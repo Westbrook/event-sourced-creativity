@@ -118,6 +118,30 @@ test('longer browser wait cannot authorize an expired fresh Video quote',async t
   } finally {globalThis.Date=RealDate;}
 });
 
+test('actual Video fold tolerates operational events; same-value source edit emits only fixed log category',async t=>{
+  const s=await fixture(t);
+  await runtime.appendEvents(s.env,[
+    ['ContextCompiled',{document_id:s.plan.documentId,context_hash:'synthetic-context',snapshot:{facts:[]}}],
+    ['DocumentRenderRequested',{document_id:s.plan.documentId,artifact_id:'synthetic-job-artifact',artifact_kind:'video'}],
+    ['DocumentRenderFailed',{document_id:s.plan.documentId,artifact_id:'synthetic-job-artifact',artifact_kind:'video',reason:'provider_submission_uncertain'}],
+  ].map(([type,payload])=>runtime.makeEvent(stream,0,'worker:renderer','test','original-run-regression',type,payload)));
+  const unchanged=await s.send();assert.equal(unchanged.status,200,await unchanged.clone().text());
+  const block=s.plan.events.find(event=>event.type==='BlockCreated');assert.ok(block);
+  await runtime.appendEvents(s.env,[runtime.makeEvent(stream,0,'user','test','same-value-edit','BlockPropertyEdited',{
+    document_id:s.plan.documentId,project_id:s.plan.projectId,block_id:block.payload.block_id,
+    property_path:'text',old_value:block.payload.properties.text,new_value:block.payload.properties.text,
+  })]);
+  const warnings=[],warn=console.warn;console.warn=(...args)=>warnings.push(args);
+  let response;try{response=await s.send();}finally{console.warn=warn;}
+  assert.equal(response.status,409);
+  const body=await response.json();assert.equal(body.error,'experience_output_source_changed');
+  assert.deepEqual(warnings.filter(args=>args[0]==='experience_output_source_mismatch'),[
+    ['experience_output_source_mismatch',{category:'provenance'}],
+  ]);
+  assert.equal(JSON.stringify(body).includes('provenance'),false,'Category is log-only, not a new public field');
+  s.unpaid();
+});
+
 for(const mutation of ['retention','source-private-body','rights-private-body','ingestion-private-body'])test(`late ${mutation} change fences Video renewal atomically`,async t=>{
   const s=await fixture(t),batch=s.DB.batch.bind(s.DB);let raced=false;
   const before=s.sqlite.prepare('SELECT COUNT(*) AS n FROM output_plan_revisions').get().n;

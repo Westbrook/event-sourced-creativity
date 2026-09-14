@@ -23,7 +23,7 @@ import { outputSourceEpochAssertion } from "./output-requirements-ledger.ts";
 import type { DocumentJobRow } from "./document-jobs-api.ts";
 import { canonicalJson } from "../src/experiences/compiler.ts";
 import { experienceResourceId, receiptPrefix, registeredExperience } from "../src/experiences/intake.ts";
-import { experienceSourceMatches } from "../src/experiences/host-source.ts";
+import { experienceSourceMismatch } from "../src/experiences/host-source.ts";
 import type { ExperienceIntakeReceipt } from "../src/experiences/native-host.ts";
 import type { ExperienceNativeState, ExperienceNativeUnavailable } from "../src/experiences/output-binding-contract.ts";
 import { authorizeExperienceIntake, readExperienceDraft, experienceDraftGuard, readExperienceBody } from "./experience-intake-api.ts";
@@ -244,9 +244,11 @@ async function load(request: Request, env: WorkerEnv, draftId: string, permissio
   trusted.sourceAssertions.push(...lineage.witnesses.map(value => outputCommandReceiptAssertion(trusted.scope, value.receipt)));
   if (binding.output === "scene" || binding.output === "video") trusted.sourceAssertions.push(sceneRenewalIndexAssertion(trusted.scope, binding.draftId, lineage.cycleCommandKeys, binding.output));
   validateManagedRequirement(loaded);
-  if (!experienceSourceMatches(plan, receipt, { documentId: trusted.projection.documentId, projectId: trusted.projection.projectId,
+  const sourceMismatch = experienceSourceMismatch(plan, receipt, { documentId: trusted.projection.documentId, projectId: trusted.projection.projectId,
     documents: trusted.projection.documents, blocks: trusted.projection.libraryBlocks.filter(block => block.id !== recipe.spec.id),
-    relations: trusted.projection.libraryBlockRelations, events: trusted.events })) {
+    relations: trusted.projection.libraryBlockRelations, events: trusted.events });
+  if (sourceMismatch !== null) {
+    console.warn("experience_output_source_mismatch", { category: sourceMismatch });
     if (request.method !== "GET" || permission !== "read" || binding.output !== "image" || !loaded.originals.run)
       error("experience_output_source_changed");
     loaded.retainedImageSourceChanged = true;

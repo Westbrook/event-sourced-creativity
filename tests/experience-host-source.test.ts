@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { experienceSourceMatches } from "../src/experiences/host-source.ts";
+import { experienceSourceMatches, experienceSourceMismatch } from "../src/experiences/host-source.ts";
 import type { ExperiencePlan } from "../src/experiences/intake.ts";
 import type { ExperienceIntakeReceipt } from "../src/experiences/native-host.ts";
 
@@ -150,4 +150,42 @@ test("rejects missing, added or duplicate current source blocks and document rel
   assert.equal(experienceSourceMatches(plan, receipt, { ...current, blocks: [...current.blocks, { ...current.blocks[0], id: "extra-block" }] }), false);
   assert.equal(experienceSourceMatches(plan, receipt, { ...current, blocks: [current.blocks[0], current.blocks[0]] }), false);
   assert.equal(experienceSourceMatches(plan, receipt, { ...current, relations: [{ id: "relation", documentId: plan.documentId }] }), false);
+});
+
+test("diagnostics return fixed categories without source values and retain refusal semantics", () => {
+  const cases: Array<[string, (input: ReturnType<typeof fixture>) => void]> = [
+    ["identity", input => { input.current.documentId = "private-identity"; }],
+    ["document", input => { input.current.documents[0].title = "private-title"; }],
+    ["original_event", input => { input.current.events[0].payload = { secret: "private-payload" }; }],
+    ["block_membership", input => { input.current.blocks.pop(); }],
+    ["relation", input => { input.current.relations.push({ documentId: input.plan.documentId, secret: "private-relation" }); }],
+    ["block_fields", input => { input.current.blocks[0].handle = "private-handle"; }],
+    ["properties", input => { input.current.blocks[0].properties = { secret: "private-content" }; }],
+    ["provenance", input => { input.current.blocks[0].sourceEvents = ["private-event"]; }],
+    ["unreadable", input => { Object.defineProperty(input.current.blocks[0], "properties", { get() { throw Error("private-exception"); } }); }],
+  ];
+  for (const [category, mutate] of cases) {
+    const input = fixture(); mutate(input);
+    assert.equal(experienceSourceMismatch(input.plan, input.receipt, input.current), category);
+    assert.equal(experienceSourceMatches(input.plan, input.receipt, input.current), false);
+  }
+  const input = fixture();
+  assert.equal(experienceSourceMismatch(input.plan, input.receipt, input.current), null);
+});
+
+test("later operational events do not invalidate exact Video source; same-value edits still do", () => {
+  // Comparator regression only. Full canonical folding and live evidence remain
+  // separate: these later operational events leave source blocks unchanged.
+  const { plan, receipt, current } = fixture();
+  plan.release.output.output = "video";
+  for (const [index, type] of ["ContextCompiled", "DocumentRenderRequested", "BudgetReserved", "DocumentRenderFailed", "GenerationUsageRecorded"].entries()) {
+    current.events.push({ eventId: `run-event-${index}`, streamId: plan.streamId, actor: "worker:renderer", sequence: 100 + index,
+      type, payload: { document_id: plan.documentId, artifact_kind: "video", reason: "provider_submission_uncertain" } });
+    assert.equal(experienceSourceMismatch(plan, receipt, current), null, type);
+  }
+  // A same-value author edit must not be ignored merely because visible text
+  // still matches: changed provenance remains a hard refusal.
+  current.blocks[0].sourceEvents = [...current.blocks[0].sourceEvents as string[], "same-value-edit"];
+  assert.equal(experienceSourceMismatch(plan, receipt, current), "provenance");
+  assert.equal(experienceSourceMatches(plan, receipt, current), false);
 });
