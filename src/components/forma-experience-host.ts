@@ -493,7 +493,7 @@ export class FormaExperienceHost extends FormaElement {
   }
   async #check(prepareImage=false) {
     const binding = this.#binding; if (!binding || !this.#readable(binding) || this.#busy) return;
-    const operation = this.#beginOperation();
+    const operation = this.#beginOperation({action:'inspectResult',output:binding.client.identity.output});
     this.#busy = true; this.#clearResult(); this.#resetDecision(); this.#status = "Checking status"; this.requestUpdate();
     let pending = false;
     try {

@@ -15,6 +15,11 @@ export function experienceResponseTimeout(operation?: ExperienceForegroundOperat
   return policy.maximumMilliseconds + 60_000;
 }
 export function experienceHostTimeout(operation?: ExperienceForegroundOperation) {
+  // Image inspection composes source refresh, original-job validation, the
+  // bounded server image read, and a final committed-stream refresh. This is
+  // presentation waiting only: individual requests and authority still expire
+  // independently, and navigation/privacy withdrawal remains immediate.
+  if(operation?.action==='inspectResult'&&operation.output==='image')return 90_000;
   const response = experienceResponseTimeout(operation);
   // Include one bounded body read and the existing post-command refresh window.
   return response === 20_000 ? 30_000 : response + EXPERIENCE_BODY_TIMEOUT_MS + 30_000;

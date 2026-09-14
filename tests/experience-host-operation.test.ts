@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { ExperienceHostOperation } from "../src/experiences/host-operation.ts";
+import {experienceHostTimeout,experienceResponseTimeout} from '../src/experiences/output-transport-lifetime.ts';
 
 // Pure operation-lifetime evidence. No native reader, host, Store or provider executes.
 test("operation deadline rejects a never-finishing read and calls onTimeout once", { timeout: 1000 }, async () => {
@@ -105,4 +106,17 @@ test("inactive waits observe supplied work rejection without reviving their leas
     await Promise.resolve();
     assert.equal(operation.current(), false);
   }
+});
+
+test('Image inspection gives composed reads a finite host window, not extra request or authority time',async context=>{
+  context.mock.timers.enable({apis:['setTimeout']});const inspection={action:'inspectResult',output:'image'};
+  assert.equal(experienceHostTimeout(inspection),90000);assert.equal(experienceResponseTimeout(inspection),20000);
+  assert.equal(experienceHostTimeout(),30000);assert.equal(experienceHostTimeout({action:'inspectResult',output:'video'}),30000);
+  let expired=0;const operation=new ExperienceHostOperation(()=>expired++,undefined,inspection);
+  const rejected=assert.rejects(operation.wait(new Promise<never>(()=>{})),/operation_unconfirmed/);
+  context.mock.timers.tick(30000);assert.equal(operation.current(),true);
+  context.mock.timers.tick(59999);assert.equal(operation.current(),true);
+  context.mock.timers.tick(1);await rejected;assert.equal(expired,1);assert.equal(operation.current(),false);
+  const cancelled=new ExperienceHostOperation(()=>expired++,undefined,inspection);const withdrawn=assert.rejects(cancelled.wait(new Promise<never>(()=>{})),/operation_withdrawn/);
+  cancelled.cancel();await withdrawn;context.mock.timers.tick(90000);assert.equal(expired,1);
 });
