@@ -92,3 +92,16 @@ test('actual PATCH publication validator rejects original accessor/inherited bat
   assert.equal(imageWitnessPublished([guard,{success:true,meta:Object.create({changes:1})}],1,1),false);
   assert.equal(imageWitnessPublished([guard,{success:true,meta:{changes:0}}],1,1),false);
 });
+
+test('incremental consumers exceed array capacity without retaining raw rows and still require terminal original-version proof',async t=>{
+  const f=fixture(t);for(let n=1;n<=170;n++)f.event(n,JSON.stringify({text:'x'.repeat(100_000)}));await f.capture();
+  await assert.rejects(f.read(),/capacity_event_bytes/);
+  let count=0;const consumer={accept(){count++;},checkpoint(){}};
+  const result=await readImageWitness(f.env,'creative:a','a','generated-image/key','output',life,consumer);
+  assert.equal(count,170);assert.equal(result.eventCount,170);assert.equal(result.eventRows.length,0);
+  assert.equal(result.head,170);assert.ok(result.eventBytes>16_000_000);assert.equal(await f.verify(result.guards),true);
+  let changed=false;
+  await assert.rejects(readImageWitness(f.env,'creative:a','a','generated-image/key','output',life,{accept(){},checkpoint(){
+    if(!changed){changed=true;f.event(171);}
+  }}),/image_witness_changed/);
+});

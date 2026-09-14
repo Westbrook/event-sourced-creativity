@@ -7,6 +7,11 @@ type Lifetime={check():void;sql(count:number):void;wait<T>(promise:Promise<T>):P
 const encoder=new TextEncoder(),bytes=(value:string)=>encoder.encode(value).length;
 export const IMAGE_WITNESS_LIMITS=Object.freeze({events:50_000,eventBytes:16_000_000,eventJsonBytes:24_000_000,
   revisions:128,revisionBytes:8_000_000,revisionBodyBytes:100_000,pageRows:256,pageBytes:512_000,rowBodyBytes:128_000,reads:800});
+// Total traversed bytes are distinct from retained state. The incremental
+// consumer must account its state each page; unchanged array callers keep the
+// original smaller cap. SQL count, page size and wall-clock budget still apply.
+export const IMAGE_STREAM_SCAN_LIMITS=Object.freeze({eventBytes:64_000_000,eventJsonBytes:96_000_000});
+type ImageEventConsumer={accept(row:Row):void;checkpoint():unknown};
 const eventFields=['event_id','stream_id','sequence','occurred_at','recorded_at','actor','client_id','correlation_id','causation_id',
   'compensates_event_id','schema_version','type','payload','private_owner','private_project','private_document','private_json','private_redacted'];
 const eventText=eventFields.filter(field=>!['sequence','schema_version','payload','private_json'].includes(field));
@@ -65,7 +70,7 @@ export function imageWitnessPublished(results:unknown,prefix:number,writes:numbe
 /** Complete owner history, with bounded cells/pages and the original immutable
  * source-generation proof retained for all later reads and conditional writes.
  * GET never activates a nonce, resets a counter or silently truncates history. */
-export async function readImageWitness(env:Pick<WorkerEnv,'DB'>,streamId:string,ownerId:string,key:string,outputId:string,life:Lifetime){
+export async function readImageWitness(env:Pick<WorkerEnv,'DB'>,streamId:string,ownerId:string,key:string,outputId:string,life:Lifetime,consumer?:ImageEventConsumer){
   life.check();
   let queryCount=0;
   const batch=(statements:D1PreparedStatement[])=>{life.sql(statements.length);queryCount+=statements.length;return life.wait(env.DB.batch<Row>(statements));};
@@ -102,9 +107,10 @@ export async function readImageWitness(env:Pick<WorkerEnv,'DB'>,streamId:string,
   const total=totals[0];
   if(totals.length!==1||!total||!integer(total.count)||!integer(total.head)||!integer(total.raw_bytes))fail('unavailable');
   if(total.count===0||total.count>IMAGE_WITNESS_LIMITS.events)fail('capacity_event_count');
-  if(total.raw_bytes>IMAGE_WITNESS_LIMITS.eventBytes)fail('capacity_event_bytes');
-  const eventRows:Row[]=[];let cursor=0,jsonBytes=2;
-  while(eventRows.length<total.count){
+  const scan=consumer?IMAGE_STREAM_SCAN_LIMITS:IMAGE_WITNESS_LIMITS;
+  if(total.raw_bytes>scan.eventBytes)fail('capacity_event_bytes');
+  const eventRows:Row[]=[];let cursor=0,jsonBytes=2,eventCount=0;
+  while(eventCount<total.count){
     const page=await read(`WITH source AS (${relation}), page AS MATERIALIZED
       (SELECT sequence,${eventCell} AS witness FROM source WHERE sequence>? ORDER BY sequence LIMIT ${IMAGE_WITNESS_LIMITS.pageRows}),
       budgeted AS (SELECT *,SUM(COALESCE(length(CAST(witness AS BLOB)),1)+1) OVER (ORDER BY sequence) AS used FROM page)
@@ -115,11 +121,12 @@ export async function readImageWitness(env:Pick<WorkerEnv,'DB'>,streamId:string,
       if(!integer(item.sequence)||item.sequence<=cursor||typeof item.witness!=='string')fail('capacity_event_row');
       const size=bytes(item.witness)+1;pageBytes+=size;jsonBytes+=size;
       if(pageBytes>IMAGE_WITNESS_LIMITS.pageBytes)fail('capacity_event_page');
-      if(jsonBytes>IMAGE_WITNESS_LIMITS.eventJsonBytes)fail('capacity_event_json');
+      if(jsonBytes>scan.eventJsonBytes)fail('capacity_event_json');
       const row:Row=JSON.parse(item.witness);if(row.sequence!==item.sequence||row.stream_id!==streamId)fail('changed');
-      eventRows.push(row);cursor=item.sequence;
+      if(consumer)consumer.accept(row);else eventRows.push(row);eventCount++;cursor=item.sequence;
     }
-    if(eventRows.length>total.count)fail('changed');
+    if(eventCount>total.count)fail('changed');
+    consumer?.checkpoint();
   }
   if(cursor!==total.head)fail('changed');
   // Source counters do not cover revisions. Preserve complete membership plus
@@ -142,5 +149,5 @@ export async function readImageWitness(env:Pick<WorkerEnv,'DB'>,streamId:string,
   const proofs=compact(guards);
   const verified=await batch(proofs.map(guard=>imageWitnessStatement(env,guard)));
   if(!imageWitnessAcknowledged(verified,proofs.length))fail('changed');
-  return {eventRows,revisionRows,guards:proofs,eventBytes:total.raw_bytes,reads,queryCount};
+  return {eventRows,eventCount,head:cursor,revisionRows,guards:proofs,eventBytes:total.raw_bytes,reads,queryCount};
 }

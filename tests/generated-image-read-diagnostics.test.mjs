@@ -33,7 +33,7 @@ test('database-kind diagnosis never returns private messages or traverses getter
     assert.equal(classify({message:'transport',cause:{message}}),kind);
   }
   assert.equal(classify({message:'private unrecognized detail'}),'unknown');
-  for(const reason of ['reads','event_count','event_bytes','event_page','event_row','event_json','revision_count','revision_row','revision_bytes']){
+  for(const reason of ['reads','event_count','event_bytes','event_page','event_row','event_json','revision_count','revision_row','revision_bytes','retained']){
     assert.equal(classify(new Error('image_witness_capacity_'+reason)),'image_witness_capacity_'+reason);
   }
   assert.equal(classify(new Error('image_witness_capacity_private-payload')),'unknown');

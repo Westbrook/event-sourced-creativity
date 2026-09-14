@@ -571,8 +571,9 @@ export function createCreativeEventFold(asOf = Number.POSITIVE_INFINITY, selecte
     }
     return true;
   };
-  const finish = (): CreativeProjection => {
+  const finish = (selection?:{documentId:string;projectId?:string}): CreativeProjection => {
   if (finished) throw new Error("creative_fold_already_finished");
+  if(selection){selectedDocumentId=selection.documentId;selectedProjectId=selection.projectId??"";}
   finished = true;
   const requestedDocument=selectedDocumentId?documents.get(selectedDocumentId):undefined;
   if(requestedDocument&&!requestedDocument.removed&&requestedDocument.projectId!==state.projectId){const requestedProject=projects.get(requestedDocument.projectId);state.projectId=requestedDocument.projectId;if(requestedProject){state.projectName=requestedProject.name;state.projectState=requestedProject.state;}}

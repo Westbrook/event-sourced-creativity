@@ -204,6 +204,17 @@ test("generated Image Save commits one immutable PNG, complete private ACK/histo
   }
 });
 
+test('complete history exceeding old raw-array cap still validates, saves, and preserves terminal head through incremental consumption',async t=>{
+  const f=await fixture(t),head=f.sqlite.prepare('SELECT MAX(sequence) n FROM events WHERE stream_id=?').get(f.streamId).n;
+  const payload=JSON.stringify({text:'x'.repeat(1000)});
+  f.sqlite.prepare(`WITH RECURSIVE n(x) AS (VALUES(1) UNION ALL SELECT x+1 FROM n WHERE x<17000)
+    INSERT INTO events(event_id,stream_id,sequence,occurred_at,recorded_at,actor,client_id,correlation_id,type,payload)
+    SELECT 'image-large-'||x,?,?+x,'now','now','user','fixture','fixture','UnusedHistory',? FROM n`).run(f.streamId,head,payload);
+  const snapshot=await body(await f.read());assert.equal(snapshot.head,head+17000);
+  const input=await f.input();await assertSaved(f,await f.save(input),input);
+  assert.equal((await body(await f.read())).head,head+17001);
+});
+
 test("same exact PNG is unchanged and does not allocate an event, history row or object", async t => {
   const f = await fixture(t), request = await f.input(ORIGINAL), before = owned(f);
   assert.deepEqual(await body(await f.save(request, ORIGINAL)), { status: "unchanged", code: "unchanged" });

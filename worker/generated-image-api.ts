@@ -1,6 +1,7 @@
-import { foldEvents, type CreativeEvent } from "../src/model/events.ts";
+import { type CreativeEvent } from "../src/model/events.ts";
 import { originalGeneratedImageUrl } from "../src/model/generated-image-original-url.ts";
-import {readImageWitness,imageWitnessStatement,imageWitnessAcknowledged,imageWitnessPublished,type ImageWitnessGuard} from './generated-image-witness.ts';
+import {readImageWitness,imageWitnessStatement,imageWitnessAcknowledged,imageWitnessPublished,IMAGE_STREAM_SCAN_LIMITS,type ImageWitnessGuard} from './generated-image-witness.ts';
+import {createImageEventConsumer} from './generated-image-event-consumer.ts';
 import {captureSceneSourceVersion} from './scene-source-generation.ts';
 import { GENERATED_IMAGE_EDIT_LIMITS } from "../src/model/generated-image-edit.ts";
 import { generatedImageEditOperationSha256, parseGeneratedImageEditRequest, parseGeneratedImageRevision,
@@ -17,7 +18,7 @@ import { EVENT_WRITE_COLUMNS, eventWriteBindings, makeEvent, serializeEvent, uui
 // CreativeOutput into a DocumentArtifact, modify planner content, or render PNGs.
 const DEADLINE_MS = 30_000;
 const MAX_EVENTS = 50_000;
-const MAX_EVENT_BYTES = 16_000_000;
+const MAX_EVENT_BYTES = IMAGE_STREAM_SCAN_LIMITS.eventBytes;
 const MAX_REVISIONS = 128;
 const MAX_REVISION_BYTES = 8_000_000;
 const MAX_REQUEST_BYTES = GENERATED_IMAGE_EDIT_LIMITS.pngBytes + 131_072;
@@ -53,7 +54,7 @@ function imageReadFailureKind(error: unknown): string {
   try { for(let depth=0;depth<3&&object(current);depth++){
     const raw=Object.getOwnPropertyDescriptor(current,"message")?.value;
     const message=typeof raw==="string"?raw.slice(0,2048):"";
-    if(/^image_witness_(?:capacity(?:_(?:reads|event_count|event_bytes|event_page|event_row|event_json|revision_count|revision_row|revision_bytes))?|changed|version|schema|epoch_absent|unavailable)$/u.test(message))return message;
+    if(/^image_witness_(?:capacity(?:_(?:reads|event_count|event_bytes|event_page|event_row|event_json|revision_count|revision_row|revision_bytes|retained))?|changed|version|schema|epoch_absent|unavailable)$/u.test(message))return message;
     if(/\bSQLITE_TOOBIG\b|\bstring or blob too big\b/iu.test(message))return "d1_value_limit";
     if(/\bno such (?:table|column)\b|\bSQLITE_SCHEMA\b/iu.test(message))return "d1_schema";
     if(/\bExpression tree is too large\b/iu.test(message))return "d1_expression_depth";
@@ -120,7 +121,7 @@ type Envelope = { kind: "generated-image"; schemaVersion: 1; origin: Origin; ini
 type Retained = { row: Row; envelope: Envelope; event: CreativeEvent | null };
 type Current = {
   snapshot: GeneratedImageEditSnapshot; origin: Origin; initialMedia: Media; retained: Retained[];
-  events: CreativeEvent[]; eventBytes: number; witnessGuards: ImageWitnessGuard[]; witnessQueries:number; rawExpires: string; originExpires: string | null; key: string; guard: Guard;
+  eventCount: number; eventBytes: number; witnessGuards: ImageWitnessGuard[]; witnessQueries:number; rawExpires: string; originExpires: string | null; key: string; guard: Guard;
 };
 
 function mediaKey(value: unknown, owner: string): string | null {
@@ -145,26 +146,25 @@ async function observeCurrent(env: WorkerEnv, actor: PilotUser, outputId: string
   life.check();
   const key = internalKey(outputId);
   life.readStage="witness_read";
-  const witnesses = await readImageWitness(env,actor.streamId,actor.userId,key,outputId,life);
+  const consumer=createImageEventConsumer(outputId,key,(value:Row)=>{
+    requireFact(object(value) && token(value.event_id) && value.stream_id === actor.streamId && integer(value.sequence, 1));
+    if(value.private_json!==null)requireFact(value.private_owner===actor.userId&&typeof value.private_json==='string');
+    const event=serializeEvent({...value,private_json:value.private_redacted===null?value.private_json:null});
+    requireFact(object(event.payload));return event;
+  });
+  const witnesses = await readImageWitness(env,actor.streamId,actor.userId,key,outputId,life,consumer);
   life.readStage="event_witness_capacity";
-  requireFact(witnesses.eventRows.length>0&&witnesses.eventRows.length<=MAX_EVENTS);
+  requireFact(witnesses.eventCount>0&&witnesses.eventCount<=MAX_EVENTS);
   life.readStage="revision_witness_capacity";
   requireFact(witnesses.revisionRows.length<=MAX_REVISIONS);
   life.readStage="witness_bounds";
-  const {eventRows,revisionRows}=witnesses;
-  requireFact(Array.isArray(eventRows) && eventRows.length > 0 && eventRows.length <= MAX_EVENTS && Array.isArray(revisionRows) && revisionRows.length <= MAX_REVISIONS);
+  const {revisionRows}=witnesses;
+  requireFact(Array.isArray(revisionRows) && revisionRows.length <= MAX_REVISIONS);
   life.readStage="event_decode";
-  const events: CreativeEvent[] = eventRows.map((value: unknown) => {
-    requireFact(object(value) && token(value.event_id) && value.stream_id === actor.streamId && integer(value.sequence, 1));
-    if (value.private_json !== null) requireFact(value.private_owner === actor.userId && typeof value.private_json === "string");
-    const event = serializeEvent({ ...value, private_json: value.private_redacted === null ? value.private_json : null });
-    requireFact(object(event.payload));
-    return event;
-  });
-  const eventBytes = eventRows.reduce((total: number, value: Row) => total + encoder.encode(String(value.payload)).length
-    + (typeof value.private_json === "string" ? encoder.encode(value.private_json).length : 0), 0);
+  const consumed=consumer.finish(),{events,envelopes:eventRows,initial,projection}=consumed;
+  const eventBytes=witnesses.eventBytes;
   life.readStage="event_order";
-  requireFact(new Set(events.map(event => event.eventId)).size === events.length && events.every((event, index) => index === 0 || events[index - 1]!.sequence < event.sequence));
+  requireFact(consumed.count===witnesses.eventCount&&consumed.head===witnesses.head);
   life.readStage="origin_alias";
   const aliases = events.filter(event => (event.type === "GenerationCompleted" || event.type === "IdeationPreviewCompleted")
     && (event.payload.object_id === outputId || Array.isArray(event.payload.object_ids) && event.payload.object_ids.includes(outputId)));
@@ -184,11 +184,9 @@ async function observeCurrent(env: WorkerEnv, actor: PilotUser, outputId: string
   // The initial projection proves generated-output identity. Current projection
   // supplies removal and current Document/reference state, including later edits.
   life.readStage="projection";
-  const initial = foldEvents(events.filter(event => event.sequence <= completed.sequence), Infinity, p.document_id);
   const initialOutput = initial.libraryOutputs.filter(output => output.id === outputId);
   requireFact(initialOutput.length === 1 && initialOutput[0]!.sourceEventId === completed.eventId && initialOutput[0]!.generationId === p.generation_id
     && initialOutput[0]!.contentRef === p.output_ref && initialOutput[0]!.mediaUrl === originalUrl && initialOutput[0]!.sequence === completed.sequence);
-  const projection = foldEvents(events, Infinity, p.document_id, initial.projectId);
   const document = projection.documents.find(value => value.id === p.document_id), outputs = projection.libraryOutputs.filter(value => value.id === outputId);
   requireFact(document && !document.removed && token(document.projectId) && projection.documentId === document.id && projection.projectId === document.projectId
     && outputs.length === 1 && !outputs[0]!.discarded && outputs[0]!.documentId === document.id && outputs[0]!.generationId === p.generation_id
@@ -277,7 +275,7 @@ async function observeCurrent(env: WorkerEnv, actor: PilotUser, outputId: string
   }).map(item => item.id);
   const snapshot: GeneratedImageEditSnapshot = { status: "current", ownerId: actor.userId, projectId: document.projectId, ...origin, rawJson: source.content,
     revision: edits.length, editEventId, media: { ...media, ...(media.byteLength === 0 ? { byteLength: undefined } : {}) }, sources, sourceIds,
-    head: events[events.length - 1]!.sequence };
+    head: witnesses.head };
   const keys = [originalUrl, media.url, ...sources.map(item => item.mediaUrl),
     ...retained.flatMap(item => item.envelope.imageRevision ? [item.envelope.imageRevision.media.url] : [])]
     .flatMap(url => [url, mediaKey(url, actor.userId)!]);
@@ -289,7 +287,7 @@ async function observeCurrent(env: WorkerEnv, actor: PilotUser, outputId: string
     bindings: [...access.bindings,
       origin.contentRef, actor.userId, source.content, source.expires_at as string, new Date().toISOString(),
       typeof p.content_expires_at === "string" ? p.content_expires_at : "", typeof p.content_expires_at === "string" ? p.content_expires_at : "", actor.userId, key] };
-  const current: Current = { snapshot, origin, initialMedia, retained, events, eventBytes, witnessGuards:witnesses.guards,witnessQueries:witnesses.queryCount, rawExpires: source.expires_at as string,
+  const current: Current = { snapshot, origin, initialMedia, retained, eventCount:witnesses.eventCount, eventBytes, witnessGuards:witnesses.guards,witnessQueries:witnesses.queryCount, rawExpires: source.expires_at as string,
     originExpires: typeof p.content_expires_at === "string" ? p.content_expires_at : null, key, guard };
   await assertCurrent(env, current, life);
   return current;
@@ -459,7 +457,7 @@ async function execute(request: Request, env: WorkerEnv, outputId: string, life:
     }
     await assertCurrent(env, current, life);
     if (input.request.resultMediaSha256 === current.snapshot.media.sha256) return reply({ status: "unchanged", code: "unchanged" });
-    requireFact(current.events.length < MAX_EVENTS && integer(current.snapshot.head + 1, 1)
+    requireFact(current.eventCount < MAX_EVENTS && integer(current.snapshot.head + 1, 1)
       && current.retained.length + (current.snapshot.revision === 0 ? 2 : 1) <= MAX_REVISIONS, "unavailable");
     const mediaId = "image-edit-" + uuidV7(), key = ownerMediaNamespace(actor.userId) + "/generated/" + mediaId + ".png";
     const media: Media = { url: "/api/media/" + encodeURIComponent(key), mediaType: "image/png", sha256: input.request.resultMediaSha256,
