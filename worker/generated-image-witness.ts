@@ -132,7 +132,13 @@ export async function readImageWitness(env:Pick<WorkerEnv,'DB'>,streamId:string,
     const sizes=pages.map(page=>{
       if(page.length>IMAGE_WITNESS_LIMITS.pageRows)fail('capacity_event_page');
       let totalBytes=0;
-      const values=page.map(item=>{if(typeof item.witness!=='string')fail('capacity_event_row');const n=bytes(item.witness)+1;totalBytes+=n;return n;});
+      const values=page.map(item=>{
+        if(typeof item.witness!=='string')fail('capacity_event_row');
+        const n=bytes(item.witness)+1;totalBytes+=n;jsonBytes+=n;
+        // Discarding a prefetched suffix never refunds bytes already traversed.
+        if(jsonBytes>scan.eventJsonBytes)fail('capacity_event_json');
+        return n;
+      });
       if(totalBytes>IMAGE_WITNESS_LIMITS.pageBytes)fail('capacity_event_page');
       return values;
     });
@@ -143,9 +149,8 @@ export async function readImageWitness(env:Pick<WorkerEnv,'DB'>,streamId:string,
     for(let itemIndex=0;itemIndex<page.length;itemIndex++){
       const item=page[itemIndex]!;
       if(!integer(item.sequence)||item.sequence<=cursor||typeof item.witness!=='string')fail('capacity_event_row');
-      const size=sizes[pageIndex]![itemIndex]!;pageBytes+=size;jsonBytes+=size;
+      const size=sizes[pageIndex]![itemIndex]!;pageBytes+=size;
       if(pageBytes>IMAGE_WITNESS_LIMITS.pageBytes)fail('capacity_event_page');
-      if(jsonBytes>scan.eventJsonBytes)fail('capacity_event_json');
       const row:Row=JSON.parse(item.witness);if(row.sequence!==item.sequence||row.stream_id!==streamId)fail('changed');
       if(consumer)consumer.accept(row);else eventRows.push(row);eventCount++;cursor=item.sequence;
     }
