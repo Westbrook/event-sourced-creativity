@@ -31,7 +31,8 @@ export async function prepareExperienceVideoReference(request: Request, env: Wor
   if (trusted instanceof Response) fail("video_reference_source_unavailable", trusted.status);
   stage("custody_read");
   const inspection = await inspectVideoReferenceCustody(trusted, auth, selection).catch(error => {
-    recordVideoCustodyFailure(error); throw error;
+    recordVideoCustodyFailure(error, { contextPresent: !!trusted.context, privateCaptured: trusted.sourcePrivateCaptured,
+      problems: trusted.sourceProblems }); throw error;
   });
   stage("custody_verified");
   const block = trusted.projection.libraryBlocks.find(candidate => candidate.id === selection.sourceBlockId);
