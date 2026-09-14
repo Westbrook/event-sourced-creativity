@@ -17,6 +17,26 @@ const hash=async(v:string)=>Array.from(new Uint8Array(await crypto.subtle.digest
 function reject(code:string):never{throw new OutputConflictError(code,409);}
 const tokenCount=(v:unknown):v is number=>Number.isSafeInteger(v)&&Number(v)>=0;
 
+/** A resolved batch is not proof that every original guard was acknowledged.
+ * A malformed/lost acknowledgement stays unknown; never retry or recapture. */
+async function acknowledgedRecoveryBatch<T extends Record<string,unknown>>(db:D1Database,statements:D1PreparedStatement[]):Promise<D1Result<T>[]> {
+  const expected=statements.length;
+  const results=await db.batch<T>(statements);
+  if(!Number.isSafeInteger(expected)||expected<1||!Array.isArray(results)||results.length!==expected)reject("output_fal_recovery_ack_unavailable");
+  for(let i=0;i<expected;i++){
+    const entry=Object.getOwnPropertyDescriptor(results,String(i))?.value;
+    if(!entry||typeof entry!=="object"||Array.isArray(entry)
+      ||Object.getOwnPropertyDescriptor(entry,"success")?.value!==true)reject("output_fal_recovery_ack_unavailable");
+    const error=Object.getOwnPropertyDescriptor(entry,"error"),rows=Object.getOwnPropertyDescriptor(entry,"results")?.value;
+    if(error&&(!Object.hasOwn(error,"value")||error.value!==undefined)||!Array.isArray(rows))reject("output_fal_recovery_ack_unavailable");
+    for(let j=0;j<rows.length;j++){
+      const row=Object.getOwnPropertyDescriptor(rows,String(j))?.value;
+      if(!row||typeof row!=="object"||Array.isArray(row))reject("output_fal_recovery_ack_unavailable");
+    }
+  }
+  return results;
+}
+
 /** Explicit recovery of one original personal Fal Image. No paid dispatcher is
  * reachable here. The failed job is not requeued; only an exact GET/publication
  * lease is claimed. Immutable failure events and the prior failure fields remain. */
@@ -39,7 +59,7 @@ export async function recoverOutputFalImage(env:WorkerEnv,user:PilotUser,job:Doc
   const assertions:OutputSqlAssertion[]=[...proof.assertions,...options.assertions,identity,
     ...proof.assertions.flatMap(a=>a.deadlineMs===undefined?[]:[{sql:"?>strftime('%Y-%m-%dT%H:%M:%fZ','now')",bindings:[new Date(a.deadlineMs).toISOString()]}])];
   const guardedRead=async<T extends Record<string,unknown>>(statement:D1PreparedStatement,extra:OutputSqlAssertion[]=[])=>{
-    const results=await env.DB.batch<T>([...[...assertions,...extra].flatMap(a=>outputAssertionStatements(env,a)),statement]);return results.at(-1)!.results;
+    const results=await acknowledgedRecoveryBatch<T>(env.DB,[...[...assertions,...extra].flatMap(a=>outputAssertionStatements(env,a)),statement]);return results.at(-1)!.results;
   };
   const completedRead=async()=>{
     const rows=await guardedRead(env.DB.prepare(`SELECT job.result_json FROM document_jobs job JOIN events done ON done.event_id=json_extract(job.result_json,'$.outputFalRecovery.completionEventId')
@@ -82,21 +102,21 @@ export async function recoverOutputFalImage(env:WorkerEnv,user:PilotUser,job:Doc
     AND (lease_expires_at IS NULL OR lease_expires_at<=strftime('%Y-%m-%dT%H:%M:%fZ','now'))
     AND json_extract(result_json,'$.outputFalRecovery.token')=? AND json_extract(result_json,'$.outputFalRecovery.expiresAt')=? AND ?>strftime('%Y-%m-%dT%H:%M:%fZ','now')
     AND NOT EXISTS(SELECT 1 FROM document_jobs competitor WHERE competitor.stream_id=document_jobs.stream_id AND competitor.document_id=document_jobs.document_id AND competitor.job_id<>document_jobs.job_id AND competitor.status IN('running','committing') AND competitor.lease_expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now')))`,bindings:[job.job_id,user.userId,token,expiresAt,expiresAt]};
-  await env.DB.batch([...assertions.flatMap(a=>outputAssertionStatements(env,a)),env.DB.prepare(`UPDATE document_jobs SET result_json=json_set(COALESCE(result_json,'{}'),'$.outputFalRecovery',json(?)) WHERE job_id=? AND owner_id=? AND status='failed' AND result_json IS ?
+  await acknowledgedRecoveryBatch(env.DB,[...assertions.flatMap(a=>outputAssertionStatements(env,a)),env.DB.prepare(`UPDATE document_jobs SET result_json=json_set(COALESCE(result_json,'{}'),'$.outputFalRecovery',json(?)) WHERE job_id=? AND owner_id=? AND status='failed' AND result_json IS ?
     AND (lease_expires_at IS NULL OR lease_expires_at<=strftime('%Y-%m-%dT%H:%M:%fZ','now'))
     AND (json_type(result_json,'$.outputFalRecovery') IS NULL OR json_extract(result_json,'$.outputFalRecovery.expiresAt')<=strftime('%Y-%m-%dT%H:%M:%fZ','now'))
     AND NOT EXISTS(SELECT 1 FROM document_jobs competitor WHERE competitor.stream_id=document_jobs.stream_id AND competitor.document_id=document_jobs.document_id AND competitor.job_id<>document_jobs.job_id AND competitor.status IN('running','committing') AND competitor.lease_expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now'))`)
     .bind(JSON.stringify(lease),job.job_id,user.userId,job.result_json),...outputAssertionStatements(env,{sql:"changes()=1"})]);
   const live=()=>[...assertions,leaseAssertion];
   const timeout=AbortSignal.timeout(120_000),signal=options.signal?AbortSignal.any([options.signal,timeout]):timeout;
-  const assertCurrent=async()=>{if(signal.aborted)throw new Error("output_fal_recovery_canceled");await env.DB.batch(live().flatMap(a=>outputAssertionStatements(env,a)));};
+  const assertCurrent=async()=>{if(signal.aborted)throw new Error("output_fal_recovery_canceled");await acknowledgedRecoveryBatch(env.DB,live().flatMap(a=>outputAssertionStatements(env,a)));};
   const privateEnv=guardOutputPrivateWrites(env,scope,slot,async()=>live(),{retentionPolicy:binding.retentionPolicy});
   try{
     const result=await readOutputFalImageResult(env,captured,receipt,{assertCurrent,signal});
     if(result.status==='pending')return{status:"pending" as const,jobId:job.job_id,slotId:slot.slotId,replayed:false};
     await settleOutputProviderCall(env,{scopeKey:scope.key,slotId:slot.slotId,callKey:'image:initial',clientRequestId:checkpoint.clientRequestId,status:'settled',usedMicrousd:result.costBreakdown.totalMicrousd,providerResponseId:receipt.providerRequestId,assertions:live()});
     const paid={clientRequestId:checkpoint.clientRequestId,provider:'fal',operation:'image',model:contract.model,status:'completed',providerRequestId:receipt.providerRequestId,costMicrousd:result.costBreakdown.totalMicrousd,inputTokens:0,outputTokens:0,totalTokens:0};
-    await env.DB.batch([...live().flatMap(a=>outputAssertionStatements(env,a)),env.DB.prepare("UPDATE document_jobs SET result_json=json_patch(COALESCE(result_json,'{}'),?) WHERE job_id=? AND owner_id=?")
+    await acknowledgedRecoveryBatch(env.DB,[...live().flatMap(a=>outputAssertionStatements(env,a)),env.DB.prepare("UPDATE document_jobs SET result_json=json_patch(COALESCE(result_json,'{}'),?) WHERE job_id=? AND owner_id=?")
       .bind(JSON.stringify({providerSubmissions:{[checkpoint.clientRequestId]:paid}}),job.job_id,user.userId)]);
     const settlement=await reconcileKnownOutputProviderReceipts(env,user,{jobId:job.job_id,assertions:live()});
     if(settlement.status==='uncertain')reject("output_fal_recovery_settlement_unavailable");

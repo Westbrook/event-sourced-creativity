@@ -78,3 +78,54 @@ test("actual Fal paid fetch follows the final gate without an optional-reader-gu
     body=>falJson({},"https://queue.fal.run/ideogram/v4",{method:"POST",body},"")),/transport_stopped/);
   assert.deepEqual(order,["gate","fetch","microtask"]);
 });
+
+async function recoveryBatchSeam(){
+  const {readFile}=await import("node:fs/promises"),{stripTypeScriptTypes}=await import("node:module");
+  const source=await readFile(new URL("../worker/output-fal-recovery.ts",import.meta.url),"utf8");
+  const start=source.indexOf("async function acknowledgedRecoveryBatch"),end=source.indexOf("/** Explicit recovery",start);
+  assert.ok(start>=0&&end>start);
+  const checked=new Function("reject",stripTypeScriptTypes(source.slice(start,end))+";return acknowledgedRecoveryBatch;")(code=>{throw new Error(code);});
+  return{source,checked,stripTypeScriptTypes};
+}
+test("original recovery requires every indexed batch acknowledgement and never retries an unknown commit",async()=>{
+  const {checked}=await recoveryBatchSeam(),statements=[{},{}],ok=()=>({success:true,results:[]});
+  const good=[ok(),{success:true,results:[{original:"retained"}]}];
+  assert.deepEqual(await checked({batch:async()=>good},statements),good);
+  const sparse=[ok(),ok()];delete sparse[0];
+  const inherited=Object.create({success:true});inherited.results=[];
+  let getters=0;const accessor=[ok(),ok()];Object.defineProperty(accessor,"0",{get(){getters++;return ok();}});
+  const errorAccessor={success:true,results:[]};Object.defineProperty(errorAccessor,"error",{get(){getters++;return undefined;}});
+  const bad=[undefined,null,{},[],[ok()],[ok(),ok(),ok()],sparse,[{success:false,results:[]},ok()],
+    [{success:true,error:"failed guard",results:[]},ok()],[{success:true},ok()],
+    [{success:true,results:{}},ok()],[{success:true,results:Array(1)},ok()],
+    [{success:true,results:[null]},ok()],[{success:true,results:[[]]},ok()],
+    [inherited,ok()],accessor,[errorAccessor,ok()]];
+  for(const response of bad){
+    let calls=0,next=0;
+    await assert.rejects(async()=>{await checked({batch:async()=>{calls++;return response;}},statements);next++;},/output_fal_recovery_ack_unavailable/);
+    assert.equal(calls,1);assert.equal(next,0);
+  }
+  assert.equal(getters,0);
+  const lost=new Error("lost acknowledgement after possible commit");let calls=0;
+  await assert.rejects(checked({batch:async()=>{calls++;throw lost;}},statements),error=>error===lost);
+  assert.equal(calls,1,"No retry or assertion that the transaction did not commit");
+});
+test("actual recovery currentness gate stops the original GET after malformed batch acknowledgements",async()=>{
+  const {source,checked,stripTypeScriptTypes}=await recoveryBatchSeam();
+  const expression=source.match(/const assertCurrent=(async\(\)=>\{[^\n]+\});/u)?.[1];assert.ok(expression);
+  assert.match(source,/const results=await acknowledgedRecoveryBatch<T>\(env.DB,/u);
+  assert.match(source,/await acknowledgedRecoveryBatch\(env.DB,\[\.\.\.assertions\.flatMap/u,"Lease claim is qualified");
+  assert.match(source,/await acknowledgedRecoveryBatch\(env.DB,\[\.\.\.live\(\)\.flatMap/u,"Original receipt write is qualified");
+  assert.equal((source.match(/env\.DB\.batch/g)||[]).length,0,"No unchecked batch remains in original recovery");
+  const c=await capture(),receipt=falImageProviderReceipt(c.contract.model,"recorded-request"),before=globalThis.fetch;
+  let fetches=0;globalThis.fetch=()=>{fetches++;throw new Error("must not reach provider");};
+  try{
+    for(const result of [[{success:true,results:[]}],[{success:false,results:[]},{success:true,results:[]}],Array(2)]){
+      let calls=0;
+      const current=new Function("signal","acknowledgedRecoveryBatch","env","live","outputAssertionStatements",`return ${stripTypeScriptTypes(expression)};`)(
+        new AbortController().signal,checked,{DB:{batch:async()=>{calls++;return result;}}},()=>[{}],()=>[{},{}]);
+      await assert.rejects(readOutputFalImageResult({FAL_KEY:"inert-key-presence"},c,receipt,{assertCurrent:current}),/output_fal_recovery_ack_unavailable/);
+      assert.equal(calls,1);assert.equal(fetches,0);
+    }
+  }finally{globalThis.fetch=before;}
+});

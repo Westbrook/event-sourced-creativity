@@ -150,6 +150,7 @@ test("unknown failures gain only fixed bounded diagnostic kinds without changing
       "output_fal_recovery_origin_unavailable", "output_fal_recovery_provenance_unavailable", "output_fal_recovery_canceled",
       "output_fal_recovery_settlement_unavailable", "output_fal_recovery_unavailable", "output_fal_recovery_receipt_mismatch",
       "output_fal_recovery_result_unavailable", "output_fal_result_outside_contract", "output_fal_result_too_large", "output_fal_result_empty",
+      "output_fal_recovery_ack_unavailable",
     ].flatMap(code=>[[new Error(code),code],[Object.assign(new Error("private original metadata"),{code,status:409}),code],
       [new Error("private wrapper",{cause:new Error(code)}),code]]),
   ];

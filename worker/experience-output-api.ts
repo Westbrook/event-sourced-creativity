@@ -83,6 +83,7 @@ const nativeDiagnosticSubtypes = new Map([
     "output_fal_recovery_origin_unavailable", "output_fal_recovery_provenance_unavailable", "output_fal_recovery_canceled",
     "output_fal_recovery_settlement_unavailable", "output_fal_recovery_unavailable", "output_fal_recovery_receipt_mismatch",
     "output_fal_recovery_result_unavailable", "output_fal_result_outside_contract", "output_fal_result_too_large", "output_fal_result_empty",
+    "output_fal_recovery_ack_unavailable",
   ].map(code => [code, code] as const),
 ]);
 function diagnosticSubtype(cause: unknown): string | undefined {
