@@ -1,3 +1,4 @@
+import {measureRetainedState,RETAINED_STATE_LIMITS} from './retained-state.ts';
 import { projectGeneratedImageEdit, type GeneratedImageOutputEdit } from "./generated-image-revision.ts";
 import { audioMetadataAfterSourceEdit } from "./audio.ts";
 import { normalizeImageFocalPoint, type ImageFocalPoint } from "./focal-point.ts";
@@ -617,7 +618,10 @@ export function createCreativeEventFold(asOf = Number.POSITIVE_INFINITY, selecte
   if(!state.projects.length&&state.projectId){const history=generationHistoryItems(state.libraryOutputs);state.projects=[{id:state.projectId,name:state.projectName,state:state.projectState,createdSequence:0,lastSequence:0,documentCount:state.documents.length,collectionCount:state.collections.length,blockCount:state.libraryBlocks.length,outputCount:history.length+state.libraryArtifacts.length,artifactCount:state.libraryArtifacts.length,recentGenerations:history.slice(0,2),recentArtifacts:state.libraryArtifacts.slice(0,2)}];}
   return state;
   };
-  return { accept, finish };
+  const retainedState=()=>[projects,blocks,blockRelations,documents,collections,membership,outputs,artifacts,
+    originalAudio,originalVideo,videoEditCounts,originalModel3d,model3dEditCounts,revisedModel3d,generationCanvas,
+    documentCompiles,previewOutputByEvent,annotations,families,preferences,conditions,state];
+  return { accept, finish, measureRetainedState:(limits=RETAINED_STATE_LIMITS)=>measureRetainedState(retainedState(),limits) };
 }
 
 export const shortEventType = (type: string) => type.replace(/([a-z])([A-Z])/g, "$1 $2");

@@ -5,6 +5,7 @@ import {readLocalMigrations,migrateLocalDatabase} from '../scripts/lib/local-mig
 import {captureSceneSourceVersion} from '../worker/scene-source-generation.ts';
 import {reduceSceneVersionedHistory,SCENE_VERSIONED_READ_LIMITS} from '../worker/scene-versioned-history-read.ts';
 import {createCreativeEventFold} from '../src/model/events.ts';
+import {createSceneContextConsumer} from '../worker/scene-context-consumer.ts';
 const migrations=readLocalMigrations(new URL('../drizzle/',import.meta.url));
 function fixture(t){
   const db=new DatabaseSync(':memory:');t.after(()=>db.close());db.exec('PRAGMA foreign_keys=ON');migrateLocalDatabase(db,{migrations});
@@ -95,4 +96,22 @@ test('malformed hydration cannot bypass original metadata or declared byte bound
     await assert.rejects(f.reduce(version,()=>({accept(){accepted=true;return true;},finish(){finished=true;}})),/output_source_changed/);
     assert.equal(accepted,false);assert.equal(finished,false);
   }
+});
+test('complete Scene consumer folds a large edit history with bounded retained state',async t=>{
+  const f=fixture(t);f.event(1,'ProjectCreated',{project_id:'p',name:'Paged'});f.event(2,'DocumentCreated',{project_id:'p',document_id:'d',title:'Document'});
+  f.event(3,'BlockCreated',{project_id:'p',document_id:'d',block_id:'b',type:'direction',properties:{text:'Start'}});
+  const text='Complete original source '.repeat(140);f.db.exec('BEGIN');
+  for(let sequence=4;sequence<=7003;sequence++)f.event(sequence,'BlockPropertyEdited',{block_id:'b',property_path:'text',new_value:text+sequence});
+  f.db.exec('COMMIT');const result=await f.reduce(await f.capture(),()=>createSceneContextConsumer({documentId:'d',projectId:'p'}));
+  assert.ok(result.rawBytes>16*1024*1024);assert.equal(result.value.trusted.snapshot.facts[0].properties.text,text+'7003');
+  assert.equal(result.value.trusted.sourceBlockVersions[0].version,7001);
+  assert.deepEqual(result.value.workflowEvents,[]);assert.ok(result.value.maximumRetainedBytes<8*1024*1024);
+  t.diagnostic(JSON.stringify({rows:result.rows,rawBytes:result.rawBytes,maximumLogicalRetainedBytes:result.value.maximumRetainedBytes,runtime:'Node SQLite, not Worker heap evidence'}));
+});
+test('growing current context refuses at retained-state capacity without a finished result',async t=>{
+  const f=fixture(t);f.event(1,'ProjectCreated',{project_id:'p'});f.event(2,'DocumentCreated',{project_id:'p',document_id:'d'});
+  for(let i=3;i<=130;i++)f.event(i,'BlockCreated',{project_id:'p',document_id:'d',block_id:'b'+i,type:'direction',properties:{text:'x'.repeat(50_000)}});
+  let finished=false;
+  await assert.rejects(f.reduce(await f.capture(),()=>{const consumer=createSceneContextConsumer({documentId:'d',projectId:'p'});return {...consumer,finish(){finished=true;return consumer.finish();}};}),/output_source_proof_too_large/);
+  assert.equal(finished,false);
 });

@@ -9,6 +9,7 @@ import { DOCUMENT_ARTIFACT_KINDS } from "../src/model/document-artifacts.ts";
 import { foldEvents } from "../src/model/events.ts";
 import {
   DOCUMENT_PRODUCTION_WORKFLOW_EVENT,
+  createProductionWorkflowHistoryFold,
   moveProductionWorkflowStage,
   productionWorkflowIssues,
   productionWorkflowSceneConfiguration,
@@ -108,6 +109,43 @@ const workflow = (target, approvalRequired = false) => recommendProductionWorkfl
   projectId: "project",
   target,
   approvalRequired,
+});
+
+test('streamed workflow evidence preserves review, edits, lineage and stage decisions',()=>{
+  const plan=workflow('scene',true),story=plan.stages.find(stage=>stage.format==='short_story');
+  story.enabled=true;story.source=artifactSource('short_story','event-4');
+  const source=artifactEvent(4,'short_story');
+  const journal=[...foundation(),source,
+    event(5,'ArtifactReviewRequested',{artifact_id:'short_story',document_id:'document',artifact_revision:0,content_sha256:'a'.repeat(64)},'user:editor'),
+    event(6,'ArtifactApproved',{artifact_id:'short_story',document_id:'document',artifact_revision:0,content_sha256:'a'.repeat(64)},'user:reviewer'),
+    event(7,DOCUMENT_PRODUCTION_WORKFLOW_EVENT,{document_id:'document',project_id:'project',workflow_id:plan.id,workflow:plan}),
+    event(8,'RightsAsserted',{reference_id:'r',rights_class:'owned'}),
+    event(9,'ReferenceIngested',{reference_id:'r',rights_class:'revoked'}),
+    event(10,'DocumentArtifactEdited',{artifact_id:'short_story',document_id:'document',edited_by_user_id:'editor'}),
+    event(11,'ArtifactChangesRequested',{artifact_id:'short_story',document_id:'document'}),
+    event(12,'GenerationCompleted',{document_id:'document',object_ids:['image']}),
+    event(13,'ObjectDiscarded',{object_id:'image'}),
+    event(14,'IdeationPreviewCompleted',{document_id:'document',object_id:'preview'}),
+    event(15,'BlockPropertyEdited',{block_id:'direction',property_path:'text',new_value:'Changed direction'}),
+  ];
+  for(let count=0;count<=journal.length;count++){
+    const events=journal.slice(0,count),fold=createProductionWorkflowHistoryFold();for(const entry of events)fold.accept(entry);
+    const evidence=fold.finish(),projection=foldEvents(events,Infinity,'document','project');
+    assert.deepEqual(productionWorkflows(evidence,'document','project'),productionWorkflows(events,'document','project'));
+    assert.deepEqual(productionWorkflowStageStates(plan,projection,evidence),productionWorkflowStageStates(plan,projection,events));
+    assert.deepEqual(artifactReviewState({id:'short_story',documentId:'document',sequence:4},projection.libraryBlocks,evidence),artifactReviewState({id:'short_story',documentId:'document',sequence:4},projection.libraryBlocks,events));
+    assert.ok(!evidence.some(entry=>entry.type==='BlockPropertyEdited'));
+    assert.throws(()=>fold.accept(source),/already_finished/);assert.throws(()=>fold.finish(),/already_finished/);
+  }
+});
+
+test('workflow resolver reuses a certified projection without widening source selection',async()=>{
+  const {resolveProductionWorkflowContext,resolveProductionWorkflowContextFromProjection}=await import('../worker/production-workflow.ts');
+  const plan=workflow('scene'),stage=plan.stages.find(value=>value.final);
+  const events=[...foundation(),event(4,DOCUMENT_PRODUCTION_WORKFLOW_EVENT,{document_id:'document',project_id:'project',workflow_id:plan.id,workflow:plan})];
+  const fold=createProductionWorkflowHistoryFold();for(const entry of events)fold.accept(entry);
+  const input={env:{DB:{prepare(){assert.fail('no source means no private-content read');}}},events,documentId:'document',projectId:'project',ownerId:'owner',snapshot:{facts:[]},workflowId:plan.id,workflowStageId:stage.id,requestedFormat:'scene',workflowSources:[]};
+  assert.deepEqual(await resolveProductionWorkflowContextFromProjection({...input,events:fold.finish(),projection:foldEvents(events,Infinity,'document','project')}),await resolveProductionWorkflowContext(input));
 });
 
 test("scene configurations distinguish both media and retain independently renderable alternatives", () => {

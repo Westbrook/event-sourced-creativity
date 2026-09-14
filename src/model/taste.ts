@@ -1,3 +1,4 @@
+import {measureRetainedState,RETAINED_STATE_LIMITS} from './retained-state.ts';
 import type { CreativeEvent } from "./events.ts";
 import { documentViewWorkflow } from "./document-view-signals.ts";
 
@@ -73,7 +74,7 @@ export function createStandingConstraintsFold(recordedAsOf = Number.POSITIVE_INF
     finished = true;
     return [...active.values()];
   };
-  return { accept, finish };
+  return { accept, finish, measureRetainedState:(limits=RETAINED_STATE_LIMITS)=>measureRetainedState([active],limits) };
 }
 
 function positiveContextEvidence(events: CreativeEvent[]) {

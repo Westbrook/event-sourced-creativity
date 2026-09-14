@@ -1,3 +1,4 @@
+import {measureRetainedState,RETAINED_STATE_LIMITS} from './retained-state.ts';
 import { artifactReviewState } from "./context-health.ts";
 import { artifactReviewBindingMatches, artifactReviewParticipants } from "./artifact-delivery.ts";
 import { DOCUMENT_ARTIFACT_KINDS, documentArtifactRevision, type DocumentArtifact, type DocumentArtifactKind } from "./document-artifacts.ts";
@@ -243,6 +244,26 @@ export function productionWorkflows(events: readonly CreativeEvent[], documentId
     workflows.set(candidate.id, candidate);
   }
   return [...workflows.values()];
+}
+
+/** Complete evidence needed by workflow selection, artifact lineage, rights and
+ * review bindings. Other authoring events belong to the creative projection.
+ * Preserve input order and full relevant payloads; do not coalesce approvals,
+ * edit counts or ancestral completions. The Scene consumer bounds this journal. */
+export function createProductionWorkflowHistoryFold(){
+  const types=new Set([DOCUMENT_PRODUCTION_WORKFLOW_EVENT,'DocumentRenderRequested','DocumentRenderCompleted',
+    'DocumentArtifactEdited','GenerationCompleted','IdeationPreviewCompleted','ObjectDiscarded',
+    'RightsAsserted','ReferenceIngested','ArtifactReviewRequested','ArtifactApproved','ArtifactChangesRequested']);
+  const events:CreativeEvent[]=[];let finished=false;
+  return {
+    accept(event:CreativeEvent){
+      if(finished)throw new Error('workflow_history_fold_already_finished');
+      if(types.has(event.type))events.push(event);
+      return true;
+    },
+    finish(){if(finished)throw new Error('workflow_history_fold_already_finished');finished=true;return events;},
+    measureRetainedState:(limits=RETAINED_STATE_LIMITS)=>measureRetainedState([events],limits),
+  };
 }
 
 const recordedSceneMedium = (value: unknown): SceneMedium | null =>

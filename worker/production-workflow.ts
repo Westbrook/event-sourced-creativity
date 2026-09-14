@@ -2,7 +2,7 @@ import { blockEffectFor, blockIntentFor } from "../src/model/block-types.ts";
 import { combinedContextGroups } from "../src/model/combined-context.ts";
 import { artifactReviewState } from "../src/model/context-health.ts";
 import { DOCUMENT_ARTIFACT_KINDS, parseDocumentArtifactContent, type DocumentArtifact, type DocumentArtifactDraft } from "../src/model/document-artifacts.ts";
-import { foldEvents, type CreativeEvent, type CreativeOutput } from "../src/model/events.ts";
+import { foldEvents, type CreativeEvent, type CreativeOutput, type CreativeProjection } from "../src/model/events.ts";
 import { artifactContextEvents, imageOutputContextEvents } from "../src/model/output-context.ts";
 import {
   MAX_PRODUCTION_WORKFLOW_SOURCES,
@@ -256,6 +256,20 @@ export async function resolveProductionWorkflowContext(input: {
   dispatchGuard?: BudgetReservationGuard;
   dispatchExpiresAt?: string | null;
 }> {
+  return resolveProductionWorkflowContextState(input);
+}
+
+/** Reuse the complete certified projection and workflow journal from the same
+ * original read. Never accept either value from a browser snapshot. */
+export function resolveProductionWorkflowContextFromProjection(
+  input:Parameters<typeof resolveProductionWorkflowContext>[0]&{projection:CreativeProjection},
+):ReturnType<typeof resolveProductionWorkflowContext>{
+  return resolveProductionWorkflowContextState(input,input.projection);
+}
+
+async function resolveProductionWorkflowContextState(
+  input:Parameters<typeof resolveProductionWorkflowContext>[0],certifiedProjection?:CreativeProjection,
+):ReturnType<typeof resolveProductionWorkflowContext>{
   const sources = normalizedSources(input.workflowSources, input.documentId);
   if (!sources.length) {
     if (input.workflowId === undefined && input.workflowStageId === undefined) return { snapshot: input.snapshot, sources };
@@ -264,7 +278,7 @@ export async function resolveProductionWorkflowContext(input: {
     || typeof input.workflowStageId !== "string" || !input.workflowStageId || input.workflowStageId.length > 120) {
     throw new ProductionWorkflowContextError("workflow_identity_invalid", "The selected production stage is unavailable.", 400);
   }
-  const projection = foldEvents(input.events, Number.POSITIVE_INFINITY, input.documentId, input.projectId);
+  const projection = certifiedProjection??foldEvents(input.events, Number.POSITIVE_INFINITY, input.documentId, input.projectId);
   const document = projection.documents.find((candidate) => candidate.id === input.documentId && candidate.projectId === input.projectId);
   if (!document) throw new ProductionWorkflowContextError("workflow_document_unavailable", "The selected production document is unavailable.", 404);
   const workflow = productionWorkflows(input.events, document.id, document.projectId).find((candidate) => candidate.id === input.workflowId);

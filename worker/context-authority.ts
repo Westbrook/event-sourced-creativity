@@ -1,12 +1,13 @@
+import {measureRetainedState,combineRetainedStateMeasurements,RETAINED_STATE_LIMITS} from '../src/model/retained-state.ts';
 import { isOutputContextBlock } from "../src/model/output-source-policy.ts";
-import { foldCanvasEvents } from "../src/canvas/model.ts";
+import { createCanvasEventFold, foldCanvasEvents, type CanvasProjection } from "../src/canvas/model.ts";
 import { blockEffectFor, blockIntentFor } from "../src/model/block-types.ts";
 import { combinedContextGroups, isContextCompositionRelation } from "../src/model/combined-context.ts";
 import { isCharacterContext } from "../src/model/character-context.ts";
 import { documentGenerationRevision } from "../src/model/document-jobs.ts";
-import { foldEvents, type CreativeBlock, type CreativeEvent } from "../src/model/events.ts";
+import { createCreativeEventFold, foldEvents, type CreativeBlock, type CreativeEvent, type CreativeProjection } from "../src/model/events.ts";
 import { normalizeSpatialScope } from "../src/model/spatial-scope.ts";
-import { assessCreativeContext } from "../src/model/context-health.ts";
+import { assessCreativeContextFromRights, createContextRightsFold, type ContextRightsReceipts } from "../src/model/context-health.ts";
 
 type ContextRequest = {
   documentId: string;
@@ -55,6 +56,44 @@ const factFor = (block: CreativeBlock) => ({
  */
 export function authoritativeCreativeContext(events: CreativeEvent[], request: ContextRequest) {
   const projection = foldEvents(events, Number.POSITIVE_INFINITY, request.documentId, request.projectId ?? "");
+  const rights=createContextRightsFold();for(const event of events)rights.accept(event);
+  return contextFromCompleteProjection(projection,request,rights.finish(),(projectId,canvasId)=>foldCanvasEvents(events,projectId,canvasId));
+}
+
+/** The caller supplies the already-resolved project, including for Canvas's
+ * legacy omitted-project fallback. Feed every original-version event in order;
+ * never finish at a page boundary.
+ * This consumer does not establish authority or source freshness by itself. */
+export function createAuthoritativeCreativeContextFold(request:ContextRequest&{projectId:string}){
+  if(typeof request.projectId!=="string"||!request.projectId)throw new ContextIntegrityError('context_project_required','Resolve the authorized document project before reading its context.');
+  const selected=structuredClone(request);
+  const suppliedCanvas=record(record(selected.snapshot).canvas);
+  const canvasId=String(selected.canvasId??suppliedCanvas.canvas_id??"");
+  const creative=createCreativeEventFold(Infinity,selected.documentId,selected.projectId??"");
+  const canvas=canvasId?createCanvasEventFold(selected.projectId??"",canvasId):null;
+  const rights=createContextRightsFold();let finished=false;
+  return {
+    accept(event:CreativeEvent){
+      if(finished)throw new Error('authoritative_context_fold_already_finished');
+      return creative.accept(event)&&(canvas?.accept(event)??true)&&rights.accept(event);
+    },
+    finish(){
+      if(finished)throw new Error('authoritative_context_fold_already_finished');finished=true;
+      const projection=creative.finish(),receipts=rights.finish();
+      return contextFromCompleteProjection(projection,selected,receipts,()=>{
+        if(!canvas)throw new ContextIntegrityError('canvas_context_not_authorized','The requested board context is not available.');
+        return canvas.finish();
+      });
+    },
+    measureRetainedState:(limits=RETAINED_STATE_LIMITS)=>combineRetainedStateMeasurements([
+      measureRetainedState(selected,limits),creative.measureRetainedState(limits),rights.measureRetainedState(limits),
+      ...(canvas?[canvas.measureRetainedState(limits)]:[]),
+    ],limits),
+  };
+}
+
+function contextFromCompleteProjection(projection:CreativeProjection,request:ContextRequest,receipts:ContextRightsReceipts,
+  canvasFor:(projectId:string,canvasId:string)=>CanvasProjection){
   const document = projection.documents.find((candidate) =>
     candidate.id === request.documentId && (!request.projectId || candidate.projectId === request.projectId),
   );
@@ -76,7 +115,7 @@ export function authoritativeCreativeContext(events: CreativeEvent[], request: C
   let canvasSnapshot: Record<string, unknown> | undefined;
 
   if (canvasId && contextSetId) {
-    const canvas = foldCanvasEvents(events, document.projectId, canvasId);
+    const canvas = canvasFor(document.projectId, canvasId);
     const contextSet = canvas.contextSets.find((candidate) =>
       candidate.id === contextSetId && candidate.canvasId === canvasId && candidate.projectId === document.projectId,
     );
@@ -214,7 +253,7 @@ export function authoritativeCreativeContext(events: CreativeEvent[], request: C
     }
   }
 
-  const governance=assessCreativeContext({blocks},events);
+  const governance=assessCreativeContextFromRights({blocks},receipts);
   const blocking=governance.issues.filter((issue)=>issue.severity==="blocking");
   if(blocking.length){
     const issue=blocking[0]!;

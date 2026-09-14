@@ -1,3 +1,4 @@
+import {measureRetainedState,RETAINED_STATE_LIMITS} from './retained-state.ts';
 import { blockIntentFor, blockTypeDefinition, isNegativeIntent } from "./block-types.ts";
 import { documentArtifactRevision, type DocumentArtifact } from "./document-artifacts.ts";
 import { inferDocumentArtifactKind } from "./document-output-intent.ts";
@@ -83,7 +84,36 @@ export function creativeContextRightsIssue(properties: Record<string, unknown>, 
 }
 
 /** Actionable readiness is derived from durable evidence, never a decorative score. */
+export type ContextRightsReceipts = {rights: ReadonlySet<string>;audioRights: ReadonlySet<string>};
+
+/** Keep the last authoritative classification, including explicit revocations. */
+export function createContextRightsFold(){
+  const rights=new Set<string>(),audioRights=new Set<string>();let finished=false;
+  return {
+    accept(event:CreativeEvent){
+      if(finished)throw new Error('context_rights_fold_already_finished');
+      if(event.type!=="RightsAsserted"&&event.type!=="ReferenceIngested")return true;
+      const id=String(event.payload.reference_id??"");if(!id)return true;
+      const classification=String(event.payload.rights_class??"");
+      if(["owned","owned_or_licensed","account-generated"].includes(classification))rights.add(id);else rights.delete(id);
+      if(audioRightsAllowed(classification))audioRights.add(id);else audioRights.delete(id);
+      return true;
+    },
+    finish():ContextRightsReceipts{
+      if(finished)throw new Error('context_rights_fold_already_finished');finished=true;
+      return {rights,audioRights};
+    },
+    measureRetainedState:(limits=RETAINED_STATE_LIMITS)=>measureRetainedState([rights,audioRights],limits),
+  };
+}
+
 export function assessCreativeContext(projection: Pick<CreativeProjection, "blocks">, events: CreativeEvent[], now = Date.now()): ContextHealthReport {
+  const fold=createContextRightsFold();for(const event of events)fold.accept(event);
+  return assessCreativeContextFromRights(projection,fold.finish(),now);
+}
+
+/** Receipts must come from the same complete authorized history as projection. */
+export function assessCreativeContextFromRights(projection: Pick<CreativeProjection,"blocks">, receipts:ContextRightsReceipts, now=Date.now()):ContextHealthReport {
   const blocks = projection.blocks.filter((block) => !block.removed && Number(block.properties.weight ?? .5) > 0);
   const issues: ContextHealthIssue[] = [];
   const byType = (type: string) => blocks.filter((block) => block.type === type);
@@ -150,15 +180,7 @@ export function assessCreativeContext(projection: Pick<CreativeProjection, "bloc
   if (invalidProtectedPlacement.size) issues.push({ id: "invalid-protected-message-placement", severity: "warning", label: "Choose a valid protected-message placement", detail: "Protected wording can be required on the opening slide, the closing slide, or both.", blockIds: [...invalidProtectedPlacement] });
   if (ungroundedProtectedMessage.size) issues.push({ id: "protected-message-not-in-context", severity: "warning", label: "Include protected wording in the message", detail: "The exact protected wording must also appear verbatim in its authored Message so every approved output can preserve it.", blockIds: [...ungroundedProtectedMessage] });
 
-  const rights=new Set<string>(),audioRights=new Set<string>();
-  for(const event of events){
-    if(event.type!=="RightsAsserted"&&event.type!=="ReferenceIngested")continue;
-    const id=String(event.payload.reference_id??"");
-    if(!id)continue;
-    const classification=String(event.payload.rights_class??"");
-    if(["owned","owned_or_licensed","account-generated"].includes(classification))rights.add(id);else rights.delete(id);
-    if(audioRightsAllowed(classification))audioRights.add(id);else audioRights.delete(id);
-  }
+  const {rights,audioRights}=receipts;
   let verifiedSources = 0;
   for(const decision of blocks.filter((block)=>block.type!=="reference")){
     const rightsIssue=creativeContextRightsIssue(decision.properties,now);

@@ -1,3 +1,4 @@
+import {measureRetainedState,combineRetainedStateMeasurements,RETAINED_STATE_LIMITS} from '../model/retained-state.ts';
 import type { CreativeEvent } from "../model/events";
 
 export type CanvasHlc = { pt: number; c: number; site: string };
@@ -253,7 +254,7 @@ export function createCanvasTextFold(objectId: string, field = "value") {
   const deleted=new Map<string,number>();for(const removal of deletes)deleted.set(opKey(removal.target),Math.max(deleted.get(opKey(removal.target))??0,removal.len));
   return ordered.map((insert)=>{const count=deleted.get(opKey(insert.id))??0;return insert.chars.slice(Math.min(count,insert.chars.length));}).join("");
   };
-  return {accept,finish};
+  return {accept,finish,measureRetainedState:(limits=RETAINED_STATE_LIMITS)=>measureRetainedState([inserts,deletes],limits)};
 }
 
 export function canvasTextReplacementOperations(events: CreativeEvent[], objectId: string, nextValue: string, site: string, counter = Date.now()) {
@@ -316,7 +317,11 @@ export function createCanvasEventFold(selectedProjectId = "", selectedCanvasId =
   const selected=requestedCanvas&&!requestedCanvas.removed?requestedCanvas:visibleCanvases[0];
   return{projectId:selected?.projectId??projectId,selectedCanvasId:selected?.id??"",canvases:visibleCanvases,items:[...items.values()].filter((item)=>!item.removed&&item.canvasId===selected?.id&&item.visible).sort((a,b)=>a.z.localeCompare(b.z)),arrangements:[...arrangements.values()].filter((arrangement)=>!arrangement.removed&&arrangement.canvasId===selected?.id).sort((a,b)=>a.createdSequence-b.createdSequence),contextSets:[...contextSets.values()].filter((set)=>set.canvasId===selected?.id),proposals:[...proposals.values()].filter((proposal)=>proposal.projectId===(selected?.projectId??projectId)),memberships:[...memberships.values()].filter((membership)=>membership.projectId===(selected?.projectId??projectId)&&(!membership.canvasId||membership.canvasId===selected?.id))};
   };
-  return {accept,finish};
+  const measure=(limits=RETAINED_STATE_LIMITS)=>combineRetainedStateMeasurements([
+    measureRetainedState([canvases,items,registers,strokes,erasedStrokes,arrangements,contextSets,proposals,memberships,[...textByItem.keys()]],limits),
+    ...[...textByItem.values()].map(text=>text.measureRetainedState(limits)),
+  ],limits);
+  return {accept,finish,measureRetainedState:measure};
 }
 
 export function canvasItemAccessibleName(item: CanvasItem) {

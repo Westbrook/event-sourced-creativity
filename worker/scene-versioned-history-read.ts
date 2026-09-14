@@ -14,7 +14,7 @@ const metadataFields=[...sceneHistoryMetadataFields,'metadata_valid'];
 const metadataJson=`json_object(${metadataFields.map(field=>`'${field}',${field}`).join(',')})`;
 const hydratedFields={event_id:'event_id',stream_id:'event_stream',sequence:'sequence',occurred_at:'occurred_at',recorded_at:'recorded_at',
   actor:'actor',client_id:'client_id',correlation_id:'correlation_id',causation_id:'causation_id',compensates_event_id:'compensates_event_id',schema_version:'schema_version',type:'event_type',order_sequence:'order_sequence'};
-type Consumer<T>={accept(event:CreativeEvent):boolean;finish():T};
+type Consumer<T>={accept(event:CreativeEvent):boolean;finish():T;checkpoint?():unknown};
 const integer=(value:unknown):value is number=>typeof value==='number'&&Number.isSafeInteger(value)&&value>=0;
 const identifier=(value:unknown):value is string=>typeof value==='string'&&value.length>0&&new TextEncoder().encode(value).length<=160;
 const changed=():never=>{throw new OutputConflictError('output_source_changed_during_read',409);};
@@ -109,7 +109,8 @@ export async function reduceSceneVersionedHistory<T>(env:Pick<WorkerEnv,'DB'>,in
       cursor=Number(metadata.order_sequence);consumed++;if(consumed>count)changed();
     }
     maximumHydratedPageBytes=Math.max(maximumHydratedPageBytes,hydratedPageBytes);
+    consumer.checkpoint?.();deadline();
   }
-  deadline();const value=consumer.finish();deadline();
+  deadline();consumer.checkpoint?.();const value=consumer.finish();deadline();
   return {value,assertions,rows:consumed,rawBytes,batches,maximumHydratedPageBytes,maximumMetadataPageBytes};
 }
