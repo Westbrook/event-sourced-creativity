@@ -16,7 +16,8 @@ test("local Worker fingerprints 40,000 event envelopes with resident private-ima
         const events = Array.from({length: 40_000}, (_, i) => {
           const bytes = new Uint8Array(1_259); bytes.fill(120);
           bytes.set(new TextEncoder().encode(String(i)));
-          return { type: "SyntheticHistory", payload: {text: new TextDecoder().decode(bytes)},
+          return { type: "SyntheticHistory", payload: {text: new TextDecoder().decode(bytes),
+            metadata:{key:"synthetic",parts:[{kind:"history",code:i},{kind:"history",code:i+1}]}},
             eventId: "event-"+i, sequence:i+1, streamId:"synthetic", actor:"synthetic", occurredAt:"synthetic",
             correlationId:"synthetic", recordedAt:"synthetic", clientId:"synthetic", causationId:null,
             compensatesEventId:null,schemaVersion:1 };
@@ -32,5 +33,5 @@ test("local Worker fingerprints 40,000 event envelopes with resident private-ima
   const response = await mf.dispatchFetch("https://qualification.invalid/");
   assert.equal(response.status, 200);
   assert.deepEqual(await response.json(), {first:true,second:true,changed:false,imageBytes:8*1024*1024,lastByte:137});
-  t.diagnostic("Actual local workerd helper execution, not the whole hosted route, SQL or a production memory-limit guarantee.");
+  t.diagnostic("240,002 nodes and1,000,002 own fields exceed both former caps. Actual local workerd helper execution, not the whole hosted route, SQL or a production memory-limit guarantee.");
 });

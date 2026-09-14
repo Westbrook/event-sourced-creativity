@@ -10,7 +10,7 @@ export function captureVideoCustodySnapshot(root: object) {
   const fail = (snapshotReason: string): never => { throw Object.assign(new Error("video_reference_snapshot_unavailable"), { snapshotReason }); };
   const fingerprint = (current: object, capture: boolean) => {
     const hash = createHash("sha256"), seen = new WeakSet<object>();
-    let nodes = 0, fields = 0, pending = "";
+    let pending = "";
     const flush = () => { if (pending) { hash.update(pending, "utf16le"); pending = ""; } };
     const write = (text: string) => {
       // Preserve every UTF-16 code unit, including lone/split surrogates.
@@ -38,9 +38,10 @@ export function captureVideoCustodySnapshot(root: object) {
       write("r" + identity + ";");
       if (seen.has(value)) return;
       seen.add(value);
-      if (++nodes > 100_000) fail("nodes");
+      // This graph is already hydrated by the authorized source reader. A
+      // separate account-history cardinality cap here rejects valid sources.
+      // Walk it once per pass; cycles terminate and strings stay chunked.
       const keys = Object.getOwnPropertyNames(value);
-      fields += keys.length; if (fields > 1_000_000) fail("fields");
       write((prototype === null ? "z" : prototype === Array.prototype ? "a" : "o") + (Array.isArray(value) ? "a" : "o") + keys.length + "{");
       for (const key of keys) {
         const descriptor = Object.getOwnPropertyDescriptor(value, key);
