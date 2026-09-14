@@ -78,3 +78,35 @@ export function sceneSourceVersionAssertions(input: SceneSourceVersion): readonl
   // contract while making this particular witness deeply immutable.
   return Object.freeze(assertions.map(value => Object.freeze({ ...value, bindings: Object.freeze([...value.bindings ?? []]) }) as unknown as OutputSqlAssertion));
 }
+
+/** Transaction-only transition for a caller-verified operational write plan.
+ * This does not approve a changed source or recover a lost acknowledgement.
+ * The caller must place before ahead of ALL writes, after behind ALL writes,
+ * and call acknowledge with the complete original batch result and exact index.
+ * No database read is performed after commit to invent a successor. */
+export function prepareSceneSourceTransition(env: Pick<WorkerEnv,"DB">, input: SceneSourceVersion) {
+  const predecessor = Object.freeze({...input});
+  const before = sceneSourceVersionAssertions(predecessor);
+  const after = env.DB.prepare(`SELECT instance_nonce,generation AS epoch,
+    COALESCE((SELECT generation FROM scene_source_generations WHERE scope_kind='stream' AND scope_key=?),0) AS stream_generation,
+    COALESCE((SELECT generation FROM scene_source_generations WHERE scope_kind='project' AND scope_key=?),0) AS project_generation
+    FROM scene_source_epoch WHERE singleton=1 AND schema_version=1 AND instance_nonce=? AND generation=?`)
+    .bind(predecessor.streamId,predecessor.projectAccessId??null,predecessor.instanceNonce,predecessor.epoch);
+  let consumed=false;
+  return Object.freeze({predecessor,before:Object.freeze(before),after,
+    acknowledge(results: unknown,expectedLength:number,resultIndex:number):SceneSourceVersion {
+      if(consumed)unavailable();consumed=true;
+      if(!Number.isSafeInteger(expectedLength)||expectedLength<before.length+1||!Number.isSafeInteger(resultIndex)
+        ||resultIndex!==expectedLength-1||!Array.isArray(results)||results.length!==expectedLength
+        ||Array.from({length:expectedLength},(_,index)=>index).some(index=>results[index]?.success!==true))unavailable();
+      const rows=results[resultIndex]?.results;
+      if(!Array.isArray(rows)||rows.length!==1)unavailable();
+      const row=rows[0];
+      if(!row||row.instance_nonce!==predecessor.instanceNonce||row.epoch!==predecessor.epoch
+        ||!generation(row.stream_generation)||row.stream_generation<predecessor.streamGeneration
+        ||!generation(row.project_generation)||row.project_generation<predecessor.projectGeneration
+        ||!predecessor.projectAccessId&&row.project_generation!==0)unavailable();
+      return Object.freeze({...predecessor,streamGeneration:row.stream_generation,projectGeneration:row.project_generation});
+    },
+  });
+}

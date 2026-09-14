@@ -3,6 +3,7 @@ import type { WorkerEnv } from "./runtime.ts";
 import { POLICY_VERSION } from "./policy-version.ts";
 import { effectivePilotParticipantSql, effectivePilotReviewerSql } from "./access-policy.ts";
 import { recordOutputProofCapacity } from "./output-proof-capacity-diagnostic.ts";
+import { prepareSceneSourceTransition, type SceneSourceVersion } from "./scene-source-generation.ts";
 
 export type OutputSqlValue = string | number | null;
 /** deadlineMs is server-only metadata for the same SQL proof; never a wire authority. */
@@ -171,25 +172,34 @@ export type OutputCommandWrite = {
   events: Array<{ type: string; payload: Record<string, unknown> }>;
   assertions?: OutputSqlAssertion[];
   sourceAssertions?: OutputSqlAssertion[];
+  /** Server-only predecessor for a verified Scene operational write plan.
+   * A replay has no new transition receipt and must not recapture one. */
+  sceneSourceVersion?: SceneSourceVersion;
   /** Server-owned exact command envelope; committed on the same private last event. */
   retainedEnvelope?: Record<string, unknown>;
   buildSidecars?: (events: EventRow[]) => { statements: D1PreparedStatement[]; assertions?: OutputSqlAssertion[] };
 };
 
 /** The event, private body, scoped projections, grants/slots and command receipt commit together. */
-export async function commitOutputCommand(env: WorkerEnv, input: OutputCommandWrite) {
+export async function commitOutputCommand(env: WorkerEnv, input: OutputCommandWrite):Promise<{
+  replayed:boolean;receipt:OutputCommandReceipt;events:EventRow[];sceneSourceVersion?:SceneSourceVersion;
+}> {
   const previous = await readOutputCommand(env, input.scope, input.key, input.digest, { allowUnavailableReceipt: true });
   if (previous) return { replayed: true, receipt: previous, events: [] as EventRow[] };
   if (!input.events.length) throw new Error("output_event_required");
   const scope = input.scope, stream = `creative:${scope.ownerUserId}`, now = new Date().toISOString();
   if (scope.kind === "personal" && (scope.actorUserId !== scope.ownerUserId || scope.organizationId || scope.projectAccessId)) throw new OutputConflictError("invalid_output_scope", 403);
   if (scope.kind === "project" && (!scope.organizationId || !scope.projectAccessId || !scope.contextId)) throw new OutputConflictError("invalid_output_scope", 403);
+  if(input.sceneSourceVersion&&(input.sceneSourceVersion.streamId!==stream
+    ||(input.sceneSourceVersion.projectAccessId??null)!==scope.projectAccessId))
+    throw new OutputConflictError("output_scene_source_changed",403);
+  const sourceTransition=input.sceneSourceVersion?prepareSceneSourceTransition(env,input.sceneSourceVersion):null;
   const events = input.events.map((event, index) => makeEvent(stream, input.expectedHead + index + 1, `user:${scope.actorUserId}`, "server:output-requirements", input.key,
     event.type, { ...event.payload, ...(input.retainedEnvelope && index === input.events.length - 1 ? { output_command_envelope: input.retainedEnvelope } : {}), project_id: scope.projectId, document_id: scope.documentId, actor_user_id: scope.actorUserId }));
   const guards = [outputScopeAuthority(scope, input.permission, now),
     { sql: "(SELECT COALESCE(MAX(sequence),0) FROM events WHERE stream_id=?)=?", bindings: [stream, input.expectedHead] },
     ...(scope.kind === "project" ? [{ sql: "(SELECT COALESCE(MAX(project_sequence),0) FROM project_event_scopes WHERE project_access_id=? AND organization_id=?)=?", bindings: [scope.projectAccessId, scope.organizationId, input.expectedProjectHead] }] : []),
-    ...(input.sourceAssertions ?? []), ...(input.assertions ?? [])] as OutputSqlAssertion[];
+    ...(input.sourceAssertions ?? []), ...(input.assertions ?? []),...(sourceTransition?.before??[])] as OutputSqlAssertion[];
   const statements = guards.flatMap((guard) => outputAssertionStatements(env, guard));
   for (const [index, event] of events.entries()) {
     statements.push(env.DB.prepare(`INSERT INTO event_write_stage(${EVENT_WRITE_COLUMNS}) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).bind(...eventWriteBindings(event)));
@@ -211,7 +221,9 @@ export async function commitOutputCommand(env: WorkerEnv, input: OutputCommandWr
       .bind(last.sequence, now, scope.projectAccessId, scope.organizationId, scope.ownerUserId));
     statements.push(...outputAssertionStatements(env, { sql: "changes()=1" }));
   }
-  try { await env.DB.batch(statements); }
+  if(sourceTransition)statements.push(sourceTransition.after);
+  let acknowledged: D1Result[];
+  try { acknowledged = await env.DB.batch(statements); }
   catch (error) {
     // A competing identical command may have committed. Its immutable digest must still agree.
     const replay = await readOutputCommand(env, scope, input.key, input.digest, { allowUnavailableReceipt: true });
@@ -219,6 +231,12 @@ export async function commitOutputCommand(env: WorkerEnv, input: OutputCommandWr
     if (String(error).includes("CHECK constraint failed") || String(error).includes("UNIQUE constraint failed")) throw new OutputConflictError("output_revision_or_authority_changed");
     throw error;
   }
+  // Replayed commands have their separate immutable receipt path above. An
+  // incomplete returned batch cannot certify this newly written event range.
+  if (!Array.isArray(acknowledged) || acknowledged.length !== statements.length
+    || Array.from({length:acknowledged.length},(_,index)=>index).some(index=>acknowledged[index]?.success !== true))
+    throw new OutputConflictError("output_write_acknowledgment_invalid",409);
+  const sceneSourceVersion=sourceTransition?.acknowledge(acknowledged,statements.length,statements.length-1);
   // The acknowledged transaction wrote these exact private envelopes. Retain
   // every appended body for the final response proof, including non-last events.
   for (const event of events) {
@@ -226,5 +244,6 @@ export async function commitOutputCommand(env: WorkerEnv, input: OutputCommandWr
     if (typeof values[16] !== "string") throw new Error("output_private_event_envelope_required");
     rememberOutputPrivateBody(scope, event.eventId, values[16], { projectId: values[14] as string | null, documentId: values[15] as string | null });
   }
-  return { replayed: false, receipt: { action: input.action, eventId: last.eventId, payload: last.payload, createdAt: now, key: input.key, requestDigest: input.digest }, events };
+  return { replayed: false, receipt: { action: input.action, eventId: last.eventId, payload: last.payload, createdAt: now, key: input.key, requestDigest: input.digest }, events,
+    ...(sceneSourceVersion?{sceneSourceVersion}:{}) };
 }

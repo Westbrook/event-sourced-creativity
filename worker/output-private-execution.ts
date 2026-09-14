@@ -178,6 +178,9 @@ export function guardOutputPrivateWrites(env: WorkerEnv, scope: OutputScope, slo
       .bind(scope.key,slot.slotId,scope.documentId,`/api/media/${encodeURIComponent(storageKey)}`,storyboardCompletion,`/api/media/${encodeURIComponent(storageKey)}`,hash,videoCompletion,`/api/media/${encodeURIComponent(storageKey)}`,hash,scope.kind,scope.ownerUserId,model3dCompletion,`/api/media/${encodeURIComponent(storageKey)}`,hash,scope.kind,scope.ownerUserId,`/api/media/${encodeURIComponent(storageKey)}`,hash,new Date().toISOString(),scope.key,slot.slotId,storageKey,hash)) : [];
     try {
       const result = await env.DB.batch([...guards, ...unwrapped.map(input => input.statement), ...publication]);
+      if (!Array.isArray(result) || result.length !== guards.length + inputs.length + publication.length
+        || Array.from({length:result.length},(_,index)=>index).some(index=>result[index]?.success !== true))
+        throw new OutputConflictError("output_write_acknowledgment_invalid",409);
       return result.slice(guards.length,guards.length+inputs.length);
     } catch (error) {
       // This shared CHECK does not identify the original failing statement.

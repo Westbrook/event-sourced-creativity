@@ -11,12 +11,15 @@ import { consentHash, executionAdmissionGuard, executionContentCustodyGuard, typ
 import { governedPackageSourceRightsValidity, sourceRightsDispatchGuard } from "./context-package-rights.ts";
 import { hasCapability, type BudgetReservationGuard, type PilotUser, type ProjectExecutionScope } from "./pilot-policy.ts";
 import { readProjectSourceEvents, resolveOwnerExecutionScope } from "./project-access.ts";
-import { ProductionWorkflowContextError, resolveProductionWorkflowContext } from "./production-workflow.ts";
+import { ProductionWorkflowContextError, resolveProductionWorkflowContext, resolveProductionWorkflowContextFromProjection } from "./production-workflow.ts";
 import { readWorkspaceEvents, streamHead, type EventReadProof, type WorkerEnv } from "./runtime.ts";
 import { OutputConflictError, type OutputSqlAssertion } from "./output-command-core.ts";
 import { outputProofReadStatements } from "./output-disclosure-proof.ts";
 import { assertSceneHistoryRead, readSceneHistoryProof } from "./scene-history-proof-read.ts";
 import { SceneHistoryProofError } from "./scene-history-proof.ts";
+import { reduceSceneVersionedHistory } from "./scene-versioned-history-read.ts";
+import { createSceneContextConsumer } from "./scene-context-consumer.ts";
+import type { SceneSourceVersion } from "./scene-source-generation.ts";
 
 
 /** Private canonical audit witness, emitted only by the executor after a known local stop. */
@@ -66,6 +69,8 @@ export type PreparedSceneCost = {
   effectiveSnapshot: Record<string, unknown>;
   scope: ProjectExecutionScope | undefined;
   validUntil: string;
+  /** Internal original-version witness, never a client cost-consent field. */
+  sourceVersion?: SceneSourceVersion;
 };
 
 /** Rebuild the same final written-source snapshot used by Scene execution, without source or index writes. */
@@ -75,7 +80,11 @@ export async function prepareSceneCostConsent(
   documentId: string,
   payload: Record<string, unknown>,
   contextSessionId: string | null,
-  options: { synchronize?: boolean } = {},
+  options: { synchronize?: boolean;
+    /** Internal qualification path. No HTTP caller enables this until the
+     * entire admission/own-write/dispatch witness chain is connected. */
+    versionedSource?:{version:SceneSourceVersion;projectId:string;assertions:readonly OutputSqlAssertion[]};
+  } = {},
 ): Promise<PreparedSceneCost> {
   if (!documentId || documentId.length > 160 || !requestIdValid(payload.sceneRequestId)) fail("scene_cost_request_required", 400);
   if (payload.artifactKind !== "scene" || payload.sceneMedium !== undefined && !isSceneMedium(payload.sceneMedium)
@@ -87,7 +96,10 @@ export async function prepareSceneCostConsent(
   const guidance = documentRenderGuidance(payload);
   // Only the initial custody locator survives this scope. Do not retain a first
   // full history/projection alongside the certified history and exact proofs.
-  const initialDocument = await (async () => {
+  const versioned=options.versionedSource?structuredClone(options.versionedSource):undefined;
+  if(versioned)Object.freeze(versioned.version);
+  if(versioned&&(!versioned.projectId||versioned.projectId.length>160||options.synchronize===true))fail("scene_cost_authority_changed",403);
+  const initialDocument = versioned?{projectId:versioned.projectId}:await (async () => {
     const initial = user.projectExecution
       ? await readProjectSourceEvents(env, user.projectExecution, { synchronize: options.synchronize === true })
       : await readWorkspaceEvents(env, user.streamId);
@@ -112,11 +124,27 @@ export async function prepareSceneCostConsent(
     .bind(contextSessionId,user.userId).first<{expires_at:string}>() : null;
   if(contextSessionId&&!selected)fail("scene_cost_authority_changed",403);
   const readValidUntil = earliestSceneDeadline([monthEnd, selected?.expires_at, ...user.access.grants.map(grant=>grant.expiresAt)]);
-  const history = await readSceneHistoryProof(env, {
+  const historyScope = {
     streamId: user.streamId, expectedOwnerHead: sourceHead, deadlineMs: Date.parse(readValidUntil),
     ...(scope ? { project: { projectAccessId: scope.projectAccessId, organizationId: scope.organizationId,
       projectId: scope.projectId, ownerUserId: scope.ownerUserId } } : {}),
-  });
+  };
+  const contextRequest = {
+    documentId, projectId: initialDocument.projectId,
+    ...(typeof payload.canvasId === "string" ? { canvasId: payload.canvasId } : {}),
+    ...(typeof payload.contextSetId === "string" ? { contextSetId: payload.contextSetId } : {}),
+    ...(typeof payload.contextRootBlockId === "string" ? { contextRootBlockId: payload.contextRootBlockId } : {}),
+    snapshot: record(payload.snapshot),
+    ...(Array.isArray(payload.sourceBlockVersions) ? { sourceBlockVersions: payload.sourceBlockVersions as Array<Record<string, unknown>> } : {}),
+  };
+  const preparedSource=await(async()=>{
+    if(versioned){
+      const complete=await reduceSceneVersionedHistory(env,{scope:historyScope,version:versioned.version,
+        readAssertions:versioned.assertions,createConsumer:()=>createSceneContextConsumer(contextRequest)});
+      return {trusted:complete.value.trusted,projection:complete.value.trusted.projection,
+        events:complete.value.workflowEvents,constraints:complete.value.standingConstraints,assertions:complete.assertions};
+    }
+  const history = await readSceneHistoryProof(env, historyScope);
   // Certify the ACTUAL hydrated rows in the same snapshot as the original raw
   // proof. A separate successful read cannot exclude transient edit/restore ABA.
   const sourceProof: EventReadProof = {
@@ -130,35 +158,32 @@ export async function prepareSceneCostConsent(
     ? await readProjectSourceEvents(env, scope, { synchronize: options.synchronize === true, sourceProof })
     : await readWorkspaceEvents(env, user.streamId, sourceProof);
   const projection = foldEvents(events, Infinity, documentId, initialDocument.projectId);
-  const document = projection.documents.find(candidate => candidate.id === documentId && candidate.projectId === initialDocument.projectId && !candidate.removed);
-  if (!document) fail("document_not_found", 404);
-  const supplied = record(payload.snapshot);
-  const trusted = authoritativeCreativeContext(events, {
-    documentId, projectId: document.projectId,
-    ...(typeof payload.canvasId === "string" ? { canvasId: payload.canvasId } : {}),
-    ...(typeof payload.contextSetId === "string" ? { contextSetId: payload.contextSetId } : {}),
-    ...(typeof payload.contextRootBlockId === "string" ? { contextRootBlockId: payload.contextRootBlockId } : {}),
-    snapshot: supplied,
-    ...(Array.isArray(payload.sourceBlockVersions) ? { sourceBlockVersions: payload.sourceBlockVersions as Array<Record<string, unknown>> } : {}),
-  });
+  if(!projection.documents.some(candidate=>candidate.id===documentId&&candidate.projectId===initialDocument.projectId&&!candidate.removed))fail("document_not_found",404);
+  return{trusted:authoritativeCreativeContext(events,contextRequest),projection,events,constraints:standingConstraints(events),assertions:history.assertions};
+  })();
+  const {trusted,projection,events}=preparedSource;
+  const document=projection.documents.find(candidate=>candidate.id===documentId&&candidate.projectId===initialDocument.projectId&&!candidate.removed);
+  if(!document)fail("document_not_found",404);
   let effectiveSnapshot: Record<string, unknown> = trusted.snapshot;
   let configuration = createSceneConfiguration(isSceneMedium(payload.sceneMedium) ? payload.sceneMedium : "visual");
   let sources: Awaited<ReturnType<typeof resolveProductionWorkflowContext>>["sources"] = [];
   let sourceGuard: BudgetReservationGuard = { sql: "1", bindings: [] };
   let sourceDeadline: string | null = null;
   if (payload.workflowId !== undefined || payload.workflowStageId !== undefined || payload.workflowSources !== undefined) {
-    const resolved = await resolveProductionWorkflowContext({
+    const workflowInput = {
       env, events, documentId, projectId: document.projectId, ownerId: scope?.ownerUserId ?? user.userId, scope,
       snapshot: trusted.snapshot, workflowId: payload.workflowId, workflowStageId: payload.workflowStageId,
-      workflowSources: payload.workflowSources, requestedFormat: "scene",
-    });
+      workflowSources: payload.workflowSources, requestedFormat: "scene" as const,
+    };
+    const resolved=versioned?await resolveProductionWorkflowContextFromProjection({...workflowInput,projection})
+      :await resolveProductionWorkflowContext(workflowInput);
     effectiveSnapshot = resolved.snapshot;
     sources = resolved.sources;
     sourceGuard = resolved.dispatchGuard ?? sourceGuard;
     sourceDeadline = resolved.dispatchExpiresAt ?? null;
     configuration = resolved.sceneConfiguration ?? configuration;
   }
-  const constraints = standingConstraints(events).map(item => ({
+  const constraints = preparedSource.constraints.map(item => ({
     preference_id: item.preferenceId, axis: item.axis, value: item.value, polarity: item.polarity,
     authority: "authored", source_event_refs: item.evidenceRefs, source_claim_ref: item.sourceClaimRef ?? null,
   }));
@@ -201,11 +226,14 @@ export async function prepareSceneCostConsent(
     .filter(fact=>fact.active!==false&&record(fact.properties).active!==false&&Number(record(fact.properties).weight??1)>0)
     .map(fact=>creativeContextRightsValidity(record(fact.properties)));
   if(authoredRights.some(rights=>rights.issue))fail("context_source_rights_expired");
-  const validUntil=earliestSceneDeadline([monthEnd,sourceDeadline,rights.validUntil,selected?.expires_at,...authoredRights.map(rights=>rights.validUntil),...user.access.grants.map(grant=>grant.expiresAt)]);
+  const originalDeadlines=preparedSource.assertions.flatMap(assertion=>assertion.deadlineMs===undefined?[]:[assertion.deadlineMs]);
+  if(originalDeadlines.some(value=>!Number.isFinite(value)||!Number.isFinite(new Date(value).getTime())))fail("scene_cost_authority_changed",403);
+  const validUntil=earliestSceneDeadline([monthEnd,sourceDeadline,rights.validUntil,selected?.expires_at,...authoredRights.map(rights=>rights.validUntil),...user.access.grants.map(grant=>grant.expiresAt),
+    ...originalDeadlines.map(value=>new Date(value).toISOString())]);
   const assertions: readonly OutputSqlAssertion[] = Object.freeze([
     executionAdmissionGuard(user, binding, sourceHead),
     ...(selected?[{sql:"EXISTS(SELECT 1 FROM project_context_sessions WHERE context_id=? AND principal_user_id=? AND expires_at=? AND revoked_at IS NULL)",bindings:[contextSessionId!,user.userId,selected.expires_at]}]:[]),
-    ...history.assertions,
+    ...preparedSource.assertions,
     sourceGuard, sourceRightsDispatchGuard(rights),
     ...(rights.validUntil ? [{ sql: "?>strftime('%Y-%m-%dT%H:%M:%fZ','now')", bindings: [rights.validUntil] }] : []),
     ...(scope ? [{ sql: "EXISTS(SELECT 1 FROM project_resource_scopes WHERE (project_access_id,organization_id,project_id,owner_user_id,resource_kind,resource_id)=(?,?,?,?,'document',?))", bindings: [scope.projectAccessId, scope.organizationId, scope.projectId, scope.ownerUserId, documentId] }] : []),
@@ -217,7 +245,8 @@ export async function prepareSceneCostConsent(
   const checked = await env.DB.batch<Record<string, unknown>>(outputProofReadStatements(env, assertions));
   assertSceneHistoryRead(checked, assertions.length);
   requireSceneCostDeadline({validUntil});
-  return { preview, binding, assertions, production, authoredSnapshot: trusted.snapshot, effectiveSnapshot, scope, validUntil };
+  return { preview, binding, assertions, production, authoredSnapshot: trusted.snapshot, effectiveSnapshot, scope, validUntil,
+    ...(versioned?{sourceVersion:versioned.version}:{}) };
 }
 
 /** Synchronous after awaited SQL: a still-valid row can expire while its response is in transit. */

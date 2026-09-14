@@ -22,6 +22,13 @@ export async function appendEvents(env: WorkerEnv, events: EventRow[], options: 
     events.forEach((event, index) => { event.sequence = head + index + 1; });
     const sidecars=options.prepareSidecars?.(events)??[];
     const results = await env.DB.batch([...events.map((event, index) => insertEventAtHead(env, event, head + index)),...sidecars]);
+    // An absent, sparse, truncated or failed acknowledgement is uncertain, not
+    // an empty successful range. Never run a successor hook or retry that write.
+    if (!Array.isArray(results) || results.length !== events.length + sidecars.length
+      || Array.from({length:results.length},(_,index)=>index).some(index=>results[index]?.success !== true))
+      throw new Error("event_append_acknowledgment_invalid");
+    if (results.slice(0,events.length).some(result=>typeof result.meta?.changes !== "number" || !Number.isSafeInteger(result.meta.changes) || result.meta.changes < 0))
+      throw new Error("event_append_acknowledgment_invalid");
     if (results.slice(0,events.length).every((result) => Number(result.meta.changes ?? 0) > 0)){options.onSidecarsCommitted?.(results.slice(events.length));return events;}
     if (options.expectedHead !== undefined) throw new StaleSequenceError(options.expectedHead, await streamHead(env,streamId));
   }

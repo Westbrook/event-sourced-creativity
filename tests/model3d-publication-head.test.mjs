@@ -84,7 +84,8 @@ test("captured actual append allows old head then exact suffix; wrapped actual t
     assert.deepEqual(JSON.parse(final.result_json).model3dInputReceipt, checkpoint.model3dInputReceipt);
     assert.equal(d.sqlite.prepare("SELECT COUNT(*) AS n FROM output_atomic_assertions").get().n, 0);
     sourceGuard.bindings[0] = 0;
-    await assert.rejects(env.DB.prepare("UPDATE document_jobs SET result_json=? WHERE job_id=?").bind("{}", row.job_id).run(), /CHECK constraint failed/u);
+    await assert.rejects(env.DB.prepare("UPDATE document_jobs SET result_json=? WHERE job_id=?").bind("{}", row.job_id).run(), error=>
+      error.code==="output_execution_authority_unverified"&&/CHECK constraint failed/u.test(String(error.cause)));
     assert.deepEqual(d.sqlite.prepare("SELECT * FROM document_jobs").get(), final, "unchanged source guards still roll back");
   } finally { d.sqlite.close(); }
 });
@@ -277,7 +278,8 @@ test("actual execution closure follows producer's two appends and preparation/tr
     const initial = compile("const value=" + appendArguments[0] + ";", { requestEvent, budgeted }, "value");
     await append(output.guardedEnvironment, initial);
     assert.equal(d.sqlite.prepare("SELECT MAX(sequence) AS head FROM events").get().head, 42);
-    await assert.rejects(output.guardedEnvironment.DB.prepare("UPDATE document_jobs SET result_json=result_json WHERE job_id=?").bind(job.job_id).run(), /CHECK constraint failed/u, "stale head40 cannot silently rebase to42");
+    await assert.rejects(output.guardedEnvironment.DB.prepare("UPDATE document_jobs SET result_json=result_json WHERE job_id=?").bind(job.job_id).run(), error=>
+      error.code==="output_execution_authority_unverified"&&/CHECK constraint failed/u.test(String(error.cause)), "stale head40 cannot silently rebase to42");
     assert.equal(d.sqlite.prepare("SELECT status FROM document_jobs").get().status, "running");
     await output.model3d.prepare(f.receipt);
     await output.beforeSourceTransmission();
