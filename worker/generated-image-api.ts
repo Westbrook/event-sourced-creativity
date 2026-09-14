@@ -1,5 +1,6 @@
 import { foldEvents, type CreativeEvent } from "../src/model/events.ts";
 import { originalGeneratedImageUrl } from "../src/model/generated-image-original-url.ts";
+import {readImageWitness,imageWitnessStatement,imageWitnessAcknowledged,imageWitnessPublished,type ImageWitnessGuard} from './generated-image-witness.ts';
 import { GENERATED_IMAGE_EDIT_LIMITS } from "../src/model/generated-image-edit.ts";
 import { generatedImageEditOperationSha256, parseGeneratedImageEditRequest, parseGeneratedImageRevision,
   type GeneratedImageEditRequest, type GeneratedImageEditSnapshot, type GeneratedImageRevision } from "../src/model/generated-image-revision.ts";
@@ -51,6 +52,7 @@ function imageReadFailureKind(error: unknown): string {
   try { for(let depth=0;depth<3&&object(current);depth++){
     const raw=Object.getOwnPropertyDescriptor(current,"message")?.value;
     const message=typeof raw==="string"?raw.slice(0,2048):"";
+    if(/^image_witness_(?:capacity|changed|version|unavailable)$/u.test(message))return message;
     if(/\bSQLITE_TOOBIG\b|\bstring or blob too big\b/iu.test(message))return "d1_value_limit";
     if(/\bno such (?:table|column)\b|\bSQLITE_SCHEMA\b/iu.test(message))return "d1_schema";
     if(/\bExpression tree is too large\b/iu.test(message))return "d1_expression_depth";
@@ -77,28 +79,15 @@ function imageReadFailureKind(error: unknown): string {
 class Lifetime {
   active = true;
   writing = false;
+  private sqlCount=0;
+  capacity(count:number){this.check();requireFact(integer(count)&&this.sqlCount+count<=900);}
+  sql(count:number){this.capacity(count);this.sqlCount+=count;}
   readStage: "admission" | "witness_read" | "event_witness_capacity" | "revision_witness_capacity" | "witness_bounds" | "event_decode" | "event_order" | "origin_alias" | "origin_fields" | "origin_path" | "projection" | "origin_envelope" | "private_content" | "revision" | "sources" | "current_guard" | "media_read" | "media_hash" | "png_facts" = "admission";
   readonly cancellations = new Set<() => void>();
   check() { requireFact(this.active, "unavailable", 408); }
   stop() { this.active = false; for (const cancel of this.cancellations) { try { cancel(); } catch { /* Cancellation is best effort and never awaited. */ } } this.cancellations.clear(); }
   async wait<T>(promise: Promise<T>): Promise<T> { const result = await promise; this.check(); return result; }
 }
-
-// One exact SQL witness includes mutable private envelopes as well as public
-// event identity. The bounded string is compared again inside the conditional
-// write; an unchanged stream head alone would miss a privacy withdrawal.
-const EVENT_SNAPSHOT_SQL = `(SELECT CASE WHEN COUNT(*)<=${MAX_EVENTS} AND COALESCE(SUM(length(CAST(payload AS BLOB))+length(CAST(COALESCE(private_json,'') AS BLOB))),0)<=${MAX_EVENT_BYTES}
-  THEN json_group_array(json_object('event_id',event_id,'stream_id',stream_id,'sequence',sequence,
-    'occurred_at',occurred_at,'recorded_at',recorded_at,'actor',actor,'client_id',client_id,'correlation_id',correlation_id,
-    'causation_id',causation_id,'compensates_event_id',compensates_event_id,'schema_version',schema_version,'type',type,'payload',payload,
-    'private_owner',private_owner,'private_project',private_project,'private_document',private_document,'private_json',private_json,'private_redacted',private_redacted)) ELSE NULL END
-  FROM (SELECT e.*,p.owner_id private_owner,p.project_id private_project,p.document_id private_document,p.private_json,p.redacted_at private_redacted
-    FROM events e LEFT JOIN event_private_payloads p ON p.private_event_id=e.event_id WHERE e.stream_id=? ORDER BY e.sequence LIMIT ${MAX_EVENTS + 1}))`;
-const REVISION_SNAPSHOT_SQL = `(SELECT CASE WHEN COUNT(*)<=${MAX_REVISIONS} AND COALESCE(SUM(length(CAST(content_json AS BLOB))),0)<=${MAX_REVISION_BYTES}
-  THEN json_group_array(json_object('revision_id',revision_id,'owner_id',owner_id,'organization_id',organization_id,'project_access_id',project_access_id,
-    'project_id',project_id,'document_id',document_id,'artifact_id',artifact_id,'revision',revision,'content_json',content_json,'content_sha256',content_sha256,
-    'created_by_user_id',created_by_user_id,'created_at',created_at,'expires_at',expires_at,'redacted_at',redacted_at)) ELSE NULL END
-  FROM (SELECT * FROM artifact_revisions WHERE owner_id=? AND artifact_id IN (?,?) ORDER BY artifact_id,revision LIMIT ${MAX_REVISIONS + 1}))`;
 
 function internalKey(outputId: string) {
   return "generated-image/" + Array.from(encoder.encode(outputId), byte => byte.toString(16).padStart(2, "0")).join("");
@@ -126,7 +115,7 @@ type Envelope = { kind: "generated-image"; schemaVersion: 1; origin: Origin; ini
 type Retained = { row: Row; envelope: Envelope; event: CreativeEvent | null };
 type Current = {
   snapshot: GeneratedImageEditSnapshot; origin: Origin; initialMedia: Media; retained: Retained[];
-  events: CreativeEvent[]; eventBytes: number; eventWitness: string; revisionWitness: string; rawExpires: string; originExpires: string | null; key: string; guard: Guard;
+  events: CreativeEvent[]; eventBytes: number; witnessGuards: ImageWitnessGuard[]; witnessQueries:number; rawExpires: string; originExpires: string | null; key: string; guard: Guard;
 };
 
 function mediaKey(value: unknown, owner: string): string | null {
@@ -151,15 +140,13 @@ async function observeCurrent(env: WorkerEnv, actor: PilotUser, outputId: string
   life.check();
   const key = internalKey(outputId);
   life.readStage="witness_read";
-  const witnesses = await life.wait(env.DB.prepare(`SELECT ${EVENT_SNAPSHOT_SQL} eventWitness,${REVISION_SNAPSHOT_SQL} revisionWitness`).bind(actor.streamId, actor.userId, key, outputId).first<Row>());
+  const witnesses = await readImageWitness(env,actor.streamId,actor.userId,key,outputId,life);
   life.readStage="event_witness_capacity";
-  requireFact(witnesses && typeof witnesses.eventWitness === "string");
+  requireFact(witnesses.eventRows.length>0&&witnesses.eventRows.length<=MAX_EVENTS);
   life.readStage="revision_witness_capacity";
-  requireFact(typeof witnesses.revisionWitness === "string");
+  requireFact(witnesses.revisionRows.length<=MAX_REVISIONS);
   life.readStage="witness_bounds";
-  const eventWitness = witnesses.eventWitness, revisionWitness = witnesses.revisionWitness;
-  requireFact(encoder.encode(eventWitness).length <= MAX_EVENT_BYTES + 8_000_000 && encoder.encode(revisionWitness).length <= MAX_REVISION_BYTES + 131_072);
-  const eventRows: unknown = JSON.parse(eventWitness), revisionRows: unknown = JSON.parse(revisionWitness);
+  const {eventRows,revisionRows}=witnesses;
   requireFact(Array.isArray(eventRows) && eventRows.length > 0 && eventRows.length <= MAX_EVENTS && Array.isArray(revisionRows) && revisionRows.length <= MAX_REVISIONS);
   life.readStage="event_decode";
   const events: CreativeEvent[] = eventRows.map((value: unknown) => {
@@ -208,6 +195,7 @@ async function observeCurrent(env: WorkerEnv, actor: PilotUser, outputId: string
   requireFact(!events.some(event => ["DocumentRenderCompleted", "DocumentArtifactEdited"].includes(event.type)
     && [outputId, key].includes(String(event.payload.artifact_id ?? ""))));
   life.readStage="private_content";
+  life.sql(1);
   const source = await life.wait(env.DB.prepare("SELECT content,expires_at FROM private_content WHERE content_id=? AND owner_id=? AND kind='provider-output' AND redacted_at IS NULL AND expires_at>?")
     .bind(p.output_ref, actor.userId, new Date().toISOString()).first<Row>());
   requireFact(source && typeof source.content === "string" && source.content.length > 0 && encoder.encode(source.content).length <= GENERATED_IMAGE_EDIT_LIMITS.rawBytes && future(source.expires_at));
@@ -289,14 +277,14 @@ async function observeCurrent(env: WorkerEnv, actor: PilotUser, outputId: string
     ...retained.flatMap(item => item.envelope.imageRevision ? [item.envelope.imageRevision.media.url] : [])]
     .flatMap(url => [url, mediaKey(url, actor.userId)!]);
   const access = admission(env, actor, document.projectId, document.id, outputId, origin.contentRef, keys);
-  const guard: Guard = { sql: `(${access.sql}) AND ${EVENT_SNAPSHOT_SQL}=? AND ${REVISION_SNAPSHOT_SQL}=?
+  const guard: Guard = { sql: `(${access.sql})
     AND EXISTS(SELECT 1 FROM private_content WHERE content_id=? AND owner_id=? AND kind='provider-output' AND content=? AND expires_at=? AND expires_at>? AND expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now') AND redacted_at IS NULL)
     AND (?='' OR ?>strftime('%Y-%m-%dT%H:%M:%fZ','now'))
     AND NOT EXISTS(SELECT 1 FROM artifact_revisions WHERE owner_id=? AND artifact_id=? AND (redacted_at IS NOT NULL OR expires_at<=strftime('%Y-%m-%dT%H:%M:%fZ','now')))`,
-    bindings: [...access.bindings, actor.streamId, eventWitness, actor.userId, key, outputId, revisionWitness,
+    bindings: [...access.bindings,
       origin.contentRef, actor.userId, source.content, source.expires_at as string, new Date().toISOString(),
       typeof p.content_expires_at === "string" ? p.content_expires_at : "", typeof p.content_expires_at === "string" ? p.content_expires_at : "", actor.userId, key] };
-  const current: Current = { snapshot, origin, initialMedia, retained, events, eventBytes, eventWitness, revisionWitness, rawExpires: source.expires_at as string,
+  const current: Current = { snapshot, origin, initialMedia, retained, events, eventBytes, witnessGuards:witnesses.guards,witnessQueries:witnesses.queryCount, rawExpires: source.expires_at as string,
     originExpires: typeof p.content_expires_at === "string" ? p.content_expires_at : null, key, guard };
   await assertCurrent(env, current, life);
   return current;
@@ -306,8 +294,10 @@ async function assertCurrent(env: WorkerEnv, current: Current, life: Lifetime) {
   life.readStage="current_guard";
   life.check();
   requireFact(future(current.rawExpires) && (current.originExpires === null || future(current.originExpires)) && current.retained.every(item => future(item.row.expires_at)), "source_changed");
-  const row = await life.wait(env.DB.prepare(`SELECT 1 ok WHERE ${current.guard.sql}`).bind(...current.guard.bindings).first<Row>());
-  requireFact(row?.ok === 1, "source_changed");
+  const guards=[...current.witnessGuards,current.guard];
+  life.sql(guards.length);
+  const results = await life.wait(env.DB.batch(guards.map(guard=>imageWitnessStatement(env,guard))));
+  requireFact(imageWitnessAcknowledged(results,guards.length), "source_changed");
 }
 
 async function boundedStream(body: ReadableStream<Uint8Array>, limit: number, declared: number | null, life: Lifetime): Promise<Uint8Array> {
@@ -397,14 +387,6 @@ function acknowledgment(current: Current, item: Retained) {
     currentRevision: current.snapshot.revision, currentEditEventId: current.snapshot.editEventId,
     appended: item.event ? [item.event] : [], head: current.snapshot.head };
 }
-function densePositive(results: unknown, length: number): boolean {
-  return Array.isArray(results) && results.length === length && Array.from({ length }, (_, index) => index).every(index => {
-    if (!Object.hasOwn(results, index)) return false;
-    const result: unknown = results[index];
-    return object(result) && result.success === true && object(result.meta) && integer(result.meta.changes, 1);
-  });
-}
-
 async function execute(request: Request, env: WorkerEnv, outputId: string, life: Lifetime): Promise<Response> {
   life.check();
   requireFact(token(outputId), "invalid", 400);
@@ -493,6 +475,9 @@ async function execute(request: Request, env: WorkerEnv, outputId: string, life:
     await assertCurrent(env, current, life);
     // The upload owns its own buffer until settlement. A timeout cannot zero
     // bytes while an already admitted R2 write is still consuming them.
+    // Preserve room for original-proof checks and full authoritative readback;
+    // known insufficient capacity refuses before allocating an immutable object.
+    life.capacity(current.witnessQueries+current.witnessGuards.length*3+100);
     const upload = input.bytes.slice();
     life.writing = true;
     const pending = (() => { try { return (env.MEDIA as ConditionalImageBucket).put(key, upload.buffer, { onlyIf: { etagDoesNotMatch: "*" }, httpMetadata: { contentType: "image/png" },
@@ -512,8 +497,12 @@ async function execute(request: Request, env: WorkerEnv, outputId: string, life:
       .bind(row.revisionId,actor.userId,current.snapshot.projectId,current.origin.documentId,current.key,row.revision,row.json,row.sha,actor.userId,event.recordedAt,expires,
         event.eventId,actor.streamId,event.sequence,actor.userId,current.snapshot.projectId,current.origin.documentId,JSON.stringify(event.payload)));
     life.check();
-    const results = await life.wait(env.DB.batch(statements));
-    requireFact(densePositive(results, statements.length));
+    // All original source and revision predicates precede every write in this
+    // transaction. A failed predicate raises SQL error, rolling the batch back.
+    const prefix=current.witnessGuards.map(guard=>imageWitnessStatement(env,guard,true));
+    life.sql(prefix.length+statements.length);
+    const results = await life.wait(env.DB.batch([...prefix,...statements]));
+    requireFact(imageWitnessPublished(results,prefix.length,statements.length));
     // Publication uses authoritative readback, including event, full private
     // record and operation digest. A later edit is reported as historical.
     current = await observeCurrent(env, actor, outputId, life);

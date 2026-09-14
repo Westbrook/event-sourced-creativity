@@ -34,3 +34,13 @@ test('database-kind diagnosis never returns private messages or traverses getter
   }
   assert.equal(classify({message:'private unrecognized detail'}),'unknown');
 });
+test('request SQL budget counts statements and reserves readback before upload',()=>{
+  const start=source.indexOf('class Lifetime'),end=source.indexOf('\nfunction internalKey',start);
+  assert.ok(start>=0&&end>start);
+  const Lifetime=new Function('requireFact','integer',stripTypeScriptTypes(source.slice(start,end))+';return Lifetime;')(
+    value=>{if(!value)throw Error('refused');},value=>Number.isSafeInteger(value)&&value>=0);
+  const life=new Lifetime();life.sql(899);life.capacity(1);life.sql(1);assert.throws(()=>life.sql(1),/refused/);
+  const stopped=new Lifetime();stopped.stop();assert.throws(()=>stopped.sql(1),/refused/);
+  assert.ok(source.indexOf('life.capacity(current.witnessQueries')<source.indexOf('const upload = input.bytes.slice()'));
+  assert.ok(source.includes('life.sql(prefix.length+statements.length)'));
+});
