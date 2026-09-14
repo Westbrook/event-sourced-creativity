@@ -4,6 +4,7 @@ import { readVideoReferencePlan, type VideoReferencePlan } from "../src/experien
 import { creativeContextRightsValidity } from "../src/model/context-health.ts";
 import { inspectVideoReferenceCustody } from "./video-reference-custody.ts";
 import { continueOutputTrustedContext } from "./output-trusted-context.ts";
+import { recordVideoCustodyFailure } from "./video-custody-diagnostic.ts";
 import { projectIntakeAuthority, type ProjectIntakeAuthorization } from "./intake-authority.ts";
 import { outputActiveSourceDeadlineAssertions } from "./output-disclosure-proof.ts";
 import type { BudgetReservationGuard } from "./pilot-policy.ts";
@@ -29,7 +30,9 @@ export async function prepareExperienceVideoReference(request: Request, env: Wor
   const trusted = await continueOutputTrustedContext(request, env, selection.sourceDocumentId, "read", auth);
   if (trusted instanceof Response) fail("video_reference_source_unavailable", trusted.status);
   stage("custody_read");
-  const inspection = await inspectVideoReferenceCustody(trusted, auth, selection);
+  const inspection = await inspectVideoReferenceCustody(trusted, auth, selection).catch(error => {
+    recordVideoCustodyFailure(error); throw error;
+  });
   stage("custody_verified");
   const block = trusted.projection.libraryBlocks.find(candidate => candidate.id === selection.sourceBlockId);
   const reference = readVideoReferencePlan({ version: 1, selection, sourceDigest: inspection.sourceDigest,

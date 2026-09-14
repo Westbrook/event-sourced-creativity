@@ -8,22 +8,23 @@ export function captureVideoCustodySnapshot(root: object) {
   const nodes: Node[] = [], seen = new WeakSet<object>();
   let fields = 0;
   const pending: Array<{ value: object; depth: number }> = [{ value: root, depth: 0 }];
-  const fail = (): never => { throw new Error("video_reference_snapshot_unavailable"); };
+  const fail = (snapshotReason: string): never => { throw Object.assign(new Error("video_reference_snapshot_unavailable"), { snapshotReason }); };
   while (pending.length) {
     const { value, depth } = pending.pop()!;
     if (seen.has(value)) continue;
-    if (depth > 96 || nodes.length >= 100_000) fail();
+    if (depth > 96) fail("depth");
+    if (nodes.length >= 100_000) fail("nodes");
     seen.add(value);
     const prototype = Object.getPrototypeOf(value);
-    if (prototype !== Object.prototype && prototype !== Array.prototype && prototype !== null) fail();
+    if (prototype !== Object.prototype && prototype !== Array.prototype && prototype !== null) fail("prototype");
     const keys = Object.getOwnPropertyNames(value), values: unknown[] = [], enumerable: boolean[] = [];
     fields += keys.length;
-    if (fields > 500_000) fail();
+    if (fields > 500_000) fail("fields");
     for (const key of keys) {
       const descriptor = Object.getOwnPropertyDescriptor(value, key);
-      if (!descriptor || !Object.hasOwn(descriptor, "value")) return fail();
+      if (!descriptor || !Object.hasOwn(descriptor, "value")) return fail("accessor");
       const item: unknown = descriptor.value;
-      if (typeof item === "function" || typeof item === "symbol" || typeof item === "bigint") fail();
+      if (typeof item === "function" || typeof item === "symbol" || typeof item === "bigint") fail("primitive");
       values.push(item);
       enumerable.push(descriptor.enumerable === true);
       if (item !== null && typeof item === "object") pending.push({ value: item, depth: depth + 1 });
