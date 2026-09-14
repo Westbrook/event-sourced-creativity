@@ -566,7 +566,8 @@ export class FormaStore {
     const projection=this.projection.get();const seen=new Set<string>();
     for(const output of [...projection.outputs,...projection.libraryOutputs])if(output.mediaUrl&&String(output.mediaType??"").startsWith("image/")&&output.focalPoint?.method!==CURRENT_FOCAL_POINT_METHOD&&!seen.has(`generation:${output.id}`)){seen.add(`generation:${output.id}`);void this.calculateImageFocalPoint({targetKind:"generation",targetId:output.id,mediaUrl:output.mediaUrl});}
     for(const item of projection.libraryArtifacts.flatMap((artifact)=>artifact.items))if(item.mediaUrl&&String(item.mediaType??"").startsWith("image/")&&item.focalPoint?.method!==CURRENT_FOCAL_POINT_METHOD&&!seen.has(`artifact:${item.id}`)){seen.add(`artifact:${item.id}`);void this.calculateImageFocalPoint({targetKind:"artifact",targetId:item.id,mediaUrl:item.mediaUrl});}
-    for(const block of [...projection.blocks,...projection.libraryBlocks]){const mediaUrl=String(block.properties.media_url??"");const sourceMimeType=String(block.properties.source_mime_type??block.properties.media_type??"");if(block.type!=="reference"||!mediaUrl||sourceMimeType&&!sourceMimeType.startsWith("image/")||block.properties.extraction_status==="pending"||normalizeImageFocalPoint(block.properties.focal_point)?.method===CURRENT_FOCAL_POINT_METHOD||seen.has(`reference:${block.id}`))continue;seen.add(`reference:${block.id}`);void this.calculateImageFocalPoint({targetKind:"reference",targetId:block.id,referenceId:String(block.properties.reference_id??""),mediaUrl});}
+    // Reference thumbnail placement is local display state. Background writes to
+    // source blocks would invalidate retained drafts and their exact provenance.
   }
   #reflectDocumentInRoute() {
     const currentRoute = this.route.get();
@@ -6815,6 +6816,7 @@ export class FormaStore {
   }
 
   async calculateImageFocalPoint(input:{targetKind:"generation"|"reference"|"artifact";targetId:string;mediaUrl:string;referenceId?:string;sample?:ImageSample}){
+    if(input.targetKind==="reference")return null;
     const sourceOwner=this.captureSourceOwnership();if(!this.sourceOwnershipActive(sourceOwner)){return;}
     const authorization=this.#activeAuthorizationScope(),key=`${input.targetKind}:${input.targetId}:${input.mediaUrl}`;if(!input.mediaUrl||this.#focalInFlight.has(key)||this.#hasFocalPoint(input.targetKind,input.targetId))return null;this.#focalInFlight.add(key);
     try{

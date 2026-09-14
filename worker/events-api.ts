@@ -1667,6 +1667,7 @@ export async function handleEvents(request:Request,env:WorkerEnv,hot=false,userO
     }
     if(body.action==="calculate_focal_point"){
       if(!body.targetKind||!body.targetId||!body.mediaUrl||!body.sample)return Response.json({error:"focal_target_media_and_sample_required"},{status:400});
+      if(!["generation","artifact","reference"].includes(body.targetKind))return Response.json({error:"focal_target_kind_invalid"},{status:400});
       const events=await readEvents(env,streamId);const projection=foldEvents(events);let blockId:string|null=null;let referenceId:string|null=null;let documentId="";let causationId:string|null=null;
       if(body.targetKind==="generation"){
         const output=projection.libraryOutputs.find((item)=>item.id===body.targetId);if(!output||output.mediaUrl!==body.mediaUrl)return Response.json({error:"generation_media_target_not_found"},{status:404});documentId=output.documentId;causationId=output.sourceEventId;
@@ -1678,6 +1679,10 @@ export async function handleEvents(request:Request,env:WorkerEnv,hot=false,userO
       const existing=events.findLast((event)=>event.type==="ImageFocalPointCalculated"&&event.payload.target_kind===body.targetKind&&String(event.payload.target_id??"")===body.targetId&&String(event.payload.media_url??body.mediaUrl)===body.mediaUrl&&(event.payload.focal_point as {method?:unknown}|undefined)?.method===CURRENT_FOCAL_POINT_METHOD);
       if(existing)return Response.json({appended:[],rejected:[],head:current,focalPoint:existing.payload.focal_point,cached:true});
       const focalPoint=calculateImageFocalPoint(body.sample);const focal=makeEvent(streamId,current+1,"worker:extractor",client,corr,"ImageFocalPointCalculated",{target_kind:body.targetKind,target_id:body.targetId,block_id:blockId,reference_id:referenceId,document_id:documentId,media_url:body.mediaUrl,focal_point:focalPoint,sample_grid:{width:body.sample.gridWidth,height:body.sample.gridHeight},extractor_name:CURRENT_FOCAL_POINT_METHOD,cost_class:"local-free"},{causationId});
+      // Older clients still request automatic reference crop maintenance. Return
+      // the display hint without editing source properties or provenance. An
+      // explicit extract_reference operation retains its existing event trail.
+      if(body.targetKind==="reference")return Response.json({appended:[],rejected:[],head:current,focalPoint,cached:false});
       await insertEvent(env,focal).run();return Response.json({appended:[focal],rejected:[],head:focal.sequence,focalPoint,cached:false});
     }
     if(body.action==="close_session"){

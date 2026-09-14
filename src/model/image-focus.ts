@@ -44,11 +44,17 @@ export function resolveImageFocalPoint(url: string) {
   return resolveImageFocalAnalysis(url).then((analysis)=>analysis.focalPoint);
 }
 
+const placementRequests = new WeakMap<HTMLImageElement, object>();
+
 export function positionImageAtFocalPoint(image: HTMLImageElement, known?: unknown) {
+  const request = {};
+  placementRequests.set(image, request);
   const point = normalizeImageFocalPoint(known);
   const apply=(resolved:ImageFocalPoint)=>{image.style.setProperty("--focal-x",`${Number((resolved.x*100).toFixed(2))}%`);image.style.setProperty("--focal-y",`${Number((resolved.y*100).toFixed(2))}%`);};
   if (point) { apply(point); return; }
   const url = image.currentSrc || image.src;
   if (!url) return;
-  void resolveImageFocalPoint(url).then((resolved) => { if (image.isConnected) apply(resolved); }).catch(() => { /* Center remains a safe fallback when pixels cannot be read. */ });
+  void resolveImageFocalPoint(url).then((resolved) => {
+    if (image.isConnected && (image.currentSrc || image.src) === url && placementRequests.get(image) === request) apply(resolved);
+  }).catch(() => { /* Center remains a safe fallback when pixels cannot be read. */ });
 }

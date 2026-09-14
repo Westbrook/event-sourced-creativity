@@ -11,6 +11,7 @@ const previousFetch=globalThis.fetch;
 globalThis.fetch=()=>{forbidden++;throw Error('No network in unpaid Video renewal fixture');};
 test.after(()=>{imports.deregister();globalThis.fetch=previousFetch;assert.equal(forbidden,0);});
 const runtime=await import('../worker/runtime.ts');
+const {handleEvents}=await import('../worker/events-api.ts');
 const {handleExperienceIntake}=await import('../worker/experience-intake-api.ts');
 const {handleExperienceOutput}=await import('../worker/experience-output-api.ts');
 const {registeredExperience}=await import('../src/experiences/intake.ts');
@@ -116,6 +117,30 @@ test('longer browser wait cannot authorize an expired fresh Video quote',async t
       body:JSON.stringify({draftHash:s.plan.draftHash,termsDigest:fresh.preflight.termsDigest,maximumMicrousd:fresh.preflight.maximumMicrousd,explicitAuthorization:true})}),s.env,execution,s.bridge);
     assert.notEqual(response.status,200);s.unpaid();
   } finally {globalThis.Date=RealDate;}
+});
+
+test('reference focal maintenance cannot alter a retained Video source, including requests from old clients',async t=>{
+  const s=await fixture(t),block=s.plan.events.find(event=>event.type==='BlockCreated'&&event.payload.type==='reference');assert.ok(block);
+  const sample={sourceWidth:2,sourceHeight:2,gridWidth:2,gridHeight:2,pixels:[[10,10,10],[220,30,30],[10,10,10],[220,30,30]]};
+  const before=await runtime.readEvents(s.env,stream);
+  for(const [targetId,mediaUrl] of [[block.payload.block_id,block.payload.properties.media_url]]){
+    const response=await handleEvents(new Request('http://localhost/api/events',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({action:'calculate_focal_point',targetKind:'reference',targetId,mediaUrl,sample})}),s.env);
+    assert.equal(response.status,200,targetId+' '+await response.clone().text());const body=await response.json();
+    assert.deepEqual(body.appended,[]);assert.equal(body.head,before.at(-1).sequence);assert.equal(body.focalPoint.method,'attention-region-v2');
+  }
+  assert.deepEqual(await runtime.readEvents(s.env,stream),before);
+  for(const [targetKind,targetId,mediaUrl,status] of [['reference','missing',block.payload.properties.media_url,404],['reference',block.payload.block_id,'/wrong.png',404],['unknown',block.payload.block_id,block.payload.properties.media_url,400]]){
+    const response=await handleEvents(new Request('http://localhost/api/events',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({action:'calculate_focal_point',targetKind,targetId,mediaUrl,sample})}),s.env);
+    assert.equal(response.status,status);assert.deepEqual(await runtime.readEvents(s.env,stream),before);
+  }
+  const unchanged=await s.send();assert.equal(unchanged.status,200,await unchanged.clone().text());s.unpaid();
+  // Historical maintenance remains real source history, not silently normalized
+  // away to restore authority over an already-changed/possibly-paid draft.
+  await runtime.appendEvents(s.env,[runtime.makeEvent(stream,0,'worker:extractor','test','legacy-focal','ImageFocalPointCalculated',{
+    target_kind:'reference',target_id:block.payload.block_id,block_id:block.payload.block_id,
+    focal_point:{x:.7,y:.3,confidence:.8,method:'attention-region-v2',sampleWidth:2,sampleHeight:2},
+  })]);
+  const changed=await s.send();assert.equal(changed.status,409);assert.equal((await changed.json()).error,'experience_output_source_changed');s.unpaid();
 });
 
 test('actual Video fold tolerates operational events; same-value source edit emits only fixed log category',async t=>{
