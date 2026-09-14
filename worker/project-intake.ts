@@ -5,6 +5,7 @@ export type { ProjectIntakeAuthorization };
 import { response, failure, readOriginal, reply } from "./project-intake-read.ts";
 import { appendEvents } from "./event-append.ts";
 import { makeEvent } from "./event-write-primitives.ts";
+import { recordIntakeDiagnostic } from "./project-intake-diagnostic.ts";
 import type { WorkerEnv } from "./runtime.ts";
 
 /** One bounded all-or-none intake. Generic batch and Canvas receipt semantics do not change. */
@@ -58,7 +59,8 @@ export async function commitAtomicIntake(env:WorkerEnv,auth:ProjectIntakeAuthori
           stream,resourceIds,resourceIds,resourceIds,resourceIds,batch,root.eventId,root.sequence,now));
       return receipts;
     }});
-  }catch{
+  }catch(error){
+    recordIntakeDiagnostic("append", "project_intake_unconfirmed", error);
     // This may be a unique-root winner, authorization/head change, or lost DB
     // acknowledgment. Only the actual original receipt read may resolve it.
   }

@@ -21,6 +21,7 @@ const ports = {
   "./output-disclosure-proof.ts": [["outputActiveSourceDeadlineAssertions", "deadlines"], ["verifyOutputSourceRead", "verify"]],
   "./experience-intake-api.ts": [["authorizeExperienceIntake", "authorize"], ["readExperienceBody", "body"]],
   "./output-requirements-api.ts": ["loadOutputTrustedContext", "trusted"],
+  "./output-trusted-context.ts": ["continueOutputTrustedContext", "continued"],
 };
 const portParents = new Set(["video-reference-custody.ts", "experience-video-reference.ts", "experience-video-reference-source.ts"].map(file =>
   pathToFileURL(realpathSync(new URL("../worker/" + file, import.meta.url))).href));
@@ -95,6 +96,15 @@ function fixture() {
     },
     async authorize() { calls.push("auth"); return state.authResponse ?? auth; },
     body(request) { calls.push("body"); return request.json(); },
+    async continued(request, suppliedEnv, id, permission, suppliedAuth) {
+      calls.push("continued");
+      assert.ok(request instanceof Request);
+      assert.equal(suppliedEnv, env); assert.equal(id, "d"); assert.equal(permission, "read");
+      assert.equal(suppliedAuth, auth, "source continuation must reuse the exact authenticated principal");
+      state.continuedRequest = request;
+      if (state.trustedError) throw state.trustedError;
+      return state.trustedResponse ?? trusted;
+    },
     async trusted(request, suppliedEnv, id, permission) {
       calls.push("trusted"); assert.equal(suppliedEnv, env); assert.equal(id, "d"); assert.equal(permission, "read");
       if (state.trustedError) throw state.trustedError;
@@ -243,9 +253,28 @@ test("fresh Video source preparation retains original reference material and fin
   assert.equal(source.reference.sourceDigest, f.trusted.sourceDigest);
   assert.ok(Object.isFrozen(source.reference.properties));
   assert.match(source.guard.sql, /current_principal/); assert.match(source.guard.sql, /current_source/); assert.match(source.guard.sql, /current_deadline/);
-  assert.equal(f.calls.filter(value => value === "trusted").length, 1);
+  assert.equal(f.calls.filter(value => value === "continued").length, 1);
+  assert.equal(state.continuedRequest, f.trusted.request);
+  assert.equal(f.calls.includes("trusted"), false, "source preparation must not reauthenticate through HTTP");
   assert.equal(f.calls.filter(value => value === "get").length, 1);
   assert.equal(f.trusted.events.filter(event => event.type === "RightsAsserted").length, 1);
+});
+
+test("Video source continuation preserves denial and refuses impersonated or substituted principals before media", async () => {
+  for (const mutate of [f => { f.auth.impersonation = {}; }, f => { f.auth.user = { ...f.auth.principal }; }]) {
+    const f = fixture(); mutate(f);
+    await assert.rejects(prepareExperienceVideoReference(f.trusted.request, f.env, f.auth, f.selection),
+      error => error.code === "video_reference_scope_unavailable" && error.status === 403);
+    assert.deepEqual(f.calls, []);
+  }
+  const denied = fixture(); state.trustedResponse = new Response("private denial", { status: 403 });
+  await assert.rejects(prepareExperienceVideoReference(denied.trusted.request, denied.env, denied.auth, denied.selection),
+    error => error.code === "video_reference_source_unavailable" && error.status === 403);
+  assert.deepEqual(denied.calls, ["continued"]);
+  const failed = fixture(), sentinel = Error("continuation failed"); state.trustedError = sentinel;
+  await assert.rejects(prepareExperienceVideoReference(failed.trusted.request, failed.env, failed.auth, failed.selection),
+    error => error === sentinel);
+  assert.deepEqual(failed.calls, ["continued"]);
 });
 
 test("latest rights-event expiry reaches the eventual atomic save guard even without a block deadline", async () => {
@@ -402,9 +431,9 @@ test("Video changed source refuses commit; an existing original receipt recovers
   f.event("RightsAsserted",{reference_id:"r",rights_class:"withdrawn"});f.trusted.ownerHead++;
   let result=await p.call(`drafts/${plan.draftId}/commit`,{draftHash:plan.draftHash});assert.equal(result.status,409);
   assert.equal((await result.json()).error,"video_reference_source_changed");assert.deepEqual(p.commits.map(x=>x.action),["check"]);
-  state.completed=true;const reads=f.calls.filter(x=>x==="trusted").length;
+  state.completed=true;const reads=f.calls.filter(x=>x==="continued").length;
   result=await p.call(`drafts/${plan.draftId}/commit`,{draftHash:plan.draftHash});assert.equal((await result.json()).status,"complete");
-  assert.equal(f.calls.filter(x=>x==="trusted").length,reads);assert.equal(p.saves.length,1);assert.equal(p.commits.some(x=>x.action==="commit"),false);
+  assert.equal(f.calls.filter(x=>x==="continued").length,reads);assert.equal(p.saves.length,1);assert.equal(p.commits.some(x=>x.action==="commit"),false);
 });
 test("Video malformed, stale review and private proof failures do not reach save or atomic mutation",async()=>{
   let f=fixture(),p=intakePorts(f);const invalid=videoRequest(f);delete invalid.reference;
@@ -421,7 +450,13 @@ test("Video discovery emits no3D kind or permission; metadata and native route b
   const candidate={source,label:"Image 日本語",preview:mediaUrl};assert.deepEqual(readVideoReferenceCandidate(candidate),candidate);
   for(const bad of [{...candidate,source:{...source,permissionAttestation}},{...candidate,source:{...source,kind:"image"}},{...candidate,preview:"https://other.invalid/image.png"}])assert.equal(readVideoReferenceCandidate(bad),null);
   assert.equal(isStandaloneExperienceRoute("/experiences/video?progress-report"),true);
-  assert.equal(parseExperienceHostRoute("/document/document/video?experience=video&experience-draft=experience-draft-"+"a".repeat(64)),null,"context entry does not register native generation");
+  const draftId = "experience-draft-" + "a".repeat(64);
+  const route = "/document/document/video?experience=video&experience-draft=" + draftId;
+  assert.deepEqual(parseExperienceHostRoute(route), {
+    output: "video", draftId, documentId: "document", documentRoute: "/document/document/video",
+  }, "registered Video host selects retained intake; the route is not generation authority");
+  assert.equal(parseExperienceHostRoute(route + "&provider=claimed"), null);
+  assert.equal(parseExperienceHostRoute(route + "&experience=video"), null);
 });
 test("shared discovery pages bounded personal projects and omits meshes/compositions from Video without changing3D defaults",()=>{
   const f=fixture(),events=[];let sequence=0;

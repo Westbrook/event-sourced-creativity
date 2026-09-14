@@ -1,12 +1,15 @@
 import { projectIntakeReceiptPrefix, projectIntakeValue, type ProjectIntake } from "../src/model/project-intake.ts";
 import { intakeGuard, type ProjectIntakeAuthorization, type AtomicIntakeOptions } from "./intake-authority.ts";
 import { serializeEvent } from "./event-read-primitives.ts";
+import { recordIntakeDiagnostic } from "./project-intake-diagnostic.ts";
 import type { EventRow } from "./event-write-primitives.ts";
 import type { WorkerEnv } from "./runtime.ts";
 
 const response=(body:unknown,status=200)=>Response.json(body,{status,headers:{"cache-control":"private, no-store"}});
-const failure=(intake:ProjectIntake,error="project_intake_unconfirmed",status=409)=>
-  response({status:"unknown",projectId:intake.projectId,documentId:intake.documentId,error},status);
+const failure=(intake:ProjectIntake,error="project_intake_unconfirmed",status=409)=>{
+  recordIntakeDiagnostic("receipt",error);
+  return response({status:"unknown",projectId:intake.projectId,documentId:intake.documentId,error},status);
+};
 
 type ReceiptState={authorized:boolean;seen:boolean;complete:boolean;events:EventRow[];head:number};
 
