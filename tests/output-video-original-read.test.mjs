@@ -6,7 +6,7 @@ async function fixture(){const f=await videoEvidenceFixture();return{...f,origin
 async function network(fn,work){const old=globalThis.fetch;globalThis.fetch=fn;try{return await work();}finally{globalThis.fetch=old;}}
 test('original Video retrieval uses only pinned GETs, privately observes response bytes and never submits another call',async()=>{
  const f=await fixture();try{const requests=[],saved=[],leases=[];
- const result=await network(async(url,init)=>{requests.push([url,init.method]);assert.equal(init.method,'GET');assert.equal(init.redirect,'error');
+ const result=await network(async(url,init)=>{requests.push([url,init.method]);assert.equal(init.method,'GET');assert.equal(init.redirect,'manual');
   if(url.endsWith('/status'))return Response.json({request_id:'video_original',status:'COMPLETED',response_url:'https://attacker.invalid/ignored'});
   if(url.endsWith('/requests/video_original'))return Response.json({request_id:'video_original',video:{url:'https://fal.media/original.mp4',content_type:'video/mp4',file_size:f.bytes.length}});
   assert.equal(url,'https://fal.media/original.mp4');assert.equal(new Headers(init.headers).has('authorization'),false);return new Response(f.bytes,{headers:{'content-type':'video/mp4'}});

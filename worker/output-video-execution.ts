@@ -67,10 +67,13 @@ export async function requestOutputVideoResponse(url: string, init: RequestInit,
     const gateResult: unknown = beforeDispatch?.();
     if (gateResult !== undefined) { void Promise.resolve(gateResult).catch(() => undefined); throw new Error("output_video_dispatch_gate_invalid"); }
     signal.throwIfAborted();
-    response = await race(fetch(url, { ...init, redirect: "error", signal }).then(result => {
+    // workerd supports manual/follow, not error. Never follow a redirect with
+    // provider credentials or source bytes; reject every 3xx before reading.
+    response = await race(fetch(url, { ...init, redirect: "manual", signal }).then(result => {
       if (signal.aborted) { cancel(result.body); throw signal.reason; } return result;
     }));
     requireValue(response);
+    requireValue(response.status < 300 || response.status >= 400, "output_video_redirect_refused");
     requireValue(!response.redirected && response.status >= 200 && response.status <= 599, "output_video_response_invalid");
     const length = response.headers.get("content-length"), encoding = response.headers.get("content-encoding"), identity = !encoding || encoding.trim().toLowerCase() === "identity";
     requireValue(length === null || /^(0|[1-9]\d*)$/u.test(length) && Number.isSafeInteger(Number(length)) && (!identity || Number(length) <= maximum), "output_video_response_limit");

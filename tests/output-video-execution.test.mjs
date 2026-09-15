@@ -23,7 +23,7 @@ function fixture(){
  const responses=[Response.json({upload_url:'https://v3.fal.media/upload/one',file_url:'https://v3.fal.media/file/one'}),new Response(null,{status:200}),
  Response.json({request_id:'job-1',response_url:'https://queue.fal.run/other-owner/other-job'}),Response.json({status:'COMPLETED',request_id:'job-1'}),
  Response.json({video:{url:'https://v3.fal.media/video/one',content_type:'video/mp4',file_size:4}}),new Response(bytes,{headers:{'content-type':'video/mp4'}})];
- const fetch=async(url,init)=>{calls.push({url,init});events.push('fetch:'+init.method);assert.equal(init.redirect,'error');assert.ok(init.signal);const r=responses.shift();assert.ok(r,'unexpected outbound attempt');return r;};
+ const fetch=async(url,init)=>{calls.push({url,init});events.push('fetch:'+init.method);assert.equal(init.redirect,'manual');assert.ok(init.signal);const r=responses.shift();assert.ok(r,'unexpected outbound attempt');return r;};
  return{options,calls,events,attempts,prepared,receipts,envelopes,signals,responses,fetch};
 }
 async function fakeNetwork(f,fn){const saved=globalThis.fetch;globalThis.fetch=f;try{return await fn();}finally{globalThis.fetch=saved;}}
@@ -83,6 +83,13 @@ test('accepted job identity and media failures preserve accepted status, never a
 test('decoded byte limits reject oversized/misdeclared/empty-chunk streams; cancellation cannot block',async()=>{
  for(const response of [new Response('12345'),new Response('1234',{headers:{'content-length':'5'}}),new Response('1234',{headers:{'content-length':'3'}}),new Response('1234',{headers:{'content-length':'no'}}),new Response(new ReadableStream({start(c){c.enqueue(new Uint8Array());},cancel(){return new Promise(()=>{});}}))])await fakeNetwork(async()=>response,()=>assert.rejects(requestOutputVideoResponse('https://fal.media/test',{},()=>{},4)));
  const good=await fakeNetwork(async()=>new Response('1234',{headers:{'content-encoding':'gzip','content-length':'20'}}),()=>requestOutputVideoResponse('https://fal.media/test',{},()=>{},4));assert.equal(await good.text(),'1234');assert.equal(good.headers.get('content-encoding'),null);
+});
+
+test('redirect refusal cancels without reading or waiting for a hostile cancellation',async()=>{
+ let canceled=0,calls=0;
+ const response=new Response(new ReadableStream({cancel(){canceled++;return new Promise(()=>{});}}),{status:307,headers:{location:'https://must-not-follow.invalid/'}});
+ await fakeNetwork(async(_url,init)=>{calls++;assert.equal(init.redirect,'manual');return response;},()=>assert.rejects(requestOutputVideoResponse('https://fal.media/test',{},()=>{}),/output_video_redirect_refused/));
+ assert.equal(calls,1);assert.equal(canceled,1);assert.equal(response.bodyUsed,true);
 });
 
 test('abort retires late response and stalled reader without awaiting cancellation',async()=>{
