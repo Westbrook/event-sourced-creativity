@@ -5,10 +5,18 @@ import { OutputConflictError, outputSlotFromRow, type OutputScope, type OutputOp
 import { model3dMayPrepareReplacement, model3dReplacementPrefix } from "./experience-model3d-replacement.ts";
 import type { DocumentJobRow } from "./document-jobs-api.ts";
 import type { WorkerEnv } from "./runtime.ts";
+import { scenePreparationCyclePrefix } from "./experience-scene-renewal.ts";
+import { sceneRenewalIndexAssertion } from "./experience-scene-renewal-proof.ts";
 
 const fail = (): never => { throw new OutputConflictError("experience_model3d_replacement_unavailable", 409); };
 type Row = Record<string, string | number | null>;
 const tables = new Set(["document_jobs", "output_operation_slots", "output_execution_grants", "output_provider_calls", "budget_reservations", "cost_budget_reservations"]);
+export function model3dLineageIndexAssertions(scope: OutputScope, draftId: string, keys: readonly string[]): OutputSqlAssertion[] {
+  const replacement = model3dReplacementPrefix(draftId), quote = scenePreparationCyclePrefix(draftId, "model3d");
+  if (keys.some(key => !key.startsWith(replacement) && !key.startsWith(quote))) return fail();
+  return [model3dReplacementIndexAssertion(scope, draftId, keys.filter(key => key.startsWith(replacement))),
+    sceneRenewalIndexAssertion(scope, draftId, keys.filter(key => key.startsWith(quote)), "model3d")];
+}
 /** Preserve exact captured scalar rows, including nulls. Only fixed internal
  * tables and D1-returned column names are accepted. No accounting writes. */
 export function model3dReplacementRowAssertion(table: string, row: Row): OutputSqlAssertion {

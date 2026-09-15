@@ -38,7 +38,7 @@ export function sceneRenewalPredecessorAssertion(scope: OutputScope, predecessor
 /** Exact index fence for selection and for the first successor append. Receipt
  * and private-body assertions must ALSO accompany it. A count alone is not
  * sufficient: replacing a key while retaining the count must fail. */
-export function sceneRenewalIndexAssertion(scope: OutputScope, draftId: string, expectedKeys: readonly string[], output: "scene" | "video" = "scene"): OutputSqlAssertion {
+export function sceneRenewalIndexAssertion(scope: OutputScope, draftId: string, expectedKeys: readonly string[], output: "scene" | "video" | "model3d" = "scene"): OutputSqlAssertion {
   personal(scope);
   const prefix = scenePreparationCyclePrefix(draftId, output);
   if (expectedKeys.length > 32 || new Set(expectedKeys).size !== expectedKeys.length

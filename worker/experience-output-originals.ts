@@ -44,7 +44,7 @@ const record = (value: unknown): value is Record<string, unknown> => Boolean(val
 /** Only exact retained confirmed/preflight receipt identities may name a child.
  * No read of the arbitrary latest native plan participates in this join. */
 export function scenePreparationPredecessor(binding: ExperienceOutputBinding, saved: Partial<Record<ExperienceOutputStage, Original>>): ScenePreparationPredecessor | null {
-  if (!["scene", "video"].includes(binding.output) || !saved.confirm || !saved.preflight) return null;
+  if (!["scene", "video", "model3d"].includes(binding.output) || binding.output === "model3d" && !binding.replacementCycle || !saved.confirm || !saved.preflight) return null;
   const confirmation = saved.confirm.receipt.payload, plan = confirmation.confirmed_plan;
   const preparation = saved.preflight.receipt.payload, preflight = preparation.preflight;
   if (!record(plan) || !record(preflight) || typeof plan.revisionId !== "string"
@@ -131,9 +131,10 @@ async function model3dLineage(trusted: LineageContext, root: ExperienceOutputBin
 export async function readExperienceOutputLineage(trusted: LineageContext, root: ExperienceOutputBinding): Promise<ExperienceOutputLineage> {
   if (Object.hasOwn(root, "preparationCycle") || Object.hasOwn(root, "replacementCycle")) error("experience_scene_renewal_lineage_unavailable", 410);
   const initial = await originals(trusted, root);
-  if (root.output === "model3d") return model3dLineage(trusted, root, initial);
-  const result: ExperienceOutputLineage = { binding: root, originals: initial, witnesses: Object.values(initial), cycleCommandKeys: [] };
-  if (root.output !== "scene" && root.output !== "video") return result;
+  const result: ExperienceOutputLineage = root.output === "model3d" ? await model3dLineage(trusted, root, initial)
+    : { binding: root, originals: initial, witnesses: Object.values(initial), cycleCommandKeys: [] };
+  if (root.output !== "scene" && root.output !== "video" && root.output !== "model3d") return result;
+  const renewalRoot = result.binding;
   const prefix = scenePreparationCyclePrefix(root.draftId, root.output);
   const index = await trusted.env.DB.prepare(`SELECT command_key FROM output_commands
     WHERE scope_key=? AND actor_user_id=? AND substr(command_key,1,?)=? ORDER BY command_key LIMIT ?`)
@@ -149,7 +150,7 @@ export async function readExperienceOutputLineage(trusted: LineageContext, root:
     if (result.originals.authorize || result.originals.run) error("experience_scene_renewal_lineage_unavailable", 410);
     const predecessor = scenePreparationPredecessor(result.binding, result.originals);
     if (!predecessor || !initial.save) error("experience_scene_renewal_lineage_unavailable", 410);
-    const child = { ...root, preparationCycle: await scenePreparationSuccessor(root, predecessor) };
+    const child = { ...renewalRoot, preparationCycle: await scenePreparationSuccessor(renewalRoot, predecessor) };
     const selected: Partial<Record<ExperienceOutputStage, Original>> = { save: initial.save };
     let missing = false;
     for (const phase of phases.slice(1)) {

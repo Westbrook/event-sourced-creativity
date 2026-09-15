@@ -304,7 +304,7 @@ export class FormaExperienceHost extends FormaElement {
   }
   #renewPreparation(event: SubmitEvent) {
     event.preventDefault(); const state = this.#state();
-    if (!event.isTrusted || !state?.permitted.renewPreparation || !(state.sceneRenewal || state.videoRenewal) || !this.#visible() || this.#busy) return;
+    if (!event.isTrusted || !state?.permitted.renewPreparation || !(state.sceneRenewal || state.videoRenewal || state.model3dRenewal) || !this.#visible() || this.#busy) return;
     void this.#command("renewPreparation", state);
   }
   #prepareReplacement(event: SubmitEvent) {
@@ -916,7 +916,7 @@ export class FormaExperienceHost extends FormaElement {
       ${available && state?.permitted.prepareReplacement && state.model3dReplacement ? html`<form class="experience-admission" data-experience-action="prepareReplacement" @submit=${(event: SubmitEvent) => this.#prepareReplacement(event)}>
         <p>${this.i18n.t("model3d.replacement.unpaid", "Reuse this document and its unchanged instructions. Preparation is free and makes no provider request. Review the new cost and transfer terms, then authorize and start separately. No automatic paid retry.")}</p>
         <button type="submit" class="button primary" data-experience-control="prepareReplacement" aria-disabled=${String(this.#busy)} ?disabled=${this.#buttonDisabled(this.#busy, "prepareReplacement")}>${this.i18n.t("model3d.replacement.prepare", "Prepare one replacement")}</button></form>` : nothing}
-      ${available && state?.permitted.renewPreparation && (state.sceneRenewal || state.videoRenewal) ? html`<form class="experience-admission" data-experience-action="renewPreparation" @submit=${(event: SubmitEvent) => this.#renewPreparation(event)}>
+      ${available && state?.permitted.renewPreparation && (state.sceneRenewal || state.videoRenewal || state.model3dRenewal) ? html`<form class="experience-admission" data-experience-action="renewPreparation" @submit=${(event: SubmitEvent) => this.#renewPreparation(event)}>
         <dl><div><dt>${this.i18n.system("Document")}</dt><dd>${this.i18n.system("Retained")}</dd></div>
           <div><dt>${this.i18n.system("Generation calls")}</dt><dd>0</dd></div>
           <div><dt>${this.i18n.system("Maximum cost")}</dt><dd>$0</dd></div>

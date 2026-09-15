@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { model3dReplacementSuccessor, model3dReplacementCycleMatches, model3dReplacementCommandKey,
   parseModel3dReplacementPredecessor, model3dMayPrepareReplacement } from '../worker/experience-model3d-replacement.ts';
+import { scenePreparationSuccessor, scenePreparationCycleMatches, scenePreparationCommandKey } from '../worker/experience-scene-renewal.ts';
 
 const hash = 'a'.repeat(64), sha = `sha256:${hash}`;
 const root = { version: 1, draftId: `experience-draft-${hash}`, draftHash: sha, releaseHash: sha,
@@ -16,6 +17,26 @@ const eligible = { sourceCurrent: true, custodyCurrent: true, personalOwner: tru
   parentCallStatus: 'uncertain', parentCallUsedMicrousd: null, parentReservedMicrousd: 400000, costReservationActive: true,
   providerAccepted: true, retainedResultCount: 0, activeLeaseCount: 0, successorCount: 0, newMaximumMicrousd: 400000,
   newMaximumCalls: 1, now: Date.parse('2026-09-15T00:00:00.000Z'), retentionExpiresAt: '2026-09-16T00:00:00.000Z' };
+test('unpaid 3D quote epochs preserve one replacement and capture immutable inputs before await', async () => {
+  const replacementCycle = await model3dReplacementSuccessor(root, prior), binding = { ...root, replacementCycle };
+  const predecessor = { ordinal: 0, cycleId: null, confirmation: { ...receipt('child-confirm'), planRevisionId: 'child-plan' },
+    preflight: { ...receipt('child-preflight'), preflightId: 'child-preflight' }, sourceDigest: hash, requirementsDigest: hash };
+  const expected = await scenePreparationSuccessor(binding, predecessor), supplied = structuredClone(binding), previous = structuredClone(predecessor);
+  const pending = scenePreparationSuccessor(supplied, previous);
+  supplied.draftId = 'experience-draft-' + 'b'.repeat(64); previous.confirmation.planRevisionId = 'mutated';
+  assert.deepEqual(await pending, expected);
+  assert.equal(await scenePreparationCycleMatches(binding, predecessor, expected), true);
+  for (const phase of ['confirm', 'preflight', 'authorize', 'run']) assert.ok(scenePreparationCommandKey(expected, phase).length <= 160);
+  assert.equal(expected.output, 'model3d'); assert.equal(Object.isFrozen(expected.predecessor.confirmation), true);
+  await assert.rejects(scenePreparationSuccessor(root, predecessor), 'root original cannot renew as an unpaid replacement');
+  let reads = 0;
+  const getter = structuredClone(binding); Object.defineProperty(getter, 'replacementCycle', { enumerable: true, get() { reads++; return replacementCycle; } });
+  const hidden = structuredClone(predecessor); Object.defineProperty(hidden, 'hidden', { value: true });
+  await assert.rejects(scenePreparationSuccessor(getter, predecessor));
+  await assert.rejects(scenePreparationSuccessor(binding, hidden));
+  await assert.rejects(scenePreparationSuccessor(binding, { ...predecessor, [Symbol('authority')]: true }));
+  assert.equal(reads, 0);
+});
 test('child continuation retains its fixed deadline, not a sliding preparation runway', () => {
   const start = eligible.now, childDeadlineMs = start + 15 * 60000, retentionExpiresAt = new Date(start + 16 * 60000).toISOString();
   assert.equal(model3dMayPrepareReplacement({ ...eligible, retentionExpiresAt }), true);

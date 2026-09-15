@@ -1,7 +1,7 @@
 import { readVideoExecutionOffer } from "../src/model/output-video-offer.ts";
 import { model3dMiniAppCostApprovalMatches, model3dMiniAppAttemptMatches, type Model3dMiniAppCostPreview } from "../src/model/model3d-mini-app-consent.ts";
 import { model3dReplacementSuccessor } from "./experience-model3d-replacement.ts";
-import { captureModel3dReplacementParent, model3dReplacementIndexAssertion } from "./experience-model3d-replacement-proof.ts";
+import { captureModel3dReplacementParent, model3dLineageIndexAssertions } from "./experience-model3d-replacement-proof.ts";
 import { readOutputModel3dPayload } from "./output-model3d-execution.ts";
 import { experienceModel3dOutputContract } from "./experience-model3d-recipe.ts";
 import { prepareExperienceModel3dReference } from "./experience-model3d-reference-source.ts";
@@ -15,6 +15,8 @@ import { sceneMiniAppCostApprovalMatches } from "../src/model/scene-mini-app-con
 import { readOutputScenePayload } from "./output-scene-preflight-contract.ts";
 import { outputScenePreparationIdentity } from "./output-scene-source.ts";
 import { outputVideoPreparationIdentity } from "./output-video-source.ts";
+import { outputModel3dPreparationIdentity } from "./output-model3d-source.ts";
+import { model3dRenewalNoExecutionAssertion } from "./experience-model3d-renewal-proof.ts";
 import { scenePreparationSuccessor } from "./experience-scene-renewal.ts";
 import { sceneRenewalIndexAssertion, sceneRenewalNoExecutionAssertion, sceneRenewalWindowAssertion, sceneRenewalPredecessorAssertion } from "./experience-scene-renewal-proof.ts";
 import { SHORT_STORY_NARRATIVE_CONTRACT } from "../src/model/output-narrative-contract.ts";
@@ -247,7 +249,7 @@ async function load(request: Request, env: WorkerEnv, draftId: string, permissio
   // immutable index/event associations survive through each later native batch.
   trusted.sourceAssertions.push(...lineage.witnesses.map(value => outputCommandReceiptAssertion(trusted.scope, value.receipt)));
   if (binding.output === "scene" || binding.output === "video") trusted.sourceAssertions.push(sceneRenewalIndexAssertion(trusted.scope, binding.draftId, lineage.cycleCommandKeys, binding.output));
-  if (binding.output === "model3d") trusted.sourceAssertions.push(model3dReplacementIndexAssertion(trusted.scope, binding.draftId, lineage.cycleCommandKeys));
+  if (binding.output === "model3d") trusted.sourceAssertions.push(...model3dLineageIndexAssertions(trusted.scope, binding.draftId, lineage.cycleCommandKeys));
   validateManagedRequirement(loaded);
   const sourceMismatch = experienceSourceMismatch(plan, receipt, { documentId: trusted.projection.documentId, projectId: trusted.projection.projectId,
     documents: trusted.projection.documents, blocks: trusted.projection.libraryBlocks.filter(block => block.id !== recipe.spec.id),
@@ -279,18 +281,21 @@ async function confirmed(loaded: Loaded) {
  * lineage. No missing/failed read is interpreted as absence. These predicates
  * accompany the native confirmation transaction, not only this preview. */
 async function renewalOffer(loaded: Loaded) {
-  if (loaded.binding.output !== "scene" && loaded.binding.output !== "video" || loaded.originals.authorize || loaded.originals.run
+  if (loaded.binding.output !== "scene" && loaded.binding.output !== "video" && !(loaded.binding.output === "model3d" && loaded.binding.replacementCycle) || loaded.originals.authorize || loaded.originals.run
     || (loaded.binding.preparationCycle?.ordinal ?? 0) >= 8) return null;
   const predecessor = scenePreparationPredecessor(loaded.binding, loaded.originals);
   if (!predecessor) return null;
   const plan = await confirmed(loaded), root = loaded.rootBinding;
+  const { preparationCycle: _previousQuote, ...renewalRoot } = loaded.binding;
+  const model3dContract = root.output === "model3d" ? experienceModel3dOutputContract(loaded.retained.plan, root) : null;
   const contract = root.output === "scene" ? createSceneOutputContract({ draftId: root.draftId, draftHash: root.draftHash,
     releaseHash: root.releaseHash, requestHash: root.requestHash, sourceBindingHash: root.sourceBindingHash }) : null;
   const videoContract = root.output === "video" ? loaded.recipe.spec.deliverables[0]?.video_contract : null;
-  const identityFor = (confirmed: { revisionId: string; confirmedAt: string }) => videoContract
+  const identityFor = (confirmed: { revisionId: string; confirmedAt: string }) => model3dContract
+    ? outputModel3dPreparationIdentity(model3dContract, confirmed, loaded.recipe.targetId, loaded.binding.replacementCycle) : videoContract
     ? outputVideoPreparationIdentity(videoContract, confirmed, loaded.recipe.targetId)
     : contract ? outputScenePreparationIdentity(contract, confirmed, loaded.recipe.targetId) : Promise.resolve(null);
-  if (!plan || !contract && !videoContract) return null;
+  if (!plan || !contract && !videoContract && !model3dContract) return null;
   const original = await identityFor(plan);
   const now = Date.now();
   if (!original || Date.parse(original.expiresAt) > now || Date.parse(loaded.retained.expiresAt) <= now + 900_000) return null;
@@ -300,19 +305,37 @@ async function renewalOffer(loaded: Loaded) {
   const requestIds: string[] = [];
   for (const witness of loaded.lineage.witnesses) {
     if (witness.receipt.action !== "confirm") continue;
+    if (root.output === "model3d" && (!record(witness.envelope.experienceBinding) || !witness.envelope.experienceBinding.replacementCycle)) continue;
     const saved = witness.receipt.payload.confirmed_plan;
     if (!record(saved) || typeof saved.revisionId !== "string" || typeof saved.confirmedAt !== "string") error("experience_scene_renewal_lineage_unavailable", 410);
     const identity = await identityFor({ revisionId: saved.revisionId, confirmedAt: saved.confirmedAt });
     if (!identity) error("experience_scene_renewal_lineage_unavailable", 410);
     requestIds.push(identity.requestId);
   }
-  const guards = [sceneRenewalNoExecutionAssertion(loaded.trusted.scope, requestIds, loaded.binding.output),
+  const cycle = loaded.binding.replacementCycle;
+  const guards = [root.output === "model3d" && cycle
+    ? model3dRenewalNoExecutionAssertion(loaded.trusted.scope, requestIds, cycle.predecessor)
+    : sceneRenewalNoExecutionAssertion(loaded.trusted.scope, requestIds, loaded.binding.output as "scene" | "video"),
     sceneRenewalWindowAssertion(loaded.trusted.scope, root.draftId, original.expiresAt, loaded.retained.expiresAt),
     sceneRenewalPredecessorAssertion(loaded.trusted.scope, predecessor)];
-  const clear = await loaded.trusted.env.DB.prepare(`SELECT CASE WHEN ${guards.map(guard => `(${guard.sql})`).join(" AND ")} THEN 1 ELSE 0 END AS clear`)
-    .bind(...guards.flatMap(guard => guard.bindings ?? [])).first<{ clear: number }>();
+  const qualificationGuards = [...guards];
+  if (root.output === "model3d" && cycle) {
+    const evidence = await outputExperienceCommands.readGrantEvidence(loaded.trusted.env, loaded.trusted.scope, cycle.predecessor.grantId, true);
+    const slot = evidence.slots.find(slot => slot.slotId === cycle.predecessor.slotId);
+    const job = await loaded.trusted.env.DB.prepare("SELECT * FROM document_jobs WHERE job_id=? AND owner_id=? AND document_id=?")
+      .bind(cycle.predecessor.jobId, loaded.trusted.scope.ownerUserId, root.documentId).first<DocumentJobRow>();
+    if (evidence.slots.length !== 1 || !slot || !job) return null;
+    const parent = await captureModel3dReplacementParent(loaded.trusted.env, loaded.trusted.scope, slot, job, {
+      assertions: loaded.trusted.sourceAssertions, current: { sourceDigest: loaded.trusted.sourceDigest,
+        requirementsDigest: loaded.trusted.requirementsDigest, retentionExpiresAt: loaded.retained.expiresAt },
+    });
+    if (parent.checkpoint.providerRequestId !== cycle.predecessor.providerRequestId) return null;
+    guards.push(...parent.assertions);
+  }
+  const clear = await loaded.trusted.env.DB.prepare(`SELECT CASE WHEN ${qualificationGuards.map(guard => `(${guard.sql})`).join(" AND ")} THEN 1 ELSE 0 END AS clear`)
+    .bind(...qualificationGuards.flatMap(guard => guard.bindings ?? [])).first<{ clear: number }>();
   if (clear?.clear !== 1) return null;
-  return { predecessor, cycle: await scenePreparationSuccessor(root, predecessor), guards,
+  return { predecessor, cycle: await scenePreparationSuccessor(renewalRoot, predecessor), guards,
     disclosure: { predecessorPreflightId: predecessor.preflight.preflightId, expiredAt: original.expiresAt } };
 }
 
@@ -395,10 +418,11 @@ async function state(loaded: Loaded): Promise<ExperiencePreparedState> {
     if (plan && await trusted.env.DB.prepare("SELECT 1 AS present FROM output_operation_slots WHERE scope_key=? AND plan_revision_id=? LIMIT 1").bind(trusted.scope.key, plan.revisionId).first()) error("experience_output_unbound_operation", 410);
     if (preflight && (((binding.output === "storyboard" || binding.output === "video") ? !preflight.targets.every(target => target.available) : !result.permitted.authorize)
       || Date.parse(preflight.expiresAt) <= Date.now())) result.status = "unavailable";
-    if ((binding.output === "scene" || binding.output === "video") && result.status === "unavailable") {
+    if ((binding.output === "scene" || binding.output === "video" || binding.output === "model3d" && binding.replacementCycle) && result.status === "unavailable") {
       const renewal = await renewalOffer(loaded);
       if (renewal) {
         if (binding.output === "video") result.videoRenewal = renewal.disclosure;
+        else if (binding.output === "model3d") result.model3dRenewal = renewal.disclosure;
         else result.sceneRenewal = renewal.disclosure;
         result.permitted.renewPreparation = true;
       }
@@ -605,7 +629,7 @@ export async function handleExperienceOutput(request: Request, env: WorkerEnv, e
       if (Object.hasOwn(body, "renewal")) {
         diagnosticStage = "prepare_confirm_state";
         const input = body.renewal;
-        if (loaded.binding.output !== "scene" && loaded.binding.output !== "video" || !record(input) || Object.keys(input).length !== 2
+        if (loaded.binding.output !== "scene" && loaded.binding.output !== "video" && !(loaded.binding.output === "model3d" && loaded.binding.replacementCycle) || !record(input) || Object.keys(input).length !== 2
           || input.explicitRenewal !== true || typeof input.predecessorPreflightId !== "string") error("experience_scene_renewal_required", 403);
         const existing = loaded.binding.preparationCycle;
         if (existing?.predecessor.preflight.preflightId !== input.predecessorPreflightId) {
@@ -616,7 +640,8 @@ export async function handleExperienceOutput(request: Request, env: WorkerEnv, e
           // receipt/private witnesses and native source/head checks fence this
           // first confirmation together in commitOutputCommand's atomic batch.
           diagnosticStage = "prepare_confirm_execute";
-          await execute({ ...loaded, binding: { ...loaded.rootBinding, preparationCycle: offer.cycle },
+          const { preparationCycle: _priorQuote, ...renewalRoot } = loaded.binding;
+          await execute({ ...loaded, binding: { ...renewalRoot, preparationCycle: offer.cycle },
             originals: { save: loaded.originals.save } }, "confirm", { explicitRequirementsConfirmation: true }, bridge, executionContext);
           diagnosticStage = "prepare_confirm_reload";
           const refreshed = await load(request, env, draftId, "author"); if (refreshed instanceof Response) return refreshed; loaded = refreshed;

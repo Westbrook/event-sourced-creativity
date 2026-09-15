@@ -18,12 +18,13 @@ const { readRetainedOutputModel3d } = await import('../worker/output-model3d-ret
 const { outputAssertionStatements } = await import('../worker/output-requirements-ledger.ts');
 const { outputTerms } = await import('../src/experiences/output-terms.ts');
 const { readModel3dExecutionOffer } = await import('../src/model/output-model3d-offer.ts');
+const { ExperienceHostOperation } = await import('../src/experiences/host-operation.ts');
 
 const flush = async () => { for (let i = 0; i < 100; i++) await new Promise(resolve => setImmediate(resolve)); };
 const post = (path, body) => new Request('http://localhost' + path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
 // Full real HTTP intake/prepare/authorize/run and runner. Only remote provider
 // traffic and wall time are synthetic. Not evidence of a live paid generation.
-for (const renewalFailure of [false, true]) test(`native 3D survives slow provider: first renewal fault=${renewalFailure}`, async t => {
+for (const [renewalFailure, renewQuote] of [[false, false], [true, false], ...['success', 'late-authorization', 'parent-recovered', 'orphan-index', 'redacted-preflight', 'retention', 'grant', 'slot', 'job', 'provider-call', 'token', 'cost'].map(mode => [true, mode])]) test(`native 3D survives slow provider: first renewal fault=${renewalFailure}, renew unpaid quote=${renewQuote}`, async t => {
   const f = outputTestDatabase(':memory:'); t.after(() => f.sqlite.close());
   let posts = 0, renewals = 0, injected = false, monotonic = 0;
   t.mock.method(globalThis, 'fetch', () => { throw Error('provider called before deliberate Start'); });
@@ -80,6 +81,14 @@ for (const renewalFailure of [false, true]) test(`native 3D survives slow provid
     throw Error(`unexpected synthetic provider route: ${target}`);
   });
   t.mock.timers.enable({ apis: ['Date', 'setTimeout'], now: Date.now() });
+  if (renewQuote) {
+    // Keep SQLite's native date functions on the same synthetic clock as Node.
+    // SQL predicates/transactions are unchanged; a second real SQLite engine
+    // evaluates the builtins with only the literal 'now' argument substituted.
+    const clock = outputTestDatabase(); t.after(() => clock.sqlite.close());
+    for (const name of ['strftime', 'julianday', 'datetime']) f.sqlite.function(name, { varargs: true }, (...args) =>
+      clock.sqlite.prepare(`SELECT ${name}(${args.map(() => '?').join(',')}) AS value`).get(...args.map(value => value === 'now' ? new Date().toISOString() : value)).value);
+  }
   t.mock.method(performance, 'now', () => monotonic);
   let running;
   try {
@@ -118,7 +127,7 @@ for (const renewalFailure of [false, true]) test(`native 3D survives slow provid
       // SQLite's SQL clock is real rather than Node's mocked Date.
       f.sqlite.prepare('UPDATE output_execution_grants SET expires_at=? WHERE grant_id=?')
         .run('2000-01-01T00:00:00.000Z', admitted.original.grantId);
-      f.sqlite.prepare('UPDATE document_jobs SET expires_at=? WHERE job_id=?').run(new Date(Date.now() + 16 * 60000).toISOString(), jobId);
+      f.sqlite.prepare('UPDATE document_jobs SET expires_at=? WHERE job_id=?').run(new Date(Date.now() + (renewQuote === 'success' ? 60 : renewQuote ? 36 : 16) * 60000).toISOString(), jobId);
       const oldCall = structuredClone(f.sqlite.prepare('SELECT * FROM output_provider_calls WHERE slot_id=?').get(admitted.original.slotId));
       const oldCost = structuredClone(f.sqlite.prepare('SELECT * FROM cost_budget_reservations WHERE reservation_id=(SELECT cost_reservation_id FROM output_operation_slots WHERE slot_id=?)').get(admitted.original.slotId));
       const view = await handleExperienceOutput(new Request('http://localhost' + path), f.env, executionContext, outputDocumentExecutionBridge);
@@ -142,12 +151,12 @@ for (const renewalFailure of [false, true]) test(`native 3D survives slow provid
       assert.deepEqual(transport[1].body.replacement, { cycleId: replacement.cycleId, previousSlotId: replacement.previousSlotId, explicitReplacement: true });
       client.dispose();
       assert.equal(replacement.priorHeldMicrousd, 400000); assert.equal(replacement.cumulativeMaximumMicrousd, 800000);
-      const next = await send('prepare', { draftHash: plan.draftHash, explicitRequirementsConfirmation: true,
+      let next = await send('prepare', { draftHash: plan.draftHash, explicitRequirementsConfirmation: true,
         replacement: { cycleId: replacement.cycleId, previousSlotId: replacement.previousSlotId, explicitReplacement: true } });
       assert.equal(next.permitted.authorize, true, JSON.stringify(next));
       assert.equal(next.model3dCostPreview.version, 'model3d-mini-app-replacement-cost-v1');
       assert.ok(decodeExperienceBinding(next, identity), 'replacement quote is browser-decodable');
-      const termsOptions = { now: Date.now(), output: 'model3d', targetId: next.plan.targetId,
+      let termsOptions = { now: Date.now(), output: 'model3d', targetId: next.plan.targetId,
         expectedModel3dContract: readModel3dExecutionOffer(next.preflight.targets[0]).contract, model3dCostPreview: next.model3dCostPreview };
       assert.equal(outputTerms(next.preflight, termsOptions).available, true, 'actual replacement cost terms enable informed consent');
       for (const change of [{ ordinal: 0 }, { ordinal: 2 }, { previousSlotId: null }, { previousSlotId: 'other' }]) {
@@ -159,12 +168,121 @@ for (const renewalFailure of [false, true]) test(`native 3D survives slow provid
       const replayedPreparation = await send('prepare', { draftHash: plan.draftHash, explicitRequirementsConfirmation: true,
         replacement: { cycleId: replacement.cycleId, previousSlotId: replacement.previousSlotId, explicitReplacement: true } });
       assert.equal(replayedPreparation.preflight.id, next.preflight.id, 'lost preparation ACK reuses the same child');
+      if (renewQuote) {
+        const stale = structuredClone(next), financial = ['output_execution_grants', 'output_operation_slots', 'document_jobs', 'budget_reservations', 'cost_budget_reservations', 'output_provider_calls'];
+        const before = Object.fromEntries(financial.map(table => [table, structuredClone(f.sqlite.prepare(`SELECT * FROM ${table}`).all())]));
+        const oldCommands = structuredClone(f.sqlite.prepare('SELECT * FROM output_commands ORDER BY command_key').all());
+        const oldDraft = structuredClone(f.sqlite.prepare('SELECT * FROM private_content WHERE content_id=?').get(plan.draftId));
+        monotonic += 16 * 60000; t.mock.timers.tick(16 * 60000); await flush();
+        const expiredResponse = await handleExperienceOutput(new Request('http://localhost' + path), f.env, executionContext, outputDocumentExecutionBridge);
+        assert.equal(expiredResponse.status, 200, await expiredResponse.clone().text()); const expired = await expiredResponse.json();
+        assert.equal(expired.permitted.authorize, false); assert.equal(expired.permitted.renewPreparation, true, JSON.stringify(expired));
+        assert.equal(expired.model3dRenewal.predecessorPreflightId, stale.preflight.id);
+        assert.ok(decodeExperienceBinding(expired, identity));
+        const renewalBody = { draftHash: plan.draftHash, explicitRequirementsConfirmation: true,
+          renewal: { predecessorPreflightId: stale.preflight.id, explicitRenewal: true } };
+        if (renewQuote !== 'success') {
+          const originalBatch = f.DB.batch.bind(f.DB); let injectedRace = false;
+          const planCount = f.sqlite.prepare('SELECT COUNT(*) n FROM output_plan_revisions').get().n;
+          const preflightCount = f.sqlite.prepare('SELECT COUNT(*) n FROM output_preflights').get().n;
+          const quoteCount = f.sqlite.prepare("SELECT COUNT(*) n FROM output_commands WHERE command_key LIKE 'model3d-cycle-v1:%'").get().n;
+          const cloneRow = (table, changes) => { const row = { ...before[table][0], ...changes }, keys = Object.keys(row);
+            f.sqlite.prepare(`INSERT INTO ${table}(${keys.join(',')}) VALUES(${keys.map(() => '?').join(',')})`).run(...keys.map(key => row[key])); };
+          const addGrant = () => cloneRow('output_execution_grants', { grant_id: 'late-grant', preflight_id: stale.preflight.id, plan_revision_id: stale.plan.revisionId });
+          f.DB.batch = async statements => {
+            if (!injectedRace && statements.some(q => /^INSERT INTO output_commands\b/u.test(q.sql.trim()))) {
+              injectedRace = true;
+              if (renewQuote === 'late-authorization') f.sqlite.prepare("INSERT INTO output_commands SELECT scope_key,actor_user_id,'late-child-authorize',request_digest,'authorize',event_id,created_at FROM output_commands WHERE action='confirm' LIMIT 1").run();
+              else if (renewQuote === 'parent-recovered') f.sqlite.prepare("UPDATE document_jobs SET status='completed' WHERE job_id=?").run(jobId);
+              else if (renewQuote === 'orphan-index') f.sqlite.prepare("INSERT INTO output_commands SELECT scope_key,actor_user_id,?,request_digest,action,event_id,created_at FROM output_commands WHERE action='confirm' LIMIT 1")
+                .run('model3d-cycle-v1:' + plan.draftId.slice('experience-draft-'.length) + ':' + 'e'.repeat(64) + ':confirm');
+              else if (renewQuote === 'redacted-preflight') f.sqlite.prepare("UPDATE event_private_payloads SET redacted_at=? WHERE private_event_id=(SELECT event_id FROM output_commands WHERE command_key LIKE 'model3d-replace-v1:%' AND action='preflight')").run(new Date().toISOString());
+              else if (renewQuote === 'retention') f.sqlite.prepare('UPDATE private_content SET expires_at=? WHERE content_id=?').run(new Date(Date.now() + 60000).toISOString(), plan.draftId);
+              else if (renewQuote === 'grant') addGrant();
+              else if (renewQuote === 'slot') { addGrant(); cloneRow('output_operation_slots', { slot_id: 'late-slot', grant_id: 'late-grant', plan_revision_id: stale.plan.revisionId,
+                job_id: stale.model3dCostPreview.requestId, attempt_ordinal: 1, previous_slot_id: admitted.original.slotId, token_reservation_id: 'late-token', cost_reservation_id: 'late-cost' }); }
+              else if (renewQuote === 'job') cloneRow('document_jobs', { job_id: stale.model3dCostPreview.requestId, status: 'failed' });
+              else if (renewQuote === 'provider-call') cloneRow('output_provider_calls', { call_key: 'late-call', client_request_id: 'late-client', status: 'settled', used_microusd: 400000 });
+              else if (renewQuote === 'token') cloneRow('budget_reservations', { reservation_id: 'late-token', correlation_id: stale.model3dCostPreview.requestId, status: 'settled' });
+              else if (renewQuote === 'cost') cloneRow('cost_budget_reservations', { reservation_id: 'late-cost', correlation_id: stale.model3dCostPreview.requestId, status: 'settled' });
+            }
+            return originalBatch(statements);
+          };
+          const refused = await handleExperienceOutput(post(path + '/prepare', renewalBody), f.env, executionContext, outputDocumentExecutionBridge);
+          assert.equal(injectedRace, true); assert.notEqual(refused.status, 200);
+          assert.equal(f.sqlite.prepare('SELECT COUNT(*) n FROM output_plan_revisions').get().n, planCount);
+          assert.equal(f.sqlite.prepare('SELECT COUNT(*) n FROM output_preflights').get().n, preflightCount);
+          assert.equal(f.sqlite.prepare("SELECT COUNT(*) n FROM output_commands WHERE command_key LIKE 'model3d-cycle-v1:%'").get().n, quoteCount + (renewQuote === 'orphan-index' ? 1 : 0));
+          assert.equal(posts, 1); return;
+        }
+        const concurrent = await Promise.all([send('prepare', renewalBody).catch(() => null), send('prepare', renewalBody).catch(() => null)]);
+        assert.ok(concurrent.some(Boolean)); next = await send('prepare', renewalBody);
+        assert.equal(next.permitted.authorize, true, JSON.stringify(next)); assert.ok(decodeExperienceBinding(next, identity));
+        assert.notEqual(next.preflight.id, stale.preflight.id); assert.notEqual(next.plan.revisionId, stale.plan.revisionId);
+        assert.notEqual(next.model3dCostPreview.requestId, stale.model3dCostPreview.requestId);
+        assert.equal(next.model3dCostPreview.replacementCycleId, stale.model3dCostPreview.replacementCycleId);
+        assert.equal(next.model3dCostPreview.previousSlotId, stale.model3dCostPreview.previousSlotId);
+        assert.equal((await send('prepare', renewalBody)).preflight.id, next.preflight.id, 'unpaid renewal replay selects one epoch');
+        for (const table of financial) assert.deepEqual(structuredClone(f.sqlite.prepare(`SELECT * FROM ${table}`).all()), before[table], table + ' remains unchanged during renewal');
+        for (const row of oldCommands) assert.deepEqual(structuredClone(f.sqlite.prepare('SELECT * FROM output_commands WHERE command_key=?').get(row.command_key)), row);
+        assert.deepEqual(structuredClone(f.sqlite.prepare('SELECT * FROM private_content WHERE content_id=?').get(plan.draftId)), oldDraft);
+        assert.equal(f.sqlite.prepare("SELECT COUNT(*) n FROM output_commands WHERE action='save'").get().n, 1);
+        const oldApproval = await handleExperienceOutput(post(path + '/authorize', { draftHash: plan.draftHash, termsDigest: stale.preflight.termsDigest,
+          maximumMicrousd: stale.preflight.maximumMicrousd, explicitAuthorization: true,
+          model3dCostConsent: { ...stale.model3dCostPreview, confirmed: true, providerTransferConfirmed: true } }), f.env, executionContext, outputDocumentExecutionBridge);
+        assert.notEqual(oldApproval.status, 200, 'old cost consent cannot authorize a fresh quote');
+        assert.equal(posts, 1);
+        const firstRenewal = next;
+        monotonic += 16 * 60000; t.mock.timers.tick(16 * 60000); await flush();
+        const secondBody = { ...renewalBody, renewal: { predecessorPreflightId: firstRenewal.preflight.id, explicitRenewal: true } };
+        next = await send('prepare', secondBody);
+        assert.equal(next.permitted.authorize, true); assert.notEqual(next.preflight.id, firstRenewal.preflight.id);
+        assert.equal(next.model3dCostPreview.replacementCycleId, firstRenewal.model3dCostPreview.replacementCycleId);
+        assert.equal((await send('prepare', secondBody)).preflight.id, next.preflight.id);
+        for (const table of financial) assert.deepEqual(structuredClone(f.sqlite.prepare(`SELECT * FROM ${table}`).all()), before[table]);
+        termsOptions = { ...termsOptions, now: Date.now(), model3dCostPreview: next.model3dCostPreview };
+      }
       monotonic += 120000; t.mock.timers.tick(120000); await flush();
       const child = await send('authorize', { draftHash: plan.draftHash, termsDigest: next.preflight.termsDigest,
         maximumMicrousd: next.preflight.maximumMicrousd, explicitAuthorization: true,
         model3dCostConsent: { ...next.model3dCostPreview, confirmed: true, providerTransferConfirmed: true } });
       assert.equal(child.permitted.run, true, JSON.stringify(child));
       assert.equal(outputTerms(child.preflight, { ...termsOptions, now: Date.now(), grant: child.grant }).grantAvailable, true);
+      // Use the real native child quote/consent shape, not a generic fixture.
+      // Only these transport responses are synthetic; no additional admission
+      // or provider call is made by this foreground-lifetime regression.
+      for (const mode of ['delayed', 'timeout', 'withdraw']) {
+        const calls = [], reply = Promise.withResolvers();
+        const wire = value => { const result = Response.json(value); Object.defineProperty(result, 'url', { value: 'http://localhost' + path + (calls.length > 1 ? '/authorize' : '') }); return result; };
+        const transportClient = new ExperienceOutputBindingClient(identity, { origin: 'http://localhost', current: () => true,
+          request: async (url, init) => { calls.push({ url, init }); return calls.length === 1 ? wire(next) : reply.promise; } });
+        await transportClient.read(); const shown = transportClient.state;
+        const consent = { ...shown.model3dCostPreview, confirmed: true, providerTransferConfirmed: true };
+        const host = new ExperienceHostOperation(() => transportClient.dispose(), undefined, { action: 'authorize', output: 'model3d' });
+        const pending = host.wait(transportClient.command('authorize', shown, undefined, undefined, consent));
+        monotonic += 20027; t.mock.timers.tick(20027); await flush();
+        assert.equal(host.current(), true); assert.equal(transportClient.pending, true); assert.equal(calls[1].init.signal.aborted, false);
+        monotonic += 24973; t.mock.timers.tick(24973); await flush();
+        assert.equal(transportClient.pending, true);
+        await transportClient.command('authorize', shown, undefined, undefined, consent);
+        assert.equal(calls.length, 2, 'pending authorization cannot duplicate POST');
+        assert.deepEqual(JSON.parse(calls[1].init.body).model3dCostConsent, consent);
+        if (mode === 'delayed') { reply.resolve(wire(child)); assert.equal((await pending).status, 'authorized'); }
+        else {
+          if (mode === 'withdraw') transportClient.dispose();
+          else { monotonic += 75000; t.mock.timers.tick(75000); }
+          await pending; assert.equal(calls[1].init.signal.aborted, true);
+          const stopped = structuredClone(transportClient.state); reply.resolve(wire(child)); await flush();
+          assert.deepEqual(transportClient.state, stopped, 'late response cannot revive expired or withdrawn authorization');
+        }
+        host.finish(); transportClient.dispose();
+        assert.deepEqual(calls.map(call => call.init.method), ['GET', 'POST'], 'no automatic Run or repeat');
+      }
+      const passiveCalls = [];
+      const passive = new ExperienceOutputBindingClient(identity, { origin: 'http://localhost', current: () => true,
+        request: async (_url, init) => { passiveCalls.push(init); return new Promise(() => {}); } });
+      const passiveRead = passive.read(); monotonic += 20000; t.mock.timers.tick(20000); await passiveRead;
+      assert.equal(passiveCalls[0].signal.aborted, true); assert.equal(passiveCalls.length, 1); passive.dispose();
       assert.notEqual(child.original.grantId, admitted.original.grantId);
       assert.equal(posts, 1, 'replacement authorization is unpaid');
       assert.deepEqual(structuredClone(f.sqlite.prepare('SELECT * FROM output_provider_calls WHERE slot_id=?').get(admitted.original.slotId)), oldCall);
@@ -203,6 +321,11 @@ for (const renewalFailure of [false, true]) test(`native 3D survives slow provid
         finally { f.sqlite.exec('ROLLBACK TO retained_negative'); f.sqlite.exec('RELEASE retained_negative'); }
       }
       await read(); assert.equal(posts, 2, 'retained reads never regenerate');
+      if (renewQuote) {
+        const refused = await handleExperienceOutput(post(path + '/prepare', { draftHash: plan.draftHash, explicitRequirementsConfirmation: true,
+          renewal: { predecessorPreflightId: next.preflight.id, explicitRenewal: true } }), f.env, executionContext, outputDocumentExecutionBridge);
+        assert.notEqual(refused.status, 200, 'settled child cannot renew into another paid attempt'); assert.equal(posts, 2);
+      }
     }
   } finally { releaseStatus.resolve(); t.mock.timers.reset(); if (running) await running.catch(() => {}); await flush(); }
 });

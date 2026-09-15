@@ -27,17 +27,17 @@ export async function experienceOutputBinding(plan: PlanIdentity): Promise<Exper
 }
 export async function experienceOutputCommandKey(binding: ExperienceOutputBinding, stage: ExperienceOutputStage) {
   if (!stages.includes(stage)) throw new Error("experience_output_stage_invalid");
+  if (Object.hasOwn(binding, "preparationCycle")) {
+    const { preparationCycle: cycle, ...root } = binding;
+    if (!["scene", "video", "model3d"].includes(binding.output) || stage === "save" || !cycle
+      || !await scenePreparationCycleMatches(root, cycle.predecessor, cycle)) throw new Error("experience_scene_renewal_lineage_unavailable");
+    return scenePreparationCommandKey(cycle, stage);
+  }
   if (Object.hasOwn(binding, "replacementCycle")) {
     const { replacementCycle: cycle, ...root } = binding;
     if (binding.output !== "model3d" || stage === "save" || !cycle
       || !await model3dReplacementCycleMatches(root, cycle)) throw new Error("experience_model3d_replacement_lineage_unavailable");
     return model3dReplacementCommandKey(cycle, stage);
-  }
-  if (Object.hasOwn(binding, "preparationCycle")) {
-    const { preparationCycle: cycle, ...root } = binding;
-    if (!["scene", "video"].includes(binding.output) || stage === "save" || !cycle
-      || !await scenePreparationCycleMatches(root, cycle.predecessor, cycle)) throw new Error("experience_scene_renewal_lineage_unavailable");
-    return scenePreparationCommandKey(cycle, stage);
   }
   // Deliberately omit mutable content, release, quote and client mutation IDs.
   // A changed envelope cannot escape this one logical-intake stage fence.

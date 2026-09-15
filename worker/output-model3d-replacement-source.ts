@@ -2,7 +2,7 @@ import { canonicalJson } from "../src/experiences/compiler.ts";
 import { readExperienceOutputLineage } from "./experience-output-originals.ts";
 import { outputCommandReceiptAssertion } from "./output-command-core.ts";
 import { outputSlotFromRow, OutputConflictError } from "./output-requirements-ledger.ts";
-import { captureModel3dReplacementParent, model3dReplacementIndexAssertion } from "./experience-model3d-replacement-proof.ts";
+import { captureModel3dReplacementParent, model3dLineageIndexAssertions } from "./experience-model3d-replacement-proof.ts";
 import type { ExperienceOutputBinding } from "./experience-output-binding.ts";
 import type { OutputBridgeTargetInput } from "./output-requirements-api.ts";
 import type { DocumentJobRow } from "./document-jobs-api.ts";
@@ -24,7 +24,7 @@ export async function resolveModel3dReplacementSource(input: OutputBridgeTargetI
   if (!row || !job) return fail();
   const assertions = [...(input.sourceAssertions ?? []),
     ...lineage.witnesses.map(value => outputCommandReceiptAssertion(input.scope, value.receipt)),
-    model3dReplacementIndexAssertion(input.scope, root.draftId, lineage.cycleCommandKeys)];
+    ...model3dLineageIndexAssertions(input.scope, root.draftId, lineage.cycleCommandKeys)];
   const childJobId = typeof lineage.originals.authorize?.receipt.payload.authorized_targets === "object"
     ? (lineage.originals.authorize?.receipt.payload.authorized_targets as Array<{ job_id?: string }>)?.[0]?.job_id : undefined;
   const parent = await captureModel3dReplacementParent(input.env, input.scope, outputSlotFromRow(input.scope.key, row), job, {

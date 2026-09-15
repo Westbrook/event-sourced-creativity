@@ -1,5 +1,6 @@
 import { canonicalJson, digest, freeze } from "../src/experiences/compiler.ts";
 import type { ExperienceOutputBinding } from "./experience-output-binding.ts";
+import { model3dReplacementCycleMatches } from "./experience-model3d-replacement.ts";
 
 /** Immutable lineage only. These values are not financial or write authority. */
 export type ScenePreparationPredecessor = Readonly<{
@@ -13,7 +14,7 @@ export type ScenePreparationPredecessor = Readonly<{
 export type ScenePreparationCycle = Readonly<{
   version: 1;
   /** Absent for legacy Scene cycles so their immutable shape stays unchanged. */
-  output?: "video";
+  output?: "video" | "model3d";
   draftId: string;
   id: string;
   ordinal: number;
@@ -27,6 +28,19 @@ const text = (value: unknown) => typeof value === "string" && value.length > 0 &
 const record = (value: unknown): value is Record<string, unknown> => Boolean(value && typeof value === "object" && !Array.isArray(value));
 const exactKeys = (value: Record<string, unknown>, keys: readonly string[]) => Object.keys(value).length === keys.length
   && keys.every(key => Object.hasOwn(value, key));
+
+/** Snapshot identity before asynchronous hashing without invoking accessors. */
+function capture<T>(input: T, depth = 0): T {
+  if (input === null || typeof input === "string" || typeof input === "boolean" || typeof input === "number" && Number.isFinite(input)) return input;
+  if (depth > 8 || !input || typeof input !== "object" || ![Object.prototype, null].includes(Object.getPrototypeOf(input))) throw new Error("experience_scene_renewal_lineage_unavailable");
+  const fields = Object.getOwnPropertyDescriptors(input), keys = Reflect.ownKeys(fields), copy: Record<string, unknown> = {};
+  if (keys.length > 32) throw new Error("experience_scene_renewal_lineage_unavailable");
+  for (const key of keys) {
+    if (typeof key !== "string" || key === "__proto__" || !fields[key]?.enumerable || !Object.hasOwn(fields[key]!, "value")) throw new Error("experience_scene_renewal_lineage_unavailable");
+    copy[key] = capture(fields[key]!.value, depth + 1);
+  }
+  return freeze(copy) as T;
+}
 
 function validPredecessor(value: unknown): value is ScenePreparationPredecessor {
   if (!record(value) || !exactKeys(value, ["ordinal", "cycleId", "confirmation", "preflight", "sourceDigest", "requirementsDigest"])
@@ -47,17 +61,22 @@ function validPredecessor(value: unknown): value is ScenePreparationPredecessor 
  * and concurrent requests. A server transaction must still fence the predecessor
  * and all custody/never-authorized witnesses when appending its first receipt. */
 export async function scenePreparationSuccessor(binding: ExperienceOutputBinding, predecessor: ScenePreparationPredecessor): Promise<ScenePreparationCycle> {
-  if (!record(binding) || !exactKeys(binding, ["version", "draftId", "draftHash", "releaseHash", "requestHash", "sourceBindingHash", "output", "projectId", "documentId", "streamId"])
-    || binding.version !== 1 || !["scene", "video"].includes(binding.output) || !validPredecessor(predecessor)) throw new Error("experience_scene_renewal_lineage_unavailable");
-  scenePreparationCyclePrefix(binding.draftId, binding.output as "scene" | "video");
+  binding = capture(binding); predecessor = capture(predecessor);
+  if (!record(binding) || !exactKeys(binding, ["version", "draftId", "draftHash", "releaseHash", "requestHash", "sourceBindingHash", "output", "projectId", "documentId", "streamId", ...(binding.output === "model3d" ? ["replacementCycle"] : [])])
+    || binding.version !== 1 || !["scene", "video", "model3d"].includes(binding.output) || !validPredecessor(predecessor)) throw new Error("experience_scene_renewal_lineage_unavailable");
+  if (binding.output === "model3d") {
+    const { replacementCycle, ...root } = binding;
+    if (!replacementCycle || !await model3dReplacementCycleMatches(root, replacementCycle)) throw new Error("experience_scene_renewal_lineage_unavailable");
+  }
+  scenePreparationCyclePrefix(binding.draftId, binding.output as "scene" | "video" | "model3d");
   const id = (await digest({ namespace: `experience-${binding.output}-preparation-cycle@1`, binding, predecessor })).slice(7);
-  return freeze({ version: 1, ...(binding.output === "video" ? { output: "video" as const } : {}), draftId: binding.draftId, id, ordinal: predecessor.ordinal + 1, predecessor: structuredClone(predecessor) });
+  return freeze({ version: 1, ...(binding.output === "video" || binding.output === "model3d" ? { output: binding.output } : {}), draftId: binding.draftId, id, ordinal: predecessor.ordinal + 1, predecessor: structuredClone(predecessor) });
 }
 
 /** Prefix scopes indexed orphan detection to this draft, not other Documents
  * sharing the same personal project output scope. */
-export function scenePreparationCyclePrefix(draftId: string, output: "scene" | "video" = "scene"): string {
-  if (!["scene", "video"].includes(output) || typeof draftId !== "string" || !/^experience-draft-[a-f0-9]{64}$/u.test(draftId)) throw new Error("experience_scene_renewal_lineage_unavailable");
+export function scenePreparationCyclePrefix(draftId: string, output: "scene" | "video" | "model3d" = "scene"): string {
+  if (!["scene", "video", "model3d"].includes(output) || typeof draftId !== "string" || !/^experience-draft-[a-f0-9]{64}$/u.test(draftId)) throw new Error("experience_scene_renewal_lineage_unavailable");
   return `${output}-cycle-v1:${draftId.slice("experience-draft-".length)}:`;
 }
 
@@ -71,7 +90,7 @@ export function scenePreparationCommandKey(cycle: ScenePreparationCycle, stage: 
 }
 
 export async function scenePreparationCycleMatches(binding: ExperienceOutputBinding, predecessor: ScenePreparationPredecessor, candidate: unknown): Promise<boolean> {
-  try { return canonicalJson(await scenePreparationSuccessor(binding, predecessor)) === canonicalJson(candidate); }
+  try { const captured = capture(candidate); return canonicalJson(await scenePreparationSuccessor(binding, predecessor)) === canonicalJson(captured); }
   catch { return false; }
 }
 

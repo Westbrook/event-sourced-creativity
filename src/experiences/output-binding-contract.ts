@@ -21,6 +21,7 @@ export type ExperienceNativeState = {
   sceneCostPreview?: SceneMiniAppCostPreview | null;
   sceneRenewal?: { predecessorPreflightId: string; expiredAt: string };
   videoRenewal?: { predecessorPreflightId: string; expiredAt: string };
+  model3dRenewal?: { predecessorPreflightId: string; expiredAt: string };
   /** Audio-only original cost and source-transfer disclosure. */
   audioCostPreview?: AudioMiniAppCostPreview | null;
   model3dCostPreview?: Model3dMiniAppCostPreview | null;
