@@ -1,5 +1,6 @@
 // Local test entry only. The runner resolves these imports against its pinned
 // canonical source root. No product HTTP route or authentication is simulated.
+import { outputModel3dRecoveryAvailable } from './worker/output-model3d-recovery-availability.ts';
 import { executeOutputModel3dRecovery } from './worker/output-model3d-recovery.ts';
 import { claimOutputModel3dRecoveryLease } from './worker/output-model3d-recovery-lease.ts';
 import { outputModel3dRecoveryStorage } from './worker/output-model3d-recovery-completion.ts';
@@ -12,14 +13,14 @@ const must = (value, label) => { if (!value) throw Error('fixture_assertion:' + 
 const labels = new Set(['Complete', 'Source', 'Race', 'Lease']);
 function environment(bindings, label) {
   if (!environments.has(label)) {
-    const real = bindings[label], metrics = { queries: 0, batches: 0, puts: 0, conditionalPuts: 0, deletes: 0, collisionKey: null };
+    const real = bindings[label], metrics = { queries: 0, batches: 0, puts: 0, conditionalPuts: 0, deletes: 0, collisionKey: null, queryFailures: [] };
     const native = new WeakMap(), descriptions = new WeakMap();
     const statement = (inner, sql, values = []) => {
       const wrapped = new Proxy(inner, { get(target, key) {
         if (key === 'bind') return (...values) => { must(values.length <= 100 && !values.includes(undefined), 'binding_limit'); return statement(target.bind(...values), sql, values); };
         if (['run', 'all', 'first', 'raw'].includes(String(key))) return async (...args) => {
           metrics.queries++; try { return await target[key](...args); }
-          catch (error) { throw Error(String(error) + ' statement=' + sql); }
+          catch (error) { metrics.queryFailures.push({ sql, error: String(error) }); throw Error(String(error) + ' statement=' + sql); }
         };
         const value = Reflect.get(target, key, target); return typeof value === 'function' ? value.bind(target) : value;
       } });
@@ -65,13 +66,14 @@ function environment(bindings, label) {
 
 export default { async fetch(request, bindings) {
   const [action, label] = new URL(request.url).pathname.slice(1).split('/');
-  if (request.method !== 'GET' || !labels.has(label) || !['warm', 'recover', 'cleanup', 'lease-retention'].includes(action))
+  if (request.method !== 'GET' || !labels.has(label) || !['warm', 'available', 'recover', 'cleanup', 'lease-retention'].includes(action))
     return new Response('Unknown local test action', { status: 404 });
   const f = JSON.parse(bindings.FIXTURE), { env, metrics } = environment(bindings, label);
-  const before = { ...metrics };
+  const before = { ...metrics, queryFailureCount: metrics.queryFailures.length };
   const counters = () => ({ queries: metrics.queries - before.queries, batches: metrics.batches - before.batches,
     puts: metrics.puts - before.puts, conditionalPuts: metrics.conditionalPuts - before.conditionalPuts,
-    deletes: metrics.deletes - before.deletes, collisionKey: metrics.collisionKey });
+    deletes: metrics.deletes - before.deletes, collisionKey: metrics.collisionKey,
+    queryFailures: metrics.queryFailures.slice(before.queryFailureCount) });
   try {
     if (action === 'warm') {
       // Actual request-local initialization, kept separate from service counts.
@@ -80,6 +82,11 @@ export default { async fetch(request, bindings) {
     }
     const job = await env.DB.prepare('SELECT * FROM document_jobs WHERE job_id=?').bind(f.jobId).first();
     must(job, 'original_job_missing'); job.output_slot_id = f.slot.slotId;
+    if (action === 'available') {
+      // Actual read-only advisory, not the service's source/authority proof.
+      const value = await outputModel3dRecoveryAvailable(env, f.scope, f.slot, job);
+      return Response.json({ ok: true, value, counters: counters() });
+    }
     if (action === 'cleanup') {
       const value = await reconcileOutputNativeStorage(env, { ownerUserId: f.scope.ownerUserId, personalOnly: true });
       return Response.json({ ok: true, value, counters: counters() });

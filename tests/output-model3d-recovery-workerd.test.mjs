@@ -131,6 +131,17 @@ test('actual local workerd + D1 + R2 recovery, lease/cleanup and conditional-cre
       const warm = await invoke('warm', label); assert.equal(warm.ok, true, JSON.stringify(warm));
     }
     const complete = databases.Complete;
+    const beforeAdvisory = await rowsSnapshot(complete, exported.tables), advisoryRequests = requests.length;
+    const advisory = await invoke('available', 'Complete');
+    assert.equal(advisory.ok, true, JSON.stringify(advisory));
+    assert.equal(advisory.value, true, 'Actual D1 advisory must expose this retained accepted original: ' + JSON.stringify(advisory));
+    assert.deepEqual(advisory.counters.queryFailures, []);
+    assert.equal(advisory.counters.queries, 2); assert.equal(advisory.counters.batches, 0);
+    assert.equal(advisory.counters.puts, 0); assert.equal(advisory.counters.deletes, 0);
+    assert.equal(requests.length, advisoryRequests);
+    assert.deepEqual(await rowsSnapshot(complete, exported.tables), beforeAdvisory, 'Advisory cannot claim, settle, acknowledge or publish');
+    // Do not require the advisory to reject the later synthetic source veto;
+    // only the independently guarded recovery service is authority for effects.
     const done = await invoke('recover', 'Complete'); assert.equal(done.ok, true, JSON.stringify(done));
     assert.equal(done.value.status, 'completed'); assert.equal(done.counters.puts, 1); assert.equal(done.counters.conditionalPuts, 1);
     assert(done.counters.queries <= 1000, 'Actual dispatched D1 statements exceed paid invocation ceiling');
