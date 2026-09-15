@@ -62,6 +62,41 @@ const replacements = [
   ["new requirements and a freshly confirmed eligible plan", (s) => { s.requirementRevision = "requirements-2"; s.confirmedPlan.requirementsDigest = "requirements-2"; s.confirmedPlan.revisionId = "new-confirmed-plan"; }, false],
   ["source proof lost without digest changes", (s) => { s.sourceVerification.status = "unavailable"; s.sourceVerification.reasonCodes = ["context_source_evidence_unavailable"]; }, false],
 ];
+test("blocked existing-attempt preflight preserves its reason without allocating or authorizing a new attempt", async () => {
+  const f = await fixture();
+  f.preflight.operationAttempts = {};
+  f.preflight.maximumMicrousd = 0; f.preflight.maximumCalls = 0;
+  Object.assign(f.preflight.targets[0], { available: false, reasonCode: "output_existing_operation_requires_recovery",
+    reason: "This target already has an authorized operation.", provider: null, model: null, route: null,
+    maximumMicrousd: 0, maximumCalls: 0, transferCode: "output_transfer_none_authorized" });
+  const pending = f.start(); f.resolve(); await pending;
+  const disclosure = region(f.controller.render(), 'class="output-provider-disclosure"');
+  assert.ok(disclosure);
+  assert.ok(!JSON.stringify(f.controller.render()).includes("output.delivery.preflightRetired"));
+  assert.ok(JSON.stringify(disclosure).includes("output.delivery.message.existingOperation"));
+  assert.equal(binding(disclosure, "?disabled"), true);
+  eventHandlers(disclosure, "change")[0].call(f.controller, { target: { checked: true } });
+  await handler(disclosure, "submit", "#authorize").call(f.controller, submitEvent());
+  assert.equal(f.requests.length, 1, "showing a refusal cannot dispatch authorize or run");
+});
+
+test("available target without an attempt allocation remains rejected", async () => {
+  const f = await fixture(); f.preflight.operationAttempts = {};
+  const pending = f.start(); f.resolve(); await pending;
+  assert.ok(!templates(f.controller.render()).some((part) => part.strings.some((text) => text.includes('class="output-provider-disclosure"'))));
+  assert.ok(JSON.stringify(f.controller.render()).includes("output.delivery.preflightRetired"));
+  assert.equal(f.requests.length, 1);
+});
+
+test("blocked offer still rejects a mismatched supplied attempt", async () => {
+  const f = await fixture(); f.preflight.targets[0].available = false;
+  Object.values(f.preflight.operationAttempts)[0].previousSlotId = "wrong-predecessor";
+  const pending = f.start(); f.resolve(); await pending;
+  assert.ok(!templates(f.controller.render()).some((part) => part.strings.some((text) => text.includes('class="output-provider-disclosure"'))));
+  assert.ok(JSON.stringify(f.controller.render()).includes("output.delivery.preflightRetired"));
+  assert.equal(f.requests.length, 1);
+});
+
 for (const alternative of [false, true]) for (const [name, mutate, mayOffer] of replacements) {
   test(`actual ${alternative ? "alternative" : "initial"} preflight reply after ${name}`, async () => {
     const f = await fixture({ alternative });
@@ -120,6 +155,35 @@ function publishTargets(f, count) {
   f.snapshots.set("doc-a", current); f.controller.willUpdate(new Map());
   return current;
 }
+
+for (const missingAvailableAttempt of [false, true]) test(`mixed blocked offer preserves only valid available-attempt proof (missing=${missingAvailableAttempt})`, async () => {
+  const f = await fixture(), current = publishTargets(f, 2), preflight = offerForAll(current, current.confirmedPlan.plan.targets);
+  const [available, blocked] = preflight.targets;
+  blocked.available = false; blocked.reasonCode = "output_existing_operation_requires_recovery";
+  blocked.transferCode = "output_transfer_none_authorized";
+  blocked.provider = null; blocked.model = null; blocked.route = null;
+  blocked.maximumMicrousd = 0; blocked.maximumCalls = 0;
+  delete preflight.operationAttempts[blocked.targetId];
+  if (missingAvailableAttempt) delete preflight.operationAttempts[available.targetId];
+  preflight.maximumMicrousd = available.maximumMicrousd; preflight.maximumCalls = available.maximumCalls;
+  const pending = f.start(); await f.waitForRequest(pending);
+  f.pending.resolve({ status: "saved", body: { snapshot: current, command: { preflight } } }); await pending;
+  const disclosure = templates(f.controller.render()).find((part) => part.strings.some((text) => text.includes('class="output-provider-disclosure"')));
+  if (missingAvailableAttempt) {
+    assert.equal(disclosure, undefined);
+    assert.ok(JSON.stringify(f.controller.render()).includes("output.delivery.preflightRetired"));
+  } else {
+    assert.ok(disclosure);
+    assert.ok(JSON.stringify(disclosure).includes("output.delivery.message.existingOperation"));
+    const disabledValues = disclosure.values.filter((_value, index) => disclosure.strings[index].trimEnd().endsWith("?disabled="));
+    assert.deepEqual(disabledValues, [true, true], "both acknowledgement and paid submission are disabled");
+    eventHandlers(disclosure, "change")[0].call(f.controller, { target: { checked: true } });
+    const form = {}, button = new f.FakeButton(form);
+    eventHandlers(disclosure, "click")[0].call(f.controller, { type: "click", isTrusted: true, currentTarget: button, defaultPrevented: false });
+    await handler(disclosure, "submit", "#authorize").call(f.controller, { ...submitEvent(), isTrusted: true, currentTarget: form, submitter: button });
+  }
+  assert.equal(f.requests.length, 1, "mixed refusal cannot arm or dispatch paid work");
+});
 
 test("256 selected targets can be checked without changing the complete assignment", async () => {
   const f = await fixture(), current = publishTargets(f, 256), before = structuredClone(current);

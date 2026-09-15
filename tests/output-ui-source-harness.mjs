@@ -78,6 +78,8 @@ export async function loadController(Base, bindings = {}) {
   const deliveryContract = await import(pathToFileURL(resolve(sourceRoot, "src/model/output-delivery-contract.ts")).href);
   const scopeAmendment = await import(pathToFileURL(resolve(sourceRoot, "src/model/output-scope-amendment.ts")).href);
   const runtimeMessages = await import(pathToFileURL(resolve(sourceRoot, "src/components/design-system/locales/output-delivery-runtime-messages.ts")).href);
+  const reviewPreview = await import(pathToFileURL(resolve(sourceRoot, "src/model/output-review-preview.ts")).href);
+  const reviewPreviewMessages = await import(pathToFileURL(resolve(sourceRoot, "src/components/design-system/locales/output-review-preview-messages.ts")).href);
   let activation = {};
   try { activation = await import(pathToFileURL(resolve(sourceRoot, "src/components/output-direct-activation.ts")).href); }
   catch (error) { if (error?.code !== "ERR_MODULE_NOT_FOUND") throw error; }
@@ -123,6 +125,8 @@ export async function loadController(Base, bindings = {}) {
     ...deliveryContract,
     ...scopeAmendment,
     ...runtimeMessages,
+    ...reviewPreview,
+    ...reviewPreviewMessages,
     ...activation,
     ...bindings,
   };

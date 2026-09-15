@@ -765,6 +765,9 @@ export class FormaOutputRequirements extends FormaElement {
     const snapshot = this.#snapshot();
     const attemptsMatch = intent.targetIds.every((id) => {
       const attempt = preflight.operationAttempts?.[id];
+      // An already-attempted target is returned as unavailable without a new
+      // attempt allocation. Preserve that explanation; it is not a stale offer.
+      if (attempt === undefined && preflight.targets?.find((target) => target.targetId === id)?.available === false) return true;
       return attempt && Number.isSafeInteger(attempt.ordinal) && attempt.ordinal >= 0 && attempt.previousSlotId === intent.alternativeOfSlotId;
     });
     if (!snapshot || !this.#nativeIntentCurrent(intent, snapshot) || !this.#preflightMatchesScope(snapshot, preflight, intent.targetIds) || !attemptsMatch) {
@@ -1152,7 +1155,12 @@ export class FormaOutputRequirements extends FormaElement {
     const intent = this.#captureNativeIntent([...this.#selectedTargets]);
     if (!intent) return;
     const response = await this.#command({ action: "preflight", planRevisionId: plan.revisionId, targetIds: intent.targetIds });
-    if (response?.command.preflight && this.#adoptPreflight(response.command.preflight, intent)) this.#announce(this.#t("preflightReady", "Review the provider, source transfer, and maximum cost. Nothing has been generated."));
+    if (response?.command.preflight && this.#adoptPreflight(response.command.preflight, intent)) {
+      const preflight = response.command.preflight;
+      this.#announce(this.#preflightAvailable(preflight)
+        ? this.#t("preflightReady", "Review the provider, source transfer, and maximum cost. Nothing has been generated.")
+        : preflight.targets.filter((target) => target.available !== true).map((target) => this.#preflightReason(target)).join(" "));
+    }
   }
 
   #grantDisclosureCurrent(snapshot: OutputRequirementsSnapshot, grant: OutputRequirementsSnapshot["grants"][number]) {
@@ -2476,7 +2484,7 @@ export class FormaOutputRequirements extends FormaElement {
         <p>${this.#t("costCeiling", "Maximum {amount} across at most {calls} generation calls, including bounded repairs. Charges may remain even when validation fails.", { amount: this.#money(preflight.maximumMicrousd), calls: preflight.maximumCalls })}</p>
         <p>${this.#t("preflightExpires", "Offer and execution authorization deadline: {date}.", { date: this.#when(preflight.expiresAt) })}</p>
         <ul>${preflight.targets.map((offered) => html`<li><b dir="auto">${plan.plan.targets.find((target) => target.id === offered.targetId)?.label ?? this.#t("targetUnavailable", "Target unavailable")}</b><p>${offered.provider ?? this.#t("unavailable", "Unavailable")} ${offered.model ?? ""}</p><p>${this.#preflightReason(offered)}</p><p>${this.#sourceTransfer(offered)}</p>${this.#model3dDisclosure(offered)}<p>${this.#executionWindow(offered)}</p><p>${this.#t("targetCostLimit", "Target limit: {amount} across at most {calls} generation calls.", { amount: this.#money(offered.maximumMicrousd), calls: offered.maximumCalls })}</p></li>`)}</ul>
-        <form id=${`output-authorize-settings-${this.documentId}`} @submit=${(event: SubmitEvent) => event.preventDefault()}><label><input aria-label=${this.#controlName(this.#t("authorizeAcknowledgment", "I approve this source transfer and the disclosed aggregate spending limit for these targets."))} type="checkbox" .checked=${this.#authorizationAcknowledged} @change=${(event: Event) => { const current = this.#paidDecision("authorize"); if (!authorizeDecision || !current || outputPaidDecisionKey(authorizeDecision) !== outputPaidDecisionKey(current)) return; this.#authorizationAcknowledged = (event.target as HTMLInputElement).checked; this.#paidActivation.clear(); this.requestUpdate(); }}>${this.#t("authorizeAcknowledgment", "I approve this source transfer and the disclosed aggregate spending limit for these targets.")}</label></form>
+        <form id=${`output-authorize-settings-${this.documentId}`} @submit=${(event: SubmitEvent) => event.preventDefault()}><label><input aria-label=${this.#controlName(this.#t("authorizeAcknowledgment", "I approve this source transfer and the disclosed aggregate spending limit for these targets."))} type="checkbox" ?disabled=${!authorizeDecision} .checked=${this.#authorizationAcknowledged} @change=${(event: Event) => { const current = this.#paidDecision("authorize"); if (!authorizeDecision || !current || outputPaidDecisionKey(authorizeDecision) !== outputPaidDecisionKey(current)) return; this.#authorizationAcknowledged = (event.target as HTMLInputElement).checked; this.#paidActivation.clear(); this.requestUpdate(); }}>${this.#t("authorizeAcknowledgment", "I approve this source transfer and the disclosed aggregate spending limit for these targets.")}</label></form>
         <form @submit=${this.#authorize}><button aria-label=${this.#controlName(this.#t("authorize", "Authorize selected work"))} type="submit" data-output-paid-action="true" class="button primary" @click=${(event: MouseEvent) => this.#armPaidAction(event, authorizeDecision)} ?disabled=${!ready || !outputNativeReadiness(snapshot).allowed || !snapshot.permissions.canRequest || Boolean(this.#busy) || !this.#authorizationAcknowledged || !authorizeDecision || (!Number.isFinite(Date.parse(preflight.expiresAt)) || Date.parse(preflight.expiresAt) <= Date.now())}>${this.#t("authorize", "Authorize selected work")}</button></form>
       </section>` : nothing}
       ${snapshot.grants.map((grant) => {
