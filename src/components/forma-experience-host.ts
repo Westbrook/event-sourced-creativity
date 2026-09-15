@@ -825,7 +825,7 @@ export class FormaExperienceHost extends FormaElement {
   #rows(rows: readonly OutputTermsRow[]) {
     const model3d = this.#binding?.selection.output === "model3d";
     return html`<dl>${rows.map(row => html`<div><dt>${model3d ? this.i18n.system(row.label) : row.label}</dt><dd>${model3d && row.label === "After uncertain response" && row.value === "No automatic paid retry; a separately authorized replacement may be available"
-      ? this.i18n.t("model3d.replacement.retry", "No automatic paid retry; a separately authorized replacement may be available")
+      ? this.i18n.t("model3d.replacement.retry", "No automatic paid retry; a separately authorized replacement may be available.")
       : model3d && model3dTermIsInterfaceCopy(row) ? this.i18n.system(row.value) : row.value}</dd></div>`)}</dl>`;
   }
   #sceneLabels(): NativeRetainedSceneLabels {
@@ -872,7 +872,7 @@ export class FormaExperienceHost extends FormaElement {
       <p dir="auto"><strong>${this.i18n.system("Maximum generation calls")}: </strong>${this.i18n.number(summary.maximumGenerationCalls)} · ${this.i18n.system(summary.requests)}. <span>${this.i18n.system("Generation recipients")}: ${summary.recipients.map((recipient, index) => html`${index ? "; " : nothing}<bdi>${recipient.provider} · ${recipient.model}</bdi>`)}</span></p>
       ${summary.safety ? html`<p dir="auto"><strong>${this.i18n.system("Additional safety checks")}: </strong>${this.i18n.number(summary.safety.maximumChecks)} · <bdi>${summary.safety.provider} · ${summary.safety.model}</bdi> · ${this.i18n.system(summary.safety.input)}. ${this.i18n.system("Separate from generation calls; before image creation.")}</p>` : nothing}
       <p class="experience-consent-caveats" dir="auto">${summary.caveats.map((caveat, index) => html`${index ? " " : nothing}${state.output === "model3d" && caveat === "No automatic paid retry; a separately authorized replacement may be available"
-        ? this.i18n.t("model3d.replacement.retry", "No automatic paid retry; a separately authorized replacement may be available") : this.i18n.system(caveat)}`)}</p>
+        ? this.i18n.t("model3d.replacement.retry", "No automatic paid retry; a separately authorized replacement may be available.") : this.i18n.system(caveat)}`)}</p>
       ${deadline ? html`<p dir="auto"><strong>${this.i18n.system(summary.usage ? "Authorization deadline" : "Approval deadline")}: </strong><time datetime=${deadline}>${this.i18n.date(new Date(deadline), { dateStyle: "medium", timeStyle: "long" })}</time></p>` : nothing}
       ${summary.usage ? html`<p dir="auto">${this.i18n.system("Used spend")}: <bdi>${summary.usage.usedSpend}</bdi> · ${this.i18n.system("Unresolved exposure")}: <bdi>${summary.usage.unresolvedExposure}</bdi> · ${this.i18n.system("Pending calls")}: ${this.i18n.number(summary.usage.pendingCalls)}${summary.usage.differentPayer ? html` · ${this.i18n.system("Payer")}: <bdi>${summary.usage.payer}</bdi>` : nothing}</p>` : nothing}` : nothing}
     </section>`;
