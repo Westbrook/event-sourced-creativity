@@ -151,7 +151,7 @@ export function slidesRenewalNoExecutionAssertion(scope: OutputScope): OutputSql
           AND budget.actor='worker:policy' AND budget.client_id='server:document-job:render_document'
           AND budget.correlation_id=reservation.correlation_id
           AND requested.stream_id=job.stream_id AND requested.type='DocumentRenderRequested'
-          AND requested.actor='user:'||job.owner_id AND requested.client_id=budget.client_id
+          AND (requested.actor='user' OR requested.actor='user:'||job.owner_id) AND requested.client_id=budget.client_id
           AND requested.correlation_id=budget.correlation_id AND requested.sequence<budget.sequence
           AND CASE WHEN json_valid(budget.payload) AND json_valid(requested.payload) THEN
             json_extract(budget.payload,'$.operation')='document-render:slides'

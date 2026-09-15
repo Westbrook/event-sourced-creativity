@@ -77,14 +77,19 @@ test("ordinary other-Document Slides reservation requires immutable request and 
       INSERT INTO cost_budget_reservations VALUES('cost','actor','creative:actor','job:attempt:1','document-render:slides','settled','2026-09');`);
     const insert = db.prepare('INSERT INTO events VALUES(?,?,?,?,?,?,?,?,?)');
     insert.run('request', JSON.stringify({document_id:'other-document',artifact_kind:'slides',artifact_id:'artifact'}),
-      'creative:actor','DocumentRenderRequested',null,'user:actor','server:document-job:render_document','job:attempt:1',1);
+      'creative:actor','DocumentRenderRequested',null,'user','server:document-job:render_document','job:attempt:1',1);
     insert.run('budget', JSON.stringify({operation:'document-render:slides',artifact_kind:'slides',artifact_id:'artifact',reservation_id:'token',cost_reservation_id:'cost',period:'2026-09'}),
       'creative:actor','BudgetReserved','request','worker:policy','server:document-job:render_document','job:attempt:1',2);
     assert.equal(pass(), true, 'ordinary jobs need no output slot or mutable checkpoint');
+    db.exec("UPDATE events SET actor='user:actor' WHERE type='DocumentRenderRequested'");
+    assert.equal(pass(), true, 'owner-qualified request actor also retains exact custody');
+    db.exec("UPDATE events SET actor='user' WHERE type='DocumentRenderRequested'");
     for (const sql of [
       "UPDATE events SET causation_id='missing' WHERE type='BudgetReserved'",
       "UPDATE events SET actor='user:actor' WHERE type='BudgetReserved'",
       "UPDATE events SET actor='user:other' WHERE type='DocumentRenderRequested'",
+      "UPDATE events SET actor='user:' WHERE type='DocumentRenderRequested'",
+      "UPDATE events SET actor='userlike' WHERE type='DocumentRenderRequested'",
       "UPDATE events SET client_id='ordinary-client'",
       "UPDATE events SET stream_id='creative:other'",
       "UPDATE events SET sequence=0 WHERE type='BudgetReserved'",
