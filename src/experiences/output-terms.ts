@@ -483,7 +483,9 @@ function summaryProjection(offer: Data, target: Data, options: OutputTermsOption
     "A timeout does not confirm provider cancellation; unresolved allowance remains held.",
     "This is Forma’s admission cap; provider billing and account limits are separate.",
   ];
-  if (fal || audio || storyboard || model3d) caveats.push("Costs use a published-rate estimate, not invoice precision.", "After an uncertain response, no additional paid request; recover the original request only.");
+  if (fal || audio || storyboard || model3d) caveats.push("Costs use a published-rate estimate, not invoice precision.", model3d
+    ? "No automatic paid retry; a separately authorized replacement may be available"
+    : "After an uncertain response, no additional paid request; recover the original request only.");
   else if (image) caveats.push("Cost accounting uses provider receipts. No additional request after overrun or an uncertain response.", "The separate safety check is free in the retained native disclosure.");
   if (model3d) caveats.push("Structural checks do not prove semantic object count or visual quality. Inspect the resulting model.");
   if (storyboard) caveats.push("No repair request or automatic retry. Review all four resulting images.");

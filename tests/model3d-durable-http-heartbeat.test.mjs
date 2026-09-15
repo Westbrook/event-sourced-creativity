@@ -112,6 +112,10 @@ for (const renewalFailure of [false, true]) test(`native 3D survives slow provid
     if (renewalFailure) {
       // Near-retention edge: child has a fixed15-minute quote, not a new
       //15-minute parent runway on each authorization/execution refresh.
+      monotonic += 16 * 60000; t.mock.timers.tick(16 * 60000); await flush();
+      // SQLite's SQL clock is real rather than Node's mocked Date.
+      f.sqlite.prepare('UPDATE output_execution_grants SET expires_at=? WHERE grant_id=?')
+        .run('2000-01-01T00:00:00.000Z', admitted.original.grantId);
       f.sqlite.prepare('UPDATE document_jobs SET expires_at=? WHERE job_id=?').run(new Date(Date.now() + 16 * 60000).toISOString(), jobId);
       const oldCall = structuredClone(f.sqlite.prepare('SELECT * FROM output_provider_calls WHERE slot_id=?').get(admitted.original.slotId));
       const oldCost = structuredClone(f.sqlite.prepare('SELECT * FROM cost_budget_reservations WHERE reservation_id=(SELECT cost_reservation_id FROM output_operation_slots WHERE slot_id=?)').get(admitted.original.slotId));
@@ -120,6 +124,7 @@ for (const renewalFailure of [false, true]) test(`native 3D survives slow provid
       assert.equal(current.permitted.prepareReplacement, true, JSON.stringify({ status: current.status, permitted: current.permitted,
         call: f.sqlite.prepare('SELECT status,used_microusd FROM output_provider_calls').get(), cost: oldCost }));
       const replacement = current.model3dReplacement;
+      assert.equal(current.status, 'unavailable', 'expired original authorization cannot start work but may qualify for a separately admitted child');
       assert.ok(decodeExperienceBinding(current, identity), 'native failed state and replacement are browser-decodable');
       for (const change of [{ cycleId: 'wrong' }, { previousSlotId: 'wrong' }, { previousJobId: 'wrong' }, { priorHeldMicrousd: 0 }, { newMaximumMicrousd: 0 }, { cumulativeMaximumMicrousd: 400000 }, { extra: true }])
         assert.equal(decodeExperienceBinding({ ...current, model3dReplacement: { ...replacement, ...change } }, identity), null);

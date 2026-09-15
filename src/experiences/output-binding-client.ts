@@ -84,7 +84,7 @@ export function decodeExperienceBinding(value: unknown, identity: ExperienceBind
     const plan = value.plan, preflight = value.preflight, original = value.original, grant = value.grant;
     if (Object.hasOwn(value, "model3dReplacement")) {
       const replacement = value.model3dReplacement;
-      if (value.output !== "model3d" || value.status !== "failed" || value.disposition !== "original_run_recorded"
+      if (value.output !== "model3d" || !["failed", "unavailable"].includes(String(value.status)) || value.disposition !== "original_run_recorded"
         || permitted.prepareReplacement !== true || permitted.prepare || permitted.authorize || permitted.run || permitted.resumeRun || permitted.renewPreparation
         || !record(original) || original.jobStatus !== "failed" || original.slotStatus !== "uncertain"
         || !record(replacement) || Object.keys(replacement).length !== 6

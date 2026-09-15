@@ -534,7 +534,7 @@ async function state(loaded: Loaded): Promise<ExperiencePreparedState> {
     result.current.source = "changed";
     result.permitted = { prepare: false, authorize: false, run: false, resumeRun: false, recoverResult: false, renewPreparation: false };
   }
-  if (binding.output === "model3d" && !binding.replacementCycle && result.status === "failed") {
+  if (binding.output === "model3d" && !binding.replacementCycle && job.status === "failed" && slot.status === "uncertain") {
     try { const offer = await replacementOffer(loaded); if (offer) {
       result.model3dReplacement = offer.disclosure; result.permitted.prepareReplacement = true;
       trusted.sourceAssertions.push(...offer.guards);
