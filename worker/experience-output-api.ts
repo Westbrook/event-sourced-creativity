@@ -37,6 +37,7 @@ import { commitAtomicIntake } from "./project-intake.ts";
 import { loadOutputTrustedContext, outputExperienceCommands, type OutputExecutionBridge, type OutputTrustedContext } from "./output-requirements-api.ts";
 import { outputCommandReceiptAssertion } from "./output-command-core.ts";
 import { outputProofCapacityDiagnostic, type OutputProofCapacityReason } from "./output-proof-capacity-diagnostic.ts";
+import { sceneReadFailureDiagnostic, type SceneReadFailureReason } from "./scene-read-diagnostic.ts";
 import { outputDatabaseMessageKind } from "./output-database-diagnostic.ts";
 import { experienceOutputAuthorization, experienceOutputBinding, experienceOutputEnvelope,
   type ExperienceOutputBinding, type ExperienceOutputStage } from "./experience-output-binding.ts";
@@ -138,7 +139,7 @@ function diagnosticSubtype(cause: unknown): string | undefined {
   } } catch { /* Optional diagnosis must never replace the original refusal. */ }
   return fallback;
 }
-const unavailable = (code: string, status = 409, diagnostic?: { stage: DiagnosticStage; kind: string; capacity?: OutputProofCapacityReason }) => {
+const unavailable = (code: string, status = 409, diagnostic?: { stage: DiagnosticStage; kind: string; capacity?: OutputProofCapacityReason; sceneRead?: SceneReadFailureReason }) => {
   const safeCode = diagnosticCodes.has(code) ? code : "experience_output_unavailable";
   // The platform associates this bounded code with its request log. Never log
   // source text, request bodies, provider responses, credentials or actor data.
@@ -737,7 +738,8 @@ export async function handleExperienceOutput(request: Request, env: WorkerEnv, e
     const code = typeof item.code === "string" ? item.code : typeof item.message === "string" && /^[a-z][a-z0-9_]+$/u.test(item.message) ? item.message : "experience_output_unavailable";
     const kind = code !== "experience_output_unavailable" && diagnosticCodes.has(code) ? "coded" : diagnosticKind(cause);
     const capacity = code === "output_source_proof_too_large" && item.status === 413 ? outputProofCapacityDiagnostic(cause) : undefined;
+    const sceneRead = code === "output_source_changed_during_read" ? sceneReadFailureDiagnostic(cause) : undefined;
     return unavailable(code, typeof item.status === "number" && item.status >= 400 && item.status < 600 ? item.status : 409,
-      { stage: diagnosticStage, kind: kind === "unknown" ? diagnosticSubtype(cause) ?? kind : kind, ...(capacity ? { capacity } : {}) });
+      { stage: diagnosticStage, kind: kind === "unknown" ? diagnosticSubtype(cause) ?? kind : kind, ...(capacity ? { capacity } : {}), ...(sceneRead ? { sceneRead } : {}) });
   }
 }

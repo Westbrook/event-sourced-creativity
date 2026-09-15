@@ -2,20 +2,22 @@ import type { WorkerEnv } from "./runtime.ts";
 import { outputProofReadStatements } from "./output-disclosure-proof.ts";
 import { OutputConflictError } from "./output-command-core.ts";
 import { recordOutputProofCapacity } from "./output-proof-capacity-diagnostic.ts";
+import { recordSceneReadFailure } from "./scene-read-diagnostic.ts";
 import { captureSceneHistoryProof, SceneHistoryProofError, type SceneHistoryScope } from "./scene-history-proof.ts";
 
 /** Scene-only strict result shape. Never treat omitted success, extra rows or a
  * coercible string as evidence that an original predicate was checked. */
 export function assertSceneHistoryRead(results: Array<D1Result<Record<string, unknown>>>, expected: number) {
   if (!Number.isSafeInteger(expected) || expected < 1 || !Array.isArray(results) || results.length !== expected) {
-    throw new OutputConflictError("output_source_changed_during_read", 409);
+    throw recordSceneReadFailure(new OutputConflictError("output_source_changed_during_read", 409), 'proof_shape');
   }
   for (let index = 0; index < expected; index++) {
     const result = results[index];
     if (!result || result.success !== true || !Array.isArray(result.results)
-      || result.results.length !== 1 || result.results[0]?.current !== 1) {
-      throw new OutputConflictError("output_source_changed_during_read", 409);
+      || result.results.length !== 1 || ![0,1].includes(result.results[0]?.current as number)) {
+      throw recordSceneReadFailure(new OutputConflictError("output_source_changed_during_read", 409), 'proof_shape');
     }
+    if(result.results[0]?.current !== 1) throw recordSceneReadFailure(new OutputConflictError("output_source_changed_during_read", 409), 'proof_false');
   }
 }
 

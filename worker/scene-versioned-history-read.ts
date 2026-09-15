@@ -5,6 +5,7 @@ import {OutputConflictError,type OutputSqlAssertion,type OutputSqlValue} from '.
 import {sceneHistorySourceRelation,sceneHistoryMetadataSelect,sceneHistoryMetadataFields,type SceneHistoryScope} from './scene-history-proof.ts';
 import {sceneSourceVersionAssertions,type SceneSourceVersion} from './scene-source-generation.ts';
 import {recordOutputProofCapacity,type OutputProofCapacityReason} from './output-proof-capacity-diagnostic.ts';
+import {recordSceneReadFailure,type SceneReadFailureReason} from './scene-read-diagnostic.ts';
 
 /** Qualification limits, not an activated production path. No history truncation:
  * limits throw before finish(). Current-state memory needs a bounded consumer. */
@@ -18,7 +19,7 @@ const hydratedFields={event_id:'event_id',stream_id:'event_stream',sequence:'seq
 type Consumer<T>={accept(event:CreativeEvent):boolean;finish():T;checkpoint?():unknown};
 const integer=(value:unknown):value is number=>typeof value==='number'&&Number.isSafeInteger(value)&&value>=0;
 const identifier=(value:unknown):value is string=>typeof value==='string'&&value.length>0&&new TextEncoder().encode(value).length<=160;
-const changed=():never=>{throw new OutputConflictError('output_source_changed_during_read',409);};
+const changed=(reason:SceneReadFailureReason='metadata'):never=>{throw recordSceneReadFailure(new OutputConflictError('output_source_changed_during_read',409),reason);};
 const capacity=(reason:OutputProofCapacityReason='scene_versioned_history_capacity'):never=>{
   throw recordOutputProofCapacity(new OutputConflictError('output_source_proof_too_large',413),reason);
 };
@@ -33,11 +34,11 @@ export async function reduceSceneVersionedHistory<T>(env:Pick<WorkerEnv,'DB'>,in
   if(!identifier(scope.streamId)||!integer(scope.expectedOwnerHead)||!Number.isFinite(scope.deadlineMs)
     ||scope.project&&(!Object.values(scope.project).every(identifier)||scope.streamId!=='creative:'+scope.project.ownerUserId)
     ||input.version.streamId!==scope.streamId||input.version.projectAccessId!==scope.project?.projectAccessId
-    ||!input.readAssertions.length)changed();
+    ||!input.readAssertions.length)changed('input');
   const callerDeadlines=input.readAssertions.flatMap(value=>value.deadlineMs===undefined?[]:[value.deadlineMs]);
-  if(callerDeadlines.some(value=>!Number.isFinite(value)))changed();
+  if(callerDeadlines.some(value=>!Number.isFinite(value)))changed('input');
   const deadlineMs=Math.min(scope.deadlineMs!,...callerDeadlines);
-  const deadline=()=>{if(Date.now()>=deadlineMs)changed();};
+  const deadline=()=>{if(Date.now()>=deadlineMs)changed('deadline');};
   const assertions:readonly OutputSqlAssertion[]=Object.freeze([
     ...sceneSourceVersionAssertions(input.version),...input.readAssertions,
     {sql:'(SELECT COALESCE(MAX(sequence),0) FROM events WHERE stream_id=?)=?',bindings:[scope.streamId,scope.expectedOwnerHead]},
@@ -66,8 +67,12 @@ export async function reduceSceneVersionedHistory<T>(env:Pick<WorkerEnv,'DB'>,in
   const read=async(sql:string,bindings:OutputSqlValue[])=>{
     deadline();if(++batches>SCENE_VERSIONED_READ_LIMITS.batches)capacity();
     const result=await env.DB.batch<Record<string,unknown>>([env.DB.prepare(sql).bind(...bindings),...guards.map(guard=>env.DB.prepare(guard.sql).bind(...guard.bindings))]);
-    deadline();if(!Array.isArray(result)||result.length!==guards.length+1||result[0]?.success!==true||!Array.isArray(result[0].results)
-      ||guards.some((_,index)=>{const guard=result[index+1];return guard?.success!==true||!Array.isArray(guard.results)||guard.results.length!==1||guard.results[0]?.current!==1;}))changed();
+    deadline();if(!Array.isArray(result)||result.length!==guards.length+1||result[0]?.success!==true||!Array.isArray(result[0].results))changed('batch_shape');
+    for(let index=0;index<guards.length;index++){
+      const guard=result[index+1];
+      if(guard?.success!==true||!Array.isArray(guard.results)||guard.results.length!==1||![0,1].includes(guard.results[0]?.current as number))changed('batch_shape');
+      if(guard.results[0]?.current!==1)changed('guard_false');
+    }
     return result[0].results;
   };
   const relation=sceneHistorySourceRelation(scope),cte=`WITH source AS NOT MATERIALIZED (${relation.sql})`;
@@ -108,20 +113,20 @@ export async function reduceSceneVersionedHistory<T>(env:Pick<WorkerEnv,'DB'>,in
       source.public_body AS payload,CASE WHEN source.redacted_at IS NULL THEN source.private_body ELSE NULL END AS private_json,source.order_sequence
       FROM json_each(?) expected CROSS JOIN source WHERE source.event_id=json_extract(expected.value,'$[0]')
         AND source.order_sequence=json_extract(expected.value,'$[1]') ORDER BY CAST(expected.key AS INTEGER)`,[...relation.bindings,JSON.stringify(expected)]);
-    if(rows.length!==selected.length)changed();
+    if(rows.length!==selected.length)changed('hydration');
     let hydratedPageBytes=0;
     for(let index=0;index<rows.length;index++){
       const row=rows[index]!,metadata=selected[index]!;
       if(Object.entries(hydratedFields).some(([field,expected])=>row[field]!==metadata[expected])
-        ||typeof row.payload!=='string'||row.private_json!==null&&typeof row.private_json!=='string')changed();
+        ||typeof row.payload!=='string'||row.private_json!==null&&typeof row.private_json!=='string')changed('hydration');
       if(bytes(String(row.payload))!==metadata.public_bytes
         ||(metadata.redacted_at===null&&metadata.private_type==='text'
-          ?typeof row.private_json!=='string'||bytes(row.private_json)!==metadata.private_bytes:row.private_json!==null))changed();
+          ?typeof row.private_json!=='string'||bytes(row.private_json)!==metadata.private_bytes:row.private_json!==null))changed('hydration');
       const size=bytes(JSON.stringify(Object.fromEntries(Object.keys(hydratedFields).map(field=>[field,row[field]]))))
         +bytes(String(row.payload))+(typeof row.private_json==='string'?bytes(row.private_json):0);
       hydratedPageBytes+=size;if(size>SCENE_VERSIONED_READ_LIMITS.eventBytes||hydratedPageBytes>SCENE_VERSIONED_READ_LIMITS.pageBytes)capacity();
       rawBytes+=Number(metadata.public_bytes)+Number(metadata.private_bytes);if(rawBytes>SCENE_VERSIONED_READ_LIMITS.rawBytes)capacity();
-      if(!consumer.accept(serializeEvent(row)))changed();
+      if(!consumer.accept(serializeEvent(row)))changed('consumer');
       cursor=Number(metadata.order_sequence);consumed++;if(consumed>count)changed();
     }
     maximumHydratedPageBytes=Math.max(maximumHydratedPageBytes,hydratedPageBytes);

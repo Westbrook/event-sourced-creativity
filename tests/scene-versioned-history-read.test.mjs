@@ -6,7 +6,18 @@ import {captureSceneSourceVersion} from '../worker/scene-source-generation.ts';
 import {reduceSceneVersionedHistory,SCENE_VERSIONED_READ_LIMITS} from '../worker/scene-versioned-history-read.ts';
 import {createCreativeEventFold} from '../src/model/events.ts';
 import {createSceneContextConsumer} from '../worker/scene-context-consumer.ts';
+import {sceneReadFailureDiagnostic,recordSceneReadFailure} from '../worker/scene-read-diagnostic.ts';
+import {assertSceneHistoryRead} from '../worker/scene-history-proof-read.ts';
 const migrations=readLocalMigrations(new URL('../drizzle/',import.meta.url));
+test('Scene diagnostics are fixed server-only labels and never disclose arbitrary input',()=>{
+  const error=new Error('original');recordSceneReadFailure(error,'deadline');
+  assert.equal(sceneReadFailureDiagnostic(error),'deadline');assert.equal(JSON.stringify(error),'{}');
+  assert.equal(sceneReadFailureDiagnostic({reason:'deadline'}),undefined);
+  const untrusted=new Error('source');recordSceneReadFailure(untrusted,'private arbitrary value');
+  assert.equal(sceneReadFailureDiagnostic(untrusted),undefined);
+  for(const [results,reason] of [[[],'proof_shape'],[[{success:true,results:[{current:0}]}],'proof_false'],[[{success:true,results:[{current:'1'}]}],'proof_shape']])
+    assert.throws(()=>assertSceneHistoryRead(results,1),error=>error.code==='output_source_changed_during_read'&&sceneReadFailureDiagnostic(error)===reason);
+});
 function fixture(t){
   const db=new DatabaseSync(':memory:');t.after(()=>db.close());db.exec('PRAGMA foreign_keys=ON');migrateLocalDatabase(db,{migrations});
   const env={DB:{prepare(sql){return{sql,bindings:[],bind(...bindings){return{...this,bindings};}};},async batch(statements){
@@ -54,9 +65,9 @@ test('oversized individual event refuses before hydration or finalization',async
 test('deadline and malformed result guards refuse without a complete projection',async t=>{
   const f=fixture(t);f.event(1,'Fixture',{});const version=await f.capture();let finished=false;
   const consumer=()=>({accept(){return true;},finish(){finished=true;}});
-  await assert.rejects(f.reduce(version,consumer,{scope:{...f.scope(),deadlineMs:Date.now()-1}}));
+  await assert.rejects(f.reduce(version,consumer,{scope:{...f.scope(),deadlineMs:Date.now()-1}}),error=>sceneReadFailureDiagnostic(error)==='deadline');
   const batch=f.env.DB.batch;f.env.DB.batch=async statements=>{const rows=await batch(statements);delete rows[1].success;return rows;};
-  await assert.rejects(f.reduce(version,consumer),/output_source_changed/);assert.equal(finished,false);
+  await assert.rejects(f.reduce(version,consumer),error=>sceneReadFailureDiagnostic(error)==='batch_shape');assert.equal(finished,false);
 });
 test('project source includes exact membership order and refuses orphan membership',async t=>{
   const f=fixture(t);f.event(1,'Fixture',{text:'first'});f.event(2,'Fixture',{text:'second'});
