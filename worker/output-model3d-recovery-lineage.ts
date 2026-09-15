@@ -49,19 +49,19 @@ export async function resolveAcceptedModel3dReplacement(input: OutputBridgeTarge
     FROM output_operation_slots parent JOIN document_jobs job ON job.job_id=parent.job_id
     JOIN output_provider_calls call ON call.scope_key=parent.scope_key AND call.slot_id=parent.slot_id
     JOIN output_execution_grants grant_row ON grant_row.scope_key=parent.scope_key AND grant_row.grant_id=parent.grant_id
-    WHERE parent.scope_key=? AND parent.slot_id=? AND parent.job_id=? AND parent.grant_id=?
+    WHERE (parent.scope_key=? AND parent.slot_id=? AND parent.job_id=? AND parent.grant_id=?
       AND parent.attempt_ordinal=0 AND parent.previous_slot_id IS NULL AND parent.target_id=?
       AND parent.target_contract_digest=? AND parent.source_digest=? AND parent.plan_revision_id=?
       AND parent.provider='fal' AND parent.maximum_calls=1 AND parent.maximum_tokens=1 AND parent.maximum_microusd=400000
-      AND parent.token_reservation_id<>? AND parent.cost_reservation_id<>?
-      AND job.owner_id=? AND job.document_id=? AND job.stream_id=? AND job.source_surface='outputs' AND job.kind='render_document'
+      AND parent.token_reservation_id<>? AND parent.cost_reservation_id<>?)
+      AND (job.owner_id=? AND job.document_id=? AND job.stream_id=? AND job.source_surface='outputs' AND job.kind='render_document'
       AND grant_row.actor_user_id=job.owner_id AND grant_row.payer_user_id=job.owner_id AND grant_row.context_id IS NULL
       AND call.call_key='model3d:initial' AND call.stage_key='model3d:initial' AND call.provider='fal' AND call.model=parent.model
       AND call.provider_response_id=? AND call.reserved_microusd=400000
-      AND length(call.request_digest)=64 AND call.request_digest NOT GLOB '*[^0-9a-f]*'
-      AND (SELECT COUNT(*) FROM output_provider_calls counted WHERE counted.scope_key=parent.scope_key AND counted.slot_id=parent.slot_id)=1
+      AND length(call.request_digest)=64 AND call.request_digest NOT GLOB '*[^0-9a-f]*')
+      AND ((SELECT COUNT(*) FROM output_provider_calls counted WHERE counted.scope_key=parent.scope_key AND counted.slot_id=parent.slot_id)=1
       AND (SELECT COUNT(*) FROM output_operation_slots child WHERE child.scope_key=parent.scope_key AND child.previous_slot_id=parent.slot_id)=1
-      AND NOT EXISTS(SELECT 1 FROM output_operation_slots child WHERE child.scope_key=parent.scope_key AND child.previous_slot_id=parent.slot_id AND child.slot_id<>?)`;
+      AND NOT EXISTS(SELECT 1 FROM output_operation_slots child WHERE child.scope_key=parent.scope_key AND child.previous_slot_id=parent.slot_id AND child.slot_id<>?))`;
   const bindings = [input.scope.key, prior.slotId, prior.jobId, prior.grantId, slot.targetId, slot.targetContractDigest, slot.sourceDigest,
     prior.confirmation.planRevisionId, slot.tokenReservationId, slot.costReservationId, input.scope.actorUserId, input.scope.documentId,
     root.streamId, prior.providerRequestId, slot.slotId];

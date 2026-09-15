@@ -26,11 +26,12 @@ const hash = async (v: Uint8Array) => Array.from(new Uint8Array(await crypto.sub
 const same = (a: unknown, b: unknown) => canonicalJson(a) === canonicalJson(b);
 type Lease = Awaited<ReturnType<typeof claimOutputModel3dRecoveryLease>>;
 type Stored = { index: number; token: string; storageKey: string; sha256: string; file: NativeRetainedModel3dFile; providerMediaUrl: string };
+export type Model3dRecoveryStage = "model3d_binding" | "model3d_authority" | "model3d_lease" | "model3d_retrieve_publish";
 
 /** Explicit read/publication command only. No generator, planner, queue writer,
  * new grant, reservation, provider-call claim, upload or provider POST. */
 export async function recoverOutputModel3d(env: WorkerEnv, user: PilotUser, job: DocumentJobRow,
-  options: { assertions: OutputSqlAssertion[]; signal?: AbortSignal; request?: Request }) {
+  options: { assertions: OutputSqlAssertion[]; signal?: AbortSignal; request?: Request; onStage?: (stage: Model3dRecoveryStage) => void }) {
   // The whole command has one deadline, including authority reads before the
   // accepted-original lease. D1 cannot be aborted; late continuations must not
   // progress and every later write carries this same SQL expiry assertion.
@@ -48,14 +49,16 @@ export async function recoverOutputModel3d(env: WorkerEnv, user: PilotUser, job:
   });
   const check = () => { controller.signal.throwIfAborted(); if (Date.now() >= deadline) fail(); };
   const work = async () => {
+    options.onStage?.("model3d_binding");
     check(); const binding = await loadOutputJobBinding(env, user, job); check(); if (!binding) fail();
+    options.onStage?.("model3d_authority");
     const proof = await resolveOutputModel3dRecoveryAuthority(env, binding.scope, binding.slot, options.request ? {request:options.request,user} : undefined); check();
     const assertions = [...proof.assertions, ...options.assertions, {
       sql: "?>strftime('%Y-%m-%dT%H:%M:%fZ','now')", bindings: [new Date(deadline).toISOString()], deadlineMs: deadline,
     }];
     const expires = Math.min(deadline, ...assertions.flatMap(a => a.deadlineMs === undefined ? [] : [a.deadlineMs]));
     if (!Number.isFinite(expires) || expires <= Date.now()) fail();
-    return executeOutputModel3dRecovery(env, user, job, binding, { assertions, signal: controller.signal,
+    return executeOutputModel3dRecovery(env, user, job, binding, { assertions, signal: controller.signal, onStage: options.onStage,
       current: { sourceDigest: proof.sourceDigest, requirementsDigest: proof.requirementsDigest, retentionExpiresAt: new Date(expires).toISOString() } });
   };
   try { const result = await Promise.race([stopped, work()]); check(); return result; }
@@ -69,7 +72,7 @@ export async function recoverOutputModel3d(env: WorkerEnv, user: PilotUser, job:
  * original-source and private-retention authority, not the old paid deadline. */
 export async function executeOutputModel3dRecovery(env: WorkerEnv, user: PilotUser, job: DocumentJobRow,
   binding: NonNullable<Awaited<ReturnType<typeof loadOutputJobBinding>>>, options: {
-    assertions: OutputSqlAssertion[]; signal?: AbortSignal;
+    assertions: OutputSqlAssertion[]; signal?: AbortSignal; onStage?: (stage: Model3dRecoveryStage) => void;
     current: { sourceDigest: string; requirementsDigest: string; retentionExpiresAt: string };
   }) {
   const { scope, slot } = binding;
@@ -113,7 +116,9 @@ export async function executeOutputModel3dRecovery(env: WorkerEnv, user: PilotUs
     return { status: "completed" as const, jobId: job.job_id, slotId: slot.slotId, replayed: true };
   };
   if (job.status === "completed") return await completedRead() ?? fail();
+  options.onStage?.("model3d_lease");
   const lease = await claimOutputModel3dRecoveryLease(env, scope, slot, job, options), cp = lease.checkpoint;
+  options.onStage?.("model3d_retrieve_publish");
   let completionJson: string | undefined;
   const extra: OutputSqlAssertion[] = [], live = () => compactModel3dRecoveryAssertions([...lease.assertions(), ...extra]);
   // Conditional creation prevents even a same-key race from overwriting another

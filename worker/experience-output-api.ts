@@ -22,7 +22,7 @@ import { sceneRenewalIndexAssertion, sceneRenewalNoExecutionAssertion, sceneRene
 import { SHORT_STORY_NARRATIVE_CONTRACT } from "../src/model/output-narrative-contract.ts";
 import { recoverOutputFalImage } from "./output-fal-recovery.ts";
 import { recoverOutputVideo } from "./output-video-recovery.ts";
-import { recoverOutputModel3d } from "./output-model3d-recovery.ts";
+import { recoverOutputModel3d, type Model3dRecoveryStage } from "./output-model3d-recovery.ts";
 import { outputModel3dRecoveryAvailable } from "./output-model3d-recovery-availability.ts";
 import { retainedPersonalFalRecoverySql, falRecoveryJobStateAllowed, type FalRecoveryStage } from "./output-fal-recovery-policy.ts";
 import { outputSourceEpochAssertion } from "./output-requirements-ledger.ts";
@@ -64,7 +64,7 @@ output_scene_original_unavailable output_scene_personal_source_required output_s
 scene_cost_changed scene_cost_authority_changed scene_cost_request_required scene_cost_request_invalid document_not_found context_source_rights_expired scene_cost_confirmation_required
 context_block_not_authorized context_source_not_authorized context_source_version_mismatch context_source_evidence_unavailable context_source_rights_required context_decisions_contradict
 output_source_proof_too_large output_source_changed_during_read`.split(/\s+/u));
-type DiagnosticStage = "initial_load" | "final_load" | "final_state" | "final_disclose" | "authorize" | "run" | "recover_result" | `recover_result_${FalRecoveryStage}` | `prepare_${"save" | "confirm" | "preflight"}_${"state" | "execute" | "reload"}`;
+type DiagnosticStage = "initial_load" | "final_load" | "final_state" | "final_disclose" | "authorize" | "run" | "recover_result" | `recover_result_${FalRecoveryStage | Model3dRecoveryStage}` | `prepare_${"save" | "confirm" | "preflight"}_${"state" | "execute" | "reload"}`;
 function diagnosticKind(cause: unknown) {
   if (!(cause instanceof Error)) return "unknown";
   const message = cause.message.slice(0, 2048);
@@ -699,7 +699,7 @@ export async function handleExperienceOutput(request: Request, env: WorkerEnv, e
       if (!job) error("experience_output_original_job_unavailable",410);
       const recover=loaded.binding.output==="video"?recoverOutputVideo:loaded.binding.output==="model3d"?recoverOutputModel3d:recoverOutputFalImage;
       const outcome = await recover(env,loaded.trusted.principal,job,{assertions,signal:request.signal,...(loaded.binding.output==="model3d"?{request}:{}),
-        ...(loaded.binding.output==="image"?{onStage:(stage:FalRecoveryStage)=>{diagnosticStage=`recover_result_${stage}`;}}:{})});
+        ...(["image","model3d"].includes(loaded.binding.output)?{onStage:(stage:FalRecoveryStage|Model3dRecoveryStage)=>{diagnosticStage=`recover_result_${stage}`;}}:{})});
       recovered = outcome.status;
     }
     diagnosticStage = "final_load";

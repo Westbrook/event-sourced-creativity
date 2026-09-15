@@ -100,6 +100,7 @@ export async function verifyNativeRunnerInWorkerd(snapshot, fixture, bytes, reco
     const result = await finite(mf.dispatchFetch('https://qualification.invalid/'+action+'/Native').then(r => r.json()), 180000, action);
     assert.equal(result.ok, true, JSON.stringify({ ...result, posts, polls }));
     if(recovery) {
+      assert(result.counters.queries <= 1000, 'child recovery stays within the paid D1 invocation query ceiling');
       assert.equal(posts,0);assert.equal(polls,1);assert.equal(result.counters.puts,1);assert.equal(result.counters.conditionalPuts,1);
       assert.equal(result.counters.childRetentionChecks,1);
       assert.deepEqual((await parentSnapshot()).map(r=>r.results),before.map(r=>r.results));
