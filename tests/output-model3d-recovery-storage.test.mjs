@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { stripTypeScriptTypes } from 'node:module';
 import { DatabaseSync } from 'node:sqlite';
 import test from 'node:test';
+import { model3dRecoveryAttemptSql } from '../worker/output-model3d-recovery-attempt.ts';
 
 // Exact actual cleanup bodies and policy SQL, with
 // isolated SQLite and metadata-only MEDIA. No full runtime/provider imports.
@@ -17,19 +18,20 @@ const cleanup=source.slice(source.indexOf('async function cleanupNativeStorageRe
 assert.deepEqual([...cleanup.matchAll(/(?:async )?function (\w+)\(/g)].map(v=>v[1]),['cleanupNativeStorageReceipt','reconcileOutputNativeStorage']);
 const guard=source.slice(source.indexOf('export function guardOutputPrivateWrites('),source.indexOf('\ntype NativeStorageReceipt'));
 assert.ok(!guard.includes('retainedModel3dRecoveryStorageSql'),'Retention exception must not enter the write/publication guard');
-const compiled=stripTypeScriptTypes([fal.slice(start,end),helper,cleanup].join('\n').replace(/^export /gm,''),{mode:'transform'});
-const {reconcile}=new Function(compiled+'\nreturn {reconcile:reconcileOutputNativeStorage};')();
+const compiled=stripTypeScriptTypes([fal.slice(start,end),helper.replace(/^import .*;\n/gm,''),cleanup].join('\n').replace(/^export /gm,''),{mode:'transform'});
+const {reconcile}=new Function('model3dRecoveryAttemptSql',compiled+'\nreturn {reconcile:reconcileOutputNativeStorage};')(model3dRecoveryAttemptSql);
 const token='12345678-1234-4234-8234-123456789abc',sha='a'.repeat(64),digest='b'.repeat(64);
 const primaryKey=`u-6f776e6572/generated/artifact-recovery-${token}.glb`;
 const model='fal-ai/hyper3d/rodin/v2.5/text-to-3d';
 function fixture({index=0,role='mesh',mime='model/gltf-binary',format='glb',extension='glb'}={}) {
   const db=new DatabaseSync(':memory:');
   db.exec(`CREATE TABLE output_native_storage_writes(scope_key,slot_id,storage_key,content_sha256,status,write_acknowledged,publication_event_id,created_at,updated_at);
-    CREATE TABLE output_operation_slots(scope_key,slot_id,grant_id,plan_revision_id,job_id,status,attempt_ordinal,previous_slot_id,provider,model,source_digest,maximum_calls,maximum_tokens);
-    CREATE TABLE output_plan_revisions(scope_key,plan_revision_id,scope_kind,owner_user_id,document_id,project_id,organization_id,project_access_id,source_digest);
+    CREATE TABLE output_operation_slots(scope_key,slot_id,grant_id,plan_revision_id,job_id,status,attempt_ordinal,previous_slot_id,provider,model,source_digest,maximum_calls,maximum_tokens,target_id,target_contract_digest,token_reservation_id,cost_reservation_id);
+    CREATE TABLE output_plan_revisions(scope_key,plan_revision_id,scope_kind,owner_user_id,document_id,project_id,organization_id,project_access_id,source_digest,confirmed_event_id);
     CREATE TABLE output_execution_grants(scope_key,grant_id,actor_user_id,payer_user_id,context_id,status,expires_at);
     CREATE TABLE document_jobs(job_id,owner_id,stream_id,document_id,kind,source_surface,status,attempt_count,lease_expires_at,expires_at,request_json,result_json);
-    CREATE TABLE output_provider_calls(scope_key,slot_id,call_key,stage_key,provider,model,status,client_request_id,provider_response_id,request_digest);
+    CREATE TABLE output_provider_calls(scope_key,slot_id,call_key,stage_key,provider,model,status,client_request_id,provider_response_id,request_digest,reserved_microusd);
+    CREATE TABLE event_private_payloads(private_event_id,owner_id,redacted_at,private_json);
     CREATE TABLE private_content(content_id,owner_id,kind,redacted_at,expires_at);
     CREATE TABLE project_resource_scopes(resource_kind,resource_id);
     CREATE TABLE private_content_retention_scopes(content_id);
@@ -39,7 +41,7 @@ function fixture({index=0,role='mesh',mime='model/gltf-binary',format='glb',exte
   const now=new Date().toISOString(),expiry=new Date(Date.now()+90000).toISOString(),retention=new Date(Date.now()+600000).toISOString();
   const key=`u-6f776e6572/generated/artifact-recovery-${token}${index===0?'':'-'+role+'-'+index}.${extension}`;
   const execution={scopeKey:'scope',slotId:'slot',grantId:'grant',planRevisionId:'plan',sourceDigest:'source'};
-  const request={artifactKind:'model3d',outputExecution:execution,outputModel3d:{source:{draftId:'draft'}},model3dCostPreview:{requestId:'job',draftId:'draft'}};
+  const request={artifactKind:'model3d',outputExecution:execution,outputModel3d:{source:{draftId:'draft'}},model3dCostPreview:{version:'model3d-mini-app-cost-v1',requestId:'job',draftId:'draft'}};
   const file=(at,storageKey,fileRole,fileMime,fileFormat)=>({index:at,token,storageKey,sha256:sha,
     file:{url:'/api/media/'+encodeURIComponent(storageKey),mimeType:fileMime,fileName:'original.glb',fileSize:4,format:fileFormat,role:fileRole,sha256:sha},providerMediaUrl:'https://fal.media/original.glb'});
   const files=[file(0,primaryKey,'mesh','model/gltf-binary','glb')];

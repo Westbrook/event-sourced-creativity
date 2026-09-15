@@ -73,7 +73,7 @@ async function readRetainedModel3d(env: WorkerEnv, input: RetainedModel3dInput, 
     JOIN output_execution_grants grant_row ON grant_row.scope_key=slot.scope_key AND grant_row.grant_id=slot.grant_id`;
   const slotSql = `slot.scope_key=? AND slot.slot_id=? AND slot.grant_id=? AND slot.plan_revision_id=? AND slot.target_id=? AND slot.source_digest=?
     AND slot.target_contract_digest=? AND slot.job_id=? AND ${recovery ? "slot.status IN('failed','uncertain')" : "slot.status='succeeded'"}
-    AND ${preview.version === "model3d-mini-app-replacement-cost-v1" && !recovery
+    AND ${preview.version === "model3d-mini-app-replacement-cost-v1"
       ? `slot.attempt_ordinal=1 AND slot.previous_slot_id IS ? AND EXISTS(SELECT 1 FROM output_operation_slots parent
           JOIN output_provider_calls parent_call ON parent_call.scope_key=parent.scope_key AND parent_call.slot_id=parent.slot_id
           WHERE parent.scope_key=slot.scope_key AND parent.slot_id=slot.previous_slot_id AND parent.job_id=?
@@ -89,7 +89,7 @@ async function readRetainedModel3d(env: WorkerEnv, input: RetainedModel3dInput, 
     AND plan.source_digest=slot.source_digest AND plan.requirements_digest=? AND plan.organization_id IS NULL AND plan.project_access_id IS NULL
     AND grant_row.actor_user_id=plan.owner_user_id AND grant_row.payer_user_id=plan.owner_user_id AND grant_row.context_id IS NULL AND ${recovery ? "grant_row.status IN('authorized','active','completed')" : "grant_row.status='completed'"}`;
   const slotBindings = [ref.scopeKey, ref.slotId, ref.grantId, ref.planRevisionId, ref.targetId, ref.sourceDigest, ref.targetContractDigest, evidence.jobId,
-    ...(preview.version === "model3d-mini-app-replacement-cost-v1" && !recovery ? [preview.previousSlotId!, preview.previousJobId!, preview.previousProviderRequestId!, preview.replacementCycleId!] : []),
+    ...(preview.version === "model3d-mini-app-replacement-cost-v1" ? [preview.previousSlotId!, preview.previousJobId!, preview.previousProviderRequestId!, preview.replacementCycleId!] : []),
     input.completionId, preview.model, preview.maximumMicrousd, input.ownerId, input.documentId, input.projectId, preview.requirementsDigest];
   const callSql = `scope_key=? AND slot_id=? AND call_key='model3d:initial' AND stage_key='model3d:initial' AND client_request_id=? AND request_digest=?
     AND provider='fal' AND model=? AND reserved_microusd=? AND used_microusd=? AND status='settled' AND provider_response_id=? AND settled_at IS NOT NULL

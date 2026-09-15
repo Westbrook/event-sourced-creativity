@@ -1,4 +1,5 @@
-/** Retention-only, expiry-only grace for an exact failed ORIGINAL recovery.
+import { model3dRecoveryAttemptSql } from "./output-model3d-recovery-attempt.ts";
+/** Retention-only, expiry-only grace for an exact failed accepted recovery.
  * One binding: the cleanup owner. This does NOT prove current source contents,
  * authorize a PUT/read/publication, refresh any lease, or release any money.
  * The publisher must repeat its full live authority/private/source assertions
@@ -6,9 +7,13 @@
  * resurrected. The original server-issued lease is capped at 120 seconds and
  * bounded here again by the original job and retained draft expiries.
  */
-export const retainedModel3dRecoveryStorageSql = `SELECT stored.scope_key,stored.slot_id,stored.storage_key,stored.content_sha256
+export const retainedModel3dRecoveryStorageSql = `WITH recovery_attempt_slots AS MATERIALIZED (
+  SELECT slot.scope_key,slot.slot_id FROM output_operation_slots slot JOIN document_jobs job ON job.job_id=slot.job_id
+  WHERE ${model3dRecoveryAttemptSql}
+) SELECT stored.scope_key,stored.slot_id,stored.storage_key,stored.content_sha256
   FROM output_native_storage_writes stored
   JOIN output_operation_slots slot ON slot.scope_key=stored.scope_key AND slot.slot_id=stored.slot_id
+  JOIN recovery_attempt_slots attempt ON attempt.scope_key=slot.scope_key AND attempt.slot_id=slot.slot_id
   JOIN output_plan_revisions plan ON plan.scope_key=slot.scope_key AND plan.plan_revision_id=slot.plan_revision_id
   JOIN output_execution_grants grant_row ON grant_row.scope_key=slot.scope_key AND grant_row.grant_id=slot.grant_id
   JOIN document_jobs job ON job.job_id=slot.job_id
@@ -28,8 +33,8 @@ export const retainedModel3dRecoveryStorageSql = `SELECT stored.scope_key,stored
     AND grant_row.context_id IS NULL)
     AND ((grant_row.status IN('authorized','active','completed')
     AND slot.status IN('failed','uncertain'))
-    AND slot.attempt_ordinal=0)))
-    AND ((((slot.previous_slot_id IS NULL
+    AND slot.attempt_ordinal IN(0,1))))
+    AND ((((slot.attempt_ordinal IN(0,1)
     AND slot.provider='fal')
     AND (slot.maximum_calls=1
     AND slot.maximum_tokens=1))

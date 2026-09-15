@@ -12,6 +12,7 @@ const { handleExperienceOutput } = await import('../worker/experience-output-api
 const { registeredExperience, initialValues } = await import('../src/experiences/intake.ts');
 const { outputDocumentExecutionBridge } = await import('../worker/output-document-execution.ts');
 const { runDocumentJob } = await import('../worker/document-jobs-api.ts');
+const { recoverOutputModel3d } = await import('../worker/output-model3d-recovery.ts');
 const { requireUser } = await import('../worker/pilot-policy.ts');
 const { RODIN_TEXT_MODEL } = await import('../src/model/model3d.ts');
 const { decodeExperienceBinding, ExperienceOutputBindingClient } = await import('../src/experiences/output-binding-client.ts');
@@ -25,25 +26,31 @@ const flush = async () => { for (let i = 0; i < 100; i++) await new Promise(reso
 const post = (path, body) => new Request('http://localhost' + path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
 // Full real HTTP intake/prepare/authorize/run and runner. Only remote provider
 // traffic and wall time are synthetic. Not evidence of a live paid generation.
-for (const [renewalFailure, renewQuote] of [[false, false], [true, false], ...['success', 'late-authorization', 'parent-recovered', 'orphan-index', 'redacted-preflight', 'retention', 'grant', 'slot', 'job', 'provider-call', 'token', 'cost'].map(mode => [true, mode])]) test(`native 3D survives slow provider: first renewal fault=${renewalFailure}, renew unpaid quote=${renewQuote}`, async t => {
+for (const [renewalFailure, renewQuote] of [[false, false], [true, false], ...['success', 'recover-child', 'recover-parent', 'recover-race', 'late-authorization', 'parent-recovered', 'orphan-index', 'redacted-preflight', 'retention', 'grant', 'slot', 'job', 'provider-call', 'token', 'cost'].map(mode => [true, mode])]) test(`native 3D survives slow provider: first renewal fault=${renewalFailure}, renew unpaid quote=${renewQuote}`, async t => {
+  const childRecovery = typeof renewQuote === 'string' && renewQuote.startsWith('recover-');
+  const successQuote = renewQuote === 'success' || childRecovery;
   const f = outputTestDatabase(':memory:'); t.after(() => f.sqlite.close());
   const diagnosticLogs = [];
   t.mock.method(console, 'warn', (...args) => diagnosticLogs.push(args));
   const realNow = Date.now.bind(Date);
-  const nativeClock = process.env.FORMA_MODEL3D_WORKERD_NATIVE === '1' && renewQuote === 'success';
+  const nativeExecution = process.env.FORMA_MODEL3D_WORKERD_NATIVE === '1' && renewQuote === 'success';
+  const nativeRecovery = process.env.FORMA_MODEL3D_WORKERD_RECOVERY === '1' && renewQuote === 'recover-child';
+  const nativeClock=nativeExecution||nativeRecovery;
   // This scenario advances 3,355 seconds before native child admission. Start
   // its synthetic history in the past so the exported child is genuinely fresh
   // against workerd's real Date and D1 clocks, without rewriting signed receipts.
-  if (nativeClock) t.mock.timers.enable({ apis: ['Date', 'setTimeout'], now: realNow() - 3355000 });
+  if (nativeClock) t.mock.timers.enable({ apis: ['Date', 'setTimeout'], now: realNow() - (nativeRecovery?4435000:3355000) });
   const installSqlClock = () => {
     const clock = outputTestDatabase(); t.after(() => clock.sqlite.close());
     for (const name of ['strftime', 'julianday', 'datetime']) f.sqlite.function(name, { varargs: true }, (...args) =>
       clock.sqlite.prepare(`SELECT ${name}(${args.map(() => '?').join(',')}) AS value`).get(...args.map(value => value === 'now' ? new Date().toISOString() : value)).value);
   };
   if (nativeClock) installSqlClock();
-  let posts = 0, renewals = 0, injected = false, monotonic = 0;
+  let posts = 0, renewals = 0, injected = false, childFault = false, monotonic = 0, recoveryMutation;
+  const recoveryGets=[];
   const workerdHeartbeats = [];
   let workerdNative;
+  let workerdRecovery;
   t.mock.method(globalThis, 'fetch', () => { throw Error('provider called before deliberate Start'); });
   await ensureSchema(f.env);
   const owner = 'dev-local-creative', now = new Date().toISOString();
@@ -79,6 +86,7 @@ for (const [renewalFailure, renewQuote] of [[false, false], [true, false], ...['
     if (statements.some(statement => statement.sql.includes('UPDATE document_jobs SET lease_expires_at'))) {
       renewals++;
       if (renewalFailure && !injected) { injected = true; throw Error('D1_ERROR: synthetic heartbeat write failure'); }
+      if (childRecovery && posts === 2 && !childFault) { childFault=true; throw Error('D1_ERROR: synthetic child heartbeat failure'); }
       if (process.env.FORMA_MODEL3D_WORKERD_HEARTBEAT === '1' && !workerdHeartbeats.some(value => value.posts === posts))
         workerdHeartbeats.push({ posts, snapshot: exportSynthetic(f.sqlite), statements: statements.map(s => ({ sql: s.sql, bindings: [...s.bindings] })) });
     }
@@ -86,10 +94,11 @@ for (const [renewalFailure, renewQuote] of [[false, false], [true, false], ...['
   };
   t.mock.method(globalThis, 'fetch', async (url, init) => {
     const target = String(url);
+    if(childFault && init?.method==='GET') { recoveryGets.push(target); if(recoveryMutation) { const mutate=recoveryMutation;recoveryMutation=null;mutate(); } }
     if (target === `https://queue.fal.run/${RODIN_TEXT_MODEL}` && init?.method === 'POST') {
       posts++; return Response.json({ request_id: posts === 1 ? 'slow-model-original' : 'slow-model-replacement', status: 'IN_PROGRESS' });
     }
-    if (/^https:\/\/queue\.fal\.run\/fal-ai\/hyper3d\/requests\/slow-model-(original|replacement)\/status\?logs=1$/u.test(target)) {
+    if (/^https:\/\/queue\.fal\.run\/fal-ai\/hyper3d\/requests\/slow-model-(original|replacement)\/status(?:\?logs=1)?$/u.test(target)) {
       if (target.includes('replacement')) { childEntered.resolve(); await releaseChildStatus.promise; }
       else { entered.resolve(); await releaseStatus.promise; }
       init?.signal?.throwIfAborted();
@@ -148,7 +157,7 @@ for (const [renewalFailure, renewQuote] of [[false, false], [true, false], ...['
       // SQLite's SQL clock is real rather than Node's mocked Date.
       f.sqlite.prepare('UPDATE output_execution_grants SET expires_at=? WHERE grant_id=?')
         .run('2000-01-01T00:00:00.000Z', admitted.original.grantId);
-      f.sqlite.prepare('UPDATE document_jobs SET expires_at=? WHERE job_id=?').run(new Date(Date.now() + (renewQuote === 'success' ? 60 : renewQuote ? 36 : 16) * 60000).toISOString(), jobId);
+      f.sqlite.prepare('UPDATE document_jobs SET expires_at=? WHERE job_id=?').run(new Date(Date.now() + (successQuote ? 60 : renewQuote ? 36 : 16) * 60000).toISOString(), jobId);
       const oldCall = structuredClone(f.sqlite.prepare('SELECT * FROM output_provider_calls WHERE slot_id=?').get(admitted.original.slotId));
       const oldCost = structuredClone(f.sqlite.prepare('SELECT * FROM cost_budget_reservations WHERE reservation_id=(SELECT cost_reservation_id FROM output_operation_slots WHERE slot_id=?)').get(admitted.original.slotId));
       const view = await handleExperienceOutput(new Request('http://localhost' + path), f.env, executionContext, outputDocumentExecutionBridge);
@@ -202,7 +211,7 @@ for (const [renewalFailure, renewQuote] of [[false, false], [true, false], ...['
         assert.ok(decodeExperienceBinding(expired, identity));
         const renewalBody = { draftHash: plan.draftHash, explicitRequirementsConfirmation: true,
           renewal: { predecessorPreflightId: stale.preflight.id, explicitRenewal: true } };
-        if (renewQuote !== 'success') {
+        if (!successQuote) {
           const originalBatch = f.DB.batch.bind(f.DB); let injectedRace = false;
           const planCount = f.sqlite.prepare('SELECT COUNT(*) n FROM output_plan_revisions').get().n;
           const preflightCount = f.sqlite.prepare('SELECT COUNT(*) n FROM output_preflights').get().n;
@@ -309,18 +318,71 @@ for (const [renewalFailure, renewQuote] of [[false, false], [true, false], ...['
       assert.deepEqual(structuredClone(f.sqlite.prepare('SELECT * FROM output_provider_calls WHERE slot_id=?').get(admitted.original.slotId)), oldCall);
       assert.deepEqual(structuredClone(f.sqlite.prepare('SELECT * FROM cost_budget_reservations WHERE reservation_id=?').get(oldCost.reservation_id)), oldCost);
       await send('run', { draftHash: plan.draftHash, grantId: child.original.grantId, explicitRun: true });
-      if (nativeClock) assert(Math.abs(Date.now() - realNow()) < 10000, 'exported child admission aligns with real runtime clock');
-      if (nativeClock) workerdNative = {
+      if (nativeExecution) assert(Math.abs(Date.now() - realNow()) < 10000, 'exported child admission aligns with real runtime clock');
+      if (nativeExecution) workerdNative = {
         snapshot: exportSynthetic(f.sqlite), fixture: { user: structuredClone(auth.user), jobId: child.original.jobId } };
       const childRunning = runDocumentJob(f.env, auth.user, child.original.jobId);
       await Promise.race([childEntered.promise, childRunning.then(() => { throw Error('replacement stopped before provider status'); })]);
       const beforeChildRenewals = renewals;
       try {
         for (let i = 0; i < 2; i++) { monotonic += 60000; t.mock.timers.tick(60000); await flush(); }
-        assert.equal(renewals, beforeChildRenewals + 2, 'replacement survives two real runner heartbeat transactions');
-        assert.equal(f.sqlite.prepare('SELECT status FROM document_jobs WHERE job_id=?').get(child.original.jobId).status, 'running');
+        assert.equal(renewals, beforeChildRenewals + (childRecovery ? 1 : 2), 'expected child heartbeat transactions');
+        assert.equal(f.sqlite.prepare('SELECT status FROM document_jobs WHERE job_id=?').get(child.original.jobId).status, childRecovery ? 'failed' : 'running');
       } finally { releaseChildStatus.resolve(); await childRunning; }
       await runDocumentJob(f.env, auth.user, child.original.jobId);
+      if (childRecovery) {
+        assert.equal(childFault,true);
+        // Expired paid authority is not renewed to retrieve accepted media.
+        monotonic += 16*60000; t.mock.timers.tick(16*60000); await flush();
+        if(renewQuote==='recover-parent') {
+          const parent=f.sqlite.prepare('SELECT document_jobs.*,? AS output_slot_id FROM document_jobs WHERE job_id=?').get(admitted.original.slotId,jobId);
+          const outcome=await recoverOutputModel3d(f.env,auth.user,parent,{assertions:[{sql:'1'}],request:new Request('http://localhost'+path)});
+          assert.equal(outcome.status,'completed','actual original recovery can precede child recovery');
+          Object.assign(oldCall,structuredClone(f.sqlite.prepare('SELECT * FROM output_provider_calls WHERE slot_id=?').get(admitted.original.slotId)));
+          Object.assign(oldCost,structuredClone(f.sqlite.prepare('SELECT * FROM cost_budget_reservations WHERE reservation_id=?').get(oldCost.reservation_id)));
+        }
+        const parentBefore=Object.fromEntries(['document_jobs','output_operation_slots','output_execution_grants','output_provider_calls','budget_reservations','cost_budget_reservations'].map(table=>[table,structuredClone(f.sqlite.prepare(`SELECT * FROM ${table} ORDER BY rowid LIMIT 1`).get())]));
+        const failedView=await handleExperienceOutput(new Request('http://localhost'+path),f.env,executionContext,outputDocumentExecutionBridge);
+        assert.equal(failedView.status,200,await failedView.clone().text());
+        const failedState=await failedView.json(); assert.equal(failedState.permitted.recoverResult,true,JSON.stringify(failedState));
+        const recoveryBody={draftHash:plan.draftHash,explicitRecovery:true,grantId:child.original.grantId,jobId:child.original.jobId};
+        if(nativeRecovery) {
+          assert(Math.abs(Date.now()-realNow())<10000,'recovery snapshot aligns with real runtime clock');
+          workerdRecovery={snapshot:exportSynthetic(f.sqlite),fixture:{user:structuredClone(auth.user),jobId:child.original.jobId,path,recoveryBody,
+            parent:{jobId,slotId:admitted.original.slotId,grantId:admitted.original.grantId,costId:oldCost.reservation_id,
+              tokenId:f.sqlite.prepare('SELECT token_reservation_id FROM output_operation_slots WHERE slot_id=?').get(admitted.original.slotId).token_reservation_id}}};
+        }
+        if(renewQuote==='recover-child') {
+          const negative=[
+            ['UPDATE output_operation_slots SET previous_slot_id=? WHERE slot_id=?',[child.original.slotId,child.original.slotId]],
+            ['UPDATE output_provider_calls SET provider_response_id=? WHERE slot_id=?',['wrong-parent-id',admitted.original.slotId]],
+            ['UPDATE output_provider_calls SET provider_response_id=? WHERE slot_id=?',['wrong-child-id',child.original.slotId]],
+            ["UPDATE document_jobs SET lease_expires_at=? WHERE job_id=?",[new Date(Date.now()+60000).toISOString(),child.original.jobId]],
+            ["UPDATE private_content SET expires_at=? WHERE content_id=?",[new Date(Date.now()-1).toISOString(),plan.draftId]],
+            ["UPDATE event_private_payloads SET redacted_at=? WHERE private_event_id=(SELECT confirmed_event_id FROM output_plan_revisions WHERE plan_revision_id=?)",[new Date().toISOString(),child.plan.revisionId]],
+            ["UPDATE event_private_payloads SET private_json=json_set(private_json,'$.output_command_envelope.experienceBinding.replacementCycle.id','wrong') WHERE private_event_id=(SELECT confirmed_event_id FROM output_plan_revisions WHERE plan_revision_id=?)",[child.plan.revisionId]],
+            ["UPDATE output_execution_grants SET preflight_id=? WHERE grant_id=?",[f.sqlite.prepare('SELECT preflight_id FROM output_preflights p WHERE NOT EXISTS(SELECT 1 FROM output_execution_grants g WHERE g.preflight_id=p.preflight_id) LIMIT 1').get().preflight_id,child.original.grantId]],
+          ];
+          for(const [sql,values] of negative) {
+            f.sqlite.exec('SAVEPOINT child_negative'); const getCount=recoveryGets.length;
+            try { f.sqlite.prepare(sql).run(...values); const denied=await handleExperienceOutput(post(path+'/recover-result',recoveryBody),f.env,executionContext,outputDocumentExecutionBridge);
+              assert.notEqual(denied.status,200,sql); assert.equal(recoveryGets.length,getCount,'refusal before provider GET'); }
+            finally {f.sqlite.exec('ROLLBACK TO child_negative');f.sqlite.exec('RELEASE child_negative');}
+          }
+        }
+        if(renewQuote==='recover-race') {
+          recoveryMutation=()=>f.sqlite.prepare('UPDATE output_provider_calls SET provider_response_id=? WHERE slot_id=?').run('changed-after-claim',admitted.original.slotId);
+          const priorGets=recoveryGets.length;
+          const denied=await handleExperienceOutput(post(path+'/recover-result',recoveryBody),f.env,executionContext,outputDocumentExecutionBridge);
+          assert.notEqual(denied.status,200); assert.equal(recoveryGets.length,priorGets+1,'race stops before result/media');
+          assert.equal(posts,2); assert.equal(f.sqlite.prepare('SELECT status FROM document_jobs WHERE job_id=?').get(child.original.jobId).status,'failed');
+          return;
+        }
+        const recovered=await send('recover-result',recoveryBody); assert.equal(recovered.recovery,'completed');
+        assert.equal(posts,2,'recovery never generates');
+        const replay=await send('recover-result',recoveryBody); assert.equal(replay.recovery,'completed');
+        for(const [table,before] of Object.entries(parentBefore)) assert.deepEqual(structuredClone(f.sqlite.prepare(`SELECT * FROM ${table} ORDER BY rowid LIMIT 1`).get()),before,table+' parent unchanged');
+      }
       const after = f.sqlite.prepare('SELECT status,error_message,result_json FROM document_jobs WHERE job_id=?').get(child.original.jobId);
       assert.equal(after.status, 'completed', JSON.stringify(after)); assert.equal(posts, 2);
       assert.deepEqual(structuredClone(f.sqlite.prepare('SELECT * FROM output_provider_calls WHERE slot_id=?').get(admitted.original.slotId)), oldCall);
@@ -369,5 +431,10 @@ for (const [renewalFailure, renewQuote] of [[false, false], [true, false], ...['
     t.mock.restoreAll();
     const { verifyNativeRunnerInWorkerd } = await import('./helpers/model3d-heartbeat-workerd.mjs');
     t.diagnostic(JSON.stringify(await verifyNativeRunnerInWorkerd(workerdNative.snapshot, workerdNative.fixture, bytes)));
+  }
+  if(workerdRecovery) {
+    t.mock.restoreAll();
+    const {verifyChildRecoveryInWorkerd}=await import('./helpers/model3d-heartbeat-workerd.mjs');
+    t.diagnostic(JSON.stringify(await verifyChildRecoveryInWorkerd(workerdRecovery.snapshot,workerdRecovery.fixture,bytes)));
   }
 });

@@ -2,16 +2,18 @@ import { readOutputModel3dPayload, verifyModel3dPreparedReceipt } from "./output
 import type { DocumentJobRow } from "./document-jobs-api.ts";
 import type { WorkerEnv } from "./runtime.ts";
 import type { OutputOperationSlot, OutputScope } from "./output-requirements-ledger.ts";
+import { model3dMiniAppAttemptMatches } from "../src/model/model3d-mini-app-consent.ts";
+import { model3dRecoveryAttemptSql } from "./output-model3d-recovery-attempt.ts";
 
 /** Read-only UI advice, not recovery authority. The recovery service independently
  * requires every current source, private-body, original-call and reservation join. */
 export async function outputModel3dRecoveryAvailable(env: WorkerEnv, scope: OutputScope, slot: OutputOperationSlot, job: DocumentJobRow): Promise<boolean> {
   if (scope.kind !== "personal" || scope.actorUserId !== scope.ownerUserId || scope.contextId !== null
     || scope.organizationId !== null || scope.projectAccessId !== null || job.status !== "failed"
-    || slot.attemptOrdinal !== 0 || slot.previousSlotId !== null || !["failed", "uncertain"].includes(slot.status)) return false;
+    || !["failed", "uncertain"].includes(slot.status)) return false;
   try {
     const offer = await readOutputModel3dPayload(JSON.parse(job.request_json));
-    if (!offer || offer.contract.reference !== null || offer.preview.sourceFilesTransferred !== 0
+    if (!offer || !model3dMiniAppAttemptMatches(offer.preview,slot) || offer.contract.reference !== null || offer.preview.sourceFilesTransferred !== 0
       || offer.preview.requestId !== job.job_id || offer.preview.actorUserId !== scope.actorUserId
       || offer.preview.documentId !== scope.documentId || offer.preview.projectId !== scope.projectId) return false;
     const metadata = JSON.parse(job.result_json ?? "{}");
@@ -28,7 +30,7 @@ export async function outputModel3dRecoveryAvailable(env: WorkerEnv, scope: Outp
         AND (json_type(job.result_json,'$.outputModel3dRecovery') IS NULL
           OR (json_extract(job.result_json,'$.outputModel3dRecovery.version')='output-model3d-recovery-v1'
             AND json_extract(job.result_json,'$.outputModel3dRecovery.expiresAt')<=strftime('%Y-%m-%dT%H:%M:%fZ','now')))
-        AND slot.status IN('failed','uncertain') AND slot.attempt_ordinal=0 AND slot.previous_slot_id IS NULL
+        AND slot.status IN('failed','uncertain') AND ${model3dRecoveryAttemptSql}
         AND slot.maximum_calls=1 AND slot.provider='fal' AND slot.model=?
         AND grant_row.actor_user_id=job.owner_id AND grant_row.payer_user_id=job.owner_id AND grant_row.context_id IS NULL
         AND grant_row.status IN('authorized','active','completed')

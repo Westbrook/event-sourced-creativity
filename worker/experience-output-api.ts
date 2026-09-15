@@ -698,7 +698,7 @@ export async function handleExperienceOutput(request: Request, env: WorkerEnv, e
         .bind(current.original.jobId,loaded.trusted.scope.actorUserId,loaded.binding.streamId,loaded.binding.documentId).first<DocumentJobRow>();
       if (!job) error("experience_output_original_job_unavailable",410);
       const recover=loaded.binding.output==="video"?recoverOutputVideo:loaded.binding.output==="model3d"?recoverOutputModel3d:recoverOutputFalImage;
-      const outcome = await recover(env,loaded.trusted.principal,job,{assertions,signal:request.signal,
+      const outcome = await recover(env,loaded.trusted.principal,job,{assertions,signal:request.signal,...(loaded.binding.output==="model3d"?{request}:{}),
         ...(loaded.binding.output==="image"?{onStage:(stage:FalRecoveryStage)=>{diagnosticStage=`recover_result_${stage}`;}}:{})});
       recovered = outcome.status;
     }

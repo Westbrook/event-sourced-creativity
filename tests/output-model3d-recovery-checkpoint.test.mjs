@@ -32,6 +32,10 @@ async function original() {
 function resultChange(f, change) { const result = JSON.parse(f.job.result_json); change(result); f.job.result_json = JSON.stringify(result); }
 async function refused(change) { const f = await original(); change(f); const before = structuredClone(f); await assert.rejects(capture(f, at), /output_model3d|request_not_authorized/); assert.deepEqual(f, before); }
 
+test('attempt ordinal retains strict numeric identity',async()=>{
+  for(const ordinal of ['0','1',null,undefined]) await refused(f=>{f.slot.attemptOrdinal=ordinal;});
+});
+
 test("accepted original checkpoint is captured without IO, mutable aliases, or new identities", async () => {
   const priorFetch = globalThis.fetch; globalThis.fetch = () => { throw Error("no network"); };
   try {
@@ -89,16 +93,21 @@ test("duplicate completed/acknowledged jobs are not admitted to the failed-origi
 
 test("lease guards keep complete original joins as bounded independent SQL statements", async () => {
   const f = await original(), checkpoint = await capture(f, at), guards = outputModel3dRecoveryAssertions(f.scope, f.slot, f.job, checkpoint, checkpoint.expiresAt);
-  assert.equal(guards.length, 11);
+  assert.equal(guards.length, 12);
   for (const guard of guards) {
     assert.equal((guard.sql.match(/\?/gu) ?? []).length, guard.bindings.length);
     assert(guard.bindings.length <= 100); assert(!guard.bindings.includes(undefined));
     assert(!/\b(?:INSERT|UPDATE|DELETE|REPLACE|ALTER|DROP)\b/iu.test(guard.sql));
   }
   const identity = guards.find(g => g.sql.includes("JOIN output_plan_revisions"));
-  for (const fragment of ["job.status='failed'", "job.attempt_count=1", "job.request_json=?", "slot.attempt_ordinal=0", "slot.previous_slot_id IS NULL",
+  for (const fragment of ["job.status='failed'", "job.attempt_count=1", "job.request_json=?", "slot.attempt_ordinal=?", "slot.previous_slot_id IS ?",
     "slot.maximum_calls=1", "grant_row.payer_user_id=job.owner_id", "grant_row.status IN('authorized','active','completed')", "NOT EXISTS(SELECT 1 FROM project_resource_scopes", "plan.requirements_digest=?"]) assert(identity.sql.includes(fragment), fragment);
   const call = guards.find(g => g.sql.includes("JOIN json_each"));
+  const attempt = guards.find(g => g.sql.includes("parent.attempt_ordinal=0"));
+  assert(attempt.sql.includes("slot.attempt_ordinal=0"));
+  assert(attempt.sql.includes("slot.previous_slot_id IS NULL"));
+  assert(attempt.sql.includes("slot.attempt_ordinal=1"));
+  assert.deepEqual(attempt.bindings, [f.job.job_id, f.scope.key, f.slot.slotId]);
   assert(call.sql.includes("call.provider_response_id=?")); assert(call.sql.includes("call.request_digest=?")); assert(call.sql.includes("COUNT(*) FROM output_provider_calls"));
   assert(call.sql.includes("IN('accepted','completed')")); assert(call.sql.includes("call.status IN('uncertain','settled')"));
   assert(!guards.some(g => g.sql.includes("result_json IS ?")), "full mutable result is CAS-bound only at claim, not across settlement");

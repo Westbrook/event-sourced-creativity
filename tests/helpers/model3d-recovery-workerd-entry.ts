@@ -10,13 +10,16 @@ import { ensureOutputRequirementsSchema } from './worker/output-requirements-led
 import { outputAssertionStatements } from './worker/output-requirements-ledger.ts';
 import { captureModel3dReplacementParent } from './worker/experience-model3d-replacement-proof.ts';
 import { runDocumentJob } from './worker/document-jobs-api.ts';
+import { handleExperienceOutput } from './worker/experience-output-api.ts';
+import { outputDocumentExecutionBridge } from './worker/output-document-execution.ts';
+import { retainedModel3dRecoveryStorageSql } from './worker/output-model3d-recovery-storage.ts';
 
 const environments = new Map();
 const must = (value, label) => { if (!value) throw Error('fixture_assertion:' + label); };
 const labels = new Set(['Complete', 'Source', 'Race', 'Lease', 'Replacement', 'Native']);
 function environment(bindings, label) {
   if (!environments.has(label)) {
-    const real = bindings[label], metrics = { queries: 0, batches: 0, heartbeats: 0, puts: 0, conditionalPuts: 0, deletes: 0, collisionKey: null, queryFailures: [] };
+    const real = bindings[label], metrics = { queries: 0, batches: 0, heartbeats: 0, puts: 0, conditionalPuts: 0, deletes: 0, collisionKey: null, queryFailures: [], childRetentionChecks: 0 };
     const native = new WeakMap(), descriptions = new WeakMap();
     const statement = (inner, sql, values = []) => {
       const wrapped = new Proxy(inner, { get(target, key) {
@@ -54,6 +57,15 @@ function environment(bindings, label) {
     const MEDIA = new Proxy(bucket, { get(target, key) {
       if (key === 'put') return async (name, bytes, options) => {
         metrics.puts++;
+        if (label === 'Native' && JSON.parse(bindings.FIXTURE).recoveryBody) {
+          // The real recovery service persists the exact pending file before
+          // its conditional PUT. Qualify the actual cleanup grace on D1 here,
+          // while the failed child still has its live recovery lease.
+          const f = JSON.parse(bindings.FIXTURE);
+          const retained = await real.prepare(retainedModel3dRecoveryStorageSql).bind(f.user.userId).all();
+          must(retained.results.some(row => row.storage_key === name), 'child_storage_retained_before_put');
+          metrics.childRetentionChecks++;
+        }
         if (options?.onlyIf?.etagDoesNotMatch === '*') metrics.conditionalPuts++;
         if (label === 'Race' && metrics.collisionKey === null) {
           // Deterministic local race at the actual native R2 boundary, after
@@ -74,12 +86,13 @@ function environment(bindings, label) {
 
 export default { async fetch(request, bindings) {
   const [action, label] = new URL(request.url).pathname.slice(1).split('/');
-  if (request.method !== 'GET' || !labels.has(label) || !['warm', 'available', 'recover', 'cleanup', 'lease-retention', 'replacement-proof', 'replacement-race', 'native-run'].includes(action))
+  if (request.method !== 'GET' || !labels.has(label) || !['warm', 'available', 'recover', 'cleanup', 'lease-retention', 'replacement-proof', 'replacement-race', 'native-run', 'child-recover'].includes(action))
     return new Response('Unknown local test action', { status: 404 });
   const f = JSON.parse(bindings.FIXTURE), { env, metrics } = environment(bindings, label);
   const before = { ...metrics, queryFailureCount: metrics.queryFailures.length };
   const counters = () => ({ queries: metrics.queries - before.queries, batches: metrics.batches - before.batches,
     heartbeats: metrics.heartbeats - before.heartbeats,
+    childRetentionChecks: metrics.childRetentionChecks - before.childRetentionChecks,
     puts: metrics.puts - before.puts, conditionalPuts: metrics.conditionalPuts - before.conditionalPuts,
     deletes: metrics.deletes - before.deletes, collisionKey: metrics.collisionKey,
     queryFailures: metrics.queryFailures.slice(before.queryFailureCount) });
@@ -94,6 +107,13 @@ export default { async fetch(request, bindings) {
       return Response.json({ ok: result?.status === 'completed', status: result?.status,
         error: result?.error_message, diagnostic: globalThis.__syntheticNativeFailure,
         result: result?.result_json, counters: counters() });
+    }
+    if(action==='child-recover' && label==='Native') {
+      const response=await handleExperienceOutput(new Request('http://localhost'+f.path+'/recover-result',{
+        method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(f.recoveryBody)}),env,
+        {waitUntil(){throw Error('unexpected background execution');}},outputDocumentExecutionBridge);
+      const body=await response.json();
+      return Response.json({ok:response.ok&&body.recovery==='completed',httpStatus:response.status,body,counters:counters()});
     }
     const job = await env.DB.prepare('SELECT * FROM document_jobs WHERE job_id=?').bind(f.jobId).first();
     must(job, 'original_job_missing'); job.output_slot_id = f.slot.slotId;

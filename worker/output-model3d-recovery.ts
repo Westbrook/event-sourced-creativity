@@ -30,7 +30,7 @@ type Stored = { index: number; token: string; storageKey: string; sha256: string
 /** Explicit read/publication command only. No generator, planner, queue writer,
  * new grant, reservation, provider-call claim, upload or provider POST. */
 export async function recoverOutputModel3d(env: WorkerEnv, user: PilotUser, job: DocumentJobRow,
-  options: { assertions: OutputSqlAssertion[]; signal?: AbortSignal }) {
+  options: { assertions: OutputSqlAssertion[]; signal?: AbortSignal; request?: Request }) {
   // The whole command has one deadline, including authority reads before the
   // accepted-original lease. D1 cannot be aborted; late continuations must not
   // progress and every later write carries this same SQL expiry assertion.
@@ -49,7 +49,7 @@ export async function recoverOutputModel3d(env: WorkerEnv, user: PilotUser, job:
   const check = () => { controller.signal.throwIfAborted(); if (Date.now() >= deadline) fail(); };
   const work = async () => {
     check(); const binding = await loadOutputJobBinding(env, user, job); check(); if (!binding) fail();
-    const proof = await resolveOutputModel3dRecoveryAuthority(env, binding.scope, binding.slot); check();
+    const proof = await resolveOutputModel3dRecoveryAuthority(env, binding.scope, binding.slot, options.request ? {request:options.request,user} : undefined); check();
     const assertions = [...proof.assertions, ...options.assertions, {
       sql: "?>strftime('%Y-%m-%dT%H:%M:%fZ','now')", bindings: [new Date(deadline).toISOString()], deadlineMs: deadline,
     }];

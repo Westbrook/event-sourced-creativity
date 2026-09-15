@@ -18,6 +18,8 @@ import { OutputConflictError, type OutputSqlAssertion } from "./output-command-c
 import type { OutputBridgeTargetInput } from "./output-requirements-api.ts";
 import { resolveModel3dReplacementSource } from "./output-model3d-replacement-source.ts";
 import type { Model3dReplacementCycle } from "./experience-model3d-replacement.ts";
+import { resolveAcceptedModel3dReplacement } from "./output-model3d-recovery-lineage.ts";
+import type { OutputOperationSlot } from "./output-requirements-ledger.ts";
 
 function fail(code = "output_model3d_original_unavailable"): never { throw new OutputConflictError(code, 409); }
 const record = (value: unknown): value is Record<string, unknown> => Boolean(value && typeof value === "object" && !Array.isArray(value));
@@ -65,6 +67,13 @@ function receiptAssertion(input: OutputBridgeTargetInput, receipt: ExperienceInt
  * This reuses the real personal principal; it does not synthesize an authenticated
  * Request or bypass the caller's full lifecycle/custody/source loader. */
 export async function resolveOutputModel3dSource(input: OutputBridgeTargetInput) {
+  return resolveModel3dSource(input, resolveModel3dReplacementSource);
+}
+/** Separate retrieval entry: reuse source custody without renewing dispatch. */
+export async function resolveOutputModel3dRecoverySource(input: OutputBridgeTargetInput, slot: OutputOperationSlot) {
+  return resolveModel3dSource(input, (source, root, retention) => resolveAcceptedModel3dReplacement(source, root, retention, slot));
+}
+async function resolveModel3dSource(input: OutputBridgeTargetInput, replacementSource: typeof resolveModel3dReplacementSource) {
   const { scope, principal, target, confirmedPlan, context } = input;
   const contract = parseModel3dOutputContract(target.model3d_contract);
   if (!contract || scope.kind !== "personal" || scope.actorUserId !== scope.ownerUserId || scope.actorUserId !== principal.userId
@@ -121,7 +130,7 @@ export async function resolveOutputModel3dSource(input: OutputBridgeTargetInput)
     || created.payload.project_id !== plan.projectId || created.payload.document_id !== plan.documentId
     || created.payload.handle !== block.handle || created.payload.position !== block.position
     || !same(created.payload.properties, block.properties)) fail("output_model3d_requirement_changed");
-  const replacement = await resolveModel3dReplacementSource(input, binding, retained.expiresAt);
+  const replacement = await replacementSource(input, binding, retained.expiresAt);
   const identity = await outputModel3dPreparationIdentity(contract, confirmedPlan, target.id, replacement?.cycle);
   if (!identity || !exactIso(retained.expiresAt) || Date.parse(identity.expiresAt) > Date.parse(retained.expiresAt)) fail("output_model3d_original_expired");
   const draft = join(projectIntakeAuthority(input.env, auth, plan), experienceDraftGuard(auth, plan, retained.content));

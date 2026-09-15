@@ -40,7 +40,10 @@ export async function verifyHeartbeatInWorkerd(snapshot, statements) {
   } finally { await finite(mf.dispose(), 10000, 'heartbeat-dispose'); }
 }
 
-export async function verifyNativeRunnerInWorkerd(snapshot, fixture, bytes) {
+export async function verifyChildRecoveryInWorkerd(snapshot, fixture, bytes) {
+  return verifyNativeRunnerInWorkerd(snapshot,fixture,bytes,true);
+}
+export async function verifyNativeRunnerInWorkerd(snapshot, fixture, bytes, recovery=false) {
   const { Miniflare, Log, LogLevel } = wrangler('miniflare'), { build } = wrangler('esbuild');
   const root = fileURLToPath(new URL('../../', import.meta.url));
   const entry = await readFile(new URL('./model3d-recovery-workerd-entry.ts', import.meta.url), 'utf8');
@@ -59,21 +62,22 @@ export async function verifyNativeRunnerInWorkerd(snapshot, fixture, bytes) {
       });
     } }] });
   let posts = 0, polls = 0, acceptedAt = 0;
-  const base = 'https://queue.fal.run/fal-ai/hyper3d/requests/native-workerd-replacement';
+  const providerId=recovery?'slow-model-replacement':'native-workerd-replacement';
+  const base = 'https://queue.fal.run/fal-ai/hyper3d/requests/'+providerId;
   const mf = new Miniflare({ modules: true, compatibilityDate: '2026-05-22', compatibilityFlags: ['nodejs_compat'],
     host: '127.0.0.1', port: 0, log: new Log(LogLevel.NONE), d1Databases: ['Native'], r2Buckets: ['NativeMedia'],
     script: built.outputFiles[0].text, bindings: { FIXTURE: JSON.stringify(fixture) },
     outboundService(request) {
-      if (request.method === 'POST' && request.url === 'https://queue.fal.run/fal-ai/hyper3d/rodin/v2.5/text-to-3d') {
+      if (!recovery && request.method === 'POST' && request.url === 'https://queue.fal.run/fal-ai/hyper3d/rodin/v2.5/text-to-3d') {
         assert.equal(++posts, 1); acceptedAt = Date.now();
         return Response.json({ request_id: 'native-workerd-replacement', status: 'IN_PROGRESS' });
       }
       assert.equal(request.method, 'GET');
-      if (request.url === base + '/status?logs=1') {
+      if (request.url === base + (recovery?'/status':'/status?logs=1')) {
         polls++;
-        return Response.json({ request_id: 'native-workerd-replacement', status: Date.now() - acceptedAt >= 125000 ? 'COMPLETED' : 'IN_PROGRESS' });
+        return Response.json({ request_id: providerId, status: recovery||Date.now() - acceptedAt >= 125000 ? 'COMPLETED' : 'IN_PROGRESS' });
       }
-      if (request.url === base) return Response.json({ request_id: 'native-workerd-replacement', seed: 7,
+      if (request.url === base) return Response.json({ request_id: providerId, seed: 7,
         model_mesh: { url: 'https://fal.media/files/native-workerd.glb', file_name: 'native-workerd.glb',
           content_type: 'model/gltf-binary', file_size: bytes.length }, textures: [] });
       if (request.url === 'https://fal.media/files/native-workerd.glb') return new Response(bytes, {
@@ -85,8 +89,25 @@ export async function verifyNativeRunnerInWorkerd(snapshot, fixture, bytes) {
     await finite(install(db, snapshot), 35000, 'native-install');
     const warm = await finite(mf.dispatchFetch('https://qualification.invalid/warm/Native').then(r => r.json()), 10000, 'native-warm');
     assert.equal(warm.ok, true);
-    const result = await finite(mf.dispatchFetch('https://qualification.invalid/native-run/Native').then(r => r.json()), 180000, 'native-run');
+    const parentSnapshot=async()=>{
+      const p=fixture.parent;
+      return Promise.all([['document_jobs','job_id',p.jobId],['output_operation_slots','slot_id',p.slotId],['output_execution_grants','grant_id',p.grantId],
+        ['output_provider_calls','slot_id',p.slotId],['cost_budget_reservations','reservation_id',p.costId],['budget_reservations','reservation_id',p.tokenId]]
+        .map(([table,key,id])=>db.prepare(`SELECT * FROM ${table} WHERE ${key}=?`).bind(id).all()));
+    };
+    const before=recovery?await parentSnapshot():null;
+    const action=recovery?'child-recover':'native-run';
+    const result = await finite(mf.dispatchFetch('https://qualification.invalid/'+action+'/Native').then(r => r.json()), 180000, action);
     assert.equal(result.ok, true, JSON.stringify({ ...result, posts, polls }));
+    if(recovery) {
+      assert.equal(posts,0);assert.equal(polls,1);assert.equal(result.counters.puts,1);assert.equal(result.counters.conditionalPuts,1);
+      assert.equal(result.counters.childRetentionChecks,1);
+      assert.deepEqual((await parentSnapshot()).map(r=>r.results),before.map(r=>r.results));
+      const replay=await finite(mf.dispatchFetch('https://qualification.invalid/child-recover/Native').then(r=>r.json()),35000,'child-replay');
+      assert.equal(replay.ok,true,JSON.stringify(replay));assert.equal(polls,1);assert.equal(replay.counters.puts,0);
+      assert.deepEqual((await parentSnapshot()).map(r=>r.results),before.map(r=>r.results));
+      return {posts,polls,counters:result.counters,replay:replay.counters};
+    }
     assert.equal(posts, 1); assert(polls >= 25, 'normal five-second polling reaches both heartbeats');
     assert.equal(result.counters.heartbeats, 2, 'both native guarded heartbeat batches committed');
     return { posts, polls, counters: result.counters };

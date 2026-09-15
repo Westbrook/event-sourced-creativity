@@ -357,24 +357,24 @@ export async function reconcileOutputNativeStorage(env: WorkerEnv, filter: { own
           AND grace.slot_id=output_native_storage_writes.slot_id AND grace.storage_key=output_native_storage_writes.storage_key
           AND grace.content_sha256=output_native_storage_writes.content_sha256) AND NOT EXISTS(
         SELECT 1 FROM document_jobs recovery WHERE recovery.job_id=slot.job_id AND recovery.owner_id=grant_row.actor_user_id
-          AND recovery.status='failed' AND (json_extract(recovery.result_json,'$.outputFalRecovery.version')='output-fal-recovery-v1'
+          AND recovery.status='failed' AND ((json_extract(recovery.result_json,'$.outputFalRecovery.version')='output-fal-recovery-v1'
           AND json_extract(recovery.result_json,'$.outputFalRecovery.clientRequestId')=json_extract(recovery.result_json,'$.outputFalCheckpoint.clientRequestId')
           AND length(json_extract(recovery.result_json,'$.outputFalRecovery.token'))=36
           AND output_native_storage_writes.storage_key=json_extract(recovery.result_json,'$.outputFalRecovery.storageKey')
           AND output_native_storage_writes.storage_key LIKE '%-recovery-'||json_extract(recovery.result_json,'$.outputFalRecovery.token')||'.png'
           AND retained.grant_id IS NOT NULL
-          AND json_extract(recovery.result_json,'$.outputFalRecovery.expiresAt')>strftime('%Y-%m-%dT%H:%M:%fZ','now')
-          OR recovery.kind='render_document' AND recovery.source_surface='outputs' AND recovery.document_id=plan.document_id AND plan.scope_kind='personal'
-          AND plan.organization_id IS NULL AND plan.project_access_id IS NULL AND grant_row.context_id IS NULL
-          AND recovery.owner_id=plan.owner_user_id AND recovery.stream_id='creative:'||plan.owner_user_id
-          AND recovery.expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now')
-          AND json_extract(recovery.request_json,'$.artifactKind')='video' AND json_type(recovery.result_json,'$.outputVideoStop') IS NULL
+          AND json_extract(recovery.result_json,'$.outputFalRecovery.expiresAt')>strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+          OR ((recovery.kind='render_document' AND recovery.source_surface='outputs' AND recovery.document_id=plan.document_id AND plan.scope_kind='personal')
+          AND ((plan.organization_id IS NULL AND plan.project_access_id IS NULL AND grant_row.context_id IS NULL)
+          AND (recovery.owner_id=plan.owner_user_id AND recovery.stream_id='creative:'||plan.owner_user_id
+          AND recovery.expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now')))
+          AND ((json_extract(recovery.request_json,'$.artifactKind')='video' AND json_type(recovery.result_json,'$.outputVideoStop') IS NULL
           AND json_extract(recovery.result_json,'$.outputVideoRecovery.version')='output-video-recovery-v1'
-          AND length(json_extract(recovery.result_json,'$.outputVideoRecovery.token'))=36
-          AND json_extract(recovery.result_json,'$.outputVideoRecovery.clientRequestId')=json_extract(recovery.result_json,'$.outputVideoMediaCheckpoint.clientRequestId')
+          AND length(json_extract(recovery.result_json,'$.outputVideoRecovery.token'))=36)
+          AND (json_extract(recovery.result_json,'$.outputVideoRecovery.clientRequestId')=json_extract(recovery.result_json,'$.outputVideoMediaCheckpoint.clientRequestId')
           AND json_extract(recovery.result_json,'$.outputVideoRecovery.requestDigest')=json_extract(recovery.result_json,'$.outputVideoMediaCheckpoint.requestDigest')
           AND output_native_storage_writes.storage_key=json_extract(recovery.result_json,'$.outputVideoRecovery.storageKey')
-          AND json_extract(recovery.result_json,'$.outputVideoRecovery.expiresAt')>strftime('%Y-%m-%dT%H:%M:%fZ','now')))))
+          AND json_extract(recovery.result_json,'$.outputVideoRecovery.expiresAt')>strftime('%Y-%m-%dT%H:%M:%fZ','now'))))))))
       AND (? IS NULL OR plan.owner_user_id=?) AND (? IS NULL OR plan.organization_id=?)
       AND (?=0 OR (plan.scope_kind='personal' AND plan.organization_id IS NULL AND plan.project_access_id IS NULL)))`)
     .bind(filter.ownerUserId??null, filter.ownerUserId??null, now, now, filter.ownerUserId ?? null, filter.ownerUserId ?? null, filter.organizationId ?? null, filter.organizationId ?? null, Number(filter.personalOnly === true)).run();

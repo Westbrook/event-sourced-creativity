@@ -2,6 +2,7 @@ import { canonicalJson, freeze } from "../src/experiences/compiler.ts";
 import { captureModel3dComparisonData } from "../src/model/output-model3d-offer.ts";
 import { readOutputModel3dPayload, verifyModel3dPreparedReceipt } from "./output-model3d-execution.ts";
 import type { Model3dPreparedReceipt } from "./fal-model3d-adapter.ts";
+import { model3dMiniAppAttemptMatches } from "../src/model/model3d-mini-app-consent.ts";
 
 const fail = (): never => { throw new Error("output_model3d_recovery_checkpoint_unavailable"); };
 const object = (value: unknown): Record<string, unknown> => value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : fail();
@@ -26,7 +27,7 @@ export async function captureOutputModel3dRecoveryCheckpoint(input: unknown, at 
     || job.kind !== "render_document" || job.source_surface !== "outputs" || job.status !== "failed"
     || !identifier(job.job_id) || !identifier(job.correlation_id) || job.attempt_count !== 1
     || job.output_slot_id !== slot.slotId || slot.jobId !== job.job_id || slot.scopeKey !== scope.key
-    || slot.attemptOrdinal !== 0 || slot.previousSlotId !== null || !["failed", "uncertain"].includes(String(slot.status))
+    || !["failed", "uncertain"].includes(String(slot.status))
     || slot.maximumCalls !== 1 || slot.maximumTokens !== 1 || slot.provider !== "fal"
     || grant.scope_key !== scope.key || grant.grant_id !== slot.grantId || grant.actor_user_id !== scope.actorUserId
     || grant.payer_user_id !== scope.ownerUserId || grant.context_id !== null
@@ -37,7 +38,9 @@ export async function captureOutputModel3dRecoveryCheckpoint(input: unknown, at 
   const request = parse(job.request_json), checkpoint = parse(job.result_json);
   if (Object.hasOwn(checkpoint, "outputModel3dStop") || !identifier(checkpoint.artifactId) || checkpoint.artifactKind !== "model3d") return fail();
   const offer = await readOutputModel3dPayload(request);
-  if (!offer || offer.contract.reference !== null || offer.preview.sourceFilesTransferred !== 0
+  if (!offer || typeof slot.jobId!=="string" || typeof slot.attemptOrdinal!=="number" || !(slot.previousSlotId===null||typeof slot.previousSlotId==="string")
+    || !model3dMiniAppAttemptMatches(offer.preview, {jobId:slot.jobId,attemptOrdinal:slot.attemptOrdinal,previousSlotId:slot.previousSlotId})
+    || offer.contract.reference !== null || offer.preview.sourceFilesTransferred !== 0
     || offer.preview.actorUserId !== scope.actorUserId || offer.preview.documentId !== scope.documentId || offer.preview.projectId !== scope.projectId
     || offer.preview.requestId !== job.job_id || offer.preview.sourceDigest !== slot.sourceDigest
     || current.sourceDigest !== slot.sourceDigest || current.requirementsDigest !== offer.preview.requirementsDigest
@@ -55,7 +58,7 @@ export async function captureOutputModel3dRecoveryCheckpoint(input: unknown, at 
   const providerRequestId = submission.providerRequestId, clientRequestId = submission.clientRequestId;
   if (typeof clientRequestId !== "string" || !/^forma-model3d-[A-Za-z0-9._:-]{1,150}$/u.test(clientRequestId) || key !== clientRequestId
     || typeof providerRequestId !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$/u.test(providerRequestId)
-    || ["pending", "unknown", "submitted"].includes(providerRequestId.toLowerCase())
+    || ["pending", "unknown", "submitted"].includes(providerRequestId.toLowerCase()) || providerRequestId === offer.preview.previousProviderRequestId
     || submission.provider !== "fal" || submission.operation !== "model3d" || submission.model !== prepared.model
     || !["accepted", "completed"].includes(String(submission.status))
     || submission.requestDigest !== undefined && submission.requestDigest !== prepared.requestDigest

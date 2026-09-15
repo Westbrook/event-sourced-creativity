@@ -1,6 +1,7 @@
 import { readOutputModel3dPayload, requireModel3dMiniAppCostApproval } from "./output-model3d-execution.ts";
 import { outputModel3dPreflightAssertions } from "./output-model3d-preflight.ts";
 import { model3dMiniAppAttemptMatches } from "../src/model/model3d-mini-app-consent.ts";
+import { resolveOutputModel3dRecoverySource } from "./output-model3d-source.ts";
 import { parseAudioMiniAppCostPreview } from "../src/model/audio-mini-app-consent.ts";
 import { requireAudioMiniAppCostApproval } from "./output-audio-execution.ts";
 import { readOutputScenePayload } from "./output-scene-preflight-contract.ts";
@@ -300,9 +301,10 @@ export async function resolveOutputVideoRecoveryAuthority(env:WorkerEnv,scope:Ou
 /** Authority to read and publish one already accepted original, never to submit
  * a replacement or renew its paid dispatch deadline. The recovery lease must
  * additionally bind the private checkpoint and the original provider call. */
-export async function resolveOutputModel3dRecoveryAuthority(env:WorkerEnv,scope:OutputScope,slot:OutputOperationSlot){
+export async function resolveOutputModel3dRecoveryAuthority(env:WorkerEnv,scope:OutputScope,slot:OutputOperationSlot, caller?: {request:Request;user:PilotUser}){
   if(scope.kind!=="personal"||scope.contextId!==null||scope.organizationId!==null||scope.projectAccessId!==null||scope.key!==slot.scopeKey
-    ||scope.actorUserId!==scope.ownerUserId||slot.attemptOrdinal!==0||slot.previousSlotId!==null)fail("output_model3d_recovery_scope_unsupported",403);
+    ||scope.actorUserId!==scope.ownerUserId||!(slot.attemptOrdinal===0&&slot.previousSlotId===null
+      ||slot.attemptOrdinal===1&&Boolean(slot.previousSlotId)&&caller?.user.userId===scope.actorUserId))fail("output_model3d_recovery_scope_unsupported",403);
   const current=await loadOutputCurrentContext(env,scope),evidence=await readOutputGrantEvidence(env,scope,slot.grantId);
   if(!["authorized","active","completed"].includes(String(evidence.row.status)))fail("output_execution_grant_inactive",403);
   const {target,targetPreflight}=await validateOutputExecutionTarget(current,evidence,slot);
@@ -310,10 +312,15 @@ export async function resolveOutputModel3dRecoveryAuthority(env:WorkerEnv,scope:
   if(target.media_kind!=="model3d"||targetPreflight.provider!=="fal"||targetPreflight.route!=="model3d-mini-app-static-glb-v1"
     ||targetPreflight.maximumCalls!==1||!payload||payload.contract.reference!==null||targetPreflight.model!==payload.preview.model
     ||payload.preview.requestId!==slot.jobId||payload.preview.documentId!==scope.documentId
-    ||payload.preview.projectId!==scope.projectId||payload.preview.actorUserId!==scope.actorUserId)
+    ||payload.preview.projectId!==scope.projectId||payload.preview.actorUserId!==scope.actorUserId||!model3dMiniAppAttemptMatches(payload.preview,slot))
     fail("output_model3d_recovery_route_unsupported",403);
+  const childSource=slot.attemptOrdinal===1?await resolveOutputModel3dRecoverySource({request:caller!.request,env,scope,principal:caller!.user,
+    confirmedPlan:evidence.confirmedPlan,target,context:current.context,sourceEvents:current.events,sourceAssertions:current.assertions,
+    sourceDigest:current.sourceDigest,requirementsDigest:current.requirementsDigest},slot):null;
+  if(childSource&&(childSource.requestId!==slot.jobId||childSource.expiresAt!==payload.preview.expiresAt
+    ||childSource.replacement?.id!==payload.preview.replacementCycleId||childSource.replacement?.predecessor.providerRequestId!==payload.preview.previousProviderRequestId))fail("output_model3d_recovery_route_unsupported",403);
   return prepareOutputExecutionProof(scope,{...current,confirmedPlan:evidence.confirmedPlan,target,preflight:evidence.preflight,targetPreflight,
-    assertions:[...current.assertions,...retainedOutputBodyAssertions(scope),{sql:`EXISTS(SELECT 1 FROM output_execution_grants WHERE scope_key=? AND grant_id=? AND actor_user_id=? AND context_id IS NULL AND status IN('authorized','active','completed'))`,bindings:[scope.key,slot.grantId,scope.actorUserId]}]});
+    assertions:[...current.assertions,...(childSource?.sourceAssertions??[]),...retainedOutputBodyAssertions(scope),{sql:`EXISTS(SELECT 1 FROM output_execution_grants WHERE scope_key=? AND grant_id=? AND actor_user_id=? AND context_id IS NULL AND status IN('authorized','active','completed'))`,bindings:[scope.key,slot.grantId,scope.actorUserId]}]});
 }
 
 /** Reuse retained evidence only while every later event is proven nonsemantic.

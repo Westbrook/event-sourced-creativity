@@ -4,6 +4,7 @@ import { captureModel3dComparisonData } from "../src/model/output-model3d-offer.
 import { outputAssertionStatements, OutputConflictError, type OutputScope, type OutputOperationSlot, type OutputSqlAssertion } from "./output-requirements-ledger.ts";
 import type { DocumentJobRow } from "./document-jobs-api.ts";
 import type { WorkerEnv } from "./runtime.ts";
+import { model3dRecoveryAttemptSql } from "./output-model3d-recovery-attempt.ts";
 
 const fail = (): never => { throw new OutputConflictError("output_model3d_recovery_unavailable", 409); };
 type Current = { sourceDigest: string; requirementsDigest: string; retentionExpiresAt: string };
@@ -29,7 +30,7 @@ async function within<T>(operation: () => Promise<T>, deadlineMs: number, signal
   } finally { if (timer !== undefined) clearTimeout(timer); if (abort) signal?.removeEventListener("abort", abort); }
 }
 
-/** Finite read/publication lease for a failed accepted ORIGINAL, never dispatch.
+/** Finite read/publication lease for a failed accepted attempt, never dispatch.
  * The caller's current resolver supplies nonempty live source/private authority
  * assertions and its actual minimum retained-body expiry. No synthetic scope or
  * snapshot authorizes this function. Existing normal job leases win.
@@ -122,7 +123,7 @@ export function outputModel3dRecoveryAssertions(scope: OutputScope, slot: Output
       AND job.expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now') AND (job.lease_expires_at IS NULL OR job.lease_expires_at<=strftime('%Y-%m-%dT%H:%M:%fZ','now'))
       AND json_type(job.result_json,'$.outputModel3dStop') IS NULL)
       AND (slot.scope_key=? AND slot.slot_id=? AND slot.grant_id=? AND slot.plan_revision_id=? AND slot.target_id=? AND slot.target_contract_digest=? AND slot.source_digest=? AND slot.route_digest=?
-      AND slot.attempt_ordinal=0 AND slot.previous_slot_id IS NULL AND slot.status IN('failed','uncertain')
+      AND slot.attempt_ordinal=? AND slot.previous_slot_id IS ? AND slot.status IN('failed','uncertain')
       AND slot.provider='fal' AND slot.model=? AND slot.maximum_calls=1 AND slot.maximum_tokens=1 AND slot.maximum_microusd=?
       AND slot.token_reservation_id=? AND slot.cost_reservation_id=?)
       AND (plan.scope_kind='personal' AND plan.owner_user_id=job.owner_id AND plan.project_id=? AND plan.document_id=job.document_id
@@ -133,7 +134,10 @@ export function outputModel3dRecoveryAssertions(scope: OutputScope, slot: Output
       AND NOT EXISTS(SELECT 1 FROM document_jobs other WHERE other.stream_id=job.stream_id AND other.document_id=job.document_id AND other.job_id<>job.job_id AND other.status IN('running','committing') AND other.lease_expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now'))))`,
     bindings: [job.job_id, scope.actorUserId, job.stream_id, scope.documentId, job.correlation_id, job.request_json, job.expires_at,
       scope.key, slot.slotId, slot.grantId, slot.planRevisionId, slot.targetId, slot.targetContractDigest, slot.sourceDigest, slot.routeDigest,
-      checkpoint.prepared.model, checkpoint.offer.preview.maximumMicrousd, slot.tokenReservationId, slot.costReservationId, scope.projectId, checkpoint.offer.preview.requirementsDigest] },
+      slot.attemptOrdinal, slot.previousSlotId, checkpoint.prepared.model, checkpoint.offer.preview.maximumMicrousd, slot.tokenReservationId, slot.costReservationId, scope.projectId, checkpoint.offer.preview.requirementsDigest] },
+  { sql: `EXISTS(SELECT 1 FROM document_jobs job JOIN output_operation_slots slot ON slot.job_id=job.job_id
+    WHERE (job.job_id=? AND slot.scope_key=? AND slot.slot_id=?) AND ${model3dRecoveryAttemptSql})`,
+    bindings: [job.job_id, scope.key, slot.slotId] },
   { sql: `EXISTS(SELECT 1 FROM output_provider_calls call JOIN document_jobs job ON job.job_id=?
     JOIN json_each(job.result_json,'$.providerSubmissions') receipt ON receipt.key=call.client_request_id
     WHERE call.scope_key=? AND call.slot_id=? AND call.call_key='model3d:initial' AND call.stage_key='model3d:initial'
