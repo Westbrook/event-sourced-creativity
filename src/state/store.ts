@@ -1,4 +1,5 @@
 import { isStandaloneExperienceRoute } from "../experiences/host-route.ts";
+import { AttentionPublicationGate } from "./attention-publication.ts";
 import { AUDIO_LOCAL_CONVERSION_MEDIA_TYPE, parseAudioTrimOperationRequest, audioTrimOperationFingerprintInput, encodeAudioConversionSource } from "../model/audio-local-conversion.ts";
 import { inspectPcmWav, PCM_WAV_EDIT_MAX_BYTES } from "../model/audio-container.ts";
 import { captureCurrentGeneratedImageEdit, matchGeneratedImageEditSnapshot, type CurrentGeneratedImageEdit } from "../model/generated-image-edit-current.ts";
@@ -341,6 +342,7 @@ function outputSnapshotRenderable(value: unknown): value is OutputRequirementsSn
 }
 
 export class FormaStore {
+  readonly attentionPublication = new AttentionPublicationGate();
   /** A transient request to review existing ledger Undo, not a second history/queue. */
   readonly canvasArrangementUndoRequest = new Signal.State<{ eventId: string; operationId: string; projectId: string; canvasId: string; authorityKey: string } | null>(null);
   readonly outputRequirements = new OutputRequirementsClient<OutputRequirementsSnapshot>({
@@ -5677,17 +5679,24 @@ export class FormaStore {
 
   async hot(event: EventInput, options: { keepalive?: boolean } = {}) {
     if(this.session.get()?.impersonation)return;
+    const attention = event.type === "AttentionEpisodeObserved";
+    const attentionTicket = this.attentionPublication.ticket();
+    if(attention && !this.attentionPublication.current(attentionTicket))return;
     const sourceOwner=this.captureSourceOwnership();if(!this.sourceOwnershipActive(sourceOwner))return;
     const authorization=this.#activeAuthorizationScope();
     try {
       if(!options.keepalive)await this.#appendPipeline;
       this.#assertAuthorizationScope(authorization);this.#assertSourceOwnership(sourceOwner);
+      const publish = async () => {
       const response = await fetch("/api/events/hot", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "hot", event, events: [event], clientId: "web:lit" }), keepalive: options.keepalive });
       this.#assertAuthorizationScope(authorization);this.#assertSourceOwnership(sourceOwner);
       if (!response.ok) return;
       const body = await response.json() as { appended?: CreativeEvent[]; head?: number };
       this.#assertAuthorizationScope(authorization);this.#assertSourceOwnership(sourceOwner);
       const appended=body.appended??[];this.events.set([...this.events.get(), ...appended].sort((left,right)=>left.sequence-right.sequence)); this.head.set(Math.max(this.head.get(),body.head??0)); this.#publishAppended(appended);this.notify();
+      };
+      if(attention)await this.attentionPublication.publish(attentionTicket,publish);
+      else await publish();
     } catch(error) {if(NativeImageRetirementError.is(error))throw error;/* Engagement instrumentation never blocks the creative action. */ }
   }
 

@@ -2,9 +2,12 @@ import { html } from "lit";
 import { FormaElement } from "./forma-element";
 import { ATTENTION_IDLE_GRACE_MS, attentionTickTransition, buildAttentionEpisode, clearLocalAttentionEpisodes, isAttentionActionTerminal, saveLocalAttentionEpisode } from "../model/attention";
 import type { CreativeEvent } from "../model/events";
+import type { AttentionPublicationGate } from "../state/attention-publication.ts";
 import { documentFocusFromRoute, documentIdFromRoute, documentViewFromRoute } from "../model/routes";
 
 type LiveEpisode = {
+  publicationTicket: number | null;
+  publicationGate: AttentionPublicationGate; ownerId: string;
   startedAt: number; lastTickAt: number; lastActivityAt: number; activeMs: number; idleMs: number; hadActivity: boolean;
   surface: string; context: string; visibleRefs: Set<string>; documentView?: string; documentId?: string; focused?: boolean;
 };
@@ -24,6 +27,9 @@ const surfaceFor=(path:string)=>path.startsWith("/library")?"library":path.start
 
 export class FormaAttentionObserver extends FormaElement {
   #episode:LiveEpisode|null=null;#timer=0;#intersection?:IntersectionObserver;#enabled=false;#lastRoute="";
+  // Session/source retirement precedes publication. Discard rather than finish:
+  // an A→B→A transition must not retain B's context in A's open episode.
+  #withdraw=()=>{this.#episode=null;};
   #visibility=()=>{if(document.visibilityState==="visible")this.#start();else this.#finish("page_hidden",null,false);};
   #route=(event:Event)=>{const path=String((event as CustomEvent<{path:string}>).detail?.path??this.store.route.get());if(path===this.#lastRoute)return;this.#finish("route_changed",null,false);this.#lastRoute=path;this.#start();};
   #forget=()=>{clearLocalAttentionEpisodes(this.store.session.get()?.user.userId??"anonymous");this.#episode=null;if(this.#capturing())this.#start();};
@@ -42,11 +48,13 @@ export class FormaAttentionObserver extends FormaElement {
 
   override connectedCallback(){
     super.connectedCallback();this.#lastRoute=this.store.route.get();
+    window.addEventListener("forma-authorization-changed",this.#withdraw);window.addEventListener("forma-event-source-retired",this.#withdraw);
     document.addEventListener("visibilitychange",this.#visibility);window.addEventListener("forma-route-changed",this.#route);window.addEventListener("forma-events-appended",this.#appended);window.addEventListener("forma-attention-forget",this.#forget);
     window.addEventListener("pointermove",this.#activity,{passive:true});window.addEventListener("pointerdown",this.#activity,{passive:true});window.addEventListener("scroll",this.#activity,{passive:true});window.addEventListener("keydown",this.#activity,{passive:true});window.addEventListener("touchstart",this.#activity,{passive:true});window.addEventListener("focusin",this.#activity,{passive:true});
     this.#timer=window.setInterval(()=>this.#tick(),5_000);this.#syncSetting();this.#refreshVisibleRefs();
   }
   override disconnectedCallback(){
+    window.removeEventListener("forma-authorization-changed",this.#withdraw);window.removeEventListener("forma-event-source-retired",this.#withdraw);
     this.#finish("capture_disabled",null,false);document.removeEventListener("visibilitychange",this.#visibility);window.removeEventListener("forma-route-changed",this.#route);window.removeEventListener("forma-events-appended",this.#appended);window.removeEventListener("forma-attention-forget",this.#forget);
     window.removeEventListener("pointermove",this.#activity);window.removeEventListener("pointerdown",this.#activity);window.removeEventListener("scroll",this.#activity);window.removeEventListener("keydown",this.#activity);window.removeEventListener("touchstart",this.#activity);window.removeEventListener("focusin",this.#activity);window.clearInterval(this.#timer);this.#intersection?.disconnect();super.disconnectedCallback();
   }
@@ -54,7 +62,7 @@ export class FormaAttentionObserver extends FormaElement {
   #capturing(){return Boolean(!this.store.session.get()?.projectContext&&this.store.ui.attentionCapture&&!this.store.ui.attentionPaused&&document.visibilityState==="visible");}
   #syncSetting(){const enabled=this.#capturing();if(enabled===this.#enabled)return;this.#enabled=enabled;if(enabled)this.#start();else this.#finish(this.store.ui.attentionPaused?"capture_paused":"capture_disabled",null,false);}
   #start(now=Date.now()){
-    if(!this.#capturing()||this.#episode)return;const path=this.store.route.get();const visibleRefs=new Set<string>();if(this.store.ui.compareOpen)this.store.ui.comparisonOutputIds.split("|").filter(Boolean).forEach((id)=>visibleRefs.add(`object:${id}`));const documentView=documentViewFromRoute(path)??undefined;const documentId=documentIdFromRoute(path)??(documentView?this.store.projection.get().documentId:undefined);this.#episode={startedAt:now,lastTickAt:now,lastActivityAt:now,activeMs:0,idleMs:0,hadActivity:false,surface:surfaceFor(path),context:`${surfaceFor(path)}-overview`,visibleRefs,documentView,documentId,focused:documentView?documentFocusFromRoute(path):undefined};
+    if(!this.#capturing()||this.#episode)return;const path=this.store.route.get();const visibleRefs=new Set<string>();if(this.store.ui.compareOpen)this.store.ui.comparisonOutputIds.split("|").filter(Boolean).forEach((id)=>visibleRefs.add(`object:${id}`));const documentView=documentViewFromRoute(path)??undefined;const documentId=documentIdFromRoute(path)??(documentView?this.store.projection.get().documentId:undefined);this.#episode={publicationTicket:this.store.attentionPublication.ticket(),publicationGate:this.store.attentionPublication,ownerId:this.store.session.get()?.user.userId??"anonymous",startedAt:now,lastTickAt:now,lastActivityAt:now,activeMs:0,idleMs:0,hadActivity:false,surface:surfaceFor(path),context:`${surfaceFor(path)}-overview`,visibleRefs,documentView,documentId,focused:documentView?documentFocusFromRoute(path):undefined};
   }
   #accrue(now:number){
     const episode=this.#episode;if(!episode||now<=episode.lastTickAt)return;const activeUntil=Math.min(now,episode.lastActivityAt+ATTENTION_IDLE_GRACE_MS);
@@ -63,9 +71,9 @@ export class FormaAttentionObserver extends FormaElement {
   #tick(){const now=Date.now();const transition=attentionTickTransition(this.#episode?.lastActivityAt??null,now);if(transition==="dormant")return;this.#accrue(now);if(transition==="idle-timeout")this.#finish("idle_timeout",null,false);}
   #finish(terminalType:string,terminalRef:string|null,restart:boolean){
     const current=this.#episode;this.#episode=null;if(!current)return;const endedAt=Date.now();this.#accrueFor(current,endedAt);const total=current.activeMs+current.idleMs;
-    if(total>=MIN_EPISODE_MS&&current.activeMs>0&&(terminalType!=="idle_timeout"||current.hadActivity)){
+    if(current.ownerId===(this.store.session.get()?.user.userId??"anonymous")&&current.publicationGate===this.store.attentionPublication&&total>=MIN_EPISODE_MS&&current.activeMs>0&&(terminalType!=="idle_timeout"||current.hadActivity)){
       const episode=buildAttentionEpisode({episode_id:crypto.randomUUID(),surface:current.surface,context:current.context,document_view:current.documentView,document_id:current.documentId,focused:current.focused,started_at:new Date(current.startedAt).toISOString(),ended_at:new Date(endedAt).toISOString(),active_ms:Math.round(current.activeMs),idle_ms:Math.round(current.idleMs),visible_refs:[...current.visibleRefs].slice(0,8),terminal_type:terminalType,terminal_ref:terminalRef});
-      saveLocalAttentionEpisode(episode,this.store.session.get()?.user.userId??"anonymous");if(!/^(capture_disabled|capture_paused)$/.test(terminalType))void this.store.hot({type:"AttentionEpisodeObserved",payload:episode},{keepalive:terminalType==="page_hidden"});
+      saveLocalAttentionEpisode(episode,this.store.session.get()?.user.userId??"anonymous");if(this.store.attentionPublication.current(current.publicationTicket)&&!/^(capture_disabled|capture_paused)$/.test(terminalType))void this.store.hot({type:"AttentionEpisodeObserved",payload:episode},{keepalive:terminalType==="page_hidden"});
     }
     if(restart&&this.#capturing())this.#start(endedAt);
   }

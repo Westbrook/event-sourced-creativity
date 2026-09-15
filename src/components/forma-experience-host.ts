@@ -75,6 +75,7 @@ type Result = { lease: object; candidate: ExperienceResultCandidate; current(): 
 /** Same-Document native admission view. All original command/grant identities are
  * retained by the server; mounting and recovery read them without admitting work. */
 export class FormaExperienceHost extends FormaElement {
+  #releaseAttention?: () => void;
   #epoch = 0;
   #navigationEpoch = 0;
   #commandFocusReveal: (() => Promise<void>) | null = null;
@@ -128,6 +129,7 @@ export class FormaExperienceHost extends FormaElement {
 
   override connectedCallback() {
     super.connectedCallback();
+    this.#releaseAttention ??= this.store.attentionPublication.hold();
     this.addEventListener("focusout", this.#focusOut);
     this.ownerDocument.addEventListener("visibilitychange", this.#visibility);
     this.ownerDocument.defaultView?.addEventListener("pagehide", this.#pagehide);
@@ -138,6 +140,7 @@ export class FormaExperienceHost extends FormaElement {
   }
   override disconnectedCallback() {
     this.#retire();
+    this.#releaseAttention?.(); this.#releaseAttention = undefined;
     this.removeEventListener("focusout", this.#focusOut);
     this.#storyUnsubscribe?.(); this.#storyUnsubscribe = undefined;
     this.ownerDocument.defaultView?.removeEventListener("forma-authorization-changed", this.#storyWithdraw);
@@ -413,6 +416,8 @@ export class FormaExperienceHost extends FormaElement {
     this.#busy = true; this.#resetDecision(); this.#clearResult(); this.#status = action === "recoverResult" ? this.i18n.system("Recovering") : "Recording"; this.requestUpdate();
     let followResult = false;
     try {
+      await operation.wait(binding.store.attentionPublication.settled());
+      if (!this.#operationCurrent(operation) || !this.#visible(binding)) return;
       const response = await operation.wait(binding.client.command(action, shown, sceneConsent, audioConsent, model3dConsent));
       // Unknown admission remains unknown. Only explicit Check status recovers it.
       if (!("draftId" in response)) this.#status = outputSourceCapacityMessage(response) ? this.i18n.system("Original unavailable")
