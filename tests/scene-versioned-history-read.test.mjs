@@ -115,3 +115,37 @@ test('growing current context refuses at retained-state capacity without a finis
   await assert.rejects(f.reduce(await f.capture(),()=>{const consumer=createSceneContextConsumer({documentId:'d',projectId:'p'});return {...consumer,finish(){finished=true;return consumer.finish();}};}),/output_source_proof_too_large/);
   assert.equal(finished,false);
 });
+
+test('renewal lineage exceeding 99 total bindings keeps every guard in each atomic page batch',async t=>{
+  const f=fixture(t);f.event(1,'Fixture',{});const version=await f.capture(),batch=f.env.DB.batch;
+  const assertions=Array.from({length:60},(_,i)=>({sql:'?=?',bindings:[i,i]}));let observed=0;
+  f.env.DB.batch=async statements=>{observed++;assert.ok(statements.length>2);
+    assert.ok(statements.every(s=>s.bindings.length<=99));
+    const all=statements.slice(1).flatMap(s=>s.bindings);
+    for(let i=0;i<60;i++)assert.ok(all.includes(i),`guard ${i} retained`);
+    return batch(statements);};
+  const result=await f.reduce(version,()=>({accept(){return true;},finish(){return 'complete';}}),{readAssertions:assertions});
+  assert.equal(result.value,'complete');assert.ok(observed>=4);assert.ok(result.assertions.length>=assertions.length);
+  for(const position of [0,30,59]){
+    let finished=false;const invalid=assertions.map((a,i)=>i===position?{...a,bindings:[i,-1]}:a);
+    await assert.rejects(f.reduce(version,()=>({accept(){return true;},finish(){finished=true;}}),{readAssertions:invalid}),/output_source_changed/);
+    assert.equal(finished,false);
+  }
+});
+
+test('lineage batching still refuses a missing guard result and oversized individual predicate',async t=>{
+  const f=fixture(t);f.event(1,'Fixture',{});const version=await f.capture(),batch=f.env.DB.batch;let finished=false;
+  const consumer=()=>({accept(){return true;},finish(){finished=true;}});
+  const readAssertions=Array.from({length:60},()=>({sql:'?=?',bindings:[1,1]}));
+  f.env.DB.batch=async statements=>{const result=await batch(statements);result.pop();return result;};
+  await assert.rejects(f.reduce(version,consumer,{readAssertions}),/output_source_changed/);
+  for(const position of ['first','middle','last']){
+    f.env.DB.batch=async statements=>{const result=await batch(statements);
+      delete result[position==='first'?1:position==='last'?result.length-1:Math.floor(result.length/2)];return result;};
+    await assert.rejects(f.reduce(version,consumer,{readAssertions}),/output_source_changed/);
+  }
+  f.env.DB.batch=batch;
+  await assert.rejects(f.reduce(version,consumer,{readAssertions:[{sql:Array(100).fill('?').join(' AND '),bindings:Array(100).fill(1)}]}),/output_source_proof_too_large/);
+  await assert.rejects(f.reduce(version,consumer,{readAssertions:Array.from({length:520},()=>({sql:'1',bindings:[]}))}),/output_source_proof_too_large/);
+  assert.equal(finished,false);
+});

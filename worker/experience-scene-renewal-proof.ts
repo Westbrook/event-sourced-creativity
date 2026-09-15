@@ -108,6 +108,7 @@ export function slidesRenewalNoExecutionAssertion(scope: OutputScope): OutputSql
   const stream = `creative:${scope.ownerUserId}`;
   const reservations = (["budget_reservations", "cost_budget_reservations"] as const).map((table, index) => {
     const reservationId = index === 0 ? "token_reservation_id" : "cost_reservation_id";
+    const eventReservationId = index === 0 ? "reservation_id" : "cost_reservation_id";
     return { sql: `NOT EXISTS(SELECT 1 FROM ${table} reservation
       WHERE (reservation.owner_id=? OR reservation.stream_id=?) AND reservation.operation='document-render:slides'
       AND NOT EXISTS(SELECT 1 FROM output_operation_slots slot
@@ -128,8 +129,41 @@ export function slidesRenewalNoExecutionAssertion(scope: OutputScope): OutputSql
               AND length(substr(reservation.correlation_id,length(slot.job_id)+11))=36
               AND substr(reservation.correlation_id,length(slot.job_id)+11) GLOB '????????-????-????-????-????????????'
               AND length(replace(substr(reservation.correlation_id,length(slot.job_id)+11),'-',''))=32
-              AND replace(substr(reservation.correlation_id,length(slot.job_id)+11),'-','') NOT GLOB '*[^a-f0-9]*'))))`,
-      bindings: [scope.ownerUserId, stream, scope.ownerUserId, stream, scope.ownerUserId, scope.documentId] };
+              AND replace(substr(reservation.correlation_id,length(slot.job_id)+11),'-','') NOT GLOB '*[^a-f0-9]*')))
+      AND NOT EXISTS(SELECT 1 FROM document_jobs job
+        JOIN events budget ON budget.stream_id=job.stream_id AND budget.type='BudgetReserved'
+        JOIN events requested ON requested.event_id=budget.causation_id
+        WHERE job.owner_id=? AND job.stream_id=? AND job.kind='render_document'
+          AND reservation.owner_id=job.owner_id AND reservation.stream_id=job.stream_id
+          AND job.document_id!=? AND length(job.document_id) BETWEEN 1 AND 160
+          AND job.document_id GLOB '[A-Za-z0-9]*' AND job.document_id NOT GLOB '*[^A-Za-z0-9._:-]*'
+          AND CASE WHEN json_valid(job.request_json) THEN json_extract(job.request_json,'$.artifactKind')='slides' ELSE 0 END
+          AND (reservation.correlation_id=job.job_id
+            OR (substr(reservation.correlation_id,1,length(job.job_id)+9)=job.job_id||':attempt:'
+              AND length(substr(reservation.correlation_id,length(job.job_id)+10)) BETWEEN 1 AND 9
+              AND substr(reservation.correlation_id,length(job.job_id)+10) NOT GLOB '*[^0-9]*'
+              AND CAST(substr(reservation.correlation_id,length(job.job_id)+10) AS INTEGER)>0)
+            OR (substr(reservation.correlation_id,1,length(job.job_id)+10)=job.job_id||':recovery:'
+              AND length(substr(reservation.correlation_id,length(job.job_id)+11))=36
+              AND substr(reservation.correlation_id,length(job.job_id)+11) GLOB '????????-????-????-????-????????????'
+              AND length(replace(substr(reservation.correlation_id,length(job.job_id)+11),'-',''))=32
+              AND replace(substr(reservation.correlation_id,length(job.job_id)+11),'-','') NOT GLOB '*[^a-f0-9]*'))
+          AND budget.actor='worker:policy' AND budget.client_id='server:document-job:render_document'
+          AND budget.correlation_id=reservation.correlation_id
+          AND requested.stream_id=job.stream_id AND requested.type='DocumentRenderRequested'
+          AND requested.actor='user:'||job.owner_id AND requested.client_id=budget.client_id
+          AND requested.correlation_id=budget.correlation_id AND requested.sequence<budget.sequence
+          AND CASE WHEN json_valid(budget.payload) AND json_valid(requested.payload) THEN
+            json_extract(budget.payload,'$.operation')='document-render:slides'
+            AND json_extract(budget.payload,'$.artifact_kind')='slides'
+            AND json_extract(budget.payload,'$.${eventReservationId}')=reservation.reservation_id
+            AND json_extract(budget.payload,'$.period')=reservation.period
+            AND json_type(budget.payload,'$.artifact_id')='text' AND length(json_extract(budget.payload,'$.artifact_id'))>0
+            AND json_extract(requested.payload,'$.artifact_id')=json_extract(budget.payload,'$.artifact_id')
+            AND json_extract(requested.payload,'$.artifact_kind')='slides'
+            AND json_extract(requested.payload,'$.document_id')=job.document_id ELSE 0 END))`,
+      bindings: [scope.ownerUserId, stream, scope.ownerUserId, stream, scope.ownerUserId, scope.documentId,
+        scope.ownerUserId, stream, scope.documentId] };
   });
   return { sql: `NOT EXISTS(SELECT 1 FROM output_commands command LEFT JOIN events event ON event.event_id=command.event_id
       WHERE command.scope_key=? AND command.action IN('authorize','run')

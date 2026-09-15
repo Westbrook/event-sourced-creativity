@@ -275,20 +275,23 @@ async function renewalOffer(loaded: Loaded) {
   const plan = await confirmed(loaded), root = loaded.rootBinding;
   const { preparationCycle: _previousQuote, ...renewalRoot } = loaded.binding;
   if (root.output === "slides") {
+    const refused = (reason: string) => { console.info("experience_renewal_refused", { output: "slides", reason }); return null; };
     const preflight = loaded.originals.preflight?.receipt.payload.preflight;
     const now = Date.now();
     if (!plan || !record(preflight) || typeof preflight.expiresAt !== "string"
       || !Number.isFinite(Date.parse(preflight.expiresAt)) || Date.parse(preflight.expiresAt) > now
-      || Date.parse(loaded.retained.expiresAt) <= now + 900_000) return null;
-    if ((await registeredExperience(loaded.retained.plan.request.experienceId))?.releaseHash !== root.releaseHash) return null;
+      || Date.parse(loaded.retained.expiresAt) <= now + 900_000) return refused("quote_or_retention_window");
+    if ((await registeredExperience(loaded.retained.plan.request.experienceId))?.releaseHash !== root.releaseHash) return refused("release_changed");
     const latest = await outputExperienceCommands.readConfirmedPlan(loaded.trusted);
-    if (!latest || canonicalJson(latest) !== canonicalJson(plan)) return null;
+    if (!latest || canonicalJson(latest) !== canonicalJson(plan)) return refused("plan_changed");
     const guards = [slidesRenewalNoExecutionAssertion(loaded.trusted.scope),
       sceneRenewalWindowAssertion(loaded.trusted.scope, root.draftId, preflight.expiresAt, loaded.retained.expiresAt),
       sceneRenewalPredecessorAssertion(loaded.trusted.scope, predecessor)];
-    const clear = await loaded.trusted.env.DB.prepare(`SELECT CASE WHEN ${guards.map(guard => `(${guard.sql})`).join(" AND ")} THEN 1 ELSE 0 END AS clear`)
-      .bind(...guards.flatMap(guard => guard.bindings ?? [])).first<{ clear: number }>();
-    if (clear?.clear !== 1) return null;
+    const clear = await loaded.trusted.env.DB.prepare(`SELECT ${guards.map((guard, index) => `CASE WHEN (${guard.sql}) THEN 1 ELSE 0 END AS proof${index}`).join(",")}`)
+      .bind(...guards.flatMap(guard => guard.bindings ?? [])).first<{ proof0: number; proof1: number; proof2: number }>();
+    if (clear?.proof0 !== 1) return refused("financial_evidence_unassociated");
+    if (clear.proof1 !== 1) return refused("quote_or_retention_window");
+    if (clear.proof2 !== 1) return refused("predecessor_changed");
     return { predecessor, cycle: await scenePreparationSuccessor(renewalRoot, predecessor), guards,
       disclosure: { predecessorPreflightId: predecessor.preflight.preflightId, expiredAt: preflight.expiresAt } };
   }

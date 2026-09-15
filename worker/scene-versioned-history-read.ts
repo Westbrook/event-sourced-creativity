@@ -4,11 +4,12 @@ import {serializeEvent} from './event-read-primitives.ts';
 import {OutputConflictError,type OutputSqlAssertion,type OutputSqlValue} from './output-command-core.ts';
 import {sceneHistorySourceRelation,sceneHistoryMetadataSelect,sceneHistoryMetadataFields,type SceneHistoryScope} from './scene-history-proof.ts';
 import {sceneSourceVersionAssertions,type SceneSourceVersion} from './scene-source-generation.ts';
+import {recordOutputProofCapacity,type OutputProofCapacityReason} from './output-proof-capacity-diagnostic.ts';
 
 /** Qualification limits, not an activated production path. No history truncation:
  * limits throw before finish(). Current-state memory needs a bounded consumer. */
 export const SCENE_VERSIONED_READ_LIMITS=Object.freeze({rows:40_000,pageRows:256,pageBytes:512*1024,eventBytes:128*1024,
-  rawBytes:64*1024*1024,batches:400});
+  rawBytes:64*1024*1024,batches:400,guardStatements:64,guardBytes:512*1024});
 const encoder=new TextEncoder(),bytes=(value:string)=>encoder.encode(value).length;
 const metadataFields=[...sceneHistoryMetadataFields,'metadata_valid'];
 const metadataJson=`json_object(${metadataFields.map(field=>`'${field}',${field}`).join(',')})`;
@@ -18,7 +19,9 @@ type Consumer<T>={accept(event:CreativeEvent):boolean;finish():T;checkpoint?():u
 const integer=(value:unknown):value is number=>typeof value==='number'&&Number.isSafeInteger(value)&&value>=0;
 const identifier=(value:unknown):value is string=>typeof value==='string'&&value.length>0&&new TextEncoder().encode(value).length<=160;
 const changed=():never=>{throw new OutputConflictError('output_source_changed_during_read',409);};
-const capacity=():never=>{throw new OutputConflictError('output_source_proof_too_large',413);};
+const capacity=(reason:OutputProofCapacityReason='scene_versioned_history_capacity'):never=>{
+  throw recordOutputProofCapacity(new OutputConflictError('output_source_proof_too_large',413),reason);
+};
 
 /** Pure reduction of complete, original-version source pages. The caller must
  * supply existing live authority/rights guards and retain returned assertions at
@@ -40,18 +43,31 @@ export async function reduceSceneVersionedHistory<T>(env:Pick<WorkerEnv,'DB'>,in
     {sql:'(SELECT COALESCE(MAX(sequence),0) FROM events WHERE stream_id=?)=?',bindings:[scope.streamId,scope.expectedOwnerHead]},
     {sql:"(CAST(strftime('%s','now') AS INTEGER)*1000+CAST(substr(strftime('%f','now'),4,3) AS INTEGER))<?",bindings:[deadlineMs],deadlineMs},
   ].map(value=>Object.freeze({...value,bindings:Object.freeze([...(value.bindings??[])])}) as unknown as OutputSqlAssertion));
-  // One bounded guard statement avoids multiplying each page by the number of
-  // predicates. The original predicates and bindings are never recaptured.
-  const guardSql='SELECT CASE WHEN '+assertions.map(value=>'('+value.sql+')').join(' AND ')+' THEN 1 ELSE 0 END AS current';
-  const guardBindings=assertions.flatMap(value=>value.bindings??[]);
-  if(new TextEncoder().encode(guardSql).length>99_000||guardBindings.length>99
-    ||guardBindings.some(value=>typeof value==='string'&&new TextEncoder().encode(value).length>128*1024))capacity();
+  // D1's parameter limit is per statement, not per transaction. Keep every
+  // original predicate in the same atomic page batch; never truncate lineage or
+  // recapture its evidence merely to fit it into a single SELECT.
+  const guards:Array<{sql:string;bindings:OutputSqlValue[]}>=[];
+  let parts:string[]=[],bindings:OutputSqlValue[]=[],guardBytes=0;
+  const statement=(values:string[])=>'SELECT CASE WHEN '+values.map(value=>'('+value+')').join(' AND ')+' THEN 1 ELSE 0 END AS current';
+  const flush=()=>{if(!parts.length)return;const sql=statement(parts);guardBytes+=bytes(sql);
+    guards.push({sql,bindings});parts=[];bindings=[];
+    if(guards.length>SCENE_VERSIONED_READ_LIMITS.guardStatements)capacity('scene_versioned_guard_count');
+    if(guardBytes>SCENE_VERSIONED_READ_LIMITS.guardBytes)capacity('scene_versioned_guard_bytes');};
+  for(const assertion of assertions){
+    const values=[...(assertion.bindings??[])];
+    if(bytes(statement([assertion.sql]))>99_000)capacity('scene_history_sql_bytes');
+    if(values.length>99)capacity('scene_history_bindings');
+    if(values.some(value=>typeof value==='string'&&bytes(value)>128*1024))capacity('scene_history_binding_bytes');
+    if(parts.length&&(parts.length>=8||bindings.length+values.length>99||bytes(statement([...parts,assertion.sql]))>99_000))flush();
+    parts.push(assertion.sql);bindings.push(...values);
+  }
+  flush();
   let batches=0;
   const read=async(sql:string,bindings:OutputSqlValue[])=>{
     deadline();if(++batches>SCENE_VERSIONED_READ_LIMITS.batches)capacity();
-    const result=await env.DB.batch<Record<string,unknown>>([env.DB.prepare(sql).bind(...bindings),env.DB.prepare(guardSql).bind(...guardBindings)]);
-    deadline();if(!Array.isArray(result)||result.length!==2||result[0]?.success!==true||!Array.isArray(result[0].results)
-      ||result[1]?.success!==true||!Array.isArray(result[1].results)||result[1].results.length!==1||result[1].results[0]?.current!==1)changed();
+    const result=await env.DB.batch<Record<string,unknown>>([env.DB.prepare(sql).bind(...bindings),...guards.map(guard=>env.DB.prepare(guard.sql).bind(...guard.bindings))]);
+    deadline();if(!Array.isArray(result)||result.length!==guards.length+1||result[0]?.success!==true||!Array.isArray(result[0].results)
+      ||guards.some((_,index)=>{const guard=result[index+1];return guard?.success!==true||!Array.isArray(guard.results)||guard.results.length!==1||guard.results[0]?.current!==1;}))changed();
     return result[0].results;
   };
   const relation=sceneHistorySourceRelation(scope),cte=`WITH source AS NOT MATERIALIZED (${relation.sql})`;

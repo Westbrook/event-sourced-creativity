@@ -28,6 +28,16 @@ test('actual Scene cost preparation preserves full workflow reuse and preview th
     for(const a of sceneSourceVersionAssertions(next.sourceVersion))assert.equal(f.sqlite.prepare(`SELECT (${a.sql}) AS current`).get(...a.bindings).current,1);
   }finally{f.close();}
 });
+test('actual Scene cost preparation accepts cumulative renewal witnesses without spending',async()=>{
+  const f=await createSceneCostFixture();try{
+    const user=await principal(f),versionedSource=await original(f),before=f.counts();
+    const baseline=await prepareSceneCostConsent(f.env,user,f.documentId,f.payload,null,{versionedSource});
+    versionedSource.assertions.push(...Array.from({length:60},(_,i)=>({sql:'?=?',bindings:[i,i]})));
+    const renewed=await prepareSceneCostConsent(f.env,user,f.documentId,f.payload,null,{versionedSource});
+    assert.deepEqual(renewed.preview,baseline.preview);assert.deepEqual(renewed.effectiveSnapshot,baseline.effectiveSnapshot);
+    assert.deepEqual(f.counts(),before);
+  }finally{f.close();}
+});
 test('actual versioned Scene preparation rejects changes during workflow content resolution',async()=>{
   const f=await createSceneCostFixture();try{
     const user=await principal(f),versionedSource=await original(f);let changed=false;

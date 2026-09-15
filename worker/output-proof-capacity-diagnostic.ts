@@ -6,6 +6,8 @@ const reasons = [
   "scene_history_proof_bytes", "scene_history_rows", "scene_history_raw_bytes",
   "private_source_raw_bytes", "private_source_binding_bytes",
   "output_assertion_sql_bytes", "output_assertion_bindings", "output_assertion_binding_bytes",
+  "scene_versioned_history_capacity", "scene_versioned_guard_count", "scene_versioned_guard_bytes",
+  "scene_retained_state_capacity",
 ] as const;
 export type OutputProofCapacityReason = typeof reasons[number];
 const allowed = new Set<string>(reasons);
