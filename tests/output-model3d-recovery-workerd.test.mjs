@@ -15,54 +15,11 @@ const { Miniflare, Log, LogLevel } = requireWrangler('miniflare');
 const { build } = requireWrangler('esbuild');
 const here = dirname(fileURLToPath(import.meta.url));
 const hash = bytes => createHash('sha256').update(bytes).digest('hex');
-const quote = name => '"' + name.replaceAll('"', '""') + '"';
 const labels = ['Complete', 'Source', 'Race', 'Lease', 'Replacement'];
 const financial = ['budget_counters', 'budget_reservations', 'cost_budget_counters', 'cost_budget_reservations', 'output_provider_calls'];
 
-// Scalar SQL encodings preserve SQLite types and rowids during synthetic
-// export. No live database, application content, migration repair or dump path.
-function exportSynthetic(sqlite) {
-  const schema = sqlite.prepare("SELECT type,name,tbl_name,sql FROM sqlite_schema ORDER BY type,name").all();
-  assert(schema.length <= 512);
-  assert(schema.every(row => !row.name.startsWith('sqlite_') || row.sql === null), 'Unexpected SQLite system table needs explicit handling');
-  const tables = schema.filter(row => row.type === 'table');
-  const inserts = [], rows = {};
-  for (const { name } of tables) {
-    const columns = sqlite.prepare(`PRAGMA table_info(${quote(name)})`).all().map(row => row.name);
-    const expressions = ['CAST(rowid AS TEXT) AS original_rowid', ...columns.map((column, i) => `quote(${quote(column)}) AS c${i}`)];
-    rows[name] = structuredClone(sqlite.prepare(`SELECT ${expressions.join(',')} FROM ${quote(name)} ORDER BY rowid`).all());
-    for (const row of rows[name]) {
-      assert(/^[0-9]+$/.test(row.original_rowid));
-      const sql = `INSERT INTO ${quote(name)}(rowid,${columns.map(quote).join(',')}) VALUES(${row.original_rowid},${columns.map((_, i) => row['c' + i]).join(',')})`;
-      assert(Buffer.byteLength(sql) < 90000, 'Synthetic fixture row unexpectedly exceeds bounded seed statement');
-      inserts.push(sql);
-    }
-  }
-  assert(inserts.length <= 2048);
-  return { schema: structuredClone(schema), tables: tables.map(row => row.name), rows, inserts };
-}
-async function install(db, exported) {
-  // Preserve every table/index/trigger and every field. Seed before triggers so
-  // the already-recorded event sidecars are not generated a second time.
-  await db.batch(exported.schema.filter(row => row.type === 'table').map(row => db.prepare(row.sql)));
-  await db.batch([db.prepare('PRAGMA defer_foreign_keys=ON'), ...exported.inserts.map(sql => db.prepare(sql))]);
-  const rest = exported.schema.filter(row => row.sql && row.type !== 'table');
-  await db.batch(rest.map(row => db.prepare(row.sql)));
-  assert.deepEqual((await db.prepare('PRAGMA foreign_key_check').all()).results, []);
-  assert.deepEqual(await rowsSnapshot(db, exported.tables), exported.rows, 'Exact synthetic row/rowid parity, not a substitute schema');
-  const names = new Set(exported.schema.map(row => row.name));
-  const actualSchema = (await db.prepare('SELECT type,name,tbl_name,sql FROM sqlite_schema ORDER BY type,name').all()).results.filter(row => names.has(row.name));
-  assert.deepEqual(actualSchema, exported.schema, 'Every original synthetic schema entry preserved');
-}
-async function rowsSnapshot(db, tables) {
-  const result = {};
-  for (const name of tables) {
-    const columns = (await db.prepare(`PRAGMA table_info(${quote(name)})`).all()).results.map(row => row.name);
-    const expressions = ['CAST(rowid AS TEXT) AS original_rowid', ...columns.map((column, i) => `quote(${quote(column)}) AS c${i}`)];
-    result[name] = (await db.prepare(`SELECT ${expressions.join(',')} FROM ${quote(name)} ORDER BY rowid`).all()).results;
-  }
-  return result;
-}
+// Reuse the same exact synthetic schema/row snapshot in native heartbeat tests.
+import { exportSynthetic, install, rowsSnapshot } from "./helpers/model3d-workerd-snapshot.mjs";
 async function finite(work, ms, name) {
   let timer;
   try { return await Promise.race([work, new Promise((_, reject) => { timer = setTimeout(() => reject(Error('local_timeout:' + name)), ms); })]); }

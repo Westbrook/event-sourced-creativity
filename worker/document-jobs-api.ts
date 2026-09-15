@@ -1,5 +1,6 @@
 import { readFalRecoveryCheckpoint, recoveredFalImageEventIds } from "./output-fal-recovery-policy.ts";
 import { stopOutputVideoJob } from "./output-video-stop.ts";
+import { logOutputJobFailure, recordOutputJobHeartbeatFailure } from "./output-job-failure-diagnostic.ts";
 import { readOutputAudioPayload } from "./output-audio-execution.ts";
 import { MODEL3D_PRIVATE_CHECKPOINT_KEYS, MODEL3D_TERMINAL_RESULT_SQL, model3dNativeCheckpoint, model3dPublicResultSql } from "./output-model3d-terminal.ts";
 import { readOutputSceneLocalStop } from "./output-scene-local-stop.ts";
@@ -1840,7 +1841,7 @@ async function runWithHeartbeat<T>(env: WorkerEnv, row: DocumentJobRow,user:Pilo
       failure=new ProviderRequestError({code:"output_execution_time_limit",category:"network",scope:"request",action:"contact_support",message:"The authorized application execution window ended. A provider request may still have been accepted; its allowance is retained until the receipt is reconciled.",retryable:false,retryAfterMs:null,requestId:null,httpStatus:504});
       break;
     }
-    if (!settled) try {await verify();await renewJobLease(env, row);renewals++; } catch (error) { controller.abort("document_job_canceled"); failure = error;if(native)break;await execution; }
+    if (!settled) try {await verify();await renewJobLease(env, row);renewals++; } catch (error) { if(native)recordOutputJobHeartbeatFailure(error,renewals===0);controller.abort("document_job_canceled"); failure = error;if(native)break;await execution; }
   }
   if (failure !== undefined) throw failure;
   return value as T;
@@ -2358,6 +2359,7 @@ export async function runDocumentJob(env: WorkerEnv, user: PilotUser, jobId: str
     const completedAt = new Date().toISOString(),localDispatchStop=outputOperationExecution?.dispatchStop(error)??null;
     const detail = localDispatchStop??classifyDocumentJobFailure(error);
     if(outputBinding){
+      logOutputJobFailure(error);
       // Monetary evidence may converge independently of erased source bodies.
       // A failed/uncertain settlement leaves its original allowance for the
       // explicit receipt check; it never starts another provider request.

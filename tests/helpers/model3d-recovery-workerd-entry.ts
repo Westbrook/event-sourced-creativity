@@ -9,20 +9,21 @@ import { ensureSchema } from './worker/runtime.ts';
 import { ensureOutputRequirementsSchema } from './worker/output-requirements-ledger.ts';
 import { outputAssertionStatements } from './worker/output-requirements-ledger.ts';
 import { captureModel3dReplacementParent } from './worker/experience-model3d-replacement-proof.ts';
+import { runDocumentJob } from './worker/document-jobs-api.ts';
 
 const environments = new Map();
 const must = (value, label) => { if (!value) throw Error('fixture_assertion:' + label); };
-const labels = new Set(['Complete', 'Source', 'Race', 'Lease', 'Replacement']);
+const labels = new Set(['Complete', 'Source', 'Race', 'Lease', 'Replacement', 'Native']);
 function environment(bindings, label) {
   if (!environments.has(label)) {
-    const real = bindings[label], metrics = { queries: 0, batches: 0, puts: 0, conditionalPuts: 0, deletes: 0, collisionKey: null, queryFailures: [] };
+    const real = bindings[label], metrics = { queries: 0, batches: 0, heartbeats: 0, puts: 0, conditionalPuts: 0, deletes: 0, collisionKey: null, queryFailures: [] };
     const native = new WeakMap(), descriptions = new WeakMap();
     const statement = (inner, sql, values = []) => {
       const wrapped = new Proxy(inner, { get(target, key) {
         if (key === 'bind') return (...values) => { must(values.length <= 100 && !values.includes(undefined), 'binding_limit'); return statement(target.bind(...values), sql, values); };
         if (['run', 'all', 'first', 'raw'].includes(String(key))) return async (...args) => {
           metrics.queries++; try { return await target[key](...args); }
-          catch (error) { metrics.queryFailures.push({ sql, error: String(error) }); throw Error(String(error) + ' statement=' + sql); }
+          catch (error) { metrics.queryFailures.push({ sql, error: String(error) }); throw error; }
         };
         const value = Reflect.get(target, key, target); return typeof value === 'function' ? value.bind(target) : value;
       } });
@@ -31,7 +32,11 @@ function environment(bindings, label) {
     const DB = new Proxy(real, { get(target, key) {
       if (key === 'prepare') return sql => statement(target.prepare(sql), sql);
       if (key === 'batch') return async inputs => { metrics.batches++; metrics.queries += inputs.length;
-        try { return await target.batch(inputs.map(input => native.get(input) ?? input)); }
+        try {
+          const result = await target.batch(inputs.map(input => native.get(input) ?? input));
+          if (inputs.some(input => descriptions.get(input)?.sql.includes('UPDATE document_jobs SET lease_expires_at'))) metrics.heartbeats++;
+          return result;
+        }
         catch (error) {
           const failures = [];
           for (let index = 0; index < inputs.length; index++) {
@@ -39,7 +44,8 @@ function environment(bindings, label) {
             try { await target.prepare('EXPLAIN QUERY PLAN ' + d.sql).bind(...d.values).all(); }
             catch (compiled) { failures.push({ index, sql: d.sql, error: String(compiled) }); }
           }
-          throw Error(String(error) + ' compile_failures=' + JSON.stringify(failures));
+          metrics.queryFailures.push({ error: String(error), compileFailures: failures });
+          throw error;
         }
       };
       const value = Reflect.get(target, key, target); return typeof value === 'function' ? value.bind(target) : value;
@@ -68,11 +74,12 @@ function environment(bindings, label) {
 
 export default { async fetch(request, bindings) {
   const [action, label] = new URL(request.url).pathname.slice(1).split('/');
-  if (request.method !== 'GET' || !labels.has(label) || !['warm', 'available', 'recover', 'cleanup', 'lease-retention', 'replacement-proof', 'replacement-race'].includes(action))
+  if (request.method !== 'GET' || !labels.has(label) || !['warm', 'available', 'recover', 'cleanup', 'lease-retention', 'replacement-proof', 'replacement-race', 'native-run'].includes(action))
     return new Response('Unknown local test action', { status: 404 });
   const f = JSON.parse(bindings.FIXTURE), { env, metrics } = environment(bindings, label);
   const before = { ...metrics, queryFailureCount: metrics.queryFailures.length };
   const counters = () => ({ queries: metrics.queries - before.queries, batches: metrics.batches - before.batches,
+    heartbeats: metrics.heartbeats - before.heartbeats,
     puts: metrics.puts - before.puts, conditionalPuts: metrics.conditionalPuts - before.conditionalPuts,
     deletes: metrics.deletes - before.deletes, collisionKey: metrics.collisionKey,
     queryFailures: metrics.queryFailures.slice(before.queryFailureCount) });
@@ -81,6 +88,12 @@ export default { async fetch(request, bindings) {
       // Actual request-local initialization, kept separate from service counts.
       await ensureSchema(env); await ensureOutputRequirementsSchema(env);
       return Response.json({ ok: true, counters: counters() });
+    }
+    if (action === 'native-run' && label === 'Native') {
+      const result = await runDocumentJob(env, f.user, f.jobId);
+      return Response.json({ ok: result?.status === 'completed', status: result?.status,
+        error: result?.error_message, diagnostic: globalThis.__syntheticNativeFailure,
+        result: result?.result_json, counters: counters() });
     }
     const job = await env.DB.prepare('SELECT * FROM document_jobs WHERE job_id=?').bind(f.jobId).first();
     must(job, 'original_job_missing'); job.output_slot_id = f.slot.slotId;

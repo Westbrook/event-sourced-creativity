@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { outputTestDatabase } from './output-server-test-helpers.mjs';
 import { glb } from './helpers/model3d-native-execution-fixture.mjs';
+import { exportSynthetic } from './helpers/model3d-workerd-snapshot.mjs';
 import { registerOutputSourceImports } from './output-execution-test-helpers.mjs';
 registerOutputSourceImports();
 const { ensureSchema } = await import('../worker/runtime.ts');
@@ -26,7 +27,23 @@ const post = (path, body) => new Request('http://localhost' + path, { method: 'P
 // traffic and wall time are synthetic. Not evidence of a live paid generation.
 for (const [renewalFailure, renewQuote] of [[false, false], [true, false], ...['success', 'late-authorization', 'parent-recovered', 'orphan-index', 'redacted-preflight', 'retention', 'grant', 'slot', 'job', 'provider-call', 'token', 'cost'].map(mode => [true, mode])]) test(`native 3D survives slow provider: first renewal fault=${renewalFailure}, renew unpaid quote=${renewQuote}`, async t => {
   const f = outputTestDatabase(':memory:'); t.after(() => f.sqlite.close());
+  const diagnosticLogs = [];
+  t.mock.method(console, 'warn', (...args) => diagnosticLogs.push(args));
+  const realNow = Date.now.bind(Date);
+  const nativeClock = process.env.FORMA_MODEL3D_WORKERD_NATIVE === '1' && renewQuote === 'success';
+  // This scenario advances 3,355 seconds before native child admission. Start
+  // its synthetic history in the past so the exported child is genuinely fresh
+  // against workerd's real Date and D1 clocks, without rewriting signed receipts.
+  if (nativeClock) t.mock.timers.enable({ apis: ['Date', 'setTimeout'], now: realNow() - 3355000 });
+  const installSqlClock = () => {
+    const clock = outputTestDatabase(); t.after(() => clock.sqlite.close());
+    for (const name of ['strftime', 'julianday', 'datetime']) f.sqlite.function(name, { varargs: true }, (...args) =>
+      clock.sqlite.prepare(`SELECT ${name}(${args.map(() => '?').join(',')}) AS value`).get(...args.map(value => value === 'now' ? new Date().toISOString() : value)).value);
+  };
+  if (nativeClock) installSqlClock();
   let posts = 0, renewals = 0, injected = false, monotonic = 0;
+  const workerdHeartbeats = [];
+  let workerdNative;
   t.mock.method(globalThis, 'fetch', () => { throw Error('provider called before deliberate Start'); });
   await ensureSchema(f.env);
   const owner = 'dev-local-creative', now = new Date().toISOString();
@@ -56,12 +73,14 @@ for (const [renewalFailure, renewQuote] of [[false, false], [true, false], ...['
   await send('run', { draftHash: plan.draftHash, grantId: admitted.original.grantId, explicitRun: true });
   const jobId = admitted.original.jobId;
   const auth = await requireUser(new Request('http://localhost/api/session'), f.env, 'creator'); assert.ok(auth.user);
-  const entered = Promise.withResolvers(), releaseStatus = Promise.withResolvers(), bytes = glb();
+  const entered = Promise.withResolvers(), releaseStatus = Promise.withResolvers(), childEntered = Promise.withResolvers(), releaseChildStatus = Promise.withResolvers(), bytes = glb();
   const batch = f.env.DB.batch.bind(f.env.DB);
   f.env.DB.batch = async statements => {
     if (statements.some(statement => statement.sql.includes('UPDATE document_jobs SET lease_expires_at'))) {
       renewals++;
       if (renewalFailure && !injected) { injected = true; throw Error('D1_ERROR: synthetic heartbeat write failure'); }
+      if (process.env.FORMA_MODEL3D_WORKERD_HEARTBEAT === '1' && !workerdHeartbeats.some(value => value.posts === posts))
+        workerdHeartbeats.push({ posts, snapshot: exportSynthetic(f.sqlite), statements: statements.map(s => ({ sql: s.sql, bindings: [...s.bindings] })) });
     }
     return batch(statements);
   };
@@ -71,7 +90,8 @@ for (const [renewalFailure, renewQuote] of [[false, false], [true, false], ...['
       posts++; return Response.json({ request_id: posts === 1 ? 'slow-model-original' : 'slow-model-replacement', status: 'IN_PROGRESS' });
     }
     if (/^https:\/\/queue\.fal\.run\/fal-ai\/hyper3d\/requests\/slow-model-(original|replacement)\/status\?logs=1$/u.test(target)) {
-      entered.resolve(); await releaseStatus.promise;
+      if (target.includes('replacement')) { childEntered.resolve(); await releaseChildStatus.promise; }
+      else { entered.resolve(); await releaseStatus.promise; }
       init?.signal?.throwIfAborted();
       return Response.json({ request_id: target.includes('replacement') ? 'slow-model-replacement' : 'slow-model-original', status: 'COMPLETED' });
     }
@@ -80,14 +100,12 @@ for (const [renewalFailure, renewQuote] of [[false, false], [true, false], ...['
     if (target === 'https://fal.media/files/slow.glb') return new Response(bytes, { headers: { 'content-type': 'model/gltf-binary', 'content-length': String(bytes.length) } });
     throw Error(`unexpected synthetic provider route: ${target}`);
   });
-  t.mock.timers.enable({ apis: ['Date', 'setTimeout'], now: Date.now() });
-  if (renewQuote) {
+  if (!nativeClock) t.mock.timers.enable({ apis: ['Date', 'setTimeout'], now: Date.now() });
+  if (renewQuote && !nativeClock) {
     // Keep SQLite's native date functions on the same synthetic clock as Node.
     // SQL predicates/transactions are unchanged; a second real SQLite engine
     // evaluates the builtins with only the literal 'now' argument substituted.
-    const clock = outputTestDatabase(); t.after(() => clock.sqlite.close());
-    for (const name of ['strftime', 'julianday', 'datetime']) f.sqlite.function(name, { varargs: true }, (...args) =>
-      clock.sqlite.prepare(`SELECT ${name}(${args.map(() => '?').join(',')}) AS value`).get(...args.map(value => value === 'now' ? new Date().toISOString() : value)).value);
+    installSqlClock();
   }
   t.mock.method(performance, 'now', () => monotonic);
   let running;
@@ -112,6 +130,9 @@ for (const [renewalFailure, renewQuote] of [[false, false], [true, false], ...['
     assert.equal(call.used_microusd, renewalFailure ? null : 400000);
     if (renewalFailure) {
       assert.equal(injected, true);
+      assert.deepEqual(diagnosticLogs.filter(entry => entry[0] === 'output_native_execution_stopped'), [
+        ['output_native_execution_stopped', { stage: 'heartbeat_first', kind: 'd1_error' }],
+      ]);
       assert.equal(Object.values(JSON.parse(row.result_json).providerSubmissions)[0].status, 'accepted');
       assert.notEqual(f.sqlite.prepare('SELECT status FROM cost_budget_reservations').get().status, 'settled');
       assert.equal(f.sqlite.prepare("SELECT COUNT(*) n FROM events WHERE type='DocumentRenderCompleted'").get().n, 0);
@@ -288,7 +309,17 @@ for (const [renewalFailure, renewQuote] of [[false, false], [true, false], ...['
       assert.deepEqual(structuredClone(f.sqlite.prepare('SELECT * FROM output_provider_calls WHERE slot_id=?').get(admitted.original.slotId)), oldCall);
       assert.deepEqual(structuredClone(f.sqlite.prepare('SELECT * FROM cost_budget_reservations WHERE reservation_id=?').get(oldCost.reservation_id)), oldCost);
       await send('run', { draftHash: plan.draftHash, grantId: child.original.grantId, explicitRun: true });
-      await runDocumentJob(f.env, auth.user, child.original.jobId);
+      if (nativeClock) assert(Math.abs(Date.now() - realNow()) < 10000, 'exported child admission aligns with real runtime clock');
+      if (nativeClock) workerdNative = {
+        snapshot: exportSynthetic(f.sqlite), fixture: { user: structuredClone(auth.user), jobId: child.original.jobId } };
+      const childRunning = runDocumentJob(f.env, auth.user, child.original.jobId);
+      await Promise.race([childEntered.promise, childRunning.then(() => { throw Error('replacement stopped before provider status'); })]);
+      const beforeChildRenewals = renewals;
+      try {
+        for (let i = 0; i < 2; i++) { monotonic += 60000; t.mock.timers.tick(60000); await flush(); }
+        assert.equal(renewals, beforeChildRenewals + 2, 'replacement survives two real runner heartbeat transactions');
+        assert.equal(f.sqlite.prepare('SELECT status FROM document_jobs WHERE job_id=?').get(child.original.jobId).status, 'running');
+      } finally { releaseChildStatus.resolve(); await childRunning; }
       await runDocumentJob(f.env, auth.user, child.original.jobId);
       const after = f.sqlite.prepare('SELECT status,error_message,result_json FROM document_jobs WHERE job_id=?').get(child.original.jobId);
       assert.equal(after.status, 'completed', JSON.stringify(after)); assert.equal(posts, 2);
@@ -327,5 +358,16 @@ for (const [renewalFailure, renewQuote] of [[false, false], [true, false], ...['
         assert.notEqual(refused.status, 200, 'settled child cannot renew into another paid attempt'); assert.equal(posts, 2);
       }
     }
-  } finally { releaseStatus.resolve(); t.mock.timers.reset(); if (running) await running.catch(() => {}); await flush(); }
+  } finally { releaseStatus.resolve(); releaseChildStatus.resolve(); t.mock.timers.reset(); if (running) await running.catch(() => {}); await flush(); }
+  if (workerdHeartbeats.length) {
+    t.mock.restoreAll();
+    const { verifyHeartbeatInWorkerd } = await import('./helpers/model3d-heartbeat-workerd.mjs');
+    for (const captured of workerdHeartbeats) t.diagnostic(JSON.stringify({ posts: captured.posts,
+      workerd: await verifyHeartbeatInWorkerd(captured.snapshot, captured.statements) }));
+  }
+  if (workerdNative) {
+    t.mock.restoreAll();
+    const { verifyNativeRunnerInWorkerd } = await import('./helpers/model3d-heartbeat-workerd.mjs');
+    t.diagnostic(JSON.stringify(await verifyNativeRunnerInWorkerd(workerdNative.snapshot, workerdNative.fixture, bytes)));
+  }
 });
