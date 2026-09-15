@@ -3,6 +3,7 @@ import type { VideoOutputContract } from "../model/output-video-contract.ts";
 import { readModel3dExecutionOffer } from "../model/output-model3d-offer.ts";
 import type { Model3dOutputContract } from "../model/output-model3d-contract.ts";
 import type { Model3dMiniAppCostPreview } from "../model/model3d-mini-app-consent.ts";
+import { model3dMiniAppAttemptMatches } from "../model/model3d-mini-app-consent.ts";
 import { EXPERIENCE_AUDIO_INTENT } from "./contracts.ts";
 import { parseAudioOutputContract, type AudioOutputContract } from "../model/output-audio-contract.ts";
 import { parseAudioMiniAppCostPreview, type AudioMiniAppCostPreview } from "../model/audio-mini-app-consent.ts";
@@ -534,9 +535,9 @@ export function outputTerms(preflight: OutputPreflight, options: OutputTermsOpti
     if (!target || !ceiling(target.maximumMicrousd) || !ceiling(target.maximumCalls)
       || target.maximumMicrousd > offer.maximumMicrousd || target.maximumCalls > offer.maximumCalls) return unknownTerms;
     const attempt = record(record(offer.operationAttempts)?.[options.targetId]);
-    if (!attempt || !ceiling(attempt.ordinal) || attempt.previousSlotId !== null
+    if (!attempt || !ceiling(attempt.ordinal) || (options.output !== "model3d" && attempt.previousSlotId !== null)
       || Object.keys(record(offer.operationAttempts)!).length !== 1) return unknownTerms;
-    if (target.provider === "fal" && (offer.maximumMicrousd !== target.maximumMicrousd || offer.maximumCalls !== (options.output==="storyboard"?5:options.output==="audio"?3:options.output==="model3d"?1:2) || attempt.ordinal !== 0)) return unknownTerms;
+    if (target.provider === "fal" && (offer.maximumMicrousd !== target.maximumMicrousd || offer.maximumCalls !== (options.output==="storyboard"?5:options.output==="audio"?3:options.output==="model3d"?1:2) || options.output !== "model3d" && attempt.ordinal !== 0)) return unknownTerms;
     if(options.output==="storyboard"||options.output==="video"){
       const checked=options.output==="video"?readVideoExecutionOffer(target):readStoryboardExecutionOffer(target);
       if(!checked||checked.original.sourceDigest!==offer.sourceDigest||checked.original.requirementsDigest!==offer.requirementsDigest
@@ -546,7 +547,8 @@ export function outputTerms(preflight: OutputPreflight, options: OutputTermsOpti
     if (options.output === "model3d") {
       const checked = readModel3dExecutionOffer(target);
       if (!checked || checked.preview.sourceDigest !== offer.sourceDigest || checked.preview.requirementsDigest !== offer.requirementsDigest
-        || expiry > Date.parse(checked.preview.expiresAt)) return unknownTerms;
+        || expiry > Date.parse(checked.preview.expiresAt)
+        || !model3dMiniAppAttemptMatches(checked.preview, {jobId: checked.preview.requestId, attemptOrdinal: attempt.ordinal, previousSlotId: attempt.previousSlotId as string | null})) return unknownTerms;
     }
     const projected = targetProjection(target, options);
     if (!projected) return unknownTerms;

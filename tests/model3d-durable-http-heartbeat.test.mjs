@@ -16,6 +16,8 @@ const { RODIN_TEXT_MODEL } = await import('../src/model/model3d.ts');
 const { decodeExperienceBinding, ExperienceOutputBindingClient } = await import('../src/experiences/output-binding-client.ts');
 const { readRetainedOutputModel3d } = await import('../worker/output-model3d-retained.ts');
 const { outputAssertionStatements } = await import('../worker/output-requirements-ledger.ts');
+const { outputTerms } = await import('../src/experiences/output-terms.ts');
+const { readModel3dExecutionOffer } = await import('../src/model/output-model3d-offer.ts');
 
 const flush = async () => { for (let i = 0; i < 100; i++) await new Promise(resolve => setImmediate(resolve)); };
 const post = (path, body) => new Request('http://localhost' + path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
@@ -145,6 +147,13 @@ for (const renewalFailure of [false, true]) test(`native 3D survives slow provid
       assert.equal(next.permitted.authorize, true, JSON.stringify(next));
       assert.equal(next.model3dCostPreview.version, 'model3d-mini-app-replacement-cost-v1');
       assert.ok(decodeExperienceBinding(next, identity), 'replacement quote is browser-decodable');
+      const termsOptions = { now: Date.now(), output: 'model3d', targetId: next.plan.targetId,
+        expectedModel3dContract: readModel3dExecutionOffer(next.preflight.targets[0]).contract, model3dCostPreview: next.model3dCostPreview };
+      assert.equal(outputTerms(next.preflight, termsOptions).available, true, 'actual replacement cost terms enable informed consent');
+      for (const change of [{ ordinal: 0 }, { ordinal: 2 }, { previousSlotId: null }, { previousSlotId: 'other' }]) {
+        const bad = structuredClone(next.preflight); Object.assign(bad.operationAttempts[next.plan.targetId], change);
+        assert.equal(outputTerms(bad, termsOptions).available, false);
+      }
       assert.notEqual(next.model3dCostPreview.requestId, jobId);
       assert.equal(posts, 1, 'replacement preparation is unpaid');
       const replayedPreparation = await send('prepare', { draftHash: plan.draftHash, explicitRequirementsConfirmation: true,
@@ -155,6 +164,7 @@ for (const renewalFailure of [false, true]) test(`native 3D survives slow provid
         maximumMicrousd: next.preflight.maximumMicrousd, explicitAuthorization: true,
         model3dCostConsent: { ...next.model3dCostPreview, confirmed: true, providerTransferConfirmed: true } });
       assert.equal(child.permitted.run, true, JSON.stringify(child));
+      assert.equal(outputTerms(child.preflight, { ...termsOptions, now: Date.now(), grant: child.grant }).grantAvailable, true);
       assert.notEqual(child.original.grantId, admitted.original.grantId);
       assert.equal(posts, 1, 'replacement authorization is unpaid');
       assert.deepEqual(structuredClone(f.sqlite.prepare('SELECT * FROM output_provider_calls WHERE slot_id=?').get(admitted.original.slotId)), oldCall);
