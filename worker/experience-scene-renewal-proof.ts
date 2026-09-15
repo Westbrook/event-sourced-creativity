@@ -38,7 +38,7 @@ export function sceneRenewalPredecessorAssertion(scope: OutputScope, predecessor
 /** Exact index fence for selection and for the first successor append. Receipt
  * and private-body assertions must ALSO accompany it. A count alone is not
  * sufficient: replacing a key while retaining the count must fail. */
-export function sceneRenewalIndexAssertion(scope: OutputScope, draftId: string, expectedKeys: readonly string[], output: "scene" | "video" | "model3d" = "scene"): OutputSqlAssertion {
+export function sceneRenewalIndexAssertion(scope: OutputScope, draftId: string, expectedKeys: readonly string[], output: "scene" | "video" | "model3d" | "slides" = "scene"): OutputSqlAssertion {
   personal(scope);
   const prefix = scenePreparationCyclePrefix(draftId, output);
   if (expectedKeys.length > 32 || new Set(expectedKeys).size !== expectedKeys.length
@@ -97,4 +97,63 @@ export function sceneRenewalNoExecutionAssertion(scope: OutputScope, originalReq
     bindings: [scope.key, scope.documentId, `creative:${scope.ownerUserId}`, scope.documentId,
       scope.key, scope.documentId, scope.key, scope.documentId, requests,
       scope.ownerUserId, scope.documentId, requests, requests, requests, scope.key, scope.documentId, requests] };
+}
+
+/** Slides job/reservation UUIDs are allocated at authorization, not quote time.
+ * Never invent a deterministic request ID. Unassociated own-stream reservations
+ * are blockers; only a consistent, positively different Document is excluded.
+ * Keep this proof in both read qualification and the atomic successor append. */
+export function slidesRenewalNoExecutionAssertion(scope: OutputScope): OutputSqlAssertion {
+  personal(scope);
+  const stream = `creative:${scope.ownerUserId}`;
+  const reservations = (["budget_reservations", "cost_budget_reservations"] as const).map((table, index) => {
+    const reservationId = index === 0 ? "token_reservation_id" : "cost_reservation_id";
+    return { sql: `NOT EXISTS(SELECT 1 FROM ${table} reservation
+      WHERE (reservation.owner_id=? OR reservation.stream_id=?) AND reservation.operation='document-render:slides'
+      AND NOT EXISTS(SELECT 1 FROM output_operation_slots slot
+        JOIN output_plan_revisions plan ON plan.scope_key=slot.scope_key AND plan.plan_revision_id=slot.plan_revision_id
+        JOIN document_jobs job ON job.job_id=slot.job_id
+        WHERE slot.${reservationId}=reservation.reservation_id
+          AND reservation.owner_id=? AND reservation.stream_id=?
+          AND plan.owner_user_id=? AND plan.document_id!=? AND length(plan.document_id) BETWEEN 1 AND 160
+          AND plan.document_id GLOB '[A-Za-z0-9]*' AND plan.document_id NOT GLOB '*[^A-Za-z0-9._:-]*'
+          AND slot.scope_key='personal:'||plan.owner_user_id||':'||plan.project_id
+          AND job.owner_id=plan.owner_user_id AND job.document_id=plan.document_id AND job.stream_id=reservation.stream_id
+          AND (reservation.correlation_id=slot.job_id
+            OR (substr(reservation.correlation_id,1,length(slot.job_id)+9)=slot.job_id||':attempt:'
+              AND length(substr(reservation.correlation_id,length(slot.job_id)+10)) BETWEEN 1 AND 9
+              AND substr(reservation.correlation_id,length(slot.job_id)+10) NOT GLOB '*[^0-9]*'
+              AND CAST(substr(reservation.correlation_id,length(slot.job_id)+10) AS INTEGER)>0)
+            OR (substr(reservation.correlation_id,1,length(slot.job_id)+10)=slot.job_id||':recovery:'
+              AND length(substr(reservation.correlation_id,length(slot.job_id)+11))=36
+              AND substr(reservation.correlation_id,length(slot.job_id)+11) GLOB '????????-????-????-????-????????????'
+              AND length(replace(substr(reservation.correlation_id,length(slot.job_id)+11),'-',''))=32
+              AND replace(substr(reservation.correlation_id,length(slot.job_id)+11),'-','') NOT GLOB '*[^a-f0-9]*'))))`,
+      bindings: [scope.ownerUserId, stream, scope.ownerUserId, stream, scope.ownerUserId, scope.documentId] };
+  });
+  return { sql: `NOT EXISTS(SELECT 1 FROM output_commands command LEFT JOIN events event ON event.event_id=command.event_id
+      WHERE command.scope_key=? AND command.action IN('authorize','run')
+      AND CASE WHEN json_valid(event.payload) THEN
+        (json_extract(event.payload,'$.document_id')=? OR json_type(event.payload,'$.document_id') IS NOT 'text') ELSE 1 END)
+    AND NOT EXISTS(SELECT 1 FROM events event WHERE event.stream_id=? AND event.type IN('OutputExecutionAuthorized','OutputExecutionRunRequested')
+      AND CASE WHEN json_valid(event.payload) THEN
+        (json_extract(event.payload,'$.document_id')=? OR json_type(event.payload,'$.document_id') IS NOT 'text'
+          OR length(json_extract(event.payload,'$.document_id')) NOT BETWEEN 1 AND 160
+          OR json_extract(event.payload,'$.document_id') NOT GLOB '[A-Za-z0-9]*'
+          OR json_extract(event.payload,'$.document_id') GLOB '*[^A-Za-z0-9._:-]*') ELSE 1 END)
+    AND NOT EXISTS(SELECT 1 FROM output_execution_grants grant_row LEFT JOIN output_plan_revisions plan
+      ON plan.scope_key=grant_row.scope_key AND plan.plan_revision_id=grant_row.plan_revision_id
+      WHERE grant_row.scope_key=? AND (plan.document_id=? OR plan.document_id IS NULL))
+    AND NOT EXISTS(SELECT 1 FROM output_operation_slots slot LEFT JOIN output_plan_revisions plan
+      ON plan.scope_key=slot.scope_key AND plan.plan_revision_id=slot.plan_revision_id
+      WHERE slot.scope_key=? AND (plan.document_id=? OR plan.document_id IS NULL))
+    AND NOT EXISTS(SELECT 1 FROM document_jobs WHERE owner_id=? AND document_id=?)
+    AND NOT EXISTS(SELECT 1 FROM output_provider_calls call LEFT JOIN output_operation_slots slot
+      ON slot.scope_key=call.scope_key AND slot.slot_id=call.slot_id
+      LEFT JOIN output_plan_revisions plan ON plan.scope_key=slot.scope_key AND plan.plan_revision_id=slot.plan_revision_id
+      WHERE call.scope_key=? AND (plan.document_id=? OR plan.document_id IS NULL))
+    AND ${reservations.map(part => part.sql).join(" AND ")}`,
+    bindings: [scope.key, scope.documentId, stream, scope.documentId, scope.key, scope.documentId,
+      scope.key, scope.documentId, scope.ownerUserId, scope.documentId, scope.key, scope.documentId,
+      ...reservations.flatMap(part => part.bindings)] };
 }

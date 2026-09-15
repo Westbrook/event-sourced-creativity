@@ -29,7 +29,7 @@ export async function experienceOutputCommandKey(binding: ExperienceOutputBindin
   if (!stages.includes(stage)) throw new Error("experience_output_stage_invalid");
   if (Object.hasOwn(binding, "preparationCycle")) {
     const { preparationCycle: cycle, ...root } = binding;
-    if (!["scene", "video", "model3d"].includes(binding.output) || stage === "save" || !cycle
+    if (!["scene", "video", "model3d", "slides"].includes(binding.output) || stage === "save" || !cycle
       || !await scenePreparationCycleMatches(root, cycle.predecessor, cycle)) throw new Error("experience_scene_renewal_lineage_unavailable");
     return scenePreparationCommandKey(cycle, stage);
   }

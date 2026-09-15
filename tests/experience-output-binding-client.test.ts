@@ -95,6 +95,33 @@ function changedSourceResult() {
   value.grant!.pendingCalls = value.grant!.operations[0]!.pendingCalls = 0;
   return value;
 }
+
+test("Slides renewal decodes only the exact expired never-authorized quote and sends one unpaid preparation", async () => {
+  const slidesIdentity = { ...identity, output: "slides" as const };
+  const expired = state("review", "slides");
+  expired.status = "unavailable"; expired.permitted = { ...denied(), renewPreparation: true };
+  expired.slidesRenewal = { predecessorPreflightId: expired.preflight!.id, expiredAt: expired.preflight!.expiresAt };
+  assert.ok(decodeExperienceBinding(expired, slidesIdentity));
+  for (const altered of [
+    { ...expired, slidesRenewal: { ...expired.slidesRenewal, predecessorPreflightId: "other" } },
+    { ...expired, slidesRenewal: { ...expired.slidesRenewal, expiredAt: "2026-01-01T00:00:00.000Z" } },
+    { ...expired, sceneRenewal: expired.slidesRenewal },
+    { ...expired, permitted: { ...expired.permitted, authorize: true } },
+    { ...expired, original: state("authorized", "slides").original },
+  ]) assert.equal(decodeExperienceBinding(altered, slidesIdentity), null);
+  const calls: Array<{ url: string; init?: RequestInit }> = [];
+  const client = new ExperienceOutputBindingClient(slidesIdentity, {
+    origin, current: () => true,
+    request: async (input, init) => { calls.push({ url: String(input), init }); return response(expired, init?.method === "POST" ? basePath + "/prepare" : basePath); },
+  });
+  const shown = await client.read(); assert.ok(shown && "output" in shown);
+  await client.command("renewPreparation", shown);
+  assert.equal(calls.length, 2);
+  assert.equal(calls[1]!.url, basePath + "/prepare");
+  assert.deepEqual(JSON.parse(String(calls[1]!.init!.body)), { draftHash: identity.draftHash, explicitRequirementsConfirmation: true,
+    renewal: { predecessorPreflightId: expired.preflight!.id, explicitRenewal: true } });
+  assert.equal(calls.some(call => /\/(authorize|run)$/.test(call.url)), false);
+});
 test("changed-source completed Image decoder retains separate current and original digests", () => {
   const value = changedSourceResult(), decoded = decodeExperienceBinding(value, identity);
   assert.deepEqual(decoded, value); assert.ok(Object.isFrozen(decoded));

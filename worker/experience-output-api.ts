@@ -18,7 +18,7 @@ import { outputVideoPreparationIdentity } from "./output-video-source.ts";
 import { outputModel3dPreparationIdentity } from "./output-model3d-source.ts";
 import { model3dRenewalNoExecutionAssertion } from "./experience-model3d-renewal-proof.ts";
 import { scenePreparationSuccessor } from "./experience-scene-renewal.ts";
-import { sceneRenewalIndexAssertion, sceneRenewalNoExecutionAssertion, sceneRenewalWindowAssertion, sceneRenewalPredecessorAssertion } from "./experience-scene-renewal-proof.ts";
+import { sceneRenewalIndexAssertion, sceneRenewalNoExecutionAssertion, sceneRenewalWindowAssertion, sceneRenewalPredecessorAssertion, slidesRenewalNoExecutionAssertion } from "./experience-scene-renewal-proof.ts";
 import { SHORT_STORY_NARRATIVE_CONTRACT } from "../src/model/output-narrative-contract.ts";
 import { recoverOutputFalImage } from "./output-fal-recovery.ts";
 import { recoverOutputVideo } from "./output-video-recovery.ts";
@@ -235,7 +235,7 @@ async function load(request: Request, env: WorkerEnv, draftId: string, permissio
   // Earlier stages are an atomic prerequisite, not merely UI provenance. Their
   // immutable index/event associations survive through each later native batch.
   trusted.sourceAssertions.push(...lineage.witnesses.map(value => outputCommandReceiptAssertion(trusted.scope, value.receipt)));
-  if (binding.output === "scene" || binding.output === "video") trusted.sourceAssertions.push(sceneRenewalIndexAssertion(trusted.scope, binding.draftId, lineage.cycleCommandKeys, binding.output));
+  if (binding.output === "scene" || binding.output === "video" || binding.output === "slides") trusted.sourceAssertions.push(sceneRenewalIndexAssertion(trusted.scope, binding.draftId, lineage.cycleCommandKeys, binding.output));
   if (binding.output === "model3d") trusted.sourceAssertions.push(...model3dLineageIndexAssertions(trusted.scope, binding.draftId, lineage.cycleCommandKeys));
   validateManagedRequirement(loaded);
   const sourceMismatch = experienceSourceMismatch(plan, receipt, { documentId: trusted.projection.documentId, projectId: trusted.projection.projectId,
@@ -268,12 +268,30 @@ async function confirmed(loaded: Loaded) {
  * lineage. No missing/failed read is interpreted as absence. These predicates
  * accompany the native confirmation transaction, not only this preview. */
 async function renewalOffer(loaded: Loaded) {
-  if (loaded.binding.output !== "scene" && loaded.binding.output !== "video" && !(loaded.binding.output === "model3d" && loaded.binding.replacementCycle) || loaded.originals.authorize || loaded.originals.run
+  if (loaded.binding.output !== "scene" && loaded.binding.output !== "video" && loaded.binding.output !== "slides" && !(loaded.binding.output === "model3d" && loaded.binding.replacementCycle) || loaded.originals.authorize || loaded.originals.run
     || (loaded.binding.preparationCycle?.ordinal ?? 0) >= 8) return null;
   const predecessor = scenePreparationPredecessor(loaded.binding, loaded.originals);
   if (!predecessor) return null;
   const plan = await confirmed(loaded), root = loaded.rootBinding;
   const { preparationCycle: _previousQuote, ...renewalRoot } = loaded.binding;
+  if (root.output === "slides") {
+    const preflight = loaded.originals.preflight?.receipt.payload.preflight;
+    const now = Date.now();
+    if (!plan || !record(preflight) || typeof preflight.expiresAt !== "string"
+      || !Number.isFinite(Date.parse(preflight.expiresAt)) || Date.parse(preflight.expiresAt) > now
+      || Date.parse(loaded.retained.expiresAt) <= now + 900_000) return null;
+    if ((await registeredExperience(loaded.retained.plan.request.experienceId))?.releaseHash !== root.releaseHash) return null;
+    const latest = await outputExperienceCommands.readConfirmedPlan(loaded.trusted);
+    if (!latest || canonicalJson(latest) !== canonicalJson(plan)) return null;
+    const guards = [slidesRenewalNoExecutionAssertion(loaded.trusted.scope),
+      sceneRenewalWindowAssertion(loaded.trusted.scope, root.draftId, preflight.expiresAt, loaded.retained.expiresAt),
+      sceneRenewalPredecessorAssertion(loaded.trusted.scope, predecessor)];
+    const clear = await loaded.trusted.env.DB.prepare(`SELECT CASE WHEN ${guards.map(guard => `(${guard.sql})`).join(" AND ")} THEN 1 ELSE 0 END AS clear`)
+      .bind(...guards.flatMap(guard => guard.bindings ?? [])).first<{ clear: number }>();
+    if (clear?.clear !== 1) return null;
+    return { predecessor, cycle: await scenePreparationSuccessor(renewalRoot, predecessor), guards,
+      disclosure: { predecessorPreflightId: predecessor.preflight.preflightId, expiredAt: preflight.expiresAt } };
+  }
   const model3dContract = root.output === "model3d" ? experienceModel3dOutputContract(loaded.retained.plan, root) : null;
   const contract = root.output === "scene" ? createSceneOutputContract({ draftId: root.draftId, draftHash: root.draftHash,
     releaseHash: root.releaseHash, requestHash: root.requestHash, sourceBindingHash: root.sourceBindingHash }) : null;
@@ -405,10 +423,11 @@ async function state(loaded: Loaded): Promise<ExperiencePreparedState> {
     if (plan && await trusted.env.DB.prepare("SELECT 1 AS present FROM output_operation_slots WHERE scope_key=? AND plan_revision_id=? LIMIT 1").bind(trusted.scope.key, plan.revisionId).first()) error("experience_output_unbound_operation", 410);
     if (preflight && (((binding.output === "storyboard" || binding.output === "video") ? !preflight.targets.every(target => target.available) : !result.permitted.authorize)
       || Date.parse(preflight.expiresAt) <= Date.now())) result.status = "unavailable";
-    if ((binding.output === "scene" || binding.output === "video" || binding.output === "model3d" && binding.replacementCycle) && result.status === "unavailable") {
+    if ((binding.output === "scene" || binding.output === "video" || binding.output === "slides" || binding.output === "model3d" && binding.replacementCycle) && result.status === "unavailable") {
       const renewal = await renewalOffer(loaded);
       if (renewal) {
-        if (binding.output === "video") result.videoRenewal = renewal.disclosure;
+        if (binding.output === "slides") result.slidesRenewal = renewal.disclosure;
+        else if (binding.output === "video") result.videoRenewal = renewal.disclosure;
         else if (binding.output === "model3d") result.model3dRenewal = renewal.disclosure;
         else result.sceneRenewal = renewal.disclosure;
         result.permitted.renewPreparation = true;
@@ -616,7 +635,7 @@ export async function handleExperienceOutput(request: Request, env: WorkerEnv, e
       if (Object.hasOwn(body, "renewal")) {
         diagnosticStage = "prepare_confirm_state";
         const input = body.renewal;
-        if (loaded.binding.output !== "scene" && loaded.binding.output !== "video" && !(loaded.binding.output === "model3d" && loaded.binding.replacementCycle) || !record(input) || Object.keys(input).length !== 2
+        if (loaded.binding.output !== "scene" && loaded.binding.output !== "video" && loaded.binding.output !== "slides" && !(loaded.binding.output === "model3d" && loaded.binding.replacementCycle) || !record(input) || Object.keys(input).length !== 2
           || input.explicitRenewal !== true || typeof input.predecessorPreflightId !== "string") error("experience_scene_renewal_required", 403);
         const existing = loaded.binding.preparationCycle;
         if (existing?.predecessor.preflight.preflightId !== input.predecessorPreflightId) {
