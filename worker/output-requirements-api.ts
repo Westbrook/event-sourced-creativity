@@ -1,5 +1,6 @@
 import { readOutputModel3dPayload, requireModel3dMiniAppCostApproval } from "./output-model3d-execution.ts";
 import { outputModel3dPreflightAssertions } from "./output-model3d-preflight.ts";
+import { model3dMiniAppAttemptMatches } from "../src/model/model3d-mini-app-consent.ts";
 import { parseAudioMiniAppCostPreview } from "../src/model/audio-mini-app-consent.ts";
 import { requireAudioMiniAppCostApproval } from "./output-audio-execution.ts";
 import { readOutputScenePayload } from "./output-scene-preflight-contract.ts";
@@ -484,10 +485,17 @@ async function preflightPlan(trusted: OutputTrustedContext, body: Record<string,
   const lastAttempt = new Map(attempts.results.map((row) => [String(row.target_id), row]));
   for (const target of selected as OutputPlanTarget[]) {
     const initial = lastAttempt.get(target.id);
+    const replacementCycle = record(record(body.experienceBinding).replacementCycle);
+    // This only permits running the unpaid verifier below. Its server-owned
+    // source/lineage proof must succeed before any preflight can be recorded.
+    const replacementRequested = Boolean(body.alternativeOfSlotId && initial?.status === "uncertain" && initial.attempt_ordinal === 0
+      && initial.previous_slot_id === null && Object.hasOwn(target, "model3d_contract")
+      && /^\/api\/experiences\/drafts\/experience-draft-[a-f0-9]{64}\/output\/prepare$/u.test(new URL(trusted.request.url).pathname)
+      && replacementCycle.ordinal === 1 && record(replacementCycle.predecessor).slotId === initial.slot_id);
     let recoveryReason = "";
     if (body.alternativeOfSlotId) {
-      if (!initial || initial.slot_id !== body.alternativeOfSlotId || !["succeeded", "failed", "cancelled", "unavailable"].includes(String(initial.status))) fail("previous_output_operation_not_terminal", 409);
-      if (Number(initial.unresolved_cost)) fail("reconcile_previous_output_cost_before_alternative", 409);
+      if (!initial || initial.slot_id !== body.alternativeOfSlotId || !replacementRequested && !["succeeded", "failed", "cancelled", "unavailable"].includes(String(initial.status))) fail("previous_output_operation_not_terminal", 409);
+      if (Number(initial.unresolved_cost) && !replacementRequested) fail("reconcile_previous_output_cost_before_alternative", 409);
       operationAttempts[target.id] = { ordinal: Number(initial.attempt_ordinal) + 1, previousSlotId: String(initial.slot_id) };
     } else if (initial) recoveryReason = "This target already has an authorized operation. Recover its stored result or explicitly authorize an alternative; a second initial operation will not be created.";
     else operationAttempts[target.id] = { ordinal: 0, previousSlotId: null };
@@ -497,6 +505,14 @@ async function preflightPlan(trusted: OutputTrustedContext, body: Record<string,
     }
     const result = await bridge.preflight(bridgeTarget(trusted, plan, target));
     if (result.targetId !== target.id) fail("bridge_target_mismatch", 500);
+    if (replacementRequested) {
+      const payload = await readOutputModel3dPayload(record(result.settings).payload), proof = outputModel3dPreflightAssertions(result);
+      if (!result.available || !payload || !proof?.length || payload.preview.version !== "model3d-mini-app-replacement-cost-v1"
+        || payload.preview.previousSlotId !== initial?.slot_id || payload.preview.previousJobId !== initial?.job_id
+        || payload.preview.replacementCycleId !== replacementCycle.id || payload.preview.maximumMicrousd !== 400000
+        || payload.preview.priorHeldMicrousd !== 400000 || payload.preview.cumulativeMaximumMicrousd !== 800000)
+        fail("experience_model3d_replacement_unavailable", 409);
+    }
     if (Object.hasOwn(target, "model3d_contract") && (result.available || result.reasonCode === "output_native_model3d_unconfigured")) {
       const proof = outputModel3dPreflightAssertions(result);
       const deadlines = proof?.flatMap(value => value.deadlineMs === undefined ? [] : [value.deadlineMs]);
@@ -593,7 +609,7 @@ async function authorizePlan(trusted: OutputTrustedContext, body: Record<string,
     }
     if(Object.hasOwn(target,"model3d_contract")){
       const original=await readOutputModel3dPayload(record(offered.settings).payload),fresh=await readOutputModel3dPayload(record(current.settings).payload),proof=outputModel3dPreflightAssertions(current);
-      if(!original||!fresh||!proof?.length||attempt.ordinal!==0||attempt.previousSlotId||fresh.preview.actorUserId!==trusted.scope.actorUserId
+      if(!original||!fresh||!proof?.length||!model3dMiniAppAttemptMatches(fresh.preview,{jobId:fresh.preview.requestId,attemptOrdinal:attempt.ordinal,previousSlotId:attempt.previousSlotId})||fresh.preview.actorUserId!==trusted.scope.actorUserId
         ||fresh.preview.documentId!==trusted.scope.documentId||fresh.preview.projectId!==trusted.scope.projectId
         ||fresh.preview.sourceDigest!==trusted.sourceDigest||fresh.preview.requirementsDigest!==trusted.requirementsDigest)fail("output_model3d_original_attempt_required",403);
       requireModel3dMiniAppCostApproval(body.model3dCostConsent,original.preview,fresh.preview);
@@ -651,7 +667,10 @@ async function authorizePlan(trusted: OutputTrustedContext, body: Record<string,
         ...slots.flatMap((slot) => outputProviderStages(preflight.targets.find((target) => target.targetId === slot.targetId)!).map((call) => trusted.env.DB.prepare("INSERT INTO output_operation_routes(scope_key,slot_id,stage_key,provider,model,maximum_calls) VALUES(?,?,?,?,?,1)").bind(slot.scopeKey, slot.slotId, call.stage, call.provider, call.model))),
         ...native.statements], assertions: [
           { sql: "(SELECT COALESCE(SUM(maximum_microusd),0) FROM output_operation_slots WHERE scope_key=? AND grant_id=?)<=? AND (SELECT COALESCE(SUM(maximum_calls),0) FROM output_operation_slots WHERE scope_key=? AND grant_id=?)=?", bindings: [trusted.scope.key, grantId, Number(body.maximumMicrousd), trusted.scope.key, grantId, preflight.maximumCalls] },
-          ...slots.filter((slot) => slot.previousSlotId).map((slot) => ({ sql: "EXISTS(SELECT 1 FROM output_operation_slots previous WHERE previous.scope_key=? AND previous.slot_id=? AND previous.target_id=? AND previous.target_contract_digest=? AND previous.attempt_ordinal=? AND previous.status IN('succeeded','failed','cancelled','unavailable') AND NOT EXISTS(SELECT 1 FROM output_provider_calls pending WHERE pending.scope_key=previous.scope_key AND pending.slot_id=previous.slot_id AND pending.used_microusd IS NULL))", bindings: [slot.scopeKey, slot.previousSlotId, slot.targetId, slot.targetContractDigest, slot.attemptOrdinal - 1] })),
+          // Typed 3D children carried exact parent/hold/one-child assertions in
+          // the pre-write source proof above. All generic alternatives retain
+          // their original terminal-and-settled requirement.
+          ...slots.filter((slot) => slot.previousSlotId && !model3dTargets.some(target => target.id === slot.targetId)).map((slot) => ({ sql: "EXISTS(SELECT 1 FROM output_operation_slots previous WHERE previous.scope_key=? AND previous.slot_id=? AND previous.target_id=? AND previous.target_contract_digest=? AND previous.attempt_ordinal=? AND previous.status IN('succeeded','failed','cancelled','unavailable') AND NOT EXISTS(SELECT 1 FROM output_provider_calls pending WHERE pending.scope_key=previous.scope_key AND pending.slot_id=previous.slot_id AND pending.used_microusd IS NULL))", bindings: [slot.scopeKey, slot.previousSlotId, slot.targetId, slot.targetContractDigest, slot.attemptOrdinal - 1] })),
           ...native.assertions] };
     } });
 }

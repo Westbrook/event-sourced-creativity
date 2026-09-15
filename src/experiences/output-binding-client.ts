@@ -9,7 +9,7 @@ import { parseAudioMiniAppCostPreview, audioMiniAppCostApprovalMatches } from ".
 
 export type ExperienceBindingIdentity = Readonly<{ draftId: string; draftHash: string; releaseHash: string; documentId: string; projectId: string; output: "image" | "slides" | "short_story" | "scene" | "storyboard" | "audio" | "video" | "model3d"; actorUserId: string }>;
 export type ExperienceBindingResponse = ExperienceNativeState | ExperienceNativeUnavailable;
-export type ExperienceBindingAction = "prepare" | "renewPreparation" | "authorize" | "run" | "resumeRun" | "recoverResult";
+export type ExperienceBindingAction = "prepare" | "prepareReplacement" | "renewPreparation" | "authorize" | "run" | "resumeRun" | "recoverResult";
 const status = new Set(["absent", "preparing", "review", "authorized", "queued", "running", "succeeded", "failed", "cancelled", "partial", "uncertain", "unavailable"]);
 const stages = new Set([null, "save", "confirm", "preflight", "authorize", "run"]);
 const text = (value: unknown): value is string => typeof value === "string" && value.length > 0 && value.length <= 1024 && !/[\p{Cc}]/u.test(value);
@@ -69,10 +69,12 @@ export function decodeExperienceBinding(value: unknown, identity: ExperienceBind
     const permitted = value.permitted;
     if (permitted.renewPreparation !== undefined && typeof permitted.renewPreparation !== "boolean") return null;
     if (permitted.recoverResult !== undefined && typeof permitted.recoverResult !== "boolean") return null;
+    if (permitted.prepareReplacement !== undefined && typeof permitted.prepareReplacement !== "boolean") return null;
     if (value.recovery !== undefined && !["pending", "completed"].includes(String(value.recovery))) return null;
     if (!["prepare", "authorize", "run", "resumeRun"].every(key => typeof permitted[key] === "boolean")) return null;
     if (value.status === "unavailable" && value.originalIntent === "unknown_or_retained") {
       return text(value.error) && !permitted.prepare && !permitted.authorize && !permitted.run && !permitted.resumeRun && !permitted.recoverResult && !permitted.renewPreparation
+        && !permitted.prepareReplacement && !Object.hasOwn(value, "model3dReplacement")
         && !Object.hasOwn(value, "sceneRenewal") && !Object.hasOwn(value, "videoRenewal") ? freeze(structuredClone(value)) as ExperienceNativeUnavailable : null;
     }
     if (!["draftId", "draftHash", "releaseHash", "documentId", "projectId", "output"].every(key => value[key] === identity[key as keyof ExperienceBindingIdentity])
@@ -80,6 +82,17 @@ export function decodeExperienceBinding(value: unknown, identity: ExperienceBind
       || !record(value.current) || value.current.custody !== "verified" || !["verified", "changed"].includes(String(value.current.source))
       || !text(value.current.sourceDigest) || !text(value.current.requirementsDigest)) return null;
     const plan = value.plan, preflight = value.preflight, original = value.original, grant = value.grant;
+    if (Object.hasOwn(value, "model3dReplacement")) {
+      const replacement = value.model3dReplacement;
+      if (value.output !== "model3d" || value.status !== "failed" || value.disposition !== "original_run_recorded"
+        || permitted.prepareReplacement !== true || permitted.prepare || permitted.authorize || permitted.run || permitted.resumeRun || permitted.renewPreparation
+        || !record(original) || original.jobStatus !== "failed" || original.slotStatus !== "uncertain"
+        || !record(replacement) || Object.keys(replacement).length !== 6
+        || !text(replacement.cycleId) || !/^[a-f0-9]{64}$/u.test(replacement.cycleId)
+        || replacement.previousSlotId !== original.slotId || replacement.previousJobId !== original.jobId
+        || replacement.priorHeldMicrousd !== 400000 || replacement.newMaximumMicrousd !== 400000
+        || replacement.cumulativeMaximumMicrousd !== 800000) return null;
+    } else if (permitted.prepareReplacement) return null;
     const retainedImage = value.current.source === "changed";
     if (retainedImage && (value.output !== "image" || value.status !== "succeeded" || value.stage !== "run"
       || value.disposition !== "original_run_recorded" || Object.values(permitted).some(flag => flag !== false)
@@ -227,6 +240,9 @@ export class ExperienceOutputBindingClient {
       if (!model3dMiniAppCostApprovalMatches(model3dApproval, shown.model3dCostPreview)) return this.#state;
     } else if (model3dApproval !== undefined) return this.#state;
     const body = action === "prepare" ? { draftHash: this.identity.draftHash, explicitRequirementsConfirmation: true }
+      : action === "prepareReplacement" && shown.output === "model3d" && shown.model3dReplacement
+        ? { draftHash: this.identity.draftHash, explicitRequirementsConfirmation: true,
+          replacement: { cycleId: shown.model3dReplacement.cycleId, previousSlotId: shown.model3dReplacement.previousSlotId, explicitReplacement: true } }
       : action === "renewPreparation" && (shown.output === "scene" && shown.sceneRenewal || shown.output === "video" && shown.videoRenewal)
         ? { draftHash: this.identity.draftHash, explicitRequirementsConfirmation: true,
           renewal: { predecessorPreflightId: (shown.output === "video" ? shown.videoRenewal! : shown.sceneRenewal!).predecessorPreflightId, explicitRenewal: true } }
@@ -235,7 +251,7 @@ export class ExperienceOutputBindingClient {
       : action === "recoverResult" && shown.original ? { draftHash: this.identity.draftHash, grantId: shown.original.grantId, jobId: shown.original.jobId, explicitRecovery: true }
       : (action === "run" || action === "resumeRun") && shown.original ? { draftHash: this.identity.draftHash, grantId: shown.original.grantId, explicitRun: true } : null;
     if (!body) return this.#state;
-    return this.#request("POST", action === "resumeRun" ? "run" : action, body);
+    return this.#request("POST", action === "resumeRun" ? "run" : action === "prepareReplacement" ? "prepare" : action, body);
   }
   async #request(method: "GET" | "POST", action?: ExperienceBindingAction, body?: object) {
     if (this.#pending || !this.#controls.current()) return this.#state;

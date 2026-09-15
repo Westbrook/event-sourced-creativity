@@ -52,7 +52,10 @@ export async function preflightOutputModel3dMiniAppTarget(input: OutputBridgeTar
   if (assertions.some(value => value.deadlineMs !== undefined && Date.now() >= value.deadlineMs))
     return unavailable(target.id, "output_model3d_source_changed");
   const selected = description.references[0];
-  const costPreview = parseModel3dMiniAppCostPreview({ version: "model3d-mini-app-cost-v1", requestId: source.requestId,
+  const costPreview = parseModel3dMiniAppCostPreview({ version: source.replacement ? "model3d-mini-app-replacement-cost-v1" : "model3d-mini-app-cost-v1", requestId: source.requestId,
+    ...(source.replacement ? { replacementCycleId: source.replacement.id, previousSlotId: source.replacement.predecessor.slotId,
+      previousJobId: source.replacement.predecessor.jobId, previousProviderRequestId: source.replacement.predecessor.providerRequestId,
+      priorHeldMicrousd: 400000, cumulativeMaximumMicrousd: 800000 } : {}),
     expiresAt: source.expiresAt, draftId: source.plan.draftId, actorUserId: input.scope.actorUserId,
     projectId: input.scope.projectId, documentId: input.scope.documentId, sourceDigest: input.sourceDigest,
     requirementsDigest: input.requirementsDigest, preparationDigest: description.preparationDigest,
@@ -68,7 +71,7 @@ export async function preflightOutputModel3dMiniAppTarget(input: OutputBridgeTar
   const configured = Boolean(input.env.FAL_KEY?.trim());
   const result: OutputNativeTargetPreflight = freeze({
     targetId: target.id, available: configured, reasonCode: configured ? "output_model3d_ready_for_separate_approval" : "output_native_model3d_unconfigured",
-    reason: "One original Rodin request for a static GLB. Static assembly checks do not prove one semantic object or visual quality; review the retained model.",
+    reason: "One Rodin request for a static GLB. Static assembly checks do not prove one semantic object or visual quality; review the retained model.",
     provider: "fal", model: prepared.model, route: "model3d-mini-app-static-glb-v1",
     maximumMicrousd: description.maximumMicrousd, maximumCalls: 1, maximumTokens: 1,
     transferCode: "output_transfer_model3d_not_yet_authorized",

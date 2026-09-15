@@ -7,10 +7,12 @@ import { outputModel3dRecoveryStorage } from './worker/output-model3d-recovery-c
 import { reconcileOutputNativeStorage } from './worker/output-private-execution.ts';
 import { ensureSchema } from './worker/runtime.ts';
 import { ensureOutputRequirementsSchema } from './worker/output-requirements-ledger.ts';
+import { outputAssertionStatements } from './worker/output-requirements-ledger.ts';
+import { captureModel3dReplacementParent } from './worker/experience-model3d-replacement-proof.ts';
 
 const environments = new Map();
 const must = (value, label) => { if (!value) throw Error('fixture_assertion:' + label); };
-const labels = new Set(['Complete', 'Source', 'Race', 'Lease']);
+const labels = new Set(['Complete', 'Source', 'Race', 'Lease', 'Replacement']);
 function environment(bindings, label) {
   if (!environments.has(label)) {
     const real = bindings[label], metrics = { queries: 0, batches: 0, puts: 0, conditionalPuts: 0, deletes: 0, collisionKey: null, queryFailures: [] };
@@ -66,7 +68,7 @@ function environment(bindings, label) {
 
 export default { async fetch(request, bindings) {
   const [action, label] = new URL(request.url).pathname.slice(1).split('/');
-  if (request.method !== 'GET' || !labels.has(label) || !['warm', 'available', 'recover', 'cleanup', 'lease-retention'].includes(action))
+  if (request.method !== 'GET' || !labels.has(label) || !['warm', 'available', 'recover', 'cleanup', 'lease-retention', 'replacement-proof', 'replacement-race'].includes(action))
     return new Response('Unknown local test action', { status: 404 });
   const f = JSON.parse(bindings.FIXTURE), { env, metrics } = environment(bindings, label);
   const before = { ...metrics, queryFailureCount: metrics.queryFailures.length };
@@ -82,6 +84,22 @@ export default { async fetch(request, bindings) {
     }
     const job = await env.DB.prepare('SELECT * FROM document_jobs WHERE job_id=?').bind(f.jobId).first();
     must(job, 'original_job_missing'); job.output_slot_id = f.slot.slotId;
+    if (action === 'replacement-proof' || action === 'replacement-race') {
+      const proof = await captureModel3dReplacementParent(env, f.scope, f.slot, job, { assertions: f.assertions, current: f.current });
+      if (action === 'replacement-proof') {
+        await env.DB.batch(proof.assertions.flatMap(a => outputAssertionStatements(env, a)));
+        return Response.json({ ok: true, retainedHold: proof.checkpoint.settled === false, counters: counters() });
+      }
+      await env.DB.prepare('UPDATE recovery_test_source SET current=0').run();
+      let refused = false;
+      try { await env.DB.batch([
+        env.DB.prepare('UPDATE cost_budget_reservations SET reserved_microusd=800000'),
+        ...proof.assertions.flatMap(a => outputAssertionStatements(env, a)),
+      ]); } catch { refused = true; }
+      must(refused, 'replacement_source_race_must_refuse');
+      must((await env.DB.prepare('SELECT reserved_microusd FROM cost_budget_reservations').first()).reserved_microusd === 400000, 'replacement_atomic_rollback');
+      return Response.json({ ok: true, refused, counters: counters() });
+    }
     if (action === 'available') {
       // Actual read-only advisory, not the service's source/authority proof.
       const value = await outputModel3dRecoveryAvailable(env, f.scope, f.slot, job);

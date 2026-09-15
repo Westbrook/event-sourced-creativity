@@ -72,12 +72,24 @@ async function readRetainedModel3d(env: WorkerEnv, input: RetainedModel3dInput, 
   const slotFrom = `output_operation_slots slot JOIN output_plan_revisions plan ON plan.scope_key=slot.scope_key AND plan.plan_revision_id=slot.plan_revision_id
     JOIN output_execution_grants grant_row ON grant_row.scope_key=slot.scope_key AND grant_row.grant_id=slot.grant_id`;
   const slotSql = `slot.scope_key=? AND slot.slot_id=? AND slot.grant_id=? AND slot.plan_revision_id=? AND slot.target_id=? AND slot.source_digest=?
-    AND slot.target_contract_digest=? AND slot.job_id=? AND ${recovery ? "slot.status IN('failed','uncertain')" : "slot.status='succeeded'"} AND slot.attempt_ordinal=0 AND slot.previous_slot_id IS NULL
+    AND slot.target_contract_digest=? AND slot.job_id=? AND ${recovery ? "slot.status IN('failed','uncertain')" : "slot.status='succeeded'"}
+    AND ${preview.version === "model3d-mini-app-replacement-cost-v1" && !recovery
+      ? `slot.attempt_ordinal=1 AND slot.previous_slot_id IS ? AND EXISTS(SELECT 1 FROM output_operation_slots parent
+          JOIN output_provider_calls parent_call ON parent_call.scope_key=parent.scope_key AND parent_call.slot_id=parent.slot_id
+          WHERE parent.scope_key=slot.scope_key AND parent.slot_id=slot.previous_slot_id AND parent.job_id=?
+            AND parent.attempt_ordinal=0 AND parent.previous_slot_id IS NULL AND parent.target_id=slot.target_id
+            AND parent.target_contract_digest=slot.target_contract_digest AND parent.source_digest=slot.source_digest
+            AND parent_call.provider='fal' AND parent_call.provider_response_id=? AND parent_call.reserved_microusd=400000)
+          AND EXISTS(SELECT 1 FROM event_private_payloads proof WHERE proof.private_event_id=plan.confirmed_event_id
+            AND proof.owner_id=plan.owner_user_id AND proof.redacted_at IS NULL
+            AND json_extract(proof.private_json,'$.output_command_envelope.experienceBinding.replacementCycle.id')=?)`
+      : "slot.attempt_ordinal=0 AND slot.previous_slot_id IS NULL"}
     AND ${recovery ? "EXISTS(SELECT 1 FROM events WHERE event_id=? AND stream_id='creative:'||plan.owner_user_id AND type='DocumentRenderCompleted')" : "slot.outcome_event_id=?"} AND slot.provider='fal' AND slot.model=? AND slot.maximum_calls=1 AND slot.maximum_microusd=?
     AND plan.scope_kind='personal' AND plan.owner_user_id=? AND plan.document_id=? AND plan.project_id=?
     AND plan.source_digest=slot.source_digest AND plan.requirements_digest=? AND plan.organization_id IS NULL AND plan.project_access_id IS NULL
     AND grant_row.actor_user_id=plan.owner_user_id AND grant_row.payer_user_id=plan.owner_user_id AND grant_row.context_id IS NULL AND ${recovery ? "grant_row.status IN('authorized','active','completed')" : "grant_row.status='completed'"}`;
   const slotBindings = [ref.scopeKey, ref.slotId, ref.grantId, ref.planRevisionId, ref.targetId, ref.sourceDigest, ref.targetContractDigest, evidence.jobId,
+    ...(preview.version === "model3d-mini-app-replacement-cost-v1" && !recovery ? [preview.previousSlotId!, preview.previousJobId!, preview.previousProviderRequestId!, preview.replacementCycleId!] : []),
     input.completionId, preview.model, preview.maximumMicrousd, input.ownerId, input.documentId, input.projectId, preview.requirementsDigest];
   const callSql = `scope_key=? AND slot_id=? AND call_key='model3d:initial' AND stage_key='model3d:initial' AND client_request_id=? AND request_digest=?
     AND provider='fal' AND model=? AND reserved_microusd=? AND used_microusd=? AND status='settled' AND provider_response_id=? AND settled_at IS NOT NULL

@@ -1,5 +1,6 @@
 import { canonicalJson, digest } from "../src/experiences/compiler.ts";
 import { scenePreparationCommandKey, scenePreparationCycleMatches, type ScenePreparationCycle } from "./experience-scene-renewal.ts";
+import { model3dReplacementCommandKey, model3dReplacementCycleMatches, type Model3dReplacementCycle } from "./experience-model3d-replacement.ts";
 
 /** Pure identity/envelope helpers. No provider, budget, job or authorization is minted here. */
 export type ExperienceOutputStage = "save" | "confirm" | "preflight" | "authorize" | "run";
@@ -9,6 +10,8 @@ export type ExperienceOutputBinding = Readonly<{
   /** Only a server-verified append-only successor may add this. Root v1 bindings
    * and their immutable keys/envelopes retain their exact original shape. */
   preparationCycle?: ScenePreparationCycle;
+  /** Additional-risk 3D child; never a renewal of the parent's paid authority. */
+  replacementCycle?: Model3dReplacementCycle;
 }>;
 type PlanIdentity = { draftId: string; draftHash: string; request: unknown; events: readonly unknown[];
   release: { releaseHash: string; output: { output: string } }; projectId: string; documentId: string; streamId: string };
@@ -24,6 +27,12 @@ export async function experienceOutputBinding(plan: PlanIdentity): Promise<Exper
 }
 export async function experienceOutputCommandKey(binding: ExperienceOutputBinding, stage: ExperienceOutputStage) {
   if (!stages.includes(stage)) throw new Error("experience_output_stage_invalid");
+  if (Object.hasOwn(binding, "replacementCycle")) {
+    const { replacementCycle: cycle, ...root } = binding;
+    if (binding.output !== "model3d" || stage === "save" || !cycle
+      || !await model3dReplacementCycleMatches(root, cycle)) throw new Error("experience_model3d_replacement_lineage_unavailable");
+    return model3dReplacementCommandKey(cycle, stage);
+  }
   if (Object.hasOwn(binding, "preparationCycle")) {
     const { preparationCycle: cycle, ...root } = binding;
     if (!["scene", "video"].includes(binding.output) || stage === "save" || !cycle

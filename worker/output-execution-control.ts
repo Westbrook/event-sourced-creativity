@@ -50,6 +50,7 @@ import { priceTextUsageBreakdownMicrousd, priceImageUsageBreakdownMicrousd } fro
 import { estimateOpenAITextCallMaximumMicrousd } from "./openai-text-cost.ts";
 import { estimateModel3dCostMicrousd } from "../src/model/model3d.ts";
 import { readOutputModel3dPayload, requireModel3dMiniAppCostApproval, verifyModel3dPreparedReceipt, assertModel3dPreparedAttempt, qualifyOutputModel3dCompletion } from "./output-model3d-execution.ts";
+import { model3dMiniAppAttemptMatches } from "../src/model/model3d-mini-app-consent.ts";
 import { outputModel3dPreflightAssertions } from "./output-model3d-preflight.ts";
 import type { Model3dPreparedReceipt, Model3dGeneratedFile } from "./fal-model3d-adapter.ts";
 
@@ -157,7 +158,7 @@ export async function createOutputEventExecution(env:WorkerEnv,user:PilotUser,jo
  const refreshModel3d=model3dProof?async()=>{
   const refreshed=await preflightOutputNativeTarget({env,request:new Request("https://output-execution.invalid"),scope,principal:user,confirmedPlan:authority.confirmedPlan,target:authority.target,context:authority.context,ownerHead:authority.sourceEpoch.head,sourceEvents:authority.events,sourceAssertions:authority.assertions,sourceDigest:authority.sourceDigest,requirementsDigest:authority.requirementsDigest});
   const proof=outputModel3dPreflightAssertions(refreshed),payload=refreshed.available?await readOutputModel3dPayload((refreshed.settings as OutputNativeSettings).payload):null;
-  if(!proof||!payload||!model3dPayload||scope.kind!=="personal"||scope.contextId||payload.preview.requestId!==job.job_id||slot.jobId!==job.job_id||slot.attemptOrdinal!==0||slot.previousSlotId
+  if(!proof||!payload||!model3dPayload||scope.kind!=="personal"||scope.contextId||payload.preview.requestId!==job.job_id||slot.jobId!==job.job_id||!model3dMiniAppAttemptMatches(payload.preview,slot)
    ||await outputDigest(refreshed)!==slot.routeDigest)throw new OutputConflictError("output_model3d_original_attempt_required",403);
   requireModel3dMiniAppCostApproval(parsed(job.request_json).model3dCostConsent,model3dPayload.preview,payload.preview);
   model3dAssertions.splice(0,model3dAssertions.length,...proof);

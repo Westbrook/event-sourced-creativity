@@ -16,7 +16,7 @@ const { build } = requireWrangler('esbuild');
 const here = dirname(fileURLToPath(import.meta.url));
 const hash = bytes => createHash('sha256').update(bytes).digest('hex');
 const quote = name => '"' + name.replaceAll('"', '""') + '"';
-const labels = ['Complete', 'Source', 'Race', 'Lease'];
+const labels = ['Complete', 'Source', 'Race', 'Lease', 'Replacement'];
 const financial = ['budget_counters', 'budget_reservations', 'cost_budget_counters', 'cost_budget_reservations', 'output_provider_calls'];
 
 // Scalar SQL encodings preserve SQLite types and rowids during synthetic
@@ -72,7 +72,7 @@ async function finite(work, ms, name) {
 test('actual local workerd + D1 + R2 recovery, lease/cleanup and conditional-create refusal', { timeout: 180000 }, async t => {
   const { model3dRecoveryFixture } = await import(pathToFileURL(join(root, 'tests/helpers/output-model3d-recovery-fixture.mjs')).href);
   const { glb } = await import(pathToFileURL(join(root, 'tests/helpers/model3d-native-execution-fixture.mjs')).href);
-  const f = await model3dRecoveryFixture();
+  const f = await model3dRecoveryFixture({ scopeKey: 'personal:owner:project', retentionMs: 3600000 });
   let mf, directory, closed = false, passed = false;
   const requests = [], unexpected = [], reports = [];
   const originalFetch = globalThis.fetch;
@@ -131,6 +131,14 @@ test('actual local workerd + D1 + R2 recovery, lease/cleanup and conditional-cre
       const warm = await invoke('warm', label); assert.equal(warm.ok, true, JSON.stringify(warm));
     }
     const complete = databases.Complete;
+    const replacementBefore = await rowsSnapshot(databases.Replacement, exported.tables), beforeReplacementCalls = requests.length;
+    const replacementProof = await invoke('replacement-proof', 'Replacement');
+    assert.equal(replacementProof.ok, true, JSON.stringify(replacementProof)); assert.equal(replacementProof.retainedHold, true);
+    assert.deepEqual(replacementProof.counters.queryFailures, []);
+    assert.deepEqual(await rowsSnapshot(databases.Replacement, exported.tables), replacementBefore);
+    const replacementRace = await invoke('replacement-race', 'Replacement');
+    assert.equal(replacementRace.ok, true, JSON.stringify(replacementRace)); assert.equal(replacementRace.refused, true);
+    assert.equal(requests.length, beforeReplacementCalls, 'replacement proof and rejected admission never call provider');
     const beforeAdvisory = await rowsSnapshot(complete, exported.tables), advisoryRequests = requests.length;
     const advisory = await invoke('available', 'Complete');
     assert.equal(advisory.ok, true, JSON.stringify(advisory));

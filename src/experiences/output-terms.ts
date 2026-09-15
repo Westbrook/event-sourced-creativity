@@ -310,7 +310,7 @@ function targetProjection(target: Data, options: OutputTermsOptions): OutputTerm
         ...(preview.referenceSha256 ? [row("Exact reference SHA-256", preview.referenceSha256), row("Reference bytes", preview.referenceBytes), row("Reference type", preview.referenceMimeType!)] : []),
         row("Submitted prompt", checked.description.prompt), row("Settings", "Gen-2.5-High · GLB · Auto mesh · No HD pack"),
         row("Result review", "Static rooted assembly, not semantic-object or visual-quality acceptance"),
-        row("After uncertain response", "No additional paid request")) });
+        row("After uncertain response", "No automatic paid retry; a separately authorized replacement may be available")) });
   }
   if(options.output==="storyboard"){
     const parsed=readStoryboardExecutionOffer(target),expected=options.expectedStoryboard;

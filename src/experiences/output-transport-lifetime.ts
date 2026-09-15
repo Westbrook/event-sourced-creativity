@@ -7,7 +7,7 @@ export const EXPERIENCE_BODY_TIMEOUT_MS = 20_000;
 export function experienceResponseTimeout(operation?: ExperienceForegroundOperation) {
   // Preparation performs save, confirm and preflight with fresh custody reads.
   // This is one explicit intent, not automatic continuation or paid execution.
-  if (operation?.action === "prepare" || operation?.action === "renewPreparation") return 120_000;
+  if (operation?.action === "prepare" || operation?.action === "renewPreparation" || operation?.action === "prepareReplacement") return 120_000;
   // Video admission rereads the retained image, rights and quote before its
   // atomic grant. Account-sized custody reads can exceed the old 20s client
   // cutoff. This only waits for that explicit request; server expiry, source

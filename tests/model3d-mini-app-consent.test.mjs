@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { parseModel3dMiniAppCostPreview, model3dMiniAppCostApprovalMatches } from "../src/model/model3d-mini-app-consent.ts";
+import { parseModel3dMiniAppCostPreview, model3dMiniAppCostApprovalMatches, model3dMiniAppAttemptMatches } from "../src/model/model3d-mini-app-consent.ts";
 import { MODEL3D_MINI_APP_SETTINGS } from "../src/model/output-model3d-contract.ts";
 import { estimateModel3dCostMicrousd, RODIN_IMAGE_MODEL, RODIN_TEXT_MODEL } from "../src/model/model3d.ts";
 const now = Date.parse("2026-09-13T12:00:00.000Z");
@@ -10,6 +10,24 @@ const preview = (image = true) => ({ version: "model3d-mini-app-cost-v1", reques
   model: image ? RODIN_IMAGE_MODEL : RODIN_TEXT_MODEL, sourceFilesTransferred: image ? 1 : 0, sourceKind: image ? "image" : null,
   referenceSha256: image ? "f".repeat(64) : null, referenceBytes: image ? 64 : 0, referenceMimeType: image ? "image/png" : null });
 const approval = v => ({ ...v, confirmed: true, providerTransferConfirmed: true });
+test('replacement binds separate original hold, new ceiling and exact predecessor into fresh consent', () => {
+  const v = { ...preview(false), version: 'model3d-mini-app-replacement-cost-v1', replacementCycleId: '1'.repeat(64),
+    previousSlotId: 'parent-slot', previousJobId: 'model3d-' + '2'.repeat(64), previousProviderRequestId: 'parent-provider',
+    priorHeldMicrousd: 400000, cumulativeMaximumMicrousd: 800000 };
+  assert.deepEqual(parseModel3dMiniAppCostPreview(v), v);
+  assert.equal(model3dMiniAppCostApprovalMatches(approval(v), v, now), true);
+  assert.equal(model3dMiniAppCostApprovalMatches(approval(preview(false)), v, now), false);
+  assert.equal(model3dMiniAppAttemptMatches(v, { jobId: v.requestId, attemptOrdinal: 1, previousSlotId: v.previousSlotId }), true);
+  for (const key of Object.keys(v)) {
+    const changed = { ...approval(v), [key]: typeof v[key] === 'number' ? v[key] + 1 : String(v[key]) + '-changed' };
+    assert.equal(model3dMiniAppCostApprovalMatches(changed, v, now), false, key);
+  }
+  for (const change of [{ attemptOrdinal: 0 }, { attemptOrdinal: 2 }, { previousSlotId: null }, { previousSlotId: 'other' }, { jobId: v.previousJobId }])
+    assert.equal(model3dMiniAppAttemptMatches(v, { jobId: v.requestId, attemptOrdinal: 1, previousSlotId: v.previousSlotId, ...change }), false);
+  for (const change of [{ version: 'model3d-mini-app-cost-v1' }, { previousJobId: v.requestId }, { priorHeldMicrousd: 0 },
+    { cumulativeMaximumMicrousd: 400000 }, { model: RODIN_IMAGE_MODEL, sourceFilesTransferred: 1, sourceKind: 'image', referenceSha256: 'f'.repeat(64), referenceBytes: 64, referenceMimeType: 'image/png' }])
+    assert.equal(parseModel3dMiniAppCostPreview({ ...v, ...change }), null);
+});
 test("explicit exact original terms match text or one owned-reference transfer without minting approval", () => {
   for (const image of [false, true]) {
     const v = preview(image), parsed = parseModel3dMiniAppCostPreview(v);

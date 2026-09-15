@@ -307,6 +307,11 @@ export class FormaExperienceHost extends FormaElement {
     if (!event.isTrusted || !state?.permitted.renewPreparation || !(state.sceneRenewal || state.videoRenewal) || !this.#visible() || this.#busy) return;
     void this.#command("renewPreparation", state);
   }
+  #prepareReplacement(event: SubmitEvent) {
+    event.preventDefault(); const state = this.#state();
+    if (!event.isTrusted || !state?.permitted.prepareReplacement || !state.model3dReplacement || !this.#visible() || this.#busy) return;
+    void this.#command("prepareReplacement", state);
+  }
   async #load() {
     const operation = this.#beginOperation();
     let loadedBinding: Binding | undefined;
@@ -819,7 +824,9 @@ export class FormaExperienceHost extends FormaElement {
   }
   #rows(rows: readonly OutputTermsRow[]) {
     const model3d = this.#binding?.selection.output === "model3d";
-    return html`<dl>${rows.map(row => html`<div><dt>${model3d ? this.i18n.system(row.label) : row.label}</dt><dd>${model3d && model3dTermIsInterfaceCopy(row) ? this.i18n.system(row.value) : row.value}</dd></div>`)}</dl>`;
+    return html`<dl>${rows.map(row => html`<div><dt>${model3d ? this.i18n.system(row.label) : row.label}</dt><dd>${model3d && row.label === "After uncertain response" && row.value === "No automatic paid retry; a separately authorized replacement may be available"
+      ? this.i18n.t("model3d.replacement.retry", "No automatic paid retry; a separately authorized replacement may be available")
+      : model3d && model3dTermIsInterfaceCopy(row) ? this.i18n.system(row.value) : row.value}</dd></div>`)}</dl>`;
   }
   #sceneLabels(): NativeRetainedSceneLabels {
     return {
@@ -901,6 +908,13 @@ export class FormaExperienceHost extends FormaElement {
       ${unavailableProviderPreparation ? html`<section class="experience-terms" aria-label=${this.i18n.system("Cost and transfer")}>
         <dl><div><dt>${this.i18n.system("Provider")}</dt><dd>${this.i18n.system(target?.reasonCode === "output_narrative_provider_unavailable" ? "Unavailable" : "Not configured")}</dd></div><div><dt>${this.i18n.system("Source transfer")}</dt><dd>${this.i18n.system("None")}</dd></div><div><dt>${this.i18n.system("Maximum cost")}</dt><dd>$0</dd></div></dl></section>` : nothing}
       ${available && state?.preflight && binding && !result && !unavailableProviderPreparation ? this.#termsSummary(terms, state, binding) : nothing}
+      ${available && (state?.model3dReplacement || state?.model3dCostPreview?.version === "model3d-mini-app-replacement-cost-v1") ? html`<aside class="experience-terms" data-model3d-replacement-exposure>
+        <p>${state?.model3dCostPreview?.version === "model3d-mini-app-replacement-cost-v1"
+          ? this.i18n.t("model3d.replacement.history", "This replacement was prepared with $0.40 unresolved on the original request and a separate $0.40 ceiling: $0.80 combined maximum. The replacement does not settle or refund the original charge.")
+          : this.i18n.t("model3d.replacement.exposure", "The original $0.40 remains reserved and unresolved. One replacement may cost up to another $0.40: $0.80 maximum combined exposure. This does not release, refund or settle the original charge.")}</p></aside>` : nothing}
+      ${available && state?.permitted.prepareReplacement && state.model3dReplacement ? html`<form class="experience-admission" data-experience-action="prepareReplacement" @submit=${(event: SubmitEvent) => this.#prepareReplacement(event)}>
+        <p>${this.i18n.t("model3d.replacement.unpaid", "Reuse this document and its unchanged instructions. Preparation is free and makes no provider request. Review the new cost and transfer terms, then authorize and start separately. No automatic paid retry.")}</p>
+        <button type="submit" class="button primary" data-experience-control="prepareReplacement" aria-disabled=${String(this.#busy)} ?disabled=${this.#buttonDisabled(this.#busy, "prepareReplacement")}>${this.i18n.t("model3d.replacement.prepare", "Prepare one replacement")}</button></form>` : nothing}
       ${available && state?.permitted.renewPreparation && (state.sceneRenewal || state.videoRenewal) ? html`<form class="experience-admission" data-experience-action="renewPreparation" @submit=${(event: SubmitEvent) => this.#renewPreparation(event)}>
         <dl><div><dt>${this.i18n.system("Document")}</dt><dd>${this.i18n.system("Retained")}</dd></div>
           <div><dt>${this.i18n.system("Generation calls")}</dt><dd>0</dd></div>

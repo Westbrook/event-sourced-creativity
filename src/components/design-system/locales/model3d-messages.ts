@@ -1,6 +1,11 @@
 /** Shared 3D model input, generation, and validation copy. */
 export const FORMA_MODEL3D_MESSAGES = {
   "en": {
+    "model3d.replacement.retry": "No automatic paid retry; a separately authorized replacement may be available",
+    "model3d.replacement.history": "This replacement was prepared with $0.40 unresolved on the original request and a separate $0.40 ceiling: $0.80 combined maximum. The replacement does not settle or refund the original charge.",
+    "model3d.replacement.prepare": "Prepare one replacement",
+    "model3d.replacement.exposure": "The original $0.40 remains reserved and unresolved. One replacement may cost up to another $0.40: $0.80 maximum combined exposure. This does not release, refund or settle the original charge.",
+    "model3d.replacement.unpaid": "Reuse this document and its unchanged instructions. Preparation is free and makes no provider request. Review the new cost and transfer terms, then authorize and start separately. No automatic paid retry.",
     "model3d.block.label": "3D model",
     "model3d.asset.invalid": "This file is not a valid GLB 2.0 model. Export it again as a self-contained GLB.",
     "model3d.asset.format": "Choose a self-contained GLB (.glb) model.",
@@ -265,6 +270,11 @@ export const FORMA_MODEL3D_MESSAGES = {
     "model3d.asset.meshInstances": "This model expands into too many mesh instances. Reduce its instances and export another GLB."
   },
   "fr": {
+    "model3d.replacement.retry": "Aucune nouvelle tentative payante automatique ; un remplacement autorisé séparément peut être disponible",
+    "model3d.replacement.history": "Ce remplacement a été préparé avec 0,40 $ non résolus sur la demande d’origine et un plafond distinct de 0,40 $, soit 0,80 $ au total. Le remplacement ne règle ni ne rembourse le montant d’origine.",
+    "model3d.replacement.prepare": "Préparer un remplacement",
+    "model3d.replacement.exposure": "Les 0,40 $ d’origine restent réservés et non résolus. Un remplacement peut coûter jusqu’à 0,40 $ supplémentaires, soit un engagement cumulé maximal de 0,80 $. Cela ne libère, ne rembourse ni ne règle le montant d’origine.",
+    "model3d.replacement.unpaid": "Réutilisez ce document et ses instructions inchangées. La préparation est gratuite et ne contacte aucun fournisseur. Examinez les nouveaux coûts et conditions de transfert, puis autorisez et lancez séparément. Aucune nouvelle tentative payante automatique.",
     "model3d.block.label": "Modèle 3D",
     "model3d.asset.invalid": "Ce fichier n’est pas un modèle GLB 2.0 valide. Exportez-le à nouveau en GLB autonome.",
     "model3d.asset.format": "Choisissez un modèle GLB (.glb) autonome.",
@@ -529,6 +539,11 @@ export const FORMA_MODEL3D_MESSAGES = {
     "model3d.asset.meshInstances": "Ce modèle génère trop d’instances de maillage lors de son chargement. Réduisez leur nombre, puis exportez un nouveau GLB."
   },
   "ja": {
+    "model3d.replacement.retry": "有料の自動再試行はありません。別途承認する代替生成を利用できる場合があります",
+    "model3d.replacement.history": "この代替生成は、元のリクエストの未解決料金0.40米ドルと、別途上限0.40米ドル、合計最大0.80米ドルとして準備されました。代替生成によって元の料金が精算または返金されることはありません。",
+    "model3d.replacement.prepare": "代替モデルを1回分準備",
+    "model3d.replacement.exposure": "元の0.40米ドルは未解決のまま確保されています。代替モデルの生成には追加で最大0.40米ドル、合計で最大0.80米ドルがかかる可能性があります。元の料金の確保解除、返金、精算は行いません。",
+    "model3d.replacement.unpaid": "このドキュメントと変更のない指示を再利用します。準備は無料で、プロバイダーへのリクエストは行いません。新しい費用と転送条件を確認し、承認と開始をそれぞれ行ってください。有料の自動再試行はありません。",
     "model3d.block.label": "3Dモデル",
     "model3d.asset.invalid": "このファイルは有効な GLB 2.0 モデルではありません。必要なデータをすべて含む GLB として再度エクスポートしてください。",
     "model3d.asset.format": "必要なデータをすべて含む GLB（.glb）モデルを選択してください。",
@@ -793,6 +808,11 @@ export const FORMA_MODEL3D_MESSAGES = {
     "model3d.asset.meshInstances": "このモデルは展開後のメッシュインスタンス数が多すぎます。インスタンスを減らして、GLBを再度エクスポートしてください。"
   },
   "ar": {
+    "model3d.replacement.retry": "لا توجد إعادة محاولة مدفوعة تلقائية؛ قد يتوفر بديل بموافقة منفصلة",
+    "model3d.replacement.history": "تم تحضير هذا البديل مع بقاء 0.40 دولار غير محسوم للطلب الأصلي وسقف منفصل قدره 0.40 دولار، بإجمالي أقصى 0.80 دولار. لا يؤدي البديل إلى تسوية المبلغ الأصلي أو رده.",
+    "model3d.replacement.prepare": "تحضير بديل واحد",
+    "model3d.replacement.exposure": "يبقى المبلغ الأصلي البالغ 0.40 دولار أمريكي محجوزًا وغير محسوم. قد يكلف البديل ما يصل إلى 0.40 دولار إضافي، بحد أقصى إجمالي قدره 0.80 دولار. لا يؤدي ذلك إلى تحرير المبلغ الأصلي أو رده أو تسويته.",
+    "model3d.replacement.unpaid": "أعد استخدام هذا المستند وتعليماته دون تغيير. التحضير مجاني ولا يرسل طلبًا إلى المزوّد. راجع التكلفة الجديدة وشروط النقل، ثم وافق وابدأ كلًّا على حدة. لا توجد إعادة محاولة مدفوعة تلقائية.",
     "model3d.block.label": "نموذج ثلاثي الأبعاد",
     "model3d.asset.invalid": "هذا الملف ليس نموذج GLB 2.0 صالحًا. صدّره مجددًا بصيغة GLB تتضمن جميع الملفات اللازمة.",
     "model3d.asset.format": "اختر نموذج GLB (.glb) يتضمن جميع الملفات اللازمة.",

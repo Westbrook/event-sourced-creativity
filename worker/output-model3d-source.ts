@@ -16,6 +16,8 @@ import { experienceOutputBinding } from "./experience-output-binding.ts";
 import { createExperienceOutputRecipe, matchExperienceOutputRecipeTarget } from "./experience-output-recipe.ts";
 import { OutputConflictError, type OutputSqlAssertion } from "./output-command-core.ts";
 import type { OutputBridgeTargetInput } from "./output-requirements-api.ts";
+import { resolveModel3dReplacementSource } from "./output-model3d-replacement-source.ts";
+import type { Model3dReplacementCycle } from "./experience-model3d-replacement.ts";
 
 function fail(code = "output_model3d_original_unavailable"): never { throw new OutputConflictError(code, 409); }
 const record = (value: unknown): value is Record<string, unknown> => Boolean(value && typeof value === "object" && !Array.isArray(value));
@@ -25,13 +27,17 @@ const exactIso = (value: string) => Number.isFinite(Date.parse(value)) && new Da
 /** Pure original-operation identity, not a job allocation or approval. Rechecks
  * retain the confirmed plan's timestamp, never Date.now()+TTL or a new UUID.
  * The admission owner must assign requestId verbatim to the original slot.jobId. */
-export async function outputModel3dPreparationIdentity(contract: Model3dOutputContract, plan: Pick<OutputConfirmedPlan, "revisionId" | "confirmedAt">, targetId: string) {
+export async function outputModel3dPreparationIdentity(contract: Model3dOutputContract, plan: Pick<OutputConfirmedPlan, "revisionId" | "confirmedAt">, targetId: string, replacement?: Model3dReplacementCycle) {
   if (!parseModel3dOutputContract(contract) || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$/u.test(targetId)
     || typeof plan.revisionId !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$/u.test(plan.revisionId)
     || typeof plan.confirmedAt !== "string" || !exactIso(plan.confirmedAt)) return null;
   const expiry = Date.parse(plan.confirmedAt) + 15 * 60_000;
   if (!Number.isSafeInteger(expiry) || !Number.isFinite(new Date(expiry).getTime())) return null;
-  const requestId = "model3d-" + (await digest(["experience-model3d-initial-operation@1", contract.source.draftId, plan.revisionId, targetId])).slice(7);
+  if (replacement && (replacement.ordinal !== 1 || replacement.draftId !== contract.source.draftId
+    || !/^[a-f0-9]{64}$/u.test(replacement.id) || replacement.predecessor.targetId !== targetId)) return null;
+  const requestId = "model3d-" + (await digest(replacement
+    ? ["experience-model3d-replacement-operation@1", contract.source.draftId, replacement.id, replacement.predecessor.slotId, plan.revisionId, targetId]
+    : ["experience-model3d-initial-operation@1", contract.source.draftId, plan.revisionId, targetId])).slice(7);
   return Object.freeze({ requestId, expiresAt: new Date(expiry).toISOString() });
 }
 
@@ -115,13 +121,14 @@ export async function resolveOutputModel3dSource(input: OutputBridgeTargetInput)
     || created.payload.project_id !== plan.projectId || created.payload.document_id !== plan.documentId
     || created.payload.handle !== block.handle || created.payload.position !== block.position
     || !same(created.payload.properties, block.properties)) fail("output_model3d_requirement_changed");
-  const identity = await outputModel3dPreparationIdentity(contract, confirmedPlan, target.id);
+  const replacement = await resolveModel3dReplacementSource(input, binding, retained.expiresAt);
+  const identity = await outputModel3dPreparationIdentity(contract, confirmedPlan, target.id, replacement?.cycle);
   if (!identity || !exactIso(retained.expiresAt) || Date.parse(identity.expiresAt) > Date.parse(retained.expiresAt)) fail("output_model3d_original_expired");
   const draft = join(projectIntakeAuthority(input.env, auth, plan), experienceDraftGuard(auth, plan, retained.content));
-  const sourceAssertions = [...input.sourceAssertions, draft, receiptAssertion(input, receipt), ...(original ? [original.guard, {
+  const sourceAssertions = [...input.sourceAssertions, ...(replacement?.assertions ?? []), draft, receiptAssertion(input, receipt), ...(original ? [original.guard, {
     sql: MODEL3D_REFERENCE_HEAD_SQL, bindings: [principal.streamId, original.head],
   }] : [])].map(assertion => ({
     ...assertion, bindings: [...(assertion.bindings ?? [])],
   }));
-  return { plan: freeze(plan), contract, receipt, ...identity, sourceAssertions };
+  return { plan: freeze(plan), contract, receipt, ...identity, sourceAssertions, replacement: replacement?.cycle ?? null };
 }

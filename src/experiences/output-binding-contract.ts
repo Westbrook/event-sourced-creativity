@@ -24,6 +24,8 @@ export type ExperienceNativeState = {
   /** Audio-only original cost and source-transfer disclosure. */
   audioCostPreview?: AudioMiniAppCostPreview | null;
   model3dCostPreview?: Model3dMiniAppCostPreview | null;
+  model3dReplacement?: { cycleId: string; previousSlotId: string; previousJobId: string;
+    priorHeldMicrousd: 400000; newMaximumMicrousd: 400000; cumulativeMaximumMicrousd: 800000 };
   status: "absent" | "preparing" | "review" | "authorized" | "queued" | "running" | "succeeded" | "failed" | "cancelled" | "partial" | "uncertain" | "unavailable";
   recovery?: "pending" | "completed";
   disposition: "never_admitted" | "prepared" | "original_authorized" | "original_run_recorded";
@@ -34,11 +36,11 @@ export type ExperienceNativeState = {
   preflight: ExperienceNativePreflight | null;
   grant: OutputGrantRow | null;
   original: ExperienceNativeOriginal | null;
-  permitted: { prepare: boolean; authorize: boolean; run: boolean; resumeRun: boolean; recoverResult?: boolean; renewPreparation?: boolean };
+  permitted: { prepare: boolean; authorize: boolean; run: boolean; resumeRun: boolean; recoverResult?: boolean; renewPreparation?: boolean; prepareReplacement?: boolean };
 };
 export type ExperienceNativeUnavailable = {
   version: 1; status: "unavailable"; error: string; originalIntent: "unknown_or_retained";
-  permitted: { prepare: false; authorize: false; run: false; resumeRun: false; recoverResult?: false; renewPreparation?: false };
+  permitted: { prepare: false; authorize: false; run: false; resumeRun: false; recoverResult?: false; renewPreparation?: false; prepareReplacement?: false };
 };
 export type ExperienceNativePrepareRequest = { draftHash: string; explicitRequirementsConfirmation: true };
 export type ExperienceNativeAuthorizeRequest = { draftHash: string; termsDigest: string; maximumMicrousd: number; explicitAuthorization: true; sceneCostConsent?: SceneMiniAppCostApproval; audioCostConsent?: ExperienceAudioCostApproval; model3dCostConsent?: ExperienceModel3dCostApproval };

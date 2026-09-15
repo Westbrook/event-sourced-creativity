@@ -1,4 +1,5 @@
 import { readOutputModel3dPayload, requireModel3dMiniAppCostApproval } from "./output-model3d-execution.ts";
+import { model3dMiniAppAttemptMatches } from "../src/model/model3d-mini-app-consent.ts";
 import { preflightOutputModel3dMiniAppTarget, outputModel3dPreflightAssertions } from "./output-model3d-preflight.ts";
 import { readOutputAudioPayload, requireAudioMiniAppCostApproval } from "./output-audio-execution.ts";
 import { parseAudioMiniAppCostPreview } from "../src/model/audio-mini-app-consent.ts";
@@ -108,7 +109,7 @@ async function prepareAdmission(input:Parameters<OutputExecutionBridge["prepareA
    const refreshed=await preflightOutputModel3dMiniAppTarget({...input,target}),proof=outputModel3dPreflightAssertions(refreshed);
    const offer=refreshed.available?await readOutputModel3dPayload((refreshed.settings as OutputNativeSettings).payload):null;
    if(!nativeModel3d||!proof?.length||!offer||input.scope.kind!=="personal"||input.scope.contextId||await outputDigest(refreshed)!==slot.routeDigest
-    ||offer.preview.requestId!==slot.jobId||slot.attemptOrdinal!==0||slot.previousSlotId)throw new OutputConflictError("output_model3d_original_attempt_required",403);
+    ||!model3dMiniAppAttemptMatches(offer.preview,slot))throw new OutputConflictError("output_model3d_original_attempt_required",403);
    requireModel3dMiniAppCostApproval(input.model3dCostConsent,nativeModel3d.preview,offer.preview);sceneAssertions.push(...proof);return offer;
   };
   if(nativeModel3d)await refreshModel3d();

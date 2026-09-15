@@ -1,5 +1,7 @@
 import { readVideoExecutionOffer } from "../src/model/output-video-offer.ts";
-import { model3dMiniAppCostApprovalMatches, type Model3dMiniAppCostPreview } from "../src/model/model3d-mini-app-consent.ts";
+import { model3dMiniAppCostApprovalMatches, model3dMiniAppAttemptMatches, type Model3dMiniAppCostPreview } from "../src/model/model3d-mini-app-consent.ts";
+import { model3dReplacementSuccessor } from "./experience-model3d-replacement.ts";
+import { captureModel3dReplacementParent, model3dReplacementIndexAssertion } from "./experience-model3d-replacement-proof.ts";
 import { readOutputModel3dPayload } from "./output-model3d-execution.ts";
 import { experienceModel3dOutputContract } from "./experience-model3d-recipe.ts";
 import { prepareExperienceModel3dReference } from "./experience-model3d-reference-source.ts";
@@ -37,7 +39,7 @@ import { experienceOutputAuthorization, experienceOutputBinding, experienceOutpu
   type ExperienceOutputBinding, type ExperienceOutputStage } from "./experience-output-binding.ts";
 import { createExperienceOutputRecipe, matchExperienceOutputRecipeTarget, type ExperienceOutputRecipe } from "./experience-output-recipe.ts";
 import type { WorkerEnv, WorkerExecutionContext } from "./runtime.ts";
-import { readExperienceOutputLineage, scenePreparationPredecessor, experienceOutputPhases as phases, experienceOutputError as error,
+import { readExperienceOutputLineage, model3dReplacementPredecessor, scenePreparationPredecessor, experienceOutputPhases as phases, experienceOutputError as error,
   type ExperienceOutputLineage, type ExperienceOutputOriginal as Original } from "./experience-output-originals.ts";
 
 const record = (value: unknown): value is Record<string, unknown> => Boolean(value && typeof value === "object" && !Array.isArray(value));
@@ -245,6 +247,7 @@ async function load(request: Request, env: WorkerEnv, draftId: string, permissio
   // immutable index/event associations survive through each later native batch.
   trusted.sourceAssertions.push(...lineage.witnesses.map(value => outputCommandReceiptAssertion(trusted.scope, value.receipt)));
   if (binding.output === "scene" || binding.output === "video") trusted.sourceAssertions.push(sceneRenewalIndexAssertion(trusted.scope, binding.draftId, lineage.cycleCommandKeys, binding.output));
+  if (binding.output === "model3d") trusted.sourceAssertions.push(model3dReplacementIndexAssertion(trusted.scope, binding.draftId, lineage.cycleCommandKeys));
   validateManagedRequirement(loaded);
   const sourceMismatch = experienceSourceMismatch(plan, receipt, { documentId: trusted.projection.documentId, projectId: trusted.projection.projectId,
     documents: trusted.projection.documents, blocks: trusted.projection.libraryBlocks.filter(block => block.id !== recipe.spec.id),
@@ -311,6 +314,27 @@ async function renewalOffer(loaded: Loaded) {
   if (clear?.clear !== 1) return null;
   return { predecessor, cycle: await scenePreparationSuccessor(root, predecessor), guards,
     disclosure: { predecessorPreflightId: predecessor.preflight.preflightId, expiredAt: original.expiresAt } };
+}
+
+async function replacementOffer(loaded: Loaded) {
+  if (loaded.binding.output !== "model3d" || loaded.binding.replacementCycle || !loaded.originals.run || !loaded.originals.authorize) return null;
+  const grantId = loaded.originals.authorize.receipt.payload.grant_id;
+  if (typeof grantId !== "string") return null;
+  const evidence = await outputExperienceCommands.readGrantEvidence(loaded.trusted.env, loaded.trusted.scope, grantId, true);
+  if (evidence.slots.length !== 1) return null;
+  const slot = evidence.slots[0]!;
+  const job = await loaded.trusted.env.DB.prepare("SELECT * FROM document_jobs WHERE job_id=? AND owner_id=? AND document_id=?")
+    .bind(slot.jobId, loaded.trusted.scope.ownerUserId, loaded.binding.documentId).first<DocumentJobRow>();
+  if (!job || job.status !== "failed" || slot.status !== "uncertain") return null;
+  const parent = await captureModel3dReplacementParent(loaded.trusted.env, loaded.trusted.scope, slot, job, {
+    assertions: loaded.trusted.sourceAssertions, current: { sourceDigest: loaded.trusted.sourceDigest,
+      requirementsDigest: loaded.trusted.requirementsDigest, retentionExpiresAt: loaded.retained.expiresAt },
+  });
+  const prior = model3dReplacementPredecessor(loaded.rootBinding, loaded.originals, parent.checkpoint.providerRequestId as string);
+  if (!prior || prior.slotId !== slot.slotId || prior.jobId !== slot.jobId || prior.sourceDigest !== loaded.trusted.sourceDigest) return null;
+  const cycle = await model3dReplacementSuccessor(loaded.rootBinding, prior);
+  return { cycle, guards: parent.assertions, disclosure: { cycleId: cycle.id, previousSlotId: prior.slotId,
+    previousJobId: prior.jobId, priorHeldMicrousd: 400000 as const, newMaximumMicrousd: 400000 as const, cumulativeMaximumMicrousd: 800000 as const } };
 }
 
 /** Audio preparation wire shape is server-only while the native client selector stays closed. */
@@ -394,14 +418,15 @@ async function state(loaded: Loaded): Promise<ExperiencePreparedState> {
     || canonicalJson(authorization.envelope.sceneCostConsent ?? null) !== canonicalJson({ ...result.sceneCostPreview, confirmed: true }))) error("experience_scene_original_consent_unavailable", 410);
   if (slot.grantId !== grantId || slot.targetId !== loaded.recipe.targetId || slot.planRevisionId !== plan.revisionId
     || slot.targetContractDigest !== plan.targetContractDigests[loaded.recipe.targetId] || slot.sourceDigest !== plan.sourceDigest
-    || slot.attemptOrdinal !== 0 || slot.previousSlotId !== null || !Array.isArray(authorizedTargets) || authorizedTargets.length !== 1
+    || (binding.output === "model3d" ? !model3dMiniAppAttemptMatches(result.model3dCostPreview, slot) : slot.attemptOrdinal !== 0 || slot.previousSlotId !== null)
+    || !Array.isArray(authorizedTargets) || authorizedTargets.length !== 1
     || canonicalJson(authorizedTargets[0]) !== canonicalJson({ target_id: slot.targetId, operation_slot_id: slot.slotId, job_id: slot.jobId, route_digest: slot.routeDigest })) error("experience_output_original_operation_changed");
   const job = await trusted.env.DB.prepare("SELECT * FROM document_jobs WHERE job_id=? AND owner_id=? AND stream_id=? AND document_id=?")
     .bind(slot.jobId, trusted.scope.actorUserId, binding.streamId, binding.documentId).first<DocumentJobRow>();
   if (!job || !job.correlation_id || !Number.isFinite(Date.parse(job.expires_at)) || Date.parse(job.expires_at) <= Date.now()) error("experience_output_original_job_unavailable", 410);
   trusted.sourceAssertions.push({ sql: "EXISTS(SELECT 1 FROM document_jobs WHERE job_id=? AND owner_id=? AND stream_id=? AND document_id=? AND status=? AND expires_at=? AND correlation_id=? AND expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now'))",
     bindings: [slot.jobId, trusted.scope.actorUserId, binding.streamId, binding.documentId, job.status, job.expires_at, job.correlation_id], deadlineMs: Date.parse(job.expires_at) });
-  if(binding.output==="model3d"&&(!result.model3dCostPreview||slot.jobId!==result.model3dCostPreview.requestId||slot.attemptOrdinal!==0||slot.previousSlotId
+  if(binding.output==="model3d"&&(!result.model3dCostPreview||!model3dMiniAppAttemptMatches(result.model3dCostPreview, slot)
     ||canonicalJson(authorization.envelope.model3dCostConsent)!==canonicalJson({...result.model3dCostPreview,confirmed:true,providerTransferConfirmed:true})))error("experience_model3d_original_consent_unavailable",410);
   if(binding.output==="audio"&&(!result.audioCostPreview||slot.jobId!==result.audioCostPreview.requestId||slot.attemptOrdinal!==0||slot.previousSlotId||canonicalJson(authorization.envelope.audioCostConsent)!==canonicalJson({...result.audioCostPreview,confirmed:true,providerTransferConfirmed:true})))error("experience_audio_original_consent_unavailable",410);
   const run = originals.run;
@@ -509,6 +534,12 @@ async function state(loaded: Loaded): Promise<ExperiencePreparedState> {
     result.current.source = "changed";
     result.permitted = { prepare: false, authorize: false, run: false, resumeRun: false, recoverResult: false, renewPreparation: false };
   }
+  if (binding.output === "model3d" && !binding.replacementCycle && result.status === "failed") {
+    try { const offer = await replacementOffer(loaded); if (offer) {
+      result.model3dReplacement = offer.disclosure; result.permitted.prepareReplacement = true;
+      trusted.sourceAssertions.push(...offer.guards);
+    } } catch { /* An unverified parent must not expose replacement authority. */ }
+  }
   return result;
 }
 
@@ -538,7 +569,7 @@ export async function handleExperienceOutput(request: Request, env: WorkerEnv, e
       const origin = request.headers.get("origin");
       if (origin && origin !== url.origin || request.headers.get("sec-fetch-site") === "cross-site") return unavailable("same_origin_required", 403);
       const value = await readExperienceBody(request);
-      const keys = action === "prepare" ? ["draftHash", "explicitRequirementsConfirmation", ...(record(value) && Object.hasOwn(value, "renewal") ? ["renewal"] : [])] : action === "authorize" ? ["draftHash", "termsDigest", "maximumMicrousd", "explicitAuthorization", ...(record(value) && Object.hasOwn(value, "sceneCostConsent") ? ["sceneCostConsent"] : []), ...(record(value) && Object.hasOwn(value, "audioCostConsent") ? ["audioCostConsent"] : []), ...(record(value) && Object.hasOwn(value, "model3dCostConsent") ? ["model3dCostConsent"] : [])] : action === "recover-result" ? ["draftHash", "grantId", "jobId", "explicitRecovery"] : ["draftHash", "grantId", "explicitRun"];
+      const keys = action === "prepare" ? ["draftHash", "explicitRequirementsConfirmation", ...(record(value) && Object.hasOwn(value, "renewal") ? ["renewal"] : []), ...(record(value) && Object.hasOwn(value, "replacement") ? ["replacement"] : [])] : action === "authorize" ? ["draftHash", "termsDigest", "maximumMicrousd", "explicitAuthorization", ...(record(value) && Object.hasOwn(value, "sceneCostConsent") ? ["sceneCostConsent"] : []), ...(record(value) && Object.hasOwn(value, "audioCostConsent") ? ["audioCostConsent"] : []), ...(record(value) && Object.hasOwn(value, "model3dCostConsent") ? ["model3dCostConsent"] : [])] : action === "recover-result" ? ["draftHash", "grantId", "jobId", "explicitRecovery"] : ["draftHash", "grantId", "explicitRun"];
       if (!record(value) || Object.keys(value).length !== keys.length || keys.some(key => !Object.hasOwn(value, key))) return unavailable("experience_output_request_invalid", 400);
       body = value;
     }
@@ -555,6 +586,22 @@ export async function handleExperienceOutput(request: Request, env: WorkerEnv, e
     if (action && (await registeredExperience(loaded.retained.plan.request.experienceId))?.releaseHash !== loaded.binding.releaseHash) error("experience_release_changed");
     if (action === "prepare") {
       if (body.explicitRequirementsConfirmation !== true) error("experience_output_recipe_confirmation_required", 403);
+      if (Object.hasOwn(body, "replacement")) {
+        const input = body.replacement;
+        if (loaded.binding.output !== "model3d" || Object.hasOwn(body, "renewal") || !record(input)
+          || Object.keys(input).length !== 3 || input.explicitReplacement !== true || typeof input.cycleId !== "string"
+          || typeof input.previousSlotId !== "string") error("experience_model3d_replacement_unavailable", 403);
+        const existing = loaded.binding.replacementCycle;
+        if (existing && (existing.id !== input.cycleId || existing.predecessor.slotId !== input.previousSlotId)) error("experience_model3d_replacement_unavailable", 409);
+        if (!existing) {
+          const offer = await replacementOffer(loaded);
+          if (!offer || offer.cycle.id !== input.cycleId || offer.cycle.predecessor.slotId !== input.previousSlotId) error("experience_model3d_replacement_unavailable", 409);
+          loaded.trusted.sourceAssertions.push(...offer.guards);
+          await execute({ ...loaded, binding: { ...loaded.rootBinding, replacementCycle: offer.cycle }, originals: { save: loaded.originals.save } },
+            "confirm", { explicitRequirementsConfirmation: true, explicitReplacement: true }, bridge, executionContext);
+          const refreshed = await load(request, env, draftId, "author"); if (refreshed instanceof Response) return refreshed; loaded = refreshed;
+        }
+      }
       if (Object.hasOwn(body, "renewal")) {
         diagnosticStage = "prepare_confirm_state";
         const input = body.renewal;
@@ -588,7 +635,8 @@ export async function handleExperienceOutput(request: Request, env: WorkerEnv, e
           diagnosticStage = `prepare_${phase}_execute`;
           await execute(loaded, phase, phase === "save" ? { blockId: loaded.recipe.spec.id, spec: loaded.recipe.spec, explicitRequirementsConfirmation: body.explicitRequirementsConfirmation }
             : phase === "confirm" ? { explicitRequirementsConfirmation: body.explicitRequirementsConfirmation }
-            : { planRevisionId: plan!.revisionId, targetIds: [loaded.recipe.targetId] }, bridge, executionContext);
+            : { planRevisionId: plan!.revisionId, targetIds: [loaded.recipe.targetId],
+              ...(loaded.binding.replacementCycle ? { alternativeOfSlotId: loaded.binding.replacementCycle.predecessor.slotId } : {}) }, bridge, executionContext);
           diagnosticStage = `prepare_${phase}_reload`;
           const refreshed = await load(request, env, draftId, "author"); if (refreshed instanceof Response) return refreshed; loaded = refreshed;
         }
