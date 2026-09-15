@@ -97,6 +97,39 @@ async function completed(kind = "image") {
     projectId: p.projectId, artifactId: "artifact", ...execution, usedCalls: 1, usedMicrousd: p.maximumMicrousd };
   return { f, evidence, input, retained, expected };
 }
+test("explicit text-only original recovery decodes without authorizing a replacement or reference transfer", async () => {
+  for (const kind of [null, "image", "saved-model-view"]) {
+    const f = await fixture(kind), q = quote(f), p = f.preview, state = clone(q.state);
+    const command = key => ({ key, eventId: key + "-event" });
+    state.status = "unavailable"; state.disposition = "original_run_recorded";
+    state.permitted = { prepare: false, authorize: false, run: false, resumeRun: false, recoverResult: true };
+    state.original = { authorization: command("authorize"), run: command("run"), grantId: "grant", grantStatus: "active",
+      slotId: "slot", slotStatus: "uncertain", jobId: p.requestId, jobStatus: "failed", correlationId: "correlation", jobExpiresAt: p.expiresAt,
+      targetId: q.target.targetId, targetContractDigest: state.plan.targetContractDigest, routeDigest: "route",
+      planRevisionId: state.plan.revisionId, sourceDigest: p.sourceDigest, requirementsDigest: p.requirementsDigest, expiresAt: p.expiresAt };
+    const counters = { maximumMicrousd: p.maximumMicrousd, maximumCalls: 1, usedMicrousd: 0, exposedMicrousd: p.maximumMicrousd, usedCalls: 0, pendingCalls: 1 };
+    state.grant = { id: "grant", status: "active", planRevisionId: state.plan.revisionId, actorUserId: p.actorUserId, payerUserId: p.actorUserId,
+      expiresAt: p.expiresAt, ...counters, disclosure: clone(q.preflight), operations: [{ id: "slot", targetId: q.target.targetId,
+        jobId: p.requestId, status: "uncertain", ...counters }] };
+    assert.equal(Boolean(decodeExperienceBinding(state, q.identity)), kind === null);
+    if (kind !== null) continue;
+    for (const mutate of [v => { v.permitted.run = true; }, v => { v.original.jobStatus = "canceled"; },
+      v => { v.preflight.targets[0].model = "foreign"; }, v => { v.original.jobId = "foreign"; },
+      v => { v.current.source = "changed"; }, v => { v.grant.status = v.original.grantStatus = "revoked"; }]) {
+      const bad = clone(state); mutate(bad); assert.equal(decodeExperienceBinding(bad, q.identity), null);
+    }
+    const origin = "https://forma.test", requests = [];
+    const client = new ExperienceOutputBindingClient(q.identity, { origin, current: () => true, request: async (path, init) => {
+      requests.push({ path, method: init.method, body: init.body && JSON.parse(init.body) });
+      const response = Response.json(state); Object.defineProperty(response, "url", { value: origin + path }); return response;
+    } });
+    const shown = await client.read(); assert.equal(requests.length, 1);
+    await client.command("recoverResult", shown);
+    assert.equal(requests.length, 2); assert.equal(requests[1].path.endsWith("/recover-result"), true);
+    assert.deepEqual(requests[1].body, { draftHash: q.identity.draftHash, grantId: "grant", jobId: p.requestId, explicitRecovery: true });
+    client.dispose();
+  }
+});
 test("retained native reader joins original private receipt, current selection and exact GLB; tampering refuses", async () => {
   for (const kind of [null, "image", "saved-model-view"]) {
     const c = await completed(kind);

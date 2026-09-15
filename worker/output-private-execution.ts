@@ -1,4 +1,5 @@
 import { retainedPersonalFalRecoverySql } from "./output-fal-recovery-policy.ts";
+import { retainedModel3dRecoveryStorageSql } from "./output-model3d-recovery-storage.ts";
 import { markOutputSchemaReady, outputSchemaIsReady } from "./output-schema-state.ts";
 import { inheritRuntimeSchemaReadiness, type WorkerEnv } from "./runtime.ts";
 import { outputAssertionStatements, OutputConflictError, type OutputOperationSlot, type OutputScope, type OutputSqlAssertion } from "./output-requirements-ledger.ts";
@@ -345,12 +346,16 @@ export async function reconcileOutputNativeStorage(env: WorkerEnv, filter: { own
   // Organization-only cleanup cannot retain a personal Fal recovery.
   await env.DB.prepare(`WITH retained_fal_grants AS MATERIALIZED (
     SELECT scope_key,grant_id FROM output_execution_grants WHERE actor_user_id=? AND ${retainedPersonalFalRecoverySql}
-  ) UPDATE output_native_storage_writes SET status='cleanup_pending',updated_at=? WHERE status IN('writing','written') AND publication_event_id IS NULL
+  ), retained_model3d_storage AS MATERIALIZED (${retainedModel3dRecoveryStorageSql})
+  UPDATE output_native_storage_writes SET status='cleanup_pending',updated_at=? WHERE status IN('writing','written') AND publication_event_id IS NULL
     AND EXISTS(SELECT 1 FROM output_operation_slots slot JOIN output_execution_grants grant_row ON grant_row.scope_key=slot.scope_key AND grant_row.grant_id=slot.grant_id
       JOIN output_plan_revisions plan ON plan.scope_key=slot.scope_key AND plan.plan_revision_id=slot.plan_revision_id
       LEFT JOIN retained_fal_grants retained ON retained.scope_key=grant_row.scope_key AND retained.grant_id=grant_row.grant_id
       WHERE slot.scope_key=output_native_storage_writes.scope_key AND slot.slot_id=output_native_storage_writes.slot_id
       AND (grant_row.status='revoked' OR (grant_row.expires_at<=? AND NOT EXISTS(
+        SELECT 1 FROM retained_model3d_storage grace WHERE grace.scope_key=output_native_storage_writes.scope_key
+          AND grace.slot_id=output_native_storage_writes.slot_id AND grace.storage_key=output_native_storage_writes.storage_key
+          AND grace.content_sha256=output_native_storage_writes.content_sha256) AND NOT EXISTS(
         SELECT 1 FROM document_jobs recovery WHERE recovery.job_id=slot.job_id AND recovery.owner_id=grant_row.actor_user_id
           AND recovery.status='failed' AND (json_extract(recovery.result_json,'$.outputFalRecovery.version')='output-fal-recovery-v1'
           AND json_extract(recovery.result_json,'$.outputFalRecovery.clientRequestId')=json_extract(recovery.result_json,'$.outputFalCheckpoint.clientRequestId')
@@ -372,7 +377,7 @@ export async function reconcileOutputNativeStorage(env: WorkerEnv, filter: { own
           AND json_extract(recovery.result_json,'$.outputVideoRecovery.expiresAt')>strftime('%Y-%m-%dT%H:%M:%fZ','now')))))
       AND (? IS NULL OR plan.owner_user_id=?) AND (? IS NULL OR plan.organization_id=?)
       AND (?=0 OR (plan.scope_kind='personal' AND plan.organization_id IS NULL AND plan.project_access_id IS NULL)))`)
-    .bind(filter.ownerUserId??null, now, now, filter.ownerUserId ?? null, filter.ownerUserId ?? null, filter.organizationId ?? null, filter.organizationId ?? null, Number(filter.personalOnly === true)).run();
+    .bind(filter.ownerUserId??null, filter.ownerUserId??null, now, now, filter.ownerUserId ?? null, filter.ownerUserId ?? null, filter.organizationId ?? null, filter.organizationId ?? null, Number(filter.personalOnly === true)).run();
   const receipts = await env.DB.prepare(`SELECT stored.scope_key,stored.slot_id,stored.storage_key,stored.content_sha256,stored.write_acknowledged,stored.updated_at,plan.owner_user_id,plan.document_id
     FROM output_native_storage_writes stored JOIN output_operation_slots slot ON slot.scope_key=stored.scope_key AND slot.slot_id=stored.slot_id
     JOIN output_plan_revisions plan ON plan.scope_key=slot.scope_key AND plan.plan_revision_id=slot.plan_revision_id

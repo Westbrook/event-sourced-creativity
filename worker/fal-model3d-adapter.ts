@@ -54,7 +54,7 @@ export type FalModel3dOptions = {
 };
 
 type QueueState = { request_id?: string; status?: string; status_url?: string; response_url?: string; cancel_url?: string; error?: unknown; error_type?: string; queue_position?: number; logs?: Array<{ message?: string }> };
-type ProviderFile = { url?: unknown; content_type?: unknown; file_name?: unknown; file_size?: unknown };
+export type ProviderFile = { url?: unknown; content_type?: unknown; file_name?: unknown; file_size?: unknown };
 const record = (value: unknown): Record<string, unknown> => value !== null && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
 const falHeaders = (env: Pick<WorkerEnv, "FAL_KEY">) => ({ authorization: `Key ${env.FAL_KEY}`, "content-type": "application/json", "x-fal-store-io": "0" });
 const requestError = (code: string, message: string, prompt: string, options: Partial<ProviderFailureDetail> = {}) => new ProviderRequestError({
@@ -139,7 +139,7 @@ async function fetchJson(url: string, init: RequestInit, prompt: string, request
 }
 
 const hasError = (body: Record<string, unknown>) => body.error != null && body.error !== "" || Boolean(body.error_type) || Array.isArray(body.detail) && body.detail.length > 0;
-function verifyResponseIdentity(body: Record<string, unknown>, receipt: FalModel3dProviderReceipt, prompt: string, headers?: Headers) {
+export function verifyResponseIdentity(body: Record<string, unknown>, receipt: FalModel3dProviderReceipt, prompt: string, headers?: Headers) {
   const headerId = headers?.get("x-fal-request-id");
   if (body.request_id !== undefined && body.request_id !== receipt.providerJobId
     || headerId && headerId !== receipt.providerJobId) throw requestError("model3d_response_identity_mismatch", "The provider returned a different request ID. The original 3D receipt was retained for recovery.", prompt, { requestId: receipt.providerJobId, httpStatus: 409, action: "contact_support" });
@@ -269,10 +269,19 @@ async function downloadFile(file: ProviderFile, receipt: FalModel3dProviderRecei
   if (!response.ok) throw requestError("model3d_download_failed", "Rodin finished, but an artifact could not be downloaded. Resume the saved request to retrieve its files without another generation.", prompt, { requestId, httpStatus: response.status, category: "server", scope: "provider", action: "retry", retryable: true, retryAfterMs: providerRetryAfterMs(response) ?? 5000 });
   const bytes = await boundedArtifactBytes(response, file.file_size, prompt, requestId);
   if (!bytes.length) throw requestError("model3d_empty_artifact", "Rodin returned an empty artifact. Resume the original request to retrieve its files.", prompt, { requestId, httpStatus: 502, action: "retry", retryable: true });
+  return qualifyFalModel3dFile(file, receipt, prepared, primary, expected, bytes, response.headers);
+}
+
+/** Shared exact-byte format/name/MIME validation; no network or submission. */
+export async function qualifyFalModel3dFile(file: ProviderFile, receipt: FalModel3dProviderReceipt, prepared: Model3dPreparedReceipt,
+  primary: boolean, expected: "mesh" | "texture", bytes: Uint8Array, headers: Headers): Promise<Model3dGeneratedFile> {
+  const prompt = prepared.submittedPrompt, requestId = receipt.providerJobId;
+  const url = trustedMediaUrl(file.url, prompt, requestId, "artifact");
+  if (!bytes.length || bytes.length > MAX_MODEL3D_GENERATED_FILE_BYTES) throw transferLimitError(prompt, requestId);
   const name = fileName(file, url, primary ? `model.${prepared.settings.geometry_file_format}` : "artifact.bin");
   const kind = fileKind(name, prepared.settings.geometry_file_format, primary, expected);
   if (primary && kind.format !== prepared.settings.geometry_file_format && kind.mimeType !== "application/zip") throw requestError("model3d_primary_format_mismatch", "The provider did not return the requested 3D format. The original request is retained for recovery.", prompt, { requestId, httpStatus: 502, action: "retry", retryable: true });
-  const responseType = String(response.headers.get("content-type") ?? "").split(";")[0]!.trim().toLowerCase();
+  const responseType = String(headers.get("content-type") ?? "").split(";")[0]!.trim().toLowerCase();
   const advertisedType = typeof file.content_type === "string" ? file.content_type.split(";")[0]!.trim().toLowerCase() : "";
   if ([responseType, advertisedType].some((type) => ["text/html", "application/json", "application/javascript", "text/javascript", "image/svg+xml"].includes(type)) || !validModelSignature(bytes, kind.format)) throw requestError("model3d_artifact_invalid", "A downloaded file does not match the returned 3D format. The original provider request is retained for recovery.", prompt, { requestId, httpStatus: 502, action: "retry", retryable: true });
   if (["image/png", "image/jpeg", "image/webp"].includes(kind.mimeType) && !imageSignature(bytes, kind.mimeType)) throw requestError("model3d_texture_invalid", "A returned texture or preview is not a readable image. Resume the original provider request to retrieve it again.", prompt, { requestId, httpStatus: 502, action: "retry", retryable: true });
@@ -415,21 +424,7 @@ export async function generateFalModel3d(env: Pick<WorkerEnv, "FAL_KEY">, prompt
       submission = { ...submission, status: "completed", providerRequestId: requestId, costMicrousd: prepared.estimatedCostMicrousd, inputTokens: 0, outputTokens: 0, totalTokens: 0 };
       await options.onProviderSubmission?.(submission);
     }
-    const entries: Array<{ file: ProviderFile; primary: boolean; group: "mesh" | "texture" }> = [
-      { file: mesh, primary: true, group: "mesh" },
-      ...(data.model_meshes as unknown[] ?? []).map((file) => ({ file: record(file), primary: false, group: "mesh" as const })),
-      ...data.textures.map((file) => ({ file: record(file), primary: false, group: "texture" as const })),
-    ];
-    const described = new Set<string>();
-    const manifest: Model3dProviderArtifactDescriptor[] = [];
-    for (const entry of entries) {
-      const url = trustedMediaUrl(entry.file.url, submittedPrompt, requestId, "artifact");
-      if (described.has(url.toString())) continue;
-      described.add(url.toString());
-      const name = fileName(entry.file, url, entry.primary ? `model.${prepared.settings.geometry_file_format}` : "artifact.bin");
-      const kind = fileKind(name, prepared.settings.geometry_file_format, entry.primary, entry.group);
-      manifest.push({ providerMediaUrl: url.toString(), ...kind, fileName: name, fileSize: typeof entry.file.file_size === "number" && Number.isSafeInteger(entry.file.file_size) && entry.file.file_size >= 0 ? entry.file.file_size : null });
-    }
+    const { entries, manifest } = describeFalModel3dFiles(data, prepared, requestId);
     await options.onResultManifest?.(manifest);
     const seen = new Set<string>(), files: Model3dGeneratedFile[] = [], additionalMeshes: Model3dGeneratedFile[] = [], textures: Model3dGeneratedFile[] = [];
     for (const entry of entries) {
@@ -458,4 +453,28 @@ export async function generateFalModel3d(env: Pick<WorkerEnv, "FAL_KEY">, prompt
     }, submittedPrompt);
     throw error;
   }
+}
+
+/** Shared complete provider descriptor list. No downloaded bytes or provider I/O. */
+export function describeFalModel3dFiles(data: Record<string, unknown>, prepared: Model3dPreparedReceipt, requestId: string) {
+  const mesh = record(data.model_mesh);
+  if (typeof mesh.url !== "string" || !Array.isArray(data.textures) || data.model_meshes !== undefined && !Array.isArray(data.model_meshes)
+    || !Number.isInteger(data.seed) || Number(data.seed) < 0 || Number(data.seed) > 65535) throw requestError("model3d_result_incomplete",
+    "The provider result is incomplete. The original receipt is retained; no replacement was submitted.", prepared.submittedPrompt, { requestId, httpStatus: 502 });
+    const entries: Array<{ file: ProviderFile; primary: boolean; group: "mesh" | "texture" }> = [
+      { file: record(data.model_mesh), primary: true, group: "mesh" },
+      ...(data.model_meshes as unknown[] ?? []).map((file) => ({ file: record(file), primary: false, group: "mesh" as const })),
+      ...(data.textures as unknown[]).map((file) => ({ file: record(file), primary: false, group: "texture" as const })),
+    ];
+    const described = new Set<string>();
+    const manifest: Model3dProviderArtifactDescriptor[] = [];
+    for (const entry of entries) {
+      const url = trustedMediaUrl(entry.file.url, prepared.submittedPrompt, requestId, "artifact");
+      if (described.has(url.toString())) continue;
+      described.add(url.toString());
+      const name = fileName(entry.file, url, entry.primary ? `model.${prepared.settings.geometry_file_format}` : "artifact.bin");
+      const kind = fileKind(name, prepared.settings.geometry_file_format, entry.primary, entry.group);
+      manifest.push({ providerMediaUrl: url.toString(), ...kind, fileName: name, fileSize: typeof entry.file.file_size === "number" && Number.isSafeInteger(entry.file.file_size) && entry.file.file_size >= 0 ? entry.file.file_size : null });
+    }
+  return { entries, manifest };
 }

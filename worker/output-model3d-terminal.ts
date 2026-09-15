@@ -6,6 +6,7 @@ export const MODEL3D_PRIVATE_CHECKPOINT_KEYS = Object.freeze([
   "outputExecution", "model3dInputReceipt", "model3dProviderFiles", "model3dSettings",
   "model3dEstimatedCostMicrousd", "model3dProviderSubmission", "providerJobId", "providerModel", "provider",
   "providerStatusUrl", "providerResponseUrl", "providerCancelUrl", "providerSubmissions", "providerSubmissionProtocol",
+  "outputModel3dRecovery", "outputModel3dRecoveryHistory", "outputModel3dRecoveryEnvelopes", "outputModel3dRecoveryFiles",
 ]);
 export function model3dNativeCheckpoint(request: Record<string, unknown>): boolean {
   return request.artifactKind === "model3d" && Boolean(parseModel3dOutputContract(request.outputModel3d));

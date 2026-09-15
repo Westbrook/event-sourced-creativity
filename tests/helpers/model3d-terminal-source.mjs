@@ -3,6 +3,7 @@ import fs from "node:fs";
 import { createRequire } from "node:module";
 import { documentJobCompletionBindings } from "../../worker/document-job-sql.ts";
 import { MODEL3D_PRIVATE_CHECKPOINT_KEYS, MODEL3D_TERMINAL_RESULT_SQL, model3dNativeCheckpoint } from "../../worker/output-model3d-terminal.ts";
+import { recoveredFalImageEventIds } from "../../worker/output-fal-recovery-policy.ts";
 
 // Execute the actual terminal/outcome SQL without importing the application's
 // HTTP/bootstrap graph. Only unrelated serialization presentation ports are stubbed.
@@ -33,7 +34,7 @@ export function terminalSource({ withoutModel3dPreservation = false } = {}) {
 }
 export function serializeTerminalSource(row) {
   const source = declarations(jobSource, ["parseRequest", "parseResult", "parentJobIdFromRequest", "serializeJob"]);
-  const ports = { MODEL3D_PRIVATE_CHECKPOINT_KEYS, model3dNativeCheckpoint,
+  const ports = { MODEL3D_PRIVATE_CHECKPOINT_KEYS, model3dNativeCheckpoint, recoveredFalImageEventIds,
     OUTPUT_STORYBOARD_RETAINED_CHECKPOINT_KEYS: [], OUTPUT_VIDEO_RETAINED_CHECKPOINT_KEYS: [], generationRequestIdentity: () => ({}), sceneConfigurationFromRequest: () => null,
     queueRecoveryPresentation: () => null, errorDetailFromResult: () => null, model3dRecoveryProviderReceipt: () => { throw Error("Private original must not be reintroduced"); },
     consentedAdaptiveJob: () => false, certifiedAdaptiveRows: new WeakSet(), fanKindFromRequest: () => null };

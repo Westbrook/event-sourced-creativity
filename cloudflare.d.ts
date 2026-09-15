@@ -38,6 +38,7 @@ interface R2Bucket {
     options?: {
       httpMetadata?: { contentType?: string };
       customMetadata?: Record<string, string>;
+      onlyIf?: { etagDoesNotMatch?: string };
     },
   ): Promise<unknown>;
   get(key: string, options?: { range?: { offset: number; length: number } }): Promise<R2ObjectBody | null>;

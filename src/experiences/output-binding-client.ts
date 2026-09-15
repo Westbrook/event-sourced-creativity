@@ -1,6 +1,6 @@
 import { parseModel3dMiniAppCostPreview, model3dMiniAppCostApprovalMatches } from "../model/model3d-mini-app-consent.ts";
 import { EXPERIENCE_BODY_TIMEOUT_MS, experienceResponseTimeout } from "./output-transport-lifetime.ts";
-import { readModel3dExecutionPayload } from "../model/output-model3d-offer.ts";
+import { readModel3dExecutionOffer, readModel3dExecutionPayload } from "../model/output-model3d-offer.ts";
 import type { ExperienceModel3dCostApproval } from "./output-binding-contract.ts";
 import type { ExperienceAudioCostApproval, ExperienceNativeState, ExperienceNativeUnavailable } from "./output-binding-contract.ts";
 import { parseSceneMiniAppCostPreview, sceneMiniAppCostApprovalMatches, type SceneMiniAppCostApproval } from "../model/scene-mini-app-consent.ts";
@@ -45,6 +45,17 @@ export function bindingJson(value: unknown): string {
   return serialized;
 }
 const commandIdentity = (value: unknown) => record(value) && ["key", "eventId"].every(key => text(value[key]));
+function originalRecoveryTargetMatches(output: unknown, target: unknown): boolean {
+  if (!record(target)) return false;
+  if (output === "image") return target.provider === "fal" && target.model === "ideogram/v4" && target.route === "document-image-fal-manual-v1";
+  if (output === "model3d") {
+    const offer = readModel3dExecutionOffer(target);
+    // The first recovery policy admits text-only originals. Reference recovery
+    // needs separate current reference-custody proof, not this UI allowance.
+    return Boolean(offer && offer.contract.reference === null);
+  }
+  return false;
+}
 function freeze<T>(value: T): T { if (value && typeof value === "object") { Object.values(value).forEach(freeze); Object.freeze(value); } return value; }
 export function unavailableBinding(error = "original_unavailable"): ExperienceNativeUnavailable {
   return Object.freeze({ version: 1, status: "unavailable", error, originalIntent: "unknown_or_retained", permitted: Object.freeze({ prepare: false, authorize: false, run: false, resumeRun: false }) });
@@ -172,16 +183,17 @@ export function decodeExperienceBinding(value: unknown, identity: ExperienceBind
       || permitted.prepare || permitted.authorize || permitted.run)) return null;
     if (["queued", "running", "succeeded", "failed", "cancelled", "partial", "uncertain", "unavailable"].includes(String(value.status)) && (permitted.prepare || permitted.authorize || permitted.run)) return null;
     if (["succeeded", "failed", "cancelled", "partial", "uncertain", "unavailable"].includes(String(value.status)) && permitted.resumeRun) return null;
-    if (permitted.recoverResult && (value.output !== "image" || value.disposition !== "original_run_recorded"
+    if (permitted.recoverResult && (value.disposition !== "original_run_recorded"
       || !["failed", "uncertain", "unavailable"].includes(String(value.status)) || !record(original) || original.jobStatus !== "failed"
+      || !["failed", "uncertain"].includes(String(original.slotStatus))
       || !record(grant) || !["authorized", "active", "completed"].includes(String(grant.status))
       || !record(preflight) || !Array.isArray(preflight.targets) || !record(preflight.targets[0])
-      || preflight.targets[0].provider !== "fal" || preflight.targets[0].model !== "ideogram/v4" || preflight.targets[0].route !== "document-image-fal-manual-v1"
+      || !originalRecoveryTargetMatches(value.output, preflight.targets[0])
       || permitted.prepare || permitted.authorize || permitted.run || permitted.resumeRun)) return null;
-    if (value.recovery === "completed" && (value.status !== "succeeded" || value.output !== "image" || value.disposition !== "original_run_recorded"
+    if (value.recovery === "completed" && (value.status !== "succeeded" || value.disposition !== "original_run_recorded"
       || !record(original) || original.jobStatus !== "completed" || original.slotStatus !== "succeeded" || !record(grant) || grant.status !== "completed"
       || !record(preflight) || !Array.isArray(preflight.targets) || !record(preflight.targets[0]) || preflight.targets[0].provider !== "fal"
-      || preflight.targets[0].model !== "ideogram/v4" || preflight.targets[0].route !== "document-image-fal-manual-v1")
+      || !originalRecoveryTargetMatches(value.output, preflight.targets[0]))
       || value.recovery === "pending" && !permitted.recoverResult) return null;
     return freeze(structuredClone(value)) as ExperienceNativeState;
   } catch { return null; }

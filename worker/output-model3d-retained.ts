@@ -18,10 +18,26 @@ const hash = async (value: string) => Array.from(new Uint8Array(await crypto.sub
 /** The existing retained handler owns authentication, selection and private
  * source custody. This adds original-job/paid-call/storage evidence only for a
  * native mini-app's unedited Model3D result; no new permission or media fetch. */
-export async function readRetainedOutputModel3d(env: WorkerEnv, input: {
+type RetainedModel3dInput = {
   ownerId: string; completionId: string; documentId: string; projectId: string; artifactId: string; contentId: string; inputId: string;
   rawContent: string; contentExpiresAt: string; completionRaw: string; signal?: AbortSignal;
-}) {
+};
+type RecoveryLease = { token: string; expiresAt: string; assertCurrent(): Promise<void>; assertions(): OutputSqlAssertion[] };
+export async function readRetainedOutputModel3d(env: WorkerEnv, input: RetainedModel3dInput) {
+  return readRetainedModel3d(env, input);
+}
+/** Internal original-only finalization. Public retained routes never supply a
+ * lease. Every check below stays shared; only terminal job/slot expectations
+ * differ under a live, current-authority, exact-token failed-original lease. */
+export async function readRetainedOutputModel3dRecovery(env: WorkerEnv, input: RetainedModel3dInput, lease: RecoveryLease) {
+  if (!lease || !lease.token || !Number.isFinite(Date.parse(lease.expiresAt)) || Date.parse(lease.expiresAt) <= Date.now()
+    || !lease.assertions().length) fail();
+  await lease.assertCurrent();
+  const result = await readRetainedModel3d(env, input, lease);
+  await lease.assertCurrent();
+  return result;
+}
+async function readRetainedModel3d(env: WorkerEnv, input: RetainedModel3dInput, recovery?: RecoveryLease) {
   const payload = object(JSON.parse(bounded(input.completionRaw))), settings = object(payload.settings);
   const evidence = captureExperienceModel3dEvidence(settings);
   if (!evidence || evidence.actorUserId !== input.ownerId || evidence.documentId !== input.documentId || evidence.projectId !== input.projectId
@@ -33,7 +49,7 @@ export async function readRetainedOutputModel3d(env: WorkerEnv, input: {
     || !same(settings.model3d_files, evidence.files) || settings.production_mode !== "manual") return fail();
   const ref = evidence.execution, preview = evidence.costPreview;
   const jobSql = `job_id=? AND owner_id=? AND document_id=? AND stream_id=? AND kind='render_document'
-    AND source_surface='outputs' AND status='completed' AND error_message IS NULL AND completed_at IS NOT NULL
+    AND source_surface='outputs' AND ${recovery ? "status='failed'" : "status='completed' AND error_message IS NULL AND completed_at IS NOT NULL"}
     AND expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now') AND length(CAST(request_json AS BLOB))<=1048576 AND length(CAST(result_json AS BLOB))<=1048576
     AND NOT EXISTS(SELECT 1 FROM project_resource_scopes WHERE resource_kind IN('job','document') AND resource_id IN(document_jobs.job_id,document_jobs.document_id))`;
   const jobBindings = [evidence.jobId, input.ownerId, input.documentId, `creative:${input.ownerId}`];
@@ -56,11 +72,11 @@ export async function readRetainedOutputModel3d(env: WorkerEnv, input: {
   const slotFrom = `output_operation_slots slot JOIN output_plan_revisions plan ON plan.scope_key=slot.scope_key AND plan.plan_revision_id=slot.plan_revision_id
     JOIN output_execution_grants grant_row ON grant_row.scope_key=slot.scope_key AND grant_row.grant_id=slot.grant_id`;
   const slotSql = `slot.scope_key=? AND slot.slot_id=? AND slot.grant_id=? AND slot.plan_revision_id=? AND slot.target_id=? AND slot.source_digest=?
-    AND slot.target_contract_digest=? AND slot.job_id=? AND slot.status='succeeded' AND slot.attempt_ordinal=0 AND slot.previous_slot_id IS NULL
-    AND slot.outcome_event_id=? AND slot.provider='fal' AND slot.model=? AND slot.maximum_calls=1 AND slot.maximum_microusd=?
+    AND slot.target_contract_digest=? AND slot.job_id=? AND ${recovery ? "slot.status IN('failed','uncertain')" : "slot.status='succeeded'"} AND slot.attempt_ordinal=0 AND slot.previous_slot_id IS NULL
+    AND ${recovery ? "EXISTS(SELECT 1 FROM events WHERE event_id=? AND stream_id='creative:'||plan.owner_user_id AND type='DocumentRenderCompleted')" : "slot.outcome_event_id=?"} AND slot.provider='fal' AND slot.model=? AND slot.maximum_calls=1 AND slot.maximum_microusd=?
     AND plan.scope_kind='personal' AND plan.owner_user_id=? AND plan.document_id=? AND plan.project_id=?
     AND plan.source_digest=slot.source_digest AND plan.requirements_digest=? AND plan.organization_id IS NULL AND plan.project_access_id IS NULL
-    AND grant_row.actor_user_id=plan.owner_user_id AND grant_row.payer_user_id=plan.owner_user_id AND grant_row.context_id IS NULL AND grant_row.status='completed'`;
+    AND grant_row.actor_user_id=plan.owner_user_id AND grant_row.payer_user_id=plan.owner_user_id AND grant_row.context_id IS NULL AND ${recovery ? "grant_row.status IN('authorized','active','completed')" : "grant_row.status='completed'"}`;
   const slotBindings = [ref.scopeKey, ref.slotId, ref.grantId, ref.planRevisionId, ref.targetId, ref.sourceDigest, ref.targetContractDigest, evidence.jobId,
     input.completionId, preview.model, preview.maximumMicrousd, input.ownerId, input.documentId, input.projectId, preview.requirementsDigest];
   const callSql = `scope_key=? AND slot_id=? AND call_key='model3d:initial' AND stage_key='model3d:initial' AND client_request_id=? AND request_digest=?
@@ -83,6 +99,7 @@ export async function readRetainedOutputModel3d(env: WorkerEnv, input: {
       projectId: input.projectId, artifactId: input.artifactId, ...ref, usedCalls: 1, usedMicrousd: preview.maximumMicrousd,
     })) return fail();
   const assertions: OutputSqlAssertion[] = [
+    ...(recovery ? [...recovery.assertions(), { sql: "EXISTS(SELECT 1 FROM document_jobs WHERE job_id=? AND owner_id=? AND status=\'failed\' AND json_extract(result_json,\'$.outputModel3dRecovery.token\')=? AND json_extract(result_json,\'$.outputModel3dRecovery.expiresAt\')=? AND ?>strftime(\'%Y-%m-%dT%H:%M:%fZ\',\'now\'))", bindings: [evidence.jobId, input.ownerId, recovery.token, recovery.expiresAt, recovery.expiresAt], deadlineMs: Date.parse(recovery.expiresAt) }] : []),
     { sql: "EXISTS(SELECT 1 FROM events event JOIN event_private_payloads body ON body.private_event_id=event.event_id WHERE event.event_id=? AND event.stream_id=? AND event.correlation_id=? AND event.actor='worker:renderer' AND event.type='DocumentRenderCompleted' AND event.compensates_event_id IS NULL AND body.owner_id=? AND body.document_id=? AND body.project_id=? AND body.redacted_at IS NULL AND body.private_json=?)",
       bindings: [input.completionId, job.stream_id, job.correlation_id, input.ownerId, input.documentId, input.projectId, input.completionRaw] },
     { sql: `EXISTS(SELECT 1 FROM document_jobs WHERE ${jobSql} AND request_json=? AND result_json=? AND expires_at=? AND correlation_id=? AND attempt_count=?)`,
@@ -106,5 +123,5 @@ export async function readRetainedOutputModel3d(env: WorkerEnv, input: {
     if (parts.length !== bindings.length + 1) return fail();
     return "(" + parts.map((part, position) => part + (position < bindings.length ? `(SELECT json_extract(bindings,'$[${index}][${position}]') FROM model3d_witness)` : "")).join("") + ")";
   }).join(" AND ");
-  return { expiresAt: new Date(deadlineMs).toISOString(), witness: { json, sql } };
+  return { assertions, evidence, prepared, expiresAt: new Date(deadlineMs).toISOString(), witness: { json, sql } };
 }

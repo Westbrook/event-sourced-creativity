@@ -127,6 +127,15 @@ test("actual native-storage wrapper publishes only its exact original model3d re
 test("actual terminal SQL preserves the private original and joins strict retained read; the old assignment refuses", async () => {
   for (const withoutModel3dPreservation of [true, false]) {
     const x = await setup(); try {
+      // Exercise presence, not only omission: recovery capabilities and their
+      // history/manifests must survive terminal persistence but never a feed.
+      Object.assign(x.checkpoint, {
+        outputModel3dRecovery: { version: "output-model3d-recovery-v1", token: "private-token" },
+        outputModel3dRecoveryHistory: [{ providerRequestId: "private-original" }],
+        outputModel3dRecoveryEnvelopes: [{ contentRef: "private-provider-response" }],
+        outputModel3dRecoveryFiles: [{ storageKey: "private-owned-model", sha256: "1".repeat(64) }],
+      });
+      x.d.sqlite.prepare("UPDATE document_jobs SET result_json=?").run(JSON.stringify(x.checkpoint));
       await x.publish(x.payload);
       await terminalSource({ withoutModel3dPreservation })({ DB: x.d.DB }, x.row(), "completed",
         { artifactId: "artifact", artifactKind: "model3d", appendedEventIds: ["completed"], stage: "completed" }, null);
