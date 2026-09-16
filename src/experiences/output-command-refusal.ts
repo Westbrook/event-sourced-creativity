@@ -6,6 +6,6 @@ export function outputCommandRefusal(value: unknown) {
     || typeof row.error !== 'string' || !/^[a-z][a-z0-9_]{0,95}$/u.test(row.error)) return null;
   // These are locally generated transport/decoder outcomes, not a confirmed
   // server refusal. Keep their uncertainty visible.
-  if (['submission_unconfirmed','original_unavailable','withdrawn'].includes(row.error)) return null;
+  if (['not_loaded','submission_unconfirmed','original_unavailable','withdrawn'].includes(row.error)) return null;
   return { code: row.error };
 }
