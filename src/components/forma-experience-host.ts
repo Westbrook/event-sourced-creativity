@@ -330,7 +330,9 @@ export class FormaExperienceHost extends FormaElement {
     void this.#command("prepareReplacement", state);
   }
   async #load() {
-    const operation = this.#beginOperation();
+    // Route selection changes only this presentation wait, never authority.
+    const operation = this.#beginOperation(parseExperienceHostRoute(this.store.route.get())?.output === "video"
+      ? { action: "read", output: "video" } : undefined);
     let loadedBinding: Binding | undefined;
     const epoch = ++this.#epoch, store = this.store, route = store.route.get(), selection = parseExperienceHostRoute(route), session = store.session.get();
     const source = store.captureSourceOwnership(), authorization = store.captureAuthorizationScope();

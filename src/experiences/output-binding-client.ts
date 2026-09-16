@@ -271,7 +271,7 @@ export class ExperienceOutputBindingClient {
     const path = `/api/experiences/drafts/${encodeURIComponent(this.identity.draftId)}/output${action ? "/" + (action === "recoverResult" ? "recover-result" : action === "renewPreparation" ? "prepare" : action) : ""}`;
     let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
     const testTimeout = Number.isSafeInteger(this.#controls.timeoutMs) && Number(this.#controls.timeoutMs) > 0 && Number(this.#controls.timeoutMs) <= 20000 ? Number(this.#controls.timeoutMs) : undefined;
-    const timeoutMs = testTimeout ?? experienceResponseTimeout(action ? { action, output: this.identity.output } : undefined);
+    const timeoutMs = testTimeout ?? experienceResponseTimeout({ action: action ?? "read", output: this.identity.output });
     let rejectStopped: (reason: Error) => void = () => {};
     const stopped = new Promise<never>((_, reject) => { rejectStopped = reject; });
     void stopped.catch(() => {});

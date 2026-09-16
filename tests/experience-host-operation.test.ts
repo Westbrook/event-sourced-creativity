@@ -111,7 +111,7 @@ test("inactive waits observe supplied work rejection without reviving their leas
 test('Image inspection gives composed reads a finite host window, not extra request or authority time',async context=>{
   context.mock.timers.enable({apis:['setTimeout']});const inspection={action:'inspectResult',output:'image'};
   assert.equal(experienceHostTimeout(inspection),90000);assert.equal(experienceResponseTimeout(inspection),20000);
-  assert.equal(experienceHostTimeout(),30000);assert.equal(experienceHostTimeout({action:'inspectResult',output:'video'}),30000);
+  assert.equal(experienceHostTimeout(),30000);assert.equal(experienceHostTimeout({action:'inspectResult',output:'video'}),110000);
   let expired=0;const operation=new ExperienceHostOperation(()=>expired++,undefined,inspection);
   const rejected=assert.rejects(operation.wait(new Promise<never>(()=>{})),/operation_unconfirmed/);
   context.mock.timers.tick(30000);assert.equal(operation.current(),true);

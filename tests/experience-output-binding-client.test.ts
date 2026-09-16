@@ -560,8 +560,8 @@ test("ordinary delayed headers do not renew the twenty-second total deadline", a
   assert.deepEqual(client.state, unavailableBinding("original_unavailable")); assert.equal(fake.calls[0].init.signal!.aborted, true);
 });
 
-test("foreground policy extends explicit source-proof admission, never passive or other admission waits", () => {
-  for (const action of ["read", "unknown"]) {
+test("foreground policy extends explicit admission and scoped Video reads, never unknown actions", () => {
+  for (const action of ["unknown"]) {
     assert.equal(experienceResponseTimeout({action,output:"video"}), 20000);
     assert.equal(experienceHostTimeout({action,output:"video"}), 30000);
   }
@@ -981,3 +981,61 @@ for (const output of ["image", "slides", "short_story", "scene"] as const) {
     }
   });
 }
+
+// Append to tests/experience-output-binding-client.test.ts.
+test('Video status GET survives old header and host cutoffs without retry or POST',async context=>{
+ context.mock.timers.enable({apis:['setTimeout']});
+ const videoIdentity={...identity,output:'video' as const};let finish!:(value:Response)=>void;
+ const fake=transport([()=>new Promise<Response>(resolve=>{finish=resolve;})]);
+ const client=new ExperienceOutputBindingClient(videoIdentity,{origin,current:()=>true,request:fake.request});
+ const host=new ExperienceHostOperation(()=>client.dispose(),undefined,{action:'inspectResult',output:'video'});
+ const pending=host.wait(client.read());
+ context.mock.timers.tick(45000);assert.equal(host.current(),true);assert.equal(client.pending,true);assert.equal(fake.calls[0].init.signal!.aborted,false);
+ await client.read();assert.equal(fake.calls.length,1);
+ finish(response({...state('absent'),output:'video'}));assert.equal((await pending).status,'absent');host.finish();
+ assert.deepEqual(fake.calls.map(call=>call.init.method),['GET']);
+});
+test('Video status GET header deadline stays finite and late reply cannot revive state',async context=>{
+ context.mock.timers.enable({apis:['setTimeout']});let finish!:(value:Response)=>void;
+ const fake=transport([()=>new Promise<Response>(resolve=>{finish=resolve;})]);
+ const client=new ExperienceOutputBindingClient({...identity,output:'video'},{origin,current:()=>true,request:fake.request});
+ const pending=client.read();context.mock.timers.tick(59999);assert.equal(fake.calls[0].init.signal!.aborted,false);
+ context.mock.timers.tick(1);await pending;assert.equal(fake.calls[0].init.signal!.aborted,true);assert.deepEqual(client.state,unavailableBinding('original_unavailable'));
+ finish(response({...state('absent'),output:'video'}));await new Promise<void>(resolve=>setImmediate(resolve));
+ assert.deepEqual(client.state,unavailableBinding('original_unavailable'));assert.equal(fake.calls.length,1);
+});
+test('Video status response body retains one nonrenewing twenty-second limit',async context=>{
+ context.mock.timers.enable({apis:['setTimeout']});let finish!:(value:Response)=>void,next!:(value:ReadableStreamReadResult<Uint8Array>)=>void;
+ const fake=transport([()=>new Promise<Response>(resolve=>{finish=resolve;})]);
+ const client=new ExperienceOutputBindingClient({...identity,output:'video'},{origin,current:()=>true,request:fake.request});
+ const pending=client.read();context.mock.timers.tick(45000);const reply=response({...state('absent'),output:'video'});
+ Object.defineProperty(reply.body,'getReader',{value:()=>({read:()=>new Promise<ReadableStreamReadResult<Uint8Array>>(resolve=>{next=resolve;}),cancel:async()=>{}})});
+ finish(reply);await new Promise<void>(resolve=>setImmediate(resolve));context.mock.timers.tick(19000);next({done:false,value:new Uint8Array([32])});
+ await new Promise<void>(resolve=>setImmediate(resolve));context.mock.timers.tick(1000);await pending;
+ assert.equal(fake.calls[0].init.signal!.aborted,true);assert.deepEqual(client.state,unavailableBinding('original_unavailable'));assert.equal(fake.calls.length,1);
+});
+for(const reason of ['cancel','source-retire'])test(`Video longer read remains immediately withdrawable on ${reason}`,async context=>{
+ context.mock.timers.enable({apis:['setTimeout']});let finish!:(value:Response)=>void,current=true;
+ const fake=transport([()=>new Promise<Response>(resolve=>{finish=resolve;})]);
+ const client=new ExperienceOutputBindingClient({...identity,output:'video'},{origin,current:()=>current,request:fake.request});
+ const host=new ExperienceHostOperation(()=>client.dispose(),undefined,{action:'inspectResult',output:'video'});
+ const pending=host.wait(client.read()),rejected=assert.rejects(pending,/operation_withdrawn/);
+ context.mock.timers.tick(31000);if(reason==='source-retire')current=false;
+ host.cancel();client.dispose();await rejected;
+ assert.equal(fake.calls[0].init.signal!.aborted,true);assert.equal(client.pending,false);assert.deepEqual(client.state,unavailableBinding('withdrawn'));
+ finish(response({...state('absent'),output:'video'}));await new Promise<void>(resolve=>setImmediate(resolve));
+ context.mock.timers.tick(110000);assert.equal(host.current(),false);assert.deepEqual(client.state,unavailableBinding('withdrawn'));assert.equal(fake.calls.length,1);
+});
+test('Video read host remains bounded at110s and unknown actions retain generic limits',async context=>{
+ context.mock.timers.enable({apis:['setTimeout']});
+ for(const action of ['read','inspectResult']){
+  assert.equal(experienceHostTimeout({action,output:'video'}),110000);
+  let timeouts=0;const host=new ExperienceHostOperation(()=>timeouts++,undefined,{action,output:'video'});
+  const waiting=assert.rejects(host.wait(new Promise<never>(()=>{})),/operation_unconfirmed/);
+  context.mock.timers.tick(109999);assert.equal(host.current(),true);context.mock.timers.tick(1);await waiting;assert.equal(timeouts,1);
+ }
+ assert.equal(experienceResponseTimeout({action:'read',output:'video'}),60000);
+ assert.equal(experienceResponseTimeout({action:'unknown',output:'video'}),20000);
+ assert.equal(experienceHostTimeout({action:'unknown',output:'video'}),30000);
+ assert.equal(experienceResponseTimeout(),20000);assert.equal(experienceHostTimeout(),30000);
+});
