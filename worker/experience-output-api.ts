@@ -269,14 +269,18 @@ async function confirmed(loaded: Loaded) {
  * lineage. No missing/failed read is interpreted as absence. These predicates
  * accompany the native confirmation transaction, not only this preview. */
 async function renewalOffer(loaded: Loaded) {
-  if (loaded.binding.output !== "scene" && loaded.binding.output !== "video" && loaded.binding.output !== "slides" && !(loaded.binding.output === "model3d" && loaded.binding.replacementCycle) || loaded.originals.authorize || loaded.originals.run
-    || (loaded.binding.preparationCycle?.ordinal ?? 0) >= 8) return null;
+  const refused = (reason: string) => {
+    try { console.info("experience_renewal_refused", { output: loaded.binding.output, reason }); } catch { /* Optional diagnostics never change renewal authority. */ }
+    return null;
+  };
+  if (loaded.binding.output !== "scene" && loaded.binding.output !== "video" && loaded.binding.output !== "slides" && !(loaded.binding.output === "model3d" && loaded.binding.replacementCycle)) return null;
+  if (loaded.originals.authorize || loaded.originals.run) return refused("execution_recorded");
+  if ((loaded.binding.preparationCycle?.ordinal ?? 0) >= 8) return refused("renewal_limit");
   const predecessor = scenePreparationPredecessor(loaded.binding, loaded.originals);
-  if (!predecessor) return null;
+  if (!predecessor) return refused("predecessor_unavailable");
   const plan = await confirmed(loaded), root = loaded.rootBinding;
   const { preparationCycle: _previousQuote, ...renewalRoot } = loaded.binding;
   if (root.output === "slides") {
-    const refused = (reason: string) => { console.info("experience_renewal_refused", { output: "slides", reason }); return null; };
     const preflight = loaded.originals.preflight?.receipt.payload.preflight;
     const now = Date.now();
     if (!plan || !record(preflight) || typeof preflight.expiresAt !== "string"
@@ -304,13 +308,13 @@ async function renewalOffer(loaded: Loaded) {
     ? outputModel3dPreparationIdentity(model3dContract, confirmed, loaded.recipe.targetId, loaded.binding.replacementCycle) : videoContract
     ? outputVideoPreparationIdentity(videoContract, confirmed, loaded.recipe.targetId)
     : contract ? outputScenePreparationIdentity(contract, confirmed, loaded.recipe.targetId) : Promise.resolve(null);
-  if (!plan || !contract && !videoContract && !model3dContract) return null;
+  if (!plan || !contract && !videoContract && !model3dContract) return refused("contract_unavailable");
   const original = await identityFor(plan);
   const now = Date.now();
-  if (!original || Date.parse(original.expiresAt) > now || Date.parse(loaded.retained.expiresAt) <= now + 900_000) return null;
-  if ((await registeredExperience(loaded.retained.plan.request.experienceId))?.releaseHash !== root.releaseHash) return null;
+  if (!original || Date.parse(original.expiresAt) > now || Date.parse(loaded.retained.expiresAt) <= now + 900_000) return refused("quote_or_retention_window");
+  if ((await registeredExperience(loaded.retained.plan.request.experienceId))?.releaseHash !== root.releaseHash) return refused("release_changed");
   const latest = await outputExperienceCommands.readConfirmedPlan(loaded.trusted);
-  if (!latest || canonicalJson(latest) !== canonicalJson(plan)) return null;
+  if (!latest || canonicalJson(latest) !== canonicalJson(plan)) return refused("plan_changed");
   const requestIds: string[] = [];
   for (const witness of loaded.lineage.witnesses) {
     if (witness.receipt.action !== "confirm") continue;
@@ -341,9 +345,11 @@ async function renewalOffer(loaded: Loaded) {
     if (parent.checkpoint.providerRequestId !== cycle.predecessor.providerRequestId) return null;
     guards.push(...parent.assertions);
   }
-  const clear = await loaded.trusted.env.DB.prepare(`SELECT CASE WHEN ${qualificationGuards.map(guard => `(${guard.sql})`).join(" AND ")} THEN 1 ELSE 0 END AS clear`)
-    .bind(...qualificationGuards.flatMap(guard => guard.bindings ?? [])).first<{ clear: number }>();
-  if (clear?.clear !== 1) return null;
+  const clear = await loaded.trusted.env.DB.prepare(`SELECT ${qualificationGuards.map((guard, index) => `CASE WHEN (${guard.sql}) THEN 1 ELSE 0 END AS proof${index}`).join(",")}`)
+    .bind(...qualificationGuards.flatMap(guard => guard.bindings ?? [])).first<{ proof0: number; proof1: number; proof2: number }>();
+  if (clear?.proof0 !== 1) return refused("financial_evidence_unassociated");
+  if (clear.proof1 !== 1) return refused("quote_or_retention_window");
+  if (clear.proof2 !== 1) return refused("predecessor_changed");
   return { predecessor, cycle: await scenePreparationSuccessor(renewalRoot, predecessor), guards,
     disclosure: { predecessorPreflightId: predecessor.preflight.preflightId, expiredAt: original.expiresAt } };
 }
