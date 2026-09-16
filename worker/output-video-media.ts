@@ -5,6 +5,17 @@ import { OUTPUT_VIDEO_TRANSPORT } from "./output-video-execution.ts";
 import type { WorkerEnv } from "./runtime.ts";
 export type OutputVideoMediaResult = { artifactId: string; mediaUrl: string; mediaType: string; sha256: string; byteLength: number; clientRequestId: string; providerRequestId: string; model: string; requestDigest: string };
 function fail(reason="unavailable"): never { throw new Error("output_video_media_"+reason); }
+/** Seedance's nominal 480p grid is 864x496 (landscape) / 496x864
+ * (portrait), not a literal 480px short edge. Keep standard 480px originals
+ * readable, but never widen the aspect tolerance for arbitrary dimensions.
+ * Provider table: https://fal.ai/models/bytedance/seedance-2.0/text-to-video
+ * Verified 2026-09-16. Frame size in the contract selects orientation. */
+export function outputVideoFrameDiagnostic(width:number,height:number,frameSize:"1280x720"|"720x1280") {
+ const landscape=frameSize==="1280x720";
+ if(width===(landscape?864:496)&&height===(landscape?496:864))return null;
+ if(Math.min(width,height)!==480)return "dimensions";
+ return Math.abs(width/height-(landscape?16/9:9/16))>.03?"aspect_ratio":null;
+}
 /** Bounded original private-object readback. Container/sample facts are not
  * decoded playback, visual quality or human acceptance. */
 export async function readOutputVideoMedia(env: WorkerEnv, ownerId: string, contractValue: unknown, value: OutputVideoMediaResult, lifetime: { signal?: AbortSignal; deadlineMs: number }) {
@@ -39,7 +50,7 @@ export async function readOutputVideoMedia(env: WorkerEnv, ownerId: string, cont
   if(!complete||length!==value.byteLength)fail("stream_length");
   const bytes=new Uint8Array(length);let offset=0;for(const chunk of chunks){bytes.set(chunk,offset);offset+=chunk.length;}
   const inspection=await bounded(inspectOutputAsset(bytes,value.artifactId+".mp4")),facts=inspection.facts;
-  const landscape=contract.frameSize==="1280x720",width=Number(facts.width),height=Number(facts.height),ratio=width/height;
+  const width=Number(facts.width),height=Number(facts.height);
   if(inspection.status!=="inspected"||inspection.kind!=="video"||inspection.mimeType!=="video/mp4"||inspection.extension!=="mp4")fail("inspection");
   if(inspection.sha256!==value.sha256)fail("digest");
   if(facts.durationBasis!=="mp4-track-timeline")fail("duration_basis");
@@ -47,8 +58,7 @@ export async function readOutputVideoMedia(env: WorkerEnv, ownerId: string, cont
   if(facts.codec!=="avc1")fail("codec");
   if(facts.audioCodec!==undefined)fail("audio_present");
   if(facts.rotationDegrees!==0)fail("rotation");
-  if(Math.min(width,height)!==480)fail("dimensions");
-  if(Math.abs(ratio-(landscape?16/9:9/16))>.03)fail("aspect_ratio");
+  const frameFailure=outputVideoFrameDiagnostic(width,height,contract.frameSize);if(frameFailure)fail(frameFailure);
   current();return{bytes,inspection,media:Object.freeze({...value,width,height,durationSeconds:facts.durationSeconds!,audioTracks:0,codec:"avc1",rotationDegrees:0})};
  }finally{finished=true;clearTimeout(timer);lifetime.signal?.removeEventListener("abort",abort);controller.signal.removeEventListener("abort",stopped);controller.abort();
   if(reader){if(!complete){try{void reader.cancel().catch(()=>{});}catch{/* Already closed. */}}try{reader.releaseLock();}catch{/* Pending rejection remains observed. */}}
