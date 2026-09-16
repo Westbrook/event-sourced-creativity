@@ -18,7 +18,7 @@ async function fixture(){
  INSERT INTO output_plan_revisions VALUES('scope','plan','owner','doc',NULL,NULL,'personal');
  UPDATE output_provider_calls SET status='uncertain' WHERE provider='fal';`);
  const reference={scopeKey:'scope',grantId:'grant',slotId:'slot',planRevisionId:'plan',targetId:'target',targetContractDigest:'target-contract',sourceDigest:'source'};
- f.cp.outputExecution=reference;f.persist();f.job.request_json=JSON.stringify({...f.settings,artifactKind:'video',productionMode:'manual',itemCount:1,outputExecution:reference});
+ f.cp.outputExecution=reference;f.persist();f.job.request_json=JSON.stringify({...f.settings,artifactKind:'video',productionMode:'manual',itemCount:1});
  f.sqlite.prepare("UPDATE document_jobs SET request_json=?,source_surface='outputs'").run(f.job.request_json);
  await f.finish('failed');assert.equal(f.job.status,'failed');assert.equal(f.job.lease_expires_at,null);
  const assertions=[{sql:'1=1',bindings:[],deadlineMs:Date.now()+40000}],before=f.sqlite.prepare('SELECT result_json FROM document_jobs').get().result_json;
@@ -43,6 +43,45 @@ test('failed-original recovery claims only a bounded read lease and privately re
  }finally{f.sqlite.close();}
 });
 
+test('checkpoint-only original execution is required; exact legacy duplicate is optional and never sufficient',async()=>{
+ for(const variant of ['absent','matching','null','foreign','missing-checkpoint','null-checkpoint','scopeKey','grantId','slotId','planRevisionId','targetId','targetContractDigest','sourceDigest']){
+  const f=await fixture();try{
+   const request=JSON.parse(f.job.request_json),checkpoint=JSON.parse(f.job.result_json),reference=structuredClone(checkpoint.outputExecution);
+   assert.equal(Object.hasOwn(request,'outputExecution'),false);
+   if(variant==='matching'||variant==='missing-checkpoint'||variant==='null-checkpoint')request.outputExecution=reference;
+   if(variant==='null')request.outputExecution=null;
+   if(variant==='foreign')request.outputExecution={...reference,slotId:'foreign'};
+   if(variant==='missing-checkpoint')delete checkpoint.outputExecution;
+   if(variant==='null-checkpoint')checkpoint.outputExecution=null;
+   if(Object.hasOwn(reference,variant))checkpoint.outputExecution[variant]='foreign';
+   f.job.request_json=JSON.stringify(request);f.job.result_json=JSON.stringify(checkpoint);
+   f.sqlite.prepare('UPDATE document_jobs SET request_json=?,result_json=?').run(f.job.request_json,f.job.result_json);
+   const before=f.sqlite.prepare('SELECT * FROM document_jobs').get(),calls=f.sqlite.prepare('SELECT * FROM output_provider_calls ORDER BY call_key').all(),slots=f.sqlite.prepare('SELECT * FROM output_operation_slots').all(),grants=f.sqlite.prepare('SELECT * FROM output_execution_grants').all();
+   if(variant==='absent'||variant==='matching'){
+    const lease=await f.claim();await lease.assertCurrent();await lease.release();
+    const after=f.sqlite.prepare('SELECT * FROM document_jobs').get();
+    assert.equal(after.request_json,before.request_json);assert.equal(after.status,'failed');assert.equal(after.expires_at,before.expires_at);assert.equal(after.lease_expires_at,before.lease_expires_at);
+    assert.deepEqual(JSON.parse(after.result_json).outputExecution,reference);
+   }else{await assert.rejects(f.claim());assert.deepEqual(f.sqlite.prepare('SELECT * FROM document_jobs').get(),before);}
+   assert.deepEqual(f.sqlite.prepare('SELECT * FROM output_provider_calls ORDER BY call_key').all(),calls);
+   assert.deepEqual(f.sqlite.prepare('SELECT * FROM output_operation_slots').all(),slots);assert.deepEqual(f.sqlite.prepare('SELECT * FROM output_execution_grants').all(),grants);
+  }finally{f.sqlite.close();}
+ }
+});
+test('claimed recovery still withdraws if either immutable reference body changes',async()=>{
+ for(const field of ['request_json','result_json']){
+  const f=await fixture();try{
+   const lease=await f.claim(),calls=f.sqlite.prepare('SELECT * FROM output_provider_calls ORDER BY call_key').all();
+   const body=JSON.parse(f.sqlite.prepare('SELECT '+field+' AS body FROM document_jobs').get().body);
+   body.outputExecution={...JSON.parse(f.job.result_json).outputExecution,slotId:'foreign'};
+   f.sqlite.prepare('UPDATE document_jobs SET '+field+'=?').run(JSON.stringify(body));
+   const before=f.sqlite.prepare('SELECT COUNT(*) n FROM private_content').get().n;
+   await assert.rejects(lease.assertCurrent());await assert.rejects(lease.retainEnvelope(envelope(f),hook()));
+   assert.equal(f.sqlite.prepare('SELECT COUNT(*) n FROM private_content').get().n,before);
+   assert.deepEqual(f.sqlite.prepare('SELECT * FROM output_provider_calls ORDER BY call_key').all(),calls);
+  }finally{f.sqlite.close();}
+ }
+});
 test('canceled, foreign, concurrent, expired, changed-source and unknown-provider originals cannot claim recovery',async()=>{
  const changes=[
   f=>{f.job.status='canceled';f.sqlite.exec("UPDATE document_jobs SET status='canceled'");},

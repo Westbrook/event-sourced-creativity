@@ -17,12 +17,17 @@ function reject():never{throw new OutputConflictError("output_video_recovery_una
 export async function claimOutputVideoRecoveryLease(env:WorkerEnv,scope:OutputScope,slot:OutputOperationSlot,job:DocumentJobRow,
  options:{assertions:OutputSqlAssertion[];signal?:AbortSignal}){
  const request=object(JSON.parse(job.request_json)),cp=object(JSON.parse(job.result_json??"{}")),checkpoint=object(cp.outputVideoMediaCheckpoint),planner=object(cp.outputVideoPlannerCheckpoint);
- const contract=parseVideoOutputContract(request.outputVideo),execution=object(request.outputExecution);
+ const contract=parseVideoOutputContract(request.outputVideo),execution=object(cp.outputExecution);
+ const reference={scopeKey:scope.key,grantId:slot.grantId,slotId:slot.slotId,planRevisionId:slot.planRevisionId,targetId:slot.targetId,targetContractDigest:slot.targetContractDigest,sourceDigest:slot.sourceDigest};
  if(!contract||request.artifactKind!=="video"||request.productionMode!=="manual"||request.itemCount!==1
   ||scope.kind!=="personal"||scope.actorUserId!==scope.ownerUserId||scope.contextId||scope.organizationId||scope.projectAccessId||!options.assertions.length
   ||job.kind!=="render_document"||job.source_surface!=="outputs"||job.status!=="failed"||job.owner_id!==scope.actorUserId||job.stream_id!==`creative:${scope.ownerUserId}`||job.document_id!==scope.documentId
   ||slot.jobId!==job.job_id||slot.scopeKey!==scope.key||slot.slotId!==job.output_slot_id||slot.attemptOrdinal!==0||slot.previousSlotId!==null
   ||execution.scopeKey!==scope.key||execution.slotId!==slot.slotId||execution.grantId!==slot.grantId
+  // Admission stores its reference in the checkpoint. A request-side legacy
+  // duplicate may agree but cannot supply, replace or override that authority.
+  ||canonicalJson(execution)!==canonicalJson(reference)
+  ||Object.hasOwn(request,"outputExecution")&&canonicalJson(request.outputExecution)!==canonicalJson(reference)
   ||checkpoint.version!=="output-video-request-checkpoint-v1"||checkpoint.stage!=="video:initial"||checkpoint.provider!=="fal"
   ||planner.stage!=="planning:0:initial"||planner.provider!=="openai"||typeof planner.clientRequestId!=="string"||typeof planner.requestDigest!=="string"
   ||typeof cp.artifactId!=="string"||!cp.artifactId||typeof cp.plannerResponseId!=="string"||!cp.plannerResponseId

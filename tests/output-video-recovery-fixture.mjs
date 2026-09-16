@@ -20,7 +20,7 @@ export async function videoRecoveryFixture({published=false,referenceSha256}={})
  original.cp.providerSubmissions[mediaId].inputTokens=0;original.cp.providerSubmissions[mediaId].outputTokens=0;
  if(!published){original.cp.outputVideoMediaEnvelopes=original.cp.outputVideoMediaEnvelopes.slice(0,1);delete original.cp.outputVideoMediaResult;original.cp.providerSubmissions[mediaId].status='accepted';delete original.cp.providerSubmissions[mediaId].costMicrousd;}
  original.persist();original.sqlite.exec("UPDATE output_provider_calls SET status='uncertain',used_microusd=NULL WHERE provider='fal'");
- const settings={...original.settings,artifactKind:'video',productionMode:'manual',itemCount:1,outputExecution:reference};
+ const settings={...original.settings,artifactKind:'video',productionMode:'manual',itemCount:1};
  original.job.request_json=JSON.stringify(settings);original.sqlite.prepare("UPDATE document_jobs SET request_json=?,source_surface='outputs'").run(original.job.request_json);
  await original.finish('failed');
  for(const row of original.sqlite.prepare('SELECT * FROM private_content').all())insert('private_content',row);
