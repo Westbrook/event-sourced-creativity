@@ -6,12 +6,13 @@ import type { Model3dGeneratedFile, Model3dPreparedReceipt } from "./fal-model3d
 import type { PaidProviderSubmission } from "../src/model/provider-submission.ts";
 import { ownerMediaNamespace } from "../src/model/media-ownership.ts";
 import { captureModel3dComparisonData } from "../src/model/output-model3d-offer.ts";
+import { MODEL3D_PRIVATE_TRANSFER_MAX_BYTES } from "../src/model/model3d.ts";
 
 function fail(): never { throw new Error("output_model3d_recovery_completion_invalid"); }
 const object = (v: unknown): Record<string, unknown> => v && typeof v === "object" && !Array.isArray(v) ? v as Record<string, unknown> : fail();
 const equal = (a: unknown, b: unknown) => canonicalJson(a) === canonicalJson(b);
-export const MODEL3D_RECOVERY_PRIMARY_QUALIFICATION_BYTES = 16 * 1024 * 1024;
-/** Recovery-only memory bound. Original paid bytes are stored before checking. */
+export const MODEL3D_RECOVERY_PRIMARY_QUALIFICATION_BYTES = MODEL3D_PRIVATE_TRANSFER_MAX_BYTES;
+/** One owned buffer, not three full-size copies. Paid bytes are stored first. */
 export function assertOutputModel3dRecoveryPrimarySize(bytes: number) {
   if (!Number.isSafeInteger(bytes) || bytes < 1 || bytes > MODEL3D_RECOVERY_PRIMARY_QUALIFICATION_BYTES)
     throw new Error("output_model3d_recovery_qualification_size_limit");
@@ -52,7 +53,7 @@ export function createOutputModel3dRecoveryAssembly(identity: AssemblyIdentity) 
       if (qualified) fail();
       assertOutputModel3dRecoveryPrimarySize(primary.bytes.byteLength);
       qualified = await qualifyOutputModel3dCompletion({ offer: input.offer, prepared: input.prepared, calls: [input.submission],
-        providerRequestId: input.submission.providerRequestId!, primary });
+        providerRequestId: input.submission.providerRequestId!, primary }, "transfer");
       // Only the compact immutable proof survives this call, not primary bytes.
       return qualified;
     },

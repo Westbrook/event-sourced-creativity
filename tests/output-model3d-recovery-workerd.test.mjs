@@ -37,7 +37,7 @@ test('actual local workerd + D1 + R2 recovery, lease/cleanup and conditional-cre
   // accepted synthetic network port. Node fixture must never use fetch.
   globalThis.fetch = () => { throw Error('node_fixture_network_forbidden'); };
   try {
-    const exported = exportSynthetic(f.sqlite), bytes = glb();
+    const exported = exportSynthetic(f.sqlite), bytes = glb({}, process.env.FORMA_MODEL3D_LARGE_GLB === '1' ? 63 * 1024 * 1024 : 36);
     const tuple = { scope: f.scope, slot: f.slot, user: f.user, assertions: f.assertions, current: f.current,
       jobId: f.job.job_id, draftId: f.original.preview.draftId };
     assert.equal(f.provider.providerRequestId, 'provider-test-original');

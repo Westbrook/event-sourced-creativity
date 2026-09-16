@@ -1,8 +1,7 @@
 import { canonicalJson, digest, freeze } from "../experiences/compiler.ts";
 import { model3dMiniAppCostApprovalMatches, parseModel3dMiniAppCostPreview } from "./model3d-mini-app-consent.ts";
 import { RODIN_ADAPTER_VERSION } from "./model3d.ts";
-import { qualifyStaticModel3dAsset } from "./model3d-static-policy.ts";
-import { MAX_MODEL3D_UPLOAD_BYTES } from "./model3d-assets.ts";
+import { captureModel3dAssetBytes, inspectTransferredStaticModel3dAsset } from "./model3d-static-policy.ts";
 import type { Model3dPreparedReceipt } from "../../worker/fal-model3d-adapter.ts";
 import type { PaidProviderSubmission } from "./provider-submission.ts";
 import type { ProviderAttemptPreflight } from "../../worker/openai-adapter.ts";
@@ -62,16 +61,13 @@ export function assertModel3dPreparedAttempt(offer: OutputModel3dPayload, prepar
 export async function qualifyOutputModel3dCompletion(input: {
   offer: OutputModel3dPayload; prepared: Model3dPreparedReceipt; calls: readonly PaidProviderSubmission[];
   providerRequestId: string; primary: { bytes: Uint8Array; mimeType: string; sha256: string; role: string; format: string | null };
-}) {
+}, ownership: "copy" | "transfer" = "copy") {
   // Capture the caller-owned native byte view before the first await. The
   // qualifier and final custody hash must see exactly the same immutable copy.
-  const typed = Object.getPrototypeOf(Uint8Array.prototype);
   if (Object.getPrototypeOf(input.primary.bytes) !== Uint8Array.prototype) return fail();
-  const length = Object.getOwnPropertyDescriptor(typed, "byteLength")!.get!.call(input.primary.bytes);
-  const buffer = Object.getOwnPropertyDescriptor(typed, "buffer")!.get!.call(input.primary.bytes);
-  Object.getOwnPropertyDescriptor(ArrayBuffer.prototype, "byteLength")!.get!.call(buffer);
-  if (!Number.isSafeInteger(length) || length < 1 || length > MAX_MODEL3D_UPLOAD_BYTES) return fail();
-  const bytes = new Uint8Array(input.primary.bytes), primary = snapshot({ mimeType: input.primary.mimeType, sha256: input.primary.sha256,
+  const bytes = captureModel3dAssetBytes(input.primary.bytes, ownership);
+  if (!bytes) return fail();
+  const primary = snapshot({ mimeType: input.primary.mimeType, sha256: input.primary.sha256,
     role: input.primary.role, format: input.primary.format }) as Record<string, unknown>;
   const calls = snapshot(input.calls), providerRequestId = input.providerRequestId, offer = input.offer;
   const prepared = await verifyModel3dPreparedReceipt(offer, input.prepared);
@@ -82,13 +78,12 @@ export async function qualifyOutputModel3dCompletion(input: {
     || call.costMicrousd !== offer.preview.maximumMicrousd || call.totalTokens !== 0
     || call.requestDigest !== undefined && call.requestDigest !== prepared.requestDigest || call.unitId !== undefined && call.unitId !== "model3d:initial") return fail();
   if (primary.role !== "mesh" || primary.format !== "glb" || primary.mimeType !== "model/gltf-binary" || !hash(primary.sha256)) return fail();
-  const qualification = await qualifyStaticModel3dAsset(bytes, primary.mimeType);
+  const inspected = await inspectTransferredStaticModel3dAsset(bytes, primary.mimeType);
   // Invalid/animated output remains an original paid result, but never acquires
   // this static qualification. A separate exact-byte hash binds both branches.
-  const actual = new Uint8Array(await crypto.subtle.digest("SHA-256", bytes));
-  if (Array.from(actual, byte => byte.toString(16).padStart(2, "0")).join("") !== primary.sha256) return fail();
+  if (!inspected || inspected.sha256 !== primary.sha256) return fail();
   return freeze({ schemaVersion: 1, contract: offer.contract, preparationDigest: offer.preview.preparationDigest,
     mediaCallId: call.clientRequestId, providerRequestId: call.providerRequestId, requestDigest: prepared.requestDigest,
-    primarySha256: primary.sha256, primaryByteLength: bytes.byteLength, qualification,
+    primarySha256: primary.sha256, primaryByteLength: inspected.byteLength, qualification: inspected.qualification,
     semanticObjectCount: "unverified", requirementFulfilled: false });
 }

@@ -2,9 +2,34 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import test from "node:test";
 import { MAX_MODEL3D_UPLOAD_BYTES, validateModel3dAsset } from "../src/model/model3d-assets.ts";
-import { MODEL3D_STATIC_POLICY, qualifyStaticModel3dAsset } from "../src/model/model3d-static-policy.ts";
+import { MODEL3D_STATIC_POLICY, qualifyStaticModel3dAsset, inspectTransferredStaticModel3dAsset } from "../src/model/model3d-static-policy.ts";
 
 const hash = bytes => createHash("sha256").update(bytes).digest("hex");
+
+test("consuming inspection detaches aliases and hashes only the exact offset view", async () => {
+  const original = fixture().bytes(), expected = hash(original);
+  const backing = new Uint8Array(original.length + 16); backing.fill(29); backing.set(original, 8);
+  const selected = backing.subarray(8, 8 + original.length);
+  Object.defineProperty(selected, 'buffer', {get(){throw Error('supplied getter');}});
+  selected[Symbol.iterator] = () => { throw Error('supplied iterator'); };
+  const pending = inspectTransferredStaticModel3dAsset(selected, 'model/gltf-binary');
+  assert.equal(backing.byteLength, 0); assert.equal(selected.byteLength, 0);
+  const result = await pending;
+  assert.equal(result.qualification.status, 'qualified'); assert.equal(result.sha256, expected);
+  assert.equal(result.byteLength, original.length); assert(Object.isFrozen(result));
+  const bad = new Uint8Array([1,2,3]), badHash = hash(bad);
+  const unqualified = await inspectTransferredStaticModel3dAsset(bad, 'model/gltf-binary');
+  assert.equal(unqualified.qualification.status, 'unqualified'); assert.equal(unqualified.sha256, badHash);
+});
+
+test("consuming inspection refuses shared, resizable, subclassed and oversized backing stores", async () => {
+  class Custom extends Uint8Array {};
+  class CustomBuffer extends ArrayBuffer {};
+  const cases = [new Uint8Array(new SharedArrayBuffer(8)), new Uint8Array(new ArrayBuffer(8,{maxByteLength:16})),
+    new Custom(8), new Uint8Array(new CustomBuffer(8)), new Uint8Array(MAX_MODEL3D_UPLOAD_BYTES + 1).subarray(0,8),
+    new Proxy(new Uint8Array(8), {})];
+  for (const value of cases) assert.equal(await inspectTransferredStaticModel3dAsset(value, 'model/gltf-binary'), null);
+});
 // New, synthetic in-memory GLBs. No app fixture, provider file, reference or external resource.
 function fixture() {
   const parts = [];

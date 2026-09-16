@@ -10,8 +10,8 @@ const realFetch = globalThis.fetch;
 const deny = () => { throw Error("Unexpected network: this suite permits only its synthetic original-ID GET ports"); };
 globalThis.fetch = deny; test.after(() => { globalThis.fetch = realFetch; });
 
-function ports(f, mode = "completed", onRequest = () => {}) {
-  const requests = [], bytes = glb(), requestId = f.provider.providerRequestId;
+function ports(f, mode = "completed", onRequest = () => {}, bytes = glb()) {
+  const requests = [], requestId = f.provider.providerRequestId;
   const base = "https://queue.fal.run/fal-ai/hyper3d/requests/" + requestId;
   const asset = "https://v3.fal.media/files/test/original.glb";
   f.env.FAL_KEY = "synthetic-unit-test-key-not-a-credential";
@@ -129,6 +129,19 @@ test("authority change during original status GET prevents result/media/publicat
   } finally { globalThis.fetch = deny; f.close(); }
 });
 
+test("a settled original with a refused file can be recovered without another paid attempt", async () => {
+  const f = await fixture();
+  try {
+    ports(f, "bad-file"); await assert.rejects(run(f));
+    const settled = budgets(f);
+    const port = ports(f);
+    assert.equal((await run(f)).status, "completed");
+    successful(f); assert.equal(port.requests.length, 3);
+    assert.deepEqual(budgets(f), settled);
+    assert.equal(result(f).outputModel3dRecoveryHistory.length, 2);
+  } finally { globalThis.fetch = deny; f.close(); }
+});
+
 test("lost acknowledgement after actual commit returns the same strict completed original", async () => {
   const f = await fixture();
   try {
@@ -164,9 +177,20 @@ test("pure remaining-usage arithmetic denies malformed, foreign, negative and ex
   assert.throws(() => remainingOutputModel3dRecoveryUsage({ ...input, rows: Array(65).fill(row) }));
 });
 
-test("recovery primary structural qualification has explicit inclusive 16MiB size boundary", () => {
-  assert.equal(MODEL3D_RECOVERY_PRIMARY_QUALIFICATION_BYTES, 16 * 1024 * 1024);
+test("recovery primary structural qualification shares the inclusive 64MiB transfer boundary", () => {
+  assert.equal(MODEL3D_RECOVERY_PRIMARY_QUALIFICATION_BYTES, 64 * 1024 * 1024);
   assert.doesNotThrow(() => assertOutputModel3dRecoveryPrimarySize(MODEL3D_RECOVERY_PRIMARY_QUALIFICATION_BYTES));
   for (const size of [0, -1, 1.5, NaN, Infinity, MODEL3D_RECOVERY_PRIMARY_QUALIFICATION_BYTES + 1])
     assert.throws(() => assertOutputModel3dRecoveryPrimarySize(size), /output_model3d_recovery_qualification_size_limit/);
+});
+
+test("actual recovery qualifies a GLB larger than the retired 16MiB cap", async () => {
+  const f = await fixture();
+  try {
+    const port = ports(f, "completed", () => {}, glb({}, 18 * 1024 * 1024));
+    assert.equal((await run(f)).status, "completed"); successful(f);
+    assert.equal(port.requests.length, 3);
+    assert.equal((await run(f)).status, "completed");
+    assert.equal(port.requests.length, 3);
+  } finally { globalThis.fetch = deny; f.close(); }
 });

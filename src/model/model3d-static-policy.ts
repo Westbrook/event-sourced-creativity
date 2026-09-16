@@ -33,25 +33,37 @@ const STATIC_EXTENSIONS = new Set([
 const typedArrayPrototype = Object.getPrototypeOf(Uint8Array.prototype);
 const typedLength = Object.getOwnPropertyDescriptor(typedArrayPrototype, "byteLength")!.get!;
 const typedBuffer = Object.getOwnPropertyDescriptor(typedArrayPrototype, "buffer")!.get!;
+const typedOffset = Object.getOwnPropertyDescriptor(typedArrayPrototype, "byteOffset")!.get!;
 const bufferLength = Object.getOwnPropertyDescriptor(ArrayBuffer.prototype, "byteLength")!.get!;
+const bufferResizable = Object.getOwnPropertyDescriptor(ArrayBuffer.prototype, "resizable")?.get;
 const record = (value: unknown): Record<string, unknown> | null =>
   value !== null && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
 
 /** Capture native bytes once, before any await; never call supplied iterators/getters. */
-function snapshot(input: unknown): Uint8Array<ArrayBuffer> | null {
+export function captureModel3dAssetBytes(input: unknown, ownership: "copy" | "transfer" = "copy"): Uint8Array<ArrayBuffer> | null {
   try {
     if (input === null || typeof input !== "object") return null;
     let length: number;
     if (Object.getPrototypeOf(input) === Uint8Array.prototype) {
       length = typedLength.call(input);
       // Reject shared backing memory: its contents can race even a synchronous copy.
-      bufferLength.call(typedBuffer.call(input));
+      const buffer = typedBuffer.call(input) as ArrayBuffer;
+      const backingLength = bufferLength.call(buffer);
       if (!length || length > MAX_MODEL3D_UPLOAD_BYTES) return null;
+      if (ownership === "transfer") {
+        if (Object.getPrototypeOf(buffer) !== ArrayBuffer.prototype || backingLength > MAX_MODEL3D_UPLOAD_BYTES || bufferResizable?.call(buffer)) return null;
+        const offset = typedOffset.call(input);
+        return new Uint8Array(structuredClone(buffer, { transfer: [buffer] }), offset, length);
+      }
       return new Uint8Array(input as Uint8Array);
     }
     if (Object.getPrototypeOf(input) !== ArrayBuffer.prototype) return null;
     length = bufferLength.call(input);
     if (!length || length > MAX_MODEL3D_UPLOAD_BYTES) return null;
+    if (ownership === "transfer") {
+      if (bufferResizable?.call(input)) return null;
+      return new Uint8Array(structuredClone(input as ArrayBuffer, { transfer: [input as ArrayBuffer] }));
+    }
     return new Uint8Array(new Uint8Array(input as ArrayBuffer));
   } catch { return null; }
 }
@@ -92,9 +104,25 @@ export async function qualifyStaticModel3dAsset(
   input: Uint8Array | ArrayBuffer,
   mimeType: unknown = MODEL3D_MIME_TYPE,
 ): Promise<StaticModel3dQualification> {
+  return qualifyOwnedStaticModel3dAsset(captureModel3dAssetBytes(input), mimeType);
+}
+
+/** Consumes the native backing buffer before any await. Only its private view
+ * survives; all caller aliases are detached. No mutable-view bypass exists.
+ * Qualification and custody digest describe the same exact bounded bytes. */
+export async function inspectTransferredStaticModel3dAsset(input: Uint8Array, mimeType: unknown) {
+  const bytes = captureModel3dAssetBytes(input, "transfer");
+  if (!bytes) return null;
+  const byteLength = bytes.byteLength;
+  const qualification = await qualifyOwnedStaticModel3dAsset(bytes, mimeType);
+  const sha256 = qualification.status === "qualified" ? qualification.sha256
+    : Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", bytes)), byte => byte.toString(16).padStart(2, "0")).join("");
+  return Object.freeze({ qualification, sha256, byteLength });
+}
+
+async function qualifyOwnedStaticModel3dAsset(bytes: Uint8Array<ArrayBuffer> | null, mimeType: unknown): Promise<StaticModel3dQualification> {
   const refuse = (reason: StaticModel3dRefusal): StaticModel3dQualification =>
     Object.freeze({ status: "unqualified", policy: MODEL3D_STATIC_POLICY, reason });
-  const bytes = snapshot(input);
   if (!bytes) return refuse("invalid_bytes");
   if (typeof mimeType !== "string") return refuse("invalid_glb");
   let model: Record<string, unknown>;
