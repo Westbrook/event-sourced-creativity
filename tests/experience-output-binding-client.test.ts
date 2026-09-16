@@ -825,6 +825,83 @@ function recoverable():ExperienceNativeState {
   Object.assign(value.preflight!.targets[0],{provider:'fal',model:'ideogram/v4',route:'document-image-fal-manual-v1'});
   value.grant!.disclosure=structuredClone(value.preflight!);return value;
 }
+const videoIdentity={...identity,output:'video' as const,draftHash:'sha256:'+identity.draftHash,releaseHash:'sha256:'+identity.releaseHash};
+async function recoverableVideo() {
+  const {createVideoOutputContract}=await import('../src/model/output-video-contract.ts');
+  const {VIDEO_ADAPTER_CONTRACT}=await import('../src/model/video-adapter.ts');
+  const {VIDEO_READY_REASON,VIDEO_TRANSFER,readVideoExecutionOffer}=await import('../src/model/output-video-offer.ts');
+  const {OUTPUT_VIDEO_EXECUTION_POLICY}=await import('../src/model/output-execution-policy.ts');
+  const {documentRenderTokenReservation}=await import('../src/model/generation-budget.ts');
+  const value=state('failed');Object.assign(value,videoIdentity);value.permitted.recoverResult=true;
+  const sourceDigest='d'.repeat(64),requirementsDigest='e'.repeat(64),jobId='video-'+'f'.repeat(64);
+  Object.assign(value.current,{sourceDigest,requirementsDigest});Object.assign(value.plan!,{sourceDigest,requirementsDigest});
+  Object.assign(value.preflight!,{sourceDigest,requirementsDigest});Object.assign(value.original!,{sourceDigest,requirementsDigest,jobId});
+  value.grant!.operations[0].jobId=jobId;
+  const contract=createVideoOutputContract({source:{draftId:identity.draftId,draftHash:'sha256:'+identity.draftHash,
+    releaseHash:'sha256:'+identity.releaseHash,requestHash:'sha256:'+'1'.repeat(64),sourceBindingHash:'sha256:'+'2'.repeat(64)},
+    reference:{version:1,sourceProjectId:'source-project',sourceDocumentId:'source-document',sourceBlockId:'source-block',
+      referenceId:'source-reference',sha256:'3'.repeat(64),permissionAttestation:'i-own-or-have-permission'},frameSize:'1280x720'});
+  assert.ok(contract);
+  const mediaMaximum=4*VIDEO_ADAPTER_CONTRACT.publishedCostPerSecondMicrousd['480p'],maximumMicrousd=mediaMaximum+10000;
+  const target={targetId:value.plan!.targetId,available:true,reasonCode:'output_video_ready',reason:VIDEO_READY_REASON,
+    transferCode:'output_transfer_video_after_authorization',transferDescription:VIDEO_TRANSFER,provider:'fal',model:VIDEO_ADAPTER_CONTRACT.model,
+    route:'document-video-owned-still-four-seconds-manual-v1',maximumMicrousd,maximumCalls:2,maximumTokens:documentRenderTokenReservation('video',1,1),
+    settings:{kind:'render_document',preparationOnly:false,executionAvailable:true,explicitCostAndTransferApprovalRequired:true,
+      executionPolicy:OUTPUT_VIDEO_EXECUTION_POLICY,videoPricingVersion:`forma.video.fal-480p-transport@1:${VIDEO_ADAPTER_CONTRACT.adapterVersion}:${VIDEO_ADAPTER_CONTRACT.publishedCostPerSecondMicrousd['480p']}`,
+      original:{requestId:jobId,expiresAt:value.original!.expiresAt,draftId:identity.draftId,actorUserId:identity.actorUserId,
+        projectId:identity.projectId,documentId:identity.documentId,sourceDigest,requirementsDigest},
+      payload:{artifactKind:'video',productionMode:'manual',itemCount:1,outputVideo:contract,
+        outputVideoPlanner:{contract,requestDigest:'4'.repeat(64),maximumInputTokens:4096},videoSeconds:4,videoSize:'1280x720',videoResolution:'480p',videoAudioMode:'silent',
+        outputTargetInstructions:'Slow camera push toward the teapot.',paidMediaConfirmed:true,budgetAcknowledged:true,preflightAcknowledged:true},
+      calls:[{stage:'planning:0:initial',provider:'openai',model:'gpt-5.6-terra',maximumMicrousd:10000,maximumInputTokens:4096,maximumOutputTokens:3000},
+        {stage:'video:initial',provider:'fal',model:VIDEO_ADAPTER_CONTRACT.model,maximumMicrousd:mediaMaximum,maximumInputTokens:0,maximumOutputTokens:0}]}};
+  assert.ok(readVideoExecutionOffer(target));
+  value.preflight!.targets=[target];
+  for(const row of [value.preflight!,value.grant!,value.grant!.operations[0]]) Object.assign(row,{maximumMicrousd,maximumCalls:2});
+  value.grant!.disclosure=structuredClone(value.preflight!);
+  return value;
+}
+test('Video recovery accepts the closed original offer and sends only explicit original-result recovery',async()=>{
+  const value=await recoverableVideo();
+  assert.ok(decodeExperienceBinding(value,videoIdentity));
+  const path=basePath+'/recover-result',fake=transport([response(value),response({...value,recovery:'pending'},path)]);
+  const client=new ExperienceOutputBindingClient(videoIdentity,{origin,current:()=>true,request:fake.request});
+  await client.read();const original=shown(client);
+  await client.command('run',original);await client.command('resumeRun',original);assert.equal(fake.calls.length,1);
+  await client.command('recoverResult',original);
+  assert.deepEqual(fake.calls.map(c=>[c.path,c.init.method]),[[basePath,'GET'],[path,'POST']]);
+  assert.deepEqual(JSON.parse(String(fake.calls[1].init.body)),{draftHash:videoIdentity.draftHash,grantId:value.original!.grantId,jobId:value.original!.jobId,explicitRecovery:true});
+  assert.equal(shown(client).recovery,'pending');
+});
+test('Video recovery refuses changed provider policy and preserves completed recovery without authorizing generation',async()=>{
+  const value=await recoverableVideo();
+  for(const patch of [{provider:'other'},{model:'other'},{route:'document-image-fal-manual-v1'},{maximumCalls:3}]){
+    const bad=structuredClone(value);Object.assign(bad.preflight!.targets[0],patch);bad.grant!.disclosure=structuredClone(bad.preflight!);
+    assert.equal(decodeExperienceBinding(bad,videoIdentity),null);
+  }
+  const missing=structuredClone(value);delete missing.preflight!.targets[0].settings;missing.grant!.disclosure=structuredClone(missing.preflight!);
+  assert.equal(decodeExperienceBinding(missing,videoIdentity),null);
+  for(const patch of [{requestId:'video-'+'0'.repeat(64)},{actorUserId:'different-owner'},{projectId:'different-project'},
+    {documentId:'different-document'},{sourceDigest:'0'.repeat(64)},{requirementsDigest:'0'.repeat(64)}]) {
+    const bad=structuredClone(value),settings=bad.preflight!.targets[0].settings as {original:Record<string,unknown>};
+    Object.assign(settings.original,patch);bad.grant!.disclosure=structuredClone(bad.preflight!);
+    assert.equal(decodeExperienceBinding(bad,videoIdentity),null);
+  }
+  for(const field of ['draftHash','releaseHash']) {
+    const bad=structuredClone(value),settings=bad.preflight!.targets[0].settings as {payload:{outputVideo:{source:Record<string,unknown>};outputVideoPlanner:{contract:unknown}}};
+    settings.payload.outputVideo.source[field]='sha256:'+'0'.repeat(64);
+    settings.payload.outputVideoPlanner.contract=structuredClone(settings.payload.outputVideo);
+    bad.grant!.disclosure=structuredClone(bad.preflight!);assert.equal(decodeExperienceBinding(bad,videoIdentity),null);
+  }
+  // This synthetic quote is already expired; reading recovery is not new spending authority.
+  assert.ok(Date.parse(value.original!.expiresAt)<Date.now());assert.ok(decodeExperienceBinding(value,videoIdentity));
+  value.status='succeeded';value.recovery='completed';value.permitted.recoverResult=false;
+  value.original!.jobStatus='completed';value.original!.slotStatus='succeeded';value.original!.grantStatus='completed';
+  value.grant!.status='completed';value.grant!.operations[0].status='succeeded';
+  assert.ok(decodeExperienceBinding(value,videoIdentity));
+  assert.equal(value.permitted.run,false);assert.equal(value.permitted.resumeRun,false);
+  const widened=structuredClone(value);widened.permitted.run=true;assert.equal(decodeExperienceBinding(widened,videoIdentity),null);
+});
 test('Audio original recovery decodes exact native terms and cannot fall back to paid Run',async()=>{
   const {createAudioOutputContract}=await import('../src/model/output-audio-contract.ts');
   const value=state('failed');value.output='audio';value.permitted.recoverResult=true;
