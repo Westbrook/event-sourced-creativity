@@ -18,7 +18,7 @@ import { OUTPUT_NATIVE_EXECUTION_POLICY, readOutputNativeExecutionPolicy, type O
 import { outputSchemaIsReady } from "./output-schema-state.ts";
 import { loadOutputJobBinding, createOutputEventExecution, synchronizeOutputJobOutcome, prepareOutputJobOutcomeStatements, reconcileKnownOutputProviderReceipts, type OutputExecutionProof, type OutputEventExecution } from "./output-execution-control.ts";
 import { prepareSceneJobSourceClaim } from './scene-job-source-witness.ts';
-import { expiredOriginalSceneJobFailure, expiredOriginalAudioJobFailure, expiredOriginalVideoJobFailure, type SceneTerminalWitness } from './output-expired-scene-job.ts';
+import { expiredOriginalSceneJobFailure, expiredOriginalAudioJobFailure, expiredOriginalVideoJobFailure, expiredOriginalModel3dJobFailure, type SceneTerminalWitness } from './output-expired-scene-job.ts';
 import { outputProofReadStatements } from "./output-disclosure-proof.ts";
 import { retainedOutputBodyAssertions, rememberOutputPrivateBody, type OutputScope, ensureOutputRequirementsSchema, outputAssertionStatements, outputScopeAuthority, OutputConflictError, type OutputSqlAssertion } from "./output-requirements-ledger.ts";
 import { resolveOutputExecutionAuthority, prepareOutputExecutionProof } from "./output-requirements-api.ts";
@@ -2155,8 +2155,8 @@ export async function runDocumentJob(env: WorkerEnv, user: PilotUser, jobId: str
     return readJob(env,user.userId,jobId);
   }
   if(outputBinding&&row.kind==='render_document'&&row.source_surface==='outputs'
-    &&['audio','video'].includes(String(parseRequest(row).artifactKind))&&row.attempt_count!==0){
-    const originalClaimFailure=parseRequest(row).artifactKind==='video'?expiredOriginalVideoJobFailure:expiredOriginalAudioJobFailure;
+    &&['audio','video','model3d'].includes(String(parseRequest(row).artifactKind))&&row.attempt_count!==0){
+    const originalClaimFailure=parseRequest(row).artifactKind==='model3d'?expiredOriginalModel3dJobFailure:parseRequest(row).artifactKind==='video'?expiredOriginalVideoJobFailure:expiredOriginalAudioJobFailure;
     const expiredClaim=originalClaimFailure(row,new Date().toISOString());
     if(expiredClaim){
       const receipts=await env.DB.prepare("SELECT event_id,sequence,type,payload FROM events WHERE stream_id=? AND correlation_id=? AND type IN('DocumentRenderCompleted','DocumentRenderFailed') ORDER BY sequence LIMIT 2").bind(row.stream_id,row.correlation_id).all<SceneTerminalWitness>();
