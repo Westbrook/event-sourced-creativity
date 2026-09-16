@@ -1,6 +1,7 @@
 import {canonicalJson,freeze} from "./compiler.ts";
 import {snapshotExperienceEvidence as snapshot} from "./evidence-snapshot.ts";
 import {parseVideoOutputContract,type VideoOutputContract} from "../model/output-video-contract.ts";
+import {outputVideoFrameDiagnostic} from "../model/output-video-dimensions.ts";
 import {ownerMediaNamespace} from "../model/media-ownership.ts";
 import type {NativeRetainedOutputDto} from "../model/native-retained-output.ts";
 const row=(v:unknown):v is Record<string,unknown>=>Boolean(v&&typeof v==="object"&&!Array.isArray(v));
@@ -30,8 +31,8 @@ export function captureExperienceVideoEvidence(value:unknown):ExperienceVideoEvi
    ||m.mediaType!=="video/mp4"||m.model!=="bytedance/seedance-2.0/reference-to-video"||!hash(m.sha256)||!hash(m.requestDigest)||!id(m.clientRequestId)||!id(m.providerRequestId)
    ||!Number.isSafeInteger(m.byteLength)||Number(m.byteLength)<1||Number(m.byteLength)>24*1024*1024||m.audioTracks!==0||m.codec!=="avc1"||m.rotationDegrees!==0
    ||!Number.isFinite(m.durationSeconds)||Math.abs(Number(m.durationSeconds)-4)>1/24+.001
-   ||![m.width,m.height].every(n=>Number.isSafeInteger(n)&&Number(n)>0)||Math.min(Number(m.width),Number(m.height))!==480
-   ||Math.abs(Number(m.width)/Number(m.height)-(contract.frameSize==="1280x720"?16/9:9/16))>.03)return null;
+   ||![m.width,m.height].every(n=>Number.isSafeInteger(n)&&Number(n)>0)
+   ||outputVideoFrameDiagnostic(Number(m.width),Number(m.height),contract.frameSize)!==null)return null;
   return freeze({receipt:receipt as unknown as Receipt,contentSha256,inputSha256});
  }catch{return null;}
 }

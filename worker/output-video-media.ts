@@ -1,21 +1,11 @@
 import { ownerMediaNamespace } from "../src/model/media-ownership.ts";
 import { inspectOutputAsset, MAX_OUTPUT_ASSET_BYTES } from "../src/model/output-asset-inspection.ts";
 import { parseVideoOutputContract } from "../src/model/output-video-contract.ts";
+import { outputVideoFrameDiagnostic } from "../src/model/output-video-dimensions.ts";
 import { OUTPUT_VIDEO_TRANSPORT } from "./output-video-execution.ts";
 import type { WorkerEnv } from "./runtime.ts";
 export type OutputVideoMediaResult = { artifactId: string; mediaUrl: string; mediaType: string; sha256: string; byteLength: number; clientRequestId: string; providerRequestId: string; model: string; requestDigest: string };
 function fail(reason="unavailable"): never { throw new Error("output_video_media_"+reason); }
-/** Seedance's nominal 480p grid is 864x496 (landscape) / 496x864
- * (portrait), not a literal 480px short edge. Keep standard 480px originals
- * readable, but never widen the aspect tolerance for arbitrary dimensions.
- * Provider table: https://fal.ai/models/bytedance/seedance-2.0/text-to-video
- * Verified 2026-09-16. Frame size in the contract selects orientation. */
-export function outputVideoFrameDiagnostic(width:number,height:number,frameSize:"1280x720"|"720x1280") {
- const landscape=frameSize==="1280x720";
- if(width===(landscape?864:496)&&height===(landscape?496:864))return null;
- if(Math.min(width,height)!==480)return "dimensions";
- return Math.abs(width/height-(landscape?16/9:9/16))>.03?"aspect_ratio":null;
-}
 /** Bounded original private-object readback. Container/sample facts are not
  * decoded playback, visual quality or human acceptance. */
 export async function readOutputVideoMedia(env: WorkerEnv, ownerId: string, contractValue: unknown, value: OutputVideoMediaResult, lifetime: { signal?: AbortSignal; deadlineMs: number }) {

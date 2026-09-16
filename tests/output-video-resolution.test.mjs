@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {registerOutputSourceImports} from './output-execution-test-helpers.mjs';
 registerOutputSourceImports();
-const {outputVideoFrameDiagnostic}=await import('../worker/output-video-media.ts');
+const {outputVideoFrameDiagnostic}=await import('../src/model/output-video-dimensions.ts');
 
 test('Seedance nominal 480p accepts only the documented native grid for each orientation',()=>{
  assert.equal(outputVideoFrameDiagnostic(864,496,'1280x720'),null);

@@ -32,6 +32,17 @@ test('client associates original Video completion and verifies the real projecte
   assert.deepEqual(captureExperienceVideoTarget(target,f.contract),f.contract);
  }finally{f.sqlite.close();}
 });
+test('Video display evidence uses the same orientation-bound native grid as private-byte validation',async()=>{
+ const f=await fixture();try{
+  for(const [frameSize,width,height] of [['1280x720',864,496],['720x1280',496,864]]){
+   const s=structuredClone(f.payload.settings);s.output_video.contract.frameSize=frameSize;
+   Object.assign(s.output_video.media,{width,height});assert(captureExperienceVideoEvidence(s));
+   for(const [w,h] of [[height,width],[width+1,height],[width,height-1],[1280,720],[720,1280]]){
+    Object.assign(s.output_video.media,{width:w,height:h});assert.equal(captureExperienceVideoEvidence(s),null,`${frameSize}: ${w}x${h}`);
+   }
+  }
+ }finally{f.sqlite.close();}
+});
 test('Video display evidence rejects tampering and accessors without fetching media or granting authority',async()=>{
  const f=await fixture();try{let reads=0;
   for(const mutate of [s=>s.output_video.media.model='other',s=>s.output_video.media.width=1280,s=>s.output_video.media.audioTracks=1,s=>s.output_video.providerCallCount=3,s=>s.output_video.media.mediaUrl='/api/media/other',s=>s.output_video.extra=true,s=>Object.defineProperty(s.output_video,'media',{enumerable:true,get(){reads++;throw Error('getter');}})]){const s=structuredClone(f.payload.settings);mutate(s);assert.equal(captureExperienceVideoEvidence(s),null);}
