@@ -16,6 +16,7 @@ import { readOutputScenePayload } from "./output-scene-preflight-contract.ts";
 import { outputScenePreparationIdentity } from "./output-scene-source.ts";
 import { outputVideoPreparationIdentity } from "./output-video-source.ts";
 import { outputAudioPreparationIdentity } from "./output-audio-source.ts";
+import { outputStoryboardPreparationIdentity } from "./output-storyboard-source.ts";
 import { outputModel3dPreparationIdentity } from "./output-model3d-source.ts";
 import { model3dRenewalNoExecutionAssertion } from "./experience-model3d-renewal-proof.ts";
 import { scenePreparationSuccessor } from "./experience-scene-renewal.ts";
@@ -237,7 +238,7 @@ async function load(request: Request, env: WorkerEnv, draftId: string, permissio
   // Earlier stages are an atomic prerequisite, not merely UI provenance. Their
   // immutable index/event associations survive through each later native batch.
   trusted.sourceAssertions.push(...lineage.witnesses.map(value => outputCommandReceiptAssertion(trusted.scope, value.receipt)));
-  if (binding.output === "scene" || binding.output === "video" || binding.output === "audio" || binding.output === "slides") trusted.sourceAssertions.push(sceneRenewalIndexAssertion(trusted.scope, binding.draftId, lineage.cycleCommandKeys, binding.output));
+  if (binding.output === "scene" || binding.output === "video" || binding.output === "audio" || binding.output === "storyboard" || binding.output === "slides") trusted.sourceAssertions.push(sceneRenewalIndexAssertion(trusted.scope, binding.draftId, lineage.cycleCommandKeys, binding.output));
   if (binding.output === "model3d") trusted.sourceAssertions.push(...model3dLineageIndexAssertions(trusted.scope, binding.draftId, lineage.cycleCommandKeys));
   validateManagedRequirement(loaded);
   const sourceMismatch = experienceSourceMismatch(plan, receipt, { documentId: trusted.projection.documentId, projectId: trusted.projection.projectId,
@@ -274,7 +275,7 @@ async function renewalOffer(loaded: Loaded) {
     try { console.info("experience_renewal_refused", { output: loaded.binding.output, reason }); } catch { /* Optional diagnostics never change renewal authority. */ }
     return null;
   };
-  if (loaded.binding.output !== "scene" && loaded.binding.output !== "video" && loaded.binding.output !== "audio" && loaded.binding.output !== "slides" && !(loaded.binding.output === "model3d" && loaded.binding.replacementCycle)) return null;
+  if (loaded.binding.output !== "scene" && loaded.binding.output !== "video" && loaded.binding.output !== "audio" && loaded.binding.output !== "storyboard" && loaded.binding.output !== "slides" && !(loaded.binding.output === "model3d" && loaded.binding.replacementCycle)) return null;
   if (loaded.originals.authorize || loaded.originals.run) return refused("execution_recorded");
   if ((loaded.binding.preparationCycle?.ordinal ?? 0) >= 8) return refused("renewal_limit");
   const predecessor = scenePreparationPredecessor(loaded.binding, loaded.originals);
@@ -306,12 +307,14 @@ async function renewalOffer(loaded: Loaded) {
     releaseHash: root.releaseHash, requestHash: root.requestHash, sourceBindingHash: root.sourceBindingHash }) : null;
   const videoContract = root.output === "video" ? loaded.recipe.spec.deliverables[0]?.video_contract : null;
   const audioContract = root.output === "audio" ? loaded.recipe.spec.deliverables[0]?.audio_contract : null;
+  const storyboardContract = root.output === "storyboard" ? loaded.recipe.spec.deliverables[0]?.storyboard_contract : null;
   const identityFor = (confirmed: { revisionId: string; confirmedAt: string }) => model3dContract
     ? outputModel3dPreparationIdentity(model3dContract, confirmed, loaded.recipe.targetId, loaded.binding.replacementCycle) : videoContract
     ? outputVideoPreparationIdentity(videoContract, confirmed, loaded.recipe.targetId) : audioContract
-    ? outputAudioPreparationIdentity(audioContract, confirmed, loaded.recipe.targetId)
+    ? outputAudioPreparationIdentity(audioContract, confirmed, loaded.recipe.targetId) : storyboardContract
+    ? outputStoryboardPreparationIdentity(storyboardContract, confirmed, loaded.recipe.targetId)
     : contract ? outputScenePreparationIdentity(contract, confirmed, loaded.recipe.targetId) : Promise.resolve(null);
-  if (!plan || !contract && !videoContract && !audioContract && !model3dContract) return refused("contract_unavailable");
+  if (!plan || !contract && !videoContract && !audioContract && !storyboardContract && !model3dContract) return refused("contract_unavailable");
   const original = await identityFor(plan);
   const now = Date.now();
   if (!original || Date.parse(original.expiresAt) > now || Date.parse(loaded.retained.expiresAt) <= now + 900_000) return refused("quote_or_retention_window");
@@ -331,7 +334,7 @@ async function renewalOffer(loaded: Loaded) {
   const cycle = loaded.binding.replacementCycle;
   const guards = [root.output === "model3d" && cycle
     ? model3dRenewalNoExecutionAssertion(loaded.trusted.scope, requestIds, cycle.predecessor)
-    : sceneRenewalNoExecutionAssertion(loaded.trusted.scope, requestIds, loaded.binding.output as "scene" | "video" | "audio"),
+    : sceneRenewalNoExecutionAssertion(loaded.trusted.scope, requestIds, loaded.binding.output as "scene" | "video" | "audio" | "storyboard"),
     sceneRenewalWindowAssertion(loaded.trusted.scope, root.draftId, original.expiresAt, loaded.retained.expiresAt),
     sceneRenewalPredecessorAssertion(loaded.trusted.scope, predecessor)];
   const qualificationGuards = [...guards];
@@ -436,12 +439,13 @@ async function state(loaded: Loaded): Promise<ExperiencePreparedState> {
     if (plan && await trusted.env.DB.prepare("SELECT 1 AS present FROM output_operation_slots WHERE scope_key=? AND plan_revision_id=? LIMIT 1").bind(trusted.scope.key, plan.revisionId).first()) error("experience_output_unbound_operation", 410);
     if (preflight && (((binding.output === "storyboard" || binding.output === "video") ? !preflight.targets.every(target => target.available) : !result.permitted.authorize)
       || Date.parse(preflight.expiresAt) <= Date.now())) result.status = "unavailable";
-    if ((binding.output === "scene" || binding.output === "video" || binding.output === "audio" || binding.output === "slides" || binding.output === "model3d" && binding.replacementCycle) && result.status === "unavailable") {
+    if ((binding.output === "scene" || binding.output === "video" || binding.output === "audio" || binding.output === "storyboard" || binding.output === "slides" || binding.output === "model3d" && binding.replacementCycle) && result.status === "unavailable") {
       const renewal = await renewalOffer(loaded);
       if (renewal) {
         if (binding.output === "slides") result.slidesRenewal = renewal.disclosure;
         else if (binding.output === "video") result.videoRenewal = renewal.disclosure;
         else if (binding.output === "audio") result.audioRenewal = renewal.disclosure;
+        else if (binding.output === "storyboard") result.storyboardRenewal = renewal.disclosure;
         else if (binding.output === "model3d") result.model3dRenewal = renewal.disclosure;
         else result.sceneRenewal = renewal.disclosure;
         result.permitted.renewPreparation = true;
@@ -649,7 +653,7 @@ export async function handleExperienceOutput(request: Request, env: WorkerEnv, e
       if (Object.hasOwn(body, "renewal")) {
         diagnosticStage = "prepare_confirm_state";
         const input = body.renewal;
-        if (loaded.binding.output !== "scene" && loaded.binding.output !== "video" && loaded.binding.output !== "audio" && loaded.binding.output !== "slides" && !(loaded.binding.output === "model3d" && loaded.binding.replacementCycle) || !record(input) || Object.keys(input).length !== 2
+        if (loaded.binding.output !== "scene" && loaded.binding.output !== "video" && loaded.binding.output !== "audio" && loaded.binding.output !== "storyboard" && loaded.binding.output !== "slides" && !(loaded.binding.output === "model3d" && loaded.binding.replacementCycle) || !record(input) || Object.keys(input).length !== 2
           || input.explicitRenewal !== true || typeof input.predecessorPreflightId !== "string") error("experience_scene_renewal_required", 403);
         const existing = loaded.binding.preparationCycle;
         if (existing?.predecessor.preflight.preflightId !== input.predecessorPreflightId) {

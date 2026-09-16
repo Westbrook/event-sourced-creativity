@@ -122,6 +122,33 @@ test("Audio renewal decodes only the exact expired never-authorized quote and se
     renewal: { predecessorPreflightId: expired.preflight!.id, explicitRenewal: true } });
   assert.equal(calls.some(call => /\/(authorize|run)$/.test(call.url)), false);
 });
+
+test("Storyboard renewal decodes only the exact expired never-authorized quote and sends one unpaid preparation", async () => {
+  const storyboardIdentity = { ...identity, output: "storyboard" as const };
+  const expired = { ...state("review", "slides"), output: "storyboard" as const } as ExperienceNativeState;
+  expired.status = "unavailable"; expired.permitted = { ...denied(), renewPreparation: true };
+  expired.storyboardRenewal = { predecessorPreflightId: expired.preflight!.id, expiredAt: expired.preflight!.expiresAt };
+  assert.ok(decodeExperienceBinding(expired, storyboardIdentity));
+  for (const altered of [
+    { ...expired, storyboardRenewal: { ...expired.storyboardRenewal, predecessorPreflightId: "other" } },
+    { ...expired, storyboardRenewal: { ...expired.storyboardRenewal, expiredAt: "2999-01-01T00:00:00.000Z" } },
+    { ...expired, sceneRenewal: expired.storyboardRenewal },
+    { ...expired, permitted: { ...expired.permitted, authorize: true } },
+    { ...expired, original: state("authorized", "slides").original },
+  ]) assert.equal(decodeExperienceBinding(altered, storyboardIdentity), null);
+  const calls: Array<{ url: string; init?: RequestInit }> = [];
+  const client = new ExperienceOutputBindingClient(storyboardIdentity, {
+    origin, current: () => true,
+    request: async (input, init) => { calls.push({ url: String(input), init }); return response(expired, init?.method === "POST" ? basePath + "/prepare" : basePath); },
+  });
+  const shown = await client.read(); assert.ok(shown && "output" in shown);
+  await client.command("renewPreparation", shown);
+  assert.equal(calls.length, 2);
+  assert.equal(calls[1]!.url, basePath + "/prepare");
+  assert.deepEqual(JSON.parse(String(calls[1]!.init!.body)), { draftHash: identity.draftHash, explicitRequirementsConfirmation: true,
+    renewal: { predecessorPreflightId: expired.preflight!.id, explicitRenewal: true } });
+  assert.equal(calls.some(call => /\/(authorize|run)$/.test(call.url)), false);
+});
 test("Slides renewal decodes only the exact expired never-authorized quote and sends one unpaid preparation", async () => {
   const slidesIdentity = { ...identity, output: "slides" as const };
   const expired = state("review", "slides");

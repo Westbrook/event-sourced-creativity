@@ -25,6 +25,8 @@ function extracted(path, names, deps) {
   const js = stripTypeScriptTypes(body);
   return new Function(...Object.keys(deps), js + "\nreturn {" + names.join(",") + "};")(...Object.values(deps));
 }
+// Use the real bounded proof builder; this legacy port fixture does not execute SQL.
+const { outputProofReadStatements } = extracted("worker/output-disclosure-proof.ts", ["outputProofReadStatements"], {});
 class OutputConflictError extends Error { constructor(code, status = 409) { super(code); this.code = code; this.status = status; } }
 const creator = "audio-owned-test";
 const release = await registeredExperience("audio");
@@ -61,8 +63,9 @@ function fixture() {
   const reads = [], selects = [], principal = { userId: creator, streamId: plan.streamId, access: { capabilities: ["project.author"] }, consent: true };
   const input = { request: new Request("https://forma.test"), principal,
     env: { OPENAI_API_KEY: "synthetic-configured-no-network", FAL_KEY: "synthetic-configured-no-network", DB: {
-      prepare(sql) { assert.match(sql, /^SELECT 1 AS current WHERE /u); selects.push(sql);
-        return { bind(...values) { selects.push(values); return { async first() { return input.current ? { current: 1 } : null; } }; } }; },
+      prepare(sql) { assert.match(sql, /^SELECT CASE WHEN \(/u); selects.push(sql);
+        return { bind(...values) { selects.push(values); return { sql, values }; } }; },
+      async batch(statements) { return statements.map(() => ({ success: true, results: [{ current: input.current ? 1 : 0 }] })); },
     } }, current: true,
     scope: { kind: "personal", actorUserId: creator, ownerUserId: creator, projectId: plan.projectId, documentId: plan.documentId,
       organizationId: null, projectAccessId: null, contextId: null },
@@ -95,7 +98,7 @@ function fixture() {
     createAudioOutputContract, parseAudioOutputContract, experienceOutputBinding, createExperienceOutputRecipe, matchExperienceOutputRecipeTarget, OutputConflictError, ...ports,
   });
   const preflight = extracted("worker/output-audio-preflight.ts", ["preflightOutputAudioTarget", "outputAudioPreflightAssertions"], {
-    canonicalJson, freeze, EXPERIENCE_AUDIO_INTENT, parseAudioOutputContract, audioAuthoringConflict, documentRenderTokenReservation,
+    canonicalJson, freeze, EXPERIENCE_AUDIO_INTENT, parseAudioOutputContract, audioAuthoringConflict, documentRenderTokenReservation, outputProofReadStatements,
     estimateOpenAITextCallMaximumMicrousd, selectAudioAdapter, audioPreparationConstraints, resolveOutputAudioSource: resolver.resolveOutputAudioSource,
   });
   return { input, reads, selects, ...resolver, ...preflight };

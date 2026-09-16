@@ -11,6 +11,7 @@ import { audioPreparationConstraints } from "./audio-prompt-adapter.ts";
 import { resolveOutputAudioSource } from "./output-audio-source.ts";
 import type { OutputBridgeTargetInput } from "./output-requirements-api.ts";
 import type { OutputNativeTargetPreflight } from "../src/model/output-delivery-contract.ts";
+import { outputProofReadStatements } from "./output-disclosure-proof.ts";
 import type { OutputSqlAssertion } from "./output-command-core.ts";
 
 const unavailable = (targetId: string, code: string): OutputNativeTargetPreflight => ({
@@ -21,11 +22,6 @@ const unavailable = (targetId: string, code: string): OutputNativeTargetPrefligh
 const proofs = new WeakMap<OutputNativeTargetPreflight, readonly OutputSqlAssertion[]>();
 /** Only the exact freshly checked server object carries original-source custody. */
 export const outputAudioPreflightAssertions = (value: OutputNativeTargetPreflight) => proofs.get(value) ?? null;
-function conjunction(assertions: readonly OutputSqlAssertion[]): OutputSqlAssertion {
-  if (assertions.length === 1) return assertions[0]!;
-  const middle = Math.ceil(assertions.length / 2), left = conjunction(assertions.slice(0, middle)), right = conjunction(assertions.slice(middle));
-  return { sql: `(${left.sql}) AND (${right.sql})`, bindings: [...(left.bindings ?? []), ...(right.bindings ?? [])] };
-}
 
 /** This read-only quote is not execution authority. The original mini-app join
  * separately verifies explicit cost/transfer approval, source and reservation
@@ -67,8 +63,11 @@ export async function preflightOutputAudioTarget(input: OutputBridgeTargetInput)
   if (!Number.isSafeInteger(maximumMicrousd)) return unavailable(target.id, "output_audio_price_unavailable");
   const assertions: OutputSqlAssertion[] = [...source.sourceAssertions, { sql: "? > strftime('%Y-%m-%dT%H:%M:%fZ','now')", bindings: [source.expiresAt], deadlineMs: Date.parse(source.expiresAt) }];
   if (!assertions.length) return unavailable(target.id, "output_audio_source_unavailable");
-  const guard = conjunction(assertions);
-  if (!await env.DB.prepare(`SELECT 1 AS current WHERE ${guard.sql}`).bind(...(guard.bindings ?? [])).first()
+  // Each ancestor remains checked; a single flattened query can exceed D1's binding limit.
+  const checked = await env.DB.batch<Record<string, unknown>>(outputProofReadStatements(env, assertions));
+  if (!Array.isArray(checked) || checked.length !== assertions.length
+    || Array.from({length:assertions.length},(_,index)=>checked[index]).some(result=>!result
+      || result.success!==true || !Array.isArray(result.results) || result.results.length!==1 || result.results[0]?.current!==1)
     || assertions.some(value => value.deadlineMs !== undefined && Date.now() >= value.deadlineMs))
     return unavailable(target.id, "output_audio_source_changed");
   const costPreview=parseAudioMiniAppCostPreview({version:"audio-mini-app-cost-v1",requestId:source.requestId,expiresAt:source.expiresAt,draftId:source.plan.draftId,actorUserId:input.scope.actorUserId,projectId:input.scope.projectId,documentId:input.scope.documentId,sourceDigest:input.sourceDigest,requirementsDigest:input.requirementsDigest,maximumMicrousd,maximumCalls:3,maximumTokens:128000,planningModel:"gpt-5.6-terra",maximumPlanningCalls:2,maximumOutputTokens:3000,audioModel:selection.model,maximumAudioCalls:1,durationSeconds:20,requireInstrumental:true,sourceFilesTransferred:0});

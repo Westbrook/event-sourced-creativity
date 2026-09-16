@@ -44,7 +44,7 @@ const record = (value: unknown): value is Record<string, unknown> => Boolean(val
 /** Only exact retained confirmed/preflight receipt identities may name a child.
  * No read of the arbitrary latest native plan participates in this join. */
 export function scenePreparationPredecessor(binding: ExperienceOutputBinding, saved: Partial<Record<ExperienceOutputStage, Original>>): ScenePreparationPredecessor | null {
-  if (!["scene", "video", "model3d", "slides", "audio"].includes(binding.output) || binding.output === "model3d" && !binding.replacementCycle || !saved.confirm || !saved.preflight) return null;
+  if (!["scene", "video", "model3d", "slides", "audio", "storyboard"].includes(binding.output) || binding.output === "model3d" && !binding.replacementCycle || !saved.confirm || !saved.preflight) return null;
   const confirmation = saved.confirm.receipt.payload, plan = confirmation.confirmed_plan;
   const preparation = saved.preflight.receipt.payload, preflight = preparation.preflight;
   if (!record(plan) || !record(preflight) || typeof plan.revisionId !== "string"
@@ -133,7 +133,7 @@ export async function readExperienceOutputLineage(trusted: LineageContext, root:
   const initial = await originals(trusted, root);
   const result: ExperienceOutputLineage = root.output === "model3d" ? await model3dLineage(trusted, root, initial)
     : { binding: root, originals: initial, witnesses: Object.values(initial), cycleCommandKeys: [] };
-  if (root.output !== "scene" && root.output !== "video" && root.output !== "model3d" && root.output !== "slides" && root.output !== "audio") return result;
+  if (root.output !== "scene" && root.output !== "video" && root.output !== "model3d" && root.output !== "slides" && root.output !== "audio" && root.output !== "storyboard") return result;
   const renewalRoot = result.binding;
   const prefix = scenePreparationCyclePrefix(root.draftId, root.output);
   const index = await trusted.env.DB.prepare(`SELECT command_key FROM output_commands

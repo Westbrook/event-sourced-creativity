@@ -14,7 +14,7 @@ export type ScenePreparationPredecessor = Readonly<{
 export type ScenePreparationCycle = Readonly<{
   version: 1;
   /** Absent for legacy Scene cycles so their immutable shape stays unchanged. */
-  output?: "video" | "model3d" | "slides" | "audio";
+  output?: "video" | "model3d" | "slides" | "audio" | "storyboard";
   draftId: string;
   id: string;
   ordinal: number;
@@ -63,20 +63,20 @@ function validPredecessor(value: unknown): value is ScenePreparationPredecessor 
 export async function scenePreparationSuccessor(binding: ExperienceOutputBinding, predecessor: ScenePreparationPredecessor): Promise<ScenePreparationCycle> {
   binding = capture(binding); predecessor = capture(predecessor);
   if (!record(binding) || !exactKeys(binding, ["version", "draftId", "draftHash", "releaseHash", "requestHash", "sourceBindingHash", "output", "projectId", "documentId", "streamId", ...(binding.output === "model3d" ? ["replacementCycle"] : [])])
-    || binding.version !== 1 || !["scene", "video", "model3d", "slides", "audio"].includes(binding.output) || !validPredecessor(predecessor)) throw new Error("experience_scene_renewal_lineage_unavailable");
+    || binding.version !== 1 || !["scene", "video", "model3d", "slides", "audio", "storyboard"].includes(binding.output) || !validPredecessor(predecessor)) throw new Error("experience_scene_renewal_lineage_unavailable");
   if (binding.output === "model3d") {
     const { replacementCycle, ...root } = binding;
     if (!replacementCycle || !await model3dReplacementCycleMatches(root, replacementCycle)) throw new Error("experience_scene_renewal_lineage_unavailable");
   }
-  scenePreparationCyclePrefix(binding.draftId, binding.output as "scene" | "video" | "model3d" | "slides" | "audio");
+  scenePreparationCyclePrefix(binding.draftId, binding.output as "scene" | "video" | "model3d" | "slides" | "audio" | "storyboard");
   const id = (await digest({ namespace: `experience-${binding.output}-preparation-cycle@1`, binding, predecessor })).slice(7);
-  return freeze({ version: 1, ...(binding.output === "video" || binding.output === "model3d" || binding.output === "slides" || binding.output === "audio" ? { output: binding.output } : {}), draftId: binding.draftId, id, ordinal: predecessor.ordinal + 1, predecessor: structuredClone(predecessor) });
+  return freeze({ version: 1, ...(binding.output === "video" || binding.output === "model3d" || binding.output === "slides" || binding.output === "audio" || binding.output === "storyboard" ? { output: binding.output } : {}), draftId: binding.draftId, id, ordinal: predecessor.ordinal + 1, predecessor: structuredClone(predecessor) });
 }
 
 /** Prefix scopes indexed orphan detection to this draft, not other Documents
  * sharing the same personal project output scope. */
-export function scenePreparationCyclePrefix(draftId: string, output: "scene" | "video" | "model3d" | "slides" | "audio" = "scene"): string {
-  if (!["scene", "video", "model3d", "slides", "audio"].includes(output) || typeof draftId !== "string" || !/^experience-draft-[a-f0-9]{64}$/u.test(draftId)) throw new Error("experience_scene_renewal_lineage_unavailable");
+export function scenePreparationCyclePrefix(draftId: string, output: "scene" | "video" | "model3d" | "slides" | "audio" | "storyboard" = "scene"): string {
+  if (!["scene", "video", "model3d", "slides", "audio", "storyboard"].includes(output) || typeof draftId !== "string" || !/^experience-draft-[a-f0-9]{64}$/u.test(draftId)) throw new Error("experience_scene_renewal_lineage_unavailable");
   return `${output}-cycle-v1:${draftId.slice("experience-draft-".length)}:`;
 }
 

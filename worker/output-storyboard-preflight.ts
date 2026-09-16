@@ -11,6 +11,7 @@ import { estimateOpenAITextCallMaximumMicrousd } from "./openai-text-cost.ts";
 import { resolveOutputStoryboardSource } from "./output-storyboard-source.ts";
 import type { OutputBridgeTargetInput } from "./output-requirements-api.ts";
 import type { OutputNativeTargetPreflight } from "../src/model/output-delivery-contract.ts";
+import { outputProofReadStatements } from "./output-disclosure-proof.ts";
 import type { OutputSqlAssertion } from "./output-command-core.ts";
 
 const unavailable=(targetId:string,code:string):OutputNativeTargetPreflight=>({targetId,available:false,reasonCode:code,reason:"Storyboard unavailable",transferCode:"output_transfer_none_authorized",transferDescription:"This check sends nothing.",provider:null,model:null,route:null,maximumMicrousd:0,maximumCalls:0,maximumTokens:0,settings:{}});
@@ -24,11 +25,6 @@ export function storyboardPlanningSnapshot(snapshot:Record<string,unknown>,proje
  const supplied=Array.isArray(snapshot.standing_constraints)?snapshot.standing_constraints.filter((value):value is Record<string,unknown>=>Boolean(value)&&typeof value==="object"&&!Array.isArray(value)):[];
  const merged=[...new Map([...supplied,...authored].map(value=>[String(value.preference_id??`${value.polarity}:${value.axis}:${value.value}`),value])).values()];
  return {...structuredClone(snapshot),document:{id:projection.documentId,title:projection.documentTitle},...(merged.length?{standing_constraints:merged}:{})};
-}
-function conjunction(assertions:readonly OutputSqlAssertion[]):OutputSqlAssertion{
- if(assertions.length===1)return assertions[0]!;
- const middle=Math.ceil(assertions.length/2),left=conjunction(assertions.slice(0,middle)),right=conjunction(assertions.slice(middle));
- return{sql:`(${left.sql}) AND (${right.sql})`,bindings:[...(left.bindings??[]),...(right.bindings??[])]};
 }
 
 /** Offline quoted route for the exact completion and native host joins.
@@ -49,8 +45,13 @@ export async function preflightOutputStoryboardTarget(input:OutputBridgeTargetIn
  const plannerMaximum=estimateOpenAITextCallMaximumMicrousd(OUTPUT_FAL_PLANNING_MODEL,prepared.maximumInputTokens,prepared.maximumOutputTokens);
  const calls=[{stage:"planning:0:initial",provider:"openai",model:OUTPUT_FAL_PLANNING_MODEL,maximumMicrousd:plannerMaximum,maximumInputTokens:prepared.maximumInputTokens,maximumOutputTokens:4000},
   ...Array.from({length:4},(_,index)=>({stage:`image:frame:${index+1}`,provider:"fal",model:fal.model,maximumMicrousd:fal.maximumMicrousd,maximumInputTokens:0,maximumOutputTokens:0}))];
- const sourceAssertions:OutputSqlAssertion[]=[...source.sourceAssertions,{sql:"?>strftime('%Y-%m-%dT%H:%M:%fZ','now')",bindings:[source.expiresAt],deadlineMs:Date.parse(source.expiresAt)}],guard=conjunction(sourceAssertions);
- if(!await env.DB.prepare(`SELECT 1 AS current WHERE ${guard.sql}`).bind(...(guard.bindings??[])).first()||sourceAssertions.some(x=>x.deadlineMs!==undefined&&Date.now()>=x.deadlineMs))return unavailable(target.id,"output_storyboard_source_changed");
+ const sourceAssertions:OutputSqlAssertion[]=[...source.sourceAssertions,{sql:"?>strftime('%Y-%m-%dT%H:%M:%fZ','now')",bindings:[source.expiresAt],deadlineMs:Date.parse(source.expiresAt)}];
+ // Match Scene: bounded statements in one atomic read, retaining every ancestor witness.
+ const checked=await env.DB.batch<Record<string,unknown>>(outputProofReadStatements(env,sourceAssertions));
+ if(!Array.isArray(checked)||checked.length!==sourceAssertions.length
+  ||Array.from({length:sourceAssertions.length},(_,index)=>checked[index]).some(result=>!result
+    ||result.success!==true||!Array.isArray(result.results)||result.results.length!==1||result.results[0]?.current!==1)
+  ||sourceAssertions.some(x=>x.deadlineMs!==undefined&&Date.now()>=x.deadlineMs))return unavailable(target.id,"output_storyboard_source_changed");
  const preflight:OutputNativeTargetPreflight=freeze({targetId:target.id,available:true,reasonCode:"output_storyboard_ready",reason:STORYBOARD_READY_REASON,
   transferCode:"output_transfer_storyboard_after_authorization",transferDescription:STORYBOARD_TRANSFER,
   provider:"fal",model:fal.model,route:"document-storyboard-four-frames-manual-v1",maximumMicrousd:plannerMaximum+4*fal.maximumMicrousd,maximumCalls:5,maximumTokens:documentRenderTokenReservation("storyboard",4,1),

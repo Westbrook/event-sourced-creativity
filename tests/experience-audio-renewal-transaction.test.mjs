@@ -197,3 +197,54 @@ for(const mutation of ['retention','source-private-body'])test(`late ${mutation}
   const response=await s.send(s.body);assert.equal(raced,true);assert.notEqual(response.status,200);
   assert.equal(s.sqlite.prepare('SELECT COUNT(*) AS n FROM output_plan_revisions').get().n,before);s.unpaid();
 });
+
+test('repeated Audio renewals keep every proof within D1 capacity',async t=>{
+  const s=await fixture(t,true),prepare=s.DB.prepare.bind(s.DB),batch=s.DB.batch.bind(s.DB);
+  const counts=[],proofBatches=[];
+  const track=statement=>{
+    const bind=statement.bind.bind(statement);
+    statement.bind=(...values)=>{counts.push(values.length);assert.ok(values.length<=100);return track(bind(...values));};
+    return statement;
+  };
+  s.DB.prepare=sql=>track(prepare(sql));
+  s.DB.batch=async statements=>{
+    const result=await batch(statements);
+    if(statements.every(q=>q.sql.startsWith('SELECT CASE WHEN ('))&&statements.at(-1)?.bindings.length===1
+      &&statements.at(-1).sql.includes("strftime('%Y-%m-%dT%H:%M:%fZ','now')"))proofBatches.push(statements.reduce((n,q)=>n+q.bindings.length,0));
+    return result;
+  };
+  const original=s.sqlite.prepare('SELECT * FROM output_commands ORDER BY command_key').all();
+  for(let i=0;i<3;i++){
+    const response=await s.send(s.body);assert.equal(response.status,200,await response.clone().text());
+    const ready=await response.json();assert.equal(ready.permitted.authorize,true);
+    t.mock.timers.setTime(Date.parse(ready.preflight.targets[0].settings.original.expiresAt)+1);
+    const expired=await(await s.send()).json();assert.equal(expired.permitted.renewPreparation,true);
+    s.body={...s.body,renewal:{predecessorPreflightId:expired.preflight.id,explicitRenewal:true}};
+  }
+  assert.ok(proofBatches.some(n=>n>100),'Regression actually exceeds a flattened D1 statement capacity');
+  assert.ok(counts.length>0&&Math.max(...counts)<=100);
+  for(const row of original)assert.deepEqual(s.sqlite.prepare('SELECT * FROM output_commands WHERE command_key=?').get(row.command_key),row);
+  s.unpaid();
+});
+
+for(const fault of ['missing','sparse','failed','false','expired'])test('Audio preflight refuses '+fault+' atomic proof',async t=>{
+  const s=await fixture(t,true),batch=s.DB.batch.bind(s.DB),preflight=s.bridge.preflight;
+  let active=false,injected=false;
+  s.bridge.preflight=async(...args)=>{active=true;try{return await preflight(...args);}finally{active=false;}};
+  s.DB.batch=async statements=>{
+    const result=await batch(statements),last=statements.at(-1);
+    if(!active||!statements.every(q=>q.sql.startsWith('SELECT CASE WHEN ('))||last?.bindings.length!==1
+      ||!last.sql.includes("strftime('%Y-%m-%dT%H:%M:%fZ','now')"))return result;
+    injected=true;
+    if(fault==='missing')return result.slice(0,-1);
+    if(fault==='sparse'){delete result[0];return result;}
+    if(fault==='failed')result[0].success=false;
+    if(fault==='false')result[0].results=[{current:0}];
+    if(fault==='expired')t.mock.timers.setTime(Date.parse(last.bindings[0]));
+    return result;
+  };
+  const response=await s.send(s.body);assert.equal(injected,true);
+  if(response.status===200){const state=await response.json();assert.equal(state.permitted.authorize,false);assert.equal(state.permitted.run,false);}
+  else assert.equal(response.status,409);
+  s.unpaid();
+});

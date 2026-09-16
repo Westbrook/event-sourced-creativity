@@ -1,6 +1,7 @@
 import { parseModel3dMiniAppCostPreview, model3dMiniAppCostApprovalMatches } from "../model/model3d-mini-app-consent.ts";
 import { EXPERIENCE_BODY_TIMEOUT_MS, experienceResponseTimeout } from "./output-transport-lifetime.ts";
 import { readModel3dExecutionOffer, readModel3dExecutionPayload } from "../model/output-model3d-offer.ts";
+import { readStoryboardExecutionOffer } from "../model/output-storyboard-offer.ts";
 import type { ExperienceModel3dCostApproval } from "./output-binding-contract.ts";
 import type { ExperienceAudioCostApproval, ExperienceNativeState, ExperienceNativeUnavailable } from "./output-binding-contract.ts";
 import { parseSceneMiniAppCostPreview, sceneMiniAppCostApprovalMatches, type SceneMiniAppCostApproval } from "../model/scene-mini-app-consent.ts";
@@ -75,7 +76,7 @@ export function decodeExperienceBinding(value: unknown, identity: ExperienceBind
     if (value.status === "unavailable" && value.originalIntent === "unknown_or_retained") {
       return text(value.error) && !permitted.prepare && !permitted.authorize && !permitted.run && !permitted.resumeRun && !permitted.recoverResult && !permitted.renewPreparation
         && !permitted.prepareReplacement && !Object.hasOwn(value, "model3dReplacement")
-        && !Object.hasOwn(value, "sceneRenewal") && !Object.hasOwn(value, "videoRenewal") && !Object.hasOwn(value, "audioRenewal") && !Object.hasOwn(value, "model3dRenewal") && !Object.hasOwn(value, "slidesRenewal") ? freeze(structuredClone(value)) as ExperienceNativeUnavailable : null;
+        && !Object.hasOwn(value, "sceneRenewal") && !Object.hasOwn(value, "videoRenewal") && !Object.hasOwn(value, "audioRenewal") && !Object.hasOwn(value, "storyboardRenewal") && !Object.hasOwn(value, "model3dRenewal") && !Object.hasOwn(value, "slidesRenewal") ? freeze(structuredClone(value)) as ExperienceNativeUnavailable : null;
     }
     if (!["draftId", "draftHash", "releaseHash", "documentId", "projectId", "output"].every(key => value[key] === identity[key as keyof ExperienceBindingIdentity])
       || value.sourceSurface !== "outputs" || !status.has(String(value.status)) || !stages.has(value.stage as never)
@@ -100,11 +101,13 @@ export function decodeExperienceBinding(value: unknown, identity: ExperienceBind
       || original.slotStatus !== "succeeded" || original.grantStatus !== "completed" || !record(grant)
       || grant.status !== "completed" || grant.pendingCalls !== 0 || !Array.isArray(grant.operations)
       || grant.operations.length !== 1 || !record(grant.operations[0]) || grant.operations[0].pendingCalls !== 0)) return null;
-    if (Object.hasOwn(value, "sceneRenewal") || Object.hasOwn(value, "videoRenewal") || Object.hasOwn(value, "audioRenewal") || Object.hasOwn(value, "model3dRenewal") || Object.hasOwn(value, "slidesRenewal")) {
-      const field = value.output === "slides" ? "slidesRenewal" : value.output === "model3d" ? "model3dRenewal" : value.output === "video" ? "videoRenewal" : value.output === "audio" ? "audioRenewal" : "sceneRenewal";
+    if (Object.hasOwn(value, "sceneRenewal") || Object.hasOwn(value, "videoRenewal") || Object.hasOwn(value, "audioRenewal") || Object.hasOwn(value, "storyboardRenewal") || Object.hasOwn(value, "model3dRenewal") || Object.hasOwn(value, "slidesRenewal")) {
+      const field = value.output === "slides" ? "slidesRenewal" : value.output === "model3d" ? "model3dRenewal" : value.output === "video" ? "videoRenewal" : value.output === "audio" ? "audioRenewal" : value.output === "storyboard" ? "storyboardRenewal" : "sceneRenewal";
       const renewal = value[field];
-      if (!["scene", "video", "audio", "model3d", "slides"].includes(String(value.output)) || !Object.hasOwn(value, field)
-        || ["sceneRenewal", "videoRenewal", "audioRenewal", "model3dRenewal", "slidesRenewal"].some(key => key !== field && Object.hasOwn(value, key))
+      const storyboardOffer = value.output === "storyboard" && record(preflight) && Array.isArray(preflight.targets)
+        ? readStoryboardExecutionOffer(preflight.targets[0]) : null;
+      if (!["scene", "video", "audio", "storyboard", "model3d", "slides"].includes(String(value.output)) || !Object.hasOwn(value, field)
+        || ["sceneRenewal", "videoRenewal", "audioRenewal", "storyboardRenewal", "model3dRenewal", "slidesRenewal"].some(key => key !== field && Object.hasOwn(value, key))
         || value.output === "model3d" && (!record(value.model3dCostPreview) || value.model3dCostPreview.version !== "model3d-mini-app-replacement-cost-v1")
         || value.status !== "unavailable" || value.disposition !== "prepared"
         || value.stage !== "preflight" || original !== null || grant !== null || !record(preflight)
@@ -113,6 +116,7 @@ export function decodeExperienceBinding(value: unknown, identity: ExperienceBind
         || renewal.predecessorPreflightId !== preflight.id || !text(renewal.expiredAt)
         || value.output === "slides" && renewal.expiredAt !== preflight.expiresAt
         || value.output === "audio" && record(value.audioCostPreview) && renewal.expiredAt !== value.audioCostPreview.expiresAt
+        || storyboardOffer && renewal.expiredAt !== storyboardOffer.original.expiresAt
         || !Number.isFinite(Date.parse(renewal.expiredAt)) || Date.parse(renewal.expiredAt) > Date.now()) return null;
     } else if (permitted.renewPreparation) return null;
     if (value.output === "scene") {
@@ -246,9 +250,9 @@ export class ExperienceOutputBindingClient {
       : action === "prepareReplacement" && shown.output === "model3d" && shown.model3dReplacement
         ? { draftHash: this.identity.draftHash, explicitRequirementsConfirmation: true,
           replacement: { cycleId: shown.model3dReplacement.cycleId, previousSlotId: shown.model3dReplacement.previousSlotId, explicitReplacement: true } }
-      : action === "renewPreparation" && (shown.output === "scene" && shown.sceneRenewal || shown.output === "video" && shown.videoRenewal || shown.output === "audio" && shown.audioRenewal || shown.output === "model3d" && shown.model3dRenewal || shown.output === "slides" && shown.slidesRenewal)
+      : action === "renewPreparation" && (shown.output === "scene" && shown.sceneRenewal || shown.output === "video" && shown.videoRenewal || shown.output === "audio" && shown.audioRenewal || shown.output === "storyboard" && shown.storyboardRenewal || shown.output === "model3d" && shown.model3dRenewal || shown.output === "slides" && shown.slidesRenewal)
         ? { draftHash: this.identity.draftHash, explicitRequirementsConfirmation: true,
-          renewal: { predecessorPreflightId: (shown.output === "slides" ? shown.slidesRenewal! : shown.output === "model3d" ? shown.model3dRenewal! : shown.output === "video" ? shown.videoRenewal! : shown.output === "audio" ? shown.audioRenewal! : shown.sceneRenewal!).predecessorPreflightId, explicitRenewal: true } }
+          renewal: { predecessorPreflightId: (shown.output === "slides" ? shown.slidesRenewal! : shown.output === "model3d" ? shown.model3dRenewal! : shown.output === "video" ? shown.videoRenewal! : shown.output === "audio" ? shown.audioRenewal! : shown.output === "storyboard" ? shown.storyboardRenewal! : shown.sceneRenewal!).predecessorPreflightId, explicitRenewal: true } }
       : action === "authorize" && shown.preflight ? { draftHash: this.identity.draftHash, termsDigest: shown.preflight.termsDigest, maximumMicrousd: shown.preflight.maximumMicrousd, explicitAuthorization: true,
         ...(shown.output === "scene" ? {sceneCostConsent: sceneApproval} : {}), ...(shown.output === "audio" ? {audioCostConsent: audioApproval} : {}), ...(shown.output === "model3d" ? {model3dCostConsent: model3dApproval} : {}) }
       : action === "recoverResult" && shown.original ? { draftHash: this.identity.draftHash, grantId: shown.original.grantId, jobId: shown.original.jobId, explicitRecovery: true }

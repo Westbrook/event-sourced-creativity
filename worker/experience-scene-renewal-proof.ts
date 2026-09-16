@@ -38,7 +38,7 @@ export function sceneRenewalPredecessorAssertion(scope: OutputScope, predecessor
 /** Exact index fence for selection and for the first successor append. Receipt
  * and private-body assertions must ALSO accompany it. A count alone is not
  * sufficient: replacing a key while retaining the count must fail. */
-export function sceneRenewalIndexAssertion(scope: OutputScope, draftId: string, expectedKeys: readonly string[], output: "scene" | "video" | "model3d" | "slides" | "audio" = "scene"): OutputSqlAssertion {
+export function sceneRenewalIndexAssertion(scope: OutputScope, draftId: string, expectedKeys: readonly string[], output: "scene" | "video" | "model3d" | "slides" | "audio" | "storyboard" = "scene"): OutputSqlAssertion {
   personal(scope);
   const prefix = scenePreparationCyclePrefix(draftId, output);
   if (expectedKeys.length > 32 || new Set(expectedKeys).size !== expectedKeys.length
@@ -59,10 +59,10 @@ export function sceneRenewalIndexAssertion(scope: OutputScope, draftId: string, 
  * native Scene reservation correlation is exactly that plan's request/job ID.
  * The same predicate is intended for read qualification AND final atomic write,
  * never solely as an earlier in-memory Boolean. */
-export function sceneRenewalNoExecutionAssertion(scope: OutputScope, originalRequestIds: readonly string[], output: "scene" | "video" | "audio" = "scene"): OutputSqlAssertion {
+export function sceneRenewalNoExecutionAssertion(scope: OutputScope, originalRequestIds: readonly string[], output: "scene" | "video" | "audio" | "storyboard" = "scene"): OutputSqlAssertion {
   personal(scope);
   if (originalRequestIds.length < 1 || originalRequestIds.length > 9 || new Set(originalRequestIds).size !== originalRequestIds.length
-    || !["scene", "video", "audio"].includes(output)
+    || !["scene", "video", "audio", "storyboard"].includes(output)
     || originalRequestIds.some(value => !new RegExp(`^${output}-[a-f0-9]{64}$`, "u").test(value))) throw new Error("experience_scene_renewal_lineage_unavailable");
   const requests = JSON.stringify([...originalRequestIds].sort());
   return { sql: `NOT EXISTS(SELECT 1 FROM output_commands command LEFT JOIN events event ON event.event_id=command.event_id
