@@ -73,6 +73,9 @@ type Image = NonNullable<Awaited<ReturnType<FormaStore["loadGeneratedImageEdit"]
 type Scene = NonNullable<Awaited<ReturnType<typeof readExperienceNativeScene>>>;
 type Result = { lease: object; candidate: ExperienceResultCandidate; current(): boolean } & ({ output: "model3d"; model3d: Model3d; render: typeof renderNativeRetainedModel3d } | { output: "video"; video: Video; mount: typeof mountNativeRetainedVideo } | { output: "audio"; audio: Audio; render: typeof renderNativeRetainedAudio } | { output: "storyboard"; storyboard: Storyboard; render: typeof renderNativeRetainedStoryboard } | { output: "image"; image: Image } | { output: "slides"; slides: Slides; render: typeof renderNativeRetainedSlides } | { output: "short_story"; story: RetainedStoryDto; render: typeof renderNativeRetainedStory } | { output: "scene"; scene: Scene; measurement: unknown; render: typeof renderNativeRetainedScene });
 
+type ResultReadStage = "source_state" | "requirements" | "native_job" | "candidate" | "private_content" | "private_input" | "input_validation" | "retained_read" | "final_projection";
+type ResultReadFailure = Readonly<{ stage: ResultReadStage; kind: "unavailable" | "deadline" }>;
+
 /** Same-Document native admission view. All original command/grant identities are
  * retained by the server; mounting and recovery read them without admitting work. */
 export class FormaExperienceHost extends FormaElement {
@@ -96,6 +99,8 @@ export class FormaExperienceHost extends FormaElement {
   #operation?: ExperienceHostOperation;
   #status = "Checking Document";
   #result?: Result;
+  #resultReadStage?: ResultReadStage;
+  #resultReadFailure?: ResultReadFailure;
   #videoPresentation?: NativeVideoPresentation;
   #videoResult?: Result;
   #videoNode?: HTMLElement;
@@ -154,8 +159,14 @@ export class FormaExperienceHost extends FormaElement {
     this.#stopResultRead();
     this.#navigationEpoch++;
     this.#operation?.cancel();
+    this.#resultReadStage = undefined; this.#resultReadFailure = undefined;
     const operation = new ExperienceHostOperation(() => {
       if (this.#operation !== operation) return;
+      // Only this owned host timer proves a presentation deadline. Never infer
+      // timeout or server/provider provenance from arbitrary exception text.
+      if (foreground?.action === "inspectResult" && this.#resultReadStage)
+        this.#resultReadFailure = Object.freeze({ stage: this.#resultReadStage, kind: "deadline" });
+      this.#resultReadStage = undefined;
       this.#operation = undefined; this.#binding?.client.dispose(); this.#clearResult(); this.#resetDecision();
       this.#busy = false; this.#loading = false; this.#refreshing = false; this.#status = "Operation unconfirmed"; this.requestUpdate();
     }, undefined, foreground);
@@ -187,6 +198,7 @@ export class FormaExperienceHost extends FormaElement {
     if (["short_story", "scene", "storyboard", "audio", "video", "model3d"].includes(this.#binding?.selection.output ?? "")) { this.#status = "Document unavailable"; this.#retire(); this.requestUpdate(); }
   };
   #visibility = () => { if (this.ownerDocument.visibilityState === "hidden") {
+    this.#resultReadStage = undefined; this.#resultReadFailure = undefined;
     this.#stopResultRead();
     this.#navigationEpoch++;
     this.#resetDecision(); this.#clearResult(); this.#binding?.client.dispose(); this.#operation?.cancel(); this.#operation = undefined;
@@ -194,6 +206,7 @@ export class FormaExperienceHost extends FormaElement {
   } };
   #pagehide = () => { this.#status = "Closed"; this.#retire(); this.requestUpdate(); };
   #retire() {
+    this.#resultReadStage = undefined; this.#resultReadFailure = undefined;
     this.#stopResultRead();
     this.#navigationEpoch++;
     if (this.#retired) return;
@@ -512,27 +525,32 @@ export class FormaExperienceHost extends FormaElement {
     const operation = this.#beginOperation({action:'inspectResult',output:binding.client.identity.output});
     this.#busy = true; this.#clearResult(); this.#resetDecision(); this.#status = "Checking status"; this.requestUpdate();
     let pending = false;
+    this.#resultReadStage = "source_state";
     try {
       await this.#refreshAndRead(binding, operation);
       const state = this.#state(); if (!state?.original || !this.#visible(binding)) return;
       if (["queued", "running"].includes(state.status) && ["queued", "running"].includes(state.original.jobStatus)) {
         pending = true; return;
       }
+      this.#resultReadStage = "requirements";
       await operation.wait(this.store.outputRequirements.ensure(state.documentId, { force: true }));
       const lease = Object.freeze({});
       const current = () => (this.#operationCurrent(operation) || this.#result?.lease === lease)
         && this.#binding === binding && this.#visible(binding) && this.#state() === state && this.#snapshotMatches(state);
       if (!current()) throw new Error("unavailable");
+      this.#resultReadStage = "native_job";
       const inspected = await operation.wait(this.store.inspectOutputNativeJob(state.documentId, state.original.jobId, current));
       if (inspected.status !== "found" || !current() || !inspected.current()) throw new Error("unavailable");
       if (inspected.job.status !== "completed") {
         this.#status = this.#statusLabel(state); pending = ["queued", "running"].includes(inspected.job.status); return;
       }
+      this.#resultReadStage = "candidate";
       const candidate = this.#candidate(state, inspected.job);
       if (!candidate) throw new Error("unavailable");
       const selected = () => current() && inspected.current() && bindingJson(this.#candidate(state, inspected.job)) === bindingJson(candidate)
         && Date.parse(candidate.expiresAt) > Date.now() && experienceResultGrantCurrent(state, Date.now());
       if (candidate.output === "image") {
+        this.#resultReadStage = "retained_read";
         const image = await operation.wait(this.store.loadGeneratedImageEdit(candidate.outputId, { current: selected,prepareSource:prepareImage })),  format = this.#imageFormat();
         if (!image || !selected() || !format || image.status !== "current" || image.revision !== 0 || image.editEventId !== null
           || image.ownerId !== binding.ownerId || image.projectId !== state.projectId || image.documentId !== state.documentId || image.outputId !== candidate.outputId
@@ -540,18 +558,21 @@ export class FormaExperienceHost extends FormaElement {
           || image.media.url !== candidate.mediaUrl || image.media.mediaType !== "image/png" || image.media.width !== format.dimensions.width || image.media.height !== format.dimensions.height) throw new Error("unavailable");
         this.#result = { lease, output: "image", candidate, image, current: selected }; this.#status = "1 image";
       } else {
+        this.#resultReadStage = "private_content";
         const raw = await operation.wait(this.store.ensurePrivateContent(candidate.contentRef, { force: true }));
         if (typeof raw !== "string" || !selected() || new TextEncoder().encode(raw).length > 1048576) throw new Error("unavailable");
         const hash = Array.from(new Uint8Array(await operation.wait(crypto.subtle.digest("SHA-256", new TextEncoder().encode(raw)))), byte => byte.toString(16).padStart(2, "0")).join("");
         if (!selected()) throw new Error("unavailable");
         if (candidate.output === "model3d") {
           if (!binding.model3dContract || !state.model3dCostPreview || !state.plan || !state.original || !state.grant) throw new Error("unavailable");
+          this.#resultReadStage = "private_input";
           const input = await operation.wait(this.store.ensurePrivateContent(candidate.inputRef, { force: true }));
           if (!selected()) throw new Error("unavailable");
           const [client, renderer] = await operation.wait(Promise.all([import("../model/retained-short-story-client.ts"), import("./native-retained-model3d.ts")]));
           if (!selected()) throw new Error("unavailable");
           const abort = new AbortController(); this.#reader = abort;
           const visible = () => this.#reader === abort && !abort.signal.aborted && selected();
+          this.#resultReadStage = "retained_read";
           const model3d = await operation.wait(client.readNativeRetainedOutput({ output: "model3d",
             selection: { documentId: state.documentId, artifactId: candidate.artifactId, revision: 0, contentSha256: hash } },
             { origin: this.ownerDocument.location.origin, signal: abort.signal, current: visible, request: (path, init) => fetch(path, init) }));
@@ -568,14 +589,17 @@ export class FormaExperienceHost extends FormaElement {
           this.#status = "1 static GLB · Structure checked; visual review required";
         } else if (candidate.output === "audio") {
           if (!binding.audioSource || !state.audioCostPreview || !state.plan || !state.original || !state.grant) throw new Error("unavailable");
+          this.#resultReadStage = "private_input";
           const input = await operation.wait(this.store.ensurePrivateContent(candidate.inputRef, { force: true }));
           if (!selected()) throw new Error("unavailable");
+          this.#resultReadStage = "input_validation";
           if (!await operation.wait(verifyExperienceAudioInput(input, candidate.audio, {
             documentId: state.documentId, projectId: state.projectId, artifactId: candidate.artifactId, jobId: candidate.jobId, plannerResponseId: candidate.plannerResponseId,
             usedMicrousd: state.grant.usedMicrousd, usedCalls: state.grant.usedCalls, source: binding.audioSource, costPreview: state.audioCostPreview, grantId: state.original.grantId, slotId: state.original.slotId,
             planRevisionId: state.plan.revisionId, targetId: state.plan.targetId, targetContractDigest: state.plan.targetContractDigest,
             sourceDigest: state.plan.sourceDigest,
           })) || !selected()) throw new Error("unavailable");
+          this.#resultReadStage = "retained_read";
           const [client, renderer] = await operation.wait(Promise.all([import("../model/retained-short-story-client.ts"), import("./native-retained-audio.ts")]));
           if (!selected()) throw new Error("unavailable");
           const abort = new AbortController(); this.#reader = abort;
@@ -583,6 +607,7 @@ export class FormaExperienceHost extends FormaElement {
           const audio = await operation.wait(client.readNativeRetainedOutput({ output: "audio",
             selection: { documentId: state.documentId, artifactId: candidate.artifactId, revision: 0, contentSha256: hash } },
             { origin: this.ownerDocument.location.origin, signal: abort.signal, current: visible, request: (path, init) => fetch(path, init) }));
+          this.#resultReadStage = "final_projection";
           if (!visible() || audio.output !== "audio" || audio.content.inputRef !== candidate.inputRef
             || audio.content.media?.url !== candidate.mediaUrl || audio.content.media.mediaType !== "audio/mpeg"
             || audio.content.media.sha256 !== candidate.audio.mediaSha256 || audio.content.role !== "score" || audio.content.lyrics !== ""
@@ -596,8 +621,10 @@ export class FormaExperienceHost extends FormaElement {
           if ([values.characterA?.value, values.characterB?.value, values.location?.value].some(value => typeof value !== "string")) throw new Error("unavailable");
           const displaySource = { characters: [{ id: "A" as const, name: values.characterA.value as string }, { id: "B" as const, name: values.characterB.value as string }] as const,
             location: values.location.value as string };
+          this.#resultReadStage = "private_input";
           const input = await operation.wait(this.store.ensurePrivateContent(candidate.inputRef, { force: true }));
           if (!selected()) throw new Error("unavailable");
+          this.#resultReadStage = "retained_read";
           const scene = await operation.wait(readExperienceNativeScene(raw, input, candidate.scene, {
             documentId: candidate.documentId, projectId: candidate.projectId, artifactId: candidate.artifactId, providerResponseId: candidate.providerResponseId,
             source: binding.sceneSource, costPreview: state.sceneCostPreview, displaySource, expiresAt: candidate.expiresAt,
@@ -627,12 +654,14 @@ export class FormaExperienceHost extends FormaElement {
           this.#status = this.i18n.system("Scene");
         } else if(candidate.output==="video"){
           if(!binding.videoContract||!state.plan||!state.original||hash!==candidate.video.contentSha256)throw new Error("unavailable");
+          this.#resultReadStage = "private_input";
           const input=await operation.wait(this.store.ensurePrivateContent(candidate.inputRef,{force:true}));
           if(!selected())throw new Error("unavailable");
           const [client,renderer]=await operation.wait(Promise.all([import("../model/retained-short-story-client.ts"),import("./native-retained-video.ts")]));
           if(!selected())throw new Error("unavailable");
           const abort=new AbortController();this.#reader=abort;
           const visible=()=>this.#reader===abort&&!abort.signal.aborted&&selected();
+          this.#resultReadStage = "retained_read";
           const video=await operation.wait(client.readNativeRetainedOutput({output:"video",selection:{documentId:state.documentId,artifactId:candidate.artifactId,revision:0,contentSha256:hash}},
             {origin:this.ownerDocument.location.origin,signal:abort.signal,current:visible,request:(path,init)=>fetch(path,init)}));
           if(!visible()||video.output!=="video"||!await operation.wait(verifyExperienceVideoRead(candidate.video,raw,input,video,{
@@ -644,12 +673,14 @@ export class FormaExperienceHost extends FormaElement {
           this.#status="1 video · 4 s · 480p · Silent";
         } else if(candidate.output==="storyboard"){
           if(!binding.storyboardSource||!state.plan||!state.original||hash!==candidate.storyboard.contentSha256)throw new Error("unavailable");
+          this.#resultReadStage = "private_input";
           const input=await operation.wait(this.store.ensurePrivateContent(candidate.inputRef,{force:true}));
           if(!selected())throw new Error("unavailable");
           const [client,renderer]=await operation.wait(Promise.all([import("../model/retained-short-story-client.ts"),import("./native-retained-storyboard.ts")]));
           if(!selected())throw new Error("unavailable");
           const abort=new AbortController();this.#reader=abort;
           const visible=()=>this.#reader===abort&&!abort.signal.aborted&&selected();
+          this.#resultReadStage = "retained_read";
           const storyboard=await operation.wait(client.readNativeRetainedOutput({output:"storyboard",selection:{documentId:state.documentId,artifactId:candidate.artifactId,revision:0,contentSha256:hash}},
             {origin:this.ownerDocument.location.origin,signal:abort.signal,current:visible,request:(path,init)=>fetch(path,init)}));
           if(!visible()||storyboard.output!=="storyboard"||!await operation.wait(verifyExperienceStoryboardRead(candidate.storyboard,raw,input,storyboard,{
@@ -664,6 +695,7 @@ export class FormaExperienceHost extends FormaElement {
           const [client, renderer] = await operation.wait(Promise.all([import("../model/retained-short-story-client.ts"), import("./native-retained-story.ts")]));
           if (!selected()) throw new Error("unavailable");
           const abort = new AbortController(); this.#reader = abort;
+          this.#resultReadStage = "retained_read";
           const story = await operation.wait(client.readRetainedShortStory({ documentId: state.documentId, artifactId: candidate.artifactId, revision: 0, contentSha256: hash },
             { origin: this.ownerDocument.location.origin, signal: abort.signal, current: () => this.#reader === abort && selected(), request: (path, init) => fetch(path, init) }));
           if (!selected() || !await operation.wait(verifyExperienceStoryRead(candidate.narrative, raw, story)) || !selected() || Date.parse(story.expiresAt) <= Date.now()) throw new Error("unavailable");
@@ -673,6 +705,7 @@ export class FormaExperienceHost extends FormaElement {
         const [client, renderer] = await operation.wait(Promise.all([import("../model/retained-short-story-client.ts"), import("./native-retained-slides.ts")]));
         if (!selected()) throw new Error("unavailable");
         const abort = new AbortController(); this.#reader = abort;
+        this.#resultReadStage = "retained_read";
         const slides = await operation.wait(client.readNativeRetainedOutput({ output: "slides", selection: { documentId: state.documentId, artifactId: candidate.artifactId, revision: 0, contentSha256: hash } },
           { origin: this.ownerDocument.location.origin, signal: abort.signal, current: () => this.#reader === abort && selected(), request: (path, init) => fetch(path, init) }));
         if (slides.output !== "slides" || !selected() || slides.content.items.length !== 5 || Date.parse(slides.expiresAt) <= Date.now()) throw new Error("unavailable");
@@ -681,8 +714,15 @@ export class FormaExperienceHost extends FormaElement {
         }
       }
       this.#scheduleDeadline();
-    } catch { if (this.#operationCurrent(operation)) { if (this.#baseCurrent(binding)) this.#status = "Result unavailable"; this.#clearResult(); } }
+    } catch { if (this.#operationCurrent(operation)) {
+      if (this.#baseCurrent(binding)) {
+        this.#status = "Result unavailable";
+        if (this.#resultReadStage) this.#resultReadFailure = Object.freeze({ stage: this.#resultReadStage, kind: "unavailable" });
+      }
+      this.#clearResult();
+    } }
     finally { if (this.#finishOperation(operation)) {
+      this.#resultReadStage = undefined;
       this.#busy = false; this.requestUpdate(); if (pending) this.#scheduleResultRead();
     } }
   }
@@ -888,6 +928,7 @@ export class FormaExperienceHost extends FormaElement {
     const available = this.#visible(binding), format = this.#imageFormat(), authorize = this.#paidDecision("authorize"), run = this.#paidDecision("run"), resume = this.#paidDecision("resumeRun");
     const sourceCapacity = available && binding ? outputSourceCapacityMessage(binding.client.state) : null;
     const commandRefusal = available && binding ? outputCommandRefusal(binding.client.state) : null;
+    const resultFailure = available ? this.#resultReadFailure : undefined;
     const target = state?.preflight?.targets[0];
     const unavailableProviderPreparation = available && state?.status === "unavailable" && state.disposition === "prepared"
       && !state.original && !state.grant && !Object.values(state.permitted).some(Boolean)
@@ -900,7 +941,7 @@ export class FormaExperienceHost extends FormaElement {
     return html`<section class="experience-host" aria-busy=${String(this.#loading || this.#busy)}>
       <header class="experience-heading"><h1>${binding?.selection.output === "video" ? "Video" : binding?.selection.output === "image" ? "Image" : binding?.selection.output === "slides" ? "Slides" : binding?.selection.output === "short_story" ? "Short story" : binding?.selection.output === "scene" ? "Scene" : binding?.selection.output === "model3d" ? this.i18n.system("3D model") : binding?.selection.output === "audio" ? this.i18n.system("Audio") : binding?.selection.output === "storyboard" ? "Storyboard" : "Output"}</h1></header>
       <p data-experience-status class=${duplicateReviewStatus ? "experience-status-duplicate" : nothing} tabindex="-1" role="status" aria-live="polite">${this.#model3dText(this.#status)}</p>
-      ${commandRefusal ? html`<details data-experience-command-refusal><summary>${this.i18n.system("Technical details")}</summary><code>${commandRefusal.code}</code></details>` : nothing}
+      ${commandRefusal || resultFailure ? html`<details data-experience-command-refusal><summary>${this.i18n.system("Technical details")}</summary>${commandRefusal ? html`<code>${commandRefusal.code}</code>` : nothing}${resultFailure ? html`<code data-experience-result-failure>${`result_read:${resultFailure.stage}:${resultFailure.kind}`}</code>` : nothing}</details>` : nothing}
       ${available && state?.current.source === "changed" ? html`<p data-experience-retained-source dir="auto">${retainedImageSourceMessage(this.i18n.locale)}</p>` : nothing}
       ${sourceCapacity ? html`<p data-experience-source-capacity dir="auto">${this.i18n.t(sourceCapacity.id, FORMA_OUTPUT_DELIVERY_RUNTIME_MESSAGES.en[sourceCapacity.id], sourceCapacity.values)}</p>` : nothing}
       ${available && result ? result.output === "image" ? html`<figure class="experience-native-image"><img data-experience-image src=${result.image.media.url} alt="Image" width=${result.image.media.width} height=${result.image.media.height}

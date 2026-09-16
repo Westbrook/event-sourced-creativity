@@ -42,3 +42,38 @@ test('planner timeout keeps its single submission unresolved without retry or ze
  assert.equal(calls,1);assert.equal(f.attempts.length,1);assert.equal(f.receipts.length,0);
  assert.ok(f.submissions.some(s=>s.status==='pending'));assert.ok(!f.submissions.some(s=>s.status==='completed'||s.status==='rejected'));
 });
+
+test('early Video envelope custody failure retains known billing and original error without a private candidate or media call',async()=>{
+ const f=configured(),failure=Error('synthetic_envelope_custody_failed');let calls=0;
+ f.i.options.onVideoPlannerEnvelope=async()=>{throw failure;};
+ await network(async()=>{calls++;return response();},()=>assert.rejects(generateDocumentArtifact({OPENAI_API_KEY:'synthetic'},'owner','video',f.i),error=>error===failure));
+ assert.equal(calls,1);assert.equal(f.receipts.length,0);assert.equal(f.attempts.length,1);
+ const paid=f.submissions.at(-1);assert.equal(paid.status,'completed');assert.equal(paid.providerRequestId,'resp_video_1');assert.ok(paid.costMicrousd>0);
+ assert.equal(paid.totalTokens,130);assert.equal(paid.responseRef,undefined);
+ assert.ok(!Object.hasOwn(paid,'candidateRaw')&&!Object.hasOwn(paid,'rawEnvelope'));
+ assert.ok(!f.attempts.some(attempt=>attempt.logicalCallKey.includes('repair')));
+});
+for(const mode of ['missing_usage','invalid_usage','model_mismatch'])test('early Video custody failure retains unpriced '+mode+' without inventing settlement',async()=>{
+ const f=configured(),failure=Error('synthetic_envelope_custody_failed');let calls=0;
+ f.i.options.onVideoPlannerEnvelope=async()=>{throw failure;};
+ await network(async()=>{calls++;const body=await response().json();if(mode==='missing_usage')delete body.usage;else if(mode==='invalid_usage')body.usage.input_tokens=-1;else body.model='unknown_model';return Response.json(body);},()=>assert.rejects(generateDocumentArtifact({OPENAI_API_KEY:'synthetic'},'owner','video',f.i),error=>error===failure));
+ assert.equal(calls,1);assert.equal(f.receipts.length,0);assert.equal(f.submissions.at(-1).costMicrousd,undefined);assert.equal(f.submissions.at(-1).providerRequestId,'resp_video_1');assert.ok(!f.submissions.some(call=>call.status==='rejected'));
+});
+test('malformed JSON after failed Video custody preserves the custody error and the unresolved original call',async()=>{
+ const f=configured(),failure=Error('synthetic_envelope_custody_failed');let calls=0;
+ f.i.options.onVideoPlannerEnvelope=async()=>{throw failure;};
+ await network(async()=>{calls++;return new Response('not JSON');},()=>assert.rejects(generateDocumentArtifact({OPENAI_API_KEY:'synthetic'},'owner','video',f.i),error=>error===failure));
+ assert.equal(calls,1);assert.equal(f.receipts.length,0);assert.deepEqual(f.submissions.map(call=>call.status),['pending']);
+});
+for(const mode of ['parent_aborted','authority_revoked'])test('early Video custody failure respects existing observer '+mode+' refusal',async()=>{
+ const {withOutputVideoHook}=await import('../worker/output-video-execution.ts');
+ const f=configured(),failure=Error('synthetic_envelope_custody_failed'),parent=new AbortController();let authority=true,calls=0,financialWrites=0;
+ f.i.options.signal=parent.signal;
+ f.i.options.onVideoPlannerEnvelope=async()=>{if(mode==='parent_aborted')parent.abort(Error('parent stopped'));else authority=false;throw failure;};
+ f.i.options.onProviderSubmission=receipt=>withOutputVideoHook(parent.signal,async lease=>{
+  lease.assertCurrent();if(!authority)throw Error('output_execution_authority_unverified');
+  if(receipt.status!=='pending')financialWrites++;f.submissions.push(receipt);
+ });
+ await network(async()=>{calls++;return response();},()=>assert.rejects(generateDocumentArtifact({OPENAI_API_KEY:'synthetic'},'owner','video',f.i),error=>error===failure));
+ assert.equal(calls,1);assert.equal(financialWrites,0);assert.equal(f.receipts.length,0);assert.deepEqual(f.submissions.map(call=>call.status),['pending']);
+});

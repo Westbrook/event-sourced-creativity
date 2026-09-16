@@ -1,4 +1,5 @@
 import { retainedPlannerResponseShape, retainedStoryboardResponseShape } from "./output-planner-response-shape.ts";
+import { readStoryboardInspectionWitness } from "./output-storyboard-inspection-witness.ts";
 import { unstartedOutputJobFailure } from "./output-unstarted-job-failure.ts";
 import { readFalRecoveryCheckpoint, recoveredFalImageEventIds } from "./output-fal-recovery-policy.ts";
 import { stopOutputVideoJob } from "./output-video-stop.ts";
@@ -1611,6 +1612,7 @@ async function inspectPlannerResponseShapes(env:WorkerEnv,user:PilotUser,row:Doc
   if(user.projectExecution||row.kind!=="render_document"||!["audio","video","storyboard"].includes(String(kind))||row.owner_id!==user.userId||row.stream_id!==user.streamId)return [];
   const diagnostics=[];
   const retainedRows:PrivatePresentationCandidateRow[]=[];
+  const requestWitnesses:NonNullable<Awaited<ReturnType<typeof readStoryboardInspectionWitness>>>[]=[];
   for(const call of providerSubmissions(parseResult(row)).filter(call=>call.provider==="openai"&&call.operation==="planning"&&call.responseRef&&call.providerRequestId).slice(0,2)){
     // Personal exact-job inspection only; the existing query verifies job/source
     // custody, excludes project content, and checks source and response retention.
@@ -1618,15 +1620,17 @@ async function inspectPlannerResponseShapes(env:WorkerEnv,user:PilotUser,row:Doc
     const candidate=candidates.find(candidate=>candidate.content_id===call.responseRef);
     if(!candidate)continue;
     const identity={jobId:row.job_id,documentId:row.document_id,streamId:row.stream_id,kind:String(kind),clientRequestId:call.clientRequestId,responseId:call.providerRequestId!,model:call.model};
-    const shape=kind==='storyboard'?await retainedStoryboardResponseShape(candidate.content,identity):retainedPlannerResponseShape(candidate.content,identity);
-    if(shape&&Date.parse(candidate.read_expires_at)>Date.now()){diagnostics.push({responseId:call.providerRequestId,...shape});retainedRows.push(candidate);}
+    const witness=kind==='storyboard'?await readStoryboardInspectionWitness(env,row,call):null;
+    const shape=kind==='storyboard'?await retainedStoryboardResponseShape(candidate.content,identity,witness?.requestBody):retainedPlannerResponseShape(candidate.content,identity);
+    if(shape&&Date.parse(candidate.read_expires_at)>Date.now()){diagnostics.push({responseId:call.providerRequestId,...shape});retainedRows.push(candidate);if(witness)requestWitnesses.push(witness);}
   }
   if(!diagnostics.length)return [];
   const proof=presentationCandidateDisclosureQuery(user,row,"","");
   if(!proof)return [];
   // Last await: certify current principal, exact job, original bytes, custody
   // and retention together. Diagnostics grant neither recovery nor settlement.
-  const final=await env.DB.prepare(`${proof.ctes} SELECT candidate_custody.* FROM ${proof.from} WHERE ${proof.where}`).bind(...proof.bindings).all<PrivatePresentationCandidateRow>();
+  const final=await env.DB.prepare(`${proof.ctes} SELECT candidate_custody.* FROM ${proof.from} WHERE ${proof.where}${requestWitnesses.map(witness=>` AND (${witness.sql})`).join('')}`).bind(...proof.bindings,...requestWitnesses.flatMap(witness=>witness.bindings)).all<PrivatePresentationCandidateRow>();
+  if(requestWitnesses.some(witness=>!(witness.deadlineMs>Date.now())))return [];
   if(!retainedRows.every(original=>final.results.some(current=>current.content_id===original.content_id&&current.content===original.content&&current.expires_at===original.expires_at
     &&current.created_at===original.created_at&&current.classification===original.classification&&current.policy_version===original.policy_version
     &&current.source_content_id===original.source_content_id&&current.source_content===original.source_content&&current.source_expires_at===original.source_expires_at
@@ -1641,7 +1645,7 @@ function serializeJob(row: DocumentJobRow, recoveryBlocker: DocumentJobRow | nul
   const recovery = queueRecoveryPresentation(row, recoveryBlocker);
   const errorDetail=errorDetailFromResult(parsed);
   const privateCheckpointKeys=new Set(["scenePolicyStopSummary","providerSubmissions","providerSubmissionProtocol","providerSubmissionLegacyUncertain","presentationCandidates","presentationRecoveryOnly","providerResponseRef","candidateRaw","storyboardSafeRecovery","storyboardRejectedProviderReceipt","adaptiveProviderReceipt","model3dProviderFiles","quote"]);
-  if(row.output_slot_id&&row.kind==="render_document"&&request.artifactKind==="storyboard")for(const key of OUTPUT_STORYBOARD_RETAINED_CHECKPOINT_KEYS)privateCheckpointKeys.add(key);
+  if(row.kind==="render_document"&&request.artifactKind==="storyboard")for(const key of OUTPUT_STORYBOARD_RETAINED_CHECKPOINT_KEYS)privateCheckpointKeys.add(key);
   if(row.output_slot_id&&row.kind==="render_document"&&request.artifactKind==="video")for(const key of OUTPUT_VIDEO_RETAINED_CHECKPOINT_KEYS)privateCheckpointKeys.add(key);
   if(model3dNativeCheckpoint(request))for(const key of MODEL3D_PRIVATE_CHECKPOINT_KEYS)privateCheckpointKeys.add(key);
   const sanitizedResult=result?Object.fromEntries(Object.entries(result).filter(([key])=>!privateCheckpointKeys.has(key)&&!key.startsWith("outputVideo")&&(key!=="recoverablePresentationCandidate"||request.artifactKind==="slides"&&row.status==="failed"&&parsed.recoverablePresentationCandidate===true))):null;

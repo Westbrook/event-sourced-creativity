@@ -28,6 +28,8 @@ const terminal=new Function('documentJobCompletionBindings','prepareOutputJobOut
 export async function videoEvidenceFixture({referenceSha256="f".repeat(64)}={}){
  const f=outputTestDatabase();f.sqlite.exec(`CREATE TABLE output_atomic_assertions(token TEXT PRIMARY KEY,passed INTEGER CHECK(passed=1));
  CREATE TABLE private_content(content_id TEXT PRIMARY KEY,owner_id TEXT,kind TEXT,content TEXT NOT NULL,created_at TEXT,expires_at TEXT,redacted_at TEXT);
+ CREATE TABLE private_content_retention_scopes(content_id TEXT PRIMARY KEY,organization_id TEXT,project_access_id TEXT,project_id TEXT,actor_user_id TEXT,classification TEXT,policy_version INTEGER,assigned_expires_at TEXT,created_at TEXT);
+ CREATE TABLE organization_projects(owner_user_id TEXT,project_id TEXT);
  CREATE TABLE project_resource_scopes(resource_kind TEXT,resource_id TEXT);
  CREATE TABLE events(event_id TEXT,stream_id TEXT,type TEXT,payload TEXT,correlation_id TEXT,sequence INTEGER);
  CREATE TABLE output_operation_slots(scope_key TEXT,slot_id TEXT,job_id TEXT,route_digest TEXT,grant_id TEXT,source_digest TEXT,status TEXT,outcome_event_id TEXT,updated_at TEXT);

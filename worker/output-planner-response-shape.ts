@@ -1,5 +1,5 @@
 import { captureStoryboardPlannerResponse } from "./output-storyboard-request.ts";
-import { captureOutputStoryboardPlan } from "./output-storyboard-plan.ts";
+import { captureOutputStoryboardPlan, storyboardPlanFailureReason } from "./output-storyboard-plan.ts";
 import { parseStoryboardOutputContract } from "../src/model/output-storyboard-contract.ts";
 /** Source-free structural diagnostics; never returns provider text or arbitrary keys. */
 const record=(value:unknown):Record<string,unknown>|null=>value!==null&&typeof value==="object"&&!Array.isArray(value)?value as Record<string,unknown>:null;
@@ -53,7 +53,7 @@ export function retainedPlannerResponseShape(raw:string,identity:{jobId:string;d
 
 /** Validate the original Storyboard candidate in place without disclosing its
  * creative contents or treating diagnostics as publication authority. */
-export async function retainedStoryboardResponseShape(raw:string,identity:{jobId:string;documentId:string;streamId:string;kind:string;clientRequestId:string;responseId:string;model:string}){
+export async function retainedStoryboardResponseShape(raw:string,identity:{jobId:string;documentId:string;streamId:string;kind:string;clientRequestId:string;responseId:string;model:string},plannerRequestBody?:string){
   try{
     const retained=record(JSON.parse(raw)),call=record(retained?.call);
     if(identity.kind!=="storyboard"||!retained||retained.job_id!==identity.jobId||retained.document_id!==identity.documentId||retained.stream_id!==identity.streamId
@@ -67,14 +67,14 @@ export async function retainedStoryboardResponseShape(raw:string,identity:{jobId
     let candidate:Record<string,unknown>|null=null;
     try{candidate=record(JSON.parse(retained.output_text));}catch{}
     const items=Array.isArray(candidate?.items)?candidate.items:[];
-    // This diagnostic deliberately does not load the private original request.
-    // Nonempty aliases cannot be judged without that witness; do not mislabel
-    // the retained creative response as invalid or authorize it from shape alone.
+    // The caller may supply an independently certified original request. Never
+    // infer an alias catalog from the returned candidate or current document.
     const requiresRequestWitness=items.some(value=>{const row=record(value);return Array.isArray(row?.context_group_ids)&&row.context_group_ids.length>0;});
     const issues:string[]=[];
-    try{await captureStoryboardPlannerResponse(envelope,retained.output_text,retained.output_storyboard);}catch{issues.push(requiresRequestWitness?"storyboard_original_request_witness_required":"storyboard_candidate_invalid");}
+    const missingWitness=requiresRequestWitness&&plannerRequestBody===undefined;
+    try{await captureStoryboardPlannerResponse(envelope,retained.output_text,retained.output_storyboard,plannerRequestBody);}catch(error){issues.push(missingWitness?"storyboard_original_request_witness_required":storyboardPlanFailureReason(error)??"storyboard_candidate_invalid");}
     const contractValid=Boolean(parseStoryboardOutputContract(retained.output_storyboard));
-    let planValid:boolean|null=requiresRequestWitness?null:false;try{await captureOutputStoryboardPlan(candidate,retained.output_storyboard,identity.responseId);planValid=true;}catch{}
+    let planValid:boolean|null=missingWitness?null:false;try{await captureOutputStoryboardPlan(candidate,retained.output_storyboard,identity.responseId,plannerRequestBody);planValid=true;}catch{}
     // Fixed field names and numeric/type summaries only: no creative values,
     // unknown provider keys, group identifiers or opaque reasoning are exposed.
     const field=(value:unknown)=>({type:typeof value,length:typeof value==='string'?value.length:null,blank:typeof value==='string'?!value.trim():null});

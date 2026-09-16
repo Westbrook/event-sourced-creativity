@@ -1209,6 +1209,7 @@ export async function generateDocumentArtifact(env:WorkerEnv,userId:string,kind:
   const run=async(requestInstructions:string,requestInput:string,name:string)=>{
     if(narrative){if(narrativeAttempted||name!=="document_short_story")throw new Error("output_narrative_call_consumed");narrativeAttempted=true;}
     let localDispatchStop=false;
+    let videoEnvelopeFailure:{error:unknown}|undefined;
     try{
       const validationRepair=name.endsWith("_repair");
       if(nativeVideo&&(validationRepair||paidCalls.length||name!=="document_video"))throw new Error("output_video_planner_call_consumed");
@@ -1267,7 +1268,8 @@ export async function generateDocumentArtifact(env:WorkerEnv,userId:string,kind:
       }
       let rawVideoEnvelope:string|undefined;
       if(nativeVideo){const captured=await captureVideoPlannerEnvelope(response,{clientRequestId,requestDigest,model:callModel},input.options?.signal);
-        await input.options!.onVideoPlannerEnvelope!(captured);rawVideoEnvelope=videoPlannerEnvelopeText(captured);}
+        rawVideoEnvelope=videoPlannerEnvelopeText(captured);
+        try{await input.options!.onVideoPlannerEnvelope!(captured);}catch(error){videoEnvelopeFailure={error};}}
       const rawAudioEnvelope=nativeVideo?rawVideoEnvelope:nativeAudio?await readOutputAudioEnvelope(response):undefined;
       const body=(nativeAudio||nativeVideo?JSON.parse(rawAudioEnvelope!):storyboardEnvelope===null?await response.json():JSON.parse(storyboardEnvelope)) as OpenAIResponse;
       if((nativeAudio||nativeVideo)&&!response.ok&&definitiveProviderRejection(response.status))await input.options?.onProviderSubmission?.({...submission,status:"rejected",costMicrousd:0});
@@ -1283,6 +1285,14 @@ export async function generateDocumentArtifact(env:WorkerEnv,userId:string,kind:
           call={...call,costMicrousd:cost.totalMicrousd,textInputCostMicrousd:cost.textInputMicrousd,textOutputCostMicrousd:cost.textOutputMicrousd,cachedInputTokens:measured.cachedInputTokens,cacheWriteInputTokens:measured.cacheWriteTokens,...(measured.reasoningTokens===null?{}:{reasoningTokens:measured.reasoningTokens}),usageCostBasis:cost.costBasis,pricingReceipt:cost};
         }catch{/* Preserve the received response and known tokens, but never invent a settled price. */}
       }else if(verifiedUsage(body.usage))call.costMicrousd=priceTextUsageBreakdownMicrousd(callModel,paidUsage).totalMicrousd;
+      if(videoEnvelopeFailure){
+        // Private custody failed, but bounded received bytes can still carry
+        // billing evidence. Keep the existing observer's lifetime/authority
+        // guards; never persist another private body or proceed to media.
+        // Unverified usage/model/pricing has no invented settled cost.
+        await input.options?.onProviderSubmission?.(call);
+        throw videoEnvelopeFailure.error;
+      }
       paidCalls.push(call);
       const accounting=paidAccounting();
       const receipt={model:accounting.providerModel,responseId:String(body.id??""),responseIds:accounting.providerResponseIds,usage:accounting.providerUsage,latencyMs:Date.now()-started};
@@ -1319,6 +1329,7 @@ export async function generateDocumentArtifact(env:WorkerEnv,userId:string,kind:
     }catch(error){
       // Retain the original server guard identity; earlier paid receipts are
       // already durable and must not turn this local stop into a provider error.
+      if(videoEnvelopeFailure)throw videoEnvelopeFailure.error;
       if(localDispatchStop||!paidResponses.length)throw error;
       throw new ProviderRequestError(classifyProviderFailure(error),error instanceof ProviderRequestError?error.preparedPrompt:`Document ${kind} instructions:\n${requestInstructions}\n\nCreative context:\n${requestInput}`,paidAccounting());
     }

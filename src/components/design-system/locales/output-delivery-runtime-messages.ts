@@ -1,6 +1,55 @@
 /** Stable, server-owned messages only. Authored content is never passed through this registry. */
 type Translation = readonly [string, string, string, string];
 const groups = {
+
+  storyboardContract: { codes: "output_storyboard_contract_unsupported", text: [
+    "These requirements are not supported for Storyboard. Review the saved delivery plan in Forma; this check starts no generation.",
+    "Ces exigences ne sont pas prises en charge pour Storyboard. Consultez le plan de livraison enregistré dans Forma ; cette vérification ne lance aucune génération.",
+    "هذه المتطلبات غير مدعومة للوحة القصة. راجع خطة التسليم المحفوظة في Forma؛ لا يبدأ هذا الفحص أي توليد.",
+    "この要件はストーリーボードでサポートされていません。Formaで保存済みの納品計画を確認してください。この確認では生成を開始しません。",
+  ] },
+  storyboardProvider: { codes: "output_storyboard_provider_unavailable", text: [
+    "Storyboard generation is not configured for this workspace. Contact a workspace administrator; this check starts no generation.",
+    "La génération de storyboards n’est pas configurée pour cet espace de travail. Contactez un administrateur ; cette vérification ne lance aucune génération.",
+    "توليد لوحات القصة غير مهيأ لمساحة العمل هذه. تواصل مع مسؤول مساحة العمل؛ لا يبدأ هذا الفحص أي توليد.",
+    "このワークスペースではストーリーボード生成が設定されていません。管理者に連絡してください。この確認では生成を開始しません。",
+  ] },
+  storyboardExpired: { codes: "output_storyboard_original_expired", text: [
+    "The saved Storyboard preparation has expired. If it was never authorized, use Renew preparation in the Storyboard mini-app when available. After an authorized attempt, prepare a fresh Storyboard draft using the same story beats and visual direction. Your previous Document, history, and any charges or holds remain; preparation does not start generation.",
+    "La préparation du storyboard enregistré a expiré. Si elle n’a jamais été autorisée, utilisez Renouveler la préparation dans la mini-app Storyboard lorsque cette option est disponible. Après une tentative autorisée, préparez un nouveau brouillon Storyboard avec les mêmes étapes du récit et la même direction visuelle. Le document précédent, son historique et les frais ou réservations restent conservés ; la préparation ne lance aucune génération.",
+    "انتهت صلاحية إعداد لوحة القصة المحفوظة. إذا لم يُصرّح به سابقًا، فاستخدم تجديد الإعداد في تطبيق لوحة القصة المصغّر عند توفره. بعد محاولة مصرّح بها، جهّز مسودة جديدة باستخدام أحداث القصة نفسها والتوجيه البصري نفسه. يبقى المستند السابق وسجله وأي رسوم أو مبالغ محجوزة محفوظة؛ لا يبدأ الإعداد أي توليد.",
+    "保存済みストーリーボードの準備期限が切れました。未承認の場合は、ストーリーボードのミニアプリで利用可能なら「準備を更新」を使用してください。承認済みの試行後は、同じ物語の展開と視覚的な方針を使って新しい下書きを準備してください。以前のドキュメント、履歴、請求や予約額は保持されます。準備では生成を開始しません。",
+  ] },
+  storyboardChanged: { codes: "output_storyboard_source_changed", text: [
+    "The saved Storyboard preparation no longer matches the current Document. Review the Document and saved delivery plan in Forma. This check starts no generation and does not remove earlier charges or holds.",
+    "La préparation du storyboard enregistré ne correspond plus au document actuel. Consultez le document et le plan de livraison enregistré dans Forma. Cette vérification ne lance aucune génération et ne supprime ni frais ni réservations antérieurs.",
+    "لم يعد إعداد لوحة القصة المحفوظة مطابقًا للمستند الحالي. راجع المستند وخطة التسليم المحفوظة في Forma. لا يبدأ هذا الفحص أي توليد ولا يلغي الرسوم أو المبالغ المحجوزة السابقة.",
+    "保存済みストーリーボードの準備内容が現在のドキュメントと一致しません。Formaでドキュメントと保存済み納品計画を確認してください。この確認では生成を開始せず、以前の請求や予約額も取り消しません。",
+  ] },
+  storyboardContext: { codes: "output_storyboard_context_limit", text: [
+    "This Storyboard exceeds the supported context limit. Review the selected source material in Forma; nothing was silently omitted and this check starts no generation.",
+    "Ce storyboard dépasse la limite de contexte prise en charge. Consultez les sources sélectionnées dans Forma ; rien n’a été omis sans vous en informer et cette vérification ne lance aucune génération.",
+    "تتجاوز لوحة القصة هذه حد السياق المدعوم. راجع المواد المصدرية المحددة في Forma؛ لم يُحذف أي شيء دون إبلاغك ولا يبدأ هذا الفحص أي توليد.",
+    "このストーリーボードは対応するコンテキスト上限を超えています。Formaで選択済みの資料を確認してください。内容を黙って省略しておらず、この確認では生成を開始しません。",
+  ] },
+  storyboardOffer: { codes: "output_storyboard_offer_invalid", text: [
+    "The Storyboard cost and source-transfer terms could not be verified. No new spending approval or generation is available; earlier charges and holds remain recorded.",
+    "Les conditions de coût et de transfert des sources du storyboard n’ont pas pu être vérifiées. Aucune nouvelle autorisation de dépense ni génération n’est disponible ; les frais et réservations antérieurs restent enregistrés.",
+    "تعذر التحقق من شروط تكلفة لوحة القصة ونقل مصادرها. لا تتوفر موافقة جديدة على الإنفاق أو عملية توليد؛ تبقى الرسوم والمبالغ المحجوزة السابقة مسجلة.",
+    "ストーリーボードの費用と資料転送の条件を検証できませんでした。新たな支出承認も生成も利用できません。以前の請求や予約額は記録に残ります。",
+  ] },
+  storyboardReady: { codes: "output_storyboard_ready", text: [
+    "Exactly 4 frames from the authored story and visual direction. Review the resulting images; completion does not guarantee creative acceptance.",
+    "Exactement 4 images à partir du récit et de la direction visuelle rédigés. Examinez les images produites ; la fin de la génération ne garantit pas leur acceptation créative.",
+    "أربعة إطارات بالضبط من القصة والتوجيه البصري المؤلّفين. راجع الصور الناتجة؛ لا يضمن اكتمال التوليد قبولها إبداعيًا.",
+    "作成した物語と視覚的な方針から正確に4フレームを生成します。生成された画像を確認してください。完了しても創作上の承認は保証されません。",
+  ] },
+  storyboardTransfer: { codes: "output_transfer_storyboard_after_authorization", text: [
+    "This check sends nothing. After authorization and Create, Forma sends the current Document context to OpenAI once to plan exactly four frames, then each planned frame direction to fal.ai / Ideogram 4 for one PNG. Before each of the four images, the exact final text prompt also goes to OpenAI (omni-moderation-latest) for its existing safety check. Those up to four safety checks are separate from the five paid generation stages; no reference pixels, repair request or automatic retry is authorized. This is a published-rate allowance, not a provider invoice.",
+    "Cette vérification n’envoie rien. Après autorisation et création, Forma envoie une fois le contexte du document actuel à OpenAI pour planifier exactement quatre images, puis la direction de chaque image à fal.ai / Ideogram 4 pour un PNG. Avant chacune des quatre images, le texte final exact est aussi envoyé à OpenAI (omni-moderation-latest) pour le contrôle de sécurité existant. Ces quatre contrôles au maximum sont distincts des cinq étapes de génération payantes ; aucun pixel de référence, demande de correction ni nouvelle tentative automatique n’est autorisé. Il s’agit d’une provision aux tarifs publiés, pas d’une facture du fournisseur.",
+    "لا يرسل هذا الفحص شيئًا. بعد التصريح والإنشاء، ترسل Forma سياق المستند الحالي إلى OpenAI مرة واحدة لتخطيط أربعة إطارات بالضبط، ثم توجيه كل إطار إلى fal.ai / Ideogram 4 لإنشاء صورة PNG واحدة. قبل كل صورة من الصور الأربع، يُرسل النص النهائي نفسه أيضًا إلى OpenAI (omni-moderation-latest) للفحص الأمني الحالي. هذه الفحوص الأربعة كحد أقصى منفصلة عن مراحل التوليد الخمس المدفوعة؛ لا يُصرّح بإرسال بكسلات مرجعية أو طلب إصلاح أو إعادة محاولة تلقائية. هذا مخصص وفق الأسعار المنشورة، وليس فاتورة من المزوّد.",
+    "この確認では何も送信しません。承認して作成すると、Formaは現在のドキュメントのコンテキストをOpenAIに1回送信して正確に4フレームを計画し、各フレームの方針をfal.ai / Ideogram 4に送信してPNGを1枚ずつ生成します。各画像の生成前には、最終テキストプロンプトをそのままOpenAI（omni-moderation-latest）にも送り、既存の安全確認を行います。最大4回の安全確認は5段階の有料生成とは別です。参照画像の画素、修正依頼、自動再試行は許可されません。これは公開料金に基づく予算枠であり、プロバイダーの請求書ではありません。",
+  ] },
   sceneContract: { codes: "output_scene_contract_unsupported", text: [
     "These output requirements are not supported for Scene. Review the saved delivery plan in Forma.",
     "Ces exigences de sortie ne sont pas prises en charge pour Scène. Consultez le plan de livraison enregistré dans Forma.",

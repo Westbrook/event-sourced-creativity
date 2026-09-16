@@ -1,7 +1,14 @@
 import { parseStoryboardOutputContract } from "../src/model/output-storyboard-contract.ts";
 import type { DocumentArtifactDraft, DocumentArtifactDraftItem } from "../src/model/document-artifacts.ts";
 
-const fail = (): never => { throw new Error("output_storyboard_plan_invalid"); };
+const planFailures = new WeakMap<object, string>();
+export function storyboardPlanFailureReason(error: unknown): string | undefined {
+  return error !== null && typeof error === "object" ? planFailures.get(error) : undefined;
+}
+const fail = (reason = "plan_structure"): never => {
+  const error = new Error("output_storyboard_plan_invalid");
+  planFailures.set(error, reason); throw error;
+};
 function fields(value: unknown, required: readonly string[], optional: readonly string[] = []): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value) || ![Object.prototype, null].includes(Object.getPrototypeOf(value))) return fail();
   const descriptors = Object.getOwnPropertyDescriptors(value), keys = Reflect.ownKeys(descriptors);
@@ -10,8 +17,10 @@ function fields(value: unknown, required: readonly string[], optional: readonly 
   return value as Record<string, unknown>;
 }
 function text(value: unknown, maximum: number, required = false): string {
-  if (typeof value !== "string" || value.length > maximum || required && !value.trim()) return fail();
-  for (const character of value) if ([0, 8, 11, 12].includes(character.charCodeAt(0))) return fail();
+  if (typeof value !== "string") return fail("text_type");
+  if (value.length > maximum) return fail("text_length");
+  if (required && !value.trim()) return fail("text_blank");
+  for (const character of value) if ([0, 8, 11, 12].includes(character.charCodeAt(0))) return fail("text_control");
   return value;
 }
 function array(value: unknown, count?: number, maximum=4): unknown[] {
@@ -28,11 +37,12 @@ function array(value: unknown, count?: number, maximum=4): unknown[] {
 }
 function frame(value: unknown, allowedGroups:ReadonlySet<string>): DocumentArtifactDraftItem {
   const row = fields(value, ["title", "body", "notes", "image_prompt"], ["context_group_ids", "slide"]);
-  if (Object.hasOwn(row, "slide") && row.slide !== null) return fail();
+  if (Object.hasOwn(row, "slide") && row.slide !== null) return fail("slide_non_null");
   // These are request-local annotations from the exact planner request, never
   // new source IDs or permission to fetch additional context.
   const groups=Object.hasOwn(row,"context_group_ids")?array(row.context_group_ids,undefined,24):null;
-  if(groups&&(groups.some(id=>typeof id!=="string"||!allowedGroups.has(id))||new Set(groups).size!==groups.length))return fail();
+  if(groups&&groups.some(id=>typeof id!=="string"||!allowedGroups.has(id)))return fail("context_group_unknown");
+  if(groups&&new Set(groups).size!==groups.length)return fail("context_group_duplicate");
   return { title: text(row.title, 512, true), body: text(row.body, 16_384, true), notes: text(row.notes, 8_192),
     image_prompt: text(row.image_prompt, 8_192, true), slide: null,
     ...(groups ? { context_group_ids: groups as string[] } : {}) };
@@ -54,27 +64,28 @@ const capturedPlans = new WeakSet<object>();
  */
 export async function captureOutputStoryboardPlan(value: unknown, sourceContract: unknown, plannerResponseId: unknown, plannerRequestBody?:string) {
   const contract = parseStoryboardOutputContract(sourceContract);
-  if (!contract || typeof plannerResponseId !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/u.test(plannerResponseId)) return fail();
+  if (!contract) return fail("contract");
+  if (typeof plannerResponseId !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/u.test(plannerResponseId)) return fail("response_id");
   const allowedGroups=new Set<string>();
   if(plannerRequestBody!==undefined){
-    if(typeof plannerRequestBody!=="string"||new TextEncoder().encode(plannerRequestBody).length>262144)return fail();
+    if(typeof plannerRequestBody!=="string"||new TextEncoder().encode(plannerRequestBody).length>262144)return fail("request_size");
     const request=JSON.parse(plannerRequestBody),input=JSON.parse(request.input);
-    if(JSON.stringify(parseStoryboardOutputContract(input.storyboard_contract))!==JSON.stringify(contract))return fail();
+    if(JSON.stringify(parseStoryboardOutputContract(input.storyboard_contract))!==JSON.stringify(contract))return fail("request_contract");
     const groups=array(input.combined_context_plan??[],undefined,64);
     for(let index=0;index<groups.length;index++){
       const group=groups[index] as Record<string,unknown>;
-      if(!group||typeof group!=="object"||group.context_key!==`context_group_${index+1}`)return fail();
+      if(!group||typeof group!=="object"||group.context_key!==`context_group_${index+1}`)return fail("request_group_alias");
       allowedGroups.add(group.context_key as string);
     }
   }
   // The provider schema omits slide-only fields. Retained internal plans use
   // explicit nulls; accept both representations without changing creative text.
   const row = fields(value, ["title", "summary", "content_markdown", "items"], ["presentation"]);
-  if (Object.hasOwn(row, "presentation") && row.presentation !== null) return fail();
+  if (Object.hasOwn(row, "presentation") && row.presentation !== null) return fail("presentation_non_null");
   const plan: DocumentArtifactDraft = { title: text(row.title, 512, true), summary: text(row.summary, 4_096),
     content_markdown: text(row.content_markdown, 65_536, true), presentation: null, items: array(row.items, 4).map(value=>frame(value,allowedGroups)) };
   const raw = JSON.stringify(plan);
-  if (new TextEncoder().encode(raw).length > contract.maximumPlanBytes) return fail();
+  if (new TextEncoder().encode(raw).length > contract.maximumPlanBytes) return fail("plan_bytes");
   const hasGroups=plan.items.some(item=>item.context_group_ids?.length);
   const plannerRequestDigest=hasGroups?await sha(plannerRequestBody!):null;
   const planSha256 = await sha(raw), bindingSha256 = await sha(JSON.stringify({ contract, plannerResponseId, planSha256,...(plannerRequestDigest?{plannerRequestDigest}:{}) }));
