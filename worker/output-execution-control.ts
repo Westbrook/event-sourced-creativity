@@ -22,6 +22,7 @@ import { retainStoryboardFrameCheckpoint, storyboardFrameSequenceAssertion } fro
 import type { CapturedStoryboardPlan } from "./output-storyboard-plan.ts";
 import { assertOutputSceneAttempt } from "./output-scene-execution.ts";
 import { outputScenePreflightProof } from "./output-scene-preflight.ts";
+import { outputProofReadStatements } from "./output-disclosure-proof.ts";
 import { readSceneJobSourceWitness,sceneJobSourceWitnessAssertions,prepareSceneJobSourceTransition } from './scene-job-source-witness.ts';
 import { readOutputScenePayload } from "./output-scene-preflight-contract.ts";
 import { requireSceneMiniAppCostApproval } from "./scene-mini-app-consent.ts";
@@ -174,13 +175,32 @@ export async function createOutputEventExecution(env:WorkerEnv,user:PilotUser,jo
  }:undefined;
  if(refreshAudio)await refreshAudio();
  const scenePayload=sceneProof?await readOutputScenePayload(settings.payload):null;
+ let scenePreflight=current;
  const refreshScene=sceneProof?async()=>{
-  const refreshed=await preflightOutputNativeTarget({env,request:new Request("https://output-execution.invalid"),scope,principal:user,confirmedPlan:authority.confirmedPlan,target:authority.target,context:authority.context,ownerHead:authority.sourceEpoch.head,sourceEvents:authority.events,sourceAssertions:authority.assertions,sourceDigest:authority.sourceDigest,requirementsDigest:authority.requirementsDigest,...(sceneStored?{sceneSourceVersion:sceneStored.witness.successor}:{})});
+  // Request-local custody only: a committed successor requires a new reduction.
+  // An unchanged version rechecks every original predicate, never recaptures
+  // authority after a failed check or caches consent across requests.
+  const captured=outputScenePreflightProof(scenePreflight);
+  const reused=Boolean(sceneStored&&captured?.prepared.sourceVersion
+    &&JSON.stringify(captured.prepared.sourceVersion)===JSON.stringify(sceneStored.witness.successor));
+  const refreshed=reused?scenePreflight:await preflightOutputNativeTarget({env,request:new Request("https://output-execution.invalid"),scope,principal:user,confirmedPlan:authority.confirmedPlan,target:authority.target,context:authority.context,ownerHead:authority.sourceEpoch.head,sourceEvents:authority.events,sourceAssertions:authority.assertions,sourceDigest:authority.sourceDigest,requirementsDigest:authority.requirementsDigest,...(sceneStored?{sceneSourceVersion:sceneStored.witness.successor}:{})});
   const proof=outputScenePreflightProof(refreshed);
   const payload=refreshed.available?await readOutputScenePayload((refreshed.settings as OutputNativeSettings).payload):null;
   if(!proof||!payload||!scenePayload||proof.requestId!==job.job_id||proof.requestId!==slot.jobId||slot.attemptOrdinal!==0||slot.previousSlotId
     ||await outputDigest(refreshed)!==slot.routeDigest)throw new OutputConflictError("output_scene_source_changed",403);
   requireSceneMiniAppCostApproval(parsed(job.request_json).sceneCostConsent,scenePayload.outputScene.costPreview,payload.outputScene.costPreview);
+  if(reused){
+   const assertions=proof.sourceAssertions;
+   const expired=()=>!Number.isFinite(Date.parse(proof.expiresAt))||Date.now()>=Date.parse(proof.expiresAt)
+     ||assertions.some(value=>value.deadlineMs!==undefined&&(!Number.isFinite(value.deadlineMs)||Date.now()>=value.deadlineMs));
+   if(!assertions.length||expired())throw new OutputConflictError("output_scene_source_changed",409);
+   const checked=await env.DB.batch<Record<string,unknown>>(outputProofReadStatements(env,assertions));
+   if(!Array.isArray(checked)||checked.length!==assertions.length
+     ||Array.from({length:assertions.length},(_,index)=>checked[index]).some(result=>!result||result.success!==true
+       ||!Array.isArray(result.results)||result.results.length!==1||result.results[0]?.current!==1)
+     ||expired())throw new OutputConflictError("output_scene_source_changed",409);
+  }
+  scenePreflight=refreshed;
   sceneAssertions.splice(0,sceneAssertions.length,...proof.sourceAssertions);
   return proof.prepared;
  }:undefined;
