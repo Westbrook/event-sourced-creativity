@@ -54,7 +54,7 @@ export async function readStoryboardPlannerAttempt(attempt: ProviderAttemptPrefl
 /** Validate the first original provider envelope before any legacy artifact
  * normalization or repair. Four malformed frames are a failure, never a reason
  * to make an unplanned second planner call. Cost/receipt proof remains separate. */
-export async function captureStoryboardPlannerResponse(envelope: unknown, raw: string, contract: unknown) {
+export async function captureStoryboardPlannerResponse(envelope: unknown, raw: string, contract: unknown, plannerRequestBody?:string) {
  const row=object(envelope),usage=object(row.usage);
  if(row.model!==OUTPUT_FAL_PLANNING_MODEL||row.status!=="completed"||typeof row.id!=="string"||row.incomplete_details
   ||!["input_tokens","output_tokens","total_tokens"].every(key=>Number.isSafeInteger(usage[key])&&Number(usage[key])>=0)
@@ -64,5 +64,5 @@ export async function captureStoryboardPlannerResponse(envelope: unknown, raw: s
  if(texts.length>1||texts.some(text=>typeof text!=="string")||typeof row.output_text==="string"&&texts.length===1&&row.output_text!==texts[0]
   ||(row.output_text||texts[0]||"")!==raw)return fail();
  if(typeof raw!=="string"||new TextEncoder().encode(raw).byteLength>262144)return fail();
- return captureOutputStoryboardPlan(JSON.parse(raw),contract,row.id);
+ return captureOutputStoryboardPlan(JSON.parse(raw),contract,row.id,plannerRequestBody);
 }

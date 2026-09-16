@@ -77,6 +77,30 @@ test('actual outgoing strict schema and incoming raw Storyboard agree on omitted
  assert.equal(fetches.length,1);assert.equal(result.raw,wire);assert.deepEqual(result.output,JSON.parse(raw()));
  assert.equal(f.responses.length,1);assert.deepEqual(JSON.parse(f.responses[0].storyboardEnvelope),envelope(wire));
 });
+test('actual grouped planner request accepts only its original aliases without stripping or changing text',async()=>{
+ const source=input();source.snapshot.facts[0].block_id='keeper';source.snapshot.facts[1].block_id='style';
+ source.snapshot.relationships=[{from_block_id:'keeper',to_block_id:'style',kind:'context_contains'}];
+ const prepared=await prepareStoryboardPlannerRequest({},'owner',source,contract());
+ const groups=JSON.parse(JSON.parse(prepared.requestBody).input).combined_context_plan;
+ assert.equal(groups.length,1);assert.equal(groups[0].context_key,'context_group_1');
+ const candidate=JSON.parse(raw());for(const item of candidate.items)item.context_group_ids=['context_group_1'];
+ let posted=0;globalThis.fetch=async(url,options)=>{assert.equal(options.body,prepared.requestBody);posted++;return new Response(JSON.stringify(envelope(JSON.stringify(candidate))));};
+ const result=await generateDocumentArtifact({OPENAI_API_KEY:'unusable-test-presence-marker'},'owner','storyboard',{...source,options:{...source.options,
+  outputStoryboard:{contract:contract(),requestDigest:prepared.requestDigest,maximumInputTokens:prepared.maximumInputTokens},onBeforeProviderAttempt(){},onBeforeProviderDispatch(){},onProviderResponse(){},onProviderSubmission(){},onStoryboardEnvelope(){}}});
+ assert.equal(posted,1);assert.deepEqual(result.output,candidate);assert.equal(result.storyboardRequestBody,prepared.requestBody);
+ const {captureOutputStoryboardPlan}=await import('../worker/output-storyboard-plan.ts');
+ const {bindStoryboardFrameAttempt,readStoryboardFrameAttempt}=await import('../worker/output-storyboard-fal.ts');
+ const {createOutputFalImageContract,captureOutputFalImageRequest}=await import('../worker/output-fal-image-contract.ts');
+ const captured=await captureOutputStoryboardPlan(result.output,contract(),result.responseId,result.storyboardRequestBody);
+ const fal=createOutputFalImageContract('ideogram/v4','1536x1024');
+ const request=await captureOutputFalImageRequest(fal,fal.model,{prompt:'Original direction',expansion_model:fal.expansionModel,image_size:{width:fal.width,height:fal.height},rendering_speed:fal.renderingSpeed,acceleration:fal.acceleration,num_images:1,sync_mode:false,enable_safety_checker:true,output_format:fal.outputFormat},fal,'frame-original');
+ const mapped=await bindStoryboardFrameAttempt(captured,0,request.attempt),execution={contract:contract(),requestDigest:prepared.requestDigest,maximumInputTokens:prepared.maximumInputTokens};
+ assert.equal((await readStoryboardFrameAttempt(mapped,contract(),execution)).plan.bindingSha256,captured.bindingSha256);
+ await assert.rejects(readStoryboardFrameAttempt(mapped,contract()));
+ await assert.rejects(readStoryboardFrameAttempt(mapped,contract(),{...execution,requestDigest:'f'.repeat(64)}));
+ const changed=structuredClone(mapped);changed.storyboard.plannerRequestBody+=' ';await assert.rejects(readStoryboardFrameAttempt(changed,contract(),execution));
+ assert.equal(posted,1,'reconstruction never calls either provider');
+});
 test('malformed raw first response cannot be normalized, padded or repaired through a second request',async()=>{
  for(const mutate of [p=>p.items.pop(),p=>delete p.items[0].image_prompt,p=>p.items[0].image_prompt='',p=>p.items[0].extra='forbidden',p=>p.presentation={},p=>p.items.reverse().push(p.items[0])]){
   const p=JSON.parse(raw());mutate(p);const f=await runFixture(envelope(JSON.stringify(p)));await assert.rejects(f.promise);assert.equal(fetches.length,1);assert.equal(f.responses.length,1);

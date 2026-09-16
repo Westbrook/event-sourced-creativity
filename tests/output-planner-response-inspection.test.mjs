@@ -63,6 +63,21 @@ test('Storyboard reasoning encryption presence is accurate without exposing opaq
  const body=await(await f.request()).json();assert.equal(body.job.result.plannerResponseDiagnostics[0].reasoningEncryptedContent,true);
  assert.equal(body.job.result.plannerResponseDiagnostics[0].valid,true);assert.doesNotMatch(JSON.stringify(body),/PRIVATE|OPAQUE|SECRET/);
 });
+test('grouped Storyboard diagnostics distinguish missing original-request witness from invalid creative output',async t=>{
+ const f=await fixture(t,'storyboard');
+ const row=f.sqlite.prepare("SELECT content FROM private_content WHERE content_id='response-content'").get(),retained=JSON.parse(row.content),envelope=JSON.parse(retained.provider_envelope),candidate=JSON.parse(retained.output_text);
+ candidate.items[0].context_group_ids=['context_group_1'];
+ retained.output_text=JSON.stringify(candidate);envelope.output_text=retained.output_text;retained.provider_envelope=JSON.stringify(envelope);
+ retained.content_sha256=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(retained.output_text))),n=>n.toString(16).padStart(2,'0')).join('');
+ f.sqlite.prepare("UPDATE private_content SET content=? WHERE content_id='response-content'").run(JSON.stringify(retained));
+ const before=f.sqlite.prepare('SELECT * FROM document_jobs').get();
+ t.mock.method(globalThis,'fetch',()=>{throw Error('No network allowed');});
+ const body=await(await f.request()).json(),diagnostic=body.job.result.plannerResponseDiagnostics[0];
+ assert.equal(diagnostic.valid,false);assert.equal(diagnostic.planValid,null);
+ assert.deepEqual(diagnostic.issues,['storyboard_original_request_witness_required']);
+ assert.doesNotMatch(JSON.stringify(body),/SECRET|context_group_1/);
+ assert.deepEqual(f.sqlite.prepare('SELECT * FROM document_jobs').get(),before);
+});
 for(const sql of ["UPDATE private_content SET content=json_set(content,'$.content_sha256','wrong') WHERE content_id='response-content'","UPDATE private_content SET content=json_set(content,'$.response_id','wrong') WHERE content_id='response-content'"])
 test('Storyboard inspection refuses changed hash or response identity '+sql,async t=>{const f=await fixture(t,'storyboard');f.sqlite.exec(sql);assert.deepEqual((await(await f.request()).json()).job.result.plannerResponseDiagnostics,[]);});
 for(const [name,sql] of [

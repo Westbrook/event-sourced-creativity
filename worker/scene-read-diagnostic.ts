@@ -1,5 +1,5 @@
 /** Server-only, fixed-category diagnosis. Never retains source, SQL or IDs. */
-const reasons = ['input', 'deadline', 'batch_shape', 'guard_false', 'metadata', 'hydration', 'consumer', 'proof_shape', 'proof_false'] as const;
+const reasons = ['input', 'deadline', 'batch_shape', 'guard_false', 'guard_schema', 'guard_generation', 'guard_caller_proof', 'guard_owner_head', 'guard_deadline', 'metadata', 'hydration', 'consumer', 'proof_shape', 'proof_false'] as const;
 export type SceneReadFailureReason = typeof reasons[number];
 const allowed = new Set<string>(reasons);
 const diagnostics = new WeakMap<object, SceneReadFailureReason>();

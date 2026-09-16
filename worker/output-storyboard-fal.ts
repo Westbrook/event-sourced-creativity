@@ -2,9 +2,11 @@ import { captureOutputStoryboardPlan, outputStoryboardFrameBinding, type Capture
 import { restoreOutputFalImageRequest, readOutputFalImageContract, type OutputFalCapturedRequest } from "./output-fal-image-contract.ts";
 import type { ProviderAttemptPreflight } from "./openai-adapter.ts";
 import { parseStoryboardOutputContract } from "../src/model/output-storyboard-contract.ts";
+import {captureStoryboardPlannerRequest,readStoryboardPlannerExecution} from "./output-storyboard-request.ts";
 
 export type StoryboardFrameAttempt = Readonly<{
   contract: CapturedStoryboardPlan["contract"]; planRaw: string; plannerResponseId: string; frameIndex: number; adaptedRequestDigest: string;
+  plannerRequestBody?:string;
 }>;
 const fail = (): never => { throw new Error("output_storyboard_frame_request_invalid"); };
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
@@ -19,20 +21,26 @@ export async function bindStoryboardFrameAttempt(plan: CapturedStoryboardPlan, f
   const binding = await outputStoryboardFrameBinding(plan, frameIndex, attempt.requestDigest);
   return Object.freeze({ ...attempt, logicalCallKey: binding.stage, requestDigest: binding.requestDigest,
     storyboard: Object.freeze({ contract: plan.contract, planRaw: plan.raw, plannerResponseId: plan.plannerResponseId,
-      frameIndex, adaptedRequestDigest: attempt.requestDigest }) });
+      frameIndex, adaptedRequestDigest: attempt.requestDigest,...(plan.plannerRequestBody?{plannerRequestBody:plan.plannerRequestBody}:{}) }) });
 }
 
 /** Reconstruct the exact mapped claim; the source contract still needs the
  * caller's original-intake/owner/slot/lease SQL proof, not just this hash match. */
-export async function readStoryboardFrameAttempt(attempt: ProviderAttemptPreflight, expectedContract: unknown) {
+export async function readStoryboardFrameAttempt(attempt: ProviderAttemptPreflight, expectedContract: unknown, expectedPlanner?:unknown) {
   const value = attempt.storyboard;
   if (!value || typeof value !== "object" || Array.isArray(value)) return fail();
-  const descriptors = Object.getOwnPropertyDescriptors(value), keys = ["contract", "planRaw", "plannerResponseId", "frameIndex", "adaptedRequestDigest"];
+  const descriptors = Object.getOwnPropertyDescriptors(value), keys = ["contract", "planRaw", "plannerResponseId", "frameIndex", "adaptedRequestDigest",...(Object.hasOwn(value,"plannerRequestBody")?["plannerRequestBody"]:[])];
   if (Reflect.ownKeys(descriptors).length !== keys.length || !keys.every(key => descriptors[key]?.enumerable && "value" in descriptors[key])) return fail();
   const row = value as StoryboardFrameAttempt;
   const expectedSource = parseStoryboardOutputContract(expectedContract);
   if (typeof row.planRaw !== "string" || row.planRaw.length > 262_144 || typeof row.adaptedRequestDigest !== "string" || !expectedSource) return fail();
-  const plan = await captureOutputStoryboardPlan(JSON.parse(row.planRaw), row.contract, row.plannerResponseId);
+  if(row.plannerRequestBody!==undefined){
+    const execution=readStoryboardPlannerExecution(expectedPlanner);
+    if(!execution||typeof row.plannerRequestBody!=="string")return fail();
+    const captured=await captureStoryboardPlannerRequest(row.contract,row.plannerRequestBody,attempt.clientRequestId);
+    if(captured.requestDigest!==execution.requestDigest||captured.maximumInputTokens!==execution.maximumInputTokens||!same(captured.contract,execution.contract))return fail();
+  }
+  const plan = await captureOutputStoryboardPlan(JSON.parse(row.planRaw), row.contract, row.plannerResponseId,row.plannerRequestBody);
   if (plan.raw !== row.planRaw || !same(plan.contract, expectedSource)) return fail();
   const original = { ...attempt, logicalCallKey: "image:initial", requestDigest: row.adaptedRequestDigest };
   delete original.storyboard;

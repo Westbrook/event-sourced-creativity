@@ -23,7 +23,7 @@ const {storeGeneratedImage}=await import(C+'/worker/media-api.ts');
 const {png}=await import(C+'/tests/output-asset-fixtures.mjs');
 const {verifyOutputStoryboardCompletion}=await import('../worker/output-storyboard-completion.ts');
 const originalFetch=globalThis.fetch;globalThis.fetch=()=>{throw Error('network forbidden');};test.after(()=>{globalThis.fetch=originalFetch;});
-async function fixture(){
+async function fixture(grouped=false){
  const f=outputTestDatabase();f.sqlite.exec(`CREATE TABLE output_atomic_assertions(token TEXT PRIMARY KEY,passed INTEGER CHECK(passed=1));
  CREATE TABLE private_content(content_id TEXT PRIMARY KEY,owner_id TEXT,kind TEXT,content TEXT NOT NULL,created_at TEXT,expires_at TEXT,redacted_at TEXT);
  CREATE TABLE project_resource_scopes(resource_kind TEXT,resource_id TEXT);CREATE TABLE events(event_id TEXT,stream_id TEXT,type TEXT,payload TEXT);
@@ -31,9 +31,11 @@ async function fixture(){
  CREATE TABLE output_provider_calls(scope_key TEXT,slot_id TEXT,call_key TEXT,stage_key TEXT,provider TEXT,model TEXT,client_request_id TEXT,request_digest TEXT,status TEXT,provider_response_id TEXT,used_microusd INTEGER);`);createStoryboardJobTable(f.sqlite);
  const contract=createStoryboardOutputContract({draftId:'experience-draft-'+'a'.repeat(64),draftHash:'sha256:'+'b'.repeat(64),releaseHash:'sha256:'+'c'.repeat(64),requestHash:'sha256:'+'d'.repeat(64),sourceBindingHash:'sha256:'+'e'.repeat(64)});
  const artifact={title:'Keeper',summary:'Return home',content_markdown:'A keeper returns home with the lantern.',presentation:null,items:Array.from({length:4},(_,i)=>({title:'Frame '+i,body:'Moment '+i,notes:'Lantern continuity',image_prompt:'Keeper near harbor '+i,slide:null,context_group_ids:[]}))};
- const planner=await prepareStoryboardPlannerRequest({},'owner',{documentTitle:'Keeper',snapshot:{facts:[{type:'subject',instruction:artifact.content_markdown}]},options:{itemCount:4,productionMode:'manual'}},contract);
+ const snapshot={facts:[{block_id:'keeper',type:'subject',instruction:artifact.content_markdown}]};
+ if(grouped){snapshot.facts.push({block_id:'style',type:'style',instruction:'Preserve lantern continuity.'});snapshot.relationships=[{from_block_id:'keeper',to_block_id:'style',kind:'context_contains'}];for(const item of artifact.items)item.context_group_ids=['context_group_1'];}
+ const planner=await prepareStoryboardPlannerRequest({},'owner',{documentTitle:'Keeper',snapshot,options:{itemCount:4,productionMode:'manual'}},contract);
  const response={id:'planner-original',model:planner.attempt.model,status:'completed',output_text:'\n '+JSON.stringify(artifact)+'\n',usage:{input_tokens:100,output_tokens:200,total_tokens:300},service_tier:'default'};
- const plan=await captureStoryboardPlannerResponse(response,response.output_text,contract),future=new Date(Date.now()+60000).toISOString(),artifactId='artifact-original';
+ const plan=await captureStoryboardPlannerResponse(response,response.output_text,contract,planner.requestBody),future=new Date(Date.now()+60000).toISOString(),artifactId='artifact-original';
  const scope={kind:'personal',key:'scope',actorUserId:'owner',ownerUserId:'owner',documentId:'doc'},slot={slotId:'slot',jobId:'job',routeDigest:'route',grantId:'grant',sourceDigest:'source'};
  const job={job_id:'job',owner_id:'owner',stream_id:'creative:owner',document_id:'doc',correlation_id:'corr',output_slot_id:'slot',attempt_count:1,kind:'render_document',status:'running',lease_expires_at:future,expires_at:future,result_json:'{}'};
  insertStoryboardJob(f.sqlite,job);
@@ -58,8 +60,9 @@ async function fixture(){
  const verify=()=>verifyOutputStoryboardCompletion(f.env,scope,slot,job,settings,artifactId,artifact,cp.renderedItems);
  return {...f,job,scope,slot,settings,artifactId,artifact,cp,persist,verify};
 }
-test('actual private checkpoints, five settled SQL claims and four physically stored PNG fixtures join at completion, without admission',async()=>{
- const f=await fixture();try{const result=await f.verify();assert.equal(result.receipt.frameCount,4);assert.equal(result.receipt.providerCallCount,5);assert.equal(result.receipt.visualReview,'required');
+for(const grouped of [false,true])test(`actual private checkpoints, five settled SQL claims and four stored PNG fixtures join at completion (grouped=${grouped}), without admission`,async()=>{
+ const f=await fixture(grouped);try{const result=await f.verify();assert.equal(result.receipt.frameCount,4);assert.equal(result.receipt.providerCallCount,5);assert.equal(result.receipt.visualReview,'required');
+  if(grouped){assert.deepEqual(f.artifact.items.map(i=>i.context_group_ids),Array.from({length:4},()=>['context_group_1']));const ref=f.cp.outputStoryboardPlannerCheckpoint.requestRef;f.sqlite.prepare('UPDATE private_content SET content=content||? WHERE content_id=?').run(' ',ref);await assert.rejects(f.verify());f.sqlite.prepare('UPDATE private_content SET content=substr(content,1,length(content)-1) WHERE content_id=?').run(ref);}
   for(const a of result.assertions)assert(f.sqlite.prepare('SELECT 1 WHERE '+a.sql).get(...(a.bindings??[])));
   assert.equal(f.sqlite.prepare('SELECT COUNT(*) n FROM output_provider_calls').get().n,5);
  }finally{f.sqlite.close();}
@@ -162,6 +165,11 @@ test('actual guarded four-frame publication binds verified receipt and each item
    f.sqlite.exec(`ALTER TABLE events ADD COLUMN correlation_id TEXT;ALTER TABLE events ADD COLUMN actor TEXT;ALTER TABLE events ADD COLUMN sequence INTEGER;
     ALTER TABLE output_operation_slots ADD COLUMN plan_revision_id TEXT DEFAULT 'revision';
     ALTER TABLE output_operation_slots ADD COLUMN target_id TEXT;
+    ALTER TABLE output_operation_slots ADD COLUMN token_reservation_id TEXT;
+    ALTER TABLE output_operation_slots ADD COLUMN cost_reservation_id TEXT;
+    ALTER TABLE output_operation_slots ADD COLUMN maximum_calls INTEGER;
+    ALTER TABLE output_operation_slots ADD COLUMN maximum_tokens INTEGER;
+    ALTER TABLE output_provider_calls ADD COLUMN reserved_microusd INTEGER;
     ALTER TABLE output_operation_slots ADD COLUMN target_contract_digest TEXT;
     ALTER TABLE output_operation_slots ADD COLUMN provider TEXT;ALTER TABLE output_operation_slots ADD COLUMN model TEXT;
     ALTER TABLE output_operation_slots ADD COLUMN attempt_ordinal INTEGER;ALTER TABLE output_operation_slots ADD COLUMN previous_slot_id TEXT;
@@ -169,8 +177,14 @@ test('actual guarded four-frame publication binds verified receipt and each item
     CREATE TABLE output_native_storage_writes(scope_key TEXT,slot_id TEXT,storage_key TEXT,content_sha256 TEXT,status TEXT,write_acknowledged INTEGER,publication_event_id TEXT,created_at TEXT,updated_at TEXT);
     CREATE TABLE output_execution_grants(scope_key TEXT,grant_id TEXT,actor_user_id TEXT,context_id TEXT,status TEXT,expires_at TEXT);
     CREATE TABLE output_plan_revisions(scope_key TEXT,plan_revision_id TEXT,owner_user_id TEXT,document_id TEXT,organization_id TEXT,project_access_id TEXT,scope_kind TEXT);
+    CREATE TABLE private_content_retention_scopes(content_id TEXT PRIMARY KEY,organization_id TEXT,project_access_id TEXT,project_id TEXT,actor_user_id TEXT,classification TEXT,policy_version INTEGER,assigned_expires_at TEXT,created_at TEXT);
     INSERT INTO output_plan_revisions VALUES('scope','revision','owner','doc',NULL,NULL,'personal');
+    ALTER TABLE output_plan_revisions ADD COLUMN project_id TEXT;
+    ALTER TABLE output_plan_revisions ADD COLUMN confirmed_event_id TEXT;
+    ALTER TABLE output_plan_revisions ADD COLUMN source_digest TEXT;
+    CREATE TABLE organization_projects(owner_user_id TEXT,project_id TEXT);
     INSERT INTO output_execution_grants VALUES('scope','grant','owner',NULL,'active','2000-01-01T00:00:00.000Z');`);
+   f.sqlite.exec('ALTER TABLE output_execution_grants ADD COLUMN payer_user_id TEXT');
    // These are the same explicit offline PNG fixtures, written through the real
    // custody wrapper. No provider transport or execution admission is simulated.
    let receiptJson;

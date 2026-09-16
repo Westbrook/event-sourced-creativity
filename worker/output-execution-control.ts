@@ -427,7 +427,7 @@ export async function createOutputEventExecution(env:WorkerEnv,user:PilotUser,jo
    }else if(attempt.video||attempt.videoPlanning)throw new OutputConflictError("output_video_request_not_authorized",403);
    const storyboardPlanning=artifactKind==="storyboard"&&callKey.startsWith("planning:")||attempt.storyboardPlanning!==undefined?await readStoryboardPlannerAttempt(attempt,settings.payload.outputStoryboardPlanner):null;
    if(storyboardPlanning&&(artifactKind!=="storyboard"||route.provider!=="openai"||scope.kind!=="personal"))throw new OutputConflictError("output_storyboard_planner_not_authorized",403);
-   const storyboard=callKey.startsWith("image:frame:")||attempt.storyboard!==undefined?await readStoryboardFrameAttempt(attempt,settings.payload.outputStoryboard):null;
+   const storyboard=callKey.startsWith("image:frame:")||attempt.storyboard!==undefined?await readStoryboardFrameAttempt(attempt,settings.payload.outputStoryboard,settings.payload.outputStoryboardPlanner):null;
    if(storyboard&&(artifactKind!=="storyboard"||route.provider!=="fal"||scope.kind!=="personal"))throw new OutputConflictError("output_storyboard_request_not_authorized",403);
    if(audioPayload||attempt.audio!==undefined){try{await assertOutputAudioAttempt(settings,attempt);}catch{throw new OutputConflictError("output_audio_request_not_authorized",403);}}
    const fal=route.provider==="fal"&&(callKey==="image:initial"||storyboard)?readOutputFalImageContract(settings.payload.outputFalImage):null;
@@ -629,7 +629,7 @@ export async function reconcileKnownOutputProviderReceipts(env:WorkerEnv,user:Pi
  const safe:Record<string,PaidProviderSubmission>={};
  for(const call of calls.results){
   const receipt=receipts.find(value=>value.clientRequestId===call.client_request_id);
-  const expectedOperation=String(call.stage_key).startsWith('planning:')?'planning':call.stage_key==='model3d:initial'?'model3d':call.stage_key==='video:initial'?'video':'image';
+  const expectedOperation=String(call.stage_key).startsWith('planning:')?'planning':call.stage_key==='model3d:initial'?'model3d':call.stage_key==='video:initial'?'video':call.stage_key==='audio:initial'?'audio':'image';
   if(!receipt||receipt.provider!==call.provider||receipt.model!==call.model||receipt.operation!==expectedOperation
     ||!['completed','rejected'].includes(receipt.status))continue;
   const knownCost=receipt.status==='rejected'?0:receipt.costMicrousd;

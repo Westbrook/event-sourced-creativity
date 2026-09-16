@@ -67,10 +67,14 @@ export async function retainedStoryboardResponseShape(raw:string,identity:{jobId
     let candidate:Record<string,unknown>|null=null;
     try{candidate=record(JSON.parse(retained.output_text));}catch{}
     const items=Array.isArray(candidate?.items)?candidate.items:[];
+    // This diagnostic deliberately does not load the private original request.
+    // Nonempty aliases cannot be judged without that witness; do not mislabel
+    // the retained creative response as invalid or authorize it from shape alone.
+    const requiresRequestWitness=items.some(value=>{const row=record(value);return Array.isArray(row?.context_group_ids)&&row.context_group_ids.length>0;});
     const issues:string[]=[];
-    try{await captureStoryboardPlannerResponse(envelope,retained.output_text,retained.output_storyboard);}catch{issues.push("storyboard_candidate_invalid");}
+    try{await captureStoryboardPlannerResponse(envelope,retained.output_text,retained.output_storyboard);}catch{issues.push(requiresRequestWitness?"storyboard_original_request_witness_required":"storyboard_candidate_invalid");}
     const contractValid=Boolean(parseStoryboardOutputContract(retained.output_storyboard));
-    let planValid=false;try{await captureOutputStoryboardPlan(candidate,retained.output_storyboard,identity.responseId);planValid=true;}catch{}
+    let planValid:boolean|null=requiresRequestWitness?null:false;try{await captureOutputStoryboardPlan(candidate,retained.output_storyboard,identity.responseId);planValid=true;}catch{}
     // Fixed field names and numeric/type summaries only: no creative values,
     // unknown provider keys, group identifiers or opaque reasoning are exposed.
     const field=(value:unknown)=>({type:typeof value,length:typeof value==='string'?value.length:null,blank:typeof value==='string'?!value.trim():null});

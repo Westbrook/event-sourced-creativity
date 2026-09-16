@@ -45,6 +45,22 @@ test('versioned reader consumes over16MiB fully in bounded pages without retaini
   assert.ok(result.batches<=SCENE_VERSIONED_READ_LIMITS.batches);assert.ok(Object.isFrozen(result.assertions));
   t.diagnostic(JSON.stringify({rows:result.rows,rawBytes:result.rawBytes,batches:result.batches,maximumHydratedPageBytes:result.maximumHydratedPageBytes,maximumMetadataPageBytes:result.maximumMetadataPageBytes,runtime:'Node SQLite; not Worker memory evidence'}));
 });
+test('same-batch refusal identifies only a fixed failing predicate category',async t=>{
+ for(const category of ['schema','generation','caller_proof','owner_head','deadline'])await t.test(category,async t=>{
+  const f=fixture(t);f.event(1,'Fixture',{});const version=await f.capture(),scope=f.scope(),options={scope};
+  const now=Date.now;let finished=false,reads=0;const batch=f.env.DB.batch;
+  if(category==='schema'){const trigger=f.db.prepare("SELECT name FROM sqlite_schema WHERE type='trigger' AND name LIKE 'scene_source_%' LIMIT 1").get();assert(trigger);f.db.exec('DROP TRIGGER '+trigger.name);}
+  if(category==='generation')f.event(2,'Fixture',{});
+  if(category==='caller_proof')options.readAssertions=[{sql:'0',bindings:[]}];
+  if(category==='owner_head')scope.expectedOwnerHead=0;
+  if(category==='deadline'){const actual=now();scope.deadlineMs=actual-10000;Date.now=()=>actual-20000;}
+  f.env.DB.batch=async statements=>{reads++;return batch(statements);};
+  try{await assert.rejects(f.reduce(version,()=>({accept(){assert.fail('must refuse before hydration');},finish(){finished=true;}}),options),
+   error=>error.code==='output_source_changed_during_read'&&sceneReadFailureDiagnostic(error)==='guard_'+category);
+   assert.equal(reads,1,'no diagnostic reread or source recapture');assert.equal(finished,false);
+  }finally{Date.now=now;}
+ });
+});
 test('edit and restore before a later page rejects original token without finalizing partial state',async t=>{
   const f=fixture(t);for(let i=1;i<=300;i++)f.event(i,'Fixture',{});f.secret(1,{text:'original'});
   const version=await f.capture(),batch=f.env.DB.batch;let reads=0,accepted=0,finished=false;

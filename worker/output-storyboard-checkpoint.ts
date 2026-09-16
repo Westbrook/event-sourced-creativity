@@ -42,7 +42,7 @@ export async function retainStoryboardFrameCheckpoint(env: WorkerEnv, user: Pilo
     || job.owner_id !== user.userId || slot.jobId !== job.job_id || job.kind !== "render_document"
     || job.document_id !== scope.documentId || job.output_slot_id !== slot.slotId) throw new OutputConflictError("output_storyboard_checkpoint_scope_mismatch",403);
   const previous: Record<string,unknown> = JSON.parse(job.result_json ?? "{}");
-  const originalPlan = await captureOutputStoryboardPlan(previous.artifactPlan, plan.contract, previous.plannerResponseId);
+  const originalPlan = await captureOutputStoryboardPlan(previous.artifactPlan, plan.contract, previous.plannerResponseId,plan.plannerRequestBody);
   if (originalPlan.bindingSha256 !== plan.bindingSha256) throw new OutputConflictError("output_storyboard_checkpoint_plan_changed",409);
   const originalPlanRaw = JSON.stringify(previous.artifactPlan), key = `f${frameIndex+1}`, path = `$.outputStoryboardCheckpoints.${key}`;
   const requestContent = await preparePrivateContent(env,user.userId,"prompt",captured.body);

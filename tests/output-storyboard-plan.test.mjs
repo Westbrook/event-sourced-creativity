@@ -92,16 +92,34 @@ test('actual events-handler native contract gate refuses injected, wrong-count a
  assert.equal(gate(undefined,'storyboard',{productionMode:'manual',itemCount:6},parseStoryboardOutputContract,Response),undefined,'Legacy path unchanged');
  assert(source.includes('plan=nativeStoryboardPlan.plan;'));
  assert(source.includes('direction:outputStoryboardFrameDirection(nativeStoryboardPlan,index)'));
- assert(source.indexOf('captureOutputStoryboardPlan(plan,nativeStoryboard,plannerResponseId)')<source.indexOf('for(let index=renderedItems.length;index<plan.items.length;index+=1)'));
+ assert(source.indexOf('captureOutputStoryboardPlan(plan,nativeStoryboard,plannerResponseId,nativeStoryboardRequestBody)')<source.indexOf('for(let index=renderedItems.length;index<plan.items.length;index+=1)'));
 });
 
 test('actual post-planner receipt join requires exactly one matching completed response before frame capture is used',async()=>{
  const source=readFileSync(new URL('../worker/events-api.ts',import.meta.url),'utf8');
  const start=source.indexOf('        const nativeStoryboardPlan=');const end=source.indexOf('        let sceneCompletionReceipt:',start);assert(start>0&&end>start);
- const selected=stripTypeScriptTypes('async function selected(plan,nativeStoryboard,plannerResponseId,plannerModel,body,providerSubmissions,captureOutputStoryboardPlan){'+source.slice(start,end)+'return plan;}');
+ const selected=stripTypeScriptTypes('async function selected(plan,nativeStoryboard,plannerResponseId,plannerModel,body,providerSubmissions,captureOutputStoryboardPlan){let nativeStoryboardRequestBody;'+source.slice(start,end)+'return plan;}');
  const run=new Function('return '+selected)();
  const original={operation:'planning',status:'completed',provider:'openai',providerRequestId:'original-response',model:'selected-planner'};
  const invoke=receipts=>run(plan(),contract(),'original-response','selected-planner',{},()=>receipts,captureOutputStoryboardPlan);
  assert.deepEqual(await invoke([original]),plan(),'Source-extracted association only, not real receipt admission');
  for(const receipts of [[],[original,original],[{...original,status:'pending'}],[{...original,provider:'fal'}],[{...original,providerRequestId:'foreign'}],[{...original,model:'different'}]])await assert.rejects(invoke(receipts),/output_storyboard_planner_receipt_unavailable/);
+});
+test('request-local groups are exact bounded annotations, never arbitrary source identifiers',async()=>{
+ const p=plan();p.items[0].context_group_ids=['context_group_2','context_group_1'];
+ const body=JSON.stringify({input:JSON.stringify({storyboard_contract:contract(),combined_context_plan:[{context_key:'context_group_1'},{context_key:'context_group_2'}]})});
+ const before=structuredClone(p),captured=await captureOutputStoryboardPlan(p,contract(),'original-response',body);
+ assert.deepEqual(captured.plan,before);assert.equal(captured.plannerRequestBody,body);assert.match(captured.plannerRequestDigest,/^[a-f0-9]{64}$/);
+ await assert.rejects(captureOutputStoryboardPlan(p,contract(),'original-response'));
+ for(const ids of [['foreign'],['context_group_3'],['context_group_1','context_group_1'],[null],Array(2)]){
+  const altered=structuredClone(p);altered.items[0].context_group_ids=ids;await assert.rejects(captureOutputStoryboardPlan(altered,contract(),'original-response',body));
+ }
+ let reads=0;const ids=[];Object.defineProperty(ids,'0',{enumerable:true,get(){reads++;return 'context_group_1';}});p.items[0].context_group_ids=ids;
+ await assert.rejects(captureOutputStoryboardPlan(p,contract(),'original-response',body));assert.equal(reads,0);
+ const changed=JSON.stringify({input:JSON.stringify({storyboard_contract:{...contract(),source:{...contract().source,requestHash:'sha256:'+'f'.repeat(64)}},combined_context_plan:[]})});
+ await assert.rejects(captureOutputStoryboardPlan(before,contract(),'original-response',changed));
+ const different=await captureOutputStoryboardPlan(before,contract(),'original-response',body+' ');assert.notEqual(different.bindingSha256,captured.bindingSha256);
+ const many=Array.from({length:25},(_,i)=>({context_key:`context_group_${i+1}`}));
+ const over=structuredClone(before);over.items[0].context_group_ids=many.map(g=>g.context_key);
+ await assert.rejects(captureOutputStoryboardPlan(over,contract(),'original-response',JSON.stringify({input:JSON.stringify({storyboard_contract:contract(),combined_context_plan:many})})));
 });

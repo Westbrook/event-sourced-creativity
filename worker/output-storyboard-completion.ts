@@ -64,7 +64,7 @@ async function storyboardEvidence(retainedRead:boolean,env:WorkerEnv,scope:Outpu
  const response=object(JSON.parse(storyboardEnvelopeText(envelope)));
  const output=Array.isArray(response.output)?response.output:[];
  const originalText=response.output_text||output.flatMap(value=>Array.isArray(object(value).content)?object(value).content as unknown[]:[]).map(object).find(part=>part.type==="output_text")?.text;
- const captured=await captureStoryboardPlannerResponse(response,text(originalText),execution.contract);
+ const captured=await captureStoryboardPlannerResponse(response,text(originalText),execution.contract,prepared.requestBody);
  if(captured.plannerResponseId!==checkpoint.plannerResponseId||!same(captured.plan,artifact))return fail();
  const paid=(await env.DB.prepare("SELECT call_key,stage_key,provider,model,client_request_id,request_digest,status,used_microusd,provider_response_id FROM output_provider_calls WHERE scope_key=? AND slot_id=? ORDER BY call_key").bind(scope.key,slot.slotId).all<Record<string,unknown>>()).results;
  if(paid.length!==5||new Set(paid.map(call=>call.client_request_id)).size!==5||new Set(paid.map(call=>call.provider_response_id)).size!==5

@@ -76,7 +76,7 @@ test('true cost above estimate is recorded and settlement replay cannot hide or 
  await settleBudget(env,'owner',a.token.reservationId,10);
 });
 
-test('native Video reconciles two original calls and reservations once without creating another charge',async()=>{
+for (const mediaKind of ['video','audio']) test(`native ${mediaKind} reconciles two original calls and reservations once without creating another charge`,async()=>{
  const {OUTPUT_REQUIREMENTS_SCHEMA}=await import('../worker/output-requirements-schema.ts');
  const {markOutputSchemaReady}=await import('../worker/output-schema-state.ts');
  const {reconcileKnownOutputProviderReceipts}=await import('../worker/output-execution-control.ts');
@@ -85,19 +85,19 @@ test('native Video reconciles two original calls and reservations once without c
    INSERT INTO events(event_id) VALUES('confirmed'),('preflight'),('authorized');
    CREATE TABLE document_jobs(job_id TEXT,kind TEXT,owner_id TEXT,stream_id TEXT,document_id TEXT,status TEXT,correlation_id TEXT,request_json TEXT,result_json TEXT,updated_at TEXT,source_surface TEXT);`);
   for(const sql of OUTPUT_REQUIREMENTS_SCHEMA)f.sqlite.exec(sql);markOutputSchemaReady(f.env.DB);
-  const reserved=await prepare(f.env,'video',600000);await f.env.DB.batch(reserved.statements);
+  const reserved=await prepare(f.env,mediaKind,600000);await f.env.DB.batch(reserved.statements);
   const now=new Date().toISOString(),insert=(table,row)=>f.sqlite.prepare(`INSERT INTO ${table}(${Object.keys(row).join(',')}) VALUES(${Object.keys(row).map(()=>'?').join(',')})`).run(...Object.values(row));
   // Original admission is explicit fixture setup. The tested operation starts
   // from a failed job and real active reservations; no admission is claimed.
   insert('output_plan_revisions',{scope_key:'scope',scope_kind:'personal',owner_user_id:'owner',project_id:'project',document_id:'doc',plan_revision_id:'plan',plan_id:'plan',revision:1,confirmed_event_id:'confirmed',requirements_digest:'requirements',source_digest:'source',resolver_version:'test',source_head:0,target_count:1,created_at:now});
-  insert('output_plan_targets',{scope_key:'scope',plan_revision_id:'plan',target_id:'target',target_contract_digest:'contract',media_kind:'video',required:1,selected:1,ordinal:0});
+  insert('output_plan_targets',{scope_key:'scope',plan_revision_id:'plan',target_id:'target',target_contract_digest:'contract',media_kind:mediaKind,required:1,selected:1,ordinal:0});
   insert('output_preflights',{scope_key:'scope',preflight_id:'preflight',plan_revision_id:'plan',actor_user_id:'owner',terms_digest:'terms',event_id:'preflight',expires_at:'2099-01-01T00:00:00.000Z',created_at:now});
   insert('output_execution_grants',{scope_key:'scope',grant_id:'grant',plan_revision_id:'plan',actor_user_id:'owner',payer_user_id:'owner',preflight_id:'preflight',authorization_event_id:'authorized',maximum_microusd:600000,maximum_calls:2,status:'active',expires_at:'2099-01-01T00:00:00.000Z',created_at:now});
-  insert('output_operation_slots',{scope_key:'scope',slot_id:'slot',grant_id:'grant',plan_revision_id:'plan',target_id:'target',target_contract_digest:'contract',source_digest:'source',provider:'fal',model:'bytedance/seedance-2.0/reference-to-video',route_digest:'route',job_id:'job',cost_reservation_id:reserved.cost.reservationId,token_reservation_id:reserved.token.reservationId,maximum_microusd:600000,maximum_calls:2,maximum_tokens:32000,status:'uncertain',created_at:now,updated_at:now});
-  const receipts={planning:{clientRequestId:'planning',provider:'openai',model:'gpt-5.6-terra',operation:'planning',status:'completed',providerRequestId:'response',costMicrousd:300,inputTokens:100,outputTokens:30,totalTokens:130},video:{clientRequestId:'video',provider:'fal',model:'bytedance/seedance-2.0/reference-to-video',operation:'video',status:'completed',providerRequestId:'original',costMicrousd:538020,inputTokens:0,outputTokens:0,totalTokens:0}};
-  insert('document_jobs',{job_id:'job',kind:'render_document',owner_id:'owner',stream_id:'creative:owner',document_id:'doc',status:'failed',correlation_id:'video',request_json:'{"artifactKind":"video"}',result_json:JSON.stringify({providerSubmissions:receipts}),updated_at:now,source_surface:'outputs'});
+  insert('output_operation_slots',{scope_key:'scope',slot_id:'slot',grant_id:'grant',plan_revision_id:'plan',target_id:'target',target_contract_digest:'contract',source_digest:'source',provider:'fal',model:mediaKind==='audio'?'fal-ai/stable-audio-3/medium/text-to-audio':'bytedance/seedance-2.0/reference-to-video',route_digest:'route',job_id:'job',cost_reservation_id:reserved.cost.reservationId,token_reservation_id:reserved.token.reservationId,maximum_microusd:600000,maximum_calls:2,maximum_tokens:32000,status:'uncertain',created_at:now,updated_at:now});
+  const receipts={planning:{clientRequestId:'planning',provider:'openai',model:'gpt-5.6-terra',operation:'planning',status:'completed',providerRequestId:'response',costMicrousd:300,inputTokens:100,outputTokens:30,totalTokens:130},video:{clientRequestId:'video',provider:'fal',model:mediaKind==='audio'?'fal-ai/stable-audio-3/medium/text-to-audio':'bytedance/seedance-2.0/reference-to-video',operation:mediaKind,status:'completed',providerRequestId:'original',costMicrousd:538020,inputTokens:0,outputTokens:0,totalTokens:0}};
+  insert('document_jobs',{job_id:'job',kind:'render_document',owner_id:'owner',stream_id:'creative:owner',document_id:'doc',status:'failed',correlation_id:mediaKind,request_json:JSON.stringify({artifactKind:mediaKind}),result_json:JSON.stringify({providerSubmissions:receipts}),updated_at:now,source_surface:'outputs'});
   for(const [key,r] of Object.entries(receipts)){
-   const stage=key==='planning'?'planning:0:initial':'video:initial';insert('output_operation_routes',{scope_key:'scope',slot_id:'slot',stage_key:stage,provider:r.provider,model:r.model,maximum_calls:1});
+   const stage=key==='planning'?'planning:0:initial':`${mediaKind}:initial`;insert('output_operation_routes',{scope_key:'scope',slot_id:'slot',stage_key:stage,provider:r.provider,model:r.model,maximum_calls:1});
    insert('output_provider_calls',{scope_key:'scope',slot_id:'slot',call_key:stage,stage_key:stage,provider:r.provider,model:r.model,client_request_id:key,request_digest:key+'-digest',reserved_microusd:r.costMicrousd,used_microusd:key==='planning'?r.costMicrousd:null,status:key==='planning'?'settled':'uncertain',provider_response_id:r.providerRequestId,created_at:now});
   }
   const counts=()=>['document_jobs','output_operation_slots','output_provider_calls','budget_reservations','cost_budget_reservations'].map(table=>f.sqlite.prepare(`SELECT COUNT(*) n FROM ${table}`).get().n),before=counts();

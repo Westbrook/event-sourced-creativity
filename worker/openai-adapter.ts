@@ -1306,7 +1306,7 @@ export async function generateDocumentArtifact(env:WorkerEnv,userId:string,kind:
         if(code)throw new ProviderRequestError({code,category:code==="narrative_provider_refused"?"safety":"provider",scope:"request",action:"edit_request",message:"Story response unavailable",retryable:false,retryAfterMs:null,requestId:body.id??null,httpStatus:null},null,paidAccounting());
       }
       if((route||narrative||storyboard||nativeAudio||nativeVideo)&&(!verifiedUsage(body.usage)||!Number.isSafeInteger(call.costMicrousd))||!route&&!narrative&&!storyboard&&!nativeAudio&&!nativeVideo&&input.options?.onProviderSubmission&&!verifiedUsage(body.usage))throw missingUsageReceipt(body.id??null);
-      if(storyboard)await captureStoryboardPlannerResponse(body,raw,storyboard);
+      if(storyboard)await captureStoryboardPlannerResponse(body,raw,storyboard,requestBody);
       if((nativeAudio||nativeVideo)&&!outputPlannerResponseShape(body,callModel).valid)throw new Error(nativeVideo?"output_video_planner_response_invalid":"output_audio_response_invalid");
       await input.options?.onProviderAttempt?.(receipt);
       if(kind==="slides"){
@@ -1315,7 +1315,7 @@ export async function generateDocumentArtifact(env:WorkerEnv,userId:string,kind:
         const detail=refused||reason==="content_filter"?{code:"presentation_provider_refused",category:"safety" as const,message:"The provider could not safely complete this presentation; revise the request before trying again."}:body.status==="incomplete"?{code:reason==="max_output_tokens"?"presentation_output_limit_reached":"presentation_provider_response_incomplete",category:"provider" as const,message:reason==="max_output_tokens"?"The provider reached its presentation output limit before the complete slide artifact was returned.":"The provider reported that the presentation response was incomplete."}:!raw.trim()?{code:"presentation_empty_provider_response",category:"provider" as const,message:"The provider completed without returning a usable presentation artifact."}:null;
         if(detail)throw new ProviderRequestError({...detail,scope:"request",action:"edit_request",retryable:false,retryAfterMs:null,requestId:receipt.responseId||null,httpStatus:null},null,accounting);
       }
-      return{body,raw,call};
+      return{body,raw,call,requestBody};
     }catch(error){
       // Retain the original server guard identity; earlier paid receipts are
       // already durable and must not turn this local stop into a provider error.
@@ -1360,8 +1360,8 @@ export async function generateDocumentArtifact(env:WorkerEnv,userId:string,kind:
   const first=preparation?.candidateRaw!==undefined?null:await run(instructions,providerInput,`document_${kind}`);
   let body:OpenAIResponse=first?.body??{};
   let raw=preparation?.candidateRaw??first?.raw??"";
-  const originalStoryboard=storyboard?await captureStoryboardPlannerResponse(body,raw,storyboard):null;
-  let assessment=originalStoryboard?{output:originalStoryboard.plan,groupResolution:resolveDocumentArtifactContextGroups(originalStoryboard.plan,[]).receipt,sourceResolution:null,issues:[] as DocumentArtifactValidationIssue[]}:assess(parseDocumentArtifactContent(raw));
+  const originalStoryboard=storyboard?await captureStoryboardPlannerResponse(body,raw,storyboard,first?.requestBody):null;
+  let assessment=originalStoryboard?{output:originalStoryboard.plan,groupResolution:resolveDocumentArtifactContextGroups(originalStoryboard.plan,groupContracts).receipt,sourceResolution:null,issues:[] as DocumentArtifactValidationIssue[]}:assess(parseDocumentArtifactContent(raw));
   let output=assessment.output;
   const initialResolution=assessment.groupResolution;
   const initialSourceResolution=assessment.sourceResolution;
@@ -1460,6 +1460,7 @@ export async function generateDocumentArtifact(env:WorkerEnv,userId:string,kind:
   const usageBodies=paidResponses;
   const usage=paidAccounting().providerUsage;
   return{
+    ...(originalStoryboard?{storyboardRequestBody:first!.requestBody}:{}),
     responseId:body.id??"",
     model:body.model??model,
     output,

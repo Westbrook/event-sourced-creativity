@@ -47,20 +47,25 @@ export async function reduceSceneVersionedHistory<T>(env:Pick<WorkerEnv,'DB'>,in
   // D1's parameter limit is per statement, not per transaction. Keep every
   // original predicate in the same atomic page batch; never truncate lineage or
   // recapture its evidence merely to fit it into a single SELECT.
-  const guards:Array<{sql:string;bindings:OutputSqlValue[]}>=[];
-  let parts:string[]=[],bindings:OutputSqlValue[]=[],guardBytes=0;
-  const statement=(values:string[])=>'SELECT CASE WHEN '+values.map(value=>'('+value+')').join(' AND ')+' THEN 1 ELSE 0 END AS current';
+  const guards:Array<{sql:string;bindings:OutputSqlValue[];categories:SceneReadFailureReason[]}>=[];
+  let parts:string[]=[],bindings:OutputSqlValue[]=[],categories:SceneReadFailureReason[]=[],guardBytes=0;
+  // Evaluate each original predicate once in the SAME atomic read batch. Only
+  // fixed category names leave this module; no SQL, source, IDs or bindings.
+  const statement=(values:string[])=>{const columns=values.map((_,index)=>`guard_${index}`);
+    return 'SELECT CASE WHEN '+columns.join(' AND ')+' THEN 1 ELSE 0 END AS current,'+columns.join(',')
+      +' FROM (SELECT '+values.map((value,index)=>`CASE WHEN (${value}) THEN 1 ELSE 0 END AS guard_${index}`).join(',')+')';};
   const flush=()=>{if(!parts.length)return;const sql=statement(parts);guardBytes+=bytes(sql);
-    guards.push({sql,bindings});parts=[];bindings=[];
+    guards.push({sql,bindings,categories});parts=[];bindings=[];categories=[];
     if(guards.length>SCENE_VERSIONED_READ_LIMITS.guardStatements)capacity('scene_versioned_guard_count');
     if(guardBytes>SCENE_VERSIONED_READ_LIMITS.guardBytes)capacity('scene_versioned_guard_bytes');};
-  for(const assertion of assertions){
+  for(const [index,assertion] of assertions.entries()){
     const values=[...(assertion.bindings??[])];
     if(bytes(statement([assertion.sql]))>99_000)capacity('scene_history_sql_bytes');
     if(values.length>99)capacity('scene_history_bindings');
     if(values.some(value=>typeof value==='string'&&bytes(value)>128*1024))capacity('scene_history_binding_bytes');
     if(parts.length&&(parts.length>=8||bindings.length+values.length>99||bytes(statement([...parts,assertion.sql]))>99_000))flush();
     parts.push(assertion.sql);bindings.push(...values);
+    categories.push(index===0?'guard_schema':index===1?'guard_generation':index<2+input.readAssertions.length?'guard_caller_proof':index===2+input.readAssertions.length?'guard_owner_head':'guard_deadline');
   }
   flush();
   let batches=0;
@@ -71,7 +76,9 @@ export async function reduceSceneVersionedHistory<T>(env:Pick<WorkerEnv,'DB'>,in
     for(let index=0;index<guards.length;index++){
       const guard=result[index+1];
       if(guard?.success!==true||!Array.isArray(guard.results)||guard.results.length!==1||![0,1].includes(guard.results[0]?.current as number))changed('batch_shape');
-      if(guard.results[0]?.current!==1)changed('guard_false');
+      const bits=guards[index]!.categories.map((_,part)=>guard.results[0]?.[`guard_${part}`]);
+      if(bits.some(bit=>bit!==0&&bit!==1)||Number(bits.every(bit=>bit===1))!==guard.results[0]?.current)changed('batch_shape');
+      if(guard.results[0]?.current!==1)changed(guards[index]!.categories[bits.indexOf(0)]??'guard_false');
     }
     return result[0].results;
   };
