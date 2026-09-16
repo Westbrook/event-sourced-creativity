@@ -503,6 +503,7 @@ export async function handleEvents(request:Request,env:WorkerEnv,hot=false,userO
     await ensureSchema(env);if(execution?.output)env=execution.output.guardedEnvironment;
     const appendOperationEvents=async(environment:WorkerEnv,events:EventRow[],options:Parameters<typeof appendEvents>[2]={})=>{
       if(!execution?.output)return appendEvents(environment,events,options);
+      const appendAndRefresh=async()=>{
       try{const appended=await appendEvents(environment,events,{...options,retries:1,
         initialHead:events.length&&events[0]!.sequence>1?events[0]!.sequence-1:undefined,prepareSidecars:execution.output.eventWriteSidecars,onSidecarsCommitted:execution.output.eventWriteCommitted,
       });
@@ -517,6 +518,11 @@ export async function handleEvents(request:Request,env:WorkerEnv,hot=false,userO
         if(!String(error).includes("constraint failed")&&await execution.output.eventAppendCommitted(events))return events;
         throw error;
       }
+      };
+      // Include append, acknowledgement, refreshed proof, and exact lost-ACK
+      // recovery in one boundary. Heartbeats cannot capture a mixed version.
+      return execution.output.withSourceTransition
+        ?execution.output.withSourceTransition(appendAndRefresh):appendAndRefresh();
     };const inspection=request.method==="GET"&&new URL(request.url).searchParams.get("audit")==="1";const hasProjectCookie=hasProjectContextCookie(request);const auth=userOverride?{response:null,user:userOverride}:await requireUser(request,env,inspection?"admin":request.method==="GET"||hasProjectCookie?"viewer":"creator",hasProjectCookie?{account:"principal"}:{});if(auth.response||!auth.user)return auth.response!;
     const selected=hasProjectCookie?await readProjectRequestContext(request,env,auth.user):{context:null,response:null};
     if(selected.response)return selected.response;

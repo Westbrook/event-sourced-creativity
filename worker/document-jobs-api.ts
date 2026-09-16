@@ -1836,7 +1836,7 @@ async function beginJobCommit(env: WorkerEnv, row: DocumentJobRow, progressMessa
   row.status = "committing";row.updated_at=now;if(checkpoint)row.result_json=JSON.stringify(checkpoint);
 }
 
-async function runWithHeartbeat<T>(env: WorkerEnv, row: DocumentJobRow,user:PilotUser, operation: (control: { signal: AbortSignal; beginCommit: () => Promise<void>; progress: (stage:string,message:string,patch?:Record<string,unknown>,options?:{financialReceiptPersisted?:true}) => Promise<void> }) => Promise<T>,nativePolicy:OutputNativeExecutionPolicy=OUTPUT_NATIVE_EXECUTION_POLICY) {
+async function runWithHeartbeat<T>(env: WorkerEnv, row: DocumentJobRow,user:PilotUser, operation: (control: { signal: AbortSignal; beginCommit: () => Promise<void>; progress: (stage:string,message:string,patch?:Record<string,unknown>,options?:{financialReceiptPersisted?:true}) => Promise<void> }) => Promise<T>,nativePolicy:OutputNativeExecutionPolicy=OUTPUT_NATIVE_EXECUTION_POLICY,withSourceTransition:NonNullable<OutputEventExecution['withSourceTransition']>=async work=>work()) {
   let settled = false; let value: T | undefined; let failure: unknown;
   const native=Boolean(row.output_slot_id),startedMonotonic=performance.now();let renewals=0;
   const controller = new AbortController(); let commitStarted = false;
@@ -1846,7 +1846,7 @@ async function runWithHeartbeat<T>(env: WorkerEnv, row: DocumentJobRow,user:Pilo
   await verify();
   let progressQueue=Promise.resolve();
   const serializedProgress=(stage:string,message:string,patch?:Record<string,unknown>,options?:{financialReceiptPersisted?:true})=>{
-    const next=progressQueue.then(async()=>{
+    const next=progressQueue.then(()=>withSourceTransition(async()=>{
       if(commitStarted)return;
       const previous=parseResult(row);
       const changed=Boolean(patch&&Object.entries(patch).some(([key,value])=>JSON.stringify(previous[key])!==JSON.stringify(value)));
@@ -1857,9 +1857,9 @@ async function runWithHeartbeat<T>(env: WorkerEnv, row: DocumentJobRow,user:Pilo
       // Do not drop changed validation metadata, a new call, or any authority check.
       if(isPresentationJob(row)&&options?.financialReceiptPersisted&&!changed)return;
       await updateJobProgress(env,row,stage,message,patch,!(row.output_slot_id&&options?.financialReceiptPersisted));
-    });progressQueue=next.catch(()=>undefined);return next;
+    }));progressQueue=next.catch(()=>undefined);return next;
   };
-  const execution = operation({ signal: controller.signal, beginCommit: async () => { await progressQueue;if (commitStarted) return;await verify();if(requiresForegroundDocumentExecution(row))await beginJobCommit(env,row,"Saving the provider result and its durable receipt.");else{await updateJobProgress(env,row,"saving","Saving the provider result and its durable receipt.");await beginJobCommit(env,row);}commitStarted=true; }, progress: serializedProgress }).then((result) => { value = result; settled = true; }, (error) => { failure = error; settled = true; });
+  const execution = operation({ signal: controller.signal, beginCommit: async () => { await progressQueue;await withSourceTransition(async()=>{if (commitStarted) return;await verify();if(requiresForegroundDocumentExecution(row))await beginJobCommit(env,row,"Saving the provider result and its durable receipt.");else{await updateJobProgress(env,row,"saving","Saving the provider result and its durable receipt.");await beginJobCommit(env,row);}commitStarted=true;}); }, progress: serializedProgress }).then((result) => { value = result; settled = true; }, (error) => { failure = error; settled = true; });
   while (!settled) {
     let timer:ReturnType<typeof setTimeout>|undefined;
     await Promise.race([execution, new Promise<void>((resolve) => {timer=setTimeout(resolve,native?Math.max(1,Math.min(nativePolicy.heartbeatMilliseconds,nativePolicy.maximumMilliseconds-(performance.now()-startedMonotonic))):DOCUMENT_JOB_HEARTBEAT_MS);})]);
@@ -1871,7 +1871,7 @@ async function runWithHeartbeat<T>(env: WorkerEnv, row: DocumentJobRow,user:Pilo
       failure=new ProviderRequestError({code:"output_execution_time_limit",category:"network",scope:"request",action:"contact_support",message:"The authorized application execution window ended. A provider request may still have been accepted; its allowance is retained until the receipt is reconciled.",retryable:false,retryAfterMs:null,requestId:null,httpStatus:504});
       break;
     }
-    if (!settled) try {await verify();await renewJobLease(env, row);renewals++; } catch (error) { if(native)recordOutputJobHeartbeatFailure(error,renewals===0);controller.abort("document_job_canceled"); failure = error;if(native)break;await execution; }
+    if (!settled) try {await withSourceTransition(async()=>{if(settled)return;await verify();await renewJobLease(env, row);renewals++;}); } catch (error) { if(native)recordOutputJobHeartbeatFailure(error,renewals===0);controller.abort("document_job_canceled"); failure = error;if(native)break;await execution; }
   }
   if (failure !== undefined) throw failure;
   return value as T;
@@ -2358,7 +2358,7 @@ export async function runDocumentJob(env: WorkerEnv, user: PilotUser, jobId: str
     const response = await runWithHeartbeat(operationEnvironment, row,user, (control) => handleEvents(new Request("http://document-job.local/api/events", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(payload), signal: control.signal }), env, false, user, outputExecution?{...control,output:outputExecution}:foregroundPresentation&&!user.projectExecution?{...control,settlePersonalPresentation:async input=>{
       const {settlePersonalPresentationBudgets}=await import("./pilot-policy.ts");
       foregroundAccountSettlement=await settlePersonalPresentationBudgets(operationEnvironment,user.billingUserId??user.userId,{...input,jobId:row.job_id,streamId:row.stream_id,correlationId:row.correlation_id});
-    }}:control),nativeExecutionPolicy);
+    }}:control),nativeExecutionPolicy,outputExecution?.withSourceTransition);
     documentJobMemoryClaims.delete(row);
     const body = await response.json() as Record<string, unknown>;let followup:DocumentJobRow|null=null;if(response.ok&&body.followupJob&&typeof body.followupJob==="object")followup=await queueFollowupPreview(env,user,row,body.followupJob as Record<string,unknown>);const completedAt = new Date().toISOString();
     const suppliedFailure=!response.ok?(body.errorDetail&&typeof body.errorDetail==="object"?body.errorDetail as ProviderFailureDetail:applicationFailureDetail(String(body.error??"document_job_failed"),body.scope,response.status)):null;

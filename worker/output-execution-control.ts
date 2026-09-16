@@ -54,12 +54,14 @@ import { readOutputModel3dPayload, requireModel3dMiniAppCostApproval, verifyMode
 import { model3dMiniAppAttemptMatches } from "../src/model/model3d-mini-app-consent.ts";
 import { outputModel3dPreflightAssertions } from "./output-model3d-preflight.ts";
 import type { Model3dPreparedReceipt, Model3dGeneratedFile } from "./fal-model3d-adapter.ts";
+import { outputSourceTransition, type OutputSourceTransition } from "./output-source-transition.ts";
 
 const parsed=(raw:string|null|undefined):Record<string,unknown>=>{try{const value:unknown=JSON.parse(raw??"{}");return value&&typeof value==="object"&&!Array.isArray(value)?value as Record<string,unknown>:{};}catch{return{};}};
 export type OutputJobBinding={scope:OutputScope;slot:OutputOperationSlot;retentionPolicy:Record<string,unknown>|null};
 export type OutputExecutionProof=ReturnType<typeof prepareOutputExecutionProof>;
 export type OutputEventExecution={
  guardedEnvironment:WorkerEnv;
+ withSourceTransition?:OutputSourceTransition;
  accountSettlement?:{reservation_id:string;reserved_microusd:number;used_microusd:number;status:string};
  sourceEvents:EventRow[];sourceHead:number;
  eventAppendCommitted:(events:EventRow[])=>Promise<boolean>;
@@ -225,7 +227,7 @@ export async function createOutputEventExecution(env:WorkerEnv,user:PilotUser,jo
  const reference={scopeKey:slot.scopeKey,grantId:slot.grantId,slotId:slot.slotId,planRevisionId:slot.planRevisionId,targetId:slot.targetId,targetContractDigest:slot.targetContractDigest,sourceDigest:slot.sourceDigest};
  const guardedEnvironment=guardOutputPrivateWrites(env,scope,slot,async()=>liveAssertions(),{retentionPolicy:binding.retentionPolicy,storyboardCompletionJson:()=>storyboardCompletionJson,videoCompletionJson:()=>videoCompletionJson,model3dCompletionJson:()=>model3dCompletionJson});
  let publicationScopesComplete=scope.kind==="personal";
- return {guardedEnvironment,...(model3dPayload&&refreshModel3d?{model3d:{
+ return {guardedEnvironment,...(sceneProof?{withSourceTransition:outputSourceTransition()}:{}),...(model3dPayload&&refreshModel3d?{model3d:{
   async prepare(receipt:Model3dPreparedReceipt){
    await refreshModel3d();assertDispatchDeadline();
    model3dPrepared=await verifyModel3dPreparedReceipt(model3dPayload,receipt);
