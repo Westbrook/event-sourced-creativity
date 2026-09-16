@@ -1117,7 +1117,7 @@ async function readCurrentRetainedNative(request: Request, env: WorkerEnv, nativ
     if(storyboardDiagnosticTarget)storyboardDiagnosticStage="read_final_witness";
     const comparisons = eventColumns.map((name, index) => `actual.${name} IS NOT json_extract(expected.value,'$[${index}]')`).join(" OR ");
     const final = await env.DB.prepare(`WITH ${auth.cte},${eventCte}${job?`,${nativeCompletion ? nativeCompletionJobCte(nativeCompletion.output) : jobCte}`:""},
-      ${storyboardRead?`storyboard_witness AS (SELECT ? AS bindings),storyboard_proof AS MATERIALIZED (SELECT CASE WHEN (${storyboardRead.witness.sql}) THEN 1 ELSE 0 END AS permitted),`:""}${model3dRead?"model3d_witness AS (SELECT ? AS bindings),":""}${videoRead?"video_witness AS (SELECT ? AS bindings),":""}expected_events AS (SELECT value FROM json_each(?))
+      ${storyboardRead?`storyboard_witness AS (SELECT ? AS bindings),storyboard_proof AS MATERIALIZED (SELECT CASE WHEN (${storyboardRead.witness.sql}) THEN 1 ELSE 0 END AS permitted),`:""}${model3dRead?"model3d_witness AS (SELECT ? AS bindings),":""}${videoRead?`video_witness AS (SELECT ? AS bindings),video_proof AS MATERIALIZED (SELECT CASE WHEN (${videoRead.witness.sql}) THEN 1 ELSE 0 END AS permitted),`:""}expected_events AS (SELECT value FROM json_each(?))
       SELECT 1 AS admitted FROM private_content WHERE ${personalContentGuard()}
         AND CAST(content AS BLOB)=CAST(? AS BLOB) AND expires_at=?
         AND EXISTS(SELECT 1 FROM authorized WHERE CAST(auth_json AS BLOB)=CAST(? AS BLOB))
@@ -1126,7 +1126,7 @@ async function readCurrentRetainedNative(request: Request, env: WorkerEnv, nativ
           ON actual.event_id=json_extract(expected.value,'$[0]') WHERE actual.event_id IS NULL OR ${comparisons})
         ${job?"AND EXISTS(SELECT 1 FROM bounded_story_job WHERE CAST(job_json AS BLOB)=CAST(? AS BLOB))":""}
         ${storyboard?`AND EXISTS(SELECT 1 FROM event_private_payloads WHERE ${storyboardReceiptGuard()} AND CAST(private_json AS BLOB)=CAST(? AS BLOB))`:""}
-        ${storyboardRead?"AND (SELECT permitted FROM storyboard_proof)=1":""}${videoRead?`AND (${videoRead.witness.sql})`:""}
+        ${storyboardRead?"AND (SELECT permitted FROM storyboard_proof)=1":""}${videoRead?"AND (SELECT permitted FROM video_proof)=1":""}
         ${model3dRead?`AND (${model3dRead.witness.sql})`:""}
         ${model3d?`AND EXISTS(SELECT 1 FROM event_private_payloads WHERE ${model3dReceiptGuard()} AND CAST(private_json AS BLOB)=CAST(? AS BLOB))`:""}
         ${video?`AND EXISTS(SELECT 1 FROM event_private_payloads WHERE ${videoReceiptGuard()} AND CAST(private_json AS BLOB)=CAST(? AS BLOB))`:""}

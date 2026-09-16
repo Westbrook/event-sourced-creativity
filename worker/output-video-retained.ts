@@ -1,4 +1,5 @@
 import { canonicalJson } from "../src/experiences/compiler.ts";
+import { balancedOutputRetainedConjunction } from "./output-retained-witness.ts";
 import { parseVideoOutputContract } from "../src/model/output-video-contract.ts";
 import { readOutputVideoCompletion, verifyOutputVideoRecoveryCompletion } from "./output-video-completion.ts";
 import { outputSlotFromRow, type OutputScope, type OutputSqlAssertion } from "./output-requirements-ledger.ts";
@@ -97,10 +98,10 @@ export async function readRetainedOutputVideo(env:WorkerEnv,input:{
  // must not grow one transport parameter per frame/private-body comparison.
  const witnessJson=JSON.stringify(assertions.map(a=>a.bindings??[]));
  bounded(witnessJson);
- const witnessSql=assertions.map((a,index)=>{
+ const witnessSql=balancedOutputRetainedConjunction(assertions.map((a,index)=>{
   const parts=a.sql.split("?"),bindings=a.bindings??[];
   if(parts.length!==bindings.length+1)return fail();
   return "("+parts.map((part,position)=>part+(position<bindings.length?`(SELECT json_extract(bindings,'$[${index}][${position}]') FROM video_witness)`:"")).join("")+")";
- }).join(" AND ");
+ }));
  return {assertions,expiresAt:new Date(deadlineMs).toISOString(),witness:{json:witnessJson,sql:witnessSql}};
 }
