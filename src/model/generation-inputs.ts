@@ -193,6 +193,7 @@ function inspectDocumentGenerationInputs(job:DocumentJob,events:CreativeEvent[],
     artifact_checkpoint:artifactPlan||plannerInput||managedInputs||Object.keys(videoInputReceipt).length||Object.keys(audioInputReceipt).length?{plan:artifactPlan,planner_input:plannerInput,planner_model:checkpoint.plannerModel??null,planner_response_id:checkpoint.plannerResponseId??null,render_input:Object.keys(audioInputReceipt).length?audioInputReceipt:Object.keys(videoInputReceipt).length?videoInputReceipt:null,managed_inputs:managedInputs,rendered_items:checkpoint.renderedItems??[]}:null,
     failures:failures.map((event)=>({event_id:event.eventId,type:event.type,sequence:event.sequence,payload:event.payload})),
     technical_error:job.errorDetail??job.error??null,
+    planner_response_diagnostics:checkpoint.plannerResponseDiagnostics??null,
     retention_note:retentionNote,
   };
   const family=job.kind==="render_document"?(artifactKind?artifactKind.replaceAll("_"," "):"document output"):job.kind==="prompt_fan"?`${job.fanKind==="preview"?"Draft":"Full-quality"} fan`:job.kind==="preview"?"Draft image":"Full-quality image";

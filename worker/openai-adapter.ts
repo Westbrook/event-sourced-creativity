@@ -1,3 +1,4 @@
+import { outputPlannerResponseShape } from "./output-planner-response-shape.ts";
 import { captureVideoPlannerEnvelope, videoPlannerEnvelopeText, type VideoPlannerRawEnvelope } from "./output-video-planner-envelope.ts";
 import { requestOutputVideoResponse } from "./output-video-execution.ts";
 import { captureVideoPlannerRequest, readVideoPlannerExecution, type VideoPlannerExecution, type VideoPlannerAttempt } from "./output-video-planner.ts";
@@ -1306,14 +1307,7 @@ export async function generateDocumentArtifact(env:WorkerEnv,userId:string,kind:
       }
       if((route||narrative||storyboard||nativeAudio||nativeVideo)&&(!verifiedUsage(body.usage)||!Number.isSafeInteger(call.costMicrousd))||!route&&!narrative&&!storyboard&&!nativeAudio&&!nativeVideo&&input.options?.onProviderSubmission&&!verifiedUsage(body.usage))throw missingUsageReceipt(body.id??null);
       if(storyboard)await captureStoryboardPlannerResponse(body,raw,storyboard);
-      if(nativeAudio||nativeVideo){
-        const outputs=body.output as Array<Record<string,unknown>>|undefined;
-        const messages=outputs?.filter(item=>item.type==="message");
-        if(body.model!==callModel||body.status!=="completed"||body.incomplete_details||!body.id||!outputs?.length||messages?.length!==1||outputs.some(item=>{
-          if(item.type==="reasoning")return Object.keys(item).some(key=>!["id","type","status","summary"].includes(key))||typeof item.id!=="string"||!Array.isArray(item.summary)||item.summary.some(part=>!part||typeof part!=="object"||(part as Record<string,unknown>).type!=="summary_text"||typeof (part as Record<string,unknown>).text!=="string");
-          const content=item.content as Array<Record<string,unknown>>|undefined;return item.type!=="message"||item.role!=="assistant"||item.status!=="completed"||content?.length!==1||content[0]?.type!=="output_text"||typeof content[0]?.text!=="string";
-        }))throw new Error(nativeVideo?"output_video_planner_response_invalid":"output_audio_response_invalid");
-      }
+      if((nativeAudio||nativeVideo)&&!outputPlannerResponseShape(body,callModel).valid)throw new Error(nativeVideo?"output_video_planner_response_invalid":"output_audio_response_invalid");
       await input.options?.onProviderAttempt?.(receipt);
       if(kind==="slides"){
         const refused=body.output?.some((output)=>output.type==="refusal"||output.content?.some((content)=>content.type==="refusal"||Boolean(content.refusal)))??false;

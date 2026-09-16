@@ -28,7 +28,7 @@ test("explicit operation cancellation rejects immediately without a timeout call
 
 test("foreground host covers execution/body/refresh then expires once without extending authority", async context => {
   context.mock.timers.enable({ apis: ["setTimeout"] });
-  for (const [action, output, deadline] of [["authorize","scene",170000],["run","short_story",350000],["resumeRun","model3d",1010000],["recoverResult","image",230000]] as const) {
+  for (const [action, output, deadline] of [["authorize","scene",290000],["run","short_story",350000],["resumeRun","model3d",1010000],["recoverResult","image",230000]] as const) {
     let callbacks = 0;
     const operation = new ExperienceHostOperation(() => { callbacks++; }, undefined, {action,output});
     const rejected = assert.rejects(operation.wait(new Promise<never>(() => {})), /operation_unconfirmed/u);

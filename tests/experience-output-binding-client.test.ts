@@ -576,16 +576,18 @@ test("foreground policy extends explicit source-proof admission, never passive o
   assert.equal(experienceHostTimeout({action:"authorize",output:"video"}),170000);
   assert.equal(experienceResponseTimeout({action:"authorize",output:"model3d"}),120000);
   assert.equal(experienceHostTimeout({action:"authorize",output:"model3d"}),170000);
-  assert.equal(experienceResponseTimeout({action:"authorize",output:"scene"}),120000);
-  assert.equal(experienceHostTimeout({action:"authorize",output:"scene"}),170000);
+  assert.equal(experienceResponseTimeout({action:"authorize",output:"scene"}),240000);
+  assert.equal(experienceHostTimeout({action:"authorize",output:"scene"}),290000);
   for (const action of ["run", "resumeRun"]) for (const output of ["image","slides","short_story","scene","storyboard","audio","video","model3d"]) {
     const expected = ["video","model3d"].includes(output) ? 960000 : 300000;
     assert.equal(experienceResponseTimeout({action,output}), expected);
     assert.equal(experienceHostTimeout({action,output}), expected + 50000);
   }
   assert.equal(experienceResponseTimeout({action:"recoverResult",output:"image"}), 180000);
-  assert.equal(experienceResponseTimeout({action:"prepare",output:"scene"}), 120000);
-  assert.equal(experienceHostTimeout({action:"prepare",output:"scene"}), 170000);
+  for(const action of ["prepare","renewPreparation"]){
+    assert.equal(experienceResponseTimeout({action,output:"scene"}),240000);
+    assert.equal(experienceHostTimeout({action,output:"scene"}),290000);
+  }
 });
 
 test("one explicit Video authorization survives old cutoffs without repeat or automatic Run",async context=>{

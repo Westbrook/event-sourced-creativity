@@ -1,3 +1,5 @@
+import { retainedPlannerResponseShape } from "./output-planner-response-shape.ts";
+import { unstartedOutputJobFailure } from "./output-unstarted-job-failure.ts";
 import { readFalRecoveryCheckpoint, recoveredFalImageEventIds } from "./output-fal-recovery-policy.ts";
 import { stopOutputVideoJob } from "./output-video-stop.ts";
 import { logOutputJobFailure, recordOutputJobHeartbeatFailure } from "./output-job-failure-diagnostic.ts";
@@ -669,7 +671,7 @@ function presentationAccountingEvidenceQuery(user:PilotUser,job:DocumentJobRow){
 
 /** Materialize independent proofs instead of nesting deep private-source/ACL expressions.
  * This same final statement certifies reads and the preservation transaction. */
-function presentationCandidateDisclosureQuery(user:PilotUser,job:DocumentJobRow,projectContextId:string,responseId:string,accountingEvidence:string){
+function presentationCandidateDisclosureQuery(user:PilotUser,job:DocumentJobRow,projectContextId:string,responseId:string,accountingEvidence?:string){
   const snapshot=user.authorizationSnapshot,source=privatePresentationCandidateQuery(user,job,projectContextId,responseId);
   if(!snapshot||!source)return null;
   const financial=presentationAccountingEvidenceQuery(user,job);
@@ -680,16 +682,16 @@ function presentationCandidateDisclosureQuery(user:PilotUser,job:DocumentJobRow,
           COALESCE(principal.grants_json,'[]'),COALESCE(principal.organizations_json,'[]'),COALESCE(principal.projects_json,'[]'),
           COALESCE(principal.identity_policies_json,'[]'),COALESCE(principal.approved_canvas_requirements,0))=(?,?,?,?,?,?,?,?,?)
           AND principal.consent_version IS ?),
-      candidate_custody AS MATERIALIZED(${source.sql}),
-      candidate_accounting AS MATERIALIZED(${financial.sql})`,
-    from:"candidate_custody CROSS JOIN candidate_authority CROSS JOIN candidate_accounting",
-    where:`candidate_authority.authorized=1 AND candidate_accounting.evidence=?
+      candidate_custody AS MATERIALIZED(${source.sql})${accountingEvidence===undefined?"":`,
+      candidate_accounting AS MATERIALIZED(${financial.sql})`}`,
+    from:"candidate_custody CROSS JOIN candidate_authority"+(accountingEvidence===undefined?"":" CROSS JOIN candidate_accounting"),
+    where:`candidate_authority.authorized=1 ${accountingEvidence===undefined?"":"AND candidate_accounting.evidence=?"}
       AND EXISTS(SELECT 1 FROM document_jobs current_job WHERE(current_job.job_id,current_job.owner_id,current_job.stream_id,
         current_job.document_id,current_job.kind,current_job.status,current_job.correlation_id)=(?,?,?,?,?,?,?)
         AND current_job.request_json IS ? AND current_job.result_json IS ?)`,
     bindings:[user.userId,user.userId,user.role,snapshot.updatedAt,snapshot.rawEpoch,snapshot.grants,snapshot.organizations,
-      snapshot.projects,snapshot.identityPolicies,snapshot.canvasRequirements,user.consentVersion,...source.bindings,...financial.bindings,
-      accountingEvidence,job.job_id,job.owner_id,job.stream_id,job.document_id,job.kind,job.status,job.correlation_id,job.request_json,job.result_json] as Array<string|number|null>,
+      snapshot.projects,snapshot.identityPolicies,snapshot.canvasRequirements,user.consentVersion,...source.bindings,...(accountingEvidence===undefined?[]:[...financial.bindings,accountingEvidence]),
+      job.job_id,job.owner_id,job.stream_id,job.document_id,job.kind,job.status,job.correlation_id,job.request_json,job.result_json] as Array<string|number|null>,
   };
 }
 
@@ -1602,6 +1604,33 @@ function queueRecoveryPresentation(row: DocumentJobRow, recoveryBlocker: Documen
   return null;
 }
 
+async function inspectPlannerResponseShapes(env:WorkerEnv,user:PilotUser,row:DocumentJobRow){
+  const kind=parseRequest(row).artifactKind;
+  if(user.projectExecution||row.kind!=="render_document"||!["audio","video"].includes(String(kind))||row.owner_id!==user.userId||row.stream_id!==user.streamId)return [];
+  const diagnostics=[];
+  const retainedRows:PrivatePresentationCandidateRow[]=[];
+  for(const call of providerSubmissions(parseResult(row)).filter(call=>call.provider==="openai"&&call.operation==="planning"&&call.responseRef&&call.providerRequestId).slice(0,2)){
+    // Personal exact-job inspection only; the existing query verifies job/source
+    // custody, excludes project content, and checks source and response retention.
+    const candidates=await privatePresentationCandidateRows(env,user,row,"",call.providerRequestId!);
+    const candidate=candidates.find(candidate=>candidate.content_id===call.responseRef);
+    if(!candidate)continue;
+    const shape=retainedPlannerResponseShape(candidate.content,{jobId:row.job_id,documentId:row.document_id,streamId:row.stream_id,kind:String(kind),clientRequestId:call.clientRequestId,responseId:call.providerRequestId!,model:call.model});
+    if(shape&&Date.parse(candidate.read_expires_at)>Date.now()){diagnostics.push({responseId:call.providerRequestId,...shape});retainedRows.push(candidate);}
+  }
+  if(!diagnostics.length)return [];
+  const proof=presentationCandidateDisclosureQuery(user,row,"","");
+  if(!proof)return [];
+  // Last await: certify current principal, exact job, original bytes, custody
+  // and retention together. Diagnostics grant neither recovery nor settlement.
+  const final=await env.DB.prepare(`${proof.ctes} SELECT candidate_custody.* FROM ${proof.from} WHERE ${proof.where}`).bind(...proof.bindings).all<PrivatePresentationCandidateRow>();
+  if(!retainedRows.every(original=>final.results.some(current=>current.content_id===original.content_id&&current.content===original.content&&current.expires_at===original.expires_at
+    &&current.created_at===original.created_at&&current.classification===original.classification&&current.policy_version===original.policy_version
+    &&current.source_content_id===original.source_content_id&&current.source_content===original.source_content&&current.source_expires_at===original.source_expires_at
+    &&Date.parse(current.read_expires_at)>Date.now())))return [];
+  return diagnostics;
+}
+
 function serializeJob(row: DocumentJobRow, recoveryBlocker: DocumentJobRow | null = null, detail = true) {
   const parsed = parseResult(row); const result = row.result_json ? parsed : null; const request = parseRequest(row); const identity = generationRequestIdentity(row.kind, request, row.document_id);
   const sceneConfiguration=row.kind==="render_document"?sceneConfigurationFromRequest(request):null;
@@ -2098,6 +2127,9 @@ export async function runDocumentJob(env: WorkerEnv, user: PilotUser, jobId: str
     if(recovered.status==="completed")return recovered;
   }
   if (documentJobTerminal({ status: row.status })) {await synchronizeOutputJobOutcome(env,row);return row;}
+  // A duplicate runner does not own another execution's live lease. In
+  // particular, its fresh authority read must not terminalize paid work.
+  if((row.status==="running"||row.status==="committing")&&!rowIsStale(row))return row;
   const outputBinding=await loadOutputJobBinding(env,user,row);
   if(outputBinding)row.output_slot_id=outputBinding.slot.slotId;
   if(outputBinding&&!['queued','running'].includes(outputBinding.slot.status))return row;
@@ -2106,9 +2138,11 @@ export async function runDocumentJob(env: WorkerEnv, user: PilotUser, jobId: str
     try{outputProof=prepareOutputExecutionProof(outputBinding.scope,await resolveOutputExecutionAuthority(env,outputBinding.scope,outputBinding.slot));const policy=readOutputNativeExecutionPolicy((outputProof.targetPreflight.settings as Record<string,unknown>).executionPolicy);if(!policy)throw new OutputConflictError("output_execution_policy_invalid",409);nativeExecutionPolicy=policy;const jobAuthority=documentJobProjectAuthority(user,row.document_id,jobId);outputAdmissionAssertions=[...outputProof.assertions,...(jobAuthority?[jobAuthority]:[])];}
     catch(error){
       const detail=classifyDocumentJobFailure(error);
-      await finishDocumentJob(env,row,"failed",{...parseResult(row),errorDetail:publicFailureDetail(detail),stage:"failed",progressMessage:"The Output source, requirement, or permission changed. No new provider request was sent."},detail.message,new Date().toISOString(),false);
-      const blocked=await readJob(env,user.userId,jobId);
-      if(blocked){await releaseInterruptedAttempt(env,user,blocked,"output_authority_changed_before_dispatch");await synchronizeOutputJobOutcome(env,blocked);}
+      const stopped=unstartedOutputJobFailure(row,{...parseResult(row),errorDetail:publicFailureDetail(detail),stage:"failed",progressMessage:"The Output source, requirement, or permission changed. No new provider request was sent."},detail.message,new Date().toISOString());
+      const changed=stopped?Number((await env.DB.prepare(stopped.sql).bind(...stopped.bindings).run()).meta.changes??0):0;
+      // A competing claim/completion during the awaited proof wins. Never
+      // release, settle or project an outcome on behalf of that execution.
+      if(changed===1){const blocked=await readJob(env,user.userId,jobId);if(blocked){await releaseInterruptedAttempt(env,user,blocked,"output_authority_changed_before_dispatch");await synchronizeOutputJobOutcome(env,blocked);}}
       return readJob(env,user.userId,jobId);
     }
   }
@@ -3391,7 +3425,8 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
       if(!requestedJob||requestedJob.owner_id!==user.userId||requestedJob.stream_id!==user.streamId
         ||!(Date.parse(requestedJob.expires_at)>Date.now()))return Response.json({error:"job_not_found"},{status:404,headers:{"cache-control":"private, no-store"}});
       const certified=consentedAdaptiveJob(requestedJob)?await certifiedAdaptiveJob(env,user,requestedJob,false,true):requestedJob;
-      return Response.json({job:serializeJob(certified)},{headers:{"cache-control":"private, no-store"}});
+      const job=serializeJob(certified),plannerResponseDiagnostics=await inspectPlannerResponseShapes(env,user,certified);
+      return Response.json({job:{...job,result:{...job.result,plannerResponseDiagnostics}}},{headers:{"cache-control":"private, no-store"}});
     }
     const activeOnly = query.get("scope") === "active";
     const documentScope = query.get("document")?.trim().slice(0, 160) ?? "";

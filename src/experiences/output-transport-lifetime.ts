@@ -5,6 +5,10 @@ export const EXPERIENCE_BODY_TIMEOUT_MS = 20_000;
 /** Waiting for an already authorized job grants no extra provider time, calls,
  * source access or spend. Server execution/authority deadlines remain unchanged. */
 export function experienceResponseTimeout(operation?: ExperienceForegroundOperation) {
+  // Scene's exact-source admission can exceed two minutes on a retained account.
+  // Wait for this explicit unpaid transaction; do not renew its server proof,
+  // quote or consent, retry it, or start the subsequent paid run automatically.
+  if(operation?.output==="scene"&&["prepare","renewPreparation","authorize"].includes(operation.action))return 240_000;
   // Preparation performs save, confirm and preflight with fresh custody reads.
   // This is one explicit intent, not automatic continuation or paid execution.
   if (operation?.action === "prepare" || operation?.action === "renewPreparation" || operation?.action === "prepareReplacement") return 120_000;
