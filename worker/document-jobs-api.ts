@@ -1,4 +1,4 @@
-import { retainedPlannerResponseShape } from "./output-planner-response-shape.ts";
+import { retainedPlannerResponseShape, retainedStoryboardResponseShape } from "./output-planner-response-shape.ts";
 import { unstartedOutputJobFailure } from "./output-unstarted-job-failure.ts";
 import { readFalRecoveryCheckpoint, recoveredFalImageEventIds } from "./output-fal-recovery-policy.ts";
 import { stopOutputVideoJob } from "./output-video-stop.ts";
@@ -17,7 +17,7 @@ import { OUTPUT_NATIVE_EXECUTION_POLICY, readOutputNativeExecutionPolicy, type O
 import { outputSchemaIsReady } from "./output-schema-state.ts";
 import { loadOutputJobBinding, createOutputEventExecution, synchronizeOutputJobOutcome, prepareOutputJobOutcomeStatements, reconcileKnownOutputProviderReceipts, type OutputExecutionProof, type OutputEventExecution } from "./output-execution-control.ts";
 import { prepareSceneJobSourceClaim } from './scene-job-source-witness.ts';
-import { expiredOriginalSceneJobFailure, type SceneTerminalWitness } from './output-expired-scene-job.ts';
+import { expiredOriginalSceneJobFailure, expiredOriginalAudioJobFailure, type SceneTerminalWitness } from './output-expired-scene-job.ts';
 import { outputProofReadStatements } from "./output-disclosure-proof.ts";
 import { retainedOutputBodyAssertions, rememberOutputPrivateBody, type OutputScope, ensureOutputRequirementsSchema, outputAssertionStatements, outputScopeAuthority, OutputConflictError, type OutputSqlAssertion } from "./output-requirements-ledger.ts";
 import { resolveOutputExecutionAuthority, prepareOutputExecutionProof } from "./output-requirements-api.ts";
@@ -1607,7 +1607,7 @@ function queueRecoveryPresentation(row: DocumentJobRow, recoveryBlocker: Documen
 
 async function inspectPlannerResponseShapes(env:WorkerEnv,user:PilotUser,row:DocumentJobRow){
   const kind=parseRequest(row).artifactKind;
-  if(user.projectExecution||row.kind!=="render_document"||!["audio","video"].includes(String(kind))||row.owner_id!==user.userId||row.stream_id!==user.streamId)return [];
+  if(user.projectExecution||row.kind!=="render_document"||!["audio","video","storyboard"].includes(String(kind))||row.owner_id!==user.userId||row.stream_id!==user.streamId)return [];
   const diagnostics=[];
   const retainedRows:PrivatePresentationCandidateRow[]=[];
   for(const call of providerSubmissions(parseResult(row)).filter(call=>call.provider==="openai"&&call.operation==="planning"&&call.responseRef&&call.providerRequestId).slice(0,2)){
@@ -1616,7 +1616,8 @@ async function inspectPlannerResponseShapes(env:WorkerEnv,user:PilotUser,row:Doc
     const candidates=await privatePresentationCandidateRows(env,user,row,"",call.providerRequestId!);
     const candidate=candidates.find(candidate=>candidate.content_id===call.responseRef);
     if(!candidate)continue;
-    const shape=retainedPlannerResponseShape(candidate.content,{jobId:row.job_id,documentId:row.document_id,streamId:row.stream_id,kind:String(kind),clientRequestId:call.clientRequestId,responseId:call.providerRequestId!,model:call.model});
+    const identity={jobId:row.job_id,documentId:row.document_id,streamId:row.stream_id,kind:String(kind),clientRequestId:call.clientRequestId,responseId:call.providerRequestId!,model:call.model};
+    const shape=kind==='storyboard'?await retainedStoryboardResponseShape(candidate.content,identity):retainedPlannerResponseShape(candidate.content,identity);
     if(shape&&Date.parse(candidate.read_expires_at)>Date.now()){diagnostics.push({responseId:call.providerRequestId,...shape});retainedRows.push(candidate);}
   }
   if(!diagnostics.length)return [];
@@ -2145,6 +2146,22 @@ export async function runDocumentJob(env: WorkerEnv, user: PilotUser, jobId: str
     if(!recovery)return readJob(env,user.userId,jobId);
     const stopped=await env.DB.prepare(recovery.sql).bind(...recovery.bindings).run();
     if(Number(stopped.meta.changes??0)===1){const terminal=await readJob(env,user.userId,jobId);if(terminal)await synchronizeOutputJobOutcome(env,terminal);}
+    return readJob(env,user.userId,jobId);
+  }
+  if(outputBinding&&row.kind==='render_document'&&row.source_surface==='outputs'
+    &&parseRequest(row).artifactKind==='audio'&&row.attempt_count!==0){
+    const expiredAudio=expiredOriginalAudioJobFailure(row,new Date().toISOString());
+    if(expiredAudio){
+      const receipts=await env.DB.prepare("SELECT event_id,sequence,type,payload FROM events WHERE stream_id=? AND correlation_id=? AND type IN('DocumentRenderCompleted','DocumentRenderFailed') ORDER BY sequence LIMIT 2").bind(row.stream_id,row.correlation_id).all<SceneTerminalWitness>();
+      if(receipts.success===false)return readJob(env,user.userId,jobId);
+      const recovery=expiredOriginalAudioJobFailure(row,new Date().toISOString(),receipts.results);
+      if(recovery){
+        const stopped=await env.DB.prepare(recovery.sql).bind(...recovery.bindings).run();
+        if(Number(stopped.meta.changes??0)===1){const terminal=await readJob(env,user.userId,jobId);if(terminal)await synchronizeOutputJobOutcome(env,terminal);}
+      }
+    }
+    // Malformed evidence, a lost CAS, or an unusual queued-but-started state
+    // cannot fall through to generic reservation handoff / attempt 2.
     return readJob(env,user.userId,jobId);
   }
   let outputAdmissionAssertions:OutputSqlAssertion[]=[];let outputProof:OutputExecutionProof|undefined;let nativeExecutionPolicy:OutputNativeExecutionPolicy=OUTPUT_NATIVE_EXECUTION_POLICY;

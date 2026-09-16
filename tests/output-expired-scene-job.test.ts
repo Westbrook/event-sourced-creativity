@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {DatabaseSync} from 'node:sqlite';
 import {readFileSync} from 'node:fs';
-import {expiredOriginalSceneJobFailure} from '../worker/output-expired-scene-job.ts';
+import {expiredOriginalSceneJobFailure,expiredOriginalAudioJobFailure} from '../worker/output-expired-scene-job.ts';
 const now='2020-01-01T00:02:00.000Z';
 const snapshot={job_id:'job',owner_id:'owner',stream_id:'stream',correlation_id:'job:attempt:1',kind:'render_document',source_surface:'outputs',status:'running',attempt_count:1,request_json:'{"artifactKind":"scene"}',result_json:'{"providerSubmissionProtocol":1,"receipt":"preserve"}',updated_at:'2020-01-01T00:00:00.000Z',lease_expires_at:'2020-01-01T00:01:00.000Z',scene_source_protocol:1,scene_source_version_json:'{"retained":"witness"}',output_slot_id:'slot'};
 function fixture(){const db=new DatabaseSync(':memory:');db.exec(`CREATE TABLE document_jobs(job_id TEXT,owner_id TEXT,stream_id TEXT,correlation_id TEXT,kind TEXT,source_surface TEXT,status TEXT,attempt_count INTEGER,request_json TEXT,result_json TEXT,updated_at TEXT,lease_expires_at TEXT,scene_source_protocol INTEGER,scene_source_version_json TEXT,output_slot_id TEXT,error_message TEXT,completed_at TEXT);CREATE TABLE output_operation_slots(slot_id TEXT,job_id TEXT,status TEXT);CREATE TABLE output_provider_calls(status TEXT,cost INTEGER);CREATE TABLE cost_budget_reservations(status TEXT,amount INTEGER);CREATE TABLE events(stream_id TEXT,correlation_id TEXT,type TEXT);`);db.prepare('INSERT INTO document_jobs VALUES('+Array(15).fill('?').join(',')+',NULL,NULL)').run(...Object.values(snapshot));db.exec("INSERT INTO output_operation_slots VALUES('slot','job','queued');INSERT INTO cost_budget_reservations VALUES('active',1000000)");return db;}
@@ -28,3 +28,23 @@ test('recorded terminal projection is guarded: '+mutation,()=>{
 });
 test('a recorded failure racing interruption wins',()=>{const db=fixture();try{const query=expiredOriginalSceneJobFailure(snapshot,now);db.exec("INSERT INTO events VALUES('stream','job:attempt:1','DocumentRenderFailed')");assert.equal(db.prepare(query.sql).run(...query.bindings).changes,0);}finally{db.close();}});
 test('conflicting terminal receipts never choose a favorable result',()=>assert.equal(expiredOriginalSceneJobFailure(snapshot,now,[terminal,{...terminal,event_id:'other',type:'DocumentRenderFailed'}]),null));
+
+for(const call of ['pending','uncertain','completed'])test('native Audio interruption preserves original claim and provider allowance: '+call,()=>{
+ const db=fixture();try{
+  db.exec(`UPDATE document_jobs SET request_json='{"artifactKind":"audio"}',scene_source_protocol=0,scene_source_version_json=NULL`);
+  db.prepare('INSERT INTO output_provider_calls VALUES(?,37600)').run(call);
+  const audio=db.prepare('SELECT * FROM document_jobs').get() as typeof snapshot;
+  const query=expiredOriginalAudioJobFailure(audio,now)!;assert.ok(query);
+  const calls=db.prepare('SELECT * FROM output_provider_calls').all(),budget=db.prepare('SELECT * FROM cost_budget_reservations').all();
+  assert.equal(db.prepare(query.sql).run(...query.bindings).changes,1);
+  const after=db.prepare('SELECT * FROM document_jobs').get()!;
+  assert.equal(after.status,'failed');assert.equal(after.attempt_count,1);assert.equal(after.correlation_id,audio.correlation_id);
+  assert.equal(JSON.parse(String(after.result_json)).receipt,'preserve');assert.equal(JSON.parse(String(after.result_json)).noAutomaticRetry,true);
+  assert.deepEqual(db.prepare('SELECT * FROM output_provider_calls').all(),calls);assert.deepEqual(db.prepare('SELECT * FROM cost_budget_reservations').all(),budget);
+  assert.equal(db.prepare(query.sql).run(...query.bindings).changes,0);
+ }finally{db.close();}
+});
+test('Audio interruption refuses non-Audio, live, malformed and unclaimed snapshots',()=>{
+ const audio={...snapshot,request_json:'{"artifactKind":"audio"}',scene_source_protocol:0,scene_source_version_json:null};
+ for(const change of [{output_slot_id:null},{scene_source_protocol:1},{source_surface:'document'},{status:'queued'},{status:'completed'},{attempt_count:0},{lease_expires_at:'2099-01-01T00:00:00.000Z'},{request_json:'{"artifactKind":"video"}'},{request_json:'{'},{result_json:'null'}])assert.equal(expiredOriginalAudioJobFailure({...audio,...change},now),null);
+});

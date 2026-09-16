@@ -27,8 +27,8 @@ function array(value: unknown, count?: number): unknown[] {
   return copy;
 }
 function frame(value: unknown): DocumentArtifactDraftItem {
-  const row = fields(value, ["title", "body", "notes", "image_prompt", "slide"], ["context_group_ids"]);
-  if (row.slide !== null) return fail();
+  const row = fields(value, ["title", "body", "notes", "image_prompt"], ["context_group_ids", "slide"]);
+  if (Object.hasOwn(row, "slide") && row.slide !== null) return fail();
   // The accepted mini-app has no group/reference authoring surface. An unknown
   // group cannot silently widen this initial route's source selection.
   if (Object.hasOwn(row, "context_group_ids") && array(row.context_group_ids, 0).length) return fail();
@@ -54,8 +54,10 @@ const capturedPlans = new WeakSet<object>();
 export async function captureOutputStoryboardPlan(value: unknown, sourceContract: unknown, plannerResponseId: unknown) {
   const contract = parseStoryboardOutputContract(sourceContract);
   if (!contract || typeof plannerResponseId !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/u.test(plannerResponseId)) return fail();
-  const row = fields(value, ["title", "summary", "content_markdown", "presentation", "items"]);
-  if (row.presentation !== null) return fail();
+  // The provider schema omits slide-only fields. Retained internal plans use
+  // explicit nulls; accept both representations without changing creative text.
+  const row = fields(value, ["title", "summary", "content_markdown", "items"], ["presentation"]);
+  if (Object.hasOwn(row, "presentation") && row.presentation !== null) return fail();
   const plan: DocumentArtifactDraft = { title: text(row.title, 512, true), summary: text(row.summary, 4_096),
     content_markdown: text(row.content_markdown, 65_536, true), presentation: null, items: array(row.items, 4).map(frame) };
   const raw = JSON.stringify(plan);

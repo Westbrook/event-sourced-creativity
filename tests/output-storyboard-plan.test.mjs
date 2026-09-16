@@ -12,6 +12,17 @@ const originalFetch=globalThis.fetch;let network=0;
 globalThis.fetch=()=>{network++;throw Error('network forbidden');};
 test.after(()=>{globalThis.fetch=originalFetch;assert.equal(network,0);});
 
+test('provider-schema omitted slide fields retain the same internal plan and binding as explicit nulls',async()=>{
+ const explicit=plan(),wire=structuredClone(explicit);
+ delete wire.presentation;for(const item of wire.items)delete item.slide;
+ const a=await captureOutputStoryboardPlan(explicit,contract(),'original-response');
+ const b=await captureOutputStoryboardPlan(wire,contract(),'original-response');
+ assert.deepEqual(b.plan,explicit);assert.equal(b.raw,a.raw);assert.equal(b.bindingSha256,a.bindingSha256);
+ for(const change of [p=>p.presentation=undefined,p=>p.items[0].slide=undefined,p=>Object.defineProperty(p,'presentation',{enumerable:true,get(){throw Error('must not read');}}),p=>Object.defineProperty(p.items[0],'slide',{enumerable:true,get(){throw Error('must not read');}})]){
+  const p=structuredClone(wire);change(p);await assert.rejects(captureOutputStoryboardPlan(p,contract(),'original-response'),/output_storyboard_plan_invalid/);
+ }
+});
+
 test('array capture never consults inherited map or subclass mapping behavior',async()=>{
  let calls=0;
  const inherited=Object.create(Array.prototype,{map:{value(){calls++;return [];}}});

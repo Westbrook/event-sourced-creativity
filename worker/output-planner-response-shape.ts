@@ -1,3 +1,4 @@
+import { captureStoryboardPlannerResponse } from "./output-storyboard-request.ts";
 /** Source-free structural diagnostics; never returns provider text or arbitrary keys. */
 const record=(value:unknown):Record<string,unknown>|null=>value!==null&&typeof value==="object"&&!Array.isArray(value)?value as Record<string,unknown>:null;
 export function outputPlannerResponseShape(value:unknown,expectedModel:string){
@@ -45,5 +46,30 @@ export function retainedPlannerResponseShape(raw:string,identity:{jobId:string;d
       ||retained.response_id!==identity.responseId||call?.clientRequestId!==identity.clientRequestId||call?.providerRequestId!==identity.responseId||call?.model!==identity.model
       ||typeof retained.raw_envelope!=="string"||retained.raw_envelope.length>524288)return null;
     return outputPlannerResponseShape(JSON.parse(retained.raw_envelope),identity.model);
+  }catch{return null;}
+}
+
+/** Validate the original Storyboard candidate in place without disclosing its
+ * creative contents or treating diagnostics as publication authority. */
+export async function retainedStoryboardResponseShape(raw:string,identity:{jobId:string;documentId:string;streamId:string;kind:string;clientRequestId:string;responseId:string;model:string}){
+  try{
+    const retained=record(JSON.parse(raw)),call=record(retained?.call);
+    if(identity.kind!=="storyboard"||!retained||retained.job_id!==identity.jobId||retained.document_id!==identity.documentId||retained.stream_id!==identity.streamId
+      ||retained.artifact_kind!==identity.kind||retained.response_id!==identity.responseId||call?.clientRequestId!==identity.clientRequestId
+      ||call?.providerRequestId!==identity.responseId||call?.model!==identity.model||typeof retained.provider_envelope!=="string"
+      ||retained.provider_envelope.length>1_048_576||typeof retained.output_text!=="string"||retained.output_text.length>262144)return null;
+    const digest=Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256",new TextEncoder().encode(retained.output_text))),byte=>byte.toString(16).padStart(2,"0")).join("");
+    if(digest!==retained.content_sha256)return null;
+    const envelope=record(JSON.parse(retained.provider_envelope));
+    if(!envelope||envelope.id!==identity.responseId||envelope.model!==identity.model)return null;
+    let candidate:Record<string,unknown>|null=null;
+    try{candidate=record(JSON.parse(retained.output_text));}catch{}
+    const items=Array.isArray(candidate?.items)?candidate.items:[];
+    const issues:string[]=[];
+    try{await captureStoryboardPlannerResponse(envelope,retained.output_text,retained.output_storyboard);}catch{issues.push("storyboard_candidate_invalid");}
+    const reasoningEncryptedContent=Array.isArray(envelope.output)&&envelope.output.some(item=>{const value=record(item);return value?.type==='reasoning'&&Object.hasOwn(value,'encrypted_content');});
+    return{valid:issues.length===0,issues,reasoningEncryptedContent,candidateParses:Boolean(candidate),frameCount:items.length,
+      presentationField:!candidate||!Object.hasOwn(candidate,"presentation")?"absent":candidate.presentation===null?"null":"non_null",
+      slideFields:items.slice(0,4).map(item=>{const row=record(item);return !row||!Object.hasOwn(row,"slide")?"absent":row.slide===null?"null":"non_null";})};
   }catch{return null;}
 }

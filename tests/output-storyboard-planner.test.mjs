@@ -65,6 +65,18 @@ test('actual native adapter sends prepared bytes once and retains original envel
  assert.equal(f.responses[0].storyboardEnvelope,'\n '+JSON.stringify(envelope())+'\n');
  assert.deepEqual(result.output,JSON.parse(raw()));assert.equal(result.raw,raw());
 });
+test('actual outgoing strict schema and incoming raw Storyboard agree on omitted slide-only fields',async()=>{
+ const candidate=JSON.parse(raw());delete candidate.presentation;for(const item of candidate.items)delete item.slide;
+ const wire=JSON.stringify(candidate),f=await runFixture(envelope(wire)),result=await f.promise;
+ const schema=JSON.parse(f.prepared.requestBody).text.format.schema;
+ assert.equal(schema.additionalProperties,false);assert.equal(schema.properties.items.items.additionalProperties,false);
+ assert.equal(Object.hasOwn(schema.properties,'presentation'),false);
+ assert.equal(Object.hasOwn(schema.properties.items.items.properties,'slide'),false);
+ assert.deepEqual(Object.keys(candidate).sort(),schema.required.toSorted());
+ for(const item of candidate.items)assert.deepEqual(Object.keys(item).sort(),schema.properties.items.items.required.toSorted());
+ assert.equal(fetches.length,1);assert.equal(result.raw,wire);assert.deepEqual(result.output,JSON.parse(raw()));
+ assert.equal(f.responses.length,1);assert.deepEqual(JSON.parse(f.responses[0].storyboardEnvelope),envelope(wire));
+});
 test('malformed raw first response cannot be normalized, padded or repaired through a second request',async()=>{
  for(const mutate of [p=>p.items.pop(),p=>delete p.items[0].image_prompt,p=>p.items[0].image_prompt='',p=>p.items[0].extra='forbidden',p=>p.presentation={},p=>p.items.reverse().push(p.items[0])]){
   const p=JSON.parse(raw());mutate(p);const f=await runFixture(envelope(JSON.stringify(p)));await assert.rejects(f.promise);assert.equal(fetches.length,1);assert.equal(f.responses.length,1);
