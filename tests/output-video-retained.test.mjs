@@ -11,6 +11,12 @@ test('retained native Video joins terminal original job, private MP4 and expired
 });
 test('retained Video refuses edited, unpublished, foreign, erased and expired original evidence',async()=>{
  for(const mutate of [
+  f=>f.sqlite.exec("UPDATE document_jobs SET result_json=json_remove(result_json,'$.outputExecution')"),
+  f=>f.sqlite.exec("UPDATE document_jobs SET result_json=json_set(result_json,'$.outputExecution.scopeKey','foreign')"),
+  f=>f.sqlite.exec("UPDATE document_jobs SET result_json=json_set(result_json,'$.outputExecution.slotId','foreign')"),
+  f=>f.sqlite.exec("UPDATE document_jobs SET request_json=json_set(request_json,'$.outputExecution',NULL)"),
+  f=>f.sqlite.exec("UPDATE document_jobs SET request_json=json_set(request_json,'$.outputExecution.scopeKey','foreign')"),
+  f=>f.sqlite.exec("UPDATE document_jobs SET request_json=json_set(request_json,'$.outputExecution.slotId','foreign')"),
   f=>f.sqlite.exec("UPDATE output_operation_slots SET attempt_ordinal=1"),
   f=>f.sqlite.exec("UPDATE output_operation_slots SET previous_slot_id='other'"),
   f=>f.sqlite.exec("UPDATE output_operation_slots SET outcome_event_id='other'"),
@@ -23,6 +29,20 @@ test('retained Video refuses edited, unpublished, foreign, erased and expired or
   f=>{f.payload.media_url='/api/media/foreign';f.input.completionRaw=JSON.stringify(f.payload);},
   f=>{f.media.clear();}
  ]){const f=await fixture();try{mutate(f);await assert.rejects(f.read(),undefined,String(mutate));}finally{f.sqlite.close();}}
+});
+test('retained Video accepts actual checkpoint-only reference, rejects conflicting legacy values and pins both JSON bodies',async()=>{
+ for(const mutation of ['result','request']){
+  const f=await fixture();try{
+   const row=f.sqlite.prepare('SELECT request_json,result_json FROM document_jobs').get(),request=JSON.parse(row.request_json),reference=JSON.parse(row.result_json).outputExecution;
+   assert.equal(Object.hasOwn(request,'outputExecution'),false);await f.read();
+   request.outputExecution=reference;f.sqlite.prepare('UPDATE document_jobs SET request_json=?').run(JSON.stringify(request));
+   const read=await f.read();assert(f.sqlite.prepare('WITH video_witness AS (SELECT ? AS bindings) SELECT 1 WHERE '+read.witness.sql).get(read.witness.json));
+   if(mutation==='result')f.sqlite.exec("UPDATE document_jobs SET result_json=json_remove(result_json,'$.outputExecution')");
+   else f.sqlite.exec("UPDATE document_jobs SET request_json=json_set(request_json,'$.outputExecution.grantId','foreign')");
+   assert.equal(f.sqlite.prepare('WITH video_witness AS (SELECT ? AS bindings) SELECT 1 WHERE '+read.witness.sql).get(read.witness.json),undefined);
+   await assert.rejects(f.read());
+  }finally{f.sqlite.close();}
+ }
 });
 test('final packed witness detects original evidence changes after private Video reads',async()=>{
  const f=await fixture();try{const result=await f.read();f.sqlite.exec("UPDATE private_content SET redacted_at='now' WHERE content_id='input'");assert.equal(f.sqlite.prepare('WITH video_witness AS (SELECT ? AS bindings) SELECT 1 WHERE '+result.witness.sql).get(result.witness.json),undefined);}finally{f.sqlite.close();}

@@ -29,14 +29,14 @@ export async function readRetainedOutputStoryboard(env:WorkerEnv,input:{
   ||settings.item_count!==4||settings.production_mode!=="manual"||typeof receipt.jobId!=="string"||typeof receipt.slotId!=="string")return fail();
  const jobSql=`job_id=? AND owner_id=? AND document_id=? AND stream_id=?
   AND EXISTS(SELECT 1 FROM output_operation_slots relation WHERE relation.job_id=document_jobs.job_id
-   AND relation.scope_key=json_extract(document_jobs.request_json,'$.outputExecution.scopeKey') AND relation.slot_id=?) AND kind='render_document'
+   AND relation.scope_key=json_extract(document_jobs.result_json,'$.outputExecution.scopeKey') AND relation.slot_id=?) AND kind='render_document'
   AND source_surface='outputs' AND status='completed' AND error_message IS NULL AND completed_at IS NOT NULL
   AND expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now') AND length(CAST(result_json AS BLOB))<=1048576 AND length(CAST(request_json AS BLOB))<=1048576
   AND NOT EXISTS(SELECT 1 FROM project_resource_scopes WHERE resource_kind IN('job','document') AND resource_id IN(document_jobs.job_id,document_jobs.document_id))`;
  const jobBindings=[receipt.jobId,input.ownerId,input.documentId,`creative:${input.ownerId}`,receipt.slotId];
  const job=await env.DB.prepare(`SELECT document_jobs.*,(SELECT relation.slot_id FROM output_operation_slots relation
-  WHERE relation.job_id=document_jobs.job_id AND relation.scope_key=json_extract(document_jobs.request_json,'$.outputExecution.scopeKey')
-   AND relation.slot_id=json_extract(document_jobs.request_json,'$.outputExecution.slotId')) AS output_slot_id
+  WHERE relation.job_id=document_jobs.job_id AND relation.scope_key=json_extract(document_jobs.result_json,'$.outputExecution.scopeKey')
+   AND relation.slot_id=json_extract(document_jobs.result_json,'$.outputExecution.slotId')) AS output_slot_id
   FROM document_jobs WHERE ${jobSql}`).bind(...jobBindings).first<DocumentJobRow>();
  if(!job||typeof job.result_json!=="string"||job.correlation_id!==receipt.correlationId||job.attempt_count!==receipt.attempt)return fail();
  const slotSql=`slot.job_id=? AND slot.slot_id=? AND slot.status='succeeded' AND slot.attempt_ordinal=0 AND slot.previous_slot_id IS NULL
@@ -52,7 +52,9 @@ export async function readRetainedOutputStoryboard(env:WorkerEnv,input:{
   documentId:input.documentId,projectId:input.projectId,organizationId:null,projectAccessId:null,contextId:null};
  const slot=outputSlotFromRow(scope.key,row),request=object(JSON.parse(job.request_json)),checkpoint=object(JSON.parse(job.result_json));
  const reference={scopeKey:scope.key,grantId:slot.grantId,slotId:slot.slotId,planRevisionId:slot.planRevisionId,targetId:slot.targetId,targetContractDigest:slot.targetContractDigest,sourceDigest:slot.sourceDigest};
- if(!same(request.outputExecution,reference)||!same(checkpoint.outputExecution,reference)||request.artifactKind!=="storyboard"
+ // Admission persists the execution reference in result_json, not the creative
+ // request payload. A legacy duplicate may agree, but never override custody.
+ if(Object.hasOwn(request,"outputExecution")&&!same(request.outputExecution,reference)||!same(checkpoint.outputExecution,reference)||request.artifactKind!=="storyboard"
   ||request.productionMode!=="manual"||request.itemCount!==4||!same(request.outputStoryboard,contract)
   ||checkpoint.artifactId!==input.artifactId||checkpoint.artifactKind!=="storyboard"
   ||!Array.isArray(checkpoint.appendedEventIds)||!checkpoint.appendedEventIds.includes(input.completionId))return fail();

@@ -17,7 +17,8 @@ export async function videoRetainedFixture(){
  INSERT INTO output_plan_revisions VALUES('scope','plan','owner','doc','project',NULL,NULL,'personal');
  INSERT INTO events VALUES('completion','creative:owner','DocumentRenderCompleted','{}','corr',1);`);
  const reference={scopeKey:'scope',grantId:'grant',slotId:'slot',planRevisionId:'plan',targetId:'target',targetContractDigest:'target-contract',sourceDigest:'source'};
- f.cp.outputExecution=reference;f.persist();f.job.request_json=JSON.stringify({...f.settings,artifactKind:'video',productionMode:'manual',itemCount:1,outputExecution:reference});
+ // Actual admission writes the reference to result_json only.
+ f.cp.outputExecution=reference;f.persist();f.job.request_json=JSON.stringify({...f.settings,artifactKind:'video',productionMode:'manual',itemCount:1});
  f.sqlite.prepare('UPDATE document_jobs SET request_json=?').run(f.job.request_json);
  const {receipt}=await f.verify();await f.finish('completed',{appendedEventIds:['completion']});
  const body={schema_version:1,artifact_id:f.artifactId,artifact_kind:'video',document_id:'doc',project_id:'project',output_video:receipt,request:{item_count:1,production_mode:'manual',source_surface:'outputs'},planner:{provider:'openai',response_id:receipt.plannerResponseId}};

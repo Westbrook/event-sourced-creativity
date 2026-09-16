@@ -6,6 +6,16 @@ import {storyboardEvidenceFixture} from './output-storyboard-retained-fixture.mj
 import {assertStoryboardJobSchema} from './output-storyboard-job-schema.mjs';
 const {readRetainedOutputStoryboard}=await import('../worker/output-storyboard-retained.ts');
 const {verifyOutputStoryboardCompletion}=await import('../worker/output-storyboard-completion.ts');
+const {model3dNativeCheckpoint,MODEL3D_TERMINAL_RESULT_SQL,MODEL3D_PRIVATE_CHECKPOINT_KEYS}=await import('../worker/output-model3d-terminal.ts');
+const {recoveredFalImageEventIds}=await import('../worker/output-fal-recovery-policy.ts');
+const harnessSource=readFileSync(new URL('../worker/document-jobs-api.ts',import.meta.url),'utf8');
+const harnessDeclarations=[...harnessSource.matchAll(/^const OUTPUT_(?:STORYBOARD|VIDEO)_RETAINED_CHECKPOINT_KEYS = [^\n]+/gm)].map(match=>match[0].replace(' as const;',';')).join('\n');
+assert.equal(harnessDeclarations.split('\n').length,2,'Use both current native terminal key declarations');
+const harnessDependencies={model3dNativeCheckpoint,MODEL3D_TERMINAL_RESULT_SQL,MODEL3D_PRIVATE_CHECKPOINT_KEYS,recoveredFalImageEventIds};
+function qualifiedFunction(...args){
+ const body=args.pop();
+ return new Function(...Object.keys(harnessDependencies),harnessDeclarations+'\nreturn function('+args.join(',')+'){\n'+body+'\n};')(...Object.values(harnessDependencies));
+}
 const originalFetch=globalThis.fetch;globalThis.fetch=()=>{throw Error('network forbidden');};test.after(()=>{globalThis.fetch=originalFetch;});
 test('all eight retained checkpoint fields conserve JSON presence, type and value; invalid original evidence never becomes readable',async()=>{
  const {stripTypeScriptTypes}=await import('node:module');
@@ -13,7 +23,7 @@ test('all eight retained checkpoint fields conserve JSON presence, type and valu
  const source=readFileSync(new URL('../worker/document-jobs-api.ts',import.meta.url),'utf8');
  const constant=source.match(/const OUTPUT_STORYBOARD_RETAINED_CHECKPOINT_KEYS = [^\n]+/)?.[0]??'';
  const start=source.indexOf('async function finishDocumentJob('),end=source.indexOf('\nfunction queueRecoveryPresentation',start);
- const finish=new Function('parseRequest','parentJobIdFromRequest','documentJobCompletionBindings','prepareOutputJobOutcomeStatements','PRESERVE_ADAPTIVE_RECEIPT_SQL',
+ const finish=qualifiedFunction('parseRequest','parentJobIdFromRequest','documentJobCompletionBindings','prepareOutputJobOutcomeStatements','PRESERVE_ADAPTIVE_RECEIPT_SQL',
   stripTypeScriptTypes(constant+'\n'+source.slice(start,end))+';return finishDocumentJob;')(
    row=>JSON.parse(row.request_json),()=>null,documentJobCompletionBindings,()=>[],'?');
  const keys=['outputExecution','providerSubmissionProtocol','providerSubmissionLegacyUncertain','artifactPlan','renderedItems','outputStoryboardPlannerCheckpoint','outputStoryboardRawEnvelope','outputStoryboardCheckpoints'];
@@ -47,7 +57,7 @@ test('actual native terminal SQL preserves exact Storyboard checkpoint before th
  const constant=source.match(/const OUTPUT_STORYBOARD_RETAINED_CHECKPOINT_KEYS = [^\n]+/)?.[0]??'';
  const start=source.indexOf('async function finishDocumentJob('),end=source.indexOf('\nfunction queueRecoveryPresentation',start);
  let outcomeCalls=0;
- const finish=new Function('parseRequest','parentJobIdFromRequest','documentJobCompletionBindings','prepareOutputJobOutcomeStatements','PRESERVE_ADAPTIVE_RECEIPT_SQL',
+ const finish=qualifiedFunction('parseRequest','parentJobIdFromRequest','documentJobCompletionBindings','prepareOutputJobOutcomeStatements','PRESERVE_ADAPTIVE_RECEIPT_SQL',
   stripTypeScriptTypes(constant+'\n'+source.slice(start,end))+';return finishDocumentJob;')(
    row=>JSON.parse(row.request_json),()=>null,documentJobCompletionBindings,()=>{outcomeCalls++;return[];},'?');
  for(const uncertainty of [undefined,false,true,null,'false','true','0',0,1,{nested:null},[]]){const f=await fixture();try{
@@ -79,17 +89,19 @@ test('actual native terminal SQL preserves exact Storyboard checkpoint before th
  }finally{f.sqlite.close();}}
 });
 
-test('native Storyboard terminal private checkpoint fields are not generic public job results; legacy and other outputs unchanged',async()=>{
+test('Storyboard private checkpoint fields remain private without a derived slot; other outputs unchanged',async()=>{
  const {stripTypeScriptTypes}=await import('node:module');
  const source=readFileSync(new URL('../worker/document-jobs-api.ts',import.meta.url),'utf8');
  const constant=source.match(/const OUTPUT_STORYBOARD_RETAINED_CHECKPOINT_KEYS = [^\n]+/)?.[0]??'';
  const start=source.indexOf('  const privateCheckpointKeys=new Set('),end=source.indexOf('\n  if(sanitizedResult&&request.artifactKind',start);
- const sanitize=new Function('row','request','parsed','result',stripTypeScriptTypes(constant+'\n'+source.slice(start,end))+';return sanitizedResult;');
+ const sanitize=qualifiedFunction('row','request','parsed','result',stripTypeScriptTypes(constant+'\n'+source.slice(start,end))+';return sanitizedResult;');
  const privateKeys=['outputExecution','artifactPlan','renderedItems','outputStoryboardPlannerCheckpoint','outputStoryboardRawEnvelope','outputStoryboardCheckpoints'];
  const result={artifactId:'original',stage:'completed',...Object.fromEntries(privateKeys.map(key=>[key,{private:true}]))};
  const native=sanitize({output_slot_id:'slot',kind:'render_document'},{artifactKind:'storyboard'},result,result);
  assert.equal(native.artifactId,'original');assert.equal(native.stage,'completed');for(const key of privateKeys)assert(!Object.hasOwn(native,key),key);
- for(const [row,request] of [[{kind:'render_document'},{artifactKind:'storyboard'}],[{output_slot_id:'slot',kind:'render_document'},{artifactKind:'audio'}],[{output_slot_id:'slot',kind:'generate'},{artifactKind:'image'}]]){
+ const cold=sanitize({kind:'render_document'},{artifactKind:'storyboard'},result,result);
+ for(const key of privateKeys)assert(!Object.hasOwn(cold,key),key);
+ for(const [row,request] of [[{output_slot_id:'slot',kind:'render_document'},{artifactKind:'audio'}],[{output_slot_id:'slot',kind:'generate'},{artifactKind:'image'}]]){
   const unchanged=sanitize(row,request,result,result);for(const key of privateKeys)assert.deepEqual(unchanged[key],result[key]);
  }
 });
@@ -111,7 +123,8 @@ async function fixture(){
  Object.assign(f.slot,{scopeKey:'scope',planRevisionId:'revision',targetId:'target',targetContractDigest:'target-digest'});
  const result=await f.verify(),receipt=result.receipt,reference={scopeKey:'scope',grantId:'grant',slotId:'slot',planRevisionId:'revision',targetId:'target',targetContractDigest:'target-digest',sourceDigest:'source'};
  f.cp.outputExecution=reference;f.cp.artifactKind='storyboard';f.cp.appendedEventIds=['completion'];f.persist();
- const request={...f.settings,artifactKind:'storyboard',productionMode:'manual',itemCount:4,outputExecution:reference};
+ // Match prepareAdmission/buildStatements: reference is checkpoint-only.
+ const request={...f.settings,artifactKind:'storyboard',productionMode:'manual',itemCount:4};
  f.sqlite.prepare("UPDATE document_jobs SET status='completed',request_json=?,completed_at=?,lease_expires_at=NULL").run(JSON.stringify(request),new Date().toISOString());
  f.sqlite.exec("UPDATE output_operation_slots SET status='succeeded'");
  const inputBody={schema_version:1,artifact_id:f.artifactId,artifact_kind:'storyboard',document_id:'doc',project_id:'project',
@@ -140,7 +153,15 @@ test('retained completed Storyboard reuses original five settled receipts and re
  }finally{f.sqlite.close();}
 });
 test('retained read rejects foreign, edited, expired, revoked, unresolved or unpublished evidence without a new call',async()=>{
+ const producer=readFileSync(new URL('../worker/output-document-execution.ts',import.meta.url),'utf8');
+ const writer=readFileSync(new URL('../worker/document-jobs-api.ts',import.meta.url),'utf8');
+ assert(producer.includes('outputExecution:reference,generationReceipt:'));
+ assert(writer.includes('JSON.stringify(payload),JSON.stringify({...initialResult,...checkpoint,providerSubmissionProtocol:1})'));
  const mutations=[
+  f=>f.sqlite.exec("UPDATE document_jobs SET result_json=json_remove(result_json,'$.outputExecution')"),
+  f=>f.sqlite.exec("UPDATE document_jobs SET result_json=json_set(result_json,'$.outputExecution.scopeKey','foreign')"),
+  f=>f.sqlite.exec("UPDATE document_jobs SET result_json=json_set(result_json,'$.outputExecution.slotId','foreign')"),
+  f=>f.sqlite.exec("UPDATE document_jobs SET request_json=json_set(request_json,'$.outputExecution',NULL)"),
   f=>f.sqlite.exec("UPDATE output_operation_slots SET job_id='foreign'"),
   f=>f.sqlite.exec("UPDATE output_operation_slots SET scope_key='foreign'"),
   f=>f.sqlite.exec("UPDATE output_operation_slots SET slot_id='foreign'"),
@@ -163,6 +184,7 @@ test('retained read rejects foreign, edited, expired, revoked, unresolved or unp
  for(const change of mutations){const f=await fixture();try{change(f);await assert.rejects(f.read());assert.equal(f.sqlite.prepare('SELECT COUNT(*) n FROM output_provider_calls').get().n,5);}finally{f.sqlite.close();}}
 });
 test('retained physical read is abortable and late changed publication evidence cannot pass final SQL witness',async()=>{
+ // Existing publication/private-source mutation checks remain unchanged below.
  const f=await fixture();try{
   const verified=await f.read();f.sqlite.exec("UPDATE output_native_storage_writes SET publication_event_id='foreign'");
   assert(verified.assertions.some(a=>!f.sqlite.prepare('SELECT 1 WHERE '+a.sql).get(...a.bindings)));
@@ -174,6 +196,7 @@ test('retained physical read is abortable and late changed publication evidence 
  }finally{f.sqlite.close();}
 });
 test('actual retained reader attaches Storyboard revalidation to current revision and final auth/content witness',()=>{
+ // The full reader fixtures above now use the real checkpoint-only reference.
  const source=readFileSync(new URL('../worker/retained-story-api.ts',import.meta.url),'utf8');
  assert.match(source,/selection\.revision!==0\|\|native\.latestEditId/);
  assert.match(source,/storyboardRead=await readRetainedOutputStoryboard/);
@@ -184,6 +207,20 @@ test('actual retained reader attaches Storyboard revalidation to current revisio
  // This is a source wiring control, not a hosted-principal admission proof.
 });
 
+test('retained Storyboard permits only an exact optional legacy reference and pins both JSON bodies through disclosure',async()=>{
+ for(const mutation of ['result','request']){
+  const f=await fixture();try{
+   const row=f.sqlite.prepare('SELECT request_json,result_json FROM document_jobs').get(),request=JSON.parse(row.request_json),reference=JSON.parse(row.result_json).outputExecution;
+   assert.equal(Object.hasOwn(request,'outputExecution'),false);
+   request.outputExecution=reference;f.sqlite.prepare('UPDATE document_jobs SET request_json=?').run(JSON.stringify(request));
+   const read=await f.read();assert(f.sqlite.prepare('WITH storyboard_witness AS (SELECT ? AS bindings) SELECT 1 WHERE '+read.witness.sql).get(read.witness.json));
+   if(mutation==='result')f.sqlite.exec("UPDATE document_jobs SET result_json=json_remove(result_json,'$.outputExecution')");
+   else f.sqlite.exec("UPDATE document_jobs SET request_json=json_set(request_json,'$.outputExecution.grantId','foreign')");
+   assert.equal(f.sqlite.prepare('WITH storyboard_witness AS (SELECT ? AS bindings) SELECT 1 WHERE '+read.witness.sql).get(read.witness.json),undefined);
+   await assert.rejects(f.read());
+  }finally{f.sqlite.close();}
+ }
+});
 test('actual hosted retained GET joins SQLite principal, private completion, original evidence and PNGs without writes; final mutation withdraws DTO',async()=>{
  const C=process.env.FORMA_SOURCE_ROOT;
  const {outputTestDatabase}=await import(C+'/tests/output-execution-test-helpers.mjs');
@@ -242,26 +279,28 @@ test('actual hosted retained GET joins SQLite principal, private completion, ori
   assert.equal((await handleNativeRetainedOutputRead(request(),env)).status,404);
  }finally{f.sqlite.close();g.sqlite.close();}
 });
-test('actual native terminal construction, receipt refresh and guarded finish retain all five observed Storyboard calls; old constructor reproduces count one',async()=>{
+test('actual native terminal construction retains all five Storyboard calls; disabling only its branch reproduces count one',async()=>{
  const {stripTypeScriptTypes}=await import('node:module');
  const {documentJobCompletionBindings}=await import(process.env.FORMA_SOURCE_ROOT+'/worker/document-job-sql.ts');
  const submissions=await import(process.env.FORMA_SOURCE_ROOT+'/src/model/provider-submission.ts');
  const source=readFileSync(new URL('../worker/document-jobs-api.ts',import.meta.url),'utf8');
  const take=(start,end)=>{const a=source.indexOf(start),b=source.indexOf(end,a);assert(a>=0&&b>a);return source.slice(a,b);};
- const safeResult=new Function(stripTypeScriptTypes(take('function safeResult(','\n/** Read/recover only retained paid evidence.'))+';return safeResult;')();
+ const safeResult=qualifiedFunction(stripTypeScriptTypes(take('function safeResult(','\n/** Read/recover only retained paid evidence.'))+';return safeResult;')();
  const constructSource=take('    const liveCheckpoint=latestCheckpoint;','\n    const recordedNativeFailure=');
- const oldCondition='outputBinding&&readOutputAudioPayload(parseRequest(row))',newCondition='outputBinding&&(readOutputAudioPayload(parseRequest(row))||row.kind==="render_document"&&parseRequest(row).artifactKind==="storyboard")';
+ // Mutation oracle removes only Storyboard while preserving the current Audio,
+ // Video and Model3D branches. The actual constructor remains unmodified.
+ const oldCondition='outputBinding&&(readOutputAudioPayload(parseRequest(row))||row.kind==="render_document"&&parseRequest(row).artifactKind==="video"||model3dNativeCheckpoint(parseRequest(row)))',newCondition='outputBinding&&(readOutputAudioPayload(parseRequest(row))||row.kind==="render_document"&&["storyboard","video"].includes(String(parseRequest(row).artifactKind))||model3dNativeCheckpoint(parseRequest(row)))';
  assert(constructSource.includes(newCondition));
- const makeConstruct=text=>new Function('latestCheckpoint','durableCheckpoint','outputBinding','row','body','safeResult','readOutputAudioPayload','parseRequest','followup','sceneConfiguration','detail','response',
+ const makeConstruct=text=>qualifiedFunction('latestCheckpoint','durableCheckpoint','outputBinding','row','body','safeResult','readOutputAudioPayload','parseRequest','followup','sceneConfiguration','detail','response',
   stripTypeScriptTypes(text)+';return terminalResult;');
  const construct=makeConstruct(constructSource),oldConstruct=makeConstruct(constructSource.replace(newCondition,oldCondition));
  const missing=()=>{throw Error('Unexpected receipt dependency or source/financial read');};
  const deps={requiresForegroundDocumentExecution:row=>['preview','generate','render_document'].includes(row.kind),parseResult:row=>JSON.parse(row.result_json),
   readJob:missing,readCorrelatedEvents:missing,costBudgetReservation:missing,readScenePolicyStopEvidence:missing,readOutputSceneLocalStop:missing,
   providerSubmissions:submissions.providerSubmissions,hasUnresolvedProviderSubmission:submissions.hasUnresolvedProviderSubmission,hasUnsettledProviderSubmission:submissions.hasUnsettledProviderSubmission,definitiveProviderRejection:submissions.definitiveProviderRejection};
- const refresh=new Function(...Object.keys(deps),stripTypeScriptTypes(take('async function refreshGenerationReceipt(','\nfunction rowIsStale('))+';return refreshGenerationReceipt;')(...Object.values(deps));
+ const refresh=qualifiedFunction(...Object.keys(deps),stripTypeScriptTypes(take('async function refreshGenerationReceipt(','\nfunction rowIsStale('))+';return refreshGenerationReceipt;')(...Object.values(deps));
  const constant=source.match(/const OUTPUT_STORYBOARD_RETAINED_CHECKPOINT_KEYS = [^\n]+/)[0];
- const finish=new Function('parseRequest','parentJobIdFromRequest','documentJobCompletionBindings','prepareOutputJobOutcomeStatements','PRESERVE_ADAPTIVE_RECEIPT_SQL',
+ const finish=qualifiedFunction('parseRequest','parentJobIdFromRequest','documentJobCompletionBindings','prepareOutputJobOutcomeStatements','PRESERVE_ADAPTIVE_RECEIPT_SQL',
   stripTypeScriptTypes(constant+'\n'+take('async function finishDocumentJob(','\nfunction queueRecoveryPresentation'))+';return finishDocumentJob;')(row=>JSON.parse(row.request_json),()=>null,documentJobCompletionBindings,()=>[],'?');
  for(const useOld of [true,false]){const f=await fixture();try{
   const calls=f.sqlite.prepare('SELECT * FROM output_provider_calls').all();assert.equal(calls.length,5);assert(calls.every(call=>call.status==='settled'));

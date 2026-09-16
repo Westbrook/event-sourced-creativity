@@ -33,14 +33,14 @@ export async function readRetainedOutputVideo(env:WorkerEnv,input:{
   ||settings.item_count!==1||settings.production_mode!=="manual"||typeof receipt.jobId!=="string"||typeof receipt.slotId!=="string")return fail();
  const jobSql=`job_id=? AND owner_id=? AND document_id=? AND stream_id=?
   AND EXISTS(SELECT 1 FROM output_operation_slots relation WHERE relation.job_id=document_jobs.job_id
-   AND relation.scope_key=json_extract(document_jobs.request_json,'$.outputExecution.scopeKey') AND relation.slot_id=?) AND kind='render_document'
+   AND relation.scope_key=json_extract(document_jobs.result_json,'$.outputExecution.scopeKey') AND relation.slot_id=?) AND kind='render_document'
   AND source_surface='outputs' AND ${recovery?"status='failed'":"status='completed' AND error_message IS NULL AND completed_at IS NOT NULL"}
   AND expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now') AND length(CAST(result_json AS BLOB))<=1048576 AND length(CAST(request_json AS BLOB))<=1048576
   AND NOT EXISTS(SELECT 1 FROM project_resource_scopes WHERE resource_kind IN('job','document') AND resource_id IN(document_jobs.job_id,document_jobs.document_id))`;
  const jobBindings=[receipt.jobId,input.ownerId,input.documentId,`creative:${input.ownerId}`,receipt.slotId];
  const job=await env.DB.prepare(`SELECT document_jobs.*,(SELECT relation.slot_id FROM output_operation_slots relation
-  WHERE relation.job_id=document_jobs.job_id AND relation.scope_key=json_extract(document_jobs.request_json,'$.outputExecution.scopeKey')
-   AND relation.slot_id=json_extract(document_jobs.request_json,'$.outputExecution.slotId')) AS output_slot_id
+  WHERE relation.job_id=document_jobs.job_id AND relation.scope_key=json_extract(document_jobs.result_json,'$.outputExecution.scopeKey')
+   AND relation.slot_id=json_extract(document_jobs.result_json,'$.outputExecution.slotId')) AS output_slot_id
   FROM document_jobs WHERE ${jobSql}`).bind(...jobBindings).first<DocumentJobRow>();
  if(!job||typeof job.result_json!=="string"||job.correlation_id!==receipt.correlationId||job.attempt_count!==receipt.attempt)return fail();
  const slotSql=`slot.job_id=? AND slot.slot_id=? AND ${recovery?"slot.status IN('uncertain','failed')":"slot.status='succeeded'"} AND slot.attempt_ordinal=0 AND slot.previous_slot_id IS NULL
@@ -56,7 +56,9 @@ export async function readRetainedOutputVideo(env:WorkerEnv,input:{
   documentId:input.documentId,projectId:input.projectId,organizationId:null,projectAccessId:null,contextId:null};
  const slot=outputSlotFromRow(scope.key,row),request=object(JSON.parse(job.request_json)),checkpoint=object(JSON.parse(job.result_json));
  const reference={scopeKey:scope.key,grantId:slot.grantId,slotId:slot.slotId,planRevisionId:slot.planRevisionId,targetId:slot.targetId,targetContractDigest:slot.targetContractDigest,sourceDigest:slot.sourceDigest};
- if(!same(request.outputExecution,reference)||!same(checkpoint.outputExecution,reference)||request.artifactKind!=="video"
+ // The admitted reference is the preserved private checkpoint, not a field
+ // manufactured in request_json. Reject any conflicting legacy duplicate.
+ if(Object.hasOwn(request,"outputExecution")&&!same(request.outputExecution,reference)||!same(checkpoint.outputExecution,reference)||request.artifactKind!=="video"
   ||request.productionMode!=="manual"||request.itemCount!==1||!same(request.outputVideo,contract)
   ||checkpoint.artifactId!==input.artifactId||checkpoint.artifactKind!=="video"
   ||!Array.isArray(checkpoint.appendedEventIds)||!checkpoint.appendedEventIds.includes(input.completionId))return fail();
