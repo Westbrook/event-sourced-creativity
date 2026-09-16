@@ -26,7 +26,7 @@ const hash = async (v: Uint8Array) => Array.from(new Uint8Array(await crypto.sub
 const same = (a: unknown, b: unknown) => canonicalJson(a) === canonicalJson(b);
 type Lease = Awaited<ReturnType<typeof claimOutputModel3dRecoveryLease>>;
 type Stored = { index: number; token: string; storageKey: string; sha256: string; file: NativeRetainedModel3dFile; providerMediaUrl: string };
-export type Model3dRecoveryStage = "model3d_binding" | "model3d_authority" | "model3d_lease" | "model3d_retrieve_publish" | "model3d_result_receipt" | "model3d_file_manifest" | "model3d_file_store" | "model3d_file_qualify" | "model3d_assembly" | "model3d_content_store" | "model3d_publish";
+export type Model3dRecoveryStage = "model3d_binding" | "model3d_authority" | "model3d_lease" | "model3d_retrieve_publish" | "model3d_original_read" | "model3d_read_authority" | "model3d_provider_read" | "model3d_envelope_prepare" | "model3d_envelope_store" | "model3d_result_receipt" | "model3d_file_manifest" | "model3d_file_store" | "model3d_file_qualify" | "model3d_assembly" | "model3d_content_store" | "model3d_publish";
 function noteStage(options: { onStage?: (stage: Model3dRecoveryStage) => void }, stage: Model3dRecoveryStage) {
   try { options.onStage?.(stage); } catch { /* Diagnostics never alter recovery. */ }
 }
@@ -188,10 +188,12 @@ export async function executeOutputModel3dRecovery(env: WorkerEnv, user: PilotUs
     let paid: PaidProviderSubmission | undefined, manifest: readonly Model3dProviderArtifactDescriptor[] = [];
     let assembly: ReturnType<typeof createOutputModel3dRecoveryAssembly> | undefined;
     const envelopePhases = new Set<string>();
+    noteStage(options,"model3d_original_read");
     const result = await readOriginalFalModel3d(env, { offer: cp.offer, prepared: cp.prepared, submission: cp.submission as PaidProviderSubmission }, {
       signal: options.signal, deadlineMs: lease.deadlineMs,
-      beforeRead: async hook => { hook.assertCurrent(); await lease.assertCurrent(); hook.assertCurrent(); },
+      beforeRead: async hook => { noteStage(options,"model3d_read_authority"); hook.assertCurrent(); await lease.assertCurrent(); hook.assertCurrent(); noteStage(options,"model3d_provider_read"); },
       onEnvelope: async (value, hook) => {
+        noteStage(options,"model3d_envelope_prepare");
         hook.assertCurrent(); await lease.assertCurrent();
         const envelope = object(value);
         if (!["status", "result"].includes(String(envelope.phase)) || envelopePhases.has(String(envelope.phase))
@@ -201,6 +203,7 @@ export async function executeOutputModel3dRecovery(env: WorkerEnv, user: PilotUs
         hook.assertCurrent(); await lease.assertCurrent();
         const receipt = { token: lease.token, phase: envelope.phase, responseRef: prepared.contentId, sha256: await hash(new TextEncoder().encode(raw)),
           expiresAt: [prepared.expiresAt, job.expires_at].sort()[0] };
+        noteStage(options,"model3d_envelope_store");
         await env.DB.batch([...live(), { sql: "COALESCE((SELECT json_array_length(result_json,'$.outputModel3dRecoveryEnvelopes') FROM document_jobs WHERE job_id=?),0)<64", bindings: [job.job_id] }]
           .flatMap(a => outputAssertionStatements(env, a)).concat(prepared.statements.slice(0, 1), [env.DB.prepare("UPDATE document_jobs SET result_json=json_insert(json_set(result_json,'$.outputModel3dRecoveryEnvelopes',json(COALESCE(json_extract(result_json,'$.outputModel3dRecoveryEnvelopes'),'[]'))),'$.outputModel3dRecoveryEnvelopes[#]',json(?)) WHERE job_id=? AND owner_id=?")
             .bind(bounded(receipt), job.job_id, scope.actorUserId)]));

@@ -91,6 +91,9 @@ const nativeDiagnosticSubtypes = new Map([
   // disclose no retained provider identity, private checkpoint or source detail.
   ...[
     // Fixed 3D read/recovery labels contain no provider identity or payload.
+    "memory_boundary_schema_unavailable", "memory_boundary_database_changed", "memory_boundary_alias_invalid",
+    "native_structured_origin_schema_database_changed", "native_document_job_origin_schema_database_changed",
+    "private_content_expiry_ceiling_invalid", "private_content_identity_invalid", "project_private_content_access_revoked",
     "output_model3d_recovery_unavailable", "output_model3d_recovery_completion_invalid", "output_model3d_recovery_qualification_size_limit",
     "output_model3d_recovery_assertion_invalid", "output_model3d_recovery_checkpoint_unavailable", "output_model3d_recovery_lineage_unavailable",
     "output_model3d_recovery_aborted", "output_model3d_recovery_deadline", "output_model3d_recovery_duplicate_completion",
