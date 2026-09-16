@@ -60,6 +60,23 @@ test("Video reuses lineage while separating cycle identities and retaining origi
   assert.equal(body.clientMutationId, scenePreparationCommandKey(cycle, "confirm"));
 });
 
+test("Audio reuses lineage while separating cycle identities and retaining original draft/save", async () => {
+  const scene = await binding(), audio = { ...scene, output: "audio" as const }, p = predecessor();
+  const original = await experienceOutputCommandKey(audio, "save");
+  const cycle = await scenePreparationSuccessor(audio, p), second = await scenePreparationSuccessor(audio, p);
+  assert.deepEqual(cycle, second); assert.equal(cycle.output, "audio");
+  assert.equal(cycle.draftId, audio.draftId);
+  assert.match(scenePreparationCommandKey(cycle, "confirm"), /^audio-cycle-v1:/);
+  assert.notEqual(cycle.id, (await scenePreparationSuccessor(scene, p)).id);
+  assert.equal(await scenePreparationCycleMatches(scene, p, cycle), false);
+  assert.equal(await scenePreparationCycleMatches(audio, p, { ...cycle, output: undefined }), false);
+  assert.equal(await experienceOutputCommandKey(audio, "save"), original);
+  await assert.rejects(experienceOutputCommandKey({ ...audio, preparationCycle: cycle }, "save"));
+  const body = await experienceOutputEnvelope({ ...audio, preparationCycle: cycle }, "confirm", 7);
+  assert.equal(body.documentId, audio.documentId);
+  assert.equal(body.clientMutationId, scenePreparationCommandKey(cycle, "confirm"));
+});
+
 test("lineage validation refuses changed predecessor, source, release, Document and arbitrary candidate data", async () => {
   const b = await binding(), p = predecessor(), cycle = await scenePreparationSuccessor(b, p);
   assert.equal(await scenePreparationCycleMatches(b, p, cycle), true);

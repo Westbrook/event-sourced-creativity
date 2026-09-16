@@ -79,6 +79,28 @@ test("Video proof rejects prior financial history and isolates only its cycle na
   } finally { db.close(); }
 });
 
+test("Audio proof rejects prior financial history and isolates only its cycle namespace", () => {
+  const db = database(), audioId = `audio-${"a".repeat(64)}`, audioKey = key.replace("scene-", "audio-");
+  try {
+    assert.throws(() => sceneRenewalNoExecutionAssertion(scope, [audioId]));
+    assert.throws(() => sceneRenewalNoExecutionAssertion(scope, [requestId], "audio"));
+    const proof = sceneRenewalNoExecutionAssertion(scope, [audioId], "audio");
+    assert.equal(passed(db, proof), true);
+    db.prepare("INSERT INTO cost_budget_reservations VALUES(?,?,?)").run("other-payer", audioId + ":attempt:1", "settled");
+    assert.equal(passed(db, proof), false);
+    db.exec("DELETE FROM cost_budget_reservations");
+    const empty = sceneRenewalIndexAssertion(scope, draftId, [], "audio");
+    db.prepare("INSERT INTO output_commands VALUES(?,?,?,?,?)").run(scope.key, scope.actorUserId, key, "confirm", "scene-event");
+    assert.equal(passed(db, empty), true);
+    db.prepare("INSERT INTO output_commands VALUES(?,?,?,?,?)").run(scope.key, scope.actorUserId, audioKey, "confirm", "audio-event");
+    assert.equal(passed(db, empty), false);
+    assert.equal(passed(db, sceneRenewalIndexAssertion(scope, draftId, [audioKey], "audio")), true);
+    assert.throws(() => sceneRenewalIndexAssertion(scope, draftId, [key], "audio"));
+    db.exec("DROP TABLE output_provider_calls");
+    assert.throws(() => passed(db, proof));
+  } finally { db.close(); }
+});
+
 test("all retained lineage reservation outcomes block renewal, including settled charges", () => {
   for (const status of ["active", "settled", "cancelled", "uncertain"]) {
     const db = database(), proof = sceneRenewalNoExecutionAssertion(scope, [predecessorRequestId, requestId]);

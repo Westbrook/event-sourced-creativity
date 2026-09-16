@@ -54,7 +54,7 @@ test('actual host read stops before private input or player import when ownershi
  const f=fixture(),Actual=actualMethods(['check'],{bindingJson,experienceResultGrantCurrent:()=>true,verifyExperienceAudioInput});
  for(const boundary of ['hash','input']){
   const host=new Actual(),reads=[],state={...f.state,status:'succeeded',original:{jobStatus:'completed',jobId:f.preview.requestId},grant:{usedMicrousd:38400,usedCalls:2}};
-  const binding={audioSource:f.source,ownerId:'actor'},candidate={output:'audio',jobId:f.preview.requestId,artifactId:'artifact',contentRef:'content',inputRef:'input',plannerResponseId:'provider-plan',audio:f.evidence,expiresAt:'2099-01-01T00:00:00.000Z'};
+  const binding={client:{identity:{output:'audio'}},audioSource:f.source,ownerId:'actor'},candidate={output:'audio',jobId:f.preview.requestId,artifactId:'artifact',contentRef:'content',inputRef:'input',plannerResponseId:'provider-plan',audio:f.evidence,expiresAt:'2099-01-01T00:00:00.000Z'};
   let current=true;const operation={wait:async promise=>{const result=await promise;if(boundary==='hash'&&result instanceof ArrayBuffer)current=false;return result;}};
   Object.assign(host,{_binding:binding,_busy:false,_readable:()=>true,_visible:()=>current,_beginOperation:()=>operation,_operationCurrent:()=>true,
    _clearResult(){this._result=undefined;},_resetDecision(){},requestUpdate(){},_refreshAndRead:async()=>{},_state:()=>state,_snapshotMatches:()=>true,_candidate:()=>candidate,
