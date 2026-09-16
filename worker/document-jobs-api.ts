@@ -17,6 +17,7 @@ import { OUTPUT_NATIVE_EXECUTION_POLICY, readOutputNativeExecutionPolicy, type O
 import { outputSchemaIsReady } from "./output-schema-state.ts";
 import { loadOutputJobBinding, createOutputEventExecution, synchronizeOutputJobOutcome, prepareOutputJobOutcomeStatements, reconcileKnownOutputProviderReceipts, type OutputExecutionProof, type OutputEventExecution } from "./output-execution-control.ts";
 import { prepareSceneJobSourceClaim } from './scene-job-source-witness.ts';
+import { expiredOriginalSceneJobFailure, type SceneTerminalWitness } from './output-expired-scene-job.ts';
 import { outputProofReadStatements } from "./output-disclosure-proof.ts";
 import { retainedOutputBodyAssertions, rememberOutputPrivateBody, type OutputScope, ensureOutputRequirementsSchema, outputAssertionStatements, outputScopeAuthority, OutputConflictError, type OutputSqlAssertion } from "./output-requirements-ledger.ts";
 import { resolveOutputExecutionAuthority, prepareOutputExecutionProof } from "./output-requirements-api.ts";
@@ -2133,6 +2134,19 @@ export async function runDocumentJob(env: WorkerEnv, user: PilotUser, jobId: str
   const outputBinding=await loadOutputJobBinding(env,user,row);
   if(outputBinding)row.output_slot_id=outputBinding.slot.slotId;
   if(outputBinding&&!['queued','running'].includes(outputBinding.slot.status))return row;
+  const expiredScene=outputBinding?expiredOriginalSceneJobFailure(row,new Date().toISOString()):null;
+  if(expiredScene){
+    // This exact expired claim, not a new source read, owns terminalization.
+    // Keep the original reservations and all pending/uncertain provider rows.
+    // Read public terminal metadata only: recovery must not disclose retained
+    // private content or require a new, possibly expired generation authority.
+    const receipts=await env.DB.prepare("SELECT event_id,sequence,type,payload FROM events WHERE stream_id=? AND correlation_id=? AND type IN('DocumentRenderCompleted','DocumentRenderFailed') ORDER BY sequence LIMIT 2").bind(row.stream_id,row.correlation_id).all<SceneTerminalWitness>();
+    const recovery=expiredOriginalSceneJobFailure(row,new Date().toISOString(),receipts.results);
+    if(!recovery)return readJob(env,user.userId,jobId);
+    const stopped=await env.DB.prepare(recovery.sql).bind(...recovery.bindings).run();
+    if(Number(stopped.meta.changes??0)===1){const terminal=await readJob(env,user.userId,jobId);if(terminal)await synchronizeOutputJobOutcome(env,terminal);}
+    return readJob(env,user.userId,jobId);
+  }
   let outputAdmissionAssertions:OutputSqlAssertion[]=[];let outputProof:OutputExecutionProof|undefined;let nativeExecutionPolicy:OutputNativeExecutionPolicy=OUTPUT_NATIVE_EXECUTION_POLICY;
   if(outputBinding){
     try{outputProof=prepareOutputExecutionProof(outputBinding.scope,await resolveOutputExecutionAuthority(env,outputBinding.scope,outputBinding.slot));const policy=readOutputNativeExecutionPolicy((outputProof.targetPreflight.settings as Record<string,unknown>).executionPolicy);if(!policy)throw new OutputConflictError("output_execution_policy_invalid",409);nativeExecutionPolicy=policy;const jobAuthority=documentJobProjectAuthority(user,row.document_id,jobId);outputAdmissionAssertions=[...outputProof.assertions,...(jobAuthority?[jobAuthority]:[])];}

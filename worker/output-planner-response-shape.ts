@@ -19,8 +19,10 @@ export function outputPlannerResponseShape(value:unknown,expectedModel:string){
       // Responses includes encrypted_content in stateless (store:false) output.
       // Accept only this documented optional field, never decrypt or expose it.
       // https://developers.openai.com/api/docs/guides/reasoning#preserve-reasoning-without-stored-responses
-      if(Object.keys(item).some(key=>!["id","type","status","summary","encrypted_content"].includes(key)))issues.add("reasoning_extra_fields");
+      if(Object.keys(item).some(key=>!["id","type","status","summary","encrypted_content","content"].includes(key)))issues.add("reasoning_extra_fields");
       if(Object.hasOwn(item,"encrypted_content")&&item.encrypted_content!==null&&typeof item.encrypted_content!=="string")issues.add("reasoning_encrypted_content_invalid");
+      // Optional reasoning content is metadata here, never the authored result.
+      if(Object.hasOwn(item,"content")&&item.content!==null&&(!Array.isArray(item.content)||item.content.some(value=>{const part=record(value);return !part||Object.keys(part).some(key=>!["type","text"].includes(key))||part.type!=="reasoning_text"||typeof part.text!=="string";})))issues.add("reasoning_content_invalid");
       if(typeof item.id!=="string")issues.add("reasoning_id_invalid");
       if(!Array.isArray(item.summary)||item.summary.some(value=>{const part=record(value);return !part||part.type!=="summary_text"||typeof part.text!=="string";}))issues.add("reasoning_summary_invalid");
     }else{

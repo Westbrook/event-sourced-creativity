@@ -14,7 +14,7 @@ const {outputDocumentExecutionBridge}=await import('../worker/output-document-ex
 
 // Actual source/SQLite and
 // actual bridge; no remote transport, production data, or admission replacement.
-async function fixture(t,{renewals=0,history=0}={}){
+export async function fixture(t,{renewals=0,history=0}={}){
  const f=outputTestDatabase();t.after(()=>f.sqlite.close());
  const realFetch=globalThis.fetch;let network=0;
  globalThis.fetch=()=>{network++;throw Error('No provider transport in admission test');};

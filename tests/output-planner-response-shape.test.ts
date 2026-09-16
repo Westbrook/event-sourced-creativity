@@ -9,12 +9,16 @@ for(const [name,mutate,issue] of [
  ['incomplete',b=>b.incomplete_details={reason:'max_output_tokens'},'incomplete_details_present'],
  ['extra reasoning',b=>b.output[0].unknown='PRIVATE ENCRYPTED CONTENT','reasoning_extra_fields'],
  ['malformed encrypted reasoning',b=>b.output[0].encrypted_content={secret:'SECRET'},'reasoning_encrypted_content_invalid'],
+ ['malformed reasoning content',b=>b.output[0].content={text:'SECRET'},'reasoning_content_invalid'],
+ ['wrong reasoning content type',b=>b.output[0].content=[{type:'output_text',text:'SECRET'}],'reasoning_content_invalid'],
+ ['extra reasoning content field',b=>b.output[0].content=[{type:'reasoning_text',text:'SECRET',unknown:'PRIVATE'}],'reasoning_content_invalid'],
  ['reasoning summary',b=>b.output[0].summary=[{type:'wrong',text:'SECRET'}],'reasoning_summary_invalid'],
  ['role',b=>b.output[1].role='user','message_role_invalid'],['message status',b=>b.output[1].status='in_progress','message_status_invalid'],
  ['refusal',b=>b.output[1].content=[{type:'refusal',refusal:'SECRET'}],'message_content_invalid'],
  ['multiple',b=>b.output.push(b.output[1]),'message_count_invalid'],['null',b=>b.output.push(null),'output_item_not_object'],
 ] as const)test('rejects '+name,()=>{const body:any=good();mutate(body);const result=outputPlannerResponseShape(body,model);assert.equal(result.valid,false);assert.ok(result.issues.includes(issue));assert.doesNotMatch(JSON.stringify(result),/PRIVATE|SECRET/);});
 const identity={jobId:'job',documentId:'document',streamId:'stream',kind:'audio',clientRequestId:'client',responseId:'response-1',model};
+for(const content of [null,[],[{type:'reasoning_text',text:'PRIVATE REASONING'}]])test('accepts documented optional reasoning content '+JSON.stringify(content),()=>{const body:any=good();body.output[0].content=content;assert.equal(outputPlannerResponseShape(body,model).valid,true);assert.doesNotMatch(JSON.stringify(outputPlannerResponseShape(body,model)),/PRIVATE/);});
 const retained=()=>({job_id:identity.jobId,document_id:identity.documentId,stream_id:identity.streamId,artifact_kind:identity.kind,response_id:identity.responseId,call:{clientRequestId:identity.clientRequestId,providerRequestId:identity.responseId,model},raw_envelope:JSON.stringify(good())});
 test('exact retained call returns only structural evidence',()=>assert.deepEqual(retainedPlannerResponseShape(JSON.stringify(retained()),identity),{valid:true,issues:[],reasoningEncryptedContent:false}));
 for(const encrypted of [null,'OPAQUE ENCRYPTED CONTENT'])test('accepts documented encrypted reasoning '+typeof encrypted,()=>{const body:any=good();body.output[0].encrypted_content=encrypted;assert.deepEqual(outputPlannerResponseShape(body,model),{valid:true,issues:[],reasoningEncryptedContent:true});assert.doesNotMatch(JSON.stringify(outputPlannerResponseShape(body,model)),/OPAQUE/);});
