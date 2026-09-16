@@ -81,6 +81,7 @@ import { productionWorkflowSourceIdentity, type ProductionWorkflowSource } from 
 import { createSceneConfiguration, isSceneMedium, type SceneConfiguration, type SceneMedium } from "../src/model/scene-configuration";
 import { falImageProviderReceipt } from "./fal-image-adapter";
 import { PAID_PROVIDER_FINANCIAL_FIELDS, definitiveProviderRejection, hasUnresolvedProviderSubmission, hasUnsettledProviderSubmission, invalidProviderSubmissionSql, mergeProviderSubmissions, providerSubmissions, unresolvedProviderSubmissionSql, unsettledProviderSubmissionSql } from "../src/model/provider-submission";
+import { persistOutputAudioValidation } from "./output-audio-validation-progress.ts";
 import { generationExecutionSummary } from "../src/model/generation-execution-evidence.ts";
 import { originalSourceAudioRecoveryRequested, recoverOriginalSourceAudio } from "./document-audio-recovery";
 import { privateContentScopeGuard } from "./pilot-policy";
@@ -1813,6 +1814,7 @@ async function updateJobProgress(env: WorkerEnv, row: DocumentJobRow, stage: str
     const unknown=hasUnresolvedProviderSubmission(result);
     result.generationReceipt={...receipt,...(active?{provider:active.provider,model:active.model}:{}),provider_request_status:unknown?"submission_unknown":submitted?"submitted":receipt.provider_request_status,source_transmission_status:submitted||receipt.source_transmission_status==="transmitted"?"transmitted":unknown?"unknown":receipt.source_transmission_status,settled_cost_microusd:hasUnsettledProviderSubmission(result)&&!Number(receipt.settled_cost_microusd)?null:receipt.settled_cost_microusd,reservation_status:"executing"};
   }
+  if(row.output_slot_id&&parseRequest(row).artifactKind==="audio"&&patch.providerSubmissions)await persistOutputAudioValidation(env,row,patch);
   if(!persist){row.result_json=JSON.stringify(result);row.updated_at=updatedAt;return;}
   const persistedResult=row.output_slot_id?"json_patch(?,json_object('providerSubmissions',json(COALESCE(json_extract(result_json,'$.providerSubmissions'),'{}')),'outputFalCheckpoint',json(json_extract(result_json,'$.outputFalCheckpoint'))))":PRESERVE_ADAPTIVE_RECEIPT_SQL;
   const updated=await env.DB.prepare(`UPDATE document_jobs SET result_json=${persistedResult},updated_at=? WHERE job_id=? AND owner_id=? AND status='running' AND correlation_id=?`).bind(JSON.stringify(result), updatedAt, row.job_id, row.owner_id, row.correlation_id).run();

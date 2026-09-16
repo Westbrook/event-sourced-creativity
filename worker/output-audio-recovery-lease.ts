@@ -33,6 +33,7 @@ export async function claimOutputAudioRecoveryLease(env:WorkerEnv,scope:OutputSc
  const deadlineMs=Math.min(enteredAt+120000,Date.parse(job.expires_at),...options.assertions.flatMap(a=>a.deadlineMs===undefined?[]:[a.deadlineMs]));
  if(!Number.isFinite(deadlineMs)||deadlineMs<=Date.now())refuse();
  const request=parse(job.request_json),cp=parse(job.result_json),contract=readOutputAudioPayload(request),execution=object(request.outputExecution),wire=object(cp.outputAudioRequest),audio=object(cp.audioInputReceipt),queue=object(audio.queue);
+ const originalReceiptMap=JSON.stringify(cp.providerSubmissions);
  if(!contract||scope.kind!=="personal"||scope.actorUserId!==scope.ownerUserId||scope.contextId||scope.organizationId||scope.projectAccessId||!options.assertions.length
   ||job.kind!=="render_document"||job.source_surface!=="outputs"||job.status!=="failed"||job.owner_id!==scope.actorUserId||job.stream_id!==`creative:${scope.ownerUserId}`||job.document_id!==scope.documentId
   ||!Number.isSafeInteger(job.attempt_count)||job.attempt_count<1||job.attempt_count>2
@@ -76,7 +77,8 @@ export async function claimOutputAudioRecoveryLease(env:WorkerEnv,scope:OutputSc
   bindings:[job.job_id,scope.actorUserId,job.stream_id,job.document_id,job.correlation_id,job.request_json,job.attempt_count,job.expires_at,scope.key,slot.slotId,slot.grantId,slot.planRevisionId,slot.targetId,slot.targetContractDigest,slot.sourceDigest,slot.routeDigest]
  },{sql:"?>strftime('%Y-%m-%dT%H:%M:%fZ','now')",bindings:[expiresAt],deadlineMs},
  {sql:"EXISTS(SELECT 1 FROM document_jobs WHERE job_id=? AND COALESCE(json_extract(result_json,'$.providerSubmissionLegacyUncertain'),0)<>1)",bindings:[job.job_id]}];
- const read=async<T>(statement:D1PreparedStatement)=>{const rows=await within(()=>env.DB.batch<T>([...assertions.flatMap(a=>outputAssertionStatements(env,a)),statement]),deadlineMs,options.signal);return rows.at(-1)!.results;};
+ const originalMapAssertion:OutputSqlAssertion={sql:"EXISTS(SELECT 1 FROM document_jobs WHERE job_id=? AND json_extract(result_json,'$.providerSubmissions')=json(?))",bindings:[job.job_id,originalReceiptMap]};
+ const read=async<T>(statement:D1PreparedStatement)=>{const rows=await within(()=>env.DB.batch<T>([...[...assertions,originalMapAssertion].flatMap(a=>outputAssertionStatements(env,a)),statement]),deadlineMs,options.signal);return rows.at(-1)!.results;};
  options.onStage?.("audio_source");
  const generation=object(cp.generationReceipt),sourceRef=generation.input_ref;
  if(typeof sourceRef!=="string"||!sourceRef||typeof generation.source_snapshot_sha256!=="string")refuse();
@@ -104,8 +106,6 @@ export async function claimOutputAudioRecoveryLease(env:WorkerEnv,scope:OutputSc
  if(media.status==="settled"&&(mediaReceipt.status!=="completed"||media.used_microusd!==mediaReceipt.costMicrousd)
   ||media.status==="uncertain"&&media.used_microusd!==null
   ||mediaReceipt.status==="completed"&&(!Number.isSafeInteger(mediaReceipt.costMicrousd)||Number(mediaReceipt.costMicrousd)<=0||Number(mediaReceipt.costMicrousd)>Number(media.reserved_microusd)))refuse();
- // Check completed planner evidence without changing the pending media receipt.
- verifyOutputAudioCalls(receipts.map(call=>call===mediaReceipt&&call.status!=="completed"?{...call,status:"completed",costMicrousd:Number(parameters.published_cost_microusd),totalTokens:0}:call),contract);
  const final=receipts.find(call=>call.unitId===(planners.length===2?"planning:0:repair":"planning:0:initial"));
  if(final?.providerRequestId!==cp.plannerResponseId)refuse();
  outputAudioPlannerCost(cp);
@@ -146,17 +146,40 @@ export async function claimOutputAudioRecoveryLease(env:WorkerEnv,scope:OutputSc
   }
   assertions.push({sql:"EXISTS(SELECT 1 FROM private_content WHERE content_id=? AND owner_id=? AND kind='provider-response' AND content=? AND expires_at=? AND redacted_at IS NULL AND expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now') AND NOT EXISTS(SELECT 1 FROM project_resource_scopes WHERE resource_kind='content' AND resource_id=private_content.content_id))",bindings:[receipt.responseRef!,scope.actorUserId,body.content,body.expires_at]});
   assertions.push({sql:"EXISTS(SELECT 1 FROM output_provider_calls WHERE scope_key=? AND slot_id=? AND call_key=? AND stage_key=? AND provider='openai' AND model='gpt-5.6-terra' AND client_request_id=? AND request_digest IS ? AND provider_response_id=? AND status='settled' AND used_microusd=?)",bindings:[scope.key,slot.slotId,String(planned.call_key),String(planned.stage_key),receipt.clientRequestId,String(planned.request_digest),receipt.providerRequestId!,receipt.costMicrousd!]});
-  assertions.push({sql:"EXISTS(SELECT 1 FROM document_jobs WHERE job_id=? AND json_extract(result_json,?)=json(?))",bindings:[job.job_id,'$.providerSubmissions.'+JSON.stringify(receipt.clientRequestId),JSON.stringify(receipt)]});
  }
+ // Older native progress retained the received "pending" validation label
+ // over the later successful observation. Only repair that label after exact
+ // original raw-response, usage, source, normalized-plan and final-validation
+ // witnesses have all passed. No monetary or request identity is reconstructed.
+ if(final.validationStatus==="pending"){
+  const validation=object(object(cp.plannerInput).validation),history=Array.isArray(validation.validation_history)?validation.validation_history.map(object):[];
+  const expectedIds=planners.map(planned=>receipts.find(call=>call.clientRequestId===planned.client_request_id)?.providerRequestId);
+  const last=history.at(-1),repaired=planners.length===2;
+  const finalIssues=repaired?validation.repair_issues:validation.initial_issues,reconciliation=object(validation.adapter_reconciliation);
+  if(final.completionStatus!=="completed"||canonicalJson(validation.provider_response_ids)!==canonicalJson(expectedIds)
+   ||new Set(expectedIds).size!==expectedIds.length||history.length!==planners.length
+   ||history.some((entry,index)=>entry.stage!==(index===0?"initial":"repair")||entry.provider_attempt!==index+1)
+   ||final.validationIssueCount!==undefined&&final.validationIssueCount!==0
+   ||validation.provider_call_count!==planners.length||validation.repair_attempted!==repaired
+   ||validation.repair_response_id!==(repaired?final.providerRequestId:null)
+   ||!last||last.stage!==(repaired?"repair":"initial")||last.provider_attempt!==planners.length||last.issue_count!==0
+   ||!Array.isArray(last.issues)||last.issues.length!==0
+   ||!Array.isArray(finalIssues)||finalIssues.length!==0
+   ||reconciliation.artifact_kind!=="audio"||reconciliation.adapter_id!=="openai-document"||reconciliation.final_issue_count!==0)refuse();
+  final.validationStatus="valid";final.validationIssueCount=0;
+ }
+ verifyOutputAudioCalls(receipts.map(call=>call===mediaReceipt&&call.status!=="completed"?{...call,status:"completed",costMicrousd:Number(parameters.published_cost_microusd),totalTokens:0}:call),contract);
  if((["inputTokens","outputTokens","totalTokens"] as const).some(key=>object(cp.plannerUsage)[key]!==totals[key]))refuse();
  assertions.push({sql:`(SELECT COUNT(*) FROM output_provider_calls WHERE scope_key=? AND slot_id=?)=? AND EXISTS(SELECT 1 FROM output_provider_calls WHERE scope_key=? AND slot_id=? AND call_key='audio:initial' AND stage_key='audio:initial' AND provider='fal' AND model=? AND client_request_id=? AND request_digest=? AND provider_response_id=? AND reserved_microusd=? AND status IN('uncertain','settled'))`,bindings:[scope.key,slot.slotId,calls.length,scope.key,slot.slotId,attempt.model,attempt.clientRequestId,attempt.requestDigest,cp.providerJobId,Number(media.reserved_microusd)]});
  const lease={version:"output-audio-recovery-v1",token,expiresAt,storageKey:`${ownerMediaNamespace(scope.ownerUserId)}/generated/${cp.artifactId}.mp3`,clientRequestId:attempt.clientRequestId,requestDigest:attempt.requestDigest,providerRequestId:cp.providerJobId};
  options.onStage?.("audio_lease");
- let receiptMap=JSON.stringify(cp.providerSubmissions),settledCost=mediaReceipt.status==="completed"?Number(mediaReceipt.costMicrousd):null,allowUncertain=media.status==="uncertain";
+ const validatedReceiptMap=JSON.stringify(cp.providerSubmissions);
+ let receiptMap=originalReceiptMap,settledCost=mediaReceipt.status==="completed"?Number(mediaReceipt.costMicrousd):null,allowUncertain=media.status==="uncertain";
  const finance=():OutputSqlAssertion[]=>[{sql:"EXISTS(SELECT 1 FROM document_jobs WHERE job_id=? AND json_extract(result_json,'$.providerSubmissions')=json(?))",bindings:[job.job_id,receiptMap]},
   {sql:"EXISTS(SELECT 1 FROM output_provider_calls WHERE scope_key=? AND slot_id=? AND call_key='audio:initial' AND ((?=1 AND status='uncertain' AND used_microusd IS NULL) OR (status='settled' AND used_microusd=?)))",bindings:[scope.key,slot.slotId,Number(allowUncertain),settledCost]}];
- await within(()=>env.DB.batch([...assertions,...finance()].flatMap(a=>outputAssertionStatements(env,a)).concat(env.DB.prepare(`UPDATE document_jobs SET result_json=json_set(result_json,'$.outputAudioRecovery',json(?)) WHERE job_id=? AND owner_id=? AND result_json IS ?
-  AND (json_type(result_json,'$.outputAudioRecovery') IS NULL OR json_extract(result_json,'$.outputAudioRecovery.expiresAt')<=strftime('%Y-%m-%dT%H:%M:%fZ','now'))`).bind(JSON.stringify(lease),job.job_id,scope.actorUserId,job.result_json),...outputAssertionStatements(env,{sql:"changes()=1"}))),deadlineMs,options.signal);
+ await within(()=>env.DB.batch([...assertions,...finance()].flatMap(a=>outputAssertionStatements(env,a)).concat(env.DB.prepare(`UPDATE document_jobs SET result_json=json_set(result_json,'$.outputAudioRecovery',json(?),'$.providerSubmissions',json(?)) WHERE job_id=? AND owner_id=? AND result_json IS ?
+  AND (json_type(result_json,'$.outputAudioRecovery') IS NULL OR json_extract(result_json,'$.outputAudioRecovery.expiresAt')<=strftime('%Y-%m-%dT%H:%M:%fZ','now'))`).bind(JSON.stringify(lease),validatedReceiptMap,job.job_id,scope.actorUserId,job.result_json),...outputAssertionStatements(env,{sql:"changes()=1"}))),deadlineMs,options.signal);
+ receiptMap=validatedReceiptMap;
  const live=()=>structuredClone([...assertions,...finance(),{sql:"EXISTS(SELECT 1 FROM document_jobs WHERE job_id=? AND owner_id=? AND status='failed' AND json_extract(result_json,'$.outputAudioRecovery.token')=? AND json_extract(result_json,'$.outputAudioRecovery.expiresAt')=? AND ?>strftime('%Y-%m-%dT%H:%M:%fZ','now'))",bindings:[job.job_id,scope.actorUserId,token,expiresAt,expiresAt],deadlineMs}]);
  const prepared:CreativeAudioPreparedReceipt={provider:"fal",model:attempt.model,submittedPrompt:String(audio.submitted_prompt),parameters,imageReference:null,sourceAudioTreatment:sourceIds.length?"authored-description-only":"none",audioWaveformSubmitted:false};
  return Object.freeze({token,expiresAt,deadlineMs,lease:freeze(lease),contract,attempt,prepared:freeze(prepared),urls:freeze(urls),checkpoint:freeze(cp),receipts:freeze(receipts),providerRequestId:cp.providerJobId,assertions:live,

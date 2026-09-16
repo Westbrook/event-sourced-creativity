@@ -91,6 +91,7 @@ const nativeDiagnosticSubtypes = new Map([
   // disclose no retained provider identity, private checkpoint or source detail.
   ...[
     "output_audio_recovery_unavailable", "output_audio_recovery_deadline", "output_audio_recovery_aborted",
+    "output_audio_completion_unavailable", "output_audio_cost_unavailable",
     "output_audio_recovery_duplicate_completion", "output_audio_recovery_input_invalid", "output_audio_recovery_media_changed",
     "output_audio_recovery_result_invalid", "output_audio_recovery_settlement_unavailable", "output_audio_recovery_usage_conflict",
     "output_native_storage_recovery_conflict",

@@ -22,6 +22,14 @@ function mockProvider(t,f,{lyrics='',before}={}){
 }
 const counts=f=>['document_jobs','output_execution_grants','output_operation_slots','output_provider_calls','budget_reservations','cost_budget_reservations'].map(name=>f.sqlite.prepare(`SELECT COUNT(*) n FROM ${name}`).get().n);
 const run=(f,signal)=>executeOutputAudioRecovery({...f.env,FAL_KEY:'offline-audio-test'},f.user,f.job(),f.binding,{assertions:f.assertions,signal});
+test('historical pending validation recovers and replays without a second provider read',async t=>{
+ const f=await audioRecoveryFixture();t.after(()=>f.close());
+ f.cp.providerSubmissions[f.planner.clientRequestId].validationStatus='pending';
+ f.cp.plannerInput.validation={provider_response_ids:[f.planner.providerRequestId],provider_call_count:1,repair_attempted:false,repair_response_id:null,initial_issues:[],repair_issues:[],validation_history:[{stage:'initial',provider_attempt:1,issue_count:0,issues:[]}],adapter_reconciliation:{artifact_kind:'audio',adapter_id:'openai-document',final_issue_count:0}};
+ f.sqlite.prepare('UPDATE document_jobs SET result_json=?').run(JSON.stringify(f.cp));
+ const requests=mockProvider(t,f);assert.equal((await run(f)).status,'completed');assert.equal(requests.length,3);
+ const before=f.job().result_json;assert.equal((await run(f)).status,'completed');assert.equal(requests.length,3);assert.equal(f.job().result_json,before);
+});
 
 test('Audio advisory offer uses retained source, original call and no successor',async t=>{
  const {outputAudioRecoveryAvailable}=await import('../worker/output-audio-recovery-availability.ts');

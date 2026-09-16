@@ -24,6 +24,29 @@ for(const [name,sql] of [
 test('abort refuses before claiming original custody',async t=>{const f=await audioRecoveryFixture();t.after(()=>f.close());const controller=new AbortController();controller.abort();await assert.rejects(f.claim(controller.signal));assert.equal(JSON.parse(f.job().result_json).outputAudioRecovery,undefined);});
 
 const save=(f,cp)=>f.sqlite.prepare('UPDATE document_jobs SET result_json=?').run(JSON.stringify(cp));
+function pendingValidation(f){
+ f.cp.providerSubmissions[f.planner.clientRequestId].validationStatus='pending';
+ f.cp.plannerInput.validation={provider_response_ids:[f.planner.providerRequestId],provider_call_count:1,repair_attempted:false,repair_response_id:null,initial_issues:[],repair_issues:[],validation_history:[{stage:'initial',provider_attempt:1,issue_count:0,issues:[]}],adapter_reconciliation:{artifact_kind:'audio',adapter_id:'openai-document',final_issue_count:0}};
+ save(f,f.cp);
+}
+test('Audio repairs only witnessed pending validation in the atomic original lease',async t=>{
+ const f=await audioRecoveryFixture();t.after(()=>f.close());pendingValidation(f);
+ const before=structuredClone(f.cp.providerSubmissions),lease=await f.claim();await lease.assertCurrent();
+ const after=JSON.parse(f.job().result_json).providerSubmissions;
+ assert.deepEqual(after,{...before,[f.planner.clientRequestId]:{...before[f.planner.clientRequestId],validationStatus:'valid',validationIssueCount:0}});
+ assert.equal(f.job().attempt_count,2);await lease.release();
+});
+for(const [name,mutate] of [
+ ['missing witness',f=>{delete f.cp.plannerInput.validation;}],
+ ['different response',f=>{f.cp.plannerInput.validation.provider_response_ids=['wrong'];}],
+ ['contradictory count',f=>{f.cp.providerSubmissions[f.planner.clientRequestId].validationIssueCount=1;}],
+ ['invalid verdict',f=>{f.cp.providerSubmissions[f.planner.clientRequestId].validationStatus='invalid';}],
+ ['missing verdict',f=>{delete f.cp.providerSubmissions[f.planner.clientRequestId].validationStatus;}],
+ ['nonzero issues',f=>{f.cp.plannerInput.validation.validation_history[0].issues=[{code:'bad'}];}],
+ ['different adapter',f=>{f.cp.plannerInput.validation.adapter_reconciliation.adapter_id='other';}],
+ ['duplicate history',f=>{f.cp.plannerInput.validation.validation_history.push(f.cp.plannerInput.validation.validation_history[0]);}],
+ ['changed plan',f=>{f.cp.artifactPlan.title='changed';}],
+])test('Audio pending repair refuses '+name,async t=>{const f=await audioRecoveryFixture();t.after(()=>f.close());pendingValidation(f);mutate(f);save(f,f.cp);const before=f.job().result_json;await assert.rejects(f.claim());assert.equal(f.job().result_json,before);});
 for(const [name,mutate] of [
  ['malformed extra receipt',cp=>{cp.providerSubmissions.extra={};}],
  ['miskeyed media receipt',cp=>{cp.providerSubmissions.wrong=cp.providerSubmissions['forma-audio-original'];delete cp.providerSubmissions['forma-audio-original'];}],

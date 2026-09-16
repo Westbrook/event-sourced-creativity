@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 import { stripTypeScriptTypes } from "node:module";
 import { withExperienceOutputDispatch } from "../worker/experience-output-dispatch.ts";
 import { ProviderRequestError } from "../worker/provider-errors.ts";
+import { outputDatabaseMessageKind } from "../worker/output-database-diagnostic.ts";
 
 // Dispatcher inputs only. No admitted/completed DB chain or provider fixture.
 function input() {
@@ -126,8 +127,8 @@ test("unknown failures gain only fixed bounded diagnostic kinds without changing
   const helpers=source.slice(source.indexOf("const record ="),source.indexOf("async function refused("));
   const caught=source.match(/\} catch \(cause\) \{([\s\S]*)\n {2}\}\n\}\s*$/u);assert.ok(caught);
   const logged=[];
-  const invoke=new Function("cause","console",helpers+"\nconst diagnosticStage='prepare_preflight_execute';\n"+caught[1]);
-  const readSubtype=new Function("cause",helpers+"\nreturn diagnosticSubtype(cause);");
+  const invoke=new Function("outputDatabaseMessageKind","cause","console",helpers+"\nconst diagnosticStage='prepare_preflight_execute';\n"+caught[1]).bind(null,outputDatabaseMessageKind);
+  const readSubtype=new Function("outputDatabaseMessageKind","cause",helpers+"\nreturn diagnosticSubtype(cause);").bind(null,outputDatabaseMessageKind);
   const cases=[
     [new Error("D1_ERROR: FOREIGN KEY constraint failed: private_table"),"d1_constraint"],
     [new Error("Wrong number of parameter bindings: private_binding"),"d1_binding_count"],
@@ -151,6 +152,11 @@ test("unknown failures gain only fixed bounded diagnostic kinds without changing
     ...["bridge_target_mismatch","bridge_preflight_incomplete","bridge_provider_call_routes_required","bridge_provider_call_routes_invalid"]
       .map(code=>[Object.assign(new Error("private source"),{code,status:500}),code]),
     ...[
+      "output_audio_recovery_unavailable", "output_audio_recovery_deadline", "output_audio_recovery_aborted",
+      "output_audio_completion_unavailable", "output_audio_cost_unavailable",
+      "output_audio_recovery_duplicate_completion", "output_audio_recovery_input_invalid", "output_audio_recovery_media_changed",
+      "output_audio_recovery_result_invalid", "output_audio_recovery_settlement_unavailable", "output_audio_recovery_usage_conflict",
+      "output_native_storage_recovery_conflict",
       "output_native_operation_required", "output_execution_contract_changed", "output_execution_grant_inactive",
       "output_fal_recovery_job_unavailable", "output_fal_recovery_scope_unsupported", "output_fal_recovery_route_unsupported",
       "output_fal_recovery_contract_unavailable", "output_fal_recovery_checkpoint_unavailable", "output_fal_recovery_completion_unavailable",
@@ -207,8 +213,8 @@ test("provider recovery diagnostics expose only fixed status or category labels,
   const source=stripTypeScriptTypes(readFileSync(new URL('../worker/experience-output-api.ts',import.meta.url),'utf8'));
   const helpers=source.slice(source.indexOf('const record ='),source.indexOf('async function refused('));
   const caught=source.match(/\} catch \(cause\) \{([\s\S]*)\n {2}\}\n\}\s*$/u);assert.ok(caught);
-  const invoke=new Function('cause','console',helpers+"\nconst diagnosticStage='recover_result_provider_status';\n"+caught[1]);
-  const subtype=new Function('cause',helpers+';return diagnosticSubtype(cause);');
+  const invoke=new Function('outputDatabaseMessageKind','cause','console',helpers+"\nconst diagnosticStage='recover_result_provider_status';\n"+caught[1]).bind(null,outputDatabaseMessageKind);
+  const subtype=new Function('outputDatabaseMessageKind','cause',helpers+';return diagnosticSubtype(cause);').bind(null,outputDatabaseMessageKind);
   const detail={code:'private_arbitrary_code',category:'unknown',scope:'request',action:'none',message:'private provider body',retryable:false,retryAfterMs:null,requestId:'private-request-id',httpStatus:null};
   for(const [change,kind] of [[{httpStatus:404},'provider_http_404'],[{httpStatus:422},'provider_http_422'],[{category:'network'},'provider_network'],[{category:'safety'},'provider_safety'],[{code:'fal_provider_returned_untrusted_image_url'},'fal_provider_returned_untrusted_image_url']]){
     const cause=new ProviderRequestError({...detail,...change},'private prepared prompt'),logs=[];
