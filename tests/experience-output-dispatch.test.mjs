@@ -130,6 +130,11 @@ test("unknown failures gain only fixed bounded diagnostic kinds without changing
   const invoke=new Function("outputDatabaseMessageKind","cause","console",helpers+"\nconst diagnosticStage='prepare_preflight_execute';\n"+caught[1]).bind(null,outputDatabaseMessageKind);
   const readSubtype=new Function("outputDatabaseMessageKind","cause",helpers+"\nreturn diagnosticSubtype(cause);").bind(null,outputDatabaseMessageKind);
   const cases=[
+    [new Error("output_video_recovery_unavailable"),"output_video_recovery_unavailable"],
+    [new Error("output_video_provider_receipt_mismatch"),"output_video_provider_receipt_mismatch"],
+    [new Error("output_video_result_unavailable"),"output_video_result_unavailable"],
+    [new Error("output_video_request_timeout"),"output_video_request_timeout"],
+    [new Error("wrapper",{cause:new Error("output_video_hook_timeout")}),"output_video_hook_timeout"],
     [new Error("D1_ERROR: FOREIGN KEY constraint failed: private_table"),"d1_constraint"],
     [new Error("Wrong number of parameter bindings: private_binding"),"d1_binding_count"],
     [new Error("D1_TYPE_ERROR: private value"),"d1_binding_type"],

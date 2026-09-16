@@ -90,6 +90,19 @@ const nativeDiagnosticSubtypes = new Map([
   // Fixed original-image recovery failures are log-only. Public responses still
   // disclose no retained provider identity, private checkpoint or source detail.
   ...[
+    // Video labels are log-only too: never disclose provider IDs or raw bodies.
+    "output_video_recovery_unavailable", "output_video_recovery_scope_unsupported", "output_video_recovery_route_unsupported",
+    "output_video_recovery_duplicate_completion", "output_video_recovery_settlement_unavailable", "output_video_recovery_media_changed",
+    "output_video_recovery_usage_conflict", "output_video_recovery_completion_changed", "output_video_recovery_identity_invalid",
+    "output_video_recovery_hooks_required", "output_video_recovery_interrupted", "output_video_recovery_timeout",
+    "output_video_checkpoint_invalid", "output_video_completion_unavailable", "output_video_response_custody_unavailable",
+    "output_video_provider_unavailable", "output_video_provider_receipt_mismatch", "output_video_status_unavailable",
+    "output_video_result_unavailable", "output_video_result_invalid", "output_video_result_ambiguous", "output_video_result_length_mismatch",
+    "output_video_request_timeout", "output_video_hook_timeout", "output_video_hook_retired", "output_video_hook_lease_unobserved",
+    "output_video_recovery_retired", "output_video_aborted", "output_video_transport_retired", "output_video_completion_invalid",
+    "output_video_retained_unavailable", "output_video_media_url_invalid", "output_video_envelope_invalid", "output_video_request_invalid",
+    "output_video_redirect_refused", "output_video_response_invalid", "output_video_response_limit",
+    "output_video_response_length_mismatch", "output_video_response_headers_limit",
     "output_audio_recovery_unavailable", "output_audio_recovery_deadline", "output_audio_recovery_aborted",
     "output_audio_completion_unavailable", "output_audio_cost_unavailable",
     "output_audio_recovery_duplicate_completion", "output_audio_recovery_input_invalid", "output_audio_recovery_media_changed",
