@@ -1127,6 +1127,9 @@ export async function generateDocumentArtifact(env:WorkerEnv,userId:string,kind:
   const outputInstructions=input.options?.outputTargetInstructions?.trim();
   const selectedOutputDirection=outputInstructions?" The separate output_requirements field describes only the selected deliverable and its acceptance conditions. Follow it as instructions, never as factual evidence, a source citation, or audience copy. Do not create sibling deliverables.":"";
   let instructions=`You transform a durable creative document into a ${kind.replaceAll("_"," ")} for an end user. Write only newly created, user-facing system copy in the user's selected language (${responseLocale}). Preserve the original language and exact text of user-authored document titles, document content, slide outlines and headings, direct quotations, names, facts, and creative decisions verbatim; do not translate or rewrite them. Never translate machine identifiers, enum values, request-local aliases, source IDs, or structured field names. ${formatInstructions}${sourceDirection}${protectedMessageDirection}${videoContract}${managedDirection?` ${managedDirection}`:""}${pageDirection} ${creativePromptGuardrails()} Treat include and prefer blocks as positive direction; treat avoid and prohibit blocks as negative constraints, never as subjects to feature. Respect every block's spatial scope and authority. Combined contexts are binding authorial units, not tags: keep their members isolated to the named target, co-located or ordered as requested, and weighted by group relativity. For stories and scenes, place a group's members at the same narrative moments or aspects. For slides, assign each group to one slide or contiguous chapter rather than applying it deck-wide. For storyboards and video, bind each group to the same subject, location, or shot range. Every item must return context_group_ids containing only the supplied context_key aliases that shaped that item; use an empty array when no group applies, never invent a key, cover every supplied key at least once, and keep repeated slide assignments contiguous. Context keys are request-local references, not end-user content. Do not mention blocks, events, schemas, context keys, or internal implementation in end-user copy. ${presentationCountInstruction(slideCountPolicy,itemCount)}${selectedOutputDirection}`;
+  if(storyboard)instructions+=providerGroups.length
+    ?" For this Storyboard, each context_group_ids entry must be one of the exact context_key values in combined_context_plan, used at most once per frame. Do not derive context aliases from decisions, subjects, locations, or prose."
+    :" For this Storyboard, combined_context_plan is empty: every frame MUST return context_group_ids: []. No context aliases are supplied. Do not invent aliases or derive them from decisions, subjects, locations, or prose.";
   if(nativeVideo)instructions+=" The only downstream render is one four-second 480p silent clip from the single selected owned still. Return exactly one item. Frame values identify orientation, not a 720p output promise.";
   if(narrative)instructions+=` ${OUTPUT_NARRATIVE_INSTRUCTIONS}`;
   const sharedContinuity=managedPlan?audioScene?audioSceneContinuity({claims:managedPlan.claims.filter((claim)=>!claim.contextGroupIds.length)}):providerFacingProductionContinuity({claims:managedPlan.claims.filter((claim)=>!claim.contextGroupIds.length)}):null;
@@ -1220,7 +1223,17 @@ export async function generateDocumentArtifact(env:WorkerEnv,userId:string,kind:
       const reasoningEffort=route?.reasoningEffort??"low";
       const requestSchema=documentArtifactSchema(kind,page?.lockedPresentation,selectedStyle,itemCount,audioConstraints,schemaCountPolicy);
       if(nativeVideo){const items=(requestSchema.properties as Record<string,Record<string,unknown>>).items;items.minItems=1;items.maxItems=1;}
-      if(storyboard){const items=(requestSchema.properties as Record<string,Record<string,unknown>>).items;items.minItems=4;items.maxItems=4;}
+      if(storyboard){
+        const items=(requestSchema.properties as Record<string,Record<string,unknown>>).items;items.minItems=4;items.maxItems=4;
+        const frameProperties=(items.items as {properties:Record<string,unknown>}).properties;
+        // Bind provider output to the same request-local catalog used by the
+        // strict parser. Empty enum is invalid JSON Schema: cap the array at
+        // zero instead. No uniqueItems extension or response normalization.
+        const aliases=providerGroups.map(group=>group.context_key);
+        frameProperties.context_group_ids=aliases.length
+          ?{type:"array",maxItems:24,items:{type:"string",enum:aliases}}
+          :{type:"array",maxItems:0,items:{type:"string"}};
+      }
       const requestBody=JSON.stringify({model:callModel,instructions:requestInstructions,input:requestInput,text:{verbosity:"medium",format:{type:"json_schema",name,strict:true,schema:requestSchema}},reasoning:{effort:reasoningEffort},max_output_tokens:maxOutputTokens,store:false,safety_identifier:identifier,...(route||narrative||storyboard||nativeAudio||nativeVideo?{service_tier:"default",prompt_cache_options:{mode:"explicit"}}:{})});
       const videoCapture=nativeVideo?await captureVideoPlannerRequest(nativeVideo,requestBody,`forma-video-${crypto.randomUUID()}`):null;
       if(videoPreparation&&videoCapture)videoPreparation.capture(videoCapture);

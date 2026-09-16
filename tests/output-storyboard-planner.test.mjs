@@ -59,6 +59,10 @@ test('offline preparation uses actual adapter and retains authored context with 
  await assert.rejects(prepareStoryboardPlannerRequest({},'owner',{...source,options:{...source.options,onProviderSubmission(){throw Error('callback');}}},contract()));
 });
 test('actual native adapter sends prepared bytes once and retains original envelope before exact four-frame return; fixture only',async()=>{
+ const prepared=await prepareStoryboardPlannerRequest({},'owner',input(),contract()),body=JSON.parse(prepared.requestBody);
+ assert.deepEqual(JSON.parse(body.input).combined_context_plan,[]);
+ assert.deepEqual(body.text.format.schema.properties.items.items.properties.context_group_ids,{type:'array',maxItems:0,items:{type:'string'}});
+ assert.match(body.instructions,/combined_context_plan is empty: every frame MUST return context_group_ids: \[\]/);
  const f=await runFixture(envelope()),result=await f.promise;
  assert.equal(fetches.length,1);assert.equal(fetches[0],f.prepared.requestBody);assert.equal(f.attempts[0].logicalCallKey,'planning:0:initial');
  assert.equal(f.attempts[0].storyboardPlanning.requestBody,fetches[0]);assert.equal(f.responses.length,1);assert.deepEqual(JSON.parse(f.responses[0].storyboardEnvelope),envelope());
@@ -83,6 +87,7 @@ test('actual grouped planner request accepts only its original aliases without s
  const prepared=await prepareStoryboardPlannerRequest({},'owner',source,contract());
  const groups=JSON.parse(JSON.parse(prepared.requestBody).input).combined_context_plan;
  assert.equal(groups.length,1);assert.equal(groups[0].context_key,'context_group_1');
+ assert.deepEqual(JSON.parse(prepared.requestBody).text.format.schema.properties.items.items.properties.context_group_ids,{type:'array',maxItems:24,items:{type:'string',enum:groups.map(group=>group.context_key)}});
  const candidate=JSON.parse(raw());for(const item of candidate.items)item.context_group_ids=['context_group_1'];
  let posted=0;globalThis.fetch=async(url,options)=>{assert.equal(options.body,prepared.requestBody);posted++;return new Response(JSON.stringify(envelope(JSON.stringify(candidate))));};
  const result=await generateDocumentArtifact({OPENAI_API_KEY:'unusable-test-presence-marker'},'owner','storyboard',{...source,options:{...source.options,
@@ -104,6 +109,33 @@ test('actual grouped planner request accepts only its original aliases without s
 test('malformed raw first response cannot be normalized, padded or repaired through a second request',async()=>{
  for(const mutate of [p=>p.items.pop(),p=>delete p.items[0].image_prompt,p=>p.items[0].image_prompt='',p=>p.items[0].extra='forbidden',p=>p.presentation={},p=>p.items.reverse().push(p.items[0])]){
   const p=JSON.parse(raw());mutate(p);const f=await runFixture(envelope(JSON.stringify(p)));await assert.rejects(f.promise);assert.equal(fetches.length,1);assert.equal(f.responses.length,1);
+ }
+});
+test('empty original catalog rejects invented aliases after one retained planner call without repair',async()=>{
+ const candidate=JSON.parse(raw());for(const frame of candidate.items)frame.context_group_ids=['context_group_1','context_group_2','context_group_3'];
+ const f=await runFixture(envelope(JSON.stringify(candidate)));
+ await assert.rejects(f.promise,/output_storyboard_plan_invalid/);
+ assert.equal(fetches.length,1);assert.equal(fetches[0],f.prepared.requestBody);assert.equal(f.responses.length,1);
+ assert.equal(f.responses[0].candidateRaw,JSON.stringify(candidate));assert.equal(f.rawEnvelopes.length,1);
+});
+test('actual multi-group schema exactly matches request aliases and preserves deterministic preparation',async()=>{
+ globalThis.fetch=()=>{throw Error('offline preparation reached transport');};
+ const source=input();source.snapshot.facts=[];source.snapshot.relationships=[];
+ for(let index=0;index<3;index++){
+  source.snapshot.facts.push({block_id:'subject-'+index,type:'subject',active:true,instruction:'Subject '+index},{block_id:'style-'+index,type:'style',active:true,instruction:'Style '+index});
+  source.snapshot.relationships.push({from_block_id:'subject-'+index,to_block_id:'style-'+index,kind:'context_contains'});
+ }
+ const prepared=await prepareStoryboardPlannerRequest({},'owner',source,contract()),again=await prepareStoryboardPlannerRequest({},'owner',source,contract());
+ const body=JSON.parse(prepared.requestBody),groups=JSON.parse(body.input).combined_context_plan,field=body.text.format.schema.properties.items.items.properties.context_group_ids;
+ assert.equal(groups.length,3);assert.deepEqual(field,{type:'array',maxItems:24,items:{type:'string',enum:groups.map(group=>group.context_key)}});
+ assert.equal(body.max_output_tokens,4000);assert.equal(prepared.maximumOutputTokens,4000);assert.equal(prepared.maximumInputTokens,new TextEncoder().encode(prepared.requestBody).length+4096);
+ assert.equal(prepared.requestBody,again.requestBody);assert.equal(prepared.requestDigest,again.requestDigest);
+ const {captureOutputStoryboardPlan}=await import('../worker/output-storyboard-plan.ts');
+ const candidate=JSON.parse(raw());for(const frame of candidate.items)frame.context_group_ids=field.items.enum;
+ const captured=await captureOutputStoryboardPlan(candidate,contract(),'response-original',prepared.requestBody);assert.deepEqual(captured.plan,candidate);
+ for(const aliases of [['context_group_4'],['context_group_1','context_group_1']]){
+  const changed=structuredClone(candidate);changed.items[0].context_group_ids=aliases;
+  await assert.rejects(captureOutputStoryboardPlan(changed,contract(),'response-original',prepared.requestBody),/output_storyboard_plan_invalid/);
  }
 });
 test('completed envelope identity, refusal, usage and exact candidate binding are mandatory',async()=>{
