@@ -65,7 +65,10 @@ export async function verifyExperienceStoryboardRead(evidence:ExperienceStoryboa
    ||input.project_id!==x.projectId||input.artifact_id!==x.artifactId||!same(input.output_storyboard,receipt)
    ||!row(input.request)||input.request.source_surface!=="outputs"||input.request.production_mode!=="manual"||input.request.item_count!==4
    ||!row(input.planner)||input.planner.provider!=="openai"||input.planner.response_id!==receipt.plannerResponseId)return false;
-  const [contentHash,inputHash,bindingHash]=await Promise.all([sha(raw),sha(rawInput),sha(JSON.stringify({contract,plannerResponseId:receipt.plannerResponseId,planSha256:receipt.planSha256}))]);
+  // Request-local aliases bind the exact planner request; empty/omitted aliases
+  // retain the original hash, matching the server's canonical plan capture.
+  const hasGroups=content.items.some(item=>row(item)&&Array.isArray(item.context_group_ids)&&item.context_group_ids.length>0);
+  const [contentHash,inputHash,bindingHash]=await Promise.all([sha(raw),sha(rawInput),sha(JSON.stringify({contract,plannerResponseId:receipt.plannerResponseId,planSha256:receipt.planSha256,...(hasGroups?{plannerRequestDigest:receipt.plannerRequestDigest}:{})}))]);
   if(contentHash!==e.contentSha256||contentHash!==receipt.planSha256||inputHash!==e.inputSha256||bindingHash!==receipt.storyboardBindingSha256)return false;
   return content.items.every((item,index)=>{
    const frame=result.content.frames[index],saved=receipt.frames[index];

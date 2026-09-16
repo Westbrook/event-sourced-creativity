@@ -1,4 +1,5 @@
 import { canonicalJson } from "../src/experiences/compiler.ts";
+import { balancedOutputRetainedConjunction } from "./output-retained-witness.ts";
 import { captureExperienceModel3dEvidence, verifyExperienceModel3dRead } from "../src/experiences/model3d-native-result.ts";
 import { readModel3dExecutionPayload } from "../src/model/output-model3d-offer.ts";
 import { verifyModel3dPreparedReceipt } from "../src/model/model3d-mini-app-execution.ts";
@@ -130,10 +131,10 @@ async function readRetainedModel3d(env: WorkerEnv, input: RetainedModel3dInput, 
   // Closed server-authored SQL/bindings, packed once for the caller's final
   // principal/source/event witness; never one D1 parameter per retained file.
   const json = bounded(JSON.stringify(assertions.map(a => a.bindings ?? [])));
-  const sql = assertions.map((a, index) => {
+  const sql = balancedOutputRetainedConjunction(assertions.map((a, index) => {
     const parts = a.sql.split("?"), bindings = a.bindings ?? [];
     if (parts.length !== bindings.length + 1) return fail();
     return "(" + parts.map((part, position) => part + (position < bindings.length ? `(SELECT json_extract(bindings,'$[${index}][${position}]') FROM model3d_witness)` : "")).join("") + ")";
-  }).join(" AND ");
+  }));
   return { assertions, evidence, prepared, expiresAt: new Date(deadlineMs).toISOString(), witness: { json, sql } };
 }

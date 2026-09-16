@@ -43,7 +43,7 @@ function database() {
     const keys = Object.keys(value); sqlite.prepare("INSERT INTO " + table + "(" + keys.join(",") + ") VALUES(" + keys.map(() => "?").join(",") + ")").run(...Object.values(value));
   } };
 }
-async function setup() {
+async function setup({ storageKey = "owner/model.glb" } = {}) {
   const f = await fixture("image"), p = f.preview, bytes = glb(), hash = sha(bytes), d = database(), now = new Date().toISOString();
   const scope = { kind: "personal", key: "personal:owner:project", actorUserId: "owner", ownerUserId: "owner", documentId: "document",
     projectId: "project", organizationId: null, projectAccessId: null, contextId: null };
@@ -77,7 +77,7 @@ async function setup() {
     providerRequestId: "provider-original", costMicrousd: p.maximumMicrousd, totalTokens: 0 };
   const receipt = await qualifyOutputModel3dCompletion({ offer: f.offer, prepared: f.receipt, calls: [call], providerRequestId: "provider-original",
     primary: { bytes, sha256: hash, mimeType: "model/gltf-binary", role: "mesh", format: "glb" } });
-  const storageKey = "owner/model.glb", files = [{ url: "/api/media/" + encodeURIComponent(storageKey), sha256: hash, fileSize: bytes.byteLength,
+  const files = [{ url: "/api/media/" + encodeURIComponent(storageKey), sha256: hash, fileSize: bytes.byteLength,
     mimeType: "model/gltf-binary", fileName: "model.glb", role: "mesh", format: "glb", previewSupported: true }];
   const completion = { schemaVersion: 1, jobId: p.requestId, actorUserId: "owner", documentId: "document", projectId: "project", artifactId: "artifact",
     execution: reference, contract: f.offer.contract, costPreview: p, receipt, files };
@@ -115,6 +115,63 @@ async function setup() {
     inputId: "input", rawContent, contentExpiresAt: p.expiresAt, completionRaw: JSON.stringify(payload) };
   return { d, payload, emitPorts, publish, p, completion, checkpoint, row, retainedInput, noOwner() { ownedCompletion = undefined; }, withdraw() { proof = false; } };
 }
+
+test("actual native Model3D retained GET qualifies final proof in workerd and rejects late withdrawal",async()=>{
+ const C=process.env.FORMA_SOURCE_ROOT;if(!C)throw Error('FORMA_SOURCE_ROOT required');
+ const {outputTestDatabase}=await import(C+'/tests/output-execution-test-helpers.mjs');
+ const {ensureSchema,appendAuditEvent,appendEvents,makeEvent}=await import(C+'/worker/runtime.ts');
+ const {handleNativeRetainedOutputRead}=await import(C+'/worker/retained-story-api.ts');
+ const {nativeRetainedOutputRequestPath}=await import(C+'/src/model/native-retained-output.ts');
+ const {readRetainedWitnessInWorkerd}=await import(C+'/tests/helpers/retained-witness-workerd.mjs');
+ const {exportSynthetic}=await import(C+'/tests/helpers/model3d-workerd-snapshot.mjs');
+ const {outputDatabaseFailureKind}=await import(C+'/worker/output-database-diagnostic.ts');
+ const {ownerMediaNamespace}=await import(C+'/src/model/media-ownership.ts');
+ const x=await setup({storageKey:ownerMediaNamespace('owner')+'/generated/model.glb'}),g=outputTestDatabase(),oldFetch=globalThis.fetch;globalThis.fetch=()=>{throw Error('network_forbidden');};
+ try{
+  await x.publish(x.payload);
+  await terminalSource()({DB:x.d.DB},x.row(),"completed",{artifactId:"artifact",artifactKind:"model3d",appendedEventIds:["completed"]},null);
+  await ensureSchema(g.env);
+  const now=new Date().toISOString();
+  g.sqlite.prepare("INSERT INTO users(user_id,email,display_name,role,consent_version,consented_at,created_at,updated_at) VALUES('owner','owner@example.test','Owner','creator','pilot-2026-08-10',?,?,?)").run(now,now,now);
+  await appendAuditEvent(g.env,'creative:owner','user','DocumentCreated',{document_id:'document',project_id:'project',title:'Kettle'});
+  const insert=(table,row)=>{const keys=Object.keys(row);g.sqlite.prepare('INSERT INTO '+table+'('+keys.join(',')+') VALUES('+keys.map(()=>'?').join(',')+')').run(...keys.map(key=>row[key]));};
+  // Preserve the original synthetic identities and real emitted private body.
+  // Shift only fixture event ordinals to place DocumentCreated before them.
+  for(const row of x.d.sqlite.prepare("SELECT * FROM events WHERE event_id<>'completed' ORDER BY sequence").all())insert('events',{...row,sequence:row.sequence+1});
+  const completed={...makeEvent('creative:owner',0,'worker:renderer','test','correlation','DocumentRenderCompleted',x.payload),eventId:'completed'};
+  await appendEvents(g.env,[completed]);
+  for(const table of ['output_plan_revisions','output_plan_targets','output_preflights','output_execution_grants','output_operation_slots','output_operation_routes','output_provider_calls','output_native_storage_writes','private_content','document_jobs']){
+   for(const row of x.d.sqlite.prepare('SELECT * FROM '+table).all())insert(table,row);
+  }
+  insert('private_content',{content_id:'content',owner_id:'owner',kind:'document-artifact',content:x.retainedInput.rawContent,created_at:now,expires_at:x.p.expiresAt,redacted_at:null});
+  let beforeFinal;
+  const env={...g.env,DB:{prepare(sql){
+   assert.match(sql,/^\s*(WITH|SELECT)\b/i);const statement=g.DB.prepare(sql);
+   const wrap=bindings=>({bind(...values){return wrap(values);},async first(){
+    if(sql.includes('expected_events AS')){
+     await beforeFinal?.();
+     const expected=await statement.bind(...bindings).first();let actual;
+     try{actual=await readRetainedWitnessInWorkerd(exportSynthetic(g.sqlite),{sql,bindings});}
+     catch(error){console.log('synthetic Model3D final D1',outputDatabaseFailureKind(error),{sqlBytes:Buffer.byteLength(sql),bindings:bindings.length});throw error;}
+     assert.deepEqual(actual,expected===null?null:{...expected},'real D1 preserves exact final witness result');return actual;
+    }
+    return statement.bind(...bindings).first();
+   },async all(){return statement.bind(...bindings).all();}});
+   return wrap([]);
+  },batch(){throw Error('retained read wrote');}},MEDIA:new Proxy({},{get(){throw Error('retained read must not generate or fetch provider media');}})};
+  const selection={documentId:'document',artifactId:'artifact',revision:0,contentSha256:sha(x.retainedInput.rawContent)};
+  const request=()=>new Request('https://forma.test'+nativeRetainedOutputRequestPath({output:'model3d',selection}),{headers:{'oai-authenticated-user-id':'owner','oai-authenticated-user-email':'owner@example.test'}});
+  const before=g.sqlite.prepare('SELECT total_changes() n').get().n;
+  const response=await handleNativeRetainedOutputRead(request(),env);assert.equal(response.status,200,await response.clone().text());
+  const dto=await response.json();assert.equal(dto.output,'model3d');assert.equal(dto.content.files.length,1);assert.equal(dto.content.files[0].url,x.completion.files[0].url);
+  assert.equal(g.sqlite.prepare('SELECT total_changes() n').get().n,before);
+  beforeFinal=()=>g.sqlite.prepare("UPDATE users SET consent_version=NULL WHERE user_id='owner'").run();
+  assert.equal((await handleNativeRetainedOutputRead(request(),env)).status,404);
+  g.sqlite.prepare("UPDATE users SET consent_version='pilot-2026-08-10' WHERE user_id='owner'").run();
+  beforeFinal=()=>g.sqlite.prepare("UPDATE private_content SET content=json_set(content,'$.fixture_changed',1) WHERE content_id='input'").run();
+  assert.equal((await handleNativeRetainedOutputRead(request(),env)).status,404);
+ }finally{globalThis.fetch=oldFetch;x.d.sqlite.close();g.sqlite.close();}
+});
 test("actual native-storage wrapper publishes only its exact original model3d receipt on SQLite", async () => {
   const x = await setup(); try {
     assert.equal(x.d.sqlite.prepare("SELECT write_acknowledged FROM output_native_storage_writes").get().write_acknowledged, 1);
