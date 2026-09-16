@@ -1,6 +1,6 @@
 import { outputPlannerResponseShape } from "./output-planner-response-shape.ts";
 import { captureVideoPlannerEnvelope, videoPlannerEnvelopeText, type VideoPlannerRawEnvelope } from "./output-video-planner-envelope.ts";
-import { requestOutputVideoResponse } from "./output-video-execution.ts";
+import { requestOutputVideoPlannerResponse } from "./output-video-execution.ts";
 import { captureVideoPlannerRequest, readVideoPlannerExecution, type VideoPlannerExecution, type VideoPlannerAttempt } from "./output-video-planner.ts";
 import { parseVideoOutputContract } from "../src/model/output-video-contract.ts";
 import { generateOutputVideo, type OutputVideoAttempt, type OutputVideoExecutionOptions } from "./output-video-execution.ts";
@@ -1255,7 +1255,7 @@ export async function generateDocumentArtifact(env:WorkerEnv,userId:string,kind:
         if(kind==="scene")await input.options?.onProviderSubmission?.({...submission,status:"rejected",costMicrousd:0});else localDispatchStop=true;
         throw error;
       }
-      const response=nativeVideo?await requestOutputVideoResponse("https://api.openai.com/v1/responses",{method:"POST",headers:{...openAIHeaders(env),"X-Client-Request-Id":clientRequestId},signal:input.options?.signal,body:requestBody},()=>{},524288,()=>input.options!.onBeforeProviderDispatch!(clientRequestId))
+      const response=nativeVideo?await requestOutputVideoPlannerResponse("https://api.openai.com/v1/responses",{method:"POST",headers:{...openAIHeaders(env),"X-Client-Request-Id":clientRequestId},signal:input.options?.signal,body:requestBody},()=>input.options!.onBeforeProviderDispatch!(clientRequestId))
         :await openAIRequest("https://api.openai.com/v1/responses",{method:"POST",headers:{...openAIHeaders(env),"X-Client-Request-Id":clientRequestId},signal:input.options?.signal,body:requestBody},undefined,storyboard||nativeAudio?"caller-bounded":"classify");
       if(!nativeAudio&&!nativeVideo&&!response.ok&&definitiveProviderRejection(response.status))await input.options?.onProviderSubmission?.({...submission,status:"rejected",costMicrousd:0});
       let storyboardEnvelope:string|null=null;

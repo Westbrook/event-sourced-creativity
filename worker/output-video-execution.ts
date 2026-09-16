@@ -52,11 +52,21 @@ function cancel(body: ReadableStream<Uint8Array> | null) { try { void body?.canc
  * A late fetch response is retired; cancellation promises never delay exit. */
 export async function requestOutputVideoResponse(url: string, init: RequestInit, before: () => void | Promise<void>, maximum = OUTPUT_VIDEO_TRANSPORT.maximumEnvelopeBytes as number,
   beforeDispatch?: () => void): Promise<Response> {
+  return requestBoundedResponse(url,init,before,maximum,beforeDispatch,OUTPUT_VIDEO_TRANSPORT.requestTimeoutMs);
+}
+/** The OpenAI planner is not a FAL status request. Its fixed sub-deadline
+ * remains inside the consented overall execution window; parent abort wins.
+ * This changes neither request bytes, call/cost caps nor retry behavior. */
+export async function requestOutputVideoPlannerResponse(url:string,init:RequestInit,beforeDispatch:()=>void):Promise<Response>{
+  requireValue(url==='https://api.openai.com/v1/responses'&&init.method==='POST','output_video_planner_transport_invalid');
+  return requestBoundedResponse(url,init,()=>{},524288,beforeDispatch,240000);
+}
+async function requestBoundedResponse(url:string,init:RequestInit,before:()=>void|Promise<void>,maximum:number,beforeDispatch:(()=>void)|undefined,timeoutMs:number):Promise<Response>{
   requireValue(Number.isSafeInteger(maximum) && maximum > 0 && maximum <= OUTPUT_VIDEO_TRANSPORT.maximumResultBytes);
   const controller = new AbortController(), signal = controller.signal;
   const abort = () => controller.abort(init.signal?.reason ?? new Error("output_video_aborted"));
   if (init.signal?.aborted) abort(); else init.signal?.addEventListener("abort", abort, { once: true });
-  const timer = setTimeout(() => controller.abort(new Error("output_video_request_timeout")), OUTPUT_VIDEO_TRANSPORT.requestTimeoutMs);
+  const timer = setTimeout(() => controller.abort(new Error("output_video_request_timeout")), timeoutMs);
   let rejectAbort: (() => void) | undefined;
   const stopped = new Promise<never>((_, reject) => { rejectAbort = () => reject(signal.reason); if (signal.aborted) rejectAbort(); else signal.addEventListener("abort", rejectAbort, { once: true }); });
   const race = <T>(work: Promise<T>) => Promise.race([work, stopped]);

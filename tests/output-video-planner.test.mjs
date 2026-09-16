@@ -35,3 +35,10 @@ test('source, policy, body, model and request-digest drift refuse before dispatc
  for(const change of [f=>{f.i.snapshot.facts[0].properties.text='Changed motion';},f=>{f.i.options.videoSeconds=5;},f=>{f.i.options.videoSize='1280x720';},f=>{f.i.options.videoAudioMode='original_ambient';},f=>{f.i.options.outputVideoPlanner={...execution,requestDigest:'0'.repeat(64)};},f=>{f.i.options.productionPlan=undefined;}]){const f=configured();change(f);await network(()=>assert.fail('network'),()=>assert.rejects(generateDocumentArtifact({OPENAI_API_KEY:'synthetic'},'owner','video',f.i)));}
  const wire=JSON.parse(original.requestBody);for(const changed of [{...wire,model:'other'},{...wire,store:true},{...wire,tools:[]},{...wire,max_output_tokens:3001},{...wire,text:{...wire.text,format:{...wire.text.format,name:'document_video_repair'}}}])await assert.rejects(captureVideoPlannerRequest(contract,JSON.stringify(changed),'forma-video-test'));
 });
+test('planner timeout keeps its single submission unresolved without retry or zero-charge assertion',async t=>{
+ t.mock.timers.enable({apis:['setTimeout']});const f=configured();let calls=0,started=false;
+ const pending=network(()=>{calls++;started=true;return new Promise(()=>{});},()=>generateDocumentArtifact({OPENAI_API_KEY:'synthetic'},'owner','video',f.i));
+ while(!started)await new Promise(resolve=>setImmediate(resolve));t.mock.timers.tick(240000);await assert.rejects(pending);
+ assert.equal(calls,1);assert.equal(f.attempts.length,1);assert.equal(f.receipts.length,0);
+ assert.ok(f.submissions.some(s=>s.status==='pending'));assert.ok(!f.submissions.some(s=>s.status==='completed'||s.status==='rejected'));
+});
