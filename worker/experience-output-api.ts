@@ -25,6 +25,7 @@ import { SHORT_STORY_NARRATIVE_CONTRACT } from "../src/model/output-narrative-co
 import { recoverOutputFalImage } from "./output-fal-recovery.ts";
 import { recoverOutputVideo } from "./output-video-recovery.ts";
 import { recoverOutputAudio } from "./output-audio-recovery.ts";
+import type { AudioRecoveryStage } from "./output-audio-recovery-lease.ts";
 import { outputAudioRecoveryAvailable } from "./output-audio-recovery-availability.ts";
 import { recoverOutputModel3d, type Model3dRecoveryStage } from "./output-model3d-recovery.ts";
 import { outputModel3dRecoveryAvailable } from "./output-model3d-recovery-availability.ts";
@@ -69,7 +70,7 @@ output_scene_original_unavailable output_scene_personal_source_required output_s
 scene_cost_changed scene_cost_authority_changed scene_cost_request_required scene_cost_request_invalid document_not_found context_source_rights_expired scene_cost_confirmation_required
 context_block_not_authorized context_source_not_authorized context_source_version_mismatch context_source_evidence_unavailable context_source_rights_required context_decisions_contradict
 output_source_proof_too_large output_source_changed_during_read`.split(/\s+/u));
-type DiagnosticStage = "initial_load" | "final_load" | "final_state" | "final_disclose" | "authorize" | "run" | "recover_result" | `recover_result_${FalRecoveryStage | Model3dRecoveryStage}` | `prepare_${"save" | "confirm" | "preflight"}_${"state" | "execute" | "reload"}`;
+type DiagnosticStage = "initial_load" | "final_load" | "final_state" | "final_disclose" | "authorize" | "run" | "recover_result" | `recover_result_${FalRecoveryStage | Model3dRecoveryStage | AudioRecoveryStage}` | `prepare_${"save" | "confirm" | "preflight"}_${"state" | "execute" | "reload"}`;
 function diagnosticKind(cause: unknown) {
   if (!(cause instanceof Error)) return "unknown";
   const message = cause.message.slice(0, 2048);
@@ -89,6 +90,10 @@ const nativeDiagnosticSubtypes = new Map([
   // Fixed original-image recovery failures are log-only. Public responses still
   // disclose no retained provider identity, private checkpoint or source detail.
   ...[
+    "output_audio_recovery_unavailable", "output_audio_recovery_deadline", "output_audio_recovery_aborted",
+    "output_audio_recovery_duplicate_completion", "output_audio_recovery_input_invalid", "output_audio_recovery_media_changed",
+    "output_audio_recovery_result_invalid", "output_audio_recovery_settlement_unavailable", "output_audio_recovery_usage_conflict",
+    "output_native_storage_recovery_conflict",
     "output_native_operation_required", "output_execution_contract_changed", "output_execution_grant_inactive",
     "output_fal_recovery_job_unavailable", "output_fal_recovery_scope_unsupported", "output_fal_recovery_route_unsupported",
     "output_fal_recovery_contract_unavailable", "output_fal_recovery_checkpoint_unavailable", "output_fal_recovery_completion_unavailable",
@@ -744,7 +749,7 @@ export async function handleExperienceOutput(request: Request, env: WorkerEnv, e
       if (!job) error("experience_output_original_job_unavailable",410);
       const recover=loaded.binding.output==="audio"?recoverOutputAudio:loaded.binding.output==="video"?recoverOutputVideo:loaded.binding.output==="model3d"?recoverOutputModel3d:recoverOutputFalImage;
       const outcome = await recover(env,loaded.trusted.principal,job,{assertions,signal:request.signal,...(loaded.binding.output==="model3d"?{request}:{}),
-        ...(["image","model3d"].includes(loaded.binding.output)?{onStage:(stage:FalRecoveryStage|Model3dRecoveryStage)=>{diagnosticStage=`recover_result_${stage}`;}}:{})});
+        ...(["image","model3d","audio"].includes(loaded.binding.output)?{onStage:(stage:FalRecoveryStage|Model3dRecoveryStage|AudioRecoveryStage)=>{diagnosticStage=`recover_result_${stage}`;}}:{})});
       recovered = outcome.status;
     }
     diagnosticStage = "final_load";

@@ -3,7 +3,7 @@ import { captureExperienceAudioEvidence, verifyExperienceAudioInput } from "../s
 import { providerSubmissions, invalidProviderSubmissions, type PaidProviderSubmission } from "../src/model/provider-submission.ts";
 import { ownerMediaNamespace } from "../src/model/media-ownership.ts";
 import { audioDurationMetadata, MAX_AUDIO_UPLOAD_BYTES } from "../src/model/audio.ts";
-import { claimOutputAudioRecoveryLease } from "./output-audio-recovery-lease.ts";
+import { claimOutputAudioRecoveryLease, type AudioRecoveryStage } from "./output-audio-recovery-lease.ts";
 import { recoverAcceptedAudio } from "./fal-audio-adapter.ts";
 import { outputAudioHash, verifyOutputAudioCalls } from "./output-audio-execution.ts";
 import { loadOutputJobBinding, reconcileKnownOutputProviderReceipts, prepareOutputJobOutcomeStatements } from "./output-execution-control.ts";
@@ -20,7 +20,7 @@ const parse=(value:string|null)=>object(JSON.parse(value??"{}"));
 const integer=(value:unknown):value is number=>Number.isSafeInteger(value)&&Number(value)>=0;
 function fail(code="output_audio_recovery_unavailable"):never{throw new OutputConflictError(code,409);}
 type Binding=NonNullable<Awaited<ReturnType<typeof loadOutputJobBinding>>>;
-type Options={assertions:OutputSqlAssertion[];signal?:AbortSignal};
+type Options={assertions:OutputSqlAssertion[];signal?:AbortSignal;onStage?:(stage:AudioRecoveryStage)=>void};
 type UsageRow={event_id:string;sequence:number;actor:string;correlation_id:string;private_json:string;owner_id:string;document_id:string;redacted_at:string|null};
 
 /** A stalled fetch/body cannot keep an original-recovery request alive. The
@@ -68,16 +68,18 @@ export async function recoverOutputAudio(env:WorkerEnv,user:PilotUser,job:Docume
  const deadlineMs=Math.min(Date.now()+120000,Date.parse(job.expires_at),...options.assertions.flatMap(a=>a.deadlineMs===undefined?[]:[a.deadlineMs]));
  const captured={user:structuredClone(user),job:structuredClone(job),assertions:structuredClone(options.assertions)};
  return withinAudioRecovery(async signal=>{
+  options.onStage?.("audio_binding");
   const binding=await loadOutputJobBinding(env,captured.user,captured.job);signal.throwIfAborted();if(!binding)fail();
+  options.onStage?.("audio_authority");
   const proof=await resolveOutputAudioRecoveryAuthority(env,binding.scope,binding.slot);signal.throwIfAborted();
-  return executeOutputAudioRecovery(env,captured.user,captured.job,binding,{signal,assertions:[...proof.assertions,...captured.assertions,{sql:"?>strftime('%Y-%m-%dT%H:%M:%fZ','now')",bindings:[new Date(deadlineMs).toISOString()],deadlineMs}]});
+  return executeOutputAudioRecovery(env,captured.user,captured.job,binding,{signal,onStage:options.onStage,assertions:[...proof.assertions,...captured.assertions,{sql:"?>strftime('%Y-%m-%dT%H:%M:%fZ','now')",bindings:[new Date(deadlineMs).toISOString()],deadlineMs}]});
  },deadlineMs,options.signal);
 }
 
 export async function executeOutputAudioRecovery(env:WorkerEnv,user:PilotUser,job:DocumentJobRow,binding:Binding,options:Options){
  const entered=Date.now(),deadlineMs=Math.min(entered+120000,Date.parse(job.expires_at),...options.assertions.flatMap(a=>a.deadlineMs===undefined?[]:[a.deadlineMs]));
  const captured={job:structuredClone(job),binding:structuredClone(binding),user:structuredClone(user),assertions:structuredClone(options.assertions)};
- return withinAudioRecovery(signal=>execute(env,captured.user,captured.job,captured.binding,{assertions:captured.assertions,signal}),deadlineMs,options.signal);
+ return withinAudioRecovery(signal=>execute(env,captured.user,captured.job,captured.binding,{assertions:captured.assertions,signal,onStage:options.onStage}),deadlineMs,options.signal);
 }
 
 async function execute(env:WorkerEnv,user:PilotUser,job:DocumentJobRow,binding:Binding,options:Options&{signal:AbortSignal}){
@@ -142,6 +144,7 @@ async function execute(env:WorkerEnv,user:PilotUser,job:DocumentJobRow,binding:B
   await env.DB.batch(guards.flatMap(a=>outputAssertionStatements(env,a)));options.signal.throwIfAborted();return guards;
  };
  const completedRead=async()=>{
+  options.onStage?.("audio_replay");
   const live=await currentJob();if(live?.status!=="completed")return null;
   const row=await completions();if(!row)fail();
   await readCompletion(row,[...options.assertions,{sql:"EXISTS(SELECT 1 FROM document_jobs job JOIN output_operation_slots slot ON slot.job_id=job.job_id JOIN output_execution_grants grant_row ON grant_row.scope_key=slot.scope_key AND grant_row.grant_id=slot.grant_id WHERE job.job_id=? AND job.status='completed' AND slot.slot_id=? AND slot.scope_key=? AND slot.status='succeeded' AND grant_row.status='completed')",bindings:[job.job_id,slot.slotId,scope.key]}]);
@@ -160,10 +163,12 @@ async function execute(env:WorkerEnv,user:PilotUser,job:DocumentJobRow,binding:B
  try{
   const previous=await completions();
   if(previous){await reconcileKnownOutputProviderReceipts(env,user,{jobId:job.job_id,assertions:live()});await lease.assertSettled();const proof=await readCompletion(previous,live());await env.DB.batch([...proof.flatMap(a=>outputAssertionStatements(env,a)),...finish(previous.event_id,[previous.event_id])]);return await completedRead()??fail();}
+  options.onStage?.("audio_provider");
   const audio=await recoverAcceptedAudio(env,{providerJobId:lease.providerRequestId,providerModel:lease.attempt.model,providerStatusUrl:lease.urls.statusUrl,providerResponseUrl:lease.urls.responseUrl,providerCancelUrl:lease.urls.cancelUrl,
    retainedReceipt:lease.prepared,profile:EXPERIENCE_AUDIO_INTENT,signal:options.signal,onBeforeSourceTransmission:()=>lease.assertCurrent()});
   options.signal.throwIfAborted();await lease.assertCurrent();
   if(audio.mimeType!=="audio/mpeg"||audio.providerJobId!==lease.providerRequestId||audio.model!==lease.attempt.model)fail("output_audio_recovery_result_invalid");
+  options.onStage?.("audio_settlement");
   const calls=await lease.recordCompletedMedia(audio.costMicrousd),receipt=verifyOutputAudioCalls([...calls],lease.contract);
   const settlement=await reconcileKnownOutputProviderReceipts(env,user,{jobId:job.job_id,assertions:live()});if(settlement.status==="uncertain")fail("output_audio_recovery_settlement_unavailable");
   await lease.assertSettled();
@@ -190,6 +195,7 @@ async function execute(env:WorkerEnv,user:PilotUser,job:DocumentJobRow,binding:B
    AND (SELECT COUNT(*) FROM json_each(?) saved JOIN events event ON event.event_id=json_extract(saved.value,'$.event_id') AND event.sequence=json_extract(saved.value,'$.sequence') AND event.actor=json_extract(saved.value,'$.actor') AND event.correlation_id=json_extract(saved.value,'$.correlation_id') AND event.stream_id=? AND event.type='GenerationUsageRecorded'
     JOIN event_private_payloads body ON body.private_event_id=event.event_id AND body.owner_id=? AND body.document_id=? AND body.private_json=json_extract(saved.value,'$.private_json') AND body.redacted_at IS NULL)=?
    AND NOT EXISTS(SELECT 1 FROM events WHERE stream_id=? AND type='DocumentRenderCompleted' AND correlation_id IN(?,?,?))`,bindings:[job.stream_id,job.job_id,`${job.job_id}:attempt:1`,job.attempt_count===2?`${job.job_id}:attempt:2`:job.job_id,priorRows.length,priorSnapshot,job.stream_id,scope.actorUserId,scope.documentId,priorRows.length,job.stream_id,job.job_id,`${job.job_id}:attempt:1`,job.attempt_count===2?`${job.job_id}:attempt:2`:job.job_id]}];
+  options.onStage?.("audio_storage");
   const stored=await storeGeneratedMedia(privateEnv,scope.actorUserId,artifactId,audio.bytes,audio.model,"audio/mpeg",{artifactRole:"document-audio",artifactId,provider:"fal",providerJobId:lease.providerRequestId});
   const content=await storePrivateContent(privateEnv,scope.actorUserId,"document-artifact",raw),inputStored=await storePrivateContent(privateEnv,scope.actorUserId,"document-artifact-input",rawInput);
   const complete=makeEvent(job.stream_id,1,"worker:renderer","output-audio-recovery",job.correlation_id,"DocumentRenderCompleted",{artifact_id:artifactId,artifact_kind:"audio",document_id:scope.documentId,project_id:scope.projectId,requested_by_user_id:scope.actorUserId,title:String(plan.title??""),summary:String(plan.summary??""),
@@ -197,6 +203,7 @@ async function execute(env:WorkerEnv,user:PilotUser,job:DocumentJobRow,binding:B
    settings:{...completionSettings,item_count:1,production_mode:"manual",audio_provider_model:audio.model,audio_profile:EXPERIENCE_AUDIO_INTENT,lyrics:"",...audioDurationMetadata(stored,20),audio_content_sha256:await outputAudioHash(raw),audio_input_sha256:await outputAudioHash(rawInput)}});
   const usage=makeEvent(job.stream_id,2,"worker:policy","output-audio-recovery",job.correlation_id,"GenerationUsageRecorded",{operation:"document-render:audio",artifact_id:artifactId,artifact_kind:"audio",document_id:scope.documentId,reservation_id:slot.tokenReservationId,cost_reservation_id:slot.costReservationId,...remaining,planner_response_id:cp.plannerResponseId,provider_job_id:lease.providerRequestId,model_ids:["gpt-5.6-terra",audio.model],source_surface:"outputs",recovered:true},{causationId:complete.eventId});
   await lease.assertCurrent();options.signal.throwIfAborted();
+  options.onStage?.("audio_publish");
   await appendEvents(privateEnv,[complete,usage],{retries:1,prepareSidecars:()=>[...outputAssertionStatements(env,{sql:"(SELECT COUNT(*) FROM events WHERE event_id IN(?,?))=2",bindings:[complete.eventId,usage.eventId]}),...finish(complete.eventId,[complete.eventId,usage.eventId])]});
   return await completedRead()??fail();
  }finally{void lease.release().catch(()=>{});}
