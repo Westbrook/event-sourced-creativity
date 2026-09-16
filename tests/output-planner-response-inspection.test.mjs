@@ -27,7 +27,7 @@ test('actual personal inspection returns bounded shape only and never mutates re
  const f=await fixture(t),before=f.sqlite.prepare('SELECT * FROM document_jobs').get();
  t.mock.method(globalThis,'fetch',()=>{throw Error('No network allowed');});
  const r=await f.request();assert.equal(r.status,200);const body=await r.json();
- assert.deepEqual(body.job.result.plannerResponseDiagnostics,[{responseId:'response',valid:false,issues:['reasoning_extra_fields'],reasoningEncryptedContent:true}]);
+ assert.deepEqual(body.job.result.plannerResponseDiagnostics,[{responseId:'response',valid:true,issues:[],reasoningEncryptedContent:true}]);
  assert.doesNotMatch(JSON.stringify(body),/SECRET|raw_envelope|response-content/);
  assert.deepEqual(f.sqlite.prepare('SELECT * FROM document_jobs').get(),before);
 });
