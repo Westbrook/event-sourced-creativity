@@ -8,6 +8,7 @@ import { preflightOutputVideoTarget, requireOutputVideoOriginal } from "./output
 import { preflightOutputStoryboardTarget, outputStoryboardPreflightProof } from "./output-storyboard-preflight.ts";
 import { readStoryboardExecutionOffer } from "../src/model/output-storyboard-offer.ts";
 import { preflightOutputSceneTarget, outputScenePreflightProof } from "./output-scene-preflight.ts";
+import { outputProofReadStatements } from "./output-disclosure-proof.ts";
 import { readOutputScenePayload } from "./output-scene-preflight-contract.ts";
 import { requireSceneMiniAppCostApproval } from "./scene-mini-app-consent.ts";
 import { preflightOutputNarrativeTarget } from "./output-narrative-preflight.ts";
@@ -133,13 +134,29 @@ async function prepareAdmission(input:Parameters<OutputExecutionBridge["prepareA
   if(nativeAudio)await refreshAudio();
   const nativeScene=Object.hasOwn(target,"scene_contract")?await readOutputScenePayload(settings.payload):null;
   if(Object.hasOwn(target,"scene_contract")&&!nativeScene)throw new OutputConflictError("output_scene_contract_unsupported");
+  // Custody belongs to this exact server preflight and this admission invocation.
+  // Revalidate its original version/predicates, never rebuild or recapture a new
+  // source after a mismatch. The final admission and dispatch still check them.
+  const originalSceneProof=nativeScene?outputScenePreflightProof(current):null;
   const refreshScene=async()=>{
-   const refreshed=await preflightOutputSceneTarget({...input,target});
+   const reused=Boolean(originalSceneProof?.prepared.sourceVersion);
+   const refreshed=reused?current:await preflightOutputSceneTarget({...input,target});
    const proof=outputScenePreflightProof(refreshed);
    const payload=refreshed.available?await readOutputScenePayload((refreshed.settings as OutputNativeSettings).payload):null;
    if(!proof||!payload||!nativeScene||await outputDigest(refreshed)!==slot.routeDigest||proof.requestId!==slot.jobId
      ||slot.attemptOrdinal!==0||slot.previousSlotId)throw new OutputConflictError("output_scene_original_attempt_required");
    requireSceneMiniAppCostApproval(input.sceneCostConsent,nativeScene.outputScene.costPreview,payload.outputScene.costPreview);
+   if(reused){
+    const assertions=proof.sourceAssertions;
+    const expired=()=>!Number.isFinite(Date.parse(proof.expiresAt))||Date.now()>=Date.parse(proof.expiresAt)
+      ||assertions.some(value=>value.deadlineMs!==undefined&&(!Number.isFinite(value.deadlineMs)||Date.now()>=value.deadlineMs));
+    if(!assertions.length||expired())throw new OutputConflictError("output_scene_source_changed",409);
+    const checked=await input.env.DB.batch<Record<string,unknown>>(outputProofReadStatements(input.env,assertions));
+    if(!Array.isArray(checked)||checked.length!==assertions.length
+      ||Array.from({length:assertions.length},(_,index)=>checked[index]).some(result=>!result||result.success!==true
+        ||!Array.isArray(result.results)||result.results.length!==1||result.results[0]?.current!==1)
+      ||expired())throw new OutputConflictError("output_scene_source_changed",409);
+   }
    sceneAssertions.push(...proof.sourceAssertions);
    return proof.prepared;
   };
