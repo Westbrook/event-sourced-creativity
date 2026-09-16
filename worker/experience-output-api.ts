@@ -24,6 +24,8 @@ import { sceneRenewalIndexAssertion, sceneRenewalNoExecutionAssertion, sceneRene
 import { SHORT_STORY_NARRATIVE_CONTRACT } from "../src/model/output-narrative-contract.ts";
 import { recoverOutputFalImage } from "./output-fal-recovery.ts";
 import { recoverOutputVideo } from "./output-video-recovery.ts";
+import { recoverOutputAudio } from "./output-audio-recovery.ts";
+import { outputAudioRecoveryAvailable } from "./output-audio-recovery-availability.ts";
 import { recoverOutputModel3d, type Model3dRecoveryStage } from "./output-model3d-recovery.ts";
 import { outputModel3dRecoveryAvailable } from "./output-model3d-recovery-availability.ts";
 import { retainedPersonalFalRecoverySql, falRecoveryJobStateAllowed, type FalRecoveryStage } from "./output-fal-recovery-policy.ts";
@@ -536,6 +538,13 @@ async function state(loaded: Loaded): Promise<ExperiencePreparedState> {
         current.lease_expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now') OR json_extract(current.result_json,'$.outputFalRecovery.expiresAt')>strftime('%Y-%m-%dT%H:%M:%fZ','now')))`)
       .bind(trusted.scope.key,grantId,job.job_id).first());
   const jobMetadata: unknown = JSON.parse(job.result_json ?? "{}");
+  if(binding.output==="audio"){
+    result.permitted.resumeRun=false;
+    result.permitted.recoverResult=Boolean(run&&snapshot.permissions?.canRequest&&await outputAudioRecoveryAvailable(trusted.env,trusted.scope,slot,job));
+    const recovery=record(jobMetadata)?jobMetadata.outputAudioRecovery:null;
+    if(job.status==="completed"&&slot.status==="succeeded"&&grant.status==="completed"&&record(recovery)
+      &&recovery.version==="output-audio-recovery-v1"&&recovery.status==="completed"&&typeof recovery.completionEventId==="string")result.recovery="completed";
+  }
   if (binding.output === "model3d") {
     result.permitted.recoverResult = Boolean(run && snapshot.permissions?.canRequest
       && await outputModel3dRecoveryAvailable(trusted.env, trusted.scope, slot, job));
@@ -623,7 +632,6 @@ export async function handleExperienceOutput(request: Request, env: WorkerEnv, e
     }
     let loaded = await load(request, env, draftId, action === "prepare" ? "author" : action ? "request" : "read");
     if (loaded instanceof Response) return loaded;
-    if (loaded.binding.output === "audio" && action === "recover-result") error("experience_audio_recovery_unavailable", 409);
     if (action === "recover-result" && !["image", "video", "model3d", "audio", "storyboard"].includes(loaded.binding.output))
       error("experience_output_explicit_recovery_required", 403);
     if(action==="authorize"&&(loaded.binding.output==="audio")!==Object.hasOwn(body,"audioCostConsent"))error("experience_audio_confirmation_required",403);
@@ -722,7 +730,7 @@ export async function handleExperienceOutput(request: Request, env: WorkerEnv, e
       const recoveryLoaded = loaded;
       const assertions = recoveryLoaded.trusted.sourceAssertions.map(assertion => {
         const capturedHead=assertion.sql === "(SELECT COALESCE(MAX(sequence),0) FROM events WHERE stream_id=?)=?"
-          || ["video", "model3d"].includes(recoveryLoaded.binding.output)&&assertion.sql === "COALESCE((SELECT MAX(sequence) FROM events WHERE stream_id=?),0)=?";
+          || ["video", "model3d", "audio"].includes(recoveryLoaded.binding.output)&&assertion.sql === "COALESCE((SELECT MAX(sequence) FROM events WHERE stream_id=?),0)=?";
         if(!capturedHead)return assertion;
         if(assertion.bindings?.length!==2||assertion.bindings[0]!==recoveryLoaded.binding.streamId
           ||!Number.isSafeInteger(assertion.bindings[1])||assertion.bindings[1]!==recoveryLoaded.trusted.ownerHead)error("output_source_epoch_required",403);
@@ -734,7 +742,7 @@ export async function handleExperienceOutput(request: Request, env: WorkerEnv, e
       const job = await env.DB.prepare("SELECT document_jobs.*,(SELECT slot.slot_id FROM output_operation_slots slot WHERE slot.job_id=document_jobs.job_id) AS output_slot_id FROM document_jobs WHERE job_id=? AND owner_id=? AND stream_id=? AND document_id=?")
         .bind(current.original.jobId,loaded.trusted.scope.actorUserId,loaded.binding.streamId,loaded.binding.documentId).first<DocumentJobRow>();
       if (!job) error("experience_output_original_job_unavailable",410);
-      const recover=loaded.binding.output==="video"?recoverOutputVideo:loaded.binding.output==="model3d"?recoverOutputModel3d:recoverOutputFalImage;
+      const recover=loaded.binding.output==="audio"?recoverOutputAudio:loaded.binding.output==="video"?recoverOutputVideo:loaded.binding.output==="model3d"?recoverOutputModel3d:recoverOutputFalImage;
       const outcome = await recover(env,loaded.trusted.principal,job,{assertions,signal:request.signal,...(loaded.binding.output==="model3d"?{request}:{}),
         ...(["image","model3d"].includes(loaded.binding.output)?{onStage:(stage:FalRecoveryStage|Model3dRecoveryStage)=>{diagnosticStage=`recover_result_${stage}`;}}:{})});
       recovered = outcome.status;

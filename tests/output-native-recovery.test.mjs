@@ -36,6 +36,9 @@ const { FORMA_OUTPUT_DELIVERY_MESSAGES } = await import("../src/components/desig
 const BASE = "/api/output-requirements";
 
 async function recoveryFixture(t, { shared = false, medium = "slides", locale = "en", sharedEditor = false } = {}) {
+  const originalObserver = globalThis.IntersectionObserver;
+  globalThis.IntersectionObserver = class { observe() {} disconnect() {} };
+  t.after(() => { if (originalObserver === undefined) delete globalThis.IntersectionObserver; else globalThis.IntersectionObserver = originalObserver; });
   let providerCalls = 0;
   t.mock.method(globalThis, "fetch", async (url, init) => {
     providerCalls += 1;
@@ -104,6 +107,17 @@ async function recoveryFixture(t, { shared = false, medium = "slides", locale = 
   ui.store = host.store;
   ui.renderer.registry = { "forma-output-requirement-card": FormaOutputRequirementCard };
   ui.host = new FormaOutputRequirements();
+  // Node's Lit shim has no EventTarget; supply the native lifecycle boundary.
+  const hostEvents = new EventTarget();
+  ui.host.addEventListener = hostEvents.addEventListener.bind(hostEvents);
+  ui.host.removeEventListener = hostEvents.removeEventListener.bind(hostEvents);
+  ui.host.dispatchEvent = hostEvents.dispatchEvent.bind(hostEvents);
+  const queryAll = ui.host.querySelectorAll.bind(ui.host);
+  ui.host.querySelectorAll = selector => queryAll(selector).map(node => {
+    node.dataset ??= Object.fromEntries(Object.entries(node.attributes ?? {}).filter(([key]) => key.startsWith('data-'))
+      .map(([key,value]) => [key.slice(5).replace(/-([a-z])/g, (_match, letter) => letter.toUpperCase()), value]));
+    return node;
+  });
   ui.host.store = host.store;
   ui.host.documentId = worker.documentId;
   ui.host.documentName = "Community stewardship";

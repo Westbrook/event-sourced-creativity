@@ -2,6 +2,7 @@ import { parseModel3dMiniAppCostPreview, model3dMiniAppCostApprovalMatches } fro
 import { EXPERIENCE_BODY_TIMEOUT_MS, experienceResponseTimeout } from "./output-transport-lifetime.ts";
 import { readModel3dExecutionOffer, readModel3dExecutionPayload } from "../model/output-model3d-offer.ts";
 import { readStoryboardExecutionOffer } from "../model/output-storyboard-offer.ts";
+import { parseAudioOutputContract } from "../model/output-audio-contract.ts";
 import type { ExperienceModel3dCostApproval } from "./output-binding-contract.ts";
 import type { ExperienceAudioCostApproval, ExperienceNativeState, ExperienceNativeUnavailable } from "./output-binding-contract.ts";
 import { parseSceneMiniAppCostPreview, sceneMiniAppCostApprovalMatches, type SceneMiniAppCostApproval } from "../model/scene-mini-app-consent.ts";
@@ -49,6 +50,9 @@ const commandIdentity = (value: unknown) => record(value) && ["key", "eventId"].
 function originalRecoveryTargetMatches(output: unknown, target: unknown): boolean {
   if (!record(target)) return false;
   if (output === "image") return target.provider === "fal" && target.model === "ideogram/v4" && target.route === "document-image-fal-manual-v1";
+  if (output === "audio") return target.provider === "fal" && target.model === "fal-ai/stable-audio-3/medium/text-to-audio"
+    && target.route === "document-audio-timed-music-manual-v1" && record(target.settings) && record(target.settings.payload)
+    && Boolean(parseAudioOutputContract(target.settings.payload.outputAudio));
   if (output === "model3d") {
     const offer = readModel3dExecutionOffer(target);
     // The first recovery policy admits text-only originals. Reference recovery

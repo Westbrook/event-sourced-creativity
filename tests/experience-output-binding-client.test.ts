@@ -825,6 +825,25 @@ function recoverable():ExperienceNativeState {
   Object.assign(value.preflight!.targets[0],{provider:'fal',model:'ideogram/v4',route:'document-image-fal-manual-v1'});
   value.grant!.disclosure=structuredClone(value.preflight!);return value;
 }
+test('Audio original recovery decodes exact native terms and cannot fall back to paid Run',async()=>{
+  const {createAudioOutputContract}=await import('../src/model/output-audio-contract.ts');
+  const value=state('failed');value.output='audio';value.permitted.recoverResult=true;
+  const audioIdentity={...identity,output:'audio' as const},sourceDigest='d'.repeat(64),requirementsDigest='e'.repeat(64),jobId='audio-'+'f'.repeat(64);
+  Object.assign(value.current,{sourceDigest,requirementsDigest});Object.assign(value.plan!,{sourceDigest,requirementsDigest});
+  Object.assign(value.preflight!,{sourceDigest,requirementsDigest});Object.assign(value.original!,{sourceDigest,requirementsDigest,jobId});value.grant!.operations[0].jobId=jobId;
+  const contract=createAudioOutputContract({draftId:identity.draftId,draftHash:'sha256:'+identity.draftHash,releaseHash:'sha256:'+identity.releaseHash,requestHash:'sha256:'+'1'.repeat(64),sourceBindingHash:'sha256:'+'2'.repeat(64)});
+  Object.assign(value.preflight!.targets[0],{provider:'fal',model:'fal-ai/stable-audio-3/medium/text-to-audio',route:'document-audio-timed-music-manual-v1',settings:{payload:{outputAudio:contract}}});
+  value.grant!.disclosure=structuredClone(value.preflight!);
+  value.audioCostPreview={version:'audio-mini-app-cost-v1',requestId:jobId,actorUserId:identity.actorUserId,projectId:identity.projectId,documentId:identity.documentId,draftId:identity.draftId,sourceDigest,requirementsDigest,expiresAt:value.original!.expiresAt,maximumMicrousd:1037600,maximumCalls:3,maximumTokens:128000,planningModel:'gpt-5.6-terra',maximumPlanningCalls:2,maximumOutputTokens:3000,audioModel:'fal-ai/stable-audio-3/medium/text-to-audio',maximumAudioCalls:1,durationSeconds:20,requireInstrumental:true,sourceFilesTransferred:0};
+  assert.ok(decodeExperienceBinding(value,audioIdentity));
+  for(const route of ['other','document-image-fal-manual-v1']){const bad=structuredClone(value);bad.preflight!.targets[0].route=route;bad.grant!.disclosure=structuredClone(bad.preflight!);assert.equal(decodeExperienceBinding(bad,audioIdentity),null);}
+  const missing=structuredClone(value);missing.audioCostPreview=null;assert.equal(decodeExperienceBinding(missing,audioIdentity),null);
+  const path=basePath+'/recover-result',fake=transport([response(value),response({...value,recovery:'pending'},path)]);
+  const client=new ExperienceOutputBindingClient(audioIdentity,{origin,current:()=>true,request:fake.request});
+  await client.read();const offered=shown(client);await client.command('run',offered);await client.command('resumeRun',offered);assert.equal(fake.calls.length,1);
+  await client.command('recoverResult',offered);assert.deepEqual(fake.calls.map(c=>[c.path,c.init.method]),[[basePath,'GET'],[path,'POST']]);
+  assert.equal(JSON.parse(String(fake.calls[1].init.body)).jobId,jobId);
+});
 test('recovery transport uses only its explicit original-job endpoint; passive GET and paid Run stay separate',async()=>{
   const value=recoverable(),path=basePath+'/recover-result',fake=transport([response(value),response({...value,recovery:'pending'},path)]);
   const client=new ExperienceOutputBindingClient(identity,{origin,current:()=>true,request:fake.request});

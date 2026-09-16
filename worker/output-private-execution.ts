@@ -8,8 +8,9 @@ const privateWrite = (sql: string) => /\b(?:INSERT(?:\s+OR\s+\w+)?\s+INTO|UPDATE
   || /\bUPDATE\s+document_jobs\s+SET\b[\s\S]*(?:result_json|request_json|lease_expires_at)/iu.test(sql);
 
 /** Existing writers run unchanged, with the same transaction guarding their private writes. */
-export function guardOutputPrivateWrites(env: WorkerEnv, scope: OutputScope, slot: OutputOperationSlot, assertions: () => Promise<OutputSqlAssertion[]>,options:{retentionPolicy?:Record<string,unknown>|null;storyboardCompletionJson?:()=>string|undefined;videoCompletionJson?:()=>string|undefined;model3dCompletionJson?:()=>string|undefined;onStorageStage?:(stage:"storage_reserve"|"storage_put"|"storage_ack")=>void}={}): WorkerEnv {
+export function guardOutputPrivateWrites(env: WorkerEnv, scope: OutputScope, slot: OutputOperationSlot, assertions: () => Promise<OutputSqlAssertion[]>,options:{retentionPolicy?:Record<string,unknown>|null;storyboardCompletionJson?:()=>string|undefined;videoCompletionJson?:()=>string|undefined;model3dCompletionJson?:()=>string|undefined;audioRecoveryStorage?:{token:string;storageKey:string;signal:AbortSignal};onStorageStage?:(stage:"storage_reserve"|"storage_put"|"storage_ack")=>void}={}): WorkerEnv {
   const nativeKeys = new Map<string, string>();
+  const audioRecoveryStorage=options.audioRecoveryStorage?Object.freeze({...options.audioRecoveryStorage}):null;
   const onStorageStage=options.onStorageStage;
   // The private-content INSERT also checks this exact policy version in its
   // transaction. Reusing one request-local read never bypasses a policy change.
@@ -291,9 +292,40 @@ export function guardOutputPrivateWrites(env: WorkerEnv, scope: OutputScope, slo
         const now = new Date().toISOString();
         nativeKeys.set(storageKey,hash);
         onStorageStage?.("storage_reserve");
+        // Only an exact original Audio lease may adopt acknowledged,
+        // unpublished same bytes. Deleted receipts are never revived: an old
+        // cleanup worker may still hold their storage identity.
+        const reclaim=audioRecoveryStorage&&audioRecoveryStorage.storageKey===storageKey&&scope.kind==="personal"
+          &&scope.actorUserId===scope.ownerUserId;
+        const audioStorageProof=reclaim?outputAssertionStatements(env,{sql:`EXISTS(SELECT 1 FROM document_jobs WHERE job_id=? AND owner_id=? AND document_id=? AND status='failed'
+          AND kind='render_document' AND source_surface='outputs' AND json_extract(request_json,'$.artifactKind')='audio'
+          AND json_extract(result_json,'$.outputAudioRecovery.version')='output-audio-recovery-v1'
+          AND json_extract(result_json,'$.outputAudioRecovery.token')=? AND json_extract(result_json,'$.outputAudioRecovery.storageKey')=?
+          AND json_extract(result_json,'$.outputAudioRecovery.expiresAt')>strftime('%Y-%m-%dT%H:%M:%fZ','now'))`,bindings:[slot.jobId,scope.actorUserId,scope.documentId,audioRecoveryStorage.token,storageKey]}):[];
+        if(reclaim){
+          const prior=await env.DB.prepare("SELECT content_sha256,status,write_acknowledged,publication_event_id FROM output_native_storage_writes WHERE scope_key=? AND slot_id=? AND storage_key=?")
+            .bind(scope.key,slot.slotId,storageKey).first<{content_sha256:string;status:string;write_acknowledged:number;publication_event_id:string|null}>();
+          if(prior?.status==="written"){
+            if(prior.content_sha256!==hash||prior.write_acknowledged!==1||prior.publication_event_id!==null)throw new OutputConflictError("output_native_storage_recovery_conflict",409);
+            const retained=()=>[...audioStorageProof,...outputAssertionStatements(env,{sql:"EXISTS(SELECT 1 FROM output_native_storage_writes WHERE scope_key=? AND slot_id=? AND storage_key=? AND content_sha256=? AND status='written' AND write_acknowledged=1 AND publication_event_id IS NULL)",bindings:[scope.key,slot.slotId,storageKey,hash]})];
+            await guardedBatch(retained(),true);
+            const existing=await target.get(storageKey),metadata=existing?.customMetadata;
+            if(!existing||existing.size!==bytes.length||metadata?.ownerId!==scope.ownerUserId||metadata?.sha256!==hash||metadata?.artifactId!==options?.customMetadata?.artifactId
+              ||metadata?.outputNativeStorage!=="1"||metadata?.outputScopeKey!==scope.key||metadata?.outputSlotId!==slot.slotId||metadata?.outputSha256!==hash)
+              throw new OutputConflictError("output_native_storage_recovery_conflict",409);
+            const reader=existing.body.getReader();let offset=0,done=false;
+            try{for(;;){audioRecoveryStorage!.signal.throwIfAborted();const chunk=await reader.read();audioRecoveryStorage!.signal.throwIfAborted();if(chunk.done){done=true;break;}if(!(chunk.value instanceof Uint8Array)||!chunk.value.length||offset+chunk.value.length>bytes.length||chunk.value.some((byte:number,index:number)=>byte!==bytes[offset+index]))throw new OutputConflictError("output_native_storage_recovery_conflict",409);offset+=chunk.value.length;}}
+            finally{if(!done)void reader.cancel().catch(()=>{});reader.releaseLock();}
+            if(offset!==bytes.length)throw new OutputConflictError("output_native_storage_recovery_conflict",409);
+            await guardedBatch(retained(),true);
+            return existing;
+          }
+        }
         await guardedBatch([
+          ...audioStorageProof,
           env.DB.prepare("INSERT INTO output_native_storage_writes(scope_key,slot_id,storage_key,content_sha256,status,write_acknowledged,created_at,updated_at) VALUES(?,?,?,?,'writing',0,?,?)")
             .bind(scope.key, slot.slotId, storageKey, hash, now, now),
+          ...outputAssertionStatements(env,{sql:"changes()=1"}),
         ], true);
         let acknowledged = false;
         try {
@@ -346,7 +378,31 @@ export async function reconcileOutputNativeStorage(env: WorkerEnv, filter: { own
   // Organization-only cleanup cannot retain a personal Fal recovery.
   await env.DB.prepare(`WITH retained_fal_grants AS MATERIALIZED (
     SELECT scope_key,grant_id FROM output_execution_grants WHERE actor_user_id=? AND ${retainedPersonalFalRecoverySql}
-  ), retained_model3d_storage AS MATERIALIZED (${retainedModel3dRecoveryStorageSql})
+  ), retained_model3d_storage AS MATERIALIZED (${retainedModel3dRecoveryStorageSql}), retained_audio_storage AS MATERIALIZED (
+    SELECT slot.scope_key,slot.slot_id,json_extract(audio.result_json,'$.outputAudioRecovery.storageKey') AS storage_key
+      FROM output_operation_slots slot JOIN output_execution_grants grant_row ON grant_row.scope_key=slot.scope_key AND grant_row.grant_id=slot.grant_id
+      JOIN output_plan_revisions plan ON plan.scope_key=slot.scope_key AND plan.plan_revision_id=slot.plan_revision_id
+      JOIN document_jobs audio ON audio.job_id=slot.job_id JOIN output_provider_calls original
+          ON original.scope_key=slot.scope_key AND original.slot_id=slot.slot_id AND original.call_key='audio:initial'
+        WHERE audio.job_id=slot.job_id AND audio.owner_id=grant_row.actor_user_id AND audio.status='failed'
+          AND audio.kind='render_document' AND audio.source_surface='outputs' AND audio.document_id=plan.document_id
+          AND plan.scope_kind='personal' AND plan.organization_id IS NULL AND plan.project_access_id IS NULL AND grant_row.context_id IS NULL
+          AND audio.owner_id=plan.owner_user_id AND audio.stream_id='creative:'||plan.owner_user_id
+          AND audio.expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now') AND slot.attempt_ordinal=0 AND slot.previous_slot_id IS NULL
+          AND json_extract(audio.request_json,'$.artifactKind')='audio'
+          AND json_extract(audio.result_json,'$.outputAudioRecovery.version')='output-audio-recovery-v1'
+          AND length(json_extract(audio.result_json,'$.outputAudioRecovery.token'))=36
+          AND json_extract(audio.result_json,'$.outputAudioRecovery.expiresAt')>strftime('%Y-%m-%dT%H:%M:%fZ','now')
+          AND original.provider='fal' AND original.model='fal-ai/stable-audio-3/medium/text-to-audio' AND original.status IN('uncertain','settled')
+          AND original.client_request_id=json_extract(audio.result_json,'$.outputAudioRequest.clientRequestId')
+          AND original.client_request_id=json_extract(audio.result_json,'$.outputAudioRecovery.clientRequestId')
+          AND original.request_digest=json_extract(audio.result_json,'$.outputAudioRequest.requestDigest')
+          AND original.request_digest=json_extract(audio.result_json,'$.outputAudioRecovery.requestDigest')
+          AND original.provider_response_id=json_extract(audio.result_json,'$.providerJobId')
+          AND original.provider_response_id=json_extract(audio.result_json,'$.outputAudioRecovery.providerRequestId')
+          AND NOT EXISTS(SELECT 1 FROM output_operation_slots successor WHERE successor.scope_key=slot.scope_key AND successor.previous_slot_id=slot.slot_id)
+          AND NOT EXISTS(SELECT 1 FROM project_resource_scopes WHERE resource_kind IN('job','document') AND resource_id IN(audio.job_id,audio.document_id))
+  )
   UPDATE output_native_storage_writes SET status='cleanup_pending',updated_at=? WHERE status IN('writing','written') AND publication_event_id IS NULL
     AND EXISTS(SELECT 1 FROM output_operation_slots slot JOIN output_execution_grants grant_row ON grant_row.scope_key=slot.scope_key AND grant_row.grant_id=slot.grant_id
       JOIN output_plan_revisions plan ON plan.scope_key=slot.scope_key AND plan.plan_revision_id=slot.plan_revision_id
@@ -356,6 +412,8 @@ export async function reconcileOutputNativeStorage(env: WorkerEnv, filter: { own
         SELECT 1 FROM retained_model3d_storage grace WHERE grace.scope_key=output_native_storage_writes.scope_key
           AND grace.slot_id=output_native_storage_writes.slot_id AND grace.storage_key=output_native_storage_writes.storage_key
           AND grace.content_sha256=output_native_storage_writes.content_sha256) AND NOT EXISTS(
+        SELECT 1 FROM retained_audio_storage grace WHERE grace.scope_key=output_native_storage_writes.scope_key
+          AND grace.slot_id=output_native_storage_writes.slot_id AND grace.storage_key=output_native_storage_writes.storage_key) AND NOT EXISTS(
         SELECT 1 FROM document_jobs recovery WHERE recovery.job_id=slot.job_id AND recovery.owner_id=grant_row.actor_user_id
           AND recovery.status='failed' AND ((json_extract(recovery.result_json,'$.outputFalRecovery.version')='output-fal-recovery-v1'
           AND json_extract(recovery.result_json,'$.outputFalRecovery.clientRequestId')=json_extract(recovery.result_json,'$.outputFalCheckpoint.clientRequestId')
