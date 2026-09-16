@@ -507,17 +507,19 @@ test("ordinary delayed headers do not renew the twenty-second total deadline", a
   assert.deepEqual(client.state, unavailableBinding("original_unavailable")); assert.equal(fake.calls[0].init.signal!.aborted, true);
 });
 
-test("foreground policy only extends explicit Video and 3D admission, never passive or other admission waits", () => {
+test("foreground policy only extends explicit Scene, Video and 3D admission, never passive or other admission waits", () => {
   for (const action of ["read", "unknown"]) {
     assert.equal(experienceResponseTimeout({action,output:"video"}), 20000);
     assert.equal(experienceHostTimeout({action,output:"video"}), 30000);
   }
-  for (const output of ["image","slides","short_story","scene","storyboard","audio","unknown"])
+  for (const output of ["image","slides","short_story","storyboard","audio","unknown"])
     assert.equal(experienceResponseTimeout({action:"authorize",output}),20000);
   assert.equal(experienceResponseTimeout({action:"authorize",output:"video"}),120000);
   assert.equal(experienceHostTimeout({action:"authorize",output:"video"}),170000);
   assert.equal(experienceResponseTimeout({action:"authorize",output:"model3d"}),120000);
   assert.equal(experienceHostTimeout({action:"authorize",output:"model3d"}),170000);
+  assert.equal(experienceResponseTimeout({action:"authorize",output:"scene"}),120000);
+  assert.equal(experienceHostTimeout({action:"authorize",output:"scene"}),170000);
   for (const action of ["run", "resumeRun"]) for (const output of ["image","slides","short_story","scene","storyboard","audio","video","model3d"]) {
     const expected = ["video","model3d"].includes(output) ? 960000 : 300000;
     assert.equal(experienceResponseTimeout({action,output}), expected);

@@ -34,6 +34,74 @@ function clientFixture(f) {
     }});
   return {client, calls};
 }
+test('Scene explicit authorization survives 83.5s without repeat or automatic creation', async context => {
+  context.mock.timers.enable({apis: ['setTimeout']});
+  const f = fixture(), calls = [], origin = 'https://forma.invalid';
+  let finish;
+  const reply = (path) => {
+    const result = new Response(JSON.stringify(f.state), {headers: {'content-type':'application/json'}});
+    Object.defineProperty(result, 'url', {value: origin + path}); return result;
+  };
+  const client = new ExperienceOutputBindingClient(f.identity, {origin, current: () => true, request: async (path, init) => {
+    calls.push({path, init});
+    return init.method === 'POST' ? new Promise(resolve => { finish = () => resolve(reply(path)); }) : reply(path);
+  }});
+  try {
+    const shown = await client.read(), approval = {...f.preview, confirmed:true};
+    const pending = client.command('authorize', shown, approval);
+    context.mock.timers.tick(83500);
+    assert.equal(client.pending, true); assert.equal(calls[1].init.signal.aborted, false);
+    await client.command('authorize', shown, approval); assert.equal(calls.length, 2);
+    finish(); await pending;
+    assert.equal(client.state.status, 'review');
+    assert.deepEqual(calls.map(call => call.init.method), ['GET','POST']);
+    assert.deepEqual(JSON.parse(calls[1].init.body).sceneCostConsent, approval);
+  } finally { client.dispose(); }
+});
+test('Scene authorization timeout is finite and reconciliation is GET only', async context => {
+  context.mock.timers.enable({apis: ['setTimeout']});
+  const f = fixture(), calls = [], origin = 'https://forma.invalid';
+  const client = new ExperienceOutputBindingClient(f.identity, {origin, current: () => true, request: async (path, init) => {
+    calls.push({path,init});
+    if (init.method === 'POST') return new Promise(() => {});
+    const result = new Response(JSON.stringify(f.state), {headers:{'content-type':'application/json'}});
+    Object.defineProperty(result,'url',{value:origin+path}); return result;
+  }});
+  try {
+    const shown = await client.read(), approval = {...f.preview, confirmed:true};
+    const pending = client.command('authorize', shown, approval);
+    context.mock.timers.tick(119999); assert.equal(client.pending,true);
+    context.mock.timers.tick(1); await pending;
+    assert.equal(calls[1].init.signal.aborted,true);
+    assert.equal(client.state.status,'unavailable');
+    await client.command('authorize',shown,approval); assert.equal(calls.length,2);
+    await client.read(); assert.deepEqual(calls.map(call=>call.init.method),['GET','POST','GET']);
+  } finally { client.dispose(); }
+});
+test('Scene authorization preserves 20s body timeout and immediate withdrawal', async context => {
+  context.mock.timers.enable({apis: ['setTimeout']});
+  for (const stop of ['body-timeout','withdrawal']) {
+    const f=fixture(), origin='https://forma.invalid', calls=[]; let finish;
+    const response = path => { const result=new Response(JSON.stringify(f.state),{headers:{'content-type':'application/json'}}); Object.defineProperty(result,'url',{value:origin+path}); return result; };
+    const client=new ExperienceOutputBindingClient(f.identity,{origin,current:()=>true,request:async(path,init)=>{
+      calls.push({path,init}); return init.method==='POST'?new Promise(resolve=>{finish=resolve;}):response(path);
+    }});
+    const shown=await client.read(),pending=client.command('authorize',shown,{...f.preview,confirmed:true});
+    context.mock.timers.tick(45000);
+    const reply=response(calls[1].path);
+    if(stop==='body-timeout'){
+      Object.defineProperty(reply.body,'getReader',{value:()=>({read:()=>new Promise(()=>{}),cancel:async()=>{}})});
+      finish(reply); await new Promise(resolve=>setImmediate(resolve));
+      context.mock.timers.tick(19999); assert.equal(client.pending,true);
+      context.mock.timers.tick(1); await pending;
+      assert.equal(client.state.status,'unavailable');
+    } else {
+      client.dispose(); await pending; finish(reply); await new Promise(resolve=>setImmediate(resolve));
+      assert.equal(client.state.status,'unavailable');
+    }
+    assert.equal(calls.length,2); assert.equal(calls[1].init.signal.aborted,true); client.dispose();
+  }
+});
 test('actual closed Scene preflight schema fits bounded client decoding without widening other output depths', async () => {
   const f = fixture(), payload = await scenePreflightFixture();
   const ready = await outputScenePreflightConfiguration('target-1', payload, Date.parse('2026-09-13T04:00:00Z'));

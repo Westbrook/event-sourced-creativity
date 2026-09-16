@@ -136,12 +136,12 @@ test('actual host joins private Scene reads, compares measured pages, retires pr
   assert.match(host,/\.retained-story-reader, \.native-retained-scene-reader/);
 });
 
-test('actual Scene host withdrawal during content hashing prevents the private input read, font or renderer import and result publication', async () => {
+test('actual Scene host withdrawal during content hashing prevents the private input read, font or renderer import and result publication', {timeout: 5000}, async () => {
   const host = readFileSync(new URL('../src/components/forma-experience-host.ts', import.meta.url), 'utf8');
-  const begin = host.indexOf('  async #check() {'), end = host.indexOf('  #scheduleDeadline()', begin);
+  const begin = host.indexOf('  async #check('), end = host.indexOf('  #stopResultRead()', begin);
   assert.ok(begin >= 0 && end > begin, 'extract the complete current host method');
   const method = host.slice(begin, end);
-  const fence = '        if (!selected()) throw new Error("unavailable");\n        if (candidate.output === "scene")';
+  const fence = '        if (!selected()) throw new Error("unavailable");\n        if (candidate.output === "model3d")';
   assert.equal(method.split(fence).length, 2, 'the post-hash guard has one exact extraction site');
 
   async function withdrawnDuringHash(actualMethod) {
@@ -151,7 +151,7 @@ test('actual Scene host withdrawal during content hashing prevents the private i
     const trace = { privateReads: [], imports: [], verifierCalls: 0, publishedResults: 0, clears: 0 };
     const candidate = { output: 'scene', contentRef: 'content-test', inputRef: 'input-test', jobId: 'job-test', expiresAt: new Date(Date.now() + 60000).toISOString() };
     const state = { documentId: 'document-test', original: { jobId: candidate.jobId }, sceneCostPreview: { requestId: candidate.jobId } };
-    const binding = { sceneSource: {}, plan: { request: { values: { characterA: {value: 'A'}, characterB: {value: 'B'}, location: {value: 'Room'} } } } };
+    const binding = { client: {identity: {output: 'scene'}}, sceneSource: {}, plan: { request: { values: { characterA: {value: 'A'}, characterB: {value: 'B'}, location: {value: 'Room'} } } } };
     const operation = { wait: value => value };
     let published;
     const context = {
@@ -174,7 +174,7 @@ test('actual Scene host withdrawal during content hashing prevents the private i
     // Execute the actual full host method with controlled async boundaries, not
     // its guard reimplemented in the fixture. No app modules or native runtime
     // are loaded: any font/renderer import is an observable hard-stop boundary.
-    const extracted = stripTypeScriptTypes(actualMethod.replace('async #check()', 'async function check()')
+    const extracted = stripTypeScriptTypes(actualMethod.replace('async #check(', 'async function check(')
       .replaceAll('this.#', 'this.').replaceAll('import(', 'loadModule('));
     const check = new Function('bindingJson', 'experienceResultGrantCurrent', 'crypto', 'loadModule', 'readExperienceNativeScene',
       extracted + '; return check;')(canonicalJson, () => true,
@@ -182,7 +182,10 @@ test('actual Scene host withdrawal during content hashing prevents the private i
       path => { trace.imports.push(path); throw Error('Unexpected font/renderer import'); },
       () => { trace.verifierCalls++; throw Error('Unexpected private Scene verification'); });
     const pending = check.call(context);
-    await hashStarted;
+    await Promise.race([
+      hashStarted,
+      pending.then(() => { throw Error('Host returned before content hashing'); }),
+    ]);
     assert.deepEqual(trace.privateReads, [candidate.contentRef], 'the original content was read before withdrawal');
     current = false;
     releaseHash(new ArrayBuffer(32));
@@ -200,7 +203,7 @@ test('actual Scene host withdrawal during content hashing prevents the private i
   assert.deepEqual(guarded.privateReads, ['content-test']);
   // Mutation control only, not a product edit or claimed historical runtime:
   // remove just the new fence to prove the oracle detects the stale read.
-  const withoutFence = method.replace(fence, '        if (candidate.output === "scene")');
+  const withoutFence = method.replace(fence, '        if (candidate.output === "model3d")');
   const missingGuard = await withdrawnDuringHash(withoutFence);
   assert.deepEqual(missingGuard.privateReads, ['content-test', 'input-test']);
 });
