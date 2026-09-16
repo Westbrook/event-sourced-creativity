@@ -17,6 +17,19 @@ function qualifiedFunction(...args){
  return new Function(...Object.keys(harnessDependencies),harnessDeclarations+'\nreturn function('+args.join(',')+'){\n'+body+'\n};')(...Object.values(harnessDependencies));
 }
 const originalFetch=globalThis.fetch;globalThis.fetch=()=>{throw Error('network forbidden');};test.after(()=>{globalThis.fetch=originalFetch;});
+
+test('retained diagnostic preserves original injected failures and nested completion stage with no writes',async()=>{
+ const {storyboardReadFailureDiagnostic}=await import('../worker/storyboard-read-diagnostic.ts');
+ for(const [needle,stage] of [['SELECT document_jobs.*','retained_job'],['SELECT call_key,stage_key','completion_ledger']]){
+  const f=await fixture();try{
+   const original=new Error('private SQL prompt key'),before=f.sqlite.prepare('SELECT total_changes() n').get().n;
+   f.setBeforeRead(sql=>{if(sql.includes(needle))throw original;});
+   await assert.rejects(f.read(),error=>error===original&&storyboardReadFailureDiagnostic(error)===stage);
+   assert.equal(f.sqlite.prepare('SELECT total_changes() n').get().n,before);
+   assert.equal(JSON.stringify(original),'{}');
+  }finally{f.sqlite.close();}
+ }
+});
 test('all eight retained checkpoint fields conserve JSON presence, type and value; invalid original evidence never becomes readable',async()=>{
  const {stripTypeScriptTypes}=await import('node:module');
  const {documentJobCompletionBindings}=await import(process.env.FORMA_SOURCE_ROOT+'/worker/document-job-sql.ts');

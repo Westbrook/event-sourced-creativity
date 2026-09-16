@@ -1,3 +1,4 @@
+import { recordStoryboardReadFailure, type StoryboardReadStage } from "./storyboard-read-diagnostic.ts";
 import { canonicalJson } from "../src/experiences/compiler.ts";
 import { invalidProviderSubmissions, providerSubmissions } from "../src/model/provider-submission.ts";
 import { captureStoryboardPlannerRequest, captureStoryboardPlannerResponse, readStoryboardPlannerExecution } from "./output-storyboard-request.ts";
@@ -26,6 +27,8 @@ export async function verifyOutputStoryboardCompletion(...args:StoryboardEvidenc
 export async function readOutputStoryboardCompletion(...args:StoryboardEvidenceInputs){return storyboardEvidence(true,...args);}
 async function storyboardEvidence(retainedRead:boolean,env:WorkerEnv,scope:OutputScope,slot:OutputOperationSlot,job:DocumentJobRow,
  settings:Record<string,unknown>,artifactId:string,artifact:unknown,renderedItems:unknown,lifetime:{signal?:AbortSignal;deadlineMs?:number}={}){
+ let diagnosticStage:StoryboardReadStage="completion_identity";
+ try{
  const execution=readStoryboardPlannerExecution(settings.outputStoryboardPlanner);
  if(!execution||!same(execution.contract,settings.outputStoryboard)||scope.kind!=="personal"||scope.actorUserId!==scope.ownerUserId
   ||job.owner_id!==scope.actorUserId||job.stream_id!==`creative:${scope.actorUserId}`||job.document_id!==scope.documentId
@@ -38,6 +41,7 @@ async function storyboardEvidence(retainedRead:boolean,env:WorkerEnv,scope:Outpu
   bindings:[job.job_id,scope.actorUserId,job.stream_id,scope.documentId,job.correlation_id,job.attempt_count,scope.key,slot.slotId,slot.grantId,slot.routeDigest,slot.sourceDigest]};
  if(!await env.DB.prepare(`SELECT 1 AS current WHERE ${current.sql}`).bind(...current.bindings!).first())return fail();
  assertions.push(current);
+ diagnosticStage="completion_checkpoint";
  const row=await env.DB.prepare("SELECT result_json FROM document_jobs WHERE job_id=? AND owner_id=? AND stream_id=? AND correlation_id=?").bind(job.job_id,scope.actorUserId,job.stream_id,job.correlation_id).first<{result_json:string}>();
  if(!row)return fail();const checkpoint=object(JSON.parse(row.result_json)),planner=object(checkpoint.outputStoryboardPlannerCheckpoint),rawCheckpoint=object(checkpoint.outputStoryboardRawEnvelope),frames=object(checkpoint.outputStoryboardCheckpoints);
  if(checkpoint.artifactId!==artifactId||!same(checkpoint.artifactPlan,artifact)||!same(checkpoint.renderedItems,renderedItems)
@@ -52,10 +56,12 @@ async function storyboardEvidence(retainedRead:boolean,env:WorkerEnv,scope:Outpu
   const body=await env.DB.prepare(`SELECT content,expires_at FROM private_content WHERE ${predicate}`).bind(id,scope.actorUserId,kind).first<{content:string;expires_at:string}>();
   if(!body)return fail();assertions.push({sql:`EXISTS(SELECT 1 FROM private_content WHERE ${predicate} AND content=? AND expires_at=?)`,bindings:[id,scope.actorUserId,kind,body.content,body.expires_at],deadlineMs:Date.parse(body.expires_at)});return body.content;
  }
+ diagnosticStage="completion_planner_request";
  const prepared=await captureStoryboardPlannerRequest(execution.contract,await retained(planner.requestRef,"prompt"),text(planner.clientRequestId));
  if(prepared.requestDigest!==execution.requestDigest||prepared.maximumInputTokens!==execution.maximumInputTokens
   ||planner.version!=="output-storyboard-planner-checkpoint-v1"||planner.stage!=="planning:0:initial"||planner.provider!=="openai"||planner.model!==prepared.attempt.model
   ||planner.requestDigest!==prepared.requestDigest||!same(planner.contract,execution.contract))return fail();
+ diagnosticStage="completion_planner_envelope";
  const envelope=object(JSON.parse(await retained(rawCheckpoint.responseRef,"provider-response"))) as unknown as StoryboardRawEnvelope;
  if(envelope.version!=="output-storyboard-raw-envelope-v1"||envelope.clientRequestId!==planner.clientRequestId||envelope.requestDigest!==planner.requestDigest
   ||envelope.provider!=="openai"||envelope.model!==planner.model||envelope.httpStatus!==200||envelope.complete!==true||envelope.readFailed!==false
@@ -64,8 +70,10 @@ async function storyboardEvidence(retainedRead:boolean,env:WorkerEnv,scope:Outpu
  const response=object(JSON.parse(storyboardEnvelopeText(envelope)));
  const output=Array.isArray(response.output)?response.output:[];
  const originalText=response.output_text||output.flatMap(value=>Array.isArray(object(value).content)?object(value).content as unknown[]:[]).map(object).find(part=>part.type==="output_text")?.text;
+ diagnosticStage="completion_planner_plan";
  const captured=await captureStoryboardPlannerResponse(response,text(originalText),execution.contract,prepared.requestBody);
  if(captured.plannerResponseId!==checkpoint.plannerResponseId||!same(captured.plan,artifact))return fail();
+ diagnosticStage="completion_ledger";
  const paid=(await env.DB.prepare("SELECT call_key,stage_key,provider,model,client_request_id,request_digest,status,used_microusd,provider_response_id FROM output_provider_calls WHERE scope_key=? AND slot_id=? ORDER BY call_key").bind(scope.key,slot.slotId).all<Record<string,unknown>>()).results;
  if(paid.length!==5||new Set(paid.map(call=>call.client_request_id)).size!==5||new Set(paid.map(call=>call.provider_response_id)).size!==5
   ||paid.some(call=>call.status!=="settled"||!Number.isSafeInteger(call.used_microusd)||Number(call.used_microusd)<0))return fail();
@@ -76,12 +84,14 @@ async function storyboardEvidence(retainedRead:boolean,env:WorkerEnv,scope:Outpu
    ||matchingReceipts.length!==1||!receipt||receipt.status!=="completed"||receipt.operation!==(provider==="openai"?"planning":"image")||receipt.provider!==provider||receipt.model!==model||receipt.providerRequestId!==responseId||receipt.costMicrousd!==call.used_microusd)return fail();
   assertions.push({sql:"EXISTS(SELECT 1 FROM output_provider_calls WHERE scope_key=? AND slot_id=? AND call_key=? AND stage_key=? AND provider=? AND model=? AND client_request_id=? AND request_digest=? AND provider_response_id=? AND status='settled' AND used_microusd=?)",bindings:[scope.key,slot.slotId,stage,stage,provider,model,text(clientId),text(requestDigest),text(responseId),Number(call.used_microusd)]});return call;
  }
+ diagnosticStage="completion_planner_claim";
  const plannerCall=claim("planning:0:initial",planner.clientRequestId,planner.requestDigest,"openai",prepared.attempt.model,response.id);
  const usage=readOpenAITextUsage(response.usage,{cachePolicy:"disabled-explicit"}),cost=priceCurrentOpenAITextUsage(prepared.attempt.model,usage,typeof response.service_tier==="string"?response.service_tier:"default");
  const plannerReceipt=receipts.find(value=>value.clientRequestId===planner.clientRequestId)!;
  if(plannerCall.used_microusd!==cost.totalMicrousd||plannerReceipt.inputTokens!==usage.inputTokens||plannerReceipt.outputTokens!==usage.outputTokens||plannerReceipt.totalTokens!==usage.totalTokens)return fail();
  const media=[];
  for(let index=0;index<4;index++){
+  diagnosticStage="completion_frame";
   const saved=object(frames['f'+(index+1)]),frame=object(renderedItems[index]);
   if(saved.version!=="output-storyboard-frame-checkpoint-v1"||saved.frameIndex!==index||saved.stage!==`image:frame:${index+1}`||saved.provider!=="fal"
    ||saved.planSha256!==captured.planSha256||saved.storyboardBindingSha256!==captured.bindingSha256||saved.plannerResponseId!==captured.plannerResponseId
@@ -92,6 +102,7 @@ async function storyboardEvidence(retainedRead:boolean,env:WorkerEnv,scope:Outpu
   const frameCall=claim(text(saved.stage),saved.clientRequestId,saved.requestDigest,"fal",request.contract.model,frame.provider_request_id);
   if(frame.cost_microusd!==frameCall.used_microusd)return fail();
   const retainedLifetime=retainedRead?{...lifetime,deadlineMs:Math.min(lifetime.deadlineMs??Infinity,Date.parse(job.expires_at),...assertions.flatMap(a=>a.deadlineMs===undefined?[]:[a.deadlineMs]))}:lifetime;
+  diagnosticStage="completion_media";
   media.push(await readOutputStoryboardFrameMedia(env,scope.actorUserId,artifactId,index,frame as unknown as StoryboardFrameMedia,captured.bindingSha256,retainedLifetime));
  }
  assertions.push({sql:"(SELECT COUNT(*) FROM output_provider_calls WHERE scope_key=? AND slot_id=?)=5",bindings:[scope.key,slot.slotId]});
@@ -100,4 +111,5 @@ async function storyboardEvidence(retainedRead:boolean,env:WorkerEnv,scope:Outpu
   grantId:slot.grantId,targetId:slot.targetId,planRevisionId:slot.planRevisionId,targetContractDigest:slot.targetContractDigest,
   sourceDigest:slot.sourceDigest,plannerRequestDigest:prepared.requestDigest,plannerResponseId:captured.plannerResponseId,planSha256:captured.planSha256,storyboardBindingSha256:captured.bindingSha256,
   frameCount:4,frames:media,providerCallCount:5,visualReview:"required"}};
+ }catch(error){if(retainedRead)recordStoryboardReadFailure(error,diagnosticStage);throw error;}
 }

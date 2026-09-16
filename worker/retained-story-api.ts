@@ -1,3 +1,4 @@
+import { recordStoryboardReadFailure, storyboardReadFailureDiagnostic, logStoryboardReadFailure, type StoryboardReadStage } from "./storyboard-read-diagnostic.ts";
 import { readRetainedOutputVideo } from "./output-video-retained.ts";
 import { parseNativeAudioCompletionUrl, validateNativeAudioCompletion, type NativeAudioHandle } from "../src/model/native-audio-completion.ts";
 import { parseNativeVideoCompletionUrl, validateNativeVideoCompletion, type NativeVideoHandle } from "../src/model/native-video-completion.ts";
@@ -982,6 +983,8 @@ async function readCurrentRetainedNative(request: Request, env: WorkerEnv, nativ
   const handle = nativeCompletion?.handle ?? (nativeOutput ? null : parseNativeStoryCompletionUrl(request.url));
   let selection = nativeOutput?.selection ?? parseRetainedStoryRequestUrl(request.url);
   if (!selection && !handle) return error("invalid_retained_story_selection", 400);
+  let storyboardDiagnosticStage:StoryboardReadStage|undefined;
+  const storyboardDiagnosticTarget=(nativeCompletion?.output??nativeOutput?.output)==="storyboard";
   try {
     const identity = hostedIdentity(request);
     if (!identity) return error("authentication_required", 401);
@@ -1001,6 +1004,7 @@ async function readCurrentRetainedNative(request: Request, env: WorkerEnv, nativ
       email: identity.email, source: identity.source, subject: identity.userId,
     });
     if (access.identityPolicyDeniedCustody) return error("retained_story_access_denied", 403);
+    if(storyboardDiagnosticTarget)storyboardDiagnosticStage="read_selection";
     const streamId = `creative:${identity.userId}`;
     const job = handle ? await completedStoryJob(env, handle, identity.userId, streamId, nativeCompletion?.output ?? null) : null;
     const target = job && handle ? {documentId:handle.documentId,artifactId:job.artifactId,revision:0} : selection!;
@@ -1008,6 +1012,7 @@ async function readCurrentRetainedNative(request: Request, env: WorkerEnv, nativ
       .bind(streamId).all<EventRow>();
     const snapshot = eventSnapshot(events.results);
     const native = selectNative(events.results, target, identity.userId, job?.completionId, nativeCompletion?.output ?? nativeOutput?.output ?? "short_story", job?.requestedSlideCount ?? job?.requestedFrameCount ?? (nativeCompletion?.output === "audio" ? 1 : nativeCompletion?.output === "model3d" ? 0 : undefined));
+    if(storyboardDiagnosticTarget)storyboardDiagnosticStage="read_receipt";
     const storyboard = (nativeCompletion?.output ?? nativeOutput?.output) === "storyboard" ? await storyboardReceipt(env, native, identity.userId, target) : null;
     const model3d = (nativeCompletion?.output ?? nativeOutput?.output) === "model3d" ? await model3dReceipt(env, native, identity.userId, target) : null;
     const video = (nativeCompletion?.output ?? nativeOutput?.output) === "video" ? await videoReceipt(env, native, identity.userId, target) : null;
@@ -1019,6 +1024,7 @@ async function readCurrentRetainedNative(request: Request, env: WorkerEnv, nativ
     const model3dInput = nativeCompletion?.output === "model3d" && job && model3d
       ? await model3dCompletionInput(env, job, model3d, native, identity.userId, target) : null;
     const completionInput = audioInput ?? videoInput ?? model3dInput;
+    if(storyboardDiagnosticTarget)storyboardDiagnosticStage="read_content";
     const contentBindings = [native.contentId, identity.userId, native.projectId, target.documentId, target.artifactId];
     const source = await env.DB.prepare(`SELECT content,expires_at FROM private_content WHERE ${personalContentGuard()}`)
       .bind(...contentBindings).first<{ content: string; expires_at: string }>();
@@ -1029,13 +1035,14 @@ async function readCurrentRetainedNative(request: Request, env: WorkerEnv, nativ
     const body = record(JSON.parse(source.content));
     if (!body || typeof body.title !== "string" || typeof body.content_markdown !== "string"
       || !Array.isArray(body.items)) throw unavailable();
+    if(storyboardDiagnosticTarget)storyboardDiagnosticStage="read_evidence";
     let storyboardRead:Awaited<ReturnType<typeof readRetainedOutputStoryboard>>|null=null;
     if(storyboard&&(storyboard.payload.source_surface==="outputs"||Object.hasOwn(record(storyboard.payload.settings)??{},"output_storyboard"))){
       if(selection.revision!==0||native.latestEditId||typeof native.completionInputRef!=="string"||!opaque.test(native.completionInputRef))throw unavailable();
       try{storyboardRead=await readRetainedOutputStoryboard(env,{ownerId:identity.userId,completionId:native.completionId,
         documentId:selection.documentId,projectId:native.projectId,artifactId:selection.artifactId,contentId:native.contentId,
         inputId:native.completionInputRef,rawContent:source.content,contentExpiresAt:source.expires_at,completionRaw:storyboard.raw,signal:request.signal});}
-      catch{throw unavailable();}
+      catch(failure){const refused=unavailable();const stage=storyboardReadFailureDiagnostic(failure);if(stage)recordStoryboardReadFailure(refused,stage);throw refused;}
     }
     let videoRead:Awaited<ReturnType<typeof readRetainedOutputVideo>>|null=null;
     if(video&&(video.payload.source_surface==="outputs"||Object.hasOwn(record(video.payload.settings)??{},"output_video"))){
@@ -1057,6 +1064,7 @@ async function readCurrentRetainedNative(request: Request, env: WorkerEnv, nativ
     }
     const retainedExpiresAt = videoRead?.expiresAt ?? model3dRead?.expiresAt ?? storyboardRead?.expiresAt ?? (model3dEdit?.source && Date.parse(model3dEdit.source.expiresAt) < Date.parse(source.expires_at)
       ? model3dEdit.source.expiresAt : source.expires_at);
+    if(storyboardDiagnosticTarget)storyboardDiagnosticStage="read_dto";
     const outputTarget = nativeCompletion ? { output: nativeCompletion.output, selection } : nativeOutput;
     const dto = outputTarget
       ? projectNativeRetainedOutput(outputTarget, body, retainedExpiresAt, native.sceneMedium, {
@@ -1106,6 +1114,7 @@ async function readCurrentRetainedNative(request: Request, env: WorkerEnv, nativ
     // One final SELECT rechecks the exact auth and operational snapshots, all
     // source-redaction/scope metadata, personal custody and exact raw content.
     // The witness is a closed array generated above, never caller-supplied SQL.
+    if(storyboardDiagnosticTarget)storyboardDiagnosticStage="read_final_witness";
     const comparisons = eventColumns.map((name, index) => `actual.${name} IS NOT json_extract(expected.value,'$[${index}]')`).join(" OR ");
     const final = await env.DB.prepare(`WITH ${auth.cte},${eventCte}${job?`,${nativeCompletion ? nativeCompletionJobCte(nativeCompletion.output) : jobCte}`:""},
       ${storyboardRead?"storyboard_witness AS (SELECT ? AS bindings),":""}${model3dRead?"model3d_witness AS (SELECT ? AS bindings),":""}${videoRead?"video_witness AS (SELECT ? AS bindings),":""}expected_events AS (SELECT value FROM json_each(?))
@@ -1133,6 +1142,7 @@ async function readCurrentRetainedNative(request: Request, env: WorkerEnv, nativ
         ${completionInput?`AND EXISTS(SELECT 1 FROM private_content WHERE ${audioInputGuard()} AND CAST(content AS BLOB)=CAST(? AS BLOB) AND expires_at=?)`:""}`)
       .bind(...auth.bindings, streamId, ...(job?.bindings??[]), ...(storyboardRead?[storyboardRead.witness.json]:[]), ...(model3dRead?[model3dRead.witness.json]:[]), ...(videoRead?[videoRead.witness.json]:[]), snapshot, ...contentBindings, source.content, source.expires_at, principal.auth_json, ...(job?[job.snapshot]:[]), ...(storyboard?[...storyboard.bindings,storyboard.raw]:[]), ...(model3d?[...model3d.bindings,model3d.raw]:[]), ...(video?[...video.bindings,video.raw]:[]), ...(audio?[...audio.bindings,audio.raw]:[]), ...(audioEdit?[...audioEdit.bindings,audioEdit.raw]:[]), ...(videoEdit?[...videoEdit.bindings,videoEdit.raw]:[]), ...(videoEdit?.source?[...videoEdit.source.bindings,videoEdit.source.raw,videoEdit.source.expiresAt]:[]), ...(videoEdit?.source?.edit?[...videoEdit.source.edit.bindings,videoEdit.source.edit.raw]:[]), ...(model3dEdit?[...model3dEdit.bindings,model3dEdit.raw]:[]), ...(model3dEdit?.source?[...model3dEdit.source.bindings,model3dEdit.source.raw,model3dEdit.source.expiresAt]:[]), ...(model3dEdit?.source?.edit?[...model3dEdit.source.edit.bindings,model3dEdit.source.edit.raw]:[]), ...(model3dEdit?.originalReset?[...model3dEdit.originalReset.bindings,model3dEdit.originalReset.raw]:[]), ...(completionInput?[...completionInput.bindings,completionInput.raw,completionInput.expiresAt]:[]))
       .first<{ admitted: number }>();
+    if(storyboardDiagnosticTarget&&final?.admitted===1)storyboardDiagnosticStage="read_final_lifetime";
     if (final?.admitted !== 1 || Date.parse(source.expires_at) <= Date.now() || job && Date.parse(job.expiresAt) <= Date.now()
       || storyboardRead && (Date.parse(storyboardRead.expiresAt)<=Date.now()||request.signal.aborted)
       || model3dRead && (Date.parse(model3dRead.expiresAt)<=Date.now()||request.signal.aborted)
@@ -1143,6 +1153,7 @@ async function readCurrentRetainedNative(request: Request, env: WorkerEnv, nativ
     // No asynchronous work occurs between the final read and literal response.
     return new Response(serialized, { status: 200, headers });
   } catch (failure) {
+    if(storyboardDiagnosticStage)logStoryboardReadFailure(failure,storyboardDiagnosticStage);
     if (failure instanceof Unavailable) return error(failure.message === "personal_principal_required"
       ? "personal_principal_required" : "retained_story_unavailable", failure.message === "personal_principal_required" ? 403 : 404);
     // Missing schema, adapter failures and invalid stored JSON remain opaque.

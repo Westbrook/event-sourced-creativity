@@ -73,7 +73,7 @@ type Image = NonNullable<Awaited<ReturnType<FormaStore["loadGeneratedImageEdit"]
 type Scene = NonNullable<Awaited<ReturnType<typeof readExperienceNativeScene>>>;
 type Result = { lease: object; candidate: ExperienceResultCandidate; current(): boolean } & ({ output: "model3d"; model3d: Model3d; render: typeof renderNativeRetainedModel3d } | { output: "video"; video: Video; mount: typeof mountNativeRetainedVideo } | { output: "audio"; audio: Audio; render: typeof renderNativeRetainedAudio } | { output: "storyboard"; storyboard: Storyboard; render: typeof renderNativeRetainedStoryboard } | { output: "image"; image: Image } | { output: "slides"; slides: Slides; render: typeof renderNativeRetainedSlides } | { output: "short_story"; story: RetainedStoryDto; render: typeof renderNativeRetainedStory } | { output: "scene"; scene: Scene; measurement: unknown; render: typeof renderNativeRetainedScene });
 
-type ResultReadStage = "source_state" | "requirements" | "native_job" | "candidate" | "private_content" | "private_input" | "input_validation" | "retained_read" | "final_projection";
+type ResultReadStage = "source_state" | "requirements" | "native_job" | "candidate" | "private_content" | "private_input" | "input_validation" | "retained_read" | "retained_verify" | "final_projection";
 type ResultReadFailure = Readonly<{ stage: ResultReadStage; kind: "unavailable" | "deadline" }>;
 
 /** Same-Document native admission view. All original command/grant identities are
@@ -683,6 +683,7 @@ export class FormaExperienceHost extends FormaElement {
           this.#resultReadStage = "retained_read";
           const storyboard=await operation.wait(client.readNativeRetainedOutput({output:"storyboard",selection:{documentId:state.documentId,artifactId:candidate.artifactId,revision:0,contentSha256:hash}},
             {origin:this.ownerDocument.location.origin,signal:abort.signal,current:visible,request:(path,init)=>fetch(path,init)}));
+          this.#resultReadStage = "retained_verify";
           if(!visible()||storyboard.output!=="storyboard"||!await operation.wait(verifyExperienceStoryboardRead(candidate.storyboard,raw,input,storyboard,{
             source:binding.storyboardSource,documentId:state.documentId,projectId:state.projectId,artifactId:candidate.artifactId,ownerId:binding.ownerId,
             jobId:state.original.jobId,slotId:state.original.slotId,grantId:state.original.grantId,targetId:state.plan.targetId,

@@ -176,14 +176,14 @@ test('actual host read awaits original input and verified DTO; withdrawal at eac
  for(const boundary of ['none','content','hash','input','import','dto','verification']){
   const f=fixture(),candidate=captureExperienceNativeResult(f.identity,f.job,f.current,f.now),trace={reads:[],imports:[],verified:0,published:0},state={...f.expected,output:'storyboard',plan:{revisionId:'revision',targetId:'target',targetContractDigest:'target-digest',sourceDigest:'source-digest'},original:{jobId:'job',slotId:'slot',grantId:'grant',correlationId:'corr'}};
   let current=true,published,finished=false;
-  const operation={wait:value=>value},binding={storyboardSource:f.source,ownerId:'owner'};
+  const operation={wait:value=>value},binding={storyboardSource:f.source,ownerId:'owner',client:{identity:{output:'storyboard'}}};
   const render=()=>{throw Error('No DOM rendering in source control');};
   const context={binding,busy:false,readable:()=>current,visible:()=>current,baseCurrent:()=>current,beginOperation:()=>operation,operationCurrent:()=>!finished,finishOperation:()=>{finished=true;return true;},resetDecision(){},requestUpdate(){},refreshAndRead:async()=>{},state:()=>state,snapshotMatches:()=>current,candidate:()=>candidate,scheduleDeadline(){},ownerDocument:{location:{origin:'https://forma.test'}},
    clearResult(){this.reader?.abort();this.reader=undefined;published=undefined;},
    store:{outputRequirements:{ensure:async()=>{}},inspectOutputNativeJob:async()=>({status:'found',job:f.job,current:()=>current}),
     ensurePrivateContent:async ref=>{trace.reads.push(ref);if(boundary===(ref==='content'?'content':'input'))current=false;return ref==='content'?f.raw:f.rawInput;}}};
   Object.defineProperty(context,'result',{get:()=>published,set:value=>{published=value;trace.published++;}});
-  const check=hostMethod('async #check()','#stopResultRead()',{
+  const check=hostMethod('async #check(','#stopResultRead()',{
    bindingJson:canonicalJson,experienceResultGrantCurrent:()=>true,crypto:{subtle:{digest:async(...args)=>{const hash=await crypto.subtle.digest(...args);if(boundary==='hash')current=false;return hash;}}},
    loadModule:async path=>{trace.imports.push(path);if(boundary==='import')current=false;
     return path.includes('retained-short-story-client')?{readNativeRetainedOutput:async(selector,options)=>{assert.deepEqual(selector,{output:'storyboard',selection:f.dto.selection});assert.equal(options.current(),true);assert(options.signal instanceof AbortSignal);if(boundary==='dto')current=false;return f.dto;}}:{renderNativeRetainedStoryboard:render};},
