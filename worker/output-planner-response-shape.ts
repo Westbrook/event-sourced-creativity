@@ -1,4 +1,6 @@
 import { captureStoryboardPlannerResponse } from "./output-storyboard-request.ts";
+import { captureOutputStoryboardPlan } from "./output-storyboard-plan.ts";
+import { parseStoryboardOutputContract } from "../src/model/output-storyboard-contract.ts";
 /** Source-free structural diagnostics; never returns provider text or arbitrary keys. */
 const record=(value:unknown):Record<string,unknown>|null=>value!==null&&typeof value==="object"&&!Array.isArray(value)?value as Record<string,unknown>:null;
 export function outputPlannerResponseShape(value:unknown,expectedModel:string){
@@ -67,8 +69,16 @@ export async function retainedStoryboardResponseShape(raw:string,identity:{jobId
     const items=Array.isArray(candidate?.items)?candidate.items:[];
     const issues:string[]=[];
     try{await captureStoryboardPlannerResponse(envelope,retained.output_text,retained.output_storyboard);}catch{issues.push("storyboard_candidate_invalid");}
+    const contractValid=Boolean(parseStoryboardOutputContract(retained.output_storyboard));
+    let planValid=false;try{await captureOutputStoryboardPlan(candidate,retained.output_storyboard,identity.responseId);planValid=true;}catch{}
+    // Fixed field names and numeric/type summaries only: no creative values,
+    // unknown provider keys, group identifiers or opaque reasoning are exposed.
+    const field=(value:unknown)=>({type:typeof value,length:typeof value==='string'?value.length:null,blank:typeof value==='string'?!value.trim():null});
+    const candidateFields={title:field(candidate?.title),summary:field(candidate?.summary),contentMarkdown:field(candidate?.content_markdown),
+      extraFieldCount:candidate?Object.keys(candidate).filter(key=>!['title','summary','content_markdown','items','presentation'].includes(key)).length:0,
+      frames:items.slice(0,4).map(value=>{const row=record(value);return{title:field(row?.title),body:field(row?.body),notes:field(row?.notes),imagePrompt:field(row?.image_prompt),contextGroupCount:Array.isArray(row?.context_group_ids)?row.context_group_ids.length:null,extraFieldCount:row?Object.keys(row).filter(key=>!['title','body','notes','image_prompt','context_group_ids','slide'].includes(key)).length:0};})};
     const reasoningEncryptedContent=Array.isArray(envelope.output)&&envelope.output.some(item=>{const value=record(item);return value?.type==='reasoning'&&Object.hasOwn(value,'encrypted_content');});
-    return{valid:issues.length===0,issues,reasoningEncryptedContent,candidateParses:Boolean(candidate),frameCount:items.length,
+    return{valid:issues.length===0,issues,contractValid,planValid,candidateFields,envelopeIssues:outputPlannerResponseShape(envelope,identity.model).issues,reasoningEncryptedContent,candidateParses:Boolean(candidate),frameCount:items.length,
       presentationField:!candidate||!Object.hasOwn(candidate,"presentation")?"absent":candidate.presentation===null?"null":"non_null",
       slideFields:items.slice(0,4).map(item=>{const row=record(item);return !row||!Object.hasOwn(row,"slide")?"absent":row.slide===null?"null":"non_null";})};
   }catch{return null;}

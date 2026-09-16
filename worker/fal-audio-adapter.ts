@@ -101,6 +101,9 @@ async function fetchJson(url: string, init: RequestInit, prompt: string, request
   let response: Response;
   try { response = await fetch(url, init); }
   catch (error) { throw new ProviderRequestError({ ...classifyProviderFailure(error), requestId }, prompt); }
+  if (response.status >= 300 && response.status < 400) {
+    throw providerError("fal_audio_redirect_refused", "The original audio request returned an unexpected redirect. No redirected request was sent.", prompt, { requestId, status: response.status, category: "server" });
+  }
   let body: Record<string, unknown>;
   try { body = (bounded ? JSON.parse(await readOutputAudioEnvelope(response)) : await response.json()) as Record<string, unknown>; }
   catch { if(bounded)throw new Error("output_audio_response_unreadable"); throw providerError("fal_audio_response_invalid", "Fal returned an invalid audio-generation response. The original request can be recovered without purchasing another output.", prompt, { requestId, retryable: true, status: response.status, category: "server" }); }
@@ -252,7 +255,7 @@ export async function recoverAcceptedAudio(env: WorkerEnv, options: CreativeAudi
   if (!Number.isSafeInteger(estimatedCostMicrousd) || estimatedCostMicrousd <= 0) {
     throw providerError("audio_recovery_receipt_invalid", "The original audio cost evidence is unavailable.", "", { requestId: options.providerJobId, status: 409 });
   }
-  return readAcceptedAudio(env, { model: options.providerModel, providerJobId: options.providerJobId, urls, profile: normalizeAudioRequestProfile(options.profile), prepared, estimatedCostMicrousd, started: Date.now() }, { signal: options.signal, onStage: options.onStage, verifyIdentity: true });
+  return readAcceptedAudio(env, { model: options.providerModel, providerJobId: options.providerJobId, urls, profile: normalizeAudioRequestProfile(options.profile), prepared, estimatedCostMicrousd, started: Date.now() }, { signal: options.signal, onStage: options.onStage, onBeforeSourceTransmission: options.onBeforeSourceTransmission, verifyIdentity: true });
 }
 
 /** Route an approved specialist schema through one recoverable Fal queue transport. */

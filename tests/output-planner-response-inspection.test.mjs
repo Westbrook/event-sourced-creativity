@@ -45,7 +45,14 @@ test('Storyboard inspection validates retained raw candidate without revealing c
  const f=await fixture(t,'storyboard'),before=f.sqlite.prepare('SELECT * FROM document_jobs').get();
  t.mock.method(globalThis,'fetch',()=>{throw Error('No network allowed');});
  const response=await f.request();assert.equal(response.status,200);const body=await response.json();
- assert.deepEqual(body.job.result.plannerResponseDiagnostics,[{responseId:'response',valid:true,issues:[],reasoningEncryptedContent:false,candidateParses:true,frameCount:4,presentationField:'absent',slideFields:['absent','absent','absent','absent']}]);
+ const [diagnostic]=body.job.result.plannerResponseDiagnostics;
+ const {candidateFields,contractValid,planValid,envelopeIssues,...core}=diagnostic;
+ assert.deepEqual(core,{responseId:'response',valid:true,issues:[],reasoningEncryptedContent:false,candidateParses:true,frameCount:4,presentationField:'absent',slideFields:['absent','absent','absent','absent']});
+ assert.equal(contractValid,true);assert.equal(planValid,true);
+ assert.deepEqual(envelopeIssues,['output_missing','message_count_invalid']);
+ assert.deepEqual(candidateFields.title,{type:'string',length:12,blank:false});
+ assert.equal(candidateFields.extraFieldCount,0);assert.equal(candidateFields.frames.length,4);
+ assert.ok(candidateFields.frames.every(frame=>frame.contextGroupCount===0&&frame.extraFieldCount===0));
  assert.doesNotMatch(JSON.stringify(body),/SECRET|provider_envelope|response-content/);assert.deepEqual(f.sqlite.prepare('SELECT * FROM document_jobs').get(),before);
 });
 test('Storyboard reasoning encryption presence is accurate without exposing opaque bytes',async t=>{

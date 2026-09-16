@@ -19,6 +19,7 @@ import { keyed } from "lit/directives/keyed.js";
 import { captureOutputNavigationFocus } from "./output-navigation-focus.ts";
 import { digest } from "../experiences/compiler.ts";
 import { captureExperienceSceneTarget } from "../experiences/scene-target.ts";
+import { outputCommandRefusal } from "../experiences/output-command-refusal.ts";
 import { createSceneOutputContract, type SceneOutputSource } from "../model/output-scene-contract.ts";
 import { sceneMiniAppCostApprovalMatches, type SceneMiniAppCostApproval } from "../model/scene-mini-app-consent.ts";
 import { readExperienceNativeScene } from "../experiences/scene-native-result.ts";
@@ -420,7 +421,7 @@ export class FormaExperienceHost extends FormaElement {
       if (!this.#operationCurrent(operation) || !this.#visible(binding)) return;
       const response = await operation.wait(binding.client.command(action, shown, sceneConsent, audioConsent, model3dConsent));
       // Unknown admission remains unknown. Only explicit Check status recovers it.
-      if (!("draftId" in response)) this.#status = outputSourceCapacityMessage(response) ? this.i18n.system("Original unavailable")
+      if (!("draftId" in response)) this.#status = outputSourceCapacityMessage(response) || outputCommandRefusal(response) ? this.i18n.system("Original unavailable")
         : action === "recoverResult" ? this.i18n.system("Recovery unconfirmed") : "Submission unconfirmed";
       else if (this.#visible(binding)) {
         await this.#refreshAndRead(binding, operation);
@@ -886,6 +887,7 @@ export class FormaExperienceHost extends FormaElement {
     const state = this.#state(), terms = this.#terms(state), binding = this.#binding, result = this.#result;
     const available = this.#visible(binding), format = this.#imageFormat(), authorize = this.#paidDecision("authorize"), run = this.#paidDecision("run"), resume = this.#paidDecision("resumeRun");
     const sourceCapacity = available && binding ? outputSourceCapacityMessage(binding.client.state) : null;
+    const commandRefusal = available && binding ? outputCommandRefusal(binding.client.state) : null;
     const target = state?.preflight?.targets[0];
     const unavailableProviderPreparation = available && state?.status === "unavailable" && state.disposition === "prepared"
       && !state.original && !state.grant && !Object.values(state.permitted).some(Boolean)
@@ -898,6 +900,7 @@ export class FormaExperienceHost extends FormaElement {
     return html`<section class="experience-host" aria-busy=${String(this.#loading || this.#busy)}>
       <header class="experience-heading"><h1>${binding?.selection.output === "video" ? "Video" : binding?.selection.output === "image" ? "Image" : binding?.selection.output === "slides" ? "Slides" : binding?.selection.output === "short_story" ? "Short story" : binding?.selection.output === "scene" ? "Scene" : binding?.selection.output === "model3d" ? this.i18n.system("3D model") : binding?.selection.output === "audio" ? this.i18n.system("Audio") : binding?.selection.output === "storyboard" ? "Storyboard" : "Output"}</h1></header>
       <p data-experience-status class=${duplicateReviewStatus ? "experience-status-duplicate" : nothing} tabindex="-1" role="status" aria-live="polite">${this.#model3dText(this.#status)}</p>
+      ${commandRefusal ? html`<details data-experience-command-refusal><summary>${this.i18n.system("Technical details")}</summary><code>${commandRefusal.code}</code></details>` : nothing}
       ${available && state?.current.source === "changed" ? html`<p data-experience-retained-source dir="auto">${retainedImageSourceMessage(this.i18n.locale)}</p>` : nothing}
       ${sourceCapacity ? html`<p data-experience-source-capacity dir="auto">${this.i18n.t(sourceCapacity.id, FORMA_OUTPUT_DELIVERY_RUNTIME_MESSAGES.en[sourceCapacity.id], sourceCapacity.values)}</p>` : nothing}
       ${available && result ? result.output === "image" ? html`<figure class="experience-native-image"><img data-experience-image src=${result.image.media.url} alt="Image" width=${result.image.media.width} height=${result.image.media.height}

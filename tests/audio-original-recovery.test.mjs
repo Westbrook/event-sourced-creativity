@@ -116,6 +116,19 @@ test("original audio recovery retains an accepted historical prompt beyond today
   });
 });
 
+test("original Audio recovery checks current read authority before every GET",async()=>{
+ await withMockAudio({},async calls=>{
+  let checks=0;
+  await recoverAcceptedAudio(environment,{...recoveryOptions(),onBeforeSourceTransmission:async()=>{assert.equal(calls.length,checks);checks++;}});
+  assert.equal(checks,3);assert.equal(calls.length,3);
+ });
+ for(const stopAt of [1,2,3])await withMockAudio({},async calls=>{
+  let checks=0;
+  await assert.rejects(recoverAcceptedAudio(environment,{...recoveryOptions(),onBeforeSourceTransmission:async()=>{if(++checks===stopAt)throw Error('Authority withdrawn');}}),/Authority withdrawn/);
+  assert.equal(calls.length,stopAt-1);
+ });
+});
+
 const invalidIdentities = [
   ["missing request ID", (options) => { delete options.providerJobId; }],
   ["empty request ID", (options) => { options.providerJobId = ""; }],

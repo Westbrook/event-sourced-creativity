@@ -10,16 +10,19 @@ export function expiredOriginalSceneJobFailure(row:SceneJobSnapshot,now:string,t
 export function expiredOriginalAudioJobFailure(row:SceneJobSnapshot,now:string,terminals:SceneTerminalWitness[]=[]){
   return expiredOriginalNativeJobFailure(row,now,terminals,'audio');
 }
-function expiredOriginalNativeJobFailure(row:SceneJobSnapshot,now:string,terminals:SceneTerminalWitness[],kind:'scene'|'audio'){
+export function expiredOriginalVideoJobFailure(row:SceneJobSnapshot,now:string,terminals:SceneTerminalWitness[]=[]){
+  return expiredOriginalNativeJobFailure(row,now,terminals,'video');
+}
+function expiredOriginalNativeJobFailure(row:SceneJobSnapshot,now:string,terminals:SceneTerminalWitness[],kind:'scene'|'audio'|'video'){
   const deadline=Date.parse(row.lease_expires_at??'');
-  if(!row.output_slot_id||(kind==='scene'&&row.scene_source_protocol!==1)||(kind==='audio'&&row.scene_source_protocol===1)||row.kind!=='render_document'||row.source_surface!=='outputs'
+  if(!row.output_slot_id||(kind==='scene'&&row.scene_source_protocol!==1)||(kind!=='scene'&&row.scene_source_protocol===1)||row.kind!=='render_document'||row.source_surface!=='outputs'
     ||!['running','committing'].includes(row.status)||!Number.isSafeInteger(row.attempt_count)||row.attempt_count<1
     ||!Number.isFinite(deadline)||!Number.isFinite(Date.parse(now))||deadline>Date.parse(now))return null;
   let request:Record<string,unknown>,previous:Record<string,unknown>;
   try{request=JSON.parse(row.request_json);previous=JSON.parse(row.result_json??'{}');}catch{return null;}
   if(!request||typeof request!=='object'||Array.isArray(request)||request.artifactKind!==kind
     ||!previous||typeof previous!=='object'||Array.isArray(previous))return null;
-  const label=kind==='scene'?'Scene':'Audio';
+  const label=kind==='scene'?'Scene':kind==='audio'?'Audio':'Video';
   const message=`The original ${label} execution was interrupted. Its recorded calls and allowances are preserved; no automatic second attempt was started.`;
   let result:Record<string,unknown>={...previous,noAutomaticRetry:true,stage:'failed',progressMessage:message,
     errorDetail:{code:'execution_interrupted',category:'server',scope:'unknown',action:'contact_support',message,retryable:false,retryAfterMs:null,requestId:null,httpStatus:null}};
