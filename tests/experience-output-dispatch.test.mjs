@@ -130,6 +130,7 @@ test("unknown failures gain only fixed bounded diagnostic kinds without changing
   const invoke=new Function("outputDatabaseMessageKind","cause","console",helpers+"\nconst diagnosticStage='prepare_preflight_execute';\n"+caught[1]).bind(null,outputDatabaseMessageKind);
   const readSubtype=new Function("outputDatabaseMessageKind","cause",helpers+"\nreturn diagnosticSubtype(cause);").bind(null,outputDatabaseMessageKind);
   const cases=[
+    ...['unavailable','interrupted','identity','lifetime','object_metadata','content_type','stream_chunk','stream_length','inspection','digest','duration_basis','duration','codec','audio_present','rotation','dimensions','aspect_ratio'].map(reason=>[new Error('output_video_media_'+reason),'output_video_media_'+reason]),
     [new Error("output_video_recovery_unavailable"),"output_video_recovery_unavailable"],
     [new Error("output_video_provider_receipt_mismatch"),"output_video_provider_receipt_mismatch"],
     [new Error("output_video_result_unavailable"),"output_video_result_unavailable"],
