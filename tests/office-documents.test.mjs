@@ -246,6 +246,39 @@ test("PowerPoint scorecards keep all six independently editable categories and d
   }
 });
 
+test("narrow PowerPoint precision summaries reserve wrapped values and translated labels before the caption",()=>{
+  const item={title:"Verified PNG",body:"One unbranded teal teapot appears on a warm tabletop.",notes:"",image_prompt:"",slide:{layout:"statement",bullets:[],visual:{kind:"metric",label:"File size",value:"1,063,520 bytes",exactValue:"1,063,520 bytes",displayValue:"1,063,520 bytes",unit:"bytes",data:[]}}};
+  for(const translate of [undefined,(text)=>text==="Rounded display"?"Rounded display for the delivered artifact":text]){
+    const parts=verifyOfficeArchive(createPowerPointDocument([item],defaultSlidePresentation(),{translate}));
+    const xml=parts.get("ppt/slides/slide1.xml"),caption=shapeBox(xml,"Editable visual label");
+    for(const kind of ["exact","displayed"]){
+      const label=shapeBox(xml,`Editable ${kind} value label`),value=shapeBox(xml,`Editable ${kind} value`);
+      assert.equal(shapeText(xml,`Editable ${kind} value`),"1,063,520 bytes");
+      assert.ok(value.height>=2*19*12700*1.2,"two lines at the emitted 19pt remain inside the value box");
+      assert.ok(value.y>=label.y+label.height+30000,"wrapped labels precede values");
+      assert.ok(caption.y>=value.y+value.height+90000,"caption stays below the complete wrapped value");
+    }
+    if(translate)assert.ok(shapeBox(xml,"Editable displayed value label").height>=3*12*12700*1.2,"translated label receives multiple lines at the actual 12pt font");
+  }
+});
+
+test("PowerPoint precision summaries budget separate units and reject an overflowing metric",()=>{
+  const item={title:"Delivered file",body:"Preserved exact quantity",notes:"",image_prompt:"",slide:{layout:"statement",bullets:[],visual:{kind:"metric",label:"File size",value:"1063520",exactValue:"1063520",displayValue:"1063520",unit:"bytes",data:[]}}};
+  const parts=verifyOfficeArchive(createPowerPointDocument([item],defaultSlidePresentation()));
+  const xml=parts.get("ppt/slides/slide1.xml"),caption=shapeBox(xml,"Editable visual label");
+  for(const kind of ["exact","displayed"]){
+    const unit=shapeBox(xml,`Editable ${kind} value unit`);
+    assert.equal(shapeText(xml,`Editable ${kind} value unit`),"bytes");
+    assert.ok(unit.height>=2*12.5*12700*1.2,"narrow unit wraps without exceeding its box");
+    assert.ok(caption.y>=unit.y+unit.height+90000);
+  }
+  const crowded=structuredClone(item);
+  crowded.slide.visual.exactValue="1,063,520 bytes";
+  crowded.slide.visual.displayValue="1,063,520 bytes";
+  crowded.slide.visual.label="Complete delivered file size with all authored precision preserved";
+  assert.throws(()=>createPowerPointDocument([crowded],defaultSlidePresentation(),{translate:(text)=>text==="Rounded display"?"Rounded display\nfor the delivered\nartifact\nretaining every\nsource value\nwithout removal\nor shortening\nof labels":text}),/office_archive_slide_layout_overflow/);
+});
+
 test("dense architecture bullets reflow without collisions or clipped editable labels",()=>{
   const long="A responsive creative experience must preserve every authored source decision, reviewer boundary, accessibility requirement, reusable evidence relationship, and cross-device continuity checkpoint without hiding the enterprise controls that keep ownership and accountability clear.";
   const bullets=[long,...Array.from({length:7},(_,index)=>`Distinct authored supporting argument ${index+2}`)];

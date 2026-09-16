@@ -250,14 +250,26 @@ function addVisualShapes(shapes:string[],nextId:()=>number,slide:SlideVisualData
   if(showNumericPrecision&&visual.displayValue)summary.push({kind:"displayed",label:localization.translate?.("Rounded display")??"Rounded display",value:String(visual.displayValue)});
   if(summary.length){
     const column=Math.floor(box.width/Math.max(summary.length,1));
-    summary.forEach((entry,index)=>{
-      const x=box.x+index*column,hasSeparateUnit=Boolean(unit)&&unitValue(entry.value,unit)!==entry.value;
+    const measured=summary.map((entry)=>{
+      const hasSeparateUnit=Boolean(unit)&&unitValue(entry.value,unit)!==entry.value;
       const valueWidth=hasSeparateUnit?Math.min(column-420000,Math.max(950000,Math.ceil(entry.value.length*220000))):column-120000;
-      add(`Editable ${entry.kind} value label`,entry.label,x,box.y,column-120000,195000,colors.muted,1150);
-      add(`Editable ${entry.kind} value`,entry.value,x,box.y+210000,valueWidth,350000,colors.accentInk,1900,true);
-      if(hasSeparateUnit)add(`Editable ${entry.kind} value unit`,unit,x+valueWidth+40000,box.y+275000,Math.max(200000,column-valueWidth-150000),200000,colors.muted,1250);
+      const unitWidth=Math.max(200000,column-valueWidth-150000);
+      return{entry,hasSeparateUnit,valueWidth,unitWidth,labelHeight:Math.max(195000,officeTextHeight(entry.label,column-120000,12)),valueHeight:Math.max(350000,officeTextHeight(entry.value,valueWidth,19)),unitHeight:hasSeparateUnit?Math.max(200000,officeTextHeight(unit,unitWidth,12.5)):0};
     });
-    box={...box,y:box.y+630000,height:Math.max(300000,box.height-630000)};
+    // Budget the emitted font sizes and wrapped text, not only the XML boxes:
+    // Office autofit may expand a value into the caption that follows it.
+    const labelHeight=Math.max(...measured.map((entry)=>entry.labelHeight));
+    const valueOffset=labelHeight+30000;
+    const contentHeight=Math.max(...measured.map((entry)=>Math.max(entry.valueHeight,entry.hasSeparateUnit?65000+entry.unitHeight:0)));
+    const summaryHeight=valueOffset+contentHeight+90000;
+    if(summaryHeight+300000>box.height)throw new Error("office_archive_slide_layout_overflow");
+    measured.forEach(({entry,hasSeparateUnit,valueWidth,unitWidth,valueHeight,unitHeight},index)=>{
+      const x=box.x+index*column;
+      add(`Editable ${entry.kind} value label`,entry.label,x,box.y,column-120000,labelHeight,colors.muted,1200);
+      add(`Editable ${entry.kind} value`,entry.value,x,box.y+valueOffset,valueWidth,valueHeight,colors.accentInk,1900,true);
+      if(hasSeparateUnit)add(`Editable ${entry.kind} value unit`,unit,x+valueWidth+40000,box.y+valueOffset+65000,unitWidth,unitHeight,colors.muted,1250);
+    });
+    box={...box,y:box.y+summaryHeight,height:box.height-summaryHeight};
   }
 
   if(slide.quote?.text||kind==="quote"||layout==="quote"){
@@ -362,8 +374,12 @@ function addVisualShapes(shapes:string[],nextId:()=>number,slide:SlideVisualData
     return;
   }
 
-  if(visual.label)add("Editable visual label",visual.label,box.x,box.y,box.width,300000,colors.accentInk,1350,true);
-  if(visual.value)add("Editable visual value",unitValue(visual.value,unit),box.x,box.y+(visual.label?420000:0),box.width,Math.max(300000,box.height-(visual.label?420000:0)),colors.foreground,kind==="metric"?2850:2200,true);
+  const labelHeight=visual.label?Math.max(300000,officeTextHeight(visual.label,box.width,13.5)):0;
+  const valueOffset=visual.label?labelHeight+120000:0,valueText=unitValue(visual.value,unit),valueSize=kind==="metric"?2850:2200;
+  const valueHeight=visual.value?Math.max(300000,officeTextHeight(valueText,box.width,valueSize/100)):0;
+  if(labelHeight>box.height||visual.value&&valueOffset+valueHeight>box.height)throw new Error("office_archive_slide_layout_overflow");
+  if(visual.label)add("Editable visual label",visual.label,box.x,box.y,box.width,labelHeight,colors.accentInk,1350,true);
+  if(visual.value)add("Editable visual value",valueText,box.x,box.y+valueOffset,box.width,box.height-valueOffset,colors.foreground,valueSize,true);
   data.forEach((datum,index)=>{const y=box.y+Math.floor((index+1)*box.height/(data.length+1));add(`Editable visual datum label ${index+1}`,datum.label,box.x,y,Math.floor(box.width*.6),230000,colors.foreground,1200);if(datum.value)add(`Editable visual datum value ${index+1}`,datum.value,box.x+Math.floor(box.width*.62),y,Math.floor(box.width*.38),230000,colors.foreground,1200,true);});
 }
 const themeXml=(accent:string,locale="en-US",fontFamily?:string)=>`${XML}<a:theme xmlns:a="${A}" name="Forma"><a:themeElements><a:clrScheme name="Forma"><a:dk1><a:sysClr val="windowText" lastClr="111827"/></a:dk1><a:lt1><a:sysClr val="window" lastClr="FFFFFF"/></a:lt1><a:dk2><a:srgbClr val="273449"/></a:dk2><a:lt2><a:srgbClr val="F4F5F7"/></a:lt2><a:accent1><a:srgbClr val="${accent}"/></a:accent1>${["10B981","F59E0B","EF4444","8B5CF6","06B6D4"].map((shade,index)=>`<a:accent${index+2}><a:srgbClr val="${shade}"/></a:accent${index+2}>`).join("")}<a:hlink><a:srgbClr val="2563EB"/></a:hlink><a:folHlink><a:srgbClr val="7C3AED"/></a:folHlink></a:clrScheme><a:fontScheme name="Forma"><a:majorFont><a:latin typeface="${escapeXml(fontFamily??"Aptos Display")}"/><a:ea typeface="${/^ja(?:-|$)/i.test(locale)?"Yu Gothic":""}"/><a:cs typeface=""/></a:majorFont><a:minorFont><a:latin typeface="${escapeXml(fontFamily??"Aptos")}"/><a:ea typeface="${/^ja(?:-|$)/i.test(locale)?"Yu Gothic":""}"/><a:cs typeface=""/></a:minorFont></a:fontScheme><a:fmtScheme name="Forma"><a:fillStyleLst>${'<a:solidFill><a:schemeClr val="phClr"/></a:solidFill>'.repeat(3)}</a:fillStyleLst><a:lnStyleLst>${'<a:ln w="12700"><a:solidFill><a:schemeClr val="phClr"/></a:solidFill></a:ln>'.repeat(3)}</a:lnStyleLst><a:effectStyleLst>${"<a:effectStyle><a:effectLst/></a:effectStyle>".repeat(3)}</a:effectStyleLst><a:bgFillStyleLst>${'<a:solidFill><a:schemeClr val="phClr"/></a:solidFill>'.repeat(3)}</a:bgFillStyleLst></a:fmtScheme></a:themeElements></a:theme>`;
