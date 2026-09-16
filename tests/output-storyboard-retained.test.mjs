@@ -4,6 +4,8 @@ import {readFileSync} from 'node:fs';
 import {createHash} from 'node:crypto';
 import {storyboardEvidenceFixture} from './output-storyboard-retained-fixture.mjs';
 import {assertStoryboardJobSchema} from './output-storyboard-job-schema.mjs';
+import {readRetainedWitnessInWorkerd} from './helpers/retained-witness-workerd.mjs';
+import {exportSynthetic} from './helpers/model3d-workerd-snapshot.mjs';
 const {readRetainedOutputStoryboard}=await import('../worker/output-storyboard-retained.ts');
 const {verifyOutputStoryboardCompletion}=await import('../worker/output-storyboard-completion.ts');
 const {model3dNativeCheckpoint,MODEL3D_TERMINAL_RESULT_SQL,MODEL3D_PRIVATE_CHECKPOINT_KEYS}=await import('../worker/output-model3d-terminal.ts');
@@ -277,7 +279,16 @@ test('actual hosted retained GET joins SQLite principal, private completion, ori
   g.sqlite.prepare("INSERT INTO private_content VALUES('content','owner','document-artifact',?,?,?,NULL)").run(f.input.rawContent,now,f.job.expires_at);
   let beforeFinal;
   const env={...g.env,MEDIA:f.env.MEDIA,DB:{prepare(sql){assert.match(sql,/^\s*(WITH|SELECT)\b/i);
-   const p=g.DB.prepare(sql),wrap=values=>({bind(...v){return wrap(v);},async first(){if(sql.includes('expected_events AS'))await beforeFinal?.();return p.bind(...values).first();},async all(){return p.bind(...values).all();}});
+   const p=g.DB.prepare(sql),wrap=values=>({bind(...v){return wrap(v);},async first(){
+    if(sql.includes('expected_events AS')){
+     await beforeFinal?.();
+     const expected=await p.bind(...values).first();
+     const actual=await readRetainedWitnessInWorkerd(exportSynthetic(g.sqlite),{sql,bindings:values});
+     assert.deepEqual(actual,expected===null?null:{...expected},'real D1 preserves exact final witness result');
+     return actual;
+    }
+    return p.bind(...values).first();
+   },async all(){return p.bind(...values).all();}});
    return wrap([]);
   },batch(){throw Error('read attempted mutation');}}};
   const selection={documentId:'doc',artifactId:f.artifactId,revision:0,contentSha256:createHash('sha256').update(f.input.rawContent).digest('hex')};
@@ -288,6 +299,9 @@ test('actual hosted retained GET joins SQLite principal, private completion, ori
   assert.deepEqual(dto.content.frames.map(frame=>[frame.title,frame.body,frame.notes,frame.imagePrompt]),f.artifact.items.map(frame=>[frame.title,frame.body,frame.notes,frame.image_prompt]));
   assert(dto.content.frames.every(frame=>frame.image?.mediaType==='image/png'));
   assert.equal(g.sqlite.prepare('SELECT total_changes() n').get().n,before);
+  beforeFinal=()=>g.sqlite.prepare("UPDATE users SET consent_version=NULL WHERE user_id='owner'").run();
+  assert.equal((await handleNativeRetainedOutputRead(request(),env)).status,404);
+  g.sqlite.prepare("UPDATE users SET consent_version='pilot-2026-08-10' WHERE user_id='owner'").run();
   beforeFinal=()=>g.sqlite.prepare("UPDATE private_content SET content=json_set(content,'$.document_snapshot','changed') WHERE content_id='input'").run();
   assert.equal((await handleNativeRetainedOutputRead(request(),env)).status,404);
  }finally{f.sqlite.close();g.sqlite.close();}

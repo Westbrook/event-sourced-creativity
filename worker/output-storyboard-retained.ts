@@ -1,5 +1,6 @@
 import { recordStoryboardReadFailure, type StoryboardReadStage } from "./storyboard-read-diagnostic.ts";
 import { canonicalJson } from "../src/experiences/compiler.ts";
+import { balancedOutputRetainedConjunction } from "./output-retained-witness.ts";
 import { parseStoryboardOutputContract } from "../src/model/output-storyboard-contract.ts";
 import { readOutputStoryboardCompletion } from "./output-storyboard-completion.ts";
 import { outputSlotFromRow, type OutputScope, type OutputSqlAssertion } from "./output-requirements-ledger.ts";
@@ -106,11 +107,11 @@ export async function readRetainedOutputStoryboard(env:WorkerEnv,input:{
  diagnosticStage="retained_witness";
  const witnessJson=JSON.stringify(assertions.map(a=>a.bindings??[]));
  bounded(witnessJson);
- const witnessSql=assertions.map((a,index)=>{
+ const witnessSql=balancedOutputRetainedConjunction(assertions.map((a,index)=>{
   const parts=a.sql.split("?"),bindings=a.bindings??[];
   if(parts.length!==bindings.length+1)return fail();
   return "("+parts.map((part,position)=>part+(position<bindings.length?`(SELECT json_extract(bindings,'$[${index}][${position}]') FROM storyboard_witness)`:"")).join("")+")";
- }).join(" AND ");
+ }));
  return {assertions,expiresAt:new Date(deadlineMs).toISOString(),witness:{json:witnessJson,sql:witnessSql}};
  }catch(error){throw recordStoryboardReadFailure(error,diagnosticStage);}
 }
