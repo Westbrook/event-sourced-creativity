@@ -1,4 +1,5 @@
 import { ownerMediaNamespace } from "../src/model/media-ownership.ts";
+import { captureBoundedVideoEnvelope } from "./output-video-envelope-bound.ts";
 import { canonicalJson, jsonIssues } from "../src/experiences/compiler.ts";
 import { parseVideoOutputContract } from "../src/model/output-video-contract.ts";
 import { captureOutputVideoAttempt, OUTPUT_VIDEO_TRANSPORT, type OutputVideoRawEnvelope, type OutputVideoHookLease } from "./output-video-execution.ts";
@@ -87,9 +88,10 @@ export async function claimOutputVideoRecoveryLease(env:WorkerEnv,scope:OutputSc
  const assertCurrent=async()=>{options.signal?.throwIfAborted();await env.DB.batch(live().flatMap(a=>outputAssertionStatements(env,a)));options.signal?.throwIfAborted();};
  let retainedCount=0;
  return Object.freeze({token,expiresAt,deadlineMs,lease,attempt,providerRequestId,requestBody:raw.content,contract,assertions:live,assertCurrent,
-  async retainEnvelope(value:OutputVideoRawEnvelope,hook:OutputVideoHookLease){
+  async retainEnvelope(incoming:OutputVideoRawEnvelope,hook:OutputVideoHookLease){
    hook.assertCurrent();await assertCurrent();
-   if(jsonIssues(value).length||value.schemaVersion!==1||!["status","result"].includes(value.phase)||retainedCount>=2
+   const value=captureBoundedVideoEnvelope(incoming,"decodedBodyBase64",OUTPUT_VIDEO_TRANSPORT.maximumEnvelopeBytes,reject);
+   if(value.schemaVersion!==1||!["status","result"].includes(value.phase)||retainedCount>=2
     ||value.clientRequestId!==attempt.clientRequestId||value.requestDigest!==attempt.requestDigest||value.providerRequestId!==providerRequestId
     ||value.requestUrl!==`https://queue.fal.run/bytedance/seedance-2.0/requests/${providerRequestId}`+(value.phase==="status"?"/status":"")
     ||!Number.isSafeInteger(value.decodedByteLength)||value.decodedByteLength<0||value.decodedByteLength>OUTPUT_VIDEO_TRANSPORT.maximumEnvelopeBytes

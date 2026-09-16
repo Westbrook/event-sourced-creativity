@@ -109,7 +109,22 @@ test('stale callback or release cannot overwrite new recovery, and a late source
  }finally{f.sqlite.close();}
 });
 
-test('real GET-only recovery and private callbacks qualify measured completion while the original remains failed',async()=>{
+test('recovery envelope exact cap and hostile inputs preserve custody, failure identity and original paid ledger',async()=>{
+ const {OUTPUT_VIDEO_TRANSPORT}=await import('../worker/output-video-execution.ts');let getters=0;
+ const cap=OUTPUT_VIDEO_TRANSPORT.maximumEnvelopeBytes;
+ const bytes=(e,count)=>{const raw=Buffer.alloc(count,120);Object.assign(e,{decodedByteLength:count,decodedBodySha256:sha(raw),decodedBodyBase64:raw.toString('base64')});};
+ for(const mutate of [null,e=>bytes(e,cap+1),e=>{e.decodedBodyBase64='!bad!';},e=>{e.decodedBodyBase64='YQ';e.decodedByteLength=1;},e=>{e.decodedBodySha256='0'.repeat(64);},e=>{e.clientRequestId='foreign';},e=>{e.requestDigest='0'.repeat(64);},e=>{e.providerRequestId='foreign';},e=>{e.decodedByteLength++;},e=>{e.extra='x'.repeat(8193);},e=>{e.extra=e;},e=>{Object.setPrototypeOf(e,{foreign:true});},e=>{e[Symbol('extra')]=1;},e=>{Object.defineProperty(e,'hidden',{value:1});},e=>{Object.defineProperty(e,'__proto__',{value:1,enumerable:true});},e=>{Object.defineProperty(e,'decodedBodyBase64',{enumerable:true,get(){getters++;throw Error('body getter');}});},e=>{Object.defineProperty(e,'extra',{enumerable:true,get(){getters++;throw Error('extra getter');}});},e=>{e.phase='submission';},e=>{e.requestUrl='https://fal.media/other';}]){
+  const f=await fixture();try{
+   const lease=await f.claim(),e=envelope(f),calls=f.sqlite.prepare('SELECT * FROM output_provider_calls ORDER BY call_key').all(),before=f.sqlite.prepare('SELECT * FROM document_jobs').get(),count=f.sqlite.prepare('SELECT COUNT(*) n FROM private_content').get().n;
+   bytes(e,mutate?7000:cap);if(mutate)mutate(e);
+   if(mutate){await assert.rejects(lease.retainEnvelope(e,hook()));assert.equal(f.sqlite.prepare('SELECT COUNT(*) n FROM private_content').get().n,count);assert.deepEqual(f.sqlite.prepare('SELECT * FROM document_jobs').get(),before);}
+   else{const saved=await lease.retainEnvelope(e,hook());const raw=JSON.parse(f.sqlite.prepare('SELECT content FROM private_content WHERE content_id=?').get(saved.responseRef).content);assert.deepEqual(raw,e);assert.equal(raw.decodedByteLength,cap);}
+   assert.equal(getters,0);assert.deepEqual(f.sqlite.prepare('SELECT * FROM output_provider_calls ORDER BY call_key').all(),calls);
+   const bad=envelope(f);bad.extra='x'.repeat(8193);await assert.rejects(lease.retainEnvelope(bad,hook()),error=>error.code==='output_video_recovery_unavailable'&&error.status===409);
+  }finally{f.sqlite.close();}
+ }
+});
+test('real GET-only recovery and large private callbacks qualify measured completion while the original remains failed',async()=>{
  const {readOriginalOutputVideo}=await import('../worker/output-video-execution.ts');
  const {verifyOutputVideoRecoveryCompletion}=await import('../worker/output-video-completion.ts');
  const {outputAssertionStatements}=await import('../worker/output-requirements-ledger.ts');
@@ -118,14 +133,16 @@ test('real GET-only recovery and private callbacks qualify measured completion w
   const lease=await f.claim();
   globalThis.fetch=async(url,init)=>{
    requests.push({url:String(url),method:init?.method??'GET'});
-   if(String(url).endsWith('/status'))return Response.json({request_id:'video_original',status:'COMPLETED'});
+   if(String(url).endsWith('/status'))return Response.json({request_id:'video_original',status:'COMPLETED',logs:'x'.repeat(7000)});
    if(String(url)==='https://fal.media/recovered.mp4')return new Response(f.bytes,{headers:{'content-type':'video/mp4'}});
-   return Response.json({request_id:'video_original',video:{url:'https://fal.media/recovered.mp4',content_type:'video/mp4',file_size:f.bytes.length}});
+   return Response.json({request_id:'video_original',logs:'x'.repeat(7000),video:{url:'https://fal.media/recovered.mp4',content_type:'video/mp4',file_size:f.bytes.length}});
   };
   const result=await readOriginalOutputVideo({...f.env,FAL_KEY:'offline-test-key'},{contract:lease.contract,requestBody:lease.requestBody,clientRequestId:lease.attempt.clientRequestId,requestDigest:lease.attempt.requestDigest,providerRequestId:lease.providerRequestId},{
    onBeforeRead:async(hook)=>{hook.assertCurrent();await lease.assertCurrent();hook.assertCurrent();},onEnvelope:lease.retainEnvelope,
   });
   assert.equal(result.status,'completed');assert.deepEqual(result.bytes,f.bytes);assert.equal(requests.length,3);assert(requests.every(r=>r.method==='GET'));
+  const saved=JSON.parse(f.sqlite.prepare('SELECT result_json FROM document_jobs').get().result_json).outputVideoRecoveryEnvelopes;
+  assert.equal(saved.length,2);for(const entry of saved){const raw=JSON.parse(f.sqlite.prepare('SELECT content FROM private_content WHERE content_id=?').get(entry.responseRef).content);assert.ok(raw.decodedByteLength>6144);assert.equal(JSON.parse(Buffer.from(raw.decodedBodyBase64,'base64').toString()).logs.length,7000);}
   // Financial settlement is an explicit fixture setup, not exercised or claimed
   // by this read/custody test. The real completion verifier requires it.
   await assert.rejects(verifyOutputVideoRecoveryCompletion(lease,f.env,f.scope,f.slot,f.job,f.settings,f.artifactId,f.artifact,{deadlineMs:lease.deadlineMs}));

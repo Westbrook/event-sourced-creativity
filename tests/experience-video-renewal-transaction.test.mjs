@@ -87,6 +87,54 @@ test('late Video authorization evidence without head change blocks renewal atomi
   assert.equal(s.sqlite.prepare('SELECT COUNT(*) AS n FROM output_plan_revisions').get().n,before);s.unpaid();
 });
 
+// Append to experience-video-renewal-transaction.test.mjs: actual HTTP,
+// source/custody readers and final SQLite disclosure guards remain in use.
+const {outputExperienceCommands}=await import('../worker/output-requirements-api.ts');
+test('Video prepare omits only redundant final reload; renewal and replay retain current custody reads',async t=>{
+ const s=await fixture(t),info=console.info;let cycles=0;
+ console.info=(name,detail)=>{if(name==='video_reference_prepare'&&detail?.stage==='context_read')cycles++;};
+ try{
+  const response=await s.send(s.body);assert.equal(response.status,200,await response.clone().text());
+  assert.equal(cycles,4,'initial, post-confirm, internal native preflight and post-preflight reads; no fifth duplicate');
+  const first=await response.json();assert.equal(first.permitted.authorize,true);s.unpaid();
+  cycles=0;const replay=await s.send(s.body);assert.equal(replay.status,200,await replay.clone().text());
+  assert.equal(cycles,1,'idempotent preparation replay performs its own fresh read');
+  assert.equal((await replay.json()).preflight.id,first.preflight.id);s.unpaid();
+  cycles=0;const passive=await s.send();assert.equal(passive.status,200);assert.equal(cycles,1,'GET remains a fresh read');
+ }finally{console.info=info;}
+});
+test('Video post-preflight reload still rejects a changed original image before disclosure',async t=>{
+ const s=await fixture(t),execute=outputExperienceCommands.execute,disclose=outputExperienceCommands.disclose;
+ let changed=false,disclosures=0;
+ outputExperienceCommands.execute=async(...args)=>{
+  const result=await execute(...args);
+  if(args[1].action==='preflight'&&!(result instanceof Response)){
+   changed=true;const item=[...s.media.values()][0];item.bytes=new Uint8Array([1,2,3]);
+  }
+  return result;
+ };
+ outputExperienceCommands.disclose=(...args)=>{disclosures++;return disclose(...args);};
+ try{const response=await s.send(s.body);assert.equal(changed,true);assert.notEqual(response.status,200);assert.equal(disclosures,0);s.unpaid();}
+ finally{outputExperienceCommands.execute=execute;outputExperienceCommands.disclose=disclose;}
+});
+for(const mutation of ['authority','source-private-body','rights-private-body','retention','head','command-index'])test(`Video final disclosure still rejects late ${mutation} mutation`,async t=>{
+ const s=await fixture(t),disclose=outputExperienceCommands.disclose;let entered=false;
+ outputExperienceCommands.disclose=async(...args)=>{
+  entered=true;
+  if(mutation==='authority')s.sqlite.prepare("UPDATE users SET consent_version='revoked' WHERE user_id=?").run(owner);
+  if(mutation==='source-private-body'||mutation==='rights-private-body'){
+   const type=mutation==='rights-private-body'?'RightsAsserted':'BlockCreated';
+   assert.ok(s.sqlite.prepare("UPDATE event_private_payloads SET private_json=json_set(private_json,'$.rights_class','restricted') WHERE private_event_id IN(SELECT event_id FROM events WHERE type=?)").run(type).changes>0);
+  }
+  if(mutation==='retention')s.sqlite.prepare("UPDATE private_content SET expires_at='2000-01-01T00:00:00.000Z' WHERE content_id=?").run(s.plan.draftId);
+  if(mutation==='head')await runtime.appendEvents(s.env,[runtime.makeEvent(stream,0,'worker:policy','test','late-source-head','ContextCompiled',{document_id:s.plan.documentId,context_hash:'late-head',snapshot:{facts:[]}})]);
+  if(mutation==='command-index')assert.ok(s.sqlite.prepare("UPDATE output_commands SET request_digest='changed' WHERE action='preflight'").run().changes>0);
+  return disclose(...args);
+ };
+ try{const response=await s.send(s.body);assert.equal(entered,true);assert.notEqual(response.status,200);assert.equal(Object.hasOwn(await response.json(),'preflight'),false);s.unpaid();}
+ finally{outputExperienceCommands.disclose=disclose;}
+});
+
 test('interrupted child preflight resumes the same Video confirmation without repeating Save',async t=>{
   const s=await fixture(t),preflight=s.bridge.preflight;let interrupted=false;
   const before=s.sqlite.prepare('SELECT COUNT(*) AS n FROM output_plan_revisions').get().n;

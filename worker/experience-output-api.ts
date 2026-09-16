@@ -754,7 +754,12 @@ export async function handleExperienceOutput(request: Request, env: WorkerEnv, e
       recovered = outcome.status;
     }
     diagnosticStage = "final_load";
-    const latest = action ? await load(request, env, draftId, "read") : loaded; if (latest instanceof Response) return latest;
+    // Video preparation already reloads after every committed free stage.
+    // Reuse only this request's final post-commit read; final disclosure still
+    // rechecks its exact source/head, private custody, deadline and authority.
+    // Authorize/run/recovery must retain their separate final read.
+    const reuseVideoPrepareRead = action === "prepare" && loaded.binding.output === "video";
+    const latest = action && !reuseVideoPrepareRead ? await load(request, env, draftId, "read") : loaded; if (latest instanceof Response) return latest;
     diagnosticStage = "final_state";
     const value = await state(latest);
     if (recovered) value.recovery = recovered;

@@ -1,4 +1,5 @@
 import { MAX_STORYBOARD_ENVELOPE_BYTES } from "./output-storyboard-envelope.ts";
+import { captureBoundedVideoEnvelope } from "./output-video-envelope-bound.ts";
 import type { VideoPlannerRawEnvelope } from "./output-video-planner-envelope.ts";
 import { canonicalJson, freeze, jsonIssues } from "../src/experiences/compiler.ts";
 import { preparePrivateContent } from "./private-content-storage.ts";
@@ -77,8 +78,7 @@ export async function retainOutputVideoRequestCheckpoint(env: WorkerEnv, scope: 
 export async function retainOutputVideoMediaEnvelope(env: WorkerEnv, scope: OutputScope, slot: OutputOperationSlot, job: DocumentJobRow,
   value: OutputVideoRawEnvelope, lease: OutputVideoHookLease) {
   current(scope, slot, job, lease);
-  if (jsonIssues(value).length) fail();
-  const envelope = freeze(structuredClone(value)), result = JSON.parse(job.result_json ?? "{}"), checkpoint = result.outputVideoMediaCheckpoint;
+  const envelope = captureBoundedVideoEnvelope(value, "decodedBodyBase64", OUTPUT_VIDEO_TRANSPORT.maximumEnvelopeBytes, fail), result = JSON.parse(job.result_json ?? "{}"), checkpoint = result.outputVideoMediaCheckpoint;
   const envelopes = result.outputVideoMediaEnvelopes ?? [], count = envelopes.length;
   if (!checkpoint || checkpoint.stage !== "video:initial" || checkpoint.clientRequestId !== envelope.clientRequestId || checkpoint.requestDigest !== envelope.requestDigest
     || envelope.schemaVersion !== 1 || !["submission", "status", "result"].includes(envelope.phase) || !Array.isArray(envelopes)
@@ -106,8 +106,7 @@ export async function retainOutputVideoMediaEnvelope(env: WorkerEnv, scope: Outp
 export async function retainOutputVideoPlannerEnvelope(env: WorkerEnv, scope: OutputScope, slot: OutputOperationSlot, job: DocumentJobRow,
   value: VideoPlannerRawEnvelope, lease: OutputVideoHookLease) {
   current(scope, slot, job, lease);
-  if (jsonIssues(value).length) fail();
-  const envelope = freeze(structuredClone(value)), checkpoint = JSON.parse(job.result_json ?? "{}").outputVideoPlannerCheckpoint;
+  const envelope = captureBoundedVideoEnvelope(value, "bodyBase64", MAX_STORYBOARD_ENVELOPE_BYTES, fail), checkpoint = JSON.parse(job.result_json ?? "{}").outputVideoPlannerCheckpoint;
   if (!checkpoint || envelope.version !== "output-video-planner-envelope-v1" || envelope.provider !== "openai" || envelope.model !== checkpoint.model
     || envelope.clientRequestId !== checkpoint.clientRequestId || envelope.requestDigest !== checkpoint.requestDigest
     || !Number.isSafeInteger(envelope.retainedBytes) || envelope.retainedBytes < 0 || envelope.retainedBytes > MAX_STORYBOARD_ENVELOPE_BYTES

@@ -7,7 +7,10 @@ registerOutputSourceImports();
 const {createVideoOutputContract}=await import('../src/model/output-video-contract.ts');
 const {prepareVideoPlannerRequest}=await import('../worker/openai-adapter.ts');
 const {captureOutputVideoAttempt}=await import('../worker/output-video-execution.ts');
-const {retainOutputVideoRequestCheckpoint,retainOutputVideoMediaEnvelope}=await import('../worker/output-video-checkpoint.ts');
+const {retainOutputVideoRequestCheckpoint,retainOutputVideoMediaEnvelope,retainOutputVideoPlannerEnvelope}=await import('../worker/output-video-checkpoint.ts');
+const {captureVideoPlannerEnvelope}=await import('../worker/output-video-planner-envelope.ts');
+const {MAX_STORYBOARD_ENVELOPE_BYTES}=await import('../worker/output-storyboard-envelope.ts');
+const {OUTPUT_VIDEO_TRANSPORT}=await import('../worker/output-video-execution.ts');
 const hash=raw=>createHash('sha256').update(raw).digest('hex');
 const contract=createVideoOutputContract({source:{draftId:'experience-draft-'+'a'.repeat(64),draftHash:'sha256:'+'b'.repeat(64),releaseHash:'sha256:'+'c'.repeat(64),requestHash:'sha256:'+'d'.repeat(64),sourceBindingHash:'sha256:'+'e'.repeat(64)},reference:{version:1,sourceProjectId:'p',sourceDocumentId:'d',sourceBlockId:'b',referenceId:'r',sha256:'f'.repeat(64),permissionAttestation:'i-own-or-have-permission'},frameSize:'1280x720'});
 const planner=await prepareVideoPlannerRequest({},'owner',{documentTitle:'Pan',snapshot:{facts:[]},options:{productionMode:'manual',itemCount:1,videoSeconds:4,videoSize:'1280x720',videoAudioMode:'silent'}},contract);
@@ -29,6 +32,55 @@ function fixture(){
 }
 function response(phase='submission',raw=Buffer.from('{"request_id":"original"}')){return{schemaVersion:1,phase,clientRequestId:media.clientRequestId,requestDigest:media.requestDigest,providerRequestId:phase==='submission'?null:'original',requestUrl:phase==='submission'?'https://queue.fal.run/'+media.model:'https://queue.fal.run/'+media.model+'/requests/original/'+phase,httpStatus:200,headers:[['content-type','application/json']],decodedByteLength:raw.length,decodedBodySha256:hash(raw),decodedBodyBase64:raw.toString('base64')};}
 
+test('actual captured planner and media envelopes above the generic JSON string limit retain exact bytes',async()=>{
+ const f=fixture();try{
+  await f.request(planner.attempt);
+  const body=JSON.stringify({id:'resp_original',model:planner.attempt.model,status:'completed',output:[{type:'message',role:'assistant',content:[{type:'output_text',text:JSON.stringify({title:'Pan',summary:'A still subject.',content_markdown:'One four-second silent pan.',items:[{title:'Pan',body:'Motion '.repeat(1100),notes:'Silent',image_prompt:'Original subject.',context_group_ids:[]}]})}]}],usage:{input_tokens:100,output_tokens:1800,total_tokens:1900}});
+  const captured=await captureVideoPlannerEnvelope(new Response(body),{clientRequestId:planner.attempt.clientRequestId,requestDigest:planner.requestDigest,model:planner.attempt.model});
+  assert.ok(captured.retainedBytes>6144&&captured.retainedBytes<MAX_STORYBOARD_ENVELOPE_BYTES);
+  await retainOutputVideoPlannerEnvelope(f.env,f.scope,f.slot,f.job,captured,f.lease);
+  const cp=JSON.parse(f.job.result_json),raw=f.sqlite.prepare('SELECT content FROM private_content WHERE content_id=?').get(cp.outputVideoPlannerEnvelope.responseRef).content;
+  assert.deepEqual(JSON.parse(raw),captured);assert.equal(Buffer.from(JSON.parse(raw).bodyBase64,'base64').toString(),body);
+  await f.request(media);const envelope=response('submission',Buffer.from(JSON.stringify({request_id:'original',logs:'x'.repeat(7000)})));
+  await f.envelope(envelope);const mediaCp=JSON.parse(f.job.result_json).outputVideoMediaEnvelopes[0];
+  assert.deepEqual(JSON.parse(f.sqlite.prepare('SELECT content FROM private_content WHERE content_id=?').get(mediaCp.responseRef).content),envelope);
+  assert.equal(f.sqlite.prepare('SELECT COUNT(*) AS count FROM output_provider_calls WHERE used_microusd IS NOT NULL').get().count,0);
+ }finally{f.close();}
+});
+test('dedicated envelope byte bounds preserve hostile JSON, base64, identity and byte-count rejection',async()=>{
+ let getterCalls=0;
+ for(const kind of ['planner','media'])for(const mutate of [
+  (e,key,cap)=>{e[key]=Buffer.alloc(cap+1,120).toString('base64');if(key==='bodyBase64')e.retainedBytes=cap+1;else e.decodedByteLength=cap+1;},
+  (e,key)=>{e[key]='!not-base64!';},
+  (e,key)=>{e[key]='YQ';if(key==='bodyBase64')e.retainedBytes=1;else e.decodedByteLength=1;},
+  e=>{e.clientRequestId='foreign';},e=>{e.requestDigest='0'.repeat(64);},
+  (e,key)=>{if(key==='bodyBase64')e.retainedBytes++;else e.decodedByteLength++;},
+  (e,key)=>{Object.defineProperty(e,key,{enumerable:true,get(){getterCalls++;throw Error('body getter invoked');}});},
+  e=>{Object.defineProperty(e,'extra',{enumerable:true,get(){getterCalls++;throw Error('extra getter invoked');}});},
+  e=>{Object.defineProperty(e,'hidden',{value:1});},e=>{e[Symbol('extra')]=1;},
+  e=>{e.extra=e;},e=>{Object.setPrototypeOf(e,{foreign:true});},e=>{e.extra='x'.repeat(8193);},
+  e=>{Object.defineProperty(e,'__proto__',{value:'bad',enumerable:true});},
+ ]){
+  const f=fixture();try{
+   await f.request(kind==='planner'?planner.attempt:media);
+   const captured=kind==='planner'?await captureVideoPlannerEnvelope(Response.json({id:'resp_original'}),{clientRequestId:planner.attempt.clientRequestId,requestDigest:planner.requestDigest,model:planner.attempt.model}):response();
+   const e=structuredClone(captured),key=kind==='planner'?'bodyBase64':'decodedBodyBase64',cap=kind==='planner'?MAX_STORYBOARD_ENVELOPE_BYTES:OUTPUT_VIDEO_TRANSPORT.maximumEnvelopeBytes;
+   mutate(e,key,cap);const count=f.count(),before=f.job.result_json;
+   await assert.rejects(kind==='planner'?retainOutputVideoPlannerEnvelope(f.env,f.scope,f.slot,f.job,e,f.lease):f.envelope(e));
+   assert.equal(f.count(),count);assert.equal(f.job.result_json,before);
+   assert.equal(getterCalls,0,'descriptor validation never invokes getters');
+  }finally{f.close();}
+ }
+});
+test('planner and media exact transport caps retain bounded original bytes',async()=>{
+ for(const kind of ['planner','media']){const f=fixture();try{
+  await f.request(kind==='planner'?planner.attempt:media);
+  const cap=kind==='planner'?MAX_STORYBOARD_ENVELOPE_BYTES:OUTPUT_VIDEO_TRANSPORT.maximumEnvelopeBytes;
+  const bytes=Buffer.alloc(cap,120),envelope=kind==='planner'?await captureVideoPlannerEnvelope(new Response(bytes),{clientRequestId:planner.attempt.clientRequestId,requestDigest:planner.requestDigest,model:planner.attempt.model}):response('submission',bytes);
+  if(kind==='planner'){assert.equal(envelope.retainedBytes,cap);assert.equal(envelope.complete,true);await retainOutputVideoPlannerEnvelope(f.env,f.scope,f.slot,f.job,envelope,f.lease);}else await f.envelope(envelope);
+  assert.equal(f.count(),2);
+ }finally{f.close();}}
+});
 test('real private inserts bind exact planner/media wire and original decoded envelopes atomically without cleanup',async()=>{
  const f=fixture();try{
   f.sqlite.prepare('INSERT INTO private_content VALUES(?,?,?,?,?,?,NULL)').run('expired-other','owner','prompt','keep','2020-01-01','2020-01-02');
