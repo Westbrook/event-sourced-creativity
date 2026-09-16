@@ -66,7 +66,8 @@ export async function executeOutputVideoRecovery(env:WorkerEnv,user:PilotUser,jo
  const lease=await claimOutputVideoRecoveryLease(env,scope,slot,job,options);
  let completionJson:string|undefined,completionAssertions:OutputSqlAssertion[]=[];
  const live=()=>[...lease.assertions(),...completionAssertions];
- const privateEnv=guardOutputPrivateWrites(env,scope,slot,async()=>live(),{retentionPolicy:binding.retentionPolicy,videoCompletionJson:()=>completionJson});
+ const privateEnv=guardOutputPrivateWrites(env,scope,slot,async()=>live(),{retentionPolicy:binding.retentionPolicy,videoCompletionJson:()=>completionJson,
+  videoRecoveryStorage:{token:lease.token,storageKey:lease.lease.storageKey,signal:AbortSignal.any([...(options.signal?[options.signal]:[]),AbortSignal.timeout(Math.max(1,lease.deadlineMs-Date.now()))])}});
  const update=async(patch:Record<string,unknown>)=>{
   await lease.assertCurrent();await env.DB.batch([...live().flatMap(a=>outputAssertionStatements(env,a)),env.DB.prepare("UPDATE document_jobs SET result_json=json_patch(result_json,?) WHERE job_id=? AND owner_id=?").bind(JSON.stringify(patch),job.job_id,scope.actorUserId)]);
  };

@@ -66,6 +66,70 @@ test('publication rollback leaves paid evidence intact and cannot fabricate a co
  }finally{f.close();}
 });
 
+async function retainedUnpublishedVideo(f){
+ const batch=f.DB.batch;
+ f.DB.batch=async statements=>{if(statements.some(s=>s.sql.includes('INSERT INTO event_write_stage')&&s.bindings.includes('DocumentRenderCompleted')))throw Error('retained before publication');return batch(statements);};
+ try{await assert.rejects(f.run(),/retained before publication/);}finally{f.DB.batch=batch;}
+ return f.sqlite.prepare('SELECT * FROM output_native_storage_writes').get();
+}
+
+test('Video recovery reuses exact acknowledged unpublished original bytes without another storage PUT or paid call',async()=>{
+ const f=await videoRecoveryFixture();f.requests=[];globalThis.fetch=transport(f);
+ try{
+  const receipt=await retainedUnpublishedVideo(f);assert.equal(receipt.status,'written');assert.equal(receipt.write_acknowledged,1);
+  const budgets=f.sqlite.prepare('SELECT * FROM cost_budget_counters ORDER BY scope').all();
+  f.env.MEDIA.put=()=>{throw Error('must reuse original bytes without PUT');};
+  assert.equal((await f.run()).status,'completed');assert(f.requests.every(r=>r.method==='GET'));
+  assert.equal(f.sqlite.prepare('SELECT COUNT(*) n FROM output_provider_calls').get().n,2);
+  assert.equal(f.sqlite.prepare('SELECT COUNT(*) n FROM output_native_storage_writes').get().n,1);
+  assert.deepEqual(f.sqlite.prepare('SELECT * FROM cost_budget_counters ORDER BY scope').all(),budgets);
+ }finally{f.close();}
+});
+
+for(const mutation of ['deleted','cleanup_pending','writing','ack','published','hash','owner','artifact','native_slot','bytes','cleanup_during_read','cancel_during_read'])test(`Video storage adoption refuses ${mutation} without overwrite or completion`,async()=>{
+ const f=await videoRecoveryFixture();f.requests=[];globalThis.fetch=transport(f);
+ try{
+  const receipt=await retainedUnpublishedVideo(f),item=f.media.get(receipt.storage_key);
+  if(['deleted','cleanup_pending','writing'].includes(mutation))f.sqlite.prepare('UPDATE output_native_storage_writes SET status=?').run(mutation);
+  if(mutation==='ack')f.sqlite.exec('UPDATE output_native_storage_writes SET write_acknowledged=0');
+  if(mutation==='published')f.sqlite.exec("UPDATE output_native_storage_writes SET publication_event_id=(SELECT event_id FROM events LIMIT 1)");
+  if(mutation==='hash')f.sqlite.exec("UPDATE output_native_storage_writes SET content_sha256='changed'");
+  if(mutation==='owner')item.metadata.ownerId='foreign';
+  if(mutation==='artifact')item.metadata.artifactId='foreign';
+  if(mutation==='native_slot')item.metadata.outputSlotId='foreign';
+  if(mutation==='bytes')item.bytes[0]^=1;
+  if(mutation.endsWith('during_read')){
+   const get=f.env.MEDIA.get.bind(f.env.MEDIA);let reads=0;
+   f.env.MEDIA.get=async key=>{const value=await get(key);if(++reads===2){
+    if(mutation==='cleanup_during_read')f.sqlite.exec("UPDATE output_native_storage_writes SET status='cleanup_pending'");
+    else f.sqlite.exec("UPDATE document_jobs SET status='canceled'");
+   }return value;};
+  }
+  f.env.MEDIA.put=()=>{throw Error('unsafe overwrite');};
+  await assert.rejects(f.run());
+  assert.equal(f.sqlite.prepare("SELECT COUNT(*) n FROM events WHERE type='DocumentRenderCompleted'").get().n,0);
+  assert.equal(f.sqlite.prepare('SELECT COUNT(*) n FROM output_provider_calls').get().n,2);
+ }finally{f.close();}
+});
+
+for(const stalled of ['get','stream'])test(`Video adoption aborts stalled ${stalled} without overwriting or publishing`,async()=>{
+ const f=await videoRecoveryFixture();f.requests=[];globalThis.fetch=transport(f);
+ try{
+  const receipt=await retainedUnpublishedVideo(f),controller=new AbortController(),get=f.env.MEDIA.get.bind(f.env.MEDIA);let reads=0,canceled=false,release;
+  f.env.MEDIA.put=()=>{throw Error('must not PUT');};
+  f.env.MEDIA.get=async key=>{
+   const value=await get(key);if(++reads!==2)return value;
+   value.body=new ReadableStream({cancel(){canceled=true;}});
+   queueMicrotask(()=>controller.abort(Error('test storage abort')));
+   return stalled==='get'?new Promise(resolve=>{release=()=>resolve(value);}):value;
+  };
+  await assert.rejects(f.run(controller.signal),/test storage abort/);
+  release?.();await new Promise(resolve=>setImmediate(resolve));assert(canceled);
+  assert.equal(f.sqlite.prepare('SELECT status FROM output_native_storage_writes WHERE storage_key=?').get(receipt.storage_key).status,'written');
+  assert.equal(f.sqlite.prepare("SELECT COUNT(*) n FROM events WHERE type='DocumentRenderCompleted'").get().n,0);
+ }finally{f.close();}
+});
+
 for(const mutation of ['cancel','source','abort'])test(`recovery refuses ${mutation} during the media read without publication or another paid call`,async()=>{
  const f=await videoRecoveryFixture(),controller=new AbortController();f.requests=[];
  f.sqlite.exec('CREATE TABLE recovery_source(current INTEGER);INSERT INTO recovery_source VALUES(1)');

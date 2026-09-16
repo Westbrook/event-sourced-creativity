@@ -8,9 +8,12 @@ const privateWrite = (sql: string) => /\b(?:INSERT(?:\s+OR\s+\w+)?\s+INTO|UPDATE
   || /\bUPDATE\s+document_jobs\s+SET\b[\s\S]*(?:result_json|request_json|lease_expires_at)/iu.test(sql);
 
 /** Existing writers run unchanged, with the same transaction guarding their private writes. */
-export function guardOutputPrivateWrites(env: WorkerEnv, scope: OutputScope, slot: OutputOperationSlot, assertions: () => Promise<OutputSqlAssertion[]>,options:{retentionPolicy?:Record<string,unknown>|null;storyboardCompletionJson?:()=>string|undefined;videoCompletionJson?:()=>string|undefined;model3dCompletionJson?:()=>string|undefined;audioRecoveryStorage?:{token:string;storageKey:string;signal:AbortSignal};onStorageStage?:(stage:"storage_reserve"|"storage_put"|"storage_ack")=>void}={}): WorkerEnv {
+export function guardOutputPrivateWrites(env: WorkerEnv, scope: OutputScope, slot: OutputOperationSlot, assertions: () => Promise<OutputSqlAssertion[]>,options:{retentionPolicy?:Record<string,unknown>|null;storyboardCompletionJson?:()=>string|undefined;videoCompletionJson?:()=>string|undefined;model3dCompletionJson?:()=>string|undefined;audioRecoveryStorage?:{token:string;storageKey:string;signal:AbortSignal};videoRecoveryStorage?:{token:string;storageKey:string;signal:AbortSignal};onStorageStage?:(stage:"storage_reserve"|"storage_put"|"storage_ack")=>void}={}): WorkerEnv {
   const nativeKeys = new Map<string, string>();
   const audioRecoveryStorage=options.audioRecoveryStorage?Object.freeze({...options.audioRecoveryStorage}):null;
+  const videoRecoveryStorage=options.videoRecoveryStorage?Object.freeze({...options.videoRecoveryStorage}):null;
+  const originalRecoveryStorage=audioRecoveryStorage??videoRecoveryStorage;
+  const recoveryKind=audioRecoveryStorage?"audio":"video",recoveryField=audioRecoveryStorage?"outputAudioRecovery":"outputVideoRecovery";
   const onStorageStage=options.onStorageStage;
   // The private-content INSERT also checks this exact policy version in its
   // transaction. Reusing one request-local read never bypasses a policy change.
@@ -292,16 +295,16 @@ export function guardOutputPrivateWrites(env: WorkerEnv, scope: OutputScope, slo
         const now = new Date().toISOString();
         nativeKeys.set(storageKey,hash);
         onStorageStage?.("storage_reserve");
-        // Only an exact original Audio lease may adopt acknowledged,
+        // Only an exact original Audio or Video lease may adopt acknowledged,
         // unpublished same bytes. Deleted receipts are never revived: an old
         // cleanup worker may still hold their storage identity.
-        const reclaim=audioRecoveryStorage&&audioRecoveryStorage.storageKey===storageKey&&scope.kind==="personal"
+        const reclaim=originalRecoveryStorage&&originalRecoveryStorage.storageKey===storageKey&&scope.kind==="personal"
           &&scope.actorUserId===scope.ownerUserId;
         const audioStorageProof=reclaim?outputAssertionStatements(env,{sql:`EXISTS(SELECT 1 FROM document_jobs WHERE job_id=? AND owner_id=? AND document_id=? AND status='failed'
-          AND kind='render_document' AND source_surface='outputs' AND json_extract(request_json,'$.artifactKind')='audio'
-          AND json_extract(result_json,'$.outputAudioRecovery.version')='output-audio-recovery-v1'
-          AND json_extract(result_json,'$.outputAudioRecovery.token')=? AND json_extract(result_json,'$.outputAudioRecovery.storageKey')=?
-          AND json_extract(result_json,'$.outputAudioRecovery.expiresAt')>strftime('%Y-%m-%dT%H:%M:%fZ','now'))`,bindings:[slot.jobId,scope.actorUserId,scope.documentId,audioRecoveryStorage.token,storageKey]}):[];
+          AND kind='render_document' AND source_surface='outputs' AND json_extract(request_json,'$.artifactKind')='${recoveryKind}'
+          AND json_extract(result_json,'$.${recoveryField}.version')='output-${recoveryKind}-recovery-v1'
+          AND json_extract(result_json,'$.${recoveryField}.token')=? AND json_extract(result_json,'$.${recoveryField}.storageKey')=?
+          AND json_extract(result_json,'$.${recoveryField}.expiresAt')>strftime('%Y-%m-%dT%H:%M:%fZ','now'))`,bindings:[slot.jobId,scope.actorUserId,scope.documentId,originalRecoveryStorage.token,storageKey]}):[];
         if(reclaim){
           const prior=await env.DB.prepare("SELECT content_sha256,status,write_acknowledged,publication_event_id FROM output_native_storage_writes WHERE scope_key=? AND slot_id=? AND storage_key=?")
             .bind(scope.key,slot.slotId,storageKey).first<{content_sha256:string;status:string;write_acknowledged:number;publication_event_id:string|null}>();
@@ -309,16 +312,26 @@ export function guardOutputPrivateWrites(env: WorkerEnv, scope: OutputScope, slo
             if(prior.content_sha256!==hash||prior.write_acknowledged!==1||prior.publication_event_id!==null)throw new OutputConflictError("output_native_storage_recovery_conflict",409);
             const retained=()=>[...audioStorageProof,...outputAssertionStatements(env,{sql:"EXISTS(SELECT 1 FROM output_native_storage_writes WHERE scope_key=? AND slot_id=? AND storage_key=? AND content_sha256=? AND status='written' AND write_acknowledged=1 AND publication_event_id IS NULL)",bindings:[scope.key,slot.slotId,storageKey,hash]})];
             await guardedBatch(retained(),true);
-            const existing=await target.get(storageKey),metadata=existing?.customMetadata;
+            const signal=originalRecoveryStorage!.signal;
+            let rejectRead!:(reason:unknown)=>void;
+            const interrupted=new Promise<never>((_,reject)=>{rejectRead=reject;});
+            const abortRead=()=>rejectRead(signal.reason??Error("output_native_storage_recovery_interrupted"));
+            signal.addEventListener("abort",abortRead,{once:true});
+            let readFinished=false;
+            let releaseBody=()=>{};
+            try{
+            signal.throwIfAborted();
+            const existing=await Promise.race([target.get(storageKey).then(value=>{if(value){releaseBody=()=>{void value.body.cancel().catch(()=>{});};if(readFinished)releaseBody();}return value;}),interrupted]),metadata=existing?.customMetadata;
             if(!existing||existing.size!==bytes.length||metadata?.ownerId!==scope.ownerUserId||metadata?.sha256!==hash||metadata?.artifactId!==options?.customMetadata?.artifactId
               ||metadata?.outputNativeStorage!=="1"||metadata?.outputScopeKey!==scope.key||metadata?.outputSlotId!==slot.slotId||metadata?.outputSha256!==hash)
-              throw new OutputConflictError("output_native_storage_recovery_conflict",409);
+              {if(existing)void existing.body.cancel().catch(()=>{});throw new OutputConflictError("output_native_storage_recovery_conflict",409);}
             const reader=existing.body.getReader();let offset=0,done=false;
-            try{for(;;){audioRecoveryStorage!.signal.throwIfAborted();const chunk=await reader.read();audioRecoveryStorage!.signal.throwIfAborted();if(chunk.done){done=true;break;}if(!(chunk.value instanceof Uint8Array)||!chunk.value.length||offset+chunk.value.length>bytes.length||chunk.value.some((byte:number,index:number)=>byte!==bytes[offset+index]))throw new OutputConflictError("output_native_storage_recovery_conflict",409);offset+=chunk.value.length;}}
+            try{for(;;){signal.throwIfAborted();const chunk=await Promise.race([reader.read(),interrupted]);signal.throwIfAborted();if(chunk.done){done=true;break;}if(!(chunk.value instanceof Uint8Array)||!chunk.value.length||offset+chunk.value.length>bytes.length||chunk.value.some((byte:number,index:number)=>byte!==bytes[offset+index]))throw new OutputConflictError("output_native_storage_recovery_conflict",409);offset+=chunk.value.length;}}
             finally{if(!done)void reader.cancel().catch(()=>{});reader.releaseLock();}
             if(offset!==bytes.length)throw new OutputConflictError("output_native_storage_recovery_conflict",409);
             await guardedBatch(retained(),true);
             return existing;
+            }finally{readFinished=true;releaseBody();signal.removeEventListener("abort",abortRead);}
           }
         }
         await guardedBatch([
