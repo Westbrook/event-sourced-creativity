@@ -40,6 +40,14 @@ function ports(f, mode = "completed", onRequest = () => {}) {
 const run = f => executeOutputModel3dRecovery(f.env, f.user, f.readJob(), { scope: f.scope, slot: f.slot, retentionPolicy: null },
   { assertions: f.assertions, current: f.current });
 const count = (f, type) => f.sqlite.prepare("SELECT COUNT(*) AS n FROM events WHERE correlation_id=? AND type=?").get(f.job.correlation_id, type).n;
+test("throwing stage diagnostics cannot interrupt original recovery or alter billing",async()=>{
+ const f=await fixture(),stages=[];
+ try {const port=ports(f);const done=await executeOutputModel3dRecovery(f.env,f.user,f.readJob(),{scope:f.scope,slot:f.slot,retentionPolicy:null},
+  {assertions:f.assertions,current:f.current,onStage(stage){stages.push(stage);throw Error('observer failure');}});
+  assert.equal(done.status,'completed');successful(f);assert.equal(port.requests.length,3);
+  assert.ok(stages.includes('model3d_file_qualify'));assert.ok(stages.includes('model3d_publish'));
+ }finally{f.close();globalThis.fetch=deny;}
+});
 for (const stop of ["abort", "deadline"]) test(`whole recovery command retires a hung authority read on ${stop} without late continuation`, { timeout: 3000 }, async () => {
   const f = await fixture(), controller = new AbortController();
   try {

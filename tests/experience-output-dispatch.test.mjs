@@ -221,7 +221,10 @@ test("provider recovery diagnostics expose only fixed status or category labels,
   const caught=source.match(/\} catch \(cause\) \{([\s\S]*)\n {2}\}\n\}\s*$/u);assert.ok(caught);
   const invoke=new Function('outputDatabaseMessageKind','cause','console',helpers+"\nconst diagnosticStage='recover_result_provider_status';\n"+caught[1]).bind(null,outputDatabaseMessageKind);
   const subtype=new Function('outputDatabaseMessageKind','cause',helpers+';return diagnosticSubtype(cause);').bind(null,outputDatabaseMessageKind);
+  for(const code of ['model3d_original_length_mismatch','output_model3d_recovery_qualification_size_limit','model3d_primary_format_mismatch'])assert.equal(subtype(new Error(code)),code);
+  assert.equal(subtype(new Error('model3d_arbitrary_private_payload')),undefined);
   const detail={code:'private_arbitrary_code',category:'unknown',scope:'request',action:'none',message:'private provider body',retryable:false,retryAfterMs:null,requestId:'private-request-id',httpStatus:null};
+  for(const code of ['model3d_primary_format_mismatch','model3d_artifact_invalid','model3d_texture_invalid'])assert.equal(subtype(new ProviderRequestError({...detail,code,httpStatus:502},'private prompt')),code);
   for(const [change,kind] of [[{httpStatus:404},'provider_http_404'],[{httpStatus:422},'provider_http_422'],[{category:'network'},'provider_network'],[{category:'safety'},'provider_safety'],[{code:'fal_provider_returned_untrusted_image_url'},'fal_provider_returned_untrusted_image_url']]){
     const cause=new ProviderRequestError({...detail,...change},'private prepared prompt'),logs=[];
     const response=invoke(cause,{warn:(...args)=>logs.push(args)});

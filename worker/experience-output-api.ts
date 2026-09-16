@@ -90,6 +90,20 @@ const nativeDiagnosticSubtypes = new Map([
   // Fixed original-image recovery failures are log-only. Public responses still
   // disclose no retained provider identity, private checkpoint or source detail.
   ...[
+    // Fixed 3D read/recovery labels contain no provider identity or payload.
+    "output_model3d_recovery_unavailable", "output_model3d_recovery_completion_invalid", "output_model3d_recovery_qualification_size_limit",
+    "output_model3d_recovery_assertion_invalid", "output_model3d_recovery_checkpoint_unavailable", "output_model3d_recovery_lineage_unavailable",
+    "output_model3d_recovery_aborted", "output_model3d_recovery_deadline", "output_model3d_recovery_duplicate_completion",
+    "output_model3d_recovery_media_changed", "output_model3d_recovery_read_aborted", "output_model3d_recovery_read_expired",
+    "output_model3d_recovery_settlement_unavailable", "output_model3d_recovery_usage_incomplete", "output_model3d_request_not_authorized",
+    "model3d_original_download_failed", "model3d_original_file_count_limit", "model3d_original_headers_limit",
+    "model3d_original_hook_retired", "model3d_original_hook_unobserved", "model3d_original_hooks_required",
+    "model3d_original_length_invalid", "model3d_original_length_mismatch", "model3d_original_queue_state_invalid",
+    "model3d_original_read_aborted", "model3d_original_read_expired", "model3d_original_read_retired", "model3d_original_read_timeout",
+    "model3d_original_receipt_required", "model3d_original_redirect_refused", "model3d_original_response_invalid", "model3d_original_response_limit",
+    "model3d_artifact_invalid", "model3d_artifact_length_mismatch", "model3d_artifact_transfer_limit", "model3d_empty_artifact",
+    "model3d_media_url_invalid", "model3d_media_url_untrusted", "model3d_primary_format_mismatch", "model3d_result_incomplete",
+    "model3d_texture_invalid", "model3d_response_identity_mismatch",
     // Video labels are log-only too: never disclose provider IDs or raw bodies.
     "output_video_recovery_unavailable", "output_video_recovery_scope_unsupported", "output_video_recovery_route_unsupported",
     "output_video_recovery_duplicate_completion", "output_video_recovery_settlement_unavailable", "output_video_recovery_media_changed",
@@ -125,6 +139,9 @@ const nativeDiagnosticSubtypes = new Map([
   ].map(code => [code, code] as const),
 ]);
 const providerDiagnosticCodes = new Set([
+  "model3d_artifact_invalid", "model3d_artifact_length_mismatch", "model3d_artifact_transfer_limit", "model3d_empty_artifact",
+  "model3d_media_url_invalid", "model3d_media_url_untrusted", "model3d_primary_format_mismatch", "model3d_result_incomplete",
+  "model3d_texture_invalid", "model3d_response_identity_mismatch",
   "fal_provider_returned_no_image", "fal_provider_returned_invalid_image_url", "fal_provider_returned_untrusted_image_url",
   "fal_provider_returned_empty_image", "fal_provider_returned_non_image", "fal_provider_returned_invalid_request_id", "fal_provider_receipt_mismatch",
 ]);

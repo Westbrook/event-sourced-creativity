@@ -26,7 +26,10 @@ const hash = async (v: Uint8Array) => Array.from(new Uint8Array(await crypto.sub
 const same = (a: unknown, b: unknown) => canonicalJson(a) === canonicalJson(b);
 type Lease = Awaited<ReturnType<typeof claimOutputModel3dRecoveryLease>>;
 type Stored = { index: number; token: string; storageKey: string; sha256: string; file: NativeRetainedModel3dFile; providerMediaUrl: string };
-export type Model3dRecoveryStage = "model3d_binding" | "model3d_authority" | "model3d_lease" | "model3d_retrieve_publish";
+export type Model3dRecoveryStage = "model3d_binding" | "model3d_authority" | "model3d_lease" | "model3d_retrieve_publish" | "model3d_result_receipt" | "model3d_file_manifest" | "model3d_file_store" | "model3d_file_qualify" | "model3d_assembly" | "model3d_content_store" | "model3d_publish";
+function noteStage(options: { onStage?: (stage: Model3dRecoveryStage) => void }, stage: Model3dRecoveryStage) {
+  try { options.onStage?.(stage); } catch { /* Diagnostics never alter recovery. */ }
+}
 
 /** Explicit read/publication command only. No generator, planner, queue writer,
  * new grant, reservation, provider-call claim, upload or provider POST. */
@@ -49,9 +52,9 @@ export async function recoverOutputModel3d(env: WorkerEnv, user: PilotUser, job:
   });
   const check = () => { controller.signal.throwIfAborted(); if (Date.now() >= deadline) fail(); };
   const work = async () => {
-    options.onStage?.("model3d_binding");
+    noteStage(options,"model3d_binding");
     check(); const binding = await loadOutputJobBinding(env, user, job); check(); if (!binding) fail();
-    options.onStage?.("model3d_authority");
+    noteStage(options,"model3d_authority");
     const proof = await resolveOutputModel3dRecoveryAuthority(env, binding.scope, binding.slot, options.request ? {request:options.request,user} : undefined); check();
     const assertions = [...proof.assertions, ...options.assertions, {
       sql: "?>strftime('%Y-%m-%dT%H:%M:%fZ','now')", bindings: [new Date(deadline).toISOString()], deadlineMs: deadline,
@@ -116,9 +119,9 @@ export async function executeOutputModel3dRecovery(env: WorkerEnv, user: PilotUs
     return { status: "completed" as const, jobId: job.job_id, slotId: slot.slotId, replayed: true };
   };
   if (job.status === "completed") return await completedRead() ?? fail();
-  options.onStage?.("model3d_lease");
+  noteStage(options,"model3d_lease");
   const lease = await claimOutputModel3dRecoveryLease(env, scope, slot, job, options), cp = lease.checkpoint;
-  options.onStage?.("model3d_retrieve_publish");
+  noteStage(options,"model3d_retrieve_publish");
   let completionJson: string | undefined;
   const extra: OutputSqlAssertion[] = [], live = () => compactModel3dRecoveryAssertions([...lease.assertions(), ...extra]);
   // Conditional creation prevents even a same-key race from overwriting another
@@ -206,6 +209,7 @@ export async function executeOutputModel3dRecovery(env: WorkerEnv, user: PilotUs
         envelopePhases.add(String(envelope.phase)); hook.assertCurrent();
       },
       onProviderSubmission: async (receipt, hook) => {
+        noteStage(options,"model3d_result_receipt");
         hook.assertCurrent(); await lease.assertCurrent();
         if (paid || !envelopePhases.has("result") || receipt.status !== "completed" || receipt.provider !== "fal" || receipt.operation !== "model3d"
           || receipt.model !== cp.prepared.model || receipt.clientRequestId !== cp.clientRequestId || receipt.providerRequestId !== cp.providerRequestId
@@ -217,10 +221,12 @@ export async function executeOutputModel3dRecovery(env: WorkerEnv, user: PilotUs
         await settle(); hook.assertCurrent();
       },
       onResultManifest: async (value, hook) => {
+        noteStage(options,"model3d_file_manifest");
         hook.assertCurrent(); if (!paid || !value.length || value.length > 64) fail(); manifest = structuredClone(value);
         bounded(manifest, 64000); await update({ model3dProviderFiles: manifest }); hook.assertCurrent();
       },
       onGeneratedFile: async (asset, index, hook) => {
+        noteStage(options,"model3d_file_store");
         hook.assertCurrent(); await lease.assertCurrent();
         if (!paid || index !== files.length || index >= manifest.length || asset.providerMediaUrl !== manifest[index]!.providerMediaUrl
           || asset.fileName !== manifest[index]!.fileName || asset.role !== manifest[index]!.role || asset.format !== manifest[index]!.format
@@ -239,15 +245,17 @@ export async function executeOutputModel3dRecovery(env: WorkerEnv, user: PilotUs
         if (stored.key !== location.storageKey || stored.contentHash !== asset.sha256) fail();
         files.push({ ...file, ...(stored.previewSupported === undefined ? {} : { previewSupported: stored.previewSupported }) });
         storage[index]!.file = files[index]!; await update({ outputModel3dRecoveryFiles: storage });
-        if (index === 0) { if (!assembly) fail(); await assembly.qualify(asset); }
+        if (index === 0) { noteStage(options,"model3d_file_qualify"); if (!assembly) fail(); await assembly.qualify(asset); }
         hook.assertCurrent();
       },
     });
     if (result.status === "pending") return { status: "pending" as const, jobId: job.job_id, slotId: slot.slotId, replayed: false };
     if (!paid || !assembly || files.length !== manifest.length || !files.length) fail();
+    noteStage(options,"model3d_assembly");
     const assembled = await assembly.finish(files, "3D model", result.seed);
     completionJson = bounded(assembled.completion);
     await lease.assertCurrent();
+    noteStage(options,"model3d_content_store");
     const content = await storePrivateContent(privateEnv, scope.actorUserId, "document-artifact", bounded(assembled.content));
     const invocation = await storePrivateContent(privateEnv, scope.actorUserId, "document-artifact-input", bounded(assembled.invocation));
     const complete = makeEvent(job.stream_id, 1, "worker:renderer", "output-model3d-recovery", job.correlation_id, "DocumentRenderCompleted", {
@@ -278,6 +286,7 @@ export async function executeOutputModel3dRecovery(env: WorkerEnv, user: PilotUs
       model_ids: [cp.prepared.model], source_surface: "outputs", recovered: true }, { causationId: complete.eventId });
     await lease.assertCurrent();
     try {
+      noteStage(options,"model3d_publish");
       await appendEvents(privateEnv, [complete, usage], { retries: 1, prepareSidecars: () => [
         ...outputAssertionStatements(env, { sql: "(SELECT COUNT(*) FROM events WHERE event_id IN(?,?))=2", bindings: [complete.eventId, usage.eventId] }),
         ...finish(complete.eventId, [complete.eventId, usage.eventId]),
