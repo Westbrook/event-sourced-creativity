@@ -16,21 +16,26 @@ const object=(v:unknown):Record<string,unknown>=>v&&typeof v==="object"&&!Array.
 const parse=(v:string|null)=>object(JSON.parse(v??"{}"));
 const sha=async(v:string)=>Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256",new TextEncoder().encode(v))),b=>b.toString(16).padStart(2,"0")).join("");
 function fail(code="output_video_recovery_unavailable"):never{throw new OutputConflictError(code,409);}
+export type VideoRecoveryStage="video_binding"|"video_authority"|"video_lease"|"video_replay"|"video_provider"|"video_settlement"|"video_storage"|"video_publish";
+type Options={assertions:OutputSqlAssertion[];signal?:AbortSignal;onStage?:(stage:VideoRecoveryStage)=>void};
+function stage(options:Options,value:VideoRecoveryStage){try{options.onStage?.(value);}catch{/* Diagnosis cannot change execution. */}}
 
 /** Explicit original-only recovery. No queue writer, planner, upload, POST,
  * new grant/reservation, or provider call claim is reachable from this entry. */
-export async function recoverOutputVideo(env:WorkerEnv,user:PilotUser,job:DocumentJobRow,options:{assertions:OutputSqlAssertion[];signal?:AbortSignal}){
+export async function recoverOutputVideo(env:WorkerEnv,user:PilotUser,job:DocumentJobRow,options:Options){
+ stage(options,"video_binding");
  const binding=await loadOutputJobBinding(env,user,job);if(!binding)fail();
+ stage(options,"video_authority");
  const {scope,slot}=binding,proof=await resolveOutputVideoRecoveryAuthority(env,scope,slot);
  const assertions=[...proof.assertions,...options.assertions];
- return executeOutputVideoRecovery(env,user,job,binding,{assertions,signal:options.signal});
+ return executeOutputVideoRecovery(env,user,job,binding,{assertions,signal:options.signal,onStage:options.onStage});
 }
 
 /** Internal execution seam shared by the API and offline original-custody
  * controls. Authorization/source assertions must come from the caller's current
  * resolver; the lease additionally rechecks all original job/slot/private IDs. */
 export async function executeOutputVideoRecovery(env:WorkerEnv,user:PilotUser,job:DocumentJobRow,
- binding:NonNullable<Awaited<ReturnType<typeof loadOutputJobBinding>>>,options:{assertions:OutputSqlAssertion[];signal?:AbortSignal}){
+ binding:NonNullable<Awaited<ReturnType<typeof loadOutputJobBinding>>>,options:Options){
  const {scope,slot}=binding;if(scope.actorUserId!==user.userId||!options.assertions.length)fail();
  const settings=parse(job.request_json),original=parse(job.result_json),artifactId=original.artifactId;
  if(typeof artifactId!=="string"||!artifactId||!original.artifactPlan)fail();
@@ -57,6 +62,7 @@ export async function executeOutputVideoRecovery(env:WorkerEnv,user:PilotUser,jo
   if(options.signal?.aborted||Date.parse(read.expiresAt)<=Date.now())fail();return{status:"completed" as const,jobId:job.job_id,slotId:slot.slotId,replayed:true};
  };
  if(job.status==="completed")return await completedRead()??fail();
+ stage(options,"video_lease");
  const lease=await claimOutputVideoRecoveryLease(env,scope,slot,job,options);
  let completionJson:string|undefined,completionAssertions:OutputSqlAssertion[]=[];
  const live=()=>[...lease.assertions(),...completionAssertions];
@@ -75,6 +81,7 @@ export async function executeOutputVideoRecovery(env:WorkerEnv,user:PilotUser,jo
   ];
  };
  try{
+  stage(options,"video_replay");
   const existing=await completions();
   if(existing){
    // The original completed media receipt is already durable. Reconcile only
@@ -86,17 +93,21 @@ export async function executeOutputVideoRecovery(env:WorkerEnv,user:PilotUser,jo
    await env.DB.batch([...final.flatMap(a=>outputAssertionStatements(env,a)),...finish(existing.event_id,[existing.event_id])]);
    return await completedRead()??fail();
   }
+  stage(options,"video_provider");
   const result=await readOriginalOutputVideo(env,{contract:lease.contract,requestBody:lease.requestBody,clientRequestId:lease.attempt.clientRequestId,requestDigest:lease.attempt.requestDigest!,providerRequestId:lease.providerRequestId},{signal:options.signal,
    onBeforeRead:async hook=>{hook.assertCurrent();await lease.assertCurrent();hook.assertCurrent();},onEnvelope:async(value,hook)=>{await lease.retainEnvelope(value,hook);}});
   if(result.status==="pending")return{status:"pending" as const,jobId:job.job_id,slotId:slot.slotId,replayed:false};
+  stage(options,"video_settlement");
   const paid={clientRequestId:result.clientRequestId,provider:"fal",operation:"video",model:result.model,status:"completed",providerRequestId:result.providerRequestId,costMicrousd:result.costMicrousd,inputTokens:0,outputTokens:0,totalTokens:0};
   await update({providerSubmissions:{[result.clientRequestId]:paid}});
   const settlement=await reconcileKnownOutputProviderReceipts(env,user,{jobId:job.job_id,assertions:live()});if(settlement.status==="uncertain")fail("output_video_recovery_settlement_unavailable");
   await lease.assertCurrent();
+  stage(options,"video_storage");
   const existingMedia=await env.MEDIA.head(lease.lease.storageKey),hash=Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256",new Uint8Array(result.bytes).buffer)),b=>b.toString(16).padStart(2,"0")).join("");
   await lease.assertCurrent();if(existingMedia&&(existingMedia.customMetadata?.ownerId!==scope.actorUserId||existingMedia.customMetadata?.artifactId!==artifactId||existingMedia.customMetadata?.sha256!==hash))fail("output_video_recovery_media_changed");
   const stored=await storeGeneratedMedia(privateEnv,scope.actorUserId,artifactId,result.bytes,result.model,"video/mp4",{artifactRole:"document-video",artifactId,provider:"fal",providerJobId:result.providerRequestId,providerRequestId:result.providerRequestId,providerSubmissionId:result.clientRequestId,outputVideoRequestDigest:result.requestDigest});
   await update({outputVideoMediaResult:{artifactId,mediaUrl:stored.url,mediaType:"video/mp4",sha256:stored.contentHash,byteLength:result.bytes.length,clientRequestId:result.clientRequestId,providerRequestId:result.providerRequestId,model:result.model,requestDigest:result.requestDigest}});
+  stage(options,"video_publish");
   const verified=await verifyOutputVideoRecoveryCompletion(lease,env,scope,slot,job,settings,artifactId,original.artifactPlan,{signal:options.signal,deadlineMs:lease.deadlineMs});
   completionJson=JSON.stringify(verified.receipt);completionAssertions=verified.assertions;
   const plan=object(original.artifactPlan),input={schema_version:1,artifact_id:artifactId,artifact_kind:"video",document_id:scope.documentId,project_id:scope.projectId,output_video:verified.receipt,

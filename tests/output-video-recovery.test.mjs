@@ -11,7 +11,10 @@ const transport=f=>async(url,init)=>{
 test('failed original Video retrieves once, settles its real reservations and publishes/finalizes atomically',async()=>{
  const f=await videoRecoveryFixture();f.requests=[];globalThis.fetch=transport(f);
  try{
-  const result=await f.run();assert.equal(result.status,'completed');assert.equal(f.requests.length,3);assert(f.requests.every(r=>r.method==='GET'));
+  const stages=[];
+  const result=await f.run(undefined,value=>{stages.push(value);throw Error('diagnostic observer must not change execution');});
+  assert.deepEqual(stages,['video_lease','video_replay','video_provider','video_settlement','video_storage','video_publish']);
+  assert.equal(result.status,'completed');assert.equal(f.requests.length,3);assert(f.requests.every(r=>r.method==='GET'));
   const job=f.sqlite.prepare('SELECT * FROM document_jobs').get(),slot=f.sqlite.prepare('SELECT * FROM output_operation_slots').get();assert.equal(job.status,'completed');assert.equal(slot.status,'succeeded');
   assert.equal(f.sqlite.prepare('SELECT COUNT(*) n FROM output_provider_calls').get().n,2);assert.equal(f.sqlite.prepare('SELECT COUNT(*) n FROM document_jobs').get().n,1);
   assert.equal(f.sqlite.prepare("SELECT COUNT(*) n FROM events WHERE type='DocumentRenderCompleted'").get().n,1);assert.equal(f.sqlite.prepare('SELECT status FROM cost_budget_reservations').get().status,'settled');

@@ -42,6 +42,6 @@ export async function videoRecoveryFixture({published=false,referenceSha256}={})
  const slot=outputSlotFromRow('scope',f.sqlite.prepare('SELECT * FROM output_operation_slots').get()),binding={scope,slot,retentionPolicy:null};
  const assertions=[{sql:'1=1',bindings:[],deadlineMs:Date.now()+45000}];
  const user={userId:'owner',billingUserId:'owner',streamId:'creative:owner'};
- const run=(signal)=>executeOutputVideoRecovery({...f.env,FAL_KEY:'offline-test-key'},user,{...f.sqlite.prepare('SELECT * FROM document_jobs').get(),output_slot_id:'slot'},binding,{assertions,signal});
+ const run=(signal,onStage)=>executeOutputVideoRecovery({...f.env,FAL_KEY:'offline-test-key'},user,{...f.sqlite.prepare('SELECT * FROM document_jobs').get(),output_slot_id:'slot'},binding,{assertions,signal,onStage});
  return {...f,original,job,scope,slot,binding,user,assertions,run,settings,close(){f.sqlite.close();original.sqlite.close();}};
 }
