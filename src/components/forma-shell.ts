@@ -1,5 +1,6 @@
 import { isStandaloneExperienceRoute } from "../experiences/host-route.ts";
 import { html, noChange, nothing } from "lit";
+import { isSelectedOutputSharePagePath, selectedOutputSharePageToken } from "../model/selected-output-share-routes.ts";
 import { repeat } from "lit/directives/repeat.js";
 import { keyed } from "lit/directives/keyed.js";
 import { FormaElement, icon, downloadJson, copyTextToClipboard } from "./forma-element";
@@ -1504,6 +1505,7 @@ export class FormaShell extends FormaElement {
     const path = this.store.route.get();const applicationId=applicationIdFromRoute(path);const application=applicationDefinition(applicationId);const isCreative=applicationId==="creative";const isCanvas=applicationId==="canvas";const isMaking=isCreative||isCanvas;
     const pathname=path.split(/[?#]/)[0]||"/";
     const experienceMode=this.#experienceMode();
+    if(isSelectedOutputSharePagePath(pathname))return html`<a class="skip-link" href="#main-content">${this.i18n.t("shell.skip")}</a><div class="shared-locale-switcher">${this.#localePicker()}</div><forma-selected-output-shared-view .token=${selectedOutputSharePageToken(path.split(/[?#]/u, 1)[0] ?? "")}></forma-selected-output-shared-view><span class="sr-only" role="status" aria-live="polite">${this.#localeAnnouncement}</span>`;
     if(pathname==="/share"||pathname.startsWith("/share/"))return html`<a class="skip-link" href="#main-content">${this.i18n.t("shell.skip")}</a><div class="shared-locale-switcher">${this.#localePicker()}</div><forma-shared-view .token=${decodeURIComponent(pathname.slice("/share/".length))}></forma-shared-view><span class="sr-only" role="status" aria-live="polite">${this.#localeAnnouncement}</span>`;
     const session=this.store.session.get();const impersonation=session?.impersonation;const shared=Boolean(session?.projectContext);const canAuthor=!shared||Boolean(session?.projectContext?.permissions.includes("project.author"));
     const documentRouteState=this.store.documentRouteState(path);
