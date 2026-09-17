@@ -21,7 +21,7 @@ import './developer-console.ts';
 import { DEVELOPER_DESKTOP_QUERY } from './developer-layout.ts';
 import type { StillDeveloperConsole } from './developer-console.ts';
 import { decisionDiagnostics, responseDisposition, type DecisionDiagnostics, type DecisionResponse, type ReceivedDecision } from './diagnostics.ts';
-import { ACTIONS, POLICY_VERSION, eligibleActions, evaluateActions, selectActions, type Action } from './decisions.ts';
+import { ACTIONS, POLICY_VERSION, eligibleActions, evaluateActions, rankAllFormats, selectActions, type Action } from './decisions.ts';
 import { isContextCompositionRelation } from '../model/combined-context.ts';
 import { documentSnapshot } from './context.ts';
 import { generationReview, issueAffectsBlock, type GenerationReview } from './generation-review.ts';
@@ -303,9 +303,9 @@ export class StillApp extends LitElement {
         this.recordDecision(result,disposition,diagnosticScope);
         if (disposition==='Applied') {
           const allowed = new Set(this.candidates().filter(a=>!!FORMATS[a.id]).map(a=>a.id));
-          this.formatSuggestions = [...new Set(result.formats!)].filter(id=>allowed.has(id)).slice(0,3);this.formatEmphasis=result.presentation??presentActions(this.formatSuggestions); this.changed();
+          this.formatSuggestions = [...new Set(result.rankedFormats ?? result.formats!)].filter(id=>allowed.has(id));this.formatEmphasis=result.presentation??presentActions(this.formatSuggestions); this.changed();
         }
-      } catch(error) { this.recordDecision({source:'fallback',reason:error instanceof ApiError?`HTTP ${error.status}`:'Network unavailable',head,policy:POLICY_VERSION},'Kept full format picker',diagnosticScope); }
+      } catch(error) { this.recordDecision({source:'fallback',reason:error instanceof ApiError?`HTTP ${error.status}`:'Network unavailable',head,policy:POLICY_VERSION},'Kept local format order',diagnosticScope); }
       finally {if(ticket===this.decisionTicket){this.developerPending=false;this.changed();}}
     }, 1300);
   }
@@ -448,6 +448,17 @@ export class StillApp extends LitElement {
     }
     this.begin(id);
   }
+  private selectMenuFormat = (event: CustomEvent<{action:string}>) => {
+    const menu = event.currentTarget as HTMLElement & {open:boolean; updateComplete:Promise<unknown>};
+    const item = event.composedPath()[0] as HTMLElement;
+    if (event.defaultPrevented || item.localName !== 'en-menu-item' || item.parentElement !== menu) return;
+    const format = event.detail.action;
+    queueMicrotask(async () => {
+      if (event.defaultPrevented) return;
+      await menu.updateComplete;
+      if (!menu.open && menu.isConnected && this.mode === 'generate' && !this.generation) this.chooseFormat(format);
+    });
+  };
   private chooseFormat(format: string) {
     if (this.busy || this.composing || this.generation?.attempted) return;
     const enteringReview = !this.generation && !!format;
@@ -564,8 +575,9 @@ export class StillApp extends LitElement {
       const visibleFacts = source.facts.filter(b => b.active || issues.some(i => issueAffectsBlock(i, b)));
       const generalIssues = issues.filter(i => !visibleFacts.some(b => issueAffectsBlock(i, b)));
       const formats = this.candidates().filter(a => !!FORMATS[a.id]);
-      const suggested = this.formatSuggestions.filter(id=>formats.some(a=>a.id===id)).slice(0,this.pageActionLimit-2);
-      const pickerFormats = g ? formats : formats.filter(a=>!suggested.includes(a.id));
+      const ordered = [...new Set([...this.formatSuggestions, ...rankAllFormats(formats)])].filter(id=>formats.some(a=>a.id===id));
+      const suggested = ordered.slice(0,Math.min(3,this.pageActionLimit-2));
+      const remaining = ordered.filter(id=>!suggested.includes(id));
       return html`<section class="form-page generation-page">
         <span class="eyebrow">${p.projectName}</span><h1>${p.documentTitle}</h1>
         <div class="generation-context">${visibleFacts.map(b => { const warnings = issues.filter(i => issueAffectsBlock(i, b)); return html`<section id=${'generation-context-'+b.block_id} class=${warnings.length ? 'generation-fact needs-review' : 'generation-fact'} tabindex="-1">
@@ -573,11 +585,17 @@ export class StillApp extends LitElement {
           ${warnings.map(i => html`<div class="context-review-reason"><strong>${i.label}</strong> · ${i.summary}</div>`)}
           ${warnings.length ? html`<a class="review-context-link" href=${this.viewURL('document',{blockId:b.block_id})} @click=${(e:MouseEvent)=>this.follow(e,'document',{blockId:b.block_id})}>Open idea</a>` : nothing}
         </section>`; })}</div>
-        <div class="format-options" @pointerenter=${()=>{this.formatTouched=true;}} @focusin=${()=>{this.formatTouched=true;}}>
-        ${!g && suggested.length ? html`<en-toolbar class="format-suggestions" label="Suggested formats" keyboard-navigation="tab">${suggested.map(id=>this.suggestedButton({...ACTIONS.find(a=>a.id===id)!,label:FORMATS[id]},true,presentEvidence(suggested,this.formatEmphasis)))}</en-toolbar>` : nothing}
-        ${g || pickerFormats.length ? html`<en-select class="select-label" label="${!g && suggested.length ? 'Other formats' : 'Output'}" .value=${live(g?.format ?? '')} ?disabled=${this.busy || this.composing || !!g?.attempted} @en-change=${(e: CustomEvent<{proposed:string;value:string}>) => this.chooseFormat(e.detail.proposed)}>
-          <en-select-option value="">Choose a format</en-select-option>${pickerFormats.map(a => html`<en-select-option value=${a.id}>${FORMATS[a.id]}</en-select-option>`)}${g && !formats.some(a => a.id === g.format) ? html`<en-select-option value=${g.format}>${FORMATS[g.format]}</en-select-option>` : nothing}
-        </en-select>` : nothing}
+        <div class="format-options" @pointerdown=${()=>{this.formatTouched=true;}} @focusin=${()=>{this.formatTouched=true;}}>
+        ${!g ? html`<en-toolbar class="format-suggestions" label="Output formats" keyboard-navigation="tab">
+          ${suggested.map(id=>this.suggestedButton({...ACTIONS.find(a=>a.id===id)!,label:FORMATS[id]},true,presentEvidence(suggested,this.formatEmphasis)))}
+          ${remaining.length ? html`<en-button id="still-format-menu" variant="ghost" size="medium" ?disabled=${this.busy || this.composing}>Menu</en-button>` : nothing}
+          ${this.button('Back', () => this.closeMode())}
+        </en-toolbar>
+        ${remaining.length ? html`<en-menu for="still-format-menu" label="Other formats" @en-action=${this.selectMenuFormat}>
+          ${remaining.map(id=>html`<en-menu-item action=${id}>${FORMATS[id]}</en-menu-item>`)}
+        </en-menu>` : nothing}` : html`<en-select class="select-label" label="Output" .value=${live(g.format)} ?disabled=${this.busy || this.composing || !!g.attempted} @en-change=${(e: CustomEvent<{proposed:string;value:string}>) => this.chooseFormat(e.detail.proposed)}>
+          <en-select-option value="">Choose a format</en-select-option>${formats.map(a => html`<en-select-option value=${a.id}>${FORMATS[a.id]}</en-select-option>`)}${!formats.some(a => a.id === g.format) ? html`<en-select-option value=${g.format}>${FORMATS[g.format]}</en-select-option>` : nothing}
+        </en-select>`}
         </div>
         ${g?.format === 'model3d' ? this.field('Prompt · 1,024 characters max', g.prompt, v => { g.prompt = v; }, 6) : nothing}
         ${g && ['slides', 'storyboard'].includes(g.format) ? html`<en-select class="select-label" label="Length" .value=${String(g.itemCount)} ?disabled=${this.busy || !!g.attempted} @en-change=${(e: CustomEvent<{proposed:string;value:string}>) => { g.itemCount = Number(e.detail.proposed); this.changed(); }}>${[3, 4, 6, 8, 10].map(n => html`<en-select-option value=${n}>${n} ${g.format === 'slides' ? 'slides' : 'frames'}</en-select-option>`)}</en-select>` : nothing}
@@ -591,7 +609,7 @@ export class StillApp extends LitElement {
           ${generalIssues.map(i=>html`<p><strong>${i.label}</strong> · ${i.summary}</p>`)}
           ${visibleFacts.filter(b=>issues.some(i=>issueAffectsBlock(i,b))).map(b=>html`<a href=${'#generation-context-'+b.block_id} @click=${(e:MouseEvent)=>{e.preventDefault();this.querySelector<HTMLElement>('#'+CSS.escape('generation-context-'+b.block_id))?.focus();}}>Review ${text(b.properties.label)||b.handle||b.type}</a>`)}
         </section>` : nothing}
-        <div class="form-actions">${g ? this.button(g.recoveryClosed ? 'Review another' : g.attempted ? 'Check generation' : g.format === 'scene' && !g.scenePreview ? 'Check cost' : this.generationGate ? (this.generationGate.key ? 'Approve' : 'Blocked') : 'Generate', () => void this.run(() => this.generate()), true, !!this.generationGate && !this.generationGate.key) : nothing}${this.button('Back', () => this.closeMode())}</div>
+        ${g ? html`<div class="form-actions">${this.button(g.recoveryClosed ? 'Review another' : g.attempted ? 'Check generation' : g.format === 'scene' && !g.scenePreview ? 'Check cost' : this.generationGate ? (this.generationGate.key ? 'Approve' : 'Blocked') : 'Generate', () => void this.run(() => this.generate()), true, !!this.generationGate && !this.generationGate.key)}${this.button('Back', () => this.closeMode())}</div>` : nothing}
       </section>`;
     }
     if (mode === 'workspaces') return html`<section class="form-page"><h1>Workspaces</h1><en-select class="select-label" label="Workspace" .value=${this.choice} @en-change=${(e: CustomEvent<{proposed:string;value:string}>) => { this.choice = e.detail.proposed; this.changed(); }}><en-select-option value="">Personal projects</en-select-option>${this.client.session?.projects?.map(p => html`<en-select-option value=${p.projectAccessId}>${p.projectName} · ${p.role}</en-select-option>`)}</en-select><div class="form-actions">${this.button('Open', () => void this.run(async () => { await this.client.switchWorkspace(this.client.session?.projects?.find(p => p.projectAccessId === this.choice)); this.navigate(this.client.position.view, this.client.position); }), true)}${this.button('Back', () => this.closeMode())}</div></section>`;

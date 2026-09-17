@@ -25,7 +25,7 @@ test('the format chooser accepts fit-only Jev answers without selecting or gener
     assert.equal(response.status,200,await response.clone().text());
     const body=await response.json();
     assert.equal(body.policy,POLICY_VERSION);assert.equal(body.source,'jev');assert.equal(body.head,initial.head);
-    assert.deepEqual(body.formats,['short_story','scene','image']);assert.deepEqual(body.actions,[]);
+    assert.deepEqual(body.formats,['short_story','scene','image']);assert.deepEqual(body.rankedFormats,['short_story','scene','image','slides','storyboard']);assert.deepEqual(body.actions,[]);
     assert.equal(calls,1);assert.deepEqual(f.counts(),before);
     assert.equal((await (await f.request('/api/events?after=0')).json()).head,initial.head);
   }finally{globalThis.fetch=saved;await f.drainBackground();f.close();}

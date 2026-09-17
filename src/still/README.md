@@ -77,3 +77,7 @@ The current palette uses `en-dialog`, with same-root native combobox/listbox sem
 ## Image provider
 
 New Still jobs use the configured OpenAI GPT-image model (default `gpt-image-2`) for image generation and image reference edits, including image stages in rendered artifacts. Job admission saves `stillImageProvider: "openai"` server-side and applies that policy to readiness, pricing, and execution. Existing jobs without the marker retain their original provider/recovery behavior. Forma’s image default and the audio, video, and 3D providers remain independent.
+
+## Create-page choices
+
+The unselected `/create` page offers the top three available formats, an En Reve Menu containing the remaining formats in the same Jev order, and Back. Before Jev responds (or if it is unavailable), a stable local order keeps every format accessible without implying model confidence. Selecting a format opens the existing review and cost/consent flow; it never generates immediately. Pointer activation or keyboard focus freezes the choices so a delayed response cannot reorder a menu being used. The full `rankedFormats` response retains lower-fit and unscored eligible formats; diagnostics distinguish those from strong suggestions.

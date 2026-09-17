@@ -4,7 +4,7 @@ import { handleEvents } from './events-api.ts';
 import { handleSession, requireConsent, requireUser } from './pilot-policy.ts';
 import type { WorkerEnv, WorkerExecutionContext } from './runtime.ts';
 import type { CreativeEvent } from '../src/model/events.ts';
-import { ACTIONS, buildDecisionState, evaluateActions, POLICY_VERSION, questionsFor, rankFormats, selectActions, type Abilities, type Answer, type Position } from '../src/still/decisions.ts';
+import { ACTIONS, buildDecisionState, evaluateActions, POLICY_VERSION, questionsFor, rankAllFormats, selectActions, type Abilities, type Answer, type Position } from '../src/still/decisions.ts';
 import { compositionIndex, connectionEvidence, shouldEnrich, enrichmentQuestions, refineMenu, type MenuAdjustment } from '../src/still/assessments.ts';
 import { presentActions, type Emphasis } from '../src/still/presentation.ts';
 import { decisionDiagnostics, inspectAnswer, type DecisionPass, type DecisionExchange } from '../src/still/diagnostics.ts';
@@ -99,7 +99,8 @@ export async function handleStillDecision(request: Request, env: WorkerEnv, cont
     return reply({source:'jev',model:first.model,policy:POLICY_VERSION,head,paletteActions:recommended.map(id=>({id})),actions:[],candidateIds:built.candidates.map(a=>a.id),...diagnostics('jev',undefined,answers,first.model)});
   }
   let actions=choosingFormat?[]:selectActions(built.candidates,position,answers);
-  const formats=choosingFormat?rankFormats(built.candidates,answers):[];
+  const rankedFormats=choosingFormat?rankAllFormats(built.candidates,answers):[];
+  const formats=rankedFormats.slice(0,3);
   let target:typeof evidence.destinations[number]|undefined;
   if(shouldEnrich(position,answers,evidence.destinations.length)&&deadline-Date.now()>=1200){
     const alternatives=built.candidates.filter(a=>['surprise','compose','new-document','use-in'].includes(a.id)&&!actions.some(x=>x.id===a.id));
@@ -110,5 +111,5 @@ export async function handleStillDecision(request: Request, env: WorkerEnv, cont
   const availablePresentation=choosingFormat?{}:presentActions(evaluateActions(built.candidates,position,answers).ranked.map(a=>a.id),answers);
   for(const row of Object.values(availablePresentation))Object.assign(row,{variant:'secondary',size:'medium',tier:'peer',reason:'Not in initial menu; evaluated when shown'});
   presentation={...availablePresentation,...presentActions(recommended,answers,choosingFormat?'fit_':'use_')};
-  return reply({source:'jev',model:first.model,policy:POLICY_VERSION,head,actions,rankedActions:choosingFormat?[]:evaluateActions(built.candidates,position,answers).ranked.map(a=>({id:a.id})),formats,presentation,...(target?{targets:{'use-in':target.id}}:{}),candidateIds:built.candidates.map(a=>a.id),stage:questions.stage?inspectAnswer(questions.stage,answers.stage).choice:undefined,questionsEvaluated:passes.reduce((n,p)=>n+p.questions.length,0),...diagnostics('jev',undefined,answers,first.model)});
+  return reply({source:'jev',model:first.model,policy:POLICY_VERSION,head,actions,rankedActions:choosingFormat?[]:evaluateActions(built.candidates,position,answers).ranked.map(a=>({id:a.id})),formats,rankedFormats,presentation,...(target?{targets:{'use-in':target.id}}:{}),candidateIds:built.candidates.map(a=>a.id),stage:questions.stage?inspectAnswer(questions.stage,answers.stage).choice:undefined,questionsEvaluated:passes.reduce((n,p)=>n+p.questions.length,0),...diagnostics('jev',undefined,answers,first.model)});
 }

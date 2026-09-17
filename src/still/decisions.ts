@@ -5,7 +5,7 @@ import { isContextCompositionRelation } from '../model/combined-context.ts';
 import { parseDocumentArtifactContent } from '../model/document-artifacts.ts';
 import { foldEvents, type CreativeEvent, type CreativeProjection } from '../model/events.ts';
 
-export const POLICY_VERSION = 'still-6';
+export const POLICY_VERSION = 'still-7';
 export type Position = { projectId: string; documentId: string; blockId: string; outputId: string; view: string; intent: string; recentActions: string[]; itemIndex?: number; actionLimit?:number; palette?:PaletteFeedback };
 export type Abilities = { author: boolean; generate: boolean; projectCreate: boolean; formats: string[] };
 export type Action = { id: string; label: string; group: 'navigate' | 'write' | 'context' | 'make' | 'reflect'; description: string };
@@ -244,6 +244,19 @@ export function evaluateFormats(candidates: Action[], answers: Record<string, An
 export function rankFormats(candidates: Action[], answers: Record<string, Answer> = {}): string[] {
   return evaluateFormats(candidates,answers).selected;
 }
+// Complete chooser order: unavailable formats never enter; uncertain/missing answers
+// keep a stable local tail instead of making a format inaccessible.
+export function rankAllFormats(candidates: Action[], answers: Record<string, Answer> = {}): string[] {
+  const evidence = (id: string) => {
+    const a = answers[`fit_${id}`];
+    return a?.type === 'score' && Number.isFinite(a.score) && a.score! >= 0 && a.score! <= 3 && Number.isFinite(a.confidence) && a.confidence! >= .12 && a.confidence! <= 1 ? a : undefined;
+  };
+  return candidates.filter(a => Object.hasOwn(MEDIUM_QUESTIONS, a.id)).sort((a, b) => {
+    const left = evidence(a.id), right = evidence(b.id);
+    return Number(!!right) - Number(!!left) || (right?.score ?? 0) - (left?.score ?? 0) || (right?.confidence ?? 0) - (left?.confidence ?? 0);
+  }).map(a => a.id);
+}
+
 // Signals refine ranking only; no answer can authorize a mutation or introduce an action.
 const SIGNALS: Record<string, { yes?: string[]; no?: string[] }> = {
   projects: { yes: ['returning', 'existing_start'] }, documents: { yes: ['returning', 'reuse_result'] },
