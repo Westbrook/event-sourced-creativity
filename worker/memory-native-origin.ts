@@ -909,14 +909,25 @@ export function nativeStructuredOriginMinimizedCondition(alias: "origin" | "tomb
       AND ${safeId(`json_extract(${scope},'$[2]')`)} AND ${safeId(`json_extract(${scope},'$[3]')`)}
       THEN ${scope} IS json_array(json_extract(${scope},'$[0]'),json_extract(${scope},'$[1]'),
         json_extract(${scope},'$[2]'),json_extract(${scope},'$[3]')) ELSE 0 END ELSE 0 END)`;
-  return {condition: `(${alias}.status='minimized' AND ${alias}.schema_version=1 AND ${alias}.recipe_version='${NATIVE_STRUCTURED_ORIGIN_RECIPE}'
-    AND ${NATIVE_STRUCTURED_ORIGIN_HEADER_COLUMNS.filter(column => !NATIVE_STRUCTURED_ORIGIN_TOMBSTONE_COLUMNS.some(retained => retained === column)).map(column => `${alias}.${column} IS NULL`).join(" AND ")}
-    AND ${["origin_id", "actor_user_id", "turn_id", "user_event_id", "answer_event_id", "user_content_id", "answer_content_id", "manifest_content_ref"].map(column => safeId(`${alias}.${column}`)).join(" AND ")}
-    AND ${alias}.user_event_id<>${alias}.answer_event_id AND ${alias}.user_content_id<>${alias}.answer_content_id
-    AND ${alias}.manifest_content_ref<>${alias}.user_content_id AND ${alias}.manifest_content_ref<>${alias}.answer_content_id
-    AND ${scopeValid} AND typeof(${alias}.withdrawn_at)='text' AND length(${alias}.withdrawn_at)=24
-    AND strftime('%Y-%m-%dT%H:%M:%fZ',julianday(${alias}.withdrawn_at)) IS ${alias}.withdrawn_at
-    AND ${alias}.withdrawal_reason IN('source-unavailable','source-changed','source-expired','enrollment-changed','access-withdrawn','erased','manual'))`, bindings: []};
+  // Keep the fixed predicate shallow when callers compose it with schema guards.
+  // Only association changes: preserve every operand, its order and CASE fences.
+  const all = (conditions: readonly string[]): string => {
+    if (conditions.length === 1) return `(${conditions[0]})`;
+    const middle = Math.floor(conditions.length / 2);
+    return `(${all(conditions.slice(0, middle))} AND ${all(conditions.slice(middle))})`;
+  };
+  return {condition: all([
+    `${alias}.status='minimized'`, `${alias}.schema_version=1`, `${alias}.recipe_version='${NATIVE_STRUCTURED_ORIGIN_RECIPE}'`,
+    ...NATIVE_STRUCTURED_ORIGIN_HEADER_COLUMNS.filter(column => !NATIVE_STRUCTURED_ORIGIN_TOMBSTONE_COLUMNS.some(retained => retained === column))
+      .map(column => `${alias}.${column} IS NULL`),
+    ...["origin_id", "actor_user_id", "turn_id", "user_event_id", "answer_event_id", "user_content_id", "answer_content_id", "manifest_content_ref"]
+      .map(column => safeId(`${alias}.${column}`)),
+    `${alias}.user_event_id<>${alias}.answer_event_id`, `${alias}.user_content_id<>${alias}.answer_content_id`,
+    `${alias}.manifest_content_ref<>${alias}.user_content_id`, `${alias}.manifest_content_ref<>${alias}.answer_content_id`,
+    scopeValid, `typeof(${alias}.withdrawn_at)='text'`, `length(${alias}.withdrawn_at)=24`,
+    `strftime('%Y-%m-%dT%H:%M:%fZ',julianday(${alias}.withdrawn_at)) IS ${alias}.withdrawn_at`,
+    `${alias}.withdrawal_reason IN('source-unavailable','source-changed','source-expired','enrollment-changed','access-withdrawn','erased','manual')`,
+  ]), bindings: []};
 }
 
 /** Exact full original projection, not the v1 512-byte role excerpt. This is
