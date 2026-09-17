@@ -22,11 +22,21 @@ export class ApiError extends Error {
 }
 const scope = (s: Session | null) => s ? [s.user.userId, s.projectContext?.projectAccessId ?? 'personal', s.permissionEpoch ?? '', JSON.stringify(s.impersonation ?? null)].join(':') : '';
 export async function api<T>(path: string, body?: unknown, method = body === undefined ? 'GET' : 'POST'): Promise<T> {
-  const response = await fetch(path, { method, credentials: 'same-origin', headers: body === undefined ? {} : { 'content-type': 'application/json' }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
-  let data: Record<string, unknown>;
-  try { data = await response.json(); } catch { throw new Error('Response interrupted. Refresh to check the save before retrying.'); }
-  if (!response.ok) throw new ApiError(response.status, data);
-  return data as T;
+  const controller = method === 'GET' ? new AbortController() : null;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const read = async () => {
+    const response = await fetch(path, { method, credentials: 'same-origin', ...(controller ? {signal:controller.signal} : {}), headers: body === undefined ? {} : { 'content-type': 'application/json' }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
+    let data: Record<string, unknown>;
+    try { data = await response.json(); } catch { throw new Error(method === 'GET' ? 'The response was interrupted. Try again.' : 'Response interrupted. Refresh to check the save before retrying.'); }
+    if (!response.ok) throw new ApiError(response.status, data);
+    return data as T;
+  };
+  if (!controller) return read();
+  try {
+    return await Promise.race([read(), new Promise<never>((_, reject) => {
+      timer = setTimeout(() => { reject(new Error('The server took too long to respond. Try again.')); controller.abort(); }, 30_000);
+    })]);
+  } finally { clearTimeout(timer); }
 }
 export type GenerationDraft = { format: string; prompt: string; itemCount: number; tone: string; audience: string; requestId: string; sourceHead: number; documentId: string; scopeKey: string; attempted?: boolean; recoveryClosed?: boolean; previousUnconfirmed?: boolean; sourceSnapshot?: ReturnType<typeof documentSnapshot>; sourceBlockVersions?: Array<Record<string, unknown>>; sourceRevision?: string; adaptation?: Model3dDocumentAdaptation; scenePreview?: SceneCostPreview; acknowledgements?: Record<string, boolean> };
 
@@ -138,7 +148,9 @@ export class StillClient {
       const incoming: CreativeEvent[] = []; let hydrated: Record<string, string> | undefined;
       for (let count = 0; ; count++) {
         if (count >= 500) throw new Error('The event history could not be verified.');
-        const page = await this.request<{ events: CreativeEvent[]; head: number; nextAfter: number; hasMore: boolean; content?: Record<string, string> }>(`/api/events?after=${after}&limit=5000&content=${start === 0 && count === 0 ? 1 : 0}`); check();
+        // The creative projection does not need account telemetry. Jev still reads
+        // the full authorized history server-side for its own state.
+        const page = await this.request<{ events: CreativeEvent[]; head: number; nextAfter: number; hasMore: boolean; content?: Record<string, string> }>(`/api/events?after=${after}&limit=6500&profile=workspace&content=0`); check();
         if (!Array.isArray(page.events) || !Number.isSafeInteger(page.head) || page.head < start || page.events.some(e => !e.eventId || !Number.isSafeInteger(e.sequence) || e.sequence < 1 || !e.payload)) throw new Error('The event history could not be verified.');
         target ??= page.head;
         incoming.push(...page.events.filter(e => e.sequence <= target!));
@@ -147,7 +159,7 @@ export class StillClient {
         if (!Number.isSafeInteger(page.nextAfter) || page.nextAfter <= after) throw new Error('The event history did not advance.');
         after = page.nextAfter;
       }
-      if (start > 0 && needsContent(incoming, this.content)) {
+      if (needsContent(incoming, { ...this.content, ...hydrated })) {
         const page = await this.request<{ content?: Record<string, string> }>(`/api/events?after=${target}&limit=1&content=1`); check();
         hydrated = page.content;
       }
