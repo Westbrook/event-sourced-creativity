@@ -10,6 +10,8 @@ test("sharing copy covers every canonical locale and retains the same output ide
   for (const { locale } of FORMA_SUPPORTED_LOCALES) {
     const copy = selectedOutputShareCopy(locale);
     assert.deepEqual(Object.keys(copy).sort(), keys);
+    assert.notEqual(copy.manageLinks, copy.shareOutput, `${locale}: managing retained links is distinct from sharing an output`);
+    assert.notEqual(copy.manageLinks, copy.publishLink, `${locale}: managing retained links does not imply publication`);
     assert.deepEqual(Object.keys(copy.outputKinds).sort(), ["scene", "short_story", "slides"]);
     for (const [name, value] of Object.entries(copy)) {
       if (name === "outputKinds") continue;
@@ -29,6 +31,7 @@ test("saved regional locale values select supported copy without exposing protot
     ["", "en"], ["de-DE", "en"], ["toString", "en"], ["__proto__", "en"]]) {
     assert.equal(selectedOutputShareCopy(value), SELECTED_OUTPUT_SHARE_MESSAGES[expected]);
   }
+  assert.equal(selectedOutputShareCopy("unsupported").manageLinks, "Manage links");
 });
 
 test("every translated expiry label preserves a literal supplied date exactly once", () => {

@@ -1,18 +1,19 @@
 /* Scoped publisher layout. Stable native controls retain focus, selection and
    composition while locale updates change their adjacent display labels. */
 forma-selected-output-share-review,
-.selected-output-share-review {
+.selected-output-share-review:not([hidden]) {
   display: block;
   min-inline-size: 0;
   max-inline-size: 100%;
 }
-.selected-output-share-review > div:not([hidden]) {
+.selected-output-share-review > div:not([hidden]),
+.selected-output-share-review .selected-output-share-creation:not([hidden]) {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   gap: .75rem;
   min-inline-size: 0;
 }
-.selected-output-share-review > div > label {
+.selected-output-share-review .selected-output-share-creation > label {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   gap: .375rem;
@@ -20,7 +21,7 @@ forma-selected-output-share-review,
   line-height: 1.4;
   overflow-wrap: anywhere;
 }
-.selected-output-share-review > div > label > input {
+.selected-output-share-review .selected-output-share-creation > label > input {
   box-sizing: border-box;
   inline-size: 100%;
   max-inline-size: 100%;
@@ -30,6 +31,7 @@ forma-selected-output-share-review,
 }
 .selected-output-share-review > button,
 .selected-output-share-review > div > button,
+.selected-output-share-review .selected-output-share-creation > button,
 .selected-output-share-review > div > ul button,
 .selected-output-share-review [data-selected-output-link-mount] button {
   min-inline-size: max(2.75rem, 44px);
@@ -39,7 +41,8 @@ forma-selected-output-share-review,
   white-space: normal;
   overflow-wrap: anywhere;
 }
-.selected-output-share-review > div > :is(p, ul) {
+.selected-output-share-review > div > :is(p, ul),
+.selected-output-share-review .selected-output-share-creation > p {
   min-inline-size: 0;
   margin-block: 0;
   overflow-wrap: anywhere;
