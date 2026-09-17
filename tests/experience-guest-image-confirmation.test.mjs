@@ -197,7 +197,7 @@ test('partial Memory schemas fail before source disclosure or confirmation mutat
 
 function sourceDeclaration(source, name) {
   const file = ts.createSourceFile('witness.ts', source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
-  const matches = file.statements.filter(node => ts.isFunctionDeclaration(node) ? node.name?.text === name
+  const matches = file.statements.filter(node => ts.isFunctionDeclaration(node) || ts.isTypeAliasDeclaration(node) ? node.name?.text === name
     : ts.isVariableStatement(node) && node.declarationList.declarations.some(declaration => ts.isIdentifier(declaration.name) && declaration.name.text === name));
   assert.equal(matches.length, 1, `one top-level declaration for ${name}`);
   return matches[0].getText(file);
@@ -205,12 +205,12 @@ function sourceDeclaration(source, name) {
 test('stage witness mechanically preserves the sealed original prefix, private, schema and resource validators', () => {
   const original = readFileSync(new URL('../worker/experience-guest-image-output-witness.ts', import.meta.url), 'utf8');
   const successor = readFileSync(new URL('../worker/experience-guest-image-stage-witness.ts', import.meta.url), 'utf8');
-  assert.equal(createHash('sha256').update(original).digest('hex'), '8893aee29f7658f011acb4961ad899f8c69823f6f8fe5389bfabc5030f9f4b71',
-    'original first-SAVE witness remains byte-identical to accepted a2745c253587fff9715335c6ce22bcc8ebab845b');
+  assert.equal(createHash('sha256').update(original).digest('hex'), 'ba114d7c30a9237bcde53067215983b9142f34f8fa36bc2c7784eb1c74917b9c',
+    'original first-SAVE witness remains byte-identical to accepted schema-alternatives successor 8baaccd1744f1399f402ddd03ae9e9d0c2d3ad9c');
   for (const name of ['originalPrefix','memoryProof','sponsorSchema','freshSource','personalBlockScopes','expectedResource','resourceProof',
     'eventRow','unsupportedIdentityJson','boundedIdentityValue','bytes','iso','uuid','flatRow','proof','together','current','prove',
     'sourceColumns','sessionColumns','policyColumns','draftColumns','commitColumns','eventColumns','bodyColumns','eventWitness','prefixWitness',
-    'prefixJoins','commandColumns','resourceColumns','registries','registrySchemaSql','normalizedDdl','schemaItem','sponsorNames','sponsorTables','sponsorSchemaSql']) {
+    'prefixJoins','commandColumns','resourceColumns','registries','registrySchemaSql','SponsorSchemaFamily','normalizedDdl','schemaItem','sponsorVariants','sponsorNames','sponsorTables','sponsorSchemaSql']) {
     assert.equal(sourceDeclaration(successor, name), sourceDeclaration(original, name), `${name} retains the accepted exact native contract`);
   }
   const oldDriverFamily = '{ required: false, sql: SPONSOR_DRIVER_SCHEMA }';

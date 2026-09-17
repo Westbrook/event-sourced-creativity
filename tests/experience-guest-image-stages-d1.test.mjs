@@ -18,7 +18,7 @@ const [{ ensureSchema, readWorkspaceEvents }, { GUEST_CUSTODY_SCHEMA, GUEST_DB_N
   { canonicalJson, digest }, { POLICY_VERSION }, { authoritativeCreativeContext },
   { SPONSOR_ISSUER_SCHEMA }, { SPONSOR_DRIVER_SCHEMA }, { SPONSOR_INTAKE_SCHEMA },
   { SPONSOR_READ_POLICY_SCHEMA }, { SPONSOR_READ_APPROVAL_SCHEMA }, { SPONSOR_READ_ATTEMPT_SCHEMA },
-  { SPONSOR_INTAKE_READ_POLICY_SCHEMA }, { SPONSOR_INTAKE_READ_APPROVAL_SCHEMA }, { SPONSOR_INTAKE_READ_ATTEMPT_SCHEMA }] = await Promise.all([
+  { SPONSOR_INTAKE_READ_POLICY_SCHEMA }, { SPONSOR_INTAKE_READ_APPROVAL_SCHEMA }, { SPONSOR_INTAKE_READ_ATTEMPT_SCHEMA, SPONSOR_INTAKE_READ_ATTEMPT_V2_SCHEMA }] = await Promise.all([
   import('../worker/runtime.ts'), import('../worker/experience-guest-session.ts'), import('../worker/experience-guest-source.ts'),
   import('../worker/experience-guest-context-inventory.ts'), import('../worker/experience-guest-image-output.ts'),
   import('../worker/experience-sponsor-entitlement.ts'), import('../worker/experience-sponsor-resources.ts'),
@@ -44,7 +44,7 @@ const proofFor = session => ({ sessionId: session.sessionId, sessionToken: sessi
 const statements = sql => sql.split('--> statement-breakpoint').map(part => part.trim()).filter(Boolean);
 const optionalSchema = [...SPONSOR_ISSUER_SCHEMA, ...SPONSOR_DRIVER_SCHEMA, ...SPONSOR_INTAKE_SCHEMA,
   ...SPONSOR_READ_POLICY_SCHEMA, ...SPONSOR_READ_APPROVAL_SCHEMA, ...SPONSOR_READ_ATTEMPT_SCHEMA,
-  ...SPONSOR_INTAKE_READ_POLICY_SCHEMA, ...SPONSOR_INTAKE_READ_APPROVAL_SCHEMA, ...SPONSOR_INTAKE_READ_ATTEMPT_SCHEMA];
+  ...SPONSOR_INTAKE_READ_POLICY_SCHEMA, ...SPONSOR_INTAKE_READ_APPROVAL_SCHEMA];
 
 // Forward every application statement to actual workerd D1. Optional hooks add
 // explicit fixture changes in the native batch, or simulate lost acknowledgments;
@@ -128,7 +128,9 @@ async function templateFor(env, release, sourceContext, sourcePlan) {
       imageRender: structuredClone(settings.imageRender), imageBudget: structuredClone(settings.imageBudget), executionPolicy: structuredClone(settings.executionPolicy) },
     transport: await sponsorImageTransport(env) };
 }
-async function fixture(t, { memory = false, optional = false, maximum = false, operationCap = 100, lifetime = 120000 } = {}) {
+async function fixture(t, { memory = false, optional = false, maximum = false, operationCap = 100, lifetime = 120000, attemptVersion = 1 } = {}) {
+  assert.ok(attemptVersion === 1 || attemptVersion === 2, 'closed native attempt schema version');
+  const attemptSchema = attemptVersion === 2 ? SPONSOR_INTAKE_READ_ATTEMPT_V2_SCHEMA : SPONSOR_INTAKE_READ_ATTEMPT_SCHEMA;
   const directory = await mkdtemp(join(tmpdir(), 'forma-guest-stages-d1-')), egress = [], media = [];
   const mf = new Miniflare({ modules: true, compatibilityDate: '2026-05-15', host: '127.0.0.1', port: 0,
     script: "export default {fetch(){return new Response('Local D1 fixture only.',{status:404});}};",
@@ -146,7 +148,7 @@ async function fixture(t, { memory = false, optional = false, maximum = false, o
   // setup only. No canonical guest row or lifecycle/session helper is used.
   await ensureSchema(env);
   for (const sql of [...GUEST_CUSTODY_SCHEMA, ...GUEST_SOURCE_SCHEMA, ...SPONSOR_ENTITLEMENT_SCHEMA, ...SPONSOR_RESOURCE_SCHEMA, ...SPONSOR_APPROVAL_SCHEMA,
-    ...(optional ? optionalSchema : SPONSOR_DRIVER_SCHEMA)]) await DB.prepare(sql).run();
+    ...(optional ? [...optionalSchema, ...attemptSchema] : SPONSOR_DRIVER_SCHEMA)]) await DB.prepare(sql).run();
   if (memory) for (const name of ['0027_memory_native_origins.sql', '0033_memory_structured_answer_provenance.sql', '0034_memory_document_job_origins.sql'])
     await DB.batch(statements(await readFile(new URL('../drizzle/' + name, import.meta.url), 'utf8')).map(sql => DB.prepare(sql)));
   await DB.prepare('INSERT INTO users(user_id,email,display_name,role,consent_version,consented_at,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)')
@@ -211,7 +213,7 @@ async function fixture(t, { memory = false, optional = false, maximum = false, o
   }
   observed.records.length = 0; observed.batches.length = 0;
   return { raw, DB, env, observed, session, proof, terms, sourcePolicy, prepared, committed, inventory, native, release, subject, compiled, approvalId,
-    originalEvents, sourceContext, input, memory, optional, maximum,
+    originalEvents, sourceContext, input, memory, optional, maximum, attemptVersion,
     review: () => prepareGuestImageConfirmation(request(), env, input),
     confirm: review => confirmGuestImageRequirement(request(), env, { ...input, reviewedRequirementDigest: review.reviewedRequirementDigest, explicitRequirementsConfirmation: true }),
     preflight: () => preflightGuestImage(request(), env, input), quote: () => readGuestImagePreflight(request(), env, input),
@@ -233,7 +235,7 @@ function injectBeforeFinalGuard(f,items,records,sql){
 }
 function metrics(t,f){
   t.diagnostic(JSON.stringify({engine:'Wrangler-pinned Miniflare/workerd D1',applicationExecution:'Node-hosted native source functions',localOnly:true,
-    memory:f.memory,optionalSponsorFamilies:f.optional,originalPrefix:f.prepared.plan.events.length,policyMaximumEvents:f.sourcePolicy.maximumEvents,
+    memory:f.memory,optionalSponsorFamilies:f.optional,intakeReadAttemptSchemaVersion:f.attemptVersion,originalPrefix:f.prepared.plan.events.length,policyMaximumEvents:f.sourcePolicy.maximumEvents,
     subjectCharacters:f.subject.length,subjectUtf8Bytes:Buffer.byteLength(f.subject),sourceSnapshotUtf8Bytes:Buffer.byteLength(canonicalJson(f.sourceContext.snapshot)),
     explicitApprovedMaximumMicrousd:f.compiled.policy.templates[0].maximumMicrousd,
     strictDeploymentQualifiedStatements:f.observed.strictQualifications.length,strictDeploymentUniqueSql:new Set(f.observed.strictQualifications.map(row=>row.key)).size,
@@ -350,4 +352,18 @@ for(const stage of ['confirmation','reservation','quote'])test(`actual D1 late s
     assert.equal(after.contents.output_preflights.length,0);await assert.rejects(f.preflight());assert.deepEqual(await snapshot(f.DB),after,'quote failure preserves the charged unknown claim');
   }else assert.deepEqual(after,before,'native event/sidecars/debit and fixture revocation roll back together');
   metrics(t,f);
+});
+
+
+test('V2 actual local workerd D1 completes maximum guest stages with complete Memory and optional sponsor families',{timeout:120000},async t=>{
+  const f=await fixture(t,{memory:true,optional:true,maximum:true,attemptVersion:2}),before=await snapshot(f.DB);
+  const attempt=before.schema.find(row=>row.type==='table'&&row.name==='experience_sponsor_intake_read_attempts');
+  assert.ok(attempt);assert.ok(attempt.sql.includes("'image-output-confirmation'"),'the actual complete V2 native family is installed');
+  assert.equal(f.prepared.plan.events.length,8);assert.equal(f.subject.length,f.release.interactions.subject.maxLength);
+  const {review,confirmation}=await confirmed(f),quote=await f.preflight();
+  assert.equal(quote.replayed,false);assert.equal(quote.planRevisionId,confirmation.planRevisionId);
+  const after=await footprint(f,before,quote);assert.deepEqual(after.contents.experience_sponsor_intake_read_attempts,[]);
+  f.observed.readOnly=true;assert.deepEqual(await f.confirm(review),{...confirmation,replayed:true});
+  assert.deepEqual(await f.preflight(),{...quote,replayed:true});assert.deepEqual(await f.quote(),{...quote,replayed:true});
+  assert.deepEqual(await snapshot(f.DB),after,'V2 compatibility changes no schema, original source, private custody, financial or receipt history');metrics(t,f);
 });

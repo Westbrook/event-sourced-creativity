@@ -35,7 +35,7 @@ import { SPONSOR_READ_APPROVAL_SCHEMA } from "./experience-sponsor-read-approval
 import { SPONSOR_READ_ATTEMPT_SCHEMA } from "./experience-sponsor-read-attempts.ts";
 import { SPONSOR_INTAKE_READ_POLICY_SCHEMA } from "./experience-sponsor-intake-read-policy.ts";
 import { SPONSOR_INTAKE_READ_APPROVAL_SCHEMA } from "./experience-sponsor-intake-read-approval.ts";
-import { SPONSOR_INTAKE_READ_ATTEMPT_SCHEMA } from "./experience-sponsor-intake-read-attempts.ts";
+import { SPONSOR_INTAKE_READ_ATTEMPT_SCHEMA, SPONSOR_INTAKE_READ_ATTEMPT_V2_SCHEMA } from "./experience-sponsor-intake-read-attempts.ts";
 import { SPONSOR_NATIVE_IMAGE_READ_INDEXES } from "./experience-sponsor-native-image-read.ts";
 import { nativeMemoryAnswerExclusion } from "./memory-native-boundary.ts";
 import { normalizePlanSuggestions, outputRequirements, outputSourceDigests } from "./output-trusted-context.ts";
@@ -200,11 +200,13 @@ async function memoryProof(ctx: Context, draftId: string) {
     { sql: `${registrySchemaSql}=?`, bindings: [row.snapshot] }]), registries: observed.map(entry => String(entry.name)) };
 }
 
-const sponsorFamilies = [
+type SponsorSchemaFamily = { required: boolean; sql: readonly string[]; alternatives?: readonly (readonly string[])[] };
+const sponsorFamilies: readonly SponsorSchemaFamily[] = [
   { required: true, sql: SPONSOR_ENTITLEMENT_SCHEMA }, { required: true, sql: SPONSOR_RESOURCE_SCHEMA }, { required: true, sql: SPONSOR_APPROVAL_SCHEMA },
   { required: false, sql: SPONSOR_ISSUER_SCHEMA }, { required: true, sql: SPONSOR_DRIVER_SCHEMA }, { required: false, sql: SPONSOR_INTAKE_SCHEMA },
   { required: false, sql: SPONSOR_READ_POLICY_SCHEMA }, { required: false, sql: SPONSOR_READ_APPROVAL_SCHEMA }, { required: false, sql: SPONSOR_READ_ATTEMPT_SCHEMA },
-  { required: false, sql: SPONSOR_INTAKE_READ_POLICY_SCHEMA }, { required: false, sql: SPONSOR_INTAKE_READ_APPROVAL_SCHEMA }, { required: false, sql: SPONSOR_INTAKE_READ_ATTEMPT_SCHEMA },
+  { required: false, sql: SPONSOR_INTAKE_READ_POLICY_SCHEMA }, { required: false, sql: SPONSOR_INTAKE_READ_APPROVAL_SCHEMA },
+  { required: false, sql: SPONSOR_INTAKE_READ_ATTEMPT_SCHEMA, alternatives: [SPONSOR_INTAKE_READ_ATTEMPT_V2_SCHEMA] },
   // The native sponsored reader separately provisions this exact index on an
   // entitlement table. Its other indexes concern events/artifact rows and are
   // outside this sponsor-family schema witness; none grants guest authority.
@@ -216,8 +218,11 @@ const schemaItem = (sql: string) => {
   if (!match) return fail("schema_unavailable");
   return { type: match[1].toLowerCase(), name: match[2], sql: normalizedDdl(sql) };
 };
-const sponsorNames = sponsorFamilies.flatMap(family => family.sql.map(sql => schemaItem(sql).name));
-const sponsorTables = sponsorFamilies.flatMap(family => family.sql.map(schemaItem)).filter(item => item.type === "table").map(item => item.name);
+const sponsorVariants = sponsorFamilies.map(family => ({ required: family.required,
+  variants: [family.sql, ...(family.alternatives ?? [])].map(variant => variant.map(schemaItem)) }));
+const sponsorNames = [...new Set(sponsorVariants.flatMap(family => family.variants.flatMap(variant => variant.map(item => item.name))))];
+const sponsorTables = [...new Set(sponsorVariants.flatMap(family => family.variants.flatMap(variant =>
+  variant.filter(item => item.type === "table").map(item => item.name))))];
 const sponsorSchemaSql = `(SELECT json_group_array(json_object('type',type,'name',name,'table',tbl_name,'sql',sql)) FROM
   (SELECT type,name,tbl_name,CASE WHEN typeof(sql)='text' AND length(CAST(sql AS BLOB))<=32768 THEN sql ELSE NULL END AS sql FROM sqlite_schema
     WHERE name IN(${sponsorNames.map(name => `'${name}'`).join(",")}) OR tbl_name IN(${sponsorTables.map(name => `'${name}'`).join(",")}) ORDER BY name,type))`;
@@ -238,12 +243,16 @@ async function sponsorSchema(ctx: Context) {
     || new Set(explicit.map(item => item.name)).size !== explicit.length) return fail("schema_unavailable");
   const entries = new Map(explicit.map(item => [String(item.name), item]));
   const tables = new Set<string>();
-  for (const family of sponsorFamilies) {
-    const expected = family.sql.map(schemaItem), present = expected.filter(item => entries.has(item.name));
+  for (const family of sponsorVariants) {
+    const names = new Set(family.variants.flatMap(variant => variant.map(item => item.name)));
+    const present = [...names].filter(name => entries.has(name));
     if (!family.required && !present.length) continue;
-    if (present.length !== expected.length || expected.some(item => {
-      const actual = entries.get(item.name); return !actual || actual.type !== item.type || normalizedDdl(String(actual.sql)) !== item.sql;
-    })) return fail("schema_unavailable");
+    // Accept one whole native version, never a per-object mixture. The raw
+    // observed snapshot below still fences a later legitimate schema change.
+    const expected = family.variants.find(variant => present.length === variant.length && variant.every(item => {
+      const actual = entries.get(item.name); return actual && actual.type === item.type && normalizedDdl(String(actual.sql)) === item.sql;
+    }));
+    if (!expected) return fail("schema_unavailable");
     expected.filter(item => item.type === "table").forEach(item => tables.add(item.name));
   }
   return { proof: { sql: `${sponsorSchemaSql}=?`, bindings: [row.snapshot] } as Proof, tables };
