@@ -1,6 +1,7 @@
 import { jsonIssues } from "../src/experiences/compiler.ts";
 import { readOutputModel3dPayload, requireModel3dMiniAppCostApproval } from "./output-model3d-execution.ts";
 import { requireSponsorAdmission, sponsorAdmissionPayer, sponsorAdmissionPlan, type SponsorAdmissionAuthority } from "./experience-sponsor-admission.ts";
+import { requireSponsorExecution, type SponsorExecutionAuthority } from "./experience-sponsor-execution.ts";
 import { outputModel3dPreflightAssertions } from "./output-model3d-preflight.ts";
 import { model3dMiniAppAttemptMatches } from "../src/model/model3d-mini-app-consent.ts";
 import { resolveOutputModel3dRecoverySource } from "./output-model3d-source.ts";
@@ -730,18 +731,25 @@ async function validateRecordedOutputRun(trusted: OutputTrustedContext, evidence
   return ready;
 }
 
-// Admission-only sponsored personal grants must never enter the actor-paid runner.
-// Shared/organization execution has its own existing payer semantics.
-function refuseDormantSponsorExecution(scope: OutputScope, evidence: OutputGrantEvidence) {
+// Only the dormant internal entry can supply a fresh execution seal. Registered
+// requests retain their existing refusal of sponsored personal execution.
+async function requireRecordedSponsorExecution(trusted: OutputTrustedContext, grantId: string, evidence: OutputGrantEvidence, authority?: SponsorExecutionAuthority) {
   const envelope = record(evidence.authorization.output_command_envelope);
-  if (scope.kind === "personal" && Object.hasOwn(envelope, "sponsor_entitlement")) fail("sponsor_execution_not_enabled", 403);
+  if (trusted.scope.kind !== "personal" || !Object.hasOwn(envelope, "sponsor_entitlement")) {
+    if (authority) fail("sponsor_execution_binding_changed", 403);
+    return null;
+  }
+  if (!authority) fail("sponsor_execution_not_enabled", 403);
+  const sponsor = await requireSponsorExecution(authority, trusted.env, trusted.scope.actorUserId, { grantId, scopeKey: trusted.scope.key });
+  if (canonicalOutputJson(envelope.sponsor_entitlement) !== canonicalOutputJson(sponsor.marker)) fail("sponsor_execution_binding_changed", 403);
+  return sponsor;
 }
 
-async function runGrant(trusted: OutputTrustedContext, body: Record<string, unknown>, digest: string, bridge: OutputExecutionBridge | undefined, executionContext: WorkerExecutionContext) {
+async function runGrant(trusted: OutputTrustedContext, body: Record<string, unknown>, digest: string, bridge: OutputExecutionBridge | undefined, executionContext: WorkerExecutionContext, executionAuthority?: SponsorExecutionAuthority) {
   if (!bridge) fail("native_execution_unavailable", 409);
   const grantId = identifier(body.grantId, "grant_id_required");
   const evidence = await readOutputGrantEvidence(trusted.env, trusted.scope, grantId, true);
-  refuseDormantSponsorExecution(trusted.scope, evidence);
+  const sponsor = await requireRecordedSponsorExecution(trusted, grantId, evidence, executionAuthority);
   const ready = await validateRecordedOutputRun(trusted, evidence, bridge, ["authorized", "queued", "running"]);
   const readyIds = ready.map((slot) => slot.slotId);
   const sceneJobRuns:NonNullable<OutputCommandWrite['sceneJobRuns']>=[];
@@ -753,7 +761,7 @@ async function runGrant(trusted: OutputTrustedContext, body: Record<string, unkn
       sceneJobRuns.push({slot,version:receipt.witness.successor,previousRaw:receipt.raw});}
   }
   const saved = await commitOutputCommand(trusted.env, { ...commandWrite(trusted, body, digest, "request"),sceneJobRuns, events: [{ type: "OutputExecutionRunRequested", payload: { grant_id: grantId, job_ids: evidence.slots.map((slot) => slot.jobId), existing_jobs_only: true } }],
-    assertions: ready.length ? [outputRunGrantAssertion(trusted.scope, grantId), { sql: "NOT EXISTS(SELECT 1 FROM output_operation_slots slot WHERE slot.scope_key=? AND slot.grant_id=? AND slot.status IN('authorized','queued','running') AND slot.slot_id NOT IN(SELECT value FROM json_each(?)))", bindings: [trusted.scope.key, grantId, JSON.stringify(readyIds)] }] : [],
+    assertions: [...(sponsor?.assertions ?? []), ...(ready.length ? [outputRunGrantAssertion(trusted.scope, grantId), { sql: "NOT EXISTS(SELECT 1 FROM output_operation_slots slot WHERE slot.scope_key=? AND slot.grant_id=? AND slot.status IN('authorized','queued','running') AND slot.slot_id NOT IN(SELECT value FROM json_each(?)))", bindings: [trusted.scope.key, grantId, JSON.stringify(readyIds)] }] : [])],
     buildSidecars: () => ({ statements: [trusted.env.DB.prepare("UPDATE output_operation_slots SET status='queued',updated_at=? WHERE scope_key=? AND grant_id=? AND status='authorized' AND slot_id IN(SELECT value FROM json_each(?))").bind(nowIso(), trusted.scope.key, grantId, JSON.stringify(readyIds)), trusted.env.DB.prepare("UPDATE output_execution_grants SET status='active' WHERE scope_key=? AND grant_id=? AND status='authorized'").bind(trusted.scope.key, grantId)], assertions: ready.length ? [outputRunGrantAssertion(trusted.scope, grantId)] : [] }) });
   // Dispatch is an existing-job wake-up only. No new source read, slot, budget,
   // provider call or alternative is created here; the job HTTP runner owns work.
@@ -762,15 +770,15 @@ async function runGrant(trusted: OutputTrustedContext, body: Record<string, unkn
   return saved;
 }
 
-async function resumeRecordedOutputRun(trusted: OutputTrustedContext, grantId: string, bridge: OutputExecutionBridge | undefined, executionContext: WorkerExecutionContext) {
+async function resumeRecordedOutputRun(trusted: OutputTrustedContext, grantId: string, bridge: OutputExecutionBridge | undefined, executionContext: WorkerExecutionContext, executionAuthority?: SponsorExecutionAuthority) {
   if (!bridge) fail("native_execution_unavailable", 409);
   const evidence = await readOutputGrantEvidence(trusted.env, trusted.scope, grantId, true);
-  refuseDormantSponsorExecution(trusted.scope, evidence);
+  const sponsor = await requireRecordedSponsorExecution(trusted, grantId, evidence, executionAuthority);
   const pending = await validateRecordedOutputRun(trusted, evidence, bridge, ["queued", "running"]);
   if (!pending.length) return;
   // Identical replay resumes only recorded jobs under fresh authority. Exact
   // provider receipts and leases decide whether a logical call was consumed.
-  await trusted.env.DB.batch([outputScopeAuthority(trusted.scope, "request"), outputRunGrantAssertion(trusted.scope, grantId), ...trusted.sourceAssertions, ...retainedOutputBodyAssertions(trusted.scope),
+  await trusted.env.DB.batch([...(sponsor?.assertions ?? []), outputScopeAuthority(trusted.scope, "request"), outputRunGrantAssertion(trusted.scope, grantId), ...trusted.sourceAssertions, ...retainedOutputBodyAssertions(trusted.scope),
     { sql: "(SELECT COALESCE(MAX(sequence),0) FROM events WHERE stream_id=?)=?", bindings: [`creative:${trusted.scope.ownerUserId}`, trusted.ownerHead] }].flatMap((assertion) => outputAssertionStatements(trusted.env, assertion)));
   await bridge.dispatch({ request: trusted.request, env: trusted.env, scope: trusted.scope, principal: trusted.principal, executionContext, slots: pending });
 }
@@ -1196,7 +1204,7 @@ function responseCommand(receipt: { action: string; eventId: string; payload: Re
     ...(downloadUrl ? { manifestId: String(payload.manifest_id), downloadUrl, downloadUrls: Array.from({ length: partCount }, (_, index) => `${downloadUrl}${partCount > 1 ? `&part=${index + 1}` : ""}`), partCount } : {}) };
 }
 
-async function executeExperienceCommand(trusted: OutputTrustedContext, body: Record<string, unknown>, bridge: OutputExecutionBridge, executionContext: WorkerExecutionContext, sponsorAdmission?: SponsorAdmissionAuthority) {
+async function executeExperienceCommand(trusted: OutputTrustedContext, body: Record<string, unknown>, bridge: OutputExecutionBridge, executionContext: WorkerExecutionContext, sponsorAdmission?: SponsorAdmissionAuthority, executionAuthority?: SponsorExecutionAuthority) {
     const action = String(body.action);
     if (!["save", "confirm", "preflight", "authorize", "run"].includes(action)) fail("experience_output_action_unsupported", 400);
     const envelope = structuredClone(body), digest = await outputDigest(envelope);
@@ -1205,7 +1213,7 @@ async function executeExperienceCommand(trusted: OutputTrustedContext, body: Rec
     if (replay) {
       if (replay.privateUnavailable) fail("original_command_content_unavailable", 410);
       // This branch is invoked only by an explicit POST run, never passive re-entry.
-      if (action === "run") await resumeRecordedOutputRun(trusted, identifier(replay.payload.grant_id, "grant_id_required"), bridge, executionContext);
+      if (action === "run") await resumeRecordedOutputRun(trusted, identifier(replay.payload.grant_id, "grant_id_required"), bridge, executionContext, executionAuthority);
       return { replayed: true, receipt: replay, events: [] as EventRow[] };
     }
     const bound = { ...trusted, retainedCommandEnvelope: envelope };
@@ -1213,7 +1221,7 @@ async function executeExperienceCommand(trusted: OutputTrustedContext, body: Rec
       : action === "confirm" ? confirmPlan(bound, envelope, digest)
       : action === "preflight" ? preflightPlan(bound, envelope, digest, bridge)
       : action === "authorize" ? authorizePlan(bound, envelope, digest, bridge, sponsorAdmission)
-      : runGrant(bound, envelope, digest, bridge, executionContext);
+      : runGrant(bound, envelope, digest, bridge, executionContext, executionAuthority);
 }
 
 /** Internal, server-bound mini-app adapter. No HTTP caller chooses these capabilities. */
@@ -1238,6 +1246,19 @@ export const outputExperienceCommands = {
     const envelope = { ...command, sponsor_entitlement: sponsorship.marker };
     return executeExperienceCommand(captured, envelope, bridge, executionContext, authority);
 
+  },
+  /** Dormant internal Run only. Registered routes cannot construct this seal. */
+  async executeSponsoredRun(trusted: OutputTrustedContext, body: Record<string, unknown>, authority: SponsorExecutionAuthority, bridge: OutputExecutionBridge, executionContext: WorkerExecutionContext) {
+    if (jsonIssues(body).length) fail("sponsor_command_invalid", 403);
+    const command = structuredClone(body);
+    const { request, env, governanceWitness, ...data } = trusted;
+    const captured = { ...structuredClone(data), request, env, governanceWitness };
+    inheritRetainedOutputPrivateBodies(trusted.scope, captured.scope);
+    if (command.action !== "run" || Object.hasOwn(command, "sponsor_entitlement")) fail("sponsor_command_invalid", 403);
+    const sponsor = await requireSponsorExecution(authority, env, captured.scope.actorUserId, {
+      request, command, grantId: identifier(command.grantId, "grant_id_required"), scopeKey: captured.scope.key,
+    });
+    return executeExperienceCommand(captured, { ...command, sponsor_entitlement: sponsor.marker }, bridge, executionContext, undefined, authority);
   },
 };
 

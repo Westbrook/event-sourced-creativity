@@ -1,3 +1,4 @@
+import { requireSponsorExecution, readSponsorFinancialBinding, sponsorFinancialIdentity, sponsorTerminalReleaseStatement, type SponsorExecutionAuthority, type SponsorFinancialBinding } from "./experience-sponsor-execution.ts";
 import { retainedPlannerResponseShape, retainedStoryboardResponseShape } from "./output-planner-response-shape.ts";
 import { readStoryboardInspectionWitness } from "./output-storyboard-inspection-witness.ts";
 import { unstartedOutputJobFailure } from "./output-unstarted-job-failure.ts";
@@ -1572,7 +1573,7 @@ function failureProgressMessage(detail: ProviderFailureDetail | DocumentJobError
 const OUTPUT_STORYBOARD_RETAINED_CHECKPOINT_KEYS = ["outputExecution","providerSubmissionProtocol","providerSubmissionLegacyUncertain","artifactPlan","renderedItems","outputStoryboardPlannerCheckpoint","outputStoryboardRawEnvelope","outputStoryboardCheckpoints"] as const;
 const OUTPUT_VIDEO_RETAINED_CHECKPOINT_KEYS = ["outputExecution","providerSubmissionProtocol","providerSubmissionLegacyUncertain","artifactPlan","outputVideoPlannerCheckpoint","outputVideoPlannerEnvelope","outputVideoMediaCheckpoint","outputVideoMediaEnvelopes","outputVideoMediaResult","outputVideoRecovery","outputVideoRecoveryEnvelopes"] as const;
 
-async function finishDocumentJob(env: WorkerEnv, row: DocumentJobRow, status: "completed" | "failed", result: Record<string, unknown>, errorMessage: string | null, completedAt = new Date().toISOString(), guardActive = true) {
+async function finishDocumentJob(env: WorkerEnv, row: DocumentJobRow, status: "completed" | "failed", result: Record<string, unknown>, errorMessage: string | null, completedAt = new Date().toISOString(), guardActive = true, sponsorTerminal: D1PreparedStatement[] = []) {
   const parentId = parentJobIdFromRequest(parseRequest(row));
   const bindings = documentJobCompletionBindings({ status, result, errorMessage, completedAt, parentId, jobId: row.job_id, ownerId: row.owner_id, correlationId: row.correlation_id });
   // Keep the exact verified private checkpoint in the guarded terminal write.
@@ -1592,7 +1593,7 @@ async function finishDocumentJob(env: WorkerEnv, row: DocumentJobRow, status: "c
     ? `UPDATE document_jobs SET status=?,result_json=${resultAssignment},error_message=?,completed_at=?,lease_expires_at=NULL,notified_at=CASE WHEN ? IS NULL THEN notified_at ELSE ? END,updated_at=? WHERE job_id=? AND owner_id=? AND correlation_id=? AND status IN ('running','committing')`
     : `UPDATE document_jobs SET status=?,result_json=${resultAssignment},error_message=?,completed_at=?,lease_expires_at=NULL,notified_at=CASE WHEN ? IS NULL THEN notified_at ELSE ? END,updated_at=? WHERE job_id=? AND owner_id=? AND correlation_id=?`;
   const terminal=env.DB.prepare(statement).bind(...bindings);
-  return row.output_slot_id?(await env.DB.batch([terminal,...prepareOutputJobOutcomeStatements(env,row)]))[0]!:terminal.run();
+  return row.output_slot_id?(await env.DB.batch([terminal,...prepareOutputJobOutcomeStatements(env,row),...sponsorTerminal]))[0]!:terminal.run();
 }
 
 function queueRecoveryPresentation(row: DocumentJobRow, recoveryBlocker: DocumentJobRow | null) {
@@ -1904,7 +1905,8 @@ async function restoreLegacyCostReservation(env: WorkerEnv, user: PilotUser, row
   return reservationId;
 }
 
-async function releaseInterruptedAttempt(env: WorkerEnv, user: PilotUser, row: DocumentJobRow, reason: string) {
+async function releaseInterruptedAttempt(env: WorkerEnv, user: PilotUser, row: DocumentJobRow, reason: string, sponsorFinancial?: SponsorFinancialBinding) {
+  if(sponsorFinancial){const financial=sponsorFinancialIdentity(sponsorFinancial,env,user.userId,row.job_id);const checkpoint=parseResult(row);await settleDocumentGenerationBudgets(env,financial.payerUserId,{reservationId:String(checkpoint.reservationId??""),costReservationId:String(checkpoint.costReservationId??""),reason,assertions:[financial.assertion]});return;}
   if(consentedAdaptiveJob(row)){await failConsequentialExecution(env,row.owner_id,row.job_id,reason);await reconcileConsequentialUsage(env,row.owner_id,row.job_id);return;}
   // Historical planning has no exact non-submission boundary: do not release an uncertain legacy hold.
   if(row.kind==="structure_adaptive"&&(row.attempt_count>0||row.started_at))return;
@@ -2122,7 +2124,7 @@ async function queueFollowupPreview(env:WorkerEnv,user:PilotUser,parent:Document
   return readJob(env,user.userId,jobId);
 }
 
-export async function runDocumentJob(env: WorkerEnv, user: PilotUser, jobId: string, verifiedRow?:DocumentJobRow) {
+export async function runDocumentJob(env: WorkerEnv, user: PilotUser, jobId: string, verifiedRow?:DocumentJobRow, sponsorAuthority?:SponsorExecutionAuthority) {
   await ensureSchema(env);
   await ensureOutputRequirementsSchema(env);
   let row=verifiedRow&&verifiedRow.job_id===jobId&&verifiedRow.owner_id===user.userId&&verifiedRow.stream_id===user.streamId?verifiedRow:await readJob(env,user.userId,jobId);if(!row)return row;
@@ -2142,6 +2144,11 @@ export async function runDocumentJob(env: WorkerEnv, user: PilotUser, jobId: str
   const outputBinding=await loadOutputJobBinding(env,user,row);
   if(outputBinding)row.output_slot_id=outputBinding.slot.slotId;
   if(outputBinding&&!['queued','running'].includes(outputBinding.slot.status))return row;
+  if(outputBinding?.sponsored&&(user.fictional||user.projectExecution||user.billingUserId&&user.billingUserId!==user.userId))throw new OutputConflictError("sponsor_personal_principal_required",403);
+  const sponsorExecution=outputBinding?.sponsored?await requireSponsorExecution(sponsorAuthority,env,user.userId,{jobId,grantId:outputBinding.slot.grantId,scopeKey:outputBinding.scope.key}):null;
+  const sponsorFinancial=sponsorExecution?sponsorFinancialIdentity(sponsorExecution.financial,env,user.userId,jobId):null;
+  const nativeFinancialOwner=sponsorFinancial?.payerUserId??user.billingUserId??user.userId;
+  const sponsorTerminal=()=>sponsorExecution?[sponsorTerminalReleaseStatement(sponsorExecution.financial,env,user.userId,jobId)]:[];
   const expiredScene=outputBinding?expiredOriginalSceneJobFailure(row,new Date().toISOString()):null;
   if(expiredScene){
     // This exact expired claim, not a new source read, owns terminalization.
@@ -2174,14 +2181,14 @@ export async function runDocumentJob(env: WorkerEnv, user: PilotUser, jobId: str
   }
   let outputAdmissionAssertions:OutputSqlAssertion[]=[];let outputProof:OutputExecutionProof|undefined;let nativeExecutionPolicy:OutputNativeExecutionPolicy=OUTPUT_NATIVE_EXECUTION_POLICY;
   if(outputBinding){
-    try{outputProof=prepareOutputExecutionProof(outputBinding.scope,await resolveOutputExecutionAuthority(env,outputBinding.scope,outputBinding.slot));const policy=readOutputNativeExecutionPolicy((outputProof.targetPreflight.settings as Record<string,unknown>).executionPolicy);if(!policy)throw new OutputConflictError("output_execution_policy_invalid",409);nativeExecutionPolicy=policy;const jobAuthority=documentJobProjectAuthority(user,row.document_id,jobId);outputAdmissionAssertions=[...outputProof.assertions,...(jobAuthority?[jobAuthority]:[])];}
+    try{outputProof=prepareOutputExecutionProof(outputBinding.scope,await resolveOutputExecutionAuthority(env,outputBinding.scope,outputBinding.slot));const policy=readOutputNativeExecutionPolicy((outputProof.targetPreflight.settings as Record<string,unknown>).executionPolicy);if(!policy)throw new OutputConflictError("output_execution_policy_invalid",409);nativeExecutionPolicy=policy;const jobAuthority=documentJobProjectAuthority(user,row.document_id,jobId);outputAdmissionAssertions=[...(sponsorExecution?.assertions??[]),...outputProof.assertions,...(jobAuthority?[jobAuthority]:[])];}
     catch(error){
       const detail=classifyDocumentJobFailure(error);
       const stopped=unstartedOutputJobFailure(row,{...parseResult(row),errorDetail:publicFailureDetail(detail),stage:"failed",progressMessage:"The Output source, requirement, or permission changed. No new provider request was sent."},detail.message,new Date().toISOString());
       const changed=stopped?Number((await env.DB.prepare(stopped.sql).bind(...stopped.bindings).run()).meta.changes??0):0;
       // A competing claim/completion during the awaited proof wins. Never
       // release, settle or project an outcome on behalf of that execution.
-      if(changed===1){const blocked=await readJob(env,user.userId,jobId);if(blocked){await releaseInterruptedAttempt(env,user,blocked,"output_authority_changed_before_dispatch");await synchronizeOutputJobOutcome(env,blocked);}}
+      if(changed===1){const blocked=await readJob(env,user.userId,jobId);if(blocked){await releaseInterruptedAttempt(env,user,blocked,"output_authority_changed_before_dispatch",sponsorExecution?.financial);await synchronizeOutputJobOutcome(env,blocked);if(sponsorExecution)await sponsorTerminalReleaseStatement(sponsorExecution.financial,env,user.userId,jobId).run();}}
       return readJob(env,user.userId,jobId);
     }
   }
@@ -2299,7 +2306,7 @@ export async function runDocumentJob(env: WorkerEnv, user: PilotUser, jobId: str
   const memoryClaimDb=env.DB,memoryClaimPrincipalKey=row.kind==="chat"&&row.source_surface==="chat"?documentJobMemoryPrincipalKey(user):"";
   let claimed;
   if (handoffPaidProviderReservations) {
-    const billingOwnerId = user.billingUserId ?? user.userId;
+    const billingOwnerId = nativeFinancialOwner;
     const tokenReservationId=String(previousCheckpoint.reservationId);
     const costReservationId=String(previousCheckpoint.costReservationId);
     const operation=row.kind==="generate"?"image-generation":`document-render:${String(parseRequest(previousRow).artifactKind??"unknown")}`;
@@ -2377,12 +2384,12 @@ export async function runDocumentJob(env: WorkerEnv, user: PilotUser, jobId: str
     }
     payload.action = row.kind; payload.documentId = row.document_id; payload.sourceSurface = row.source_surface;
     payload.correlationId = row.correlation_id; payload.clientId = `server:document-job:${row.kind}`;
-    const outputExecution=outputBinding?await createOutputEventExecution(env,user,row,outputBinding,outputProof):undefined;
+    const outputExecution=outputBinding?await createOutputEventExecution(env,user,row,outputBinding,outputProof,sponsorAuthority):undefined;
     outputOperationExecution=outputExecution;operationEnvironment=outputExecution?.guardedEnvironment??env;
     if(!foregroundPresentation)await updateJobProgress(operationEnvironment,row,"compiling",row.kind==="preview"||row.kind==="generate"?"Compiling the checked document state for generation.":row.kind==="render_document"?"Compiling the document into the requested artifact.":"Processing the requested document change.");
     const response = await runWithHeartbeat(operationEnvironment, row,user, (control) => handleEvents(new Request("http://document-job.local/api/events", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(payload), signal: control.signal }), env, false, user, outputExecution?{...control,output:outputExecution}:foregroundPresentation&&!user.projectExecution?{...control,settlePersonalPresentation:async input=>{
       const {settlePersonalPresentationBudgets}=await import("./pilot-policy.ts");
-      foregroundAccountSettlement=await settlePersonalPresentationBudgets(operationEnvironment,user.billingUserId??user.userId,{...input,jobId:row.job_id,streamId:row.stream_id,correlationId:row.correlation_id});
+      foregroundAccountSettlement=await settlePersonalPresentationBudgets(operationEnvironment,nativeFinancialOwner,{...input,jobId:row.job_id,streamId:row.stream_id,correlationId:row.correlation_id});
     }}:control),nativeExecutionPolicy,outputExecution?.withSourceTransition);
     documentJobMemoryClaims.delete(row);
     const body = await response.json() as Record<string, unknown>;let followup:DocumentJobRow|null=null;if(response.ok&&body.followupJob&&typeof body.followupJob==="object")followup=await queueFollowupPreview(env,user,row,body.followupJob as Record<string,unknown>);const completedAt = new Date().toISOString();
@@ -2398,14 +2405,14 @@ export async function runDocumentJob(env: WorkerEnv, user: PilotUser, jobId: str
     const acceptedReceipt=rawReceipt&&typeof rawReceipt==="object"?{...rawReceipt as Record<string,unknown>,...(observedPlannerCalls?{actual_provider_call_count:observedPlannerCalls}:{})}:null;
     let terminalResult = { ...durableCheckpoint, ...(outputBinding&&(readOutputAudioPayload(parseRequest(row))||row.kind==="render_document"&&["storyboard","video"].includes(String(parseRequest(row).artifactKind))||model3dNativeCheckpoint(parseRequest(row)))?{providerSubmissions:liveCheckpoint.providerSubmissions}:{}), ...(acceptedReceipt?{generationReceipt:acceptedReceipt}:{}), ...safeResult({...body,followupJobId:followup?.job_id}), ...(sceneConfiguration?{sceneMedium:sceneConfiguration.medium,sceneConfiguration}:{}), ...(detail ? { errorDetail: publicFailureDetail(detail) } : {}), stage: response.ok ? "completed" : "failed", progressMessage: response.ok ? "The operation finished." : failureProgressMessage(detail) };
     const recordedNativeFailure=outputBinding&&Array.isArray(body.appended)&&body.appended.some(event=>event&&typeof event==="object"&&["GenerationFailed","DocumentRenderFailed"].includes(String((event as Record<string,unknown>).type)));
-    if(outputBinding&&!response.ok&&!recordedNativeFailure)await settleDocumentGenerationBudgets(env,user.billingUserId??user.userId,{reservationId:outputBinding.slot.tokenReservationId,costReservationId:outputBinding.slot.costReservationId,reason:"output_rejected_before_generation"});
+    if(outputBinding&&!response.ok&&!recordedNativeFailure)await settleDocumentGenerationBudgets(env,nativeFinancialOwner,{reservationId:outputBinding.slot.tokenReservationId,costReservationId:outputBinding.slot.costReservationId,reason:"output_rejected_before_generation",assertions:sponsorFinancial?[sponsorFinancial.assertion]:[]});
     // Build the final receipt while the lease and source-retention proof are still
     // live, then publish it with the terminal state in the same guarded write.
     const nativeReceiptReady=outputBinding?await refreshGenerationReceipt(operationEnvironment,user,row,body,detail,"",{
       ...row,status:response.ok?"completed":"failed",result_json:JSON.stringify(terminalResult),error_message:response.ok?null:detail?.message??String(body.error??"document_job_failed"),completed_at:completedAt,lease_expires_at:null,updated_at:completedAt,
     },false,outputOperationExecution?.accountSettlement):null;
     if(nativeReceiptReady)terminalResult=parseResult(nativeReceiptReady) as typeof terminalResult;
-    const terminalWrite=await finishDocumentJob(operationEnvironment,row,response.ok?"completed":"failed",terminalResult,response.ok?null:detail?.message??String(body.error??"document_job_failed"),completedAt);
+    const terminalWrite=await finishDocumentJob(operationEnvironment,row,response.ok?"completed":"failed",terminalResult,response.ok?null:detail?.message??String(body.error??"document_job_failed"),completedAt,true,sponsorTerminal());
     if(nativeReceiptReady&&Number(terminalWrite.meta.changes??0)===1){persistedForegroundPresentation=nativeReceiptReady;outputOutcomeSynchronized=true;}
     if(!outputBinding&&!response.ok&&row.kind==="render_document"){
       const failed=await readJob(env,user.userId,row.job_id);
@@ -2436,7 +2443,7 @@ export async function runDocumentJob(env: WorkerEnv, user: PilotUser, jobId: str
       // Monetary evidence may converge independently of erased source bodies.
       // A failed/uncertain settlement leaves its original allowance for the
       // explicit receipt check; it never starts another provider request.
-      if(!outputOperationExecution?.accountSettlement)try{await settleDocumentGenerationBudgets(env,user.billingUserId??user.userId,{reservationId:outputBinding.slot.tokenReservationId,costReservationId:outputBinding.slot.costReservationId,reason:"output_execution_stopped"});}catch{/* The durable call and account reservation remain the source of truth. */}
+      if(!outputOperationExecution?.accountSettlement)try{await settleDocumentGenerationBudgets(env,nativeFinancialOwner,{reservationId:outputBinding.slot.tokenReservationId,costReservationId:outputBinding.slot.costReservationId,reason:"output_execution_stopped",assertions:sponsorFinancial?[sponsorFinancial.assertion]:[]});}catch{/* The durable call and account reservation remain the source of truth. */}
       const safeFailure={errorDetail:localDispatchStop??{code:detail.code,category:detail.category,scope:"request",action:"none",message:"The Output operation could not finish under its current authorization.",retryable:false},stage:"failed",progressMessage:"The Output operation stopped; inspect its retained receipt before authorizing another attempt."};
       const terminal=env.DB.prepare("UPDATE document_jobs SET status='failed',result_json=json_patch(COALESCE(result_json,'{}'),?),error_message=?,completed_at=?,lease_expires_at=NULL,updated_at=? WHERE job_id=? AND owner_id=? AND stream_id=? AND correlation_id=? AND status IN('queued','running','committing')")
         .bind(JSON.stringify(safeFailure),detail.code,completedAt,completedAt,row.job_id,user.userId,user.streamId,row.correlation_id);
@@ -2444,18 +2451,18 @@ export async function runDocumentJob(env: WorkerEnv, user: PilotUser, jobId: str
       // previous completion committed but its acknowledgement was lost, its
       // completed state wins instead of being overwritten with a failure.
       const localStopRow=await readJob(env,user.userId,row.job_id);
-      const localStopProof=localStopRow?await readOutputSceneLocalStop(env,localStopRow,user.userId,user.billingUserId??user.userId):null;
+      const localStopProof=localStopRow?await readOutputSceneLocalStop(env,localStopRow,user.userId,nativeFinancialOwner):null;
       const localStopFinancial=localStopProof?[env.DB.prepare(`UPDATE document_jobs SET result_json=json_patch(result_json,json_object('generationReceipt',json_object(
         'reservation_status',(SELECT status FROM cost_budget_reservations WHERE reservation_id=? AND owner_id=?),
         'settled_cost_microusd',(SELECT used_microusd FROM cost_budget_reservations WHERE reservation_id=? AND owner_id=?))))
-        WHERE job_id=? AND owner_id=? AND (${localStopProof.guard.sql})`).bind(outputBinding.slot.costReservationId,user.billingUserId??user.userId,
-          outputBinding.slot.costReservationId,user.billingUserId??user.userId,row.job_id,user.userId,...localStopProof.guard.bindings)]:[];
-      const finalized=await env.DB.batch([terminal,...localStopFinancial,...prepareOutputJobOutcomeStatements(env,row),env.DB.prepare("SELECT * FROM document_jobs WHERE job_id=? AND owner_id=? AND stream_id=? AND correlation_id=?").bind(row.job_id,user.userId,user.streamId,row.correlation_id)]);
+        WHERE job_id=? AND owner_id=? AND (${localStopProof.guard.sql})`).bind(outputBinding.slot.costReservationId,nativeFinancialOwner,
+          outputBinding.slot.costReservationId,nativeFinancialOwner,row.job_id,user.userId,...localStopProof.guard.bindings)]:[];
+      const finalized=await env.DB.batch([terminal,...localStopFinancial,...prepareOutputJobOutcomeStatements(env,row),...sponsorTerminal(),env.DB.prepare("SELECT * FROM document_jobs WHERE job_id=? AND owner_id=? AND stream_id=? AND correlation_id=?").bind(row.job_id,user.userId,user.streamId,row.correlation_id)]);
       persistedForegroundPresentation=(finalized.at(-1)?.results[0] as unknown as DocumentJobRow|undefined)??null;
       outputOutcomeSynchronized=Boolean(persistedForegroundPresentation);
     }else{
       const durableCheckpoint = parseResult(await readJob(env, user.userId, row.job_id) ?? row);
-      await finishDocumentJob(env, row, "failed", { ...durableCheckpoint, errorDetail: publicFailureDetail(detail), stage: "failed", progressMessage: failureProgressMessage(detail) }, detail.message, completedAt);
+      await finishDocumentJob(env, row, "failed", { ...durableCheckpoint, errorDetail: publicFailureDetail(detail), stage: "failed", progressMessage: failureProgressMessage(detail) }, detail.message, completedAt,true,sponsorTerminal());
     }
     if(!outputBinding&&row.kind==="render_document"){
       const failed=await readJob(env,user.userId,row.job_id);
@@ -2571,6 +2578,22 @@ async function stopAdaptivePlanningJob(env:WorkerEnv,user:PilotUser,target:Docum
 async function stopGenerationJob(env: WorkerEnv, user: PilotUser, target: DocumentJobRow, force: boolean) {
   if(consentedAdaptiveJob(target))return stopAdaptivePlanningJob(env,user,target,force);
   await ensureOutputRequirementsSchema(env);
+  const output=await loadOutputJobBinding(env,user,target);
+  if(output?.sponsored){
+    const original=await readSponsorFinancialBinding(env,user.userId,target.job_id),financial=sponsorFinancialIdentity(original,env,user.userId,target.job_id);
+    if(documentJobTerminal(target)){await reconcileKnownOutputProviderReceipts(env,user,{jobId:target.job_id});await sponsorTerminalReleaseStatement(original,env,user.userId,target.job_id).run();return {job:await readJob(env,user.userId,target.job_id)} as const;}
+    // This slice can cancel only a proven unstarted original. An accepted or
+    // unknown paid stage retains its monetary exposure and cannot be stopped by
+    // inferring zero spend from browser status.
+    if(target.status!=="queued"||target.attempt_count!==0||await env.DB.prepare("SELECT 1 FROM output_provider_calls WHERE scope_key=? AND slot_id=? LIMIT 1").bind(output.scope.key,output.slot.slotId).first())return {error:"provider_submission_in_flight",status:409} as const;
+    const now=new Date().toISOString(),reason=force?"generation_force_failed":"generation_canceled";
+    const terminal=env.DB.prepare("UPDATE document_jobs SET status=?,error_message=?,completed_at=?,lease_expires_at=NULL,updated_at=? WHERE job_id=? AND owner_id=? AND stream_id=? AND correlation_id=? AND status='queued' AND attempt_count=0 AND NOT EXISTS(SELECT 1 FROM output_provider_calls WHERE scope_key=? AND slot_id=?)")
+      .bind(force?"failed":"canceled",reason,now,now,target.job_id,user.userId,target.stream_id,target.correlation_id,output.scope.key,output.slot.slotId);
+    await env.DB.batch([...outputAssertionStatements(env,financial.assertion),terminal,...outputAssertionStatements(env,{sql:"changes()=1"}),...prepareOutputJobOutcomeStatements(env,target)]);
+    await settleDocumentGenerationBudgets(env,financial.payerUserId,{reservationId:output.slot.tokenReservationId,costReservationId:output.slot.costReservationId,reason,assertions:[financial.assertion]});
+    await sponsorTerminalReleaseStatement(original,env,user.userId,target.job_id).run();
+    return {job:await readJob(env,user.userId,target.job_id),stoppedCount:1} as const;
+  }
   if(!force){const nativeVideoStop=await stopOutputVideoJob(env,user.userId,target);if(nativeVideoStop){if("job" in nativeVideoStop&&nativeVideoStop.job)await reconcileKnownOutputProviderReceipts(env,user,{jobId:target.job_id});return nativeVideoStop;}}
   if(await env.DB.prepare("SELECT 1 FROM output_operation_slots slot JOIN output_provider_calls calls ON calls.scope_key=slot.scope_key AND calls.slot_id=slot.slot_id WHERE slot.job_id=? AND calls.status IN('pending','uncertain') LIMIT 1").bind(target.job_id).first())return{error:"provider_submission_in_flight",status:409} as const;
   if (target.kind !== "preview" && target.kind !== "generate" && target.kind !== "prompt_fan" && target.kind !== "render_document") return { error: "generation_job_required", status: 409 } as const;
@@ -3454,6 +3477,7 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
     const consent = requireConsent(user); if (consent) return consent;
     const jobId=decodeURIComponent(path.slice(0,-4).replace(/\/$/,""));const existing=verifiedPathJob??await readJob(env,user.userId,jobId);
     if (!existing) return Response.json({ error: "job_not_found" }, { status: 404 });
+    if((await loadOutputJobBinding(env,user,existing))?.sponsored)return Response.json({error:"sponsor_execution_not_enabled"},{status:403});
     if (existing.kind === "prompt_fan") {
       const job = await reconcilePromptFanParent(env, user.userId, jobId); if (!job) return Response.json({ error: "job_not_found" }, { status: 404 });
       context?.waitUntil(driveDocumentQueue(env, user));

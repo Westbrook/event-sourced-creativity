@@ -539,10 +539,17 @@ export async function handleEvents(request:Request,env:WorkerEnv,hot=false,userO
     }
     let executionScope=auth.user.projectExecution;
     const ownerId=auth.user.userId,storageOwnerId=executionScope?.ownerUserId??ownerId,actorUserId=auth.user.userId,streamId=auth.user.streamId,userActor=executionScope?`user:${auth.user.userId}`:"user";
-    const billingOwnerId=auth.user.billingUserId??actorUserId;await seedIfEmpty(env,streamId);
+    const ordinaryBillingOwnerId=auth.user.billingUserId??actorUserId;
+    // Native execution supplies the payer resolved from its committed grant and
+    // reservations. It never changes the principal that owns creative content.
+    const billingOwnerId=execution?.output?execution.output.financialPayerUserId:ordinaryBillingOwnerId;
+    if(typeof billingOwnerId!=="string"||!billingOwnerId)return Response.json({error:"output_financial_authority_required"},{status:403});
+    const sponsoredOutput=Boolean(execution?.output?.sponsorFinancialBinding);
+    if(sponsoredOutput&&(executionScope||auth.user.fictional||ordinaryBillingOwnerId!==actorUserId))return Response.json({error:"sponsor_personal_principal_required"},{status:403});
+    await seedIfEmpty(env,streamId);
     const settleOperationOutputBudgets=async(input:Parameters<typeof settleDocumentGenerationBudgets>[2])=>{
       if(execution?.output?.accountSettlement)return {settled:false,status:"known" as const,receipt:execution.output.accountSettlement};
-      const settled=await settleDocumentGenerationBudgets(env,billingOwnerId,input);
+      const settled=await settleDocumentGenerationBudgets(env,billingOwnerId,{...input,assertions:[...(input.assertions??[]),...(execution?.output?.financialAssertions??[])]});
       if(execution?.output&&settled.receipt)execution.output.accountSettlement=settled.receipt;
       return settled;
     };
@@ -563,6 +570,7 @@ export async function handleEvents(request:Request,env:WorkerEnv,hot=false,userO
     if(request.method!=="POST")return new Response("Method not allowed",{status:405});
     const consent=requireConsent(auth.user);if(consent)return consent;
     const body=await request.json() as {action?:"append"|"batch"|"canvas_sync"|"propose"|"preview"|"generate"|"chat"|"structure_adaptive"|"render_document"|"hot"|"evaluate_extractors"|"rebuild_index"|"extract_reference"|"calculate_focal_point"|"open_session"|"close_session"|"compose_brief"|"declare_intent"|"run_scout"|"refresh_taste_model"|"set_condition"|"check_conditions"|"critique_object";event?:EventInput;events?:EventInput[];expectedSequence?:number;clientId?:string;correlationId?:string;locale?:string;documentId?:string;documentRevision?:string;canvasId?:string;contextSetId?:string;projectScope?:boolean;prompt?:string;message?:string;livePreview?:boolean;sourceSurface?:string;sourcePreviewId?:string;sourceChatTurnId?:string;directionRef?:string;directionModel?:string;promptTechnique?:string;promptFanId?:string;preflightId?:string;preflightVersion?:string;preflightAcknowledged?:boolean;exemplarRefs?:Array<Record<string,unknown>>;snapshot?:Record<string,unknown>;sourceBlockVersions?:Array<Record<string,unknown>>;blockId?:string;referenceId?:string;targetKind?:"generation"|"reference"|"artifact";targetId?:string;mediaUrl?:string;sample?:ImageSample;findingKinds?:ReferenceFindingKind[];statement?:string;deadline?:string|null;maxObservations?:number;condition?:string;triggerKind?:"generation_count"|"on_date";threshold?:number;onDate?:string;objectId?:string;axis?:string;polarity?:"positive"|"negative";value?:string;note?:string;artifactId?:string;artifactKind?:DocumentArtifactKind;itemCount?:number;audience?:string;tone?:string;sceneMedium?:SceneMedium;sceneConfiguration?:SceneConfiguration;videoSeconds?:VideoDurationSeconds;videoSize?:"1280x720"|"720x1280";videoResolution?:"480p"|"720p";videoAudioMode?:VideoAudioMode;soundtrackBlockIds?:string[];sendSoundtrackToVideoProvider?:boolean;audioImageBlockId?:string;audioProfile?:AudioRequestProfile;audioProviderModel?:string;audioVideoArtifactId?:string;sendAudioVideoToProvider?:boolean;audioEstimatedCostMicrousd?:number;model3dPrompt?:string;model3dPromptSource?:"exact"|"document";model3dAdaptation?:Record<string,unknown>;model3dSettings?:unknown;model3dReferenceBlockIds?:string[];model3dInputReceipt?:Record<string,unknown>;model3dProviderSubmission?:string;paidMediaConfirmed?:boolean;productionMode?:ProductionMode;productionPlan?:ManagedProductionPlan;productionSceneReceipts?:Record<string,ProductionSceneReceipt>;productionFrameReceipts?:Record<string,ProductionFrameReceipt>;productionPrepaidSceneIds?:string[];productionPrepaidAnchor?:boolean;productionAnchor?:Record<string,unknown>;costReservationMicrousd?:number;budgetAcknowledged?:boolean;budgetWarningSuppressed?:boolean;providerJobId?:string;providerModel?:string;providerStatusUrl?:string;providerResponseUrl?:string;providerCancelUrl?:string;reservationId?:string;requestKey?:string;workflowId?:string;workflowStageId?:string;workflowSources?:ProductionWorkflowSource[];artifactPlan?:Record<string,unknown>;plannerModel?:string;plannerResponseId?:string;plannerLatencyMs?:number;plannerUsage?:Record<string,unknown>;plannerInput?:Record<string,unknown>;renderedItems?:Array<Record<string,unknown>>;videoInputReceipt?:Record<string,unknown>;audioInputReceipt?:Record<string,unknown>};
+    if(sponsoredOutput&&body.action!=="generate")return Response.json({error:"sponsor_recipe_unsupported"},{status:403});
     if(body.action==="render_document"&&body.videoResolution!==undefined){
       if(body.artifactKind!=="video"||!VIDEO_ADAPTER_CONTRACT.supportedResolutions.includes(body.videoResolution))return Response.json({error:"video_resolution_unsupported",supported:VIDEO_ADAPTER_CONTRACT.supportedResolutions},{status:400});
       if(body.productionMode==="managed")return Response.json({error:"managed_video_resolution_unsupported"},{status:400});
@@ -710,7 +718,7 @@ export async function handleEvents(request:Request,env:WorkerEnv,hot=false,userO
           }
           if((body.action==="render_document"||body.action==="generate")&&(body.workflowId!==undefined||body.workflowStageId!==undefined||body.workflowSources!==undefined)){
             let workflowScope=executionScope;
-            if(!workflowScope&&!auth.user.fictional&&billingOwnerId===ownerId){const scopes=await ownerDocumentBudgetScopes(env,ownerId,documentId,projectId);if(scopes.length>1)return Response.json({error:"ambiguous_project_budget_scope"},{status:409});if(scopes[0])workflowScope={organizationId:scopes[0].organizationId,projectAccessId:scopes[0].projectAccessId,projectId,ownerUserId:ownerId,actorUserId:ownerId};}
+            if(!workflowScope&&!auth.user.fictional&&ordinaryBillingOwnerId===ownerId){const scopes=await ownerDocumentBudgetScopes(env,ownerId,documentId,projectId);if(scopes.length>1)return Response.json({error:"ambiguous_project_budget_scope"},{status:409});if(scopes[0])workflowScope={organizationId:scopes[0].organizationId,projectAccessId:scopes[0].projectAccessId,projectId,ownerUserId:ownerId,actorUserId:ownerId};}
             const resolved=await resolveProductionWorkflowContext({env,events:paidSourceEvents,documentId,projectId,ownerId:workflowScope?.ownerUserId??ownerId,scope:workflowScope,snapshot:trusted.snapshot,workflowId:body.workflowId,workflowStageId:body.workflowStageId,workflowSources:body.workflowSources,requestedFormat:body.action==="generate"?"image":body.artifactKind});
             body.snapshot=resolved.snapshot;if(!(body.action==="render_document"&&body.artifactKind==="scene"))body.workflowSources=resolved.sources;
             if(body.action==="render_document"&&body.artifactKind==="scene"&&resolved.sceneConfiguration){
@@ -736,9 +744,14 @@ export async function handleEvents(request:Request,env:WorkerEnv,hot=false,userO
         }
       }
     }
-    const budgetScopes=paidOperation&&executionScope?[{organizationId:executionScope.organizationId,projectAccessId:executionScope.projectAccessId,actorUserId:executionScope.actorUserId}]:paidOperation&&!auth.user.fictional&&billingOwnerId===ownerId?await ownerDocumentBudgetScopes(env,ownerId,documentId,projectId):[];
+    const budgetScopes=paidOperation&&executionScope?[{organizationId:executionScope.organizationId,projectAccessId:executionScope.projectAccessId,actorUserId:executionScope.actorUserId}]:paidOperation&&!auth.user.fictional&&ordinaryBillingOwnerId===ownerId?await ownerDocumentBudgetScopes(env,ownerId,documentId,projectId):[];
     if(budgetScopes.length>1)return Response.json({error:"ambiguous_project_budget_scope"},{status:409});
     const projectBudgetScope=budgetScopes[0];
+    if(sponsoredOutput){
+      if(executionScope||projectBudgetScope)return Response.json({error:"sponsor_organization_budget_unsupported"},{status:403});
+      const actorAllowance=await pilotExecutionAllowance(env,actorUserId);
+      if(!actorAllowance.allowed||actorAllowance.pilot)return Response.json({error:"sponsor_managed_pilot_unsupported"},{status:403});
+    }
     if(!executionScope&&projectBudgetScope){
       executionScope={organizationId:projectBudgetScope.organizationId,projectAccessId:projectBudgetScope.projectAccessId,projectId,ownerUserId:ownerId,actorUserId:ownerId};
       const governedProjection=foldEvents(paidSourceEvents!,Number.POSITIVE_INFINITY,documentId,projectId);
@@ -746,6 +759,7 @@ export async function handleEvents(request:Request,env:WorkerEnv,hot=false,userO
         return Response.json({error:"context_source_rights_expired",message:"The original rights for an adopted organizational source are no longer valid."},{status:409});
     }
     const pilotAllowance=paidOperation?await pilotExecutionAllowance(env,billingOwnerId,projectBudgetScope):null;
+    if(sponsoredOutput&&pilotAllowance?.pilot)return Response.json({error:"sponsor_managed_pilot_unsupported"},{status:403});
     if(pilotAllowance&&!pilotAllowance.allowed)return Response.json({error:"active_pilot_participation_required"},{status:403});
     if(pilotAllowance?.pilot&&paidSourceEvents){
       const scopedProjection=foldEvents(paidSourceEvents,Number.POSITIVE_INFINITY,documentId,projectId);
