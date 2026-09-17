@@ -78,10 +78,13 @@ still-app .quiet-state p { color: var(--soft); }
 still-app .still-mark { width: 30px; height: 30px; border: 1px solid #a9a391; border-radius: 50%; box-shadow: 8px 0 0 -1px var(--paper), 9px 0 0 0 #c1bbaa; }
 still-app .check { display: flex; gap: 12px; margin: 22px 0; font-size: 14px; align-items: flex-start; }
 still-app .check input { margin-top: 4px; accent-color: #575c48; }
-still-app .status-message { margin: 26px auto 8px; width: fit-content; max-width: 720px; color: #757467; font-size: 12px; text-align: center; }
+still-app .feedback-strip { position: sticky; top: env(safe-area-inset-top, 0px); z-index: 6; background: var(--paper); max-height: 40dvh; overflow: auto; }
+still-app .feedback-strip:has(> *) { padding-block: 12px; border-bottom: 1px solid var(--line); }
+still-app .status-message { margin: 0 auto; width: fit-content; max-width: 720px; color: #757467; font-size: 12px; text-align: center; overflow-wrap: anywhere; }
+still-app .feedback-strip > * + * { margin-top: 8px; }
 still-app .status-message.error { color: #9b402c; padding: 14px 20px; background: #f3e8df; border-radius: 3px; }
-still-app .job-status { display: flex; align-items: center; justify-content: center; gap: 10px; font-size: 12px; color: var(--soft); margin-top: 25px; }
-still-app .job-status i { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: #82916d; animation: still-pulse 2s ease-in-out infinite; }
+still-app .job-status { display: flex; align-items: center; justify-content: center; gap: 10px; font-size: 12px; color: var(--soft); overflow-wrap: anywhere; }
+still-app .job-status i { display: inline-block; flex: 0 0 6px; height: 6px; border-radius: 50%; background: #82916d; animation: still-pulse 2s ease-in-out infinite; }
 still-app .image-stage { display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: calc(100dvh - 265px); }
 still-app .image-stage img { max-width: 100%; max-height: calc(100dvh - 300px); object-fit: contain; }
 still-app figcaption, still-app .caption { font-size: 12px; color: var(--soft); margin-top: 16px; text-align: center; }
