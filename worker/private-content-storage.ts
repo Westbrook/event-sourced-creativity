@@ -17,6 +17,39 @@ export function privateContentRetentionClass(kind: PrivateContentKind): "durable
 }
 
 export async function preparePrivateContent(env: WorkerEnv, ownerId: string, kind: PrivateContentKind, content: string, projectScope?: ProjectExecutionScope, admissionReads?:OutputAdmissionReads, guard?:BudgetReservationGuard, identity?:{contentId:string}, expiryCeiling?:string, storyCleanupRead?:SponsorStoryIntakeCleanupRead, audioCleanupRead?:SponsorAudioIntakeCleanupRead) {
+  return preparePrivateContentInternal(env,ownerId,kind,content,projectScope,admissionReads,guard,identity,expiryCeiling,storyCleanupRead,audioCleanupRead);
+}
+
+/** Personal Slides publishes these exact two kinds for one owner. Sharing the
+ * binding call does not share a qualified guard or remove either cleanup query.
+ */
+export async function preparePersonalSlidesPrivateContentPair(env: WorkerEnv, ownerId: string, artifactContent: string, inputContent: string) {
+  if (typeof ownerId !== "string" || !ownerId || typeof artifactContent !== "string" || typeof inputContent !== "string") {
+    throw new Error("personal_slides_private_content_pair_invalid");
+  }
+  const preparationDb = env.DB;
+  let cleanupReads: Promise<PromiseSettledResult<BudgetReservationGuard>[]> | undefined;
+  const cleanupFor = (index: 0 | 1) => async () => {
+    if (env.DB !== preparationDb) throw new Error("native_structured_origin_schema_database_changed");
+    cleanupReads ??= import("./memory-native-boundary.ts").then(({ nativePrivateContentMemoryExclusionPair }) => {
+      if (env.DB !== preparationDb) throw new Error("native_structured_origin_schema_database_changed");
+      return nativePrivateContentMemoryExclusionPair(env);
+    });
+    const outcome = (await cleanupReads)[index];
+    if (env.DB !== preparationDb) throw new Error("native_structured_origin_schema_database_changed");
+    if (!outcome) throw new Error("memory_boundary_schema_unavailable");
+    if (outcome.status === "rejected") throw outcome.reason;
+    return outcome.value;
+  };
+  const prepared = await Promise.all([
+    preparePrivateContentInternal(env,ownerId,"document-artifact",artifactContent,undefined,undefined,undefined,undefined,undefined,undefined,undefined,cleanupFor(0)),
+    preparePrivateContentInternal(env,ownerId,"document-artifact-input",inputContent,undefined,undefined,undefined,undefined,undefined,undefined,undefined,cleanupFor(1)),
+  ]);
+  if (env.DB !== preparationDb) throw new Error("native_structured_origin_schema_database_changed");
+  return prepared;
+}
+
+async function preparePrivateContentInternal(env: WorkerEnv, ownerId: string, kind: PrivateContentKind, content: string, projectScope?: ProjectExecutionScope, admissionReads?:OutputAdmissionReads, guard?:BudgetReservationGuard, identity?:{contentId:string}, expiryCeiling?:string, storyCleanupRead?:SponsorStoryIntakeCleanupRead, audioCleanupRead?:SponsorAudioIntakeCleanupRead, privateCleanupRead?:()=>Promise<BudgetReservationGuard>) {
   const preparationDb = env.DB;
   if(audioCleanupRead!==undefined){
     if(storyCleanupRead!==undefined)throw new Error("sponsor_audio_intake_native_unavailable");
@@ -95,7 +128,9 @@ export async function preparePrivateContent(env: WorkerEnv, ownerId: string, kin
     const { nativeMemoryAnswerExclusion } = await import("./memory-native-boundary.ts");
     if (env.DB !== preparationDb) throw new Error("native_structured_origin_schema_database_changed");
     try {
-      const exclusion = audioCleanupRead!==undefined
+      const exclusion = privateCleanupRead
+        ? await privateCleanupRead()
+        : audioCleanupRead!==undefined
         ? await readSponsorAudioIntakeCleanupExclusion(audioCleanupRead,env,ownerId,kind,content,projectScope,admissionReads,guard,identity,expiryCeiling)
         : storyCleanupRead
         ? await readSponsorStoryIntakeCleanupExclusion(storyCleanupRead,env,ownerId,kind,content,projectScope,admissionReads,guard,identity,expiryCeiling)

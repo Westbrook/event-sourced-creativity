@@ -36,7 +36,7 @@ const [
 
 function reliabilityDatabase(){
   const sqlite=new DatabaseSync(":memory:");
-  const controls={failDocumentRequestWrite:false,failedDocumentRequestWrites:0,beforeRun:null,bindingCalls:0};
+  const controls={failDocumentRequestWrite:false,failedDocumentRequestWrites:0,beforeRun:null,afterRun:null,bindingCalls:0};
 
   class Statement{
     constructor(sql,values=[]){this.sql=sql;this.values=values;}
@@ -50,7 +50,7 @@ function reliabilityDatabase(){
     }
     async first(){controls.bindingCalls+=1;return this.execute("first");}
     async all(){controls.bindingCalls+=1;return this.execute("all");}
-    async run(){controls.bindingCalls+=1;if(controls.beforeRun)await controls.beforeRun(this);return this.execute("run");}
+    async run(){controls.bindingCalls+=1;if(controls.beforeRun)await controls.beforeRun(this);const result=this.execute("run");if(controls.afterRun)await controls.afterRun(this,result);return result;}
   }
 
   const DB={
@@ -1226,6 +1226,166 @@ for(const [label,slideCount,repair] of [["a long-running twelve-block presentati
     assert.equal(envelopes.reduce((sum,envelope)=>sum+envelope.call.costMicrousd,0),repair?27000:12000);
     assert.equal(result.result.generationReceipt.settled_cost_microusd,repair?27000:12000);
   }finally{release.resolve();globalThis.fetch=previousFetch;context.mock.timers.reset();}
+});
+
+// Synthetic dormant-schema control only. No enrollment, rows, financial helper,
+// runtime migration or Video behavior is imported/activated by this fixture.
+// Exact Video DDL source SHA-256: 0fbe3d6fb662353daf78e80f8303b8c7a128bc36ad732a4a41b2ec21cf53be48.
+// Exact R15 entitlement source SHA-256: 2880b77d0af4b05e88334e961b870b47cccf9d732da022fbdab7b42a521d76b8.
+const DORMANT_VIDEO_PARENT_TEST_SCHEMA = [
+  `CREATE TABLE experience_sponsor_campaigns(
+    campaign_id TEXT PRIMARY KEY NOT NULL,policy_digest TEXT NOT NULL,policy_json TEXT NOT NULL,
+    enabled INTEGER NOT NULL DEFAULT 0 CHECK(enabled IN(0,1)))`,
+  `CREATE TABLE experience_sponsor_grants(
+    grant_id TEXT PRIMARY KEY NOT NULL,campaign_id TEXT NOT NULL REFERENCES experience_sponsor_campaigns(campaign_id),
+    policy_digest TEXT NOT NULL,actor_user_id TEXT NOT NULL,session_digest TEXT NOT NULL,intent_key TEXT NOT NULL,
+    envelope_digest TEXT NOT NULL,issued_at_ms INTEGER NOT NULL,expires_at_ms INTEGER NOT NULL,
+    enabled INTEGER NOT NULL DEFAULT 0 CHECK(enabled IN(0,1)),
+    UNIQUE(campaign_id,actor_user_id,intent_key),CHECK(expires_at_ms>issued_at_ms))`,
+];
+const DORMANT_VIDEO_FINANCIAL_TEST_SCHEMA = Object.freeze([
+  `CREATE TABLE experience_sponsor_video_purchases(
+    job_id TEXT PRIMARY KEY NOT NULL REFERENCES document_jobs(job_id),actor_user_id TEXT NOT NULL,
+    scope_key TEXT NOT NULL,slot_id TEXT NOT NULL,issued_grant_id TEXT NOT NULL REFERENCES experience_sponsor_grants(grant_id),
+    token_reservation_id TEXT NOT NULL REFERENCES budget_reservations(reservation_id),cost_reservation_id TEXT NOT NULL REFERENCES cost_budget_reservations(reservation_id),
+    snapshot_json TEXT NOT NULL CHECK(json_valid(snapshot_json) AND json_type(snapshot_json)='array' AND length(CAST(snapshot_json AS BLOB))<=32768),
+    UNIQUE(scope_key,slot_id),UNIQUE(job_id,scope_key,slot_id),
+    FOREIGN KEY(scope_key,slot_id) REFERENCES output_operation_slots(scope_key,slot_id))`,
+  `CREATE TABLE experience_sponsor_video_observations(
+    job_id TEXT NOT NULL,scope_key TEXT NOT NULL,slot_id TEXT NOT NULL,
+    call_key TEXT NOT NULL CHECK(call_key IN('planning:0:initial','video:initial')),
+    observation_kind TEXT NOT NULL CHECK(observation_kind IN('accepted','terminal')),
+    record_json TEXT NOT NULL CHECK(json_valid(record_json) AND json_type(record_json)='object' AND length(CAST(record_json AS BLOB))<=4096),
+    PRIMARY KEY(job_id,call_key,observation_kind),
+    FOREIGN KEY(job_id,scope_key,slot_id) REFERENCES experience_sponsor_video_purchases(job_id,scope_key,slot_id),
+    FOREIGN KEY(scope_key,slot_id,call_key) REFERENCES output_provider_calls(scope_key,slot_id,call_key))`,
+  ...["purchases", "observations"].flatMap(table => [
+    ...["UPDATE", "DELETE"].map(action => `CREATE TRIGGER experience_sponsor_video_${table}_no_${action.toLowerCase()} BEFORE ${action} ON experience_sponsor_video_${table} BEGIN SELECT RAISE(ABORT,'sponsor_video_financial_immutable'); END`),
+    `CREATE TRIGGER experience_sponsor_video_${table}_no_replace BEFORE INSERT ON experience_sponsor_video_${table}
+      WHEN EXISTS(SELECT 1 FROM experience_sponsor_video_${table} old WHERE ${table === "purchases" ? "old.job_id=NEW.job_id OR (old.scope_key=NEW.scope_key AND old.slot_id=NEW.slot_id)" : "old.job_id=NEW.job_id AND old.call_key=NEW.call_key AND old.observation_kind=NEW.observation_kind"})
+      BEGIN SELECT RAISE(ABORT,'sponsor_video_financial_exists'); END`,
+  ]),
+]);
+
+test("keeps the six-slide bounded repair below the conservative subrequest budget with unrelated dormant Video schema",async(context)=>{
+  const slideCount=6,repair=true;
+  const fixture=await reliabilityWorker();context.after(()=>fixture.sqlite.close());
+  for(const table of ["document_jobs","budget_reservations","cost_budget_reservations","output_operation_slots","output_provider_calls"])
+    assert.equal(fixture.sqlite.prepare("SELECT COUNT(*) AS count FROM sqlite_schema WHERE type='table' AND name=?").get(table).count,1,table);
+  for(const sql of [...DORMANT_VIDEO_PARENT_TEST_SCHEMA,...DORMANT_VIDEO_FINANCIAL_TEST_SCHEMA])fixture.sqlite.exec(sql);
+  assert.equal(DORMANT_VIDEO_FINANCIAL_TEST_SCHEMA.length,8);
+  assert.equal(fixture.sqlite.prepare("SELECT COUNT(*) AS count FROM sqlite_schema WHERE name LIKE 'experience_sponsor_video_%'").get().count,8);
+  for(const table of ["experience_sponsor_campaigns","experience_sponsor_grants","experience_sponsor_video_purchases","experience_sponsor_video_observations"])
+    assert.equal(fixture.sqlite.prepare("SELECT COUNT(*) AS count FROM "+table).get().count,0,table);
+  const documentId=await seedIndependentPresentation(fixture,"subrequest-headroom-presentation-document",slideCount);
+  const request=presentationAdmission(documentId,"foreground-hosted-subrequest-headroom");
+  request.payload.itemCount=slideCount;request.payload.requestedSlideCount=slideCount;
+  const admission=await fixture.request("/api/document-jobs",json(request));
+  assert.equal(admission.status,202,JSON.stringify(await admission.clone().json()));
+  const {job}=await admission.json();const before=fixture.controls.bindingCalls;
+  context.mock.timers.enable({apis:["Date","setTimeout"],now:Date.now()});
+  const entered=Promise.withResolvers(),release=Promise.withResolvers(),previousFetch=globalThis.fetch;let providerCalls=0,validatedAtCommit=false;
+  const retained=()=>fixture.sqlite.prepare("SELECT content FROM private_content WHERE kind='provider-response' AND json_extract(content,'$.job_id')=? ORDER BY created_at,content_id").all(job.jobId).map(row=>JSON.parse(row.content));
+  fixture.controls.beforeRun=async statement=>{
+    if(!statement.sql.startsWith("UPDATE document_jobs SET status='committing'"))return;
+    const checkpoint=JSON.parse(fixture.sqlite.prepare("SELECT result_json FROM document_jobs WHERE job_id=?").get(job.jobId).result_json);
+    const calls=Object.values(checkpoint.providerSubmissions);
+    assert.equal(calls.length,repair?2:1);
+    assert.equal(calls.at(-1).validationStatus,"valid","changed validation evidence remains durable before artifact commit");
+    assert.equal(calls.at(-1).validationIssueCount,0);validatedAtCommit=true;
+  };
+  globalThis.fetch=async(_url,init={})=>{
+    providerCalls+=1;
+    const clientRequestId=new Headers(init.headers).get("X-Client-Request-Id");
+    const checkpoint=JSON.parse(fixture.sqlite.prepare("SELECT result_json FROM document_jobs WHERE job_id=?").get(job.jobId).result_json);
+    assert.equal(checkpoint.presentationProviderClientRequestId,clientRequestId);
+    assert.equal(checkpoint.presentationProviderSubmission,"pending");
+    assert.equal(checkpoint.providerSubmissions[clientRequestId].status,"pending","the exact call is durable before dispatch");
+    assert.match(checkpoint.providerSubmissions[clientRequestId].requestDigest,/^[a-f0-9]{64}$/u);
+    if(providerCalls===2){const initial=retained();assert.equal(initial.length,1);assert.equal(initial[0].output_text,"{}");assert.equal(initial[0].call.providerRequestId,"subrequest-headroom-presentation-response-1");assert.equal(initial[0].call.costMicrousd,12000);}
+    entered.resolve();await release.promise;
+    return Response.json({id:`subrequest-headroom-presentation-response-${providerCalls}`,model:"gpt-5.6-terra",output_text:repair&&providerCalls===1?"{}":JSON.stringify(independentProviderResponse(init.body)),usage:providerCalls===1?{input_tokens:1200,output_tokens:800,total_tokens:2000}:{input_tokens:2100,output_tokens:900,total_tokens:3000}});
+  };
+  try{
+    const execution=fixture.request(`/api/document-jobs/${job.jobId}/run`,{method:"POST"});await entered.promise;
+    for(let renewal=0;renewal<4;renewal+=1){context.mock.timers.tick(DOCUMENT_JOB_HEARTBEAT_MS);await flushExecution();}
+    release.resolve();const completed=await execution;
+    assert.equal(completed.status,200,JSON.stringify(await completed.clone().json()));
+    const result=(await completed.json()).job;assert.equal(result.status,"completed");
+    const databaseSubrequests=fixture.controls.bindingCalls-before;
+    context.diagnostic(JSON.stringify({fixture:"presentation-request-budget-dormant-video-schema",repair,databaseSubrequests,simulatedProviderCalls:providerCalls}));
+    assert.ok(databaseSubrequests+providerCalls<50,`${databaseSubrequests} D1 binding calls and ${providerCalls} paid-provider requests must stay below the repository's conservative 50-request budget; actual hosted quotas require separate verification`);
+    assert.equal(providerCalls,repair?2:1);assert.equal(validatedAtCommit,true);
+    const envelopes=retained();assert.equal(envelopes.length,providerCalls);
+    assert.equal(new Set(envelopes.map(envelope=>envelope.call.clientRequestId)).size,providerCalls);
+    assert.equal(envelopes.reduce((sum,envelope)=>sum+envelope.call.totalTokens,0),repair?5000:2000);
+    assert.equal(envelopes.reduce((sum,envelope)=>sum+envelope.call.costMicrousd,0),repair?27000:12000);
+    assert.equal(result.result.generationReceipt.settled_cost_microusd,repair?27000:12000);
+    for(const table of ["experience_sponsor_campaigns","experience_sponsor_grants","experience_sponsor_video_purchases","experience_sponsor_video_observations"])
+      assert.equal(fixture.sqlite.prepare("SELECT COUNT(*) AS count FROM "+table).get().count,0,table+" stays dormant");
+  }finally{release.resolve();globalThis.fetch=previousFetch;context.mock.timers.reset();}
+});
+
+// Focused terminal controls use the built Worker and real fixture persistence.
+for(const mode of ["standalone timestamps","parent notification timestamps","zero-change completion","lost completion acknowledgement","receipt preparation fallback"])test(`personal Slides terminal preserves canonical ${mode}`,async context=>{
+  const fixture=await reliabilityWorker();context.after(()=>fixture.sqlite.close());
+  const documentId=await seedIndependentPresentation(fixture,"terminal-receipt-document",6);
+  const request=presentationAdmission(documentId,"terminal-receipt-"+mode.replaceAll(" ","-"));
+  request.payload.itemCount=6;request.payload.requestedSlideCount=6;
+  const admission=await fixture.request("/api/document-jobs",json(request));
+  assert.equal(admission.status,202,await admission.clone().text());const {job}=await admission.json();
+  if(mode==="parent notification timestamps")fixture.sqlite.prepare("UPDATE document_jobs SET request_json=json_set(request_json,'$.parentJobId','synthetic-missing-parent') WHERE job_id=?").run(job.jobId);
+  const previousFetch=globalThis.fetch;let providerCalls=0,terminalAttempts=0,receiptWrites=0,faults=0,failedTerminalChanges=null;
+  const terminalReceipts=[];const iso=Date.prototype.toISOString;
+  context.mock.timers.enable({apis:["Date","setTimeout"],now:Date.now()});
+  if(mode.includes("timestamps"))context.mock.method(Date.prototype,"toISOString",function(){const value=iso.call(this);context.mock.timers.tick(1);return value;});
+  const isTerminal=statement=>statement.sql.startsWith("UPDATE document_jobs SET status=?,result_json=")&&statement.values[0]==="completed";
+  fixture.controls.beforeRun=async statement=>{
+    if(statement.sql.startsWith("UPDATE document_jobs SET result_json=?,updated_at=? WHERE"))receiptWrites+=1;
+    if(!isTerminal(statement))return;
+    terminalAttempts+=1;terminalReceipts.push(JSON.parse(statement.values[1]).generationReceipt);
+    if(mode==="zero-change completion"&&faults++===0){
+      const competing=JSON.parse(statement.values[1]);competing.terminalCanary="competing-terminal-writer";
+      fixture.sqlite.prepare("UPDATE document_jobs SET status='failed',result_json=?,completed_at=?,lease_expires_at=NULL,updated_at=? WHERE job_id=?")
+        .run(JSON.stringify(competing),statement.values[3],statement.values[6],job.jobId);
+    }
+  };
+  fixture.controls.afterRun=async(statement,result)=>{
+    if(statement.sql.startsWith("UPDATE document_jobs SET status=?,result_json=")&&statement.values[0]==="failed")failedTerminalChanges=result.meta.changes;
+    if(mode==="lost completion acknowledgement"&&isTerminal(statement)&&faults++===0){assert.equal(result.meta.changes,1);throw new Error("synthetic terminal acknowledgement lost after commit");}
+    if(mode==="receipt preparation fallback"&&statement.sql.startsWith("INSERT INTO provider_health ")){
+      let dates=0;
+      context.mock.method(Date.prototype,"toISOString",function(){if(++dates===2){faults+=1;throw new Error("synthetic receipt timestamp failure");}return iso.call(this);});
+    }
+  };
+  globalThis.fetch=async(url,init={})=>{
+    assert.equal(String(url),"https://api.openai.com/v1/responses");providerCalls+=1;
+    return Response.json({id:"terminal-receipt-response",model:"gpt-5.6-terra",output_text:JSON.stringify(independentProviderResponse(init.body)),usage:{input_tokens:1200,output_tokens:800,total_tokens:2000}});
+  };
+  try{
+    const response=await fixture.request(`/api/document-jobs/${job.jobId}/run`,{method:"POST"});
+    assert.equal(response.status,200,await response.clone().text());const returned=(await response.json()).job;
+    const saved=fixture.sqlite.prepare("SELECT * FROM document_jobs WHERE job_id=?").get(job.jobId),savedResult=JSON.parse(saved.result_json);
+    const inspected=await fixture.request(`/api/document-jobs/${job.jobId}?inspection=1`);assert.equal(inspected.status,200,await inspected.clone().text());const reread=(await inspected.json()).job;
+    assert.equal(terminalAttempts,1);assert.equal(providerCalls,1);
+    assert.equal(returned.status,mode==="zero-change completion"?"failed":"completed");assert.equal(returned.status,saved.status);
+    assert.equal(returned.completedAt,saved.completed_at);assert.equal(returned.updatedAt,saved.updated_at);assert.equal(returned.notifiedAt,saved.notified_at);
+    assert.deepEqual(returned.result.generationReceipt,reread.result.generationReceipt);
+    assert.equal(savedResult.generationReceipt.settled_cost_microusd,12000);assert.equal(returned.result.generationReceipt.settled_cost_microusd,12000);
+    assert.equal(fixture.sqlite.prepare("SELECT COUNT(*) AS count FROM events WHERE type='DocumentRenderCompleted' AND json_extract(payload,'$.document_id')=?").get(documentId).count,1);
+    assert.equal(fixture.sqlite.prepare("SELECT COUNT(*) AS count FROM cost_budget_reservations WHERE owner_id='dev-local-creative' AND status='settled' AND used_microusd=12000").get().count,1);
+    if(mode.includes("timestamps")){
+      assert.equal(receiptWrites,0,"the receipt is part of the one terminal write");assert.equal(terminalReceipts[0].settled_cost_microusd,12000);
+      assert.equal(saved.updated_at,saved.completed_at);assert.equal(saved.notified_at,mode==="parent notification timestamps"?saved.completed_at:null);
+    }else if(mode==="zero-change completion"){
+      assert.equal(faults,1);assert.equal(returned.result.terminalCanary,"competing-terminal-writer");assert.equal(savedResult.terminalCanary,"competing-terminal-writer");
+    }else if(mode==="lost completion acknowledgement"){
+      assert.equal(faults,1);assert.equal(failedTerminalChanges,0,"the committed terminal state cannot be overwritten after a lost ACK");
+    }else{
+      assert.equal(faults,1);assert.equal(receiptWrites,1,"preparation failure preserves the original persisted refresh");
+      assert.notEqual(terminalReceipts[0].settled_cost_microusd,12000,"fallback did not publish an unprepared receipt");
+    }
+  }finally{globalThis.fetch=previousFetch;context.mock.restoreAll();context.mock.timers.reset();}
 });
 
 test("fails promptly after exhausted pre-provider recovery with truthful no-contact, no-transmission, and zero-cost receipts",async()=>{

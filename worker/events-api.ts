@@ -16,6 +16,7 @@ import type { OutputSceneEnvelope } from "./output-scene-adapter.ts";
 import { readOutputNarrativePayload, outputNarrativePlannerCost, verifyOutputNarrativeCompletion } from "./output-narrative-execution.ts";
 import { outputAssertionStatements } from "./output-requirements-ledger.ts";
 import { nativeMemoryAnswerExclusion } from "./memory-native-boundary.ts";
+import { preparePersonalSlidesPrivateContentPair } from "./private-content-storage.ts";
 import { presentationProviderLabels } from "../src/model/generation-execution-evidence.ts";
 import { documentRenderGuidance, documentRenderGuidanceProblem } from "../src/model/document-render-guidance.ts";
 import { handleProjectIntake } from "./project-intake.ts";
@@ -1570,7 +1571,12 @@ export async function handleEvents(request:Request,env:WorkerEnv,hot=false,userO
         if(videoCompletionReceipt)Object.assign(inputReceipt,{output_video:videoCompletionReceipt});
         let stored:Awaited<ReturnType<typeof storePrivateContent>>,inputStored:Awaited<ReturnType<typeof storePrivateContent>>;
         if(batchPresentationBookkeeping){
-          const prepared=await Promise.all([preparePrivateContent(env,storageOwnerId,"document-artifact",JSON.stringify(plan)),preparePrivateContent(env,ownerId,"document-artifact-input",JSON.stringify(inputReceipt),executionScope)]);
+          const preparationDb=env.DB;
+          const personalSlides=artifactKind==="slides"&&!executionScope&&!projectBudgetScope&&storageOwnerId===ownerId&&!execution?.output;
+          const prepared=personalSlides
+            ?await preparePersonalSlidesPrivateContentPair(env,ownerId,JSON.stringify(plan),JSON.stringify(inputReceipt))
+            :await Promise.all([preparePrivateContent(env,storageOwnerId,"document-artifact",JSON.stringify(plan)),preparePrivateContent(env,ownerId,"document-artifact-input",JSON.stringify(inputReceipt),executionScope)]);
+          if(personalSlides&&env.DB!==preparationDb)throw new Error("native_structured_origin_schema_database_changed");
           // Reuse the same custody/retention predicates, but publish both local
           // artifacts together. Ignored inserts or a canceled job abort this batch.
           const statements=outputAssertionStatements(env,{sql:"EXISTS(SELECT 1 FROM document_jobs WHERE job_id=? AND owner_id=? AND stream_id=? AND correlation_id=? AND status='committing' AND NOT EXISTS(SELECT 1 FROM output_operation_slots WHERE job_id=document_jobs.job_id))",bindings:[presentationIdentity.jobId,ownerId,streamId,corr]});

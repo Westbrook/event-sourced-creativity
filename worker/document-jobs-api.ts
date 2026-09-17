@@ -2422,6 +2422,30 @@ export async function runDocumentJob(env: WorkerEnv, user: PilotUser, jobId: str
       ...row,status:response.ok?"completed":"failed",result_json:JSON.stringify(terminalResult),error_message:response.ok?null:detail?.message??String(body.error??"document_job_failed"),completed_at:completedAt,lease_expires_at:null,updated_at:completedAt,
     },false,outputOperationExecution?.accountSettlement):null;
     if(nativeReceiptReady)terminalResult=parseResult(nativeReceiptReady) as typeof terminalResult;
+    // A personal Slides receipt can use the already acknowledged settlement and
+    // returned events without another read. Keep every other receipt path intact.
+    let personalReceiptReady:DocumentJobRow|null=null;
+    if(!outputBinding&&!row.output_slot_id&&response.ok&&foregroundPresentation&&!user.projectExecution
+      &&(acceptedReceipt as Record<string,unknown>|null)?.artifact_kind==="slides"&&foregroundAccountSettlement){
+      try{
+        const payloads=Array.isArray(body.appended)?body.appended.filter((event):event is Record<string,unknown>=>Boolean(event&&typeof event==="object"&&!Array.isArray(event)))
+          .map(event=>({type:String(event.type??""),payload:event.payload&&typeof event.payload==="object"&&!Array.isArray(event.payload)?event.payload as Record<string,unknown>:{}})):[];
+        const reservationId=(terminalResult as Record<string,unknown>).costReservationId
+          ??payloads.find(event=>event.type==="BudgetReserved")?.payload.cost_reservation_id
+          ??payloads.find(event=>event.type==="GenerationUsageRecorded")?.payload.cost_reservation_id;
+        if(payloads.length>0&&typeof reservationId==="string"&&foregroundAccountSettlement.reservation_id===reservationId){
+          personalReceiptReady=await refreshGenerationReceipt(operationEnvironment,user,row,body,null,"",{
+            ...row,status:"completed",result_json:JSON.stringify(terminalResult),error_message:null,completed_at:completedAt,lease_expires_at:null,
+            notified_at:parentJobIdFromRequest(parseRequest(row))?completedAt:row.notified_at,updated_at:completedAt,
+          },false,foregroundAccountSettlement);
+        }
+      }catch{
+        // Preserve the original terminal-write/receipt-refresh ordering if this
+        // read-free preparation fails; its ordinary refresh still reports failure.
+        personalReceiptReady=null;
+      }
+      if(personalReceiptReady)terminalResult=parseResult(personalReceiptReady) as typeof terminalResult;
+    }
     const terminalWrite=await finishDocumentJob(operationEnvironment,row,response.ok?"completed":"failed",terminalResult,response.ok?null:detail?.message??String(body.error??"document_job_failed"),completedAt,true,sponsorTerminal());
     if(nativeReceiptReady&&Number(terminalWrite.meta.changes??0)===1){persistedForegroundPresentation=nativeReceiptReady;outputOutcomeSynchronized=true;}
     if(!outputBinding&&!response.ok&&row.kind==="render_document"){
@@ -2436,7 +2460,7 @@ export async function runDocumentJob(env: WorkerEnv, user: PilotUser, jobId: str
     }
     if(!outputBinding&&response.ok&&foregroundPresentation&&Number(terminalWrite.meta.changes??0)===1){
       const saved:DocumentJobRow={...row,status:"completed",result_json:JSON.stringify(terminalResult),error_message:null,completed_at:completedAt,lease_expires_at:null,notified_at:parentJobIdFromRequest(parseRequest(row))?completedAt:row.notified_at,updated_at:completedAt};
-      persistedForegroundPresentation=await refreshGenerationReceipt(operationEnvironment,user,row,body,detail,"",saved,true,foregroundAccountSettlement);
+      persistedForegroundPresentation=personalReceiptReady?saved:await refreshGenerationReceipt(operationEnvironment,user,row,body,detail,"",saved,true,foregroundAccountSettlement);
     }else if(!outputBinding)await refreshGenerationReceipt(operationEnvironment,user,row,body,detail);
   } catch (error) {
     documentJobMemoryClaims.delete(row);
