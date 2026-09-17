@@ -1,3 +1,5 @@
+import { referenceCompositionMediaUrl } from "./reference-composition-media-url.ts";
+export { referenceCompositionMediaUrl } from "./reference-composition-media-url.ts";
 import { creativeContextRightsIssue } from "./context-health.ts";
 import type { CreativeBlock, CreativeEvent } from "./events.ts";
 import { promptFactIsActive } from "./prompt-policy.ts";
@@ -50,15 +52,6 @@ const bounded = (value: unknown, minimum: number, maximum: number): value is num
 const background = (value: unknown): value is ReferenceCompositionBackground => value === "transparent" || value === "#ffffff" || value === "#171717";
 const aspect = (value: unknown): value is ReferenceCompositionAspect => REFERENCE_COMPOSITION_ASPECTS.includes(value as ReferenceCompositionAspect);
 
-/** Return only the existing private media route; remote and redirect-like paths never enter the board. */
-export function referenceCompositionMediaUrl(value: unknown): string | null {
-  if (typeof value !== "string" || !value.startsWith("/api/media/") || /[?#\s\\]/u.test(value)) return null;
-  try {
-    const key = decodeURIComponent(value.slice("/api/media/".length));
-    if (!key || key.length > 2048 || /[\p{Cc}\\]/u.test(key) || key.split("/").some(part => part === ".." || part === ".")) return null;
-    return `/api/media/${encodeURIComponent(key)}`;
-  } catch { return null; }
-}
 
 export function normalizeReferenceCompositionSource(value: unknown): ReferenceCompositionSource | null {
   if (!record(value) || !token(value.id) || !token(value.blockId) || !["image", "model-view"].includes(text(value.kind))) return null;

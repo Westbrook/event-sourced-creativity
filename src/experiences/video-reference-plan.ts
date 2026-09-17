@@ -1,6 +1,6 @@
 import { canonicalJson, exactKeys, freeze, jsonIssues, record } from "./compiler.ts";
 import { readVideoReferenceIntent, type VideoReferenceIntent } from "./video-reference.ts";
-import { referenceCompositionMediaUrl } from "../model/reference-composition.ts";
+import { referenceCompositionMediaUrl } from "../model/reference-composition-media-url.ts";
 
 /** Deterministic saved source material, not reusable inspection or authority. */
 export type VideoReferencePlan = Readonly<{
