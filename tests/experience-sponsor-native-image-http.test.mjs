@@ -6,6 +6,16 @@ const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 const shortPolicy=()=>{const policy=readPolicy();for(const limit of Object.values(policy.operations))limit.deadlineMs=200;return policy;};
 const monetaryState=f=>Object.fromEntries(['document_jobs','output_operation_slots','output_provider_calls','budget_reservations','cost_budget_reservations','budget_counters','cost_budget_counters']
   .map(table=>[table,f.sqlite.prepare(`SELECT * FROM ${table} ORDER BY rowid`).all()]));
+const dropNativeAdmissionTables=(f,{allNativeOutputs=false}={})=>{
+  // Model a partial restore only inside this disposable fixture. Restore the
+  // normal FK setting before exercising either actual HTTP handler.
+  const tables=allNativeOutputs?f.sqlite.prepare("SELECT name FROM sqlite_schema WHERE type='table' AND name GLOB 'output_*' AND name<>'output_atomic_assertions'").all().map(row=>row.name)
+    :['output_operation_slots','output_execution_grants'];
+  f.sqlite.exec('PRAGMA foreign_keys=OFF');
+  try{for(const name of tables)f.sqlite.exec('DROP TABLE "'+name.replaceAll('"','""')+'"');}
+  finally{f.sqlite.exec('PRAGMA foreign_keys=ON');}
+  assert.equal(f.sqlite.prepare('PRAGMA foreign_keys').get().foreign_keys,1);
+};
 
 test('native sponsored current Image GET preserves the native snapshot and charges every request',async t=>{
   const f=await nativeImageReadFixture(t),before=f.snapshotNativeState(),attempts=f.attempts().length;
@@ -114,6 +124,36 @@ for(const missing of ['policy','indexes'])test(`known sponsored reads fail close
   const f=await nativeImageReadFixture(t,missing==='policy'?{policy:null}:{indexes:false}),before=f.snapshotNativeState();
   for(const response of [await f.readImage(),await f.readMedia()]){assert.equal(response.status,409);await response.text();}
   assert.equal(f.io.get,0);assert.equal(f.io.history,0);assert.equal(f.attempts().length,0);f.assertReadOnly(before);
+});
+
+test('partial restore retaining sponsor consumption refuses Image and media when both native admission tables are absent',async t=>{
+  const f=await nativeImageReadFixture(t);dropNativeAdmissionTables(f);
+  assert.ok(f.sqlite.prepare('SELECT 1 FROM experience_sponsor_consumptions WHERE actor_user_id=? AND job_id=?').get(f.actor,f.jobId));
+  const before=f.snapshotNativeState(),attempts=f.attempts().length,responses=[await f.readImage(),await f.readMedia()];
+  for(const response of responses)await response.arrayBuffer();
+  assert.deepEqual(responses.map(response=>response.status),[409,409]);
+  assert.equal(f.io.get,0);assert.equal(f.io.history,0);assert.equal(f.attempts().length,attempts);f.assertReadOnly(before);
+});
+
+test('genuine pre-Outputs ordinary legacy Image and media remain readable without native admission tables',async t=>{
+  const f=await nativeImageReadFixture(t,{ordinaryOnly:true,legacyOutputJob:true});dropNativeAdmissionTables(f,{allNativeOutputs:true});
+  assert.equal(f.sqlite.prepare("SELECT COUNT(*) n FROM sqlite_schema WHERE name LIKE 'experience_sponsor_%'").get().n,0);
+  assert.equal(f.sqlite.prepare("SELECT COUNT(*) n FROM sqlite_schema WHERE (name GLOB 'output_*' AND name<>'output_atomic_assertions') OR (tbl_name GLOB 'output_*' AND tbl_name<>'output_atomic_assertions')").get().n,0);
+  assert.ok(f.sqlite.prepare("SELECT 1 FROM sqlite_schema WHERE type='table' AND name='output_atomic_assertions'").get(), 'the shared assertion table alone is not native Outputs authority');
+  const before=f.snapshotNativeState(),current=await responseJson(await f.readImage());
+  assert.equal(current.outputId,f.outputId);assert.equal(current.status,'current');
+  const response=await f.readMedia();assert.equal(response.status,200);
+  assert.deepEqual(new Uint8Array(await response.arrayBuffer()),new Uint8Array(f.originalBytes));f.assertReadOnly(before);
+});
+
+test('empty surviving native Outputs ledger makes absent admission tables an uncertain partial restore',async t=>{
+  const f=await nativeImageReadFixture(t,{ordinaryOnly:true});dropNativeAdmissionTables(f);
+  assert.equal(f.sqlite.prepare('SELECT COUNT(*) n FROM output_provider_calls').get().n,0);
+  assert.equal(f.sqlite.prepare("SELECT COUNT(*) n FROM sqlite_schema WHERE name LIKE 'experience_sponsor_%'").get().n,0);
+  const before=f.snapshotNativeState(),responses=[await f.readImage(),await f.readMedia()];
+  for(const response of responses)await response.arrayBuffer();
+  assert.deepEqual(responses.map(response=>response.status),[409,409]);
+  assert.equal(f.io.get,0);assert.equal(f.io.history,0);f.assertReadOnly(before);
 });
 
 for(const fault of ['owner','hash','mime','bytes','dimensions'])test(`native sponsored media refuses ${fault} mismatch with its attempt retained`,async t=>{

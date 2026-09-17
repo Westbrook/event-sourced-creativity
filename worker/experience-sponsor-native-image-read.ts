@@ -24,6 +24,12 @@ const boundedJson = (column: string, path: string, maximum: number, type = false
 const outputExpression = boundedJson("payload", "object_id", IMAGE_WITNESS_LIMITS.rowBodyBytes);
 const generationExpression = boundedJson("payload", "generation_id", IMAGE_WITNESS_LIMITS.rowBodyBytes);
 const revisionExpression = boundedJson("content_json", "imageRevision.media.url", IMAGE_WITNESS_LIMITS.revisionBodyBytes);
+// Native Outputs authority relations and the durable guard on ordinary Jobs,
+// excluding output_atomic_assertions, which also serves managed-video reads.
+const nativeAuthorityObjects = ["output_commands", "output_plan_revisions", "output_plan_targets", "output_preflights",
+  "output_execution_grants", "output_operation_slots", "output_operation_routes", "output_provider_calls", "output_assets",
+  "output_native_storage_writes", "output_asset_storage_writes", "output_results", "output_target_acceptances",
+  "output_plan_fulfillments", "output_delivery_manifests", "output_durable_jobs", "output_durable_owner_immutable"].map(name => `'${name}'`).join(",");
 
 /** Dormant definitions only. No initializer or public approval path installs
  * these indexes. Missing/mismatched definitions fail closed for actors whose
@@ -112,10 +118,19 @@ export async function beginSponsorNativeImageRead(request: Request, env: WorkerE
   if (request.method !== "GET") return fail("sponsor_native_read_get_required");
   if (!id(actor.userId) || !id(ownerId)) return fail();
   const base = await all(env, life, `SELECT name FROM sqlite_schema WHERE type='table' AND name IN('document_jobs','output_operation_slots','output_execution_grants') LIMIT 3`, []);
-  // The initial app schema can predate Outputs entirely. A partial Outputs
-  // schema cannot establish absence of distinct-payer jobs and is refused.
+  // Only a genuinely pre-Outputs schema may bypass native classification.
+  // Missing slot/grant tables can also be a partial restore retaining sponsor
+  // consumption, issuance or private authorization. Even empty/counterfeit
+  // authority objects make absence uncertain; never infer it from row counts.
   const names = new Set(base.map(row => row.name));
-  if (!names.has("output_operation_slots") && !names.has("output_execution_grants")) return null;
+  if (!names.has("output_operation_slots") && !names.has("output_execution_grants")) {
+    const retained = await life.wait(() => env.DB.prepare(`SELECT 1 FROM sqlite_schema WHERE
+      lower(name) GLOB 'experience_sponsor_*' OR lower(tbl_name) GLOB 'experience_sponsor_*'
+      OR lower(name) GLOB 'idx_sponsor_image_*' OR lower(tbl_name) GLOB 'idx_sponsor_image_*'
+      OR lower(name) IN(${nativeAuthorityObjects}) OR lower(tbl_name) IN(${nativeAuthorityObjects}) LIMIT 1`).first());
+    if (retained) return fail("sponsor_native_read_configuration");
+    return null;
+  }
   if (names.size !== 3) return fail("sponsor_native_read_configuration");
   const stored = "mediaKey" in lookup ? await life.wait(() => env.DB.prepare(`SELECT ${textCell("job.owner_id", "owner_id")},${textCell("job.correlation_id", "correlation_id")},
       ${textCell("event.correlation_id", "event_correlation")},${textCell("execution.payer_user_id", "payer_user_id")},${textCell("stored.publication_event_id", "publication_event_id")},
