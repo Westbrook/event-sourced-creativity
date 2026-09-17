@@ -48,9 +48,9 @@ export async function commitAtomicIntake(env:WorkerEnv,auth:ProjectIntakeAuthori
             ON receipt.stream_id=? AND receipt.client_event_id=json_extract(expected.value,'$.key')
               AND receipt.event_id=json_extract(expected.value,'$.id') AND receipt.sequence=json_extract(expected.value,'$.sequence')
             WHERE CAST(expected.key AS INTEGER)>0)=?
-          AND NOT EXISTS(SELECT 1 FROM events prior WHERE prior.stream_id=? AND prior.type IN('ProjectCreated','DocumentCreated','BlockCreated','ReferenceIngested')
+          AND NOT EXISTS(SELECT 1 FROM events prior WHERE prior.stream_id=? AND prior.type IN('ProjectCreated','DocumentCreated','DocumentForked','BlockCreated','ReferenceIngested')
             AND (json_extract(prior.payload,'$.project_id') IN(SELECT value FROM json_each(?)) AND prior.type='ProjectCreated'
-              OR json_extract(prior.payload,'$.document_id') IN(SELECT value FROM json_each(?)) AND prior.type='DocumentCreated'
+              OR json_extract(prior.payload,'$.document_id') IN(SELECT value FROM json_each(?)) AND prior.type IN('DocumentCreated','DocumentForked')
               OR json_extract(prior.payload,'$.block_id') IN(SELECT value FROM json_each(?)) AND prior.type='BlockCreated'
               OR json_extract(prior.payload,'$.reference_id') IN(SELECT value FROM json_each(?)) AND prior.type='ReferenceIngested')
             AND prior.event_id NOT IN(SELECT json_extract(value,'$.id') FROM json_each(?)))
