@@ -1,51 +1,22 @@
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
-import {execFileSync} from 'node:child_process';
 import {readFileSync} from 'node:fs';
 import {createHash} from 'node:crypto';
-import {dirname,resolve,extname} from 'node:path';
-import {fileURLToPath,pathToFileURL} from 'node:url';
-import ts from 'typescript';
 import {fixture,rows,nativeEvents,outputDigest,snapshot,changes} from './helpers/guest-image-stage-fixture.mjs';
 const [{prepareGuestImageConfirmation,confirmGuestImageRequirement},{preflightGuestImage,readGuestImagePreflight}]=await Promise.all([
   import('../worker/experience-guest-image-confirmation.ts'),import('../worker/experience-guest-image-preflight.ts')]);
 const {preflightOutputImageSlidesTarget,outputNativeImageDisclosure}=await import('../worker/output-image-slides-preflight.ts');
-const root=resolve(fileURLToPath(new URL('..',import.meta.url))),nativePath='worker/output-image-slides-preflight.ts';
-const baseline='d84849b9d4609f5cfd92cd863d108768ef6456f6';
-const sourceAt=path=>execFileSync('git',['show',`${baseline}:${path}`],{cwd:root,encoding:'utf8'});
-const baselineSource=sourceAt(nativePath),baselineFile=pathToFileURL(resolve(root,nativePath));
-assert.equal(createHash('sha256').update(baselineSource).digest('hex'),'1c54607a0ce12d4afecbc027828de95d60b4a6b802251a3968404a570d667e82');
-// Exercise the actual frozen function, not a copied expected offer. Only its
-// import locations change for the data URL. Its complete static runtime closure
-// must still be byte-identical to d848, excluding this deliberately edited file.
-const checked=new Set();
-function runtimeImports(source,path){
-  const file=ts.createSourceFile(path,source,ts.ScriptTarget.Latest,true,ts.ScriptKind.TS);
-  return file.statements.flatMap(node=>{
-    if(!ts.isImportDeclaration(node)&&!ts.isExportDeclaration(node)||node.isTypeOnly||!node.moduleSpecifier||!ts.isStringLiteral(node.moduleSpecifier))return [];
-    if(ts.isImportDeclaration(node)&&node.importClause){const clause=node.importClause;
-      if(clause.isTypeOnly||!clause.name&&clause.namedBindings&&ts.isNamedImports(clause.namedBindings)&&clause.namedBindings.elements.every(element=>element.isTypeOnly))return [];}
-    const value=node.moduleSpecifier.text;if(!value.startsWith('.'))return [];
-    const full=resolve(dirname(resolve(root,path)),extname(value)?value:`${value}.ts`);
-    assert.ok(full.startsWith(root+'/'));return [full.slice(root.length+1)];
-  });
-}
-function verifyDependency(path){
-  if(checked.has(path))return;checked.add(path);const source=sourceAt(path);
-  if(path!==nativePath)assert.equal(readFileSync(resolve(root,path),'utf8'),source,`Unreviewed dependency drift: ${path}`);
-  for(const dependency of runtimeImports(source,path))verifyDependency(dependency);
-}
-verifyDependency(nativePath);
-const absoluteImports=context=>{
-  const visit=node=>{
-    if(ts.isImportDeclaration(node)&&ts.isStringLiteral(node.moduleSpecifier)&&node.moduleSpecifier.text.startsWith('.'))return context.factory.updateImportDeclaration(node,node.modifiers,node.importClause,
-      context.factory.createStringLiteral(new URL(node.moduleSpecifier.text,baselineFile).href),node.attributes);
-    return ts.visitEachChild(node,visit,context);
-  };
-  return source=>ts.visitNode(source,visit);
-};
-const transpiled=ts.transpileModule(baselineSource,{fileName:nativePath,compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.ESNext},transformers:{before:[absoluteImports]}}).outputText;
-const {preflightOutputImageSlidesTarget:baselineQuote}=await import(`data:text/javascript;base64,${Buffer.from(transpiled).toString('base64')}`);
+// Independent expected bytes were captured once from the reviewed frozen native
+// builder. Tests neither need its Git object nor regenerate from current code.
+// Reference changes require separately reviewed native contract evidence.
+const reference=JSON.parse(readFileSync(new URL('./fixtures/guest-image-native-disclosure-d848.json',import.meta.url),'utf8'));
+assert.equal(reference.version,1);
+assert.equal(reference.provenance.commit,'d84849b9d4609f5cfd92cd863d108768ef6456f6');
+assert.equal(reference.provenance.path,'worker/output-image-slides-preflight.ts');
+assert.equal(reference.provenance.sourceSha256,'1c54607a0ce12d4afecbc027828de95d60b4a6b802251a3968404a570d667e82');
+assert.deepEqual(reference.cases.map(value=>value.name),['Image square','Image wide','Image portrait','Slides exact','Slides flexible','Fal Image']);
+const expectedCases=new Map(reference.cases.map(value=>[value.name,value]));
+assert.equal(expectedCases.size,6);
 
 function pureInput(kind='image',ratio={width:1,height:1},flexible=false){
   const slides=kind==='slides';return {env:{OPENAI_API_KEY:'presence-only-not-a-credential',OPENAI_MODEL:'gpt-5.6-terra',OPENAI_IMAGE_MODEL:'gpt-image-2'},
@@ -55,24 +26,32 @@ function pureInput(kind='image',ratio={width:1,height:1},flexible=false){
     context:{snapshot:{facts:[{block_id:'disclosure-source',type:'subject',active:true,intent:'include',properties:{text:'A pear orchard beside a stone wall.'}}],relationships:[]}}};
 }
 
-for(const [name,build]of [
-  ['Image square',()=>pureInput()],['Image wide',()=>pureInput('image',{width:16,height:9})],['Image portrait',()=>pureInput('image',{width:9,height:16})],
-  ['Slides exact',()=>pureInput('slides')],['Slides flexible',()=>pureInput('slides',null,true)],
-  ['Fal Image',()=>{const input=pureInput();Object.assign(input.env,{FORMA_IMAGE_PROVIDER:'fal',FAL_KEY:'presence-only-not-a-credential'});return input;}],
-])test(`${name} serialized native offer preserves the frozen d848 builder and original property order`,async t=>{
+
+for(const [name,build,provider,route]of [
+  ['Image square',()=>pureInput(),'openai','document-image-manual-v1'],
+  ['Image wide',()=>pureInput('image',{width:16,height:9}),'openai','document-image-manual-v1'],
+  ['Image portrait',()=>pureInput('image',{width:9,height:16}),'openai','document-image-manual-v1'],
+  ['Slides exact',()=>pureInput('slides'),'openai','document-slides-manual-v1'],
+  ['Slides flexible',()=>pureInput('slides',null,true),'openai','document-slides-manual-v1'],
+  ['Fal Image',()=>{const input=pureInput();Object.assign(input.env,{FORMA_IMAGE_PROVIDER:'fal',FAL_KEY:'presence-only-not-a-credential'});return input;},'fal','document-image-fal-manual-v1'],
+])test(`${name} serialized native offer preserves independent frozen expectations and property order`,async t=>{
   const fetch=t.mock.method(globalThis,'fetch',()=>{throw Error('Pure disclosure parity attempted network');});
-  const input=build(),before=await baselineQuote(input),after=await preflightOutputImageSlidesTarget(input);
-  assert.equal(before.available,true,JSON.stringify(before));assert.equal(after.available,true,JSON.stringify(after));
-  assert.deepEqual(after,before);assert.deepEqual(Object.keys(after),Object.keys(before));assert.equal(JSON.stringify(after),JSON.stringify(before));
+  const input=build(),captured=expectedCases.get(name);assert.deepEqual(input,captured.input);
+  assert.equal(createHash('sha256').update(captured.expectedSerialized).digest('hex'),captured.expectedSha256);
+  const before=JSON.parse(captured.expectedSerialized),after=await preflightOutputImageSlidesTarget(input);
+  assert.equal(before.available,true);assert.equal(before.provider,provider);assert.equal(before.route,route);
+  assert.equal(after.available,true,JSON.stringify(after));
+  assert.deepEqual(after,before);assert.deepEqual(Object.keys(after),Object.keys(before));assert.equal(JSON.stringify(after),captured.expectedSerialized);
   assert.equal(fetch.mock.callCount(),0);
 });
 
-test('native Image disclosure helper returns fresh exact values and cannot be poisoned by another caller',async()=>{
-  const original=await baselineQuote(pureInput()),first=outputNativeImageDisclosure(),second=outputNativeImageDisclosure();
+test('native Image disclosure helper returns fresh exact values and cannot be poisoned by another caller',()=>{
+  const original=JSON.parse(expectedCases.get('Image square').expectedSerialized),first=outputNativeImageDisclosure(),second=outputNativeImageDisclosure();
+  const expected={reasonValues:original.reasonValues,reason:original.reason,transferDescription:original.transferDescription};
   assert.deepEqual(Object.keys(first),['reasonValues','reason','transferDescription']);
-  assert.deepEqual(first,{reasonValues:original.reasonValues,reason:original.reason,transferDescription:original.transferDescription});
+  assert.deepEqual(first,expected);assert.deepEqual(second,expected);
   assert.notEqual(first,second);assert.notEqual(first.reasonValues,second.reasonValues);first.reasonValues.maximumExecutionSeconds=0;first.reason='changed';first.transferDescription='changed';
-  assert.deepEqual(outputNativeImageDisclosure(),second);assert.equal(second.reasonValues.maximumExecutionSeconds,240);
+  assert.deepEqual(outputNativeImageDisclosure(),expected);assert.deepEqual(second,expected);assert.equal(second.reasonValues.maximumExecutionSeconds,240);
 });
 
 async function quotedFixture(t){
