@@ -58,7 +58,7 @@ export async function handleExperienceIntake(request: Request, env: WorkerEnv) {
     catch { return denied(`${validated.release.output.output}_reference_source_unavailable`); }
     const plan = await buildExperiencePlan(auth.user.userId, validated.request, validated.release, source?.reference), content = canonicalJson(plan);
     const authority = projectIntakeAuthority(env, auth, plan);
-    const storageLimit: BudgetReservationGuard = { sql: `(SELECT COUNT(*) FROM private_content WHERE owner_id=? AND kind='experience-draft' AND created_at>strftime('%Y-%m-%dT%H:%M:%fZ','now','-1 day'))<50`, bindings: [auth.user.userId] };
+    const storageLimit = experienceDraftStorageGuard(auth.user.userId);
     let saveGuard = join(authority, storageLimit);
     if (source) {
       saveGuard = join(saveGuard, { sql: `(${source.guard.sql}) AND (SELECT COALESCE(MAX(sequence),0) FROM events WHERE stream_id=?)=?`, bindings: [...source.guard.bindings, auth.user.streamId, source.head] });
@@ -80,6 +80,9 @@ export async function handleExperienceIntake(request: Request, env: WorkerEnv) {
   const retained = await readDraft(env, auth, id); if (!retained) return denied("experience_draft_unavailable", 404);
   if (!action) return reply({ status: "prepared", plan: retained.plan, expiresAt: retained.expiresAt });
   const plan = retained.plan;
+  // A marker only refuses ordinary mutation; it never supplies sponsor authority.
+  // Existing owner reads and original receipt recovery remain native operations.
+  if (action === "commit" && Object.hasOwn(plan, "sponsor_intake")) return denied("sponsor_intake_internal_only", 403);
   if (action === "commit" && approvedHash !== plan.draftHash) return denied("experience_review_stale");
   // Changed registrations block new intake, but never replace or reinterpret the old receipt.
   if (action === "commit" && (await registeredExperience(plan.request.experienceId))?.releaseHash !== plan.release.releaseHash) return denied("experience_release_changed");
@@ -116,3 +119,8 @@ function intakeResult(result: Record<string, unknown>, status: number, id: strin
 
 // Internal re-entry adapters reuse the same principal, bounded body and retained custody checks.
 export { authorize as authorizeExperienceIntake, readDraft as readExperienceDraft, retainedGuard as experienceDraftGuard, boundedBody as readExperienceBody };
+
+/** Reuse the existing ordinary storage ceiling without changing its predicate. */
+export function experienceDraftStorageGuard(ownerId: string): BudgetReservationGuard {
+  return { sql: `(SELECT COUNT(*) FROM private_content WHERE owner_id=? AND kind='experience-draft' AND created_at>strftime('%Y-%m-%dT%H:%M:%fZ','now','-1 day'))<50`, bindings: [ownerId] };
+}

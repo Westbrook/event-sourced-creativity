@@ -1,16 +1,21 @@
 import { canonicalJson, digest, exactKeys, freeze, jsonIssues, record } from "../src/experiences/compiler.ts";
 import { SponsorEntitlementError } from "./experience-sponsor-policy.ts";
 
-export type SponsorResourceOperation = "text-intake" | "preflight" | "issuance";
+export type SponsorResourceOperation = "text-intake" | "preflight" | "issuance" | "image-text-draft-storage";
 export type SponsorResourceAllowance = {
   maximumOperations: number; maximumTextBytes: number;
   maximumOperationsPerWindow: number; maximumTextBytesPerWindow: number;
   maximumPendingGrants: number; maximumInflightJobs: number;
 };
-export type SponsorResourceLimits = {
+export type SponsorResourceLimitsV1 = {
   version: 1; startsAtMs: number; expiresAtMs: number; windowMs: number;
   maximumOperationTextBytes: number; campaign: SponsorResourceAllowance; actor: SponsorResourceAllowance;
 };
+export type SponsorResourceLimitsV2 = Omit<SponsorResourceLimitsV1, "version"> & {
+  version: 2;
+  allowedOperations: ["text-intake", "preflight", "issuance", "image-text-draft-storage"];
+};
+export type SponsorResourceLimits = SponsorResourceLimitsV1 | SponsorResourceLimitsV2;
 export type SponsorResourceSql = Readonly<{ sql: string; bindings: readonly (string | number | null)[] }>;
 export type SponsorResourceInput = {
   limits: unknown; campaignId: string; policyDigest: string; actorUserId: string; sessionDigest: string;
@@ -24,11 +29,19 @@ const integer = (value: unknown, min: number, max: number): value is number => N
 const statement = (sql: string, ...bindings: (string | number | null)[]): SponsorResourceSql => freeze({ sql, bindings });
 const instant = "CAST((julianday('now')-2440587.5)*86400000 AS INTEGER)";
 const allowanceKeys = ["maximumOperations", "maximumTextBytes", "maximumOperationsPerWindow", "maximumTextBytesPerWindow", "maximumPendingGrants", "maximumInflightJobs"];
+const limitKeys = ["version", "startsAtMs", "expiresAtMs", "windowMs", "maximumOperationTextBytes", "campaign", "actor"];
+const operations = ["text-intake", "preflight", "issuance", "image-text-draft-storage"] as const;
+const reviewedOperations = (value: unknown): boolean => Array.isArray(value) && value.length === operations.length
+  && operations.every((operation, index) => value[index] === operation);
 
-/** Explicit server-approved limits only. No default allowance or caller clock. */
+/** Explicit server-approved limits only. No default allowance or caller clock.
+ * V1 text-intake remains existing-Document text preparation. V2 separately
+ * authorizes an initial Image text draft write; it adds no upload allowance. */
 export function readSponsorResourceLimits(raw: unknown): Readonly<SponsorResourceLimits> {
-  if (jsonIssues(raw).length || !record(raw) || !exactKeys(raw, ["version", "startsAtMs", "expiresAtMs", "windowMs", "maximumOperationTextBytes", "campaign", "actor"])
-    || raw.version !== 1 || !integer(raw.startsAtMs, 0, 8_000_000_000_000) || !integer(raw.expiresAtMs, raw.startsAtMs + 1, 8_000_000_000_000)
+  if (jsonIssues(raw).length || !record(raw) || (raw.version !== 1 && raw.version !== 2)
+    || !exactKeys(raw, [...limitKeys, ...(raw.version === 2 ? ["allowedOperations"] : [])])
+    || (raw.version === 2 && !reviewedOperations(raw.allowedOperations))
+    || !integer(raw.startsAtMs, 0, 8_000_000_000_000) || !integer(raw.expiresAtMs, raw.startsAtMs + 1, 8_000_000_000_000)
     || !integer(raw.windowMs, 1, 31_536_000_000) || !integer(raw.maximumOperationTextBytes, 1, 1_048_576)) return fail("sponsor_resource_limits_invalid");
   for (const allowance of [raw.campaign, raw.actor]) {
     if (!record(allowance) || !exactKeys(allowance, allowanceKeys)
@@ -43,7 +56,9 @@ export function readSponsorResourceLimits(raw: unknown): Readonly<SponsorResourc
 }
 
 /** Dormant schema: importing does not install or enable it. Counters record
- * bounded text/preflight/issuance operations and bytes, never money or invoices.
+ * bounded preparation/preflight/issuance and V2 initial-draft operations and
+ * bytes, never money or invoices. Existing installed schemas require a separate
+ * reviewed migration before enabling V2; this export performs no migration.
  * Campaign totals intentionally survive policy versions and terminal jobs. */
 export const SPONSOR_RESOURCE_SCHEMA = Object.freeze([
   `CREATE TABLE experience_sponsor_resource_policies(
@@ -53,7 +68,7 @@ export const SPONSOR_RESOURCE_SCHEMA = Object.freeze([
   `CREATE TABLE experience_sponsor_resource_receipts(
     resource_id TEXT PRIMARY KEY NOT NULL,campaign_id TEXT NOT NULL REFERENCES experience_sponsor_campaigns(campaign_id),
     policy_digest TEXT NOT NULL,limits_digest TEXT NOT NULL,actor_user_id TEXT NOT NULL,session_digest TEXT NOT NULL,
-    operation TEXT NOT NULL CHECK(operation IN('text-intake','preflight','issuance')),intent_key TEXT NOT NULL,
+    operation TEXT NOT NULL CHECK(operation IN('text-intake','preflight','issuance','image-text-draft-storage')),intent_key TEXT NOT NULL,
     payload_digest TEXT NOT NULL,text_bytes INTEGER NOT NULL CHECK(typeof(text_bytes)='integer' AND text_bytes>=0 AND text_bytes<=1048576),
     issued_grant_id TEXT REFERENCES experience_sponsor_grants(grant_id),recorded_at_ms INTEGER NOT NULL,
     CHECK((operation='issuance' AND issued_grant_id IS NOT NULL) OR (operation<>'issuance' AND issued_grant_id IS NULL)),
@@ -121,10 +136,11 @@ export async function prepareSponsorResourcePlan(raw: SponsorResourceInput) {
     || !exactKeys(raw, ["limits", "campaignId", "policyDigest", "actorUserId", "sessionDigest", "intentKey", "operation", "payloadDigest", "textBytes", "resourceId", ...(Object.hasOwn(raw, "issuedGrantId") ? ["issuedGrantId"] : [])])
     || ![raw.campaignId, raw.actorUserId, raw.intentKey, raw.resourceId].every(id)
     || ![raw.policyDigest, raw.sessionDigest, raw.payloadDigest].every(hash)
-    || !["text-intake", "preflight", "issuance"].includes(raw.operation)
+    || !operations.includes(raw.operation)
     || !integer(raw.textBytes, 0, 1_048_576)
     || (raw.operation === "issuance" ? !id(raw.issuedGrantId) : Object.hasOwn(raw, "issuedGrantId"))) return fail("sponsor_resource_input_invalid");
   const limits = readSponsorResourceLimits(raw.limits);
+  if (raw.operation === "image-text-draft-storage" && limits.version !== 2) return fail("sponsor_resource_input_invalid");
   if (raw.textBytes > limits.maximumOperationTextBytes) return fail("sponsor_resource_text_too_large");
   // Capture every binding before the first asynchronous hash.
   const input = freeze(JSON.parse(canonicalJson(raw)) as SponsorResourceInput);

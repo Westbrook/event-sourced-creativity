@@ -1,3 +1,4 @@
+import { sponsorImageTextSource } from "./experience-sponsor-image-format.ts";
 import { canonicalJson, digest, exactKeys, jsonIssues, record } from "../src/experiences/compiler.ts";
 import { SponsorEntitlementError } from "./experience-sponsor-policy.ts";
 import { loadApprovedSponsorCampaign, readSponsorInternalCommand } from "./experience-sponsor-approval.ts";
@@ -59,8 +60,7 @@ async function trustedFrom(request: Request, env: WorkerEnv, command: Command) {
   const selected = plan.plan.targets.filter(target => target.selected);
   if (selected.length !== 1 || selected[0]!.id !== command.targetId || selected[0]!.media_kind !== "image" || selected[0]!.blocking_issues.length)
     return fail("sponsor_driver_target_unsupported");
-  const textTypes = new Set(["subject", "message", "style", "mood", "lighting", "composition", "color", "palette", "medium", "constraint", "detail", "text", "treatment", "negative", "output"]);
-  if (trusted.context.snapshot.facts.some(fact => !textTypes.has(String(fact.type).toLowerCase()))) return fail("sponsor_driver_text_source_required");
+  if (!await sponsorImageTextSource(trusted.context.snapshot.facts)) return fail("sponsor_driver_text_source_required");
   return trusted;
 }
 function sourceProofs(trusted: OutputTrustedContext): OutputSqlAssertion[] {

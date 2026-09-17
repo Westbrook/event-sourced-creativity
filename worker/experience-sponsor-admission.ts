@@ -1,3 +1,4 @@
+import { sponsorImageTextSource } from "./experience-sponsor-image-format.ts";
 import { sponsorApprovalAssertion, sponsorIssuedAuthorityAssertion } from "./experience-sponsor-approval.ts";
 import { matchSponsorImageTemplate } from "./experience-sponsor-campaign.ts";
 import { readSponsorImageTemplateEvidence } from "./experience-sponsor-image-evidence.ts";
@@ -79,11 +80,10 @@ export async function describeSponsorImageAdmission(trusted: OutputTrustedContex
   const facts = Array.isArray(trusted.context.snapshot.facts) ? trusted.context.snapshot.facts : [];
   const attempts = preflight && record(preflight.operationAttempts) ? preflight.operationAttempts : {};
   const attempt = offered && record(attempts[String(offered.targetId)]) ? attempts[String(offered.targetId)] as Record<string, unknown> : null;
-  const textTypes = new Set(["subject", "message", "style", "mood", "lighting", "composition", "color", "palette", "medium", "constraint", "detail", "text", "treatment", "negative", "output"]);
   if (!offered?.available || settings?.kind !== "generate" || !size || calls.length !== 2 || offered.maximumCalls !== 2
     || planning?.stage !== "planning:initial" || planning.provider !== "openai" || typeof planning.model !== "string"
     || rendering?.stage !== "image:initial" || rendering.provider !== offered.provider || rendering.model !== offered.model
-    || facts.some(fact => !record(fact) || !textTypes.has(String(fact.type).toLowerCase()))
+    || !await sponsorImageTextSource(facts)
     || !record(settings.payload) || Object.hasOwn(settings.payload, "sourcePreviewId") || Object.hasOwn(settings.payload, "references")
     || attempt?.ordinal !== 0 || attempt.previousSlotId !== null || preflight?.maximumMicrousd !== command.maximumMicrousd
     || command.explicitAuthorization !== true) return fail("sponsor_recipe_unsupported");
