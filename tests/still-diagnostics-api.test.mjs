@@ -29,10 +29,15 @@ test('authenticated diagnostic opt-in preserves decisions and writes no creative
     assert.ok(!debug.diagnostics.questions.some(q=>q.id==='unknown'));
     model=42;const malformed=await request({developer:true});assert.equal(malformed.source,'jev');assert.deepEqual(malformed.formats,ordinary.formats);assert.equal(malformed.diagnostics.model,undefined);
     invalid=true;const uncertain=await request({developer:true});assert.equal(uncertain.reason,'uncertain');assert.equal(uncertain.diagnostics.questions.find(q=>q.id==='fit_image').confidence,.01);assert.deepEqual(uncertain.formats,[]);
+    const home=await request({developer:true,projectId:'',documentId:'',view:'projects'});
+    assert.deepEqual(home.diagnostics.exchange.request,submitted);
+    assert.ok(submitted.state.history.recentCreative.some(e=>e.type==='DocumentRenderCompleted'));
+    assert.equal(submitted.state.history.focused.length,0);
+    assert.equal(home.diagnostics.context.coverage.included.recentCreative,submitted.state.history.recentCreative.length);
     delete f.env.JEV_API_KEY;const fallback=await request({developer:true});assert.equal(fallback.reason,'not_configured');assert.ok(fallback.diagnostics.questions.every(q=>!q.asked&&!q.probabilities));assert.equal(fallback.diagnostics.exchange,undefined);
     clock+=2000;const denied=await f.request('/api/still/decision',f.json({...input,documentId:'not-accessible',developer:true}));
     assert.equal(denied.status,409);assert.equal((await denied.json()).diagnostics,undefined);
-    assert.equal(calls,4);assert.deepEqual(f.counts(),counts);assert.equal((await (await f.request('/api/events?after=0')).json()).head,head);
+    assert.equal(calls,5);assert.deepEqual(f.counts(),counts);assert.equal((await (await f.request('/api/events?after=0')).json()).head,head);
   }finally{globalThis.fetch=fetch;Date.now=now;await f.drainBackground();f.close();}
 });
 

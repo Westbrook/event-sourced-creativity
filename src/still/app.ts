@@ -1,3 +1,4 @@
+import { localHistoryEvidence } from './history.ts';
 import { LitElement, html, nothing, type TemplateResult } from 'lit';
 import { live } from 'lit/directives/live.js';
 import { repeat } from 'lit/directives/repeat.js';
@@ -135,7 +136,7 @@ export class StillApp extends LitElement {
   }
   private interactionScope(){return JSON.stringify([this.client.epoch,this.client.scopeKey,this.client.position.projectId,this.client.position.documentId]);}
   private diagnosticScope(){return `${this.developerEpoch}/${this.interactionScope()}`;}
-  private localDiagnostics(reason:string, formats=false){return decisionDiagnostics(this.client.projection,{...this.client.position,...(formats?{view:'choose-format'}:{})},this.client.abilities,{head:this.client.head,source:'fallback',reason,artifactKind:this.client.projection.artifacts.find(a=>a.id===this.client.position.outputId)?.kind});}
+  private localDiagnostics(reason:string, formats=false){return decisionDiagnostics(this.client.projection,{...this.client.position,...(formats?{view:'choose-format'}:{})},this.client.abilities,{head:this.client.head,source:'fallback',reason,localEvents:localHistoryEvidence(this.client.events),artifactKind:this.client.projection.artifacts.find(a=>a.id===this.client.position.outputId)?.kind});}
   private recordDecision(result:DecisionResponse,disposition:string,scope:string){
     if(!this.developer||this.disposed||scope!==this.diagnosticScope())return;
     this.developerReceived={at:new Date().toLocaleTimeString(),disposition,trace:result.diagnostics,source:result.source,reason:result.reason,recommended:result.formats?.length?result.formats:result.actions?.map(a=>a.id)??[]};
