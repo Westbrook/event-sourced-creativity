@@ -96,6 +96,36 @@ export async function prepareSponsorEntitlement(input: {
     statement(`INSERT INTO experience_sponsor_assertions(token,passed) VALUES(?,CASE WHEN (${sql}) THEN 1 ELSE 0 END)`, token, ...bindings),
     statement("DELETE FROM experience_sponsor_assertions WHERE token=?", token),
   ];
+  const nativeAssertion = Object.freeze({ sql: `EXISTS(SELECT 1 FROM output_operation_slots slot
+    JOIN output_execution_grants grant_row ON grant_row.scope_key=slot.scope_key AND grant_row.grant_id=slot.grant_id
+    JOIN output_plan_revisions plan ON plan.scope_key=slot.scope_key AND plan.plan_revision_id=slot.plan_revision_id
+    JOIN document_jobs job ON job.job_id=slot.job_id
+    JOIN budget_reservations tokens ON tokens.reservation_id=slot.token_reservation_id
+    JOIN cost_budget_reservations cost ON cost.reservation_id=slot.cost_reservation_id
+    JOIN output_commands command ON command.scope_key=slot.scope_key AND command.actor_user_id=grant_row.actor_user_id AND command.command_key=?
+    JOIN event_private_payloads body ON body.private_event_id=command.event_id
+    WHERE slot.scope_key=? AND slot.slot_id=? AND slot.grant_id=? AND slot.plan_revision_id=? AND slot.job_id=?
+      AND slot.cost_reservation_id=? AND slot.token_reservation_id=? AND slot.status='authorized'
+      AND slot.source_digest=? AND slot.provider=? AND slot.model=? AND slot.route_digest=?
+      AND slot.maximum_microusd=? AND slot.maximum_tokens=? AND slot.maximum_calls=?
+      AND grant_row.actor_user_id=? AND grant_row.payer_user_id=? AND grant_row.status='authorized'
+      AND grant_row.context_id IS NULL AND grant_row.plan_revision_id=plan.plan_revision_id
+      AND grant_row.maximum_microusd=slot.maximum_microusd AND grant_row.maximum_calls=slot.maximum_calls
+      AND grant_row.expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now')
+      AND plan.scope_kind='personal' AND plan.owner_user_id=? AND plan.project_id=? AND plan.document_id=?
+      AND plan.source_digest=slot.source_digest AND plan.source_head=?
+      AND job.owner_id=plan.owner_user_id AND job.stream_id=? AND job.document_id=plan.document_id AND job.status='queued'
+      AND tokens.owner_id=grant_row.payer_user_id AND tokens.status='active' AND tokens.reserved_tokens=slot.maximum_tokens
+      AND cost.owner_id=grant_row.payer_user_id AND cost.status='active' AND cost.reserved_microusd=slot.maximum_microusd AND cost.allow_user_overage=0
+      AND tokens.correlation_id=job.correlation_id AND cost.correlation_id=job.correlation_id
+      AND tokens.stream_id=job.stream_id AND cost.stream_id=job.stream_id
+      AND body.owner_id=plan.owner_user_id AND body.project_id=plan.project_id AND body.document_id=plan.document_id AND body.redacted_at IS NULL
+      AND json_extract(body.private_json,'$.output_command_envelope.sponsor_entitlement.envelope_digest')=?
+      AND json_extract(body.private_json,'$.output_command_envelope.sponsor_entitlement.policy_digest')=?
+      AND json_extract(body.private_json,'$.output_command_envelope.sponsor_entitlement.consumption_id')=?)`, bindings: [native.commandKey, native.scopeKey, native.slotId, native.executionGrantId, native.planRevisionId, native.jobId,
+    native.costReservationId, native.tokenReservationId, envelope.sourceDigest.slice(7), recipe.provider, recipe.model, recipe.routeDigest.slice(7),
+    recipe.maximumMicrousd, recipe.maximumTokens, calls, envelope.actorUserId, envelope.payerUserId, envelope.ownerUserId,
+    envelope.projectId, envelope.documentId, envelope.sourceRevision, `creative:${envelope.ownerUserId}`, envelopeDigest, policyDigest, envelope.consumptionId] });
   // Only the database clock can move a rolling-window cutoff. A caller clock,
   // even when combined with MAX(dbNow,...), could discard recent consumption.
   const statements: Sql[] = [statement(`WITH instant(now_ms) AS (
@@ -122,37 +152,8 @@ export async function prepareSponsorEntitlement(input: {
   // Principal-wide across campaigns/output types. No automatic release is
   // supplied: uncertain/failed/cancelled work must not free this slot by accident.
   statement("INSERT INTO experience_sponsor_active_jobs(actor_user_id,consumption_id,job_id) VALUES(?,?,?)", envelope.actorUserId, envelope.consumptionId, native.jobId),
-  ...check(`EXISTS(SELECT 1 FROM output_operation_slots slot
-    JOIN output_execution_grants grant_row ON grant_row.scope_key=slot.scope_key AND grant_row.grant_id=slot.grant_id
-    JOIN output_plan_revisions plan ON plan.scope_key=slot.scope_key AND plan.plan_revision_id=slot.plan_revision_id
-    JOIN document_jobs job ON job.job_id=slot.job_id
-    JOIN budget_reservations tokens ON tokens.reservation_id=slot.token_reservation_id
-    JOIN cost_budget_reservations cost ON cost.reservation_id=slot.cost_reservation_id
-    JOIN output_commands command ON command.scope_key=slot.scope_key AND command.actor_user_id=grant_row.actor_user_id AND command.command_key=?
-    JOIN event_private_payloads body ON body.private_event_id=command.event_id
-    WHERE slot.scope_key=? AND slot.slot_id=? AND slot.grant_id=? AND slot.plan_revision_id=? AND slot.job_id=?
-      AND slot.cost_reservation_id=? AND slot.token_reservation_id=? AND slot.status='queued'
-      AND slot.source_digest=? AND slot.provider=? AND slot.model=? AND slot.route_digest=?
-      AND slot.maximum_microusd=? AND slot.maximum_tokens=? AND slot.maximum_calls=?
-      AND grant_row.actor_user_id=? AND grant_row.payer_user_id=? AND grant_row.status='authorized'
-      AND grant_row.context_id IS NULL AND grant_row.plan_revision_id=plan.plan_revision_id
-      AND grant_row.maximum_microusd=slot.maximum_microusd AND grant_row.maximum_calls=slot.maximum_calls
-      AND grant_row.expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now')
-      AND plan.scope_kind='personal' AND plan.owner_user_id=? AND plan.project_id=? AND plan.document_id=?
-      AND plan.source_digest=slot.source_digest AND plan.source_head=?
-      AND job.owner_id=plan.owner_user_id AND job.stream_id=? AND job.document_id=plan.document_id AND job.status='queued'
-      AND tokens.owner_id=grant_row.payer_user_id AND tokens.status='active' AND tokens.reserved_tokens=slot.maximum_tokens
-      AND cost.owner_id=grant_row.payer_user_id AND cost.status='active' AND cost.reserved_microusd=slot.maximum_microusd AND cost.allow_user_overage=0
-      AND tokens.correlation_id=job.correlation_id AND cost.correlation_id=job.correlation_id
-      AND tokens.stream_id=job.stream_id AND cost.stream_id=job.stream_id
-      AND body.owner_id=plan.owner_user_id AND body.project_id=plan.project_id AND body.document_id=plan.document_id AND body.redacted_at IS NULL
-      AND json_extract(body.private_json,'$.output_command_envelope.sponsor_entitlement.envelope_digest')=?
-      AND json_extract(body.private_json,'$.output_command_envelope.sponsor_entitlement.policy_digest')=?
-      AND json_extract(body.private_json,'$.output_command_envelope.sponsor_entitlement.consumption_id')=?)`,
-  [native.commandKey, native.scopeKey, native.slotId, native.executionGrantId, native.planRevisionId, native.jobId,
-    native.costReservationId, native.tokenReservationId, envelope.sourceDigest, recipe.provider, recipe.model, recipe.routeDigest,
-    recipe.maximumMicrousd, recipe.maximumTokens, calls, envelope.actorUserId, envelope.payerUserId, envelope.ownerUserId,
-    envelope.projectId, envelope.documentId, envelope.sourceRevision, `creative:${envelope.ownerUserId}`, envelopeDigest, policyDigest, envelope.consumptionId]),
+  ...check(nativeAssertion.sql, nativeAssertion.bindings),
   ];
-  return Object.freeze({ kind: "dormant-transaction-plan" as const, ...compiled, replayLookup, statements: Object.freeze(statements) });
+  return Object.freeze({ kind: "dormant-transaction-plan" as const, ...compiled, replayLookup, statements: Object.freeze(statements),
+    admissionStatements: Object.freeze(statements.slice(0, -2)), nativeAssertion });
 }

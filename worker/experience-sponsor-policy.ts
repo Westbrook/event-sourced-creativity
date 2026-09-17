@@ -1,8 +1,8 @@
 import { canonicalJson, digest, exactKeys, jsonIssues, record } from "../src/experiences/compiler.ts";
 import type { OutputKind } from "../src/experiences/contracts.ts";
 
-/** Dormant contract only. No route imports this module; there is no environment
- * switch, policy loader, sponsor enrollment or grant issuer. */
+/** Dormant contract only. No registered route issues sponsor authority; there is
+ * no environment switch, policy loader, sponsor enrollment or grant issuer. */
 export const DEFAULT_SPONSOR_POLICY = Object.freeze({ version: 1, mode: "disabled" } as const);
 export class SponsorEntitlementError extends Error {
   readonly code: string;

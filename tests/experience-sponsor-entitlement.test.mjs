@@ -59,9 +59,9 @@ function fixture(t) {
   function nativeStatements(plan, raw, { omitMarker = false, payer = plan.envelope.payerUserId } = {}) {
     const n = raw.native, e = plan.envelope, r = e.recipe, calls = Object.values(r.calls).reduce((a, b) => a + b, 0), stream = `creative:${e.ownerUserId}`;
     return [
-      insert('output_plan_revisions', { scope_key: n.scopeKey, plan_revision_id: n.planRevisionId, scope_kind: 'personal', owner_user_id: e.ownerUserId, project_id: e.projectId, document_id: e.documentId, source_digest: e.sourceDigest, source_head: e.sourceRevision }),
+      insert('output_plan_revisions', { scope_key: n.scopeKey, plan_revision_id: n.planRevisionId, scope_kind: 'personal', owner_user_id: e.ownerUserId, project_id: e.projectId, document_id: e.documentId, source_digest: e.sourceDigest.slice(7), source_head: e.sourceRevision }),
       insert('output_execution_grants', { scope_key: n.scopeKey, grant_id: n.executionGrantId, plan_revision_id: n.planRevisionId, actor_user_id: e.actorUserId, payer_user_id: payer, status: 'authorized', context_id: null, maximum_microusd: r.maximumMicrousd, maximum_calls: calls, expires_at: new Date(e.expiresAtMs).toISOString() }),
-      insert('output_operation_slots', { scope_key: n.scopeKey, slot_id: n.slotId, grant_id: n.executionGrantId, plan_revision_id: n.planRevisionId, job_id: n.jobId, cost_reservation_id: n.costReservationId, token_reservation_id: n.tokenReservationId, status: 'queued', source_digest: e.sourceDigest, provider: r.provider, model: r.model, route_digest: r.routeDigest, maximum_microusd: r.maximumMicrousd, maximum_tokens: r.maximumTokens, maximum_calls: calls }),
+      insert('output_operation_slots', { scope_key: n.scopeKey, slot_id: n.slotId, grant_id: n.executionGrantId, plan_revision_id: n.planRevisionId, job_id: n.jobId, cost_reservation_id: n.costReservationId, token_reservation_id: n.tokenReservationId, status: 'authorized', source_digest: e.sourceDigest.slice(7), provider: r.provider, model: r.model, route_digest: r.routeDigest.slice(7), maximum_microusd: r.maximumMicrousd, maximum_tokens: r.maximumTokens, maximum_calls: calls }),
       insert('document_jobs', { job_id: n.jobId, owner_id: e.ownerUserId, stream_id: stream, document_id: e.documentId, status: 'queued', correlation_id: n.jobId }),
       insert('budget_reservations', { reservation_id: n.tokenReservationId, owner_id: payer, status: 'active', reserved_tokens: r.maximumTokens, correlation_id: n.jobId, stream_id: stream }),
       insert('cost_budget_reservations', { reservation_id: n.costReservationId, owner_id: payer, status: 'active', reserved_microusd: r.maximumMicrousd, allow_user_overage: 0, correlation_id: n.jobId, stream_id: stream }),
@@ -96,8 +96,10 @@ test('default disabled, explicit candidate only, and no runtime registration', a
   await assert.rejects(prepareSponsorEntitlement({ ...input(), policy: undefined }), /sponsor_disabled/);
   for (const changed of [{ mode: 'enabled' }, { extra: true }, { maximumMicrousd: Infinity }, { maximumAdmissions: 0 }, { audience: 'anyone' }])
     assert.throws(() => readSponsorPolicy(policy(changed)), /sponsor_policy_invalid/);
-  for (const name of ['experience-intake-api.ts', 'output-requirements-api.ts', 'experience-output-dispatch.ts', 'output-requirements-schema.ts'])
-    assert.doesNotMatch(readFileSync(new URL(`../worker/${name}`, import.meta.url), 'utf8'), /experience-sponsor/);
+  for (const name of ['experience-intake-api.ts', 'experience-output-dispatch.ts', 'output-requirements-schema.ts'])
+    assert.doesNotMatch(readFileSync(new URL(`../worker/${name}`, import.meta.url), 'utf8'), /createSponsorAdmissionAuthority|executeSponsored|SPONSOR_ENTITLEMENT_SCHEMA/);
+  const api=readFileSync(new URL('../worker/output-requirements-api.ts', import.meta.url),'utf8');
+  assert.doesNotMatch(api.slice(api.indexOf('export async function handleOutputRequirements')), /executeSponsored|createSponsorAdmissionAuthority/);
 });
 
 test('campaign and issued-grant schema defaults refuse admission without explicit enabling', async t => {

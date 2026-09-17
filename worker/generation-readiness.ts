@@ -1,4 +1,4 @@
-import { assertOutputAdmissionActor, readOutputAdmissionValue, type OutputAdmissionReads } from "./output-admission-reads.ts";
+import { assertOutputAdmissionActor, outputAdmissionBudgetOwner, outputAdmissionSponsor, readOutputAdmissionValue, type OutputAdmissionReads } from "./output-admission-reads.ts";
 import { referencePixelMode, sendsReferencePixels } from "../src/model/block-types.ts";
 import { hasSavedModel3dView } from "../src/model/reference-media.ts";
 import { promptFactIsActive } from "../src/model/prompt-policy.ts";
@@ -12,7 +12,7 @@ import { standingConstraints } from "../src/model/taste.ts";
 import { readGeneratedImageReference } from "./media-api.ts";
 import { moderateGenerationSnapshot, moderatePromptTechniqueSet } from "./openai-moderation.ts";
 import type { ImageReference } from "./openai-adapter.ts";
-import { hasCapability, readAccountBudgets, readBudgets, requireConsent, requireUser, type PilotUser, type ProjectExecutionScope } from "./pilot-policy.ts";
+import { hasCapability, pilotExecutionAllowance, readAccountBudgets, readBudgets, requireConsent, requireUser, type PilotUser, type ProjectExecutionScope } from "./pilot-policy.ts";
 import { hasProjectContextCookie, ownerDocumentBudgetScopes, readProjectRequestContext, readProjectSourceEvents } from "./project-access.ts";
 import { classifyProviderFailure, type ProviderFailureDetail } from "./provider-errors.ts";
 import { appendAuditEvent, ensureSchema, readWorkspaceEvents, uuidV7, type EventRow, type WorkerEnv } from "./runtime.ts";
@@ -179,6 +179,8 @@ export async function comparePromptTechniqueSafety(env: WorkerEnv, user: PilotUs
 
 export async function preflightGeneration(env:WorkerEnv,user:PilotUser,input:GenerationPreflightInput,options:{appendEvents?:boolean;allowCache?:boolean;sourceEvents?:EventRow[];allowProviderCalls?:boolean;persist?:boolean;outputAdmissionReads?:OutputAdmissionReads;outputImageRender?:{format:ImageFormat;size:`${number}x${number}`}}={}):Promise<GenerationReadiness>{
   assertOutputAdmissionActor(options.outputAdmissionReads,env,user.userId,user.projectExecution?.organizationId??null,user.projectExecution?.projectAccessId??null,input.documentId);
+  const sponsor=outputAdmissionSponsor(options.outputAdmissionReads);
+  if(sponsor&&(user.projectExecution||user.fictional||(user.billingUserId??user.userId)!==user.userId))throw new Error("sponsor_personal_principal_required");
   if(options.outputAdmissionReads&&(options.allowProviderCalls!==false||options.persist!==false||options.appendEvents!==false||options.allowCache!==false))throw new Error("output_admission_readiness_must_be_local");
   await ensureSchema(env);const checkedAt=nowIso();const technique=normalizePromptTechnique(input.promptTechnique);const productionMode:ProductionMode=input.productionMode==="managed"?"managed":"manual";
   const hasWorkflow=input.workflowId!==undefined||input.workflowStageId!==undefined||input.workflowSources!==undefined;
@@ -202,6 +204,12 @@ export async function preflightGeneration(env:WorkerEnv,user:PilotUser,input:Gen
     }catch{prefetched=null;/* Recompute malformed cache rows. */}
   }
   const events=options.sourceEvents??await readWorkspaceEvents(env,user.streamId);const trusted=authoritativeCreativeContext(events,{documentId:input.documentId,projectId:execution?.projectId,canvasId:input.canvasId,contextSetId:input.contextSetId,contextRootBlockId:input.contextRootBlockId,characterOutputKind:input.characterOutputKind,snapshot:input.snapshot,sourceBlockVersions:input.sourceBlockVersions});const projection=trusted.projection;const baseSnapshot=trusted.snapshot;const documentRevision=trusted.documentRevision;
+  if(sponsor){
+    const actorAllowance=await readOutputAdmissionValue(options.outputAdmissionReads,"sponsor-actor-pilot-allowance",()=>pilotExecutionAllowance(env,user.userId));
+    if(!actorAllowance.allowed||actorAllowance.pilot)throw new Error("sponsor_managed_pilot_unsupported");
+    const scopes=await readOutputAdmissionValue(options.outputAdmissionReads,"budget-scopes",()=>ownerDocumentBudgetScopes(env,user.userId,projection.documentId,projection.projectId));
+    if(scopes.length)throw new Error("sponsor_organization_budget_unsupported");
+  }
   let effectiveSnapshot:Record<string,unknown>=baseSnapshot;
   if(hasWorkflow){
     if(input.kind!=="generate")throw new ProductionWorkflowContextError("workflow_stage_unavailable","Production source checkpoints can only inform an explicitly requested final-quality image.",409);
@@ -224,8 +232,9 @@ export async function preflightGeneration(env:WorkerEnv,user:PilotUser,input:Gen
   }
   let previous:GenerationReadiness|null=null;const previousRow=await readOutputAdmissionValue(options.outputAdmissionReads,"previous-image-preflight",()=>env.DB.prepare("SELECT result_json,expires_at FROM generation_preflights WHERE owner_id=? AND document_id=? AND request_key LIKE ? ORDER BY created_at DESC LIMIT 1").bind(user.userId,projection.documentId,`${cachePrefix}%`).first<PreflightRow>());if(previousRow)try{previous=JSON.parse(previousRow.result_json) as GenerationReadiness;}catch{/* A malformed historical cache must not block a new check. */}
   const preflightId=uuidV7();const expiresAt=new Date(Date.now()+10*60_000).toISOString();const probes:GenerationReadinessProbe[]=[];const add=(probe:GenerationReadinessProbe)=>probes.push(probe);if(options.appendEvents!==false){if(previous&&previous.documentRevision!==documentRevision)await appendAuditEvent(env,user.streamId,"worker:policy","GenerationPreflightInvalidated",{preflight_id:previous.preflightId,document_id:projection.documentId,previous_document_revision:previous.documentRevision,document_revision:documentRevision,reason:"document-or-request-changed",source_surface:input.sourceSurface??"generation-controls",preflight_version:GENERATION_PREFLIGHT_VERSION});await appendAuditEvent(env,user.streamId,"worker:policy","GenerationPreflightRequested",{preflight_id:preflightId,document_id:projection.documentId,document_revision:documentRevision,request_key:requestKey,kind:input.kind,prompt_technique:technique,source_surface:input.sourceSurface??"generation-controls",preflight_version:GENERATION_PREFLIGHT_VERSION});}
-  const estimatedTokens=generationReadinessReservation(input.kind);const budgets=execution?(await readOutputAdmissionValue(options.outputAdmissionReads,"account-budgets",()=>readAccountBudgets(env,user.userId,execution.organizationId))).budgets:await readOutputAdmissionValue(options.outputAdmissionReads,"token-budgets",()=>readBudgets(env,user.billingUserId??user.userId));const remaining=Math.max(0,Math.min(budgets.user.limit-budgets.user.used-budgets.user.reserved,budgets.workspace.limit-budgets.workspace.used-budgets.workspace.reserved));
-  const canReadWorkspaceBudget=!execution||hasCapability(user,"workspace.usage.read",{organizationId:execution.organizationId});
+  const budgetOwner=outputAdmissionBudgetOwner(options.outputAdmissionReads,env,user.userId,user.billingUserId??user.userId);
+  const estimatedTokens=generationReadinessReservation(input.kind);const budgets=execution?(await readOutputAdmissionValue(options.outputAdmissionReads,"account-budgets",()=>readAccountBudgets(env,user.userId,execution.organizationId))).budgets:await readOutputAdmissionValue(options.outputAdmissionReads,"token-budgets",()=>readBudgets(env,budgetOwner,sponsor?{initialize:false}:{}));const remaining=Math.max(0,Math.min(budgets.user.limit-budgets.user.used-budgets.user.reserved,budgets.workspace.limit-budgets.workspace.used-budgets.workspace.reserved));
+  const canReadWorkspaceBudget=!sponsor&&(!execution||hasCapability(user,"workspace.usage.read",{organizationId:execution.organizationId}));
   add(remaining>=estimatedTokens?{id:"application-budget",label:"Application budget",status:"pass",severity:"info",summary:canReadWorkspaceBudget?`${remaining.toLocaleString()} tokens remain; this request reserves ${estimatedTokens.toLocaleString()}.`:"This request is within your personal and organization generation limits.",action:"none"}:{id:"application-budget",label:"Application budget",status:"fail",severity:"blocking",summary:canReadWorkspaceBudget?`Only ${remaining.toLocaleString()} tokens remain; this request needs ${estimatedTokens.toLocaleString()}.`:"This request exceeds a personal or organization generation limit.",action:"review_budget"});
   let provider=await readOutputAdmissionValue(options.outputAdmissionReads,"provider-health",()=>readProviderHealth(env));if(!env.OPENAI_API_KEY){provider={...emptyProvider("The OpenAI planner and safety preflight are not configured."),status:"authentication_failed",scope:"account"};}else if(usesFalImages(env)&&!env.FAL_KEY){provider={...emptyProvider("Fal is selected for images but no Fal credential is configured."),status:"authentication_failed",scope:"account"};}
   const providerLabel=usesFalImages(env)?"Fal + safety availability":"OpenAI availability";add(statusBlocksProvider(provider)?{id:"provider-health",label:providerLabel,status:"fail",severity:"blocking",summary:provider.message,action:provider.status==="rate_limited"?"wait":"refresh_provider"}:{id:"provider-health",label:providerLabel,status:"pass",severity:"info",summary:provider.status==="healthy"?provider.message:"No recent account, project, or model block has been observed.",action:"none"});

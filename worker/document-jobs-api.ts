@@ -13,7 +13,8 @@ import { readOutputNarrativePayload } from "./output-narrative-execution.ts";
 import { captureDocumentRenderSettings } from "../src/model/document-render-request.ts";
 import { documentRenderGuidance, documentRenderGuidanceProblem } from "../src/model/document-render-guidance.ts";
 import { PresentationModelConfigurationError, readFrozenPresentationModelRoutes, resolvePresentationModelRoutes } from "./presentation-model-routing.ts";
-import { assertOutputAdmissionRequest, assertOutputAdmissionActor, assertOutputAdmissionBudget, readOutputAdmissionValue, type OutputAdmissionReads } from "./output-admission-reads.ts";
+import { assertOutputAdmissionRequest, assertOutputAdmissionActor, assertOutputAdmissionBudget, outputAdmissionBudgetOwner, outputAdmissionSponsor, readOutputAdmissionValue, type OutputAdmissionReads } from "./output-admission-reads.ts";
+import { readExistingPrincipalRequest } from "./principal-request-core.ts";
 import { OUTPUT_NATIVE_EXECUTION_POLICY, readOutputNativeExecutionPolicy, type OutputNativeExecutionPolicy } from "../src/model/output-execution-policy.ts";
 import { outputSchemaIsReady } from "./output-schema-state.ts";
 import { loadOutputJobBinding, createOutputEventExecution, synchronizeOutputJobOutcome, prepareOutputJobOutcomeStatements, reconcileKnownOutputProviderReceipts, type OutputExecutionProof, type OutputEventExecution } from "./output-execution-control.ts";
@@ -2683,6 +2684,7 @@ export async function cancelProjectActorJobs(env:WorkerEnv,operator:PilotUser,sc
 
 export type PreparedOutputDocumentJob = {
   user: PilotUser; documentId: string; kind: "generate" | "render_document";
+  budgetOwnerId: string;
   jobId: string; payload: Record<string, unknown>; estimatedMicrousd: number;
   maximumTokens: number; maximumCalls: number; initialResult: Record<string, unknown>;
   sourceHead: number; expiresAt: string; createdAt: string;
@@ -2726,7 +2728,13 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
   if(request.method==="POST"&&!path){try{const inspected=await request.clone().json() as {kind?:unknown;payload?:Record<string,unknown>};sceneInspection=inspected.kind==="render_document"&&inspected.payload?.artifactKind==="scene"&&inspected.payload.sceneCostPreview===true;}catch{/* The normal admission parser still rejects malformed input. */}}
   if(request.method!=="GET"&&!sceneInspection)await ensureOutputRequirementsSchema(env);
   const scoped=hasProjectContextCookie(request);
-  const auth=await readOutputAdmissionValue(outputPreparation?.readScope,"principal",()=>requireUser(request,env,scoped||sceneInspection?"viewer":request.method==="GET"?"viewer":"creator",scoped?{account:"principal"}:{}));
+  const sponsor=outputAdmissionSponsor(outputPreparation?.readScope);
+  if(sponsor&&scoped)return Response.json({error:"sponsor_personal_principal_required"},{status:403});
+  const auth=await readOutputAdmissionValue(outputPreparation?.readScope,"principal",async()=>{
+    if(!sponsor)return requireUser(request,env,scoped||sceneInspection?"viewer":request.method==="GET"?"viewer":"creator",scoped?{account:"principal"}:{});
+    const existing=await readExistingPrincipalRequest(request,env,"creator",{account:"principal"});
+    return "kind" in existing?{response:Response.json({error:"sponsor_principal_changed"},{status:403}),user:null}:existing;
+  });
   if(auth.response||!auth.user)return auth.response!;
   const principal=auth.user,selected=scoped?await readOutputAdmissionValue(outputPreparation?.readScope,"project-selection",()=>readProjectRequestContext(request,env,principal)):{context:null,response:null};
   if(selected.response)return selected.response;
@@ -2739,6 +2747,12 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
   const readOnlyScene=Boolean(sceneInspection&&project&&hasCapability(principal,"project.read",{organizationId:project.organizationId,projectAccessId:project.projectAccessId}));
   if(!canRequestOutputs&&!readOnlyPlanning&&!readOnlyScene)return Response.json({error:"project_read_only"},{status:403});
   const user:PilotUser=project?{...principal,streamId:`creative:${project.ownerUserId}`,projectExecution:{organizationId:project.organizationId,projectAccessId:project.projectAccessId,projectId:project.projectId,ownerUserId:project.ownerUserId,actorUserId:principal.userId}}:principal;
+  if(sponsor){
+    if(project||user.fictional||user.projectExecution||(user.billingUserId??user.userId)!==user.userId)return Response.json({error:"sponsor_personal_principal_required"},{status:403});
+    // Actor eligibility is independent of the sponsor's financial identity.
+    const actorAllowance=await readOutputAdmissionValue(outputPreparation?.readScope,"sponsor-actor-pilot-allowance",()=>pilotExecutionAllowance(env,user.userId));
+    if(!actorAllowance.allowed||actorAllowance.pilot)return Response.json({error:"sponsor_managed_pilot_unsupported"},{status:403});
+  }
   if(path==="presentation-candidates"){
     if(request.method!=="GET")return new Response("Method not allowed",{status:405,headers:{"cache-control":"private, no-store"}});
     const documentId=new URL(request.url).searchParams.get("document")?.trim().slice(0,160)??"";
@@ -3629,6 +3643,8 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
   const documentId = String(input.documentId ?? projection.documentId); const documentRecord = projection.documents.find((document) => document.id === documentId);
   if (!documentRecord) return Response.json({ error: "document_not_found" }, { status: 404 });
   if(project&&documentRecord.projectId!==project.projectId)return Response.json({error:"document_not_found"},{status:404});
+  if(sponsor&&(await readOutputAdmissionValue(outputPreparation?.readScope,"budget-scopes",()=>ownerDocumentBudgetScopes(env,user.userId,documentId,documentRecord.projectId))).length)
+    return Response.json({error:"sponsor_organization_budget_unsupported"},{status:403});
   if(kind==="structure_adaptive"&&(String(input.sourceSurface??payload.sourceSurface??"")==="canvas"||payload.canvasId!==undefined)){
     const canvasId=typeof payload.canvasId==="string"?payload.canvasId.trim():"";
     if(!canvasId||canvasId.length>160||String(input.sourceSurface??payload.sourceSurface??"")!=="canvas"||payload.projectScope!==true)return Response.json({error:"canvas_context_required",message:"Board planning requires its exact authorized Canvas board."},{status:400});
@@ -3729,9 +3745,10 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
   let productionPlan:ManagedProductionPlan|null=null;
   let estimatedGenerationCostMicrousd=0;
   if(kind==="preview"||kind==="generate"||kind==="prompt_fan"||kind==="render_document"||kind==="chat"||kind==="structure_adaptive"){
-    const billingUserId=user.billingUserId??user.userId;
-    const scopes=user.projectExecution?[{organizationId:user.projectExecution.organizationId,projectAccessId:user.projectExecution.projectAccessId,actorUserId:user.projectExecution.actorUserId}]:!user.fictional&&billingUserId===user.userId?await readOutputAdmissionValue(outputPreparation?.readScope,"budget-scopes",()=>ownerDocumentBudgetScopes(env,user.userId,documentId,documentRecord.projectId)):[];
+    const billingUserId=outputAdmissionBudgetOwner(outputPreparation?.readScope,env,user.userId,user.billingUserId??user.userId);
+    const scopes=user.projectExecution?[{organizationId:user.projectExecution.organizationId,projectAccessId:user.projectExecution.projectAccessId,actorUserId:user.projectExecution.actorUserId}]:!user.fictional&&(sponsor||billingUserId===user.userId)?await readOutputAdmissionValue(outputPreparation?.readScope,"budget-scopes",()=>ownerDocumentBudgetScopes(env,user.userId,documentId,documentRecord.projectId)):[];
     if(scopes.length>1)return Response.json({error:"ambiguous_project_budget_scope"},{status:409});
+    if(sponsor&&scopes.length)return Response.json({error:"sponsor_organization_budget_unsupported"},{status:403});
     assertOutputAdmissionBudget(outputPreparation?.readScope,env,billingUserId,new Date().toISOString().slice(0,7),scopes[0]);
     if(kind==="chat"&&scopes[0]&&!project)return Response.json({error:"project_context_required",message:"Open this document in its shared workspace before starting a creative conversation."},{status:409});
     if(scopes[0]){
@@ -3741,6 +3758,7 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
       projectContentScope??={organizationId:scopes[0].organizationId,projectAccessId:scopes[0].projectAccessId,projectId:documentRecord.projectId,ownerUserId:user.userId,actorUserId:user.userId};
     }
     const pilotAllowance=await pilotExecutionAllowance(env,billingUserId,scopes[0],outputPreparation?.readScope);
+    if(sponsor&&pilotAllowance.pilot)return Response.json({error:"sponsor_managed_pilot_unsupported"},{status:403});
     if(!pilotAllowance.allowed)return Response.json({error:"active_pilot_participation_required"},{status:403});
     const trustedSnapshot=workflowPlanningSnapshot??(payload.snapshot&&typeof payload.snapshot==="object"&&!Array.isArray(payload.snapshot)?payload.snapshot as Record<string,unknown>:null);
     const trustedFacts=Array.isArray(trustedSnapshot?.facts)?trustedSnapshot.facts.filter((fact):fact is Record<string,unknown>=>Boolean(fact&&typeof fact==="object"&&!Array.isArray(fact))).map((fact)=>({type:String(fact.type??""),properties:fact.properties&&typeof fact.properties==="object"&&!Array.isArray(fact.properties)?fact.properties as Record<string,unknown>:{}})):null;
@@ -3826,7 +3844,10 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
       const exhausted=fixed.results.find((counter)=>Number(counter.used_microusd)+Number(counter.reserved_microusd)+estimatedCostMicrousd>Number(counter.hard_limit_microusd));
       if(exhausted)return Response.json({error:"pilot_budget_hard_cap_reached",scope:exhausted.scope==="pilot_user"?"user":"workspace"},{status:429});
     }
-    const gate=generationBudgetGate(account?.costBudgets??await readOutputAdmissionValue(outputPreparation?.readScope,"cost-budgets",()=>readCostBudgets(env,billingUserId)),{projectedMicrousd:estimatedCostMicrousd,suppressedUntilCritical:payload.budgetWarningSuppressed===true,noticeAcknowledged:payload.budgetAcknowledged===true});
+    const gate=generationBudgetGate(account?.costBudgets??await readOutputAdmissionValue(outputPreparation?.readScope,"cost-budgets",()=>readCostBudgets(env,billingUserId,sponsor?{initialize:false}:{})),{projectedMicrousd:estimatedCostMicrousd,suppressedUntilCritical:payload.budgetWarningSuppressed===true,noticeAcknowledged:payload.budgetAcknowledged===true});
+    // The creative actor receives availability, never the sponsor's balances
+    // or utilization. Sponsorship does not grant account-usage read access.
+    if(sponsor&&gate.level==="blocked")return Response.json({error:"sponsor_budget_unavailable"},{status:429});
     if(gate.level==="blocked")return Response.json({error:"budget_hard_cap_reached",message:`This generation exceeds the remaining ${gate.scope==="workspace"?"organization":"personal"} monthly budget.`,scope:gate.scope,gate},{status:429});
     if(account){
       const sceneCount=production?.scenes.length??Math.max(1,Math.floor(Number(payload.itemCount??6)));
@@ -3834,7 +3855,7 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
       const tokenScope=account.budgets.user.used+account.budgets.user.reserved+estimatedTokens>account.budgets.user.limit?"user":account.budgets.workspace.used+account.budgets.workspace.reserved+estimatedTokens>account.budgets.workspace.limit?"workspace":null;
       if(tokenScope)return Response.json({error:"budget_hard_cap_reached",message:`This generation exceeds the remaining ${tokenScope==="workspace"?"organization":"personal"} monthly token budget.`,scope:tokenScope},{status:429});
     }
-    if(gate.requiresAcknowledgement&&payload.budgetAcknowledged!==true)return Response.json({error:"generation_budget_acknowledgement_required",message:`Review your ${Math.round(gate.projectedUtilization*100)}% monthly budget usage before starting this generation.`,gate},{status:428});
+    if(gate.requiresAcknowledgement&&payload.budgetAcknowledged!==true)return sponsor?Response.json({error:"sponsor_budget_confirmation_required"},{status:428}):Response.json({error:"generation_budget_acknowledgement_required",message:`Review your ${Math.round(gate.projectedUtilization*100)}% monthly budget usage before starting this generation.`,gate},{status:428});
     if(kind==="render_document"&&artifactKind==="slides"){
       const authorizedSources=new Set(buildPresentationSourceContract(workflowPlanningSnapshot??payload.snapshot as Record<string,unknown>).sources.filter((source)=>source.sourceKind==="block").map((source)=>source.sourceId));
       if(!authorizedSources.size)return Response.json({error:"presentation_authorized_source_required",message:"Add at least one active, authorized source decision before generating a presentation. Exclusions and disabled decisions cannot become slide content."},{status:422});
@@ -3952,7 +3973,7 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
     const queueEvent={type:scope?"ProjectDocumentJobQueued":"OutputOperationJobQueued",payload:{job_id:jobId,document_id:documentId,kind,
       ...(scope?{organization_id:scope.organizationId,project_access_id:scope.projectAccessId,project_id:scope.projectId,history_owner_user_id:scope.ownerUserId,actor_user_id:scope.actorUserId}:{}),
       output_slot_id:outputPreparation.outputExecution.slotId,output_grant_id:outputPreparation.outputExecution.grantId}};
-    outputPreparation.prepared={user,documentId,kind,jobId,payload,estimatedMicrousd:estimatedGenerationCostMicrousd,
+    outputPreparation.prepared={user,budgetOwnerId:outputAdmissionBudgetOwner(outputPreparation.readScope,env,user.userId,user.billingUserId??user.userId),documentId,kind,jobId,payload,estimatedMicrousd:estimatedGenerationCostMicrousd,
       maximumTokens:outputPreparation.maximumTokens,maximumCalls:outputPreparation.maximumCalls,
       initialResult:{...(initialResult??{}),providerSubmissionProtocol:1},sourceHead:requestedSequence,expiresAt,createdAt,queueEvent,
       buildStatements:(event,checkpoint)=>{
