@@ -19,6 +19,7 @@ import { decisionDiagnostics, responseDisposition, type DecisionDiagnostics, typ
 import { ACTIONS, POLICY_VERSION, eligibleActions, selectActions, type Action } from './decisions.ts';
 import { isContextCompositionRelation } from '../model/combined-context.ts';
 import { documentSnapshot } from './context.ts';
+import { generationReview, issueAffectsBlock, type GenerationReview } from './generation-review.ts';
 import { api, ApiError, StillClient, type GenerationDraft } from './client.ts';
 import { documentArtifactRevision, model3dArtifactMediaFile, parseDocumentArtifactContent, type DocumentArtifact } from '../model/document-artifacts.ts';
 import { estimateModel3dCostMicrousd } from '../model/model3d.ts';
@@ -89,7 +90,7 @@ export class StillApp extends LitElement {
   private generation: GenerationDraft | null = null;
   private formatSuggestions: string[] = [];
   private formatTouched = false;
-  private generationGate: { key: string; message: string } | null = null;
+  private generationGate: GenerationReview | null = null;
   private ownership = false;
   private providerConsent = false;
   private disposed = false;
@@ -361,11 +362,16 @@ export class StillApp extends LitElement {
     const draft = this.generation; if (!draft) return;
     if(draft.recoveryClosed){this.generation=this.client.reviewNewGeneration(draft);this.generationGate=null;this.notice='Review this new request before generating.';this.changed();return;}
     if (!draft.attempted && draft.format === 'scene' && !draft.scenePreview) { const quote = await this.client.previewScene(draft); if (quote) draft.scenePreview = quote; this.changed(); return; }
-    if (this.generationGate) { draft.acknowledgements = { ...draft.acknowledgements, [this.generationGate.key]: true }; this.generationGate = null; }
+    if (this.generationGate && !this.generationGate.key) return;
+    if (this.generationGate?.key) { draft.acknowledgements = { ...draft.acknowledgements, [this.generationGate.key]: true }; this.generationGate = null; }
     try { const job=await this.client.generate(draft); this.closeMode(); this.notice = ['queued','running','committing'].includes(job.status)?'Generating…':job.status==='completed'?'Generation found.':job.status==='partial'?'Partial result found.':job.status==='failed'?'Generation failed. See results.':'Generation canceled.'; }
     catch (error) {
-      if (error instanceof ApiError && error.status === 428 && ['generation_budget_acknowledgement_required', 'generation_preflight_review_required'].includes(String(error.body.error))) {
-        this.generationGate = { key: error.body.error === 'generation_budget_acknowledgement_required' ? 'budgetAcknowledged' : 'preflightAcknowledged', message: String(error.body.message ?? error.body.summary ?? 'Review required.') };
+      const review = error instanceof ApiError ? generationReview(error.status, error.body) : null;
+      if (review) {
+        this.generationGate = review;
+        this.changed();
+        await this.updateComplete;
+        this.querySelector<HTMLElement>('.generation-review')?.focus();
         return;
       }
       throw error;
@@ -428,12 +434,19 @@ export class StillApp extends LitElement {
     if (mode === 'generate') {
       const g = this.generation;
       const source = g?.sourceSnapshot ?? documentSnapshot(p, p.documentId);
+      const issues = this.generationGate?.issues ?? [];
+      const visibleFacts = source.facts.filter(b => b.active || issues.some(i => issueAffectsBlock(i, b)));
+      const generalIssues = issues.filter(i => !visibleFacts.some(b => issueAffectsBlock(i, b)));
       const formats = this.candidates().filter(a => !!FORMATS[a.id]);
       const suggested = this.formatSuggestions.filter(id=>formats.some(a=>a.id===id));
       const pickerFormats = g ? formats : formats.filter(a=>!suggested.includes(a.id));
       return html`<section class="form-page generation-page">
         <span class="eyebrow">${p.projectName}</span><h1>${p.documentTitle}</h1>
-        <div class="generation-context">${source.facts.filter(b => b.active).map(b => html`<p><span>${text(b.properties.label) || b.handle || b.type}${b.locked ? ' · locked' : ''}</span>${safeMedia(text(b.properties.media_url)) && b.type === 'reference' ? html`<img class="context-reference" src=${safeMedia(text(b.properties.media_url))} alt=${b.handle}/>` : nothing}${text(b.properties.text) || text(b.properties.description)}</p>`)}</div>
+        <div class="generation-context">${visibleFacts.map(b => { const warnings = issues.filter(i => issueAffectsBlock(i, b)); return html`<section id=${'generation-context-'+b.block_id} class=${warnings.length ? 'generation-fact needs-review' : 'generation-fact'} tabindex="-1">
+          <p><span>${text(b.properties.label) || b.handle || b.type}${b.locked ? ' · locked' : ''}</span>${safeMedia(text(b.properties.media_url)) && b.type === 'reference' ? html`<img class="context-reference" src=${safeMedia(text(b.properties.media_url))} alt=${b.handle}/>` : nothing}${text(b.properties.text) || text(b.properties.description)}</p>
+          ${warnings.map(i => html`<div class="context-review-reason"><strong>${i.label}</strong> · ${i.summary}</div>`)}
+          ${warnings.length ? html`<a class="review-context-link" href=${this.viewURL('document',{blockId:b.block_id})} @click=${(e:MouseEvent)=>this.follow(e,'document',{blockId:b.block_id})}>Open idea</a>` : nothing}
+        </section>`; })}</div>
         <div class="format-options" @pointerenter=${()=>{this.formatTouched=true;}} @focusin=${()=>{this.formatTouched=true;}}>
         ${!g && suggested.length ? html`<en-toolbar class="format-suggestions" label="Suggested formats" keyboard-navigation="tab">${suggested.map(id=>this.suggestedButton({...ACTIONS.find(a=>a.id===id)!,label:FORMATS[id]},true))}</en-toolbar>` : nothing}
         ${g || pickerFormats.length ? html`<label class="select-label">${!g && suggested.length ? 'Other formats' : 'Output'}<select .value=${live(g?.format ?? '')} ?disabled=${this.busy || this.composing || !!g?.attempted} @change=${(e: Event) => this.chooseFormat((e.target as HTMLSelectElement).value)}>
@@ -447,8 +460,12 @@ export class StillApp extends LitElement {
         ${g?.adaptation?.issues.map(i => html`<p class="gate-notice">${i.message}</p>`)}
         ${g?.previousUnconfirmed ? html`<p class="gate-notice">Original status unknown. Starting another may duplicate it.</p>` : nothing}
         ${g ? html`<p class="cost-note">${g.recoveryClosed ? 'Original status unknown. Starting another may duplicate it.' : g.attempted ? `Checking an earlier ${FORMATS[g.format].toLowerCase()} request.` : g.format === 'model3d' ? `Estimated cost: $${(estimateModel3dCostMicrousd() / 1e6).toFixed(2)} · GLB · text to 3D` : g.scenePreview ? `Maximum cost: $${(g.scenePreview.maximumMicrousd / 1e6).toFixed(2)} · ${g.scenePreview.model}` : g.format === 'scene' ? 'Cost approval required.' : 'Forma provider and spending limits apply.'}</p>` : nothing}
-        ${this.generationGate ? html`<p class="gate-notice">${this.generationGate.message}</p>` : nothing}
-        <div class="form-actions">${g ? this.button(g.recoveryClosed ? 'Review another' : g.attempted ? 'Check generation' : g.format === 'scene' && !g.scenePreview ? 'Check cost' : this.generationGate ? 'Approve' : 'Generate', () => void this.run(() => this.generate()), true) : nothing}${this.button('Back', () => this.closeMode())}</div>
+        ${this.generationGate ? html`<section class="generation-review gate-notice" role="alert" tabindex="-1" aria-label=${this.generationGate.message}>
+          <strong>${this.generationGate.message}</strong>
+          ${generalIssues.map(i=>html`<p><strong>${i.label}</strong> · ${i.summary}</p>`)}
+          ${visibleFacts.filter(b=>issues.some(i=>issueAffectsBlock(i,b))).map(b=>html`<a href=${'#generation-context-'+b.block_id} @click=${(e:MouseEvent)=>{e.preventDefault();this.querySelector<HTMLElement>('#'+CSS.escape('generation-context-'+b.block_id))?.focus();}}>Review ${text(b.properties.label)||b.handle||b.type}</a>`)}
+        </section>` : nothing}
+        <div class="form-actions">${g ? this.button(g.recoveryClosed ? 'Review another' : g.attempted ? 'Check generation' : g.format === 'scene' && !g.scenePreview ? 'Check cost' : this.generationGate ? (this.generationGate.key ? 'Approve' : 'Blocked') : 'Generate', () => void this.run(() => this.generate()), true, !!this.generationGate && !this.generationGate.key) : nothing}${this.button('Back', () => this.closeMode())}</div>
       </section>`;
     }
     if (mode === 'actions') {const options=findActions(this.bodyDraft,this.candidates()).filter(a=>a.id!=='ui:developer'||this.desktop.matches),chosen=this.candidates().find(a=>a.id===this.choice);if(chosen&&!options.some(a=>a.id===chosen.id))options.unshift(chosen);return html`<section class="form-page"><h1>More</h1>${this.field('What next?',this.bodyDraft,v=>{this.bodyDraft=v;this.choice='';this.finderMessage='';this.finderInferred=false;},1,'Make it 3D, use it in a character…')}<label class="select-label">Action<select .value=${live(this.choice)} ?disabled=${this.busy} @change=${(e:Event)=>{this.choice=(e.target as HTMLSelectElement).value;this.finderInferred=false;this.finderMessage='';this.changed();}}><option value="" .selected=${!this.choice}>Choose an action</option>${options.map(a=>html`<option value=${a.id} .selected=${a.id===this.choice}>${a.label}</option>`)}</select></label>${this.finderMessage?html`<p class="cost-note" role="status">${this.finderMessage}</p>`:nothing}<div class="form-actions">${this.button(this.choice?'Open':'Find',()=>this.choice?this.openFoundAction():void this.run(()=>this.findAction()),true,!this.choice&&!this.bodyDraft.trim())}${this.button('Back',()=>this.closeMode())}</div></section>`;}

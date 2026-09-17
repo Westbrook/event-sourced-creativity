@@ -65,6 +65,13 @@ still-app .generation-context p { font: 24px/1.57 Georgia, serif; margin: 28px 0
 still-app .generation-context span { display: block; font: 10px/1.5 Arial, sans-serif; letter-spacing: .06em; text-transform: uppercase; color: #999185; margin-bottom: 5px; }
 still-app .cost-note { font-size: 12px; }
 still-app .gate-notice { background: #eee7dc; padding: 16px; font-size: 14px; }
+still-app .generation-fact { margin: 28px 0; }
+still-app .generation-fact p { margin: 0; }
+still-app .generation-fact.needs-review { border-left: 3px solid var(--accent); background: #eee7dc; padding: 16px 20px; }
+still-app .context-review-reason { margin-top: 12px; font-size: 13px; }
+still-app .review-context-link, still-app .generation-review a { display: block; width: fit-content; color: var(--ink); font-size: 13px; margin-top: 12px; }
+still-app .generation-review p { margin-top: 12px; }
+still-app .generation-review:focus, still-app .generation-fact:focus { outline: 2px solid var(--accent); outline-offset: 4px; }
 still-app .quiet-state { min-height: 52vh; display: flex; justify-content: center; align-items: center; flex-direction: column; gap: 24px; text-align: center; }
 still-app .quiet-state p { color: var(--soft); }
 still-app .still-mark { width: 30px; height: 30px; border: 1px solid #a9a391; border-radius: 50%; box-shadow: 8px 0 0 -1px var(--paper), 9px 0 0 0 #c1bbaa; }
