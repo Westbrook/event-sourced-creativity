@@ -1,4 +1,6 @@
+import { jsonIssues } from "../src/experiences/compiler.ts";
 import { readOutputModel3dPayload, requireModel3dMiniAppCostApproval } from "./output-model3d-execution.ts";
+import { requireSponsorAdmission, sponsorAdmissionPayer, sponsorAdmissionPlan, type SponsorAdmissionAuthority } from "./experience-sponsor-admission.ts";
 import { outputModel3dPreflightAssertions } from "./output-model3d-preflight.ts";
 import { model3dMiniAppAttemptMatches } from "../src/model/model3d-mini-app-consent.ts";
 import { resolveOutputModel3dRecoverySource } from "./output-model3d-source.ts";
@@ -91,6 +93,7 @@ export interface OutputExecutionBridge {
   preflight(input: OutputBridgeTargetInput): Promise<OutputNativeTargetPreflight>;
   prepareAdmission(input: Omit<OutputBridgeTargetInput, "target"> & {
     grantId: string; preflight: OutputPreflight; slots: OutputOperationSlot[]; governanceWitness?: OutputGovernanceWitness; sceneCostConsent?: unknown; audioCostConsent?: unknown; model3dCostConsent?: unknown;
+    sponsorAdmission?: SponsorAdmissionAuthority;
   }): Promise<OutputPreparedAdmission>;
   /** May schedule existing admitted job IDs only. The runner rechecks slot/grant/current authority before every call. */
   dispatch(input: { request: Request; env: WorkerEnv; scope: OutputScope; principal: PilotUser; executionContext: WorkerExecutionContext; slots: OutputOperationSlot[] }): Promise<void>;
@@ -212,7 +215,7 @@ function outputRequestDeadline(scope: OutputScope, raw: unknown) {
   return Math.min(Date.parse(tuple[0]), permissionDeadline);
 }
 
-type OutputGrantEvidence = { row: Record<string, unknown>; confirmedPlan: OutputConfirmedPlan; preflight: OutputPreflight; slots: OutputOperationSlot[] };
+type OutputGrantEvidence = { row: Record<string, unknown>; authorization: Record<string, unknown>; confirmedPlan: OutputConfirmedPlan; preflight: OutputPreflight; slots: OutputOperationSlot[] };
 
 /** One scoped read retains both immutable creative bodies; it never synthesizes a grant. */
 async function readOutputGrantEvidence(env: WorkerEnv, scope: OutputScope, grantId: string, includeSlots = false): Promise<OutputGrantEvidence> {
@@ -243,7 +246,7 @@ async function readOutputGrantEvidence(env: WorkerEnv, scope: OutputScope, grant
   const authorization = rememberOutputPrivateBody(scope, String(row.authorization_event_id), row.authorization_private_json);
   if (confirmedPlan.id !== scope.documentId || confirmedPlan.revisionId !== row.plan_revision_id || confirmedPlan.sourceDigest !== row.plan_source_digest || confirmedPlan.requirementsDigest !== row.plan_requirements_digest
     || preflight.id !== row.preflight_id || preflight.planRevisionId !== confirmedPlan.revisionId || preflight.termsDigest !== row.terms_digest || authorization.grant_id !== row.grant_id) fail("output_execution_contract_changed", 409);
-  return { row, confirmedPlan, preflight, slots: (slotsResult?.results ?? []).map((slot) => outputSlotFromRow(scope.key, slot)) };
+  return { row, authorization, confirmedPlan, preflight, slots: (slotsResult?.results ?? []).map((slot) => outputSlotFromRow(scope.key, slot)) };
 }
 
 async function validateOutputExecutionTarget(current: { sourceDigest: string; requirementsDigest: string }, evidence: OutputGrantEvidence, slot: OutputOperationSlot) {
@@ -591,8 +594,9 @@ function outputProviderStages(offered: OutputNativeTargetPreflight): Array<{ sta
   return calls as Array<{ stage: string; provider: string; model: string }>;
 }
 
-async function authorizePlan(trusted: OutputTrustedContext, body: Record<string, unknown>, digest: string, bridge?: OutputExecutionBridge) {
+async function authorizePlan(trusted: OutputTrustedContext, body: Record<string, unknown>, digest: string, bridge?: OutputExecutionBridge, sponsorAdmission?: SponsorAdmissionAuthority) {
   if (!bridge) fail("native_execution_unavailable", 409);
+  if (Object.hasOwn(body, "sponsor_entitlement") !== Boolean(sponsorAdmission)) fail("sponsor_authority_unavailable", 403);
   if (body.explicitAuthorization !== true || !Number.isSafeInteger(body.maximumMicrousd) || Number(body.maximumMicrousd) <= 0) fail("explicit_spending_authorization_required", 403);
   const preflightId = identifier(body.preflightId, "preflight_id_required");
   const row = await trusted.env.DB.prepare("SELECT * FROM output_preflights WHERE scope_key=? AND preflight_id=? AND actor_user_id=?").bind(trusted.scope.key, preflightId, trusted.scope.actorUserId).first<Record<string, unknown>>();
@@ -670,7 +674,7 @@ async function authorizePlan(trusted: OutputTrustedContext, body: Record<string,
     slots.push({ scopeKey: trusted.scope.key, slotId: uuidV7(), grantId, planRevisionId: plan.revisionId, targetId: target.id, targetContractDigest: plan.targetContractDigests[target.id], sourceDigest: trusted.sourceDigest, provider: offered.provider!, model: offered.model!, routeDigest: await outputDigest(offered), jobId, costReservationId: uuidV7(), tokenReservationId: uuidV7(), maximumMicrousd: offered.maximumMicrousd, maximumCalls: offered.maximumCalls, maximumTokens: offered.maximumTokens, status: "authorized", attemptOrdinal: attempt.ordinal, previousSlotId: attempt.previousSlotId });
   }
   if (slots.reduce((sum, slot) => sum + slot.maximumMicrousd, 0) !== preflight.maximumMicrousd || slots.reduce((sum, slot) => sum + slot.maximumCalls, 0) !== preflight.maximumCalls) fail("output_allocation_mismatch", 500);
-  const prepared = await bridge.prepareAdmission({ request: trusted.request, env: trusted.env, scope: trusted.scope, principal: trusted.principal, confirmedPlan: plan, context, ownerHead: trusted.ownerHead, sourceEvents: trusted.events, sourceAssertions: trusted.sourceAssertions, sourceDigest: trusted.sourceDigest, requirementsDigest: trusted.requirementsDigest, grantId, preflight, slots, governanceWitness: trusted.governanceWitness, ...(sceneTargets.length ? { sceneCostConsent: body.sceneCostConsent,sceneUseVersionedHistory:true } : {}), ...(audioTargets.length?{audioCostConsent:body.audioCostConsent}:{}), ...(model3dTargets.length?{model3dCostConsent:body.model3dCostConsent}:{}) });
+  const prepared = await bridge.prepareAdmission({ request: trusted.request, env: trusted.env, scope: trusted.scope, principal: trusted.principal, confirmedPlan: plan, context, ownerHead: trusted.ownerHead, sourceEvents: trusted.events, sourceAssertions: trusted.sourceAssertions, sourceDigest: trusted.sourceDigest, requirementsDigest: trusted.requirementsDigest, grantId, preflight, slots, ...(sponsorAdmission ? { sponsorAdmission } : {}), governanceWitness: trusted.governanceWitness, ...(sceneTargets.length ? { sceneCostConsent: body.sceneCostConsent,sceneUseVersionedHistory:true } : {}), ...(audioTargets.length?{audioCostConsent:body.audioCostConsent}:{}), ...(model3dTargets.length?{model3dCostConsent:body.model3dCostConsent}:{}) });
   if (!prepared.events.length) fail("output_admission_receipt_required", 500);
   // Preserve the original Scene quote deadline through final atomic admission.
   if (sceneExpiresAt && Date.parse(sceneExpiresAt) <= Date.now()) fail("scene_mini_app_confirmation_required", 403);
@@ -681,17 +685,23 @@ async function authorizePlan(trusted: OutputTrustedContext, body: Record<string,
     const key = canonicalOutputJson(assertion);
     if (!captured.has(key)) { captured.add(key); sourceAssertions.push(assertion); }
   }
+  const sponsor = sponsorAdmission ? sponsorAdmissionPayer(sponsorAdmission, { request: trusted.request, env: trusted.env, actorUserId: trusted.scope.actorUserId, documentId: trusted.scope.documentId }) : null;
+  if (sponsor && (slots.length !== 1 || trusted.scope.kind !== "personal")) fail("sponsor_recipe_unsupported", 403);
+  const sponsoredPlan = sponsorAdmission ? await sponsorAdmissionPlan(sponsorAdmission, trusted, { scopeKey: trusted.scope.key,
+    planRevisionId: plan.revisionId, slotId: slots[0]!.slotId, executionGrantId: grantId, jobId: slots[0]!.jobId,
+    costReservationId: slots[0]!.costReservationId, tokenReservationId: slots[0]!.tokenReservationId, commandKey: write.key }) : null;
   return commitOutputCommand(trusted.env, { ...write, sourceAssertions,sceneJobAdmissions:prepared.sceneJobAdmissions, events: [...prepared.events, { type: "OutputExecutionAuthorized", payload: { grant_id: grantId, plan_revision_id: plan.revisionId, preflight_id: preflightId, maximum_microusd: Number(body.maximumMicrousd), maximum_calls: preflight.maximumCalls, authorized_targets: slots.map((slot) => ({ target_id: slot.targetId, operation_slot_id: slot.slotId, job_id: slot.jobId, route_digest: slot.routeDigest })), source_digest: trusted.sourceDigest } }],
     assertions: [{ sql: "EXISTS(SELECT 1 FROM output_preflights preflight JOIN event_private_payloads body ON body.private_event_id=preflight.event_id AND body.redacted_at IS NULL WHERE preflight.scope_key=? AND preflight.preflight_id=? AND preflight.actor_user_id=? AND preflight.terms_digest=? AND preflight.expires_at>MAX(?,strftime('%Y-%m-%dT%H:%M:%fZ','now')))", bindings: [trusted.scope.key, preflightId, trusted.scope.actorUserId, preflight.termsDigest, createdAt] }],
     buildSidecars: (events) => {
       const native = prepared.buildStatements(events);
       if (!native.statements.length || !native.assertions.length) throw new Error("output_atomic_native_admission_required");
       return { statements: [trusted.env.DB.prepare("INSERT INTO output_execution_grants(scope_key,grant_id,plan_revision_id,actor_user_id,payer_user_id,context_id,preflight_id,authorization_event_id,maximum_microusd,maximum_calls,status,expires_at,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,'authorized',?,?)")
-        .bind(trusted.scope.key, grantId, plan.revisionId, trusted.scope.actorUserId, trusted.scope.actorUserId, trusted.scope.contextId, preflightId, events.at(-1)!.eventId, Number(body.maximumMicrousd), preflight.maximumCalls, grantExpiresAt, createdAt),
+        .bind(trusted.scope.key, grantId, plan.revisionId, trusted.scope.actorUserId, sponsor?.payerUserId ?? trusted.scope.actorUserId, trusted.scope.contextId, preflightId, events.at(-1)!.eventId, Number(body.maximumMicrousd), preflight.maximumCalls, grantExpiresAt, createdAt),
         ...slots.map((slot) => trusted.env.DB.prepare(`INSERT INTO output_operation_slots(scope_key,slot_id,grant_id,plan_revision_id,target_id,target_contract_digest,source_digest,provider,model,route_digest,job_id,cost_reservation_id,token_reservation_id,maximum_microusd,maximum_calls,maximum_tokens,attempt_ordinal,previous_slot_id,status,created_at,updated_at)
           VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'authorized',?,?)`).bind(slot.scopeKey, slot.slotId, slot.grantId, slot.planRevisionId, slot.targetId, slot.targetContractDigest, slot.sourceDigest, slot.provider, slot.model, slot.routeDigest, slot.jobId, slot.costReservationId, slot.tokenReservationId, slot.maximumMicrousd, slot.maximumCalls, slot.maximumTokens, slot.attemptOrdinal, slot.previousSlotId, createdAt, createdAt)),
         ...slots.flatMap((slot) => outputProviderStages(preflight.targets.find((target) => target.targetId === slot.targetId)!).map((call) => trusted.env.DB.prepare("INSERT INTO output_operation_routes(scope_key,slot_id,stage_key,provider,model,maximum_calls) VALUES(?,?,?,?,?,1)").bind(slot.scopeKey, slot.slotId, call.stage, call.provider, call.model))),
-        ...native.statements], assertions: [
+        ...native.statements, ...(sponsoredPlan?.admissionStatements ?? []).map(statement => trusted.env.DB.prepare(statement.sql).bind(...statement.bindings))], receiptAssertions: sponsoredPlan ? [sponsoredPlan.nativeAssertion] : [], assertions: [
+          ...(sponsor?.assertions ?? []),
           { sql: "(SELECT COALESCE(SUM(maximum_microusd),0) FROM output_operation_slots WHERE scope_key=? AND grant_id=?)<=? AND (SELECT COALESCE(SUM(maximum_calls),0) FROM output_operation_slots WHERE scope_key=? AND grant_id=?)=?", bindings: [trusted.scope.key, grantId, Number(body.maximumMicrousd), trusted.scope.key, grantId, preflight.maximumCalls] },
           // Typed 3D children carried exact parent/hold/one-child assertions in
           // the pre-write source proof above. All generic alternatives retain
@@ -720,10 +730,18 @@ async function validateRecordedOutputRun(trusted: OutputTrustedContext, evidence
   return ready;
 }
 
+// Admission-only sponsored personal grants must never enter the actor-paid runner.
+// Shared/organization execution has its own existing payer semantics.
+function refuseDormantSponsorExecution(scope: OutputScope, evidence: OutputGrantEvidence) {
+  const envelope = record(evidence.authorization.output_command_envelope);
+  if (scope.kind === "personal" && Object.hasOwn(envelope, "sponsor_entitlement")) fail("sponsor_execution_not_enabled", 403);
+}
+
 async function runGrant(trusted: OutputTrustedContext, body: Record<string, unknown>, digest: string, bridge: OutputExecutionBridge | undefined, executionContext: WorkerExecutionContext) {
   if (!bridge) fail("native_execution_unavailable", 409);
   const grantId = identifier(body.grantId, "grant_id_required");
   const evidence = await readOutputGrantEvidence(trusted.env, trusted.scope, grantId, true);
+  refuseDormantSponsorExecution(trusted.scope, evidence);
   const ready = await validateRecordedOutputRun(trusted, evidence, bridge, ["authorized", "queued", "running"]);
   const readyIds = ready.map((slot) => slot.slotId);
   const sceneJobRuns:NonNullable<OutputCommandWrite['sceneJobRuns']>=[];
@@ -747,6 +765,7 @@ async function runGrant(trusted: OutputTrustedContext, body: Record<string, unkn
 async function resumeRecordedOutputRun(trusted: OutputTrustedContext, grantId: string, bridge: OutputExecutionBridge | undefined, executionContext: WorkerExecutionContext) {
   if (!bridge) fail("native_execution_unavailable", 409);
   const evidence = await readOutputGrantEvidence(trusted.env, trusted.scope, grantId, true);
+  refuseDormantSponsorExecution(trusted.scope, evidence);
   const pending = await validateRecordedOutputRun(trusted, evidence, bridge, ["queued", "running"]);
   if (!pending.length) return;
   // Identical replay resumes only recorded jobs under fresh authority. Exact
@@ -1177,13 +1196,7 @@ function responseCommand(receipt: { action: string; eventId: string; payload: Re
     ...(downloadUrl ? { manifestId: String(payload.manifest_id), downloadUrl, downloadUrls: Array.from({ length: partCount }, (_, index) => `${downloadUrl}${partCount > 1 ? `&part=${index + 1}` : ""}`), partCount } : {}) };
 }
 
-/** Internal, server-bound mini-app adapter. No HTTP caller chooses these capabilities. */
-export const outputExperienceCommands = {
-  readConfirmedPlan,
-  readGrantEvidence: readOutputGrantEvidence,
-  snapshot: buildSnapshot,
-  disclose: discloseOutputJson,
-  async execute(trusted: OutputTrustedContext, body: Record<string, unknown>, bridge: OutputExecutionBridge, executionContext: WorkerExecutionContext) {
+async function executeExperienceCommand(trusted: OutputTrustedContext, body: Record<string, unknown>, bridge: OutputExecutionBridge, executionContext: WorkerExecutionContext, sponsorAdmission?: SponsorAdmissionAuthority) {
     const action = String(body.action);
     if (!["save", "confirm", "preflight", "authorize", "run"].includes(action)) fail("experience_output_action_unsupported", 400);
     const envelope = structuredClone(body), digest = await outputDigest(envelope);
@@ -1199,8 +1212,32 @@ export const outputExperienceCommands = {
     return action === "save" ? saveRequirement(bound, envelope, digest)
       : action === "confirm" ? confirmPlan(bound, envelope, digest)
       : action === "preflight" ? preflightPlan(bound, envelope, digest, bridge)
-      : action === "authorize" ? authorizePlan(bound, envelope, digest, bridge)
+      : action === "authorize" ? authorizePlan(bound, envelope, digest, bridge, sponsorAdmission)
       : runGrant(bound, envelope, digest, bridge, executionContext);
+}
+
+/** Internal, server-bound mini-app adapter. No HTTP caller chooses these capabilities. */
+export const outputExperienceCommands = {
+  readConfirmedPlan,
+  readGrantEvidence: readOutputGrantEvidence,
+  snapshot: buildSnapshot,
+  disclose: discloseOutputJson,
+  async execute(trusted: OutputTrustedContext, body: Record<string, unknown>, bridge: OutputExecutionBridge, executionContext: WorkerExecutionContext) {
+    if (Object.hasOwn(body, "sponsor_entitlement")) fail("sponsor_authority_unavailable", 403);
+    return executeExperienceCommand(trusted, body, bridge, executionContext);
+  },
+  /** Dormant internal entry only. No registered HTTP route can issue or pass a seal. */
+  async executeSponsored(trusted: OutputTrustedContext, body: Record<string, unknown>, authority: SponsorAdmissionAuthority, bridge: OutputExecutionBridge, executionContext: WorkerExecutionContext) {
+    if (jsonIssues(body).length) fail("sponsor_command_invalid", 403);
+    const command = structuredClone(body);
+    const { request, env, governanceWitness, ...data } = trusted;
+    const captured = { ...structuredClone(data), request, env, governanceWitness };
+    inheritRetainedOutputPrivateBodies(trusted.scope, captured.scope);
+    if (command.action !== "authorize" || Object.hasOwn(command, "sponsor_entitlement")) fail("sponsor_command_invalid", 403);
+    const sponsorship = await requireSponsorAdmission(authority, captured, command);
+    const envelope = { ...command, sponsor_entitlement: sponsorship.marker };
+    return executeExperienceCommand(captured, envelope, bridge, executionContext, authority);
+
   },
 };
 
@@ -1230,6 +1267,7 @@ export async function handleOutputRequirements(request: Request, env: WorkerEnv,
     if (request.method !== "POST") return json({ error: "method_not_allowed" }, 405);
     if (!isUpload && path !== BASE) return json({ error: "not_found" }, 404);
     if (!isUpload && !["save", "remove", "confirm", "preflight", "authorize", "run", "bind", "review", "export"].includes(action)) return json({ error: "unknown_output_action" }, 400);
+    if (!isUpload && Object.hasOwn(body, "sponsor_entitlement")) fail("sponsor_authority_unavailable", 403);
     const digest = isUpload ? "" : await outputDigest(body);
     if (!isUpload) {
       parseOutputRevision(body.expectedRevision);

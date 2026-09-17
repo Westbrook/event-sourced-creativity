@@ -12,7 +12,7 @@ import { outputProofReadStatements } from "./output-disclosure-proof.ts";
 import { readOutputScenePayload } from "./output-scene-preflight-contract.ts";
 import { requireSceneMiniAppCostApproval } from "./scene-mini-app-consent.ts";
 import { preflightOutputNarrativeTarget } from "./output-narrative-preflight.ts";
-import { createOutputAdmissionReads, outputAdmissionGovernanceAssertions } from "./output-admission-reads.ts";
+import { createOutputAdmissionReads, outputAdmissionBudgetOwner, outputAdmissionGovernanceAssertions, outputAdmissionSponsor } from "./output-admission-reads.ts";
 import type { OutputGovernanceWitness } from "./output-governance-witness.ts";
 import { OUTPUT_MODEL3D_EXECUTION_POLICY } from "../src/model/output-execution-policy.ts";
 import { validateModel3dRequest } from "../src/model/model3d.ts";
@@ -83,9 +83,11 @@ export async function preflightOutputModel3dTarget(input:OutputBridgeTargetInput
 }
 
 async function prepareAdmission(input:Parameters<OutputExecutionBridge["prepareAdmission"]>[0]&{governanceWitness?:OutputGovernanceWitness}):Promise<OutputPreparedAdmission&{sourceAssertions:OutputSqlAssertion[]}>{
- const readScope=createOutputAdmissionReads({request:input.request,env:input.env,documentId:input.scope.documentId,actorUserId:input.scope.actorUserId,billingUserId:input.principal.billingUserId??input.principal.userId,organizationId:input.scope.organizationId,projectAccessId:input.scope.projectAccessId},
+ if(input.sponsorAdmission&&(input.scope.kind!=="personal"||input.scope.contextId||input.scope.actorUserId!==input.scope.ownerUserId||input.principal.fictional||input.principal.projectExecution))throw new OutputConflictError("sponsor_personal_principal_required",403);
+ const readScope=createOutputAdmissionReads({request:input.request,env:input.env,documentId:input.scope.documentId,actorUserId:input.scope.actorUserId,billingUserId:input.principal.billingUserId??input.principal.userId,organizationId:input.scope.organizationId,projectAccessId:input.scope.projectAccessId,...(input.sponsorAdmission?{sponsorAdmission:input.sponsorAdmission}:{})},
   input.governanceWitness?{witness:input.governanceWitness,source:{ownerUserId:input.scope.ownerUserId,projectId:input.scope.projectId,contextId:input.scope.contextId??"",sourceDigest:input.sourceDigest,contextSnapshotDigest:await outputDigest(input.context.snapshot)}}:undefined);
- const governanceAssertions=outputAdmissionGovernanceAssertions(readScope);
+ const sponsor=outputAdmissionSponsor(readScope);
+ const governanceAssertions=[...outputAdmissionGovernanceAssertions(readScope),...(sponsor?.assertions??[])];
  const sceneAssertions:OutputSqlAssertion[]=[];
  const sceneJobAdmissions:NonNullable<OutputPreparedAdmission['sceneJobAdmissions']>=[];
  const prepared:Array<{slot:OutputOperationSlot;job:PreparedOutputDocumentJob;statements:D1PreparedStatement[];assertions:OutputSqlAssertion[];checkpoint:Record<string,unknown>}> = [];
@@ -174,12 +176,14 @@ async function prepareAdmission(input:Parameters<OutputExecutionBridge["prepareA
    compile:async trusted=>{if(trusted.documentRevision!==input.context.documentRevision||await outputDigest(trusted.snapshot)!==await outputDigest(input.context.snapshot))throw new OutputConflictError("output_source_changed");return admissionPayload;}});
   if(job instanceof Response){const issue=record(await job.json());throw new OutputConflictError(String(issue.error??"output_job_preflight_failed"),job.status);}
   if(job.user.userId!==input.scope.actorUserId||job.user.streamId!==`creative:${input.scope.ownerUserId}`)throw new OutputConflictError("output_job_scope_mismatch",403);
-  const billingOwner=job.user.billingUserId??job.user.userId;
+  const billingOwner=outputAdmissionBudgetOwner(readScope,input.env,job.user.userId,job.user.billingUserId??job.user.userId);
+  if(job.budgetOwnerId!==billingOwner)throw new OutputConflictError("output_job_budget_scope_mismatch",403);
   const budgetScope=job.user.projectExecution?{organizationId:job.user.projectExecution.organizationId,projectAccessId:job.user.projectExecution.projectAccessId,actorUserId:job.user.projectExecution.actorUserId}:undefined;
   const budgetContext={streamId:job.user.streamId,correlationId:slot.jobId,operation:job.kind==="generate"?"image-generation":`document-render:${String(settings.payload.artifactKind)}`,...(budgetScope?{projectScope:budgetScope}:{})};
-  const token=await prepareBudgetReservation(input.env,billingOwner,slot.maximumTokens,{...budgetContext,reservationId:slot.tokenReservationId,outputAdmissionReads:readScope});
+  const sponsorBudget=sponsor?{batchCounterInitialization:true,reservationAssertions:sponsor.assertions}:{};
+  const token=await prepareBudgetReservation(input.env,billingOwner,slot.maximumTokens,{...budgetContext,...sponsorBudget,reservationId:slot.tokenReservationId,outputAdmissionReads:readScope});
   if(!token.ok)throw new OutputConflictError("output_token_budget_unavailable",429);
-  const cost=await prepareCostBudgetReservation(input.env,billingOwner,slot.maximumMicrousd,{...budgetContext,period:token.period,reservationId:slot.costReservationId,outputAdmissionReads:readScope,maximumMicrousd:slot.maximumMicrousd,allowUserOverage:false});
+  const cost=await prepareCostBudgetReservation(input.env,billingOwner,slot.maximumMicrousd,{...budgetContext,...sponsorBudget,period:token.period,reservationId:slot.costReservationId,outputAdmissionReads:readScope,maximumMicrousd:slot.maximumMicrousd,allowUserOverage:false});
   if(!cost.ok)throw new OutputConflictError("output_cost_budget_unavailable",429);
   const assertions:OutputSqlAssertion[]=[{sql:`EXISTS(SELECT 1 FROM budget_reservations token JOIN cost_budget_reservations cost
    ON cost.owner_id=token.owner_id AND cost.stream_id=token.stream_id AND cost.correlation_id=token.correlation_id AND cost.operation=token.operation AND cost.period=token.period

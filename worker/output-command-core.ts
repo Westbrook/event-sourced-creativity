@@ -183,7 +183,9 @@ export type OutputCommandWrite = {
   sceneJobRuns?: Array<{slot:OutputOperationSlot;version:SceneSourceVersion;previousRaw:string}>;
   /** Server-owned exact command envelope; committed on the same private last event. */
   retainedEnvelope?: Record<string, unknown>;
-  buildSidecars?: (events: EventRow[]) => { statements: D1PreparedStatement[]; assertions?: OutputSqlAssertion[] };
+  buildSidecars?: (events: EventRow[]) => { statements: D1PreparedStatement[]; assertions?: OutputSqlAssertion[];
+    /** Final same-transaction proof may join the immutable command receipt. */
+    receiptAssertions?: OutputSqlAssertion[] };
 };
 
 /** The event, private body, scoped projections, grants/slots and command receipt commit together. */
@@ -228,6 +230,7 @@ export async function commitOutputCommand(env: WorkerEnv, input: OutputCommandWr
   const last = events.at(-1)!;
   statements.push(env.DB.prepare(`INSERT INTO output_commands(scope_key,actor_user_id,command_key,request_digest,action,event_id,created_at) VALUES(?,?,?,?,?,?,?)`)
     .bind(scope.key, scope.actorUserId, input.key, input.digest, input.action, last.eventId, now));
+  statements.push(...(sidecars?.receiptAssertions ?? []).flatMap(guard => outputAssertionStatements(env, guard)));
   if (scope.kind === "project") {
     statements.push(env.DB.prepare("UPDATE project_migration_states SET last_owner_sequence=?,updated_at=? WHERE project_access_id=? AND organization_id=? AND owner_user_id=? AND status='active'")
       .bind(last.sequence, now, scope.projectAccessId, scope.organizationId, scope.ownerUserId));

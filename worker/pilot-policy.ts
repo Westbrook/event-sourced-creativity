@@ -238,14 +238,15 @@ async function ensureBudgetRow(env: WorkerEnv, scope: "user" | "workspace", scop
   await budgetRowStatement(env,scope,scopeId,limit,reservationPeriod).run();
 }
 
-export async function readBudgets(env: WorkerEnv, userId: string) {
+export async function readBudgets(env: WorkerEnv, userId: string, options: { initialize?: boolean } = {}) {
+  const initialize = options.initialize !== false;
   const limits = budgetLimits(env);
   const currentPeriod = period();
   const select = () => env.DB.prepare("SELECT scope,used_tokens,reserved_tokens,hard_limit_tokens FROM budget_counters WHERE period=? AND ((scope='user' AND scope_id=?) OR (scope='workspace' AND scope_id='forma'))").bind(currentPeriod, userId);
   let rows = (await select().all<Record<string, unknown>>()).results;
   const userRow = rows.find((row) => row.scope === "user");
   const workspaceRow = rows.find((row) => row.scope === "workspace");
-  if (!userRow || !workspaceRow || Number(userRow.hard_limit_tokens) !== limits.user || Number(workspaceRow.hard_limit_tokens) !== limits.workspace) {
+  if (initialize && (!userRow || !workspaceRow || Number(userRow.hard_limit_tokens) !== limits.user || Number(workspaceRow.hard_limit_tokens) !== limits.workspace)) {
     const now = new Date().toISOString();
     const upsert = (scope: "user" | "workspace", scopeId: string, limit: number) => env.DB.prepare(`INSERT INTO budget_counters (scope,scope_id,period,used_tokens,reserved_tokens,hard_limit_tokens,updated_at)
       VALUES (?,?,?,0,0,?,?) ON CONFLICT(scope,scope_id,period) DO UPDATE
@@ -258,7 +259,9 @@ export async function readBudgets(env: WorkerEnv, userId: string) {
     ]);
     rows = result.at(-1)?.results ?? [];
   }
-  const map = Object.fromEntries(rows.map((row) => [String(row.scope), { used: Number(row.used_tokens), reserved: Number(row.reserved_tokens), limit: Number(row.hard_limit_tokens) }]));
+  // Preview the same effective limits the eventual reservation batch installs,
+  // without initializing or changing counters during read-only preparation.
+  const map = Object.fromEntries(rows.map((row) => [String(row.scope), { used: Number(row.used_tokens), reserved: Number(row.reserved_tokens), limit: !initialize ? (row.scope === "user" ? limits.user : limits.workspace) : Number(row.hard_limit_tokens) }]));
   return { period: currentPeriod, user: map.user ?? { used: 0, reserved: 0, limit: limits.user }, workspace: map.workspace ?? { used: 0, reserved: 0, limit: limits.workspace } };
 }
 
@@ -770,13 +773,14 @@ function initializeOutputAdmissionCounters(env:WorkerEnv,userId:string,reservati
   });
 }
 
-export async function readCostBudgets(env: WorkerEnv, userId: string) {
+export async function readCostBudgets(env: WorkerEnv, userId: string, options: { initialize?: boolean } = {}) {
+  const initialize = options.initialize !== false;
   const limits = costBudgetLimits(env);
   const currentPeriod=period();
   const select=()=>env.DB.prepare("SELECT scope,used_microusd,reserved_microusd,hard_limit_microusd FROM cost_budget_counters WHERE period=? AND ((scope='user' AND scope_id=?) OR (scope='workspace' AND scope_id='forma'))").bind(currentPeriod,userId);
   let rows=(await select().all<Record<string,unknown>>()).results;
   const userRow=rows.find((row)=>row.scope==="user"),workspaceRow=rows.find((row)=>row.scope==="workspace");
-  if(!userRow||!workspaceRow||Number(userRow.hard_limit_microusd)!==limits.user||Number(workspaceRow.hard_limit_microusd)!==limits.workspace){
+  if(initialize&&(!userRow||!workspaceRow||Number(userRow.hard_limit_microusd)!==limits.user||Number(workspaceRow.hard_limit_microusd)!==limits.workspace)){
     const now=new Date().toISOString();
     const upsert=(scope:"user"|"workspace",scopeId:string,limit:number)=>env.DB.prepare(`INSERT INTO cost_budget_counters (scope,scope_id,period,used_microusd,reserved_microusd,hard_limit_microusd,updated_at)
       VALUES (?,?,?,0,0,?,?) ON CONFLICT(scope,scope_id,period) DO UPDATE
@@ -786,7 +790,7 @@ export async function readCostBudgets(env: WorkerEnv, userId: string) {
     rows=result.at(-1)?.results??[];
   }
   const map = Object.fromEntries(rows.map((row) => {
-    const usedMicrousd = Number(row.used_microusd); const reservedMicrousd = Number(row.reserved_microusd); const limitMicrousd = Number(row.hard_limit_microusd);
+    const usedMicrousd = Number(row.used_microusd); const reservedMicrousd = Number(row.reserved_microusd); const limitMicrousd = !initialize ? (row.scope === "user" ? limits.user : limits.workspace) : Number(row.hard_limit_microusd);
     return [String(row.scope), { usedMicrousd, reservedMicrousd, limitMicrousd, remainingMicrousd: Math.max(0, limitMicrousd - usedMicrousd - reservedMicrousd) } satisfies CostBudgetSnapshot];
   }));
   const empty = (limitMicrousd: number): CostBudgetSnapshot => ({ usedMicrousd: 0, reservedMicrousd: 0, limitMicrousd, remainingMicrousd: limitMicrousd });
