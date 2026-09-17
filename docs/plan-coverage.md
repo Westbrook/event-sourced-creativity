@@ -1,5 +1,9 @@
 # Forma plan coverage
 
+Track outstanding delivery work in the [central backlog](backlog.md), including
+[durable generation activation](backlog.md#durable-generation). This ledger
+retains the phase-level evidence and historical decisions behind those items.
+
 This ledger reconciles Revision 2.1 of the synthesis/build plan with the kickoff addendum and the adopted pilot baseline. “Operational” means the interaction is server-enforced, appends a durable fact, or derives from those facts. “Evaluation” means the product contract is active but still requires pilot evidence.
 
 | Slice | Status | Implemented evidence | Remaining gate |
