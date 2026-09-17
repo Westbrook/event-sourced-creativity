@@ -1,6 +1,7 @@
 import {measureRetainedState,RETAINED_STATE_LIMITS} from './retained-state.ts';
 import type { CreativeEvent } from "./events.ts";
 import { documentViewWorkflow } from "./document-view-signals.ts";
+import { promptFactIsActive } from "./prompt-policy.ts";
 
 export const CREATOR_AXES = ["subject","composition","style","palette","lighting","exclusion"] as const;
 export type CreatorAxis = typeof CREATOR_AXES[number];
@@ -77,6 +78,32 @@ export function createStandingConstraintsFold(recordedAsOf = Number.POSITIVE_INF
   return { accept, finish, measureRetainedState:(limits=RETAINED_STATE_LIMITS)=>measureRetainedState([active],limits) };
 }
 
+function savedContextFact(value: unknown): { axis: CreatorAxis; value: string; polarity: PreferencePolarity } | null {
+  if (typeof value === "string") {
+    if (!value.trim()) return null;
+    const [prefix, ...rest] = value.split("/");
+    return { axis: axisFor(prefix), value: concise(rest.join("/") || value), polarity: "affirm" };
+  }
+  if (!value || typeof value !== "object" || Array.isArray(value) || !promptFactIsActive(value)) return null;
+  const fact = value as Record<string, unknown>;
+  if (!fact.properties || typeof fact.properties !== "object" || Array.isArray(fact.properties)) return null;
+  const properties = fact.properties as Record<string, unknown>;
+  // Read creative values, never serialize the fact's asset/identity/provenance metadata.
+  const fields = ["text", "instruction", "description", "value", "colors", "palette", "lighting", "subject", "composition", "style"] as const;
+  const values = fields.flatMap((key) => {
+    const candidate = properties[key];
+    const text = typeof candidate === "string" ? candidate.trim()
+      : Array.isArray(candidate) && candidate.every((item) => typeof item === "string") ? candidate.map((item) => item.trim()).filter(Boolean).join(", ") : "";
+    return text ? [{ key, text }] : [];
+  });
+  if (!values.length) return null;
+  const kind = typeof fact.type === "string" ? fact.type : typeof fact.role === "string" ? fact.role : "";
+  const intent = fact.intent ?? properties.intent;
+  const polarity = kind === "exclusion" || fact.effect === "must_not_include" || intent === "avoid" || intent === "prohibit" ? "forbid" : "affirm";
+  return { axis: CREATOR_AXES.includes(kind as CreatorAxis) ? kind as CreatorAxis : axisFor(`${kind} ${values.map((item) => item.key).join(" ")}`),
+    value: concise([...new Set(values.map((item) => item.text))].join(" · ")), polarity };
+}
+
 function positiveContextEvidence(events: CreativeEvent[]) {
   const rows: Array<{axis:CreatorAxis;value:string;polarity:PreferencePolarity;event:CreativeEvent;refs:string[]}> = [];
   for (const outcome of events.filter((event) => /^(ObjectSaved|ObjectPinned|ObjectExported|AddedToLibrary|PromptFanOutputPromoted)$/.test(event.type))) {
@@ -85,9 +112,9 @@ function positiveContextEvidence(events: CreativeEvent[]) {
     if (!completed) continue;
     const compiled = [...events].reverse().find((event) => event.sequence < completed.sequence && event.type === "ContextCompiled" && event.payload.generation_id === completed.payload.generation_id);
     const snapshot = compiled?.payload.compiled_snapshot as Record<string, unknown> | undefined;
-    for (const fact of list(snapshot?.facts).map(String).slice(0,6)) {
-      const [prefix,...rest] = fact.split("/"); const axis = axisFor(prefix); const value = concise(rest.join("/") || fact);
-      rows.push({axis,value,polarity:"affirm",event:outcome,refs:[compiled?.eventId,completed.eventId,outcome.eventId].filter((item):item is string=>Boolean(item))});
+    for (const value of list(snapshot?.facts).slice(0,6)) {
+      const fact = savedContextFact(value); if (!fact) continue;
+      rows.push({...fact,event:outcome,refs:[compiled?.eventId,completed.eventId,outcome.eventId].filter((item):item is string=>Boolean(item))});
     }
   }
   return rows;

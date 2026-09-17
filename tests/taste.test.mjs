@@ -58,3 +58,56 @@ test("joins critiques through generated objects to compiler inputs and model ada
   assert.ok(attributed?.axes.some((row)=>row.axis==="composition"&&row.negative===1)); assert.ok(attributed?.axes.some((row)=>row.axis==="palette"&&row.positive===1)); assert.equal(attributed?.compileRefs.length,1);
   assert.equal(unresolved?.critiqueCount,1); assert.equal(tasteMetrics(evidence).attributedCritiques,2);
 });
+
+const savedContext = (facts) => [
+  event(1, "ContextCompiled", { generation_id: "g-saved", compiled_snapshot: { facts } }, "worker:compiler"),
+  event(2, "GenerationCompleted", { generation_id: "g-saved", object_ids: ["saved-output"] }, "worker:generator"),
+  event(3, "ObjectSaved", { object_id: "saved-output" }),
+];
+const inferenceTime = new Date("2026-08-10T12:00:00.000Z");
+
+test("saved structured context produces readable inferred preferences with its original evidence", () => {
+  const facts = [
+    { block_id: "private-palette-id", type: "palette", active: true, properties: { colors: ["amber", "ochre"], weight: .8 }, source_event_refs: ["private-source-id"] },
+    { type: "direction", properties: { text: "  Restrained\n  grain  ", content_ref: "private-content-id", media_url: "https://private.example/source" } },
+    { type: "reference", properties: { description: "Soft window light", media_url: "https://private.example/reference" } },
+  ];
+  const original = structuredClone(facts);
+  const beliefs = inferTasteBeliefs(savedContext(facts), inferenceTime);
+  assert.deepEqual(beliefs.map(({ axis, value, authority }) => ({ axis, value, authority })), [
+    { axis: "palette", value: "amber, ochre", authority: "inferred" },
+    { axis: "style", value: "Restrained grain", authority: "inferred" },
+    { axis: "style", value: "Soft window light", authority: "inferred" },
+  ]);
+  assert.ok(beliefs.every((belief) => belief.polarity === "affirm" && belief.evidenceRefs.join(",") === "event-1,event-2,event-3"));
+  assert.doesNotMatch(JSON.stringify(beliefs), /\[object Object\]|private-|https:\/\//u);
+  assert.deepEqual(facts, original);
+});
+
+test("saved structured context skips inactive and metadata-only facts and preserves exclusions", () => {
+  const facts = [
+    { type: "palette", active: false, properties: { text: "inactive blue" } },
+    { type: "lighting", properties: { text: "disabled flash", weight: 0 } },
+    { type: "reference", properties: { media_url: "https://private.example/reference", content_ref: "private-id", weight: .8 } },
+    { type: "direction", properties: { text: { secret: "must not stringify nested data" } } },
+    { type: "exclusion", intent: "avoid", effect: "must_not_include", properties: { text: "logos" } },
+    { type: "subject", intent: "prohibit", properties: { description: "crowds" } },
+  ];
+  const beliefs = inferTasteBeliefs(savedContext(facts), inferenceTime);
+  assert.deepEqual(beliefs.map(({ axis, value, polarity }) => ({ axis, value, polarity })), [
+    { axis: "exclusion", value: "logos", polarity: "forbid" },
+    { axis: "subject", value: "crowds", polarity: "forbid" },
+  ]);
+  assert.deepEqual(inferTasteBeliefs(savedContext([null, 42, {}, [], { properties: {} }]), inferenceTime), []);
+});
+
+test("legacy saved facts retain their interpretation and structured values stay bounded", () => {
+  const beliefs = inferTasteBeliefs(savedContext(["palette/dusk/warm", { type: "composition", properties: { text: "x".repeat(300) } }]), inferenceTime);
+  assert.equal(beliefs[0].axis, "palette");
+  assert.equal(beliefs[0].value, "dusk/warm");
+  assert.equal(beliefs[1].axis, "composition");
+  assert.equal(beliefs[1].value.length, 120);
+  const unmatched = savedContext([{ type: "subject", properties: { text: "unrelated" } }]);
+  unmatched[2].payload.object_id = "other-output";
+  assert.deepEqual(inferTasteBeliefs(unmatched, inferenceTime), []);
+});
