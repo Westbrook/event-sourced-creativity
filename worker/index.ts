@@ -13,6 +13,7 @@ import { handleDocumentJobs, runDocumentJob } from "./document-jobs-api";
 import { withExperienceOutputDispatch } from "./experience-output-dispatch.ts";
 import { handleExperienceVideoReference } from "./experience-video-reference.ts";
 import { handleExperienceIntake } from "./experience-intake-api";
+import { createSponsorImageEntryRoute } from "./experience-sponsor-image-entry.ts";
 import { handleExperienceOutput } from "./experience-output-api";
 import { handleDocumentDuplication } from "./document-duplication-api";
 import { handleCanvasArrangements } from "./canvas-arrangements";
@@ -50,6 +51,10 @@ import { handleWorkspaceLocalProposal } from "./workspace-local-proposal-api";
 import { handleOutputSchemaPreflight, OUTPUT_SCHEMA_PREFLIGHT_PATH } from "./output-schema-preflight";
 import { handleRetainedStoryRead, handleNativeRetainedOutputRead } from "./retained-story-api";
 import { handleSelectedOutputShareApi, isSelectedOutputShareApiPath } from "./selected-output-share-api.ts";
+
+// A handled sponsor entry response already belongs to one bounded operation.
+// Do not attach an unrelated background private-content sweep to that request.
+const sponsoredImageResponses = new WeakSet<Response>();
 
 async function authorizeApplication(request: Request, env: WorkerEnv, application: ApplicationId, path: string) {
     if(application==="creative"){
@@ -98,6 +103,10 @@ async function routeRequest(request: Request, env: WorkerEnv, context: WorkerExe
       if(origin&&origin!==url.origin)return Response.json({error:"same_origin_required"},{status:403,headers:{"cache-control":"private, no-store"}});
     }
     if(isSelectedOutputShareApiPath(url.pathname))return handleSelectedOutputShareApi(request,env);
+    if(url.pathname==="/api/experiences/sponsor/image"||url.pathname.startsWith("/api/experiences/sponsor/image/")){
+      const sponsored=await createSponsorImageEntryRoute(env.FORMA_SPONSOR_IMAGE_ENTRY)(request,env);
+      if(sponsored){sponsoredImageResponses.add(sponsored);return sponsored;}
+    }
     if(url.pathname==="/api/retained-story"||url.pathname.startsWith("/api/retained-story/"))return handleRetainedStoryRead(request,env);
     if(url.pathname==="/api/retained-output"||url.pathname.startsWith("/api/retained-output/"))return handleNativeRetainedOutputRead(request,env);
     if(/^\/api\/experiences\/drafts\/experience-draft-[a-f0-9]{64}\/output(?:\/(?:prepare|authorize|run|recover-result))?$/u.test(url.pathname))return handleExperienceOutput(request,env,context,withExperienceOutputDispatch(outputDocumentExecutionBridge,runDocumentJob));
@@ -322,7 +331,7 @@ export default {
     const pathname=new URL(request.url).pathname;
     const retainedStoryRead=pathname==="/api/retained-story"||pathname.startsWith("/api/retained-story/")
       ||pathname==="/api/retained-output"||pathname.startsWith("/api/retained-output/");
-    if(pathname.startsWith("/api/")&&pathname!==OUTPUT_SCHEMA_PREFLIGHT_PATH&&pathname!=="/api/admin/budget-hold-dispositions"&&pathname!=="/api/admin/generation-accounting"&&pathname!=="/api/admin/managed-video-reconciliation"&&!retainedStoryRead&&!isSelectedOutputShareApiPath(pathname))schedulePrivateContentRetention(env,context);
+    if(pathname.startsWith("/api/")&&pathname!==OUTPUT_SCHEMA_PREFLIGHT_PATH&&pathname!=="/api/admin/budget-hold-dispositions"&&pathname!=="/api/admin/generation-accounting"&&pathname!=="/api/admin/managed-video-reconciliation"&&!retainedStoryRead&&!isSelectedOutputShareApiPath(pathname)&&!sponsoredImageResponses.has(response))schedulePrivateContentRetention(env,context);
     const headers=new Headers(response.headers);
     headers.append("server-timing",`app;dur=${Math.max(0,performance.now()-started).toFixed(1)}`);
     if(new URL(request.url).pathname.startsWith("/api/")&&!headers.has("cache-control"))headers.set("cache-control","private, no-store");

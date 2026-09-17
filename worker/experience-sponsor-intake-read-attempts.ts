@@ -1,6 +1,6 @@
 import { canonicalJson, digest, freeze } from "../src/experiences/compiler.ts";
 import { SponsorEntitlementError } from "./experience-sponsor-policy.ts";
-import { SPONSOR_IMAGE_INTAKE_READ_OPERATIONS, readSponsorIntakeReadPolicy, type SponsorImageIntakeReadOperation } from "./experience-sponsor-intake-read-policy.ts";
+import { SPONSOR_IMAGE_INTAKE_READ_V2_OPERATIONS, readSponsorIntakeReadPolicy, type SponsorImageIntakeReadOperation } from "./experience-sponsor-intake-read-policy.ts";
 import { requireSponsorIntakeReadAuthority, type SponsorIntakeReadAuthority } from "./experience-sponsor-intake-reads.ts";
 import type { WorkerEnv } from "./runtime.ts";
 
@@ -51,6 +51,14 @@ export const SPONSOR_INTAKE_READ_ATTEMPT_SCHEMA = Object.freeze([
     WHEN EXISTS(SELECT 1 FROM experience_sponsor_intake_read_attempts old WHERE old.attempt_id=NEW.attempt_id)
     BEGIN SELECT RAISE(ABORT,'sponsor_intake_read_attempt_exists'); END`,
 ]);
+
+/** Fresh V2 provisioning only. The V1 schema above stays byte-identical and
+ * rejects this additional operation. This export performs no migration or
+ * replacement; an installed V1 allocation/schema is never silently upgraded. */
+export const SPONSOR_INTAKE_READ_ATTEMPT_V2_SCHEMA = Object.freeze(SPONSOR_INTAKE_READ_ATTEMPT_SCHEMA.map((sql, index) => index === 0
+  ? sql.replace("CHECK(operation IN('image-intake-bootstrap','image-intake-draft','image-intake-receipt'))",
+    "CHECK(operation IN('image-intake-bootstrap','image-intake-draft','image-intake-receipt','image-output-confirmation'))")
+  : sql));
 
 const boundedText = (column: string, maximumBytes: number) => `CASE WHEN typeof(${column})='text'
   AND length(CAST(${column} AS BLOB))<=${maximumBytes} AND instr(${column},char(0))=0 THEN ${column} END`;
@@ -112,7 +120,7 @@ async function approvedPolicy(db: WorkerEnv["DB"], campaignId: string, sponsorPo
  * Commit the debit before accessing retained creative content or media. */
 export async function reserveSponsorIntakeReadAttempt(authority: SponsorIntakeReadAuthority, request: Request, env: WorkerEnv,
   operation: SponsorImageIntakeReadOperation): Promise<SponsorIntakeReadAttempt> {
-  if (!SPONSOR_IMAGE_INTAKE_READ_OPERATIONS.includes(operation)) return fail("sponsor_intake_read_operation_invalid");
+  if (!SPONSOR_IMAGE_INTAKE_READ_V2_OPERATIONS.includes(operation)) return fail("sponsor_intake_read_operation_invalid");
   const database = env.DB;
   const native = requireSponsorIntakeReadAuthority(authority, request, env);
   if (native.operation !== operation) return fail("sponsor_intake_read_operation_invalid");
@@ -122,7 +130,11 @@ export async function reserveSponsorIntakeReadAttempt(authority: SponsorIntakeRe
   };
   const approved = await approvedPolicy(database, native.campaignId, native.policyDigest);
   unchanged();
-  const { policy } = approved, limit = policy.operations[operation];
+  const { policy } = approved;
+  if (operation === "image-output-confirmation" && policy.version !== 2) return fail("sponsor_intake_read_operation_unavailable");
+  const limit = operation === "image-output-confirmation"
+    ? policy.version === 2 ? policy.operations[operation] : undefined : policy.operations[operation];
+  if (!limit) return fail("sponsor_intake_read_operation_unavailable");
   const assertions = [...native.assertions.map(item => ({ sql: item.sql, bindings: [...item.bindings] })), approved.assertion];
   const proof = and(assertions), attemptId = crypto.randomUUID();
   // Materialize each complete native/read assertion separately: combining their

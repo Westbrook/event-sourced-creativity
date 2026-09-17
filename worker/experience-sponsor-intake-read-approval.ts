@@ -1,6 +1,6 @@
 import { canonicalJson, digest, exactKeys, freeze, jsonIssues, record } from "../src/experiences/compiler.ts";
 import { compileSponsorApprovalProposal, readSponsorInternalCommand, sponsorApprovalAssertion } from "./experience-sponsor-approval.ts";
-import { readSponsorIntakeReadPolicy, type SponsorIntakeReadPolicyV1 } from "./experience-sponsor-intake-read-policy.ts";
+import { readSponsorIntakeReadPolicy, type SponsorIntakeReadPolicy } from "./experience-sponsor-intake-read-policy.ts";
 import { SponsorEntitlementError } from "./experience-sponsor-policy.ts";
 import { readExistingPrincipalRequest } from "./principal-request-core.ts";
 import { POLICY_VERSION } from "./policy-version.ts";
@@ -13,7 +13,7 @@ const hash = (value: unknown): value is string => typeof value === "string" && /
 const boundedJson = (column: string, maximumBytes: number) => `CASE WHEN typeof(${column})='text' AND length(CAST(${column} AS BLOB))<=${maximumBytes} AND instr(${column},char(0))=0 THEN ${column} END`;
 const clock = "CAST((julianday('now')-2440587.5)*86400000 AS INTEGER)";
 export type SponsorIntakeReadApprovalProposal = {
-  version: 1; campaignId: string; sponsorPolicyDigest: string; readPolicy: SponsorIntakeReadPolicyV1;
+  version: 1; campaignId: string; sponsorPolicyDigest: string; readPolicy: SponsorIntakeReadPolicy;
 };
 type OriginalApproval = { approval_id: string; campaign_id: string; payer_user_id: string; terms_json: string; terms_digest: string;
   policy_json: string; policy_digest: string; payer_authority_json: string; approval_command_json: string };

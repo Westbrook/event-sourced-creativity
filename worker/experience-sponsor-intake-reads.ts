@@ -3,7 +3,7 @@ import { experienceDocumentRoute, experienceDraftId, isDraftId, isIntentId, rece
 import { continueExperienceAuthorization, readDraft, retainedGuard } from "./experience-intake-read.ts";
 import { loadApprovedSponsorCampaign } from "./experience-sponsor-approval.ts";
 import { SponsorEntitlementError } from "./experience-sponsor-policy.ts";
-import { SPONSOR_IMAGE_INTAKE_READ_OPERATIONS, type SponsorImageIntakeReadOperation } from "./experience-sponsor-intake-read-policy.ts";
+import { SPONSOR_IMAGE_INTAKE_READ_OPERATIONS, type SponsorImageIntakeReadOperation, type SponsorImageIntakeReadOperationV1 } from "./experience-sponsor-intake-read-policy.ts";
 import { reserveSponsorIntakeReadAttempt, takeSponsorIntakeReadAttempt, type SponsorIntakeReadAttempt } from "./experience-sponsor-intake-read-attempts.ts";
 import { packSponsorIntakeReadQuery } from "./experience-sponsor-intake-read-sql.ts";
 import { readExistingPrincipalRequest } from "./principal-request-core.ts";
@@ -13,6 +13,9 @@ import { readSponsorIntakeCommand } from "./experience-sponsor-intake-command.ts
 import type { ProjectIntake } from "../src/model/project-intake.ts";
 import type { BudgetReservationGuard } from "./pilot-policy.ts";
 import type { WorkerEnv } from "./runtime.ts";
+import type { OutputSqlAssertion } from "./output-command-core.ts";
+import type { ExperienceIntakeReceipt } from "../src/experiences/native-host.ts";
+import { createSponsorImageConfirmationNativeEnvironment } from "./experience-sponsor-image-confirmation-native.ts";
 
 const fail = (code: string): never => { throw new SponsorEntitlementError(code); };
 const id = (v: unknown): v is string => typeof v === "string" && /^[A-Za-z0-9][A-Za-z0-9_.:@/-]{0,199}$/u.test(v);
@@ -67,7 +70,7 @@ const originalFrom = `FROM experience_sponsor_intakes intake JOIN experience_spo
   AND typeof(intake.content_bytes)='integer' AND intake.content_bytes>0`;
 
 function selector(raw: unknown): Selector {
-  if (jsonIssues(raw).length || !record(raw) || !SPONSOR_IMAGE_INTAKE_READ_OPERATIONS.includes(raw.operation as SponsorImageIntakeReadOperation)) return fail("sponsor_intake_read_request_invalid");
+  if (jsonIssues(raw).length || !record(raw) || !SPONSOR_IMAGE_INTAKE_READ_OPERATIONS.includes(raw.operation as SponsorImageIntakeReadOperationV1)) return fail("sponsor_intake_read_request_invalid");
   const fresh = exactKeys(raw, ["operation", "campaignId"]) && raw.operation === "image-intake-bootstrap" && id(raw.campaignId);
   const saved = exactKeys(raw, ["operation", "draftId"]) && typeof raw.draftId === "string" && isDraftId(raw.draftId)
     || exactKeys(raw, ["operation", "intentId"]) && typeof raw.intentId === "string" && isIntentId(raw.intentId);
@@ -130,15 +133,17 @@ class Lifetime {
   readonly maximum: number; readonly deadline: number;
   readonly authorityCurrent: () => void;
   readonly signal?: AbortSignal;
-  constructor(maximum: number, deadline: number, authorityCurrent: () => void, signal?: AbortSignal) {
+  readonly maximumQueries: number;
+  constructor(maximum: number, deadline: number, authorityCurrent: () => void, signal?: AbortSignal, maximumQueries = 12) {
     this.maximum = maximum; this.deadline = deadline; this.authorityCurrent = authorityCurrent; this.signal = signal;
+    this.maximumQueries = maximumQueries;
   }
   check() { this.authorityCurrent(); if (this.signal?.aborted) fail("sponsor_intake_post_read_cancelled"); if (performance.now() >= this.deadline) fail("sponsor_intake_read_deadline"); }
   remaining() { this.check(); return Math.max(0, this.maximum - this.used); }
   account(value: unknown) { this.check(); this.used += new TextEncoder().encode(JSON.stringify(value)).byteLength; if (this.used > this.maximum) fail("sponsor_intake_read_byte_limit"); }
   accountSerialized(value: string) { this.check(); this.used += new TextEncoder().encode(value).byteLength; if (this.used > this.maximum) fail("sponsor_intake_read_byte_limit"); }
   async run<T>(work: () => Promise<T>): Promise<T> {
-    this.check(); if (++this.queries > 12) fail("sponsor_intake_read_query_limit");
+    this.check(); if (++this.queries > this.maximumQueries) fail("sponsor_intake_read_query_limit");
     let timer: ReturnType<typeof setTimeout> | undefined, abort: (() => void) | undefined;
     try {
       const cancelled = new Promise<never>((_, reject) => {
@@ -160,6 +165,10 @@ const nativeReceiptColumns = ["requested_key", "receipt_key", ...eventColumns, "
 type NativeReceiptProof = { full: BudgetReservationGuard;
   parts: readonly Readonly<{ sql: string; bindings: readonly (string | number | null)[] }>[];
   prefixBindings: readonly (string | number | null)[]; expandPostComposition?: true };
+// Private confirmation-only decomposition. A row witness is never authority:
+// every captured support predicate must accompany it in the same statement.
+type ConfirmationReceiptSnapshot = { support: BudgetReservationGuard[]; stable: BudgetReservationGuard;
+  full: BudgetReservationGuard; stableRows: string };
 
 /** Recognize this one native reader exactly before changing its expression
  * shape. All complete predicates move to mandatory zero/one-row gates in the
@@ -193,7 +202,9 @@ function gatedNativeReceipt(sql: string, bindings: unknown[], proof: NativeRecei
   const native = sql.slice(0, -suffix.length) + `\n    CROSS JOIN ${gates.map(gate => gate.name).join(" CROSS JOIN ")}`
     + " ORDER BY CAST(expected.key AS INTEGER)";
   return { sql: native, ctes: gates.map(gate => `${gate.name} AS MATERIALIZED (SELECT 1 WHERE ${gate.sql})`).join(","),
-    bindings: [...parts.flatMap(part => [...part.bindings]), ...proof.prefixBindings] };
+    bindings: [...parts.flatMap(part => [...part.bindings]), ...proof.prefixBindings],
+    rowSql: sql.slice(0, -suffix.length) + " ORDER BY CAST(expected.key AS INTEGER)",
+    rowBindings: proof.prefixBindings, support: parts };
 }
 
 type PostDraftProof = { env: WorkerEnv; auth: ProjectIntakeAuthorization; draftId: string; base: BudgetReservationGuard;
@@ -222,7 +233,8 @@ function gatedPostDraft(sql: string, bindings: unknown[], proof: PostDraftProof)
     expected = `SELECT 1 AS current WHERE ${full.sql}`; expectedBindings = full.bindings;
     data = from => `SELECT 1 AS current FROM ${from} WHERE ${native.sql}`;
   }
-  if (sql !== expected || !sameBindings(bindings, expectedBindings) || !compiledPostWrites.has(proof.additional))
+  if (sql !== expected || !sameBindings(bindings, expectedBindings)
+    || !compiledPostWrites.has(proof.additional) && !compiledConfirmationGuards.has(proof.additional))
     return fail("sponsor_intake_read_native_query_changed");
   const parts = distinctPostGuards(expandPostGuard(proof.additional));
   let prefix = "sponsor_intake_post_draft_gate";
@@ -237,7 +249,8 @@ function gatedPostDraft(sql: string, bindings: unknown[], proof: PostDraftProof)
  * SQLite bounds the complete approved row JSON before bytes cross into the
  * Worker. Unknown query shapes refuse; extra schema columns are not projected.
  * Exact receipt rows are retained as final scalar SQL proof, not reauthored. */
-function boundedNativeEnvironment(env: WorkerEnv, life: Lifetime, proofs: BudgetReservationGuard[], receiptProof?: NativeReceiptProof, draftProof?: PostDraftProof): WorkerEnv {
+function boundedNativeEnvironment(env: WorkerEnv, life: Lifetime, proofs: BudgetReservationGuard[], receiptProof?: NativeReceiptProof,
+  draftProof?: PostDraftProof, confirmationSnapshots?: ConfirmationReceiptSnapshot[]): WorkerEnv {
   const DB = { prepare(sql: string) {
     const columns = sql.startsWith("SELECT content,expires_at FROM private_content") ? ["content", "expires_at"]
       : sql.startsWith("SELECT 1 AS current WHERE") ? ["current"]
@@ -246,6 +259,12 @@ function boundedNativeEnvironment(env: WorkerEnv, life: Lifetime, proofs: Budget
     function statement(bindings: unknown[]): D1PreparedStatement {
       const execute = async (kind: "first" | "all") => {
         const remaining = life.remaining();
+        // The confirmation-only factor must cover the exact full predicate
+        // before any private SELECT runs, in addition to native SQL/vector
+        // recognition performed immediately below. Existing callers omit it.
+        if (confirmationSnapshots && (!receipt || !receiptProof
+          || receiptProof.full.sql !== receiptProof.parts.map(part => `(${part.sql})`).join(" AND ")))
+          return fail("sponsor_intake_read_native_query_changed");
         const native = receipt ? receiptProof ? gatedNativeReceipt(sql, bindings, receiptProof)
           : fail("sponsor_intake_read_native_query_changed") : draftProof ? gatedPostDraft(sql, bindings, draftProof) : { sql, bindings, ctes: "" };
         // D1 permits at most32 function arguments. json_set retains explicit
@@ -268,6 +287,21 @@ function boundedNativeEnvironment(env: WorkerEnv, life: Lifetime, proofs: Budget
         if (receipt) {
           proofs.push({ sql: `(WITH ${native.ctes} SELECT json_group_array(json_array(${columns.map(c => `row.${c}`).join(",")})) FROM (${native.sql}) row)=?`,
             bindings: [...native.bindings as (string | number | null)[], JSON.stringify(result.results.map(row => columns.map(c => row[c] ?? null)))] });
+          if (confirmationSnapshots) {
+            // Both recognitions happened before this read. All support remains
+            // mandatory alongside these private data-only witnesses.
+            if (!("rowSql" in native)) return fail("sponsor_intake_read_native_query_changed");
+            const stableColumns = columns.filter(column => column !== "current_head");
+            const rows = (selected: readonly string[]) => JSON.stringify(result.results.map(row => selected.map(column => row[column] ?? null)));
+            const witness = (selected: readonly string[]): BudgetReservationGuard => ({
+              sql: `(SELECT json_group_array(json_array(${selected.map(column => `row.${column}`).join(",")})) FROM (${native.rowSql}) row)=?`,
+              bindings: [...native.rowBindings, rows(selected)],
+            });
+            confirmationSnapshots.push(freeze({
+              support: native.support.map(part => capturePostGuard({ sql: part.sql, bindings: [...part.bindings] })),
+              stable: witness(stableColumns), full: witness(columns), stableRows: rows(stableColumns),
+            }));
+          }
         }
         return kind === "all" ? result : result.results[0] ?? null;
       };
@@ -774,4 +808,236 @@ export async function verifySponsorIntakePostPrepared(cap: SponsorIntakePostRead
     state.life.account(current); state.life.check();
     if (current?.current !== 1) return fail("sponsor_intake_original_unavailable");
   } finally { state.reading = false; }
+}
+
+/** A separate capability for the actual confirmation GET/POST. Its V2 read
+ * operation does not inherit draft/commit permission or generation authority. */
+declare const imageConfirmationAllowance: unique symbol;
+export type SponsorImageConfirmationAllowance = Readonly<{ [imageConfirmationAllowance]: true }>;
+type ConfirmationState = {
+  request: Request; env: WorkerEnv; db: WorkerEnv["DB"]; authority: SponsorIntakeReadAuthority;
+  auth: ProjectIntakeAuthorization; draftId: string; draftHash: string; mode: "read" | "confirm";
+  original: IntakeReceipt; ticket: Awaited<ReturnType<typeof takeSponsorIntakeReadAttempt>>; life: Lifetime;
+  saved: PostSaved | null; nativeReceipt: ExperienceIntakeReceipt | null; receiptProof?: BudgetReservationGuard;
+  stableReceipt?: ConfirmationReceiptSnapshot;
+  retained: BudgetReservationGuard[]; live: BudgetReservationGuard[] | null; nativeEnv?: WorkerEnv;
+  reading: boolean; finishing: boolean; closed: boolean;
+};
+const confirmationAllowances = new WeakMap<SponsorImageConfirmationAllowance, ConfirmationState>();
+const confirmationRequests = new WeakSet<Request>();
+const compiledConfirmationGuards = new WeakSet<BudgetReservationGuard>();
+function confirmationState(cap: SponsorImageConfirmationAllowance, request: Request, env: WorkerEnv, finishing = false) {
+  const state = confirmationAllowances.get(cap);
+  if (!state || state.request !== request || state.env !== env || state.db !== env.DB || state.closed
+    || state.finishing && !finishing) return fail("sponsor_confirmation_unavailable");
+  requireSponsorIntakeReadAuthority(state.authority, request, env);
+  if (request.signal.aborted) return fail("sponsor_intake_post_read_cancelled");
+  return state;
+}
+function confirmationAssertions(state: ConfirmationState): BudgetReservationGuard[] {
+  return distinctPostGuards([...state.ticket.assertions.map(proof => ({ sql: proof.sql, bindings: [...proof.bindings] })),
+    ...state.retained.map(capturePostGuard),
+    ...(state.stableReceipt ? [...state.stableReceipt.support, state.stableReceipt.stable].map(capturePostGuard) : []),
+    { sql: `${clock}<?`, bindings: [state.ticket.deadlineAtMs] }]);
+}
+function confirmationGuard(state: ConfirmationState): BudgetReservationGuard {
+  const result = composeSponsorIntakePostGuards(...confirmationAssertions(state));
+  compiledConfirmationGuards.add(result);
+  return result;
+}
+function confirmationCompleteAssertions(state: ConfirmationState): BudgetReservationGuard[] {
+  if (!state.saved || !state.nativeReceipt || !state.receiptProof || !state.stableReceipt) return fail("sponsor_confirmation_original_unavailable");
+  return distinctPostGuards([...confirmationAssertions(state), capturePostGuard(state.receiptProof), ...(state.live ?? []).map(capturePostGuard)]);
+}
+
+/** The source-free original selects the historical campaign before admission.
+ * Current generation eligibility is deliberately deferred to the write gate. */
+export async function createSponsorImageConfirmationAllowance(request: Request, env: WorkerEnv,
+  draftId: string): Promise<SponsorImageConfirmationAllowance> {
+  if (confirmationRequests.has(request) || postRequests.has(request) || !isDraftId(draftId)
+    || !["GET", "POST"].includes(request.method) || env.FORMA_PILOT_COHORT_ID?.trim()) return fail("sponsor_confirmation_request_invalid");
+  confirmationRequests.add(request);
+  const database = env.DB;
+  const unchanged = () => {
+    if (database !== env.DB) return fail("sponsor_confirmation_unavailable");
+    if (request.signal.aborted) return fail("sponsor_intake_post_read_cancelled");
+  };
+  // This finite transport bound covers principal/control awaits before the
+  // separately approved read ticket exists; it grants no private read budget.
+  const transport = new Lifetime(65_536, performance.now() + 5_000, unchanged, request.signal);
+  let draftHash: string | null = null;
+  if (request.method === "POST") {
+    const command = await transport.run(() => readSponsorIntakeCommand(request));
+    if (!exactKeys(command, ["draftHash", "explicitRequirementsConfirmation"])
+      || !hash(command.draftHash) || command.explicitRequirementsConfirmation !== true) return fail("sponsor_confirmation_request_invalid");
+    draftHash = command.draftHash;
+  } else if (request.body !== null) return fail("sponsor_confirmation_request_invalid");
+  const principal = await transport.run(() => readExistingPrincipalRequest(request, env, "creator", { account: "principal" }));
+  if ("kind" in principal || principal.response || !principal.user
+    || principal.user.billingUserId && principal.user.billingUserId !== principal.user.userId) return fail("sponsor_intake_read_actor_unavailable");
+  const authorized = await transport.run(() => continueExperienceAuthorization(request, env, principal));
+  if (authorized instanceof Response) return fail("sponsor_intake_read_actor_unavailable");
+  const auth = freeze(structuredClone(authorized));
+  const original = await transport.run(() => postSource(database, auth, draftId)); transport.account(original);
+  if (!validPostReceipt(original) || original.actor_user_id !== auth.user.userId || original.draft_id !== draftId)
+    return fail("sponsor_intake_read_original_unavailable");
+  if (draftHash !== null && draftHash !== original.draft_hash) return fail("sponsor_intake_intent_conflict");
+  const authority = Object.freeze({}) as SponsorIntakeReadAuthority;
+  authorities.set(authority, { request, env, db: database, auth, operation: "image-output-confirmation",
+    campaignId: original.campaign_id, policyDigest: original.policy_digest, resourceKey: `draft:${draftId}`,
+    original: freeze({ ...original }), assertions: [projectIntakeAuthority(env, auth,
+      { projectId: original.project_id, documentId: original.document_id }), postLineage(auth, original), postCustody(auth, original)] });
+  const attempt = await transport.run(() => reserveSponsorIntakeReadAttempt(authority, request, env, "image-output-confirmation"));
+  const ticket = await transport.run(() => takeSponsorIntakeReadAttempt(attempt, authority, request, env));
+  const cap = Object.freeze({}) as SponsorImageConfirmationAllowance;
+  // Confirmation is a closed multi-stage native composition, with a separate
+  // finite ceiling. Existing V1 readers retain their original twelve calls.
+  const life = new Lifetime(ticket.maximumBytes, ticket.monotonicDeadline,
+    () => { confirmationState(cap, request, env, true); }, request.signal, 128);
+  confirmationAllowances.set(cap, { request, env, db: database, authority, auth, draftId, draftHash: original.draft_hash,
+    mode: request.method === "POST" ? "confirm" : "read", original: freeze({ ...original }), ticket, life,
+    saved: null, nativeReceipt: null, retained: [], live: null, reading: false, finishing: false, closed: false });
+  life.check(); return cap;
+}
+
+export function requireSponsorImageConfirmationAllowance(cap: SponsorImageConfirmationAllowance, request: Request, env: WorkerEnv) {
+  const state = confirmationState(cap, request, env); state.life.check();
+  return freeze({ mode: state.mode, auth: state.auth, draftId: state.draftId, draftHash: state.draftHash, campaignId: state.original.campaign_id });
+}
+
+async function readConfirmationReceipt(state: ConfirmationState): Promise<ExperienceIntakeReceipt> {
+  if (!state.saved) return fail("sponsor_confirmation_original_unavailable");
+  const plan = state.saved.plan, stream = state.auth.user.streamId, prefix = receiptPrefix(plan.draftId);
+  const intake = { projectId: plan.projectId, documentId: plan.documentId, events: structuredClone(plan.events) as ExperiencePlan["events"][number][] };
+  const guard = confirmationGuard(state), options = { receiptPrefix: prefix, clientId: "web:experience-intake", correlationPrefix: "experience-intake:", guard };
+  const native = projectIntakeAuthority(state.env, state.auth, intake), full = intakeGuard(state.env, state.auth, intake, options);
+  const proof: NativeReceiptProof = { full, parts: [native, guard], expandPostComposition: true,
+    prefixBindings: [stream, prefix.length, prefix, stream, JSON.stringify(intake.events.map(event => String(event.payload.client_event_id))), stream, state.auth.user.userId] };
+  const observed: BudgetReservationGuard[] = [], snapshots: ConfirmationReceiptSnapshot[] = [];
+  const response = await state.life.run(() => commitAtomicIntake(boundedNativeEnvironment(state.env, state.life, observed, proof, undefined, snapshots), state.auth, intake, "check", options));
+  const body: unknown = await state.life.run(() => response.json());
+  if (response.status !== 200 || !record(body) || body.status !== "complete" || body.projectId !== plan.projectId
+    || body.documentId !== plan.documentId || !Array.isArray(body.appended) || body.appended.length !== plan.events.length
+    || !Array.isArray(body.rejected) || body.rejected.length || !Number.isSafeInteger(body.head) || observed.length !== 1 || snapshots.length !== 1)
+    return fail("sponsor_confirmation_original_unavailable");
+  const snapshot = snapshots[0]!;
+  if (state.stableReceipt && snapshot.stableRows !== state.stableReceipt.stableRows)
+    return fail("sponsor_confirmation_original_changed");
+  state.life.account(body); state.life.check();
+  const receipt = freeze({ ...body, generation: "unavailable", draftId: plan.draftId, draftHash: plan.draftHash,
+    documentRoute: experienceDocumentRoute(plan) }) as ExperienceIntakeReceipt;
+  // Preserve the first exact mapping/body witness forever. Refreshing an own
+  // output head never recaptures changed original bytes or nests prior proofs.
+  // All support predicates accompanying the new head witness are already exact
+  // members of the current mandatory conjunction, or must be retained here.
+  const current = confirmationAssertions(state);
+  if (state.stableReceipt && snapshot.support.some(proof => !current.some(existing => existing.sql === proof.sql
+    && sameBindings(existing.bindings, proof.bindings)))) return fail("sponsor_confirmation_original_changed");
+  state.stableReceipt ??= snapshot;
+  state.receiptProof = capturePostGuard(snapshot.full); state.nativeReceipt = receipt;
+  return receipt;
+}
+
+/** Read the exact marked draft through the existing native parser, then the
+ * actual completed native receipt. Both are bounded before private bytes exit. */
+export async function readSponsorImageConfirmationOriginal(cap: SponsorImageConfirmationAllowance, request: Request, env: WorkerEnv) {
+  const state = confirmationState(cap, request, env); state.life.check();
+  if (state.reading) return fail("sponsor_confirmation_unavailable");
+  state.reading = true;
+  try {
+    const additional = confirmationGuard(state);
+    const draftProof: PostDraftProof = { env, auth: state.auth, draftId: state.draftId, additional,
+      base: projectIntakeAuthority(env, state.auth, { projectId: "", documentId: "" }) };
+    const saved = await state.life.run(() => readDraft(boundedNativeEnvironment(env, state.life, [], undefined, draftProof), state.auth, state.draftId, additional));
+    if (!saved) return fail("sponsor_confirmation_original_unavailable");
+    const plan = saved.plan, original = state.original, marker = (plan as unknown as Row).sponsor_intake;
+    if (plan.release.definition.id !== "image" || plan.release.output.output !== "image"
+      || Object.hasOwn(plan, "reference") || Object.hasOwn(plan.request, "reference") || !record(marker)
+      || !exactKeys(marker, ["version", "receiptId"]) || marker.version !== 1 || marker.receiptId !== original.receipt_id
+      || original.native_intent_id !== plan.request.intentId || original.project_id !== plan.projectId || original.document_id !== plan.documentId
+      || original.draft_hash !== plan.draftHash || original.expires_at !== saved.expiresAt
+      || original.content_digest !== await state.life.run(() => digest(saved.content))
+      || original.source_digest !== await state.life.run(() => digest(plan.events))
+      || original.content_bytes !== new TextEncoder().encode(saved.content).byteLength
+      || original.receipt_id !== `sponsor-intake-${(await state.life.run(() => digest({ campaignId: original.campaign_id,
+        actor: state.auth.user.userId, intent: plan.request.intentId }))).slice(7)}`
+      || state.saved && state.saved.content !== saved.content) return fail("sponsor_intake_read_original_changed");
+    state.life.check();
+    state.saved = freeze({ ...saved, receipt: original });
+    state.retained = freeze([retainedGuard(state.auth, plan, saved.content)]);
+    const nativeReceipt = await readConfirmationReceipt(state);
+    return freeze({ ...state.saved, auth: state.auth, nativeReceipt });
+  } finally { state.reading = false; }
+}
+
+export function sponsorImageConfirmationAssertions(cap: SponsorImageConfirmationAllowance, request: Request, env: WorkerEnv): OutputSqlAssertion[] {
+  const state = confirmationState(cap, request, env); state.life.check();
+  return confirmationCompleteAssertions(state).map(proof => ({ sql: proof.sql, bindings: [...proof.bindings] }));
+}
+
+/** Called only for a missing native save/confirm stage. Exact completed replay
+ * does not acquire this prospective generation-campaign eligibility proof. */
+export async function requireSponsorImageConfirmationWrite(cap: SponsorImageConfirmationAllowance, request: Request, env: WorkerEnv): Promise<OutputSqlAssertion[]> {
+  const state = confirmationState(cap, request, env); state.life.check();
+  if (state.mode !== "confirm" || state.reading || !state.saved || !state.nativeReceipt) return fail("sponsor_confirmation_write_unavailable");
+  const approved = await state.life.run(() => loadApprovedSponsorCampaign(request, env, state.original.campaign_id));
+  const release = await state.life.run(() => registeredExperience("image"));
+  state.life.check();
+  if (approved.actor.userId !== state.auth.user.userId || approved.policyDigest !== state.original.policy_digest
+    || approved.policy.resources.version !== 2 || !release || canonicalJson(release) !== canonicalJson(state.saved.plan.release)
+    || !approved.policy.templates.some(template => template.appId === "image" && template.releaseDigest === release.releaseHash))
+    return fail("sponsor_confirmation_write_unavailable");
+  state.live = freeze(approved.assertions.map(proof => ({ sql: proof.sql, bindings: [...(proof.bindings ?? [])] })));
+  return confirmationCompleteAssertions(state).map(proof => ({ sql: proof.sql, bindings: [...proof.bindings] }));
+}
+
+export function sponsorImageConfirmationEnvironment(cap: SponsorImageConfirmationAllowance, request: Request, env: WorkerEnv): WorkerEnv {
+  const state = confirmationState(cap, request, env); state.life.check();
+  if (!state.saved || !state.nativeReceipt) return fail("sponsor_confirmation_original_unavailable");
+  return state.nativeEnv ??= createSponsorImageConfirmationNativeEnvironment(env, {
+    auth: state.auth, plan: state.saved.plan,
+    check: () => { confirmationState(cap, request, env); state.life.check(); }, remaining: () => state.life.remaining(),
+    account: value => state.life.account(value), run: work => state.life.run(work),
+    assertions: () => confirmationAssertions(state), nativeAssertions: () => confirmationCompleteAssertions(state),
+    allowWrite: () => {
+      confirmationState(cap, request, env); state.life.check();
+      if (state.mode !== "confirm" || !state.live || !state.nativeReceipt || !state.receiptProof)
+        return fail("sponsor_confirmation_write_unavailable");
+    },
+  });
+}
+
+/** Only the current_head observation is replaced after a native stage; all
+ * original marked bytes, custody, ticket and read approval remain mandatory. */
+export async function refreshSponsorImageConfirmationReceipt(cap: SponsorImageConfirmationAllowance, request: Request, env: WorkerEnv) {
+  const state = confirmationState(cap, request, env); state.life.check();
+  if (state.mode !== "confirm" || !state.live || state.reading || !state.saved) return fail("sponsor_confirmation_write_unavailable");
+  state.reading = true;
+  try { return await readConfirmationReceipt(state); }
+  finally { state.reading = false; }
+}
+
+/** Additive final output/source evidence cannot replace any mandatory ticket,
+ * original native receipt, body, custody, read-policy or deadline predicate. */
+export async function finishSponsorImageConfirmation(cap: SponsorImageConfirmationAllowance, request: Request, env: WorkerEnv,
+  body: unknown, status = 200, extraAssertions: readonly OutputSqlAssertion[] = []): Promise<Response> {
+  const state = confirmationState(cap, request, env); state.life.check();
+  if (state.reading || !Number.isInteger(status) || status < 200 || status > 599) return fail("sponsor_confirmation_unavailable");
+  const extra = extraAssertions.map(proof => ({ sql: proof.sql, bindings: [...(proof.bindings ?? [])] }));
+  const final = distinctPostGuards([...confirmationCompleteAssertions(state), ...extra]);
+  state.finishing = true;
+  try {
+    const serialized = JSON.stringify(body);
+    if (typeof serialized !== "string") return fail("sponsor_confirmation_unavailable");
+    state.life.accountSerialized(serialized);
+    let prefix = "sponsor_image_confirmation_final";
+    while (final.some(proof => proof.sql.toLowerCase().includes(prefix))) prefix += "_";
+    const gates = final.map((proof, index) => ({ name: `${prefix}_${index}`, sql: proof.sql }));
+    const packed = packSponsorIntakeReadQuery(`WITH ${gates.map(gate => `${gate.name} AS MATERIALIZED (SELECT 1 WHERE ${gate.sql})`).join(",")}
+      SELECT 1 AS current FROM ${gates.map(gate => gate.name).join(" CROSS JOIN ")}`, final.flatMap(proof => [...proof.bindings]));
+    const current = await state.life.run(() => state.db.prepare(packed.sql).bind(...packed.bindings).first<{ current: number }>());
+    state.life.account(current); state.life.check();
+    if (current?.current !== 1) return fail("sponsor_intake_read_custody_changed");
+    return new Response(serialized, { status, headers: { "content-type": "application/json", "cache-control": "private, no-store" } });
+  } finally { state.closed = true; }
 }

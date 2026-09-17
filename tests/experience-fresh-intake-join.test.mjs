@@ -104,7 +104,28 @@ const modulePaths = [
   "worker/output-image-slides-preflight.ts",
   "worker/output-read-state.ts",
   "worker/presentation-model-routing.ts",
-  "worker/replay-cost.ts"
+  "worker/replay-cost.ts",
+  "src/model/model3d-assets.ts",
+  "src/model/model3d-static-policy.ts",
+  "src/model/model3d.ts",
+  "src/model/output-audio-contract.ts",
+  "src/model/output-model3d-contract.ts",
+  "src/model/output-narrative-contract.ts",
+  "src/model/output-requirements.ts",
+  "src/model/output-scene-contract.ts",
+  "src/model/output-storyboard-contract.ts",
+  "src/model/output-video-contract.ts",
+  "worker/experience-audio-recipe.ts",
+  "worker/experience-model3d-recipe.ts",
+  "worker/experience-model3d-replacement.ts",
+  "worker/experience-narrative-recipe.ts",
+  "worker/experience-output-binding.ts",
+  "worker/experience-output-recipe.ts",
+  "worker/experience-scene-recipe.ts",
+  "worker/experience-scene-renewal.ts",
+  "worker/experience-sponsor-image-confirmation-native.ts",
+  "worker/experience-storyboard-recipe.ts",
+  "worker/experience-video-recipe.ts"
 ];
 const fixtureBuiltins = { 'tests/fixtures/fresh-intake-join-sqlite.mjs': ['node:assert/strict', 'node:sqlite'] };
 const extensionlessEdges = [{ from: 'src/model/project-intake.ts', specifier: './block-types', to: 'src/model/block-types.ts' }];
