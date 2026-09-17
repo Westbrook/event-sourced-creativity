@@ -2,6 +2,12 @@ import { storyboardAudienceHtml } from "../model/storyboard-audience.ts";
 import { documentJobCanCheckSavedPresentationReceipt, savedPresentationReceiptCheckMessage, type PresentationReceiptCheckStatus } from "../model/presentation-receipt-check.ts";
 import { html, noChange, nothing, type PropertyValues } from "lit";
 import type { SelectedOutputShareLease } from "../selected-output-share-client.ts";
+import { readSelectedOutputShareSourceMedia, type SelectedOutputShareReadMedia } from "../selected-output-share-media-client.ts";
+import { SELECTED_OUTPUT_SHARE_MEDIA_PROJECTION_POLICY, parseSelectedOutputShareMediaRequestSelection } from "../model/selected-output-share.ts";
+import { SELECTED_OUTPUT_SHARE_AUDIO_POLICY } from "../model/selected-output-share-audio.ts";
+import { SELECTED_OUTPUT_SHARE_VIDEO_X264_POLICY } from "../model/selected-output-share-video.ts";
+import { SELECTED_OUTPUT_SHARE_MODEL3D_TEXTURE_POLICY } from "../model/selected-output-share-model3d.ts";
+import { captureExperienceVideoEvidence } from "../experiences/video-native-result.ts";
 import "./forma-selected-output-share-review.ts";
 import { NativeShortStoryController, type NativeStoryOpening } from "./native-short-story-controller.ts";
 import { nativeStoryDialogPresentation, renderNativeStoryDialog } from "./native-short-story-dialog.ts";
@@ -47,7 +53,7 @@ import { documentContextBlockRoute, libraryFocusFromRoute, libraryFocusRoute, li
 import { navigateInApp, navigationPresentationClosing, navigationPresentationMatches, type NavigationPresentationContext } from "./command-departure";
 import { reuseManualOutput, type ManualOutputReuse } from "./manual-output-reuse";
 import { outputNavigationOwnedRouteFocus } from "./output-navigation-focus";
-import { DOCUMENT_ARTIFACT_KINDS, SLIDE_STYLE_PRESETS, documentArtifactRevision, documentArtifactDefinition, parseDocumentArtifactContent, type DocumentArtifact, type DocumentArtifactDraftItem, type DocumentArtifactItem, type DocumentArtifactKind, type SlideStylePresetId } from "../model/document-artifacts";
+import { DOCUMENT_ARTIFACT_KINDS, SLIDE_STYLE_PRESETS, documentArtifactRevision, documentArtifactDefinition, parseAudioMediaRevision, parseDocumentArtifactContent, type DocumentArtifact, type DocumentArtifactDraftItem, type DocumentArtifactItem, type DocumentArtifactKind, type SlideStylePresetId } from "../model/document-artifacts";
 import { authorizedGenerationFailureRemediation, documentJobCanRecoverPresentation, documentJobCanRecoverProviderRender, documentJobFailure, documentJobFailureVisible, generationFailureGuidance, type DocumentJob } from "../model/document-jobs";
 import { documentRenderSuggestions } from "../model/document-render-suggestions";
 import { DOCUMENT_RENDER_GUIDANCE_MAX_LENGTH, documentRenderGuidance } from "../model/document-render-guidance.ts";
@@ -1470,10 +1476,52 @@ export class DocumentArtifacts extends FormaElement {
     const previous=this.#selectedOutputShare;if(!previous)return;
     this.#selectedOutputShare=null;previous.unsubscribe();previous.abort.abort();this.requestUpdate();
   }
+  #selectedOutputShareMediaBasis(original:DocumentArtifact,binding:{revision:number;contentSha256:string}){
+    const artifact=this.store.projection.get().libraryArtifacts.find(value=>value.id===original.id);
+    const completion=this.store.events.get().find(event=>event.eventId===original.sourceEventId),owner=this.store.session.get()?.user.userId;
+    if(!artifact||artifact.kind!==original.kind||artifact.documentId!==original.documentId||artifact.sourceEventId!==original.sourceEventId
+      ||!completion||!owner)return null;
+    const content=this.#content(artifact),edits=this.store.events.get().filter(event=>event.type==="DocumentArtifactEdited"&&event.payload.artifact_id===artifact.id);
+    if(!content||edits.some(event=>Object.hasOwn(event.payload,"restored_from_revision")||Object.hasOwn(event.payload,"revision_action")))return null;
+    if(artifact.kind==="audio"){
+      const revision=content.audio_revision,latest=edits.at(-1),parsed=latest?parseAudioMediaRevision(latest.payload.audio_revision):null;
+      if(!revision||!latest||!parsed||JSON.stringify(parsed)!==JSON.stringify(revision)||binding.revision!==edits.length
+        ||latest.streamId!==`creative:${owner}`||latest.payload.revision!==binding.revision||latest.payload.document_id!==artifact.documentId
+        ||latest.payload.content_ref!==artifact.contentRef||latest.payload.content_sha256!==binding.contentSha256
+        ||latest.payload.edited_by_user_id!==owner||latest.payload.source_surface!=="document-artifact-audio-trim"
+        ||artifact.mediaUrl!==revision.media.url||artifact.mediaType!=="audio/wav"||artifact.settings.source_media_sha256!==revision.media.sha256)return null;
+      return{policy:SELECTED_OUTPUT_SHARE_AUDIO_POLICY,media:{url:revision.media.url,mimeType:"audio/wav" as const,
+        byteLength:revision.media.byteLength,sha256:revision.media.sha256},proof:JSON.stringify([latest.eventId,revision])};
+    }
+    if(binding.revision!==0||edits.length||content.audio_revision||content.video_revision||content.model3d_revision)return null;
+    if(artifact.kind==="video"){
+      const evidence=captureExperienceVideoEvidence(completion.payload.settings),current=captureExperienceVideoEvidence(artifact.settings);
+      const media=evidence?.receipt.media,item=videoArtifactMediaItem(artifact);
+      if(!evidence||!current||!media||JSON.stringify(evidence)!==JSON.stringify(current)||evidence.contentSha256!==binding.contentSha256
+        ||evidence.receipt.actorUserId!==owner||evidence.receipt.documentId!==artifact.documentId||evidence.receipt.artifactId!==artifact.id
+        ||completion.payload.source_surface!=="outputs"||artifact.sourceSurface!=="outputs"
+        ||completion.payload.media_url!==media.mediaUrl||completion.payload.media_type!==media.mediaType
+        ||artifact.mediaUrl!==media.mediaUrl||artifact.mediaType!==media.mediaType||artifact.settings.source_media_sha256!==media.sha256
+        ||!item||item.mediaUrl!==media.mediaUrl||item.mediaType!==media.mediaType
+        ||!Array.isArray(completion.payload.items)||completion.payload.items.length!==1
+        ||completion.payload.items[0]?.id!==item.id||completion.payload.items[0]?.media_url!==media.mediaUrl
+        ||completion.payload.items[0]?.media_type!==media.mediaType)return null;
+      return{policy:SELECTED_OUTPUT_SHARE_VIDEO_X264_POLICY,media:{url:media.mediaUrl,mimeType:media.mediaType,
+        byteLength:media.byteLength,sha256:media.sha256},proof:JSON.stringify([evidence,item.id])};
+    }
+    if(artifact.kind==="model3d"){
+      const file=model3dArtifactMediaFile(artifact),receipt=model3dArtifactMediaFile({kind:"model3d",settings:completion.payload.settings as Record<string,unknown>,mediaUrl:typeof completion.payload.media_url==="string"?completion.payload.media_url:null});
+      if(!file||!receipt||JSON.stringify(file)!==JSON.stringify(receipt)||artifact.mediaUrl!==file.url||artifact.mediaType!==file.mimeType
+        ||completion.payload.media_url!==file.url||completion.payload.media_type!==file.mimeType)return null;
+      return{policy:SELECTED_OUTPUT_SHARE_MODEL3D_TEXTURE_POLICY,media:{url:file.url,mimeType:"model/gltf-binary" as const,
+        byteLength:file.fileSize,sha256:file.sha256},proof:JSON.stringify(file)};
+    }
+    return null;
+  }
   #selectedOutputShareBinding(artifact:DocumentArtifact){
     const session=this.store.session.get(),owner=session?.user.userId,binding=this.#currentDeliveryBinding(artifact);
     if(!owner||session.projectContext||session.impersonation||!binding
-      ||!["short_story","scene","slides"].includes(artifact.kind)||this.#editingId||this.#savingEdit
+      ||!["short_story","scene","slides","audio","video","model3d"].includes(artifact.kind)||this.#editingId||this.#savingEdit
       ||this.#viewerOpening||!this.#viewDialog()?.open||this.ownerDocument.visibilityState==="hidden"
       ||this.closest("[hidden],[inert]")||!this.#content(artifact))return null;
     const completion=this.store.events.get().find(event=>event.eventId===artifact.sourceEventId);
@@ -1483,6 +1531,7 @@ export class DocumentArtifacts extends FormaElement {
       ||completion.payload.requested_by_user_id!==owner||completion.payload.artifact_id!==artifact.id
       ||completion.payload.document_id!==artifact.documentId||completion.payload.artifact_kind!==artifact.kind
       ||Object.keys(completion.payload).some(key=>/sponsor|workflow|recover|replacement/iu.test(key)))return null;
+    if(["audio","video","model3d"].includes(artifact.kind)&&!this.#selectedOutputShareMediaBasis(artifact,binding))return null;
     return binding;
   }
   #syncSelectedOutputShare=()=>{
@@ -1492,16 +1541,34 @@ export class DocumentArtifacts extends FormaElement {
     const binding=this.#selectedOutputShareBinding(artifact),store=this.store,route=store.route.get();
     const owner=store.captureSourceOwnership(),viewer=this.#viewerCurrent,dialog=this.#viewDialog();
     if(!binding||!owner||!store.sourceOwnershipActive(owner)||!viewer||!viewer()||!dialog)return;
-    const abort=new AbortController();
+    const abort=new AbortController(),media=this.#selectedOutputShareMediaBasis(artifact,binding),mediaIdentity=JSON.stringify(media);
+    const origin=this.ownerDocument.location?.origin;
+    const selection=media?parseSelectedOutputShareMediaRequestSelection({output:artifact.kind,documentId:artifact.documentId,
+      artifactId:artifact.id,revision:binding.revision,contentSha256:binding.contentSha256,mediaSha256:media.media.sha256,
+      policy:media.policy,projectionPolicy:SELECTED_OUTPUT_SHARE_MEDIA_PROJECTION_POLICY})
+      :Object.freeze({output:artifact.kind as "short_story"|"scene"|"slides",documentId:artifact.documentId,
+        artifactId:artifact.id,revision:binding.revision,contentSha256:binding.contentSha256});
+    if(!selection)return;
+    const readMedia:SelectedOutputShareReadMedia=async(output,controls)=>{
+      const read=new AbortController(),retire=()=>read.abort();
+      abort.signal.addEventListener("abort",retire,{once:true});controls.signal.addEventListener("abort",retire,{once:true});
+      if(abort.signal.aborted||controls.signal.aborted)read.abort();
+      try{
+        if(!media||!origin||output.output!==artifact.kind)throw new Error("selected_output_share_unavailable");
+        return await readSelectedOutputShareSourceMedia(output,media.media,{signal:read.signal,
+          isCurrent:()=>!read.signal.aborted&&!controls.signal.aborted&&source.isCurrent()&&controls.isCurrent(),origin});
+      }finally{abort.signal.removeEventListener("abort",retire);controls.signal.removeEventListener("abort",retire);}
+    };
     const source:SelectedOutputShareLease=Object.freeze({
-      selection:Object.freeze({output:artifact.kind as "short_story"|"scene"|"slides",documentId:artifact.documentId,
-        artifactId:artifact.id,revision:binding.revision,contentSha256:binding.contentSha256}),
+      selection,...(media?{readMedia}:{}),
       signal:abort.signal,
       isCurrent:()=>{
         if(abort.signal.aborted)return false;
         const current=this.#selectedOutputShare?.source===source&&this.isConnected&&this.store===store
+          &&this.ownerDocument.location?.origin===origin
           &&store.sourceOwnershipActive(owner)&&store.route.get()===route&&this.#viewerCurrent===viewer&&viewer()
-          &&this.#viewDialog()===dialog&&this.#selectedOutputShareBinding(artifact)===binding;
+          &&this.#viewDialog()===dialog&&this.#selectedOutputShareBinding(artifact)===binding
+          &&JSON.stringify(this.#selectedOutputShareMediaBasis(artifact,binding))===mediaIdentity;
         if(!current)this.#retireSelectedOutputShare();
         return Boolean(current);
       },

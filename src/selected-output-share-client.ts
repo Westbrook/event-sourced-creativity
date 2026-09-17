@@ -1,15 +1,20 @@
-import { parseSelectedOutputShareSelection, validateSelectedOutputSharePublicOutput,
+import { parseSelectedOutputShareSelection, parseSelectedOutputShareAnySelection, parseSelectedOutputShareMediaRequestSelection,
+  validateSelectedOutputSharePublicOutput, validateSelectedOutputShareMediaPublicOutput,
+  projectSelectedOutputShareMediaCandidate, parseSelectedOutputShareAnyApproval,
   SELECTED_OUTPUT_SHARE_PURPOSE, SELECTED_OUTPUT_SHARE_JSON_MAX_BYTES, SELECTED_OUTPUT_SHARE_TITLE_MAX_BYTES,
-  SELECTED_OUTPUT_SHARE_MAX_LIFETIME_MS, type SelectedOutputShareCandidate, type SelectedOutputShareKind,
-  type SelectedOutputShareReview, type SelectedOutputShareSelection } from "./model/selected-output-share.ts";
+  SELECTED_OUTPUT_SHARE_MAX_LIFETIME_MS, type SelectedOutputShareAnyCandidate,
+  type SelectedOutputShareReview, type SelectedOutputShareAnySelection } from "./model/selected-output-share.ts";
+import type { SelectedOutputShareReadMedia } from "./selected-output-share-media-client.ts";
 
 export type SelectedOutputShareLease = Readonly<{
-  selection: SelectedOutputShareSelection; signal: AbortSignal; isCurrent: () => boolean;
+  selection: SelectedOutputShareAnySelection; signal: AbortSignal; isCurrent: () => boolean;
+  /** Trusted host-owned exact source read, consumed only by explicit review. */
+  readMedia?: SelectedOutputShareReadMedia;
 }>;
 export type SelectedOutputShareClientOptions = Readonly<{ origin: string; fetcher?: typeof fetch }>;
-export type SelectedOutputShareMetadata = Readonly<{ shareId: string; title: string; output: SelectedOutputShareKind;
+export type SelectedOutputShareMetadata = Readonly<{ shareId: string; title: string; output: SelectedOutputShareAnySelection["output"];
   revision: number; expiresAt: string; issuedAt: string }>;
-export type SelectedOutputSharePrepared = Readonly<{ candidateId: string; candidate: SelectedOutputShareCandidate; replayed: boolean }>;
+export type SelectedOutputSharePrepared = Readonly<{ candidateId: string; candidate: SelectedOutputShareAnyCandidate; replayed: boolean }>;
 export type SelectedOutputShareCommitted = Readonly<{ share: Readonly<{ shareId: string; expiresAt: string; active: true; token?: string }>; replayed: boolean }>;
 export type SelectedOutputSharePage = Readonly<{ shares: readonly SelectedOutputShareMetadata[]; nextCursor: string | null }>;
 
@@ -48,7 +53,7 @@ function cursor(value: unknown): value is string {
 /** A request lease and data decoder only. Capability discovery never supplies
  * publishing authority; the server must freshly authorize every operation. */
 export function createSelectedOutputShareClient(lease: SelectedOutputShareLease, options: SelectedOutputShareClientOptions) {
-  const selection = parseSelectedOutputShareSelection(lease.selection) ?? fail(), signal = lease.signal, isCurrent = lease.isCurrent;
+  const selection = parseSelectedOutputShareAnySelection(lease.selection) ?? fail(), signal = lease.signal, isCurrent = lease.isCurrent;
   const origin = options.origin, parsedOrigin = new URL(origin), fetcher = options.fetcher ?? fetch;
   if (!["http:", "https:"].includes(parsedOrigin.protocol) || parsedOrigin.origin !== origin) return fail();
   const selectedJson = JSON.stringify(selection), prepared = new Map<string, string>();
@@ -93,8 +98,27 @@ export function createSelectedOutputShareClient(lease: SelectedOutputShareLease,
     check(creation);
     return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)) as unknown;
   }
-  async function candidate(value: unknown, creation: number): Promise<SelectedOutputShareCandidate> {
+  async function candidate(value: unknown, creation: number): Promise<SelectedOutputShareAnyCandidate> {
     check(creation);
+    if ("projectionPolicy" in selection) {
+      const raw = fields(value, ["schemaVersion", "kind", "purpose", "selection", "sourceExpiresAt", "mediaIdentity", "publicOutput", "candidateSha256"]);
+      const selected = parseSelectedOutputShareMediaRequestSelection(raw.selection), publicOutput = validateSelectedOutputShareMediaPublicOutput(raw.publicOutput);
+      const identity = fields(raw.mediaIdentity, ["sourceMediaSha256", "publicMediaSha256", "qualificationPolicy", "projectionPolicy"]);
+      if (raw.schemaVersion !== 1 || raw.kind !== "selected-output-share-candidate" || raw.purpose !== SELECTED_OUTPUT_SHARE_PURPOSE
+        || !selected || JSON.stringify(selected) !== selectedJson || !timestamp(raw.sourceExpiresAt)
+        || !publicOutput || publicOutput.output !== selection.output || !digest(raw.candidateSha256)
+        || identity.sourceMediaSha256 !== selected.mediaSha256 || identity.publicMediaSha256 !== publicOutput.content.media.sha256
+        || identity.sourceMediaSha256 !== identity.publicMediaSha256 || identity.qualificationPolicy !== selected.policy
+        || identity.projectionPolicy !== selected.projectionPolicy) return fail();
+      // The projector derives identity, so validate the supplied identity above
+      // before reconstructing a canonical candidate. It must never repair one.
+      const captured = await projectSelectedOutputShareMediaCandidate(selected, { descriptor: publicOutput.content.media,
+        sourceExpiresAt: raw.sourceExpiresAt, disclosure: publicOutput.content.disclosure },
+      { title: publicOutput.title, expiresAt: publicOutput.expiresAt });
+      check(creation);
+      if (!captured || Date.parse(captured.publicOutput.expiresAt) <= Date.now() || captured.candidateSha256 !== raw.candidateSha256) return fail();
+      return captured;
+    }
     const raw = fields(value, ["schemaVersion", "kind", "purpose", "selection", "sourceExpiresAt", "publicOutput", "candidateSha256"]);
     const selected = parseSelectedOutputShareSelection(raw.selection), publicOutput = validateSelectedOutputSharePublicOutput(raw.publicOutput);
     if (raw.schemaVersion !== 1 || raw.kind !== "selected-output-share-candidate" || raw.purpose !== SELECTED_OUTPUT_SHARE_PURPOSE
@@ -133,14 +157,15 @@ export function createSelectedOutputShareClient(lease: SelectedOutputShareLease,
       prepared.set(result.candidateId, parsed.candidateSha256);
       return Object.freeze({ candidateId: result.candidateId, candidate: parsed, replayed: result.replayed });
     },
-    async commit(candidateId: string, value: SelectedOutputShareCandidate): Promise<SelectedOutputShareCommitted> {
+    async commit(candidateId: string, value: SelectedOutputShareAnyCandidate): Promise<SelectedOutputShareCommitted> {
       const epoch = availabilityEpoch; check(epoch);
       if (!identifier(candidateId) || !prepared.has(candidateId)) return fail();
       const parsed = await candidate(value, epoch); check(epoch);
       if (Date.parse(parsed.publicOutput.expiresAt) <= Date.now() || prepared.get(candidateId) !== parsed.candidateSha256) return fail();
-      const result = fields(await read(`${base}/commit`, "POST", { candidateId, approval: {
+      const approval = parseSelectedOutputShareAnyApproval({
         purpose: SELECTED_OUTPUT_SHARE_PURPOSE, candidateSha256: parsed.candidateSha256, allowPublicRead: true,
-      } }, 4096, epoch), ["share", "replayed"]); check(epoch);
+      }, parsed) ?? fail();
+      const result = fields(await read(`${base}/commit`, "POST", { candidateId, approval }, 4096, epoch), ["share", "replayed"]); check(epoch);
       if (typeof result.replayed !== "boolean") return fail();
       const share = fields(result.share, ["shareId", "expiresAt", "active"], result.replayed ? [] : ["token"]);
       if (share.shareId !== candidateId || share.expiresAt !== parsed.publicOutput.expiresAt || share.active !== true
@@ -160,11 +185,11 @@ export function createSelectedOutputShareClient(lease: SelectedOutputShareLease,
       const shares = result.shares.map(value => {
         const item = fields(value, ["shareId", "title", "output", "revision", "expiresAt", "issuedAt"]);
         if (!identifier(item.shareId) || seen.has(item.shareId) || !title(item.title)
-          || typeof item.output !== "string" || !["short_story", "scene", "slides"].includes(item.output)
+          || typeof item.output !== "string" || !["short_story", "scene", "slides", "audio", "video", "model3d"].includes(item.output)
           || typeof item.revision !== "number" || !Number.isSafeInteger(item.revision) || item.revision < 0
           || !timestamp(item.expiresAt) || !timestamp(item.issuedAt) || item.issuedAt >= item.expiresAt) return fail();
         seen.add(item.shareId);
-        return Object.freeze({ shareId: item.shareId, title: item.title, output: item.output as SelectedOutputShareKind,
+        return Object.freeze({ shareId: item.shareId, title: item.title, output: item.output as SelectedOutputShareAnySelection["output"],
           revision: item.revision, expiresAt: item.expiresAt, issuedAt: item.issuedAt });
       });
       return Object.freeze({ shares: Object.freeze(shares), nextCursor: result.nextCursor as string | null });

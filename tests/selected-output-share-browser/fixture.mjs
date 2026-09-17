@@ -4,13 +4,17 @@
 import "../../src/styles.css";
 import "../../src/design-system.css";
 import "../../src/responsive-foundation.css";
-import { parseSelectedOutputShareSelection, parseSelectedOutputShareApproval,
-  projectSelectedOutputShareCandidate } from "../../src/model/selected-output-share.ts";
+import { parseSelectedOutputShareAnySelection, parseSelectedOutputShareAnyApproval,
+  projectSelectedOutputShareCandidate, projectSelectedOutputShareMediaCandidate, SELECTED_OUTPUT_SHARE_MEDIA_PROJECTION_POLICY } from "../../src/model/selected-output-share.ts";
 import { projectNativeRetainedOutput } from "../../src/model/native-retained-output.ts";
+import { readSelectedOutputShareSourceMedia } from "../../src/selected-output-share-media-client.ts";
+import { syntheticMediaFixtures } from "./media-fixtures.mjs";
 
 const $ = selector => document.querySelector(selector);
-const counts = { availability: 0, list: 0, prepare: 0, commit: 0, revoke: 0, recipient: 0, forbidden: 0 };
-const records = new Map(), intents = new Map(), held = [], events = [];
+const counts = { availability: 0, list: 0, prepare: 0, commit: 0, revoke: 0, recipient: 0, sourceFile: 0, recipientFile: 0, fileBytes: 0, fileAborts: 0,
+  fileCancels: 0, embeddedTextureReads: 0, objectUrlsCreated: 0, objectUrlsRevoked: 0, downloads: 0, mediaPlays: 0, forbidden: 0 };
+const records = new Map(), intents = new Map(), held = [], events = [], objectUrls = new Map();
+const mediaFixtures = await syntheticMediaFixtures();
 const realDateNow = Date.now.bind(Date), realPerformanceNow = performance.now.bind(performance);
 let wallOffset = 0, elapsedOffset = 0, generation = 0, sequence = 0, sourceName = "A", sourceController;
 let source, publisher, recipient, latestToken = "", available = false;
@@ -18,14 +22,23 @@ Date.now = () => realDateNow() + wallOffset;
 Object.defineProperty(performance, "now", { configurable: true, value: () => realPerformanceNow() + elapsedOffset });
 const iso = value => new Date(value).toISOString();
 const outputKind = () => $("#fixture-kind").value;
-const currentSelection = () => Object.freeze({ output: outputKind(), documentId: `fixture-document-${sourceName}`,
-  artifactId: `fixture-artifact-${sourceName}-${outputKind()}`, revision: 1, contentSha256: (sourceName === "A" ? "a" : "b").repeat(64) });
+const currentSelection = () => {
+  const media = mediaFixtures.get(outputKind());
+  return Object.freeze({ output: outputKind(), documentId: `fixture-document-${sourceName}`,
+    artifactId: `fixture-artifact-${sourceName}-${outputKind()}`, revision: media ? 0 : 1,
+    contentSha256: (sourceName === "A" ? "a" : "b").repeat(64),
+    ...(media ? { mediaSha256: media.descriptor.sha256, policy: media.policy,
+      projectionPolicy: SELECTED_OUTPUT_SHARE_MEDIA_PROJECTION_POLICY } : {}) });
+};
+const sourcePath = selection => `/api/media/${encodeURIComponent(`synthetic-fixture/${selection.documentId}/${selection.artifactId}`)}`;
 const sameSelection = (left, right) => JSON.stringify(left) === JSON.stringify(right);
 function receipt(message) {
   if (message) events.push(message);
   $("#fixture-status").textContent = `${available ? "Synthetic creation enabled" : "Creation disabled"} · Source ${sourceName} · ${outputKind()} · ${counts.forbidden} forbidden requests · ${held.length} held replies`;
   $("#fixture-receipt").textContent = JSON.stringify({ syntheticOnly: true, serverActivation: false, source: sourceName,
     kind: outputKind(), generation, creationAvailable: available, counts, held: held.length,
+    activeObjectUrls: objectUrls.size,
+    mediaQualification: [...mediaFixtures.values()].map(({ descriptor, policy }) => ({ ...descriptor, policy })),
     wallOffsetMs: wallOffset, elapsedOffsetMs: elapsedOffset, issued: [...records.values()].filter(record => record.issued && !record.revoked).length,
     events: events.slice(-25) }, null, 2);
 }
@@ -66,7 +79,10 @@ function nativeDto(selection) {
   return projectNativeRetainedOutput({ output, selection: identity }, raw, base.expiresAt);
 }
 async function newRecord(selection, review, intentKey) {
-  const candidate = await projectSelectedOutputShareCandidate(selection, nativeDto(selection), review);
+  const media = mediaFixtures.get(selection.output);
+  const candidate = media ? await projectSelectedOutputShareMediaCandidate(selection, {
+    descriptor: media.descriptor, sourceExpiresAt: iso(Date.now() + 86_400_000), disclosure: media.disclosure,
+  }, review) : await projectSelectedOutputShareCandidate(selection, nativeDto(selection), review);
   if (!candidate) throw new Error("The real pure projector rejected the synthetic fixture");
   const id = `fixture-candidate-${++sequence}`;
   const record = { id, candidate, intentKey, issued: false, revoked: false, token: "", issuedAt: "" };
@@ -89,11 +105,59 @@ async function maybeHold(operation, response) {
   return response;
 }
 
+// Observe real object-URL creation and disposal; keep the platform behavior.
+// No global handle exposes fixture bytes or synthetic ownership as authority.
+const createObjectURL = URL.createObjectURL.bind(URL), revokeObjectURL = URL.revokeObjectURL.bind(URL);
+URL.createObjectURL = blob => { const value = createObjectURL(blob); objectUrls.set(value, blob); ++counts.objectUrlsCreated; receipt(); return value; };
+URL.revokeObjectURL = value => { if (objectUrls.delete(value)) ++counts.objectUrlsRevoked; revokeObjectURL(value); receipt(); };
+
+function fileResponse(request, media, publicFile) {
+  const mode = $("#fixture-response").value, changed = ["file-hash", "file-mime", "file-length", "file-filename"].includes(mode);
+  if (changed) $("#fixture-response").value = "normal";
+  const bytes = media.bytes.slice();
+  if (mode === "file-hash") bytes[bytes.length - 1] ^= 1;
+  const filename = media.descriptor.kind === "audio" ? "forma-audio.wav" : media.descriptor.kind === "video" ? "forma-video.mp4" : "forma-3d.glb";
+  const headers = { "content-type": mode === "file-mime" ? "application/octet-stream" : media.descriptor.mimeType,
+    "content-length": String(bytes.length + (mode === "file-length" ? 1 : 0)), "cache-control": "private, no-store",
+    "x-content-type-options": "nosniff", "referrer-policy": "no-referrer",
+    ...(publicFile ? { "content-disposition": `attachment; filename="${mode === "file-filename" ? "wrong-file.bin" : filename}"` } : {}) };
+  // A held body exposes cancellation and late completion without a network.
+  // It intentionally does not release itself on abort, so tests can prove the
+  // product rejects and disposes late data after source/token/expiry changes.
+  const hold = mode === (publicFile ? "recipient-file" : "source-file");
+  if (hold) $("#fixture-response").value = "normal";
+  let cancelled = false;
+  const body = new ReadableStream({ start(controller) {
+    const release = () => {
+      if (cancelled) { bytes.fill(0); receipt("Held synthetic file was cancelled; no late bytes delivered"); return; }
+      counts.fileBytes += bytes.length; controller.enqueue(bytes); controller.close(); receipt("Synthetic exact file body delivered");
+    };
+    if (hold) { held.push(release); receipt(`Holding ${publicFile ? "recipient" : "source"} file body`); }
+    else release();
+  }, cancel() { cancelled = true; bytes.fill(0); ++counts.fileCancels; receipt("Synthetic file body cancelled"); } });
+  request.signal.addEventListener("abort", () => { ++counts.fileAborts; receipt("Synthetic file request aborted"); }, { once: true });
+  const response = new Response(body, { status: 200, headers });
+  Object.defineProperty(response, "url", { value: request.url });
+  if (changed) receipt(`Synthetic file ${mode.slice(5)} mismatch supplied`);
+  return response;
+}
+
 // No fallback to real fetch exists. Static ES module/CSS loads remain Vite
 // resources, and CSP independently blocks external font/CSS/media requests.
 window.fetch = async (input, init) => {
   const request = new Request(new URL(typeof input === "string" ? input : input instanceof URL ? input.href : input.url, location.origin), init);
   const url = new URL(request.url), path = url.pathname;
+  if (url.protocol === "blob:") {
+    // The actual GLTFLoader's ImageBitmapLoader fetches its embedded PNG blob.
+    // Serve only a still-live Blob issued in this page, without real fetch or
+    // any HTTP fallback; revoked/unregistered/non-PNG URLs remain forbidden.
+    const blob = objectUrls.get(url.href);
+    if (url.origin !== location.origin || url.search || url.hash || request.method !== "GET"
+      || request.headers.has("range") || request.signal.aborted || !blob || blob.type !== "image/png") return forbidden(request);
+    ++counts.embeddedTextureReads; receipt("Actual GLTFLoader read one owned synthetic embedded PNG blob");
+    const response = new Response(blob, { headers: { "content-type": blob.type, "content-length": String(blob.size) } });
+    Object.defineProperty(response, "url", { value: request.url }); return response;
+  }
   if (url.origin !== location.origin || url.hash) return forbidden(request);
   if (path === "/api/selected-output-shares/availability" && request.method === "GET" && !url.search) {
     ++counts.availability; receipt(); return json(request, { creationAvailable: available });
@@ -113,7 +177,7 @@ window.fetch = async (input, init) => {
     ++counts.prepare; const body = await request.json();
     if (!exact(body, ["intentKey", "selection", "review"]) || typeof body.intentKey !== "string"
       || !exact(body.review, ["title", "expiresAt"])) return forbidden(request);
-    const selection = parseSelectedOutputShareSelection(body.selection);
+    const selection = parseSelectedOutputShareAnySelection(body.selection);
     if (!available || !selection || !source || source.signal.aborted || !sameSelection(selection, source.selection)) return json(request, { error: "unavailable" }, 409);
     const previous = intents.get(body.intentKey), record = previous ?? await newRecord(selection, body.review, body.intentKey);
     if (record.revoked || record.issued || !sameSelection(record.candidate.selection, selection)
@@ -127,7 +191,7 @@ window.fetch = async (input, init) => {
     const record = records.get(body.candidateId);
     if (!available || !record || record.revoked || !source || source.signal.aborted
       || !sameSelection(record.candidate.selection, source.selection) || Date.parse(record.candidate.publicOutput.expiresAt) <= Date.now()
-      || !parseSelectedOutputShareApproval(body.approval, record.candidate)) return json(request, { error: "unavailable" }, 409);
+      || !parseSelectedOutputShareAnyApproval(body.approval, record.candidate)) return json(request, { error: "unavailable" }, 409);
     const result = issue(record); receipt("Synthetic publication approved; in-memory token only");
     return maybeHold("commit", json(request, result));
   }
@@ -135,6 +199,20 @@ window.fetch = async (input, init) => {
   if (revoke && request.method === "DELETE" && !url.search) {
     ++counts.revoke; const record = records.get(revoke[1]); if (record) record.revoked = true;
     receipt("Synthetic link revoked"); return json(request, { ok: true });
+  }
+  const file = path.match(/^\/api\/selected-output-shared\/([A-Za-z0-9_-]{32})\/file$/u);
+  if (file && request.method === "GET" && !url.search && !request.headers.has("range")) {
+    ++counts.recipientFile;
+    const record = [...records.values()].find(value => value.token === file[1] && value.issued && !value.revoked);
+    const media = record && mediaFixtures.get(record.candidate.selection.output);
+    receipt(); return record && media && Date.parse(record.candidate.publicOutput.expiresAt) > Date.now()
+      ? fileResponse(request, media, true) : json(request, { error: "unavailable" }, 404);
+  }
+  if (path.startsWith("/api/media/") && request.method === "GET" && !url.search && !request.headers.has("range")) {
+    ++counts.sourceFile;
+    const media = source && mediaFixtures.get(source.selection.output);
+    if (!source || source.signal.aborted || !source.isCurrent() || path !== sourcePath(source.selection) || !media) return forbidden(request);
+    receipt(); return fileResponse(request, media, false);
   }
   const read = path.match(/^\/api\/selected-output-shared\/([A-Za-z0-9_-]{32})$/u);
   if (read && request.method === "GET" && !url.search) {
@@ -158,8 +236,18 @@ $("#fixture-publisher").append(publisher); $("#fixture-recipient").append(recipi
 function renewSource(name = sourceName) {
   sourceController?.abort(); sourceName = name; const epoch = ++generation;
   sourceController = new AbortController();
-  source = Object.freeze({ selection: currentSelection(), signal: sourceController.signal,
-    isCurrent: () => generation === epoch && !sourceController.signal.aborted });
+  const selection = currentSelection(), controller = sourceController;
+  const isCurrent = () => generation === epoch && !controller.signal.aborted;
+  const media = mediaFixtures.get(selection.output);
+  source = Object.freeze({ selection, signal: controller.signal, isCurrent,
+    ...(media ? { readMedia: (output, controls) => {
+      if (!isCurrent() || output.output !== selection.output || output.content.media.sha256 !== selection.mediaSha256
+        || JSON.stringify(output.content.media) !== JSON.stringify(media.descriptor)) throw new Error("Synthetic source selection mismatch");
+      return readSelectedOutputShareSourceMedia(output, { url: sourcePath(selection), mimeType: media.descriptor.mimeType,
+        byteLength: media.descriptor.byteLength, sha256: media.descriptor.sha256 }, {
+        signal: controls.signal, isCurrent: () => isCurrent() && controls.isCurrent(), origin: location.origin,
+      });
+    } } : {}) });
   publisher.enabled = true; publisher.source = source;
   receipt(`Fresh synthetic source ${sourceName}, lifetime ${generation}`);
 }
@@ -190,8 +278,11 @@ function openRecipient(value = latestToken) {
   receipt(value ? "Opened exact synthetic recipient token" : "No synthetic token exists");
 }
 $("#fixture-show-recipient").addEventListener("click", () => openRecipient());
+$("#fixture-clear-recipient").addEventListener("click", () => { recipient.token = ""; receipt("Recipient token cleared; file/player/viewer must retire"); });
+document.addEventListener("play", event => { if (event.target instanceof HTMLMediaElement) { ++counts.mediaPlays; receipt("Native media playback gesture observed"); } }, true);
 document.addEventListener("click", event => {
   const anchor = event.target.closest?.("a[href]"); if (!anchor) return;
+  if (anchor.hasAttribute("download") && anchor.href.startsWith("blob:")) { ++counts.downloads; receipt(`Explicit synthetic download: ${anchor.download}`); }
   const url = new URL(anchor.href); const match = url.pathname.match(/^\/share\/output\/([A-Za-z0-9_-]{32})$/u);
   if (url.origin === location.origin && match) { event.preventDefault(); openRecipient(match[1]); }
 });
@@ -208,4 +299,4 @@ $("#fixture-clock-reset").addEventListener("click", () => {
 });
 const initialToken = location.pathname.match(/^\/share\/output\/([A-Za-z0-9_-]{32})\/?$/u)?.[1];
 if (initialToken) openRecipient(initialToken);
-receipt("Ready: actual native components, closed default capability, strict synthetic API transport");
+receipt("Ready: actual components, qualified synthetic bytes only, closed default capability, strict synthetic transport");

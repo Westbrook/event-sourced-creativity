@@ -4,7 +4,7 @@ import test from "node:test";
 import ts from "typescript";
 import * as lit from "lit";
 import { selectedOutputShareCopy } from "../src/components/selected-output-share-messages.ts";
-import { projectSelectedOutputShareCandidate } from "../src/model/selected-output-share.ts";
+import { projectSelectedOutputShareCandidate, projectSelectedOutputShareMediaCandidate } from "../src/model/selected-output-share.ts";
 
 // Actual complete review component, client and content/slide renderers, synthetic HTTP streams,
 // and the existing finite native DOM ports. This is not browser, physical-device,
@@ -63,6 +63,15 @@ const rawText = node => node.children.map(child => typeof child === "string" ? c
 const visibleText = node => node.hiddenBy ? "" : node.children.map(child => typeof child === "string" ? child : visibleText(child)).join("");
 const metadata = (id = "candidate-a") => ({ shareId: id, title: "An existing link", output: "scene", revision: 2, expiresAt: iso(NOW - 60_000), issuedAt: iso(NOW - 120_000) });
 async function candidate(selection, review) {
+  if (selection.projectionPolicy) {
+    const output = selection.output;
+    const descriptor = { kind: output, mimeType: output === "audio" ? "audio/wav" : output === "video" ? "video/mp4" : "model/gltf-binary",
+      sha256: selection.mediaSha256, byteLength: output === "audio" ? 8044 : 408,
+      ...(output === "audio" ? { sampleRate: 8000, channels: 1, sampleCount: 4000, durationSeconds: 0.5, durationBasis: "pcm-samples" }
+        : output === "video" ? { width: 16, height: 16, durationSeconds: 1 } : {}) };
+    return projectSelectedOutputShareMediaCandidate(selection, { descriptor, sourceExpiresAt: iso(NOW + 7 * 86_400_000),
+      disclosure: output === "audio" ? { watermark: "not-declared" } : output === "video" ? { encoderDeclaration: "x264-163-r3060" } : {} }, review, NOW);
+  }
   const { output, ...nativeSelection } = selection;
   const projected = await projectSelectedOutputShareCandidate(selection, { schemaVersion: 1, kind: "native-retained-output", output,
     selection: nativeSelection, title: "PRIVATE title never used", expiresAt: iso(NOW + 7 * 86_400_000),
@@ -76,7 +85,7 @@ function response(url, value) {
   Object.defineProperty(result, "url", { value: String(url) });
   return result;
 }
-let mountCommit;
+let mountCommit, mediaMount;
 async function loadComponent() {
   const source = fs.readFileSync(new URL(COMPONENT, ROOT), "utf8"), dependencies = new Map();
   const tree = ts.createSourceFile(COMPONENT, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
@@ -90,6 +99,10 @@ async function loadComponent() {
     }
     if (!node.importClause || node.importClause.isTypeOnly) continue;
     if (name === "lit") dependencies.set(name, { ...lit, render: (...args) => mountCommit(...args) });
+    // The imperative file leaf has its own actual-DOM/reader tests. This finite
+    // port verifies the publisher's owner, original expiry and readiness wiring;
+    // it does not claim file verification, playback or GLB/browser evidence.
+    else if (name === "./selected-output-share-media-view.ts") dependencies.set(name, { mountSelectedOutputShareMedia: (...args) => mediaMount(...args) });
     else if (/\/presentational-element(?:\.ts)?$/u.test(name)) dependencies.set(name, { FormaPresentationalElement: ports.ElementPort });
     else if (name.startsWith(".")) {
       const target = new URL(name.endsWith(".ts") ? name : name + ".ts", new URL(COMPONENT, ROOT));
@@ -106,9 +119,9 @@ async function loadComponent() {
 const ShareReview = await loadComponent();
 const { PresentationSlide } = await ports.loadActual("src/components/presentation-slide.ts");
 
-function fixture(t, { enabled = true, available = true, reply, shares = [], cursor = null, locale = "en" } = {}) {
-  let now = NOW, monotonic = 0, localeCallback, clock = 0, current = true;
-  const requests = [], commits = [], clipboard = [], focusCalls = [], timers = new Map(), frames = new Map(), outputs = new Map();
+function fixture(t, { enabled = true, available = true, reply, shares = [], cursor = null, locale = "en", selection = SELECTION, readMedia } = {}) {
+  let now = NOW, monotonic = 0, localeCallback, clock = 0, current = true, candidateSequence = 0, mediaMountNode = null;
+  const requests = [], commits = [], clipboard = [], focusCalls = [], mediaViews = [], timers = new Map(), frames = new Map(), outputs = new Map();
   const base = () => ({ locale, trace: [], listeners: new Map(), changed: new Map(), requested: false,
     timers, frames, resizeTargets: new Map(), storage: new Map(), tick: async () => true });
   const f = base(), preview = base(), link = base();
@@ -129,7 +142,8 @@ function fixture(t, { enabled = true, available = true, reply, shares = [], curs
     if (path.endsWith("/availability")) return response(url, { creationAvailable: available });
     if (path.endsWith("/prepare")) {
       const { selection, review } = JSON.parse(init.body);
-      return response(url, { candidateId: "candidate-a", candidate: await candidate(selection, review), replayed: false });
+      return response(url, { candidateId: selection.projectionPolicy ? `candidate-${String.fromCharCode(97 + candidateSequence++)}` : "candidate-a",
+        candidate: await candidate(selection, review), replayed: false });
     }
     if (path.endsWith("/commit")) return response(url, { share: { shareId: "candidate-a", expiresAt: iso(NOW + 3_600_000), active: true, token: TOKEN }, replayed: false });
     if (init.method === "DELETE") { shares = shares.filter(share => share.shareId !== decodeURIComponent(path.split("/").at(-1))); cursor = null; return response(url, { ok: true }); }
@@ -150,6 +164,20 @@ function fixture(t, { enabled = true, available = true, reply, shares = [], curs
     const name = Object.hasOwn(mount.attributes, "data-selected-output-review-mount") ? "data-selected-output-review-mount" : "data-selected-output-link-mount";
     assert.ok(Object.hasOwn(mount.attributes, name));
     outputs.set(name, value); commits.push({ value, mount }); drawMount(name.includes("review") ? preview : link);
+    if (name.includes("review")) {
+      const emitted = preview.renderer.nodes.find(node => Object.hasOwn(node.attributes, "data-selected-output-media-mount"));
+      // General tree ports reconstruct native nodes on every observation. This
+      // one explicit Lit child-part port models the stable emitted empty media
+      // mount, and drops identity when that part is withdrawn. Actual DOM/locale
+      // persistence is independently exercised in the browser fixture.
+      mediaMountNode = emitted ? mediaMountNode ?? emitted : null;
+      mount.querySelector = selector => selector === "[data-selected-output-media-mount]" ? mediaMountNode : null;
+    }
+  };
+  mediaMount = (host, output, controls) => {
+    const view = { host, output, controls, refreshes: [], disposed: false,
+      refresh(locale) { this.refreshes.push(locale.locale); }, dispose() { this.disposed = true; } };
+    mediaViews.push(view); return view;
   };
   ports.bindFixture(f); f.host = new ShareReview(); f.host.tag = "forma-selected-output-share-review"; f.host.attributes = {};
   assert.equal(f.host.enabled, false, "host creation clamp defaults closed");
@@ -176,7 +204,7 @@ function fixture(t, { enabled = true, available = true, reply, shares = [], curs
     assert.ok(predicate(), "bounded synthetic component observation settled");
   };
   const sourceAbort = new AbortController();
-  const source = { selection: SELECTION, signal: sourceAbort.signal, isCurrent: () => current };
+  const source = { selection, signal: sourceAbort.signal, isCurrent: () => current, ...(readMedia ? { readMedia } : {}) };
   f.host.source = source; f.host.enabled = enabled;
   assert.equal(requests.length, 0, "property assignment cannot start transport before connection");
   f.host.isConnected = true; f.host.connectedCallback(); draw();
@@ -188,11 +216,11 @@ function fixture(t, { enabled = true, available = true, reply, shares = [], curs
     await settle();
   };
   t.after(() => {
-    ports.bindFixture(f); f.host.isConnected = false; f.host.disconnectedCallback(); f.i18n.hostDisconnected(); ports.bindFixture(null); mountCommit = undefined;
+    ports.bindFixture(f); f.host.isConnected = false; f.host.disconnectedCallback(); f.i18n.hostDisconnected(); ports.bindFixture(null); mountCommit = mediaMount = undefined;
     if (oldLocation) Object.defineProperty(ports.documentPort, "location", oldLocation); else delete ports.documentPort.location;
     if (oldNavigator) Object.defineProperty(ports.windowPort, "navigator", oldNavigator); else delete ports.windowPort.navigator;
   });
-  return { f, source, sourceAbort, requests, commits, clipboard, focusCalls, outputs, draw, settle, nodes, text, find, act,
+  return { f, source, sourceAbort, requests, commits, clipboard, focusCalls, mediaViews, outputs, draw, settle, nodes, text, find, act,
     async open() { await settle(); const entry = nodes("button").find(node => Object.hasOwn(node.attributes, "data-selected-output-share-open")); assert.ok(entry, "a current creation or management entry is visible"); await act(entry); },
     async edit(name, value) { const node = nodes("input").find(item => item.attributes.name === name); assert.ok(node); node.port.name = name; node.port.value = value; await act(node, "input"); },
     async fill(title = "An explicit title") { await this.edit("share-title", title); await this.edit("share-expiry", localDate(NOW + 3_600_000)); },
@@ -244,6 +272,72 @@ test("empty title and expiry require deliberate review then separate exact publi
   await f.act(f.find("button", "Copy link"));
   assert.deepEqual(f.clipboard, ["https://fixture.invalid/share/output/" + TOKEN]);
   assert.equal(f.requests.filter(item => item.init.method === "POST").length, 2);
+});
+
+const mediaSelection = output => ({ ...SELECTION, output, mediaSha256: "b".repeat(64),
+  policy: output === "audio" ? "selected-output-share-audio-v1" : output === "video" ? "selected-output-share-avc-mp4-x264-163-r3060-v1" : "selected-output-share-glb-png-textures-v1",
+  projectionPolicy: "selected-output-media-exact-bytes-v1" });
+for (const output of ["audio", "video", "model3d"]) test(`${output}: file review is explicit, locale-stable and required before separate publication`, async t => {
+  let reads = 0;
+  const readMedia = () => { ++reads; throw new Error("This component ownership port must never initiate a media read"); };
+  const f = fixture(t, { selection: mediaSelection(output), readMedia });
+  await f.open(); await f.fill("Reviewed <script>literal</script> 日本語 العربية");
+  await f.act(f.find("button", "Review"));
+  assert.equal(f.mediaViews.length, 1); assert.equal(reads, 0, "mounting cannot read media");
+  const view = f.mediaViews[0];
+  assert.equal(view.controls.readMedia, readMedia); assert.equal(view.controls.isCurrent(), true);
+  assert.equal(view.output.output, output); assert.equal(view.output.content.media.sha256, "b".repeat(64));
+  assert.equal(view.output.title, "Reviewed <script>literal</script> 日本語 العربية");
+  assert.match(f.text(), /Reviewed <script>literal<\/script>/u);
+  assert.doesNotMatch(f.text(), /bbbbbbbb|document-a|artifact-a|candidateSha256/u);
+  assert.equal(f.nodes("audio").length + f.nodes("video").length + f.nodes("a").length, 0);
+  assert.equal(Object.hasOwn(f.find("button", "Publish link").attributes, "disabled"), true);
+  await f.find("button", "Publish link").handlers.click(); await f.settle();
+  assert.equal(f.requests.filter(item => String(item.url).endsWith("/commit")).length, 0, "programmatic click also preserves readiness guard");
+  for (const locale of ["fr", "ja", "ar", "en"]) f.locale(locale);
+  assert.equal(f.mediaViews.length, 1, "locale-only render preserves mounted file preview");
+  assert.ok(view.refreshes.includes("ar")); assert.equal(reads, 0);
+  view.controls.onReady(true); await f.settle();
+  view.controls.onReady(false); await f.settle();
+  assert.equal(Object.hasOwn(f.find("button", "Publish link").attributes, "disabled"), true, "losing the held file clears readiness");
+  await f.find("button", "Publish link").handlers.click(); await f.settle();
+  assert.equal(f.requests.filter(item => String(item.url).endsWith("/commit")).length, 0);
+  view.controls.onReady(true); await f.settle();
+  await f.act(f.find("button", "Publish link"));
+  assert.equal(f.requests.filter(item => String(item.url).endsWith("/commit")).length, 1);
+  assert.equal(view.disposed, true); assert.equal(view.controls.signal.aborted, true); assert.equal(view.controls.isCurrent(), false);
+});
+
+test("media preview retires on input edits and late readiness cannot approve a replacement", async t => {
+  const f = fixture(t, { selection: mediaSelection("audio"), readMedia: async () => { throw new Error("No automatic read"); } });
+  await f.open(); await f.fill(); await f.act(f.find("button", "Review"));
+  const original = f.mediaViews[0];
+  await f.edit("share-title", "Replacement");
+  assert.equal(original.disposed, true); assert.equal(original.controls.signal.aborted, true);
+  await f.act(f.find("button", "Review"));
+  original.controls.onReady(true); await f.settle();
+  assert.equal(f.mediaViews.length, 2); assert.equal(Object.hasOwn(f.find("button", "Publish link").attributes, "disabled"), true);
+  f.sourceAbort.abort();
+  assert.equal(f.mediaViews[1].disposed, true); assert.equal(f.mediaViews[1].controls.isCurrent(), false);
+});
+
+test("media review uses original monotonic expiry across locale changes and wall-clock rollback", async t => {
+  const f = fixture(t, { selection: mediaSelection("model3d"), readMedia: async () => { throw new Error("No automatic read"); } });
+  await f.open(); await f.fill(); await f.act(f.find("button", "Review"));
+  const view = f.mediaViews[0]; view.controls.onReady(true); await f.settle(); f.locale("ar");
+  f.clocks(NOW - 86_400_000, 3_600_001); await f.settle();
+  assert.equal(view.disposed, true); assert.equal(view.controls.isCurrent(), false); assert.equal(view.controls.signal.aborted, true);
+  assert.equal(f.nodes("button").some(node => rawText(node) === selectedOutputShareCopy("ar").publishLink), false);
+  assert.equal(f.requests.filter(item => String(item.url).endsWith("/commit")).length, 0);
+});
+
+test("changing the trusted media reader within a lease retires the old source", async t => {
+  const f = fixture(t, { selection: mediaSelection("video"), readMedia: async () => { throw new Error("No automatic read"); } });
+  await f.open(); await f.fill(); await f.act(f.find("button", "Review"));
+  const view = f.mediaViews[0];
+  f.source.readMedia = async () => { throw new Error("Changed port"); }; f.draw();
+  assert.equal(view.disposed, true); assert.equal(view.controls.isCurrent(), false);
+  assert.equal(f.nodes("button").length, 0, "changed authority port cannot leave a sharing entry behind");
 });
 
 test("four saved locales preserve authored inputs and active composition without requests or publication", async t => {

@@ -54,7 +54,11 @@ import { outputAvailabilityMessage, outputSourceCapacityMessage } from "../exper
 import { FORMA_OUTPUT_DELIVERY_RUNTIME_MESSAGES } from "./design-system/locales/output-delivery-runtime-messages.ts";
 import { captureExperienceNativeResult, type ExperienceResultCandidate } from "../experiences/native-result-association.ts";
 import "../experiences/host.css";
-import { parseSelectedOutputShareSelection } from "../model/selected-output-share.ts";
+import { parseSelectedOutputShareSelection, parseSelectedOutputShareMediaRequestSelection,
+  SELECTED_OUTPUT_SHARE_MEDIA_PROJECTION_POLICY } from "../model/selected-output-share.ts";
+import { SELECTED_OUTPUT_SHARE_VIDEO_X264_POLICY } from "../model/selected-output-share-video.ts";
+import { SELECTED_OUTPUT_SHARE_MODEL3D_TEXTURE_POLICY } from "../model/selected-output-share-model3d.ts";
+import { readSelectedOutputShareSourceMedia, type SelectedOutputShareReadMedia } from "../selected-output-share-media-client.ts";
 import type { SelectedOutputShareLease } from "../selected-output-share-client.ts";
 import "./forma-selected-output-share-review.ts";
 
@@ -147,24 +151,73 @@ export class FormaExperienceHost extends FormaElement {
     this.#shareAbort?.abort(); this.#shareAbort = undefined;
     this.#shareSource = undefined; this.#shareResult = undefined;
   }
+  #selectedShareMedia(result: Result) {
+    if (result.output !== "video" && result.output !== "model3d") return null;
+    const native = result.output === "video" ? result.video : result.model3d;
+    if (!native || native.selection.revision !== 0) return null;
+    let media: Readonly<{ url: string; mimeType: string; sha256: string; byteLength: number }>;
+    if (result.output === "video" && result.candidate.output === "video") {
+      const receipt = result.candidate.video.receipt.media, output = result.video.content;
+      if (result.candidate.video.contentSha256 !== native.selection.contentSha256
+        || receipt.mediaUrl !== result.candidate.mediaUrl || output.primaryMedia?.url !== receipt.mediaUrl
+        || output.primaryMedia.mediaType !== "video/mp4" || output.clips.length !== 1
+        || output.clips[0]?.media?.url !== receipt.mediaUrl || output.clips[0]?.media?.mediaType !== "video/mp4") return null;
+      media = Object.freeze({ url: receipt.mediaUrl, mimeType: "video/mp4", sha256: receipt.sha256, byteLength: receipt.byteLength });
+    } else if (result.output === "model3d" && result.candidate.output === "model3d") {
+      const file = result.model3d.content.files[0], receipt = result.candidate.model3d.receipt;
+      if (!file || file.url !== result.candidate.mediaUrl || file.role !== "mesh" || file.format !== "glb"
+        || file.mimeType !== "model/gltf-binary" || file.previewSupported === false
+        || file.sha256 !== receipt.primarySha256 || file.fileSize !== receipt.primaryByteLength) return null;
+      media = Object.freeze({ url: file.url, mimeType: file.mimeType, sha256: file.sha256, byteLength: file.fileSize });
+    } else return null;
+    if (!Number.isSafeInteger(media.byteLength) || media.byteLength < 1) return null;
+    // These are the explicitly offered profiles. A refusal never retries a
+    // broader profile, converts bytes, or discovers a different media source.
+    const selection = parseSelectedOutputShareMediaRequestSelection({ output: result.output,
+      documentId: native.selection.documentId, artifactId: native.selection.artifactId,
+      revision: native.selection.revision, contentSha256: native.selection.contentSha256, mediaSha256: media.sha256,
+      policy: result.output === "video" ? SELECTED_OUTPUT_SHARE_VIDEO_X264_POLICY : SELECTED_OUTPUT_SHARE_MODEL3D_TEXTURE_POLICY,
+      projectionPolicy: SELECTED_OUTPUT_SHARE_MEDIA_PROJECTION_POLICY });
+    return selection ? Object.freeze({ selection, media }) : null;
+  }
   #selectedShareSource(result: Result | undefined, binding: Binding | undefined): SelectedOutputShareLease | null {
-    if (!result || !binding || !["short_story", "scene", "slides"].includes(result.output)
+    if (!result || !binding || !["short_story", "scene", "slides", "video", "model3d"].includes(result.output)
       || this.#result !== result || this.#binding !== binding || this.#busy || this.#loading
       || !this.#visible(binding) || !result.current()) { this.#retireSelectedShare(); return null; }
-    if (this.#shareSource && this.#shareResult === result) return this.#shareSource;
+    if (this.#shareSource && this.#shareResult === result) {
+      if (this.#shareSource.isCurrent()) return this.#shareSource;
+      this.#retireSelectedShare(); return null;
+    }
     this.#retireSelectedShare();
     if (this.#shareRetiredResults.has(result)) return null;
     const native = result.output === "short_story" ? result.story.selection : result.output === "scene" ? result.scene.content.selection
       : result.output === "slides" ? result.slides.selection : null;
-    const selection = native && parseSelectedOutputShareSelection({ output: result.output, documentId: native.documentId,
-      artifactId: native.artifactId, revision: native.revision, contentSha256: native.contentSha256 });
+    const media = this.#selectedShareMedia(result);
+    const selection = media?.selection ?? (native && parseSelectedOutputShareSelection({ output: result.output, documentId: native.documentId,
+      artifactId: native.artifactId, revision: native.revision, contentSha256: native.contentSha256 }));
     if (!selection || selection.documentId !== binding.plan.documentId || !("artifactId" in result.candidate)
       || selection.artifactId !== result.candidate.artifactId) return null;
     const abort = new AbortController();
+    const mediaIdentity = media ? JSON.stringify(media) : null;
     const isCurrent = () => this.#shareAbort === abort && !abort.signal.aborted && this.#shareResult === result
-      && this.#result === result && this.#binding === binding && !this.#busy && !this.#loading && this.#visible(binding) && result.current();
+      && this.#result === result && this.#binding === binding && !this.#busy && !this.#loading && this.#visible(binding) && result.current()
+      && (mediaIdentity === null || JSON.stringify(this.#selectedShareMedia(result)) === mediaIdentity);
+    const origin = media ? this.ownerDocument.location.origin : null;
+    const readMedia: SelectedOutputShareReadMedia | undefined = media && origin ? async (output, controls) => {
+      const reader = new AbortController(), retire = () => reader.abort();
+      abort.signal.addEventListener("abort", retire, { once: true });
+      controls.signal.addEventListener("abort", retire, { once: true });
+      const current = () => !reader.signal.aborted && !controls.signal.aborted && isCurrent() && controls.isCurrent()
+        && this.ownerDocument.location.origin === origin && output.output === selection.output;
+      try {
+        if (!current()) throw new Error("selected_output_share_unavailable");
+        return await readSelectedOutputShareSourceMedia(output, media.media, { origin, signal: reader.signal, isCurrent: current });
+      } finally {
+        abort.signal.removeEventListener("abort", retire); controls.signal.removeEventListener("abort", retire);
+      }
+    } : undefined;
     this.#shareAbort = abort; this.#shareResult = result;
-    return this.#shareSource = Object.freeze({ selection, signal: abort.signal, isCurrent });
+    return this.#shareSource = Object.freeze({ selection, signal: abort.signal, isCurrent, ...(readMedia ? { readMedia } : {}) });
   }
   #resultReadStage?: ResultReadStage;
   #resultReadFailure?: ResultReadFailure;

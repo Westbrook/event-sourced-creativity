@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="referrer" content="no-referrer">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data: blob:; media-src blob:; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'">
   <link rel="icon" href="data:,">
   <title>Forma · Selected output synthetic fixture</title>
   <style>
@@ -28,12 +28,12 @@
     <aside class="fixture-qa" aria-label="Synthetic verification controls" translate="no" dir="ltr">
       <h1>Selected-output sharing · local synthetic fixture</h1>
       <p>These controls are test instrumentation. Creation starts disabled, matching the server constant. Enabling the mock does not activate production or grant real publication permission.</p>
-      <p>Only synthetic text and Slides are used. Shares exist in this page’s memory; there is no Worker, database, Store, provider, upload, invoice, or cross-tab persistence. External fonts are blocked; app styles use their system-font fallback.</p>
+      <p>Only synthetic text, Slides, PCM WAV, two black MP4 frames, and a textured triangle GLB are used. The actual format qualifiers run locally; this proves no private custody, publishing authority, live-provider acceptance, or physical-device behavior. Shares exist in this page’s memory; there is no Worker, database, Store, provider, upload, invoice, or cross-tab persistence. External fonts are blocked; app styles use their system-font fallback.</p>
       <div class="fixture-controls">
         <forma-ui-language-picker id="fixture-locale" label="Saved language"></forma-ui-language-picker>
-        <label>Output <select id="fixture-kind"><option value="short_story">Short story</option><option value="scene">Scene</option><option value="slides">Slides</option></select></label>
+        <label>Output <select id="fixture-kind"><option value="short_story">Short story</option><option value="scene">Scene</option><option value="slides">Slides</option><option value="audio">Audio · WAV</option><option value="video">Video · MP4</option><option value="model3d">3D · GLB</option></select></label>
         <label>Mock creation <select id="fixture-availability"><option value="false">Disabled · actual capability</option><option value="true">Enabled · synthetic test only</option></select></label>
-        <label>Next response <select id="fixture-response"><option value="normal">Normal</option><option value="prepare">Hold preparation reply</option><option value="commit">Hold publication reply</option><option value="lost-commit">Lose publication acknowledgement</option><option value="list-failure">Fail one metadata read</option></select></label>
+        <label>Next response <select id="fixture-response"><option value="normal">Normal</option><option value="prepare">Hold preparation reply</option><option value="commit">Hold publication reply</option><option value="lost-commit">Lose publication acknowledgement</option><option value="list-failure">Fail one metadata read</option><option value="source-file">Hold source file body</option><option value="recipient-file">Hold recipient file body</option><option value="file-hash">Mismatch file bytes</option><option value="file-mime">Mismatch file MIME</option><option value="file-length">Mismatch file length</option><option value="file-filename">Mismatch public filename</option></select></label>
         <button type="button" id="fixture-source-a">Source A</button>
         <button type="button" id="fixture-source-b">Source B</button>
         <button type="button" id="fixture-abort">Abort source</button>
@@ -41,6 +41,7 @@
         <button type="button" id="fixture-seed">Add synthetic existing link</button>
         <button type="button" id="fixture-expiry-input">Choose expiry +2 minutes</button>
         <button type="button" id="fixture-show-recipient">Open latest recipient</button>
+        <button type="button" id="fixture-clear-recipient">Clear recipient token</button>
         <button type="button" id="fixture-expire">Expire receipts</button>
         <button type="button" id="fixture-rollback">Expire elapsed time; roll clock back</button>
         <button type="button" id="fixture-clock-reset">Reset test clock</button>

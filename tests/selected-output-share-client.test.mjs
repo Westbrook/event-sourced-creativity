@@ -1,10 +1,15 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { createHash } from "node:crypto";
 import { registerOutputSourceImports } from "./output-server-test-helpers.mjs";
 
 const imports = registerOutputSourceImports();
 const { createSelectedOutputShareClient } = await import("../src/selected-output-share-client.ts");
-const { projectSelectedOutputShareCandidate } = await import("../src/model/selected-output-share.ts");
+const { projectSelectedOutputShareCandidate, projectSelectedOutputShareMediaCandidate,
+  SELECTED_OUTPUT_SHARE_MEDIA_PROJECTION_POLICY: projectionPolicy } = await import("../src/model/selected-output-share.ts");
+const { SELECTED_OUTPUT_SHARE_AUDIO_POLICY: audioPolicy } = await import("../src/model/selected-output-share-audio.ts");
+const { SELECTED_OUTPUT_SHARE_VIDEO_POLICY: videoPolicy, SELECTED_OUTPUT_SHARE_VIDEO_X264_POLICY: encoderPolicy } = await import("../src/model/selected-output-share-video.ts");
+const { SELECTED_OUTPUT_SHARE_MODEL3D_POLICY: modelPolicy, SELECTED_OUTPUT_SHARE_MODEL3D_TEXTURE_POLICY: texturePolicy } = await import("../src/model/selected-output-share-model3d.ts");
 imports.deregister();
 
 const origin = "https://forma.test", base = origin + "/api/selected-output-shares";
@@ -26,7 +31,27 @@ async function candidate(output = "short_story", choices = review()) {
   const value = await projectSelectedOutputShareCandidate(selected, native, choices); assert(value);
   return value;
 }
-function fixture(selected = selection("short_story")) {
+const profiles = [["audio", audioPolicy], ["video", videoPolicy], ["video", encoderPolicy], ["model3d", modelPolicy], ["model3d", texturePolicy]];
+const mediaSelection = (output, policy) => ({ ...selection(output), mediaSha256: "b".repeat(64), policy, projectionPolicy });
+// Declared fixture descriptors exercise the actual client/model boundary. They
+// are not proof of qualified bytes, custody, a live provider or permission.
+async function mediaCandidate(output = "audio", policy = audioPolicy, choices = review()) {
+  const selected = mediaSelection(output, policy), descriptor = { kind: output,
+    mimeType: output === "audio" ? "audio/wav" : output === "video" ? "video/mp4" : "model/gltf-binary",
+    sha256: selected.mediaSha256, byteLength: output === "audio" ? 8044 : output === "video" ? 782 : 408,
+    ...(output === "audio" ? { sampleRate: 8000, channels: 1, sampleCount: 4000, durationSeconds: 0.5, durationBasis: "pcm-samples" }
+      : output === "video" ? { width: 16, height: 16, durationSeconds: 1 } : {}) };
+  const value = await projectSelectedOutputShareMediaCandidate(selected, { descriptor,
+    sourceExpiresAt: new Date(Date.now() + 86400000).toISOString(),
+    disclosure: output === "audio" ? { watermark: "synthid-declared" }
+      : output === "video" ? { encoderDeclaration: policy === encoderPolicy ? "x264-163-r3060" : null } : {},
+  }, choices); assert(value); return value;
+}
+function rehash(value) {
+  const { candidateSha256: _digest, ...preimage } = value;
+  return { ...preimage, candidateSha256: createHash("sha256").update(JSON.stringify(preimage)).digest("hex") };
+}
+function fixture(selected = selection("short_story"), readMedia) {
   const controller = new AbortController(), calls = [], replies = []; let current = true;
   const fetcher = async (url, init) => {
     calls.push({ url, init });
@@ -35,7 +60,7 @@ function fixture(selected = selection("short_story")) {
     if (!Object.hasOwn(response, "url")) Object.defineProperty(response, "url", { value: url });
     return response;
   };
-  const lease = { selection: selected, signal: controller.signal, isCurrent: () => current };
+  const lease = { selection: selected, signal: controller.signal, isCurrent: () => current, ...(readMedia ? { readMedia } : {}) };
   const options = { origin, fetcher }, client = createSelectedOutputShareClient(lease, options);
   return { client, calls, replies, controller, lease, options, retire() { current = false; },
     json(value) { replies.push(Response.json(value)); },
@@ -64,6 +89,182 @@ test("actual model candidates for all three outputs retain exact reviewed data a
     }
     assert.equal(sent.init.headers["Content-Type"], "application/json");
   }
+});
+
+for (const [output, policy] of profiles) test(`media ${policy}: exact model candidate, private identity and explicit approval survive the client`, async () => {
+  const value = await mediaCandidate(output, policy), f = fixture(mediaSelection(output, policy)); await f.enable();
+  const result = await prepare(f, value);
+  assert.deepEqual(result, { candidateId: "candidate-1", candidate: value, replayed: false });
+  assert.equal(JSON.stringify(result.candidate), JSON.stringify(value), "canonical media digest input order survives decoding");
+  for (const item of [result, result.candidate, result.candidate.selection, result.candidate.mediaIdentity,
+    result.candidate.publicOutput, result.candidate.publicOutput.content, result.candidate.publicOutput.content.media,
+    result.candidate.publicOutput.content.disclosure]) assert(Object.isFrozen(item));
+  assert.notEqual(result.candidate.selection.contentSha256, result.candidate.mediaIdentity.sourceMediaSha256);
+  assert.deepEqual(JSON.parse(f.calls[1].init.body), { intentKey: "intent-1", selection: value.selection,
+    review: { title: value.publicOutput.title, expiresAt: value.publicOutput.expiresAt } });
+  const share = { shareId: result.candidateId, expiresAt: value.publicOutput.expiresAt, active: true, token: "A".repeat(32) };
+  f.json({ share, replayed: false }); assert.deepEqual(await f.client.commit(result.candidateId, result.candidate), { share, replayed: false });
+  assert.equal(f.calls[2].url, base + "/commit");
+  assert.deepEqual(JSON.parse(f.calls[2].init.body), { candidateId: result.candidateId,
+    approval: { purpose: "selected-output-read-v1", candidateSha256: value.candidateSha256, allowPublicRead: true } });
+  assert.equal(f.calls.length, 3, "candidate decoding performs no media fetch or provider call");
+});
+
+test("media identity is closed and cannot be silently repaired even with an attacker-recomputed candidate digest", async () => {
+  const original = await mediaCandidate();
+  for (const mutate of [
+    value => { delete value.mediaIdentity; }, value => { value.mediaIdentity.extra = true; },
+    ...["sourceMediaSha256", "publicMediaSha256", "qualificationPolicy", "projectionPolicy"].flatMap(key => [
+      value => { delete value.mediaIdentity[key]; }, value => { value.mediaIdentity[key] = "c".repeat(64); },
+    ]),
+    value => { value.selection.mediaSha256 = value.selection.contentSha256; },
+    value => { value.selection.policy = videoPolicy; }, value => { value.selection.projectionPolicy = "future-transform"; },
+    value => { value.publicOutput.content.media.sha256 = value.selection.contentSha256; },
+    value => { value.publicOutput.content.media.kind = "video"; },
+    value => { value.publicOutput.content.media.byteLength--; },
+    value => { value.publicOutput.content.media.mimeType = "audio/mpeg"; },
+    value => { value.publicOutput.content.disclosure.watermark = "verified"; },
+    value => { value.publicOutput.content.media.url = "/api/private-media"; },
+    value => { value.publicOutput.content.media.fileName = "Private filename.wav"; },
+    value => { value.publicOutput.content.media.bytes = [0, 1]; },
+    value => { value.publicOutput.content.disclosure.provider = "private"; },
+    value => { value.publicOutput.attribution = "Other"; },
+    value => { value.publicOutput.kind = "native-retained-output"; },
+    value => { value.publicOutput.schemaVersion = 2; },
+    value => { value.sourceExpiresAt = new Date(Date.parse(value.publicOutput.expiresAt) - 1).toISOString(); },
+    value => { value.sourceExpiresAt = "2000-01-01T00:00:00.000Z"; },
+    value => { value.sourceExpiresAt = value.sourceExpiresAt.replace(/\.\d{3}Z$/u, "Z"); },
+    value => { value.publicOutput.title = "Unreviewed title"; },
+    value => { value.publicOutput.expiresAt = new Date(Date.parse(value.publicOutput.expiresAt) - 1).toISOString(); },
+    value => { value.selection.documentId = "another-document"; },
+    value => { value.selection.revision++; }, value => { value.purpose = "selected-output-media-read-v1"; },
+    value => { value.bytes = [0, 1]; },
+  ]) {
+    const f = fixture(original.selection); await f.enable(); const changed = structuredClone(original); mutate(changed);
+    f.json({ candidateId: "candidate-1", candidate: rehash(changed), replayed: false });
+    await assert.rejects(f.client.prepare({ title: original.publicOutput.title, expiresAt: original.publicOutput.expiresAt }, "intent"), unavailable);
+    const count = f.calls.length; await assert.rejects(f.client.commit("candidate-1", original), unavailable); assert.equal(f.calls.length, count);
+  }
+});
+
+test("media profile policies and disclosures cannot be substituted or downgraded into text", async () => {
+  for (const [output, policy] of profiles) {
+    const original = await mediaCandidate(output, policy);
+    const changed = structuredClone(original);
+    if (output === "audio") changed.publicOutput.content.disclosure = {};
+    else if (output === "video") changed.publicOutput.content.disclosure.encoderDeclaration = policy === encoderPolicy ? null : "x264-163-r3060";
+    else changed.publicOutput.content.disclosure = { textures: true };
+    const f = fixture(original.selection); await f.enable(); f.json({ candidateId: "candidate-1", candidate: rehash(changed), replayed: false });
+    await assert.rejects(f.client.prepare({ title: original.publicOutput.title, expiresAt: original.publicOutput.expiresAt }, "intent"), unavailable);
+    await assert.rejects(prepare(f, await candidate()), unavailable);
+  }
+  for (const output of ["image", "storyboard", "short_story"]) {
+    assert.throws(() => fixture(mediaSelection(output, audioPolicy)), unavailable);
+  }
+  const f = fixture(); await f.enable(); const text = await candidate();
+  assert.deepEqual(Object.keys(text.publicOutput), ["schemaVersion", "kind", "title", "expiresAt", "attribution", "output", "content"]);
+  const parsed = await prepare(f, text); assert.equal(JSON.stringify(parsed.candidate), JSON.stringify(text));
+  assert.deepEqual(Object.keys(parsed.candidate), ["schemaVersion", "kind", "purpose", "selection", "sourceExpiresAt", "publicOutput", "candidateSha256"]);
+  f.json({ candidateId: "candidate-2", candidate: rehash({ ...text, mediaIdentity: (await mediaCandidate()).mediaIdentity }), replayed: false });
+  await assert.rejects(f.client.prepare({ title: text.publicOutput.title, expiresAt: text.publicOutput.expiresAt }, "intent-2"), unavailable);
+});
+
+test("media normalization cannot discard malformed private identity or public fields while retaining the original valid digest", async () => {
+  const original = await mediaCandidate();
+  for (const mutate of [
+    value => { delete value.mediaIdentity; }, value => { value.mediaIdentity.extra = true; },
+    ...["sourceMediaSha256", "publicMediaSha256", "qualificationPolicy", "projectionPolicy"].flatMap(key => [
+      value => { delete value.mediaIdentity[key]; }, value => { value.mediaIdentity[key] = "changed"; },
+    ]),
+    value => { value.publicOutput.attribution = "Changed"; },
+    value => { value.publicOutput.sourceUrl = "/api/private-media"; },
+    value => { value.publicOutput.content.private = "discarded private data"; },
+    value => { value.publicOutput.content.media.fileName = "Private file.wav"; },
+    value => { value.publicOutput.content.disclosure.private = true; },
+  ]) {
+    const changed = structuredClone(original); mutate(changed);
+    assert.equal(changed.candidateSha256, original.candidateSha256);
+    const f = fixture(original.selection); await f.enable();
+    f.json({ candidateId: "candidate-1", candidate: changed, replayed: false });
+    await assert.rejects(f.client.prepare({ title: original.publicOutput.title, expiresAt: original.publicOutput.expiresAt }, "intent"), unavailable);
+  }
+});
+
+test("media stays creation-closed while expired owned metadata remains listable and revocable", async () => {
+  const value = await mediaCandidate(), f = fixture(value.selection);
+  await assert.rejects(f.client.prepare(review(), "intent"), unavailable);
+  await assert.rejects(f.client.commit("candidate-1", value), unavailable); assert.equal(f.calls.length, 0);
+  f.json({ creationAvailable: false }); assert.equal(await f.client.availability(), false);
+  await assert.rejects(f.client.prepare(review(), "intent"), unavailable); assert.equal(f.calls.length, 1);
+  const rows = ["audio", "video", "model3d"].map((output, index) => ({ ...metadata(), shareId: "old-media-" + index, output }));
+  f.json({ shares: rows, nextCursor: null }); assert.deepEqual((await f.client.list()).shares, rows);
+  f.json({ ok: true }); await f.client.revoke(rows[0].shareId);
+  for (const changed of [{ ...rows[0], token: "secret" }, { ...rows[0], output: "image" }, { ...rows[0], mediaSha256: "b".repeat(64) }]) {
+    f.json({ shares: [changed], nextCursor: null }); await assert.rejects(f.client.list(), unavailable);
+  }
+});
+
+test("media lost acknowledgment performs no retry and replay never restores a token", async () => {
+  const value = await mediaCandidate(), f = fixture(value.selection); await f.enable(); const result = await prepare(f, value);
+  const before = f.calls.length; f.replies.push(() => { throw Error("Lost media acknowledgment"); });
+  await assert.rejects(f.client.commit(result.candidateId, result.candidate), /Lost media acknowledgment/u);
+  assert.equal(f.calls.length, before + 1);
+  const share = { shareId: result.candidateId, expiresAt: value.publicOutput.expiresAt, active: true };
+  f.json({ share, replayed: true }); assert.deepEqual(await f.client.commit(result.candidateId, result.candidate), { share, replayed: true });
+  f.json({ share: { ...share, token: "B".repeat(32) }, replayed: true });
+  await assert.rejects(f.client.commit(result.candidateId, result.candidate), unavailable);
+});
+
+test("media candidate decoding neither invokes the trusted review port nor captures accessors", async () => {
+  let mediaReads = 0, accesses = 0;
+  const value = await mediaCandidate(), f = fixture(value.selection, async () => { mediaReads++; throw Error("not a media review gesture"); });
+  await f.enable(); await prepare(f, value);
+  for (const path of [["mediaIdentity"], ["mediaIdentity", "publicMediaSha256"], ["publicOutput", "attribution"],
+    ["publicOutput", "content", "media", "sha256"], ["publicOutput", "content", "disclosure", "watermark"]]) {
+    const malformed = structuredClone(value); let at = malformed;
+    for (const key of path.slice(0, -1)) at = at[key];
+    Object.defineProperty(at, path.at(-1), { enumerable: true, get() { accesses++; throw Error("must not invoke getter"); } });
+    const before = f.calls.length; await assert.rejects(f.client.commit("candidate-1", malformed), unavailable); assert.equal(f.calls.length, before);
+  }
+  assert.equal(accesses, 0); assert.equal(mediaReads, 0);
+});
+
+test("media commit captures identity and exact reviewed metadata before asynchronous hashing", async t => {
+  const value = await mediaCandidate(), f = fixture(value.selection); await f.enable(); await prepare(f, value);
+  const supplied = structuredClone(value), digest = crypto.subtle.digest.bind(crypto.subtle);
+  const hashing = Promise.withResolvers(), release = Promise.withResolvers();
+  t.mock.method(crypto.subtle, "digest", async (...args) => { hashing.resolve(); await release.promise; return digest(...args); });
+  const share = { shareId: "candidate-1", expiresAt: value.publicOutput.expiresAt, active: true, token: "C".repeat(32) };
+  f.json({ share, replayed: false }); const pending = f.client.commit("candidate-1", supplied); await hashing.promise;
+  supplied.selection.documentId = "another-source";
+  supplied.mediaIdentity.publicMediaSha256 = "f".repeat(64);
+  supplied.publicOutput.title = "Changed after review";
+  supplied.publicOutput.content.media.byteLength = 1;
+  supplied.publicOutput.content.disclosure.watermark = "not-declared";
+  supplied.candidateSha256 = "d".repeat(64);
+  release.resolve(); assert.deepEqual(await pending, { share, replayed: false });
+  assert.deepEqual(JSON.parse(f.calls.at(-1).init.body), { candidateId: "candidate-1",
+    approval: { purpose: "selected-output-read-v1", candidateSha256: value.candidateSha256, allowPublicRead: true } });
+});
+
+test("media projector hashing cannot outlive source, capability or expiry", async t => {
+  for (const operation of ["prepare", "commit"]) for (const mode of ["retire", "abort", "capability", "expiry"]) await t.test(`${operation} ${mode}`, async child => {
+    const value = await mediaCandidate(), f = fixture(value.selection); await f.enable();
+    if (operation === "commit") await prepare(f, value);
+    let now = Date.now(); child.mock.method(Date, "now", () => now);
+    const digest = crypto.subtle.digest.bind(crypto.subtle), hashing = Promise.withResolvers(), release = Promise.withResolvers();
+    child.mock.method(crypto.subtle, "digest", async (...args) => { hashing.resolve(); await release.promise; return digest(...args); });
+    const before = f.calls.length, pending = operation === "prepare" ? prepare(f, value) : f.client.commit("candidate-1", value);
+    await hashing.promise;
+    if (mode === "retire") f.retire(); else if (mode === "abort") f.controller.abort();
+    else if (mode === "expiry") now = Date.parse(value.publicOutput.expiresAt);
+    else { f.json({ creationAvailable: false }); await f.client.availability(); await f.enable(); }
+    release.resolve(); await assert.rejects(pending, unavailable);
+    assert.equal(f.calls.length, before + (operation === "prepare" ? 1 : 0) + (mode === "capability" ? 2 : 0));
+    if (operation === "prepare" && mode === "capability") {
+      const count = f.calls.length; await assert.rejects(f.client.commit("candidate-1", value), unavailable); assert.equal(f.calls.length, count);
+    }
+  });
 });
 
 test("availability alone enables creation; false or malformed responses close the gate while management remains usable", async () => {

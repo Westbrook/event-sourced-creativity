@@ -1,0 +1,7 @@
+.selected-output-share-media { display: grid; gap: 1rem; min-inline-size: 0; }
+.selected-output-share-media-actions { display: flex; flex-wrap: wrap; gap: .75rem; }
+.selected-output-share-media-actions > button { min-inline-size: 44px; min-block-size: 44px; max-inline-size: 100%; white-space: normal; overflow-wrap: anywhere; }
+.selected-output-share-media audio, .selected-output-share-media video { display: block; inline-size: 100%; max-inline-size: 100%; }
+.selected-output-share-media video { max-block-size: 70vh; }
+.selected-output-share-media [hidden] { display: none !important; }
+.selected-output-share-media [data-selected-media-status]:empty { display: none; }

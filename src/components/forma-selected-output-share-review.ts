@@ -1,14 +1,19 @@
 import { html, nothing, render } from "lit";
-import { parseSelectedOutputShareSelection, SELECTED_OUTPUT_SHARE_MAX_LIFETIME_MS,
+import { parseSelectedOutputShareAnySelection, SELECTED_OUTPUT_SHARE_MAX_LIFETIME_MS,
   SELECTED_OUTPUT_SHARE_TITLE_MAX_BYTES, type SelectedOutputShareReview } from "../model/selected-output-share.ts";
 import { createSelectedOutputShareClient, type SelectedOutputShareClient, type SelectedOutputShareLease,
   type SelectedOutputShareMetadata, type SelectedOutputSharePrepared } from "../selected-output-share-client.ts";
 import { FormaPresentationalElement } from "./presentational-element";
 import { renderSelectedOutputShareContent } from "./selected-output-share-content.ts";
 import { selectedOutputShareCopy, selectedOutputShareExpiryLabel } from "./selected-output-share-messages.ts";
+import type { SelectedOutputShareReadMedia } from "../selected-output-share-media-client.ts";
+import { mountSelectedOutputShareMedia } from "./selected-output-share-media-view.ts";
 import "./forma-selected-output-share-review.css";
 
-type Owner = { epoch: number; abort: AbortController; current: () => boolean; client: SelectedOutputShareClient };
+type Owner = { epoch: number; abort: AbortController; current: () => boolean; client: SelectedOutputShareClient;
+  readMedia: SelectedOutputShareReadMedia | undefined };
+type MediaPreview = { candidate: SelectedOutputSharePrepared; mount: HTMLElement; abort: AbortController;
+  view?: ReturnType<typeof mountSelectedOutputShareMedia> };
 type Status = "" | "loading" | "unavailable" | "linkPublished" | "copied" | "revoked" | "expired";
 
 function reviewFromInputs(title: string, localExpiry: string): SelectedOutputShareReview | null {
@@ -61,6 +66,8 @@ export class FormaSelectedOutputShareReview extends FormaPresentationalElement {
   #focusTitle = false;
   #focusManagement = false;
   #focusReturn = false;
+  #media: MediaPreview | null = null;
+  #mediaReady = false;
 
   get source(): SelectedOutputShareLease | null { return this.#source; }
   set source(value: SelectedOutputShareLease | null) {
@@ -106,6 +113,7 @@ export class FormaSelectedOutputShareReview extends FormaPresentationalElement {
 
   #clearTransient() {
     ++this.#transientEpoch;
+    this.#clearMedia();
     this.#candidate = null;
     this.#url = "";
     this.#linkExpiry = "";
@@ -115,6 +123,14 @@ export class FormaSelectedOutputShareReview extends FormaPresentationalElement {
     // Retire authored candidate bytes and one-time token before Lit's next turn.
     if (this.#previewMount) render(nothing, this.#previewMount);
     if (this.#linkMount) render(nothing, this.#linkMount);
+  }
+
+  #clearMedia() {
+    const media = this.#media;
+    this.#media = null;
+    this.#mediaReady = false;
+    media?.abort.abort();
+    media?.view?.dispose();
   }
 
   #retire() {
@@ -146,16 +162,17 @@ export class FormaSelectedOutputShareReview extends FormaPresentationalElement {
   #start() {
     if (!this.#connected || !this.isConnected || this.#owner) return;
     const source = this.#source, document = this.ownerDocument, origin = document.location.origin;
-    const selection = parseSelectedOutputShareSelection(source?.selection);
+    const selection = parseSelectedOutputShareAnySelection(source?.selection);
     if (!source || !selection || !(source.signal instanceof AbortSignal) || source.signal.aborted || typeof source.isCurrent !== "function") return;
-    const sourceSignal = source.signal, sourceCurrent = source.isCurrent, epoch = this.#epoch;
+    const sourceSignal = source.signal, sourceCurrent = source.isCurrent, readMedia = source.readMedia, epoch = this.#epoch;
+    if (readMedia !== undefined && typeof readMedia !== "function") return;
     const abort = new AbortController();
     const current = () => {
       if (!this.#connected || !this.isConnected || abort.signal.aborted || sourceSignal.aborted
         || this.#epoch !== epoch || this.#source !== source || this.ownerDocument !== document
-        || document.location.origin !== origin || source.signal !== sourceSignal || source.isCurrent !== sourceCurrent) return false;
+        || document.location.origin !== origin || source.signal !== sourceSignal || source.isCurrent !== sourceCurrent || source.readMedia !== readMedia) return false;
       try {
-        const now = parseSelectedOutputShareSelection(source.selection);
+        const now = parseSelectedOutputShareAnySelection(source.selection);
         return now !== null && Object.keys(selection).every(key => now[key as keyof typeof now] === selection[key as keyof typeof selection])
           && sourceCurrent() === true;
       } catch { return false; }
@@ -166,7 +183,7 @@ export class FormaSelectedOutputShareReview extends FormaPresentationalElement {
     this.#sourceAbort = () => sourceSignal.removeEventListener("abort", onAbort);
     try {
       const client = createSelectedOutputShareClient({ selection, signal: abort.signal, isCurrent: current }, { origin });
-      const owner: Owner = { epoch, abort, current, client };
+      const owner: Owner = { epoch, abort, current, client, readMedia };
       this.#owner = owner;
       // Bounded owned metadata discovery is read-only. A successful nonempty
       // result can reveal management; it never supplies creation permission.
@@ -275,10 +292,12 @@ export class FormaSelectedOutputShareReview extends FormaPresentationalElement {
     this.#checkExpiry();
     const owner = this.#validOwner(), prepared = this.#candidate;
     if (!owner || !this.#open || !this.#enabled || !this.#available || this.#busy || this.#composing || !prepared || this.#pendingRevokeId) return;
+    if ("mediaIdentity" in prepared.candidate && !this.#mediaReady) return;
     const review = reviewFromInputs(this.#title, this.#expiry);
     if (!review || review.title !== prepared.candidate.publicOutput.title || review.expiresAt !== prepared.candidate.publicOutput.expiresAt) return;
     // One gesture consumes the candidate locally even if its acknowledgement is
     // lost. Only an explicit revoke can unlock another attempt in this lifetime.
+    this.#clearMedia();
     this.#candidate = null;
     const transientEpoch = this.#transientEpoch;
     this.#pendingRevokeId = prepared.candidateId;
@@ -371,6 +390,7 @@ export class FormaSelectedOutputShareReview extends FormaPresentationalElement {
     const owner = this.#validOwner(), copy = selectedOutputShareCopy(this.i18n.locale);
     if (this.#previewMount) render(owner && this.#open && this.#candidate
       ? renderSelectedOutputShareContent(this.#candidate.candidate.publicOutput, this.i18n) : nothing, this.#previewMount);
+    this.#syncMedia(owner);
     if (this.#linkMount) render(owner && this.#open && this.#url ? html`<p><a href=${this.#url} referrerpolicy="no-referrer"
       translate="no" dir="ltr">${this.#url}</a> <button type="button" @click=${this.#copy}>${copy.copyLink}</button></p>` : nothing, this.#linkMount);
     if (this.#focusTitle && owner && this.#open) {
@@ -386,6 +406,36 @@ export class FormaSelectedOutputShareReview extends FormaPresentationalElement {
       && (this.#enabled && this.#available || this.#managementKnown || this.#pendingRevokeId)) {
       this.#focusReturn = false;
       this.querySelector<HTMLButtonElement>("[data-selected-output-share-open]")?.focus();
+    }
+  }
+
+  #syncMedia(owner: Owner | null) {
+    const candidate = this.#candidate, output = candidate?.candidate.publicOutput;
+    const mount = this.#previewMount?.querySelector<HTMLElement>("[data-selected-output-media-mount]");
+    if (!owner || !this.#open || !candidate || !output || !(output.output === "audio" || output.output === "video" || output.output === "model3d") || !mount) {
+      this.#clearMedia(); return;
+    }
+    if (this.#media?.candidate === candidate && this.#media.mount === mount) {
+      this.#media.view?.refresh(this.i18n); return;
+    }
+    this.#clearMedia();
+    if (!owner.readMedia) return;
+    const preview: MediaPreview = { candidate, mount, abort: new AbortController() };
+    this.#media = preview;
+    const current = () => this.#media === preview && !preview.abort.signal.aborted && owner.current()
+      && this.#owner === owner && this.#candidate === candidate && this.#open
+      && Date.parse(output.expiresAt) > Date.now() && this.#expiryDeadline !== null && this.#expiryDeadline > performance.now();
+    try {
+      preview.view = mountSelectedOutputShareMedia(mount, output, { locale: this.i18n,
+        readMedia: owner.readMedia, signal: preview.abort.signal, isCurrent: current,
+        onReady: ready => {
+          if (!current() || this.#mediaReady === ready) return;
+          this.#mediaReady = ready; this.requestUpdate();
+        } });
+    } catch {
+      this.#clearMedia();
+      this.#status = "unavailable";
+      this.requestUpdate();
     }
   }
 
@@ -412,7 +462,8 @@ export class FormaSelectedOutputShareReview extends FormaPresentationalElement {
         </div>
         <p role="status" aria-live="polite" aria-atomic="true">${status}</p>
         <div data-selected-output-review-mount></div>
-        <button type="button" ?hidden=${!canCreate || !this.#candidate} ?disabled=${!canCreate || this.#busy || !this.#candidate}
+        ${this.#candidate && "mediaIdentity" in this.#candidate.candidate ? html`<p>${copy.reviewFile}</p>` : nothing}
+        <button type="button" ?hidden=${!canCreate || !this.#candidate} ?disabled=${!canCreate || this.#busy || !this.#candidate || "mediaIdentity" in this.#candidate.candidate && !this.#mediaReady}
           @click=${this.#publish}>${copy.publishLink}</button>
         <div data-selected-output-link-mount></div>
         ${this.#pendingRevokeId && !this.#shares.some(share => share.shareId === this.#pendingRevokeId)

@@ -12,7 +12,9 @@ test("sharing copy covers every canonical locale and retains the same output ide
     assert.deepEqual(Object.keys(copy).sort(), keys);
     assert.notEqual(copy.manageLinks, copy.shareOutput, `${locale}: managing retained links is distinct from sharing an output`);
     assert.notEqual(copy.manageLinks, copy.publishLink, `${locale}: managing retained links does not imply publication`);
-    assert.deepEqual(Object.keys(copy.outputKinds).sort(), ["scene", "short_story", "slides"]);
+    assert.deepEqual(Object.keys(copy.outputKinds).sort(), ["audio", "model3d", "scene", "short_story", "slides", "video"]);
+    assert.notEqual(copy.loadFile, copy.downloadFile, `${locale}: loading preview and downloading a file are distinct actions`);
+    assert.notEqual(copy.watermarkDeclared, copy.watermarkUndeclared, `${locale}: a source declaration never implies detection or absence`);
     for (const [name, value] of Object.entries(copy)) {
       if (name === "outputKinds") continue;
       assert.equal(typeof value, "string"); assert(value.trim(), `${locale}:${name}`);
