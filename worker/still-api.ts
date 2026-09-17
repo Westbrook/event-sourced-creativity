@@ -2,7 +2,7 @@ import { handleEvents } from './events-api.ts';
 import { handleSession, requireConsent, requireUser } from './pilot-policy.ts';
 import type { WorkerEnv, WorkerExecutionContext } from './runtime.ts';
 import type { CreativeEvent } from '../src/model/events.ts';
-import { buildDecisionState, POLICY_VERSION, questionsFor, selectActions, type Abilities, type Answer, type Position } from '../src/still/decisions.ts';
+import { buildDecisionState, POLICY_VERSION, questionsFor, rankFormats, selectActions, type Abilities, type Answer, type Position } from '../src/still/decisions.ts';
 
 const reply = (body: unknown, status = 200) => Response.json(body, { status, headers: { 'cache-control': 'private, no-store', vary: 'Cookie, oai-authenticated-user-id' } });
 const recentCalls = new Map<string, number>();
@@ -46,7 +46,8 @@ export async function handleStillDecision(request: Request, env: WorkerEnv, cont
   }
   const built = buildDecisionState(events, position, abilities, head, content);
   if (position.projectId && !built.projection.projects.some(p => p.id === position.projectId) || position.documentId && !built.projection.documents.some(d => d.id === position.documentId && !d.removed)) return reply({ error: 'selection_unavailable' }, 409);
-  const fallback = (reason: string) => reply({ source: 'fallback', reason, policy: POLICY_VERSION, head, actions: selectActions(built.candidates, position), candidateIds: built.candidates.map(a => a.id) });
+  const choosingFormat = position.view === 'choose-format';
+  const fallback = (reason: string) => reply({ source: 'fallback', reason, policy: POLICY_VERSION, head, actions: choosingFormat ? [] : selectActions(built.candidates, position), formats: [], candidateIds: built.candidates.map(a => a.id) });
   if (!env.JEV_API_KEY) return fallback('not_configured');
   try {
     const body = JSON.stringify({ model: 'jev-latest', state: built.state, questions: questionsFor(built.candidates,position,built.state.selectedWork?.kind) });
@@ -58,7 +59,7 @@ export async function handleStillDecision(request: Request, env: WorkerEnv, cont
     });
     if (!response.ok) return fallback(response.status === 429 || response.status === 529 ? 'busy' : 'unavailable');
     const result = await response.json() as { model?: string; answers?: Record<string, Answer> };
-    if (!result.answers || typeof result.answers !== 'object' || !built.candidates.some(a => { if(a.id==='intent')return false; const x = result.answers?.[`use_${a.id}`]; return x?.type === 'score' && Number.isFinite(x.score) && x.score! >= 0 && x.score! <= 3 && Number.isFinite(x.confidence) && x.confidence! >= .12 && x.confidence! <= 1; })) return fallback('uncertain');
-    return reply({ source: 'jev', model: result.model, policy: POLICY_VERSION, head, actions: selectActions(built.candidates, position, result.answers), candidateIds: built.candidates.map(a => a.id), stage: result.answers.stage?.choice, questionsEvaluated: Object.keys(questionsFor(built.candidates,position,built.state.selectedWork?.kind)).length });
+    if (!result.answers || typeof result.answers !== 'object' || !built.candidates.some(a => { if(a.id==='intent')return false; const x = result.answers?.[`${choosingFormat ? 'fit' : 'use'}_${a.id}`]; return x?.type === 'score' && Number.isFinite(x.score) && x.score! >= 0 && x.score! <= 3 && Number.isFinite(x.confidence) && x.confidence! >= .12 && x.confidence! <= 1; })) return fallback('uncertain');
+    return reply({ source: 'jev', model: result.model, policy: POLICY_VERSION, head, actions: choosingFormat ? [] : selectActions(built.candidates, position, result.answers), formats: choosingFormat ? rankFormats(built.candidates, result.answers) : [], candidateIds: built.candidates.map(a => a.id), stage: result.answers.stage?.choice, questionsEvaluated: Object.keys(questionsFor(built.candidates,position,built.state.selectedWork?.kind)).length });
   } catch { return fallback('unavailable'); }
 }

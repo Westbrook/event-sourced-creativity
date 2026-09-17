@@ -45,6 +45,8 @@ export class StillApp extends LitElement {
   private decisionTimer = 0;
   private pollTimer = 0;
   private generation: GenerationDraft | null = null;
+  private formatSuggestions: string[] = [];
+  private formatTouched = false;
   private generationGate: { key: string; message: string } | null = null;
   private ownership = false;
   private providerConsent = false;
@@ -102,6 +104,20 @@ export class StillApp extends LitElement {
       } catch { /* Local contextual actions remain fully usable. */ }
     }, 700);
   }
+  private suggestFormats() {
+    const ticket = this.decisionTicket, snapshot = JSON.stringify(this.client.position), head = this.client.head, scope = this.client.scopeKey;
+    this.decisionTimer = window.setTimeout(async () => {
+      try {
+        if (ticket !== this.decisionTicket || this.mode !== 'generate' || this.generation || this.formatTouched) return;
+        const result = await api<{ formats: string[]; source: string; head: number; policy: string }>('/api/still/decision', { ...this.client.position, view:'choose-format' });
+        if (ticket !== this.decisionTicket || this.mode !== 'generate' || this.generation || this.formatTouched || this.disposed || head !== this.client.head || scope !== this.client.scopeKey || snapshot !== JSON.stringify(this.client.position)) return;
+        if (result.policy === POLICY_VERSION && result.source === 'jev' && result.head === head && Array.isArray(result.formats)) {
+          const allowed = new Set(this.candidates().filter(a=>!!FORMATS[a.id]).map(a=>a.id));
+          this.formatSuggestions = [...new Set(result.formats)].filter(id=>allowed.has(id)).slice(0,3); this.changed();
+        }
+      } catch { /* The full picker remains available when suggestions cannot be made. */ }
+    }, 1300);
+  }
   private poll() {
     this.pollTimer = window.setTimeout(async () => {
       try { if (!this.busy && !document.hidden && this.client.session?.policy.accepted) { if (this.client.position.documentId) await this.client.pollJobs(); else await this.client.refresh(); } } catch { /* Keep saved work visible; explicit refresh reports errors. */ }
@@ -135,20 +151,22 @@ export class StillApp extends LitElement {
       void this.run(async () => { const b = this.client.projection.blocks.find(x => x.id === this.client.position.blockId); if (!b) return; await this.client.append([{ type: id === 'toggle-context' ? 'BlockWeightSet' : id === 'lock' ? 'BlockLocked' : 'BlockUnlocked', payload: { block_id: b.id, ...(id === 'toggle-context' ? { weight: Number(b.properties.weight ?? 1) > 0 ? 0 : .8, previous_weight: b.properties.weight ?? 1 } : {}) } }]); this.notice = 'Updated.'; this.decide(); }); return;
     }
     if (id === 'create' || FORMATS[id]) {
-      this.generation = null; this.generationGate = null;
+      this.generation = null; this.generationGate = null; this.formatSuggestions = []; this.formatTouched = false;
       try {
         const format = this.client.pendingGeneration?.format ?? (id === 'create' ? '' : id);
         if (format) this.generation = this.client.prepareGeneration(format);
       } catch (error) { this.error = error instanceof Error ? error.message : 'Format unavailable.'; this.changed(); return; }
-      this.begin('generate'); return;
+      this.begin('generate'); if (!this.generation) this.suggestFormats(); return;
     }
     this.begin(id);
   }
   private chooseFormat(format: string) {
     if (this.busy || this.composing || this.generation?.attempted) return;
+    const enteringReview = !this.generation && !!format;
     try { this.generation = format ? this.client.prepareGeneration(format, this.generation ?? undefined) : null; this.generationGate = null; this.error = ''; }
     catch (error) { this.error = error instanceof Error ? error.message : 'Format unavailable.'; }
     this.changed();
+    if (enteringReview && this.generation) void this.updateComplete.then(()=>this.querySelector<HTMLSelectElement>('.format-options select')?.focus());
   }
   private async save() {
     const c = this.client, p = c.projection;
@@ -239,12 +257,17 @@ export class StillApp extends LitElement {
       const g = this.generation;
       const source = g?.sourceSnapshot ?? documentSnapshot(p, p.documentId);
       const formats = this.candidates().filter(a => !!FORMATS[a.id]);
+      const suggested = this.formatSuggestions.filter(id=>formats.some(a=>a.id===id));
+      const pickerFormats = g ? formats : formats.filter(a=>!suggested.includes(a.id));
       return html`<section class="form-page generation-page">
         <span class="eyebrow">${p.projectName}</span><h1>${p.documentTitle}</h1>
         <div class="generation-context">${source.facts.filter(b => b.active).map(b => html`<p><span>${b.handle || b.type}${b.locked ? ' · locked' : ''}</span>${safeMedia(text(b.properties.media_url)) && b.type === 'reference' ? html`<img class="context-reference" src=${safeMedia(text(b.properties.media_url))} alt=${b.handle}/>` : nothing}${text(b.properties.text) || text(b.properties.description)}</p>`)}</div>
-        <label class="select-label">Output<select .value=${live(g?.format ?? '')} ?disabled=${this.busy || this.composing || !!g?.attempted} @change=${(e: Event) => this.chooseFormat((e.target as HTMLSelectElement).value)}>
-          <option value="" .selected=${!g}>Choose a format</option>${formats.map(a => html`<option value=${a.id} .selected=${g?.format === a.id}>${FORMATS[a.id]}</option>`)}${g && !formats.some(a => a.id === g.format) ? html`<option value=${g.format} .selected=${true}>${FORMATS[g.format]}</option>` : nothing}
-        </select></label>
+        <div class="format-options" @pointerenter=${()=>{this.formatTouched=true;}} @focusin=${()=>{this.formatTouched=true;}}>
+        ${!g && suggested.length ? html`<en-toolbar class="format-suggestions" label="Suggested formats" keyboard-navigation="tab">${suggested.map((id,i)=>this.button(FORMATS[id],()=>this.chooseFormat(id),i===0))}</en-toolbar>` : nothing}
+        ${g || pickerFormats.length ? html`<label class="select-label">${!g && suggested.length ? 'Other formats' : 'Output'}<select .value=${live(g?.format ?? '')} ?disabled=${this.busy || this.composing || !!g?.attempted} @change=${(e: Event) => this.chooseFormat((e.target as HTMLSelectElement).value)}>
+          <option value="" .selected=${!g}>Choose a format</option>${pickerFormats.map(a => html`<option value=${a.id} .selected=${g?.format === a.id}>${FORMATS[a.id]}</option>`)}${g && !formats.some(a => a.id === g.format) ? html`<option value=${g.format} .selected=${true}>${FORMATS[g.format]}</option>` : nothing}
+        </select></label>` : nothing}
+        </div>
         ${g?.format === 'model3d' ? this.field('Prompt · 1,024 characters max', g.prompt, v => { g.prompt = v; }, 6) : nothing}
         ${g && ['slides', 'storyboard'].includes(g.format) ? html`<label class="select-label">Length<select .value=${String(g.itemCount)} ?disabled=${this.busy || !!g.attempted} @change=${(e: Event) => { g.itemCount = Number((e.target as HTMLSelectElement).value); this.changed(); }}>${[3, 4, 6, 8, 10].map(n => html`<option value=${n} .selected=${g.itemCount === n}>${n} ${g.format === 'slides' ? 'slides' : 'frames'}</option>`)}</select></label>` : nothing}
         ${g && !['model3d', 'image'].includes(g.format) ? this.field('Tone', g.tone, v => { g.tone = v; g.scenePreview = undefined; }, 1, 'Optional') : nothing}
@@ -252,7 +275,7 @@ export class StillApp extends LitElement {
         ${g?.adaptation?.issues.map(i => html`<p class="gate-notice">${i.message}</p>`)}
         ${g ? html`<p class="cost-note">${g.attempted ? `Checking an earlier ${FORMATS[g.format].toLowerCase()} request.` : g.format === 'model3d' ? `Estimated cost: $${(estimateModel3dCostMicrousd() / 1e6).toFixed(2)} · GLB · text to 3D` : g.scenePreview ? `Maximum cost: $${(g.scenePreview.maximumMicrousd / 1e6).toFixed(2)} · ${g.scenePreview.model}` : g.format === 'scene' ? 'Cost approval required.' : 'Forma provider and spending limits apply.'}</p>` : nothing}
         ${this.generationGate ? html`<p class="gate-notice">${this.generationGate.message}</p>` : nothing}
-        <div class="form-actions">${this.button(g?.attempted ? 'Check generation' : g?.format === 'scene' && !g.scenePreview ? 'Check cost' : this.generationGate ? 'Approve' : 'Generate', () => void this.run(() => this.generate()), true, !g)}${this.button('Back', () => this.closeMode())}</div>
+        <div class="form-actions">${g ? this.button(g.attempted ? 'Check generation' : g.format === 'scene' && !g.scenePreview ? 'Check cost' : this.generationGate ? 'Approve' : 'Generate', () => void this.run(() => this.generate()), true) : nothing}${this.button('Back', () => this.closeMode())}</div>
       </section>`;
     }
     if (mode === 'actions') return html`<section class="form-page"><h1>Actions</h1><label class="select-label">Action<select .value=${this.choice} @change=${(e: Event) => { this.choice = (e.target as HTMLSelectElement).value; this.changed(); }}>${this.candidates().map(a => html`<option value=${a.id}>${a.label}</option>`)}</select></label><div class="form-actions">${this.button('Go', () => this.choose(this.choice), true)}${this.button('Workspaces', () => { this.mode = 'workspaces'; this.changed(); })}${this.button('Refresh', () => void this.run(async () => { await this.client.load(); this.readRoute(); this.closeMode(); }))}${this.button('Back', () => this.closeMode())}</div></section>`;

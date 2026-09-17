@@ -6,11 +6,18 @@ import { resolve, extname } from 'node:path';
 import { createSceneCostFixture } from './helpers/scene-cost-fixture.mjs';
 import { memoryMedia } from './helpers/still-media-fixture.mjs';
 const f=await createSceneCostFixture(1,'visual');f.env.FORMA_ASSISTANT_PROVIDER_USER_IDS=f.owner;f.env.MEDIA=memoryMedia();
+f.env.JEV_API_KEY='fixture-only-no-external-network';
 const json=input=>({method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(input)});
 const current=await (await f.request('/api/events?after=0')).json();
 await f.request('/api/events',json({action:'batch',expectedSequence:current.head,events:[{type:'DocumentRenamed',payload:{document_id:f.documentId,old_title:'One current authored direction',new_title:'LOCAL TEST · Small ideas'}},{type:'BlockCreated',payload:{project_id:f.projectId,document_id:f.documentId,block_id:'preview-light',type:'style',scope:'document',handle:'Evening light',position:'z',properties:{text:'Warm evening light across the harbor.',weight:.8}}}]}));
 let calls=0;
 globalThis.fetch=async(url,init)=>{
+  if(String(url)==='https://api.typesafe.ai/v1/systemone') {
+    const body=JSON.parse(init.body);
+    if(body.state?.current?.view!=='choose-format')return new Response(null,{status:503});
+    const score=(score,confidence)=>({type:'score',score,confidence});
+    return Response.json({model:'simulated-jev',answers:{fit_short_story:score(3,.95),fit_scene:score(3,.9),fit_image:score(2,.9)}});
+  }
   if(String(url)!=='https://api.openai.com/v1/responses')throw new Error('External network disabled in this fixture.');
   calls++;const body=JSON.parse(init.body),input=JSON.parse(body.input);
   const result=input.source?{proposals:[{type:'subject',subtype:'Hero subject',label:'keeper',text:'keeper',source_excerpt:'keeper',participants:[]}]}:{inferred:[],related:[],learned:[],image_query:''};

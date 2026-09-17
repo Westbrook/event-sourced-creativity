@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { foldEvents } from '../src/model/events.ts';
-import { eligibleActions, buildDecisionState, questionsFor, selectActions, CREATIVE_QUESTIONS } from '../src/still/decisions.ts';
+import { eligibleActions, buildDecisionState, questionsFor, selectActions, rankFormats, CREATIVE_QUESTIONS } from '../src/still/decisions.ts';
 import { operationJournal } from '../src/still/operation-journal.ts';
 import { StillClient } from '../src/still/client.ts';
 import { isBlockKind } from '../src/model/block-types.ts';
@@ -155,4 +155,18 @@ test('an unconfirmed generation locks the original format even after returning t
     const recovered=c.prepareGeneration(c.pendingGeneration.format);
     assert.equal(recovered.format,'scene');assert.equal(recovered.attempted,true);assert.equal(recovered.scenePreview,undefined);
   } finally {operationJournal.clearGeneration('test:personal','d');}
+});
+
+
+test('format suitability is ranked separately from intent and capped at three available choices',()=>{
+  const candidates=eligibleActions(foldEvents(events,Infinity,'d','p'),position,{...abilities,formats:['image','short_story','scene','slides','audio','model3d']});
+  const score=(score,confidence=.9)=>({type:'score',score,confidence});
+  const answers={fit_short_story:score(3,.95),fit_scene:score(3),fit_audio:score(2,.8),fit_image:score(2,.7),fit_model3d:score(1),fit_video:score(3,1),fit_invented:score(3,1)};
+  assert.deepEqual(rankFormats(candidates,answers),['short_story','scene','audio']);
+  assert.ok(!selectActions(candidates,position,answers).some(a=>abilities.formats.includes(a.id)));
+  const questions=questionsFor(candidates,{...position,view:'choose-format'});
+  assert.ok(questions.fit_image);assert.equal(questions.use_image,undefined);assert.equal(questions.requested_image,undefined);
+  assert.equal(Object.keys(questions).length,6);
+  for (const bad of [score(NaN),score(Infinity),score(-1),score(4),score(2,.49),score(3,2),score('3'),{type:'noul',noul:1}]) assert.deepEqual(rankFormats(candidates,{fit_image:bad}),[]);
+  assert.deepEqual(rankFormats(candidates),[]);
 });

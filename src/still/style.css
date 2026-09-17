@@ -57,6 +57,8 @@ still-app .select-label { display: flex; flex-direction: column; color: var(--so
 still-app select { width: 100%; border: 1px solid var(--line); border-radius: 3px; padding: 13px 35px 13px 15px; background: #fbfaf7; font-size: 17px; color: var(--ink); }
 still-app .context-preview { font: 22px/1.65 Georgia, serif; white-space: pre-wrap; }
 still-app .generation-page { max-width: 900px; }
+still-app .format-suggestions::part(base) { border: 0; border-radius: 0; padding: 0; background: none; box-shadow: none; flex-wrap: wrap; }
+still-app .format-suggestions + .select-label { max-width: 320px; }
 still-app .generation-context { margin: 24px 0 40px; }
 still-app .generation-context p { font: 24px/1.57 Georgia, serif; margin: 28px 0; white-space: pre-wrap; overflow-wrap: anywhere; }
 still-app .generation-context span { display: block; font: 10px/1.5 Arial, sans-serif; letter-spacing: .06em; text-transform: uppercase; color: #999185; margin-bottom: 5px; }
