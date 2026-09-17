@@ -291,6 +291,16 @@ export class FormaModel3dViewer extends FormaPresentationalElement {
     runtime.camera.position.copy(runtime.controls.target).add(offset); runtime.controls.update(); this.#draw();
   }
 
+  #orbit(horizontal: number, vertical: number) {
+    const runtime = this.#runtime;
+    if (!runtime || this.disabled || this.#capturing) return;
+    const spherical = new runtime.three.Spherical().setFromVector3(runtime.camera.position.clone().sub(runtime.controls.target));
+    const step = Math.PI / 18;
+    spherical.theta += horizontal * step; spherical.phi += vertical * step;
+    spherical.makeSafe(); runtime.camera.position.setFromSpherical(spherical).add(runtime.controls.target);
+    runtime.controls.update(); this.#draw();
+  }
+
   #keyDown = (event: KeyboardEvent) => {
     const runtime = this.#runtime; if (!runtime || this.disabled || this.#capturing || event.altKey || event.metaKey || event.ctrlKey) return;
     if (["+", "=", "-", "_", "Home", "ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key)) { event.preventDefault(); event.stopPropagation(); }
@@ -298,15 +308,8 @@ export class FormaModel3dViewer extends FormaPresentationalElement {
     if (event.key === "Home") this.#reset();
     else if (event.key === "+" || event.key === "=") this.#zoom(0.85);
     else if (event.key === "-" || event.key === "_") this.#zoom(1 / 0.85);
-    else {
-      const spherical = new runtime.three.Spherical().setFromVector3(runtime.camera.position.clone().sub(runtime.controls.target));
-      const step = Math.PI / 18;
-      if (event.key === "ArrowLeft") spherical.theta -= step;
-      if (event.key === "ArrowRight") spherical.theta += step;
-      if (event.key === "ArrowUp") spherical.phi -= step;
-      if (event.key === "ArrowDown") spherical.phi += step;
-      spherical.makeSafe(); runtime.camera.position.setFromSpherical(spherical).add(runtime.controls.target); runtime.controls.update(); this.#draw();
-    }
+    else this.#orbit(event.key === "ArrowLeft" ? -1 : event.key === "ArrowRight" ? 1 : 0,
+      event.key === "ArrowUp" ? -1 : event.key === "ArrowDown" ? 1 : 0);
   };
 
   async #capture() {
@@ -354,6 +357,10 @@ export class FormaModel3dViewer extends FormaPresentationalElement {
       </div>
       <div class="model3d-viewer-controls" role="group" aria-label=${this.i18n.t("model3d.viewer.controls", "Model view controls")}>
         ${presets.map(([preset, title]) => html`<button type="button" class="button secondary compact" ?disabled=${unavailable} @click=${() => this.#preset(preset)}>${title}</button>`)}
+        <button type="button" class="button secondary compact" ?disabled=${unavailable} @click=${() => this.#orbit(-1, 0)}>${this.i18n.t("model3d.viewer.orbitLeft", "Orbit left")}</button>
+        <button type="button" class="button secondary compact" ?disabled=${unavailable} @click=${() => this.#orbit(1, 0)}>${this.i18n.t("model3d.viewer.orbitRight", "Orbit right")}</button>
+        <button type="button" class="button secondary compact" ?disabled=${unavailable} @click=${() => this.#orbit(0, -1)}>${this.i18n.t("model3d.viewer.orbitUp", "Orbit up")}</button>
+        <button type="button" class="button secondary compact" ?disabled=${unavailable} @click=${() => this.#orbit(0, 1)}>${this.i18n.t("model3d.viewer.orbitDown", "Orbit down")}</button>
         <button type="button" class="button secondary compact" ?disabled=${unavailable} aria-label=${this.i18n.t("model3d.viewer.zoomIn", "Zoom in")} @click=${() => this.#zoom(0.85)}>+</button>
         <button type="button" class="button secondary compact" ?disabled=${unavailable} aria-label=${this.i18n.t("model3d.viewer.zoomOut", "Zoom out")} @click=${() => this.#zoom(1 / 0.85)}>−</button>
         <button type="button" class="button secondary compact" ?disabled=${unavailable} @click=${this.#reset}>${this.i18n.t("model3d.viewer.reset", "Reset view")}</button>

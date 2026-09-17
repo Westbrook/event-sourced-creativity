@@ -1,5 +1,9 @@
 export const FORMA_MODEL3D_VIEWER_MESSAGES = {
   en: {
+    "model3d.viewer.orbitLeft": "Orbit left",
+    "model3d.viewer.orbitRight": "Orbit right",
+    "model3d.viewer.orbitUp": "Orbit up",
+    "model3d.viewer.orbitDown": "Orbit down",
     "model3d.viewer.open": "View model",
     "model3d.viewer.preview": "Model preview",
     "model3d.geometry.download": "Download current GLB",
@@ -51,6 +55,10 @@ export const FORMA_MODEL3D_VIEWER_MESSAGES = {
     "model3d.viewer.reload": "Reload preview",
   },
   fr: {
+    "model3d.viewer.orbitLeft": "Pivoter à gauche",
+    "model3d.viewer.orbitRight": "Pivoter à droite",
+    "model3d.viewer.orbitUp": "Pivoter vers le haut",
+    "model3d.viewer.orbitDown": "Pivoter vers le bas",
     "model3d.viewer.open": "Voir le modèle",
     "model3d.viewer.preview": "Aperçu du modèle",
     "model3d.geometry.download": "Télécharger le GLB actuel",
@@ -102,6 +110,10 @@ export const FORMA_MODEL3D_VIEWER_MESSAGES = {
     "model3d.viewer.reload": "Recharger l’aperçu",
   },
   ar: {
+    "model3d.viewer.orbitLeft": "الدوران يسارًا",
+    "model3d.viewer.orbitRight": "الدوران يمينًا",
+    "model3d.viewer.orbitUp": "الدوران لأعلى",
+    "model3d.viewer.orbitDown": "الدوران لأسفل",
     "model3d.viewer.open": "عرض النموذج",
     "model3d.viewer.preview": "معاينة النموذج",
     "model3d.geometry.download": "تنزيل ملف GLB الحالي",
@@ -153,6 +165,10 @@ export const FORMA_MODEL3D_VIEWER_MESSAGES = {
     "model3d.viewer.reload": "إعادة تحميل المعاينة",
   },
   ja: {
+    "model3d.viewer.orbitLeft": "左に回転",
+    "model3d.viewer.orbitRight": "右に回転",
+    "model3d.viewer.orbitUp": "上に回転",
+    "model3d.viewer.orbitDown": "下に回転",
     "model3d.viewer.open": "モデルを表示",
     "model3d.viewer.preview": "モデルのプレビュー",
     "model3d.geometry.download": "現在のGLBをダウンロード",
