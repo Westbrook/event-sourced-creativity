@@ -2,7 +2,7 @@ import type { compactHistoryEvent } from './history.ts';
 import type { Emphasis } from './presentation.ts';
 import { questionComposition, type MenuAdjustment } from './assessments.ts';
 import type { CreativeProjection } from '../model/events.ts';
-import { evaluateActions, evaluateEligibility, evaluateFormats, POLICY_VERSION, questionsFor, type Abilities, type Answer, type Position, type Question } from './decisions.ts';
+import { evaluateActions, evaluateEligibility, evaluateFormats, rankAllFormats, POLICY_VERSION, questionsFor, type Abilities, type Answer, type Position, type Question } from './decisions.ts';
 
 export function inspectAnswer(question: Question, answer?: Answer) {
   const warnings: string[] = [];
@@ -48,6 +48,16 @@ export function decisionDiagnostics(p: CreativeProjection, position: Position, a
   const questions=questionsFor(candidates,position,options.artifactKind), answers=options.answers??{};
   const formats=position.view==='choose-format'&&!position.palette;
   const evaluation=formats?evaluateFormats(candidates,answers):evaluateActions(candidates,position,answers);
+  if (formats) {
+    const order=rankAllFormats(candidates,answers);
+    evaluation.selected=order.slice(0,3);
+    for (const row of evaluation.rows) {
+      const index=order.indexOf(row.id);
+      if (index<0) continue;
+      row.rank=index+1;row.selected=index<3?index+1:undefined;
+      row.reason=index<3?row.reason:row.reason && row.reason!=='Three-format limit'?`Menu · ${row.reason}`:'Menu · lower priority';
+    }
+  }
   return {
     version:1 as const, policy:POLICY_VERSION, source:options.source, reason:options.reason, model:typeof options.model==='string'?options.model.slice(0,100):undefined, head:options.head,
     channel:position.palette?'palette':formats?'formats':'actions',
@@ -61,7 +71,7 @@ export function decisionDiagnostics(p: CreativeProjection, position: Position, a
   };
 }
 export type DecisionDiagnostics = ReturnType<typeof decisionDiagnostics>;
-export type DecisionResponse = { source:string; reason?:string; model?:string; head:number; policy:string; actions?:{id:string}[]; rankedActions?:{id:string}[]; paletteActions?:{id:string}[]; formats?:string[]; presentation?:Record<string,Emphasis>; targets?:Record<string,string>; resolvedAction?:string; diagnostics?:DecisionDiagnostics };
+export type DecisionResponse = { source:string; reason?:string; model?:string; head:number; policy:string; actions?:{id:string}[]; rankedActions?:{id:string}[]; paletteActions?:{id:string}[]; formats?:string[]; rankedFormats?:string[]; presentation?:Record<string,Emphasis>; targets?:Record<string,string>; resolvedAction?:string; diagnostics?:DecisionDiagnostics };
 export type ReceivedDecision = { at:string; disposition:string; trace?:DecisionDiagnostics; source:string; reason?:string; recommended:string[] };
 
 export function responseDisposition(result: DecisionResponse, state: { stale:boolean; focused?:boolean; touched?:boolean; head:number; headChanged?:boolean; formats?:boolean }) {

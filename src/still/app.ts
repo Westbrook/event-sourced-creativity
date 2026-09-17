@@ -1,3 +1,5 @@
+import { failureNotification, canContinueReview } from './notifications.ts';
+import type { DocumentJob } from '../model/document-jobs.ts';
 import './form-elements.js';
 import type { PaletteFeedback } from './palette-feedback.ts';
 import { actionLimit, type ExperimentResult } from './decision-lab.ts';
@@ -21,7 +23,7 @@ import './developer-console.ts';
 import { DEVELOPER_DESKTOP_QUERY } from './developer-layout.ts';
 import type { StillDeveloperConsole } from './developer-console.ts';
 import { decisionDiagnostics, responseDisposition, type DecisionDiagnostics, type DecisionResponse, type ReceivedDecision } from './diagnostics.ts';
-import { ACTIONS, POLICY_VERSION, eligibleActions, evaluateActions, selectActions, type Action } from './decisions.ts';
+import { ACTIONS, POLICY_VERSION, eligibleActions, evaluateActions, rankAllFormats, selectActions, type Action } from './decisions.ts';
 import { isContextCompositionRelation } from '../model/combined-context.ts';
 import { documentSnapshot } from './context.ts';
 import { generationReview, issueAffectsBlock, type GenerationReview } from './generation-review.ts';
@@ -45,8 +47,16 @@ export class StillApp extends LitElement {
   private startupFailed = false;
   private contentRead: {key:string; error:string} | null = null;
   private busy = false;
-  private error = '';
-  private notice = '';
+  private errorMessage = '';
+  private errorVersion = 0;
+  private get error() { return this.errorMessage; }
+  private set error(value:string) { this.errorMessage=value; ++this.errorVersion; }
+  private noticeMessage = '';
+  private noticeVersion = 0;
+  private get notice() { return this.noticeMessage; }
+  private set notice(value:string) { this.noticeMessage=value; ++this.noticeVersion; }
+  private dismissedNotifications = new Set<string>();
+  private reviewVersion = 0;
   private mode = '';
   private routeMode = '';
   private routeError = '';
@@ -303,9 +313,9 @@ export class StillApp extends LitElement {
         this.recordDecision(result,disposition,diagnosticScope);
         if (disposition==='Applied') {
           const allowed = new Set(this.candidates().filter(a=>!!FORMATS[a.id]).map(a=>a.id));
-          this.formatSuggestions = [...new Set(result.formats!)].filter(id=>allowed.has(id)).slice(0,3);this.formatEmphasis=result.presentation??presentActions(this.formatSuggestions); this.changed();
+          this.formatSuggestions = [...new Set(result.rankedFormats ?? result.formats!)].filter(id=>allowed.has(id));this.formatEmphasis=result.presentation??presentActions(this.formatSuggestions); this.changed();
         }
-      } catch(error) { this.recordDecision({source:'fallback',reason:error instanceof ApiError?`HTTP ${error.status}`:'Network unavailable',head,policy:POLICY_VERSION},'Kept full format picker',diagnosticScope); }
+      } catch(error) { this.recordDecision({source:'fallback',reason:error instanceof ApiError?`HTTP ${error.status}`:'Network unavailable',head,policy:POLICY_VERSION},'Kept local format order',diagnosticScope); }
       finally {if(ticket===this.decisionTicket){this.developerPending=false;this.changed();}}
     }, 1300);
   }
@@ -448,6 +458,17 @@ export class StillApp extends LitElement {
     }
     this.begin(id);
   }
+  private selectMenuFormat = (event: CustomEvent<{action:string}>) => {
+    const menu = event.currentTarget as HTMLElement & {open:boolean; updateComplete:Promise<unknown>};
+    const item = event.composedPath()[0] as HTMLElement;
+    if (event.defaultPrevented || item.localName !== 'en-menu-item' || item.parentElement !== menu) return;
+    const format = event.detail.action;
+    queueMicrotask(async () => {
+      if (event.defaultPrevented) return;
+      await menu.updateComplete;
+      if (!menu.open && menu.isConnected && this.mode === 'generate' && !this.generation) this.chooseFormat(format);
+    });
+  };
   private chooseFormat(format: string) {
     if (this.busy || this.composing || this.generation?.attempted) return;
     const enteringReview = !this.generation && !!format;
@@ -488,10 +509,10 @@ export class StillApp extends LitElement {
     catch (error) {
       const review = error instanceof ApiError ? generationReview(error.status, error.body) : null;
       if (review) {
-        this.generationGate = review;
+        this.generationGate = review; ++this.reviewVersion;
         this.changed();
         await this.updateComplete;
-        this.querySelector<HTMLElement>('.generation-review')?.focus();
+        this.querySelector<HTMLElement>('.generation-notifications')?.focus();
         return;
       }
       throw error;
@@ -562,10 +583,10 @@ export class StillApp extends LitElement {
       const source = g?.sourceSnapshot ?? documentSnapshot(p, p.documentId);
       const issues = this.generationGate?.issues ?? [];
       const visibleFacts = source.facts.filter(b => b.active || issues.some(i => issueAffectsBlock(i, b)));
-      const generalIssues = issues.filter(i => !visibleFacts.some(b => issueAffectsBlock(i, b)));
       const formats = this.candidates().filter(a => !!FORMATS[a.id]);
-      const suggested = this.formatSuggestions.filter(id=>formats.some(a=>a.id===id)).slice(0,this.pageActionLimit-2);
-      const pickerFormats = g ? formats : formats.filter(a=>!suggested.includes(a.id));
+      const ordered = [...new Set([...this.formatSuggestions, ...rankAllFormats(formats)])].filter(id=>formats.some(a=>a.id===id));
+      const suggested = ordered.slice(0,Math.min(3,this.pageActionLimit-2));
+      const remaining = ordered.filter(id=>!suggested.includes(id));
       return html`<section class="form-page generation-page">
         <span class="eyebrow">${p.projectName}</span><h1>${p.documentTitle}</h1>
         <div class="generation-context">${visibleFacts.map(b => { const warnings = issues.filter(i => issueAffectsBlock(i, b)); return html`<section id=${'generation-context-'+b.block_id} class=${warnings.length ? 'generation-fact needs-review' : 'generation-fact'} tabindex="-1">
@@ -573,11 +594,17 @@ export class StillApp extends LitElement {
           ${warnings.map(i => html`<div class="context-review-reason"><strong>${i.label}</strong> · ${i.summary}</div>`)}
           ${warnings.length ? html`<a class="review-context-link" href=${this.viewURL('document',{blockId:b.block_id})} @click=${(e:MouseEvent)=>this.follow(e,'document',{blockId:b.block_id})}>Open idea</a>` : nothing}
         </section>`; })}</div>
-        <div class="format-options" @pointerenter=${()=>{this.formatTouched=true;}} @focusin=${()=>{this.formatTouched=true;}}>
-        ${!g && suggested.length ? html`<en-toolbar class="format-suggestions" label="Suggested formats" keyboard-navigation="tab">${suggested.map(id=>this.suggestedButton({...ACTIONS.find(a=>a.id===id)!,label:FORMATS[id]},true,presentEvidence(suggested,this.formatEmphasis)))}</en-toolbar>` : nothing}
-        ${g || pickerFormats.length ? html`<en-select class="select-label" label="${!g && suggested.length ? 'Other formats' : 'Output'}" .value=${live(g?.format ?? '')} ?disabled=${this.busy || this.composing || !!g?.attempted} @en-change=${(e: CustomEvent<{proposed:string;value:string}>) => this.chooseFormat(e.detail.proposed)}>
-          <en-select-option value="">Choose a format</en-select-option>${pickerFormats.map(a => html`<en-select-option value=${a.id}>${FORMATS[a.id]}</en-select-option>`)}${g && !formats.some(a => a.id === g.format) ? html`<en-select-option value=${g.format}>${FORMATS[g.format]}</en-select-option>` : nothing}
-        </en-select>` : nothing}
+        <div class="format-options" @pointerdown=${()=>{this.formatTouched=true;}} @focusin=${()=>{this.formatTouched=true;}}>
+        ${!g ? html`<en-toolbar class="format-suggestions" label="Output formats" keyboard-navigation="tab">
+          ${suggested.map(id=>this.suggestedButton({...ACTIONS.find(a=>a.id===id)!,label:FORMATS[id]},true,presentEvidence(suggested,this.formatEmphasis)))}
+          ${remaining.length ? html`<en-button id="still-format-menu" variant="ghost" size="medium" ?disabled=${this.busy || this.composing}>Menu</en-button>` : nothing}
+          ${this.button('Back', () => this.closeMode())}
+        </en-toolbar>
+        ${remaining.length ? html`<en-menu for="still-format-menu" label="Other formats" @en-action=${this.selectMenuFormat}>
+          ${remaining.map(id=>html`<en-menu-item action=${id}>${FORMATS[id]}</en-menu-item>`)}
+        </en-menu>` : nothing}` : html`<en-select class="select-label" label="Output" .value=${live(g.format)} ?disabled=${this.busy || this.composing || !!g.attempted} @en-change=${(e: CustomEvent<{proposed:string;value:string}>) => this.chooseFormat(e.detail.proposed)}>
+          <en-select-option value="">Choose a format</en-select-option>${formats.map(a => html`<en-select-option value=${a.id}>${FORMATS[a.id]}</en-select-option>`)}${!formats.some(a => a.id === g.format) ? html`<en-select-option value=${g.format}>${FORMATS[g.format]}</en-select-option>` : nothing}
+        </en-select>`}
         </div>
         ${g?.format === 'model3d' ? this.field('Prompt · 1,024 characters max', g.prompt, v => { g.prompt = v; }, 6) : nothing}
         ${g && ['slides', 'storyboard'].includes(g.format) ? html`<en-select class="select-label" label="Length" .value=${String(g.itemCount)} ?disabled=${this.busy || !!g.attempted} @en-change=${(e: CustomEvent<{proposed:string;value:string}>) => { g.itemCount = Number(e.detail.proposed); this.changed(); }}>${[3, 4, 6, 8, 10].map(n => html`<en-select-option value=${n}>${n} ${g.format === 'slides' ? 'slides' : 'frames'}</en-select-option>`)}</en-select>` : nothing}
@@ -586,12 +613,7 @@ export class StillApp extends LitElement {
         ${g?.adaptation?.issues.map(i => html`<p class="gate-notice">${i.message}</p>`)}
         ${g?.previousUnconfirmed ? html`<p class="gate-notice">Original status unknown. Starting another may duplicate it.</p>` : nothing}
         ${g ? html`<p class="cost-note">${g.recoveryClosed ? 'Original status unknown. Starting another may duplicate it.' : g.attempted ? `Checking an earlier ${FORMATS[g.format].toLowerCase()} request.` : g.format === 'model3d' ? `Estimated cost: $${(estimateModel3dCostMicrousd() / 1e6).toFixed(2)} · GLB · text to 3D` : g.scenePreview ? `Maximum cost: $${(g.scenePreview.maximumMicrousd / 1e6).toFixed(2)} · ${g.scenePreview.model}` : g.format === 'scene' ? 'Cost approval required.' : 'Forma provider and spending limits apply.'}</p>` : nothing}
-        ${this.generationGate ? html`<section class="generation-review gate-notice" role="alert" tabindex="-1" aria-label=${this.generationGate.message}>
-          <strong>${this.generationGate.message}</strong>
-          ${generalIssues.map(i=>html`<p><strong>${i.label}</strong> · ${i.summary}</p>`)}
-          ${visibleFacts.filter(b=>issues.some(i=>issueAffectsBlock(i,b))).map(b=>html`<a href=${'#generation-context-'+b.block_id} @click=${(e:MouseEvent)=>{e.preventDefault();this.querySelector<HTMLElement>('#'+CSS.escape('generation-context-'+b.block_id))?.focus();}}>Review ${text(b.properties.label)||b.handle||b.type}</a>`)}
-        </section>` : nothing}
-        <div class="form-actions">${g ? this.button(g.recoveryClosed ? 'Review another' : g.attempted ? 'Check generation' : g.format === 'scene' && !g.scenePreview ? 'Check cost' : this.generationGate ? (this.generationGate.key ? 'Approve' : 'Blocked') : 'Generate', () => void this.run(() => this.generate()), true, !!this.generationGate && !this.generationGate.key) : nothing}${this.button('Back', () => this.closeMode())}</div>
+        ${g ? html`<div class="form-actions">${this.button(g.recoveryClosed ? 'Review another' : g.attempted ? 'Check generation' : g.format === 'scene' && !g.scenePreview ? 'Check cost' : this.generationGate ? (this.generationGate.key ? 'Continue' : 'Blocked') : 'Generate', () => void this.run(() => this.generate()), true, !!this.generationGate && !this.generationGate.key)}${this.button('Back', () => this.closeMode())}</div>` : nothing}
       </section>`;
     }
     if (mode === 'workspaces') return html`<section class="form-page"><h1>Workspaces</h1><en-select class="select-label" label="Workspace" .value=${this.choice} @en-change=${(e: CustomEvent<{proposed:string;value:string}>) => { this.choice = e.detail.proposed; this.changed(); }}><en-select-option value="">Personal projects</en-select-option>${this.client.session?.projects?.map(p => html`<en-select-option value=${p.projectAccessId}>${p.projectName} · ${p.role}</en-select-option>`)}</en-select><div class="form-actions">${this.button('Open', () => void this.run(async () => { await this.client.switchWorkspace(this.client.session?.projects?.find(p => p.projectAccessId === this.choice)); this.navigate(this.client.position.view, this.client.position); }), true)}${this.button('Back', () => this.closeMode())}</div></section>`;
@@ -619,9 +641,52 @@ export class StillApp extends LitElement {
     if(this.moreOpen)actions=[...this.toolbarSuggestions(nextToolbarActions(this.rankedActions,visibleIds,eligible,limit-2)),this.button('Back',()=>{this.moreOpen=false;this.changed();void this.updateComplete.then(()=>this.querySelector<HTMLElement>('[data-action-id="ui:more"]')?.focus());}),this.button('Palette ⌘K',()=>this.openFinder('more'),false,false,'ui:palette')];
     return html`<footer class="action-dock" @pointerenter=${()=>{this.dockTouched=true;}} @pointerdown=${()=>{this.dockTouched=true;}} @focusin=${()=>{this.dockTouched=true;}}><en-toolbar label="Your next step" keyboard-navigation="tab">${actions}</en-toolbar></footer>`;
   }
+  private reviewContext(job?:DocumentJob) {
+    const ids=job?.errorDetail?.contributingBlockIds ?? this.generationGate?.issues.flatMap(i=>i.blockIds??[]) ?? [];
+    const refs=job?.errorDetail?.contributingReferenceIds ?? this.generationGate?.issues.flatMap(i=>i.referenceIds??[]) ?? [];
+    const block=this.client.projection.blocks.find(b=>!b.removed && (ids.includes(b.id) || refs.includes(String(b.properties.reference_id??''))));
+    this.navigate('document',{blockId:block?.id??'',outputId:''});
+  }
+  private notification(key:string,message:string,variant:'info'|'success'|'warning'|'danger',actions:{label:string;run:()=>void}[],dismiss?:()=>void) {
+    const identity=`${this.client.scopeKey}:${this.client.position.documentId}:${key}`;
+    if(this.dismissedNotifications.has(identity))return nothing;
+    return keyed(identity,html`<en-toast .announcement=${message} variant=${variant} priority="polite" duration="0" dismiss-label="Dismiss message" @en-change=${(event:CustomEvent<{proposed:boolean}>)=>{
+      if(event.target!==event.currentTarget||event.detail.proposed!==false)return;
+      const focused=(event.currentTarget as HTMLElement).matches(':focus-within');
+      queueMicrotask(()=>{
+        if(event.defaultPrevented)return;
+        this.dismissedNotifications.add(identity);
+        if(this.dismissedNotifications.size>200)this.dismissedNotifications.delete(this.dismissedNotifications.values().next().value!);
+        dismiss?.();this.changed();
+        if(focused)void this.updateComplete.then(()=>this.focusContent());
+      });
+    }}>${message}${actions.map(action=>html`<en-button slot="actions" variant="secondary" size="small" ?disabled=${this.busy||this.composing} @click=${()=>{this.dismissedNotifications.add(identity);action.run();this.changed();}}>${action.label}</en-button>`)}</en-toast>`);
+  }
+  private renderNotifications(failed?:DocumentJob) {
+    const review=this.generationGate, failure=failed?failureNotification(failed):null;
+    return html`<en-toast-region class="generation-notifications" placement="block-start-end" label="Notifications" max="2">
+      ${this.error?this.notification(`error:${this.errorVersion}`,this.error,'danger',[
+        this.generation?.attempted?{label:'Check generation',run:()=>void this.run(()=>this.generate())}:
+        this.mode==='generate'?{label:'Review context',run:()=>this.reviewContext()}:
+        {label:this.startupFailed?'Reload':'Review step',run:()=>this.startupFailed?void this.run(()=>this.loadWorkspace()):this.focusContent()},
+      ],()=>{this.error='';}):nothing}
+      ${review?this.notification(`review:${this.reviewVersion}`, [review.message,...review.issues.map(i=>i.summary)].join('. '),canContinueReview(review)?'warning':'danger',[
+        {label:'Review context',run:()=>this.reviewContext()},
+        ...(canContinueReview(review)?[{label:'Continue',run:()=>void this.run(()=>this.generate())}]:[]),
+      ]):nothing}
+      ${!this.mode&&failed&&failure?this.notification(`job:${failure.key}`,failure.message,failed.errorDetail?.category==='safety'?'warning':'danger',[
+        {label:failure.label,run:()=>{
+          if(failure.action==='context')this.reviewContext(failed);
+          else if(failure.action==='generation'&&this.client.abilities.formats.includes(failure.format))this.choose(failure.format);
+          else this.navigate('results');
+        }},
+      ],()=>{void this.client.dismissJob(failed).catch(()=>{this.error='Message hidden here. Dismissal could not be saved.';this.changed();});}):nothing}
+      ${this.notice?this.notification(`notice:${this.noticeVersion}`,this.notice,'success',[],()=>{this.notice='';}):nothing}
+    </en-toast-region>`;
+  }
   render() {
-    const c = this.client, running = c.jobs.filter(j => activeJobs.has(j.status) && j.documentId === c.position.documentId), failed = c.jobs.find(j => j.status === 'failed' && j.documentId === c.position.documentId);
-    return html`<div class=${this.developer?'still-layout has-developer':'still-layout'}><div class="still-shell"><header class="masthead"><a class="wordmark" href=${this.viewURL('projects',{projectId:'',documentId:''})} aria-label="Still home" @click=${this.home}>still<span aria-hidden="true">.</span></a><span class="working-status" role="status" aria-live="polite">${this.busy ? 'Working…' : ''}</span><span class="session-status">${c.session?.impersonation ? 'Preview · read only' : c.session && !c.abilities.author ? 'Read only' : ''}</span></header><div class="feedback-strip">${running.length ? html`<aside class="job-status" role="status"><i></i>${running[0].progressMessage || 'Generating…'}${running.length > 1 ? ` · ${running.length} in progress` : ''}</aside>` : nothing}${this.error || failed && !this.mode ? html`<div class="status-message error" role="alert">${this.error || failed?.errorDetail?.message || failed?.error || 'Generation failed.'}</div>` : this.notice && !this.mode ? html`<div class="status-message" role="status">${this.notice}</div>` : nothing}</div><main id="still-content" aria-busy=${this.loading}>${this.renderCanvas()}</main>${this.renderDock()}${this.renderPalette()}</div>${this.developer ? html`<aside class="developer-panel" aria-label="Developer panel"><still-developer-console @developer-density=${this.setDensity} @developer-experiment=${this.experiment} @developer-disable=${()=>this.setDeveloper(false)}></still-developer-console></aside>` : nothing}${new URL(location.href).searchParams.has('progress-report') ? html`<a class="progress-return" href=${REPORT_URL}>Progress Report ↗</a>` : nothing}</div>`;
+    const c = this.client, running = c.jobs.filter(j => activeJobs.has(j.status) && j.documentId === c.position.documentId), failed = c.jobs.find(j => j.status === 'failed' && !j.dismissedAt && j.documentId === c.position.documentId);
+    return html`<div class=${this.developer?'still-layout has-developer':'still-layout'}><div class="still-shell"><header class="masthead"><a class="wordmark" href=${this.viewURL('projects',{projectId:'',documentId:''})} aria-label="Still home" @click=${this.home}>still<span aria-hidden="true">.</span></a><span class="working-status" role="status" aria-live="polite">${this.busy ? 'Working…' : ''}</span><span class="session-status">${c.session?.impersonation ? 'Preview · read only' : c.session && !c.abilities.author ? 'Read only' : ''}</span></header><div class="feedback-strip">${running.length ? html`<aside class="job-status" role="status"><i></i>${running[0].progressMessage || 'Generating…'}${running.length > 1 ? ` · ${running.length} in progress` : ''}</aside>` : nothing}</div><main id="still-content" aria-busy=${this.loading}>${this.renderCanvas()}</main>${this.renderDock()}${this.renderPalette()}</div>${this.developer ? html`<aside class="developer-panel" aria-label="Developer panel"><still-developer-console @developer-density=${this.setDensity} @developer-experiment=${this.experiment} @developer-disable=${()=>this.setDeveloper(false)}></still-developer-console></aside>` : nothing}${new URL(location.href).searchParams.has('progress-report') ? html`<a class="progress-return" href=${REPORT_URL}>Progress Report ↗</a>` : nothing}</div>${this.renderNotifications(failed)}`;
   }
 }
 if (!customElements.get('still-app')) customElements.define('still-app', StillApp);
