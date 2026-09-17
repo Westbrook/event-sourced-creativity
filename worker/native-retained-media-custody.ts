@@ -11,6 +11,7 @@ import { captureExperienceVideoEvidence } from "../src/experiences/video-native-
 import { projectNativeRetainedOutput, type NativeRetainedOutputDto } from "../src/model/native-retained-output.ts";
 import { selectRetainedModel3dEditFile } from "../src/model/native-retained-model3d.ts";
 import { parseSelectedOutputShareMediaSelection, type SelectedOutputShareMediaSelection } from "../src/model/selected-output-share-media.ts";
+import { isSelectedOutputShareStableAudioSelection } from "../src/model/selected-output-share-mp3-contract.ts";
 import type { AudioMediaRevision, VideoMediaRevision } from "../src/model/document-artifacts.ts";
 import type { Model3dMediaRevision } from "../src/model/model3d-media-revision.ts";
 import type { WorkerEnv } from "./runtime.ts";
@@ -20,9 +21,9 @@ type SqlValue = string | number | null;
  * These fixed queries are produced internally, never supplied by a requester. */
 export type NativeRetainedMediaAssertion = Readonly<{ sql: string; bindings: readonly SqlValue[] }>;
 export type NativeRetainedMediaAsset = Readonly<{
-  url: string; mimeType: "audio/wav" | "video/mp4" | "model/gltf-binary";
+  url: string; mimeType: "audio/wav" | "audio/mpeg" | "video/mp4" | "model/gltf-binary";
   sha256: string; byteLength: number | null;
-  readMode: "owned-media" | "native-output-video";
+  readMode: "owned-media" | "native-output-video" | "native-output-audio-mp3";
   audioRevision: AudioMediaRevision | null;
   videoRevision: VideoMediaRevision | null;
   model3dRevision: Model3dMediaRevision | null;
@@ -203,9 +204,14 @@ export async function readNativeRetainedMediaCustody(env: WorkerEnv, identity: N
   let asset: NativeRetainedMediaAsset;
   if (dto.output === "audio") {
     const current = dto.content.media;
-    if (!current || current.mediaType !== "audio/wav" || current.sha256 !== selected.mediaSha256) throw unavailable();
-    asset = { url: current.url, mimeType: "audio/wav", sha256: current.sha256,
-      byteLength: audioEdit?.revision?.media.byteLength ?? null, readMode: "owned-media", ...revisions };
+    const stableAudio = isSelectedOutputShareStableAudioSelection(selected);
+    // This is only genuine current source custody. The separate recipe proof
+    // and sharing authority must still run before any derivative byte read.
+    if (!current || current.mediaType !== (stableAudio ? "audio/mpeg" : "audio/wav")
+      || current.sha256 !== selected.mediaSha256) throw unavailable();
+    asset = { url: current.url, mimeType: stableAudio ? "audio/mpeg" : "audio/wav", sha256: current.sha256,
+      byteLength: audioEdit?.revision?.media.byteLength ?? null,
+      readMode: stableAudio ? "native-output-audio-mp3" : "owned-media", ...revisions };
   } else if (dto.output === "video") {
     const current = dto.content.primaryMedia, clips = dto.content.clips.filter(clip => clip.media !== null);
     if (!current || clips.length !== 1 || clips[0]?.media?.url !== current.url || current.mediaType !== "video/mp4") throw unavailable();

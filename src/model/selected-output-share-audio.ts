@@ -122,3 +122,12 @@ export function copySelectedOutputShareAudioBytes(qualification: unknown): Uint8
   const bytes = ownedAudio.get(qualification as QualifiedSelectedOutputShareAudio);
   return bytes ? new Uint8Array(bytes) : null;
 }
+
+/** Retire only this process's exact opaque qualification. Previously returned
+ * copies have their own owner and are unaffected. No authority is conferred. */
+export function disposeSelectedOutputShareAudio(qualification: unknown): void {
+  if (qualification === null || typeof qualification !== "object") return;
+  const key = qualification as QualifiedSelectedOutputShareAudio, bytes = ownedAudio.get(key);
+  if (!bytes) return;
+  ownedAudio.delete(key); bytes.fill(0);
+}

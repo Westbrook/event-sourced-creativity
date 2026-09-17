@@ -2,6 +2,9 @@ import type { WorkerEnv } from "./runtime.ts";
 import { AUTH_BYTES, EVENT_BYTES, nativeRetainedTextCustodyAssertion, nativeRetainedTextCustodySnapshot, type NativeRetainedTextCustody } from "./native-retained-text-custody.ts";
 import { nativeRetainedMediaCustodyAssertion, nativeRetainedMediaCustodySnapshot, type NativeRetainedMediaCustody,
   type NativeRetainedMediaSnapshot } from "./native-retained-media-custody.ts";
+import { nativeStableAudioRecipeSnapshot, nativeStableAudioRecipeAssertions, type NativeStableAudioRecipeProof,
+  type NativeStableAudioRecipeSnapshot } from "./native-stable-audio-share-proof.ts";
+import { isSelectedOutputShareStableAudioSelection } from "../src/model/selected-output-share-mp3-contract.ts";
 import { selectedOutputShareMediaRecoveryLineage } from "./selected-output-share-media-recovery.ts";
 import { documentJobMaxAttempts } from "../src/model/document-jobs.ts";
 import { MAX_MANUAL_PRESENTATION_SLIDES } from "../src/model/presentation-count-policy.ts";
@@ -15,7 +18,8 @@ export type SelectedOutputShareAuthority = Readonly<{ [selectedShareAuthority]: 
 type SqlValue = string | number | null;
 type Assertion = { sql: string; bindings: SqlValue[] };
 type Snapshot = Readonly<{ jobId: string; completionId: string; expiresAt: string }>;
-type Custody = { kind: "text"; proof: NativeRetainedTextCustody } | { kind: "media"; proof: NativeRetainedMediaCustody };
+type Custody = { kind: "text"; proof: NativeRetainedTextCustody } | { kind: "media"; proof: NativeRetainedMediaCustody }
+  | { kind: "stable-audio"; proof: NativeRetainedMediaCustody; recipe: NativeStableAudioRecipeProof };
 type State = { env: WorkerEnv; db: WorkerEnv["DB"]; environment: string; custody: Custody; snapshot: Snapshot; assertion: readonly SelectedShareProofQuery[] };
 const proofs = new WeakMap<object, State>();
 const encoder = new TextEncoder();
@@ -306,7 +310,7 @@ function originalVideoWithNotes(native: NativeRetainedMediaSnapshot): boolean {
 /** Media-specific provenance, after exact native current custody. Outputs media
  * needs its original receipt bridge; ordinary Document revisions keep current
  * native custody without manufacturing an original revision or recovery lease. */
-function validateMediaWitness(raw: string, native: NativeRetainedMediaSnapshot): Snapshot {
+function validateMediaWitness(raw: string, native: NativeRetainedMediaSnapshot, stableAudio = false): Snapshot {
   const witness = parse(raw), job = object(witness?.job), completion = object(witness?.completion), slot = object(witness?.slot),
     plan = object(witness?.plan), grant = object(witness?.grant), preflight = object(witness?.preflight), authorization = object(witness?.authorization);
   if (!job || !completion || !slot || !plan || !grant || !preflight || !authorization) return fail();
@@ -344,7 +348,7 @@ function validateMediaWitness(raw: string, native: NativeRetainedMediaSnapshot):
     // uses the ordinary job completion path with exact request AND result
     // references, including its native current edit/restore receipt lineage.
     if (mediaCompletion.sourceSurface !== "outputs"
-      || (selected.output === "audio" ? mediaCompletion.videoReceipt !== null || mediaCompletion.model3dReceipt !== null || native.media.readMode !== "owned-media"
+      || (selected.output === "audio" ? mediaCompletion.videoReceipt !== null || mediaCompletion.model3dReceipt !== null || native.media.readMode !== (stableAudio ? "native-output-audio-mp3" : "owned-media")
         : selected.output === "video"
           ? selected.revision !== 0 && !originalVideoWithNotes(native) || mediaCompletion.videoReceipt !== "object" || mediaCompletion.model3dReceipt !== null || native.media.readMode !== "native-output-video"
           : mediaCompletion.model3dReceipt !== "object" || mediaCompletion.videoReceipt !== null
@@ -417,29 +421,64 @@ async function readAuthority(env: WorkerEnv, custody: NativeRetainedTextCustody)
   return proof;
 }
 
-async function readMediaAuthority(env: WorkerEnv, custody: NativeRetainedMediaCustody): Promise<SelectedOutputShareAuthority> {
+/** Both objects must be genuine capabilities issued against the same observed
+ * current native source. Neither declarations nor one proof can stand in for
+ * the other. This comparison does not manufacture a revision-zero DTO. */
+function stableAudioSource(env: WorkerEnv, custody: NativeRetainedMediaCustody,
+  recipe: NativeStableAudioRecipeProof): NativeStableAudioRecipeSnapshot {
+  const native = nativeRetainedMediaCustodySnapshot(custody, env), source = nativeStableAudioRecipeSnapshot(recipe, env);
+  const selected = native.selection, expected = source.selection;
+  if (!isSelectedOutputShareStableAudioSelection(selected)
+    || native.identity.userId !== source.identity.userId || native.identity.email !== source.identity.email
+    || native.identity.source !== source.identity.source || selected.output !== expected.output
+    || selected.documentId !== expected.documentId || selected.artifactId !== expected.artifactId
+    || selected.revision !== expected.revision || selected.contentSha256 !== expected.contentSha256
+    || selected.mediaSha256 !== expected.mediaSha256 || selected.sourceProfile !== expected.sourceProfile
+    || selected.projectionPolicy !== expected.projectionPolicy || native.projectId !== source.projectId
+    || native.contentId !== source.contentId || native.completionId !== source.completionId
+    || native.authSnapshot !== source.authSnapshot || native.sourceExpiresAt !== source.sourceExpiresAt
+    || native.media.readMode !== "native-output-audio-mp3" || native.media.mimeType !== "audio/mpeg"
+    || source.media.mimeType !== "audio/mpeg" || native.media.url !== source.media.url
+    || native.media.sha256 !== source.media.sha256 || native.media.sha256 !== selected.mediaSha256) return fail();
+  return source;
+}
+
+async function readMediaAuthority(env: WorkerEnv, custody: NativeRetainedMediaCustody,
+  recipe?: NativeStableAudioRecipeProof): Promise<SelectedOutputShareAuthority> {
   const db = env.DB, capturedEnvironment = environment(env), native = nativeRetainedMediaCustodySnapshot(custody, env), custodyAssertion = nativeRetainedMediaCustodyAssertion(custody, env);
-  const policy = await admissionDeadline(env, native);
-  const schema = await sponsorSchema(env), cte = provenanceQuery(schema.names, true);
+  const stableSource = recipe ? stableAudioSource(env, custody, recipe) : null;
+  if (!stableSource && (native.media.readMode === "native-output-audio-mp3" || isSelectedOutputShareStableAudioSelection(native.selection))) return fail();
+  const check = () => {
+    if (env.DB !== db || environment(env) !== capturedEnvironment) return fail();
+    if (recipe) stableAudioSource(env, custody, recipe); else nativeRetainedMediaCustodySnapshot(custody, env);
+  };
+  const policy = await admissionDeadline(env, native); check();
+  const schema = await sponsorSchema(env); check();
+  const cte = provenanceQuery(schema.names, true);
   const bindings: SqlValue[] = [native.completionId, `creative:${native.identity.userId}`, native.identity.userId, native.selection.documentId];
-  const result = await db.prepare(`WITH ${cte} SELECT witness FROM bounded_selected_share_jobs LIMIT 2`).bind(...bindings).all<{ witness: string }>();
+  const result = await db.prepare(`WITH ${cte} SELECT witness FROM bounded_selected_share_jobs LIMIT 2`).bind(...bindings).all<{ witness: string }>(); check();
   if (!result.success || result.results.length !== 1 || typeof result.results[0]?.witness !== "string" || bytes(result.results[0].witness) > WITNESS_BYTES) return fail();
-  const raw = result.results[0].witness, source = validateMediaWitness(raw, native);
-  const snapshot = Object.freeze({ ...source, expiresAt: policy.expiresAt && policy.expiresAt < source.expiresAt ? policy.expiresAt : source.expiresAt });
+  const raw = result.results[0].witness, source = validateMediaWitness(raw, native, stableSource !== null);
+  if (stableSource && source.jobId !== stableSource.jobId) return fail();
+  const expiresAt = [source.expiresAt, ...(policy.expiresAt ? [policy.expiresAt] : []), ...(stableSource ? [stableSource.expiresAt] : [])].sort()[0]!;
+  const snapshot = Object.freeze({ ...source, expiresAt });
   const assertion = Object.freeze([
     selectedSharePredicateProof(schema.assertion), selectedShareProofQuery(custodyAssertion.sql, custodyAssertion.bindings),
     selectedSharePredicateProof(policy.assertion),
     selectedShareProofQuery(`WITH ${cte}
       SELECT 1 AS admitted FROM bounded_selected_share_jobs WHERE CAST(witness AS BLOB)=CAST(? AS BLOB)
         AND (SELECT COUNT(*) FROM selected_share_jobs)=1`, [...bindings, raw]),
+    ...(recipe ? nativeStableAudioRecipeAssertions(recipe, env) : []),
   ]);
-  const statement = selectedShareProofStatement(assertion);
+  // All seven complete leaves (four existing + three recipe) are siblings in
+  // the same balanced final statement; no extra external conjunction is added.
+  const statement = selectedShareProofStatement(assertion, recipe ? "balanced" : "linear");
   const final = await db.prepare(`${statement.withSql} SELECT 1 AS admitted WHERE ${statement.sql}`)
-    .bind(...statement.bindings).first<{ admitted: number }>();
-  if (env.DB !== db || environment(env) !== capturedEnvironment || final?.admitted !== 1 || Date.parse(snapshot.expiresAt) <= Date.now()) return fail();
-  nativeRetainedMediaCustodySnapshot(custody, env);
+    .bind(...statement.bindings).first<{ admitted: number }>(); check();
+  if (final?.admitted !== 1 || Date.parse(snapshot.expiresAt) <= Date.now()) return fail();
   const proof = Object.freeze({}) as SelectedOutputShareAuthority;
-  proofs.set(proof, { env, db, environment: capturedEnvironment, custody: { kind: "media", proof: custody }, snapshot, assertion });
+  proofs.set(proof, { env, db, environment: capturedEnvironment,
+    custody: recipe ? { kind: "stable-audio", proof: custody, recipe } : { kind: "media", proof: custody }, snapshot, assertion });
   return proof;
 }
 
@@ -456,11 +495,23 @@ export async function readSelectedOutputShareMediaAuthority(env: WorkerEnv, cust
   try { return await readMediaAuthority(env, custody); } catch { return fail(); }
 }
 
+/** Native Stable20 MP3 requires both authentic source custody and recipe
+ * evidence, then the complete ordinary actor-paid publication checks. */
+export async function readSelectedOutputShareStableAudioAuthority(env: WorkerEnv, custody: NativeRetainedMediaCustody,
+  recipe: NativeStableAudioRecipeProof): Promise<SelectedOutputShareAuthority> {
+  try {
+    // An absent recipe may not fall through to the ordinary media entry.
+    stableAudioSource(env, custody, recipe);
+    return await readMediaAuthority(env, custody, recipe);
+  } catch { return fail(); }
+}
+
 function state(proof: SelectedOutputShareAuthority, env: WorkerEnv): State {
   const captured = proof && typeof proof === "object" ? proofs.get(proof) : undefined;
   if (!captured || captured.env !== env || captured.db !== env.DB || captured.environment !== environment(env)
     || Date.parse(captured.snapshot.expiresAt) <= Date.now()) return fail();
   if (captured.custody.kind === "text") nativeRetainedTextCustodySnapshot(captured.custody.proof, env);
+  else if (captured.custody.kind === "stable-audio") stableAudioSource(env, captured.custody.proof, captured.custody.recipe);
   else nativeRetainedMediaCustodySnapshot(captured.custody.proof, env);
   return captured;
 }

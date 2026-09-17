@@ -3,15 +3,18 @@ import { parseSelectedOutputShareAnyApproval, parseSelectedOutputShareAnySelecti
   SELECTED_OUTPUT_SHARE_PURPOSE, type SelectedOutputShareAnySelection } from "../src/model/selected-output-share.ts";
 import { hostedIdentity, readNativeRetainedTextCustody, nativeRetainedTextCustodySnapshot,
   type NativeRetainedIdentity } from "./native-retained-text-custody.ts";
-import { readSelectedOutputShareAuthority, readSelectedOutputShareMediaAuthority, selectedOutputShareAuthoritySnapshot,
+import { readSelectedOutputShareAuthority, readSelectedOutputShareMediaAuthority, readSelectedOutputShareStableAudioAuthority, selectedOutputShareAuthoritySnapshot,
   selectedOutputShareAuthorityAssertion } from "./selected-output-share-authority.ts";
 import { readNativeRetainedMediaCustody, nativeRetainedMediaCustodySnapshot } from "./native-retained-media-custody.ts";
-import { readNativeRetainedMediaBytes, copyCurrentNativeRetainedMediaBytes, assertNativeRetainedMediaBytesCurrent,
+import { readNativeRetainedMediaBytes, readNativeRetainedStableAudioBytes, copyCurrentNativeRetainedMediaBytes, assertNativeRetainedMediaBytesCurrent,
   NATIVE_RETAINED_MEDIA_BYTES_BUDGET_MS, type NativeRetainedMediaBytes } from "./native-retained-media-bytes.ts";
 import { SELECTED_OUTPUT_SHARE_VIDEO_X264_POLICY } from "../src/model/selected-output-share-video.ts";
 import { selectedOutputShareSchemaState, selectedOutputShareSchemaAssertion } from "./selected-output-share-readiness.ts";
 import type { WorkerEnv } from "./runtime.ts";
 import { selectedSharePredicateProof, selectedShareProofStatement, type SelectedShareProofQuery } from "./selected-output-share-proof.ts";
+import { isSelectedOutputShareStableAudioSelection } from "../src/model/selected-output-share-mp3-contract.ts";
+import { readNativeStableAudioRecipeProof } from "./native-stable-audio-share-proof.ts";
+import type { SelectedOutputShareMp3Operation } from "./selected-output-share-mp3-operation.ts";
 
 // The finite selected-share dispatcher exposes read/revoke only while creation
 // remains closed. There is no initializer, provider or budget entry here. The
@@ -59,19 +62,26 @@ function identity(request: Request): NativeRetainedIdentity {
   try { value = hostedIdentity(request); } catch { return fail("selected_output_share_personal_principal_required", 403); }
   return value ?? fail("selected_output_share_authentication_required", 401);
 }
-async function command(request: Request) {
+async function command(request: Request, signal: AbortSignal) {
   if (request.method !== "POST") fail("method_not_allowed", 405);
   origin(request);
   if (request.headers.get("content-type")?.split(";", 1)[0] !== "application/json") fail("selected_output_share_command_invalid", 400);
   const reader = request.body?.getReader();
   if (!reader) fail("selected_output_share_command_invalid", 400);
   const chunks: Uint8Array[] = []; let length = 0;
-  for (;;) {
-    const result = await reader.read(); if (result.done) break;
-    length += result.value.byteLength;
-    if (length > 8192 || request.signal.aborted) { void reader.cancel().catch(() => {}); fail("selected_output_share_command_invalid", 400); }
-    chunks.push(result.value);
-  }
+  const cancel = () => { void reader.cancel().catch(() => {}); };
+  signal.addEventListener("abort", cancel, { once: true });
+  try {
+    if (signal.aborted) { cancel(); fail(); }
+    for (;;) {
+      const result = await reader.read();
+      if (signal.aborted || request.signal.aborted) fail();
+      if (result.done) break;
+      length += result.value.byteLength;
+      if (length > 8192) { cancel(); fail("selected_output_share_command_invalid", 400); }
+      chunks.push(result.value);
+    }
+  } finally { signal.removeEventListener("abort", cancel); try { reader.releaseLock(); } catch { /* Cancellation owns a pending read. */ } }
   const bytes = new Uint8Array(length); let offset = 0;
   for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
   try { return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)) as unknown; }
@@ -104,29 +114,80 @@ function joined(...proofs: (Assertion | readonly SelectedShareProofQuery[])[]): 
   return proofs.flatMap(proof => Array.isArray(proof) ? proof : [selectedSharePredicateProof(proof as Assertion)]);
 }
 function future(current: Row) { if (Date.parse(current.expires_at!) <= Date.now() || current.revoked_at !== null) fail(); }
-function live(current: Row, active = false): Assertion {
+function live(current: Row, active = false, prepared = false): Assertion {
   return { sql: `EXISTS(SELECT 1 FROM selected_output_shares WHERE share_id=? AND purpose=? AND minimized_at IS NULL AND revoked_at IS NULL
-    AND expires_at>${nowSql} AND source_expires_at>${nowSql} AND provenance_expires_at>${nowSql}${active ? " AND token_hash IS NOT NULL AND issued_at IS NOT NULL" : ""})`,
+    AND expires_at>${nowSql} AND source_expires_at>${nowSql} AND provenance_expires_at>${nowSql}${active ? " AND token_hash IS NOT NULL AND issued_at IS NOT NULL" : prepared ? " AND token_hash IS NULL AND issued_at IS NULL" : ""})`,
   bindings: [current.share_id, SELECTED_OUTPUT_SHARE_PURPOSE] };
 }
+type Mp3Operation = { proof: SelectedOutputShareMp3Operation; resources: typeof import("./selected-output-share-mp3-operation.ts") };
+type OperationDeadline = Readonly<{ wallDeadline: number; monotonicDeadline: number }>;
+const operationDeadline = (): OperationDeadline => Object.freeze({ wallDeadline: Date.now() + NATIVE_RETAINED_MEDIA_BYTES_BUDGET_MS,
+  monotonicDeadline: performance.now() + NATIVE_RETAINED_MEDIA_BYTES_BUDGET_MS });
+/** Metadata lookup and command parsing precede knowledge of the source branch.
+ * Race those awaits too. A derivative body owns the actual request signal and
+ * these same deadlines, so clearing this transient wrapper cannot renew it or
+ * abort its successful handoff. Late unhanded bodies are cancelled. */
+async function withOperationBudget(request: Request,
+  action: (signal: AbortSignal, deadline: OperationDeadline) => Promise<Response>): Promise<Response> {
+  const deadline = operationDeadline(), controller = new AbortController();
+  if (request.signal.aborted) return rejected(new Refusal("selected_output_share_unavailable", 404));
+  let timer: ReturnType<typeof setTimeout> | undefined, cancel: (() => void) | undefined, accepting = true;
+  const stopped = new Promise<never>((_, reject) => {
+    cancel = () => { controller.abort(); reject(new Refusal("selected_output_share_unavailable", 404)); };
+    request.signal.addEventListener("abort", cancel, { once: true });
+    timer = setTimeout(cancel, Math.max(0, Math.min(deadline.wallDeadline - Date.now(), deadline.monotonicDeadline - performance.now())));
+    if (request.signal.aborted) cancel();
+  });
+  const pending = Promise.resolve().then(() => action(controller.signal, deadline));
+  void pending.then(response => { if (!accepting) void response.body?.cancel().catch(() => {}); }, () => {});
+  try { return await Promise.race([pending, stopped]); }
+  catch (error) { return rejected(error); }
+  finally {
+    accepting = false; clearTimeout(timer);
+    if (cancel) request.signal.removeEventListener("abort", cancel);
+    controller.abort(); void pending.catch(() => {});
+  }
+}
+async function beginMp3(selection: SelectedOutputShareAnySelection, signal: AbortSignal,
+  deadline?: OperationDeadline): Promise<Mp3Operation | null> {
+  if (!isSelectedOutputShareStableAudioSelection(selection)) return null;
+  const resources = await import("./selected-output-share-mp3-operation.ts");
+  const proof = resources.acquireSelectedOutputShareMp3Operation(signal, deadline);
+  if (!proof) fail();
+  return { proof, resources };
+}
+const during = <T>(operation: Mp3Operation | null, thunk: () => Promise<T>, disposeLate?: (result: T) => void | Promise<void>): Promise<T> =>
+  operation ? operation.resources.runSelectedOutputShareMp3Operation(operation.proof, thunk, disposeLate) : thunk();
+function operationCurrent(operation: Mp3Operation | null) { operation?.resources.assertSelectedOutputShareMp3OperationCurrent(operation.proof); }
+function finishMp3(operation: Mp3Operation | null) { operation?.resources.finishSelectedOutputShareMp3Operation(operation.proof); }
 async function fresh(env: WorkerEnv, principal: NativeRetainedIdentity, selection: SelectedOutputShareAnySelection,
-  review: unknown, signal: AbortSignal) {
+  review: unknown, signal: AbortSignal, operation: Mp3Operation | null = null) {
   if (selection.output === "audio" || selection.output === "video" || selection.output === "model3d") {
     const nativeSelection = selectedOutputShareNativeMediaSelection(selection);
     if (!nativeSelection) fail();
-    const custody = await readNativeRetainedMediaCustody(env, principal, nativeSelection, signal);
+    const derivative = isSelectedOutputShareStableAudioSelection(nativeSelection);
+    if (derivative && !operation || !derivative && operation) fail();
+    const actualSignal = operation ? operation.resources.selectedOutputShareMp3OperationSignal(operation.proof) : signal;
+    const custody = await during(operation, () => readNativeRetainedMediaCustody(env, principal, nativeSelection, actualSignal));
     const source = nativeRetainedMediaCustodySnapshot(custody, env);
-    const authority = await readSelectedOutputShareMediaAuthority(env, custody);
+    const recipe = derivative ? await during(operation, () => readNativeStableAudioRecipeProof(env, principal, {
+      output: "audio", documentId: nativeSelection.documentId, artifactId: nativeSelection.artifactId,
+      revision: nativeSelection.revision, contentSha256: nativeSelection.contentSha256, mediaSha256: nativeSelection.mediaSha256,
+      sourceProfile: nativeSelection.sourceProfile, projectionPolicy: nativeSelection.projectionPolicy,
+    }, actualSignal)) : null;
+    const authority = await during(operation, () => recipe
+      ? readSelectedOutputShareStableAudioAuthority(env, custody, recipe) : readSelectedOutputShareMediaAuthority(env, custody));
     const provenance = selectedOutputShareAuthoritySnapshot(authority, env);
-    const media = await readNativeRetainedMediaBytes(custody, env);
+    const media = recipe && operation ? await during(operation, () => readNativeRetainedStableAudioBytes(custody, recipe, env, operation.proof))
+      : await readNativeRetainedMediaBytes(custody, env);
     const disclosure = source.dto.output === "audio"
       ? { watermark: source.dto.content.synthIdWatermarked === true ? "synthid-declared" : "not-declared" }
       : source.dto.output === "video" ? { encoderDeclaration: nativeSelection.policy === SELECTED_OUTPUT_SHARE_VIDEO_X264_POLICY ? "x264-163-r3060" : null } : {};
-    const candidate = await projectSelectedOutputShareMediaCandidate(selection,
-      { descriptor: media.descriptor, sourceExpiresAt: source.expiresAt, disclosure }, review);
+    const candidate = await during(operation, () => projectSelectedOutputShareMediaCandidate(selection,
+      { descriptor: media.descriptor, sourceExpiresAt: source.expiresAt, disclosure }, review));
     if (!candidate || candidate.publicOutput.expiresAt > provenance.expiresAt) fail();
     return { source, provenance, candidate, media, sourceExpiry: candidate.sourceExpiresAt,
-      authHash: await hash(source.authSnapshot), proof: selectedOutputShareAuthorityAssertion(authority, env) };
+      authHash: await during(operation, () => hash(source.authSnapshot)), proof: selectedOutputShareAuthorityAssertion(authority, env) };
   }
   const custody = await readNativeRetainedTextCustody(env, principal, selection);
   const source = nativeRetainedTextCustodySnapshot(custody, env);
@@ -148,7 +209,7 @@ function matches(current: Row, value: Awaited<ReturnType<typeof fresh>>) {
     || current.expires_at !== value.candidate.publicOutput.expiresAt) fail();
 }
 async function finalProof(env: WorkerEnv, assertion: readonly SelectedShareProofQuery[], media: NativeRetainedMediaBytes | null) {
-  const proof = selectedShareProofStatement(joined(selectedOutputShareSchemaAssertion(), assertion));
+  const proof = selectedShareProofStatement(joined(selectedOutputShareSchemaAssertion(), assertion), media ? "balanced" : "linear");
   const result = await env.DB.prepare(`${proof.withSql} SELECT 1 AS permitted WHERE ${proof.sql}`).bind(...proof.bindings).first<{ permitted: number }>();
   if (result?.permitted !== 1) fail();
   if (media) assertNativeRetainedMediaBytesCurrent(media, env);
@@ -157,18 +218,22 @@ const shareMetadata = (current: Row) => ({ shareId: current.share_id, expiresAt:
 
 /** Authenticated preparation stores only identity and explicit review choices,
  * never a copy of the native output. It cannot activate a public read token. */
-export async function prepareSelectedOutputShare(request: Request, env: WorkerEnv): Promise<Response> {
+async function prepare(request: Request, env: WorkerEnv, operationSignal: AbortSignal, deadline: OperationDeadline): Promise<Response> {
+  let operation: Mp3Operation | null = null;
   try {
-    const stable = frame(request, env), principal = identity(request), input = await command(request); stable();
+    const frameCurrent = frame(request, env, operationSignal);
+    const stable = () => { frameCurrent(); operationCurrent(operation); };
+    const principal = identity(request), input = await command(request, operationSignal); stable();
     if (!exact(input, ["intentKey", "selection", "review"]) || !id(input.intentKey)) fail("selected_output_share_command_invalid", 400);
     const selection = parseSelectedOutputShareAnySelection(input.selection);
     if (!selection) fail("selected_output_share_command_invalid", 400);
-    await ready(env); stable();
-    const intent = await replayKey(principal.userId, input.intentKey); stable();
-    let existing = await env.DB.prepare(`SELECT ${rowColumns.join(",")} FROM selected_output_shares WHERE replay_key=?`)
-      .bind(intent).first(); stable();
+    operation = await beginMp3(selection, request.signal, deadline);
+    await during(operation, () => ready(env)); stable();
+    const intent = await during(operation, () => replayKey(principal.userId, input.intentKey as string)); stable();
+    let existing = await during(operation, () => env.DB.prepare(`SELECT ${rowColumns.join(",")} FROM selected_output_shares WHERE replay_key=?`)
+      .bind(intent).first()); stable();
     if (existing) row(existing); // A minimized intent remains consumed without reading source content.
-    const value = await fresh(env, principal, selection, input.review, request.signal); stable();
+    const value = await fresh(env, principal, selection, input.review, operationSignal, operation); stable();
     let replayed = Boolean(existing);
     if (!existing) {
       const current: Row = { share_id: crypto.randomUUID(), purpose: SELECTED_OUTPUT_SHARE_PURPOSE, replay_key: intent, owner_id: principal.userId,
@@ -180,71 +245,86 @@ export async function prepareSelectedOutputShare(request: Request, env: WorkerEn
         token_hash: null, issued_at: null, revoked_at: null, minimized_at: null };
       stable();
       try {
-        const proof = selectedShareProofStatement(joined(selectedOutputShareSchemaAssertion(), value.proof));
-        const inserted = await env.DB.prepare(`${proof.withSql} INSERT INTO selected_output_shares(${rowColumns.join(",")})
+        const proof = selectedShareProofStatement(joined(selectedOutputShareSchemaAssertion(), value.proof), value.media ? "balanced" : "linear");
+        const inserted = await during(operation, () => env.DB.prepare(`${proof.withSql} INSERT INTO selected_output_shares(${rowColumns.join(",")})
           SELECT ${rowColumns.map(() => "?").join(",")} WHERE (${proof.sql}) AND ?>${nowSql}`)
-          .bind(...proof.bindings, ...rowColumns.map(column => current[column]), current.expires_at).run();
+          .bind(...proof.bindings, ...rowColumns.map(column => current[column]), current.expires_at).run());
         stable(); if (Number(inserted.meta.changes ?? 0) !== 1) fail();
         existing = current;
       } catch (error) {
         stable();
-        existing = await env.DB.prepare(`SELECT ${rowColumns.join(",")} FROM selected_output_shares WHERE replay_key=?`)
-          .bind(intent).first();
+        existing = await during(operation, () => env.DB.prepare(`SELECT ${rowColumns.join(",")} FROM selected_output_shares WHERE replay_key=?`)
+          .bind(intent).first());
         if (!existing) throw error;
         replayed = true;
       }
     }
     const current = row(existing); future(current); matches(current, value);
     if (current.issued_at !== null) fail("selected_output_share_already_issued", 409);
-    stable(); await finalProof(env, joined(value.proof, rowAssertion(current), live(current)), value.media); stable(); future(current);
+    stable(); await during(operation, () => finalProof(env, joined(value.proof, rowAssertion(current), live(current)), value.media)); stable(); future(current);
     return json({ candidateId: current.share_id, candidate: value.candidate, replayed });
   } catch (error) { return rejected(error); }
+  finally { finishMp3(operation); }
+}
+export function prepareSelectedOutputShare(request: Request, env: WorkerEnv): Promise<Response> {
+  return withOperationBudget(request, (signal, deadline) => prepare(request, env, signal, deadline));
 }
 
 /** Deliberate approval consumes one candidate exactly once. A lost response is
  * retried as metadata only: hashes never recover or rotate the original secret. */
-export async function commitSelectedOutputShare(request: Request, env: WorkerEnv): Promise<Response> {
+async function commit(request: Request, env: WorkerEnv, operationSignal: AbortSignal, deadline: OperationDeadline): Promise<Response> {
+  let operation: Mp3Operation | null = null;
   try {
-    const stable = frame(request, env), principal = identity(request), input = await command(request); stable();
+    const frameCurrent = frame(request, env, operationSignal);
+    const stable = () => { frameCurrent(); operationCurrent(operation); };
+    const principal = identity(request), input = await command(request, operationSignal); stable();
     if (!exact(input, ["candidateId", "approval"]) || !id(input.candidateId)) fail("selected_output_share_command_invalid", 400);
     await ready(env); stable();
     const current = row(await env.DB.prepare(`SELECT ${rowColumns.join(",")} FROM selected_output_shares WHERE share_id=? AND owner_id=?`)
       .bind(input.candidateId, principal.userId).first()); stable(); future(current);
-    const value = await fresh(env, principal, selectionOf(current), { title: current.review_title, expiresAt: current.expires_at }, request.signal);
+    const selection = selectionOf(current); operation = await beginMp3(selection, request.signal, deadline);
+    const value = await fresh(env, principal, selection, { title: current.review_title, expiresAt: current.expires_at }, operationSignal, operation);
     stable(); matches(current, value);
     if (!parseSelectedOutputShareAnyApproval(input.approval, value.candidate)) fail("selected_output_share_approval_required", 400);
     if (current.issued_at !== null) {
-      await finalProof(env, joined(value.proof, rowAssertion(current), live(current, true)), value.media); stable(); future(current);
+      await during(operation, () => finalProof(env, joined(value.proof, rowAssertion(current), live(current, true)), value.media)); stable(); future(current);
       return json({ share: shareMetadata(current), replayed: true });
     }
     const secret = btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(24)))).replaceAll("+", "-").replaceAll("/", "_");
-    const token = await tokenHash(secret), issuedAt = new Date().toISOString(); stable();
+    const token = await during(operation, () => tokenHash(secret)), issuedAt = new Date().toISOString(); stable();
     const proof = selectedShareProofStatement(joined(selectedOutputShareSchemaAssertion(), value.proof, rowAssertion(current), live(current)),
       value.media ? "balanced" : "linear");
-    const issued = await env.DB.prepare(`${proof.withSql} UPDATE selected_output_shares SET token_hash=?,issued_at=?
+    const issued = await during(operation, () => env.DB.prepare(`${proof.withSql} UPDATE selected_output_shares SET token_hash=?,issued_at=?
       WHERE share_id=? AND minimized_at IS NULL AND token_hash IS NULL AND issued_at IS NULL AND revoked_at IS NULL AND (${proof.sql}) AND ?>=${nowSql}`)
       // The database deadline is the reviewed expiry, not a prepared wall-clock snapshot.
-      .bind(...proof.bindings, token, issuedAt, current.share_id, current.expires_at).run(); stable();
+      .bind(...proof.bindings, token, issuedAt, current.share_id, current.expires_at).run()); stable();
     if (Number(issued.meta.changes ?? 0) !== 1) {
-      const observed = row(await env.DB.prepare(`SELECT ${rowColumns.join(",")} FROM selected_output_shares WHERE share_id=? AND owner_id=?`)
-        .bind(current.share_id, principal.userId).first()); stable(); future(observed); matches(observed, value);
+      const observed = row(await during(operation, () => env.DB.prepare(`SELECT ${rowColumns.join(",")} FROM selected_output_shares WHERE share_id=? AND owner_id=?`)
+        .bind(current.share_id, principal.userId).first())); stable(); future(observed); matches(observed, value);
       if (observed.issued_at === null) fail();
-      await finalProof(env, joined(value.proof, rowAssertion(observed), live(observed, true)), value.media); stable(); future(observed);
+      await during(operation, () => finalProof(env, joined(value.proof, rowAssertion(observed), live(observed, true)), value.media)); stable(); future(observed);
       return json({ share: shareMetadata(observed), replayed: true });
     }
     future(current);
     if (value.media) assertNativeRetainedMediaBytesCurrent(value.media, env);
     return json({ share: { ...shareMetadata(current), token: secret }, replayed: false });
   } catch (error) { return rejected(error); }
+  finally { finishMp3(operation); }
+}
+export function commitSelectedOutputShare(request: Request, env: WorkerEnv): Promise<Response> {
+  return withOperationBudget(request, (signal, deadline) => commit(request, env, signal, deadline));
 }
 
 /** The token supplies only a selected-output read scope. Its bound stored
  * canonical principal is checked directly; no authenticated headers are forged. */
-async function readPublic(request: Request, env: WorkerEnv, rawToken: string, file: boolean, operationSignal: AbortSignal = request.signal): Promise<Response> {
+async function readPublic(request: Request, env: WorkerEnv, rawToken: string, file: boolean,
+  operationSignal: AbortSignal = request.signal, deadline: OperationDeadline = operationDeadline()): Promise<Response> {
+  let operation: Mp3Operation | null = null;
   try {
     if (request.method !== "GET") fail("method_not_allowed", 405);
     if (typeof rawToken !== "string" || !/^[A-Za-z0-9_-]{32}$/u.test(rawToken)) fail();
-    const stable = frame(request, env, operationSignal); stable();
+    const frameCurrent = frame(request, env, operationSignal);
+    const stable = () => { frameCurrent(); operationCurrent(operation); }; stable();
     await ready(env); stable();
     const token = await tokenHash(rawToken); stable();
     const current = row(await env.DB.prepare(`SELECT ${rowColumns.map(column => `share.${column}`).join(",")} FROM selected_output_shares share
@@ -253,53 +333,82 @@ async function readPublic(request: Request, env: WorkerEnv, rawToken: string, fi
       .bind(token, SELECTED_OUTPUT_SHARE_PURPOSE).first()); stable(); future(current);
     const selection = selectionOf(current);
     if (file && selection.output !== "audio" && selection.output !== "video" && selection.output !== "model3d") fail();
+    operation = await beginMp3(selection, request.signal, deadline);
     const principal: NativeRetainedIdentity = { userId: current.owner_id!, email: current.owner_email!, source: "openai-workspace" };
-    const value = await fresh(env, principal, selectionOf(current), { title: current.review_title, expiresAt: current.expires_at }, operationSignal);
+    const value = await fresh(env, principal, selection, { title: current.review_title, expiresAt: current.expires_at }, operationSignal, operation);
     stable(); matches(current, value);
     const serialized = JSON.stringify(value.candidate.publicOutput);
     // Obtain a locally owned complete buffer after its own current custody
     // check; never expose an R2 stream, key, redirect or caller-selected asset.
     const fileBytes = file && value.media ? await copyCurrentNativeRetainedMediaBytes(value.media, env) : null;
     if (file && !fileBytes) fail();
-    await finalProof(env, joined(value.proof, rowAssertion(current), live(current, true)), value.media); stable(); future(current);
+    await during(operation, () => finalProof(env, joined(value.proof, rowAssertion(current), live(current, true)), value.media)); stable(); future(current);
     if (fileBytes && value.media) {
       const descriptor = value.media.descriptor;
       const filename = descriptor.kind === "audio" ? "forma-audio.wav" : descriptor.kind === "video" ? "forma-video.mp4" : "forma-3d.glb";
-      return new Response(fileBytes, { status: 200, headers: {
+      const init = { status: 200, headers: {
         ...headers, "content-type": descriptor.mimeType, "content-length": String(fileBytes.byteLength),
         "content-disposition": `attachment; filename="${filename}"`,
         "content-security-policy": "default-src 'none'; sandbox",
-      } });
+      } };
+      if (operation) {
+        operation.resources.retireSelectedOutputShareMp3Projection(operation.proof);
+        return operation.resources.selectedOutputShareMp3Response(operation.proof, fileBytes, init);
+      }
+      return new Response(fileBytes, init);
     }
     return new Response(serialized, { status: 200, headers });
   } catch (error) { return rejected(error); }
+  finally { finishMp3(operation); }
 }
 
 /** Existing JSON delivery remains the finite reviewed public projection. */
 export function readSelectedOutputShare(request: Request, env: WorkerEnv, rawToken: string): Promise<Response> {
-  return readPublic(request, env, rawToken, false);
+  return withOperationBudget(request, (signal, deadline) => readPublic(request, env, rawToken, false, signal, deadline));
 }
 /** Full-file delivery only, from the exact current qualified native buffer. */
-export async function readSelectedOutputShareMediaFile(request: Request, env: WorkerEnv, rawToken: string): Promise<Response> {
-  // Bound the entire file operation, including schema/token lookup, native
-  // provenance and the last share proof. Derive cancellation from the actual
-  // request; no replacement Request, headers or principal are manufactured.
-  if (request.signal.aborted) return rejected(new Refusal("selected_output_share_unavailable", 404));
-  const controller = new AbortController();
-  let timer: ReturnType<typeof setTimeout> | undefined, cancel: (() => void) | undefined;
-  const stopped = new Promise<never>((_, reject) => {
-    cancel = () => { controller.abort(); reject(new Refusal("selected_output_share_unavailable", 404)); };
-    request.signal.addEventListener("abort", cancel, { once: true });
-    timer = setTimeout(cancel, NATIVE_RETAINED_MEDIA_BYTES_BUDGET_MS);
-    if (request.signal.aborted) cancel();
-  });
-  const pending = readPublic(request, env, rawToken, true, controller.signal);
-  try { return await Promise.race([pending, stopped]); }
-  catch (error) { return rejected(error); }
-  finally {
-    clearTimeout(timer); if (cancel) request.signal.removeEventListener("abort", cancel); controller.abort();
-    void pending.catch(() => {});
-  }
+export function readSelectedOutputShareMediaFile(request: Request, env: WorkerEnv, rawToken: string): Promise<Response> {
+  return withOperationBudget(request, (signal, deadline) => readPublic(request, env, rawToken, true, signal, deadline));
+}
+
+/** Owner-only exact prepared derivative. Candidate IDs are row selectors, never
+ * bearer credentials. The production dispatcher keeps this route closed while
+ * creation is disabled; no original MP3 or caller-selected URL is returned. */
+async function readPrepared(request: Request, env: WorkerEnv, candidateId: string,
+  operationSignal: AbortSignal, deadline: OperationDeadline): Promise<Response> {
+  let operation: Mp3Operation | null = null;
+  try {
+    const frameCurrent = frame(request, env, operationSignal);
+    const stable = () => { frameCurrent(); operationCurrent(operation); };
+    if (request.method !== "GET") fail("method_not_allowed", 405);
+    if (request.headers.get("sec-fetch-site") !== "same-origin"
+      || request.headers.has("origin") && request.headers.get("origin") !== new URL(request.url).origin)
+      fail("selected_output_share_same_origin_required", 403);
+    if (!id(candidateId)) fail();
+    const principal = identity(request); stable(); await ready(env); stable();
+    const current = row(await env.DB.prepare(`SELECT ${rowColumns.join(",")} FROM selected_output_shares WHERE share_id=? AND owner_id=?`)
+      .bind(candidateId, principal.userId).first()); stable(); future(current);
+    if (current.issued_at !== null || current.token_hash !== null) fail();
+    const selection = selectionOf(current);
+    if (!isSelectedOutputShareStableAudioSelection(selection)) fail();
+    operation = await beginMp3(selection, request.signal, deadline);
+    if (!operation) fail();
+    const value = await fresh(env, principal, selection, { title: current.review_title, expiresAt: current.expires_at }, operationSignal, operation);
+    stable(); matches(current, value);
+    if (!value.media || value.media.descriptor.kind !== "audio") fail();
+    const fileBytes = await copyCurrentNativeRetainedMediaBytes(value.media, env);
+    await during(operation, () => finalProof(env, joined(value.proof, rowAssertion(current), live(current, false, true)), value.media));
+    stable(); future(current);
+    operation.resources.retireSelectedOutputShareMp3Projection(operation.proof);
+    return operation.resources.selectedOutputShareMp3Response(operation.proof, fileBytes, { status: 200, headers: {
+      ...headers, "content-type": "audio/wav", "content-length": String(fileBytes.byteLength),
+      "content-disposition": 'attachment; filename="forma-audio.wav"', "content-security-policy": "default-src 'none'; sandbox",
+    } });
+  } catch (error) { return rejected(error); }
+  finally { finishMp3(operation); }
+}
+export function readPreparedSelectedOutputShareMediaFile(request: Request, env: WorkerEnv, candidateId: string): Promise<Response> {
+  return withOperationBudget(request, (signal, deadline) => readPrepared(request, env, candidateId, signal, deadline));
 }
 
 /** Revocation only removes access. Source expiry, loss of creator role and

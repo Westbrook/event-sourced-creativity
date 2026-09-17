@@ -1,4 +1,5 @@
-import { projectSelectedOutputShareMp3, copySelectedOutputShareMp3Bytes } from "../../worker/selected-output-share-mp3-projection.ts";
+import { projectSelectedOutputShareMp3, copySelectedOutputShareMp3Bytes,
+  selectedOutputShareMp3ProjectionDrained } from "../../worker/selected-output-share-mp3-projection.ts";
 const digest = async (bytes: Uint8Array<ArrayBuffer>) => Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", bytes)), x => x.toString(16).padStart(2, "0")).join("");
 export default { async fetch(request: Request) {
   const source = new Uint8Array(await request.arrayBuffer()), expected = { sha256: request.headers.get("x-sha256")!, byteLength: source.length, mimeType: "audio/mpeg", recipe: "forma.audio.instrumental-20@1" };
@@ -13,11 +14,13 @@ export default { async fetch(request: Request) {
   const input = action === "subclass" ? new (class extends Uint8Array {})(source)
     : action === "impostor" ? Object.create(Uint8Array.prototype) : source;
   const nativeTimer = globalThis.setTimeout; let yields = 0;
+  let releaseYield: (() => void) | undefined, heldTimer: ReturnType<typeof setTimeout> | undefined;
   if (action === "deadline" || action === "after-yield-abort") globalThis.setTimeout = ((callback: () => void, delay?: number) => {
     if (delay === 0) {
       yields++;
-      if (action === "deadline") return nativeTimer(() => {}, 6000);
-      return nativeTimer(() => { controller.abort(); callback(); }, 0);
+      releaseYield = callback;
+      heldTimer = action === "deadline" ? nativeTimer(() => {}, 6000) : nativeTimer(() => controller.abort(), 0);
+      return heldTimer;
     }
     return nativeTimer(callback, delay);
   }) as typeof setTimeout;
@@ -27,12 +30,17 @@ export default { async fetch(request: Request) {
   if (action === "concurrent") simultaneous = await projectSelectedOutputShareMp3(source, expected, new AbortController().signal);
   let result;
   try { result = await pending; } finally { globalThis.setTimeout = nativeTimer; }
-  let afterTimeout;
-  if (action === "deadline" || action === "after-yield-abort") afterTimeout = await projectSelectedOutputShareMp3(source, expected, new AbortController().signal);
+  let afterTimeout, whilePending;
+  if (action === "deadline" || action === "after-yield-abort") {
+    whilePending = await projectSelectedOutputShareMp3(source, expected, new AbortController().signal);
+    clearTimeout(heldTimer); releaseYield?.();
+    await selectedOutputShareMp3ProjectionDrained();
+    afterTimeout = await projectSelectedOutputShareMp3(source, expected, new AbortController().signal);
+  } else await selectedOutputShareMp3ProjectionDrained();
   const bytes = copySelectedOutputShareMp3Bytes(result);
   const forged = copySelectedOutputShareMp3Bytes(JSON.parse(JSON.stringify(result)));
   const bytesHash = bytes ? await digest(bytes) : null;
   let copiedIndependently = true;
   if (bytes) { bytes.fill(0); const second = copySelectedOutputShareMp3Bytes(result); copiedIndependently = !!second && await digest(second) === bytesHash; second?.fill(0); }
-  return Response.json({ result, simultaneous, afterTimeout, yields, bytesHash, forged: forged !== null, copiedIndependently });
+  return Response.json({ result, simultaneous, afterTimeout, whilePending, yields, bytesHash, forged: forged !== null, copiedIndependently });
 } };

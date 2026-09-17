@@ -39,7 +39,9 @@ export const digest = value => createHash("sha256").update(value).digest("hex");
  * only; MEDIA methods and ASSETS.fetch throw. Tests can separately trap global
  * fetch. No media fixture is fetched,
  * synthesized, decoded, or presented as measured provider output. */
-export async function fixture(t, { repair = false } = {}) {
+export async function fixture(t, { repair = false, mediaSha256 = MEDIA_HASH } = {}) {
+  assert.equal(typeof mediaSha256, "string");
+  assert.match(mediaSha256, /^[a-f0-9]{64}$/u, "Synthetic native Audio source digest must be lowercase SHA-256");
   const state = outputTestDatabase();
   t.after(() => state.sqlite.close());
   await ensureSchema(state.env); await ensureOutputRequirementsSchema(state.env);
@@ -106,10 +108,10 @@ export async function fixture(t, { repair = false } = {}) {
   const originalRaw = JSON.stringify({ title: "Synthetic retained Audio", summary: "Synthetic private summary", content_markdown: "Synthetic private direction.",
     presentation: null, items: [{ title: "Track", body: "Instrumental", notes: "", image_prompt: "", slide: null }] });
   const settings = { item_count: 1, production_mode: "manual", output_audio: contract, output_audio_execution: reference,
-    output_audio_receipt: receipt, source_media_sha256: MEDIA_HASH, audio_provider_model: MODEL,
+    output_audio_receipt: receipt, source_media_sha256: mediaSha256, audio_provider_model: MODEL,
     audio_role: "score", audio_goal: "timed_music", audio_destination: "standalone", audio_profile: EXPERIENCE_AUDIO_INTENT,
     audio_synthid_watermarked: false, audio_watermark_basis: null, lyrics: "", duration_seconds: null,
-    estimated_duration_seconds: 20, duration_basis: "estimate", duration_media_url: mediaUrl, duration_media_sha256: MEDIA_HASH };
+    estimated_duration_seconds: 20, duration_basis: "estimate", duration_media_url: mediaUrl, duration_media_sha256: mediaSha256 };
   const expected = { documentId: DOCUMENT, projectId: PROJECT, artifactId: ARTIFACT, jobId: JOB, plannerResponseId: planner.providerRequestId,
     source, costPreview, usedMicrousd, usedCalls, ...Object.fromEntries(Object.entries(reference).filter(([key]) => key !== "scopeKey")) };
   const evidence = captureExperienceAudioEvidence(settings); assert.ok(evidence);
@@ -166,7 +168,7 @@ export async function fixture(t, { repair = false } = {}) {
       created_at: capturedAt, settled_at: capturedAt });
   }
   insert("output_native_storage_writes", { scope_key: reference.scopeKey, slot_id: reference.slotId, storage_key: mediaKey,
-    content_sha256: MEDIA_HASH, status: "written", write_acknowledged: 1, publication_event_id: completion.eventId,
+    content_sha256: mediaSha256, status: "written", write_acknowledged: 1, publication_event_id: completion.eventId,
     created_at: capturedAt, updated_at: capturedAt });
   const admission = { schema_version: 1, job_id: JOB, artifact_kind: "audio", document_id: DOCUMENT, captured_at: capturedAt,
     request: { production_mode: "manual", audio_profile: EXPERIENCE_AUDIO_INTENT },
@@ -217,7 +219,7 @@ export async function fixture(t, { repair = false } = {}) {
   const identity = Object.freeze({ userId: OWNER, email: EMAIL, source: "openai-workspace" });
   const raw = () => state.sqlite.prepare("SELECT content FROM private_content WHERE content_id=?").get(CONTENT).content;
   const select = (revision = 0, overrides = {}) => ({ output: "audio", documentId: DOCUMENT, artifactId: ARTIFACT, revision,
-    contentSha256: digest(raw()), mediaSha256: MEDIA_HASH, sourceProfile: SOURCE_PROFILE, projectionPolicy: PROJECTION_POLICY, ...overrides });
+    contentSha256: digest(raw()), mediaSha256, sourceProfile: SOURCE_PROFILE, projectionPolicy: PROJECTION_POLICY, ...overrides });
   const selection = select();
   const replace = value => state.sqlite.prepare("UPDATE private_content SET content=? WHERE content_id=?")
     .run(typeof value === "string" ? value : JSON.stringify(value), CONTENT);

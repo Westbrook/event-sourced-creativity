@@ -1,4 +1,4 @@
-import { qualifySelectedOutputShareAudio, copySelectedOutputShareAudioBytes, type QualifiedSelectedOutputShareAudio } from "../src/model/selected-output-share-audio.ts";
+import { qualifySelectedOutputShareAudio, copySelectedOutputShareAudioBytes, disposeSelectedOutputShareAudio, type QualifiedSelectedOutputShareAudio } from "../src/model/selected-output-share-audio.ts";
 import { parseAudioShareMp3Envelope } from "./audio-share-mp3-envelope.ts";
 import { acquireMp3ShareDecoder, MPG123_SHARE_DECODER_SHA256, type Mp3DecoderLease } from "./vendor/mpg123/loader.ts";
 
@@ -27,6 +27,7 @@ const signalAborted = Object.getOwnPropertyDescriptor(AbortSignal.prototype, "ab
 const addEvent = EventTarget.prototype.addEventListener, removeEvent = EventTarget.prototype.removeEventListener;
 const expectedKeys = ["sha256", "byteLength", "mimeType", "recipe"];
 let projecting = false;
+let drained: Promise<void> = Promise.resolve();
 function facts(value: unknown): SelectedOutputShareMp3Expected | null {
   if (!value || typeof value !== "object" || Object.getPrototypeOf(value) !== Object.prototype && Object.getPrototypeOf(value) !== null) return null;
   const descriptors = Object.getOwnPropertyDescriptors(value);
@@ -67,7 +68,18 @@ export async function projectSelectedOutputShareMp3(input: unknown, expected: un
   const refusal = (reason: SelectedOutputShareMp3Refusal): SelectedOutputShareMp3Projection => Object.freeze({ status: "unqualified", projection: SELECTED_OUTPUT_SHARE_MP3_PROJECTION, reason });
   if (projecting) return refusal("busy");
   projecting = true;
+  let resolveDrained: () => void = () => {};
+  drained = new Promise<void>(resolve => { resolveDrained = resolve; });
   let source: Uint8Array<ArrayBuffer> | null = null, wav: Uint8Array<ArrayBuffer> | null = null, decoder: Mp3DecoderLease | null = null;
+  let retained = false, closing = false, qualified: QualifiedSelectedOutputShareAudio | null = null;
+  const pending = new Set<Promise<unknown>>();
+  const cleanup = () => {
+    if (!closing || pending.size) return;
+    decoder?.close(); decoder = null;
+    source?.fill(0); source = null; wav?.fill(0); wav = null;
+    if (!retained && qualified) disposeSelectedOutputShareAudio(qualified);
+    qualified = null; projecting = false; resolveDrained();
+  };
   let stopped: "cancelled" | "timeout" | null = null, timer: ReturnType<typeof setTimeout> | undefined, listening = false;
   let rejectStopped: (reason: Error) => void = () => {};
   const stop = (reason: "cancelled" | "timeout") => { if (!stopped) { stopped = reason; rejectStopped(new Error(reason)); } };
@@ -86,7 +98,19 @@ export async function projectSelectedOutputShareMp3(input: unknown, expected: un
     addEvent.call(signal, "abort", onAbort, { once: true }); listening = true;
     timer = setTimeout(() => stop("timeout"), SELECTED_OUTPUT_SHARE_MP3_PROJECTION_LIMITS.deadlineMs);
     const check = () => { if (signalAborted.call(signal)) stop("cancelled"); if (stopped) throw new Error(stopped); };
-    const wait = async <T>(pending: Promise<T>): Promise<T> => { check(); const value = await Promise.race([pending, interrupted]); check(); return value; };
+    const wait = async <T>(work: Promise<T>, disposeLate?: (value: T) => void): Promise<T> => {
+      let delivered = false, available = false, disposed = false, value: T;
+      const dispose = () => { if (available && !delivered && !disposed) { disposed = true; disposeLate?.(value); } };
+      // Register before racing. A returned timeout does not end the underlying
+      // digest/qualification or permit a second decoder-sized operation.
+      const tracked = work.then(result => { value = result; available = true;
+        if (closing || stopped) dispose(); return result;
+      });
+      pending.add(tracked);
+      void tracked.then(() => { pending.delete(tracked); cleanup(); }, () => { pending.delete(tracked); cleanup(); });
+      try { check(); const result = await Promise.race([tracked, interrupted]); check(); delivered = true; return result; }
+      finally { if (!delivered) dispose(); }
+    };
     if (await wait(sha(source)) !== expectedFacts.sha256) return refusal("source_mismatch");
     const envelope = parseAudioShareMp3Envelope(source);
     if (!envelope.ok) return refusal("unsupported_mp3");
@@ -107,19 +131,33 @@ export async function projectSelectedOutputShareMp3(input: unknown, expected: un
     // No native state spans the expensive qualification/digest awaits.
     decoder.close(); decoder = null;
     const digest = await wait(sha(wav));
-    const qualified = await wait(qualifySelectedOutputShareAudio(wav, { sha256: digest, byteLength: wav.length, mimeType: "audio/wav" }));
-    if (qualified.status !== "qualified") return refusal("decode_failed");
+    const qualification = await wait(qualifySelectedOutputShareAudio(wav, { sha256: digest, byteLength: wav.length, mimeType: "audio/wav" }), disposeSelectedOutputShareAudio);
+    if (qualification.status !== "qualified") return refusal("decode_failed");
+    qualified = qualification;
     const result = Object.freeze({ status: "projected", projection: SELECTED_OUTPUT_SHARE_MP3_PROJECTION,
       decoderSha256: MPG123_SHARE_DECODER_SHA256, sourceSha256: expectedFacts.sha256, sourceByteLength: source.length, sourceMimeType: "audio/mpeg",
       sha256: digest, byteLength: wav.length, mimeType: "audio/wav", sampleRate: envelope.sampleRate, channels: envelope.channels,
       sampleCount: samples, durationSeconds: samples / envelope.sampleRate, durationBasis: "pcm-samples" }) as ProjectedSelectedOutputShareMp3;
-    owned.set(result, qualified); return result;
+    owned.set(result, qualified); retained = true; return result;
   } catch { return refusal(stopped ?? "decode_failed"); }
   finally {
     clearTimeout(timer); if (listening) removeEvent.call(signal, "abort", onAbort);
-    decoder?.close(); source?.fill(0); wav?.fill(0); projecting = false;
+    decoder?.close(); decoder = null; closing = true; cleanup();
   }
 }
+/** Resource identity only, never current custody or publication authority. */
+export function isOwnedSelectedOutputShareMp3(value: unknown): value is ProjectedSelectedOutputShareMp3 {
+  return value !== null && typeof value === "object" && owned.has(value as ProjectedSelectedOutputShareMp3);
+}
+export function disposeSelectedOutputShareMp3(value: unknown): void {
+  if (!value || typeof value !== "object") return;
+  const key = value as ProjectedSelectedOutputShareMp3, qualification = owned.get(key);
+  if (!qualification) return;
+  owned.delete(key); disposeSelectedOutputShareAudio(qualification);
+}
+/** A late noncancellable operation remains charged until it settles. */
+export function selectedOutputShareMp3ProjectionBusy(): boolean { return projecting; }
+export function selectedOutputShareMp3ProjectionDrained(): Promise<void> { return drained; }
 /** A copy from this exact local witness only; it conveys no publishing right. */
 export function copySelectedOutputShareMp3Bytes(value: unknown): Uint8Array<ArrayBuffer> | null {
   if (!value || typeof value !== "object") return null;

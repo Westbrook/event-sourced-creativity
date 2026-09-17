@@ -43,6 +43,16 @@ export async function handleSelectedOutputShareApi(request: Request, env: Worker
     const { prepareSelectedOutputShare, commitSelectedOutputShare } = await import("./selected-output-share-lifecycle.ts");
     return path.endsWith("/prepare") ? prepareSelectedOutputShare(request, env) : commitSelectedOutputShare(request, env);
   }
+  const preparedFile = path.match(/^\/api\/selected-output-shares\/([A-Za-z0-9][A-Za-z0-9._:-]{0,159})\/file$/u);
+  if (preparedFile) {
+    if (request.method !== "GET") return wrongMethod("GET");
+    if (request.headers.get("sec-fetch-site") !== "same-origin"
+      || request.headers.has("origin") && request.headers.get("origin") !== url.origin)
+      return json({ error: "selected_output_share_same_origin_required" }, 403);
+    if (!creationEnabled) return json({ error: "selected_output_share_creation_unavailable" }, 503);
+    const { readPreparedSelectedOutputShareMediaFile } = await import("./selected-output-share-lifecycle.ts");
+    return readPreparedSelectedOutputShareMediaFile(request, env, preparedFile[1]!);
+  }
   const publicFile = path.match(/^\/api\/selected-output-shared\/([A-Za-z0-9_-]{32})\/file$/u);
   if (publicFile) {
     if (request.method !== "GET") return wrongMethod("GET");

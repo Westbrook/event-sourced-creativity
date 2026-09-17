@@ -4,14 +4,17 @@ import { copySelectedOutputShareVideoBytes, SELECTED_OUTPUT_SHARE_VIDEO_POLICY, 
   type QualifiedSelectedOutputShareVideo } from "./selected-output-share-video.ts";
 import { copySelectedOutputShareModel3dBytes, SELECTED_OUTPUT_SHARE_MODEL3D_POLICY, SELECTED_OUTPUT_SHARE_MODEL3D_TEXTURE_POLICY,
   type QualifiedSelectedOutputShareModel3d, type QualifiedSelectedOutputShareTexturedModel3d } from "./selected-output-share-model3d.ts";
+import { isSelectedOutputShareStableAudioSelection, parseSelectedOutputShareStableAudioSelection,
+  type SelectedOutputShareStableAudioSelection } from "./selected-output-share-mp3-contract.ts";
 
 /** Declared selection only. No value in this module proves canonical custody. */
 type DeclaredSelection = Readonly<{ documentId: string; artifactId: string; revision: number; contentSha256: string; mediaSha256: string }>;
-export type SelectedOutputShareMediaSelection = DeclaredSelection & (
+export type SelectedOutputShareExactMediaSelection = DeclaredSelection & (
   | Readonly<{ output: "audio"; policy: typeof SELECTED_OUTPUT_SHARE_AUDIO_POLICY }>
   | Readonly<{ output: "video"; policy: typeof SELECTED_OUTPUT_SHARE_VIDEO_POLICY | typeof SELECTED_OUTPUT_SHARE_VIDEO_X264_POLICY }>
   | Readonly<{ output: "model3d"; policy: typeof SELECTED_OUTPUT_SHARE_MODEL3D_POLICY | typeof SELECTED_OUTPUT_SHARE_MODEL3D_TEXTURE_POLICY }>
 );
+export type SelectedOutputShareMediaSelection = SelectedOutputShareExactMediaSelection | SelectedOutputShareStableAudioSelection;
 type AssetFacts = Readonly<{ sha256: string; byteLength: number }>;
 /** Finite recipient data only: no URL/key, filename, private identity or source. */
 export type SelectedOutputShareMediaDescriptor = AssetFacts & (
@@ -24,7 +27,7 @@ declare const attachedMedia: unique symbol;
 export type SelectedOutputShareMediaAttachment = Readonly<{
   [attachedMedia]: true;
   /** Private, declared identity and exact requested profile. Never send as public output. */
-  selection: SelectedOutputShareMediaSelection;
+  selection: SelectedOutputShareExactMediaSelection;
   descriptor: SelectedOutputShareMediaDescriptor;
 }>;
 
@@ -37,6 +40,8 @@ const digest = /^[a-f0-9]{64}$/u;
  * declared identity is not evidence that the selected Document/output exists. */
 export function parseSelectedOutputShareMediaSelection(value: unknown): SelectedOutputShareMediaSelection | null {
   try {
+    const derivative = parseSelectedOutputShareStableAudioSelection(value);
+    if (derivative) return derivative;
     if (value === null || typeof value !== "object" || Object.getPrototypeOf(value) !== Object.prototype
       && Object.getPrototypeOf(value) !== null) return null;
     const names = Reflect.ownKeys(value), captured: Record<string, unknown> = Object.create(null);
@@ -53,7 +58,7 @@ export function parseSelectedOutputShareMediaSelection(value: unknown): Selected
     if (!(output === "audio" && policy === SELECTED_OUTPUT_SHARE_AUDIO_POLICY
       || output === "video" && (policy === SELECTED_OUTPUT_SHARE_VIDEO_POLICY || policy === SELECTED_OUTPUT_SHARE_VIDEO_X264_POLICY)
       || output === "model3d" && (policy === SELECTED_OUTPUT_SHARE_MODEL3D_POLICY || policy === SELECTED_OUTPUT_SHARE_MODEL3D_TEXTURE_POLICY))) return null;
-    return Object.freeze(captured) as SelectedOutputShareMediaSelection;
+    return Object.freeze(captured) as SelectedOutputShareExactMediaSelection;
   } catch { return null; }
 }
 
@@ -66,7 +71,9 @@ export function attachSelectedOutputShareMedia(selection: unknown, qualification
   let bytes: Uint8Array<ArrayBuffer> | null = null, retained = false;
   try {
     const selected = parseSelectedOutputShareMediaSelection(selection);
-    if (!selected) return null;
+    // This factory owns exact bytes only. A derivative declaration cannot use
+    // a WAV qualification as an MP3 custody or projection witness.
+    if (!selected || isSelectedOutputShareStableAudioSelection(selected)) return null;
     let descriptor: SelectedOutputShareMediaDescriptor;
     if (selected.output === "audio") {
       bytes = copySelectedOutputShareAudioBytes(qualification);

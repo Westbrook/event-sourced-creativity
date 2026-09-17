@@ -19,6 +19,11 @@ import { qualifySelectedOutputShareModel3d, qualifySelectedOutputShareTexturedMo
   SELECTED_OUTPUT_SHARE_MODEL3D_POLICY } from "../src/model/selected-output-share-model3d.ts";
 import { attachSelectedOutputShareMedia, copySelectedOutputShareMediaBytes,
   type SelectedOutputShareMediaAttachment, type SelectedOutputShareMediaDescriptor } from "../src/model/selected-output-share-media.ts";
+import { isSelectedOutputShareStableAudioSelection, selectedOutputShareStableAudioDescriptorMatches } from "../src/model/selected-output-share-mp3-contract.ts";
+import { nativeStableAudioRecipeSnapshot, assertNativeStableAudioRecipeCurrent,
+  type NativeStableAudioRecipeProof } from "./native-stable-audio-share-proof.ts";
+import type { SelectedOutputShareMp3Operation } from "./selected-output-share-mp3-operation.ts";
+import type { ProjectedSelectedOutputShareMp3 } from "./selected-output-share-mp3-projection.ts";
 import type { WorkerEnv } from "./runtime.ts";
 
 /** Finite local observation; this capability expires, and grants no publication permission. */
@@ -29,6 +34,10 @@ type Budget = { env: WorkerEnv; custody: NativeRetainedMediaCustody;
   signal: AbortSignal; monotonicDeadline: number; wallDeadline: number; rightsDeadline: number };
 type State = Budget & { attachment: SelectedOutputShareMediaAttachment };
 const observations = new WeakMap<NativeRetainedMediaBytes, State>();
+type StableAudioState = { env: WorkerEnv; custody: NativeRetainedMediaCustody; recipe: NativeStableAudioRecipeProof;
+  operation: SelectedOutputShareMp3Operation; projection: ProjectedSelectedOutputShareMp3;
+  resources: typeof import("./selected-output-share-mp3-operation.ts"); projector: typeof import("./selected-output-share-mp3-projection.ts") };
+const stableAudioObservations = new WeakMap<NativeRetainedMediaBytes, StableAudioState>();
 const hash = async (bytes: Uint8Array<ArrayBuffer>) => Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", bytes)),
   byte => byte.toString(16).padStart(2, "0")).join("");
 const textHash = (value: unknown) => hash(new TextEncoder().encode(JSON.stringify(value)));
@@ -142,6 +151,7 @@ async function authoredByteFacts(value: Budget, snapshot: NativeRetainedMediaSna
  * Native identity/selection/content stay opaque through final current rejoin. */
 export async function readNativeRetainedMediaBytes(custody: NativeRetainedMediaCustody, env: WorkerEnv): Promise<NativeRetainedMediaBytes> {
   const snapshot = nativeRetainedMediaCustodySnapshot(custody, env), signal = nativeRetainedMediaCustodySignal(custody, env);
+  if (isSelectedOutputShareStableAudioSelection(snapshot.selection)) throw unavailable();
   const budget: Budget = { env, custody, signal,
     monotonicDeadline: performance.now() + NATIVE_RETAINED_MEDIA_BYTES_BUDGET_MS,
     wallDeadline: Date.now() + NATIVE_RETAINED_MEDIA_BYTES_BUDGET_MS, rightsDeadline: Infinity };
@@ -176,6 +186,19 @@ export async function readNativeRetainedMediaBytes(custody: NativeRetainedMediaC
  * No sync accessor exposes a stale observation. The same finite read budget and
  * captured signal/DB/storage/identity/selection/rights boundaries still apply. */
 export async function copyCurrentNativeRetainedMediaBytes(proof: NativeRetainedMediaBytes, env: WorkerEnv): Promise<Uint8Array<ArrayBuffer>> {
+  const stable = stableAudioObservations.get(proof);
+  if (stable) {
+    assertStableAudioBytesCurrent(stable, env);
+    await stable.resources.runSelectedOutputShareMp3Operation(stable.operation, () => assertNativeRetainedMediaCustody(stable.custody, env));
+    await stable.resources.runSelectedOutputShareMp3Operation(stable.operation, () => assertNativeStableAudioRecipeCurrent(stable.recipe, env));
+    assertStableAudioBytesCurrent(stable, env);
+    const bytes = stable.projector.copySelectedOutputShareMp3Bytes(stable.projection);
+    if (!bytes) throw unavailable();
+    try { stable.resources.ownSelectedOutputShareMp3ResponseBytes(stable.operation, bytes); }
+    catch (error) { bytes.fill(0); throw error; }
+    assertStableAudioBytesCurrent(stable, env);
+    return bytes;
+  }
   const value = observations.get(proof);
   if (!value || value.env !== env) throw unavailable();
   await bounded(value, () => assertNativeRetainedMediaCustody(value.custody, env));
@@ -189,7 +212,97 @@ export async function copyCurrentNativeRetainedMediaBytes(proof: NativeRetainedM
  * recheck this exact local byte observation's environment, signal and lifetimes.
  * This neither executes SQL nor grants publication authority or copies bytes. */
 export function assertNativeRetainedMediaBytesCurrent(proof: NativeRetainedMediaBytes, env: WorkerEnv): void {
+  const stable = stableAudioObservations.get(proof);
+  if (stable) { assertStableAudioBytesCurrent(stable, env); return; }
   const value = observations.get(proof);
   if (!value || value.env !== env) throw unavailable();
   current(value);
+}
+
+function assertStableAudioBytesCurrent(value: StableAudioState, env: WorkerEnv): void {
+  if (value.env !== env) throw unavailable();
+  value.resources.assertSelectedOutputShareMp3OperationCurrent(value.operation);
+  nativeRetainedMediaCustodySnapshot(value.custody, env);
+  nativeStableAudioRecipeSnapshot(value.recipe, env);
+  if (!value.projector.isOwnedSelectedOutputShareMp3(value.projection)) throw unavailable();
+}
+
+/** Separate owned source -> derived WAV observation. Both source capabilities
+ * are genuine and current; neither a public descriptor nor client PCM enters.
+ * The operation is acquired before custody reads and never restarted here. */
+export async function readNativeRetainedStableAudioBytes(custody: NativeRetainedMediaCustody,
+  recipe: NativeStableAudioRecipeProof, env: WorkerEnv, operation: SelectedOutputShareMp3Operation): Promise<NativeRetainedMediaBytes> {
+  const resources = await import("./selected-output-share-mp3-operation.ts");
+  resources.assertSelectedOutputShareMp3OperationCurrent(operation);
+  const source = nativeRetainedMediaCustodySnapshot(custody, env), original = nativeStableAudioRecipeSnapshot(recipe, env);
+  const signal = resources.selectedOutputShareMp3OperationSignal(operation);
+  if (!isSelectedOutputShareStableAudioSelection(source.selection) || source.media.readMode !== "native-output-audio-mp3"
+    || source.media.mimeType !== "audio/mpeg" || nativeRetainedMediaCustodySignal(custody, env) !== signal
+    || source.identity.userId !== original.identity.userId || source.identity.email !== original.identity.email
+    || source.identity.source !== original.identity.source || source.projectId !== original.projectId
+    || source.contentId !== original.contentId || source.completionId !== original.completionId
+    || source.authSnapshot !== original.authSnapshot || source.sourceExpiresAt !== original.sourceExpiresAt
+    || source.selection.documentId !== original.selection.documentId || source.selection.artifactId !== original.selection.artifactId
+    || source.selection.revision !== original.selection.revision || source.selection.contentSha256 !== original.selection.contentSha256
+    || source.selection.mediaSha256 !== original.selection.mediaSha256 || source.media.url !== original.media.url
+    || source.media.sha256 !== original.media.sha256 || source.media.audioRevision !== null
+    || source.media.videoRevision !== null || source.media.model3dRevision !== null) throw unavailable();
+  const run = <T>(action: () => Promise<T>, dispose?: (value: T) => void | Promise<void>, adopt?: (value: T) => void) =>
+    resources.runSelectedOutputShareMp3Operation(operation, action, dispose, adopt);
+  const projector = await run(() => import("./selected-output-share-mp3-projection.ts"));
+  const key = `${ownerMediaNamespace(source.identity.userId)}/generated/${source.selection.artifactId}.mp3`;
+  if (source.media.url !== `/api/media/${encodeURIComponent(key)}`) throw unavailable();
+  let bytes: Uint8Array<ArrayBuffer> | null = null, body: ReadableStream<Uint8Array> | null = null;
+  let reader: ReadableStreamDefaultReader<Uint8Array> | null = null, complete = false;
+  const cancel = async (stream: ReadableStream<Uint8Array> | null) => { try { await stream?.cancel(); } catch { /* A locked stream is cancelled by its reader. */ } };
+  try {
+    await run(() => assertNativeRetainedMediaCustody(custody, env));
+    await run(() => assertNativeStableAudioRecipeCurrent(recipe, env));
+    const object = await run(() => env.MEDIA.get(key), late => cancel(late?.body ?? null), observed => { body = observed?.body ?? null; });
+    body = object?.body ?? null;
+    const metadata = object?.customMetadata ? Object.freeze({ ...object.customMetadata }) : null;
+    const size = object?.size, mime = new Headers(); object?.writeHttpMetadata(mime);
+    if (!object || !body || !metadata || metadata.ownerId !== source.identity.userId || metadata.projectAccessId
+      || metadata.sha256 !== source.media.sha256 || metadata.mimeType !== "audio/mpeg" || mime.get("content-type") !== "audio/mpeg"
+      || !Number.isSafeInteger(size) || Number(size) < 1 || Number(size) > 1_000_000
+      || source.media.byteLength !== null && size !== source.media.byteLength) throw unavailable();
+    bytes = new Uint8Array(size!); resources.ownSelectedOutputShareMp3Source(operation, bytes);
+    reader = body.getReader(); let offset = 0, chunks = 0;
+    for (;;) {
+      const next = await run(() => reader!.read());
+      if (next.done) { complete = offset === size; break; }
+      if (!(next.value instanceof Uint8Array) || ++chunks > 65_536 || next.value.byteLength > size! - offset) throw unavailable();
+      bytes.set(next.value, offset); offset += next.value.byteLength;
+    }
+    if (!complete || await run(() => hash(bytes!)) !== source.media.sha256) throw unavailable();
+    const projected = await run(() => projector.projectSelectedOutputShareMp3(bytes,
+      { sha256: source.media.sha256, byteLength: size!, mimeType: "audio/mpeg", recipe: original.recipe }, signal),
+      late => projector.disposeSelectedOutputShareMp3(late), observed => {
+        if (observed.status === "projected") resources.ownSelectedOutputShareMp3Projection(operation, observed);
+      });
+    if (projected.status !== "projected") throw unavailable();
+    if (projected.sourceSha256 !== source.media.sha256 || projected.sourceMimeType !== "audio/mpeg"
+      || projected.sourceByteLength !== size || projected.sampleCount !== projected.sampleRate * 20) throw unavailable();
+    const descriptor = Object.freeze({ kind: "audio" as const, mimeType: projected.mimeType, sha256: projected.sha256,
+      byteLength: projected.byteLength, sampleRate: projected.sampleRate, channels: projected.channels,
+      sampleCount: projected.sampleCount, durationSeconds: projected.durationSeconds, durationBasis: projected.durationBasis });
+    if (!selectedOutputShareStableAudioDescriptorMatches(descriptor)) throw unavailable();
+    await run(() => assertNativeRetainedMediaCustody(custody, env));
+    await run(() => assertNativeStableAudioRecipeCurrent(recipe, env));
+    const state: StableAudioState = { env, custody, recipe, operation, projection: projected, resources, projector };
+    assertStableAudioBytesCurrent(state, env);
+    const proof = Object.freeze({ descriptor }) as NativeRetainedMediaBytes;
+    stableAudioObservations.set(proof, state); return proof;
+  } finally {
+    // Own the allocation's failure cleanup here, including rejection before
+    // this function can return it to any caller. No input byte survives use.
+    resources.retireSelectedOutputShareMp3Source(operation);
+    bytes?.fill(0); bytes = null;
+    if (!complete) {
+      void resources.cleanupSelectedOutputShareMp3Operation(operation, async () => {
+        try { await (reader ? reader.cancel() : body?.cancel()); } catch { /* Already cancelled/closed. */ }
+      });
+    }
+    try { reader?.releaseLock(); } catch { /* A late read remains tracked by the operation. */ }
+  }
 }

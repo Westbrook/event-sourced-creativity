@@ -3,7 +3,11 @@ import { validateNativeRetainedOutputDto } from "./native-retained-output.ts";
 import type { SlidePresentation, SlideVisualData } from "./document-artifacts.ts";
 
 import { parseSelectedOutputShareMediaSelection as parseNativeMediaSelection,
-  type SelectedOutputShareMediaSelection as NativeMediaSelection, type SelectedOutputShareMediaDescriptor as MediaDescriptor } from "./selected-output-share-media.ts";
+  type SelectedOutputShareMediaSelection as NativeMediaSelection, type SelectedOutputShareExactMediaSelection as ExactMediaSelection,
+  type SelectedOutputShareMediaDescriptor as MediaDescriptor } from "./selected-output-share-media.ts";
+import { isSelectedOutputShareStableAudioSelection, parseSelectedOutputShareStableAudioSelection,
+  selectedOutputShareStableAudioDescriptorMatches, SELECTED_OUTPUT_SHARE_STABLE_AUDIO_PROJECTION_POLICY,
+  type SelectedOutputShareStableAudioSelection } from "./selected-output-share-mp3-contract.ts";
 import { SELECTED_OUTPUT_SHARE_AUDIO_LIMITS } from "./selected-output-share-audio.ts";
 import { SELECTED_OUTPUT_SHARE_VIDEO_X264_POLICY } from "./selected-output-share-video.ts";
 import { SELECTED_OUTPUT_SHARE_MODEL3D_LIMITS } from "./selected-output-share-model3d.ts";
@@ -341,9 +345,10 @@ export function parseSelectedOutputShareApproval(value: unknown, expectedCandida
 // Media is additive: existing text contracts, projection and digest order above
 // stay unchanged. These are closed data shapes, never gate or custody handles.
 export const SELECTED_OUTPUT_SHARE_MEDIA_PROJECTION_POLICY = "selected-output-media-exact-bytes-v1" as const;
-export type SelectedOutputShareMediaRequestSelection = NativeMediaSelection & Readonly<{
+export type SelectedOutputShareExactMediaRequestSelection = ExactMediaSelection & Readonly<{
   projectionPolicy: typeof SELECTED_OUTPUT_SHARE_MEDIA_PROJECTION_POLICY;
 }>;
+export type SelectedOutputShareMediaRequestSelection = SelectedOutputShareExactMediaRequestSelection | SelectedOutputShareStableAudioSelection;
 export type SelectedOutputShareAnySelection = SelectedOutputShareSelection | SelectedOutputShareMediaRequestSelection;
 export type SelectedOutputShareMediaDisclosure = Readonly<{ watermark: "synthid-declared" | "not-declared" }>
   | Readonly<{ encoderDeclaration: "x264-163-r3060" | null }> | Readonly<Record<string, never>>;
@@ -356,14 +361,13 @@ export type SelectedOutputShareMediaPublicOutput = PublicShareBase & (
     disclosure: Readonly<Record<string, never>> }> }>
 );
 export type SelectedOutputShareAnyPublicOutput = SelectedOutputSharePublicOutput | SelectedOutputShareMediaPublicOutput;
-/** Source and public bytes have separate identities even while the only
- * supported projection requires equality. A future projector needs an explicit
- * new policy and independently witnessed public bytes; it cannot reuse this one. */
+/** Exact-byte policy requires source/public equality. The explicit Stable Audio
+ * derivative binds separate MP3 and WAV digests; neither identity proves bytes. */
 export type SelectedOutputShareMediaIdentity = Readonly<{
   sourceMediaSha256: string;
   publicMediaSha256: string;
   qualificationPolicy: NativeMediaSelection["policy"];
-  projectionPolicy: typeof SELECTED_OUTPUT_SHARE_MEDIA_PROJECTION_POLICY;
+  projectionPolicy: typeof SELECTED_OUTPUT_SHARE_MEDIA_PROJECTION_POLICY | typeof SELECTED_OUTPUT_SHARE_STABLE_AUDIO_PROJECTION_POLICY;
 }>;
 export type SelectedOutputShareMediaCandidate = Readonly<{
   schemaVersion: 1;
@@ -391,10 +395,13 @@ const finiteInteger = (value: unknown, minimum: number, maximum: number): value 
 const finiteDuration = (value: unknown): value is number =>
   typeof value === "number" && Number.isFinite(value) && value > 0 && value <= 21_600;
 
-/** Capture exactly eight requested fields. Neither declared source identity nor
+/** Capture eight exact-byte fields or nine explicit MP3 derivative fields.
+ * Neither declared source identity nor
  * an accepted profile/policy string establishes a native read or public grant. */
 export function parseSelectedOutputShareMediaRequestSelection(value: unknown): SelectedOutputShareMediaRequestSelection | null {
   try {
+    const derivative = parseSelectedOutputShareStableAudioSelection(value);
+    if (derivative) return derivative;
     const captured = fields(value, mediaSelectionKeys);
     if (!captured || captured.projectionPolicy !== SELECTED_OUTPUT_SHARE_MEDIA_PROJECTION_POLICY) return null;
     const selected = parseNativeMediaSelection({ output: captured.output, documentId: captured.documentId, artifactId: captured.artifactId,
@@ -406,11 +413,12 @@ export function parseSelectedOutputShareMediaRequestSelection(value: unknown): S
     return encoder.encode(JSON.stringify(result)).length <= 1024 ? result as SelectedOutputShareMediaRequestSelection : null;
   } catch { return null; }
 }
-/** The native reader receives its original closed seven-field selection only
- * after the requested projection policy has been explicitly validated. */
+/** The native reader receives the unchanged seven-field exact selection or
+ * the complete nine-field MP3 selection, after explicit policy validation. */
 export function selectedOutputShareNativeMediaSelection(value: unknown): NativeMediaSelection | null {
   const selected = parseSelectedOutputShareMediaRequestSelection(value);
   if (!selected) return null;
+  if (isSelectedOutputShareStableAudioSelection(selected)) return selected;
   return parseNativeMediaSelection({ output: selected.output, documentId: selected.documentId, artifactId: selected.artifactId,
     revision: selected.revision, contentSha256: selected.contentSha256, mediaSha256: selected.mediaSha256, policy: selected.policy });
 }
@@ -476,7 +484,8 @@ function capturedMediaIdentity(value: unknown, selected: SelectedOutputShareMedi
   publicHash: string): SelectedOutputShareMediaIdentity | null {
   const identity = fields(value, mediaIdentityKeys);
   if (!identity || identity.sourceMediaSha256 !== selected.mediaSha256 || identity.publicMediaSha256 !== publicHash
-    || identity.sourceMediaSha256 !== identity.publicMediaSha256 || identity.qualificationPolicy !== selected.policy
+    || !isSelectedOutputShareStableAudioSelection(selected) && identity.sourceMediaSha256 !== identity.publicMediaSha256
+    || identity.qualificationPolicy !== selected.policy
     || identity.projectionPolicy !== selected.projectionPolicy) return null;
   return Object.freeze({ sourceMediaSha256: selected.mediaSha256, publicMediaSha256: publicHash,
     qualificationPolicy: selected.policy, projectionPolicy: selected.projectionPolicy });
@@ -485,6 +494,11 @@ function mediaDisclosureMatches(selected: SelectedOutputShareMediaRequestSelecti
   content: SelectedOutputShareMediaPublicOutput["content"]): boolean {
   return selected.output !== "video" || "encoderDeclaration" in content.disclosure
     && content.disclosure.encoderDeclaration === (selected.policy === SELECTED_OUTPUT_SHARE_VIDEO_X264_POLICY ? "x264-163-r3060" : null);
+}
+function mediaDescriptorMatchesSelection(selected: SelectedOutputShareMediaRequestSelection, descriptor: MediaDescriptor): boolean {
+  return isSelectedOutputShareStableAudioSelection(selected)
+    ? selectedOutputShareStableAudioDescriptorMatches(descriptor)
+    : descriptor.sha256 === selected.mediaSha256;
 }
 
 /** DATA projection only: caller-supplied descriptors do not prove actual media,
@@ -500,7 +514,7 @@ export async function projectSelectedOutputShareMediaCandidate(selection: unknow
     if (!captured) return null;
     const retainedExpiry = timestamp(captured.sourceExpiresAt), content = capturedMediaContent(selected.output, captured.descriptor, captured.disclosure);
     if (retainedExpiry === null || timestamp(choices.expiresAt)! > retainedExpiry || !content
-      || content.media.sha256 !== selected.mediaSha256 || !mediaDisclosureMatches(selected, content)) return null;
+      || !mediaDescriptorMatchesSelection(selected, content.media) || !mediaDisclosureMatches(selected, content)) return null;
     const mediaIdentity: SelectedOutputShareMediaIdentity = Object.freeze({ sourceMediaSha256: selected.mediaSha256,
       publicMediaSha256: content.media.sha256, qualificationPolicy: selected.policy, projectionPolicy: selected.projectionPolicy });
     const publicOutput = immutable({ schemaVersion: 1, kind: "selected-output-read", output: selected.output,
@@ -548,6 +562,7 @@ export function parseSelectedOutputShareMediaApproval(value: unknown,
     const content = output && fields(output.content, ["media", "disclosure"]);
     const media = selected && content && capturedMediaContent(selected.output, content.media, content.disclosure);
     if (!selected || !output || output.output !== selected.output || !media || !mediaDisclosureMatches(selected, media)
+      || !mediaDescriptorMatchesSelection(selected, media.media)
       || !capturedMediaIdentity(expected.mediaIdentity, selected, media.media.sha256)) return null;
     return Object.freeze({ purpose: SELECTED_OUTPUT_SHARE_PURPOSE, candidateSha256: expected.candidateSha256, allowPublicRead: true });
   } catch { return null; }
