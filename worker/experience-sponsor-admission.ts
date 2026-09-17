@@ -1,3 +1,5 @@
+import { describeSponsorSlidesAdmission, readSponsorSlidesTemplateEvidence } from "./experience-sponsor-slides-evidence.ts";
+import { matchSponsorSlidesTemplate } from "./experience-sponsor-slides-contract.ts";
 import { describeSponsorStoryAdmission, readSponsorStoryTemplateEvidence } from "./experience-sponsor-story-evidence.ts";
 import { matchSponsorStoryTemplate } from "./experience-sponsor-story-contract.ts";
 import { sponsorImageTextSource } from "./experience-sponsor-image-format.ts";
@@ -182,8 +184,8 @@ export async function createSponsorAdmissionAuthority(input: {
   const command = JSON.parse(commandJson) as Record<string, unknown>;
   if (typeof grantId !== "string" || !/^[A-Za-z0-9][A-Za-z0-9_.:@/-]{0,199}$/u.test(grantId)) return fail("sponsor_grant_invalid");
   const compiled = await compileSponsorEnvelope(input.policy, input.envelope);
-  const description = compiled.policy.version === 4
-    ? await describeSponsorStoryAdmission(trusted, command) : await describeSponsorImageAdmission(trusted, command);
+  const description = compiled.policy.version === 5 ? await describeSponsorSlidesAdmission(trusted, command)
+    : compiled.policy.version === 4 ? await describeSponsorStoryAdmission(trusted, command) : await describeSponsorImageAdmission(trusted, command);
   if (!current()) return fail("sponsor_authority_changed");
   if (compiled.policy.version === 2) {
     const evidence = await readSponsorImageTemplateEvidence(trusted, command, description.recipe);
@@ -192,6 +194,10 @@ export async function createSponsorAdmissionAuthority(input: {
   if (compiled.policy.version === 4) {
     const evidence = await readSponsorStoryTemplateEvidence(trusted, command, description.recipe);
     if (!(await Promise.all(compiled.policy.templates.map(template => matchSponsorStoryTemplate(template, evidence)))).some(Boolean)) return fail("sponsor_campaign_template_mismatch");
+  }
+  if (compiled.policy.version === 5) {
+    const evidence = await readSponsorSlidesTemplateEvidence(trusted, command, description.recipe);
+    if (!(await Promise.all(compiled.policy.templates.map(template => matchSponsorSlidesTemplate(template, evidence)))).some(Boolean)) return fail("sponsor_campaign_template_mismatch");
   }
   for (const [key, value] of Object.entries(description)) {
     if (key === "preflightExpiresAtMs") continue;
@@ -208,7 +214,7 @@ export async function createSponsorAdmissionAuthority(input: {
     principalAssertions.push({ sql: `EXISTS(SELECT 1 FROM (${PRINCIPAL_WITH_ACCESS_SQL}) captured WHERE json_array(${principalColumns.map(column => `captured.${column}`).join(",")})=?)`,
       bindings: [userId, JSON.stringify(principalColumns.map(column => row[column] ?? null))] });
   }
-  const issuedAssertions: OutputSqlAssertion[] = p.version === 2 || p.version === 4 ? [sponsorApprovalAssertion(p, e.actorUserId), await sponsorIssuedAuthorityAssertion({ policy:p, policyDigest:compiled.policyDigest, grantId,
+  const issuedAssertions: OutputSqlAssertion[] = p.version === 2 || p.version === 4 || p.version === 5 ? [sponsorApprovalAssertion(p, e.actorUserId), await sponsorIssuedAuthorityAssertion({ policy:p, policyDigest:compiled.policyDigest, grantId,
     actorUserId:e.actorUserId,sessionDigest:e.sessionDigest,intentKey:e.intentKey,envelopeDigest:compiled.envelopeDigest })] : [];
   const assertions: OutputSqlAssertion[] = [...principalAssertions, ...issuedAssertions, { sql: `EXISTS(SELECT 1 FROM experience_sponsor_campaigns campaign JOIN experience_sponsor_grants grant_row ON grant_row.campaign_id=campaign.campaign_id
     JOIN users actor ON actor.user_id=grant_row.actor_user_id JOIN users payer ON payer.user_id=?
@@ -264,18 +270,19 @@ export async function sponsorAdmissionPlan(authority: SponsorAdmissionAuthority,
   const resource = await sponsorResourceAdmissionAssertion({ limits: state.compiled.policy.resources, campaignId: state.compiled.policy.campaignId,
     policyDigest: state.compiled.policyDigest, actorUserId: state.compiled.envelope.actorUserId });
   const approval = sponsorApprovalAssertion(state.compiled.policy, state.compiled.envelope.actorUserId);
-  if (state.compiled.policy.version === 4) {
+  if (state.compiled.policy.version === 4 || state.compiled.policy.version === 5) {
     // Native sidecars and the occupancy insert precede these guards in the same
     // DB.batch. Keep each complete predicate in its own CHECK statement: nesting
     // them with the final receipt witness exceeds D1's expression depth. The
     // native receipt assertion still runs after output_commands is inserted.
-    const token = `sponsor-story:${state.compiled.envelope.consumptionId}`;
+    const family = state.compiled.policy.version === 5 ? "slides" : "story";
+    const token = `sponsor-${family}:${state.compiled.envelope.consumptionId}`;
     const guards = [resource, approval].flatMap(proof => [
       { sql: `INSERT INTO experience_sponsor_assertions(token,passed) VALUES(?,CASE WHEN (${proof.sql}) THEN 1 ELSE 0 END)`,
         bindings: [token, ...(proof.bindings ?? [])] },
       { sql: "DELETE FROM experience_sponsor_assertions WHERE token=?", bindings: [token] },
     ]);
-    if (await digest(plan.nativeAssertion.sql) !== STORY_NATIVE_RECEIPT_SOURCE_DIGEST) return fail("sponsor_story_native_proof_changed");
+    if (await digest(plan.nativeAssertion.sql) !== STORY_NATIVE_RECEIPT_SOURCE_DIGEST) return fail(state.compiled.policy.version === 5 ? "sponsor_slides_native_proof_changed" : "sponsor_story_native_proof_changed");
     return { ...plan, admissionStatements: [...plan.admissionStatements, ...guards],
       nativeAssertion: { ...plan.nativeAssertion, sql: STORY_NATIVE_RECEIPT_SQL } };
   }

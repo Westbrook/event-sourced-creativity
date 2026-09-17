@@ -578,14 +578,22 @@ export async function handleEvents(request:Request,env:WorkerEnv,hot=false,userO
       const profile=sponsorFinancialEventProfile(binding,sponsorEnvironment,actorUserId,output.reference);
       if(profile==="image"){
         if(body.action!=="generate")return Response.json({error:"sponsor_recipe_unsupported"},{status:403});
-      }else{
+      }else if(profile==="short_story"){
         const settings=sponsorEventJson(output.settings),reference=sponsorEventJson(output.reference);
         const narrative=await readOutputNarrativePayload(output.settings);
         if(!narrative||body.action!=="render_document"||body.artifactKind!=="short_story"||body.productionMode!=="manual"||body.itemCount!==3
           ||sponsorEventJson(output.settings)!==settings||sponsorEventJson(output.reference)!==reference
           ||sponsorFinancialEventProfile(binding,sponsorEnvironment,actorUserId,output.reference)!=="short_story")
           return Response.json({error:"sponsor_recipe_unsupported"},{status:403});
-      }
+      }else if(profile==="slides"){
+        const settings=output.settings,supplied=body as Record<string,unknown>,exactFive=sponsorEventJson({kind:"exact",unit:"slide",value:5});
+        if(body.action!=="render_document"||body.artifactKind!=="slides"||body.productionMode!=="manual"||body.itemCount!==5
+          ||supplied.requestedSlideCount!==5||sponsorEventJson(supplied.slideCountPolicy??null)!==exactFive
+          ||settings.artifactKind!=="slides"||settings.productionMode!=="manual"||settings.itemCount!==5||settings.requestedSlideCount!==5
+          ||sponsorEventJson(settings.slideCountPolicy??null)!==exactFive||typeof settings.outputTargetInstructions!=="string"
+          ||supplied.outputTargetInstructions!==settings.outputTargetInstructions||settings.budgetAcknowledged!==true||settings.preflightAcknowledged!==true)
+          return Response.json({error:"sponsor_recipe_unsupported"},{status:403});
+      }else return Response.json({error:"sponsor_recipe_unsupported"},{status:403});
     }
     if(body.action==="render_document"&&body.videoResolution!==undefined){
       if(body.artifactKind!=="video"||!VIDEO_ADAPTER_CONTRACT.supportedResolutions.includes(body.videoResolution))return Response.json({error:"video_resolution_unsupported",supported:VIDEO_ADAPTER_CONTRACT.supportedResolutions},{status:400});
