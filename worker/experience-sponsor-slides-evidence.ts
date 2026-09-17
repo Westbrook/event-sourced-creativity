@@ -7,7 +7,7 @@ import { POLICY_VERSION } from "./policy-version.ts";
 import { preflightOutputImageSlidesTarget } from "./output-image-slides-preflight.ts";
 import { sponsorCurrentSourceAssertions } from "./experience-sponsor-image-evidence.ts";
 import { SponsorEntitlementError, type SponsorRecipe } from "./experience-sponsor-policy.ts";
-import { outputProofReadStatements, assertOutputProofRead, outputDigest } from "./output-disclosure-proof.ts";
+import { outputProofReadStatements, outputDigest } from "./output-disclosure-proof.ts";
 import type { OutputTrustedContext } from "./output-requirements-api.ts";
 import type { OutputSqlAssertion } from "./output-command-core.ts";
 import { buildDocumentPresentationSourceContract, preparePresentationComparisonRequest } from "./openai-adapter.ts";
@@ -50,7 +50,7 @@ async function readNative(trusted: OutputTrustedContext, rawCommand: Record<stri
     || trusted.principal.billingUserId && trusted.principal.billingUserId !== trusted.principal.userId || trusted.env.FORMA_PILOT_COHORT_ID?.trim()
     || !trusted.context || trusted.sourceProblems.length || !trusted.sourcePrivateCaptured) return fail("sponsor_scope_unsupported");
   if (!textSource(trusted.context.snapshot.facts)) return fail("sponsor_slides_text_source_required");
-  const request = trusted.request, env = trusted.env, database = env.DB;
+  const request = trusted.request, signal = request.signal, env = trusted.env, database = env.DB;
   const source = () => canonicalJson({ scope: trusted.scope, principal: { userId: trusted.principal.userId, consentVersion: trusted.principal.consentVersion,
     fictional: trusted.principal.fictional ?? false, projectExecution: trusted.principal.projectExecution ?? null, billingUserId: trusted.principal.billingUserId ?? null,
     authorizationSnapshot: trusted.principal.authorizationSnapshot ?? null }, projectContext: Boolean(trusted.projectContext),
@@ -59,7 +59,9 @@ async function readNative(trusted: OutputTrustedContext, rawCommand: Record<stri
       compositionEffort: env.OPENAI_SLIDES_COMPOSITION_REASONING_EFFORT ?? null, repairModel: env.OPENAI_SLIDES_REPAIR_MODEL ?? null,
       repairEffort: env.OPENAI_SLIDES_REPAIR_REASONING_EFFORT ?? null, providerConfigured: Boolean(env.OPENAI_API_KEY), cohort: env.FORMA_PILOT_COHORT_ID ?? null }, ownerHead: trusted.ownerHead,
     sourceDigest: trusted.sourceDigest, requirementsDigest: trusted.requirementsDigest, context: trusted.context, assertions: trusted.sourceAssertions });
-  const captured = source(), current = () => trusted.request === request && trusted.env === env && env.DB === database && source() === captured;
+  const captured = source(), current = () => !signal.aborted && request.signal === signal && trusted.request === request && trusted.env === env && env.DB === database && source() === captured;
+  const requireCurrent = () => { if (!current()) return fail("sponsor_authority_changed"); };
+  requireCurrent();
   // Retained private-body witnesses are keyed to the original scope identity.
   // Capture them before cloning; a cloned scope cannot recover that WeakMap.
   const capturedAssertions = structuredClone(sponsorCurrentSourceAssertions(trusted));
@@ -70,15 +72,18 @@ async function readNative(trusted: OutputTrustedContext, rawCommand: Record<stri
     sourceAssertions: structuredClone(trusted.sourceAssertions), sourceProblems: [...trusted.sourceProblems],
     env: { ...env } };
   const principalRow = await database.prepare(PRINCIPAL_WITH_ACCESS_SQL).bind(trusted.scope.actorUserId).first<Record<string, unknown>>();
+  requireCurrent();
   if (!principalRow) return fail("sponsor_principal_changed");
   const auth = await readExistingPrincipalRequest(request, env, "creator", { account: "principal" });
-  if (!current() || "kind" in auth || auth.response || !auth.user || auth.user.userId !== trusted.scope.actorUserId
+  requireCurrent();
+  if ("kind" in auth || auth.response || !auth.user || auth.user.userId !== trusted.scope.actorUserId
     || auth.user.consentVersion !== POLICY_VERSION || auth.user.fictional || auth.user.projectExecution
     || canonicalJson(auth.user.authorizationSnapshot) !== canonicalJson(trusted.principal.authorizationSnapshot)) return fail("sponsor_principal_changed");
   const principal = auth.user;
   const bindings = [trusted.scope.key, String(command.preflightId), principal.userId, principal.userId, trusted.scope.projectId,
     trusted.scope.documentId, trusted.sourceDigest, trusted.requirementsDigest];
   const row = await database.prepare(quoteSql).bind(...bindings).first<Quote>();
+  requireCurrent();
   if (!row || row.terms_digest !== command.termsDigest || !Number.isFinite(Date.parse(row.expires_at)) || Date.parse(row.expires_at) <= Date.now()) return fail("sponsor_native_terms_changed");
   const body: unknown = JSON.parse(row.private_json), planBody: unknown = JSON.parse(row.plan_json);
   const quote = record(body) && record(body.preflight) ? body.preflight : null;
@@ -151,20 +156,36 @@ async function readNative(trusted: OutputTrustedContext, rawCommand: Record<stri
     { sql: `EXISTS(SELECT 1 FROM (${quoteSql}) captured WHERE terms_digest=? AND expires_at=? AND private_json=? AND source_head=? AND plan_revision_id=? AND plan_json=?)`,
       bindings: [...bindings, row.terms_digest, row.expires_at, row.private_json, row.source_head, row.plan_revision_id, row.plan_json] }];
   const deadline = Math.min(description.preflightExpiresAtMs, ...assertions.flatMap(assertion => assertion.deadlineMs === undefined ? [] : [assertion.deadlineMs]));
-  if (!current() || !Number.isFinite(deadline) || deadline <= Date.now()) return fail("sponsor_authority_changed");
+  // Keep liveness private, including the await in each public return wrapper.
+  const assertCurrent = () => {
+    requireCurrent();
+    if (!Number.isFinite(deadline) || deadline <= Date.now()) return fail("sponsor_authority_changed");
+  };
+  assertCurrent();
   const checked = await database.batch<Record<string, unknown>>(outputProofReadStatements(env, assertions));
-  assertOutputProofRead(checked, assertions.length);
-  if (!current() || deadline <= Date.now()) return fail("sponsor_authority_changed");
-  return freeze({ description, offered: JSON.parse(canonicalJson(offered)) as Record<string, unknown>, composition });
+  assertCurrent();
+  // The older shared helper skips sparse slots. Every original proof must have
+  // its own native integer acknowledgment; do not invoke response accessors.
+  const own = (value: unknown, key: PropertyKey): unknown => value && typeof value === "object"
+    ? Object.getOwnPropertyDescriptor(value, key)?.value : undefined;
+  if (!Array.isArray(checked) || own(checked, "length") !== assertions.length || Array.from({ length: assertions.length }, (_, index) => {
+    const result = own(checked, index), rows = own(result, "results"), row = own(rows, 0);
+    return own(result, "success") !== true || own(result, "error") !== undefined || !Array.isArray(rows) || own(rows, "length") !== 1 || own(row, "current") !== 1;
+  }).some(Boolean)) return fail("sponsor_authority_changed");
+  assertCurrent();
+  return freeze({ description, offered: JSON.parse(canonicalJson(offered)) as Record<string, unknown>, composition, assertCurrent });
 }
 
 export async function describeSponsorSlidesAdmission(trusted: OutputTrustedContext, command: Record<string, unknown>) {
-  return (await readNative(trusted, command)).description;
+  const native = await readNative(trusted, command);
+  native.assertCurrent();
+  return native.description;
 }
 export async function readSponsorSlidesTemplateEvidence(trusted: OutputTrustedContext, command: Record<string, unknown>, recipe: SponsorRecipe) {
   if (jsonIssues(recipe).length) return fail("sponsor_native_envelope_mismatch");
   const capturedRecipe = JSON.parse(canonicalJson(recipe)) as SponsorRecipe;
   const native = await readNative(trusted, command);
+  native.assertCurrent();
   if (canonicalJson(native.description.recipe) !== canonicalJson(capturedRecipe)) return fail("sponsor_native_envelope_mismatch");
   return freeze({ recipe: native.description.recipe, offered: native.offered, composition: native.composition });
 }
