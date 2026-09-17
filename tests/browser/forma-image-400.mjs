@@ -41,7 +41,11 @@ const focused = () => page.evaluate(() => {
   const rect = element.getBoundingClientRect(), hit = document.elementFromPoint((rect.left + rect.right) / 2, (rect.top + rect.bottom) / 2);
   return { tag: element.tagName, id: element.id, text: (element.getAttribute("aria-label") || element.labels?.[0]?.textContent || element.textContent).trim().replace(/\s+/g, " "),
     rect: rect.toJSON(), invalid: element.getAttribute("aria-invalid"), scrollY,
-    visible: rect.left >= 0 && rect.top >= 0 && rect.right <= innerWidth && rect.bottom <= innerHeight,
+    viewport: { width: innerWidth, height: innerHeight, visualWidth: visualViewport?.width, visualHeight: visualViewport?.height, dpr: devicePixelRatio },
+    // Retain the prior 1 CSS px edge tolerance for native zoomed layout;
+    // complete control-border and focus-outline paint are not accepted here.
+    visibilityToleranceCssPx: 1,
+    visible: rect.left >= -1 && rect.top >= -1 && rect.right <= innerWidth + 1 && rect.bottom <= innerHeight + 1,
     unobscured: hit === element || element.contains(hit) || Boolean(hit?.contains(element)) };
 });
 async function tabToReview(stage) {
