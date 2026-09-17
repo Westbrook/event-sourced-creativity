@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
+import {DatabaseSync} from 'node:sqlite';
 import {sponsorReadFixture} from './sponsor-read-fixture.mjs';
 const {beginSponsorNativeImageRead,requireSponsorNativeImageRead,SPONSOR_NATIVE_IMAGE_READ_INDEXES}=await import('../worker/experience-sponsor-native-image-read.ts');
 
@@ -7,6 +8,17 @@ const policy=()=>({version:1,windowMs:60_000,
   operations:Object.fromEntries(['image-status','image-result','image-media'].map(operation=>[operation,{maximumBytes:32_000_000,deadlineMs:10_000}])),
   actor:{maximumRequestsPerWindow:3,maximumBytesPerWindow:96_000_000},campaign:{maximumRequestsPerWindow:6,maximumBytesPerWindow:192_000_000}});
 const attempts=f=>f.sqlite.prepare('SELECT * FROM experience_sponsor_read_attempts ORDER BY rowid').all();
+function oldSchema(t,ddl=''){
+  const sqlite=new DatabaseSync(':memory:');t.after(()=>sqlite.close());
+  sqlite.exec('CREATE TABLE document_jobs(job_id TEXT); CREATE TABLE output_atomic_assertions(token TEXT,passed INTEGER);'+ddl);
+  // Execute the real bounded schema queries. This adapter supplies no native
+  // authorization result; actual HTTP tests qualify retained creative custody.
+  const prepare=(sql,bindings=[])=>({bind:(...values)=>prepare(sql,values),
+    all:async()=>({success:true,results:sqlite.prepare(sql).all(...bindings)}),first:async()=>sqlite.prepare(sql).get(...bindings)??null});
+  const env={DB:{prepare}};
+  return {sqlite,begin:()=>beginSponsorNativeImageRead(new Request('http://localhost/api/media/ordinary.png'),env,
+    {userId:'ordinary-owner',streamId:'creative:ordinary-owner'},{mediaKey:'ordinary-owner/ordinary.png'})};
+}
 async function fixture(t,{indexes=true,readPolicy=true,...options}={}){
   const f=await sponsorReadFixture(t,options);
   if(indexes)for(const definition of SPONSOR_NATIVE_IMAGE_READ_INDEXES)f.sqlite.exec(definition.sql);
@@ -66,6 +78,29 @@ test('an actor without distinct-payer Image history remains ordinary without the
   const before=f.snapshotNativeState();
   assert.equal((await f.begin({mediaKey:`${f.payer}/ordinary.png`},f.readRequest(),ordinaryActor)).context,null);
   assert.equal((await f.begin({outputId:'ordinary-output'},f.readRequest(),ordinaryActor)).context,null);f.noReadSideEffects(before);
+});
+
+test('pre-Outputs fallback preserves a genuinely old schema and unrelated shared assertions',async t=>{
+  const f=oldSchema(t),before=f.sqlite.prepare('SELECT name,sql FROM sqlite_schema ORDER BY name').all();
+  assert.equal(await f.begin(),null);assert.deepEqual(f.sqlite.prepare('SELECT name,sql FROM sqlite_schema ORDER BY name').all(),before);
+});
+
+for(const populated of [false,true])test(`pre-Outputs fallback refuses ${populated?'retained':'empty'} sponsor consumption schema`,async t=>{
+  const f=oldSchema(t,'CREATE TABLE experience_sponsor_consumptions(job_id TEXT);'+(populated?"INSERT INTO experience_sponsor_consumptions VALUES('retained-job');":''));
+  await assert.rejects(f.begin(),/sponsor_native_read_configuration/);
+  assert.equal(f.sqlite.prepare('SELECT COUNT(*) n FROM experience_sponsor_consumptions').get().n,populated?1:0);
+});
+
+for(const [kind,ddl] of [
+  ['sponsor view','CREATE VIEW experience_sponsor_issuances AS SELECT 1;'],
+  ['lookup index','CREATE TABLE retained_media(key TEXT); CREATE INDEX IDX_SPONSOR_IMAGE_REVISION_MEDIA_LOOKUP ON retained_media(key);'],
+  ['native authority','CREATE TABLE output_native_storage_writes(storage_key TEXT);'],
+  ['dormant durable lineage','CREATE TABLE output_durable_jobs(job_id TEXT);'],
+  ['detached durable guard','CREATE TRIGGER output_durable_owner_immutable BEFORE UPDATE ON document_jobs BEGIN SELECT 1; END;'],
+])test(`pre-Outputs fallback refuses uncertain ${kind} without consuming data`,async t=>{
+  const f=oldSchema(t,ddl),before=f.sqlite.prepare('SELECT name,sql FROM sqlite_schema ORDER BY name').all();
+  await assert.rejects(f.begin(),/sponsor_native_read_configuration/);
+  assert.deepEqual(f.sqlite.prepare('SELECT name,sql FROM sqlite_schema ORDER BY name').all(),before);
 });
 
 test('sponsored actor cannot bypass missing or counterfeit classification indexes',async t=>{
