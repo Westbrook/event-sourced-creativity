@@ -1,3 +1,4 @@
+import { hasServerExecutionOwner, readOutputDurableObservation } from "../model/output-durable-observation.ts";
 import { parseModel3dMiniAppCostPreview, model3dMiniAppCostApprovalMatches } from "../model/model3d-mini-app-consent.ts";
 import { EXPERIENCE_BODY_TIMEOUT_MS, experienceResponseTimeout } from "./output-transport-lifetime.ts";
 import { readModel3dExecutionOffer, readModel3dExecutionPayload } from "../model/output-model3d-offer.ts";
@@ -181,6 +182,9 @@ export function decodeExperienceBinding(value: unknown, identity: ExperienceBind
         || original.targetId !== plan.targetId || original.targetContractDigest !== plan.targetContractDigest || original.planRevisionId !== plan.revisionId
         || original.sourceDigest !== plan.sourceDigest || original.requirementsDigest !== plan.requirementsDigest || !commandIdentity(original.authorization)
         || original.run !== null && !commandIdentity(original.run)) return null;
+      if ((Object.hasOwn(original,"executionOwner") || Object.hasOwn(original,"observation"))
+        && (original.executionOwner!=="durable" || !readOutputDurableObservation(original.observation)
+          || permitted.run || permitted.resumeRun || permitted.recoverResult || permitted.prepareReplacement)) return null;
       if (grant.id !== original.grantId || grant.status !== original.grantStatus || grant.planRevisionId !== plan.revisionId
         || grant.actorUserId !== identity.actorUserId || !text(grant.payerUserId) || !text(grant.expiresAt) || grant.expiresAt !== original.expiresAt
         || grant.maximumMicrousd !== preflight.maximumMicrousd || grant.maximumCalls !== preflight.maximumCalls
@@ -251,6 +255,7 @@ export class ExperienceOutputBindingClient {
   dispose() { this.#epoch++; this.#abort?.abort(); this.#state = unavailableBinding("withdrawn"); this.#pending = false; }
   async read() { return this.#request("GET"); }
   async command(action: ExperienceBindingAction, shown: ExperienceNativeState, sceneApproval?: SceneMiniAppCostApproval, audioApproval?: ExperienceAudioCostApproval, model3dApproval?: ExperienceModel3dCostApproval) {
+    if (shown.original && hasServerExecutionOwner(shown.original) && ["run","resumeRun","recoverResult","prepareReplacement"].includes(action)) return this.#state;
     if (this.#pending || shown !== this.#state || !shown.permitted[action] || !this.#controls.current()) return this.#state;
     // Never manufacture Scene consent from a server preview. It is a separate
     // explicit host action, sent only with Authorize and tied to this exact state.

@@ -1,0 +1,11 @@
+
+/Users/westbrook/Documents/repos/codex/.wrangler/durable-generation-foundations/worker/output-requirements-api.ts
+   24:209  error  'OutputRequirementsSnapshot' is defined but never used  @typescript-eslint/no-unused-vars
+   32:10   error  'hasCapability' is defined but never used               @typescript-eslint/no-unused-vars
+   34:22   error  'streamHead' is defined but never used                  @typescript-eslint/no-unused-vars
+   35:201  error  'readOutputSlots' is defined but never used             @typescript-eslint/no-unused-vars
+  160:16   error  'readAssets' is defined but never used                  @typescript-eslint/no-unused-vars
+  162:16   error  'readGrants' is defined but never used                  @typescript-eslint/no-unused-vars
+
+✖ 6 problems (6 errors, 0 warnings)
+

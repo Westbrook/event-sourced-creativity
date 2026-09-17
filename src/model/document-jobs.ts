@@ -65,6 +65,8 @@ export type GenerationFailureGuidance = {
 };
 
 export type DocumentJob = {
+  executionOwner?: "durable";
+  observation?: import("./output-durable-observation.ts").OutputDurableObservation;
   jobId: string;
   documentId: string;
   canvasId?: string | null;

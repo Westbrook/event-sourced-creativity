@@ -1116,3 +1116,12 @@ test('Video read host remains bounded at110s and unknown actions retain generic 
  assert.equal(experienceHostTimeout({action:'unknown',output:'video'}),30000);
  assert.equal(experienceResponseTimeout(),20000);assert.equal(experienceHostTimeout(),30000);
 });
+
+test("durable observations decode only closed phases with all ordinary drivers disabled",()=>{
+  const value=state("queued");value.original!.executionOwner="durable";value.original!.observation={version:1,phase:"retaining",revision:4};
+  value.permitted.resumeRun=false;assert.ok(decodeExperienceBinding(value,identity));
+  for(const permission of ["run","resumeRun","recoverResult","prepareReplacement"] as const){
+    const invalid=structuredClone(value);invalid.permitted[permission]=true;assert.equal(decodeExperienceBinding(invalid,identity),null);
+  }
+  const invalid=structuredClone(value) as unknown as MutableRecord;invalid.original.observation={version:1,phase:"future",revision:4};assert.equal(decodeExperienceBinding(invalid,identity),null);
+});

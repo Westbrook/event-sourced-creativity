@@ -1,3 +1,4 @@
+import { outputJobIsDurable, assertOutputDurableLease } from "./output-durable-control.ts";
 import { requireSponsorExecution, readSponsorFinancialBinding, sponsorFinancialIdentity, sponsorTerminalReleaseStatement, type SponsorExecutionAuthority, type SponsorFinancialBinding } from "./experience-sponsor-execution.ts";
 import { verifyOutputVideoCompletion } from "./output-video-completion.ts";
 import { prepareOutputProviderFinancialCheckpoint, retainUnsettledOutputProviderObservation } from "./output-provider-financial-checkpoint.ts";
@@ -468,6 +469,7 @@ export async function createOutputEventExecution(env:WorkerEnv,user:PilotUser,jo
     await retainStoryboardPlannerRequestCheckpoint(guardedEnvironment,scope,slot,job,storyboardPlanning);claimed.checkpointed=true;}
   },
   beforeProviderDispatch(clientRequestId){
+   if(outputJobIsDurable(job)) assertOutputDurableLease(env,job.job_id);
    const call=claimedCalls.get(clientRequestId);
    if(!call||!call.pending||call.dispatched||localStops.has(clientRequestId)||(call.storyboardBinding||artifactKind==="video")&&!call.checkpointed)throw new OutputConflictError("output_provider_call_missing",403);
    // No await may separate this check from the actual adapter fetch. A denial
