@@ -8,6 +8,10 @@ import './vendor/elements/define/toolbar.js';
 import './vendor/elements/define/textarea.js';
 import './style.css';
 import './context-flow.ts';
+import './use-in-flow.ts';
+import type { StillUseInFlow } from './use-in-flow.ts';
+import { explicitAction, findActions, finderEntry } from './finder.ts';
+import { presentActions, type Emphasis } from './presentation.ts';
 import './developer-console.ts';
 import type { StillDeveloperConsole } from './developer-console.ts';
 import { decisionDiagnostics, responseDisposition, type DecisionDiagnostics, type DecisionResponse, type ReceivedDecision } from './diagnostics.ts';
@@ -52,6 +56,13 @@ export class StillApp extends LitElement {
   private get itemIndex() { return this.client.position.itemIndex ?? 0; }
   private set itemIndex(value: number) { this.client.position.itemIndex = value; }
   private suggestions: Action[] = [];
+  private emphasis:Record<string,Emphasis>={};
+  private formatEmphasis:Record<string,Emphasis>={};
+  private suggestionTargets:Record<string,string>={};
+  private useInTarget='';
+  private dockTouched=false;
+  private finderInferred=false;
+  private finderMessage='';
   private decisionSource = 'fallback';
   private decisionTicket = 0;
   private decisionTimer = 0;
@@ -89,7 +100,7 @@ export class StillApp extends LitElement {
   }
   disconnectedCallback() { super.disconnectedCallback(); this.disposed = true; ++this.developerEpoch; this.developerApplied=undefined;this.developerReceived=undefined;this.dockObserver.disconnect(); clearTimeout(this.pollTimer); clearTimeout(this.decisionTimer); window.removeEventListener('popstate', this.popstate); window.removeEventListener('beforeunload', this.beforeUnload); }
   private draftSignature(){const g=this.generation;return JSON.stringify([this.titleDraft,this.bodyDraft,this.kindDraft,g?.prompt,g?.tone,g?.audience,g?.itemCount]);}
-  private preventsRouteChange(){return this.busy&&!this.loading||this.composing||this.client.hasUnconfirmedWrite||!!this.generation?.attempted||!!this.mode&&this.draftSignature()!==this.draftBaseline||!!this.querySelector<StillContextFlow>('still-context-flow')?.preventsRouteChange;}
+  private preventsRouteChange(){return this.busy&&!this.loading||this.composing||this.client.hasUnconfirmedWrite||!!this.generation?.attempted||!!this.mode&&this.draftSignature()!==this.draftBaseline||!!this.querySelector<StillContextFlow>('still-context-flow')?.preventsRouteChange||!!this.querySelector<StillUseInFlow>('still-use-in-flow')?.preventsRouteChange;}
   private beforeUnload = (e: BeforeUnloadEvent) => { if (this.preventsRouteChange()) { e.preventDefault(); e.returnValue = ''; } };
   private changed() { this.requestUpdate(); }
   protected updated() {
@@ -165,7 +176,7 @@ export class StillApp extends LitElement {
     }
     this.activeAddress=url;
   }
-  private resetStep(){++this.decisionTicket;clearTimeout(this.decisionTimer);this.mode='';this.routeMode='';this.bodyDraft='';this.titleDraft='';this.pendingBlock=null;this.generation=null;this.generationGate=null;this.formatSuggestions=[];this.formatTouched=false;this.developerPending=false;}
+  private resetStep(){this.dockTouched=false;this.useInTarget='';this.emphasis={};this.formatEmphasis={};++this.decisionTicket;clearTimeout(this.decisionTimer);this.mode='';this.routeMode='';this.bodyDraft='';this.titleDraft='';this.pendingBlock=null;this.generation=null;this.generationGate=null;this.formatSuggestions=[];this.formatTouched=false;this.developerPending=false;}
   private navigate(view: string, ids: Partial<StillClient['position']> = {}) {
     this.resetStep();this.page = 0; this.itemIndex = 0; this.error = '';this.routeError='';this.notice='';
     const changedDocument = ids.documentId !== undefined && ids.documentId !== this.client.position.documentId || ids.projectId !== undefined && ids.projectId !== this.client.position.projectId;
@@ -179,14 +190,14 @@ export class StillApp extends LitElement {
     if(event.button!==0||event.metaKey||event.ctrlKey||event.shiftKey||event.altKey||event.defaultPrevented)return;
     event.preventDefault();if(!this.busy&&!this.composing)this.navigate(view,ids);
   }
-  private turnPage(page:number){this.page=Math.max(0,page);this.writeRoute();this.changed();this.decide();}
-  private turnItem(item:number){this.itemIndex=item;this.writeRoute();this.changed();this.decide();}
+  private turnPage(page:number){this.dockTouched=false;this.page=Math.max(0,page);this.writeRoute();this.changed();this.decide();}
+  private turnItem(item:number){this.dockTouched=false;this.itemIndex=item;this.writeRoute();this.changed();this.decide();}
   private candidates() { return eligibleActions(this.client.projection, this.client.position, this.client.abilities); }
   private decide() {
     if(this.currentRouteProblem(this.client.projection))return;
     if(this.mode){clearTimeout(this.decisionTimer);if(this.mode==='generate'&&!this.generation)this.suggestFormats();return;}
     clearTimeout(this.decisionTimer); const ticket = ++this.decisionTicket;
-    const candidates = this.candidates(); this.suggestions = selectActions(candidates, this.client.position); this.decisionSource = 'fallback'; this.changed();
+    const candidates = this.candidates(); if(this.dockTouched)return;this.suggestions = selectActions(candidates, this.client.position);this.emphasis=presentActions(this.suggestions.map(a=>a.id));this.suggestionTargets={}; this.decisionSource = 'fallback'; this.changed();
     if(this.developer){this.developerScope=this.diagnosticScope();this.developerApplied=this.localDiagnostics('Local policy');this.developerReceived=undefined;this.developerPending=false;}
     if (!this.client.session?.policy.accepted || this.mode) return;
     this.decisionTimer = window.setTimeout(async () => {
@@ -194,9 +205,9 @@ export class StillApp extends LitElement {
       this.developerPending=this.developer;this.changed();
       try {
         const result = await api<DecisionResponse>('/api/still/decision', {...this.client.position,...(this.developer?{developer:true}:{})});
-        const disposition=responseDisposition(result,{head:this.client.head,headChanged:head!==this.client.head,stale:ticket!==this.decisionTicket||snapshot!==JSON.stringify(this.client.position)||!!this.mode||this.disposed||scope!==this.interactionScope(),focused:!!this.querySelector('.action-dock')?.contains(document.activeElement)});
+        const disposition=responseDisposition(result,{head:this.client.head,headChanged:head!==this.client.head,stale:ticket!==this.decisionTicket||snapshot!==JSON.stringify(this.client.position)||!!this.mode||this.disposed||scope!==this.interactionScope(),focused:this.dockTouched||!!this.querySelector('.action-dock')?.contains(document.activeElement)});
         this.recordDecision(result,disposition,diagnosticScope);
-        if(disposition==='Applied'){const allowed=new Map(this.candidates().map(a=>[a.id,a]));this.suggestions=result.actions!.map(a=>allowed.get(a.id)).filter((a):a is Action=>!!a).slice(0,4);this.decisionSource=result.source;this.changed();}
+        if(disposition==='Applied'){const allowed=new Map(this.candidates().map(a=>[a.id,a]));this.suggestions=result.actions!.map(a=>allowed.get(a.id)).filter((a):a is Action=>!!a).slice(0,4);this.emphasis=result.presentation??presentActions(this.suggestions.map(a=>a.id));this.suggestionTargets=result.targets??{};this.decisionSource=result.source;this.changed();}
       } catch(error) { this.recordDecision({source:'fallback',reason:error instanceof ApiError?`HTTP ${error.status}`:'Network unavailable',head,policy:POLICY_VERSION},'Kept local controls',diagnosticScope); }
       finally {if(ticket===this.decisionTicket){this.developerPending=false;this.changed();}}
     }, 700);
@@ -214,7 +225,7 @@ export class StillApp extends LitElement {
         this.recordDecision(result,disposition,diagnosticScope);
         if (disposition==='Applied') {
           const allowed = new Set(this.candidates().filter(a=>!!FORMATS[a.id]).map(a=>a.id));
-          this.formatSuggestions = [...new Set(result.formats!)].filter(id=>allowed.has(id)).slice(0,3); this.changed();
+          this.formatSuggestions = [...new Set(result.formats!)].filter(id=>allowed.has(id)).slice(0,3);this.formatEmphasis=result.presentation??presentActions(this.formatSuggestions); this.changed();
         }
       } catch(error) { this.recordDecision({source:'fallback',reason:error instanceof ApiError?`HTTP ${error.status}`:'Network unavailable',head,policy:POLICY_VERSION},'Kept full format picker',diagnosticScope); }
       finally {if(ticket===this.decisionTicket){this.developerPending=false;this.changed();}}
@@ -226,13 +237,28 @@ export class StillApp extends LitElement {
       if (!this.disposed) this.poll();
     }, this.client.jobs.some(j => activeJobs.has(j.status)) ? 2000 : 12000);
   }
-  private button(label: string, action: () => void, primary = false, disabled = false, actionId='') { return html`<en-button data-action-id=${actionId} variant=${primary ? 'primary' : 'ghost'} .disabled=${this.busy || this.composing || disabled} @click=${action}>${label}</en-button>`; }
+  private suggestedButton(a:Action,format=false){const e=(format?this.formatEmphasis:this.emphasis)[a.id]??{variant:'secondary',size:'medium',tier:'peer',reason:'No clear leader'};return html`<en-button data-action-id=${a.id} data-tier=${e.tier} data-emphasis-reason=${e.reason} variant=${e.variant} size=${e.size} .disabled=${this.busy||this.composing} @click=${()=>format?this.chooseFormat(a.id):this.choose(a.id)}>${a.label}</en-button>`;}
+  private openFinder(){this.client.position.recentActions=[...this.client.position.recentActions,'ui:more'].slice(-12);this.begin('actions');}
+  private async findAction(){
+    const query=this.bodyDraft.trim(),candidates=this.candidates();if(!query)return;
+    const explicit=explicitAction(query,candidates);this.finderInferred=true;this.finderMessage='';
+    if(explicit){this.choice=explicit;this.finderMessage='';return;}
+    const snapshot=JSON.stringify(this.client.position),head=this.client.head,scope=this.interactionScope(),diagnosticScope=this.diagnosticScope(),ticket=this.decisionTicket;
+    this.developerPending=this.developer;
+    try{const result=await api<DecisionResponse>('/api/still/decision',{...this.client.position,view:'find-action',intent:query,...(this.developer?{developer:true}:{})});
+      const stale=result.policy!==POLICY_VERSION||result.head!==head||ticket!==this.decisionTicket||this.mode!=='actions'||query!==this.bodyDraft.trim()||scope!==this.interactionScope()||snapshot!==JSON.stringify(this.client.position)||head!==this.client.head||this.disposed;
+      this.recordDecision(result,stale?'Ignored: finder changed':'Finder suggestion',diagnosticScope);if(stale)return;
+      this.choice=candidates.some(a=>a.id===result.resolvedAction)?result.resolvedAction!:'';this.finderMessage=this.choice?'':'Choose an action.';
+    }catch{this.finderMessage='Choose an action.';}finally{this.developerPending=false;}
+  }
+  private openFoundAction(){const id=this.choice;this.suggestionTargets={};this.useInTarget='';if(!id)return;if(id==='ui:workspaces'){this.begin('workspaces');return;}if(id==='ui:refresh'){void this.run(async()=>{await this.client.load();this.readRoute();this.closeMode();});return;}const entry=this.finderInferred?finderEntry(id):id;if(entry==='view-result'){this.navigate('artifact',{outputId:this.client.position.outputId});return;}if(entry==='context'&&id!=='context'){this.navigate('document',{blockId:this.client.position.blockId});return;}this.choose(entry);}
+  private button(label: string, action: () => void, primary = false, disabled = false, actionId='') { return html`<en-button data-action-id=${actionId} size="medium" variant=${primary ? 'primary' : 'ghost'} .disabled=${this.busy || this.composing || disabled} @click=${action}>${label}</en-button>`; }
   private field(label: string, value: string, change: (v: string) => void, rows = 3, placeholder = '') { return html`<en-textarea label=${label} .value=${live(value)} rows=${rows} placeholder=${placeholder} .disabled=${this.busy || this.client.hasUnconfirmedWrite || !!this.generation?.attempted} @en-input=${(e: CustomEvent<{ value: string; isComposing: boolean }>) => { change(e.detail.value); this.composing = e.detail.isComposing; if (!this.composing) this.changed(); }}></en-textarea>`; }
   private closeMode() { if (this.mode === 'generate') this.client.position.intent = ''; this.resetStep();this.error='';this.writeRoute();this.decide();this.focusContent(); }
   private begin(mode: string, updateURL=true) {
     this.developerPending=false;
     this.pendingBlock = null; this.mode = mode;this.routeMode=mode; ++this.decisionTicket; clearTimeout(this.decisionTimer); this.error = ''; this.choice = ''; this.titleDraft = ''; this.bodyDraft = ''; this.kindDraft = 'direction';
-    if (mode === 'actions') this.choice = this.candidates()[0]?.id ?? '';
+    if (mode === 'actions'){this.finderInferred=false;this.finderMessage='';}
     if (mode === 'edit-block') { const block = this.client.projection.blocks.find(b => b.id === this.client.position.blockId); this.bodyDraft = text(block?.properties.text); this.titleDraft = block?.handle ?? ''; this.kindDraft = block?.type ?? 'message'; this.editBase = { text: text(block?.properties.text) };  }
     if (mode === 'rename') { this.titleDraft = this.client.projection.documentTitle; this.editBase = { title: this.titleDraft }; }
     if (mode === 'intent') this.bodyDraft = this.client.position.intent;
@@ -243,6 +269,8 @@ export class StillApp extends LitElement {
   }
   private choose(id: string) {
     if (this.busy || this.composing) return;
+    if(!id.startsWith('ui:')&&!this.candidates().some(a=>a.id===id)){this.error='Action changed. Choose another step.';this.dockTouched=false;this.decide();return;}
+    if(id==='use-in')this.useInTarget=this.suggestionTargets[id]??'';
     if(id==='ui:developer'){this.closeMode();this.setDeveloper(true);return;}
     this.client.position.recentActions = [...this.client.position.recentActions, id].slice(-12);
     if (id === 'projects') return this.navigate('projects', { projectId: '', documentId: '' });
@@ -252,7 +280,7 @@ export class StillApp extends LitElement {
     if (id === 'replace-part') return this.begin('edit-block');
     if (id === 'export') { void this.run(() => this.exportWork()); return; }
     if (['lock', 'unlock', 'toggle-context'].includes(id)) {
-      void this.run(async () => { const b = this.client.projection.blocks.find(x => x.id === this.client.position.blockId); if (!b) return; await this.client.append([{ type: id === 'toggle-context' ? 'BlockWeightSet' : id === 'lock' ? 'BlockLocked' : 'BlockUnlocked', payload: { block_id: b.id, ...(id === 'toggle-context' ? { weight: Number(b.properties.weight ?? 1) > 0 ? 0 : .8, previous_weight: b.properties.weight ?? 1 } : {}) } }]); this.notice = 'Updated.'; this.decide(); }); return;
+      void this.run(async () => { const b = this.client.projection.blocks.find(x => x.id === this.client.position.blockId); if (!b) return; await this.client.append([{ type: id === 'toggle-context' ? 'BlockWeightSet' : id === 'lock' ? 'BlockLocked' : 'BlockUnlocked', payload: { block_id: b.id, ...(id === 'toggle-context' ? { weight: Number(b.properties.weight ?? 1) > 0 ? 0 : .8, previous_weight: b.properties.weight ?? 1 } : {}) } }]); this.notice = 'Updated.';this.closeMode(); }); return;
     }
     if (id === 'create' || FORMATS[id]) {
       this.generation = null; this.generationGate = null; this.formatSuggestions = []; this.formatTouched = false;
@@ -355,10 +383,11 @@ export class StillApp extends LitElement {
       const a = p.artifacts.find(x => x.id === pos.outputId), o = p.outputs.find(x => x.id === pos.outputId);
       return a ? this.renderArtifact(a) : o ? html`<figure class="image-stage"><img src=${safeMedia(o.mediaUrl)} alt=${o.title ?? p.documentTitle} /><figcaption>${o.title ?? p.documentTitle}</figcaption></figure>` : html`<section class="quiet-state"><h1>Result unavailable</h1></section>`;
     }
-    return html`<article class="document-page"><span class="eyebrow">${p.projectName}</span><h1>${p.documentTitle}</h1><div class="context-blocks">${p.blocks.filter(b => !b.removed).map((b, i) => html`<a aria-current=${pos.blockId===b.id?'true':nothing} href=${this.viewURL('document',{blockId:pos.blockId===b.id?'':b.id})} class=${`context-block ${pos.blockId === b.id ? 'selected' : ''} ${Number(b.properties.weight ?? 1) <= 0 ? 'inactive' : ''}`} @click=${(e:MouseEvent)=>this.follow(e,'document',{blockId:pos.blockId===b.id?'':b.id})}><span class="block-index">${String(i + 1).padStart(2, '0')}</span><div><span class="block-label">${b.handle || b.type}${p.blockRelations.filter(r=>!r.removed&&r.toBlockId===b.id&&isContextCompositionRelation(r.kind)).map(r=>` · part of ${p.blocks.find(parent=>parent.id===r.fromBlockId)?.handle??'a group'}`).join('')}${b.locked ? ' · locked' : ''}${Number(b.properties.weight ?? 1) <= 0 ? ' · excluded' : ''}</span>${safeMedia(text(b.properties.media_url)) && b.type === 'reference' ? html`<img class="context-reference" src=${safeMedia(text(b.properties.media_url))} alt=${b.handle}/>` : nothing}<p>${text(b.properties.text) || text(b.properties.description) || 'Empty idea'}</p></div></a>`)}</div>${!p.blocks.filter(b => !b.removed).length ? html`<div class="blank-page"><span class="pencil-line" aria-hidden="true"></span><p>Add an idea.</p></div>` : nothing}</article>`;
+    return html`<article class="document-page"><span class="eyebrow">${p.projectName}</span><h1>${p.documentTitle}</h1><div class="context-blocks">${p.blocks.filter(b => !b.removed).map((b, i) => html`<a aria-current=${pos.blockId===b.id?'true':nothing} href=${this.viewURL('document',{blockId:pos.blockId===b.id?'':b.id})} class=${`context-block ${pos.blockId === b.id ? 'selected' : ''} ${Number(b.properties.weight ?? 1) <= 0 ? 'inactive' : ''}`} @click=${(e:MouseEvent)=>this.follow(e,'document',{blockId:pos.blockId===b.id?'':b.id})}><span class="block-index">${String(i + 1).padStart(2, '0')}</span><div><span class="block-label">${text(b.properties.label) || b.handle || b.type}${p.blockRelations.filter(r=>!r.removed&&r.toBlockId===b.id&&isContextCompositionRelation(r.kind)).map(r=>` · part of ${p.blocks.find(parent=>parent.id===r.fromBlockId)?.handle??'a group'}`).join('')}${b.locked ? ' · locked' : ''}${Number(b.properties.weight ?? 1) <= 0 ? ' · excluded' : ''}</span>${safeMedia(text(b.properties.media_url)) && b.type === 'reference' ? html`<img class="context-reference" src=${safeMedia(text(b.properties.media_url))} alt=${b.handle}/>` : nothing}<p>${text(b.properties.text) || text(b.properties.description) || 'Empty idea'}</p></div></a>`)}</div>${!p.blocks.filter(b => !b.removed).length ? html`<div class="blank-page"><span class="pencil-line" aria-hidden="true"></span><p>Add an idea.</p></div>` : nothing}</article>`;
   }
   private renderMode() {
     const mode = this.mode, p = this.client.projection;
+    if(mode==='use-in')return keyed(`${this.interactionScope()}/${this.client.position.blockId}/use-in`,html`<still-use-in-flow .client=${this.client} .suggestedTarget=${this.useInTarget} @context-back=${()=>this.closeMode()} @use-in-done=${(e:CustomEvent<{projectId:string;documentId:string;blockId:string}>)=>{this.navigate('document',{projectId:e.detail.projectId,documentId:e.detail.documentId,blockId:e.detail.blockId});this.notice='Saved.';}}></still-use-in-flow>`);
     if (['split-context','research-context','find-references','compose'].includes(mode)) return keyed(`${this.client.scopeKey}/${p.projectId}/${p.documentId}/${this.client.position.blockId}/${mode}`,html`<still-context-flow .client=${this.client} .action=${mode} @context-back=${()=>this.closeMode()} @context-done=${()=>{this.notice='Saved.';this.closeMode();}}></still-context-flow>`);
     if (mode === 'generate') {
       const g = this.generation;
@@ -368,9 +397,9 @@ export class StillApp extends LitElement {
       const pickerFormats = g ? formats : formats.filter(a=>!suggested.includes(a.id));
       return html`<section class="form-page generation-page">
         <span class="eyebrow">${p.projectName}</span><h1>${p.documentTitle}</h1>
-        <div class="generation-context">${source.facts.filter(b => b.active).map(b => html`<p><span>${b.handle || b.type}${b.locked ? ' · locked' : ''}</span>${safeMedia(text(b.properties.media_url)) && b.type === 'reference' ? html`<img class="context-reference" src=${safeMedia(text(b.properties.media_url))} alt=${b.handle}/>` : nothing}${text(b.properties.text) || text(b.properties.description)}</p>`)}</div>
+        <div class="generation-context">${source.facts.filter(b => b.active).map(b => html`<p><span>${text(b.properties.label) || b.handle || b.type}${b.locked ? ' · locked' : ''}</span>${safeMedia(text(b.properties.media_url)) && b.type === 'reference' ? html`<img class="context-reference" src=${safeMedia(text(b.properties.media_url))} alt=${b.handle}/>` : nothing}${text(b.properties.text) || text(b.properties.description)}</p>`)}</div>
         <div class="format-options" @pointerenter=${()=>{this.formatTouched=true;}} @focusin=${()=>{this.formatTouched=true;}}>
-        ${!g && suggested.length ? html`<en-toolbar class="format-suggestions" label="Suggested formats" keyboard-navigation="tab">${suggested.map((id,i)=>this.button(FORMATS[id],()=>this.chooseFormat(id),i===0,false,id))}</en-toolbar>` : nothing}
+        ${!g && suggested.length ? html`<en-toolbar class="format-suggestions" label="Suggested formats" keyboard-navigation="tab">${suggested.map(id=>this.suggestedButton({...ACTIONS.find(a=>a.id===id)!,label:FORMATS[id]},true))}</en-toolbar>` : nothing}
         ${g || pickerFormats.length ? html`<label class="select-label">${!g && suggested.length ? 'Other formats' : 'Output'}<select .value=${live(g?.format ?? '')} ?disabled=${this.busy || this.composing || !!g?.attempted} @change=${(e: Event) => this.chooseFormat((e.target as HTMLSelectElement).value)}>
           <option value="" .selected=${!g}>Choose a format</option>${pickerFormats.map(a => html`<option value=${a.id} .selected=${g?.format === a.id}>${FORMATS[a.id]}</option>`)}${g && !formats.some(a => a.id === g.format) ? html`<option value=${g.format} .selected=${true}>${FORMATS[g.format]}</option>` : nothing}
         </select></label>` : nothing}
@@ -385,7 +414,8 @@ export class StillApp extends LitElement {
         <div class="form-actions">${g ? this.button(g.attempted ? 'Check generation' : g.format === 'scene' && !g.scenePreview ? 'Check cost' : this.generationGate ? 'Approve' : 'Generate', () => void this.run(() => this.generate()), true) : nothing}${this.button('Back', () => this.closeMode())}</div>
       </section>`;
     }
-    if (mode === 'actions') return html`<section class="form-page"><h1>Actions</h1><label class="select-label">Action<select .value=${this.choice} @change=${(e: Event) => { this.choice = (e.target as HTMLSelectElement).value; this.changed(); }}>${this.candidates().map(a => html`<option value=${a.id}>${a.label}</option>`)}<option value="ui:developer">Developer console</option></select></label><div class="form-actions">${this.button('Go', () => this.choose(this.choice), true)}${this.button('Workspaces', () => this.begin('workspaces'))}${this.button('Refresh', () => void this.run(async () => { await this.client.load(); this.readRoute(); this.closeMode(); }))}${this.button('Back', () => this.closeMode())}</div></section>`;
+    if (mode === 'actions') {const options=findActions(this.bodyDraft,this.candidates()),chosen=this.candidates().find(a=>a.id===this.choice);if(chosen&&!options.some(a=>a.id===chosen.id))options.unshift(chosen);return html`<section class="form-page"><h1>More</h1>${this.field('What next?',this.bodyDraft,v=>{this.bodyDraft=v;this.choice='';this.finderMessage='';this.finderInferred=false;},1,'Make it 3D, use it in a character…')}<label class="select-label">Action<select .value=${live(this.choice)} ?disabled=${this.busy} @change=${(e:Event)=>{this.choice=(e.target as HTMLSelectElement).value;this.finderInferred=false;this.finderMessage='';this.changed();}}><option value="" .selected=${!this.choice}>Choose an action</option>${options.map(a=>html`<option value=${a.id} .selected=${a.id===this.choice}>${a.label}</option>`)}</select></label>${this.finderMessage?html`<p class="cost-note" role="status">${this.finderMessage}</p>`:nothing}<div class="form-actions">${this.button(this.choice?'Open':'Find',()=>this.choice?this.openFoundAction():void this.run(()=>this.findAction()),true,!this.choice&&!this.bodyDraft.trim())}${this.button('Back',()=>this.closeMode())}</div></section>`;}
+
     if (mode === 'workspaces') return html`<section class="form-page"><h1>Workspaces</h1><label class="select-label">Workspace<select .value=${this.choice} @change=${(e: Event) => { this.choice = (e.target as HTMLSelectElement).value; this.changed(); }}><option value="">Personal projects</option>${this.client.session?.projects?.map(p => html`<option value=${p.projectAccessId}>${p.projectName} · ${p.role}</option>`)}</select></label><div class="form-actions">${this.button('Open', () => void this.run(async () => { await this.client.switchWorkspace(this.client.session?.projects?.find(p => p.projectAccessId === this.choice)); this.navigate(this.client.position.view, this.client.position); }), true)}${this.button('Back', () => this.closeMode())}</div></section>`;
     if (mode === 'reuse') return html`<section class="form-page"><h1>Reuse idea</h1><label class="select-label">Idea<select .value=${this.choice} @change=${(e: Event) => { this.choice = (e.target as HTMLSelectElement).value; this.changed(); }}><option value="">Choose an idea</option>${p.libraryBlocks.filter(b => !b.removed && b.documentId !== p.documentId).map(b => html`<option value=${b.id}>${b.handle} · ${b.type}</option>`)}</select></label><p class="context-preview">${text(p.libraryBlocks.find(b => b.id === this.choice)?.properties.text)}</p><div class="form-actions">${this.button('Use idea', () => void this.run(() => this.save()), true, !this.choice)}${this.button('Back', () => this.closeMode())}</div></section>`;
     const titles: Record<string, string> = { 'new-project': 'New project', 'new-document': 'New document', 'add-context': 'Add idea', 'edit-block': 'Edit idea', rename: 'Rename', intent: 'Next step', 'edit-artifact': 'Edit writing' };
@@ -399,17 +429,17 @@ export class StillApp extends LitElement {
     if (view === 'projects' || view === 'documents' || view === 'results') {
       const count = view === 'projects' ? p.projects.length : view === 'documents' ? p.documents.filter(d => !d.removed).length : p.outputs.filter(o => !o.discarded).length + p.artifacts.length;
       const suggested = this.suggestions.find(a => a.id !== view && a.id !== 'results');
-      actions = suggested ? [this.button(suggested.label, () => this.choose(suggested.id), true, false, suggested.id)] : [this.button(view === 'projects' ? 'New project' : view === 'documents' ? 'New document' : 'Document', () => view === 'results' ? this.navigate('document') : this.begin(view === 'projects' ? 'new-project' : 'new-document'), true, view === 'projects' ? !c.abilities.projectCreate : view !== 'results' && !c.abilities.author)];
+      actions = suggested ? [this.suggestedButton(suggested)] : [this.button(view === 'projects' ? 'New project' : view === 'documents' ? 'New document' : 'Document', () => view === 'results' ? this.navigate('document') : this.begin(view === 'projects' ? 'new-project' : 'new-document'), true, view === 'projects' ? !c.abilities.projectCreate : view !== 'results' && !c.abilities.author)];
       if (count > 3) actions = [this.button(this.page > 0 ? 'Previous' : 'First page', () => this.turnPage(this.page-1), false, this.page === 0), this.button('Next', () => this.turnPage(this.page+1), false, (this.page + 1) * 3 >= count)];
       // The browse content contains at most three item controls; the dock adds two.
       if (actions.length === 2) actions = [this.button('More results', () => this.turnPage((this.page+1)*3>=count?0:this.page+1))];
-      actions.push(this.button('More', () => this.begin('actions'), false, false, 'ui:more'));
+      actions.push(this.button('More', () => this.openFinder(), false, false, 'ui:more'));
     } else {
       const a = p.artifacts.find(x => x.id === c.position.outputId);
-      if (view === 'artifact' && a && ['slides', 'storyboard'].includes(a.kind) && a.items.length > 1) actions = [this.button('Previous', () => this.turnItem(this.itemIndex-1), false, this.itemIndex === 0), this.button('Next', () => this.turnItem(this.itemIndex+1), false, this.itemIndex >= a.items.length - 1), ...this.suggestions.slice(0,2).map(a => this.button(a.label, () => this.choose(a.id), false, false, a.id)), this.button('More', () => this.begin('actions'), false, false, 'ui:more')];
-      else actions = [html`${repeat(this.suggestions.slice(0, 4), a => a.id, (a, i) => this.button(a.label, () => this.choose(a.id), i === 0, false, a.id))}`, this.button('More', () => this.begin('actions'), false, false, 'ui:more')];
+      if (view === 'artifact' && a && ['slides', 'storyboard'].includes(a.kind) && a.items.length > 1) actions = [this.button('Previous', () => this.turnItem(this.itemIndex-1), false, this.itemIndex === 0), this.button('Next', () => this.turnItem(this.itemIndex+1), false, this.itemIndex >= a.items.length - 1), ...this.suggestions.slice(0,2).map(a => this.suggestedButton(a)), this.button('More', () => this.openFinder(), false, false, 'ui:more')];
+      else actions = [html`${repeat(this.suggestions.slice(0, 4), a => a.id, a => this.suggestedButton(a))}`, this.button('More', () => this.openFinder(), false, false, 'ui:more')];
     }
-    return html`<footer class="action-dock">${this.busy ? html`<span class="dock-caption" role="status">Working…</span>` : nothing}<en-toolbar label="Your next step" keyboard-navigation="tab">${actions}</en-toolbar></footer>`;
+    return html`<footer class="action-dock" @pointerenter=${()=>{this.dockTouched=true;}} @pointerdown=${()=>{this.dockTouched=true;}} @focusin=${()=>{this.dockTouched=true;}}>${this.busy ? html`<span class="dock-caption" role="status">Working…</span>` : nothing}<en-toolbar label="Your next step" keyboard-navigation="tab">${actions}</en-toolbar></footer>`;
   }
   render() {
     const c = this.client, p = c.projection, running = c.jobs.filter(j => activeJobs.has(j.status) && j.documentId === c.position.documentId), failed = c.jobs.find(j => j.status === 'failed' && j.documentId === c.position.documentId);

@@ -11,14 +11,19 @@ f.env.JEV_API_KEY='fixture-only-no-external-network';
 const json=input=>({method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(input)});
 const current=await (await f.request('/api/events?after=0')).json();
 await f.request('/api/events',json({action:'batch',expectedSequence:current.head,events:[{type:'DocumentRenamed',payload:{document_id:f.documentId,old_title:'One current authored direction',new_title:'LOCAL TEST · Small ideas'}},{type:'BlockCreated',payload:{project_id:f.projectId,document_id:f.documentId,block_id:'preview-light',type:'style',scope:'document',handle:'Evening light',position:'z',properties:{text:'Warm evening light across the harbor.',weight:.8}}}]}));
+const next=await(await f.request('/api/events?after=0')).json();
+await f.request('/api/events',json({action:'batch',expectedSequence:next.head,events:[{type:'DocumentCreated',payload:{project_id:f.projectId,document_id:'preview-characters',title:'Characters'}},{type:'BlockCreated',payload:{project_id:f.projectId,document_id:'preview-characters',block_id:'preview-mara',scope:'document',type:'subject',handle:'Mara',position:'a',properties:{text:'Mara, the harbor keeper. She watches the evening tide.',weight:.8}}}]}));
 let calls=0;
 const decisionDelay=Math.min(30000,Math.max(0,Number(process.env.STILL_PREVIEW_JEV_DELAY_MS)||0));
 globalThis.fetch=async(url,init)=>{
   if(String(url)==='https://api.typesafe.ai/v1/systemone') {
     const body=JSON.parse(init.body);
     if(decisionDelay)await new Promise(resolve=>setTimeout(resolve,decisionDelay));
+    if(body.state?.current?.view==='find-action')return Response.json({model:'simulated-jev',answers:{action:{type:'choice',choice:'use-in',confidence:.9}}});
+    if(body.questions.target_0)return Response.json({model:'simulated-jev-connections',answers:Object.fromEntries(Object.entries(body.questions).map(([key,q])=>[key,q.type==='score'?{type:'score',score:3,confidence:.95,probabilities:{0:0,1:0,2:0,3:1}}:{type:'noul',noul:key.startsWith('conflict_')?0:.5}]))});
     if(body.state?.current?.view!=='choose-format') {
       const answers=Object.fromEntries(Object.entries(body.questions).map(([key,q])=>[key,q.type==='score'?{type:'score',score:2.4,confidence:.55,probabilities:{'0':0,'1':.1,'2':.4,'3':.5}}:q.type==='noul'?{type:'noul',noul:.5}:{type:'choice',choice:'organize',confidence:.5,probabilities:{begin:.1,organize:.5,explore:.1,shape:.1,review:.1,finish:.1}}]));
+      if(answers['use_use-in'])answers['use_use-in']={type:'score',score:3,confidence:.95,probabilities:{0:0,1:0,2:0,3:1}};
       return Response.json({model:'simulated-jev',answers});
     }
     const score=(score,confidence)=>({type:'score',score,confidence,probabilities:{'0':0,'1':0,'2':3-score,'3':score-2}});

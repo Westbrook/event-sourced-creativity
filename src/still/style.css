@@ -128,7 +128,7 @@ still-app .progress-return { position: fixed; left: 12px; bottom: max(12px, env(
   still-app .slide { aspect-ratio: auto; min-height: 50vh; padding: 55px 24px 28px; }
   still-app .slide .eyebrow { top: 20px; left: 24px; }
   still-app .prose { font-size: 19px; }
-  still-app .progress-return { bottom: auto; top: 6px; left: auto; right: 8px; }
+  still-app .progress-return { bottom: calc(var(--dock-height, 180px) + 12px); top: auto; left: 12px; right: auto; }
 }
 @media (prefers-reduced-motion: reduce) { still-app * { animation: none !important; transition: none !important; } }
 
@@ -149,3 +149,11 @@ still-app en-button[variant="primary"] { --en-button-color:#fff; }
 .assembly-list { padding-inline-start: 1.5rem; }
 .assembly-list li { padding: 1rem 0; }
 .context-flow blockquote { border-inline-start: 2px solid #d3cbbd; margin: 2rem 0; padding-inline-start: 1rem; opacity: .75; }
+
+still-app .select-label input { font:inherit; font-size:17px; color:var(--ink); background:#fbfaf7; border:1px solid var(--line); border-radius:3px; padding:13px 15px; width:100%; }
+still-app input:focus-visible { outline:2px solid var(--accent); outline-offset:4px; }
+still-app :is(.action-dock,.format-suggestions) en-button[size="small"]::part(control) { min-block-size:44px; padding-inline:12px; font-size:13px; }
+still-app :is(.action-dock,.format-suggestions) en-button[size="medium"]::part(control) { min-block-size:44px; padding-inline:16px; font-size:13px; }
+still-app :is(.action-dock,.format-suggestions) en-button[size="large"]::part(control) { min-block-size:48px; padding-inline:20px; font-size:13px; }
+still-app en-button[data-tier="alternative"] { margin-inline-start:5px; }
+still-app en-button[data-action-id="ui:more"] { margin-inline-start:7px; }

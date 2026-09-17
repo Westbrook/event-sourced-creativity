@@ -1,3 +1,5 @@
+import type { Emphasis } from './presentation.ts';
+import { questionComposition, type MenuAdjustment } from './assessments.ts';
 import type { CreativeProjection } from '../model/events.ts';
 import { evaluateActions, evaluateEligibility, evaluateFormats, POLICY_VERSION, questionsFor, type Abilities, type Answer, type Position, type Question } from './decisions.ts';
 
@@ -32,11 +34,14 @@ export type DecisionExchange = {
   responseStatus?:number;
 };
 
+export type InspectedQuestion=ReturnType<typeof inspectAnswer>&{id:string;question:Question;asked:boolean};
+export type DecisionPass={id:string;parentId?:string;label:string;status:'answered'|'failed'|'skipped';reason?:string;elapsedMs:number;compositionIds:string[];evidenceIds:string[];exchange?:DecisionExchange;model?:string;questions:InspectedQuestion[]};
+
 // The opt-in exchange is the serialized, authorized request body only. Never attach
 // provider headers, credentials, arbitrary answer keys, or provider-supplied legends.
 export function decisionDiagnostics(p: CreativeProjection, position: Position, abilities: Abilities, options: {
   head: number; source: string; reason?: string; model?: string; answers?: Record<string,Answer>;
-  asked?: boolean; artifactKind?: string; coverage?: unknown; observedAnswers?: Record<string,Answer>; exchange?:DecisionExchange;
+  asked?: boolean; artifactKind?: string; coverage?: unknown; observedAnswers?: Record<string,Answer>; exchange?:DecisionExchange; passes?:DecisionPass[]; presentation?:Record<string,Emphasis>; adjustments?:MenuAdjustment[]; recommended?:string[]; metrics?:Record<string,unknown>;
 }) {
   const eligibility=evaluateEligibility(p,position,abilities), candidates=eligibility.filter(r=>r.eligible).map(r=>r.action);
   const questions=questionsFor(candidates,position,options.artifactKind), answers=options.answers??{};
@@ -46,15 +51,16 @@ export function decisionDiagnostics(p: CreativeProjection, position: Position, a
     version:1 as const, policy:POLICY_VERSION, source:options.source, reason:options.reason, model:typeof options.model==='string'?options.model.slice(0,100):undefined, head:options.head,
     channel:formats?'formats':'actions',
     ...(options.exchange?{exchange:options.exchange}:{}),
+    passes:options.passes??[],presentation:options.presentation??{},menuAdjustments:options.adjustments??[],metrics:options.metrics??{},
     position:{projectId:position.projectId,documentId:position.documentId,blockId:position.blockId,outputId:position.outputId,view:position.view,itemIndex:position.itemIndex??0,hasIntent:!!position.intent.trim()},
     context:{blocks:p.blocks.filter(b=>!b.removed).length,libraryBlocks:p.libraryBlocks.filter(b=>!b.removed).length,outputs:p.outputs.length,artifacts:p.artifacts.length,coverage:options.coverage},
-    recommended:formats?(evaluation.selected as string[]):(evaluation.selected as {id:string}[]).map(a=>a.id),
-    actions:eligibility.map(row=>({...row,...evaluation.rows.find(r=>r.id===row.action.id),eligibilityReason:row.reason})),
-    questions:Object.entries(questions).map(([id,question])=>({id,question,asked:!!options.asked,...inspectAnswer(question,(options.observedAnswers??answers)[id])})),
+    recommended:options.recommended??(formats?(evaluation.selected as string[]):(evaluation.selected as {id:string}[]).map(a=>a.id)),
+    actions:eligibility.map(row=>{const initial=evaluation.rows.find(r=>r.id===row.action.id),index=options.recommended?.indexOf(row.action.id),change=options.adjustments?.find(a=>a.actionId===row.action.id||a.replacedId===row.action.id);return {...row,...initial,eligibilityReason:row.reason,initialSelection:initial?.selected,...(index!==undefined?{selected:index>=0?index+1:undefined,reason:index>=0?'':change?.replacedId===row.action.id?`Replaced by ${change.actionId}: ${change.reason}`:initial?.reason||'Not selected by final menu'}:{})};}),
+    questions:Object.entries(questions).map(([id,question])=>({id,composition:questionComposition(id),question,asked:!!options.asked,...inspectAnswer(question,(options.observedAnswers??answers)[id])})),
   };
 }
 export type DecisionDiagnostics = ReturnType<typeof decisionDiagnostics>;
-export type DecisionResponse = { source:string; reason?:string; model?:string; head:number; policy:string; actions?:{id:string}[]; formats?:string[]; diagnostics?:DecisionDiagnostics };
+export type DecisionResponse = { source:string; reason?:string; model?:string; head:number; policy:string; actions?:{id:string}[]; formats?:string[]; presentation?:Record<string,Emphasis>; targets?:Record<string,string>; resolvedAction?:string; diagnostics?:DecisionDiagnostics };
 export type ReceivedDecision = { at:string; disposition:string; trace?:DecisionDiagnostics; source:string; reason?:string; recommended:string[] };
 
 export function responseDisposition(result: DecisionResponse, state: { stale:boolean; focused?:boolean; touched?:boolean; head:number; headChanged?:boolean; formats?:boolean }) {

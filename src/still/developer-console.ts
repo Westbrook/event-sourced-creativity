@@ -4,7 +4,7 @@ import './vendor/elements/define/drawer.js';
 import './exchange-inspector.ts';
 import type { DecisionDiagnostics, ReceivedDecision } from './diagnostics.ts';
 
-type Control = { label:string; id:string; region:string; variant:string; size:string; disabled:boolean; options:string[] };
+type Control = { label:string; id:string; region:string; variant:string; size:string; emphasis:string; disabled:boolean; options:string[] };
 export type ConsoleContext = { view:string; mode:string; head:number; selectedFormat:string; page:number; current:DecisionDiagnostics };
 const numeric=(n:number|undefined)=>n===undefined?'—':Number(n.toFixed(3)).toString();
 const percent=(n:number)=>`${(n*100).toFixed(1)}%`;
@@ -32,7 +32,7 @@ export class StillDeveloperConsole extends LitElement {
     const controls=[...this.root.querySelectorAll<HTMLElement>('main en-button, main select, main en-textarea, main input, main button, main a, main [role="button"], main [role="checkbox"], main audio[controls], main video[controls], .action-dock en-button')]
       .filter(e=>e.getClientRects().length>0).map((e,index)=>{
         const label=e.getAttribute('label')||e.getAttribute('aria-label')||(['AUDIO','VIDEO'].includes(e.tagName)?`${e.tagName==='AUDIO'?'Audio':'Video'} player (native control group)`:e.tagName==='SELECT'?[...(e.closest('label')?.childNodes??[])].filter(n=>n.nodeType===Node.TEXT_NODE).map(n=>n.textContent).join(' '):e.innerText)||e.tagName.toLowerCase();
-        return {label:label.replace(/\s+/g,' ').trim(),id:e.dataset.actionId||`ui:${e.tagName.toLowerCase()}:${index}`,region:e.closest('.action-dock')?'dock':e.closest('.format-options')?'formats':'content / workflow',variant:e.getAttribute('variant')||'native',size:e.getAttribute('size')||'default',disabled:!!(e as HTMLButtonElement).disabled||e.getAttribute('aria-disabled')==='true',options:e.tagName==='SELECT'?[...(e as HTMLSelectElement).options].map(o=>o.text):[]};
+        return {label:label.replace(/\s+/g,' ').trim(),id:e.dataset.actionId||`ui:${e.tagName.toLowerCase()}:${index}`,region:e.closest('.action-dock')?'dock':e.closest('.format-options')?'formats':'content / workflow',variant:e.getAttribute('variant')||'native',size:e.getAttribute('size')||'default',emphasis:e.dataset.emphasisReason||'',disabled:!!(e as HTMLButtonElement).disabled||e.getAttribute('aria-disabled')==='true',options:e.tagName==='SELECT'?[...(e as HTMLSelectElement).options].map(o=>o.text):[]};
       });
     if(JSON.stringify(controls)!==JSON.stringify(this.controls))this.controls=controls;
   };
@@ -54,8 +54,8 @@ export class StillDeveloperConsole extends LitElement {
         <div class="console">
           <div class="status"><strong>${this.pending?'Jev pending':this.received?.disposition??'Local controls'}</strong><span>${c.view}${c.mode?` / ${c.mode}`:''} · head ${c.head}</span></div>
           <details open><summary>On page · ${this.controls.length} controls</summary>
-            <p class="muted">${c.mode?'The open workflow supplies its own controls.':c.view==='projects'||c.view==='documents'||c.view==='results'?'Browse content and pagination share the control budget.':'Up to four suggestions, plus More. Slides reserve two places for paging.'} Primary emphasis follows position, not a probability threshold.</p>
-            <ul class="controls">${this.controls.map(x=>html`<li><b>${x.label}</b><code>${x.id}</code><span>${x.region} · ${x.variant} · ${x.size}${x.disabled?' · disabled':''}</span>${x.options.length?html`<details><summary>Picker options</summary>${x.options.join(' · ')}</details>`:nothing}</li>`)}</ul>
+            <p class="muted">${c.mode?'The open workflow supplies its own controls.':c.view==='projects'||c.view==='documents'||c.view==='results'?'Browse content and pagination share the control budget.':'Up to four suggestions, plus More. Slides reserve two places for paging.'} Emphasis requires useful, confident scores, a valid distribution and a clear margin. Ties and missing evidence have equal weight. More stays available.</p>
+            <ul class="controls">${this.controls.map(x=>html`<li><b>${x.label}</b><code>${x.id}</code><span>${x.region} · ${x.variant} · ${x.size}${x.disabled?' · disabled':''}</span>${x.emphasis?html`<span>${x.emphasis}</span>`:nothing}${x.options.length?html`<details><summary>Picker options</summary>${x.options.join(' · ')}</details>`:nothing}</li>`)}</ul>
             ${c.selectedFormat?html`<p>Selected format: <code>${c.selectedFormat}</code>. Selection does not start generation.</p>`:nothing}
           </details>
           <div class="trace-choice"><label>Decision<select .value=${viewingReceived?'received':'applied'} @change=${(e:Event)=>{this.showReceived=(e.target as HTMLSelectElement).value==='received';}}><option value="applied">Applied to controls</option><option value="received" ?disabled=${!this.received}>Latest response</option></select></label></div>
@@ -64,6 +64,7 @@ export class StillDeveloperConsole extends LitElement {
             ${!matched?html`<p class="warning">This decision describes an earlier view or event head. Current eligibility is shown separately below.</p>`:nothing}`:html`<p>No diagnostic payload. ${this.received?.reason??'Local eligibility remains available.'}</p>`}
           ${viewingReceived&&this.received?.disposition!=='Applied'?html`<p class="warning">This response did not replace the controls. See Applied to controls for the decision in use.</p>`:nothing}
           ${this.received?html`<p class="muted">Latest response · ${this.received.at} · ${this.received.source}${this.received.reason?` / ${this.received.reason}`:''} · ${this.received.disposition}</p>`:nothing}
+          ${trace?.passes?.length?html`<details><summary>Compositions · ${trace.passes.filter(p=>p.status!=='skipped').length} passes</summary>${trace.passes.map(p=>html`<p><strong>${p.label}</strong> · ${p.status} · ${p.elapsedMs} ms${p.reason?` · ${p.reason}`:''}<br>${p.compositionIds.join(' · ')}${p.parentId?` · follows ${p.parentId}`:''}</p>`)}<p class="muted">Distinct judgments share the first request. A second pass uses fuller destination evidence. Agreement is not counted as independent evidence.</p>${trace.menuAdjustments.map(a=>html`<p>${a.actionId}${a.replacedId?` replaces ${a.replacedId}`:''}: ${a.reason}. ${a.evidence.map(e=>`${e.passId}/${e.questionId}`).join(', ')}</p>`)}<pre>${JSON.stringify(trace.metrics,null,2)}</pre></details>`:nothing}
           ${trace?keyed(trace,html`<still-exchange-inspector .trace=${trace}></still-exchange-inspector>`):nothing}
           <p class="muted">Score distributions describe rubric ratings. Confidence describes concentration. Neither is the probability of a click. Rank includes policy adjustments.</p>
           <label>Find action or question<input type="search" .value=${this.filter} @input=${(e:Event)=>{this.filter=(e.target as HTMLInputElement).value.toLowerCase();}}/></label>
@@ -74,10 +75,10 @@ export class StillDeveloperConsole extends LitElement {
             return html`<details class=${row.selected?'selected':''}><summary><span>${row.action.label}</span><span>${row.selected?`#${row.selected}`:row.eligible?'available':'excluded'}</span><code>${numeric(answer?.score)} / ${numeric(row.value)}</code></summary>
               <p><code>${row.action.id}</code> · ${row.action.group}</p><p>Now: ${current?.eligible?'available':current?.eligibilityReason??'unavailable'}. Decision: ${!row.eligible?row.eligibilityReason:row.reason||`selected #${row.selected}`}.</p>
               ${row.base!==undefined?html`<p>Base ${numeric(row.base)} (${row.basis==='jev'?'Jev':'local policy'})${row.rank?` · rank ${row.rank}`:''}</p>${row.adjustments?.map(a=>html`<p class="adjustment"><b>${a.delta>0?'+':''}${numeric(a.delta)}</b> ${a.label}${a.questions.length?html`<small>${a.questions.join(', ')}</small>`:nothing}</p>`)}<p>Final rank value: ${numeric(row.value)}</p>`:nothing}
-              ${this.distribution(answer)}
+              ${trace?.presentation[row.action.id]?html`<p>Emphasis: ${trace.presentation[row.action.id].tier} · ${trace.presentation[row.action.id].variant} · ${trace.presentation[row.action.id].size}. ${trace.presentation[row.action.id].reason}.</p>`:nothing}${this.distribution(answer)}
             </details>`;
           })}</div>
-          <details><summary>Creative questions · ${questions.filter(q=>q.asked).length} sent</summary>${questions.filter(q=>`${q.id} ${q.question.instructions}`.toLowerCase().includes(this.filter)).map(q=>html`<details><summary><code>${q.id}</code> · ${q.question.type} · ${numeric(q.score??q.noul)}${q.choice?` ${q.choice}`:''}</summary>${this.distribution(q)}</details>`)}</details>
+          <details><summary>Creative questions · ${questions.filter(q=>q.asked).length} sent</summary>${questions.filter(q=>`${q.id} ${q.question.instructions}`.toLowerCase().includes(this.filter)).map(q=>html`<details><summary><code>${q.id}</code> · ${q.composition} · ${q.question.type} · ${numeric(q.score??q.noul)}${q.choice?` ${q.choice}`:''}</summary>${this.distribution(q)}</details>`)}</details>
           <details><summary>Context coverage</summary><pre>${JSON.stringify({current:c.current.position,decision:trace?.position,context:trace?.context??c.current.context},null,2)}</pre></details>
           <p class="muted">Session memory only. No creative events are added by this console.</p>
           <en-button variant="ghost" size="small" @click=${()=>this.dispatchEvent(new CustomEvent('developer-disable',{bubbles:true,composed:true}))}>Exit developer mode</en-button>
