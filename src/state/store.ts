@@ -1,3 +1,4 @@
+import { hasServerExecutionOwner } from "../model/output-durable-observation.ts";
 import { isStandaloneExperienceRoute } from "../experiences/host-route.ts";
 import { AttentionPublicationGate } from "./attention-publication.ts";
 import { AUDIO_LOCAL_CONVERSION_MEDIA_TYPE, parseAudioTrimOperationRequest, audioTrimOperationFingerprintInput, encodeAudioConversionSource } from "../model/audio-local-conversion.ts";
@@ -1341,11 +1342,17 @@ export class FormaStore {
       return "unavailable";
     }
   }
+  #serverOwnedJob(jobId:string){
+    const listed=this.documentJobs.get().find(job=>job.jobId===jobId),detail=this.#jobDetails.get(jobId);
+    return Boolean(listed&&hasServerExecutionOwner(listed)||detail&&hasServerExecutionOwner(detail));
+  }
   async reconcileDocumentProviderReceipt(jobId:string){
+    if(this.#serverOwnedJob(jobId))return false;
     const sourceOwner=this.captureSourceOwnership(),authorization=this.#activeAuthorizationScope();
     try{
       const session=this.session.get();
       const original=this.documentJobs.get().find((job)=>job.jobId===jobId);
+      if(original&&hasServerExecutionOwner(original))return false;
       if(!session||session.impersonation||session.projectContext&&session.projectContext.ownerUserId!==session.user.userId||!original||original.kind!=="render_document"||original.status!=="failed"||original.result?.artifactKind!=="storyboard"||original.result.storyboardProviderSubmission!=="pending"||original.result.providerJobId)throw new Error("The saved provider render could not be recovered");
       const response=await this.guardedFetch(`/api/document-jobs/${encodeURIComponent(jobId)}/reconcile-provider`,{method:"POST"},"refresh this saved provider receipt without submitting another paid request");
       this.#assertAuthorizationScope(authorization);
@@ -1369,6 +1376,7 @@ export class FormaStore {
     }catch(error){if(this.#scopeStillActive(authorization)&&this.sourceOwnershipActive(sourceOwner))this.toast(error instanceof Error?error.message:"The saved provider render could not be recovered");return false;}
   }
   async recoverDocumentRender(jobId:string){
+    if(this.#serverOwnedJob(jobId))return false;
     const sourceOwner=this.captureSourceOwnership(),authorization=this.#activeAuthorizationScope();
     try{
       const original=this.documentJobs.get().find(job=>job.jobId===jobId);
@@ -1387,8 +1395,10 @@ export class FormaStore {
     }catch(error){if(this.#scopeStillActive(authorization)&&this.sourceOwnershipActive(sourceOwner))this.toast(error instanceof Error?error.message:"The saved provider render could not be recovered");return false;}
   }
   async recoverDocumentPresentation(jobId:string){
+    if(this.#serverOwnedJob(jobId))return false;
     const sourceOwner=this.captureSourceOwnership(),authorization=this.#activeAuthorizationScope();
     const original=this.documentJobs.get().find((job)=>job.jobId===jobId);
+      if(original&&hasServerExecutionOwner(original))return false;
     try{
       if(!original||!documentJobCanRecoverPresentation(original))throw new Error("The saved presentation response could not be recovered");
       const response=await this.guardedFetch(`/api/document-jobs/${encodeURIComponent(jobId)}/recover`,{method:"POST"},"recover this saved presentation without another provider request");
@@ -1413,6 +1423,7 @@ export class FormaStore {
     }catch(error){if(this.#scopeStillActive(authorization)&&this.sourceOwnershipActive(sourceOwner))this.toast(error instanceof Error?error.message:"The saved provider render could not be recovered");return false;}
   }
   async stopDocumentJob(jobId:string,force=false){
+    if(this.#serverOwnedJob(jobId))return false;
     const sourceOwner=this.captureSourceOwnership(),authorization=this.#activeAuthorizationScope();
     const original=this.documentJobs.get().find(job=>job.jobId===jobId);
     try{
@@ -2422,7 +2433,7 @@ export class FormaStore {
   #scheduleJobPoll(delay=2_000){window.clearTimeout(this.#jobPollTimer);if(!this.#jobFeedCurrent()||!this.sourceOwnershipActive(this.captureSourceOwnership())||!this.#canReadProjectJobs())return;this.#jobPollTimer=window.setTimeout(()=>{if(document.visibilityState==="visible")void this.syncDocumentJobs();},delay);}
   #syncVisibleJobs(path=this.route.get()){if(path!==this.route.get())return;if(!this.#jobFeedCurrent()||!this.#canReadProjectJobs()){window.clearTimeout(this.#jobPollTimer);this.#pendingPassiveJobPath="";return;}if(routeCapabilities(path).jobHistory||this.documentJobs.get().some((job)=>job.status==="queued"||job.status==="running"||job.status==="committing")){this.#pendingPassiveJobPath="";void this.syncDocumentJobs();return;}window.clearTimeout(this.#jobPollTimer);if(document.documentElement.dataset.formaPhase==="populated"){this.#pendingPassiveJobPath="";this.#scheduleJobPoll(1_200);}else this.#pendingPassiveJobPath=path;}
   #jobScope(path=this.route.get()){const documentId=documentIdFromRoute(path);return documentId?`?document=${encodeURIComponent(documentId)}`:routeCapabilities(path).jobHistory?"":"?scope=active";}
-  #driveDocumentJobs(jobs:DocumentJob[]){
+  #driveDocumentJobs(jobs:DocumentJob[]){jobs=jobs.filter(job=>!hasServerExecutionOwner(job));
     if(!this.sourceOwnershipActive(this.captureSourceOwnership())||!this.#canRequestProjectOutputs())return;
     const originalScope=this.#activeAuthorizationScope();jobs=jobs.filter(job=>job.sourceSurface==="native-image"||this.#sourcePausedJobs.get(job.jobId)!==originalScope);
     const projection=this.projection.get(),projectDocuments=new Set(projection.documents
@@ -2434,7 +2445,7 @@ export class FormaStore {
     const recoverable=jobs.find((job)=>job.sourceSurface!=="native-image"&&!this.#presentationRecoveryAttempts.has(job.jobId)&&documentJobCanRecoverPresentation(job));
     if(recoverable&&this.session.get()){this.#presentationRecoveryAttempts.add(recoverable.jobId);void this.recoverDocumentPresentation(recoverable.jobId);}
   }
-  async #driveDocumentJob(job:DocumentJob){if(job.sourceSurface==="native-image")return;const sourceOwner=this.captureSourceOwnership(),authorization=this.#activeAuthorizationScope();if(!this.sourceOwnershipActive(sourceOwner)||this.#sourcePausedJobs.get(job.jobId)===authorization)return;this.#jobsDriving.add(job.jobId);try{const response=await fetch(`/api/document-jobs/${encodeURIComponent(job.jobId)}/run`,{method:"POST"});this.#assertAuthorizationScope(authorization);this.#assertSourceOwnership(sourceOwner);const body=await response.json() as {job?:DocumentJob;error?:string};this.#assertAuthorizationScope(authorization);this.#assertSourceOwnership(sourceOwner);if(!response.ok&&!body.job)throw new Error(body.error??"document_job_runner_failed");}catch{if(this.sourceOwnershipActive(sourceOwner)&&this.#scopeStillActive(authorization)&&document.visibilityState==="visible")this.toast("The connection to the background operation ended. The app will recover it safely.");}finally{if(this.sourceOwnershipActive(sourceOwner)&&this.#scopeStillActive(authorization)){this.#jobsDriving.delete(job.jobId);this.#scheduleJobPoll(350);}}}
+  async #driveDocumentJob(job:DocumentJob){if(job.sourceSurface==="native-image"||hasServerExecutionOwner(job))return;const sourceOwner=this.captureSourceOwnership(),authorization=this.#activeAuthorizationScope();if(!this.sourceOwnershipActive(sourceOwner)||this.#sourcePausedJobs.get(job.jobId)===authorization)return;this.#jobsDriving.add(job.jobId);try{const response=await fetch(`/api/document-jobs/${encodeURIComponent(job.jobId)}/run`,{method:"POST"});this.#assertAuthorizationScope(authorization);this.#assertSourceOwnership(sourceOwner);const body=await response.json() as {job?:DocumentJob;error?:string};this.#assertAuthorizationScope(authorization);this.#assertSourceOwnership(sourceOwner);if(!response.ok&&!body.job)throw new Error(body.error??"document_job_runner_failed");}catch{if(this.sourceOwnershipActive(sourceOwner)&&this.#scopeStillActive(authorization)&&document.visibilityState==="visible")this.toast("The connection to the background operation ended. The app will recover it safely.");}finally{if(this.sourceOwnershipActive(sourceOwner)&&this.#scopeStillActive(authorization)){this.#jobsDriving.delete(job.jobId);this.#scheduleJobPoll(350);}}}
   #captureInitialListReadOwner():NativeImageListReadOwner{
     return{intent:Object.freeze({}),navigation:this.#workspaceTransition,feedRevision:this.#jobFeedRevision,route:this.route.get(),scope:this.#jobScope(),
       source:this.captureSourceOwnership(),session:this.session.get(),sessionRevision:this.#sessionRevision,
@@ -6189,6 +6200,7 @@ export class FormaStore {
   }
 
   async retryDocumentGeneration(job:DocumentJob,promptTechnique?:PromptTechnique){
+    if(hasServerExecutionOwner(job)||this.#serverOwnedJob(job.jobId))return;
     const technique=normalizePromptTechnique(promptTechnique??job.promptTechnique);const productionMode=job.productionMode??"manual";
     if(job.kind==="generate"&&job.sourceSurface.startsWith("workflow:")){
       const [,workflowId,...stageParts]=job.sourceSurface.split(":");const workflowStageId=stageParts.join(":");const projection=this.projection.get();const workflow=productionWorkflows(this.events.get(),job.documentId,projection.projectId).find((candidate)=>candidate.id===workflowId);const stage=workflow?.stages.find((candidate)=>candidate.id===workflowStageId&&candidate.format==="image"&&candidate.enabled);if(!workflow||!stage){this.toast(this.#systemNotice("Review & change request"));return;}

@@ -8,6 +8,8 @@ export type ExperienceAudioCostApproval = AudioMiniAppCostPreview & Readonly<{ c
 export type ExperienceNativeStage = "save" | "confirm" | "preflight" | "authorize" | "run";
 export type ExperienceNativePreflight = OutputPreflight;
 export type ExperienceNativeOriginal = {
+  executionOwner?: "durable";
+  observation?: import("../model/output-durable-observation.ts").OutputDurableObservation;
   authorization: { key: string; eventId: string };
   run: { key: string; eventId: string } | null;
   grantId: string; grantStatus: string; slotId: string; slotStatus: string; jobId: string; jobStatus: string;

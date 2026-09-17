@@ -11,7 +11,6 @@ const OWNER = "native-story-store-owner";
 const PROJECT = "native-story-store-project";
 const DOCUMENT = "native-story-store-document";
 const AT = "2026-09-03T00:00:00.000Z";
-const notDispatched = { disposition: "not-dispatched", handle: null, reason: "unavailable" };
 function fixtureTransport() {
   const inputs = [
     { type: "ProjectCreated", payload: { project_id: PROJECT, name: "Native story fixtures" } },
@@ -174,4 +173,18 @@ test("native Image polls the original running job and joins its later completion
   assert.equal(read.status,"data");assert.equal(joinNativeImageCompletion(acknowledgment.handle,read.data,()=>true).status,"matched");
   assert.equal(inspectCount,1);assert.equal(h.requests.filter(request=>request.url.startsWith("/api/events?")).length,1);
   assert.equal(runnerRequests(h).length,1);assert.deepEqual(ackRequests(h),[]);
+});
+
+test("durable ownership excludes the oldest job before selecting a legacy runner",OPTIONS,async t=>{
+  const h=await host(t),setup=imageSetup(h),durable=imageJob(setup,{sourceSurface:"outputs",executionOwner:"durable"}),legacy=imageJob(setup,{jobId:"legacy-after-durable",sourceSurface:"document",requestedAt:"2026-09-03T00:00:01.000Z"});
+  observeJobs(h,()=>[durable,legacy]);await h.store.syncDocumentJobs();
+  await untilScene(()=>runnerRequests(h).length===1,"legacy runner remains eligible");
+  assert.equal(runnerRequests(h)[0].url,"/api/document-jobs/legacy-after-durable/run");
+});
+test("durable jobs refuse ordinary stop, recovery and retry even with a stale unmarked argument",OPTIONS,async t=>{
+  const h=await host(t),setup=imageSetup(h),job=imageJob(setup,{sourceSurface:"outputs",executionOwner:"durable"});
+  observeJobs(h,()=>[job]);await h.store.syncDocumentJobs();const before=h.requests.length;
+  assert.equal(await h.store.stopDocumentJob(job.jobId),false);assert.equal(await h.store.recoverDocumentRender(job.jobId),false);
+  assert.equal(await h.store.recoverDocumentPresentation(job.jobId),false);assert.equal(await h.store.reconcileDocumentProviderReceipt(job.jobId),false);
+  await h.store.retryDocumentGeneration({...job,executionOwner:undefined});assert.equal(h.requests.length,before);assert.deepEqual(runnerRequests(h),[]);
 });

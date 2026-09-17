@@ -1,3 +1,4 @@
+import { outputJobIsDurable, readOutputDurableOwnership } from "./output-durable-control.ts";
 import { readVideoExecutionOffer } from "../src/model/output-video-offer.ts";
 import { model3dMiniAppCostApprovalMatches, model3dMiniAppAttemptMatches, type Model3dMiniAppCostPreview } from "../src/model/model3d-mini-app-consent.ts";
 import { model3dReplacementSuccessor } from "./experience-model3d-replacement.ts";
@@ -535,7 +536,7 @@ async function state(loaded: Loaded): Promise<ExperiencePreparedState> {
     || grant.operations[0]!.status !== slot.status)
     error("experience_output_original_grant_unavailable", 410);
   result.grant = grant;
-  result.original = { authorization: { key: authorization.receipt.key, eventId: authorization.receipt.eventId },
+  result.original = { ...await readOutputDurableOwnership(trusted.env, job), authorization: { key: authorization.receipt.key, eventId: authorization.receipt.eventId },
     run: run ? { key: run.receipt.key, eventId: run.receipt.eventId } : null,
     grantId, grantStatus: String(evidence.row.status), slotId: slot.slotId, slotStatus: slot.status, jobId: slot.jobId, jobStatus: job.status,
     targetId: slot.targetId, targetContractDigest: slot.targetContractDigest, routeDigest: slot.routeDigest, planRevisionId: plan.revisionId,
@@ -639,6 +640,10 @@ async function state(loaded: Loaded): Promise<ExperiencePreparedState> {
       result.model3dReplacement = offer.disclosure; result.permitted.prepareReplacement = true;
       trusted.sourceAssertions.push(...offer.guards);
     } } catch { /* An unverified parent must not expose replacement authority. */ }
+  }
+  if(outputJobIsDurable(job)) {
+    result.permitted.run=false; result.permitted.resumeRun=false; result.permitted.recoverResult=false;
+    result.permitted.prepareReplacement=false; delete result.model3dReplacement;
   }
   return result;
 }
