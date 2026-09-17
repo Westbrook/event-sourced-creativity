@@ -1,5 +1,6 @@
 import { canonicalJson, digest, exactKeys, jsonIssues, record } from "../src/experiences/compiler.ts";
 import { readSponsorCampaignTemplate, recipeMatchesSponsorTemplate, type SponsorImageCampaignTemplate } from "./experience-sponsor-campaign.ts";
+import { captureSponsorSceneJson, readSponsorSceneCampaignTemplate, recipeMatchesSponsorSceneTemplate, type SponsorSceneCampaignTemplate } from "./experience-sponsor-scene-contract.ts";
 import { readSponsorSlidesCampaignTemplate, recipeMatchesSponsorSlidesTemplate, type SponsorSlidesCampaignTemplate } from "./experience-sponsor-slides-contract.ts";
 import { readSponsorStoryCampaignTemplate, recipeMatchesSponsorStoryTemplate, type SponsorStoryCampaignTemplate } from "./experience-sponsor-story-contract.ts";
 import { readSponsorResourceLimits, type SponsorResourceLimits, type SponsorResourceLimitsV1 } from "./experience-sponsor-resources.ts";
@@ -45,6 +46,11 @@ export type SponsorPolicyV4 = Omit<SponsorPolicyV1, "version" | "recipes"> & {
 export type SponsorPolicyV5 = Omit<SponsorPolicyV1, "version" | "recipes"> & {
   version: 5; family: "canonical-five-slide-deck@1"; templates: SponsorSlidesCampaignTemplate[]; resources: SponsorResourceLimitsV1;
 };
+/** Staged Scene data only; excluded from common runtime policy/envelope unions
+ * until original native proof/job transition composition is separately reviewed. */
+export type SponsorPolicyV6 = Omit<SponsorPolicyV1, "version" | "recipes"> & {
+  version: 6; family: "canonical-scene-screenplay@1"; templates: SponsorSceneCampaignTemplate[]; resources: SponsorResourceLimitsV1;
+};
 export type SponsorApprovedPolicy = SponsorPolicyV2 | SponsorPolicyV4 | SponsorPolicyV5;
 export type SponsorPolicy = SponsorPolicyV1 | SponsorApprovedPolicy;
 export type SponsorEnvelopeV1 = {
@@ -58,6 +64,7 @@ export type SponsorEnvelopeV1 = {
 export type SponsorEnvelopeV2 = Omit<SponsorEnvelopeV1, "version"> & { version: 2; templateDigest: string };
 export type SponsorEnvelopeV4 = Omit<SponsorEnvelopeV1, "version"> & { version: 4; family: "canonical-short-story@1"; templateDigest: string };
 export type SponsorEnvelopeV5 = Omit<SponsorEnvelopeV1, "version"> & { version: 5; family: "canonical-five-slide-deck@1"; templateDigest: string };
+export type SponsorEnvelopeV6 = Omit<SponsorEnvelopeV1, "version"> & { version: 6; family: "canonical-scene-screenplay@1"; templateDigest: string };
 export type SponsorEnvelope = SponsorEnvelopeV1 | SponsorEnvelopeV2 | SponsorEnvelopeV4 | SponsorEnvelopeV5;
 const recipeKeys = ["appId", "recipeVersion", "releaseDigest", "outputKind", "provider", "model", "routeDigest", "settingsDigest", "outputCount", "durationMs", "width", "height", "calls", "maximumTokens", "maximumMicrousd"];
 function validRecipe(value: unknown): value is SponsorRecipe {
@@ -220,6 +227,54 @@ export async function compileSponsorEnvelope(rawPolicy: unknown, rawEnvelope: un
     if (!policy.templates.some((template, index) => templateDigests[index] === (envelope as SponsorEnvelopeV2).templateDigest && recipeMatchesSponsorTemplate(template, envelope.recipe))) return fail("sponsor_envelope_not_eligible");
   }
   // Copy/freeze before hashing: mutation during WebCrypto must not change the envelope.
+  const [policyDigest, envelopeDigest] = await Promise.all([digest(policy), digest(envelope)]);
+  return freeze({ policy, envelope, policyJson: canonicalJson(policy), envelopeJson: canonicalJson(envelope), policyDigest, envelopeDigest });
+}
+
+
+/** Dedicated inert V6 grammar. Common runtime entry points deliberately refuse it. */
+export function readSponsorScenePolicy(raw: unknown): SponsorPolicyV6 {
+  raw = captureSponsorSceneJson(raw);
+  if (jsonIssues(raw).length) return fail("sponsor_policy_invalid");
+  if (!keys(raw, ["version", "family", "mode", "campaignId", "policyVersion", "payerUserId", "audience", "approvalReceiptDigest", "startsAtMs", "expiresAtMs", "maximumGrantLifetimeMs", "maximumAdmissions", "maximumMicrousd", "maximumAdmissionsPerActor", "windowMs", "maximumAdmissionsPerWindow", "maximumAdmissionsPerActorWindow", "templates", "resources"])
+    || raw.version !== 6 || raw.family !== "canonical-scene-screenplay@1" || raw.mode !== "candidate" || raw.audience !== "canonical-principal"
+    || ![raw.campaignId, raw.policyVersion, raw.payerUserId].every(id) || !hash(raw.approvalReceiptDigest)
+    || !integer(raw.startsAtMs, 0, 8_640_000_000_000_000) || !integer(raw.expiresAtMs, 1, 8_640_000_000_000_000)
+    || raw.expiresAtMs <= raw.startsAtMs || !integer(raw.maximumGrantLifetimeMs, 1, 900_000)
+    || !integer(raw.maximumMicrousd, 1, 1_000_000_000_000)
+    || ![raw.maximumAdmissions, raw.maximumAdmissionsPerActor, raw.maximumAdmissionsPerWindow, raw.maximumAdmissionsPerActorWindow].every(value => integer(value, 1, 100_000))
+    || !integer(raw.windowMs, 1, 86_400_000) || !Array.isArray(raw.templates) || raw.templates.length !== 1
+    || Number(raw.maximumAdmissionsPerActor) > Number(raw.maximumAdmissions)
+    || Number(raw.maximumAdmissionsPerWindow) > Number(raw.maximumAdmissions)
+    || Number(raw.maximumAdmissionsPerActorWindow) > Number(raw.maximumAdmissionsPerActor)) return fail("sponsor_policy_invalid");
+  const templates = raw.templates.map(readSponsorSceneCampaignTemplate), resources = readSponsorResourceLimits(raw.resources);
+  if (resources.version !== 1 || resources.startsAtMs < raw.startsAtMs || resources.expiresAtMs > raw.expiresAtMs
+    || templates.some(template => template.maximumMicrousd > Number(raw.maximumMicrousd))) return fail("sponsor_policy_invalid");
+  return freeze(JSON.parse(canonicalJson({ ...raw, templates, resources })) as SponsorPolicyV6);
+}
+
+
+/** Digest-bearing review material only, never a grant or native source proof. */
+export async function compileSponsorSceneEnvelope(rawPolicy: unknown, raw: unknown) {
+  raw = captureSponsorSceneJson(raw);
+  const policy = readSponsorScenePolicy(rawPolicy);
+  if (jsonIssues(raw).length) return fail("sponsor_envelope_invalid");
+  if (record(raw) && raw.actorKind === "guest") return fail("sponsor_guest_custody_not_integrated");
+  if (!keys(raw, ["version", "family", "campaignId", "policyVersion", "consumptionId", "intentKey", "actorKind", "actorUserId", "sessionDigest", "payerUserId", "ownerUserId", "projectId", "documentId", "sourceRevision", "sourceDigest", "orderedAssetDigests", "rightsDigest", "compiledInputDigest", "transferEnvelopeDigest", "recipe", "issuedAtMs", "expiresAtMs", "templateDigest"])
+    || raw.version !== 6 || raw.family !== policy.family || raw.actorKind !== "canonical-principal"
+    || ![raw.campaignId, raw.policyVersion, raw.consumptionId, raw.intentKey, raw.actorUserId, raw.payerUserId, raw.ownerUserId, raw.projectId, raw.documentId].every(id)
+    || ![raw.sessionDigest, raw.sourceDigest, raw.rightsDigest, raw.compiledInputDigest, raw.transferEnvelopeDigest, raw.templateDigest].every(hash)
+    || !integer(raw.sourceRevision, 0, Number.MAX_SAFE_INTEGER)
+    || !Array.isArray(raw.orderedAssetDigests) || raw.orderedAssetDigests.length !== 0
+    || !integer(raw.issuedAtMs, Math.max(policy.startsAtMs, policy.resources.startsAtMs), policy.expiresAtMs)
+    || !integer(raw.expiresAtMs, Number(raw.issuedAtMs) + 1, Math.min(policy.expiresAtMs, policy.resources.expiresAtMs, Number(raw.issuedAtMs) + policy.maximumGrantLifetimeMs))) return fail("sponsor_envelope_invalid");
+  if (raw.campaignId !== policy.campaignId || raw.policyVersion !== policy.policyVersion || raw.payerUserId !== policy.payerUserId
+    || raw.actorUserId !== raw.ownerUserId || raw.actorUserId === raw.payerUserId
+    || !policy.templates.some(template => recipeMatchesSponsorSceneTemplate(template, raw.recipe))) return fail("sponsor_envelope_not_eligible");
+  const envelope = freeze(JSON.parse(canonicalJson(raw)) as SponsorEnvelopeV6);
+  const templateDigests = await Promise.all(policy.templates.map(template => digest(template)));
+  if (!policy.templates.some((template, index) => templateDigests[index] === envelope.templateDigest
+    && recipeMatchesSponsorSceneTemplate(template, envelope.recipe))) return fail("sponsor_envelope_not_eligible");
   const [policyDigest, envelopeDigest] = await Promise.all([digest(policy), digest(envelope)]);
   return freeze({ policy, envelope, policyJson: canonicalJson(policy), envelopeJson: canonicalJson(envelope), policyDigest, envelopeDigest });
 }

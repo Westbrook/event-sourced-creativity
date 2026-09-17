@@ -1,15 +1,18 @@
-import { canonicalJson, digest, exactKeys, jsonIssues, record } from "../src/experiences/compiler.ts";
-import { readSponsorPolicy, SponsorEntitlementError, type SponsorApprovedPolicy, type SponsorPolicyV2, type SponsorPolicyV4, type SponsorPolicyV5 } from "./experience-sponsor-policy.ts";
-import { readExistingPrincipalRequest } from "./principal-request-core.ts";
+import { canonicalJson, digest, exactKeys, freeze, jsonIssues, record } from "../src/experiences/compiler.ts";
+import { readSponsorPolicy, readSponsorScenePolicy, SponsorEntitlementError, type SponsorApprovedPolicy, type SponsorPolicyV2, type SponsorPolicyV4, type SponsorPolicyV5, type SponsorPolicyV6 } from "./experience-sponsor-policy.ts";
+import { identityFromRequest, readExistingPrincipalRequest } from "./principal-request-core.ts";
 import { PRINCIPAL_WITH_ACCESS_SQL } from "./access-policy.ts";
 import { POLICY_VERSION } from "./policy-version.ts";
 import type { OutputSqlAssertion } from "./output-command-core.ts";
 import { outputAssertionStatements } from "./output-command-core.ts";
+import { outputProofReadStatements } from "./output-disclosure-proof.ts";
+import { captureSponsorSceneJson } from "./experience-sponsor-scene-contract.ts";
 import type { WorkerEnv } from "./runtime.ts";
 
 const fail = (code: string): never => { throw new SponsorEntitlementError(code); };
 const id = (value: unknown): value is string => typeof value === "string" && /^[A-Za-z0-9][A-Za-z0-9_.:@/-]{0,199}$/u.test(value);
 const columns = ["user_id", "role", "consent_version", "updated_at", "permission_epoch", "grants_json", "organizations_json", "projects_json", "identity_policies_json", "approved_canvas_requirements"];
+const sceneColumns = [...columns, "email", "display_name", "consented_at"];
 const databaseNow = "CAST((julianday('now')-2440587.5)*86400000 AS INTEGER)";
 
 /** Dormant tables only. No schema initializer, route, configuration switch or
@@ -32,7 +35,7 @@ export const SPONSOR_APPROVAL_SCHEMA = Object.freeze([
     BEGIN SELECT RAISE(ABORT,'sponsor_approval_already_exists'); END`,
 ]);
 export type SponsorApprovalProposal = {
-  policy: Omit<SponsorPolicyV2, "approvalReceiptDigest"> | Omit<SponsorPolicyV4, "approvalReceiptDigest"> | Omit<SponsorPolicyV5, "approvalReceiptDigest">;
+  policy: Omit<SponsorPolicyV2, "approvalReceiptDigest"> | Omit<SponsorPolicyV4, "approvalReceiptDigest"> | Omit<SponsorPolicyV5, "approvalReceiptDigest"> | Omit<SponsorPolicyV6, "approvalReceiptDigest">;
   eligibleActorUserIds: string[];
   issuerUserIds: string[];
 };
@@ -41,16 +44,23 @@ export type SponsorApprovalProposal = {
  * except its own reference, avoiding a circular hash. The authenticated record
  * below additionally retains the full final policy JSON and its exact digest. */
 export async function compileSponsorApprovalProposal(raw: unknown) {
+  // Only the new Scene proposal takes this dedicated capture path. Select it
+  // through own data, not property getters; a later V6 copy must originate here.
+  const proposedPolicy = raw && typeof raw === "object" ? Object.getOwnPropertyDescriptor(raw, "policy")?.value : undefined;
+  const sceneProposal = proposedPolicy && typeof proposedPolicy === "object" && Object.getOwnPropertyDescriptor(proposedPolicy, "version")?.value === 6;
+  if (sceneProposal) raw = captureSponsorSceneJson(raw);
   if (jsonIssues(raw).length || !record(raw) || !exactKeys(raw, ["policy", "eligibleActorUserIds", "issuerUserIds"])
-    || !record(raw.policy) || Object.hasOwn(raw.policy, "approvalReceiptDigest") || (raw.policy.version !== 2 && raw.policy.version !== 4 && raw.policy.version !== 5)
+    || !record(raw.policy) || Object.hasOwn(raw.policy, "approvalReceiptDigest") || (raw.policy.version !== 2 && raw.policy.version !== 4 && raw.policy.version !== 5 && raw.policy.version !== 6)
     || ![raw.eligibleActorUserIds, raw.issuerUserIds].every(value => Array.isArray(value) && value.length > 0 && value.length <= 100
       && value.every(id) && new Set(value).size === value.length)) return fail("sponsor_approval_terms_invalid");
   const copied = JSON.parse(canonicalJson(raw)) as SponsorApprovalProposal;
-  const validated = readSponsorPolicy({ ...copied.policy, approvalReceiptDigest: `sha256:${"0".repeat(64)}` });
-  if (validated.mode !== "candidate" || (validated.version !== 2 && validated.version !== 4 && validated.version !== 5) || copied.eligibleActorUserIds.includes(validated.payerUserId)
+  if (copied.policy.version === 6 && !sceneProposal) return fail("sponsor_approval_terms_invalid");
+  const read = copied.policy.version === 6 ? readSponsorScenePolicy : readSponsorPolicy;
+  const validated = read({ ...copied.policy, approvalReceiptDigest: `sha256:${"0".repeat(64)}` });
+  if (validated.mode !== "candidate" || (validated.version !== 2 && validated.version !== 4 && validated.version !== 5 && validated.version !== 6) || copied.eligibleActorUserIds.includes(validated.payerUserId)
     || copied.issuerUserIds.some(actor => !copied.eligibleActorUserIds.includes(actor))) return fail("sponsor_approval_terms_invalid");
   const termsJson = canonicalJson(copied), termsDigest = await digest(copied);
-  const policy = readSponsorPolicy({ ...copied.policy, approvalReceiptDigest: termsDigest }) as SponsorApprovedPolicy;
+  const policy = read({ ...copied.policy, approvalReceiptDigest: termsDigest }) as SponsorApprovedPolicy | SponsorPolicyV6;
   return { policy, policyJson: canonicalJson(policy), policyDigest: await digest(policy), termsJson, termsDigest };
 }
 async function principal(request: Request, env: WorkerEnv) {
@@ -60,11 +70,11 @@ async function principal(request: Request, env: WorkerEnv) {
     || env.FORMA_PILOT_COHORT_ID?.trim()) return fail("sponsor_canonical_principal_required");
   return auth.user;
 }
-async function authoritySnapshot(env: WorkerEnv, userId: string) {
+async function authoritySnapshot(env: WorkerEnv, userId: string, capturedColumns: readonly string[] = columns) {
   const row = await env.DB.prepare(PRINCIPAL_WITH_ACCESS_SQL).bind(userId).first<Record<string, unknown>>();
   if (!row || !["creator", "admin"].includes(String(row.role)) || row.consent_version !== POLICY_VERSION) return fail("sponsor_approval_principal_changed");
-  const json = JSON.stringify(columns.map(column => row[column] ?? null));
-  const assertion: OutputSqlAssertion = { sql: `EXISTS(SELECT 1 FROM (${PRINCIPAL_WITH_ACCESS_SQL}) captured WHERE json_array(${columns.map(column => `captured.${column}`).join(",")})=?)`, bindings: [userId, json] };
+  const json = JSON.stringify(capturedColumns.map(column => row[column] ?? null));
+  const assertion: OutputSqlAssertion = { sql: `EXISTS(SELECT 1 FROM (${PRINCIPAL_WITH_ACCESS_SQL}) captured WHERE json_array(${capturedColumns.map(column => `captured.${column}`).join(",")})=?)`, bindings: [userId, json] };
   return { json, assertion };
 }
 
@@ -94,7 +104,7 @@ export async function approveSponsorCampaign(request: Request, env: WorkerEnv) {
   const input = JSON.parse(canonicalJson(raw)) as typeof raw;
   const compiled = await compileSponsorApprovalProposal(input.proposal), payer = await principal(request, env);
   if (payer.userId !== compiled.policy.payerUserId || input.reviewedTermsDigest !== compiled.termsDigest) return fail("sponsor_payer_approval_required");
-  const payerAuthority = await authoritySnapshot(env, payer.userId);
+  const payerAuthority = await authoritySnapshot(env, payer.userId, compiled.policy.version === 6 ? sceneColumns : columns);
   const existing = await env.DB.prepare("SELECT * FROM experience_sponsor_approvals WHERE campaign_id=? OR approval_id=?")
     .bind(compiled.policy.campaignId, input.approvalId as string).first<Record<string, unknown>>();
   const currentProof: OutputSqlAssertion = { sql: `EXISTS(SELECT 1 FROM experience_sponsor_approvals approval JOIN experience_sponsor_campaigns campaign ON campaign.campaign_id=approval.campaign_id
@@ -125,7 +135,8 @@ export async function approveSponsorCampaign(request: Request, env: WorkerEnv) {
 
 /** Live v2/v4/v5 approval predicate for issuance, native admission and every paid stage.
  * Original incurred monetary settlement deliberately never uses this predicate. */
-export function sponsorApprovalAssertion(policy: SponsorApprovedPolicy, actorUserId: string, requireIssuer = false): OutputSqlAssertion {
+export function sponsorApprovalAssertion(policy: SponsorApprovedPolicy | SponsorPolicyV6, actorUserId: string, requireIssuer = false): OutputSqlAssertion {
+  const capturedColumns = policy.version === 6 ? sceneColumns : columns;
   // Keep the complete approval and principal proofs as sibling materialized
   // relations. Nesting the principal query inside the approval WHERE exceeds
   // D1's expression depth when this predicate is an atomic-write witness.
@@ -142,7 +153,7 @@ export function sponsorApprovalAssertion(policy: SponsorApprovedPolicy, actorUse
       AND payer.role IN('creator','admin') AND payer.consent_version=?),
     sponsor_payer_principal AS MATERIALIZED (${PRINCIPAL_WITH_ACCESS_SQL})
     SELECT 1 FROM sponsor_approval_terms approval JOIN sponsor_payer_principal captured
-      ON json_array(${columns.map(column => `captured.${column}`).join(",")})=approval.payer_authority_json)`,
+      ON json_array(${capturedColumns.map(column => `captured.${column}`).join(",")})=approval.payer_authority_json)`,
     bindings: [policy.campaignId, policy.payerUserId, policy.approvalReceiptDigest, canonicalJson(policy), actorUserId, ...(requireIssuer ? [actorUserId] : []), POLICY_VERSION, policy.payerUserId], deadlineMs: policy.expiresAtMs };
 }
 
@@ -238,4 +249,67 @@ export async function sponsorIssuedAuthorityAssertion(input: {
       AND resource.campaign_id=issuance.campaign_id AND resource.actor_user_id=issuance.actor_user_id AND resource.intent_key=issuance.intent_key
       AND resource.operation='issuance' AND resource.session_digest=? AND resource.policy_digest=? AND resource.limits_digest=? AND resource.payload_digest=issuance.envelope_digest)`,
     bindings: [grantId, policy.campaignId, actorUserId, intentKey, policyDigest, envelopeDigest, sessionDigest, sessionDigest, policyDigest, limitsDigest] };
+}
+
+
+/** Dedicated Scene metadata reader. This never grants issuance, native admission,
+ * paid execution or result reads; common policy/envelope parsers still refuse V6.
+ * No initializer or atomic-write assertion helper is used by this reader. */
+export async function loadApprovedSponsorSceneCampaign(request: Request, env: WorkerEnv, campaignId: string) {
+  if (!id(campaignId)) return fail("sponsor_campaign_invalid");
+  const signal = request.signal, database = env.DB;
+  const identity = () => canonicalJson({ url: request.url, method: request.method, headers: [...request.headers.entries()],
+    cohort: env.FORMA_PILOT_COHORT_ID ?? null, admins: env.FORMA_ADMIN_EMAILS ?? null });
+  const captured = identity();
+  const current = () => {
+    if (signal.aborted || request.signal !== signal || env.DB !== database || identity() !== captured) return fail("sponsor_approval_principal_changed");
+  };
+  current();
+  // Capture the exact actor row before native authentication. A changed row
+  // between those reads must not be adopted as a fresh authority snapshot.
+  const observed = identityFromRequest(request);
+  if (!observed) return fail("sponsor_canonical_principal_required");
+  const actorAuthority = await authoritySnapshot(env, observed.userId, sceneColumns);
+  current();
+  const actor = await principal(request, env);
+  current();
+  // Join the actual native principal to the original row as well as checking
+  // that row again in SQL. Otherwise a changed-and-restored row could leave a
+  // different authenticated actor in memory while the final SQL snapshot passes.
+  const original = JSON.parse(actorAuthority.json) as unknown[];
+  const expected = {
+    userId: String(original[0]), role: String(original[1]), consentVersion: original[2] ? String(original[2]) : null,
+    email: String(original[10]), displayName: String(original[11]), consentedAt: original[12] ? String(original[12]) : null,
+    authorizationSnapshot: { updatedAt: String(original[3] ?? ""), rawEpoch: String(original[4] ?? ""),
+      grants: String(original[5] ?? "[]"), organizations: String(original[6] ?? "[]"), projects: String(original[7] ?? "[]"),
+      identityPolicies: String(original[8] ?? "[]"), canvasRequirements: Number(original[9] ?? 0) },
+  };
+  const authenticated = { userId: actor.userId, role: actor.role, consentVersion: actor.consentVersion, email: actor.email,
+    displayName: actor.displayName, consentedAt: actor.consentedAt, authorizationSnapshot: actor.authorizationSnapshot };
+  if (actor.userId !== observed.userId || canonicalJson(authenticated) !== canonicalJson(expected)) return fail("sponsor_approval_principal_changed");
+  const row = await database.prepare("SELECT policy_json,policy_digest FROM experience_sponsor_campaigns WHERE campaign_id=? AND enabled=1 AND length(CAST(policy_json AS BLOB))<=131072")
+    .bind(campaignId).first<{ policy_json: string; policy_digest: string }>();
+  current();
+  if (!row) return fail("sponsor_approved_campaign_unavailable");
+  const policy = readSponsorScenePolicy(JSON.parse(row.policy_json));
+  if (policy.campaignId !== campaignId || await digest(policy) !== row.policy_digest) return fail("sponsor_approved_campaign_unavailable");
+  current();
+  const assertions = [actorAuthority.assertion, sponsorApprovalAssertion(policy, actor.userId, true),
+    { sql: `NOT EXISTS(SELECT 1 FROM pilot_participants participant JOIN pilot_cohorts cohort ON cohort.cohort_id=participant.cohort_id
+      WHERE participant.user_id IN(?,?) AND participant.status='active' AND participant.revoked_at IS NULL AND cohort.status IN('active','paused','closed'))`,
+      bindings: [actor.userId, policy.payerUserId] },
+    { sql: `EXISTS(SELECT 1 FROM experience_sponsor_campaigns WHERE campaign_id=? AND enabled=1 AND policy_digest=? AND policy_json=?) AND ${databaseNow}>=? AND ${databaseNow}<?`,
+      bindings: [campaignId, row.policy_digest, row.policy_json, policy.startsAtMs, policy.expiresAtMs], deadlineMs: policy.expiresAtMs }];
+  const deadline = policy.expiresAtMs;
+  if (Date.now() < policy.startsAtMs || Date.now() >= deadline) return fail("sponsor_approved_campaign_unavailable");
+  current();
+  const checked = await database.batch<Record<string, unknown>>(outputProofReadStatements(env, assertions));
+  current();
+  const own = (value: unknown, key: PropertyKey): unknown => value && typeof value === "object" ? Object.getOwnPropertyDescriptor(value, key)?.value : undefined;
+  if (!Array.isArray(checked) || own(checked, "length") !== assertions.length || assertions.some((_, index) => {
+    const result = own(checked, index), rows = own(result, "results");
+    return own(result, "success") !== true || own(result, "error") !== undefined || !Array.isArray(rows) || own(rows, "length") !== 1 || own(own(rows, 0), "current") !== 1;
+  }) || Date.now() < policy.startsAtMs || Date.now() >= deadline) return fail("sponsor_approved_campaign_unavailable");
+  current();
+  return freeze({ actor, policy, policyDigest: row.policy_digest, assertions });
 }
