@@ -190,3 +190,17 @@ still-app .palette-hint { color: var(--soft); font-size: 12px; }
 /* Fixed library region: notifications do not participate in content layout. */
 still-app .generation-notifications { --en-toast-region-width: 30rem; --en-toast-region-layer: 40; --en-toast-region-max-size: 55dvh; }
 still-app .generation-notifications en-toast { --en-toast-background: var(--en-color-surface); --en-toast-color: var(--en-color-text); }
+
+still-app .pending-thumbnail { position: relative; aspect-ratio: 4 / 3; display: grid; place-items: center; background: var(--en-color-surface-muted, #eae7df); overflow: hidden; }
+still-app .pending-thumbnail en-skeleton { position: absolute; inset: 0; --en-skeleton-size: 100%; opacity: .6; }
+still-app .pending-thumbnail > span { position: relative; font: 27px Georgia, serif; }
+still-app .result small { display: block; margin-top: 6px; color: var(--ink-muted, #77756b); }
+still-app .generation-stage { max-width: 950px; margin: 2vh auto; }
+still-app .generation-stage h1 { margin-bottom: 16px; }
+still-app .generation-stage > p { margin: 12px 0 24px; }
+still-app .generation-placeholder { width: min(100%, 720px); height: min(42dvh, 460px); }
+still-app .generation-placeholder en-skeleton { height: 100%; --en-skeleton-size: 100%; }
+still-app .generation-placeholder.audio { height: min(20dvh, 160px); }
+still-app .job-status a { color: inherit; text-underline-offset: .2em; }
+
+still-app .generation-placeholder.known-size { width: min(100%, 720px, calc(42dvh * var(--generation-ratio))); height: auto; aspect-ratio: var(--generation-ratio); }

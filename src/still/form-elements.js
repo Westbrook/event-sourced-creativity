@@ -11,3 +11,5 @@ import './vendor/elements/define/menu-item.js';
 
 import './vendor/elements/define/toast.js';
 import './vendor/elements/define/toast-region.js';
+
+import './vendor/elements/define/skeleton.js';
