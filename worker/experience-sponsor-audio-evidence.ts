@@ -7,7 +7,7 @@ import { POLICY_VERSION } from "./policy-version.ts";
 import { preflightOutputAudioTarget, outputAudioPreflightAssertions } from "./output-audio-preflight.ts";
 import { sponsorCurrentSourceAssertions } from "./experience-sponsor-image-evidence.ts";
 import { SponsorEntitlementError, type SponsorRecipe } from "./experience-sponsor-policy.ts";
-import { outputProofReadStatements, assertOutputProofRead, outputDigest } from "./output-disclosure-proof.ts";
+import { outputProofReadStatements, outputDigest } from "./output-disclosure-proof.ts";
 import type { OutputTrustedContext } from "./output-requirements-api.ts";
 import type { OutputSqlAssertion } from "./output-command-core.ts";
 import { parseAudioMiniAppCostPreview, audioMiniAppCostApprovalMatches } from "../src/model/audio-mini-app-consent.ts";
@@ -142,22 +142,35 @@ async function readNative(trusted: OutputTrustedContext, rawCommand: Record<stri
     { sql: `EXISTS(SELECT 1 FROM (${quoteSql}) captured WHERE terms_digest=? AND expires_at=? AND private_json=? AND source_head=? AND plan_revision_id=? AND plan_json=?)`,
       bindings: [...bindings, row.terms_digest, row.expires_at, row.private_json, row.source_head, row.plan_revision_id, row.plan_json] }];
   const deadline = Math.min(description.preflightExpiresAtMs, ...assertions.flatMap(assertion => assertion.deadlineMs === undefined ? [] : [assertion.deadlineMs]));
-  if (!current() || !Number.isFinite(deadline) || deadline <= Date.now()) return fail("sponsor_authority_changed");
+  const assertCurrent = () => {
+    if (!current() || !Number.isFinite(deadline) || deadline <= Date.now()) return fail("sponsor_authority_changed");
+  };
+  assertCurrent();
   const results = await checked(() => database.batch<Record<string, unknown>>(outputProofReadStatements(env, assertions)));
-  assertOutputProofRead(results, assertions.length);
-  if (!current() || deadline <= Date.now()) return fail("sponsor_authority_changed");
+  // The shared helper skips sparse slots and coerces predicates. Require an
+  // own data acknowledgement for every actual statement, without getters.
+  const own = (value: unknown, key: PropertyKey): unknown => value && typeof value === "object"
+    ? Object.getOwnPropertyDescriptor(value, key)?.value : undefined;
+  if (!Array.isArray(results) || own(results, "length") !== assertions.length || Array.from({ length: assertions.length }, (_, index) => {
+    const result = own(results, index), rows = own(result, "results"), row = own(rows, 0);
+    return own(result, "success") !== true || own(result, "error") !== undefined || !Array.isArray(rows) || own(rows, "length") !== 1 || own(row, "current") !== 1;
+  }).some(Boolean)) return fail("sponsor_authority_changed");
+  assertCurrent();
   // This is review evidence only. A later issuer must bind a real deliberate
   // actor consent receipt and separate payer approval; booleans are not authority.
-  return freeze({ description, offered: JSON.parse(canonicalJson(offered)) as Record<string, unknown>, consent });
+  return freeze({ description, offered: JSON.parse(canonicalJson(offered)) as Record<string, unknown>, consent, assertCurrent });
 }
 
 export async function describeSponsorAudioAdmission(trusted: OutputTrustedContext, command: Record<string, unknown>) {
-  return (await readNative(trusted, command)).description;
+  const native = await readNative(trusted, command);
+  native.assertCurrent();
+  return native.description;
 }
 export async function readSponsorAudioTemplateEvidence(trusted: OutputTrustedContext, command: Record<string, unknown>, recipe: SponsorRecipe) {
   if (jsonIssues(recipe).length) return fail("sponsor_native_envelope_mismatch");
   const capturedRecipe = JSON.parse(canonicalJson(recipe)) as SponsorRecipe;
   const native = await readNative(trusted, command);
+  native.assertCurrent();
   if (canonicalJson(native.description.recipe) !== canonicalJson(capturedRecipe)) return fail("sponsor_native_envelope_mismatch");
   return freeze({ recipe: native.description.recipe, offered: native.offered, consent: native.consent });
 }
