@@ -1,7 +1,7 @@
 import { canonicalJson, digest, exactKeys, freeze, jsonIssues, record } from "../src/experiences/compiler.ts";
 import { experienceDocumentRoute, experienceResourceId } from "../src/experiences/intake.ts";
 import { insertEventAtHead } from "./event-append.ts";
-import { eventWriteBindings, makeEvent } from "./event-write-primitives.ts";
+import { makeEvent } from "./event-write-primitives.ts";
 import { publicEventPayload } from "./event-privacy.ts";
 import { readExistingPrincipalRequest, requireConsent } from "./principal-request-core.ts";
 import { projectIntakeAuthority } from "./intake-authority.ts";
@@ -17,25 +17,21 @@ import { nativeStructuredOriginSchema } from "./memory-native-origin-schema.ts";
 import { nativeDocumentJobOriginSchema } from "./memory-document-job-origin-schema.ts";
 import type { WorkerEnv } from "./runtime.ts";
 
+import { guestImageCopyPrefixEventInput, guestImageCopyPrefixLineage, guestImageCopyOriginalSource,
+  guestImageCopySaveEnvelope, guestImageCopySaveEventInput, guestImageCopyLineage,
+  guestImageCopyCommandKey as commandKey, guestImageCopyClaimRowProof as claimRowProof,
+  guestImageCopyEventMeta as eventMeta, guestImageCopyCommandProof as commandProof,
+  guestImageCopyTargetCustody as targetCustody, guestImageCopyTargetBody as targetBody,
+  guestImageCopyPrefixTargets as prefixTargets, guestImageCopyClaimProvenance as claimProvenance,
+  type GuestImageClaimLineage, type GuestImageCopyRow as Row, type GuestImageCopyCommand as Command,
+  type GuestImageCopyResource as Resource } from "./experience-guest-image-copy-contract.ts";
+export type { GuestImageClaimLineage } from "./experience-guest-image-copy-contract.ts";
+
 export const GUEST_IMAGE_CLAIM_SCHEMA = GUEST_IMAGE_SAVE_CLAIM_SCHEMA;
 type Value = string | number | null;
 type Proof = { sql: string; bindings: Value[] };
 type Context = { request: Request; env: WorkerEnv; db: WorkerEnv["DB"]; current: () => void };
 type Prefix = ReturnType<typeof guestContextAdoptionData>;
-type Row = { session_id: string; destination_user_id: string; lease_id: string; request_id: string; manifest_digest: string;
-  context_lineage_digest: string; lineage_json: string; lineage_digest: string; created_at_ms: number };
-type Command = { scope_key: string; actor_user_id: string; command_key: string; request_digest: string; action: string; event_id: string; created_at: string };
-type Resource = { resource_id: string; campaign_id: string; policy_digest: string; limits_digest: string; actor_user_id: string;
-  session_digest: string; operation: string; intent_key: string; payload_digest: string; text_bytes: number; issued_grant_id: null; recorded_at_ms: number };
-type EventIdentity = { id: string; sequence: number; occurred: string; recorded: string; public: string; privateDigest: string };
-export type GuestImageClaimLineage = Readonly<{
-  version: 1; kind: "first-image-save"; sessionId: string; guestSubject: string; destinationUserId: string; projectId: string;
-  documentId: string; draftId: string; draftHash: string; manifestDigest: string; origin: string; contextLineageDigest: string;
-  source: { head: number; eventIds: string[]; expiresAt: string; sessionPolicyId: string; sessionTermsDigest: string; sessionExpiresAtMs: number;
-    sourcePolicyId: string; sourcePolicyDigest: string; requestDigest: string; contentDigest: string; releaseHash: string;
-    save: EventIdentity; command: Command; resource: Resource };
-  target: EventIdentity & { commandKey: string; requestDigest: string; requirementId: string; contextHead: number };
-}>;
 export type GuestImageClaimRequest = Readonly<{ sessionId: string; requestId: string; approvedManifestDigest: string; proof?: GuestClaimProof }>;
 const rowColumns = "session_id,destination_user_id,lease_id,request_id,manifest_digest,context_lineage_digest,lineage_json,lineage_digest,created_at_ms";
 const commandColumns = "scope_key,actor_user_id,command_key,request_digest,action,event_id,created_at";
@@ -131,13 +127,6 @@ async function destination(ctx: Context) {
     || auth.user.userId.startsWith("guest:") || !auth.user.access.capabilities.includes("project.author")) return fail("destination_unavailable");
   return { user: auth.user, principal: auth.user, impersonation: null };
 }
-const prefixKey = (session: string, index: number) => `guest-context-adoption:v1:${session}:${index}`;
-async function commandKey(sessionId: string, destinationUserId: string, manifestDigest: string) {
-  return `guest-image-save-claim-v1:${(await digest({ domain: "forma-guest-image-save-claim@1", sessionId, destinationUserId, manifestDigest })).slice(7)}`;
-}
-function claimRowProof(row: Row): Proof {
-  return { sql: `EXISTS(SELECT 1 FROM experience_guest_image_claims claim WHERE ${arraySql(rowColumns, "claim")}=?)`, bindings: [tuple(row, rowColumns)] };
-}
 function leaseProof(lease: Record<string, Value>, active: boolean): Proof {
   return { sql: `EXISTS(SELECT 1 FROM experience_guest_claim_leases lease WHERE ${arraySql(leaseColumns, "lease") }=?${active ? ` AND expires_at_ms>${GUEST_DB_NOW}` : ""})`, bindings: [tuple(lease, leaseColumns)] };
 }
@@ -158,37 +147,6 @@ async function targetMemory(ctx: Context, ids: string[]): Promise<Proof> {
   parts.push({ sql: `${memorySchema}=?`, bindings: [row.snapshot] });
   for (const item of found) parts.push({ sql: `NOT EXISTS(SELECT 1 FROM ${item.name} WHERE user_event_id IN(SELECT value FROM json_each(?)) OR answer_event_id IN(SELECT value FROM json_each(?)))`, bindings: [JSON.stringify(ids), JSON.stringify(ids)] });
   return all(...parts);
-}
-function eventMeta(lineage: GuestImageClaimLineage, target: boolean): Proof {
-  const event = target ? lineage.target : lineage.source.save, owner = target ? lineage.destinationUserId : lineage.guestSubject;
-  return { sql: `EXISTS(SELECT 1 FROM events e JOIN event_private_payloads body ON body.private_event_id=e.event_id
-    WHERE json_array(e.event_id,e.stream_id,e.sequence,e.occurred_at,e.recorded_at,e.actor,e.client_id,e.correlation_id,e.causation_id,e.compensates_event_id,e.schema_version,e.type,e.payload,
-      body.owner_id,body.project_id,body.document_id,body.created_at)=?)`, bindings: [JSON.stringify([event.id, `creative:${owner}`, event.sequence, event.occurred, event.recorded,
-    target ? `user:${owner}` : owner, target ? "server:output-requirements" : "server:guest-output", target ? lineage.target.commandKey : lineage.source.command.command_key,
-    null, null, 1, "BlockCreated", event.public, owner, lineage.projectId, lineage.documentId, event.recorded])] };
-}
-function commandProof(lineage: GuestImageClaimLineage): Proof {
-  return { sql: `EXISTS(SELECT 1 FROM output_commands command WHERE ${arraySql(commandColumns, "command")}=?)
-    AND EXISTS(SELECT 1 FROM output_commands command WHERE ${arraySql(commandColumns, "command")}=?)
-    AND EXISTS(SELECT 1 FROM experience_sponsor_resource_receipts resource WHERE ${arraySql(resourceColumns, "resource")}=?)`, bindings: [
-    tuple(lineage.source.command, commandColumns), JSON.stringify([`personal:${lineage.destinationUserId}:${lineage.projectId}`, lineage.destinationUserId,
-      lineage.target.commandKey, lineage.target.requestDigest, "save", lineage.target.id, lineage.target.recorded]), tuple(lineage.source.resource, resourceColumns)] };
-}
-function targetCustody(lineage: GuestImageClaimLineage, prefix: Prefix["lineage"]): Proof {
-  const blocks = prefix.events.flatMap(event => {
-    const block = parsed(event.public).block_id; return event.type === "BlockCreated" && typeof block === "string" ? [block] : [];
-  });
-  blocks.push(lineage.target.requirementId);
-  return { sql: `NOT EXISTS(SELECT 1 FROM project_event_scopes WHERE event_id=?)
-    AND NOT EXISTS(SELECT 1 FROM project_resource_scopes WHERE resource_kind='block' AND resource_id IN(SELECT value FROM json_each(?)))
-    AND (SELECT COUNT(*) FROM events WHERE stream_id=? AND type='BlockCreated' AND json_extract(payload,'$.block_id')=?)=1
-    AND NOT EXISTS(SELECT 1 FROM events WHERE stream_id=? AND sequence>? AND type IN('BlockRemoved','BlockRehomed') AND json_extract(payload,'$.block_id')=?)`,
-  bindings: [lineage.target.id, JSON.stringify([...new Set(blocks)]), `creative:${lineage.destinationUserId}`, lineage.target.requirementId,
-    `creative:${lineage.destinationUserId}`, lineage.target.sequence, lineage.target.requirementId] };
-}
-function targetBody(lineage: GuestImageClaimLineage, content: string): Proof {
-  return { sql: `EXISTS(SELECT 1 FROM event_private_payloads body WHERE private_event_id=? AND owner_id=? AND project_id=? AND document_id=?
-    AND created_at=? AND private_json=? AND redacted_at IS NULL)`, bindings: [lineage.target.id, lineage.destinationUserId, lineage.projectId, lineage.documentId, lineage.target.recorded, content] };
 }
 function sourceMetadata(lineage: GuestImageClaimLineage): Proof {
   const s = lineage.source;
@@ -250,10 +208,6 @@ async function completed(ctx: Context, sessionId: string) {
   // copy. replayed does not mean adoption necessarily predates this invocation.
   return { row, lineage, prefix, proof, receipt: receipt(lineage, row, true) };
 }
-function claimProvenance(lineage: Pick<GuestImageClaimLineage, "sessionId" | "manifestDigest" | "guestSubject" | "source">) {
-  return { version: 1, sessionId: lineage.sessionId, manifestDigest: lineage.manifestDigest, sourceCommandKey: lineage.source.command.command_key,
-    sourceRequestDigest: lineage.source.command.request_digest, sourceEventId: lineage.source.save.id, guestSubject: lineage.guestSubject };
-}
 
 /** Source-free current canonical receipt. No guest credentials or payer access. */
 export async function readGuestImageClaim(request: Request, env: WorkerEnv, input: { sessionId: string }) {
@@ -263,20 +217,58 @@ export async function readGuestImageClaim(request: Request, env: WorkerEnv, inpu
   return saved?.receipt ?? null;
 }
 
-function prefixTargets(lineage: Prefix["lineage"], bodies: string[]): Proof {
-  const values = lineage.events.map((event, index) => ({ ...event, private: bodies[index] }));
-  return { sql: `(SELECT COUNT(*) FROM json_each(?) expected
-    JOIN events event ON event.event_id=json_extract(expected.value,'$.id') AND event.stream_id=? AND event.sequence=json_extract(expected.value,'$.sequence')
-      AND event.occurred_at=json_extract(expected.value,'$.occurred') AND event.recorded_at=json_extract(expected.value,'$.recorded')
-      AND event.actor='user' AND event.client_id='server:guest-context-adoption' AND event.correlation_id=? AND event.schema_version=1
-      AND event.causation_id IS NULL AND event.compensates_event_id IS NULL AND event.type=json_extract(expected.value,'$.type') AND event.payload=json_extract(expected.value,'$.public')
-    JOIN event_private_payloads body ON body.private_event_id=event.event_id AND body.owner_id=? AND body.redacted_at IS NULL
-      AND body.project_id IS json_extract(expected.value,'$.project') AND body.document_id IS json_extract(expected.value,'$.document')
-      AND body.private_json=json_extract(expected.value,'$.private') AND body.created_at=event.recorded_at
-    JOIN event_client_receipts receipt ON receipt.stream_id=event.stream_id AND receipt.event_id=event.event_id AND receipt.sequence=event.sequence
-      AND receipt.client_event_id=json_extract(expected.value,'$.key') AND receipt.created_at=event.recorded_at)=?`,
-  bindings: [JSON.stringify(values), `creative:${lineage.destinationUserId}`, `guest-context-adoption:${lineage.sessionId}`, lineage.destinationUserId, values.length] };
+/** Separate internal canonical GET capture; the existing POST context and
+ * public receipt reader retain their original contract. completed() binds the
+ * request origin to the stored immutable canonical origin before disclosure. */
+function completedReadContext(request: Request, env: WorkerEnv): Context {
+  if (!(request instanceof Request)) return fail("request_invalid");
+  if (request.method === "POST") return context(request, env);
+  const db = env.DB, url = request.url, method = request.method, headers = JSON.stringify(Array.from(request.headers)), signal = request.signal;
+  const cohort = env.FORMA_PILOT_COHORT_ID, admins = env.FORMA_ADMIN_EMAILS, origin = new URL(url), site = request.headers.get("sec-fetch-site");
+  if (method !== "GET" || origin.protocol !== "https:" || origin.username || origin.password || origin.search || origin.hash
+    || request.headers.has("origin") && request.headers.get("origin") !== origin.origin
+    || site !== null && site !== "same-origin" && site !== "none" || bytes(headers) > 32768
+    || (request.headers.get("cookie") ?? "").split(";").some(part => ["forma_project_context", "forma_impersonation"].includes(part.split("=", 1)[0]!.trim()))) return fail("request_invalid");
+  const current = () => {
+    if (env.DB !== db) fail("database_changed");
+    if (request.signal !== signal || signal.aborted) fail("aborted");
+    if (request.url !== url || request.method !== method || JSON.stringify(Array.from(request.headers)) !== headers
+      || env.FORMA_PILOT_COHORT_ID !== cohort || env.FORMA_ADMIN_EMAILS !== admins) fail("authority_changed");
+  };
+  current(); return { request, env, db, current };
 }
+declare const completedImageClaimBrand: unique symbol;
+export type GuestImageCompletedClaimWitness = Readonly<{ [completedImageClaimBrand]: true }>;
+type CompletedReadData = Readonly<Pick<Completed, "row" | "lineage" | "proof" | "receipt"> & {
+  prefix: Pick<Prefix, "row" | "lineage" | "proof">;
+}>;
+const completedImageClaims = new WeakMap<GuestImageCompletedClaimWitness, { ctx: Context; data: CompletedReadData }>();
+
+/** Internal completed-only read capability. No guest credentials, new claim,
+ * payer access or source-free receipt can create this request-bound witness. */
+export async function inspectCompletedGuestImageClaim(request: Request, env: WorkerEnv, input: { sessionId: string }): Promise<GuestImageCompletedClaimWitness | null> {
+  const ctx = completedReadContext(request, env);
+  if (jsonIssues(input).length || !record(input) || !exactKeys(input, ["sessionId"]) || !guestId(input.sessionId)) return fail("invalid");
+  const saved = await completed(ctx, input.sessionId); ctx.current();
+  if (!saved) return null;
+  // Only inert values are cloned/frozen. Native auth, Request, env, DB and the
+  // lifecycle closure stay outside this recursively frozen value container.
+  const data = freeze(structuredClone({ row: saved.row, lineage: saved.lineage, proof: saved.proof, receipt: saved.receipt,
+    prefix: { row: saved.prefix.row, lineage: saved.prefix.lineage, proof: saved.prefix.proof } }));
+  const witness = Object.freeze(Object.create(null)) as GuestImageCompletedClaimWitness;
+  completedImageClaims.set(witness, { ctx, data });
+  return witness;
+}
+export function guestImageCompletedClaimData(request: Request, env: WorkerEnv, witness: GuestImageCompletedClaimWitness): CompletedReadData {
+  const saved = witness && typeof witness === "object" ? completedImageClaims.get(witness) : undefined;
+  if (!saved || saved.ctx.request !== request || saved.ctx.env !== env) return fail();
+  saved.ctx.current();
+  // This proof is a component, not an automatic reread. Consumers must join it
+  // with exact mapping/body predicates in their final awaited read, then call
+  // this accessor again to check captured request and environment identity.
+  return saved.data;
+}
+
 async function copy(ctx: Context, inventory: GuestImageSaveInventory, leaseId: string, requestId: string) {
   const data = guestImageSaveInventoryData(ctx.env, inventory), auth = await destination(ctx); ctx.current();
   if (new URL(ctx.request.url).origin !== data.session.policy.terms.origin) return fail("origin_required");
@@ -288,41 +280,33 @@ async function copy(ctx: Context, inventory: GuestImageSaveInventory, leaseId: s
   const currentHead = await ctx.db.prepare("SELECT COALESCE(MAX(sequence),0) AS head FROM events WHERE stream_id=?").bind(auth.user.streamId).first<{ head: number }>(); ctx.current();
   if (!currentHead || !integer(currentHead.head)) return fail();
   const head = currentHead.head, plan = data.plan;
-  const prefixEvents = plan.events.map((event, index) => makeEvent(auth.user.streamId, head + index + 1, "user", "server:guest-context-adoption",
-    `guest-context-adoption:${inventory.sessionId}`, event.type, { ...structuredClone(event.payload), client_event_id: prefixKey(inventory.sessionId, index) }));
+  const prefixEvents = plan.events.map((event, index) => makeEvent(...guestImageCopyPrefixEventInput(
+    { destinationStreamId: auth.user.streamId, head, sessionId: inventory.sessionId }, event, index)));
   const prefixBodies = prefixEvents.map(event => JSON.stringify(event.payload));
   const hashes = await Promise.all(prefixBodies.map(body => digest(body))); ctx.current();
-  const targets = prefixEvents.map((event, i) => { const values = eventWriteBindings(event); return { id: event.eventId, sequence: event.sequence,
-    occurred: event.occurredAt, recorded: event.recordedAt, type: event.type, public: String(values[12]), privateDigest: hashes[i],
-    project: values[14] as string | null, document: values[15] as string | null, key: prefixKey(inventory.sessionId, i) }; });
-  const prefix: Prefix["lineage"] = { version: 1, sessionId: inventory.sessionId, guestSubject: inventory.guestSubject, projectId: inventory.projectId,
-    documentId: inventory.documentId, draftHash: inventory.draftHash, manifestDigest: inventory.manifestDigest, sourceEventIds: [...data.sourceEventIds],
-    sourceHead: inventory.sourceHead, destinationUserId: auth.user.userId, origin: data.session.policy.terms.origin, targetStart: head + 1,
-    targetHead: head + prefixEvents.length, events: targets, lease };
+  const prefix = guestImageCopyPrefixLineage({ sessionId: inventory.sessionId, guestSubject: inventory.guestSubject, projectId: inventory.projectId,
+    documentId: inventory.documentId, draftHash: inventory.draftHash, manifestDigest: inventory.manifestDigest, sourceEventIds: data.sourceEventIds,
+    sourceHead: inventory.sourceHead, destinationUserId: auth.user.userId, origin: data.session.policy.terms.origin, head }, prefixEvents, hashes, lease);
   const prefixJson = canonicalJson(prefix), prefixHash = await digest(prefix); ctx.current();
   const sourcePayload = parsed(data.save.privateJson), originalEnvelope = sourcePayload.output_command_envelope;
   if (!record(originalEnvelope) || !record(originalEnvelope.guestSponsorPreparation) || !record(originalEnvelope.guestSponsorPreparation.source)) return fail();
   const original = originalEnvelope.guestSponsorPreparation.source;
-  const source: GuestImageClaimLineage["source"] = { head: inventory.sourceHead, eventIds: [...data.sourceEventIds], expiresAt: inventory.expiresAt,
+  const source = guestImageCopyOriginalSource({ head: inventory.sourceHead, eventIds: data.sourceEventIds, expiresAt: inventory.expiresAt,
     sessionPolicyId: data.session.row.policy_id, sessionTermsDigest: data.session.row.terms_digest, sessionExpiresAtMs: data.session.row.expires_at_ms,
-    sourcePolicyId: String(original.sourcePolicyId), sourcePolicyDigest: String(original.sourcePolicyDigest), requestDigest: String(original.requestDigest),
-    contentDigest: String(original.contentDigest), releaseHash: plan.release.releaseHash,
-    save: { id: data.save.event.eventId, sequence: data.save.event.sequence, occurred: data.save.event.occurredAt, recorded: data.save.event.recordedAt,
-      public: JSON.stringify(publicEventPayload(data.save.event.eventId, sourcePayload, true).payload), privateDigest: await digest(data.save.privateJson) },
-    command: structuredClone(data.save.command) as unknown as Command, resource: structuredClone(data.save.resource) as unknown as Resource }; ctx.current();
+    releaseHash: plan.release.releaseHash }, { event: data.save.event, command: data.save.command as unknown as Command,
+    resource: data.save.resource as unknown as Resource }, sourcePayload, original, await digest(data.save.privateJson)); ctx.current();
   const key = await commandKey(inventory.sessionId, auth.user.userId, inventory.manifestDigest); ctx.current();
-  const envelope = { action: "save", documentId: inventory.documentId, expectedRevision: `output:${prefix.targetHead}`, clientMutationId: key,
-    blockId: data.save.requirementId, spec: structuredClone(originalEnvelope.spec), planSuggestions: structuredClone(originalEnvelope.planSuggestions),
-    guestImageClaim: claimProvenance({ sessionId: inventory.sessionId, manifestDigest: inventory.manifestDigest, guestSubject: inventory.guestSubject, source }) };
+  const envelope = guestImageCopySaveEnvelope({ sessionId: inventory.sessionId, manifestDigest: inventory.manifestDigest,
+    guestSubject: inventory.guestSubject, documentId: inventory.documentId, source, contextHead: prefix.targetHead,
+    commandKey: key, requirementId: data.save.requirementId }, { spec: originalEnvelope.spec, planSuggestions: originalEnvelope.planSuggestions });
   const requestDigest = (await digest(envelope)).slice(7); ctx.current();
-  const tail = makeEvent(auth.user.streamId, prefix.targetHead + 1, `user:${auth.user.userId}`, "server:output-requirements", key, "BlockCreated",
-    { ...structuredClone(sourcePayload), actor_user_id: auth.user.userId, output_command_envelope: envelope });
+  const tail = makeEvent(...guestImageCopySaveEventInput({ destinationStreamId: auth.user.streamId, destinationUserId: auth.user.userId,
+    contextHead: prefix.targetHead, commandKey: key }, sourcePayload, envelope));
   const body = JSON.stringify(tail.payload), tailHash = await digest(body); ctx.current();
-  const lineage = readGuestImageClaimLineage(canonicalJson({ version: 1, kind: "first-image-save", sessionId: inventory.sessionId, guestSubject: inventory.guestSubject,
+  const lineage = readGuestImageClaimLineage(canonicalJson(guestImageCopyLineage({ sessionId: inventory.sessionId, guestSubject: inventory.guestSubject,
     destinationUserId: auth.user.userId, projectId: inventory.projectId, documentId: inventory.documentId, draftId: plan.draftId, draftHash: plan.draftHash,
     manifestDigest: inventory.manifestDigest, origin: prefix.origin, contextLineageDigest: prefixHash, source,
-    target: { id: tail.eventId, sequence: tail.sequence, occurred: tail.occurredAt, recorded: tail.recordedAt,
-      public: String(eventWriteBindings(tail)[12]), privateDigest: tailHash, commandKey: key, requestDigest, requirementId: data.save.requirementId, contextHead: prefix.targetHead } }));
+    commandKey: key, requestDigest, requirementId: data.save.requirementId, contextHead: prefix.targetHead }, tail, tailHash)));
   const lineageJson = canonicalJson(lineage), lineageHash = await digest(lineage); ctx.current();
   const allEvents = [...prefixEvents, tail], memory = await targetMemory(ctx, allEvents.map(event => event.eventId)); ctx.current();
   const ids = JSON.stringify([...new Set([...plan.events.flatMap(event => [event.payload.project_id, event.payload.document_id, event.payload.block_id]

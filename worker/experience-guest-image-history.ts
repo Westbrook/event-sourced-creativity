@@ -240,8 +240,11 @@ async function readSource(ctx: Context, sessionId: string, mode: "due" | "retain
     const retained = await ctx.db.prepare("SELECT ?>strftime('%Y-%m-%dT%H:%M:%fZ','now') AS retained").bind(source.expires_at).first<{ retained: number }>();
     current(ctx); if (retained?.retained !== 1) return fail("expired");
   }
-  const session = await snapshot(ctx, parts, "experience_guest_sessions", "session_id", sessionId, sessionColumns,
+  const sessionParts: Proof[] = [];
+  const session = await snapshot(ctx, sessionParts, "experience_guest_sessions", "session_id", sessionId, sessionColumns,
     "length(CAST(guest_subject AS BLOB))<=160 AND length(CAST(project_id AS BLOB))<=160 AND length(CAST(document_id AS BLOB))<=160 AND length(CAST(policy_id AS BLOB))<=160 AND length(CAST(terms_digest AS BLOB))=71 AND length(CAST(session_hash AS BLOB))=71 AND length(CAST(claim_hash AS BLOB))=71");
+  const sessionProof = sessionParts[0];
+  parts.push(sessionProof);
   if (typeof session.guest_subject !== "string" || !/^guest:[a-f0-9-]{36}$/u.test(session.guest_subject)
     || !guestId(session.policy_id) || !guestHash(session.terms_digest) || !guestHash(session.session_hash) || !guestHash(session.claim_hash)
     || !integer(session.created_at_ms, 0, 8_640_000_000_000_000) || !integer(session.expires_at_ms, 1, 8_640_000_000_000_000)
@@ -356,7 +359,8 @@ async function readSource(ctx: Context, sessionId: string, mode: "due" | "retain
   if (mode === "due") parts.push({ sql: `?<=strftime('%Y-%m-%dT%H:%M:%fZ','now')`, bindings: [source.expires_at] });
   else parts.push({ sql: `?>strftime('%Y-%m-%dT%H:%M:%fZ','now')`, bindings: [source.expires_at] });
   return { source, session, policy, terms, draft, plan: retainedPlan, eventIds, blockIds, contextEvents, parts, draftId, projectId, documentId,
-    prefixWitnesses: rows.results.map(row => row.witness), prefixRetained };
+    prefixWitnesses: rows.results.map(row => row.witness), prefixRetained, sessionProof,
+    associationParts: parts.filter(part => part !== sessionProof) };
 }
 
 export async function historicalSource(ctx: Context, sessionId: string) { return readSource(ctx, sessionId, "due"); }
@@ -391,6 +395,7 @@ export async function historicalApproval(ctx: Context, parts: Proof[], campaignI
 type Historical = Awaited<ReturnType<typeof historicalSource>>;
 export async function saveAssociation(ctx: Context, original: Historical) {
   const { source, session, policy: sourcePolicy, terms, plan, eventIds, draftId, projectId, documentId, parts } = original;
+  const associationOffset = parts.length;
   const streamId = `creative:${session.guest_subject}`, identity = (await checkedDigest(ctx, { namespace: "experience-output-command@1", streamId, draftId })).slice(7); current(ctx);
   const commandKey = `experience-output-v1:${identity}:save`, scopeKey = `personal:${session.guest_subject}:${projectId}`;
   const requirementId = await experienceResourceId(draftId, "native-output-requirement"); current(ctx);
@@ -493,6 +498,7 @@ export async function saveAssociation(ctx: Context, original: Historical) {
     // Without the original private plan, sourceBindingHash and text_bytes are
     // pinned historical commitments; the erased text is not reconstructed.
   }
+  original.associationParts.push(...parts.slice(associationOffset));
   return { tail, observed: observed.witness, eventId, requirementId, commandKey, scopeKey, resource,
     sessionDigest: sessionBinding.sessionDigest, driverId: driver.driverId, command, approval, sessionBinding, sourceBinding, driver,
     limitsDigest, minimum, maximum, recipe, planSuggestions, preparation, binding, expectedEnvelope, expectedPayload };
@@ -517,11 +523,10 @@ export async function collectRetainedGuestImageHistory(request: Request, env: Wo
   const saved = await saveAssociation(ctx, original); current(ctx);
   if (saved.tail.redacted_at !== null) return fail();
   const memory = await memoryProof(ctx, original.draftId); current(ctx);
-  const currentGuards: Proof[] = [
-    { sql: liveSource.session.policy.guard.sql, bindings: [...liveSource.session.policy.guard.bindings] },
-    { sql: liveSource.session.guard.sql, bindings: [...liveSource.session.guard.bindings] },
-  ];
-  return { mode: "retained" as const, ctx, original, saved, sponsor, memory, liveSource, currentGuards };
+  const currentPolicyProof: Proof = { sql: liveSource.session.policy.guard.sql, bindings: [...liveSource.session.policy.guard.bindings] };
+  const currentSessionProof: Proof = { sql: liveSource.session.guard.sql, bindings: [...liveSource.session.guard.bindings] };
+  const currentGuards: Proof[] = [currentPolicyProof, currentSessionProof];
+  return { mode: "retained" as const, ctx, original, saved, sponsor, memory, liveSource, currentGuards, currentPolicyProof, currentSessionProof };
 }
 
 export async function collectDueGuestImageHistory(env: WorkerEnv, input: { sessionId: string }) {
@@ -531,5 +536,17 @@ export async function collectDueGuestImageHistory(env: WorkerEnv, input: { sessi
   const sponsor = await laterStageSponsorSchema(ctx); current(ctx);
   const saved = await saveAssociation(ctx, original); current(ctx);
   const memory = await memoryProof(ctx, original.draftId); current(ctx);
-  return { mode: "due" as const, ctx, original, saved, sponsor, memory, currentGuards: [] as Proof[] };
+  return { mode: "due" as const, ctx, original, saved, sponsor, memory, currentGuards: [] as Proof[], currentPolicyProof: null, currentSessionProof: null };
+}
+
+/** A structural predicate only: the consumer must join the exact immutable
+ * completion mapping and native completion time. No credential or custody
+ * authority is produced by replacing this one observed session field. */
+export function guestImageHistorySessionProof(original: Pick<Awaited<ReturnType<typeof historicalSource>>, "session">,
+  input: { revokedAtMs: number }): Proof {
+  if (!record(input) || !exactKeys(input, ["revokedAtMs"]) || !integer(input.revokedAtMs)
+    || original.session.revoked_at_ms !== null && original.session.revoked_at_ms !== input.revokedAtMs) return fail();
+  const expected = { ...original.session, revoked_at_ms: input.revokedAtMs };
+  return { sql: `EXISTS(SELECT 1 FROM experience_guest_sessions WHERE session_id=? AND ${objectSql(sessionColumns)}=?)`,
+    bindings: [original.session.session_id, JSON.stringify(expected)] };
 }
