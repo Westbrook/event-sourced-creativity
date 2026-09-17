@@ -1,3 +1,4 @@
+import type { ExperienceDisplayPort } from "./display-locale.ts";
 import { readVideoReferencePlan } from "./video-reference-plan.ts";
 import { readVideoReferenceCandidate, type VideoReferenceCandidate } from "./video-reference-candidate.ts";
 import { readVideoReferenceIntent, EXPERIENCE_VIDEO_INTENT, type VideoReferenceIntent } from "./video-reference.ts";
@@ -14,6 +15,12 @@ type Changed = (selection: ReferenceIntent | null, ready: boolean) => void;
 type PickerPolicy = "model3d" | "video";
 const node = <K extends keyof HTMLElementTagNameMap>(tag: K, text?: string) => {
   const item = document.createElement(tag); if (text !== undefined) item.textContent = text; return item;
+};
+// Presentation bindings never rewrite reference labels, source identities or input values.
+const bindText = <T extends HTMLElement>(display: ExperienceDisplayPort | undefined, element: T, source: string, values?: Record<string, string | number>): T => {
+  if (display) return display.bindText(element, source, values);
+  element.textContent = values ? source.replace(/\{(\w+)\}/gu, (placeholder, key: string) => Object.hasOwn(values, key) ? String(values[key]) : placeholder) : source;
+  return element;
 };
 const sameSource = (candidate: ReferenceCandidate, intent: ReferenceIntent) => {
   const { permissionAttestation: _, ...source } = intent; return canonicalJson(candidate.source) === canonicalJson(source);
@@ -84,6 +91,9 @@ export async function readModel3dPreviewBytes(response: Response, expectedHash: 
 /** Native controls stay mounted through reads. No input grants authority; Save rereads. */
 class ReferencePicker {
   #policy: PickerPolicy;
+  #display?: ExperienceDisplayPort;
+  #setText<T extends HTMLElement>(element: T, source: string, values?: Record<string, string | number>) { return bindText(this.#display, element, source, values); }
+  #node<K extends keyof HTMLElementTagNameMap>(tag: K, source: string) { return this.#setText(node(tag), source); }
   #maximumBytes: number;
   #copy(model3d: string, video: string) { return this.#policy === "video" ? video : model3d; }
   readonly element = node("fieldset");
@@ -93,9 +103,9 @@ class ReferencePicker {
   #image = node("img");
   #caption = node("p");
   #permission = node("input");
-  #browse = node("button", "Browse Document references");
-  #refresh = node("button", "Refresh reference list");
-  #retry = node("button", "Check selected reference");
+  #browse = node("button");
+  #refresh = node("button");
+  #retry = node("button");
   #text = node("input");
   #fetch: Fetcher;
   #changed: Changed;
@@ -119,21 +129,25 @@ class ReferencePicker {
   #sourceBusy = false;
   #checkEpoch = 0;
   #checkAbort = new AbortController();
-  constructor(changed: Changed, retained: ReferenceIntent | undefined, fetcher: Fetcher, policy: PickerPolicy) {
-    this.#policy = policy; this.#maximumBytes = policy === "video" ? 30 * 1024 * 1024 : cap;
-    if (policy === "video") { this.#browse.textContent = "Browse images"; this.#refresh.textContent = "Refresh images"; this.#retry.textContent = "Check image"; }
+  constructor(changed: Changed, retained: ReferenceIntent | undefined, fetcher: Fetcher, policy: PickerPolicy, display?: ExperienceDisplayPort) {
+    this.#policy = policy; this.#display = display; this.#maximumBytes = policy === "video" ? 30 * 1024 * 1024 : cap;
+    this.#setText(this.#browse, this.#copy("Browse Document references", "Browse images"));
+    this.#setText(this.#refresh, this.#copy("Refresh reference list", "Refresh images"));
+    this.#setText(this.#retry, this.#copy("Check selected reference", "Check image"));
     this.#fetch = (path, init) => fetcher(path, init); this.#changed = changed; this.#retained = retained;
     this.element.className = "experience-model3d-reference";
     if (policy === "video") this.element.className += " experience-video-reference";
     const name = `experience-model3d-reference-${crypto.randomUUID()}`;
-    const legend = node("legend", this.#copy("Reference", "Image")), textLabel = node("label"), permissionLabel = node("label");
+    const legend = this.#node("legend", this.#copy("Reference", "Image")), textLabel = node("label"), permissionLabel = node("label");
     this.#text.type = "radio"; this.#text.name = name; this.#text.checked = policy === "model3d" && !retained;
-    textLabel.append(this.#text, node("span", "Text only"));
+    textLabel.append(this.#text, this.#node("span", "Text only"));
     this.#choices.className = "experience-model3d-reference-choices";
     if (policy === "model3d") this.#choices.append(textLabel);
     this.#permission.type = "checkbox";
-    permissionLabel.append(this.#permission, node("span", this.#copy("I own or have permission to use this reference and its contents.", "Ownership / permission confirmed")));
-    this.#image.alt = this.#copy("Selected reference", "Selected image"); this.#image.hidden = true;
+    permissionLabel.append(this.#permission, this.#node("span", this.#copy("I own or have permission to use this reference and its contents.", "Ownership / permission confirmed")));
+    if (display) display.bindAttribute(this.#image, "alt", this.#copy("Selected reference", "Selected image"));
+    else this.#image.alt = this.#copy("Selected reference", "Selected image");
+    this.#image.hidden = true;
     this.#selected.className = "experience-model3d-reference-selected"; this.#selected.hidden = true;
     this.#caption.dir = "auto";
     this.#selected.append(this.#image, this.#caption, permissionLabel, this.#retry);
@@ -150,9 +164,9 @@ class ReferencePicker {
       this.#checkAbort.abort(); this.#checkAbort = new AbortController(); this.#checkEpoch++; this.#inspectionReady = false;
       this.#notify(false);
       if (this.#permission.checked && this.#candidate) void this.#inspect();
-      else this.#status.textContent = this.#copy("Permission is required for the selected reference. You may instead choose Text only.", "Permission required");
+      else this.#setText(this.#status, this.#copy("Permission is required for the selected reference. You may instead choose Text only.", "Permission required"));
     });
-    this.element.append(legend, node("p", this.#copy("Choose one image or saved 3D view from your personal Document references. URLs and uploaded meshes are not reference inputs.", "1 image · Required")), this.#choices, this.#browse, this.#refresh, this.#selected, this.#status);
+    this.element.append(legend, this.#node("p", this.#copy("Choose one image or saved 3D view from your personal Document references. URLs and uploaded meshes are not reference inputs.", "1 image · Required")), this.#choices, this.#browse, this.#refresh, this.#selected, this.#status);
     if (retained) queueMicrotask(() => { if (!this.#disposed) { this.#changed(retained, false); void this.#load(); } });
   }
   focus() { (this.#candidate ? this.#permission : this.#browse).focus(); }
@@ -182,7 +196,7 @@ class ReferencePicker {
     if (this.#disposed || this.#listBusy || this.#listFailed || this.#head !== undefined && !this.#next) return;
     const epoch = ++this.#listEpoch; this.#listBusy = true; this.#browse.setAttribute("aria-disabled", "true");
     this.#refresh.setAttribute("aria-disabled", "true");
-    this.#status.textContent = this.#copy("Reading current Document references…", "Loading images");
+    this.#setText(this.#status, this.#copy("Reading current Document references…", "Loading images"));
     const cursor = this.#next ? `?after=${encodeURIComponent(this.#next.after)}&head=${this.#next.head}` : "";
     try {
       const response = await this.#fetch(`/api/experiences/${this.#policy}/references${cursor}`, this.#options(this.#listAbort.signal));
@@ -205,14 +219,14 @@ class ReferencePicker {
           input.checked = true; this.#select(candidate, this.#retained); this.#retained = undefined;
         }
       }
-      this.#browse.textContent = this.#next ? this.#copy("More Document references", "More images") : this.#copy("References loaded", "Images loaded");
-      if (this.#awaitingDiscovery) this.#status.textContent = this.#copy("The selected source has not matched this fresh list. Read more references, or explicitly choose another source or Text only.", "Selected image unavailable");
-      else if (!this.#candidate) this.#status.textContent = this.#retained ? this.#copy("The saved selection is not available on this page. Continue reading references or choose Text only.", "Saved image not listed") : candidates.length ? this.#copy("Choose one reference, or keep Text only. Files are checked only after selection.", "Select image") : this.#copy("No matching Document references on this page. Text only remains available.", "No images");
+      this.#setText(this.#browse, this.#next ? this.#copy("More Document references", "More images") : this.#copy("References loaded", "Images loaded"));
+      if (this.#awaitingDiscovery) this.#setText(this.#status, this.#copy("The selected source has not matched this fresh list. Read more references, or explicitly choose another source or Text only.", "Selected image unavailable"));
+      else if (!this.#candidate) this.#setText(this.#status, this.#retained ? this.#copy("The saved selection is not available on this page. Continue reading references or choose Text only.", "Saved image not listed") : candidates.length ? this.#copy("Choose one reference, or keep Text only. Files are checked only after selection.", "Select image") : this.#copy("No matching Document references on this page. Text only remains available.", "No images"));
     } catch {
       if (!this.#disposed && epoch === this.#listEpoch) {
         this.#listFailed = true; this.#invalidateList(); this.#refresh.hidden = false;
-        this.#browse.textContent = this.#copy("Reference list unavailable", "Images unavailable");
-        this.#status.textContent = this.#copy("The reference list changed or is unavailable. Refresh this list without losing your authored text. The selected source must match and pass a fresh check before Save.", "Images changed · Refresh required");
+        this.#setText(this.#browse, this.#copy("Reference list unavailable", "Images unavailable"));
+        this.#setText(this.#status, this.#copy("The reference list changed or is unavailable. Refresh this list without losing your authored text. The selected source must match and pass a fresh check before Save.", "Images changed · Refresh required"));
       }
     } finally {
       if (!this.#disposed && epoch === this.#listEpoch) { this.#listBusy = false; this.#browse.setAttribute("aria-disabled", String(this.#listFailed || !this.#next && this.#head !== undefined)); this.#refresh.setAttribute("aria-disabled", "false"); }
@@ -225,8 +239,8 @@ class ReferencePicker {
     this.#expectedSource = undefined; this.#awaitingDiscovery = false;
     this.#previewReady = false; this.#inspectionReady = false; this.#permission.checked = Boolean(retained);
     this.#retireImage(); this.#selected.hidden = !candidate;
-    if (!candidate) { this.#changed(null, this.#policy === "model3d"); this.#status.textContent = this.#copy("Text only. No reference will be saved.", "Image required"); return; }
-    this.#caption.textContent = `${candidate.label} · ${"kind" in candidate.source && candidate.source.kind === "saved-model-view" ? "Saved 3D view" : "Image"}`;
+    if (!candidate) { this.#changed(null, this.#policy === "model3d"); this.#setText(this.#status, this.#copy("Text only. No reference will be saved.", "Image required")); return; }
+    this.#setText(this.#caption, "kind" in candidate.source && candidate.source.kind === "saved-model-view" ? "{label} · Saved 3D view" : "{label} · Image", { label: candidate.label });
     this.#changed(retained ?? null, false); void this.#readSelection();
   }
   #intent(): ReferenceIntent | null {
@@ -239,7 +253,7 @@ class ReferencePicker {
     const candidate = this.#candidate; if (!candidate || this.#disposed || this.#sourceBusy || this.#awaitingDiscovery || this.#listFailed) return;
     const epoch = this.#sourceEpoch; this.#sourceBusy = true; this.#retry.setAttribute("aria-disabled", "true");
     this.#checkAbort.abort(); this.#checkAbort = new AbortController(); this.#checkEpoch++;
-    this.#previewReady = false; this.#inspectionReady = false; this.#notify(false); this.#status.textContent = this.#copy("Reading the exact private image…", "Loading image");
+    this.#previewReady = false; this.#inspectionReady = false; this.#notify(false); this.#setText(this.#status, this.#copy("Reading the exact private image…", "Loading image"));
     const lease = previewLease(this.#sourceAbort.signal);
     try {
       const request = this.#fetch(candidate.preview, this.#options(lease.signal));
@@ -255,9 +269,9 @@ class ReferencePicker {
       if (this.#disposed || epoch !== this.#sourceEpoch || this.#candidate !== candidate) return;
       this.#previewReady = true; this.#settle();
       if (this.#permission.checked) void this.#inspect();
-      else this.#status.textContent = this.#copy("Review this exact reference and confirm your permission to use it.", "Permission required");
+      else this.#setText(this.#status, this.#copy("Review this exact reference and confirm your permission to use it.", "Permission required"));
     } catch {
-      if (!this.#disposed && epoch === this.#sourceEpoch) { this.#retireImage(); this.#previewReady = false; this.#notify(false); this.#status.textContent = this.#copy("The exact private image is unavailable, changed or could not be displayed. Check it again or choose Text only.", "Image unavailable · Retry"); }
+      if (!this.#disposed && epoch === this.#sourceEpoch) { this.#retireImage(); this.#previewReady = false; this.#notify(false); this.#setText(this.#status, this.#copy("The exact private image is unavailable, changed or could not be displayed. Check it again or choose Text only.", "Image unavailable · Retry")); }
     } finally {
       lease.dispose();
       if (!this.#disposed && epoch === this.#sourceEpoch) { this.#sourceBusy = false; this.#retry.setAttribute("aria-disabled", "false"); }
@@ -266,7 +280,7 @@ class ReferencePicker {
   async #inspect() {
     const intent = this.#intent(); if (!intent || this.#disposed || this.#awaitingDiscovery || this.#listFailed) return;
     this.#checkAbort.abort(); this.#checkAbort = new AbortController(); const epoch = ++this.#checkEpoch;
-    this.#inspectionReady = false; this.#notify(false); this.#status.textContent = this.#copy("Checking current source, permission records and private-file custody…", "Checking image");
+    this.#inspectionReady = false; this.#notify(false); this.#setText(this.#status, this.#copy("Checking current source, permission records and private-file custody…", "Checking image"));
     try {
       const response = await this.#fetch(`/api/experiences/${this.#policy}/reference/inspect`, { ...this.#options(this.#checkAbort.signal), method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(intent) });
       const value = await response.json();
@@ -280,13 +294,13 @@ class ReferencePicker {
       if (this.#disposed || epoch !== this.#checkEpoch || canonicalJson(this.#intent()) !== canonicalJson(intent)) return;
       this.#inspectionReady = true; this.#settle();
     } catch {
-      if (!this.#disposed && epoch === this.#checkEpoch) { this.#inspectionReady = false; this.#notify(false); this.#status.textContent = this.#copy("The selected source cannot currently be used. Check its permissions and reference settings in Forma, or choose Text only.", "Image unavailable · Check permissions"); }
+      if (!this.#disposed && epoch === this.#checkEpoch) { this.#inspectionReady = false; this.#notify(false); this.#setText(this.#status, this.#copy("The selected source cannot currently be used. Check its permissions and reference settings in Forma, or choose Text only.", "Image unavailable · Check permissions")); }
     }
   }
   #settle() {
     if (!this.#candidate || !this.#permission.checked || this.#awaitingDiscovery || this.#listFailed) return;
     const ready = this.#previewReady && this.#inspectionReady; this.#notify(ready);
-    if (ready) this.#status.textContent = this.#copy("Exact image displayed and current source checked. Save checks again. This is your permission statement, not an approval or generation authorization.", "Image checked");
+    if (ready) this.#setText(this.#status, this.#copy("Exact image displayed and current source checked. Save checks again. This is your permission statement, not an approval or generation authorization.", "Image checked"));
   }
   #retireImage() { this.#image.removeAttribute("src"); this.#image.hidden = true; if (this.#url) URL.revokeObjectURL(this.#url); this.#url = undefined; }
   dispose() {
@@ -298,46 +312,53 @@ class ReferencePicker {
 
 /** Existing3D policy remains the default public entry. */
 export class Model3dReferencePicker extends ReferencePicker {
-  constructor(changed: (selection: Model3dReferenceIntent | null, ready: boolean) => void, retained?: Model3dReferenceIntent, fetcher: Fetcher = fetch) {
-    super((value, ready) => { const selection = readModel3dReferenceIntent(value); changed(selection, ready && (!value || Boolean(selection))); }, retained, fetcher, "model3d");
+  constructor(changed: (selection: Model3dReferenceIntent | null, ready: boolean) => void, retained?: Model3dReferenceIntent, fetcher: Fetcher = fetch, display?: ExperienceDisplayPort) {
+    super((value, ready) => { const selection = readModel3dReferenceIntent(value); changed(selection, ready && (!value || Boolean(selection))); }, retained, fetcher, "model3d", display);
   }
 }
 /** Required ordinary image; Video's own closed intent and inspection endpoint. */
 export class VideoReferencePicker extends ReferencePicker {
-  constructor(changed: (selection: VideoReferenceIntent | null, ready: boolean) => void, retained?: VideoReferenceIntent, fetcher: Fetcher = fetch) {
-    super((value, ready) => { const selection = readVideoReferenceIntent(value); changed(selection, ready && Boolean(selection)); }, retained, fetcher, "video");
+  constructor(changed: (selection: VideoReferenceIntent | null, ready: boolean) => void, retained?: VideoReferenceIntent, fetcher: Fetcher = fetch, display?: ExperienceDisplayPort) {
+    super((value, ready) => { const selection = readVideoReferenceIntent(value); changed(selection, ready && Boolean(selection)); }, retained, fetcher, "video", display);
   }
 }
 
 /** Exact saved image for review/recovery. GET-only; no inspection, permission,
  * ingestion, or generation is inferred from displaying previously selected bytes. */
 export class VideoReferencePreview {
+  #display?: ExperienceDisplayPort;
+  #setText<T extends HTMLElement>(element: T, source: string, values?: Record<string, string | number>) { return bindText(this.#display, element, source, values); }
   readonly element = node("figure");
   #image = node("img");
-  #status = node("p", "Image unavailable");
-  #reload = node("button", "Reload image");
+  #status = node("p");
+  #reload = node("button");
   #candidate: VideoReferenceCandidate | null = null;
   #abort = new AbortController();
   #fetch: Fetcher;
   #url?: string;
   #busy = false;
   #disposed = false;
-  constructor(value: unknown, fetcher: Fetcher = fetch) {
+  constructor(value: unknown, fetcher: Fetcher = fetch, display?: ExperienceDisplayPort) {
+    this.#display = display;
+    this.#setText(this.#status, "Image unavailable"); this.#setText(this.#reload, "Reload image");
     this.#fetch = (path, init) => fetcher(path, init);
     const reference = jsonIssues(value).length || !record(value) ? null : readVideoReferencePlan(value, value.selection);
     this.element.className = "experience-video-retained-image";
-    this.#image.hidden = true; this.#image.alt = "Selected image";
+    this.#image.hidden = true;
+    if (display) display.bindAttribute(this.#image, "alt", "Selected image");
+    else this.#image.alt = "Selected image";
     this.#status.setAttribute("role", "status"); this.#status.setAttribute("aria-live", "polite");
     this.#reload.type = "button"; this.#reload.className = "experience-button";
     this.#reload.addEventListener("click", () => void this.#read());
     this.element.append(this.#image);
     if (reference) {
       const { permissionAttestation: _, ...source } = reference.selection;
-      const label = typeof reference.properties.label === "string" && reference.properties.label.trim() ? reference.properties.label : "Selected image";
+      const authoredLabel = typeof reference.properties.label === "string" && reference.properties.label.trim() ? reference.properties.label : null;
+      const label = authoredLabel ?? "Selected image";
       this.#candidate = readVideoReferenceCandidate({ source, label, preview: reference.properties.media_url });
-      const caption = node("figcaption", label); caption.dir = "auto";
+      const caption = authoredLabel === null ? this.#setText(node("figcaption"), "Selected image") : node("figcaption", authoredLabel); caption.dir = "auto";
       const details = node("details"), hash = node("code", reference.selection.sha256);
-      details.append(node("summary", "Image details"), node("p", "SHA-256"), hash);
+      details.append(this.#setText(node("summary"), "Image details"), this.#setText(node("p"), "SHA-256"), hash);
       this.element.append(caption, details);
     }
     this.element.append(this.#status, this.#reload);
@@ -347,7 +368,7 @@ export class VideoReferencePreview {
   async #read() {
     if (this.#disposed || this.#busy || !this.#candidate) return;
     this.#busy = true; this.#reload.setAttribute("aria-disabled", "true");
-    this.#retireImage(); this.#status.textContent = "Loading image";
+    this.#retireImage(); this.#setText(this.#status, "Loading image");
     const lease = previewLease(this.#abort.signal);
     try {
       const pending = this.#fetch(this.#candidate.preview, { credentials: "same-origin", cache: "no-store", redirect: "error", signal: lease.signal });
@@ -358,9 +379,9 @@ export class VideoReferencePreview {
       this.#url = URL.createObjectURL(new Blob([content.bytes], { type: content.mime })); this.#image.src = this.#url;
       await lease.settle(this.#image.decode());
       if (this.#disposed) return;
-      this.#image.hidden = false; this.#status.textContent = "";
+      this.#image.hidden = false; this.#setText(this.#status, "");
     } catch {
-      if (!this.#disposed) { this.#retireImage(); this.#status.textContent = "Image unavailable"; }
+      if (!this.#disposed) { this.#retireImage(); this.#setText(this.#status, "Image unavailable"); }
     } finally {
       lease.dispose(); this.#busy = false;
       if (!this.#disposed) this.#reload.setAttribute("aria-disabled", "false");

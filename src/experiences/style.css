@@ -21,7 +21,8 @@
 .experience-page h2 { font-size: 1.5rem; margin-block: 0 1rem; }
 .experience-page p { margin-block: .5rem 1rem; overflow-wrap: anywhere; }
 .experience-page :focus-visible { outline: var(--forma-focus-ring-width, .1875rem) solid var(--forma-focus-ring-color, var(--ex-accent)); outline-offset: 3px; }
-.experience-navigation, #experience-root { max-inline-size: 80rem; margin-inline: auto; }
+#experience-navigation, #experience-root { max-inline-size: 80rem; margin-inline: auto; }
+.experience-language { display: flex; justify-content: flex-end; margin-block-end: .75rem; --forma-color-text: var(--ex-text); --forma-color-surface: var(--ex-surface); --forma-color-border-strong: var(--ex-border-strong); }
 .experience-navigation { display: flex; flex-wrap: wrap; gap: .5rem; }
 .experience-navigation a, .experience-button { display: inline-flex; align-items: center; justify-content: center; min-block-size: max(44px, var(--forma-control-min-size, 2.75rem)); min-inline-size: 44px; padding: .5rem 1rem; border: 1px solid var(--ex-border-strong); border-radius: var(--forma-radius-small, .375rem); color: var(--ex-text); background: var(--ex-surface); font: inherit; text-decoration: none; overflow-wrap: anywhere; cursor: pointer; touch-action: manipulation; }
 .experience-navigation a[aria-current=page], .experience-button[aria-pressed=true] { border-color: var(--ex-accent); color: var(--ex-accent); background: var(--ex-accent-soft); box-shadow: inset 0 0 0 1px var(--ex-accent); }
@@ -35,7 +36,7 @@
 .experience-controls { display: grid; gap: 1.5rem; }
 .experience-stage-heading { display: flex; flex-wrap: wrap; gap: .5rem; justify-content: space-between; margin-block-end: 1rem; font-size: .875rem; }
 .experience-spatial { display: grid; align-items: center; justify-items: center; aspect-ratio: 4/3; min-block-size: 14rem; padding: 1rem; overflow: hidden; border: 1px solid var(--ex-border); background: radial-gradient(ellipse at 50% 0%, var(--ex-accent-soft), var(--ex-subtle) 65%); }
-.experience-spatial[data-anchor=left] { justify-items: start; }.experience-spatial[data-anchor=right] { justify-items: end; }
+.experience-spatial[data-anchor=left] { justify-items: left; }.experience-spatial[data-anchor=right] { justify-items: right; }
 .experience-spatial[data-lighting=soft-light] { background: radial-gradient(ellipse at 50% 50%, var(--ex-surface), var(--ex-subtle)); }
 .experience-spatial[data-lighting=low-key] { background: linear-gradient(120deg, var(--ex-subtle), var(--ex-accent-soft)); }
 .experience-subject { display: block; max-inline-size: 75%; padding: 1rem; border: 1px solid var(--ex-border-strong); border-radius: .5rem; background: var(--ex-surface); overflow-wrap: anywhere; white-space: pre-wrap; }
