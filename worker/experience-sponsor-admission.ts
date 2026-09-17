@@ -1,3 +1,5 @@
+import { describeSponsorStoryAdmission, readSponsorStoryTemplateEvidence } from "./experience-sponsor-story-evidence.ts";
+import { matchSponsorStoryTemplate } from "./experience-sponsor-story-contract.ts";
 import { sponsorImageTextSource } from "./experience-sponsor-image-format.ts";
 import { sponsorApprovalAssertion, sponsorIssuedAuthorityAssertion } from "./experience-sponsor-approval.ts";
 import { matchSponsorImageTemplate } from "./experience-sponsor-campaign.ts";
@@ -14,6 +16,70 @@ import type { PilotUser } from "./pilot-policy.ts";
 import type { OutputTrustedContext } from "./output-requirements-api.ts";
 import type { OutputSqlAssertion } from "./output-command-core.ts";
 import type { WorkerEnv } from "./runtime.ts";
+
+// Exact equivalent of the qualified original native sponsor receipt proof.
+// Balanced conjunctions keep V4 inside D1 depth 100. A source digest guard below
+// refuses future original-proof changes until this closed mapping is reviewed.
+const STORY_NATIVE_RECEIPT_SQL = `EXISTS(SELECT 1 FROM output_operation_slots slot
+    JOIN output_execution_grants grant_row ON grant_row.scope_key=slot.scope_key AND grant_row.grant_id=slot.grant_id
+    JOIN output_plan_revisions plan ON plan.scope_key=slot.scope_key AND plan.plan_revision_id=slot.plan_revision_id
+    JOIN document_jobs job ON job.job_id=slot.job_id
+    JOIN budget_reservations tokens ON tokens.reservation_id=slot.token_reservation_id
+    JOIN cost_budget_reservations cost ON cost.reservation_id=slot.cost_reservation_id
+    JOIN output_commands command ON command.scope_key=slot.scope_key AND command.actor_user_id=grant_row.actor_user_id AND command.command_key=?
+    JOIN event_private_payloads body ON body.private_event_id=command.event_id
+    WHERE ((((((slot.scope_key=?)
+      AND ((slot.slot_id=?)
+      AND (slot.grant_id=?)))
+      AND ((slot.plan_revision_id=?)
+      AND ((slot.job_id=?)
+      AND (slot.cost_reservation_id=?))))
+      AND (((slot.token_reservation_id=?)
+      AND ((slot.status='authorized')
+      AND (slot.source_digest=?)))
+      AND ((slot.provider=?)
+      AND ((slot.model=?)
+      AND (slot.route_digest=?)))))
+      AND ((((slot.maximum_microusd=?)
+      AND ((slot.maximum_tokens=?)
+      AND (slot.maximum_calls=?)))
+      AND ((grant_row.actor_user_id=?)
+      AND ((grant_row.payer_user_id=?)
+      AND (grant_row.status='authorized'))))
+      AND (((grant_row.context_id IS NULL)
+      AND ((grant_row.plan_revision_id=plan.plan_revision_id)
+      AND (grant_row.maximum_microusd=slot.maximum_microusd)))
+      AND (((grant_row.maximum_calls=slot.maximum_calls)
+      AND (grant_row.expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now')))
+      AND ((plan.scope_kind='personal')
+      AND (plan.owner_user_id=?))))))
+      AND (((((plan.project_id=?)
+      AND ((plan.document_id=?)
+      AND (plan.source_digest=slot.source_digest)))
+      AND ((plan.source_head=?)
+      AND ((job.owner_id=plan.owner_user_id)
+      AND (job.stream_id=?))))
+      AND (((job.document_id=plan.document_id)
+      AND ((job.status='queued')
+      AND (tokens.owner_id=grant_row.payer_user_id)))
+      AND (((tokens.status='active')
+      AND (tokens.reserved_tokens=slot.maximum_tokens))
+      AND ((cost.owner_id=grant_row.payer_user_id)
+      AND (cost.status='active')))))
+      AND ((((cost.reserved_microusd=slot.maximum_microusd)
+      AND ((cost.allow_user_overage=0)
+      AND (tokens.correlation_id=job.correlation_id)))
+      AND ((cost.correlation_id=job.correlation_id)
+      AND ((tokens.stream_id=job.stream_id)
+      AND (cost.stream_id=job.stream_id))))
+      AND (((body.owner_id=plan.owner_user_id)
+      AND ((body.project_id=plan.project_id)
+      AND (body.document_id=plan.document_id)))
+      AND (((body.redacted_at IS NULL)
+      AND (json_extract(body.private_json,'$.output_command_envelope.sponsor_entitlement.envelope_digest')=?))
+      AND ((json_extract(body.private_json,'$.output_command_envelope.sponsor_entitlement.policy_digest')=?)
+      AND (json_extract(body.private_json,'$.output_command_envelope.sponsor_entitlement.consumption_id')=?))))))))`;
+const STORY_NATIVE_RECEIPT_SOURCE_DIGEST = "sha256:4cd2a7bb7c1e3cb6aa31ace796862cc242ab0ebc477f897be98e7c984fba13c8";
 
 declare const sponsorAdmission: unique symbol;
 export type SponsorAdmissionAuthority = Readonly<{ [sponsorAdmission]: true }>;
@@ -115,11 +181,17 @@ export async function createSponsorAdmissionAuthority(input: {
     && captured.scope === canonicalJson(trusted.scope) && captured.sourceDigest === trusted.sourceDigest && captured.requirementsDigest === trusted.requirementsDigest && captured.sourceBindingJson === sourceBinding(trusted);
   const command = JSON.parse(commandJson) as Record<string, unknown>;
   if (typeof grantId !== "string" || !/^[A-Za-z0-9][A-Za-z0-9_.:@/-]{0,199}$/u.test(grantId)) return fail("sponsor_grant_invalid");
-  const [compiled, description] = await Promise.all([compileSponsorEnvelope(input.policy, input.envelope), describeSponsorImageAdmission(trusted, command)]);
+  const compiled = await compileSponsorEnvelope(input.policy, input.envelope);
+  const description = compiled.policy.version === 4
+    ? await describeSponsorStoryAdmission(trusted, command) : await describeSponsorImageAdmission(trusted, command);
   if (!current()) return fail("sponsor_authority_changed");
   if (compiled.policy.version === 2) {
     const evidence = await readSponsorImageTemplateEvidence(trusted, command, description.recipe);
     if (!compiled.policy.templates.some(template => matchSponsorImageTemplate(template, evidence))) return fail("sponsor_campaign_template_mismatch");
+  }
+  if (compiled.policy.version === 4) {
+    const evidence = await readSponsorStoryTemplateEvidence(trusted, command, description.recipe);
+    if (!(await Promise.all(compiled.policy.templates.map(template => matchSponsorStoryTemplate(template, evidence)))).some(Boolean)) return fail("sponsor_campaign_template_mismatch");
   }
   for (const [key, value] of Object.entries(description)) {
     if (key === "preflightExpiresAtMs") continue;
@@ -136,7 +208,7 @@ export async function createSponsorAdmissionAuthority(input: {
     principalAssertions.push({ sql: `EXISTS(SELECT 1 FROM (${PRINCIPAL_WITH_ACCESS_SQL}) captured WHERE json_array(${principalColumns.map(column => `captured.${column}`).join(",")})=?)`,
       bindings: [userId, JSON.stringify(principalColumns.map(column => row[column] ?? null))] });
   }
-  const issuedAssertions: OutputSqlAssertion[] = p.version === 2 ? [sponsorApprovalAssertion(p, e.actorUserId), await sponsorIssuedAuthorityAssertion({ policy:p, policyDigest:compiled.policyDigest, grantId,
+  const issuedAssertions: OutputSqlAssertion[] = p.version === 2 || p.version === 4 ? [sponsorApprovalAssertion(p, e.actorUserId), await sponsorIssuedAuthorityAssertion({ policy:p, policyDigest:compiled.policyDigest, grantId,
     actorUserId:e.actorUserId,sessionDigest:e.sessionDigest,intentKey:e.intentKey,envelopeDigest:compiled.envelopeDigest })] : [];
   const assertions: OutputSqlAssertion[] = [...principalAssertions, ...issuedAssertions, { sql: `EXISTS(SELECT 1 FROM experience_sponsor_campaigns campaign JOIN experience_sponsor_grants grant_row ON grant_row.campaign_id=campaign.campaign_id
     JOIN users actor ON actor.user_id=grant_row.actor_user_id JOIN users payer ON payer.user_id=?
@@ -192,6 +264,21 @@ export async function sponsorAdmissionPlan(authority: SponsorAdmissionAuthority,
   const resource = await sponsorResourceAdmissionAssertion({ limits: state.compiled.policy.resources, campaignId: state.compiled.policy.campaignId,
     policyDigest: state.compiled.policyDigest, actorUserId: state.compiled.envelope.actorUserId });
   const approval = sponsorApprovalAssertion(state.compiled.policy, state.compiled.envelope.actorUserId);
+  if (state.compiled.policy.version === 4) {
+    // Native sidecars and the occupancy insert precede these guards in the same
+    // DB.batch. Keep each complete predicate in its own CHECK statement: nesting
+    // them with the final receipt witness exceeds D1's expression depth. The
+    // native receipt assertion still runs after output_commands is inserted.
+    const token = `sponsor-story:${state.compiled.envelope.consumptionId}`;
+    const guards = [resource, approval].flatMap(proof => [
+      { sql: `INSERT INTO experience_sponsor_assertions(token,passed) VALUES(?,CASE WHEN (${proof.sql}) THEN 1 ELSE 0 END)`,
+        bindings: [token, ...(proof.bindings ?? [])] },
+      { sql: "DELETE FROM experience_sponsor_assertions WHERE token=?", bindings: [token] },
+    ]);
+    if (await digest(plan.nativeAssertion.sql) !== STORY_NATIVE_RECEIPT_SOURCE_DIGEST) return fail("sponsor_story_native_proof_changed");
+    return { ...plan, admissionStatements: [...plan.admissionStatements, ...guards],
+      nativeAssertion: { ...plan.nativeAssertion, sql: STORY_NATIVE_RECEIPT_SQL } };
+  }
   return { ...plan, nativeAssertion: { sql: `(${plan.nativeAssertion.sql}) AND (${resource.sql}) AND (${approval.sql})`,
     bindings: [...plan.nativeAssertion.bindings, ...resource.bindings, ...(approval.bindings ?? [])] } };
 }

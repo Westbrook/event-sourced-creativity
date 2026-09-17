@@ -1,3 +1,5 @@
+import { sponsorFinancialEventProfile } from "./experience-sponsor-execution.ts";
+import { canonicalJson as sponsorEventJson } from "../src/experiences/compiler.ts";
 import { parseVideoOutputContract } from "../src/model/output-video-contract.ts";
 import { readVideoPlannerExecution } from "./output-video-planner.ts";
 import { generateOutputVideo, withOutputVideoHook, outputVideoMediaPrice, OUTPUT_VIDEO_TRANSPORT, type OutputVideoHookLease } from "./output-video-execution.ts";
@@ -499,6 +501,7 @@ export async function legacyChatMemoryProof(env:WorkerEnv,streamId:string,select
 }
 
 export async function handleEvents(request:Request,env:WorkerEnv,hot=false,userOverride?:PilotUser,execution?:EventExecutionControl):Promise<Response>{
+  const sponsorEnvironment=env;
   try{
     await ensureSchema(env);if(execution?.output)env=execution.output.guardedEnvironment;
     const appendOperationEvents=async(environment:WorkerEnv,events:EventRow[],options:Parameters<typeof appendEvents>[2]={})=>{
@@ -570,7 +573,20 @@ export async function handleEvents(request:Request,env:WorkerEnv,hot=false,userO
     if(request.method!=="POST")return new Response("Method not allowed",{status:405});
     const consent=requireConsent(auth.user);if(consent)return consent;
     const body=await request.json() as {action?:"append"|"batch"|"canvas_sync"|"propose"|"preview"|"generate"|"chat"|"structure_adaptive"|"render_document"|"hot"|"evaluate_extractors"|"rebuild_index"|"extract_reference"|"calculate_focal_point"|"open_session"|"close_session"|"compose_brief"|"declare_intent"|"run_scout"|"refresh_taste_model"|"set_condition"|"check_conditions"|"critique_object";event?:EventInput;events?:EventInput[];expectedSequence?:number;clientId?:string;correlationId?:string;locale?:string;documentId?:string;documentRevision?:string;canvasId?:string;contextSetId?:string;projectScope?:boolean;prompt?:string;message?:string;livePreview?:boolean;sourceSurface?:string;sourcePreviewId?:string;sourceChatTurnId?:string;directionRef?:string;directionModel?:string;promptTechnique?:string;promptFanId?:string;preflightId?:string;preflightVersion?:string;preflightAcknowledged?:boolean;exemplarRefs?:Array<Record<string,unknown>>;snapshot?:Record<string,unknown>;sourceBlockVersions?:Array<Record<string,unknown>>;blockId?:string;referenceId?:string;targetKind?:"generation"|"reference"|"artifact";targetId?:string;mediaUrl?:string;sample?:ImageSample;findingKinds?:ReferenceFindingKind[];statement?:string;deadline?:string|null;maxObservations?:number;condition?:string;triggerKind?:"generation_count"|"on_date";threshold?:number;onDate?:string;objectId?:string;axis?:string;polarity?:"positive"|"negative";value?:string;note?:string;artifactId?:string;artifactKind?:DocumentArtifactKind;itemCount?:number;audience?:string;tone?:string;sceneMedium?:SceneMedium;sceneConfiguration?:SceneConfiguration;videoSeconds?:VideoDurationSeconds;videoSize?:"1280x720"|"720x1280";videoResolution?:"480p"|"720p";videoAudioMode?:VideoAudioMode;soundtrackBlockIds?:string[];sendSoundtrackToVideoProvider?:boolean;audioImageBlockId?:string;audioProfile?:AudioRequestProfile;audioProviderModel?:string;audioVideoArtifactId?:string;sendAudioVideoToProvider?:boolean;audioEstimatedCostMicrousd?:number;model3dPrompt?:string;model3dPromptSource?:"exact"|"document";model3dAdaptation?:Record<string,unknown>;model3dSettings?:unknown;model3dReferenceBlockIds?:string[];model3dInputReceipt?:Record<string,unknown>;model3dProviderSubmission?:string;paidMediaConfirmed?:boolean;productionMode?:ProductionMode;productionPlan?:ManagedProductionPlan;productionSceneReceipts?:Record<string,ProductionSceneReceipt>;productionFrameReceipts?:Record<string,ProductionFrameReceipt>;productionPrepaidSceneIds?:string[];productionPrepaidAnchor?:boolean;productionAnchor?:Record<string,unknown>;costReservationMicrousd?:number;budgetAcknowledged?:boolean;budgetWarningSuppressed?:boolean;providerJobId?:string;providerModel?:string;providerStatusUrl?:string;providerResponseUrl?:string;providerCancelUrl?:string;reservationId?:string;requestKey?:string;workflowId?:string;workflowStageId?:string;workflowSources?:ProductionWorkflowSource[];artifactPlan?:Record<string,unknown>;plannerModel?:string;plannerResponseId?:string;plannerLatencyMs?:number;plannerUsage?:Record<string,unknown>;plannerInput?:Record<string,unknown>;renderedItems?:Array<Record<string,unknown>>;videoInputReceipt?:Record<string,unknown>;audioInputReceipt?:Record<string,unknown>};
-    if(sponsoredOutput&&body.action!=="generate")return Response.json({error:"sponsor_recipe_unsupported"},{status:403});
+    if(sponsoredOutput){
+      const output=execution!.output!,binding=output.sponsorFinancialBinding!;
+      const profile=sponsorFinancialEventProfile(binding,sponsorEnvironment,actorUserId,output.reference);
+      if(profile==="image"){
+        if(body.action!=="generate")return Response.json({error:"sponsor_recipe_unsupported"},{status:403});
+      }else{
+        const settings=sponsorEventJson(output.settings),reference=sponsorEventJson(output.reference);
+        const narrative=await readOutputNarrativePayload(output.settings);
+        if(!narrative||body.action!=="render_document"||body.artifactKind!=="short_story"||body.productionMode!=="manual"||body.itemCount!==3
+          ||sponsorEventJson(output.settings)!==settings||sponsorEventJson(output.reference)!==reference
+          ||sponsorFinancialEventProfile(binding,sponsorEnvironment,actorUserId,output.reference)!=="short_story")
+          return Response.json({error:"sponsor_recipe_unsupported"},{status:403});
+      }
+    }
     if(body.action==="render_document"&&body.videoResolution!==undefined){
       if(body.artifactKind!=="video"||!VIDEO_ADAPTER_CONTRACT.supportedResolutions.includes(body.videoResolution))return Response.json({error:"video_resolution_unsupported",supported:VIDEO_ADAPTER_CONTRACT.supportedResolutions},{status:400});
       if(body.productionMode==="managed")return Response.json({error:"managed_video_resolution_unsupported"},{status:400});

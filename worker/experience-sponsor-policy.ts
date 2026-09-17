@@ -1,6 +1,7 @@
 import { canonicalJson, digest, exactKeys, jsonIssues, record } from "../src/experiences/compiler.ts";
 import { readSponsorCampaignTemplate, recipeMatchesSponsorTemplate, type SponsorImageCampaignTemplate } from "./experience-sponsor-campaign.ts";
-import { readSponsorResourceLimits, type SponsorResourceLimits } from "./experience-sponsor-resources.ts";
+import { readSponsorStoryCampaignTemplate, recipeMatchesSponsorStoryTemplate, type SponsorStoryCampaignTemplate } from "./experience-sponsor-story-contract.ts";
+import { readSponsorResourceLimits, type SponsorResourceLimits, type SponsorResourceLimitsV1 } from "./experience-sponsor-resources.ts";
 import type { OutputKind } from "../src/experiences/contracts.ts";
 
 /** Dormant contract only. No registered route issues sponsor authority; there is
@@ -37,7 +38,11 @@ export type SponsorPolicyV1 = {
   recipes: SponsorRecipe[];
 };
 export type SponsorPolicyV2 = Omit<SponsorPolicyV1, "version" | "recipes"> & { version: 2; templates: SponsorImageCampaignTemplate[]; resources: SponsorResourceLimits };
-export type SponsorPolicy = SponsorPolicyV1 | SponsorPolicyV2;
+export type SponsorPolicyV4 = Omit<SponsorPolicyV1, "version" | "recipes"> & {
+  version: 4; family: "canonical-short-story@1"; templates: SponsorStoryCampaignTemplate[]; resources: SponsorResourceLimitsV1;
+};
+export type SponsorApprovedPolicy = SponsorPolicyV2 | SponsorPolicyV4;
+export type SponsorPolicy = SponsorPolicyV1 | SponsorApprovedPolicy;
 export type SponsorEnvelopeV1 = {
   version: 1; campaignId: string; policyVersion: string; consumptionId: string; intentKey: string;
   actorKind: "canonical-principal"; actorUserId: string; sessionDigest: string; payerUserId: string;
@@ -47,7 +52,8 @@ export type SponsorEnvelopeV1 = {
   issuedAtMs: number; expiresAtMs: number;
 };
 export type SponsorEnvelopeV2 = Omit<SponsorEnvelopeV1, "version"> & { version: 2; templateDigest: string };
-export type SponsorEnvelope = SponsorEnvelopeV1 | SponsorEnvelopeV2;
+export type SponsorEnvelopeV4 = Omit<SponsorEnvelopeV1, "version"> & { version: 4; family: "canonical-short-story@1"; templateDigest: string };
+export type SponsorEnvelope = SponsorEnvelopeV1 | SponsorEnvelopeV2 | SponsorEnvelopeV4;
 const recipeKeys = ["appId", "recipeVersion", "releaseDigest", "outputKind", "provider", "model", "routeDigest", "settingsDigest", "outputCount", "durationMs", "width", "height", "calls", "maximumTokens", "maximumMicrousd"];
 function validRecipe(value: unknown): value is SponsorRecipe {
   if (!keys(value, recipeKeys) || ![value.appId, value.recipeVersion, value.provider, value.model].every(id)
@@ -61,10 +67,31 @@ function validRecipe(value: unknown): value is SponsorRecipe {
     && Number(value.calls.render) > 0;
 }
 
+/** Separate finite grammar: the native story has one planning call and no
+ * render call. V1/V2 Image recipes and the guest lane's V3 are not reinterpreted. */
+function readSponsorStoryPolicy(raw: unknown): SponsorPolicyV4 {
+  if (!keys(raw, ["version", "family", "mode", "campaignId", "policyVersion", "payerUserId", "audience", "approvalReceiptDigest", "startsAtMs", "expiresAtMs", "maximumGrantLifetimeMs", "maximumAdmissions", "maximumMicrousd", "maximumAdmissionsPerActor", "windowMs", "maximumAdmissionsPerWindow", "maximumAdmissionsPerActorWindow", "templates", "resources"])
+    || raw.version !== 4 || raw.family !== "canonical-short-story@1" || raw.mode !== "candidate" || raw.audience !== "canonical-principal"
+    || ![raw.campaignId, raw.policyVersion, raw.payerUserId].every(id) || !hash(raw.approvalReceiptDigest)
+    || !integer(raw.startsAtMs, 0, 8_640_000_000_000_000) || !integer(raw.expiresAtMs, 1, 8_640_000_000_000_000)
+    || raw.expiresAtMs <= raw.startsAtMs || !integer(raw.maximumGrantLifetimeMs, 1, 900_000)
+    || !integer(raw.maximumMicrousd, 1, 1_000_000_000_000)
+    || ![raw.maximumAdmissions, raw.maximumAdmissionsPerActor, raw.maximumAdmissionsPerWindow, raw.maximumAdmissionsPerActorWindow].every(value => integer(value, 1, 100_000))
+    || !integer(raw.windowMs, 1, 86_400_000) || !Array.isArray(raw.templates) || raw.templates.length !== 1
+    || Number(raw.maximumAdmissionsPerActor) > Number(raw.maximumAdmissions)
+    || Number(raw.maximumAdmissionsPerWindow) > Number(raw.maximumAdmissions)
+    || Number(raw.maximumAdmissionsPerActorWindow) > Number(raw.maximumAdmissionsPerActor)) return fail("sponsor_policy_invalid");
+  const templates = raw.templates.map(readSponsorStoryCampaignTemplate), resources = readSponsorResourceLimits(raw.resources);
+  if (resources.version !== 1 || resources.startsAtMs < raw.startsAtMs || resources.expiresAtMs > raw.expiresAtMs
+    || templates.some(template => template.maximumMicrousd > Number(raw.maximumMicrousd))) return fail("sponsor_policy_invalid");
+  return freeze(JSON.parse(canonicalJson({ ...raw, templates, resources })) as SponsorPolicyV4);
+}
+
 /** Candidate policies are inert review material, not runtime configuration. */
 export function readSponsorPolicy(raw: unknown = DEFAULT_SPONSOR_POLICY): SponsorPolicy | typeof DEFAULT_SPONSOR_POLICY {
   if (jsonIssues(raw).length) return fail("sponsor_policy_invalid");
   if (keys(raw, ["version", "mode"]) && raw.version === 1 && raw.mode === "disabled") return DEFAULT_SPONSOR_POLICY;
+  if (record(raw) && raw.version === 4) return readSponsorStoryPolicy(raw);
   if (record(raw) && raw.version === 2) {
     if (!keys(raw, ["version", "mode", "campaignId", "policyVersion", "payerUserId", "audience", "approvalReceiptDigest", "startsAtMs", "expiresAtMs", "maximumGrantLifetimeMs", "maximumAdmissions", "maximumMicrousd", "maximumAdmissionsPerActor", "windowMs", "maximumAdmissionsPerWindow", "maximumAdmissionsPerActorWindow", "templates", "resources"])
       || !Array.isArray(raw.templates) || raw.templates.length !== 1) return fail("sponsor_policy_invalid");
@@ -96,11 +123,34 @@ export function readSponsorPolicy(raw: unknown = DEFAULT_SPONSOR_POLICY): Sponso
   return freeze(JSON.parse(canonicalJson(raw)) as SponsorPolicy);
 }
 
+async function compileSponsorStoryEnvelope(policy: SponsorPolicyV4, raw: unknown) {
+  if (jsonIssues(raw).length) return fail("sponsor_envelope_invalid");
+  if (record(raw) && raw.actorKind === "guest") return fail("sponsor_guest_custody_not_integrated");
+  if (!keys(raw, ["version", "family", "campaignId", "policyVersion", "consumptionId", "intentKey", "actorKind", "actorUserId", "sessionDigest", "payerUserId", "ownerUserId", "projectId", "documentId", "sourceRevision", "sourceDigest", "orderedAssetDigests", "rightsDigest", "compiledInputDigest", "transferEnvelopeDigest", "recipe", "issuedAtMs", "expiresAtMs", "templateDigest"])
+    || raw.version !== 4 || raw.family !== policy.family || raw.actorKind !== "canonical-principal"
+    || ![raw.campaignId, raw.policyVersion, raw.consumptionId, raw.intentKey, raw.actorUserId, raw.payerUserId, raw.ownerUserId, raw.projectId, raw.documentId].every(id)
+    || ![raw.sessionDigest, raw.sourceDigest, raw.rightsDigest, raw.compiledInputDigest, raw.transferEnvelopeDigest, raw.templateDigest].every(hash)
+    || !integer(raw.sourceRevision, 0, Number.MAX_SAFE_INTEGER)
+    || !Array.isArray(raw.orderedAssetDigests) || raw.orderedAssetDigests.length !== 0
+    || !integer(raw.issuedAtMs, Math.max(policy.startsAtMs, policy.resources.startsAtMs), policy.expiresAtMs)
+    || !integer(raw.expiresAtMs, Number(raw.issuedAtMs) + 1, Math.min(policy.expiresAtMs, policy.resources.expiresAtMs, Number(raw.issuedAtMs) + policy.maximumGrantLifetimeMs))) return fail("sponsor_envelope_invalid");
+  if (raw.campaignId !== policy.campaignId || raw.policyVersion !== policy.policyVersion || raw.payerUserId !== policy.payerUserId
+    || raw.actorUserId !== raw.ownerUserId || raw.actorUserId === raw.payerUserId
+    || !policy.templates.some(template => recipeMatchesSponsorStoryTemplate(template, raw.recipe))) return fail("sponsor_envelope_not_eligible");
+  const envelope = freeze(JSON.parse(canonicalJson(raw)) as SponsorEnvelopeV4);
+  const templateDigests = await Promise.all(policy.templates.map(template => digest(template)));
+  if (!policy.templates.some((template, index) => templateDigests[index] === envelope.templateDigest
+    && recipeMatchesSponsorStoryTemplate(template, envelope.recipe))) return fail("sponsor_envelope_not_eligible");
+  const [policyDigest, envelopeDigest] = await Promise.all([digest(policy), digest(envelope)]);
+  return freeze({ policy, envelope, policyJson: canonicalJson(policy), envelopeJson: canonicalJson(envelope), policyDigest, envelopeDigest });
+}
+
 /** Hashes source/rights/transfer evidence without copying creative text. They do
  * not prove rights, identity or custody; native commit-time authority is required. */
 export async function compileSponsorEnvelope(rawPolicy: unknown, rawEnvelope: unknown) {
   const policy = readSponsorPolicy(rawPolicy);
   if (policy.mode === "disabled") return fail("sponsor_disabled");
+  if (policy.version === 4) return compileSponsorStoryEnvelope(policy, rawEnvelope);
   if (jsonIssues(rawEnvelope).length) return fail("sponsor_envelope_invalid");
   if (record(rawEnvelope) && rawEnvelope.actorKind === "guest") return fail("sponsor_guest_custody_not_integrated");
   if (!keys(rawEnvelope, ["version", "campaignId", "policyVersion", "consumptionId", "intentKey", "actorKind", "actorUserId", "sessionDigest", "payerUserId", "ownerUserId", "projectId", "documentId", "sourceRevision", "sourceDigest", "orderedAssetDigests", "rightsDigest", "compiledInputDigest", "transferEnvelopeDigest", "recipe", "issuedAtMs", "expiresAtMs", ...(policy.version === 2 ? ["templateDigest"] : [])])

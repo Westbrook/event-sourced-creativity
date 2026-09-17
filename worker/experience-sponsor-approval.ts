@@ -1,5 +1,5 @@
 import { canonicalJson, digest, exactKeys, jsonIssues, record } from "../src/experiences/compiler.ts";
-import { readSponsorPolicy, SponsorEntitlementError, type SponsorPolicyV2 } from "./experience-sponsor-policy.ts";
+import { readSponsorPolicy, SponsorEntitlementError, type SponsorApprovedPolicy, type SponsorPolicyV2, type SponsorPolicyV4 } from "./experience-sponsor-policy.ts";
 import { readExistingPrincipalRequest } from "./principal-request-core.ts";
 import { PRINCIPAL_WITH_ACCESS_SQL } from "./access-policy.ts";
 import { POLICY_VERSION } from "./policy-version.ts";
@@ -32,7 +32,7 @@ export const SPONSOR_APPROVAL_SCHEMA = Object.freeze([
     BEGIN SELECT RAISE(ABORT,'sponsor_approval_already_exists'); END`,
 ]);
 export type SponsorApprovalProposal = {
-  policy: Omit<SponsorPolicyV2, "approvalReceiptDigest">;
+  policy: Omit<SponsorPolicyV2, "approvalReceiptDigest"> | Omit<SponsorPolicyV4, "approvalReceiptDigest">;
   eligibleActorUserIds: string[];
   issuerUserIds: string[];
 };
@@ -42,15 +42,15 @@ export type SponsorApprovalProposal = {
  * below additionally retains the full final policy JSON and its exact digest. */
 export async function compileSponsorApprovalProposal(raw: unknown) {
   if (jsonIssues(raw).length || !record(raw) || !exactKeys(raw, ["policy", "eligibleActorUserIds", "issuerUserIds"])
-    || !record(raw.policy) || Object.hasOwn(raw.policy, "approvalReceiptDigest") || raw.policy.version !== 2
+    || !record(raw.policy) || Object.hasOwn(raw.policy, "approvalReceiptDigest") || (raw.policy.version !== 2 && raw.policy.version !== 4)
     || ![raw.eligibleActorUserIds, raw.issuerUserIds].every(value => Array.isArray(value) && value.length > 0 && value.length <= 100
       && value.every(id) && new Set(value).size === value.length)) return fail("sponsor_approval_terms_invalid");
   const copied = JSON.parse(canonicalJson(raw)) as SponsorApprovalProposal;
   const validated = readSponsorPolicy({ ...copied.policy, approvalReceiptDigest: `sha256:${"0".repeat(64)}` });
-  if (validated.mode !== "candidate" || validated.version !== 2 || copied.eligibleActorUserIds.includes(validated.payerUserId)
+  if (validated.mode !== "candidate" || (validated.version !== 2 && validated.version !== 4) || copied.eligibleActorUserIds.includes(validated.payerUserId)
     || copied.issuerUserIds.some(actor => !copied.eligibleActorUserIds.includes(actor))) return fail("sponsor_approval_terms_invalid");
   const termsJson = canonicalJson(copied), termsDigest = await digest(copied);
-  const policy = readSponsorPolicy({ ...copied.policy, approvalReceiptDigest: termsDigest }) as SponsorPolicyV2;
+  const policy = readSponsorPolicy({ ...copied.policy, approvalReceiptDigest: termsDigest }) as SponsorApprovedPolicy;
   return { policy, policyJson: canonicalJson(policy), policyDigest: await digest(policy), termsJson, termsDigest };
 }
 async function principal(request: Request, env: WorkerEnv) {
@@ -123,9 +123,9 @@ export async function approveSponsorCampaign(request: Request, env: WorkerEnv) {
   return { replayed: false, approvalId: String(input.approvalId), ...compiled };
 }
 
-/** Live v2 approval predicate for issuance, native admission and every paid stage.
+/** Live v2/v4 approval predicate for issuance, native admission and every paid stage.
  * Original incurred monetary settlement deliberately never uses this predicate. */
-export function sponsorApprovalAssertion(policy: SponsorPolicyV2, actorUserId: string, requireIssuer = false): OutputSqlAssertion {
+export function sponsorApprovalAssertion(policy: SponsorApprovedPolicy, actorUserId: string, requireIssuer = false): OutputSqlAssertion {
   // Keep the complete approval and principal proofs as sibling materialized
   // relations. Nesting the principal query inside the approval WHERE exceeds
   // D1's expression depth when this predicate is an atomic-write witness.
@@ -164,6 +164,26 @@ export async function loadApprovedSponsorCampaign(request: Request, env: WorkerE
   return { actor, policy, policyDigest: row.policy_digest, assertions };
 }
 
+/** Explicit story-only loader. Existing Image callers keep their V2-only loader;
+ * importing this does not enroll a campaign or register an issuance route. */
+export async function loadApprovedSponsorStoryCampaign(request: Request, env: WorkerEnv, campaignId: string) {
+  if (!id(campaignId)) return fail("sponsor_campaign_invalid");
+  const actor = await principal(request, env);
+  const row = await env.DB.prepare("SELECT policy_json,policy_digest FROM experience_sponsor_campaigns WHERE campaign_id=? AND enabled=1").bind(campaignId).first<{ policy_json: string; policy_digest: string }>();
+  if (!row) return fail("sponsor_approved_campaign_unavailable");
+  const policy = readSponsorPolicy(JSON.parse(row.policy_json));
+  if (policy.mode !== "candidate" || policy.version !== 4 || policy.campaignId !== campaignId || await digest(policy) !== row.policy_digest) return fail("sponsor_approved_campaign_unavailable");
+  const actorAuthority = await authoritySnapshot(env, actor.userId);
+  const assertions = [actorAuthority.assertion, sponsorApprovalAssertion(policy, actor.userId, true),
+    { sql: `NOT EXISTS(SELECT 1 FROM pilot_participants participant JOIN pilot_cohorts cohort ON cohort.cohort_id=participant.cohort_id
+      WHERE participant.user_id IN(?,?) AND participant.status='active' AND participant.revoked_at IS NULL AND cohort.status IN('active','paused','closed'))`,
+      bindings: [actor.userId, policy.payerUserId] },
+    { sql: `EXISTS(SELECT 1 FROM experience_sponsor_campaigns WHERE campaign_id=? AND enabled=1 AND policy_digest=? AND policy_json=?) AND ${databaseNow}>=? AND ${databaseNow}<?`,
+      bindings: [campaignId, row.policy_digest, row.policy_json, policy.startsAtMs, policy.expiresAtMs], deadlineMs: policy.expiresAtMs }];
+  await env.DB.batch(assertions.flatMap(proof => outputAssertionStatements(env, proof)));
+  return { actor, policy, policyDigest: row.policy_digest, assertions };
+}
+
 /** Monotonic payer kill switch. No approval renewal, budget reset or refund is
  * implied; existing known incurred costs retain their source-free authority. */
 export async function revokeSponsorCampaign(request: Request, env: WorkerEnv) {
@@ -181,11 +201,11 @@ export async function revokeSponsorCampaign(request: Request, env: WorkerEnv) {
   return { revoked: true as const };
 }
 
-/** Exact server issuance evidence. A v2 grant row alone is insufficient: it
+/** Exact server issuance evidence. A v2/v4 grant row alone is insufficient: it
  * must have the immutable issuer record and atomic resource receipt for this
  * same actor/session/intent/envelope and approved policy. */
 export async function sponsorIssuedAuthorityAssertion(input: {
-  policy: SponsorPolicyV2; policyDigest: string; grantId: string; actorUserId: string;
+  policy: SponsorApprovedPolicy; policyDigest: string; grantId: string; actorUserId: string;
   sessionDigest: string; intentKey: string; envelopeDigest: string;
 }): Promise<OutputSqlAssertion> {
   const { policy, policyDigest, grantId, actorUserId, sessionDigest, intentKey, envelopeDigest } = input;

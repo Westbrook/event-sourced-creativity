@@ -1,3 +1,5 @@
+import { readSponsorStoryTemplateEvidence } from "./experience-sponsor-story-evidence.ts";
+import { matchSponsorStoryTemplate } from "./experience-sponsor-story-contract.ts";
 import { sponsorApprovalAssertion, sponsorIssuedAuthorityAssertion } from "./experience-sponsor-approval.ts";
 import { matchSponsorImageTemplate } from "./experience-sponsor-campaign.ts";
 import { sponsorImageEvidence } from "./experience-sponsor-image-evidence.ts";
@@ -15,7 +17,7 @@ declare const executionAuthority: unique symbol;
 export type SponsorExecutionAuthority = Readonly<{ [executionAuthority]: true }>;
 declare const financialAuthority: unique symbol;
 export type SponsorFinancialBinding = Readonly<{ [financialAuthority]: true }>;
-type Financial = { env: WorkerEnv; database: WorkerEnv["DB"]; actorUserId: string; payerUserId: string; jobId: string;
+type Financial = { profile: "image" | "short_story"; env: WorkerEnv; database: WorkerEnv["DB"]; actorUserId: string; payerUserId: string; jobId: string;
   grantId: string; scopeKey: string; slotId: string; consumptionId: string; campaignId: string; issuedGrantId: string;
   policyDigest: string; envelopeDigest: string; costReservationId: string; tokenReservationId: string; assertion: OutputSqlAssertion };
 type Execution = { request: Request; env: WorkerEnv; database: WorkerEnv["DB"]; actorUserId: string; commandJson: string;
@@ -47,22 +49,87 @@ const FINANCIAL_FROM = `FROM document_jobs job
  AND tokens.operation='image-generation' AND cost.operation=tokens.operation AND cost.period=tokens.period
  AND tokens.reserved_tokens=slot.maximum_tokens AND cost.reserved_microusd=slot.maximum_microusd AND cost.allow_user_overage=0`;
 
+// Separate original monetary shape; never selected from a current campaign or caller DTO.
+const STORY_FINANCIAL_FROM = `FROM document_jobs job
+ JOIN output_operation_slots slot ON slot.job_id=job.job_id
+ JOIN output_execution_grants execution ON execution.scope_key=slot.scope_key AND execution.grant_id=slot.grant_id
+ JOIN output_plan_revisions plan ON plan.scope_key=slot.scope_key AND plan.plan_revision_id=slot.plan_revision_id
+ JOIN experience_sponsor_consumptions consumption ON consumption.job_id=job.job_id AND consumption.actor_user_id=execution.actor_user_id
+ JOIN experience_sponsor_grants issued ON issued.grant_id=consumption.grant_id AND issued.campaign_id=consumption.campaign_id
+ JOIN budget_reservations tokens ON tokens.reservation_id=slot.token_reservation_id
+ JOIN cost_budget_reservations cost ON cost.reservation_id=slot.cost_reservation_id
+ WHERE ((((((job.job_id=?)
+ AND (job.owner_id=?))
+ AND ((execution.actor_user_id=job.owner_id)
+ AND ((plan.scope_kind='personal')
+ AND (plan.owner_user_id=job.owner_id))))
+ AND (((plan.document_id=job.document_id)
+ AND (job.stream_id='creative:'||job.owner_id))
+ AND ((job.kind='render_document')
+ AND ((job.source_surface='outputs')
+ AND (execution.context_id IS NULL)))))
+ AND ((((execution.plan_revision_id=slot.plan_revision_id)
+ AND (execution.payer_user_id<>execution.actor_user_id))
+ AND ((slot.attempt_ordinal=0)
+ AND ((slot.previous_slot_id IS NULL)
+ AND (execution.maximum_microusd=slot.maximum_microusd))))
+ AND (((execution.maximum_calls=1)
+ AND (slot.maximum_calls=1))
+ AND (((SELECT COUNT(*) FROM output_operation_slots sibling WHERE sibling.scope_key=slot.scope_key AND sibling.grant_id=slot.grant_id)=1)
+ AND ((consumption.maximum_microusd=slot.maximum_microusd)
+ AND (issued.actor_user_id=consumption.actor_user_id))))))
+ AND (((((issued.session_digest=consumption.session_digest)
+ AND (issued.intent_key=consumption.intent_key))
+ AND ((issued.envelope_digest=consumption.envelope_digest)
+ AND ((tokens.owner_id=execution.payer_user_id)
+ AND (cost.owner_id=execution.payer_user_id))))
+ AND (((tokens.stream_id=job.stream_id)
+ AND (cost.stream_id=job.stream_id))
+ AND ((tokens.correlation_id=job.correlation_id)
+ AND ((cost.correlation_id=job.correlation_id)
+ AND (tokens.operation='document-render:short_story')))))
+ AND ((((cost.operation=tokens.operation)
+ AND (cost.period=tokens.period))
+ AND ((tokens.reserved_tokens=slot.maximum_tokens)
+ AND ((cost.reserved_microusd=slot.maximum_microusd)
+ AND (cost.allow_user_overage=0))))
+ AND (((slot.provider='openai')
+ AND (slot.maximum_tokens=128000))
+ AND ((EXISTS(SELECT 1 FROM output_operation_routes route WHERE route.scope_key=slot.scope_key AND route.slot_id=slot.slot_id
+   AND route.stage_key='planning:0:initial' AND route.provider=slot.provider AND route.model=slot.model AND route.maximum_calls=1))
+ AND (((SELECT COUNT(*) FROM output_operation_routes route WHERE route.scope_key=slot.scope_key AND route.slot_id=slot.slot_id)=1)
+ AND (EXISTS(SELECT 1 FROM experience_sponsor_issuances original WHERE original.grant_id=issued.grant_id
+   AND original.envelope_digest=consumption.envelope_digest AND original.policy_digest=issued.policy_digest
+   AND json_extract(original.envelope_json,'$.version')=4 AND json_extract(original.envelope_json,'$.family')='canonical-short-story@1'
+   AND json_extract(original.envelope_json,'$.recipe.appId')='short-story' AND json_extract(original.envelope_json,'$.recipe.outputKind')='short_story'))))))))`;
+
 /** Source-free, original financial authority. Call only after identifying a
  * sponsored personal native job; ordinary installations have no sponsor schema. */
 export async function readSponsorFinancialBinding(env: WorkerEnv, actorUserId: string, jobId: string): Promise<SponsorFinancialBinding> {
-  const row = await env.DB.prepare(`SELECT execution.payer_user_id,execution.grant_id,slot.scope_key,slot.slot_id,
+  const database = env.DB;
+  let from = FINANCIAL_FROM, profile: Financial["profile"] = "image";
+  let row = await database.prepare(`SELECT execution.payer_user_id,execution.grant_id,slot.scope_key,slot.slot_id,
     consumption.consumption_id,consumption.campaign_id,issued.grant_id AS issued_grant_id,issued.policy_digest,
     consumption.envelope_digest,slot.cost_reservation_id,slot.token_reservation_id ${FINANCIAL_FROM}`)
     .bind(jobId, actorUserId).first<Record<string, string>>();
-  if (!row) return fail("sponsor_financial_binding_unavailable");
-  const assertion: OutputSqlAssertion = { sql: `EXISTS(SELECT 1 ${FINANCIAL_FROM}
+  if (!row) {
+    const job = await database.prepare("SELECT kind FROM document_jobs WHERE job_id=? AND owner_id=?").bind(jobId, actorUserId).first<{ kind: string }>();
+    if (job?.kind !== "render_document") return fail("sponsor_financial_binding_unavailable");
+    from = STORY_FINANCIAL_FROM; profile = "short_story";
+    row = await database.prepare(`SELECT execution.payer_user_id,execution.grant_id,slot.scope_key,slot.slot_id,
+      consumption.consumption_id,consumption.campaign_id,issued.grant_id AS issued_grant_id,issued.policy_digest,
+      consumption.envelope_digest,slot.cost_reservation_id,slot.token_reservation_id ${STORY_FINANCIAL_FROM}`)
+      .bind(jobId, actorUserId).first<Record<string, string>>();
+  }
+  if (!row || env.DB !== database) return fail("sponsor_financial_binding_unavailable");
+  const assertion: OutputSqlAssertion = { sql: `EXISTS(SELECT 1 ${from}
     AND execution.payer_user_id=? AND execution.grant_id=? AND slot.scope_key=? AND slot.slot_id=?
     AND consumption.consumption_id=? AND consumption.campaign_id=? AND issued.grant_id=? AND issued.policy_digest=?
     AND consumption.envelope_digest=? AND slot.cost_reservation_id=? AND slot.token_reservation_id=?)`,
   bindings: [jobId, actorUserId, row.payer_user_id!, row.grant_id!, row.scope_key!, row.slot_id!, row.consumption_id!,
     row.campaign_id!, row.issued_grant_id!, row.policy_digest!, row.envelope_digest!, row.cost_reservation_id!, row.token_reservation_id!] };
   const binding = Object.freeze({}) as SponsorFinancialBinding;
-  finances.set(binding, { env, database: env.DB, actorUserId, jobId, payerUserId: row.payer_user_id!, grantId: row.grant_id!, scopeKey: row.scope_key!,
+  finances.set(binding, { profile, env, database, actorUserId, jobId, payerUserId: row.payer_user_id!, grantId: row.grant_id!, scopeKey: row.scope_key!,
     slotId: row.slot_id!, consumptionId: row.consumption_id!, campaignId: row.campaign_id!, issuedGrantId: row.issued_grant_id!, policyDigest: row.policy_digest!,
     envelopeDigest: row.envelope_digest!, costReservationId: row.cost_reservation_id!, tokenReservationId: row.token_reservation_id!, assertion });
   return binding;
@@ -71,6 +138,16 @@ export function sponsorFinancialIdentity(binding: SponsorFinancialBinding, env: 
   const state = finances.get(binding);
   if (!state || state.env !== env || state.database !== env.DB || state.actorUserId !== actorUserId || state.jobId !== jobId) return fail("sponsor_financial_authority_unavailable");
   return { payerUserId: state.payerUserId, assertion: structuredClone(state.assertion) };
+}
+/** Narrow events gate: the original monetary branch supplies the profile.
+ * No action, artifactKind, payer field or mutable campaign chooses it. */
+export function sponsorFinancialEventProfile(binding: SponsorFinancialBinding, env: WorkerEnv, actorUserId: string,
+  reference: { scopeKey: string; grantId: string; slotId: string }) {
+  const state = finances.get(binding);
+  if (!state || state.env !== env || state.database !== env.DB || state.actorUserId !== actorUserId
+    || state.scopeKey !== reference.scopeKey || state.grantId !== reference.grantId || state.slotId !== reference.slotId)
+    return fail("sponsor_financial_authority_unavailable");
+  return state.profile;
 }
 async function current(env: WorkerEnv, assertions: OutputSqlAssertion[]) {
   const result = await env.DB.batch<Record<string, unknown>>(assertions.map(a => env.DB.prepare(`SELECT CASE WHEN (${a.sql}) THEN 1 ELSE 0 END AS current`).bind(...(a.bindings ?? []))));
@@ -114,16 +191,33 @@ export async function createSponsorExecutionAuthority(trusted: OutputTrustedCont
     && recipe.routeDigest === `sha256:${row.route_digest}` && recipe.provider === row.provider && recipe.model === row.model
     && recipe.maximumTokens === row.maximum_tokens && recipe.maximumMicrousd === row.maximum_microusd
     && recipe.calls.parsing === 0 && recipe.calls.planning === 1 && recipe.calls.render === 1 && recipe.calls.repair === 0);
-  if (policy.version === 2) {
+  if (policy.version === 2 || policy.version === 4) {
     const issued = await env.DB.prepare("SELECT envelope_json FROM experience_sponsor_issuances WHERE grant_id=? AND envelope_digest=? AND policy_digest=?").bind(f.issuedGrantId,f.envelopeDigest,f.policyDigest).first<{envelope_json:string}>();
     if (!issued) return fail("sponsor_execution_binding_changed");
     const compiled = await compileSponsorEnvelope(policy,JSON.parse(issued.envelope_json));
     const quote: unknown = JSON.parse(String(row.preflight_private_json));
     const preflight = record(quote) && record(quote.preflight) ? quote.preflight : null;
     const offered = preflight && Array.isArray(preflight.targets) && preflight.targets.length === 1 ? preflight.targets[0] : null;
-    const evidence = await sponsorImageEvidence(env,compiled.envelope.recipe,offered);
-    recipeEligible = compiled.envelopeDigest === f.envelopeDigest && compiled.envelope.recipe.routeDigest === `sha256:${row.route_digest}`
-      && policy.templates.some(template => matchSponsorImageTemplate(template,evidence));
+    if (policy.version === 2) {
+      const evidence = await sponsorImageEvidence(env,compiled.envelope.recipe,offered);
+      recipeEligible = f.profile === "image" && compiled.envelopeDigest === f.envelopeDigest && compiled.envelope.recipe.routeDigest === `sha256:${row.route_digest}`
+        && policy.templates.some(template => matchSponsorImageTemplate(template,evidence));
+    } else {
+      const authorization: unknown = JSON.parse(String(row.private_json));
+      const original = record(authorization) && record(authorization.output_command_envelope) ? authorization.output_command_envelope : null;
+      if (!original) return fail("sponsor_execution_binding_changed");
+      const { sponsor_entitlement: ignored, ...authorize } = original; void ignored;
+      // A fresh read checks the original authorization quote against current
+      // native source; rebasing its read revision emits no authorization/write.
+      const evidence = await readSponsorStoryTemplateEvidence(trusted, { ...authorize, expectedRevision: `output:${trusted.ownerHead}` }, compiled.envelope.recipe);
+      recipeEligible = f.profile === "short_story" && compiled.envelopeDigest === f.envelopeDigest
+        && compiled.envelope.recipe.routeDigest === `sha256:${row.route_digest}` && compiled.envelope.recipe.provider === row.provider
+        && compiled.envelope.recipe.model === row.model && compiled.envelope.recipe.maximumTokens === row.maximum_tokens
+        && compiled.envelope.recipe.maximumMicrousd === row.maximum_microusd
+        && (await Promise.all(policy.templates.map(template => matchSponsorStoryTemplate(template,evidence)))).some(Boolean);
+      approvalAssertions.push({ sql: "EXISTS(SELECT 1 FROM event_private_payloads quote JOIN output_preflights preflight ON preflight.event_id=quote.private_event_id WHERE preflight.scope_key=? AND preflight.preflight_id=? AND quote.owner_id=? AND quote.private_json=? AND quote.redacted_at IS NULL)",
+        bindings: [scope.key, String(authorize.preflightId), actorUserId, String(row.preflight_private_json)] });
+    }
     approvalAssertions.push(sponsorApprovalAssertion(policy,actorUserId),await sponsorIssuedAuthorityAssertion({policy,policyDigest:f.policyDigest,grantId:f.issuedGrantId,
       actorUserId,sessionDigest:compiled.envelope.sessionDigest,intentKey:compiled.envelope.intentKey,envelopeDigest:f.envelopeDigest}));
     const resource=await sponsorResourceAdmissionAssertion({limits:policy.resources,campaignId:policy.campaignId,policyDigest:f.policyDigest,actorUserId});
