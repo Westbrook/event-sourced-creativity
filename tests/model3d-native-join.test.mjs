@@ -97,7 +97,7 @@ async function completed(kind = "image") {
     projectId: p.projectId, artifactId: "artifact", ...execution, usedCalls: 1, usedMicrousd: p.maximumMicrousd };
   return { f, evidence, input, retained, expected };
 }
-test("explicit text-only original recovery decodes without authorizing a replacement or reference transfer", async () => {
+test("explicit original text/image recovery decodes without authorizing a replacement or another reference transfer", async () => {
   for (const kind of [null, "image", "saved-model-view"]) {
     const f = await fixture(kind), q = quote(f), p = f.preview, state = clone(q.state);
     const command = key => ({ key, eventId: key + "-event" });
@@ -111,8 +111,7 @@ test("explicit text-only original recovery decodes without authorizing a replace
     state.grant = { id: "grant", status: "active", planRevisionId: state.plan.revisionId, actorUserId: p.actorUserId, payerUserId: p.actorUserId,
       expiresAt: p.expiresAt, ...counters, disclosure: clone(q.preflight), operations: [{ id: "slot", targetId: q.target.targetId,
         jobId: p.requestId, status: "uncertain", ...counters }] };
-    assert.equal(Boolean(decodeExperienceBinding(state, q.identity)), kind === null);
-    if (kind !== null) continue;
+    assert(decodeExperienceBinding(state, q.identity));
     for (const mutate of [v => { v.permitted.run = true; }, v => { v.original.jobStatus = "canceled"; },
       v => { v.preflight.targets[0].model = "foreign"; }, v => { v.original.jobId = "foreign"; },
       v => { v.current.source = "changed"; }, v => { v.grant.status = v.original.grantStatus = "revoked"; }]) {

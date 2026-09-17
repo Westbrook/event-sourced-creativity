@@ -57,9 +57,9 @@ function originalRecoveryTargetMatches(output: unknown, target: unknown): boolea
   if (output === "video") return Boolean(readVideoExecutionOffer(target));
   if (output === "model3d") {
     const offer = readModel3dExecutionOffer(target);
-    // The first recovery policy admits text-only originals. Reference recovery
-    // needs separate current reference-custody proof, not this UI allowance.
-    return Boolean(offer && offer.contract.reference === null);
+    // A closed original offer is display eligibility only. The Worker rechecks
+    // current reference custody before every original-result read or publication.
+    return Boolean(offer);
   }
   return false;
 }

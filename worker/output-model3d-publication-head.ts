@@ -3,14 +3,15 @@ import { OutputConflictError, type OutputSqlAssertion } from "./output-command-c
 
 export const MODEL3D_REFERENCE_HEAD_SQL = "COALESCE((SELECT MAX(sequence) FROM events WHERE stream_id=?),0)=?";
 const fail = (): never => { throw new OutputConflictError("output_model3d_publication_changed", 409); };
-type Original = Readonly<{ jobId: string; ownerId: string; streamId: string; correlationId: string }>;
+type Original = Readonly<{ jobId: string; ownerId: string; streamId: string; correlationId: string; clientId?: "server:document-job:render_document" | "output-model3d-recovery" }>;
 
 /** Request-local evidence from the actual event writer, never an HTTP receipt.
  * The writer publishes request/budget first, then rechecks the owned reference.
  * Only the final completed/usage pair advances that rechecked source head.
  * Original custody, source, consent, expiry, job and grant assertions stay intact. */
 export function model3dPublicationHead(original: Original) {
-  const owner = { ...original };
+  const owner = { ...original, clientId: original.clientId ?? "server:document-job:render_document" };
+  if (!["server:document-job:render_document", "output-model3d-recovery"].includes(owner.clientId)) fail();
   let captured: Readonly<{ oldHead: number; newHead: number; rows: string }> | null = null;
   return {
     hasPublication: () => captured !== null,
@@ -24,7 +25,7 @@ export function model3dPublicationHead(original: Original) {
       if (!Number.isSafeInteger(oldHead) || oldHead < 0 || !Number.isSafeInteger(oldHead + 2)
         || events.some((event, index) => event.streamId !== owner.streamId || event.correlationId !== owner.correlationId
           || event.sequence !== oldHead + index + 1 || event.type !== types[index]
-          || event.actor !== actors[index] || event.clientId !== "server:document-job:render_document"
+          || event.actor !== actors[index] || event.clientId !== owner.clientId
           || event.compensatesEventId !== null)) fail();
       const completed = events[0]!, settings = completed.payload.settings as Record<string, unknown> | undefined;
       if (completed.payload.artifact_kind !== "model3d" || completed.payload.source_surface !== "outputs"

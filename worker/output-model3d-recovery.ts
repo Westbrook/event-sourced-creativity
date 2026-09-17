@@ -1,3 +1,4 @@
+import { model3dPublicationHead } from "./output-model3d-publication-head.ts";
 import { canonicalJson } from "../src/experiences/compiler.ts";
 import { providerSubmissions, type PaidProviderSubmission } from "../src/model/provider-submission.ts";
 import { MODEL3D_PRIVATE_TRANSFER_MAX_BYTES, RODIN_ADAPTER_VERSION } from "../src/model/model3d.ts";
@@ -110,11 +111,12 @@ export async function executeOutputModel3dRecovery(env: WorkerEnv, user: PilotUs
       artifactId, contentId: payload.content_ref, inputId: payload.input_ref, rawContent: body.content, contentExpiresAt: body.expires_at,
       completionRaw: done.private_json, signal: options.signal }, assertion };
   };
+  const publication = model3dPublicationHead({ jobId: job.job_id, ownerId: scope.actorUserId, streamId: job.stream_id, correlationId: job.correlation_id, clientId: "output-model3d-recovery" });
   const completedRead = async () => {
     options.signal?.throwIfAborted(); const current = await currentJob(); if (current?.status !== "completed") return null;
     const done = await completions(); if (!done) fail(); const retained = await retainedInput(done);
     const read = await readRetainedOutputModel3d(env, retained.input);
-    await env.DB.batch([...options.assertions, retained.assertion, ...read.assertions].flatMap(a => outputAssertionStatements(env, a)));
+    await env.DB.batch([...publication.assertions(options.assertions), retained.assertion, ...read.assertions].flatMap(a => outputAssertionStatements(env, a)));
     if (options.signal?.aborted || Date.parse(read.expiresAt) <= Date.now()) fail();
     return { status: "completed" as const, jobId: job.job_id, slotId: slot.slotId, replayed: true };
   };
@@ -266,7 +268,7 @@ export async function executeOutputModel3dRecovery(env: WorkerEnv, user: PilotUs
       title: assembled.content.title, summary: assembled.content.summary, content_ref: content.contentId, content_expires_at: content.expiresAt,
       input_ref: invocation.contentId, input_expires_at: invocation.expiresAt, item_count: 0, items: [], presentation: null,
       media_url: files[0]!.url, media_type: files[0]!.mimeType, provider: "fal", provider_job_id: cp.providerRequestId, model_id: cp.prepared.model,
-      planner_model_id: null, planner_response_id: null, reference_inputs: cp.prepared.referenceInputs, used_reference_pixels: false,
+      planner_model_id: null, planner_response_id: null, reference_inputs: cp.prepared.referenceInputs, used_reference_pixels: cp.prepared.usedReferencePixels,
       source_surface: "outputs", recovered: true, settings: { production_mode: "manual", output_model3d: assembled.completion, seed: result.seed,
         model3d: cp.prepared.settings, model3d_settings: cp.prepared.settings, model3d_files: files, adapter_version: RODIN_ADAPTER_VERSION,
         source_media_sha256: files[0]!.sha256, reserved_cost_microusd: cp.offer.preview.maximumMicrousd, settled_cost_microusd: paid.costMicrousd } });
@@ -290,10 +292,15 @@ export async function executeOutputModel3dRecovery(env: WorkerEnv, user: PilotUs
     await lease.assertCurrent();
     try {
       noteStage(options,"model3d_publish");
-      await appendEvents(privateEnv, [complete, usage], { retries: 1, prepareSidecars: () => [
-        ...outputAssertionStatements(env, { sql: "(SELECT COUNT(*) FROM events WHERE event_id IN(?,?))=2", bindings: [complete.eventId, usage.eventId] }),
-        ...finish(complete.eventId, [complete.eventId, usage.eventId]),
-      ] });
+      await appendEvents(privateEnv, [complete, usage], { retries: 1, prepareSidecars: events => {
+        // The pre-write guard still requires the exact original head. Only these
+        // actual finalized rows may explain its advance in a post-commit read.
+        publication.capture(events, completionJson);
+        return [
+          ...outputAssertionStatements(env, { sql: "(SELECT COUNT(*) FROM events WHERE event_id IN(?,?))=2", bindings: [complete.eventId, usage.eventId] }),
+          ...finish(complete.eventId, [complete.eventId, usage.eventId]),
+        ];
+      } });
     } catch (error) { const committed = await completedRead(); if (committed) return committed; throw error; }
     return await completedRead() ?? fail();
   } finally { await lease.release().catch(() => {}); }

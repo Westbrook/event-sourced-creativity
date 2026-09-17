@@ -40,7 +40,6 @@ export async function captureOutputModel3dRecoveryCheckpoint(input: unknown, at 
   const offer = await readOutputModel3dPayload(request);
   if (!offer || typeof slot.jobId!=="string" || typeof slot.attemptOrdinal!=="number" || !(slot.previousSlotId===null||typeof slot.previousSlotId==="string")
     || !model3dMiniAppAttemptMatches(offer.preview, {jobId:slot.jobId,attemptOrdinal:slot.attemptOrdinal,previousSlotId:slot.previousSlotId})
-    || offer.contract.reference !== null || offer.preview.sourceFilesTransferred !== 0
     || offer.preview.actorUserId !== scope.actorUserId || offer.preview.documentId !== scope.documentId || offer.preview.projectId !== scope.projectId
     || offer.preview.requestId !== job.job_id || offer.preview.sourceDigest !== slot.sourceDigest
     || current.sourceDigest !== slot.sourceDigest || current.requirementsDigest !== offer.preview.requirementsDigest
@@ -50,8 +49,10 @@ export async function captureOutputModel3dRecoveryCheckpoint(input: unknown, at 
   const execution = { scopeKey: slot.scopeKey, slotId: slot.slotId, grantId: slot.grantId, planRevisionId: slot.planRevisionId,
     targetId: slot.targetId, targetContractDigest: slot.targetContractDigest, sourceDigest: slot.sourceDigest };
   if (!same(request.outputExecution, execution) || !same(checkpoint.outputExecution, execution)) return fail();
+  // The shared verifier binds the original zero-or-one-image receipt to the
+  // closed offer; the caller must still prove current original source custody.
+  // Replacement offers remain text-only under the existing consent policy.
   const prepared = await verifyModel3dPreparedReceipt(offer, checkpoint.model3dInputReceipt as Model3dPreparedReceipt);
-  if (prepared.referenceInputs.length !== 0 || prepared.usedReferencePixels !== false) return fail();
   const submissions = object(checkpoint.providerSubmissions), entries = Object.entries(submissions);
   if (entries.length !== 1 || !Array.isArray(captured.calls) || captured.calls.length !== 1) return fail();
   const [key, value] = entries[0]!, submission = object(value), call = object(captured.calls[0]);

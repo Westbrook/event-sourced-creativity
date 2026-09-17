@@ -9,6 +9,7 @@ import { guardOutputPrivateWrites } from "../worker/output-private-execution.ts"
 import { appendEvents } from "../worker/event-append.ts";
 import { OUTPUT_REQUIREMENTS_SCHEMA } from "../worker/output-requirements-schema.ts";
 import { model3dNativeCheckpoint } from "../worker/output-model3d-terminal.ts";
+import { model3dMiniAppAttemptMatches } from "../src/model/model3d-mini-app-consent.ts";
 import { providerSubmissions, hasUnresolvedProviderSubmission, hasUnsettledProviderSubmission } from "../src/model/provider-submission.ts";
 import { fixture, glb, sha } from "./helpers/model3d-native-execution-fixture.mjs";
 import { terminalSource } from "./helpers/model3d-terminal-source.mjs";
@@ -131,6 +132,25 @@ test("capture is immutable, bounded and bound to actual original writer and owne
   const unarmed = publication(); unarmed.continuation.capture(unarmed.events, undefined);
   assert.equal(unarmed.continuation.hasPublication(), false);
   const textOnly = [{ sql: "?=1", bindings: [1] }]; assert.deepEqual(x.continuation.assertions(textOnly), textOnly);
+});
+
+test("publication witness accepts only its exact closed renderer or recovery client", async () => {
+  const clients = ["server:document-job:render_document", "output-model3d-recovery"];
+  for (const clientId of clients) {
+    const d = database(), x = publication();
+    try {
+      const continuation = model3dPublicationHead({ ...x.original, clientId });
+      x.events.forEach(event => { event.clientId = clientId; });
+      continuation.capture(x.events, x.completionJson);
+      await publish(d, x);
+      assert.equal(present(d, continuation.assertions([x.fence])[0]), true);
+      d.sqlite.prepare("UPDATE events SET client_id=? WHERE sequence=2").run(clients.find(client => client !== clientId));
+      assert.equal(present(d, continuation.assertions([x.fence])[0]), false, "same correlation cannot substitute the other writer");
+      const wrongWriter = model3dPublicationHead({ ...x.original, clientId: clients.find(client => client !== clientId) });
+      assert.throws(() => wrongWriter.capture(x.events, x.completionJson), /output_model3d_publication_changed/u);
+    } finally { d.sqlite.close(); }
+  }
+  assert.throws(() => model3dPublicationHead({ ...publication().original, clientId: "another-recovery-client" }), /output_model3d_publication_changed/u);
 });
 
 const jobSource = fs.readFileSync(new URL(import.meta.resolve("../worker/document-jobs-api.ts")), "utf8");
@@ -260,12 +280,12 @@ test("actual execution closure follows producer's two appends and preparation/tr
   // Qualification receives a synthetic completed call; no provider is executed.
   const preflight = async () => {
     const head = d.sqlite.prepare("SELECT MAX(sequence) AS head FROM events").get().head; headReads.push(head);
-    const actualAssertions = compile("const " + sourceInitializer + ";", { input: { sourceAssertions: [sourceGuard] }, draft: sourceGuard, receiptAssertion: () => sourceGuard, receipt: {}, original: { guard: sourceGuard, head }, principal: { streamId: job.stream_id }, MODEL3D_REFERENCE_HEAD_SQL }, "sourceAssertions");
+    const actualAssertions = compile("const " + sourceInitializer + ";", { input: { sourceAssertions: [sourceGuard] }, draft: sourceGuard, receiptAssertion: () => sourceGuard, receipt: {}, replacement: null, original: { guard: sourceGuard, head }, principal: { streamId: job.stream_id }, MODEL3D_REFERENCE_HEAD_SQL }, "sourceAssertions");
     preflightProofs.set(current, actualAssertions); return current;
   };
   const bytes = glb(), media = { bytes, sha256: sha(bytes), mimeType: "model/gltf-binary", role: "mesh", format: "glb" }, call = { clientRequestId: "one", provider: "fal", operation: "model3d", model: f.preview.model, status: "completed", providerRequestId: "provider", costMicrousd: f.preview.maximumMicrousd, totalTokens: 0 };
   const ports = { OutputConflictError, preflightOutputNativeTarget: preflight, outputDigest, outputModel3dPreflightAssertions: value => preflightProofs.get(value), documentJobProjectAuthority: () => null,
-    model3dPublicationHead, outputScopeAuthority: () => sourceGuard, readOutputModel3dPayload, requireModel3dMiniAppCostApproval, verifyModel3dPreparedReceipt,
+    model3dPublicationHead, model3dMiniAppAttemptMatches, outputScopeAuthority: () => sourceGuard, readOutputModel3dPayload, requireModel3dMiniAppCostApproval, verifyModel3dPreparedReceipt,
     parsed: raw => JSON.parse(raw ?? "{}"), providerSubmissions, guardOutputPrivateWrites, outputAssertionStatements, eventWriteBindings,
     projectNativeRetainedModel3d, captureModel3dComparisonData, prepareOutputImageProviderHealth: () => [], prepareOutputNativeProjectPublicationStatements: () => [],
     qualifyOutputModel3dCompletion: input => qualifyOutputModel3dCompletion({ ...input, calls: [call] }) };

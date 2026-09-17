@@ -1,13 +1,13 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { fixture } from "./helpers/model3d-native-execution-fixture.mjs";
+import { fixture, sha } from "./helpers/model3d-native-execution-fixture.mjs";
 import { captureOutputModel3dRecoveryCheckpoint as capture } from "../worker/output-model3d-recovery-checkpoint.ts";
 import { outputModel3dRecoveryAssertions } from "../worker/output-model3d-recovery-lease.ts";
 
 const at = Date.parse("2026-09-15T12:00:00.000Z");
-async function original() {
-  const f = await fixture();
+async function original(kind = null) {
+  const f = await fixture(kind);
   const scope = { kind: "personal", key: "scope", actorUserId: "owner", ownerUserId: "owner", projectId: "project", documentId: "document", contextId: null, organizationId: null, projectAccessId: null };
   const slot = { scopeKey: "scope", slotId: "slot", grantId: "grant", planRevisionId: "plan", targetId: "target", targetContractDigest: "a".repeat(64), routeDigest: "e".repeat(64),
     sourceDigest: f.preview.sourceDigest, jobId: f.preview.requestId, status: "uncertain", attemptOrdinal: 0, previousSlotId: null,
@@ -31,6 +31,94 @@ async function original() {
 }
 function resultChange(f, change) { const result = JSON.parse(f.job.result_json); change(result); f.job.result_json = JSON.stringify(result); }
 async function refused(change) { const f = await original(); change(f); const before = structuredClone(f); await assert.rejects(capture(f, at), /output_model3d|request_not_authorized/); assert.deepEqual(f, before); }
+function requestChange(f, change) { const request = JSON.parse(f.job.request_json); change(request); f.job.request_json = JSON.stringify(request); }
+function receiptDigest(receipt) {
+  return sha(JSON.stringify({ model: receipt.model, parameters: receipt.parameters, referenceInputs: receipt.referenceInputs }, (_key, value) =>
+    value && typeof value === "object" && !Array.isArray(value) ? Object.fromEntries(Object.entries(value).sort(([a], [b]) => a.localeCompare(b))) : value));
+}
+async function imageRefused(change, message) {
+  const f = await original("image"); change(f); const before = structuredClone(f);
+  await assert.rejects(capture(f, at), /output_model3d|request_not_authorized/, message); assert.deepEqual(f, before, message);
+}
+
+test("single-image accepted originals retain exact input, identity and holds without network or upload", async () => {
+  const priorFetch = globalThis.fetch; globalThis.fetch = () => { throw Error("no network"); };
+  try {
+    for (const kind of ["image", "saved-model-view"]) {
+      const f = await original(kind), before = structuredClone(f), result = await capture(f, at);
+      assert.equal(result.providerRequestId, "original-provider"); assert.equal(result.clientRequestId, "forma-model3d-original");
+      assert.equal(result.jobId, before.job.job_id); assert.deepEqual(result.execution, JSON.parse(before.job.request_json).outputExecution);
+      assert.equal(result.offer.preview.sourceFilesTransferred, 1); assert.equal(result.offer.preview.sourceKind, kind);
+      assert.equal(result.prepared.usedReferencePixels, true); assert.equal(result.prepared.referenceInputs.length, 1);
+      assert.deepEqual(structuredClone(result.prepared.referenceInputs), JSON.parse(before.job.result_json).model3dInputReceipt.referenceInputs);
+      assert.equal(result.offer.preview.maximumMicrousd, 400000); assert.equal(result.settled, false);
+      assert.equal(result.reservationId, before.token.reservation_id); assert.equal(result.costReservationId, before.cost.reservation_id);
+      assert.deepEqual(f, before);
+    }
+  } finally { globalThis.fetch = priorFetch; }
+});
+
+test("single-image receipts bind reference fields even when a changed receipt has a matching digest", async () => {
+  const changes = {
+    sha256: value => { value.sha256 = "0".repeat(64); },
+    blockId: value => { value.blockId = "foreign-copy"; },
+    referenceId: value => { value.referenceId = "foreign-reference"; },
+    mimeType: value => { value.mimeType = "image/jpeg"; },
+    byteLength: value => { value.byteLength += 1; },
+    index: value => { value.index = 1; },
+    transport: value => { value.transport = "url"; },
+  };
+  for (const [key, change] of Object.entries(changes)) await imageRefused(f => resultChange(f, result => {
+    change(result.model3dInputReceipt.referenceInputs[0]);
+    result.model3dInputReceipt.requestDigest = receiptDigest(result.model3dInputReceipt);
+    f.calls[0].request_digest = result.model3dInputReceipt.requestDigest;
+  }), key);
+  for (const change of [receipt => { receipt.referenceInputs = []; }, receipt => { receipt.referenceInputs.push({ ...receipt.referenceInputs[0], index: 1 }); },
+    receipt => { receipt.usedReferencePixels = false; }]) await imageRefused(f => resultChange(f, result => {
+      change(result.model3dInputReceipt); result.model3dInputReceipt.requestDigest = receiptDigest(result.model3dInputReceipt);
+      f.calls[0].request_digest = result.model3dInputReceipt.requestDigest;
+    }));
+});
+
+test("single-image offer, source-file count and separate transfer consent cannot drift", async () => {
+  for (const change of [request => { request.outputModel3d.reference.selection.sha256 = "0".repeat(64); },
+    request => { request.outputModel3d.reference.copiedBlockId = "foreign-copy"; },
+    request => { request.outputModel3d.reference.selection.referenceId = "foreign-reference"; },
+    request => { request.model3dPreparation.references[0].mimeType = "image/jpeg"; },
+    request => { request.model3dPreparation.references[0].byteLength += 1; },
+    request => { request.model3dPreparation.references.push({ ...request.model3dPreparation.references[0] }); },
+    request => { request.model3dCostPreview.sourceFilesTransferred = 0; request.model3dCostConsent.sourceFilesTransferred = 0; },
+    request => { request.model3dCostPreview.sourceFilesTransferred = 2; request.model3dCostConsent.sourceFilesTransferred = 2; },
+    request => { request.model3dCostConsent.providerTransferConfirmed = false; },
+    request => { request.model3dCostConsent.referenceSha256 = "0".repeat(64); }]) await imageRefused(f => requestChange(f, change));
+});
+
+test("image originals keep expired dispatch quotes and existing paid accounting without renewal", async () => {
+  const f = await original("image"); requestChange(f, request => {
+    request.model3dCostPreview.expiresAt = "2020-01-01T00:00:00.000Z"; request.model3dCostConsent.expiresAt = request.model3dCostPreview.expiresAt;
+  });
+  const held = structuredClone(f), captured = await capture(f, at);
+  assert.equal(captured.offer.preview.expiresAt, "2020-01-01T00:00:00.000Z"); assert.equal(captured.expiresAt, f.current.retentionExpiresAt); assert.deepEqual(f, held);
+  resultChange(f, result => Object.assign(result.providerSubmissions["forma-model3d-original"], { status: "completed", costMicrousd: 400000, inputTokens: 0, outputTokens: 0, totalTokens: 0 }));
+  Object.assign(f.calls[0], { status: "settled", used_microusd: 400000 }); Object.assign(f.token, { status: "released", used_tokens: 0 }); Object.assign(f.cost, { status: "settled", used_microusd: 400000 });
+  const settled = structuredClone(f); assert.equal((await capture(f, at)).settled, true); assert.deepEqual(f, settled);
+  for (const change of [value => { value.cost.used_microusd = 0; }, value => { value.token.used_tokens = 1; }, value => { value.calls[0].used_microusd = 1; },
+    value => { value.current.retentionExpiresAt = "2020-01-01T00:00:00.000Z"; }]) {
+    const invalid = structuredClone(f); change(invalid); const before = structuredClone(invalid); await assert.rejects(capture(invalid, at)); assert.deepEqual(invalid, before);
+  }
+});
+
+test("image evidence cannot admit a replacement, duplicate call or mismatched original request", async () => {
+  for (const change of [f => { f.slot.attemptOrdinal = 1; f.slot.previousSlotId = "previous"; },
+    f => { f.calls.push(structuredClone(f.calls[0])); }, f => { f.calls[0].provider_response_id = "another-original"; },
+    f => { f.calls[0].request_digest = "0".repeat(64); }, f => { f.current.sourceDigest = "0".repeat(64); },
+    f => resultChange(f, result => { result.providerSubmissions["forma-model3d-original"].status = "pending"; }),
+    f => requestChange(f, request => {
+      const replacement = { version: "model3d-mini-app-replacement-cost-v1", replacementCycleId: "a".repeat(64), previousSlotId: "previous",
+        previousJobId: "model3d-" + "c".repeat(64), previousProviderRequestId: "previous-provider", priorHeldMicrousd: 400000, cumulativeMaximumMicrousd: 800000 };
+      Object.assign(request.model3dCostPreview, replacement); Object.assign(request.model3dCostConsent, replacement); f.slot.attemptOrdinal = 1; f.slot.previousSlotId = "previous";
+    })]) await imageRefused(change);
+});
 
 test('attempt ordinal retains strict numeric identity',async()=>{
   for(const ordinal of ['0','1',null,undefined]) await refused(f=>{f.slot.attemptOrdinal=ordinal;});
