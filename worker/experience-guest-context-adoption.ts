@@ -141,7 +141,7 @@ function result(lineage: Lineage, replayed: boolean) {
 }
 /** Resume from immutable lineage and current canonical custody. Revoked/expired
  * guest proof is never revived, and missing private copies are never recreated. */
-export async function readGuestContextAdoption(request: Request, env: WorkerEnv, input: { sessionId: string }) {
+async function readAdoptionData(request: Request, env: WorkerEnv, input: { sessionId: string }, canonicalRead = false) {
   if (jsonIssues(input).length || !record(input) || !exactKeys(input, ["sessionId"]) || !guestId(input.sessionId)) return guestFail("adoption_invalid");
   const captured = structuredClone(input), db = env.DB, auth = await destination(request, env);
   if (env.DB !== db) return guestFail("database_changed");
@@ -149,7 +149,12 @@ export async function readGuestContextAdoption(request: Request, env: WorkerEnv,
     .bind(captured.sessionId, auth.user.userId).first<Receipt>();
   if (env.DB !== db) return guestFail("database_changed");
   if (!row) return null;
-  const lineage = parseLineage(row); origin(request, lineage.origin);
+  const lineage = parseLineage(row);
+  if (canonicalRead && request.method === "GET") {
+    if (new URL(request.url).origin !== lineage.origin || request.headers.has("origin") && request.headers.get("origin") !== lineage.origin
+      || request.headers.get("sec-fetch-site") === "cross-site")
+      return guestFail("origin_required");
+  } else origin(request, lineage.origin);
   if (await digest(lineage) !== row.lineage_digest) return guestFail("adoption_unavailable");
   const native = projectIntakeAuthority(env, auth, lineage), custody = currentCustody(lineage);
   if (env.DB !== db) return guestFail("database_changed");
@@ -163,7 +168,37 @@ export async function readGuestContextAdoption(request: Request, env: WorkerEnv,
   if (env.DB !== db) return guestFail("database_changed");
   if (!await db.prepare(`SELECT 1 AS current WHERE ${final.sql}`).bind(...final.bindings).first()) return guestFail("adoption_unavailable");
   if (env.DB !== db) return guestFail("database_changed");
-  return result(lineage, true);
+  return { result: result(lineage, true), lineage, row, bodies, auth, proof: final };
+}
+
+/** Existing public completed-claim read retains its POST/origin contract. */
+export async function readGuestContextAdoption(request: Request, env: WorkerEnv, input: { sessionId: string }) {
+  const db = env.DB, data = await readAdoptionData(request, env, input);
+  if (env.DB !== db) return guestFail("database_changed");
+  return data?.result ?? null;
+}
+
+/** Internal canonical read witness. The original actor/plan remain guest-owned;
+ * this proves only the already completed canonical context copy. Serialization
+ * never carries the private proof, and every mutation must repeat it atomically. */
+export type GuestContextAdoptionWitness = Readonly<{ version: 1; kind: "canonical-guest-context"; sessionId: string;
+  destinationUserId: string; projectId: string; documentId: string; manifestDigest: string }>;
+const adoptionWitnesses = new WeakMap<GuestContextAdoptionWitness, { db: WorkerEnv["DB"]; data: NonNullable<Awaited<ReturnType<typeof readAdoptionData>>> }>();
+export async function inspectGuestContextAdoption(request: Request, env: WorkerEnv, input: { sessionId: string }) {
+  const db = env.DB, data = await readAdoptionData(request, env, input, true);
+  if (env.DB !== db) return guestFail("database_changed");
+  if (!data) return null;
+  const witness: GuestContextAdoptionWitness = Object.freeze({ version: 1, kind: "canonical-guest-context", sessionId: data.lineage.sessionId,
+    destinationUserId: data.lineage.destinationUserId, projectId: data.lineage.projectId, documentId: data.lineage.documentId,
+    manifestDigest: data.lineage.manifestDigest });
+  adoptionWitnesses.set(witness, { db, data: freeze(data) });
+  return witness;
+}
+export function guestContextAdoptionData(env: WorkerEnv, witness: GuestContextAdoptionWitness) {
+  const saved = witness && typeof witness === "object" ? adoptionWitnesses.get(witness) : undefined;
+  if (!saved) return guestFail("adoption_unavailable");
+  if (env.DB !== saved.db) return guestFail("database_changed");
+  return saved.data;
 }
 
 /** A closed, context-only baseline copy. Original actor/IDs/financial history

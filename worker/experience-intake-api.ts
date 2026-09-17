@@ -1,3 +1,4 @@
+import { readGuestContextPlan } from "./experience-guest-plan-custody.ts";
 import { prepareExperienceVideoReference, videoReferenceCommitGuard } from "./experience-video-reference-source.ts";
 import { readModel3dReferenceIntent } from "../src/experiences/model3d-reference.ts";
 import { handleExperienceModel3dReference } from "./experience-model3d-reference.ts";
@@ -77,7 +78,22 @@ export async function handleExperienceIntake(request: Request, env: WorkerEnv) {
     if (!body || typeof body !== "object" || Array.isArray(body) || Object.keys(body).length !== 1 || !("draftHash" in body) || typeof body.draftHash !== "string") return denied("request_invalid", 400);
     approvedHash = body.draftHash;
   }
-  const retained = await readDraft(env, auth, id); if (!retained) return denied("experience_draft_unavailable", 404);
+  const retained = await readDraft(env, auth, id);
+  if (!retained) {
+    // An explicit original draft-ID GET may reopen already claimed context.
+    // This tagged read never grants generation or fabricates ordinary receipts,
+    // and never retains a missing plan, installs schema or commits any events.
+    if (request.method === "GET" && !lookup) {
+      const claimedDb = env.DB;
+      try {
+        const claimed = await readGuestContextPlan(request, env, { draftId: id });
+        if (env.DB !== claimedDb) return denied("experience_draft_unavailable", 404);
+        if (claimed) return reply(claimed);
+      }
+      catch { return denied("experience_draft_unavailable", 404); }
+    }
+    return denied("experience_draft_unavailable", 404);
+  }
   if (!action) return reply({ status: "prepared", plan: retained.plan, expiresAt: retained.expiresAt });
   const plan = retained.plan;
   // A marker only refuses ordinary mutation; it never supplies sponsor authority.
