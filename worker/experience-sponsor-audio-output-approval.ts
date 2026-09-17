@@ -70,25 +70,80 @@ export type SponsorAudioOutputReadLimits = SponsorAudioIntakeReadLimits & {
     account(usage: SponsorAudioOutputReadControlUsage): void;
   };
 };
+
+/** The actual native signal is immutable cancellation evidence. Own properties
+ * cannot hide its aborted state or replace native listener registration. This
+ * guard narrows the unchanged Audio A transport; it grants no read authority. */
+export function captureSponsorAudioOutputAbort(request: Request, extraSignal?: AbortSignal) {
+  const requestSignal = Object.getOwnPropertyDescriptor(Request.prototype, "signal")?.get;
+  const signalAborted = Object.getOwnPropertyDescriptor(AbortSignal.prototype, "aborted")?.get;
+  const add = EventTarget.prototype.addEventListener, remove = EventTarget.prototype.removeEventListener;
+  if (!requestSignal || !signalAborted || typeof add !== "function" || typeof remove !== "function")
+    return fail("sponsor_audio_output_read_authority_changed");
+  const signal = requestSignal.call(request) as AbortSignal;
+  const signals = [...new Set(extraSignal ? [signal, extraSignal] : [signal])];
+  let closed = false;
+  const current = () => {
+    try {
+      if (closed || requestSignal.call(request) !== signal || request.signal !== signal
+        || signals.some(value => signalAborted.call(value) !== false))
+        return fail("sponsor_audio_output_read_authority_changed");
+    } catch (error) { closed = true; throw error; }
+  };
+  const listen = (cancel: () => void) => {
+    current();
+    const stopped = () => { closed = true; cancel(); };
+    const registered: AbortSignal[] = [];
+    const cleanup = () => { for (const value of registered) remove.call(value, "abort", stopped); };
+    try {
+      for (const value of signals) { add.call(value, "abort", stopped, { once: true }); registered.push(value); }
+      current(); return cleanup;
+    } catch (error) { cleanup(); closed = true; throw error; }
+  };
+  current(); return Object.freeze({ signal, current, listen });
+}
+
 export function createSponsorAudioOutputReadBoundary(request: Request, env: WorkerEnv, limits?: SponsorAudioOutputReadLimits) {
-  const base = createSponsorAudioIntakeReadBoundary(request, env, limits), shared = limits?.sharedControl;
+  const aborted = captureSponsorAudioOutputAbort(request, limits?.signal), extraCurrent = limits?.current;
+  let closed = false;
+  const nativeCurrent = () => {
+    try {
+      if (closed) return fail("sponsor_audio_output_read_authority_changed");
+      aborted.current(); extraCurrent?.(); aborted.current();
+    } catch (error) { closed = true; throw error; }
+  };
+  const monotonicDeadline = Math.min(performance.now() + 30_000, limits?.monotonicDeadline ?? Infinity);
+  const base = createSponsorAudioIntakeReadBoundary(request, env, { current: nativeCurrent,
+    signal: limits?.signal ?? aborted.signal, monotonicDeadline }), shared = limits?.sharedControl;
+  const check = () => { try { base.check(); } catch (error) { closed = true; throw error; } };
+  const wait = async <T>(operation: () => Promise<T>): Promise<T> => {
+    check(); let cleanup: (() => void) | undefined;
+    try {
+      const stopped = new Promise<never>((_, reject) => {
+        cleanup = aborted.listen(() => { closed = true; reject(new SponsorEntitlementError("sponsor_audio_output_read_authority_changed")); });
+      });
+      const result = await Promise.race([stopped, base.wait(() => { check(); return operation(); })]);
+      check(); return result;
+    } finally { cleanup?.(); check(); }
+  };
   let controlQueries = 0, controlRows = 0;
   const acknowledgementOverhead = 4096;
   const mutations = new WeakMap<D1PreparedStatement, "assertion" | "policy" | "approval">();
   const assertions = (items: readonly OutputSqlAssertion[]) => {
+    check();
     const statements = base.assertions(items);
     for (const statement of statements) mutations.set(statement, "assertion");
     return statements;
   };
   const mutation = (sql: string, bindings: readonly (string | number | null)[]) => {
-    base.check();
+    check();
     if (sql !== policyInsertSql && sql !== approvalInsertSql || bindings.length !== (sql === policyInsertSql ? 5 : 12)
       || bindings.some(value => typeof value !== "string")) return fail("sponsor_audio_output_read_control_invalid");
     const statement = base.database.prepare(sql).bind(...bindings);
     mutations.set(statement, sql === policyInsertSql ? "policy" : "approval"); return statement;
   };
   const remaining = () => {
-    base.check();
+    check();
     const own = { bytes: 4_194_304 - base.controlBytes, queries: 1024 - controlQueries, rows: 65_536 - controlRows };
     const external = shared?.remaining();
     if (external) for (const key of ["bytes", "queries", "rows"] as const) {
@@ -102,7 +157,7 @@ export function createSponsorAudioOutputReadBoundary(request: Request, env: Work
       return fail("sponsor_audio_output_read_control_limit");
     controlQueries += usage.queries; controlRows += usage.rows;
     if (controlQueries > 1024 || controlRows > 65_536) return fail("sponsor_audio_output_read_control_limit");
-    shared?.account(usage); base.check();
+    shared?.account(usage); check();
   };
   const query = async <T extends object>(sql: string, bindings: readonly (string | number | null)[], fields: readonly string[], maximum = 1): Promise<T[]> => {
     const room = remaining();
@@ -122,7 +177,7 @@ export function createSponsorAudioOutputReadBoundary(request: Request, env: Work
       FROM ${prefix}_body`, bindings);
     account({ bytes: 0, queries: 1, rows: 0 });
     const beforeBytes = base.controlBytes;
-    const result = await base.query<{ count: number; bytes: number; body: string | null }>(packed.sql, packed.bindings, ["count", "bytes", "body"]);
+    const result = await wait(() => base.query<{ count: number; bytes: number; body: string | null }>(packed.sql, packed.bindings, ["count", "bytes", "body"]));
     const actualBytes = base.controlBytes - beforeBytes, row = result[0];
     account({ bytes: actualBytes, queries: 0, rows: row && Number.isSafeInteger(row.count) && row.count >= 0 ? Math.max(1, row.count) : 1 });
     if (result.length !== 1 || !row || !Number.isSafeInteger(row.count) || row.count < 0 || row.count > rowLimit
@@ -132,7 +187,7 @@ export function createSponsorAudioOutputReadBoundary(request: Request, env: Work
     if (!Array.isArray(parsed) || parsed.length !== row.count || parsed.some(value => !record(value) || !exactKeys(value, fields)
       || fields.some(field => value[field] !== null && typeof value[field] !== "string" && (typeof value[field] !== "number" || !Number.isFinite(value[field])))))
       return fail("sponsor_audio_output_read_control_invalid");
-    base.check(); return parsed as T[];
+    check(); return parsed as T[];
   };
   const batch = async (statements: D1PreparedStatement[]) => {
     const room = remaining();
@@ -147,7 +202,7 @@ export function createSponsorAudioOutputReadBoundary(request: Request, env: Work
     for (const statement of statements) mutations.delete(statement);
     account({ bytes: 0, queries: statements.length, rows: 0 });
     const beforeBytes = base.controlBytes;
-    const acknowledgements = await base.batch(statements);
+    const acknowledgements = await wait(() => base.batch(statements));
     if (acknowledgements.some(acknowledgement => acknowledgement.results.length !== 0))
       return fail("sponsor_audio_output_read_control_invalid");
     // Every actual result envelope is a control row for these exact no-row mutations.
@@ -157,10 +212,10 @@ export function createSponsorAudioOutputReadBoundary(request: Request, env: Work
     if (bytes > room.bytes || bytes > statements.length * acknowledgementOverhead || rows > room.rows) return fail("sponsor_audio_output_read_control_limit");
     return acknowledgements;
   };
-  return { database: base.database, check: base.check, wait: base.wait, assertions, mutation, query, batch,
-    get controlBytes() { return base.controlBytes; },
-    get controlQueries() { base.check(); return controlQueries; },
-    get controlRows() { base.check(); return controlRows; } };
+  return { database: base.database, check, wait, assertions, mutation, query, batch,
+    get controlBytes() { check(); return base.controlBytes; },
+    get controlQueries() { check(); return controlQueries; },
+    get controlRows() { check(); return controlRows; } };
 }
 const boundary = (env: WorkerEnv, request: Request, limits?: SponsorAudioOutputReadLimits) => createSponsorAudioOutputReadBoundary(request, env, limits);
 type Boundary = ReturnType<typeof boundary>;

@@ -599,3 +599,70 @@ test('Audio output attempt preserves historical original payer provenance after 
   assert.deepEqual(view.original,f.intake.receipt);assert.equal(view.receipt.campaign_id,f.campaignId);assert.equal(rows(f,attemptTable).length,1);
   await attempts.retireSponsorAudioOutputReadBudget(budget,req,f.env);noNativeWork(f);
 });
+
+test('Audio output budget rejects native cancellation hidden by an own aborted property',async t=>{
+  const f=await attemptFixture(t),controller=new AbortController(),req=f.makeRequest('audio-output-state',{signal:controller.signal}),
+    signal=req.signal,nativeAborted=Object.getOwnPropertyDescriptor(AbortSignal.prototype,'aborted').get,
+    attempt=await f.reserve(req),budget=await attempts.takeSponsorAudioOutputReadAttempt(attempt,req,f.env),
+    view=attempts.requireSponsorAudioOutputReadBudget(budget,req,f.env),before=snapshot(f),charged=rows(f,attemptTable);
+  assert.ok(signal instanceof AbortSignal);assert.equal(nativeAborted.call(signal),false);
+  assert.equal(Object.hasOwn(signal,'aborted'),false);view.current();
+  // Preserve the same genuine native Request.signal. This own data property
+  // hides only the public JS accessor; AbortController still cancels its slot.
+  Object.defineProperty(signal,'aborted',{value:false,configurable:true});controller.abort();
+  assert.equal(req.signal,signal);assert.equal(signal.aborted,false);assert.equal(nativeAborted.call(signal),true);
+  const refused=operation=>{try{operation();return false;}catch{return true;}};
+  const currentRefused=refused(()=>view.current()),responseRefused=refused(()=>view.accountResponse('{"status":"cancelled"}')),
+    retiredRefused=refused(()=>attempts.requireSponsorAudioOutputReadBudget(budget,req,f.env));
+  assert.deepEqual(rows(f,attemptTable),charged);assert.deepEqual(snapshot(f),before);noNativeWork(f);
+  t.diagnostic(JSON.stringify({nativeAborted:nativeAborted.call(signal),ownAborted:signal.aborted,currentRefused,responseRefused,retiredRefused,unchangedChargedRows:charged.length,networkAttempts,mediaAttempts:f.mediaAttempts}));
+  assert.deepEqual({currentRefused,responseRefused,retiredRefused},{currentRefused:true,responseRefused:true,retiredRefused:true});
+});
+
+test('Audio output standalone boundary rejects native cancellation hidden by an own aborted property',async t=>{
+  const f=await fixture(t),controller=new AbortController(),req=readRequest(controller.signal),signal=req.signal,
+    nativeAborted=Object.getOwnPropertyDescriptor(AbortSignal.prototype,'aborted').get,
+    bound=approval.createSponsorAudioOutputReadBoundary(req,f.env),before=snapshot(f);
+  assert.deepEqual(await bound.query('SELECT 1 AS value',[],['value']),[{value:1}]);bound.check();
+  assert.equal(nativeAborted.call(signal),false);assert.equal(Object.hasOwn(signal,'aborted'),false);
+  Object.defineProperty(signal,'aborted',{value:false,configurable:true});controller.abort();
+  assert.equal(req.signal,signal);assert.equal(signal.aborted,false);assert.equal(nativeAborted.call(signal),true);
+  let checkRefused=false,queryRefused=false,dispatched=0;const prepare=f.DB.prepare;
+  f.DB.prepare=function(sql){dispatched++;return prepare.call(this,sql);};
+  try{
+    try{bound.check();}catch{checkRefused=true;}
+    try{await bound.query('SELECT 2 AS value',[],['value']);}catch{queryRefused=true;}
+  }finally{f.DB.prepare=prepare;}
+  assert.deepEqual(snapshot(f),before);noNativeWork(f);
+  t.diagnostic(JSON.stringify({nativeAborted:nativeAborted.call(signal),ownAborted:signal.aborted,checkRefused,queryRefused,dispatched,networkAttempts,mediaAttempts:f.mediaAttempts}));
+  assert.deepEqual({checkRefused,queryRefused,dispatched},{checkRefused:true,queryRefused:true,dispatched:0});
+});
+
+test('Audio output standalone boundary interrupts a pending native wait despite shadowed listener methods',async t=>{
+  const f=await fixture(t),controller=new AbortController(),req=readRequest(controller.signal),signal=req.signal,
+    nativeAborted=Object.getOwnPropertyDescriptor(AbortSignal.prototype,'aborted').get,
+    bound=approval.createSponsorAudioOutputReadBoundary(req,f.env),before=snapshot(f);
+  assert.deepEqual(await bound.query('SELECT 1 AS value',[],['value']),[{value:1}]);bound.check();
+  let shadowCalls=0,started=0,dispatched=0,settle;
+  Object.defineProperty(signal,'addEventListener',{value:()=>{shadowCalls++;},configurable:true});
+  Object.defineProperty(signal,'removeEventListener',{value:()=>{shadowCalls++;},configurable:true});
+  const blocked=new Promise(resolve=>{settle=resolve;}),prepare=f.DB.prepare;
+  f.DB.prepare=function(sql){dispatched++;return prepare.call(this,sql);};
+  let timer,outcome,queryRefused=false,settled=false,pendingBeforeAbort=false;
+  const pending=bound.wait(()=>{started++;return blocked;}).then(value=>{settled=true;return {kind:'fulfilled',value};},error=>{settled=true;return {kind:'rejected',message:error.message};});
+  try{
+    assert.equal(started,1);assert.equal(req.signal,signal);
+    await new Promise(resolve=>setImmediate(resolve));
+    assert.equal(settled,false,'the genuine wait remains pending before cancellation');
+    assert.equal(nativeAborted.call(signal),false);pendingBeforeAbort=true;
+    controller.abort();assert.equal(nativeAborted.call(signal),true);
+    outcome=await Promise.race([pending,new Promise(resolve=>{timer=setTimeout(()=>resolve({kind:'timeout'}),500);})]);
+    try{await bound.query('SELECT 2 AS value',[],['value']);}catch{queryRefused=true;}
+  }finally{
+    clearTimeout(timer);settle('must-not-disclose-after-abort');await pending;f.DB.prepare=prepare;
+  }
+  assert.deepEqual(snapshot(f),before);noNativeWork(f);
+  t.diagnostic(JSON.stringify({nativeAborted:nativeAborted.call(signal),outcome:outcome?.kind,pendingBeforeAbort,queryRefused,dispatched,shadowCalls,networkAttempts,mediaAttempts:f.mediaAttempts}));
+  assert.equal(outcome.kind,'rejected','native abort must interrupt the still-blocked work before its test timeout');
+  assert.equal(queryRefused,true);assert.equal(dispatched,0);
+});

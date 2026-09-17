@@ -3,7 +3,7 @@ import { isDraftId } from "../src/experiences/intake.ts";
 import { sponsorPrincipalDigest } from "./experience-sponsor-admission.ts";
 import { captureSponsorAudioJson, SponsorEntitlementError } from "./experience-sponsor-policy.ts";
 import { SPONSOR_AUDIO_OUTPUT_READ_OPERATIONS, type SponsorAudioOutputReadOperation, type SponsorAudioOutputReadOperationLimit } from "./experience-sponsor-audio-output-policy.ts";
-import { createSponsorAudioOutputReadBoundary, readApprovedSponsorAudioOutputReadPolicy, readSponsorAudioOutputPrincipal,
+import { captureSponsorAudioOutputAbort, createSponsorAudioOutputReadBoundary, readApprovedSponsorAudioOutputReadPolicy, readSponsorAudioOutputPrincipal,
   qualifySponsorAudioOutputReadAssertionSink, type SponsorAudioOutputReadLimits } from "./experience-sponsor-audio-output-approval.ts";
 import { readApprovedSponsorAudioIntakePolicy, SPONSOR_AUDIO_INTAKE_APPROVAL_SCHEMA } from "./experience-sponsor-audio-intake-approval.ts";
 import { SPONSOR_AUDIO_INTAKE_POLICY_SCHEMA } from "./experience-sponsor-audio-intake-policy.ts";
@@ -139,17 +139,20 @@ function acknowledgements(value: unknown, count: number, maximum: number) {
 }
 function lifecycle(request: Request, env: WorkerEnv) {
   const database = env.DB, cohort = env.FORMA_PILOT_COHORT_ID, admins = env.FORMA_ADMIN_EMAILS;
-  const method = request.method, url = request.url, signal = request.signal, headers = JSON.stringify([...request.headers]);
+  const cancellation = captureSponsorAudioOutputAbort(request), signal = cancellation.signal;
+  const method = request.method, url = request.url, headers = JSON.stringify([...request.headers]);
   const started = performance.now(); let deadline = started + 30000, closed = false, bootstrap = true;
   let limit: SponsorAudioOutputReadOperationLimit | undefined;
   const used: Usage = { bytes: bytes(headers), queries: 0, rows: 0 };
   if (used.bytes > 32768) return failure("sponsor_audio_output_read_control_limit");
   const check = () => {
-    if (closed || env.DB !== database || env.FORMA_PILOT_COHORT_ID !== cohort || env.FORMA_ADMIN_EMAILS !== admins
-      || request.method !== method || request.url !== url || request.signal !== signal || signal.aborted
-      || JSON.stringify([...request.headers]) !== headers || performance.now() >= deadline) {
-      closed = true; return failure("sponsor_audio_output_read_authority_changed");
-    }
+    try {
+      cancellation.current();
+      if (closed || env.DB !== database || env.FORMA_PILOT_COHORT_ID !== cohort || env.FORMA_ADMIN_EMAILS !== admins
+        || request.method !== method || request.url !== url || request.signal !== signal
+        || JSON.stringify([...request.headers]) !== headers || performance.now() >= deadline)
+        return failure("sponsor_audio_output_read_authority_changed");
+    } catch (error) { closed = true; throw error; }
   };
   const ceilings = (): Usage => ({ bytes: Math.min(limit?.maximumBytes ?? Infinity, bootstrap ? 4194304 : Infinity),
     queries: Math.min(limit?.maximumQueries ?? Infinity, bootstrap ? 1024 : Infinity), rows: Math.min(limit?.maximumRows ?? Infinity, bootstrap ? 65536 : Infinity) });
@@ -165,19 +168,20 @@ function lifecycle(request: Request, env: WorkerEnv) {
     remaining();
   };
   const wait = async <T>(work: () => Promise<T>): Promise<T> => {
-    check(); let timer: ReturnType<typeof setTimeout> | undefined, cancel: (() => void) | undefined;
+    check(); let timer: ReturnType<typeof setTimeout> | undefined, cleanup: (() => void) | undefined;
     try {
-      const result = await Promise.race([work(), new Promise<never>((_, reject) => {
-        cancel = () => { closed = true; reject(new SponsorEntitlementError("sponsor_audio_output_read_authority_changed")); };
-        signal.addEventListener("abort", cancel, { once: true }); if (signal.aborted) cancel();
+      const stopped = new Promise<never>((_, reject) => {
+        const cancel = () => { closed = true; reject(new SponsorEntitlementError("sponsor_audio_output_read_authority_changed")); };
+        cleanup = cancellation.listen(cancel);
         timer = setTimeout(cancel, Math.max(0, deadline - performance.now()));
-      })]); check(); return result;
-    } finally { if (timer !== undefined) clearTimeout(timer); if (cancel) signal.removeEventListener("abort", cancel); check(); }
+      });
+      const result = await Promise.race([stopped, Promise.resolve().then(() => { check(); return work(); })]); check(); return result;
+    } finally { if (timer !== undefined) clearTimeout(timer); cleanup?.(); check(); }
   };
   const narrow = (selected: SponsorAudioOutputReadOperationLimit) => { check(); limit = selected; deadline = Math.min(deadline, started + selected.deadlineMs); remaining(); };
   const narrowDeadline = (value: number) => { if (!Number.isFinite(value)) return failure(); deadline = Math.min(deadline, value); check(); };
   const active = () => { check(); if (!limit) return failure(); bootstrap = false; remaining(); };
-  return { database, check, wait, account, remaining, narrow, narrowDeadline, active,
+  return { database, signal, check, wait, account, remaining, narrow, narrowDeadline, active,
     retire() { closed = true; }, get used() { check(); return { ...used }; }, get deadline() { check(); return deadline; } };
 }
 type Life = ReturnType<typeof lifecycle>;
@@ -186,8 +190,8 @@ const ownerCurrent = (life: Life, principal: Principal) => () => {
 };
 type Attempt = { request: Request; env: WorkerEnv; life: Life; selected: Readonly<Selector>; principal: Principal;
   original: SponsorAudioIntakeReceipt; approved: Approved; receipt: Readonly<Receipt>; assertions: readonly Assertion[]; taken: boolean };
-const limitsFor = (life: Life, current: () => void, request: Request): SponsorAudioOutputReadLimits => ({ current,
-  monotonicDeadline: life.deadline, signal: request.signal, sharedControl: { remaining: life.remaining, account: life.account } });
+const limitsFor = (life: Life, current: () => void): SponsorAudioOutputReadLimits => ({ current,
+  monotonicDeadline: life.deadline, signal: life.signal, sharedControl: { remaining: life.remaining, account: life.account } });
 
 // Exact positive Audio A descriptors. Their own local 4MiB counters do not
 // become fresh allowances: only the shared transport's actual ACKs are debited.
@@ -207,7 +211,7 @@ function existingSchemaQuery(statements: readonly string[], names: readonly stri
 }
 async function provenance<T>(request: Request, env: WorkerEnv, life: Life, current: () => void,
   expected: readonly Descriptor[], work: (nativeEnv: WorkerEnv, limits: SponsorAudioOutputReadLimits) => Promise<T>): Promise<T> {
-  const limits = limitsFor(life, current, request), bounded = createSponsorAudioOutputReadBoundary(request, env, limits);
+  const limits = limitsFor(life, current), bounded = createSponsorAudioOutputReadBoundary(request, env, limits);
   let next = 0;
   const deny = (): never => failure("sponsor_audio_output_read_control_query_invalid");
   const database = new Proxy(life.database, { get(_target, key) {
@@ -301,7 +305,7 @@ export async function reserveSponsorAudioOutputReadAttempt(request: Request, env
   if (requests.has(request)) return failure(); requests.add(request);
   const life = lifecycle(request, env);
   try {
-    const principal = await life.wait(() => readSponsorAudioOutputPrincipal(request, env, limitsFor(life, life.check, request)));
+    const principal = await life.wait(() => readSponsorAudioOutputPrincipal(request, env, limitsFor(life, life.check)));
     const current = ownerCurrent(life, principal);
     current(); const sessionDigest = await life.wait(() => sponsorPrincipalDigest(principal.principal)); current();
     const lookup = sponsorAudioIntakeReceiptLookup(selected.draftId);
@@ -311,13 +315,13 @@ export async function reserveSponsorAudioOutputReadAttempt(request: Request, env
     ], (nativeEnv, limits) => readStoredSponsorAudioIntake(request, nativeEnv, { draftId: selected.draftId, actorUserId: principal.principal.userId }, limits)); current();
     const original = stored.receipt;
     if (!original || original.sessionDigest !== sessionDigest) return failure();
-    const approved = await life.wait(() => readApprovedSponsorAudioOutputReadPolicy(request, env, original.campaignId, original.sponsorPolicyDigest, limitsFor(life, current, request))); current();
+    const approved = await life.wait(() => readApprovedSponsorAudioOutputReadPolicy(request, env, original.campaignId, original.sponsorPolicyDigest, limitsFor(life, current))); current();
     const limit = approved.policy.operations[selected.operation]; life.narrow(limit); current();
     const intake = await provenance(request, env, life, current, intakeApprovalDescriptors(original, approved.originalApprovalId),
       (nativeEnv, limits) => readApprovedSponsorAudioIntakePolicy(request, nativeEnv, original.campaignId, original.sponsorPolicyDigest, limits)); current();
     if (intake.approvalId !== original.intakeApprovalId || intake.intakePolicyDigest !== original.intakePolicyDigest
       || intake.originalApprovalId !== approved.originalApprovalId || intake.payerUserId !== approved.payerUserId) return failure();
-    const limits = limitsFor(life, current, request), bound = createSponsorAudioOutputReadBoundary(request, env, limits);
+    const limits = limitsFor(life, current), bound = createSponsorAudioOutputReadBoundary(request, env, limits);
     const schema = await life.wait(() => bound.query<{ snapshot: string }>(schemaQuery, [], ["snapshot"])); current();
     if (schema.length !== 1 || schema[0]!.snapshot !== snapshot) return failure("sponsor_audio_output_read_attempt_schema_unavailable");
     const sink = await life.wait(() => qualifySponsorAudioOutputReadAssertionSink(request, env, limits)); current();
@@ -377,7 +381,7 @@ export async function takeSponsorAudioOutputReadAttempt(attempt: SponsorAudioOut
   const { life } = state, current = ownerCurrent(life, state.principal);
   try {
     current(); const assertions = freeze([...state.assertions, receiptProof(state.receipt)]), joinedProof = joined(assertions);
-    const bound = createSponsorAudioOutputReadBoundary(request, env, limitsFor(life, current, request)), started = performance.now();
+    const bound = createSponsorAudioOutputReadBoundary(request, env, limitsFor(life, current)), started = performance.now();
     const rows = await life.wait(() => bound.query<{ available: number; now_ms: number }>(`SELECT 1 AS available,${clock} AS now_ms WHERE ${joinedProof.sql}`, joinedProof.bindings, ["available", "now_ms"])); current();
     if (rows.length !== 1 || rows[0]!.available !== 1 || !integer(rows[0]!.now_ms)) return failure();
     life.narrowDeadline(started + state.receipt.deadline_at_ms - rows[0]!.now_ms); current();
