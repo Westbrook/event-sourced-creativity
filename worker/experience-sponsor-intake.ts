@@ -1,10 +1,12 @@
-import { canonicalJson, digest, exactKeys, freeze, jsonIssues, record } from "../src/experiences/compiler.ts";
+import { readSponsorIntakeCommand as commandFrom } from "./experience-sponsor-intake-command.ts";
+import { canonicalJson, digest, exactKeys, freeze, record } from "../src/experiences/compiler.ts";
 import { buildExperiencePlan, experienceDocumentRoute, experienceDraftId, isDraftId, isIntentId, receiptPrefix, registeredExperience, validateIntakeRequest, type ExperiencePlan } from "../src/experiences/intake.ts";
-import { authorizeExperienceIntake, experienceDraftGuard, experienceDraftStorageGuard, readExperienceBody, readExperienceDraft } from "./experience-intake-api.ts";
+import { authorizeExperienceIntake, experienceDraftGuard, experienceDraftStorageGuard, readExperienceDraft } from "./experience-intake-api.ts";
 import { loadApprovedSponsorCampaign } from "./experience-sponsor-approval.ts";
 import { sponsorPrincipalDigest } from "./experience-sponsor-admission.ts";
 import { prepareSponsorResourcePlan } from "./experience-sponsor-resources.ts";
 import { SponsorEntitlementError } from "./experience-sponsor-policy.ts";
+import { composeSponsorIntakePostGuards, composeSponsorIntakePostWriteGuard, prepareSponsorIntakePostStorageWitness, readSponsorIntakePostDraft, requireSponsorIntakePostReadAllowance, sealSponsorIntakePostNativeReceipt, verifySponsorIntakePostPrepared, type SponsorIntakePostReadAllowance } from "./experience-sponsor-intake-reads.ts";
 import { commitAtomicIntake, projectIntakeAuthority, type ProjectIntakeAuthorization } from "./project-intake.ts";
 import { storePrivateContent, type BudgetReservationGuard } from "./pilot-policy.ts";
 import type { WorkerEnv } from "./runtime.ts";
@@ -12,12 +14,13 @@ import type { WorkerEnv } from "./runtime.ts";
 const fail = (code: string): never => { throw new SponsorEntitlementError(code); };
 const id = (value: unknown): value is string => typeof value === "string" && /^[A-Za-z0-9][A-Za-z0-9_.:@/-]{0,199}$/u.test(value);
 const databaseNow = "CAST((julianday('now')-2440587.5)*86400000 AS INTEGER)";
-const join = (...proofs: BudgetReservationGuard[]): BudgetReservationGuard => ({ sql: proofs.map(p => `(${p.sql})`).join(" AND "), bindings: proofs.flatMap(p => p.bindings) });
+const join = composeSponsorIntakePostGuards;
 type Marker = { version: 1; receiptId: string };
 type Plan = ExperiencePlan & { sponsor_intake: Marker };
 type Receipt = { receipt_id: string; resource_id: string; campaign_id: string; policy_digest: string; limits_digest: string;
   actor_user_id: string; session_digest: string; native_intent_id: string; draft_id: string; project_id: string; document_id: string;
   draft_hash: string; body_digest: string; content_digest: string; source_digest: string; content_bytes: number; expires_at: string };
+type MeteredRead = { allowance: SponsorIntakePostReadAllowance; request: Request };
 
 /** Dormant, immutable source-free linkage. Creative text remains only in the
  * existing erasable native private body; no route or initializer installs this. */
@@ -34,14 +37,7 @@ export const SPONSOR_INTAKE_SCHEMA = Object.freeze([
     BEGIN SELECT RAISE(ABORT,'sponsor_intake_exists'); END`,
 ]);
 
-async function commandFrom(request: Request) {
-  if (request.method !== "POST") return fail("sponsor_intake_post_required");
-  const url = new URL(request.url), origin = request.headers.get("origin");
-  if (origin && origin !== url.origin || request.headers.get("sec-fetch-site") === "cross-site") return fail("sponsor_intake_same_origin_required");
-  let body: unknown; try { body = await readExperienceBody(request); } catch { return fail("sponsor_intake_request_invalid"); }
-  if (jsonIssues(body).length || !record(body)) return fail("sponsor_intake_request_invalid");
-  return freeze(JSON.parse(canonicalJson(body)) as Record<string, unknown>);
-}
+export { readSponsorIntakeCommand } from "./experience-sponsor-intake-command.ts";
 async function actorFrom(request: Request, env: WorkerEnv) {
   const auth = await authorizeExperienceIntake(request, env);
   if (auth instanceof Response) return fail("sponsor_intake_actor_unavailable");
@@ -52,11 +48,18 @@ function marked(plan: ExperiencePlan): plan is Plan {
   return record(marker) && exactKeys(marker, ["version", "receiptId"]) && marker.version === 1 && id(marker.receiptId);
 }
 /** A missing/redacted/expired body never becomes a fresh write or a new debit. */
-async function original(env: WorkerEnv, auth: ProjectIntakeAuthorization, draftId: string, campaignId: string) {
-  const stored = await readExperienceDraft(env, auth, draftId);
+async function original(env: WorkerEnv, auth: ProjectIntakeAuthorization, draftId: string, campaignId: string, read?: MeteredRead) {
+  const metered = read ? await readSponsorIntakePostDraft(read.allowance, env, auth, draftId) : undefined;
+  const stored = read ? metered : await readExperienceDraft(env, auth, draftId);
   if (!stored) return null;
   if (!marked(stored.plan)) return fail("sponsor_intake_existing_ordinary_draft");
-  const receipt = await env.DB.prepare("SELECT * FROM experience_sponsor_intakes WHERE draft_id=? AND actor_user_id=?")
+  // The metered reader already captured this exact bounded source-free row.
+  // Do not fetch it again through the unmetered legacy SELECT * path.
+  let receipt: Receipt | null;
+  if (read) {
+    if (!metered) return fail("sponsor_intake_original_unavailable");
+    receipt = metered.receipt;
+  } else receipt = await env.DB.prepare("SELECT * FROM experience_sponsor_intakes WHERE draft_id=? AND actor_user_id=?")
     .bind(draftId, auth.user.userId).first<Receipt>();
   if (!receipt || receipt.campaign_id !== campaignId || receipt.receipt_id !== stored.plan.sponsor_intake.receiptId
     || receipt.native_intent_id !== stored.plan.request.intentId || receipt.project_id !== stored.plan.projectId || receipt.document_id !== stored.plan.documentId
@@ -76,22 +79,24 @@ async function original(env: WorkerEnv, auth: ProjectIntakeAuthorization, draftI
     receipt.body_digest,receipt.source_digest,receipt.expires_at,stored.content] };
   return { ...stored, plan: stored.plan, receipt, proof: join(projectIntakeAuthority(env,auth,stored.plan),experienceDraftGuard(auth,stored.plan,stored.content),proof) };
 }
-async function disclosePrepared(env: WorkerEnv, saved: NonNullable<Awaited<ReturnType<typeof original>>>, replayed: boolean) {
-  if (!await env.DB.prepare(`SELECT 1 AS current WHERE ${saved.proof.sql}`).bind(...saved.proof.bindings).first()) return fail("sponsor_intake_original_unavailable");
+async function disclosePrepared(env: WorkerEnv, saved: NonNullable<Awaited<ReturnType<typeof original>>>, replayed: boolean, read?: MeteredRead) {
+  if (read) await verifySponsorIntakePostPrepared(read.allowance,read.request,env,saved.proof);
+  else if (!await env.DB.prepare(`SELECT 1 AS current WHERE ${saved.proof.sql}`).bind(...saved.proof.bindings).first()) return fail("sponsor_intake_original_unavailable");
   return { status: "prepared" as const, plan: saved.plan, expiresAt: saved.expiresAt, replayed };
 }
 
 /** Actual native draft storage plus intake allowance in one existing D1 batch.
  * No paid work, new financial hold, public route or caller-chosen payer. */
-export async function prepareSponsorImageDraft(request: Request, env: WorkerEnv) {
-  const command = await commandFrom(request);
+export async function prepareSponsorImageDraft(request: Request, env: WorkerEnv, allowance?: SponsorIntakePostReadAllowance) {
+  const captured = allowance ? requireSponsorIntakePostReadAllowance(allowance, request, env, "prepare-sponsored-image-draft") : undefined;
+  const command = captured?.command ?? await commandFrom(request), read = allowance ? { allowance, request } : undefined;
   if (!exactKeys(command,["action","campaignId","request"]) || command.action !== "prepare-sponsored-image-draft" || !id(command.campaignId)
     || !record(command.request) || !isIntentId(command.request.intentId) || command.request.experienceId !== "image" || Object.hasOwn(command.request,"reference")) return fail("sponsor_intake_request_invalid");
-  const auth = await actorFrom(request,env), campaignId = command.campaignId, draftId = await experienceDraftId(auth.user.userId,command.request.intentId);
-  const bodyDigest = await digest(command), existing = await original(env,auth,draftId,campaignId);
+  const auth = captured?.auth ?? await actorFrom(request,env), campaignId = command.campaignId, draftId = await experienceDraftId(auth.user.userId,command.request.intentId);
+  const bodyDigest = await digest(command), existing = await original(env,auth,draftId,campaignId,read);
   if (existing) {
     if (existing.receipt.body_digest !== bodyDigest) return fail("sponsor_intake_intent_conflict");
-    return disclosePrepared(env,existing,true);
+    return disclosePrepared(env,existing,true,read);
   }
   // A retained native identity may not be adopted after expiry/redaction or
   // retroactively attached to a new campaign by inserting only its receipt.
@@ -109,47 +114,56 @@ export async function prepareSponsorImageDraft(request: Request, env: WorkerEnv)
   const contentBytes = new TextEncoder().encode(content).byteLength, sessionDigest = await sponsorPrincipalDigest(approved.actor), sourceDigest = await digest(plan.events);
   const resource = await prepareSponsorResourcePlan({ limits:approved.policy.resources,campaignId,policyDigest:approved.policyDigest,actorUserId:auth.user.userId,
     sessionDigest,intentKey:validated.request.intentId,operation:"image-text-draft-storage",payloadDigest:contentDigest,textBytes:contentBytes,resourceId:`${receiptId}:resource` });
-  const live = join(projectIntakeAuthority(env,auth,plan),...approved.assertions.map(p=>({sql:p.sql,bindings:p.bindings??[]}))), storageGuard = join(experienceDraftStorageGuard(auth.user.userId),live);
+  const liveProofs = [projectIntakeAuthority(env,auth,plan),...approved.assertions.map(p=>({sql:p.sql,bindings:p.bindings??[]}))];
+  const live = allowance ? composeSponsorIntakePostWriteGuard(allowance,request,env,...liveProofs) : join(...liveProofs);
+  const storageGuard = join(experienceDraftStorageGuard(auth.user.userId),live);
   try {
-    await storePrivateContent(env,auth.user.userId,"experience-draft",content,undefined,storageGuard,stored=>[
-      ...resource.statements.map(statement=>env.DB.prepare(statement.sql).bind(...statement.bindings)),
-      env.DB.prepare(`INSERT INTO experience_sponsor_intakes(receipt_id,resource_id,campaign_id,policy_digest,limits_digest,actor_user_id,session_digest,native_intent_id,draft_id,project_id,document_id,draft_hash,body_digest,content_digest,source_digest,content_bytes,expires_at,recorded_at_ms)
+    await storePrivateContent(env,auth.user.userId,"experience-draft",content,undefined,storageGuard,stored=>{
+      const statements = [...resource.statements.map(statement=>env.DB.prepare(statement.sql).bind(...statement.bindings)),
+        env.DB.prepare(`INSERT INTO experience_sponsor_intakes(receipt_id,resource_id,campaign_id,policy_digest,limits_digest,actor_user_id,session_digest,native_intent_id,draft_id,project_id,document_id,draft_hash,body_digest,content_digest,source_digest,content_bytes,expires_at,recorded_at_ms)
         VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,${databaseNow})`).bind(receiptId,`${receiptId}:resource`,campaignId,approved.policyDigest,resource.limitsDigest,auth.user.userId,sessionDigest,
-          validated.request.intentId,draftId,plan.projectId,plan.documentId,plan.draftHash,bodyDigest,contentDigest,sourceDigest,contentBytes,stored.expiresAt),
+          validated.request.intentId,draftId,plan.projectId,plan.documentId,plan.draftHash,bodyDigest,contentDigest,sourceDigest,contentBytes,stored.expiresAt)];
       // A CHECK witness is checked inside the native storage transaction.
       // It cannot be replaced by storePrivateContent's post-commit change count.
-      env.DB.prepare(`INSERT INTO experience_sponsor_intake_assertions(receipt_id,passed) VALUES(?,CASE WHEN EXISTS(SELECT 1 FROM private_content body
+      const witnessSql = `INSERT INTO experience_sponsor_intake_assertions(receipt_id,passed) VALUES(?,CASE WHEN EXISTS(SELECT 1 FROM private_content body
         JOIN experience_sponsor_intakes intake ON intake.draft_id=body.content_id JOIN experience_sponsor_resource_receipts resource ON resource.resource_id=intake.resource_id
         WHERE intake.receipt_id=? AND body.owner_id=? AND body.kind='experience-draft' AND body.content=? AND body.redacted_at IS NULL AND body.expires_at=?
           AND intake.expires_at=body.expires_at AND intake.content_digest=? AND intake.content_bytes=? AND resource.operation='image-text-draft-storage'
           AND resource.payload_digest=intake.content_digest AND resource.text_bytes=intake.content_bytes
           AND resource.campaign_id=intake.campaign_id AND resource.actor_user_id=intake.actor_user_id AND resource.policy_digest=intake.policy_digest
           AND resource.limits_digest=intake.limits_digest AND resource.session_digest=intake.session_digest AND resource.intent_key=intake.native_intent_id)
-        AND (${live.sql}) THEN 1 ELSE 0 END)`).bind(receiptId,receiptId,auth.user.userId,content,stored.expiresAt,contentDigest,contentBytes,...live.bindings),
-      env.DB.prepare("DELETE FROM experience_sponsor_intake_assertions WHERE receipt_id=?").bind(receiptId),
-    ],{contentId:draftId});
+        AND (${live.sql}) THEN 1 ELSE 0 END)`;
+      const witnessBindings = [receiptId,receiptId,auth.user.userId,content,stored.expiresAt,contentDigest,contentBytes,...live.bindings];
+      statements.push(allowance
+        ? prepareSponsorIntakePostStorageWitness(allowance,request,env,live,witnessSql,witnessBindings)
+        : env.DB.prepare(witnessSql).bind(...witnessBindings));
+      statements.push(env.DB.prepare("DELETE FROM experience_sponsor_intake_assertions WHERE receipt_id=?").bind(receiptId));
+      return statements;
+    },{contentId:draftId});
   } catch (error) {
-    const saved = await original(env,auth,draftId,campaignId);
+    const saved = await original(env,auth,draftId,campaignId,read);
     if (!saved || saved.receipt.body_digest !== bodyDigest) throw error;
-    return disclosePrepared(env,saved,true);
+    return disclosePrepared(env,saved,true,read);
   }
-  const saved = await original(env,auth,draftId,campaignId);
+  const saved = await original(env,auth,draftId,campaignId,read);
   if (!saved || saved.receipt.body_digest !== bodyDigest) return fail("sponsor_intake_save_unconfirmed");
-  return disclosePrepared(env,saved,false);
+  return disclosePrepared(env,saved,false,read);
 }
 
 /** Explicit review commits the unchanged native event grammar. An already
  * completed native receipt is recovered under actor custody even when new
  * sponsor work has expired/revoked; no expiry or counter is reset. */
-export async function commitSponsorImageDraft(request: Request, env: WorkerEnv) {
-  const command = await commandFrom(request);
+export async function commitSponsorImageDraft(request: Request, env: WorkerEnv, allowance?: SponsorIntakePostReadAllowance) {
+  const captured = allowance ? requireSponsorIntakePostReadAllowance(allowance,request,env,"commit-sponsored-image-draft") : undefined;
+  const command = captured?.command ?? await commandFrom(request), read = allowance ? { allowance, request } : undefined;
   if (!exactKeys(command,["action","campaignId","draftId","draftHash"]) || command.action !== "commit-sponsored-image-draft" || !id(command.campaignId)
     || typeof command.draftId !== "string" || !isDraftId(command.draftId) || typeof command.draftHash !== "string") return fail("sponsor_intake_request_invalid");
-  const auth = await actorFrom(request,env), saved = await original(env,auth,command.draftId,command.campaignId);
+  const auth = captured?.auth ?? await actorFrom(request,env), saved = await original(env,auth,command.draftId,command.campaignId,read);
   if (!saved || command.draftHash !== saved.plan.draftHash) return fail("sponsor_intake_review_stale");
   const plan = saved.plan, intake = {projectId:plan.projectId,documentId:plan.documentId,events:structuredClone(plan.events) as ExperiencePlan["events"][number][]};
   const options = {receiptPrefix:receiptPrefix(plan.draftId),clientId:"web:experience-intake",correlationPrefix:"experience-intake:",guard:saved.proof};
-  const before = await commitAtomicIntake(env,auth,intake,"check",options), originalReceipt = await before.json() as Record<string,unknown>;
+  const checkOptions = allowance ? sealSponsorIntakePostNativeReceipt(allowance,request,env,auth,intake,options) : options;
+  const before = await commitAtomicIntake(env,auth,intake,"check",checkOptions), originalReceipt = await before.json() as Record<string,unknown>;
   if (originalReceipt.status === "complete") return {...originalReceipt,draftId:plan.draftId,draftHash:plan.draftHash,documentRoute:experienceDocumentRoute(plan),generation:"unavailable",replayed:true};
   const approved = await loadApprovedSponsorCampaign(request,env,command.campaignId);
   if (approved.policy.resources.version !== 2 || approved.actor.userId !== auth.user.userId || approved.policyDigest !== saved.receipt.policy_digest
@@ -157,7 +171,8 @@ export async function commitSponsorImageDraft(request: Request, env: WorkerEnv) 
   const resourceLive: BudgetReservationGuard = {sql:`EXISTS(SELECT 1 FROM experience_sponsor_resource_policies WHERE campaign_id=? AND enabled=1 AND limits_digest=? AND limits_json=?) AND ${databaseNow}>=? AND ${databaseNow}<?`,
     bindings:[command.campaignId,saved.receipt.limits_digest,canonicalJson(approved.policy.resources),approved.policy.resources.startsAtMs,approved.policy.resources.expiresAtMs]};
   const guard = join(saved.proof,resourceLive,...approved.assertions.map(p=>({sql:p.sql,bindings:p.bindings??[]})));
-  const response = await commitAtomicIntake(env,auth,intake,"commit",{...options,guard}), result = await response.json() as Record<string,unknown>;
+  const commitOptions = allowance ? sealSponsorIntakePostNativeReceipt(allowance,request,env,auth,intake,{...options,guard}) : {...options,guard};
+  const response = await commitAtomicIntake(env,auth,intake,"commit",commitOptions), result = await response.json() as Record<string,unknown>;
   if (result.status !== "complete") return fail("sponsor_intake_commit_unconfirmed");
   return {...result,draftId:plan.draftId,draftHash:plan.draftHash,documentRoute:experienceDocumentRoute(plan),generation:"unavailable",replayed:false};
 }

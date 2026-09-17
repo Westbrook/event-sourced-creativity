@@ -964,3 +964,14 @@ export function handleNativeRetainedOutputRead(request: Request, env: WorkerEnv)
   if (!target) return Promise.resolve(error("invalid_native_retained_output_selection", 400));
   return readCurrentRetainedNative(request, env, target);
 }
+
+/** Internal reuse boundary for a separately observed current-media proof. These
+ * are the exact functions used above, not an HTTP/authentication adapter. The
+ * bundle supplies no caller identity, publication right or selected byte access. */
+export const nativeRetainedMediaReceiptReaders = Object.freeze({
+  audio: Object.freeze({ receipt: audioReceipt, edit: audioEditReceipt, receiptGuard: audioReceiptGuard }),
+  video: Object.freeze({ receipt: videoReceipt, edit: videoEditReceipt, receiptGuard: videoReceiptGuard,
+    sourceGuard: videoSourceRevisionGuard }),
+  model3d: Object.freeze({ receipt: model3dReceipt, edit: model3dEditReceipt, receiptGuard: model3dReceiptGuard,
+    sourceGuard: model3dSourceRevisionGuard }),
+});

@@ -1,0 +1,272 @@
+{
+  "schemaVersion": 1,
+  "component": "Forma dormant MP3-to-PCM projection decoder",
+  "binary": {
+    "file": "decoder.wasm",
+    "bytes": 99479,
+    "sha256": "f0e9e8848367320ccb757e4092f0d6809668cfe38f43139d47b447151d7dff6b",
+    "modified": false,
+    "origin": "Extracted compressed literal from the pinned npm/generated EmscriptenWasm.js; no generated decoder wrapper JavaScript evaluated.",
+    "sourceBuildReproduced": false
+  },
+  "npm": {
+    "name": "mpg123-decoder",
+    "version": "1.0.3",
+    "registry": "https://registry.npmjs.org/mpg123-decoder/1.0.3",
+    "tarball": "https://registry.npmjs.org/mpg123-decoder/-/mpg123-decoder-1.0.3.tgz",
+    "tarballSha256": "5207b35109ec884e7d47ab89b670bc86438399f681e1a6c26716003b3949cc5c",
+    "integrity": "sha512-+fjxnWigodWJm3+4pndi+KUg9TBojgn31DPk85zEsim7C6s0X5Ztc/hQYdytXkwuGXH+aB0/aEkG40Emukv6oQ==",
+    "integrityVerified": true,
+    "packageScriptsExecuted": false,
+    "gitHead": "8f2428c1cd96b54dab74836c8471ff75fe35cbee"
+  },
+  "wrapper": {
+    "repository": "https://github.com/eshaz/wasm-audio-decoders",
+    "revision": "8f2428c1cd96b54dab74836c8471ff75fe35cbee",
+    "declaredLicense": "MIT",
+    "standaloneUpstreamLicensePresent": false,
+    "copyrightSource": "src/mpg123-decoder/dist/mpg123-decoder.min.js first line",
+    "copyrightNotice": "Copyright 2021-2025 Ethan Halsall",
+    "sourceManifest": "corresponding-source/wrapper-source-manifest.json",
+    "files": 32,
+    "sourceBytes": 550711,
+    "selection": "Root build recipe/lockfiles/submodule pins/README; complete mpg123-decoder/common source files; mpg123 minified dist file for its original attribution. Other codecs and unrelated audio fixtures excluded.",
+    "modifications": "None in archived upstream files. Forma materialization/extraction helpers and provenance notes are separately authored."
+  },
+  "codec": {
+    "name": "libmpg123",
+    "versionFromConfigureAc": "1.29.0",
+    "repository": "https://github.com/madebr/mpg123",
+    "revision": "08247b317163175e62035893af3ff9e71a5dfefd",
+    "sourceArchiveUrl": "https://codeload.github.com/madebr/mpg123/tar.gz/08247b317163175e62035893af3ff9e71a5dfefd",
+    "sourceManifest": "corresponding-source/codec-source-manifest.json",
+    "completePinnedGitTree": true,
+    "files": 356,
+    "expandedBytes": 3358777,
+    "archiveBytes": 877073,
+    "archiveSha256": "78d3d63e8786a232bd1a1658399baed52b043e1c7d6f57ae35406d0597308350",
+    "archiveAllFileGitBlobIdentitiesVerified": true,
+    "license": "LGPL-2.1",
+    "copyingFileIncludesOptionalGpl2ConversionText": true,
+    "gplConversionClaimed": false,
+    "modifications": "None"
+  },
+  "toolchain": {
+    "declaredEmscriptenVersion": "4.0.7",
+    "emscriptenSourceRevision": "8dc91db45bf96c174531006839472a3924d105aa",
+    "source": "https://github.com/emscripten-core/emscripten/tree/8dc91db45bf96c174531006839472a3924d105aa",
+    "upstreamBuildAttestationAvailable": false,
+    "completeSdkSourceBundled": false,
+    "actualLinkedRuntimeObjectMapAvailable": false,
+    "generatedOriginalConfigAvailable": false,
+    "buildExecutedHere": false,
+    "toolchainInstalledHere": false,
+    "sdkOrXcodeLicenseAcceptedHere": false,
+    "recipe": "REBUILD.md"
+  },
+  "extractionTool": {
+    "name": "simple-yenc",
+    "version": "1.0.4",
+    "registry": "https://registry.npmjs.org/simple-yenc/1.0.4",
+    "tarballSha256": "52151d29797654e08019f3d45e5f22c16ebc3c356258b00926aa4db636012fbd",
+    "integrity": "sha512-5gvxpSd79e9a3V4QDYUqnqxeD4HGlhCakVpb6gMnDD7lexJggSBJRBO5h52y/iJrdXRilX9UCuDaIJhSWm5OWw==",
+    "integrityVerified": true,
+    "sourceFile": "corresponding-source/extraction/simple-yenc.source.txt",
+    "originalPackagePath": "src/simple-yenc.js",
+    "sourceModified": false,
+    "runtimeDependency": false,
+    "packageScriptsExecuted": false,
+    "sourceManifest": "corresponding-source/extraction-source-manifest.json",
+    "offlineExecution": "The CLI verifies source SHA-256, materializes its exact bytes to an owned temporary .mjs, imports it, then removes that temporary directory. No Worker import or package lifecycle script."
+  },
+  "noticeSources": [
+    {
+      "file": "licenses/MPG123-COPYING",
+      "url": "https://raw.githubusercontent.com/madebr/mpg123/08247b317163175e62035893af3ff9e71a5dfefd/COPYING"
+    },
+    {
+      "file": "licenses/MPG123-AUTHORS",
+      "url": "https://raw.githubusercontent.com/madebr/mpg123/08247b317163175e62035893af3ff9e71a5dfefd/AUTHORS"
+    },
+    {
+      "file": "licenses/EMSCRIPTEN-LICENSE-4.0.7.txt",
+      "url": "https://raw.githubusercontent.com/emscripten-core/emscripten/4.0.7/LICENSE"
+    },
+    {
+      "file": "licenses/EMSCRIPTEN-MUSL-COPYRIGHT-4.0.7.txt",
+      "url": "https://raw.githubusercontent.com/emscripten-core/emscripten/4.0.7/system/lib/libc/musl/COPYRIGHT"
+    },
+    {
+      "file": "licenses/EMSCRIPTEN-COMPILER-RT-LICENSE-4.0.7.txt",
+      "url": "https://raw.githubusercontent.com/emscripten-core/emscripten/8dc91db45bf96c174531006839472a3924d105aa/system/lib/compiler-rt/LICENSE.TXT"
+    },
+    {
+      "file": "licenses/MIT-STANDARD-TEXT.txt",
+      "url": "https://raw.githubusercontent.com/spdx/license-list-data/v3.27.0/text/MIT.txt"
+    },
+    {
+      "file": "licenses/SIMPLE-YENC-LICENSE",
+      "origin": "Exact simple-yenc@1.0.4 npm artifact LICENSE"
+    },
+    {
+      "file": "licenses/WRAPPER-UPSTREAM-NOTICES.txt",
+      "origin": "Verbatim first line of pinned minified decoder plus verbatim Licensing paragraph of pinned root README; labels separate the excerpts."
+    },
+    {
+      "file": "licenses/WRAPPER-MIT-NOTICE.txt",
+      "origin": "Explicitly labeled assembled notice using actual upstream banner/README declaration and SPDX standard MIT text; not claimed to be an upstream file."
+    },
+    {
+      "file": "licenses/PUFF-UPSTREAM-HEADER.txt",
+      "url": "https://raw.githubusercontent.com/eshaz/wasm-audio-decoders/8f2428c1cd96b54dab74836c8471ff75fe35cbee/src/common/src/puff/puff.h",
+      "scope": "Unmodified notice/header for upstream common source included in source archive. Not used by Forma static-WASM loader or offline extraction, which uses Node zlib."
+    },
+    {
+      "file": "licenses/EMMALLOC-UPSTREAM-NOTICE.txt",
+      "url": "https://raw.githubusercontent.com/emscripten-core/emscripten/8dc91db45bf96c174531006839472a3924d105aa/system/lib/emmalloc.c",
+      "origin": "Verbatim first comment/header; actual full upstream source was retrieved read-only.",
+      "upstreamSourceBytes": 56496,
+      "upstreamSourceSha256": "530aad5d28529ec86a2c4a56813a0f21a7e8e013fd23ae7d018e216d44d68265"
+    }
+  ],
+  "validation": {
+    "date": "2026-09-17",
+    "allArchivedUpstreamFilesMatchPinnedGitBlobs": true,
+    "materializedFiles": 388,
+    "offlineExtraction": {
+      "bytes": 99479,
+      "sha256": "f0e9e8848367320ccb757e4092f0d6809668cfe38f43139d47b447151d7dff6b",
+      "matchesShippedBinary": true,
+      "extractionMode": "published-pinned-yenc",
+      "sourceBuildReproduced": false,
+      "generatedWrapperJavaScriptEvaluated": false,
+      "verifiedYencDependencyExecuted": true,
+      "packageLifecycleScriptsExecuted": 0,
+      "networkRequests": 0
+    },
+    "extractionCliScopedLint": "pass",
+    "preservedReviewFindings": [
+      "Initial unmodified executable simple-yenc source triggered seven existing upstream style violations under app lint. Exact source is now text/archive, materialized only by the offline CLI; no upstream bytes or lint configuration were altered.",
+      "The initial receipt field upstreamJavaScriptEvaluated was overbroad: verified simple-yenc executes while generated wrapper JavaScript does not. Final fields distinguish them.",
+      "An initial --rebuilt receipt incorrectly inferred source-build reproduction from a matching payload and a caller flag. A no-compilation base64 counterexample was preserved by independent review; final helper always leaves sourceBuildReproduced false pending external build evidence."
+    ]
+  },
+  "limitations": [
+    "Pinned source association and repeatable binary extraction are established; source-build reproducibility is unproved.",
+    "Original generated configuration, original link map, and exact host/SDK cache provenance were not supplied upstream.",
+    "Emscripten/toolchain source is referenced by pin but the complete SDK checkout is not bundled; exact retained runtime/math object attribution is unverified.",
+    "This provenance bundle does not activate sharing, confer native output custody, or approve a production release."
+  ],
+  "vendorFiles": [
+    {
+      "path": "REBUILD.md",
+      "bytes": 6477,
+      "sha256": "563eebcdb98c705a56ea887bc9aedb5d12ca3d4c3ceb4691259d34583d455f99"
+    },
+    {
+      "path": "corresponding-source/codec-source-manifest.json",
+      "bytes": 88483,
+      "sha256": "25fc00cf0d10976ce90076be24cbed771ea8bcceee49c819aa3e91c254d596d9"
+    },
+    {
+      "path": "corresponding-source/extract-wasm.mjs",
+      "bytes": 3495,
+      "sha256": "aff621d024118777a1bbeb14dba26291f08bc75fe3c83cc4626e7858fc1ead0d"
+    },
+    {
+      "path": "corresponding-source/extraction/simple-yenc.source.txt",
+      "bytes": 7627,
+      "sha256": "363cbcc23d55beed7b89398d1213a67722128ba958f6d1eb1964f8797375af4a"
+    },
+    {
+      "path": "corresponding-source/extraction-source-manifest.json",
+      "bytes": 806,
+      "sha256": "95840a92285ad2acbf7884f142c32de779b0b0ac604cc4c54d1a98c6d1c0519e"
+    },
+    {
+      "path": "corresponding-source/materialize.py",
+      "bytes": 3397,
+      "sha256": "337ac6a9f4e1034423cdd7e40f8e94fa7fc1e59f1e5d299670b27fd3fade9c1b"
+    },
+    {
+      "path": "corresponding-source/mpg123-08247b317163175e62035893af3ff9e71a5dfefd.tar.gz",
+      "bytes": 877073,
+      "sha256": "78d3d63e8786a232bd1a1658399baed52b043e1c7d6f57ae35406d0597308350"
+    },
+    {
+      "path": "corresponding-source/simple-yenc-1.0.4-source.tar.gz",
+      "bytes": 3898,
+      "sha256": "891d7d5ac05773e6f4ea06d97382091cec53bee99565be12079178336ee98770"
+    },
+    {
+      "path": "corresponding-source/wasm-audio-decoders-8f2428c1cd96b54dab74836c8471ff75fe35cbee-mpg123-source.tar.gz",
+      "bytes": 218195,
+      "sha256": "9fdc2ffe2dbacc790afb5f5e3c9750256397ba68254a0c217ff1893fa75c3920"
+    },
+    {
+      "path": "corresponding-source/wrapper-source-manifest.json",
+      "bytes": 13372,
+      "sha256": "161e47efecf7f6fddeff93e2277d250a5637a5c6f44cb32d7e13eca04671f779"
+    },
+    {
+      "path": "licenses/EMMALLOC-UPSTREAM-NOTICE.txt",
+      "bytes": 2172,
+      "sha256": "5246bd08a8ee991e26eb101a01aeb5dae4e42bf2df667c995ae5d5c2d5dec20f"
+    },
+    {
+      "path": "licenses/EMSCRIPTEN-COMPILER-RT-LICENSE-4.0.7.txt",
+      "bytes": 16708,
+      "sha256": "1a8f1058753f1ba890de984e48f0242a3a5c29a6a8f2ed9fd813f36985387e8d"
+    },
+    {
+      "path": "licenses/EMSCRIPTEN-LICENSE-4.0.7.txt",
+      "bytes": 5093,
+      "sha256": "620a78084fc7ca97c0b5dea9abf891f3ffcadfdbf305276f099c9c4e12fc1d86"
+    },
+    {
+      "path": "licenses/EMSCRIPTEN-MUSL-COPYRIGHT-4.0.7.txt",
+      "bytes": 6204,
+      "sha256": "f9bc4423732350eb0b3f7ed7e91d530298476f8fec0c6c427a1c04ade22655af"
+    },
+    {
+      "path": "licenses/MIT-STANDARD-TEXT.txt",
+      "bytes": 1078,
+      "sha256": "b05785f9f18e6716bab63424b11454513b9943a222595b70411009202fc592b5"
+    },
+    {
+      "path": "licenses/MPG123-AUTHORS",
+      "bytes": 9170,
+      "sha256": "acf074a5eb7933a9d60074ea3251629c2eddd28e5255b306252c753142c91b4c"
+    },
+    {
+      "path": "licenses/MPG123-COPYING",
+      "bytes": 40718,
+      "sha256": "c22482728a634a8dfdb4ff72a96d4c1ed64cd8f3e79335c401751ac591609366"
+    },
+    {
+      "path": "licenses/PUFF-UPSTREAM-HEADER.txt",
+      "bytes": 1415,
+      "sha256": "969b7be2a930db0cdcb19b0e5b29ae6741f5a8f663b6dba6d647e12ec60cfa8e"
+    },
+    {
+      "path": "licenses/README.md",
+      "bytes": 2498,
+      "sha256": "a8ec705ad134d2ed965add9226025cf661978ae42cc88d6b15f502740dcc31a8"
+    },
+    {
+      "path": "licenses/SIMPLE-YENC-LICENSE",
+      "bytes": 1058,
+      "sha256": "ce44a03cf2ded9cf1d326c5ffb20a29245375dd1b9f1e95e59cd275c24c00533"
+    },
+    {
+      "path": "licenses/WRAPPER-MIT-NOTICE.txt",
+      "bytes": 1411,
+      "sha256": "93949dda8f30d03aebe53bbb4d4a8b69546be66cb8f3f074da015a369736d005"
+    },
+    {
+      "path": "licenses/WRAPPER-UPSTREAM-NOTICES.txt",
+      "bytes": 456,
+      "sha256": "e38a42c676802530f45eabb5aecf8db58eb666b287444b0e1eb74edeb2ec27c2"
+    }
+  ]
+}

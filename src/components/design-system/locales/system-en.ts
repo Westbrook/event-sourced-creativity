@@ -1,5 +1,8 @@
 /** Audited Forma-owned interface, metadata, and component-documentation copy. */
 const messages: Record<string, string> = {
+  "system.auto.mnnucx.13": "Shared output",
+  "system.auto.1h1pgn9.12": "Share output",
+  "system.auto.g1h7cj.64": "Additional host clamp. It cannot override the server capability.",
   "system.auto.1tmhsof.17": "Renew preparation",
   "system.auto.156lxlv.8": "3D model",
   "system.auto.15uddgm.56": "1 static GLB · Structure checked; visual review required",

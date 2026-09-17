@@ -12,6 +12,29 @@ const same=(a:unknown,b:unknown)=>canonicalJson(a)===canonicalJson(b);
 const bounded=(v:string)=>{if(typeof v!=="string"||new TextEncoder().encode(v).length>1_048_576)return fail();return v;};
 const sha=async(v:string)=>Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256",new TextEncoder().encode(v))),n=>n.toString(16).padStart(2,"0")).join("");
 
+type RetainedVideoByteState = {
+ env:WorkerEnv;database:WorkerEnv["DB"];media:WorkerEnv["MEDIA"];
+ cohort:WorkerEnv["FORMA_PILOT_COHORT_ID"];administrators:WorkerEnv["FORMA_ADMIN_EMAILS"];
+ signal:AbortSignal|undefined;deadlineMs:number;bytes:Uint8Array<ArrayBuffer>;
+};
+const retainedVideoBytes=new WeakMap<object,RetainedVideoByteState>();
+const currentByteEnvironment=(state:RetainedVideoByteState,env:WorkerEnv)=>state.env===env&&state.database===env.DB
+ &&state.media===env.MEDIA&&state.cohort===env.FORMA_PILOT_COHORT_ID&&state.administrators===env.FORMA_ADMIN_EMAILS
+ &&!state.signal?.aborted&&Date.now()<state.deadlineMs;
+
+/** Exact bytes already inspected by this original retained read. This local
+ * capability does not revalidate the returned SQL witness or current selection;
+ * its internal caller must do so before using the bytes as native custody. */
+export function copyRetainedOutputVideoBytes(value:unknown,env:WorkerEnv):Uint8Array<ArrayBuffer>|null{
+ try{
+  if(!value||typeof value!=="object")return null;
+  const state=retainedVideoBytes.get(value);
+  if(!state||!currentByteEnvironment(state,env))return null;
+  const bytes=new Uint8Array(state.bytes);
+  return currentByteEnvironment(state,env)?bytes:null;
+ }catch{return null;}
+}
+
 /** The existing hosted retained reader owns current principal, Document and
  * revision custody. Revalidate the original completed two-call evidence and
  * one physical MP4 here, without dispatch, grant renewal or new authority.
@@ -24,6 +47,8 @@ export async function readRetainedOutputVideo(env:WorkerEnv,input:{
  currentAssertions?:readonly OutputSqlAssertion[];
 }){
  const recovery=input.recoveryLease;
+ const byteBinding={env,database:env.DB,media:env.MEDIA,cohort:env.FORMA_PILOT_COHORT_ID,
+  administrators:env.FORMA_ADMIN_EMAILS,signal:input.signal};
  const payload=object(JSON.parse(bounded(input.completionRaw))),settings=object(payload.settings),receipt=object(settings.output_video);
  const contract=parseVideoOutputContract(receipt.contract);
  if(!contract||receipt.version!=="output-video-completion-v1"||receipt.providerCallCount!==2
@@ -103,5 +128,12 @@ export async function readRetainedOutputVideo(env:WorkerEnv,input:{
   if(parts.length!==bindings.length+1)return fail();
   return "("+parts.map((part,position)=>part+(position<bindings.length?`(SELECT json_extract(bindings,'$[${index}][${position}]') FROM video_witness)`:"")).join("")+")";
  }));
- return {assertions,expiresAt:new Date(deadlineMs).toISOString(),witness:{json:witnessJson,sql:witnessSql}};
+ const retained={assertions,expiresAt:new Date(deadlineMs).toISOString(),witness:{json:witnessJson,sql:witnessSql}};
+ // Own the already inspected bytes before returning; callers cannot replace
+ // the lifetime or acquire a capability from recovery finalization evidence.
+ if(!recovery){
+  const state={...byteBinding,deadlineMs,bytes:new Uint8Array(result.bytes)};
+  if(currentByteEnvironment(state,env))retainedVideoBytes.set(retained,state);
+ }
+ return retained;
 }

@@ -2,6 +2,7 @@ import { projectIntakeReceiptPrefix, projectIntakeValue, type ProjectIntake } fr
 import { intakeGuard, type ProjectIntakeAuthorization, type AtomicIntakeOptions } from "./intake-authority.ts";
 import { serializeEvent } from "./event-read-primitives.ts";
 import { recordIntakeDiagnostic } from "./project-intake-diagnostic.ts";
+import { readSponsorIntakePostNativeReceipt } from "./experience-sponsor-intake-reads.ts";
 import type { EventRow } from "./event-write-primitives.ts";
 import type { WorkerEnv } from "./runtime.ts";
 
@@ -17,7 +18,7 @@ type ReceiptState={authorized:boolean;seen:boolean;complete:boolean;events:Event
 async function readOriginal(env:WorkerEnv,auth:ProjectIntakeAuthorization,intake:ProjectIntake,options?:AtomicIntakeOptions):Promise<ReceiptState>{
   const guard=intakeGuard(env,auth,intake,options),stream=auth.user.streamId,prefix=options?.receiptPrefix??projectIntakeReceiptPrefix(intake.projectId);
   const expected=JSON.stringify(intake.events.map(event=>String(event.payload.client_event_id)));
-  const result=await env.DB.prepare(`SELECT expected.value AS requested_key,receipt.client_event_id AS receipt_key,
+  const sql=`SELECT expected.value AS requested_key,receipt.client_event_id AS receipt_key,
       event.*,secret.private_json,
       (SELECT COUNT(*) FROM event_client_receipts counted WHERE counted.stream_id=? AND substr(counted.client_event_id,1,?)=?) AS receipt_total,
       (SELECT COALESCE(MAX(sequence),0) FROM events head WHERE head.stream_id=?) AS current_head
@@ -25,8 +26,13 @@ async function readOriginal(env:WorkerEnv,auth:ProjectIntakeAuthorization,intake
     LEFT JOIN event_client_receipts receipt ON receipt.stream_id=? AND receipt.client_event_id=expected.value
     LEFT JOIN events event ON event.event_id=receipt.event_id AND event.stream_id=receipt.stream_id AND event.sequence=receipt.sequence
     LEFT JOIN event_private_payloads secret ON secret.private_event_id=event.event_id AND secret.owner_id=? AND secret.redacted_at IS NULL
-    WHERE ${guard.sql} ORDER BY CAST(expected.key AS INTEGER)`)
-    .bind(stream,prefix.length,prefix,stream,expected,stream,auth.user.userId,...guard.bindings).all<Record<string,unknown>>();
+    WHERE ${guard.sql} ORDER BY CAST(expected.key AS INTEGER)`;
+  const bindings=[stream,prefix.length,prefix,stream,expected,stream,auth.user.userId,...guard.bindings];
+  // The optional token belongs to one actual POST and this exact native call.
+  // Both the first read and post-append/lost-ACK read retain the full intakeGuard.
+  const result=options?.sponsorIntakeRead
+    ?await readSponsorIntakePostNativeReceipt(options.sponsorIntakeRead,env,auth,intake,options,sql,bindings)
+    :await env.DB.prepare(sql).bind(...bindings).all<Record<string,unknown>>();
   const rows=result.results;
   if(rows.length!==intake.events.length)return{authorized:false,seen:false,complete:false,events:[],head:0};
   const seen=Number(rows[0]?.receipt_total??0)>0,events:EventRow[]=[];

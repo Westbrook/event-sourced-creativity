@@ -1,0 +1,2501 @@
+{
+  "repository": "https://github.com/madebr/mpg123",
+  "revision": "08247b317163175e62035893af3ff9e71a5dfefd",
+  "archive": "mpg123-08247b317163175e62035893af3ff9e71a5dfefd.tar.gz",
+  "archiveSha256": "78d3d63e8786a232bd1a1658399baed52b043e1c7d6f57ae35406d0597308350",
+  "completePinnedGitTree": true,
+  "files": [
+    {
+      "path": "AUTHORS",
+      "bytes": 9170,
+      "gitBlobSha1": "3321f0bafc0592034a3ab63f3ee17855653fb956",
+      "sha256": "acf074a5eb7933a9d60074ea3251629c2eddd28e5255b306252c753142c91b4c",
+      "mode": "100644"
+    },
+    {
+      "path": "COPYING",
+      "bytes": 40718,
+      "gitBlobSha1": "14e14f01cfc70ab24e95ad6be4fd7d6bbc1126de",
+      "sha256": "c22482728a634a8dfdb4ff72a96d4c1ed64cd8f3e79335c401751ac591609366",
+      "mode": "100644"
+    },
+    {
+      "path": "ChangeLog",
+      "bytes": 109,
+      "gitBlobSha1": "e8d40a1aa79a6f01e9ea9191c5e9d6202d2c2057",
+      "sha256": "78e19ac17d8e78ae535856d3ad2dd97805fd8abc5a2e5e1f018a47c5e026914a",
+      "mode": "100644"
+    },
+    {
+      "path": "INSTALL",
+      "bytes": 6456,
+      "gitBlobSha1": "a9cec3fe3c02f473da7bad41321e2e1eaa5c90c9",
+      "sha256": "675dd6cdcfe2af30215b80bbcfc96332f8c4bbf335b139cffe526e343db81384",
+      "mode": "100644"
+    },
+    {
+      "path": "Makefile.am",
+      "bytes": 2414,
+      "gitBlobSha1": "09dc0da307d6bc43a7995e2da47ec5b26e3f995f",
+      "sha256": "6b6d40736cda147fefc298589681d17de4757044f1b18191375c88baebdb79fc",
+      "mode": "100644"
+    },
+    {
+      "path": "NEWS",
+      "bytes": 110863,
+      "gitBlobSha1": "155c66e48e069fed562353fe0c95d33de080a4d2",
+      "sha256": "2cbbe37ebcd3f270095f77b5c28b5a4881358226e88f4f838d0d97fffa2af30c",
+      "mode": "100644"
+    },
+    {
+      "path": "NEWS.libmpg123",
+      "bytes": 8354,
+      "gitBlobSha1": "dd669055b097493921715d85a472afe38574faba",
+      "sha256": "d9196e92ffb634bea9f876f5b7b807cd2821ff04cae3b2705add955adb9581ce",
+      "mode": "100644"
+    },
+    {
+      "path": "NEWS.libout123",
+      "bytes": 345,
+      "gitBlobSha1": "2c861ca354e28916007e8b81fbb649b477bd5e03",
+      "sha256": "2b6dd239e468ddde22213fe0977ab1d54313df61f6b22115253abba7ff6c2b7a",
+      "mode": "100644"
+    },
+    {
+      "path": "NEWS.libsyn123",
+      "bytes": 26,
+      "gitBlobSha1": "c6badb07bf44cea6fb46d49f3c7a757b7e2448fb",
+      "sha256": "dc24486c20279619fbd2258801a2ef8af6691bd2f1874a6748f2dbe0df590c8b",
+      "mode": "100644"
+    },
+    {
+      "path": "README",
+      "bytes": 11997,
+      "gitBlobSha1": "c0a4029136a193e2279328f320ea10bd51727783",
+      "sha256": "2bb568750064a0706fb1e166a4c809e5740964252f4141694818dc16285684d4",
+      "mode": "100644"
+    },
+    {
+      "path": "TODO",
+      "bytes": 1898,
+      "gitBlobSha1": "1290e6d5d502c2d237a82ba3de345a9d9c98a988",
+      "sha256": "2c82ba2d8581b4947642991237db49c490d2b2a16f506839d67edd927a5cc475",
+      "mode": "100644"
+    },
+    {
+      "path": "configure.ac",
+      "bytes": 85289,
+      "gitBlobSha1": "544bb22913c0db66f04ec5a7e911df6422f1074d",
+      "sha256": "49d9c599ee702e71acd896005125bb4c89fd956f189bf2bba7f0978164786e02",
+      "mode": "100644"
+    },
+    {
+      "path": "doc/ACCURACY",
+      "bytes": 269,
+      "gitBlobSha1": "cd84833b34c16ee883f0ccee9895128525c3dbc2",
+      "sha256": "2230400de3081265e7ce8e738c6518bc5618fd2db3e85b1249305a8e07f23445",
+      "mode": "100644"
+    },
+    {
+      "path": "doc/BENCHMARKING",
+      "bytes": 4600,
+      "gitBlobSha1": "cf080eb63952e30a5d6a2fbf138007c9c4b0c0f5",
+      "sha256": "14a48dcb1094dd7a3bf87e39b9954e3546d60d0952ae7f5603ca34598898fefc",
+      "mode": "100644"
+    },
+    {
+      "path": "doc/BUGS",
+      "bytes": 164,
+      "gitBlobSha1": "22139c8fea55f852e28a51e2489b7a060c25fb5b",
+      "sha256": "3cbc8658f675d7ff4de7b56c45211c32469826bdf33c70ef412a55a19e87545f",
+      "mode": "100644"
+    },
+    {
+      "path": "doc/CONTACT",
+      "bytes": 650,
+      "gitBlobSha1": "3bfc2cd7155f426e4ddfb8176b35424b61a66eb4",
+      "sha256": "ae37a19dd3a8006bc2449e5a4655f6857f88053cd6d0884521193b4e101dcf44",
+      "mode": "100644"
+    },
+    {
+      "path": "doc/LARGEFILE",
+      "bytes": 3458,
+      "gitBlobSha1": "01f77dc607bba3ad8a255faee6406d510b1fa37b",
+      "sha256": "f03505c662148f1b05d0b6d3d62d947b2505f6f4fb896b50d75756a3f8ba6e80",
+      "mode": "100644"
+    },
+    {
+      "path": "doc/LICENSE",
+      "bytes": 957,
+      "gitBlobSha1": "0ede421fea79f1d93a679b746d4dc7ce82466ef9",
+      "sha256": "cca79ea6fc0a7715e52450df2d86311f990e85067dd13f4d7f5a88d4fd23a07c",
+      "mode": "100644"
+    },
+    {
+      "path": "doc/Makemodule.am",
+      "bytes": 646,
+      "gitBlobSha1": "4bb91c880baeaded94f8ec3d765f774427b15253",
+      "sha256": "d60341c4ba2d7c58ff2e1aaba0e568d4751ca2b9ff82f75d77e28f215d20f434",
+      "mode": "100644"
+    },
+    {
+      "path": "doc/PATENTS",
+      "bytes": 3211,
+      "gitBlobSha1": "7197e099ef91c3bd6da025d61ae2e4d68934c76f",
+      "sha256": "a16db5483cc2ab07a81b152fe9147f0ef196d38d26477c7b8c803aff6522e8bc",
+      "mode": "100644"
+    },
+    {
+      "path": "doc/README.3DNOW",
+      "bytes": 2334,
+      "gitBlobSha1": "98aae5a68e9d63982c2996972910b0c3d40e742a",
+      "sha256": "913c6661d01495929fd84bf1decbb312a05191342ef3df62f51cfdf0354be093",
+      "mode": "100644"
+    },
+    {
+      "path": "doc/README.gain",
+      "bytes": 9529,
+      "gitBlobSha1": "e12fc5ac035bc7c8e35cf310afd2cd4e50340476",
+      "sha256": "d50ab8bbe448a7b491a51eab8f0766e953eac35c5247f9d1d4e7556624ddaf7d",
+      "mode": "100644"
+    },
+    {
+      "path": "doc/README.remote",
+      "bytes": 8513,
+      "gitBlobSha1": "0b0e74f302eed5020f8e54fee467e26e1f59a230",
+      "sha256": "0f5c5a75b5f6b2a195327c758ab7f9b590712f4d2ca94420c6a174fffa493abc",
+      "mode": "100644"
+    },
+    {
+      "path": "doc/README.thor",
+      "bytes": 2643,
+      "gitBlobSha1": "2dd1ede97b5b55c6ea701d9a8113681f40f9e903",
+      "sha256": "3ff33ffdaf7386b1d3f35eb43fd5edd771baedc7a92690afad974e519343f17e",
+      "mode": "100644"
+    },
+    {
+      "path": "doc/ROAD_TO_LGPL",
+      "bytes": 8727,
+      "gitBlobSha1": "c2d2313fbd736bd50a5a58d04a44d47cae018a4c",
+      "sha256": "93c08bd839ded41b613de2a76afe4a51c78e516c6afa4b2fac3128c0d971e199",
+      "mode": "100644"
+    },
+    {
+      "path": "doc/THANKS",
+      "bytes": 727,
+      "gitBlobSha1": "b01b668b9dbd8a46b567311da4e9831487a8fc81",
+      "sha256": "1f2dc617e7fdffd7b0ea57080486147204fdd31fd99056c22c4cc2bf9fb1b81f",
+      "mode": "100644"
+    },
+    {
+      "path": "doc/TODO",
+      "bytes": 245,
+      "gitBlobSha1": "72eb9f514fbd45d21c24b741c3933f7be0d2b28a",
+      "sha256": "2dad82b7acbf683cedb9f55bead4ee55f25b94605dadb6879f344c16af3eed53",
+      "mode": "100644"
+    },
+    {
+      "path": "doc/buffer.txt",
+      "bytes": 16525,
+      "gitBlobSha1": "5af57f2d4e72f097f87ccd3599ab3ab5645601d8",
+      "sha256": "4d4f53765e88edfe16c042806c04fa8e9a81cd6170a82b122c7527ad5bba9574",
+      "mode": "100644"
+    },
+    {
+      "path": "doc/doxy_examples.c",
+      "bytes": 1014,
+      "gitBlobSha1": "0b45df7117ce95e77a3c48a43e9cb5d610eda227",
+      "sha256": "ba513d4c3acd7473a299ed3966f25b3001cb8b699c7480932976eacb78c8bf3b",
+      "mode": "100644"
+    },
+    {
+      "path": "doc/doxyfoot.xhtml",
+      "bytes": 40,
+      "gitBlobSha1": "5330c6db948760bdb21c71de9b9c68105dc4b202",
+      "sha256": "71f32ab980c7fa265e07d9a230302e02734b364bda09a7406e323b837a3dacad",
+      "mode": "100644"
+    },
+    {
+      "path": "doc/doxygen.conf",
+      "bytes": 1166,
+      "gitBlobSha1": "40010f3f7e3df501c752448bef2da596c8bd4ecc",
+      "sha256": "45e4d77e336720d6af7087e808d41fc15b460b6b8cdae879946e6bb56035a173",
+      "mode": "100644"
+    },
+    {
+      "path": "doc/doxyhead.xhtml",
+      "bytes": 1334,
+      "gitBlobSha1": "d47767c352b948b094db2c42acf90bb5d52911cf",
+      "sha256": "db7c6f9544d292a16c2674c5a8ac9c2fae469ffa47512969175eb3c46f62c325",
+      "mode": "100644"
+    },
+    {
+      "path": "doc/examples/Makefile",
+      "bytes": 1914,
+      "gitBlobSha1": "f185c5133ff99cdd300c4bccffdf8340ff120068",
+      "sha256": "f83c3f7c18ada8829e127b86cd262c33f85e0942886c187d153fe73f22ad57bf",
+      "mode": "100644"
+    },
+    {
+      "path": "doc/examples/dumb_decoder.c",
+      "bytes": 1425,
+      "gitBlobSha1": "659e092b3210a3383883a429c74079d0d7c0b11a",
+      "sha256": "0578914bddb114edb82cd92a32472d674388069626dca69f47ea5a8e8f2559a0",
+      "mode": "100644"
+    },
+    {
+      "path": "doc/examples/dump_seekindex.c",
+      "bytes": 1106,
+      "gitBlobSha1": "725fa347bd45199f087abb7e4832eb0786a4c450",
+      "sha256": "fde06a54c53a1f904fc0c72ca6fdab71feb0fdd767e844d1d9722e8cfa057d51",
+      "mode": "100644"
+    },
+    {
+      "path": "doc/examples/extract_frames.c",
+      "bytes": 2717,
+      "gitBlobSha1": "6fd523f8f7d2f1ccde765fbc9efeb8b36030dcb6",
+      "sha256": "9dcbd701286ca92be3a44eec8fd81abbe9a686d51fe1a0b3eb56779da5ede58b",
+      "mode": "100644"
+    },
+    {
+      "path": "doc/examples/feedseek.c",
+      "bytes": 5307,
+      "gitBlobSha1": "eac7e7826a03a19a23b1eb3531ae336d17f0d068",
+      "sha256": "d7d5fe26ad5d4a8feb7e69cfad7f5820ac6a66f84be27278947b4b29e50e2a59",
+      "mode": "100644"
+    },
+    {
+      "path": "doc/examples/id3dump.c",
+      "bytes": 4465,
+      "gitBlobSha1": "18bbb19f6f02d101a487539bf72e1bf316017b4e",
+      "sha256": "96c78940a7b795955536d622bcf3228a399c83874c62bf25a71c346d158d8206",
+      "mode": "100644"
+    },
+    {
+      "path": "doc/examples/mpg123_to_out123.c",
+      "bytes": 4885,
+      "gitBlobSha1": "bc87adc78c2e79977e87285386f249708dbb31e8",
+      "sha256": "c3530b9701c1374d0b63b5252674279b66e1044f02a21b101948acadfa98adcf",
+      "mode": "100644"
+    },
+    {
+      "path": "doc/examples/mpg123_to_wav_replaced_io.c",
+      "bytes": 5139,
+      "gitBlobSha1": "03ac99dde7488b26f29af7fdb758e923561aed6b",
+      "sha256": "bcd0e8145ab1d27ad6f60761246182c9bf2750f701afccd88f71d6566fbf3152",
+      "mode": "100644"
+    },
+    {
+      "path": "doc/examples/mpglib.c",
+      "bytes": 2795,
+      "gitBlobSha1": "a5dd5a98020a364a89bcb3b360b7589206d138e5",
+      "sha256": "91ff9321998a5e9946862a425c47caebc4952d3a4fcce273e0728af13396fb31",
+      "mode": "100644"
+    },
+    {
+      "path": "doc/examples/scan.c",
+      "bytes": 1227,
+      "gitBlobSha1": "8152073222e97b07a15a07b92d9167471491fa76",
+      "sha256": "aa3d3bb85604ac4b69a54f82e78381f1cc4d1608cf0b7c825bce6dcd965f5958",
+      "mode": "100644"
+    },
+    {
+      "path": "doc/libmpg123_speed.txt",
+      "bytes": 4231,
+      "gitBlobSha1": "1d486483d52add333e0166b8fb4dbeb8ba75edc6",
+      "sha256": "c72db3e86dae277ff9db87bacbdeade3c851f412a1b145236bd959faef94aa05",
+      "mode": "100644"
+    },
+    {
+      "path": "doc/monostereo.txt",
+      "bytes": 1542,
+      "gitBlobSha1": "a53cd54bb61195673b2dd35c96f97808abc38856",
+      "sha256": "a319b1064c4598457e100036eb14d4b42311310880b91d7201d5bc96b085269b",
+      "mode": "100644"
+    },
+    {
+      "path": "doc/parse_refactor.txt",
+      "bytes": 9611,
+      "gitBlobSha1": "20795041dd379f0d4b9c11c7006076b4aa94b98c",
+      "sha256": "d5c3eca2e5859ed912e615e49d7ddb88dde834fb9858686f62bbd4d674418eed",
+      "mode": "100644"
+    },
+    {
+      "path": "doc/windows-notes.html",
+      "bytes": 26034,
+      "gitBlobSha1": "df47570d94717a7616066bc945820122ac7b4b57",
+      "sha256": "5999792ac7e305d9b1f52bad866dfed0b7a1c6a51eeb5ce6ede97f5081f02dd5",
+      "mode": "100644"
+    },
+    {
+      "path": "equalize.dat",
+      "bytes": 459,
+      "gitBlobSha1": "8cefb34c5feb86d99fb07959217e2056ee4eaf16",
+      "sha256": "cddb7806d5bfd1c719c36a7c86a543dc74d5f65da1681e7fee5e66e00157e473",
+      "mode": "100644"
+    },
+    {
+      "path": "libmpg123.pc.in",
+      "bytes": 266,
+      "gitBlobSha1": "a8f692ebcdb52da71191ba8c6fc233804023a3a4",
+      "sha256": "b9dd53c726498345221d135b279c15a15a6df0ce755723bd82680b3d681aaefe",
+      "mode": "100644"
+    },
+    {
+      "path": "libout123.pc.in",
+      "bytes": 291,
+      "gitBlobSha1": "fc4713f31a63c1ec781caf76b904a71998b8c680",
+      "sha256": "cae475b4e32f5eccc65dfeaeca4d44840c4e6cc3f50eba637d10e88830e3472b",
+      "mode": "100644"
+    },
+    {
+      "path": "libsyn123.pc.in",
+      "bytes": 281,
+      "gitBlobSha1": "7e4ce2ed247ecf5f3185af996c9bd86915414330",
+      "sha256": "b6a60c84eefdef6f7417c4b4d2ebb1f6b0c907c34168450965d0991a995231b1",
+      "mode": "100644"
+    },
+    {
+      "path": "m4/addrconfig.m4",
+      "bytes": 944,
+      "gitBlobSha1": "5494509dc0acc2eda9bd4474890a478be611d2f5",
+      "sha256": "543fb630dd0f0ae3b3993e77b3e1ec6bfb1b98ac9fc8e00cba82907d9237ad7d",
+      "mode": "100644"
+    },
+    {
+      "path": "makedll.sh",
+      "bytes": 490,
+      "gitBlobSha1": "2fe9ef6e772176ca4c717ddb100cc81a1a3f72a9",
+      "sha256": "31df29fa4c09df19030a63d717d911185461e7f6b3925c5e13cb98dc5ca55b4e",
+      "mode": "100644"
+    },
+    {
+      "path": "man1/mpg123.1",
+      "bytes": 26729,
+      "gitBlobSha1": "3a55724bd0dc00d95b7ccb3c292547479466a4e6",
+      "sha256": "b0198208e24b1fb545699870f2df0b1e3f084c09ddc5be7981f2c56691bbc5ca",
+      "mode": "100644"
+    },
+    {
+      "path": "man1/out123.1",
+      "bytes": 13766,
+      "gitBlobSha1": "423a68fd01586f728b16d026d803da652a369616",
+      "sha256": "22d027947fcde0aff71fd4cd4927ef45c2dbe47673f0231f3d6e0ce2f2493f5a",
+      "mode": "100644"
+    },
+    {
+      "path": "misc/equalizer-control.pl",
+      "bytes": 615,
+      "gitBlobSha1": "ac559cf8cfe05d992156e501f353e04565c779b2",
+      "sha256": "7ceee48d57462cd9c916a1bc405d4cbfc6dd6e99c2bf0c2baf10f8f46a792f2d",
+      "mode": "100644"
+    },
+    {
+      "path": "misc/ruby-mpg123.rb",
+      "bytes": 4018,
+      "gitBlobSha1": "737050c9ed33a8409dc386bdcd3906c41dc02291",
+      "sha256": "2d8304fbb8e93e9c17eb6494a56ac67205fe2e18386c45acc3c44660a9e9bfd3",
+      "mode": "100644"
+    },
+    {
+      "path": "mpg123.spec.in",
+      "bytes": 2416,
+      "gitBlobSha1": "387087d6e744f5d5ee9b2849590bce8c4ae513bb",
+      "sha256": "a7da70c9b7a18f09b97750d4833652a89f2c88ca815d82db08892f3ddf712ad3",
+      "mode": "100644"
+    },
+    {
+      "path": "ports/README",
+      "bytes": 1469,
+      "gitBlobSha1": "5b426a69473bb48d4c8fbc359d8880aafa28e17c",
+      "sha256": "048de218fd7d88bb86853331224b6273dc80f272f9f513ae9d13b1088d4cb147",
+      "mode": "100644"
+    },
+    {
+      "path": "ports/Sony_PSP/Makefile.psp",
+      "bytes": 1394,
+      "gitBlobSha1": "12d86643bb701e3188952d8c30b1e37d25b9de14",
+      "sha256": "40a463da2965498494ec784620ba46121157669d179511f636965daccfa9cab3",
+      "mode": "100644"
+    },
+    {
+      "path": "ports/Sony_PSP/README",
+      "bytes": 287,
+      "gitBlobSha1": "ce9b45c4a59931b0e313c6a74ab7402f7b3f4bad",
+      "sha256": "2be21d771efd4ed10211c30248b3aa3c6eeca7ccc662d343b46349063de89948",
+      "mode": "100644"
+    },
+    {
+      "path": "ports/Sony_PSP/config.h",
+      "bytes": 10149,
+      "gitBlobSha1": "957c5e9da8775348cc31627921ff1c46142a4b06",
+      "sha256": "552ac210e9459bb761851bebdfdc1b5f641bb6cd48b2f73407cf7ebe3a8501c1",
+      "mode": "100644"
+    },
+    {
+      "path": "ports/Sony_PSP/readers.c.patch",
+      "bytes": 32,
+      "gitBlobSha1": "73bbb26cd71aed074fe2c23e9fe633c33808be74",
+      "sha256": "229d659feb02adb931a7a3732d03490cad0dd5f8888e973507013f0e7a461895",
+      "mode": "100644"
+    },
+    {
+      "path": "ports/cmake/CMakeLists.txt",
+      "bytes": 2378,
+      "gitBlobSha1": "efc62d8bc5a854af106ec59dda08a681ff5d7f67",
+      "sha256": "590184755c85a007d6235d916c9becd9c27aea805b846c43b0ca2bf8367c795d",
+      "mode": "100644"
+    },
+    {
+      "path": "ports/cmake/cmake/CheckCPUArch.c.in",
+      "bytes": 84,
+      "gitBlobSha1": "5493139474568d91f435364ad90a213a2d70e5fc",
+      "sha256": "8debc0cc8812c45d3996519c8d1641584d251076a63940c2511883883372251d",
+      "mode": "100644"
+    },
+    {
+      "path": "ports/cmake/cmake/CheckCPUArch.cmake",
+      "bytes": 1464,
+      "gitBlobSha1": "925aa09afac6ae9fc5fccefb065e62d52db0d06e",
+      "sha256": "072af67f12693bd51766df1ce861d5ea7f457f93c053653c094e0884855b6023",
+      "mode": "100644"
+    },
+    {
+      "path": "ports/cmake/cmake/read_api_version.cmake",
+      "bytes": 723,
+      "gitBlobSha1": "a2b12b4f0cea7e20ba60823d9b72db35cc9427f7",
+      "sha256": "8924438142bb2add865373f9f02c6e6dabf9ec040e2216fbdcc22e8e83f7d285",
+      "mode": "100644"
+    },
+    {
+      "path": "ports/cmake/cmake/search_libs.cmake",
+      "bytes": 490,
+      "gitBlobSha1": "82da54e52bc7a1b16494b615e6905c289677edc1",
+      "sha256": "b945db011655f945b67759898a27f25c57b897ed583ac69f0a8713ec3b242659",
+      "mode": "100644"
+    },
+    {
+      "path": "ports/cmake/mpg123-config.cmake.in",
+      "bytes": 67,
+      "gitBlobSha1": "89c6e7d07b60dc425c1b665d9985392f7f61ed02",
+      "sha256": "52b6e9c136f0782d4ed5f050e62dcd12342df21b81e565fba177e10af4a586ef",
+      "mode": "100644"
+    },
+    {
+      "path": "ports/cmake/src/CMakeLists.txt",
+      "bytes": 17435,
+      "gitBlobSha1": "c7ba36fa95721e63eca7164e873123874aa31119",
+      "sha256": "72fb5a93fc14845bd3e7ee5e6eeaa03c99adfaf2b921004c6cb5b9f1c88ef758",
+      "mode": "100644"
+    },
+    {
+      "path": "ports/cmake/src/compat/CMakeLists.txt",
+      "bytes": 618,
+      "gitBlobSha1": "f887f43003f692a6cfcd3db4ba8474ad48382389",
+      "sha256": "9a149f4dbc394d0704c33b3256858ea7e230a105bb1f44ce7e776c696811336d",
+      "mode": "100644"
+    },
+    {
+      "path": "ports/cmake/src/config.cmake.h.in",
+      "bytes": 4233,
+      "gitBlobSha1": "d90ff717560ee81ef4d9f24fd4198713a6c69f20",
+      "sha256": "7d961e4a83ed29ee07324bc947a1e73770a05ee041ba04c5d50083e8ca4d5279",
+      "mode": "100644"
+    },
+    {
+      "path": "ports/cmake/src/libmpg123/CMakeLists.txt",
+      "bytes": 14066,
+      "gitBlobSha1": "9305452c1e1023c1ad654ccbea6c2a942cc6f0c8",
+      "sha256": "7fb0667891fa57a3e73d49a5b61d06d700135d6db4978e2d4af191fee92ef305",
+      "mode": "100644"
+    },
+    {
+      "path": "ports/cmake/src/libout123/CMakeLists.txt",
+      "bytes": 1768,
+      "gitBlobSha1": "56710368f6512cacc68f46a2751eca394cfedae7",
+      "sha256": "dc2c0903757c023c854228da347799cbd7c2347d18b2caf58838ad98508f4366",
+      "mode": "100644"
+    },
+    {
+      "path": "ports/cmake/src/libout123/modules/CMakeLists.txt",
+      "bytes": 6296,
+      "gitBlobSha1": "21810c6e2ffc0a6c2815f1809a0a64167584a7e6",
+      "sha256": "1cce6c19619beee13103d9ac396432d06b2267288a4608ac479573bcace5c216",
+      "mode": "100644"
+    },
+    {
+      "path": "ports/cmake/src/libsyn123/CMakeLists.txt",
+      "bytes": 1415,
+      "gitBlobSha1": "89558f56eb427d2fc664cdc8afe1061f6604aa8c",
+      "sha256": "8987e49a7206a9bc9dd4b345fb0f95bc4120b5e1dc82f9d6e15451e8989f8442",
+      "mode": "100644"
+    },
+    {
+      "path": "ports/cmake/src/tests/CMakeLists.txt",
+      "bytes": 658,
+      "gitBlobSha1": "49159c7ff922429a475db3000bce6bf22bcd5e2d",
+      "sha256": "0350697ccf10fee53b5663c2de04c0d6add8beef7604784d0aa32d0ca713ea66",
+      "mode": "100644"
+    },
+    {
+      "path": "scripts/benchmark-cpu.pl",
+      "bytes": 1591,
+      "gitBlobSha1": "88559bc5717365e460aa7d50771f98aeb85a1fe3",
+      "sha256": "e7aa1c4f46407eeb36221055abb8db252c24c513dc59e101770211707c526470",
+      "mode": "100755"
+    },
+    {
+      "path": "scripts/conplay",
+      "bytes": 3032,
+      "gitBlobSha1": "eff2a1daf46f4d5344d2399ec0f21bb175b0973e",
+      "sha256": "283f37b717cd6cbeed1e26b3de0fcb15e802074aec13b3b0b78fee59db69e35c",
+      "mode": "100755"
+    },
+    {
+      "path": "scripts/exportsym.pl",
+      "bytes": 272,
+      "gitBlobSha1": "7375433afeed7d8ff0483a9ab6048be50e1f8999",
+      "sha256": "3ff6c1077ffd9be99bfd2fee1e786f0fdf0750a3e6442f16ae56e75c5225a65e",
+      "mode": "100644"
+    },
+    {
+      "path": "scripts/intsym.pl",
+      "bytes": 3122,
+      "gitBlobSha1": "86dbf694cba7abdea285d05492fcae526c426160",
+      "sha256": "085b557ff5133f1328b3f4b35414b2b3eef01d57de669b0ee60fe2c96cdfb9be",
+      "mode": "100644"
+    },
+    {
+      "path": "scripts/mpg123info",
+      "bytes": 1487,
+      "gitBlobSha1": "7b069868f9e409b247c8ca268a102491a0424b38",
+      "sha256": "3a681e2502eababbc9346a9649979c0d9a4cfe0dd012542fcc1b382b9386e840",
+      "mode": "100755"
+    },
+    {
+      "path": "scripts/syn123-channelscaling.sh",
+      "bytes": 939,
+      "gitBlobSha1": "8d820466497aa6f120eaa95d0da52d59398d0d18",
+      "sha256": "5314d228b81da00e6da3a0329ec5fc9c659c50bc3ecdeec5d02485ec12af7b56",
+      "mode": "100644"
+    },
+    {
+      "path": "scripts/tag_lyrics.py",
+      "bytes": 2047,
+      "gitBlobSha1": "1feb081c75d34f86615192e20c7573ea5829de29",
+      "sha256": "0a986cb5ceda0957eec716acb0a9abddab07dcf21b82e52a710c5e87d702259e",
+      "mode": "100644"
+    },
+    {
+      "path": "scripts/test-static-modules.sh",
+      "bytes": 393,
+      "gitBlobSha1": "848d2bdc6dcc3280e9918147c0683822131ab291",
+      "sha256": "4600098fac1fa2ed80cefbe7998cd0c4b748dfe72843f9130d707688f288231c",
+      "mode": "100644"
+    },
+    {
+      "path": "src/Makemodule.am",
+      "bytes": 2274,
+      "gitBlobSha1": "3653327cb60a01bd1dfae42878c5148a12eb1386",
+      "sha256": "9bf68e81ca54f23ae06f2789133a2f8eb2cbe7a569d0e98057c86295fa84e44b",
+      "mode": "100644"
+    },
+    {
+      "path": "src/audio.c",
+      "bytes": 19642,
+      "gitBlobSha1": "3979ff9a05c1bdaac0420806a76636e2921c2bc4",
+      "sha256": "b6471c257477178033238813ea8f0ec46336582a66a588ce1034ce10c3355451",
+      "mode": "100644"
+    },
+    {
+      "path": "src/audio.h",
+      "bytes": 1309,
+      "gitBlobSha1": "f2610137595ecf3255979cdc4a5c37d6ad5d356a",
+      "sha256": "d606209194bcf9cde748a394d003bc69b559bf74d30bdb969b327f5763cc27b6",
+      "mode": "100644"
+    },
+    {
+      "path": "src/common.c",
+      "bytes": 11715,
+      "gitBlobSha1": "164943a54fb45ff13ceaa9990dc84a106495847d",
+      "sha256": "ac29c64f99ae52ba86eca7ad0b54a68a5b0e1cba39fcdc901c1adddf280d4e80",
+      "mode": "100644"
+    },
+    {
+      "path": "src/common.h",
+      "bytes": 882,
+      "gitBlobSha1": "fb8f11377878a5999e0ede95cc28393bfb05255c",
+      "sha256": "6cba468d981df1c26a5bc988781160cdf56f030716c9604d8ec433edd13a58fd",
+      "mode": "100644"
+    },
+    {
+      "path": "src/compat/Makemodule.am",
+      "bytes": 693,
+      "gitBlobSha1": "b9b418007349e36ca767ec277cb2d20e7d48601e",
+      "sha256": "601d45207e69ed3ab4788e70605d0375d4cd420192c7a92892a7ae4e93a2b02e",
+      "mode": "100644"
+    },
+    {
+      "path": "src/compat/compat.c",
+      "bytes": 11468,
+      "gitBlobSha1": "a810b5f36f72662abcd6469299ed42497f8c79d1",
+      "sha256": "77b9065408f2d8594889ac5465c50c6c1bef4ae5bb884c88c284d7ff932f8c19",
+      "mode": "100644"
+    },
+    {
+      "path": "src/compat/compat.h",
+      "bytes": 9717,
+      "gitBlobSha1": "3e81919e3f03b962ce96c6fc6d260dada1f94038",
+      "sha256": "6f16eac2d4117e7f936134f842ec6329d70322dad5e9325607e68ab3410cb913",
+      "mode": "100644"
+    },
+    {
+      "path": "src/compat/compat_dl.c",
+      "bytes": 2433,
+      "gitBlobSha1": "8329036f8ad68ab9936e01a61ad6070a7afeab70",
+      "sha256": "dee6711a5aa1b13ce6aae21f4a4ca91086646e30399a74cd16929113e5fe7827",
+      "mode": "100644"
+    },
+    {
+      "path": "src/compat/compat_str.c",
+      "bytes": 3125,
+      "gitBlobSha1": "735f7b6312745548b1b3cf3d51d824dcc5fc2ff7",
+      "sha256": "edba6e39acea095a77fdfafda5d5c3c0ca122da248fac93677b2afff8b2688b3",
+      "mode": "100644"
+    },
+    {
+      "path": "src/compat/wpathconv.h",
+      "bytes": 2932,
+      "gitBlobSha1": "78b4294c2cf819f57e5c82928e977e3b35280f81",
+      "sha256": "874eaee15a7416ab42bed6c0c61a876c0ea6d53f3ede61ab2e5e167f831afbc3",
+      "mode": "100644"
+    },
+    {
+      "path": "src/control_generic.c",
+      "bytes": 28088,
+      "gitBlobSha1": "364b294cc83c3bf2c890d2d110008135adc3d60c",
+      "sha256": "8ac30689e30176c7ddb2b21ab7112f25408260dc635eb61227c1608a01c4cb1c",
+      "mode": "100644"
+    },
+    {
+      "path": "src/equalizer.c",
+      "bytes": 1392,
+      "gitBlobSha1": "127d2324f4e8a188ef9a51dbb1ca1219e82c9ada",
+      "sha256": "2c2f8121d6b67b7f1437aeb7187b0f01d25f57bff4a0a98daf7561103b89aceb",
+      "mode": "100644"
+    },
+    {
+      "path": "src/filters.c",
+      "bytes": 3888,
+      "gitBlobSha1": "32f2ca654b588789b8a0a4e9a26a6e35adcbeb44",
+      "sha256": "20b9aa20fe6284b5da0668874a7e5d82fbbdaddc00c13306fbc7b666e60f97d6",
+      "mode": "100644"
+    },
+    {
+      "path": "src/filters.h",
+      "bytes": 1123,
+      "gitBlobSha1": "3345718f8a4043afc536dc6b03c575165d405062",
+      "sha256": "d18ed672a1e6fdcb2a08db111789e30098b33fa21f1894ce9cdeda6615068f24",
+      "mode": "100644"
+    },
+    {
+      "path": "src/genre.c",
+      "bytes": 2792,
+      "gitBlobSha1": "f820d389358f16fa3496036296fec08f1f516a54",
+      "sha256": "1283839d2088ef97f3077837839b796c77c83fa5e7218e13c0d27b52baa26cf9",
+      "mode": "100644"
+    },
+    {
+      "path": "src/genre.h",
+      "bytes": 345,
+      "gitBlobSha1": "0a493d023d8d68aba26ddc976c400176b8f7b596",
+      "sha256": "96129561c54c11c1dea78921320980a06bb550d50623c1c001319b8d33661cbc",
+      "mode": "100644"
+    },
+    {
+      "path": "src/getlopt.c",
+      "bytes": 4447,
+      "gitBlobSha1": "305d433d8df5d7d0a5fde37d9695caf6eb27258d",
+      "sha256": "d8e41eebb62bbf00527dfa14aee645992a88f5d0d50012871f24312f1a0e6fca",
+      "mode": "100644"
+    },
+    {
+      "path": "src/getlopt.h",
+      "bytes": 2335,
+      "gitBlobSha1": "85014b6a7251d84bc0e89322ec60129b8c66ee76",
+      "sha256": "b3798e459a75f897340dac553f0a27d45eca1bc294993f7c6dc430abc233ee41",
+      "mode": "100644"
+    },
+    {
+      "path": "src/httpget.c",
+      "bytes": 21681,
+      "gitBlobSha1": "e1226f067e8fd38aa343364ff8db663f01f879ff",
+      "sha256": "2a268959a2a232de97a804e5bf0091f4fc6448c8314bf09bb48ed91fe582d641",
+      "mode": "100644"
+    },
+    {
+      "path": "src/httpget.h",
+      "bytes": 2197,
+      "gitBlobSha1": "2fccfaf39677248d4adc2a2d91ec182b45869cf8",
+      "sha256": "782ae609bd2b3a76827dbd28dd85b6c056538372a23d415270570e67662e3d34",
+      "mode": "100644"
+    },
+    {
+      "path": "src/intsym.h",
+      "bytes": 17872,
+      "gitBlobSha1": "7b9b0fb5ce186a969566aebeb872e57ba5d2c11c",
+      "sha256": "2db3d3cc7d7059bdb3389c35eb5682bd834a2a3f062a63759a1949cf24af73ad",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libmpg123/Makemodule.am",
+      "bytes": 14947,
+      "gitBlobSha1": "1fa2523e8bbe29dee6497239047bc791212c4cba",
+      "sha256": "661c85066544bdfe6286b09ab603c885b541c286de1951de045058cf45b6869a",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libmpg123/abi_align.h",
+      "bytes": 1166,
+      "gitBlobSha1": "9ae46f429ab32a3f918d91e64da17a9c3cf9da3d",
+      "sha256": "f825c7ea40b950d18525f9c458227953350ae20d1d204fea5f02f347bb349add",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libmpg123/calctables.c",
+      "bytes": 11725,
+      "gitBlobSha1": "da156961b75f585bee6c13f626fa6b01b58abb4c",
+      "sha256": "cbeb4b4571876c753fb593a933bcf47c523788717bc151b9e5b0777300149564",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libmpg123/check_neon.S",
+      "bytes": 596,
+      "gitBlobSha1": "7c7690497631a71c5e6e0f5126e0c6488cf79b79",
+      "sha256": "6297597102e491a1c520a6be366d8f0b008fa2f86de63696e5cb9766c7c6da07",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libmpg123/costabs.h",
+      "bytes": 1850,
+      "gitBlobSha1": "38d0ef899393049cf1920794c15dccbba9b74a3b",
+      "sha256": "0ed6698258920860b1769a396276aad380c54147de2a50c1feda1ab0a974fcf1",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libmpg123/dct36_3dnow.S",
+      "bytes": 11213,
+      "gitBlobSha1": "2d45dc0a6b1a5eeff5fafb1d7888fb83f093c0c6",
+      "sha256": "b003209a811db3b663d17a37cb7459903beb31303a01f77045d28812dc98c2e7",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libmpg123/dct36_3dnowext.S",
+      "bytes": 11668,
+      "gitBlobSha1": "287b6b9021f95b720281807f3de845c78ca22780",
+      "sha256": "4e7b46e1d6e874382983eda109d2f65d009168802b17843a3c3c9acd2ad17c1b",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libmpg123/dct36_avx.S",
+      "bytes": 7525,
+      "gitBlobSha1": "e302b6ddb4a2ffea2f6c1f0d115f5f17bb573b17",
+      "sha256": "899152c73d0b1010bb561023971ef92e282317c2c54470095bf60eb5689c04f9",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libmpg123/dct36_neon.S",
+      "bytes": 5228,
+      "gitBlobSha1": "e7fa3af213eb9c8c9cbf59c0767cfd4548b44164",
+      "sha256": "0a986fa473d9bae7ff9161549d715c1b6707e81492686407e82c9ba999d830bc",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libmpg123/dct36_neon64.S",
+      "bytes": 5628,
+      "gitBlobSha1": "89db65abbb30bb2bf1dcb585950af419353f3365",
+      "sha256": "8cbf88ecd3facd7c627bd23ae443ea4a32541f0fa0232f7deb030db06a0ba79f",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libmpg123/dct36_sse.S",
+      "bytes": 7544,
+      "gitBlobSha1": "caa391c0c0a0a1bc87665ded45aa90925cbe2783",
+      "sha256": "c42a044108ed70af7287f4be53eab437b01611da659bcf89699a0e6544f61071",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libmpg123/dct36_x86_64.S",
+      "bytes": 8042,
+      "gitBlobSha1": "35676c3f47084eb6fb4c45acd5f41daa3749a1ed",
+      "sha256": "1b3319da1687673b54f80962c5f39c593feaaf125c767697cba238e9c71cb4c3",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libmpg123/dct64.c",
+      "bytes": 4509,
+      "gitBlobSha1": "a49d308b1660a177dae9eae70959aee5146d700b",
+      "sha256": "11750c04f8eef31c149ba15a63cf7645009abcbea9cd996c186d0c319b2c9df0",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libmpg123/dct64_2.c",
+      "bytes": 3945,
+      "gitBlobSha1": "31d3f362312ac69729afce38b31ca028b98e294b",
+      "sha256": "2682cf169f88166dc489f30a2bf7c0204c208505f3aeb64374a393c9daea283c",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libmpg123/dct64_3dnow.S",
+      "bytes": 13723,
+      "gitBlobSha1": "99e6a2cde7b5194b3198764a2dadf49ff14c22b8",
+      "sha256": "57771cce445fb73940f2a7f8f1a98352173205abef160f8f3d73041ffa792bc1",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libmpg123/dct64_3dnowext.S",
+      "bytes": 15307,
+      "gitBlobSha1": "69367bf6cbc525bb8ac286aa7486abd2723d1933",
+      "sha256": "ea8e0733e6e74630c2e09f9c97cf2bbf86a70797fa2c5b5862e094175927803e",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libmpg123/dct64_altivec.c",
+      "bytes": 8298,
+      "gitBlobSha1": "3d6c7e1d1fdadc384f57c0220b2f81e0d1d60ba3",
+      "sha256": "e8622871d18aecd62299dd96259ab3890dd445091bd9eac9e412bb9bdadbae81",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libmpg123/dct64_avx.S",
+      "bytes": 9519,
+      "gitBlobSha1": "3a8468e80a084b14bcbafeb1982307e167d6a850",
+      "sha256": "9ee835c24a7444973cb28f0b0ba270e012c42867c4305ba00e5e42cb2088ef40",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libmpg123/dct64_avx_float.S",
+      "bytes": 9295,
+      "gitBlobSha1": "e4c024e272032d343d63c4d62450b92611ef5bc8",
+      "sha256": "ee3f00bce2b3ec17c9f706b4105e091bc90b2fd80c37d5ff86eaca5d9033f764",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libmpg123/dct64_i386.c",
+      "bytes": 11378,
+      "gitBlobSha1": "7c61014189b641f704ec96b962145afa27cff4c9",
+      "sha256": "df1c5ec8d9e21edadc9ce5537203acef36cb002e375d79277407df1e047b260f",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libmpg123/dct64_i486.c",
+      "bytes": 9905,
+      "gitBlobSha1": "b81d0607326d3ab30309cf252d51d8ca5125a9b0",
+      "sha256": "fece42493804fa5f3300dbf2a407871c111ad164d265c4ba4ee522acb928a9ee",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libmpg123/dct64_mmx.S",
+      "bytes": 13966,
+      "gitBlobSha1": "ff8d403e550ea6e7cb8bb218f3eef907b7bcfdb7",
+      "sha256": "685051145e52735e9cf9d94f1dcf8ab9e742b9114e548a0d6e83105164082dd2",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libmpg123/dct64_neon.S",
+      "bytes": 6221,
+      "gitBlobSha1": "de8c363bcdb16dc83315cb23294ab7bb9d00a999",
+      "sha256": "1fb8ac77985422538bb00caa25f55f901f01bfd3a8e4c309cc53ea8371f320a4",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libmpg123/dct64_neon64.S",
+      "bytes": 9249,
+      "gitBlobSha1": "32b8a0b416fe3985d06c9ac62c291c23ab66e10b",
+      "sha256": "bcbc194cf56b7289d180221c098f1341a0fdef9dccad8692c7a388064d3ac9d9",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libmpg123/dct64_neon64_float.S",
+      "bytes": 8954,
+      "gitBlobSha1": "0e557e50537344f96bd22c17f9513d3cc3f07cd5",
+      "sha256": "9a21c5f9541c22e5d59d74e8e3e77da78c54ea8b2e82a58f651af760e6718931",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libmpg123/dct64_neon_float.S",
+      "bytes": 5672,
+      "gitBlobSha1": "36d640f30581920c873f6b4639eb01c818adf093",
+      "sha256": "37b0bf550cf1ff41a9f399fbc3b3303c0d707c3d51992a14afc34af1e6560beb",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libmpg123/dct64_sse.S",
+      "bytes": 9938,
+      "gitBlobSha1": "16bcd69ff5e7892cf4174c89a036c868f714825a",
+      "sha256": "216a4099644a6017c75e17e33fc693fca86b8b5762c309e2691f45120e4552ec",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libmpg123/dct64_sse_float.S",
+      "bytes": 9260,
+      "gitBlobSha1": "544d2d6c5102c32b28ac35a9655b16635080f169",
+      "sha256": "f26952d03bada9a4f168823a9be600fa5fa01ea447d0ab1f147bb0325574352f",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libmpg123/dct64_vector.c",
+      "bytes": 7312,
+      "gitBlobSha1": "14e9fcf934f3a4cb514477b740473cd569a03a49",
+      "sha256": "579e346cceb7a0e47414b7542976a81fd9ec6f4dd24a3c317ec18a72bc5440f4",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libmpg123/dct64_x86_64.S",
+      "bytes": 9682,
+      "gitBlobSha1": "9d858623a4f5becc21416f3c16d55989a25018ef",
+      "sha256": "648cf09510e0e51eedadd034367c49805c764606927d5f51d3a87a899691373c",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libmpg123/dct64_x86_64_float.S",
+      "bytes": 9211,
+      "gitBlobSha1": "5197e4c0cbca63445d7dac8820f2a417498abef6",
+      "sha256": "fb4d7502fc3cdbc28052e01e5c85c3854ea39f32f228ffe05ee259fdada8ddae",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libmpg123/debug.h",
+      "bytes": 6641,
+      "gitBlobSha1": "83f2ba9562e5fe45eb6bf73ebfc8470c5534cf24",
+      "sha256": "9ad4cdf5be1afc56c0009c2acd143a17861ef1079aee4e81a306f3b49d3dc57a",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libmpg123/decode.h",
+      "bytes": 12493,
+      "gitBlobSha1": "e32940c99423748fea947429046788c67de360fa",
+      "sha256": "81e1df79499ef429fc7953c927f9f7b68701ac1d418cd0b0c46fc0479bd0ecdc",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libmpg123/dither.c",
+      "bytes": 114,
+      "gitBlobSha1": "329a4de703deb46f511fd1f69bff8e0182feb74a",
+      "sha256": "efac2798faf9bb1cad5f934f54eda921eb98a4c211c6eab66e2d41968f99a214",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libmpg123/dither.h",
+      "bytes": 562,
+      "gitBlobSha1": "6a6cb3e4794960b926f27e897660455b2c2175ab",
+      "sha256": "4d096103bf1fd3c212fe1a399e3e450f87f6ce83bb1329c35eb88156bc977c99",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libmpg123/dither_impl.h",
+      "bytes": 3178,
+      "gitBlobSha1": "30dbdd135a580d6bc8441ed578749283a0ede3dc",
+      "sha256": "e66dc1a425496976f765794b49afa2b49108b9015a77970eb8bc41b0e04be318",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libmpg123/equalizer.c",
+      "bytes": 423,
+      "gitBlobSha1": "bc5d5d93538827ac9ed9e91846013bf76bbb7866",
+      "sha256": "c6f0f2b04f3cf7988d410e01f7c7688a46a57a51774835c0fc3963045f92e842",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libmpg123/equalizer_3dnow.S",
+      "bytes": 1371,
+      "gitBlobSha1": "471a0ed02d20f83905cfb8bf80eedc8742aeaa28",
+      "sha256": "0a2f3c79fdd2b3994f4f4e6ce6f5fe5a49198ecd89f15e34e17fb8e1dca0549a",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libmpg123/feature.c",
+      "bytes": 2101,
+      "gitBlobSha1": "24adad6afb2de8798af595c6ba4164400e5d44ea",
+      "sha256": "3338c57d122e94fffef189747d82c61ab1a5697e823c023b13991b7c3814e049",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libmpg123/fmt123.h",
+      "bytes": 6089,
+      "gitBlobSha1": "d7772e1e575fda59e5bb5ffd86c9ba3e374abb51",
+      "sha256": "9b7c2567f5aa80eefaeb045ed793fd013ac2d1ea9dbb11ff3434c485517d94a6",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libmpg123/format.c",
+      "bytes": 20896,
+      "gitBlobSha1": "0ae7750a9d060aac2fc91d43efd4a64d37908471",
+      "sha256": "1bd848a1d1730cb9ee774eb6472268dc05dae1621672378d8ec6bcb55410ec5b",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libmpg123/frame.c",
+      "bytes": 31824,
+      "gitBlobSha1": "b14908f231924a3846e951d700244796eae38926",
+      "sha256": "16ae255a2f40bb57c96c920006cf895ddc61989ac1e2b97a2e5fa178fc996846",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libmpg123/frame.h",
+      "bytes": 12808,
+      "gitBlobSha1": "c7d4079c94673f73fbdd431155486427fa5fe944",
+      "sha256": "f9912763cc19c14acdcb91c61e56759bcf79324f5440a735ed1f0cda570bffdd",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libmpg123/gapless.h",
+      "bytes": 4349,
+      "gitBlobSha1": "a98b86bc3ac15111d094a7e81f4fd179a1e80503",
+      "sha256": "93a816ef97a1c4b9d6f842a546335d55d69f2df13adb0089b9e43a3e1e753d81",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libmpg123/getbits.h",
+      "bytes": 2913,
+      "gitBlobSha1": "6d0d548e3aad99f87f8150352e577cd08b6441f5",
+      "sha256": "5cfdf08a32f1836e697676266ef64da57ecfd5ac3cd83a2eceeaedd5311437a1",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libmpg123/getcpuflags.S",
+      "bytes": 2535,
+      "gitBlobSha1": "50a9d00a6f34a287d47fcfa689bfcd16130bf2e4",
+      "sha256": "61b46221e319cbed2353102b7395d6bedf0c308240836977debe68fd8b60c5dd",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libmpg123/getcpuflags.h",
+      "bytes": 2954,
+      "gitBlobSha1": "fd7d080a3b1cae4b2b22f9fd0244e0943699d254",
+      "sha256": "14171ce63f34b749565b69cb54c78bbac7dc74cb64f0da5d8e6866e830b37833",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libmpg123/getcpuflags_arm.c",
+      "bytes": 1109,
+      "gitBlobSha1": "a0bbf43fb96ec6541e18ee947ae66467d6253445",
+      "sha256": "fb1499eed1396e7759941fb1249682f15526cf057cfd5c9bc8e592c71986dc61",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libmpg123/getcpuflags_x86_64.S",
+      "bytes": 943,
+      "gitBlobSha1": "92fb7650fd978cde1eab5b31a522c46fbd15d859",
+      "sha256": "f739929200b97e69cbf5ac84476c4373bccd127b9548aa83da7bbe8f4d061ba0",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libmpg123/huffman.h",
+      "bytes": 16326,
+      "gitBlobSha1": "576fbd884c6c668ca535b5b3b998f844d41ea008",
+      "sha256": "d8ad16c4486e99c83f7c2c0fee94c76a5c1c83136c8e324e1d11087334e51085",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libmpg123/icy.c",
+      "bytes": 671,
+      "gitBlobSha1": "1c287e78b6ff4bc533e121f6226c15c352d57ed1",
+      "sha256": "71228d24d1b63a7da218db8309d770ecaaf8190c9cb6a908c58b14722bb15f66",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libmpg123/icy.h",
+      "bytes": 725,
+      "gitBlobSha1": "a5fd64ea07124dd54f5ccfbf1da6078c53bc5fa2",
+      "sha256": "30d9c9d484de7a0072b43715b9e3b7fe34533c365f57c77da547a4e306e072e4",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libmpg123/icy2utf8.c",
+      "bytes": 12939,
+      "gitBlobSha1": "71605d2ac67f269769de5171796bd45c056b17f0",
+      "sha256": "a8dd767c73c3c1ea213b84772d215d9755db95475bb06d76b79a69eeffd80f61",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libmpg123/icy2utf8.h",
+      "bytes": 199,
+      "gitBlobSha1": "aeec012130922d1adfdd6bca6edf3244dc3e936e",
+      "sha256": "a7838f18cdfbc5c6ef24c16437c9cf7d1cab5e5def7369ab53b642f3240a6381",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libmpg123/id3.c",
+      "bytes": 48867,
+      "gitBlobSha1": "84c8bd2888ce0f3c93e91315e7ff2ac47ac805a9",
+      "sha256": "423d2b92f1842f4e3632c8e17b16653856cae28547165bb9556c18b82666cc4d",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libmpg123/id3.h",
+      "bytes": 1103,
+      "gitBlobSha1": "3a56694911005b9e0b7d2fd2add9f4d8400dd3d6",
+      "sha256": "4071ad084742000aae03ff3bb10bb69ffd2f09ace8ee81e460041f9bdbb9afba",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libmpg123/index.c",
+      "bytes": 3647,
+      "gitBlobSha1": "f8d94de509ea77a0f5fbf370be2845585f89a629",
+      "sha256": "ffa7f223da71ff8f687a63ae8428d4df70291034b0b34bfd4885bfe884bd4927",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libmpg123/index.h",
+      "bytes": 2230,
+      "gitBlobSha1": "3e1ca648a5c1ed61312b790a298c4911a2fdb24c",
+      "sha256": "3344b8c37c852c703607deb549d216d3fe3773589c73418c81795ae72a884eaf",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libmpg123/init_costabs.h",
+      "bytes": 663,
+      "gitBlobSha1": "97095573367da1b986b3e8b494e1cff9536af963",
+      "sha256": "9e4451eb229547afc576109230fac7a5e4850472dac7081218281c8f629fd936",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libmpg123/init_layer12.h",
+      "bytes": 1494,
+      "gitBlobSha1": "b8de19b9831e8ff879df8111b4f72cb295696442",
+      "sha256": "9d9888297017aa6b751ae7126997ebb229c64879caeface65d8b7ec8968241c9",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libmpg123/init_layer3.h",
+      "bytes": 5412,
+      "gitBlobSha1": "2ad9db151fef27a3e2a578a5148243845762a3f1",
+      "sha256": "ec28e96f7d6c98ae24fd72ce029251d4d15204c023e047abe3b8bcd60a50105f",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libmpg123/l12tabs.h",
+      "bytes": 72597,
+      "gitBlobSha1": "8b49c6e754b5564d76243367f48347b950aa8efe",
+      "sha256": "27ead824c6d75f90fc4e33e128bfb195b99ed1a52df224b134526cdf150ac8ee",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libmpg123/l2tables.h",
+      "bytes": 8729,
+      "gitBlobSha1": "d06b029c89fd596d3d3e3093a60d5fadd9b95e61",
+      "sha256": "47c43423223de3f8f0dab4bc48148eccbc95e31bb306e1323036cbff1b0bd182",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libmpg123/l3bandgain.h",
+      "bytes": 4357,
+      "gitBlobSha1": "05cab97c2240e947c1173713cc7703b2023ae952",
+      "sha256": "b01e842673150511f3f581fd86f776f3ff94ed74665b0a9de76f7da2cf0b699d",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libmpg123/l3tabs.h",
+      "bytes": 313661,
+      "gitBlobSha1": "7b410925c8606f433ce9560374c96ba60e56d524",
+      "sha256": "1c22dfc0c20fd89097a2cb67bb80bca143026794b31c1da6b324d7a62c293bba",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libmpg123/layer1.c",
+      "bytes": 5806,
+      "gitBlobSha1": "c5bfc75d982f637499ad4986b57f88bf77051876",
+      "sha256": "50094fbb43fac614fc9a95de7b94ee5cf681817420bb3be0eb069bf0f153f230",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libmpg123/layer2.c",
+      "bytes": 9797,
+      "gitBlobSha1": "0f2071b5a5bba8092b977e9843c327ad83208f3e",
+      "sha256": "1b3e968a2807c7b088b3188526a01bb76c9cf26f26a647048d34d763deab18f2",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libmpg123/layer3.c",
+      "bytes": 46221,
+      "gitBlobSha1": "a25ef09820af8f34c304085227df4afeba8c57e6",
+      "sha256": "2a5fb9ba7f7983d2542ef7c251c0e387c017408b71047bfa546cf91daac7645b",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libmpg123/lfs_alias.c",
+      "bytes": 9633,
+      "gitBlobSha1": "982d7ca9dc6e4b00364b8e4d4a6d7400be7e043d",
+      "sha256": "312de76bc5d339b9b7506f1fdbaece067d3794c9e986edabbb6eb97dc922e718",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libmpg123/lfs_wrap.c",
+      "bytes": 21610,
+      "gitBlobSha1": "a01f302b20d4de480397df0049af5014f09bb88f",
+      "sha256": "e286b222613440bb1bfc7d3ec2a58fe7a236654fbef6603b5e1258cc5ba313c8",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libmpg123/libmpg123.c",
+      "bytes": 54121,
+      "gitBlobSha1": "bac5c24c8508db186fb68b11debcbded37ba9c92",
+      "sha256": "60d7631bdd80c39f3c1f4f5bb046e6f25cd7547c0c49c9f5db238984e46b3138",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libmpg123/libmpg123.sym.in",
+      "bytes": 0,
+      "gitBlobSha1": "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libmpg123/mangle.h",
+      "bytes": 5405,
+      "gitBlobSha1": "e37386ab009cf7d149f0ce6bdcc0799e35f3ba97",
+      "sha256": "a91894070c9d8a857dc1ca3ca728830491a4a5faf4a252a6cf75d06849494c14",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libmpg123/mpeghead.h",
+      "bytes": 3742,
+      "gitBlobSha1": "7696df748abba17f9f81f7c5c0efe83345f8c70d",
+      "sha256": "b870a5897322b118e280bfd82ff7f94c15c841f57f4ec4a6cf451221eed4d215",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libmpg123/mpg123.h.in",
+      "bytes": 92182,
+      "gitBlobSha1": "8cb1fec6fdd5d9afff641950097ef60f13893a0e",
+      "sha256": "88ca1eb41ea374ec9f4743d96cb7590c0d80f3ee08d627d8fa746f5ae42439fd",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libmpg123/mpg123lib_intern.h",
+      "bytes": 9603,
+      "gitBlobSha1": "49f0b7858f057588cc28e7668ccca211e463985a",
+      "sha256": "24a5e815813e7894eea91b8e34de51216d921d9958ca39fea2226a92a4e92d57",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libmpg123/newhuffman.h",
+      "bytes": 47475,
+      "gitBlobSha1": "4d108a95db88fe21132ec06553a299f7e9fc73d2",
+      "sha256": "e3718f395ccb11bab3c9f070deb125ecc4a6c6de861c57047cc82f67ee42f2d3",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libmpg123/ntom.c",
+      "bytes": 4130,
+      "gitBlobSha1": "196a569037627ab4192b19e91c4fd4c436ca6909",
+      "sha256": "5716b01f8184de9f8c51ceadc140813efaeb8fe9ce93b413b818419b23f083b3",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libmpg123/optimize.c",
+      "bytes": 28704,
+      "gitBlobSha1": "7ada9349f0bb5683228b3b3041905860d7eb37ec",
+      "sha256": "10bf98764e17cb0ac2077be55bf131924eb899667ef82a7a7098dc51800d8e49",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libmpg123/optimize.h",
+      "bytes": 9350,
+      "gitBlobSha1": "4ac33a2eb1a4e9336b4fcf9c4204b37a3f2fa49e",
+      "sha256": "b6622280ae9751e08dd9f33864686bf4a49813ee880103af9f01b93a78baf468",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libmpg123/parse.c",
+      "bytes": 42736,
+      "gitBlobSha1": "c2efd3dc05f081540c7ca3227050af38ebc1fd59",
+      "sha256": "aa671825cd25d121a61b1c9c21f01d3bcefa5c840e6c6a995b495c6b27d105c0",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libmpg123/parse.h",
+      "bytes": 907,
+      "gitBlobSha1": "33eeccdc5ab6ef081bb1e77035474299f0003cf5",
+      "sha256": "d39ee76615f8447513523bd359bbad204d7755fe2f9b219c4e4e9ea053b3a5e5",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libmpg123/reader.h",
+      "bytes": 5481,
+      "gitBlobSha1": "52735c1c837c4fe05f07d93e51cad8681f4ab2a0",
+      "sha256": "659e397f399402b48c609b3a149fd8d5952e2e9f02da01a48d57d24bf79aea11",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libmpg123/readers.c",
+      "bytes": 33704,
+      "gitBlobSha1": "a360c0dafdaa2162713c35f5e09648238d193662",
+      "sha256": "81f98f363c7f78f5b80589b4f970c8539286901baadc7a36516d6417eccbc6a8",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libmpg123/sample.h",
+      "bytes": 6755,
+      "gitBlobSha1": "c57b0af43963a50b94423cd03c87c1b3969e2213",
+      "sha256": "d76e00b264293ac8815890a5ee82d03d2d2eea892c160e06ba64157c9537510f",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libmpg123/stringbuf.c",
+      "bytes": 5691,
+      "gitBlobSha1": "fb3b83066f70dddd7d9196d75e5f0c248cd7c09e",
+      "sha256": "c5b82447d42f908f004ef96b1cc0fe6f81fa72d0a804473a0615bf05ab556063",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libmpg123/swap_bytes_impl.h",
+      "bytes": 2146,
+      "gitBlobSha1": "28e7ff481a668da3303992e824bd8ae87daf4baa",
+      "sha256": "1062be70b5a70d4ee771e1b64267fcd0d5987494a50d84e02d4ee9bda180930d",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libmpg123/synth.c",
+      "bytes": 28784,
+      "gitBlobSha1": "ed927d9344d8e082ad97a3d0365647769871e846",
+      "sha256": "459df63f21022a1df9c040e9c8dfa6cc040bc041bc2751984f0833cc3c37e830",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libmpg123/synth.h",
+      "bytes": 6837,
+      "gitBlobSha1": "87dd007595b2e4f27eb29d80c3575a3e37382429",
+      "sha256": "0aa3b66964b14bb18d4408f55d3170894b2022fd53a5c2f2f0437bbee6a8c707",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libmpg123/synth_3dnow.S",
+      "bytes": 7343,
+      "gitBlobSha1": "8e306ae9eb0982a6184679ba273efd6c039fdb64",
+      "sha256": "dd7773e2839e1a1d9ef5b972ca10d3c671302103705eec82cd1e7c1079e5752d",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libmpg123/synth_3dnowext.S",
+      "bytes": 374,
+      "gitBlobSha1": "77eff75350732cac96d96803c731788a4242d7d9",
+      "sha256": "f13d8d2bfe9283ffbd7d8a2fc25183b49891804cdc05b9e7ff78d1bfb0c733bc",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libmpg123/synth_8bit.c",
+      "bytes": 3949,
+      "gitBlobSha1": "8a9a55fc32b51a3526044629c85f0cb57d804152",
+      "sha256": "224199f886994953fe6608db423bc157f9f51326c76a5f4b234e43d6bb6be5b5",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libmpg123/synth_8bit.h",
+      "bytes": 2154,
+      "gitBlobSha1": "e518d4f1d71ce784e803ac6bf4c5dab2a5d6ef84",
+      "sha256": "19fe1ccb72853f96e902eb0bf5b3a0695d2a3c52b31c03b671d94743c1c23706",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libmpg123/synth_altivec.c",
+      "bytes": 29674,
+      "gitBlobSha1": "e1f3ea19fd3ae0027e967eac80629f3c0d47ecf4",
+      "sha256": "dd08bf5167587b0d0239febb25fa83fa04698777e33f57fbd4c636b3bafe128c",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libmpg123/synth_arm.S",
+      "bytes": 5524,
+      "gitBlobSha1": "c5ea88c68df9f28fdaf08bcf7a32b1f2aa06a086",
+      "sha256": "968a2b9c12eaa39c31f335612c326640cff47b28eca7846ff3e8f1634f0f12b6",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libmpg123/synth_arm_accurate.S",
+      "bytes": 6172,
+      "gitBlobSha1": "481aa1beb786a04ee48cf8d2e004aaac2e3ab20f",
+      "sha256": "69b92592fcad2a440baf11551366cf02018cc209e371743acf82f8d70e9a3918",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libmpg123/synth_i486.c",
+      "bytes": 7240,
+      "gitBlobSha1": "01b0119d00a434893dff990aa747d7c8a4f32dae",
+      "sha256": "bd79140104075a47714ee8207a88ffef7932e0983de8c10e0a2c2b7ec6da439a",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libmpg123/synth_i586.S",
+      "bytes": 6299,
+      "gitBlobSha1": "37f0dbf07b70fddd19af8bf109f339c0a8dcbe70",
+      "sha256": "63d36ce5728de009fe9598e1dac4cd22d0dc1449bc91d5c883d23a7730976177",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libmpg123/synth_i586_dither.S",
+      "bytes": 7521,
+      "gitBlobSha1": "7cbc35f20c733a05d677d30c94ce3854531ed094",
+      "sha256": "f3652b2b289842ecdde8d6ccd051a047e5e0fe937fa7a79d2765612e5eebbb19",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libmpg123/synth_mmx.S",
+      "bytes": 3652,
+      "gitBlobSha1": "e57e4f0ff31b826349f9dbc6422cdc53c52e1bec",
+      "sha256": "bbcf7c07c9a381ed7cfa640df4f7c92bd53972ca07b594c2f1a11269c1f54873",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libmpg123/synth_mono.h",
+      "bytes": 2081,
+      "gitBlobSha1": "907aa254c9283b73e4ddbc3f819e7070adab63cb",
+      "sha256": "b410ba286791392502655295496c19c937ed1db9307ed3aee1a678b11c912884",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libmpg123/synth_neon.S",
+      "bytes": 2821,
+      "gitBlobSha1": "eace315bfa7c74d603decda8cd0964208e1997b2",
+      "sha256": "71cf44cc90b406f0338a675f748c866211cc4d5c31ad5f10a664125857787901",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libmpg123/synth_neon64.S",
+      "bytes": 2970,
+      "gitBlobSha1": "68d43a5209b4ab06cbc677a50fea7bcef94dfa2c",
+      "sha256": "ba82111c34d7e838b4e9eed8ee48baeebb61fdbe4cee07551f635ffdf3c07eed",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libmpg123/synth_neon64_accurate.S",
+      "bytes": 3299,
+      "gitBlobSha1": "3cbb317afdc50ba7376252cf558af09320d84968",
+      "sha256": "2f51a7a26551a5274966b5e81af7ffa58e24769f33695a860087e7417d7c7f4b",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libmpg123/synth_neon64_float.S",
+      "bytes": 2823,
+      "gitBlobSha1": "0cedae3021e4ff38c81d57848e26746c084e2b5b",
+      "sha256": "8a5e85f6406e5ce11777b2e1385a0500add3809d28a5bbb33ed7841910c3b293",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libmpg123/synth_neon64_s32.S",
+      "bytes": 3305,
+      "gitBlobSha1": "917c94645c69013417202bc1d51d72f01c2d789c",
+      "sha256": "e0cd51a4d2f4e6ff5235079a536dab729852b53ac4540f8e945969a1be3cf584",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libmpg123/synth_neon_accurate.S",
+      "bytes": 4116,
+      "gitBlobSha1": "501223fa7b541e7d5892be5f4d7f1ea4c91c0fd5",
+      "sha256": "2130ad004af41aa06519d4984a71539710d45e8424653a85ba487954f4a2d978",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libmpg123/synth_neon_float.S",
+      "bytes": 3537,
+      "gitBlobSha1": "15ead4e458e7a45fb87da2a2714bfd3648d80b0c",
+      "sha256": "7c0ee59e679603ce54f392496066ecb8474b6b1768043af8074da8aaf7347785",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libmpg123/synth_neon_s32.S",
+      "bytes": 3984,
+      "gitBlobSha1": "7068baf367a2117620353731709fac1ac8d5b12c",
+      "sha256": "2a72bd0b33df01019b23cd1ca282d7394825327be63d7291ed7a92fa8734d225",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libmpg123/synth_ntom.h",
+      "bytes": 5368,
+      "gitBlobSha1": "4554d2183218736313fcdae4c8daf4f37899cf0e",
+      "sha256": "a8875eed498291c28ce76da6187bf3ba0a2914d1f0b17697303f1e19ea9404d6",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libmpg123/synth_real.c",
+      "bytes": 13548,
+      "gitBlobSha1": "fe8cf8676ada719b5fc108efa89d9d390b572253",
+      "sha256": "c7768df0a3edd0b1d042211222a2e3266532bbc1a9b8f01e90b0f7e5ebda3be1",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libmpg123/synth_s32.c",
+      "bytes": 13642,
+      "gitBlobSha1": "b44d8e1965300412785f4211b06ee044b43d6414",
+      "sha256": "db907ee2d44fdb6982a23631a13d3b44343daabf8faad5b4f6995704df5863c8",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libmpg123/synth_sse.S",
+      "bytes": 354,
+      "gitBlobSha1": "d01178b4bed4f71e75f4c3e135ca844415cf9420",
+      "sha256": "1c2763c96f43b141d90d4dddad1606b115708da3355032cab96cb1886ec5a9db",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libmpg123/synth_sse3d.h",
+      "bytes": 5716,
+      "gitBlobSha1": "5ebbd940a6c55e22c2976eed73dabd406e3dcf99",
+      "sha256": "862b348f72f1f68a6fdd46bc71c91627f18af8e43f6c07f27dea0a5314dc8d4c",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libmpg123/synth_sse_accurate.S",
+      "bytes": 6082,
+      "gitBlobSha1": "57bcbd60f505bea3b6bc02d6e263a121fbfcea0f",
+      "sha256": "e3623839435700899eb56334f828b83a61933b63d027beb1d9b6becd1c449dc6",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libmpg123/synth_sse_float.S",
+      "bytes": 4943,
+      "gitBlobSha1": "ddf6e2479190dc3bb988fa659e9b724918af6868",
+      "sha256": "4c056af17b87522d4936daa7d229e348aaf55604e5db44997a38b2b17bf611e4",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libmpg123/synth_sse_s32.S",
+      "bytes": 6254,
+      "gitBlobSha1": "7aba4a17bfa7320eb0ed0eb7e6e5f9f56d3fe69c",
+      "sha256": "22fae9bb3991f8f0b6a45359d303002c56a3343407feebad4d1267a4a47b18be",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libmpg123/synth_stereo_avx.S",
+      "bytes": 6269,
+      "gitBlobSha1": "79fb6702022afc8ec4a05c6f3f65d50af4692e09",
+      "sha256": "c07f8b665efa92e00180b45e63f66d285d2a94a7912df5aa04c3c23d653dd6dd",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libmpg123/synth_stereo_avx_accurate.S",
+      "bytes": 6947,
+      "gitBlobSha1": "6ba0251632f4d40fda0e13c927a169f5cd12511e",
+      "sha256": "db8d5a87ec731388fe8ed2a3a25515ae1e5aa8f545cf0b7c6d5826e24afbd783",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libmpg123/synth_stereo_avx_float.S",
+      "bytes": 5749,
+      "gitBlobSha1": "955ec71d8c1836c43f3d39b1178e296c377401c5",
+      "sha256": "91659224ce7b763123638e12526de70b78d2e7f8363456500b96703ca89019b8",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libmpg123/synth_stereo_avx_s32.S",
+      "bytes": 7024,
+      "gitBlobSha1": "8f1e9a6ab7309039a61ba5e11549f570f82c84fc",
+      "sha256": "35c93cd5379aa56764e1e7fb0cfd9576c20bd0fd2901b1b5088f0fad391d7355",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libmpg123/synth_stereo_neon.S",
+      "bytes": 4218,
+      "gitBlobSha1": "abb2747e0fab16f4551330379b48a13f0d58ae96",
+      "sha256": "6b453d93be17e2ac6db28cd02fe924e84cc08bbd6b15a7bb4df191a1cdf03e25",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libmpg123/synth_stereo_neon64.S",
+      "bytes": 4518,
+      "gitBlobSha1": "aeffa6c5c96e2ee0b6f171d38b270f471905288b",
+      "sha256": "5b699ce4f177dc2719f31e95bf9ad48ffd0fce9bffb12ba7dd7bc5c4e9de4493",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libmpg123/synth_stereo_neon64_accurate.S",
+      "bytes": 5224,
+      "gitBlobSha1": "2e79fc64fa593d9eb9328a2a3615e4f5e39fb16e",
+      "sha256": "82ea18e648da7c31dc922a418b0655978f102646e980a33a612315386b866a75",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libmpg123/synth_stereo_neon64_float.S",
+      "bytes": 4529,
+      "gitBlobSha1": "aec656c261bfb0c7059fd18d287a5c034838b0cb",
+      "sha256": "68548547a673096d9e1d07781ba4d5370a284e14fd9cc6697b2be39c120675d4",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libmpg123/synth_stereo_neon64_s32.S",
+      "bytes": 5274,
+      "gitBlobSha1": "52e1d66d3944db22464a28ba4550625dd0e592a6",
+      "sha256": "60e063fa6654999e84142549d48f12e9c27c0189677bbb6dd6fc8dbdcec813d3",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libmpg123/synth_stereo_neon_accurate.S",
+      "bytes": 6536,
+      "gitBlobSha1": "37a051c836289e205805f7f97a597855c47899e9",
+      "sha256": "5dc4b0afb60a012d4f65fbd92bd4355b95b4f2a1c58d6cdb10ce7838776449a8",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libmpg123/synth_stereo_neon_float.S",
+      "bytes": 5468,
+      "gitBlobSha1": "405fa2801f869fa8959c2999ed302cf0d8bdb534",
+      "sha256": "f0b3288de489e4ee851861d2adf9912da9b62d234d28911358037fcc102f86ec",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libmpg123/synth_stereo_neon_s32.S",
+      "bytes": 6168,
+      "gitBlobSha1": "dfb41147c5075f2c46a44b7a0311fc2e904efb95",
+      "sha256": "ed7cf439980f4b4f3f5ed180d92f530ebb745eba295308293e58dffe9f531a59",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libmpg123/synth_stereo_sse_accurate.S",
+      "bytes": 10679,
+      "gitBlobSha1": "c7b36b2e4960311db9443c5058e4689859cef260",
+      "sha256": "b10aae103fb3bc9ff218e918375c50f10875d80158aec2a2494e32f03dca8af2",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libmpg123/synth_stereo_sse_float.S",
+      "bytes": 8644,
+      "gitBlobSha1": "113b3547d7396229f9552b94f0bde47537b572d9",
+      "sha256": "eca8011e21e033e9ec5b1f9e7052bb1f5634f54a3b891a0c30f0993ef3192a92",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libmpg123/synth_stereo_sse_s32.S",
+      "bytes": 11332,
+      "gitBlobSha1": "248cf9d837fe813708d42a3c305f6d081901da51",
+      "sha256": "180012e2b252595fbb118b34e758da1355bc82ec024ee5e29cff89905c828fba",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libmpg123/synth_stereo_x86_64.S",
+      "bytes": 7396,
+      "gitBlobSha1": "3aa4dfe071ac6ea1a8adc1e93d60f2ebdfc88bcd",
+      "sha256": "bb54506b937e14ea2eeef8d1df51f2a074cb6eb2142c411bbe113a7dd99c6c59",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libmpg123/synth_stereo_x86_64_accurate.S",
+      "bytes": 9952,
+      "gitBlobSha1": "e9a9911b0041d2f54de3556a31c5cb3cdbb65e2d",
+      "sha256": "3240bf007e89496c154571ebb331f57b6eed1e84c48eabd749e7d8253854b178",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libmpg123/synth_stereo_x86_64_float.S",
+      "bytes": 8658,
+      "gitBlobSha1": "a1b381a306d8817984a3b1db4866fdd2ca241568",
+      "sha256": "e97dfbb580f0a147eb59b73ad7081354e3544bfdc52ce2a393d7a47be70efa59",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libmpg123/synth_stereo_x86_64_s32.S",
+      "bytes": 10412,
+      "gitBlobSha1": "a05c8961c0d0a028d40b1ee46d650f3797a2854c",
+      "sha256": "a1d81d0da7a43e41562b8d8e847e3ac68a06fa5852db3017cd356a2a1e05fce6",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libmpg123/synth_x86_64.S",
+      "bytes": 5130,
+      "gitBlobSha1": "eac7237460f0595f41becde7ee01f4e2b8421625",
+      "sha256": "b0cdaa8c03efe0376c4dd54b79d8131654cc701e945a8d5cc99705130604a377",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libmpg123/synth_x86_64_accurate.S",
+      "bytes": 6390,
+      "gitBlobSha1": "d841e8e01f68c4ebe5adc3e6ec7a66c306fa603e",
+      "sha256": "070d6b8e5af2f10d8b2a1f27a1e73a8dec201fb01d947db96e393003245f9ce1",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libmpg123/synth_x86_64_float.S",
+      "bytes": 5388,
+      "gitBlobSha1": "a26ee6b088f6585ee9f3de49c4b1e00fe66a6a74",
+      "sha256": "846b8f6cd3ef95771abf1a821d836c860797882bb5ad732cab81be647423a73c",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libmpg123/synth_x86_64_s32.S",
+      "bytes": 6686,
+      "gitBlobSha1": "7f964a847164ae1a881d5ae5eafb3e7b28116dfa",
+      "sha256": "0b7313e82001d6769f6be99f51a27bddace40faed9b97772ab6dee7a1269182c",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libmpg123/synths.h",
+      "bytes": 1168,
+      "gitBlobSha1": "fb2c8294e06407d9383dc4ef7c522f33011d9cc1",
+      "sha256": "5d178ac1e367ca18d8cb9c2ec039148035972074d75af4169981096b17bfd955",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libmpg123/system.c",
+      "bytes": 10713,
+      "gitBlobSha1": "37cbfce9b7dff0dd23cb3bcc96bdcea9ae494e32",
+      "sha256": "5a055ff727eec280b1069c2fa2ce0decc0225f315b25fd2e840247f49841a95f",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libmpg123/tabinit.c",
+      "bytes": 10554,
+      "gitBlobSha1": "ae7fac381d340388b5891f11d55573ce6d88a9a8",
+      "sha256": "67f77a171a93810a024cb43927abb7823c557a012347ac7f3b726996409831d9",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libmpg123/tabinit_mmx.S",
+      "bytes": 5638,
+      "gitBlobSha1": "63586a7affd5cbcf949d2f0fc92dfd5bee12b62b",
+      "sha256": "1af5810f48476e465b81feeb718a994dc53d10207aa876ef4a6d77ec979f70f9",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libmpg123/testcpu.c",
+      "bytes": 1012,
+      "gitBlobSha1": "bacd6c1c2634df2e26d1eac4cb84c651c31a9f93",
+      "sha256": "06b49958b4912d0299a9f9cdfdff5760e358f7c95bbebe5f86bef21c6aa34e17",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libmpg123/true.h",
+      "bytes": 288,
+      "gitBlobSha1": "b38675ff3e52f76c6437d459d1458fcbbf71a115",
+      "sha256": "b986478b9a801d36eea4df5ae94540915ab37a73095fec76885fce669c2645a6",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libout123/Makemodule.am",
+      "bytes": 1653,
+      "gitBlobSha1": "2385189d721fccd3dd3d8e5a770db1f3fbd244d7",
+      "sha256": "64c2376966f3ae8c9315db1a059fdb6d844800aafb1dd851a785f51356abf17e",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libout123/buffer.c",
+      "bytes": 26448,
+      "gitBlobSha1": "812ae21511c944ab26ab9444c13d2180508b38c2",
+      "sha256": "dd282f9ba00ff9550a9d068c025762bf8fca4b54ea51490513f78ad7259a711d",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libout123/buffer.h",
+      "bytes": 2206,
+      "gitBlobSha1": "455876ce8c2dffee8c38e12c1493495729c5b7d6",
+      "sha256": "c33171d716e605fadc2c9c487fac8de8ced888b854b6738fcfb8196097184037",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libout123/hextxt.c",
+      "bytes": 6086,
+      "gitBlobSha1": "9e9010e4cd603eb84b0d5584510eb3ad3d3797be",
+      "sha256": "c99df979d7b149c0a973551c83133fe82d91bc26b31f5813a5ff144ca40a3115",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libout123/hextxt.h",
+      "bytes": 710,
+      "gitBlobSha1": "73869f50e2090f0802898ba09cda24b7db931721",
+      "sha256": "917fbdd21444e1b6d1ace213906a20973115be3c731906a58131bac4c198c994",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libout123/legacy_module.c",
+      "bytes": 2321,
+      "gitBlobSha1": "a77f2a5930497a2763610b980c71d99dbb454d38",
+      "sha256": "eae44c6aebe224d50fd11a17ee4b11eafec982a1570684ecf5697557211b9705",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libout123/libout123.c",
+      "bytes": 35010,
+      "gitBlobSha1": "ee2c793bcb2b236084e7eb8cb076e7d4e0939c05",
+      "sha256": "5988c46a68513895954d5271842cdd9cd4f6f3d49ba200e536bc114c94afe71f",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libout123/module.c",
+      "bytes": 7556,
+      "gitBlobSha1": "eac1747e27f4f84be6ccc3817bf439a4a052435e",
+      "sha256": "fc5cc5aeeb39c46cca8cf790785f7ea798699302dfd9c1754af2a8e798fc8e67",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libout123/module.h",
+      "bytes": 1305,
+      "gitBlobSha1": "7c086520e85218bb27df2b3baea27bd14e5bfa72",
+      "sha256": "58b212313c64121eb40381d6338d1274fa1e109cb0baf0f26311bacd1fb860e4",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libout123/modules/Makemodule.am",
+      "bytes": 26273,
+      "gitBlobSha1": "d0cd9024e80e20c528420f34988a95040ee0fcf0",
+      "sha256": "3940bc753f373ce672dcf03b86679f52329f556f7746b5d7e2e3535ec17a21b1",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libout123/modules/aix.c",
+      "bytes": 7712,
+      "gitBlobSha1": "fde2829cfee998ccf93ff8c4eca4fe6c5262c8f2",
+      "sha256": "f194d779c9c1ea342bfceca841a28612b8d28d988ebf7bb3e724b8b4e54668ba",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libout123/modules/alib.c",
+      "bytes": 5091,
+      "gitBlobSha1": "4d1cf414318a48070e156a6ce227e3af45ed0927",
+      "sha256": "8f82b39667a3856bcb596ac457e8d42e54e375a792703a95684027b180759168",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libout123/modules/alsa.c",
+      "bytes": 10233,
+      "gitBlobSha1": "b76cadafce374c055d6b4b0015feddcc32bfaca5",
+      "sha256": "7bb70e69f30c0c11d13eb68f4f9f249f4381b96b5db2b10079d7bb6547825ff7",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libout123/modules/arts.c",
+      "bytes": 2704,
+      "gitBlobSha1": "4b5b7e14f09441de91bf20f13deac82621af4d22",
+      "sha256": "0468b88da45a401a01ab944a050aff566be80cefce823d1ff7882a0c9df6b770",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libout123/modules/coreaudio.c",
+      "bytes": 12199,
+      "gitBlobSha1": "48ab495ac0f0c2ea0ae0e5eba3196f6fd4e86d15",
+      "sha256": "38c3272adf4149934cc581018f7ee78abad74e903ad704acacbc3f2da7083787",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libout123/modules/dummy.c",
+      "bytes": 1853,
+      "gitBlobSha1": "a98faa79a7bb3ff03da054b982358f1de45f6723",
+      "sha256": "0926696c3c7debfe78196cc7e29946f4c444cd8d049d8944cbecf5828f3ff7b6",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libout123/modules/esd.c",
+      "bytes": 3536,
+      "gitBlobSha1": "408758f80c4ce82a3c118f2ea22659660936c0ca",
+      "sha256": "f59c8a2d00b032f44238aa4833c9954c244d90256e5ff9838e17afc90ca85ba6",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libout123/modules/hp.c",
+      "bytes": 3629,
+      "gitBlobSha1": "255b1985446fe34f6339016836945c81e37d2980",
+      "sha256": "fadda427c7d902b477503ebf467ce9f8d18ad52a91d0c8f141e0ff72b49fc656",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libout123/modules/jack.c",
+      "bytes": 15984,
+      "gitBlobSha1": "9d68fe7f7283e152e4aed594f6741577e8c8dd64",
+      "sha256": "287686ebe5944e921c473ae50b6a84b9ec7b7f04a9735e1bb23facf4d011e341",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libout123/modules/mint.c",
+      "bytes": 3568,
+      "gitBlobSha1": "dbcf0c45a362bdac4832992f13143c19cfdb6961",
+      "sha256": "2afa1498287033bf46c3a37aec0f9a74d2a997c8b8e958994831430450ac75ca",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libout123/modules/nas.c",
+      "bytes": 10166,
+      "gitBlobSha1": "2e29723b8573b13afd49d5568aa3f8a600e70a97",
+      "sha256": "25af941d7fd1e7601da0f5bcd2219f61b12aee322fad82a13c00029b7d0489e9",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libout123/modules/openal.c",
+      "bytes": 4634,
+      "gitBlobSha1": "e49de66a6e022f68f608f072eed314ab18c52100",
+      "sha256": "9eae3e58e7da7c6fd849fcfdbace296e46165588ed54051e5360f5706d069909",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libout123/modules/os2.c",
+      "bytes": 15639,
+      "gitBlobSha1": "520edfbfc0aca98b4ea642385ca5a9e958398502",
+      "sha256": "091b197201d02242f5059b905787ccab8923da4369e50eb977a66ad33913751e",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libout123/modules/oss.c",
+      "bytes": 6133,
+      "gitBlobSha1": "2418e1d827f3fe801dd0e06b6736bf28d5326ea6",
+      "sha256": "5feb819f954849a2d78d5b8a5a26232faac1c96174c9a6a11383e400f1b49643",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libout123/modules/portaudio.c",
+      "bytes": 7726,
+      "gitBlobSha1": "53354952f15e495ea57df0450410c3dcc8cb93c2",
+      "sha256": "80d6223ac9927c2e004071267d6df43e12ec8b769b860fd43873bd563e7a3436",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libout123/modules/pulse.c",
+      "bytes": 8508,
+      "gitBlobSha1": "ed5989c6da12553e7ac0ddcce87433ff9e17e50b",
+      "sha256": "6102ba9a7c2ee07df5d3d8fb10794f5ab174a35bb1ed4754bdbd9478513135b1",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libout123/modules/qsa.c",
+      "bytes": 7060,
+      "gitBlobSha1": "48b69c932f48f828ae57e38dfec959d1e1717ba7",
+      "sha256": "ca8b552f90fca5ba138a04f7f7c854db38a1da2d24098801731579cafc9bfe39",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libout123/modules/sdl.c",
+      "bytes": 8485,
+      "gitBlobSha1": "47da5c2f78d20e8499da08dc433069e41c05813a",
+      "sha256": "362c2330f0a4ffd5f850dc75b11c10fee8fe5d241d4bd1d18439279f865eea8b",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libout123/modules/sgi.c",
+      "bytes": 5740,
+      "gitBlobSha1": "1ffe2cbeb6c54ae8c5bf00e64fe5d7b5cdc8eb5b",
+      "sha256": "90a24e58405b27551644e74b52ff343de685e2c28171f113bece989a58b63afb",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libout123/modules/sndio.c",
+      "bytes": 8016,
+      "gitBlobSha1": "2b67e13b37fea0d114f366820ac2a2fb99697d26",
+      "sha256": "29ae2939ac269defa0e5226bd5e34717eb0240f7057b804c26f7729735d7f5ad",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libout123/modules/sun.c",
+      "bytes": 5517,
+      "gitBlobSha1": "7dacea2cbf8f5320cde83d6c8085fa8f5189af19",
+      "sha256": "45f66c73e05bcd352ea75a326e41e5832f491408b088950c5190461bc3c99710",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libout123/modules/tinyalsa.c",
+      "bytes": 4508,
+      "gitBlobSha1": "49e7c19268b9ff2d2e67fb8c750e5a0d9a2cb268",
+      "sha256": "041a9d5400af2c14228cc9a8b636a6e20a7e577114dd976658b1172f18205619",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libout123/modules/win32.c",
+      "bytes": 12339,
+      "gitBlobSha1": "961d4506916fe528e07e79404f9648c9feaac51b",
+      "sha256": "2d8a02608c54d32fc9599ebe6aee582fadb88cec9d72cfc57b89a68179a507bc",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libout123/modules/win32_wasapi.c",
+      "bytes": 22805,
+      "gitBlobSha1": "487b4300a0a039be188f6c3f246347c70bde2973",
+      "sha256": "6de848faef610a0ad497a7aa5db75a6a3e3a91c1f63c3e58d07f69d341d62641",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libout123/out123.h.in",
+      "bytes": 30138,
+      "gitBlobSha1": "9e5d173fddc30b7622b3e26efdf99c200008249f",
+      "sha256": "e28fd797006c5c0b3b98e1ac8cfa718aa6fbb42dcf864cd896e04a7808aa6763",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libout123/out123_int.h",
+      "bytes": 4061,
+      "gitBlobSha1": "3c395b2465bbde05a4af71629cd62f0af26a49ae",
+      "sha256": "9b4feca06d09713953c98cb596b6d1ad84a7347360b10ebffc361d1e7b3b8f3a",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libout123/sfifo.c",
+      "bytes": 2717,
+      "gitBlobSha1": "0cf26bebcb20f16a2fe23cebafa67ff3fb108eb6",
+      "sha256": "99b058b169c3d68b4d9d583d5f18b5c4d3d3d24769ff96be754738d5e89c5f38",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libout123/sfifo.h",
+      "bytes": 2549,
+      "gitBlobSha1": "14957a4681645203dc0a5f324190861031f9e13b",
+      "sha256": "41f3cccb46da76e32643b0c1ac34b345e22bd14b93276bb40e90494dc98c4a05",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libout123/stringlists.c",
+      "bytes": 1810,
+      "gitBlobSha1": "23002a7d577ff8cd62ab85b00c3a08a60b64fab5",
+      "sha256": "cf305779e207936810ac5fcf4955b4f53cf119b73246a606ac7dd89b8067efc4",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libout123/stringlists.h",
+      "bytes": 456,
+      "gitBlobSha1": "2c95faa436fa2e9396eb87d0258ba6345638c114",
+      "sha256": "211676bc55fa497376159c7ab70d13f00804a6c65197b6130b768ec299a95e2c",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libout123/wav.c",
+      "bytes": 17095,
+      "gitBlobSha1": "dfd89191ecfd721af50caf4f7ed0c37908a51f6d",
+      "sha256": "e2035ea1d667c808decbd61af38936d131b254dd246efe63640342c101abf1f2",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libout123/wav.h",
+      "bytes": 999,
+      "gitBlobSha1": "8718972015a1298ce356c7b68e9381d3269ea8df",
+      "sha256": "ba31fc65674a62682835628fcf96a60ed2d501bc04e3ad1013a6e84d0e0e24da",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libout123/wavhead.h",
+      "bytes": 1421,
+      "gitBlobSha1": "07ab92b354879c7f163c0ee3282faad9f80d8a1a",
+      "sha256": "d550d512449ed00335e75fe554a210c0d18ca35e398b6e07d2b099755ad83515",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libout123/xfermem.c",
+      "bytes": 7756,
+      "gitBlobSha1": "9e235a40245e879cb86da98733890190504d0253",
+      "sha256": "99bb48930f39dadc54c0ece9f43db0055acdba2577f2491edac2539a374daf8e",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libout123/xfermem.h",
+      "bytes": 3318,
+      "gitBlobSha1": "44815954cca9284c7e85c0a7216a8274dd343ce1",
+      "sha256": "9d4be8039dd2b681403d95d2af09bdf859b932bf2fd1395d9a1f914a9e64d4aa",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libsyn123/Makemodule.am",
+      "bytes": 875,
+      "gitBlobSha1": "b9f75e3801a1444d03b95a7de710b9fb50dcaaec",
+      "sha256": "f62a86344ef1cbe1a3d6a2d4bc943ec7dba19ae670e75422fcc6231f06f7561b",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libsyn123/filter.c",
+      "bytes": 10481,
+      "gitBlobSha1": "881d3885637df435d15e06698a95b96318c1bc45",
+      "sha256": "0e1959739c3cd2f3b41dd166ec0bd63dd7195ad91295546f7c48c358d15a5cb3",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libsyn123/g711_impl.h",
+      "bytes": 6813,
+      "gitBlobSha1": "392d9c786bca1e4e8338bddeb8b6e5a75ebd2a5d",
+      "sha256": "002492544a39fe4dd0dd7f696dfc64c4de939b05ceef9f6aba89981aa9fcf464",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libsyn123/geiger.c",
+      "bytes": 9354,
+      "gitBlobSha1": "be494f3d2765398fe761daae95f037a6b6ebb2c6",
+      "sha256": "12e42d8d319a49bfd8561be05ee342ddcb9444a2adaeacf2e327732051a1903e",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libsyn123/libsyn123.c",
+      "bytes": 25136,
+      "gitBlobSha1": "9cd9937b583a2c18bdce06b6e20f807f45547b2f",
+      "sha256": "6a9f3968dfd37c0e898492ba1f783cf80ad06fc325c8192f47ecb74731db7942",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libsyn123/pinknoise.c",
+      "bytes": 5218,
+      "gitBlobSha1": "360987759c4c521196e8fd63f1f1875e2ea06e13",
+      "sha256": "511aa9f6f7f095739c67be9b54556e8e17bdc6e7c9287e62030c38d4cfcd2725",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libsyn123/resample.c",
+      "bytes": 81762,
+      "gitBlobSha1": "3552ffad53d51b0b4d1b9249b6b3a4a8c1e46a89",
+      "sha256": "dc975ffe19f395c2d3dda6f5fa357d11b7b71b0555c9a3dc464fd5983b961af1",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libsyn123/sampleconv.c",
+      "bytes": 27472,
+      "gitBlobSha1": "7179957462a1f6db6c634d232f1b3dd895ae1562",
+      "sha256": "1b0a7e84afa53f1d4d9e30fa758bef42f133c12a31d56abd8c637fb7c49ea142",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libsyn123/syn123.h.in",
+      "bytes": 49785,
+      "gitBlobSha1": "6a1ef3caf312fff08ac98685a0df3f29310d4f00",
+      "sha256": "09f75294d68168950cabb6725af60ae35ec46e91eecd0521f7925e61997b5e2b",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libsyn123/syn123_int.h",
+      "bytes": 5112,
+      "gitBlobSha1": "3828abe5fdd93a175460ee83fc73d7119a28ffc6",
+      "sha256": "dc8a742a80c56553ea6a7e76853145d735cf4e2ee9aa6dc52666f323c9fe680f",
+      "mode": "100644"
+    },
+    {
+      "path": "src/libsyn123/volume.c",
+      "bytes": 2768,
+      "gitBlobSha1": "a80851d028bb6135beea27b2a00e5426f25a6121",
+      "sha256": "45c891b55c1e839dd2530fb8516604efcf5c850a5394bb6d576191ab76c9c270",
+      "mode": "100644"
+    },
+    {
+      "path": "src/local.c",
+      "bytes": 12957,
+      "gitBlobSha1": "fcac6281f00b73631c36495d39af5f0c504270d9",
+      "sha256": "3e216bd46726f1808e153a65abd8d51226d28c84ff2d89f53faf64476299933e",
+      "mode": "100644"
+    },
+    {
+      "path": "src/local.h",
+      "bytes": 3450,
+      "gitBlobSha1": "50e420428967263e36619bdea515a02c6ffd6a9a",
+      "sha256": "20862fe68ce94aaa911c21d15435b3e269d6ffce776dd3acb94df2fc3ac90c10",
+      "mode": "100644"
+    },
+    {
+      "path": "src/metaprint.c",
+      "bytes": 12729,
+      "gitBlobSha1": "54192d46c0030473e0176ffd24421b85e6f07595",
+      "sha256": "4e7741fd89dac53576d0ac59c6d497d232ee992f2726d924a8a5664db58bb256",
+      "mode": "100644"
+    },
+    {
+      "path": "src/metaprint.h",
+      "bytes": 768,
+      "gitBlobSha1": "0c9cd1c3995df8c8e6557819a1d36f351bd1890f",
+      "sha256": "c9ea3f59b5ae7f1ba26e909cddf7e20470a8af5f0e775455a3d2c4f187d9f191",
+      "mode": "100644"
+    },
+    {
+      "path": "src/mpg123-id3dump.c",
+      "bytes": 10631,
+      "gitBlobSha1": "ee54971273e2877554d30457eab48b0b004de08f",
+      "sha256": "f69335d43683052171df07a557b21410df2bddb03c065fdeeeda24abbd65cea4",
+      "mode": "100644"
+    },
+    {
+      "path": "src/mpg123-strip.c",
+      "bytes": 4453,
+      "gitBlobSha1": "6ab0d16e10363004f1f156f4d2614adeaef753bf",
+      "sha256": "4ed5090356398c6d5ffe047e8313132648d010b313dc7432b81be98a10418228",
+      "mode": "100644"
+    },
+    {
+      "path": "src/mpg123-with-modules",
+      "bytes": 233,
+      "gitBlobSha1": "11584e1f7a814c0fbb403a4147c0a6cdbb5ba7b7",
+      "sha256": "b16edffbaf12d0301f798e403e0840be2ab408a6c64a749c3c6ce2ca530d055d",
+      "mode": "100755"
+    },
+    {
+      "path": "src/mpg123.c",
+      "bytes": 58499,
+      "gitBlobSha1": "dd9e7a81f91038f87ed10761084c72406f64e9ac",
+      "sha256": "0adf937570e56a2f610a77458a6f36f6a5a805ec8aeeb26167011d657801f9c9",
+      "mode": "100644"
+    },
+    {
+      "path": "src/mpg123app.h",
+      "bytes": 4024,
+      "gitBlobSha1": "5b05649124d20a7a6feacec94aa67f050090ee73",
+      "sha256": "20a6be206b6141c8c0c5162170eedcf2c128f18e104d83ed15598fa77b361035",
+      "mode": "100644"
+    },
+    {
+      "path": "src/out123-with-modules",
+      "bytes": 233,
+      "gitBlobSha1": "3350e299e073c351a63bdbeb1d9ac0eacb1cd8b2",
+      "sha256": "7bf51826ea92e3dabad83d8a03bc7a5aa9f7e72e0074c7a6e1405d52ebf79709",
+      "mode": "100755"
+    },
+    {
+      "path": "src/out123.c",
+      "bytes": 58829,
+      "gitBlobSha1": "a431bce2dc52f71b7ade4434d0ea96da0d7f0ef8",
+      "sha256": "0445586516a2927721e639f689aa5ea5085524c93009c95da68b163d6efde11a",
+      "mode": "100644"
+    },
+    {
+      "path": "src/output/Makefile.am",
+      "bytes": 8611,
+      "gitBlobSha1": "f85992d3eed32f69690b3aa957b57266ff58012a",
+      "sha256": "410afff2eef5a7c036bc81adf1a12ba83a798c4adce84a2ba77b825572a0a44f",
+      "mode": "100644"
+    },
+    {
+      "path": "src/playlist.c",
+      "bytes": 19689,
+      "gitBlobSha1": "c8e7717823c1efd6551a777568edcb6e2b1d94fc",
+      "sha256": "b2d91a3963b80e1aeb4b608ca73ad23039d019a8651b31d5e8591f5d1bf65a14",
+      "mode": "100644"
+    },
+    {
+      "path": "src/playlist.h",
+      "bytes": 1256,
+      "gitBlobSha1": "c475d99e66023c067c498efbc9c24e337254053f",
+      "sha256": "ff35c178886d4e9d5d6896789d27abd86b820f8b710731b109a55058992026ca",
+      "mode": "100644"
+    },
+    {
+      "path": "src/resolver.c",
+      "bytes": 8456,
+      "gitBlobSha1": "9f0616e64c3928026cf50b9e9a00bab5bf3c6a3f",
+      "sha256": "5a6e08363deb5df4a7264c5195ab1b1228fc763e8621bbb16590572504c9b6f7",
+      "mode": "100644"
+    },
+    {
+      "path": "src/resolver.h",
+      "bytes": 965,
+      "gitBlobSha1": "637df72acacdae2a4ce40b6a8175f45e99707d26",
+      "sha256": "6aa2834970f9b089a3a625520d63a02e6ce94389b1081b23a54dad0cdb03da94",
+      "mode": "100644"
+    },
+    {
+      "path": "src/streamdump.c",
+      "bytes": 1607,
+      "gitBlobSha1": "8d0ae368ba52b032b03519dd682aea7fd7b68469",
+      "sha256": "69962b6f5360b5d2d3fdfb13619b3b57b88be199f3f64769e8a6bea82dfa16bb",
+      "mode": "100644"
+    },
+    {
+      "path": "src/streamdump.h",
+      "bytes": 503,
+      "gitBlobSha1": "dd9f52ecd5ba0f8436550648f6552c3936c644ad",
+      "sha256": "47da14e2a35f8ba2020ab8e25b89ca5fdfde1b7d27eaa75156f1a0df44bee027",
+      "mode": "100644"
+    },
+    {
+      "path": "src/sysutil.c",
+      "bytes": 2080,
+      "gitBlobSha1": "cf5bf0cc23eced34bfe8174807631cffb17d2832",
+      "sha256": "80ad9f989460af90ea8649036a6eac6a88ec69aa632fe285a065b78bb524f136",
+      "mode": "100644"
+    },
+    {
+      "path": "src/sysutil.h",
+      "bytes": 517,
+      "gitBlobSha1": "c961be621b21d05eade51e88ee8b7f76d3548830",
+      "sha256": "5fea4fd90d6eea2758c4fec2c1d9ea0f592f130a8085c4e39490535b2d48b378",
+      "mode": "100644"
+    },
+    {
+      "path": "src/term.c",
+      "bytes": 15132,
+      "gitBlobSha1": "32b3bcded9faf3d060eb00cfaa20ace5bdd6adec",
+      "sha256": "e47de72192b807f662fb11aad3a25e9879034aee213c0e788b943dc9de3f7cd1",
+      "mode": "100644"
+    },
+    {
+      "path": "src/term.h",
+      "bytes": 2481,
+      "gitBlobSha1": "5e8e75483292032e3825385e10b43ca915b8b5e7",
+      "sha256": "1c052f0a215b0f30d892322cadc8e127b1a2d04f53f725f918a829bd04e4d65f",
+      "mode": "100644"
+    },
+    {
+      "path": "src/tests/Makemodule.am",
+      "bytes": 2647,
+      "gitBlobSha1": "4ad25f735b5dbd2a55c1d40619b3e316f2b50f68",
+      "sha256": "c07fd095ae9d1553fe6c459675a4f1e5424b6a150ea08942b0762a7836cc98ff",
+      "mode": "100644"
+    },
+    {
+      "path": "src/tests/decode_fixed.c",
+      "bytes": 1630,
+      "gitBlobSha1": "3f1b99aa499a30e9cf23c8464426f88bfdf5b029",
+      "sha256": "68228edbaa12cf108f7bf74e340e7d00e06ea07905e0585467b6ce909ba8ff33",
+      "mode": "100644"
+    },
+    {
+      "path": "src/tests/decode_fixed.sh",
+      "bytes": 623,
+      "gitBlobSha1": "ba75627faf7f0be8ca1b80ad76bf48aec2670591",
+      "sha256": "642a3ebc00c65b104ee211a6a48ca3709d943f18c100b5a06a689c316626670e",
+      "mode": "100755"
+    },
+    {
+      "path": "src/tests/interpolsim.c",
+      "bytes": 4924,
+      "gitBlobSha1": "1366058a3bcb71438a6dcb4877b5191c8724acab",
+      "sha256": "a57b0be4a0a7dea54b97c5651fcaf3b22c91b29e989e78d9c80a7af0e8d98ea7",
+      "mode": "100644"
+    },
+    {
+      "path": "src/tests/noise.c",
+      "bytes": 1233,
+      "gitBlobSha1": "4af8cf6b1cfcece36209a7efc23cd26b07c0e7a5",
+      "sha256": "5698920384a93ca75c0a7f6935b028177d249ccd444664ce208149f4e6eed856",
+      "mode": "100644"
+    },
+    {
+      "path": "src/tests/plain_id3.c",
+      "bytes": 2320,
+      "gitBlobSha1": "7b24765341521a3319acba28a31637b1d8bda8d7",
+      "sha256": "4c631f00b696ab9e50983ffcdbf4575dec256d8d8ce5be868fb149a33e4070d2",
+      "mode": "100644"
+    },
+    {
+      "path": "src/tests/plain_id3.sh",
+      "bytes": 257,
+      "gitBlobSha1": "48cc0ab634316fdd11031ca8e57973d22300c6d2",
+      "sha256": "89fd5d0359a27e556cd08647add475891cccbdc5d13121e642968c94aa6dc458",
+      "mode": "100755"
+    },
+    {
+      "path": "src/tests/plain_id3.txt",
+      "bytes": 316,
+      "gitBlobSha1": "a2c3127aba6b3c46dcd99057db7b225616e8243b",
+      "sha256": "5bf16c69c77df61248e9706df4afca73839d9c51b449c31c82e4fe961636efdb",
+      "mode": "100644"
+    },
+    {
+      "path": "src/tests/resample_total.c",
+      "bytes": 733,
+      "gitBlobSha1": "148f85a1a14c1530cfaf5856f22dca80e756b877",
+      "sha256": "db81365d82fbcde884f2a608ba2eb7e0fa38c7567c404be7861d04ba05961871",
+      "mode": "100644"
+    },
+    {
+      "path": "src/tests/seek_accuracy.c",
+      "bytes": 7603,
+      "gitBlobSha1": "a66057723f99ba17ea71286934899564eaafb5c4",
+      "sha256": "9e7e779bd2e66125b4b1ddd5cb28d576eb75c600374abfdf8a23d6f1c532b404",
+      "mode": "100644"
+    },
+    {
+      "path": "src/tests/seek_accuracy.sh",
+      "bytes": 69,
+      "gitBlobSha1": "97d6f1ee6072eaca64d45317d9c2c8224bdc7d90",
+      "sha256": "d2d3c37548578783c67ec5ed7819066b7b8a1638ca4a003a57ba25bf5570de02",
+      "mode": "100755"
+    },
+    {
+      "path": "src/tests/seek_whence.c",
+      "bytes": 1298,
+      "gitBlobSha1": "5eaf2953bca19b393d4de7537b0a0052781a8256",
+      "sha256": "1cdc374b5800fd94dcd009ea54cd020bd9060e8206ef8b5cfb6b1e52eddbf3b9",
+      "mode": "100644"
+    },
+    {
+      "path": "src/tests/seek_whence.sh",
+      "bytes": 67,
+      "gitBlobSha1": "7700a192b19408fa947cf3de760ba05d62f116d5",
+      "sha256": "78d377ddcc963a10d57bddc51680019f2045d76aec1b32b44bdf52f8a3daddc4",
+      "mode": "100755"
+    },
+    {
+      "path": "src/tests/sweep.mp3",
+      "bytes": 10677,
+      "gitBlobSha1": "b62d8af078c9daf09deae0079c2a420fe754be99",
+      "sha256": "f3059e12fac4e0f8893db533a8debb3d54a4fcd628c27258187b5dad0d1bdff7",
+      "mode": "100644"
+    },
+    {
+      "path": "src/tests/sweeper.c",
+      "bytes": 4604,
+      "gitBlobSha1": "306a01eb378f5268f0656654ecd7653a41818789",
+      "sha256": "cd947448591a77ad7cdbaa01e4d1b1f51811118d5066719f0e6f7f589db0b0f1",
+      "mode": "100644"
+    },
+    {
+      "path": "src/tests/testtext.h",
+      "bytes": 5302,
+      "gitBlobSha1": "1bb2b299036f03be7718c14166c1ddd5174f06c3",
+      "sha256": "dc9a326c7d370858846f603596d9e639d4360fe0284e8c33396d5e7978b15960",
+      "mode": "100644"
+    },
+    {
+      "path": "src/tests/testtext.sh",
+      "bytes": 628,
+      "gitBlobSha1": "9d27f7bfa1c28551cc7cfc373d4bb3f6e854bb10",
+      "sha256": "3c5b27ed7ff432b3355e0430ed5898ab457ca1470f77f4d161b5672f0b34eb22",
+      "mode": "100755"
+    },
+    {
+      "path": "src/tests/text.c",
+      "bytes": 2281,
+      "gitBlobSha1": "a9e75543334ebb12b9c48dd482979280b361b03a",
+      "sha256": "da9037618f2793fe8643857144328ba98c5edcb3de1a56fe66f39e4c9fb1fafa",
+      "mode": "100644"
+    },
+    {
+      "path": "src/tests/textprint.c",
+      "bytes": 4686,
+      "gitBlobSha1": "80ef6f24937b8316325bfd3b7285b82c7c144cee",
+      "sha256": "51496e142ead08e628d22441e8fb50b824966af3aee719e8f0937b162b88ce0f",
+      "mode": "100644"
+    },
+    {
+      "path": "src/tests/volume.c",
+      "bytes": 1601,
+      "gitBlobSha1": "1456ab705420feffcc5471f3870ba136397efb13",
+      "sha256": "127cfc9aab561015278a5c979d8ce47edc0e1752bcdc1d0627cb24b5286a3e5a",
+      "mode": "100644"
+    },
+    {
+      "path": "src/win32_net.c",
+      "bytes": 16809,
+      "gitBlobSha1": "b76ffaa4db52b894f19bf012da4c265be625092b",
+      "sha256": "dcc34a003a0118adceb5239ec20788f03f7fe77dba9c25d24b9737fdabeb6ab0",
+      "mode": "100755"
+    },
+    {
+      "path": "src/win32_support.c",
+      "bytes": 5054,
+      "gitBlobSha1": "af6dc0c9d93b379f34aa3348374cd02978c44358",
+      "sha256": "7fc60c97fadce6effbd66369fded3b4e9a2b150778bff5338a7d0a27d688b028",
+      "mode": "100755"
+    },
+    {
+      "path": "src/win32_support.h",
+      "bytes": 4195,
+      "gitBlobSha1": "afe9651850d259dbe290853b303c4de2e808b3b5",
+      "sha256": "fdb25c4befa776a60b73dde4306dbef0f80de35fa2ba4db0e93b011935b61aa3",
+      "mode": "100755"
+    },
+    {
+      "path": "src/wrapper_test.c",
+      "bytes": 2837,
+      "gitBlobSha1": "0eb1bf7ec52266a0adbdf206dae6d716617dd9a2",
+      "sha256": "1d3716fd9dfb1e29b306e3e2456ebbb2a54ae28ee05d6036131c9786976d96c9",
+      "mode": "100644"
+    },
+    {
+      "path": "valgrind.sup",
+      "bytes": 43370,
+      "gitBlobSha1": "2f7bc637c59348c7fa54f16cb2cac1fc5aa4c6a5",
+      "sha256": "18df6218ace4598d673982be5d1f59861fe5e7ef88be97d293282f3f2dda670f",
+      "mode": "100644"
+    },
+    {
+      "path": "windows-builds.sh",
+      "bytes": 4210,
+      "gitBlobSha1": "535bd7c89a50d92d363d2584d3e8cc97f4faf73d",
+      "sha256": "01a260a88830970261624a1d0ec6997be9a738b5989657f784a95a2e124716b9",
+      "mode": "100755"
+    }
+  ]
+}

@@ -1,4 +1,5 @@
 import { outputJobIsDurable, readOutputDurableOwnership } from "./output-durable-control.ts";
+import { classifySponsorIntakeDraft } from "./experience-sponsor-intake-classification.ts";
 import { readVideoExecutionOffer } from "../src/model/output-video-offer.ts";
 import { model3dMiniAppCostApprovalMatches, model3dMiniAppAttemptMatches, type Model3dMiniAppCostPreview } from "../src/model/model3d-mini-app-consent.ts";
 import { model3dReplacementSuccessor } from "./experience-model3d-replacement.ts";
@@ -54,6 +55,7 @@ import { readExperienceOutputLineage, model3dReplacementPredecessor, scenePrepar
 
 const record = (value: unknown): value is Record<string, unknown> => Boolean(value && typeof value === "object" && !Array.isArray(value));
 const diagnosticCodes = new Set(`not_found method_not_allowed same_origin_required experience_output_request_invalid experience_output_unavailable
+sponsor_intake_internal_only
 experience_output_unbound_requirement experience_output_requirement_changed experience_output_requirement_evidence_unavailable experience_draft_unavailable
 experience_image_ratio_required experience_scene_contract_unavailable experience_audio_contract_unavailable experience_storyboard_contract_unavailable experience_model3d_contract_unavailable
 experience_intake_original_unavailable experience_output_scope_changed output_video_source_changed experience_model3d_original_changed experience_output_source_changed experience_output_source_unavailable
@@ -234,7 +236,17 @@ function validateManagedRequirement(loaded: Loaded) {
 
 async function load(request: Request, env: WorkerEnv, draftId: string, permission: "read" | "author" | "request"): Promise<Loaded | Response> {
   const auth = await authorizeExperienceIntake(request, env); if (auth instanceof Response) return refused(auth);
-  const retained = await readExperienceDraft(env, auth, draftId); if (!retained) error("experience_draft_unavailable", 410);
+  const database = env.DB, classification = await classifySponsorIntakeDraft(env, draftId);
+  if (env.DB !== database || classification.kind === "unavailable") return unavailable("experience_draft_unavailable", 410);
+  if (classification.kind === "sponsored") return unavailable("sponsor_intake_internal_only", 403);
+  const originalEnv = env;
+  // Keep every downstream native read on the classified database. This is a
+  // captured environment, not a substitute DB implementation or permission.
+  env = { ...env, DB: database };
+  const retained = await readExperienceDraft(env, auth, draftId, classification.guard);
+  if (!retained || env.DB !== database) error("experience_draft_unavailable", 410);
+  const nativeDraftGuard = experienceDraftGuard(auth, retained.plan, retained.content);
+  const ordinaryDraftGuard = { sql: `(${nativeDraftGuard.sql}) AND (${classification.guard.sql})`, bindings: [...nativeDraftGuard.bindings, ...classification.guard.bindings] };
   const plan = retained.plan, binding = await experienceOutputBinding(plan);
   const ratio = plan.request.values.ratio;
   if (binding.output === "image" && (!ratio || ratio.provenance !== "authored" || !record(ratio.value))) error("experience_image_ratio_required");
@@ -254,7 +266,7 @@ async function load(request: Request, env: WorkerEnv, draftId: string, permissio
   const recipe = createExperienceOutputRecipe(binding.output === "video" ? { output: "video", ...identities, contract: videoSource!.contract } : binding.output === "model3d" ? { output: "model3d", ...identities, contract: model3dContract! } : binding.output === "storyboard" ? { output: "storyboard", ...identities, contract: storyboardContract! } : binding.output === "audio" ? { output: "audio", ...identities, contract: audioContract! } : binding.output === "scene" ? { output: "scene", ...identities, contract: sceneContract! } : binding.output === "short_story" ? { output: "short_story", ...identities, contract: SHORT_STORY_NARRATIVE_CONTRACT } : binding.output === "slides" ? { output: "slides", ...identities }
     : { output: "image", ...identities, variantId: await experienceResourceId(draftId, "native-output-variant"), aspectRatio: ratio!.value as { width: number; height: number } });
   const intakeResponse = await commitAtomicIntake(env, auth, { projectId: plan.projectId, documentId: plan.documentId, events: structuredClone(plan.events) as typeof plan.events[number][] }, "check", {
-    receiptPrefix: receiptPrefix(draftId), clientId: "web:experience-intake", correlationPrefix: "experience-intake:", guard: experienceDraftGuard(auth, plan, retained.content) });
+    receiptPrefix: receiptPrefix(draftId), clientId: "web:experience-intake", correlationPrefix: "experience-intake:", guard: ordinaryDraftGuard });
   const receipt = { ...await intakeResponse.json() as Record<string, unknown>, draftId, draftHash: plan.draftHash } as unknown as ExperienceIntakeReceipt;
   if (!intakeResponse.ok || receipt.status !== "complete") error("experience_intake_original_unavailable", 410);
   const trusted = await loadOutputTrustedContext(request, env, plan.documentId, permission); if (trusted instanceof Response) return refused(trusted);
@@ -262,7 +274,7 @@ async function load(request: Request, env: WorkerEnv, draftId: string, permissio
     || trusted.scope.documentId !== plan.documentId || trusted.scope.projectId !== plan.projectId) error("experience_output_scope_changed", 403);
   // The same retained draft/custody assertion participates in every native write
   // and final private disclosure, not only this earlier in-memory source check.
-  trusted.sourceAssertions.push(experienceDraftGuard(auth, plan, retained.content));
+  trusted.sourceAssertions.push(ordinaryDraftGuard);
   if (videoSource) {
     if (videoSource.head !== trusted.ownerHead) error("output_video_source_changed", 409);
     trusted.sourceAssertions.push(videoSource.guard, { sql: "COALESCE((SELECT MAX(sequence) FROM events WHERE stream_id=?),0)=?",
@@ -297,6 +309,7 @@ async function load(request: Request, env: WorkerEnv, draftId: string, permissio
     loaded.retainedImageSourceChanged = true;
   }
   if (trusted.sourceProblems.length) error("experience_output_source_unavailable", 410);
+  if (originalEnv.DB !== database) return unavailable("experience_draft_unavailable", 410);
   return loaded;
 }
 

@@ -1,0 +1,25 @@
+{
+  "package": "simple-yenc",
+  "version": "1.0.4",
+  "origin": "Exact npm artifact files; no package scripts run.",
+  "packageTarballSha256": "52151d29797654e08019f3d45e5f22c16ebc3c356258b00926aa4db636012fbd",
+  "archive": "simple-yenc-1.0.4-source.tar.gz",
+  "archiveSha256": "891d7d5ac05773e6f4ea06d97382091cec53bee99565be12079178336ee98770",
+  "files": [
+    {
+      "path": "LICENSE",
+      "bytes": 1058,
+      "sha256": "ce44a03cf2ded9cf1d326c5ffb20a29245375dd1b9f1e95e59cd275c24c00533"
+    },
+    {
+      "path": "package.json",
+      "bytes": 1285,
+      "sha256": "68b0047a8d7853ebf56a60e30d5a32efe688024f6913b58061db3c7464160066"
+    },
+    {
+      "path": "src/simple-yenc.js",
+      "bytes": 7627,
+      "sha256": "363cbcc23d55beed7b89398d1213a67722128ba958f6d1eb1964f8797375af4a"
+    }
+  ]
+}

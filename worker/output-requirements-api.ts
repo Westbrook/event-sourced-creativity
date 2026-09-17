@@ -1,3 +1,9 @@
+import { readExistingPrincipalRequest } from "./principal-request-core.ts";
+import { beginSponsorOutputAssetRead, requireSponsorOutputAssetRead, type SponsorOutputAssetRead } from "./experience-sponsor-output-asset-read.ts";
+import { sponsorOutputAssetReadEnvironment } from "./experience-sponsor-output-read-budget.ts";
+import { sponsorImageResponseBody } from "./experience-sponsor-native-image-budget.ts";
+import { sponsorJobReadFailure } from "./experience-sponsor-job-read.ts";
+import { hasProjectContextCookie } from "./project-request-context.ts";
 import { prepareOutputDurableRun, wakeOutputDurableJobs } from "./output-durable-control.ts";
 import { jsonIssues } from "../src/experiences/compiler.ts";
 import { readOutputModel3dPayload, requireModel3dMiniAppCostApproval } from "./output-model3d-execution.ts";
@@ -1166,10 +1172,10 @@ async function downloadDelivery(trusted: OutputTrustedContext, manifestId: strin
     deliveryAssertions(trusted, plan, pinned));
 }
 
-async function downloadAsset(trusted: OutputTrustedContext, assetId: string) {
+async function downloadAsset(trusted: OutputTrustedContext, assetId: string, sponsored?: SponsorOutputAssetRead) {
   const asset = await loadExactAsset(trusted, assetId);
-  return discloseOutputResponse(trusted, () => ({ body: assetBuffer(asset.bytes), init: { headers: { "content-type": asset.inspection.mimeType!, "content-disposition": `attachment; filename="output.${asset.inspection.extension}"; filename*=UTF-8''${encodeURIComponent(asset.name)}`, "cache-control": "private, no-store", "x-content-type-options": "nosniff", "x-output-sha256": asset.inspection.sha256!, "x-output-review": "File inspection download does not establish assignment acceptance or complete delivery." } } }), [
-    { sql: "EXISTS(SELECT 1 FROM output_assets asset JOIN event_private_payloads body ON body.private_event_id=asset.created_event_id AND body.redacted_at IS NULL WHERE asset.scope_key=? AND asset.asset_id=? AND asset.document_id=? AND asset.redacted_at IS NULL AND asset.content_sha256=?)", bindings: [trusted.scope.key, assetId, trusted.scope.documentId, asset.inspection.sha256!] }], outputAssetReadAssertions(trusted.scope, [asset.row]));
+  return discloseOutputResponse(trusted, () => ({ body: sponsored ? sponsorImageResponseBody(asset.bytes, sponsored.budget) : assetBuffer(asset.bytes), init: { headers: { "content-type": asset.inspection.mimeType!, "content-disposition": `attachment; filename="output.${asset.inspection.extension}"; filename*=UTF-8''${encodeURIComponent(asset.name)}`, "cache-control": "private, no-store", "x-content-type-options": "nosniff", "x-output-sha256": asset.inspection.sha256!, "x-output-review": "File inspection download does not establish assignment acceptance or complete delivery." } } }), [
+    { sql: "EXISTS(SELECT 1 FROM output_assets asset JOIN event_private_payloads body ON body.private_event_id=asset.created_event_id AND body.redacted_at IS NULL WHERE asset.scope_key=? AND asset.asset_id=? AND asset.document_id=? AND asset.redacted_at IS NULL AND asset.content_sha256=?)", bindings: [trusted.scope.key, assetId, trusted.scope.documentId, asset.inspection.sha256!] }, ...(sponsored ? sponsored.assertions : [])], outputAssetReadAssertions(trusted.scope, [asset.row]));
 }
 
 
@@ -1276,8 +1282,38 @@ export async function handleOutputRequirements(request: Request, env: WorkerEnv,
     const documentId = identifier(body.documentId ?? url.searchParams.get("documentId"), "document_id_required");
     const action = isUpload ? "adopt" : String(body.action ?? "");
     const permission: OutputCommandPermission = ["save", "remove", "bind", "adopt", "confirm"].includes(action) ? "author" : ["preflight", "authorize", "run"].includes(action) ? "request" : action === "review" ? "review" : "read";
+    // Classify before native history/private-source loading. An explicit asset
+    // may spend one original Image attempt; a snapshot/package may not inherit it.
+    let ordinaryReadAssertion: OutputSqlAssertion | undefined;
+    if (request.method === "GET" && !hasProjectContextCookie(request)) {
+      const auth = await readExistingPrincipalRequest(request, env, "viewer", { account: "principal" }).catch(async error => {
+        // Preserve the existing ordinary cold-install/onboarding path only when
+        // no retained sponsor configuration makes that classification uncertain.
+        if (!/no such table:/u.test(String(error))) throw error;
+        const retained = await env.DB.prepare("SELECT 1 FROM sqlite_schema WHERE lower(name) GLOB 'experience_sponsor_*' OR lower(tbl_name) GLOB 'experience_sponsor_*' LIMIT 1").first();
+        if (retained) return { response: json({ error: "sponsor_output_read_configuration" }, 403), user: null };
+        return null;
+      });
+      if (auth && "response" in auth && auth.response) return auth.response;
+      const actor = auth === null ? null : "kind" in auth ? { userId: auth.identity.userId, streamId: `creative:${auth.identity.userId}` } : auth.user;
+      if (actor) {
+        const match = /^\/api\/output-requirements\/assets\/([^/]+)$/u.exec(path);
+        const assetId = match ? identifier(decodeURIComponent(match[1])) : undefined;
+        const context = await beginSponsorOutputAssetRead(request, env, actor, documentId, assetId);
+        if (context?.kind === "ordinary") ordinaryReadAssertion = context.assertion;
+        if (context?.kind === "sponsored" && auth) {
+          if ("kind" in auth) return json({ error: "sponsor_principal_changed" }, 403);
+          const selected = requireSponsorOutputAssetRead(context, request, env, actor);
+          const bounded = sponsorOutputAssetReadEnvironment(env, selected.budget, selected);
+          const trusted = await continueOutputTrustedContext(request, bounded, documentId, "read", auth);
+          if (trusted instanceof Response) return trusted;
+          return await downloadAsset(trusted, selected.assetId, context);
+        }
+      }
+    }
     const trusted = await loadOutputTrustedContext(request, env, documentId, permission);
     if (trusted instanceof Response) return trusted;
+    if (ordinaryReadAssertion) trusted.sourceAssertions.push(ordinaryReadAssertion);
     await ensureOutputRequirementsSchema(env);
     if (request.method === "GET") {
       if (path === BASE) return await discloseOutputJson(trusted, await buildSnapshot(trusted, bridge));
@@ -1334,6 +1370,8 @@ export async function handleOutputRequirements(request: Request, env: WorkerEnv,
       try { return await withholdCommittedOutput(env, committed, error instanceof OutputConflictError ? error.status : 410); }
       catch { return json({ error: "output_private_evidence_unavailable" }, 410); }
     }
+    const sponsoredFailure = sponsorJobReadFailure(error); if (sponsoredFailure) return sponsoredFailure;
+    if (/no such table: experience_sponsor_(?:read_policies|read_attempts)/u.test(String(error))) return json({ error: "sponsor_read_policy_unavailable" }, 403);
     if (error instanceof OutputConflictError) return json({ error: error.code }, error.status);
     if (error instanceof ContextIntegrityError) return json({ error: error.code }, 409);
     if (String(error).includes("CHECK constraint failed")) return json({ error: "output_revision_or_authority_changed" }, 409);

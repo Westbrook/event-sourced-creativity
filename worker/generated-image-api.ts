@@ -13,6 +13,9 @@ import { PRINCIPAL_WITH_ACCESS_SQL } from "./access-policy.ts";
 import { configuredPilotAdmissionGuard, POLICY_VERSION, requireConsent, requireUser, type PilotUser } from "./pilot-policy.ts";
 import { readProjectRequestContext } from "./project-access.ts";
 import { EVENT_WRITE_COLUMNS, eventWriteBindings, makeEvent, serializeEvent, uuidV7, type WorkerEnv } from "./runtime.ts";
+import { beginSponsorNativeImageRead, requireSponsorNativeImageRead, type SponsorNativeImageRead } from "./experience-sponsor-native-image-read.ts";
+import { SponsorNativeImageReadBudget, sponsorNativeImageReadEnvironment, sponsorImageResponseBody } from "./experience-sponsor-native-image-budget.ts";
+import { SponsorReadLimitError } from "./experience-sponsor-read-attempts.ts";
 
 // This personal endpoint owns one server-only event type. It does not turn a
 // CreativeOutput into a DocumentArtifact, modify planner content, or render PNGs.
@@ -42,7 +45,11 @@ const textHash = (value: string) => outputAssetSha256(encoder.encode(value));
 const future = (value: unknown) => typeof value === "string" && Date.parse(value) > Date.now() && new Date(value).toISOString() === value;
 const reply = (value: unknown, status = 200) => Response.json(value, { status, headers: { "cache-control": "no-store", "x-content-type-options": "nosniff" } });
 class Refusal extends Error {
-  constructor(readonly code: "unavailable" | "source_changed" | "invalid" | "forbidden", readonly status = 409) { super(code); }
+  readonly code: "unavailable" | "source_changed" | "invalid" | "forbidden";
+  readonly status: number;
+  constructor(code: "unavailable" | "source_changed" | "invalid" | "forbidden", status = 409) {
+    super(code); this.code = code; this.status = status;
+  }
 }
 function requireFact(value: unknown, code: Refusal["code"] = "unavailable", status = 409): asserts value {
   if (!value) throw new Refusal(code, status);
@@ -81,15 +88,31 @@ function imageReadFailureKind(error: unknown): string {
 class Lifetime {
   active = true;
   writing = false;
+  sponsor: SponsorNativeImageReadBudget | null = null;
+  sponsorFacts: ReturnType<typeof requireSponsorNativeImageRead> | null = null;
   private sqlCount=0;
   get queryCount(){return this.sqlCount;}
   capacity(count:number){this.check();requireFact(integer(count)&&this.sqlCount+count<=900);}
   sql(count:number){this.capacity(count);this.sqlCount+=count;}
   readStage: "admission" | "witness_read" | "event_witness_capacity" | "revision_witness_capacity" | "witness_bounds" | "event_decode" | "event_order" | "origin_alias" | "origin_fields" | "origin_path" | "projection" | "origin_envelope" | "private_content" | "revision" | "sources" | "current_guard" | "media_read" | "media_hash" | "png_facts" = "admission";
   readonly cancellations = new Set<() => void>();
-  check() { requireFact(this.active, "unavailable", 408); }
+  check() { requireFact(this.active, "unavailable", 408); this.sponsor?.check(); }
   stop() { this.active = false; for (const cancel of this.cancellations) { try { cancel(); } catch { /* Cancellation is best effort and never awaited. */ } } this.cancellations.clear(); }
-  async wait<T>(promise: Promise<T>): Promise<T> { const result = await promise; this.check(); return result; }
+  async wait<T>(promise: Promise<T>): Promise<T> { const result = await (this.sponsor ? this.sponsor.wait(promise) : promise); this.check(); return result; }
+}
+
+function sponsorEnvironment(context: SponsorNativeImageRead, request: Request, env: WorkerEnv, actor: PilotUser,
+  lookup: { outputId: string } | { mediaKey: string }, life: Lifetime) {
+  const facts = requireSponsorNativeImageRead(context, request, env, actor, lookup);
+  life.sponsorFacts = facts;
+  life.sponsor = new SponsorNativeImageReadBudget(facts.maximumBytes, facts.monotonicDeadline, request.signal);
+  life.sponsor.spend(facts.usedBytes);
+  return sponsorNativeImageReadEnvironment(env, life.sponsor);
+}
+function readReply(value: unknown, life: Lifetime) {
+  if (!life.sponsor) return reply(value);
+  const bytes = encoder.encode(JSON.stringify(value));
+  return new Response(sponsorImageResponseBody(bytes, life.sponsor), { headers: { "content-type": "application/json", "cache-control": "no-store", "x-content-type-options": "nosniff" } });
 }
 
 function internalKey(outputId: string) {
@@ -123,6 +146,7 @@ type Retained = { row: Row; envelope: Envelope; event: CreativeEvent | null };
 type Current = {
   snapshot: GeneratedImageEditSnapshot; origin: Origin; initialMedia: Media; retained: Retained[];
   eventCount: number; eventBytes: number; witnessGuards: ImageWitnessGuard[]; witnessQueries:number; rawExpires: string; originExpires: string | null; key: string; guard: Guard;
+  nativeCompletion: { provider: unknown; model: unknown; sourceSurface: unknown; projectId: unknown };
 };
 
 function mediaKey(value: unknown, owner: string): string | null {
@@ -289,7 +313,8 @@ async function observeCurrent(env: WorkerEnv, actor: PilotUser, outputId: string
       origin.contentRef, actor.userId, source.content, source.expires_at as string, new Date().toISOString(),
       typeof p.content_expires_at === "string" ? p.content_expires_at : "", typeof p.content_expires_at === "string" ? p.content_expires_at : "", actor.userId, key] };
   const current: Current = { snapshot, origin, initialMedia, retained, eventCount:witnesses.eventCount, eventBytes, witnessGuards:witnesses.guards,witnessQueries:witnesses.queryCount, rawExpires: source.expires_at as string,
-    originExpires: typeof p.content_expires_at === "string" ? p.content_expires_at : null, key, guard };
+    originExpires: typeof p.content_expires_at === "string" ? p.content_expires_at : null, key, guard,
+    nativeCompletion: { provider: p.provider, model: p.model_id, sourceSurface: p.source_surface, projectId: p.project_id } };
   await assertCurrent(env, current, life);
   return current;
 }
@@ -298,7 +323,16 @@ async function assertCurrent(env: WorkerEnv, current: Current, life: Lifetime) {
   life.readStage="current_guard";
   life.check();
   requireFact(future(current.rawExpires) && (current.originExpires === null || future(current.originExpires)) && current.retained.every(item => future(item.row.expires_at)), "source_changed");
-  const guards=[...current.witnessGuards,current.guard];
+  const sponsored=life.sponsorFacts;
+  if(sponsored)requireFact(current.origin.outputId===sponsored.outputId&&current.origin.sourceEventId===sponsored.sourceEventId
+    &&current.origin.documentId===sponsored.documentId&&current.snapshot.projectId===sponsored.projectId
+    &&current.snapshot.ownerId===sponsored.actorUserId&&current.nativeCompletion.provider===sponsored.provider
+    &&current.nativeCompletion.model===sponsored.model&&current.nativeCompletion.sourceSurface==='outputs'
+    &&(current.nativeCompletion.projectId==null||current.nativeCompletion.projectId===sponsored.projectId)
+    &&current.origin.generationId===sponsored.generationId&&current.origin.contentRef===sponsored.contentRef
+    &&current.initialMedia.url===sponsored.originalMediaUrl&&current.initialMedia.sha256===sponsored.originalContentSha256
+    &&current.initialMedia.width===sponsored.width&&current.initialMedia.height===sponsored.height,'source_changed');
+  const guards=[...current.witnessGuards,current.guard,...(sponsored?[{sql:sponsored.assertion.sql,bindings:[...sponsored.assertion.bindings]}]:[])];
   life.sql(guards.length);
   const results = await life.wait(env.DB.batch(guards.map(guard=>imageWitnessStatement(env,guard))));
   requireFact(imageWitnessAcknowledged(results,guards.length), "source_changed");
@@ -316,6 +350,7 @@ async function boundedStream(body: ReadableStream<Uint8Array>, limit: number, de
       requireFact(result.value instanceof Uint8Array && Object.getPrototypeOf(result.value) === Uint8Array.prototype
         && bufferOf.call(result.value) instanceof ArrayBuffer && ++reads <= 65_536, "invalid", 413);
       const chunkLength: number = byteLengthOf.call(result.value);
+      life.sponsor?.spend(chunkLength);
       length += chunkLength;
       requireFact(length <= limit && (declared === null || length <= declared), "invalid", 413);
       const chunk = new Uint8Array(chunkLength);
@@ -343,8 +378,10 @@ async function ownedMedia(env: WorkerEnv, owner: string, url: string, expectedHa
   requireFact(value);
   const cancel = () => { void value.body.cancel().catch(() => {}); };
   try {
+    life.sponsor?.account({size:value.size,metadata:value.customMetadata,httpEtag:value.httpEtag});
     requireFact(value.customMetadata?.ownerId === owner && !value.customMetadata.projectAccessId && !value.customMetadata.organizationId && value.customMetadata.sha256 === expectedHash
       && integer(value.size, 1) && value.size <= GENERATED_IMAGE_EDIT_LIMITS.pngBytes);
+    life.sponsor?.expect(value.size);
     if (expectedMime) { const headers = new Headers(); value.writeHttpMetadata(headers); requireFact(headers.get("content-type") === expectedMime); }
     const bytes = await boundedStream(value.body, GENERATED_IMAGE_EDIT_LIMITS.pngBytes, value.size, life);
     life.readStage="media_hash";
@@ -417,17 +454,21 @@ async function execute(request: Request, env: WorkerEnv, outputId: string, life:
       return reply({status:'prepared'});
     }finally{input.fill(0);}
   }
+  if(request.method==='GET'){
+    const sponsored=await life.wait(beginSponsorNativeImageRead(request,env,actor,{outputId}));
+    if(sponsored)env=sponsorEnvironment(sponsored,request,env,actor,{outputId},life);
+  }
   let current = await observeCurrent(env, actor, outputId, life);
   if (check) {
     const item = committed(current, operation!);
-    if (!item) return reply({ status: "unconfirmed", code: "unconfirmed" });
+    if (!item) return readReply({ status: "unconfirmed", code: "unconfirmed" },life);
     const bytes = await ownedMedia(env, actor.userId, item.envelope.imageRevision!.media.url, item.envelope.imageRevision!.media.sha256, life, "image/png");
-    try { await pngFacts(bytes, item.envelope.imageRevision!.media, life); await assertCurrent(env, current, life); return reply(acknowledgment(current, item)); }
+    try { await pngFacts(bytes, item.envelope.imageRevision!.media, life); await assertCurrent(env, current, life); return readReply(acknowledgment(current, item),life); }
     finally { bytes.fill(0); }
   }
   if (request.method === "GET") {
     const bytes = await ownedMedia(env, actor.userId, current.snapshot.media.url, current.snapshot.media.sha256, life, "image/png");
-    try { await pngFacts(bytes, current.snapshot.media, life); await assertCurrent(env, current, life); return reply(current.snapshot); }
+    try { await pngFacts(bytes, current.snapshot.media, life); await assertCurrent(env, current, life); return readReply(current.snapshot,life); }
     finally { bytes.fill(0); }
   }
   const input = await readMultipart(request, life);
@@ -530,7 +571,7 @@ async function execute(request: Request, env: WorkerEnv, outputId: string, life:
 /** One finite request lifetime, including stalled get/read/put/D1 operations.
  * Cancellation never waits for an uncooperative stream. Admitted uncertain
  * writes retain their immutable object and are resolved only by exact Check. */
-export async function handleGeneratedImageEdit(request: Request, env: WorkerEnv, outputId: string): Promise<Response> {
+async function withImageLifetime(request: Request, execute: (life: Lifetime) => Promise<Response>): Promise<Response> {
   const life = new Lifetime();
   if (request.body) life.cancellations.add(() => { void request.body!.cancel().catch(() => {}); });
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -545,12 +586,38 @@ export async function handleGeneratedImageEdit(request: Request, env: WorkerEnv,
     request.signal.addEventListener("abort", stop, { once: true });
     if (request.signal.aborted) stop();
   });
-  const work = execute(request, env, outputId, life).catch((error: unknown) => {
+  const work = execute(life).catch((error: unknown) => {
     if (life.writing) return reply({ status: "unconfirmed", code: "unconfirmed" });
+    if(error instanceof SponsorReadLimitError)return Response.json({status:"refused",code:"read_limit_reached"},{status:429,headers:{"cache-control":"no-store","retry-after":String(Math.max(1,Math.ceil(error.retryAfterMs/1000)))}});
     const failure = error instanceof Refusal ? error : new Refusal("unavailable");
     if(request.method==="GET")console.warn("generated_image_read_refused",{stage:life.readStage,code:failure.code,status:failure.status,kind:imageReadFailureKind(error)});
     return reply({ status: "refused", code: failure.code }, failure.status);
   });
   try { return await Promise.race([work, interrupted]); }
   finally { life.stop(); if (timer !== undefined) clearTimeout(timer); if (stop) request.signal.removeEventListener("abort", stop); }
+}
+
+export function handleGeneratedImageEdit(request: Request, env: WorkerEnv, outputId: string): Promise<Response> {
+  return withImageLifetime(request,life=>execute(request,env,outputId,life));
+}
+
+/** Native /media uses the same original/current revision witness as Image GET.
+ * The already-debited capability must match this exact request, owner and key;
+ * neither object metadata nor the lookup tuple authorizes a byte. */
+export function readSponsorGeneratedImageMedia(request: Request, env: WorkerEnv, actor: PilotUser, key: string,
+  context: SponsorNativeImageRead): Promise<Response> {
+  return withImageLifetime(request,async life=>{
+    const bounded=sponsorEnvironment(context,request,env,actor,{mediaKey:key},life);
+    const current=await observeCurrent(bounded,actor,life.sponsorFacts!.outputId,life);
+    const url='/api/media/'+encodeURIComponent(key);
+    const candidates=[current.initialMedia,...current.retained.flatMap(item=>item.envelope.imageRevision?[item.envelope.imageRevision.media]:[])];
+    const media=candidates.find(item=>item.url===url);
+    requireFact(media,'source_changed');
+    const bytes=await ownedMedia(bounded,actor.userId,url,media.sha256,life,'image/png');
+    try{
+      await pngFacts(bytes,{...media,...(media.byteLength===0?{byteLength:undefined}:{})},life);
+      await assertCurrent(bounded,current,life);
+      return new Response(sponsorImageResponseBody(bytes,life.sponsor!),{headers:{'content-type':'image/png','content-length':String(bytes.byteLength),'cache-control':'private, no-store','x-content-type-options':'nosniff'}});
+    }catch(error){bytes.fill(0);throw error;}
+  });
 }

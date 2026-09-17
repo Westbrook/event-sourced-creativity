@@ -13039,6 +13039,135 @@
     },
     {
       "kind": "javascript-module",
+      "path": "src/components/forma-selected-output-share-review.ts",
+      "declarations": [
+        {
+          "kind": "class",
+          "name": "FormaSelectedOutputShareReview",
+          "tagName": "forma-selected-output-share-review",
+          "customElement": true,
+          "summary": "Share output",
+          "description": "Share output",
+          "superclass": {
+            "name": "FormaPresentationalElement",
+            "module": "src/components/presentational-element.ts"
+          },
+          "members": [
+            {
+              "kind": "field",
+              "name": "enabled",
+              "type": {
+                "text": "boolean"
+              },
+              "description": "Additional host clamp. It cannot override the server capability.",
+              "attribute": "enabled"
+            },
+            {
+              "kind": "field",
+              "name": "source",
+              "type": {
+                "text": "Readonly<{ selection: import(\"./src/model/selected-output-share\").SelectedOutputShareAnySelection; signal: AbortSignal; isCurrent: () => boolean; readMedia?: SelectedOutputShareReadMedia; }> | null"
+              }
+            }
+          ],
+          "attributes": [
+            {
+              "name": "enabled",
+              "fieldName": "enabled",
+              "type": {
+                "text": "boolean"
+              },
+              "description": "Additional host clamp. It cannot override the server capability."
+            }
+          ],
+          "x-forma": {
+            "category": "application",
+            "renderRoot": "light",
+            "stateful": false
+          }
+        }
+      ],
+      "exports": [
+        {
+          "kind": "custom-element-definition",
+          "name": "forma-selected-output-share-review",
+          "declaration": {
+            "name": "FormaSelectedOutputShareReview",
+            "module": "src/components/forma-selected-output-share-review.ts"
+          }
+        },
+        {
+          "kind": "js",
+          "name": "FormaSelectedOutputShareReview",
+          "declaration": {
+            "name": "FormaSelectedOutputShareReview",
+            "module": "src/components/forma-selected-output-share-review.ts"
+          }
+        }
+      ]
+    },
+    {
+      "kind": "javascript-module",
+      "path": "src/components/forma-selected-output-shared-view.ts",
+      "declarations": [
+        {
+          "kind": "class",
+          "name": "FormaSelectedOutputSharedView",
+          "tagName": "forma-selected-output-shared-view",
+          "customElement": true,
+          "summary": "Shared output",
+          "description": "Shared output",
+          "superclass": {
+            "name": "FormaPresentationalElement",
+            "module": "src/components/presentational-element.ts"
+          },
+          "members": [
+            {
+              "kind": "field",
+              "name": "token",
+              "type": {
+                "text": "string"
+              },
+              "attribute": "token"
+            }
+          ],
+          "attributes": [
+            {
+              "name": "token",
+              "fieldName": "token",
+              "type": {
+                "text": "string"
+              }
+            }
+          ],
+          "x-forma": {
+            "category": "application",
+            "renderRoot": "light",
+            "stateful": false
+          }
+        }
+      ],
+      "exports": [
+        {
+          "kind": "custom-element-definition",
+          "name": "forma-selected-output-shared-view",
+          "declaration": {
+            "name": "FormaSelectedOutputSharedView",
+            "module": "src/components/forma-selected-output-shared-view.ts"
+          }
+        },
+        {
+          "kind": "js",
+          "name": "FormaSelectedOutputSharedView",
+          "declaration": {
+            "name": "FormaSelectedOutputSharedView",
+            "module": "src/components/forma-selected-output-shared-view.ts"
+          }
+        }
+      ]
+    },
+    {
+      "kind": "javascript-module",
       "path": "src/components/forma-sessions.ts",
       "declarations": [
         {

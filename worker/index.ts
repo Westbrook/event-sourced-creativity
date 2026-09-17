@@ -49,6 +49,7 @@ import { handleContextApplication } from "./context-application-api";
 import { handleWorkspaceLocalProposal } from "./workspace-local-proposal-api";
 import { handleOutputSchemaPreflight, OUTPUT_SCHEMA_PREFLIGHT_PATH } from "./output-schema-preflight";
 import { handleRetainedStoryRead, handleNativeRetainedOutputRead } from "./retained-story-api";
+import { handleSelectedOutputShareApi, isSelectedOutputShareApiPath } from "./selected-output-share-api.ts";
 
 async function authorizeApplication(request: Request, env: WorkerEnv, application: ApplicationId, path: string) {
     if(application==="creative"){
@@ -96,6 +97,7 @@ async function routeRequest(request: Request, env: WorkerEnv, context: WorkerExe
       const origin=request.headers.get("origin");
       if(origin&&origin!==url.origin)return Response.json({error:"same_origin_required"},{status:403,headers:{"cache-control":"private, no-store"}});
     }
+    if(isSelectedOutputShareApiPath(url.pathname))return handleSelectedOutputShareApi(request,env);
     if(url.pathname==="/api/retained-story"||url.pathname.startsWith("/api/retained-story/"))return handleRetainedStoryRead(request,env);
     if(url.pathname==="/api/retained-output"||url.pathname.startsWith("/api/retained-output/"))return handleNativeRetainedOutputRead(request,env);
     if(/^\/api\/experiences\/drafts\/experience-draft-[a-f0-9]{64}\/output(?:\/(?:prepare|authorize|run|recover-result))?$/u.test(url.pathname))return handleExperienceOutput(request,env,context,withExperienceOutputDispatch(outputDocumentExecutionBridge,runDocumentJob));
@@ -320,7 +322,7 @@ export default {
     const pathname=new URL(request.url).pathname;
     const retainedStoryRead=pathname==="/api/retained-story"||pathname.startsWith("/api/retained-story/")
       ||pathname==="/api/retained-output"||pathname.startsWith("/api/retained-output/");
-    if(pathname.startsWith("/api/")&&pathname!==OUTPUT_SCHEMA_PREFLIGHT_PATH&&pathname!=="/api/admin/budget-hold-dispositions"&&pathname!=="/api/admin/generation-accounting"&&pathname!=="/api/admin/managed-video-reconciliation"&&!retainedStoryRead)schedulePrivateContentRetention(env,context);
+    if(pathname.startsWith("/api/")&&pathname!==OUTPUT_SCHEMA_PREFLIGHT_PATH&&pathname!=="/api/admin/budget-hold-dispositions"&&pathname!=="/api/admin/generation-accounting"&&pathname!=="/api/admin/managed-video-reconciliation"&&!retainedStoryRead&&!isSelectedOutputShareApiPath(pathname))schedulePrivateContentRetention(env,context);
     const headers=new Headers(response.headers);
     headers.append("server-timing",`app;dur=${Math.max(0,performance.now()-started).toFixed(1)}`);
     if(new URL(request.url).pathname.startsWith("/api/")&&!headers.has("cache-control"))headers.set("cache-control","private, no-store");

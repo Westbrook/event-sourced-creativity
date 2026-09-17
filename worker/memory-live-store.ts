@@ -1160,8 +1160,13 @@ const structuredMetadataReadable=(alias:string,columns:readonly string[])=>colum
 // Unavailable scalar metadata is represented without hydrating arbitrary bytes.
 // Such a row cannot be a physical target, but cannot poison a different valid
 // revision's bounded cleanup projection either. No original body text is read.
-const structuredRetirementJsonRow=(alias:string,columns:readonly string[])=>"json_object("+columns.map(column=>
-  `'${column}',CASE WHEN typeof(${alias}.${column})='blob' OR typeof(${alias}.${column})='text' AND length(CAST(${alias}.${column} AS BLOB))>1024 THEN NULL ELSE ${alias}.${column} END`).join(",")+")";
+const structuredRetirementJsonRow=(alias:string,columns:readonly string[])=>{
+  const value=(column:string)=>`CASE WHEN typeof(${alias}.${column})='blob' OR typeof(${alias}.${column})='text' AND length(CAST(${alias}.${column} AS BLOB))>1024 THEN NULL ELSE ${alias}.${column} END`;
+  const initial="json_object("+columns.slice(0,15).map(column=>`'${column}',${value(column)}`).join(",")+")";
+  // Preserve every explicit NULL key and its order while keeping each function
+  // below D1's 32-argument compatibility limit. These fixed rows have at most 23 columns.
+  return columns.length<=15?initial:"json_set("+initial+","+columns.slice(15).map(column=>`'$.${column}',${value(column)}`).join(",")+")";
+};
 function structuredRetirementQuery(where:MemorySqlGuard) {
   const bodyColumns=structuredBodyColumns.filter(key=>key!=="content"&&key!=="redacted_at");
   return nativeMemoryDescriptor(`WITH selected_heads AS(SELECT * FROM ${structuredHeads} WHERE ${where.condition}),
