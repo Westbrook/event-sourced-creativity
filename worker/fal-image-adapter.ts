@@ -22,7 +22,7 @@ type FalQueueState = {
   error_type?: string;
 };
 type FalImageFile = { url?: string; content_type?: string; width?: number; height?: number; file_size?: number };
-type FalImageResult = { images?: FalImageFile[]; timings?: Record<string,number>; seed?: number; has_nsfw_concepts?: boolean[]; prompt?: string; error?: unknown };
+type FalImageResult = { images?: FalImageFile[]; timings?: Record<string,number>; seed?: number; has_nsfw_concepts?: boolean[]; prompt?: string; request_id?: string; model?: string; status?: string; error?: unknown; error_type?: unknown };
 
 export type FalImageProviderReceipt = {
   provider: "fal";
@@ -195,19 +195,34 @@ export async function generateFalCreativeImage(env:WorkerEnv,userId:string,snaps
     state=submitted;
   }
   const requestId=receipt.providerRequestId,statusUrl=receipt.providerStatusUrl,responseUrl=receipt.providerResponseUrl;
+  const assertNativeQueueIdentity=()=>{if(nativeRequest&&(!state||typeof state!=="object"||state.request_id!==undefined&&state.request_id!==requestId))throw new Error("output_fal_result_receipt_mismatch");};
+  assertNativeQueueIdentity();
   const deadline=Date.now()+FAL_IMAGE_TIMEOUT_MS;
   while(state.status!=="COMPLETED"){
     if(state.status==="FAILED"||state.status==="CANCELLED")throw new ProviderRequestError({code:`fal_image_${state.status.toLowerCase()}`,category:"provider",scope:"request",action:"retry",message:`Fal marked image request ${requestId.slice(0,8)} as ${state.status.toLowerCase()}.`,retryable:state.status==="FAILED",retryAfterMs:2_000,requestId,httpStatus:502},prompt);
     if(Date.now()>=deadline)throw new ProviderRequestError({code:"fal_image_timeout",category:"provider",scope:"request",action:"retry",message:"Fal did not finish this image within ten minutes. The provider request ID is retained for diagnosis.",retryable:true,retryAfterMs:5_000,requestId,httpStatus:504},prompt);
     const log=state.logs?.at(-1)?.message?.trim();await options.onStage?.("provider-rendering",log?`Ideogram · ${log}`:state.status==="IN_QUEUE"?`Ideogram queued${Number.isFinite(state.queue_position)?` · ${Number(state.queue_position)+1} ahead or active`:""}.`:"Ideogram is rendering the image.");
-    await wait(1_000,options.signal);state=await falJson(env,`${statusUrl}${statusUrl.includes("?")?"&":"?"}logs=1`,{headers:falHeaders(env),signal:options.signal},prompt,requestId) as FalQueueState;
+    await wait(1_000,options.signal);
+    if(nativeRequest)await options.onBeforeSourceTransmission!();
+    state=await falJson(env,`${statusUrl}${statusUrl.includes("?")?"&":"?"}logs=1`,{headers:falHeaders(env),signal:options.signal,...(nativeRequest?{redirect:"manual" as const}:{})},prompt,requestId) as FalQueueState;
+    assertNativeQueueIdentity();
   }
-  if(state.error!==undefined||state.error_type){
+  if(state.error!==undefined||state.error_type||nativeRequest&&state.error_type!==undefined){
     const message=falBodyMessage({error:state.error,error_type:state.error_type},"Fal completed the queue request with a provider error.");const rawCode=falBodyCode({error:state.error,error_type:state.error_type});const safeCode=(rawCode||"completed_with_error").toLowerCase().replace(/[^a-z0-9]+/g,"_").replace(/^_+|_+$/g,"");
     throw new ProviderRequestError({code:`fal_${safeCode}`,category:"provider",scope:"request",action:"edit_request",message,retryable:false,retryAfterMs:null,requestId,httpStatus:422},prompt);
   }
-  await options.onStage?.("provider-download","Ideogram finished rendering. Securing the private result.");
-  const result=await falJson(env,responseUrl,{headers:falHeaders(env),signal:options.signal},prompt,requestId) as FalImageResult;
+  // A native result read still needs current creative authority. Once that
+  // authorized read returns priced evidence, preserve its financial witness
+  // before any later private progress or media operation can be denied.
+  if(nativeRequest)await options.onBeforeSourceTransmission!();
+  else await options.onStage?.("provider-download","Ideogram finished rendering. Securing the private result.");
+  const result=await falJson(env,responseUrl,{headers:falHeaders(env),signal:options.signal,...(nativeRequest?{redirect:"manual" as const}:{})},prompt,requestId) as FalImageResult;
+  if(nativeRequest){
+    const cost=qualifiedOutputFalImageCost(result,nativeRequest,requestId,prompt);
+    if(cost)await options.onProviderSubmission!({clientRequestId:nativeRequest.attempt.clientRequestId,provider:"fal",operation:"image",model:nativeRequest.contract.model,
+      providerRequestId:requestId,status:"completed",costMicrousd:cost.totalMicrousd,inputTokens:0,outputTokens:0,totalTokens:0});
+    await options.onStage?.("provider-download","Ideogram finished rendering. Securing the private result.");
+  }
   const {image,bytes,width,height,mimeType}=await readFalImageFile(result,requestId,prompt,sizeResult,format,options.signal,nativeRequest,nativeRequest?async()=>{await options.onBeforeSourceTransmission?.();}:undefined);
   return{provider:"fal" as const,adapterId:FAL_IDEOGRAM_ADAPTER_ID,adapterVersion:options.ideogramAdapterVersion??FAL_IDEOGRAM_ADAPTER_VERSION,providerRequestId:requestId,providerMediaUrl:image.url,model,prompt,canonicalPrompt,promptTechnique,promptMode,promptAdapterVersion,promptAdaptation:adaptation,bytes,revisedPrompt:result.prompt&&result.prompt!==prompt?result.prompt:null,createdAt:null,latencyMs:Date.now()-started,usage:{inputTokens:0,outputTokens:0,totalTokens:0,textInputTokens:0,imageInputTokens:0},width,height,mimeType,quality,usedReference:references.length>0,referenceCount:references.length,referenceInputs:references.map((reference)=>({source:reference.source,blockId:reference.blockId??null,referenceId:reference.referenceId??null,label:reference.label??null,mode:reference.mode??null,strength:falReferenceStrength(reference,options.ideogramReferenceStrength)})),safetyProbeCount:moderation.probeCount,safetyCoverage:moderation.coverage,safetyRequestIds:moderation.requestIds,partialCount:0,outputFormat:format,outputCompression:null,seed:Number.isFinite(result.seed)?Number(result.seed):null,nsfwDetected:Boolean(result.has_nsfw_concepts?.some(Boolean)),renderingSpeed:speed,expansionModel,costBreakdown:nativeRequest?outputFalImageCost(nativeRequest.contract):priceFalIdeogramImageBreakdownMicrousd(model,width,height,speed,expansionModel),...(nativeRequest?{pricingVersion:nativeRequest.contract.pricingVersion}:{}),costPrecision:"provider-pixel-rate-estimate" as const};
 }
@@ -225,12 +240,30 @@ async function boundedFalImageBytes(response:Response){
   }catch(error){await reader.cancel().catch(()=>{});throw error;}finally{reader.releaseLock();}
   const bytes=new Uint8Array(total);let offset=0;for(const chunk of chunks){bytes.set(chunk,offset);offset+=chunk.byteLength;}return bytes;
 }
-async function readFalImageFile(result:FalImageResult,requestId:string,prompt:string,size:{width:number;height:number},format:"png"|"jpeg",signal?:AbortSignal,nativeRequest?:OutputFalCapturedRequest|null,assertCurrent?:()=>Promise<void>){
+function falImageFileLocation(result:FalImageResult,requestId:string,prompt:string,nativeRequest?:OutputFalCapturedRequest|null){
   if(nativeRequest&&result.images?.length!==1)throw new Error("output_fal_result_outside_contract");
   const image=result.images?.[0];if(!image?.url)throw new ProviderRequestError({code:"fal_provider_returned_no_image",category:"provider",scope:"request",action:"retry",message:"Fal completed the request without an image URL.",retryable:true,retryAfterMs:2_000,requestId,httpStatus:502},prompt);
   let imageUrl:URL;try{imageUrl=new URL(image.url);}catch{throw new ProviderRequestError({code:"fal_provider_returned_invalid_image_url",category:"provider",scope:"request",action:"retry",message:"Fal returned an invalid image location.",retryable:true,retryAfterMs:2_000,requestId,httpStatus:502},prompt);}if(imageUrl.protocol!=="https:"||imageUrl.username||imageUrl.password||imageUrl.port||!(imageUrl.hostname==="fal.media"||imageUrl.hostname.endsWith(".fal.media")))throw new ProviderRequestError({code:"fal_provider_returned_untrusted_image_url",category:"provider",scope:"request",action:"retry",message:"Fal returned an image location outside its trusted media domain.",retryable:true,retryAfterMs:2_000,requestId,httpStatus:502},prompt);
+  return {image,url:image.url};
+}
+/** Published-rate evidence for an original completed native output, not an
+ * invoice or permission to read its private bytes. Omitted provider metadata
+ * retains the existing after-byte observation path; defaults are not evidence. */
+function qualifiedOutputFalImageCost(result:FalImageResult,nativeRequest:OutputFalCapturedRequest,requestId:string,prompt:string){
+  if(!result||typeof result!=="object"||Array.isArray(result)||result.error!==undefined||result.error_type!==undefined||result.status!==undefined&&result.status!=="COMPLETED")throw new Error("output_fal_result_unavailable");
+  if(result.request_id!==undefined&&result.request_id!==requestId||result.model!==undefined&&result.model!==nativeRequest.contract.model)throw new Error("output_fal_result_receipt_mismatch");
+  if(!Array.isArray(result.images)||result.images.length!==1)throw new Error("output_fal_result_outside_contract");
+  const {image}=falImageFileLocation(result,requestId,prompt,nativeRequest);
+  if(image.width!==undefined&&image.width!==nativeRequest.contract.width||image.height!==undefined&&image.height!==nativeRequest.contract.height
+    ||image.content_type!==undefined&&image.content_type!=="image/png")throw new Error("output_fal_result_outside_contract");
+  if(!["width","height","content_type"].every(key=>Object.hasOwn(image,key)))return null;
+  if(image.width!==nativeRequest.contract.width||image.height!==nativeRequest.contract.height||image.content_type!=="image/png")throw new Error("output_fal_result_outside_contract");
+  return outputFalImageCost(nativeRequest.contract);
+}
+async function readFalImageFile(result:FalImageResult,requestId:string,prompt:string,size:{width:number;height:number},format:"png"|"jpeg",signal?:AbortSignal,nativeRequest?:OutputFalCapturedRequest|null,assertCurrent?:()=>Promise<void>){
+  const {image,url}=falImageFileLocation(result,requestId,prompt,nativeRequest);
   await assertCurrent?.();
-  let imageResponse:Response;try{imageResponse=await fetch(image.url,{method:"GET",...(nativeRequest?{redirect:"manual" as const}:{}),signal});}catch(error){throw new ProviderRequestError({...classifyProviderFailure(error),requestId},prompt);}
+  let imageResponse:Response;try{imageResponse=await fetch(url,{method:"GET",...(nativeRequest?{redirect:"manual" as const}:{}),signal});}catch(error){throw new ProviderRequestError({...classifyProviderFailure(error),requestId},prompt);}
   if(nativeRequest&&imageResponse.status>=300&&imageResponse.status<400){void imageResponse.body?.cancel().catch(()=>{});throw new Error("output_fal_redirect_refused");}
   if(!imageResponse.ok)throw falError(imageResponse,{},`fal_image_download_${imageResponse.status}`,prompt,requestId);
   const bytes=nativeRequest?await boundedFalImageBytes(imageResponse):new Uint8Array(await imageResponse.arrayBuffer());
