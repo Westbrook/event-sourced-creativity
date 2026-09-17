@@ -6314,4 +6314,9 @@ Object.assign(messages, {
   "system.auto.1wr7im1.141": "アプリケーションに接続された生成画像エディターのインターフェース。組み合わせる前に、実際の属性、JavaScriptプロパティ、イベントを確認してください。",
 });
 
+Object.assign(messages, {
+  "system.auto.1n26nr5.46": "保存済みネイティブ3Dモデルのアプリケーションインターフェース。",
+  "system.auto.1qkmc2b.138": "Storeに依存しない保存済みネイティブ3Dモデルのインターフェースです。組み込む前に、実際の属性、JavaScriptプロパティ、イベントを確認してください。",
+});
+
 export default messages;

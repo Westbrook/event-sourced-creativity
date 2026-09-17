@@ -14779,6 +14779,64 @@
     },
     {
       "kind": "javascript-module",
+      "path": "src/components/native-retained-model3d.ts",
+      "declarations": [
+        {
+          "kind": "class",
+          "name": "NativeRetainedModel3d",
+          "tagName": "forma-native-retained-model3d",
+          "customElement": true,
+          "summary": "Native retained model3d application interface.",
+          "description": "Store-independent native retained model3d interface. Inspect its actual attributes, JavaScript properties, and events before composing it.",
+          "superclass": {
+            "name": "FormaPresentationalElement",
+            "module": "src/components/presentational-element.ts"
+          },
+          "members": [
+            {
+              "kind": "field",
+              "name": "locale",
+              "type": {
+                "text": "Model3dLocale | null"
+              },
+              "default": "null"
+            },
+            {
+              "kind": "field",
+              "name": "result",
+              "type": {
+                "text": "(Readonly<{ schemaVersion: 1; kind: \"native-retained-output\"; selection: import(\"./src/model/retained-short-story\").RetainedStorySelection; title: string; expiresAt: string; }> & Readonly<{ output: \"model3d\"; content: import(\"./src/model/native-retained-model3d\").NativeRetainedModel3dContent; }>) | null"
+              }
+            }
+          ],
+          "x-forma": {
+            "category": "application",
+            "renderRoot": "light",
+            "stateful": false
+          }
+        }
+      ],
+      "exports": [
+        {
+          "kind": "custom-element-definition",
+          "name": "forma-native-retained-model3d",
+          "declaration": {
+            "name": "NativeRetainedModel3d",
+            "module": "src/components/native-retained-model3d.ts"
+          }
+        },
+        {
+          "kind": "js",
+          "name": "NativeRetainedModel3d",
+          "declaration": {
+            "name": "NativeRetainedModel3d",
+            "module": "src/components/native-retained-model3d.ts"
+          }
+        }
+      ]
+    },
+    {
+      "kind": "javascript-module",
       "path": "src/components/native-retained-storyboard.ts",
       "declarations": [
         {

@@ -6314,4 +6314,9 @@ Object.assign(messages, {
   "system.auto.1wr7im1.141": "Interface de l’éditeur d’images générées connectée à l’application. Examinez ses attributs, propriétés JavaScript et événements réels avant de la composer.",
 });
 
+Object.assign(messages, {
+  "system.auto.1n26nr5.46": "Interface applicative du modèle 3D natif conservé.",
+  "system.auto.1qkmc2b.138": "Interface du modèle 3D natif conservé, indépendante du Store. Examinez ses attributs, propriétés JavaScript et événements réels avant de la composer.",
+});
+
 export default messages;

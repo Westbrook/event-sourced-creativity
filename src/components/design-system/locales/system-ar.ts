@@ -6314,4 +6314,9 @@ Object.assign(messages, {
   "system.auto.1wr7im1.141": "واجهة محرر الصور المُولَّدة المتصلة بالتطبيق. افحص سماتها وخصائص JavaScript وأحداثها الفعلية قبل تركيبها.",
 });
 
+Object.assign(messages, {
+  "system.auto.1n26nr5.46": "واجهة تطبيق النموذج ثلاثي الأبعاد الأصلي المحفوظ.",
+  "system.auto.1qkmc2b.138": "واجهة النموذج ثلاثي الأبعاد الأصلي المحفوظ، مستقلة عن Store. افحص سماتها الفعلية وخصائص JavaScript وأحداثها قبل تركيبها.",
+});
+
 export default messages;

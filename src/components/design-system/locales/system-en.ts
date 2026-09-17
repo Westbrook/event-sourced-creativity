@@ -6345,4 +6345,9 @@ Object.assign(messages, {
   "system.auto.1wr7im1.141": "Application-connected generated image editor interface. Inspect its actual attributes, JavaScript properties, and events before composing it.",
 });
 
+Object.assign(messages, {
+  "system.auto.1n26nr5.46": "Native retained model3d application interface.",
+  "system.auto.1qkmc2b.138": "Store-independent native retained model3d interface. Inspect its actual attributes, JavaScript properties, and events before composing it.",
+});
+
 export default messages;
