@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { StillClient } from '../src/still/client.ts';
 import { operationJournal } from '../src/still/operation-journal.ts';
 
-const session = {user:{userId:'economy',role:'creator',displayName:'Creator'},permissionEpoch:'1',policy:{accepted:true},provider:{configured:true}};
+const session = {user:{userId:'economy',role:'creator',displayName:'Creator'},permissionEpoch:'1',policy:{accepted:true},provider:{configured:true,plannerConfigured:true}};
 const event = (sequence,type,payload) => ({eventId:`e${sequence}`,sequence,type,payload,actor:'user',streamId:'creative:economy',clientId:'test',correlationId:'test',occurredAt:'2026-09-17T12:00:00Z',recordedAt:'2026-09-17T12:00:00Z',schemaVersion:1});
 const initial = [event(1,'ProjectCreated',{project_id:'p',name:'Project'}),event(2,'DocumentCreated',{project_id:'p',document_id:'d',title:'Document'})];
 const json = (body,status=200) => new Response(JSON.stringify(body),{status,headers:{'content-type':'application/json'}});

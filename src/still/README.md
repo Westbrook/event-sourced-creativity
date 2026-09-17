@@ -73,3 +73,7 @@ Forms use `en-select` with `en-select-option`, `en-checkbox`, `en-search-input`,
 Use `en-switch` for the proposed client-side Flags controls and `en-tooltip` for future onboarding explanations; these primitives are included in the vendor closure. This migration does not enable onboarding or make new model calls.
 
 The current palette uses `en-dialog`, with same-root native combobox/listbox semantics for the application-owned asynchronous Jev search. The supplied `en-command-palette` currently exposes a finite local catalog and no public query-change contract; do not reach into its private shadow state to implement Jev lookup. Adopt it when its public contract supports the existing interaction. Native links, media controls and lazy disclosure trees retain their semantic behavior.
+
+## Image provider
+
+New Still jobs use the configured OpenAI GPT-image model (default `gpt-image-2`) for image generation and image reference edits, including image stages in rendered artifacts. Job admission saves `stillImageProvider: "openai"` server-side and applies that policy to readiness, pricing, and execution. Existing jobs without the marker retain their original provider/recovery behavior. Forma’s image default and the audio, video, and 3D providers remain independent.
