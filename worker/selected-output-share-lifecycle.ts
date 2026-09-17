@@ -6,6 +6,7 @@ import { readSelectedOutputShareAuthority, selectedOutputShareAuthoritySnapshot,
   selectedOutputShareAuthorityAssertion } from "./selected-output-share-authority.ts";
 import { selectedOutputShareSchemaState, selectedOutputShareSchemaAssertion } from "./selected-output-share-readiness.ts";
 import type { WorkerEnv } from "./runtime.ts";
+import { selectedSharePredicateProof, selectedShareProofStatement, type SelectedShareProofQuery } from "./selected-output-share-proof.ts";
 
 // The finite selected-share dispatcher exposes read/revoke only while creation
 // remains closed. No initializer, provider, budget or private-media entry is
@@ -93,8 +94,8 @@ function rowAssertion(current: Row): Assertion {
   return { sql: `EXISTS(SELECT 1 FROM selected_output_shares WHERE ${rowColumns.map(column => `${column} IS ?`).join(" AND ")})`,
     bindings: rowColumns.map(column => current[column]) };
 }
-function joined(...proofs: Assertion[]): Assertion {
-  return { sql: proofs.map(proof => `(${proof.sql})`).join(" AND "), bindings: proofs.flatMap(proof => proof.bindings) };
+function joined(...proofs: (Assertion | readonly SelectedShareProofQuery[])[]): readonly SelectedShareProofQuery[] {
+  return proofs.flatMap(proof => Array.isArray(proof) ? proof : [selectedSharePredicateProof(proof as Assertion)]);
 }
 function future(current: Row) { if (Date.parse(current.expires_at!) <= Date.now() || current.revoked_at !== null) fail(); }
 function live(current: Row, active = false): Assertion {
@@ -122,9 +123,9 @@ function matches(current: Row, value: Awaited<ReturnType<typeof fresh>>) {
     || current.selection_json !== JSON.stringify(value.candidate.selection) || current.review_title !== value.candidate.publicOutput.title
     || current.expires_at !== value.candidate.publicOutput.expiresAt) fail();
 }
-async function finalProof(env: WorkerEnv, assertion: Assertion) {
-  const proof = joined(selectedOutputShareSchemaAssertion(), assertion);
-  const result = await env.DB.prepare(`SELECT 1 AS permitted WHERE ${proof.sql}`).bind(...proof.bindings).first<{ permitted: number }>();
+async function finalProof(env: WorkerEnv, assertion: readonly SelectedShareProofQuery[]) {
+  const proof = selectedShareProofStatement(joined(selectedOutputShareSchemaAssertion(), assertion));
+  const result = await env.DB.prepare(`${proof.withSql} SELECT 1 AS permitted WHERE ${proof.sql}`).bind(...proof.bindings).first<{ permitted: number }>();
   if (result?.permitted !== 1) fail();
 }
 const shareMetadata = (current: Row) => ({ shareId: current.share_id, expiresAt: current.expires_at, active: true as const });
@@ -154,10 +155,10 @@ export async function prepareSelectedOutputShare(request: Request, env: WorkerEn
         token_hash: null, issued_at: null, revoked_at: null, minimized_at: null };
       stable();
       try {
-        const proof = joined(selectedOutputShareSchemaAssertion(), value.proof);
-        const inserted = await env.DB.prepare(`INSERT INTO selected_output_shares(${rowColumns.join(",")})
+        const proof = selectedShareProofStatement(joined(selectedOutputShareSchemaAssertion(), value.proof));
+        const inserted = await env.DB.prepare(`${proof.withSql} INSERT INTO selected_output_shares(${rowColumns.join(",")})
           SELECT ${rowColumns.map(() => "?").join(",")} WHERE (${proof.sql}) AND ?>${nowSql}`)
-          .bind(...rowColumns.map(column => current[column]), ...proof.bindings, current.expires_at).run();
+          .bind(...proof.bindings, ...rowColumns.map(column => current[column]), current.expires_at).run();
         stable(); if (Number(inserted.meta.changes ?? 0) !== 1) fail();
         existing = current;
       } catch (error) {
@@ -193,11 +194,11 @@ export async function commitSelectedOutputShare(request: Request, env: WorkerEnv
     }
     const secret = btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(24)))).replaceAll("+", "-").replaceAll("/", "_");
     const token = await tokenHash(secret), issuedAt = new Date().toISOString(); stable();
-    const proof = joined(selectedOutputShareSchemaAssertion(), value.proof, rowAssertion(current), live(current));
-    const issued = await env.DB.prepare(`UPDATE selected_output_shares SET token_hash=?,issued_at=?
+    const proof = selectedShareProofStatement(joined(selectedOutputShareSchemaAssertion(), value.proof, rowAssertion(current), live(current)));
+    const issued = await env.DB.prepare(`${proof.withSql} UPDATE selected_output_shares SET token_hash=?,issued_at=?
       WHERE share_id=? AND minimized_at IS NULL AND token_hash IS NULL AND issued_at IS NULL AND revoked_at IS NULL AND (${proof.sql}) AND ?>=${nowSql}`)
       // The database deadline is the reviewed expiry, not a prepared wall-clock snapshot.
-      .bind(token, issuedAt, current.share_id, ...proof.bindings, current.expires_at).run(); stable();
+      .bind(...proof.bindings, token, issuedAt, current.share_id, current.expires_at).run(); stable();
     if (Number(issued.meta.changes ?? 0) !== 1) {
       const observed = row(await env.DB.prepare(`SELECT ${rowColumns.join(",")} FROM selected_output_shares WHERE share_id=? AND owner_id=?`)
         .bind(current.share_id, principal.userId).first()); stable(); future(observed); matches(observed, value);
