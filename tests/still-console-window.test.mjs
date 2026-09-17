@@ -89,3 +89,10 @@ test('pagehide clears viewer data before BFCache can preserve it and ignores lat
   const count=v.applied.length;v.message('snapshot',{scope:'a',context:{head:10},controls:[]});v.receiver.returnToPanel();
   assert.equal(v.applied.length,count);assert.equal(v.listeners.size,0);assert.equal(v.timers.size,0);
 });
+
+test('developer commands and experiment results stay within the paired window session',()=>{
+ const listeners=new Map(),sent=[],commands=[],popup={closed:false,postMessage:(m)=>sent.push(m),close(){this.closed=true;}};
+ const owner={location:{origin:'https://still.test'},addEventListener:(k,v)=>listeners.set(k,v),removeEventListener:k=>listeners.delete(k),setInterval:()=>1,clearInterval(){},open(url){owner.url=url;return popup;}};
+ const host=new ConsoleWindowHost(owner,()=>({scope:'scope',context:{head:1},controls:[]}),()=>{},()=>{},c=>commands.push(c));host.open();const session=new URL(owner.url).searchParams.get('developer-console');const send=(type,data={},origin=owner.location.origin)=>listeners.get('message')({source:popup,origin,data:{...consoleEnvelope(session,type),...data}});
+ send('density',{value:8});assert.equal(commands.length,0);send('ready');send('density',{value:8},'https://wrong.test');assert.equal(commands.length,0);send('density',{value:8});send('experiment',{id:'one',scope:'scope',request:{state:{}}});assert.equal(commands.length,2);assert.equal(commands[0].value,8);send('generate');assert.equal(commands.length,2);host.result('one',{isolated:true});assert.equal(sent.at(-1).type,'experiment-result');assert.equal(sent.at(-1).id,'one');host.dispose();
+});

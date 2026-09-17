@@ -1,7 +1,7 @@
 import type { DecisionDiagnostics, ReceivedDecision } from './diagnostics.ts';
 
 export type ConsoleControl = { label:string; id:string; region:string; variant:string; size:string; emphasis:string; disabled:boolean; options:string[] };
-export type ConsoleContext = { view:string; mode:string; head:number; selectedFormat:string; page:number; more?:boolean; paletteOpen?:boolean; current:DecisionDiagnostics };
+export type ConsoleContext = { view:string; mode:string; head:number; selectedFormat:string; page:number; actionLimit?:number; more?:boolean; paletteOpen?:boolean; current:DecisionDiagnostics };
 export type ConsoleSnapshot = { scope:string; context:ConsoleContext; applied?:DecisionDiagnostics; received?:ReceivedDecision; pending:boolean; controls:ConsoleControl[] };
 const protocol='still-developer-console-v1';
 export const validConsoleSession=(value:string|null):value is string=>!!value&&/^[a-f0-9-]{36}$/.test(value);
@@ -17,7 +17,7 @@ export class ConsoleWindowHost {
   private ready=false;
   private previous='';
   private timer=0;
-  constructor(private owner:Window,private snapshot:()=>ConsoleSnapshot,private changed:(open:boolean,connected:boolean)=>void,private returned:()=>void){}
+  constructor(private owner:Window,private snapshot:()=>ConsoleSnapshot,private changed:(open:boolean,connected:boolean)=>void,private returned:()=>void,private command?:(data:{type:string;value?:number;request?:unknown;id?:string;scope?:string})=>void){}
   get isOpen(){return !!this.popup&&!this.popup.closed;}
   open(){
     if(this.isOpen){this.popup?.focus();return true;}
@@ -37,11 +37,13 @@ export class ConsoleWindowHost {
     if(event.data.type==='ready'){this.ready=true;this.publish(true);}
     if(event.data.type==='rendered'&&this.ready)this.changed(true,true);
     if(event.data.type==='disconnected'){this.ready=false;this.changed(true,false);}
+    if(this.ready&&['density','experiment'].includes(event.data.type))this.command?.(event.data);
     if(event.data.type==='return'){this.dispose();this.returned();}
   };
   private send(type:string,snapshot?:ConsoleSnapshot){
     this.popup?.postMessage(consoleEnvelope(this.session,type,snapshot),this.owner.location.origin);
   }
+  result(id:string,result:unknown,error?:string){this.popup?.postMessage({...consoleEnvelope(this.session,'experiment-result'),id,result,error},this.owner.location.origin);}
   publish(force=false){
     if(!this.ready||!this.isOpen)return;
     const snapshot=this.snapshot(),serialized=JSON.stringify(snapshot);
@@ -63,16 +65,18 @@ export class ConsoleWindowReceiver {
   private connected=false;
   private active=false;
   private revision=0;
-  constructor(private owner:Window,private source:Window,private session:string,private apply:(snapshot:ConsoleSnapshot)=>Promise<unknown>|void,private clear:(message:string)=>void,private now=()=>Date.now()){}
+  constructor(private owner:Window,private source:Window,private session:string,private apply:(snapshot:ConsoleSnapshot)=>Promise<unknown>|void,private clear:(message:string)=>void,private now=()=>Date.now(),private result?:(data:{id:string;result:unknown;error?:string})=>void){}
   start(){
     this.active=true;this.lastSeen=this.now();
     this.owner.addEventListener('message',this.receive);this.owner.addEventListener('pagehide',this.pagehide);
     this.timer=this.owner.setInterval(this.pulse,1000);this.send('ready');
   }
+  command(type:string,data:Record<string,unknown>){if(this.active)this.source.postMessage({...consoleEnvelope(this.session,type),...data},this.owner.location.origin);}
   returnToPanel(){if(this.active)this.send('return');}
   private send(type:string){this.source.postMessage(consoleEnvelope(this.session,type),this.owner.location.origin);}
   private receive=(event:MessageEvent)=>{
     if(!this.active||!consoleMessage(event,this.source,this.owner.location.origin,this.session))return;
+    if(event.data.type==='experiment-result'){this.result?.(event.data);return;}
     if(!['snapshot','alive','ended'].includes(event.data.type))return;
     this.lastSeen=this.now();
     if(event.data.type==='ended'){this.stop();return;}

@@ -24,7 +24,7 @@ export function paletteActions(query:string,candidates:Action[]){
   const q=query.trim().toLowerCase();
   return [...candidates,...UTILITIES].filter(a=>!q||`${a.label} ${a.id}`.toLowerCase().includes(q)||(terms[a.id]??[]).some(term=>q.includes(term)));
 }
-export function nextToolbarActions(ranked:Action[],visibleIds:string[],eligible:Action[]){
+export function nextToolbarActions(ranked:Action[],visibleIds:string[],eligible:Action[],count=3){
   const allowed=new Set(eligible.map(a=>a.id)),seen=new Set(visibleIds);
-  return ranked.filter(a=>{if(!allowed.has(a.id)||seen.has(a.id))return false;seen.add(a.id);return true;}).slice(0,3);
+  return ranked.filter(a=>{if(!allowed.has(a.id)||seen.has(a.id))return false;seen.add(a.id);return true;}).slice(0,count);
 }

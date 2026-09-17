@@ -1,3 +1,4 @@
+import { actionLimit } from '../src/still/decision-lab.ts';
 import { handleEvents } from './events-api.ts';
 import { handleSession, requireConsent, requireUser } from './pilot-policy.ts';
 import type { WorkerEnv, WorkerExecutionContext } from './runtime.ts';
@@ -20,7 +21,7 @@ export async function handleStillDecision(request: Request, env: WorkerEnv, cont
   try { input = JSON.parse(raw); } catch { return reply({ error: 'invalid_json' }, 400); }
   if (!input || typeof input !== 'object' || Array.isArray(input)) return reply({ error: 'invalid_position' }, 400);
   const clean = (key: string, max = 180) => typeof input[key] === 'string' ? String(input[key]).slice(0, max) : '';
-  const position: Position = { projectId: clean('projectId'), documentId: clean('documentId'), blockId: clean('blockId'), outputId: clean('outputId'), view: clean('view', 40), itemIndex: Number.isSafeInteger(input.itemIndex) ? Math.max(0,Math.min(1000,Number(input.itemIndex))) : 0, intent: clean('intent', 2000), recentActions: Array.isArray(input.recentActions) ? input.recentActions.filter(x => typeof x === 'string').slice(-12).map(x => x.slice(0, 60)) : [] };
+  const position: Position = { actionLimit: actionLimit(input.actionLimit), projectId: clean('projectId'), documentId: clean('documentId'), blockId: clean('blockId'), outputId: clean('outputId'), view: clean('view', 40), itemIndex: Number.isSafeInteger(input.itemIndex) ? Math.max(0,Math.min(1000,Number(input.itemIndex))) : 0, intent: clean('intent', 2000), recentActions: Array.isArray(input.recentActions) ? input.recentActions.filter(x => typeof x === 'string').slice(-12).map(x => x.slice(0, 60)) : [] };
   const rateKey = auth.user.userId;
   const now = Date.now();
   if ((recentCalls.get(rateKey) ?? 0) > now - 1200) return reply({ error: 'decision_cooldown' }, 429);

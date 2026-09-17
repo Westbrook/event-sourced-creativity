@@ -1,3 +1,4 @@
+import { actionLimit, type ExperimentResult } from './decision-lab.ts';
 import './palette-elements.js';
 import { localHistoryEvidence } from './history.ts';
 import { LitElement, html, nothing, type TemplateResult } from 'lit';
@@ -67,6 +68,10 @@ export class StillApp extends LitElement {
   private useInTarget='';
   private dockTouched=false;
   private moreOpen=false;
+  private density=5;
+  private get pageActionLimit(){return this.developer?this.density:5;}
+  private setDensity=(e:CustomEvent<{value:number}>)=>{this.density=actionLimit(e.detail.value);this.client.position.actionLimit=this.pageActionLimit;this.changed();};
+  private experiment=async(e:CustomEvent<{scope:string;request:unknown;complete:(result?:ExperimentResult,error?:string)=>void}>)=>{const d=e.detail;if(!this.developer||d.scope!==this.diagnosticScope()){d.complete(undefined,'View changed. Copy a new request.');return;}try{const result=await api<ExperimentResult>('/api/still/experiment',d.request);d.complete(d.scope===this.diagnosticScope()?result:undefined,d.scope===this.diagnosticScope()?undefined:'View changed. Experiment discarded.');}catch(error){d.complete(undefined,error instanceof Error?error.message:'Experiment failed.');}};
   private rankedActions:Action[]=[];
   private paletteOpen=false;
   private paletteQuery='';
@@ -83,6 +88,7 @@ export class StillApp extends LitElement {
   private readonly desktop = window.matchMedia(DEVELOPER_DESKTOP_QUERY);
   private get developer() { return this.developerRequested && this.desktop.matches; }
   private readonly developerViewportChanged = () => {
+    if(!this.desktop.matches){this.density=5;this.client.position.actionLimit=5;}
     ++this.developerEpoch;
     this.developerApplied=undefined;this.developerReceived=undefined;this.developerPending=false;
     this.developerScope=this.diagnosticScope();this.changed();
@@ -138,7 +144,7 @@ export class StillApp extends LitElement {
     const inspector=this.querySelector<StillDeveloperConsole>('still-developer-console');
     if(inspector){
       if(this.developerScope!==this.diagnosticScope()){this.developerApplied=undefined;this.developerReceived=undefined;this.developerScope=this.diagnosticScope();}
-      inspector.context={view:this.client.position.view,mode:this.mode,head:this.client.head,page:this.page,more:this.moreOpen,paletteOpen:this.paletteOpen,selectedFormat:this.generation?.format??'',current:this.localDiagnostics('Current eligibility')};
+      inspector.context={view:this.client.position.view,mode:this.mode,head:this.client.head,page:this.page,actionLimit:this.pageActionLimit,more:this.moreOpen,paletteOpen:this.paletteOpen,selectedFormat:this.generation?.format??'',current:this.localDiagnostics('Current eligibility')};
       inspector.applied=this.developerApplied;inspector.received=this.developerReceived;inspector.pending=this.developerPending||this.paletteBusy;
       inspector.scope=this.diagnosticScope();
     }
@@ -155,6 +161,7 @@ export class StillApp extends LitElement {
   private setDeveloper(enabled:boolean){
     if(enabled&&!this.desktop.matches)return;
     ++this.developerEpoch;
+    if(!enabled){this.density=5;this.client.position.actionLimit=5;}
     this.developerRequested=enabled;this.developerApplied=undefined;this.developerReceived=undefined;this.developerPending=false;this.developerScope=this.diagnosticScope();
     const url=new URL(location.href);if(enabled)url.searchParams.set('developer','');else url.searchParams.delete('developer');history.replaceState({...history.state},'',url);this.activeAddress=this.address();
     this.changed();
@@ -527,7 +534,7 @@ export class StillApp extends LitElement {
       const visibleFacts = source.facts.filter(b => b.active || issues.some(i => issueAffectsBlock(i, b)));
       const generalIssues = issues.filter(i => !visibleFacts.some(b => issueAffectsBlock(i, b)));
       const formats = this.candidates().filter(a => !!FORMATS[a.id]);
-      const suggested = this.formatSuggestions.filter(id=>formats.some(a=>a.id===id));
+      const suggested = this.formatSuggestions.filter(id=>formats.some(a=>a.id===id)).slice(0,this.pageActionLimit-2);
       const pickerFormats = g ? formats : formats.filter(a=>!suggested.includes(a.id));
       return html`<section class="form-page generation-page">
         <span class="eyebrow">${p.projectName}</span><h1>${p.documentTitle}</h1>
@@ -537,7 +544,7 @@ export class StillApp extends LitElement {
           ${warnings.length ? html`<a class="review-context-link" href=${this.viewURL('document',{blockId:b.block_id})} @click=${(e:MouseEvent)=>this.follow(e,'document',{blockId:b.block_id})}>Open idea</a>` : nothing}
         </section>`; })}</div>
         <div class="format-options" @pointerenter=${()=>{this.formatTouched=true;}} @focusin=${()=>{this.formatTouched=true;}}>
-        ${!g && suggested.length ? html`<en-toolbar class="format-suggestions" label="Suggested formats" keyboard-navigation="tab">${suggested.map(id=>this.suggestedButton({...ACTIONS.find(a=>a.id===id)!,label:FORMATS[id]},true))}</en-toolbar>` : nothing}
+        ${!g && suggested.length ? html`<en-toolbar class="format-suggestions" label="Suggested formats" keyboard-navigation="tab">${suggested.map(id=>this.suggestedButton({...ACTIONS.find(a=>a.id===id)!,label:FORMATS[id]},true,presentEvidence(suggested,this.formatEmphasis)))}</en-toolbar>` : nothing}
         ${g || pickerFormats.length ? html`<label class="select-label">${!g && suggested.length ? 'Other formats' : 'Output'}<select .value=${live(g?.format ?? '')} ?disabled=${this.busy || this.composing || !!g?.attempted} @change=${(e: Event) => this.chooseFormat((e.target as HTMLSelectElement).value)}>
           <option value="" .selected=${!g}>Choose a format</option>${pickerFormats.map(a => html`<option value=${a.id} .selected=${g?.format === a.id}>${FORMATS[a.id]}</option>`)}${g && !formats.some(a => a.id === g.format) ? html`<option value=${g.format} .selected=${true}>${FORMATS[g.format]}</option>` : nothing}
         </select></label>` : nothing}
@@ -566,29 +573,25 @@ export class StillApp extends LitElement {
   private renderDock() {
     const c = this.client, p = c.projection, view = c.position.view;
     if (this.loading || this.startupFailed || !c.session?.policy.accepted || this.mode || this.currentRouteProblem(p)) return nothing;
-    let actions: TemplateResult[];
-    let visibleIds:string[]=[];
-    if (view === 'projects' || view === 'documents' || view === 'results') {
-      const count = view === 'projects' ? p.projects.length : view === 'documents' ? p.documents.filter(d => !d.removed).length : p.outputs.filter(o => !o.discarded).length + p.artifacts.length;
-      const suggested = this.suggestions.find(a => a.id !== view && a.id !== 'results');
-      actions = suggested ? this.toolbarSuggestions([suggested]) : [this.button(view === 'projects' ? 'New project' : view === 'documents' ? 'New document' : 'Document', () => view === 'results' ? this.navigate('document') : this.begin(view === 'projects' ? 'new-project' : 'new-document'), true, view === 'projects' ? !c.abilities.projectCreate : view !== 'results' && !c.abilities.author)];
-      if (count > 3) actions = [this.button(this.page > 0 ? 'Previous' : 'First page', () => this.turnPage(this.page-1), false, this.page === 0), this.button('Next', () => this.turnPage(this.page+1), false, (this.page + 1) * 3 >= count)];
-      // The browse content contains at most three item controls; the dock adds two.
-      if (actions.length === 2) actions = [this.button('More results', () => this.turnPage((this.page+1)*3>=count?0:this.page+1))];
-      visibleIds=count>3?[]:suggested?[suggested.id]:[];
-      actions.push(this.button('More', () => this.openMore(), false, false, 'ui:more'));
-    } else {
-      const a = p.artifacts.find(x => x.id === c.position.outputId);
-      visibleIds=this.suggestions.slice(0,view==='artifact'&&a&&['slides','storyboard'].includes(a.kind)&&a.items.length>1?2:4).map(a=>a.id);
-      if (view === 'artifact' && a && ['slides', 'storyboard'].includes(a.kind) && a.items.length > 1) actions = [this.button('Previous', () => this.turnItem(this.itemIndex-1), false, this.itemIndex === 0), this.button('Next', () => this.turnItem(this.itemIndex+1), false, this.itemIndex >= a.items.length - 1), ...this.toolbarSuggestions(this.suggestions.slice(0,2)), this.button('More', () => this.openMore(), false, false, 'ui:more')];
-      else actions = [html`${this.toolbarSuggestions(this.suggestions.slice(0,4))}`, this.button('More', () => this.openMore(), false, false, 'ui:more')];
-    }
-    if(this.moreOpen)actions=[...this.toolbarSuggestions(nextToolbarActions(this.rankedActions,visibleIds,this.candidates())),this.button('Back',()=>{this.moreOpen=false;this.changed();void this.updateComplete.then(()=>this.querySelector<HTMLElement>('[data-action-id="ui:more"]')?.focus());}),this.button('Palette ⌘K',()=>this.openFinder(),false,false,'ui:palette')];
+    const limit=this.pageActionLimit,eligible=this.candidates();
+    const pool=[...this.suggestions,...(limit>5?this.rankedActions.filter(a=>!this.suggestions.some(s=>s.id===a.id)):[])].filter(a=>eligible.some(e=>e.id===a.id));
+    const a=p.artifacts.find(x=>x.id===c.position.outputId);
+    const slides=view==='artifact'&&a&&['slides','storyboard'].includes(a.kind)&&a.items.length>1;
+    const browsing=['projects','documents','results'].includes(view);
+    const count=view==='projects'?p.projects.length:view==='documents'?p.documents.filter(d=>!d.removed).length:p.outputs.filter(o=>!o.discarded).length+p.artifacts.length;
+    const paging=browsing&&count>3;
+    const visible=pool.filter(a=>!browsing||a.id!==view).slice(0,limit-1-(slides?2:paging?1:0));
+    const visibleIds=visible.map(a=>a.id);
+    let actions:TemplateResult[]=[...this.toolbarSuggestions(visible)];
+    if(slides)actions.unshift(this.button('Previous',()=>this.turnItem(this.itemIndex-1),false,this.itemIndex===0),this.button('Next',()=>this.turnItem(this.itemIndex+1),false,this.itemIndex>=a!.items.length-1));
+    if(paging)actions.push(this.button('More results',()=>this.turnPage((this.page+1)*3>=count?0:this.page+1)));
+    actions.push(this.button('More',()=>this.openMore(),false,false,'ui:more'));
+    if(this.moreOpen)actions=[...this.toolbarSuggestions(nextToolbarActions(this.rankedActions,visibleIds,eligible,limit-2)),this.button('Back',()=>{this.moreOpen=false;this.changed();void this.updateComplete.then(()=>this.querySelector<HTMLElement>('[data-action-id="ui:more"]')?.focus());}),this.button('Palette ⌘K',()=>this.openFinder(),false,false,'ui:palette')];
     return html`<footer class="action-dock" @pointerenter=${()=>{this.dockTouched=true;}} @pointerdown=${()=>{this.dockTouched=true;}} @focusin=${()=>{this.dockTouched=true;}}><en-toolbar label="Your next step" keyboard-navigation="tab">${actions}</en-toolbar></footer>`;
   }
   render() {
     const c = this.client, running = c.jobs.filter(j => activeJobs.has(j.status) && j.documentId === c.position.documentId), failed = c.jobs.find(j => j.status === 'failed' && j.documentId === c.position.documentId);
-    return html`<div class=${this.developer?'still-layout has-developer':'still-layout'}><div class="still-shell"><header class="masthead"><a class="wordmark" href=${this.viewURL('projects',{projectId:'',documentId:''})} aria-label="Still home" @click=${this.home}>still<span aria-hidden="true">.</span></a><span class="working-status" role="status" aria-live="polite">${this.busy ? 'Working…' : ''}</span><span class="session-status">${c.session?.impersonation ? 'Preview · read only' : c.session && !c.abilities.author ? 'Read only' : ''}</span></header><div class="feedback-strip">${running.length ? html`<aside class="job-status" role="status"><i></i>${running[0].progressMessage || 'Generating…'}${running.length > 1 ? ` · ${running.length} in progress` : ''}</aside>` : nothing}${this.error || failed && !this.mode ? html`<div class="status-message error" role="alert">${this.error || failed?.errorDetail?.message || failed?.error || 'Generation failed.'}</div>` : this.notice && !this.mode ? html`<div class="status-message" role="status">${this.notice}</div>` : nothing}</div><main id="still-content" aria-busy=${this.loading}>${this.renderCanvas()}</main>${this.renderDock()}${this.renderPalette()}</div>${this.developer ? html`<aside class="developer-panel" aria-label="Developer panel"><still-developer-console @developer-disable=${()=>this.setDeveloper(false)}></still-developer-console></aside>` : nothing}${new URL(location.href).searchParams.has('progress-report') ? html`<a class="progress-return" href=${REPORT_URL}>Progress Report ↗</a>` : nothing}</div>`;
+    return html`<div class=${this.developer?'still-layout has-developer':'still-layout'}><div class="still-shell"><header class="masthead"><a class="wordmark" href=${this.viewURL('projects',{projectId:'',documentId:''})} aria-label="Still home" @click=${this.home}>still<span aria-hidden="true">.</span></a><span class="working-status" role="status" aria-live="polite">${this.busy ? 'Working…' : ''}</span><span class="session-status">${c.session?.impersonation ? 'Preview · read only' : c.session && !c.abilities.author ? 'Read only' : ''}</span></header><div class="feedback-strip">${running.length ? html`<aside class="job-status" role="status"><i></i>${running[0].progressMessage || 'Generating…'}${running.length > 1 ? ` · ${running.length} in progress` : ''}</aside>` : nothing}${this.error || failed && !this.mode ? html`<div class="status-message error" role="alert">${this.error || failed?.errorDetail?.message || failed?.error || 'Generation failed.'}</div>` : this.notice && !this.mode ? html`<div class="status-message" role="status">${this.notice}</div>` : nothing}</div><main id="still-content" aria-busy=${this.loading}>${this.renderCanvas()}</main>${this.renderDock()}${this.renderPalette()}</div>${this.developer ? html`<aside class="developer-panel" aria-label="Developer panel"><still-developer-console @developer-density=${this.setDensity} @developer-experiment=${this.experiment} @developer-disable=${()=>this.setDeveloper(false)}></still-developer-console></aside>` : nothing}${new URL(location.href).searchParams.has('progress-report') ? html`<a class="progress-return" href=${REPORT_URL}>Progress Report ↗</a>` : nothing}</div>`;
   }
 }
 if (!customElements.get('still-app')) customElements.define('still-app', StillApp);
