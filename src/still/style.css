@@ -2,10 +2,10 @@ html { color-scheme: light; background: #f7f6f2; }
 body { margin: 0; }
 still-app { --paper: #f7f6f2; --ink: #302f2b; --soft: #77746d; --line: #dedbd2; --accent: #a54c32; --en-color-canvas: var(--paper); --en-color-text: var(--ink); --en-color-line: var(--line); display: block; color: var(--ink); background: var(--paper); font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; font-size: 16px; line-height: 1.5; letter-spacing: -.015em; }
 still-app * { box-sizing: border-box; }
-still-app button, still-app select { font: inherit; color: inherit; }
+still-app button { font: inherit; color: inherit; }
 still-app button { cursor: pointer; }
 still-app a.work-row, still-app a.result, still-app a.context-block { color: inherit; text-decoration: none; }
-still-app button:focus-visible, still-app select:focus-visible, still-app a:focus-visible { outline: 2px solid var(--accent); outline-offset: 6px; }
+still-app button:focus-visible, still-app a:focus-visible { outline: 2px solid var(--accent); outline-offset: 6px; }
 still-app .still-shell { min-height: 100dvh; padding: 0 48px max(148px, var(--dock-height, 148px)); }
 still-app .masthead { height: 104px; display: flex; align-items: center; gap: 32px; }
 still-app .wordmark { color: inherit; text-decoration: none; font-family: Georgia, 'Times New Roman', serif; font-size: 35px; letter-spacing: -2px; line-height: 1; }
@@ -50,12 +50,11 @@ still-app .pencil-line { display: block; width: 76px; height: 1px; background: #
 still-app .form-page { max-width: 660px; margin: 5vh auto 30px; }
 still-app .form-page h1 { font-size: clamp(36px, 4vw, 58px); margin-bottom: 28px; }
 still-app .form-page > p { color: var(--soft); margin-bottom: 26px; line-height: 1.7; }
-still-app en-textarea { display: block; margin: 24px 0; --en-color-surface: transparent; --en-input-background: transparent; }
+still-app en-textarea, still-app en-text-field { display: block; margin: 24px 0; --en-color-surface: transparent; --en-input-background: transparent; }
 still-app en-textarea::part(control) { font: 19px/1.7 Georgia, 'Times New Roman', serif; min-height: 48px; resize: vertical; background: #fbfaf7; border-color: var(--line); }
 still-app en-textarea::part(label) { color: var(--soft); font-size: 12px; font-weight: 400; }
 still-app .form-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 28px; }
-still-app .select-label { display: flex; flex-direction: column; color: var(--soft); font-size: 12px; gap: 9px; margin: 24px 0; }
-still-app select { width: 100%; border: 1px solid var(--line); border-radius: 3px; padding: 13px 35px 13px 15px; background: #fbfaf7; font-size: 17px; color: var(--ink); }
+still-app .select-label { display:block;min-width:0;margin:24px 0; }
 still-app .context-preview { font: 22px/1.65 Georgia, serif; white-space: pre-wrap; }
 still-app .generation-page { max-width: 900px; }
 still-app .format-suggestions::part(base) { border: 0; border-radius: 0; padding: 0; background: none; box-shadow: none; flex-wrap: wrap; }
@@ -75,8 +74,7 @@ still-app .generation-review:focus, still-app .generation-fact:focus { outline: 
 still-app .quiet-state { min-height: 52vh; display: flex; justify-content: center; align-items: center; flex-direction: column; gap: 24px; text-align: center; }
 still-app .quiet-state p { color: var(--soft); }
 still-app .still-mark { width: 30px; height: 30px; border: 1px solid #a9a391; border-radius: 50%; box-shadow: 8px 0 0 -1px var(--paper), 9px 0 0 0 #c1bbaa; }
-still-app .check { display: flex; gap: 12px; margin: 22px 0; font-size: 14px; align-items: flex-start; }
-still-app .check input { margin-top: 4px; accent-color: #575c48; }
+still-app .check { display:block;margin:16px 0; }
 still-app .feedback-strip { position: sticky; top: env(safe-area-inset-top, 0px); z-index: 6; background: var(--paper); max-height: 40dvh; overflow: auto; }
 still-app .feedback-strip:has(> *) { padding-block: 12px; border-bottom: 1px solid var(--line); }
 still-app .status-message { margin: 0 auto; width: fit-content; max-width: 720px; color: #757467; font-size: 12px; text-align: center; overflow-wrap: anywhere; }
@@ -158,7 +156,6 @@ still-app main h1:focus { outline:none; }
 .assembly-list li { padding: 1rem 0; }
 .context-flow blockquote { border-inline-start: 2px solid #d3cbbd; margin: 2rem 0; padding-inline-start: 1rem; opacity: .75; }
 
-still-app .select-label input { font:inherit; font-size:17px; color:var(--ink); background:#fbfaf7; border:1px solid var(--line); border-radius:3px; padding:13px 15px; width:100%; }
 still-app input:focus-visible { outline:2px solid var(--accent); outline-offset:4px; }
 still-app :is(.action-dock,.format-suggestions) en-button[size="small"]::part(control) { min-block-size:44px; padding-inline:12px; font-size:13px; }
 still-app :is(.action-dock,.format-suggestions) en-button[size="medium"]::part(control) { min-block-size:44px; padding-inline:16px; font-size:13px; }
