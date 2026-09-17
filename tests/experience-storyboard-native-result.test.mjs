@@ -23,6 +23,7 @@ const {createOutputFalImageContract}=await import('../src/model/output-fal-image
 const {documentRenderTokenReservation}=await import('../src/model/generation-budget.ts');
 const {OUTPUT_NATIVE_EXECUTION_POLICY}=await import('../src/model/output-execution-policy.ts');
 const {readStoryboardExecutionOffer,STORYBOARD_READY_REASON,STORYBOARD_TRANSFER}=await import('../src/model/output-storyboard-offer.ts');
+const {outputJobIsDurable,readOutputDurableOwnership}=await import('../worker/output-durable-control.ts');
 const oldFetch=globalThis.fetch;globalThis.fetch=()=>{throw Error('network forbidden');};test.after(()=>{globalThis.fetch=oldFetch;});
 const sha=value=>createHash('sha256').update(value).digest('hex');
 const sourceFile=path=>readFileSync(new URL('../'+path,import.meta.url),'utf8');
@@ -115,24 +116,36 @@ test('actual state reconstructs original completed Storyboard read without grant
   const preflight={id:'preflight',planRevisionId:'revision',sourceDigest:'source',requirementsDigest:'requirements',termsDigest:'terms',maximumMicrousd:maximum,maximumCalls:5,expiresAt:expired,targets:[quoted]};
   const slot={slotId:'slot',jobId:jobId,grantId:'grant',targetId:'target',planRevisionId:'revision',targetContractDigest:'target-digest',sourceDigest:'source',attemptOrdinal:0,previousSlotId:null,routeDigest:'route',status:'succeeded'};
   const grant={id:'grant',status:'completed',expiresAt:expired,planRevisionId:'revision',actorUserId:'owner',payerUserId:'owner',maximumMicrousd:maximum,maximumCalls:5,disclosure:preflight,pendingCalls:0,operations:[{id:'slot',jobId:jobId,targetId:'target',status:'succeeded',pendingCalls:0}]};
-  const job={job_id:jobId,correlation_id:'corr',expires_at:future,status:'completed',result_json:'{}'};
+  const job={job_id:jobId,correlation_id:'corr',expires_at:future,status:'completed',request_json:'{}',result_json:'{}'};
+  const durable={row:{phase:'ready',revision:4}};
   const evidence={slots:[slot],confirmedPlan:plan,preflight,row:{status:'completed',expires_at:expired,deadline_current:0}};
   const original={preflight:{receipt:{payload:{preflight}},envelope:{planRevisionId:'revision'}},
    authorize:{receipt:{key:'auth-key',eventId:'auth-event',payload:{grant_id:'grant',authorized_targets:[{target_id:'target',operation_slot_id:'slot',job_id:jobId,route_digest:'route'}]}},envelope:{preflightId:'preflight',termsDigest:'terms',explicitAuthorization:true,maximumMicrousd:maximum}},
    run:{receipt:{key:'run-key',eventId:'run-event',payload:{grant_id:'grant',job_ids:[jobId],existing_jobs_only:true}},envelope:{grantId:'grant',explicitRun:true}}};
   const statements=[],loaded={binding:{output:'storyboard',draftId:'draft',draftHash:'hash',releaseHash:'release',documentId:'doc',projectId:'project',streamId:'creative:owner'},recipe:{targetId:'target',spec:{deliverables:[{storyboard_contract:contract}]}},originals:original,
    trusted:{sourceDigest:'source',requirementsDigest:'requirements',scope:{key:'scope',actorUserId:'owner'},sourceAssertions:[],env:{DB:{prepare(sql){
-    statements.push(sql);assert.match(sql,/^SELECT \* FROM document_jobs/u);
+    statements.push(sql);
+    if(sql==='SELECT phase,revision FROM output_durable_jobs WHERE job_id=?')return {bind(...args){assert.deepEqual(args,[jobId]);return {first:async()=>durable.row};}};
+    assert.match(sql,/^SELECT \* FROM document_jobs/u);
     return {bind(...args){assert.deepEqual(args,[jobId,'owner','creative:owner','doc']);return {first:async()=>job};}};
    }}}}};
   const source=sourceFile('worker/experience-output-api.ts'),body=source.slice(source.indexOf('async function state('),source.indexOf('\nasync function execute'));
-  const deps={confirmed:async()=>plan,record:v=>Boolean(v&&typeof v==='object'&&!Array.isArray(v)),canonicalJson,readStoryboardExecutionOffer,phases:['save','confirm','preflight','authorize','run'],error:code=>{throw Error(code);},
+  const deps={confirmed:async()=>plan,record:v=>Boolean(v&&typeof v==='object'&&!Array.isArray(v)),canonicalJson,readStoryboardExecutionOffer,outputJobIsDurable,readOutputDurableOwnership,phases:['save','confirm','preflight','authorize','run'],error:code=>{throw Error(code);},
    outputExperienceCommands:{readGrantEvidence:async()=>evidence,snapshot:async()=>({grants:[grant],permissions:{canRequest:true}})}};
   const state=new Function(...Object.keys(deps),stripTypeScriptTypes(body)+';return state;')(...Object.values(deps));
-  return {loaded,plan,preflight,slot,grant,job,evidence,state,statements};
+  return {loaded,plan,preflight,slot,grant,job,evidence,state,statements,durable};
  }
  const f=stateFixture(),value=await f.state(f.loaded);assert.equal(value.status,'succeeded');assert.equal(value.disposition,'original_run_recorded');
  assert.deepEqual(value.permitted,{prepare:false,authorize:false,run:false,resumeRun:false,recoverResult:false});assert.equal(experienceResultGrantCurrent(value,now),true);assert.equal(f.loaded.trusted.sourceAssertions.length,1);
+ assert.equal(value.original.executionOwner,undefined);assert.equal(value.original.observation,undefined);assert.equal(f.statements.length,1,'ordinary completed job needs no durable lookup');
+ for(const durableRow of [{phase:'ready',revision:4},null,{phase:'invented',revision:4},{phase:'ready',revision:-1}]){
+  const f=stateFixture();f.job.request_json=JSON.stringify({outputDurable:1});f.durable.row=durableRow;
+  if(durableRow?.phase==='ready'&&durableRow.revision===4){
+   const value=await f.state(f.loaded);assert.equal(value.original.executionOwner,'durable');assert.deepEqual(value.original.observation,{version:1,phase:'ready',revision:4});
+   assert.deepEqual(value.permitted,{prepare:false,authorize:false,run:false,resumeRun:false,recoverResult:false,prepareReplacement:false});
+  }else await assert.rejects(f.state(f.loaded),error=>error.code==='output_durable_observation_unavailable'&&error.status===409);
+  assert.equal(f.statements.length,2);assert.equal(f.statements[1],'SELECT phase,revision FROM output_durable_jobs WHERE job_id=?');
+ }
  for(const mutate of [f=>f.loaded.originals.authorize.envelope.explicitAuthorization=false,f=>f.slot.previousSlotId='old',f=>f.slot.jobId='foreign',
  f=>f.loaded.originals.run.receipt.payload.job_ids=['foreign'],f=>f.grant.operations[0].jobId='foreign',f=>f.job.expires_at=expired]){
   const f=stateFixture();mutate(f);await assert.rejects(f.state(f.loaded));
@@ -173,14 +186,20 @@ test('actual snapshot gate requires unchanged intake, one exact personal target 
 });
 
 test('actual host read awaits original input and verified DTO; withdrawal at each boundary never publishes',async()=>{
- for(const boundary of ['none','content','hash','input','import','dto','verification']){
-  const f=fixture(),candidate=captureExperienceNativeResult(f.identity,f.job,f.current,f.now),trace={reads:[],imports:[],verified:0,published:0},state={...f.expected,output:'storyboard',plan:{revisionId:'revision',targetId:'target',targetContractDigest:'target-digest',sourceDigest:'source-digest'},original:{jobId:'job',slotId:'slot',grantId:'grant',correlationId:'corr'}};
+ const observationPending=hostMethod('#observationPending(state:ExperienceNativeState)','#confirmed =');
+ const scenarios=[...['none','content','hash','input','import','dto','verification'].map(boundary=>({boundary})),
+  {boundary:'none',durablePhase:'ready'},
+  ...['queued','running'].map(jobStatus=>({boundary:'pending',jobStatus})),
+  ...['queued','generating','awaiting_provider','retaining','cancel_requested'].map(durablePhase=>({boundary:'pending',durablePhase}))];
+ for(const {boundary,jobStatus,durablePhase} of scenarios){
+  const f=fixture(),candidate=captureExperienceNativeResult(f.identity,f.job,f.current,f.now),trace={reads:[],imports:[],verified:0,published:0,observed:0,requirements:0,inspected:0,scheduled:0},state={...f.expected,output:'storyboard',status:jobStatus??'succeeded',plan:{revisionId:'revision',targetId:'target',targetContractDigest:'target-digest',sourceDigest:'source-digest'},original:{jobId:'job',slotId:'slot',grantId:'grant',correlationId:'corr',jobStatus:jobStatus??'completed',...(durablePhase?{executionOwner:'durable',observation:{version:1,phase:durablePhase,revision:4}}:{})}};
   let current=true,published,finished=false;
   const operation={wait:value=>value},binding={storyboardSource:f.source,ownerId:'owner',client:{identity:{output:'storyboard'}}};
   const render=()=>{throw Error('No DOM rendering in source control');};
   const context={binding,busy:false,readable:()=>current,visible:()=>current,baseCurrent:()=>current,beginOperation:()=>operation,operationCurrent:()=>!finished,finishOperation:()=>{finished=true;return true;},resetDecision(){},requestUpdate(){},refreshAndRead:async()=>{},state:()=>state,snapshotMatches:()=>current,candidate:()=>candidate,scheduleDeadline(){},ownerDocument:{location:{origin:'https://forma.test'}},
+   observationPending(value){assert.equal(value,state);trace.observed++;return observationPending.call(this,value);},scheduleResultRead(){trace.scheduled++;},
    clearResult(){this.reader?.abort();this.reader=undefined;published=undefined;},
-   store:{outputRequirements:{ensure:async()=>{}},inspectOutputNativeJob:async()=>({status:'found',job:f.job,current:()=>current}),
+   store:{outputRequirements:{ensure:async()=>{trace.requirements++;}},inspectOutputNativeJob:async()=>{trace.inspected++;return {status:'found',job:f.job,current:()=>current};},
     ensurePrivateContent:async ref=>{trace.reads.push(ref);if(boundary===(ref==='content'?'content':'input'))current=false;return ref==='content'?f.raw:f.rawInput;}}};
   Object.defineProperty(context,'result',{get:()=>published,set:value=>{published=value;trace.published++;}});
   const check=hostMethod('async #check(','#stopResultRead()',{
@@ -189,7 +208,11 @@ test('actual host read awaits original input and verified DTO; withdrawal at eac
     return path.includes('retained-short-story-client')?{readNativeRetainedOutput:async(selector,options)=>{assert.deepEqual(selector,{output:'storyboard',selection:f.dto.selection});assert.equal(options.current(),true);assert(options.signal instanceof AbortSignal);if(boundary==='dto')current=false;return f.dto;}}:{renderNativeRetainedStoryboard:render};},
    verifyExperienceStoryboardRead:async(...args)=>{trace.verified++;const valid=await verifyExperienceStoryboardRead(...args);if(boundary==='verification')current=false;return valid;}
   });
-  await check.call(context);assert.equal(context.busy,false);
+  await check.call(context);assert.equal(context.busy,false);assert.equal(trace.observed,1);
+  if(boundary==='pending'){
+   assert.equal(trace.requirements,0);assert.equal(trace.inspected,0);assert.deepEqual(trace.reads,[]);assert.deepEqual(trace.imports,[]);assert.equal(trace.verified,0);assert.equal(trace.published,0);assert.equal(context.result,undefined);assert.equal(trace.scheduled,1);continue;
+  }
+  assert.equal(trace.requirements,1);assert.equal(trace.inspected,1);assert.equal(trace.scheduled,0);
   if(boundary==='none'){assert.equal(trace.published,1);assert.equal(context.result.storyboard,f.dto);assert.equal(context.result.render,render);assert.equal(context.result.current(),true);current=false;assert.equal(context.result.current(),false);}
   else{assert.equal(trace.published,0,boundary);assert.equal(context.result,undefined,boundary);}
   if(['content','hash'].includes(boundary)){assert.deepEqual(trace.reads,['content']);assert.deepEqual(trace.imports,[]);}
