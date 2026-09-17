@@ -2,24 +2,26 @@ import { inspectOutputAsset, MAX_OUTPUT_ASSET_BYTES } from "./output-asset-inspe
 
 /** Exact-byte format/metadata qualification only; never publishing authority. */
 export const SELECTED_OUTPUT_SHARE_IMAGE_POLICY = "selected-output-share-png-v1" as const;
+export const SELECTED_OUTPUT_SHARE_IMAGE_RESOLUTION_POLICY = "selected-output-share-png-resolution-v1" as const;
+export type SelectedOutputShareImagePolicy = typeof SELECTED_OUTPUT_SHARE_IMAGE_POLICY | typeof SELECTED_OUTPUT_SHARE_IMAGE_RESOLUTION_POLICY;
 export const SELECTED_OUTPUT_SHARE_IMAGE_LIMITS = Object.freeze({ bytes: MAX_OUTPUT_ASSET_BYTES, chunks: 4096 });
 export type SelectedOutputShareImageExpected = Readonly<{ sha256: string; width: number; height: number; byteLength: number }>;
 export type SelectedOutputShareImageRefusal = "invalid_input" | "unsupported_png" | "unqualified_metadata" | "invalid_png" | "selection_mismatch";
 declare const imageQualification: unique symbol;
-export type QualifiedSelectedOutputShareImage = Readonly<{
+export type QualifiedSelectedOutputShareImage<Policy extends SelectedOutputShareImagePolicy = typeof SELECTED_OUTPUT_SHARE_IMAGE_POLICY> = Readonly<{
   [imageQualification]: true;
   status: "qualified";
-  policy: typeof SELECTED_OUTPUT_SHARE_IMAGE_POLICY;
+  policy: Policy;
   mimeType: "image/png";
   sha256: string;
   width: number;
   height: number;
   byteLength: number;
 }>;
-export type SelectedOutputShareImageQualification = QualifiedSelectedOutputShareImage
-  | Readonly<{ status: "unqualified"; policy: typeof SELECTED_OUTPUT_SHARE_IMAGE_POLICY; reason: SelectedOutputShareImageRefusal }>;
+export type SelectedOutputShareImageQualification<Policy extends SelectedOutputShareImagePolicy = typeof SELECTED_OUTPUT_SHARE_IMAGE_POLICY> = QualifiedSelectedOutputShareImage<Policy>
+  | Readonly<{ status: "unqualified"; policy: Policy; reason: SelectedOutputShareImageRefusal }>;
 
-const ownedImages = new WeakMap<QualifiedSelectedOutputShareImage, Uint8Array<ArrayBuffer>>();
+const ownedImages = new WeakMap<QualifiedSelectedOutputShareImage<SelectedOutputShareImagePolicy>, Uint8Array<ArrayBuffer>>();
 const typedPrototype = Object.getPrototypeOf(Uint8Array.prototype);
 const typedLength = Object.getOwnPropertyDescriptor(typedPrototype, "byteLength")!.get!;
 const typedBuffer = Object.getOwnPropertyDescriptor(typedPrototype, "buffer")!.get!;
@@ -63,10 +65,10 @@ function captureBytes(value: unknown): Uint8Array<ArrayBuffer> | null {
 /** Deliberately narrower than native private PNG support. No opaque payload
  * chunks, profiles, suggested palettes or ancillary strings are public-safe by
  * default. Native inspection below supplies CRC, inflate and scanline checks. */
-function publicPngChunks(bytes: Uint8Array): SelectedOutputShareImageRefusal | null {
+function publicPngChunks(bytes: Uint8Array, resolutionProfile: boolean): SelectedOutputShareImageRefusal | null {
   if (bytes.length < 57 || !signature.every((value, index) => bytes[index] === value)) return "unsupported_png";
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-  let cursor = 8, count = 0, color = 0, seenData = false, ended = false;
+  let cursor = 8, count = 0, color = 0, seenData = false, ended = false, resolutionStage = 0;
   const singletons = new Set<string>();
   while (cursor + 12 <= bytes.length) {
     if (++count > SELECTED_OUTPUT_SHARE_IMAGE_LIMITS.chunks) return "invalid_png";
@@ -74,6 +76,8 @@ function publicPngChunks(bytes: Uint8Array): SelectedOutputShareImageRefusal | n
     if (end + 4 > bytes.length) return "invalid_png";
     const type = String.fromCharCode(bytes[cursor + 4]!, bytes[cursor + 5]!, bytes[cursor + 6]!, bytes[cursor + 7]!);
     if (count === 1 && type !== "IHDR") return "invalid_png";
+    // The optional resolution profile is a complete, contiguous, ordered trio.
+    if (resolutionStage === 1 && type !== "oFFs" || resolutionStage === 2 && type !== "pHYs") return "invalid_png";
     if (type !== "IDAT") {
       if (singletons.has(type)) return "invalid_png";
       singletons.add(type);
@@ -98,6 +102,26 @@ function publicPngChunks(bytes: Uint8Array): SelectedOutputShareImageRefusal | n
     } else if (type === "tRNS") {
       if (seenData || color !== 2 || length !== 6) return "invalid_png";
       if ([0, 2, 4].some(offset => view.getUint16(start + offset) > 255)) return "invalid_png";
+    } else if (resolutionProfile && type === "eXIf") {
+      if (seenData || resolutionStage !== 0 || length !== 54) return "invalid_png";
+      // Complete big-endian TIFF: header; two 72/1 rationals at 8 and 16;
+      // IFD at 24 with exactly X/YResolution RATIONAL tags; next IFD is zero.
+      // Every byte is checked. No EXIF prefix, padding, private tags or pointers.
+      if (view.getUint16(start) !== 0x4d4d || view.getUint16(start + 2) !== 42 || view.getUint32(start + 4) !== 24
+        || view.getUint32(start + 8) !== 72 || view.getUint32(start + 12) !== 1
+        || view.getUint32(start + 16) !== 72 || view.getUint32(start + 20) !== 1 || view.getUint16(start + 24) !== 2
+        || view.getUint16(start + 26) !== 0x011a || view.getUint16(start + 28) !== 5 || view.getUint32(start + 30) !== 1
+        || view.getUint32(start + 34) !== 8 || view.getUint16(start + 38) !== 0x011b || view.getUint16(start + 40) !== 5
+        || view.getUint32(start + 42) !== 1 || view.getUint32(start + 46) !== 16 || view.getUint32(start + 50) !== 0) return "unqualified_metadata";
+      resolutionStage = 1;
+    } else if (resolutionProfile && type === "oFFs") {
+      if (seenData || resolutionStage !== 1 || length !== 9) return "invalid_png";
+      if (view.getInt32(start) !== 0 || view.getInt32(start + 4) !== 0 || bytes[start + 8] !== 0) return "unqualified_metadata";
+      resolutionStage = 2;
+    } else if (resolutionProfile && type === "pHYs") {
+      if (seenData || resolutionStage !== 2 || length !== 9) return "invalid_png";
+      if (view.getUint32(start) !== 2834 || view.getUint32(start + 4) !== 2834 || bytes[start + 8] !== 1) return "unqualified_metadata";
+      resolutionStage = 3;
     } else return "unqualified_metadata";
     cursor = end + 4;
   }
@@ -110,8 +134,20 @@ function publicPngChunks(bytes: Uint8Array): SelectedOutputShareImageRefusal | n
  * It never strips metadata, changes pixels, creates a share, or calls a provider.
  */
 export async function qualifySelectedOutputShareImage(input: unknown, expected: unknown): Promise<SelectedOutputShareImageQualification> {
-  const refused = (reason: SelectedOutputShareImageRefusal): SelectedOutputShareImageQualification =>
-    Object.freeze({ status: "unqualified", policy: SELECTED_OUTPUT_SHARE_IMAGE_POLICY, reason });
+  return qualifyImage(input, expected, SELECTED_OUTPUT_SHARE_IMAGE_POLICY);
+}
+
+/** Explicit resolution-only profile; the default v1 gate remains unchanged.
+ * Supports v1 PNGs plus the closed eXIf/oFFs/pHYs trio, never arbitrary EXIF.
+ * This is format qualification only, with the same publishing-authority limits.
+ */
+export async function qualifyResolutionSelectedOutputShareImage(input: unknown, expected: unknown): Promise<SelectedOutputShareImageQualification<typeof SELECTED_OUTPUT_SHARE_IMAGE_RESOLUTION_POLICY>> {
+  return qualifyImage(input, expected, SELECTED_OUTPUT_SHARE_IMAGE_RESOLUTION_POLICY);
+}
+
+async function qualifyImage<Policy extends SelectedOutputShareImagePolicy>(input: unknown, expected: unknown, policy: Policy): Promise<SelectedOutputShareImageQualification<Policy>> {
+  const refused = (reason: SelectedOutputShareImageRefusal): SelectedOutputShareImageQualification<Policy> =>
+    Object.freeze({ status: "unqualified", policy, reason });
   let bytes: Uint8Array<ArrayBuffer> | null = null, retained = false;
   try {
     const facts = expectedFacts(expected);
@@ -119,14 +155,14 @@ export async function qualifySelectedOutputShareImage(input: unknown, expected: 
     bytes = captureBytes(input);
     if (!bytes) return refused("invalid_input");
     if (bytes.length !== facts.byteLength) return refused("selection_mismatch");
-    const failure = publicPngChunks(bytes);
+    const failure = publicPngChunks(bytes, policy === SELECTED_OUTPUT_SHARE_IMAGE_RESOLUTION_POLICY);
     if (failure) return refused(failure);
     const inspection = await inspectOutputAsset(bytes, "image.png", { snapshot: false });
     if (inspection.status !== "inspected" || inspection.kind !== "image" || inspection.mimeType !== "image/png"
       || inspection.extension !== "png") return refused("invalid_png");
     if (inspection.sha256 !== facts.sha256 || inspection.byteLength !== facts.byteLength
       || inspection.facts.width !== facts.width || inspection.facts.height !== facts.height) return refused("selection_mismatch");
-    const result = Object.freeze({ status: "qualified", policy: SELECTED_OUTPUT_SHARE_IMAGE_POLICY, mimeType: "image/png", ...facts }) as QualifiedSelectedOutputShareImage;
+    const result = Object.freeze({ status: "qualified", policy, mimeType: "image/png", ...facts }) as QualifiedSelectedOutputShareImage<Policy>;
     ownedImages.set(result, bytes); retained = true;
     return result;
   } catch { return refused("invalid_input"); }
@@ -138,6 +174,6 @@ export async function qualifySelectedOutputShareImage(input: unknown, expected: 
  * reads. The caller still must check current publishing authority separately. */
 export function copySelectedOutputShareImageBytes(qualification: unknown): Uint8Array<ArrayBuffer> | null {
   if (qualification === null || typeof qualification !== "object") return null;
-  const bytes = ownedImages.get(qualification as QualifiedSelectedOutputShareImage);
+  const bytes = ownedImages.get(qualification as QualifiedSelectedOutputShareImage<SelectedOutputShareImagePolicy>);
   return bytes ? new Uint8Array(bytes) : null;
 }
