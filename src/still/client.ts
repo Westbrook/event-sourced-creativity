@@ -55,8 +55,11 @@ export class StillClient {
   private verifying: { epoch: number; promise: Promise<() => void> } | null = null;
   private jobRead = 0;
   private contentRevision = 0;
+  private contentRead = 0;
+  private contentApplied = 0;
   private contentWrites = new Map<string, number>();
   private polling: { key: string; promise: Promise<void> } | null = null;
+  private hydrating: { epoch: number; promise: Promise<void> } | null = null;
   private projected: { events: CreativeEvent[]; length: number; document: string; project: string; value: ReturnType<typeof foldEvents> } | null = null;
   private get journalScope() { return this.session ? `${this.session.user.userId}:${this.session.projectContext?.projectAccessId ?? 'personal'}` : ''; }
   private retirePendingWrite() { this.pendingWrite = null; operationJournal.clearWrite(this.journalScope); }
@@ -107,13 +110,13 @@ export class StillClient {
     return { author, generate: !!s && !s.impersonation && (shared ? shared.permissions.includes('project.output.request') : author), projectCreate: author && !shared, formats: [...(p?.configured ? ['image', 'storyboard'] : []), ...(p?.plannerConfigured ? ['short_story', 'scene', 'slides'] : []), ...(p?.videoConfigured ? ['video'] : []), ...(p?.audioConfigured ? ['audio'] : []), ...(p?.model3dConfigured ? ['model3d'] : [])] };
   }
   fence() { const epoch = this.epoch, key = scope(this.session); return () => { if (epoch !== this.epoch || key !== scope(this.session)) throw new Error('Workspace changed. Check the original workspace.'); }; }
-  async load() {
+  async load(options: { hydrateContent?: boolean } = {}) {
     const epoch = ++this.epoch;
     this.events = []; this.content = {}; this.head = 0; this.jobs = []; this.session = null; this.projected = null; this.contentWrites.clear();
     const session = await api<Session>('/api/session');
     if (epoch !== this.epoch) return;
     this.session = session; this.pendingWrite = operationJournal.write(this.journalScope);
-    if (session.policy.accepted) { await this.refreshSource(this.fence()); await this.recoverPendingWrite(); }
+    if (session.policy.accepted) { await this.refreshSource(this.fence(), options.hydrateContent !== false); await this.recoverPendingWrite(); }
     this.onChange();
   }
   async verifyScope() {
@@ -138,12 +141,33 @@ export class StillClient {
     if (this.refreshing && this.refreshingEpoch === this.epoch) return this.refreshing;
     return this.refreshSource(await this.verifyScope());
   }
-  private refreshSource(check: () => void) {
+  async ensureContent(reference: string) {
+    if (!reference || reference in this.content) return;
+    const check = this.fence();
+    if (this.hydrating?.epoch === this.epoch) await this.hydrating.promise;
+    else {
+      const revision = this.contentRevision, read = ++this.contentRead;
+      const promise = (async () => {
+        const result = await this.request<{content?: Record<string,string>}>(`/api/events?after=${this.head}&limit=1&content=1`); check();
+        const newer = Object.fromEntries(Object.entries(this.content).filter(([key]) => (this.contentWrites.get(key) ?? 0) > revision));
+        if (read > this.contentApplied) {
+          this.contentApplied = read;
+          this.content = { ...result.content, ...newer }; this.onChange();
+        }
+      })();
+      this.hydrating = {epoch:this.epoch,promise};
+      try { await promise; } finally { if (this.hydrating?.promise === promise) this.hydrating = null; }
+    }
+    check();
+    if (!(reference in this.content)) throw new Error('This writing is unavailable.');
+  }
+  private refreshSource(check: () => void, hydrateContent = true) {
     check();
     if (this.refreshing && this.refreshingEpoch === this.epoch) return this.refreshing;
     this.refreshingEpoch = this.epoch;
     const operation = (async () => {
       const start = this.head, contentRevision = this.contentRevision;
+      let contentRead = ++this.contentRead;
       let after = start, target: number | undefined;
       const incoming: CreativeEvent[] = []; let hydrated: Record<string, string> | undefined;
       for (let count = 0; ; count++) {
@@ -159,13 +183,15 @@ export class StillClient {
         if (!Number.isSafeInteger(page.nextAfter) || page.nextAfter <= after) throw new Error('The event history did not advance.');
         after = page.nextAfter;
       }
-      if (needsContent(incoming, { ...this.content, ...hydrated })) {
+      if (hydrateContent && needsContent(incoming, { ...this.content, ...hydrated })) {
+        contentRead = ++this.contentRead;
         const page = await this.request<{ content?: Record<string, string> }>(`/api/events?after=${target}&limit=1&content=1`); check();
         hydrated = page.content;
       }
       check();
       const changed = this.mergeEvents(incoming), advanced = target! > this.head;
-      if (hydrated) {
+      if (hydrated && contentRead > this.contentApplied) {
+        this.contentApplied = contentRead;
         // An artifact save may finish while this read is in flight. Its acknowledged
         // body is newer than this read; retain it while hydrating other references.
         const newer = Object.fromEntries(Object.entries(this.content).filter(([key]) => (this.contentWrites.get(key) ?? 0) > contentRevision));

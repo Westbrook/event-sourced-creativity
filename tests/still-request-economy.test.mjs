@@ -131,3 +131,39 @@ test('authoritative hydration removes omitted expired or redacted cached bodies'
     await c.refresh();assert.deepEqual(c.content,{current:'Current body','new-body':'New story'});
   });
 });
+
+test('media startup never waits for unrelated writing and bodies load only when requested',async()=>{
+  const c=new StillClient(),rendered=event(3,'DocumentRenderCompleted',{document_id:'d',artifact_id:'a',content_ref:'body'});
+  await network(url=>url==='/api/session'?json(session):url.includes('content=1')?page([],3,{body:'Full retained writing'}):page([...initial,rendered],3),async calls=>{
+    await c.load({hydrateContent:false});assert.equal(calls.length,2);assert.deepEqual(c.content,{});assert.equal(c.head,3);
+    await Promise.all([c.ensureContent('body'),c.ensureContent('body')]);assert.equal(calls.length,3);assert.equal(c.content.body,'Full retained writing');
+    await c.ensureContent('body');assert.equal(calls.length,3);
+  });
+});
+test('on-demand hydration cannot overwrite an edit acknowledged while it was loading',async()=>{
+  const c=client(),reading=deferred(),release=deferred();
+  await network(async(url,init)=>{
+    if(url==='/api/session')return json(session);
+    if(init?.method==='PATCH')return json({appended:[event(3,'DocumentArtifactEdited',{artifact_id:'a',content_ref:'body'})],head:3,content:{body:'New writing'},revision:1});
+    reading.resolve();await release.promise;return page([],2,{body:'Old writing'});
+  },async()=>{const pending=c.ensureContent('body');await reading.promise;await c.editArtifact('a','New writing',0);release.resolve();await pending;assert.equal(c.content.body,'New writing');});
+});
+test('on-demand writing failures can retry and stale denials cannot clear a new workspace',async()=>{
+  const c=client();let attempt=0;
+  await network(()=>++attempt===1?json({error:'temporary'},503):page([],2,{body:'Writing'}),async()=>{await assert.rejects(c.ensureContent('body'));await c.ensureContent('body');assert.equal(c.content.body,'Writing');});
+  const reading=deferred(),release=deferred();
+  await network(async()=>{reading.resolve();await release.promise;return json({error:'forbidden'},403);},async()=>{
+    const pending=c.ensureContent('other');await reading.promise;c.epoch++;c.session={...session,user:{...session.user,userId:'next'}};c.content={next:'Private'};release.resolve();await assert.rejects(pending,/Workspace changed/);assert.deepEqual(c.content,{next:'Private'});
+  });
+});
+test('missing retained writing is an error rather than an empty editable body',async()=>{
+  const c=client();await network(()=>page(),async()=>{await assert.rejects(c.ensureContent('missing'),/unavailable/);});
+});
+test('an older lazy read cannot replace a newer authoritative refresh',async()=>{
+  const c=client(),reading=deferred(),release=deferred();let bodies=0;
+  await network(async url=>{
+    if(url==='/api/session')return json(session);
+    if(url.includes('content=1')){if(++bodies===1){reading.resolve();await release.promise;return page([],2,{body:'Earlier'});}return page([],3,{body:'Current'});}
+    return page([event(3,'DocumentArtifactEdited',{artifact_id:'a',content_ref:'body'})],3);
+  },async()=>{const lazy=c.ensureContent('body');await reading.promise;await c.refresh();release.resolve();await lazy;assert.equal(c.content.body,'Current');});
+});

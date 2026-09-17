@@ -2,7 +2,7 @@ import { handleEvents } from './events-api.ts';
 import { handleSession, requireConsent, requireUser } from './pilot-policy.ts';
 import type { WorkerEnv, WorkerExecutionContext } from './runtime.ts';
 import type { CreativeEvent } from '../src/model/events.ts';
-import { buildDecisionState, POLICY_VERSION, questionsFor, rankFormats, selectActions, type Abilities, type Answer, type Position } from '../src/still/decisions.ts';
+import { buildDecisionState, evaluateActions, POLICY_VERSION, questionsFor, rankFormats, selectActions, type Abilities, type Answer, type Position } from '../src/still/decisions.ts';
 import { compositionIndex, connectionEvidence, shouldEnrich, enrichmentQuestions, refineMenu, type MenuAdjustment } from '../src/still/assessments.ts';
 import { presentActions, type Emphasis } from '../src/still/presentation.ts';
 import { decisionDiagnostics, inspectAnswer, type DecisionPass, type DecisionExchange } from '../src/still/diagnostics.ts';
@@ -55,9 +55,9 @@ export async function handleStillDecision(request: Request, env: WorkerEnv, cont
   const evidence=choosingFormat||finding||!env.JEV_API_KEY||!built.candidates.some(a=>a.id==='use-in')?{destinations:[],details:[],source:null}:connectionEvidence(events,position);
   const compositions=compositionIndex(questions),passes:DecisionPass[]=[];
   let asked=false,exchange:DecisionExchange|undefined,presentation:Record<string,Emphasis>={},adjustments:MenuAdjustment[]=[],recommended:string[]|undefined;
-  const metrics=()=>({elapsedMs:Date.now()-started,providerCalls:passes.filter(p=>p.status!=='skipped').length,candidateCount:built.candidates.length,questionsAsked:passes.reduce((n,p)=>n+p.questions.filter(q=>q.asked).length,0),menuGroups:recommended?[...new Set(recommended.map(id=>built.candidates.find(a=>a.id===id)?.group))]:[],recentEscapeHatches:position.recentActions.filter(id=>id==='ui:more').length,destinationCandidates:evidence.destinations.length});
+  const metrics=()=>({elapsedMs:Date.now()-started,providerCalls:passes.filter(p=>p.status!=='skipped').length,candidateCount:built.candidates.length,questionsAsked:passes.reduce((n,p)=>n+p.questions.filter(q=>q.asked).length,0),menuGroups:recommended?[...new Set(recommended.map(id=>built.candidates.find(a=>a.id===id)?.group))]:[],recentEscapeHatches:position.recentActions.filter(id=>id==='ui:more'||id==='ui:palette').length,destinationCandidates:evidence.destinations.length});
   const diagnostics = (source:string, reason?:string, answers?:Record<string,Answer>, model?:string, observedAnswers?:Record<string,Answer>) => input.developer===true ? {diagnostics:decisionDiagnostics(built.projection,position,abilities,{head,source,reason,answers,model,observedAnswers,asked,exchange,passes,presentation,adjustments,recommended,metrics:metrics(),artifactKind:built.state.selectedWork?.kind,coverage:built.state.history.coverage})} : {};
-  const fallback = (reason: string, observedAnswers?:Record<string,Answer>) => reply({ source: 'fallback', reason, policy: POLICY_VERSION, head, actions: choosingFormat||finding ? [] : selectActions(built.candidates, position), formats: [], candidateIds: built.candidates.map(a => a.id), ...diagnostics('fallback',reason,undefined,undefined,observedAnswers) });
+  const fallback = (reason: string, observedAnswers?:Record<string,Answer>) => reply({ source: 'fallback', reason, policy: POLICY_VERSION, head, actions: choosingFormat||finding ? [] : selectActions(built.candidates, position), rankedActions: choosingFormat||finding ? [] : evaluateActions(built.candidates,position).ranked.map(a=>({id:a.id})), formats: [], candidateIds: built.candidates.map(a => a.id), ...diagnostics('fallback',reason,undefined,undefined,observedAnswers) });
   if (!env.JEV_API_KEY) return fallback('not_configured');
   const callPass=async(id:string,label:string,state:unknown,askedQuestions:typeof questions,timeout:number,parentId?:string)=>{
     const body=JSON.stringify({model:'jev-latest',state,questions:askedQuestions});
@@ -99,5 +99,5 @@ export async function handleStillDecision(request: Request, env: WorkerEnv, cont
   }else passes.push({id:'connections',parentId:'assessment',label:'Connection evidence',status:'skipped',reason:choosingFormat?'format_comparison':deadline-Date.now()<1200?'latency_budget':!position.blockId?'no_selected_idea':!evidence.destinations.length?'no_destinations':'no_useful_connection_signal',elapsedMs:0,compositionIds:['connections','exploration'],evidenceIds:[],questions:[]});
   recommended=choosingFormat?formats:actions.map(a=>a.id);
   presentation=presentActions(recommended,answers,choosingFormat?'fit_':'use_');
-  return reply({source:'jev',model:first.model,policy:POLICY_VERSION,head,actions,formats,presentation,...(target?{targets:{'use-in':target.id}}:{}),candidateIds:built.candidates.map(a=>a.id),stage:questions.stage?inspectAnswer(questions.stage,answers.stage).choice:undefined,questionsEvaluated:passes.reduce((n,p)=>n+p.questions.length,0),...diagnostics('jev',undefined,answers,first.model)});
+  return reply({source:'jev',model:first.model,policy:POLICY_VERSION,head,actions,rankedActions:choosingFormat?[]:evaluateActions(built.candidates,position,answers).ranked.map(a=>({id:a.id})),formats,presentation,...(target?{targets:{'use-in':target.id}}:{}),candidateIds:built.candidates.map(a=>a.id),stage:questions.stage?inspectAnswer(questions.stage,answers.stage).choice:undefined,questionsEvaluated:passes.reduce((n,p)=>n+p.questions.length,0),...diagnostics('jev',undefined,answers,first.model)});
 }

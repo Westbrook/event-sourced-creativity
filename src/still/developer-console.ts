@@ -1,6 +1,7 @@
 import { LitElement, css, html, nothing } from 'lit';
 import { keyed } from 'lit/directives/keyed.js';
 import './exchange-inspector.ts';
+import './json-tree.ts';
 import type { DecisionDiagnostics, ReceivedDecision } from './diagnostics.ts';
 import { ConsoleWindowHost, type ConsoleContext, type ConsoleControl } from './console-window.ts';
 export type { ConsoleContext } from './console-window.ts';
@@ -40,8 +41,8 @@ export class StillDeveloperConsole extends LitElement {
   private reattach=()=>{this.windowHost?.dispose();void this.updateComplete.then(()=>this.show());};
   private readControls=()=>{
     if(!this.root)return;
-    const controls=[...this.root.querySelectorAll<HTMLElement>('main en-button, main select, main en-textarea, main input, main button, main a, main [role="button"], main [role="checkbox"], main audio[controls], main video[controls], .action-dock en-button')]
-      .filter(e=>e.getClientRects().length>0).map((e,index)=>{
+    const controls=[...this.root.querySelectorAll<HTMLElement>('main en-button, main select, main en-textarea, main input, main button, main a, main [role="button"], main [role="checkbox"], main audio[controls], main video[controls], .action-dock en-button, .command-palette input, .command-palette button')]
+      .filter(e=>e.getClientRects().length>0 && (!this.context?.paletteOpen || !!e.closest('.command-palette'))).map((e,index)=>{
         const label=e.getAttribute('label')||e.getAttribute('aria-label')||(['AUDIO','VIDEO'].includes(e.tagName)?`${e.tagName==='AUDIO'?'Audio':'Video'} player (native control group)`:e.tagName==='SELECT'?[...(e.closest('label')?.childNodes??[])].filter(n=>n.nodeType===Node.TEXT_NODE).map(n=>n.textContent).join(' '):e.innerText)||e.tagName.toLowerCase();
         return {label:label.replace(/\s+/g,' ').trim(),id:e.dataset.actionId||`ui:${e.tagName.toLowerCase()}:${index}`,region:e.closest('.action-dock')?'dock':e.closest('.format-options')?'formats':'content / workflow',variant:e.getAttribute('variant')||'native',size:e.getAttribute('size')||'default',emphasis:e.dataset.emphasisReason||'',disabled:!!(e as HTMLButtonElement).disabled||e.getAttribute('aria-disabled')==='true',options:e.tagName==='SELECT'?[...(e as HTMLSelectElement).options].map(o=>o.text):[]};
       });
@@ -54,6 +55,20 @@ export class StillDeveloperConsole extends LitElement {
       ${q.type==='noul'?nothing:html`<div class="distribution">${(q.type==='score'?q.criteria.map((label,i)=>[String(i),label]):Object.entries(q.criteria)).map(([key,label])=>html`<div><span>${key} · ${label}</span><meter min="0" max="1" value=${a.probabilities?.[key]??0} aria-label=${`${label}: ${a.probabilities?percent(a.probabilities[key]):'unavailable'}`}></meter><b>${a.probabilities?percent(a.probabilities[key]):'—'}</b></div>`)}</div>`}
       ${a.warnings.map(w=>html`<p class="muted">${w}.</p>`)}`;
   }
+  private eventList(label:string,events:unknown) {
+    const list=Array.isArray(events)?events as Record<string,unknown>[]:[];
+    return html`<details><summary>${label} · ${list.length}</summary>${list.length?list.slice().reverse().map(e=>html`<still-json-tree .label=${`#${e.sequence} ${e.type} · ${e.at}`} .value=${e}></still-json-tree>`):html`<p class="muted">No events in this sample.</p>`}</details>`;
+  }
+  private coverage(trace:DecisionDiagnostics|undefined,current:DecisionDiagnostics) {
+    const state=trace?.exchange?.request.state as {history?:{recentCreative?:unknown;recent?:unknown;focused?:unknown;milestones?:unknown;eventCounts?:unknown;coverage?:unknown};current?:{recentActions?:unknown}}|undefined;
+    return html`<details><summary>Context coverage</summary>
+      <p class="muted">${state ? 'Captured Jev request · event samples are bounded.' : 'Local workspace snapshot · not evidence of a Jev call.'}</p>
+      <still-json-tree label="Position" .value=${{current:current.position,decision:trace?.position}}></still-json-tree>
+      <still-json-tree label="Session actions" .value=${state?.current?.recentActions??current.position.recentActions}></still-json-tree>
+      ${state?.history ? html`${this.eventList('Recent creative events · sent to Jev',state.history.recentCreative)}${this.eventList('Recent log events · sent to Jev',state.history.recent)}<still-json-tree label="Full history summary · sent to Jev" .value=${state.history}></still-json-tree>` : html`${this.eventList('Recent creative events · local',current.context.localEvents)}<p class="muted">Local history uses the compact workspace profile. The server reads the full authorized log for Jev.</p>`}
+      <still-json-tree label="Coverage counts" .value=${trace?.context??current.context}></still-json-tree>
+    </details>`;
+  }
   render(){
     if(!this.context)return nothing;
     const c=this.context,viewingReceived=this.showReceived&&!!this.received,trace=viewingReceived?this.received?.trace:this.applied;
@@ -65,7 +80,7 @@ export class StillDeveloperConsole extends LitElement {
           ${this.windowError?html`<p role="alert">${this.windowError}</p>`:nothing}
           <div class="status"><strong>${this.pending?'Jev pending':this.received?.disposition??'Local controls'}</strong><span>${c.view}${c.mode?` / ${c.mode}`:''} · head ${c.head}</span></div>
           <details open><summary>On page · ${this.controls.length} controls</summary>
-            <p class="muted">${c.mode?'The open workflow supplies its own controls.':c.view==='projects'||c.view==='documents'||c.view==='results'?'Browse content and pagination share the control budget.':'Up to four suggestions, plus More. Slides reserve two places for paging.'} Emphasis requires useful, confident scores, a valid distribution and a clear margin. Ties and missing evidence have equal weight. More stays available.</p>
+            <p class="muted">${c.paletteOpen?'The command palette lists eligible actions.':c.more?'Up to three next-ranked actions, Back, and Palette.':c.mode?'The open workflow supplies its own controls.':c.view==='projects'||c.view==='documents'||c.view==='results'?'Browse content and pagination share the control budget.':'Up to four suggestions, plus More. Slides reserve two places for paging.'} Emphasis requires useful, confident scores, a valid distribution and a clear margin. Ties and missing evidence have equal weight. The palette is always available with ⌘K.</p>
             <ul class="controls">${this.controls.map(x=>html`<li><b>${x.label}</b><code>${x.id}</code><span>${x.region} · ${x.variant} · ${x.size}${x.disabled?' · disabled':''}</span>${x.emphasis?html`<span>${x.emphasis}</span>`:nothing}${x.options.length?html`<details><summary>Picker options</summary>${x.options.join(' · ')}</details>`:nothing}</li>`)}</ul>
             ${c.selectedFormat?html`<p>Selected format: <code>${c.selectedFormat}</code>. Selection does not start generation.</p>`:nothing}
           </details>
@@ -90,7 +105,7 @@ export class StillDeveloperConsole extends LitElement {
             </details>`;
           })}</div>
           <details><summary>Creative questions · ${questions.filter(q=>q.asked).length} sent</summary>${questions.filter(q=>`${q.id} ${q.question.instructions}`.toLowerCase().includes(this.filter)).map(q=>html`<details><summary><code>${q.id}</code> · ${q.composition} · ${q.question.type} · ${numeric(q.score??q.noul)}${q.choice?` ${q.choice}`:''}</summary>${this.distribution(q)}</details>`)}</details>
-          <details><summary>Context coverage</summary><pre>${JSON.stringify({current:c.current.position,decision:trace?.position,context:trace?.context??c.current.context},null,2)}</pre></details>
+          ${this.coverage(trace,c.current)}
           <p class="muted">Session memory only. No creative events are added by this console.</p>
         </div>`;
     return content;
