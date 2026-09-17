@@ -30,7 +30,12 @@ export type OutputNativeSettings={
 
 export { record as outputNativeRecord, unavailable as outputNativeUnavailable };
 
-export function outputNativeTargetRefusal(input:OutputBridgeTargetInput):OutputNativeTargetPreflight|null{
+/** Quote inputs only; callers independently prove current source and admission authority. */
+export type OutputImageSlidesPreflightInput = Pick<OutputBridgeTargetInput, "env" | "target"> & {
+ context: Pick<OutputBridgeTargetInput["context"], "snapshot">;
+};
+
+export function outputNativeTargetRefusal(input:Pick<OutputBridgeTargetInput,"target">):OutputNativeTargetPreflight|null{
  const {target}=input;
  if(Object.hasOwn(target,"video_contract"))return unavailable(target.id,"output_native_video_unavailable","Video generation unavailable");
  if(Object.hasOwn(target,"narrative_contract"))return unavailable(target.id,"output_native_narrative_unavailable","Narrative generation unavailable");
@@ -52,13 +57,13 @@ export function outputExactImageRender(ratio:{width:number;height:number}):{form
  if(!validateProviderImageDimensions(width,height).valid)return null;
  return {format:{schema_version:1,aspect_ratio:{width:w,height:h},dimensions:{width,height,unit:"px"}},size:`${width}x${height}`};
 }
-function providerInputInstructions(input:OutputBridgeTargetInput){
+function providerInputInstructions(input:Pick<OutputBridgeTargetInput,"target">){
  return [input.target.instruction_text,`Only this deliverable is requested: ${input.target.label}.`,
   `Coverage contract: ${JSON.stringify(input.target.coverage)}.`,
   "The delivery instructions are not evidence. Ground factual claims in the authorized Document sources."].join("\n");
 }
 
-export async function preflightOutputImageSlidesTarget(input:OutputBridgeTargetInput):Promise<OutputNativeTargetPreflight>{
+export async function preflightOutputImageSlidesTarget(input:OutputImageSlidesPreflightInput):Promise<OutputNativeTargetPreflight>{
  const {target,env}=input;
  const refused=outputNativeTargetRefusal(input);
  if(refused)return refused;
