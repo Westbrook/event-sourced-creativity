@@ -2,6 +2,7 @@ import type { WorkerEnv } from "./runtime.ts";
 import { OutputConflictError, outputAssertionStatements, outputScopeAuthority, type OutputScope, type OutputSqlAssertion } from "./output-command-core.ts";
 import { markOutputSchemaReady, outputSchemaIsReady } from "./output-schema-state.ts";
 import { OUTPUT_REQUIREMENTS_SCHEMA, upgradeOutputRequirementsSchema } from "./output-requirements-schema.ts";
+import type { OutputProviderFinancialCheckpoint } from "./output-provider-financial-checkpoint.ts";
 
 export { OutputConflictError, outputAssertionStatements, outputScopeAuthority, retainedOutputBodyAssertions, rememberOutputPrivateBody, resetRetainedOutputPrivateBodies, inheritRetainedOutputPrivateBodies, outputCommandReceiptAssertion, readOutputCommand, commitOutputCommand } from "./output-command-core.ts";
 export type { OutputSqlValue, OutputSqlAssertion, OutputScope, OutputCommandPermission, OutputCommandReceipt, OutputCommandWrite } from "./output-command-core.ts";
@@ -112,12 +113,23 @@ export async function settleOutputProviderCall(env: WorkerEnv, input: {
   status: "settled" | "uncertain" | "rejected"; providerResponseId?: string;
   /** HTTP reconciliation supplies current caller/job authority; provider observers omit it. */
   assertions?: OutputSqlAssertion[];
+  /** Internal source-free observation; committed atomically with this receipt. */
+  financialCheckpoint?: OutputProviderFinancialCheckpoint;
 }) {
   if (input.usedMicrousd !== null && (!Number.isSafeInteger(input.usedMicrousd) || input.usedMicrousd < 0)) throw new Error("invalid_provider_cost");
   if (input.status === "settled" && input.usedMicrousd === null || input.status === "uncertain" && input.usedMicrousd !== null || input.status === "rejected" && input.usedMicrousd !== 0) throw new Error("invalid_provider_settlement");
+  if (input.financialCheckpoint) {
+    const { binding } = input.financialCheckpoint, { receipt } = binding;
+    const status = receipt.status === "rejected" ? "rejected" : receipt.status === "completed" && receipt.costMicrousd !== undefined ? "settled" : "uncertain";
+    const cost = status === "rejected" ? 0 : status === "settled" ? receipt.costMicrousd : null;
+    if (binding.scopeKey !== input.scopeKey || binding.slotId !== input.slotId || binding.callKey !== input.callKey
+      || receipt.clientRequestId !== input.clientRequestId || receipt.providerRequestId !== input.providerResponseId
+      || status !== input.status || cost !== input.usedMicrousd) throw new Error("provider_observation_binding_mismatch");
+  }
   const read = async () => {
-    const statement = env.DB.prepare("SELECT used_microusd,status,provider_response_id FROM output_provider_calls WHERE scope_key=? AND slot_id=? AND call_key=? AND client_request_id=?")
-      .bind(input.scopeKey, input.slotId, input.callKey, input.clientRequestId);
+    const proof = input.financialCheckpoint?.matches;
+    const statement = env.DB.prepare(`SELECT used_microusd,status,provider_response_id,(${proof?.sql ?? "1"}) AS checkpoint_matches FROM output_provider_calls WHERE scope_key=? AND slot_id=? AND call_key=? AND client_request_id=?`)
+      .bind(...(proof?.bindings ?? []), input.scopeKey, input.slotId, input.callKey, input.clientRequestId);
     if (!input.assertions?.length) return statement.first<Record<string, unknown>>();
     try {
       // A denied HTTP write cannot turn into an unauthorized canonical-receipt
@@ -134,10 +146,18 @@ export async function settleOutputProviderCall(env: WorkerEnv, input: {
   const now = new Date().toISOString();
   try { await env.DB.batch([
     ...(input.assertions ?? []).flatMap((assertion) => outputAssertionStatements(env, assertion)),
-    env.DB.prepare(`UPDATE output_provider_calls SET used_microusd=?,status=?,provider_response_id=?,settled_at=?
-      WHERE scope_key=? AND slot_id=? AND call_key=? AND client_request_id=? AND status IN('pending','uncertain')`)
-      .bind(input.usedMicrousd, input.status, input.providerResponseId ?? null, input.status === "uncertain" ? null : now, input.scopeKey, input.slotId, input.callKey, input.clientRequestId),
+    // Once acceptance identifies an external request, every later observation
+    // belongs to that request. An omitted ID cannot erase it, and neither a
+    // different ID nor a rejection can replace accepted-request custody.
+    env.DB.prepare(`UPDATE output_provider_calls SET used_microusd=?,status=?,provider_response_id=COALESCE(provider_response_id,?),settled_at=?
+      WHERE scope_key=? AND slot_id=? AND call_key=? AND client_request_id=? AND status IN('pending','uncertain')
+        AND (provider_response_id IS NULL OR ? IS NULL OR provider_response_id=?)
+        AND (?<>'rejected' OR provider_response_id IS NULL)`)
+      .bind(input.usedMicrousd, input.status, input.providerResponseId ?? null, input.status === "uncertain" ? null : now, input.scopeKey, input.slotId, input.callKey, input.clientRequestId,
+        input.providerResponseId ?? null, input.providerResponseId ?? null, input.status),
     ...outputAssertionStatements(env, { sql: "changes()=1" }),
+    ...(input.financialCheckpoint ? [input.financialCheckpoint.write, ...outputAssertionStatements(env, { sql: "changes()=1" }),
+      ...outputAssertionStatements(env, input.financialCheckpoint.matches)] : []),
     env.DB.prepare(`UPDATE output_execution_grants SET status='exceeded' WHERE scope_key=? AND grant_id=(SELECT grant_id FROM output_operation_slots WHERE scope_key=? AND slot_id=?)
       AND (EXISTS(SELECT 1 FROM output_operation_slots child WHERE child.scope_key=output_execution_grants.scope_key AND child.grant_id=output_execution_grants.grant_id
         AND (SELECT COALESCE(SUM(COALESCE(calls.used_microusd,calls.reserved_microusd)),0) FROM output_provider_calls calls WHERE calls.scope_key=child.scope_key AND calls.slot_id=child.slot_id)>child.maximum_microusd)
@@ -148,7 +168,10 @@ export async function settleOutputProviderCall(env: WorkerEnv, input: {
     // Attempt the guarded write first. A concurrent callback or lost D1
     // acknowledgement is successful only when the exact canonical receipt agrees.
     const committed = await read();
-    if (committed && committed.status === input.status && committed.used_microusd === input.usedMicrousd && committed.provider_response_id === (input.providerResponseId ?? null)) return { replayed: true };
+    if (committed && committed.status === input.status && committed.used_microusd === input.usedMicrousd
+      && (input.providerResponseId === undefined || committed.provider_response_id === input.providerResponseId)
+      && Number(committed.checkpoint_matches) === 1) return { replayed: true };
+    if (committed?.provider_response_id && (input.status === "rejected" || input.providerResponseId !== undefined && committed.provider_response_id !== input.providerResponseId)) throw new OutputConflictError("provider_settlement_conflict");
     if (committed && ["settled", "rejected"].includes(String(committed.status))) throw new OutputConflictError("provider_settlement_conflict");
     if (!committed && String(error).includes("constraint failed")) throw new OutputConflictError("output_provider_call_missing", 404);
     throw error;
