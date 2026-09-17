@@ -21,8 +21,8 @@ export class ApiError extends Error {
   constructor(status: number, body: Record<string, unknown>) { super(String(body.message ?? body.error ?? 'The request could not be completed.').replaceAll('_', ' ')); this.status = status; this.body = body; }
 }
 const scope = (s: Session | null) => s ? [s.user.userId, s.projectContext?.projectAccessId ?? 'personal', s.permissionEpoch ?? '', JSON.stringify(s.impersonation ?? null)].join(':') : '';
-export async function api<T>(path: string, body?: unknown, method = body === undefined ? 'GET' : 'POST'): Promise<T> {
-  const controller = method === 'GET' ? new AbortController() : null;
+export async function api<T>(path: string, body?: unknown, method = body === undefined ? 'GET' : 'POST', timeoutMs?:number): Promise<T> {
+  const controller = method === 'GET' || timeoutMs ? new AbortController() : null;
   let timer: ReturnType<typeof setTimeout> | undefined;
   const read = async () => {
     const response = await fetch(path, { method, credentials: 'same-origin', ...(controller ? {signal:controller.signal} : {}), headers: body === undefined ? {} : { 'content-type': 'application/json' }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
@@ -34,7 +34,7 @@ export async function api<T>(path: string, body?: unknown, method = body === und
   if (!controller) return read();
   try {
     return await Promise.race([read(), new Promise<never>((_, reject) => {
-      timer = setTimeout(() => { reject(new Error('The server took too long to respond. Try again.')); controller.abort(); }, 30_000);
+      timer = setTimeout(() => { reject(new Error('The server took too long to respond. Try again.')); controller.abort(); }, timeoutMs??30_000);
     })]);
   } finally { clearTimeout(timer); }
 }

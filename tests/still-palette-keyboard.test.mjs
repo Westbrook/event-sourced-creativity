@@ -8,7 +8,7 @@ import ts from 'typescript';
 const source=ts.createSourceFile('app.ts',fs.readFileSync(new URL('../src/still/app.ts',import.meta.url),'utf8'),ts.ScriptTarget.Latest,true);
 const app=source.statements.find(n=>ts.isClassDeclaration(n)&&n.name?.text==='StillApp');
 function fixture(){
-  const calls=[],host={paletteOpen:false,paletteQuery:'未確定',paletteIndex:0,desktop:{matches:true},candidates:()=>[],updateComplete:Promise.resolve(),querySelector:()=>null,changed:()=>calls.push('changed'),closeFinder:()=>calls.push('close'),openFinder:()=>calls.push('open'),openFoundAction:id=>calls.push(id),findAction:()=>calls.push('find')};
+  const calls=[],host={paletteOpen:false,paletteQuery:'未確定',paletteIndex:0,desktop:{matches:true},candidates:()=>[],paletteOptions:()=>[{id:"one"},{id:"two"}],updateComplete:Promise.resolve(),querySelector:()=>null,changed:()=>calls.push('changed'),closeFinder:()=>calls.push('close'),openFinder:()=>calls.push('open'),openFoundAction:id=>calls.push(id),findAction:()=>calls.push('find')};
   for(const name of ['paletteKeys','paletteShortcut']){
     const member=app.members.find(n=>n.name?.getText(source)===name);
     const js=ts.transpileModule(`const handler=${member.initializer.getText(source)};`,{compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText;

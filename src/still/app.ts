@@ -1,3 +1,4 @@
+import type { PaletteFeedback } from './palette-feedback.ts';
 import { actionLimit, type ExperimentResult } from './decision-lab.ts';
 import './palette-elements.js';
 import { localHistoryEvidence } from './history.ts';
@@ -80,6 +81,11 @@ export class StillApp extends LitElement {
   private paletteIndex=0;
   private paletteBusy=false;
   private paletteTicket=0;
+  private paletteRefreshing=false;
+  private paletteTouched=false;
+  private paletteFeedback:PaletteFeedback|undefined;
+  private paletteOrder:{rankedIds:string[];passedOverIds:string[]}={rankedIds:[],passedOverIds:[]};
+  private toolbarSeen:string[]=[];
   private finderInferred=false;
   private finderMessage='';
   private decisionSource = 'fallback';
@@ -145,8 +151,8 @@ export class StillApp extends LitElement {
     const inspector=this.querySelector<StillDeveloperConsole>('still-developer-console');
     if(inspector){
       if(this.developerScope!==this.diagnosticScope()){this.developerApplied=undefined;this.developerReceived=undefined;this.developerScope=this.diagnosticScope();}
-      inspector.context={view:this.client.position.view,mode:this.mode,head:this.client.head,page:this.page,actionLimit:this.pageActionLimit,more:this.moreOpen,paletteOpen:this.paletteOpen,selectedFormat:this.generation?.format??'',current:this.localDiagnostics('Current eligibility')};
-      inspector.applied=this.developerApplied;inspector.received=this.developerReceived;inspector.pending=this.developerPending||this.paletteBusy;
+      inspector.context={view:this.client.position.view,mode:this.mode,head:this.client.head,page:this.page,actionLimit:this.pageActionLimit,more:this.moreOpen,paletteOpen:this.paletteOpen,paletteFeedback:this.paletteFeedback,paletteOrder:this.paletteOrder,selectedFormat:this.generation?.format??'',current:this.localDiagnostics('Current eligibility')};
+      inspector.applied=this.developerApplied;inspector.received=this.developerReceived;inspector.pending=this.developerPending||this.paletteBusy||this.paletteRefreshing;
       inspector.scope=this.diagnosticScope();
     }
   }
@@ -155,7 +161,7 @@ export class StillApp extends LitElement {
   private localDiagnostics(reason:string, formats=false){return decisionDiagnostics(this.client.projection,{...this.client.position,...(formats?{view:'choose-format'}:{})},this.client.abilities,{head:this.client.head,source:'fallback',reason,localEvents:localHistoryEvidence(this.client.events),artifactKind:this.client.projection.artifacts.find(a=>a.id===this.client.position.outputId)?.kind});}
   private recordDecision(result:DecisionResponse,disposition:string,scope:string){
     if(!this.developer||this.disposed||scope!==this.diagnosticScope())return;
-    this.developerReceived={at:new Date().toLocaleTimeString(),disposition,trace:result.diagnostics,source:result.source,reason:result.reason,recommended:result.formats?.length?result.formats:result.actions?.map(a=>a.id)??[]};
+    this.developerReceived={at:new Date().toLocaleTimeString(),disposition,trace:result.diagnostics,source:result.source,reason:result.reason,recommended:result.paletteActions?.map(a=>a.id)??(result.formats?.length?result.formats:result.actions?.map(a=>a.id)??[])};
     if(disposition==='Applied')this.developerApplied=result.diagnostics;
     this.changed();
   }
@@ -242,7 +248,7 @@ export class StillApp extends LitElement {
     }
     this.activeAddress=url;
   }
-  private resetStep(){this.moreOpen=false;this.paletteOpen=false;++this.paletteTicket;this.dockTouched=false;this.useInTarget='';this.emphasis={};this.formatEmphasis={};++this.decisionTicket;clearTimeout(this.decisionTimer);this.mode='';this.routeMode='';this.bodyDraft='';this.titleDraft='';this.pendingBlock=null;this.generation=null;this.generationGate=null;this.formatSuggestions=[];this.formatTouched=false;this.developerPending=false;}
+  private resetStep(){this.toolbarSeen=[];this.paletteFeedback=undefined;this.paletteRefreshing=false;this.moreOpen=false;this.paletteOpen=false;++this.paletteTicket;this.dockTouched=false;this.useInTarget='';this.emphasis={};this.formatEmphasis={};++this.decisionTicket;clearTimeout(this.decisionTimer);this.mode='';this.routeMode='';this.bodyDraft='';this.titleDraft='';this.pendingBlock=null;this.generation=null;this.generationGate=null;this.formatSuggestions=[];this.formatTouched=false;this.developerPending=false;}
   private navigate(view: string, ids: Partial<StillClient['position']> = {}) {
     this.resetStep();this.page = 0; this.itemIndex = 0; this.error = '';this.routeError='';this.notice='';
     const changedDocument = ids.documentId !== undefined && ids.documentId !== this.client.position.documentId || ids.projectId !== undefined && ids.projectId !== this.client.position.projectId;
@@ -325,23 +331,44 @@ export class StillApp extends LitElement {
   private paletteShortcut=(event:KeyboardEvent)=>{
     if(event.isComposing||event.keyCode===229)return;
     if((event.metaKey||event.ctrlKey)&&!event.altKey&&event.key.toLowerCase()==='k'){
-      event.preventDefault();if(event.repeat)return;if(this.paletteOpen)this.closeFinder();else this.openFinder();
+      event.preventDefault();if(event.repeat)return;if(this.paletteOpen)this.closeFinder();else this.openFinder('shortcut');
     }
   };
-  private openMore(){this.moreOpen=true;this.dockTouched=true;this.client.position.recentActions=[...this.client.position.recentActions,'ui:more'].slice(-12);this.changed();void this.updateComplete.then(()=>this.querySelector<HTMLElement>('.action-dock en-button')?.focus());}
-  private openFinder(){
+  private openMore(){this.toolbarSeen=this.visibleToolbarActions();this.moreOpen=true;this.dockTouched=true;this.client.position.recentActions=[...this.client.position.recentActions,'ui:more'].slice(-12);this.changed();void this.updateComplete.then(()=>this.querySelector<HTMLElement>('.action-dock en-button')?.focus());}
+  private visibleToolbarActions(){return [...this.querySelectorAll<HTMLElement>('.action-dock [data-action-id]')].map(e=>e.dataset.actionId!).filter(id=>this.candidates().some(a=>a.id===id));}
+  private paletteOptions(){return paletteActions(this.paletteQuery,this.candidates(),this.paletteOrder).filter(a=>this.desktop.matches||a.id!=='ui:developer');}
+  private openFinder(entry:PaletteFeedback['entry']='direct'){
+    const visible=this.visibleToolbarActions();
+    this.paletteFeedback={entry,surface:this.mode?'workflow':this.moreOpen?'more':'toolbar',toolbar:this.moreOpen?this.toolbarSeen:visible,more:this.moreOpen?visible:[]};
+    this.paletteOrder={rankedIds:[...this.suggestions,...this.rankedActions].map(a=>a.id),passedOverIds:[...this.paletteFeedback.toolbar,...this.paletteFeedback.more]};
+    this.paletteTouched=false;
     this.paletteOpen=true;this.paletteQuery='';this.paletteChoice='';this.paletteIndex=0;this.paletteBusy=false;++this.paletteTicket;this.finderInferred=false;this.finderMessage='';
     this.dockTouched=true;this.client.position.recentActions=[...this.client.position.recentActions,'ui:palette'].slice(-12);this.changed();
     void this.updateComplete.then(()=>this.querySelector<HTMLInputElement>('.palette-query')?.focus());
+    void this.refreshPalette();
   }
-  private closeFinder(){this.paletteOpen=false;this.paletteBusy=false;++this.paletteTicket;if(this.routeMode==='actions'){this.routeMode=this.mode;this.writeRoute(true);}this.changed();}
+  private async refreshPalette(){
+    if(this.loading||this.startupFailed||!this.client.session?.policy.accepted)return;
+    const snapshot=JSON.stringify(this.client.position),head=this.client.head,scope=this.interactionScope(),diagnosticScope=this.diagnosticScope(),ticket=this.paletteTicket;
+    this.paletteRefreshing=true;if(this.developer)this.developerReceived=undefined;this.changed();
+    try{
+      const result=await api<DecisionResponse>('/api/still/decision',{...this.client.position,palette:this.paletteFeedback,...(this.developer?{developer:true}:{})},'POST',1800);
+      const stale=ticket!==this.paletteTicket||!this.paletteOpen||this.paletteTouched||scope!==this.interactionScope()||snapshot!==JSON.stringify(this.client.position)||head!==this.client.head||result.head!==head||this.disposed;
+      const applied=!stale&&result.policy===POLICY_VERSION&&result.source==='jev'&&!!result.paletteActions?.length;
+      this.recordDecision(result,stale?'Ignored: palette changed':applied?'Palette order applied':'Kept local palette order',diagnosticScope);
+      if(applied)this.paletteOrder={rankedIds:result.paletteActions!.map(a=>a.id),passedOverIds:[]};
+    }catch(error){
+      if(ticket===this.paletteTicket)this.recordDecision({source:'fallback',reason:error instanceof ApiError?`HTTP ${error.status}`:'Palette refresh exceeded budget or was unavailable',head,policy:POLICY_VERSION},'Kept local palette order',diagnosticScope);
+    }finally{if(ticket===this.paletteTicket){this.paletteRefreshing=false;this.changed();}}
+  }
+  private closeFinder(){this.paletteRefreshing=false;this.paletteOpen=false;this.paletteBusy=false;++this.paletteTicket;if(this.routeMode==='actions'){this.routeMode=this.mode;this.writeRoute(true);}this.changed();}
   private async findAction(){
     const query=this.paletteQuery.trim(),candidates=this.candidates();if(!query||this.paletteBusy||!this.client.session?.policy.accepted)return;
     const explicit=explicitAction(query,candidates);this.finderInferred=true;this.finderMessage='';
     if(explicit){this.paletteChoice=explicit;this.changed();return;}
     const snapshot=JSON.stringify(this.client.position),head=this.client.head,scope=this.interactionScope(),diagnosticScope=this.diagnosticScope(),ticket=++this.paletteTicket;
-    this.paletteBusy=true;if(this.developer)this.developerReceived=undefined;this.changed();
-    try{const result=await api<DecisionResponse>('/api/still/decision',{...this.client.position,view:'find-action',intent:query,...(this.developer?{developer:true}:{})});
+    this.paletteRefreshing=false;this.paletteBusy=true;if(this.developer)this.developerReceived=undefined;this.changed();
+    try{const result=await api<DecisionResponse>('/api/still/decision',{...this.client.position,view:'find-action',intent:query,palette:this.paletteFeedback,...(this.developer?{developer:true}:{})});
       const stale=result.policy!==POLICY_VERSION||result.head!==head||ticket!==this.paletteTicket||!this.paletteOpen||query!==this.paletteQuery.trim()||scope!==this.interactionScope()||snapshot!==JSON.stringify(this.client.position)||head!==this.client.head||this.disposed;
       this.recordDecision(result,stale?'Ignored: palette changed':'Palette suggestion',diagnosticScope);if(stale)return;
       this.paletteChoice=candidates.some(a=>a.id===result.resolvedAction)?result.resolvedAction!:'';this.finderMessage=this.paletteChoice?'':'Choose an action.';
@@ -360,20 +387,21 @@ export class StillApp extends LitElement {
     this.choose(entry);
   }
   private paletteKeys=(event:KeyboardEvent)=>{
+    this.paletteTouched=true;
     if(event.isComposing||event.keyCode===229){event.stopPropagation();return;}
     if(event.key==='Escape'){event.preventDefault();event.stopPropagation();this.closeFinder();return;}
-    const options=paletteActions(this.paletteQuery,this.candidates()).filter(a=>this.desktop.matches||a.id!=='ui:developer');
+    const options=this.paletteOptions();
     if(['ArrowDown','ArrowUp','Home','End'].includes(event.key)&&options.length){event.preventDefault();this.paletteIndex=event.key==='Home'?0:event.key==='End'?options.length-1:(this.paletteIndex+(event.key==='ArrowDown'?1:-1)+options.length)%options.length;this.changed();void this.updateComplete.then(()=>this.querySelector('#palette-option-'+this.paletteIndex)?.scrollIntoView({block:'nearest'}));}
     if(event.key==='Enter'){event.preventDefault();if(options[this.paletteIndex])this.openFoundAction(options[this.paletteIndex].id,false);else void this.findAction();}
   };
   private renderPalette(){
-    const options=paletteActions(this.paletteQuery,this.candidates()).filter(a=>this.desktop.matches||a.id!=='ui:developer');
+    const options=this.paletteOptions();
     const chosen=this.candidates().find(a=>a.id===this.paletteChoice);
     return html`<en-dialog class="command-palette" label="Command palette" .open=${this.paletteOpen} closedby="any" @en-change=${(e:CustomEvent)=>{if(e.target===e.currentTarget&&e.detail.proposed===false)this.closeFinder();}}>
-      <input class="palette-query" autofocus type="text" autocomplete="off" spellcheck="false" role="combobox" aria-label="Find an action" aria-autocomplete="list" aria-expanded="true" aria-controls="palette-options" aria-activedescendant=${options[this.paletteIndex]?'palette-option-'+this.paletteIndex:nothing} placeholder="Search actions or describe a next step…" .value=${live(this.paletteQuery)} @keydown=${this.paletteKeys} @input=${(e:Event)=>{this.paletteQuery=(e.target as HTMLInputElement).value;this.paletteIndex=0;this.paletteChoice='';this.finderMessage='';this.paletteBusy=false;++this.paletteTicket;this.changed();}} />
+      <input class="palette-query" autofocus type="text" autocomplete="off" spellcheck="false" role="combobox" aria-label="Find an action" aria-autocomplete="list" aria-expanded="true" aria-controls="palette-options" aria-activedescendant=${options[this.paletteIndex]?'palette-option-'+this.paletteIndex:nothing} placeholder="Search actions or describe a next step…" .value=${live(this.paletteQuery)} @keydown=${this.paletteKeys} @input=${(e:Event)=>{this.paletteTouched=true;this.paletteRefreshing=false;this.paletteQuery=(e.target as HTMLInputElement).value;this.paletteIndex=0;this.paletteChoice='';this.finderMessage='';this.paletteBusy=false;++this.paletteTicket;this.changed();}} />
       ${this.finderMessage?html`<p role="status">${this.finderMessage}</p>`:nothing}
       ${chosen?html`<button class="palette-result" @click=${()=>this.openFoundAction()}>Open ${chosen.label}</button>`:nothing}
-      <div id="palette-options" role="listbox" aria-label="Actions" class="palette-options">${options.map((a,i)=>html`<button id=${'palette-option-'+i} class="palette-result" role="option" aria-selected=${i===this.paletteIndex} tabindex="-1" @click=${()=>this.openFoundAction(a.id,false)}>${a.label}</button>`)}</div>
+      <div id="palette-options" role="listbox" aria-label="Actions" class="palette-options" @pointermove=${()=>{this.paletteTouched=true;}} @pointerdown=${()=>{this.paletteTouched=true;}}>${options.map((a,i)=>html`<button id=${'palette-option-'+i} data-action-id=${a.id} class="palette-result" role="option" aria-selected=${i===this.paletteIndex} tabindex="-1" @click=${()=>this.openFoundAction(a.id,false)}>${a.label}</button>`)}</div>
       ${this.paletteQuery.trim()?html`<button class="palette-find" ?disabled=${this.paletteBusy} @click=${()=>void this.findAction()}>${this.paletteBusy?'Finding…':'Find a step with Jev'}</button>`:nothing}
       <span slot="footer" class="palette-hint">↑ ↓ Select · Enter Open · Esc Close</span>
     </en-dialog>`;
@@ -587,7 +615,7 @@ export class StillApp extends LitElement {
     if(slides)actions.unshift(this.button('Previous',()=>this.turnItem(this.itemIndex-1),false,this.itemIndex===0),this.button('Next',()=>this.turnItem(this.itemIndex+1),false,this.itemIndex>=a!.items.length-1));
     if(paging)actions.push(this.button('More results',()=>this.turnPage((this.page+1)*3>=count?0:this.page+1)));
     actions.push(this.button('More',()=>this.openMore(),false,false,'ui:more'));
-    if(this.moreOpen)actions=[...this.toolbarSuggestions(nextToolbarActions(this.rankedActions,visibleIds,eligible,limit-2)),this.button('Back',()=>{this.moreOpen=false;this.changed();void this.updateComplete.then(()=>this.querySelector<HTMLElement>('[data-action-id="ui:more"]')?.focus());}),this.button('Palette ⌘K',()=>this.openFinder(),false,false,'ui:palette')];
+    if(this.moreOpen)actions=[...this.toolbarSuggestions(nextToolbarActions(this.rankedActions,visibleIds,eligible,limit-2)),this.button('Back',()=>{this.moreOpen=false;this.changed();void this.updateComplete.then(()=>this.querySelector<HTMLElement>('[data-action-id="ui:more"]')?.focus());}),this.button('Palette ⌘K',()=>this.openFinder('more'),false,false,'ui:palette')];
     return html`<footer class="action-dock" @pointerenter=${()=>{this.dockTouched=true;}} @pointerdown=${()=>{this.dockTouched=true;}} @focusin=${()=>{this.dockTouched=true;}}><en-toolbar label="Your next step" keyboard-navigation="tab">${actions}</en-toolbar></footer>`;
   }
   render() {

@@ -1,9 +1,10 @@
+import { cleanPaletteFeedback } from '../src/still/palette-feedback.ts';
 import { actionLimit } from '../src/still/decision-lab.ts';
 import { handleEvents } from './events-api.ts';
 import { handleSession, requireConsent, requireUser } from './pilot-policy.ts';
 import type { WorkerEnv, WorkerExecutionContext } from './runtime.ts';
 import type { CreativeEvent } from '../src/model/events.ts';
-import { buildDecisionState, evaluateActions, POLICY_VERSION, questionsFor, rankFormats, selectActions, type Abilities, type Answer, type Position } from '../src/still/decisions.ts';
+import { ACTIONS, buildDecisionState, evaluateActions, POLICY_VERSION, questionsFor, rankFormats, selectActions, type Abilities, type Answer, type Position } from '../src/still/decisions.ts';
 import { compositionIndex, connectionEvidence, shouldEnrich, enrichmentQuestions, refineMenu, type MenuAdjustment } from '../src/still/assessments.ts';
 import { presentActions, type Emphasis } from '../src/still/presentation.ts';
 import { decisionDiagnostics, inspectAnswer, type DecisionPass, type DecisionExchange } from '../src/still/diagnostics.ts';
@@ -22,7 +23,9 @@ export async function handleStillDecision(request: Request, env: WorkerEnv, cont
   if (!input || typeof input !== 'object' || Array.isArray(input)) return reply({ error: 'invalid_position' }, 400);
   const clean = (key: string, max = 180) => typeof input[key] === 'string' ? String(input[key]).slice(0, max) : '';
   const position: Position = { actionLimit: actionLimit(input.actionLimit), projectId: clean('projectId'), documentId: clean('documentId'), blockId: clean('blockId'), outputId: clean('outputId'), view: clean('view', 40), itemIndex: Number.isSafeInteger(input.itemIndex) ? Math.max(0,Math.min(1000,Number(input.itemIndex))) : 0, intent: clean('intent', 2000), recentActions: Array.isArray(input.recentActions) ? input.recentActions.filter(x => typeof x === 'string').slice(-12).map(x => x.slice(0, 60)) : [] };
-  const rateKey = auth.user.userId;
+  position.palette=cleanPaletteFeedback(input.palette,ACTIONS.map(a=>a.id));
+  const palette=!!position.palette&&position.view!=='find-action';
+  const rateKey = auth.user.userId+(palette?':palette':'');
   const now = Date.now();
   if ((recentCalls.get(rateKey) ?? 0) > now - 1200) return reply({ error: 'decision_cooldown' }, 429);
   recentCalls.set(rateKey, now);
@@ -50,15 +53,16 @@ export async function handleStillDecision(request: Request, env: WorkerEnv, cont
   }
   const built = buildDecisionState(events, position, abilities, head, content);
   if (position.projectId && !built.projection.projects.some(p => p.id === position.projectId) || position.documentId && !built.projection.documents.some(d => d.id === position.documentId && !d.removed)) return reply({ error: 'selection_unavailable' }, 409);
-  const choosingFormat = position.view === 'choose-format', finding=position.view==='find-action';
+  if(position.palette){position.palette.toolbar=position.palette.toolbar.filter(id=>built.candidates.some(a=>a.id===id));position.palette.more=position.palette.more.filter(id=>built.candidates.some(a=>a.id===id));}
+  const choosingFormat = position.view === 'choose-format'&&!palette, finding=position.view==='find-action';
   const questions=questionsFor(built.candidates,position,built.state.selectedWork?.kind);
   const started=Date.now(),deadline=started+10_000;
-  const evidence=choosingFormat||finding||!env.JEV_API_KEY||!built.candidates.some(a=>a.id==='use-in')?{destinations:[],details:[],source:null}:connectionEvidence(events,position);
+  const evidence=palette||choosingFormat||finding||!env.JEV_API_KEY||!built.candidates.some(a=>a.id==='use-in')?{destinations:[],details:[],source:null}:connectionEvidence(events,position);
   const compositions=compositionIndex(questions),passes:DecisionPass[]=[];
   let asked=false,exchange:DecisionExchange|undefined,presentation:Record<string,Emphasis>={},adjustments:MenuAdjustment[]=[],recommended:string[]|undefined;
   const metrics=()=>({elapsedMs:Date.now()-started,providerCalls:passes.filter(p=>p.status!=='skipped').length,candidateCount:built.candidates.length,questionsAsked:passes.reduce((n,p)=>n+p.questions.filter(q=>q.asked).length,0),menuGroups:recommended?[...new Set(recommended.map(id=>built.candidates.find(a=>a.id===id)?.group))]:[],recentEscapeHatches:position.recentActions.filter(id=>id==='ui:more'||id==='ui:palette').length,destinationCandidates:evidence.destinations.length});
   const diagnostics = (source:string, reason?:string, answers?:Record<string,Answer>, model?:string, observedAnswers?:Record<string,Answer>) => input.developer===true ? {diagnostics:decisionDiagnostics(built.projection,position,abilities,{head,source,reason,answers,model,observedAnswers,asked,exchange,passes,presentation,adjustments,recommended,metrics:metrics(),artifactKind:built.state.selectedWork?.kind,coverage:built.state.history.coverage})} : {};
-  const fallback = (reason: string, observedAnswers?:Record<string,Answer>) => reply({ source: 'fallback', reason, policy: POLICY_VERSION, head, actions: choosingFormat||finding ? [] : selectActions(built.candidates, position), rankedActions: choosingFormat||finding ? [] : evaluateActions(built.candidates,position).ranked.map(a=>({id:a.id})), formats: [], candidateIds: built.candidates.map(a => a.id), ...diagnostics('fallback',reason,undefined,undefined,observedAnswers) });
+  const fallback = (reason: string, observedAnswers?:Record<string,Answer>) => reply({ source: 'fallback', reason, policy: POLICY_VERSION, head, actions: palette||choosingFormat||finding ? [] : selectActions(built.candidates, position), rankedActions: palette||choosingFormat||finding ? [] : evaluateActions(built.candidates,position).ranked.map(a=>({id:a.id})), formats: [], candidateIds: built.candidates.map(a => a.id), ...diagnostics('fallback',reason,undefined,undefined,observedAnswers) });
   if (!env.JEV_API_KEY) return fallback('not_configured');
   const callPass=async(id:string,label:string,state:unknown,askedQuestions:typeof questions,timeout:number,parentId?:string)=>{
     const body=JSON.stringify({model:'jev-latest',state,questions:askedQuestions});
@@ -80,7 +84,7 @@ export async function handleStillDecision(request: Request, env: WorkerEnv, cont
     }catch{pass.reason='unavailable';return {reason:pass.reason};}
     finally{pass.elapsedMs=Date.now()-at;pass.questions=Object.entries(askedQuestions).map(([id,question])=>({id,question,asked:true,...inspectAnswer(question,answers[id])}));}
   };
-  const first=await callPass('assessment','Creative assessment',{...built.state,compositions,connectionCandidates:evidence.destinations.map(d=>({...d,label:d.label.slice(0,120),project:d.project.slice(0,120),document:d.document.slice(0,120)})),compositionGuidance:'Questions in each composition supply distinct judgments, not independent votes on the same outcome. Missing evidence remains unknown. Code combines eligible results; suggestions never authorize actions.'},questions,6000);
+  const first=await callPass('assessment',palette?'Palette alternatives':'Creative assessment',{...built.state,compositions,connectionCandidates:evidence.destinations.map(d=>({...d,label:d.label.slice(0,120),project:d.project.slice(0,120),document:d.document.slice(0,120)})),compositionGuidance:'Questions in each composition supply distinct judgments, not independent votes on the same outcome. Missing evidence remains unknown. Code combines eligible results; suggestions never authorize actions.'},questions,palette?1200:6000);
   if(!first.answers)return fallback(first.reason??'unavailable');
   const answers=first.answers;
   if(finding){
@@ -90,6 +94,10 @@ export async function handleStillDecision(request: Request, env: WorkerEnv, cont
     return reply({source:'jev',model:first.model,policy:POLICY_VERSION,head,resolvedAction:resolved,actions:[],candidateIds:built.candidates.map(a=>a.id),...diagnostics('jev',resolved?undefined:'uncertain',answers,first.model)});
   }
   if(!built.candidates.some(a=>{if(a.id==='intent')return false;const x=answers[`${choosingFormat?'fit':'use'}_${a.id}`];return x?.type==='score'&&Number.isFinite(x.score)&&x.score!>=0&&x.score!<=3&&Number.isFinite(x.confidence)&&x.confidence!>=.12&&x.confidence!<=1;}))return fallback('uncertain',answers);
+  if(palette){
+    recommended=evaluateActions(built.candidates,position,answers).ranked.map(a=>a.id);
+    return reply({source:'jev',model:first.model,policy:POLICY_VERSION,head,paletteActions:recommended.map(id=>({id})),actions:[],candidateIds:built.candidates.map(a=>a.id),...diagnostics('jev',undefined,answers,first.model)});
+  }
   let actions=choosingFormat?[]:selectActions(built.candidates,position,answers);
   const formats=choosingFormat?rankFormats(built.candidates,answers):[];
   let target:typeof evidence.destinations[number]|undefined;

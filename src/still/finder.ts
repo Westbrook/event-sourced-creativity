@@ -20,9 +20,11 @@ export function explicitAction(query:string,candidates:Action[]):string{
 // An inferred action opens a view or review. It never performs a mutation/download.
 export function finderEntry(id:string){return ['lock','unlock','toggle-context'].includes(id)?'context':id==='export'?'view-result':id;}
 
-export function paletteActions(query:string,candidates:Action[]){
+export function paletteActions(query:string,candidates:Action[], ordering?:{rankedIds:string[];passedOverIds:string[]}){
   const q=query.trim().toLowerCase();
-  return [...candidates,...UTILITIES].filter(a=>!q||`${a.label} ${a.id}`.toLowerCase().includes(q)||(terms[a.id]??[]).some(term=>q.includes(term)));
+  const rank=(id:string)=>{const i=ordering?.rankedIds.indexOf(id)??-1;return i<0?Infinity:i;};
+  const passed=(id:string)=>Number(ordering?.passedOverIds.includes(id)??false);
+  return [...candidates,...UTILITIES].filter(a=>!q||`${a.label} ${a.id}`.toLowerCase().includes(q)||(terms[a.id]??[]).some(term=>q.includes(term))).sort((a,b)=>Number(q!==a.id&&q!==a.label.toLowerCase())-Number(q!==b.id&&q!==b.label.toLowerCase())||passed(a.id)-passed(b.id)||(rank(a.id)-rank(b.id)||0));
 }
 export function nextToolbarActions(ranked:Action[],visibleIds:string[],eligible:Action[],count=3){
   const allowed=new Set(eligible.map(a=>a.id)),seen=new Set(visibleIds);
