@@ -23,7 +23,7 @@ const actor='dev-local-creative',stream=`creative:${actor}`,path='/api/output-re
 const post=(url,body)=>new Request('http://localhost'+url,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)});
 const snapshot=f=>({rows:f.sqlite.prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name").all().map(({name})=>[name,f.sqlite.prepare(`SELECT * FROM "${name.replaceAll('"','""')}" ORDER BY rowid`).all()]),
  changes:f.sqlite.prepare('SELECT total_changes() AS n').get().n,schema:f.sqlite.prepare('SELECT type,name,tbl_name,sql FROM sqlite_master ORDER BY type,name').all()});
-async function fixture(t){
+async function fixture(t,{signal}={}){
  const f=outputTestDatabase();t.after(()=>f.sqlite.close());
  for(const operation of ['get','head','put','delete','list'])f.env.MEDIA[operation]=()=>{mediaAccess++;throw Error('No media access');};
  f.env.ASSETS.fetch=()=>{assetsAccess++;throw Error('No asset fetch');};
@@ -47,7 +47,7 @@ async function fixture(t){
  const command={documentId:row.document_id,action:'authorize',expectedRevision:ready.outputRevision??`output:${f.sqlite.prepare('SELECT MAX(sequence) AS n FROM events WHERE stream_id=?').get(stream).n}`,
   clientMutationId:'scene-sponsor-qualification',preflightId:ready.preflight.id,termsDigest:ready.preflight.termsDigest,maximumMicrousd:ready.preflight.maximumMicrousd,
   explicitAuthorization:true,sceneCostConsent:{...ready.sceneCostPreview,confirmed:true}}; // Explicit synthetic actor action; collector does not create it.
- const request=post(path,command),trusted=await loadOutputTrustedContext(request,f.env,row.document_id,'request');assert.ok(!(trusted instanceof Response));
+ const request=new Request(post(path,command),{signal}),trusted=await loadOutputTrustedContext(request,f.env,row.document_id,'request');assert.ok(!(trusted instanceof Response));
  command.expectedRevision=`output:${trusted.ownerHead}`;
  const confirmed=await outputExperienceCommands.readConfirmedPlan(trusted,ready.preflight.planRevisionId);
  // Separate native producer setup AFTER persisted preflight bookkeeping. This
@@ -211,4 +211,56 @@ test('current provider configuration and local evidence limits are independently
  for(const config of [{OPENAI_API_KEY:undefined},{OPENAI_MODEL:'other'}]){Object.assign(f.env,config);await assert.rejects(describe(f),/sponsor_scene_provider_unavailable/);Object.assign(f.env,{OPENAI_API_KEY:key,OPENAI_MODEL:model});}
  const trusted={...f.trusted,sourceAssertions:[...f.trusted.sourceAssertions,...Array.from({length:128},()=>({sql:'1',bindings:[]}))]};
  await assert.rejects(evidence.describeSponsorSceneAdmission(trusted,f.command,f.native),/sponsor_scene_evidence_limit/);assert.deepEqual(snapshot(f),before);
+});
+
+
+test('Scene cancellation after real final batch refuses inert evidence',async t=>{
+ const controller=new AbortController(),f=await fixture(t,{signal:controller.signal}),before=snapshot(f),batch=f.DB.batch.bind(f.DB);let reached=false;
+ f.DB.batch=async statements=>{const results=await batch(statements);reached=true;controller.abort();return results;};
+ const result=await describe(f).then(value=>({value}),error=>({error}));
+ assert.equal(reached,true);assert.equal(f.request.signal.aborted,true);assert.deepEqual(snapshot(f),before);
+ t.diagnostic(JSON.stringify({reachedRealBatch:reached,aborted:f.request.signal.aborted,returnedInertEvidence:Boolean(result.value),unchangedRowsSchemaTotalChanges:true,egress,mediaAccess,assetsAccess}));
+ assert.ok(result.error,'aborted original request must not return inert evidence');
+});
+
+
+test('Scene cancellation template API refuses after real final batch',async t=>{
+ const controller=new AbortController(),f=await fixture(t,{signal:controller.signal}),description=await describe(f),before=snapshot(f),batch=f.DB.batch.bind(f.DB);let reached=false;
+ f.DB.batch=async statements=>{const results=await batch(statements);reached=true;controller.abort();return results;};
+ await assert.rejects(evidence.readSponsorSceneTemplateEvidence(f.trusted,f.command,description.recipe,f.native),/sponsor_authority_changed/);
+ assert.equal(reached,true);assert.deepEqual(snapshot(f),before);
+});
+
+test('Scene lifetime normal signal preserves both inert public return shapes',async t=>{
+ const controller=new AbortController(),f=await fixture(t,{signal:controller.signal}),before=snapshot(f),description=await describe(f);
+ const actual=await evidence.readSponsorSceneTemplateEvidence(f.trusted,f.command,description.recipe,f.native);
+ assert.equal(controller.signal.aborted,false);assert.deepEqual(Object.keys(actual).sort(),['offered','recipe']);
+ assert.equal(Object.hasOwn(description,'assertCurrent'),false);assert.equal(Object.hasOwn(actual,'assertCurrent'),false);
+ assert.ok(Object.isFrozen(description));assert.ok(Object.isFrozen(actual));assert.deepEqual(snapshot(f),before);
+});
+
+for(const fault of ['entry-abort','principal-abort','authentication-abort','quote-abort','principal-header','authentication-principal','quote-environment','principal-signal'])
+test(`Scene lifetime ${fault} stops before the next owned read`,async t=>{
+ const controller=new AbortController(),f=await fixture(t,{signal:controller.signal}),before=snapshot(f),prepare=f.DB.prepare.bind(f.DB),batch=f.DB.batch.bind(f.DB);
+ let reads=0,batches=0,prepared=0;
+ const boundary=fault==='entry-abort'?0:fault.startsWith('principal-')?1:fault.startsWith('authentication-')?2:3;
+ const wrap=statement=>new Proxy(statement,{get(target,key){
+  if(key==='bind')return (...bindings)=>wrap(target.bind(...bindings));
+  if(key==='first')return async()=>{const row=await target.first();reads++;
+   if(reads===boundary){
+    if(fault.endsWith('-abort'))controller.abort();
+    if(fault==='principal-header')f.request.headers.set('oai-authenticated-user-id','changed');
+    if(fault==='authentication-principal')f.trusted.principal={...f.trusted.principal};
+    if(fault==='quote-environment')f.trusted.env={...f.env};
+    if(fault==='principal-signal')Object.defineProperty(f.request,'signal',{value:new AbortController().signal});
+   }
+   return row;
+  };
+  const value=Reflect.get(target,key);return typeof value==='function'?value.bind(target):value;
+ }});
+ f.DB.prepare=sql=>{prepared++;return wrap(prepare(sql));};f.DB.batch=async statements=>{batches++;return batch(statements);};
+ if(fault==='entry-abort')controller.abort();
+ await assert.rejects(describe(f),/sponsor_authority_changed/);
+ assert.equal(reads,boundary);assert.equal(prepared,boundary);assert.equal(batches,0);assert.deepEqual(snapshot(f),before);
+ t.diagnostic(JSON.stringify({fault,actualReads:reads,nextReadPrevented:true,unchangedRowsSchemaTotalChanges:true,egress,mediaAccess,assetsAccess}));
 });

@@ -57,23 +57,28 @@ async function readNative(trusted: OutputTrustedContext, commandInput: Record<st
     || trusted.principal.billingUserId && trusted.principal.billingUserId !== trusted.principal.userId || trusted.env.FORMA_PILOT_COHORT_ID?.trim()
     || !trusted.context || trusted.sourceProblems.length || !trusted.sourcePrivateCaptured) return fail("sponsor_scope_unsupported");
   if (!trusted.env.OPENAI_API_KEY || (trusted.env.OPENAI_MODEL ?? OUTPUT_SCENE_MODEL) !== OUTPUT_SCENE_MODEL) return fail("sponsor_scene_provider_unavailable");
-  const request = trusted.request, env = trusted.env, database = env.DB, originalPrincipal = trusted.principal;
+  const request = trusted.request, signal = request.signal, env = trusted.env, database = env.DB, originalPrincipal = trusted.principal;
   const source = () => canonicalJson({ scope: trusted.scope, principal: trusted.principal,
     request: { url: request.url, method: request.method, headers: [...request.headers.entries()] }, projectContext: Boolean(trusted.projectContext),
     sourcePrivateCaptured: trusted.sourcePrivateCaptured, sourceProblems: trusted.sourceProblems,
     configuration: { model: env.OPENAI_MODEL ?? null, providerKey: env.OPENAI_API_KEY ?? null, cohort: env.FORMA_PILOT_COHORT_ID ?? null }, ownerHead: trusted.ownerHead,
     sourceDigest: trusted.sourceDigest, requirementsDigest: trusted.requirementsDigest, context: trusted.context, assertions: trusted.sourceAssertions });
-  const captured = source(), current = () => trusted.request === request && trusted.env === env && env.DB === database && trusted.principal === originalPrincipal && source() === captured;
+  const captured = source(), current = () => !signal.aborted && request.signal === signal && trusted.request === request && trusted.env === env && env.DB === database && trusted.principal === originalPrincipal && source() === captured;
+  const requireCurrent = () => { if (!current()) return fail("sponsor_authority_changed"); };
+  requireCurrent();
   const principalRow = await database.prepare(PRINCIPAL_WITH_ACCESS_SQL).bind(trusted.scope.actorUserId).first<Record<string, unknown>>();
+  requireCurrent();
   if (!principalRow) return fail("sponsor_principal_changed");
   const auth = await readExistingPrincipalRequest(request, env, "creator", { account: "principal" });
-  if (!current() || "kind" in auth || auth.response || !auth.user || auth.user.userId !== trusted.scope.actorUserId
+  requireCurrent();
+  if ("kind" in auth || auth.response || !auth.user || auth.user.userId !== trusted.scope.actorUserId
     || auth.user.consentVersion !== POLICY_VERSION || auth.user.fictional || auth.user.projectExecution
     || canonicalJson(auth.user) !== canonicalJson(trusted.principal)) return fail("sponsor_principal_changed");
   const principal = auth.user;
   const bindings = [trusted.scope.key, String(command.preflightId), principal.userId, principal.userId, trusted.scope.projectId,
     trusted.scope.documentId, trusted.sourceDigest, trusted.requirementsDigest];
   const row = await database.prepare(quoteSql).bind(...bindings).first<Quote>();
+  requireCurrent();
   if (!row || row.terms_digest !== command.termsDigest || !Number.isFinite(Date.parse(row.expires_at)) || Date.parse(row.expires_at) <= Date.now()) return fail("sponsor_native_terms_changed");
   if (row.private_json.length > 524288 || row.plan_json.length > 524288) return fail("sponsor_recipe_unsupported");
   const body = captureSponsorSceneJson(JSON.parse(row.private_json)), planBody = captureSponsorSceneJson(JSON.parse(row.plan_json));
@@ -123,8 +128,15 @@ async function readNative(trusted: OutputTrustedContext, commandInput: Record<st
   if (assertions.length > 128 || assertions.some(assertion => assertion.sql.length > 100000 || (assertion.bindings?.length ?? 0) > 100)
     || new TextEncoder().encode(canonicalJson(assertions)).byteLength > 2 * 1024 * 1024) return fail("sponsor_scene_evidence_limit");
   const deadline = Math.min(description.preflightExpiresAtMs, ...assertions.flatMap(assertion => assertion.deadlineMs === undefined ? [] : [assertion.deadlineMs]));
-  if (!current() || !Number.isFinite(deadline) || deadline <= Date.now()) return fail("sponsor_authority_changed");
+  // Internal liveness assertion only; it never reads/writes and never escapes
+  // either public API. Recheck after their await as well as this final batch.
+  const assertCurrent = () => {
+    requireCurrent();
+    if (!Number.isFinite(deadline) || deadline <= Date.now()) return fail("sponsor_authority_changed");
+  };
+  assertCurrent();
   const checked = await database.batch<Record<string, unknown>>(outputProofReadStatements(env, assertions));
+  assertCurrent();
   // The older shared helper skips sparse slots. Require every own data slot and
   // native integer predicate; malformed/late responses never become evidence.
   const own = (value: unknown, key: PropertyKey): unknown => value && typeof value === "object"
@@ -133,16 +145,19 @@ async function readNative(trusted: OutputTrustedContext, commandInput: Record<st
     const result = own(checked, index), rows = own(result, "results"), row = own(rows, 0);
     return own(result, "success") !== true || own(result, "error") !== undefined || !Array.isArray(rows) || own(rows, "length") !== 1 || own(row, "current") !== 1;
   }).some(Boolean)) return fail("sponsor_authority_changed");
-  if (!current() || deadline <= Date.now()) return fail("sponsor_authority_changed");
-  return freeze({ description, offered: JSON.parse(canonicalJson(offered)) as Record<string, unknown> });
+  assertCurrent();
+  return freeze({ description, offered: JSON.parse(canonicalJson(offered)) as Record<string, unknown>, assertCurrent });
 }
 
 export async function describeSponsorSceneAdmission(trusted: OutputTrustedContext, command: Record<string, unknown>, nativePreflight: OutputNativeTargetPreflight) {
-  return (await readNative(trusted, command, nativePreflight)).description;
+  const native = await readNative(trusted, command, nativePreflight);
+  native.assertCurrent();
+  return native.description;
 }
 export async function readSponsorSceneTemplateEvidence(trusted: OutputTrustedContext, command: Record<string, unknown>, recipe: SponsorRecipe, nativePreflight: OutputNativeTargetPreflight) {
   const capturedRecipe = captureSponsorSceneJson(recipe);
   const native = await readNative(trusted, command, nativePreflight);
+  native.assertCurrent();
   if (canonicalJson(native.description.recipe) !== canonicalJson(capturedRecipe)) return fail("sponsor_native_envelope_mismatch");
   return freeze({ recipe: native.description.recipe, offered: native.offered });
 }
