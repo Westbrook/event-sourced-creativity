@@ -1,5 +1,7 @@
 import { canonicalJson, digest, exactKeys, freeze, jsonIssues, record } from "../src/experiences/compiler.ts";
 import { experienceResourceId } from "../src/experiences/intake.ts";
+import { readSponsoredVideoActorRequest, readSponsoredVideoReview, sponsoredVideoActorIntentMatchesNative,
+  type SponsoredVideoActorRequest, type SponsoredVideoReview } from "../src/experiences/sponsored-video-actor-intent.ts";
 import { readVideoExecutionOffer } from "../src/model/output-video-offer.ts";
 import { readExperienceBody } from "./experience-intake-body.ts";
 import { continueExperienceAuthorization, readDraft, retainedGuard } from "./experience-intake-read.ts";
@@ -26,6 +28,14 @@ type Intent = Readonly<{
   expiresAtMs: number;
 }>;
 const proofs = new WeakMap<SponsorVideoIntentProof, { trusted: OutputTrustedContext; assertCurrent(): void; intent: Intent }>();
+declare const actorProofBrand: unique symbol;
+/** Actual Request/review evidence only. Neither this token nor parsed sponsor
+ * metadata authenticates the campaign, payer approval, or a private-read grant. */
+export type SponsorVideoActorIntentProof = Readonly<{ [actorProofBrand]: true }>;
+type ActorIntent = Omit<Intent, "requestBody"> & Readonly<{
+  requestBody: SponsoredVideoActorRequest; requestDigest: string; review: SponsoredVideoReview; reviewDigest: string;
+}>;
+const actorProofs = new WeakMap<SponsorVideoActorIntentProof, { trusted: OutputTrustedContext; assertCurrent(): void; intent: ActorIntent }>();
 const fail = (code: string): never => { throw new SponsorEntitlementError(code); };
 const commandKeys = ["documentId", "action", "expectedRevision", "clientMutationId", "preflightId", "termsDigest", "maximumMicrousd", "explicitAuthorization"];
 
@@ -42,7 +52,23 @@ export function requireSponsorVideoIntentProof(proof: SponsorVideoIntentProof, t
   return state.intent;
 }
 
-async function readIntent(trusted: OutputTrustedContext): Promise<SponsorVideoIntentProof> {
+/** Separate provenance: an ordinary token or copied DTO cannot be promoted. */
+export function requireSponsorVideoActorIntentProof(proof: SponsorVideoActorIntentProof, trusted: OutputTrustedContext, candidateEnvelope?: unknown): ActorIntent {
+  const state = actorProofs.get(proof);
+  if (!state || state.trusted !== trusted) return fail("sponsor_video_actor_intent_unavailable");
+  state.assertCurrent();
+  if (candidateEnvelope !== undefined && (jsonIssues(candidateEnvelope).length
+    || canonicalJson(candidateEnvelope) !== canonicalJson(state.intent.envelope))) return fail("sponsor_native_envelope_mismatch");
+  state.assertCurrent();
+  return state.intent;
+}
+
+function readIntent(trusted: OutputTrustedContext): Promise<SponsorVideoIntentProof>;
+function readIntent(trusted: OutputTrustedContext, actor: { review: unknown }): Promise<SponsorVideoActorIntentProof>;
+async function readIntent(trusted: OutputTrustedContext, actor?: { review: unknown }): Promise<SponsorVideoIntentProof | SponsorVideoActorIntentProof> {
+  // Capture the review before any owned await; later caller mutation cannot
+  // change what the actual Request's digest must name. This is not approval.
+  const review = actor ? readSponsoredVideoReview(actor.review) : null;
   const request = trusted.request, env = trusted.env, database = env.DB, media = env.MEDIA, scope = trusted.scope;
   const plannerKey = env.OPENAI_API_KEY, videoKey = env.FAL_KEY;
   const source = () => JSON.stringify({ scope: trusted.scope, principal: trusted.principal, projectContext: trusted.projectContext,
@@ -72,10 +98,10 @@ async function readIntent(trusted: OutputTrustedContext): Promise<SponsorVideoIn
   // Ordinary helper reads retain their existing custody contract. The two
   // phases bound this caller's wait; they do not cancel an already issued SQL.
   const controller = new AbortController();
-  let active = true, deadlineMs = Date.now() + 30000, rejectStop!: (error: unknown) => void;
+  let active = true, deadlineMs = Math.min(Date.now() + 30000, review ? Date.parse(review.expiresAt) : Infinity), rejectStop!: (error: unknown) => void;
   const stop = new Promise<never>((_, reject) => { rejectStop = reject; });
   const abort = () => { controller.abort(); rejectStop(new SponsorEntitlementError("sponsor_video_intent_interrupted")); };
-  let timer = setTimeout(abort, 30000);
+  let timer = setTimeout(abort, Math.max(1, deadlineMs - Date.now()));
   request.signal.addEventListener("abort", abort, { once: true });
   const check = () => { assertCurrent(); if (!active || controller.signal.aborted || Date.now() >= deadlineMs) fail("sponsor_video_intent_interrupted"); };
   const wait = async <T>(work: Promise<T>): Promise<T> => {
@@ -87,10 +113,19 @@ async function readIntent(trusted: OutputTrustedContext): Promise<SponsorVideoIn
     check();
     const body: unknown = await wait(readExperienceBody(request, controller.signal));
     check();
-    if (!record(body) || jsonIssues(body).length || !exactKeys(body, ["draftHash", "termsDigest", "maximumMicrousd", "explicitAuthorization"])
+    if (!review && (!record(body) || jsonIssues(body).length || !exactKeys(body, ["draftHash", "termsDigest", "maximumMicrousd", "explicitAuthorization"])
       || typeof body.draftHash !== "string" || typeof body.termsDigest !== "string" || body.explicitAuthorization !== true
-      || !Number.isSafeInteger(body.maximumMicrousd) || Number(body.maximumMicrousd) <= 0) return fail("sponsor_video_intent_approval_required");
-    const requestBody = freeze(structuredClone(body)) as Intent["requestBody"];
+      || !Number.isSafeInteger(body.maximumMicrousd) || Number(body.maximumMicrousd) <= 0)) return fail("sponsor_video_intent_approval_required");
+    const requestBody = review ? readSponsoredVideoActorRequest(body) : freeze(structuredClone(body)) as Intent["requestBody"];
+    // Keep the complete supplied five-field body. The internal native command
+    // is ordinary command data, never an ordinary proxy Request or proof.
+    const actorRequest = review ? requestBody as SponsoredVideoActorRequest : null;
+    const reviewDigest = review ? await wait(digest(review)) : null;
+    check();
+    if (actorRequest && (actorRequest.sponsorReview.campaignId !== review!.campaignId
+      || actorRequest.sponsorReview.reviewDigest !== reviewDigest)) return fail("sponsor_video_actor_review_changed");
+    const requestDigest = actorRequest ? await wait(digest(actorRequest)) : null;
+    check();
     const classification = await wait(classifySponsorIntakeDraft(native.env, path[1]!));
     check();
     if (classification.kind !== "ordinary") return fail("sponsor_video_intent_scope_unsupported");
@@ -134,6 +169,8 @@ async function readIntent(trusted: OutputTrustedContext): Promise<SponsorVideoIn
       || !(selected.save.sequence < selected.confirm.sequence && selected.confirm.sequence < selected.preflight.sequence)) return fail("sponsor_video_intent_preflight_changed");
     const offered = quote.targets[0], video = readVideoExecutionOffer(offered);
     if (!video || video.contract.source.releaseHash !== root.releaseHash) return fail("sponsor_recipe_unsupported");
+    const reviewFacts = { draftHash: draft.plan.draftHash, termsDigest: quote.termsDigest, offer: offered, expiresAt: quote.expiresAt };
+    if (review && !sponsoredVideoActorIntentMatchesNative(review, actorRequest, reviewFacts)) return fail("sponsor_video_actor_review_changed");
     const envelope = freeze(await wait(experienceOutputEnvelope(lineage.binding, "authorize", native.ownerHead,
       { ...experienceOutputAuthorization(requestBody, { termsDigest: quote.termsDigest, maximumMicrousd: quote.maximumMicrousd }), preflightId: quote.id })));
     check();
@@ -187,7 +224,8 @@ async function readIntent(trusted: OutputTrustedContext): Promise<SponsorVideoIn
       sceneRenewalNoExecutionAssertion(native.scope, requestIds, "video"),
       ...lineage.witnesses.map(item => outputCommandReceiptAssertion(native.scope, item.receipt)));
     const expiresAtMs = Math.min(Date.parse(draft.expiresAt), Date.parse(quote.expiresAt), Date.parse(String(video.original.expiresAt)),
-      ...[...native.sourceAssertions, ...outputActiveSourceDeadlineAssertions(native.context!)].flatMap(assertion => assertion.deadlineMs === undefined ? [] : [assertion.deadlineMs]), Date.now() + 30000);
+      ...[...native.sourceAssertions, ...outputActiveSourceDeadlineAssertions(native.context!)].flatMap(assertion => assertion.deadlineMs === undefined ? [] : [assertion.deadlineMs]),
+      ...(review ? [Date.parse(review.expiresAt)] : []), Date.now() + 30000);
     if (!Number.isFinite(expiresAtMs) || expiresAtMs <= Date.now()) return fail("sponsor_native_terms_changed");
     check();
     clearTimeout(timer); deadlineMs = expiresAtMs; timer = setTimeout(abort, Math.max(1, deadlineMs - Date.now()));
@@ -198,8 +236,17 @@ async function readIntent(trusted: OutputTrustedContext): Promise<SponsorVideoIn
     check();
     if (description.recipe.releaseDigest !== root.releaseHash || description.recipe.routeDigest !== routeDigest
       || description.recipe.settingsDigest !== settingsDigest || description.preflightExpiresAtMs !== Date.parse(quote.expiresAt)) return fail("sponsor_native_envelope_mismatch");
+    if (review && !sponsoredVideoActorIntentMatchesNative(review, actorRequest, reviewFacts)) return fail("sponsor_video_actor_review_changed");
     const intent = freeze({ requestBody, envelope, envelopeDigest, native: description, expiresAtMs });
     const requireCurrent = () => { assertCurrent(); if (Date.now() >= expiresAtMs) fail("sponsor_video_intent_expired"); };
+    if (review && actorRequest && reviewDigest && requestDigest) {
+      const proof = Object.freeze(Object.create(null)) as SponsorVideoActorIntentProof;
+      const actorIntent = freeze({ ...intent, requestBody: actorRequest, review, reviewDigest, requestDigest });
+      check(); requireCurrent();
+      actorProofs.set(proof, { trusted, assertCurrent: requireCurrent, intent: actorIntent });
+      check(); requireCurrent();
+      return proof;
+    }
     const proof = Object.freeze(Object.create(null)) as SponsorVideoIntentProof;
     check(); requireCurrent();
     proofs.set(proof, { trusted, assertCurrent: requireCurrent, intent });
@@ -214,4 +261,8 @@ async function readIntent(trusted: OutputTrustedContext): Promise<SponsorVideoIn
 export function readSponsorVideoIntentProof(trusted: OutputTrustedContext): Promise<SponsorVideoIntentProof> {
   // Return the owner's exact promise; no unchecked public adoption await.
   return readIntent(trusted);
+}
+
+export function readSponsorVideoActorIntentProof(trusted: OutputTrustedContext, review: unknown): Promise<SponsorVideoActorIntentProof> {
+  return readIntent(trusted, { review });
 }
