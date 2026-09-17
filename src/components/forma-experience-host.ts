@@ -54,6 +54,9 @@ import { outputAvailabilityMessage, outputSourceCapacityMessage } from "../exper
 import { FORMA_OUTPUT_DELIVERY_RUNTIME_MESSAGES } from "./design-system/locales/output-delivery-runtime-messages.ts";
 import { captureExperienceNativeResult, type ExperienceResultCandidate } from "../experiences/native-result-association.ts";
 import "../experiences/host.css";
+import { parseSelectedOutputShareSelection } from "../model/selected-output-share.ts";
+import type { SelectedOutputShareLease } from "../selected-output-share-client.ts";
+import "./forma-selected-output-share-review.ts";
 
 type Binding = {
   selection: ExperienceHostSelection; plan: ExperiencePlan; store: FormaStore; route: string; ownerId: string;
@@ -132,6 +135,37 @@ export class FormaExperienceHost extends FormaElement {
   #operation?: ExperienceHostOperation;
   #status = "Checking Document";
   #result?: Result;
+  #shareSource?: SelectedOutputShareLease;
+  #shareResult?: Result;
+  #shareAbort?: AbortController;
+  #shareRetiredResults = new WeakSet<object>();
+  #shareUnsubscribe?: () => void;
+  #shareSync = () => { if (this.#shareSource && !this.#shareSource.isCurrent()) this.#retireSelectedShare(); };
+  #shareWithdraw = () => this.#retireSelectedShare();
+  #retireSelectedShare() {
+    if (this.#shareResult) this.#shareRetiredResults.add(this.#shareResult);
+    this.#shareAbort?.abort(); this.#shareAbort = undefined;
+    this.#shareSource = undefined; this.#shareResult = undefined;
+  }
+  #selectedShareSource(result: Result | undefined, binding: Binding | undefined): SelectedOutputShareLease | null {
+    if (!result || !binding || !["short_story", "scene", "slides"].includes(result.output)
+      || this.#result !== result || this.#binding !== binding || this.#busy || this.#loading
+      || !this.#visible(binding) || !result.current()) { this.#retireSelectedShare(); return null; }
+    if (this.#shareSource && this.#shareResult === result) return this.#shareSource;
+    this.#retireSelectedShare();
+    if (this.#shareRetiredResults.has(result)) return null;
+    const native = result.output === "short_story" ? result.story.selection : result.output === "scene" ? result.scene.content.selection
+      : result.output === "slides" ? result.slides.selection : null;
+    const selection = native && parseSelectedOutputShareSelection({ output: result.output, documentId: native.documentId,
+      artifactId: native.artifactId, revision: native.revision, contentSha256: native.contentSha256 });
+    if (!selection || selection.documentId !== binding.plan.documentId || !("artifactId" in result.candidate)
+      || selection.artifactId !== result.candidate.artifactId) return null;
+    const abort = new AbortController();
+    const isCurrent = () => this.#shareAbort === abort && !abort.signal.aborted && this.#shareResult === result
+      && this.#result === result && this.#binding === binding && !this.#busy && !this.#loading && this.#visible(binding) && result.current();
+    this.#shareAbort = abort; this.#shareResult = result;
+    return this.#shareSource = Object.freeze({ selection, signal: abort.signal, isCurrent });
+  }
   #resultReadStage?: ResultReadStage;
   #resultReadFailure?: ResultReadFailure;
   #videoPresentation?: NativeVideoPresentation;
@@ -175,6 +209,9 @@ export class FormaExperienceHost extends FormaElement {
     this.ownerDocument.defaultView?.addEventListener("pageshow", this.#pageshow);
     this.ownerDocument.defaultView?.addEventListener("online", this.#resumeObservation);
     this.#storyUnsubscribe = this.store.subscribe(this.#storySync);
+    this.#shareUnsubscribe = this.store.subscribe(this.#shareSync);
+    this.ownerDocument.defaultView?.addEventListener("forma-authorization-changed", this.#shareWithdraw);
+    this.ownerDocument.defaultView?.addEventListener("forma-event-source-retired", this.#shareWithdraw);
     this.ownerDocument.defaultView?.addEventListener("forma-authorization-changed", this.#storyWithdraw);
     this.ownerDocument.defaultView?.addEventListener("forma-event-source-retired", this.#storyWithdraw);
     void this.#load();
@@ -184,6 +221,9 @@ export class FormaExperienceHost extends FormaElement {
     this.#releaseAttention?.(); this.#releaseAttention = undefined;
     this.removeEventListener("focusout", this.#focusOut);
     this.#storyUnsubscribe?.(); this.#storyUnsubscribe = undefined;
+    this.#shareUnsubscribe?.(); this.#shareUnsubscribe = undefined;
+    this.ownerDocument.defaultView?.removeEventListener("forma-authorization-changed", this.#shareWithdraw);
+    this.ownerDocument.defaultView?.removeEventListener("forma-event-source-retired", this.#shareWithdraw);
     this.ownerDocument.defaultView?.removeEventListener("forma-authorization-changed", this.#storyWithdraw);
     this.ownerDocument.defaultView?.removeEventListener("forma-event-source-retired", this.#storyWithdraw);
     this.ownerDocument.removeEventListener("visibilitychange", this.#visibility);
@@ -217,6 +257,7 @@ export class FormaExperienceHost extends FormaElement {
   }
   #resetDecision() { this.#confirmed = false; this.#approval = false; this.#sceneApproval = false; this.#audioApproval = false; this.#model3dApproval = false; this.#latch.clear(); }
   #clearResult() {
+    this.#retireSelectedShare();
     this.#videoNode = undefined;
     this.#videoPresentation?.dispose();this.#videoPresentation=undefined;this.#videoResult=undefined;
     this.#reader?.abort(); this.#reader = undefined; this.#result = undefined; this.#imageLoaded = false;
@@ -986,6 +1027,7 @@ export class FormaExperienceHost extends FormaElement {
   }
   override render() {
     const state = this.#state(), terms = this.#terms(state), binding = this.#binding, result = this.#result;
+    const shareSource = this.#selectedShareSource(result, binding);
     const available = this.#visible(binding), format = this.#imageFormat(), authorize = this.#paidDecision("authorize"), run = this.#paidDecision("run"), resume = this.#paidDecision("resumeRun");
     const sourceCapacity = available && binding ? outputSourceCapacityMessage(binding.client.state) : null;
     const commandRefusal = available && binding ? outputCommandRefusal(binding.client.state) : null;
@@ -1012,6 +1054,7 @@ export class FormaExperienceHost extends FormaElement {
         : result.output === "audio" ? keyed(result.lease, result.render(result.audio, this.i18n))
         : result.output === "scene" ? keyed(result.lease, result.render(result.scene.content, this.i18n.system("Scene"), result.measurement, this.#sceneLabels()))
         : result.output === "short_story" ? keyed(result.lease, result.render(result.story, "Short story")) : result.output === "storyboard" ? keyed(result.lease,result.render(result.storyboard,this.i18n)) : result.render(result.slides, this.i18n) : nothing}
+      ${shareSource ? html`<forma-selected-output-share-review .source=${shareSource} .enabled=${true}></forma-selected-output-share-review>` : nothing}
       ${available && state?.permitted.prepare ? html`<form class="experience-admission" data-experience-action="prepare" @submit=${(event: SubmitEvent) => this.#prepare(event)}>
         <dl><div><dt>${this.#model3dText("Output")}</dt><dd>${state.output === "video" ? "1 video · 4 s · 480p · Silent" : state.output === "model3d" ? this.i18n.system("1 static GLB assembly · One requested object") : state.output === "audio" ? this.i18n.system("1 instrumental track · about 20 seconds") : state.output === "image" ? "1 image" : state.output === "short_story" ? "1 story · 600–800 words" : state.output === "scene" ? this.i18n.system("1 written scene · 2 characters · 1 location · 1–2 pages") : state.output === "storyboard" ? "4 frames" : "5 slides"}</dd></div>${format ? html`<div><dt>${this.i18n.system("Ratio")}</dt><dd>${format.aspect_ratio.width}:${format.aspect_ratio.height}</dd></div><div><dt>${this.i18n.system("Dimensions")}</dt><dd>${format.dimensions.width} × ${format.dimensions.height}</dd></div>` : nothing}</dl>
         <label><input type="checkbox" .checked=${this.#confirmed} ?disabled=${this.#busy} @change=${(event: Event) => { this.#confirmed = (event.currentTarget as HTMLInputElement).checked; this.#latch.clear(); this.requestUpdate(); }}>${this.i18n.system("Confirm output")}</label>
