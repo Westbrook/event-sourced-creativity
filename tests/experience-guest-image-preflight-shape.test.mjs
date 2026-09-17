@@ -81,6 +81,12 @@ test('minimal quote type needs only env, target and native snapshot; canonical i
     const minimal: OutputImageSlidesPreflightInput = { env: canonical.env, target: canonical.target, context: { snapshot: canonical.context.snapshot } };
     void preflightOutputImageSlidesTarget(minimal);
     void preflightOutputImageSlidesTarget(canonical);
+    // Full native object literals retain the original public call contract.
+    void preflightOutputImageSlidesTarget({ request: canonical.request, env: canonical.env, scope: canonical.scope,
+      principal: canonical.principal, confirmedPlan: canonical.confirmedPlan, target: canonical.target,
+      context: canonical.context, ownerHead: canonical.ownerHead, sourceEvents: canonical.sourceEvents,
+      sourceAssertions: canonical.sourceAssertions, sourceDigest: canonical.sourceDigest,
+      requirementsDigest: canonical.requirementsDigest });
     void outputNativeTargetRefusal({ target: canonical.target });
     // @ts-expect-error A source snapshot remains required.
     const missing: OutputImageSlidesPreflightInput = { env: canonical.env, target: canonical.target, context: {} };

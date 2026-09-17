@@ -70,7 +70,7 @@ export function outputNativeImageDisclosure(){
   transferDescription:"After you authorize and start, the authorized Document source context and selected target instructions go to the disclosed provider. Native image attempts also send the exact final image prompt as text to OpenAI (omni-moderation-latest) for at most one additional automatic safety check before image creation. This check is not counted as a generation call and is currently free under OpenAI’s pricing. If reference pixels are required, native image generation is unavailable. This preflight sends nothing. Account and provider ceilings are separate; the displayed cap bounds application admission, not a guarantee of provider billing."};
 }
 
-export async function preflightOutputImageSlidesTarget(input:OutputImageSlidesPreflightInput):Promise<OutputNativeTargetPreflight>{
+export async function preflightOutputImageSlidesTarget(input:OutputBridgeTargetInput | OutputImageSlidesPreflightInput):Promise<OutputNativeTargetPreflight>{
  const {target,env}=input;
  const refused=outputNativeTargetRefusal(input);
  if(refused)return refused;
