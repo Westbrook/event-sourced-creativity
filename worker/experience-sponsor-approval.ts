@@ -126,15 +126,23 @@ export async function approveSponsorCampaign(request: Request, env: WorkerEnv) {
 /** Live v2 approval predicate for issuance, native admission and every paid stage.
  * Original incurred monetary settlement deliberately never uses this predicate. */
 export function sponsorApprovalAssertion(policy: SponsorPolicyV2, actorUserId: string, requireIssuer = false): OutputSqlAssertion {
-  return { sql: `EXISTS(SELECT 1 FROM experience_sponsor_approvals approval JOIN users payer ON payer.user_id=approval.payer_user_id
+  // Keep the complete approval and principal proofs as sibling materialized
+  // relations. Nesting the principal query inside the approval WHERE exceeds
+  // D1's expression depth when this predicate is an atomic-write witness.
+  // Both relations and their exact snapshot join still execute in that write;
+  // their order preserves every original parameter's position and SQLite type.
+  return { sql: `EXISTS(WITH sponsor_approval_terms AS MATERIALIZED (
+    SELECT approval.payer_authority_json FROM experience_sponsor_approvals approval JOIN users payer ON payer.user_id=approval.payer_user_id
     WHERE approval.campaign_id=? AND approval.payer_user_id=? AND approval.approved_by_user_id=approval.payer_user_id
       AND approval.terms_digest=? AND approval.policy_json=? AND approval.revoked_at_ms IS NULL
       AND json_extract(approval.approval_command_json,'$.action')='approve-sponsor-campaign' AND json_extract(approval.approval_command_json,'$.confirmation')='APPROVE_SPONSOR_CAMPAIGN'
       AND json_extract(approval.approval_command_json,'$.reviewedTermsDigest')=approval.terms_digest
       AND EXISTS(SELECT 1 FROM json_each(approval.terms_json,'$.eligibleActorUserIds') eligible WHERE eligible.value=?)
       ${requireIssuer ? "AND EXISTS(SELECT 1 FROM json_each(approval.terms_json,'$.issuerUserIds') issuer WHERE issuer.value=?)" : ""}
-      AND payer.role IN('creator','admin') AND payer.consent_version=?
-      AND EXISTS(SELECT 1 FROM (${PRINCIPAL_WITH_ACCESS_SQL}) captured WHERE json_array(${columns.map(column => `captured.${column}`).join(",")})=approval.payer_authority_json))`,
+      AND payer.role IN('creator','admin') AND payer.consent_version=?),
+    sponsor_payer_principal AS MATERIALIZED (${PRINCIPAL_WITH_ACCESS_SQL})
+    SELECT 1 FROM sponsor_approval_terms approval JOIN sponsor_payer_principal captured
+      ON json_array(${columns.map(column => `captured.${column}`).join(",")})=approval.payer_authority_json)`,
     bindings: [policy.campaignId, policy.payerUserId, policy.approvalReceiptDigest, canonicalJson(policy), actorUserId, ...(requireIssuer ? [actorUserId] : []), POLICY_VERSION, policy.payerUserId], deadlineMs: policy.expiresAtMs };
 }
 

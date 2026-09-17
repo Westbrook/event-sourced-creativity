@@ -3,6 +3,7 @@ import { POLICY_VERSION } from "./policy-version.ts";
 import type { BudgetReservationGuard, PilotImpersonation, PilotUser } from "./pilot-policy.ts";
 import type { ConsequentialBinding } from "./consequential-consent.ts";
 import type { WorkerEnv } from "./runtime.ts";
+import type { SponsorIntakePostNativeReceipt } from "./experience-sponsor-intake-reads.ts";
 import type { ProjectIntake } from "../src/model/project-intake.ts";
 
 export type ProjectIntakeAuthorization={user:PilotUser;principal:PilotUser;impersonation:PilotImpersonation|null};
@@ -96,7 +97,7 @@ export function projectIntakeAuthority(env:WorkerEnv,auth:ProjectIntakeAuthoriza
       new Date().toISOString(),user.role,POLICY_VERSION,user.consentedAt??"",user.userId,intake.projectId,user.userId,intake.documentId]};
 }
 
-type AtomicIntakeOptions={receiptPrefix:string;clientId:string;correlationPrefix:string;guard:BudgetReservationGuard;expectedHead?:number};
+type AtomicIntakeOptions={receiptPrefix:string;clientId:string;correlationPrefix:string;guard:BudgetReservationGuard;expectedHead?:number;sponsorIntakeRead?:SponsorIntakePostNativeReceipt};
 const intakeGuard=(env:WorkerEnv,auth:ProjectIntakeAuthorization,intake:ProjectIntake,options?:AtomicIntakeOptions)=>{
   const original=projectIntakeAuthority(env,auth,intake);
   return options?{sql:`(${original.sql}) AND (${options.guard.sql})`,bindings:[...original.bindings,...options.guard.bindings]}:original;

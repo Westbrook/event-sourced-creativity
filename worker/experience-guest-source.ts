@@ -221,3 +221,20 @@ export async function commitGuestImageSource(request: Request, env: WorkerEnv, i
   const result = await committed(env, session, saved); if (!result) return guestFail("source_commit_unavailable");
   return { ...result, replayed: false };
 }
+
+/** Server-internal read-only source proof for a separately governed custody
+ * inventory. It never prepares or commits a source and is not a claim witness
+ * or canonical account authority. No route exposes this proof object. */
+export async function readGuestImageSourceForCustody(request: Request, env: WorkerEnv, proof: GuestClaimProof) {
+  if (jsonIssues(proof).length) return guestFail("proof_unavailable");
+  const captured = structuredClone(proof), db = env.DB;
+  const session = await guestSession(env, request, captured);
+  if (env.DB !== db) return guestFail("database_changed");
+  const saved = await original(env, session);
+  if (env.DB !== db) return guestFail("database_changed");
+  if (!saved) return guestFail("source_unavailable");
+  const commit = await committed(env, session, saved);
+  if (env.DB !== db) return guestFail("database_changed");
+  if (!commit) return guestFail("source_commit_unavailable");
+  return freeze({ session, saved, commit });
+}

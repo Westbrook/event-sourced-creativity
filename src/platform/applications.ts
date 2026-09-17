@@ -398,6 +398,7 @@ export function resolveServerRoute(routeValue: string): ServerRouteResolution | 
   const legacyDocumentMatch = path.match(/^\/studio\/(board|guided|layers|adaptive|editor|chat)\/focus$/);
   if (legacyDocumentMatch) return { application: "creative", entryPath: `/studio/${legacyDocumentMatch[1]}/`, canonicalFamily: `/studio/${legacyDocumentMatch[1]}/focus` };
 
+  if (path === "/share/output" || path.startsWith("/share/output/")) return { application: "creative", entryPath: "/share/", canonicalFamily: "/share/output/:token" };
   if (/^\/share\/[^/]+$/.test(path)) return { application: "creative", entryPath: "/share/", canonicalFamily: "/share/:token" };
   if (/^\/canvas\/proposals\/[^/]+$/.test(path)) return { application: "canvas", entryPath: "/canvas/proposals/", canonicalFamily: "/canvas/proposals/:proposal" };
   if (/^\/canvas\/projects\/[^/]+(?:\/[^/]+)*$/.test(path)) return { application: "canvas", entryPath: "/canvas/projects/", canonicalFamily: "/canvas/projects/*" };

@@ -57,8 +57,8 @@ test('actual story read branch captures exact selection and rejects stale or exp
 test('actual story retirement clears private DOM synchronously and uses a fresh keyed subtree',()=>{
  const src=readFileSync(new URL('../src/components/forma-experience-host.ts',import.meta.url),'utf8'),begin=src.indexOf('  #clearResult() {'),end=src.indexOf('  #storySync =',begin);
  const method=stripTypeScriptTypes(src.slice(begin,end).replace('#clearResult','function clearResult').replaceAll('this.#','this.'));
- const clear=new Function(method+';return clearResult;')(),trace=[],prose={text:'private prose',replaceChildren(){this.text='';trace.push('cleared');},remove(){trace.push('removed');}},context={reader:{abort(){trace.push('aborted');}},result:{output:'short_story'},imageNode:undefined,querySelectorAll:selector=>selector.includes('.retained-story-reader')?[prose]:[]};
- clear.call(context);assert.equal(prose.text,'');assert.deepEqual(trace,['aborted','cleared','removed']);assert.equal(context.result,undefined);assert.equal(context.reader,undefined);assert.match(src,/keyed\(result\.lease, result\.render\(result\.story/);
+ const clear=new Function(method+';return clearResult;')(),trace=[],prose={text:'private prose',replaceChildren(){this.text='';trace.push('cleared');},remove(){trace.push('removed');}},context={retireSelectedShare(){trace.push('share-retired');},reader:{abort(){trace.push('aborted');}},result:{output:'short_story'},imageNode:undefined,querySelectorAll:selector=>selector.includes('.retained-story-reader')?[prose]:[]};
+ clear.call(context);assert.equal(prose.text,'');assert.deepEqual(trace,['share-retired','aborted','cleared','removed']);assert.equal(context.result,undefined);assert.equal(context.reader,undefined);assert.match(src,/keyed\(result\.lease, result\.render\(result\.story/);
 });
 
 test('actual story provider-unavailable view reports zero transfer/cost without a Slides or not-configured claim',()=>{

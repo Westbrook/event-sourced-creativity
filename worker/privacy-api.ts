@@ -3,6 +3,7 @@ import { reconcileOutputNativeStorage } from "./output-private-execution.ts";
 import { EXPIRED_DOCUMENT_JOB_REDACTION_SQL } from "./document-jobs-api.ts";
 import { releaseUndispatchedOutputReservations } from "./output-execution-control.ts";
 import { personalOutputErasureStatements, personalOutputErasureProgress } from "./output-requirement-retention.ts";
+import { preparePersonalSelectedOutputShareErasure } from "./selected-output-share-retention.ts";
 import { prepareLiveMemoryErasureBarrier, prepareLiveMemoryErasureStatements } from "./memory-live-store.ts";
 import { prepareNativeDocumentJobOriginRetentionStep } from "./memory-native-origin.ts";
 import { migrateLegacyEventPayloads, unsafePublicIdentifierPredicate } from "./event-privacy-migration.ts";
@@ -125,6 +126,8 @@ export async function handleEventPrivacy(request: Request, env: WorkerEnv): Prom
     if(!current())return unconfirmed();
     const outputErasure=await personalOutputErasureStatements(env,userId,now,EXPIRED_DOCUMENT_JOB_REDACTION_SQL);
     if(!current())return unconfirmed();
+    const selectedShareErasure=await preparePersonalSelectedOutputShareErasure(env,userId,now);
+    if(!current())return unconfirmed();
     const pending=barrier.pendingOrigins>0;
     const final=pending?null:await prepareLiveMemoryErasureStatements(env,{actorUserId:userId,personalOnly:true},now);
     if(!current())return unconfirmed();
@@ -174,12 +177,19 @@ export async function handleEventPrivacy(request: Request, env: WorkerEnv): Prom
           OR custody.resource_kind='document' AND custody.resource_id=document_jobs.document_id)`)
       .bind(now,now,userId,`creative:${userId}`);
     const outputOffset=prefix.length+generic.length,legacyIndex=outputOffset+outputErasure.length;
-    const statements=[...prefix,...generic,...outputErasure,legacyPresentationErasure,...genericChecks,...heldChecks,...terminal];
+    // Selected links retire in the same transaction even while memory cleanup
+    // defers authored-body erasure. Each owner acknowledges only its receipts.
+    const selectedShareOffset=legacyIndex+1+genericChecks.length+heldChecks.length;
+    const selectedShareStatements=[...selectedShareErasure.statements,...selectedShareErasure.terminalAssertions];
+    const terminalOffset=selectedShareOffset+selectedShareStatements.length;
+    const statements=[...prefix,...generic,...outputErasure,legacyPresentationErasure,...genericChecks,...heldChecks,...selectedShareStatements,...terminal];
     if(!current())return unconfirmed();
     const result=await db.batch(statements),summary=privacyBatchChanges(result,statements.length,prefix.length,legacyIndex,genericChecks.length,heldChecks.length);
     if(!summary||!current())return unconfirmed();
     const {changes,held}=summary;
-    const ownReceipts=[...Array.prototype.slice.call(result,0,prefix.length),...Array.prototype.slice.call(result,legacyIndex+1+genericChecks.length+heldChecks.length)];
+    const selectedShareSummary=selectedShareErasure.acknowledge(Array.prototype.slice.call(result,selectedShareOffset,terminalOffset));
+    if(!selectedShareSummary||!current())return unconfirmed();
+    const ownReceipts=[...Array.prototype.slice.call(result,0,prefix.length),...Array.prototype.slice.call(result,terminalOffset)];
     if(!(final?final.acknowledge(ownReceipts):barrier.acknowledge(ownReceipts))||!current())return unconfirmed();
     let advancedMemoryCleanupWorkUnits=0;
     if(pending)for(let index=0;index<16;index++){
@@ -217,6 +227,8 @@ export async function handleEventPrivacy(request: Request, env: WorkerEnv): Prom
       erasedLegacyPresentationJobs:changes[legacyIndex],revokedOutputGrantCount:outputErasure.length?changes[outputOffset]:0,
       uncertainProviderAccountingRetained:true,outputReservationReconciliationPending,
       outputProviderReconciliationPending:outputProgress.providerReconciliationPending,outputStorageCleanupPending:outputProgress.storageCleanupPending,outputReconciliationCheckFailed,
+      ...(selectedShareErasure.installed?{selectedOutputShareMetadataMinimizedCount:selectedShareSummary.minimizedCount,
+        selectedOutputShareTombstonesRetained:true}:{}),
       finishedOutputsRetained:true,sharedOrganizationContextRetained:true,uploadedFilesRetained:true,otherDevicesAndBackupsPurged:false,
     },{status:authoredPending?202:200});
   }catch{return unconfirmed();}

@@ -7,6 +7,16 @@ type State = Readonly<{ phase: "setup" | "preparing" | "review" | "submitting" |
 type Fetcher = (input: string, init?: RequestInit) => Promise<Response>;
 /** Expected authenticated display context only; the server retains authority. */
 export type SponsorImageIntakeBinding = Readonly<{ version: 1; campaignId: string; actorUserId: string }>;
+/** Context custody is a distinct receipt, never an ordinary generation-host ACK. */
+export type ExperienceContextCustodyReceipt = Readonly<{
+  version: 1; kind: "guest-context"; sessionId: string; destinationUserId: string;
+  manifestDigest: string; lineageDigest: string; draftId: string; draftHash: string;
+  projectId: string; documentId: string; targetStreamId: string; eventIds: readonly string[];
+  head: number; documentRoute: string; appended: readonly Readonly<Record<string, unknown>>[];
+}>;
+const eventId = (value: unknown): value is string => typeof value === "string" && /^[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/u.test(value);
+const hash = (value: unknown) => typeof value === "string" && /^sha256:[a-f0-9]{64}$/u.test(value);
+const instant = (value: unknown) => typeof value === "string" && Number.isFinite(Date.parse(value)) && new Date(value).toISOString() === value;
 /** A retained context-authoring flow. Completion means Document creation, not generation. */
 export class ExperienceIntakeRuntime {
   readonly mode = "intake" as const;
@@ -18,6 +28,9 @@ export class ExperienceIntakeRuntime {
   #resume?: Readonly<{ id: string; byIntent: boolean }>;
   #route?: string;
   #receipt?: ExperienceIntakeReceipt;
+  #contextOnly = false;
+  #contextReceipt?: ExperienceContextCustodyReceipt;
+  #contextIdentity?: string;
   #listeners = new Set<() => void>();
   #fetch: Fetcher;
   #sponsorImage?: SponsorImageIntakeBinding;
@@ -46,18 +59,23 @@ export class ExperienceIntakeRuntime {
   get documentRoute() { return this.#route; }
   /** Validated saved draft material for read-only review, never generation authority. */
   get preparedPlan() { return this.#plan; }
-  get committedPlan() { return this.#receipt ? this.#plan : undefined; }
+  get committedPlan() { return this.#receipt || this.#contextReceipt ? this.#plan : undefined; }
   get receipt() { return this.#receipt; }
+  get contextOnly() { return this.#contextOnly; }
+  get contextReceipt() { return this.#contextReceipt; }
   get referenceReady() { return this.#referenceReady; }
   get draftId() { return this.#plan?.draftId ?? (this.#resume && !this.#resume.byIntent ? this.#resume.id : undefined); }
   get intentId() { return this.#request?.intentId ?? (this.#resume?.byIntent ? this.#resume.id : undefined); }
-  get canRetry() { return Boolean(this.#plan || this.#request) && (!this.#plan || this.#plan.release.releaseHash === this.admissionRelease.releaseHash); }
+  get canRetry() { return !this.#contextOnly && Boolean(this.#plan || this.#request) && (!this.#plan || this.#plan.release.releaseHash === this.admissionRelease.releaseHash); }
   subscribe(callback: () => void) { this.#listeners.add(callback); return () => this.#listeners.delete(callback); }
   #set(phase: State["phase"], issues: readonly Issue[] = []) { if (!this.#disposed) { this.#state = freeze({ ...this.#state, phase, issues }); for (const callback of this.#listeners) callback(); } }
   #error(error: unknown) { return [{ code: error instanceof Error ? error.message : "experience_unavailable", path: "$" }]; }
+  #failed(error: unknown, epoch: number) { if (!this.#disposed && epoch === this.#epoch) { if (this.#contextOnly) this.#withdrawContext(); this.#set("uncertain", this.#error(error)); } }
   async #get(path: string, body?: unknown) {
     const response = await this.#fetch(path, { ...(body === undefined ? {} : { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }), credentials: "same-origin", cache: "no-store", redirect: "error", signal: this.#abort.signal });
     const value = await response.json() as Record<string, unknown>;
+    if (!record(value)) throw new Error("experience_result_mismatch");
+    this.#isContextResponse(value);
     if (!response.ok) throw new Error(typeof value.error === "string" ? value.error : "experience_unavailable");
     return value;
   }
@@ -84,15 +102,63 @@ export class ExperienceIntakeRuntime {
     if (await digest(base) !== draftHash) throw new Error("experience_result_mismatch");
     return freeze(plan);
   }
+  #isContextResponse(value: Record<string, unknown>) {
+    // Lock before validation: malformed custody must not expose ordinary retry.
+    if (value.status === "context-only" || ["custody", "generationAvailable", "miniAppClaimComplete"].some(key => Object.hasOwn(value, key))
+      || record(value.plan) && typeof value.plan.streamId === "string" && value.plan.streamId.startsWith("creative:guest:")) this.#contextOnly = true;
+    return this.#contextOnly;
+  }
+  #withdrawContext() {
+    this.#contextReceipt = undefined; this.#receipt = undefined; this.#route = undefined; this.#plan = undefined; this.#request = undefined;
+    this.#release = this.admissionRelease;
+    this.#state = freeze({ ...this.#state, draft: { values: initialValues(this.admissionRelease) } });
+  }
+  async #finishContext(value: Record<string, unknown>, epoch: number) {
+    if (this.#sponsorImage || !this.#resume || this.#resume.byIntent || jsonIssues(value).length
+      || !exactKeys(value, ["version", "status", "plan", "expiresAt", "custody", "generationAvailable", "miniAppClaimComplete", "replayed"])
+      || value.version !== 1 || value.status !== "context-only" || value.generationAvailable !== false || value.miniAppClaimComplete !== false
+      || typeof value.replayed !== "boolean" || !instant(value.expiresAt) || !record(value.custody)) throw new Error("experience_result_mismatch");
+    const plan = await this.#acceptPlan(value), custody = value.custody;
+    if (!exactKeys(custody, ["version", "kind", "sessionId", "destinationUserId", "manifestDigest", "lineageDigest", "draftId", "draftHash", "projectId", "documentId", "targetStreamId", "eventIds", "head", "documentRoute", "appended"])
+      || custody.version !== 1 || custody.kind !== "guest-context" || custody.sessionId !== plan.request.intentId
+      || plan.release.definition.id !== "image" || plan.release.output.output !== "image" || Object.hasOwn(plan, "reference") || Object.hasOwn(plan.request, "reference")
+      || !plan.streamId.startsWith("creative:guest:") || !eventId(plan.streamId.slice("creative:guest:".length))
+      || typeof custody.destinationUserId !== "string" || !custody.destinationUserId || custody.destinationUserId.trim() !== custody.destinationUserId
+      || custody.destinationUserId.length > 240 || /[\p{Cc}]/u.test(custody.destinationUserId) || custody.destinationUserId.startsWith("guest:")
+      || custody.targetStreamId !== `creative:${custody.destinationUserId}` || custody.targetStreamId === plan.streamId
+      || !hash(custody.manifestDigest) || !hash(custody.lineageDigest) || custody.draftId !== plan.draftId || custody.draftHash !== plan.draftHash
+      || custody.projectId !== plan.projectId || custody.documentId !== plan.documentId || custody.documentRoute !== experienceDocumentRoute(plan)
+      || !Number.isSafeInteger(custody.head) || !Array.isArray(custody.eventIds) || !Array.isArray(custody.appended)
+      || plan.events.length < 1 || plan.events.length > 16 || custody.appended.length !== plan.events.length || custody.eventIds.length !== plan.events.length
+      || custody.eventIds.some(id => !eventId(id)) || new Set(custody.eventIds).size !== plan.events.length) throw new Error("experience_result_mismatch");
+    const events = custody.appended as Array<Record<string, unknown>>;
+    if (events.some((event, index) => !record(event)
+      || !exactKeys(event, ["eventId", "streamId", "sequence", "occurredAt", "recordedAt", "actor", "clientId", "correlationId", "causationId", "compensatesEventId", "schemaVersion", "type", "payload"])
+      || event.eventId !== (custody.eventIds as string[])[index] || event.actor !== "user" || event.streamId !== custody.targetStreamId
+      || event.clientId !== "server:guest-context-adoption" || event.correlationId !== `guest-context-adoption:${custody.sessionId}`
+      || event.causationId !== null || event.compensatesEventId !== null || event.schemaVersion !== 1 || !instant(event.occurredAt) || !instant(event.recordedAt)
+      || !Number.isSafeInteger(event.sequence) || Number(event.sequence) < 1 || index > 0 && event.sequence !== Number(events[index - 1].sequence) + 1
+      || event.type !== plan.events[index].type || canonicalJson(event.payload) !== canonicalJson({ ...plan.events[index].payload, client_event_id: `guest-context-adoption:v1:${custody.sessionId}:${index}` }))
+      || custody.head !== events[events.length - 1].sequence) throw new Error("experience_result_mismatch");
+    // Rechecks bind the same receipt without retaining its private payload text
+    // after an authority failure has withdrawn the saved context.
+    const identity = await digest({ custody, expiresAt: value.expiresAt });
+    if (this.#contextIdentity && this.#contextIdentity !== identity) throw new Error("experience_result_mismatch");
+    if (this.#disposed || epoch !== this.#epoch) return;
+    this.#contextIdentity = identity; this.#contextReceipt = freeze(structuredClone(custody)) as ExperienceContextCustodyReceipt;
+    this.#plan = plan; this.#request = plan.request; this.#release = plan.release; this.#referenceReady = true;
+    this.#state = freeze({ ...this.#state, draft: { values: plan.request.values } });
+    this.#route = custody.documentRoute as string; this.#set("complete");
+  }
   change(id: string, value: ExperienceValue) {
-    if (this.#disposed || this.state.phase !== "setup" || !this.release.interactions[id] || valueIssues(value, this.release.interactions[id], id, false).length) return false;
+    if (this.#disposed || this.#contextOnly || this.state.phase !== "setup" || !this.release.interactions[id] || valueIssues(value, this.release.interactions[id], id, false).length) return false;
     this.#plan = undefined; this.#request = undefined; this.#resume = undefined;
     this.#state = freeze({ ...this.#state, draft: { ...this.state.draft, values: { ...this.state.draft.values, [id]: { value: structuredClone(value), provenance: "authored" } } } });
     this.#set("setup"); return true;
   }
   /** UI readiness is not server authority. Every referenced prepare/commit rereads it. */
   changeReference(value: unknown, ready: boolean) {
-    if (this.#disposed || this.state.phase !== "setup" || !["model3d", "video"].includes(this.release.output.output)) return false;
+    if (this.#disposed || this.#contextOnly || this.state.phase !== "setup" || !["model3d", "video"].includes(this.release.output.output)) return false;
     const reference = value === null ? null : readExperienceReferenceIntent(this.release.output.output, value);
     if (value !== null && !reference || typeof ready !== "boolean") return false;
     this.#plan = undefined; this.#request = undefined; this.#resume = undefined; this.#referenceReady = ready && (this.release.output.output !== "video" || reference !== null);
@@ -100,7 +166,7 @@ export class ExperienceIntakeRuntime {
     this.#set("setup"); return true;
   }
   async prepare() {
-    if (this.#disposed || this.state.phase !== "setup") return;
+    if (this.#disposed || this.#contextOnly || this.state.phase !== "setup") return;
     if (!this.#referenceReady) { this.#set("setup", [{ code: `${this.release.output.output}_reference_not_ready`, path: "$reference" }]); return; }
     const issues = intakeValueIssues(this.release, this.state.draft.values); if (issues.length) { this.#set("setup", issues); return; }
     this.#request ??= freeze({ intentId: crypto.randomUUID(), experienceId: this.release.definition.id, releaseHash: this.release.releaseHash, values: structuredClone(this.state.draft.values), ...(this.state.draft.reference ? { reference: this.state.draft.reference } : {}) });
@@ -109,54 +175,72 @@ export class ExperienceIntakeRuntime {
   async #save() {
     const epoch = ++this.#epoch; this.#set("preparing");
     try {
-      const plan = await this.#acceptPlan(await this.#get("/api/experiences/drafts", this.#request));
+      const value = await this.#get("/api/experiences/drafts", this.#request);
+      if (this.#contextOnly) throw new Error("experience_result_mismatch");
+      const plan = await this.#acceptPlan(value);
       if (this.#disposed || epoch !== this.#epoch) return;
       this.#plan = plan; this.#set("review");
-    } catch (error) { if (epoch === this.#epoch) this.#set("uncertain", this.#error(error)); }
+    } catch (error) { this.#failed(error, epoch); }
   }
-  back() { if (this.state.phase === "review") this.#set("setup"); }
+  back() { if (!this.#disposed && !this.#contextOnly && this.state.phase === "review") this.#set("setup"); }
   async resume(id: string, byIntent = false) {
     if (this.#disposed || this.state.phase !== "setup" || !(byIntent ? isIntentId(id) : isDraftId(id))) return;
     this.#resume = Object.freeze({ id, byIntent });
     const epoch = ++this.#epoch; this.#set("preparing");
     try {
-      const plan = await this.#acceptPlan(await this.#get(byIntent ? `/api/experiences/drafts?intentId=${id}` : `/api/experiences/drafts/${id}`));
+      const value = await this.#get(byIntent ? `/api/experiences/drafts?intentId=${id}` : `/api/experiences/drafts/${id}`);
+      if (this.#disposed || epoch !== this.#epoch) return;
+      if (this.#isContextResponse(value)) { await this.#finishContext(value, epoch); return; }
+      const plan = await this.#acceptPlan(value);
       if (this.#disposed || epoch !== this.#epoch) return;
       this.#request = plan.request; this.#plan = plan; this.#release = plan.release; this.#referenceReady = true; this.#state = freeze({ ...this.#state, draft: { values: plan.request.values, ...(plan.request.reference ? { reference: plan.request.reference } : {}) } });
       this.#set("uncertain"); await this.recover();
-    } catch (error) { if (epoch === this.#epoch) this.#set("uncertain", this.#error(error)); }
+    } catch (error) { this.#failed(error, epoch); }
   }
   async #finish(value: Record<string, unknown>, epoch: number) {
     const plan = this.#plan!;
+    if (this.#contextOnly) throw new Error("experience_result_mismatch");
     if (value.status !== "complete" || value.generation !== "unavailable" || value.draftId !== plan.draftId || value.draftHash !== plan.draftHash || value.projectId !== plan.projectId || value.documentId !== plan.documentId || value.documentRoute !== experienceDocumentRoute(plan) || !Array.isArray(value.rejected) || value.rejected.length || !Number.isSafeInteger(value.head) || !Array.isArray(value.appended) || value.appended.length !== plan.events.length || new Set(value.appended.map(event => event && typeof event === "object" ? event.eventId : undefined)).size !== plan.events.length) throw new Error("experience_result_mismatch");
-    const events = value.appended as Array<Record<string, any>>;
+    const events = value.appended as Array<Record<string, unknown> & { sequence: number }>;
     if (events.some((event, index) => !event || typeof event.eventId !== "string" || !/^[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/u.test(event.eventId) || event.actor !== "user" || event.streamId !== plan.streamId || event.clientId !== "web:experience-intake" || event.correlationId !== `experience-intake:${plan.projectId}` || event.schemaVersion !== 1 || event.compensatesEventId !== null || !Number.isSafeInteger(event.sequence) || event.sequence < 1 || index > 0 && event.sequence !== events[index - 1].sequence + 1 || event.type !== plan.events[index].type || canonicalJson(event.payload) !== canonicalJson(plan.events[index].payload)) || Number(value.head) < events[events.length - 1].sequence) throw new Error("experience_result_mismatch");
     if (this.#disposed || epoch !== this.#epoch) return;
     this.#receipt = freeze(structuredClone(value)) as ExperienceIntakeReceipt;
     this.#route = value.documentRoute as string; this.#set("complete");
   }
   async submit() {
-    if (this.#disposed || !["review", "uncertain"].includes(this.state.phase)) return;
+    if (this.#disposed || this.#contextOnly || !["review", "uncertain"].includes(this.state.phase)) return;
     if (!this.canRetry) { this.#set("uncertain", [{ code: "experience_release_changed", path: "$" }]); return; }
     if (!this.#plan) { if (this.#request) await this.#save(); return; }
     const epoch = ++this.#epoch; this.#set("submitting");
     try { await this.#finish(await this.#get(`/api/experiences/drafts/${this.#plan.draftId}/commit`, { draftHash: this.#plan.draftHash }), epoch); }
-    catch (error) { if (epoch === this.#epoch) this.#set("uncertain", this.#error(error)); }
+    catch (error) { this.#failed(error, epoch); }
   }
   async recover() {
-    if (this.#disposed || this.state.phase !== "uncertain") return;
-    const epoch = ++this.#epoch; this.#set("preparing");
+    if (this.#disposed || this.state.phase !== "uncertain" && !(this.#contextOnly && this.state.phase === "complete")) return;
+    const epoch = ++this.#epoch;
+    if (this.#contextOnly) this.#withdrawContext();
+    this.#set("preparing");
     try {
+      if (this.#contextOnly) {
+        if (!this.#resume || this.#resume.byIntent) throw new Error("experience_draft_unavailable");
+        await this.#finishContext(await this.#get(`/api/experiences/drafts/${this.#resume.id}/receipt`), epoch); return;
+      }
       if (!this.#plan) {
         const lookup = this.#request ? `/api/experiences/drafts?intentId=${this.#request.intentId}` : this.#resume ? this.#resume.byIntent ? `/api/experiences/drafts?intentId=${this.#resume.id}` : `/api/experiences/drafts/${this.#resume.id}` : undefined;
         if (!lookup) throw new Error("experience_draft_unavailable");
-        const plan = await this.#acceptPlan(await this.#get(lookup));
+        const value = await this.#get(lookup);
+        if (this.#disposed || epoch !== this.#epoch) return;
+        if (this.#isContextResponse(value)) { await this.#finishContext(value, epoch); return; }
+        const plan = await this.#acceptPlan(value);
         if (this.#disposed || epoch !== this.#epoch) return;
         this.#plan = plan; this.#request = plan.request; this.#release = plan.release; this.#referenceReady = true; this.#state = freeze({ ...this.#state, draft: { values: plan.request.values, ...(plan.request.reference ? { reference: plan.request.reference } : {}) } });
       }
       if (this.#disposed || epoch !== this.#epoch) return;
-      await this.#finish(await this.#get(`/api/experiences/drafts/${this.#plan.draftId}/receipt`), epoch);
-    } catch (error) { if (epoch === this.#epoch) this.#set("uncertain", this.#error(error)); }
+      const value = await this.#get(`/api/experiences/drafts/${this.#plan.draftId}/receipt`);
+      if (this.#disposed || epoch !== this.#epoch) return;
+      if (this.#isContextResponse(value)) await this.#finishContext(value, epoch);
+      else await this.#finish(value, epoch);
+    } catch (error) { this.#failed(error, epoch); }
   }
-  dispose() { this.#disposed = true; this.#epoch++; this.#abort.abort(); this.#listeners.clear(); }
+  dispose() { this.#disposed = true; this.#epoch++; this.#abort.abort(); this.#listeners.clear(); if (this.#contextOnly) { this.#withdrawContext(); this.#contextIdentity = undefined; } }
 }

@@ -110,6 +110,7 @@ export function performanceRouteSurface(path: string) {
   if(pathname.startsWith("/product"))return `product-${pathname.split("/")[2]||"home"}`;
   if(pathname.startsWith("/knowledge"))return `knowledge-${pathname.split("/")[2]||"home"}`;
   if(pathname.startsWith("/engineering"))return `engineering-${pathname.split("/")[2]||"health"}`;
+  if (pathname === "/share/output" || pathname.startsWith("/share/output/")) return "shared-output";
   if (pathname === "/share" || pathname.startsWith("/share/")) return "shared-document";
   if (pathname === "/operations/canvas") return "operations-canvas-governance";
   if (pathname === "/operations" || pathname === "/system") return "operations-system";
@@ -137,6 +138,8 @@ function recordApiResource(resource: PerformanceResourceTiming) {
   if (url.origin !== location.origin || !url.pathname.startsWith("/api/") || url.pathname==="/api/performance") return;
   if (metrics.resources.some((item) => item.name === resource.name && item.startTime === resource.startTime)) return;
   const path = url.pathname.startsWith("/api/media/") ? "/api/media/:key"
+    : url.pathname.startsWith("/api/selected-output-shared/") ? "/api/selected-output-shared/:token"
+    : url.pathname.startsWith("/api/selected-output-shares/") && !["/api/selected-output-shares/availability", "/api/selected-output-shares/prepare", "/api/selected-output-shares/commit"].includes(url.pathname) ? "/api/selected-output-shares/:share"
     : url.pathname.startsWith("/api/shared/") ? "/api/shared/:token"
     : url.pathname.startsWith("/api/document-jobs/") ? "/api/document-jobs/:job"
     : url.pathname;
@@ -312,6 +315,7 @@ export function completeRoutePopulation(path: string, retry = 0) {
       : Boolean(main && main.querySelectorAll("*").length > 2 && !main.querySelector(".application-loading"));
     if (surface==="document-workspace"||pathname==="/"||pathname==="/creative/create"||pathname.startsWith("/creative/create/")) meaningful=Boolean(Array.from(main?.querySelectorAll("[data-forma-content=primary],[data-forma-empty-state]")??[]).some((item)=>!item.closest("[hidden]")));
     else if(pathname==="/deliver") meaningful=Boolean(main?.querySelector(".forma-deliver-preview,.forma-responsive-empty[data-forma-empty-state]"));
+    else if (surface === "shared-output") meaningful = Boolean(document.querySelector("forma-selected-output-shared-view #main-content"));
     else if (surface === "shared-document") meaningful = Boolean(document.querySelector(".shared-view .shared-output,.shared-view [data-forma-empty-state],.shared-view .shared-status h1"));
     else if (surface === "product-insights") meaningful = Boolean(main?.querySelector("forma-product-insights .role-evidence li,forma-product-insights .role-evidence[data-forma-empty-state],forma-product-insights [role=alert]"));
     else if (surface === "operations-canvas-governance") meaningful = Boolean(main?.querySelector("forma-canvas-governance .canvas-governance-grid,forma-canvas-governance .canvas-governance-error[role=alert]"));

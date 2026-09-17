@@ -2,12 +2,14 @@ import { html } from "lit";
 import { hasExperienceHostSelector } from "../../experiences/host-route.ts";
 import { FormaElement } from "../../components/forma-element";
 import { documentViewFromRoute, routePathname } from "../../model/routes";
+import { isSelectedOutputSharePagePath } from "../../model/selected-output-share-routes.ts";
 
 export function loadCreativeRoute(path: string): Promise<unknown> {
   if (hasExperienceHostSelector(path)) return import("../../components/forma-experience-host");
   const pathname=routePathname(path);
   const documentView = documentViewFromRoute(path);
   if (["/make/short-story", "/make/scene", "/make/slides", "/make/storyboard", "/make/model3d", "/make/audio", "/make/video"].includes(pathname)) return import("../../components/forma-retained-short-story");
+  if (isSelectedOutputSharePagePath(pathname)) return import("../../components/forma-selected-output-shared-view");
   if (pathname === "/share" || pathname.startsWith("/share/")) return import("../../components/forma-shared-view");
   if (pathname.startsWith("/projects") || pathname === "/creative") return import("../../components/forma-projects");
   if (pathname.startsWith("/studio/project")) return import("../../components/forma-project-contents");

@@ -1,0 +1,36 @@
+/** Internal, complete selected-share proof queries. Each query preserves its
+ * own native predicates and yields admitted=1 only while all of them hold.
+ * These are server-authored SQL, never request data or transported authority.
+ */
+export type SelectedShareProofQuery = Readonly<{ sql: string; bindings: readonly (string | number | null)[] }>;
+
+export function selectedShareProofQuery(sql: string, bindings: readonly (string | number | null)[]): SelectedShareProofQuery {
+  return Object.freeze({ sql, bindings: Object.freeze([...bindings]) });
+}
+
+export function selectedSharePredicateProof(assertion: SelectedShareProofQuery): SelectedShareProofQuery {
+  return selectedShareProofQuery(`SELECT 1 AS admitted WHERE (${assertion.sql})`, assertion.bindings);
+}
+
+/** Materialize sibling full proofs so SQLite does not recursively expand one
+ * native authority query inside another. The caller executes this WITH clause
+ * and every conjunct in the SAME final read or conditional write statement.
+ * Bindings occur before the caller's statement bindings, in relation order.
+ */
+export function selectedShareProofStatement(proofs: readonly SelectedShareProofQuery[], conjunction: "linear" | "balanced" = "linear") {
+  if (proofs.length < 1 || proofs.length > 16) throw new Error("selected_output_share_proof_unavailable");
+  const leaves = proofs.map((_, index) => `EXISTS(SELECT 1 FROM selected_share_proof_${index} WHERE admitted=1)`);
+  // Deep native media predicates still count toward D1's expression limit when
+  // the sibling proofs are used by an atomic UPDATE. Group the same ordered
+  // leaves into a balanced tree; do not rewrite, omit or nest the native SQL.
+  const balanced = (terms: readonly string[]): string => {
+    if (terms.length === 1) return `(${terms[0]})`;
+    const middle = Math.floor(terms.length / 2);
+    return `(${balanced(terms.slice(0, middle))} AND ${balanced(terms.slice(middle))})`;
+  };
+  return {
+    withSql: `WITH ${proofs.map((proof, index) => `selected_share_proof_${index} AS MATERIALIZED (${proof.sql})`).join(",")}`,
+    sql: conjunction === "balanced" ? balanced(leaves) : leaves.join(" AND "),
+    bindings: proofs.flatMap(proof => [...proof.bindings]),
+  };
+}

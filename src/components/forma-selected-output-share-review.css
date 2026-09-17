@@ -1,0 +1,71 @@
+/* Scoped publisher layout. Stable native controls retain focus, selection and
+   composition while locale updates change their adjacent display labels. */
+forma-selected-output-share-review,
+.selected-output-share-review:not([hidden]) {
+  display: block;
+  min-inline-size: 0;
+  max-inline-size: 100%;
+}
+.selected-output-share-review > div:not([hidden]),
+.selected-output-share-review .selected-output-share-creation:not([hidden]) {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: .75rem;
+  min-inline-size: 0;
+}
+.selected-output-share-review .selected-output-share-creation > label {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: .375rem;
+  min-inline-size: 0;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+.selected-output-share-review .selected-output-share-creation > label > input {
+  box-sizing: border-box;
+  inline-size: 100%;
+  max-inline-size: 100%;
+  min-inline-size: 0;
+  min-block-size: max(2.75rem, 44px);
+  font-size: max(1rem, 16px);
+}
+.selected-output-share-review > button,
+.selected-output-share-review > div > button,
+.selected-output-share-review .selected-output-share-creation > button,
+.selected-output-share-review > div > ul button,
+.selected-output-share-review [data-selected-output-link-mount] button {
+  min-inline-size: max(2.75rem, 44px);
+  min-block-size: max(2.75rem, 44px);
+  max-inline-size: 100%;
+  block-size: auto;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.selected-output-share-review > div > :is(p, ul),
+.selected-output-share-review .selected-output-share-creation > p {
+  min-inline-size: 0;
+  margin-block: 0;
+  overflow-wrap: anywhere;
+}
+.selected-output-share-review > div > ul {
+  display: grid;
+  gap: .75rem;
+  padding-inline-start: 1.25rem;
+}
+.selected-output-share-review > div > ul > li {
+  min-inline-size: 0;
+  overflow-wrap: anywhere;
+}
+.selected-output-share-review [data-selected-output-link-mount] > p {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: .75rem;
+  margin-block: 0;
+  min-inline-size: 0;
+}
+.selected-output-share-review [data-selected-output-link-mount] a {
+  min-inline-size: 0;
+  max-inline-size: 100%;
+  overflow-wrap: anywhere;
+}

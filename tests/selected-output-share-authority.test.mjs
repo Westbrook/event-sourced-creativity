@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { registerOutputSourceImports } from "./output-server-test-helpers.mjs";
 import { selectedOutputShareFixture, OWNER, EMAIL, DOCUMENT, PROJECT, ARTIFACT, JOB, EXPIRY } from "./helpers/selected-output-share-fixture.mjs";
+import { selectedShareProofStatement } from "../worker/selected-output-share-proof.ts";
 
 const imports = registerOutputSourceImports();
 let readNativeRetainedTextCustody, readSelectedOutputShareAuthority, selectedOutputShareAuthoritySnapshot;
@@ -19,10 +20,34 @@ const unavailable = /selected_output_share_authority_unavailable/u;
 const custody = f => readNativeRetainedTextCustody(f.env, f.identity, f.selection());
 const authority = async f => readSelectedOutputShareAuthority(f.env, await custody(f));
 const evaluate = async (f, proof) => {
-  const assertion = selectedOutputShareAuthorityAssertion(proof, f.env);
-  return (await f.env.DB.prepare(`SELECT CASE WHEN (${assertion.sql}) THEN 1 ELSE 0 END AS admitted`)
-    .bind(...assertion.bindings).first()).admitted;
+  const statement = selectedShareProofStatement(selectedOutputShareAuthorityAssertion(proof, f.env));
+  return (await f.env.DB.prepare(`${statement.withSql} SELECT 1 AS admitted WHERE ${statement.sql}`)
+    .bind(...statement.bindings).first())?.admitted ?? 0;
 };
+
+test("bounded slot JSON preserves the original exact bytes, key order and every NULL field", async t => {
+  const columns = ["scope_key", "slot_id", "grant_id", "plan_revision_id", "target_id", "target_contract_digest", "source_digest",
+    "job_id", "route_digest", "attempt_ordinal", "previous_slot_id", "status", "outcome_event_id", "provider", "model",
+    "cost_reservation_id", "token_reservation_id", "maximum_microusd", "maximum_calls", "maximum_tokens"];
+  const keys = ["scopeKey", "slotId", "grantId", "planRevisionId", "targetId", "targetContractDigest", "sourceDigest",
+    "jobId", "routeDigest", "attemptOrdinal", "previousSlotId", "status", "outcomeEventId", "provider", "model",
+    "costReservationId", "tokenReservationId", "maximumMicrousd", "maximumCalls", "maximumTokens"];
+  const original = `json_object(${keys.flatMap((key, index) => [`'${key}'`, `slot.${columns[index]}`]).join(",")})`;
+  for (const slot of [undefined, "actor"]) await t.test(slot ?? "legacy NULL slot", async child => {
+    const f = await fixture(child, { slot });
+    await authority(f);
+    const statement = f.statements.find(value => value.sql.startsWith("WITH selected_share_jobs AS ("));
+    assert.ok(statement, "execute the actual complete provenance query");
+    const originalSql = statement.sql.replace(/json_set\(json_object\('scopeKey',[\s\S]*?slot\.maximum_tokens\)/u, original);
+    assert.notEqual(originalSql, statement.sql, "compare the bounded expression to its original 40-argument representation");
+    const current = f.sqlite.prepare(statement.sql).get(...statement.bindings).witness;
+    assert.equal(current, f.sqlite.prepare(originalSql).get(...statement.bindings).witness);
+    const projected = JSON.parse(current).slot;
+    assert.deepEqual(Object.keys(projected), keys);
+    assert.equal(projected.previousSlotId, null);
+    if (!slot) assert.ok(Object.values(projected).every(value => value === null));
+  });
+});
 const mutateJson = (f, column, mutate) => {
   const value = JSON.parse(f.job()[column]);
   mutate(value);
@@ -266,7 +291,9 @@ test("authority objects cannot be forged, copied or moved between environment/da
   try { assert.throws(() => selectedOutputShareAuthorityAssertion(proof, f.env), unavailable); }
   finally { f.env.DB = prior; }
   const assertion = selectedOutputShareAuthorityAssertion(proof, f.env);
-  assertion.bindings.fill("mutated-caller-copy");
+  assert.throws(() => assertion[0].bindings.fill("mutated-caller-copy"), TypeError);
+  assert.throws(() => assertion[0].sql = "SELECT 1 AS admitted", TypeError);
+  assert.throws(() => assertion.pop(), TypeError);
   assert.equal(await evaluate(f, proof), 1);
 });
 
@@ -449,7 +476,7 @@ test("crossing a scheduled policy boundary after the final SQLite read refuses t
   const source = await custody(f);
   let crossed = false;
   f.setAfterStatement(sql => {
-    if (!sql.startsWith("SELECT CASE WHEN") || !sql.includes("bounded_selected_share_jobs")) return;
+    if (!sql.startsWith("WITH selected_share_proof_") || !sql.includes(" SELECT 1 AS admitted WHERE ") || !sql.includes("bounded_selected_share_jobs")) return;
     f.setAfterStatement(null);
     crossed = true;
     t.mock.method(Date, "now", () => Date.parse(startsAt));

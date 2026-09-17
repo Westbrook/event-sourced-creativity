@@ -1,7 +1,12 @@
 import type { WorkerEnv } from "./runtime.ts";
 import { AUTH_BYTES, EVENT_BYTES, nativeRetainedTextCustodyAssertion, nativeRetainedTextCustodySnapshot, type NativeRetainedTextCustody } from "./native-retained-text-custody.ts";
+import { nativeRetainedMediaCustodyAssertion, nativeRetainedMediaCustodySnapshot, type NativeRetainedMediaCustody,
+  type NativeRetainedMediaSnapshot } from "./native-retained-media-custody.ts";
+import { selectedOutputShareMediaRecoveryLineage } from "./selected-output-share-media-recovery.ts";
 import { documentJobMaxAttempts } from "../src/model/document-jobs.ts";
 import { MAX_MANUAL_PRESENTATION_SLIDES } from "../src/model/presentation-count-policy.ts";
+import { selectedShareProofQuery, selectedSharePredicateProof, selectedShareProofStatement,
+  type SelectedShareProofQuery } from "./selected-output-share-proof.ts";
 
 /** Detached, read-only provenance proof. This module does not install schema or
  * expose an endpoint, and a proof is not permission to create a public link. */
@@ -10,7 +15,8 @@ export type SelectedOutputShareAuthority = Readonly<{ [selectedShareAuthority]: 
 type SqlValue = string | number | null;
 type Assertion = { sql: string; bindings: SqlValue[] };
 type Snapshot = Readonly<{ jobId: string; completionId: string; expiresAt: string }>;
-type State = { env: WorkerEnv; db: WorkerEnv["DB"]; environment: string; custody: NativeRetainedTextCustody; snapshot: Snapshot; assertion: Assertion };
+type Custody = { kind: "text"; proof: NativeRetainedTextCustody } | { kind: "media"; proof: NativeRetainedMediaCustody };
+type State = { env: WorkerEnv; db: WorkerEnv["DB"]; environment: string; custody: Custody; snapshot: Snapshot; assertion: readonly SelectedShareProofQuery[] };
 const proofs = new WeakMap<object, State>();
 const encoder = new TextEncoder();
 // Reuse the native custody transport budgets; do not enlarge the private reader.
@@ -51,7 +57,7 @@ async function sponsorSchema(env: WorkerEnv): Promise<{ names: Set<string>; asse
  * owner-recovery exception has no past-end cutoff; only a scheduled live cohort
  * can end that exception. Actual authorization remains the native predicate.
  * This bounds transported witness bytes, not database scan/sort work. */
-async function admissionDeadline(env: WorkerEnv, native: ReturnType<typeof nativeRetainedTextCustodySnapshot>): Promise<{ expiresAt: string | null; assertion: Assertion }> {
+async function admissionDeadline(env: WorkerEnv, native: Pick<ReturnType<typeof nativeRetainedTextCustodySnapshot>, "identity">): Promise<{ expiresAt: string | null; assertion: Assertion }> {
   const configured = env.FORMA_PILOT_COHORT_ID?.trim() ?? "";
   const breakglass = new Set((env.FORMA_ADMIN_EMAILS ?? "").split(",").map(value => value.trim().toLowerCase()).filter(Boolean));
   if (!configured || breakglass.has(native.identity.email.toLowerCase())) return { expiresAt: null, assertion: { sql: "1", bindings: [] } };
@@ -113,7 +119,14 @@ async function admissionDeadline(env: WorkerEnv, native: ReturnType<typeof nativ
   } };
 }
 
-const jsonRow = (columns: Record<string, string>) => `json_object(${Object.entries(columns).flatMap(([name, value]) => [`'${name}'`, value]).join(",")})`;
+const jsonRow = (columns: Record<string, string>) => {
+  const entries = Object.entries(columns);
+  const initial = `json_object(${entries.slice(0, 15).flatMap(([name, value]) => [`'${name}'`, value]).join(",")})`;
+  // json_set preserves explicit SQL NULL fields and insertion order. json_patch
+  // would delete those fields and change the byte-exact provenance witness.
+  return entries.length <= 15 ? initial
+    : `json_set(${initial},${entries.slice(15).flatMap(([name, value]) => [`'$.${name}'`, value]).join(",")})`;
+};
 const jobJson = jsonRow({ jobId: "job.job_id", ownerId: "job.owner_id", streamId: "job.stream_id", documentId: "job.document_id",
   kind: "job.kind", status: "job.status", sourceSurface: "job.source_surface", correlationId: "job.correlation_id",
   attemptCount: "job.attempt_count", requestedSequence: "job.requested_sequence", requestJson: "job.request_json", resultJson: "job.result_json",
@@ -141,7 +154,7 @@ const authorizationJson = jsonRow({ eventId: "authorization.event_id", streamId:
   privateJson: "body.private_json", redactedAt: "body.redacted_at",
   scoped: "EXISTS(SELECT 1 FROM project_event_scopes scope WHERE scope.event_id=authorization.event_id)" });
 
-function provenanceQuery(schema: Set<string>): string {
+function provenanceQuery(schema: Set<string>, media = false): string {
   const sponsor = [
     ...(schema.has("experience_sponsor_consumptions") ? ["NOT EXISTS(SELECT 1 FROM experience_sponsor_consumptions sponsor WHERE sponsor.job_id=job.job_id)"] : []),
     ...(schema.has("experience_sponsor_active_jobs") ? ["NOT EXISTS(SELECT 1 FROM experience_sponsor_active_jobs sponsor WHERE sponsor.job_id=job.job_id)"] : []),
@@ -150,7 +163,7 @@ function provenanceQuery(schema: Set<string>): string {
   // output_slot_id is a readJob projection, not a physical document_jobs column.
   // Joining every actual slot also makes duplicate/contradictory bindings refuse.
   return `selected_share_jobs AS (
-    SELECT json_object('job',${jobJson},'completion',${completionJson},'slot',${slotJson},'plan',${planJson},'grant',${grantJson},'preflight',${preflightJson},'authorization',${authorizationJson}) AS witness
+    SELECT json_object('job',${jobJson},'completion',${completionJson},'slot',${slotJson},'plan',${planJson},'grant',${grantJson},'preflight',${preflightJson},'authorization',${authorizationJson}${media ? `,'mediaCompletion',CASE WHEN length(CAST(media_body.private_json AS BLOB)) BETWEEN 1 AND ${RAW_BYTES} THEN media_body.private_json ELSE NULL END` : ""}) AS witness
     FROM events completion JOIN document_jobs job ON job.stream_id=completion.stream_id AND job.correlation_id=completion.correlation_id
     LEFT JOIN output_operation_slots slot ON slot.job_id=job.job_id
     LEFT JOIN output_plan_revisions plan ON plan.scope_key=slot.scope_key AND plan.plan_revision_id=slot.plan_revision_id
@@ -158,8 +171,11 @@ function provenanceQuery(schema: Set<string>): string {
     LEFT JOIN output_preflights preflight ON preflight.scope_key=grant_row.scope_key AND preflight.preflight_id=grant_row.preflight_id
     LEFT JOIN events authorization ON authorization.event_id=grant_row.authorization_event_id
     LEFT JOIN event_private_payloads body ON body.private_event_id=grant_row.authorization_event_id
+    ${media ? "LEFT JOIN event_private_payloads media_body ON media_body.private_event_id=completion.event_id" : ""}
     WHERE completion.event_id=? AND completion.stream_id=? AND completion.type='DocumentRenderCompleted'
-      AND completion.actor='worker:renderer' AND completion.client_id='server:document-job:render_document'
+      AND completion.actor='worker:renderer' AND ${media
+        ? "completion.client_id IN('server:document-job:render_document','output-video-recovery','output-model3d-recovery')"
+        : "completion.client_id='server:document-job:render_document'"}
       AND job.owner_id=? AND job.document_id=? AND job.kind='render_document' AND job.status='completed'
       AND job.error_message IS NULL AND job.completed_at IS NOT NULL
       AND typeof(job.attempt_count)='integer' AND job.attempt_count BETWEEN 1 AND ${documentJobMaxAttempts("render_document")}
@@ -265,6 +281,105 @@ function validateWitness(raw: string, native: ReturnType<typeof nativeRetainedTe
   return Object.freeze({ jobId: job.jobId, completionId: native.completionId, expiresAt });
 }
 
+
+/** The nonzero branch accepts only the private-issued genuine snapshot bridge.
+ * No declaration supplied in a request or copied public descriptor can mint it. */
+function restoredOriginalModel3d(native: NativeRetainedMediaSnapshot): boolean {
+  const basis = native.nativeOriginal, selected = native.selection;
+  return Boolean(basis && basis.output === "model3d" && basis.relation === "selected-restored-original" && basis.originalRevision === 0
+    && basis.selectedRevision === selected.revision && selected.revision > 0 && basis.selectedContentSha256 === selected.contentSha256
+    && basis.originalContentSha256 === selected.contentSha256 && basis.mediaSha256 === selected.mediaSha256
+    && basis.mediaSha256 === native.media.sha256 && basis.mediaByteLength === native.media.byteLength);
+}
+
+/** Media-specific provenance, after exact native current custody. Outputs media
+ * needs its original receipt bridge; ordinary Document revisions keep current
+ * native custody without manufacturing an original revision or recovery lease. */
+function validateMediaWitness(raw: string, native: NativeRetainedMediaSnapshot): Snapshot {
+  const witness = parse(raw), job = object(witness?.job), completion = object(witness?.completion), slot = object(witness?.slot),
+    plan = object(witness?.plan), grant = object(witness?.grant), preflight = object(witness?.preflight), authorization = object(witness?.authorization);
+  if (!job || !completion || !slot || !plan || !grant || !preflight || !authorization) return fail();
+  const request = parse(job.requestJson), result = parse(job.resultJson), completed = parse(completion.payload), privateCompletion = parse(witness?.mediaCompletion);
+  if (!privateCompletion) return fail();
+  const settings = object(privateCompletion.settings);
+  const mediaCompletion = { sourceSurface: privateCompletion.source_surface ?? null, itemCount: privateCompletion.item_count,
+    videoReceipt: settings && Object.hasOwn(settings, "output_video") ? object(settings.output_video) ? "object" : "invalid" : null,
+    model3dReceipt: settings && Object.hasOwn(settings, "output_model3d") ? object(settings.output_model3d) ? "object" : "invalid" : null };
+  const owner = native.identity.userId, selected = native.selection;
+  if (!request || !result || !completed || !validId(job.jobId) || job.ownerId !== owner || job.streamId !== `creative:${owner}`
+    || job.documentId !== selected.documentId || completion.eventId !== native.completionId
+    || !timestamp(job.expiresAt) || Date.parse(job.expiresAt) <= Date.now() || !timestamp(job.completedAt)
+    || !Number.isSafeInteger(job.requestedSequence) || Number(job.requestedSequence) < 0
+    || !Number.isSafeInteger(completion.sequence) || Number(completion.sequence) <= Number(job.requestedSequence)
+    || request.artifactKind !== selected.output || result.artifactKind !== selected.output || result.artifactId !== selected.artifactId
+    || request.productionMode !== "manual" || !selectedOutputShareMediaRecoveryLineage({ output: selected.output,
+      jobId: job.jobId, slotId: slot.slotId, completionId: native.completionId, completionClient: completion.clientId,
+      request, result, publicCompletion: completed, privateCompletion })) return fail();
+  const eventIds = result.appendedEventIds;
+  if (!Array.isArray(eventIds) || eventIds.length < 1 || eventIds.length > 128 || eventIds.some(id => !validId(id))
+    || new Set(eventIds).size !== eventIds.length || !eventIds.includes(native.completionId)) return fail();
+  if (request.itemCount !== undefined && request.itemCount !== 1 && !(selected.output === "model3d" && request.itemCount === 0)
+    || mediaCompletion.itemCount !== (selected.output === "model3d" ? 0 : 1)) return fail();
+  if (slot.slotId === null) {
+    if (job.sourceSurface !== "document" || Object.hasOwn(request, "outputExecution") || Object.hasOwn(result, "outputExecution")
+      || mediaCompletion.sourceSurface !== null && mediaCompletion.sourceSurface !== "document"
+      || mediaCompletion.videoReceipt !== null || mediaCompletion.model3dReceipt !== null
+      || native.media.readMode !== "owned-media") return fail();
+  } else {
+    // These markers come from the actual private completion, already pinned by
+    // native custody. They select the native original packed proof, rather than
+    // treating a slot declaration as evidence that the proof ran. Revised
+    // Outputs Video/GLB need an original-to-current provenance bridge. Audio
+    // uses the ordinary job completion path with exact request AND result
+    // references, including its native current edit/restore receipt lineage.
+    if (mediaCompletion.sourceSurface !== "outputs"
+      || (selected.output === "audio" ? mediaCompletion.videoReceipt !== null || mediaCompletion.model3dReceipt !== null || native.media.readMode !== "owned-media"
+        : selected.output === "video"
+          ? selected.revision !== 0 || mediaCompletion.videoReceipt !== "object" || mediaCompletion.model3dReceipt !== null || native.media.readMode !== "native-output-video"
+          : mediaCompletion.model3dReceipt !== "object" || mediaCompletion.videoReceipt !== null
+            || selected.revision !== 0 && !restoredOriginalModel3d(native))) return fail();
+    const body = parse(authorization.privateJson), publicAuthorization = parse(authorization.payload);
+    const envelope = object(body?.output_command_envelope);
+    const reference = { scopeKey: slot.scopeKey, grantId: slot.grantId, slotId: slot.slotId, planRevisionId: slot.planRevisionId,
+      targetId: slot.targetId, targetContractDigest: slot.targetContractDigest, sourceDigest: slot.sourceDigest };
+    if (job.sourceSurface !== "outputs" || !Object.values(reference).every(validId)
+      || !(selected.output === "video" && !Object.hasOwn(request, "outputExecution")) && !matches(request.outputExecution, reference)
+      || !matches(result.outputExecution, reference) || slot.jobId !== job.jobId || slot.status !== "succeeded"
+      || slot.attemptOrdinal !== 0 || slot.previousSlotId !== null || slot.outcomeEventId !== native.completionId
+      || plan.scopeKey !== slot.scopeKey || plan.scopeKind !== "personal" || plan.ownerId !== owner || plan.projectId !== native.projectId
+      || plan.documentId !== selected.documentId || plan.organizationId !== null || plan.projectAccessId !== null
+      || plan.planRevisionId !== slot.planRevisionId || plan.sourceDigest !== slot.sourceDigest
+      || grant.scopeKey !== slot.scopeKey || grant.grantId !== slot.grantId || grant.planRevisionId !== slot.planRevisionId
+      || grant.actorId !== owner || grant.payerId !== owner || grant.contextId !== null || grant.status !== "completed"
+      || preflight.scopeKey !== slot.scopeKey || preflight.preflightId !== grant.preflightId || preflight.planRevisionId !== slot.planRevisionId
+      || preflight.actorId !== owner || !validId(preflight.termsDigest) || !validId(preflight.eventId)
+      || !body || !publicAuthorization || !envelope || !ordinaryLineage(body) || !ordinaryLineage(publicAuthorization)
+      || authorization.eventId !== grant.authorizationEventId || authorization.privateId !== grant.authorizationEventId
+      || authorization.ownerId !== owner || authorization.projectId !== native.projectId || authorization.documentId !== selected.documentId
+      || authorization.redactedAt !== null || authorization.scoped !== 0 || authorization.streamId !== `creative:${owner}`
+      || authorization.type !== "OutputExecutionAuthorized" || authorization.actor !== `user:${owner}` || authorization.clientId !== "server:output-requirements"
+      || publicAuthorization._private_ref !== authorization.eventId || Number(authorization.sequence) >= Number(completion.sequence)
+      || body.project_id !== native.projectId || body.document_id !== selected.documentId || body.actor_user_id !== owner
+      || body.grant_id !== slot.grantId || body.plan_revision_id !== slot.planRevisionId || body.preflight_id !== grant.preflightId
+      || body.source_digest !== slot.sourceDigest || body.maximum_microusd !== grant.maximumMicrousd || body.maximum_calls !== grant.maximumCalls) return fail();
+    // The mini-app retained envelope is the actual authorize command. An empty
+    // object proves neither its selected Document nor its deliberate approval.
+    const expectedRevision = typeof envelope.expectedRevision === "string" && /^output:\d+$/u.test(envelope.expectedRevision)
+      ? Number(envelope.expectedRevision.slice("output:".length)) : NaN;
+    if (envelope.action !== "authorize" || envelope.documentId !== selected.documentId || envelope.explicitAuthorization !== true
+      || !validId(envelope.clientMutationId) || envelope.clientMutationId !== authorization.correlationId
+      || envelope.preflightId !== preflight.preflightId || envelope.termsDigest !== preflight.termsDigest
+      || envelope.maximumMicrousd !== grant.maximumMicrousd || !Number.isSafeInteger(expectedRevision)
+      || expectedRevision < 0 || expectedRevision >= Number(authorization.sequence)) return fail();
+    const targets = body.authorized_targets;
+    if (!Array.isArray(targets) || targets.length < 1 || targets.length > 1000
+      || targets.filter(value => object(value)?.operation_slot_id === slot.slotId).length !== 1
+      || !targets.some(value => matches(value, { target_id: slot.targetId, operation_slot_id: slot.slotId, job_id: job.jobId, route_digest: slot.routeDigest }))) return fail();
+  }
+  const expiresAt = job.expiresAt < native.expiresAt ? job.expiresAt : native.expiresAt;
+  return Object.freeze({ jobId: job.jobId, completionId: native.completionId, expiresAt });
+}
+
 async function readAuthority(env: WorkerEnv, custody: NativeRetainedTextCustody): Promise<SelectedOutputShareAuthority> {
   const db = env.DB, capturedEnvironment = environment(env), native = nativeRetainedTextCustodySnapshot(custody, env), custodyAssertion = nativeRetainedTextCustodyAssertion(custody, env);
   const policy = await admissionDeadline(env, native);
@@ -274,17 +389,46 @@ async function readAuthority(env: WorkerEnv, custody: NativeRetainedTextCustody)
   if (!result.success || result.results.length !== 1 || typeof result.results[0]?.witness !== "string" || bytes(result.results[0].witness) > WITNESS_BYTES) return fail();
   const raw = result.results[0].witness, source = validateWitness(raw, native);
   const snapshot = Object.freeze({ ...source, expiresAt: policy.expiresAt && policy.expiresAt < source.expiresAt ? policy.expiresAt : source.expiresAt });
-  const assertion: Assertion = {
-    sql: `(${schema.assertion.sql}) AND (${custodyAssertion.sql}) AND (${policy.assertion.sql}) AND EXISTS(WITH ${cte}
-      SELECT 1 FROM bounded_selected_share_jobs WHERE CAST(witness AS BLOB)=CAST(? AS BLOB)
-        AND (SELECT COUNT(*) FROM selected_share_jobs)=1)`,
-    bindings: [...schema.assertion.bindings, ...custodyAssertion.bindings, ...policy.assertion.bindings, ...bindings, raw],
-  };
-  const final = await db.prepare(`SELECT CASE WHEN (${assertion.sql}) THEN 1 ELSE 0 END AS admitted`).bind(...assertion.bindings).first<{ admitted: number }>();
+  const assertion = Object.freeze([
+    selectedSharePredicateProof(schema.assertion), selectedShareProofQuery(custodyAssertion.sql, custodyAssertion.bindings),
+    selectedSharePredicateProof(policy.assertion),
+    selectedShareProofQuery(`WITH ${cte}
+      SELECT 1 AS admitted FROM bounded_selected_share_jobs WHERE CAST(witness AS BLOB)=CAST(? AS BLOB)
+        AND (SELECT COUNT(*) FROM selected_share_jobs)=1`, [...bindings, raw]),
+  ]);
+  const statement = selectedShareProofStatement(assertion);
+  const final = await db.prepare(`${statement.withSql} SELECT 1 AS admitted WHERE ${statement.sql}`)
+    .bind(...statement.bindings).first<{ admitted: number }>();
   if (env.DB !== db || environment(env) !== capturedEnvironment || final?.admitted !== 1 || Date.parse(snapshot.expiresAt) <= Date.now()) return fail();
   nativeRetainedTextCustodySnapshot(custody, env);
   const proof = Object.freeze({}) as SelectedOutputShareAuthority;
-  proofs.set(proof, { env, db, environment: capturedEnvironment, custody, snapshot, assertion });
+  proofs.set(proof, { env, db, environment: capturedEnvironment, custody: { kind: "text", proof: custody }, snapshot, assertion });
+  return proof;
+}
+
+async function readMediaAuthority(env: WorkerEnv, custody: NativeRetainedMediaCustody): Promise<SelectedOutputShareAuthority> {
+  const db = env.DB, capturedEnvironment = environment(env), native = nativeRetainedMediaCustodySnapshot(custody, env), custodyAssertion = nativeRetainedMediaCustodyAssertion(custody, env);
+  const policy = await admissionDeadline(env, native);
+  const schema = await sponsorSchema(env), cte = provenanceQuery(schema.names, true);
+  const bindings: SqlValue[] = [native.completionId, `creative:${native.identity.userId}`, native.identity.userId, native.selection.documentId];
+  const result = await db.prepare(`WITH ${cte} SELECT witness FROM bounded_selected_share_jobs LIMIT 2`).bind(...bindings).all<{ witness: string }>();
+  if (!result.success || result.results.length !== 1 || typeof result.results[0]?.witness !== "string" || bytes(result.results[0].witness) > WITNESS_BYTES) return fail();
+  const raw = result.results[0].witness, source = validateMediaWitness(raw, native);
+  const snapshot = Object.freeze({ ...source, expiresAt: policy.expiresAt && policy.expiresAt < source.expiresAt ? policy.expiresAt : source.expiresAt });
+  const assertion = Object.freeze([
+    selectedSharePredicateProof(schema.assertion), selectedShareProofQuery(custodyAssertion.sql, custodyAssertion.bindings),
+    selectedSharePredicateProof(policy.assertion),
+    selectedShareProofQuery(`WITH ${cte}
+      SELECT 1 AS admitted FROM bounded_selected_share_jobs WHERE CAST(witness AS BLOB)=CAST(? AS BLOB)
+        AND (SELECT COUNT(*) FROM selected_share_jobs)=1`, [...bindings, raw]),
+  ]);
+  const statement = selectedShareProofStatement(assertion);
+  const final = await db.prepare(`${statement.withSql} SELECT 1 AS admitted WHERE ${statement.sql}`)
+    .bind(...statement.bindings).first<{ admitted: number }>();
+  if (env.DB !== db || environment(env) !== capturedEnvironment || final?.admitted !== 1 || Date.parse(snapshot.expiresAt) <= Date.now()) return fail();
+  nativeRetainedMediaCustodySnapshot(custody, env);
+  const proof = Object.freeze({}) as SelectedOutputShareAuthority;
+  proofs.set(proof, { env, db, environment: capturedEnvironment, custody: { kind: "media", proof: custody }, snapshot, assertion });
   return proof;
 }
 
@@ -294,17 +438,25 @@ export async function readSelectedOutputShareAuthority(env: WorkerEnv, custody: 
   try { return await readAuthority(env, custody); } catch { return fail(); }
 }
 
+
+/** Detached media authority. Native custody must be authentic and current; this
+ * proof alone neither qualifies media bytes nor authorizes a public link. */
+export async function readSelectedOutputShareMediaAuthority(env: WorkerEnv, custody: NativeRetainedMediaCustody): Promise<SelectedOutputShareAuthority> {
+  try { return await readMediaAuthority(env, custody); } catch { return fail(); }
+}
+
 function state(proof: SelectedOutputShareAuthority, env: WorkerEnv): State {
   const captured = proof && typeof proof === "object" ? proofs.get(proof) : undefined;
   if (!captured || captured.env !== env || captured.db !== env.DB || captured.environment !== environment(env)
     || Date.parse(captured.snapshot.expiresAt) <= Date.now()) return fail();
-  nativeRetainedTextCustodySnapshot(captured.custody, env);
+  if (captured.custody.kind === "text") nativeRetainedTextCustodySnapshot(captured.custody.proof, env);
+  else nativeRetainedMediaCustodySnapshot(captured.custody.proof, env);
   return captured;
 }
 export function selectedOutputShareAuthoritySnapshot(proof: SelectedOutputShareAuthority, env: WorkerEnv): Snapshot {
   return Object.freeze({ ...state(proof, env).snapshot });
 }
-export function selectedOutputShareAuthorityAssertion(proof: SelectedOutputShareAuthority, env: WorkerEnv): Assertion {
+export function selectedOutputShareAuthorityAssertion(proof: SelectedOutputShareAuthority, env: WorkerEnv): readonly SelectedShareProofQuery[] {
   const assertion = state(proof, env).assertion;
-  return { sql: assertion.sql, bindings: [...assertion.bindings] };
+  return Object.freeze(assertion.map(query => selectedShareProofQuery(query.sql, query.bindings)));
 }

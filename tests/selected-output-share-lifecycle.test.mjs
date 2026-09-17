@@ -3,6 +3,7 @@ import test from "node:test";
 import { registerOutputSourceImports } from "./output-server-test-helpers.mjs";
 import { selectedOutputShareFixture, OWNER, EMAIL, PROJECT, CONTENT, ARTIFACT, JOB,
   POLICY, PURPOSE, LITERAL, digest, nativeContent } from "./helpers/selected-output-share-fixture.mjs";
+import { SELECTED_OUTPUT_SHARE_PRIVATE_COLUMNS } from "../worker/selected-output-share-schema.ts";
 
 const imports = registerOutputSourceImports();
 let prepareSelectedOutputShare, commitSelectedOutputShare, readSelectedOutputShare, revokeSelectedOutputShare;
@@ -41,8 +42,9 @@ function headers(response) {
   assert.equal(response.headers.get("etag"), null);
 }
 function countRows(f, table) { return f.sqlite.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get().n; }
-function finalRead(sql) { return sql.startsWith("SELECT 1 AS permitted WHERE") && sql.includes("selected_output_shares"); }
-function tokenWrite(sql) { return /^UPDATE selected_output_shares SET token_hash=/u.test(sql); }
+function finalRead(sql) { return sql.startsWith("WITH selected_share_proof_") && sql.includes(" SELECT 1 AS permitted WHERE") && sql.includes("selected_output_shares"); }
+function tokenWrite(sql) { return sql.startsWith("WITH selected_share_proof_") && sql.includes(" UPDATE selected_output_shares SET token_hash="); }
+function preparationWrite(sql) { return sql.startsWith("WITH selected_share_proof_") && sql.includes(" INSERT INTO selected_output_shares("); }
 async function edit(f) {
   f.replace({ ...nativeContent(), content_markdown: "Edited exact selected output", items: [{ title: "Changed", body: "Edited slide", notes: "Private", image_prompt: "", slide: null }] });
   await f.append("DocumentArtifactEdited", { artifact_id: ARTIFACT, content_ref: CONTENT, revision: 1,
@@ -372,7 +374,7 @@ test("INSERT OR REPLACE cannot erase an issued share through its unique token di
   const f = await selectedOutputShareFixture(t), issued = await issue(f);
   f.sqlite.exec("PRAGMA recursive_triggers=OFF");
   const before = f.shares().map(row => ({ ...row }));
-  const replacement = { ...before[0], share_id: "another-share-id", intent_key: "another-intent" }, columns = Object.keys(replacement);
+  const replacement = { ...before[0], share_id: "another-share-id", intent_key: "another-intent", replay_key: digest("different-token-collision-replay-key") }, columns = Object.keys(replacement);
   assert.throws(() => f.sqlite.prepare(`INSERT OR REPLACE INTO selected_output_shares(${columns.join(",")}) VALUES(${columns.map(() => "?").join(",")})`)
     .run(...columns.map(column => replacement[column])), /selected_output_share_exists/u);
   assert.deepEqual(f.shares().map(row => ({ ...row })), before);
@@ -394,7 +396,7 @@ test("preparation rechecks custody within the candidate INSERT and stores no can
   const f = await selectedOutputShareFixture(t);
   let raced = false;
   f.setBeforeStatement(sql => {
-    if (!sql.startsWith("INSERT INTO selected_output_shares(")) return;
+    if (!preparationWrite(sql)) return;
     raced = true; f.setBeforeStatement(null);
     f.sqlite.prepare("UPDATE private_content SET redacted_at=? WHERE content_id=?").run(new Date().toISOString(), CONTENT);
   });
@@ -464,4 +466,96 @@ test("an organization domain policy permits the actual authenticated owner while
   assert.equal((await prepareSelectedOutputShare(f.request({ intentKey: "restricted-policy-review", selection: f.selection(), review: f.review() }), f.env)).status, 404);
   assert.equal(f.calls.some(sql => sql.includes("event_base AS")), false, "public policy refuses before private artifact selection");
   assert.equal(f.changes(), baseline);
+});
+
+function minimizeDirect(f, shareId) {
+  const now = new Date().toISOString();
+  f.sqlite.prepare(`UPDATE selected_output_shares SET ${SELECTED_OUTPUT_SHARE_PRIVATE_COLUMNS.map(column => `${column}=NULL`).join(",")},
+    revoked_at=COALESCE(revoked_at,?),minimized_at=? WHERE share_id=?`).run(now, now, shareId);
+}
+
+test("preparation binds the exact canonical subject and intent in a purpose-separated immutable replay key", async t => {
+  const f = await selectedOutputShareFixture(t), prepared = await prepare(f);
+  const expected = digest(`selected-output-replay-v1\0${JSON.stringify([PURPOSE, OWNER, prepared.body.intentKey])}`);
+  const stored = f.shares()[0];
+  assert.equal(stored.replay_key, expected);
+  assert.notEqual(stored.replay_key, digest(JSON.stringify([PURPOSE, OWNER, prepared.body.intentKey])));
+  assert.notEqual(stored.replay_key, digest(`selected-output-replay-v1\0${JSON.stringify([PURPOSE, EMAIL, prepared.body.intentKey])}`));
+  assert.equal(stored.minimized_at, null);
+});
+
+test("minimized review intents and tokens stay consumed while a fresh intent still needs current native custody", async t => {
+  for (const state of ["prepared", "issued"]) await t.test(state, async child => {
+    const f = await selectedOutputShareFixture(child);
+    const result = state === "issued" ? await issue(f) : { prepared: await prepare(f) };
+    const original = { ...f.shares()[0] }, shareId = result.prepared.candidateId;
+    minimizeDirect(f, shareId);
+    const tombstone = { ...f.shares()[0] }, baseline = f.changes(); f.calls.length = 0;
+    for (const column of SELECTED_OUTPUT_SHARE_PRIVATE_COLUMNS) assert.equal(tombstone[column], null, column);
+    assert.equal(tombstone.replay_key, original.replay_key);
+    assert.equal(tombstone.token_hash, original.token_hash);
+    assert.equal((await prepareSelectedOutputShare(f.request(result.prepared.body), f.env)).status, 404);
+    assert.equal((await commitSelectedOutputShare(f.request(approval(result.prepared)), f.env)).status, 404);
+    if (result.share) assert.equal((await readSelectedOutputShare(publicRequest(), f.env, result.share.token)).status, 404);
+    assert.equal((await revokeSelectedOutputShare(f.request(undefined, {}, "DELETE"), f.env, shareId)).status, 404);
+    assert.equal(f.calls.some(sql => sql.includes("event_base AS") || sql.includes("native_principal AS")), false,
+      "a terminal replay refuses before native authorization or private selection");
+    assert.equal(f.changes(), baseline);
+    assert.deepEqual({ ...f.shares()[0] }, tombstone);
+    const next = await issue(f, { intentKey: "fresh-explicit-review-after-minimization" });
+    assert.notEqual(next.share.shareId, shareId);
+    assert.equal((await readSelectedOutputShare(publicRequest(), f.env, next.share.token)).status, 200);
+    assert.equal(f.shares().length, 2);
+    f.sqlite.prepare("UPDATE private_content SET redacted_at=? WHERE content_id=?").run(new Date().toISOString(), CONTENT);
+    const beforeRefusal = f.changes();
+    assert.equal((await prepareSelectedOutputShare(f.request({ ...result.prepared.body, intentKey: "fresh-intent-without-custody" }), f.env)).status, 404);
+    assert.equal(f.shares().length, 2); assert.equal(f.changes(), beforeRefusal);
+  });
+});
+
+test("absent or partial share schema rejects every lifecycle entry before authorization, private reads or initialization", async t => {
+  for (const schema of ["absent", "partial"]) for (const operation of ["prepare", "commit", "read", "revoke"]) {
+    await t.test(`${schema} ${operation}`, async child => {
+      const f = await selectedOutputShareFixture(child, { installShareSchema: false });
+      if (schema === "partial") f.sqlite.exec("CREATE TABLE selected_output_shares(share_id TEXT PRIMARY KEY NOT NULL)");
+      const before = f.changes(), tables = f.sqlite.prepare("SELECT type,name,sql FROM sqlite_schema ORDER BY type,name").all();
+      let response;
+      if (operation === "prepare") response = await prepareSelectedOutputShare(f.request({ intentKey: "schema-unready", selection: f.selection(), review: f.review() }), f.env);
+      else if (operation === "commit") response = await commitSelectedOutputShare(f.request({ candidateId: "unavailable-share", approval: {
+        purpose: PURPOSE, candidateSha256: "0".repeat(64), allowPublicRead: true } }), f.env);
+      else if (operation === "read") response = await readSelectedOutputShare(publicRequest(), f.env, "a".repeat(32));
+      else response = await revokeSelectedOutputShare(f.request(undefined, {}, "DELETE"), f.env, "unavailable-share");
+      assert.equal(response.status, 404); headers(response);
+      assert.equal(f.calls.length, 1, "only the read-only readiness statement is reached");
+      assert.match(f.calls[0], /main\.sqlite_schema/u);
+      assert.doesNotMatch(f.calls[0], /native_principal AS|event_base AS|FROM private_content|UPDATE selected_output_shares/u);
+      assert.equal(f.changes(), before);
+      assert.deepEqual(f.sqlite.prepare("SELECT type,name,sql FROM sqlite_schema ORDER BY type,name").all(), tables);
+    });
+  }
+});
+
+test("each final lifecycle statement rechecks schema integrity after the initial readiness observation", async t => {
+  for (const operation of ["prepare", "commit", "read", "revoke"]) await t.test(operation, async child => {
+    const f = await selectedOutputShareFixture(child);
+    const result = operation === "prepare" ? null : operation === "commit" ? { prepared: await prepare(f) } : await issue(f);
+    const before = f.changes(), original = f.shares().map(row => ({ ...row })); let raced = false;
+    f.setBeforeStatement(sql => {
+      const boundary = operation === "prepare" ? preparationWrite(sql)
+        : operation === "commit" ? tokenWrite(sql) : operation === "read" ? finalRead(sql)
+          : sql.startsWith("UPDATE selected_output_shares SET revoked_at=");
+      if (!boundary) return;
+      f.setBeforeStatement(null); raced = true;
+      f.sqlite.exec("DROP TRIGGER selected_output_share_no_delete");
+    });
+    let response;
+    if (operation === "prepare") response = await prepareSelectedOutputShare(f.request({ intentKey: "schema-race", selection: f.selection(), review: f.review() }), f.env);
+    else if (operation === "commit") response = await commitSelectedOutputShare(f.request(approval(result.prepared)), f.env);
+    else if (operation === "read") response = await readSelectedOutputShare(publicRequest(), f.env, result.share.token);
+    else response = await revokeSelectedOutputShare(f.request(undefined, {}, "DELETE"), f.env, result.share.shareId);
+    assert.equal(raced, true, "the final schema boundary must be reached");
+    assert.equal(response.status, 404); headers(response);
+    assert.equal(f.changes(), before, "no grant, revocation or candidate is written under the altered schema");
+    assert.deepEqual(f.shares().map(row => ({ ...row })), original);
+  });
 });

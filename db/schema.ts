@@ -1056,6 +1056,52 @@ export const shares = sqliteTable(
   (table) => [uniqueIndex("idx_shares_token_hash").on(table.tokenHash), index("idx_shares_owner").on(table.ownerId, table.createdAt)],
 );
 
+/** Selected-output public reads retain only operational replay/token tombstones after
+ * metadata retirement. The canonical migration adds WITHOUT ROWID and immutable
+ * transition triggers; Drizzle models columns, indexes, uniqueness and CHECKs. */
+export const selectedOutputShares = sqliteTable("selected_output_shares", {
+  shareId: text("share_id").primaryKey().notNull(),
+  purpose: text("purpose").notNull(),
+  replayKey: text("replay_key").notNull().unique(),
+  ownerId: text("owner_id"),
+  ownerEmail: text("owner_email"),
+  intentKey: text("intent_key"),
+  projectId: text("project_id"),
+  jobId: text("job_id"),
+  completionEventId: text("completion_event_id"),
+  selectionJson: text("selection_json"),
+  reviewTitle: text("review_title"),
+  sourceExpiresAt: text("source_expires_at"),
+  provenanceExpiresAt: text("provenance_expires_at"),
+  expiresAt: text("expires_at"),
+  candidateSha256: text("candidate_sha256"),
+  issuerAuthoritySha256: text("issuer_authority_sha256"),
+  createdAt: text("created_at"),
+  tokenHash: text("token_hash").unique(),
+  issuedAt: text("issued_at"),
+  revokedAt: text("revoked_at"),
+  minimizedAt: text("minimized_at"),
+}, table => [
+  unique("selected_output_shares_owner_intent_unique").on(table.ownerId, table.intentKey),
+  index("selected_output_shares_owner").on(table.ownerId, table.createdAt),
+  check("selected_output_share_purpose", sql.raw(`purpose='selected-output-read-v1'`)),
+  check("selected_output_share_replay_key", sql.raw(`length(replay_key)=64 AND replay_key NOT GLOB '*[^0-9a-f]*'`)),
+  check("selected_output_share_token_pair", sql.raw(`(token_hash IS NULL AND issued_at IS NULL) OR (token_hash IS NOT NULL AND issued_at IS NOT NULL
+      AND length(token_hash)=64 AND token_hash NOT GLOB '*[^0-9a-f]*' AND length(issued_at)=24)`)),
+  check("selected_output_share_revocation", sql.raw(`revoked_at IS NULL OR length(revoked_at)=24`)),
+  check("selected_output_share_active_or_minimized", sql.raw(`(minimized_at IS NULL AND owner_id IS NOT NULL AND owner_email IS NOT NULL AND intent_key IS NOT NULL AND project_id IS NOT NULL AND job_id IS NOT NULL AND completion_event_id IS NOT NULL AND selection_json IS NOT NULL AND review_title IS NOT NULL AND source_expires_at IS NOT NULL AND provenance_expires_at IS NOT NULL AND expires_at IS NOT NULL AND candidate_sha256 IS NOT NULL AND issuer_authority_sha256 IS NOT NULL AND created_at IS NOT NULL
+      AND json_valid(selection_json) AND length(CAST(selection_json AS BLOB)) BETWEEN 1 AND 1024
+      AND length(CAST(review_title AS BLOB)) BETWEEN 1 AND 512
+      AND length(candidate_sha256)=64 AND candidate_sha256 NOT GLOB '*[^0-9a-f]*'
+      AND length(issuer_authority_sha256)=64 AND issuer_authority_sha256 NOT GLOB '*[^0-9a-f]*'
+      AND length(created_at)=24 AND length(source_expires_at)=24 AND length(provenance_expires_at)=24 AND length(expires_at)=24
+      AND created_at<expires_at AND expires_at<=source_expires_at AND expires_at<=provenance_expires_at
+      AND (issued_at IS NULL OR (issued_at>=created_at AND issued_at<expires_at))
+      AND (revoked_at IS NULL OR revoked_at>=created_at))
+      OR (minimized_at IS NOT NULL AND length(minimized_at)=24 AND revoked_at IS NOT NULL AND revoked_at<=minimized_at
+        AND (issued_at IS NULL OR issued_at<=minimized_at) AND owner_id IS NULL AND owner_email IS NULL AND intent_key IS NULL AND project_id IS NULL AND job_id IS NULL AND completion_event_id IS NULL AND selection_json IS NULL AND review_title IS NULL AND source_expires_at IS NULL AND provenance_expires_at IS NULL AND expires_at IS NULL AND candidate_sha256 IS NULL AND issuer_authority_sha256 IS NULL AND created_at IS NULL)`)),
+]);
+
 /** Immutable resource and exact-media authorization attached to a private share. */
 export const shareScopes = sqliteTable(
   "share_scopes",
@@ -1199,7 +1245,7 @@ export const outputAtomicAssertions = sqliteTable(
     token: text("token").primaryKey().notNull(),
     passed: integer("passed").notNull(),
   },
-  (table) => [
+  () => [
     check("output_atomic_assertions_check_1", sql.raw("passed=1")),
   ],
 );

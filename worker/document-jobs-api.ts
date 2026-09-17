@@ -1,3 +1,4 @@
+import { readSponsorJobStatus, sponsorJobReadPredicate } from "./experience-sponsor-job-read.ts";
 import { outputJobIsDurable, requireOutputDurableBinding } from "./output-durable-control.ts";
 import { requireSponsorExecution, readSponsorFinancialBinding, sponsorFinancialIdentity, sponsorTerminalReleaseStatement, type SponsorExecutionAuthority, type SponsorFinancialBinding } from "./experience-sponsor-execution.ts";
 import { retainedPlannerResponseShape, retainedStoryboardResponseShape } from "./output-planner-response-shape.ts";
@@ -2776,6 +2777,19 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
   const readOnlyScene=Boolean(sceneInspection&&project&&hasCapability(principal,"project.read",{organizationId:project.organizationId,projectAccessId:project.projectAccessId}));
   if(!canRequestOutputs&&!readOnlyPlanning&&!readOnlyScene)return Response.json({error:"project_read_only"},{status:403});
   const user:PilotUser=project?{...principal,streamId:`creative:${project.ownerUserId}`,projectExecution:{organizationId:project.organizationId,projectAccessId:project.projectAccessId,projectId:project.projectId,ownerUserId:project.ownerUserId,actorUserId:principal.userId}}:principal;
+  if(request.method==="GET"&&!project&&(!path||!path.includes("/"))){
+    const selectors=new URL(request.url).searchParams;
+    const selectedJob=selectors.get("sponsorJobId");
+    if(selectedJob!==null&&(path||selectors.getAll("sponsorJobId").length!==1))
+      return Response.json({error:"sponsor_job_selection_invalid"},{status:400,headers:{"cache-control":"private, no-store"}});
+    const target=path?decodeURIComponent(path):selectedJob;
+    if(target!==null){
+      const sponsored=await readSponsorJobStatus(request,env,user,target,{selected:!path,
+        ...(selectors.has("document")?{documentId:selectors.get("document")??""}:{})});
+      if(sponsored)return sponsored;
+    }
+  }
+
   if(sponsor){
     if(project||user.fictional||user.projectExecution||(user.billingUserId??user.userId)!==user.userId)return Response.json({error:"sponsor_personal_principal_required"},{status:403});
     // Actor eligibility is independent of the sponsor's financial identity.
@@ -3502,7 +3516,14 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
   }
 
   if (request.method === "GET") {
-    const requestedJob = path ? await readJob(env, user.userId, decodeURIComponent(path)) : null;
+    // Default lists omit campaign reads before loading private checkpoints.
+    // A caller explicitly selects one with sponsorJobId; detail/inspection was
+    // handled above. Ordinary polling cannot spend a campaign's read allowance.
+    const sponsorExcluded=await sponsorJobReadPredicate(env,user);
+    const readOrdinaryDetail=(jobId:string)=>env.DB.prepare(`SELECT *${outputSchemaIsReady(env.DB)?",(SELECT slot.slot_id FROM output_operation_slots slot WHERE slot.job_id=document_jobs.job_id) AS output_slot_id":""}
+      FROM document_jobs WHERE job_id=? AND owner_id=? AND stream_id=? AND NOT (${sponsorExcluded})`)
+      .bind(jobId,user.userId,user.streamId).first<DocumentJobRow>();
+    const requestedJob = path ? await readOrdinaryDetail(decodeURIComponent(path)) : null;
     if(path&&requestedJob&&documentJobTerminal(requestedJob)&&Date.parse(requestedJob.expires_at)<=Date.now())return Response.json({error:"job_not_found"},{status:404});
     const query = new URL(request.url).searchParams;
     // An explicit input inspection must never repair a job, settle a hold, or
@@ -3529,7 +3550,7 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
       ) END AS request_json,
       json_remove(${model3dPublicResultSql("")},'$.providerSubmissions','$.providerSubmissionProtocol','$.providerSubmissionLegacyUncertain','$.plannerInput','$.videoInputReceipt','$.audioInputReceipt','$.model3dInputReceipt','$.model3dProviderFiles','$.artifactPlan','$.presentationCandidates','$.presentationRecoveryOnly','$.productionPlan','$.productionSceneReceipts','$.productionAnchor') AS result_json,
       error_message,attempt_count,requested_at,started_at,completed_at,lease_expires_at,notified_at,expires_at,updated_at
-      FROM document_jobs WHERE owner_id=? AND stream_id=? AND NOT EXISTS(SELECT 1 FROM project_resource_scopes resource WHERE resource.resource_kind='job' AND resource.resource_id=document_jobs.job_id) AND (status IN ('queued','running','committing') OR (notified_at IS NULL AND expires_at>?) OR (kind IN ('preview','generate','prompt_fan','render_document','structure_adaptive') AND (status IN ('failed','partial') OR kind='structure_adaptive') AND expires_at>?))
+      FROM document_jobs WHERE owner_id=? AND stream_id=? AND NOT (${sponsorExcluded}) AND NOT EXISTS(SELECT 1 FROM project_resource_scopes resource WHERE resource.resource_kind='job' AND resource.resource_id=document_jobs.job_id) AND (status IN ('queued','running','committing') OR (notified_at IS NULL AND expires_at>?) OR (kind IN ('preview','generate','prompt_fan','render_document','structure_adaptive') AND (status IN ('failed','partial') OR kind='structure_adaptive') AND expires_at>?))
       AND NOT EXISTS(SELECT 1 FROM output_operation_slots slot WHERE slot.job_id=document_jobs.job_id AND slot.status='authorized')
       AND (?=0 OR status IN ('queued','running','committing') OR notified_at IS NULL)
       AND (?='' OR status IN ('queued','running','committing') OR notified_at IS NULL OR document_id=?)
@@ -3556,12 +3577,12 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
       }
     }
     if (reconciled) {
-      const refreshed = path ? await readJob(env, user.userId, decodeURIComponent(path)) : null;
+      const refreshed = path ? await readOrdinaryDetail(decodeURIComponent(path)) : null;
       rows = path ? refreshed ? [refreshed] : [] : (await readVisibleJobs()).results;
     }
     const visibleBlocker = [...rows].filter((row)=>!outputJobIsDurable(row)&&row.kind!=="prompt_fan"&&["running","committing"].includes(row.status)).sort((left,right)=>left.requested_at.localeCompare(right.requested_at)||left.job_id.localeCompare(right.job_id))[0]??null;
     const activeBlocker = path
-      ? await env.DB.prepare("SELECT * FROM document_jobs WHERE owner_id=? AND stream_id=? AND json_type(request_json,'$.outputDurable') IS NULL AND kind!='prompt_fan' AND status IN ('running','committing') ORDER BY requested_at ASC,job_id ASC LIMIT 1").bind(user.userId, user.streamId).first<DocumentJobRow>()
+      ? await env.DB.prepare(`SELECT * FROM document_jobs WHERE owner_id=? AND stream_id=? AND NOT (${sponsorExcluded}) AND json_type(request_json,'$.outputDurable') IS NULL AND kind!='prompt_fan' AND status IN ('running','committing') ORDER BY requested_at ASC,job_id ASC LIMIT 1`).bind(user.userId, user.streamId).first<DocumentJobRow>()
       : visibleBlocker;
     const recoveryBlocker = activeBlocker && rowIsStale(activeBlocker) ? activeBlocker : null;
     if (recoveryBlocker&&!requiresForegroundDocumentExecution(recoveryBlocker)) context?.waitUntil(driveDocumentQueue(env, user));
