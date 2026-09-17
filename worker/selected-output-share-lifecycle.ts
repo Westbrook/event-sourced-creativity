@@ -7,8 +7,9 @@ import { readSelectedOutputShareAuthority, selectedOutputShareAuthoritySnapshot,
 import { selectedOutputShareSchemaState, selectedOutputShareSchemaAssertion } from "./selected-output-share-readiness.ts";
 import type { WorkerEnv } from "./runtime.ts";
 
-// No route, initializer, provider, budget or private-media entry imports this
-// detached lifecycle. Every source proof is freshly obtained inside the call.
+// The finite selected-share dispatcher exposes read/revoke only while creation
+// remains closed. No initializer, provider, budget or private-media entry is
+// imported here. Every source proof is freshly obtained inside the call.
 const encoder = new TextEncoder();
 const id = (value: unknown): value is string => typeof value === "string" && /^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$/u.test(value);
 const digest = (value: unknown): value is string => typeof value === "string" && /^[a-f0-9]{64}$/u.test(value);
