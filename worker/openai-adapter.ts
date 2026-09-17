@@ -1,3 +1,4 @@
+import { OPENAI_IMAGE_DIRECTION_CONTRACT, OPENAI_IMAGE_GENERATION_CONTRACT } from "./openai-image-route-contract.ts";
 import { outputPlannerResponseShape } from "./output-planner-response-shape.ts";
 import { captureVideoPlannerEnvelope, videoPlannerEnvelopeText, type VideoPlannerRawEnvelope } from "./output-video-planner-envelope.ts";
 import { requestOutputVideoPlannerResponse } from "./output-video-execution.ts";
@@ -118,17 +119,6 @@ export type VideoReference = { bytes:Uint8Array; mimeType:string; blockId:string
 export type VideoAudioReference = { bytes:Uint8Array; mimeType:string; blockId:string; referenceId:string; label:string; durationSeconds:number; rightsClass:string };
 export type CreativeVideoPreparedReceipt = { provider:string; model:string; submittedPrompt:string; parameters:Record<string,unknown>; referenceInputs:Array<Record<string,unknown>>; usedReferencePixels:boolean; adaptation?:VideoPromptAdaptation };
 export type CreativeVideoOptions = { seconds:VideoDurationSeconds; size:"1280x720"|"720x1280"; resolution?:"480p"|"720p"; audioMode?:VideoAudioMode; generateAudio?:boolean; endUserId?:string; referencePromptProfile?:"standard"|"positive-only"; providerJobId?:string; providerModel?:string; providerStatusUrl?:string; providerResponseUrl?:string; providerCancelUrl?:string; references?:VideoReference[]; audioReferences?:VideoAudioReference[]; snapshot?:Record<string,unknown>; plan?:Pick<DocumentArtifactDraft,"title"|"summary"|"items">; productionContinuity?:{prohibitions:string[];scopedTargets:Array<{target:string;role:string;prohibitions:string[]}>}; retainedReceipt?:CreativeVideoPreparedReceipt; signal?:AbortSignal; onStage?:(stage:string,message:string)=>void|Promise<void>; onPrepared?:(receipt:CreativeVideoPreparedReceipt)=>void|Promise<void>; onReceipt?:(receipt:{providerJobId:string;provider:string;model:string;providerStatusUrl:string;providerResponseUrl:string;providerCancelUrl:string})=>void|Promise<void> };
-
-const outputSchema = {
-  type: "object",
-  additionalProperties: false,
-  required: ["title", "rationale", "scene", "palette", "next_moves"],
-  properties: {
-    title: { type: "string" }, rationale: { type: "string" }, scene: { type: "string" },
-    palette: { type: "array", minItems: 3, maxItems: 6, items: { type: "string" } },
-    next_moves: { type: "array", minItems: 2, maxItems: 4, items: { type: "string" } },
-  },
-};
 
 const adaptiveStructureSchema = {
   type:"object", additionalProperties:false,
@@ -405,13 +395,13 @@ export async function generateCreativeDirection(env: WorkerEnv, userId: string, 
   const submission:PaidProviderSubmission={clientRequestId:`forma-direction-${crypto.randomUUID()}`,provider:"openai",operation:"planning",model:env.OPENAI_MODEL??"gpt-5.6-terra",status:"pending"};
   const identifier=await safetyIdentifier(userId);
   const requestBody=JSON.stringify({model:env.OPENAI_MODEL??"gpt-5.6-terra",instructions,input:plannerInput,
-    text:{verbosity:"low",format:{type:"json_schema",name:"forma_creative_direction",strict:true,schema:outputSchema}},
-    reasoning:{effort:"low"},max_output_tokens:1200,store:false,safety_identifier:identifier});
-  await executionOptions?.onBeforeProviderAttempt?.({model:submission.model,maximumInputTokens:new TextEncoder().encode(requestBody).byteLength+4096,maximumOutputTokens:1200,
+    text:OPENAI_IMAGE_DIRECTION_CONTRACT.text,
+    reasoning:OPENAI_IMAGE_DIRECTION_CONTRACT.reasoning,max_output_tokens:OPENAI_IMAGE_DIRECTION_CONTRACT.maximumOutputTokens,store:OPENAI_IMAGE_DIRECTION_CONTRACT.store,safety_identifier:identifier});
+  await executionOptions?.onBeforeProviderAttempt?.({model:submission.model,maximumInputTokens:new TextEncoder().encode(requestBody).byteLength+4096,maximumOutputTokens:OPENAI_IMAGE_DIRECTION_CONTRACT.maximumOutputTokens,
     clientRequestId:submission.clientRequestId,logicalCallKey:"planning:initial",requestDigest:await sha256Bytes(new TextEncoder().encode(requestBody))});
   await onProviderSubmission?.(submission);
   executionOptions?.onBeforeProviderDispatch?.(submission.clientRequestId);
-  const response = await openAIRequest("https://api.openai.com/v1/responses",{method:"POST",headers:{...openAIHeaders(env),"X-Client-Request-Id":submission.clientRequestId},signal,body:requestBody});
+  const response = await openAIRequest(OPENAI_IMAGE_DIRECTION_CONTRACT.api,{method:"POST",headers:{...openAIHeaders(env),"X-Client-Request-Id":submission.clientRequestId},signal,body:requestBody});
   if(!response.ok&&definitiveProviderRejection(response.status))await onProviderSubmission?.({...submission,status:"rejected",costMicrousd:0});
   const body = await response.json() as OpenAIResponse;
   if (!response.ok) throw providerErrorFromResponse(response, body, `openai_${response.status}`, `Creative-direction planner instructions:\n${instructions}\n\nPlanner input:\n${plannerInput}`);
@@ -461,17 +451,17 @@ async function readImageStream(response:Response,onEvent:(event:OpenAIImageStrea
 
 export async function generateCreativeImage(env:WorkerEnv,userId:string,snapshot:Record<string,unknown>,direction:Record<string,unknown>,options:CreativeImageOptions={}) {
   if(!env.OPENAI_API_KEY)throw new Error("provider_not_configured");
-  const model=env.OPENAI_IMAGE_MODEL??"gpt-image-2";const quality=options.quality??"high";const size=options.size??"1536x1024";const sizeValidation=validateProviderImageSize(size);
+  const model=env.OPENAI_IMAGE_MODEL??OPENAI_IMAGE_GENERATION_CONTRACT.defaults.model;const quality=options.quality??OPENAI_IMAGE_GENERATION_CONTRACT.defaults.quality;const size=options.size??OPENAI_IMAGE_GENERATION_CONTRACT.defaults.size;const sizeValidation=validateProviderImageSize(size);
   if(model.startsWith("gpt-image-2")&&!sizeValidation.valid)throw new ProviderRequestError({code:"invalid_image_size",category:"provider",scope:"request",action:"edit_request",message:`The requested image size ${size} cannot be submitted to ${model}. ${sizeValidation.issues.join(" ")}`,retryable:false,retryAfterMs:null,requestId:null,httpStatus:400});
   const references=validateImageReferences(options.references??[]);const promptTechnique=normalizePromptTechnique(options.promptTechnique);const prompt=options.preparedPrompt?.trim()||buildCreativeImagePrompt(snapshot,direction,references,promptTechnique,{size,quality,partialImages:options.partialImages});const started=Date.now();
   await options.onStage?.("safety-review","Reviewing the exact image prompt and selected reference pixels.");
   let moderation:Awaited<ReturnType<typeof moderateExactImagePrompt>>;try{moderation=await moderateExactImagePrompt(env,prompt,references,options.signal);}catch(error){if(error instanceof ProviderRequestError)throw new ProviderRequestError(error.detail,prompt);throw error;}
   if(moderation.flagged)throw new ProviderRequestError({code:"safety_preflight_flagged",category:"safety",scope:"request",action:"edit_request",message:`A preflight review identified likely safety concerns${moderation.categories.length?` in ${moderation.categories.join(", ")}`:""}. Review the exact prompt and the contributing context before retrying.`,retryable:false,retryAfterMs:null,requestId:moderation.requestId,httpStatus:400,riskCategories:moderation.categories,contributingReferenceIds:moderation.referenceIds,probe:"exact-prompt-and-reference-moderation"},prompt);
   await options.onStage?.("provider-wait","Safety preflight passed. Waiting for the image provider.");
-  const outputFormat=options.outputFormat??"png";const outputCompression=Math.max(0,Math.min(100,Math.round(options.outputCompression??100)));const partialImages=options.partialImages??0;const user=await safetyIdentifier(userId);
+  const outputFormat=options.outputFormat??OPENAI_IMAGE_GENERATION_CONTRACT.defaults.outputFormat;const outputCompression=Math.max(0,Math.min(100,Math.round(options.outputCompression??OPENAI_IMAGE_GENERATION_CONTRACT.defaults.outputCompression)));const partialImages=options.partialImages??OPENAI_IMAGE_GENERATION_CONTRACT.defaults.partialImages;const user=await safetyIdentifier(userId);
   let response:Response;
   if(references.length){
-    const form=new FormData();form.set("model",model);form.set("prompt",prompt);form.set("n","1");form.set("size",size);form.set("quality",quality);form.set("output_format",outputFormat);if(outputFormat!=="png")form.set("output_compression",String(outputCompression));if(partialImages){form.set("stream","true");form.set("partial_images",String(partialImages));}form.set("user",user);
+    const form=new FormData();form.set("model",model);form.set("prompt",prompt);form.set("n",String(OPENAI_IMAGE_GENERATION_CONTRACT.outputCount));form.set("size",size);form.set("quality",quality);form.set("output_format",outputFormat);if(outputFormat!=="png")form.set("output_compression",String(outputCompression));if(partialImages){form.set("stream","true");form.set("partial_images",String(partialImages));}form.set("user",user);
     references.forEach((reference,index)=>{const buffer=reference.bytes.buffer.slice(reference.bytes.byteOffset,reference.bytes.byteOffset+reference.bytes.byteLength) as ArrayBuffer;const extension=reference.mimeType==="image/jpeg"?"jpg":reference.mimeType==="image/webp"?"webp":"png";form.append("image[]",new Blob([buffer],{type:reference.mimeType}),`${reference.source}-${index+1}.${extension}`);});
     await options.onStage?.("provider-submit","Submitting the approved image request.");
     options.onBeforeProviderDispatch?.(options.providerClientRequestId??"");
@@ -479,7 +469,7 @@ export async function generateCreativeImage(env:WorkerEnv,userId:string,snapshot
   }else{
     await options.onStage?.("provider-submit","Submitting the approved image request.");
     options.onBeforeProviderDispatch?.(options.providerClientRequestId??"");
-    try{response=await openAIRequest("https://api.openai.com/v1/images/generations",{method:"POST",headers:{...openAIHeaders(env),...(options.providerClientRequestId?{"X-Client-Request-Id":options.providerClientRequestId}:{})},body:JSON.stringify({model,prompt,n:1,size,quality,output_format:outputFormat,...(outputFormat!=="png"?{output_compression:outputCompression}:{}),...(partialImages?{stream:true,partial_images:partialImages}:{}),user}),signal:options.signal});}catch(error){if(error instanceof ProviderRequestError)throw new ProviderRequestError(error.detail,prompt);throw error;}
+    try{response=await openAIRequest(OPENAI_IMAGE_GENERATION_CONTRACT.api,{method:"POST",headers:{...openAIHeaders(env),...(options.providerClientRequestId?{"X-Client-Request-Id":options.providerClientRequestId}:{})},body:JSON.stringify({model,prompt,n:OPENAI_IMAGE_GENERATION_CONTRACT.outputCount,size,quality,output_format:outputFormat,...(outputFormat!=="png"?{output_compression:outputCompression}:{}),...(partialImages?{stream:true,partial_images:partialImages}:{}),user}),signal:options.signal});}catch(error){if(error instanceof ProviderRequestError)throw new ProviderRequestError(error.detail,prompt);throw error;}
   }
   if(!response.ok){let error:OpenAIImageResponse={};try{error=await response.json() as OpenAIImageResponse;}catch{/* Preserve the provider status when no JSON error body is available. */}throw providerErrorFromResponse(response,error,`openai_image_${response.status}`,prompt);}
   const [requestedWidth,requestedHeight]=size.split("x").map(Number);let encoded="";let revisedPrompt:string|null=null;let createdAt:number|null=null;let usage:OpenAIImageUsage={};let completedSize:string=size;let completedFormat=outputFormat;let partialCount=0;
