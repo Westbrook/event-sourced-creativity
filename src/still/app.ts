@@ -2,7 +2,6 @@ import './palette-elements.js';
 import { localHistoryEvidence } from './history.ts';
 import { LitElement, html, nothing, type TemplateResult } from 'lit';
 import { live } from 'lit/directives/live.js';
-import { repeat } from 'lit/directives/repeat.js';
 import { keyed } from 'lit/directives/keyed.js';
 import './vendor/tokens/default.css';
 import './vendor/elements/define/button.js';
@@ -13,7 +12,7 @@ import './context-flow.ts';
 import './use-in-flow.ts';
 import type { StillUseInFlow } from './use-in-flow.ts';
 import { explicitAction, paletteActions, nextToolbarActions, finderEntry } from './finder.ts';
-import { presentActions, type Emphasis } from './presentation.ts';
+import { presentActions, presentEvidence, type Emphasis } from './presentation.ts';
 import './developer-console.ts';
 import { DEVELOPER_DESKTOP_QUERY } from './developer-layout.ts';
 import type { StillDeveloperConsole } from './developer-console.ts';
@@ -140,7 +139,7 @@ export class StillApp extends LitElement {
     if(inspector){
       if(this.developerScope!==this.diagnosticScope()){this.developerApplied=undefined;this.developerReceived=undefined;this.developerScope=this.diagnosticScope();}
       inspector.context={view:this.client.position.view,mode:this.mode,head:this.client.head,page:this.page,more:this.moreOpen,paletteOpen:this.paletteOpen,selectedFormat:this.generation?.format??'',current:this.localDiagnostics('Current eligibility')};
-      inspector.applied=this.developerApplied;inspector.received=this.developerReceived;inspector.pending=this.developerPending;
+      inspector.applied=this.developerApplied;inspector.received=this.developerReceived;inspector.pending=this.developerPending||this.paletteBusy;
       inspector.scope=this.diagnosticScope();
     }
   }
@@ -313,10 +312,12 @@ export class StillApp extends LitElement {
       if (!this.disposed) this.poll();
     }, 2000);
   }
-  private suggestedButton(a:Action,format=false){const e=(format?this.formatEmphasis:this.emphasis)[a.id]??{variant:'secondary',size:'medium',tier:'peer',reason:'No clear leader'};return html`<en-button data-action-id=${a.id} data-tier=${e.tier} data-emphasis-reason=${e.reason} variant=${e.variant} size=${e.size} .disabled=${this.busy||this.composing} @click=${()=>format?this.chooseFormat(a.id):this.choose(a.id)}>${a.label}</en-button>`;}
+  private suggestedButton(a:Action,format=false,presentation?:Record<string,Emphasis>){const e=(presentation??(format?this.formatEmphasis:this.emphasis))[a.id]??{variant:'secondary',size:'medium',tier:'peer',reason:'No clear leader'};return html`<en-button data-action-id=${a.id} data-tier=${e.tier} data-emphasis-reason=${e.reason} variant=${e.variant} size=${e.size} .disabled=${this.busy||this.composing} @click=${()=>format?this.chooseFormat(a.id):this.choose(a.id)}>${a.label}</en-button>`;}
+  private toolbarSuggestions(actions:Action[]){const emphasis=presentEvidence(actions.map(a=>a.id),this.emphasis);return actions.map(a=>this.suggestedButton(a,false,emphasis));}
   private paletteShortcut=(event:KeyboardEvent)=>{
+    if(event.isComposing||event.keyCode===229)return;
     if((event.metaKey||event.ctrlKey)&&!event.altKey&&event.key.toLowerCase()==='k'){
-      event.preventDefault();if(event.repeat)return;this.paletteOpen?this.closeFinder():this.openFinder();
+      event.preventDefault();if(event.repeat)return;if(this.paletteOpen)this.closeFinder();else this.openFinder();
     }
   };
   private openMore(){this.moreOpen=true;this.dockTouched=true;this.client.position.recentActions=[...this.client.position.recentActions,'ui:more'].slice(-12);this.changed();void this.updateComplete.then(()=>this.querySelector<HTMLElement>('.action-dock en-button')?.focus());}
@@ -331,12 +332,12 @@ export class StillApp extends LitElement {
     const explicit=explicitAction(query,candidates);this.finderInferred=true;this.finderMessage='';
     if(explicit){this.paletteChoice=explicit;this.changed();return;}
     const snapshot=JSON.stringify(this.client.position),head=this.client.head,scope=this.interactionScope(),diagnosticScope=this.diagnosticScope(),ticket=++this.paletteTicket;
-    this.paletteBusy=true;this.changed();
+    this.paletteBusy=true;if(this.developer)this.developerReceived=undefined;this.changed();
     try{const result=await api<DecisionResponse>('/api/still/decision',{...this.client.position,view:'find-action',intent:query,...(this.developer?{developer:true}:{})});
       const stale=result.policy!==POLICY_VERSION||result.head!==head||ticket!==this.paletteTicket||!this.paletteOpen||query!==this.paletteQuery.trim()||scope!==this.interactionScope()||snapshot!==JSON.stringify(this.client.position)||head!==this.client.head||this.disposed;
       this.recordDecision(result,stale?'Ignored: palette changed':'Palette suggestion',diagnosticScope);if(stale)return;
       this.paletteChoice=candidates.some(a=>a.id===result.resolvedAction)?result.resolvedAction!:'';this.finderMessage=this.paletteChoice?'':'Choose an action.';
-    }catch{if(ticket===this.paletteTicket)this.finderMessage='Choose an action.';}finally{if(ticket===this.paletteTicket){this.paletteBusy=false;this.changed();}}
+    }catch(error){if(ticket===this.paletteTicket){this.finderMessage='Choose an action.';this.recordDecision({source:'fallback',reason:error instanceof ApiError?`HTTP ${error.status}`:'Network unavailable',head,policy:POLICY_VERSION},'Palette lookup failed',diagnosticScope);}}finally{if(ticket===this.paletteTicket){this.paletteBusy=false;this.changed();}}
   }
   private openFoundAction(id=this.paletteChoice,inferred=this.finderInferred){
     if(!id)return;
@@ -351,10 +352,11 @@ export class StillApp extends LitElement {
     this.choose(entry);
   }
   private paletteKeys=(event:KeyboardEvent)=>{
+    if(event.isComposing||event.keyCode===229){event.stopPropagation();return;}
     if(event.key==='Escape'){event.preventDefault();event.stopPropagation();this.closeFinder();return;}
     const options=paletteActions(this.paletteQuery,this.candidates()).filter(a=>this.desktop.matches||a.id!=='ui:developer');
     if(['ArrowDown','ArrowUp','Home','End'].includes(event.key)&&options.length){event.preventDefault();this.paletteIndex=event.key==='Home'?0:event.key==='End'?options.length-1:(this.paletteIndex+(event.key==='ArrowDown'?1:-1)+options.length)%options.length;this.changed();void this.updateComplete.then(()=>this.querySelector('#palette-option-'+this.paletteIndex)?.scrollIntoView({block:'nearest'}));}
-    if(event.key==='Enter'&&!event.isComposing){event.preventDefault();if(options[this.paletteIndex])this.openFoundAction(options[this.paletteIndex].id,false);else void this.findAction();}
+    if(event.key==='Enter'){event.preventDefault();if(options[this.paletteIndex])this.openFoundAction(options[this.paletteIndex].id,false);else void this.findAction();}
   };
   private renderPalette(){
     const options=paletteActions(this.paletteQuery,this.candidates()).filter(a=>this.desktop.matches||a.id!=='ui:developer');
@@ -569,7 +571,7 @@ export class StillApp extends LitElement {
     if (view === 'projects' || view === 'documents' || view === 'results') {
       const count = view === 'projects' ? p.projects.length : view === 'documents' ? p.documents.filter(d => !d.removed).length : p.outputs.filter(o => !o.discarded).length + p.artifacts.length;
       const suggested = this.suggestions.find(a => a.id !== view && a.id !== 'results');
-      actions = suggested ? [this.suggestedButton(suggested)] : [this.button(view === 'projects' ? 'New project' : view === 'documents' ? 'New document' : 'Document', () => view === 'results' ? this.navigate('document') : this.begin(view === 'projects' ? 'new-project' : 'new-document'), true, view === 'projects' ? !c.abilities.projectCreate : view !== 'results' && !c.abilities.author)];
+      actions = suggested ? this.toolbarSuggestions([suggested]) : [this.button(view === 'projects' ? 'New project' : view === 'documents' ? 'New document' : 'Document', () => view === 'results' ? this.navigate('document') : this.begin(view === 'projects' ? 'new-project' : 'new-document'), true, view === 'projects' ? !c.abilities.projectCreate : view !== 'results' && !c.abilities.author)];
       if (count > 3) actions = [this.button(this.page > 0 ? 'Previous' : 'First page', () => this.turnPage(this.page-1), false, this.page === 0), this.button('Next', () => this.turnPage(this.page+1), false, (this.page + 1) * 3 >= count)];
       // The browse content contains at most three item controls; the dock adds two.
       if (actions.length === 2) actions = [this.button('More results', () => this.turnPage((this.page+1)*3>=count?0:this.page+1))];
@@ -578,14 +580,14 @@ export class StillApp extends LitElement {
     } else {
       const a = p.artifacts.find(x => x.id === c.position.outputId);
       visibleIds=this.suggestions.slice(0,view==='artifact'&&a&&['slides','storyboard'].includes(a.kind)&&a.items.length>1?2:4).map(a=>a.id);
-      if (view === 'artifact' && a && ['slides', 'storyboard'].includes(a.kind) && a.items.length > 1) actions = [this.button('Previous', () => this.turnItem(this.itemIndex-1), false, this.itemIndex === 0), this.button('Next', () => this.turnItem(this.itemIndex+1), false, this.itemIndex >= a.items.length - 1), ...this.suggestions.slice(0,2).map(a => this.suggestedButton(a)), this.button('More', () => this.openMore(), false, false, 'ui:more')];
-      else actions = [html`${repeat(this.suggestions.slice(0, 4), a => a.id, a => this.suggestedButton(a))}`, this.button('More', () => this.openMore(), false, false, 'ui:more')];
+      if (view === 'artifact' && a && ['slides', 'storyboard'].includes(a.kind) && a.items.length > 1) actions = [this.button('Previous', () => this.turnItem(this.itemIndex-1), false, this.itemIndex === 0), this.button('Next', () => this.turnItem(this.itemIndex+1), false, this.itemIndex >= a.items.length - 1), ...this.toolbarSuggestions(this.suggestions.slice(0,2)), this.button('More', () => this.openMore(), false, false, 'ui:more')];
+      else actions = [html`${this.toolbarSuggestions(this.suggestions.slice(0,4))}`, this.button('More', () => this.openMore(), false, false, 'ui:more')];
     }
-    if(this.moreOpen)actions=[...nextToolbarActions(this.rankedActions,visibleIds,this.candidates()).map(a=>this.suggestedButton(a)),this.button('Back',()=>{this.moreOpen=false;this.changed();void this.updateComplete.then(()=>this.querySelector<HTMLElement>('[data-action-id="ui:more"]')?.focus());}),this.button('Palette ⌘K',()=>this.openFinder(),false,false,'ui:palette')];
+    if(this.moreOpen)actions=[...this.toolbarSuggestions(nextToolbarActions(this.rankedActions,visibleIds,this.candidates())),this.button('Back',()=>{this.moreOpen=false;this.changed();void this.updateComplete.then(()=>this.querySelector<HTMLElement>('[data-action-id="ui:more"]')?.focus());}),this.button('Palette ⌘K',()=>this.openFinder(),false,false,'ui:palette')];
     return html`<footer class="action-dock" @pointerenter=${()=>{this.dockTouched=true;}} @pointerdown=${()=>{this.dockTouched=true;}} @focusin=${()=>{this.dockTouched=true;}}><en-toolbar label="Your next step" keyboard-navigation="tab">${actions}</en-toolbar></footer>`;
   }
   render() {
-    const c = this.client, p = c.projection, running = c.jobs.filter(j => activeJobs.has(j.status) && j.documentId === c.position.documentId), failed = c.jobs.find(j => j.status === 'failed' && j.documentId === c.position.documentId);
+    const c = this.client, running = c.jobs.filter(j => activeJobs.has(j.status) && j.documentId === c.position.documentId), failed = c.jobs.find(j => j.status === 'failed' && j.documentId === c.position.documentId);
     return html`<div class=${this.developer?'still-layout has-developer':'still-layout'}><div class="still-shell"><header class="masthead"><a class="wordmark" href=${this.viewURL('projects',{projectId:'',documentId:''})} aria-label="Still home" @click=${this.home}>still<span aria-hidden="true">.</span></a><span class="working-status" role="status" aria-live="polite">${this.busy ? 'Working…' : ''}</span><span class="session-status">${c.session?.impersonation ? 'Preview · read only' : c.session && !c.abilities.author ? 'Read only' : ''}</span></header><div class="feedback-strip">${running.length ? html`<aside class="job-status" role="status"><i></i>${running[0].progressMessage || 'Generating…'}${running.length > 1 ? ` · ${running.length} in progress` : ''}</aside>` : nothing}${this.error || failed && !this.mode ? html`<div class="status-message error" role="alert">${this.error || failed?.errorDetail?.message || failed?.error || 'Generation failed.'}</div>` : this.notice && !this.mode ? html`<div class="status-message" role="status">${this.notice}</div>` : nothing}</div><main id="still-content" aria-busy=${this.loading}>${this.renderCanvas()}</main>${this.renderDock()}${this.renderPalette()}</div>${this.developer ? html`<aside class="developer-panel" aria-label="Developer panel"><still-developer-console @developer-disable=${()=>this.setDeveloper(false)}></still-developer-console></aside>` : nothing}${new URL(location.href).searchParams.has('progress-report') ? html`<a class="progress-return" href=${REPORT_URL}>Progress Report ↗</a>` : nothing}</div>`;
   }
 }

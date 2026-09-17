@@ -23,6 +23,7 @@ test('batched assessment and optional evidence have paired, sanitized traces; en
     assert.equal(bodies[0].state.compositions.length,4);assert.ok(good.targets['use-in']);
     assert.deepEqual(good.rankedActions.map(a=>a.id),good.diagnostics.actions.filter(a=>a.rank).sort((a,b)=>a.rank-b.rank).map(a=>a.action.id));
     assert.ok(good.rankedActions.length>good.actions.length);
+    for(const a of good.rankedActions)assert.ok(good.presentation[a.id].usefulProbability>=0&&good.presentation[a.id].usefulProbability<=1);
     for(let i=0;i<2;i++)assert.deepEqual(good.diagnostics.passes[i].exchange.request,bodies[i]);
     assert.equal(good.diagnostics.passes[1].model,'simulated-enrichment');assert.ok(good.diagnostics.passes[1].questions.some(q=>q.id==='target_0'));
     assert.ok(!good.diagnostics.questions.some(q=>q.id==='target_0'));assert.doesNotMatch(JSON.stringify(good),/fixture-secret-key|DO_NOT_FORWARD/);
