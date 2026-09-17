@@ -77,18 +77,29 @@ export async function originalOutputsMediaFixture(t, output, options = {}) {
       status: "completed", providerRequestId: "provider-original", costMicrousd: maximumMicrousd, totalTokens: 0 };
     const receipt = await qualifyOutputModel3dCompletion({ offer: f.offer, prepared: f.receipt, calls: [call], providerRequestId: call.providerRequestId,
       primary: { bytes, sha256: mediaHash, mimeType: "model/gltf-binary", role: "mesh", format: "glb" } });
-    const key = `${ownerMediaNamespace(OWNER)}/generated/model.glb`;
+    const key = `${ownerMediaNamespace(OWNER)}/generated/${options.model3dStorageToken
+      ? `${artifactId}-recovery-${options.model3dStorageToken}` : "model"}.glb`;
     if (options.mediaBytes === true) g.media.set(key, { bytes: new Uint8Array(bytes), contentType: "model/gltf-binary", metadata: {
       ownerId: OWNER, artifactId, source: "provider-generated-media", model, sha256: mediaHash, mimeType: "model/gltf-binary",
       modelFormat: "glb", modelPreviewSafe: "true",
     } });
     const files = [{ url: "/api/media/" + encodeURIComponent(key), sha256: mediaHash, fileSize: bytes.byteLength,
       mimeType: "model/gltf-binary", fileName: "model.glb", role: "mesh", format: "glb", previewSupported: true }];
+    if (options.secondaryModel3d === true) {
+      const alternate = glb({ asset: { version: "2.0", generator: "synthetic-alternate" } }), alternateKey = `${ownerMediaNamespace(OWNER)}/generated/alternate.glb`;
+      if (options.selectSecondaryModel3d === true) expectedBytes = new Uint8Array(alternate);
+      files.push({ url: "/api/media/" + encodeURIComponent(alternateKey), sha256: hash(alternate), fileSize: alternate.byteLength,
+        mimeType: "model/gltf-binary", fileName: "alternate.glb", role: "mesh", format: "glb", previewSupported: true });
+      if (options.mediaBytes === true) g.media.set(alternateKey, { bytes: new Uint8Array(alternate), contentType: "model/gltf-binary", metadata: {
+        ownerId: OWNER, artifactId, source: "provider-generated-media", model, sha256: hash(alternate), mimeType: "model/gltf-binary",
+        modelFormat: "glb", modelPreviewSafe: "true",
+      } });
+    }
     const completion = { schemaVersion: 1, jobId: p.requestId, actorUserId: OWNER, documentId, projectId: PROJECT, artifactId,
       execution: reference, contract: f.offer.contract, costPreview: p, receipt, files };
     payload = emittedModel3dCompletionSource({ sourceReceipt: { document_id: documentId, project_id: PROJECT }, workflowLineage: {},
       artifactId, executionScope: undefined, ownerId: OWNER, plan: { title: "Synthetic kettle", summary: f.payload.model3dPrompt },
-      stored: { contentId: "content", expiresAt: expiry }, inputStored: { contentId: "input", expiresAt: expiry }, primary: files[0],
+      stored: { contentId: "content", expiresAt: expiry }, inputStored: { contentId: "input", expiresAt: expiry }, primary: options.selectSecondaryModel3d === true ? files[1] : files[0],
       generated: { providerJobId: call.providerRequestId, model, latencyMs: 1, seed: null }, preparedReceipt: f.receipt,
       sourceSurface: "outputs", prepared: { settings: f.payload.model3dSettings }, files, nativeCompletion: completion, RODIN_ADAPTER_VERSION,
       costReservationMicrousd: maximumMicrousd, actualCostMicrousd: maximumMicrousd, body: {} });
@@ -109,8 +120,8 @@ export async function originalOutputsMediaFixture(t, output, options = {}) {
     rows.output_provider_calls = [{ scope_key: reference.scopeKey, slot_id: reference.slotId, call_key: "model3d:initial", stage_key: "model3d:initial",
       client_request_id: call.clientRequestId, request_digest: f.receipt.requestDigest, provider: "fal", model,
       reserved_microusd: maximumMicrousd, used_microusd: maximumMicrousd, status: "settled", provider_response_id: call.providerRequestId }];
-    rows.output_native_storage_writes = [{ scope_key: reference.scopeKey, slot_id: reference.slotId, storage_key: key,
-      content_sha256: mediaHash, status: "written", write_acknowledged: 1 }];
+    rows.output_native_storage_writes = files.map(file => ({ scope_key: reference.scopeKey, slot_id: reference.slotId,
+      storage_key: decodeURIComponent(file.url.slice("/api/media/".length)), content_sha256: file.sha256, status: "written", write_acknowledged: 1 }));
   }
   const stream = `creative:${OWNER}`, correlation = `${job.job_id}:attempt:1`, routeDigest = donor?.slot.routeDigest ?? "fixture-native-route", termsDigest = "fixture-native-terms";
   const append = async (type, body, actor = `user:${OWNER}`, client = "server:output-requirements", corr = "fixture-authorize") => {
@@ -126,7 +137,7 @@ export async function originalOutputsMediaFixture(t, output, options = {}) {
     authorized_targets: [{ target_id: reference.targetId, operation_slot_id: reference.slotId, job_id: job.job_id, route_digest: routeDigest }],
     output_command_envelope: { action: "authorize", documentId, clientMutationId: "fixture-authorize", preflightId: "preflight",
       termsDigest, maximumMicrousd, explicitAuthorization: true, expectedRevision: `output:${preflight.sequence}` } });
-  const completed = await append("DocumentRenderCompleted", payload, "worker:renderer", "server:document-job:render_document", correlation);
+  const completed = await append("DocumentRenderCompleted", { ...payload, ...options.completionPayload }, "worker:renderer", options.completionClientId ?? "server:document-job:render_document", correlation);
   const result = { ...JSON.parse(job.result_json), appendedEventIds: [completed.eventId] };
   Object.assign(job, { status: "completed", source_surface: "outputs", correlation_id: correlation, requested_sequence: authorization.sequence,
     requested_at: now, started_at: now, completed_at: now, error_message: null, attempt_count: 1,
@@ -172,7 +183,7 @@ export async function originalOutputsMediaFixture(t, output, options = {}) {
     head() { stats.heads++; throw Error("unexpected media head"); }, put() { stats.writes++; throw Error("unexpected media write"); }, delete() { stats.writes++; throw Error("unexpected media delete"); },
   } };
   const identity = { userId: OWNER, email: EMAIL, source: "openai-workspace" }, controller = new AbortController();
-  const selection = { output, documentId, artifactId, revision: 0, contentSha256: hash(rawContent), mediaSha256: mediaHash, policy: output === "video" ? videoPolicy : modelPolicy };
+  const selection = { output, documentId, artifactId, revision: 0, contentSha256: hash(rawContent), mediaSha256: options.selectSecondaryModel3d === true ? payload.settings.model3d_files[1].sha256 : mediaHash, policy: output === "video" ? videoPolicy : modelPolicy };
   return { ...g, env, identity, selection, stats, statements, completed, authorization, reference, jobId: job.job_id, controller,
     expectedBytes: new Uint8Array(expectedBytes), originalRaw: rawContent, originalUrl: payload.media_url, expiry,
     appendSynthetic: append,

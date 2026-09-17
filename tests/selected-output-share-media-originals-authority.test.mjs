@@ -163,7 +163,7 @@ test("Video: the unchanged original donor remains unqualified by the strict publ
   assert.deepEqual(f.stats, { gets: 1, heads: 0, writes: 0 }, "cached native bytes do not trigger a fallback GET");
 });
 
-test("GLB: actual current Outputs scale and original restore custody never become original-only sharing authority", async t => {
+test("GLB: current Outputs scale refuses authority while a genuinely witnessed original restore composes", async t => {
   withoutNetwork(t);
   const f = await originalOutputsMediaFixture(t, "model3d"), original = await f.read();
   const authority = await readSelectedOutputShareMediaAuthority(f.env, original);
@@ -174,7 +174,8 @@ test("GLB: actual current Outputs scale and original restore custody never becom
     assert.equal(snapshot.media.sha256, edited.selection.mediaSha256);
     assert.deepEqual(snapshot.media.model3dRevision, edited.record);
     assert.equal(await evaluate(f, authority), 0, "old original authority also sees current-selection replacement");
-    await assert.rejects(readSelectedOutputShareMediaAuthority(f.env, current), unavailable);
+    if (action === "scale") await assert.rejects(readSelectedOutputShareMediaAuthority(f.env, current), unavailable);
+    else assert.equal(await evaluate(f, await readSelectedOutputShareMediaAuthority(f.env, current)), 1);
     assert.equal(f.changes(), before);
   }
   assert.deepEqual(f.stats, { gets: 0, heads: 0, writes: 0 });

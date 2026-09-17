@@ -2,6 +2,7 @@ import type { WorkerEnv } from "./runtime.ts";
 import { AUTH_BYTES, EVENT_BYTES, nativeRetainedTextCustodyAssertion, nativeRetainedTextCustodySnapshot, type NativeRetainedTextCustody } from "./native-retained-text-custody.ts";
 import { nativeRetainedMediaCustodyAssertion, nativeRetainedMediaCustodySnapshot, type NativeRetainedMediaCustody,
   type NativeRetainedMediaSnapshot } from "./native-retained-media-custody.ts";
+import { selectedOutputShareMediaRecoveryLineage } from "./selected-output-share-media-recovery.ts";
 import { documentJobMaxAttempts } from "../src/model/document-jobs.ts";
 import { MAX_MANUAL_PRESENTATION_SLIDES } from "../src/model/presentation-count-policy.ts";
 import { selectedShareProofQuery, selectedSharePredicateProof, selectedShareProofStatement,
@@ -172,7 +173,9 @@ function provenanceQuery(schema: Set<string>, media = false): string {
     LEFT JOIN event_private_payloads body ON body.private_event_id=grant_row.authorization_event_id
     ${media ? "LEFT JOIN event_private_payloads media_body ON media_body.private_event_id=completion.event_id" : ""}
     WHERE completion.event_id=? AND completion.stream_id=? AND completion.type='DocumentRenderCompleted'
-      AND completion.actor='worker:renderer' AND completion.client_id='server:document-job:render_document'
+      AND completion.actor='worker:renderer' AND ${media
+        ? "completion.client_id IN('server:document-job:render_document','output-video-recovery','output-model3d-recovery')"
+        : "completion.client_id='server:document-job:render_document'"}
       AND job.owner_id=? AND job.document_id=? AND job.kind='render_document' AND job.status='completed'
       AND job.error_message IS NULL AND job.completed_at IS NOT NULL
       AND typeof(job.attempt_count)='integer' AND job.attempt_count BETWEEN 1 AND ${documentJobMaxAttempts("render_document")}
@@ -279,6 +282,16 @@ function validateWitness(raw: string, native: ReturnType<typeof nativeRetainedTe
 }
 
 
+/** The nonzero branch accepts only the private-issued genuine snapshot bridge.
+ * No declaration supplied in a request or copied public descriptor can mint it. */
+function restoredOriginalModel3d(native: NativeRetainedMediaSnapshot): boolean {
+  const basis = native.nativeOriginal, selected = native.selection;
+  return Boolean(basis && basis.output === "model3d" && basis.relation === "selected-restored-original" && basis.originalRevision === 0
+    && basis.selectedRevision === selected.revision && selected.revision > 0 && basis.selectedContentSha256 === selected.contentSha256
+    && basis.originalContentSha256 === selected.contentSha256 && basis.mediaSha256 === selected.mediaSha256
+    && basis.mediaSha256 === native.media.sha256 && basis.mediaByteLength === native.media.byteLength);
+}
+
 /** Media-specific provenance, after exact native current custody. Outputs media
  * needs its original receipt bridge; ordinary Document revisions keep current
  * native custody without manufacturing an original revision or recovery lease. */
@@ -287,7 +300,7 @@ function validateMediaWitness(raw: string, native: NativeRetainedMediaSnapshot):
     plan = object(witness?.plan), grant = object(witness?.grant), preflight = object(witness?.preflight), authorization = object(witness?.authorization);
   if (!job || !completion || !slot || !plan || !grant || !preflight || !authorization) return fail();
   const request = parse(job.requestJson), result = parse(job.resultJson), completed = parse(completion.payload), privateCompletion = parse(witness?.mediaCompletion);
-  if (!privateCompletion || !ordinaryLineage(privateCompletion)) return fail();
+  if (!privateCompletion) return fail();
   const settings = object(privateCompletion.settings);
   const mediaCompletion = { sourceSurface: privateCompletion.source_surface ?? null, itemCount: privateCompletion.item_count,
     videoReceipt: settings && Object.hasOwn(settings, "output_video") ? object(settings.output_video) ? "object" : "invalid" : null,
@@ -299,7 +312,9 @@ function validateMediaWitness(raw: string, native: NativeRetainedMediaSnapshot):
     || !Number.isSafeInteger(job.requestedSequence) || Number(job.requestedSequence) < 0
     || !Number.isSafeInteger(completion.sequence) || Number(completion.sequence) <= Number(job.requestedSequence)
     || request.artifactKind !== selected.output || result.artifactKind !== selected.output || result.artifactId !== selected.artifactId
-    || request.productionMode !== "manual" || !ordinaryLineage(request) || !ordinaryLineage(result) || !ordinaryLineage(completed)) return fail();
+    || request.productionMode !== "manual" || !selectedOutputShareMediaRecoveryLineage({ output: selected.output,
+      jobId: job.jobId, slotId: slot.slotId, completionId: native.completionId, completionClient: completion.clientId,
+      request, result, publicCompletion: completed, privateCompletion })) return fail();
   const eventIds = result.appendedEventIds;
   if (!Array.isArray(eventIds) || eventIds.length < 1 || eventIds.length > 128 || eventIds.some(id => !validId(id))
     || new Set(eventIds).size !== eventIds.length || !eventIds.includes(native.completionId)) return fail();
@@ -319,9 +334,10 @@ function validateMediaWitness(raw: string, native: NativeRetainedMediaSnapshot):
     // references, including its native current edit/restore receipt lineage.
     if (mediaCompletion.sourceSurface !== "outputs"
       || (selected.output === "audio" ? mediaCompletion.videoReceipt !== null || mediaCompletion.model3dReceipt !== null || native.media.readMode !== "owned-media"
-        : selected.revision !== 0 || (selected.output === "video"
-          ? mediaCompletion.videoReceipt !== "object" || mediaCompletion.model3dReceipt !== null || native.media.readMode !== "native-output-video"
-          : mediaCompletion.model3dReceipt !== "object" || mediaCompletion.videoReceipt !== null))) return fail();
+        : selected.output === "video"
+          ? selected.revision !== 0 || mediaCompletion.videoReceipt !== "object" || mediaCompletion.model3dReceipt !== null || native.media.readMode !== "native-output-video"
+          : mediaCompletion.model3dReceipt !== "object" || mediaCompletion.videoReceipt !== null
+            || selected.revision !== 0 && !restoredOriginalModel3d(native))) return fail();
     const body = parse(authorization.privateJson), publicAuthorization = parse(authorization.payload);
     const envelope = object(body?.output_command_envelope);
     const reference = { scopeKey: slot.scopeKey, grantId: slot.grantId, slotId: slot.slotId, planRevisionId: slot.planRevisionId,
