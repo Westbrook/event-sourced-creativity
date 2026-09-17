@@ -134,3 +134,14 @@ still-app main h1:focus { outline:none; }
 
 still-app en-button { --en-color-action-text:#4f5148; --en-color-focus:#8e6246; --en-button-color:#4f5148; }
 still-app en-button[variant="primary"] { --en-button-color:#fff; }
+
+.context-flow .analysis-input { margin: 2rem 0; border-block: 1px solid var(--line, #d9d5cd); padding: 1.5rem 0; }
+.context-flow pre { white-space: pre-wrap; overflow-wrap: anywhere; font: .8rem/1.65 ui-monospace, monospace; max-height: 28rem; overflow: auto; }
+.reference-study { display: block; max-width: 100%; max-height: 52vh; object-fit: contain; margin: 2rem auto; }
+.context-reference { max-width: 100%; max-height: 20rem; object-fit: contain; margin: 1rem 0; }
+.context-error { color: #8d402d; padding: 1rem 0; }
+.change-review { border-top: 1px solid #d9d5cd; padding: 1.4rem 0; }
+.source-link { display: inline-flex; align-items: center; padding: .75rem; color: inherit; font-size: .875rem; }
+.assembly-list { padding-inline-start: 1.5rem; }
+.assembly-list li { padding: 1rem 0; }
+.context-flow blockquote { border-inline-start: 2px solid #d3cbbd; margin: 2rem 0; padding-inline-start: 1rem; opacity: .75; }

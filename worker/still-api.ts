@@ -49,7 +49,7 @@ export async function handleStillDecision(request: Request, env: WorkerEnv, cont
   const fallback = (reason: string) => reply({ source: 'fallback', reason, policy: POLICY_VERSION, head, actions: selectActions(built.candidates, position), candidateIds: built.candidates.map(a => a.id) });
   if (!env.JEV_API_KEY) return fallback('not_configured');
   try {
-    const body = JSON.stringify({ model: 'jev-latest', state: built.state, questions: questionsFor(built.candidates) });
+    const body = JSON.stringify({ model: 'jev-latest', state: built.state, questions: questionsFor(built.candidates,position,built.state.selectedWork?.kind) });
     if (new TextEncoder().encode(body).byteLength > 60_000) return fallback('context_budget');
     const response = await fetch('https://api.typesafe.ai/v1/systemone', {
       method: 'POST', headers: { authorization: `Bearer ${env.JEV_API_KEY}`, 'content-type': 'application/json' },
@@ -58,7 +58,7 @@ export async function handleStillDecision(request: Request, env: WorkerEnv, cont
     });
     if (!response.ok) return fallback(response.status === 429 || response.status === 529 ? 'busy' : 'unavailable');
     const result = await response.json() as { model?: string; answers?: Record<string, Answer> };
-    if (!result.answers || typeof result.answers !== 'object' || !built.candidates.some(a => { const x = result.answers?.[`use_${a.id}`]; return x?.type === 'score' && Number.isFinite(x.score) && x.score! >= 0 && x.score! <= 3 && Number.isFinite(x.confidence) && x.confidence! >= .12 && x.confidence! <= 1; })) return fallback('uncertain');
-    return reply({ source: 'jev', model: result.model, policy: POLICY_VERSION, head, actions: selectActions(built.candidates, position, result.answers), candidateIds: built.candidates.map(a => a.id), stage: result.answers.stage?.choice, questionsEvaluated: Object.keys(questionsFor(built.candidates)).length });
+    if (!result.answers || typeof result.answers !== 'object' || !built.candidates.some(a => { if(a.id==='intent')return false; const x = result.answers?.[`use_${a.id}`]; return x?.type === 'score' && Number.isFinite(x.score) && x.score! >= 0 && x.score! <= 3 && Number.isFinite(x.confidence) && x.confidence! >= .12 && x.confidence! <= 1; })) return fallback('uncertain');
+    return reply({ source: 'jev', model: result.model, policy: POLICY_VERSION, head, actions: selectActions(built.candidates, position, result.answers), candidateIds: built.candidates.map(a => a.id), stage: result.answers.stage?.choice, questionsEvaluated: Object.keys(questionsFor(built.candidates,position,built.state.selectedWork?.kind)).length });
   } catch { return fallback('unavailable'); }
 }

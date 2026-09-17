@@ -118,7 +118,7 @@ export class StillClient {
     const check = await this.verifyScope();
     const exportOnly = events.every(e => ['ObjectExported', 'DocumentArtifactExported'].includes(e.type));
     if (!this.abilities.author && !(exportOnly && this.session?.projectContext)) throw new Error('This workspace is read only.');
-    const inputs: EventInput[] = events.map(e => ({ ...e, payload: { ...e.payload, source_surface: 'still', interaction_policy: 'still-1' } }));
+    const inputs: EventInput[] = events.map(e => ({ ...e, payload: { ...e.payload, source_surface: 'still', interaction_policy: 'still-2' } }));
     this.pendingWrite ??= operationJournal.write(this.journalScope);
     const signature = await digest(inputs); check();
     if (this.pendingWrite) {
@@ -133,7 +133,7 @@ export class StillClient {
     const projection = this.projection;
     for (const event of events) {
       const block = projection.libraryBlocks.find(b => b.id === event.payload.block_id);
-      if (event.type === 'BlockPropertyEdited' && block && JSON.stringify(block.properties[String(event.payload.property_path)]) !== JSON.stringify(event.payload.old_value)) throw new Error('This thought changed while you were writing. Your draft is preserved; reopen the current version before saving.');
+      if (event.type === 'BlockPropertyEdited' && block && JSON.stringify(block.properties[String(event.payload.property_path)] ?? null) !== JSON.stringify(event.payload.old_value ?? null)) throw new Error('This thought changed while you were writing. Your draft is preserved; reopen the current version before saving.');
       if (event.type === 'DocumentRenamed' && projection.documents.find(d => d.id === event.payload.document_id)?.title !== event.payload.old_title) throw new Error('The document name changed. Reopen its current name before saving.');
       if (event.type === 'BlockWeightSet' && block && Number(block.properties.weight ?? 1) !== Number(event.payload.previous_weight)) throw new Error('This context changed. Review its current influence before saving.');
     }
