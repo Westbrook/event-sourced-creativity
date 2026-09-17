@@ -1,4 +1,5 @@
 import { verifyOutputVideoCompletion } from "./output-video-completion.ts";
+import { prepareOutputProviderFinancialCheckpoint, retainUnsettledOutputProviderObservation } from "./output-provider-financial-checkpoint.ts";
 import { retainOutputVideoRequestCheckpoint, retainOutputVideoMediaEnvelope, retainOutputVideoPlannerEnvelope } from "./output-video-checkpoint.ts";
 import { captureOutputVideoAttempt, outputVideoMediaPrice, type OutputVideoHookLease, type OutputVideoRawEnvelope } from "./output-video-execution.ts";
 import { assertVideoPlannerAttempt } from "./output-video-planner.ts";
@@ -37,7 +38,7 @@ import { prepareOutputNativeProjectPublicationStatements } from "./output-native
 import { guardOutputPrivateWrites, reconcileOutputNativeStorage } from "./output-private-execution.ts";
 import type { ProviderFailureDetail } from "./provider-errors.ts";
 import type { PaidProviderSubmission } from "../src/model/provider-submission.ts";
-import { providerSubmissions } from "../src/model/provider-submission.ts";
+import { mergeProviderSubmissions, providerSubmissions } from "../src/model/provider-submission.ts";
 import type { ImageFormat } from "../src/model/image-format.ts";
 import { eventWriteBindings, type EventRow, type WorkerEnv } from "./runtime.ts";
 import { documentJobProjectAuthority, type DocumentJobRow } from "./document-jobs-api.ts";
@@ -472,21 +473,34 @@ export async function createOutputEventExecution(env:WorkerEnv,user:PilotUser,jo
    if(receipt.status==="pending"){call.pending=true;return;}
    // The independent operational checkpoint contains payment identities/counts only.
    // It remains writable after erasure and never copies an in-memory source/result body.
-   const safe:Record<string,unknown>={clientRequestId:receipt.clientRequestId,provider:receipt.provider,operation:receipt.operation,model:receipt.model,status:receipt.status};
+   const safe:PaidProviderSubmission={clientRequestId:receipt.clientRequestId,provider:receipt.provider,operation:receipt.operation,model:receipt.model,status:receipt.status};
    if(receipt.providerRequestId)safe.providerRequestId=receipt.providerRequestId;
    for(const key of ["costMicrousd","inputTokens","outputTokens","totalTokens"] as const)if(Number.isSafeInteger(receipt[key])&&Number(receipt[key])>=0)safe[key]=receipt[key];
-   observedReceipts.set(receipt.clientRequestId,receipt);
-   const planning=[...observedReceipts.values()].filter(value=>value.operation==="planning"&&value.status==="completed");
+   const observation=Object.fromEntries(Object.entries(receipt).filter(([,value])=>value!==undefined));
+   const observations=new Map(Object.entries(mergeProviderSubmissions(Object.fromEntries(observedReceipts),{[receipt.clientRequestId]:observation})));
+   const planning=[...observations.values()].filter(value=>value.operation==="planning"&&value.status==="completed");
    const plannerFields=receipt.operation==="planning"&&receipt.status==="completed"?{plannerModel:receipt.model,plannerResponseId:receipt.providerRequestId??"",plannerResponseIds:planning.map(value=>value.providerRequestId).filter(Boolean),plannerUsage:planning.reduce((total,value)=>({inputTokens:total.inputTokens+Number(value.inputTokens??0),outputTokens:total.outputTokens+Number(value.outputTokens??0),totalTokens:total.totalTokens+Number(value.totalTokens??0)}),{inputTokens:0,outputTokens:0,totalTokens:0})}:{};
    const financial={...plannerFields,providerSubmissionProtocol:1,providerSubmissions:{[receipt.clientRequestId]:safe},reservationId:slot.tokenReservationId,costReservationId:slot.costReservationId,costReservationPeriod:period,costReservationMicrousd:slot.maximumMicrousd,
     ...(artifactKind==="slides"?{presentationProviderSubmission:"confirmed"}:{}),
     generationReceipt:{provider:receipt.provider,model:receipt.model,artifact_kind:artifactKind,provider_request_status:"submitted",source_transmission_status:"transmitted",reservation_status:"executing"}};
-   const financialWrite=env.DB.prepare("UPDATE document_jobs SET result_json=json_patch(COALESCE(result_json,'{}'),?),updated_at=? WHERE job_id=? AND owner_id=? AND stream_id=? AND correlation_id=?")
-    .bind(JSON.stringify(financial),new Date().toISOString(),job.job_id,user.userId,job.stream_id,job.correlation_id);
-   if(artifactKind==="video"){if(!videoHook)throw new OutputConflictError("output_video_hook_invalid",403);await env.DB.batch([...videoLifetimeAssertions().flatMap(a=>outputAssertionStatements(env,a)),financialWrite,...videoLifetimeAssertions().flatMap(a=>outputAssertionStatements(env,a))]);}
-   else await financialWrite.run();
+   if(artifactKind==="video"&&!videoHook)throw new OutputConflictError("output_video_hook_invalid",403);
+   const financialCheckpoint=prepareOutputProviderFinancialCheckpoint(env,{scopeKey:scope.key,slotId:slot.slotId,callKey:call.callKey,
+    jobId:job.job_id,ownerId:user.userId,streamId:job.stream_id,correlationId:job.correlation_id,receipt:safe,patch:financial});
    const known=Number.isSafeInteger(receipt.costMicrousd)&&Number(receipt.costMicrousd)>=0;
-   await settleOutputProviderCall(env,{...(artifactKind==="video"?{assertions:videoLifetimeAssertions()}:{}),scopeKey:scope.key,slotId:slot.slotId,callKey:call.callKey,clientRequestId:receipt.clientRequestId,status:receipt.status==="rejected"?"rejected":receipt.status==="completed"&&known?"settled":"uncertain",usedMicrousd:receipt.status==="rejected"?0:receipt.status==="completed"&&known?Number(receipt.costMicrousd):null,...(receipt.providerRequestId?{providerResponseId:receipt.providerRequestId}:{})});
+   try{
+    await settleOutputProviderCall(env,{...(artifactKind==="video"?{assertions:videoLifetimeAssertions()}:{}),financialCheckpoint,scopeKey:scope.key,slotId:slot.slotId,callKey:call.callKey,clientRequestId:receipt.clientRequestId,status:receipt.status==="rejected"?"rejected":receipt.status==="completed"&&known?"settled":"uncertain",usedMicrousd:receipt.status==="rejected"?0:receipt.status==="completed"&&known?Number(receipt.costMicrousd):null,...(receipt.providerRequestId?{providerResponseId:receipt.providerRequestId}:{})});
+   }catch(error){
+    // Preserve the existing source-free reconciliation witness if a transient
+    // ledger/storage fault prevents the combined commit. This is not successful
+    // settlement. The same monotonic receipt and canonical call predicates make
+    // the fallback refuse conflicting IDs, terminal regressions and stale Video
+    // authority; maintenance can settle an exact retained receipt later.
+    if(!(error instanceof OutputConflictError))try{
+     await retainUnsettledOutputProviderObservation(env,financialCheckpoint,artifactKind==="video"?videoLifetimeAssertions():[]);
+    }catch{/* The original failure and pending provider call retain uncertainty. */}
+    throw error;
+   }
+   observedReceipts.set(receipt.clientRequestId,observations.get(receipt.clientRequestId)!);
    call.settled=receipt.status==="completed"&&known;
    // Subsequent private progress/candidate writes carry the same live SQL proof;
    // retaining this monetary witness does not itself authorize any private write.

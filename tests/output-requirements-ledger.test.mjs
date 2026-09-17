@@ -6,6 +6,7 @@ import { registerOutputSourceImports, outputTestDatabase } from "./output-server
 const hooks = registerOutputSourceImports();
 const { ensureSchema, makeEvent, appendEvents, streamHead } = await import("../worker/runtime.ts");
 const { ensureOutputRequirementsSchema, commitOutputCommand, readOutputCommand, claimOutputProviderCall, settleOutputProviderCall, outputScopeAuthority, outputSourceEpochAssertion, outputAssertionStatements } = await import("../worker/output-requirements-ledger.ts");
+const { prepareOutputProviderFinancialCheckpoint, retainUnsettledOutputProviderObservation } = await import("../worker/output-provider-financial-checkpoint.ts");
 hooks.deregister();
 
 const scope = { kind: "personal", key: "personal:owner:project", ownerUserId: "owner", actorUserId: "owner", projectId: "project", documentId: "document", organizationId: null, projectAccessId: null, contextId: null };
@@ -139,6 +140,172 @@ test("identical concurrent settlements and a lost settlement acknowledgement rep
   assert.deepEqual(await settleOutputProviderCall(state.env, { ...input, callKey: "repair", clientRequestId: "request-repair", providerResponseId: "provider-response-two" }), { replayed: true });
   assert.equal(state.sqlite.prepare("SELECT SUM(used_microusd) AS cost FROM output_provider_calls").get().cost, 40);
   assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS count FROM output_atomic_assertions").get().count, 0);
+});
+
+test("accepted provider identity survives omitted IDs and cannot be replaced or rejected", async () => {
+  const state = await operationFixture();
+  await claimOutputProviderCall(state.env, call("initial"));
+  const accepted = { scopeKey: scope.key, slotId: "slot", callKey: "initial", clientRequestId: "request-initial", usedMicrousd: null, status: "uncertain", providerResponseId: "accepted-original" };
+  await settleOutputProviderCall(state.env, accepted);
+  const read = () => state.sqlite.prepare("SELECT status,used_microusd,provider_response_id FROM output_provider_calls").get();
+  await settleOutputProviderCall(state.env, { ...accepted, providerResponseId: undefined });
+  assert.deepEqual({ ...read() }, { status: "uncertain", used_microusd: null, provider_response_id: "accepted-original" });
+  for (const patch of [
+    { providerResponseId: "different-request" },
+    { status: "settled", usedMicrousd: 20, providerResponseId: "different-request" },
+    { status: "rejected", usedMicrousd: 0 },
+    { status: "rejected", usedMicrousd: 0, providerResponseId: undefined },
+  ]) {
+    await assert.rejects(settleOutputProviderCall(state.env, { ...accepted, ...patch }), /provider_settlement_conflict/u);
+    assert.deepEqual({ ...read() }, { status: "uncertain", used_microusd: null, provider_response_id: "accepted-original" });
+  }
+  const completed = { ...accepted, status: "settled", usedMicrousd: 20, providerResponseId: undefined };
+  assert.deepEqual(await settleOutputProviderCall(state.env, completed), { replayed: false });
+  assert.deepEqual(await settleOutputProviderCall(state.env, completed), { replayed: true });
+  assert.deepEqual({ ...read() }, { status: "settled", used_microusd: 20, provider_response_id: "accepted-original" });
+  await assert.rejects(settleOutputProviderCall(state.env, accepted), /provider_settlement_conflict/u);
+  assert.equal(read().status, "settled", "late acceptance cannot regress settlement");
+});
+
+test("racing acceptance identities pin one request and preserve unresolved exposure", async () => {
+  const state = await operationFixture();
+  await claimOutputProviderCall(state.env, call("initial"));
+  const base = { scopeKey: scope.key, slotId: "slot", callKey: "initial", clientRequestId: "request-initial", usedMicrousd: null, status: "uncertain" };
+  const outcomes = await Promise.allSettled(["provider-one", "provider-two"].map(providerResponseId => settleOutputProviderCall(state.env, { ...base, providerResponseId })));
+  assert.equal(outcomes.filter(result => result.status === "fulfilled").length, 1);
+  assert.match(outcomes.find(result => result.status === "rejected").reason.message, /provider_settlement_conflict/u);
+  const row = state.sqlite.prepare("SELECT status,used_microusd,provider_response_id FROM output_provider_calls").get();
+  assert.equal(row.status, "uncertain"); assert.equal(row.used_microusd, null);
+  assert.equal(row.provider_response_id, "provider-one");
+  assert.equal((await claimOutputProviderCall(state.env, call("initial"))).claimed, false);
+  await assert.rejects(claimOutputProviderCall(state.env, call("repair")), /output_provider_call_not_authorized/u);
+});
+
+async function financialFixture(t) {
+  const state = await operationFixture(); t.after(() => state.sqlite.close());
+  const now = new Date().toISOString();
+  state.sqlite.prepare(`INSERT INTO document_jobs(job_id,owner_id,stream_id,document_id,kind,status,source_surface,correlation_id,requested_sequence,request_json,result_json,requested_at,expires_at,updated_at)
+    VALUES('job','owner','creative:owner','document','render_document','running','outputs','correlation',1,'{}','{}',?,?,?)`).run(now, now, now);
+  await claimOutputProviderCall(state.env, call("initial"));
+  const base = { clientRequestId: "request-initial", provider: "openai", operation: "planning", model: "test-model", providerRequestId: "original-response" };
+  const checkpoint = receipt => prepareOutputProviderFinancialCheckpoint(state.env, {
+    scopeKey: scope.key, slotId: "slot", callKey: "initial", jobId: "job", ownerId: "owner", streamId: "creative:owner", correlationId: "correlation", receipt,
+    patch: { providerSubmissionProtocol: 1, generationReceipt: { reservation_status: "executing" } },
+  });
+  const observe = (receipt, assertions) => {
+    const binding = { scopeKey: scope.key, slotId: "slot", callKey: "initial" };
+    const financialCheckpoint = checkpoint(receipt);
+    const known = receipt.status === "completed" && receipt.costMicrousd !== undefined;
+    return settleOutputProviderCall(state.env, { ...binding, clientRequestId: receipt.clientRequestId, providerResponseId: receipt.providerRequestId,
+      status: receipt.status === "rejected" ? "rejected" : known ? "settled" : "uncertain",
+      usedMicrousd: receipt.status === "rejected" ? 0 : known ? receipt.costMicrousd : null, financialCheckpoint, assertions });
+  };
+  const read = () => ({ ledger: { ...state.sqlite.prepare("SELECT status,used_microusd,provider_response_id FROM output_provider_calls").get() },
+    job: JSON.parse(state.sqlite.prepare("SELECT result_json FROM document_jobs WHERE job_id='job'").get().result_json) });
+  return { ...state, base, observe, read, checkpoint };
+}
+
+test("provider observation commits checkpoint and ledger together; duplicates never regress terminal usage", async t => {
+  const f = await financialFixture(t), accepted = { ...f.base, status: "accepted" };
+  await f.observe(accepted);
+  await f.observe({ ...accepted, providerRequestId: undefined });
+  assert.equal(f.read().job.providerSubmissions[f.base.clientRequestId].providerRequestId, f.base.providerRequestId);
+  for (const patch of [{ providerRequestId: "replacement" }, { status: "rejected", costMicrousd: 0 }]) {
+    const before = f.read(); await assert.rejects(f.observe({ ...accepted, ...patch })); assert.deepEqual(f.read(), before);
+  }
+  const completed = { ...accepted, status: "completed", costMicrousd: 20, inputTokens: 2, outputTokens: 3, totalTokens: 5 };
+  const concurrent = await Promise.all([f.observe(completed), f.observe(completed)]);
+  assert.deepEqual(concurrent.map(result => result.replayed).sort(), [false, true]);
+  assert.deepEqual(f.read().job.providerSubmissions[f.base.clientRequestId], completed);
+  for (const patch of [{ status: "accepted" }, { status: "rejected", costMicrousd: 0 }, { costMicrousd: 21 }, { inputTokens: 3 }, { outputTokens: 4 }, { totalTokens: 6 }]) {
+    const before = f.read(); await assert.rejects(f.observe({ ...completed, ...patch })); assert.deepEqual(f.read(), before);
+  }
+  assert.equal(f.read().ledger.used_microusd, 20);
+});
+
+for (const failure of ["IGNORE", "ABORT, 'injected checkpoint failure'"]) test(`checkpoint ${failure} rolls back provider settlement`, async t => {
+  const f = await financialFixture(t), before = f.read();
+  f.sqlite.exec(`CREATE TRIGGER fail_financial_checkpoint BEFORE UPDATE OF result_json ON document_jobs BEGIN SELECT RAISE(${failure}); END;`);
+  await assert.rejects(f.observe({ ...f.base, status: "completed", costMicrousd: 20, totalTokens: 5 }));
+  assert.deepEqual(f.read(), before);
+  f.sqlite.exec("DROP TRIGGER fail_financial_checkpoint");
+  await f.observe({ ...f.base, status: "completed", costMicrousd: 20, totalTokens: 5 });
+  assert.equal(f.read().ledger.used_microusd, 20);
+});
+
+test("lost acknowledgement replay proves the per-call checkpoint and ignores later display summaries", async t => {
+  const f = await financialFixture(t), completed = { ...f.base, status: "completed", costMicrousd: 20, totalTokens: 5 };
+  const batch = f.env.DB.batch.bind(f.env.DB);
+  f.env.DB.batch = async statements => {
+    const result = await batch(statements);
+    if (statements.some(statement => statement.sql.includes("UPDATE output_provider_calls SET used_microusd"))) throw new Error("acknowledgement lost after commit");
+    return result;
+  };
+  assert.deepEqual(await f.observe(completed), { replayed: true });
+  f.sqlite.prepare("UPDATE document_jobs SET status='completed',result_json=json_set(result_json,'$.generationReceipt.reservation_status','settled')").run();
+  assert.deepEqual(await f.observe(completed), { replayed: true });
+  assert.equal(f.read().job.generationReceipt.reservation_status, "settled");
+  f.sqlite.prepare("UPDATE document_jobs SET result_json=json_set(result_json,'$.providerSubmissions.\"request-initial\".totalTokens',999)").run();
+  const before = f.read();
+  await assert.rejects(f.observe(completed), /provider_settlement_conflict/u);
+  assert.deepEqual(f.read(), before, "ledger agreement alone is insufficient for replay");
+});
+
+test("canonical checkpoint conflict rolls back ledger even when legacy records are ahead", async t => {
+  const f = await financialFixture(t);
+  const completed = { ...f.base, status: "completed", costMicrousd: 20, totalTokens: 5 };
+  f.sqlite.prepare("UPDATE document_jobs SET result_json=?").run(JSON.stringify({ providerSubmissions: { [f.base.clientRequestId]: completed } }));
+  const before = f.read();
+  for (const receipt of [{ ...completed, totalTokens: 6 }, { ...f.base, status: "accepted" }]) {
+    await assert.rejects(f.observe(receipt)); assert.deepEqual(f.read(), before);
+  }
+  await f.observe(completed);
+  assert.equal(f.read().ledger.used_microusd, 20);
+});
+
+test("source-free atomic observation survives consent loss while caller-guarded replay stays denied", async t => {
+  const f = await financialFixture(t), completed = { ...f.base, status: "completed", costMicrousd: 20, totalTokens: 5 };
+  f.sqlite.exec("UPDATE users SET consent_version=NULL; UPDATE output_execution_grants SET status='revoked'; UPDATE document_jobs SET status='canceled'");
+  await assert.rejects(f.observe(completed, [outputScopeAuthority(scope, "request")]));
+  assert.equal(f.read().ledger.status, "pending");
+  await f.observe(completed);
+  assert.equal(f.read().ledger.used_microusd, 20);
+  await assert.rejects(f.observe(completed, [outputScopeAuthority(scope, "request")]));
+  assert.deepEqual(await f.observe(completed), { replayed: true });
+});
+
+test("fallback cannot rewrite a terminal summary after lost commit and read acknowledgements", async t => {
+  const f = await financialFixture(t), completed = { ...f.base, status: "completed", costMicrousd: 20, totalTokens: 5 };
+  const batch = f.env.DB.batch.bind(f.env.DB), prepare = f.env.DB.prepare.bind(f.env.DB);
+  f.env.DB.batch = async statements => {
+    const result = await batch(statements);
+    if (statements.some(statement => statement.sql.includes("UPDATE output_provider_calls SET used_microusd"))) {
+      f.sqlite.exec("UPDATE document_jobs SET result_json=json_set(result_json,'$.generationReceipt.reservation_status','settled')");
+      throw new Error("lost commit acknowledgement");
+    }
+    return result;
+  };
+  f.env.DB.prepare = sql => {
+    const statement = prepare(sql);
+    if (sql.startsWith("SELECT used_microusd,status,provider_response_id")) statement.bind = () => ({ first: async () => { throw new Error("lost read acknowledgement"); } });
+    return statement;
+  };
+  await assert.rejects(f.observe(completed), /lost read acknowledgement/u);
+  const before = f.read();
+  await assert.rejects(retainUnsettledOutputProviderObservation(f.env, f.checkpoint(completed)));
+  assert.deepEqual(f.read(), before);
+  assert.equal(f.read().job.generationReceipt.reservation_status, "settled");
+});
+
+test("fallback preserves a new unsettled witness but rejects conflicting canonical acceptance", async t => {
+  const f = await financialFixture(t), completed = { ...f.base, status: "completed", costMicrousd: 20, totalTokens: 5 };
+  await retainUnsettledOutputProviderObservation(f.env, f.checkpoint(completed));
+  assert.equal(f.read().ledger.status, "pending");
+  assert.deepEqual(f.read().job.providerSubmissions[f.base.clientRequestId], completed);
+  f.sqlite.prepare("UPDATE output_provider_calls SET status='uncertain',provider_response_id='different-original'").run();
+  const before = f.read();
+  await assert.rejects(retainUnsettledOutputProviderObservation(f.env, f.checkpoint({ ...completed, providerRequestId: undefined })));
+  assert.deepEqual(f.read(), before);
 });
 
 test("fresh provider claims and settlements each use one guarded binding call, while replay still checks the canonical receipt", async () => {
