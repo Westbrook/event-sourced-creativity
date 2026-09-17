@@ -1,4 +1,6 @@
-import { outputNativeImageDisclosure, providerInputInstructions } from "./output-image-slides-preflight.ts";
+import { guestImageStageNativePayload, guestImageStageConfirmedPlan, guestImageStageEvent, guestImageStageCommandRow,
+  guestImageStagePlanRows, guestImageStageIntentRow, guestImageStageQuoteRow, guestImageStageQuoteShape,
+  guestImageStageQuoteRecipe, type GuestImageStageContract } from "./experience-guest-image-stage-contract.ts";
 import { foldEvents } from "../src/model/events.ts";
 import { compileOutputPlan } from "../src/model/output-plan.ts";
 import type { OutputConfirmedPlan, OutputPreflight, OutputNativeTargetPreflight } from "../src/model/output-delivery-contract.ts";
@@ -6,7 +8,6 @@ import { outputRequirementInterpretationNeedsReview } from "../src/model/output-
 import { outputTargetContractDigest } from "./output-requirements-api.ts";
 import { outputDigest } from "./output-disclosure-proof.ts";
 import { sponsorImageTextSource } from "./experience-sponsor-image-format.ts";
-import { matchSponsorImageTemplate } from "./experience-sponsor-campaign.ts";
 import type { SponsorRecipe } from "./experience-sponsor-policy.ts";
 /** The original prefix/schema readers below are mechanically compared with the
  * accepted a2745c first-SAVE witness. Its strict N+1 API is unchanged. This file
@@ -537,52 +538,37 @@ function exactRow(table: string, columns: string[], row: Record<string, Value>):
   if (!flatRow(row, columns)) return fail("row_invalid");
   return { sql: `EXISTS(SELECT 1 FROM ${table} WHERE ${objectSql(columns)}=?)`, bindings: [JSON.stringify(row)] };
 }
+function stageContract(data: StageData): GuestImageStageContract {
+  const { base } = data;
+  return { scopeKey: base.scopeKey, actorUserId: base.session.row.guest_subject, projectId: base.plan.projectId,
+    documentId: base.plan.documentId, streamId: base.plan.streamId, sourceHead: base.sourceHead,
+    sourceEventIds: base.sourceEventIds, savedEventId: base.saved!.eventId, savedCreatedAt: base.saved!.createdAt,
+    campaignId: base.policy.campaignId, sessionDigest: base.resourceInput.sessionDigest,
+    sourceDigest: data.sourceDigest, requirementsDigest: data.requirementsDigest, compiledPlan: data.compiledPlan,
+    target: data.target, targetId: data.target.id, contractDigest: data.contractDigest, confirmationOptions: data.confirmationOptions,
+    releaseRevision: base.plan.release.definition.revision, releaseHash: base.plan.release.releaseHash,
+    approvedTemplate: base.policy.templates[0], driver: data.driver, confirmationTextBytes: data.confirmResource.textBytes };
+}
 function nativePayload(captured: Captured, envelope: Record<string, unknown>, values: Record<string, unknown>) {
-  const { data } = captured;
-  return { ...values, output_command_envelope: structuredClone(envelope), project_id: data.plan.projectId,
-    document_id: data.plan.documentId, actor_user_id: data.session.row.guest_subject };
+  return guestImageStageNativePayload({ projectId: captured.data.plan.projectId, documentId: captured.data.plan.documentId,
+    actorUserId: captured.data.session.row.guest_subject }, envelope, values);
 }
 function stageEvent(captured: Captured, raw: EventRow, kind: "confirm" | "preflight", payload: Record<string, unknown>) {
   const data = stage(captured), key = kind === "confirm" ? data.confirmKey : String(data.preflightEnvelope?.clientMutationId);
-  const offset = kind === "confirm" ? 2 : 3;
-  if (jsonIssues(raw).length || !record(raw) || !exactKeys(raw, ["eventId", "streamId", "sequence", "occurredAt", "recordedAt", "actor", "clientId", "correlationId", "causationId", "compensatesEventId", "schemaVersion", "type", "payload"])
-    || !uuid(raw.eventId) || [...captured.source.commit.eventIds, captured.data.saved!.eventId].includes(raw.eventId)
-    || kind === "preflight" && raw.eventId === data.confirmEvent?.eventId
-    || raw.streamId !== captured.data.plan.streamId || raw.sequence !== captured.data.sourceHead + offset
-    || raw.actor !== captured.data.session.row.guest_subject || raw.clientId !== "server:guest-output" || raw.correlationId !== key
-    || raw.causationId !== null || raw.compensatesEventId !== null || raw.schemaVersion !== 1
-    || raw.type !== (kind === "confirm" ? "OutputPlanConfirmed" : "OutputPlanPreflighted")
-    || !iso(raw.recordedAt) || raw.occurredAt !== raw.recordedAt || Date.parse(raw.recordedAt) >= captured.expiresAtMs
-    || raw.recordedAt < (kind === "confirm" ? captured.data.saved!.createdAt : data.confirmEvent!.recordedAt)
-    || JSON.stringify(raw.payload) !== JSON.stringify(payload) || bytes(JSON.stringify(payload)) > 65536) return fail("successor_invalid");
-  return freeze(structuredClone(raw));
+  return guestImageStageEvent({ ...stageContract(data), sourceEventIds: captured.source.commit.eventIds }, raw, kind, payload,
+    { commandKey: key, expiresAtMs: captured.expiresAtMs, ...(data.confirmEvent ? { confirmEvent: data.confirmEvent } : {}) });
 }
 function commandRow(captured: Captured, event: EventRow, action: "confirm" | "preflight", requestDigest: string) {
-  return { scope_key: captured.data.scopeKey, actor_user_id: captured.data.session.row.guest_subject, command_key: event.correlationId,
-    request_digest: requestDigest, action, event_id: event.eventId, created_at: event.recordedAt };
+  return guestImageStageCommandRow({ scopeKey: captured.data.scopeKey, actorUserId: captured.data.session.row.guest_subject }, event, action, requestDigest);
 }
 export function guestImagePlanRows(data: StageData, confirmed: OutputConfirmedPlan, event: EventRow) {
-  const { base } = data;
-  return {
-    plan: { scope_key: base.scopeKey, scope_kind: "personal", owner_user_id: base.session.row.guest_subject,
-      project_id: base.plan.projectId, document_id: base.plan.documentId, organization_id: null, project_access_id: null,
-      plan_revision_id: confirmed.revisionId, plan_id: confirmed.id, revision: 1, confirmed_event_id: event.eventId,
-      requirements_digest: data.requirementsDigest, source_digest: data.sourceDigest, resolver_version: "output-plan-v1",
-      source_head: base.sourceHead + 1, target_count: 1, created_at: event.recordedAt },
-    target: { scope_key: base.scopeKey, plan_revision_id: confirmed.revisionId, target_id: data.target.id,
-      target_contract_digest: data.contractDigest, media_kind: "image", required: 1, selected: 1, ordinal: 0 },
-  };
+  return guestImageStagePlanRows(stageContract(data), confirmed, event);
 }
 export function guestImageIntentRow(data: StageData, createdAtMs: number) {
-  return { driver_id: data.driver.driverId, campaign_id: data.base.policy.campaignId, actor_user_id: data.base.session.row.guest_subject,
-    session_digest: data.base.resourceInput.sessionDigest, intent_key: data.driver.intentKey, document_id: data.base.plan.documentId,
-    command_json: data.driver.commandJson, command_digest: data.driver.commandDigest, source_digest: data.sourceDigest,
-    requirements_digest: data.requirementsDigest, source_text_bytes: data.confirmResource.textBytes, created_at_ms: createdAtMs };
+  return guestImageStageIntentRow(stageContract(data), createdAtMs);
 }
 export function guestImageQuoteRow(data: StageData, quote: OutputPreflight, event: EventRow) {
-  return { scope_key: data.base.scopeKey, preflight_id: quote.id, plan_revision_id: quote.planRevisionId,
-    actor_user_id: data.base.session.row.guest_subject, terms_digest: quote.termsDigest, event_id: event.eventId,
-    expires_at: quote.expiresAt, created_at: quote.createdAt };
+  return guestImageStageQuoteRow({ scopeKey: data.base.scopeKey, actorUserId: data.base.session.row.guest_subject }, quote, event);
 }
 function expectedStageResource(captured: Captured, input: SponsorResourceInput) {
   return { resource_id: input.resourceId, campaign_id: input.campaignId, policy_digest: input.policyDigest, limits_digest: captured.limitsDigest,
@@ -610,9 +596,7 @@ async function addConfirmation(captured: Captured, raw: EventRow, intentTime: nu
   const data = stage(captured);
   if (data.state !== "saved" || !record(raw.payload.confirmed_plan) || !uuid(raw.payload.confirmed_plan.revisionId)
     || !Number.isSafeInteger(intentTime) || intentTime < Date.parse(captured.data.saved!.createdAt) || intentTime >= captured.expiresAtMs) return fail("confirmation_invalid");
-  const confirmed: OutputConfirmedPlan = { id: captured.data.plan.documentId, revisionId: raw.payload.confirmed_plan.revisionId,
-    revision: 1, confirmedAt: raw.recordedAt, requirementsDigest: data.requirementsDigest, sourceDigest: data.sourceDigest,
-    plan: data.compiledPlan, targetContractDigests: { [data.target.id]: data.contractDigest }, confirmationOptions: data.confirmationOptions };
+  const confirmed = guestImageStageConfirmedPlan(stageContract(data), raw.payload.confirmed_plan.revisionId, raw.recordedAt);
   const payload = nativePayload(captured, data.confirmEnvelope, { plan_revision_id: confirmed.revisionId, confirmed_plan: confirmed });
   const event = stageEvent(captured, raw, "confirm", payload), rows = guestImagePlanRows(data, confirmed, event);
   const preflightEnvelope = await experienceOutputEnvelope(captured.data.binding, "preflight", captured.data.sourceHead + 2,
@@ -639,40 +623,16 @@ function addClaim(captured: Captured, resourceTime: number | null) {
 /** Validate the retained native offer against its actual captured transport;
  * never reconstruct actual provider evidence from policy or new configuration. */
 export async function guestImageQuoteRecipe(data: StageData, offered: OutputNativeTargetPreflight, transport: unknown): Promise<SponsorRecipe> {
-  const disclosure = outputNativeImageDisclosure();
-  if (jsonIssues(offered).length || jsonIssues(transport).length || bytes(canonicalJson({ offered, transport })) > 49152
-    || offered.targetId !== data.target.id || offered.available !== true || offered.provider !== "openai" || typeof offered.model !== "string"
-    || offered.reason !== disclosure.reason || offered.transferDescription !== disclosure.transferDescription
-    || !record(offered.reasonValues) || canonicalJson(offered.reasonValues) !== canonicalJson(disclosure.reasonValues)
-    || ![offered.maximumCalls, offered.maximumMicrousd, offered.maximumTokens].every(value => Number.isSafeInteger(value) && value > 0)
-    || !record(offered.settings.payload) || offered.settings.payload.outputTargetInstructions !== providerInputInstructions({ target: data.target })
-    || !record(offered.settings.imageRender) || !record(offered.settings.imageRender.format) || !record(offered.settings.imageRender.format.dimensions)
-    || !Array.isArray(offered.settings.calls) || offered.settings.calls.length !== offered.maximumCalls
-    || offered.settings.calls.some(call => !record(call) || typeof call.stage !== "string" || !/^[A-Za-z0-9][A-Za-z0-9_.:@/-]{0,199}$/u.test(call.stage)
-      || !Number.isSafeInteger(call.maximumMicrousd) || Number(call.maximumMicrousd) <= 0)
-    || new Set(offered.settings.calls.map(call => record(call) ? call.stage : null)).size !== offered.maximumCalls) return fail("quote_invalid");
-  const dimensions = offered.settings.imageRender.format.dimensions;
-  const recipe: SponsorRecipe = { appId: "image", recipeVersion: `image@${data.base.plan.release.definition.revision}`,
-    releaseDigest: data.base.plan.release.releaseHash, outputKind: "image", provider: offered.provider, model: offered.model,
-    routeDigest: await digest(offered), settingsDigest: await digest(offered.settings), outputCount: 1, durationMs: 0,
-    width: Number(dimensions.width), height: Number(dimensions.height), calls: { parsing: 0, planning: 1, render: 1, repair: 0 },
-    maximumTokens: offered.maximumTokens, maximumMicrousd: offered.maximumMicrousd };
-  if (!matchSponsorImageTemplate(data.base.policy.templates[0], { recipe, offered, transport })) return fail("quote_template_mismatch");
-  return recipe;
+  return guestImageStageQuoteRecipe({ target: data.target, releaseRevision: data.base.plan.release.definition.revision,
+    releaseHash: data.base.plan.release.releaseHash, approvedTemplate: data.base.policy.templates[0] }, offered, transport);
 }
 async function addQuote(captured: Captured, raw: EventRow) {
   const data = stage(captured), value = raw.payload.preflight, transport = raw.payload.guest_sponsor_quote_transport;
-  if (data.state !== "claimed" || !data.confirmed || !data.preflightEnvelope || !data.preflightDigest || jsonIssues(value).length
-    || !record(value) || !exactKeys(value, ["id", "planRevisionId", "sourceDigest", "requirementsDigest", "targets", "operationAttempts", "maximumMicrousd", "maximumCalls", "expiresAt", "createdAt", "termsDigest"])
-    || !uuid(value.id) || value.planRevisionId !== data.confirmed.revisionId || value.sourceDigest !== data.sourceDigest || value.requirementsDigest !== data.requirementsDigest
-    || !Array.isArray(value.targets) || value.targets.length !== 1 || !record(value.targets[0]) || value.targets[0].targetId !== data.target.id
-    || canonicalJson(value.operationAttempts) !== canonicalJson({ [data.target.id]: { ordinal: 0, previousSlotId: null } })
-    || value.maximumMicrousd !== value.targets[0].maximumMicrousd || value.maximumCalls !== value.targets[0].maximumCalls
-    || value.createdAt !== raw.recordedAt || !iso(value.expiresAt) || !iso(value.createdAt) || value.expiresAt <= value.createdAt
-    || Date.parse(value.expiresAt) > Math.min(captured.expiresAtMs, Date.parse(value.createdAt) + 15 * 60_000)) return fail("quote_invalid");
-  const { termsDigest, ...withoutDigest } = value;
+  if (data.state !== "claimed" || !data.confirmed || !data.preflightEnvelope || !data.preflightDigest) return fail("quote_invalid");
+  const quote = guestImageStageQuoteShape({ targetId: data.target.id, sourceDigest: data.sourceDigest, requirementsDigest: data.requirementsDigest }, value,
+    { revisionId: data.confirmed.revisionId, recordedAt: raw.recordedAt, expiresAtMs: captured.expiresAtMs });
+  const { termsDigest, ...withoutDigest } = quote;
   if (termsDigest !== await outputDigest(withoutDigest)) return fail("quote_invalid"); current(captured.ctx);
-  const quote = value as unknown as OutputPreflight;
   await guestImageQuoteRecipe(data, quote.targets[0], transport); current(captured.ctx);
   const event = stageEvent(captured, raw, "preflight", nativePayload(captured, data.preflightEnvelope,
     { preflight_id: quote.id, plan_revision_id: data.confirmed.revisionId, preflight: quote, guest_sponsor_quote_transport: transport }));
