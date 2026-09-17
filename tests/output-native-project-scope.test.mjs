@@ -10,7 +10,9 @@ const [runtime, projectAccess, ledger, policy, publication] = await Promise.all(
   import("../worker/output-requirements-ledger.ts"),
   import("../worker/pilot-policy.ts"),
   import("../worker/output-native-project-publication.ts"),
-]).finally(() => imports.deregister());
+]).catch(error => { imports.deregister(); throw error; });
+// ensureSchema also imports source modules lazily while the tests execute.
+test.after(() => imports.deregister());
 const { ensureSchema, eventWriteBindings, EVENT_WRITE_COLUMNS, makeEvent, serializeEvent } = runtime;
 const { synchronizeProjectScope, prepareProjectSourceEventsStatement, projectSourceProjectionCurrentAssertion } = projectAccess;
 const { ensureOutputRequirementsSchema, outputAssertionStatements } = ledger;
@@ -80,16 +82,33 @@ async function fixture() {
   return { sqlite, env, scope, insert, append, guard, read, reset, transport, now };
 }
 
-test("an already current project manifest uses one exact-scoped read and performs no writes", async () => {
+function assertCurrentManifestReads(state) {
+  // Memory custody qualification precedes the one exact-scoped manifest read.
+  // This same four-read path predates sponsor admission (dc9c429 baseline).
+  assert.equal(state.transport.d1, 4);
+  assert.equal(state.transport.queries.length, 4);
+  const [ledger, origin, integrity, manifest] = state.transport.queries;
+  for (const sql of state.transport.queries) {
+    assert.match(sql, /^SELECT/u, "a current manifest requires no writes or rebuild");
+    assert.equal(sql.includes("experience_sponsor"), false, "ordinary project scope has no sponsor read");
+  }
+  for (const sql of [ledger, origin]) assert.match(sql, /AS schema_json$/u);
+  assert.match(ledger, /memory_structured_conversation_heads/u);
+  assert.match(origin, /memory_structured_answer_origins/u);
+  assert.match(integrity, /END AS verified$/u);
+  assert.match(integrity, /memory_structured_schema_changed/u);
+  assert.match(manifest, /END AS origin_integrity,migration\.status,migration\.last_owner_sequence/u);
+  for (const field of ["owner_head", "event_count", "document_count", "manifest_current"]) assert.ok(manifest.includes("AS " + field));
+}
+
+test("an already current project manifest qualifies Memory custody and uses one exact-scoped read without writes", async () => {
   const state = await fixture();
   assert.deepEqual(await synchronizeProjectScope(state.env, state.scope), { eventCount: 2, documentCount: 1 });
-  assert.equal(state.transport.d1, 1);
-  assert.equal(state.transport.queries.length, 1);
-  assert.match(state.transport.queries[0], /^SELECT/u);
+  assertCurrentManifestReads(state);
   assert.equal(state.sqlite.prepare("SELECT last_owner_sequence FROM project_migration_states").get().last_owner_sequence, 2);
 });
 
-test("a stale project still takes the existing complete rebuild before the single-read fast path", async () => {
+test("a stale project still takes the existing complete rebuild before the qualified manifest fast path", async () => {
   const state = await fixture();
   const compiled = state.append("ContextCompiled", { project_id: "project", document_id: "document", compiled_snapshot: { document: { id: "document" } } }, "worker:compiler");
   assert.deepEqual(await synchronizeProjectScope(state.env, state.scope), { eventCount: 3, documentCount: 1 });
@@ -97,7 +116,7 @@ test("a stale project still takes the existing complete rebuild before the singl
   assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM project_event_scopes WHERE event_id=?").get(compiled.eventId).n, 1);
   state.reset();
   await synchronizeProjectScope(state.env, state.scope);
-  assert.equal(state.transport.d1, 1);
+  assertCurrentManifestReads(state);
 });
 
 test("a matching cursor without its exact manifest marker cannot bypass the existing rebuild", async () => {
@@ -114,7 +133,7 @@ test("fast-path document counts do not include another owner or organization und
     state.insert("project_resource_scopes", { project_access_id: "project-access", resource_kind: "document", resource_id: id, organization_id: organization, project_id: "project", owner_user_id: owner, actor_user_id: owner, visibility: "collaborative_output", created_at: state.now });
   }
   assert.deepEqual(await synchronizeProjectScope(state.env, state.scope), { eventCount: 2, documentCount: 1 });
-  assert.equal(state.transport.d1, 1);
+  assertCurrentManifestReads(state);
 });
 
 test("the shared prepared SELECT preserves exact source hydration without synchronizing or writing a migration", async () => {
