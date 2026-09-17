@@ -253,6 +253,13 @@
       "when": 1789387745000,
       "tag": "0039_scene_job_source_witness",
       "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "6",
+      "when": 1789659788167,
+      "tag": "0040_selected_output_shares",
+      "breakpoints": true
     }
   ]
 }
