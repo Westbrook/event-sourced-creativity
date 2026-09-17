@@ -89,6 +89,7 @@ export class FormaWorkspace extends FormaElement {
   #referenceComposition:{id:string;current:()=>boolean}|null=null;
   #compositionSaving=false;
   #uploadCurrent:()=>boolean=()=>false;
+  #uploadUnsubscribe:(()=>void)|null=null;
   #uploading = false; #pendingUpload: File | null = null; #uploadDocumentId = ""; #rightsConfirmed = false;
   #referenceFindingKinds = new Set<ReferenceFindingKind>(DEFAULT_REFERENCE_FINDINGS);
   #projectSettings=false;#projectName="";#projectState="active";#deleteDocument=false;
@@ -380,6 +381,7 @@ export class FormaWorkspace extends FormaElement {
   }
 
   override disconnectedCallback(){
+    this.#cancelUpload();
     this.#detachNativeImagePage();
     window.removeEventListener("forma-assistant-tool-request",this.#assistantTool);
     this.#localProposal.reset();this.#proposalResumeKey="";
@@ -389,6 +391,7 @@ export class FormaWorkspace extends FormaElement {
   }
 
   adoptedCallback(){
+    this.#cancelUpload();
     this.#detachNativeImagePage();
     this.#syncNativeImagePage();
   }
@@ -396,6 +399,7 @@ export class FormaWorkspace extends FormaElement {
   protected override updated() {
     this.#syncNativeImagePage();
     this.#syncQuickEditReview();
+    if(this.#pendingUpload&&!this.#uploadCurrent())this.#cancelUpload();
     if(this.#referenceComposition&&!this.#referenceComposition.current()){this.#referenceComposition=null;this.#compositionSaving=false;this.requestUpdate();}
     const opening=this.#nextOpening;
     if(opening&&!opening.current(opening.ready?"editing":"opening")){this.#nextOpening=null;opening.retire();}
@@ -529,45 +533,66 @@ export class FormaWorkspace extends FormaElement {
   }
   #queueUpload(event: Event|File) {
     const file=event instanceof File?event:(event.target as HTMLInputElement).files?.[0];if(!file)return;
-    const source=this.store.captureSourceOwnership(),route=this.store.route.get();
-    this.#uploadCurrent=()=>this.isConnected&&this.store.sourceOwnershipActive(source)&&this.store.route.get()===route&&this.#pendingUpload===file;
-    this.#pendingUpload = file; this.#uploadDocumentId=this.#blockDraft?.documentId??this.store.projection.get().documentId; this.#rightsConfirmed = false; this.#referenceFindingKinds = new Set(DEFAULT_REFERENCE_FINDINGS); this.requestUpdate();
+    this.#uploadUnsubscribe?.();
+    const store=this.store,source=store.captureSourceOwnership(),authorization=store.captureAuthorizationScope(),route=store.route.get();
+    const projectId=store.projection.get().projectId,documentId=this.#blockDraft?.documentId??store.projection.get().documentId;
+    let active=true;
+    const current=()=>active&&(active=this.isConnected&&this.store===store&&store.sourceOwnershipActive(source)
+      &&store.authorizationScopeActive(authorization)&&store.route.get()===route&&store.projection.get().projectId===projectId
+      &&store.projection.get().documentId===documentId&&this.#pendingUpload===file);
+    this.#uploadCurrent=current;
+    this.#uploading=false;
+    this.#pendingUpload = file; this.#uploadDocumentId=documentId; this.#rightsConfirmed = false; this.#referenceFindingKinds = new Set(DEFAULT_REFERENCE_FINDINGS);
+    this.#uploadUnsubscribe=store.subscribe(()=>{if(!current())this.#cancelUpload();});this.requestUpdate();
   }
   #resetFileInputs() { this.querySelectorAll<HTMLInputElement>('input[type="file"]').forEach((input)=>{input.value="";}); }
-  #cancelUpload() { this.#pendingUpload = null; this.#uploadDocumentId=""; this.#rightsConfirmed = false; this.#resetFileInputs(); this.requestUpdate(); }
+  #cancelUpload() { this.#uploadUnsubscribe?.(); this.#uploadUnsubscribe=null; this.#uploadCurrent=()=>false; this.#uploading=false; this.#pendingUpload = null; this.#uploadDocumentId=""; this.#rightsConfirmed = false; this.#resetFileInputs(); this.requestUpdate(); }
   async #confirmUpload() {
-    const file = this.#pendingUpload; if (!file || !this.#rightsConfirmed) return;
+    // A replacement may reuse the same File. Keep the original queue predicate,
+    // target and consent owner instead of consulting a newer upload after awaits.
+    const file=this.#pendingUpload,origin=this.#uploadCurrent,documentId=this.#uploadDocumentId,draft=this.#blockDraft;
+    const owns=()=>this.#uploadCurrent===origin;
+    const current=()=>owns()&&origin()&&this.#rightsConfirmed;
+    if(this.#uploading||!file||!documentId||!current())return;
+    const findingKinds=file.type.toLowerCase().startsWith("image/")?[...this.#referenceFindingKinds]:[];
     this.#uploading = true; this.requestUpdate();
     try {
       if(model3dMimeType(file)){
-        const saved=await this.store.uploadModel3dFile(file,()=>this.#uploadCurrent()&&this.#rightsConfirmed,{documentId:this.#uploadDocumentId,rightsConfirmed:true});
-        if(saved&&this.#uploadCurrent()){this.#pendingUpload=null;this.#uploadDocumentId="";this.#rightsConfirmed=false;this.#closeBlock();this.#resetFileInputs();}
-        this.#uploading=false;this.requestUpdate();return;
+        const saved=await this.store.uploadModel3dFile(file,current,{documentId,rightsConfirmed:true});
+        if(saved&&current()){if(this.#blockDraft===draft)this.#closeBlock();this.#cancelUpload();}
+        return;
       }
       const isImage=file.type.toLowerCase().startsWith("image/");const isAudio=Boolean(audioMimeType(file.type));
       let sample: ImageSample | null = null;
       if(isImage)try { sample = await sampleImageFile(file); } catch { /* Upload remains useful when this browser cannot sample an image. */ }
+      if(!current())return;
       const localDuration=isAudio?await browserAudioDuration(file):null;
-      const form = new FormData(); form.append("file", file); form.append("rightsConfirmed", "true"); form.append("nonSensitiveConfirmed", "true"); const response = await this.store.guardedFetch("/api/media", { method: "POST", body: form },"upload this licensed reference"); const media = await response.json() as { key?: string; url?: string; contentHash?: string; mimeType?:string; size?:number; durationSeconds?:number; extraction?:SourceDocumentExtraction; sourceEvidenceHash?:string; error?: string };
+      if(!current())return;
+      const form = new FormData(); form.append("file", file); form.append("rightsConfirmed", "true"); form.append("nonSensitiveConfirmed", "true");
+      const response = await this.store.guardedFetch("/api/media", { method: "POST", body: form },"upload this licensed reference",{current});
+      if(!current())return;
+      const media = await response.json() as { key?: string; url?: string; contentHash?: string; mimeType?:string; size?:number; durationSeconds?:number; extraction?:SourceDocumentExtraction; sourceEvidenceHash?:string; error?: string };
+      if(!current())return;
       if (!response.ok) throw new Error(media.error ?? "Upload failed");
       const extraction=!isImage&&!isAudio?media.extraction??null:null;
       if(!isImage&&!isAudio&&(!extraction||!media.sourceEvidenceHash||!media.contentHash))throw new Error("The source could not be verified against its uploaded contents.");
       const readableText=extraction?.text??"";
       const ref = crypto.randomUUID(); const block = crypto.randomUUID();
-      const findingKinds=isImage?[...this.#referenceFindingKinds]:[];const documentId=this.#uploadDocumentId||this.store.projection.get().documentId;
       const appended=await this.store.appendBatch([
         { type: "ReferenceIngested", payload: { reference_id: ref, source_type: isAudio?"audio-upload":isImage?"upload":"document-upload", source_ref: media.url, content_hash: media.contentHash??media.key, source_mime_type:media.mimeType??file.type, rights_class: "asserted" } },
         { type: "RightsAsserted", payload: { reference_id: ref, rights_class: "owned_or_licensed", assertion_method: "explicit-upload-confirmation" } },
         { type: "BlockCreated", payload: { block_id: block, document_id:documentId, type: isAudio?"audio":"reference", handle: `${isAudio?"audio":"reference"}/${file.name.replace(/\W+/g,"-").toLowerCase()}`, position: `z${this.store.head.get()}`, properties: { reference_id: ref, label: file.name, media_url: media.url, media_type:media.mimeType??file.type, source_mime_type:media.mimeType??file.type, source_content_hash:media.contentHash, source_citation:`${file.name} · SHA-256 ${media.contentHash??"not recorded"}`, ...(extraction?{text:readableText,source_citations:extraction.segments.map((segment)=>({anchor:segment.anchor,excerpt:segment.text})),source_segment_count:extraction.segments.length,source_excerpt_truncated:extraction.truncated,source_kind:extraction.sourceKind,source_evidence_hash:media.sourceEvidenceHash}:{}), subtype:isAudio?"Score":"Mood", weight: .72, authority: "authored",...(isAudio?{audio_role:"score",rights_class:"owned_or_licensed",duration_seconds:media.durationSeconds??localDuration,size_bytes:media.size??file.size,description:"",inform_generation:false,include_in_output:false,allow_provider_audio_transfer:false}:{pixel_reference_mode:"context_only",extraction_preferences:findingKinds,extraction_status:sample?"pending":extraction?.status??"unavailable",...(extraction?.status==="unavailable"?{extraction_message:extraction.message}:{})}) } } },
-      ],{rebaseAttempts:6});
-      if(!appended.length){this.#uploading=false;this.requestUpdate();return;}
+      ],{rebaseAttempts:6,current});
+      if(!appended.length||!current())return;
       if(sample&&!this.store.session.get()?.projectContext)await this.store.extractReference(block,ref,sample,findingKinds);
       else if(isAudio)this.store.toast(this.i18n.t("audio.reference.private","Private audio reference"));
       else if(!isImage){const detail=extraction?localizedSourceExtractionMessage(extraction,this.i18n):this.i18n.system(readableText?"Its rights, anchored citations, and content hash were recorded.":"Readable source text could not be extracted.");this.store.toast(this.i18n.t(`source.extraction.notice.${readableText?"ready":"unavailable"}`,"",{detail}));}
       else if(!sample||this.store.session.get()?.projectContext)this.store.toast("Reference stored; image findings can be analyzed later from the block.");
-      this.#pendingUpload = null; this.#uploadDocumentId=""; this.#rightsConfirmed = false; this.#blockDraft = null; this.#resetFileInputs();
-    } catch (error) { this.store.toast(error instanceof Error ? error.message : "Upload failed"); }
-    this.#uploading = false; this.requestUpdate();
+      if(!current())return;
+      if(this.#blockDraft===draft)this.#blockDraft=null;
+      this.#cancelUpload();
+    } catch (error) { if(current())this.store.toast(error instanceof Error ? error.message : "Upload failed"); }
+    finally { if(owns()){this.#uploading=false;if(!origin())this.#cancelUpload();else this.requestUpdate();} }
   }
   #blockComposer() {
     const draft = this.#blockDraft; if (!draft) return nothing; const selected = blockTypeDefinition(draft.type);
@@ -1076,7 +1101,7 @@ export class FormaWorkspace extends FormaElement {
       ${this.#projectSettings&&!projectContext?html`<dialog class="modal workspace-modal project-settings-dialog" closedby="any" aria-labelledby="project-settings-title" @click=${(event:MouseEvent)=>{if(event.target===event.currentTarget)this.#closeProjectSettings();}} @cancel=${(event:Event)=>{event.preventDefault();this.#closeProjectSettings();}} @close=${()=>{if(this.#projectSettings){this.#projectSettings=false;this.requestUpdate();}}}><form class="modal-card project-settings-form" @submit=${this.#saveProject}><button type="button" class="icon-button modal-close" aria-label="Close project settings" @click=${this.#closeProjectSettings}>${icon("close")}</button><span class="eyebrow">Project settings</span><h2 id="project-settings-title">Edit ${p.projectName}</h2><label>Project name<input maxlength="80" required .value=${this.#projectName} @input=${(event:InputEvent)=>{this.#projectName=(event.target as HTMLInputElement).value;this.requestUpdate();}}></label><label>Project state<select .value=${this.#projectState} @change=${(event:Event)=>{this.#projectState=(event.target as HTMLSelectElement).value;}}><option value="active">Active</option><option value="archived">Archived</option><option value="paused">Paused</option></select><small>State changes are reversible events; they never delete project history.</small></label><footer><button type="button" class="button ghost" @click=${this.#closeProjectSettings}>Cancel</button><button class="button primary" ?disabled=${!this.#projectName.trim()}>Save project</button></footer></form></dialog>`:nothing}
       ${this.#deleteDocument?html`<dialog class="modal workspace-modal document-delete-dialog studio-document-delete-dialog" closedby="any" aria-labelledby="studio-delete-document-title" @click=${(event:MouseEvent)=>{if(event.target===event.currentTarget)this.#closeDeleteDocument();}} @cancel=${(event:Event)=>{event.preventDefault();this.#closeDeleteDocument();}} @close=${()=>{if(this.#deleteDocument){this.#deleteDocument=false;this.requestUpdate();}}}><div class="modal-card document-delete-card"><button class="icon-button modal-close" aria-label="Cancel document removal" @click=${this.#closeDeleteDocument}>${icon("close")}</button><span class="eyebrow">Removal can be undone</span><h2 id="studio-delete-document-title">Remove “${p.documentTitle}”?</h2><p>The document, its creative decisions, and its results will leave your active project. Another document opens automatically, and Undo can bring this one back.</p><div class="document-delete-summary"><span>${icon("trash")}</span><div><b>${p.documentTitle}</b><small>${p.blocks.length} creative decision${p.blocks.length===1?"":"s"} · ${history.length+p.artifacts.length} result${history.length+p.artifacts.length===1?"":"s"}</small></div></div><footer><button class="button ghost" @click=${this.#closeDeleteDocument}>Cancel</button><button class="button danger" @click=${this.#confirmDeleteDocument}>Remove document</button></footer></div></dialog>`:nothing}
       ${this.#referenceComposition?html`<forma-reference-compositor .sources=${referenceCompositionSources(p.blocks,this.store.events.get())} .disabled=${this.#compositionSaving} @composition-capture=${this.#saveReferenceComposition} @composition-close=${this.#closeReferenceComposition}></forma-reference-compositor>`:nothing}
-      ${this.#pendingUpload ? html`<dialog class="modal workspace-modal upload-rights-modal" closedby="any" aria-modal="true" aria-labelledby="upload-rights-title" @click=${(event: MouseEvent) => { if (event.target === event.currentTarget && !this.#uploading) this.#cancelUpload(); }} @cancel=${(event: Event) => { event.preventDefault(); if (!this.#uploading) this.#cancelUpload(); }} @close=${() => { if (this.#pendingUpload && !this.#uploading) { this.#pendingUpload = null; this.#uploadDocumentId = ""; this.#rightsConfirmed = false; this.requestUpdate(); } }}>
+      ${this.#pendingUpload ? html`<dialog class="modal workspace-modal upload-rights-modal" closedby="any" aria-modal="true" aria-labelledby="upload-rights-title" @click=${(event: MouseEvent) => { if (event.target === event.currentTarget && !this.#uploading) this.#cancelUpload(); }} @cancel=${(event: Event) => { event.preventDefault(); if (!this.#uploading) this.#cancelUpload(); }} @close=${() => { if (this.#pendingUpload && !this.#uploading) this.#cancelUpload(); }}>
         <form class="modal-card reference-upload-card" @submit=${(event:SubmitEvent)=>{event.preventDefault();if(this.#rightsConfirmed&&!this.#uploading)void this.#confirmUpload();}}>
           <button type="button" class="icon-button modal-close" aria-label="Cancel upload" ?disabled=${this.#uploading} @click=${this.#cancelUpload}>${icon("close")}</button>
           <span class="eyebrow">Reference setup · before upload</span><h2 id="upload-rights-title">${model3dMimeType(this.#pendingUpload)?this.i18n.t("model3d.upload.review","Review this 3D model"):audioMimeType(this.#pendingUpload.type)?this.i18n.t("audio.reference.private","Private audio reference"):this.#pendingUpload.type.startsWith("image/")?this.i18n.system("Choose what this image should contribute"):this.i18n.system("Verify this source document")}</h2>
