@@ -1,3 +1,4 @@
+import './vendor/elements/define/badge.js';
 import { LitElement, css, html, nothing } from 'lit';
 import { keyed } from 'lit/directives/keyed.js';
 import './exchange-inspector.ts';
@@ -75,8 +76,9 @@ export class StillDeveloperConsole extends LitElement {
     const rows=trace?.actions??c.current.actions;
     const matched=trace?.head===c.head&&trace.position.view===(c.mode==='generate'&&!c.selectedFormat?'choose-format':c.view)&&(['projectId','documentId','blockId','outputId','itemIndex','hasIntent'] as const).every(key=>trace.position[key]===c.current.position[key]);
     const questions=trace?.questions??[];
+    const jevState=this.pending?'Pending':this.received?'Received':'Not Requested';
     const content=html`<div class="console">
-          <header class="panel-heading"><h2 tabindex="-1">Decisions${this.detached?' · Live':''}</h2><div class="window-tools">${this.detached?html`<en-button variant="secondary" size="small" @click=${()=>this.dispatchEvent(new CustomEvent('developer-return'))}>Return to panel</en-button>`:html`<en-button variant="secondary" size="small" @click=${this.detach}>${this.windowOpen?'Focus window':'Open in window'}</en-button>${this.windowOpen?html`<en-button variant="ghost" size="small" @click=${this.reattach}>Close window</en-button>`:nothing}<en-button variant="ghost" size="small" aria-label="Close developer panel" @click=${()=>this.dispatchEvent(new CustomEvent('developer-disable',{bubbles:true,composed:true}))}>Close</en-button>`}</div></header>
+          <header class="panel-heading"><h2 tabindex="-1">Decisions${this.detached?' · Live':''}</h2><div class="window-tools">${this.detached?html`<en-button variant="secondary" size="small" @click=${()=>this.dispatchEvent(new CustomEvent('developer-return'))}>Return to panel</en-button>`:html`<en-button variant="secondary" size="small" @click=${this.detach}>${this.windowOpen?'Focus window':'Open in window'}</en-button>${this.windowOpen?html`<en-button variant="ghost" size="small" @click=${this.reattach}>Close window</en-button>`:nothing}<en-button variant="ghost" size="small" aria-label="Close developer panel" @click=${()=>this.dispatchEvent(new CustomEvent('developer-disable',{bubbles:true,composed:true}))}>Close</en-button>`}</div><div class="jev-state" role="status" aria-live="polite" aria-atomic="true"><strong>Jev state</strong><div class="jev-state-badges">${['Not Requested','Pending','Received'].map(state=>html`<en-badge variant=${state===jevState?'success':'neutral'} aria-current=${state===jevState?'step':nothing}><span slot="prefix" aria-hidden="true">${state===jevState?'●':'○'}</span>${state}</en-badge>`)}</div><span class="sr-only">Current: ${jevState}</span></div></header>
           ${this.windowError?html`<p role="alert">${this.windowError}</p>`:nothing}
           <div class="status"><strong>${this.pending?'Jev pending':this.received?.disposition??'Local controls'}</strong><span>${c.view}${c.mode?` / ${c.mode}`:''} · head ${c.head}</span></div>
           <details open><summary>On page · ${this.controls.length} controls</summary>
@@ -114,6 +116,7 @@ export class StillDeveloperConsole extends LitElement {
     :host{display:block;min-width:0;padding:0 20px 24px;font:13px/1.5 system-ui,sans-serif;color:#33332e;container-type:inline-size}
     :host([detached]){max-width:1200px;margin:auto;padding:0 24px 24px}
     .panel-heading{position:sticky;top:0;z-index:2;display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px;padding:18px 0 14px;background:#f7f6f2;border-bottom:1px solid #d9d7ce}
+    .jev-state{flex-basis:100%;display:grid;gap:8px;padding-top:8px}.jev-state>strong{font-size:13px}.jev-state-badges{display:flex;flex-wrap:wrap;gap:6px}.jev-state en-badge{--en-badge-radius:9999px}.jev-state en-badge[variant="success"]{--en-badge-background:#e6f3e9}.jev-state en-badge[variant="success"]::part(base){border-color:var(--en-color-success-text);font-weight:650}.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
     h2{font-size:15px;font-weight:600;margin:0}h2:focus{outline:none}
     .window-tools{display:flex;flex-wrap:wrap;align-items:center;gap:6px} .console{overflow-wrap:anywhere}
     .window-tools en-button::part(control){padding-inline:10px}

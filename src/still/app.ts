@@ -140,7 +140,7 @@ export class StillApp extends LitElement {
     if(inspector){
       if(this.developerScope!==this.diagnosticScope()){this.developerApplied=undefined;this.developerReceived=undefined;this.developerScope=this.diagnosticScope();}
       inspector.context={view:this.client.position.view,mode:this.mode,head:this.client.head,page:this.page,more:this.moreOpen,paletteOpen:this.paletteOpen,selectedFormat:this.generation?.format??'',current:this.localDiagnostics('Current eligibility')};
-      inspector.applied=this.developerApplied;inspector.received=this.developerReceived;inspector.pending=this.developerPending;
+      inspector.applied=this.developerApplied;inspector.received=this.developerReceived;inspector.pending=this.developerPending||this.paletteBusy;
       inspector.scope=this.diagnosticScope();
     }
   }
@@ -331,12 +331,12 @@ export class StillApp extends LitElement {
     const explicit=explicitAction(query,candidates);this.finderInferred=true;this.finderMessage='';
     if(explicit){this.paletteChoice=explicit;this.changed();return;}
     const snapshot=JSON.stringify(this.client.position),head=this.client.head,scope=this.interactionScope(),diagnosticScope=this.diagnosticScope(),ticket=++this.paletteTicket;
-    this.paletteBusy=true;this.changed();
+    this.paletteBusy=true;if(this.developer)this.developerReceived=undefined;this.changed();
     try{const result=await api<DecisionResponse>('/api/still/decision',{...this.client.position,view:'find-action',intent:query,...(this.developer?{developer:true}:{})});
       const stale=result.policy!==POLICY_VERSION||result.head!==head||ticket!==this.paletteTicket||!this.paletteOpen||query!==this.paletteQuery.trim()||scope!==this.interactionScope()||snapshot!==JSON.stringify(this.client.position)||head!==this.client.head||this.disposed;
       this.recordDecision(result,stale?'Ignored: palette changed':'Palette suggestion',diagnosticScope);if(stale)return;
       this.paletteChoice=candidates.some(a=>a.id===result.resolvedAction)?result.resolvedAction!:'';this.finderMessage=this.paletteChoice?'':'Choose an action.';
-    }catch{if(ticket===this.paletteTicket)this.finderMessage='Choose an action.';}finally{if(ticket===this.paletteTicket){this.paletteBusy=false;this.changed();}}
+    }catch(error){if(ticket===this.paletteTicket){this.finderMessage='Choose an action.';this.recordDecision({source:'fallback',reason:error instanceof ApiError?`HTTP ${error.status}`:'Network unavailable',head,policy:POLICY_VERSION},'Palette lookup failed',diagnosticScope);}}finally{if(ticket===this.paletteTicket){this.paletteBusy=false;this.changed();}}
   }
   private openFoundAction(id=this.paletteChoice,inferred=this.finderInferred){
     if(!id)return;
