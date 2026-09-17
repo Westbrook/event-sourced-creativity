@@ -54,6 +54,8 @@ import { handleSelectedOutputShareApi, isSelectedOutputShareApiPath } from "./se
 
 // A handled sponsor entry response already belongs to one bounded operation.
 // Do not attach an unrelated background private-content sweep to that request.
+import { createSponsorImageEntryModeRoute, SPONSOR_IMAGE_ENTRY_MODE_PATH } from "./experience-sponsor-image-entry-mode.ts";
+
 const sponsoredImageResponses = new WeakSet<Response>();
 
 async function authorizeApplication(request: Request, env: WorkerEnv, application: ApplicationId, path: string) {
@@ -103,6 +105,10 @@ async function routeRequest(request: Request, env: WorkerEnv, context: WorkerExe
       if(origin&&origin!==url.origin)return Response.json({error:"same_origin_required"},{status:403,headers:{"cache-control":"private, no-store"}});
     }
     if(isSelectedOutputShareApiPath(url.pathname))return handleSelectedOutputShareApi(request,env);
+    if(url.pathname===SPONSOR_IMAGE_ENTRY_MODE_PATH){
+      const mode=await createSponsorImageEntryModeRoute(env.FORMA_SPONSOR_IMAGE_ENTRY)(request,env);
+      if(mode){sponsoredImageResponses.add(mode);return mode;}
+    }
     if(url.pathname==="/api/experiences/sponsor/image"||url.pathname.startsWith("/api/experiences/sponsor/image/")){
       const sponsored=await createSponsorImageEntryRoute(env.FORMA_SPONSOR_IMAGE_ENTRY)(request,env);
       if(sponsored){sponsoredImageResponses.add(sponsored);return sponsored;}

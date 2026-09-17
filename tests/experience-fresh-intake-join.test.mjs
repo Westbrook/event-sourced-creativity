@@ -48,6 +48,7 @@ const modulePaths = [
   "worker/experience-intake-read.ts",
   "worker/experience-sponsor-admission.ts",
   "worker/experience-sponsor-entitlement.ts",
+  "worker/experience-sponsor-intake-classification.ts",
   "worker/experience-sponsor-intake-command.ts",
   "worker/experience-sponsor-intake-read-attempts.ts",
   "worker/experience-sponsor-intake-read-policy.ts",

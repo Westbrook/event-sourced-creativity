@@ -1,12 +1,15 @@
 import { canonicalJson, digest, exactKeys, freeze, jsonIssues, record } from "../src/experiences/compiler.ts";
 import { experienceDocumentRoute, experienceDraftId, isDraftId, isIntentId, receiptPrefix, registeredExperience, type ExperiencePlan } from "../src/experiences/intake.ts";
 import { continueExperienceAuthorization, readDraft, retainedGuard } from "./experience-intake-read.ts";
-import { loadApprovedSponsorCampaign } from "./experience-sponsor-approval.ts";
-import { SponsorEntitlementError } from "./experience-sponsor-policy.ts";
+import { loadApprovedSponsorCampaign, sponsorApprovalAssertion } from "./experience-sponsor-approval.ts";
+import { SponsorEntitlementError, readSponsorPolicy } from "./experience-sponsor-policy.ts";
 import { SPONSOR_IMAGE_INTAKE_READ_OPERATIONS, type SponsorImageIntakeReadOperation, type SponsorImageIntakeReadOperationV1 } from "./experience-sponsor-intake-read-policy.ts";
 import { reserveSponsorIntakeReadAttempt, takeSponsorIntakeReadAttempt, type SponsorIntakeReadAttempt } from "./experience-sponsor-intake-read-attempts.ts";
 import { packSponsorIntakeReadQuery } from "./experience-sponsor-intake-read-sql.ts";
-import { readExistingPrincipalRequest } from "./principal-request-core.ts";
+import { readExistingPrincipalRequest, identityFromRequest } from "./principal-request-core.ts";
+import { PLATFORM_PRINCIPAL_WITH_ACCESS_SQL, principalAccessFromRow } from "./access-policy.ts";
+import { POLICY_VERSION } from "./policy-version.ts";
+import { classifySponsorIntakeDraft } from "./experience-sponsor-intake-classification.ts";
 import { intakeGuard, projectIntakeAuthority, type AtomicIntakeOptions, type ProjectIntakeAuthorization } from "./intake-authority.ts";
 import { commitAtomicIntake } from "./project-intake.ts";
 import { readSponsorIntakeCommand } from "./experience-sponsor-intake-command.ts";
@@ -58,6 +61,11 @@ type State = { request: Request; env: WorkerEnv; db: WorkerEnv["DB"]; auth: Proj
   operation: SponsorImageIntakeReadOperation; campaignId: string; policyDigest: string; resourceKey: string;
   assertions: BudgetReservationGuard[]; original?: IntakeReceipt; release?: ExperiencePlan["release"] };
 const authorities = new WeakMap<SponsorIntakeReadAuthority, State>();
+// Separate metadata capabilities can reserve the existing bootstrap allowance,
+// but never enter the native private-read authority map.
+type MetadataState = { request: Request; env: WorkerEnv; db: WorkerEnv["DB"]; actorUserId: string;
+  campaignId: string; policyDigest: string; resourceKey: string; assertions: readonly BudgetReservationGuard[]; current(): void };
+const metadataAuthorities = new WeakMap<SponsorIntakeReadAuthority, MetadataState>();
 
 // Source-free indexed lineage only. No private draft text, canonical event
 // payload, provider result or job is read before resource admission.
@@ -123,6 +131,14 @@ export async function identifySponsorIntakeRead(request: Request, env: WorkerEnv
 
 export function requireSponsorIntakeReadAuthority(authority: SponsorIntakeReadAuthority, request: Request, env: WorkerEnv) {
   const state = authorities.get(authority);
+  if (!state) {
+    const metadata = metadataAuthorities.get(authority);
+    if (!metadata || metadata.request !== request || metadata.env !== env || metadata.db !== env.DB)
+      return fail("sponsor_intake_read_authority_unavailable");
+    metadata.current();
+    return { actorUserId: metadata.actorUserId, campaignId: metadata.campaignId, policyDigest: metadata.policyDigest,
+      resourceKey: metadata.resourceKey, operation: "image-intake-bootstrap" as const, assertions: structuredClone(metadata.assertions) };
+  }
   if (!state || state.request !== request || state.env !== env || state.db !== env.DB) return fail("sponsor_intake_read_authority_unavailable");
   return { actorUserId: state.auth.user.userId, campaignId: state.campaignId, policyDigest: state.policyDigest,
     resourceKey: state.resourceKey, operation: state.operation, assertions: structuredClone(state.assertions) };
@@ -317,6 +333,8 @@ function boundedNativeEnvironment(env: WorkerEnv, life: Lifetime, proofs: Budget
  * native custody, not generation eligibility, old sessions or live campaign
  * limits. The response preserves the original native marked plan/receipt. */
 export async function resolveSponsorIntakeRead(authority: SponsorIntakeReadAuthority, attempt: SponsorIntakeReadAttempt, request: Request, env: WorkerEnv): Promise<Response> {
+  // Metadata cannot enter a private sink, even before consuming its ticket.
+  if (!authorities.has(authority)) return fail("sponsor_intake_read_authority_unavailable");
   requireSponsorIntakeReadAuthority(authority, request, env);
   const ticket = await takeSponsorIntakeReadAttempt(attempt, authority, request, env), state = authorities.get(authority)!;
   if (ticket.operation !== state.operation) return fail("sponsor_intake_read_operation_changed");
@@ -1040,4 +1058,309 @@ export async function finishSponsorImageConfirmation(cap: SponsorImageConfirmati
     if (current?.current !== 1) return fail("sponsor_intake_read_custody_changed");
     return new Response(serialized, { status, headers: { "content-type": "application/json", "cache-control": "private, no-store" } });
   } finally { state.closed = true; }
+}
+
+type EntryModeSelector = Readonly<{ kind: "fresh" }> | Readonly<{ draftId: string }> | Readonly<{ intentId: string }>;
+type EntryModeSelection = Readonly<{ enabled: boolean; campaignId: string | null; selector: EntryModeSelector }>;
+const metadataActorColumns = ["user_id", "email", "display_name", "role", "consent_version", "consented_at", "updated_at",
+  "permission_epoch", "grants_json", "organizations_json", "projects_json", "identity_policies_json", "approved_canvas_requirements"] as const;
+const modeBytes = (value: string) => new TextEncoder().encode(value).byteLength;
+const modeError = (): never => fail("sponsor_image_entry_mode_unavailable");
+// Inspect ACK data without invoking accessors or accepting inherited fields.
+// These checks acknowledge only this fixed metadata facade, not new authority.
+const modeOwnData = (value: unknown, key: PropertyKey): unknown => {
+  if (!value || typeof value !== "object") return modeError();
+  const descriptor = Object.getOwnPropertyDescriptor(value, key);
+  if (!descriptor || !("value" in descriptor)) return modeError();
+  return descriptor.value;
+};
+const modeExactData = (value: unknown, keys: readonly string[]): Record<string, unknown> => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return modeError();
+  const actual = Reflect.ownKeys(value);
+  if (actual.length !== keys.length || actual.some(key => typeof key !== "string" || !keys.includes(key))) return modeError();
+  return Object.fromEntries(keys.map(key => [key, modeOwnData(value, key)]));
+};
+const modeDenseData = (value: unknown, length: number): unknown[] => {
+  if (!Array.isArray(value) || modeOwnData(value, "length") !== length) return modeError();
+  const keys = Reflect.ownKeys(value);
+  if (keys.length !== length + 1 || keys.some(key => key !== "length"
+    && (typeof key !== "string" || !/^(?:0|[1-9][0-9]*)$/u.test(key) || Number(key) >= length))) return modeError();
+  return Array.from({ length }, (_, index) => modeOwnData(value, String(index)));
+};
+const modeAuthorized = (value: unknown) => modeExactData(value, ["authorized"]).authorized === 1;
+const metadataJson = (columns: readonly string[], qualifier = "") => {
+  let expression = "json_object()";
+  for (let at = 0; at < columns.length; at += 15) expression = `json_set(${expression},${columns.slice(at, at + 15)
+    .map(column => `'$.${column}',${qualifier}"${column}"`).join(",")})`;
+  return expression;
+};
+const metadataActorJson = metadataJson(metadataActorColumns);
+
+/** Fixed control-plane projection only. Approval receipts are the expressly
+ * retained exception: they may contain copied payer project names before debit.
+ * They never enter the browser DTO. No creative body query is accepted here.
+ * A local timeout stops further work/disclosure, not an already submitted D1 query. */
+class EntryModeScope {
+  readonly env: WorkerEnv;
+  readonly database: WorkerEnv["DB"];
+  readonly request: Request;
+  readonly original: WorkerEnv;
+  deadline = performance.now() + 5000;
+  bytes = 0;
+  queries = 0;
+  private readonly headerSnapshot: string;
+  private readonly projections = new Map<string, readonly string[]>();
+  private readonly statements = new WeakMap<object, { sql: string; bindings: readonly (string | number | null)[]; columns: readonly string[] | null }>();
+  constructor(request: Request, env: WorkerEnv) {
+    this.request = request; this.original = env; this.database = env.DB;
+    this.headerSnapshot = this.identityHeaders();
+    const prepare = (sql: string) => {
+      this.check();
+      const columns = this.projections.get(sql) ?? this.ledgerProjection(sql);
+      const statement = (bindings: readonly (string | number | null)[]): object => {
+        const value = {
+          bind: (...next: (string | number | null)[]) => statement([...next]),
+          first: async (column?: string) => {
+            if (column !== undefined) return modeError();
+            const result = await this.execute(value);
+            return result.results[0] ?? null;
+          },
+          all: () => this.execute(value),
+          run: () => modeError(), raw: () => modeError(),
+        };
+        this.statements.set(value, { sql, bindings: Object.freeze([...bindings]), columns });
+        return value;
+      };
+      return statement([]);
+    };
+    const DB = { prepare, exec: () => modeError(), batch: async (values: object[]) => {
+      this.check();
+      if (values.length !== 2) return modeError();
+      const captured = values.map(value => this.statements.get(value));
+      if (!captured[0] || captured[0].columns !== null || !captured[1] || captured[1].columns === null
+        || !captured[1].sql.startsWith("SELECT attempt_id,campaign_id,sponsor_policy_digest,read_policy_digest,actor_user_id,resource_key,")) return modeError();
+      const compiled = captured.map(value => this.compile(value!));
+      const results = modeDenseData(await this.wait(() => this.database.batch(compiled), values.length), 2);
+      if (modeOwnData(results[0], "success") !== true) return modeError();
+      const changes = modeOwnData(modeOwnData(results[0], "meta"), "changes");
+      if (changes !== 0 && changes !== 1) return modeError();
+      // Never pass an unchecked native ACK into the unchanged allowance ledger.
+      // A malformed ACK after a durable INSERT retains the charge and discloses nothing.
+      // Preserve the native zero-row quota denial so the ledger keeps its 429 path.
+      return [{ success: true, meta: { changes }, results: [] }, this.decode(results[1], captured[1].columns)];
+    } } as unknown as WorkerEnv["DB"];
+    this.env = { ...env, DB }; this.capturedFacade = DB;
+  }
+  check() {
+    if (this.original.DB !== this.database || this.env && this.env.DB !== this.capturedFacade) return modeError();
+    if (this.identityHeaders() !== this.headerSnapshot) return modeError();
+    if (this.request.signal.aborted) return fail("sponsor_intake_post_read_cancelled");
+    if (performance.now() >= this.deadline) return fail("sponsor_intake_read_deadline");
+  }
+  // The facade identity is captured once after construction, never looked up
+  // from an externally replaceable binding during a disclosure check.
+  private capturedFacade?: WorkerEnv["DB"];
+  private identityHeaders() {
+    return JSON.stringify(["oai-authenticated-user-id", "oai-authenticated-user-email", "oai-authenticated-user-full-name",
+      "oai-authenticated-user-full-name-encoding", "cookie"].map(name => this.request.headers.get(name)));
+  }
+  async wait<T>(work: () => Promise<T>, count = 0): Promise<T> {
+    this.check(); if ((this.queries += count) > 12) return fail("sponsor_intake_read_query_limit");
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let abort: (() => void) | undefined;
+    try {
+      const cancelled = new Promise<never>((_, reject) => {
+        abort = () => reject(new SponsorEntitlementError("sponsor_intake_post_read_cancelled"));
+        this.request.signal.addEventListener("abort", abort, { once: true });
+        if (this.request.signal.aborted) abort();
+      });
+      this.check();
+      const result = await Promise.race([work(), cancelled, new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new SponsorEntitlementError("sponsor_intake_read_deadline")), Math.max(1, this.deadline - performance.now()));
+      })]);
+      this.check(); return result;
+    } finally {
+      if (timer !== undefined) clearTimeout(timer);
+      if (abort) this.request.signal.removeEventListener("abort", abort);
+    }
+  }
+  register(sql: string, columns: readonly string[]) {
+    if (!columns.length || columns.some(value => !/^[a-z_][a-z0-9_]*$/u.test(value))) return modeError();
+    this.projections.set(sql, Object.freeze([...columns])); return sql;
+  }
+  private ledgerProjection(sql: string): readonly string[] | null {
+    // These are the five fixed control statements in the unchanged approved
+    // policy/reservation/take functions. Their predicates/bind vectors remain
+    // untouched; the adapter only closes and bounds the returned row shape.
+    if (sql.startsWith("SELECT policy.campaign_id,policy.sponsor_policy_digest,policy.read_policy_digest,"))
+      return ["campaign_id", "sponsor_policy_digest", "read_policy_digest", "policy_json", "review_receipt_digest", "approval_id",
+        "original_approval_id", "payer_user_id", "terms_digest", "terms_json", "review_receipt_json", "approval_command_json", "original_terms_digest", "payer_authority_json"];
+    if (sql.startsWith("INSERT INTO experience_sponsor_intake_read_attempts(attempt_id,campaign_id,sponsor_policy_digest,read_policy_digest,")) return null;
+    if (sql.startsWith("SELECT attempt_id,campaign_id,sponsor_policy_digest,read_policy_digest,actor_user_id,resource_key,"))
+      return ["attempt_id", "campaign_id", "sponsor_policy_digest", "read_policy_digest", "actor_user_id", "resource_key", "operation", "maximum_bytes", "admitted_at_ms", "deadline_at_ms", "charged_through_ms"];
+    if (sql.startsWith(`SELECT ${clock} AS now_ms,`)) return ["now_ms", "campaign_requests", "campaign_bytes", "actor_requests", "actor_bytes", "retry_at_ms"];
+    if (sql.startsWith("WITH sponsor_intake_sample_gate") && sql.includes(`SELECT 1 AS available,${clock} AS now_ms`)) return ["available", "now_ms"];
+    return modeError();
+  }
+  private compile(value: { sql: string; bindings: readonly (string | number | null)[]; columns: readonly string[] | null }) {
+    this.check();
+    let sql = value.sql;
+    if (sql === "SELECT type,sql FROM sqlite_master WHERE lower(name)=? AND type IN('table','view')")
+      sql = "SELECT type,CASE WHEN typeof(sql)='text' AND length(CAST(sql AS BLOB))<=32768 THEN sql END AS sql FROM sqlite_master WHERE lower(name)=? AND type IN('table','view')";
+    if (value.columns !== null) {
+      const remaining = Math.max(0, 1048576 - this.bytes);
+      sql = `WITH mode_original AS MATERIALIZED (${sql}),mode_rows AS MATERIALIZED (
+        SELECT ${metadataJson(value.columns)} AS mode_json FROM mode_original),mode_aggregate AS (
+        SELECT COUNT(*) AS mode_count,json_group_array(json(mode_json)) AS mode_body FROM mode_rows)
+        SELECT mode_count,length(CAST(mode_body AS BLOB)) AS mode_bytes,
+          CASE WHEN mode_count<=1 AND length(CAST(mode_body AS BLOB))<=${remaining} THEN mode_body END AS mode_body FROM mode_aggregate`;
+    }
+    const packed = packSponsorIntakeReadQuery(sql, value.bindings);
+    return this.database.prepare(packed.sql).bind(...packed.bindings);
+  }
+  private decode(result: unknown, columns: readonly string[]) {
+    this.check();
+    if (modeOwnData(result, "success") !== true) return modeError();
+    const [metadata] = modeDenseData(modeOwnData(result, "results"), 1);
+    const row = modeExactData(metadata, ["mode_count", "mode_bytes", "mode_body"]);
+    if (row.mode_count !== 0 && row.mode_count !== 1
+      || !Number.isSafeInteger(row.mode_bytes) || Number(row.mode_bytes) < 0
+      || typeof row.mode_body !== "string" || modeBytes(row.mode_body) !== row.mode_bytes
+      || this.bytes + Number(row.mode_bytes) > 1048576) return modeError();
+    this.bytes += Number(row.mode_bytes);
+    const parsed = modeDenseData(JSON.parse(row.mode_body), row.mode_count);
+    const rows = parsed.map(value => {
+      const data = modeExactData(value, columns);
+      if (Object.values(data).some(cell => cell !== null && typeof cell !== "string"
+        && (typeof cell !== "number" || !Number.isFinite(cell)))) return modeError();
+      return data;
+    });
+    return { success: true as const, results: rows };
+  }
+  private async execute(statement: object) {
+    const value = this.statements.get(statement);
+    if (!value || value.columns === null) return modeError();
+    const native = this.compile(value), result = await this.wait(() => native.all(), 1);
+    return this.decode(result, value.columns);
+  }
+  async first(sql: string, bindings: readonly (string | number | null)[], columns: readonly string[]) {
+    return this.env.DB.prepare(this.register(sql, columns)).bind(...bindings).first<Row>();
+  }
+}
+
+function metadataCurrentProof(proofs: readonly BudgetReservationGuard[], label: "ordinary" | "final") {
+  const names = proofs.map((_, index) => `entry_mode_gate_${index}`);
+  return { sql: `/* sponsor-image-entry-mode-${label} */ WITH ${proofs.map((proof, index) =>
+    `${names[index]} AS MATERIALIZED (SELECT 1 WHERE ${proof.sql})`).join(",")} SELECT 1 AS authorized FROM ${names.join(" CROSS JOIN ")}`,
+    bindings: proofs.flatMap(proof => proof.bindings) };
+}
+
+/** Bootstrap metadata is nonauthorizing. Its private map can consume only the
+ * existing exact bootstrap ledger. No retained plan/event/receipt body is read. */
+export async function readSponsorImageEntryMode(request: Request, env: WorkerEnv, input: EntryModeSelection): Promise<Response> {
+  if (request.method !== "GET" || request.body || jsonIssues(input).length || !record(input)
+    || !exactKeys(input, ["enabled", "campaignId", "selector"]) || typeof input.enabled !== "boolean"
+    || input.campaignId !== null && !id(input.campaignId) || !record(input.selector)) return modeError();
+  const selected = freeze(structuredClone(input.selector)) as unknown as Row;
+  const fresh = exactKeys(selected, ["kind"]) && selected.kind === "fresh";
+  if (!fresh && !(exactKeys(selected, ["draftId"]) && typeof selected.draftId === "string" && isDraftId(selected.draftId))
+    && !(exactKeys(selected, ["intentId"]) && isIntentId(selected.intentId))) return modeError();
+  const reply = (mode: "ordinary" | "sponsor-image", actorUserId?: string) => {
+    const body = JSON.stringify({ version: 1, mode, ...(actorUserId ? { actorUserId } : {}), selector: selected });
+    if (modeBytes(body) > 1024) return modeError();
+    return new Response(body, { headers: { "content-type": "application/json", "cache-control": "private, no-store" } });
+  };
+  if (request.signal.aborted) return fail("sponsor_intake_post_read_cancelled");
+  if (fresh && !input.enabled) return reply("ordinary");
+  const scope = new EntryModeScope(request, env), identity = identityFromRequest(request);
+  if (!identity || modeBytes(identity.userId) > 240 || modeBytes(identity.email) > 320 || modeBytes(identity.displayName) > 1024
+    || [...identity.userId + identity.email].some(character => character.codePointAt(0)! < 32 || character.codePointAt(0) === 127)) return modeError();
+  const draftId = fresh ? null : "draftId" in selected ? String(selected.draftId) : await scope.wait(() => experienceDraftId(identity.userId, String(selected.intentId)));
+  if (draftId) {
+    // Register only the exact existing classification SELECTs. The native
+    // classifier keeps its same final negative proof, including schema absence.
+    scope.register("SELECT type,sql FROM sqlite_master WHERE lower(name)=? AND type IN('table','view')", ["type", "sql"]);
+    scope.register("SELECT 1 AS sponsored FROM experience_sponsor_intakes WHERE draft_id=? LIMIT 1", ["sponsored"]);
+    scope.register("SELECT 1 AS sponsored FROM private_content WHERE content_id=? AND (CASE WHEN json_valid(content) THEN json_type(content,'$.sponsor_intake') IS NOT NULL ELSE 0 END) LIMIT 1", ["sponsored"]);
+    const classification = await scope.wait(() => classifySponsorIntakeDraft(scope.env, draftId));
+    scope.check();
+    if (classification.kind === "unavailable") return modeError();
+    if (classification.kind === "ordinary") {
+      const final = metadataCurrentProof([classification.guard], "ordinary");
+      if (!modeAuthorized(await scope.first(final.sql, final.bindings, ["authorized"]))) return modeError();
+      scope.check(); return reply("ordinary");
+    }
+  }
+  if (!input.enabled || fresh && !input.campaignId || env.FORMA_PILOT_COHORT_ID?.trim()
+    || modeBytes(request.headers.get("cookie") ?? "") > 8192 || (request.headers.get("cookie") ?? "").split(";")
+      .some(part => /^(?:forma_impersonation|forma_project_context)(?:=|$)/u.test(part.trim()))) return modeError();
+  const actorQuery = `WITH entry_mode_principal AS MATERIALIZED (${PLATFORM_PRINCIPAL_WITH_ACCESS_SQL})
+    SELECT ${metadataActorJson} AS auth_json FROM entry_mode_principal
+    WHERE length(CAST(${metadataActorJson} AS BLOB))<=131072`;
+  const actorRow = await scope.first(actorQuery, [identity.userId], ["auth_json"]);
+  if (!actorRow || typeof actorRow.auth_json !== "string") return modeError();
+  const actor = JSON.parse(actorRow.auth_json) as Row;
+  if (actor.user_id !== identity.userId || actor.email !== identity.email || actor.display_name !== identity.displayName
+    || !["creator", "admin"].includes(String(actor.role)) || actor.consent_version !== POLICY_VERSION) return modeError();
+  const access = await scope.wait(() => principalAccessFromRow(actor, String(actor.role), {
+    email: identity.email, source: identity.source, subject: identity.userId,
+  }));
+  if (access.identityPolicyDeniedCustody || !access.capabilities.includes("project.author")) return modeError();
+  const actorProof: BudgetReservationGuard = { sql: `EXISTS(WITH entry_mode_principal AS MATERIALIZED (${PLATFORM_PRINCIPAL_WITH_ACCESS_SQL})
+    SELECT 1 FROM entry_mode_principal WHERE ${metadataActorJson}=?)`, bindings: [identity.userId, actorRow.auth_json] };
+  let campaignId: string, policyDigest: string, resourceKey: string;
+  const assertions: BudgetReservationGuard[] = [actorProof];
+  if (draftId) {
+    const sql = `SELECT ${receiptColumns.map(column => `intake.${column}`).join(",")} ${originalFrom}`;
+    const original = await scope.first(sql, [draftId, identity.userId], receiptColumns) as IntakeReceipt | null;
+    if (!original || !id(original.campaign_id) || !hash(original.policy_digest) || !hash(original.content_digest)
+      || !hash(original.source_digest) || !hash(original.draft_hash) || !Number.isSafeInteger(original.content_bytes)) return modeError();
+    campaignId = original.campaign_id; policyDigest = original.policy_digest; resourceKey = `draft:${draftId}`;
+    assertions.push({ sql: `EXISTS(SELECT 1 ${originalFrom} AND json_array(${receiptColumns.map(column => `intake.${column}`).join(",")})=?)`,
+      bindings: [draftId, identity.userId, JSON.stringify(receiptColumns.map(column => original[column]))] },
+    { sql: `EXISTS(SELECT 1 FROM private_content WHERE content_id=? AND owner_id=? AND kind='experience-draft'
+        AND redacted_at IS NULL AND expires_at=? AND expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+      AND NOT EXISTS(SELECT 1 FROM project_resource_scopes WHERE resource_kind='content' AND resource_id=?)
+      AND NOT EXISTS(SELECT 1 FROM private_content_retention_scopes WHERE content_id=?)
+      AND NOT EXISTS(SELECT 1 FROM organization_projects WHERE project_id=?)
+      AND NOT EXISTS(SELECT 1 FROM project_resource_scopes WHERE resource_kind='document' AND resource_id=?)
+      AND NOT EXISTS(SELECT 1 FROM events WHERE stream_id=? AND type IN('DocumentRemoved','ProjectRemoved')
+        AND (type='DocumentRemoved' AND json_extract(payload,'$.document_id')=? OR type='ProjectRemoved' AND json_extract(payload,'$.project_id')=?))`,
+      bindings: [draftId, identity.userId, original.expires_at, draftId, draftId, original.project_id,
+        original.document_id, `creative:${identity.userId}`, original.document_id, original.project_id] });
+  } else {
+    campaignId = input.campaignId!;
+    const campaign = await scope.first(`SELECT CASE WHEN length(CAST(policy_json AS BLOB))<=131072 THEN policy_json END AS policy_json,
+      policy_digest FROM experience_sponsor_campaigns WHERE campaign_id=? AND enabled=1`, [campaignId], ["policy_json", "policy_digest"]);
+    if (!campaign || typeof campaign.policy_json !== "string" || typeof campaign.policy_digest !== "string") return modeError();
+    const policy = readSponsorPolicy(JSON.parse(campaign.policy_json)), release = await scope.wait(() => registeredExperience("image"));
+    if (policy.mode !== "candidate" || policy.version !== 2 || policy.campaignId !== campaignId || policy.resources.version !== 2
+      || !release || !policy.templates.some(template => template.appId === "image" && template.releaseDigest === release.releaseHash)
+      || canonicalJson(policy) !== campaign.policy_json || await scope.wait(() => digest(policy)) !== campaign.policy_digest) return modeError();
+    policyDigest = campaign.policy_digest; resourceKey = `bootstrap:${campaignId}`;
+    const approved = sponsorApprovalAssertion(policy, identity.userId, true);
+    assertions.push({ sql: approved.sql, bindings: [...(approved.bindings ?? [])] },
+      { sql: `NOT EXISTS(SELECT 1 FROM pilot_participants participant JOIN pilot_cohorts cohort ON cohort.cohort_id=participant.cohort_id
+        WHERE participant.user_id IN(?,?) AND participant.status='active' AND participant.revoked_at IS NULL AND cohort.status IN('active','paused','closed'))`,
+        bindings: [identity.userId, policy.payerUserId] },
+      { sql: `EXISTS(SELECT 1 FROM experience_sponsor_campaigns WHERE campaign_id=? AND enabled=1 AND policy_digest=? AND policy_json=?)
+        AND ${clock}>=? AND ${clock}<?`, bindings: [campaignId, policyDigest, campaign.policy_json, policy.startsAtMs, policy.expiresAtMs] },
+      { sql: `NOT EXISTS(SELECT 1 FROM organization_projects WHERE owner_user_id=? AND project_id='')
+        AND NOT EXISTS(SELECT 1 FROM project_resource_scopes WHERE owner_user_id=? AND resource_kind='document' AND resource_id='')`,
+        bindings: [identity.userId, identity.userId] });
+  }
+  scope.check();
+  const authority = Object.freeze({}) as SponsorIntakeReadAuthority;
+  metadataAuthorities.set(authority, { request, env: scope.env, db: scope.env.DB, actorUserId: identity.userId,
+    campaignId, policyDigest, resourceKey, assertions: freeze(assertions), current: () => scope.check() });
+  const attempt = await scope.wait(() => reserveSponsorIntakeReadAttempt(authority, request, scope.env, "image-intake-bootstrap"));
+  const ticket = await scope.wait(() => takeSponsorIntakeReadAttempt(attempt, authority, request, scope.env));
+  scope.deadline = Math.min(scope.deadline, ticket.monotonicDeadline);
+  const response = reply("sponsor-image", identity.userId);
+  if (modeBytes(JSON.stringify({ version: 1, mode: "sponsor-image", actorUserId: identity.userId, selector: selected })) > ticket.maximumBytes) return modeError();
+  const final = metadataCurrentProof([...ticket.assertions.map(proof => ({ sql: proof.sql, bindings: [...proof.bindings] })),
+    { sql: `${clock}<?`, bindings: [ticket.deadlineAtMs] }], "final");
+  if (!modeAuthorized(await scope.first(final.sql, final.bindings, ["authorized"]))) return modeError();
+  scope.check(); requireSponsorIntakeReadAuthority(authority, request, scope.env);
+  return response;
 }

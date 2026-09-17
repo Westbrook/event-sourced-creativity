@@ -1,3 +1,4 @@
+import { createSponsorImageHostSession } from "../experiences/sponsor-image-host-session.ts";
 import { hasServerExecutionOwner } from "../model/output-durable-observation.ts";
 import { ref } from "lit/directives/ref.js";
 import { retainedImageSourceMessage } from "../experiences/retained-image-source-message.ts";
@@ -74,6 +75,13 @@ type Binding = {
   videoContract: VideoOutputContract | null;
   model3dContract: Model3dOutputContract | null;
 };
+type SponsorHostContext = {
+  selection: ExperienceHostSelection; store: FormaStore; route: string; ownerId: string; revision: string;
+  source: ReturnType<FormaStore["captureSourceOwnership"]>; authorization: ReturnType<FormaStore["captureAuthorizationScope"]>;
+};
+type SponsorHostBinding = SponsorHostContext & {
+  plan: ExperiencePlan; session: ReturnType<typeof createSponsorImageHostSession>;
+};
 type Video = Extract<NativeRetainedOutputDto, { output: "video" }>;
 type Model3d = Extract<NativeRetainedOutputDto, { output: "model3d" }>;
 type Audio = Extract<NativeRetainedOutputDto, { output: "audio" }>;
@@ -94,11 +102,66 @@ export class FormaExperienceHost extends FormaElement {
   #navigationEpoch = 0;
   #commandFocusReveal: (() => Promise<void>) | null = null;
   #retired = false;
+  #pageHidden = false;
   #loading = true;
   #busy = false;
   #refreshing = false;
   #runtime?: ExperienceIntakeRuntime;
   #binding?: Binding;
+  #sponsor?: SponsorHostBinding;
+  #sponsorMode = false;
+  #sponsorAbort?: AbortController;
+  #sponsorPending?: ReturnType<typeof createSponsorImageHostSession>;
+  #sponsorPendingCurrent?: () => boolean;
+  #sponsorUnsubscribe?: () => void;
+  #sponsorVisibility?: MutationObserver;
+  #sponsorContextCurrent(context: SponsorHostContext) {
+    const store = this.store, session = store.session.get(), projection = store.projection.get();
+    return !this.#retired && !this.#pageHidden && this.isConnected && store === context.store && store.route.get() === context.route
+      && Boolean(session && !session.impersonation && !session.projectContext && session.user.userId === context.ownerId
+        && session.policy.accepted && ["creator", "admin"].includes(session.user.role))
+      && store.authorizationScopeActive(context.authorization) && store.sourceOwnershipActive(context.source)
+      && store.documentRouteState(context.route) === "ready" && store.routeDataReady(context.route)
+      && store.asOf.get() === Number.POSITIVE_INFINITY && projection.documentId === context.selection.documentId
+      && projection.documents.filter(document => document.id === context.selection.documentId && !document.removed).length === 1
+      && store.experienceDocumentSourceCurrent(context.selection.documentId, context.revision);
+  }
+  #sponsorCurrent(binding = this.#sponsor): binding is SponsorHostBinding {
+    return Boolean(binding && this.#sponsor === binding && this.#sponsorContextCurrent(binding)
+      && !this.#sponsorAbort?.signal.aborted && this.#sponsorAbort && !binding.session.signal.aborted
+      && binding.session.runtime?.committedPlan === binding.plan && binding.session.runtime.receipt
+      && binding.plan.documentId === binding.selection.documentId && binding.plan.draftId === binding.selection.draftId
+      && binding.plan.streamId === `creative:${binding.ownerId}` && binding.plan.release.output.output === "image"
+      && binding.session.mode?.mode === "sponsor-image" && binding.session.mode.actorUserId === binding.ownerId
+      && this.store.projection.get().projectId === binding.plan.projectId
+      && this.store.projection.get().documents.some(document => document.id === binding.plan.documentId
+        && document.projectId === binding.plan.projectId && document.title === binding.plan.title && !document.removed));
+  }
+  #sponsorVisible(binding = this.#sponsor): binding is SponsorHostBinding {
+    return this.#sponsorCurrent(binding) && this.ownerDocument.visibilityState !== "hidden" && !this.closest("[hidden],[inert]");
+  }
+  #disposeSponsor() {
+    this.#sponsorAbort?.abort(); this.#sponsorAbort = undefined;
+    this.#sponsorPending?.dispose(); this.#sponsorPending = undefined; this.#sponsorPendingCurrent = undefined;
+    this.#sponsor?.session.dispose(); this.#sponsor = undefined;
+    this.#confirmed = false;
+    // Withdraw retained source text synchronously, before a later Lit update.
+    for (const node of this.querySelectorAll("[data-sponsor-image-private]")) node.replaceChildren();
+  }
+  #sponsorSync = () => {
+    if (this.#sponsorPendingCurrent && !this.#sponsorPendingCurrent() || this.#sponsor && !this.#sponsorCurrent()) {
+      this.#status = "Document unavailable"; this.#retire(); this.requestUpdate();
+    }
+  };
+  #sponsorWithdraw = () => {
+    if (this.#sponsorAbort || this.#sponsor) { this.#status = "Document unavailable"; this.#retire(); this.requestUpdate(); }
+  };
+  #sponsorVisibilityChanged = () => {
+    if (this.#pageHidden) return;
+    if (this.closest("[hidden],[inert]")) {
+      if (this.#sponsorAbort || this.#sponsor) this.#suspendObservation();
+    } else if (this.#initialReadSuspended && (this.#sponsorMode || parseExperienceHostRoute(this.store.route.get())?.output === "image")) this.#resumeObservation();
+  };
   #observationAttachment?: Readonly<{binding:Binding;jobId:string;grantId:string;slotId:string;runKey:string|null;runEventId:string|null;until:number;pending:boolean;expiresAt:number}>;
   #attachObservation(binding:Binding,state:ExperienceNativeState,pending=false){
     const original=state.original;if(!original)return;
@@ -119,6 +182,7 @@ export class FormaExperienceHost extends FormaElement {
   }
   #initialReadSuspended=false;
   #resumeObservation=()=>{
+    if (this.#pageHidden) return;
     if(this.#initialReadSuspended&&!this.#retired&&this.isConnected&&this.ownerDocument.visibilityState!=="hidden"){
       this.#initialReadSuspended=false;void this.#load();return;
     }
@@ -285,10 +349,21 @@ export class FormaExperienceHost extends FormaElement {
     this.ownerDocument.defaultView?.addEventListener("forma-event-source-retired", this.#shareWithdraw);
     this.ownerDocument.defaultView?.addEventListener("forma-authorization-changed", this.#storyWithdraw);
     this.ownerDocument.defaultView?.addEventListener("forma-event-source-retired", this.#storyWithdraw);
+    this.#sponsorUnsubscribe = this.store.subscribe(this.#sponsorSync);
+    this.ownerDocument.defaultView?.addEventListener("forma-authorization-changed", this.#sponsorWithdraw);
+    this.ownerDocument.defaultView?.addEventListener("forma-event-source-retired", this.#sponsorWithdraw);
+    this.#sponsorVisibility = new MutationObserver(this.#sponsorVisibilityChanged);
+    this.#sponsorVisibility.observe(this, { attributes: true, attributeFilter: ["hidden", "inert"] });
+    for (let node = this.parentElement; node; node = node.parentElement)
+      this.#sponsorVisibility.observe(node, { attributes: true, attributeFilter: ["hidden", "inert"] });
     void this.#load();
   }
   override disconnectedCallback() {
     this.#retire();
+    this.#sponsorUnsubscribe?.(); this.#sponsorUnsubscribe = undefined;
+    this.#sponsorVisibility?.disconnect(); this.#sponsorVisibility = undefined;
+    this.ownerDocument.defaultView?.removeEventListener("forma-authorization-changed", this.#sponsorWithdraw);
+    this.ownerDocument.defaultView?.removeEventListener("forma-event-source-retired", this.#sponsorWithdraw);
     this.#releaseAttention?.(); this.#releaseAttention = undefined;
     this.removeEventListener("focusout", this.#focusOut);
     this.#storyUnsubscribe?.(); this.#storyUnsubscribe = undefined;
@@ -315,7 +390,7 @@ export class FormaExperienceHost extends FormaElement {
       if (foreground?.action === "inspectResult" && this.#resultReadStage)
         this.#resultReadFailure = Object.freeze({ stage: this.#resultReadStage, kind: "deadline" });
       this.#resultReadStage = undefined;
-      this.#operation = undefined; this.#binding?.client.dispose(); this.#clearResult(); this.#resetDecision();
+      this.#operation = undefined; this.#binding?.client.dispose(); this.#disposeSponsor(); this.#clearResult(); this.#resetDecision();
       this.#busy = false; this.#loading = false; this.#refreshing = false; this.#status = "Operation unconfirmed"; this.requestUpdate();
       if(this.#observationAttachment){this.#extendObservationGrace();this.#scheduleResultRead();}
     }, undefined, foreground);
@@ -349,6 +424,8 @@ export class FormaExperienceHost extends FormaElement {
   };
   #visibility = () => { if(this.ownerDocument.visibilityState==="hidden")this.#suspendObservation();else this.#resumeObservation(); };
   #suspendObservation = () => {
+    if (this.#sponsorAbort || this.#sponsor) { this.#initialReadSuspended = true; this.#sponsorMode = true; }
+    this.#disposeSponsor();
     if(this.#loading&&!this.#observationAttachment)this.#initialReadSuspended=true;
     this.#resultReadStage = undefined; this.#resultReadFailure = undefined;
     this.#stopResultRead();
@@ -357,15 +434,22 @@ export class FormaExperienceHost extends FormaElement {
     this.#busy = false; this.#loading = false; this.#refreshing = false; this.requestUpdate();
   };
   #pagehide = (event:PageTransitionEvent) => {
-    if(event.persisted&&this.#binding&&this.#observationAttachment?.binding===this.#binding)this.#suspendObservation();
+    this.#pageHidden = true;
+    if (event.persisted && (this.#sponsorAbort || this.#sponsorMode
+      || this.#initialReadSuspended && parseExperienceHostRoute(this.store.route.get())?.output === "image")) this.#suspendObservation();
+    else if(event.persisted&&this.#binding&&this.#observationAttachment?.binding===this.#binding)this.#suspendObservation();
     else { this.#status="Closed";this.#retire();this.requestUpdate(); }
   };
-  #pageshow = (event:PageTransitionEvent) => { if(event.persisted)this.#resumeObservation(); };
+  #pageshow = (event:PageTransitionEvent) => {
+    this.#pageHidden = false;
+    if(event.persisted)this.#resumeObservation();
+  };
   #retire() {
     this.#observationAttachment=undefined;this.#initialReadSuspended=false;
     this.#resultReadStage = undefined; this.#resultReadFailure = undefined;
     this.#stopResultRead();
     this.#navigationEpoch++;
+    this.#disposeSponsor();
     if (this.#retired) return;
     this.#retired = true; this.#sourceLifetime.retire(); this.#epoch++; this.#resetDecision(); this.#clearResult(); this.#runtime?.dispose(); this.#binding?.client.dispose(); this.#operation?.cancel(); this.#operation = undefined;
     if (this.#deadline) clearTimeout(this.#deadline); this.#deadline = undefined;
@@ -487,8 +571,62 @@ export class FormaExperienceHost extends FormaElement {
     if (!event.isTrusted || !state?.permitted.prepareReplacement || !state.model3dReplacement || !this.#visible() || this.#busy) return;
     void this.#command("prepareReplacement", state);
   }
+  async #loadImageSession(context: SponsorHostContext, operation: ExperienceHostOperation, active: () => boolean) {
+    const abort = new AbortController(); this.#sponsorAbort = abort;
+    const current = () => active() && !abort.signal.aborted && this.#sponsorContextCurrent(context)
+      && this.ownerDocument.visibilityState !== "hidden" && !this.closest("[hidden],[inert]");
+    const session = createSponsorImageHostSession({ draftId: context.selection.draftId },
+      (path, init) => fetch(path, init), { signal: abort.signal });
+    this.#sponsorPending = session;
+    // Store notifications check custody only. Visibility separately suspends so
+    // reopening can construct a fresh passive session after private state clears.
+    this.#sponsorPendingCurrent = () => !abort.signal.aborted && this.#sponsorContextCurrent(context);
+    try {
+      if (!current()) throw new Error("unavailable");
+      const mode = await operation.wait(session.resolveMode());
+      if (!current()) throw new Error("unavailable");
+      if (mode.mode === "ordinary") { this.#disposeSponsor(); this.#sponsorMode = false; return false; }
+      if (mode.mode !== "sponsor-image" || mode.actorUserId !== context.ownerId) throw new Error("unavailable");
+      this.#sponsorMode = true;
+      const opened = await operation.wait(session.openSponsor());
+      const plan = opened.runtime.committedPlan;
+      if (!current() || opened.runtime.state.phase !== "complete" || !opened.runtime.receipt || !plan
+        || plan.documentId !== context.selection.documentId || plan.draftId !== context.selection.draftId
+        || plan.release.output.output !== "image" || plan.streamId !== `creative:${context.ownerId}`) throw new Error("unavailable");
+      const binding: SponsorHostBinding = { ...context, plan, session };
+      this.#sponsor = binding;
+      if (!this.#sponsorVisible(binding)) throw new Error("unavailable");
+      await operation.wait(session.readConfirmation());
+      if (!current() || !this.#sponsorVisible(binding)) throw new Error("unavailable");
+      this.#sponsorPending = undefined; this.#sponsorPendingCurrent = undefined;
+      this.#status = session.confirmationState?.confirmation?.status === "confirmed" ? "Output confirmed · Generation unavailable" : "Confirm output";
+      return true;
+    } catch (error) {
+      // Dispose the captured object even if a newer session already owns the host.
+      session.dispose(); abort.abort();
+      if (this.#sponsorAbort === abort) this.#disposeSponsor();
+      throw error;
+    }
+  }
+  async #confirmSponsor(event: SubmitEvent) {
+    event.preventDefault();
+    const binding = this.#sponsor;
+    if (!event.isTrusted || !binding || !this.#confirmed || !this.#sponsorVisible(binding) || this.#busy || this.#loading
+      || binding.session.pending || binding.session.confirmationState?.confirmation?.status !== "unconfirmed") return;
+    const operation = this.#beginOperation(); this.#busy = true; this.#confirmed = false;
+    this.#status = "Recording"; this.requestUpdate();
+    try {
+      await operation.wait(binding.session.confirm({ explicitRequirementsConfirmation: true }));
+      if (!this.#operationCurrent(operation) || !this.#sponsorVisible(binding)) return;
+      this.#status = "Output confirmed · Generation unavailable";
+    } catch {
+      if (this.#operationCurrent(operation) && this.#sponsorVisible(binding)) this.#status = "Confirmation unconfirmed";
+    } finally {
+      if (this.#finishOperation(operation)) { this.#busy = false; this.requestUpdate(); }
+    }
+  }
   async #load() {
-    if(this.ownerDocument.visibilityState==="hidden"){this.#initialReadSuspended=true;this.#loading=false;return;}
+    if(this.#pageHidden||this.ownerDocument.visibilityState==="hidden"||parseExperienceHostRoute(this.store.route.get())?.output==="image"&&this.closest("[hidden],[inert]")){this.#initialReadSuspended=true;this.#loading=false;return;}
     // Route selection changes only this presentation wait, never authority.
     const operation = this.#beginOperation(parseExperienceHostRoute(this.store.route.get())?.output === "video"
       ? { action: "read", output: "video" } : undefined);
@@ -499,6 +637,8 @@ export class FormaExperienceHost extends FormaElement {
       && store.authorizationScopeActive(authorization) && store.sourceOwnershipActive(source);
     try {
       if (!selection || !session || !active()) throw new Error("unavailable");
+      if (selection.output === "image" && await this.#loadImageSession({ selection, store, route, source, authorization,
+        ownerId: session.user.userId, revision: store.documentGenerationRevision() }, operation, active)) return;
       const release = await operation.wait(registeredExperience(selection.output === "short_story" ? "short-story" : selection.output)); if (!release || !active()) throw new Error("unavailable");
       const runtime = new ExperienceIntakeRuntime(release); this.#runtime = runtime; await operation.wait(runtime.resume(selection.draftId));
       const plan = runtime.committedPlan;
@@ -1024,6 +1164,8 @@ export class FormaExperienceHost extends FormaElement {
     } finally { focus.dispose(); }
   }
   protected override willUpdate() {
+    this.#sponsorSync();
+    this.#sponsorVisibilityChanged();
     if (this.#binding) {
       const source = this.#sourceLifetime.observe(this.#baseCurrent(this.#binding), this.#current(this.#binding));
       if (source.retired) { this.#status = "Document unavailable"; this.#retire(); }
@@ -1096,7 +1238,29 @@ export class FormaExperienceHost extends FormaElement {
       ${summary.usage ? html`<p dir="auto">${this.i18n.system("Used spend")}: <bdi>${summary.usage.usedSpend}</bdi> · ${this.i18n.system("Unresolved exposure")}: <bdi>${summary.usage.unresolvedExposure}</bdi> · ${this.i18n.system("Pending calls")}: ${this.i18n.number(summary.usage.pendingCalls)}${summary.usage.differentPayer ? html` · ${this.i18n.system("Payer")}: <bdi>${summary.usage.payer}</bdi>` : nothing}</p>` : nothing}` : nothing}
     </section>`;
   }
+  #renderSponsor() {
+    const binding = this.#sponsor, available = this.#sponsorVisible(binding);
+    const confirmation = available ? binding.session.confirmationState?.confirmation : null;
+    const format = available ? experienceImageFormat(binding.plan.request.values.ratio?.value) : null;
+    return html`<section class="experience-view experience-native-host" aria-busy=${String(this.#loading || this.#busy)}>
+      <header class="experience-heading"><h1>Image</h1></header>
+      <p data-experience-status tabindex="-1" role="status" aria-live="polite">${this.#status}</p>
+      ${available ? keyed(binding, html`<section data-sponsor-image-private>
+        <p>Sponsored Image</p><h2>${binding.plan.title}</h2>
+        <dl><div><dt>Output</dt><dd>1 image</dd></div>${format ? html`<div><dt>Ratio</dt><dd>${format.aspect_ratio.width}:${format.aspect_ratio.height}</dd></div>
+          <div><dt>Dimensions</dt><dd>${format.dimensions.width} × ${format.dimensions.height}</dd></div>` : nothing}</dl>
+        ${confirmation?.status === "unconfirmed" ? html`<form class="experience-admission" data-experience-action="sponsor-confirm" @submit=${(event: SubmitEvent) => this.#confirmSponsor(event)}>
+          <label><input type="checkbox" .checked=${this.#confirmed} ?disabled=${this.#busy || this.#loading}
+            @change=${(event: Event) => { this.#confirmed = event.isTrusted && this.#sponsorVisible(binding) && (event.currentTarget as HTMLInputElement).checked; this.requestUpdate(); }}>Confirm output</label>
+          <button type="submit" class="button primary" data-experience-control="sponsor-confirm" ?disabled=${this.#busy || this.#loading || !this.#confirmed}>Confirm output</button></form>` : nothing}
+        <p>Generation unavailable</p>
+      </section>`) : nothing}
+      <footer class="experience-host-exit"><button type="button" class="button secondary" ?disabled=${this.#busy || this.#loading}
+        @click=${() => { if (!this.#busy && !this.#loading) void this.#navigate(() => this.#exit()); }}>Outputs</button></footer>
+    </section>`;
+  }
   override render() {
+    if (this.#sponsorMode) return this.#renderSponsor();
     const state = this.#state(), terms = this.#terms(state), binding = this.#binding, result = this.#result;
     const shareSource = this.#selectedShareSource(result, binding);
     const available = this.#visible(binding), format = this.#imageFormat(), authorize = this.#paidDecision("authorize"), run = this.#paidDecision("run"), resume = this.#paidDecision("resumeRun");
