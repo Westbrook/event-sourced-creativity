@@ -86,6 +86,7 @@ const modulePaths = [
   "worker/experience-sponsor-approval.ts",
   "worker/experience-sponsor-campaign.ts",
   "worker/experience-sponsor-image-evidence.ts",
+  "worker/experience-sponsor-image-format.ts",
   "worker/experience-sponsor-resources.ts",
   "worker/fal-image-identity.ts",
   "worker/image-adapter-selection.ts",
