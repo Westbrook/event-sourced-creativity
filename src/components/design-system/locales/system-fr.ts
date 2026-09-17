@@ -1,5 +1,8 @@
 /** Audited Forma-owned interface, metadata, and component-documentation copy. */
 const messages: Record<string, string> = {
+  "system.auto.mnnucx.13": "Résultat partagé",
+  "system.auto.1h1pgn9.12": "Partager le résultat",
+  "system.auto.g1h7cj.64": "Restriction supplémentaire définie par l’hôte. Elle ne peut pas outrepasser la capacité autorisée par le serveur.",
   "system.auto.1tmhsof.17": "Renouveler la préparation",
   "system.auto.156lxlv.8": "Modèle 3D",
   "system.auto.15uddgm.56": "1 GLB statique · Structure vérifiée ; examen visuel requis",

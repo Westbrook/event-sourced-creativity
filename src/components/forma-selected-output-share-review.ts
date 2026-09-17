@@ -22,9 +22,10 @@ function reviewFromInputs(title: string, localExpiry: string): SelectedOutputSha
   return Object.freeze({ title, expiresAt: date.toISOString() });
 }
 
-/** An explicit publisher surface. A source lease identifies one host authority
+/* An explicit publisher surface. A source lease identifies one host authority
  * lifetime; it is not permission to publish. The host must abort it immediately
  * when selection or authority changes, including an A -> B -> A transition. */
+/** @summary Share output */
 export class FormaSelectedOutputShareReview extends FormaPresentationalElement {
   static properties = { source: { attribute: false, noAccessor: true }, enabled: { type: Boolean, noAccessor: true } };
   #source: SelectedOutputShareLease | null = null;

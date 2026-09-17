@@ -70,7 +70,7 @@ async function readSelectedOutput(token: string, origin: string, owner: ReadOwne
   }
 }
 
-/** @summary Selected shared output */
+/** @summary Shared output */
 export class FormaSelectedOutputSharedView extends FormaPresentationalElement {
   static properties = { token: { type: String, noAccessor: true } };
   #token = "";

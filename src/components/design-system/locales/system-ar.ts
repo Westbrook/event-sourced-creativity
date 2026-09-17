@@ -1,5 +1,8 @@
 /** Audited Forma-owned interface, metadata, and component-documentation copy. */
 const messages: Record<string, string> = {
+  "system.auto.mnnucx.13": "النتيجة المشتركة",
+  "system.auto.1h1pgn9.12": "مشاركة النتيجة",
+  "system.auto.g1h7cj.64": "قيد إضافي يفرضه المضيف. لا يمكنه تجاوز الصلاحية التي يتيحها الخادم.",
   "system.auto.1tmhsof.17": "تجديد التحضير",
   "system.auto.156lxlv.8": "نموذج ثلاثي الأبعاد",
   "system.auto.15uddgm.56": "ملف GLB ثابت واحد · تم التحقق من البنية؛ يلزم فحص بصري",
