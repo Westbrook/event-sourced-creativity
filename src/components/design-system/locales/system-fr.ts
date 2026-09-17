@@ -6315,8 +6315,8 @@ Object.assign(messages, {
 });
 
 Object.assign(messages, {
-  "system.auto.1n26nr5.46": "Interface applicative du modèle 3D natif conservé.",
-  "system.auto.1qkmc2b.138": "Interface du modèle 3D natif conservé, indépendante du Store. Examinez ses attributs, propriétés JavaScript et événements réels avant de la composer.",
+  "system.auto.1n26nr5.46": "Interface applicative native de modèle 3D conservé.",
+  "system.auto.1qkmc2b.138": "Interface native de modèle 3D conservé, indépendante du store. Examinez ses attributs réels, ses propriétés JavaScript et ses événements avant de l’intégrer.",
 });
 
 export default messages;
