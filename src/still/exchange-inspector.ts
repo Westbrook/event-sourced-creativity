@@ -28,12 +28,12 @@ export class StillExchangeInspector extends LitElement {
     </details>`;
   }
   static styles=css`
-    :host{display:block}details{border-top:1px solid #d9d7ce;padding:10px 0}summary{cursor:pointer;font-weight:550}
+    :host{display:block;container-type:inline-size}details{border-top:1px solid #d9d7ce;padding:10px 0}summary{cursor:pointer;font-weight:550}
     summary:focus-visible{outline:2px solid #596345;outline-offset:3px}p{margin:9px 0}h4{font-size:13px;margin:0 0 9px}
     label{display:block;margin:12px 0;font-size:12px}select{display:block;width:100%;padding:8px;margin-top:4px;font:inherit;color:inherit;background:#fff;border:1px solid #c9c6bb;border-radius:4px}
     .meta{font-size:11px;color:#706e65}code{font:11px/1.5 ui-monospace,monospace}
     .pair{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:20px;margin:18px 0}section{min-width:0}
-    @media(max-width:520px){.pair{grid-template-columns:minmax(0,1fr)}}
+    @container(max-width:520px){.pair{grid-template-columns:minmax(0,1fr)}}
   `;
 }
 if(!customElements.get('still-exchange-inspector'))customElements.define('still-exchange-inspector',StillExchangeInspector);

@@ -13,6 +13,7 @@ import type { StillUseInFlow } from './use-in-flow.ts';
 import { explicitAction, findActions, finderEntry } from './finder.ts';
 import { presentActions, type Emphasis } from './presentation.ts';
 import './developer-console.ts';
+import { DEVELOPER_DESKTOP_QUERY } from './developer-layout.ts';
 import type { StillDeveloperConsole } from './developer-console.ts';
 import { decisionDiagnostics, responseDisposition, type DecisionDiagnostics, type DecisionResponse, type ReceivedDecision } from './diagnostics.ts';
 import { ACTIONS, POLICY_VERSION, eligibleActions, selectActions, type Action } from './decisions.ts';
@@ -66,13 +67,25 @@ export class StillApp extends LitElement {
   private decisionSource = 'fallback';
   private decisionTicket = 0;
   private decisionTimer = 0;
-  private developer = new URL(location.href).searchParams.has('developer');
+  private developerRequested = new URL(location.href).searchParams.has('developer');
+  private readonly desktop = window.matchMedia(DEVELOPER_DESKTOP_QUERY);
+  private get developer() { return this.developerRequested && this.desktop.matches; }
+  private readonly developerViewportChanged = () => {
+    ++this.developerEpoch;
+    this.developerApplied=undefined;this.developerReceived=undefined;this.developerPending=false;
+    this.developerScope=this.diagnosticScope();this.changed();
+    if(this.developer&&!this.loading&&!this.mode)this.decide();
+  };
   private developerEpoch = 0;
   private developerPending = false;
   private developerApplied?: DecisionDiagnostics;
   private developerReceived?: ReceivedDecision;
   private developerScope = '';
   private pollTimer = 0;
+  private lastHistoryPoll = 0;
+  private lastJobsPoll = 0;
+  private syncPending = false;
+  private readonly resumeSync = () => { if (!document.hidden) void this.sync(true); };
   private generation: GenerationDraft | null = null;
   private formatSuggestions: string[] = [];
   private formatTouched = false;
@@ -94,11 +107,14 @@ export class StillApp extends LitElement {
   connectedCallback() {
     super.connectedCallback(); this.disposed = false;
     this.client.onChange = () => { if (this.client.recoveredWrite) { this.notice = 'Save confirmed.'; this.client.recoveredWrite = false; } this.changed(); };
+    this.desktop.addEventListener('change', this.developerViewportChanged);
     window.addEventListener('popstate', this.popstate);
     window.addEventListener('beforeunload', this.beforeUnload);
-    void this.run(async () => { await this.client.load(); this.readRoute(); this.loading = false; this.decide(); this.poll(); });
+    window.addEventListener('focus', this.resumeSync);
+    document.addEventListener('visibilitychange', this.resumeSync);
+    void this.run(async () => { await this.client.load(); this.readRoute(); this.loading = false; this.lastHistoryPoll = Date.now(); this.decide(); this.poll(); });
   }
-  disconnectedCallback() { super.disconnectedCallback(); this.disposed = true; ++this.developerEpoch; this.developerApplied=undefined;this.developerReceived=undefined;this.dockObserver.disconnect(); clearTimeout(this.pollTimer); clearTimeout(this.decisionTimer); window.removeEventListener('popstate', this.popstate); window.removeEventListener('beforeunload', this.beforeUnload); }
+  disconnectedCallback() { super.disconnectedCallback(); this.desktop.removeEventListener('change', this.developerViewportChanged); this.disposed = true; ++this.developerEpoch; this.developerApplied=undefined;this.developerReceived=undefined;this.dockObserver.disconnect(); clearTimeout(this.pollTimer); clearTimeout(this.decisionTimer); window.removeEventListener('popstate', this.popstate); window.removeEventListener('beforeunload', this.beforeUnload); window.removeEventListener('focus', this.resumeSync); document.removeEventListener('visibilitychange', this.resumeSync); }
   private draftSignature(){const g=this.generation;return JSON.stringify([this.titleDraft,this.bodyDraft,this.kindDraft,g?.prompt,g?.tone,g?.audience,g?.itemCount]);}
   private preventsRouteChange(){return this.busy&&!this.loading||this.composing||this.client.hasUnconfirmedWrite||!!this.generation?.attempted||!!this.mode&&this.draftSignature()!==this.draftBaseline||!!this.querySelector<StillContextFlow>('still-context-flow')?.preventsRouteChange||!!this.querySelector<StillUseInFlow>('still-use-in-flow')?.preventsRouteChange;}
   private beforeUnload = (e: BeforeUnloadEvent) => { if (this.preventsRouteChange()) { e.preventDefault(); e.returnValue = ''; } };
@@ -123,8 +139,9 @@ export class StillApp extends LitElement {
     this.changed();
   }
   private setDeveloper(enabled:boolean){
+    if(enabled&&!this.desktop.matches)return;
     ++this.developerEpoch;
-    this.developer=enabled;this.developerApplied=undefined;this.developerReceived=undefined;this.developerPending=false;this.developerScope=this.diagnosticScope();
+    this.developerRequested=enabled;this.developerApplied=undefined;this.developerReceived=undefined;this.developerPending=false;this.developerScope=this.diagnosticScope();
     const url=new URL(location.href);if(enabled)url.searchParams.set('developer','');else url.searchParams.delete('developer');history.replaceState({...history.state},'',url);this.activeAddress=this.address();
     this.changed();
     if(enabled){if(!this.mode)this.decide();void this.updateComplete.then(()=>this.querySelector<StillDeveloperConsole>('still-developer-console')?.show());}
@@ -139,8 +156,8 @@ export class StillApp extends LitElement {
   }
   private readRoute() {
     const q = new URL(location.href).searchParams, route=parseStillRoute(location.href);
-    if(this.developer!==q.has('developer'))++this.developerEpoch;
-    this.developer=q.has('developer');if(!this.developer){this.developerApplied=undefined;this.developerReceived=undefined;}
+    if(this.developerRequested!==q.has('developer'))++this.developerEpoch;
+    this.developerRequested=q.has('developer');if(!this.developer){this.developerApplied=undefined;this.developerReceived=undefined;}
     if(this.mode==='generate')this.client.position.intent='';
     this.resetStep();this.routeError='';this.error='';this.notice='';
     if(!route){this.routeError='Page not found';this.activeAddress=this.address();return;}
@@ -237,11 +254,23 @@ export class StillApp extends LitElement {
       finally {if(ticket===this.decisionTicket){this.developerPending=false;this.changed();}}
     }, 1300);
   }
+  private async sync(force = false) {
+    if (this.syncPending || this.disposed || this.loading || this.busy || document.hidden || !this.client.session?.policy.accepted) return;
+    const now = Date.now(), work: Promise<void>[] = [];
+    this.syncPending = true;
+    try {
+      // Keep collaborator edits current independently of whether this page has jobs.
+      if (force || now - this.lastHistoryPoll >= 30000) { this.lastHistoryPoll = now; work.push(this.client.refresh()); }
+      const interval = this.client.jobs.some(j => activeJobs.has(j.status)) ? 2000 : 60000;
+      if (this.client.position.documentId && (force || now - this.lastJobsPoll >= interval)) { this.lastJobsPoll = now; work.push(this.client.pollJobs()); }
+      await Promise.allSettled(work);
+    } finally { this.syncPending = false; }
+  }
   private poll() {
     this.pollTimer = window.setTimeout(async () => {
-      try { if (!this.busy && !document.hidden && this.client.session?.policy.accepted) { if (this.client.position.documentId) await this.client.pollJobs(); else await this.client.refresh(); } } catch { /* Keep saved work visible; explicit refresh reports errors. */ }
+      await this.sync();
       if (!this.disposed) this.poll();
-    }, this.client.jobs.some(j => activeJobs.has(j.status)) ? 2000 : 12000);
+    }, 2000);
   }
   private suggestedButton(a:Action,format=false){const e=(format?this.formatEmphasis:this.emphasis)[a.id]??{variant:'secondary',size:'medium',tier:'peer',reason:'No clear leader'};return html`<en-button data-action-id=${a.id} data-tier=${e.tier} data-emphasis-reason=${e.reason} variant=${e.variant} size=${e.size} .disabled=${this.busy||this.composing} @click=${()=>format?this.chooseFormat(a.id):this.choose(a.id)}>${a.label}</en-button>`;}
   private openFinder(){this.client.position.recentActions=[...this.client.position.recentActions,'ui:more'].slice(-12);this.begin('actions');}
@@ -422,7 +451,7 @@ export class StillApp extends LitElement {
         <div class="form-actions">${g ? this.button(g.recoveryClosed ? 'Review another' : g.attempted ? 'Check generation' : g.format === 'scene' && !g.scenePreview ? 'Check cost' : this.generationGate ? 'Approve' : 'Generate', () => void this.run(() => this.generate()), true) : nothing}${this.button('Back', () => this.closeMode())}</div>
       </section>`;
     }
-    if (mode === 'actions') {const options=findActions(this.bodyDraft,this.candidates()),chosen=this.candidates().find(a=>a.id===this.choice);if(chosen&&!options.some(a=>a.id===chosen.id))options.unshift(chosen);return html`<section class="form-page"><h1>More</h1>${this.field('What next?',this.bodyDraft,v=>{this.bodyDraft=v;this.choice='';this.finderMessage='';this.finderInferred=false;},1,'Make it 3D, use it in a character…')}<label class="select-label">Action<select .value=${live(this.choice)} ?disabled=${this.busy} @change=${(e:Event)=>{this.choice=(e.target as HTMLSelectElement).value;this.finderInferred=false;this.finderMessage='';this.changed();}}><option value="" .selected=${!this.choice}>Choose an action</option>${options.map(a=>html`<option value=${a.id} .selected=${a.id===this.choice}>${a.label}</option>`)}</select></label>${this.finderMessage?html`<p class="cost-note" role="status">${this.finderMessage}</p>`:nothing}<div class="form-actions">${this.button(this.choice?'Open':'Find',()=>this.choice?this.openFoundAction():void this.run(()=>this.findAction()),true,!this.choice&&!this.bodyDraft.trim())}${this.button('Back',()=>this.closeMode())}</div></section>`;}
+    if (mode === 'actions') {const options=findActions(this.bodyDraft,this.candidates()).filter(a=>a.id!=='ui:developer'||this.desktop.matches),chosen=this.candidates().find(a=>a.id===this.choice);if(chosen&&!options.some(a=>a.id===chosen.id))options.unshift(chosen);return html`<section class="form-page"><h1>More</h1>${this.field('What next?',this.bodyDraft,v=>{this.bodyDraft=v;this.choice='';this.finderMessage='';this.finderInferred=false;},1,'Make it 3D, use it in a character…')}<label class="select-label">Action<select .value=${live(this.choice)} ?disabled=${this.busy} @change=${(e:Event)=>{this.choice=(e.target as HTMLSelectElement).value;this.finderInferred=false;this.finderMessage='';this.changed();}}><option value="" .selected=${!this.choice}>Choose an action</option>${options.map(a=>html`<option value=${a.id} .selected=${a.id===this.choice}>${a.label}</option>`)}</select></label>${this.finderMessage?html`<p class="cost-note" role="status">${this.finderMessage}</p>`:nothing}<div class="form-actions">${this.button(this.choice?'Open':'Find',()=>this.choice?this.openFoundAction():void this.run(()=>this.findAction()),true,!this.choice&&!this.bodyDraft.trim())}${this.button('Back',()=>this.closeMode())}</div></section>`;}
 
     if (mode === 'workspaces') return html`<section class="form-page"><h1>Workspaces</h1><label class="select-label">Workspace<select .value=${this.choice} @change=${(e: Event) => { this.choice = (e.target as HTMLSelectElement).value; this.changed(); }}><option value="">Personal projects</option>${this.client.session?.projects?.map(p => html`<option value=${p.projectAccessId}>${p.projectName} · ${p.role}</option>`)}</select></label><div class="form-actions">${this.button('Open', () => void this.run(async () => { await this.client.switchWorkspace(this.client.session?.projects?.find(p => p.projectAccessId === this.choice)); this.navigate(this.client.position.view, this.client.position); }), true)}${this.button('Back', () => this.closeMode())}</div></section>`;
     if (mode === 'reuse') return html`<section class="form-page"><h1>Reuse idea</h1><label class="select-label">Idea<select .value=${this.choice} @change=${(e: Event) => { this.choice = (e.target as HTMLSelectElement).value; this.changed(); }}><option value="">Choose an idea</option>${p.libraryBlocks.filter(b => !b.removed && b.documentId !== p.documentId).map(b => html`<option value=${b.id}>${b.handle} · ${b.type}</option>`)}</select></label><p class="context-preview">${text(p.libraryBlocks.find(b => b.id === this.choice)?.properties.text)}</p><div class="form-actions">${this.button('Use idea', () => void this.run(() => this.save()), true, !this.choice)}${this.button('Back', () => this.closeMode())}</div></section>`;
@@ -451,7 +480,7 @@ export class StillApp extends LitElement {
   }
   render() {
     const c = this.client, p = c.projection, running = c.jobs.filter(j => activeJobs.has(j.status) && j.documentId === c.position.documentId), failed = c.jobs.find(j => j.status === 'failed' && j.documentId === c.position.documentId);
-    return html`<div class="still-shell"><header class="masthead"><a class="wordmark" href=${this.viewURL('projects',{projectId:'',documentId:''})} aria-label="Still home" @click=${this.home}>still<span aria-hidden="true">.</span></a><span class="session-status">${this.busy ? 'Working' : c.session?.impersonation ? 'Preview · read only' : c.session && !c.abilities.author ? 'Read only' : ''}</span></header><main id="still-content" aria-busy=${this.loading}>${this.renderCanvas()}</main>${running.length ? html`<aside class="job-status" role="status"><i></i>${running[0].progressMessage || 'Generating…'}${running.length > 1 ? ` · ${running.length} in progress` : ''}</aside>` : nothing}${this.error || failed && !this.mode ? html`<div class="status-message error" role="alert">${this.error || failed?.errorDetail?.message || failed?.error || 'Generation failed.'}</div>` : this.notice && !this.mode ? html`<div class="status-message" role="status">${this.notice}</div>` : nothing}${this.renderDock()}${this.developer ? html`<still-developer-console @developer-disable=${()=>this.setDeveloper(false)}></still-developer-console>` : nothing}${new URL(location.href).searchParams.has('progress-report') ? html`<a class="progress-return" href=${REPORT_URL}>Progress Report ↗</a>` : nothing}</div>`;
+    return html`<div class=${this.developer?'still-layout has-developer':'still-layout'}><div class="still-shell"><header class="masthead"><a class="wordmark" href=${this.viewURL('projects',{projectId:'',documentId:''})} aria-label="Still home" @click=${this.home}>still<span aria-hidden="true">.</span></a><span class="session-status">${this.busy ? 'Working' : c.session?.impersonation ? 'Preview · read only' : c.session && !c.abilities.author ? 'Read only' : ''}</span></header><main id="still-content" aria-busy=${this.loading}>${this.renderCanvas()}</main>${running.length ? html`<aside class="job-status" role="status"><i></i>${running[0].progressMessage || 'Generating…'}${running.length > 1 ? ` · ${running.length} in progress` : ''}</aside>` : nothing}${this.error || failed && !this.mode ? html`<div class="status-message error" role="alert">${this.error || failed?.errorDetail?.message || failed?.error || 'Generation failed.'}</div>` : this.notice && !this.mode ? html`<div class="status-message" role="status">${this.notice}</div>` : nothing}${this.renderDock()}</div>${this.developer ? html`<aside class="developer-panel" aria-label="Developer panel"><still-developer-console @developer-disable=${()=>this.setDeveloper(false)}></still-developer-console></aside>` : nothing}${new URL(location.href).searchParams.has('progress-report') ? html`<a class="progress-return" href=${REPORT_URL}>Progress Report ↗</a>` : nothing}</div>`;
   }
 }
 if (!customElements.get('still-app')) customElements.define('still-app', StillApp);

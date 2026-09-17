@@ -42,6 +42,12 @@ export class StillClient {
   private refreshing: Promise<void> | null = null;
   private refreshingEpoch = -1;
   private pendingWrite: WriteJournal | null = null;
+  private verifying: { epoch: number; promise: Promise<() => void> } | null = null;
+  private jobRead = 0;
+  private contentRevision = 0;
+  private contentWrites = new Map<string, number>();
+  private polling: { key: string; promise: Promise<void> } | null = null;
+  private projected: { events: CreativeEvent[]; length: number; document: string; project: string; value: ReturnType<typeof foldEvents> } | null = null;
   private get journalScope() { return this.session ? `${this.session.user.userId}:${this.session.projectContext?.projectAccessId ?? 'personal'}` : ''; }
   private retirePendingWrite() { this.pendingWrite = null; operationJournal.clearWrite(this.journalScope); }
   recoveredWrite = false;
@@ -49,7 +55,41 @@ export class StillClient {
   get hasUnconfirmedWrite() { return !!this.pendingWrite || !!operationJournal.write(this.journalScope); }
   get pendingGeneration() { return operationJournal.generation(this.journalScope, this.position.documentId); }
   get scopeKey() { return scope(this.session); }
-  get projection() { return foldEvents(this.events, Infinity, this.position.documentId, this.position.projectId); }
+  get projection() {
+    const { documentId: document, projectId: project } = this.position, previous = this.projected;
+    if (previous?.events === this.events && previous.length === this.events.length && previous.document === document && previous.project === project) return previous.value;
+    const value = foldEvents(this.events, Infinity, document, project);
+    this.projected = { events: this.events, length: this.events.length, document, project, value }; return value;
+  }
+  private clearSource() { ++this.epoch; this.events = []; this.content = {}; this.head = 0; this.jobs = []; this.creation = null; this.projected = null; this.contentWrites.clear(); }
+  private async request<T>(path: string, body?: unknown, method?: string): Promise<T> {
+    const check = this.fence();
+    try { const result = await api<T>(path, body, method); check(); return result; }
+    catch (error) {
+      check();
+      if (error instanceof ApiError && ([401, 403].includes(error.status) || error.status === 404 && (path === '/api/session' || path.startsWith('/api/events?')))) { this.clearSource(); this.session = null; this.onChange(); }
+      throw error;
+    }
+  }
+  private mergeEvents(incoming: CreativeEvent[]) {
+    const ids = new Set(this.events.map(e => e.eventId));
+    const added = incoming.filter(e => { if (ids.has(e.eventId)) return false; ids.add(e.eventId); return true; });
+    if (added.length) this.events = [...this.events, ...added].sort((a, b) => a.sequence - b.sequence);
+    return added.length > 0;
+  }
+  private applyReceipt(result: { appended: CreativeEvent[]; head?: number; content?: Record<string, string> }) {
+    this.mergeEvents(result.appended);
+    if (result.content) {
+      const revision = ++this.contentRevision;
+      for (const key of Object.keys(result.content)) this.contentWrites.set(key, revision);
+      this.content = { ...this.content, ...result.content };
+    }
+    // A receipt can arrive after another writer. Advance only through known events;
+    // a later delta read fills any gap instead of skipping collaborator history.
+    for (const event of this.events) { if (event.sequence === this.head + 1) this.head = event.sequence; }
+    this.onChange();
+    if ((result.head ?? this.head) > this.head || needsContent(result.appended.filter(e => e.type !== 'DocumentArtifactEdited' || !result.content), this.content)) void this.refresh().catch(() => {});
+  }
   get abilities(): Abilities {
     const s = this.session, shared = s?.projectContext;
     const author = !!s && !s.impersonation && (shared ? shared.permissions.includes('project.author') : ['creator', 'agent', 'admin'].includes(s.user.role));
@@ -59,42 +99,71 @@ export class StillClient {
   fence() { const epoch = this.epoch, key = scope(this.session); return () => { if (epoch !== this.epoch || key !== scope(this.session)) throw new Error('Workspace changed. Check the original workspace.'); }; }
   async load() {
     const epoch = ++this.epoch;
-    this.events = []; this.content = {}; this.head = 0; this.jobs = [];
+    this.events = []; this.content = {}; this.head = 0; this.jobs = []; this.session = null; this.projected = null; this.contentWrites.clear();
     const session = await api<Session>('/api/session');
     if (epoch !== this.epoch) return;
     this.session = session; this.pendingWrite = operationJournal.write(this.journalScope);
-    if (session.policy.accepted) { await this.refresh(); await this.recoverPendingWrite(); }
+    if (session.policy.accepted) { await this.refreshSource(this.fence()); await this.recoverPendingWrite(); }
     this.onChange();
   }
   async verifyScope() {
-    const check = this.fence();
-    let fresh: Session;
-    try { fresh = await api<Session>('/api/session'); } catch (error) { if (error instanceof ApiError && [401,403,404].includes(error.status)) { ++this.epoch; this.session = null; this.events = []; this.content = {}; this.head = 0; this.jobs = []; this.onChange(); } throw error; }
-    check();
-    if (scope(fresh) !== scope(this.session)) { ++this.epoch; this.session = fresh; this.pendingWrite = operationJournal.write(this.journalScope); this.creation = null; this.events = []; this.content = {}; this.head = 0; this.jobs = []; this.position = { ...this.position, projectId: fresh.projectContext?.projectId ?? '', documentId: '', outputId: '', blockId: '', view: 'projects' }; this.onChange(); throw new Error('Your workspace changed. Reopen before saving.'); }
-    return check;
+    if (this.verifying?.epoch === this.epoch) return this.verifying.promise;
+    const epoch = this.epoch, check = this.fence();
+    const promise = (async () => {
+      const fresh = await this.request<Session>('/api/session');
+      check();
+      if (scope(fresh) !== scope(this.session)) {
+        this.clearSource(); this.session = fresh; this.pendingWrite = operationJournal.write(this.journalScope);
+        this.position = { ...this.position, projectId: fresh.projectContext?.projectId ?? '', documentId: '', outputId: '', blockId: '', view: 'projects' };
+        this.onChange(); throw new Error('Your workspace changed. Reopen before saving.');
+      }
+      const changed = JSON.stringify(this.session) !== JSON.stringify(fresh);
+      this.session = fresh;
+      if (changed) this.onChange();
+      return check;
+    })().finally(() => { if (this.verifying?.promise === promise) this.verifying = null; });
+    this.verifying = { epoch, promise }; return promise;
   }
   async refresh() {
     if (this.refreshing && this.refreshingEpoch === this.epoch) return this.refreshing;
+    return this.refreshSource(await this.verifyScope());
+  }
+  private refreshSource(check: () => void) {
+    check();
+    if (this.refreshing && this.refreshingEpoch === this.epoch) return this.refreshing;
     this.refreshingEpoch = this.epoch;
     const operation = (async () => {
-      const check = await this.verifyScope();
-      let after = this.head, target = 0; const incoming: CreativeEvent[] = []; let content: Record<string, string> = {};
-      for (;;) {
-        const page = await api<{ events: CreativeEvent[]; head: number; nextAfter: number; hasMore: boolean; content?: Record<string, string> }>(`/api/events?after=${after}&limit=5000&content=${target ? 0 : 1}`); check();
-        if (!Array.isArray(page.events) || !Number.isSafeInteger(page.head)) throw new Error('The event history could not be verified.');
-        if (!target) target = page.head;
-        incoming.push(...page.events.filter(e => e.sequence <= target)); content = { ...content, ...page.content };
+      const start = this.head, contentRevision = this.contentRevision;
+      let after = start, target: number | undefined;
+      const incoming: CreativeEvent[] = []; let hydrated: Record<string, string> | undefined;
+      for (let count = 0; ; count++) {
+        if (count >= 500) throw new Error('The event history could not be verified.');
+        const page = await this.request<{ events: CreativeEvent[]; head: number; nextAfter: number; hasMore: boolean; content?: Record<string, string> }>(`/api/events?after=${after}&limit=5000&content=${start === 0 && count === 0 ? 1 : 0}`); check();
+        if (!Array.isArray(page.events) || !Number.isSafeInteger(page.head) || page.head < start || page.events.some(e => !e.eventId || !Number.isSafeInteger(e.sequence) || e.sequence < 1 || !e.payload)) throw new Error('The event history could not be verified.');
+        target ??= page.head;
+        incoming.push(...page.events.filter(e => e.sequence <= target!));
+        if (page.content) hydrated = { ...hydrated, ...page.content };
         if (!page.hasMore || page.nextAfter >= target) break;
-        if (page.nextAfter <= after) throw new Error('The event history did not advance.');
+        if (!Number.isSafeInteger(page.nextAfter) || page.nextAfter <= after) throw new Error('The event history did not advance.');
         after = page.nextAfter;
       }
-      await this.verifyScope(); check(); const ids = new Set(this.events.map(e => e.eventId));
-      this.events = [...this.events, ...incoming.filter(e => !ids.has(e.eventId))].sort((a, b) => a.sequence - b.sequence);
-      this.content = content; this.head = target; this.onChange();
-    })().catch(error => { if (error instanceof ApiError && [401,403,404].includes(error.status)) { ++this.epoch; this.events = []; this.content = {}; this.head = 0; this.jobs = []; this.session = null; this.onChange(); } throw error; }).finally(() => { if (this.refreshing === operation) this.refreshing = null; });
-    this.refreshing = operation;
-    return operation;
+      if (start > 0 && needsContent(incoming, this.content)) {
+        const page = await this.request<{ content?: Record<string, string> }>(`/api/events?after=${target}&limit=1&content=1`); check();
+        hydrated = page.content;
+      }
+      check();
+      const changed = this.mergeEvents(incoming), advanced = target! > this.head;
+      if (hydrated) {
+        // An artifact save may finish while this read is in flight. Its acknowledged
+        // body is newer than this read; retain it while hydrating other references.
+        const newer = Object.fromEntries(Object.entries(this.content).filter(([key]) => (this.contentWrites.get(key) ?? 0) > contentRevision));
+        this.content = { ...hydrated, ...newer };
+      }
+      this.head = Math.max(this.head, target!);
+      for (const event of this.events) { if (event.sequence === this.head + 1) this.head = event.sequence; }
+      if (changed || advanced || hydrated) this.onChange();
+    })().finally(() => { if (this.refreshing === operation) this.refreshing = null; });
+    this.refreshing = operation; return operation;
   }
   async acceptTerms() {
     await api('/api/session', { action: 'accept_terms', ownershipConfirmed: true, providerProcessingConfirmed: true });
@@ -138,25 +207,28 @@ export class StillClient {
       if (event.type === 'DocumentRenamed' && projection.documents.find(d => d.id === event.payload.document_id)?.title !== event.payload.old_title) throw new Error('Name changed. Reopen before saving.');
       if (event.type === 'BlockWeightSet' && block && Number(block.properties.weight ?? 1) !== Number(event.payload.previous_weight)) throw new Error('Context changed. Review its influence before saving.');
     }
-    const correlationId = crypto.randomUUID();
+    const correlationId = crypto.randomUUID(), journalScope = this.journalScope;
     const journal: WriteJournal = { correlationId, signature, receipts: await Promise.all(inputs.map(async e => ({type:e.type, keys:Object.keys(e.payload), digest:await digest(e.payload)}))) }; check();
     const submit = () => {
       operationJournal.saveWrite(this.journalScope,journal); this.pendingWrite = journal;
-      return api<{ appended: CreativeEvent[]; head: number; rejected?: { reason: string }[] }>('/api/events', { action: inputs.length === 1 ? 'append' : 'batch', ...(inputs.length === 1 ? { event: inputs[0] } : { events: inputs }), expectedSequence: this.head, clientId: 'web:still', correlationId });
+      return this.request<{ appended: CreativeEvent[]; head: number; rejected?: { reason: string }[] }>('/api/events', { action: inputs.length === 1 ? 'append' : 'batch', ...(inputs.length === 1 ? { event: inputs[0] } : { events: inputs }), expectedSequence: this.head, clientId: 'web:still', correlationId });
     };
     let result;
     try { result = await submit(); } catch (error) {
-      if (error instanceof ApiError && [400, 401, 403, 409, 422, 428].includes(error.status)) this.retirePendingWrite();
+      if (error instanceof ApiError && [400, 401, 403, 409, 422, 428].includes(error.status)) {
+        operationJournal.clearWrite(journalScope);
+        if (this.pendingWrite === journal) this.pendingWrite = null;
+      }
+      check();
       if (!(error instanceof ApiError) || error.status !== 409 || error.body.error !== 'stale_sequence') throw error;
       await this.refresh(); check(); throw new Error('The workspace changed. Draft kept; review before retrying.');
     }
     check();
-    if (result.rejected?.length || !Array.isArray(result.appended) || !inputs.every(input => result.appended.some(e => receiptMatches(e, input, this.session!)))) {
+    if (!Number.isSafeInteger(result.head) || result.rejected?.length || !Array.isArray(result.appended) || !inputs.every(input => result.appended.some(e => receiptMatches(e, input, this.session!)))) {
       await this.refresh(); throw new Error('Save was not fully confirmed. Draft kept; check the document before retrying.');
     }
     this.retirePendingWrite();
-    const ids = new Set(this.events.map(e => e.eventId)); this.events.push(...result.appended.filter(e => !ids.has(e.eventId))); this.events.sort((a,b) => a.sequence-b.sequence); this.head = result.head; this.onChange();
-    await this.refresh().catch(() => {}); check();
+    this.applyReceipt(result);
   }
   async createProject(name: string, thought: string) {
     const signature = JSON.stringify(['project', name, thought]);
@@ -185,9 +257,11 @@ export class StillClient {
   async editArtifact(id: string, markdown: string, expectedRevision: number, items?: { index: number; body: string }[]) {
     const check = await this.verifyScope();
     if (documentArtifactRevision(this.events, id) !== expectedRevision) throw new Error('This work changed while you were writing. Draft kept; reopen before saving.');
-    const result = await api<{appended?:CreativeEvent[]}>(`/api/artifacts/${encodeURIComponent(id)}`, { markdown, expectedRevision, ...(items ? {items}: {}) }, 'PATCH'); check();
-    if (!result.appended?.some(e => e.type === 'DocumentArtifactEdited' && e.payload.artifact_id === id)) throw new Error('Edit unconfirmed. Check the original before retrying.');
-    await this.refresh();
+    const result = await this.request<{appended?:CreativeEvent[]; head?: number; content?: Record<string,string>; revision?: number}>(`/api/artifacts/${encodeURIComponent(id)}`, { markdown, expectedRevision, ...(items ? {items}: {}) }, 'PATCH'); check();
+    const acknowledged = result.appended?.some(e => e.type === 'DocumentArtifactEdited' && e.payload.artifact_id === id);
+    const unchanged = result.appended?.length === 0 && result.revision === expectedRevision && !!result.content;
+    if (!acknowledged && !unchanged) throw new Error('Edit unconfirmed. Check the original before retrying.');
+    this.applyReceipt({ ...result, appended: result.appended! });
   }
   model3dAdaptation() { return adaptDocumentToModel3d(documentSnapshot(this.projection, this.position.documentId), { referenceCount: 0 }); }
   prepareGeneration(format: string, previous?: GenerationDraft): GenerationDraft {
@@ -216,7 +290,7 @@ export class StillClient {
   async previewScene(draft: GenerationDraft) {
     const check = await this.verifyScope(), request = this.generationPayload(draft);
     delete request.payload.sceneCostConsent; request.payload.sceneCostPreview = true;
-    const result = await api<{ sceneCostPreview?: unknown; job?: DocumentJob }>('/api/document-jobs', request); check();
+    const result = await this.request<{ sceneCostPreview?: unknown; job?: DocumentJob }>('/api/document-jobs', request); check();
     if (result.job) { this.jobs = [result.job, ...this.jobs.filter(j => j.jobId !== result.job!.jobId)]; return null; }
     if (!isSceneCostPreview(result.sceneCostPreview)) throw new Error('A current scene cost could not be confirmed.');
     return result.sceneCostPreview;
@@ -229,13 +303,13 @@ export class StillClient {
     if (draft.attempted || pending) {
       draft.attempted = true;
       const key = pending?.requestKey ?? String(this.generationPayload(draft).payload.requestKey);
-      const result=await api<{documentId:string;requestKey:string;status:string;job?:DocumentJob}>('/api/document-jobs/still-reconcile',{documentId:draft.documentId,requestKey:key});check();
+      const result=await this.request<{documentId:string;requestKey:string;status:string;job?:DocumentJob}>('/api/document-jobs/still-reconcile',{documentId:draft.documentId,requestKey:key});check();
       if(draft.documentId!==this.position.documentId||result.documentId!==draft.documentId||result.requestKey!==key)throw new Error('Generation check unconfirmed. Reopen the original document.');
       const job=result.job,format=pending?.format??draft.format;
       if(result.status==='found'&&job?.jobId&&job.documentId===draft.documentId&&job.requestKey===key&&job.kind===(format==='image'?'generate':'render_document')&&(format==='image'||job.result?.artifactKind===format)) {
         operationJournal.clearGeneration(this.journalScope,draft.documentId);
         this.jobs=[job,...this.jobs.filter(j=>j.jobId!==job.jobId)];this.onChange();
-        if(job.status==='queued')void api(`/api/document-jobs/${encodeURIComponent(job.jobId)}/run`,{}).catch(()=>{});
+        if(job.status==='queued')void this.request(`/api/document-jobs/${encodeURIComponent(job.jobId)}/run`,{}).catch(()=>{});
         else if(['completed','partial'].includes(job.status))void this.refresh().catch(()=>{});
         return job;
       }
@@ -246,25 +320,28 @@ export class StillClient {
       throw new Error('Generation check unconfirmed. Check again.');
     }
     if (draft.sourceSnapshot) {
-      await this.refresh(); check();
+      // Admission checks this reviewed revision against authoritative server context.
       if (await digest(documentSnapshot(this.projection,draft.documentId)) !== await digest(draft.sourceSnapshot)) throw new Error('Document changed. Reopen generation to review it.');
     }
+    check();
     if (draft.format === 'model3d') {
       if (draft.adaptation && draft.prompt === draft.adaptation.prompt && !draft.adaptation.valid) throw new Error(draft.adaptation.issues.map(i => i.message).join(' '));
       const validation = validateModel3dRequest({ prompt: draft.prompt, settings: DEFAULT_MODEL3D_SETTINGS, referenceCount: 0 });
       if (!validation.valid) throw new Error(validation.issues.map(i => i.message).join(' '));
     }
-    const request = this.generationPayload(draft);
+    const request = this.generationPayload(draft), journalScope = this.journalScope;
     Object.assign(request.payload, { paidMediaConfirmed: true, ...draft.acknowledgements });
     operationJournal.saveGeneration(this.journalScope,{documentId:draft.documentId,format:draft.format,requestKey:String(request.payload.requestKey)});
     draft.attempted = true;
     let result: {job:DocumentJob};
-    try { result = await api<{ job: DocumentJob }>('/api/document-jobs', request); }
+    try { result = await this.request<{ job: DocumentJob }>('/api/document-jobs', request); }
     catch(error) {
+      if(error instanceof ApiError && [400,401,403,409,422,428].includes(error.status) && error.body.error !== 'generation_request_closed' && !String(error.body.error).startsWith('generation_receipt_')) {
+        draft.attempted = false; operationJournal.clearGeneration(journalScope,draft.documentId);
+      }
+      check();
       if(error instanceof ApiError && error.body.error==='generation_request_closed') {
         operationJournal.saveGeneration(this.journalScope,{documentId:draft.documentId,format:draft.format,requestKey:String(request.payload.requestKey),closed:true});draft.recoveryClosed=true;
-      } else if(error instanceof ApiError && [400,401,403,409,422,428].includes(error.status)&&!String(error.body.error).startsWith('generation_receipt_')) {
-        draft.attempted = false; operationJournal.clearGeneration(this.journalScope,draft.documentId);
       }
       throw error;
     }
@@ -272,16 +349,35 @@ export class StillClient {
     if (!result.job?.jobId || result.job.documentId !== this.position.documentId) throw new Error('Generation unconfirmed. Check results before retrying.');
     operationJournal.clearGeneration(this.journalScope,draft.documentId);
     this.jobs = [result.job, ...this.jobs.filter(j => j.jobId !== result.job.jobId)]; this.onChange();
-    void api(`/api/document-jobs/${encodeURIComponent(result.job.jobId)}/run`, {}).catch(() => {});
+    void this.request(`/api/document-jobs/${encodeURIComponent(result.job.jobId)}/run`, {}).catch(() => {});
     return result.job;
   }
   async pollJobs() {
-    if (!this.position.documentId) return;
-    const check = await this.verifyScope(), document = this.position.documentId;
-    const result = await api<{ jobs: DocumentJob[] }>(`/api/document-jobs?document=${encodeURIComponent(document)}`); check();
-    await this.verifyScope(); check(); if (document !== this.position.documentId) return;
-    this.jobs = result.jobs ?? []; this.onChange();
-    if (this.jobs.some(j => ['completed', 'partial', 'failed'].includes(j.status))) await this.refresh();
+    const document = this.position.documentId, key = `${this.epoch}:${this.scopeKey}:${document}`;
+    if (!document) return;
+    if (this.polling?.key === key) return this.polling.promise;
+    const read = ++this.jobRead;
+    const operation = (async () => {
+      const check = await this.verifyScope();
+      if (read !== this.jobRead || document !== this.position.documentId) return;
+      const result = await this.request<{ jobs: DocumentJob[] }>(`/api/document-jobs?document=${encodeURIComponent(document)}`); check();
+      if (read !== this.jobRead || document !== this.position.documentId) return;
+      if (!Array.isArray(result.jobs) || result.jobs.some(j => !j || typeof j.documentId !== 'string' || typeof j.jobId !== 'string')) throw new Error('The job history could not be verified.');
+      // Forma also returns authorized active/unnotified jobs from other documents.
+      const previous = this.jobs.filter(j => j.documentId === document), jobs = result.jobs.filter(j => j.documentId === document);
+      const terminal = (job: DocumentJob) => ['completed', 'partial', 'failed', 'canceled'].includes(job.status);
+      const changed = this.jobs.some(j => j.documentId !== document) || JSON.stringify(previous) !== JSON.stringify(jobs);
+      const needsRefresh = jobs.some(j => terminal(j) && JSON.stringify(j) !== JSON.stringify(previous.find(p => p.jobId === j.jobId)))
+        || previous.some(j => !terminal(j) && !jobs.some(next => next.jobId === j.jobId));
+      if (changed) { this.jobs = jobs; this.onChange(); }
+      if (needsRefresh) {
+        // A read already in flight may predate this completion. Follow it with a
+        // delta that is known to start after the job acknowledgement.
+        if (this.refreshing) await this.refreshing;
+        await this.refreshSource(check);
+      }
+    })().finally(() => { if (this.polling?.promise === operation) this.polling = null; });
+    this.polling = { key, promise: operation }; return operation;
   }
 }
 
@@ -289,4 +385,10 @@ function receiptMatches(event: CreativeEvent, input: EventInput, session: Sessio
   if (!event.eventId || event.type !== input.type || event.actor !== (session.projectContext ? `user:${session.user.userId}` : 'user')) return false;
   if (session.projectContext && event.payload.project_id !== session.projectContext.projectId) return false;
   return ['project_id', 'document_id', 'block_id', 'artifact_id', 'object_id', 'new_value', 'new_title'].every(key => input.payload[key] === undefined || JSON.stringify(event.payload[key]) === JSON.stringify(input.payload[key]));
+}
+
+function needsContent(events: CreativeEvent[], content: Record<string, string>) {
+  return events.some(event => event.type === 'DocumentArtifactEdited'
+    || event.type === 'AssistantReasoned' && event.payload.operation === 'creative-chat' && event.payload.deterministic === false && !!event.payload.task_id
+    || Object.entries(event.payload).some(([key, value]) => /(?:^|_)(?:content|prompt|intent|input|response|message|statement|condition|note|output|direction)_ref$/.test(key) && typeof value === 'string' && !(value in content)));
 }

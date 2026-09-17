@@ -31,7 +31,7 @@ test('publishes changed controls and decisions, deduplicates unchanged snapshots
   assert.equal(h.sent.at(-1).data.snapshot.scope,'shared/project-b');assert.equal(h.sent.at(-1).data.snapshot.applied,undefined);
 });
 
-test('reopening focuses one window, returning closes it and restores the drawer',()=>{
+test('reopening focuses one window, returning closes it and returns focus to the panel',()=>{
   const h=harness();h.host.open();h.message('ready');h.host.open();assert.equal(h.opens,1);assert.equal(h.focuses,1);
   h.message('return');assert.equal(h.popup.closed,true);assert.equal(h.returns,1);assert.deepEqual(h.states,[true,false]);
   assert.equal(h.listeners.size,0);assert.equal(h.timers.size,0);assert.equal(h.sent.at(-1).data.type,'ended');
@@ -71,7 +71,7 @@ test('viewer accepts only the opener, acknowledges rendered data and sends only 
   v.message('snapshot',snapshot,{source:{}});v.message('snapshot',snapshot,{origin:'https://other.test'});v.message('snapshot',snapshot,{data:null});
   assert.equal(v.applied.length,0);v.message('snapshot',snapshot);await Promise.resolve();
   assert.deepEqual(v.applied,[snapshot]);assert.equal(v.sent.at(-1).data.type,'rendered');
-  v.receiver.returnToDrawer();assert.equal(v.sent.at(-1).data.type,'return');assert.ok(v.sent.every(x=>x.origin==='https://still.test'));
+  v.receiver.returnToPanel();assert.equal(v.sent.at(-1).data.type,'return');assert.ok(v.sent.every(x=>x.origin==='https://still.test'));
 });
 
 test('viewer clears stale data and asks for a fresh snapshot; source closure stops it',()=>{
@@ -86,6 +86,6 @@ test('pagehide clears viewer data before BFCache can preserve it and ignores lat
   v.listeners.get('pagehide')();await Promise.resolve();assert.match(v.cleared.at(-1),/disconnected/);
   assert.equal(v.sent.some(x=>x.data.type==='rendered'),false);
   assert.equal(v.sent.at(-1).data.type,'disconnected');
-  const count=v.applied.length;v.message('snapshot',{scope:'a',context:{head:10},controls:[]});v.receiver.returnToDrawer();
+  const count=v.applied.length;v.message('snapshot',{scope:'a',context:{head:10},controls:[]});v.receiver.returnToPanel();
   assert.equal(v.applied.length,count);assert.equal(v.listeners.size,0);assert.equal(v.timers.size,0);
 });
