@@ -51,10 +51,23 @@ export function guestImageInsertRow(env: WorkerEnv, table: "output_plan_revision
   return env.DB.prepare(`INSERT INTO ${table}(${keys.join(",")}) VALUES(${keys.map(() => "?").join(",")})`).bind(...Object.values(row));
 }
 export function denseGuestImageAcknowledgement(results: D1Result[], count: number, exactIndexes: number[], eventIndex?: number) {
+  // Native acknowledgements are own data, not inherited slots or accessors.
+  // A sparse array must never manufacture the one-use construction permission.
+  const own = (value: unknown, key: PropertyKey): unknown => {
+    if (value === null || typeof value !== "object") return undefined;
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    return descriptor && Object.hasOwn(descriptor, "value") ? descriptor.value : undefined;
+  };
+  const changes = (index: number) => {
+    const row = own(results, index), meta = record(row) ? own(row, "meta") : undefined;
+    return record(meta) ? own(meta, "changes") : undefined;
+  };
   return Array.isArray(results) && results.length === count
-    && Array.from({ length: count }, (_, index) => index).every(index => results[index]?.success === true)
-    && exactIndexes.every(index => results[index]?.meta?.changes === 1)
-    && (eventIndex === undefined || Number.isSafeInteger(results[eventIndex]?.meta?.changes) && Number(results[eventIndex]?.meta?.changes) > 0);
+    && Array.from({ length: count }, (_, index) => index).every(index => {
+      const row = own(results, index); return record(row) && own(row, "success") === true;
+    })
+    && exactIndexes.every(index => changes(index) === 1)
+    && (eventIndex === undefined || Number.isSafeInteger(changes(eventIndex)) && Number(changes(eventIndex)) > 0);
 }
 export async function finalGuestImageStage(ctx: GuestImageStageContext, input: GuestImageOutputInput, expected: StageData) {
   const witness = await inspectCurrentGuestImageStage(ctx, input); currentGuestImageStage(ctx);
@@ -125,7 +138,10 @@ export async function confirmGuestImageRequirement(request: Request, env: Worker
     if (!denseGuestImageAcknowledgement(results, statements.length, exact, eventIndex)) return fail("acknowledgement_unavailable");
   } catch (error) {
     currentGuestImageStage(ctx);
-    try { return confirmedReceipt(await finalGuestImageStage(ctx, base, data), true); }
+    try {
+      const original = await finalGuestImageStage(ctx, base, data); currentGuestImageStage(ctx);
+      return confirmedReceipt(original, true);
+    }
     catch { currentGuestImageStage(ctx); throw error; }
   }
   const original = await finalGuestImageStage(ctx, base, data); currentGuestImageStage(ctx);

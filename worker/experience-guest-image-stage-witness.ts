@@ -1,4 +1,4 @@
-import { providerInputInstructions } from "./output-image-slides-preflight.ts";
+import { outputNativeImageDisclosure, providerInputInstructions } from "./output-image-slides-preflight.ts";
 import { foldEvents } from "../src/model/events.ts";
 import { compileOutputPlan } from "../src/model/output-plan.ts";
 import type { OutputConfirmedPlan, OutputPreflight, OutputNativeTargetPreflight } from "../src/model/output-delivery-contract.ts";
@@ -630,8 +630,11 @@ function addClaim(captured: Captured, resourceTime: number | null) {
 /** Validate the retained native offer against its actual captured transport;
  * never reconstruct actual provider evidence from policy or new configuration. */
 export async function guestImageQuoteRecipe(data: StageData, offered: OutputNativeTargetPreflight, transport: unknown): Promise<SponsorRecipe> {
+  const disclosure = outputNativeImageDisclosure();
   if (jsonIssues(offered).length || jsonIssues(transport).length || bytes(canonicalJson({ offered, transport })) > 49152
     || offered.targetId !== data.target.id || offered.available !== true || offered.provider !== "openai" || typeof offered.model !== "string"
+    || offered.reason !== disclosure.reason || offered.transferDescription !== disclosure.transferDescription
+    || !record(offered.reasonValues) || canonicalJson(offered.reasonValues) !== canonicalJson(disclosure.reasonValues)
     || ![offered.maximumCalls, offered.maximumMicrousd, offered.maximumTokens].every(value => Number.isSafeInteger(value) && value > 0)
     || !record(offered.settings.payload) || offered.settings.payload.outputTargetInstructions !== providerInputInstructions({ target: data.target })
     || !record(offered.settings.imageRender) || !record(offered.settings.imageRender.format) || !record(offered.settings.imageRender.format.dimensions)
