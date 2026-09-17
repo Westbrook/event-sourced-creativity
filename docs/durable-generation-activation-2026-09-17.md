@@ -1,5 +1,9 @@
 # Durable generation: implementation and activation handoff
 
+Track and update the remaining work under [Durable generation in the central
+backlog](backlog.md#durable-generation). This guide retains the detailed
+activation contract and acceptance requirements.
+
 This change builds a **disabled server execution foundation**. It does not turn current Sites HTTP requests into durable background jobs. No production schema, queue, scheduler, webhook, environment binding, provider credential, audience, or entrypoint was changed. No real provider call was made. The current user instruction is to build what can be built now and document later activation.
 
 ## Delivered code

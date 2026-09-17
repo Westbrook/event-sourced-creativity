@@ -5,6 +5,13 @@ spatial canvases, images, stories, screen scenes, presentations, storyboards, an
 videos are coherent projections over durable append-only history. The underlying
 history is infrastructure; the product experience is the creative work.
 
+## Work tracking
+
+Start with the [central backlog](./docs/backlog.md) for remaining work, blockers,
+completion criteria, and links to implementation and activation guides. Update
+the relevant backlog item when taking on or completing work. The
+[plan-coverage ledger](./docs/plan-coverage.md) retains the detailed phase history.
+
 ## Applications
 
 The platform has six independently loaded, explicitly authorized applications
