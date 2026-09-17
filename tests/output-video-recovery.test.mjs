@@ -144,7 +144,7 @@ for(const mutation of ['cancel','source','abort'])test(`recovery refuses ${mutat
  };
  try{
   await assert.rejects(f.run(controller.signal));assert.equal(f.sqlite.prepare("SELECT COUNT(*) n FROM events WHERE type='DocumentRenderCompleted'").get().n,0);
-  assert.equal(f.sqlite.prepare('SELECT COUNT(*) n FROM output_provider_calls').get().n,2);assert.equal(f.sqlite.prepare('SELECT status FROM cost_budget_reservations').get().status,'active');
+  assert.equal(f.sqlite.prepare('SELECT COUNT(*) n FROM output_provider_calls').get().n,2);assert.equal(f.sqlite.prepare('SELECT status FROM cost_budget_reservations').get().status,'settled');
  }finally{f.close();}
 });
 

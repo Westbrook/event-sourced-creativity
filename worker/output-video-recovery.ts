@@ -1,3 +1,4 @@
+import { captureOriginalOutputVideoFinancialAuthority, recordOriginalOutputVideoCompletedObservation, originalOutputVideoFinancialState } from "./output-video-original-financial.ts";
 import { providerSubmissions } from "../src/model/provider-submission.ts";
 import { claimOutputVideoRecoveryLease } from "./output-video-recovery-lease.ts";
 import { readOriginalOutputVideo } from "./output-video-execution.ts";
@@ -94,14 +95,15 @@ export async function executeOutputVideoRecovery(env:WorkerEnv,user:PilotUser,jo
    await env.DB.batch([...final.flatMap(a=>outputAssertionStatements(env,a)),...finish(existing.event_id,[existing.event_id])]);
    return await completedRead()??fail();
   }
+  const financial=await captureOriginalOutputVideoFinancialAuthority(env,user,scope,slot,job);
   stage(options,"video_provider");
   const result=await readOriginalOutputVideo(env,{contract:lease.contract,requestBody:lease.requestBody,clientRequestId:lease.attempt.clientRequestId,requestDigest:lease.attempt.requestDigest!,providerRequestId:lease.providerRequestId},{signal:options.signal,
-   onBeforeRead:async hook=>{hook.assertCurrent();await lease.assertCurrent();hook.assertCurrent();},onEnvelope:async(value,hook)=>{await lease.retainEnvelope(value,hook);}});
+   onBeforeRead:async hook=>{hook.assertCurrent();await lease.assertCurrent();hook.assertCurrent();},onEnvelope:async(value,hook)=>{await lease.retainEnvelope(value,hook);},
+   onCompleted:async(observation,hook)=>{hook.assertCurrent();await recordOriginalOutputVideoCompletedObservation(financial,env,observation);}});
   if(result.status==="pending")return{status:"pending" as const,jobId:job.job_id,slotId:slot.slotId,replayed:false};
   stage(options,"video_settlement");
-  const paid={clientRequestId:result.clientRequestId,provider:"fal",operation:"video",model:result.model,status:"completed",providerRequestId:result.providerRequestId,costMicrousd:result.costMicrousd,inputTokens:0,outputTokens:0,totalTokens:0};
-  await update({providerSubmissions:{[result.clientRequestId]:paid}});
-  const settlement=await reconcileKnownOutputProviderReceipts(env,user,{jobId:job.job_id,assertions:live()});if(settlement.status==="uncertain")fail("output_video_recovery_settlement_unavailable");
+  const observed=originalOutputVideoFinancialState(financial,env).receipt;
+  if(!observed||observed.clientRequestId!==result.clientRequestId||observed.providerRequestId!==result.providerRequestId||observed.model!==result.model||observed.requestDigest!==result.requestDigest||observed.costMicrousd!==result.costMicrousd)fail("output_video_recovery_settlement_unavailable");
   await lease.assertCurrent();
   stage(options,"video_storage");
   const existingMedia=await env.MEDIA.head(lease.lease.storageKey),hash=Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256",new Uint8Array(result.bytes).buffer)),b=>b.toString(16).padStart(2,"0")).join("");
