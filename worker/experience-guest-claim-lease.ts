@@ -2,6 +2,7 @@ import { jsonIssues, record } from "../src/experiences/compiler.ts";
 import { readExistingPrincipalRequest, requireConsent } from "./principal-request-core.ts";
 import { projectIntakeAuthority } from "./intake-authority.ts";
 import { guestContextInventoryData, type GuestContextInventory } from "./experience-guest-context-inventory.ts";
+import { guestImageSaveInventoryData, type GuestImageSaveInventory } from "./experience-guest-image-claim-inventory.ts";
 import { outputAssertionStatements } from "./output-command-core.ts";
 import { GUEST_DB_NOW, guestFail, guestHash, guestId, guestSession, type GuestClaimProof } from "./experience-guest-session.ts";
 import type { WorkerEnv } from "./runtime.ts";
@@ -10,7 +11,9 @@ export type GuestClaimLeaseRequest = Readonly<{ proof: GuestClaimProof; requestI
 export type GuestContextClaimLeaseRequest = Readonly<{ proof: GuestClaimProof; requestId: string; inventory: GuestContextInventory }>;
 type LeaseRow = { session_id: string; lease_id: string; destination_user_id: string; manifest_digest: string; request_id: string;
   acquisitions: number; created_at_ms: number; expires_at_ms: number };
-type ContextLease = { inventory: GuestContextInventory; data: ReturnType<typeof guestContextInventoryData>; current: () => void };
+export type GuestImageSaveClaimLeaseRequest = Readonly<{ proof: GuestClaimProof; requestId: string; inventory: GuestImageSaveInventory }>;
+type ContextLease = { inventory: GuestContextInventory | GuestImageSaveInventory;
+  data: ReturnType<typeof guestContextInventoryData> | ReturnType<typeof guestImageSaveInventoryData>; current: () => void };
 
 /** Internal dormant lease only. manifestDigest is an untrusted immutable intent
  * commitment, not proof of source completeness or asset custody. This abstract
@@ -24,6 +27,17 @@ export async function acquireGuestClaimLease(request: Request, env: WorkerEnv, i
 /** Original-context lease only. The opaque inventory supplies the manifest and
  * complete native proof; object identity alone is never a freshness check. */
 export async function acquireGuestContextClaimLease(request: Request, env: WorkerEnv, input: GuestContextClaimLeaseRequest) {
+  return acquireInventoryLease(request, env, input, "context");
+}
+
+/** First-SAVE custody only. The new opaque inventory proves precisely N+1,
+ * preserving the stricter original-context entry and abstract lease behavior. */
+export async function acquireGuestImageSaveClaimLease(request: Request, env: WorkerEnv, input: GuestImageSaveClaimLeaseRequest) {
+  return acquireInventoryLease(request, env, input, "first-save");
+}
+
+async function acquireInventoryLease(request: Request, env: WorkerEnv,
+  input: GuestContextClaimLeaseRequest | GuestImageSaveClaimLeaseRequest, kind: "context" | "first-save") {
   if (jsonIssues(input).length || !record(input) || Object.keys(input).sort().join() !== "inventory,proof,requestId"
     || !guestId(input.requestId) || !(request instanceof Request)) return guestFail("lease_invalid");
   const db = env.DB, url = request.url, method = request.method, headers = JSON.stringify(Array.from(request.headers)), signal = request.signal;
@@ -38,7 +52,9 @@ export async function acquireGuestContextClaimLease(request: Request, env: Worke
       || env.FORMA_PILOT_COHORT_ID !== cohort || env.FORMA_ADMIN_EMAILS !== admins) guestFail("lease_authority_changed");
   };
   current();
-  const inventory = input.inventory, data = guestContextInventoryData(env, inventory);
+  const inventory = input.inventory, data = kind === "context"
+    ? guestContextInventoryData(env, inventory as GuestContextInventory)
+    : guestImageSaveInventoryData(env, inventory as GuestImageSaveInventory);
   const captured = { proof: structuredClone(input.proof), requestId: input.requestId, manifestDigest: inventory.manifestDigest };
   if (!record(captured.proof) || captured.proof.sessionId !== inventory.sessionId) return guestFail("lease_invalid");
   const result = await acquireLease(request, env, captured, { inventory, data, current });

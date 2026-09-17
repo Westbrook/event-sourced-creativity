@@ -62,10 +62,15 @@ function receiptProof(row: Receipt): Proof {
   bindings: [row.session_id, row.destination_user_id, row.lease_id, row.request_id, row.manifest_digest, row.lineage_json, row.lineage_digest, row.created_at_ms] };
 }
 function currentCustody(lineage: Lineage): Proof {
+  // Native resource IDs are global. A prefix block can leave personal custody
+  // without changing its immutable event or the containing Document's scope.
+  const blocks = json(lineage.events.filter(event => event.type === "BlockCreated")
+    .flatMap(event => { const block = (JSON.parse(event.public) as Record<string, unknown>).block_id; return typeof block === "string" ? [block] : []; }));
   const resources = json([...new Set([lineage.projectId, lineage.documentId,
     ...lineage.events.flatMap(event => { const block = (JSON.parse(event.public) as Record<string, unknown>).block_id; return typeof block === "string" ? [block] : []; })])]);
   return { sql: `NOT EXISTS(SELECT 1 FROM organization_projects WHERE project_id=?)
     AND NOT EXISTS(SELECT 1 FROM project_resource_scopes WHERE resource_kind='document' AND resource_id=?)
+    AND NOT EXISTS(SELECT 1 FROM project_resource_scopes WHERE resource_kind='block' AND resource_id IN(SELECT value FROM json_each(?)))
     AND NOT EXISTS(SELECT 1 FROM events WHERE stream_id=? AND (type='ProjectRemoved' AND json_extract(payload,'$.project_id')=?
       OR type='DocumentRemoved' AND json_extract(payload,'$.document_id')=?))
     AND NOT EXISTS(SELECT 1 FROM project_event_scopes WHERE event_id IN(SELECT json_extract(value,'$.id') FROM json_each(?)))
@@ -75,7 +80,7 @@ function currentCustody(lineage: Lineage): Proof {
           OR replacement.type IN('DocumentCreated','DocumentForked') AND (json_extract(replacement.payload,'$.document_id') IN(SELECT id FROM reserved)
             OR json_extract(replacement.payload,'$.new_document_id') IN(SELECT id FROM reserved))
           OR replacement.type='BlockCreated' AND json_extract(replacement.payload,'$.block_id') IN(SELECT id FROM reserved)))`,
-  bindings: [lineage.projectId, lineage.documentId, `creative:${lineage.destinationUserId}`, lineage.projectId, lineage.documentId, json(lineage.events),
+  bindings: [lineage.projectId, lineage.documentId, blocks, `creative:${lineage.destinationUserId}`, lineage.projectId, lineage.documentId, json(lineage.events),
     resources, `creative:${lineage.destinationUserId}`, json(lineage.events)] };
 }
 function targetProof(lineage: Lineage, privateBodies: readonly string[]): Proof {
