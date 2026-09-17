@@ -1,3 +1,4 @@
+import { PRIMARY_POLICY } from './presentation.ts';
 import './vendor/elements/define/badge.js';
 import { LitElement, css, html, nothing } from 'lit';
 import { keyed } from 'lit/directives/keyed.js';
@@ -82,7 +83,7 @@ export class StillDeveloperConsole extends LitElement {
           ${this.windowError?html`<p role="alert">${this.windowError}</p>`:nothing}
           <div class="status"><strong>${this.pending?'Jev pending':this.received?.disposition??'Local controls'}</strong><span>${c.view}${c.mode?` / ${c.mode}`:''} · head ${c.head}</span></div>
           <details open><summary>On page · ${this.controls.length} controls</summary>
-            <p class="muted">${c.paletteOpen?'The command palette lists eligible actions.':c.more?'Up to three next-ranked actions, Back, and Palette.':c.mode?'The open workflow supplies its own controls.':c.view==='projects'||c.view==='documents'||c.view==='results'?'Browse content and pagination share the control budget.':'Up to four suggestions, plus More. Slides reserve two places for paging.'} Emphasis requires useful, confident scores, a valid distribution and a clear margin. Ties and missing evidence have equal weight. The palette is always available with ⌘K.</p>
+            <p class="muted">${c.paletteOpen?'The command palette lists eligible actions.':c.more?'Up to three next-ranked actions, Back, and Palette.':c.mode?'The open workflow supplies its own controls.':c.view==='projects'||c.view==='documents'||c.view==='results'?'Browse content and pagination share the control budget.':'Up to four suggestions, plus More. Slides reserve two places for paging.'} Primary: score ≥ ${PRIMARY_POLICY.score}/3, confidence ≥ ${PRIMARY_POLICY.confidence*100}%, useful probability ≥ ${PRIMARY_POLICY.usefulProbability*100}%, and lead ≥ ${PRIMARY_POLICY.gap} over the other visible suggestions. At most one primary. Ties and missing evidence remain equal. The palette is always available with ⌘K.</p>
             <ul class="controls">${this.controls.map(x=>html`<li><b>${x.label}</b><code>${x.id}</code><span>${x.region} · ${x.variant} · ${x.size}${x.disabled?' · disabled':''}</span>${x.emphasis?html`<span>${x.emphasis}</span>`:nothing}${x.options.length?html`<details><summary>Picker options</summary>${x.options.join(' · ')}</details>`:nothing}</li>`)}</ul>
             ${c.selectedFormat?html`<p>Selected format: <code>${c.selectedFormat}</code>. Selection does not start generation.</p>`:nothing}
           </details>
@@ -103,7 +104,7 @@ export class StillDeveloperConsole extends LitElement {
             return html`<details class=${row.selected?'selected':''}><summary><span>${row.action.label}</span><span>${row.selected?`#${row.selected}`:row.eligible?'available':'excluded'}</span><code>${numeric(answer?.score)} / ${numeric(row.value)}</code></summary>
               <p><code>${row.action.id}</code> · ${row.action.group}</p><p>Now: ${current?.eligible?'available':current?.eligibilityReason??'unavailable'}. Decision: ${!row.eligible?row.eligibilityReason:row.reason||`selected #${row.selected}`}.</p>
               ${row.base!==undefined?html`<p>Base ${numeric(row.base)} (${row.basis==='jev'?'Jev':'local policy'})${row.rank?` · rank ${row.rank}`:''}</p>${row.adjustments?.map(a=>html`<p class="adjustment"><b>${a.delta>0?'+':''}${numeric(a.delta)}</b> ${a.label}${a.questions.length?html`<small>${a.questions.join(', ')}</small>`:nothing}</p>`)}<p>Final rank value: ${numeric(row.value)}</p>`:nothing}
-              ${trace?.presentation[row.action.id]?html`<p>Emphasis: ${trace.presentation[row.action.id].tier} · ${trace.presentation[row.action.id].variant} · ${trace.presentation[row.action.id].size}. ${trace.presentation[row.action.id].reason}.</p>`:nothing}${this.distribution(answer)}
+              ${trace?.presentation[row.action.id]?html`<p>Initial menu emphasis: ${trace.presentation[row.action.id].tier} · ${trace.presentation[row.action.id].variant} · ${trace.presentation[row.action.id].size}. ${trace.presentation[row.action.id].reason}.</p>`:nothing}${this.distribution(answer)}
             </details>`;
           })}</div>
           <details><summary>Creative questions · ${questions.filter(q=>q.asked).length} sent</summary>${questions.filter(q=>`${q.id} ${q.question.instructions}`.toLowerCase().includes(this.filter)).map(q=>html`<details><summary><code>${q.id}</code> · ${q.composition} · ${q.question.type} · ${numeric(q.score??q.noul)}${q.choice?` ${q.choice}`:''}</summary>${this.distribution(q)}</details>`)}</details>

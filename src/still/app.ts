@@ -2,7 +2,6 @@ import './palette-elements.js';
 import { localHistoryEvidence } from './history.ts';
 import { LitElement, html, nothing, type TemplateResult } from 'lit';
 import { live } from 'lit/directives/live.js';
-import { repeat } from 'lit/directives/repeat.js';
 import { keyed } from 'lit/directives/keyed.js';
 import './vendor/tokens/default.css';
 import './vendor/elements/define/button.js';
@@ -13,7 +12,7 @@ import './context-flow.ts';
 import './use-in-flow.ts';
 import type { StillUseInFlow } from './use-in-flow.ts';
 import { explicitAction, paletteActions, nextToolbarActions, finderEntry } from './finder.ts';
-import { presentActions, type Emphasis } from './presentation.ts';
+import { presentActions, presentEvidence, type Emphasis } from './presentation.ts';
 import './developer-console.ts';
 import { DEVELOPER_DESKTOP_QUERY } from './developer-layout.ts';
 import type { StillDeveloperConsole } from './developer-console.ts';
@@ -313,7 +312,8 @@ export class StillApp extends LitElement {
       if (!this.disposed) this.poll();
     }, 2000);
   }
-  private suggestedButton(a:Action,format=false){const e=(format?this.formatEmphasis:this.emphasis)[a.id]??{variant:'secondary',size:'medium',tier:'peer',reason:'No clear leader'};return html`<en-button data-action-id=${a.id} data-tier=${e.tier} data-emphasis-reason=${e.reason} variant=${e.variant} size=${e.size} .disabled=${this.busy||this.composing} @click=${()=>format?this.chooseFormat(a.id):this.choose(a.id)}>${a.label}</en-button>`;}
+  private suggestedButton(a:Action,format=false,presentation?:Record<string,Emphasis>){const e=(presentation??(format?this.formatEmphasis:this.emphasis))[a.id]??{variant:'secondary',size:'medium',tier:'peer',reason:'No clear leader'};return html`<en-button data-action-id=${a.id} data-tier=${e.tier} data-emphasis-reason=${e.reason} variant=${e.variant} size=${e.size} .disabled=${this.busy||this.composing} @click=${()=>format?this.chooseFormat(a.id):this.choose(a.id)}>${a.label}</en-button>`;}
+  private toolbarSuggestions(actions:Action[]){const emphasis=presentEvidence(actions.map(a=>a.id),this.emphasis);return actions.map(a=>this.suggestedButton(a,false,emphasis));}
   private paletteShortcut=(event:KeyboardEvent)=>{
     if((event.metaKey||event.ctrlKey)&&!event.altKey&&event.key.toLowerCase()==='k'){
       event.preventDefault();if(event.repeat)return;this.paletteOpen?this.closeFinder():this.openFinder();
@@ -569,7 +569,7 @@ export class StillApp extends LitElement {
     if (view === 'projects' || view === 'documents' || view === 'results') {
       const count = view === 'projects' ? p.projects.length : view === 'documents' ? p.documents.filter(d => !d.removed).length : p.outputs.filter(o => !o.discarded).length + p.artifacts.length;
       const suggested = this.suggestions.find(a => a.id !== view && a.id !== 'results');
-      actions = suggested ? [this.suggestedButton(suggested)] : [this.button(view === 'projects' ? 'New project' : view === 'documents' ? 'New document' : 'Document', () => view === 'results' ? this.navigate('document') : this.begin(view === 'projects' ? 'new-project' : 'new-document'), true, view === 'projects' ? !c.abilities.projectCreate : view !== 'results' && !c.abilities.author)];
+      actions = suggested ? this.toolbarSuggestions([suggested]) : [this.button(view === 'projects' ? 'New project' : view === 'documents' ? 'New document' : 'Document', () => view === 'results' ? this.navigate('document') : this.begin(view === 'projects' ? 'new-project' : 'new-document'), true, view === 'projects' ? !c.abilities.projectCreate : view !== 'results' && !c.abilities.author)];
       if (count > 3) actions = [this.button(this.page > 0 ? 'Previous' : 'First page', () => this.turnPage(this.page-1), false, this.page === 0), this.button('Next', () => this.turnPage(this.page+1), false, (this.page + 1) * 3 >= count)];
       // The browse content contains at most three item controls; the dock adds two.
       if (actions.length === 2) actions = [this.button('More results', () => this.turnPage((this.page+1)*3>=count?0:this.page+1))];
@@ -578,10 +578,10 @@ export class StillApp extends LitElement {
     } else {
       const a = p.artifacts.find(x => x.id === c.position.outputId);
       visibleIds=this.suggestions.slice(0,view==='artifact'&&a&&['slides','storyboard'].includes(a.kind)&&a.items.length>1?2:4).map(a=>a.id);
-      if (view === 'artifact' && a && ['slides', 'storyboard'].includes(a.kind) && a.items.length > 1) actions = [this.button('Previous', () => this.turnItem(this.itemIndex-1), false, this.itemIndex === 0), this.button('Next', () => this.turnItem(this.itemIndex+1), false, this.itemIndex >= a.items.length - 1), ...this.suggestions.slice(0,2).map(a => this.suggestedButton(a)), this.button('More', () => this.openMore(), false, false, 'ui:more')];
-      else actions = [html`${repeat(this.suggestions.slice(0, 4), a => a.id, a => this.suggestedButton(a))}`, this.button('More', () => this.openMore(), false, false, 'ui:more')];
+      if (view === 'artifact' && a && ['slides', 'storyboard'].includes(a.kind) && a.items.length > 1) actions = [this.button('Previous', () => this.turnItem(this.itemIndex-1), false, this.itemIndex === 0), this.button('Next', () => this.turnItem(this.itemIndex+1), false, this.itemIndex >= a.items.length - 1), ...this.toolbarSuggestions(this.suggestions.slice(0,2)), this.button('More', () => this.openMore(), false, false, 'ui:more')];
+      else actions = [html`${this.toolbarSuggestions(this.suggestions.slice(0,4))}`, this.button('More', () => this.openMore(), false, false, 'ui:more')];
     }
-    if(this.moreOpen)actions=[...nextToolbarActions(this.rankedActions,visibleIds,this.candidates()).map(a=>this.suggestedButton(a)),this.button('Back',()=>{this.moreOpen=false;this.changed();void this.updateComplete.then(()=>this.querySelector<HTMLElement>('[data-action-id="ui:more"]')?.focus());}),this.button('Palette ⌘K',()=>this.openFinder(),false,false,'ui:palette')];
+    if(this.moreOpen)actions=[...this.toolbarSuggestions(nextToolbarActions(this.rankedActions,visibleIds,this.candidates())),this.button('Back',()=>{this.moreOpen=false;this.changed();void this.updateComplete.then(()=>this.querySelector<HTMLElement>('[data-action-id="ui:more"]')?.focus());}),this.button('Palette ⌘K',()=>this.openFinder(),false,false,'ui:palette')];
     return html`<footer class="action-dock" @pointerenter=${()=>{this.dockTouched=true;}} @pointerdown=${()=>{this.dockTouched=true;}} @focusin=${()=>{this.dockTouched=true;}}><en-toolbar label="Your next step" keyboard-navigation="tab">${actions}</en-toolbar></footer>`;
   }
   render() {

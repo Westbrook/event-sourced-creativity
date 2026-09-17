@@ -47,3 +47,5 @@ The flag changes diagnostic visibility only. Traces are ephemeral, cleared on de
 # Verification
 
 Tests: `tests/still-console-window.test.mjs`, `tests/still-diagnostics.test.mjs`, `tests/still-diagnostics-api.test.mjs`, `tests/still-next-actions.test.mjs` and `tests/still-next-actions-api.test.mjs`, alongside the existing Still suite. `tests/still-context-preview.mjs` provides an isolated real-Worker preview with explicitly simulated Jev answers and no external provider network access. The separate user-data preview at port 5174 must not be reset to run these checks.
+
+Toolbar emphasis compares only visible suggestions, including More. One primary is allowed when the strongest score is at least 2.4/3, confidence at least 0.70, probability mass for useful ratings (2 or 3) at least 0.80, and score lead at least 0.30. The leader can appear anywhere in the menu; order is unchanged. Missing/invalid evidence and close ties remain secondary. These are rubric judgments, not click probabilities. The console shows thresholds and each rendered control’s reason.

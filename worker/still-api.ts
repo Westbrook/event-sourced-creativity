@@ -98,6 +98,8 @@ export async function handleStillDecision(request: Request, env: WorkerEnv, cont
     if(second.answers){const refined=refineMenu(actions,built.candidates,answers,second.answers,evidence.destinations,'connections');actions=refined.actions;adjustments=refined.adjustments;target=refined.target;}
   }else passes.push({id:'connections',parentId:'assessment',label:'Connection evidence',status:'skipped',reason:choosingFormat?'format_comparison':deadline-Date.now()<1200?'latency_budget':!position.blockId?'no_selected_idea':!evidence.destinations.length?'no_destinations':'no_useful_connection_signal',elapsedMs:0,compositionIds:['connections','exploration'],evidenceIds:[],questions:[]});
   recommended=choosingFormat?formats:actions.map(a=>a.id);
-  presentation=presentActions(recommended,answers,choosingFormat?'fit_':'use_');
+  const availablePresentation=choosingFormat?{}:presentActions(evaluateActions(built.candidates,position,answers).ranked.map(a=>a.id),answers);
+  for(const row of Object.values(availablePresentation))Object.assign(row,{variant:'secondary',size:'medium',tier:'peer',reason:'Not in initial menu; evaluated when shown'});
+  presentation={...availablePresentation,...presentActions(recommended,answers,choosingFormat?'fit_':'use_')};
   return reply({source:'jev',model:first.model,policy:POLICY_VERSION,head,actions,rankedActions:choosingFormat?[]:evaluateActions(built.candidates,position,answers).ranked.map(a=>({id:a.id})),formats,presentation,...(target?{targets:{'use-in':target.id}}:{}),candidateIds:built.candidates.map(a=>a.id),stage:questions.stage?inspectAnswer(questions.stage,answers.stage).choice:undefined,questionsEvaluated:passes.reduce((n,p)=>n+p.questions.length,0),...diagnostics('jev',undefined,answers,first.model)});
 }
