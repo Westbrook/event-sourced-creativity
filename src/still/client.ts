@@ -390,6 +390,12 @@ export class StillClient {
     void this.request(`/api/document-jobs/${encodeURIComponent(result.job.jobId)}/run`, {}).catch(() => {});
     return result.job;
   }
+  async dismissJob(job: DocumentJob) {
+    const check = await this.verifyScope();
+    const result = await this.request<{job:DocumentJob}>(`/api/document-jobs/${encodeURIComponent(job.jobId)}/dismiss`, {}); check();
+    if (result.job?.jobId !== job.jobId || result.job.documentId !== job.documentId || !result.job.dismissedAt) throw new Error('Dismissal could not be confirmed.');
+    this.jobs = this.jobs.map(current => current.jobId === job.jobId ? result.job : current); this.onChange();
+  }
   async pollJobs() {
     const document = this.position.documentId, key = `${this.epoch}:${this.scopeKey}:${document}`;
     if (!document) return;

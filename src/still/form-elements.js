@@ -8,3 +8,6 @@ import './vendor/elements/define/textarea.js';
 
 import './vendor/elements/define/menu.js';
 import './vendor/elements/define/menu-item.js';
+
+import './vendor/elements/define/toast.js';
+import './vendor/elements/define/toast-region.js';
