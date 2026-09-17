@@ -73,6 +73,10 @@ export class StillApp extends LitElement {
   private developerReceived?: ReceivedDecision;
   private developerScope = '';
   private pollTimer = 0;
+  private lastHistoryPoll = 0;
+  private lastJobsPoll = 0;
+  private syncPending = false;
+  private readonly resumeSync = () => { if (!document.hidden) void this.sync(true); };
   private generation: GenerationDraft | null = null;
   private formatSuggestions: string[] = [];
   private formatTouched = false;
@@ -96,9 +100,11 @@ export class StillApp extends LitElement {
     this.client.onChange = () => { if (this.client.recoveredWrite) { this.notice = 'Save confirmed.'; this.client.recoveredWrite = false; } this.changed(); };
     window.addEventListener('popstate', this.popstate);
     window.addEventListener('beforeunload', this.beforeUnload);
-    void this.run(async () => { await this.client.load(); this.readRoute(); this.loading = false; this.decide(); this.poll(); });
+    window.addEventListener('focus', this.resumeSync);
+    document.addEventListener('visibilitychange', this.resumeSync);
+    void this.run(async () => { await this.client.load(); this.readRoute(); this.loading = false; this.lastHistoryPoll = Date.now(); this.decide(); this.poll(); });
   }
-  disconnectedCallback() { super.disconnectedCallback(); this.disposed = true; ++this.developerEpoch; this.developerApplied=undefined;this.developerReceived=undefined;this.dockObserver.disconnect(); clearTimeout(this.pollTimer); clearTimeout(this.decisionTimer); window.removeEventListener('popstate', this.popstate); window.removeEventListener('beforeunload', this.beforeUnload); }
+  disconnectedCallback() { super.disconnectedCallback(); this.disposed = true; ++this.developerEpoch; this.developerApplied=undefined;this.developerReceived=undefined;this.dockObserver.disconnect(); clearTimeout(this.pollTimer); clearTimeout(this.decisionTimer); window.removeEventListener('popstate', this.popstate); window.removeEventListener('beforeunload', this.beforeUnload); window.removeEventListener('focus', this.resumeSync); document.removeEventListener('visibilitychange', this.resumeSync); }
   private draftSignature(){const g=this.generation;return JSON.stringify([this.titleDraft,this.bodyDraft,this.kindDraft,g?.prompt,g?.tone,g?.audience,g?.itemCount]);}
   private preventsRouteChange(){return this.busy&&!this.loading||this.composing||this.client.hasUnconfirmedWrite||!!this.generation?.attempted||!!this.mode&&this.draftSignature()!==this.draftBaseline||!!this.querySelector<StillContextFlow>('still-context-flow')?.preventsRouteChange||!!this.querySelector<StillUseInFlow>('still-use-in-flow')?.preventsRouteChange;}
   private beforeUnload = (e: BeforeUnloadEvent) => { if (this.preventsRouteChange()) { e.preventDefault(); e.returnValue = ''; } };
@@ -237,11 +243,23 @@ export class StillApp extends LitElement {
       finally {if(ticket===this.decisionTicket){this.developerPending=false;this.changed();}}
     }, 1300);
   }
+  private async sync(force = false) {
+    if (this.syncPending || this.disposed || this.loading || this.busy || document.hidden || !this.client.session?.policy.accepted) return;
+    const now = Date.now(), work: Promise<void>[] = [];
+    this.syncPending = true;
+    try {
+      // Keep collaborator edits current independently of whether this page has jobs.
+      if (force || now - this.lastHistoryPoll >= 30000) { this.lastHistoryPoll = now; work.push(this.client.refresh()); }
+      const interval = this.client.jobs.some(j => activeJobs.has(j.status)) ? 2000 : 60000;
+      if (this.client.position.documentId && (force || now - this.lastJobsPoll >= interval)) { this.lastJobsPoll = now; work.push(this.client.pollJobs()); }
+      await Promise.allSettled(work);
+    } finally { this.syncPending = false; }
+  }
   private poll() {
     this.pollTimer = window.setTimeout(async () => {
-      try { if (!this.busy && !document.hidden && this.client.session?.policy.accepted) { if (this.client.position.documentId) await this.client.pollJobs(); else await this.client.refresh(); } } catch { /* Keep saved work visible; explicit refresh reports errors. */ }
+      await this.sync();
       if (!this.disposed) this.poll();
-    }, this.client.jobs.some(j => activeJobs.has(j.status)) ? 2000 : 12000);
+    }, 2000);
   }
   private suggestedButton(a:Action,format=false){const e=(format?this.formatEmphasis:this.emphasis)[a.id]??{variant:'secondary',size:'medium',tier:'peer',reason:'No clear leader'};return html`<en-button data-action-id=${a.id} data-tier=${e.tier} data-emphasis-reason=${e.reason} variant=${e.variant} size=${e.size} .disabled=${this.busy||this.composing} @click=${()=>format?this.chooseFormat(a.id):this.choose(a.id)}>${a.label}</en-button>`;}
   private openFinder(){this.client.position.recentActions=[...this.client.position.recentActions,'ui:more'].slice(-12);this.begin('actions');}
