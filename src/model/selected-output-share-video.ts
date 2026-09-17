@@ -1,7 +1,7 @@
 import { inspectOutputAsset, MAX_OUTPUT_ASSET_BYTES } from "./output-asset-inspection.ts";
 
 /** Container/metadata qualification of exact bytes, never publishing authority. */
-export const SELECTED_OUTPUT_SHARE_VIDEO_POLICY = "selected-output-share-avc-mp4-v1" as const;
+export const SELECTED_OUTPUT_SHARE_VIDEO_POLICY = "selected-output-share-avc-mp4-v2" as const;
 export const SELECTED_OUTPUT_SHARE_VIDEO_LIMITS = Object.freeze({ bytes: MAX_OUTPUT_ASSET_BYTES, boxes: 4096, samples: 100_000, nals: 200_000 });
 export type SelectedOutputShareVideoExpected = Readonly<{ sha256: string; byteLength: number; width: number; height: number; durationSeconds: number }>;
 export type SelectedOutputShareVideoRefusal = "invalid_input" | "unsupported_mp4" | "unqualified_metadata" | "invalid_mp4" | "selection_mismatch";
@@ -154,6 +154,58 @@ function codec(c: Container, box: Box) {
   requireValue(cursor === box.end); return parameterSets(sps, pps, bytes.subarray(at, at + 4));
 }
 
+/** Composition offsets are playback timing, not descriptive metadata. Keep
+ * every sample and prove its presentation interval; this never rewrites clocks. */
+function timeline(c: Container, tables: Box[], samples: number, scale: number, duration: number, mediaScale: number, mediaDuration: number, mediaStart: number) {
+  requireValue(mediaScale > 0 && mediaDuration > 0 && mediaStart >= 0 && mediaStart <= mediaScale);
+  // Integer cross-products avoid the native reader's broader edit tolerance.
+  const movieNumerator = BigInt(mediaDuration) * BigInt(scale), movieFloor = movieNumerator / BigInt(mediaScale), movieCeiling = (movieNumerator + BigInt(mediaScale) - 1n) / BigInt(mediaScale);
+  requireValue(BigInt(duration) === movieFloor || BigInt(duration) === movieCeiling, "unsupported_mp4");
+  const stts = c.one(tables, "stts"), decodeDurations: number[] = [];
+  let ticks = 0;
+  for (let at = stts.data + 8; at < stts.end; at += 8) {
+    const count = c.u32(at), delta = c.u32(at + 4);
+    requireValue(count > 0 && delta > 0 && count <= samples - decodeDurations.length);
+    ticks += count * delta; requireValue(Number.isSafeInteger(ticks) && ticks <= mediaDuration);
+    for (let index = 0; index < count; index += 1) decodeDurations.push(delta);
+  }
+  requireValue(decodeDurations.length === samples && ticks === mediaDuration);
+  const ctts = tables.find(box => box.type === "ctts"), offsets: number[] = [];
+  if (ctts) {
+    requireValue(ctts.end - ctts.data >= 8 && [0, 0x01000000].includes(c.u32(ctts.data)));
+    const count = c.u32(ctts.data + 4); requireValue(count > 0 && count <= samples && ctts.end - ctts.data === 8 + count * 8);
+    for (let at = ctts.data + 8; at < ctts.end; at += 8) {
+      const run = c.u32(at), offset = c.bytes[ctts.data] === 1 ? c.view.getInt32(at + 4) : c.u32(at + 4);
+      requireValue(run > 0 && run <= samples - offsets.length);
+      for (let index = 0; index < run; index += 1) offsets.push(offset);
+    }
+    requireValue(offsets.length === samples);
+  }
+  const intervals: Array<{ start: number; end: number }> = [];
+  let decode = 0;
+  for (let index = 0; index < samples; index += 1) {
+    const start = decode + (offsets[index] ?? 0), delta = decodeDurations[index]!;
+    requireValue(Number.isSafeInteger(start) && start >= mediaStart && start + delta <= mediaStart + mediaDuration, "unsupported_mp4");
+    intervals.push({ start, end: start + delta }); decode += delta;
+  }
+  intervals.sort((first, second) => first.start - second.start);
+  let end = mediaStart;
+  for (const interval of intervals) { requireValue(interval.start === end, "unsupported_mp4"); end = interval.end; }
+  requireValue(end === mediaStart + mediaDuration, "unsupported_mp4");
+}
+
+function bitrate(c: Container, box: Box, stsz: Box, samples: number, payloadBytes: number, mediaScale: number, mediaDuration: number) {
+  requireValue(box.end - box.data === 12);
+  const buffer = c.u32(box.data), maximum = c.u32(box.data + 4), average = c.u32(box.data + 8), uniform = c.u32(stsz.data + 4);
+  let largestSample = 0;
+  for (let index = 0; index < samples; index += 1) largestSample = Math.max(largestSample, uniform || c.u32(stsz.data + 12 + index * 4));
+  // Deliberately supported declared-rate subset. Peak rate and full decoder
+  // buffer adequacy are not measured; no strings or additional bytes exist.
+  requireValue(buffer >= largestSample && buffer <= payloadBytes && average > 0 && maximum >= average, "unsupported_mp4");
+  const numerator = BigInt(payloadBytes) * 8n * BigInt(mediaScale), floor = numerator / BigInt(mediaDuration), ceiling = (numerator + BigInt(mediaDuration) - 1n) / BigInt(mediaDuration);
+  requireValue(BigInt(average) === floor || BigInt(average) === ceiling, "unsupported_mp4");
+}
+
 function publicMp4(bytes: Uint8Array) {
   const c = new Container(bytes), top = c.boxes(0, bytes.length, ["ftyp", "moov", "mdat", "free"]);
   const ftyp = c.one(top, "ftyp"), moov = c.one(top, "moov"), mdat = c.one(top, "mdat");
@@ -163,7 +215,11 @@ function publicMp4(bytes: Uint8Array) {
   const seenBrands = new Set<string>();
   for (let at = ftyp.data + 8; at < ftyp.end; at += 4) { const brand = c.text(at, 4); requireValue(brands.includes(brand) && !seenBrands.has(brand), "unqualified_metadata"); seenBrands.add(brand); }
   const free = top.find(box => box.type === "free"); if (free) requireValue(free.end === free.data, "unqualified_metadata");
-  const movie = c.boxes(moov.data, moov.end, ["mvhd", "trak"]), mvhd = c.one(movie, "mvhd");
+  const movie = c.boxes(moov.data, moov.end, ["mvhd", "trak", "udta"]), mvhd = c.one(movie, "mvhd"), udta = movie.find(box => box.type === "udta");
+  if (udta) {
+    const empty = "0000003d75647461000000356d657461000000000000002168646c7200000000000000006d6469726170706c00000000000000000000000008696c7374";
+    requireValue(udta.end - udta.start === empty.length / 2 && Array.from({ length: empty.length / 2 }, (_, index) => Number.parseInt(empty.slice(index * 2, index * 2 + 2), 16)).every((value, index) => bytes[udta.start + index] === value), "unqualified_metadata");
+  }
   c.full(mvhd, 100); c.zero(mvhd.data + 4, mvhd.data + 12);
   const scale = c.u32(mvhd.data + 12), duration = c.u32(mvhd.data + 16);
   requireValue(scale > 0 && duration > 0 && c.u32(mvhd.data + 20) === 65536 && [0, 256].includes(c.u16(mvhd.data + 24)));
@@ -171,8 +227,8 @@ function publicMp4(bytes: Uint8Array) {
   const trak = c.one(movie, "trak"), track = c.boxes(trak.data, trak.end, ["tkhd", "edts", "mdia"]), tkhd = c.one(track, "tkhd");
   requireValue([1, 3].includes(c.u32(tkhd.data))); c.full(tkhd, 84, c.u32(tkhd.data)); c.zero(tkhd.data + 4, tkhd.data + 12);
   requireValue(c.u32(tkhd.data + 12) === 1 && c.u32(tkhd.data + 20) === duration); c.zero(tkhd.data + 16, tkhd.data + 20); c.zero(tkhd.data + 24, tkhd.data + 40); c.matrix(tkhd.data + 40);
-  const edts = track.find(box => box.type === "edts");
-  if (edts) { const elst = c.one(c.boxes(edts.data, edts.end, ["elst"]), "elst"); c.full(elst, 20); requireValue(c.u32(elst.data + 4) === 1 && c.u32(elst.data + 8) === duration && c.u32(elst.data + 12) === 0 && c.u32(elst.data + 16) === 65536, "unsupported_mp4"); }
+  const edts = track.find(box => box.type === "edts"); let mediaStart = 0;
+  if (edts) { const elst = c.one(c.boxes(edts.data, edts.end, ["elst"]), "elst"); c.full(elst, 20); requireValue(c.u32(elst.data + 4) === 1 && c.u32(elst.data + 8) === duration && c.u32(elst.data + 16) === 65536, "unsupported_mp4"); mediaStart = c.view.getInt32(elst.data + 12); }
   const mdia = c.one(track, "mdia"), media = c.boxes(mdia.data, mdia.end, ["mdhd", "hdlr", "minf"]), mdhd = c.one(media, "mdhd"), hdlr = c.one(media, "hdlr");
   c.full(mdhd, 24); c.zero(mdhd.data + 4, mdhd.data + 12); requireValue([0, 0x55c4].includes(c.u16(mdhd.data + 20)), "unqualified_metadata"); c.zero(mdhd.data + 22, mdhd.data + 24);
   c.full(hdlr); requireValue(hdlr.end - hdlr.data >= 24 && hdlr.end - hdlr.data <= 37); c.zero(hdlr.data + 4, hdlr.data + 8); requireValue(c.text(hdlr.data + 8, 4) === "vide", "unsupported_mp4"); c.zero(hdlr.data + 12, hdlr.data + 24);
@@ -180,12 +236,12 @@ function publicMp4(bytes: Uint8Array) {
   const minf = c.one(media, "minf"), info = c.boxes(minf.data, minf.end, ["vmhd", "dinf", "stbl"]), vmhd = c.one(info, "vmhd"); c.full(vmhd, 12, 1); c.zero(vmhd.data + 4, vmhd.end);
   const dinf = c.one(info, "dinf"), dref = c.one(c.boxes(dinf.data, dinf.end, ["dref"]), "dref"); c.full(dref); requireValue(c.u32(dref.data + 4) === 1);
   const url = c.one(c.boxes(dref.data + 8, dref.end, ["url "]), "url "); c.full(url, 4, 1);
-  const stbl = c.one(info, "stbl"), tables = c.boxes(stbl.data, stbl.end, ["stsd", "stts", "stss", "stsc", "stsz", "stco"]), stsd = c.one(tables, "stsd"); c.full(stsd); requireValue(c.u32(stsd.data + 4) === 1);
+  const stbl = c.one(info, "stbl"), tables = c.boxes(stbl.data, stbl.end, ["stsd", "stts", "ctts", "stss", "stsc", "stsz", "stco"]), stsd = c.one(tables, "stsd"); c.full(stsd); requireValue(c.u32(stsd.data + 4) === 1);
   const avc = c.one(c.boxes(stsd.data + 8, stsd.end, ["avc1"]), "avc1"); requireValue(avc.end - avc.start >= 86);
   c.zero(avc.data, avc.start + 14); requireValue(c.u16(avc.start + 14) === 1); c.zero(avc.start + 16, avc.start + 32);
   requireValue(c.u32(avc.start + 36) === 0x00480000 && c.u32(avc.start + 40) === 0x00480000 && c.u32(avc.start + 44) === 0 && c.u16(avc.start + 48) === 1);
   c.zero(avc.start + 50, avc.start + 82); requireValue(c.u16(avc.start + 82) === 24 && c.u16(avc.start + 84) === 65535);
-  const extensions = c.boxes(avc.start + 86, avc.end, ["avcC", "pasp"]), ppsId = codec(c, c.one(extensions, "avcC"));
+  const extensions = c.boxes(avc.start + 86, avc.end, ["avcC", "pasp", "btrt"]), ppsId = codec(c, c.one(extensions, "avcC"));
   const pasp = extensions.find(box => box.type === "pasp"); if (pasp) requireValue(pasp.end - pasp.data === 8 && c.u32(pasp.data) === 1 && c.u32(pasp.data + 4) === 1);
   const stsz = c.one(tables, "stsz"), stsc = c.one(tables, "stsc"), stco = c.one(tables, "stco"), stts = c.one(tables, "stts");
   for (const table of [stsz, stsc, stco, stts]) c.full(table);
@@ -194,6 +250,9 @@ function publicMp4(bytes: Uint8Array) {
   const chunks = c.u32(stco.data + 4), mappingCount = c.u32(stsc.data + 4), timingCount = c.u32(stts.data + 4);
   requireValue(chunks > 0 && chunks <= samples && stco.end - stco.data === 8 + chunks * 4 && mappingCount > 0 && mappingCount <= chunks && stsc.end - stsc.data === 8 + mappingCount * 12
     && timingCount > 0 && timingCount <= samples && stts.end - stts.data === 8 + timingCount * 8);
+  const mediaScale = c.u32(mdhd.data + 12), mediaDuration = c.u32(mdhd.data + 16);
+  timeline(c, tables, samples, scale, duration, mediaScale, mediaDuration, mediaStart);
+  const btrt = extensions.find(box => box.type === "btrt"); if (btrt) bitrate(c, btrt, stsz, samples, mdat.end - mdat.data, mediaScale, mediaDuration);
   const stss = tables.find(box => box.type === "stss"), syncSamples = new Set<number>();
   if (stss) { c.full(stss); const count = c.u32(stss.data + 4); requireValue(count > 0 && count <= samples && stss.end - stss.data === 8 + count * 4); let previous = 0; for (let at = stss.data + 8; at < stss.end; at += 4) { const sample = c.u32(at); requireValue(sample > previous && sample <= samples); previous = sample; syncSamples.add(sample); } }
   let mapping = 0, sample = 0, end = mdat.data, nals = 0;

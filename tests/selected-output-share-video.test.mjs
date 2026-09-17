@@ -106,3 +106,55 @@ test("parameter sets and IDR require nonzero reference priority", async () => {
   const bytes = cleanVideo(), config = locate(bytes, stbl + "/stsd/avc1/avcC"), media = locate(bytes, "mdat");
   for (const at of [config.data + 8, config.data + 11 + view(bytes).getUint16(config.data + 6), media.data + 4]) { const changed = bytes.slice(); changed[at] &= 31; await refused(changed); }
 });
+
+function composition(entries, version = 0) {
+  const data = new Uint8Array(8 + entries.length * 8); data[0] = version; view(data).setUint32(4, entries.length);
+  entries.forEach(([count, offset], index) => { view(data).setUint32(8 + index * 8, count); view(data).setInt32(12 + index * 8, offset); });
+  return box("ctts", data);
+}
+function timed(bytes = cleanVideo(), entries = [[2, 1024]], version = 0, start = 1024) {
+  return modify(appendChild(bytes, stbl, composition(entries, version)), "moov/trak/edts/elst", 12, start);
+}
+function rateBox(bytes = cleanVideo(), overrides = {}) {
+  const media = locate(bytes, "mdat"), payload = media.end - media.data, facts = { buffer: payload, maximum: payload * 8, average: payload * 8, ...overrides }, data = new Uint8Array(12);
+  view(data).setUint32(0, facts.buffer); view(data).setUint32(4, facts.maximum); view(data).setUint32(8, facts.average); return box("btrt", data);
+}
+const emptyAppleWrapper = () => new Uint8Array(Buffer.from("0000003d75647461000000356d657461000000000000002168646c7200000000000000006d6469726170706c00000000000000000000000008696c7374", "hex"));
+async function qualifies(bytes, facts = expected(bytes)) { const result = await qualify(bytes, facts); assert.equal(result.status, "qualified", JSON.stringify(result)); assert.equal(result.policy, "selected-output-share-avc-mp4-v2"); assert.deepEqual(copy(result), bytes); return result; }
+
+test("v2 permits only the exact empty Apple item wrapper without changing any byte", async () => { await qualifies(appendChild(cleanVideo(), "moov", emptyAppleWrapper())); });
+for (const at of [16, 24, 36, 40, 44, 60]) test(`empty metadata wrapper mutation refuses at byte ${at}`, async () => { const wrapper = emptyAppleWrapper(); wrapper[at] ^= 1; await refused(appendChild(cleanVideo(), "moov", wrapper), "unqualified_metadata"); });
+test("empty metadata wrapper plus appended descriptive item refuses", async () => { const wrapper = emptyAppleWrapper(); await refused(appendChild(cleanVideo(), "moov", box("udta", join(wrapper.slice(8), box("name", utf8("PRIVATE"))))), "unqualified_metadata"); });
+test("version0 positive composition shift preserves complete presentation using matching edit origin", async () => { await qualifies(timed()); });
+test("version1 signed composition offsets can reorder the full timeline without dropping samples", async () => { await qualifies(timed(cleanVideo(), [[1, 8192], [1, -8192]], 1, 0)); });
+test("version1 positive shift and zero-offset table remain valid", async () => { await qualifies(timed(cleanVideo(), [[2, 1024]], 1)); await qualifies(timed(cleanVideo(), [[2, 0]], 0, 0)); });
+test("fractional media duration permits movie-clock floor or ceiling rounding", async () => {
+  let bytes = cleanVideo(); for (const path of ["moov/mvhd", "moov/trak/tkhd"]) bytes = modify(bytes, path, path.endsWith("mvhd") ? 16 : 20, 667);
+  bytes = modify(bytes, "moov/trak/edts/elst", 8, 667); bytes = modify(bytes, "moov/trak/mdia/mdhd", 12, 3); bytes = modify(bytes, "moov/trak/mdia/mdhd", 16, 2); bytes = modify(bytes, stbl + "/stts", 12, 1);
+  await qualifies(bytes, expected(bytes, { durationSeconds: 0.667 }));
+  bytes = modify(bytes, "moov/mvhd", 16, 666); bytes = modify(bytes, "moov/trak/tkhd", 20, 666); bytes = modify(bytes, "moov/trak/edts/elst", 8, 666);
+  await qualifies(bytes, expected(bytes, { durationSeconds: 0.666 }));
+});
+for (const [name, entries, version, start] of [
+  ["zero run", [[0, 0], [2, 1024]], 0, 1024], ["missing sample", [[1, 1024]], 0, 1024], ["extra sample", [[3, 1024]], 0, 1024],
+  ["duplicate presentation time", [[1, 0], [1, -8192]], 1, 0], ["gap", [[1, 0], [1, 1]], 0, 0], ["end omission", [[2, 1023]], 0, 1024],
+  ["negative presentation", [[1, -1], [1, 0]], 1, 0], ["unsigned ffffffff is not negative one", [[1, -1], [1, 0]], 0, 0],
+  ["maximum signed offset", [[2, 2147483647]], 1, 0], ["minimum signed offset", [[2, -2147483648]], 1, 0],
+  ["unsupported version", [[2, 1024]], 2, 1024], ["empty table", [], 0, 1024]
+]) test(`composition timeline refuses ${name}`, async () => { await refused(timed(cleanVideo(), entries, version, start)); });
+test("composition flags, duplicate boxes, trailing bytes and excessive entry count refuse", async () => {
+  const bytes = timed(); await refused(modify(bytes, stbl + "/ctts", 0, 1)); await refused(modify(bytes, stbl + "/ctts", 4, 100001));
+  await refused(appendChild(bytes, stbl, composition([[2, 1024]]))); const table = locate(bytes, stbl + "/ctts"); await refused(replace(bytes, stbl + "/ctts", box("ctts", join(bytes.slice(table.data, table.end), new Uint8Array(4)))));
+});
+for (const start of [1023, 1025, 0xffffffff, 16385]) test(`nonmatching/unsupported edit origin ${start} refuses`, async () => { await refused(modify(timed(), "moov/trak/edts/elst", 12, start)); });
+test("shifted presentation without matching edit and an edit that trims ordinary time refuse", async () => { await refused(replace(timed(), "moov/trak/edts/elst", new Uint8Array())); await refused(modify(cleanVideo(), "moov/trak/edts/elst", 12, 1)); });
+test("integral movie duration allows no one-tick or two-tick trim or extension", async () => {
+  for (const ticks of [998, 999, 1001, 1002]) { let bytes = cleanVideo(); bytes = modify(bytes, "moov/mvhd", 16, ticks); bytes = modify(bytes, "moov/trak/tkhd", 20, ticks); bytes = modify(bytes, "moov/trak/edts/elst", 8, ticks); await refused(bytes, "unsupported_mp4"); }
+});
+test("closed numeric bitrate box preserves exact bytes with matching actual average", async () => { const bytes = cleanVideo(); await qualifies(appendChild(bytes, stbl + "/stsd/avc1", rateBox(bytes))); });
+for (const [name, overrides] of [["buffer too small", { buffer: 1 }], ["buffer beyond payload", { buffer: 999999 }], ["zero average", { average: 0 }], ["incorrect average", { average: 1 }], ["maximum below average", { maximum: 1 }]]) test(`numeric bitrate subset refuses ${name}`, async () => { const bytes = cleanVideo(); await refused(appendChild(bytes, stbl + "/stsd/avc1", rateBox(bytes, overrides)), "unsupported_mp4"); });
+test("bitrate extra payload, short payload and duplicate fields refuse", async () => {
+  const bytes = cleanVideo(), rate = rateBox(bytes); await refused(appendChild(bytes, stbl + "/stsd/avc1", box("btrt", join(rate.slice(8), utf8("PRIVATE")))));
+  await refused(appendChild(bytes, stbl + "/stsd/avc1", box("btrt", rate.slice(8, -1)))); await refused(appendChild(appendChild(bytes, stbl + "/stsd/avc1", rate), stbl + "/stsd/avc1", rate));
+});
+test("ordinary descriptive user data and SEI remain refused after timing expansion", async () => { await refused(mp4(), "unqualified_metadata"); await refused(appendChild(timed(), "moov", box("udta", utf8("PRIVATE"))), "unqualified_metadata"); });
