@@ -1,5 +1,5 @@
 import { canonicalJson, digest, exactKeys, freeze, jsonIssues, record } from "../src/experiences/compiler.ts";
-import { readSponsorPolicy, readSponsorScenePolicy, SponsorEntitlementError, type SponsorApprovedPolicy, type SponsorPolicyV2, type SponsorPolicyV4, type SponsorPolicyV5, type SponsorPolicyV6 } from "./experience-sponsor-policy.ts";
+import { readSponsorPolicy, readSponsorScenePolicy, readSponsorAudioPolicy, captureSponsorAudioJson, SponsorEntitlementError, type SponsorApprovedPolicy, type SponsorPolicyV2, type SponsorPolicyV4, type SponsorPolicyV5, type SponsorPolicyV6, type SponsorPolicyV8 } from "./experience-sponsor-policy.ts";
 import { identityFromRequest, readExistingPrincipalRequest } from "./principal-request-core.ts";
 import { PRINCIPAL_WITH_ACCESS_SQL } from "./access-policy.ts";
 import { POLICY_VERSION } from "./policy-version.ts";
@@ -35,7 +35,7 @@ export const SPONSOR_APPROVAL_SCHEMA = Object.freeze([
     BEGIN SELECT RAISE(ABORT,'sponsor_approval_already_exists'); END`,
 ]);
 export type SponsorApprovalProposal = {
-  policy: Omit<SponsorPolicyV2, "approvalReceiptDigest"> | Omit<SponsorPolicyV4, "approvalReceiptDigest"> | Omit<SponsorPolicyV5, "approvalReceiptDigest"> | Omit<SponsorPolicyV6, "approvalReceiptDigest">;
+  policy: Omit<SponsorPolicyV2, "approvalReceiptDigest"> | Omit<SponsorPolicyV4, "approvalReceiptDigest"> | Omit<SponsorPolicyV5, "approvalReceiptDigest"> | Omit<SponsorPolicyV6, "approvalReceiptDigest"> | Omit<SponsorPolicyV8, "approvalReceiptDigest">;
   eligibleActorUserIds: string[];
   issuerUserIds: string[];
 };
@@ -47,6 +47,8 @@ export async function compileSponsorApprovalProposal(raw: unknown) {
   // Only the new Scene proposal takes this dedicated capture path. Select it
   // through own data, not property getters; a later V6 copy must originate here.
   const proposedPolicy = raw && typeof raw === "object" ? Object.getOwnPropertyDescriptor(raw, "policy")?.value : undefined;
+  if (proposedPolicy && typeof proposedPolicy === "object" && Object.getOwnPropertyDescriptor(proposedPolicy, "version")?.value === 8)
+    return compileSponsorAudioApprovalProposal(raw);
   const sceneProposal = proposedPolicy && typeof proposedPolicy === "object" && Object.getOwnPropertyDescriptor(proposedPolicy, "version")?.value === 6;
   if (sceneProposal) raw = captureSponsorSceneJson(raw);
   if (jsonIssues(raw).length || !record(raw) || !exactKeys(raw, ["policy", "eligibleActorUserIds", "issuerUserIds"])
@@ -98,7 +100,14 @@ export async function readSponsorInternalCommand(request: Request, maximumBytes 
   try { return JSON.parse(new TextDecoder("utf-8",{fatal:true}).decode(bytes)); } catch { return fail("sponsor_command_invalid"); }
 }
 export async function approveSponsorCampaign(request: Request, env: WorkerEnv) {
+  // Capture before the inherited body-parser await. Older versions keep their
+  // original path; only the explicit V8 branch consumes this lifetime guard.
+  const audioLifetime = sponsorAudioApprovalLifetime(request, env);
   const raw = await readSponsorInternalCommand(request);
+  const proposal = raw && typeof raw === "object" ? Object.getOwnPropertyDescriptor(raw, "proposal")?.value : undefined;
+  const policy = proposal && typeof proposal === "object" ? Object.getOwnPropertyDescriptor(proposal, "policy")?.value : undefined;
+  if (policy && typeof policy === "object" && Object.getOwnPropertyDescriptor(policy, "version")?.value === 8)
+    return approveSponsorAudioCampaign(raw, request, env, audioLifetime);
   if (jsonIssues(raw).length || !record(raw) || !exactKeys(raw, ["action", "approvalId", "proposal", "confirmation", "reviewedTermsDigest"])
     || raw.action !== "approve-sponsor-campaign" || !id(raw.approvalId) || raw.confirmation !== "APPROVE_SPONSOR_CAMPAIGN") return fail("sponsor_explicit_approval_required");
   const input = JSON.parse(canonicalJson(raw)) as typeof raw;
@@ -136,7 +145,7 @@ export async function approveSponsorCampaign(request: Request, env: WorkerEnv) {
 /** Live v2/v4/v5 approval predicate for issuance, native admission and every paid stage.
  * Original incurred monetary settlement deliberately never uses this predicate. */
 export function sponsorApprovalAssertion(policy: SponsorApprovedPolicy | SponsorPolicyV6, actorUserId: string, requireIssuer = false): OutputSqlAssertion {
-  const capturedColumns = policy.version === 6 ? sceneColumns : columns;
+  const capturedColumns = policy.version === 6 || policy.version === 8 ? sceneColumns : columns;
   // Keep the complete approval and principal proofs as sibling materialized
   // relations. Nesting the principal query inside the approval WHERE exceeds
   // D1's expression depth when this predicate is an atomic-write witness.
@@ -312,4 +321,215 @@ export async function loadApprovedSponsorSceneCampaign(request: Request, env: Wo
   }) || Date.now() < policy.startsAtMs || Date.now() >= deadline) return fail("sponsor_approved_campaign_unavailable");
   current();
   return freeze({ actor, policy, policyDigest: row.policy_digest, assertions });
+}
+
+/** V8 has its own descriptor snapshot and guarded compilation. It does not
+ * change any earlier proposal grammar or turn review metadata into approval. */
+async function compileSponsorAudioApprovalProposal(raw: unknown, current: () => void = () => {}) {
+  current();
+  const captured = freeze(captureSponsorAudioJson(raw));
+  if (jsonIssues(captured).length || !record(captured) || !exactKeys(captured, ["policy", "eligibleActorUserIds", "issuerUserIds"])
+    || !record(captured.policy) || captured.policy.version !== 8 || Object.hasOwn(captured.policy, "approvalReceiptDigest")
+    || ![captured.eligibleActorUserIds, captured.issuerUserIds].every(value => Array.isArray(value) && value.length > 0 && value.length <= 64
+      && value.every(id) && new Set(value).size === value.length)) return fail("sponsor_approval_terms_invalid");
+  const copied = captured as { policy: Omit<SponsorPolicyV8, "approvalReceiptDigest">; eligibleActorUserIds: string[]; issuerUserIds: string[] };
+  const validated = readSponsorAudioPolicy({ ...copied.policy, approvalReceiptDigest: `sha256:${"0".repeat(64)}` });
+  if (copied.eligibleActorUserIds.includes(validated.payerUserId) || copied.issuerUserIds.some(actor => !copied.eligibleActorUserIds.includes(actor)))
+    return fail("sponsor_approval_terms_invalid");
+  const termsJson = canonicalJson(copied);
+  current();
+  const termsDigest = await digest(copied);
+  current();
+  const policy = readSponsorAudioPolicy({ ...copied.policy, approvalReceiptDigest: termsDigest });
+  const policyJson = canonicalJson(policy);
+  const policyDigest = await digest(policy);
+  current();
+  return freeze({ policy, policyJson, policyDigest, termsJson, termsDigest });
+}
+
+function sponsorAudioApprovalLifetime(request: Request, env: WorkerEnv) {
+  const signal = request.signal, database = env.DB;
+  const identity = () => canonicalJson({ url: request.url, method: request.method, headers: [...request.headers.entries()],
+    cohort: env.FORMA_PILOT_COHORT_ID ?? null, admins: env.FORMA_ADMIN_EMAILS ?? null });
+  const captured = identity();
+  const current = () => {
+    if (signal.aborted || request.signal !== signal || env.DB !== database || identity() !== captured)
+      return fail("sponsor_approval_principal_changed");
+  };
+  return { database, current };
+}
+
+function audioPrincipalIdentity(actor: Awaited<ReturnType<typeof principal>>) {
+  return { userId: actor.userId, role: actor.role, consentVersion: actor.consentVersion, email: actor.email,
+    displayName: actor.displayName, consentedAt: actor.consentedAt, authorizationSnapshot: actor.authorizationSnapshot };
+}
+
+/** Compare the actual authentication result to the row captured before it. A
+ * changed-then-restored principal cannot be silently adopted as current. */
+function assertAudioPrincipalSnapshot(actor: Awaited<ReturnType<typeof principal>>, observedUserId: string, snapshotJson: string) {
+  const original = JSON.parse(snapshotJson) as unknown[];
+  const expected = {
+    userId: String(original[0]), role: String(original[1]), consentVersion: original[2] ? String(original[2]) : null,
+    email: String(original[10]), displayName: String(original[11]), consentedAt: original[12] ? String(original[12]) : null,
+    authorizationSnapshot: { updatedAt: String(original[3] ?? ""), rawEpoch: String(original[4] ?? ""),
+      grants: String(original[5] ?? "[]"), organizations: String(original[6] ?? "[]"), projects: String(original[7] ?? "[]"),
+      identityPolicies: String(original[8] ?? "[]"), canvasRequirements: Number(original[9] ?? 0) },
+  };
+  if (actor.userId !== observedUserId || canonicalJson(audioPrincipalIdentity(actor)) !== canonicalJson(expected))
+    return fail("sponsor_approval_principal_changed");
+}
+
+const audioOwnValue = (value: unknown, key: PropertyKey): unknown => value && typeof value === "object"
+  ? Object.getOwnPropertyDescriptor(value, key)?.value : undefined;
+function audioDataRecord(value: unknown): value is Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value) || ![Object.prototype, null].includes(Object.getPrototypeOf(value))) return false;
+  const descriptors = Object.getOwnPropertyDescriptors(value);
+  return Reflect.ownKeys(descriptors).every(key => typeof key === "string" && descriptors[key]!.enumerable && "value" in descriptors[key]!);
+}
+function assertAudioBatchResults(results: unknown, expected: number) {
+  if (!Array.isArray(results) || audioOwnValue(results, "length") !== expected) return fail("sponsor_approved_campaign_unavailable");
+  for (let index = 0; index < expected; index++) {
+    const result = audioOwnValue(results, index);
+    if (!audioDataRecord(result) || audioOwnValue(result, "success") !== true || Object.hasOwn(result, "error"))
+      return fail("sponsor_approved_campaign_unavailable");
+  }
+}
+function assertAudioProofResults(results: unknown, expected: number) {
+  assertAudioBatchResults(results, expected);
+  for (let index = 0; index < expected; index++) {
+    const rows = audioOwnValue(audioOwnValue(results, index), "results"), row = audioOwnValue(rows, 0);
+    if (!Array.isArray(rows) || audioOwnValue(rows, "length") !== 1 || !audioDataRecord(row) || audioOwnValue(row, "current") !== 1)
+      return fail("sponsor_approved_campaign_unavailable");
+  }
+}
+
+async function approveSponsorAudioCampaign(raw: unknown, request: Request, env: WorkerEnv,
+  lifetime: ReturnType<typeof sponsorAudioApprovalLifetime>) {
+  const { database } = lifetime;
+  // These SQL construction helpers consume DB only; do not let a reentrant
+  // statement preparation redirect subsequent proofs to a substituted Env.DB.
+  const proofEnv = { DB: database } as WorkerEnv;
+  lifetime.current();
+  const input = freeze(captureSponsorAudioJson(raw));
+  if (jsonIssues(input).length || !record(input) || !exactKeys(input, ["action", "approvalId", "proposal", "confirmation", "reviewedTermsDigest"])
+    || input.action !== "approve-sponsor-campaign" || !id(input.approvalId) || input.confirmation !== "APPROVE_SPONSOR_CAMPAIGN")
+    return fail("sponsor_explicit_approval_required");
+  const compiled = await compileSponsorAudioApprovalProposal(input.proposal, lifetime.current);
+  lifetime.current();
+  const live = () => {
+    lifetime.current();
+    const now = Date.now();
+    if (!Number.isFinite(now) || now < compiled.policy.startsAtMs || now >= compiled.policy.expiresAtMs)
+      return fail("sponsor_approved_campaign_unavailable");
+  };
+  live();
+  const observed = identityFromRequest(request);
+  if (!observed || observed.userId !== compiled.policy.payerUserId || input.reviewedTermsDigest !== compiled.termsDigest)
+    return fail("sponsor_payer_approval_required");
+  const payerAuthority = await authoritySnapshot(env, observed.userId, sceneColumns);
+  live();
+  const payer = await principal(request, env);
+  live();
+  assertAudioPrincipalSnapshot(payer, observed.userId, payerAuthority.json);
+  const capturedPayer = canonicalJson(audioPrincipalIdentity(payer));
+  const current = () => {
+    live();
+    if (canonicalJson(audioPrincipalIdentity(payer)) !== capturedPayer) return fail("sponsor_approval_principal_changed");
+  };
+  const existing = await database.prepare("SELECT * FROM experience_sponsor_approvals WHERE campaign_id=? OR approval_id=?")
+    .bind(compiled.policy.campaignId, input.approvalId).first<Record<string, unknown>>();
+  current();
+  const commandJson = canonicalJson(input);
+  const currentProof: OutputSqlAssertion = { sql: `EXISTS(SELECT 1 FROM experience_sponsor_approvals approval JOIN experience_sponsor_campaigns campaign ON campaign.campaign_id=approval.campaign_id
+    WHERE approval.approval_id=? AND approval.campaign_id=? AND approval.payer_user_id=? AND approval.terms_digest=? AND approval.terms_json=?
+      AND approval.policy_digest=? AND approval.policy_json=? AND approval.approved_by_user_id=? AND approval.payer_authority_json=? AND approval.approval_command_json=? AND approval.revoked_at_ms IS NULL
+      AND campaign.enabled=1 AND campaign.policy_digest=approval.policy_digest AND campaign.policy_json=approval.policy_json)`,
+    bindings: [input.approvalId, compiled.policy.campaignId, payer.userId, compiled.termsDigest, compiled.termsJson, compiled.policyDigest, compiled.policyJson, payer.userId, payerAuthority.json, commandJson] };
+  const windowProof: OutputSqlAssertion = { sql: `${databaseNow}>=? AND ${databaseNow}<?`,
+    bindings: [compiled.policy.startsAtMs, compiled.policy.expiresAtMs], deadlineMs: compiled.policy.expiresAtMs };
+  if (existing) {
+    if (existing.approval_id !== input.approvalId || existing.campaign_id !== compiled.policy.campaignId || existing.terms_json !== compiled.termsJson
+      || existing.policy_json !== compiled.policyJson || existing.approval_command_json !== commandJson || existing.revoked_at_ms !== null)
+      return fail("sponsor_approval_conflict");
+    const statements = [payerAuthority.assertion, windowProof, currentProof].flatMap(proof => outputProofReadStatements(proofEnv, [proof]));
+    current();
+    const checked = await database.batch<Record<string, unknown>>(statements);
+    current();
+    assertAudioProofResults(checked, statements.length);
+    current();
+    return freeze({ replayed: true, approvalId: input.approvalId, ...compiled });
+  }
+  const resourceDigest = await digest(compiled.policy.resources);
+  current();
+  const resourceJson = canonicalJson(compiled.policy.resources);
+  const statements = [
+    ...outputAssertionStatements(proofEnv, payerAuthority.assertion),
+    ...outputAssertionStatements(proofEnv, windowProof),
+    database.prepare("INSERT INTO experience_sponsor_campaigns(campaign_id,policy_digest,policy_json,enabled) VALUES(?,?,?,1)")
+      .bind(compiled.policy.campaignId, compiled.policyDigest, compiled.policyJson),
+    database.prepare("INSERT INTO experience_sponsor_resource_policies(campaign_id,limits_digest,limits_json,enabled) VALUES(?,?,?,1)")
+      .bind(compiled.policy.campaignId, resourceDigest, resourceJson),
+    database.prepare(`INSERT INTO experience_sponsor_approvals(approval_id,campaign_id,payer_user_id,terms_digest,terms_json,policy_digest,policy_json,approved_by_user_id,payer_authority_json,approval_command_json,approved_at_ms)
+      VALUES(?,?,?,?,?,?,?,?,?,?,${databaseNow})`).bind(input.approvalId, compiled.policy.campaignId, payer.userId, compiled.termsDigest, compiled.termsJson, compiled.policyDigest, compiled.policyJson, payer.userId, payerAuthority.json, commandJson),
+    ...outputAssertionStatements(proofEnv, currentProof),
+    ...outputAssertionStatements(proofEnv, windowProof),
+  ];
+  current();
+  const committed = await database.batch(statements);
+  // A committed but lost acknowledgement remains the original immutable
+  // approval. Never retry, revoke, refund or erase it after a lifetime failure.
+  current();
+  assertAudioBatchResults(committed, statements.length);
+  current();
+  return freeze({ replayed: false, approvalId: input.approvalId, ...compiled });
+}
+
+/** Read-only current V8 campaign metadata. It grants no native execution,
+ * sponsored intake access or finite read allowance. No schema is initialized. */
+export async function loadApprovedSponsorAudioCampaign(request: Request, env: WorkerEnv, campaignId: string) {
+  if (!id(campaignId)) return fail("sponsor_campaign_invalid");
+  const { database, current } = sponsorAudioApprovalLifetime(request, env);
+  const proofEnv = { DB: database } as WorkerEnv;
+  current();
+  const observed = identityFromRequest(request);
+  if (!observed) return fail("sponsor_canonical_principal_required");
+  const actorAuthority = await authoritySnapshot(env, observed.userId, sceneColumns);
+  current();
+  const actor = await principal(request, env);
+  current();
+  assertAudioPrincipalSnapshot(actor, observed.userId, actorAuthority.json);
+  const capturedActor = canonicalJson(audioPrincipalIdentity(actor));
+  const liveActor = () => {
+    current();
+    if (canonicalJson(audioPrincipalIdentity(actor)) !== capturedActor) return fail("sponsor_approval_principal_changed");
+  };
+  const row = await database.prepare("SELECT policy_json,policy_digest FROM experience_sponsor_campaigns WHERE campaign_id=? AND enabled=1 AND length(CAST(policy_json AS BLOB))<=131072")
+    .bind(campaignId).first<{ policy_json: string; policy_digest: string }>();
+  liveActor();
+  if (!audioDataRecord(row)) return fail("sponsor_approved_campaign_unavailable");
+  const policyJson = audioOwnValue(row, "policy_json"), storedDigest = audioOwnValue(row, "policy_digest");
+  if (typeof policyJson !== "string" || typeof storedDigest !== "string") return fail("sponsor_approved_campaign_unavailable");
+  const policy = readSponsorAudioPolicy(JSON.parse(policyJson));
+  const policyDigest = await digest(policy);
+  liveActor();
+  if (policy.campaignId !== campaignId || policyDigest !== storedDigest) return fail("sponsor_approved_campaign_unavailable");
+  const live = () => {
+    liveActor();
+    const now = Date.now();
+    if (!Number.isFinite(now) || now < policy.startsAtMs || now >= policy.expiresAtMs) return fail("sponsor_approved_campaign_unavailable");
+  };
+  live();
+  const assertions = [actorAuthority.assertion, sponsorApprovalAssertion(policy, actor.userId, true),
+    { sql: `NOT EXISTS(SELECT 1 FROM pilot_participants participant JOIN pilot_cohorts cohort ON cohort.cohort_id=participant.cohort_id
+      WHERE participant.user_id IN(?,?) AND participant.status='active' AND participant.revoked_at IS NULL AND cohort.status IN('active','paused','closed'))`,
+      bindings: [actor.userId, policy.payerUserId] },
+    { sql: `EXISTS(SELECT 1 FROM experience_sponsor_campaigns WHERE campaign_id=? AND enabled=1 AND policy_digest=? AND policy_json=?) AND ${databaseNow}>=? AND ${databaseNow}<?`,
+      bindings: [campaignId, storedDigest, policyJson, policy.startsAtMs, policy.expiresAtMs], deadlineMs: policy.expiresAtMs }];
+  const statements = outputProofReadStatements(proofEnv, assertions);
+  live();
+  const checked = await database.batch<Record<string, unknown>>(statements);
+  live();
+  assertAudioProofResults(checked, statements.length);
+  live();
+  return freeze({ actor, policy, policyDigest, assertions });
 }

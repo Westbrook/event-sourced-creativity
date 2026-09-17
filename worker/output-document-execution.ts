@@ -11,8 +11,9 @@ import { preflightOutputSceneTarget, outputScenePreflightProof } from "./output-
 import { outputProofReadStatements } from "./output-disclosure-proof.ts";
 import { readOutputScenePayload } from "./output-scene-preflight-contract.ts";
 import { requireSceneMiniAppCostApproval } from "./scene-mini-app-consent.ts";
-import { sponsorSceneAdmissionPreparation } from "./experience-sponsor-admission.ts";
+import { sponsorSceneAdmissionPreparation, sponsorAudioAdmissionPreparation } from "./experience-sponsor-admission.ts";
 import { requireSceneSponsorAdmissionForTarget, requireSceneSponsorAdmissionCurrent } from "./output-scene-sponsored-handoff.ts";
+import { requireAudioSponsorAdmissionForTarget, requireAudioSponsorAdmissionCurrent } from "./output-audio-sponsored-handoff.ts";
 import { preflightOutputNarrativeTarget } from "./output-narrative-preflight.ts";
 import { createOutputAdmissionReads, outputAdmissionBudgetOwner, outputAdmissionGovernanceAssertions, outputAdmissionSponsor } from "./output-admission-reads.ts";
 import type { OutputGovernanceWitness } from "./output-governance-witness.ts";
@@ -93,6 +94,7 @@ async function prepareAdmission(input:Parameters<OutputExecutionBridge["prepareA
  const sceneAssertions:OutputSqlAssertion[]=[];
  const sceneJobAdmissions:NonNullable<OutputPreparedAdmission['sceneJobAdmissions']>=[];
  const scenePreparation=input.sponsorAdmission?sponsorSceneAdmissionPreparation(input.sponsorAdmission,{request:input.request,env:input.env,actorUserId:input.scope.actorUserId,documentId:input.scope.documentId}):null;
+ const audioPreparation=input.sponsorAdmission?sponsorAudioAdmissionPreparation(input.sponsorAdmission,{request:input.request,env:input.env,actorUserId:input.scope.actorUserId,documentId:input.scope.documentId}):null;
  const sceneCurrentChecks:Array<()=>void>=[];
  const prepared:Array<{slot:OutputOperationSlot;job:PreparedOutputDocumentJob;statements:D1PreparedStatement[];assertions:OutputSqlAssertion[];checkpoint:Record<string,unknown>}> = [];
  for(const slot of input.slots){
@@ -100,9 +102,11 @@ async function prepareAdmission(input:Parameters<OutputExecutionBridge["prepareA
   const frozen=input.preflight.targets.find(target=>target.targetId===slot.targetId);
   if(!target||!frozen?.available)throw new OutputConflictError("output_target_not_admissible");
   if(scenePreparation&&!Object.hasOwn(target,"scene_contract"))throw new OutputConflictError("sponsor_scene_handoff_changed",403);
-  const assertSceneCurrent=()=>{if(scenePreparation)requireSceneSponsorAdmissionCurrent(scenePreparation,{...input,target},input.preflight,input.sceneCostConsent);};
-  if(scenePreparation)sceneCurrentChecks.push(assertSceneCurrent);
-  const current=scenePreparation?await requireSceneSponsorAdmissionForTarget(scenePreparation,{...input,target},input.preflight,input.sceneCostConsent):await preflightOutputNativeTarget({...input,target});
+  if(audioPreparation&&!Object.hasOwn(target,"audio_contract"))throw new OutputConflictError("sponsor_audio_handoff_changed",403);
+  const assertSceneCurrent=()=>{if(scenePreparation)requireSceneSponsorAdmissionCurrent(scenePreparation,{...input,target},input.preflight,input.sceneCostConsent);if(audioPreparation)requireAudioSponsorAdmissionCurrent(audioPreparation,{...input,target},input.preflight,input.audioCostConsent);};
+  if(scenePreparation||audioPreparation)sceneCurrentChecks.push(assertSceneCurrent);
+  if(audioPreparation)sceneAssertions.push(...requireAudioSponsorAdmissionCurrent(audioPreparation,{...input,target},input.preflight,input.audioCostConsent));
+  const current=scenePreparation?await requireSceneSponsorAdmissionForTarget(scenePreparation,{...input,target},input.preflight,input.sceneCostConsent):audioPreparation?await requireAudioSponsorAdmissionForTarget(audioPreparation,{...input,target},input.preflight,input.audioCostConsent):await preflightOutputNativeTarget({...input,target});
   assertSceneCurrent();
   if(!current.available)throw new OutputConflictError("output_route_changed");
   const currentRoute=await outputDigest(current);assertSceneCurrent();
@@ -140,9 +144,9 @@ async function prepareAdmission(input:Parameters<OutputExecutionBridge["prepareA
   const nativeAudio=Object.hasOwn(target,"audio_contract")?readOutputAudioPayload(settings.payload):null;
   if(Object.hasOwn(target,"audio_contract")&&!nativeAudio)throw new OutputConflictError("output_audio_contract_unsupported");
   const refreshAudio=async()=>{
-   const refreshed=await preflightOutputAudioTarget({...input,target});const proof=outputAudioPreflightAssertions(refreshed),preview=parseAudioMiniAppCostPreview((refreshed.settings as Record<string,unknown>).costPreview);
+   const refreshed=audioPreparation?await requireAudioSponsorAdmissionForTarget(audioPreparation,{...input,target},input.preflight,input.audioCostConsent):await preflightOutputAudioTarget({...input,target});assertSceneCurrent();const proof=outputAudioPreflightAssertions(refreshed),preview=parseAudioMiniAppCostPreview((refreshed.settings as Record<string,unknown>).costPreview);
    if(!nativeAudio||!proof||!preview||!refreshed.available||await outputDigest(refreshed)!==slot.routeDigest||preview.requestId!==slot.jobId||slot.attemptOrdinal!==0||slot.previousSlotId)throw new OutputConflictError("output_audio_source_changed",403);
-   requireAudioMiniAppCostApproval(input.audioCostConsent,(settings as unknown as Record<string,unknown>).costPreview,preview);sceneAssertions.push(...proof);return nativeAudio;
+   assertSceneCurrent();requireAudioMiniAppCostApproval(input.audioCostConsent,(settings as unknown as Record<string,unknown>).costPreview,preview);sceneAssertions.push(...proof);return nativeAudio;
   };
   if(nativeAudio)await refreshAudio();
   const nativeScene=Object.hasOwn(target,"scene_contract")?await readOutputScenePayload(settings.payload):null;

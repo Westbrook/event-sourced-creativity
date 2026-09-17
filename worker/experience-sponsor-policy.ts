@@ -3,6 +3,7 @@ import { readSponsorCampaignTemplate, recipeMatchesSponsorTemplate, type Sponsor
 import { captureSponsorSceneJson, readSponsorSceneCampaignTemplate, recipeMatchesSponsorSceneTemplate, type SponsorSceneCampaignTemplate } from "./experience-sponsor-scene-contract.ts";
 import { readSponsorSlidesCampaignTemplate, recipeMatchesSponsorSlidesTemplate, type SponsorSlidesCampaignTemplate } from "./experience-sponsor-slides-contract.ts";
 import { readSponsorStoryCampaignTemplate, recipeMatchesSponsorStoryTemplate, type SponsorStoryCampaignTemplate } from "./experience-sponsor-story-contract.ts";
+import { readSponsorAudioCampaignTemplate, recipeMatchesSponsorAudioTemplate, type SponsorAudioCampaignTemplate } from "./experience-sponsor-audio-contract.ts";
 import { readSponsorResourceLimits, type SponsorResourceLimits, type SponsorResourceLimitsV1 } from "./experience-sponsor-resources.ts";
 import type { OutputKind } from "../src/experiences/contracts.ts";
 
@@ -51,7 +52,11 @@ export type SponsorPolicyV5 = Omit<SponsorPolicyV1, "version" | "recipes"> & {
 export type SponsorPolicyV6 = Omit<SponsorPolicyV1, "version" | "recipes"> & {
   version: 6; family: "canonical-scene-screenplay@1"; templates: SponsorSceneCampaignTemplate[]; resources: SponsorResourceLimitsV1;
 };
-export type SponsorApprovedPolicy = SponsorPolicyV2 | SponsorPolicyV4 | SponsorPolicyV5 | SponsorPolicyV6;
+/** Dormant Audio grammar. V1 resources grant no Audio draft or passive reads. */
+export type SponsorPolicyV8 = Omit<SponsorPolicyV1, "version" | "recipes"> & {
+  version: 8; family: "canonical-instrumental-cue@1"; templates: SponsorAudioCampaignTemplate[]; resources: SponsorResourceLimitsV1;
+};
+export type SponsorApprovedPolicy = SponsorPolicyV2 | SponsorPolicyV4 | SponsorPolicyV5 | SponsorPolicyV6 | SponsorPolicyV8;
 export type SponsorPolicy = SponsorPolicyV1 | SponsorApprovedPolicy;
 export type SponsorEnvelopeV1 = {
   version: 1; campaignId: string; policyVersion: string; consumptionId: string; intentKey: string;
@@ -65,7 +70,11 @@ export type SponsorEnvelopeV2 = Omit<SponsorEnvelopeV1, "version"> & { version: 
 export type SponsorEnvelopeV4 = Omit<SponsorEnvelopeV1, "version"> & { version: 4; family: "canonical-short-story@1"; templateDigest: string };
 export type SponsorEnvelopeV5 = Omit<SponsorEnvelopeV1, "version"> & { version: 5; family: "canonical-five-slide-deck@1"; templateDigest: string };
 export type SponsorEnvelopeV6 = Omit<SponsorEnvelopeV1, "version"> & { version: 6; family: "canonical-scene-screenplay@1"; templateDigest: string };
-export type SponsorEnvelope = SponsorEnvelopeV1 | SponsorEnvelopeV2 | SponsorEnvelopeV4 | SponsorEnvelopeV5 | SponsorEnvelopeV6;
+export type SponsorEnvelopeV8 = Omit<SponsorEnvelopeV1, "version"> & {
+  version: 8; family: "canonical-instrumental-cue@1"; templateDigest: string;
+  audioActorRequestDigest: string; audioSponsorReviewDigest: string; originalRequestId: string; originalExpiresAtMs: number;
+};
+export type SponsorEnvelope = SponsorEnvelopeV1 | SponsorEnvelopeV2 | SponsorEnvelopeV4 | SponsorEnvelopeV5 | SponsorEnvelopeV6 | SponsorEnvelopeV8;
 const recipeKeys = ["appId", "recipeVersion", "releaseDigest", "outputKind", "provider", "model", "routeDigest", "settingsDigest", "outputCount", "durationMs", "width", "height", "calls", "maximumTokens", "maximumMicrousd"];
 function validRecipe(value: unknown): value is SponsorRecipe {
   if (!keys(value, recipeKeys) || ![value.appId, value.recipeVersion, value.provider, value.model].every(id)
@@ -121,6 +130,8 @@ function readSponsorSlidesPolicy(raw: unknown): SponsorPolicyV5 {
 
 /** Candidate policies are inert review material, not runtime configuration. */
 export function readSponsorPolicy(raw: unknown = DEFAULT_SPONSOR_POLICY): SponsorPolicy | typeof DEFAULT_SPONSOR_POLICY {
+  const ownVersion = raw && typeof raw === "object" ? Object.getOwnPropertyDescriptor(raw, "version")?.value : undefined;
+  if (ownVersion === 8) return readSponsorAudioPolicy(raw);
   if (jsonIssues(raw).length) return fail("sponsor_policy_invalid");
   if (keys(raw, ["version", "mode"]) && raw.version === 1 && raw.mode === "disabled") return DEFAULT_SPONSOR_POLICY;
   if (record(raw) && raw.version === 4) return readSponsorStoryPolicy(raw);
@@ -205,6 +216,7 @@ async function compileSponsorSlidesEnvelope(policy: SponsorPolicyV5, raw: unknow
  * not prove rights, identity or custody; native commit-time authority is required. */
 export async function compileSponsorEnvelope(rawPolicy: unknown, rawEnvelope: unknown) {
   const policy = readSponsorPolicy(rawPolicy);
+  if (policy.version === 8) return compileSponsorAudioEnvelope(policy, rawEnvelope);
   if (policy.version === 6) return compileSponsorSceneEnvelope(policy, rawEnvelope);
   if (policy.mode === "disabled") return fail("sponsor_disabled");
   if (policy.version === 4) return compileSponsorStoryEnvelope(policy, rawEnvelope);
@@ -277,6 +289,91 @@ export async function compileSponsorSceneEnvelope(rawPolicy: unknown, raw: unkno
   const templateDigests = await Promise.all(policy.templates.map(template => digest(template)));
   if (!policy.templates.some((template, index) => templateDigests[index] === envelope.templateDigest
     && recipeMatchesSponsorSceneTemplate(template, envelope.recipe))) return fail("sponsor_envelope_not_eligible");
+  const [policyDigest, envelopeDigest] = await Promise.all([digest(policy), digest(envelope)]);
+  return freeze({ policy, envelope, policyJson: canonicalJson(policy), envelopeJson: canonicalJson(envelope), policyDigest, envelopeDigest });
+}
+
+/** Audio metadata uses a bounded own-data snapshot before validation/hashing.
+ * Accessors, sparse arrays, hidden fields and symbols cannot supply authority.
+ * This is a JSON capture helper, not native source or payer approval evidence. */
+export function captureSponsorAudioJson(raw: unknown): unknown {
+  let nodes = 0, characters = 0;
+  const ancestors = new Set<object>();
+  const invalid = (): never => fail("sponsor_policy_invalid");
+  const visit = (value: unknown, depth: number): unknown => {
+    if (++nodes > 4096 || depth > 12) return invalid();
+    if (typeof value === "string") { characters += value.length; return value.length <= 8192 && characters <= 131072 ? value : invalid(); }
+    if (value === null || typeof value === "boolean") return value;
+    if (typeof value === "number") return Number.isFinite(value) ? value : invalid();
+    if (!value || typeof value !== "object" || ancestors.has(value)) return invalid();
+    const array = Array.isArray(value);
+    if (array ? Object.getPrototypeOf(value) !== Array.prototype : ![Object.prototype, null].includes(Object.getPrototypeOf(value))) return invalid();
+    const descriptors = Object.getOwnPropertyDescriptors(value), names = Reflect.ownKeys(descriptors);
+    if (names.some(name => typeof name !== "string") || names.length > 4096) return invalid();
+    const length = array ? descriptors.length?.value : 0;
+    if (array && (!Number.isSafeInteger(length) || length < 0 || length > 64 || names.length !== length + 1
+      || !("value" in descriptors.length!) || descriptors.length!.enumerable)) return invalid();
+    ancestors.add(value);
+    const result: Record<string, unknown> | unknown[] = array ? [] : Object.create(null);
+    for (const name of names as string[]) {
+      if (array && name === "length") continue;
+      const descriptor = descriptors[name]!;
+      if (!descriptor.enumerable || !("value" in descriptor) || ["__proto__", "prototype", "constructor"].includes(name)
+        || array && (!/^(?:0|[1-9]\d*)$/u.test(name) || Number(name) >= length)) return invalid();
+      characters += name.length;
+      if (characters > 131072) return invalid();
+      Object.defineProperty(result, name, { value: visit(descriptor.value, depth + 1), enumerable: true, writable: true, configurable: true });
+    }
+    ancestors.delete(value);
+    return result;
+  };
+  return visit(raw, 0);
+}
+
+/** Closed V8 review data; native admission still requires actual actor intent
+ * and a separately verified payer approval plus original Audio source proof. */
+export function readSponsorAudioPolicy(raw: unknown): SponsorPolicyV8 {
+  raw = captureSponsorAudioJson(raw);
+  if (!keys(raw, ["version", "family", "mode", "campaignId", "policyVersion", "payerUserId", "audience", "approvalReceiptDigest", "startsAtMs", "expiresAtMs", "maximumGrantLifetimeMs", "maximumAdmissions", "maximumMicrousd", "maximumAdmissionsPerActor", "windowMs", "maximumAdmissionsPerWindow", "maximumAdmissionsPerActorWindow", "templates", "resources"])
+    || raw.version !== 8 || raw.family !== "canonical-instrumental-cue@1" || raw.mode !== "candidate" || raw.audience !== "canonical-principal"
+    || ![raw.campaignId, raw.policyVersion, raw.payerUserId].every(id) || !hash(raw.approvalReceiptDigest)
+    || !integer(raw.startsAtMs, 0, 8_640_000_000_000_000) || !integer(raw.expiresAtMs, 1, 8_640_000_000_000_000)
+    || raw.expiresAtMs <= raw.startsAtMs || !integer(raw.maximumGrantLifetimeMs, 1, 900_000)
+    || !integer(raw.maximumMicrousd, 1, 1_000_000_000_000)
+    || ![raw.maximumAdmissions, raw.maximumAdmissionsPerActor, raw.maximumAdmissionsPerWindow, raw.maximumAdmissionsPerActorWindow].every(value => integer(value, 1, 100_000))
+    || !integer(raw.windowMs, 1, 86_400_000) || !Array.isArray(raw.templates) || raw.templates.length !== 1
+    || Number(raw.maximumAdmissionsPerActor) > Number(raw.maximumAdmissions)
+    || Number(raw.maximumAdmissionsPerWindow) > Number(raw.maximumAdmissions)
+    || Number(raw.maximumAdmissionsPerActorWindow) > Number(raw.maximumAdmissionsPerActor)) return fail("sponsor_policy_invalid");
+  const templates = raw.templates.map(readSponsorAudioCampaignTemplate), resources = readSponsorResourceLimits(raw.resources);
+  if (resources.version !== 1 || resources.startsAtMs < raw.startsAtMs || resources.expiresAtMs > raw.expiresAtMs
+    || templates.some(template => template.maximumMicrousd > Number(raw.maximumMicrousd))) return fail("sponsor_policy_invalid");
+  return freeze(JSON.parse(canonicalJson({ ...raw, templates, resources })) as SponsorPolicyV8);
+}
+
+/** Original request/deadline and supplied actor/review digests are immutable
+ * identity fields. This pure compiler deliberately applies no current clock:
+ * incurred-cost reconstruction must not renew or discard an expired original. */
+export async function compileSponsorAudioEnvelope(rawPolicy: unknown, raw: unknown) {
+  raw = captureSponsorAudioJson(raw);
+  const policy = readSponsorAudioPolicy(rawPolicy);
+  if (record(raw) && raw.actorKind === "guest") return fail("sponsor_guest_custody_not_integrated");
+  if (!keys(raw, ["version", "family", "campaignId", "policyVersion", "consumptionId", "intentKey", "actorKind", "actorUserId", "sessionDigest", "payerUserId", "ownerUserId", "projectId", "documentId", "sourceRevision", "sourceDigest", "orderedAssetDigests", "rightsDigest", "compiledInputDigest", "transferEnvelopeDigest", "recipe", "issuedAtMs", "expiresAtMs", "templateDigest", "audioActorRequestDigest", "audioSponsorReviewDigest", "originalRequestId", "originalExpiresAtMs"])
+    || raw.version !== 8 || raw.family !== policy.family || raw.actorKind !== "canonical-principal"
+    || ![raw.campaignId, raw.policyVersion, raw.consumptionId, raw.intentKey, raw.actorUserId, raw.payerUserId, raw.ownerUserId, raw.projectId, raw.documentId].every(id)
+    || ![raw.sessionDigest, raw.sourceDigest, raw.rightsDigest, raw.compiledInputDigest, raw.transferEnvelopeDigest, raw.templateDigest, raw.audioActorRequestDigest, raw.audioSponsorReviewDigest].every(hash)
+    || typeof raw.originalRequestId !== "string" || !/^audio-[a-f0-9]{64}$/u.test(raw.originalRequestId)
+    || !integer(raw.sourceRevision, 0, Number.MAX_SAFE_INTEGER) || !Array.isArray(raw.orderedAssetDigests) || raw.orderedAssetDigests.length !== 0
+    || !integer(raw.issuedAtMs, Math.max(policy.startsAtMs, policy.resources.startsAtMs), policy.expiresAtMs)
+    || !integer(raw.originalExpiresAtMs, Number(raw.issuedAtMs) + 1, 8_640_000_000_000_000)
+    || !integer(raw.expiresAtMs, Number(raw.issuedAtMs) + 1, Math.min(policy.expiresAtMs, policy.resources.expiresAtMs, Number(raw.originalExpiresAtMs), Number(raw.issuedAtMs) + policy.maximumGrantLifetimeMs))) return fail("sponsor_envelope_invalid");
+  if (raw.campaignId !== policy.campaignId || raw.policyVersion !== policy.policyVersion || raw.payerUserId !== policy.payerUserId
+    || raw.actorUserId !== raw.ownerUserId || raw.actorUserId === raw.payerUserId
+    || !policy.templates.some(template => recipeMatchesSponsorAudioTemplate(template, raw.recipe))) return fail("sponsor_envelope_not_eligible");
+  const envelope = freeze(JSON.parse(canonicalJson(raw)) as SponsorEnvelopeV8);
+  const templateDigests = await Promise.all(policy.templates.map(template => digest(template)));
+  if (!policy.templates.some((template, index) => templateDigests[index] === envelope.templateDigest
+    && recipeMatchesSponsorAudioTemplate(template, envelope.recipe))) return fail("sponsor_envelope_not_eligible");
   const [policyDigest, envelopeDigest] = await Promise.all([digest(policy), digest(envelope)]);
   return freeze({ policy, envelope, policyJson: canonicalJson(policy), envelopeJson: canonicalJson(envelope), policyDigest, envelopeDigest });
 }

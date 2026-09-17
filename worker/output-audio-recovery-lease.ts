@@ -7,7 +7,8 @@ import { outputPlannerResponseShape } from "./output-planner-response-shape.ts";
 import { readOpenAITextUsage } from "./openai-text-cost.ts";
 import { providerFacingCombinedContextPlan } from "./openai-adapter.ts";
 import { parseDocumentArtifactContent, resolveDocumentArtifactContextGroups, documentArtifactValidationIssues } from "../src/model/document-artifacts.ts";
-import { verifiedAudioRecoveryQueue, type CreativeAudioPreparedReceipt } from "./fal-audio-adapter.ts";
+import { verifiedAudioRecoveryQueue, readAudioCompletedResultObservation, type AudioCompletedResultObservation, type CreativeAudioPreparedReceipt } from "./fal-audio-adapter.ts";
+import { readSponsorFinancialBinding, sponsorFinancialIdentity, sponsorFinancialEventProfile } from "./experience-sponsor-execution.ts";
 import { outputAssertionStatements, OutputConflictError, type OutputScope, type OutputOperationSlot, type OutputSqlAssertion } from "./output-requirements-ledger.ts";
 import type { DocumentJobRow } from "./document-jobs-api.ts";
 import type { WorkerEnv } from "./runtime.ts";
@@ -109,7 +110,7 @@ export async function claimOutputAudioRecoveryLease(env:WorkerEnv,scope:OutputSc
  const final=receipts.find(call=>call.unitId===(planners.length===2?"planning:0:repair":"planning:0:initial"));
  if(final?.providerRequestId!==cp.plannerResponseId)refuse();
  outputAudioPlannerCost(cp);
- const totals={inputTokens:0,outputTokens:0,totalTokens:0};
+ const totals={inputTokens:0,outputTokens:0,totalTokens:0},plannerFinancialAssertions:OutputSqlAssertion[]=[];
  for(const planned of planners){
   options.onStage?.("audio_planner");
   const receipt=receipts.find(call=>call.clientRequestId===planned.client_request_id);
@@ -145,7 +146,8 @@ export async function claimOutputAudioRecoveryLease(env:WorkerEnv,scope:OutputSc
     ||canonicalJson(resolved.output)!==canonicalJson(cp.artifactPlan))refuse();
   }
   assertions.push({sql:"EXISTS(SELECT 1 FROM private_content WHERE content_id=? AND owner_id=? AND kind='provider-response' AND content=? AND expires_at=? AND redacted_at IS NULL AND expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now') AND NOT EXISTS(SELECT 1 FROM project_resource_scopes WHERE resource_kind='content' AND resource_id=private_content.content_id))",bindings:[receipt.responseRef!,scope.actorUserId,body.content,body.expires_at]});
-  assertions.push({sql:"EXISTS(SELECT 1 FROM output_provider_calls WHERE scope_key=? AND slot_id=? AND call_key=? AND stage_key=? AND provider='openai' AND model='gpt-5.6-terra' AND client_request_id=? AND request_digest IS ? AND provider_response_id=? AND status='settled' AND used_microusd=?)",bindings:[scope.key,slot.slotId,String(planned.call_key),String(planned.stage_key),receipt.clientRequestId,String(planned.request_digest),receipt.providerRequestId!,receipt.costMicrousd!]});
+  const paidPlanner:OutputSqlAssertion={sql:"EXISTS(SELECT 1 FROM output_provider_calls WHERE scope_key=? AND slot_id=? AND call_key=? AND stage_key=? AND provider='openai' AND model='gpt-5.6-terra' AND client_request_id=? AND request_digest IS ? AND provider_response_id=? AND status='settled' AND used_microusd=? AND reserved_microusd=?)",bindings:[scope.key,slot.slotId,String(planned.call_key),String(planned.stage_key),receipt.clientRequestId,String(planned.request_digest),receipt.providerRequestId!,receipt.costMicrousd!,Number(planned.reserved_microusd)]};
+  assertions.push(paidPlanner);plannerFinancialAssertions.push(paidPlanner);
  }
  // Older native progress retained the received "pending" validation label
  // over the later successful observation. Only repair that label after exact
@@ -175,6 +177,39 @@ export async function claimOutputAudioRecoveryLease(env:WorkerEnv,scope:OutputSc
  options.onStage?.("audio_lease");
  const validatedReceiptMap=JSON.stringify(cp.providerSubmissions);
  let receiptMap=originalReceiptMap,settledCost=mediaReceipt.status==="completed"?Number(mediaReceipt.costMicrousd):null,allowUncertain=media.status==="uncertain";
+ // Capture the original purchase separately from the expiring creative lease.
+ // This projection contains no source, request, result body or current campaign.
+ const purchaseSql=`FROM document_jobs job JOIN output_operation_slots slot ON slot.job_id=job.job_id
+  JOIN output_execution_grants grant_row ON grant_row.scope_key=slot.scope_key AND grant_row.grant_id=slot.grant_id
+  JOIN budget_reservations token ON token.reservation_id=slot.token_reservation_id
+  JOIN cost_budget_reservations cost ON cost.reservation_id=slot.cost_reservation_id
+  WHERE job.job_id=? AND job.owner_id=? AND job.stream_id=? AND job.document_id=? AND job.correlation_id=? AND job.attempt_count=?
+   AND job.kind='render_document' AND job.source_surface='outputs'
+   AND slot.scope_key=? AND slot.slot_id=? AND slot.grant_id=? AND slot.plan_revision_id=? AND slot.target_id=?
+   AND slot.target_contract_digest=? AND slot.source_digest=? AND slot.route_digest=? AND slot.attempt_ordinal=0 AND slot.previous_slot_id IS NULL
+   AND grant_row.actor_user_id=job.owner_id AND grant_row.context_id IS NULL
+   AND token.reservation_id=? AND cost.reservation_id=? AND token.owner_id=grant_row.payer_user_id AND cost.owner_id=token.owner_id
+   AND token.stream_id=job.stream_id AND cost.stream_id=job.stream_id AND token.correlation_id=job.correlation_id AND cost.correlation_id=job.correlation_id
+   AND token.period=cost.period AND token.operation='document-render:audio' AND cost.operation=token.operation AND cost.workspace_id='forma'
+   AND token.reserved_tokens=? AND cost.reserved_microusd=?
+   AND NOT EXISTS(SELECT 1 FROM project_budget_reservation_scopes WHERE reservation_id IN(token.reservation_id,cost.reservation_id))`;
+ const purchaseBindings=[job.job_id,scope.actorUserId,job.stream_id,job.document_id,job.correlation_id,job.attempt_count,scope.key,slot.slotId,slot.grantId,slot.planRevisionId,slot.targetId,slot.targetContractDigest,slot.sourceDigest,slot.routeDigest,slot.tokenReservationId,slot.costReservationId,slot.maximumTokens,slot.maximumMicrousd];
+ const purchases=await read<{payer_user_id:string;period:string}>(env.DB.prepare(`SELECT grant_row.payer_user_id,token.period ${purchaseSql}`).bind(...purchaseBindings));
+ if(purchases.length!==1||typeof purchases[0]?.payer_user_id!=="string"||!purchases[0].payer_user_id||typeof purchases[0].period!=="string")refuse();
+ const purchase=purchases[0],database=env.DB;
+ const sponsor=purchase.payer_user_id!==scope.actorUserId?await within(()=>readSponsorFinancialBinding(env,scope.actorUserId,job.job_id),deadlineMs,options.signal):null;
+ if(sponsor&&sponsorFinancialEventProfile(sponsor,env,scope.actorUserId,{scopeKey:scope.key,grantId:slot.grantId,slotId:slot.slotId})!=="audio")refuse();
+ const sponsored=sponsor?sponsorFinancialIdentity(sponsor,env,scope.actorUserId,job.job_id):null;
+ if(sponsored&&sponsored.payerUserId!==purchase.payer_user_id)refuse();
+ const financialAssertions=():OutputSqlAssertion[]=>{
+  if(env.DB!==database)refuse();
+  const original=sponsor?sponsorFinancialIdentity(sponsor,env,scope.actorUserId,job.job_id):null;
+  return [...(original?[original.assertion]:[]),...structuredClone(plannerFinancialAssertions),{sql:`EXISTS(SELECT 1 ${purchaseSql} AND grant_row.payer_user_id=? AND token.period=?)`,bindings:[...purchaseBindings,purchase.payer_user_id,purchase.period]},
+   {sql:`(SELECT COUNT(*) FROM output_provider_calls WHERE scope_key=? AND slot_id=?)=? AND EXISTS(SELECT 1 FROM output_provider_calls
+    WHERE scope_key=? AND slot_id=? AND call_key='audio:initial' AND stage_key='audio:initial' AND provider='fal' AND model=?
+     AND client_request_id=? AND request_digest=? AND provider_response_id=? AND reserved_microusd=?)`,
+   bindings:[scope.key,slot.slotId,calls.length,scope.key,slot.slotId,attempt.model,attempt.clientRequestId,attempt.requestDigest,String(cp.providerJobId),Number(media.reserved_microusd)]}];
+ };
  const finance=():OutputSqlAssertion[]=>[{sql:"EXISTS(SELECT 1 FROM document_jobs WHERE job_id=? AND json_extract(result_json,'$.providerSubmissions')=json(?))",bindings:[job.job_id,receiptMap]},
   {sql:"EXISTS(SELECT 1 FROM output_provider_calls WHERE scope_key=? AND slot_id=? AND call_key='audio:initial' AND ((?=1 AND status='uncertain' AND used_microusd IS NULL) OR (status='settled' AND used_microusd=?)))",bindings:[scope.key,slot.slotId,Number(allowUncertain),settledCost]}];
  await within(()=>env.DB.batch([...assertions,...finance()].flatMap(a=>outputAssertionStatements(env,a)).concat(env.DB.prepare(`UPDATE document_jobs SET result_json=json_set(result_json,'$.outputAudioRecovery',json(?),'$.providerSubmissions',json(?)) WHERE job_id=? AND owner_id=? AND result_json IS ?
@@ -183,6 +218,20 @@ export async function claimOutputAudioRecoveryLease(env:WorkerEnv,scope:OutputSc
  const live=()=>structuredClone([...assertions,...finance(),{sql:"EXISTS(SELECT 1 FROM document_jobs WHERE job_id=? AND owner_id=? AND status='failed' AND json_extract(result_json,'$.outputAudioRecovery.token')=? AND json_extract(result_json,'$.outputAudioRecovery.expiresAt')=? AND ?>strftime('%Y-%m-%dT%H:%M:%fZ','now'))",bindings:[job.job_id,scope.actorUserId,token,expiresAt,expiresAt],deadlineMs}]);
  const prepared:CreativeAudioPreparedReceipt={provider:"fal",model:attempt.model,submittedPrompt:String(audio.submitted_prompt),parameters,imageReference:null,sourceAudioTreatment:sourceIds.length?"authored-description-only":"none",audioWaveformSubmitted:false};
  return Object.freeze({token,expiresAt,deadlineMs,lease:freeze(lease),contract,attempt,prepared:freeze(prepared),urls:freeze(urls),checkpoint:freeze(cp),receipts:freeze(receipts),providerRequestId:cp.providerJobId,assertions:live,
+  financialAssertions:()=>structuredClone([...financialAssertions(),...finance()]),
+  async recordObservedProviderResult(observation:AudioCompletedResultObservation){
+   const observed=readAudioCompletedResultObservation(observation,env,{model:attempt.model,providerRequestId:String(cp.providerJobId)}),costMicrousd=observed.costMicrousd;
+   if(costMicrousd>Number(media.reserved_microusd)||settledCost!==null&&settledCost!==costMicrousd)refuse();
+   const map=JSON.parse(receiptMap);map[attempt.clientRequestId]={...map[attempt.clientRequestId],status:"completed",costMicrousd,inputTokens:0,outputTokens:0,totalTokens:0};const next=JSON.stringify(map);
+   // An identical receipt also permits recovery from a lost write acknowledgement.
+   // No creative expiry, source predicate, abort signal or lease token can erase
+   // a cost already witnessed on the original provider response.
+   const guards=[...financialAssertions(),{sql:"EXISTS(SELECT 1 FROM document_jobs WHERE job_id=? AND owner_id=? AND json_extract(result_json,'$.providerSubmissions') IN(json(?),json(?)) AND COALESCE(json_extract(result_json,'$.providerSubmissionLegacyUncertain'),0)<>1)",bindings:[job.job_id,scope.actorUserId,receiptMap,next]},
+    {sql:"EXISTS(SELECT 1 FROM output_provider_calls WHERE scope_key=? AND slot_id=? AND call_key='audio:initial' AND ((status='uncertain' AND used_microusd IS NULL) OR (status='settled' AND used_microusd=?)))",bindings:[scope.key,slot.slotId,costMicrousd]}];
+   await env.DB.batch([...guards.flatMap(a=>outputAssertionStatements(env,a)),env.DB.prepare("UPDATE document_jobs SET result_json=json_set(result_json,'$.providerSubmissions',json(?)) WHERE job_id=? AND owner_id=?").bind(next,job.job_id,scope.actorUserId),...outputAssertionStatements(env,{sql:"changes()=1"})]);
+   if(env.DB!==database)refuse();
+   receiptMap=next;settledCost=costMicrousd;return freeze(providerSubmissions({providerSubmissions:map}));
+  },
   async assertCurrent(){await within(()=>env.DB.batch(live().flatMap(a=>outputAssertionStatements(env,a))),deadlineMs,options.signal);},
   async assertSettled(){allowUncertain=false;await within(()=>env.DB.batch(live().flatMap(a=>outputAssertionStatements(env,a))),deadlineMs,options.signal);},
   async recordCompletedMedia(costMicrousd:number){

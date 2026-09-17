@@ -8,6 +8,7 @@ import { recoverAcceptedAudio } from "./fal-audio-adapter.ts";
 import { outputAudioHash, verifyOutputAudioCalls } from "./output-audio-execution.ts";
 import { loadOutputJobBinding, reconcileKnownOutputProviderReceipts, prepareOutputJobOutcomeStatements } from "./output-execution-control.ts";
 import { resolveOutputAudioRecoveryAuthority } from "./output-requirements-api.ts";
+import { readSponsorFinancialBinding, sponsorFinancialIdentity, sponsorFinancialEventProfile } from "./experience-sponsor-execution.ts";
 import { guardOutputPrivateWrites } from "./output-private-execution.ts";
 import { outputAssertionStatements, OutputConflictError, type OutputSqlAssertion } from "./output-requirements-ledger.ts";
 import { storeGeneratedMedia } from "./media-api.ts";
@@ -84,6 +85,12 @@ export async function executeOutputAudioRecovery(env:WorkerEnv,user:PilotUser,jo
 
 async function execute(env:WorkerEnv,user:PilotUser,job:DocumentJobRow,binding:Binding,options:Options&{signal:AbortSignal}){
  const {scope,slot}=binding;if(scope.actorUserId!==user.userId||scope.kind!=="personal"||!options.assertions.length)fail();
+ const sponsor=binding.sponsored?await readSponsorFinancialBinding(env,scope.actorUserId,job.job_id):null;
+ if(sponsor&&sponsorFinancialEventProfile(sponsor,env,scope.actorUserId,{scopeKey:scope.key,grantId:slot.grantId,slotId:slot.slotId})!=="audio")fail();
+ const originalFinancial=sponsor?sponsorFinancialIdentity(sponsor,env,scope.actorUserId,job.job_id):null;
+ const payerUserId=originalFinancial?.payerUserId??user.billingUserId??user.userId;
+ if(binding.payerUserId!==undefined&&binding.payerUserId!==payerUserId)fail();
+ const financialAssertions=()=>sponsor?[sponsorFinancialIdentity(sponsor,env,scope.actorUserId,job.job_id).assertion]:[];
  const settings=parse(job.request_json),original=parse(job.result_json),artifactId=original.artifactId;
  if(typeof artifactId!=="string"||!artifactId||!original.artifactPlan)fail();
  const key=`${ownerMediaNamespace(scope.ownerUserId)}/generated/${artifactId}.mp3`,mediaUrl=`/api/media/${encodeURIComponent(key)}`;
@@ -112,7 +119,7 @@ async function execute(env:WorkerEnv,user:PilotUser,job:DocumentJobRow,binding:B
     AND token.status=? AND cost.status='settled' AND token.used_tokens=? AND cost.used_microusd=?
     AND token.reserved_tokens>=token.used_tokens AND cost.reserved_microusd>=cost.used_microusd
     AND NOT EXISTS(SELECT 1 FROM project_budget_reservation_scopes WHERE reservation_id IN(token.reservation_id,cost.reservation_id)))`,
-   bindings:[scope.key,slot.slotId,job.job_id,slot.tokenReservationId,slot.costReservationId,user.billingUserId??user.userId,job.stream_id,job.correlation_id,tokens?"settled":"released",tokens,cost]};
+   bindings:[scope.key,slot.slotId,job.job_id,slot.tokenReservationId,slot.costReservationId,payerUserId,job.stream_id,job.correlation_id,tokens?"settled":"released",tokens,cost]};
  };
  const readCompletion=async(row:UsageRow,assertions:OutputSqlAssertion[])=>{
   const payload=parse(row.private_json),evidence=captureExperienceAudioEvidence(payload.settings);
@@ -138,7 +145,7 @@ async function execute(env:WorkerEnv,user:PilotUser,job:DocumentJobRow,binding:B
   finally{if(!done)void reader.cancel().catch(()=>{});reader.releaseLock();}
   if(length!==media.size)fail("output_audio_recovery_media_changed");const bytes=new Uint8Array(length);let offset=0;for(const chunk of chunks){bytes.set(chunk,offset);offset+=chunk.byteLength;}
   if(!bytes.length||bytes.length>MAX_AUDIO_UPLOAD_BYTES||Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256",bytes)),b=>b.toString(16).padStart(2,"0")).join("")!==evidence.mediaSha256)fail("output_audio_recovery_media_changed");
-  const guards=[...assertions,...settled,reservations(calls),...rows.results.map(r=>({sql:"EXISTS(SELECT 1 FROM private_content WHERE content_id=? AND owner_id=? AND kind=? AND content=? AND expires_at=? AND redacted_at IS NULL AND expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now') AND NOT EXISTS(SELECT 1 FROM project_resource_scopes WHERE resource_kind='content' AND resource_id=private_content.content_id))",bindings:[r.content_id,scope.actorUserId,r.kind,r.content,r.expires_at]})),
+  const guards=[...assertions,...financialAssertions(),...settled,reservations(calls),...rows.results.map(r=>({sql:"EXISTS(SELECT 1 FROM private_content WHERE content_id=? AND owner_id=? AND kind=? AND content=? AND expires_at=? AND redacted_at IS NULL AND expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now') AND NOT EXISTS(SELECT 1 FROM project_resource_scopes WHERE resource_kind='content' AND resource_id=private_content.content_id))",bindings:[r.content_id,scope.actorUserId,r.kind,r.content,r.expires_at]})),
    {sql:"EXISTS(SELECT 1 FROM events event JOIN event_private_payloads body ON body.private_event_id=event.event_id WHERE event.event_id=? AND event.stream_id=? AND event.correlation_id=? AND event.type='DocumentRenderCompleted' AND event.actor='worker:renderer' AND body.owner_id=? AND body.document_id=? AND body.private_json=? AND body.redacted_at IS NULL)",bindings:[row.event_id,job.stream_id,row.correlation_id,scope.actorUserId,scope.documentId,row.private_json]},
    {sql:"EXISTS(SELECT 1 FROM document_jobs WHERE job_id=? AND owner_id=? AND request_json=? AND result_json IS ? AND attempt_count=? AND correlation_id=? AND expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now'))",bindings:[job.job_id,scope.actorUserId,job.request_json,live.result_json,job.attempt_count,job.correlation_id]}];
   await env.DB.batch(guards.flatMap(a=>outputAssertionStatements(env,a)));options.signal.throwIfAborted();return guards;
@@ -152,7 +159,7 @@ async function execute(env:WorkerEnv,user:PilotUser,job:DocumentJobRow,binding:B
  };
  if(job.status==="completed")return await completedRead()??fail();
  const lease=await claimOutputAudioRecoveryLease(env,scope,slot,job,options);
- let additional:OutputSqlAssertion[]=[];const live=()=>[...lease.assertions(),...additional];
+ let additional:OutputSqlAssertion[]=[];const live=()=>[...lease.assertions(),...financialAssertions(),...additional];
  const privateEnv=guardOutputPrivateWrites(env,scope,slot,async()=>{options.signal.throwIfAborted();await lease.assertCurrent();return live();},{retentionPolicy:binding.retentionPolicy,audioRecoveryStorage:{token:lease.token,storageKey:key,signal:options.signal}});
  const finish=(completionId:string,eventIds:string[])=>{const now=new Date().toISOString();return[
   env.DB.prepare("UPDATE document_jobs SET status='completed',error_message=NULL,completed_at=?,lease_expires_at=NULL,updated_at=?,result_json=json_patch(result_json,?) WHERE job_id=? AND owner_id=? AND status='failed' AND attempt_count=? AND correlation_id=?")
@@ -165,7 +172,12 @@ async function execute(env:WorkerEnv,user:PilotUser,job:DocumentJobRow,binding:B
   if(previous){await reconcileKnownOutputProviderReceipts(env,user,{jobId:job.job_id,assertions:live()});await lease.assertSettled();const proof=await readCompletion(previous,live());await env.DB.batch([...proof.flatMap(a=>outputAssertionStatements(env,a)),...finish(previous.event_id,[previous.event_id])]);return await completedRead()??fail();}
   options.onStage?.("audio_provider");
   const audio=await recoverAcceptedAudio(env,{providerJobId:lease.providerRequestId,providerModel:lease.attempt.model,providerStatusUrl:lease.urls.statusUrl,providerResponseUrl:lease.urls.responseUrl,providerCancelUrl:lease.urls.cancelUrl,
-   retainedReceipt:lease.prepared,profile:EXPERIENCE_AUDIO_INTENT,signal:options.signal,onBeforeSourceTransmission:()=>lease.assertCurrent()});
+   retainedReceipt:lease.prepared,profile:EXPERIENCE_AUDIO_INTENT,signal:options.signal,onBeforeSourceTransmission:()=>lease.assertCurrent(),
+   onCompletedResult:async observation=>{
+    await lease.recordObservedProviderResult(observation);
+    const known=await reconcileKnownOutputProviderReceipts(env,user,{jobId:job.job_id,assertions:lease.financialAssertions()});
+    if(known.status==="uncertain")fail("output_audio_recovery_settlement_unavailable");
+   }});
   options.signal.throwIfAborted();await lease.assertCurrent();
   if(audio.mimeType!=="audio/mpeg"||audio.providerJobId!==lease.providerRequestId||audio.model!==lease.attempt.model)fail("output_audio_recovery_result_invalid");
   options.onStage?.("audio_settlement");

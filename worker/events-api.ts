@@ -594,6 +594,23 @@ export async function handleEvents(request:Request,env:WorkerEnv,hot=false,userO
           ||sponsorEventJson(output.settings)!==settings||sponsorEventJson(output.reference)!==reference
           ||sponsorFinancialEventProfile(binding,sponsorEnvironment,actorUserId,output.reference)!=="scene")
           return Response.json({error:"sponsor_recipe_unsupported"},{status:403});
+      }else if(profile==="audio"){
+        const settings=sponsorEventJson(output.settings),reference=sponsorEventJson(output.reference);
+        // Native job execution strips this legacy checkpoint field from the
+        // transport. Its price remains in the independently proved settings.
+        const audio=readOutputAudioPayload(output.settings),supplied=readOutputAudioPayload({...body,audioEstimatedCostMicrousd:output.settings.audioEstimatedCostMicrousd});
+        if(!audio||!supplied||sponsorEventJson(audio)!==sponsorEventJson(supplied)||body.action!=="render_document"
+          ||!output.refreshSponsorAudioDispatch||!output.requireSponsorAudioDispatchCurrent||execution!.signal.aborted
+          ||body.paidMediaConfirmed!==true||body.audioProviderModel!==output.settings.audioProviderModel
+          ||body.audioEstimatedCostMicrousd!==undefined&&body.audioEstimatedCostMicrousd!==output.settings.audioEstimatedCostMicrousd
+          ||body.audioProfile&&sponsorEventJson(body.audioProfile)!==sponsorEventJson(output.settings.audioProfile)
+          ||(body as Record<string,unknown>).outputTargetInstructions!==output.settings.outputTargetInstructions)
+          return Response.json({error:"sponsor_recipe_unsupported"},{status:403});
+        await output.refreshSponsorAudioDispatch(execution!);
+        output.requireSponsorAudioDispatchCurrent(execution!);
+        if(sponsorEventJson(output.settings)!==settings||sponsorEventJson(output.reference)!==reference
+          ||sponsorFinancialEventProfile(binding,sponsorEnvironment,actorUserId,output.reference)!=="audio")
+          return Response.json({error:"sponsor_recipe_unsupported"},{status:403});
       }else if(profile==="slides"){
         const settings=output.settings,supplied=body as Record<string,unknown>,exactFive=sponsorEventJson({kind:"exact",unit:"slide",value:5});
         if(body.action!=="render_document"||body.artifactKind!=="slides"||body.productionMode!=="manual"||body.itemCount!==5

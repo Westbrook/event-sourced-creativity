@@ -5,11 +5,14 @@ import { sponsorImageResponseBody } from "./experience-sponsor-native-image-budg
 import { sponsorJobReadFailure } from "./experience-sponsor-job-read.ts";
 import { hasProjectContextCookie } from "./project-request-context.ts";
 import { prepareOutputDurableRun, wakeOutputDurableJobs } from "./output-durable-control.ts";
-import { jsonIssues } from "../src/experiences/compiler.ts";
+import { exactKeys, jsonIssues } from "../src/experiences/compiler.ts";
 import { readOutputModel3dPayload, requireModel3dMiniAppCostApproval } from "./output-model3d-execution.ts";
-import { requireSponsorAdmission, sponsorAdmissionPayer, sponsorAdmissionPlan, sponsorSceneAdmissionPreparation, type SponsorAdmissionAuthority } from "./experience-sponsor-admission.ts";
-import { requireSponsorExecution, sponsorSceneRunPreparation, type SponsorExecutionAuthority } from "./experience-sponsor-execution.ts";
+import { requireSponsorAdmission, sponsorAdmissionPayer, sponsorAdmissionPlan, sponsorSceneAdmissionPreparation, sponsorAudioAdmissionPreparation, type SponsorAdmissionAuthority } from "./experience-sponsor-admission.ts";
+import { requireSponsorExecution, sponsorSceneRunPreparation, sponsorAudioRunPreparation, type SponsorExecutionAuthority } from "./experience-sponsor-execution.ts";
 import { prepareSceneSponsorAdmission, prepareSceneSponsorRun, requireSceneSponsorAdmissionForTarget, requireSceneSponsorAdmissionCurrent, sceneSponsorRunTransaction } from "./output-scene-sponsored-handoff.ts";
+import { prepareAudioSponsorAdmission, prepareAudioSponsorRun, requireAudioSponsorAdmissionForTarget, requireAudioSponsorAdmissionCurrent, audioSponsorRunTransaction } from "./output-audio-sponsored-handoff.ts";
+import { readSponsorInternalCommand } from "./experience-sponsor-approval.ts";
+import { readSponsoredAudioActorRequest, readSponsoredAudioReview } from "../src/experiences/sponsored-audio-actor-intent.ts";
 import { outputModel3dPreflightAssertions } from "./output-model3d-preflight.ts";
 import { model3dMiniAppAttemptMatches } from "../src/model/model3d-mini-app-consent.ts";
 import { resolveOutputModel3dRecoverySource } from "./output-model3d-source.ts";
@@ -518,6 +521,32 @@ function sceneSponsorPreparationCurrent(trusted: OutputTrustedContext, body: Rec
   current(); return current;
 }
 
+function audioAcknowledgementErrorClear(value: unknown): boolean {
+  if (!value || typeof value !== "object") return false;
+  const error = Object.getOwnPropertyDescriptor(value,"error");
+  return error ? Object.hasOwn(error,"value") && error.value===undefined : !("error" in value);
+}
+function audioSponsorPreparationCurrent(trusted: OutputTrustedContext, body: Record<string, unknown>) {
+  const request = trusted.request, signal = request.signal, env = trusted.env, database = env.DB, principal = trusted.principal;
+  const identities = {scope:trusted.scope,context:trusted.context,events:trusted.events};
+  const deadline = Math.min(Infinity,...trusted.sourceAssertions.flatMap(a=>a.deadlineMs===undefined?[]:[a.deadlineMs]));
+  const facts = () => canonicalOutputJson({ command: body, scope: trusted.scope, principal: trusted.principal, projectContext: trusted.projectContext,
+    ownerHead: trusted.ownerHead, context: trusted.context, sourceDigest: trusted.sourceDigest, requirementsDigest: trusted.requirementsDigest,
+    events: trusted.events, sourceAssertions: trusted.sourceAssertions, sourcePrivateCaptured: trusted.sourcePrivateCaptured, sourceProblems: trusted.sourceProblems,
+    request: { url: request.url, method: request.method, headers: [...request.headers.entries()] },
+    configuration: { key: env.OPENAI_API_KEY ?? null, fal: env.FAL_KEY ?? null, audioProvider: env.FORMA_AUDIO_PROVIDER ?? null, audioModel: env.FAL_AUDIO_MODEL ?? null, model: env.OPENAI_MODEL ?? null, cohort: env.FORMA_PILOT_COHORT_ID ?? null } });
+  const captured = facts();
+  const current = () => {
+    let aborted: unknown, actualSignal: unknown;
+    try { actualSignal = Object.getOwnPropertyDescriptor(Request.prototype, "signal")?.get?.call(request);
+      aborted = Object.getOwnPropertyDescriptor(AbortSignal.prototype, "aborted")?.get?.call(signal); } catch { fail("sponsor_audio_handoff_changed", 403); }
+    if (trusted.request !== request || request.signal !== signal || actualSignal !== signal || aborted !== false || trusted.env !== env || env.DB !== database
+      || trusted.principal !== principal || trusted.scope !== identities.scope || trusted.context !== identities.context || trusted.events !== identities.events
+      || !Number.isFinite(Date.now()) || Date.now()>=deadline || facts() !== captured) fail("sponsor_audio_handoff_changed", 403);
+  };
+  current(); return current;
+}
+
 async function preflightPlan(trusted: OutputTrustedContext, body: Record<string, unknown>, digest: string, bridge?: OutputExecutionBridge) {
   requireCurrentSource(trusted);
   const plan = currentPlan(trusted, await readConfirmedPlan(trusted, identifier(body.planRevisionId, "plan_revision_id_required")));
@@ -627,7 +656,8 @@ async function authorizePlan(trusted: OutputTrustedContext, body: Record<string,
   if (!bridge) fail("native_execution_unavailable", 409);
   if (Object.hasOwn(body, "sponsor_entitlement") !== Boolean(sponsorAdmission)) fail("sponsor_authority_unavailable", 403);
   const scenePreparation = sponsorAdmission ? sponsorSceneAdmissionPreparation(sponsorAdmission, { request: trusted.request, env: trusted.env, actorUserId: trusted.scope.actorUserId, documentId: trusted.scope.documentId }) : null;
-  const assertSceneRequest = () => { if (scenePreparation && sponsorSceneAdmissionPreparation(sponsorAdmission!, { request: trusted.request, env: trusted.env, actorUserId: trusted.scope.actorUserId, documentId: trusted.scope.documentId }) !== scenePreparation) fail("sponsor_scene_handoff_changed", 403); };
+  const audioPreparation = sponsorAdmission ? sponsorAudioAdmissionPreparation(sponsorAdmission, { request: trusted.request, env: trusted.env, actorUserId: trusted.scope.actorUserId, documentId: trusted.scope.documentId }) : null;
+  const assertSceneRequest = () => { if (scenePreparation && sponsorSceneAdmissionPreparation(sponsorAdmission!, { request: trusted.request, env: trusted.env, actorUserId: trusted.scope.actorUserId, documentId: trusted.scope.documentId }) !== scenePreparation) fail("sponsor_scene_handoff_changed", 403); if (audioPreparation && sponsorAudioAdmissionPreparation(sponsorAdmission!, { request: trusted.request, env: trusted.env, actorUserId: trusted.scope.actorUserId, documentId: trusted.scope.documentId }) !== audioPreparation) fail("sponsor_audio_handoff_changed", 403); };
   if (body.explicitAuthorization !== true || !Number.isSafeInteger(body.maximumMicrousd) || Number(body.maximumMicrousd) <= 0) fail("explicit_spending_authorization_required", 403);
   const preflightId = identifier(body.preflightId, "preflight_id_required");
   const row = await trusted.env.DB.prepare("SELECT * FROM output_preflights WHERE scope_key=? AND preflight_id=? AND actor_user_id=?").bind(trusted.scope.key, preflightId, trusted.scope.actorUserId).first<Record<string, unknown>>();
@@ -660,12 +690,13 @@ async function authorizePlan(trusted: OutputTrustedContext, body: Record<string,
     || Boolean(sceneTargets.length) !== Object.hasOwn(body, "sceneCostConsent")) fail("scene_mini_app_confirmation_required", 403);
   let sceneExpiresAt: string | null = null;
   if (scenePreparation && sceneTargets.length !== 1) fail("sponsor_scene_handoff_changed", 403);
-  const assertSceneCurrent = () => { if (scenePreparation) requireSceneSponsorAdmissionCurrent(scenePreparation, bridgeTarget(trusted, plan, sceneTargets[0]!), preflight, body.sceneCostConsent); };
+  if (audioPreparation && audioTargets.length !== 1) fail("sponsor_audio_handoff_changed", 403);
+  const assertSceneCurrent = () => { if (scenePreparation) requireSceneSponsorAdmissionCurrent(scenePreparation, bridgeTarget(trusted, plan, sceneTargets[0]!), preflight, body.sceneCostConsent); if (audioPreparation) requireAudioSponsorAdmissionCurrent(audioPreparation, bridgeTarget(trusted, plan, audioTargets[0]!), preflight, body.audioCostConsent); };
   for (const offered of preflight.targets) {
     const target = plan.plan.targets.find((value) => value.id === offered.targetId);
     if (!target || !target.selected || target.blocking_issues.length) fail("output_target_no_longer_executable", 409);
     const current = scenePreparation ? await requireSceneSponsorAdmissionForTarget(scenePreparation, bridgeTarget(trusted, plan, target), preflight, body.sceneCostConsent)
-      : await bridge.preflight(bridgeTarget(trusted, plan, target));
+      : audioPreparation ? await requireAudioSponsorAdmissionForTarget(audioPreparation, bridgeTarget(trusted, plan, target), preflight, body.audioCostConsent) : await bridge.preflight(bridgeTarget(trusted, plan, target));
     assertSceneCurrent();
     if (canonicalOutputJson(current) !== canonicalOutputJson(offered)) fail("output_provider_terms_changed", 409);
     const attempt = preflight.operationAttempts[target.id];
@@ -790,7 +821,8 @@ async function requireRecordedSponsorExecution(trusted: OutputTrustedContext, gr
 async function runGrant(trusted: OutputTrustedContext, body: Record<string, unknown>, digest: string, bridge: OutputExecutionBridge | undefined, executionContext: WorkerExecutionContext, executionAuthority?: SponsorExecutionAuthority) {
   if (!bridge) fail("native_execution_unavailable", 409);
   const sceneRun = executionAuthority ? sponsorSceneRunPreparation(executionAuthority, { request: trusted.request, env: trusted.env, actorUserId: trusted.scope.actorUserId, documentId: trusted.scope.documentId }) : null;
-  const assertSceneRequest = () => { if (sceneRun && sponsorSceneRunPreparation(executionAuthority!, { request: trusted.request, env: trusted.env, actorUserId: trusted.scope.actorUserId, documentId: trusted.scope.documentId }) !== sceneRun) fail("sponsor_scene_handoff_changed", 403); };
+  const audioRun = executionAuthority ? sponsorAudioRunPreparation(executionAuthority, { request: trusted.request, env: trusted.env, actorUserId: trusted.scope.actorUserId, documentId: trusted.scope.documentId }) : null;
+  const assertSceneRequest = () => { if (sceneRun && sponsorSceneRunPreparation(executionAuthority!, { request: trusted.request, env: trusted.env, actorUserId: trusted.scope.actorUserId, documentId: trusted.scope.documentId }) !== sceneRun) fail("sponsor_scene_handoff_changed", 403); if (audioRun && sponsorAudioRunPreparation(executionAuthority!, { request: trusted.request, env: trusted.env, actorUserId: trusted.scope.actorUserId, documentId: trusted.scope.documentId }) !== audioRun) fail("sponsor_audio_handoff_changed", 403); };
   const grantId = identifier(body.grantId, "grant_id_required");
   const evidence = await readOutputGrantEvidence(trusted.env, trusted.scope, grantId, true);
   assertSceneRequest();
@@ -802,7 +834,14 @@ async function runGrant(trusted: OutputTrustedContext, body: Record<string, unkn
   const sceneJobRuns:NonNullable<OutputCommandWrite['sceneJobRuns']>=[];
   const sceneRunAssertions: OutputSqlAssertion[] = [];
   const sceneRunChecks: Array<Parameters<typeof sceneSponsorRunTransaction>[1]> = [];
+  const audioRunChecks: Array<Parameters<typeof audioSponsorRunTransaction>[1]> = [];
   for(const slot of ready){
+    if(audioRun){
+      if(!evidence.confirmedPlan.plan.targets.some(target=>target.id===slot.targetId&&Object.hasOwn(target,"audio_contract")))fail("sponsor_audio_handoff_changed",403);
+      const job=await trusted.env.DB.prepare("SELECT correlation_id FROM document_jobs WHERE job_id=? AND owner_id=? AND stream_id=? AND document_id=?").bind(slot.jobId,trusted.scope.ownerUserId,`creative:${trusted.scope.actorUserId}`,trusted.scope.documentId).first<{correlation_id:string}>();
+      assertSceneRequest();if(!job)fail("sponsor_audio_handoff_changed",403);
+      const captured={request:trusted.request,env:trusted.env,scope:trusted.scope,slot,correlationId:job.correlation_id};sceneRunAssertions.push(...audioSponsorRunTransaction(audioRun,captured));audioRunChecks.push(captured);
+    }
     if(!evidence.confirmedPlan.plan.targets.some(target=>target.id===slot.targetId&&Object.hasOwn(target,'scene_contract')))continue;
     const retained=await trusted.env.DB.prepare('SELECT scene_source_version_json IS NOT NULL AS present,scene_source_protocol,correlation_id FROM document_jobs WHERE job_id=? AND owner_id=?').bind(slot.jobId,trusted.scope.ownerUserId).first<{present:number;scene_source_protocol:number;correlation_id:string}>();
     assertSceneRequest();
@@ -815,25 +854,45 @@ async function runGrant(trusted: OutputTrustedContext, body: Record<string, unkn
   }
   const saved = await commitOutputCommand(trusted.env, { ...commandWrite(trusted, body, digest, "request"),sceneJobRuns, events: [{ type: "OutputExecutionRunRequested", payload: { grant_id: grantId, job_ids: evidence.slots.map((slot) => slot.jobId), existing_jobs_only: true } }],
     assertions: [...(sponsor?.assertions ?? []), ...sceneRunAssertions, ...(ready.length ? [outputRunGrantAssertion(trusted.scope, grantId), { sql: "NOT EXISTS(SELECT 1 FROM output_operation_slots slot WHERE slot.scope_key=? AND slot.grant_id=? AND slot.status IN('authorized','queued','running') AND slot.slot_id NOT IN(SELECT value FROM json_each(?)))", bindings: [trusted.scope.key, grantId, JSON.stringify(readyIds)] }] : [])],
-    buildSidecars: (events) => { assertSceneRequest(); if(sceneRun)for(const captured of sceneRunChecks)sceneSponsorRunTransaction(sceneRun,captured); const durable = prepareOutputDurableRun(trusted.env, trusted.scope, ready, events.at(-1)!.eventId); return ({ statements: [trusted.env.DB.prepare("UPDATE output_operation_slots SET status='queued',updated_at=? WHERE scope_key=? AND grant_id=? AND status='authorized' AND slot_id IN(SELECT value FROM json_each(?))").bind(nowIso(), trusted.scope.key, grantId, JSON.stringify(readyIds)), trusted.env.DB.prepare("UPDATE output_execution_grants SET status='active' WHERE scope_key=? AND grant_id=? AND status='authorized'").bind(trusted.scope.key, grantId), ...durable.statements], assertions: [...(ready.length ? [outputRunGrantAssertion(trusted.scope, grantId)] : []), ...durable.assertions] }); } });
+    buildSidecars: (events) => { assertSceneRequest(); if(sceneRun)for(const captured of sceneRunChecks)sceneSponsorRunTransaction(sceneRun,captured); if(audioRun)for(const captured of audioRunChecks)audioSponsorRunTransaction(audioRun,captured); const durable = prepareOutputDurableRun(trusted.env, trusted.scope, ready, events.at(-1)!.eventId); return ({ statements: [trusted.env.DB.prepare("UPDATE output_operation_slots SET status='queued',updated_at=? WHERE scope_key=? AND grant_id=? AND status='authorized' AND slot_id IN(SELECT value FROM json_each(?))").bind(nowIso(), trusted.scope.key, grantId, JSON.stringify(readyIds)), trusted.env.DB.prepare("UPDATE output_execution_grants SET status='active' WHERE scope_key=? AND grant_id=? AND status='authorized'").bind(trusted.scope.key, grantId), ...durable.statements], assertions: [...(ready.length ? [outputRunGrantAssertion(trusted.scope, grantId)] : []), ...durable.assertions] }); } });
   // Dispatch is an existing-job wake-up only. No new source read, slot, budget,
   // provider call or alternative is created here; the job HTTP runner owns work.
-  if (ready.length && !await wakeOutputDurableJobs(trusted.env, ready)) await bridge.dispatch({ request: trusted.request, env: trusted.env, scope: trusted.scope, principal: trusted.principal, executionContext,
-    slots: ready.map((slot) => slot.status === "authorized" ? { ...slot, status: "queued" } : slot) });
+  assertSceneRequest();
+  if (ready.length) { const woke=await wakeOutputDurableJobs(trusted.env,ready);assertSceneRequest();if(!woke){await bridge.dispatch({ request: trusted.request, env: trusted.env, scope: trusted.scope, principal: trusted.principal, executionContext,
+    slots: ready.map((slot) => slot.status === "authorized" ? { ...slot, status: "queued" } : slot) });assertSceneRequest();} }
   return saved;
 }
 
 async function resumeRecordedOutputRun(trusted: OutputTrustedContext, grantId: string, bridge: OutputExecutionBridge | undefined, executionContext: WorkerExecutionContext, executionAuthority?: SponsorExecutionAuthority) {
   if (!bridge) fail("native_execution_unavailable", 409);
-  const evidence = await readOutputGrantEvidence(trusted.env, trusted.scope, grantId, true);
-  const sponsor = await requireRecordedSponsorExecution(trusted, grantId, evidence, executionAuthority);
-  const pending = await validateRecordedOutputRun(trusted, evidence, bridge, ["queued", "running"]);
+  const identity = () => ({request:trusted.request,env:trusted.env,actorUserId:trusted.scope.actorUserId,documentId:trusted.scope.documentId});
+  const audioRun = executionAuthority ? sponsorAudioRunPreparation(executionAuthority,identity()) : null;
+  const current = () => { if(audioRun && sponsorAudioRunPreparation(executionAuthority!,identity())!==audioRun)fail("sponsor_audio_handoff_changed",403); };
+  const evidence = await readOutputGrantEvidence(trusted.env, trusted.scope, grantId, true); current();
+  const sponsor = await requireRecordedSponsorExecution(trusted, grantId, evidence, executionAuthority); current();
+  const pending = await validateRecordedOutputRun(trusted, evidence, bridge, ["queued", "running"]); current();
   if (!pending.length) return;
+  const audioChecks:Array<Parameters<typeof audioSponsorRunTransaction>[1]>=[],audioAssertions:OutputSqlAssertion[]=[];
+  if(audioRun)for(const slot of pending){
+    const job=await trusted.env.DB.prepare("SELECT correlation_id FROM document_jobs WHERE job_id=? AND owner_id=? AND stream_id=? AND document_id=?")
+      .bind(slot.jobId,trusted.scope.ownerUserId,`creative:${trusted.scope.actorUserId}`,trusted.scope.documentId).first<{correlation_id:string}>();
+    current();if(!job)fail("sponsor_audio_handoff_changed",403);
+    const captured={request:trusted.request,env:trusted.env,scope:trusted.scope,slot,correlationId:job.correlation_id};
+    audioAssertions.push(...audioSponsorRunTransaction(audioRun,captured));audioChecks.push(captured);
+  }
+  const currentSlots=()=>{current();if(audioRun)for(const captured of audioChecks)audioSponsorRunTransaction(audioRun,captured);};
   // Identical replay resumes only recorded jobs under fresh authority. Exact
   // provider receipts and leases decide whether a logical call was consumed.
-  await trusted.env.DB.batch([...(sponsor?.assertions ?? []), outputScopeAuthority(trusted.scope, "request"), outputRunGrantAssertion(trusted.scope, grantId), ...trusted.sourceAssertions, ...retainedOutputBodyAssertions(trusted.scope),
-    { sql: "(SELECT COALESCE(MAX(sequence),0) FROM events WHERE stream_id=?)=?", bindings: [`creative:${trusted.scope.ownerUserId}`, trusted.ownerHead] }].flatMap((assertion) => outputAssertionStatements(trusted.env, assertion)));
-  if (!await wakeOutputDurableJobs(trusted.env, pending)) await bridge.dispatch({ request: trusted.request, env: trusted.env, scope: trusted.scope, principal: trusted.principal, executionContext, slots: pending });
+  const statements=[...(sponsor?.assertions ?? []),...audioAssertions, outputScopeAuthority(trusted.scope, "request"), outputRunGrantAssertion(trusted.scope, grantId), ...trusted.sourceAssertions, ...retainedOutputBodyAssertions(trusted.scope),
+    { sql: "(SELECT COALESCE(MAX(sequence),0) FROM events WHERE stream_id=?)=?", bindings: [`creative:${trusted.scope.ownerUserId}`, trusted.ownerHead] }].flatMap((assertion) => outputAssertionStatements(trusted.env, assertion));
+  currentSlots();const checked=await trusted.env.DB.batch(statements);currentSlots();
+  if(audioRun){const own=(value:unknown,key:PropertyKey):unknown=>value&&typeof value==="object"?Object.getOwnPropertyDescriptor(value,key)?.value:undefined;
+    if(!Array.isArray(checked)||own(checked,"length")!==statements.length||Array.from({length:statements.length},(_,index)=>{
+      const result=own(checked,index);return own(result,"success")!==true||!audioAcknowledgementErrorClear(result);
+    }).some(Boolean))fail("sponsor_audio_handoff_changed",403);
+  }
+  const woke=await wakeOutputDurableJobs(trusted.env,pending);currentSlots();
+  if(!woke){await bridge.dispatch({request:trusted.request,env:trusted.env,scope:trusted.scope,principal:trusted.principal,executionContext,slots:pending});currentSlots();}
 }
 
 export function outputAssetStorageIdentity(scope: OutputScope, assetId: string, inspection: OutputAssetInspection) {
@@ -1320,6 +1379,98 @@ export const outputExperienceCommands = {
     const source = bridgeTarget(trusted, evidence.confirmedPlan, target);
     delete source.sceneUseVersionedHistory;
     const prepared = await prepareSceneSponsorRun({ source, command: body, quote: evidence.preflight, slot, correlationId: job.correlation_id });
+    current(); return prepared;
+  },
+  /** Classify an exact retained authorize before attempting fresh actor collection.
+   * It returns inert original receipt data only. No renewed consent, issuance,
+   * grant, source witness, hold or provider dispatch is constructed on replay. */
+  async readSponsoredAudioAdmissionReplay(trusted: OutputTrustedContext, body: Record<string, unknown>) {
+    if (jsonIssues(body).length || !exactKeys(body, ["documentId", "action", "expectedRevision", "clientMutationId", "preflightId", "termsDigest", "maximumMicrousd", "explicitAuthorization", "audioCostConsent"])
+      || body.action !== "authorize" || body.documentId !== trusted.scope.documentId || Object.hasOwn(body, "sponsor_entitlement")
+      || trusted.scope.kind !== "personal" || trusted.scope.ownerUserId !== trusted.scope.actorUserId || trusted.scope.contextId
+      || trusted.principal.userId !== trusted.scope.actorUserId || trusted.principal.fictional || trusted.principal.projectExecution) fail("sponsor_command_invalid", 403);
+    const current = audioSponsorPreparationCurrent(trusted, body);
+    const auth = await readExistingPrincipalRequest(trusted.request, trusted.env, "creator", { account: "principal" });
+    current();
+    if ("kind" in auth || auth.response || !auth.user || canonicalOutputJson(auth.user) !== canonicalOutputJson(trusted.principal)) fail("sponsor_audio_handoff_changed", 403);
+    const key = identifier(body.clientMutationId, "client_mutation_id_required");
+    const row = await trusted.env.DB.prepare(`SELECT command.request_digest,command.event_id,private.private_json FROM output_commands command
+      LEFT JOIN event_private_payloads private ON private.private_event_id=command.event_id AND private.owner_id=? AND private.project_id=? AND private.document_id=? AND private.redacted_at IS NULL
+      WHERE command.scope_key=? AND command.actor_user_id=? AND command.command_key=?`)
+      .bind(trusted.scope.ownerUserId, trusted.scope.projectId, trusted.scope.documentId, trusted.scope.key, trusted.scope.actorUserId, key)
+      .first<{ request_digest: string; event_id: string; private_json: string | null }>();
+    current(); if (!row) return null;
+    if (typeof row.private_json !== "string" || new TextEncoder().encode(row.private_json).byteLength > 524288) fail("original_command_content_unavailable", 410);
+    const retained = record(JSON.parse(row.private_json)), envelope = record(retained.output_command_envelope), marker = record(envelope.sponsor_entitlement), intent = record(marker.audio_actor_intent);
+    if (!exactKeys(marker, ["payer_user_id", "campaign_id", "policy_digest", "envelope_digest", "consumption_id", "audio_actor_intent"])
+      || !exactKeys(intent, ["request", "review", "requestDigest", "reviewDigest", "commandDigest"])) fail("sponsor_audio_handoff_changed", 403);
+    const originalCommand = { ...envelope }; delete originalCommand.sponsor_entitlement;
+    if (canonicalOutputJson(originalCommand) !== canonicalOutputJson(body) || marker.payer_user_id === trusted.scope.actorUserId) fail("mutation_key_reused_with_different_content", 409);
+    const digest = await outputDigest(envelope); current();
+    if (digest !== row.request_digest || intent.commandDigest !== `sha256:${await outputDigest(body)}`) fail("mutation_key_reused_with_different_content", 409);
+    current();
+    const storedRequest = readSponsoredAudioActorRequest(intent.request), review = record(intent.review), preview = record(review.preview);
+    const url = new URL(trusted.request.url);
+    if (trusted.request.method !== "POST" || trusted.request.bodyUsed || url.search || url.hash
+      || url.pathname !== `/api/experiences/drafts/${String(preview.draftId)}/output/authorize`
+      || storedRequest.sponsorReview.campaignId !== marker.campaign_id || storedRequest.sponsorReview.reviewDigest !== intent.reviewDigest
+      || review.payerUserId !== marker.payer_user_id || review.policyDigest !== marker.policy_digest) fail("sponsor_audio_handoff_changed", 403);
+    const supplied = readSponsoredAudioActorRequest(await readSponsorInternalCommand(trusted.request, 4096)); current();
+    if (canonicalOutputJson(supplied) !== canonicalOutputJson(storedRequest)) fail("mutation_key_reused_with_different_content", 409);
+    const requestDigest = await outputDigest(supplied); current();
+    const reviewDigest = await outputDigest(review); current();
+    if (`sha256:${requestDigest}` !== intent.requestDigest || `sha256:${reviewDigest}` !== intent.reviewDigest) fail("sponsor_audio_handoff_changed", 403);
+    const receipt = await readOutputCommand(trusted.env, trusted.scope, key, digest); current();
+    if (!receipt || receipt.action !== "authorize" || receipt.eventId !== row.event_id) fail("sponsor_audio_handoff_changed", 403);
+    const assertions = [outputScopeAuthority(trusted.scope, "request"), outputCommandReceiptAssertion(trusted.scope, receipt), {
+      sql: "EXISTS(SELECT 1 FROM event_private_payloads WHERE private_event_id=? AND owner_id=? AND project_id=? AND document_id=? AND private_json=? AND redacted_at IS NULL)",
+      bindings: [row.event_id, trusted.scope.ownerUserId, trusted.scope.projectId, trusted.scope.documentId, row.private_json],
+    }];
+    const checked = await trusted.env.DB.batch<Record<string, unknown>>(outputProofReadStatements(trusted.env, assertions)); current();
+    const own = (value: unknown, key: PropertyKey): unknown => value && typeof value === "object" ? Object.getOwnPropertyDescriptor(value, key)?.value : undefined;
+    if (!Array.isArray(checked) || own(checked, "length") !== assertions.length || Array.from({ length: assertions.length }, (_, index) => {
+      const result = own(checked, index), rows = own(result, "results");
+      return own(result, "success") !== true || !audioAcknowledgementErrorClear(result) || !Array.isArray(rows) || own(rows, "length") !== 1 || own(own(rows, 0), "current") !== 1;
+    }).some(Boolean)) fail("sponsor_audio_handoff_changed", 403);
+    current(); return { kind: "retained" as const, receipt, marker: structuredClone(marker), envelope: structuredClone(envelope) };
+  },
+  /** Dormant Audio preparation. The exact original POST is consumed inside its opaque owner. */
+  async prepareSponsoredAudioAdmission(trusted: OutputTrustedContext, body: Record<string, unknown>, review: unknown) {
+    if (jsonIssues(body).length || body.action !== "authorize" || Object.hasOwn(body, "sponsor_entitlement")) fail("sponsor_command_invalid", 403);
+    requireCurrentSource(trusted);
+    const capturedReview = readSponsoredAudioReview(review), baseCurrent = audioSponsorPreparationCurrent(trusted, body);
+    const current = () => { baseCurrent(); if (canonicalOutputJson(readSponsoredAudioReview(review)) !== canonicalOutputJson(capturedReview)) fail("sponsor_audio_handoff_changed",403); };
+    const retained = await trusted.env.DB.prepare("SELECT 1 AS present FROM output_commands WHERE scope_key=? AND actor_user_id=? AND command_key=?")
+      .bind(trusted.scope.key,trusted.scope.actorUserId,identifier(body.clientMutationId,"client_mutation_id_required")).first<{present:number}>();
+    current(); if(retained)fail("sponsor_audio_original_admission_replay_required",409);
+    const row = await trusted.env.DB.prepare("SELECT event_id,expires_at,terms_digest FROM output_preflights WHERE scope_key=? AND preflight_id=? AND actor_user_id=?")
+      .bind(trusted.scope.key, identifier(body.preflightId, "preflight_id_required"), trusted.scope.actorUserId).first<{ event_id: string; expires_at: string; terms_digest: string }>();
+    current();
+    if (!row || row.expires_at <= nowIso() || row.terms_digest !== body.termsDigest) fail("output_preflight_expired", 409);
+    const quote = record((await privateEventBody(trusted.env, trusted.scope, row.event_id)).preflight) as OutputPreflight;
+    current();
+    const plan = currentPlan(trusted, await readConfirmedPlan(trusted, quote.planRevisionId));
+    current();
+    if (plan.plan.targets.length !== 1 || quote.targets.length !== 1 || !Object.hasOwn(plan.plan.targets[0]!, "audio_contract")) fail("sponsor_audio_handoff_changed", 403);
+    const prepared = await prepareAudioSponsorAdmission({ source: bridgeTarget(trusted, plan, plan.plan.targets[0]!), trusted, command: body, quote, review: capturedReview });
+    current(); return prepared;
+  },
+  /** Independently supplied Run intent and retained original native job; never fresh authorize consent. */
+  async prepareSponsoredAudioRun(trusted: OutputTrustedContext, body: Record<string, unknown>) {
+    if (jsonIssues(body).length || body.action !== "run" || Object.hasOwn(body, "sponsor_entitlement")) fail("sponsor_command_invalid", 403);
+    requireCurrentSource(trusted);
+    const current = audioSponsorPreparationCurrent(trusted, body);
+    if (trusted.request.method !== "POST" || trusted.request.bodyUsed) fail("sponsor_audio_handoff_changed", 403);
+    const evidence = await readOutputGrantEvidence(trusted.env, trusted.scope, identifier(body.grantId, "grant_id_required"), true);
+    current();
+    if (evidence.slots.length !== 1 || !["authorized", "active"].includes(String(evidence.row.status)) || !Number(evidence.row.deadline_current)) fail("sponsor_audio_handoff_changed", 403);
+    const slot = evidence.slots[0]!, { target } = await validateOutputExecutionTarget(trusted, evidence, slot);
+    current();
+    if (!Object.hasOwn(target, "audio_contract")) fail("sponsor_audio_handoff_changed", 403);
+    const job = await trusted.env.DB.prepare("SELECT correlation_id FROM document_jobs WHERE job_id=? AND owner_id=? AND stream_id=? AND document_id=?")
+      .bind(slot.jobId, trusted.scope.ownerUserId, `creative:${trusted.scope.actorUserId}`, trusted.scope.documentId).first<{ correlation_id: string }>();
+    current(); if (!job) fail("sponsor_audio_handoff_changed", 403);
+    const prepared = await prepareAudioSponsorRun({ source: bridgeTarget(trusted, evidence.confirmedPlan, target), command: body, quote: evidence.preflight, slot, correlationId: job.correlation_id });
     current(); return prepared;
   },
   async execute(trusted: OutputTrustedContext, body: Record<string, unknown>, bridge: OutputExecutionBridge, executionContext: WorkerExecutionContext) {
