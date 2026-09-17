@@ -4,6 +4,7 @@ import { guestFail, guestHash, guestId, readGuestCustodyTerms } from "./experien
 import { readGuestSourcePolicy } from "./experience-guest-source.ts";
 import { publicEventPayload } from "./event-privacy.ts";
 import { nativeMemoryAnswerExclusion } from "./memory-native-boundary.ts";
+import { captureGuestSourceRetirementCustody, type GuestSourceRetirementAssociation } from "./experience-guest-source-retirement-custody.ts";
 import type { WorkerEnv } from "./runtime.ts";
 
 type Value = string | number | null;
@@ -50,10 +51,10 @@ const registrySchemaSql = `(SELECT json_group_array(json_object('type',type,'nam
  * sweep is accepted here. Revocation and expired credentials cannot postpone
  * an already-agreed retention deadline; a claim lease cannot extend it.
  *
- * There is no adoption operation yet. Future adoption must atomically require
- * an unexpired/unredacted exact source and event copies. Any future adoption
- * that keeps guest-owned envelopes through a custody receipt must introduce an
- * explicit native retention exclusion before that adoption is activated. */
+ * A completed context adoption can distinguish exact canonical Project
+ * custody from the original guest bodies. Its immutable receipt and native
+ * destination associations are checked before/after erasure and in recovery;
+ * adoption never extends the original source deadline. */
 export async function retireExpiredGuestImageSource(env: WorkerEnv, input: { sessionId: string }) {
   if (jsonIssues(input).length || !record(input) || !exactKeys(input, ["sessionId"]) || !guestId(input.sessionId)) return unavailable();
   const sessionId = input.sessionId, db = env.DB, proofs: Proof[] = [];
@@ -137,6 +138,7 @@ export async function retireExpiredGuestImageSource(env: WorkerEnv, input: { ses
   current();
   if (rows.results.length !== eventIds.length) return unavailable();
   let retainedBytes = 0, allRedacted = draft.redacted_at !== null;
+  const originals: GuestSourceRetirementAssociation["originals"][number][] = [];
   for (const [index, entry] of rows.results.entries()) {
     const event = json(entry.witness), payload = json(event.payload as Value), id = eventIds[index], eventDocument = index === 0 ? null : documentId;
     const expectedType = ["ProjectCreated", "DocumentCreated", "EmptyCanvasChosen"][index] ?? "BlockCreated";
@@ -148,6 +150,8 @@ export async function retireExpiredGuestImageSource(env: WorkerEnv, input: { ses
       || payload._private_ref !== id || payload.project_id !== projectId || (payload.document_id ?? null) !== eventDocument
       || !canonicalTime(event.recorded_at) || !canonicalTime(event.occurred_at) || event.created_at !== event.recorded_at
       || event.receipt_created_at !== event.recorded_at || typeof event.private_json !== "string") return unavailable();
+    originals.push({ eventId: id, sequence: index + 1, occurredAt: String(event.occurred_at), recordedAt: String(event.recorded_at),
+      type: expectedType, publicJson: String(event.payload) });
     retainedBytes += bytes(String(event.payload)) + bytes(event.private_json);
     if (planEvents) {
       const expected = planEvents[index];
@@ -197,12 +201,20 @@ export async function retireExpiredGuestImageSource(env: WorkerEnv, input: { ses
       bindings: [idsJson, idsJson],
     });
   } catch { current(); return unavailable(); }
+  const custody = await captureGuestSourceRetirementCustody(env, {
+    sessionId, guestSubject: session.guest_subject, projectId, documentId, draftId, draftHash: String(source.draft_hash),
+    sourceCreatedAt: String(draft.created_at), sourceExpiresAt: String(source.expires_at), sessionCreatedAtMs: Number(session.created_at_ms),
+    sessionExpiresAtMs: Number(session.expires_at_ms), sessionRevokedAtMs: session.revoked_at_ms === null ? null : Number(session.revoked_at_ms),
+    sessionPolicyId: String(session.policy_id), sessionTermsDigest: String(session.terms_digest), origin: terms.origin,
+    committedHead: rawCommit ? Number(rawCommit.head) : null, sourceEventIds: eventIds, originals,
+  });
+  current();
+  proofs.push({ sql: custody.proof.sql, bindings: [...custody.proof.bindings] });
   proofs.push({ sql: `?<=strftime('%Y-%m-%dT%H:%M:%fZ','now')
-    AND NOT EXISTS(SELECT 1 FROM organization_projects WHERE project_id=?)
-    AND NOT EXISTS(SELECT 1 FROM project_resource_scopes WHERE resource_kind='content' AND resource_id=? OR resource_kind='document' AND resource_id=?)
+    AND NOT EXISTS(SELECT 1 FROM project_resource_scopes WHERE resource_kind='content' AND resource_id=?)
     AND NOT EXISTS(SELECT 1 FROM private_content_retention_scopes WHERE content_id=?)
     AND NOT EXISTS(SELECT 1 FROM project_event_scopes WHERE event_id IN(SELECT value FROM json_each(?)))`,
-  bindings: [source.expires_at, projectId, draftId, documentId, draftId, idsJson] });
+  bindings: [source.expires_at, draftId, draftId, idsJson] });
   const eventSnapshotProof = eventIds.length ? { sql: `(SELECT COUNT(*) FROM json_each(?) expected ${eventJoins}
     JOIN json_each(?) snapshots ON snapshots.key=expected.key WHERE ${eventWitness}=snapshots.value)=?`,
   bindings: [idsJson, `[${rows.results.map(row => row.witness).join(",")}]`, eventIds.length] } : null;
@@ -213,6 +225,12 @@ export async function retireExpiredGuestImageSource(env: WorkerEnv, input: { ses
     db.prepare(`INSERT INTO experience_guest_source_assertions VALUES(?,CASE WHEN ${proof.sql} THEN 1 ELSE 0 END)`).bind(token, ...proof.bindings),
     db.prepare("UPDATE private_content SET content='',redacted_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE content_id=? AND redacted_at IS NULL").bind(draftId),
     db.prepare("UPDATE event_private_payloads SET private_json='',redacted_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE private_event_id IN(SELECT value FROM json_each(?)) AND redacted_at IS NULL").bind(idsJson),
+    ...(custody.mode === "canonical-prefix" ? (() => {
+      const afterToken = crypto.randomUUID();
+      return [db.prepare(`INSERT INTO experience_guest_source_assertions VALUES(?,CASE WHEN ${custody.proof.sql} THEN 1 ELSE 0 END)`)
+        .bind(afterToken, ...custody.proof.bindings),
+      db.prepare("DELETE FROM experience_guest_source_assertions WHERE token=?").bind(afterToken)];
+    })() : []),
     db.prepare("DELETE FROM experience_guest_source_assertions WHERE token=?").bind(token),
   ];
   let uncertain = false;
