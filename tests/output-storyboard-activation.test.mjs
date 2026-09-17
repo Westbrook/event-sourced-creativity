@@ -7,6 +7,7 @@ import {fixture,oneFunction,canonicalJson} from './output-storyboard-source-rout
 const {readStoryboardExecutionOffer}=await import('../src/model/output-storyboard-offer.ts');
 const {outputTerms}=await import('../src/experiences/output-terms.ts');
 const {outputDigest}=await import(process.env.FORMA_SOURCE_ROOT+'/worker/output-disclosure-proof.ts');
+const {createOutputAdmissionReads,outputAdmissionGovernanceAssertions,outputAdmissionSponsor,outputAdmissionBudgetOwner,assertOutputAdmissionRequest}=await import('../worker/output-admission-reads.ts');
 const source=path=>readFileSync(new URL('../'+path,import.meta.url),'utf8');
 
 test('Storyboard activation uses existing host cost-transfer approval and exact current terms, without another approval gate',async()=>{
@@ -99,10 +100,12 @@ test('Storyboard activation admission handoff preserves the exact job, quoted pa
   const f=await offerFixture(),trace={jobs:0,budgets:0},slot={scopeKey:'scope',slotId:'slot',jobId:f.target.settings.original.requestId,grantId:'grant',targetId:f.target.targetId,planRevisionId:f.offer.planRevisionId,sourceDigest:f.input.sourceDigest,targetContractDigest:'digest',routeDigest:await outputDigest(f.target),attemptOrdinal:0,previousSlotId:null,maximumMicrousd:f.target.maximumMicrousd,maximumCalls:5,maximumTokens:f.target.maximumTokens};
   const input={...f.input,slots:[slot],preflight:{targets:[f.target]},confirmedPlan:{...f.input.confirmedPlan},request:new Request('https://forma.test/api/experiences/drafts/'+f.target.settings.original.draftId+'/output/authorize')};
   class OutputConflictError extends Error{}
-  const deps={createOutputAdmissionReads:()=>({}),outputAdmissionGovernanceAssertions:()=>[],outputDigest,OutputConflictError,readStoryboardExecutionOffer,
+  const deps={createOutputAdmissionReads,outputAdmissionGovernanceAssertions,outputAdmissionSponsor,outputAdmissionBudgetOwner,outputDigest,OutputConflictError,readStoryboardExecutionOffer,
    preflightOutputNativeTarget:arg=>f.preflightOutputStoryboardTarget(arg),preflightOutputStoryboardTarget:arg=>f.preflightOutputStoryboardTarget(arg),outputStoryboardPreflightProof:f.outputStoryboardPreflightProof,
-   prepareOutputDocumentJob:async(request,env,command,preparation)=>{trace.jobs++;trace.command=command;trace.preparation=preparation;assert.equal(request,input.request);assert.equal(env,input.env);return {user:input.principal,kind:'render_document',jobId:slot.jobId,initialResult:{}};},
-   prepareBudgetReservation:async()=>{trace.budgets++;return {ok:false};}};
+   prepareOutputDocumentJob:async(request,env,command,preparation)=>{trace.jobs++;trace.command=command;trace.preparation=preparation;assert.equal(request,input.request);assert.equal(env,input.env);
+    assertOutputAdmissionRequest(preparation.readScope,request,env,command.documentId);assert.equal(outputAdmissionSponsor(preparation.readScope),null);
+    return {user:input.principal,budgetOwnerId:trace.budgetOwner??input.principal.billingUserId??input.principal.userId,kind:'render_document',jobId:slot.jobId,initialResult:{}};},
+   prepareBudgetReservation:async(env,payer)=>{trace.budgets++;assert.equal(env,input.env);assert.equal(payer,input.principal.billingUserId??input.principal.userId);return {ok:false};}};
   const prepare=oneFunction('worker/output-document-execution.ts','async function prepareAdmission','\nexport const outputDocumentExecutionBridge',deps);
   mutate({f,input,slot,trace});return {f,input,slot,trace,invoke:()=>prepare(input)};
  }
@@ -110,6 +113,9 @@ test('Storyboard activation admission handoff preserves the exact job, quoted pa
  assert.equal(f.trace.jobs,1);assert.equal(f.trace.budgets,1);assert.equal(f.trace.preparation.jobId,f.f.target.settings.original.requestId);
  assert.deepEqual(f.trace.command.payload,f.f.target.settings.payload);assert.equal(f.trace.preparation.maximumCalls,5);
  assert.equal(f.trace.preparation.outputStoryboard.maximumMicrousd,f.f.target.maximumMicrousd);assert.equal(typeof f.trace.preparation.outputStoryboard.refresh,'function');
+ const foreignBudget=await run(({trace})=>{trace.budgetOwner='foreign';});
+ await assert.rejects(foreignBudget.invoke(),/output_job_budget_scope_mismatch/u);
+ assert.equal(foreignBudget.trace.jobs,1);assert.equal(foreignBudget.trace.budgets,0,'a foreign job payer cannot reach reservation preparation');
  for(const mutate of [x=>x.slot.jobId='foreign',x=>x.slot.attemptOrdinal=1,x=>x.slot.previousSlotId='old',x=>x.f.input.current=false,x=>x.slot.routeDigest='changed']){
   const f=await run(mutate);await assert.rejects(f.invoke());assert.equal(f.trace.jobs,0);assert.equal(f.trace.budgets,0);
  }

@@ -26,6 +26,7 @@ const {createOutputFalImageContract,OUTPUT_FAL_PLANNING_MODEL}=await import("../
 const {selectImageAdapter}=await import("../worker/image-adapter-selection.ts");
 const {prepareStoryboardPlannerRequest}=await import("../worker/openai-adapter.ts");
 const {estimateOpenAITextCallMaximumMicrousd}=await import("../worker/openai-text-cost.ts");
+const {outputProofReadStatements}=await import("../worker/output-disclosure-proof.ts");
 const originalFetch=globalThis.fetch;globalThis.fetch=()=>{throw Error('network forbidden');};test.after(()=>{globalThis.fetch=originalFetch;});
 const source = path => { const local=new URL("../"+path,import.meta.url);return readFileSync(existsSync(local)?local:C+"/"+path,"utf8"); };
 const {readStoryboardExecutionOffer,STORYBOARD_READY_REASON,STORYBOARD_TRANSFER}=await import("../src/model/output-storyboard-offer.ts");
@@ -72,8 +73,12 @@ function fixture() {
   const reads = [], selects = [], principal = { userId: creator, streamId: plan.streamId, access: { capabilities: ["project.author"] }, consent: true };
   const input = { request: new Request("https://forma.test"), principal,
     env: { FORMA_IMAGE_PROVIDER: "fal", OPENAI_API_KEY: "synthetic-configured-no-network", FAL_KEY: "synthetic-configured-no-network", DB: {
-      prepare(sql) { assert.match(sql, /^SELECT 1 AS current WHERE /u); selects.push(sql);
-        return { bind(...values) { selects.push(values); return { async first() { return input.current ? { current: 1 } : null; } }; } }; },
+      prepare(sql) { assert.match(sql, /^SELECT (?:1 AS current WHERE |CASE WHEN )/u); selects.push(sql);
+        return { bind(...values) { assert.ok(values.length<=100);selects.push(values); return {
+          async first() { return input.current ? { current: 1 } : null; },
+          async all() { return {success:true,results:input.current?[{current:1}]:[]}; },
+        }; } }; },
+      async batch(statements){return Promise.all(statements.map(statement=>statement.all()));},
     } }, current: true,
     scope: { kind: "personal", actorUserId: creator, ownerUserId: creator, projectId: plan.projectId, documentId: plan.documentId,
       organizationId: null, projectAccessId: null, contextId: null },
@@ -109,7 +114,7 @@ function fixture() {
     freeze, parseStoryboardOutputContract, standingConstraints, documentRenderTokenReservation, OUTPUT_NATIVE_EXECUTION_POLICY,
     createOutputFalImageContract, OUTPUT_FAL_PLANNING_MODEL, selectImageAdapter, prepareStoryboardPlannerRequest,
     estimateOpenAITextCallMaximumMicrousd, resolveOutputStoryboardSource: resolver.resolveOutputStoryboardSource,
-    readStoryboardExecutionOffer,STORYBOARD_READY_REASON,STORYBOARD_TRANSFER,
+    readStoryboardExecutionOffer,STORYBOARD_READY_REASON,STORYBOARD_TRANSFER,outputProofReadStatements,
   });
   return { input, reads, selects, ...resolver, ...preflight };
 }
