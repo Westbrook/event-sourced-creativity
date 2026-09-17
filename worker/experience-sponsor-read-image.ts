@@ -22,6 +22,13 @@ const columns = ["user_id", "email", "role", "consent_version", "updated_at", "p
 const lineageCells = ["job.document_id", "job.stream_id", "job.correlation_id", "plan.project_id", "plan.source_digest", "slot.scope_key", "slot.slot_id",
   "slot.route_digest", "slot.model", "execution.grant_id", "execution.payer_user_id", "used.consumption_id", "used.campaign_id", "used.envelope_digest",
   "used.session_digest", "used.intent_key", "issued.grant_id", "issued.policy_digest"];
+// Keep every predicate and binding in order, while avoiding a left-deep AND
+// chain in the retained proof and its native D1 wrappers.
+function balancedConjunction(terms: readonly string[]): string {
+  if (terms.length === 1) return terms[0]!;
+  const middle = Math.ceil(terms.length / 2);
+  return `(${balancedConjunction(terms.slice(0, middle))} AND ${balancedConjunction(terms.slice(middle))})`;
+}
 const databaseNow = "CAST((julianday('now')-2440587.5)*86400000 AS INTEGER)";
 declare const resourceAuthority: unique symbol;
 /** Resource admission only. This opaque value never authorizes creative bytes. */
@@ -40,23 +47,23 @@ const ORIGINAL_FROM = `FROM document_jobs job
  JOIN experience_sponsor_grants issued ON issued.grant_id=used.grant_id AND issued.campaign_id=used.campaign_id
  JOIN experience_sponsor_issuances issuance ON issuance.grant_id=issued.grant_id AND issuance.campaign_id=issued.campaign_id
  JOIN experience_sponsor_approvals approval ON approval.campaign_id=issued.campaign_id AND approval.policy_digest=issued.policy_digest
- WHERE job.job_id=? AND job.owner_id=? AND job.stream_id='creative:'||job.owner_id
- AND job.kind='generate' AND job.source_surface='outputs'
- AND plan.scope_kind='personal' AND plan.owner_user_id=job.owner_id AND plan.document_id=job.document_id
- AND execution.actor_user_id=job.owner_id AND execution.payer_user_id<>job.owner_id AND execution.context_id IS NULL
- AND execution.plan_revision_id=slot.plan_revision_id AND slot.attempt_ordinal=0 AND slot.previous_slot_id IS NULL
- AND slot.source_digest=plan.source_digest
- AND slot.provider='openai' AND slot.maximum_calls=2 AND execution.maximum_calls=2
- AND (SELECT COUNT(*) FROM output_operation_slots sibling WHERE sibling.scope_key=slot.scope_key AND sibling.grant_id=slot.grant_id)=1
- AND issued.actor_user_id=used.actor_user_id AND issued.intent_key=used.intent_key AND issued.session_digest=used.session_digest
- AND issued.envelope_digest=used.envelope_digest AND issuance.actor_user_id=used.actor_user_id AND issuance.intent_key=used.intent_key
- AND issuance.envelope_digest=used.envelope_digest AND issuance.policy_digest=issued.policy_digest
- AND approval.payer_user_id=execution.payer_user_id AND approval.approved_by_user_id=approval.payer_user_id
- AND slot.maximum_microusd=used.maximum_microusd AND execution.maximum_microusd=slot.maximum_microusd
- AND ${lineageCells.map(cell => `(typeof(${cell})='text' AND length(CAST(${cell} AS BLOB))<=4096)`).join(" AND ")}
- AND NOT EXISTS(SELECT 1 FROM organization_projects WHERE project_id=plan.project_id)
- AND NOT EXISTS(SELECT 1 FROM project_resource_scopes WHERE (resource_kind='document' AND resource_id=job.document_id)
-   OR (resource_kind='job' AND resource_id=job.job_id))`;
+ WHERE ${balancedConjunction([
+  "job.job_id=?", "job.owner_id=?", "job.stream_id='creative:'||job.owner_id",
+  "job.kind='generate'", "job.source_surface='outputs'",
+  "plan.scope_kind='personal'", "plan.owner_user_id=job.owner_id", "plan.document_id=job.document_id",
+  "execution.actor_user_id=job.owner_id", "execution.payer_user_id<>job.owner_id", "execution.context_id IS NULL",
+  "execution.plan_revision_id=slot.plan_revision_id", "slot.attempt_ordinal=0", "slot.previous_slot_id IS NULL",
+  "slot.source_digest=plan.source_digest", "slot.provider='openai'", "slot.maximum_calls=2", "execution.maximum_calls=2",
+  "(SELECT COUNT(*) FROM output_operation_slots sibling WHERE sibling.scope_key=slot.scope_key AND sibling.grant_id=slot.grant_id)=1",
+  "issued.actor_user_id=used.actor_user_id", "issued.intent_key=used.intent_key", "issued.session_digest=used.session_digest",
+  "issued.envelope_digest=used.envelope_digest", "issuance.actor_user_id=used.actor_user_id", "issuance.intent_key=used.intent_key",
+  "issuance.envelope_digest=used.envelope_digest", "issuance.policy_digest=issued.policy_digest",
+  "approval.payer_user_id=execution.payer_user_id", "approval.approved_by_user_id=approval.payer_user_id",
+  "slot.maximum_microusd=used.maximum_microusd", "execution.maximum_microusd=slot.maximum_microusd",
+  ...lineageCells.map(cell => `(typeof(${cell})='text' AND length(CAST(${cell} AS BLOB))<=4096)`),
+  "NOT EXISTS(SELECT 1 FROM organization_projects WHERE project_id=plan.project_id)",
+  "NOT EXISTS(SELECT 1 FROM project_resource_scopes WHERE (resource_kind='document' AND resource_id=job.document_id) OR (resource_kind='job' AND resource_id=job.job_id))",
+ ])}`;
 
 async function assertCurrent(env: WorkerEnv, assertions: Assertion[]) {
   const result = await env.DB.batch<Row>(assertions.map(a => imageWitnessStatement(env, a)));
@@ -105,11 +112,13 @@ export async function identifySponsorImageRead(request: Request, env: WorkerEnv,
   const principalJson = JSON.stringify(columns.map(key => principal[key] ?? null));
   const assertions: Assertion[] = [
     { sql: `EXISTS(SELECT 1 FROM (${PRINCIPAL_WITH_ACCESS_SQL}) current WHERE json_array(${columns.map(c => `current.${c}`).join(",")})=?)`, bindings: [actor.userId, principalJson] },
-    { sql: `EXISTS(SELECT 1 ${ORIGINAL_FROM} AND job.document_id=? AND job.stream_id=? AND job.correlation_id=? AND plan.project_id=?
-      AND slot.scope_key=? AND slot.slot_id=? AND execution.grant_id=? AND issued.grant_id=? AND used.consumption_id=? AND used.campaign_id=?
-      AND issued.policy_digest=? AND issuance.envelope_json=? AND approval.policy_json=?
-      AND slot.route_digest=? AND slot.model=? AND slot.maximum_tokens=? AND slot.maximum_microusd=? AND execution.payer_user_id=?
-      AND plan.source_digest=? AND plan.source_head=?)`,
+    { sql: `EXISTS(SELECT 1 ${ORIGINAL_FROM} AND ${balancedConjunction([
+      "job.document_id=?", "job.stream_id=?", "job.correlation_id=?", "plan.project_id=?",
+      "slot.scope_key=?", "slot.slot_id=?", "execution.grant_id=?", "issued.grant_id=?", "used.consumption_id=?", "used.campaign_id=?",
+      "issued.policy_digest=?", "issuance.envelope_json=?", "approval.policy_json=?",
+      "slot.route_digest=?", "slot.model=?", "slot.maximum_tokens=?", "slot.maximum_microusd=?", "execution.payer_user_id=?",
+      "plan.source_digest=?", "plan.source_head=?",
+    ])})`,
     bindings: [raw.jobId, actor.userId, e.documentId, String(original.stream_id), String(original.correlation_id), e.projectId,
       String(original.scope_key), String(original.slot_id), String(original.execution_grant_id), String(original.issued_grant_id), e.consumptionId, e.campaignId,
       compiled.policyDigest, String(original.envelope_json), String(original.policy_json), String(original.route_digest), recipe.model,
