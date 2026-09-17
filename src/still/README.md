@@ -16,7 +16,7 @@ The server rejects malformed routes. After loading authorized events, Still veri
 
 # Still developer console
 
-Open **More → Developer console → Open**, or add `developer` to the `/still` query string. The **Decisions** button opens the design-system Drawer. Escape or Close dismisses it; **Exit developer mode** removes the flag and clears the in-memory traces.
+Open **Palette (⌘K) → Developer panel**, or add `developer` to the `/still` query string. On desktop, the panel sits beside the application and can also open in a separate live window. Close removes the flag and clears the in-memory traces.
 
 **Open in window** moves inspection to a separate browser window while the app stays usable. It mirrors the source app's live controls, pending status, decisions and captured exchanges; it starts no data client or extra Jev calls. **Decisions ↗** focuses the existing window; **Return to Drawer** closes it and restores the Drawer. If pop-ups are blocked, the Drawer remains usable with a retry message. Browser preferences may open a tab instead of a window.
 
@@ -40,7 +40,7 @@ The flag changes diagnostic visibility only. Traces are ephemeral, cleared on de
 
 # Finding actions and reusing ideas
 
-**More** accepts a typed request or a choice from the complete eligible action catalog. **Find** resolves a suggestion; **Open** enters its destination or review. Inferred requests never directly execute mutations or downloads.
+**More** shows up to three next-ranked actions, plus **Back** and **Palette ⌘K**. Ranking comes from the same decision response, excluding the first toolbar and currently ineligible actions. Missing or zero-usefulness model scores are not promoted. **Palette** opens a design-system modal command palette; ⌘K (or Ctrl+K) toggles it from any screen, including editors. Arrow keys and Enter select an action, Escape closes it, and free-text requests can ask Jev for a step. Opening and dismissing the palette preserves drafts and focus. Commands that would leave unfinished work are blocked. Inferred requests enter a destination or review and never directly execute mutations or downloads.
 
 **Use in…** selects an eligible idea and destination, then reviews the change before saving. Within a document it links the idea into the selected context or composition; across documents it creates an independent copy with its related ideas. Access stays within the current authorized workspace. Saves use canonical Forma events, preserve existing members and recover unconfirmed receipts.
 

@@ -4,7 +4,7 @@ import { isContextCompositionRelation } from '../model/combined-context.ts';
 import { parseDocumentArtifactContent } from '../model/document-artifacts.ts';
 import { foldEvents, type CreativeEvent, type CreativeProjection } from '../model/events.ts';
 
-export const POLICY_VERSION = 'still-5';
+export const POLICY_VERSION = 'still-6';
 export type Position = { projectId: string; documentId: string; blockId: string; outputId: string; view: string; intent: string; recentActions: string[]; itemIndex?: number };
 export type Abilities = { author: boolean; generate: boolean; projectCreate: boolean; formats: string[] };
 export type Action = { id: string; label: string; group: 'navigate' | 'write' | 'context' | 'make' | 'reflect'; description: string };
@@ -282,7 +282,7 @@ export function evaluateActions(candidates: Action[], pos: Position, answers: Re
   const scored = (id: string) => { const a=answers[`use_${id}`];return a?.type==='score'&&Number.isFinite(a.score)&&a.score!>=0&&a.score!<=3&&Number.isFinite(a.confidence)&&a.confidence!>=.12&&a.confidence!<=1; };
   const recommendable = candidates.filter(a => a.id !== 'intent' && (!Object.hasOwn(MEDIUM_QUESTIONS,a.id) || !!pos.intent.trim() && evidence(`requested_${a.id}`) > .5));
   const modelRanked = recommendable.some(a=>scored(a.id));
-  const rows: RankingRow[] = candidates.map(a => ({ id:a.id, questionId:`use_${a.id}`, reason:a.id==='intent' ? 'Reserved for More' : !recommendable.includes(a) ? 'Current explicit format request required' : modelRanked && !scored(a.id) ? !answers[`use_${a.id}`] ? 'No answer' : 'Invalid score or confidence below 0.12' : modelRanked && answers[`use_${a.id}`].score===0 ? 'Zero usefulness' : '' }));
+  const rows: RankingRow[] = candidates.map(a => ({ id:a.id, questionId:`use_${a.id}`, reason:a.id==='intent' ? 'Available in Palette' : !recommendable.includes(a) ? 'Current explicit format request required' : modelRanked && !scored(a.id) ? !answers[`use_${a.id}`] ? 'No answer' : 'Invalid score or confidence below 0.12' : modelRanked && answers[`use_${a.id}`].score===0 ? 'Zero usefulness' : '' }));
   const ranked = recommendable.filter(a => !modelRanked || scored(a.id) && answers[`use_${a.id}`].score! > 0).map((a, index) => {
     const answer = answers[`use_${a.id}`];
     const valid = answer?.type === 'score' && Number.isFinite(answer.score) && answer.score! >= 0 && answer.score! <= 3 && Number.isFinite(answer.confidence) && answer.confidence! >= .12 && answer.confidence! <= 1;
@@ -315,7 +315,7 @@ export function evaluateActions(candidates: Action[], pos: Position, answers: Re
     else if(chosen.filter(x=>x.group===a.group).length>=2)row.reason='Two actions per group limit';
     else { chosen.push(a); row.selected=chosen.length; }
   });
-  return { selected:chosen, rows, modelRanked };
+  return { selected:chosen, ranked:ranked.map(row=>row.a), rows, modelRanked };
 }
 export function selectActions(candidates: Action[], pos: Position, answers: Record<string, Answer> = {}): Action[] {
   return evaluateActions(candidates,pos,answers).selected;

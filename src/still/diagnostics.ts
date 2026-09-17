@@ -61,7 +61,7 @@ export function decisionDiagnostics(p: CreativeProjection, position: Position, a
   };
 }
 export type DecisionDiagnostics = ReturnType<typeof decisionDiagnostics>;
-export type DecisionResponse = { source:string; reason?:string; model?:string; head:number; policy:string; actions?:{id:string}[]; formats?:string[]; presentation?:Record<string,Emphasis>; targets?:Record<string,string>; resolvedAction?:string; diagnostics?:DecisionDiagnostics };
+export type DecisionResponse = { source:string; reason?:string; model?:string; head:number; policy:string; actions?:{id:string}[]; rankedActions?:{id:string}[]; formats?:string[]; presentation?:Record<string,Emphasis>; targets?:Record<string,string>; resolvedAction?:string; diagnostics?:DecisionDiagnostics };
 export type ReceivedDecision = { at:string; disposition:string; trace?:DecisionDiagnostics; source:string; reason?:string; recommended:string[] };
 
 export function responseDisposition(result: DecisionResponse, state: { stale:boolean; focused?:boolean; touched?:boolean; head:number; headChanged?:boolean; formats?:boolean }) {

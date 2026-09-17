@@ -184,3 +184,11 @@ still-app .has-developer .slide { padding: clamp(24px, 3vw, 48px); }
   still-app .still-layout.has-developer { display: block; }
   still-app .has-developer .action-dock { right: 0; }
 }
+still-app .command-palette { --en-overlay-max-inline-size: 580px; --en-overlay-background: var(--paper); --en-overlay-radius: 20px; }
+still-app .command-palette::part(surface) { width: min(580px, calc(100vw - 32px)); margin-top: max(24px, 12dvh); }
+still-app .palette-query { width: 100%; box-sizing: border-box; font: inherit; padding: 14px; border: 1px solid var(--line); border-radius: 10px; color: var(--ink); background: #fff; }
+still-app .palette-options { max-height: 45dvh; overflow-y: auto; margin-top: 12px; }
+still-app .palette-result, still-app .palette-find { display: block; width: 100%; text-align: left; border: 0; border-radius: 8px; padding: 12px 14px; background: transparent; }
+still-app .palette-result[aria-selected="true"], still-app .palette-result:hover { background: #e9e7de; }
+still-app .palette-find { border-top: 1px solid var(--line); margin-top: 8px; }
+still-app .palette-hint { color: var(--soft); font-size: 12px; }
