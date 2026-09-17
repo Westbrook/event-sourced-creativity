@@ -42,8 +42,9 @@ function headers(response) {
   assert.equal(response.headers.get("etag"), null);
 }
 function countRows(f, table) { return f.sqlite.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get().n; }
-function finalRead(sql) { return sql.startsWith("SELECT 1 AS permitted WHERE") && sql.includes("selected_output_shares"); }
-function tokenWrite(sql) { return /^UPDATE selected_output_shares SET token_hash=/u.test(sql); }
+function finalRead(sql) { return sql.startsWith("WITH selected_share_proof_") && sql.includes(" SELECT 1 AS permitted WHERE") && sql.includes("selected_output_shares"); }
+function tokenWrite(sql) { return sql.startsWith("WITH selected_share_proof_") && sql.includes(" UPDATE selected_output_shares SET token_hash="); }
+function preparationWrite(sql) { return sql.startsWith("WITH selected_share_proof_") && sql.includes(" INSERT INTO selected_output_shares("); }
 async function edit(f) {
   f.replace({ ...nativeContent(), content_markdown: "Edited exact selected output", items: [{ title: "Changed", body: "Edited slide", notes: "Private", image_prompt: "", slide: null }] });
   await f.append("DocumentArtifactEdited", { artifact_id: ARTIFACT, content_ref: CONTENT, revision: 1,
@@ -395,7 +396,7 @@ test("preparation rechecks custody within the candidate INSERT and stores no can
   const f = await selectedOutputShareFixture(t);
   let raced = false;
   f.setBeforeStatement(sql => {
-    if (!sql.startsWith("INSERT INTO selected_output_shares(")) return;
+    if (!preparationWrite(sql)) return;
     raced = true; f.setBeforeStatement(null);
     f.sqlite.prepare("UPDATE private_content SET redacted_at=? WHERE content_id=?").run(new Date().toISOString(), CONTENT);
   });
@@ -540,7 +541,7 @@ test("each final lifecycle statement rechecks schema integrity after the initial
     const result = operation === "prepare" ? null : operation === "commit" ? { prepared: await prepare(f) } : await issue(f);
     const before = f.changes(), original = f.shares().map(row => ({ ...row })); let raced = false;
     f.setBeforeStatement(sql => {
-      const boundary = operation === "prepare" ? sql.startsWith("INSERT INTO selected_output_shares(")
+      const boundary = operation === "prepare" ? preparationWrite(sql)
         : operation === "commit" ? tokenWrite(sql) : operation === "read" ? finalRead(sql)
           : sql.startsWith("UPDATE selected_output_shares SET revoked_at=");
       if (!boundary) return;

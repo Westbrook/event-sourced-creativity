@@ -2,6 +2,8 @@ import type { WorkerEnv } from "./runtime.ts";
 import { AUTH_BYTES, EVENT_BYTES, nativeRetainedTextCustodyAssertion, nativeRetainedTextCustodySnapshot, type NativeRetainedTextCustody } from "./native-retained-text-custody.ts";
 import { documentJobMaxAttempts } from "../src/model/document-jobs.ts";
 import { MAX_MANUAL_PRESENTATION_SLIDES } from "../src/model/presentation-count-policy.ts";
+import { selectedShareProofQuery, selectedSharePredicateProof, selectedShareProofStatement,
+  type SelectedShareProofQuery } from "./selected-output-share-proof.ts";
 
 /** Detached, read-only provenance proof. This module does not install schema or
  * expose an endpoint, and a proof is not permission to create a public link. */
@@ -10,7 +12,7 @@ export type SelectedOutputShareAuthority = Readonly<{ [selectedShareAuthority]: 
 type SqlValue = string | number | null;
 type Assertion = { sql: string; bindings: SqlValue[] };
 type Snapshot = Readonly<{ jobId: string; completionId: string; expiresAt: string }>;
-type State = { env: WorkerEnv; db: WorkerEnv["DB"]; environment: string; custody: NativeRetainedTextCustody; snapshot: Snapshot; assertion: Assertion };
+type State = { env: WorkerEnv; db: WorkerEnv["DB"]; environment: string; custody: NativeRetainedTextCustody; snapshot: Snapshot; assertion: readonly SelectedShareProofQuery[] };
 const proofs = new WeakMap<object, State>();
 const encoder = new TextEncoder();
 // Reuse the native custody transport budgets; do not enlarge the private reader.
@@ -113,7 +115,14 @@ async function admissionDeadline(env: WorkerEnv, native: ReturnType<typeof nativ
   } };
 }
 
-const jsonRow = (columns: Record<string, string>) => `json_object(${Object.entries(columns).flatMap(([name, value]) => [`'${name}'`, value]).join(",")})`;
+const jsonRow = (columns: Record<string, string>) => {
+  const entries = Object.entries(columns);
+  const initial = `json_object(${entries.slice(0, 15).flatMap(([name, value]) => [`'${name}'`, value]).join(",")})`;
+  // json_set preserves explicit SQL NULL fields and insertion order. json_patch
+  // would delete those fields and change the byte-exact provenance witness.
+  return entries.length <= 15 ? initial
+    : `json_set(${initial},${entries.slice(15).flatMap(([name, value]) => [`'$.${name}'`, value]).join(",")})`;
+};
 const jobJson = jsonRow({ jobId: "job.job_id", ownerId: "job.owner_id", streamId: "job.stream_id", documentId: "job.document_id",
   kind: "job.kind", status: "job.status", sourceSurface: "job.source_surface", correlationId: "job.correlation_id",
   attemptCount: "job.attempt_count", requestedSequence: "job.requested_sequence", requestJson: "job.request_json", resultJson: "job.result_json",
@@ -274,13 +283,16 @@ async function readAuthority(env: WorkerEnv, custody: NativeRetainedTextCustody)
   if (!result.success || result.results.length !== 1 || typeof result.results[0]?.witness !== "string" || bytes(result.results[0].witness) > WITNESS_BYTES) return fail();
   const raw = result.results[0].witness, source = validateWitness(raw, native);
   const snapshot = Object.freeze({ ...source, expiresAt: policy.expiresAt && policy.expiresAt < source.expiresAt ? policy.expiresAt : source.expiresAt });
-  const assertion: Assertion = {
-    sql: `(${schema.assertion.sql}) AND (${custodyAssertion.sql}) AND (${policy.assertion.sql}) AND EXISTS(WITH ${cte}
-      SELECT 1 FROM bounded_selected_share_jobs WHERE CAST(witness AS BLOB)=CAST(? AS BLOB)
-        AND (SELECT COUNT(*) FROM selected_share_jobs)=1)`,
-    bindings: [...schema.assertion.bindings, ...custodyAssertion.bindings, ...policy.assertion.bindings, ...bindings, raw],
-  };
-  const final = await db.prepare(`SELECT CASE WHEN (${assertion.sql}) THEN 1 ELSE 0 END AS admitted`).bind(...assertion.bindings).first<{ admitted: number }>();
+  const assertion = Object.freeze([
+    selectedSharePredicateProof(schema.assertion), selectedShareProofQuery(custodyAssertion.sql, custodyAssertion.bindings),
+    selectedSharePredicateProof(policy.assertion),
+    selectedShareProofQuery(`WITH ${cte}
+      SELECT 1 AS admitted FROM bounded_selected_share_jobs WHERE CAST(witness AS BLOB)=CAST(? AS BLOB)
+        AND (SELECT COUNT(*) FROM selected_share_jobs)=1`, [...bindings, raw]),
+  ]);
+  const statement = selectedShareProofStatement(assertion);
+  const final = await db.prepare(`${statement.withSql} SELECT 1 AS admitted WHERE ${statement.sql}`)
+    .bind(...statement.bindings).first<{ admitted: number }>();
   if (env.DB !== db || environment(env) !== capturedEnvironment || final?.admitted !== 1 || Date.parse(snapshot.expiresAt) <= Date.now()) return fail();
   nativeRetainedTextCustodySnapshot(custody, env);
   const proof = Object.freeze({}) as SelectedOutputShareAuthority;
@@ -304,7 +316,7 @@ function state(proof: SelectedOutputShareAuthority, env: WorkerEnv): State {
 export function selectedOutputShareAuthoritySnapshot(proof: SelectedOutputShareAuthority, env: WorkerEnv): Snapshot {
   return Object.freeze({ ...state(proof, env).snapshot });
 }
-export function selectedOutputShareAuthorityAssertion(proof: SelectedOutputShareAuthority, env: WorkerEnv): Assertion {
+export function selectedOutputShareAuthorityAssertion(proof: SelectedOutputShareAuthority, env: WorkerEnv): readonly SelectedShareProofQuery[] {
   const assertion = state(proof, env).assertion;
-  return { sql: assertion.sql, bindings: [...assertion.bindings] };
+  return Object.freeze(assertion.map(query => selectedShareProofQuery(query.sql, query.bindings)));
 }
