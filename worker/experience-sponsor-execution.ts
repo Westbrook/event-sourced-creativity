@@ -1,5 +1,9 @@
+import { sponsorApprovalAssertion, sponsorIssuedAuthorityAssertion } from "./experience-sponsor-approval.ts";
+import { matchSponsorImageTemplate } from "./experience-sponsor-campaign.ts";
+import { sponsorImageEvidence } from "./experience-sponsor-image-evidence.ts";
+import { sponsorResourceAdmissionAssertion } from "./experience-sponsor-resources.ts";
 import { canonicalJson, digest, jsonIssues, record } from "../src/experiences/compiler.ts";
-import { readSponsorPolicy, SponsorEntitlementError } from "./experience-sponsor-policy.ts";
+import { readSponsorPolicy, compileSponsorEnvelope, SponsorEntitlementError } from "./experience-sponsor-policy.ts";
 import { readExistingPrincipalRequest } from "./principal-request-core.ts";
 import { POLICY_VERSION } from "./policy-version.ts";
 import type { OutputSqlAssertion } from "./output-command-core.ts";
@@ -87,11 +91,14 @@ export async function createSponsorExecutionAuthority(trusted: OutputTrustedCont
   const auth = await readExistingPrincipalRequest(request, env, "creator", { account: "principal" });
   if ("kind" in auth || auth.response || !auth.user || auth.user.userId !== actorUserId || auth.user.consentVersion !== POLICY_VERSION) return fail("sponsor_execution_principal_changed");
   const row = await env.DB.prepare(`SELECT slot.job_id,slot.route_digest,slot.provider,slot.model,slot.maximum_tokens,slot.maximum_microusd,
-    body.private_json,campaign.policy_json,campaign.policy_digest,issued.issued_at_ms,issued.expires_at_ms,execution.expires_at AS execution_expires_at
+    body.private_json,quote.private_json AS preflight_private_json,campaign.policy_json,campaign.policy_digest,issued.issued_at_ms,issued.expires_at_ms,execution.expires_at AS execution_expires_at
     FROM output_execution_grants execution JOIN output_operation_slots slot ON slot.scope_key=execution.scope_key AND slot.grant_id=execution.grant_id
     JOIN output_plan_revisions plan ON plan.scope_key=slot.scope_key AND plan.plan_revision_id=slot.plan_revision_id
     JOIN event_private_payloads body ON body.private_event_id=execution.authorization_event_id AND body.owner_id=plan.owner_user_id
       AND body.project_id=plan.project_id AND body.document_id=plan.document_id AND body.redacted_at IS NULL
+    JOIN output_preflights preflight ON preflight.scope_key=execution.scope_key AND preflight.preflight_id=execution.preflight_id
+    JOIN event_private_payloads quote ON quote.private_event_id=preflight.event_id AND quote.owner_id=plan.owner_user_id
+      AND quote.project_id=plan.project_id AND quote.document_id=plan.document_id AND quote.redacted_at IS NULL
     JOIN experience_sponsor_consumptions consumption ON consumption.job_id=slot.job_id
     JOIN experience_sponsor_campaigns campaign ON campaign.campaign_id=consumption.campaign_id
     JOIN experience_sponsor_grants issued ON issued.grant_id=consumption.grant_id
@@ -101,16 +108,34 @@ export async function createSponsorExecutionAuthority(trusted: OutputTrustedCont
   const financial = await readSponsorFinancialBinding(env, actorUserId, String(row.job_id));
   const f = finances.get(financial)!;
   const policy = readSponsorPolicy(JSON.parse(String(row.policy_json)));
+  if (policy.mode !== "candidate") return fail("sponsor_execution_binding_changed");
+  const approvalAssertions: OutputSqlAssertion[] = [];
+  let recipeEligible = policy.version === 1 && policy.recipes.some(recipe => recipe.appId === "image" && recipe.outputKind === "image" && recipe.outputCount === 1
+    && recipe.routeDigest === `sha256:${row.route_digest}` && recipe.provider === row.provider && recipe.model === row.model
+    && recipe.maximumTokens === row.maximum_tokens && recipe.maximumMicrousd === row.maximum_microusd
+    && recipe.calls.parsing === 0 && recipe.calls.planning === 1 && recipe.calls.render === 1 && recipe.calls.repair === 0);
+  if (policy.version === 2) {
+    const issued = await env.DB.prepare("SELECT envelope_json FROM experience_sponsor_issuances WHERE grant_id=? AND envelope_digest=? AND policy_digest=?").bind(f.issuedGrantId,f.envelopeDigest,f.policyDigest).first<{envelope_json:string}>();
+    if (!issued) return fail("sponsor_execution_binding_changed");
+    const compiled = await compileSponsorEnvelope(policy,JSON.parse(issued.envelope_json));
+    const quote: unknown = JSON.parse(String(row.preflight_private_json));
+    const preflight = record(quote) && record(quote.preflight) ? quote.preflight : null;
+    const offered = preflight && Array.isArray(preflight.targets) && preflight.targets.length === 1 ? preflight.targets[0] : null;
+    const evidence = await sponsorImageEvidence(env,compiled.envelope.recipe,offered);
+    recipeEligible = compiled.envelopeDigest === f.envelopeDigest && compiled.envelope.recipe.routeDigest === `sha256:${row.route_digest}`
+      && policy.templates.some(template => matchSponsorImageTemplate(template,evidence));
+    approvalAssertions.push(sponsorApprovalAssertion(policy,actorUserId),await sponsorIssuedAuthorityAssertion({policy,policyDigest:f.policyDigest,grantId:f.issuedGrantId,
+      actorUserId,sessionDigest:compiled.envelope.sessionDigest,intentKey:compiled.envelope.intentKey,envelopeDigest:f.envelopeDigest}));
+    const resource=await sponsorResourceAdmissionAssertion({limits:policy.resources,campaignId:policy.campaignId,policyDigest:f.policyDigest,actorUserId});
+    approvalAssertions.push({sql:resource.sql,bindings:[...resource.bindings],deadlineMs:policy.resources.expiresAtMs});
+  }
   const authorization: unknown = JSON.parse(String(row.private_json));
   const envelope = record(authorization) && record(authorization.output_command_envelope) ? authorization.output_command_envelope : null;
   const marker = envelope && record(envelope.sponsor_entitlement) ? envelope.sponsor_entitlement : null;
   if (row.provider !== "openai" || policy.mode !== "candidate" || await digest(policy) !== f.policyDigest || row.policy_digest !== f.policyDigest || policy.payerUserId !== f.payerUserId
     || policy.campaignId !== f.campaignId || marker?.payer_user_id !== f.payerUserId || marker.campaign_id !== f.campaignId
     || marker.policy_digest !== f.policyDigest || marker.envelope_digest !== f.envelopeDigest || marker.consumption_id !== f.consumptionId
-    || !policy.recipes.some(recipe => recipe.appId === "image" && recipe.outputKind === "image" && recipe.outputCount === 1
-      && recipe.routeDigest === `sha256:${row.route_digest}` && recipe.provider === row.provider && recipe.model === row.model
-      && recipe.maximumTokens === row.maximum_tokens && recipe.maximumMicrousd === row.maximum_microusd
-      && recipe.calls.parsing === 0 && recipe.calls.planning === 1 && recipe.calls.render === 1 && recipe.calls.repair === 0)) return fail("sponsor_execution_binding_changed");
+    || !recipeEligible) return fail("sponsor_execution_binding_changed");
   const live: OutputSqlAssertion = { sql: `EXISTS(SELECT 1 FROM experience_sponsor_campaigns campaign
     JOIN experience_sponsor_grants issued ON issued.campaign_id=campaign.campaign_id
     JOIN experience_sponsor_active_jobs active ON active.consumption_id=? AND active.actor_user_id=? AND active.job_id=?
@@ -123,7 +148,7 @@ export async function createSponsorExecutionAuthority(trusted: OutputTrustedCont
     AND actor.role IN('creator','admin') AND payer.role IN('creator','admin') AND actor.consent_version=? AND payer.consent_version=?)`,
   bindings: [f.consumptionId, actorUserId, f.jobId, actorUserId, f.payerUserId, f.campaignId, f.policyDigest, String(row.policy_json), f.issuedGrantId, Number(row.issued_at_ms), Number(row.expires_at_ms),
     policy.startsAtMs, policy.expiresAtMs, POLICY_VERSION, POLICY_VERSION], deadlineMs: Math.min(policy.expiresAtMs, Number(row.expires_at_ms), Date.parse(String(row.execution_expires_at))) };
-  const assertions = [f.assertion, live, { sql: "EXISTS(SELECT 1 FROM event_private_payloads WHERE private_event_id=(SELECT authorization_event_id FROM output_execution_grants WHERE scope_key=? AND grant_id=?) AND owner_id=? AND private_json=? AND redacted_at IS NULL)", bindings: [f.scopeKey, f.grantId, actorUserId, String(row.private_json)] }];
+  const assertions = [f.assertion, live, ...approvalAssertions, { sql: "EXISTS(SELECT 1 FROM event_private_payloads WHERE private_event_id=(SELECT authorization_event_id FROM output_execution_grants WHERE scope_key=? AND grant_id=?) AND owner_id=? AND private_json=? AND redacted_at IS NULL)", bindings: [f.scopeKey, f.grantId, actorUserId, String(row.private_json)] }];
   await current(env, assertions);
   if (trusted.request !== request || trusted.env !== env || env.DB !== database || canonicalJson(trusted.scope) !== canonicalJson(scope)) return fail("sponsor_execution_authority_changed");
   const authority = Object.freeze({}) as SponsorExecutionAuthority;

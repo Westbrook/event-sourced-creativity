@@ -1,3 +1,7 @@
+import { sponsorApprovalAssertion, sponsorIssuedAuthorityAssertion } from "./experience-sponsor-approval.ts";
+import { matchSponsorImageTemplate } from "./experience-sponsor-campaign.ts";
+import { readSponsorImageTemplateEvidence } from "./experience-sponsor-image-evidence.ts";
+import { sponsorResourceAdmissionAssertion } from "./experience-sponsor-resources.ts";
 import { canonicalJson, digest, jsonIssues, record } from "../src/experiences/compiler.ts";
 import { registeredExperience } from "../src/experiences/intake.ts";
 import { compileSponsorEnvelope, SponsorEntitlementError, type SponsorRecipe } from "./experience-sponsor-policy.ts";
@@ -97,8 +101,8 @@ export async function describeSponsorImageAdmission(trusted: OutputTrustedContex
     preflightExpiresAtMs: Date.parse(row.expires_at) };
 }
 
-/** Dormant server-only capability constructor. No route, loader or enrollment
- * calls it. Public fields cannot recreate a seal: the original Request/DB,
+/** Dormant server-only capability constructor. No registered route or enrollment
+ * calls it; only the disabled internal issuer composes it. Public fields cannot recreate a seal: the original Request/DB,
  * independently read principal and exact stored campaign/grant are required. */
 export async function createSponsorAdmissionAuthority(input: {
   trusted: OutputTrustedContext; command: Record<string, unknown>; policy: unknown; envelope: unknown; grantId: string;
@@ -113,6 +117,10 @@ export async function createSponsorAdmissionAuthority(input: {
   if (typeof grantId !== "string" || !/^[A-Za-z0-9][A-Za-z0-9_.:@/-]{0,199}$/u.test(grantId)) return fail("sponsor_grant_invalid");
   const [compiled, description] = await Promise.all([compileSponsorEnvelope(input.policy, input.envelope), describeSponsorImageAdmission(trusted, command)]);
   if (!current()) return fail("sponsor_authority_changed");
+  if (compiled.policy.version === 2) {
+    const evidence = await readSponsorImageTemplateEvidence(trusted, command, description.recipe);
+    if (!compiled.policy.templates.some(template => matchSponsorImageTemplate(template, evidence))) return fail("sponsor_campaign_template_mismatch");
+  }
   for (const [key, value] of Object.entries(description)) {
     if (key === "preflightExpiresAtMs") continue;
     if (canonicalJson(compiled.envelope[key as keyof typeof compiled.envelope]) !== canonicalJson(value)) return fail("sponsor_native_envelope_mismatch");
@@ -128,7 +136,9 @@ export async function createSponsorAdmissionAuthority(input: {
     principalAssertions.push({ sql: `EXISTS(SELECT 1 FROM (${PRINCIPAL_WITH_ACCESS_SQL}) captured WHERE json_array(${principalColumns.map(column => `captured.${column}`).join(",")})=?)`,
       bindings: [userId, JSON.stringify(principalColumns.map(column => row[column] ?? null))] });
   }
-  const assertions: OutputSqlAssertion[] = [...principalAssertions, { sql: `EXISTS(SELECT 1 FROM experience_sponsor_campaigns campaign JOIN experience_sponsor_grants grant_row ON grant_row.campaign_id=campaign.campaign_id
+  const issuedAssertions: OutputSqlAssertion[] = p.version === 2 ? [sponsorApprovalAssertion(p, e.actorUserId), await sponsorIssuedAuthorityAssertion({ policy:p, policyDigest:compiled.policyDigest, grantId,
+    actorUserId:e.actorUserId,sessionDigest:e.sessionDigest,intentKey:e.intentKey,envelopeDigest:compiled.envelopeDigest })] : [];
+  const assertions: OutputSqlAssertion[] = [...principalAssertions, ...issuedAssertions, { sql: `EXISTS(SELECT 1 FROM experience_sponsor_campaigns campaign JOIN experience_sponsor_grants grant_row ON grant_row.campaign_id=campaign.campaign_id
     JOIN users actor ON actor.user_id=grant_row.actor_user_id JOIN users payer ON payer.user_id=?
     WHERE campaign.campaign_id=? AND campaign.enabled=1 AND campaign.policy_digest=? AND campaign.policy_json=?
       AND grant_row.grant_id=? AND grant_row.enabled=1 AND grant_row.policy_digest=campaign.policy_digest
@@ -177,5 +187,11 @@ export async function requireSponsorAdmission(authority: SponsorAdmissionAuthori
 
 export async function sponsorAdmissionPlan(authority: SponsorAdmissionAuthority, trusted: OutputTrustedContext, native: SponsorNativeAdmission) {
   const state = stateFor(authority, identity(trusted));
-  return prepareSponsorEntitlement({ policy: state.compiled.policy, envelope: state.compiled.envelope, grantId: state.grantId, native });
+  const plan = await prepareSponsorEntitlement({ policy: state.compiled.policy, envelope: state.compiled.envelope, grantId: state.grantId, native });
+  if (state.compiled.policy.version === 1) return plan;
+  const resource = await sponsorResourceAdmissionAssertion({ limits: state.compiled.policy.resources, campaignId: state.compiled.policy.campaignId,
+    policyDigest: state.compiled.policyDigest, actorUserId: state.compiled.envelope.actorUserId });
+  const approval = sponsorApprovalAssertion(state.compiled.policy, state.compiled.envelope.actorUserId);
+  return { ...plan, nativeAssertion: { sql: `(${plan.nativeAssertion.sql}) AND (${resource.sql}) AND (${approval.sql})`,
+    bindings: [...plan.nativeAssertion.bindings, ...resource.bindings, ...(approval.bindings ?? [])] } };
 }

@@ -1,8 +1,10 @@
 import { canonicalJson, digest, exactKeys, jsonIssues, record } from "../src/experiences/compiler.ts";
+import { readSponsorCampaignTemplate, recipeMatchesSponsorTemplate, type SponsorImageCampaignTemplate } from "./experience-sponsor-campaign.ts";
+import { readSponsorResourceLimits, type SponsorResourceLimits } from "./experience-sponsor-resources.ts";
 import type { OutputKind } from "../src/experiences/contracts.ts";
 
 /** Dormant contract only. No registered route issues sponsor authority; there is
- * no environment switch, policy loader, sponsor enrollment or grant issuer. */
+ * no environment switch, registered policy loader, sponsor enrollment or public grant issuer. */
 export const DEFAULT_SPONSOR_POLICY = Object.freeze({ version: 1, mode: "disabled" } as const);
 export class SponsorEntitlementError extends Error {
   readonly code: string;
@@ -26,7 +28,7 @@ export type SponsorRecipe = {
   calls: { parsing: number; planning: number; render: number; repair: number };
   maximumTokens: number; maximumMicrousd: number;
 };
-export type SponsorPolicy = {
+export type SponsorPolicyV1 = {
   version: 1; mode: "candidate"; campaignId: string; policyVersion: string; payerUserId: string;
   audience: "canonical-principal"; approvalReceiptDigest: string;
   startsAtMs: number; expiresAtMs: number; maximumGrantLifetimeMs: number;
@@ -34,7 +36,9 @@ export type SponsorPolicy = {
   windowMs: number; maximumAdmissionsPerWindow: number; maximumAdmissionsPerActorWindow: number;
   recipes: SponsorRecipe[];
 };
-export type SponsorEnvelope = {
+export type SponsorPolicyV2 = Omit<SponsorPolicyV1, "version" | "recipes"> & { version: 2; templates: SponsorImageCampaignTemplate[]; resources: SponsorResourceLimits };
+export type SponsorPolicy = SponsorPolicyV1 | SponsorPolicyV2;
+export type SponsorEnvelopeV1 = {
   version: 1; campaignId: string; policyVersion: string; consumptionId: string; intentKey: string;
   actorKind: "canonical-principal"; actorUserId: string; sessionDigest: string; payerUserId: string;
   ownerUserId: string; projectId: string; documentId: string; sourceRevision: number;
@@ -42,6 +46,8 @@ export type SponsorEnvelope = {
   compiledInputDigest: string; transferEnvelopeDigest: string; recipe: SponsorRecipe;
   issuedAtMs: number; expiresAtMs: number;
 };
+export type SponsorEnvelopeV2 = Omit<SponsorEnvelopeV1, "version"> & { version: 2; templateDigest: string };
+export type SponsorEnvelope = SponsorEnvelopeV1 | SponsorEnvelopeV2;
 const recipeKeys = ["appId", "recipeVersion", "releaseDigest", "outputKind", "provider", "model", "routeDigest", "settingsDigest", "outputCount", "durationMs", "width", "height", "calls", "maximumTokens", "maximumMicrousd"];
 function validRecipe(value: unknown): value is SponsorRecipe {
   if (!keys(value, recipeKeys) || ![value.appId, value.recipeVersion, value.provider, value.model].every(id)
@@ -59,6 +65,20 @@ function validRecipe(value: unknown): value is SponsorRecipe {
 export function readSponsorPolicy(raw: unknown = DEFAULT_SPONSOR_POLICY): SponsorPolicy | typeof DEFAULT_SPONSOR_POLICY {
   if (jsonIssues(raw).length) return fail("sponsor_policy_invalid");
   if (keys(raw, ["version", "mode"]) && raw.version === 1 && raw.mode === "disabled") return DEFAULT_SPONSOR_POLICY;
+  if (record(raw) && raw.version === 2) {
+    if (!keys(raw, ["version", "mode", "campaignId", "policyVersion", "payerUserId", "audience", "approvalReceiptDigest", "startsAtMs", "expiresAtMs", "maximumGrantLifetimeMs", "maximumAdmissions", "maximumMicrousd", "maximumAdmissionsPerActor", "windowMs", "maximumAdmissionsPerWindow", "maximumAdmissionsPerActorWindow", "templates", "resources"])
+      || !Array.isArray(raw.templates) || raw.templates.length !== 1) return fail("sponsor_policy_invalid");
+    const templates = raw.templates.map(readSponsorCampaignTemplate), resources = readSponsorResourceLimits(raw.resources);
+    const { templates: ignoredTemplates, resources: ignoredResources, ...common } = raw;
+    void ignoredTemplates; void ignoredResources;
+    // Reuse the exact existing finite monetary and lifetime validator. The
+    // synthetic digests here only validate common limits; they grant no intent.
+    const base = readSponsorPolicy({ ...common, version: 1, recipes: templates.map(t => ({ appId:t.appId,recipeVersion:t.recipeVersion,releaseDigest:t.releaseDigest,
+      outputKind:t.outputKind,provider:t.calls[1].provider,model:t.calls[1].model,routeDigest:`sha256:${"0".repeat(64)}`,settingsDigest:`sha256:${"0".repeat(64)}`,
+      outputCount:t.outputCount,durationMs:t.durationMs,width:t.width,height:t.height,calls:{parsing:0,planning:1,render:1,repair:0},maximumTokens:t.maximumTokens,maximumMicrousd:t.maximumMicrousd })) });
+    if (base.mode !== "candidate" || resources.startsAtMs < base.startsAtMs || resources.expiresAtMs > base.expiresAtMs) return fail("sponsor_policy_invalid");
+    return freeze(JSON.parse(canonicalJson({ ...raw, templates, resources })) as SponsorPolicyV2);
+  }
   if (!keys(raw, ["version", "mode", "campaignId", "policyVersion", "payerUserId", "audience", "approvalReceiptDigest", "startsAtMs", "expiresAtMs", "maximumGrantLifetimeMs", "maximumAdmissions", "maximumMicrousd", "maximumAdmissionsPerActor", "windowMs", "maximumAdmissionsPerWindow", "maximumAdmissionsPerActorWindow", "recipes"])
     || raw.version !== 1 || raw.mode !== "candidate" || raw.audience !== "canonical-principal"
     || ![raw.campaignId, raw.policyVersion, raw.payerUserId].every(id) || !hash(raw.approvalReceiptDigest)
@@ -83,8 +103,8 @@ export async function compileSponsorEnvelope(rawPolicy: unknown, rawEnvelope: un
   if (policy.mode === "disabled") return fail("sponsor_disabled");
   if (jsonIssues(rawEnvelope).length) return fail("sponsor_envelope_invalid");
   if (record(rawEnvelope) && rawEnvelope.actorKind === "guest") return fail("sponsor_guest_custody_not_integrated");
-  if (!keys(rawEnvelope, ["version", "campaignId", "policyVersion", "consumptionId", "intentKey", "actorKind", "actorUserId", "sessionDigest", "payerUserId", "ownerUserId", "projectId", "documentId", "sourceRevision", "sourceDigest", "orderedAssetDigests", "rightsDigest", "compiledInputDigest", "transferEnvelopeDigest", "recipe", "issuedAtMs", "expiresAtMs"])
-    || rawEnvelope.version !== 1 || rawEnvelope.actorKind !== "canonical-principal"
+  if (!keys(rawEnvelope, ["version", "campaignId", "policyVersion", "consumptionId", "intentKey", "actorKind", "actorUserId", "sessionDigest", "payerUserId", "ownerUserId", "projectId", "documentId", "sourceRevision", "sourceDigest", "orderedAssetDigests", "rightsDigest", "compiledInputDigest", "transferEnvelopeDigest", "recipe", "issuedAtMs", "expiresAtMs", ...(policy.version === 2 ? ["templateDigest"] : [])])
+    || rawEnvelope.version !== policy.version || policy.version === 2 && !hash(rawEnvelope.templateDigest) || rawEnvelope.actorKind !== "canonical-principal"
     || ![rawEnvelope.campaignId, rawEnvelope.policyVersion, rawEnvelope.consumptionId, rawEnvelope.intentKey, rawEnvelope.actorUserId, rawEnvelope.payerUserId, rawEnvelope.ownerUserId, rawEnvelope.projectId, rawEnvelope.documentId].every(id)
     || ![rawEnvelope.sessionDigest, rawEnvelope.sourceDigest, rawEnvelope.rightsDigest, rawEnvelope.compiledInputDigest, rawEnvelope.transferEnvelopeDigest].every(hash)
     || !integer(rawEnvelope.sourceRevision, 0, Number.MAX_SAFE_INTEGER)
@@ -94,9 +114,13 @@ export async function compileSponsorEnvelope(rawPolicy: unknown, rawEnvelope: un
   if (rawEnvelope.campaignId !== policy.campaignId || rawEnvelope.policyVersion !== policy.policyVersion
     || rawEnvelope.payerUserId !== policy.payerUserId || rawEnvelope.actorUserId !== rawEnvelope.ownerUserId
     || rawEnvelope.actorUserId === rawEnvelope.payerUserId
-    || !policy.recipes.some(recipe => canonicalJson(recipe) === canonicalJson(rawEnvelope.recipe))) return fail("sponsor_envelope_not_eligible");
-  // Copy/freeze before hashing: mutation during WebCrypto must not change the envelope.
+    || (policy.version === 1 && !policy.recipes.some(recipe => canonicalJson(recipe) === canonicalJson(rawEnvelope.recipe)))) return fail("sponsor_envelope_not_eligible");
   const envelope = freeze(JSON.parse(canonicalJson(rawEnvelope)) as SponsorEnvelope);
+  if (policy.version === 2) {
+    const templateDigests = await Promise.all(policy.templates.map(template => digest(template)));
+    if (!policy.templates.some((template, index) => templateDigests[index] === (envelope as SponsorEnvelopeV2).templateDigest && recipeMatchesSponsorTemplate(template, envelope.recipe))) return fail("sponsor_envelope_not_eligible");
+  }
+  // Copy/freeze before hashing: mutation during WebCrypto must not change the envelope.
   const [policyDigest, envelopeDigest] = await Promise.all([digest(policy), digest(envelope)]);
   return freeze({ policy, envelope, policyJson: canonicalJson(policy), envelopeJson: canonicalJson(envelope), policyDigest, envelopeDigest });
 }
