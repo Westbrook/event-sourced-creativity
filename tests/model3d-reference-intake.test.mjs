@@ -11,7 +11,7 @@ const key = Symbol.for("forma.model3d-reference-intake.new-controls");
 let ports;
 const mocks = {
   "./model3d-reference-custody.ts": ["inspectModel3dReferenceCustody", "inspect"],
-  "./output-requirements-api.ts": ["loadOutputTrustedContext", "trusted"],
+  "./output-trusted-context.ts": ["continueOutputTrustedContext", "trusted"],
   "./intake-authority.ts": ["projectIntakeAuthority", "authority"],
   "./output-disclosure-proof.ts": [["outputActiveSourceDeadlineAssertions", "deadlines"], ["captureOutputPrivateSources", "capture"], ["verifyOutputSourceRead", "verify"]],
   "./experience-intake-api.ts": ["authorizeExperienceIntake", "authorize"],
@@ -147,20 +147,22 @@ test("retired runtime ignores late prepare without creating or rebasing a reques
 });
 
 function sourcePorts(f = fixture()) {
-  const calls = [], controller = new AbortController();
+  const calls = [], trustedCalls = [], controller = new AbortController();
   const trusted = { ownerHead: 11, context: { snapshot: {} }, projection: { libraryBlocks: [{ id: f.selection.sourceBlockId, properties: f.properties }] },
     sourceAssertions: [{ sql: "private_source_exact=?", bindings: ["source-private-body"] }] };
   ports = {
-    trusted: async () => trusted,
+    trusted: async (...args) => { trustedCalls.push(args); return trusted; },
     inspect: async (given, auth, selection) => { calls.push("inspect"); assert.equal(given, trusted); assert.deepEqual(selection, f.selection); return { sourceDigest: f.reference.sourceDigest }; },
     authority: () => ({ sql: "real_authority_port=?", bindings: ["synthetic-authority"] }),
     deadlines: () => [{ sql: "real_deadline_port>?", bindings: [123] }],
   };
   globalThis[key] = ports;
-  return { f, calls, trusted, controller, env: {}, auth: {}, request: new Request("https://forma.invalid/api/experiences/drafts", { signal: controller.signal }) };
+  return { f, calls, trustedCalls, trusted, controller, env: {}, auth: {}, request: new Request("https://forma.invalid/api/experiences/drafts", { signal: controller.signal }) };
 }
 test("fresh server-source read keeps all private/authority/deadline proofs and exact owner head", async () => {
   const p = sourcePorts(); const source = await prepareExperienceModel3dReference(p.request, p.env, p.auth, p.f.selection);
+  assert.equal(p.trustedCalls.length, 1); assert.equal(p.trustedCalls[0].length, 5);
+  [p.request, p.env, p.f.selection.sourceDocumentId, "read", p.auth].forEach((value, index) => assert.equal(p.trustedCalls[0][index], value));
   assert.deepEqual(p.calls, ["inspect"]); assert.equal(source.head, 11); assert.deepEqual(source.reference, p.f.reference);
   const plan = await buildExperiencePlan("owner", request(p.f.selection), release, p.f.reference);
   const combined = model3dReferenceCommitGuard(p.env, p.auth, plan, source, { sql: "retained_draft=?", bindings: ["exact-draft"] });
@@ -173,7 +175,9 @@ test("fresh server-source read keeps all private/authority/deadline proofs and e
 test("source failure, authorization response and abort refuse rather than copying caller facts", async () => {
   const p = sourcePorts();
   ports.trusted = async () => new Response(null, { status: 403 });
-  await assert.rejects(prepareExperienceModel3dReference(p.request, p.env, p.auth, p.f.selection), /source_unavailable/u);
+  await assert.rejects(prepareExperienceModel3dReference(p.request, p.env, p.auth, p.f.selection), {
+    message: "model3d_reference_source_unavailable", code: "model3d_reference_source_unavailable", status: 403,
+  });
   assert.equal(p.calls.length, 0);
   ports.trusted = async () => p.trusted; ports.inspect = async () => { throw Error("private source refused"); };
   await assert.rejects(prepareExperienceModel3dReference(p.request, p.env, p.auth, p.f.selection), /private source refused/u);
