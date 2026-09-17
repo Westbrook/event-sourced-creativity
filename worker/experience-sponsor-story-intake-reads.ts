@@ -82,12 +82,21 @@ const scalarProofs = (value: unknown, count: number) => {
  * The operation's approved full-byte ceiling replaces this bound only when a
  * genuine one-use attempt is consumed. Captured state never accepts a DTO. */
 class Lifetime {
+  readonly maximumBytes: number;
+  monotonicDeadline: number;
+  readonly request: Request;
+  readonly contextCurrent: () => void;
   used = 0;
   queries = 0;
   failed = false;
   phase: "open" | "finalizing" | "finished" = "open";
-  constructor(readonly maximumBytes: number, public monotonicDeadline: number, readonly request: Request,
-    readonly contextCurrent: () => void) {}
+  constructor(maximumBytes: number, monotonicDeadline: number, request: Request,
+    contextCurrent: () => void) {
+    this.maximumBytes = maximumBytes;
+    this.monotonicDeadline = monotonicDeadline;
+    this.request = request;
+    this.contextCurrent = contextCurrent;
+  }
   current() {
     if (this.failed) return fail("io_unavailable");
     try {
