@@ -2,6 +2,7 @@ import { handleHoldDispositions } from "./budget-hold-api.ts";
 import { handleGenerationAccounting } from "./generation-accounting-api.ts";
 import { handleVideoReconciliation } from "./managed-video-reconciliation-api.ts";
 import { handleEvents, type WorkerEnv } from "./events-api";
+import { handleStillDecision } from "./still-api";
 import { getMedia, uploadMedia } from "./media-api";
 import { handleAdminUsers, handleImpersonation, handleSession, hasCapability, requireCapability, requireConsent, requireUser } from "./pilot-policy";
 import { handleShares, handleSharedMedia, handleSharedView } from "./shares-api";
@@ -140,6 +141,7 @@ async function routeRequest(request: Request, env: WorkerEnv, context: WorkerExe
       const headers=new Headers(response.headers);headers.set("cache-control","private, no-store");headers.append("vary","Cookie, oai-authenticated-user-id, oai-authenticated-user-email, cf-access-authenticated-user-email");
       return new Response(response.body,{status:response.status,statusText:response.statusText,headers});
     }
+    if(url.pathname==="/api/still/decision")return handleStillDecision(request,env,context);
     if(url.pathname==="/api/session")return handleSession(request,env,context);
     if(url.pathname==="/api/platform/assistant")return handlePlatformAssistant(request,env);
     if(url.pathname==="/api/assistant/specialist")return handleAssistantSpecialist(request,env,context);
@@ -223,6 +225,13 @@ async function routeRequest(request: Request, env: WorkerEnv, context: WorkerExe
       headers.set("cache-control","private, no-store");
       headers.append("vary","Cookie, oai-authenticated-user-id, oai-authenticated-user-email, cf-access-authenticated-user-email");
       return new Response(asset.body,{status:asset.status,statusText:asset.statusText,headers});
+    }
+    if ((request.method === "GET" || request.method === "HEAD") && (url.pathname === "/still" || url.pathname === "/still/" || url.pathname === "/still.html")) {
+      const asset = await env.ASSETS.fetch(new Request(new URL("/still", request.url), request));
+      const headers = new Headers(asset.headers);
+      headers.set("cache-control", "private, no-store");
+      headers.set("x-forma-application", "still");
+      return new Response(asset.body, { status: asset.status, headers });
     }
     if(request.method==="GET"||request.method==="HEAD"){
       const route=resolveServerRoute(url.pathname);

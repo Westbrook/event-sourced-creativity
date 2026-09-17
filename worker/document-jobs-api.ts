@@ -3692,6 +3692,7 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
         snapshot:payload.snapshot&&typeof payload.snapshot==="object"&&!Array.isArray(payload.snapshot)?payload.snapshot as Record<string,unknown>:undefined,
         sourceBlockVersions:Array.isArray(payload.sourceBlockVersions)?payload.sourceBlockVersions as Array<Record<string,unknown>>:undefined,
       });
+      if (payload.expectedDocumentRevision !== undefined && payload.expectedDocumentRevision !== trusted.documentRevision) return Response.json({error:"context_source_version_mismatch",message:"The document changed after you reviewed it. Reopen generation to review the current context."},{status:409});
       payload.snapshot=trusted.snapshot;
       payload.sourceBlockVersions=trusted.sourceBlockVersions;
       payload.documentRevision=trusted.documentRevision;

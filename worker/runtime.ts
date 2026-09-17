@@ -24,6 +24,7 @@ export interface WorkerEnv {
   /** Separate exact-true admission for the existing scheduled memory job; unset stays disabled. */
   FORMA_MEMORY_SCHEDULING_ENABLED?: string;
   ASSETS: Fetcher;
+  JEV_API_KEY?: string;
   DB: D1Database;
   MEDIA: R2Bucket;
   OPENAI_API_KEY?: string;

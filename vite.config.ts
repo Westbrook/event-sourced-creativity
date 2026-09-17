@@ -99,6 +99,7 @@ export default defineConfig(async () => {
             input: {
               index: resolve(import.meta.dirname, "index.html"),
               marketing: resolve(import.meta.dirname, "marketing.html"),
+              still: resolve(import.meta.dirname, "still.html"),
               experiences: resolve(import.meta.dirname, "experiences.html"),
             },
           },

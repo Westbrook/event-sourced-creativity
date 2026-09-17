@@ -15,6 +15,8 @@ const checker = program.getTypeChecker();
 const compareMachine = (left, right) => left < right ? -1 : left > right ? 1 : 0;
 const sources = program.getSourceFiles()
   .filter((source) => !source.isDeclarationFile && source.fileName.startsWith(`${root}/src/`))
+  // Still is a separate application and does not participate in Forma's UI catalog.
+  .filter((source) => !source.fileName.startsWith(`${root}/src/still/`))
   .sort((left, right) => compareMachine(left.fileName, right.fileName));
 
 const modulePath = (source) => path.relative(root, source.fileName).split(path.sep).join("/");
