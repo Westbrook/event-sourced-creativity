@@ -40,8 +40,8 @@ test('actual host source join uses explicit story contract and does not weaken e
 });
 
 test('actual story read branch captures exact selection and rejects stale or expired async completion',async()=>{
- const src=readFileSync(new URL('../src/components/forma-experience-host.ts',import.meta.url),'utf8'),begin=src.indexOf('        if (candidate.output === "short_story") {'),end=src.indexOf('\n        } else {',begin);
- let branch=src.slice(begin,end+10).replace('if (candidate.output === "short_story") {','{').replaceAll('this.#reader','this.reader').replaceAll('this.#result','this.result').replaceAll('this.#status','this.status');
+ const src=readFileSync(new URL('../src/components/forma-experience-host.ts',import.meta.url),'utf8'),begin=src.indexOf('        } else if (candidate.output === "short_story") {'),end=src.indexOf('\n        } else {',begin);
+ let branch=src.slice(begin,end+10).replace('} else if (candidate.output === "short_story") {','{').replaceAll('this.#reader','this.reader').replaceAll('this.#result','this.result').replaceAll('this.#status','this.status').replaceAll('this.#resultReadStage','this.resultReadStage');
  branch=branch.replace('import("../model/retained-short-story-client.ts")','Promise.resolve(clientModule)').replace('import("./native-retained-story.ts")','Promise.resolve(rendererModule)');
  const run=new Function('clientModule','rendererModule','verifyExperienceStoryRead','return async function(candidate,state,hash,raw,selected,operation,lease){'+stripTypeScriptTypes('async function check(){'+branch+'}').slice('async function check(){'.length,-1)+'}');
  for(const mode of ['stale','expired']){
@@ -57,12 +57,12 @@ test('actual story read branch captures exact selection and rejects stale or exp
 test('actual story retirement clears private DOM synchronously and uses a fresh keyed subtree',()=>{
  const src=readFileSync(new URL('../src/components/forma-experience-host.ts',import.meta.url),'utf8'),begin=src.indexOf('  #clearResult() {'),end=src.indexOf('  #storySync =',begin);
  const method=stripTypeScriptTypes(src.slice(begin,end).replace('#clearResult','function clearResult').replaceAll('this.#','this.'));
- const clear=new Function(method+';return clearResult;')(),trace=[],prose={text:'private prose',replaceChildren(){this.text='';trace.push('cleared');},remove(){trace.push('removed');}},context={reader:{abort(){trace.push('aborted');}},result:{output:'short_story'},imageNode:undefined,querySelectorAll:selector=>selector==='.retained-story-reader, .native-retained-scene-reader'?[prose]:[]};
+ const clear=new Function(method+';return clearResult;')(),trace=[],prose={text:'private prose',replaceChildren(){this.text='';trace.push('cleared');},remove(){trace.push('removed');}},context={reader:{abort(){trace.push('aborted');}},result:{output:'short_story'},imageNode:undefined,querySelectorAll:selector=>selector.includes('.retained-story-reader')?[prose]:[]};
  clear.call(context);assert.equal(prose.text,'');assert.deepEqual(trace,['aborted','cleared','removed']);assert.equal(context.result,undefined);assert.equal(context.reader,undefined);assert.match(src,/keyed\(result\.lease, result\.render\(result\.story/);
 });
 
 test('actual story provider-unavailable view reports zero transfer/cost without a Slides or not-configured claim',()=>{
- const src=readFileSync(new URL('../src/components/forma-experience-host.ts',import.meta.url),'utf8'),begin=src.indexOf('    const unavailableProviderPreparation ='),end=src.indexOf('\n    return html',begin);
+ const src=readFileSync(new URL('../src/components/forma-experience-host.ts',import.meta.url),'utf8'),begin=src.indexOf('    const unavailableProviderPreparation ='),end=src.indexOf('\n    const duplicateReviewStatus',begin);
  const check=new Function('available','state','target',src.slice(begin,end)+';return unavailableProviderPreparation;'),target={available:false,reasonCode:'output_narrative_provider_unavailable',transferCode:'output_transfer_none_owned_adoption',provider:null,model:null,route:null,maximumMicrousd:0,maximumCalls:0,maximumTokens:0},state={output:'short_story',status:'unavailable',disposition:'prepared',original:null,grant:null,permitted:{prepare:false,authorize:false,run:false,resumeRun:false},preflight:{targets:[target],maximumMicrousd:0,maximumCalls:0}};
  assert.equal(check(true,state,target),true);assert.equal(check(true,{...state,output:'slides'},target),false);assert.equal(check(true,state,{...target,maximumMicrousd:1}),false);assert.match(src,/reasonCode === "output_narrative_provider_unavailable" \? "Unavailable" : "Not configured"/);assert.match(src,/system\("Source transfer"\).*system\("None"\)/);
 });

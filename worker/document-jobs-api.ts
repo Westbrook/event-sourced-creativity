@@ -1,3 +1,4 @@
+import { outputJobIsDurable, requireOutputDurableBinding } from "./output-durable-control.ts";
 import { requireSponsorExecution, readSponsorFinancialBinding, sponsorFinancialIdentity, sponsorTerminalReleaseStatement, type SponsorExecutionAuthority, type SponsorFinancialBinding } from "./experience-sponsor-execution.ts";
 import { retainedPlannerResponseShape, retainedStoryboardResponseShape } from "./output-planner-response-shape.ts";
 import { readStoryboardInspectionWitness } from "./output-storyboard-inspection-witness.ts";
@@ -109,6 +110,7 @@ import { DOCUMENT_JOB_ORIGIN_MANIFEST_RECIPE, encodeDocumentJobOriginManifest,
 import { nativeDocumentJobOriginSchema } from "./memory-document-job-origin-schema.ts";
 
 export type DocumentJobRow = {
+  output_durable_owner?: number;
   output_slot_id?:string|null;
   /** Private same-transaction Scene continuity receipt; never wire authority. */
   scene_source_version_json?:string|null;
@@ -178,8 +180,10 @@ const PAID_SUBMISSION_TOMBSTONE_SQL=`json_patch(json_object('providerSubmissionP
     'generationReceipt',json_patch(${UNCERTAIN_PRESENTATION_RECEIPT_SQL},json_object('artifact_kind',json_extract(request_json,'$.artifactKind'),'provider',json_extract(result_json,'$.generationReceipt.provider'),'model',json_extract(result_json,'$.generationReceipt.model'),
       'provider_request_status',CASE WHEN ${unresolvedProviderSubmissionSql()} THEN 'submission_unknown' ELSE 'submitted' END,
       'source_transmission_status',CASE WHEN ${unresolvedProviderSubmissionSql()} AND COALESCE(json_extract(result_json,'$.generationReceipt.source_transmission_status'),'')!='transmitted' THEN 'unknown' ELSE 'transmitted' END))))`;
-export const EXPIRED_DOCUMENT_JOB_REDACTION_SQL=`request_json=CASE WHEN ${PAID_SUBMISSION_HOLD_SQL} THEN json_object('artifactKind',json_extract(request_json,'$.artifactKind')) WHEN ${UNCERTAIN_PRESENTATION_SUBMISSION_SQL} THEN json_object('artifactKind','slides') WHEN ${UNCERTAIN_AUDIO_SUBMISSION_SQL} THEN json_object('artifactKind','audio') WHEN ${UNCERTAIN_STORYBOARD_SUBMISSION_SQL} THEN json_object('artifactKind','storyboard') ELSE '{}' END,result_json=CASE WHEN ${PAID_SUBMISSION_HOLD_SQL} THEN ${PAID_SUBMISSION_TOMBSTONE_SQL} WHEN ${UNCERTAIN_PRESENTATION_SUBMISSION_SQL} THEN ${UNCERTAIN_PRESENTATION_TOMBSTONE_SQL} WHEN ${UNCERTAIN_AUDIO_SUBMISSION_SQL} THEN ${UNCERTAIN_AUDIO_TOMBSTONE_SQL} WHEN ${UNCERTAIN_STORYBOARD_SUBMISSION_SQL} THEN ${UNCERTAIN_STORYBOARD_TOMBSTONE_SQL} ELSE NULL END,scene_source_version_json=NULL`;
-const DOCUMENT_JOB_REDACTION_REQUIRED_SQL=`(scene_source_version_json IS NOT NULL OR ((request_json!='{}' OR result_json IS NOT NULL) AND NOT (${PAID_SUBMISSION_HOLD_SQL} AND request_json=json_object('artifactKind',json_extract(request_json,'$.artifactKind')) AND result_json=${PAID_SUBMISSION_TOMBSTONE_SQL} OR ${UNCERTAIN_PRESENTATION_SUBMISSION_SQL} AND request_json=json_object('artifactKind','slides') AND result_json=${UNCERTAIN_PRESENTATION_TOMBSTONE_SQL} OR ${UNCERTAIN_AUDIO_SUBMISSION_SQL} AND request_json=json_object('artifactKind','audio') AND result_json=${UNCERTAIN_AUDIO_TOMBSTONE_SQL} OR ${UNCERTAIN_STORYBOARD_SUBMISSION_SQL} AND request_json=json_object('artifactKind','storyboard') AND result_json=${UNCERTAIN_STORYBOARD_TOMBSTONE_SQL})))`;
+const REDACTED_DOCUMENT_JOB_REQUEST_SQL=`CASE WHEN json_type(request_json,'$.outputDurable') IS NOT NULL THEN json_set(CASE WHEN ${PAID_SUBMISSION_HOLD_SQL} THEN json_object('artifactKind',json_extract(request_json,'$.artifactKind')) WHEN ${UNCERTAIN_PRESENTATION_SUBMISSION_SQL} THEN json_object('artifactKind','slides') WHEN ${UNCERTAIN_AUDIO_SUBMISSION_SQL} THEN json_object('artifactKind','audio') WHEN ${UNCERTAIN_STORYBOARD_SUBMISSION_SQL} THEN json_object('artifactKind','storyboard') ELSE '{}' END, '$.outputDurable',1) ELSE CASE WHEN ${PAID_SUBMISSION_HOLD_SQL} THEN json_object('artifactKind',json_extract(request_json,'$.artifactKind')) WHEN ${UNCERTAIN_PRESENTATION_SUBMISSION_SQL} THEN json_object('artifactKind','slides') WHEN ${UNCERTAIN_AUDIO_SUBMISSION_SQL} THEN json_object('artifactKind','audio') WHEN ${UNCERTAIN_STORYBOARD_SUBMISSION_SQL} THEN json_object('artifactKind','storyboard') ELSE '{}' END END`;
+const REDACTED_DOCUMENT_JOB_RESULT_SQL=`CASE WHEN ${PAID_SUBMISSION_HOLD_SQL} THEN ${PAID_SUBMISSION_TOMBSTONE_SQL} WHEN ${UNCERTAIN_PRESENTATION_SUBMISSION_SQL} THEN ${UNCERTAIN_PRESENTATION_TOMBSTONE_SQL} WHEN ${UNCERTAIN_AUDIO_SUBMISSION_SQL} THEN ${UNCERTAIN_AUDIO_TOMBSTONE_SQL} WHEN ${UNCERTAIN_STORYBOARD_SUBMISSION_SQL} THEN ${UNCERTAIN_STORYBOARD_TOMBSTONE_SQL} ELSE NULL END`;
+export const EXPIRED_DOCUMENT_JOB_REDACTION_SQL=`request_json=${REDACTED_DOCUMENT_JOB_REQUEST_SQL},result_json=${REDACTED_DOCUMENT_JOB_RESULT_SQL},scene_source_version_json=NULL`;
+const DOCUMENT_JOB_REDACTION_REQUIRED_SQL=`(scene_source_version_json IS NOT NULL OR request_json IS NOT (${REDACTED_DOCUMENT_JOB_REQUEST_SQL}) OR result_json IS NOT (${REDACTED_DOCUMENT_JOB_RESULT_SQL}))`;
 
 const activeProjectExecutionSql=`EXISTS(SELECT 1 FROM organization_projects project
   JOIN organizations organization ON organization.organization_id=project.organization_id AND organization.status='active'
@@ -893,7 +897,7 @@ async function verifiedPresentationCandidates(env:WorkerEnv,user:PilotUser,job:D
 async function freshlyRecoverablePresentationRows(env:WorkerEnv,user:PilotUser,rows:DocumentJobRow[],projectContextId=""){
   const certified=new Map<string,boolean>();
   const candidates=rows.filter((row)=>{
-    if(row.status!=="failed"||row.kind!=="render_document"||parseRequest(row).artifactKind!=="slides")return false;
+    if(outputJobIsDurable(row)||row.status!=="failed"||row.kind!=="render_document"||parseRequest(row).artifactKind!=="slides")return false;
     const checkpoint=parseResult(row);
     return Boolean(checkpoint.costReservationId&&(checkpoint.plannerResponseId||Array.isArray(checkpoint.plannerResponseIds)&&checkpoint.plannerResponseIds.length));
   }).slice(0,4);
@@ -1663,6 +1667,7 @@ function serializeJob(row: DocumentJobRow, recoveryBlocker: DocumentJobRow | nul
   const summarizedResult = detail || !visibleResult ? visibleResult
     : Object.fromEntries(Object.entries(visibleResult).filter(([key]) => !["plannerInput", "videoInputReceipt", "audioInputReceipt", "model3dInputReceipt", "artifactPlan"].includes(key)));
   return {
+    ...(outputJobIsDurable(row) ? { executionOwner: "durable" as const } : {}),
     jobId: row.job_id, documentId: row.document_id, kind: row.kind, status: row.status, sourceSurface: row.source_surface,
     ...(row.kind==="structure_adaptive"&&typeof request.canvasId==="string"&&request.canvasId?{canvasId:request.canvasId}:{}),
     ...(consentedAdaptiveJob(row)?{planningExecutionId:row.job_id,planningProjectScope:request.projectScope===true,planningLocale:typeof request.locale==="string"?request.locale:"en"}:{}),
@@ -2128,6 +2133,7 @@ export async function runDocumentJob(env: WorkerEnv, user: PilotUser, jobId: str
   await ensureSchema(env);
   await ensureOutputRequirementsSchema(env);
   let row=verifiedRow&&verifiedRow.job_id===jobId&&verifiedRow.owner_id===user.userId&&verifiedRow.stream_id===user.streamId?verifiedRow:await readJob(env,user.userId,jobId);if(!row)return row;
+  if(outputJobIsDurable(row)) await requireOutputDurableBinding(env, row.job_id);
   if(!row.output_slot_id&&!await activeProjectExecution(env,user,row.document_id,jobId)){
     if(user.projectExecution)await cancelProjectActorJobs(env,user,{organizationId:user.projectExecution.organizationId,projectAccessId:user.projectExecution.projectAccessId,actorUserId:user.userId});
     return null;
@@ -2488,7 +2494,7 @@ export async function runDocumentJob(env: WorkerEnv, user: PilotUser, jobId: str
   return finishedRow;
 }
 
-async function documentJobPrincipal(env:WorkerEnv,row:DocumentJobRow,current?:PilotUser):Promise<PilotUser|null>{
+export async function documentJobPrincipal(env:WorkerEnv,row:DocumentJobRow,current?:PilotUser):Promise<PilotUser|null>{
   const project=await env.DB.prepare("SELECT organization_id,project_access_id,project_id,owner_user_id,actor_user_id,EXISTS(SELECT 1 FROM events anchor WHERE anchor.event_id=resource.source_event_id AND anchor.stream_id='creative:'||resource.owner_user_id AND anchor.actor='user:'||resource.actor_user_id AND anchor.type='ProjectDocumentJobQueued' AND json_extract(anchor.payload,'$.job_id')=resource.resource_id AND json_extract(anchor.payload,'$.organization_id')=resource.organization_id AND json_extract(anchor.payload,'$.project_access_id')=resource.project_access_id) AS anchor_valid FROM project_resource_scopes resource WHERE resource_kind='job' AND resource_id=? AND actor_user_id=? AND owner_user_id=?")
     .bind(row.job_id,row.owner_id,row.stream_id.slice("creative:".length)).first<{organization_id:string;project_access_id:string;project_id:string;owner_user_id:string;actor_user_id:string;anchor_valid:number}>();
   if(project&&!project.anchor_valid)return null;
@@ -2506,7 +2512,7 @@ async function documentJobPrincipal(env:WorkerEnv,row:DocumentJobRow,current?:Pi
 
 async function driveDocumentQueue(env: WorkerEnv, user: PilotUser) {
   for (let count = 0; count < 50; count += 1) {
-    const running = await env.DB.prepare("SELECT * FROM document_jobs WHERE stream_id=? AND kind!='prompt_fan' AND status IN ('running','committing') ORDER BY requested_at ASC,job_id ASC LIMIT 1").bind(user.streamId).first<DocumentJobRow>();
+    const running = await env.DB.prepare("SELECT * FROM document_jobs WHERE stream_id=? AND json_type(request_json,'$.outputDurable') IS NULL AND kind!='prompt_fan' AND status IN ('running','committing') ORDER BY requested_at ASC,job_id ASC LIMIT 1").bind(user.streamId).first<DocumentJobRow>();
     if (running) {
       if (!rowIsStale(running)) return;
       const owner=await documentJobPrincipal(env,running,user);
@@ -2520,7 +2526,7 @@ async function driveDocumentQueue(env: WorkerEnv, user: PilotUser) {
       if (!recovered || recovered.status === "queued" || recovered.status === "running" || recovered.status === "committing") return;
       continue;
     }
-    const next = await env.DB.prepare("SELECT * FROM document_jobs WHERE stream_id=? AND kind!='prompt_fan' AND status='queued' AND NOT EXISTS(SELECT 1 FROM output_operation_slots output_slot WHERE output_slot.job_id=document_jobs.job_id AND output_slot.status NOT IN('queued','running')) AND NOT (kind='render_document' AND COALESCE(json_extract(request_json,'$.artifactKind'),'')='slides') ORDER BY requested_at ASC,job_id ASC LIMIT 1").bind(user.streamId).first<DocumentJobRow>();
+    const next = await env.DB.prepare("SELECT * FROM document_jobs WHERE stream_id=? AND json_type(request_json,'$.outputDurable') IS NULL AND kind!='prompt_fan' AND status='queued' AND NOT EXISTS(SELECT 1 FROM output_operation_slots output_slot WHERE output_slot.job_id=document_jobs.job_id AND output_slot.status NOT IN('queued','running')) AND NOT (kind='render_document' AND COALESCE(json_extract(request_json,'$.artifactKind'),'')='slides') ORDER BY requested_at ASC,job_id ASC LIMIT 1").bind(user.streamId).first<DocumentJobRow>();
     if (!next) return;
     if(requiresForegroundDocumentExecution(next))return;
     const owner=await documentJobPrincipal(env,next,user);
@@ -2775,6 +2781,10 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
     // Actor eligibility is independent of the sponsor's financial identity.
     const actorAllowance=await readOutputAdmissionValue(outputPreparation?.readScope,"sponsor-actor-pilot-allowance",()=>pilotExecutionAllowance(env,user.userId));
     if(!actorAllowance.allowed||actorAllowance.pilot)return Response.json({error:"sponsor_managed_pilot_unsupported"},{status:403});
+  }
+  if(request.method!=="GET" && path){
+    const durableTarget=await readJob(env,user.userId,decodeURIComponent(path.split("/")[0]!));
+    if(durableTarget && outputJobIsDurable(durableTarget) && !/^[^/]+\/(?:ack|dismiss)$/u.test(path)) return Response.json({error:"output_durable_server_owned"},{status:409,headers:{"cache-control":"private, no-store"}});
   }
   if(path==="presentation-candidates"){
     if(request.method!=="GET")return new Response("Method not allowed",{status:405,headers:{"cache-control":"private, no-store"}});
@@ -3509,6 +3519,7 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
     // Failure checkpoints remain durable, but large provider/planner inputs
     // belong to the explicitly requested detail view, not every idle poll.
     const readVisibleJobs = () => env.DB.prepare(`SELECT job_id,owner_id,stream_id,document_id,kind,status,source_surface,correlation_id,requested_sequence,
+      json_type(request_json,'$.outputDurable') IS NOT NULL AS output_durable_owner,
       CASE WHEN json_extract(request_json,'$.documentRevision') IS NULL THEN request_json ELSE json_object(
         'documentRevision',json_extract(request_json,'$.documentRevision'),'requestKey',json_extract(request_json,'$.requestKey'),
         'sourcePreviewId',json_extract(request_json,'$.sourcePreviewId'),'promptTechnique',json_extract(request_json,'$.promptTechnique'),
@@ -3525,7 +3536,7 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
       ORDER BY CASE WHEN status IN ('queued','running','committing') THEN 0 ELSE 1 END,requested_at DESC LIMIT 120`).bind(user.userId,user.streamId,now,now,Number(activeOnly),documentScope,documentScope).all<DocumentJobRow>();
     let rows = path ? requestedJob ? [requestedJob] : [] : (await readVisibleJobs()).results;
     let reconciled = false;
-    const repairCandidates = rows.filter((row) => row.status === "failed" && /Wrong number of parameter bindings/i.test(row.error_message ?? ""));
+    const repairCandidates = rows.filter((row) => !outputJobIsDurable(row) && row.status === "failed" && /Wrong number of parameter bindings/i.test(row.error_message ?? ""));
     if (repairCandidates.length) {
       const events = await readCorrelatedEvents(env,user.streamId,repairCandidates.map((row)=>row.correlation_id));
       for (const row of repairCandidates) {
@@ -3534,9 +3545,9 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
         if (retained && await repairMisreportedTerminalJob(env, retained, events)) reconciled = true;
       }
     }
-    const parents = rows.filter((row) => row.kind === "prompt_fan" && ["queued","running","committing"].includes(row.status));
+    const parents = rows.filter((row) => !outputJobIsDurable(row) && row.kind === "prompt_fan" && ["queued","running","committing"].includes(row.status));
     for(const parent of parents){const updated=await reconcilePromptFanParent(env,user.userId,parent.job_id);if(!updated||updated.status!==parent.status||updated.result_json!==parent.result_json||updated.error_message!==parent.error_message||updated.completed_at!==parent.completed_at)reconciled=true;}
-    for (const row of rows) if (rowIsStale(row) && row.attempt_count >= documentJobMaxAttempts(row.kind)) {
+    for (const row of rows) if (!outputJobIsDurable(row) && rowIsStale(row) && row.attempt_count >= documentJobMaxAttempts(row.kind)) {
       // A compact list row must never replace the retained recovery checkpoint.
       const retained = path ? row : await readJob(env, user.userId, row.job_id);
       if (retained && rowIsStale(retained) && retained.attempt_count >= documentJobMaxAttempts(retained.kind)) {
@@ -3548,9 +3559,9 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
       const refreshed = path ? await readJob(env, user.userId, decodeURIComponent(path)) : null;
       rows = path ? refreshed ? [refreshed] : [] : (await readVisibleJobs()).results;
     }
-    const visibleBlocker = [...rows].filter((row)=>row.kind!=="prompt_fan"&&["running","committing"].includes(row.status)).sort((left,right)=>left.requested_at.localeCompare(right.requested_at)||left.job_id.localeCompare(right.job_id))[0]??null;
+    const visibleBlocker = [...rows].filter((row)=>!outputJobIsDurable(row)&&row.kind!=="prompt_fan"&&["running","committing"].includes(row.status)).sort((left,right)=>left.requested_at.localeCompare(right.requested_at)||left.job_id.localeCompare(right.job_id))[0]??null;
     const activeBlocker = path
-      ? await env.DB.prepare("SELECT * FROM document_jobs WHERE owner_id=? AND stream_id=? AND kind!='prompt_fan' AND status IN ('running','committing') ORDER BY requested_at ASC,job_id ASC LIMIT 1").bind(user.userId, user.streamId).first<DocumentJobRow>()
+      ? await env.DB.prepare("SELECT * FROM document_jobs WHERE owner_id=? AND stream_id=? AND json_type(request_json,'$.outputDurable') IS NULL AND kind!='prompt_fan' AND status IN ('running','committing') ORDER BY requested_at ASC,job_id ASC LIMIT 1").bind(user.userId, user.streamId).first<DocumentJobRow>()
       : visibleBlocker;
     const recoveryBlocker = activeBlocker && rowIsStale(activeBlocker) ? activeBlocker : null;
     if (recoveryBlocker&&!requiresForegroundDocumentExecution(recoveryBlocker)) context?.waitUntil(driveDocumentQueue(env, user));
@@ -3565,6 +3576,7 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
   const input = submittedInput??await request.json() as DocumentJobAdmission;
   if (!KINDS.has(input.kind as DocumentJobKind)) return Response.json({ error: "unsupported_document_job" }, { status: 400 });
   const kind = input.kind as DocumentJobKind; const payload = input.payload && typeof input.payload === "object" ? { ...input.payload } : {};
+  if(Object.hasOwn(payload,"outputDurable"))return Response.json({error:"output_durable_marker_server_owned"},{status:400});
   if(kind==="render_document"&&payload.videoResolution!==undefined){
     if(payload.artifactKind!=="video"||payload.videoResolution!=="480p"&&payload.videoResolution!=="720p")return Response.json({error:"video_resolution_unsupported",supported:VIDEO_ADAPTER_CONTRACT.supportedResolutions},{status:400});
     if(payload.productionMode==="managed")return Response.json({error:"managed_video_resolution_unsupported"},{status:400});

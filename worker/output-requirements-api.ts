@@ -1,3 +1,4 @@
+import { prepareOutputDurableRun, wakeOutputDurableJobs } from "./output-durable-control.ts";
 import { jsonIssues } from "../src/experiences/compiler.ts";
 import { readOutputModel3dPayload, requireModel3dMiniAppCostApproval } from "./output-model3d-execution.ts";
 import { requireSponsorAdmission, sponsorAdmissionPayer, sponsorAdmissionPlan, type SponsorAdmissionAuthority } from "./experience-sponsor-admission.ts";
@@ -762,10 +763,10 @@ async function runGrant(trusted: OutputTrustedContext, body: Record<string, unkn
   }
   const saved = await commitOutputCommand(trusted.env, { ...commandWrite(trusted, body, digest, "request"),sceneJobRuns, events: [{ type: "OutputExecutionRunRequested", payload: { grant_id: grantId, job_ids: evidence.slots.map((slot) => slot.jobId), existing_jobs_only: true } }],
     assertions: [...(sponsor?.assertions ?? []), ...(ready.length ? [outputRunGrantAssertion(trusted.scope, grantId), { sql: "NOT EXISTS(SELECT 1 FROM output_operation_slots slot WHERE slot.scope_key=? AND slot.grant_id=? AND slot.status IN('authorized','queued','running') AND slot.slot_id NOT IN(SELECT value FROM json_each(?)))", bindings: [trusted.scope.key, grantId, JSON.stringify(readyIds)] }] : [])],
-    buildSidecars: () => ({ statements: [trusted.env.DB.prepare("UPDATE output_operation_slots SET status='queued',updated_at=? WHERE scope_key=? AND grant_id=? AND status='authorized' AND slot_id IN(SELECT value FROM json_each(?))").bind(nowIso(), trusted.scope.key, grantId, JSON.stringify(readyIds)), trusted.env.DB.prepare("UPDATE output_execution_grants SET status='active' WHERE scope_key=? AND grant_id=? AND status='authorized'").bind(trusted.scope.key, grantId)], assertions: ready.length ? [outputRunGrantAssertion(trusted.scope, grantId)] : [] }) });
+    buildSidecars: (events) => { const durable = prepareOutputDurableRun(trusted.env, trusted.scope, ready, events.at(-1)!.eventId); return ({ statements: [trusted.env.DB.prepare("UPDATE output_operation_slots SET status='queued',updated_at=? WHERE scope_key=? AND grant_id=? AND status='authorized' AND slot_id IN(SELECT value FROM json_each(?))").bind(nowIso(), trusted.scope.key, grantId, JSON.stringify(readyIds)), trusted.env.DB.prepare("UPDATE output_execution_grants SET status='active' WHERE scope_key=? AND grant_id=? AND status='authorized'").bind(trusted.scope.key, grantId), ...durable.statements], assertions: [...(ready.length ? [outputRunGrantAssertion(trusted.scope, grantId)] : []), ...durable.assertions] }); } });
   // Dispatch is an existing-job wake-up only. No new source read, slot, budget,
   // provider call or alternative is created here; the job HTTP runner owns work.
-  if (ready.length) await bridge.dispatch({ request: trusted.request, env: trusted.env, scope: trusted.scope, principal: trusted.principal, executionContext,
+  if (ready.length && !await wakeOutputDurableJobs(trusted.env, ready)) await bridge.dispatch({ request: trusted.request, env: trusted.env, scope: trusted.scope, principal: trusted.principal, executionContext,
     slots: ready.map((slot) => slot.status === "authorized" ? { ...slot, status: "queued" } : slot) });
   return saved;
 }
@@ -780,7 +781,7 @@ async function resumeRecordedOutputRun(trusted: OutputTrustedContext, grantId: s
   // provider receipts and leases decide whether a logical call was consumed.
   await trusted.env.DB.batch([...(sponsor?.assertions ?? []), outputScopeAuthority(trusted.scope, "request"), outputRunGrantAssertion(trusted.scope, grantId), ...trusted.sourceAssertions, ...retainedOutputBodyAssertions(trusted.scope),
     { sql: "(SELECT COALESCE(MAX(sequence),0) FROM events WHERE stream_id=?)=?", bindings: [`creative:${trusted.scope.ownerUserId}`, trusted.ownerHead] }].flatMap((assertion) => outputAssertionStatements(trusted.env, assertion)));
-  await bridge.dispatch({ request: trusted.request, env: trusted.env, scope: trusted.scope, principal: trusted.principal, executionContext, slots: pending });
+  if (!await wakeOutputDurableJobs(trusted.env, pending)) await bridge.dispatch({ request: trusted.request, env: trusted.env, scope: trusted.scope, principal: trusted.principal, executionContext, slots: pending });
 }
 
 export function outputAssetStorageIdentity(scope: OutputScope, assetId: string, inspection: OutputAssetInspection) {

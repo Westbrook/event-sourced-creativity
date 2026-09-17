@@ -1,3 +1,4 @@
+import { hasServerExecutionOwner } from "../model/output-durable-observation.ts";
 import { ref } from "lit/directives/ref.js";
 import { retainedImageSourceMessage } from "../experiences/retained-image-source-message.ts";
 import { createVideoOutputContract, type VideoOutputContract } from "../model/output-video-contract.ts";
@@ -89,6 +90,38 @@ export class FormaExperienceHost extends FormaElement {
   #refreshing = false;
   #runtime?: ExperienceIntakeRuntime;
   #binding?: Binding;
+  #observationAttachment?: Readonly<{binding:Binding;jobId:string;grantId:string;slotId:string;runKey:string|null;runEventId:string|null;until:number;pending:boolean;expiresAt:number}>;
+  #attachObservation(binding:Binding,state:ExperienceNativeState,pending=false){
+    const original=state.original;if(!original)return;
+    this.#observationAttachment=Object.freeze({binding,jobId:original.jobId,grantId:original.grantId,slotId:original.slotId,
+      runKey:original.run?.key??null,runEventId:original.run?.eventId??null,
+      until:pending?Math.min(Date.now()+120000,Date.parse(original.jobExpiresAt)):this.#observationPending(state)?Date.parse(original.jobExpiresAt):0,
+      pending,expiresAt:Date.parse(original.jobExpiresAt)});
+  }
+  #observationMatches(binding:Binding,state:ExperienceNativeState){
+    const expected=this.#observationAttachment;if(!expected||expected.binding!==binding)return true;
+    const original=state.original;
+    return Boolean(original&&original.jobId===expected.jobId&&original.grantId===expected.grantId&&original.slotId===expected.slotId
+      &&(expected.runKey===null||original.run?.key===expected.runKey&&original.run?.eventId===expected.runEventId));
+  }
+  #extendObservationGrace(){
+    const attachment=this.#observationAttachment;
+    if(attachment?.pending)this.#observationAttachment=Object.freeze({...attachment,until:Math.min(Date.now()+120000,attachment.expiresAt)});
+  }
+  #initialReadSuspended=false;
+  #resumeObservation=()=>{
+    if(this.#initialReadSuspended&&!this.#retired&&this.isConnected&&this.ownerDocument.visibilityState!=="hidden"){
+      this.#initialReadSuspended=false;void this.#load();return;
+    }
+    const binding=this.#binding;
+    if(!binding||this.#observationAttachment?.binding!==binding||!this.#readable(binding)||this.#busy||this.#loading)return;
+    this.#extendObservationGrace();void this.#check();
+  };
+  #observationPending(state:ExperienceNativeState){
+    const original=state.original;if(!original)return false;
+    if(original.executionOwner==="durable")return Boolean(original.observation&&["queued","generating","awaiting_provider","retaining","cancel_requested"].includes(original.observation.phase));
+    return ["queued","running"].includes(state.status)&&["queued","running"].includes(original.jobStatus);
+  }
   #confirmed = false;
   #approval = false;
   #sceneApproval = false;
@@ -139,6 +172,8 @@ export class FormaExperienceHost extends FormaElement {
     this.addEventListener("focusout", this.#focusOut);
     this.ownerDocument.addEventListener("visibilitychange", this.#visibility);
     this.ownerDocument.defaultView?.addEventListener("pagehide", this.#pagehide);
+    this.ownerDocument.defaultView?.addEventListener("pageshow", this.#pageshow);
+    this.ownerDocument.defaultView?.addEventListener("online", this.#resumeObservation);
     this.#storyUnsubscribe = this.store.subscribe(this.#storySync);
     this.ownerDocument.defaultView?.addEventListener("forma-authorization-changed", this.#storyWithdraw);
     this.ownerDocument.defaultView?.addEventListener("forma-event-source-retired", this.#storyWithdraw);
@@ -153,6 +188,8 @@ export class FormaExperienceHost extends FormaElement {
     this.ownerDocument.defaultView?.removeEventListener("forma-event-source-retired", this.#storyWithdraw);
     this.ownerDocument.removeEventListener("visibilitychange", this.#visibility);
     this.ownerDocument.defaultView?.removeEventListener("pagehide", this.#pagehide);
+    this.ownerDocument.defaultView?.removeEventListener("pageshow", this.#pageshow);
+    this.ownerDocument.defaultView?.removeEventListener("online", this.#resumeObservation);
     super.disconnectedCallback();
   }
   #beginOperation(foreground?: ExperienceForegroundOperation) {
@@ -169,6 +206,7 @@ export class FormaExperienceHost extends FormaElement {
       this.#resultReadStage = undefined;
       this.#operation = undefined; this.#binding?.client.dispose(); this.#clearResult(); this.#resetDecision();
       this.#busy = false; this.#loading = false; this.#refreshing = false; this.#status = "Operation unconfirmed"; this.requestUpdate();
+      if(this.#observationAttachment){this.#extendObservationGrace();this.#scheduleResultRead();}
     }, undefined, foreground);
     this.#operation = operation; return operation;
   }
@@ -197,15 +235,22 @@ export class FormaExperienceHost extends FormaElement {
     // These events precede session/source publication; do not wait for Lit.
     if (["short_story", "scene", "storyboard", "audio", "video", "model3d"].includes(this.#binding?.selection.output ?? "")) { this.#status = "Document unavailable"; this.#retire(); this.requestUpdate(); }
   };
-  #visibility = () => { if (this.ownerDocument.visibilityState === "hidden") {
+  #visibility = () => { if(this.ownerDocument.visibilityState==="hidden")this.#suspendObservation();else this.#resumeObservation(); };
+  #suspendObservation = () => {
+    if(this.#loading&&!this.#observationAttachment)this.#initialReadSuspended=true;
     this.#resultReadStage = undefined; this.#resultReadFailure = undefined;
     this.#stopResultRead();
     this.#navigationEpoch++;
     this.#resetDecision(); this.#clearResult(); this.#binding?.client.dispose(); this.#operation?.cancel(); this.#operation = undefined;
     this.#busy = false; this.#loading = false; this.#refreshing = false; this.requestUpdate();
-  } };
-  #pagehide = () => { this.#status = "Closed"; this.#retire(); this.requestUpdate(); };
+  };
+  #pagehide = (event:PageTransitionEvent) => {
+    if(event.persisted&&this.#binding&&this.#observationAttachment?.binding===this.#binding)this.#suspendObservation();
+    else { this.#status="Closed";this.#retire();this.requestUpdate(); }
+  };
+  #pageshow = (event:PageTransitionEvent) => { if(event.persisted)this.#resumeObservation(); };
   #retire() {
+    this.#observationAttachment=undefined;this.#initialReadSuspended=false;
     this.#resultReadStage = undefined; this.#resultReadFailure = undefined;
     this.#stopResultRead();
     this.#navigationEpoch++;
@@ -251,6 +296,7 @@ export class FormaExperienceHost extends FormaElement {
   }
   #paidDecision(action: "authorize" | "run" | "resumeRun"): OutputPaidDecision | null {
     const state = this.#state(), binding = this.#binding, terms = this.#terms(state);
+    if(action!=="authorize"&&state?.original&&hasServerExecutionOwner(state.original))return null;
     if (!binding || !state?.plan || state.current.source !== "verified" || !this.#visible(binding) || this.#busy || !state.permitted[action]
       || !binding.authorization || action === "authorize" && (!this.#approval || !terms?.available || !state.preflight)
       || action !== "authorize" && (!terms?.grantAvailable || !state.original || !state.grant
@@ -330,6 +376,7 @@ export class FormaExperienceHost extends FormaElement {
     void this.#command("prepareReplacement", state);
   }
   async #load() {
+    if(this.ownerDocument.visibilityState==="hidden"){this.#initialReadSuspended=true;this.#loading=false;return;}
     // Route selection changes only this presentation wait, never authority.
     const operation = this.#beginOperation(parseExperienceHostRoute(this.store.route.get())?.output === "video"
       ? { action: "read", output: "video" } : undefined);
@@ -398,12 +445,20 @@ export class FormaExperienceHost extends FormaElement {
       binding.revision = revision;
       await operation.wait(binding.client.read());
       if (!this.#current(binding)) throw new Error("withdrawn");
-      const state = this.#state(); this.#status = state ? this.#statusLabel(state) : "Original unavailable";
+      const state = this.#state();
+      if(state&&!this.#observationMatches(binding,state)){binding.client.dispose();throw new Error("original_changed");}
+      if(state?.original?.executionOwner==="durable")this.#attachObservation(binding,state);
+      else if(state?.original?.run)this.#observationAttachment=undefined;
+      this.#status = state ? this.#statusLabel(state) : "Original unavailable";
       this.#scheduleDeadline();
     } finally { if (this.#operation === operation) this.#refreshing = false; }
   }
   #statusLabel(state: ExperienceNativeState) {
     if (state.current.source === "changed") return retainedImageSourceMessage(this.i18n.locale);
+    if(state.original?.executionOwner==="durable"&&state.original.observation?.phase==="retaining")return this.i18n.t("activity.status.committing","Saving");
+    if(state.original?.executionOwner==="durable"&&state.original.observation)return this.i18n.system(({
+      queued:"Queued",generating:"Creating",awaiting_provider:"Result pending",retaining:"Saving",ready:"Completed operation",uncertain:"Unconfirmed",failed:"Failed",cancel_requested:"Queued",cancelled:"Cancelled"
+    } as const)[state.original.observation.phase]);
     if (state.recovery === "pending") return this.i18n.system("Result pending");
     if (state.permitted.recoverResult) return this.i18n.system("Recovery available");
     if (state.status === "unavailable" && state.disposition === "prepared") return this.i18n.system("Generation unavailable");
@@ -412,7 +467,7 @@ export class FormaExperienceHost extends FormaElement {
   }
   async #stopVideo(event:MouseEvent) {
     const binding=this.#binding,state=this.#state();
-    if(!event.isTrusted||!binding||!this.#visible(binding)||this.#busy||this.#loading||state?.output!=="video"||!state.original||!["queued","running"].includes(state.original.jobStatus))return;
+    if(!event.isTrusted||!binding||!this.#visible(binding)||this.#busy||this.#loading||state?.output!=="video"||!state.original||hasServerExecutionOwner(state.original)||!["queued","running"].includes(state.original.jobStatus))return;
     const jobId=state.original.jobId,operation=this.#beginOperation(),revealFocus=this.#captureCommandFocusVisibility(binding);this.#commandFocusReveal=revealFocus;this.#busy=true;this.#resetDecision();this.requestUpdate();
     try{
       const stopped=await operation.wait(this.store.stopDocumentJob(jobId));
@@ -427,6 +482,9 @@ export class FormaExperienceHost extends FormaElement {
   }
   async #command(action: ExperienceBindingAction, shown: ExperienceNativeState, sceneConsent?: SceneMiniAppCostApproval, audioConsent?: ExperienceAudioCostApproval, model3dConsent?: ExperienceModel3dCostApproval) {
     const binding = this.#binding; if (!binding || !this.#visible(binding) || this.#busy || shown !== this.#state()) return;
+    if(shown.original&&hasServerExecutionOwner(shown.original)&&["run","resumeRun","recoverResult","prepareReplacement"].includes(action))return;
+    // Saves read-only identity before Run so a lost ACK can only reattach GET.
+    if((action==="run"||action==="resumeRun")&&shown.original)this.#attachObservation(binding,shown,true);
     const operation = this.#beginOperation({ action, output: binding.client.identity.output }), revealFocus = this.#captureCommandFocusVisibility(binding);
     this.#commandFocusReveal = revealFocus;
     this.#busy = true; this.#resetDecision(); this.#clearResult(); this.#status = action === "recoverResult" ? this.i18n.system("Recovering") : "Recording"; this.requestUpdate();
@@ -444,7 +502,7 @@ export class FormaExperienceHost extends FormaElement {
         followResult = action === "run" || action === "resumeRun" || action === "recoverResult" && response.recovery === "completed";
         const current = this.#state();
         if ((action === "run" || action === "resumeRun") && this.#operationCurrent(operation) && this.#visible(binding)
-          && current?.original && response.original && shown.original && current.disposition === "original_run_recorded"
+          && current?.original && !hasServerExecutionOwner(current.original) && response.original && shown.original && current.disposition === "original_run_recorded"
           && response.disposition === "original_run_recorded" && current.original.run && response.original.run
           && ["queued", "running"].includes(current.status) && ["queued", "running"].includes(response.status)
           && ["queued", "running"].includes(current.original.jobStatus)
@@ -462,9 +520,10 @@ export class FormaExperienceHost extends FormaElement {
     finally { if (this.#commandFocusReveal === revealFocus) this.#commandFocusReveal = null;
       if (this.#finishOperation(operation)) {
       this.#busy = false; this.requestUpdate();
+      this.#extendObservationGrace();
       const continuationEpoch = this.#navigationEpoch;
       await revealFocus?.().catch(() => { /* A withdrawn focus destination cannot prevent the retained read. */ });
-      if (followResult && continuationEpoch === this.#navigationEpoch && this.#binding === binding && this.#visible(binding)) {
+      if ((followResult || this.#observationAttachment?.binding===binding) && continuationEpoch === this.#navigationEpoch && this.#binding === binding && this.#visible(binding)) {
         const state = this.#state();
         if (state?.status === "succeeded" && state.original?.jobStatus === "completed") void this.#check();
         else this.#scheduleResultRead();
@@ -531,7 +590,7 @@ export class FormaExperienceHost extends FormaElement {
     try {
       await this.#refreshAndRead(binding, operation);
       const state = this.#state(); if (!state?.original || !this.#visible(binding)) return;
-      if (["queued", "running"].includes(state.status) && ["queued", "running"].includes(state.original.jobStatus)) {
+      if (this.#observationPending(state)) {
         pending = true; return;
       }
       this.#resultReadStage = "requirements";
@@ -544,7 +603,7 @@ export class FormaExperienceHost extends FormaElement {
       const inspected = await operation.wait(this.store.inspectOutputNativeJob(state.documentId, state.original.jobId, current));
       if (inspected.status !== "found" || !current() || !inspected.current()) throw new Error("unavailable");
       if (inspected.job.status !== "completed") {
-        this.#status = this.#statusLabel(state); pending = ["queued", "running"].includes(inspected.job.status); return;
+        this.#status = this.#statusLabel(state); pending = ["queued", "running", ...(hasServerExecutionOwner(inspected.job)?["committing"]:[])].includes(inspected.job.status); return;
       }
       this.#resultReadStage = "candidate";
       const candidate = this.#candidate(state, inspected.job);
@@ -726,7 +785,7 @@ export class FormaExperienceHost extends FormaElement {
     } }
     finally { if (this.#finishOperation(operation)) {
       this.#resultReadStage = undefined;
-      this.#busy = false; this.requestUpdate(); if (pending) this.#scheduleResultRead();
+      this.#busy = false; this.requestUpdate(); if (pending || this.#observationAttachment?.binding===binding) this.#scheduleResultRead();
     } }
   }
   #stopResultRead() {
@@ -735,20 +794,19 @@ export class FormaExperienceHost extends FormaElement {
   }
   #scheduleResultRead() {
     this.#stopResultRead();
-    const binding = this.#binding, state = this.#state();
-    if (!binding || !this.#visible(binding) || this.#busy || this.#loading || this.#result || !state?.original
-      || state.disposition !== "original_run_recorded" || !state.original.run
-      || !["queued", "running"].includes(state.status) || !["queued", "running"].includes(state.original.jobStatus)
-      || !Number.isFinite(Date.parse(state.original.jobExpiresAt)) || Date.parse(state.original.jobExpiresAt) <= Date.now()) return;
-    // Only read the recorded original. Unknown submissions, recovery and paid
-    // commands remain explicit; each read keeps the existing operation guards.
-    const timer = setTimeout(() => {
-      if (this.#resultRead !== timer) return;
-      this.#resultRead = undefined;
-      if (this.#binding === binding && this.#state() === state && this.#visible(binding)
-        && !this.#busy && !this.#loading && Date.parse(state.original!.jobExpiresAt) > Date.now()) void this.#check();
-    }, Math.min(2000, Date.parse(state.original.jobExpiresAt) - Date.now()));
-    this.#resultRead = timer;
+    const binding=this.#binding,state=this.#state(),attachment=this.#observationAttachment;
+    if(!binding||!this.#readable(binding)||this.#busy||this.#loading||this.#result)return;
+    const attachedUntil=attachment?.binding===binding?attachment.until:0;
+    const legacyUntil=state?.original?.run&&state.disposition==="original_run_recorded"&&this.#observationPending(state)?Date.parse(state.original.jobExpiresAt):0;
+    const until=Math.max(attachedUntil,legacyUntil);
+    if(!Number.isFinite(until)||until<=Date.now())return;
+    // GET-only attachment survives an early pre-commit read or transient error.
+    // A lost ACK gets at most two minutes; durable work uses job retention.
+    const timer=setTimeout(()=>{
+      if(this.#resultRead!==timer)return;this.#resultRead=undefined;
+      if(this.#binding===binding&&this.#readable(binding)&&!this.#busy&&!this.#loading&&Date.now()<until)void this.#check();
+    },Math.min(2000,until-Date.now()));
+    this.#resultRead=timer;
   }
   #scheduleDeadline() {
     if (this.#deadline) clearTimeout(this.#deadline);
@@ -991,7 +1049,7 @@ export class FormaExperienceHost extends FormaElement {
         <button type="submit" class="button primary" data-experience-control="run" aria-disabled=${String(!run)} ?disabled=${this.#buttonDisabled(!run, "run")} @click=${(event: MouseEvent) => this.#arm(event, "run")}>${state.output === "video" ? "Create video" : state.output === "image" ? "Create image" : state.output === "short_story" ? "Create story" : state.output === "scene" ? this.i18n.system("Create scene") : state.output === "model3d" ? this.i18n.system("Create 3D model") : state.output === "audio" ? this.i18n.system("Create audio") : state.output === "storyboard" ? "Create storyboard" : "Create slides"}</button></form>` : nothing}
       ${available && state?.permitted.resumeRun ? html`<form class="experience-admission" data-experience-action="resumeRun" @submit=${(event: SubmitEvent) => this.#paidSubmit(event, "resumeRun", resume ? outputPaidDecisionKey(resume) : null)}>
         <button type="submit" class="button primary" data-experience-control="resumeRun" aria-disabled=${String(!resume)} ?disabled=${this.#buttonDisabled(!resume, "resumeRun")} @click=${(event: MouseEvent) => this.#arm(event, "resumeRun")}>${this.#model3dText("Resume")}</button></form>` : nothing}
-      ${available&&state?.output==="video"&&state.original&&["queued","running"].includes(state.original.jobStatus)?html`<button type="button" class="button secondary" data-experience-control="stop" aria-disabled=${String(this.#busy||this.#loading)} ?disabled=${this.#buttonDisabled(this.#busy||this.#loading,"stop")} @click=${this.#stopVideo}>Stop</button>`:nothing}
+      ${available&&state?.output==="video"&&state.original&&!hasServerExecutionOwner(state.original)&&["queued","running"].includes(state.original.jobStatus)?html`<button type="button" class="button secondary" data-experience-control="stop" aria-disabled=${String(this.#busy||this.#loading)} ?disabled=${this.#buttonDisabled(this.#busy||this.#loading,"stop")} @click=${this.#stopVideo}>Stop</button>`:nothing}
       <div class="experience-result-actions">${available && state?.permitted.recoverResult ? html`<button type="button" class="button primary" data-experience-action="recoverResult" data-experience-control="recoverResult" aria-disabled=${String(this.#busy || this.#loading)} ?disabled=${this.#buttonDisabled(this.#busy || this.#loading, "recoverResult")}
         @click=${(event: MouseEvent) => { if (event.isTrusted) void this.#command("recoverResult", state); }}>${this.i18n.system("Recover result")}</button>` : nothing}${this.#readable(binding) ? html`<button type="button" class="button secondary" data-experience-control="check" aria-disabled=${String(this.#busy || this.#loading)} ?disabled=${this.#buttonDisabled(this.#busy || this.#loading, "check")} @click=${(event:MouseEvent) => {if(event.isTrusted)void this.#check(true);}}>${this.#model3dText("Check status")}</button>` : nothing}
         ${available && result ? html`<button type="button" class="button primary" data-experience-control="edit" aria-disabled=${String(this.#busy || result.output === "image" && !this.#imageReady(result))} ?disabled=${this.#buttonDisabled(this.#busy || result.output === "image" && !this.#imageReady(result), "edit")} @click=${() => { if (!this.#busy) void this.#navigate(() => this.#edit()); }}>${this.#model3dText("Edit in Forma")}</button>` : nothing}</div>
