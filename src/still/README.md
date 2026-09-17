@@ -18,6 +18,10 @@ The server rejects malformed routes. After loading authorized events, Still veri
 
 Open **More → Developer console → Open**, or add `developer` to the `/still` query string. The **Decisions** button opens the design-system Drawer. Escape or Close dismisses it; **Exit developer mode** removes the flag and clears the in-memory traces.
 
+**Open in window** moves inspection to a separate browser window while the app stays usable. It mirrors the source app's live controls, pending status, decisions and captured exchanges; it starts no data client or extra Jev calls. **Decisions ↗** focuses the existing window; **Return to Drawer** closes it and restores the Drawer. If pop-ups are blocked, the Drawer remains usable with a retry message. Browser preferences may open a tab instead of a window.
+
+The window is paired to its opener by exact origin, window identity and a random session token. No snapshots are persisted or broadcast to other tabs. Refreshing the viewer requests the latest snapshot; workspace changes clear previous inspection state. Developer exit or source page closure clears and closes the viewer. A lost connection clears displayed data. Navigating the viewer away clears it before Back/Forward caching; reopen from Still to reconnect.
+
 The console shows:
 
 - Current controls, including content selections, picker options, native media groups, disabled state, and primitive variant/size.
@@ -42,4 +46,4 @@ The flag changes diagnostic visibility only. Traces are ephemeral, cleared on de
 
 # Verification
 
-Tests: `tests/still-diagnostics.test.mjs`, `tests/still-diagnostics-api.test.mjs`, `tests/still-next-actions.test.mjs` and `tests/still-next-actions-api.test.mjs`, alongside the existing Still suite. `tests/still-context-preview.mjs` provides an isolated real-Worker preview with explicitly simulated Jev answers and no external provider network access. The separate user-data preview at port 5174 must not be reset to run these checks.
+Tests: `tests/still-console-window.test.mjs`, `tests/still-diagnostics.test.mjs`, `tests/still-diagnostics-api.test.mjs`, `tests/still-next-actions.test.mjs` and `tests/still-next-actions-api.test.mjs`, alongside the existing Still suite. `tests/still-context-preview.mjs` provides an isolated real-Worker preview with explicitly simulated Jev answers and no external provider network access. The separate user-data preview at port 5174 must not be reset to run these checks.

@@ -3,30 +3,42 @@ import { keyed } from 'lit/directives/keyed.js';
 import './vendor/elements/define/drawer.js';
 import './exchange-inspector.ts';
 import type { DecisionDiagnostics, ReceivedDecision } from './diagnostics.ts';
-
-type Control = { label:string; id:string; region:string; variant:string; size:string; emphasis:string; disabled:boolean; options:string[] };
-export type ConsoleContext = { view:string; mode:string; head:number; selectedFormat:string; page:number; current:DecisionDiagnostics };
+import { ConsoleWindowHost, type ConsoleContext, type ConsoleControl } from './console-window.ts';
+export type { ConsoleContext } from './console-window.ts';
 const numeric=(n:number|undefined)=>n===undefined?'—':Number(n.toFixed(3)).toString();
 const percent=(n:number)=>`${(n*100).toFixed(1)}%`;
 
 export class StillDeveloperConsole extends LitElement {
-  static properties = { context:{attribute:false}, applied:{attribute:false}, received:{attribute:false}, pending:{type:Boolean}, controls:{state:true}, showReceived:{state:true}, filter:{state:true} };
+  static properties = { context:{attribute:false}, applied:{attribute:false}, received:{attribute:false}, pending:{type:Boolean}, controls:{attribute:false}, scope:{attribute:false}, detached:{type:Boolean,reflect:true}, windowOpen:{state:true}, windowConnected:{state:true}, windowError:{state:true}, showReceived:{state:true}, filter:{state:true} };
   declare context:ConsoleContext;
   declare applied:DecisionDiagnostics|undefined;
   declare received:ReceivedDecision|undefined;
   pending=false;
-  private controls:Control[]=[];
+  controls:ConsoleControl[]=[];
+  scope='';
+  detached=false;
+  private windowOpen=false;
+  private windowConnected=false;
+  private windowError='';
+  private windowHost?:ConsoleWindowHost;
   private showReceived=false;
   private filter='';
   private observer=new MutationObserver(()=>this.readControls());
   private root:Element|null=null;
   connectedCallback() {
-    super.connectedCallback();this.root=this.closest('still-app');
+    super.connectedCallback();this.root=this.detached?null:this.closest('still-app');
     if(this.root){this.observer.observe(this.root,{subtree:true,childList:true,attributes:true,characterData:true});this.root.addEventListener('change',this.readControls);}
     void this.updateComplete.then(()=>this.readControls());
   }
-  disconnectedCallback(){super.disconnectedCallback();this.observer.disconnect();this.root?.removeEventListener('change',this.readControls);}
-  show(){(this.renderRoot.querySelector('en-drawer') as HTMLElement&{show:()=>void})?.show();}
+  disconnectedCallback(){super.disconnectedCallback();this.windowHost?.dispose();this.observer.disconnect();this.root?.removeEventListener('change',this.readControls);}
+  protected updated(){this.windowHost?.publish();}
+  show(){if(this.windowHost?.isOpen){this.windowHost.open();return;}(this.renderRoot.querySelector('en-drawer') as HTMLElement&{show:()=>void})?.show();}
+  private detach=()=>{
+    this.readControls();
+    this.windowHost??=new ConsoleWindowHost(window,()=>({scope:this.scope,context:this.context,applied:this.applied,received:this.received,pending:this.pending,controls:this.controls}),(open,connected)=>{this.windowOpen=open;this.windowConnected=connected;},()=>{void this.updateComplete.then(()=>this.show());});
+    this.windowError=this.windowHost.open()?'':'Allow pop-ups for Still, then try again.';
+  };
+  private reattach=()=>{this.windowHost?.dispose();void this.updateComplete.then(()=>this.show());};
   private readControls=()=>{
     if(!this.root)return;
     const controls=[...this.root.querySelectorAll<HTMLElement>('main en-button, main select, main en-textarea, main input, main button, main a, main [role="button"], main [role="checkbox"], main audio[controls], main video[controls], .action-dock en-button')]
@@ -49,9 +61,9 @@ export class StillDeveloperConsole extends LitElement {
     const rows=trace?.actions??c.current.actions;
     const matched=trace?.head===c.head&&trace.position.view===(c.mode==='generate'&&!c.selectedFormat?'choose-format':c.view)&&(['projectId','documentId','blockId','outputId','itemIndex','hasIntent'] as const).every(key=>trace.position[key]===c.current.position[key]);
     const questions=trace?.questions??[];
-    return html`<en-button id="developer-trigger" variant="secondary" size="small">Decisions</en-button>
-      <en-drawer for="developer-trigger" label="Developer console" placement="end" closedby="any">
-        <div class="console">
+    const content=html`<div class="console">
+          <div class="window-tools">${this.detached?html`<strong>Decisions · Live</strong><en-button variant="secondary" size="small" @click=${()=>this.dispatchEvent(new CustomEvent('developer-return'))}>Return to Drawer</en-button>`:html`<en-button variant="secondary" size="small" @click=${this.detach}>Open in window</en-button>`}</div>
+          ${this.windowError?html`<p role="alert">${this.windowError}</p>`:nothing}
           <div class="status"><strong>${this.pending?'Jev pending':this.received?.disposition??'Local controls'}</strong><span>${c.view}${c.mode?` / ${c.mode}`:''} · head ${c.head}</span></div>
           <details open><summary>On page · ${this.controls.length} controls</summary>
             <p class="muted">${c.mode?'The open workflow supplies its own controls.':c.view==='projects'||c.view==='documents'||c.view==='results'?'Browse content and pagination share the control budget.':'Up to four suggestions, plus More. Slides reserve two places for paging.'} Emphasis requires useful, confident scores, a valid distribution and a clear margin. Ties and missing evidence have equal weight. More stays available.</p>
@@ -81,12 +93,15 @@ export class StillDeveloperConsole extends LitElement {
           <details><summary>Creative questions · ${questions.filter(q=>q.asked).length} sent</summary>${questions.filter(q=>`${q.id} ${q.question.instructions}`.toLowerCase().includes(this.filter)).map(q=>html`<details><summary><code>${q.id}</code> · ${q.composition} · ${q.question.type} · ${numeric(q.score??q.noul)}${q.choice?` ${q.choice}`:''}</summary>${this.distribution(q)}</details>`)}</details>
           <details><summary>Context coverage</summary><pre>${JSON.stringify({current:c.current.position,decision:trace?.position,context:trace?.context??c.current.context},null,2)}</pre></details>
           <p class="muted">Session memory only. No creative events are added by this console.</p>
-          <en-button variant="ghost" size="small" @click=${()=>this.dispatchEvent(new CustomEvent('developer-disable',{bubbles:true,composed:true}))}>Exit developer mode</en-button>
-        </div>
-      </en-drawer>`;
+          ${this.detached?nothing:html`<en-button variant="ghost" size="small" @click=${()=>this.dispatchEvent(new CustomEvent('developer-disable',{bubbles:true,composed:true}))}>Exit developer mode</en-button>`}
+        </div>`;
+    if(this.detached)return content;
+    return html`<en-button id="developer-trigger" variant="secondary" size="small" aria-label=${this.windowOpen?`Decisions · ${this.windowConnected?'Live window':'Waiting for window'}`:'Decisions'} @click=${()=>{if(this.windowOpen)this.show();}}>Decisions${this.windowOpen?' ↗':''}</en-button>
+      ${this.windowOpen?html`<en-button variant="ghost" size="small" @click=${this.reattach}>Return to Drawer</en-button>`:html`<en-drawer for="developer-trigger" label="Developer console" placement="end" closedby="any">${content}</en-drawer>`}`;
   }
   static styles=css`
     :host{position:fixed;top:16px;right:24px;z-index:20;font:13px/1.5 system-ui,sans-serif;color:#33332e}
+    :host([detached]){position:static;display:block;max-width:1200px;margin:auto;padding:20px 24px}.window-tools{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:12px 0}
     en-drawer{--en-overlay-max-inline-size:min(760px,100vw);--en-overlay-max-block-size:100dvh;--en-overlay-background:#f7f6f2;--en-overlay-color:#33332e}
     en-drawer::part(body){padding:0 22px 24px} .console{overflow-wrap:anywhere}
     h3{font-size:14px;margin:22px 0 8px}p{margin:9px 0}code,pre{font:11px/1.5 ui-monospace,monospace}pre{white-space:pre-wrap}

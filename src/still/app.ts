@@ -110,6 +110,7 @@ export class StillApp extends LitElement {
       if(this.developerScope!==this.diagnosticScope()){this.developerApplied=undefined;this.developerReceived=undefined;this.developerScope=this.diagnosticScope();}
       inspector.context={view:this.client.position.view,mode:this.mode,head:this.client.head,page:this.page,selectedFormat:this.generation?.format??'',current:this.localDiagnostics('Current eligibility')};
       inspector.applied=this.developerApplied;inspector.received=this.developerReceived;inspector.pending=this.developerPending;
+      inspector.scope=this.diagnosticScope();
     }
   }
   private interactionScope(){return JSON.stringify([this.client.epoch,this.client.scopeKey,this.client.position.projectId,this.client.position.documentId]);}
