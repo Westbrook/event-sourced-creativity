@@ -137,8 +137,9 @@ class ReadLifetime {
   usedBytes = 0;
   cutoff: number;
   maximumBytes: number;
-  constructor(monotonicDeadline: number, maximumBytes: number) { this.cutoff = monotonicDeadline; this.maximumBytes = maximumBytes; }
-  check() { if (performance.now() >= this.cutoff) fail("sponsor_read_deadline"); }
+  readonly signal?: AbortSignal;
+  constructor(monotonicDeadline: number, maximumBytes: number, signal?: AbortSignal) { this.cutoff = monotonicDeadline; this.maximumBytes = maximumBytes; this.signal = signal; }
+  check() { if (this.signal?.aborted || performance.now() >= this.cutoff) fail("sponsor_read_deadline"); }
   sql(count: number) { this.check(); this.count += count; if (this.count > 900) fail("sponsor_read_query_capacity"); }
   account(value: unknown) { this.usedBytes += new TextEncoder().encode(JSON.stringify(value)).byteLength; if (this.usedBytes > this.maximumBytes) fail("sponsor_read_byte_capacity"); }
   expect(bytes: number) { this.check(); if (this.usedBytes + bytes > this.maximumBytes) fail("sponsor_read_byte_capacity"); }
@@ -197,7 +198,7 @@ function witnessDatabase(env: WorkerEnv, life: ReadLifetime): Pick<WorkerEnv, "D
 export async function resolveSponsorImageRead(authority: SponsorImageReadAuthority, attempt: SponsorImageReadAttempt, request: Request, env: WorkerEnv) {
   requireSponsorImageReadAuthority(authority, request, env);
   const ticket = await takeSponsorImageReadAttempt(attempt, authority, request, env), state = authorities.get(authority)!;
-  const life = new ReadLifetime(ticket.monotonicDeadline, ticket.maximumBytes);
+  const life = new ReadLifetime(ticket.monotonicDeadline, ticket.maximumBytes, request.signal);
   life.sql(1);
   const job = await life.run(65_536, () => env.DB.prepare(`SELECT job.status,job.updated_at,slot.outcome_event_id,slot.status AS slot_status,execution.status AS grant_status,
     CASE WHEN json_valid(job.result_json) AND json_type(job.result_json,'$.appendedEventIds')='array'
@@ -208,8 +209,9 @@ export async function resolveSponsorImageRead(authority: SponsorImageReadAuthori
     JOIN output_execution_grants execution ON execution.scope_key=slot.scope_key AND execution.grant_id=slot.grant_id
     WHERE job.job_id=? AND job.owner_id=? AND job.stream_id=? AND job.correlation_id=? AND length(CAST(job.updated_at AS BLOB))<=40
       AND typeof(job.status)='text' AND length(CAST(job.status AS BLOB))<=32
+      AND (?<>'image-status' OR typeof(job.expires_at)='text' AND length(CAST(job.expires_at AS BLOB))<=40 AND job.expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now'))
       AND (slot.outcome_event_id IS NULL OR length(CAST(slot.outcome_event_id AS BLOB))<=200)`)
-    .bind(state.jobId, state.actorUserId, state.streamId, state.correlationId).first<Row>());
+    .bind(state.jobId, state.actorUserId, state.streamId, state.correlationId, ticket.operation).first<Row>());
   if (!job || !["queued", "running", "committing", "completed", "partial", "failed", "canceled"].includes(String(job.status))) fail("sponsor_read_original_unavailable");
   let completed: CreativeEvent | null = null, privateJson = "", privateProject: string | null = null;
   if (job.status === "completed") {
@@ -259,12 +261,13 @@ export async function resolveSponsorImageRead(authority: SponsorImageReadAuthori
       JOIN output_execution_grants execution ON execution.scope_key=slot.scope_key AND execution.grant_id=slot.grant_id
       WHERE job.job_id=? AND job.owner_id=? AND job.status=? AND job.updated_at=? AND job.correlation_id=?
       AND slot.outcome_event_id IS ? AND slot.status=? AND execution.status=?
+      AND (?<>'image-status' OR typeof(job.expires_at)='text' AND length(CAST(job.expires_at AS BLOB))<=40 AND job.expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now'))
       AND CASE WHEN json_valid(job.result_json) AND json_type(job.result_json,'$.appendedEventIds')='array'
         AND length(CAST(json_extract(job.result_json,'$.appendedEventIds') AS BLOB))<=16384 THEN json_extract(job.result_json,'$.appendedEventIds') END IS ?
       AND (SELECT COUNT(*) FROM output_provider_calls calls WHERE calls.scope_key=slot.scope_key AND calls.slot_id=slot.slot_id
         AND (calls.status IN('pending','uncertain') OR calls.used_microusd IS NULL))=?)`,
     bindings: [state.jobId, state.actorUserId, String(job.status), String(job.updated_at), state.correlationId,
-      job.outcome_event_id == null ? null : String(job.outcome_event_id), String(job.slot_status), String(job.grant_status),
+      job.outcome_event_id == null ? null : String(job.outcome_event_id), String(job.slot_status), String(job.grant_status), ticket.operation,
       job.completion_ids == null ? null : String(job.completion_ids), Number(job.unresolved_calls)] }];
   let original = null;
   if (completed && imageState) {
@@ -300,5 +303,5 @@ export async function resolveSponsorImageRead(authority: SponsorImageReadAuthori
   life.sql(final.length);
   const verified = await life.run(final.length * 1_024, () => env.DB.batch<Row>(final.map(g => imageWitnessStatement(env, g))));
   if (!imageWitnessAcknowledged(verified, final.length)) fail("sponsor_read_current_custody_changed");
-  return Object.freeze({ ...result, remainingBytes: Math.max(0, ticket.maximumBytes - life.usedBytes) });
+  return Object.freeze({ ...result, monotonicDeadline: ticket.monotonicDeadline, remainingBytes: Math.max(0, ticket.maximumBytes - life.usedBytes) });
 }
