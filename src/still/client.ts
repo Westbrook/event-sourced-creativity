@@ -156,7 +156,8 @@ export class StillClient {
       if (hydrated) {
         // An artifact save may finish while this read is in flight. Its acknowledged
         // body is newer than this read; retain it while hydrating other references.
-        this.content = { ...this.content, ...Object.fromEntries(Object.entries(hydrated).filter(([key]) => (this.contentWrites.get(key) ?? 0) <= contentRevision)) };
+        const newer = Object.fromEntries(Object.entries(this.content).filter(([key]) => (this.contentWrites.get(key) ?? 0) > contentRevision));
+        this.content = { ...hydrated, ...newer };
       }
       this.head = Math.max(this.head, target!);
       for (const event of this.events) { if (event.sequence === this.head + 1) this.head = event.sequence; }
@@ -361,8 +362,9 @@ export class StillClient {
       if (read !== this.jobRead || document !== this.position.documentId) return;
       const result = await this.request<{ jobs: DocumentJob[] }>(`/api/document-jobs?document=${encodeURIComponent(document)}`); check();
       if (read !== this.jobRead || document !== this.position.documentId) return;
-      if (!Array.isArray(result.jobs) || result.jobs.some(j => j.documentId !== document)) throw new Error('The job history could not be verified.');
-      const previous = this.jobs.filter(j => j.documentId === document), jobs = result.jobs;
+      if (!Array.isArray(result.jobs) || result.jobs.some(j => !j || typeof j.documentId !== 'string' || typeof j.jobId !== 'string')) throw new Error('The job history could not be verified.');
+      // Forma also returns authorized active/unnotified jobs from other documents.
+      const previous = this.jobs.filter(j => j.documentId === document), jobs = result.jobs.filter(j => j.documentId === document);
       const terminal = (job: DocumentJob) => ['completed', 'partial', 'failed', 'canceled'].includes(job.status);
       const changed = this.jobs.some(j => j.documentId !== document) || JSON.stringify(previous) !== JSON.stringify(jobs);
       const needsRefresh = jobs.some(j => terminal(j) && JSON.stringify(j) !== JSON.stringify(previous.find(p => p.jobId === j.jobId)))

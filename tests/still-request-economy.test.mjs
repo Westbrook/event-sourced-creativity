@@ -67,7 +67,7 @@ test('server revision conflicts retain the reviewed draft and never retry admiss
   });
 });
 test('a late history read cannot regress an acknowledged edit or the event cursor',async()=>{
-  const c=client();c.content={body:'Latest story'};
+  const c=client();c.content={body:'Latest story',expired:'Expired body'};
   const reading=deferred(),release=deferred();const external=event(3,'DocumentArtifactEdited',{artifact_id:'other',content_ref:'body'});
   await network(async(url,init)=>{
     if(url==='/api/session')return json(session);
@@ -76,7 +76,7 @@ test('a late history read cannot regress an acknowledged edit or the event curso
     return page([external],3);
   },async()=>{
     const refresh=c.refresh();await reading.promise;await c.editArtifact('a','Latest story',0);release.resolve();await refresh;
-    assert.equal(c.content.body,'Latest story');assert.deepEqual(c.events.map(e=>e.sequence),[1,2,3,4]);assert.equal(c.head,4);
+    assert.deepEqual(c.content,{body:'Latest story'});assert.deepEqual(c.events.map(e=>e.sequence),[1,2,3,4]);assert.equal(c.head,4);
   });
 });
 test('scope changes fence in-flight reads and old denials cannot clear the new workspace',async()=>{
@@ -115,5 +115,19 @@ test('returning to a document fences its earlier poll and clears another documen
     return json({jobs:[]});
   },async()=>{
     const old=c.pollJobs();await reading.promise;c.position.documentId='other';c.jobs=[{jobId:'original',documentId:'d',status:'running'}];await c.pollJobs();assert.deepEqual(c.jobs,[]);c.position.documentId='d';await c.pollJobs();release.resolve();await old;assert.deepEqual(c.jobs,[]);
+  });
+});
+test('native mixed-document job lists retain selected results without rejecting authorized siblings',async()=>{
+  const c=client();c.jobs=[{jobId:'selected',documentId:'d',status:'running'}];
+  const selected={jobId:'selected',documentId:'d',status:'completed'};
+  await network(url=>url==='/api/session'?json(session):url.startsWith('/api/document-jobs')?json({jobs:[{jobId:'active-elsewhere',documentId:'other',status:'running'},selected,{jobId:'unnotified-elsewhere',documentId:'other',status:'completed'}]}):page(),async calls=>{
+    await c.pollJobs();assert.deepEqual(c.jobs,[selected]);assert.equal(calls.length,3);await c.pollJobs();assert.equal(calls.length,5);
+  });
+});
+test('authoritative hydration removes omitted expired or redacted cached bodies',async()=>{
+  const c=client();c.content={expired:'Expired story',redacted:'Removed context',current:'Current body'};
+  const rendered=event(3,'DocumentRenderCompleted',{document_id:'d',artifact_id:'a',content_ref:'new-body'});
+  await network(url=>url==='/api/session'?json(session):url.includes('content=1')?page([],3,{current:'Current body','new-body':'New story'}):page([rendered],3),async()=>{
+    await c.refresh();assert.deepEqual(c.content,{current:'Current body','new-body':'New story'});
   });
 });
