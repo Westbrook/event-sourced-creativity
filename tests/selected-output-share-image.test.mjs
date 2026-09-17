@@ -4,7 +4,8 @@ import { deflateSync } from "node:zlib";
 import test from "node:test";
 import { inspectOutputAsset } from "../src/model/output-asset-inspection.ts";
 import { qualifySelectedOutputShareImage, copySelectedOutputShareImageBytes, SELECTED_OUTPUT_SHARE_IMAGE_POLICY,
-  SELECTED_OUTPUT_SHARE_IMAGE_LIMITS } from "../src/model/selected-output-share-image.ts";
+  SELECTED_OUTPUT_SHARE_IMAGE_LIMITS, qualifyResolutionSelectedOutputShareImage,
+  SELECTED_OUTPUT_SHARE_IMAGE_RESOLUTION_POLICY } from "../src/model/selected-output-share-image.ts";
 import { png, pngChunk, join, utf8, jpeg } from "./output-asset-fixtures.mjs";
 
 const digest = bytes => createHash("sha256").update(bytes).digest("hex");
@@ -133,4 +134,124 @@ test("chunk-count and expanded-byte limits are finite", async () => {
 test("declared chunk overrun and duplicate IHDR cannot bypass native framing", async () => {
   const bytes = png(); new DataView(bytes.buffer).setUint32(8, 0xffffffff); refused(await qualify(bytes));
   const [header, data, end] = chunks(png()); refused(await qualify(join(png().slice(0, 8), header, header, data, end)));
+});
+
+// Authored closed TIFF layout, not an arbitrary EXIF fixture/parser. All values
+// are public resolution constants, independent of any particular asset hash.
+function resolutionPayloads() {
+  const exif = new Uint8Array(54), view = new DataView(exif.buffer);
+  view.setUint16(0, 0x4d4d); view.setUint16(2, 42); view.setUint32(4, 24);
+  for (const at of [8, 16]) { view.setUint32(at, 72); view.setUint32(at + 4, 1); }
+  view.setUint16(24, 2);
+  for (const [at, tag, offset] of [[26, 0x011a, 8], [38, 0x011b, 16]]) {
+    view.setUint16(at, tag); view.setUint16(at + 2, 5); view.setUint32(at + 4, 1); view.setUint32(at + 8, offset);
+  }
+  return [["eXIf", exif], ["oFFs", new Uint8Array(9)], ["pHYs", join(unsigned([2834, 2834]), Uint8Array.of(1))]];
+}
+const resolutionChunks = () => resolutionPayloads().map(([type, payload]) => pngChunk(type, payload));
+const qualifyResolution = (bytes, expected = facts(bytes)) => qualifyResolutionSelectedOutputShareImage(bytes, expected);
+const resolutionRefused = result => {
+  refused(result); assert.equal(result.policy, SELECTED_OUTPUT_SHARE_IMAGE_RESOLUTION_POLICY);
+};
+
+test("explicit resolution profile retains exact RGB/RGBA bytes and clean-v1 inputs under its own policy", async () => {
+  for (const bytes of [png(), rgb(), png({ extraChunks: resolutionChunks() }), rgb(resolutionChunks())]) {
+    const expected = facts(bytes), result = await qualifyResolution(bytes, expected);
+    assert.deepEqual(result, { status: "qualified", policy: SELECTED_OUTPUT_SHARE_IMAGE_RESOLUTION_POLICY, mimeType: "image/png", ...expected });
+    assert.ok(Object.isFrozen(result)); assert.deepEqual(copySelectedOutputShareImageBytes(result), bytes);
+  }
+});
+test("default v1 continues refusing each resolution chunk and the complete trio", async () => {
+  for (const extraChunks of [...resolutionChunks().map(chunk => [chunk]), resolutionChunks()]) {
+    const bytes = png({ extraChunks }), result = await qualify(bytes);
+    refused(result); assert.equal(result.policy, SELECTED_OUTPUT_SHARE_IMAGE_POLICY); assert.equal(result.reason, "unqualified_metadata");
+  }
+});
+test("explicit profile composes with existing validated rendering chunks before and after the trio", async () => {
+  const bytes = rgb([pngChunk("gAMA", unsigned([45455])), ...resolutionChunks(), pngChunk("sRGB", Uint8Array.of(0)),
+    pngChunk("tRNS", Uint8Array.of(0, 1, 0, 2, 0, 3))]);
+  const result = await qualifyResolution(bytes); assert.equal(result.status, "qualified"); assert.deepEqual(copySelectedOutputShareImageBytes(result), bytes);
+});
+for (const [type, payload] of resolutionPayloads()) {
+  test(`every ${type} byte is covered by the closed resolution profile`, async () => {
+    for (let at = 0; at < payload.length; at++) {
+      const altered = payload.slice(); altered[at] ^= 1;
+      const extras = resolutionPayloads().map(([name, value]) => pngChunk(name, name === type ? altered : value));
+      const bytes = png({ extraChunks: extras }), before = bytes.slice(), result = await qualifyResolution(bytes);
+      resolutionRefused(result); assert.equal(result.reason, "unqualified_metadata", `${type} offset ${at}`); assert.deepEqual(bytes, before);
+    }
+  });
+  test(`${type} refuses truncation, zero padding and hidden suffix data`, async () => {
+    for (const replacement of [payload.slice(0, -1), new Uint8Array(), join(payload, Uint8Array.of(0)), join(payload, utf8("SYNTHETIC_PRIVATE_TRAILER"))]) {
+      const extras = resolutionPayloads().map(([name, value]) => pngChunk(name, name === type ? replacement : value));
+      resolutionRefused(await qualifyResolution(png({ extraChunks: extras })));
+    }
+  });
+  test(`${type} refuses duplicate chunks before and after the trio`, async () => {
+    for (const extras of [[pngChunk(type, payload), ...resolutionChunks()], [...resolutionChunks(), pngChunk(type, payload)]]) {
+      resolutionRefused(await qualifyResolution(png({ extraChunks: extras })));
+    }
+  });
+}
+test("partial, reordered, repeated and interrupted resolution trios refuse", async () => {
+  const [exif, offsets, physical] = resolutionChunks(), render = pngChunk("sRGB", Uint8Array.of(0));
+  for (const extras of [[exif], [offsets], [physical], [exif, offsets], [exif, physical], [offsets, physical],
+    [exif, physical, offsets], [offsets, exif, physical], [offsets, physical, exif], [physical, exif, offsets], [physical, offsets, exif],
+    [...resolutionChunks(), ...resolutionChunks()], [exif, render, offsets, physical], [exif, offsets, render, physical]]) {
+    resolutionRefused(await qualifyResolution(png({ extraChunks: extras })));
+  }
+});
+test("resolution chunks cannot follow, interrupt or precede the PNG image/header", async () => {
+  const [header, data, end] = chunks(png()), signature = png().slice(0, 8), resolution = resolutionChunks();
+  for (const bytes of [join(signature, ...resolution, header, data, end), join(signature, header, data, ...resolution, end),
+    join(signature, header, data, ...resolution, data, end), join(signature, header, resolution[0], data, resolution[1], resolution[2], end)]) {
+    resolutionRefused(await qualifyResolution(bytes));
+  }
+});
+test("alternate EXIF encodings, nested pointers and equivalent rational encodings remain unsupported", async () => {
+  const exif = resolutionPayloads()[0][1];
+  const replacements = [join(utf8("Exif\0\0"), exif), Uint8Array.from(Buffer.from("49492a00180000004800000001000000480000000100000002001a01050001000000080000001b010500010000001000000000000000", "hex"))];
+  for (const [offset, value] of [[8, 144], [12, 2], [34, 16], [46, 8], [50, 24]]) {
+    const changed = exif.slice(); new DataView(changed.buffer).setUint32(offset, value); replacements.push(changed);
+  }
+  const sameResolution = exif.slice(), equivalent = new DataView(sameResolution.buffer);
+  equivalent.setUint32(8, 144); equivalent.setUint32(12, 2); replacements.push(sameResolution);
+  for (const replacement of replacements) resolutionRefused(await qualifyResolution(png({ extraChunks: [pngChunk("eXIf", replacement), ...resolutionChunks().slice(1)] })));
+});
+test("resolution profile still refuses arbitrary metadata and opaque C2PA provenance", async () => {
+  for (const type of ["tEXt", "zTXt", "iTXt", "iCCP", "tIME", "caBX", "vpAg", "PLTE", "acTL"]) {
+    const bytes = png({ extraChunks: [...resolutionChunks(), pngChunk(type, utf8("SYNTHETIC_PRIVATE_VALUE"))] });
+    const result = await qualifyResolution(bytes); resolutionRefused(result); assert.equal(result.reason, "unqualified_metadata");
+  }
+});
+test("resolution qualification binds exact facts and isolates asynchronous byte/expected mutations", async () => {
+  const bytes = png({ extraChunks: resolutionChunks() }), original = bytes.slice(), expected = facts(bytes);
+  for (const patch of [{ sha256: "0".repeat(64) }, { width: 4 }, { height: 3 }, { byteLength: bytes.length + 1 }]) {
+    const result = await qualifyResolution(bytes, { ...expected, ...patch }); resolutionRefused(result); assert.equal(result.reason, "selection_mismatch");
+  }
+  const pending = qualifyResolution(bytes, expected); bytes.fill(0); expected.sha256 = "0".repeat(64);
+  const result = await pending; assert.equal(result.status, "qualified"); assert.deepEqual(copySelectedOutputShareImageBytes(result), original);
+  copySelectedOutputShareImageBytes(result).fill(0); assert.deepEqual(copySelectedOutputShareImageBytes(result), original);
+  for (const fake of [{ ...result }, JSON.parse(JSON.stringify(result)), new Proxy(result, {})]) assert.equal(copySelectedOutputShareImageBytes(fake), null);
+});
+test("resolution profile preserves native CRC, inflate, scanline and exact boundary validation", async () => {
+  const bytes = png({ extraChunks: resolutionChunks() }), corrupt = bytes.slice(); corrupt[corrupt.length - 1] ^= 1;
+  const [header, data, end] = chunks(png()), invalidFilter = new Uint8Array(26); invalidFilter[0] = 5;
+  for (const invalid of [corrupt, png({ extraChunks: resolutionChunks(), raw: invalidFilter }),
+    png({ extraChunks: resolutionChunks(), raw: new Uint8Array(1) }), join(bytes, Uint8Array.of(0)),
+    join(png().slice(0, 8), header, ...resolutionChunks(), pngChunk("IDAT", join(data.slice(8, -4), utf8("private compressed trailer"))), end)]) {
+    resolutionRefused(await qualifyResolution(invalid));
+  }
+});
+test("resolution profile keeps hostile input, byte budget and chunk-count refusals", async () => {
+  const bytes = png({ extraChunks: resolutionChunks() }); let calls = 0;
+  const expected = facts(bytes); Object.defineProperty(expected, "sha256", { get() { calls++; return digest(bytes); } });
+  resolutionRefused(await qualifyResolution(bytes, expected)); assert.equal(calls, 0);
+  const shared = new Uint8Array(new SharedArrayBuffer(bytes.length)); shared.set(bytes);
+  for (const input of [null, new Proxy(bytes, {}), shared, new Uint8Array(SELECTED_OUTPUT_SHARE_IMAGE_LIMITS.bytes + 1)]) {
+    resolutionRefused(await qualifyResolutionSelectedOutputShareImage(input, facts(bytes)));
+  }
+  const [header, data, end] = chunks(png()), empty = pngChunk("IDAT", new Uint8Array());
+  assert.equal((await qualifyResolution(join(png().slice(0, 8), header, ...resolutionChunks(), data, ...Array(4090).fill(empty), end))).status, "qualified");
+  resolutionRefused(await qualifyResolution(join(png().slice(0, 8), header, ...resolutionChunks(), data, ...Array(4091).fill(empty), end)));
 });
