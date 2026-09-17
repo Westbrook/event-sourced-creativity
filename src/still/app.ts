@@ -191,6 +191,11 @@ export class StillApp extends LitElement {
     if(event.button!==0||event.metaKey||event.ctrlKey||event.shiftKey||event.altKey||event.defaultPrevented)return;
     event.preventDefault();if(!this.busy&&!this.composing)this.navigate(view,ids);
   }
+  private home=(event:MouseEvent)=>{
+    if(event.button!==0||event.metaKey||event.ctrlKey||event.shiftKey||event.altKey||event.defaultPrevented)return;
+    if(this.preventsRouteChange()){event.preventDefault();this.error='Finish or close this step before leaving.';this.changed();return;}
+    this.follow(event,'projects',{projectId:'',documentId:''});
+  };
   private turnPage(page:number){this.dockTouched=false;this.page=Math.max(0,page);this.writeRoute();this.changed();this.decide();}
   private turnItem(item:number){this.dockTouched=false;this.itemIndex=item;this.writeRoute();this.changed();this.decide();}
   private candidates() { return eligibleActions(this.client.projection, this.client.position, this.client.abilities); }
@@ -444,7 +449,7 @@ export class StillApp extends LitElement {
   }
   render() {
     const c = this.client, p = c.projection, running = c.jobs.filter(j => activeJobs.has(j.status) && j.documentId === c.position.documentId), failed = c.jobs.find(j => j.status === 'failed' && j.documentId === c.position.documentId);
-    return html`<div class="still-shell"><header class="masthead"><span class="wordmark">still<span aria-hidden="true">.</span></span><span class="session-status">${this.busy ? 'Working' : c.session?.impersonation ? 'Preview · read only' : c.session && !c.abilities.author ? 'Read only' : ''}</span></header><main id="still-content" aria-busy=${this.loading}>${this.renderCanvas()}</main>${running.length ? html`<aside class="job-status" role="status"><i></i>${running[0].progressMessage || 'Generating…'}${running.length > 1 ? ` · ${running.length} in progress` : ''}</aside>` : nothing}${this.error || failed && !this.mode ? html`<div class="status-message error" role="alert">${this.error || failed?.errorDetail?.message || failed?.error || 'Generation failed.'}</div>` : this.notice && !this.mode ? html`<div class="status-message" role="status">${this.notice}</div>` : nothing}${this.renderDock()}${this.developer ? html`<still-developer-console @developer-disable=${()=>this.setDeveloper(false)}></still-developer-console>` : nothing}${new URL(location.href).searchParams.has('progress-report') ? html`<a class="progress-return" href=${REPORT_URL}>Progress Report ↗</a>` : nothing}</div>`;
+    return html`<div class="still-shell"><header class="masthead"><a class="wordmark" href=${this.viewURL('projects',{projectId:'',documentId:''})} aria-label="Still home" @click=${this.home}>still<span aria-hidden="true">.</span></a><span class="session-status">${this.busy ? 'Working' : c.session?.impersonation ? 'Preview · read only' : c.session && !c.abilities.author ? 'Read only' : ''}</span></header><main id="still-content" aria-busy=${this.loading}>${this.renderCanvas()}</main>${running.length ? html`<aside class="job-status" role="status"><i></i>${running[0].progressMessage || 'Generating…'}${running.length > 1 ? ` · ${running.length} in progress` : ''}</aside>` : nothing}${this.error || failed && !this.mode ? html`<div class="status-message error" role="alert">${this.error || failed?.errorDetail?.message || failed?.error || 'Generation failed.'}</div>` : this.notice && !this.mode ? html`<div class="status-message" role="status">${this.notice}</div>` : nothing}${this.renderDock()}${this.developer ? html`<still-developer-console @developer-disable=${()=>this.setDeveloper(false)}></still-developer-console>` : nothing}${new URL(location.href).searchParams.has('progress-report') ? html`<a class="progress-return" href=${REPORT_URL}>Progress Report ↗</a>` : nothing}</div>`;
   }
 }
 if (!customElements.get('still-app')) customElements.define('still-app', StillApp);
