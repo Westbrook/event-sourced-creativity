@@ -12,6 +12,7 @@ import { documentArtifactRevision } from "../src/model/document-artifacts.ts";
 import { creativeActionSourceRevision } from "../src/model/workspace-intelligence.ts";
 import { ARTIFACT_DELIVERY_MESSAGES } from "../src/components/design-system/locales/artifact-delivery-messages.ts";
 import { createSceneStoreHost, readWorkspaceEvents, financial } from "./helpers/event-source-retirement-fixture.mjs";
+import { actualClassDependencies } from "./helpers/actual-class-dependencies.mjs";
 
 const digest = async text => Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256",new TextEncoder().encode(text))),byte=>byte.toString(16).padStart(2,"0")).join("");
 const bytes = JSON.stringify({ content_markdown:"Exact approved output", items:[] });
@@ -225,10 +226,11 @@ const sourceOwnershipMembers=actualClassMembers(storeSource,"FormaStore",[
 ]);
 const SourceOwnership=eval(stripTypeScriptTypes("(class {"+sourceOwnershipMembers+"})"));
 const between=(source,start,end)=>{const a=source.indexOf(start),b=source.indexOf(end,a);assert.ok(a>=0&&b>a,start);return source.slice(a,b);};
-const openingMethods=actualClassMembers(componentSource,"DocumentArtifacts",[
+const openingNames=[
   "openArtifactById","#openArtifact","#artifactBinding","#targetDocumentId",
   "#privateSourceRevision","#privateSourceCurrent",
-]);
+];
+const openingMethods=actualClassMembers(componentSource,"DocumentArtifacts",openingNames);
 // Production methods remain verbatim; only their former lexical eval inputs
 // become explicit dependencies visible to both the harness and static analysis.
 const fixtureClass=(source,bindings)=>new Function(...Object.keys(bindings),'"use strict"; return '+stripTypeScriptTypes(source)+";")(...Object.values(bindings));
@@ -243,14 +245,15 @@ function viewerFixture(){
   const store=Object.assign(new SourceOwnership(),{captureAuthorizationScope:()=>({key:"authority",shared:true}),authorizationScopeActive:()=>state.active,
     projection:{get:()=>({documentId:"document",libraryArtifacts:[artifact]})},events:{get:()=>state.events},content:{get:()=>({content:state.bytes})},
     session:{get:()=>({projectContext:{permissions:["project.read","project.review.approve"]}})},ui:{instrumentation:false},ensurePrivateContent:async contentRef=>rejectIO("content:"+contentRef)});
-  const declared=new Set(["openArtifact","artifactBinding","targetDocumentId","revealWorkbenchPane","viewDialog","showArtifactIntent","privateSourceRevision","privateSourceCurrent"]);
-  const fields=[...new Set([...openingMethods.matchAll(/#([A-Za-z][A-Za-z0-9_]*)/g)].map(match=>match[1]))].filter(name=>!declared.has(name));
+  const tree=ts.createSourceFile("document-artifacts.ts",componentSource,ts.ScriptTarget.Latest,true,ts.ScriptKind.TS);
+  const parsed={tree,host:tree.statements.find(node=>ts.isClassDeclaration(node)&&node.name?.text==="DocumentArtifacts")};
+  const dependencies=actualClassDependencies(parsed,openingMethods,[...openingNames,"#revealWorkbenchPane","#viewDialog","#createDialog","#showArtifactIntent"]);
   const Probe=fixtureClass(`(class {
-    ${actualClassMembers(componentSource,"DocumentArtifacts",fields.map(name=>"#"+name))}
-    store=store;documentId="document";isConnected=true;
+    ${dependencies}
+    store=store;ownerDocument=document;documentId="document";isConnected=true;
     get updateComplete(){return Promise.resolve().then(()=>state.beforeUpdate());}requestUpdate(){}
     async #revealWorkbenchPane(){}
-    #viewDialog(){return dialog;}async #showArtifactIntent(_artifact,intent){trace.push("intent:"+intent);}
+    #viewDialog(){return dialog;}#createDialog(){return null;}async #showArtifactIntent(_artifact,intent){trace.push("intent:"+intent);}
     current(){return this.#viewerCurrent?.();}
     ${openingMethods}
   })`,{state,trace,dialog,store,document,HTMLElement,ensureModalDialog,documentArtifactRevision,fetch:async input=>rejectIO(String(input))});
@@ -268,12 +271,14 @@ test("the real viewer opening transaction refuses another revision or hash witho
 
 test("a successful exact opening keeps authorized Save/Restore editable but loses authority immediately",async()=>{
   const f=viewerFixture();let board="board-a";
-  assert.equal(await f.host.openArtifactById("artifact",{expectedContentSha256:hash,current:()=>board==="board-a"}),true);
+  // This fixture owns the exact review link; ordinary Slides content focus is
+  // exercised with the actual focus lease in the UI lifecycle fixture.
+  assert.equal(await f.host.openArtifactById("artifact",{expectedContentSha256:hash,intent:"review",current:()=>board==="board-a"}),true);
   f.state.events.push(event(3,"DocumentArtifactEdited",{artifact_id:"artifact"},"user:author"));f.state.bytes=bytes+" edited";
   assert.equal(f.host.current(),true,"a valid open editing session must not be frozen to the prior bytes");
   board="board-b";assert.equal(f.host.current(),false);
   board="board-a";f.state.active=false;assert.equal(f.host.current(),false);
-  assert.deepEqual(f.trace,["modal"],"the exact opening and authority checks use only retained content");
+  assert.deepEqual(f.trace,["modal","intent:review"],"the exact opening and authority checks use only retained content");
 });
 
 
