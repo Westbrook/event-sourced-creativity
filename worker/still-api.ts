@@ -3,7 +3,7 @@ import { handleSession, requireConsent, requireUser } from './pilot-policy.ts';
 import type { WorkerEnv, WorkerExecutionContext } from './runtime.ts';
 import type { CreativeEvent } from '../src/model/events.ts';
 import { buildDecisionState, POLICY_VERSION, questionsFor, rankFormats, selectActions, type Abilities, type Answer, type Position } from '../src/still/decisions.ts';
-import { decisionDiagnostics } from '../src/still/diagnostics.ts';
+import { decisionDiagnostics, type DecisionExchange } from '../src/still/diagnostics.ts';
 
 const reply = (body: unknown, status = 200) => Response.json(body, { status, headers: { 'cache-control': 'private, no-store', vary: 'Cookie, oai-authenticated-user-id' } });
 const recentCalls = new Map<string, number>();
@@ -49,18 +49,22 @@ export async function handleStillDecision(request: Request, env: WorkerEnv, cont
   if (position.projectId && !built.projection.projects.some(p => p.id === position.projectId) || position.documentId && !built.projection.documents.some(d => d.id === position.documentId && !d.removed)) return reply({ error: 'selection_unavailable' }, 409);
   const choosingFormat = position.view === 'choose-format';
   let asked=false;
-  const diagnostics = (source:string, reason?:string, answers?:Record<string,Answer>, model?:string, observedAnswers?:Record<string,Answer>) => input.developer===true ? {diagnostics:decisionDiagnostics(built.projection,position,abilities,{head,source,reason,answers,model,observedAnswers,asked,artifactKind:built.state.selectedWork?.kind,coverage:built.state.history.coverage})} : {};
+  let exchange:DecisionExchange|undefined;
+  const diagnostics = (source:string, reason?:string, answers?:Record<string,Answer>, model?:string, observedAnswers?:Record<string,Answer>) => input.developer===true ? {diagnostics:decisionDiagnostics(built.projection,position,abilities,{head,source,reason,answers,model,observedAnswers,asked,exchange,artifactKind:built.state.selectedWork?.kind,coverage:built.state.history.coverage})} : {};
   const fallback = (reason: string, observedAnswers?:Record<string,Answer>) => reply({ source: 'fallback', reason, policy: POLICY_VERSION, head, actions: choosingFormat ? [] : selectActions(built.candidates, position), formats: [], candidateIds: built.candidates.map(a => a.id), ...diagnostics('fallback',reason,undefined,undefined,observedAnswers) });
   if (!env.JEV_API_KEY) return fallback('not_configured');
   try {
     const body = JSON.stringify({ model: 'jev-latest', state: built.state, questions: questionsFor(built.candidates,position,built.state.selectedWork?.kind) });
     if (new TextEncoder().encode(body).byteLength > 60_000) return fallback('context_budget');
+    // Snapshot the wire representation once; expansion never rebuilds state or calls Jev.
+    if(input.developer===true)exchange={requestId:crypto.randomUUID(),requestedAt:new Date().toISOString(),request:JSON.parse(body)};
     asked=true;
     const response = await fetch('https://api.typesafe.ai/v1/systemone', {
       method: 'POST', headers: { authorization: `Bearer ${env.JEV_API_KEY}`, 'content-type': 'application/json' },
       body,
       signal: AbortSignal.timeout(10_000),
     });
+    if(exchange)exchange.responseStatus=response.status;
     if (!response.ok) return fallback(response.status === 429 || response.status === 529 ? 'busy' : 'unavailable');
     const result = await response.json() as { model?: string; answers?: Record<string, Answer> };
     if (!result.answers || typeof result.answers !== 'object' || Array.isArray(result.answers)) return fallback('uncertain');

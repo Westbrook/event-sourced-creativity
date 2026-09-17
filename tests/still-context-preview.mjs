@@ -12,9 +12,11 @@ const json=input=>({method:'POST',headers:{'content-type':'application/json'},bo
 const current=await (await f.request('/api/events?after=0')).json();
 await f.request('/api/events',json({action:'batch',expectedSequence:current.head,events:[{type:'DocumentRenamed',payload:{document_id:f.documentId,old_title:'One current authored direction',new_title:'LOCAL TEST · Small ideas'}},{type:'BlockCreated',payload:{project_id:f.projectId,document_id:f.documentId,block_id:'preview-light',type:'style',scope:'document',handle:'Evening light',position:'z',properties:{text:'Warm evening light across the harbor.',weight:.8}}}]}));
 let calls=0;
+const decisionDelay=Math.min(30000,Math.max(0,Number(process.env.STILL_PREVIEW_JEV_DELAY_MS)||0));
 globalThis.fetch=async(url,init)=>{
   if(String(url)==='https://api.typesafe.ai/v1/systemone') {
     const body=JSON.parse(init.body);
+    if(decisionDelay)await new Promise(resolve=>setTimeout(resolve,decisionDelay));
     if(body.state?.current?.view!=='choose-format') {
       const answers=Object.fromEntries(Object.entries(body.questions).map(([key,q])=>[key,q.type==='score'?{type:'score',score:2.4,confidence:.55,probabilities:{'0':0,'1':.1,'2':.4,'3':.5}}:q.type==='noul'?{type:'noul',noul:.5}:{type:'choice',choice:'organize',confidence:.5,probabilities:{begin:.1,organize:.5,explore:.1,shape:.1,review:.1,finish:.1}}]));
       return Response.json({model:'simulated-jev',answers});

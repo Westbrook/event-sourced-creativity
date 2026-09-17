@@ -23,10 +23,13 @@ The console shows:
 - Current controls, including content selections, picker options, native media groups, disabled state, and primitive variant/size.
 - The applied decision separately from the latest response. Focus preservation, changed event heads, stale positions, and format interaction can prevent a response from being applied.
 - Every registered action, current eligibility, exclusions, selection limits, rubric scores, confidence, full supplied distributions, and signed ranking adjustments.
-- The separate format-fit composition, creative questions sent, and event/context coverage. No raw event text or credentials are included in diagnostics.
+- The separate format-fit composition, creative questions sent, and event/context coverage.
+- **Request & response**, collapsed by default, pairs the complete serialized request state with its inspected response. Expand object and array branches to traverse every value. Branches mount only when opened; inspection makes no network calls. Questions sent are also traversable. Selecting a different decision collapses the inspector.
 
 Scores and probabilities refer to Jev's question rubrics, not click likelihood. Confidence describes concentration. Final ranking values include local rules and are not probabilities. Missing or invalid distributions are marked unavailable. Fallback policy values and simulated providers are labeled separately. The first ordinary suggestion is currently primary by position, not by a confidence threshold.
 
-`POST /api/still/decision` returns diagnostics only for `developer: true`. It uses the same authenticated, retained, authorized event scope as ordinary decisions. The flag changes diagnostic visibility only. Traces are ephemeral; inspecting decisions adds no creative events and never executes a recommendation. The existing endpoint cooldown still applies.
+`POST /api/still/decision` returns diagnostics only for `developer: true`. It uses the same authenticated, retained, authorized event scope as ordinary decisions. The captured state is the exact JSON sent to Jev, including bounded creative text and history summaries; it is not the full event log. It excludes transport headers and credentials. The response inspector exposes validated rubric fields, not arbitrary provider fields. A request ID and timestamp bind the snapshot to its response. Calls rejected before dispatch have no snapshot; transport failures retain the attempted state and indicate unconfirmed delivery.
+
+The flag changes diagnostic visibility only. Traces are ephemeral, cleared on developer exit, disconnect, or workspace/access changes. Late responses from an earlier developer session are discarded. Inspecting decisions adds no creative events and never executes a recommendation. The existing endpoint cooldown still applies.
 
 Tests: `tests/still-diagnostics.test.mjs` and `tests/still-diagnostics-api.test.mjs`, alongside the existing Still suite. `tests/still-context-preview.mjs` provides an isolated real-Worker preview with explicitly simulated Jev answers and no external provider network access. The separate user-data preview at port 5174 must not be reset to run these checks.

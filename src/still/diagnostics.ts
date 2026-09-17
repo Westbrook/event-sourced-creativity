@@ -25,11 +25,18 @@ export function inspectAnswer(question: Question, answer?: Answer) {
   return { status:valid?'Answered':'Invalid answer', score, confidence, noul, choice, probabilities, warnings };
 }
 
-// Pure diagnostics, using the selectors themselves. No full state, secrets, provider headers,
-// arbitrary answer keys, or provider-supplied legends are copied to the browser.
+export type DecisionExchange = {
+  requestId:string;
+  requestedAt:string;
+  request:{model:string;state:unknown;questions:Record<string,Question>};
+  responseStatus?:number;
+};
+
+// The opt-in exchange is the serialized, authorized request body only. Never attach
+// provider headers, credentials, arbitrary answer keys, or provider-supplied legends.
 export function decisionDiagnostics(p: CreativeProjection, position: Position, abilities: Abilities, options: {
   head: number; source: string; reason?: string; model?: string; answers?: Record<string,Answer>;
-  asked?: boolean; artifactKind?: string; coverage?: unknown; observedAnswers?: Record<string,Answer>;
+  asked?: boolean; artifactKind?: string; coverage?: unknown; observedAnswers?: Record<string,Answer>; exchange?:DecisionExchange;
 }) {
   const eligibility=evaluateEligibility(p,position,abilities), candidates=eligibility.filter(r=>r.eligible).map(r=>r.action);
   const questions=questionsFor(candidates,position,options.artifactKind), answers=options.answers??{};
@@ -38,6 +45,7 @@ export function decisionDiagnostics(p: CreativeProjection, position: Position, a
   return {
     version:1 as const, policy:POLICY_VERSION, source:options.source, reason:options.reason, model:typeof options.model==='string'?options.model.slice(0,100):undefined, head:options.head,
     channel:formats?'formats':'actions',
+    ...(options.exchange?{exchange:options.exchange}:{}),
     position:{projectId:position.projectId,documentId:position.documentId,blockId:position.blockId,outputId:position.outputId,view:position.view,itemIndex:position.itemIndex??0,hasIntent:!!position.intent.trim()},
     context:{blocks:p.blocks.filter(b=>!b.removed).length,libraryBlocks:p.libraryBlocks.filter(b=>!b.removed).length,outputs:p.outputs.length,artifacts:p.artifacts.length,coverage:options.coverage},
     recommended:formats?(evaluation.selected as string[]):(evaluation.selected as {id:string}[]).map(a=>a.id),

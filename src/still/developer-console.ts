@@ -1,5 +1,7 @@
 import { LitElement, css, html, nothing } from 'lit';
+import { keyed } from 'lit/directives/keyed.js';
 import './vendor/elements/define/drawer.js';
+import './exchange-inspector.ts';
 import type { DecisionDiagnostics, ReceivedDecision } from './diagnostics.ts';
 
 type Control = { label:string; id:string; region:string; variant:string; size:string; disabled:boolean; options:string[] };
@@ -62,6 +64,7 @@ export class StillDeveloperConsole extends LitElement {
             ${!matched?html`<p class="warning">This decision describes an earlier view or event head. Current eligibility is shown separately below.</p>`:nothing}`:html`<p>No diagnostic payload. ${this.received?.reason??'Local eligibility remains available.'}</p>`}
           ${viewingReceived&&this.received?.disposition!=='Applied'?html`<p class="warning">This response did not replace the controls. See Applied to controls for the decision in use.</p>`:nothing}
           ${this.received?html`<p class="muted">Latest response · ${this.received.at} · ${this.received.source}${this.received.reason?` / ${this.received.reason}`:''} · ${this.received.disposition}</p>`:nothing}
+          ${trace?keyed(trace,html`<still-exchange-inspector .trace=${trace}></still-exchange-inspector>`):nothing}
           <p class="muted">Score distributions describe rubric ratings. Confidence describes concentration. Neither is the probability of a click. Rank includes policy adjustments.</p>
           <label>Find action or question<input type="search" .value=${this.filter} @input=${(e:Event)=>{this.filter=(e.target as HTMLInputElement).value.toLowerCase();}}/></label>
           <h3>All actions · ${rows.length}</h3>

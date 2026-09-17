@@ -56,6 +56,7 @@ export class StillApp extends LitElement {
   private decisionTicket = 0;
   private decisionTimer = 0;
   private developer = new URL(location.href).searchParams.has('developer');
+  private developerEpoch = 0;
   private developerPending = false;
   private developerApplied?: DecisionDiagnostics;
   private developerReceived?: ReceivedDecision;
@@ -86,7 +87,7 @@ export class StillApp extends LitElement {
     window.addEventListener('beforeunload', this.beforeUnload);
     void this.run(async () => { await this.client.load(); this.readRoute(); this.loading = false; this.decide(); this.poll(); });
   }
-  disconnectedCallback() { super.disconnectedCallback(); this.disposed = true; this.dockObserver.disconnect(); clearTimeout(this.pollTimer); clearTimeout(this.decisionTimer); window.removeEventListener('popstate', this.popstate); window.removeEventListener('beforeunload', this.beforeUnload); }
+  disconnectedCallback() { super.disconnectedCallback(); this.disposed = true; ++this.developerEpoch; this.developerApplied=undefined;this.developerReceived=undefined;this.dockObserver.disconnect(); clearTimeout(this.pollTimer); clearTimeout(this.decisionTimer); window.removeEventListener('popstate', this.popstate); window.removeEventListener('beforeunload', this.beforeUnload); }
   private draftSignature(){const g=this.generation;return JSON.stringify([this.titleDraft,this.bodyDraft,this.kindDraft,g?.prompt,g?.tone,g?.audience,g?.itemCount]);}
   private preventsRouteChange(){return this.busy&&!this.loading||this.composing||this.client.hasUnconfirmedWrite||!!this.generation?.attempted||!!this.mode&&this.draftSignature()!==this.draftBaseline||!!this.querySelector<StillContextFlow>('still-context-flow')?.preventsRouteChange;}
   private beforeUnload = (e: BeforeUnloadEvent) => { if (this.preventsRouteChange()) { e.preventDefault(); e.returnValue = ''; } };
@@ -100,15 +101,17 @@ export class StillApp extends LitElement {
       inspector.applied=this.developerApplied;inspector.received=this.developerReceived;inspector.pending=this.developerPending;
     }
   }
-  private diagnosticScope(){return `${this.client.scopeKey}/${this.client.position.projectId}/${this.client.position.documentId}`;}
+  private interactionScope(){return JSON.stringify([this.client.epoch,this.client.scopeKey,this.client.position.projectId,this.client.position.documentId]);}
+  private diagnosticScope(){return `${this.developerEpoch}/${this.interactionScope()}`;}
   private localDiagnostics(reason:string, formats=false){return decisionDiagnostics(this.client.projection,{...this.client.position,...(formats?{view:'choose-format'}:{})},this.client.abilities,{head:this.client.head,source:'fallback',reason,artifactKind:this.client.projection.artifacts.find(a=>a.id===this.client.position.outputId)?.kind});}
   private recordDecision(result:DecisionResponse,disposition:string,scope:string){
-    if(!this.developer||scope!==this.diagnosticScope())return;
+    if(!this.developer||this.disposed||scope!==this.diagnosticScope())return;
     this.developerReceived={at:new Date().toLocaleTimeString(),disposition,trace:result.diagnostics,source:result.source,reason:result.reason,recommended:result.formats?.length?result.formats:result.actions?.map(a=>a.id)??[]};
     if(disposition==='Applied')this.developerApplied=result.diagnostics;
     this.changed();
   }
   private setDeveloper(enabled:boolean){
+    ++this.developerEpoch;
     this.developer=enabled;this.developerApplied=undefined;this.developerReceived=undefined;this.developerPending=false;this.developerScope=this.diagnosticScope();
     const url=new URL(location.href);if(enabled)url.searchParams.set('developer','');else url.searchParams.delete('developer');history.replaceState({...history.state},'',url);this.activeAddress=this.address();
     this.changed();
@@ -124,6 +127,7 @@ export class StillApp extends LitElement {
   }
   private readRoute() {
     const q = new URL(location.href).searchParams, route=parseStillRoute(location.href);
+    if(this.developer!==q.has('developer'))++this.developerEpoch;
     this.developer=q.has('developer');if(!this.developer){this.developerApplied=undefined;this.developerReceived=undefined;}
     if(this.mode==='generate')this.client.position.intent='';
     this.resetStep();this.routeError='';this.error='';this.notice='';
@@ -186,27 +190,27 @@ export class StillApp extends LitElement {
     if(this.developer){this.developerScope=this.diagnosticScope();this.developerApplied=this.localDiagnostics('Local policy');this.developerReceived=undefined;this.developerPending=false;}
     if (!this.client.session?.policy.accepted || this.mode) return;
     this.decisionTimer = window.setTimeout(async () => {
-      const snapshot = JSON.stringify(this.client.position), head = this.client.head, scope=this.diagnosticScope();
+      const snapshot = JSON.stringify(this.client.position), head = this.client.head, scope=this.interactionScope(), diagnosticScope=this.diagnosticScope();
       this.developerPending=this.developer;this.changed();
       try {
         const result = await api<DecisionResponse>('/api/still/decision', {...this.client.position,...(this.developer?{developer:true}:{})});
-        const disposition=responseDisposition(result,{head:this.client.head,headChanged:head!==this.client.head,stale:ticket!==this.decisionTicket||snapshot!==JSON.stringify(this.client.position)||!!this.mode||this.disposed||scope!==this.diagnosticScope(),focused:!!this.querySelector('.action-dock')?.contains(document.activeElement)});
-        this.recordDecision(result,disposition,scope);
+        const disposition=responseDisposition(result,{head:this.client.head,headChanged:head!==this.client.head,stale:ticket!==this.decisionTicket||snapshot!==JSON.stringify(this.client.position)||!!this.mode||this.disposed||scope!==this.interactionScope(),focused:!!this.querySelector('.action-dock')?.contains(document.activeElement)});
+        this.recordDecision(result,disposition,diagnosticScope);
         if(disposition==='Applied'){const allowed=new Map(this.candidates().map(a=>[a.id,a]));this.suggestions=result.actions!.map(a=>allowed.get(a.id)).filter((a):a is Action=>!!a).slice(0,4);this.decisionSource=result.source;this.changed();}
-      } catch(error) { this.recordDecision({source:'fallback',reason:error instanceof ApiError?`HTTP ${error.status}`:'Network unavailable',head,policy:POLICY_VERSION},'Kept local controls',scope); }
+      } catch(error) { this.recordDecision({source:'fallback',reason:error instanceof ApiError?`HTTP ${error.status}`:'Network unavailable',head,policy:POLICY_VERSION},'Kept local controls',diagnosticScope); }
       finally {if(ticket===this.decisionTicket){this.developerPending=false;this.changed();}}
     }, 700);
   }
   private suggestFormats() {
-    const ticket = this.decisionTicket, snapshot = JSON.stringify(this.client.position), head = this.client.head, scope = this.client.scopeKey;
-    const diagnosticScope=this.diagnosticScope();
+    const ticket = this.decisionTicket, snapshot = JSON.stringify(this.client.position), head = this.client.head, scope = this.interactionScope();
     if(this.developer){this.developerApplied=this.localDiagnostics('No automatic format choice',true);this.developerReceived=undefined;}
     this.decisionTimer = window.setTimeout(async () => {
+      const diagnosticScope=this.diagnosticScope();
       try {
-        if (ticket !== this.decisionTicket || this.mode !== 'generate' || this.generation || this.formatTouched) return;
+        if (ticket !== this.decisionTicket || this.mode !== 'generate' || this.generation || this.formatTouched || scope!==this.interactionScope()) return;
         this.developerPending=this.developer;this.changed();
         const result = await api<DecisionResponse>('/api/still/decision', { ...this.client.position, view:'choose-format',...(this.developer?{developer:true}:{}) });
-        const disposition=responseDisposition(result,{formats:true,head:this.client.head,headChanged:head!==this.client.head,stale:ticket!==this.decisionTicket||this.mode!=='generate'||!!this.generation||this.disposed||scope!==this.client.scopeKey||snapshot!==JSON.stringify(this.client.position),touched:this.formatTouched});
+        const disposition=responseDisposition(result,{formats:true,head:this.client.head,headChanged:head!==this.client.head,stale:ticket!==this.decisionTicket||this.mode!=='generate'||!!this.generation||this.disposed||scope!==this.interactionScope()||snapshot!==JSON.stringify(this.client.position),touched:this.formatTouched});
         this.recordDecision(result,disposition,diagnosticScope);
         if (disposition==='Applied') {
           const allowed = new Set(this.candidates().filter(a=>!!FORMATS[a.id]).map(a=>a.id));
