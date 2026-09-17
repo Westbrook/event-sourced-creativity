@@ -1,6 +1,6 @@
 import { ensureOutputRequirementsSchema } from "./output-requirements-ledger.ts";
 import { OUTPUT_DURABLE_SCHEMA, OUTPUT_DURABLE_SCHEMA_NAMES } from "./output-durable-schema.ts";
-import { registerOutputDurableRuntime, registerOutputDurableLease, outputJobIsDurable, type OutputDurableDelivery, type OutputDurableMedia } from "./output-durable-control.ts";
+import { registerOutputDurableRuntime, registerOutputDurableLease, outputJobIsDurable, hintOutputDurableDelivery, type OutputDurableDelivery, type OutputDurableMedia } from "./output-durable-control.ts";
 import { OutputConflictError, outputAssertionStatements, type OutputSqlAssertion } from "./output-command-core.ts";
 import { ensureSchema, inheritRuntimeSchemaReadiness, type WorkerEnv } from "./runtime.ts";
 import { markOutputSchemaReady, outputSchemaIsReady } from "./output-schema-state.ts";
@@ -153,9 +153,8 @@ export async function createOutputDurableRuntime(base: WorkerEnv, ports: OutputD
           AND next_attempt_at<=strftime('%Y-%m-%dT%H:%M:%fZ','now')
           AND (lease_expires_at IS NULL OR lease_expires_at<=strftime('%Y-%m-%dT%H:%M:%fZ','now'))
         ORDER BY next_attempt_at,job_id LIMIT ?`).bind(limit).all<{ job_id: string }>();
-      let hinted = 0;
-      for (const row of rows.results) { try { await ports.wake({ version: 1, jobId: row.job_id }); hinted++; } catch { /* Leave due. */ } }
-      return Object.freeze({ scanned: rows.results.length, hinted });
+      const hints = await Promise.all(rows.results.map(row => hintOutputDurableDelivery(ports.wake, { version: 1, jobId: row.job_id })));
+      return Object.freeze({ scanned: rows.results.length, hinted: hints.filter(Boolean).length });
     },
     async consume(delivery: unknown) {
       if (!delivery || typeof delivery !== "object" || Array.isArray(delivery)) return fail("output_durable_delivery_invalid");

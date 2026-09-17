@@ -35,17 +35,26 @@ export function outputDurableFence(env: WorkerEnv, jobId: string): OutputSqlAsse
   return structuredClone(leases.get(env)!.assertion);
 }
 
+/** Bound advisory delivery independently of the transport. A timeout leaves
+ * the row due; any late delivery is harmless under the consumer's lease. */
+export async function hintOutputDurableDelivery(wake: Registration["wake"], delivery: OutputDurableDelivery): Promise<boolean> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      Promise.resolve().then(() => wake(Object.freeze({ ...delivery }))).then(() => true, () => false),
+      new Promise<boolean>(resolve => { timer = setTimeout(() => resolve(false), 1000); }),
+    ]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
 /** A delivery hint is not the delivery guarantee. The future runtime must also
  * sweep committed due rows. Failure here must not undo the committed Run. */
 export async function wakeOutputDurableJobs(env: WorkerEnv, slots: readonly OutputOperationSlot[]): Promise<boolean> {
   const runtime = runtimes.get(env);
   if (!runtime || runtime.database !== env.DB) return false;
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  await Promise.race([Promise.all(slots.map(async slot => {
-    try { await runtime.wake(Object.freeze({ version: 1, jobId: slot.jobId })); }
-    catch { /* The persisted outbox remains due for the independent sweep. */ }
-  })), new Promise<void>(resolve => { timer = setTimeout(resolve, 1000); })]);
-  if (timer) clearTimeout(timer);
+  await Promise.all(slots.map(slot => hintOutputDurableDelivery(runtime.wake, { version: 1, jobId: slot.jobId })));
   return true;
 }
 

@@ -12,10 +12,10 @@ const {OUTPUT_DURABLE_SCHEMA}=await import('../worker/output-durable-schema.ts')
 const {createOutputDurableRuntime}=await import('../worker/output-durable-runtime.ts');
 const {createNativeOutputDurableRuntime}=await import('../worker/output-durable-native.ts');
 const {EXPIRED_DOCUMENT_JOB_REDACTION_SQL}=await import('../worker/document-jobs-api.ts');
-async function fixture(t,{execute,wake=async()=>{},medium="slides",cold=false,enrollMedia=["slides","image"]}={}){
+async function fixture(t,{execute,wake=async()=>{},medium="slides",cold=false,enrollMedia=["slides","image"],allTargets=false}={}){
  const f=await native.fixture();t.after(()=>f.sqlite.close());if(medium==="image")Object.assign(f.env,{FORMA_IMAGE_PROVIDER:"fal-ideogram",FAL_KEY:"offline-test-only",FAL_IMAGE_MODEL:"ideogram/v4"});if(cold)f.env.DB=new Proxy(f.env.DB,{});for(const sql of OUTPUT_DURABLE_SCHEMA)f.sqlite.exec(sql);
  const runtime=execute?await createOutputDurableRuntime(f.env,{wake,execute},{enrollMedia}):await createNativeOutputDurableRuntime(f.env,wake,{enrollMedia});
- const plan=medium==="image"?await native.saveImages(f):await native.saveDeck(f),authorization=await native.authorize(f,plan.planId,[plan.targetId??plan.targetIds[0]]);
+ const plan=medium==="image"?await native.saveImages(f):await native.saveDeck(f),authorization=await native.authorize(f,plan.planId,allTargets?plan.targetIds:[plan.targetId??plan.targetIds[0]]);
  assert.equal(f.sqlite.prepare('SELECT count(*) n FROM output_durable_jobs').get().n,0,'authorization does not enroll');
  const body={documentId:f.documentId,expectedRevision:`output:${await native.streamHead(f.env,'creative:dev-local-creative')}`,clientMutationId:'durable-run',action:'run',grantId:authorization.grantId};
  const run=()=>native.handleOutputRequirements(new Request('http://localhost/api/output-requirements',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)}),runtime.env,'/api/output-requirements',{waitUntil(){assert.fail('no detached execution');}},native.outputDocumentExecutionBridge);
@@ -33,6 +33,26 @@ test('atomic explicit Run survives a lost wake; synthetic native deck runs once 
  const before=f.sqlite.prepare('SELECT * FROM output_provider_calls').all();
  assert.equal((await f.runtime.consume(f.delivery())).phase,'ready');assert.equal(calls,1);assert.deepEqual(f.sqlite.prepare('SELECT * FROM output_provider_calls').all(),before);
  assert.equal((await f.runtime.inspect(f.job().job_id)).lease_token,null);
+});
+test('hanging Run and sweep hints stay bounded and do not block later due jobs', {timeout:10000}, async t=>{
+ t.mock.method(globalThis,'fetch',async()=>assert.fail('hints must not execute provider work'));
+ let mode='run',firstJob;const seen=[],rejectLate=[];
+ const f=await fixture(t,{medium:'image',allTargets:true,wake:delivery=>{
+  seen.push(delivery.jobId);
+  if(mode==='run'||mode==='sweep'&&delivery.jobId===firstJob)return new Promise((_,reject)=>rejectLate.push(reject));
+  return Promise.resolve();
+ }});
+ await f.ok(await f.run());
+ const rows=()=>f.sqlite.prepare('SELECT * FROM output_durable_jobs ORDER BY next_attempt_at,job_id').all();
+ const before=rows();assert.equal(before.length,2);assert.equal(seen.length,2);assert.ok(before.every(row=>row.phase==='queued'&&row.lease_token===null));
+ firstJob=before[0].job_id;mode='sweep';seen.length=0;
+ const sweep=f.runtime.sweep();
+ await new Promise(resolve=>setImmediate(resolve));
+ assert.deepEqual(seen,before.map(row=>row.job_id),'healthy later row is hinted while the first hint remains pending');
+ assert.deepEqual(await sweep,{scanned:2,hinted:1});assert.deepEqual(rows(),before,'timeouts leave every due row unchanged');
+ for(const reject of rejectLate)reject(Error('late enqueue failure'));
+ await new Promise(resolve=>setImmediate(resolve));
+ mode='healthy';assert.deepEqual(await f.runtime.sweep(),{scanned:2,hinted:2});assert.deepEqual(rows(),before);
 });
 test('failed outbox insert rolls Run and queued slot back together',async t=>{
  const f=await fixture(t);f.sqlite.exec("CREATE TRIGGER reject_durable BEFORE INSERT ON output_durable_jobs BEGIN SELECT RAISE(ABORT,'outbox_write_failed'); END");
