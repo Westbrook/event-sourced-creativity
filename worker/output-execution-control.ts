@@ -1,3 +1,4 @@
+import { requireSponsorExecution, readSponsorFinancialBinding, sponsorFinancialIdentity, sponsorTerminalReleaseStatement, type SponsorExecutionAuthority, type SponsorFinancialBinding } from "./experience-sponsor-execution.ts";
 import { verifyOutputVideoCompletion } from "./output-video-completion.ts";
 import { prepareOutputProviderFinancialCheckpoint, retainUnsettledOutputProviderObservation } from "./output-provider-financial-checkpoint.ts";
 import { retainOutputVideoRequestCheckpoint, retainOutputVideoMediaEnvelope, retainOutputVideoPlannerEnvelope } from "./output-video-checkpoint.ts";
@@ -58,10 +59,13 @@ import type { Model3dPreparedReceipt, Model3dGeneratedFile } from "./fal-model3d
 import { outputSourceTransition, type OutputSourceTransition } from "./output-source-transition.ts";
 
 const parsed=(raw:string|null|undefined):Record<string,unknown>=>{try{const value:unknown=JSON.parse(raw??"{}");return value&&typeof value==="object"&&!Array.isArray(value)?value as Record<string,unknown>:{};}catch{return{};}};
-export type OutputJobBinding={scope:OutputScope;slot:OutputOperationSlot;retentionPolicy:Record<string,unknown>|null};
+export type OutputJobBinding={scope:OutputScope;slot:OutputOperationSlot;sponsored:boolean;payerUserId:string;retentionPolicy:Record<string,unknown>|null};
 export type OutputExecutionProof=ReturnType<typeof prepareOutputExecutionProof>;
 export type OutputEventExecution={
  guardedEnvironment:WorkerEnv;
+ readonly financialPayerUserId:string;
+ readonly financialAssertions?:readonly OutputSqlAssertion[];
+ readonly sponsorFinancialBinding?:SponsorFinancialBinding;
  withSourceTransition?:OutputSourceTransition;
  accountSettlement?:{reservation_id:string;reserved_microusd:number;used_microusd:number;status:string};
  sourceEvents:EventRow[];sourceHead:number;
@@ -105,7 +109,9 @@ export type OutputEventExecution={
 /** The durable slot, not an expiring request JSON property, determines execution. */
 export async function loadOutputJobBinding(env:WorkerEnv,user:PilotUser,job:Pick<DocumentJobRow,"job_id"|"owner_id"|"stream_id"|"document_id"|"request_json"|"output_slot_id">):Promise<OutputJobBinding|null>{
  if(job.output_slot_id===null)return null;
- const row=await env.DB.prepare(`SELECT slot.*,plan.scope_kind,plan.owner_user_id,plan.project_id,plan.document_id,plan.organization_id,plan.project_access_id,grant_row.actor_user_id,grant_row.context_id,(SELECT json_object('transient_days',policy.transient_days,'evidence_days',policy.evidence_days,'version',policy.version) FROM organization_retention_policies policy WHERE policy.organization_id=plan.organization_id) AS retention_policy_json
+ const row=await env.DB.prepare(`SELECT slot.*,plan.scope_kind,plan.owner_user_id,plan.project_id,plan.document_id,plan.organization_id,plan.project_access_id,grant_row.actor_user_id,grant_row.context_id,grant_row.payer_user_id,
+  EXISTS(SELECT 1 FROM event_private_payloads body WHERE body.private_event_id=grant_row.authorization_event_id AND body.owner_id=plan.owner_user_id AND body.project_id=plan.project_id AND body.document_id=plan.document_id AND CASE WHEN body.redacted_at IS NULL AND json_valid(body.private_json) THEN json_type(body.private_json,'$.output_command_envelope.sponsor_entitlement') ELSE NULL END IS NOT NULL) AS sponsor_marker,
+  (SELECT json_object('transient_days',policy.transient_days,'evidence_days',policy.evidence_days,'version',policy.version) FROM organization_retention_policies policy WHERE policy.organization_id=plan.organization_id) AS retention_policy_json
   FROM output_operation_slots slot JOIN output_plan_revisions plan ON plan.scope_key=slot.scope_key AND plan.plan_revision_id=slot.plan_revision_id
   JOIN output_execution_grants grant_row ON grant_row.scope_key=slot.scope_key AND grant_row.grant_id=slot.grant_id WHERE slot.job_id=?`).bind(job.job_id).first<Record<string,unknown>>();
  if(!row){if(parsed(job.request_json).outputExecution)throw new OutputConflictError("output_job_binding_missing",403);return null;}
@@ -113,12 +119,15 @@ export async function loadOutputJobBinding(env:WorkerEnv,user:PilotUser,job:Pick
  const scope:OutputScope={kind:row.scope_kind as OutputScope["kind"],key:String(row.scope_key),ownerUserId:String(row.owner_user_id),actorUserId:user.userId,projectId:String(row.project_id),documentId:String(row.document_id),organizationId:row.organization_id===null?null:String(row.organization_id),projectAccessId:row.project_access_id===null?null:String(row.project_access_id),contextId:typeof row.context_id==="string"?row.context_id:null};
  if(scope.kind==="project"&&(!scope.contextId||!user.projectExecution||user.projectExecution.organizationId!==scope.organizationId||user.projectExecution.projectAccessId!==scope.projectAccessId||user.projectExecution.actorUserId!==scope.actorUserId)||scope.kind==="personal"&&user.projectExecution)throw new OutputConflictError("output_job_scope_mismatch",403);
  const slot=outputSlotFromRow(scope.key,row);
- return {scope,slot,retentionPolicy:typeof row.retention_policy_json==="string"?parsed(row.retention_policy_json):null};
+ return {scope,slot,payerUserId:String(row.payer_user_id),sponsored:scope.kind==="personal"&&(Boolean(row.sponsor_marker)||row.payer_user_id!==row.actor_user_id),retentionPolicy:typeof row.retention_policy_json==="string"?parsed(row.retention_policy_json):null};
 }
 
 /** Current source/target/route eligibility is checked again before each transfer and paid call. */
-export async function createOutputEventExecution(env:WorkerEnv,user:PilotUser,job:DocumentJobRow,binding:OutputJobBinding,preparedProof?:OutputExecutionProof):Promise<OutputEventExecution>{
+export async function createOutputEventExecution(env:WorkerEnv,user:PilotUser,job:DocumentJobRow,binding:OutputJobBinding,preparedProof?:OutputExecutionProof,sponsorAuthority?:SponsorExecutionAuthority):Promise<OutputEventExecution>{
  const {scope,slot}=binding;
+ if(binding.sponsored&&(user.fictional||user.projectExecution||user.billingUserId&&user.billingUserId!==user.userId))throw new OutputConflictError("sponsor_personal_principal_required",403);
+ const sponsor=binding.sponsored?await requireSponsorExecution(sponsorAuthority,env,user.userId,{jobId:job.job_id,grantId:slot.grantId,scopeKey:scope.key}):null;
+ const financial=sponsor?sponsorFinancialIdentity(sponsor.financial,env,user.userId,job.job_id):null;
  if(!["queued","running"].includes(slot.status))throw new OutputConflictError("output_operation_not_started",409);
  const authority=preparedProof??prepareOutputExecutionProof(scope,await resolveOutputExecutionAuthority(env,scope,slot));
  let sceneStored=job.scene_source_version_json!=null?await readSceneJobSourceWitness(env,scope,slot,job.correlation_id):null;
@@ -154,7 +163,7 @@ export async function createOutputEventExecution(env:WorkerEnv,user:PilotUser,jo
  const model3dPublication=model3dProof?model3dPublicationHead({jobId:job.job_id,ownerId:job.owner_id,streamId:job.stream_id,correlationId:job.correlation_id}):null;
  let videoHook:OutputVideoHookLease|null=null;
  const videoLifetimeAssertions=():OutputSqlAssertion[]=>{if(!videoHook)return[];videoHook.assertCurrent();return[{sql:"?>strftime('%Y-%m-%dT%H:%M:%fZ','now')",bindings:[new Date(videoHook.deadlineMs).toISOString()],deadlineMs:videoHook.deadlineMs}];};
- const liveAssertions=(recoveredScene?:NonNullable<typeof sceneStored>)=>[...videoLifetimeAssertions(),...authority.assertions,...(recoveredScene?recoveredScene.assertions:[...sceneAssertions,...(sceneStored?.assertions??[])]),...audioAssertions,...(model3dPublication?.assertions(model3dAssertions)??model3dAssertions),...storyboardSourceAssertions,...videoSourceAssertions,...sceneEnvelopeAssertions,...storyboardCompletionAssertions,...videoCompletionAssertions,...(projectJobAuthority?[projectJobAuthority]:[]),outputScopeAuthority(scope,"request"),{sql:"EXISTS(SELECT 1 FROM document_jobs WHERE job_id=? AND owner_id=? AND stream_id=? AND correlation_id=? AND (status IN('running','committing') AND lease_expires_at>MAX(?,strftime('%Y-%m-%dT%H:%M:%fZ','now')) AND lease_expires_at>=? OR status='completed'))",bindings:[job.job_id,user.userId,job.stream_id,job.correlation_id,new Date().toISOString(),job.lease_expires_at]},{sql:"EXISTS(SELECT 1 FROM output_execution_grants WHERE scope_key=? AND grant_id=? AND actor_user_id=? AND context_id IS ? AND status IN('authorized','active') AND expires_at>MAX(?,strftime('%Y-%m-%dT%H:%M:%fZ','now')))",bindings:[scope.key,slot.grantId,scope.actorUserId,scope.contextId,new Date().toISOString()]}];
+ const liveAssertions=(recoveredScene?:NonNullable<typeof sceneStored>)=>[...(sponsor?.assertions??[]),...videoLifetimeAssertions(),...authority.assertions,...(recoveredScene?recoveredScene.assertions:[...sceneAssertions,...(sceneStored?.assertions??[])]),...audioAssertions,...(model3dPublication?.assertions(model3dAssertions)??model3dAssertions),...storyboardSourceAssertions,...videoSourceAssertions,...sceneEnvelopeAssertions,...storyboardCompletionAssertions,...videoCompletionAssertions,...(projectJobAuthority?[projectJobAuthority]:[]),outputScopeAuthority(scope,"request"),{sql:"EXISTS(SELECT 1 FROM document_jobs WHERE job_id=? AND owner_id=? AND stream_id=? AND correlation_id=? AND (status IN('running','committing') AND lease_expires_at>MAX(?,strftime('%Y-%m-%dT%H:%M:%fZ','now')) AND lease_expires_at>=? OR status='completed'))",bindings:[job.job_id,user.userId,job.stream_id,job.correlation_id,new Date().toISOString(),job.lease_expires_at]},{sql:"EXISTS(SELECT 1 FROM output_execution_grants WHERE scope_key=? AND grant_id=? AND actor_user_id=? AND context_id IS ? AND status IN('authorized','active') AND expires_at>MAX(?,strftime('%Y-%m-%dT%H:%M:%fZ','now')))",bindings:[scope.key,slot.grantId,scope.actorUserId,scope.contextId,new Date().toISOString()]}];
  const settings=authority.targetPreflight.settings as OutputNativeSettings;
  if(settings.kind!==job.kind)throw new OutputConflictError("output_job_route_mismatch",403);
  const model3dPayload=model3dProof?await readOutputModel3dPayload(settings.payload):null;
@@ -208,7 +217,7 @@ export async function createOutputEventExecution(env:WorkerEnv,user:PilotUser,jo
   return proof.prepared;
  }:undefined;
  if(refreshScene)await refreshScene();
- const billingOwner=user.billingUserId??user.userId;
+ const billingOwner=financial?.payerUserId??user.billingUserId??user.userId;
  const checkpoint=parsed(job.result_json);
  const period=checkpoint.costReservationPeriod;
  const artifactKind=job.kind==="generate"?"image":String(settings.payload.artifactKind);
@@ -217,7 +226,7 @@ export async function createOutputEventExecution(env:WorkerEnv,user:PilotUser,jo
  const periodDeadline=Date.parse(`${period}-01T00:00:00.000Z`);
  const nextPeriod=Number.isFinite(periodDeadline)?new Date(periodDeadline):null;
  nextPeriod?.setUTCMonth(nextPeriod.getUTCMonth()+1);
- const dispatchDeadline=Math.min(nextPeriod?.getTime()??0,...[...authority.assertions,...sceneAssertions,...audioAssertions,...model3dAssertions,...storyboardSourceAssertions,...videoSourceAssertions].flatMap(assertion=>assertion.deadlineMs===undefined?[]:[Number.isFinite(assertion.deadlineMs)?assertion.deadlineMs:0]));
+ const dispatchDeadline=Math.min(nextPeriod?.getTime()??0,...[...(sponsor?.assertions??[]),...authority.assertions,...sceneAssertions,...audioAssertions,...model3dAssertions,...storyboardSourceAssertions,...videoSourceAssertions].flatMap(assertion=>assertion.deadlineMs===undefined?[]:[Number.isFinite(assertion.deadlineMs)?assertion.deadlineMs:0]));
  let dispatchStopError:OutputConflictError|null=null;
  const assertDispatchDeadline=()=>{if(dispatchStopError)throw dispatchStopError;const leaseDeadline=Date.parse(String(job.lease_expires_at));if(!Number.isFinite(dispatchDeadline)||!Number.isFinite(leaseDeadline)||Date.now()>=Math.min(dispatchDeadline,leaseDeadline)){
   dispatchStopError=new OutputConflictError("output_execution_deadline_expired",403);throw dispatchStopError;
@@ -228,7 +237,7 @@ export async function createOutputEventExecution(env:WorkerEnv,user:PilotUser,jo
  const reference={scopeKey:slot.scopeKey,grantId:slot.grantId,slotId:slot.slotId,planRevisionId:slot.planRevisionId,targetId:slot.targetId,targetContractDigest:slot.targetContractDigest,sourceDigest:slot.sourceDigest};
  const guardedEnvironment=guardOutputPrivateWrites(env,scope,slot,async()=>liveAssertions(),{retentionPolicy:binding.retentionPolicy,storyboardCompletionJson:()=>storyboardCompletionJson,videoCompletionJson:()=>videoCompletionJson,model3dCompletionJson:()=>model3dCompletionJson});
  let publicationScopesComplete=scope.kind==="personal";
- return {guardedEnvironment,...(sceneProof?{withSourceTransition:outputSourceTransition()}:{}),...(model3dPayload&&refreshModel3d?{model3d:{
+ return {guardedEnvironment,financialPayerUserId:billingOwner,...(financial?{financialAssertions:[financial.assertion],sponsorFinancialBinding:sponsor!.financial}:{}),...(sceneProof?{withSourceTransition:outputSourceTransition()}:{}),...(model3dPayload&&refreshModel3d?{model3d:{
   async prepare(receipt:Model3dPreparedReceipt){
    await refreshModel3d();assertDispatchDeadline();
    model3dPrepared=await verifyModel3dPreparedReceipt(model3dPayload,receipt);
@@ -480,15 +489,16 @@ export async function createOutputEventExecution(env:WorkerEnv,user:PilotUser,jo
    const observations=new Map(Object.entries(mergeProviderSubmissions(Object.fromEntries(observedReceipts),{[receipt.clientRequestId]:observation})));
    const planning=[...observations.values()].filter(value=>value.operation==="planning"&&value.status==="completed");
    const plannerFields=receipt.operation==="planning"&&receipt.status==="completed"?{plannerModel:receipt.model,plannerResponseId:receipt.providerRequestId??"",plannerResponseIds:planning.map(value=>value.providerRequestId).filter(Boolean),plannerUsage:planning.reduce((total,value)=>({inputTokens:total.inputTokens+Number(value.inputTokens??0),outputTokens:total.outputTokens+Number(value.outputTokens??0),totalTokens:total.totalTokens+Number(value.totalTokens??0)}),{inputTokens:0,outputTokens:0,totalTokens:0})}:{};
-   const financial={...plannerFields,providerSubmissionProtocol:1,providerSubmissions:{[receipt.clientRequestId]:safe},reservationId:slot.tokenReservationId,costReservationId:slot.costReservationId,costReservationPeriod:period,costReservationMicrousd:slot.maximumMicrousd,
+   const financialPatch={...plannerFields,providerSubmissionProtocol:1,providerSubmissions:{[receipt.clientRequestId]:safe},reservationId:slot.tokenReservationId,costReservationId:slot.costReservationId,costReservationPeriod:period,costReservationMicrousd:slot.maximumMicrousd,
     ...(artifactKind==="slides"?{presentationProviderSubmission:"confirmed"}:{}),
     generationReceipt:{provider:receipt.provider,model:receipt.model,artifact_kind:artifactKind,provider_request_status:"submitted",source_transmission_status:"transmitted",reservation_status:"executing"}};
    if(artifactKind==="video"&&!videoHook)throw new OutputConflictError("output_video_hook_invalid",403);
    const financialCheckpoint=prepareOutputProviderFinancialCheckpoint(env,{scopeKey:scope.key,slotId:slot.slotId,callKey:call.callKey,
-    jobId:job.job_id,ownerId:user.userId,streamId:job.stream_id,correlationId:job.correlation_id,receipt:safe,patch:financial});
+    jobId:job.job_id,ownerId:user.userId,streamId:job.stream_id,correlationId:job.correlation_id,receipt:safe,patch:financialPatch});
+   const observationAssertions=[...(financial?[financial.assertion]:[]),...(artifactKind==="video"?videoLifetimeAssertions():[])];
    const known=Number.isSafeInteger(receipt.costMicrousd)&&Number(receipt.costMicrousd)>=0;
    try{
-    await settleOutputProviderCall(env,{...(artifactKind==="video"?{assertions:videoLifetimeAssertions()}:{}),financialCheckpoint,scopeKey:scope.key,slotId:slot.slotId,callKey:call.callKey,clientRequestId:receipt.clientRequestId,status:receipt.status==="rejected"?"rejected":receipt.status==="completed"&&known?"settled":"uncertain",usedMicrousd:receipt.status==="rejected"?0:receipt.status==="completed"&&known?Number(receipt.costMicrousd):null,...(receipt.providerRequestId?{providerResponseId:receipt.providerRequestId}:{})});
+    await settleOutputProviderCall(env,{assertions:observationAssertions,financialCheckpoint,scopeKey:scope.key,slotId:slot.slotId,callKey:call.callKey,clientRequestId:receipt.clientRequestId,status:receipt.status==="rejected"?"rejected":receipt.status==="completed"&&known?"settled":"uncertain",usedMicrousd:receipt.status==="rejected"?0:receipt.status==="completed"&&known?Number(receipt.costMicrousd):null,...(receipt.providerRequestId?{providerResponseId:receipt.providerRequestId}:{})});
    }catch(error){
     // Preserve the existing source-free reconciliation witness if a transient
     // ledger/storage fault prevents the combined commit. This is not successful
@@ -496,7 +506,7 @@ export async function createOutputEventExecution(env:WorkerEnv,user:PilotUser,jo
     // the fallback refuse conflicting IDs, terminal regressions and stale Video
     // authority; maintenance can settle an exact retained receipt later.
     if(!(error instanceof OutputConflictError))try{
-     await retainUnsettledOutputProviderObservation(env,financialCheckpoint,artifactKind==="video"?videoLifetimeAssertions():[]);
+     await retainUnsettledOutputProviderObservation(env,financialCheckpoint,observationAssertions);
     }catch{/* The original failure and pending provider call retain uncertainty. */}
     throw error;
    }
@@ -553,10 +563,19 @@ export async function releaseUndispatchedOutputReservations(env:WorkerEnv,filter
 }
 
 /** Cancel and reconcile only slots whose provider history proves no submission. */
-export async function cleanupExpiredOrRevokedOutputWork(env:WorkerEnv,scope:OutputScope,slots:OutputOperationSlot[],at=Date.now()) {
+export async function cleanupExpiredOrRevokedOutputWork(env:WorkerEnv,scope:OutputScope,slots:OutputOperationSlot[],at=Date.now(),financialAssertions:OutputSqlAssertion[]=[]) {
  const now=new Date(at).toISOString();
  const owned=slots.filter(slot=>slot.scopeKey===scope.key);
  if(!owned.length)return {reconciled:0};
+ const sponsors:{binding:SponsorFinancialBinding;jobId:string}[]=[];
+ // Every entry to cleanup, including the public bridge, must reconstruct the
+ // original sponsor proof before changing its reservations. Ordinary/personal
+ // actor-paid and project grants never consult the dormant sponsor schema.
+ if(scope.kind==="personal")for(const slot of owned){
+  const grant=await env.DB.prepare("SELECT payer_user_id FROM output_execution_grants WHERE scope_key=? AND grant_id=? AND actor_user_id=?").bind(scope.key,slot.grantId,scope.actorUserId).first<{payer_user_id:string}>();
+  if(grant&&grant.payer_user_id!==scope.actorUserId){const binding=await readSponsorFinancialBinding(env,scope.actorUserId,slot.jobId);sponsors.push({binding,jobId:slot.jobId});financialAssertions=[...financialAssertions,sponsorFinancialIdentity(binding,env,scope.actorUserId,slot.jobId).assertion];}
+ }
+ const releaseTerminal=async()=>{for(const sponsor of sponsors)await sponsorTerminalReleaseStatement(sponsor.binding,env,scope.actorUserId,sponsor.jobId).run();};
  const statements:D1PreparedStatement[]=[];
  for(const slot of owned){
   statements.push(env.DB.prepare(`UPDATE output_execution_grants SET status='revoked'
@@ -576,7 +595,7 @@ export async function cleanupExpiredOrRevokedOutputWork(env:WorkerEnv,scope:Outp
    AND NOT EXISTS(SELECT 1 FROM output_provider_calls calls WHERE calls.scope_key=output_operation_slots.scope_key AND calls.slot_id=output_operation_slots.slot_id)`)
    .bind(now,scope.key,slot.slotId,scope.actorUserId));
  }
- await env.DB.batch(statements);
+ await env.DB.batch([...financialAssertions.flatMap(proof=>outputAssertionStatements(env,proof)),...statements]);
  // Cancel every still-unsubmitted sibling atomically, but settle only one
  // eligible pair per request. A settled first sibling must not starve the rest.
  const candidate=await env.DB.prepare(`SELECT grant_row.payer_user_id,slot.token_reservation_id,slot.cost_reservation_id FROM output_operation_slots slot
@@ -588,18 +607,19 @@ export async function cleanupExpiredOrRevokedOutputWork(env:WorkerEnv,scope:Outp
       OR EXISTS(SELECT 1 FROM cost_budget_reservations cost WHERE cost.reservation_id=slot.cost_reservation_id AND cost.status='active'))
    ORDER BY slot.updated_at,slot.slot_id LIMIT 1`)
    .bind(scope.key,JSON.stringify(owned.map(slot=>slot.slotId)),scope.actorUserId,scope.actorUserId).first<{payer_user_id:string;token_reservation_id:string;cost_reservation_id:string}>();
- if(!candidate)return {reconciled:0};
- const settlement=await settleDocumentGenerationBudgets(env,candidate.payer_user_id,{reservationId:candidate.token_reservation_id,costReservationId:candidate.cost_reservation_id,reason:"output_authorization_expired_or_revoked"});
+ if(!candidate){await releaseTerminal();return {reconciled:0};}
+ const settlement=await settleDocumentGenerationBudgets(env,candidate.payer_user_id,{reservationId:candidate.token_reservation_id,costReservationId:candidate.cost_reservation_id,reason:"output_authorization_expired_or_revoked",assertions:financialAssertions});
+ await releaseTerminal();
  return {reconciled:Number(settlement.settled)};
 }
 
 /** Existing account reconciliation also drains authorizations abandoned before Start. */
 export async function reconcileExpiredOutputAuthorizations(env:WorkerEnv,user:PilotUser,now=Date.now()) {
  await reconcileKnownOutputProviderReceipts(env,user);
- const owned=await env.DB.prepare(`SELECT grant_row.scope_key,grant_row.grant_id,grant_row.actor_user_id,grant_row.context_id,
+ const owned=await env.DB.prepare(`SELECT grant_row.scope_key,grant_row.grant_id,grant_row.actor_user_id,grant_row.context_id,grant_row.payer_user_id,
   plan.scope_kind,plan.owner_user_id,plan.project_id,plan.document_id,plan.organization_id,plan.project_access_id
   FROM output_execution_grants grant_row JOIN output_plan_revisions plan ON plan.scope_key=grant_row.scope_key AND plan.plan_revision_id=grant_row.plan_revision_id
-  WHERE grant_row.payer_user_id=? AND grant_row.actor_user_id=? AND grant_row.expires_at<=?
+  WHERE (grant_row.payer_user_id=? OR (plan.scope_kind='personal' AND grant_row.payer_user_id<>grant_row.actor_user_id)) AND grant_row.actor_user_id=? AND grant_row.expires_at<=?
    AND EXISTS(SELECT 1 FROM output_operation_slots slot JOIN document_jobs job ON job.job_id=slot.job_id
     WHERE slot.scope_key=grant_row.scope_key AND slot.grant_id=grant_row.grant_id AND job.attempt_count=0
     AND slot.status IN('authorized','queued','cancelled') AND NOT EXISTS(SELECT 1 FROM output_provider_calls calls WHERE calls.scope_key=slot.scope_key AND calls.slot_id=slot.slot_id)
@@ -609,7 +629,11 @@ export async function reconcileExpiredOutputAuthorizations(env:WorkerEnv,user:Pi
  let reconciled=0;
  for(const row of owned.results){
   const scope:OutputScope={kind:row.scope_kind as OutputScope["kind"],key:String(row.scope_key),ownerUserId:String(row.owner_user_id),actorUserId:String(row.actor_user_id),projectId:String(row.project_id),documentId:String(row.document_id),organizationId:typeof row.organization_id==="string"?row.organization_id:null,projectAccessId:typeof row.project_access_id==="string"?row.project_access_id:null,contextId:typeof row.context_id==="string"?row.context_id:null};
-  reconciled+=(await cleanupExpiredOrRevokedOutputWork(env,scope,await readOutputSlots(env,scope.key,String(row.grant_id)),now)).reconciled;
+  const slots=await readOutputSlots(env,scope.key,String(row.grant_id));
+  const sponsor=scope.kind==="personal"&&row.payer_user_id!==user.userId&&slots.length===1?await readSponsorFinancialBinding(env,user.userId,slots[0]!.jobId):null;
+  const financialAssertions=sponsor?[sponsorFinancialIdentity(sponsor,env,user.userId,slots[0]!.jobId).assertion]:[];
+  reconciled+=(await cleanupExpiredOrRevokedOutputWork(env,scope,slots,now,financialAssertions)).reconciled;
+  if(sponsor)await sponsorTerminalReleaseStatement(sponsor,env,user.userId,slots[0]!.jobId).run();
  }
  await reconcileOutputNativeStorage(env,{ownerUserId:user.userId,limit:1});
  return {reconciled};
@@ -621,19 +645,24 @@ export async function reconcileExpiredOutputAuthorizations(env:WorkerEnv,user:Pi
  * receipts retain their exposure without monopolizing later reconciliation. */
 export async function reconcileKnownOutputProviderReceipts(env:WorkerEnv,user:PilotUser,options:{jobId?:string;assertions?:OutputSqlAssertion[]}={}){
  const candidate=await env.DB.prepare(`SELECT slot.scope_key,slot.slot_id,slot.token_reservation_id,slot.cost_reservation_id,slot.updated_at,
-   job.job_id,job.kind,job.owner_id,job.stream_id,job.document_id,job.status,job.correlation_id,
+   job.job_id,job.kind,job.owner_id,job.stream_id,job.document_id,job.status,job.correlation_id,grant_row.payer_user_id,plan.scope_kind,
    json_extract(COALESCE(job.result_json,'{}'),'$.providerSubmissions') AS receipts_json
   FROM output_operation_slots slot JOIN output_execution_grants grant_row ON grant_row.scope_key=slot.scope_key AND grant_row.grant_id=slot.grant_id
   JOIN document_jobs job ON job.job_id=slot.job_id AND job.owner_id=grant_row.actor_user_id
-  WHERE grant_row.payer_user_id=? AND grant_row.actor_user_id=? AND job.status IN('completed','partial','failed','canceled')
+  JOIN output_plan_revisions plan ON plan.scope_key=slot.scope_key AND plan.plan_revision_id=slot.plan_revision_id
+  WHERE (grant_row.payer_user_id=? OR (plan.scope_kind='personal' AND grant_row.payer_user_id<>grant_row.actor_user_id)) AND grant_row.actor_user_id=? AND job.status IN('completed','partial','failed','canceled')
    AND (? IS NULL OR job.job_id=?)
    AND (slot.status='uncertain' OR EXISTS(SELECT 1 FROM cost_budget_reservations cost WHERE cost.reservation_id=slot.cost_reservation_id AND cost.status IN('active','executing'))
       OR EXISTS(SELECT 1 FROM budget_reservations token WHERE token.reservation_id=slot.token_reservation_id AND token.status='active'))
   ORDER BY slot.updated_at,slot.slot_id LIMIT 1`).bind(user.billingUserId??user.userId,user.userId,options.jobId??null,options.jobId??null).first<Record<string,unknown>>();
  if(!candidate)return {reconciled:0,status:'not_needed' as const};
+ const sponsor=candidate.scope_kind==='personal'&&candidate.payer_user_id!==user.userId?await readSponsorFinancialBinding(env,user.userId,String(candidate.job_id)):null;
+ const original=sponsor?sponsorFinancialIdentity(sponsor,env,user.userId,String(candidate.job_id)):null;
+ const billingOwner=original?.payerUserId??user.billingUserId??user.userId;
+ const financialAssertions=[...(options.assertions??[]),...(original?[original.assertion]:[])];
  const scopeKey=String(candidate.scope_key),slotId=String(candidate.slot_id);
  const attemptedAt=new Date(Math.max(Date.now(),(Date.parse(String(candidate.updated_at))||0)+1)).toISOString();
- const authority=(options.assertions??[]).flatMap(assertion=>outputAssertionStatements(env,assertion));
+ const authority=financialAssertions.flatMap(assertion=>outputAssertionStatements(env,assertion));
  const rotate=env.DB.prepare("UPDATE output_operation_slots SET updated_at=? WHERE scope_key=? AND slot_id=?")
   .bind(attemptedAt,scopeKey,slotId);
  if(authority.length)await env.DB.batch([...authority,rotate]);else await rotate.run();
@@ -651,7 +680,7 @@ export async function reconcileKnownOutputProviderReceipts(env:WorkerEnv,user:Pi
   if(receipt.status==='completed'&&(!['inputTokens','outputTokens','totalTokens'].every(key=>Number.isSafeInteger(receipt[key as keyof PaidProviderSubmission])&&Number(receipt[key as keyof PaidProviderSubmission])>=0)))continue;
   const status=receipt.status==='rejected'?'rejected':'settled';
   if(['pending','uncertain'].includes(String(call.status))){
-   await settleOutputProviderCall(env,{scopeKey,slotId,callKey:String(call.call_key),clientRequestId:receipt.clientRequestId,status,usedMicrousd:Number(knownCost),...(receipt.providerRequestId?{providerResponseId:receipt.providerRequestId}:{}),...(options.assertions?{assertions:options.assertions}:{})});
+   await settleOutputProviderCall(env,{scopeKey,slotId,callKey:String(call.call_key),clientRequestId:receipt.clientRequestId,status,usedMicrousd:Number(knownCost),...(receipt.providerRequestId?{providerResponseId:receipt.providerRequestId}:{}),assertions:financialAssertions});
    call.status=status;call.used_microusd=Number(knownCost);call.provider_response_id=receipt.providerRequestId??null;
   }
   if(call.status!==status||Number(call.used_microusd)!==Number(knownCost)||call.provider_response_id&&call.provider_response_id!==receipt.providerRequestId)continue;
@@ -660,12 +689,12 @@ export async function reconcileKnownOutputProviderReceipts(env:WorkerEnv,user:Pi
  if(calls.results.some(call=>!['settled','rejected'].includes(String(call.status)))||Object.keys(safe).length!==calls.results.length)return {reconciled:0,status:'uncertain' as const};
  const actor={...user,streamId:String(candidate.stream_id)};
  const job={job_id:String(candidate.job_id),stream_id:String(candidate.stream_id),correlation_id:String(candidate.correlation_id),status:String(candidate.status) as DocumentJobRow['status']};
- const settlement=await settleDocumentGenerationBudgets(env,actor.billingUserId??actor.userId,{reservationId:String(candidate.token_reservation_id),costReservationId:String(candidate.cost_reservation_id),reason:'output_known_response_reconciled',assertions:options.assertions});
+ const settlement=await settleDocumentGenerationBudgets(env,billingOwner,{reservationId:String(candidate.token_reservation_id),costReservationId:String(candidate.cost_reservation_id),reason:'output_known_response_reconciled',assertions:financialAssertions});
  if(settlement.status==='uncertain')return {reconciled:0,status:'uncertain' as const};
  // Refresh only operational fields. This remains safe after source erasure and
  // never reconstructs private requests, candidates, outputs, or event bodies.
  const originalJob=await env.DB.prepare("SELECT * FROM document_jobs WHERE job_id=? AND owner_id=?").bind(job.job_id,actor.userId).first<DocumentJobRow>();
- const localStop=originalJob?await readOutputSceneLocalStop(env,originalJob,actor.userId,actor.billingUserId??actor.userId):null;
+ const localStop=originalJob?await readOutputSceneLocalStop(env,originalJob,actor.userId,billingOwner):null;
  const actualCalls=localStop?0:calls.results.length;
  const financial=env.DB.prepare(`UPDATE document_jobs SET result_json=json_patch(COALESCE(result_json,'{}'),json_object('generationReceipt',json_object(
     'reservation_status',(SELECT status FROM cost_budget_reservations WHERE reservation_id=? AND owner_id=?),
@@ -673,7 +702,8 @@ export async function reconcileKnownOutputProviderReceipts(env:WorkerEnv,user:Pi
     'actual_provider_call_count',?, 'provider_request_status',CASE WHEN ?=0 THEN 'not_submitted' WHEN status='completed' THEN 'completed' ELSE 'submitted' END,
     'source_transmission_status',CASE WHEN ?=0 THEN 'not_transmitted' ELSE 'transmitted' END))),updated_at=?
    WHERE job_id=? AND owner_id=? AND stream_id=? AND correlation_id=? AND status IN('completed','partial','failed','canceled')`)
-   .bind(String(candidate.cost_reservation_id),actor.billingUserId??actor.userId,String(candidate.cost_reservation_id),actor.billingUserId??actor.userId,actualCalls,actualCalls,actualCalls,new Date().toISOString(),job.job_id,actor.userId,job.stream_id,job.correlation_id);
+   .bind(String(candidate.cost_reservation_id),billingOwner,String(candidate.cost_reservation_id),billingOwner,actualCalls,actualCalls,actualCalls,new Date().toISOString(),job.job_id,actor.userId,job.stream_id,job.correlation_id);
  await synchronizeOutputJobOutcome(env,job,[...authority,...(localStop?outputAssertionStatements(env,localStop.guard):[]),financial]);
+ if(sponsor)await sponsorTerminalReleaseStatement(sponsor,env,user.userId,job.job_id).run();
  return {reconciled:Number(settlement.settled),status:'known' as const};
 }
