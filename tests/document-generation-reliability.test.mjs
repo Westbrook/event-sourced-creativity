@@ -4,21 +4,35 @@ import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 
 import worker from "../dist/server/index.js";
-import { documentArtifactValidationIssues, parseDocumentArtifactContent } from "../src/model/document-artifacts.ts";
-import { DOCUMENT_JOB_HEARTBEAT_MS, documentGenerationRevision, documentJobCanRecoverProviderRender, documentJobMaxAttempts, generationFailureGuidance } from "../src/model/document-jobs.ts";
-import { claimCostBudgetReservation, loadPrivateContent, reconcileFailedBudgetReservations, reserveBudget, reserveCostBudget, settlePersonalPresentationBudgets } from "../worker/pilot-policy.ts";
-import { appendAuditEvent, readWorkspaceEvents } from "../worker/runtime.ts";
-import { foldEvents } from "../src/model/events.ts";
-import { artifactReviewState } from "../src/model/context-health.ts";
-import { isSceneCostPreview } from "../src/model/scene-cost-consent.ts";
-import { nativeMemoryAnswerExclusion } from "../worker/memory-native-boundary.ts";
 
 const workspaceRoot=new URL("../",import.meta.url).href;
 const sourceResolution=registerHooks({resolve(specifier,context,nextResolve){
   const workspaceSource=typeof context.parentURL==="string"&&context.parentURL.startsWith(workspaceRoot)&&!context.parentURL.includes("/node_modules/");
   return nextResolve(workspaceSource&&specifier.startsWith(".")&&!/\.[a-z0-9]+$/i.test(specifier)?`${specifier}.ts`:specifier,context);
 }});
-const [{cancelProjectActorJobs,handleDocumentJobs},{handleEvents}]=await Promise.all([import("../worker/document-jobs-api.ts"),import("../worker/events-api.ts")]).finally(()=>sourceResolution.deregister());
+const [
+  { documentArtifactValidationIssues, parseDocumentArtifactContent },
+  { DOCUMENT_JOB_HEARTBEAT_MS, documentGenerationRevision, documentJobCanRecoverProviderRender, documentJobMaxAttempts, generationFailureGuidance },
+  { claimCostBudgetReservation, loadPrivateContent, reconcileFailedBudgetReservations, reserveBudget, reserveCostBudget, settlePersonalPresentationBudgets },
+  { appendAuditEvent, readWorkspaceEvents },
+  { foldEvents },
+  { artifactReviewState },
+  { isSceneCostPreview },
+  { nativeMemoryAnswerExclusion },
+  { cancelProjectActorJobs, handleDocumentJobs },
+  { handleEvents },
+]=await Promise.all([
+  import("../src/model/document-artifacts.ts"),
+  import("../src/model/document-jobs.ts"),
+  import("../worker/pilot-policy.ts"),
+  import("../worker/runtime.ts"),
+  import("../src/model/events.ts"),
+  import("../src/model/context-health.ts"),
+  import("../src/model/scene-cost-consent.ts"),
+  import("../worker/memory-native-boundary.ts"),
+  import("../worker/document-jobs-api.ts"),
+  import("../worker/events-api.ts"),
+]).finally(()=>sourceResolution.deregister());
 
 function reliabilityDatabase(){
   const sqlite=new DatabaseSync(":memory:");
