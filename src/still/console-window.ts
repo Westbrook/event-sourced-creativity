@@ -26,7 +26,7 @@ export class ConsoleWindowHost {
     const url=new URL('/still',this.owner.location.origin);url.searchParams.set('developer-console',this.session);
     this.owner.addEventListener('message',this.receive);
     this.owner.addEventListener('pagehide',this.dispose);
-    this.popup=this.owner.open(url.href,`still-decisions-${this.session}`,'popup,width=980,height=900');
+    this.popup=this.owner.open(url.href,`still-decisions-${this.session}`,'popup,width=1100,height=900');
     if(!this.popup){this.dispose();return false;}
     this.changed(true,false);
     this.timer=this.owner.setInterval(()=>{if(this.popup?.closed)this.dispose();else if(this.ready)this.send('alive');},1000);
@@ -69,7 +69,7 @@ export class ConsoleWindowReceiver {
     this.owner.addEventListener('message',this.receive);this.owner.addEventListener('pagehide',this.pagehide);
     this.timer=this.owner.setInterval(this.pulse,1000);this.send('ready');
   }
-  returnToDrawer(){if(this.active)this.send('return');}
+  returnToPanel(){if(this.active)this.send('return');}
   private send(type:string){this.source.postMessage(consoleEnvelope(this.session,type),this.owner.location.origin);}
   private receive=(event:MessageEvent)=>{
     if(!this.active||!consoleMessage(event,this.source,this.owner.location.origin,this.session))return;

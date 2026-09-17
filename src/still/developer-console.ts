@@ -1,6 +1,5 @@
 import { LitElement, css, html, nothing } from 'lit';
 import { keyed } from 'lit/directives/keyed.js';
-import './vendor/elements/define/drawer.js';
 import './exchange-inspector.ts';
 import type { DecisionDiagnostics, ReceivedDecision } from './diagnostics.ts';
 import { ConsoleWindowHost, type ConsoleContext, type ConsoleControl } from './console-window.ts';
@@ -32,7 +31,7 @@ export class StillDeveloperConsole extends LitElement {
   }
   disconnectedCallback(){super.disconnectedCallback();this.windowHost?.dispose();this.observer.disconnect();this.root?.removeEventListener('change',this.readControls);}
   protected updated(){this.windowHost?.publish();}
-  show(){if(this.windowHost?.isOpen){this.windowHost.open();return;}(this.renderRoot.querySelector('en-drawer') as HTMLElement&{show:()=>void})?.show();}
+  show(){(this.renderRoot.querySelector('h2') as HTMLElement|null)?.focus({preventScroll:true});}
   private detach=()=>{
     this.readControls();
     this.windowHost??=new ConsoleWindowHost(window,()=>({scope:this.scope,context:this.context,applied:this.applied,received:this.received,pending:this.pending,controls:this.controls}),(open,connected)=>{this.windowOpen=open;this.windowConnected=connected;},()=>{void this.updateComplete.then(()=>this.show());});
@@ -62,7 +61,7 @@ export class StillDeveloperConsole extends LitElement {
     const matched=trace?.head===c.head&&trace.position.view===(c.mode==='generate'&&!c.selectedFormat?'choose-format':c.view)&&(['projectId','documentId','blockId','outputId','itemIndex','hasIntent'] as const).every(key=>trace.position[key]===c.current.position[key]);
     const questions=trace?.questions??[];
     const content=html`<div class="console">
-          <div class="window-tools">${this.detached?html`<strong>Decisions · Live</strong><en-button variant="secondary" size="small" @click=${()=>this.dispatchEvent(new CustomEvent('developer-return'))}>Return to Drawer</en-button>`:html`<en-button variant="secondary" size="small" @click=${this.detach}>Open in window</en-button>`}</div>
+          <header class="panel-heading"><h2 tabindex="-1">Decisions${this.detached?' · Live':''}</h2><div class="window-tools">${this.detached?html`<en-button variant="secondary" size="small" @click=${()=>this.dispatchEvent(new CustomEvent('developer-return'))}>Return to panel</en-button>`:html`<en-button variant="secondary" size="small" @click=${this.detach}>${this.windowOpen?'Focus window':'Open in window'}</en-button>${this.windowOpen?html`<en-button variant="ghost" size="small" @click=${this.reattach}>Close window</en-button>`:nothing}<en-button variant="ghost" size="small" aria-label="Close developer panel" @click=${()=>this.dispatchEvent(new CustomEvent('developer-disable',{bubbles:true,composed:true}))}>Close</en-button>`}</div></header>
           ${this.windowError?html`<p role="alert">${this.windowError}</p>`:nothing}
           <div class="status"><strong>${this.pending?'Jev pending':this.received?.disposition??'Local controls'}</strong><span>${c.view}${c.mode?` / ${c.mode}`:''} · head ${c.head}</span></div>
           <details open><summary>On page · ${this.controls.length} controls</summary>
@@ -93,24 +92,23 @@ export class StillDeveloperConsole extends LitElement {
           <details><summary>Creative questions · ${questions.filter(q=>q.asked).length} sent</summary>${questions.filter(q=>`${q.id} ${q.question.instructions}`.toLowerCase().includes(this.filter)).map(q=>html`<details><summary><code>${q.id}</code> · ${q.composition} · ${q.question.type} · ${numeric(q.score??q.noul)}${q.choice?` ${q.choice}`:''}</summary>${this.distribution(q)}</details>`)}</details>
           <details><summary>Context coverage</summary><pre>${JSON.stringify({current:c.current.position,decision:trace?.position,context:trace?.context??c.current.context},null,2)}</pre></details>
           <p class="muted">Session memory only. No creative events are added by this console.</p>
-          ${this.detached?nothing:html`<en-button variant="ghost" size="small" @click=${()=>this.dispatchEvent(new CustomEvent('developer-disable',{bubbles:true,composed:true}))}>Exit developer mode</en-button>`}
         </div>`;
-    if(this.detached)return content;
-    return html`<en-button id="developer-trigger" variant="secondary" size="small" aria-label=${this.windowOpen?`Decisions · ${this.windowConnected?'Live window':'Waiting for window'}`:'Decisions'} @click=${()=>{if(this.windowOpen)this.show();}}>Decisions${this.windowOpen?' ↗':''}</en-button>
-      ${this.windowOpen?html`<en-button variant="ghost" size="small" @click=${this.reattach}>Return to Drawer</en-button>`:html`<en-drawer for="developer-trigger" label="Developer console" placement="end" closedby="any">${content}</en-drawer>`}`;
+    return content;
   }
   static styles=css`
-    :host{position:fixed;top:16px;right:24px;z-index:20;font:13px/1.5 system-ui,sans-serif;color:#33332e}
-    :host([detached]){position:static;display:block;max-width:1200px;margin:auto;padding:20px 24px}.window-tools{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:12px 0}
-    en-drawer{--en-overlay-max-inline-size:min(760px,100vw);--en-overlay-max-block-size:100dvh;--en-overlay-background:#f7f6f2;--en-overlay-color:#33332e}
-    en-drawer::part(body){padding:0 22px 24px} .console{overflow-wrap:anywhere}
+    :host{display:block;min-width:0;padding:0 20px 24px;font:13px/1.5 system-ui,sans-serif;color:#33332e;container-type:inline-size}
+    :host([detached]){max-width:1200px;margin:auto;padding:0 24px 24px}
+    .panel-heading{position:sticky;top:0;z-index:2;display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px;padding:18px 0 14px;background:#f7f6f2;border-bottom:1px solid #d9d7ce}
+    h2{font-size:15px;font-weight:600;margin:0}h2:focus{outline:none}
+    .window-tools{display:flex;flex-wrap:wrap;align-items:center;gap:6px} .console{overflow-wrap:anywhere}
+    .window-tools en-button::part(control){padding-inline:10px}
     h3{font-size:14px;margin:22px 0 8px}p{margin:9px 0}code,pre{font:11px/1.5 ui-monospace,monospace}pre{white-space:pre-wrap}
     .status{display:flex;justify-content:space-between;gap:12px;margin:10px 0 18px}.muted,small{color:#706e65}.warning{background:#f1e7ce;padding:10px;border-radius:6px}
     details{border-top:1px solid #d9d7ce;padding:10px 0}summary{cursor:pointer;font-weight:550}.actions summary{display:grid;grid-template-columns:1fr 90px 90px;gap:8px}.actions summary code{text-align:right}.actions summary span:first-child::before{content:'›';display:inline-block;width:14px}.actions details[open]>summary span:first-child::before{content:'⌄'}.selected{border-left:3px solid #596345;padding-left:9px}
     label{display:block;font-size:12px;color:#706e65}input,select{display:block;box-sizing:border-box;width:100%;font:inherit;background:#fff;border:1px solid #c9c6bb;border-radius:6px;padding:9px;color:#33332e;margin-top:4px}.trace-choice{margin-top:16px}
     .controls{list-style:none;padding:0;display:grid;gap:8px}.controls li{display:grid;grid-template-columns:1fr 1fr;gap:2px 8px}.controls span,.controls details{grid-column:1/-1;color:#706e65}.controls code{text-align:right}
     .distribution>div{display:grid;grid-template-columns:1fr 100px 58px;gap:8px;align-items:center;font-size:12px;margin:5px 0}.distribution b{text-align:right}meter{width:100%;accent-color:#596345}.adjustment small{display:block;margin-left:36px}
-    @media(max-width:520px){:host{right:12px;top:12px}.status{display:block}.actions summary{grid-template-columns:1fr 68px 65px;font-size:12px}.distribution>div{grid-template-columns:1fr 60px 52px}}
+    @container(max-width:440px){.status{display:grid;gap:2px}.controls{font-size:12px}.actions summary{grid-template-columns:minmax(0,1fr) 68px 65px}.distribution>div{grid-template-columns:minmax(0,1fr) 60px 52px}}
   `;
 }
 if(!customElements.get('still-developer-console'))customElements.define('still-developer-console',StillDeveloperConsole);
