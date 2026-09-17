@@ -1,5 +1,8 @@
 import { outputJobIsDurable, assertOutputDurableLease } from "./output-durable-control.ts";
-import { requireSponsorExecution, readSponsorFinancialBinding, sponsorFinancialIdentity, sponsorTerminalReleaseStatement, type SponsorExecutionAuthority, type SponsorFinancialBinding } from "./experience-sponsor-execution.ts";
+import { requireSponsorExecution, readSponsorFinancialBinding, sponsorFinancialIdentity, sponsorFinancialEventProfile, sponsorSceneExecutionPaidEvidence, sponsorTerminalReleaseStatement, type SponsorExecutionAuthority, type SponsorFinancialBinding } from "./experience-sponsor-execution.ts";
+import { createSceneSponsorDispatchOwner, prepareSceneSponsorDispatchEvidence, invalidateSceneSponsorDispatch, type SceneSponsorDispatchEvidence } from "./output-scene-sponsored-handoff.ts";
+import { createSponsorScenePaidClaim, type SponsorScenePaidClaim, type SponsorSceneOriginalClaimIdentity } from "./experience-sponsor-scene-paid-claim.ts";
+import type { EventExecutionControl } from "./events-api.ts";
 import { verifyOutputVideoCompletion } from "./output-video-completion.ts";
 import { prepareOutputProviderFinancialCheckpoint, retainUnsettledOutputProviderObservation } from "./output-provider-financial-checkpoint.ts";
 import { retainOutputVideoRequestCheckpoint, retainOutputVideoMediaEnvelope, retainOutputVideoPlannerEnvelope } from "./output-video-checkpoint.ts";
@@ -84,6 +87,8 @@ export type OutputEventExecution={
  };
  readAudioEnvelope?:(responseRef:string)=>Promise<string>;
  refreshScene?:()=>Promise<PreparedSceneCost>;
+ refreshSponsorSceneDispatch?:(control:EventExecutionControl)=>Promise<{prepared:PreparedSceneCost;evidence:SceneSponsorDispatchEvidence}>;
+ createSponsorScenePaidClaim?:(input:{runtimeControl:EventExecutionControl;originalClaimIdentity:SponsorSceneOriginalClaimIdentity})=>SponsorScenePaidClaim;
  readSceneEnvelope?:(responseRef:string)=>Promise<string>;
  imageRender?:{format:ImageFormat;size:`${number}x${number}`};
  reservations:{reservationId:string;costReservationId:string;costReservationPeriod:string;costReservationMicrousd:number;maximumTokens:number};
@@ -129,11 +134,13 @@ export async function createOutputEventExecution(env:WorkerEnv,user:PilotUser,jo
  if(binding.sponsored&&(user.fictional||user.projectExecution||user.billingUserId&&user.billingUserId!==user.userId))throw new OutputConflictError("sponsor_personal_principal_required",403);
  const sponsor=binding.sponsored?await requireSponsorExecution(sponsorAuthority,env,user.userId,{jobId:job.job_id,grantId:slot.grantId,scopeKey:scope.key}):null;
  const financial=sponsor?sponsorFinancialIdentity(sponsor.financial,env,user.userId,job.job_id):null;
+ const sponsoredScene=Boolean(sponsor&&sponsorFinancialEventProfile(sponsor.financial,env,user.userId,slot)==="scene");
  if(!["queued","running"].includes(slot.status))throw new OutputConflictError("output_operation_not_started",409);
  const authority=preparedProof??prepareOutputExecutionProof(scope,await resolveOutputExecutionAuthority(env,scope,slot));
  let sceneStored=job.scene_source_version_json!=null?await readSceneJobSourceWitness(env,scope,slot,job.correlation_id):null;
  if(Boolean(job.scene_source_protocol===1)!==Boolean(sceneStored))throw new OutputConflictError('output_scene_source_witness_unavailable',409);
  if(sceneStored&&!Object.hasOwn(authority.target,'scene_contract'))throw new OutputConflictError('output_scene_source_witness_unavailable',409);
+ if(sponsoredScene&&!sceneStored)throw new OutputConflictError('sponsor_scene_handoff_changed',403);
  let sceneTransition:ReturnType<typeof prepareSceneJobSourceTransition>|null=null;
  const currentInput={env,request:new Request("https://output-execution.invalid"),scope,principal:user,confirmedPlan:authority.confirmedPlan,target:authority.target,context:authority.context,sourceEvents:authority.events,sourceAssertions:authority.assertions,sourceDigest:authority.sourceDigest,requirementsDigest:authority.requirementsDigest,ownerHead:authority.sourceEpoch.head,...(sceneStored?{sceneSourceVersion:sceneStored.witness.successor}:{})};
  const current=await preflightOutputNativeTarget(currentInput);
@@ -148,6 +155,7 @@ export async function createOutputEventExecution(env:WorkerEnv,user:PilotUser,jo
  const sceneProof=Object.hasOwn(authority.target,"scene_contract")?outputScenePreflightProof(current):null;
  if(Object.hasOwn(authority.target,"scene_contract")&&!sceneProof)throw new OutputConflictError("output_scene_source_unavailable",403);
  const sceneAssertions:OutputSqlAssertion[]=[...(sceneProof?.sourceAssertions??[])];
+ const sponsorSceneOwner=sponsoredScene?createSceneSponsorDispatchOwner({env,scope,slot,correlationId:job.correlation_id}):null;
  const storyboardProof=Object.hasOwn(authority.target,"storyboard_contract")?outputStoryboardPreflightProof(current):null;
  if(Object.hasOwn(authority.target,"storyboard_contract")&&!storyboardProof)throw new OutputConflictError("output_storyboard_source_unavailable",403);
  if(storyboardProof&&(storyboardProof.requestId!==job.job_id||storyboardProof.requestId!==slot.jobId||slot.attemptOrdinal!==0||slot.previousSlotId
@@ -213,6 +221,7 @@ export async function createOutputEventExecution(env:WorkerEnv,user:PilotUser,jo
        ||!Array.isArray(result.results)||result.results.length!==1||result.results[0]?.current!==1)
      ||expired())throw new OutputConflictError("output_scene_source_changed",409);
   }
+  if(sponsorSceneOwner&&refreshed!==scenePreflight)invalidateSceneSponsorDispatch(sponsorSceneOwner);
   scenePreflight=refreshed;
   sceneAssertions.splice(0,sceneAssertions.length,...proof.sourceAssertions);
   return proof.prepared;
@@ -238,7 +247,31 @@ export async function createOutputEventExecution(env:WorkerEnv,user:PilotUser,jo
  const reference={scopeKey:slot.scopeKey,grantId:slot.grantId,slotId:slot.slotId,planRevisionId:slot.planRevisionId,targetId:slot.targetId,targetContractDigest:slot.targetContractDigest,sourceDigest:slot.sourceDigest};
  const guardedEnvironment=guardOutputPrivateWrites(env,scope,slot,async()=>liveAssertions(),{retentionPolicy:binding.retentionPolicy,storyboardCompletionJson:()=>storyboardCompletionJson,videoCompletionJson:()=>videoCompletionJson,model3dCompletionJson:()=>model3dCompletionJson});
  let publicationScopesComplete=scope.kind==="personal";
- return {guardedEnvironment,financialPayerUserId:billingOwner,...(financial?{financialAssertions:[financial.assertion],sponsorFinancialBinding:sponsor!.financial}:{}),...(sceneProof?{withSourceTransition:outputSourceTransition()}:{}),...(model3dPayload&&refreshModel3d?{model3d:{
+ let sponsorRuntimeControl:EventExecutionControl|null=null;
+ let sponsorRuntimeSignal:AbortSignal|null=null;
+ const requireSponsorRuntime=(control:EventExecutionControl)=>{
+  if(!sponsoredScene||!sponsorSceneOwner||!sponsorAuthority||!sponsor||control.output!==output
+    ||sponsorRuntimeControl&&control!==sponsorRuntimeControl||sponsorRuntimeSignal&&control.signal!==sponsorRuntimeSignal)throw new OutputConflictError("sponsor_scene_handoff_changed",403);
+  const signal=control.signal;
+  try{if(Object.getOwnPropertyDescriptor(AbortSignal.prototype,"aborted")?.get?.call(signal)!==false)throw new Error("aborted");}
+  catch{throw new OutputConflictError("sponsor_scene_handoff_changed",403);}
+  sponsorSceneExecutionPaidEvidence(sponsorAuthority,sponsor.financial,env);
+  sponsorRuntimeControl=control;sponsorRuntimeSignal=signal;
+ };
+ const output:OutputEventExecution={guardedEnvironment,financialPayerUserId:billingOwner,...(financial?{financialAssertions:[financial.assertion],sponsorFinancialBinding:sponsor!.financial}:{}),...(sceneProof?{withSourceTransition:outputSourceTransition()}:{}),...(sponsoredScene?{
+  async refreshSponsorSceneDispatch(control:EventExecutionControl){
+   requireSponsorRuntime(control);
+   if(!refreshScene||!sceneStored||!sponsorSceneOwner)throw new OutputConflictError("sponsor_scene_handoff_changed",403);
+   const prepared=await refreshScene();requireSponsorRuntime(control);
+   const evidence=await prepareSceneSponsorDispatchEvidence(sponsorSceneOwner,{nativePreflight:scenePreflight,receiptRaw:sceneStored.raw,signal:control.signal});
+   requireSponsorRuntime(control);return{prepared,evidence};
+  },
+  createSponsorScenePaidClaim(input:{runtimeControl:EventExecutionControl;originalClaimIdentity:SponsorSceneOriginalClaimIdentity}){
+   requireSponsorRuntime(input.runtimeControl);
+   const claim=createSponsorScenePaidClaim({env,executionAuthority:sponsorAuthority!,financial:sponsor!.financial,runtimeControl:input.runtimeControl,originalClaimIdentity:input.originalClaimIdentity});
+   requireSponsorRuntime(input.runtimeControl);return claim;
+  },
+ }:{}),...(model3dPayload&&refreshModel3d?{model3d:{
   async prepare(receipt:Model3dPreparedReceipt){
    await refreshModel3d();assertDispatchDeadline();
    model3dPrepared=await verifyModel3dPreparedReceipt(model3dPayload,receipt);
@@ -330,7 +363,7 @@ export async function createOutputEventExecution(env:WorkerEnv,user:PilotUser,jo
    try{const statements=[...liveAssertions(recoveredScene).flatMap(assertion=>outputAssertionStatements(env,assertion)),...checks],results=await env.DB.batch(statements);
     if(!Array.isArray(results)||results.length!==statements.length||Array.from({length:statements.length},(_,i)=>i).some(i=>results[i]?.success!==true)
       ||results.slice(-checks.length).some(result=>!Array.isArray(result.results)||result.results.length!==1||(result.results[0] as {present?:unknown}|undefined)?.present!==1))return false;
-    if(recoveredScene){sceneStored=recoveredScene;sceneTransition=null;await refreshScene?.();}return true;}
+    if(recoveredScene){if(sponsorSceneOwner)invalidateSceneSponsorDispatch(sponsorSceneOwner);sceneStored=recoveredScene;sceneTransition=null;await refreshScene?.();}return true;}
    catch{return false;}
   },
   eventWriteSidecars:events=>{
@@ -348,7 +381,7 @@ export async function createOutputEventExecution(env:WorkerEnv,user:PilotUser,jo
   },
   eventWriteCommitted:results=>{if(scope.kind==="project")publicationScopesComplete=Number(results.at(-1)?.meta.changes??0)===1;
     if(sceneTransition){const receipt=sceneTransition.acknowledge(results.slice(-sceneTransition.after.length));
-      sceneStored=sceneJobSourceWitnessAssertions(scope,slot,job.correlation_id,receipt.raw);sceneTransition=null;}},
+      if(sponsorSceneOwner)invalidateSceneSponsorDispatch(sponsorSceneOwner);sceneStored=sceneJobSourceWitnessAssertions(scope,slot,job.correlation_id,receipt.raw);sceneTransition=null;}},
   publicationScopesComplete:()=>publicationScopesComplete,reference,settings:settings.payload,...(settings.imageRender?{imageRender:settings.imageRender}:{}),reservations:{reservationId:slot.tokenReservationId,costReservationId:slot.costReservationId,costReservationPeriod:period,costReservationMicrousd:slot.maximumMicrousd,maximumTokens:slot.maximumTokens},
   async assertContext(context){if(context.documentRevision!==authority.context.documentRevision||await outputDigest(context.snapshot)!==await outputDigest(authority.context.snapshot))throw new OutputConflictError("output_source_changed",409);},
   async retainFalImageRequest(request,planning){
@@ -518,6 +551,7 @@ export async function createOutputEventExecution(env:WorkerEnv,user:PilotUser,jo
    // retaining this monetary witness does not itself authorize any private write.
   },
  };
+ return output;
 }
 
 /** Projection only: job/receipt truth wins and never creates a new grant or job. */

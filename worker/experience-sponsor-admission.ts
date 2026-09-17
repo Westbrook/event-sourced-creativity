@@ -1,3 +1,6 @@
+import { describeSponsorSceneAdmission, readSponsorSceneTemplateEvidence } from "./experience-sponsor-scene-evidence.ts";
+import { matchSponsorSceneTemplate, captureSponsorSceneJson } from "./experience-sponsor-scene-contract.ts";
+import { requireSceneSponsorAdmissionForEvidence, type SceneSponsorAdmissionPreparation } from "./output-scene-sponsored-handoff.ts";
 import { describeSponsorSlidesAdmission, readSponsorSlidesTemplateEvidence } from "./experience-sponsor-slides-evidence.ts";
 import { matchSponsorSlidesTemplate } from "./experience-sponsor-slides-contract.ts";
 import { describeSponsorStoryAdmission, readSponsorStoryTemplateEvidence } from "./experience-sponsor-story-evidence.ts";
@@ -88,7 +91,7 @@ export type SponsorAdmissionAuthority = Readonly<{ [sponsorAdmission]: true }>;
 type Compiled = Awaited<ReturnType<typeof compileSponsorEnvelope>>;
 type Identity = { request: Request; env: WorkerEnv; actorUserId: string; documentId: string };
 type State = Identity & { database: WorkerEnv["DB"]; scope: string; sourceDigest: string; requirementsDigest: string;
-  sourceBindingJson: string; commandJson: string; grantId: string; compiled: Compiled; assertions: OutputSqlAssertion[]; principalDigest: string };
+  sourceBindingJson: string; commandJson: string; grantId: string; compiled: Compiled; assertions: OutputSqlAssertion[]; principalDigest: string; scenePreparation?: SceneSponsorAdmissionPreparation; sceneCurrent?: () => void };
 const authorities = new WeakMap<SponsorAdmissionAuthority, State>();
 const fail = (code: string): never => { throw new SponsorEntitlementError(code); };
 const sourceBinding = (trusted: OutputTrustedContext) => canonicalJson({ snapshot: trusted.context?.snapshot ?? null, assertions: trusted.sourceAssertions });
@@ -102,7 +105,12 @@ function stateFor(authority: SponsorAdmissionAuthority, identity: Identity) {
   const state = authorities.get(authority);
   if (!state || state.request !== identity.request || state.env !== identity.env || state.database !== identity.env.DB
     || state.actorUserId !== identity.actorUserId || state.documentId !== identity.documentId) return fail("sponsor_authority_unavailable");
+  state.sceneCurrent?.();
   return state;
+}
+export function sponsorSceneAdmissionPreparation(authority: SponsorAdmissionAuthority, identity: Identity) {
+  const state = stateFor(authority, identity);
+  return state.compiled.policy.version === 6 ? state.scenePreparation ?? fail("sponsor_scene_preparation_required") : null;
 }
 export function sponsorAdmissionPayer(authority: SponsorAdmissionAuthority, identity: Identity) {
   const state = stateFor(authority, identity);
@@ -174,18 +182,40 @@ export async function describeSponsorImageAdmission(trusted: OutputTrustedContex
  * independently read principal and exact stored campaign/grant are required. */
 export async function createSponsorAdmissionAuthority(input: {
   trusted: OutputTrustedContext; command: Record<string, unknown>; policy: unknown; envelope: unknown; grantId: string;
+  scenePreparation?: SceneSponsorAdmissionPreparation;
 }): Promise<SponsorAdmissionAuthority> {
-  if (jsonIssues(input.command).length) return fail("sponsor_command_invalid");
-  const trusted = input.trusted, commandJson = canonicalJson(input.command), grantId = input.grantId;
+  const capturedCommand = input.scenePreparation ? captureSponsorSceneJson(input.command) : input.command;
+  if (!record(capturedCommand) || !input.scenePreparation && jsonIssues(capturedCommand).length) return fail("sponsor_command_invalid");
+  const trusted = input.trusted, commandJson = canonicalJson(capturedCommand), grantId = input.grantId;
+  const signal = trusted.request.signal;
+  const sceneLifetime = canonicalJson({ url: trusted.request.url, method: trusted.request.method, headers: [...trusted.request.headers.entries()],
+    principal: trusted.principal, configuration: { key: trusted.env.OPENAI_API_KEY ?? null, model: trusted.env.OPENAI_MODEL ?? null,
+      cohort: trusted.env.FORMA_PILOT_COHORT_ID ?? null, admins: trusted.env.FORMA_ADMIN_EMAILS ?? null } });
+  const sceneCurrent = () => {
+    if (Reflect.apply(Object.getOwnPropertyDescriptor(AbortSignal.prototype, "aborted")!.get!, signal, []) || trusted.request.signal !== signal || !current() || canonicalJson({ url: trusted.request.url, method: trusted.request.method,
+      headers: [...trusted.request.headers.entries()], principal: trusted.principal,
+      configuration: { key: trusted.env.OPENAI_API_KEY ?? null, model: trusted.env.OPENAI_MODEL ?? null,
+        cohort: trusted.env.FORMA_PILOT_COHORT_ID ?? null, admins: trusted.env.FORMA_ADMIN_EMAILS ?? null } }) !== sceneLifetime) return fail("sponsor_authority_changed");
+  };
   const captured = { ...identity(trusted), database: trusted.env.DB, scope: canonicalJson(trusted.scope),
     sourceDigest: trusted.sourceDigest, requirementsDigest: trusted.requirementsDigest, sourceBindingJson: sourceBinding(trusted) };
   const current = () => captured.request === trusted.request && captured.env === trusted.env && captured.database === trusted.env.DB
     && captured.scope === canonicalJson(trusted.scope) && captured.sourceDigest === trusted.sourceDigest && captured.requirementsDigest === trusted.requirementsDigest && captured.sourceBindingJson === sourceBinding(trusted);
   const command = JSON.parse(commandJson) as Record<string, unknown>;
   if (typeof grantId !== "string" || !/^[A-Za-z0-9][A-Za-z0-9_.:@/-]{0,199}$/u.test(grantId)) return fail("sponsor_grant_invalid");
+  if (input.scenePreparation) sceneCurrent();
   const compiled = await compileSponsorEnvelope(input.policy, input.envelope);
-  const description = compiled.policy.version === 5 ? await describeSponsorSlidesAdmission(trusted, command)
+  if (compiled.policy.version === 6) {
+    if (!input.scenePreparation) return fail("sponsor_scene_preparation_required");
+    sceneCurrent();
+  }
+  else if (input.scenePreparation) return fail("sponsor_scene_preparation_unexpected");
+  const scene = compiled.policy.version === 6
+    ? await requireSceneSponsorAdmissionForEvidence(input.scenePreparation ?? fail("sponsor_scene_preparation_required"), trusted, command) : null;
+  if (compiled.policy.version === 6) sceneCurrent();
+  const description = scene ? await describeSponsorSceneAdmission(trusted, command, scene) : compiled.policy.version === 5 ? await describeSponsorSlidesAdmission(trusted, command)
     : compiled.policy.version === 4 ? await describeSponsorStoryAdmission(trusted, command) : await describeSponsorImageAdmission(trusted, command);
+  if (compiled.policy.version === 6) sceneCurrent();
   if (!current()) return fail("sponsor_authority_changed");
   if (compiled.policy.version === 2) {
     const evidence = await readSponsorImageTemplateEvidence(trusted, command, description.recipe);
@@ -199,6 +229,13 @@ export async function createSponsorAdmissionAuthority(input: {
     const evidence = await readSponsorSlidesTemplateEvidence(trusted, command, description.recipe);
     if (!(await Promise.all(compiled.policy.templates.map(template => matchSponsorSlidesTemplate(template, evidence)))).some(Boolean)) return fail("sponsor_campaign_template_mismatch");
   }
+  if (compiled.policy.version === 6) {
+    sceneCurrent();
+    const evidence = await readSponsorSceneTemplateEvidence(trusted, command, description.recipe, scene!);
+    sceneCurrent();
+    if (!(await Promise.all(compiled.policy.templates.map(template => matchSponsorSceneTemplate(template, evidence)))).some(Boolean)) return fail("sponsor_campaign_template_mismatch");
+    sceneCurrent();
+  }
   for (const [key, value] of Object.entries(description)) {
     if (key === "preflightExpiresAtMs") continue;
     if (canonicalJson(compiled.envelope[key as keyof typeof compiled.envelope]) !== canonicalJson(value)) return fail("sponsor_native_envelope_mismatch");
@@ -206,16 +243,19 @@ export async function createSponsorAdmissionAuthority(input: {
   if (compiled.envelope.intentKey !== command.clientMutationId || compiled.envelope.expiresAtMs > description.preflightExpiresAtMs)
     return fail("sponsor_native_envelope_mismatch");
   const e = compiled.envelope, p = compiled.policy;
-  const principalColumns = ["user_id", "role", "consent_version", "updated_at", "permission_epoch", "grants_json", "organizations_json", "projects_json", "identity_policies_json", "approved_canvas_requirements"];
+  const principalColumns = ["user_id", "role", "consent_version", "updated_at", "permission_epoch", "grants_json", "organizations_json", "projects_json", "identity_policies_json", "approved_canvas_requirements", ...(p.version === 6 ? ["email", "display_name", "consented_at"] : [])];
   const principalAssertions: OutputSqlAssertion[] = [];
   for (const userId of [e.actorUserId, p.payerUserId]) {
+    if (p.version === 6) sceneCurrent();
     const row = await trusted.env.DB.prepare(PRINCIPAL_WITH_ACCESS_SQL).bind(userId).first<Record<string, unknown>>();
+    if (p.version === 6) sceneCurrent();
     if (!row) return fail("sponsor_principal_changed");
     principalAssertions.push({ sql: `EXISTS(SELECT 1 FROM (${PRINCIPAL_WITH_ACCESS_SQL}) captured WHERE json_array(${principalColumns.map(column => `captured.${column}`).join(",")})=?)`,
       bindings: [userId, JSON.stringify(principalColumns.map(column => row[column] ?? null))] });
   }
-  const issuedAssertions: OutputSqlAssertion[] = p.version === 2 || p.version === 4 || p.version === 5 ? [sponsorApprovalAssertion(p, e.actorUserId), await sponsorIssuedAuthorityAssertion({ policy:p, policyDigest:compiled.policyDigest, grantId,
+  const issuedAssertions: OutputSqlAssertion[] = p.version === 2 || p.version === 4 || p.version === 5 || p.version === 6 ? [sponsorApprovalAssertion(p, e.actorUserId), await sponsorIssuedAuthorityAssertion({ policy:p, policyDigest:compiled.policyDigest, grantId,
     actorUserId:e.actorUserId,sessionDigest:e.sessionDigest,intentKey:e.intentKey,envelopeDigest:compiled.envelopeDigest })] : [];
+  if (p.version === 6) sceneCurrent();
   const assertions: OutputSqlAssertion[] = [...principalAssertions, ...issuedAssertions, { sql: `EXISTS(SELECT 1 FROM experience_sponsor_campaigns campaign JOIN experience_sponsor_grants grant_row ON grant_row.campaign_id=campaign.campaign_id
     JOIN users actor ON actor.user_id=grant_row.actor_user_id JOIN users payer ON payer.user_id=?
     WHERE campaign.campaign_id=? AND campaign.enabled=1 AND campaign.policy_digest=? AND campaign.policy_json=?
@@ -237,9 +277,11 @@ export async function createSponsorAdmissionAuthority(input: {
     compiled.envelopeDigest, e.issuedAtMs, e.expiresAtMs, POLICY_VERSION, POLICY_VERSION, e.actorUserId, e.actorUserId, e.projectId] }];
   const authority = Object.freeze({}) as SponsorAdmissionAuthority;
   if (!current()) return fail("sponsor_authority_changed");
-  const state: State = { ...captured, commandJson, grantId, compiled, assertions, principalDigest: e.sessionDigest };
+  const state: State = { ...captured, commandJson, grantId, compiled, assertions, principalDigest: e.sessionDigest,
+    ...(p.version === 6 ? { scenePreparation: input.scenePreparation, sceneCurrent } : {}) };
   authorities.set(authority, state);
   await requireSponsorAdmission(authority, trusted, command);
+  state.sceneCurrent?.();
   return authority;
 }
 
@@ -253,9 +295,18 @@ export async function requireSponsorAdmission(authority: SponsorAdmissionAuthori
   };
   unchanged();
   const principal = await principalFor(trusted);
+  if (state.compiled.policy.version === 6) unchanged();
   if (await sponsorPrincipalDigest(principal) !== state.principalDigest) return fail("sponsor_principal_changed");
+  if (state.compiled.policy.version === 6) unchanged();
   const checks = await trusted.env.DB.batch<Record<string, unknown>>(state.assertions.map(proof => trusted.env.DB.prepare(`SELECT CASE WHEN (${proof.sql}) THEN 1 ELSE 0 END AS current`).bind(...(proof.bindings ?? []))));
-  if (checks.length !== state.assertions.length || checks.some(result => result.success !== true || result.results.length !== 1 || result.results[0]?.current !== 1)) return fail("sponsor_authority_revoked");
+  if (state.compiled.policy.version === 6) {
+    unchanged();
+    const own = (value: unknown, key: PropertyKey): unknown => value && typeof value === "object" ? Object.getOwnPropertyDescriptor(value, key)?.value : undefined;
+    if (!Array.isArray(checks) || own(checks, "length") !== state.assertions.length || Array.from({ length: state.assertions.length }, (_, index) => {
+      const result = own(checks, index), rows = own(result, "results");
+      return own(result, "success") !== true || own(result, "error") !== undefined || !Array.isArray(rows) || own(rows, "length") !== 1 || own(own(rows, 0), "current") !== 1;
+    }).some(Boolean)) return fail("sponsor_authority_revoked");
+  } else if (checks.length !== state.assertions.length || checks.some(result => result.success !== true || result.results.length !== 1 || result.results[0]?.current !== 1)) return fail("sponsor_authority_revoked");
   unchanged();
   return { payerUserId: state.compiled.policy.payerUserId, assertions: structuredClone(state.assertions), marker: {
     envelope_digest: state.compiled.envelopeDigest, policy_digest: state.compiled.policyDigest, consumption_id: state.compiled.envelope.consumptionId,
@@ -266,23 +317,27 @@ export async function requireSponsorAdmission(authority: SponsorAdmissionAuthori
 export async function sponsorAdmissionPlan(authority: SponsorAdmissionAuthority, trusted: OutputTrustedContext, native: SponsorNativeAdmission) {
   const state = stateFor(authority, identity(trusted));
   const plan = await prepareSponsorEntitlement({ policy: state.compiled.policy, envelope: state.compiled.envelope, grantId: state.grantId, native });
+  state.sceneCurrent?.();
   if (state.compiled.policy.version === 1) return plan;
   const resource = await sponsorResourceAdmissionAssertion({ limits: state.compiled.policy.resources, campaignId: state.compiled.policy.campaignId,
     policyDigest: state.compiled.policyDigest, actorUserId: state.compiled.envelope.actorUserId });
+  state.sceneCurrent?.();
   const approval = sponsorApprovalAssertion(state.compiled.policy, state.compiled.envelope.actorUserId);
-  if (state.compiled.policy.version === 4 || state.compiled.policy.version === 5) {
+  if (state.compiled.policy.version === 4 || state.compiled.policy.version === 5 || state.compiled.policy.version === 6) {
     // Native sidecars and the occupancy insert precede these guards in the same
     // DB.batch. Keep each complete predicate in its own CHECK statement: nesting
     // them with the final receipt witness exceeds D1's expression depth. The
     // native receipt assertion still runs after output_commands is inserted.
-    const family = state.compiled.policy.version === 5 ? "slides" : "story";
+    const family = state.compiled.policy.version === 6 ? "scene" : state.compiled.policy.version === 5 ? "slides" : "story";
     const token = `sponsor-${family}:${state.compiled.envelope.consumptionId}`;
     const guards = [resource, approval].flatMap(proof => [
       { sql: `INSERT INTO experience_sponsor_assertions(token,passed) VALUES(?,CASE WHEN (${proof.sql}) THEN 1 ELSE 0 END)`,
         bindings: [token, ...(proof.bindings ?? [])] },
       { sql: "DELETE FROM experience_sponsor_assertions WHERE token=?", bindings: [token] },
     ]);
-    if (await digest(plan.nativeAssertion.sql) !== STORY_NATIVE_RECEIPT_SOURCE_DIGEST) return fail(state.compiled.policy.version === 5 ? "sponsor_slides_native_proof_changed" : "sponsor_story_native_proof_changed");
+    const sourceDigest = await digest(plan.nativeAssertion.sql);
+    state.sceneCurrent?.();
+    if (sourceDigest !== STORY_NATIVE_RECEIPT_SOURCE_DIGEST) return fail(state.compiled.policy.version === 6 ? "sponsor_scene_native_proof_changed" : state.compiled.policy.version === 5 ? "sponsor_slides_native_proof_changed" : "sponsor_story_native_proof_changed");
     return { ...plan, admissionStatements: [...plan.admissionStatements, ...guards],
       nativeAssertion: { ...plan.nativeAssertion, sql: STORY_NATIVE_RECEIPT_SQL } };
   }

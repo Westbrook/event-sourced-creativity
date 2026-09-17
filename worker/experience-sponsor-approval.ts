@@ -253,7 +253,7 @@ export async function sponsorIssuedAuthorityAssertion(input: {
 
 
 /** Dedicated Scene metadata reader. This never grants issuance, native admission,
- * paid execution or result reads; common policy/envelope parsers still refuse V6.
+ * paid execution or result reads; those require separately sealed native/runtime proofs.
  * No initializer or atomic-write assertion helper is used by this reader. */
 export async function loadApprovedSponsorSceneCampaign(request: Request, env: WorkerEnv, campaignId: string) {
   if (!id(campaignId)) return fail("sponsor_campaign_invalid");

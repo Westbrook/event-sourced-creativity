@@ -1,5 +1,7 @@
 # Dormant Scene V6 policy and approval metadata
 
+This document records the separately accepted policy-only stage at `4acc3fdb696c37aa683229fbe509d29fc4bcbd45`. Its staged runtime refusals remain historical evidence. The later coherent, still dormant native integration is described in [the Scene native sponsor contract](forma-sponsored-scene-native-2026-09-17.md); that successor deliberately adds V6 to common internal readers while requiring genuine native handles at runtime.
+
 This increment reserves protocol version 6, family `canonical-scene-screenplay@1`, as an explicit review contract. It adds a dedicated policy reader, envelope compiler and Scene-only approved-campaign reader. It does not add Scene to the common sponsor policy/envelope unions, `readSponsorPolicy`, `compileSponsorEnvelope`, native admission, execution or Events dispatch. The actual generic admission entry rejects V6 before native database work. No route, initializer, environment switch, issuer or campaign enrollment is activated.
 
 The source base is `c4c6a8937eace8e442bb317dd5ce2ac4a5abfff7`, composed from accepted Slides B `fea8cc16929c3b9c8abdc6d77b7e7879e9cb3eb3` and accepted Scene leaf/cancellation `d23e46244f4df6880e7cf419248e5277f55e9fd2` / `a7b7d1d3a17c054a9a1c63b439304d47d3195393`. Only `experience-sponsor-policy.ts` and `experience-sponsor-approval.ts` are existing production-file changes. Accepted native Scene evidence and ordinary Image, guest, Story and Slides runtime paths are preserved.

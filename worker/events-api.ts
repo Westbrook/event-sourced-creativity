@@ -1,3 +1,4 @@
+import { sponsorScenePaidDispatchDeadline, sponsorScenePaidClaimIdentity, requireSponsorScenePaidDispatchCurrent, type SponsorScenePaidClaim } from "./experience-sponsor-scene-paid-claim.ts";
 import { sponsorFinancialEventProfile } from "./experience-sponsor-execution.ts";
 import { canonicalJson as sponsorEventJson } from "../src/experiences/compiler.ts";
 import { parseVideoOutputContract } from "../src/model/output-video-contract.ts";
@@ -585,6 +586,14 @@ export async function handleEvents(request:Request,env:WorkerEnv,hot=false,userO
           ||sponsorEventJson(output.settings)!==settings||sponsorEventJson(output.reference)!==reference
           ||sponsorFinancialEventProfile(binding,sponsorEnvironment,actorUserId,output.reference)!=="short_story")
           return Response.json({error:"sponsor_recipe_unsupported"},{status:403});
+      }else if(profile==="scene"){
+        const settings=sponsorEventJson(output.settings),reference=sponsorEventJson(output.reference);
+        const scene=await readOutputScenePayload(output.settings);
+        if(!scene||body.action!=="render_document"||body.artifactKind!=="scene"||body.productionMode!=="manual"||body.itemCount!==1||body.sceneMedium!=="visual"
+          ||!output.refreshSponsorSceneDispatch||!output.createSponsorScenePaidClaim||execution!.signal.aborted
+          ||sponsorEventJson(output.settings)!==settings||sponsorEventJson(output.reference)!==reference
+          ||sponsorFinancialEventProfile(binding,sponsorEnvironment,actorUserId,output.reference)!=="scene")
+          return Response.json({error:"sponsor_recipe_unsupported"},{status:403});
       }else if(profile==="slides"){
         const settings=output.settings,supplied=body as Record<string,unknown>,exactFive=sponsorEventJson({kind:"exact",unit:"slide",value:5});
         if(body.action!=="render_document"||body.artifactKind!=="slides"||body.productionMode!=="manual"||body.itemCount!==5
@@ -990,6 +999,7 @@ export async function handleEvents(request:Request,env:WorkerEnv,hot=false,userO
       if((Object.hasOwn(body,"outputAudio")||execution?.output&&artifactKind==="audio")&&(!nativeAudio||!execution?.output?.refreshAudio))return Response.json({error:"output_audio_contract_unsupported"},{status:422});
       if(nativeAudio){await execution!.output!.refreshAudio!();if(body.productionMode!=="manual"||body.itemCount!==1||body.providerJobId||body.audioImageBlockId||body.audioVideoArtifactId||body.sendAudioVideoToProvider)throw new Error("output_audio_original_attempt_required");}
       const nativeScene=execution?.output?await readOutputScenePayload(execution.output.settings):null;
+      const sponsoredScene=Boolean(nativeScene&&sponsoredOutput&&sponsorFinancialEventProfile(execution!.output!.sponsorFinancialBinding!,sponsorEnvironment,actorUserId,execution!.output!.reference)==="scene");
       if((Object.hasOwn(body,"outputScene")||execution?.output&&artifactKind==="scene")&&(!nativeScene||!execution?.output?.refreshScene))return Response.json({error:"output_scene_contract_unsupported"},{status:422});
       const nativeNarrative=execution?.output?await readOutputNarrativePayload(execution.output.settings):null;
       if(execution?.output&&(artifactKind==="short_story"||Object.hasOwn(execution.output.settings,"outputNarrative"))&&!nativeNarrative)return Response.json({error:"output_narrative_contract_unsupported"},{status:422});
@@ -1041,12 +1051,13 @@ export async function handleEvents(request:Request,env:WorkerEnv,hot=false,userO
         &&recordedDocumentPlannerUsage(sourceEvents,String(body.plannerResponseId)).tokensRecorded);
       let scenePrepared:PreparedSceneCost|null=null;
       let scenePaidClaim:ClaimedSceneBudget|null=null;
+      let sponsorSceneClaim:SponsorScenePaidClaim|null=null;
       let scenePilotValidUntil:string|null=null;
       let scenePolicyStop:ScenePolicyStopWitness|null=null;
       let scenePendingRequestId:string|null=null;
       const rememberScenePolicyStop=(error:unknown,clientRequestId:string,stage:ScenePolicyStopWitness["stage"])=>{
-        if(!(error instanceof ScenePaidPolicyStopError)||!scenePrepared||!scenePaidClaim||!execution)return;
-        const approval=scenePrepared.preview,claim=scenePaidClaim;
+        if(!(error instanceof ScenePaidPolicyStopError)||!scenePrepared||(!scenePaidClaim&&!sponsorSceneClaim)||!execution)return;
+        const approval=scenePrepared.preview,claim=sponsorSceneClaim?{...sponsorScenePaidClaimIdentity(sponsorSceneClaim),projectScope:null,pilotCohortId:null}:scenePaidClaim!;
         scenePolicyStop={version:"scene-policy-stop-v1",code:"scene_paid_authority_changed",stage,
           job_id:approval.requestId,document_id:documentId,project_id:approval.projectId,actor_user_id:claim.actorUserId,attempt_correlation_id:corr,
           provider:"openai",model:approval.model,client_request_id:clientRequestId,artifact_id:artifactId,
@@ -1058,11 +1069,14 @@ export async function handleEvents(request:Request,env:WorkerEnv,hot=false,userO
       const verifySceneDispatch=async()=>{
         if(artifactKind!=="scene")return;
         if(!scenePrepared)throw new SceneCostConsentError("scene_cost_confirmation_required",428);
-        const latest=nativeScene?await execution!.output!.refreshScene!():await prepareSceneCostConsent(env,auth.user!,documentId,{...sceneBody,snapshot:authoritativeSnapshot??body.snapshot},
+        const sponsored=sponsoredScene?await execution!.output!.refreshSponsorSceneDispatch!(execution!):null;
+        const latest=sponsored?sponsored.prepared:nativeScene?await execution!.output!.refreshScene!():await prepareSceneCostConsent(env,auth.user!,documentId,{...sceneBody,snapshot:authoritativeSnapshot??body.snapshot},
           scenePrepared.preview.contextSessionId,{synchronize:true});
         if(!nativeScene)requireSceneCostApproval(sceneBody.sceneCostConsent,latest);
-        if(!scenePaidClaim)throw new ScenePaidPolicyStopError();
-        const deadline=await scenePaidDispatchDeadline(env,latest,scenePaidClaim);
+        if(sponsored?!sponsorSceneClaim:!scenePaidClaim)throw new ScenePaidPolicyStopError();
+        const deadline=sponsored?await sponsorScenePaidDispatchDeadline({claim:sponsorSceneClaim!,prepared:latest,evidence:sponsored.evidence})
+          :await scenePaidDispatchDeadline(env,latest,scenePaidClaim!);
+        if(sponsorSceneClaim)requireSponsorScenePaidDispatchCurrent(sponsorSceneClaim);
         scenePilotValidUntil=deadline.pilotValidUntil;
         requireScenePaidDeadline(scenePilotValidUntil);
         requireSceneCostDeadline(deadline);
@@ -1071,7 +1085,7 @@ export async function handleEvents(request:Request,env:WorkerEnv,hot=false,userO
       if(artifactKind==="scene"&&!retainedPaidScene){
         try{
           const approval=sceneBody.sceneCostConsent&&typeof sceneBody.sceneCostConsent==="object"?sceneBody.sceneCostConsent as Record<string,unknown>:{};
-          scenePrepared=nativeScene?await execution!.output!.refreshScene!():await prepareSceneCostConsent(env,auth.user!,documentId,{...sceneBody,snapshot:authoritativeSnapshot??body.snapshot},
+          scenePrepared=sponsoredScene?(await execution!.output!.refreshSponsorSceneDispatch!(execution!)).prepared:nativeScene?await execution!.output!.refreshScene!():await prepareSceneCostConsent(env,auth.user!,documentId,{...sceneBody,snapshot:authoritativeSnapshot??body.snapshot},
             typeof approval.contextSessionId==="string"?approval.contextSessionId:null,{synchronize:true});
           if(!nativeScene)requireSceneCostApproval(sceneBody.sceneCostConsent,scenePrepared);
           compiledSnapshot=scenePrepared.effectiveSnapshot;
@@ -1199,7 +1213,13 @@ export async function handleEvents(request:Request,env:WorkerEnv,hot=false,userO
       if(costReservationId){const existing=await costBudgetReservation(env,billingOwnerId,costReservationId);retainedStoryboardCostClaim=Boolean(execution&&artifactKind==="storyboard"&&(((body as Record<string,unknown>).storyboardProviderSubmission==="confirmed"&&body.providerJobId)||storyboardSafeRecovery)&&existing?.status==="executing");if(!existing||existing.status!=="active"&&!retainedStoryboardCostClaim||existing.stream_id!==streamId||existing.correlation_id!==corr||existing.operation!==`document-render:${artifactKind}`||existing.reserved_microusd<estimatedCostMicrousd||(costReservationPeriod&&existing.period!==costReservationPeriod)||(body.costReservationMicrousd&&existing.reserved_microusd!==Math.floor(Number(body.costReservationMicrousd)))){if(reservationCreated)await releaseBudget(env,billingOwnerId,reservationId,{reason:`document_${artifactKind}_cost_reservation_invalid`});return Response.json({error:"cost_reservation_invalid_or_expired"},{status:409});}costReservationMicrousd=existing.reserved_microusd;costReservationPeriod=existing.period;}
       if(!costReservationId){const costReservation=await reserveCostBudget(env,billingOwnerId,estimatedCostMicrousd,{maximumMicrousd:estimatedCostMicrousd,allowUserOverage:false,batchCounterInitialization:batchPresentationBookkeeping,streamId,correlationId:corr,operation:`document-render:${artifactKind}`,...(tokenReservationPeriod?{period:tokenReservationPeriod}:{}),projectScope:projectBudgetScope,...(scenePrepared?{reservationAssertions:scenePrepared.assertions}:{})}).catch(async(error:unknown)=>{if(scenePrepared&&reservationCreated){try{await releaseBudget(env,billingOwnerId,reservationId,{reason:"scene_cost_reservation_failed"});}catch{console.warn("scene_fresh_token_cleanup_failed");}}throw error;});if(!costReservation.ok){if(reservationCreated)await releaseBudget(env,billingOwnerId,reservationId,{reason:`document_${artifactKind}_cost_cap_reached`});const denied=makeEvent(streamId,requestedSequence+1,"worker:policy",client,corr,"BudgetExceeded",{reason:"monthly_cost_cap_reached",scope:costReservation.scope,reserved_tokens:0,estimated_cost_microusd:estimatedCostMicrousd,operation:`document-render:${artifactKind}`,artifact_kind:artifactKind});await insertEvent(env,denied).run();const detail=applicationFailureDetail("budget_hard_cap_reached",costReservation.scope,429);return Response.json({error:detail.code,errorDetail:publicFailureDetail(detail),scope:costReservation.scope},{status:429});}costReservationId=costReservation.reservationId;costReservationMicrousd=costReservation.reservedMicrousd;costReservationPeriod=costReservation.period;}
       if(!retainedStoryboardCostClaim&&!await claimCostBudgetReservation(env,billingOwnerId,costReservationId)){if(reservationCreated)await releaseBudget(env,billingOwnerId,reservationId,{reason:`document_${artifactKind}_cost_reservation_claim_conflict`});return Response.json({error:"cost_reservation_already_in_use"},{status:409});}
-      if(scenePrepared)scenePaidClaim={actorUserId:billingOwnerId,streamId,correlationId:corr,period:costReservationPeriod,
+      if(scenePrepared&&sponsoredScene){
+        const output=execution!.output!;
+        sponsorSceneClaim=output.createSponsorScenePaidClaim!({runtimeControl:execution!,originalClaimIdentity:{
+          jobId:scenePrepared.preview.requestId,scopeKey:output.reference.scopeKey,grantId:output.reference.grantId,slotId:output.reference.slotId,
+          streamId,correlationId:corr,period:costReservationPeriod,tokenReservationId:reservationId,costReservationId,reservedTokens:reserved,reservedMicrousd:costReservationMicrousd}});
+      }
+      if(scenePrepared&&!sponsoredScene)scenePaidClaim={actorUserId:billingOwnerId,streamId,correlationId:corr,period:costReservationPeriod,
         tokenReservationId:reservationId,costReservationId,reservedTokens:reserved,reservedMicrousd:costReservationMicrousd,
         projectScope:scenePrepared.scope?{...scenePrepared.scope}:null,pilotCohortId:pilotAllowance?.pilot?.cohort_id??null};
       const sourceBlockVersions=projection.blocks.filter((block)=>block.properties.active!==false&&Number(block.properties.weight??.5)>0).map((block)=>({block_id:block.id,version:block.sourceEvents.length}));
@@ -1298,7 +1318,7 @@ export async function handleEvents(request:Request,env:WorkerEnv,hot=false,userO
       }:undefined;
       const sceneDispatchDeadline=artifactKind==="scene"?(clientRequestId?:string)=>{
         if(!scenePrepared)throw new SceneCostConsentError("scene_cost_confirmation_required",428);
-        try{requireScenePaidDeadline(scenePilotValidUntil);requireSceneCostDeadline(scenePrepared);if(execution?.output){if(!clientRequestId)throw new Error("output_scene_request_identity_required");execution.output.beforeProviderDispatch(clientRequestId);}}
+        try{if(sponsorSceneClaim)requireSponsorScenePaidDispatchCurrent(sponsorSceneClaim);requireScenePaidDeadline(scenePilotValidUntil);requireSceneCostDeadline(scenePrepared);if(execution?.output){if(!clientRequestId)throw new Error("output_scene_request_identity_required");execution.output.beforeProviderDispatch(clientRequestId);}}
         catch(error){if(scenePendingRequestId)rememberScenePolicyStop(error,scenePendingRequestId,"after-pending");throw error;}
       }:undefined;
       const retainedObserver=paidProviderObserver(body as Record<string,unknown>,execution?.progress,{artifactId,reservationId,costReservationId,costReservationPeriod,costReservationMicrousd},execution?.output?.observeProvider??(execution&&artifactKind==="slides"?(receipt)=>retainLegacyPresentationFinancialReceipt(env,presentationIdentity,receipt):undefined),{presentation:artifactKind==="slides"});

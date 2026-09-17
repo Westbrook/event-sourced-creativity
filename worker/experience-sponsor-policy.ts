@@ -46,12 +46,12 @@ export type SponsorPolicyV4 = Omit<SponsorPolicyV1, "version" | "recipes"> & {
 export type SponsorPolicyV5 = Omit<SponsorPolicyV1, "version" | "recipes"> & {
   version: 5; family: "canonical-five-slide-deck@1"; templates: SponsorSlidesCampaignTemplate[]; resources: SponsorResourceLimitsV1;
 };
-/** Staged Scene data only; excluded from common runtime policy/envelope unions
- * until original native proof/job transition composition is separately reviewed. */
+/** Scene review data; runtime callers additionally require the original native
+ * proof and separately recorded admission/Run/dispatch transition. */
 export type SponsorPolicyV6 = Omit<SponsorPolicyV1, "version" | "recipes"> & {
   version: 6; family: "canonical-scene-screenplay@1"; templates: SponsorSceneCampaignTemplate[]; resources: SponsorResourceLimitsV1;
 };
-export type SponsorApprovedPolicy = SponsorPolicyV2 | SponsorPolicyV4 | SponsorPolicyV5;
+export type SponsorApprovedPolicy = SponsorPolicyV2 | SponsorPolicyV4 | SponsorPolicyV5 | SponsorPolicyV6;
 export type SponsorPolicy = SponsorPolicyV1 | SponsorApprovedPolicy;
 export type SponsorEnvelopeV1 = {
   version: 1; campaignId: string; policyVersion: string; consumptionId: string; intentKey: string;
@@ -65,7 +65,7 @@ export type SponsorEnvelopeV2 = Omit<SponsorEnvelopeV1, "version"> & { version: 
 export type SponsorEnvelopeV4 = Omit<SponsorEnvelopeV1, "version"> & { version: 4; family: "canonical-short-story@1"; templateDigest: string };
 export type SponsorEnvelopeV5 = Omit<SponsorEnvelopeV1, "version"> & { version: 5; family: "canonical-five-slide-deck@1"; templateDigest: string };
 export type SponsorEnvelopeV6 = Omit<SponsorEnvelopeV1, "version"> & { version: 6; family: "canonical-scene-screenplay@1"; templateDigest: string };
-export type SponsorEnvelope = SponsorEnvelopeV1 | SponsorEnvelopeV2 | SponsorEnvelopeV4 | SponsorEnvelopeV5;
+export type SponsorEnvelope = SponsorEnvelopeV1 | SponsorEnvelopeV2 | SponsorEnvelopeV4 | SponsorEnvelopeV5 | SponsorEnvelopeV6;
 const recipeKeys = ["appId", "recipeVersion", "releaseDigest", "outputKind", "provider", "model", "routeDigest", "settingsDigest", "outputCount", "durationMs", "width", "height", "calls", "maximumTokens", "maximumMicrousd"];
 function validRecipe(value: unknown): value is SponsorRecipe {
   if (!keys(value, recipeKeys) || ![value.appId, value.recipeVersion, value.provider, value.model].every(id)
@@ -125,6 +125,7 @@ export function readSponsorPolicy(raw: unknown = DEFAULT_SPONSOR_POLICY): Sponso
   if (keys(raw, ["version", "mode"]) && raw.version === 1 && raw.mode === "disabled") return DEFAULT_SPONSOR_POLICY;
   if (record(raw) && raw.version === 4) return readSponsorStoryPolicy(raw);
   if (record(raw) && raw.version === 5) return readSponsorSlidesPolicy(raw);
+  if (record(raw) && raw.version === 6) return readSponsorScenePolicy(raw);
   if (record(raw) && raw.version === 2) {
     if (!keys(raw, ["version", "mode", "campaignId", "policyVersion", "payerUserId", "audience", "approvalReceiptDigest", "startsAtMs", "expiresAtMs", "maximumGrantLifetimeMs", "maximumAdmissions", "maximumMicrousd", "maximumAdmissionsPerActor", "windowMs", "maximumAdmissionsPerWindow", "maximumAdmissionsPerActorWindow", "templates", "resources"])
       || !Array.isArray(raw.templates) || raw.templates.length !== 1) return fail("sponsor_policy_invalid");
@@ -204,6 +205,7 @@ async function compileSponsorSlidesEnvelope(policy: SponsorPolicyV5, raw: unknow
  * not prove rights, identity or custody; native commit-time authority is required. */
 export async function compileSponsorEnvelope(rawPolicy: unknown, rawEnvelope: unknown) {
   const policy = readSponsorPolicy(rawPolicy);
+  if (policy.version === 6) return compileSponsorSceneEnvelope(policy, rawEnvelope);
   if (policy.mode === "disabled") return fail("sponsor_disabled");
   if (policy.version === 4) return compileSponsorStoryEnvelope(policy, rawEnvelope);
   if (policy.version === 5) return compileSponsorSlidesEnvelope(policy, rawEnvelope);
@@ -232,7 +234,7 @@ export async function compileSponsorEnvelope(rawPolicy: unknown, rawEnvelope: un
 }
 
 
-/** Dedicated inert V6 grammar. Common runtime entry points deliberately refuse it. */
+/** Closed V6 grammar; the runtime separately requires genuine native preparation. */
 export function readSponsorScenePolicy(raw: unknown): SponsorPolicyV6 {
   raw = captureSponsorSceneJson(raw);
   if (jsonIssues(raw).length) return fail("sponsor_policy_invalid");

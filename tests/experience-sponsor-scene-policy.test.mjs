@@ -56,11 +56,11 @@ test('dedicated V6 canonical data preserves native one-call Scene limits and imm
  assert.equal((await proposed).termsJson,canonicalJson(original));assert.equal((await proposed).policy.approvalReceiptDigest,await digest(original));
 });
 
-test('common runtime parsers and actual admission entry refuse V6 before native work',async()=>{
- assert.strictEqual(readSponsorPolicy(),DEFAULT_SPONSOR_POLICY);assert.throws(()=>readSponsorPolicy(policy),/sponsor_policy_invalid/);
- await assert.rejects(compileSponsorEnvelope(policy,envelope),/sponsor_policy_invalid/);
- let reads=0;const trusted={request:request(),env:{DB:{prepare(){reads++;throw Error('No native read permitted');}}},scope:{actorUserId:actor,documentId:'document'},context:null,sourceAssertions:[],sourceDigest:h('a'),requirementsDigest:h('b')};
- await assert.rejects(createSponsorAdmissionAuthority({trusted,command:{action:'authorize'},policy,envelope,grantId:'scene-grant'}),/sponsor_policy_invalid/);assert.equal(reads,0);
+test('common V6 review data still requires genuine Scene preparation before native admission work',async()=>{
+ assert.strictEqual(readSponsorPolicy(),DEFAULT_SPONSOR_POLICY);assert.equal(readSponsorPolicy(policy).version,6);
+ assert.deepEqual(await compileSponsorEnvelope(policy,envelope),await compileSponsorSceneEnvelope(policy,envelope));
+ let reads=0;const trusted={request:request(),env:{DB:{prepare(){reads++;throw Error('No native read permitted');}}},scope:{actorUserId:actor,documentId:'document'},principal:{userId:actor},context:null,sourceAssertions:[],sourceDigest:h('a'),requirementsDigest:h('b')};
+ await assert.rejects(createSponsorAdmissionAuthority({trusted,command:{action:'authorize'},policy,envelope,grantId:'scene-grant'}),/sponsor_scene_preparation_required/);assert.equal(reads,0);
 });
 
 test('V6 closed policy, envelope and approval grammars refuse cross-family and permission expansion',async()=>{
@@ -85,7 +85,7 @@ test('actual synthetic payer approval loads only through the Scene reader with z
  const result=await loadApprovedSponsorSceneCampaign(request(),f.env,policy.campaignId);assert.equal(result.policy.version,6);assert.equal(result.actor.userId,actor);assert.equal(result.policyDigest,f.compiled.policyDigest);
  assert.equal(JSON.parse(f.sqlite.prepare('SELECT payer_authority_json FROM experience_sponsor_approvals').get().payer_authority_json).length,13);
  assert.deepEqual(snapshot(f),before);limits.assertVerified();
- for(const loader of [loadApprovedSponsorCampaign,loadApprovedSponsorStoryCampaign,loadApprovedSponsorSlidesCampaign])await assert.rejects(loader(request(),f.env,policy.campaignId),/sponsor_policy_invalid/);
+ for(const loader of [loadApprovedSponsorCampaign,loadApprovedSponsorStoryCampaign,loadApprovedSponsorSlidesCampaign])await assert.rejects(loader(request(),f.env,policy.campaignId),/sponsor_approved_campaign_unavailable/);
  assert.deepEqual(snapshot(f),before);
  t.diagnostic(JSON.stringify({statements:limits.records.length,maximumBindings:Math.max(...limits.boundCounts),zeroReaderWrites:true,egress}));
 });

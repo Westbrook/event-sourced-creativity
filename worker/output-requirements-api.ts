@@ -7,8 +7,9 @@ import { hasProjectContextCookie } from "./project-request-context.ts";
 import { prepareOutputDurableRun, wakeOutputDurableJobs } from "./output-durable-control.ts";
 import { jsonIssues } from "../src/experiences/compiler.ts";
 import { readOutputModel3dPayload, requireModel3dMiniAppCostApproval } from "./output-model3d-execution.ts";
-import { requireSponsorAdmission, sponsorAdmissionPayer, sponsorAdmissionPlan, type SponsorAdmissionAuthority } from "./experience-sponsor-admission.ts";
-import { requireSponsorExecution, type SponsorExecutionAuthority } from "./experience-sponsor-execution.ts";
+import { requireSponsorAdmission, sponsorAdmissionPayer, sponsorAdmissionPlan, sponsorSceneAdmissionPreparation, type SponsorAdmissionAuthority } from "./experience-sponsor-admission.ts";
+import { requireSponsorExecution, sponsorSceneRunPreparation, type SponsorExecutionAuthority } from "./experience-sponsor-execution.ts";
+import { prepareSceneSponsorAdmission, prepareSceneSponsorRun, requireSceneSponsorAdmissionForTarget, requireSceneSponsorAdmissionCurrent, sceneSponsorRunTransaction } from "./output-scene-sponsored-handoff.ts";
 import { outputModel3dPreflightAssertions } from "./output-model3d-preflight.ts";
 import { model3dMiniAppAttemptMatches } from "../src/model/model3d-mini-app-consent.ts";
 import { resolveOutputModel3dRecoverySource } from "./output-model3d-source.ts";
@@ -497,6 +498,26 @@ function bridgeTarget(trusted: OutputTrustedContext, plan: OutputConfirmedPlan, 
     ...(Object.hasOwn(target,'scene_contract')?{sceneUseVersionedHistory:true}:{}) };
 }
 
+/** These dormant preparation reads must not adopt a replacement caller while
+ * loading the original quote/job. Native proof creation follows this capture. */
+function sceneSponsorPreparationCurrent(trusted: OutputTrustedContext, body: Record<string, unknown>) {
+  const request = trusted.request, signal = request.signal, env = trusted.env, database = env.DB, principal = trusted.principal;
+  const facts = () => canonicalOutputJson({ command: body, scope: trusted.scope, principal: trusted.principal, projectContext: trusted.projectContext,
+    ownerHead: trusted.ownerHead, context: trusted.context, sourceDigest: trusted.sourceDigest, requirementsDigest: trusted.requirementsDigest,
+    events: trusted.events, sourceAssertions: trusted.sourceAssertions, sourcePrivateCaptured: trusted.sourcePrivateCaptured, sourceProblems: trusted.sourceProblems,
+    request: { url: request.url, method: request.method, headers: [...request.headers.entries()] },
+    configuration: { key: env.OPENAI_API_KEY ?? null, model: env.OPENAI_MODEL ?? null, cohort: env.FORMA_PILOT_COHORT_ID ?? null } });
+  const captured = facts();
+  const current = () => {
+    let aborted: unknown, actualSignal: unknown;
+    try { actualSignal = Object.getOwnPropertyDescriptor(Request.prototype, "signal")?.get?.call(request);
+      aborted = Object.getOwnPropertyDescriptor(AbortSignal.prototype, "aborted")?.get?.call(signal); } catch { fail("sponsor_scene_handoff_changed", 403); }
+    if (trusted.request !== request || request.signal !== signal || actualSignal !== signal || aborted !== false || trusted.env !== env || env.DB !== database
+      || trusted.principal !== principal || facts() !== captured) fail("sponsor_scene_handoff_changed", 403);
+  };
+  current(); return current;
+}
+
 async function preflightPlan(trusted: OutputTrustedContext, body: Record<string, unknown>, digest: string, bridge?: OutputExecutionBridge) {
   requireCurrentSource(trusted);
   const plan = currentPlan(trusted, await readConfirmedPlan(trusted, identifier(body.planRevisionId, "plan_revision_id_required")));
@@ -605,15 +626,20 @@ function outputProviderStages(offered: OutputNativeTargetPreflight): Array<{ sta
 async function authorizePlan(trusted: OutputTrustedContext, body: Record<string, unknown>, digest: string, bridge?: OutputExecutionBridge, sponsorAdmission?: SponsorAdmissionAuthority) {
   if (!bridge) fail("native_execution_unavailable", 409);
   if (Object.hasOwn(body, "sponsor_entitlement") !== Boolean(sponsorAdmission)) fail("sponsor_authority_unavailable", 403);
+  const scenePreparation = sponsorAdmission ? sponsorSceneAdmissionPreparation(sponsorAdmission, { request: trusted.request, env: trusted.env, actorUserId: trusted.scope.actorUserId, documentId: trusted.scope.documentId }) : null;
+  const assertSceneRequest = () => { if (scenePreparation && sponsorSceneAdmissionPreparation(sponsorAdmission!, { request: trusted.request, env: trusted.env, actorUserId: trusted.scope.actorUserId, documentId: trusted.scope.documentId }) !== scenePreparation) fail("sponsor_scene_handoff_changed", 403); };
   if (body.explicitAuthorization !== true || !Number.isSafeInteger(body.maximumMicrousd) || Number(body.maximumMicrousd) <= 0) fail("explicit_spending_authorization_required", 403);
   const preflightId = identifier(body.preflightId, "preflight_id_required");
   const row = await trusted.env.DB.prepare("SELECT * FROM output_preflights WHERE scope_key=? AND preflight_id=? AND actor_user_id=?").bind(trusted.scope.key, preflightId, trusted.scope.actorUserId).first<Record<string, unknown>>();
+  assertSceneRequest();
   if (!row || String(row.expires_at) <= nowIso()) fail("output_preflight_expired", 409);
   const preflight = record((await privateEventBody(trusted.env, trusted.scope, String(row.event_id))).preflight) as OutputPreflight;
+  assertSceneRequest();
   if (row.terms_digest !== body.termsDigest || preflight.termsDigest !== body.termsDigest || preflight.sourceDigest !== trusted.sourceDigest || preflight.requirementsDigest !== trusted.requirementsDigest) fail("output_authorization_terms_changed", 409);
   if (!preflight.targets.length || preflight.targets.some((target) => !target.available)) fail("unavailable_selected_output_route", 409);
   if (preflight.maximumMicrousd > Number(body.maximumMicrousd) || Number(body.maximumMicrousd) > 1_000_000_000_000) fail("output_authorization_ceiling_insufficient", 403);
   const plan = currentPlan(trusted, await readConfirmedPlan(trusted, preflight.planRevisionId));
+  assertSceneRequest();
   const model3dTargets=plan.plan.targets.filter(target=>target.selected&&Object.hasOwn(target,"model3d_contract"));
   if(model3dTargets.length&&(!/^\/api\/experiences\/drafts\/experience-draft-[a-f0-9]{64}\/output\/authorize$/u.test(new URL(trusted.request.url).pathname)
     ||model3dTargets.length!==1||preflight.targets.length!==1||trusted.scope.kind!=="personal"||trusted.scope.contextId))fail("model3d_mini_app_route_required",403);
@@ -633,10 +659,14 @@ async function authorizePlan(trusted: OutputTrustedContext, body: Record<string,
   if (sceneTargets.length > 1 || sceneTargets.length && preflight.targets.length !== 1
     || Boolean(sceneTargets.length) !== Object.hasOwn(body, "sceneCostConsent")) fail("scene_mini_app_confirmation_required", 403);
   let sceneExpiresAt: string | null = null;
+  if (scenePreparation && sceneTargets.length !== 1) fail("sponsor_scene_handoff_changed", 403);
+  const assertSceneCurrent = () => { if (scenePreparation) requireSceneSponsorAdmissionCurrent(scenePreparation, bridgeTarget(trusted, plan, sceneTargets[0]!), preflight, body.sceneCostConsent); };
   for (const offered of preflight.targets) {
     const target = plan.plan.targets.find((value) => value.id === offered.targetId);
     if (!target || !target.selected || target.blocking_issues.length) fail("output_target_no_longer_executable", 409);
-    const current = await bridge.preflight(bridgeTarget(trusted, plan, target));
+    const current = scenePreparation ? await requireSceneSponsorAdmissionForTarget(scenePreparation, bridgeTarget(trusted, plan, target), preflight, body.sceneCostConsent)
+      : await bridge.preflight(bridgeTarget(trusted, plan, target));
+    assertSceneCurrent();
     if (canonicalOutputJson(current) !== canonicalOutputJson(offered)) fail("output_provider_terms_changed", 409);
     const attempt = preflight.operationAttempts[target.id];
     if (!attempt || !Number.isSafeInteger(attempt.ordinal) || attempt.ordinal < 0) fail("output_attempt_identity_missing", 409);
@@ -665,6 +695,7 @@ async function authorizePlan(trusted: OutputTrustedContext, body: Record<string,
       const [originalScene, currentScene] = await Promise.all([
         readOutputScenePayload(record(offered.settings).payload), readOutputScenePayload(record(current.settings).payload),
       ]);
+      assertSceneCurrent();
       if (!originalScene || !currentScene || attempt.ordinal !== 0 || attempt.previousSlotId) fail("output_scene_original_attempt_required", 409);
       const preview = currentScene.outputScene.costPreview;
       if (preview.actorUserId !== trusted.scope.actorUserId || preview.projectId !== trusted.scope.projectId
@@ -680,9 +711,11 @@ async function authorizePlan(trusted: OutputTrustedContext, body: Record<string,
       jobId=preview.requestId;sceneExpiresAt=preview.expiresAt;
     }
     slots.push({ scopeKey: trusted.scope.key, slotId: uuidV7(), grantId, planRevisionId: plan.revisionId, targetId: target.id, targetContractDigest: plan.targetContractDigests[target.id], sourceDigest: trusted.sourceDigest, provider: offered.provider!, model: offered.model!, routeDigest: await outputDigest(offered), jobId, costReservationId: uuidV7(), tokenReservationId: uuidV7(), maximumMicrousd: offered.maximumMicrousd, maximumCalls: offered.maximumCalls, maximumTokens: offered.maximumTokens, status: "authorized", attemptOrdinal: attempt.ordinal, previousSlotId: attempt.previousSlotId });
+    assertSceneCurrent();
   }
   if (slots.reduce((sum, slot) => sum + slot.maximumMicrousd, 0) !== preflight.maximumMicrousd || slots.reduce((sum, slot) => sum + slot.maximumCalls, 0) !== preflight.maximumCalls) fail("output_allocation_mismatch", 500);
   const prepared = await bridge.prepareAdmission({ request: trusted.request, env: trusted.env, scope: trusted.scope, principal: trusted.principal, confirmedPlan: plan, context, ownerHead: trusted.ownerHead, sourceEvents: trusted.events, sourceAssertions: trusted.sourceAssertions, sourceDigest: trusted.sourceDigest, requirementsDigest: trusted.requirementsDigest, grantId, preflight, slots, ...(sponsorAdmission ? { sponsorAdmission } : {}), governanceWitness: trusted.governanceWitness, ...(sceneTargets.length ? { sceneCostConsent: body.sceneCostConsent,sceneUseVersionedHistory:true } : {}), ...(audioTargets.length?{audioCostConsent:body.audioCostConsent}:{}), ...(model3dTargets.length?{model3dCostConsent:body.model3dCostConsent}:{}) });
+  assertSceneCurrent();
   if (!prepared.events.length) fail("output_admission_receipt_required", 500);
   // Preserve the original Scene quote deadline through final atomic admission.
   if (sceneExpiresAt && Date.parse(sceneExpiresAt) <= Date.now()) fail("scene_mini_app_confirmation_required", 403);
@@ -698,9 +731,11 @@ async function authorizePlan(trusted: OutputTrustedContext, body: Record<string,
   const sponsoredPlan = sponsorAdmission ? await sponsorAdmissionPlan(sponsorAdmission, trusted, { scopeKey: trusted.scope.key,
     planRevisionId: plan.revisionId, slotId: slots[0]!.slotId, executionGrantId: grantId, jobId: slots[0]!.jobId,
     costReservationId: slots[0]!.costReservationId, tokenReservationId: slots[0]!.tokenReservationId, commandKey: write.key }) : null;
+  assertSceneCurrent();
   return commitOutputCommand(trusted.env, { ...write, sourceAssertions,sceneJobAdmissions:prepared.sceneJobAdmissions, events: [...prepared.events, { type: "OutputExecutionAuthorized", payload: { grant_id: grantId, plan_revision_id: plan.revisionId, preflight_id: preflightId, maximum_microusd: Number(body.maximumMicrousd), maximum_calls: preflight.maximumCalls, authorized_targets: slots.map((slot) => ({ target_id: slot.targetId, operation_slot_id: slot.slotId, job_id: slot.jobId, route_digest: slot.routeDigest })), source_digest: trusted.sourceDigest } }],
     assertions: [{ sql: "EXISTS(SELECT 1 FROM output_preflights preflight JOIN event_private_payloads body ON body.private_event_id=preflight.event_id AND body.redacted_at IS NULL WHERE preflight.scope_key=? AND preflight.preflight_id=? AND preflight.actor_user_id=? AND preflight.terms_digest=? AND preflight.expires_at>MAX(?,strftime('%Y-%m-%dT%H:%M:%fZ','now')))", bindings: [trusted.scope.key, preflightId, trusted.scope.actorUserId, preflight.termsDigest, createdAt] }],
     buildSidecars: (events) => {
+      assertSceneCurrent();
       const native = prepared.buildStatements(events);
       if (!native.statements.length || !native.assertions.length) throw new Error("output_atomic_native_admission_required");
       return { statements: [trusted.env.DB.prepare("INSERT INTO output_execution_grants(scope_key,grant_id,plan_revision_id,actor_user_id,payer_user_id,context_id,preflight_id,authorization_event_id,maximum_microusd,maximum_calls,status,expires_at,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,'authorized',?,?)")
@@ -754,22 +789,33 @@ async function requireRecordedSponsorExecution(trusted: OutputTrustedContext, gr
 
 async function runGrant(trusted: OutputTrustedContext, body: Record<string, unknown>, digest: string, bridge: OutputExecutionBridge | undefined, executionContext: WorkerExecutionContext, executionAuthority?: SponsorExecutionAuthority) {
   if (!bridge) fail("native_execution_unavailable", 409);
+  const sceneRun = executionAuthority ? sponsorSceneRunPreparation(executionAuthority, { request: trusted.request, env: trusted.env, actorUserId: trusted.scope.actorUserId, documentId: trusted.scope.documentId }) : null;
+  const assertSceneRequest = () => { if (sceneRun && sponsorSceneRunPreparation(executionAuthority!, { request: trusted.request, env: trusted.env, actorUserId: trusted.scope.actorUserId, documentId: trusted.scope.documentId }) !== sceneRun) fail("sponsor_scene_handoff_changed", 403); };
   const grantId = identifier(body.grantId, "grant_id_required");
   const evidence = await readOutputGrantEvidence(trusted.env, trusted.scope, grantId, true);
+  assertSceneRequest();
   const sponsor = await requireRecordedSponsorExecution(trusted, grantId, evidence, executionAuthority);
+  assertSceneRequest();
   const ready = await validateRecordedOutputRun(trusted, evidence, bridge, ["authorized", "queued", "running"]);
+  assertSceneRequest();
   const readyIds = ready.map((slot) => slot.slotId);
   const sceneJobRuns:NonNullable<OutputCommandWrite['sceneJobRuns']>=[];
+  const sceneRunAssertions: OutputSqlAssertion[] = [];
+  const sceneRunChecks: Array<Parameters<typeof sceneSponsorRunTransaction>[1]> = [];
   for(const slot of ready){
     if(!evidence.confirmedPlan.plan.targets.some(target=>target.id===slot.targetId&&Object.hasOwn(target,'scene_contract')))continue;
     const retained=await trusted.env.DB.prepare('SELECT scene_source_version_json IS NOT NULL AS present,scene_source_protocol,correlation_id FROM document_jobs WHERE job_id=? AND owner_id=?').bind(slot.jobId,trusted.scope.ownerUserId).first<{present:number;scene_source_protocol:number;correlation_id:string}>();
+    assertSceneRequest();
     if(retained&&Boolean(retained.scene_source_protocol===1)!==Boolean(retained.present))throw new OutputConflictError('output_scene_source_witness_unavailable',409);
+    if(sceneRun&&!retained?.present)fail("sponsor_scene_handoff_changed",403);
     if(retained?.present){const receipt=await readSceneJobSourceWitness(trusted.env,trusted.scope,slot,retained.correlation_id);
+      assertSceneRequest();
+      if(sceneRun){const captured={request:trusted.request,env:trusted.env,scope:trusted.scope,slot,correlationId:retained.correlation_id,raw:receipt.raw};sceneRunAssertions.push(...sceneSponsorRunTransaction(sceneRun,captured));sceneRunChecks.push(captured);}
       sceneJobRuns.push({slot,version:receipt.witness.successor,previousRaw:receipt.raw});}
   }
   const saved = await commitOutputCommand(trusted.env, { ...commandWrite(trusted, body, digest, "request"),sceneJobRuns, events: [{ type: "OutputExecutionRunRequested", payload: { grant_id: grantId, job_ids: evidence.slots.map((slot) => slot.jobId), existing_jobs_only: true } }],
-    assertions: [...(sponsor?.assertions ?? []), ...(ready.length ? [outputRunGrantAssertion(trusted.scope, grantId), { sql: "NOT EXISTS(SELECT 1 FROM output_operation_slots slot WHERE slot.scope_key=? AND slot.grant_id=? AND slot.status IN('authorized','queued','running') AND slot.slot_id NOT IN(SELECT value FROM json_each(?)))", bindings: [trusted.scope.key, grantId, JSON.stringify(readyIds)] }] : [])],
-    buildSidecars: (events) => { const durable = prepareOutputDurableRun(trusted.env, trusted.scope, ready, events.at(-1)!.eventId); return ({ statements: [trusted.env.DB.prepare("UPDATE output_operation_slots SET status='queued',updated_at=? WHERE scope_key=? AND grant_id=? AND status='authorized' AND slot_id IN(SELECT value FROM json_each(?))").bind(nowIso(), trusted.scope.key, grantId, JSON.stringify(readyIds)), trusted.env.DB.prepare("UPDATE output_execution_grants SET status='active' WHERE scope_key=? AND grant_id=? AND status='authorized'").bind(trusted.scope.key, grantId), ...durable.statements], assertions: [...(ready.length ? [outputRunGrantAssertion(trusted.scope, grantId)] : []), ...durable.assertions] }); } });
+    assertions: [...(sponsor?.assertions ?? []), ...sceneRunAssertions, ...(ready.length ? [outputRunGrantAssertion(trusted.scope, grantId), { sql: "NOT EXISTS(SELECT 1 FROM output_operation_slots slot WHERE slot.scope_key=? AND slot.grant_id=? AND slot.status IN('authorized','queued','running') AND slot.slot_id NOT IN(SELECT value FROM json_each(?)))", bindings: [trusted.scope.key, grantId, JSON.stringify(readyIds)] }] : [])],
+    buildSidecars: (events) => { assertSceneRequest(); if(sceneRun)for(const captured of sceneRunChecks)sceneSponsorRunTransaction(sceneRun,captured); const durable = prepareOutputDurableRun(trusted.env, trusted.scope, ready, events.at(-1)!.eventId); return ({ statements: [trusted.env.DB.prepare("UPDATE output_operation_slots SET status='queued',updated_at=? WHERE scope_key=? AND grant_id=? AND status='authorized' AND slot_id IN(SELECT value FROM json_each(?))").bind(nowIso(), trusted.scope.key, grantId, JSON.stringify(readyIds)), trusted.env.DB.prepare("UPDATE output_execution_grants SET status='active' WHERE scope_key=? AND grant_id=? AND status='authorized'").bind(trusted.scope.key, grantId), ...durable.statements], assertions: [...(ready.length ? [outputRunGrantAssertion(trusted.scope, grantId)] : []), ...durable.assertions] }); } });
   // Dispatch is an existing-job wake-up only. No new source read, slot, budget,
   // provider call or alternative is created here; the job HTTP runner owns work.
   if (ready.length && !await wakeOutputDurableJobs(trusted.env, ready)) await bridge.dispatch({ request: trusted.request, env: trusted.env, scope: trusted.scope, principal: trusted.principal, executionContext,
@@ -1237,6 +1283,45 @@ export const outputExperienceCommands = {
   readGrantEvidence: readOutputGrantEvidence,
   snapshot: buildSnapshot,
   disclose: discloseOutputJson,
+  /** Dormant native preparation only; no registered route creates a sponsor seal. */
+  async prepareSponsoredSceneAdmission(trusted: OutputTrustedContext, body: Record<string, unknown>) {
+    if (jsonIssues(body).length || body.action !== "authorize" || Object.hasOwn(body, "sponsor_entitlement")) fail("sponsor_command_invalid", 403);
+    requireCurrentSource(trusted);
+    const current = sceneSponsorPreparationCurrent(trusted, body);
+    const row = await trusted.env.DB.prepare("SELECT event_id,expires_at,terms_digest FROM output_preflights WHERE scope_key=? AND preflight_id=? AND actor_user_id=?")
+      .bind(trusted.scope.key, identifier(body.preflightId, "preflight_id_required"), trusted.scope.actorUserId).first<{ event_id: string; expires_at: string; terms_digest: string }>();
+    current();
+    if (!row || row.expires_at <= nowIso() || row.terms_digest !== body.termsDigest) fail("output_preflight_expired", 409);
+    const quote = record((await privateEventBody(trusted.env, trusted.scope, row.event_id)).preflight) as OutputPreflight;
+    current();
+    const plan = currentPlan(trusted, await readConfirmedPlan(trusted, quote.planRevisionId));
+    current();
+    if (plan.plan.targets.length !== 1 || quote.targets.length !== 1 || !Object.hasOwn(plan.plan.targets[0]!, "scene_contract")) fail("sponsor_scene_handoff_changed", 403);
+    const source = bridgeTarget(trusted, plan, plan.plan.targets[0]!);
+    delete source.sceneUseVersionedHistory;
+    const prepared = await prepareSceneSponsorAdmission({ source, command: body, quote });
+    current(); return prepared;
+  },
+  /** Uses only the exact retained original-job successor, never a fresh baseline. */
+  async prepareSponsoredSceneRun(trusted: OutputTrustedContext, body: Record<string, unknown>) {
+    if (jsonIssues(body).length || body.action !== "run" || Object.hasOwn(body, "sponsor_entitlement")) fail("sponsor_command_invalid", 403);
+    requireCurrentSource(trusted);
+    const current = sceneSponsorPreparationCurrent(trusted, body);
+    const evidence = await readOutputGrantEvidence(trusted.env, trusted.scope, identifier(body.grantId, "grant_id_required"), true);
+    current();
+    if (evidence.slots.length !== 1 || !["authorized", "active"].includes(String(evidence.row.status)) || !Number(evidence.row.deadline_current)) fail("sponsor_scene_handoff_changed", 403);
+    const slot = evidence.slots[0]!, { target } = await validateOutputExecutionTarget(trusted, evidence, slot);
+    current();
+    if (!Object.hasOwn(target, "scene_contract")) fail("sponsor_scene_handoff_changed", 403);
+    const job = await trusted.env.DB.prepare("SELECT correlation_id,scene_source_protocol FROM document_jobs WHERE job_id=? AND owner_id=?")
+      .bind(slot.jobId, trusted.scope.ownerUserId).first<{ correlation_id: string; scene_source_protocol: number }>();
+    current();
+    if (!job || job.scene_source_protocol !== 1) fail("sponsor_scene_handoff_changed", 403);
+    const source = bridgeTarget(trusted, evidence.confirmedPlan, target);
+    delete source.sceneUseVersionedHistory;
+    const prepared = await prepareSceneSponsorRun({ source, command: body, quote: evidence.preflight, slot, correlationId: job.correlation_id });
+    current(); return prepared;
+  },
   async execute(trusted: OutputTrustedContext, body: Record<string, unknown>, bridge: OutputExecutionBridge, executionContext: WorkerExecutionContext) {
     if (Object.hasOwn(body, "sponsor_entitlement")) fail("sponsor_authority_unavailable", 403);
     return executeExperienceCommand(trusted, body, bridge, executionContext);
