@@ -1,3 +1,4 @@
+import { experienceDraftId, experienceResourceId } from "../src/experiences/intake.ts";
 import { canonicalJson, digest, jsonIssues, record } from "../src/experiences/compiler.ts";
 import type { WorkerEnv } from "./runtime.ts";
 
@@ -71,7 +72,11 @@ export async function guestTokenHash(value: unknown, purpose: "session" | "claim
 export async function issueGuestClaimSession(request: Request, env: WorkerEnv, policyId: string) {
   const db = env.DB, policy = await guestPolicy(env, request, policyId);
   const sessionToken = newToken("session"), claimToken = newToken("claim"), sessionId = crypto.randomUUID();
-  const guestSubject = `guest:${crypto.randomUUID()}`, projectId = crypto.randomUUID(), documentId = crypto.randomUUID();
+  const guestSubject = `guest:${crypto.randomUUID()}`;
+  // Session ID is the server-owned native intent. Derive the exact identities
+  // the existing compiler will use; no later custody operation rewrites them.
+  const draftId = await experienceDraftId(guestSubject, sessionId);
+  const [projectId, documentId] = await Promise.all([experienceResourceId(draftId, "project"), experienceResourceId(draftId, "document")]);
   const hashes = await Promise.all([guestTokenHash(sessionToken, "session"), guestTokenHash(claimToken, "claim")]);
   if (env.DB !== db) return guestFail("database_changed");
   const row = await db.prepare(`INSERT INTO experience_guest_sessions(session_id,policy_id,terms_digest,guest_subject,project_id,document_id,session_hash,claim_hash,created_at_ms,expires_at_ms)

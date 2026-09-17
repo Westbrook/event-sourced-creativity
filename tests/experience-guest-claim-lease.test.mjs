@@ -220,3 +220,15 @@ test('concurrent expired-lease renewals use one compare-and-swap for identical o
   assert.equal(row.acquisitions,3);assert.ok(['request-C','request-D'].includes(row.request_id));
   assert.equal(JSON.parse(row.request_ids_json).length,3);
 });
+
+test('reserved identities are the actual native compiler identities for the server-owned guest intent',async t=>{
+  const f=await fixture(t),s=await f.issue();
+  const {registeredExperience,initialValues,buildExperiencePlan,validateIntakeRequest}=await import('../src/experiences/intake.ts');
+  const release=await registeredExperience('image'),values=initialValues(release);
+  values.subject={value:'A stone bridge in morning light',provenance:'authored'};values.ratio={value:{width:1,height:1},provenance:'authored'};
+  const validated=await validateIntakeRequest({intentId:s.sessionId,experienceId:'image',releaseHash:release.releaseHash,values});assert.ok(validated);
+  const plan=await buildExperiencePlan(s.guestSubject,validated.request,validated.release);
+  assert.equal(plan.projectId,s.projectId);assert.equal(plan.documentId,s.documentId);assert.equal(plan.streamId,`creative:${s.guestSubject}`);
+  const replay=await buildExperiencePlan(s.guestSubject,validated.request,validated.release);assert.deepEqual(plan,replay);
+  assert.equal(f.sqlite.prepare('SELECT COUNT(*) AS n FROM events WHERE stream_id=?').get(plan.streamId).n,0);f.assertNoNativeChanges();
+});
