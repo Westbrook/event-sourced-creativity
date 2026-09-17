@@ -8,6 +8,7 @@ import { makeEvent } from "./event-write-primitives.ts";
 import { recordIntakeDiagnostic } from "./project-intake-diagnostic.ts";
 import { prepareSponsorIntakePostRootReceipt } from "./experience-sponsor-intake-reads.ts";
 import { prepareSponsorStoryIntakeNativeRootReceipt, sponsorStoryIntakeNativeAppendOptions } from "./experience-sponsor-story-intake-native.ts";
+import { prepareSponsorAudioIntakeNativeRootReceipt, sponsorAudioIntakeNativeAppendOptions } from "./experience-sponsor-audio-intake-native.ts";
 import type { WorkerEnv } from "./runtime.ts";
 
 /** One bounded all-or-none intake. Generic batch and Canvas receipt semantics do not change. */
@@ -30,7 +31,9 @@ export async function commitAtomicIntake(env:WorkerEnv,auth:ProjectIntakeAuthori
     (options?.correlationPrefix??"project-intake:")+intake.projectId,input.type,input.payload));
   const root=events[0]!,rootKey=String(root.payload.client_event_id),now=new Date().toISOString();
   try{
-    await appendEvents(env,events,{...(options?.sponsorStoryIntakeRead
+    await appendEvents(env,events,{...(options?.sponsorAudioIntakeRead!==undefined
+      ?sponsorAudioIntakeNativeAppendOptions(options.sponsorAudioIntakeRead,env,auth,intake,options)
+      :options?.sponsorStoryIntakeRead
       ?sponsorStoryIntakeNativeAppendOptions(options.sponsorStoryIntakeRead,env,auth,intake,options)
       :options?.expectedHead === undefined ? {} : {expectedHead:options.expectedHead}),retries:1,prepareSidecars:assigned=>{
       const batch=JSON.stringify(assigned.map(event=>({id:event.eventId,key:event.payload.client_event_id,type:event.type,sequence:event.sequence,payload:JSON.stringify(event.payload)})));
@@ -63,7 +66,9 @@ export async function commitAtomicIntake(env:WorkerEnv,auth:ProjectIntakeAuthori
         stream,resourceIds,resourceIds,resourceIds,resourceIds,batch,root.eventId,root.sequence,now];
       // The optional actual-POST seal preserves this exact native CASE and its
       // failure row while moving its complete gates to a shallow statement.
-      receipts.push(options?.sponsorStoryIntakeRead
+      receipts.push(options?.sponsorAudioIntakeRead!==undefined
+        ?prepareSponsorAudioIntakeNativeRootReceipt(options.sponsorAudioIntakeRead,env,auth,intake,options,rootSql,rootBindings)
+        :options?.sponsorStoryIntakeRead
         ?prepareSponsorStoryIntakeNativeRootReceipt(options.sponsorStoryIntakeRead,env,auth,intake,options,rootSql,rootBindings)
         :options?.sponsorIntakeRead
         ?prepareSponsorIntakePostRootReceipt(options.sponsorIntakeRead,env,auth,intake,options,rootSql,rootBindings)

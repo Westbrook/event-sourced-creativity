@@ -5,6 +5,7 @@ import type { ConsequentialBinding } from "./consequential-consent.ts";
 import type { WorkerEnv } from "./runtime.ts";
 import type { SponsorIntakePostNativeReceipt } from "./experience-sponsor-intake-reads.ts";
 import type { SponsorStoryIntakeNativeReceipt } from "./experience-sponsor-story-intake-native.ts";
+import type { SponsorAudioIntakeNativeReceipt } from "./experience-sponsor-audio-intake-native.ts";
 import type { ProjectIntake } from "../src/model/project-intake.ts";
 
 export type ProjectIntakeAuthorization={user:PilotUser;principal:PilotUser;impersonation:PilotImpersonation|null};
@@ -98,8 +99,9 @@ export function projectIntakeAuthority(env:WorkerEnv,auth:ProjectIntakeAuthoriza
       new Date().toISOString(),user.role,POLICY_VERSION,user.consentedAt??"",user.userId,intake.projectId,user.userId,intake.documentId]};
 }
 
-type AtomicIntakeOptions={receiptPrefix:string;clientId:string;correlationPrefix:string;guard:BudgetReservationGuard;expectedHead?:number;sponsorIntakeRead?:SponsorIntakePostNativeReceipt;sponsorStoryIntakeRead?:SponsorStoryIntakeNativeReceipt};
+type AtomicIntakeOptions={receiptPrefix:string;clientId:string;correlationPrefix:string;guard:BudgetReservationGuard;expectedHead?:number;sponsorIntakeRead?:SponsorIntakePostNativeReceipt;sponsorStoryIntakeRead?:SponsorStoryIntakeNativeReceipt;sponsorAudioIntakeRead?:SponsorAudioIntakeNativeReceipt};
 const intakeGuard=(env:WorkerEnv,auth:ProjectIntakeAuthorization,intake:ProjectIntake,options?:AtomicIntakeOptions)=>{
+  if(options?.sponsorAudioIntakeRead!==undefined&&(options.sponsorIntakeRead!==undefined||options.sponsorStoryIntakeRead!==undefined))throw new Error("sponsor_audio_intake_native_unavailable");
   const original=projectIntakeAuthority(env,auth,intake);
   return options?{sql:`(${original.sql}) AND (${options.guard.sql})`,bindings:[...original.bindings,...options.guard.bindings]}:original;
 };
