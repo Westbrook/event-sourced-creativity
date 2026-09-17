@@ -1,5 +1,5 @@
 import { canonicalJson, digest, exactKeys, freeze, jsonIssues, record } from "../src/experiences/compiler.ts";
-import { compileGuestSponsorApprovalProposal, GuestSponsorContractError } from "./experience-guest-sponsor-contract.ts";
+import { compileGuestSponsorApprovalProposal, GuestSponsorContractError, type GuestSponsorPolicyV3 } from "./experience-guest-sponsor-contract.ts";
 import { readExistingPrincipalRequest } from "./principal-request-core.ts";
 import { PRINCIPAL_WITH_ACCESS_SQL } from "./access-policy.ts";
 import { POLICY_VERSION } from "./policy-version.ts";
@@ -275,4 +275,78 @@ export async function revokeGuestSponsorCampaign(request: Request, env: WorkerEn
     catch { current(ctx); throw error; }
   }
   const result = await finishRevocation(ctx, row, approval, value, row.revoked_at_ms !== null); current(ctx); return result;
+}
+
+
+declare const approvedCampaignBrand: unique symbol;
+/** Request-local evidence of a durable payer approval, never guest possession,
+ * native authoring or spending authority on its own. */
+export type GuestApprovedCampaignWitness = Readonly<{ [approvedCampaignBrand]: true }>;
+type ApprovedCampaignData = Readonly<{ policy: GuestSponsorPolicyV3; approvalId: string; termsDigest: string;
+  policyDigest: string; assertion: OutputSqlAssertion }>;
+const approvedCampaigns = new WeakMap<GuestApprovedCampaignWitness, { ctx: Context; data: ApprovedCampaignData }>();
+
+/** Read the actual approval and named current payer, not a payer login on the
+ * guest's Request. This does not consume the Request body or install schema.
+ * Every future write must repeat the returned assertion in its own transaction. */
+export async function readApprovedGuestSponsorCampaign(request: Request, env: WorkerEnv,
+  input: Readonly<{ campaignId: string; policyDigest: string }>): Promise<GuestApprovedCampaignWitness> {
+  const ctx = context(request, env);
+  if (jsonIssues(input).length || !record(input) || !exactKeys(input, ["campaignId", "policyDigest"])
+    || !id(input.campaignId) || !hash(input.policyDigest)) return fail("campaign_input_invalid");
+  const captured = freeze(structuredClone(input));
+  const text = ["approval_id", "campaign_id", "payer_user_id", "terms_digest", "terms_json", "policy_digest", "policy_json",
+    "approved_by_user_id", "payer_authority_json", "approval_command_json"];
+  const row = await ctx.db.prepare(`SELECT ${text.map(column => `${bounded(column)} AS ${column}`).join(",")},approved_at_ms,revoked_at_ms
+    FROM experience_sponsor_approvals WHERE campaign_id=? AND policy_digest=?`)
+    .bind(captured.campaignId, captured.policyDigest).first<Original>(); current(ctx);
+  if (!row || text.some(column => typeof row[column as keyof Original] !== "string") || !instant(row.approved_at_ms)
+    || row.campaign_id !== captured.campaignId || row.policy_digest !== captured.policyDigest
+    || row.revoked_at_ms !== null || !id(row.approval_id) || !id(row.payer_user_id) || row.payer_user_id.startsWith("guest:")
+    || row.approved_by_user_id !== row.payer_user_id) return fail("original_unavailable");
+  let raw: unknown; try { raw = JSON.parse(row.approval_command_json); } catch { return fail("original_unavailable"); }
+  const approval = await compile(ctx, approvalCommand(raw)); current(ctx);
+  const { compiled } = approval;
+  if (approval.command.approvalId !== row.approval_id || approval.commandJson !== row.approval_command_json
+    || compiled.policy.campaignId !== captured.campaignId || compiled.policy.payerUserId !== row.payer_user_id
+    || compiled.policyDigest !== captured.policyDigest || compiled.termsDigest !== row.terms_digest
+    || compiled.termsJson !== row.terms_json || compiled.policyJson !== row.policy_json
+    || row.approved_at_ms < compiled.policy.startsAtMs || row.approved_at_ms >= compiled.policy.expiresAtMs) return fail("original_unavailable");
+  // Bound computed authority JSON before it crosses the DB boundary. Its raw
+  // ten-field array must match the original actual payer approval exactly.
+  const payerText = [...columns.filter(column => column !== "approved_canvas_requirements"), "email", "display_name"];
+  const native = await ctx.db.prepare(`WITH approval_observed_payer AS MATERIALIZED (${PRINCIPAL_WITH_ACCESS_SQL})
+    SELECT ${payerText.map(column => `${bounded(column)} AS ${column}`).join(",")},approved_canvas_requirements FROM approval_observed_payer`)
+    .bind(row.payer_user_id).first<Record<string, unknown>>(); current(ctx);
+  if (!native || native.user_id !== row.payer_user_id || !["creator", "admin"].includes(String(native.role))
+    || native.consent_version !== POLICY_VERSION || typeof native.email !== "string" || !native.email
+    || native.email !== native.email.toLowerCase() || typeof native.display_name !== "string") return fail("payer_unavailable");
+  const authorityJson = JSON.stringify(columns.map(column => native[column] ?? null));
+  if (bytes(authorityJson) > maximumBytes || authorityJson !== row.payer_authority_json) return fail("payer_changed");
+  const value: Payer = Object.freeze({ userId: row.payer_user_id, email: native.email, displayName: native.display_name, authorityJson });
+  const query = approvedQuery(approval, value);
+  // Unlike the approval command's first creation, this read has observed a
+  // timestamp. Pin that entire immutable record in the reusable SQL witness.
+  query.sql += " AND approved.approved_at_ms=?";
+  query.bindings.push(row.approved_at_ms);
+  const assertion: OutputSqlAssertion = { sql: `EXISTS(${query.sql})`, bindings: [...query.bindings], deadlineMs: compiled.policy.expiresAtMs };
+  const data: ApprovedCampaignData = freeze(structuredClone({ policy: compiled.policy, approvalId: row.approval_id,
+    termsDigest: compiled.termsDigest, policyDigest: compiled.policyDigest, assertion }));
+  // All async compilation/observation ends before this complete current proof.
+  const live = await ctx.db.prepare(query.sql).bind(...query.bindings).first<{ approved_at_ms: number }>(); current(ctx);
+  if (!live || live.approved_at_ms !== row.approved_at_ms) return fail("original_unavailable");
+  const witness = Object.freeze(Object.create(null)) as GuestApprovedCampaignWitness;
+  approvedCampaigns.set(witness, { ctx, data });
+  current(ctx); return witness;
+}
+
+/** Internal only: no SQL bindings or payer metadata may be serialized to a
+ * client. Object identity proves minting, not freshness. Execute assertion
+ * before AND after the native write in the same atomic batch. */
+export function guestApprovedCampaignData(request: Request, env: WorkerEnv, witness: GuestApprovedCampaignWitness): ApprovedCampaignData {
+  const saved = witness && typeof witness === "object" ? approvedCampaigns.get(witness) : undefined;
+  if (!saved || saved.ctx.request !== request || saved.ctx.env !== env) return fail("campaign_witness_unavailable");
+  current(saved.ctx);
+  const data = freeze(structuredClone(saved.data));
+  current(saved.ctx); return data;
 }
