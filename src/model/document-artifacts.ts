@@ -5,7 +5,7 @@ import type { CreativeEvent } from "./events.ts";
 import { presentationAudienceText } from "./presentation-delivery.ts";
 import { protectedPresentationScoreContradictions, resolvePresentationSourceReferences, validatePresentationSourceCoverage, type PresentationSourceContract } from "./presentation-source.ts";
 import { parseModel3dMediaRevision, type Model3dMediaRevision } from "./model3d-media-revision.ts";
-import { projectNativeRetainedModel3d, type NativeRetainedModel3dFile } from "./native-retained-model3d.ts";
+import { projectNativeRetainedModel3d, selectRetainedModel3dEditFile, type NativeRetainedModel3dFile } from "./native-retained-model3d.ts";
 
 export const DOCUMENT_ARTIFACT_KINDS = ["short_story", "scene", "slides", "storyboard", "video", "audio", "model3d"] as const;
 export type DocumentArtifactKind = typeof DOCUMENT_ARTIFACT_KINDS[number];
@@ -153,13 +153,12 @@ export type DocumentArtifactDraft = {
   model3d_revision?: Model3dMediaRevision;
 };
 
-/** One explicit private GLB descriptor; legacy root URLs and ambiguous inventories are not edit sources. */
-export function model3dArtifactMediaFile(artifact: Pick<DocumentArtifact, "kind" | "settings">): NativeRetainedModel3dFile | null {
+/** An explicit private GLB descriptor. Multiple variants require the exact
+ * recorded primary URL; a root URL never substitutes for retained metadata. */
+export function model3dArtifactMediaFile(artifact: Pick<DocumentArtifact, "kind" | "settings"> & Partial<Pick<DocumentArtifact, "mediaUrl">>): NativeRetainedModel3dFile | null {
   if (artifact.kind !== "model3d") return null;
   const retained = projectNativeRetainedModel3d({ artifact_kind: "model3d", settings: artifact.settings });
-  const glbs = retained?.files.filter(file => file.role === "mesh" && file.format === "glb"
-    && file.mimeType === "model/gltf-binary" && file.previewSupported !== false) ?? [];
-  return glbs.length === 1 ? glbs[0]! : null;
+  return retained ? selectRetainedModel3dEditFile(retained.files, artifact.mediaUrl) : null;
 }
 
 /** Immutable authored clip provenance; the enclosing edit event identifies its current revision. */

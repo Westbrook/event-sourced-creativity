@@ -5,7 +5,7 @@ import { normalizeImageFocalPoint, type ImageFocalPoint } from "./focal-point.ts
 import { normalizePromptTechnique, PROMPT_TECHNIQUES, type PromptTechnique } from "./prompt-structures.ts";
 import { isDocumentArtifactKind, normalizeSlidePresentation, normalizeSlideVisual, parseAudioMediaRevision, parseVideoMediaRevision, videoArtifactMediaItem, type DocumentArtifact } from "./document-artifacts.ts";
 import { model3dCurrentProjectionFile, model3dRevisionFile, parseModel3dCurrentProjection, parseModel3dMediaRevision } from "./model3d-media-revision.ts";
-import { projectNativeRetainedModel3d } from "./native-retained-model3d.ts";
+import { projectNativeRetainedModel3d, selectRetainedModel3dEditFile } from "./native-retained-model3d.ts";
 
 export type EventActor = "user" | `worker:${string}` | `model:${string}`;
 
@@ -435,9 +435,7 @@ export function createCreativeEventFold(asOf = Number.POSITIVE_INFINITY, selecte
             && p.source_surface !== "document-artifact-model3d-scale" && !revisedModel3d.has(artifact.id)) break;
           const original = originalModel3d.get(artifact.id);
           const originals = original && projectNativeRetainedModel3d({ artifact_kind: "model3d", settings: original.settings });
-          const glbs = originals?.files.filter(file => file.role === "mesh" && file.format === "glb"
-            && file.mimeType === "model/gltf-binary" && file.previewSupported !== false) ?? [];
-          const source = glbs.length === 1 ? glbs[0]! : null;
+          const source = originals ? selectRetainedModel3dEditFile(originals.files, original?.mediaUrl) : null;
           const revised = parseModel3dMediaRevision(p.model3d_revision), file = model3dRevisionFile(revised);
           const identity = p.artifact_id === artifact.id && p.artifact_kind === "model3d" && p.document_id === artifact.documentId
             && artifact.contentRef !== null && p.content_ref === artifact.contentRef && p.project_id === documents.get(artifact.documentId)?.projectId

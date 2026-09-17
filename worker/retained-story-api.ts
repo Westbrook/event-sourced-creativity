@@ -562,7 +562,8 @@ async function model3dEditReceipt(env: WorkerEnv, native: ReturnType<typeof sele
   for (const url of [revision.media.url, revision.source.url]) {
     if (!decodeURIComponent(url.slice("/api/media/".length)).startsWith(prefix)) throw unavailable();
   }
-  const originalFile = model3dArtifactMediaFile({ kind: "model3d", settings: record(original.payload.settings) ?? {} });
+  const originalFile = model3dArtifactMediaFile({ kind: "model3d", settings: record(original.payload.settings) ?? {},
+    mediaUrl: typeof original.payload.media_url === "string" ? original.payload.media_url : null });
   if (!originalFile) throw unavailable();
   const sourceBindings = [ownerId, selection.artifactId, revision.source.revision, selection.documentId,
     native.projectId, revision.source.contentSha256];

@@ -103,6 +103,13 @@ function content(retainedFiles: readonly NativeRetainedModel3dFile[]): NativeRet
   return result;
 }
 
+/** Select only among already validated descriptors; metadata is not authority. */
+export function selectRetainedModel3dEditFile(retained: readonly NativeRetainedModel3dFile[], primaryUrl?: unknown): NativeRetainedModel3dFile | null {
+  const glbs = retained.filter(value => value.role === "mesh" && value.format === "glb" && value.mimeType === "model/gltf-binary");
+  const selected = glbs.length === 1 ? glbs : glbs.filter(value => value.url === primaryUrl);
+  return selected.length === 1 && selected[0]!.previewSupported !== false ? selected[0]! : null;
+}
+
 /** Project the selected completion, or only its independently witnessed current
  * GLB derivative. The caller binds the edit/source/auth witness before this call.
  * Only named own data descriptors are read here; input getters, iterators and
@@ -121,11 +128,10 @@ export function projectNativeRetainedModel3d(source: unknown, model3dRevision?: 
     }
     if (model3dRevision !== undefined) {
       const revision = parseModel3dMediaRevision(model3dRevision);
-      const originals = retained.filter(value => value.role === "mesh" && value.format === "glb"
-        && value.mimeType === "model/gltf-binary" && value.previewSupported !== false);
-      if (!revision || originals.length !== 1) invalid();
-      if (revision.source.revision === 0 && (revision.source.url !== originals[0]!.url
-        || revision.source.sha256 !== originals[0]!.sha256 || revision.source.byteLength !== originals[0]!.fileSize)) invalid();
+      const original = selectRetainedModel3dEditFile(retained, own(envelope, "media_url", false));
+      if (!revision || !original) invalid();
+      if (revision.source.revision === 0 && (revision.source.url !== original.url
+        || revision.source.sha256 !== original.sha256 || revision.source.byteLength !== original.fileSize)) invalid();
       const derivative = model3dRevisionFile(revision);
       if (!derivative) invalid();
       // Unedited alternate meshes, textures and previews stay in original history.

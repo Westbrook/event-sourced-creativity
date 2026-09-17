@@ -31,7 +31,7 @@ const editBatch = statements => statements[0]?.sql.includes("INSERT INTO event_w
 const originalContent = () => ({ title: "Harbor cube", summary: "Owned authored cube fixture; no generated quality or rendering claim.",
   content_markdown: "A small static cube. Preserve these original modeling directions, Café 雨 🌱.", presentation: null, items: [] });
 
-async function fixture(t, { sourceBytes = modelBytes(), differentRoot = false, completionChange, contentChange } = {}) {
+async function fixture(t, { sourceBytes = modelBytes(), differentRoot = false, glbVariant = false, completionChange, contentChange } = {}) {
   const state = outputTestDatabase(); t.after(() => { try { state.sqlite.close(); } finally { state.media.clear(); } });
   await runtime.ensureSchema(state.env);
   const now = new Date().toISOString(), streamId = `creative:${OWNER}`;
@@ -53,12 +53,14 @@ async function fixture(t, { sourceBytes = modelBytes(), differentRoot = false, c
     .run(CONTENT, OWNER, "document-artifact", raw, now, EXPIRY);
   const selectedFile = { url: media.url, mimeType: MIME, fileName: "harbor-cube.glb", fileSize: originalBytes.length, format: "glb", role: "mesh", sha256: hash(originalBytes), previewSupported: true };
   const alternateFile = alternate ? { url: alternate.url, mimeType: "model/obj", fileName: "original.obj", fileSize: alternateBytes.length, format: "obj", role: "mesh", sha256: hash(alternateBytes), previewSupported: false } : null;
+  const variant = glbVariant ? await mediaApi.storeGeneratedMedia(state.env, OWNER, ARTIFACT + "-shaded", originalBytes, "authored-local-variant", MIME, { source: "synthetic-retained-fixture" }) : null;
   const payload = { project_id: PROJECT, document_id: DOCUMENT, artifact_id: ARTIFACT, artifact_kind: "model3d", requested_by_user_id: OWNER,
     title: content.title, content_ref: CONTENT, input_ref: "model3d-scale-original-input", item_count: 0, items: [], presentation: null,
     source_block_versions: [{ block_id: SOURCE_BLOCK, version: 1 }], media_url: alternate?.url ?? media.url, media_type: alternate ? "model/obj" : MIME,
     settings: { item_count: 1, production_mode: "manual", model3d_files: alternateFile ? [alternateFile, selectedFile] : [selectedFile],
       source_media_sha256: alternateFile?.sha256 ?? selectedFile.sha256 } };
   completionChange?.(payload);
+  if (variant) payload.settings.model3d_files.push({ ...selectedFile, url: variant.url, fileName: "shaded.glb" });
   const completion = await runtime.appendAuditEvent(state.env, streamId, "worker:renderer", "DocumentRenderCompleted", payload);
   const privatePayload = eventId => state.sqlite.prepare("SELECT private_json FROM event_private_payloads WHERE private_event_id=?").get(eventId)?.private_json;
   const initialCompletion = privatePayload(completion.eventId);
@@ -81,7 +83,7 @@ async function fixture(t, { sourceBytes = modelBytes(), differentRoot = false, c
     state.env.MEDIA[method] = async (...args) => { calls[method].push(args[0]); return original(...args); };
   }
   const bytesAt = url => state.media.get(decodeURIComponent(url.slice("/api/media/".length)))?.bytes;
-  return { ...state, objects: state.media, media, alternate, alternateBytes, originalBytes, raw, streamId, completion, initialCompletion, privatePayload,
+  return { ...state, objects: state.media, media, alternate, variant, alternateBytes, originalBytes, raw, streamId, completion, initialCompletion, privatePayload,
     currentRaw, events, revision, historyCount, requestFor, edit, restore, fingerprint, check, native, calls, bytesAt };
 }
 
@@ -151,6 +153,28 @@ test("eligible GLB selection follows its exact retained file descriptor when the
   assert.equal(files.some(file => file.url === f.alternate.url), false, "An unchanged original alternate is not labeled as scaled geometry");
 });
 
+test("explicit primary of two GLBs survives actual scale, native reread and original restoration", async t => {
+  const f = await fixture(t, { glbVariant: true });
+  const { revision } = await saved(f, await f.edit());
+  assert.equal(revision.source.url, f.media.url);
+  const response = await f.native(); assert.equal(response.status, 200, await response.clone().text());
+  assert.equal((await response.json()).content.files[0].url, revision.media.url);
+  const current = foldEvents(await f.events(), Infinity, DOCUMENT, PROJECT).artifacts.find(item => item.id === ARTIFACT);
+  assert.equal(current.mediaUrl, revision.media.url);
+  const second = await saved(f, await f.edit(f.requestFor(1.1, f.bytesAt(revision.media.url), 1, f.currentRaw())));
+  assert.equal(second.revision.source.url, revision.media.url);
+  const reread = await f.native(); assert.equal(reread.status, 200, await reread.clone().text());
+  assert.equal((await reread.json()).content.files[0].url, second.revision.media.url);
+  const restored = await f.restore(0, 2);
+  assert.equal(restored.status, 200, await restored.clone().text());
+  const artifact = foldEvents(await f.events(), Infinity, DOCUMENT, PROJECT).artifacts.find(item => item.id === ARTIFACT);
+  assert.equal(artifact.mediaUrl, f.media.url); assert.equal(artifact.settings.model3d_files.length, 2);
+  assert.equal(model.model3dArtifactMediaFile(artifact).url, f.media.url);
+  assert.deepEqual(f.bytesAt(f.media.url), f.originalBytes); assert.deepEqual(f.bytesAt(f.variant.url), f.originalBytes);
+  assert.equal(f.privatePayload(f.completion.eventId), f.initialCompletion);
+  assert.equal(f.calls.put.length, 2);
+});
+
 test("geometry-only Save preserves unknown raw metadata and original author text", async t => {
   const f = await fixture(t), body = JSON.parse(f.raw); body.producer_note = { literal: "\tCafé 雨 — retained model 🌱\n", flags: [false, true], optional: null };
   const raw = JSON.stringify(body); f.sqlite.prepare("UPDATE private_content SET content=? WHERE content_id=?").run(raw, CONTENT);
@@ -192,7 +216,7 @@ test("model scale admission rejects missing, conflicting and foreign selected fi
         if (fault === "wrong-kind") payload.artifact_kind = "video";
         if (fault === "missing-files") delete payload.settings.model3d_files;
         if (fault === "no-glb") { file.format = "obj"; file.mimeType = "model/obj"; file.previewSupported = false; }
-        if (fault === "two-glbs") payload.settings.model3d_files.push({ ...file, url: file.url.replace(".glb", "-second.glb") });
+        if (fault === "two-glbs") { payload.settings.model3d_files.push({ ...file, url: file.url.replace(".glb", "-second.glb") }); delete payload.media_url; }
         if (fault === "descriptor-hash") file.sha256 = "f".repeat(64);
         if (fault === "descriptor-size") file.fileSize++;
         if (fault === "missing-source-versions") delete payload.source_block_versions;
