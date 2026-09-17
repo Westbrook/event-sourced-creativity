@@ -143,6 +143,28 @@ function normalizeAudioFile(result: FalAudioResult, prompt: string, requestId: s
   throw providerError("fal_audio_result_missing", "Fal completed the request without returning a playable audio file. The retained request can be recovered.", prompt, { requestId, retryable: true, status: 502, category: "server" });
 }
 
+/** Both supported result locations must describe the same original result.
+ * Optional echoes may be absent, but an ignored branch cannot contradict it. */
+function assertCompletedAudioResultEnvelope(result: Record<string, unknown>, model: string, requestId: string, prompt: string) {
+  const nested = result.data;
+  if (!nested || typeof nested !== "object" || Array.isArray(nested)) return;
+  const data = nested as Record<string, unknown>;
+  if (data.request_id !== undefined && data.request_id !== requestId || data.model !== undefined && data.model !== model) {
+    throw providerError("fal_audio_receipt_mismatch", "The nested audio result does not identify the original native request.", prompt, { requestId, status: 409 });
+  }
+  if (data.error != null) {
+    throw providerError("fal_audio_result_rejected", "The saved audio result contains a provider error; no replacement was submitted.", prompt, { requestId, status: 422 });
+  }
+  if (result.audio != null && data.audio != null) {
+    const outer = normalizeAudioFile({ audio: result.audio } as FalAudioResult, prompt, requestId);
+    const inner = normalizeAudioFile({ audio: data.audio } as FalAudioResult, prompt, requestId);
+    const fields = ["url", "content_type", "file_name", "file_size", "duration"] as const;
+    if (fields.some(key => (outer[key] ?? null) !== (inner[key] ?? null))) {
+      throw providerError("fal_audio_result_ambiguous", "The provider returned conflicting audio result locations.", prompt, { requestId, status: 409 });
+    }
+  }
+}
+
 async function imageReceipt(reference: AudioImageReference) {
   const bytes = new Uint8Array(reference.bytes);
   const digest = await crypto.subtle.digest("SHA-256", bytes.buffer);
@@ -196,6 +218,7 @@ async function readAcceptedAudio(
   const response = await fetchJson(urls.responseUrl, { method: "GET", headers: headers(env), signal: options.signal, ...(options.verifyIdentity ? { redirect: "manual" as const } : {}) }, submittedPrompt, providerJobId, options.verifyIdentity === true);
   if (options.verifyIdentity && response.body.request_id !== undefined && response.body.request_id !== providerJobId) throw providerError("fal_audio_receipt_mismatch", "The provider returned a different audio result identifier.", submittedPrompt, { requestId: providerJobId, status: 409 });
   if (options.verifyIdentity && response.body.error != null) throw providerError("fal_audio_result_rejected", "The saved audio result contains a provider error; no replacement was submitted.", submittedPrompt, { requestId: providerJobId, status: 422 });
+  if (options.onCompletedResult) assertCompletedAudioResultEnvelope(response.body, model, providerJobId, submittedPrompt);
   const result = response.body as FalAudioResult;
   const audio = normalizeAudioFile(result, submittedPrompt, providerJobId);
   const resultCost = () => {
