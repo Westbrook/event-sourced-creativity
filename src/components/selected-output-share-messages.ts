@@ -6,6 +6,7 @@ import type { SelectedOutputShareKind } from "../model/selected-output-share.ts"
  * labels in place when locale changes and preserve authored input values. */
 export type SelectedOutputShareCopy = Readonly<{
   shareOutput: string;
+  manageLinks: string;
   sharedOutput: string;
   loading: string;
   expired: string;
@@ -38,6 +39,7 @@ const freeze = (copy: SelectedOutputShareCopy): SelectedOutputShareCopy => Objec
 export const SELECTED_OUTPUT_SHARE_MESSAGES: Readonly<Record<Locale, SelectedOutputShareCopy>> = Object.freeze({
   en: freeze({
     shareOutput: "Share output",
+    manageLinks: "Manage links",
     sharedOutput: "Shared output",
     loading: "Loading",
     expired: "Expired",
@@ -64,6 +66,7 @@ export const SELECTED_OUTPUT_SHARE_MESSAGES: Readonly<Record<Locale, SelectedOut
   }),
   fr: freeze({
     shareOutput: "Partager le résultat",
+    manageLinks: "Gérer les liens",
     sharedOutput: "Résultat partagé",
     loading: "Chargement",
     expired: "Expiré",
@@ -90,6 +93,7 @@ export const SELECTED_OUTPUT_SHARE_MESSAGES: Readonly<Record<Locale, SelectedOut
   }),
   ja: freeze({
     shareOutput: "出力を共有",
+    manageLinks: "リンクを管理",
     sharedOutput: "共有された出力",
     loading: "読み込み中",
     expired: "有効期限切れ",
@@ -116,6 +120,7 @@ export const SELECTED_OUTPUT_SHARE_MESSAGES: Readonly<Record<Locale, SelectedOut
   }),
   ar: freeze({
     shareOutput: "مشاركة النتيجة",
+    manageLinks: "إدارة الروابط",
     sharedOutput: "النتيجة المشتركة",
     loading: "جارٍ التحميل",
     expired: "انتهت الصلاحية",

@@ -42,6 +42,7 @@ export class FormaSelectedOutputShareReview extends FormaPresentationalElement {
   #listBusy = false;
   #listVerified = false;
   #listFailed = false;
+  #managementKnown = false;
   #status: Status = "";
   #candidate: SelectedOutputSharePrepared | null = null;
   #url = "";
@@ -57,6 +58,7 @@ export class FormaSelectedOutputShareReview extends FormaPresentationalElement {
   #listEpoch = 0;
   #listRequest = 0;
   #focusTitle = false;
+  #focusManagement = false;
   #focusReturn = false;
 
   get source(): SelectedOutputShareLease | null { return this.#source; }
@@ -131,11 +133,12 @@ export class FormaSelectedOutputShareReview extends FormaPresentationalElement {
     this.#busy = this.#listBusy = false;
     this.#listVerified = false;
     this.#listFailed = false;
+    this.#managementKnown = false;
     this.#pendingRevokeId = null;
     this.#shares = [];
     this.#cursor = null;
     this.#status = "";
-    this.#focusTitle = this.#focusReturn = false;
+    this.#focusTitle = this.#focusManagement = this.#focusReturn = false;
     this.requestUpdate();
   }
 
@@ -164,6 +167,9 @@ export class FormaSelectedOutputShareReview extends FormaPresentationalElement {
       const client = createSelectedOutputShareClient({ selection, signal: abort.signal, isCurrent: current }, { origin });
       const owner: Owner = { epoch, abort, current, client };
       this.#owner = owner;
+      // Bounded owned metadata discovery is read-only. A successful nonempty
+      // result can reveal management; it never supplies creation permission.
+      void this.#loadLinks(false, true);
       void client.availability().then(available => {
         if (!owner.current() || this.#owner !== owner) return;
         this.#available = available;
@@ -185,18 +191,23 @@ export class FormaSelectedOutputShareReview extends FormaPresentationalElement {
 
   #show = () => {
     if (!this.#validOwner()) return;
+    const canCreate = this.#enabled && this.#available;
+    if (!canCreate && !this.#managementKnown && !this.#pendingRevokeId) return;
     this.#open = true;
-    this.#focusTitle = true;
+    this.#focusTitle = canCreate;
+    this.#focusManagement = !canCreate;
     this.requestUpdate();
-    void this.#loadLinks(false);
   };
 
   #close = () => {
+    if (!this.#validOwner()) return;
     const pendingRevokeId = this.#pendingRevokeId;
+    const managementKnown = this.#managementKnown;
     this.#retire();
-    // Closing the panel is not a new publishing decision. Preserve only the
-    // management ID so an uncertain/issued link must still be revoked first.
+    // Closing is the same host-source lifetime. Preserve known management and
+    // the pending ID, while retiring content, one-time tokens and transport.
     this.#pendingRevokeId = pendingRevokeId;
+    this.#managementKnown = managementKnown;
     this.#focusReturn = true;
     this.#start();
   };
@@ -270,6 +281,7 @@ export class FormaSelectedOutputShareReview extends FormaPresentationalElement {
     this.#candidate = null;
     const transientEpoch = this.#transientEpoch;
     this.#pendingRevokeId = prepared.candidateId;
+    this.#managementKnown = true;
     this.#busy = true;
     this.#status = "loading";
     this.requestUpdate();
@@ -292,9 +304,9 @@ export class FormaSelectedOutputShareReview extends FormaPresentationalElement {
     }
   };
 
-  #loadLinks = async (more: boolean) => {
+  #loadLinks = async (more: boolean, discovery = false) => {
     const owner = this.#validOwner();
-    if (!owner || !this.#open || this.#listBusy || more && !this.#cursor) return;
+    if (!owner || !discovery && !this.#open || this.#listBusy || more && !this.#cursor) return;
     const listEpoch = this.#listEpoch;
     const request = ++this.#listRequest;
     this.#listBusy = true;
@@ -308,6 +320,7 @@ export class FormaSelectedOutputShareReview extends FormaPresentationalElement {
       this.#cursor = page.nextCursor;
       this.#listVerified = true;
       this.#listFailed = false;
+      if (this.#shares.length) this.#managementKnown = true;
     } catch { if (owner.current() && this.#owner === owner && this.#listRequest === request && this.#listEpoch === listEpoch) this.#listFailed = true; }
     finally { if (owner.current() && this.#owner === owner && this.#listRequest === request) { this.#listBusy = false; this.requestUpdate(); } }
   };
@@ -363,7 +376,13 @@ export class FormaSelectedOutputShareReview extends FormaPresentationalElement {
       this.#focusTitle = false;
       this.querySelector<HTMLInputElement>('input[name="share-title"]')?.focus();
     }
-    if (this.#focusReturn && owner && !this.#open) {
+    if (this.#focusManagement && owner && this.#open) {
+      this.#focusManagement = false;
+      (this.querySelector<HTMLButtonElement>("[data-selected-output-revoke]")
+        ?? this.querySelector<HTMLButtonElement>("[data-selected-output-share-close]"))?.focus();
+    }
+    if (this.#focusReturn && owner && !this.#open
+      && (this.#enabled && this.#available || this.#managementKnown || this.#pendingRevokeId)) {
       this.#focusReturn = false;
       this.querySelector<HTMLButtonElement>("[data-selected-output-share-open]")?.focus();
     }
@@ -373,35 +392,40 @@ export class FormaSelectedOutputShareReview extends FormaPresentationalElement {
     this.#checkExpiry();
     const owner = this.#validOwner(), locale = this.i18n, copy = selectedOutputShareCopy(locale.locale);
     const canCreate = owner && this.#enabled && this.#available;
+    const reachable = owner && (canCreate || this.#managementKnown || this.#pendingRevokeId);
+    const entryLabel = canCreate ? copy.shareOutput : copy.manageLinks;
     const canReview = canCreate && !this.#busy && !this.#composing && !this.#pendingRevokeId && reviewFromInputs(this.#title, this.#expiry);
-    const status = this.#listFailed ? copy.unavailable : this.#status ? copy[this.#status] : this.#open && !canCreate ? copy.unavailable : "";
-    return html`<section class="selected-output-share-review" lang=${locale.locale} dir=${locale.direction} aria-label=${copy.shareOutput}>
-      <button type="button" data-selected-output-share-open ?disabled=${!owner} ?hidden=${this.#open} @click=${this.#show}>${copy.shareOutput}</button>
+    const status = this.#listFailed ? copy.unavailable : this.#status ? copy[this.#status] : "";
+    return html`<section class="selected-output-share-review" lang=${locale.locale} dir=${locale.direction} aria-label=${entryLabel} ?hidden=${!reachable}>
+      <button type="button" data-selected-output-share-open ?disabled=${!owner} ?hidden=${this.#open} @click=${this.#show}>${entryLabel}</button>
       <div ?hidden=${!this.#open}>
-        <p>${copy.accessScope}</p><p>${copy.reviewHint}</p>
+        <p>${copy.accessScope}</p>
+        <div class="selected-output-share-creation" ?hidden=${!canCreate}>
+        <p>${copy.reviewHint}</p>
         <label>${copy.title}<input name="share-title" type="text" required dir="auto" translate="no" autocomplete="off"
           .value=${this.#title} ?disabled=${this.#busy} @input=${this.#edit}
           @compositionstart=${this.#compositionStart} @compositionend=${this.#compositionEnd}></label>
         <label>${copy.expires}<input name="share-expiry" type="datetime-local" required step="60" autocomplete="off"
           .value=${this.#expiry} ?disabled=${this.#busy} @input=${this.#edit}></label>
         <button type="button" ?disabled=${!canReview} @click=${this.#review}>${copy.review}</button>
+        </div>
         <p role="status" aria-live="polite" aria-atomic="true">${status}</p>
         <div data-selected-output-review-mount></div>
-        <button type="button" ?hidden=${!this.#candidate} ?disabled=${!canCreate || this.#busy || !this.#candidate}
+        <button type="button" ?hidden=${!canCreate || !this.#candidate} ?disabled=${!canCreate || this.#busy || !this.#candidate}
           @click=${this.#publish}>${copy.publishLink}</button>
         <div data-selected-output-link-mount></div>
         ${this.#pendingRevokeId && !this.#shares.some(share => share.shareId === this.#pendingRevokeId)
-          ? html`<button type="button" ?disabled=${this.#busy} @click=${() => void this.#revoke(this.#pendingRevokeId!)}>${copy.revokeLink}</button>` : nothing}
+          ? html`<button type="button" data-selected-output-revoke ?disabled=${this.#busy} @click=${() => void this.#revoke(this.#pendingRevokeId!)}>${copy.revokeLink}</button>` : nothing}
         <ul aria-busy=${String(this.#listBusy)}>${this.#shares.map(share => html`<li>
           <span translate="no" dir="auto">${share.title}</span> <span>${copy.outputKinds[share.output]}</span>
           <span>${selectedOutputShareExpiryLabel(locale.locale, locale.date(new Date(share.expiresAt), { dateStyle: "medium", timeStyle: "short" }))}</span>
-          <button type="button" ?disabled=${this.#busy} @click=${() => void this.#revoke(share.shareId)}>${copy.revokeLink}</button>
+          <button type="button" data-selected-output-revoke ?disabled=${this.#busy} @click=${() => void this.#revoke(share.shareId)}>${copy.revokeLink}</button>
         </li>`)}</ul>
-        ${this.#listVerified && !this.#listBusy && !this.#shares.length ? html`<p>${copy.noLinks}</p>` : nothing}
+        ${this.#listVerified && !this.#listBusy && !this.#shares.length && !this.#pendingRevokeId ? html`<p>${copy.noLinks}</p>` : nothing}
         ${this.#cursor ? html`<button type="button" ?disabled=${this.#busy || this.#listBusy} @click=${() => void this.#loadLinks(true)}>${copy.moreLinks}</button>` : nothing}
         ${this.#listFailed || this.#status === "unavailable" ? html`<button type="button" ?disabled=${this.#listBusy} @click=${() => void this.#loadLinks(false)}>${copy.tryAgain}</button>` : nothing}
         <p>${copy.recordDisclosure}</p>
-        <button type="button" @click=${this.#close}>${copy.close}</button>
+        <button type="button" data-selected-output-share-close @click=${this.#close}>${copy.close}</button>
       </div>
     </section>`;
   }

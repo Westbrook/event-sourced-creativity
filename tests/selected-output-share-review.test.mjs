@@ -60,6 +60,7 @@ const iso = value => new Date(value).toISOString();
 const localDate = value => { const d = new Date(value), pad = part => String(part).padStart(2, "0"); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`; };
 const deferred = () => { let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; };
 const rawText = node => node.children.map(child => typeof child === "string" ? child : rawText(child)).join("");
+const visibleText = node => node.hiddenBy ? "" : node.children.map(child => typeof child === "string" ? child : visibleText(child)).join("");
 const metadata = (id = "candidate-a") => ({ shareId: id, title: "An existing link", output: "scene", revision: 2, expiresAt: iso(NOW - 60_000), issuedAt: iso(NOW - 120_000) });
 async function candidate(selection, review) {
   const { output, ...nativeSelection } = selection;
@@ -107,7 +108,7 @@ const { PresentationSlide } = await ports.loadActual("src/components/presentatio
 
 function fixture(t, { enabled = true, available = true, reply, shares = [], cursor = null, locale = "en" } = {}) {
   let now = NOW, monotonic = 0, localeCallback, clock = 0, current = true;
-  const requests = [], commits = [], clipboard = [], timers = new Map(), frames = new Map(), outputs = new Map();
+  const requests = [], commits = [], clipboard = [], focusCalls = [], timers = new Map(), frames = new Map(), outputs = new Map();
   const base = () => ({ locale, trace: [], listeners: new Map(), changed: new Map(), requested: false,
     timers, frames, resizeTargets: new Map(), storage: new Map(), tick: async () => true });
   const f = base(), preview = base(), link = base();
@@ -154,12 +155,22 @@ function fixture(t, { enabled = true, available = true, reply, shares = [], curs
   assert.equal(f.host.enabled, false, "host creation clamp defaults closed");
   f.renderer = new ports.RendererPort(f, {});
   const query = f.renderer.query.bind(f.renderer);
-  f.renderer.query = (owner, selector) => /^\[data-selected-output-(?:review|link)-mount\]$/u.test(selector)
+  f.renderer.query = (owner, selector) => /^\[data-selected-output-(?:(?:review|link)-mount|share-open|share-close|revoke)\]$/u.test(selector)
     ? f.renderer.nodes.filter(node => node.owner === owner && Object.hasOwn(node.attributes, selector.slice(1, -1))) : query(owner, selector);
+  const collect = f.renderer.collect.bind(f.renderer);
+  f.renderer.collect = (markup, owner) => {
+    const start = f.renderer.nodes.length; collect(markup, owner);
+    for (const node of f.renderer.nodes.slice(start)) {
+      const focus = node.focus.bind(node);
+      // Record the native focus port selected by the actual component. This
+      // does not model geometry or assert browser/assistive-technology focus.
+      node.focus = () => { focusCalls.push({ tag: node.tag, attributes: { ...node.attributes } }); focus(); };
+    }
+  };
   const draw = () => { ports.bindFixture(f); f.renderer.draw(f.host); drawMount(preview); drawMount(link); };
   const trees = () => [f, preview, link].map(value => fullPageTree(value));
   const nodes = tag => trees().flatMap(tree => tree.visible(tag));
-  const text = () => trees().map(tree => rawText(tree.root)).join("\n");
+  const text = () => trees().map(tree => visibleText(tree.root)).join("\n");
   const settle = async (predicate = () => true) => {
     for (let index = 0; index < 40; index++) { await new Promise(setImmediate); draw(); if (predicate()) return; }
     assert.ok(predicate(), "bounded synthetic component observation settled");
@@ -181,8 +192,8 @@ function fixture(t, { enabled = true, available = true, reply, shares = [], curs
     if (oldLocation) Object.defineProperty(ports.documentPort, "location", oldLocation); else delete ports.documentPort.location;
     if (oldNavigator) Object.defineProperty(ports.windowPort, "navigator", oldNavigator); else delete ports.windowPort.navigator;
   });
-  return { f, source, sourceAbort, requests, commits, clipboard, outputs, draw, settle, nodes, text, find, act,
-    async open() { await settle(); await act(find("button", selectedOutputShareCopy(f.locale).shareOutput)); },
+  return { f, source, sourceAbort, requests, commits, clipboard, focusCalls, outputs, draw, settle, nodes, text, find, act,
+    async open() { await settle(); const entry = nodes("button").find(node => Object.hasOwn(node.attributes, "data-selected-output-share-open")); assert.ok(entry, "a current creation or management entry is visible"); await act(entry); },
     async edit(name, value) { const node = nodes("input").find(item => item.attributes.name === name); assert.ok(node); node.port.name = name; node.port.value = value; await act(node, "input"); },
     async fill(title = "An explicit title") { await this.edit("share-title", title); await this.edit("share-expiry", localDate(NOW + 3_600_000)); },
     setReply(value) { reply = value; },
@@ -198,10 +209,16 @@ function fixture(t, { enabled = true, available = true, reply, shares = [], curs
 
 for (const [available, enabled] of [[false, false], [false, true], [true, false]]) test(`creation gates (${available}/${enabled}) allow list/revoke with zero preparations or commits`, async t => {
   const f = fixture(t, { available, enabled, shares: [metadata()] });
-  await f.open(); await f.fill();
+  await f.settle();
+  assert.ok(f.find("button", "Manage links"));
+  const reads = f.requests.filter(item => new URL(item.url).searchParams.has("documentId")).length;
+  assert.equal(reads, 1, "one bounded initial owned metadata read");
+  await f.open();
   assert.equal(f.requests.filter(item => item.init.method === "POST").length, 0);
-  assert.ok(Object.hasOwn(f.find("button", "Review").attributes, "disabled"));
-  assert.match(f.text(), /Unavailable/u); assert.match(f.text(), /An existing link/u);
+  assert.equal(f.requests.filter(item => new URL(item.url).searchParams.has("documentId")).length, reads, "opening reuses successful discovery");
+  assert.equal(f.nodes("input").length, 0, "creation inputs stay hidden in management mode");
+  assert.equal(f.nodes("button").filter(node => ["Review", "Publish link"].includes(rawText(node).trim())).length, 0);
+  assert.doesNotMatch(f.text(), /Unavailable/u); assert.match(f.text(), /An existing link/u);
   await f.act(f.find("button", "Revoke link"));
   assert.equal(f.requests.filter(item => item.init.method === "DELETE").length, 1);
   assert.equal(f.requests.filter(item => item.init.method === "POST").length, 0);
@@ -364,7 +381,7 @@ for (const published of [false, true]) test(`clock rollback cannot extend ${publ
 });
 
 test("failed metadata read cannot claim there are no links", async t => {
-  const f = fixture(t, { available: false, reply: (url, init, fallback) => new URL(url).searchParams.has("documentId")
+  const f = fixture(t, { available: true, reply: (url, init, fallback) => new URL(url).searchParams.has("documentId")
     ? Promise.reject(new Error("unavailable list")) : fallback(url, init) });
   await f.open();
   assert.match(f.text(), /Unavailable/u); assert.doesNotMatch(f.text(), /No links yet/u);
@@ -383,4 +400,110 @@ test("successful metadata retry clears only its read failure", async t => {
   await f.act(f.find("button", "Try again"));
   assert.match(f.text(), /Unavailable/u, "a successful metadata read cannot clear an unrelated publication failure");
   assert.ok(Object.hasOwn(f.find("button", "Review").attributes, "disabled"));
+});
+
+test("unavailable creation with verified empty metadata has no dead-end sharing action", async t => {
+  const f = fixture(t, { available: false }); await f.settle();
+  const actions = f.nodes("button");
+  if (actions.length) {
+    await f.act(actions[0]);
+    t.diagnostic("Prior behavior after opening the offered action: " + f.text().replace(/\s+/gu, " ").trim());
+  }
+  assert.equal(actions.length, 0, "creation-disabled empty state must not offer an action that leads to Unavailable");
+  assert.equal(f.requests.filter(item => new URL(item.url).searchParams.has("documentId")).length, 1, "one bounded metadata discovery");
+  assert.equal(f.requests.filter(item => item.init.method === "POST").length, 0);
+});
+
+test("failed initial discovery cannot reveal a sharing or management action", async t => {
+  const f = fixture(t, { available: false, reply: (url, init, fallback) => new URL(url).searchParams.has("documentId")
+    ? Promise.reject(new Error("unavailable metadata")) : fallback(url, init) });
+  await f.settle();
+  assert.equal(f.nodes("button").length, 0, "unknown metadata must not be treated as a known management target");
+  assert.doesNotMatch(f.text(), /Unavailable|No links yet/u, "initial discovery remains an absent entry, not a new error surface");
+  assert.equal(f.requests.filter(item => item.init.method === "POST").length, 0);
+});
+
+test("late initial metadata cannot resurrect an entry after source A-to-B-to-A", async t => {
+  const held = deferred(); let discovery = 0;
+  const f = fixture(t, { available: false, reply: (url, init, fallback) => new URL(url).searchParams.has("documentId") && ++discovery === 1
+    ? held.promise : fallback(url, init) });
+  await f.settle(); assert.equal(f.nodes("button").length, 0);
+  const first = f.requests.find(item => new URL(item.url).searchParams.has("documentId")); assert.ok(first);
+  f.setSource({ ...f.source, selection: { ...SELECTION, documentId: "document-b" } }); f.setSource(f.source);
+  await f.settle(); assert.equal(first.init.signal.aborted, true);
+  held.resolve(response(first.url, { shares: [metadata()], nextCursor: null })); await f.settle();
+  assert.equal(f.nodes("button").length, 0); assert.doesNotMatch(f.text(), /An existing link/u);
+  assert.equal(discovery, 3, "one read for each distinct source lifetime");
+});
+
+test("true fresh capability offers Share output and opening reuses an in-flight discovery", async t => {
+  const held = deferred();
+  const f = fixture(t, { reply: (url, init, fallback) => new URL(url).searchParams.has("documentId") ? held.promise : fallback(url, init) });
+  await f.settle(); assert.ok(f.find("button", "Share output")); await f.open();
+  assert.equal(f.nodes("input").length, 2);
+  assert.equal(f.requests.filter(item => new URL(item.url).searchParams.has("documentId")).length, 1);
+  const read = f.requests.find(item => new URL(item.url).searchParams.has("documentId"));
+  held.resolve(response(read.url, { shares: [], nextCursor: null })); await f.settle();
+  assert.equal(f.requests.filter(item => item.init.method === "POST").length, 0);
+  assert.match(f.text(), /No links yet/u);
+});
+
+test("same-lease known management stays reachable after the last revoke and clears on a new source", async t => {
+  const f = fixture(t, { available: false, shares: [metadata()] }); await f.open();
+  assert.ok(Object.hasOwn(f.focusCalls.at(-1).attributes, "data-selected-output-revoke"));
+  await f.act(f.find("button", "Revoke link")); await f.settle(() => f.text().includes("No links yet"));
+  await f.act(f.find("button", "Close"));
+  assert.ok(f.find("button", "Manage links"));
+  assert.ok(Object.hasOwn(f.focusCalls.at(-1).attributes, "data-selected-output-share-open"), "closing known management returns to its visible action");
+  await f.open(); assert.match(f.text(), /No links yet/u); assert.equal(f.nodes("input").length, 0);
+  assert.ok(Object.hasOwn(f.focusCalls.at(-1).attributes, "data-selected-output-share-close"), "empty known management opens at its visible Close control");
+  f.setSource({ ...f.source, selection: { ...SELECTION, artifactId: "new-artifact" } }); await f.settle();
+  assert.equal(f.nodes("button").length, 0, "historical management knowledge cannot cross source lifetimes");
+});
+
+test("same-lease known management remains reachable when its refreshed metadata fails", async t => {
+  const f = fixture(t, { available: false, shares: [metadata()] }); await f.open();
+  f.setReply((url, init, fallback) => new URL(url).searchParams.has("documentId") ? Promise.reject(new Error("later failure")) : fallback(url, init));
+  await f.act(f.find("button", "Close")); assert.ok(f.find("button", "Manage links"));
+  await f.open(); assert.match(f.text(), /Unavailable/u); assert.ok(f.find("button", "Try again"));
+  assert.equal(f.nodes("input").length, 0); assert.equal(f.requests.filter(item => item.init.method === "POST").length, 0);
+});
+
+for (const capability of [true, false]) test(`post-close focus waits for the visible refreshed creation capability (${capability})`, async t => {
+  const held = deferred(); const f = fixture(t); await f.open();
+  f.setReply((url, init, fallback) => String(url).endsWith("/availability") ? held.promise : fallback(url, init));
+  const count = f.focusCalls.length;
+  await f.act(f.find("button", "Close"));
+  assert.equal(f.nodes("button").length, 0, "fresh empty entry is hidden while capability is unresolved");
+  assert.equal(f.focusCalls.length, count, "no focus call targets the hidden opener");
+  const request = f.requests.filter(item => String(item.url).endsWith("/availability")).at(-1);
+  held.resolve(response(request.url, { creationAvailable: capability })); await f.settle();
+  if (capability) {
+    assert.ok(f.find("button", "Share output"));
+    assert.equal(f.focusCalls.length, count + 1); assert.ok(Object.hasOwn(f.focusCalls.at(-1).attributes, "data-selected-output-share-open"));
+  } else { assert.equal(f.nodes("button").length, 0); assert.equal(f.focusCalls.length, count); }
+});
+
+test("all four locales show Manage links for existing metadata without revealing creation controls", async t => {
+  const f = fixture(t, { available: false, shares: [metadata()] }); await f.settle();
+  const reads = f.requests.length;
+  for (const locale of ["en", "fr", "ja", "ar"]) {
+    f.locale(locale); assert.ok(f.find("button", selectedOutputShareCopy(locale).manageLinks));
+  }
+  assert.equal(f.requests.length, reads, "saved locale updates do not repeat discovery");
+  await f.open(); assert.equal(f.nodes("input").length, 0); assert.doesNotMatch(f.text(), /Unavailable/u);
+});
+
+test("uncertain own publication remains manageable after close when refreshed creation becomes unavailable", async t => {
+  const f = fixture(t, { reply: (url, init, fallback) => String(url).endsWith("/commit") ? Promise.reject(new Error("lost acknowledgement")) : fallback(url, init) });
+  await f.open(); await f.fill(); await f.act(f.find("button", "Review")); await f.act(f.find("button", "Publish link"));
+  f.setReply((url, init, fallback) => String(url).endsWith("/availability") ? response(url, { creationAvailable: false }) : fallback(url, init));
+  await f.act(f.find("button", "Close")); assert.ok(f.find("button", "Manage links")); await f.open();
+  assert.equal(f.nodes("input").length, 0); assert.equal(f.nodes("a").length, 0);
+  assert.doesNotMatch(f.text(), /Unavailable|No links yet/u, "own unresolved publication retains management without a false empty-state claim");
+  await f.act(f.find("button", "Revoke link"));
+  assert.equal(f.requests.filter(item => String(item.url).endsWith("/prepare")).length, 1);
+  assert.equal(f.requests.filter(item => String(item.url).endsWith("/commit")).length, 1);
+  assert.equal(f.requests.filter(item => item.init.method === "DELETE").length, 1);
+  assert.match(f.text(), /No links yet/u);
 });
