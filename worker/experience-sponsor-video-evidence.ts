@@ -11,7 +11,7 @@ import { OUTPUT_VIDEO_TRANSPORT } from "./output-video-execution.ts";
 import type { WorkerEnv } from "./runtime.ts";
 import { sponsorCurrentSourceAssertions } from "./experience-sponsor-image-evidence.ts";
 import { SponsorEntitlementError, type SponsorRecipe } from "./experience-sponsor-policy.ts";
-import { outputProofReadStatements, assertOutputProofRead, outputDigest } from "./output-disclosure-proof.ts";
+import { outputProofReadStatements, outputDigest } from "./output-disclosure-proof.ts";
 import type { OutputTrustedContext } from "./output-requirements-api.ts";
 import type { OutputSqlAssertion } from "./output-command-core.ts";
 
@@ -30,6 +30,19 @@ type Quote = { terms_digest: string; expires_at: string; private_json: string; s
 
 type ReadLifetime = { deadlineMs: number; check(): void; wait<T>(work: Promise<T>): Promise<T> };
 const cancel = (body: ReadableStream<Uint8Array> | null | undefined) => { try { void body?.cancel().catch(() => undefined); } catch { /* Nonblocking retirement. */ } };
+const ownData = (value: unknown, key: string | number): unknown => {
+  if (value === null || typeof value !== "object") return undefined;
+  const property = Object.getOwnPropertyDescriptor(value, key);
+  return property && "value" in property ? property.value : undefined;
+};
+function assertVideoProofRead(value: unknown, count: number): void {
+  if (!Array.isArray(value) || value.length !== count) fail("sponsor_video_proof_unavailable");
+  for (let index = 0; index < count; index++) {
+    const result = ownData(value, index), rows = ownData(result, "results");
+    if (ownData(result, "success") !== true || !Array.isArray(rows) || rows.length !== 1
+      || ownData(ownData(rows, 0), "current") !== 1) fail("sponsor_video_proof_unavailable");
+  }
+}
 /** Native custody needs HEAD, provenance HEAD, GET, final HEAD. This local
  * read adapter bounds that exact work; it allocates no sponsor allowance. */
 function boundedMedia(media: WorkerEnv["MEDIA"], lifetime: ReadLifetime): WorkerEnv["MEDIA"] {
@@ -49,17 +62,21 @@ function boundedMedia(media: WorkerEnv["MEDIA"], lifetime: ReadLifetime): Worker
     };
     if (name === "get") return async (value: string) => {
       key(value); if (++gets > 1) fail("sponsor_video_media_read_limit");
-      const object = await lifetime.wait(Promise.resolve().then(() => { lifetime.check(); return media.get(value); }).then(object => {
-        try { lifetime.check(); } catch (error) { if (object) cancel(object.body); throw error; } return object;
-      }));
-      if (!object) return null;
-      const size = object.size;
-      if (typeof size !== "number" || !Number.isSafeInteger(size) || size < 1 || size > limit) { cancel(object.body); fail("sponsor_video_media_byte_limit"); }
-      const headers = new Headers(); object.writeHttpMetadata(headers);
-      const metadata = { ...object.customMetadata };
-      const reader = object.body.getReader(), chunks: Uint8Array[] = [];
-      let length = 0, complete = false;
+      let delivered: Awaited<ReturnType<WorkerEnv["MEDIA"]["get"]>> | undefined;
+      let reader: ReadableStreamDefaultReader<Uint8Array> | undefined, retired = false, complete = false;
       try {
+        const object = await lifetime.wait(Promise.resolve().then(() => { lifetime.check(); return media.get(value); }).then(object => {
+          // Own delivery before wait's next check; late fulfillment is ours too.
+          if (retired) { if (object) cancel(object.body); return fail("sponsor_video_read_retired"); }
+          delivered = object; lifetime.check(); return object;
+        }));
+        if (!object) return null;
+        const size = object.size;
+        if (typeof size !== "number" || !Number.isSafeInteger(size) || size < 1 || size > limit) fail("sponsor_video_media_byte_limit");
+        const headers = new Headers(); object.writeHttpMetadata(headers);
+        const metadata = { ...object.customMetadata };
+        reader = object.body.getReader();
+        const chunks: Uint8Array[] = []; let length = 0;
         for (let index = 0; index < 65536; index++) {
           const next = await lifetime.wait(reader.read());
           if (next.done) { complete = true; break; }
@@ -74,14 +91,18 @@ function boundedMedia(media: WorkerEnv["MEDIA"], lifetime: ReadLifetime): Worker
         return { size: length, body: new Blob([bytes.buffer]).stream(), customMetadata: metadata,
           writeHttpMetadata(target: Headers) { headers.forEach((value, key) => target.set(key, value)); } };
       } finally {
-        if (!complete) { try { void reader.cancel().catch(() => undefined); } catch { /* No waiting for cancellation. */ } }
-        try { reader.releaseLock(); } catch { /* Pending read is observed by wait. */ }
+        retired = true;
+        if (reader) {
+          if (!complete) { try { void reader.cancel().catch(() => undefined); } catch { /* No waiting for cancellation. */ } }
+          try { reader.releaseLock(); } catch { /* Pending read is observed by wait. */ }
+        } else if (delivered) cancel(delivered.body);
+        delivered = undefined;
       }
     };
     return () => fail("sponsor_video_media_operation_unsupported");
   } }) as WorkerEnv["MEDIA"];
 }
-async function readNative(trusted: OutputTrustedContext, command: Record<string, unknown>) {
+async function readNative<T>(trusted: OutputTrustedContext, command: Record<string, unknown>, project: (native: Awaited<ReturnType<typeof readNativeWithin>>["value"]) => T): Promise<T> {
   const request = trusted.request, deadlineMs = Date.now() + 30000;
   let active = true, rejectStop!: (reason: unknown) => void;
   const stop = new Promise<never>((_, reject) => { rejectStop = reject; });
@@ -98,7 +119,13 @@ async function readNative(trusted: OutputTrustedContext, command: Record<string,
   request.signal.addEventListener("abort", abort, { once: true });
   const timer = setTimeout(abort, 30000);
   // Invoke directly: command/source capture must precede the first yield.
-  try { return await lifetime.wait(readNativeWithin(trusted, command, lifetime)); }
+  try {
+    const native = await lifetime.wait(readNativeWithin(trusted, command, lifetime));
+    native.assertCurrent();
+    const value = project(native.value);
+    native.assertCurrent();
+    return value;
+  }
   finally { active = false; clearTimeout(timer); request.signal.removeEventListener("abort", abort); rejectStop(new SponsorEntitlementError("sponsor_video_read_retired")); }
 }
 
@@ -198,18 +225,23 @@ async function readNativeWithin(trusted: OutputTrustedContext, rawCommand: Recor
   assertCurrent();
   const checked = await lifetime.wait(database.batch<Record<string, unknown>>(outputProofReadStatements(env, assertions)));
   assertCurrent();
-  assertOutputProofRead(checked, assertions.length);
-  if (!current() || deadline <= Date.now()) return fail("sponsor_authority_changed");
-  return freeze({ description, offered: JSON.parse(canonicalJson(offered)) as Record<string, unknown> });
+  assertVideoProofRead(checked, assertions.length);
+  const assertReturnCurrent = () => { assertCurrent(); if (deadline <= Date.now()) fail("sponsor_authority_changed"); };
+  assertReturnCurrent();
+  return { value: freeze({ description, offered: JSON.parse(canonicalJson(offered)) as Record<string, unknown> }), assertCurrent: assertReturnCurrent };
 }
 
-export async function describeSponsorVideoAdmission(trusted: OutputTrustedContext, command: Record<string, unknown>) {
-  return (await readNative(trusted, command)).description;
+export function describeSponsorVideoAdmission(trusted: OutputTrustedContext, command: Record<string, unknown>) {
+  // Return the owner's exact promise: no unchecked public adoption handoff.
+  return readNative(trusted, command, native => native.description);
 }
-export async function readSponsorVideoTemplateEvidence(trusted: OutputTrustedContext, command: Record<string, unknown>, recipe: SponsorRecipe) {
-  if (jsonIssues(recipe).length) return fail("sponsor_native_envelope_mismatch");
-  const capturedRecipe = JSON.parse(canonicalJson(recipe)) as SponsorRecipe;
-  const native = await readNative(trusted, command);
-  if (canonicalJson(native.description.recipe) !== canonicalJson(capturedRecipe)) return fail("sponsor_native_envelope_mismatch");
-  return freeze({ recipe: native.description.recipe, offered: native.offered });
+export function readSponsorVideoTemplateEvidence(trusted: OutputTrustedContext, command: Record<string, unknown>, recipe: SponsorRecipe) {
+  try {
+    if (jsonIssues(recipe).length) return fail("sponsor_native_envelope_mismatch");
+    const capturedRecipe = JSON.parse(canonicalJson(recipe)) as SponsorRecipe;
+    return readNative(trusted, command, native => {
+      if (canonicalJson(native.description.recipe) !== canonicalJson(capturedRecipe)) return fail("sponsor_native_envelope_mismatch");
+      return freeze({ recipe: native.description.recipe, offered: native.offered });
+    });
+  } catch (error) { return Promise.reject(error); }
 }

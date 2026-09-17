@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import {after,test} from 'node:test';
+import {promiseHooks} from 'node:v8';
 import {createRequire} from 'node:module';
 import {writeFile} from 'node:fs/promises';
 import {fixture,snapshot,noWrites,assertUnpaid,alterQuote,template,actor,imports} from './sponsor-video-native-fixture.mjs';
@@ -13,6 +14,103 @@ async function actualEvidence(f){const described=await describeSponsorVideoAdmis
 function assertCustodyTrace(f,start){
   assert.deepEqual(f.io.media.slice(start),['head','head','get','head'],'The actual native original-custody read must not be bypassed or repeated');
 }
+// Intercept only the leaf's final complete source/quote/principal proof batch.
+// Every real native SQL statement executes before acknowledgment fault injection.
+const isFinalVideoProof=statements=>statements.some(statement=>statement.sql.includes('captured WHERE terms_digest=? AND expires_at=? AND private_json=?'));
+const afterMicrotasks=(count,callback)=>{const advance=remaining=>queueMicrotask(()=>remaining===1?callback():advance(remaining-1));advance(count);};
+
+for(const mode of ['sparse','missing-success','false-success','null-current','undefined-entry','inherited-index','accessor-index','accessor-success','accessor-current'])test(`successor final acknowledgment refuses ${mode} after genuine native SQL`,async t=>{
+  const f=await fixture(t),batch=f.DB.batch.bind(f.DB),before=snapshot(f),assertReadOnly=noWrites(f);let reached=false;
+  let accessorsRead=0;
+  f.DB.batch=async statements=>{const actual=await batch(statements);if(!isFinalVideoProof(statements))return actual;reached=true;
+    if(mode==='sparse')return new Array(actual.length);
+    if(mode==='missing-success')return actual.map(({success:ignored,...entry})=>{void ignored;return entry;});
+    if(mode==='false-success')return actual.map(entry=>({...entry,success:false}));
+    if(mode==='null-current')return actual.map(entry=>({...entry,results:[{current:null}]}));
+    if(mode==='inherited-index')return Object.setPrototypeOf(new Array(actual.length),actual);
+    if(mode==='accessor-index'){const rows=[...actual];Object.defineProperty(rows,0,{get(){accessorsRead++;return actual[0];}});return rows;}
+    if(mode==='accessor-success'){const rows=actual.map(entry=>({...entry}));Object.defineProperty(rows[0],'success',{get(){accessorsRead++;return true;}});return rows;}
+    if(mode==='accessor-current'){const rows=actual.map(entry=>({...entry,results:[{current:1}]}));Object.defineProperty(rows[0].results[0],'current',{get(){accessorsRead++;return 1;}});return rows;}
+    return actual.map((entry,index)=>index?entry:undefined);
+  };
+  await assert.rejects(describeSponsorVideoAdmission(f.trusted,f.command));assert.equal(reached,true);
+  assert.equal(accessorsRead,0);assert.deepEqual(snapshot(f),before);assertReadOnly();assertUnpaid(f);
+});
+
+for(const api of ['describe','template'])for(const race of ['source-after-inner-proof','abort-before-public-projection'])
+test(`successor public ${api} return refuses ${race}`,async t=>{
+  const f=await fixture(t),recipe=(await describeSponsorVideoAdmission(f.trusted,f.command)).recipe;
+  const controller=new AbortController();f.trusted.request=new Request(f.request,{signal:controller.signal});
+  const batch=f.DB.batch.bind(f.DB),before=snapshot(f),assertReadOnly=noWrites(f);let reached=false,mutated=false,operation,settled=false,settledBeforeMutation;
+  // A .then observer runs later than promise settlement; V8's hook measures
+  // the exact public Promise instead of treating its observer as the boundary.
+  const stop=promiseHooks.createHook({settled(promise){if(promise===operation)settled=true;}});t.after(stop);
+  f.DB.batch=async statements=>{const actual=await batch(statements);if(isFinalVideoProof(statements)){
+    reached=true;afterMicrotasks(race==='source-after-inner-proof'?4:6,()=>{mutated=true;settledBeforeMutation=settled;
+      if(race==='source-after-inner-proof')f.trusted.context.snapshot.facts.find(fact=>typeof fact.properties.text==='string').properties.text+=' retired';
+      else controller.abort(new Error('synthetic-final-handoff-abort'));
+    });
+  }return actual;};
+  operation=api==='describe'?describeSponsorVideoAdmission(f.trusted,f.command):readSponsorVideoTemplateEvidence(f.trusted,f.command,recipe);
+  const outcome=await operation.then(value=>({value}),error=>({error}));
+  assert.equal(reached,true);assert.equal(mutated,true);assert.equal(settledBeforeMutation,false,'Mutation must precede the actual public promise settlement');
+  assert.deepEqual(snapshot(f),before);assertReadOnly();assertUnpaid(f);
+  assert.ok(outcome.error,'The public API must reject an operation retired before its actual promise settlement');
+  assert.match(outcome.error.message,/sponsor_|output_|experience_|video_/);
+});
+
+for(const api of ['describe','template'])test(`successor public ${api} already-settled result is not invalidated by a later abort`,async t=>{
+  const f=await fixture(t),recipe=(await describeSponsorVideoAdmission(f.trusted,f.command)).recipe,controller=new AbortController();
+  f.trusted.request=new Request(f.request,{signal:controller.signal});const batch=f.DB.batch.bind(f.DB),before=snapshot(f),assertReadOnly=noWrites(f);
+  let operation,settled=false,reached=false,settledBeforeAbort;
+  const stop=promiseHooks.createHook({settled(promise){if(promise===operation)settled=true;}});t.after(stop);
+  f.DB.batch=async statements=>{const actual=await batch(statements);if(isFinalVideoProof(statements))afterMicrotasks(7,()=>{
+    reached=true;settledBeforeAbort=settled;controller.abort(new Error('synthetic-after-public-settlement'));
+  });return actual;};
+  operation=api==='describe'?describeSponsorVideoAdmission(f.trusted,f.command):readSponsorVideoTemplateEvidence(f.trusted,f.command,recipe);
+  const result=await operation;await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(reached,true);assert.equal(settledBeforeAbort,true);assert.equal(result.recipe.maximumTokens,152000);
+  assert.deepEqual(snapshot(f),before);assertReadOnly();assertUnpaid(f);
+});
+
+test('successor delivered R2 body is cancelled when lifetime retires between delivery validation and await resumption',async t=>{
+  const f=await fixture(t),controller=new AbortController();f.trusted.request=new Request(f.request,{signal:controller.signal});
+  const get=f.env.MEDIA.get,clock=Date.now,before=snapshot(f),assertReadOnly=noWrites(f);
+  let delivered=false,queued=false,aborted=false,cancelled=0,acquired=0,body;
+  f.env.MEDIA.get=async key=>{const object=await get(key);body=new ReadableStream({cancel(){cancelled++;}},{highWaterMark:0});
+    const acquire=body.getReader.bind(body);body.getReader=(...args)=>{acquired++;return acquire(...args);};delivered=true;return {...object,body};};
+  Date.now=()=>{const value=clock();if(delivered&&!queued){queued=true;queueMicrotask(()=>{aborted=true;controller.abort(new Error('synthetic-delivered-body-retirement'));});}return value;};
+  try{await assert.rejects(describeSponsorVideoAdmission(f.trusted,f.command),/sponsor_video_read_interrupted/);}finally{Date.now=clock;}
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(delivered,true);assert.equal(queued,true);assert.equal(aborted,true);assert.equal(acquired,0,'Retirement occurs before reader acquisition');
+  assert.equal(body.locked,false);assert.equal(cancelled,1,'Every delivered but unacquired body belongs to the retiring operation');
+  assert.deepEqual(snapshot(f),before);assertReadOnly();assertUnpaid(f);
+});
+
+test('successor late GET fulfillment after rejection receives one nonblocking cancellation without an unhandled rejection',async t=>{
+  const f=await fixture(t),controller=new AbortController();f.trusted.request=new Request(f.request,{signal:controller.signal});
+  const get=f.env.MEDIA.get,before=snapshot(f),assertReadOnly=noWrites(f),unhandled=[],observe=reason=>unhandled.push(reason);
+  process.on('unhandledRejection',observe);t.after(()=>process.off('unhandledRejection',observe));
+  let deliver,startedResolve,retired=false,cancelled=0,acquired=0;
+  const started=new Promise(resolve=>{startedResolve=resolve;});
+  f.env.MEDIA.get=async key=>{const object=await get(key),body=new ReadableStream({cancel(){cancelled++;return new Promise(()=>{});}},{highWaterMark:0});
+    const acquire=body.getReader.bind(body);body.getReader=(...args)=>{acquired++;return acquire(...args);};
+    return new Promise(resolve=>{deliver=()=>resolve({...object,body});startedResolve();});};
+  const pending=describeSponsorVideoAdmission(f.trusted,f.command);await started;controller.abort(new Error('synthetic-before-delivery'));
+  await assert.rejects(pending,/sponsor_video_read_interrupted/);retired=true;deliver();
+  await new Promise(resolve=>setImmediate(resolve));await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(retired,true);assert.equal(acquired,0);assert.equal(cancelled,1);assert.deepEqual(unhandled,[]);
+  assert.deepEqual(snapshot(f),before);assertReadOnly();assertUnpaid(f);
+});
+
+test('successor metadata failure before reader acquisition cancels its delivered R2 body',async t=>{
+  const f=await fixture(t),get=f.env.MEDIA.get,before=snapshot(f),assertReadOnly=noWrites(f);let cancelled=0,acquired=0;
+  f.env.MEDIA.get=async key=>{const object=await get(key),body=new ReadableStream({cancel(){cancelled++;}},{highWaterMark:0});
+    const acquire=body.getReader.bind(body);body.getReader=(...args)=>{acquired++;return acquire(...args);};
+    return {...object,body,writeHttpMetadata(){throw Error('synthetic-metadata-failure');}};};
+  await assert.rejects(describeSponsorVideoAdmission(f.trusted,f.command),/synthetic-metadata-failure/);
+  assert.equal(acquired,0);assert.equal(cancelled,1);assert.deepEqual(snapshot(f),before);assertReadOnly();assertUnpaid(f);
+});
 
 for(const [frame,frameSize] of [['landscape','1280x720'],['portrait','720x1280']])test(`actual canonical Video ${frame} intake, SAVE, CONFIRM and quote yield read-only native sponsorship evidence`,async t=>{
   const f=await fixture(t,{frame}),before=snapshot(f),limits=enforceD1ExpressionDepth(f,{queryLimits:{functionArguments:32,parameters:100,sqlBytes:100000}});
@@ -233,7 +331,7 @@ test('actual native Video evidence and late source refusal execute against local
       success:true,positiveStatements,totalStatements:trace.length,sqlShapes:new Set(trace.map(value=>value.sql)).size,
       maximumBindings:Math.max(...trace.map(value=>value.bindings.length)),maximumSqlBytes:Math.max(...trace.map(value=>Buffer.byteLength(value.sql))),
       lateOriginalSourceWithdrawalRefused:changed,sourceReads:3,providerCalls:0,outboundCalls:outbound,mediaWrites:0};
-    await writeFile('/private/tmp/forma-sponsored-video-leaf-evidence-20260917/native-d1.json',JSON.stringify({evidence,trace},null,2)+'\n');
+    await writeFile(process.env.FORMA_VIDEO_D1_EVIDENCE_PATH??'/private/tmp/forma-sponsored-video-leaf-evidence-20260917/native-d1.json',JSON.stringify({evidence,trace},null,2)+'\n');
     t.diagnostic(JSON.stringify(evidence));
   }finally{await mf.dispose();}
 });
