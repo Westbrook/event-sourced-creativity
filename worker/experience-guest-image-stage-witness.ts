@@ -22,7 +22,8 @@ import type { EventRow } from "./event-write-primitives.ts";
 import { readGuestImageSourceForCustody } from "./experience-guest-source.ts";
 import { GUEST_DB_NOW, guestFail, guestHash, type GuestClaimProof } from "./experience-guest-session.ts";
 import { guestApprovedCampaignData, type GuestApprovedCampaignWitness } from "./experience-guest-sponsor-approval.ts";
-import { compileGuestSponsorSessionBinding, compileGuestSponsorSourceBinding, deriveGuestSponsorDriver } from "./experience-guest-sponsor-contract.ts";
+import { compileGuestSponsorSessionBinding, compileGuestSponsorSourceBinding, deriveGuestSponsorDriver, compileGuestSponsorEnvelope,
+  type GuestSponsorSessionBinding, type GuestSponsorSourceBinding, type GuestImageAuthorizationV1 } from "./experience-guest-sponsor-contract.ts";
 import { experienceOutputBinding, experienceOutputEnvelope } from "./experience-output-binding.ts";
 import { createExperienceOutputRecipe, matchExperienceOutputRecipeTarget } from "./experience-output-recipe.ts";
 import { SPONSOR_ENTITLEMENT_SCHEMA } from "./experience-sponsor-entitlement.ts";
@@ -76,10 +77,12 @@ type GuestImageOutputData = Readonly<{
   beforeProof: OutputSqlAssertion | null; assertion: OutputSqlAssertion; saved: Saved | null;
 }>;
 type Context = { request: Request; env: WorkerEnv; db: WorkerEnv["DB"]; headers: string; url: string; origin: string;
-  approvedWitness: GuestApprovedCampaignWitness; approved: Approved };
+  approvedWitness: GuestApprovedCampaignWitness; approved: Approved; issuerDeadline?: number };
 type Captured = { stage: StageData | null; stageProofs: Proof[]; stageEvents: EventRow[]; resourceIds: string[]; ctx: Context; data: GuestImageOutputData; prefix: Proof[]; memory: { proof: Proof; registries: string[] };
   sponsor: { proof: Proof; tables: Set<string> }; source: Source; minimumWriteMs: number; expiresAtMs: number;
-  limitsDigest: string; resourceTimestamp: number | null; driverId: string };
+  limitsDigest: string; resourceTimestamp: number | null; driverId: string;
+  sessionBinding: GuestSponsorSessionBinding; sourceBinding: GuestSponsorSourceBinding;
+  issuerBoundary?: Proof; issuerAbsent?: Proof; issuer?: { grantId: string; resourceId: string; expiresAtMs: number; proofs: Proof[] } };
 
 const fail = (part = "unavailable"): never => guestFail(`image_output_${part}`);
 const bytes = (value: string) => new TextEncoder().encode(value).byteLength;
@@ -101,6 +104,7 @@ function together(parts: readonly Proof[]): Proof {
     SELECT 1 FROM ${parts.map((_, i) => `guest_output_proof_${i}`).join(",")})`, bindings: parts.flatMap(part => part.bindings) };
 }
 function current(ctx: Context) {
+  if (ctx.issuerDeadline !== undefined && performance.now() >= ctx.issuerDeadline) return fail("issuer_observation_expired");
   if (ctx.env.DB !== ctx.db) return guestFail("database_changed");
   const { request } = ctx, url = new URL(request.url), site = request.headers.get("sec-fetch-site");
   if (request.signal.aborted || request.method !== "POST" || request.url !== ctx.url || JSON.stringify(Array.from(request.headers)) !== ctx.headers
@@ -317,12 +321,17 @@ function closure(captured: Captured, tail: string | null, includeNative: boolean
   for (const row of rows) if (allowed.has(row[0])) row[1] = `(${row[1]}) AND NOT(${allowed.get(row[0])})`;
   const add = (table: string, predicate: string) => { if (sponsor.tables.has(table)) rows.push([table, predicate]); };
   add("experience_sponsor_resource_receipts", "(d.actor_user_id=s.guest OR d.session_digest=s.session) AND d.resource_id NOT IN(SELECT value FROM json_each(s.resources))");
-  for (const table of ["experience_sponsor_grants", "experience_sponsor_consumptions"]) add(table, "d.actor_user_id=s.guest OR d.session_digest=s.session");
+  for (const table of ["experience_sponsor_grants", "experience_sponsor_consumptions"]) add(table,
+    captured.issuer && table === "experience_sponsor_grants"
+      ? "(d.actor_user_id=s.guest OR d.session_digest=s.session) AND d.grant_id<>s.issuerGrant"
+      : captured.issuer && table === "experience_sponsor_consumptions"
+        ? "d.actor_user_id=s.guest OR d.session_digest=s.session OR d.grant_id=s.issuerGrant"
+        : "d.actor_user_id=s.guest OR d.session_digest=s.session");
   add("experience_sponsor_active_jobs", "d.actor_user_id=s.guest OR EXISTS(SELECT 1 FROM experience_sponsor_consumptions used WHERE used.consumption_id=d.consumption_id AND (used.actor_user_id=s.guest OR used.session_digest=s.session))");
   // Unsupported retained identity JSON cannot be silently classified as an
   // unrelated actor's work. This bounded inspector refuses that inventory;
   // it does not repair, delete or reinterpret another actor's receipt.
-  add("experience_sponsor_issuances", `${unsupportedIdentityJson("d.driver_command_json")} OR ${unsupportedIdentityJson("d.envelope_json", ["documentId", "projectId", "ownerUserId", "actorUserId", "payerUserId", "sessionDigest"])}
+  const issuanceExclusion = `${unsupportedIdentityJson("d.driver_command_json")} OR ${unsupportedIdentityJson("d.envelope_json", ["documentId", "projectId", "ownerUserId", "actorUserId", "payerUserId", "sessionDigest"])}
     OR d.actor_user_id=s.guest OR EXISTS(SELECT 1 FROM experience_sponsor_grants issued WHERE issued.grant_id=d.grant_id AND (issued.actor_user_id=s.guest OR issued.session_digest=s.session))
     OR ${boundedIdentityValue("d.driver_command_json", "documentId")}=s.document
     OR ${boundedIdentityValue("d.envelope_json", "documentId")}=s.document
@@ -330,7 +339,8 @@ function closure(captured: Captured, tail: string | null, includeNative: boolean
     OR ${boundedIdentityValue("d.envelope_json", "ownerUserId")}=s.guest
     OR ${boundedIdentityValue("d.envelope_json", "actorUserId")}=s.guest
     OR ${boundedIdentityValue("d.envelope_json", "payerUserId")}=s.guest
-    OR ${boundedIdentityValue("d.envelope_json", "sessionDigest")}=s.session`);
+    OR ${boundedIdentityValue("d.envelope_json", "sessionDigest")}=s.session`;
+  add("experience_sponsor_issuances", captured.issuer ? `(${issuanceExclusion}) AND d.grant_id<>s.issuerGrant` : issuanceExclusion);
   add("experience_sponsor_driver_intents", `(${unsupportedIdentityJson("d.command_json")} OR d.driver_id=s.driver
     OR d.actor_user_id=s.guest OR d.session_digest=s.session OR d.document_id=s.document
     OR ${boundedIdentityValue("d.command_json", "documentId")}=s.document) AND NOT(s.plan IS NOT NULL AND d.driver_id=s.driver)`);
@@ -342,7 +352,7 @@ function closure(captured: Captured, tail: string | null, includeNative: boolean
   add("experience_sponsor_intake_read_attempts", "d.actor_user_id=s.guest OR d.resource_key='draft:'||s.draft");
   if (includeNative) for (const registry of captured.memory.registries) rows.push([registry, "d.user_event_id IN(SELECT value FROM json_each(s.ids)) OR d.answer_event_id IN(SELECT value FROM json_each(s.ids))"]);
   const groups = Array.from({ length: Math.ceil(rows.length / 4) }, (_, i) => rows.slice(i * 4, i * 4 + 4));
-  const names = ["guest", "stream", "project", "document", "draft", "ids", "prefix", "scope", "tail", "command", "resource", "session", "driver", "commands", "resources", "plan", "target", "quote", "claimed"];
+  const names = ["guest", "stream", "project", "document", "draft", "ids", "prefix", "scope", "tail", "command", "resource", "session", "driver", "commands", "resources", "plan", "target", "quote", "claimed", ...(captured.issuer ? ["issuerGrant"] : [])];
   return { sql: `NOT EXISTS(WITH guest_output_closure_input AS(SELECT ? AS value),guest_output_closure_scope AS(
     SELECT ${names.map(key => `json_extract(value,'$.${key}') AS ${key}`).join(",")} FROM guest_output_closure_input),
     ${groups.map((group, i) => `guest_output_closure_${i} AS MATERIALIZED(${group.map(([table, predicate]) => `SELECT 1 FROM ${table} d,guest_output_closure_scope s WHERE ${predicate}`).join(" UNION ALL ")} LIMIT 1)`).join(",")}
@@ -350,8 +360,9 @@ function closure(captured: Captured, tail: string | null, includeNative: boolean
     guest: session.row.guest_subject, stream: plan.streamId, project: plan.projectId, document: plan.documentId, draft: plan.draftId,
     ids: JSON.stringify([...source.commit.eventIds, ...(tail ? [tail] : []), ...captured.stageEvents.map(event => event.eventId)]), prefix: JSON.stringify(source.commit.eventIds),
     scope: data.scopeKey, tail, command: data.commandKey, resource: data.resourceInput.resourceId, session: data.resourceInput.sessionDigest, driver: captured.driverId,
-    commands: JSON.stringify([data.commandKey, ...captured.stageEvents.map(event => event.correlationId)]), resources: JSON.stringify(captured.resourceIds),
+    commands: JSON.stringify([data.commandKey, ...captured.stageEvents.map(event => event.correlationId)]), resources: JSON.stringify([...captured.resourceIds, ...(captured.issuer ? [captured.issuer.resourceId] : [])]),
     plan: captured.stage?.confirmed?.revisionId ?? null, target: captured.stage?.target.id ?? null,
+    ...(captured.issuer ? { issuerGrant: captured.issuer.grantId } : {}),
     quote: captured.stage?.quote?.id ?? null, claimed: captured.stage?.state === "claimed" || captured.stage?.state === "quoted" ? 1 : 0 })] };
 }
 
@@ -406,11 +417,11 @@ function validateEvent(captured: Captured, raw: EventRow): EventRow {
   return freeze(structuredClone(raw));
 }
 async function inspectBase(request: Request, env: WorkerEnv, input: GuestImageOutputInput,
-  approvedWitness: GuestApprovedCampaignWitness): Promise<Captured> {
+  approvedWitness: GuestApprovedCampaignWitness, issuerDeadline?: number): Promise<Captured> {
   if (!(request instanceof Request) || jsonIssues(input).length || !record(input) || !exactKeys(input, ["proof", "campaignId", "policyDigest", "draftHash"])
     || typeof input.campaignId !== "string" || !guestHash(input.policyDigest) || !guestHash(input.draftHash)) return fail();
   const copied = structuredClone(input), approved = guestApprovedCampaignData(request, env, approvedWitness), headers = JSON.stringify(Array.from(request.headers));
-  const ctx: Context = { request, env, db: env.DB, url: request.url, headers, origin: approved.policy.guestAdmission.origin, approvedWitness, approved };
+  const ctx: Context = { request, env, db: env.DB, url: request.url, headers, origin: approved.policy.guestAdmission.origin, approvedWitness, approved, ...(issuerDeadline === undefined ? {} : { issuerDeadline }) };
   current(ctx);
   if (bytes(headers) > 32768 || copied.campaignId !== approved.policy.campaignId || copied.policyDigest !== approved.policyDigest) return fail();
   const source = await readGuestImageSourceForCustody(request, env, copied.proof); current(ctx);
@@ -460,7 +471,7 @@ async function inspectBase(request: Request, env: WorkerEnv, input: GuestImageOu
   const data: GuestImageOutputData = { state: "saved", plan, session, policy, sourceHead: source.commit.head, sourceEventIds: [...source.commit.eventIds],
     scopeKey, requirementId, binding, envelope, payload, commandKey, requestDigest, resourceInput, beforeProof: null, assertion: { sql: "0", bindings: [] }, saved: null };
   const captured: Captured = { ctx, data, prefix: prefix.parts, memory, sponsor, source, minimumWriteMs: clock.now, expiresAtMs,
-    limitsDigest, resourceTimestamp: null, driverId: driver.driverId, stage: null, stageProofs: [], stageEvents: [], resourceIds: [] };
+    limitsDigest, resourceTimestamp: null, driverId: driver.driverId, sessionBinding: sessionBinding.binding, sourceBinding: sourceBinding.binding, stage: null, stageProofs: [], stageEvents: [], resourceIds: [] };
   const command = await ctx.db.prepare(`SELECT ${objectSql(commandColumns)} AS witness FROM output_commands WHERE scope_key=? AND actor_user_id=? AND command_key=?`)
     .bind(scopeKey, session.row.guest_subject, commandKey).first<{ witness: string }>(); current(ctx);
   if (!command) return fail("save_required");
@@ -587,7 +598,7 @@ function fullAssertion(captured: Captured): Proof {
     { sql: `(SELECT COUNT(*) FROM events WHERE stream_id=?)=? AND (SELECT COALESCE(MAX(sequence),0) FROM events WHERE stream_id=?)=?
       AND (SELECT COUNT(*) FROM event_client_receipts WHERE stream_id=?)=? AND ?>strftime('%Y-%m-%dT%H:%M:%fZ','now')`,
     bindings: [data.plan.streamId, count, data.plan.streamId, count, data.plan.streamId, data.sourceHead, source.saved.row.expires_at] },
-    closure(captured, data.saved!.eventId, true)]);
+    closure(captured, data.saved!.eventId, true), ...(captured.issuerBoundary ? [captured.issuerBoundary] : []), ...(captured.issuerAbsent ? [captured.issuerAbsent] : []), ...(captured.issuer?.proofs ?? [])]);
 }
 function copyCaptured(captured: Captured): Captured {
   return { ...captured, stage: { ...stage(captured) }, stageProofs: [...captured.stageProofs], stageEvents: [...captured.stageEvents], resourceIds: [...captured.resourceIds] };
@@ -670,9 +681,7 @@ async function resourceTime(captured: Captured, input: SponsorResourceInput, min
   return row.recorded_at_ms;
 }
 
-export async function inspectGuestImageStages(request: Request, env: WorkerEnv, input: GuestImageOutputInput,
-  approved: GuestApprovedCampaignWitness): Promise<GuestImageStageWitness> {
-  const captured = await inspectBase(request, env, input, approved); current(captured.ctx);
+async function collectNativeStages(captured: Captured) {
   const confirm = await readEvent(captured, stage(captured).confirmKey); current(captured.ctx);
   if (confirm) {
     const data = stage(captured), intent = await captured.ctx.db.prepare("SELECT created_at_ms FROM experience_sponsor_driver_intents WHERE driver_id=?")
@@ -688,6 +697,12 @@ export async function inspectGuestImageStages(request: Request, env: WorkerEnv, 
       if (quoted) { await addQuote(captured, quoted); current(captured.ctx); }
     }
   }
+}
+
+export async function inspectGuestImageStages(request: Request, env: WorkerEnv, input: GuestImageOutputInput,
+  approved: GuestApprovedCampaignWitness): Promise<GuestImageStageWitness> {
+  const captured = await inspectBase(request, env, input, approved); current(captured.ctx);
+  await collectNativeStages(captured); current(captured.ctx);
   captured.stage = freeze({ ...stage(captured), assertion: fullAssertion(captured) });
   await prove(captured.ctx, proof(stage(captured).assertion)); current(captured.ctx);
   const witness = Object.freeze(Object.create(null)) as GuestImageStageWitness;
@@ -719,4 +734,188 @@ export async function guestImageQuoteSuccessor(request: Request, env: WorkerEnv,
   event: EventRow): Promise<OutputSqlAssertion> {
   const captured = copyCaptured(capturedStage(request, env, witness));
   await addQuote(captured, event); current(captured.ctx); return freeze(fullAssertion(captured));
+}
+
+
+/** Separate issuer-only continuation. Existing four-state witnesses never enter
+ * this registry, and the native admission/Run authority remains unavailable. */
+declare const issuerStageWitnessBrand: unique symbol;
+export type GuestImageIssuerStageWitness = Readonly<{ [issuerStageWitnessBrand]: true }>;
+export type GuestImageIssuerRows = Readonly<{
+  grant: Readonly<{ grant_id: string; campaign_id: string; policy_digest: string; actor_user_id: string;
+    session_digest: string; intent_key: string; envelope_digest: string; issued_at_ms: number; expires_at_ms: number; enabled: 1 }>;
+  issuance: Readonly<{ grant_id: string; campaign_id: string; actor_user_id: string; intent_key: string; policy_digest: string;
+    driver_command_json: string; command_digest: string; envelope_digest: string; envelope_json: string }>;
+  resource: Readonly<{ resource_id: string; campaign_id: string; policy_digest: string; limits_digest: string;
+    actor_user_id: string; session_digest: string; operation: "issuance"; intent_key: string; payload_digest: string;
+    text_bytes: number; issued_grant_id: string; recorded_at_ms?: number }>;
+}>;
+export type GuestImageIssuerReceipt = GuestImageIssuerRows & Readonly<{
+  resource: GuestImageIssuerRows["resource"] & Readonly<{ recorded_at_ms: number }>;
+}>;
+export type GuestImageIssuerStageData = Readonly<{
+  state: "quoted-unissued" | "quoted-issued-exact"; stage: StageData;
+  sessionBinding: GuestSponsorSessionBinding; sourceBinding: GuestSponsorSourceBinding;
+  issuance: GuestImageIssuerReceipt | null; assertion: OutputSqlAssertion;
+}>;
+const issuerStageWitnesses = new WeakMap<GuestImageIssuerStageWitness, { captured: Captured; data: GuestImageIssuerStageData }>();
+const issuerGrantColumns = ["grant_id", "campaign_id", "policy_digest", "actor_user_id", "session_digest", "intent_key", "envelope_digest", "issued_at_ms", "expires_at_ms", "enabled"];
+const issuerRowColumns = ["grant_id", "campaign_id", "actor_user_id", "intent_key", "policy_digest", "driver_command_json", "command_digest", "envelope_digest", "envelope_json"];
+const ownIssuerData = (value: unknown, key: PropertyKey): unknown => {
+  if (value === null || typeof value !== "object") return undefined;
+  const descriptor = Object.getOwnPropertyDescriptor(value, key);
+  return descriptor && Object.hasOwn(descriptor, "value") ? descriptor.value : undefined;
+};
+function currentIssuer(captured: Captured) {
+  current(captured.ctx);
+  const data = stage(captured), expiry = Math.min(captured.expiresAtMs,
+    data.quote ? Date.parse(data.quote.expiresAt) : captured.expiresAtMs, captured.issuer?.expiresAtMs ?? captured.expiresAtMs);
+  if (!Number.isSafeInteger(expiry) || Date.now() >= expiry) return fail("issuer_expired");
+}
+async function proveIssuer(captured: Captured, assertion: Proof) {
+  currentIssuer(captured);
+  const result = await captured.ctx.db.prepare(`SELECT 1 AS current WHERE ${assertion.sql}`).bind(...assertion.bindings).all<{ current: number }>();
+  currentIssuer(captured);
+  if (!record(result)) return fail("issuer_proof_unavailable");
+  const rows = ownIssuerData(result, "results"), error = Object.getOwnPropertyDescriptor(result, "error");
+  if (ownIssuerData(result, "success") !== true || "error" in result && (!error || !Object.hasOwn(error, "value") || error.value !== undefined)
+    || !Array.isArray(rows) || ownIssuerData(rows, "length") !== 1 || ownIssuerData(ownIssuerData(rows, 0), "current") !== 1)
+    return fail("issuer_proof_unavailable");
+}
+async function issuerIdentity(captured: Captured) {
+  const data = stage(captured), intentKey = data.driver.stageKeys.authorize;
+  const suffix = (await digest({ campaignId: data.base.policy.campaignId, actorUserId: data.base.session.row.guest_subject, intentKey })).slice(7);
+  currentIssuer(captured);
+  return { intentKey, grantId: `sponsor-issued-${suffix}`, consumptionId: `sponsor-consume-${suffix}`, resourceId: `sponsor-resource-issue-${suffix}` };
+}
+function issuerRowOrder(columns: readonly string[], value: Record<string, Value>) {
+  return Object.fromEntries(columns.map(column => [column, value[column]!])) as Record<string, Value>;
+}
+async function validateIssuerRows(captured: Captured, raw: GuestImageIssuerRows, stored: boolean): Promise<GuestImageIssuerRows> {
+  currentIssuer(captured);
+  if (jsonIssues(raw).length || !record(raw) || !exactKeys(raw, ["grant", "issuance", "resource"])
+    || bytes(canonicalJson(raw)) > 98304 || !flatRow(raw.grant, issuerGrantColumns) || !flatRow(raw.issuance, issuerRowColumns)
+    || !flatRow(raw.resource, [...resourceColumns, ...(stored ? ["recorded_at_ms"] : [])])) return fail("issuer_rows_invalid");
+  const rows = freeze(structuredClone(raw)), data = stage(captured), grant = rows.grant, issuance = rows.issuance;
+  if (data.state !== "quoted" || !data.quote || !data.quoteEvent || !data.confirmed || !data.transport
+    || !captured.sponsor.tables.has("experience_sponsor_issuances")) return fail("issuer_quote_required");
+  if (typeof issuance.envelope_json !== "string" || bytes(issuance.envelope_json) > 65536
+    || typeof issuance.driver_command_json !== "string" || bytes(issuance.driver_command_json) > 65536) return fail("issuer_rows_invalid");
+  let envelope: unknown;
+  try { envelope = JSON.parse(issuance.envelope_json); } catch { return fail("issuer_rows_invalid"); }
+  if (jsonIssues(envelope).length || canonicalJson(envelope) !== issuance.envelope_json) return fail("issuer_rows_invalid");
+  const authorization: GuestImageAuthorizationV1 = {
+    version: 1, purpose: "authorize-guest-sponsored-image", sessionDigest: data.base.resourceInput.sessionDigest,
+    guestSourceDigest: data.driver.command.guestSourceDigest, policyDigest: captured.ctx.approved.policyDigest,
+    termsDigest: data.quote.termsDigest, maximumMicrousd: data.quote.maximumMicrousd, preflightId: data.quote.id, explicitAuthorization: true,
+  };
+  const compiled = await compileGuestSponsorEnvelope(data.base.policy, envelope, {
+    sessionBinding: captured.sessionBinding, authorization,
+    native: { sourceRevision: data.base.sourceHead + 3, preflight: data.quote, contextSnapshot: data.context.snapshot, transport: data.transport },
+  });
+  currentIssuer(captured);
+  const ids = await issuerIdentity(captured); currentIssuer(captured);
+  const e = compiled.envelope, expectedExpiry = Math.min(captured.expiresAtMs, Date.parse(data.quote.expiresAt),
+    e.issuedAtMs + data.base.policy.maximumGrantLifetimeMs);
+  if (!Number.isSafeInteger(e.issuedAtMs) || e.issuedAtMs < Date.parse(data.quote.createdAt)
+    || !stored && e.issuedAtMs < captured.minimumWriteMs || e.expiresAtMs !== expectedExpiry
+    || stored && e.issuedAtMs > data.nowMs || e.consumptionId !== ids.consumptionId
+    || compiled.policyDigest !== captured.ctx.approved.policyDigest) return fail("issuer_time_or_identity_changed");
+  const expectedGrant = { grant_id: ids.grantId, campaign_id: data.base.policy.campaignId, policy_digest: compiled.policyDigest,
+    actor_user_id: data.base.session.row.guest_subject, session_digest: data.base.resourceInput.sessionDigest,
+    intent_key: ids.intentKey, envelope_digest: compiled.envelopeDigest, issued_at_ms: e.issuedAtMs, expires_at_ms: e.expiresAtMs, enabled: 1 };
+  const expectedIssuance = { grant_id: ids.grantId, campaign_id: data.base.policy.campaignId,
+    actor_user_id: data.base.session.row.guest_subject, intent_key: ids.intentKey, policy_digest: compiled.policyDigest,
+    driver_command_json: data.driver.commandJson, command_digest: e.guestAuthorizationDigest,
+    envelope_digest: compiled.envelopeDigest, envelope_json: compiled.envelopeJson };
+  const expectedResourceRow = { resource_id: ids.resourceId, campaign_id: data.base.policy.campaignId, policy_digest: compiled.policyDigest,
+    limits_digest: captured.limitsDigest, actor_user_id: data.base.session.row.guest_subject, session_digest: data.base.resourceInput.sessionDigest,
+    operation: "issuance", intent_key: ids.intentKey, payload_digest: compiled.envelopeDigest,
+    text_bytes: bytes(canonicalJson(data.context.snapshot)), issued_grant_id: ids.grantId };
+  if (canonicalJson(grant) !== canonicalJson(expectedGrant) || canonicalJson(issuance) !== canonicalJson(expectedIssuance)
+    || canonicalJson(issuerRowOrder(resourceColumns, rows.resource)) !== canonicalJson(expectedResourceRow)) return fail("issuer_receipt_changed");
+  if (stored && (!Number.isSafeInteger(rows.resource.recorded_at_ms) || rows.resource.recorded_at_ms! < e.issuedAtMs
+    || rows.resource.recorded_at_ms! > data.nowMs || rows.resource.recorded_at_ms! >= e.expiresAtMs)) return fail("issuer_resource_time_changed");
+  currentIssuer(captured);
+  return freeze({ grant: expectedGrant, issuance: expectedIssuance,
+    resource: { ...expectedResourceRow, ...(stored ? { recorded_at_ms: rows.resource.recorded_at_ms! } : {}) } }) as GuestImageIssuerRows;
+}
+function attachIssuer(captured: Captured, rows: GuestImageIssuerRows) {
+  const resource = issuerRowOrder(resourceColumns, rows.resource), recorded = rows.resource.recorded_at_ms;
+  captured.issuerAbsent = undefined;
+  captured.issuer = { grantId: rows.grant.grant_id, resourceId: rows.resource.resource_id, expiresAtMs: rows.grant.expires_at_ms,
+    proofs: [exactRow("experience_sponsor_grants", issuerGrantColumns, issuerRowOrder(issuerGrantColumns, rows.grant)),
+      exactRow("experience_sponsor_issuances", issuerRowColumns, issuerRowOrder(issuerRowColumns, rows.issuance)),
+      { sql: `EXISTS(SELECT 1 FROM experience_sponsor_resource_receipts WHERE ${objectSql(resourceColumns)}=?
+          AND typeof(recorded_at_ms)='integer' AND recorded_at_ms>=? AND recorded_at_ms<=${GUEST_DB_NOW} AND recorded_at_ms<?${recorded === undefined ? "" : " AND recorded_at_ms=?"})
+        AND ${GUEST_DB_NOW}<? AND ?<=${GUEST_DB_NOW}`,
+        bindings: [JSON.stringify(resource), rows.grant.issued_at_ms, rows.grant.expires_at_ms,
+          ...(recorded === undefined ? [] : [recorded]), rows.grant.expires_at_ms, rows.grant.issued_at_ms] }] };
+}
+async function issuerStoredRow(captured: Captured, table: string, columns: string[], key: string, identity: string): Promise<Record<string, Value> | null> {
+  currentIssuer(captured);
+  const row = await captured.ctx.db.prepare(`SELECT CASE WHEN (${columns.map(column => `COALESCE(length(CAST(${column} AS BLOB)),0)`).join("+")})<=98304
+    THEN ${objectSql(columns)} END AS witness FROM ${table} WHERE ${key}=?`).bind(identity).first<{ witness: string }>();
+  currentIssuer(captured);
+  if (row === null) return null;
+  const raw = ownIssuerData(row, "witness");
+  if (typeof raw !== "string" || bytes(raw) > 98304) return fail("issuer_rows_invalid");
+  let value: unknown; try { value = JSON.parse(raw); } catch { return fail("issuer_rows_invalid"); }
+  if (!flatRow(value, columns)) return fail("issuer_rows_invalid");
+  return value;
+}
+export async function inspectGuestImageIssuerStage(request: Request, env: WorkerEnv, input: GuestImageOutputInput,
+  approved: GuestApprovedCampaignWitness, ownerDeadline?: number): Promise<GuestImageIssuerStageWitness> {
+  // This bounds our own read/hash continuations under the original owner too.
+  // The unchanged nested source reader has no internal cancellation hook.
+  if (ownerDeadline !== undefined && (typeof ownerDeadline !== "number" || !Number.isFinite(ownerDeadline)))
+    return fail("issuer_observation_expired");
+  const deadline = Math.min(performance.now() + 30000, ownerDeadline ?? Number.POSITIVE_INFINITY);
+  const captured = await inspectBase(request, env, input, approved, deadline); current(captured.ctx);
+  await collectNativeStages(captured); current(captured.ctx);
+  const data = stage(captured);
+  if (data.state !== "quoted" || !data.quote || !data.quoteEvent || !captured.sponsor.tables.has("experience_sponsor_issuances")) return fail("issuer_quote_required");
+  currentIssuer(captured);
+  captured.issuerBoundary = { sql: `${GUEST_DB_NOW}<?`, bindings: [Date.parse(data.quote.expiresAt)] };
+  const ids = await issuerIdentity(captured); currentIssuer(captured);
+  const grant = await issuerStoredRow(captured, "experience_sponsor_grants", issuerGrantColumns, "grant_id", ids.grantId);
+  const issuance = await issuerStoredRow(captured, "experience_sponsor_issuances", issuerRowColumns, "grant_id", ids.grantId);
+  const resource = await issuerStoredRow(captured, "experience_sponsor_resource_receipts", [...resourceColumns, "recorded_at_ms"], "resource_id", ids.resourceId);
+  currentIssuer(captured);
+  let receipt: GuestImageIssuerReceipt | null = null;
+  if (grant || issuance || resource) {
+    if (!grant || !issuance || !resource) return fail("issuer_partial_receipt");
+    receipt = await validateIssuerRows(captured, { grant, issuance, resource } as GuestImageIssuerRows, true) as GuestImageIssuerReceipt;
+    currentIssuer(captured); attachIssuer(captured, receipt);
+  } else captured.issuerAbsent = { sql: `NOT EXISTS(SELECT 1 FROM experience_sponsor_grants WHERE grant_id=?)
+      AND NOT EXISTS(SELECT 1 FROM experience_sponsor_issuances WHERE grant_id=?)
+      AND NOT EXISTS(SELECT 1 FROM experience_sponsor_resource_receipts WHERE resource_id=?)`, bindings: [ids.grantId, ids.grantId, ids.resourceId] };
+  const assertion = freeze({ ...fullAssertion(captured), deadlineMs: Math.min(captured.expiresAtMs, Date.parse(data.quote.expiresAt), receipt?.grant.expires_at_ms ?? captured.expiresAtMs) });
+  captured.stage = freeze({ ...data, assertion });
+  await proveIssuer(captured, proof(assertion)); currentIssuer(captured);
+  const result: GuestImageIssuerStageData = freeze({ state: receipt ? "quoted-issued-exact" : "quoted-unissued", stage: stage(captured),
+    sessionBinding: structuredClone(captured.sessionBinding), sourceBinding: structuredClone(captured.sourceBinding), issuance: receipt, assertion });
+  const witness = Object.freeze(Object.create(null)) as GuestImageIssuerStageWitness;
+  issuerStageWitnesses.set(witness, { captured, data: result }); return witness;
+}
+function capturedIssuerStage(request: Request, env: WorkerEnv, witness: GuestImageIssuerStageWitness) {
+  const retained = witness && typeof witness === "object" ? issuerStageWitnesses.get(witness) : undefined;
+  if (!retained || retained.captured.ctx.request !== request || retained.captured.ctx.env !== env) return fail("issuer_witness_unavailable");
+  currentIssuer(retained.captured); return retained;
+}
+export function guestImageIssuerStageData(request: Request, env: WorkerEnv, witness: GuestImageIssuerStageWitness): GuestImageIssuerStageData {
+  return capturedIssuerStage(request, env, witness).data;
+}
+export async function recheckGuestImageIssuerStage(request: Request, env: WorkerEnv, witness: GuestImageIssuerStageWitness) {
+  const { captured, data } = capturedIssuerStage(request, env, witness);
+  await proveIssuer(captured, proof(data.assertion)); currentIssuer(captured);
+}
+export async function guestImageIssuerSuccessor(request: Request, env: WorkerEnv, witness: GuestImageIssuerStageWitness,
+  rows: GuestImageIssuerRows): Promise<OutputSqlAssertion> {
+  const retained = capturedIssuerStage(request, env, witness);
+  if (retained.data.issuance) return fail("issuer_already_issued");
+  const captured = copyCaptured(retained.captured), checked = await validateIssuerRows(captured, rows, false);
+  currentIssuer(captured); attachIssuer(captured, checked);
+  const result = freeze({ ...fullAssertion(captured), deadlineMs: Math.min(captured.expiresAtMs, checked.grant.expires_at_ms) });
+  currentIssuer(captured); return result;
 }
