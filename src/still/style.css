@@ -31,7 +31,7 @@ still-app .empty-copy { color: var(--soft); font-size: 17px; margin-top: 36px; l
 still-app .action-dock { position: fixed; z-index: 5; bottom: 0; left: 0; right: 0; padding: 36px 24px max(25px, env(safe-area-inset-bottom)); background: linear-gradient(transparent, var(--paper) 24%); display: flex; align-items: center; flex-direction: column; gap: 10px; }
 still-app .dock-caption { font-size: 11px; letter-spacing: .03em; color: var(--soft); }
 still-app en-toolbar { --en-space-actions: 5px; max-width: 100%; }
-still-app en-toolbar::part(base) { border: 1px solid var(--line); border-radius: 100px; padding: 6px; gap: 5px; background: #fbfaf7; box-shadow: 0 5px 26px #3c342708; }
+still-app en-toolbar::part(base) { border: 1px solid var(--line); border-radius: 9999px; padding: 6px; gap: 5px; background: #fbfaf7; box-shadow: 0 5px 26px #3c342708; }
 still-app en-button { font-size: 13px; }
 still-app en-button::part(control) { border-radius: 100px; min-block-size: 44px; padding-inline: 19px; font-size: 13px; font-weight: 400; }
 still-app en-button[variant='primary'] { --en-color-action: #393d32; --en-color-action-hover: #25291f; --en-color-on-action: #fff; --en-color-action-pressed: #25291f; --en-color-focus: #8e6246; --en-color-action-text: #393d32; --en-color-selected: #e8e8df; }
@@ -128,7 +128,7 @@ still-app .progress-return { position: fixed; left: 12px; bottom: max(12px, env(
   still-app .work-row { gap: 16px; }
   still-app .work-row strong { font-size: 19px; }
   still-app .action-dock { padding-inline: 12px; padding-bottom: max(20px, env(safe-area-inset-bottom)); }
-  still-app en-toolbar::part(base) { border-radius: 18px; justify-content: center; flex-wrap: wrap; }
+  still-app en-toolbar::part(base) { justify-content: center; flex-wrap: wrap; }
   still-app en-button::part(control) { padding-inline: 12px; min-block-size: 44px; font-size: 12px; }
   still-app .context-block { grid-template-columns: 20px 1fr; gap: 8px; margin-left: -8px; padding: 20px 12px 20px 8px; }
   still-app .context-block p { font-size: 21px; }
@@ -175,7 +175,7 @@ still-app .still-layout.has-developer { --developer-width: clamp(360px, 38vw, 56
 still-app .has-developer .still-shell { min-width: 0; padding-inline: 32px; }
 still-app .developer-panel { position: sticky; top: 0; height: 100dvh; min-width: 0; overflow: auto; overscroll-behavior: contain; border-left: 1px solid var(--line); background: var(--paper); }
 still-app .has-developer .action-dock { right: var(--developer-width); padding-inline: 16px; }
-still-app .has-developer en-toolbar::part(base) { flex-wrap: wrap; justify-content: center; border-radius: 24px; }
+still-app .has-developer en-toolbar::part(base) { flex-wrap: wrap; justify-content: center; }
 still-app .has-developer h1 { font-size: clamp(38px, 4vw, 64px); }
 still-app .has-developer .slide h1 { font-size: clamp(28px, 3vw, 48px); }
 still-app .has-developer .slide { padding: clamp(24px, 3vw, 48px); }
