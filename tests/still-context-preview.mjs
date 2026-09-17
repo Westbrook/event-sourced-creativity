@@ -14,8 +14,11 @@ let calls=0;
 globalThis.fetch=async(url,init)=>{
   if(String(url)==='https://api.typesafe.ai/v1/systemone') {
     const body=JSON.parse(init.body);
-    if(body.state?.current?.view!=='choose-format')return new Response(null,{status:503});
-    const score=(score,confidence)=>({type:'score',score,confidence});
+    if(body.state?.current?.view!=='choose-format') {
+      const answers=Object.fromEntries(Object.entries(body.questions).map(([key,q])=>[key,q.type==='score'?{type:'score',score:2.4,confidence:.55,probabilities:{'0':0,'1':.1,'2':.4,'3':.5}}:q.type==='noul'?{type:'noul',noul:.5}:{type:'choice',choice:'organize',confidence:.5,probabilities:{begin:.1,organize:.5,explore:.1,shape:.1,review:.1,finish:.1}}]));
+      return Response.json({model:'simulated-jev',answers});
+    }
+    const score=(score,confidence)=>({type:'score',score,confidence,probabilities:{'0':0,'1':0,'2':3-score,'3':score-2}});
     return Response.json({model:'simulated-jev',answers:{fit_short_story:score(3,.95),fit_scene:score(3,.9),fit_image:score(2,.9)}});
   }
   if(String(url)!=='https://api.openai.com/v1/responses')throw new Error('External network disabled in this fixture.');

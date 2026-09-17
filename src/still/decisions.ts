@@ -42,32 +42,34 @@ export const ACTIONS: readonly Action[] = [
   { id: 'intent', label: 'Set direction', group: 'reflect', description: 'Tell the decision layer what you want next, without automatically changing or generating work.' },
 ] as const;
 
-export function eligibleActions(p: CreativeProjection, pos: Position, abilities: Abilities): Action[] {
+export function evaluateEligibility(p: CreativeProjection, pos: Position, abilities: Abilities) {
   const document = !!pos.documentId && p.documents.some(d => d.id === pos.documentId && !d.removed);
   const block = p.blocks.find(b => b.id === pos.blockId && !b.removed);
   const artifact = p.artifacts.find(a => a.id === pos.outputId);
-  return ACTIONS.filter(a => {
-    if (a.id === 'projects' || a.id === 'intent') return true;
-    if (a.id === 'new-project') return abilities.projectCreate;
-    if (a.id === 'documents') return !!pos.projectId;
-    if (a.id === 'new-document') return !!pos.projectId && abilities.author;
-    if (!document) return false;
-    if (a.group === 'make') return abilities.generate && (a.id === 'create' ? abilities.formats.length > 0 : abilities.formats.includes(a.id)) && p.blocks.some(b => !b.removed && Number(b.properties.weight ?? 1) > 0);
-    if (a.id === 'results') return p.outputs.length + p.artifacts.length > 0;
-    if (a.id === 'export') return !!artifact || p.outputs.some(o => o.id === pos.outputId);
-    if (a.id === 'edit-artifact') return abilities.author && !!artifact && ['short_story', 'scene', 'slides', 'storyboard'].includes(artifact.kind);
-    if (a.id === 'context') return pos.view !== 'document';
-    if (!abilities.author) return false;
-    if (['split-context','research-context','find-references'].includes(a.id)) return abilities.generate && editableIdea(block) && Number(block.properties.weight ?? 1)>0 && !!String(block.properties.text ?? '').trim() && String(block.properties.text ?? '').length <= (a.id==='split-context'?6000:2400);
-    if (a.id === 'compose') return editableIdea(block) && p.blocks.some(b => b.id !== block.id && editableIdea(b));
-    if (a.id === 'replace-part') return editableIdea(block);
-    if (a.id === 'edit-block') return !!block && !block.locked;
-    if (a.id === 'lock') return !!block && !block.locked;
-    if (a.id === 'unlock') return !!block?.locked;
-    if (a.id === 'toggle-context') return !!block && !block.locked;
-    if (a.id === 'reuse') return p.libraryBlocks.some(b => !b.removed && b.documentId !== pos.documentId);
-    return true;
-  }).map(a => a.id === 'toggle-context' && block ? { ...a, label: Number(block.properties.weight ?? 1) > 0 ? 'Exclude idea' : 'Include idea' } : a);
+  const exclusion = (a: Action): string => {
+    if (a.id === 'projects' || a.id === 'intent') return '';
+    if (a.id === 'new-project') return abilities.projectCreate ? '' : 'Project creation unavailable';
+    if (a.id === 'documents') return pos.projectId ? '' : 'Select a project';
+    if (a.id === 'new-document') return !pos.projectId ? 'Select a project' : abilities.author ? '' : 'Author permission required';
+    if (!document) return 'Select a document';
+    if (a.group === 'make') return !abilities.generate ? 'Generation permission required' : !(a.id === 'create' ? abilities.formats.length > 0 : abilities.formats.includes(a.id)) ? 'Provider unavailable' : p.blocks.some(b => !b.removed && Number(b.properties.weight ?? 1) > 0) ? '' : 'Active context required';
+    if (a.id === 'results') return p.outputs.length + p.artifacts.length > 0 ? '' : 'No results';
+    if (a.id === 'export') return artifact || p.outputs.some(o => o.id === pos.outputId) ? '' : 'Select a result';
+    if (a.id === 'edit-artifact') return !abilities.author ? 'Author permission required' : artifact && ['short_story', 'scene', 'slides', 'storyboard'].includes(artifact.kind) ? '' : 'Select editable writing';
+    if (a.id === 'context') return pos.view !== 'document' ? '' : 'Already viewing document';
+    if (!abilities.author) return 'Author permission required';
+    if (['split-context','research-context','find-references'].includes(a.id)) return !abilities.generate ? 'Generation permission required' : !editableIdea(block) ? 'Select an editable idea' : !(Number(block.properties.weight ?? 1)>0) ? 'Include this idea first' : !String(block.properties.text ?? '').trim() ? 'Idea text required' : String(block.properties.text ?? '').length > (a.id==='split-context'?6000:2400) ? 'Source exceeds action text limit' : '';
+    if (a.id === 'compose') return !editableIdea(block) ? 'Select an editable idea' : p.blocks.some(b => b.id !== block.id && editableIdea(b)) ? '' : 'Another editable idea required';
+    if (a.id === 'replace-part') return editableIdea(block) ? '' : 'Select an editable idea';
+    if (['edit-block','lock','toggle-context'].includes(a.id)) return !block ? 'Select an idea' : block.locked ? 'Idea is locked' : '';
+    if (a.id === 'unlock') return block?.locked ? '' : 'Select a locked idea';
+    if (a.id === 'reuse') return p.libraryBlocks.some(b => !b.removed && b.documentId !== pos.documentId) ? '' : 'No ideas in other documents';
+    return '';
+  };
+  return ACTIONS.map(a => { const reason = exclusion(a); return { action: a.id === 'toggle-context' && block ? { ...a, label: Number(block.properties.weight ?? 1) > 0 ? 'Exclude idea' : 'Include idea' } : a, eligible: !reason, reason }; });
+}
+export function eligibleActions(p: CreativeProjection, pos: Position, abilities: Abilities): Action[] {
+  return evaluateEligibility(p, pos, abilities).filter(row => row.eligible).map(row => row.action);
 }
 
 export type Question = { type: 'noul'; instructions: string } | { type: 'score'; instructions: string; criteria: string[] } | { type: 'choice'; instructions: string; criteria: Record<string, string> };
@@ -219,12 +221,20 @@ export function questionsFor(candidates: Action[], position?: Position, artifact
   } as Record<string,Question>;
 }
 
-export type Answer = { type?: string; score?: number; confidence?: number; noul?: number; choice?: string };
+export type Answer = { type?: string; score?: number; confidence?: number; noul?: number; choice?: string; probabilities?: Record<string, number> };
+export type RankingRow = { id: string; questionId: string; reason: string; base?: number; basis?: 'jev' | 'policy'; adjustments?: { label: string; delta: number; questions: string[] }[]; value?: number; rank?: number; selected?: number };
+export function evaluateFormats(candidates: Action[], answers: Record<string, Answer> = {}) {
+  const rows: RankingRow[] = candidates.map(a => {
+    const answer = answers[`fit_${a.id}`];
+    const reason = !Object.hasOwn(MEDIUM_QUESTIONS,a.id) ? 'Not an output format' : !answer ? 'No answer' : answer.type !== 'score' || !Number.isFinite(answer.score) || answer.score! < 0 || answer.score! > 3 || !Number.isFinite(answer.confidence) || answer.confidence! < 0 || answer.confidence! > 1 ? 'Invalid answer' : answer.confidence! < .5 ? 'Confidence below 0.5' : answer.score! < 2 ? 'Fit below 2' : '';
+    return { id:a.id, questionId:`fit_${a.id}`, reason, ...(!reason ? {base:answer.score, basis:'jev' as const, value:answer.score} : {}) };
+  });
+  const ranked = rows.filter(r=>!r.reason).sort((a,b)=>b.value!-a.value! || answers[b.questionId].confidence!-answers[a.questionId].confidence!);
+  ranked.forEach((row,index)=>{row.rank=index+1;if(index<3)row.selected=index+1;else row.reason='Three-format limit';});
+  return { selected:ranked.slice(0,3).map(r=>r.id), rows };
+}
 export function rankFormats(candidates: Action[], answers: Record<string, Answer> = {}): string[] {
-  return candidates.filter(a=>Object.hasOwn(MEDIUM_QUESTIONS,a.id)).map(a=>({id:a.id,answer:answers[`fit_${a.id}`]}))
-    .filter(({answer:a})=>a?.type==='score'&&Number.isFinite(a.score)&&a.score!>=2&&a.score!<=3&&Number.isFinite(a.confidence)&&a.confidence!>=.5&&a.confidence!<=1)
-    .sort((a,b)=>b.answer.score!-a.answer.score! || b.answer.confidence!-a.answer.confidence!)
-    .slice(0,3).map(a=>a.id);
+  return evaluateFormats(candidates,answers).selected;
 }
 // Signals refine ranking only; no answer can authorize a mutation or introduce an action.
 const SIGNALS: Record<string, { yes?: string[]; no?: string[] }> = {
@@ -256,7 +266,7 @@ const SIGNALS: Record<string, { yes?: string[]; no?: string[] }> = {
   surprise: { yes: ['bold_invitation', 'change_scale', 'change_setting', 'genre', 'exploration_stalled'] },
   clarify: { yes: ['blocked_input', 'unsupported', 'contradiction', 'taste_question'], no: ['premise', 'audience', 'emotion', 'takeaway'] },
 };
-export function selectActions(candidates: Action[], pos: Position, answers: Record<string, Answer> = {}): Action[] {
+export function evaluateActions(candidates: Action[], pos: Position, answers: Record<string, Answer> = {}) {
   const defaultOrder = pos.view === 'projects' ? ['new-project', 'projects', 'intent'] : pos.view === 'artifact' ? ['context', 'edit-artifact', 'export', 'create'] : pos.blockId ? ['edit-block', 'compose', 'reuse', 'create', 'results'] : ['add-context', 'reuse', 'create', 'results', 'new-document'];
   const evidence = (id: string, invert = false) => {
     const a = answers[id];
@@ -267,12 +277,15 @@ export function selectActions(candidates: Action[], pos: Position, answers: Reco
   const scored = (id: string) => { const a=answers[`use_${id}`];return a?.type==='score'&&Number.isFinite(a.score)&&a.score!>=0&&a.score!<=3&&Number.isFinite(a.confidence)&&a.confidence!>=.12&&a.confidence!<=1; };
   const recommendable = candidates.filter(a => a.id !== 'intent' && (!Object.hasOwn(MEDIUM_QUESTIONS,a.id) || !!pos.intent.trim() && evidence(`requested_${a.id}`) > .5));
   const modelRanked = recommendable.some(a=>scored(a.id));
+  const rows: RankingRow[] = candidates.map(a => ({ id:a.id, questionId:`use_${a.id}`, reason:a.id==='intent' ? 'Reserved for More' : !recommendable.includes(a) ? 'Current explicit format request required' : modelRanked && !scored(a.id) ? !answers[`use_${a.id}`] ? 'No answer' : 'Invalid score or confidence below 0.12' : modelRanked && answers[`use_${a.id}`].score===0 ? 'Zero usefulness' : '' }));
   const ranked = recommendable.filter(a => !modelRanked || scored(a.id) && answers[`use_${a.id}`].score! > 0).map((a, index) => {
     const answer = answers[`use_${a.id}`];
     const valid = answer?.type === 'score' && Number.isFinite(answer.score) && answer.score! >= 0 && answer.score! <= 3 && Number.isFinite(answer.confidence) && answer.confidence! >= .12 && answer.confidence! <= 1;
     const base = defaultOrder.includes(a.id) ? 2.8 - defaultOrder.indexOf(a.id) * .24 : .3 - index * .001;
     const signals = SIGNALS[a.id] ?? {};
-    const support = Math.min(.8, (signals.yes ?? []).reduce((n,k) => n + evidence(k) * .28, 0) + (signals.no ?? []).reduce((n,k) => n + evidence(k,true) * .16, 0));
+    const adjustments = [...(signals.yes ?? []).map(k=>({label:'Supporting signal',questions:[k],delta:evidence(k)*.28})), ...(signals.no ?? []).map(k=>({label:'Inverse signal',questions:[k],delta:evidence(k,true)*.16}))];
+    const rawSupport = adjustments.reduce((n,x)=>n+x.delta,0), support = Math.min(.8,rawSupport);
+    adjustments.push({label:'Support cap (0.8)',questions:[],delta:support-rawSupport});
     const stage = answers.stage?.type === 'choice' && stageGroups[answers.stage.choice ?? '']?.includes(a.group) ? .12 : 0;
     const novelty = Math.max(evidence('bold_invitation'),evidence('fixed_variable')) * evidence(`novel_${a.id}`) * .25;
     const reviewFirst = a.group === 'make' ? Math.max(evidence('unreviewed'), evidence('alternatives'), evidence('failure'), evidence('manage_ideas'), evidence('preserve_options')) * .8 : 0;
@@ -283,16 +296,24 @@ export function selectActions(candidates: Action[], pos: Position, answers: Reco
       : a.id === 'find-references' ? evidence('existing_reference_fit')*.7
       : ['compose','replace-part','surprise'].includes(a.id) ? Math.max(evidence('constraint_conflict'),evidence('scope_conflict'))*1.5 : 0;
     const afterStructure = ['split-context','compose','replace-part'].includes(pos.recentActions.at(-1) ?? '') && ['split-context','compose'].includes(a.id) ? .4 : 0;
-    return { a, value: (valid ? answer.score! : base) + support + stage + novelty - reviewFirst - reduce - afterStructure };
+    adjustments.push({label:'Stage match (no confidence gate)',questions:['stage'],delta:stage}, {label:'Novelty',questions:['bold_invitation','fixed_variable',`novel_${a.id}`],delta:novelty}, {label:'Review or manage first',questions:['unreviewed','alternatives','failure','manage_ideas','preserve_options'],delta:-reviewFirst}, {label:'Context preservation',questions:a.id==='split-context'?['essential_relationship','fragmentation_friction','coherent_small_idea','split_benefit','independent_change','independent_reuse','independent_sources']:a.id==='research-context'?['creative_uncertainty']:a.id==='find-references'?['existing_reference_fit']:['constraint_conflict','scope_conflict'],delta:-reduce}, {label:'Recent structural action clicked',questions:[],delta:-afterStructure});
+    const value = (valid ? answer.score! : base) + support + stage + novelty - reviewFirst - reduce - afterStructure;
+    const row = rows.find(r=>r.id===a.id)!;
+    Object.assign(row,{base:valid?answer.score!:base,basis:valid?'jev':'policy',adjustments:adjustments.filter(x=>x.delta!==0),value});
+    return { a, value, row };
   }).sort((a, b) => b.value - a.value);
   const chosen: Action[] = [];
-  for (const { a } of ranked) {
-    if (chosen.length === 4) break;
-    if (a.group === 'make' && chosen.some(x => x.group === 'make')) continue;
-    if (chosen.filter(x => x.group === a.group).length >= 2) continue;
-    chosen.push(a);
-  }
-  return chosen;
+  ranked.forEach(({a,row},index) => {
+    row.rank=index+1;
+    if(chosen.length===4)row.reason='Four-action limit';
+    else if(a.group==='make'&&chosen.some(x=>x.group==='make'))row.reason='One creation action limit';
+    else if(chosen.filter(x=>x.group===a.group).length>=2)row.reason='Two actions per group limit';
+    else { chosen.push(a); row.selected=chosen.length; }
+  });
+  return { selected:chosen, rows, modelRanked };
+}
+export function selectActions(candidates: Action[], pos: Position, answers: Record<string, Answer> = {}): Action[] {
+  return evaluateActions(candidates,pos,answers).selected;
 }
 
 const safeText = (v: unknown, max = 1000) => typeof v === 'string' ? v.replace(/https?:\/\/\S+/g, '[linked resource]').slice(0, max) : '';

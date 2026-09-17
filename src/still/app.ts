@@ -7,6 +7,9 @@ import './vendor/elements/define/toolbar.js';
 import './vendor/elements/define/textarea.js';
 import './style.css';
 import './context-flow.ts';
+import './developer-console.ts';
+import type { StillDeveloperConsole } from './developer-console.ts';
+import { decisionDiagnostics, responseDisposition, type DecisionDiagnostics, type DecisionResponse, type ReceivedDecision } from './diagnostics.ts';
 import { ACTIONS, POLICY_VERSION, eligibleActions, selectActions, type Action } from './decisions.ts';
 import { isContextCompositionRelation } from '../model/combined-context.ts';
 import { documentSnapshot } from './context.ts';
@@ -43,6 +46,11 @@ export class StillApp extends LitElement {
   private decisionSource = 'fallback';
   private decisionTicket = 0;
   private decisionTimer = 0;
+  private developer = new URL(location.href).searchParams.has('developer');
+  private developerPending = false;
+  private developerApplied?: DecisionDiagnostics;
+  private developerReceived?: ReceivedDecision;
+  private developerScope = '';
   private pollTimer = 0;
   private generation: GenerationDraft | null = null;
   private formatSuggestions: string[] = [];
@@ -63,7 +71,30 @@ export class StillApp extends LitElement {
   disconnectedCallback() { super.disconnectedCallback(); this.disposed = true; this.dockObserver.disconnect(); clearTimeout(this.pollTimer); clearTimeout(this.decisionTimer); window.removeEventListener('popstate', this.popstate); window.removeEventListener('beforeunload', this.beforeUnload); }
   private beforeUnload = (e: BeforeUnloadEvent) => { if (this.client.hasUnconfirmedWrite || this.generation?.attempted || this.mode && (this.bodyDraft || this.titleDraft)) { e.preventDefault(); e.returnValue = ''; } };
   private changed() { this.requestUpdate(); }
-  protected updated() { const dock = this.querySelector('.action-dock'); this.dockObserver.disconnect(); if (dock) this.dockObserver.observe(dock); }
+  protected updated() {
+    const dock = this.querySelector('.action-dock'); this.dockObserver.disconnect(); if (dock) this.dockObserver.observe(dock);
+    const inspector=this.querySelector<StillDeveloperConsole>('still-developer-console');
+    if(inspector){
+      if(this.developerScope!==this.diagnosticScope()){this.developerApplied=undefined;this.developerReceived=undefined;this.developerScope=this.diagnosticScope();}
+      inspector.context={view:this.client.position.view,mode:this.mode,head:this.client.head,page:this.page,selectedFormat:this.generation?.format??'',current:this.localDiagnostics('Current eligibility')};
+      inspector.applied=this.developerApplied;inspector.received=this.developerReceived;inspector.pending=this.developerPending;
+    }
+  }
+  private diagnosticScope(){return `${this.client.scopeKey}/${this.client.position.projectId}/${this.client.position.documentId}`;}
+  private localDiagnostics(reason:string, formats=false){return decisionDiagnostics(this.client.projection,{...this.client.position,...(formats?{view:'choose-format'}:{})},this.client.abilities,{head:this.client.head,source:'fallback',reason,artifactKind:this.client.projection.artifacts.find(a=>a.id===this.client.position.outputId)?.kind});}
+  private recordDecision(result:DecisionResponse,disposition:string,scope:string){
+    if(!this.developer||scope!==this.diagnosticScope())return;
+    this.developerReceived={at:new Date().toLocaleTimeString(),disposition,trace:result.diagnostics,source:result.source,reason:result.reason,recommended:result.formats?.length?result.formats:result.actions?.map(a=>a.id)??[]};
+    if(disposition==='Applied')this.developerApplied=result.diagnostics;
+    this.changed();
+  }
+  private setDeveloper(enabled:boolean){
+    this.developer=enabled;this.developerApplied=undefined;this.developerReceived=undefined;this.developerPending=false;this.developerScope=this.diagnosticScope();
+    const url=new URL(location.href);if(enabled)url.searchParams.set('developer','');else url.searchParams.delete('developer');history.replaceState(null,'',url);
+    this.changed();
+    if(enabled){if(!this.mode)this.decide();void this.updateComplete.then(()=>this.querySelector<StillDeveloperConsole>('still-developer-console')?.show());}
+    else this.focusContent();
+  }
   private focusContent() { void this.updateComplete.then(() => { const target = this.querySelector('en-textarea, select, main h1') as HTMLElement | null; if(target) { if(target.tagName === 'H1') target.tabIndex = -1; target.focus(); } }); }
   private async run(work: () => Promise<void>) {
     if (this.busy || this.composing) return;
@@ -73,6 +104,7 @@ export class StillApp extends LitElement {
   }
   private readRoute() {
     const q = new URL(location.href).searchParams;
+    this.developer=q.has('developer');if(!this.developer){this.developerApplied=undefined;this.developerReceived=undefined;}
     const projectId = q.get('project') ?? this.client.session?.projectContext?.projectId ?? '';
     const documentId = q.get('document') ?? '';
     const changedDocument = projectId !== this.client.position.projectId || documentId !== this.client.position.documentId;
@@ -93,29 +125,37 @@ export class StillApp extends LitElement {
   private decide() {
     clearTimeout(this.decisionTimer); const ticket = ++this.decisionTicket;
     const candidates = this.candidates(); this.suggestions = selectActions(candidates, this.client.position); this.decisionSource = 'fallback'; this.changed();
+    if(this.developer){this.developerScope=this.diagnosticScope();this.developerApplied=this.localDiagnostics('Local policy');this.developerReceived=undefined;this.developerPending=false;}
     if (!this.client.session?.policy.accepted || this.mode) return;
     this.decisionTimer = window.setTimeout(async () => {
-      const snapshot = JSON.stringify(this.client.position), head = this.client.head;
+      const snapshot = JSON.stringify(this.client.position), head = this.client.head, scope=this.diagnosticScope();
+      this.developerPending=this.developer;this.changed();
       try {
-        const result = await api<{ actions: Action[]; source: string; head: number; policy: string }>('/api/still/decision', this.client.position);
-        if (ticket !== this.decisionTicket || snapshot !== JSON.stringify(this.client.position) || head !== this.client.head || this.mode || this.disposed) return;
-        if (this.querySelector('.action-dock')?.contains(document.activeElement)) return; // Never move the focused action.
-        if (result.policy === POLICY_VERSION && Array.isArray(result.actions) && (result.actions.length || result.source === 'jev') && result.head === head) { const allowed = new Map(this.candidates().map(a => [a.id, a])); this.suggestions = result.actions.map(a => allowed.get(a.id)).filter((a): a is Action => !!a).slice(0, 4); this.decisionSource = result.source; this.changed(); }
-      } catch { /* Local contextual actions remain fully usable. */ }
+        const result = await api<DecisionResponse>('/api/still/decision', {...this.client.position,...(this.developer?{developer:true}:{})});
+        const disposition=responseDisposition(result,{head:this.client.head,headChanged:head!==this.client.head,stale:ticket!==this.decisionTicket||snapshot!==JSON.stringify(this.client.position)||!!this.mode||this.disposed||scope!==this.diagnosticScope(),focused:!!this.querySelector('.action-dock')?.contains(document.activeElement)});
+        this.recordDecision(result,disposition,scope);
+        if(disposition==='Applied'){const allowed=new Map(this.candidates().map(a=>[a.id,a]));this.suggestions=result.actions!.map(a=>allowed.get(a.id)).filter((a):a is Action=>!!a).slice(0,4);this.decisionSource=result.source;this.changed();}
+      } catch(error) { this.recordDecision({source:'fallback',reason:error instanceof ApiError?`HTTP ${error.status}`:'Network unavailable',head,policy:POLICY_VERSION},'Kept local controls',scope); }
+      finally {if(ticket===this.decisionTicket){this.developerPending=false;this.changed();}}
     }, 700);
   }
   private suggestFormats() {
     const ticket = this.decisionTicket, snapshot = JSON.stringify(this.client.position), head = this.client.head, scope = this.client.scopeKey;
+    const diagnosticScope=this.diagnosticScope();
+    if(this.developer){this.developerApplied=this.localDiagnostics('No automatic format choice',true);this.developerReceived=undefined;}
     this.decisionTimer = window.setTimeout(async () => {
       try {
         if (ticket !== this.decisionTicket || this.mode !== 'generate' || this.generation || this.formatTouched) return;
-        const result = await api<{ formats: string[]; source: string; head: number; policy: string }>('/api/still/decision', { ...this.client.position, view:'choose-format' });
-        if (ticket !== this.decisionTicket || this.mode !== 'generate' || this.generation || this.formatTouched || this.disposed || head !== this.client.head || scope !== this.client.scopeKey || snapshot !== JSON.stringify(this.client.position)) return;
-        if (result.policy === POLICY_VERSION && result.source === 'jev' && result.head === head && Array.isArray(result.formats)) {
+        this.developerPending=this.developer;this.changed();
+        const result = await api<DecisionResponse>('/api/still/decision', { ...this.client.position, view:'choose-format',...(this.developer?{developer:true}:{}) });
+        const disposition=responseDisposition(result,{formats:true,head:this.client.head,headChanged:head!==this.client.head,stale:ticket!==this.decisionTicket||this.mode!=='generate'||!!this.generation||this.disposed||scope!==this.client.scopeKey||snapshot!==JSON.stringify(this.client.position),touched:this.formatTouched});
+        this.recordDecision(result,disposition,diagnosticScope);
+        if (disposition==='Applied') {
           const allowed = new Set(this.candidates().filter(a=>!!FORMATS[a.id]).map(a=>a.id));
-          this.formatSuggestions = [...new Set(result.formats)].filter(id=>allowed.has(id)).slice(0,3); this.changed();
+          this.formatSuggestions = [...new Set(result.formats!)].filter(id=>allowed.has(id)).slice(0,3); this.changed();
         }
-      } catch { /* The full picker remains available when suggestions cannot be made. */ }
+      } catch(error) { this.recordDecision({source:'fallback',reason:error instanceof ApiError?`HTTP ${error.status}`:'Network unavailable',head,policy:POLICY_VERSION},'Kept full format picker',diagnosticScope); }
+      finally {if(ticket===this.decisionTicket){this.developerPending=false;this.changed();}}
     }, 1300);
   }
   private poll() {
@@ -124,10 +164,11 @@ export class StillApp extends LitElement {
       if (!this.disposed) this.poll();
     }, this.client.jobs.some(j => activeJobs.has(j.status)) ? 2000 : 12000);
   }
-  private button(label: string, action: () => void, primary = false, disabled = false) { return html`<en-button variant=${primary ? 'primary' : 'ghost'} .disabled=${this.busy || this.composing || disabled} @click=${action}>${label}</en-button>`; }
+  private button(label: string, action: () => void, primary = false, disabled = false, actionId='') { return html`<en-button data-action-id=${actionId} variant=${primary ? 'primary' : 'ghost'} .disabled=${this.busy || this.composing || disabled} @click=${action}>${label}</en-button>`; }
   private field(label: string, value: string, change: (v: string) => void, rows = 3, placeholder = '') { return html`<en-textarea label=${label} .value=${live(value)} rows=${rows} placeholder=${placeholder} .disabled=${this.busy || this.client.hasUnconfirmedWrite || !!this.generation?.attempted} @en-input=${(e: CustomEvent<{ value: string; isComposing: boolean }>) => { change(e.detail.value); this.composing = e.detail.isComposing; if (!this.composing) this.changed(); }}></en-textarea>`; }
   private closeMode() { if (this.mode === 'generate') this.client.position.intent = ''; this.mode = ''; this.bodyDraft = ''; this.titleDraft = ''; this.generationGate = null; this.generation = null; this.error = ''; this.decide(); this.focusContent(); }
   private begin(mode: string) {
+    this.developerPending=false;
     this.pendingBlock = null; this.mode = mode; ++this.decisionTicket; clearTimeout(this.decisionTimer); this.error = ''; this.choice = ''; this.titleDraft = ''; this.bodyDraft = ''; this.kindDraft = 'direction';
     if (mode === 'actions') this.choice = this.candidates()[0]?.id ?? '';
     if (mode === 'edit-block') { const block = this.client.projection.blocks.find(b => b.id === this.client.position.blockId); this.bodyDraft = text(block?.properties.text); this.titleDraft = block?.handle ?? ''; this.kindDraft = block?.type ?? 'message'; this.editBase = { text: text(block?.properties.text) };  }
@@ -140,6 +181,7 @@ export class StillApp extends LitElement {
   }
   private choose(id: string) {
     if (this.busy || this.composing) return;
+    if(id==='ui:developer'){this.closeMode();this.setDeveloper(true);return;}
     this.client.position.recentActions = [...this.client.position.recentActions, id].slice(-12);
     if (id === 'projects') return this.navigate('projects', { projectId: '', documentId: '' });
     if (id === 'documents') return this.navigate('documents', { documentId: '' });
@@ -263,7 +305,7 @@ export class StillApp extends LitElement {
         <span class="eyebrow">${p.projectName}</span><h1>${p.documentTitle}</h1>
         <div class="generation-context">${source.facts.filter(b => b.active).map(b => html`<p><span>${b.handle || b.type}${b.locked ? ' · locked' : ''}</span>${safeMedia(text(b.properties.media_url)) && b.type === 'reference' ? html`<img class="context-reference" src=${safeMedia(text(b.properties.media_url))} alt=${b.handle}/>` : nothing}${text(b.properties.text) || text(b.properties.description)}</p>`)}</div>
         <div class="format-options" @pointerenter=${()=>{this.formatTouched=true;}} @focusin=${()=>{this.formatTouched=true;}}>
-        ${!g && suggested.length ? html`<en-toolbar class="format-suggestions" label="Suggested formats" keyboard-navigation="tab">${suggested.map((id,i)=>this.button(FORMATS[id],()=>this.chooseFormat(id),i===0))}</en-toolbar>` : nothing}
+        ${!g && suggested.length ? html`<en-toolbar class="format-suggestions" label="Suggested formats" keyboard-navigation="tab">${suggested.map((id,i)=>this.button(FORMATS[id],()=>this.chooseFormat(id),i===0,false,id))}</en-toolbar>` : nothing}
         ${g || pickerFormats.length ? html`<label class="select-label">${!g && suggested.length ? 'Other formats' : 'Output'}<select .value=${live(g?.format ?? '')} ?disabled=${this.busy || this.composing || !!g?.attempted} @change=${(e: Event) => this.chooseFormat((e.target as HTMLSelectElement).value)}>
           <option value="" .selected=${!g}>Choose a format</option>${pickerFormats.map(a => html`<option value=${a.id} .selected=${g?.format === a.id}>${FORMATS[a.id]}</option>`)}${g && !formats.some(a => a.id === g.format) ? html`<option value=${g.format} .selected=${true}>${FORMATS[g.format]}</option>` : nothing}
         </select></label>` : nothing}
@@ -278,7 +320,7 @@ export class StillApp extends LitElement {
         <div class="form-actions">${g ? this.button(g.attempted ? 'Check generation' : g.format === 'scene' && !g.scenePreview ? 'Check cost' : this.generationGate ? 'Approve' : 'Generate', () => void this.run(() => this.generate()), true) : nothing}${this.button('Back', () => this.closeMode())}</div>
       </section>`;
     }
-    if (mode === 'actions') return html`<section class="form-page"><h1>Actions</h1><label class="select-label">Action<select .value=${this.choice} @change=${(e: Event) => { this.choice = (e.target as HTMLSelectElement).value; this.changed(); }}>${this.candidates().map(a => html`<option value=${a.id}>${a.label}</option>`)}</select></label><div class="form-actions">${this.button('Go', () => this.choose(this.choice), true)}${this.button('Workspaces', () => { this.mode = 'workspaces'; this.changed(); })}${this.button('Refresh', () => void this.run(async () => { await this.client.load(); this.readRoute(); this.closeMode(); }))}${this.button('Back', () => this.closeMode())}</div></section>`;
+    if (mode === 'actions') return html`<section class="form-page"><h1>Actions</h1><label class="select-label">Action<select .value=${this.choice} @change=${(e: Event) => { this.choice = (e.target as HTMLSelectElement).value; this.changed(); }}>${this.candidates().map(a => html`<option value=${a.id}>${a.label}</option>`)}<option value="ui:developer">Developer console</option></select></label><div class="form-actions">${this.button('Go', () => this.choose(this.choice), true)}${this.button('Workspaces', () => { this.mode = 'workspaces'; this.changed(); })}${this.button('Refresh', () => void this.run(async () => { await this.client.load(); this.readRoute(); this.closeMode(); }))}${this.button('Back', () => this.closeMode())}</div></section>`;
     if (mode === 'workspaces') return html`<section class="form-page"><h1>Workspaces</h1><label class="select-label">Workspace<select .value=${this.choice} @change=${(e: Event) => { this.choice = (e.target as HTMLSelectElement).value; this.changed(); }}><option value="">Personal projects</option>${this.client.session?.projects?.map(p => html`<option value=${p.projectAccessId}>${p.projectName} · ${p.role}</option>`)}</select></label><div class="form-actions">${this.button('Open', () => void this.run(async () => { await this.client.switchWorkspace(this.client.session?.projects?.find(p => p.projectAccessId === this.choice)); this.navigate(this.client.position.view, this.client.position); }), true)}${this.button('Back', () => this.closeMode())}</div></section>`;
     if (mode === 'reuse') return html`<section class="form-page"><h1>Reuse idea</h1><label class="select-label">Idea<select .value=${this.choice} @change=${(e: Event) => { this.choice = (e.target as HTMLSelectElement).value; this.changed(); }}><option value="">Choose an idea</option>${p.libraryBlocks.filter(b => !b.removed && b.documentId !== p.documentId).map(b => html`<option value=${b.id}>${b.handle} · ${b.type}</option>`)}</select></label><p class="context-preview">${text(p.libraryBlocks.find(b => b.id === this.choice)?.properties.text)}</p><div class="form-actions">${this.button('Use idea', () => void this.run(() => this.save()), true, !this.choice)}${this.button('Back', () => this.closeMode())}</div></section>`;
     const titles: Record<string, string> = { 'new-project': 'New project', 'new-document': 'New document', 'add-context': 'Add idea', 'edit-block': 'Edit idea', rename: 'Rename', intent: 'Next step', 'edit-artifact': 'Edit writing' };
@@ -292,21 +334,21 @@ export class StillApp extends LitElement {
     if (view === 'projects' || view === 'documents' || view === 'results') {
       const count = view === 'projects' ? p.projects.length : view === 'documents' ? p.documents.filter(d => !d.removed).length : p.outputs.filter(o => !o.discarded).length + p.artifacts.length;
       const suggested = this.suggestions.find(a => a.id !== view && a.id !== 'results');
-      actions = suggested ? [this.button(suggested.label, () => this.choose(suggested.id), true)] : [this.button(view === 'projects' ? 'New project' : view === 'documents' ? 'New document' : 'Document', () => view === 'results' ? this.navigate('document') : this.begin(view === 'projects' ? 'new-project' : 'new-document'), true, view === 'projects' ? !c.abilities.projectCreate : view !== 'results' && !c.abilities.author)];
+      actions = suggested ? [this.button(suggested.label, () => this.choose(suggested.id), true, false, suggested.id)] : [this.button(view === 'projects' ? 'New project' : view === 'documents' ? 'New document' : 'Document', () => view === 'results' ? this.navigate('document') : this.begin(view === 'projects' ? 'new-project' : 'new-document'), true, view === 'projects' ? !c.abilities.projectCreate : view !== 'results' && !c.abilities.author)];
       if (count > 3) actions = [this.button(this.page > 0 ? 'Previous' : 'First page', () => { this.page = Math.max(0, this.page - 1); this.changed(); }, false, this.page === 0), this.button('Next', () => { ++this.page; this.changed(); }, false, (this.page + 1) * 3 >= count)];
       // The browse content contains at most three item controls; the dock adds two.
       if (actions.length === 2) actions = [this.button('More results', () => { this.page = (this.page + 1) * 3 >= count ? 0 : this.page + 1; this.changed(); })];
-      actions.push(this.button('More', () => this.begin('actions')));
+      actions.push(this.button('More', () => this.begin('actions'), false, false, 'ui:more'));
     } else {
       const a = p.artifacts.find(x => x.id === c.position.outputId);
-      if (view === 'artifact' && a && ['slides', 'storyboard'].includes(a.kind) && a.items.length > 1) actions = [this.button('Previous', () => { --this.itemIndex; this.changed(); this.decide(); }, false, this.itemIndex === 0), this.button('Next', () => { ++this.itemIndex; this.changed(); this.decide(); }, false, this.itemIndex >= a.items.length - 1), ...this.suggestions.slice(0,2).map(a => this.button(a.label, () => this.choose(a.id))), this.button('More', () => this.begin('actions'))];
-      else actions = [html`${repeat(this.suggestions.slice(0, 4), a => a.id, (a, i) => this.button(a.label, () => this.choose(a.id), i === 0))}`, this.button('More', () => this.begin('actions'))];
+      if (view === 'artifact' && a && ['slides', 'storyboard'].includes(a.kind) && a.items.length > 1) actions = [this.button('Previous', () => { --this.itemIndex; this.changed(); this.decide(); }, false, this.itemIndex === 0), this.button('Next', () => { ++this.itemIndex; this.changed(); this.decide(); }, false, this.itemIndex >= a.items.length - 1), ...this.suggestions.slice(0,2).map(a => this.button(a.label, () => this.choose(a.id), false, false, a.id)), this.button('More', () => this.begin('actions'), false, false, 'ui:more')];
+      else actions = [html`${repeat(this.suggestions.slice(0, 4), a => a.id, (a, i) => this.button(a.label, () => this.choose(a.id), i === 0, false, a.id))}`, this.button('More', () => this.begin('actions'), false, false, 'ui:more')];
     }
     return html`<footer class="action-dock">${this.busy ? html`<span class="dock-caption" role="status">Working…</span>` : nothing}<en-toolbar label="Your next step" keyboard-navigation="tab">${actions}</en-toolbar></footer>`;
   }
   render() {
     const c = this.client, p = c.projection, running = c.jobs.filter(j => activeJobs.has(j.status) && j.documentId === c.position.documentId), failed = c.jobs.find(j => j.status === 'failed' && j.documentId === c.position.documentId);
-    return html`<div class="still-shell"><header class="masthead"><span class="wordmark">still<span aria-hidden="true">.</span></span><span class="session-status">${this.busy ? 'Working' : c.session?.impersonation ? 'Preview · read only' : c.session && !c.abilities.author ? 'Read only' : ''}</span></header><main id="still-content" aria-busy=${this.loading}>${this.renderCanvas()}</main>${running.length ? html`<aside class="job-status" role="status"><i></i>${running[0].progressMessage || 'Generating…'}${running.length > 1 ? ` · ${running.length} in progress` : ''}</aside>` : nothing}${this.error || failed && !this.mode ? html`<div class="status-message error" role="alert">${this.error || failed?.errorDetail?.message || failed?.error || 'Generation failed.'}</div>` : this.notice && !this.mode ? html`<div class="status-message" role="status">${this.notice}</div>` : nothing}${this.renderDock()}${new URL(location.href).searchParams.has('progress-report') ? html`<a class="progress-return" href=${REPORT_URL}>Progress Report ↗</a>` : nothing}</div>`;
+    return html`<div class="still-shell"><header class="masthead"><span class="wordmark">still<span aria-hidden="true">.</span></span><span class="session-status">${this.busy ? 'Working' : c.session?.impersonation ? 'Preview · read only' : c.session && !c.abilities.author ? 'Read only' : ''}</span></header><main id="still-content" aria-busy=${this.loading}>${this.renderCanvas()}</main>${running.length ? html`<aside class="job-status" role="status"><i></i>${running[0].progressMessage || 'Generating…'}${running.length > 1 ? ` · ${running.length} in progress` : ''}</aside>` : nothing}${this.error || failed && !this.mode ? html`<div class="status-message error" role="alert">${this.error || failed?.errorDetail?.message || failed?.error || 'Generation failed.'}</div>` : this.notice && !this.mode ? html`<div class="status-message" role="status">${this.notice}</div>` : nothing}${this.renderDock()}${this.developer ? html`<still-developer-console @developer-disable=${()=>this.setDeveloper(false)}></still-developer-console>` : nothing}${new URL(location.href).searchParams.has('progress-report') ? html`<a class="progress-return" href=${REPORT_URL}>Progress Report ↗</a>` : nothing}</div>`;
   }
 }
 if (!customElements.get('still-app')) customElements.define('still-app', StillApp);

@@ -1,0 +1,97 @@
+import { LitElement, css, html, nothing } from 'lit';
+import './vendor/elements/define/drawer.js';
+import type { DecisionDiagnostics, ReceivedDecision } from './diagnostics.ts';
+
+type Control = { label:string; id:string; region:string; variant:string; size:string; disabled:boolean; options:string[] };
+export type ConsoleContext = { view:string; mode:string; head:number; selectedFormat:string; page:number; current:DecisionDiagnostics };
+const numeric=(n:number|undefined)=>n===undefined?'—':Number(n.toFixed(3)).toString();
+const percent=(n:number)=>`${(n*100).toFixed(1)}%`;
+
+export class StillDeveloperConsole extends LitElement {
+  static properties = { context:{attribute:false}, applied:{attribute:false}, received:{attribute:false}, pending:{type:Boolean}, controls:{state:true}, showReceived:{state:true}, filter:{state:true} };
+  declare context:ConsoleContext;
+  declare applied:DecisionDiagnostics|undefined;
+  declare received:ReceivedDecision|undefined;
+  pending=false;
+  private controls:Control[]=[];
+  private showReceived=false;
+  private filter='';
+  private observer=new MutationObserver(()=>this.readControls());
+  private root:Element|null=null;
+  connectedCallback() {
+    super.connectedCallback();this.root=this.closest('still-app');
+    if(this.root){this.observer.observe(this.root,{subtree:true,childList:true,attributes:true,characterData:true});this.root.addEventListener('change',this.readControls);}
+    void this.updateComplete.then(()=>this.readControls());
+  }
+  disconnectedCallback(){super.disconnectedCallback();this.observer.disconnect();this.root?.removeEventListener('change',this.readControls);}
+  show(){(this.renderRoot.querySelector('en-drawer') as HTMLElement&{show:()=>void})?.show();}
+  private readControls=()=>{
+    if(!this.root)return;
+    const controls=[...this.root.querySelectorAll<HTMLElement>('main en-button, main select, main en-textarea, main input, main button, main a, main [role="button"], main [role="checkbox"], main audio[controls], main video[controls], .action-dock en-button')]
+      .filter(e=>e.getClientRects().length>0).map((e,index)=>{
+        const label=e.getAttribute('label')||e.getAttribute('aria-label')||(['AUDIO','VIDEO'].includes(e.tagName)?`${e.tagName==='AUDIO'?'Audio':'Video'} player (native control group)`:e.tagName==='SELECT'?[...(e.closest('label')?.childNodes??[])].filter(n=>n.nodeType===Node.TEXT_NODE).map(n=>n.textContent).join(' '):e.innerText)||e.tagName.toLowerCase();
+        return {label:label.replace(/\s+/g,' ').trim(),id:e.dataset.actionId||`ui:${e.tagName.toLowerCase()}:${index}`,region:e.closest('.action-dock')?'dock':e.closest('.format-options')?'formats':'content / workflow',variant:e.getAttribute('variant')||'native',size:e.getAttribute('size')||'default',disabled:!!(e as HTMLButtonElement).disabled||e.getAttribute('aria-disabled')==='true',options:e.tagName==='SELECT'?[...(e as HTMLSelectElement).options].map(o=>o.text):[]};
+      });
+    if(JSON.stringify(controls)!==JSON.stringify(this.controls))this.controls=controls;
+  };
+  private distribution(row:DecisionDiagnostics['questions'][number]|undefined){
+    if(!row)return html`<p>Not asked in this composition.</p>`;
+    const a=row, q=row.question;
+    return html`<p>${q.instructions}</p><p>${a.asked?'Sent to Jev':'Not sent to Jev'} · ${a.status}${a.score!==undefined?` · score ${numeric(a.score)}`:''}${a.confidence!==undefined?` · confidence ${percent(a.confidence)}`:''}${a.noul!==undefined?` · probability ${percent(a.noul)}`:''}${a.choice?` · choice ${a.choice}`:''}</p>
+      ${q.type==='noul'?nothing:html`<div class="distribution">${(q.type==='score'?q.criteria.map((label,i)=>[String(i),label]):Object.entries(q.criteria)).map(([key,label])=>html`<div><span>${key} · ${label}</span><meter min="0" max="1" value=${a.probabilities?.[key]??0} aria-label=${`${label}: ${a.probabilities?percent(a.probabilities[key]):'unavailable'}`}></meter><b>${a.probabilities?percent(a.probabilities[key]):'—'}</b></div>`)}</div>`}
+      ${a.warnings.map(w=>html`<p class="muted">${w}.</p>`)}`;
+  }
+  render(){
+    if(!this.context)return nothing;
+    const c=this.context,viewingReceived=this.showReceived&&!!this.received,trace=viewingReceived?this.received?.trace:this.applied;
+    const rows=trace?.actions??c.current.actions;
+    const matched=trace?.head===c.head&&trace.position.view===(c.mode==='generate'&&!c.selectedFormat?'choose-format':c.view)&&(['projectId','documentId','blockId','outputId','itemIndex','hasIntent'] as const).every(key=>trace.position[key]===c.current.position[key]);
+    const questions=trace?.questions??[];
+    return html`<en-button id="developer-trigger" variant="secondary" size="small">Decisions</en-button>
+      <en-drawer for="developer-trigger" label="Developer console" placement="end" closedby="any">
+        <div class="console">
+          <div class="status"><strong>${this.pending?'Jev pending':this.received?.disposition??'Local controls'}</strong><span>${c.view}${c.mode?` / ${c.mode}`:''} · head ${c.head}</span></div>
+          <details open><summary>On page · ${this.controls.length} controls</summary>
+            <p class="muted">${c.mode?'The open workflow supplies its own controls.':c.view==='projects'||c.view==='documents'||c.view==='results'?'Browse content and pagination share the control budget.':'Up to four suggestions, plus More. Slides reserve two places for paging.'} Primary emphasis follows position, not a probability threshold.</p>
+            <ul class="controls">${this.controls.map(x=>html`<li><b>${x.label}</b><code>${x.id}</code><span>${x.region} · ${x.variant} · ${x.size}${x.disabled?' · disabled':''}</span>${x.options.length?html`<details><summary>Picker options</summary>${x.options.join(' · ')}</details>`:nothing}</li>`)}</ul>
+            ${c.selectedFormat?html`<p>Selected format: <code>${c.selectedFormat}</code>. Selection does not start generation.</p>`:nothing}
+          </details>
+          <div class="trace-choice"><label>Decision<select .value=${viewingReceived?'received':'applied'} @change=${(e:Event)=>{this.showReceived=(e.target as HTMLSelectElement).value==='received';}}><option value="applied">Applied to controls</option><option value="received" ?disabled=${!this.received}>Latest response</option></select></label></div>
+          ${trace?html`<p><strong>${trace.model?.includes('simulated')?'Simulated Jev':trace.source==='jev'?'Jev':'Fallback'}</strong> · ${trace.channel} · ${trace.policy} · head ${trace.head}${trace.model?` · ${trace.model}`:''}${trace.reason?` · ${trace.reason}`:''}</p>
+            <p>Recommended: ${trace.recommended.join(', ')||'none'}</p>
+            ${!matched?html`<p class="warning">This decision describes an earlier view or event head. Current eligibility is shown separately below.</p>`:nothing}`:html`<p>No diagnostic payload. ${this.received?.reason??'Local eligibility remains available.'}</p>`}
+          ${viewingReceived&&this.received?.disposition!=='Applied'?html`<p class="warning">This response did not replace the controls. See Applied to controls for the decision in use.</p>`:nothing}
+          ${this.received?html`<p class="muted">Latest response · ${this.received.at} · ${this.received.source}${this.received.reason?` / ${this.received.reason}`:''} · ${this.received.disposition}</p>`:nothing}
+          <p class="muted">Score distributions describe rubric ratings. Confidence describes concentration. Neither is the probability of a click. Rank includes policy adjustments.</p>
+          <label>Find action or question<input type="search" .value=${this.filter} @input=${(e:Event)=>{this.filter=(e.target as HTMLInputElement).value.toLowerCase();}}/></label>
+          <h3>All actions · ${rows.length}</h3>
+          <p class="muted">Action · selection · Jev score / final rank value. Expand for probabilities and rules.</p>
+          <div class="actions">${rows.filter(row=>`${row.action.id} ${row.action.label}`.toLowerCase().includes(this.filter)).map(row=>{
+            const answer=questions.find(q=>q.id===row.questionId),current=c.current.actions.find(x=>x.action.id===row.action.id);
+            return html`<details class=${row.selected?'selected':''}><summary><span>${row.action.label}</span><span>${row.selected?`#${row.selected}`:row.eligible?'available':'excluded'}</span><code>${numeric(answer?.score)} / ${numeric(row.value)}</code></summary>
+              <p><code>${row.action.id}</code> · ${row.action.group}</p><p>Now: ${current?.eligible?'available':current?.eligibilityReason??'unavailable'}. Decision: ${!row.eligible?row.eligibilityReason:row.reason||`selected #${row.selected}`}.</p>
+              ${row.base!==undefined?html`<p>Base ${numeric(row.base)} (${row.basis==='jev'?'Jev':'local policy'})${row.rank?` · rank ${row.rank}`:''}</p>${row.adjustments?.map(a=>html`<p class="adjustment"><b>${a.delta>0?'+':''}${numeric(a.delta)}</b> ${a.label}${a.questions.length?html`<small>${a.questions.join(', ')}</small>`:nothing}</p>`)}<p>Final rank value: ${numeric(row.value)}</p>`:nothing}
+              ${this.distribution(answer)}
+            </details>`;
+          })}</div>
+          <details><summary>Creative questions · ${questions.filter(q=>q.asked).length} sent</summary>${questions.filter(q=>`${q.id} ${q.question.instructions}`.toLowerCase().includes(this.filter)).map(q=>html`<details><summary><code>${q.id}</code> · ${q.question.type} · ${numeric(q.score??q.noul)}${q.choice?` ${q.choice}`:''}</summary>${this.distribution(q)}</details>`)}</details>
+          <details><summary>Context coverage</summary><pre>${JSON.stringify({current:c.current.position,decision:trace?.position,context:trace?.context??c.current.context},null,2)}</pre></details>
+          <p class="muted">Session memory only. No creative events are added by this console.</p>
+          <en-button variant="ghost" size="small" @click=${()=>this.dispatchEvent(new CustomEvent('developer-disable',{bubbles:true,composed:true}))}>Exit developer mode</en-button>
+        </div>
+      </en-drawer>`;
+  }
+  static styles=css`
+    :host{position:fixed;top:16px;right:24px;z-index:20;font:13px/1.5 system-ui,sans-serif;color:#33332e}
+    en-drawer{--en-overlay-max-inline-size:min(760px,100vw);--en-overlay-max-block-size:100dvh;--en-overlay-background:#f7f6f2;--en-overlay-color:#33332e}
+    en-drawer::part(body){padding:0 22px 24px} .console{overflow-wrap:anywhere}
+    h3{font-size:14px;margin:22px 0 8px}p{margin:9px 0}code,pre{font:11px/1.5 ui-monospace,monospace}pre{white-space:pre-wrap}
+    .status{display:flex;justify-content:space-between;gap:12px;margin:10px 0 18px}.muted,small{color:#706e65}.warning{background:#f1e7ce;padding:10px;border-radius:6px}
+    details{border-top:1px solid #d9d7ce;padding:10px 0}summary{cursor:pointer;font-weight:550}.actions summary{display:grid;grid-template-columns:1fr 90px 90px;gap:8px}.actions summary code{text-align:right}.actions summary span:first-child::before{content:'›';display:inline-block;width:14px}.actions details[open]>summary span:first-child::before{content:'⌄'}.selected{border-left:3px solid #596345;padding-left:9px}
+    label{display:block;font-size:12px;color:#706e65}input,select{display:block;box-sizing:border-box;width:100%;font:inherit;background:#fff;border:1px solid #c9c6bb;border-radius:6px;padding:9px;color:#33332e;margin-top:4px}.trace-choice{margin-top:16px}
+    .controls{list-style:none;padding:0;display:grid;gap:8px}.controls li{display:grid;grid-template-columns:1fr 1fr;gap:2px 8px}.controls span,.controls details{grid-column:1/-1;color:#706e65}.controls code{text-align:right}
+    .distribution>div{display:grid;grid-template-columns:1fr 100px 58px;gap:8px;align-items:center;font-size:12px;margin:5px 0}.distribution b{text-align:right}meter{width:100%;accent-color:#596345}.adjustment small{display:block;margin-left:36px}
+    @media(max-width:520px){:host{right:12px;top:12px}.status{display:block}.actions summary{grid-template-columns:1fr 68px 65px;font-size:12px}.distribution>div{grid-template-columns:1fr 60px 52px}}
+  `;
+}
+if(!customElements.get('still-developer-console'))customElements.define('still-developer-console',StillDeveloperConsole);
