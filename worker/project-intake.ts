@@ -6,6 +6,7 @@ import { response, failure, readOriginal, reply } from "./project-intake-read.ts
 import { appendEvents } from "./event-append.ts";
 import { makeEvent } from "./event-write-primitives.ts";
 import { recordIntakeDiagnostic } from "./project-intake-diagnostic.ts";
+import { prepareSponsorIntakePostRootReceipt } from "./experience-sponsor-intake-reads.ts";
 import type { WorkerEnv } from "./runtime.ts";
 
 /** One bounded all-or-none intake. Generic batch and Canvas receipt semantics do not change. */
@@ -37,7 +38,7 @@ export async function commitAtomicIntake(env:WorkerEnv,auth:ProjectIntakeAuthori
       // Existing NOT NULL event_id is the all-or-none assertion. Existing root
       // PK fences a concurrent winner; either failure rolls back this entire
       // appendEvents D1 batch, including all staged events/private envelopes.
-      receipts.push(env.DB.prepare(`INSERT INTO event_client_receipts(stream_id,client_event_id,event_id,sequence,created_at)
+      const rootSql=`INSERT INTO event_client_receipts(stream_id,client_event_id,event_id,sequence,created_at)
         VALUES(?,?,CASE WHEN ${guard.sql}
           AND (SELECT COUNT(*) FROM json_each(?) expected JOIN events saved
             ON saved.event_id=json_extract(expected.value,'$.id') AND saved.stream_id=? AND saved.actor='user'
@@ -54,9 +55,14 @@ export async function commitAtomicIntake(env:WorkerEnv,auth:ProjectIntakeAuthori
               OR json_extract(prior.payload,'$.block_id') IN(SELECT value FROM json_each(?)) AND prior.type='BlockCreated'
               OR json_extract(prior.payload,'$.reference_id') IN(SELECT value FROM json_each(?)) AND prior.type='ReferenceIngested')
             AND prior.event_id NOT IN(SELECT json_extract(value,'$.id') FROM json_each(?)))
-          THEN ? ELSE NULL END,?,?)`)
-        .bind(stream,rootKey,...guard.bindings,batch,stream,owner,assigned.length,batch,stream,assigned.length-1,
-          stream,resourceIds,resourceIds,resourceIds,resourceIds,batch,root.eventId,root.sequence,now));
+          THEN ? ELSE NULL END,?,?)`;
+      const rootBindings=[stream,rootKey,...guard.bindings,batch,stream,owner,assigned.length,batch,stream,assigned.length-1,
+        stream,resourceIds,resourceIds,resourceIds,resourceIds,batch,root.eventId,root.sequence,now];
+      // The optional actual-POST seal preserves this exact native CASE and its
+      // failure row while moving its complete gates to a shallow statement.
+      receipts.push(options?.sponsorIntakeRead
+        ?prepareSponsorIntakePostRootReceipt(options.sponsorIntakeRead,env,auth,intake,options,rootSql,rootBindings)
+        :env.DB.prepare(rootSql).bind(...rootBindings));
       return receipts;
     }});
   }catch(error){

@@ -37,21 +37,26 @@ function retainedGuard(auth: ProjectIntakeAuthorization, plan: ExperiencePlan, c
       AND (removed.type='DocumentRemoved' AND json_extract(removed.payload,'$.document_id')=? OR removed.type='ProjectRemoved' AND json_extract(removed.payload,'$.project_id')=?))`,
   bindings: [plan.draftId, auth.user.userId, content, plan.projectId, plan.documentId, auth.user.streamId, plan.documentId, plan.projectId] };
 }
-async function readDraft(env: WorkerEnv, auth: ProjectIntakeAuthorization, id: string) {
+async function readDraft(env: WorkerEnv, auth: ProjectIntakeAuthorization, id: string, additionalGuard?: BudgetReservationGuard) {
+  const database = env.DB;
+  const additional = additionalGuard ? { sql: additionalGuard.sql, bindings: [...additionalGuard.bindings] } : undefined;
   const base = projectIntakeAuthority(env, auth, { projectId: "", documentId: "" });
-  const row = await env.DB.prepare(`SELECT content,expires_at FROM private_content WHERE content_id=? AND owner_id=? AND kind='experience-draft'
-    AND redacted_at IS NULL AND expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now') AND (${base.sql})`)
-    .bind(id, auth.user.userId, ...base.bindings).first<{ content: string; expires_at: string }>();
-  if (!row) return null;
+  const row = await (additional ? database : env.DB).prepare(`SELECT content,expires_at FROM private_content WHERE content_id=? AND owner_id=? AND kind='experience-draft'
+    AND redacted_at IS NULL AND expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now') AND (${base.sql})${additional ? ` AND (${additional.sql})` : ""}`)
+    .bind(id, auth.user.userId, ...base.bindings, ...(additional?.bindings ?? [])).first<{ content: string; expires_at: string }>();
+  if (!row || additional && env.DB !== database) return null;
   let plan: ExperiencePlan;
   try {
     plan = JSON.parse(row.content) as ExperiencePlan;
     const { draftHash, ...basePlan } = plan;
     if (!activeOutput(plan) || plan.version !== 1 || plan.draftId !== id || plan.streamId !== auth.user.streamId || !isDraftId(id) || await experienceDraftId(auth.user.userId, plan.request.intentId) !== id || await digest(basePlan) !== draftHash) return null;
   } catch { return null; }
-  const guard = join(projectIntakeAuthority(env, auth, plan), retainedGuard(auth, plan, row.content));
+  if (additional && env.DB !== database) return null;
+  const native = join(projectIntakeAuthority(env, auth, plan), retainedGuard(auth, plan, row.content));
+  const guard = additional ? join(native, additional) : native;
   // Last await: private bytes, custody, retention and current authority in one snapshot.
-  if (!await env.DB.prepare(`SELECT 1 AS current WHERE ${guard.sql}`).bind(...guard.bindings).first()) return null;
+  if (!await (additional ? database : env.DB).prepare(`SELECT 1 AS current WHERE ${guard.sql}`).bind(...guard.bindings).first()
+    || additional && env.DB !== database) return null;
   return { plan, content: row.content, expiresAt: row.expires_at };
 }
 
