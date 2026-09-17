@@ -4,7 +4,7 @@ import { readWorkerFetchWrapper } from "./helpers/worker-fetch-wrapper.mjs";
 
 // Normal integrated runs read the real worker index. The explicit override is
 // only for reviewing the outside-checkout proposal before root integration.
-const { indexText, preflightPath, wrapper } = await readWorkerFetchWrapper(process.env.FORMA_ACCOUNTING_INDEX_FILE);
+const { indexText, preflightPath, supportsSponsorResponseIdentity, wrapper } = await readWorkerFetchWrapper(process.env.FORMA_ACCOUNTING_INDEX_FILE);
 
 test("the read-only diagnostics handler is registered at its exact route", () => {
   assert.match(indexText, /import \{ handleGenerationAccounting \} from "\.\/generation-accounting-api\.ts";/u);
@@ -34,5 +34,18 @@ test("the new exact exemption preserves existing exemptions and unrelated retent
     "/api/output-schema-preflight", preflightPath + "-extra", "/api/selected-output-shares-extra", "/api/selected-output-shared-extra"]) {
     const current = wrapper(200); await current.fetch(new Request(`https://forma.invalid${path}`), {}, {});
     assert.deepEqual(current.counts(), { retentionCalls: 1, routes: 1 }, path);
+  }
+  if (supportsSponsorResponseIdentity) {
+    const path = "/api/experiences/sponsor/image/drafts/example/output-confirmation";
+    // The same prefix never grants an exemption by itself. A marked decoy has
+    // identical status/body but is not the Response returned by the route port.
+    for (const [status, identity, retentionCalls] of [[200, "returned", 0], [503, "returned", 0], [200, "unhandled", 1], [200, "different", 1]]) {
+      const current = wrapper(status, identity);
+      const response = await current.fetch(new Request(`https://forma.invalid${path}`), {}, {});
+      assert.equal(response.status, status);
+      assert.deepEqual(await response.json(), { status });
+      assert.deepEqual(current.counts(), { retentionCalls, routes: 1 }, identity);
+      assert.equal(response.headers.get("cache-control"), "private, no-store");
+    }
   }
 });

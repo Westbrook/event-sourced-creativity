@@ -22,15 +22,36 @@ export async function readWorkerFetchWrapper(indexFile = new URL("../../worker/i
   assert.ok(exportStart >= 0 && start >= exportStart && end > start, "The actual outer worker fetch wrapper must be located");
   const wrapperText = indexText.slice(start, end).trim().replace(/,\s*$/u, "")
     .replace(signature, "async function fetch(request, env, context)");
+  const supportsSponsorResponseIdentity = /\bsponsoredImageResponses\b/u.test(wrapperText);
+  let sponsorSetup = "const routeRequest = routeResponse;";
+  if (supportsSponsorResponseIdentity) {
+    const declarations = [...indexText.matchAll(/^const sponsoredImageResponses = new WeakSet<Response>\(\);$/gmu)];
+    const markers = [...indexText.matchAll(/if\(sponsored\)\{sponsoredImageResponses\.add\(sponsored\);return sponsored;\}/gu)];
+    assert.equal(declarations.length, 1, "The actual private response WeakSet must be located exactly once");
+    assert.equal(markers.length, 1, "The actual handled-response marker must be located exactly once");
+    // Keep the native declaration, marker and complete wrapper in one closure.
+    // The route port supplies only a response identity; it cannot certify the
+    // upstream sponsor handler's authorization, which has separate native tests.
+    sponsorSetup = `${declarations[0][0].replace("<Response>", "")}
+      const recordSponsoredResponse = sponsored => { ${markers[0][0]} };
+      const routeRequest = async (...args) => {
+        const response = await routeResponse(...args);
+        recordSponsoredResponse(sponsorResponseIdentity === "returned" ? response
+          : sponsorResponseIdentity === "different" ? response.clone() : null);
+        return response;
+      };`;
+  }
 
-  function wrapper(status) {
+  function wrapper(status, sponsorResponseIdentity = "unhandled") {
+    assert.ok(["unhandled", "returned", "different"].includes(sponsorResponseIdentity));
+    assert.ok(supportsSponsorResponseIdentity || sponsorResponseIdentity === "unhandled", "This source has no sponsor response marker");
     let retentionCalls = 0, routes = 0;
     // Only observe the surrounding dispatch effects. Retention decisions execute
     // the complete production wrapper and its real selected-share classifier.
-    const fetch = new Function("routeRequest", "schedulePrivateContentRetention", "OUTPUT_SCHEMA_PREFLIGHT_PATH", "isSelectedOutputShareApiPath", `return (${wrapperText});`)(
+    const fetch = new Function("routeResponse", "schedulePrivateContentRetention", "OUTPUT_SCHEMA_PREFLIGHT_PATH", "isSelectedOutputShareApiPath", "sponsorResponseIdentity", `${sponsorSetup}\nreturn (${wrapperText});`)(
       async () => { routes++; return Response.json({ status }, { status }); },
-      () => { retentionCalls++; }, preflightPath, isSelectedOutputShareApiPath);
+      () => { retentionCalls++; }, preflightPath, isSelectedOutputShareApiPath, sponsorResponseIdentity);
     return { fetch, counts: () => ({ retentionCalls, routes }) };
   }
-  return { indexText, preflightPath, wrapper };
+  return { indexText, preflightPath, supportsSponsorResponseIdentity, wrapper };
 }
