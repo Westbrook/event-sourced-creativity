@@ -6322,4 +6322,6 @@ Object.assign(messages, {
   "system.auto.1qkmc2b.138": "Storeに依存しない保存済みネイティブ3Dモデルのインターフェースです。組み込む前に、実際の属性、JavaScriptプロパティ、イベントを確認してください。",
 });
 
+Object.assign(messages, { "system.auto.scxocd.15": "スポンサー提供の画像" });
+
 export default messages;

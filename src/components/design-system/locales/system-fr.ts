@@ -6322,4 +6322,6 @@ Object.assign(messages, {
   "system.auto.1qkmc2b.138": "Interface native de modèle 3D conservé, indépendante du store. Examinez ses attributs réels, ses propriétés JavaScript et ses événements avant de l’intégrer.",
 });
 
+Object.assign(messages, { "system.auto.scxocd.15": "Image sponsorisée" });
+
 export default messages;

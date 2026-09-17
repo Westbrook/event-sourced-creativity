@@ -6353,4 +6353,6 @@ Object.assign(messages, {
   "system.auto.1qkmc2b.138": "Store-independent native retained model3d interface. Inspect its actual attributes, JavaScript properties, and events before composing it.",
 });
 
+Object.assign(messages, { "system.auto.scxocd.15": "Sponsored Image" });
+
 export default messages;

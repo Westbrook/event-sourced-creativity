@@ -6322,4 +6322,6 @@ Object.assign(messages, {
   "system.auto.1qkmc2b.138": "واجهة أصلية للنموذج ثلاثي الأبعاد المحفوظ، مستقلة عن مخزن الحالة. افحص سماتها الفعلية وخصائص JavaScript وأحداثها قبل دمجها.",
 });
 
+Object.assign(messages, { "system.auto.scxocd.15": "صورة برعاية" });
+
 export default messages;

@@ -1246,7 +1246,7 @@ export class FormaExperienceHost extends FormaElement {
       <header class="experience-heading"><h1>Image</h1></header>
       <p data-experience-status tabindex="-1" role="status" aria-live="polite">${this.#status}</p>
       ${available ? keyed(binding, html`<section data-sponsor-image-private>
-        <p>Sponsored Image</p><h2>${binding.plan.title}</h2>
+        <p>${this.i18n.system("Sponsored Image")}</p><h2>${binding.plan.title}</h2>
         <dl><div><dt>Output</dt><dd>1 image</dd></div>${format ? html`<div><dt>Ratio</dt><dd>${format.aspect_ratio.width}:${format.aspect_ratio.height}</dd></div>
           <div><dt>Dimensions</dt><dd>${format.dimensions.width} × ${format.dimensions.height}</dd></div>` : nothing}</dl>
         ${confirmation?.status === "unconfirmed" ? html`<form class="experience-admission" data-experience-action="sponsor-confirm" @submit=${(event: SubmitEvent) => this.#confirmSponsor(event)}>
