@@ -1,4 +1,5 @@
 import './vendor/tokens/default.css';
+import './theme.css';
 import './vendor/elements/define/button.js';
 import type { ExperimentResult } from './decision-lab.ts';
 import { StillDeveloperConsole } from './developer-console.ts';

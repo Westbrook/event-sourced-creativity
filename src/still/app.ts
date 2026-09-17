@@ -5,6 +5,7 @@ import { LitElement, html, nothing, type TemplateResult } from 'lit';
 import { live } from 'lit/directives/live.js';
 import { keyed } from 'lit/directives/keyed.js';
 import './vendor/tokens/default.css';
+import './theme.css';
 import './vendor/elements/define/button.js';
 import './vendor/elements/define/toolbar.js';
 import './vendor/elements/define/textarea.js';
