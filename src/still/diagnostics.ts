@@ -46,14 +46,14 @@ export function decisionDiagnostics(p: CreativeProjection, position: Position, a
 }) {
   const eligibility=evaluateEligibility(p,position,abilities), candidates=eligibility.filter(r=>r.eligible).map(r=>r.action);
   const questions=questionsFor(candidates,position,options.artifactKind), answers=options.answers??{};
-  const formats=position.view==='choose-format';
+  const formats=position.view==='choose-format'&&!position.palette;
   const evaluation=formats?evaluateFormats(candidates,answers):evaluateActions(candidates,position,answers);
   return {
     version:1 as const, policy:POLICY_VERSION, source:options.source, reason:options.reason, model:typeof options.model==='string'?options.model.slice(0,100):undefined, head:options.head,
-    channel:formats?'formats':'actions',
+    channel:position.palette?'palette':formats?'formats':'actions',
     ...(options.exchange?{exchange:options.exchange}:{}),
     passes:options.passes??[],presentation:options.presentation??{},menuAdjustments:options.adjustments??[],metrics:options.metrics??{},
-    position:{projectId:position.projectId,documentId:position.documentId,blockId:position.blockId,outputId:position.outputId,view:position.view,itemIndex:position.itemIndex??0,hasIntent:!!position.intent.trim(),recentActions:position.recentActions.slice(-12)},
+    position:{projectId:position.projectId,documentId:position.documentId,blockId:position.blockId,outputId:position.outputId,view:position.view,...(position.palette?{palette:position.palette}:{}),itemIndex:position.itemIndex??0,hasIntent:!!position.intent.trim(),recentActions:position.recentActions.slice(-12)},
     context:{blocks:p.blocks.filter(b=>!b.removed).length,libraryBlocks:p.libraryBlocks.filter(b=>!b.removed).length,outputs:p.outputs.length,artifacts:p.artifacts.length,coverage:options.coverage,localEvents:options.localEvents},
     recommended:options.recommended??(formats?(evaluation.selected as string[]):(evaluation.selected as {id:string}[]).map(a=>a.id)),
     actions:eligibility.map(row=>{const initial=evaluation.rows.find(r=>r.id===row.action.id),index=options.recommended?.indexOf(row.action.id),change=options.adjustments?.find(a=>a.actionId===row.action.id||a.replacedId===row.action.id);return {...row,...initial,eligibilityReason:row.reason,initialSelection:initial?.selected,...(index!==undefined?{selected:index>=0?index+1:undefined,reason:index>=0?'':change?.replacedId===row.action.id?`Replaced by ${change.actionId}: ${change.reason}`:initial?.reason||'Not selected by final menu'}:{})};}),
@@ -61,7 +61,7 @@ export function decisionDiagnostics(p: CreativeProjection, position: Position, a
   };
 }
 export type DecisionDiagnostics = ReturnType<typeof decisionDiagnostics>;
-export type DecisionResponse = { source:string; reason?:string; model?:string; head:number; policy:string; actions?:{id:string}[]; rankedActions?:{id:string}[]; formats?:string[]; presentation?:Record<string,Emphasis>; targets?:Record<string,string>; resolvedAction?:string; diagnostics?:DecisionDiagnostics };
+export type DecisionResponse = { source:string; reason?:string; model?:string; head:number; policy:string; actions?:{id:string}[]; rankedActions?:{id:string}[]; paletteActions?:{id:string}[]; formats?:string[]; presentation?:Record<string,Emphasis>; targets?:Record<string,string>; resolvedAction?:string; diagnostics?:DecisionDiagnostics };
 export type ReceivedDecision = { at:string; disposition:string; trace?:DecisionDiagnostics; source:string; reason?:string; recommended:string[] };
 
 export function responseDisposition(result: DecisionResponse, state: { stale:boolean; focused?:boolean; touched?:boolean; head:number; headChanged?:boolean; formats?:boolean }) {

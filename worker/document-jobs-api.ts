@@ -1,4 +1,5 @@
 import { readSponsorJobStatus, sponsorJobReadPredicate } from "./experience-sponsor-job-read.ts";
+import { stillImageEnvironment } from "./still-image-policy.ts";
 import { outputJobIsDurable, requireOutputDurableBinding } from "./output-durable-control.ts";
 import { STILL_GENERATION_CLOSED, isStillGenerationKey, stillGenerationMatch, stillGenerationDigest, stillGenerationOpen, stillGenerationAdmission } from './still-generation-recovery.ts';
 import { requireSponsorExecution, readSponsorFinancialBinding, sponsorFinancialIdentity, sponsorTerminalReleaseStatement, type SponsorExecutionAuthority, type SponsorFinancialBinding } from "./experience-sponsor-execution.ts";
@@ -2135,6 +2136,7 @@ export async function runDocumentJob(env: WorkerEnv, user: PilotUser, jobId: str
   await ensureSchema(env);
   await ensureOutputRequirementsSchema(env);
   let row=verifiedRow&&verifiedRow.job_id===jobId&&verifiedRow.owner_id===user.userId&&verifiedRow.stream_id===user.streamId?verifiedRow:await readJob(env,user.userId,jobId);if(!row)return row;
+  env = stillImageEnvironment(env, row.source_surface, parseRequest(row));
   if(outputJobIsDurable(row)) await requireOutputDurableBinding(env, row.job_id);
   if(!row.output_slot_id&&!await activeProjectExecution(env,user,row.document_id,jobId)){
     if(user.projectExecution)await cancelProjectActorJobs(env,user,{organizationId:user.projectExecution.organizationId,projectAccessId:user.projectExecution.projectAccessId,actorUserId:user.userId});
@@ -3632,6 +3634,12 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
   const input = submittedInput??await request.json() as DocumentJobAdmission;
   if (!KINDS.has(input.kind as DocumentJobKind)) return Response.json({ error: "unsupported_document_job" }, { status: 400 });
   const kind = input.kind as DocumentJobKind; const payload = input.payload && typeof input.payload === "object" ? { ...input.payload } : {};
+  // Freeze the Still image policy on new jobs; retained jobs keep their original route.
+  delete payload.stillImageProvider;
+  if (!outputPreparation && input.sourceSurface === "still" && ["preview", "generate", "prompt_fan", "render_document"].includes(kind)) {
+    payload.stillImageProvider = "openai";
+    env = stillImageEnvironment(env, "still", payload);
+  }
   if(Object.hasOwn(payload,"outputDurable"))return Response.json({error:"output_durable_marker_server_owned"},{status:400});
   if(kind==="render_document"&&payload.videoResolution!==undefined){
     if(payload.artifactKind!=="video"||payload.videoResolution!=="480p"&&payload.videoResolution!=="720p")return Response.json({error:"video_resolution_unsupported",supported:VIDEO_ADAPTER_CONTRACT.supportedResolutions},{status:400});

@@ -1,3 +1,4 @@
+import './form-elements.js';
 import { LitElement, css, html, nothing } from 'lit';
 import type { DecisionDiagnostics } from './diagnostics.ts';
 import './json-tree.ts';
@@ -11,7 +12,7 @@ export class StillExchangeInspector extends LitElement {
     const t=this.trace,pass=t.passes?.find(p=>p.id===this.passId)??t.passes?.[0],e=pass?.exchange??(!pass?t.exchange:undefined),questions=pass?.questions??t.questions;
     return html`<details @toggle=${(event:Event)=>{this.expanded=(event.target as HTMLDetailsElement).open;}}>
       <summary>Request & response${e?'':' · no captured request'}</summary>
-      ${this.expanded&&t.passes?.length?html`<label>Pass<select .value=${pass?.id??''} @change=${(event:Event)=>{this.passId=(event.target as HTMLSelectElement).value;}}>${t.passes.map(p=>html`<option value=${p.id}>${p.label} · ${p.status}${p.reason?` · ${p.reason}`:''}</option>`)}</select></label>`:nothing}
+      ${this.expanded&&t.passes?.length?html`<en-select label="Pass" .value=${pass?.id??''} @en-change=${(event: CustomEvent<{proposed:string;value:string}>)=>{this.passId=event.detail.proposed;}}>${t.passes.map(p=>html`<en-select-option value=${p.id}>${p.label} · ${p.status}${p.reason?` · ${p.reason}`:''}</en-select-option>`)}</en-select>`:nothing}
       ${!this.expanded?nothing:e?html`
         <p class="meta"><code>${e.requestId}</code><br>${e.requestedAt} · ${e.request.model}${e.responseStatus!==undefined?` · HTTP ${e.responseStatus}`:''}</p>
         ${e.responseStatus===undefined?html`<p>Request attempted; delivery unconfirmed.</p>`:nothing}
@@ -30,7 +31,7 @@ export class StillExchangeInspector extends LitElement {
   static styles=css`
     :host{display:block;container-type:inline-size}details{border-top:1px solid #d9d7ce;padding:10px 0}summary{cursor:pointer;font-weight:550}
     summary:focus-visible{outline:2px solid #596345;outline-offset:3px}p{margin:9px 0}h4{font-size:13px;margin:0 0 9px}
-    label{display:block;margin:12px 0;font-size:12px}select{display:block;width:100%;padding:8px;margin-top:4px;font:inherit;color:inherit;background:#fff;border:1px solid #c9c6bb;border-radius:4px}
+    en-select{display:block;width:100%;margin:12px 0}
     .meta{font-size:11px;color:#706e65}code{font:11px/1.5 ui-monospace,monospace}
     .pair{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:20px;margin:18px 0}section{min-width:0}
     @container(max-width:520px){.pair{grid-template-columns:minmax(0,1fr)}}

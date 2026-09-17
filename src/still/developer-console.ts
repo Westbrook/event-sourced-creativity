@@ -1,3 +1,4 @@
+import './form-elements.js';
 import './decision-lab-panel.ts';
 import { actionLimit, type ExperimentResult } from './decision-lab.ts';
 import { PRIMARY_POLICY } from './presentation.ts';
@@ -31,10 +32,10 @@ export class StillDeveloperConsole extends LitElement {
   private root:Element|null=null;
   connectedCallback() {
     super.connectedCallback();this.root=this.detached?null:this.closest('still-app');
-    if(this.root){this.observer.observe(this.root,{subtree:true,childList:true,attributes:true,characterData:true});this.root.addEventListener('change',this.readControls);}
+    if(this.root){this.observer.observe(this.root,{subtree:true,childList:true,attributes:true,characterData:true});this.root.addEventListener('change',this.readControls);this.root.addEventListener('en-change',this.readControls);}
     void this.updateComplete.then(()=>this.readControls());
   }
-  disconnectedCallback(){super.disconnectedCallback();this.windowHost?.dispose();this.observer.disconnect();this.root?.removeEventListener('change',this.readControls);}
+  disconnectedCallback(){super.disconnectedCallback();this.windowHost?.dispose();this.observer.disconnect();this.root?.removeEventListener('change',this.readControls);this.root?.removeEventListener('en-change',this.readControls);}
   protected updated(){this.windowHost?.publish();}
   show(){(this.renderRoot.querySelector('h2') as HTMLElement|null)?.focus({preventScroll:true});}
   private snapshot():ConsoleSnapshot{return {scope:this.scope,context:this.context,applied:this.applied,received:this.received,pending:this.pending,controls:this.controls};}
@@ -47,10 +48,10 @@ export class StillDeveloperConsole extends LitElement {
   private reattach=()=>{this.windowHost?.dispose();void this.updateComplete.then(()=>this.show());};
   private readControls=()=>{
     if(!this.root)return;
-    const controls=[...this.root.querySelectorAll<HTMLElement>('main en-button, main select, main en-textarea, main input, main button, main a, main [role="button"], main [role="checkbox"], main audio[controls], main video[controls], .action-dock en-button, .command-palette input, .command-palette button')]
+    const controls=[...this.root.querySelectorAll<HTMLElement>('main en-button, main select, main en-textarea, main en-text-field, main en-select, main en-search-input, main en-checkbox, main en-number-field, main input, main button, main a, main [role="button"], main [role="checkbox"], main audio[controls], main video[controls], .action-dock en-button, .command-palette input, .command-palette button')]
       .filter(e=>e.getClientRects().length>0 && (!this.context?.paletteOpen || !!e.closest('.command-palette'))).map((e,index)=>{
         const label=e.getAttribute('label')||e.getAttribute('aria-label')||(['AUDIO','VIDEO'].includes(e.tagName)?`${e.tagName==='AUDIO'?'Audio':'Video'} player (native control group)`:e.tagName==='SELECT'?[...(e.closest('label')?.childNodes??[])].filter(n=>n.nodeType===Node.TEXT_NODE).map(n=>n.textContent).join(' '):e.innerText)||e.tagName.toLowerCase();
-        return {label:label.replace(/\s+/g,' ').trim(),id:e.dataset.actionId||`ui:${e.tagName.toLowerCase()}:${index}`,region:e.closest('.action-dock')?'dock':e.closest('.format-options')?'formats':'content / workflow',variant:e.getAttribute('variant')||'native',size:e.getAttribute('size')||'default',emphasis:e.dataset.emphasisReason||'',disabled:!!(e as HTMLButtonElement).disabled||e.getAttribute('aria-disabled')==='true',options:e.tagName==='SELECT'?[...(e as HTMLSelectElement).options].map(o=>o.text):[]};
+        return {label:label.replace(/\s+/g,' ').trim(),id:e.dataset.actionId||`ui:${e.tagName.toLowerCase()}:${index}`,region:e.closest('.action-dock')?'dock':e.closest('.format-options')?'formats':e.closest('.command-palette')?'palette':'content / workflow',variant:e.getAttribute('variant')||(e.tagName.startsWith('EN-')?'default':'native'),size:e.getAttribute('size')||(e.tagName.startsWith('EN-')?'medium':'default'),emphasis:e.dataset.emphasisReason||'',disabled:!!(e as HTMLButtonElement).disabled||e.getAttribute('aria-disabled')==='true',options:e.tagName==='EN-SELECT'?[...e.querySelectorAll('en-select-option')].map(o=>o.textContent?.trim()||o.getAttribute('label')||''):e.tagName==='SELECT'?[...(e as HTMLSelectElement).options].map(o=>o.text):[]};
       });
     if(JSON.stringify(controls)!==JSON.stringify(this.controls))this.controls=controls;
   };
@@ -77,7 +78,7 @@ export class StillDeveloperConsole extends LitElement {
   }
   render(){
     if(!this.context)return nothing;
-    const c=this.context,viewingReceived=this.showReceived&&!!this.received,trace=viewingReceived?this.received?.trace:this.applied;
+    const c=this.context,viewingReceived=(this.showReceived||c.paletteOpen&&this.received?.trace?.channel==='palette')&&!!this.received,trace=viewingReceived?this.received?.trace:this.applied;
     const rows=trace?.actions??c.current.actions;
     const matched=trace?.head===c.head&&trace.position.view===(c.mode==='generate'&&!c.selectedFormat?'choose-format':c.view)&&(['projectId','documentId','blockId','outputId','itemIndex','hasIntent'] as const).every(key=>trace.position[key]===c.current.position[key]);
     const questions=trace?.questions??[];
@@ -86,23 +87,24 @@ export class StillDeveloperConsole extends LitElement {
           <header class="panel-heading"><h2 tabindex="-1">Decisions${this.detached?' · Live':''}</h2><div class="window-tools">${this.detached?html`<en-button variant="secondary" size="small" @click=${()=>this.dispatchEvent(new CustomEvent('developer-return'))}>Return to panel</en-button>`:html`<en-button variant="secondary" size="small" @click=${this.detach}>${this.windowOpen?'Focus window':'Open in window'}</en-button>${this.windowOpen?html`<en-button variant="ghost" size="small" @click=${this.reattach}>Close window</en-button>`:nothing}<en-button variant="ghost" size="small" aria-label="Close developer panel" @click=${()=>this.dispatchEvent(new CustomEvent('developer-disable',{bubbles:true,composed:true}))}>Close</en-button>`}</div><div class="jev-state" role="status" aria-live="polite" aria-atomic="true"><strong>Jev state</strong><div class="jev-state-badges">${['Not Requested','Pending','Received'].map(state=>html`<en-badge variant=${state===jevState?'success':'neutral'} aria-current=${state===jevState?'step':nothing}><span slot="prefix" aria-hidden="true">${state===jevState?'●':'○'}</span>${state}</en-badge>`)}</div><span class="sr-only">Current: ${jevState}</span></div></header>
           ${this.windowError?html`<p role="alert">${this.windowError}</p>`:nothing}
           <div class="status"><strong>${this.pending?'Jev pending':this.received?.disposition??'Local controls'}</strong><span>${c.view}${c.mode?` / ${c.mode}`:''} · head ${c.head}</span></div>
-          <label>On the page limit<select .value=${String(c.actionLimit??5)} @change=${(e:Event)=>this.density(Number((e.target as HTMLSelectElement).value))}>${Array.from({length:10},(_,i)=>i+3).map(n=>html`<option value=${n} .selected=${n===(c.actionLimit??5)}>${n}${n===5?' · default':''}</option>`)}</select></label><p class="muted">Suggested actions only. Project listings, document context, results and their content controls do not count. Density changes locally; the next Jev request includes this limit.</p>
+          <en-select label="On the page limit" .value=${String(c.actionLimit??5)} @en-change=${(e: CustomEvent<{proposed:string;value:string}>)=>this.density(Number(e.detail.proposed))}>${Array.from({length:10},(_,i)=>i+3).map(n=>html`<en-select-option value=${n}>${n}${n===5?' · default':''}</en-select-option>`)}</en-select><p class="muted">Suggested actions only. Project listings, document context, results and their content controls do not count. Density changes locally; the next Jev request includes this limit.</p>
           <still-decision-lab .snapshot=${this.snapshot()}></still-decision-lab>
           <h3>Live detail</h3><details open><summary>On page · ${this.controls.filter(x=>x.region==='dock'||x.region==='formats').length} action controls · ${this.controls.filter(x=>x.region!=='dock'&&x.region!=='formats').length} content / workflow controls</summary>
             <p class="muted">${c.paletteOpen?'The command palette lists eligible actions.':c.more?'Next-ranked actions, Back, and Palette.':c.mode?'The open workflow supplies its own controls.':c.view==='projects'||c.view==='documents'||c.view==='results'?'Content listings are outside the action budget.':'Suggested actions plus More. Toolbar paging counts toward the action limit.'} Primary: score ≥ ${PRIMARY_POLICY.score}/3, confidence ≥ ${PRIMARY_POLICY.confidence*100}%, useful probability ≥ ${PRIMARY_POLICY.usefulProbability*100}%, and lead ≥ ${PRIMARY_POLICY.gap} over the other visible suggestions. At most one primary. Ties and missing evidence remain equal. The palette is always available with ⌘K.</p>
             <ul class="controls">${this.controls.map(x=>html`<li><b>${x.label}</b><code>${x.id}</code><span>${x.region} · ${x.variant} · ${x.size}${x.disabled?' · disabled':''}</span>${x.emphasis?html`<span>${x.emphasis}</span>`:nothing}${x.options.length?html`<details><summary>Picker options</summary>${x.options.join(' · ')}</details>`:nothing}</li>`)}</ul>
             ${c.selectedFormat?html`<p>Selected format: <code>${c.selectedFormat}</code>. Selection does not start generation.</p>`:nothing}
           </details>
-          <div class="trace-choice"><label>Decision<select .value=${viewingReceived?'received':'applied'} @change=${(e:Event)=>{this.showReceived=(e.target as HTMLSelectElement).value==='received';}}><option value="applied">Applied to controls</option><option value="received" ?disabled=${!this.received}>Latest response</option></select></label></div>
+          ${c.paletteOpen&&c.paletteFeedback?html`<details><summary>Palette entry & order</summary><p>${c.paletteFeedback.entry} · ${c.paletteFeedback.surface}. Passed-over actions are weak evidence, not rejection. Local ordering is immediate; a single Jev refresh may replace it within 1.8 seconds, before interaction.</p><pre>${JSON.stringify({feedback:c.paletteFeedback,ordering:c.paletteOrder},null,2)}</pre></details>`:nothing}
+          <div class="trace-choice"><en-select label="Decision" .value=${viewingReceived?'received':'applied'} @en-change=${(e: CustomEvent<{proposed:string;value:string}>)=>{this.showReceived=e.detail.proposed==='received';}}><en-select-option value="applied">Applied to controls</en-select-option><en-select-option value="received" ?disabled=${!this.received}>Latest response</en-select-option></en-select></div>
           ${trace?html`<p><strong>${trace.model?.includes('simulated')?'Simulated Jev':trace.source==='jev'?'Jev':'Fallback'}</strong> · ${trace.channel} · ${trace.policy} · head ${trace.head}${trace.model?` · ${trace.model}`:''}${trace.reason?` · ${trace.reason}`:''}</p>
             <p>Recommended: ${trace.recommended.join(', ')||'none'}</p>
             ${!matched?html`<p class="warning">This decision describes an earlier view or event head. Current eligibility is shown separately below.</p>`:nothing}`:html`<p>No diagnostic payload. ${this.received?.reason??'Local eligibility remains available.'}</p>`}
-          ${viewingReceived&&this.received?.disposition!=='Applied'?html`<p class="warning">This response did not replace the controls. See Applied to controls for the decision in use.</p>`:nothing}
+          ${viewingReceived&&!['Applied','Palette order applied'].includes(this.received?.disposition??'')?html`<p class="warning">This response did not replace the controls. See Applied to controls for the decision in use.</p>`:nothing}
           ${this.received?html`<p class="muted">Latest response · ${this.received.at} · ${this.received.source}${this.received.reason?` / ${this.received.reason}`:''} · ${this.received.disposition}</p>`:nothing}
           ${trace?.passes?.length?html`<details><summary>Compositions · ${trace.passes.filter(p=>p.status!=='skipped').length} passes</summary>${trace.passes.map(p=>html`<p><strong>${p.label}</strong> · ${p.status} · ${p.elapsedMs} ms${p.reason?` · ${p.reason}`:''}<br>${p.compositionIds.join(' · ')}${p.parentId?` · follows ${p.parentId}`:''}</p>`)}<p class="muted">Distinct judgments share the first request. A second pass uses fuller destination evidence. Agreement is not counted as independent evidence.</p>${trace.menuAdjustments.map(a=>html`<p>${a.actionId}${a.replacedId?` replaces ${a.replacedId}`:''}: ${a.reason}. ${a.evidence.map(e=>`${e.passId}/${e.questionId}`).join(', ')}</p>`)}<pre>${JSON.stringify(trace.metrics,null,2)}</pre></details>`:nothing}
           ${trace?keyed(trace,html`<still-exchange-inspector .trace=${trace}></still-exchange-inspector>`):nothing}
           <p class="muted">Score distributions describe rubric ratings. Confidence describes concentration. Neither is the probability of a click. Rank includes policy adjustments.</p>
-          <label>Find action or question<input type="search" .value=${this.filter} @input=${(e:Event)=>{this.filter=(e.target as HTMLInputElement).value.toLowerCase();}}/></label>
+          <en-search-input label="Find action or question" .value=${this.filter} @en-input=${(e: CustomEvent<{proposed:string;value:string}>)=>{this.filter=e.detail.value.toLowerCase();}}></en-search-input>
           <h3>All actions · ${rows.length}</h3>
           <p class="muted">Action · selection · Jev score / final rank value. Expand for probabilities and rules.</p>
           <div class="actions">${rows.filter(row=>`${row.action.id} ${row.action.label}`.toLowerCase().includes(this.filter)).map(row=>{
@@ -130,7 +132,7 @@ export class StillDeveloperConsole extends LitElement {
     h3{font-size:14px;margin:22px 0 8px}p{margin:9px 0}code,pre{font:11px/1.5 ui-monospace,monospace}pre{white-space:pre-wrap}
     .status{display:flex;justify-content:space-between;gap:12px;margin:10px 0 18px}.muted,small{color:#706e65}.warning{background:#f1e7ce;padding:10px;border-radius:6px}
     details{border-top:1px solid #d9d7ce;padding:10px 0}summary{cursor:pointer;font-weight:550}.actions summary{display:grid;grid-template-columns:1fr 90px 90px;gap:8px}.actions summary code{text-align:right}.actions summary span:first-child::before{content:'›';display:inline-block;width:14px}.actions details[open]>summary span:first-child::before{content:'⌄'}.selected{border-left:3px solid #596345;padding-left:9px}
-    label{display:block;font-size:12px;color:#706e65}input,select{display:block;box-sizing:border-box;width:100%;font:inherit;background:#fff;border:1px solid #c9c6bb;border-radius:6px;padding:9px;color:#33332e;margin-top:4px}.trace-choice{margin-top:16px}
+    en-select,en-search-input{display:block;width:100%;margin-top:12px}.trace-choice{margin-top:16px}
     .controls{list-style:none;padding:0;display:grid;gap:8px}.controls li{display:grid;grid-template-columns:1fr 1fr;gap:2px 8px}.controls span,.controls details{grid-column:1/-1;color:#706e65}.controls code{text-align:right}
     .distribution>div{display:grid;grid-template-columns:1fr 100px 58px;gap:8px;align-items:center;font-size:12px;margin:5px 0}.distribution b{text-align:right}meter{width:100%;accent-color:#596345}.adjustment small{display:block;margin-left:36px}
     @container(max-width:440px){.status{display:grid;gap:2px}.controls{font-size:12px}.actions summary{grid-template-columns:minmax(0,1fr) 68px 65px}.distribution>div{grid-template-columns:minmax(0,1fr) 60px 52px}}

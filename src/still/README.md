@@ -63,3 +63,17 @@ The Decision lab explains eligibility, rubric scores, policy adjustments, initia
 Additional checks: `tests/still-decision-lab.test.mjs`, `tests/still-experiment-api.test.mjs`, and paired-window command tests.
 
 Still’s component palette lives in `theme.css`, scoped to the app and developer console. Semantic tokens inherit through component shadow roots and into the detached console. Primary uses dark olive with white text; secondary uses a warm neutral surface and restrained border; ghost stays transparent with a lighter border. Hover and keyboard focus use the same warm palette. Vendor tokens and Forma’s theme are unchanged.
+
+# En Reve control preference
+
+Use the supplied `/design-system` En Reve elements before native or locally recreated controls. Still vendors the built module closure with `scripts/vendor-still-primitives.mjs`; do not customize vendor implementations. Apply the shared Still semantic theme and public component APIs, slots and Parts.
+
+Forms use `en-select` with `en-select-option`, `en-checkbox`, `en-search-input`, `en-number-field`, `en-text-field` and `en-textarea`. The parent select owns its value; descriptors have no selected state. Read `en-change.detail.proposed` for accepted selections/toggles and `en-input.detail.value` for editable drafts. Preserve disabled state, review boundaries, IME handling and current permission checks. Developer diagnostics inspect the public hosts and authored option descriptors.
+
+Use `en-switch` for the proposed client-side Flags controls and `en-tooltip` for future onboarding explanations; these primitives are included in the vendor closure. This migration does not enable onboarding or make new model calls.
+
+The current palette uses `en-dialog`, with same-root native combobox/listbox semantics for the application-owned asynchronous Jev search. The supplied `en-command-palette` currently exposes a finite local catalog and no public query-change contract; do not reach into its private shadow state to implement Jev lookup. Adopt it when its public contract supports the existing interaction. Native links, media controls and lazy disclosure trees retain their semantic behavior.
+
+## Image provider
+
+New Still jobs use the configured OpenAI GPT-image model (default `gpt-image-2`) for image generation and image reference edits, including image stages in rendered artifacts. Job admission saves `stillImageProvider: "openai"` server-side and applies that policy to readiness, pricing, and execution. Existing jobs without the marker retain their original provider/recovery behavior. Forma’s image default and the audio, video, and 3D providers remain independent.
