@@ -31,10 +31,11 @@ the DG backlog's unassigned activation items are unchanged.
 | Production | **390**, source `5b8cffc6a58e7fde9f0fb035b250334c5f1e4764`; exact Sites source and terminal success independently verified by the continuation owner. Includes the separately published 389 upload-lifetime fix and 390 Still synchronization fixes. It does not include the later local mini-app queue. |
 | Main used for this document | `2dbe3d904d6139c4dbc7adbe31cb2b776f95144e`, the documentation-only backlog successor to production 390. This clone's exact HEAD was checked; current remote main must be checked again before integration. |
 | Qualified local candidate | R7 `eca7605dfefa990992dde36552887c487a9763a7`, composed against production 387, passed types/build and scoped composed checks. Three scoped lint findings belong to its unchanged Still baseline. This is not a production-390 composition claim. |
-| Later local assembly | R8 `d87d670cf183137751b9d46a30bdd37e12ec1ed5` adds 11 reviewed increments. Its 19:27 UTC receipt records types, 39-path lint and one native Slides flow passing; that flow uses SQLite and intercepted transport, not workerd or a live provider. Normal build and final root readback remain pending. It is unpublished. |
+| Later local assembly | R8 `d87d670cf183137751b9d46a30bdd37e12ec1ed5` adds 11 reviewed increments. Its 19:27 UTC receipt records types, 39-path lint and one native Slides flow passing; that flow uses SQLite and intercepted transport, not workerd or a live provider. Root accepted the prebuild readback after checking 27 artifact-manifest pins. Normal build remains pending; it is unpublished. |
 
-The next source delivery step is to reconcile stable production 390 and the next
-accepted supplier packets, qualify one composed successor, then obtain the
+The next source delivery step is to compose the accepted immutable production-390
+source with the next accepted supplier packets, excluding ongoing Still work;
+qualify one composed successor, then obtain the
 recorded publication owner's review and publish independently verifiable fixes.
 Do not count local source acceptance, build success, production publication and
 feature activation as interchangeable outcomes.
@@ -106,8 +107,8 @@ The [committed text lifecycle](forma-selected-output-share-2026-09-17.md) is an
 earlier inactive foundation. Local successors qualify native custody, bounded
 media reads, explicit byte profiles, lifecycle/file delivery and publisher controls.
 Current Video Notes and recovered-original custody have local repairs. The bounded
-native MP3-to-WAV adapter has completed semantic review; final root mechanical
-readback and composed integration remain pending at this snapshot.
+native MP3-to-WAV adapter has accepted semantic review and root mechanical
+readback; composed integration remains pending at this snapshot.
 
 Finish the exact recipient UI, current-media Document eligibility and retention
 patch approvals; those changes remain unapplied after automatic review. Creation
