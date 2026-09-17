@@ -171,7 +171,9 @@ export async function applyBrowserZoom(page, context, factor, testInfo) {
   const after = await browserMetrics(page);
   await attachJSON(testInfo, `browser-zoom-${factor * 100}`, { mechanism: "chrome.tabs.setZoom", reset, result, before, after });
   expect(reset.factor).toBe(1);
-  expect(result.factor).toBe(factor);
+  // Native Chromium reports requested 400% as 3.9999999999999996. Keep raw
+  // readback in the receipt and independently verify DPR/reflow/visualScale.
+  expect(result.factor).toBeCloseTo(factor, 12);
   expect(result.settings).toMatchObject({ mode: "automatic", scope: "per-tab" });
   expect(result.url).toBe(page.url());
   expect(after.visualScale, "pinch/visual scaling is not desktop browser zoom").toBe(1);
