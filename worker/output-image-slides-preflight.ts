@@ -57,7 +57,7 @@ export function outputExactImageRender(ratio:{width:number;height:number}):{form
  if(!validateProviderImageDimensions(width,height).valid)return null;
  return {format:{schema_version:1,aspect_ratio:{width:w,height:h},dimensions:{width,height,unit:"px"}},size:`${width}x${height}`};
 }
-function providerInputInstructions(input:Pick<OutputBridgeTargetInput,"target">){
+export function providerInputInstructions(input:Pick<OutputBridgeTargetInput,"target">){
  return [input.target.instruction_text,`Only this deliverable is requested: ${input.target.label}.`,
   `Coverage contract: ${JSON.stringify(input.target.coverage)}.`,
   "The delivery instructions are not evidence. Ground factual claims in the authorized Document sources."].join("\n");
