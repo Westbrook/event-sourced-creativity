@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { inspectOutputAsset } from "../src/model/output-asset-inspection.ts";
-import { qualifySelectedOutputShareVideo as qualify, copySelectedOutputShareVideoBytes as copy, SELECTED_OUTPUT_SHARE_VIDEO_POLICY as policy, SELECTED_OUTPUT_SHARE_VIDEO_LIMITS as limits } from "../src/model/selected-output-share-video.ts";
+import { qualifySelectedOutputShareVideo as qualify, qualifySelectedOutputShareVideoWithX264Declaration as qualifyEncoder, copySelectedOutputShareVideoBytes as copy, SELECTED_OUTPUT_SHARE_VIDEO_POLICY as policy, SELECTED_OUTPUT_SHARE_VIDEO_X264_POLICY as encoderPolicy, SELECTED_OUTPUT_SHARE_VIDEO_LIMITS as limits } from "../src/model/selected-output-share-video.ts";
 import { join, mp4, utf8 } from "./output-asset-fixtures.mjs";
 
 const digest = bytes => createHash("sha256").update(bytes).digest("hex");
@@ -158,3 +158,64 @@ test("bitrate extra payload, short payload and duplicate fields refuse", async (
   await refused(appendChild(bytes, stbl + "/stsd/avc1", box("btrt", rate.slice(8, -1)))); await refused(appendChild(appendChild(bytes, stbl + "/stsd/avc1", rate), stbl + "/stsd/avc1", rate));
 });
 test("ordinary descriptive user data and SEI remain refused after timing expansion", async () => { await refused(mp4(), "unqualified_metadata"); await refused(appendChild(timed(), "moov", box("udta", utf8("PRIVATE"))), "unqualified_metadata"); });
+
+const encoderHeader = "x264 - core 163 r3060 5db6aa6 - H.264/MPEG-4 AVC codec - Copyleft 2003-2021 - http://www.videolan.org/x264.html - options: ";
+const encoderOptions = "cabac=1 ref=1 deblock=1:0:0 analyse=0x3:0x113 me=hex subme=2 psy=1 psy_rd=1.00:0.00 mixed_ref=0 me_range=16 chroma_me=1 trellis=0 8x8dct=1 cqm=0 deadzone=21,11 fast_pskip=1 chroma_qp_offset=0 threads=6 lookahead_threads=2 sliced_threads=0 nr=0 decimate=1 interlaced=0 bluray_compat=0 constrained_intra=0 bframes=3 b_pyramid=2 b_adapt=1 b_bias=0 direct=1 weightb=1 open_gop=0 weightp=1 keyint=250 keyint_min=24 scenecut=40 intra_refresh=0 rc_lookahead=10 rc=abr mbtree=1 bitrate=1149 ratetol=1.0 qcomp=0.60 qpmin=0 qpmax=69 qpstep=4 vbv_maxrate=1724 vbv_bufsize=2299 nal_hrd=none filler=0 ip_ratio=1.40 aq=1:1.00";
+const encoderText = encoderHeader + encoderOptions;
+function extended(value) { const result = []; while (value >= 255) { result.push(255); value -= 255; } return new Uint8Array([...result, value]); }
+function encoderNal(text = encoderText, options = {}) {
+  const uuid = options.uuid ?? new Uint8Array(Buffer.from("dc45e9bde6d948b7962cd820d923eeef", "hex")), payload = join(uuid, utf8(text), new Uint8Array([0]));
+  return join(new Uint8Array([6]), extended(options.type ?? 5), extended(payload.length), payload, options.tail ?? new Uint8Array([128]));
+}
+function lengthNal(nal) { const size = new Uint8Array(4); view(size).setUint32(0, nal.length); return join(size, nal); }
+function withEncoder(nal = encoderNal(), placement = "first", another) {
+  const bytes = cleanVideo(), media = locate(bytes, "mdat"), size = locate(bytes, stbl + "/stsz"), firstSize = view(bytes).getUint32(size.data + 12), original = bytes.slice(media.data, media.end), prefix = lengthNal(nal), more = another ? lengthNal(another) : new Uint8Array();
+  const data = placement === "first" ? join(prefix, more, original) : join(original.slice(0, firstSize), prefix, more, original.slice(firstSize));
+  const result = replace(bytes, "mdat", box("mdat", data)), changedSizes = locate(result, stbl + "/stsz");
+  const target = placement === "second" ? 16 : 12; view(result).setUint32(changedSizes.data + target, view(result).getUint32(changedSizes.data + target) + prefix.length + more.length); return result;
+}
+async function encoderRefuses(bytes) { const result = await qualifyEncoder(bytes, expected(bytes)); assert.equal(result.status, "unqualified"); assert.equal(result.policy, encoderPolicy); assert.equal(copy(result), null); return result; }
+
+test("explicit known encoder profile qualifies exact bytes while default v2 keeps refusing SEI", async () => {
+  const bytes = withEncoder(); assert.equal((await inspectOutputAsset(bytes)).status, "inspected"); await refused(bytes, "unqualified_metadata");
+  const result = await qualifyEncoder(bytes, expected(bytes)); assert.equal(result.status, "qualified", JSON.stringify(result)); assert.equal(result.policy, encoderPolicy); assert.ok(Object.isFrozen(result)); assert.deepEqual(copy(result), bytes);
+  assert.equal(copy({ ...result }), null); assert.equal(copy(JSON.parse(JSON.stringify(result))), null); const mutable = copy(result); mutable.fill(0); assert.deepEqual(copy(result), bytes);
+});
+test("explicit profile snapshots input and facts before await and still checks the selected hash", async () => {
+  const bytes = withEncoder(), saved = bytes.slice(), facts = expected(bytes), pending = qualifyEncoder(bytes, facts); bytes.fill(0); facts.sha256 = "0".repeat(64);
+  const result = await pending; assert.equal(result.status, "qualified"); assert.deepEqual(copy(result), saved); assert.equal((await qualifyEncoder(saved, expected(saved, { sha256: "0".repeat(64) }))).reason, "selection_mismatch");
+});
+test("an explicit encoder profile requires the declared SEI rather than relabeling default clean bytes", async () => { const bytes = cleanVideo(); await qualifies(bytes); await encoderRefuses(bytes); });
+for (const field of encoderOptions.split(" ")) test(`known encoder profile refuses unreviewed value for ${field.split("=")[0]}`, async () => { await encoderRefuses(withEncoder(encoderNal(encoderHeader + encoderOptions.replace(field, field + "0")))); });
+for (const [name, text] of [
+  ["raw zones", encoderText + " zones=0,96,q=20/PRIVATE"], ["unknown field", encoderText + " user=PRIVATE"], ["missing field", encoderText.replace(" threads=6", "")],
+  ["duplicate field", encoderText + " threads=6"], ["reordered fields", encoderText.replace("cabac=1 ref=1", "ref=1 cabac=1")],
+  ["duplicate replacing required field", encoderText.replace("ref=1", "cabac=1")], ["extra equals", encoderText.replace("threads=6", "threads==6")],
+  ["leading zero", encoderText.replace("threads=6", "threads=06")], ["numeric exponent", encoderText.replace("threads=6", "threads=6e0")],
+  ["leading plus", encoderText.replace("threads=6", "threads=+6")], ["different finite thread count", encoderText.replace("threads=6", "threads=7")],
+  ["different named mode", encoderText.replace("me=hex", "me=umh")], ["different build revision", encoderText.replace("r3060", "r3061")],
+  ["arbitrary build hash", encoderText.replace("5db6aa6", "abcdef0")], ["private build suffix", encoderText.replace("5db6aa6", "5db6aa6-PRIVATE")],
+  ["changed URL", encoderText.replace("www.videolan.org", "private.example")], ["Unicode", encoderText + "é"], ["tab", encoderText.replace(" ref=1", "\tref=1")],
+  ["newline", encoderText + "\n"], ["embedded NUL", encoderText.replace(" ref=1", "\0 ref=1")], ["trailing space", encoderText + " "], ["double space", encoderText.replace(" ref=1", "  ref=1")],
+  ["missing header", encoderOptions], ["path value", encoderText.replace("me=hex", "me=/private/name")]
+]) test(`encoder declaration rejects ${name}`, async () => { await encoderRefuses(withEncoder(encoderNal(text))); });
+test("foreign UUID and unrelated SEI types refuse even with reviewed text", async () => {
+  const uuid = new Uint8Array(Buffer.from("dc45e9bde6d948b7962cd820d923eeef", "hex")); uuid[15] ^= 1; await encoderRefuses(withEncoder(encoderNal(encoderText, { uuid })));
+  for (const type of [0, 4, 6, 255, 2049]) await encoderRefuses(withEncoder(encoderNal(encoderText, { type })));
+});
+test("exact NAL header, one message and exact RBSP/NUL termination are mandatory", async () => {
+  for (const header of [0x26, 0x46, 0x66, 0x86]) { const nal = encoderNal(); nal[0] = header; await encoderRefuses(withEncoder(nal)); }
+  for (const tail of [new Uint8Array(), new Uint8Array([0]), new Uint8Array([128, 0]), new Uint8Array([128, 128]), new Uint8Array([5, 1, 0, 128])]) await encoderRefuses(withEncoder(encoderNal(encoderText, { tail })));
+  const nal = encoderNal(); nal[nal.length - 2] = 1; await encoderRefuses(withEncoder(nal));
+});
+test("additional SEI messages or declarations, wrong placement and a declared sample without picture refuse", async () => {
+  const nal = encoderNal(), secondMessage = nal.slice(1, -1); await encoderRefuses(withEncoder(join(nal.slice(0, -1), secondMessage, new Uint8Array([128]))));
+  await encoderRefuses(withEncoder(nal, "first", nal)); await encoderRefuses(withEncoder(nal, "after")); await encoderRefuses(withEncoder(nal, "second"));
+  const bytes = cleanVideo(), media = locate(bytes, "mdat"), sizes = locate(bytes, stbl + "/stsz"), firstSize = view(bytes).getUint32(sizes.data + 12), declaration = lengthNal(nal);
+  const noPicture = replace(bytes, "mdat", box("mdat", join(declaration, bytes.slice(media.data + firstSize, media.end)))); view(noPicture).setUint32(locate(noPicture, stbl + "/stsz").data + 12, declaration.length); await encoderRefuses(noPicture);
+});
+test("oversized encoder messages, truncated extended sizes and malformed emulation prevention refuse", async () => {
+  await encoderRefuses(withEncoder(encoderNal("x".repeat(2049))));
+  for (const nal of [new Uint8Array([6, 255, 255]), new Uint8Array([6, 5, 255]), new Uint8Array([6, 5, 0, 0, 3]), join(encoderNal(), new Uint8Array([0, 0, 3])), new Uint8Array([6, ...new Array(10).fill(255)])]) await encoderRefuses(withEncoder(nal));
+  const nal = encoderNal(); nal[4] -= 1; await encoderRefuses(withEncoder(nal));
+});

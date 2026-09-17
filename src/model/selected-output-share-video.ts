@@ -2,21 +2,25 @@ import { inspectOutputAsset, MAX_OUTPUT_ASSET_BYTES } from "./output-asset-inspe
 
 /** Container/metadata qualification of exact bytes, never publishing authority. */
 export const SELECTED_OUTPUT_SHARE_VIDEO_POLICY = "selected-output-share-avc-mp4-v2" as const;
+/** Explicit opt-in to publishing the declared encoder configuration, including
+ * thread counts. This is not an authenticity, custody or privacy assertion. */
+export const SELECTED_OUTPUT_SHARE_VIDEO_X264_POLICY = "selected-output-share-avc-mp4-x264-163-r3060-v1" as const;
+type VideoPolicy = typeof SELECTED_OUTPUT_SHARE_VIDEO_POLICY | typeof SELECTED_OUTPUT_SHARE_VIDEO_X264_POLICY;
 export const SELECTED_OUTPUT_SHARE_VIDEO_LIMITS = Object.freeze({ bytes: MAX_OUTPUT_ASSET_BYTES, boxes: 4096, samples: 100_000, nals: 200_000 });
 export type SelectedOutputShareVideoExpected = Readonly<{ sha256: string; byteLength: number; width: number; height: number; durationSeconds: number }>;
 export type SelectedOutputShareVideoRefusal = "invalid_input" | "unsupported_mp4" | "unqualified_metadata" | "invalid_mp4" | "selection_mismatch";
 declare const videoQualification: unique symbol;
-export type QualifiedSelectedOutputShareVideo = Readonly<{
+export type QualifiedSelectedOutputShareVideo<Policy extends VideoPolicy = typeof SELECTED_OUTPUT_SHARE_VIDEO_POLICY> = Readonly<{
   [videoQualification]: true;
   status: "qualified";
-  policy: typeof SELECTED_OUTPUT_SHARE_VIDEO_POLICY;
+  policy: Policy;
   mimeType: "video/mp4";
   sha256: string; byteLength: number; width: number; height: number; durationSeconds: number;
 }>;
-export type SelectedOutputShareVideoQualification = QualifiedSelectedOutputShareVideo
-  | Readonly<{ status: "unqualified"; policy: typeof SELECTED_OUTPUT_SHARE_VIDEO_POLICY; reason: SelectedOutputShareVideoRefusal }>;
+export type SelectedOutputShareVideoQualification<Policy extends VideoPolicy = typeof SELECTED_OUTPUT_SHARE_VIDEO_POLICY> = QualifiedSelectedOutputShareVideo<Policy>
+  | Readonly<{ status: "unqualified"; policy: Policy; reason: SelectedOutputShareVideoRefusal }>;
 
-const ownedVideos = new WeakMap<QualifiedSelectedOutputShareVideo, Uint8Array<ArrayBuffer>>();
+const ownedVideos = new WeakMap<QualifiedSelectedOutputShareVideo<VideoPolicy>, Uint8Array<ArrayBuffer>>();
 const typedPrototype = Object.getPrototypeOf(Uint8Array.prototype);
 const typedLength = Object.getOwnPropertyDescriptor(typedPrototype, "byteLength")!.get!;
 const typedBuffer = Object.getOwnPropertyDescriptor(typedPrototype, "buffer")!.get!;
@@ -206,7 +210,51 @@ function bitrate(c: Container, box: Box, stsz: Box, samples: number, payloadByte
   requireValue(BigInt(average) === floor || BigInt(average) === ceiling, "unsupported_mp4");
 }
 
-function publicMp4(bytes: Uint8Array) {
+// Each value is a deliberately reviewed singleton encoder setting, not a
+// generic number/string allowance. Other builds or settings require a new
+// profile review. In particular x264's caller-supplied `zones` string is absent.
+const x264Fields = [
+  ["cabac", "1"], ["ref", "1"], ["deblock", "1:0:0"], ["analyse", "0x3:0x113"], ["me", "hex"], ["subme", "2"],
+  ["psy", "1"], ["psy_rd", "1.00:0.00"], ["mixed_ref", "0"], ["me_range", "16"], ["chroma_me", "1"], ["trellis", "0"],
+  ["8x8dct", "1"], ["cqm", "0"], ["deadzone", "21,11"], ["fast_pskip", "1"], ["chroma_qp_offset", "0"],
+  ["threads", "6"], ["lookahead_threads", "2"], ["sliced_threads", "0"], ["nr", "0"], ["decimate", "1"], ["interlaced", "0"],
+  ["bluray_compat", "0"], ["constrained_intra", "0"], ["bframes", "3"], ["b_pyramid", "2"], ["b_adapt", "1"], ["b_bias", "0"],
+  ["direct", "1"], ["weightb", "1"], ["open_gop", "0"], ["weightp", "1"], ["keyint", "250"], ["keyint_min", "24"], ["scenecut", "40"],
+  ["intra_refresh", "0"], ["rc_lookahead", "10"], ["rc", "abr"], ["mbtree", "1"], ["bitrate", "1149"], ["ratetol", "1.0"],
+  ["qcomp", "0.60"], ["qpmin", "0"], ["qpmax", "69"], ["qpstep", "4"], ["vbv_maxrate", "1724"], ["vbv_bufsize", "2299"],
+  ["nal_hrd", "none"], ["filler", "0"], ["ip_ratio", "1.40"], ["aq", "1:1.00"],
+] as const;
+const x264Header = "x264 - core 163 r3060 5db6aa6 - H.264/MPEG-4 AVC codec - Copyleft 2003-2021 - http://www.videolan.org/x264.html - options: ";
+const x264Uuid = [0xdc, 0x45, 0xe9, 0xbd, 0xe6, 0xd9, 0x48, 0xb7, 0x96, 0x2c, 0xd8, 0x20, 0xd9, 0x23, 0xee, 0xef];
+function encoderDeclaration(nal: Uint8Array) {
+  requireValue(nal.length >= 20 && nal.length <= 2048 && nal[0] === 6, "unqualified_metadata");
+  const rbsp: number[] = [];
+  for (let index = 1, zeros = 0; index < nal.length; index += 1) {
+    const value = nal[index]!;
+    if (zeros === 2 && value === 3) { requireValue(index + 1 < nal.length && nal[index + 1]! <= 3); zeros = 0; continue; }
+    requireValue(zeros < 2 || value > 2); rbsp.push(value); zeros = value === 0 ? zeros + 1 : 0;
+  }
+  let cursor = 0;
+  const extendedByte = () => {
+    let value = 0, byte = 255;
+    while (byte === 255) { requireValue(cursor < rbsp.length); byte = rbsp[cursor++]!; value += byte; requireValue(value <= 2048); }
+    return value;
+  };
+  requireValue(extendedByte() === 5, "unqualified_metadata");
+  const length = extendedByte(), end = cursor + length;
+  requireValue(length > 17 && end + 1 === rbsp.length && rbsp[end] === 128, "unqualified_metadata");
+  requireValue(x264Uuid.every((value, index) => rbsp[cursor + index] === value), "unqualified_metadata"); cursor += 16;
+  requireValue(rbsp[end - 1] === 0 && rbsp.slice(cursor, end - 1).every(value => value >= 32 && value <= 126), "unqualified_metadata");
+  const text = String.fromCharCode(...rbsp.slice(cursor, end - 1));
+  requireValue(text.startsWith(x264Header), "unqualified_metadata");
+  const fields = text.slice(x264Header.length).split(" "); requireValue(fields.length === x264Fields.length, "unqualified_metadata");
+  x264Fields.forEach(([name, reviewedValue], index) => {
+    const field = fields[index]!, equals = field.indexOf("=");
+    requireValue(equals > 0 && field.slice(0, equals) === name && field.slice(equals + 1) === reviewedValue, "unqualified_metadata");
+  });
+}
+
+function publicMp4(bytes: Uint8Array, allowKnownEncoderDeclaration = false) {
   const c = new Container(bytes), top = c.boxes(0, bytes.length, ["ftyp", "moov", "mdat", "free"]);
   const ftyp = c.one(top, "ftyp"), moov = c.one(top, "moov"), mdat = c.one(top, "mdat");
   requireValue(top[0] === ftyp && ftyp.end - ftyp.data >= 12 && ftyp.end - ftyp.data <= 44 && (ftyp.end - ftyp.data) % 4 === 0);
@@ -255,7 +303,7 @@ function publicMp4(bytes: Uint8Array) {
   const btrt = extensions.find(box => box.type === "btrt"); if (btrt) bitrate(c, btrt, stsz, samples, mdat.end - mdat.data, mediaScale, mediaDuration);
   const stss = tables.find(box => box.type === "stss"), syncSamples = new Set<number>();
   if (stss) { c.full(stss); const count = c.u32(stss.data + 4); requireValue(count > 0 && count <= samples && stss.end - stss.data === 8 + count * 4); let previous = 0; for (let at = stss.data + 8; at < stss.end; at += 4) { const sample = c.u32(at); requireValue(sample > previous && sample <= samples); previous = sample; syncSamples.add(sample); } }
-  let mapping = 0, sample = 0, end = mdat.data, nals = 0;
+  let mapping = 0, sample = 0, end = mdat.data, nals = 0, declaredEncoder = false;
   for (let chunk = 1; chunk <= chunks; chunk += 1) {
     if (mapping + 1 < mappingCount && chunk === c.u32(stsc.data + 8 + (mapping + 1) * 12)) mapping += 1;
     const at = stsc.data + 8 + mapping * 12, first = c.u32(at), count = c.u32(at + 4);
@@ -267,7 +315,12 @@ function publicMp4(bytes: Uint8Array) {
       while (cursor < end) {
         requireValue(++nals <= SELECTED_OUTPUT_SHARE_VIDEO_LIMITS.nals && cursor + 4 <= end);
         const length = c.u32(cursor); cursor += 4; requireValue(length >= 2 && length <= end - cursor);
-        const type = bytes[cursor]! & 31; requireValue((bytes[cursor]! & 128) === 0 && (type === 1 || type === 5), "unqualified_metadata");
+        const type = bytes[cursor]! & 31;
+        if (type === 6 && allowKnownEncoderDeclaration) {
+          requireValue(!declaredEncoder && sample === 1 && idr === undefined, "unqualified_metadata");
+          encoderDeclaration(bytes.subarray(cursor, cursor + length)); declaredEncoder = true; cursor += length; continue;
+        }
+        requireValue((bytes[cursor]! & 128) === 0 && (type === 1 || type === 5), "unqualified_metadata");
         // Closed slice prefix binds the only configured PPS. Remaining coded
         // picture bytes require decoding/playback review, not a metadata claim.
         const bits = new Bits(bytes.subarray(cursor, Math.min(cursor + length, cursor + 64)), type); bits.ue(); const sliceType = bits.ue(9); requireValue(bits.ue(255) === ppsId && (type !== 5 || sliceType % 5 === 2));
@@ -275,33 +328,45 @@ function publicMp4(bytes: Uint8Array) {
         cursor += length;
       }
       requireValue(cursor === end && idr === (stss ? syncSamples.has(sample) : true));
+      requireValue(!declaredEncoder || sample !== 1 || idr === true, "unsupported_mp4");
     }
   }
   requireValue(sample === samples && mapping + 1 === mappingCount && end === mdat.end, "unqualified_metadata");
+  requireValue(!allowKnownEncoderDeclaration || declaredEncoder, "unqualified_metadata");
 }
 
 /** Captures exact bytes before awaiting. No source custody, rights, visible
  * content, covert encoded-picture data, or publication permission is inferred.
  * No stripping, transcoding, provider call or public route is performed. */
-export async function qualifySelectedOutputShareVideo(input: unknown, expected: unknown): Promise<SelectedOutputShareVideoQualification> {
-  const refused = (reason: SelectedOutputShareVideoRefusal): SelectedOutputShareVideoQualification => Object.freeze({ status: "unqualified", policy: SELECTED_OUTPUT_SHARE_VIDEO_POLICY, reason });
+async function qualifyVideo<Policy extends VideoPolicy>(input: unknown, expected: unknown, policy: Policy): Promise<SelectedOutputShareVideoQualification<Policy>> {
+  const refused = (reason: SelectedOutputShareVideoRefusal): SelectedOutputShareVideoQualification<Policy> => Object.freeze({ status: "unqualified", policy, reason });
   let bytes: Uint8Array<ArrayBuffer> | null = null, retained = false;
   try {
     const facts = expectedFacts(expected); if (!facts) return refused("invalid_input"); bytes = captureBytes(input); if (!bytes) return refused("invalid_input");
     if (bytes.length !== facts.byteLength) return refused("selection_mismatch");
-    publicMp4(bytes);
+    publicMp4(bytes, policy === SELECTED_OUTPUT_SHARE_VIDEO_X264_POLICY);
     const inspection = await inspectOutputAsset(bytes, "video.mp4", { snapshot: false });
     if (inspection.status !== "inspected" || inspection.kind !== "video" || inspection.mimeType !== "video/mp4" || inspection.extension !== "mp4"
       || inspection.facts.codec !== "avc1" || inspection.facts.audioCodec !== undefined || inspection.facts.durationBasis !== "mp4-track-timeline") return refused("invalid_mp4");
     if (inspection.sha256 !== facts.sha256 || inspection.byteLength !== facts.byteLength || inspection.facts.width !== facts.width || inspection.facts.height !== facts.height || inspection.facts.durationSeconds !== facts.durationSeconds) return refused("selection_mismatch");
-    const result = Object.freeze({ status: "qualified", policy: SELECTED_OUTPUT_SHARE_VIDEO_POLICY, mimeType: "video/mp4", ...facts }) as QualifiedSelectedOutputShareVideo;
+    const result = Object.freeze({ status: "qualified", policy, mimeType: "video/mp4", ...facts }) as QualifiedSelectedOutputShareVideo<Policy>;
     ownedVideos.set(result, bytes); retained = true; return result;
   } catch (error) { return refused(error instanceof Refusal ? error.reason : "invalid_input"); }
   finally { if (!retained) bytes?.fill(0); }
+}
+/** Default v2 policy remains unchanged: every SEI NAL refuses. */
+export function qualifySelectedOutputShareVideo(input: unknown, expected: unknown): Promise<SelectedOutputShareVideoQualification> {
+  return qualifyVideo(input, expected, SELECTED_OUTPUT_SHARE_VIDEO_POLICY);
+}
+/** Explicit known-declaration profile. Preserves the disclosed encoder build,
+ * thread counts and coding/rate settings verbatim; no authenticity, absence of
+ * visible/covert private content, or permission to publish is established. */
+export function qualifySelectedOutputShareVideoWithX264Declaration(input: unknown, expected: unknown): Promise<SelectedOutputShareVideoQualification<typeof SELECTED_OUTPUT_SHARE_VIDEO_X264_POLICY>> {
+  return qualifyVideo(input, expected, SELECTED_OUTPUT_SHARE_VIDEO_X264_POLICY);
 }
 /** Fresh copy; serialized/forged facts are not a byte-access capability. The
  * caller must separately recheck current source and publishing authority. */
 export function copySelectedOutputShareVideoBytes(qualification: unknown): Uint8Array<ArrayBuffer> | null {
   if (qualification === null || typeof qualification !== "object") return null;
-  const bytes = ownedVideos.get(qualification as QualifiedSelectedOutputShareVideo); return bytes ? new Uint8Array(bytes) : null;
+  const bytes = ownedVideos.get(qualification as QualifiedSelectedOutputShareVideo<VideoPolicy>); return bytes ? new Uint8Array(bytes) : null;
 }
