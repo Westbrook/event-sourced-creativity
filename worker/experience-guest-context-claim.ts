@@ -1,5 +1,5 @@
 import { exactKeys, freeze, jsonIssues, record } from "../src/experiences/compiler.ts";
-import { acquireGuestClaimLease } from "./experience-guest-claim-lease.ts";
+import { acquireGuestContextClaimLease } from "./experience-guest-claim-lease.ts";
 import { adoptGuestContextSource, guestContextAdoptionData, inspectGuestContextAdoption, readGuestContextAdoption } from "./experience-guest-context-adoption.ts";
 import { inspectGuestContextInventory } from "./experience-guest-context-inventory.ts";
 import { retainGuestContextPlan } from "./experience-guest-plan-custody.ts";
@@ -35,7 +35,7 @@ export async function claimGuestContext(request: Request, env: WorkerEnv, input:
     try {
       const inventory = await inspectGuestContextInventory(request, env, { proof: captured.proof }); bound();
       if (inventory.sessionId !== captured.sessionId || inventory.manifestDigest !== captured.approvedManifestDigest) return guestFail("claim_conflict");
-      const lease = await acquireGuestClaimLease(request, env, { proof: captured.proof, requestId: captured.requestId, manifestDigest: inventory.manifestDigest }); bound();
+      const lease = await acquireGuestContextClaimLease(request, env, { proof: captured.proof, requestId: captured.requestId, inventory }); bound();
       receipt = exact(await adoptGuestContextSource(request, env, { inventory, leaseId: lease.leaseId, requestId: captured.requestId })); bound();
     } catch (error) {
       // Recover only an actual exact completed receipt after an uncertain

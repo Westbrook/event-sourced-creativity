@@ -124,10 +124,10 @@ test('a missing proof cannot begin custody and cannot bootstrap a new canonical 
   const f=await fixture(t),before=persistent(f);await assert.rejects(f.claim(owner,withoutProof(f)),/proof_unavailable/);
   for(const actor of [null,'unknown'])await assert.rejects(f.claim(actor));assert.deepEqual(persistent(f),before);f.unpaid();
 });
-test('lost lease acknowledgment leaves one lease and requires an explicit exact retry',async t=>{
-  const f=await fixture(t),done=statementHook(f,sql=>sql.startsWith('INSERT INTO experience_guest_claim_leases'),()=>{throw Error('lost lease acknowledgment');},{method:'run'});
-  await assert.rejects(f.claim(),/lost lease acknowledgment/);done();assert.equal(rows(f,'experience_guest_claim_leases').length,1);assert.equal(rows(f,'experience_guest_context_adoptions').length,0);assert.equal(mappings(f).length,0);
-  assertClaim(f,await f.claim());f.unpaid();
+test('lost lease acknowledgment recovers the exact recorded lease without a second mutation',async t=>{
+  const f=await fixture(t),done=batchHook(f,statements=>statements.some(statement=>statement.sql.startsWith('INSERT INTO experience_guest_claim_leases')),()=>{throw Error('lost lease acknowledgment');});
+  assertClaim(f,await f.claim());done();assert.equal(rows(f,'experience_guest_claim_leases').length,1);assert.equal(rows(f,'experience_guest_context_adoptions').length,1);assert.equal(mappings(f).length,1);
+  const before=persistent(f);assertClaim(f,await f.claim(),{replayed:true});assert.deepEqual(persistent(f),before);f.unpaid();
 });
 for(const phase of ['adoption','retention'])test(`lost ${phase} acknowledgment uses native once-only recovery without a second mutation`,async t=>{
   const f=await fixture(t),select=phase==='adoption'?adoptionBatch:retentionBatch,done=batchHook(f,select,()=>{throw Error('lost acknowledgment');});
@@ -159,7 +159,7 @@ test('request method, same-origin envelope and pre-aborted signal are enforced b
 });
 for(const boundary of ['lease','adoption','retention'])for(const damage of ['database','abort'])test(`${damage} change after ${boundary} settlement prevents subsequent disclosure or mutation`,async t=>{
   const f=await fixture(t),controller=new AbortController(),request=new Request(post(),{signal:controller.signal}),action=()=>{if(damage==='database')f.env.DB={...f.DB};else controller.abort();};
-  const done=boundary==='lease'?statementHook(f,sql=>sql.startsWith('INSERT INTO experience_guest_claim_leases'),action,{method:'run'}):batchHook(f,boundary==='adoption'?adoptionBatch:retentionBatch,result=>{action();return result;});
+  const done=boundary==='lease'?batchHook(f,statements=>statements.some(statement=>statement.sql.startsWith('INSERT INTO experience_guest_claim_leases')),result=>{action();return result;}):batchHook(f,boundary==='adoption'?adoptionBatch:retentionBatch,result=>{action();return result;});
   await assert.rejects(f.claim(owner,f.input,request),damage==='database'?/database_changed/:/claim_aborted/);done();f.env.DB=f.DB;
   assert.equal(rows(f,'experience_guest_context_adoptions').length,boundary==='lease'?0:1);assert.equal(mappings(f).length,boundary==='retention'?1:0);assert.equal(copies(f).length,boundary==='retention'?1:0);
   assertClaim(f,await f.claim(owner,boundary==='lease'?f.input:withoutProof(f)),{replayed:boundary==='retention'});f.unpaid();
