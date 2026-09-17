@@ -123,6 +123,7 @@ export class StillApp extends LitElement {
   private lastJobsPoll = 0;
   private syncPending = false;
   private readonly resumeSync = () => { if (!document.hidden) void this.sync(true); };
+  private directGeneration = false;
   private generation: GenerationDraft | null = null;
   private formatSuggestions: string[] = [];
   private formatTouched = false;
@@ -350,7 +351,7 @@ export class StillApp extends LitElement {
       if (!this.disposed) this.poll();
     }, 2000);
   }
-  private suggestedButton(a:Action,format=false,presentation?:Record<string,Emphasis>){const e=(presentation??(format?this.formatEmphasis:this.emphasis))[a.id]??{variant:'secondary',size:'medium',tier:'peer',reason:'No clear leader'};return html`<en-button data-action-id=${a.id} data-tier=${e.tier} data-emphasis-reason=${e.reason} variant=${e.variant} size=${e.size} .disabled=${this.busy||this.composing} @click=${()=>format?this.chooseFormat(a.id):this.choose(a.id)}>${a.label}</en-button>`;}
+  private suggestedButton(a:Action,format=false,presentation?:Record<string,Emphasis>){const e=(presentation??(format?this.formatEmphasis:this.emphasis))[a.id]??{variant:'secondary',size:'medium',tier:'peer',reason:'No clear leader'};return html`<en-button data-action-id=${a.id} data-tier=${e.tier} data-emphasis-reason=${e.reason} variant=${e.variant} size=${e.size} .disabled=${this.busy||this.composing} @click=${()=>format?void this.startGeneration(a.id):this.choose(a.id)}>${a.label}</en-button>`;}
   private toolbarSuggestions(actions:Action[]){const emphasis=presentEvidence(actions.map(a=>a.id),this.emphasis);return actions.map(a=>this.suggestedButton(a,false,emphasis));}
   private paletteShortcut=(event:KeyboardEvent)=>{
     if(event.isComposing||event.keyCode===229)return;
@@ -465,8 +466,9 @@ export class StillApp extends LitElement {
       this.generation = null; this.generationGate = null; this.formatSuggestions = []; this.formatTouched = false;
       try {
         const format = this.client.pendingGeneration?.format ?? (id === 'create' ? '' : id);
-        if (format) this.generation = this.client.prepareGeneration(format);
+        if (format && (id==='create'||this.client.pendingGeneration)) this.generation = this.client.prepareGeneration(format);
       } catch (error) { this.error = error instanceof Error ? error.message : 'Format unavailable.'; this.changed(); return; }
+      if(id!=='create'&&!this.client.pendingGeneration){this.generation=null;this.begin('generate');void this.startGeneration(id);return;}
       this.begin('generate'); if (!this.generation) this.suggestFormats(); return;
     }
     this.begin(id);
@@ -479,9 +481,20 @@ export class StillApp extends LitElement {
     queueMicrotask(async () => {
       if (event.defaultPrevented) return;
       await menu.updateComplete;
-      if (!menu.open && menu.isConnected && this.mode === 'generate' && !this.generation) this.chooseFormat(format);
+      if (!menu.open && menu.isConnected && this.mode === 'generate' && !this.generation) void this.startGeneration(format);
     });
   };
+  private async startGeneration(format:string) {
+    if(this.busy||this.composing||this.directGeneration||this.generation?.attempted)return;
+    this.directGeneration=true;this.formatTouched=true;
+    try {
+      await this.run(async()=>{
+        this.generation=this.client.prepareGeneration(format);
+        this.generationGate=null;this.draftBaseline=this.draftSignature();
+        await this.generate();
+      });
+    } finally {this.directGeneration=false;this.changed();}
+  }
   private chooseFormat(format: string) {
     if (this.busy || this.composing || this.generation?.attempted) return;
     const enteringReview = !this.generation && !!format;
@@ -599,14 +612,11 @@ export class StillApp extends LitElement {
     if(mode==='use-in')return keyed(`${this.interactionScope()}/${this.client.position.blockId}/use-in`,html`<still-use-in-flow .client=${this.client} .suggestedTarget=${this.useInTarget} @context-back=${()=>this.closeMode()} @use-in-done=${(e:CustomEvent<{projectId:string;documentId:string;blockId:string}>)=>{this.navigate('document',{projectId:e.detail.projectId,documentId:e.detail.documentId,blockId:e.detail.blockId});this.notice='Saved.';}}></still-use-in-flow>`);
     if (['split-context','research-context','find-references','compose'].includes(mode)) return keyed(`${this.client.scopeKey}/${p.projectId}/${p.documentId}/${this.client.position.blockId}/${mode}`,html`<still-context-flow .client=${this.client} .action=${mode} @context-back=${()=>this.closeMode()} @context-done=${()=>{this.notice='Saved.';this.closeMode();}}></still-context-flow>`);
     if (mode === 'generate') {
-      const g = this.generation;
+      const g = this.directGeneration?null:this.generation;
       const source = g?.sourceSnapshot ?? documentSnapshot(p, p.documentId);
       const issues = this.generationGate?.issues ?? [];
       const visibleFacts = source.facts.filter(b => b.active || issues.some(i => issueAffectsBlock(i, b)));
       const formats = this.candidates().filter(a => !!FORMATS[a.id]);
-      const ordered = [...new Set([...this.formatSuggestions, ...rankAllFormats(formats)])].filter(id=>formats.some(a=>a.id===id));
-      const suggested = ordered.slice(0,Math.min(3,this.pageActionLimit-2));
-      const remaining = ordered.filter(id=>!suggested.includes(id));
       return html`<section class="form-page generation-page">
         <span class="eyebrow">${p.projectName}</span><h1>${p.documentTitle}</h1>
         <div class="generation-context">${visibleFacts.map(b => { const warnings = issues.filter(i => issueAffectsBlock(i, b)); return html`<section id=${'generation-context-'+b.block_id} class=${warnings.length ? 'generation-fact needs-review' : 'generation-fact'} tabindex="-1">
@@ -615,14 +625,7 @@ export class StillApp extends LitElement {
           ${warnings.length ? html`<a class="review-context-link" href=${this.viewURL('document',{blockId:b.block_id})} @click=${(e:MouseEvent)=>this.follow(e,'document',{blockId:b.block_id})}>Open idea</a>` : nothing}
         </section>`; })}</div>
         <div class="format-options" @pointerdown=${()=>{this.formatTouched=true;}} @focusin=${()=>{this.formatTouched=true;}}>
-        ${!g ? html`<en-toolbar class="format-suggestions" label="Output formats" keyboard-navigation="tab">
-          ${suggested.map(id=>this.suggestedButton({...ACTIONS.find(a=>a.id===id)!,label:FORMATS[id]},true,presentEvidence(suggested,this.formatEmphasis)))}
-          ${remaining.length ? html`<en-button id="still-format-menu" variant="ghost" size="medium" ?disabled=${this.busy || this.composing}>Menu</en-button>` : nothing}
-          ${this.button('Back', () => this.closeMode())}
-        </en-toolbar>
-        ${remaining.length ? html`<en-menu for="still-format-menu" label="Other formats" @en-action=${this.selectMenuFormat}>
-          ${remaining.map(id=>html`<en-menu-item action=${id}>${FORMATS[id]}</en-menu-item>`)}
-        </en-menu>` : nothing}` : html`<en-select class="select-label" label="Output" .value=${live(g.format)} ?disabled=${this.busy || this.composing || !!g.attempted} @en-change=${(e: CustomEvent<{proposed:string;value:string}>) => this.chooseFormat(e.detail.proposed)}>
+        ${!g ? nothing : html`<en-select class="select-label" label="Output" .value=${live(g.format)} ?disabled=${this.busy || this.composing || !!g.attempted} @en-change=${(e: CustomEvent<{proposed:string;value:string}>) => this.chooseFormat(e.detail.proposed)}>
           <en-select-option value="">Choose a format</en-select-option>${formats.map(a => html`<en-select-option value=${a.id}>${FORMATS[a.id]}</en-select-option>`)}${!formats.some(a => a.id === g.format) ? html`<en-select-option value=${g.format}>${FORMATS[g.format]}</en-select-option>` : nothing}
         </en-select>`}
         </div>
@@ -633,7 +636,7 @@ export class StillApp extends LitElement {
         ${g?.adaptation?.issues.map(i => html`<p class="gate-notice">${i.message}</p>`)}
         ${g?.previousUnconfirmed ? html`<p class="gate-notice">Original status unknown. Starting another may duplicate it.</p>` : nothing}
         ${g ? html`<p class="cost-note">${g.recoveryClosed ? 'Original status unknown. Starting another may duplicate it.' : g.attempted ? `Checking an earlier ${FORMATS[g.format].toLowerCase()} request.` : g.format === 'model3d' ? `Estimated cost: $${(estimateModel3dCostMicrousd() / 1e6).toFixed(2)} · GLB · text to 3D` : g.scenePreview ? `Maximum cost: $${(g.scenePreview.maximumMicrousd / 1e6).toFixed(2)} · ${g.scenePreview.model}` : g.format === 'scene' ? 'Cost approval required.' : 'Forma provider and spending limits apply.'}</p>` : nothing}
-        ${g ? html`<div class="form-actions">${this.button(g.recoveryClosed ? 'Review another' : g.attempted ? 'Check generation' : g.format === 'scene' && !g.scenePreview ? 'Check cost' : this.generationGate ? (this.generationGate.key ? 'Continue' : 'Blocked') : 'Generate', () => void this.run(() => this.generate()), true, !!this.generationGate && !this.generationGate.key)}${this.button('Back', () => this.closeMode())}</div>` : nothing}
+
       </section>`;
     }
     if (mode === 'workspaces') return html`<section class="form-page"><h1>Workspaces</h1><en-select class="select-label" label="Workspace" .value=${this.choice} @en-change=${(e: CustomEvent<{proposed:string;value:string}>) => { this.choice = e.detail.proposed; this.changed(); }}><en-select-option value="">Personal projects</en-select-option>${this.client.session?.projects?.map(p => html`<en-select-option value=${p.projectAccessId}>${p.projectName} · ${p.role}</en-select-option>`)}</en-select><div class="form-actions">${this.button('Open', () => void this.run(async () => { await this.client.switchWorkspace(this.client.session?.projects?.find(p => p.projectAccessId === this.choice)); this.navigate(this.client.position.view, this.client.position); }), true)}${this.button('Back', () => this.closeMode())}</div></section>`;
@@ -642,9 +645,28 @@ export class StillApp extends LitElement {
     const named = ['new-project', 'new-document', 'add-context', 'rename'].includes(mode);
     return html`<section class="form-page">${p.projectName ? html`<span class="eyebrow">${p.projectName}</span>` : nothing}<h1>${titles[mode] ?? 'New idea'}</h1>${named ? this.field('Name', this.titleDraft, v => { this.titleDraft = v; }, 1) : nothing}${mode === 'add-context' ? html`<en-select class="select-label" label="Type" .value=${this.kindDraft} @en-change=${(e: CustomEvent<{proposed:string;value:string}>) => { this.kindDraft = e.detail.proposed; }}>${blockKinds.map(k => html`<en-select-option value=${k}>${k[0].toUpperCase() + k.slice(1)}</en-select-option>`)}</en-select>` : nothing}${mode !== 'rename' ? this.field(mode === 'intent' ? 'Your direction' : mode === 'edit-artifact' ? 'Writing' : 'Idea', this.bodyDraft, v => { this.bodyDraft = v; }, mode === 'edit-artifact' ? 16 : 6, '') : nothing}<div class="form-actions">${this.button(mode === 'intent' ? 'Suggest actions' : this.client.hasUnconfirmedWrite ? 'Check save' : 'Save', () => void this.run(() => this.save()), true)}${this.button('Back', () => this.closeMode())}</div></section>`;
   }
+  private renderGenerationDock() {
+    const g=this.directGeneration?null:this.generation;
+    const formats=this.candidates().filter(a=>!!FORMATS[a.id]);
+    const ordered=[...new Set([...this.formatSuggestions,...rankAllFormats(formats)])].filter(id=>formats.some(a=>a.id===id));
+    const suggested=ordered.slice(0,Math.min(3,this.pageActionLimit-2));
+    const remaining=ordered.filter(id=>!suggested.includes(id));
+    return html`<footer class="action-dock" @pointerdown=${()=>{this.formatTouched=true;}} @focusin=${()=>{this.formatTouched=true;}}>
+      <en-toolbar label="Your next step" keyboard-navigation="tab">
+        ${g?this.button(g.recoveryClosed?'Review another':g.attempted?'Check generation':g.format==='scene'&&!g.scenePreview?'Check cost':this.generationGate?(this.generationGate.key?'Continue':'Blocked'):'Generate',()=>void this.run(()=>this.generate()),true,!!this.generationGate&&!this.generationGate.key):html`
+          ${suggested.map(id=>this.suggestedButton({...ACTIONS.find(a=>a.id===id)!,label:FORMATS[id]},true,presentEvidence(suggested,this.formatEmphasis)))}
+          ${remaining.length?html`<en-button id="still-format-menu" variant="ghost" size="medium" ?disabled=${this.busy||this.composing}>Menu</en-button>`:nothing}
+        `}
+        ${this.button('Back',()=>this.closeMode())}
+      </en-toolbar>
+      ${!g&&remaining.length?html`<en-menu for="still-format-menu" label="Other formats" @en-action=${this.selectMenuFormat}>${remaining.map(id=>html`<en-menu-item action=${id}>${FORMATS[id]}</en-menu-item>`)}</en-menu>`:nothing}
+    </footer>`;
+  }
   private renderDock() {
     const c = this.client, p = c.projection, view = c.position.view;
-    if (this.loading || this.startupFailed || !c.session?.policy.accepted || this.mode || this.currentRouteProblem(p)) return nothing;
+    if (this.loading || this.startupFailed || !c.session?.policy.accepted || this.currentRouteProblem(p)) return nothing;
+    if(this.mode==='generate')return this.renderGenerationDock();
+    if(this.mode)return nothing;
     if(view==='generation')return html`<footer class="action-dock"><en-toolbar label="Your next step" keyboard-navigation="tab">${this.button('Document',()=>this.navigate('document'))}${this.button('Results',()=>this.navigate('results'))}${this.button('Palette ⌘K',()=>this.openFinder('shortcut'))}</en-toolbar></footer>`;
     const limit=this.pageActionLimit,eligible=this.candidates();
     const pool=[...this.suggestions,...(limit>5?this.rankedActions.filter(a=>!this.suggestions.some(s=>s.id===a.id)):[])].filter(a=>eligible.some(e=>e.id===a.id));
