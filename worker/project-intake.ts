@@ -2,11 +2,12 @@ import { projectIntake, type ProjectIntake } from "../src/model/project-intake.t
 import { intakeGuard, type ProjectIntakeAuthorization, type AtomicIntakeOptions } from "./intake-authority.ts";
 export { projectIntakeAuthority } from "./intake-authority.ts";
 export type { ProjectIntakeAuthorization };
-import { response, failure, readOriginal, reply } from "./project-intake-read.ts";
+import { response, readOriginal, reply } from "./project-intake-read.ts";
 import { appendEvents } from "./event-append.ts";
 import { makeEvent } from "./event-write-primitives.ts";
 import { recordIntakeDiagnostic } from "./project-intake-diagnostic.ts";
 import { prepareSponsorIntakePostRootReceipt } from "./experience-sponsor-intake-reads.ts";
+import { prepareSponsorStoryIntakeNativeRootReceipt, sponsorStoryIntakeNativeAppendOptions } from "./experience-sponsor-story-intake-native.ts";
 import type { WorkerEnv } from "./runtime.ts";
 
 /** One bounded all-or-none intake. Generic batch and Canvas receipt semantics do not change. */
@@ -29,7 +30,9 @@ export async function commitAtomicIntake(env:WorkerEnv,auth:ProjectIntakeAuthori
     (options?.correlationPrefix??"project-intake:")+intake.projectId,input.type,input.payload));
   const root=events[0]!,rootKey=String(root.payload.client_event_id),now=new Date().toISOString();
   try{
-    await appendEvents(env,events,{retries:1,...(options?.expectedHead === undefined ? {} : {expectedHead:options.expectedHead}),prepareSidecars:assigned=>{
+    await appendEvents(env,events,{...(options?.sponsorStoryIntakeRead
+      ?sponsorStoryIntakeNativeAppendOptions(options.sponsorStoryIntakeRead,env,auth,intake,options)
+      :options?.expectedHead === undefined ? {} : {expectedHead:options.expectedHead}),retries:1,prepareSidecars:assigned=>{
       const batch=JSON.stringify(assigned.map(event=>({id:event.eventId,key:event.payload.client_event_id,type:event.type,sequence:event.sequence,payload:JSON.stringify(event.payload)})));
       const resourceIds=JSON.stringify([...new Set(intake.events.flatMap(event=>[event.payload.project_id,event.payload.document_id,event.payload.block_id,event.payload.reference_id].filter((id):id is string=>typeof id==="string")))]);
       const receipts=assigned.slice(1).map(event=>env.DB.prepare(`INSERT INTO event_client_receipts(stream_id,client_event_id,event_id,sequence,created_at)
@@ -60,7 +63,9 @@ export async function commitAtomicIntake(env:WorkerEnv,auth:ProjectIntakeAuthori
         stream,resourceIds,resourceIds,resourceIds,resourceIds,batch,root.eventId,root.sequence,now];
       // The optional actual-POST seal preserves this exact native CASE and its
       // failure row while moving its complete gates to a shallow statement.
-      receipts.push(options?.sponsorIntakeRead
+      receipts.push(options?.sponsorStoryIntakeRead
+        ?prepareSponsorStoryIntakeNativeRootReceipt(options.sponsorStoryIntakeRead,env,auth,intake,options,rootSql,rootBindings)
+        :options?.sponsorIntakeRead
         ?prepareSponsorIntakePostRootReceipt(options.sponsorIntakeRead,env,auth,intake,options,rootSql,rootBindings)
         :env.DB.prepare(rootSql).bind(...rootBindings));
       return receipts;

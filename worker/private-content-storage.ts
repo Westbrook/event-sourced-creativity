@@ -4,6 +4,7 @@ import { assertOutputAdmissionActor, readOutputAdmissionValue, type OutputAdmiss
 import { uuidV7 } from "./event-write-primitives.ts";
 import type { WorkerEnv } from "./runtime.ts";
 import type { ProjectExecutionScope, BudgetReservationGuard } from "./pilot-policy.ts";
+import { assertSponsorStoryIntakeCleanupRead, readSponsorStoryIntakeCleanupExclusion, type SponsorStoryIntakeCleanupRead } from "./experience-sponsor-story-intake-native.ts";
 
 export const DURABLE_WORK_RETENTION_END = "9999-12-31T23:59:59.999Z";
 export const DEFAULT_EVIDENCE_RETENTION_DAYS = 365;
@@ -14,8 +15,9 @@ export function privateContentRetentionClass(kind: PrivateContentKind): "durable
   return kind === "document-artifact" ? "durable-work" : ["document-artifact-input","activity-issue-note","execution-consent","context-proposal","authoring-preview"].includes(kind) ? "governed-evidence" : "transient-private";
 }
 
-export async function preparePrivateContent(env: WorkerEnv, ownerId: string, kind: PrivateContentKind, content: string, projectScope?: ProjectExecutionScope, admissionReads?:OutputAdmissionReads, guard?:BudgetReservationGuard, identity?:{contentId:string}, expiryCeiling?:string) {
+export async function preparePrivateContent(env: WorkerEnv, ownerId: string, kind: PrivateContentKind, content: string, projectScope?: ProjectExecutionScope, admissionReads?:OutputAdmissionReads, guard?:BudgetReservationGuard, identity?:{contentId:string}, expiryCeiling?:string, storyCleanupRead?:SponsorStoryIntakeCleanupRead) {
   const preparationDb = env.DB;
+  if(storyCleanupRead)assertSponsorStoryIntakeCleanupRead(storyCleanupRead,env,ownerId,kind,content,projectScope,admissionReads,guard,identity,expiryCeiling);
   const boundedExperienceDraft = kind === "experience-draft" && expiryCeiling !== undefined;
   if (boundedExperienceDraft && (!guard || !identity || !privateContentIdentityAllowed(kind, identity)
     || typeof content !== "string" || !content || !content.isWellFormed() || new TextEncoder().encode(content).byteLength > 65_536))
@@ -84,7 +86,9 @@ export async function preparePrivateContent(env: WorkerEnv, ownerId: string, kin
     const { nativeMemoryAnswerExclusion } = await import("./memory-native-boundary.ts");
     if (env.DB !== preparationDb) throw new Error("native_structured_origin_schema_database_changed");
     try {
-      const exclusion = await nativeMemoryAnswerExclusion(env, { answerAlias: "private_content" });
+      const exclusion = storyCleanupRead
+        ? await readSponsorStoryIntakeCleanupExclusion(storyCleanupRead,env,ownerId,kind,content,projectScope,admissionReads,guard,identity,expiryCeiling)
+        : await nativeMemoryAnswerExclusion(env, { answerAlias: "private_content" });
       if (env.DB !== preparationDb) throw new Error("native_structured_origin_schema_database_changed");
       cleanupGuard = { condition: exclusion.sql, bindings: [...exclusion.bindings] };
     } catch (error) {

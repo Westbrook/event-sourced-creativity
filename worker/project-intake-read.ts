@@ -3,6 +3,7 @@ import { intakeGuard, type ProjectIntakeAuthorization, type AtomicIntakeOptions 
 import { serializeEvent } from "./event-read-primitives.ts";
 import { recordIntakeDiagnostic } from "./project-intake-diagnostic.ts";
 import { readSponsorIntakePostNativeReceipt } from "./experience-sponsor-intake-reads.ts";
+import { readSponsorStoryIntakeNativeReceipt } from "./experience-sponsor-story-intake-native.ts";
 import type { EventRow } from "./event-write-primitives.ts";
 import type { WorkerEnv } from "./runtime.ts";
 
@@ -30,7 +31,9 @@ async function readOriginal(env:WorkerEnv,auth:ProjectIntakeAuthorization,intake
   const bindings=[stream,prefix.length,prefix,stream,expected,stream,auth.user.userId,...guard.bindings];
   // The optional token belongs to one actual POST and this exact native call.
   // Both the first read and post-append/lost-ACK read retain the full intakeGuard.
-  const result=options?.sponsorIntakeRead
+  const result=options?.sponsorStoryIntakeRead
+    ?await readSponsorStoryIntakeNativeReceipt(options.sponsorStoryIntakeRead,env,auth,intake,options,sql,bindings)
+    :options?.sponsorIntakeRead
     ?await readSponsorIntakePostNativeReceipt(options.sponsorIntakeRead,env,auth,intake,options,sql,bindings)
     :await env.DB.prepare(sql).bind(...bindings).all<Record<string,unknown>>();
   const rows=result.results;

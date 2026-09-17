@@ -13,15 +13,23 @@ export class StaleSequenceError extends Error {
 }
 
 /** Reserve and append one contiguous event range in a single D1 batch. */
-export async function appendEvents(env: WorkerEnv, events: EventRow[], options: { expectedHead?: number; initialHead?:number; retries?: number; prepareSidecars?:(events:EventRow[])=>D1PreparedStatement[];onSidecarsCommitted?:(results:D1Result[])=>void } = {}) {
+export async function appendEvents(env: WorkerEnv, events: EventRow[], options: { expectedHead?: number; initialHead?:number; retries?: number; prepareSidecars?:(events:EventRow[])=>D1PreparedStatement[];onSidecarsCommitted?:(results:D1Result[])=>void;observeBatchResult?:(results:D1Result[])=>void } = {}) {
   if (!events.length) return events;
+  // Capture the optional internal synchronous observer before the first await.
+  // It sees the actual complete ACK, including an invalid ACK, without replacing it.
+  const observeBatchResult=options.observeBatchResult;
+  if(observeBatchResult!==undefined&&(typeof observeBatchResult!=="function"
+    ||Object.getPrototypeOf(observeBatchResult)!==Function.prototype))throw new Error("event_append_observer_invalid");
   const streamId = events[0].streamId; if (!events.every((event) => event.streamId === streamId)) throw new Error("mixed_event_stream_batch");
   const retries = options.expectedHead === undefined ? Math.max(1, options.retries ?? 4) : 1;
   for (let attempt = 0; attempt < retries; attempt += 1) {
     const head = options.expectedHead ?? (attempt===0?options.initialHead:undefined) ?? await streamHead(env, streamId);
     events.forEach((event, index) => { event.sequence = head + index + 1; });
     const sidecars=options.prepareSidecars?.(events)??[];
+    if(options.observeBatchResult!==observeBatchResult)throw new Error("event_append_observer_changed");
     const results = await env.DB.batch([...events.map((event, index) => insertEventAtHead(env, event, head + index)),...sidecars]);
+    if(options.observeBatchResult!==observeBatchResult)throw new Error("event_append_observer_changed");
+    if(observeBatchResult&&observeBatchResult(results)!==undefined)throw new Error("event_append_observer_invalid");
     // An absent, sparse, truncated or failed acknowledgement is uncertain, not
     // an empty successful range. Never run a successor hook or retry that write.
     if (!Array.isArray(results) || results.length !== events.length + sidecars.length
