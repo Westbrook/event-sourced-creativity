@@ -4,6 +4,7 @@ import { hostedIdentity, readNativeRetainedTextCustody, nativeRetainedTextCustod
   type NativeRetainedIdentity } from "./native-retained-text-custody.ts";
 import { readSelectedOutputShareAuthority, selectedOutputShareAuthoritySnapshot,
   selectedOutputShareAuthorityAssertion } from "./selected-output-share-authority.ts";
+import { selectedOutputShareSchemaState, selectedOutputShareSchemaAssertion } from "./selected-output-share-readiness.ts";
 import type { WorkerEnv } from "./runtime.ts";
 
 // No route, initializer, provider, budget or private-media entry imports this
@@ -12,9 +13,9 @@ const encoder = new TextEncoder();
 const id = (value: unknown): value is string => typeof value === "string" && /^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$/u.test(value);
 const digest = (value: unknown): value is string => typeof value === "string" && /^[a-f0-9]{64}$/u.test(value);
 const nowSql = "strftime('%Y-%m-%dT%H:%M:%fZ','now')";
-const rowColumns = ["share_id", "purpose", "owner_id", "owner_email", "intent_key", "project_id", "job_id", "completion_event_id",
+const rowColumns = ["share_id", "purpose", "replay_key", "owner_id", "owner_email", "intent_key", "project_id", "job_id", "completion_event_id",
   "selection_json", "review_title", "source_expires_at", "provenance_expires_at", "expires_at", "candidate_sha256",
-  "issuer_authority_sha256", "created_at", "token_hash", "issued_at", "revoked_at"] as const;
+  "issuer_authority_sha256", "created_at", "token_hash", "issued_at", "revoked_at", "minimized_at"] as const;
 type Row = Record<typeof rowColumns[number], string | null>;
 type Assertion = { sql: string; bindings: (string | number | null)[] };
 class Refusal extends Error {
@@ -29,6 +30,8 @@ const json = (value: unknown, status = 200) => new Response(JSON.stringify(value
 const rejected = (error: unknown) => error instanceof Refusal ? json({ error: error.code }, error.status) : json({ error: "selected_output_share_unavailable" }, 404);
 const hash = async (value: string) => Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", encoder.encode(value))), byte => byte.toString(16).padStart(2, "0")).join("");
 const tokenHash = (value: string) => hash(`${SELECTED_OUTPUT_SHARE_PURPOSE}\0${value}`);
+const replayKey = (owner: string, intent: string) => hash(`selected-output-replay-v1\0${JSON.stringify([SELECTED_OUTPUT_SHARE_PURPOSE, owner, intent])}`);
+async function ready(env: WorkerEnv) { if (await selectedOutputShareSchemaState(env) !== "ready") fail(); }
 const timestamp = (value: unknown): value is string => typeof value === "string" && /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/u.test(value)
   && Number.isFinite(Date.parse(value)) && new Date(value).toISOString() === value;
 const exact = (value: unknown, keys: string[]): value is Record<string, unknown> => value !== null && typeof value === "object" && !Array.isArray(value)
@@ -70,7 +73,7 @@ function row(value: unknown): Row {
   if (!exact(value, [...rowColumns])) fail();
   if (encoder.encode(JSON.stringify(value)).length > 8192 || rowColumns.some(key => value[key] !== null && typeof value[key] !== "string")) fail();
   const result = value as Row;
-  if (result.purpose !== SELECTED_OUTPUT_SHARE_PURPOSE || ![result.share_id, result.intent_key, result.project_id, result.job_id, result.completion_event_id].every(id)
+  if (result.minimized_at !== null || !digest(result.replay_key) || result.purpose !== SELECTED_OUTPUT_SHARE_PURPOSE || ![result.share_id, result.intent_key, result.project_id, result.job_id, result.completion_event_id].every(id)
     || !result.owner_id || encoder.encode(result.owner_id).length > 240 || !result.owner_email || encoder.encode(result.owner_email).length > 320
     || !digest(result.candidate_sha256) || !digest(result.issuer_authority_sha256)
     || ![result.created_at, result.source_expires_at, result.provenance_expires_at, result.expires_at].every(timestamp)
@@ -94,7 +97,7 @@ function joined(...proofs: Assertion[]): Assertion {
 }
 function future(current: Row) { if (Date.parse(current.expires_at!) <= Date.now() || current.revoked_at !== null) fail(); }
 function live(current: Row, active = false): Assertion {
-  return { sql: `EXISTS(SELECT 1 FROM selected_output_shares WHERE share_id=? AND purpose=? AND revoked_at IS NULL
+  return { sql: `EXISTS(SELECT 1 FROM selected_output_shares WHERE share_id=? AND purpose=? AND minimized_at IS NULL AND revoked_at IS NULL
     AND expires_at>${nowSql} AND source_expires_at>${nowSql} AND provenance_expires_at>${nowSql}${active ? " AND token_hash IS NOT NULL AND issued_at IS NOT NULL" : ""})`,
   bindings: [current.share_id, SELECTED_OUTPUT_SHARE_PURPOSE] };
 }
@@ -118,7 +121,8 @@ function matches(current: Row, value: Awaited<ReturnType<typeof fresh>>) {
     || current.selection_json !== JSON.stringify(value.candidate.selection) || current.review_title !== value.candidate.publicOutput.title
     || current.expires_at !== value.candidate.publicOutput.expiresAt) fail();
 }
-async function finalProof(env: WorkerEnv, proof: Assertion) {
+async function finalProof(env: WorkerEnv, assertion: Assertion) {
+  const proof = joined(selectedOutputShareSchemaAssertion(), assertion);
   const result = await env.DB.prepare(`SELECT 1 AS permitted WHERE ${proof.sql}`).bind(...proof.bindings).first<{ permitted: number }>();
   if (result?.permitted !== 1) fail();
 }
@@ -132,29 +136,33 @@ export async function prepareSelectedOutputShare(request: Request, env: WorkerEn
     if (!exact(input, ["intentKey", "selection", "review"]) || !id(input.intentKey)) fail("selected_output_share_command_invalid", 400);
     const selection = parseSelectedOutputShareSelection(input.selection);
     if (!selection) fail("selected_output_share_command_invalid", 400);
+    await ready(env); stable();
+    const intent = await replayKey(principal.userId, input.intentKey); stable();
+    let existing = await env.DB.prepare(`SELECT ${rowColumns.join(",")} FROM selected_output_shares WHERE replay_key=?`)
+      .bind(intent).first(); stable();
+    if (existing) row(existing); // A minimized intent remains consumed without reading source content.
     const value = await fresh(env, principal, selection, input.review); stable();
-    let existing = await env.DB.prepare(`SELECT ${rowColumns.join(",")} FROM selected_output_shares WHERE owner_id=? AND intent_key=?`)
-      .bind(principal.userId, input.intentKey).first(); stable();
     let replayed = Boolean(existing);
     if (!existing) {
-      const current: Row = { share_id: crypto.randomUUID(), purpose: SELECTED_OUTPUT_SHARE_PURPOSE, owner_id: principal.userId,
+      const current: Row = { share_id: crypto.randomUUID(), purpose: SELECTED_OUTPUT_SHARE_PURPOSE, replay_key: intent, owner_id: principal.userId,
         owner_email: principal.email, intent_key: input.intentKey, project_id: value.source.projectId, job_id: value.provenance.jobId,
         completion_event_id: value.source.completionId, selection_json: JSON.stringify(value.candidate.selection),
         review_title: value.candidate.publicOutput.title, source_expires_at: value.source.sourceExpiresAt,
         provenance_expires_at: value.provenance.expiresAt, expires_at: value.candidate.publicOutput.expiresAt,
         candidate_sha256: value.candidate.candidateSha256, issuer_authority_sha256: value.authHash, created_at: new Date().toISOString(),
-        token_hash: null, issued_at: null, revoked_at: null };
+        token_hash: null, issued_at: null, revoked_at: null, minimized_at: null };
       stable();
       try {
+        const proof = joined(selectedOutputShareSchemaAssertion(), value.proof);
         const inserted = await env.DB.prepare(`INSERT INTO selected_output_shares(${rowColumns.join(",")})
-          SELECT ${rowColumns.map(() => "?").join(",")} WHERE (${value.proof.sql}) AND ?>${nowSql}`)
-          .bind(...rowColumns.map(column => current[column]), ...value.proof.bindings, current.expires_at).run();
+          SELECT ${rowColumns.map(() => "?").join(",")} WHERE (${proof.sql}) AND ?>${nowSql}`)
+          .bind(...rowColumns.map(column => current[column]), ...proof.bindings, current.expires_at).run();
         stable(); if (Number(inserted.meta.changes ?? 0) !== 1) fail();
         existing = current;
       } catch (error) {
         stable();
-        existing = await env.DB.prepare(`SELECT ${rowColumns.join(",")} FROM selected_output_shares WHERE owner_id=? AND intent_key=?`)
-          .bind(principal.userId, input.intentKey).first();
+        existing = await env.DB.prepare(`SELECT ${rowColumns.join(",")} FROM selected_output_shares WHERE replay_key=?`)
+          .bind(intent).first();
         if (!existing) throw error;
         replayed = true;
       }
@@ -172,6 +180,7 @@ export async function commitSelectedOutputShare(request: Request, env: WorkerEnv
   try {
     const stable = frame(request, env), principal = identity(request), input = await command(request); stable();
     if (!exact(input, ["candidateId", "approval"]) || !id(input.candidateId)) fail("selected_output_share_command_invalid", 400);
+    await ready(env); stable();
     const current = row(await env.DB.prepare(`SELECT ${rowColumns.join(",")} FROM selected_output_shares WHERE share_id=? AND owner_id=?`)
       .bind(input.candidateId, principal.userId).first()); stable(); future(current);
     const value = await fresh(env, principal, selectionOf(current), { title: current.review_title, expiresAt: current.expires_at });
@@ -183,9 +192,9 @@ export async function commitSelectedOutputShare(request: Request, env: WorkerEnv
     }
     const secret = btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(24)))).replaceAll("+", "-").replaceAll("/", "_");
     const token = await tokenHash(secret), issuedAt = new Date().toISOString(); stable();
-    const proof = joined(value.proof, rowAssertion(current), live(current));
+    const proof = joined(selectedOutputShareSchemaAssertion(), value.proof, rowAssertion(current), live(current));
     const issued = await env.DB.prepare(`UPDATE selected_output_shares SET token_hash=?,issued_at=?
-      WHERE share_id=? AND token_hash IS NULL AND issued_at IS NULL AND revoked_at IS NULL AND (${proof.sql}) AND ?>=${nowSql}`)
+      WHERE share_id=? AND minimized_at IS NULL AND token_hash IS NULL AND issued_at IS NULL AND revoked_at IS NULL AND (${proof.sql}) AND ?>=${nowSql}`)
       // The database deadline is the reviewed expiry, not a prepared wall-clock snapshot.
       .bind(token, issuedAt, current.share_id, ...proof.bindings, current.expires_at).run(); stable();
     if (Number(issued.meta.changes ?? 0) !== 1) {
@@ -206,10 +215,12 @@ export async function readSelectedOutputShare(request: Request, env: WorkerEnv, 
   try {
     if (request.method !== "GET") fail("method_not_allowed", 405);
     if (typeof rawToken !== "string" || !/^[A-Za-z0-9_-]{32}$/u.test(rawToken)) fail();
-    const stable = frame(request, env), token = await tokenHash(rawToken); stable();
+    const stable = frame(request, env);
+    await ready(env); stable();
+    const token = await tokenHash(rawToken); stable();
     const current = row(await env.DB.prepare(`SELECT ${rowColumns.map(column => `share.${column}`).join(",")} FROM selected_output_shares share
       JOIN users owner ON owner.user_id=share.owner_id AND owner.email=share.owner_email
-      WHERE share.token_hash=? AND share.purpose=? AND share.issued_at IS NOT NULL AND share.revoked_at IS NULL AND share.expires_at>${nowSql}`)
+      WHERE share.token_hash=? AND share.purpose=? AND share.minimized_at IS NULL AND share.issued_at IS NOT NULL AND share.revoked_at IS NULL AND share.expires_at>${nowSql}`)
       .bind(token, SELECTED_OUTPUT_SHARE_PURPOSE).first()); stable(); future(current);
     const principal: NativeRetainedIdentity = { userId: current.owner_id!, email: current.owner_email!, source: "openai-workspace" };
     const value = await fresh(env, principal, selectionOf(current), { title: current.review_title, expiresAt: current.expires_at });
@@ -228,13 +239,15 @@ export async function revokeSelectedOutputShare(request: Request, env: WorkerEnv
     origin(request);
     if (!id(shareId)) fail();
     const stable = frame(request, env), principal = identity(request); stable();
+    await ready(env); stable();
+    const schema = selectedOutputShareSchemaAssertion();
     const proof = `EXISTS(SELECT 1 FROM users WHERE user_id=? AND email=?)`;
     await env.DB.prepare(`UPDATE selected_output_shares SET revoked_at=${nowSql}
-      WHERE share_id=? AND owner_id=? AND purpose=? AND revoked_at IS NULL AND (${proof})`)
-      .bind(shareId, principal.userId, SELECTED_OUTPUT_SHARE_PURPOSE, principal.userId, principal.email).run(); stable();
+      WHERE share_id=? AND owner_id=? AND purpose=? AND minimized_at IS NULL AND revoked_at IS NULL AND (${proof}) AND (${schema.sql})`)
+      .bind(shareId, principal.userId, SELECTED_OUTPUT_SHARE_PURPOSE, principal.userId, principal.email, ...schema.bindings).run(); stable();
     const revoked = await env.DB.prepare(`SELECT 1 AS revoked FROM selected_output_shares WHERE share_id=? AND owner_id=?
-      AND purpose=? AND revoked_at IS NOT NULL AND (${proof})`)
-      .bind(shareId, principal.userId, SELECTED_OUTPUT_SHARE_PURPOSE, principal.userId, principal.email).first<{ revoked: number }>(); stable();
+      AND purpose=? AND minimized_at IS NULL AND revoked_at IS NOT NULL AND (${proof}) AND (${schema.sql})`)
+      .bind(shareId, principal.userId, SELECTED_OUTPUT_SHARE_PURPOSE, principal.userId, principal.email, ...schema.bindings).first<{ revoked: number }>(); stable();
     if (revoked?.revoked !== 1) fail();
     return json({ ok: true });
   } catch (error) { return rejected(error); }
