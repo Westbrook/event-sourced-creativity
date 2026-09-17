@@ -1,5 +1,7 @@
 export const FORMA_MODEL3D_VIEWER_MESSAGES = {
   en: {
+    "model3d.viewer.open": "View model",
+    "model3d.viewer.preview": "Model preview",
     "model3d.geometry.download": "Download current GLB",
     "model3d.geometry.title": "Scale model geometry",
     "model3d.geometry.help": "Scale the saved vertices uniformly about the model origin. Dimensions are in model units; the preview automatically fits the model. The previous file is preserved. Saving clears the old image view.",
@@ -49,6 +51,8 @@ export const FORMA_MODEL3D_VIEWER_MESSAGES = {
     "model3d.viewer.reload": "Reload preview",
   },
   fr: {
+    "model3d.viewer.open": "Voir le modèle",
+    "model3d.viewer.preview": "Aperçu du modèle",
     "model3d.geometry.download": "Télécharger le GLB actuel",
     "model3d.geometry.title": "Redimensionner la géométrie du modèle",
     "model3d.geometry.help": "Redimensionnez uniformément les sommets enregistrés autour de l’origine du modèle. Les dimensions sont exprimées en unités du modèle ; l’aperçu adapte automatiquement le cadrage. Le fichier précédent est conservé. L’enregistrement efface l’ancienne vue en image.",
@@ -98,6 +102,8 @@ export const FORMA_MODEL3D_VIEWER_MESSAGES = {
     "model3d.viewer.reload": "Recharger l’aperçu",
   },
   ar: {
+    "model3d.viewer.open": "عرض النموذج",
+    "model3d.viewer.preview": "معاينة النموذج",
     "model3d.geometry.download": "تنزيل ملف GLB الحالي",
     "model3d.geometry.title": "تغيير مقياس هندسة النموذج",
     "model3d.geometry.help": "غيّر مقياس الرؤوس المحفوظة بالتساوي حول نقطة أصل النموذج. تُعرض الأبعاد بوحدات النموذج، وتتكيف المعاينة تلقائيًا مع حجمه. يُحتفظ بالملف السابق. يؤدي الحفظ إلى إزالة ارتباط عرض الصورة القديم.",
@@ -147,6 +153,8 @@ export const FORMA_MODEL3D_VIEWER_MESSAGES = {
     "model3d.viewer.reload": "إعادة تحميل المعاينة",
   },
   ja: {
+    "model3d.viewer.open": "モデルを表示",
+    "model3d.viewer.preview": "モデルのプレビュー",
     "model3d.geometry.download": "現在のGLBをダウンロード",
     "model3d.geometry.title": "モデルの形状を拡大・縮小",
     "model3d.geometry.help": "保存済みの頂点をモデルの原点を中心に均等に拡大・縮小します。寸法はモデルの単位で表示され、プレビューはモデルに合わせて自動調整されます。変更前のファイルは保持されます。保存すると以前の画像ビューは解除されます。",
