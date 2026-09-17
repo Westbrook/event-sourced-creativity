@@ -38,6 +38,7 @@ export class StillApp extends LitElement {
   private client = new StillClient();
   private loading = true;
   private startupFailed = false;
+  private contentRead: {key:string; error:string} | null = null;
   private busy = false;
   private error = '';
   private notice = '';
@@ -122,6 +123,7 @@ export class StillApp extends LitElement {
   private beforeUnload = (e: BeforeUnloadEvent) => { if (this.preventsRouteChange()) { e.preventDefault(); e.returnValue = ''; } };
   private changed() { this.requestUpdate(); }
   protected updated() {
+    this.hydrateVisibleWriting();
     const dock = this.querySelector('.action-dock'); this.dockObserver.disconnect(); if (dock) this.dockObserver.observe(dock);
     const inspector=this.querySelector<StillDeveloperConsole>('still-developer-console');
     if(inspector){
@@ -159,9 +161,28 @@ export class StillApp extends LitElement {
   private async loadWorkspace() {
     this.loading = true; this.startupFailed = false; this.changed();
     try {
-      await this.client.load(); this.readRoute(); this.loading = false;
+      await this.client.load({hydrateContent:false}); this.readRoute(); this.loading = false;
       this.lastHistoryPoll = Date.now(); this.decide(); this.poll();
     } catch (error) { this.startupFailed = true; throw error; }
+  }
+  private missingWriting() {
+    if (this.loading || this.startupFailed || this.client.position.view !== 'artifact') return null;
+    const artifact = this.client.projection.artifacts.find(a=>a.id===this.client.position.outputId);
+    return artifact?.contentRef && ['short_story','scene','slides','storyboard'].includes(artifact.kind) && !(artifact.contentRef in this.client.content) ? artifact : null;
+  }
+  private hydrateVisibleWriting() {
+    const artifact = this.missingWriting(); if (!artifact) return;
+    const key = `${this.interactionScope()}/${artifact.id}/${artifact.contentRef}/${documentArtifactRevision(this.client.events,artifact.id)}`;
+    if (this.contentRead?.key === key) return;
+    const read = this.contentRead = {key,error:''}; this.changed();
+    void this.client.ensureContent(artifact.contentRef!).then(()=>{
+      if (this.contentRead!==read || this.disposed) return;
+      if (this.mode==='edit-artifact' && this.client.position.outputId===artifact.id) this.begin('edit-artifact',false);
+    }).catch(error=>{if(this.contentRead===read)read.error=error instanceof Error?error.message:'Writing unavailable.';})
+      .finally(()=>{if(this.contentRead===read){if(!read.error)this.contentRead=null;this.changed();}});
+  }
+  private renderWritingLoad() {
+    return html`<section class="quiet-state"><h1>${this.contentRead?.error ? 'Writing unavailable' : 'Loading writing…'}</h1>${this.contentRead?.error ? html`<p role="alert">${this.contentRead.error}</p>${this.button('Try again',()=>{this.contentRead=null;this.changed();})}` : nothing}</section>`;
   }
   private readRoute() {
     const q = new URL(location.href).searchParams, route=parseStillRoute(location.href);
@@ -362,7 +383,7 @@ export class StillApp extends LitElement {
       if (!this.titleDraft.trim()) throw new Error('Enter a name.');
       await c.append([{ type: 'DocumentRenamed', payload: { document_id: p.documentId, old_title: this.editBase.title ?? p.documentTitle, new_title: this.titleDraft.trim() } }]); this.closeMode();
     } else if (this.mode === 'intent') { c.position.intent = this.bodyDraft.trim(); this.closeMode(); return; }
-    else if (this.mode === 'edit-artifact') { await c.editArtifact(c.position.outputId, this.editBase.item !== undefined ? (parseDocumentArtifactContent(c.content[p.artifacts.find(a => a.id === c.position.outputId)?.contentRef ?? ''])?.content_markdown ?? '') : this.bodyDraft, this.editBase.revision ?? 0, this.editBase.item !== undefined ? [{index:this.editBase.item,body:this.bodyDraft}] : undefined); this.closeMode(); }
+    else if (this.mode === 'edit-artifact') { if (this.missingWriting()) throw new Error('Wait for the writing to load.'); await c.editArtifact(c.position.outputId, this.editBase.item !== undefined ? (parseDocumentArtifactContent(c.content[p.artifacts.find(a => a.id === c.position.outputId)?.contentRef ?? ''])?.content_markdown ?? '') : this.bodyDraft, this.editBase.revision ?? 0, this.editBase.item !== undefined ? [{index:this.editBase.item,body:this.bodyDraft}] : undefined); this.closeMode(); }
     else if (this.mode === 'reuse') { const b = p.libraryBlocks.find(x => x.id === this.choice); if (!b) throw new Error('Choose a context block.'); const event = c.blockEvent(text(b.properties.text), b.handle, b.type); event.payload.properties = { ...b.properties, source_block_id: b.id, weight: .8 }; if (!c.hasUnconfirmedWrite || !this.pendingBlock) { if(this.pendingBlock) Object.assign(event.payload,{block_id:this.pendingBlock.payload.block_id,position:this.pendingBlock.payload.position}); this.pendingBlock=event; } await c.append([this.pendingBlock]); this.closeMode(); }
     this.notice = 'Saved.'; this.changed(); this.decide();
   }
@@ -388,6 +409,10 @@ export class StillApp extends LitElement {
   private async exportWork() {
     const check = await this.client.verifyScope();
     const p = this.client.projection, id = this.client.position.outputId, artifact = p.artifacts.find(a => a.id === id), output = p.outputs.find(o => o.id === id);
+    if (artifact?.contentRef) {
+      await this.client.ensureContent(artifact.contentRef); check();
+      if (id !== this.client.position.outputId) throw new Error('Result changed. Reopen before downloading.');
+    }
     const model = artifact?.kind === 'model3d' ? model3dArtifactMediaFile(artifact) : null;
     const url = safeMedia(model?.url ?? artifact?.mediaUrl ?? output?.mediaUrl);
     const retained = artifact ? this.client.content[artifact.contentRef ?? ''] : '';
@@ -407,6 +432,7 @@ export class StillApp extends LitElement {
   }
   private prose(value: string): TemplateResult { return html`${value.split(/\n\s*\n/).map(part => /^#{1,6}\s/.test(part) ? html`<h2>${part.replace(/^#{1,6}\s*/, '')}</h2>` : html`<p>${part}</p>`)}`; }
   private renderArtifact(a: DocumentArtifact) {
+    if (this.missingWriting()) return this.renderWritingLoad();
     const content = parseDocumentArtifactContent(a.contentRef ? this.client.content[a.contentRef] : undefined), receipt = a.items[this.itemIndex], item = receipt ? {...receipt,...content?.items[this.itemIndex]} : undefined;
     if (a.kind === 'model3d') { const file = model3dArtifactMediaFile(a); void import('./model-view.ts'); return html`<div class="model-stage"><still-model-view src=${safeMedia(file?.url)}></still-model-view></div><p class="caption">${a.title} · Drag to rotate</p>`; }
     if (a.kind === 'video' || a.kind === 'audio') return html`<div class=${`media-stage ${a.kind}`}>${a.kind === 'video' ? html`<video controls playsinline src=${safeMedia(a.mediaUrl ?? item?.mediaUrl)}></video>` : html`<div class="sound-form" aria-hidden="true">${Array.from({ length: 42 }, (_, i) => html`<i style=${`height:${20 + Math.abs(Math.sin(i * .7) * Math.cos(i * .23)) * 100}px`}></i>`)}</div><audio controls src=${safeMedia(a.mediaUrl ?? item?.mediaUrl)}></audio>`}<h1>${a.title}</h1>${a.summary ? html`<p>${a.summary}</p>` : nothing}</div>`;
@@ -437,6 +463,7 @@ export class StillApp extends LitElement {
   }
   private renderMode() {
     const mode = this.mode, p = this.client.projection;
+    if (mode==='edit-artifact' && this.missingWriting()) return this.renderWritingLoad();
     if(mode==='use-in')return keyed(`${this.interactionScope()}/${this.client.position.blockId}/use-in`,html`<still-use-in-flow .client=${this.client} .suggestedTarget=${this.useInTarget} @context-back=${()=>this.closeMode()} @use-in-done=${(e:CustomEvent<{projectId:string;documentId:string;blockId:string}>)=>{this.navigate('document',{projectId:e.detail.projectId,documentId:e.detail.documentId,blockId:e.detail.blockId});this.notice='Saved.';}}></still-use-in-flow>`);
     if (['split-context','research-context','find-references','compose'].includes(mode)) return keyed(`${this.client.scopeKey}/${p.projectId}/${p.documentId}/${this.client.position.blockId}/${mode}`,html`<still-context-flow .client=${this.client} .action=${mode} @context-back=${()=>this.closeMode()} @context-done=${()=>{this.notice='Saved.';this.closeMode();}}></still-context-flow>`);
     if (mode === 'generate') {
