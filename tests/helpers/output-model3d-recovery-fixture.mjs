@@ -10,7 +10,7 @@ const { outputModel3dRecoveryAvailable } = await import("../../worker/output-mod
 
 /** Actual current runtime/output SQLite schema. Admission rows are explicit
  * synthetic fixtures, not HTTP admission or any live/original database. */
-export async function model3dRecoveryFixture({ scopeKey = "scope", retentionMs = 600000 } = {}) {
+export async function model3dRecoveryFixture({ scopeKey = "scope", retentionMs = 600000, referenceKind = null } = {}) {
   const f = outputTestDatabase();
   try {
     await ensureSchema(f.env); await ensureOutputRequirementsSchema(f.env);
@@ -20,7 +20,7 @@ export async function model3dRecoveryFixture({ scopeKey = "scope", retentionMs =
       statement.bind = function (...bindings) { assert(bindings.length <= 100, `D1 binding limit: ${bindings.length}`); assert(!bindings.includes(undefined)); return bind.apply(this, bindings); };
       return statement;
     };
-    const original = await preparedFixture(), now = new Date().toISOString(), expiry = new Date(Date.now() + retentionMs).toISOString();
+    const original = await preparedFixture(referenceKind), now = new Date().toISOString(), expiry = new Date(Date.now() + retentionMs).toISOString();
     const insert = (table, row) => { const entries = Object.entries(row); return f.sqlite.prepare(`INSERT INTO ${table}(${entries.map(([key]) => key).join(",")}) VALUES(${entries.map(() => "?").join(",")})`).run(...entries.map(([, value]) => value)); };
     insert("users", { user_id: "owner", email: "owner@example.test", display_name: "Owner", role: "creator", created_at: now, updated_at: now });
     const anchor = await appendAuditEvent(f.env, "creative:owner", "user", "DocumentCreated", { document_id: "document", project_id: "project", title: "Synthetic kettle" });

@@ -323,17 +323,23 @@ export async function resolveOutputModel3dRecoveryAuthority(env:WorkerEnv,scope:
   const {target,targetPreflight}=await validateOutputExecutionTarget(current,evidence,slot);
   const payload=await readOutputModel3dPayload(targetPreflight.settings.payload);
   if(target.media_kind!=="model3d"||targetPreflight.provider!=="fal"||targetPreflight.route!=="model3d-mini-app-static-glb-v1"
-    ||targetPreflight.maximumCalls!==1||!payload||payload.contract.reference!==null||targetPreflight.model!==payload.preview.model
+    ||targetPreflight.maximumCalls!==1||!payload||targetPreflight.model!==payload.preview.model
     ||payload.preview.requestId!==slot.jobId||payload.preview.documentId!==scope.documentId
     ||payload.preview.projectId!==scope.projectId||payload.preview.actorUserId!==scope.actorUserId||!model3dMiniAppAttemptMatches(payload.preview,slot))
     fail("output_model3d_recovery_route_unsupported",403);
-  const childSource=slot.attemptOrdinal===1?await resolveOutputModel3dRecoverySource({request:caller!.request,env,scope,principal:caller!.user,
+  // Reference recovery rechecks the same owned origin, distinct Document copy,
+  // rights, exact pixels and retention through the actual current caller. The
+  // retained provider receipt alone never grants current source authority.
+  const needsSource=slot.attemptOrdinal===1||payload.contract.reference!==null;
+  if(needsSource&&(!caller||caller.user.userId!==scope.actorUserId))fail("output_model3d_recovery_scope_unsupported",403);
+  const originalSource=needsSource?await resolveOutputModel3dRecoverySource({request:caller!.request,env,scope,principal:caller!.user,
     confirmedPlan:evidence.confirmedPlan,target,context:current.context,sourceEvents:current.events,sourceAssertions:current.assertions,
     sourceDigest:current.sourceDigest,requirementsDigest:current.requirementsDigest},slot):null;
-  if(childSource&&(childSource.requestId!==slot.jobId||childSource.expiresAt!==payload.preview.expiresAt
-    ||childSource.replacement?.id!==payload.preview.replacementCycleId||childSource.replacement?.predecessor.providerRequestId!==payload.preview.previousProviderRequestId))fail("output_model3d_recovery_route_unsupported",403);
+  if(originalSource&&(originalSource.requestId!==slot.jobId||originalSource.expiresAt!==payload.preview.expiresAt
+    ||(slot.attemptOrdinal===0?originalSource.replacement!==null:
+      originalSource.replacement?.id!==payload.preview.replacementCycleId||originalSource.replacement?.predecessor.providerRequestId!==payload.preview.previousProviderRequestId)))fail("output_model3d_recovery_route_unsupported",403);
   return prepareOutputExecutionProof(scope,{...current,confirmedPlan:evidence.confirmedPlan,target,preflight:evidence.preflight,targetPreflight,
-    assertions:[...current.assertions,...(childSource?.sourceAssertions??[]),...retainedOutputBodyAssertions(scope),{sql:`EXISTS(SELECT 1 FROM output_execution_grants WHERE scope_key=? AND grant_id=? AND actor_user_id=? AND context_id IS NULL AND status IN('authorized','active','completed'))`,bindings:[scope.key,slot.grantId,scope.actorUserId]}]});
+    assertions:[...current.assertions,...(originalSource?.sourceAssertions??[]),...retainedOutputBodyAssertions(scope),{sql:`EXISTS(SELECT 1 FROM output_execution_grants WHERE scope_key=? AND grant_id=? AND actor_user_id=? AND context_id IS NULL AND status IN('authorized','active','completed'))`,bindings:[scope.key,slot.grantId,scope.actorUserId]}]});
 }
 
 /** Reuse retained evidence only while every later event is proven nonsemantic.

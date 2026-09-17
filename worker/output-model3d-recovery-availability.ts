@@ -13,10 +13,13 @@ export async function outputModel3dRecoveryAvailable(env: WorkerEnv, scope: Outp
     || !["failed", "uncertain"].includes(slot.status)) return false;
   try {
     const offer = await readOutputModel3dPayload(JSON.parse(job.request_json));
-    if (!offer || !model3dMiniAppAttemptMatches(offer.preview,slot) || offer.contract.reference !== null || offer.preview.sourceFilesTransferred !== 0
+    if (!offer || !model3dMiniAppAttemptMatches(offer.preview,slot)
       || offer.preview.requestId !== job.job_id || offer.preview.actorUserId !== scope.actorUserId
       || offer.preview.documentId !== scope.documentId || offer.preview.projectId !== scope.projectId) return false;
     const metadata = JSON.parse(job.result_json ?? "{}");
+    // The closed offer and original receipt bind zero or one image, including
+    // its exact hash, MIME type, length and copied-block identity. This advice
+    // does not replace the recovery service's current source-custody proof.
     const prepared = await verifyModel3dPreparedReceipt(offer, metadata.model3dInputReceipt);
     return Boolean(await env.DB.prepare(`SELECT 1 AS available FROM document_jobs job
       JOIN output_operation_slots slot ON slot.job_id=job.job_id AND slot.scope_key=? AND slot.slot_id=?

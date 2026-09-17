@@ -71,6 +71,9 @@ export async function resolveOutputModel3dSource(input: OutputBridgeTargetInput)
 }
 /** Separate retrieval entry: reuse source custody without renewing dispatch. */
 export async function resolveOutputModel3dRecoverySource(input: OutputBridgeTargetInput, slot: OutputOperationSlot) {
+  // The initial accepted request has no replacement lineage. It still traverses
+  // the complete retained intake, original reference and copied-context checks.
+  if (slot.attemptOrdinal === 0 && slot.previousSlotId === null) return resolveModel3dSource(input, async () => null);
   return resolveModel3dSource(input, (source, root, retention) => resolveAcceptedModel3dReplacement(source, root, retention, slot));
 }
 async function resolveModel3dSource(input: OutputBridgeTargetInput, replacementSource: typeof resolveModel3dReplacementSource) {
