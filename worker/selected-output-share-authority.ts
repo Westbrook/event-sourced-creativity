@@ -292,6 +292,17 @@ function restoredOriginalModel3d(native: NativeRetainedMediaSnapshot): boolean {
     && basis.mediaSha256 === native.media.sha256 && basis.mediaByteLength === native.media.byteLength);
 }
 
+/** Current Notes may differ from the genuine original content hash, or return
+ * to its value. Only the authentic native bridge proves that relationship. */
+function originalVideoWithNotes(native: NativeRetainedMediaSnapshot): boolean {
+  const basis = native.nativeOriginal, selected = native.selection;
+  return Boolean(basis && basis.output === "video" && basis.relation === "selected-original-with-notes" && basis.originalRevision === 0
+    && basis.selectedRevision === selected.revision && selected.revision > 0 && basis.selectedContentSha256 === selected.contentSha256
+    && /^[a-f0-9]{64}$/u.test(basis.originalContentSha256) && basis.mediaSha256 === selected.mediaSha256
+    && basis.mediaSha256 === native.media.sha256 && basis.mediaByteLength === native.media.byteLength
+    && native.media.readMode === "native-output-video");
+}
+
 /** Media-specific provenance, after exact native current custody. Outputs media
  * needs its original receipt bridge; ordinary Document revisions keep current
  * native custody without manufacturing an original revision or recovery lease. */
@@ -335,7 +346,7 @@ function validateMediaWitness(raw: string, native: NativeRetainedMediaSnapshot):
     if (mediaCompletion.sourceSurface !== "outputs"
       || (selected.output === "audio" ? mediaCompletion.videoReceipt !== null || mediaCompletion.model3dReceipt !== null || native.media.readMode !== "owned-media"
         : selected.output === "video"
-          ? selected.revision !== 0 || mediaCompletion.videoReceipt !== "object" || mediaCompletion.model3dReceipt !== null || native.media.readMode !== "native-output-video"
+          ? selected.revision !== 0 && !originalVideoWithNotes(native) || mediaCompletion.videoReceipt !== "object" || mediaCompletion.model3dReceipt !== null || native.media.readMode !== "native-output-video"
           : mediaCompletion.model3dReceipt !== "object" || mediaCompletion.videoReceipt !== null
             || selected.revision !== 0 && !restoredOriginalModel3d(native))) return fail();
     const body = parse(authorization.privateJson), publicAuthorization = parse(authorization.payload);

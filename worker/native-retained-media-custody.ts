@@ -5,6 +5,8 @@ import { bytes, hash, eventCte, nativeRetainedSourceFinalGuard, opaque, readNati
 import { nativeRetainedMediaReceiptReaders as readers } from "./retained-story-api.ts";
 import { readRetainedOutputVideo, copyRetainedOutputVideoBytes } from "./output-video-retained.ts";
 import { readRetainedOutputModel3d } from "./output-model3d-retained.ts";
+import { publicEventPayload } from "./event-privacy.ts";
+import { selectedOutputShareVideoNotesContent, selectedOutputShareVideoNotesEdit } from "./selected-output-share-video-notes.ts";
 import { captureExperienceVideoEvidence } from "../src/experiences/video-native-result.ts";
 import { projectNativeRetainedOutput, type NativeRetainedOutputDto } from "../src/model/native-retained-output.ts";
 import { selectRetainedModel3dEditFile } from "../src/model/native-retained-model3d.ts";
@@ -36,7 +38,7 @@ export type NativeRetainedMediaSnapshot = Readonly<{
   /** Issued only after the actual completed original native proof. This is a
    * private relation between observed selections, never publishing authority. */
   nativeOriginal: Readonly<{
-    output: "video" | "model3d"; relation: "selected-original" | "selected-restored-original";
+    output: "video" | "model3d"; relation: "selected-original" | "selected-restored-original" | "selected-original-with-notes";
     originalRevision: 0; originalContentSha256: string;
     selectedRevision: number; selectedContentSha256: string;
     mediaSha256: string; mediaByteLength: number;
@@ -110,8 +112,11 @@ export async function readNativeRetainedMediaCustody(env: WorkerEnv, identity: N
   const model3d = selected.output === "model3d" ? await readers.model3d.receipt(env, native, actor.userId, selected) : null; stable();
   const { contentBindings, source, body } = await readNativeRetainedContent(env, actor, selected, native); stable();
   let originalVideo: Awaited<ReturnType<typeof readRetainedOutputVideo>> | null = null;
-  if (video && (video.payload.source_surface === "outputs" || Object.hasOwn(record(video.payload.settings) ?? {}, "output_video"))) {
-    if (selected.revision !== 0 || native.latestEditId || typeof native.completionInputRef !== "string" || !opaque.test(native.completionInputRef)) throw unavailable();
+  let originalVideoSource: { bindings: SqlValue[]; raw: string; expiresAt: string; sha256: string } | null = null;
+  let videoNotesEvent: { sql: string; bindings: SqlValue[] } | null = null;
+  const specializedVideo = video && (video.payload.source_surface === "outputs" || Object.hasOwn(record(video.payload.settings) ?? {}, "output_video"));
+  if (specializedVideo && selected.revision === 0) {
+    if (native.latestEditId || typeof native.completionInputRef !== "string" || !opaque.test(native.completionInputRef)) throw unavailable();
     originalVideo = await readRetainedOutputVideo(env, { ownerId: actor.userId, completionId: native.completionId,
       documentId: selected.documentId, projectId: native.projectId, artifactId: selected.artifactId,
       contentId: native.contentId, inputId: native.completionInputRef, rawContent: source.content,
@@ -120,6 +125,39 @@ export async function readNativeRetainedMediaCustody(env: WorkerEnv, identity: N
   const audioEdit = audio ? await readers.audio.edit(env, native, actor.userId, selected, body, audio) : null; stable();
   const videoEdit = video ? await readers.video.edit(env, native, actor.userId, selected, body, video) : null; stable();
   const model3dEdit = model3d ? await readers.model3d.edit(env, native, actor.userId, selected, body, model3d) : null; stable();
+  if (specializedVideo && selected.revision > 0) {
+    const originalHash = record(video.payload.settings)?.video_content_sha256;
+    if (!videoEdit || !native.latestEditId || typeof native.completionInputRef !== "string" || !opaque.test(native.completionInputRef)
+      || typeof originalHash !== "string" || !digest.test(originalHash)
+      || !selectedOutputShareVideoNotesEdit(videoEdit.raw, { ownerId: actor.userId, documentId: selected.documentId,
+        projectId: native.projectId, artifactId: selected.artifactId, contentId: native.contentId,
+        revision: selected.revision, contentSha256: selected.contentSha256 })) throw unavailable();
+    // These producer columns are absent from the generic native event snapshot.
+    // Pin them and the exact public envelope in this same current observation.
+    const eventGuard = `event_id=? AND stream_id=? AND type='DocumentArtifactEdited' AND actor='user'
+      AND client_id='web:artifact-editor' AND typeof(schema_version)='integer' AND schema_version=1
+      AND causation_id IS NULL AND compensates_event_id IS NULL AND CAST(payload AS BLOB)=CAST(? AS BLOB)`;
+    const eventBindings: SqlValue[] = [native.latestEditId, `creative:${actor.userId}`,
+      JSON.stringify(publicEventPayload(native.latestEditId, videoEdit.payload, true).payload)];
+    if (!(await database.prepare(`SELECT 1 AS admitted FROM events WHERE ${eventGuard}`).bind(...eventBindings)
+      .first<{ admitted: number }>())?.admitted) throw unavailable();
+    stable();
+    videoNotesEvent = { sql: `EXISTS(SELECT 1 FROM events WHERE ${eventGuard})`, bindings: eventBindings };
+    const bindings: SqlValue[] = [actor.userId, selected.artifactId, 0, selected.documentId, native.projectId, originalHash];
+    const original = await database.prepare(`SELECT content_json,content_sha256,expires_at FROM artifact_revisions WHERE ${readers.video.sourceGuard()}`)
+      .bind(...bindings).first<{ content_json: string; content_sha256: string; expires_at: string }>(); stable();
+    if (!original || original.content_sha256 !== originalHash || !timestamp(original.expires_at)
+      || Date.parse(original.expires_at) <= Date.now() || await hash(original.content_json) !== originalHash
+      || !selectedOutputShareVideoNotesContent(original.content_json, source.content)) throw unavailable();
+    stable();
+    originalVideoSource = { bindings, raw: original.content_json, expiresAt: original.expires_at, sha256: originalHash };
+    // Use the genuine original snapshot. The actual selected revision and raw
+    // current content remain separate; no current DTO is relabeled revision0.
+    originalVideo = await readRetainedOutputVideo(env, { ownerId: actor.userId, completionId: native.completionId,
+      documentId: selected.documentId, projectId: native.projectId, artifactId: selected.artifactId,
+      contentId: native.contentId, inputId: native.completionInputRef, rawContent: original.content_json,
+      contentExpiresAt: original.expires_at, completionRaw: video.raw, signal }); stable();
+  }
   let originalModel3d: Awaited<ReturnType<typeof readRetainedOutputModel3d>> | null = null;
   let originalModel3dSource: { bindings: SqlValue[]; raw: string; expiresAt: string } | null = null;
   const directOriginalRestore = model3dEdit?.payload.artifact_kind === "model3d"
@@ -148,7 +186,7 @@ export async function readNativeRetainedMediaCustody(env: WorkerEnv, identity: N
       contentId: native.contentId, inputId: native.completionInputRef, rawContent: originalModel3dSource?.raw ?? source.content,
       contentExpiresAt: originalModel3dSource?.expiresAt ?? source.expires_at, completionRaw: model3d.raw, signal }); stable();
   }
-  const lifetimes = [source.expires_at, originalVideo?.expiresAt, originalModel3d?.expiresAt,
+  const lifetimes = [source.expires_at, originalVideo?.expiresAt, originalVideoSource?.expiresAt, originalModel3d?.expiresAt,
     originalModel3dSource?.expiresAt, videoEdit?.source?.expiresAt, model3dEdit?.source?.expiresAt].filter((value): value is string => value !== undefined);
   if (lifetimes.some(value => !timestamp(value) || Date.parse(value) <= Date.now())) throw unavailable();
   const expiresAt = [...lifetimes].sort()[0]!;
@@ -194,8 +232,8 @@ export async function readNativeRetainedMediaCustody(env: WorkerEnv, identity: N
   if (originalVideo || matchesModel3dPrimary) {
     if (!Number.isSafeInteger(asset.byteLength) || Number(asset.byteLength) < 1) throw unavailable();
     nativeOriginal = { output: originalVideo ? "video" : "model3d",
-      relation: originalModel3dSource ? "selected-restored-original" : "selected-original",
-      originalRevision: 0, originalContentSha256: selected.contentSha256,
+      relation: originalVideoSource ? "selected-original-with-notes" : originalModel3dSource ? "selected-restored-original" : "selected-original",
+      originalRevision: 0, originalContentSha256: originalVideoSource?.sha256 ?? selected.contentSha256,
       selectedRevision: selected.revision, selectedContentSha256: selected.contentSha256,
       mediaSha256: asset.sha256, mediaByteLength: asset.byteLength! };
   }
@@ -214,12 +252,19 @@ export async function readNativeRetainedMediaCustody(env: WorkerEnv, identity: N
   receipt(readers.audio.receiptGuard, audio); receipt(readers.audio.receiptGuard, audioEdit);
   receipt(readers.video.receiptGuard, video); receipt(readers.video.receiptGuard, videoEdit);
   sourceRevision(readers.video.sourceGuard, videoEdit?.source); receipt(readers.video.receiptGuard, videoEdit?.source?.edit);
+  sourceRevision(readers.video.sourceGuard, originalVideoSource);
+  if (videoNotesEvent) predicates.push(videoNotesEvent);
   receipt(readers.model3d.receiptGuard, model3d); receipt(readers.model3d.receiptGuard, model3dEdit);
   sourceRevision(readers.model3d.sourceGuard, model3dEdit?.source); receipt(readers.model3d.receiptGuard, model3dEdit?.source?.edit);
   receipt(readers.model3d.receiptGuard, model3dEdit?.originalReset);
   sourceRevision(readers.model3d.sourceGuard, originalModel3dSource);
   const originalProofs: string[] = [], originalBindings: SqlValue[] = [];
-  if (originalVideo) { originalProofs.push(`video_witness AS (SELECT ? AS bindings),video_proof AS MATERIALIZED (SELECT CASE WHEN (${originalVideo.witness.sql}) THEN 1 ELSE 0 END AS permitted)`); originalBindings.push(originalVideo.witness.json); }
+  if (originalVideo) {
+    originalProofs.push(`video_witness AS (SELECT ? AS bindings),video_proof AS MATERIALIZED (${originalVideoSource
+      ? `SELECT 1 AS permitted WHERE (${originalVideo.witness.sql})`
+      : `SELECT CASE WHEN (${originalVideo.witness.sql}) THEN 1 ELSE 0 END AS permitted`})`);
+    originalBindings.push(originalVideo.witness.json);
+  }
   if (originalModel3d) {
     // The restored branch adds a genuine source snapshot to the native proof.
     // Omit CASE's expression levels so its full atomic lifecycle statement fits
@@ -229,10 +274,10 @@ export async function readNativeRetainedMediaCustody(env: WorkerEnv, identity: N
       : `SELECT CASE WHEN (${originalModel3d.witness.sql}) THEN 1 ELSE 0 END AS permitted`})`);
     originalBindings.push(originalModel3d.witness.json);
   }
-  // Group complete server-authored terms only for the restored-original proof;
+  // Group complete server-authored terms only for genuine original bridges;
   // their order and binding sequence are unchanged. Never parse or rewrite SQL.
-  const currentGuard = originalModel3dSource
-    ? `(${nativeRetainedSourceFinalGuard()}) AND (${predicates.map(value => `(${value.sql})`).join(" AND ")} AND (SELECT permitted FROM model3d_proof)=1)`
+  const currentGuard = originalModel3dSource || originalVideoSource
+    ? `(${nativeRetainedSourceFinalGuard()}) AND (${predicates.map(value => `(${value.sql})`).join(" AND ")} AND (SELECT permitted FROM ${originalVideoSource ? "video_proof" : "model3d_proof"})=1)`
     : `${nativeRetainedSourceFinalGuard()}
       ${predicates.map(value => `AND (${value.sql})`).join("\n")}
       ${originalVideo ? "AND (SELECT permitted FROM video_proof)=1" : ""}${originalModel3d ? "AND (SELECT permitted FROM model3d_proof)=1" : ""}`;
