@@ -1,0 +1,248 @@
+import { inspectOutputAsset, MAX_OUTPUT_ASSET_BYTES } from "./output-asset-inspection.ts";
+
+/** Container/metadata qualification of exact bytes, never publishing authority. */
+export const SELECTED_OUTPUT_SHARE_VIDEO_POLICY = "selected-output-share-avc-mp4-v1" as const;
+export const SELECTED_OUTPUT_SHARE_VIDEO_LIMITS = Object.freeze({ bytes: MAX_OUTPUT_ASSET_BYTES, boxes: 4096, samples: 100_000, nals: 200_000 });
+export type SelectedOutputShareVideoExpected = Readonly<{ sha256: string; byteLength: number; width: number; height: number; durationSeconds: number }>;
+export type SelectedOutputShareVideoRefusal = "invalid_input" | "unsupported_mp4" | "unqualified_metadata" | "invalid_mp4" | "selection_mismatch";
+declare const videoQualification: unique symbol;
+export type QualifiedSelectedOutputShareVideo = Readonly<{
+  [videoQualification]: true;
+  status: "qualified";
+  policy: typeof SELECTED_OUTPUT_SHARE_VIDEO_POLICY;
+  mimeType: "video/mp4";
+  sha256: string; byteLength: number; width: number; height: number; durationSeconds: number;
+}>;
+export type SelectedOutputShareVideoQualification = QualifiedSelectedOutputShareVideo
+  | Readonly<{ status: "unqualified"; policy: typeof SELECTED_OUTPUT_SHARE_VIDEO_POLICY; reason: SelectedOutputShareVideoRefusal }>;
+
+const ownedVideos = new WeakMap<QualifiedSelectedOutputShareVideo, Uint8Array<ArrayBuffer>>();
+const typedPrototype = Object.getPrototypeOf(Uint8Array.prototype);
+const typedLength = Object.getOwnPropertyDescriptor(typedPrototype, "byteLength")!.get!;
+const typedBuffer = Object.getOwnPropertyDescriptor(typedPrototype, "buffer")!.get!;
+const bufferLength = Object.getOwnPropertyDescriptor(ArrayBuffer.prototype, "byteLength")!.get!;
+const setBytes = Uint8Array.prototype.set;
+const expectedKeys = ["sha256", "byteLength", "width", "height", "durationSeconds"] as const;
+class Refusal extends Error { readonly reason: SelectedOutputShareVideoRefusal; constructor(reason: SelectedOutputShareVideoRefusal) { super(reason); this.reason = reason; } }
+function requireValue(value: unknown, reason: SelectedOutputShareVideoRefusal = "invalid_mp4"): asserts value { if (!value) throw new Refusal(reason); }
+function expectedFacts(value: unknown): SelectedOutputShareVideoExpected | null {
+  if (value === null || typeof value !== "object" || Object.getPrototypeOf(value) !== Object.prototype && Object.getPrototypeOf(value) !== null) return null;
+  const keys = Reflect.ownKeys(value), result: Record<string, unknown> = Object.create(null);
+  if (keys.length !== expectedKeys.length || keys.some(key => typeof key !== "string" || !expectedKeys.includes(key as typeof expectedKeys[number]))) return null;
+  for (const key of expectedKeys) {
+    const field = Object.getOwnPropertyDescriptor(value, key);
+    if (!field || !Object.hasOwn(field, "value") || !field.enumerable) return null;
+    result[key] = field.value;
+  }
+  if (typeof result.sha256 !== "string" || !/^[a-f0-9]{64}$/u.test(result.sha256)
+    || ![result.width, result.height].every(n => typeof n === "number" && Number.isSafeInteger(n) && n >= 1 && n <= 16_384)
+    || typeof result.byteLength !== "number" || !Number.isSafeInteger(result.byteLength) || result.byteLength < 1 || result.byteLength > SELECTED_OUTPUT_SHARE_VIDEO_LIMITS.bytes
+    || typeof result.durationSeconds !== "number" || !Number.isFinite(result.durationSeconds) || result.durationSeconds <= 0 || result.durationSeconds > 86_400) return null;
+  return Object.freeze(result) as SelectedOutputShareVideoExpected;
+}
+function captureBytes(value: unknown): Uint8Array<ArrayBuffer> | null {
+  if (value === null || typeof value !== "object" || Object.getPrototypeOf(value) !== Uint8Array.prototype) return null;
+  const length = typedLength.call(value) as number;
+  bufferLength.call(typedBuffer.call(value)); // Reject shared buffers and proxy impostors.
+  if (!length || length > SELECTED_OUTPUT_SHARE_VIDEO_LIMITS.bytes) return null;
+  const copy = new Uint8Array(length); setBytes.call(copy, value as Uint8Array); return copy;
+}
+
+type Box = { type: string; start: number; data: number; end: number };
+/** Only explicit 32-bit sizes: zero/large boxes and all unknown branches refuse. */
+class Container {
+  readonly view: DataView;
+  readonly bytes: Uint8Array;
+  private count = 0;
+  constructor(bytes: Uint8Array) { this.bytes = bytes; this.view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength); }
+  u32(at: number) { return this.view.getUint32(at); }
+  u16(at: number) { return this.view.getUint16(at); }
+  text(at: number, length: number) { return String.fromCharCode(...this.bytes.subarray(at, at + length)); }
+  zero(start: number, end: number) { requireValue(this.bytes.subarray(start, end).every(value => value === 0), "unqualified_metadata"); }
+  boxes(start: number, end: number, allowed: readonly string[]) {
+    const result: Box[] = [], seen = new Set<string>();
+    while (start < end) {
+      requireValue(++this.count <= SELECTED_OUTPUT_SHARE_VIDEO_LIMITS.boxes && start + 8 <= end);
+      const length = this.u32(start), type = this.text(start + 4, 4);
+      requireValue(length >= 8 && length <= end - start);
+      requireValue(allowed.includes(type), "unqualified_metadata");
+      requireValue(!seen.has(type)); seen.add(type);
+      result.push({ type, start, data: start + 8, end: start + length }); start += length;
+    }
+    requireValue(start === end); return result;
+  }
+  one(boxes: Box[], type: string) { const box = boxes.find(value => value.type === type); requireValue(box); return box; }
+  full(box: Box, size?: number, flags = 0) { requireValue(box.end - box.data >= 4 && (size === undefined || box.end - box.data === size) && this.u32(box.data) === flags); }
+  matrix(at: number) { [65536, 0, 0, 0, 65536, 0, 0, 0, 0x40000000].forEach((value, index) => requireValue(this.u32(at + index * 4) === value, "unsupported_mp4")); }
+}
+
+/** Parse parameter-set syntax to its RBSP stop bit, not just dimensions. This
+ * intentionally excludes scaling lists, slice groups, HRD and AVC extensions. */
+class Bits {
+  private offset = 0;
+  readonly bytes: Uint8Array;
+  constructor(nal: Uint8Array, type: number) {
+    requireValue(nal.length >= 2 && nal.length <= 4096 && (nal[0]! & 0x9f) === type);
+    requireValue(![5, 7, 8].includes(type) || (nal[0]! & 0x60) !== 0);
+    const raw: number[] = [];
+    for (let index = 1, zeros = 0; index < nal.length; index += 1) {
+      const value = nal[index]!;
+      if (zeros === 2 && value === 3) {
+        requireValue(index + 1 < nal.length && nal[index + 1]! <= 3); zeros = 0; continue;
+      }
+      requireValue(zeros < 2 || value > 2); raw.push(value); zeros = value === 0 ? zeros + 1 : 0;
+    }
+    this.bytes = Uint8Array.from(raw);
+  }
+  read(count = 1) {
+    requireValue(count >= 0 && count <= 32 && this.offset + count <= this.bytes.length * 8);
+    let value = 0;
+    for (let index = 0; index < count; index += 1) { value = value * 2 + (this.bytes[this.offset >> 3]! >> (7 - (this.offset & 7)) & 1); this.offset += 1; }
+    return value;
+  }
+  ue(maximum = 65535) { let zeros = 0; while (this.read() === 0) requireValue(++zeros <= 16); const value = 2 ** zeros - 1 + this.read(zeros); requireValue(value <= maximum); return value; }
+  se(minimum = -32768, maximum = 32767) { const code = this.ue(65535), value = code & 1 ? (code + 1) / 2 : -code / 2; requireValue(value >= minimum && value <= maximum); return value; }
+  more() {
+    let at = this.offset;
+    if (at >= this.bytes.length * 8 || !(this.bytes[at >> 3]! >> (7 - (at & 7)) & 1)) return true;
+    for (at += 1; at < this.bytes.length * 8; at += 1) if (this.bytes[at >> 3]! >> (7 - (at & 7)) & 1) return true;
+    return false;
+  }
+  end() { requireValue(this.read() === 1); while (this.offset % 8) requireValue(this.read() === 0); requireValue(this.offset === this.bytes.length * 8, "unqualified_metadata"); }
+}
+function parameterSets(sps: Uint8Array, pps: Uint8Array, config: Uint8Array) {
+  const s = new Bits(sps, 7), profile = s.read(8), constraints = s.read(8), level = s.read(8);
+  requireValue([66, 77, 88, 100].includes(profile), "unsupported_mp4");
+  requireValue((constraints & 3) === 0 && level >= 10 && level <= 62 && profile === config[1] && constraints === config[2] && level === config[3]);
+  const spsId = s.ue(31);
+  if (profile === 100) { requireValue(s.ue(3) === 1 && s.ue(6) === 0 && s.ue(6) === 0 && s.read() === 0 && s.read() === 0, "unsupported_mp4"); }
+  s.ue(12); const order = s.ue(2);
+  if (order === 0) s.ue(12);
+  else if (order === 1) { s.read(); s.se(); s.se(); const count = s.ue(255); for (let index = 0; index < count; index += 1) s.se(); }
+  s.ue(16); s.read(); s.ue(1023); s.ue(1023);
+  requireValue(s.read() === 1, "unsupported_mp4"); s.read();
+  if (s.read()) for (let index = 0; index < 4; index += 1) s.ue(16_383);
+  if (s.read()) {
+    if (s.read()) { const aspect = s.read(8); requireValue(aspect === 1, "unsupported_mp4"); }
+    requireValue(s.read() === 0 && s.read() === 0 && s.read() === 0, "unsupported_mp4"); // overscan, video signal, chroma location
+    if (s.read()) { requireValue(s.read(32) > 0 && s.read(32) > 0); s.read(); }
+    requireValue(s.read() === 0 && s.read() === 0, "unsupported_mp4"); // no HRD
+    s.read();
+    if (s.read()) { s.read(); s.ue(16); s.ue(16); s.ue(16); s.ue(16); s.ue(16); s.ue(16); }
+  }
+  s.end();
+  const p = new Bits(pps, 8), ppsId = p.ue(255);
+  requireValue(p.ue(31) === spsId); p.read(); p.read(); requireValue(p.ue(7) === 0, "unsupported_mp4");
+  p.ue(31); p.ue(31); p.read(); p.read(2); p.se(-26, 25); p.se(-26, 25); p.se(-12, 12); p.read(); p.read(); p.read();
+  if (p.more()) { p.read(); requireValue(p.read() === 0, "unsupported_mp4"); p.se(-12, 12); }
+  p.end(); return ppsId;
+}
+function codec(c: Container, box: Box) {
+  const { bytes } = c, at = box.data;
+  requireValue(box.end - at >= 11 && bytes[at] === 1 && bytes[at + 4] === 255 && bytes[at + 5] === 225, "unsupported_mp4");
+  let cursor = at + 6;
+  const spsLength = c.u16(cursor); cursor += 2;
+  requireValue(spsLength >= 5 && cursor + spsLength + 3 <= box.end);
+  const sps = bytes.subarray(cursor, cursor + spsLength); cursor += spsLength;
+  requireValue(bytes[cursor++] === 1, "unsupported_mp4");
+  const ppsLength = c.u16(cursor); cursor += 2;
+  requireValue(ppsLength >= 2 && cursor + ppsLength <= box.end);
+  const pps = bytes.subarray(cursor, cursor + ppsLength); cursor += ppsLength;
+  if (cursor < box.end) {
+    requireValue(bytes[at + 1] === 100 && box.end - cursor === 4 && bytes[cursor] === 253 && bytes[cursor + 1] === 248 && bytes[cursor + 2] === 248 && bytes[cursor + 3] === 0, "unqualified_metadata"); cursor += 4;
+  }
+  requireValue(cursor === box.end); return parameterSets(sps, pps, bytes.subarray(at, at + 4));
+}
+
+function publicMp4(bytes: Uint8Array) {
+  const c = new Container(bytes), top = c.boxes(0, bytes.length, ["ftyp", "moov", "mdat", "free"]);
+  const ftyp = c.one(top, "ftyp"), moov = c.one(top, "moov"), mdat = c.one(top, "mdat");
+  requireValue(top[0] === ftyp && ftyp.end - ftyp.data >= 12 && ftyp.end - ftyp.data <= 44 && (ftyp.end - ftyp.data) % 4 === 0);
+  const brands = ["isom", "iso2", "iso3", "iso4", "iso5", "iso6", "mp41", "mp42", "avc1"];
+  requireValue(brands.includes(c.text(ftyp.data, 4)) && [0, 512].includes(c.u32(ftyp.data + 4)), "unsupported_mp4");
+  const seenBrands = new Set<string>();
+  for (let at = ftyp.data + 8; at < ftyp.end; at += 4) { const brand = c.text(at, 4); requireValue(brands.includes(brand) && !seenBrands.has(brand), "unqualified_metadata"); seenBrands.add(brand); }
+  const free = top.find(box => box.type === "free"); if (free) requireValue(free.end === free.data, "unqualified_metadata");
+  const movie = c.boxes(moov.data, moov.end, ["mvhd", "trak"]), mvhd = c.one(movie, "mvhd");
+  c.full(mvhd, 100); c.zero(mvhd.data + 4, mvhd.data + 12);
+  const scale = c.u32(mvhd.data + 12), duration = c.u32(mvhd.data + 16);
+  requireValue(scale > 0 && duration > 0 && c.u32(mvhd.data + 20) === 65536 && [0, 256].includes(c.u16(mvhd.data + 24)));
+  c.zero(mvhd.data + 26, mvhd.data + 36); c.matrix(mvhd.data + 36); c.zero(mvhd.data + 72, mvhd.data + 96); requireValue(c.u32(mvhd.data + 96) === 2);
+  const trak = c.one(movie, "trak"), track = c.boxes(trak.data, trak.end, ["tkhd", "edts", "mdia"]), tkhd = c.one(track, "tkhd");
+  requireValue([1, 3].includes(c.u32(tkhd.data))); c.full(tkhd, 84, c.u32(tkhd.data)); c.zero(tkhd.data + 4, tkhd.data + 12);
+  requireValue(c.u32(tkhd.data + 12) === 1 && c.u32(tkhd.data + 20) === duration); c.zero(tkhd.data + 16, tkhd.data + 20); c.zero(tkhd.data + 24, tkhd.data + 40); c.matrix(tkhd.data + 40);
+  const edts = track.find(box => box.type === "edts");
+  if (edts) { const elst = c.one(c.boxes(edts.data, edts.end, ["elst"]), "elst"); c.full(elst, 20); requireValue(c.u32(elst.data + 4) === 1 && c.u32(elst.data + 8) === duration && c.u32(elst.data + 12) === 0 && c.u32(elst.data + 16) === 65536, "unsupported_mp4"); }
+  const mdia = c.one(track, "mdia"), media = c.boxes(mdia.data, mdia.end, ["mdhd", "hdlr", "minf"]), mdhd = c.one(media, "mdhd"), hdlr = c.one(media, "hdlr");
+  c.full(mdhd, 24); c.zero(mdhd.data + 4, mdhd.data + 12); requireValue([0, 0x55c4].includes(c.u16(mdhd.data + 20)), "unqualified_metadata"); c.zero(mdhd.data + 22, mdhd.data + 24);
+  c.full(hdlr); requireValue(hdlr.end - hdlr.data >= 24 && hdlr.end - hdlr.data <= 37); c.zero(hdlr.data + 4, hdlr.data + 8); requireValue(c.text(hdlr.data + 8, 4) === "vide", "unsupported_mp4"); c.zero(hdlr.data + 12, hdlr.data + 24);
+  const name = c.text(hdlr.data + 24, hdlr.end - hdlr.data - 24); requireValue(name === "" || name === "\0" || name === "VideoHandler\0", "unqualified_metadata");
+  const minf = c.one(media, "minf"), info = c.boxes(minf.data, minf.end, ["vmhd", "dinf", "stbl"]), vmhd = c.one(info, "vmhd"); c.full(vmhd, 12, 1); c.zero(vmhd.data + 4, vmhd.end);
+  const dinf = c.one(info, "dinf"), dref = c.one(c.boxes(dinf.data, dinf.end, ["dref"]), "dref"); c.full(dref); requireValue(c.u32(dref.data + 4) === 1);
+  const url = c.one(c.boxes(dref.data + 8, dref.end, ["url "]), "url "); c.full(url, 4, 1);
+  const stbl = c.one(info, "stbl"), tables = c.boxes(stbl.data, stbl.end, ["stsd", "stts", "stss", "stsc", "stsz", "stco"]), stsd = c.one(tables, "stsd"); c.full(stsd); requireValue(c.u32(stsd.data + 4) === 1);
+  const avc = c.one(c.boxes(stsd.data + 8, stsd.end, ["avc1"]), "avc1"); requireValue(avc.end - avc.start >= 86);
+  c.zero(avc.data, avc.start + 14); requireValue(c.u16(avc.start + 14) === 1); c.zero(avc.start + 16, avc.start + 32);
+  requireValue(c.u32(avc.start + 36) === 0x00480000 && c.u32(avc.start + 40) === 0x00480000 && c.u32(avc.start + 44) === 0 && c.u16(avc.start + 48) === 1);
+  c.zero(avc.start + 50, avc.start + 82); requireValue(c.u16(avc.start + 82) === 24 && c.u16(avc.start + 84) === 65535);
+  const extensions = c.boxes(avc.start + 86, avc.end, ["avcC", "pasp"]), ppsId = codec(c, c.one(extensions, "avcC"));
+  const pasp = extensions.find(box => box.type === "pasp"); if (pasp) requireValue(pasp.end - pasp.data === 8 && c.u32(pasp.data) === 1 && c.u32(pasp.data + 4) === 1);
+  const stsz = c.one(tables, "stsz"), stsc = c.one(tables, "stsc"), stco = c.one(tables, "stco"), stts = c.one(tables, "stts");
+  for (const table of [stsz, stsc, stco, stts]) c.full(table);
+  requireValue(stsz.end - stsz.data >= 12); const uniform = c.u32(stsz.data + 4), samples = c.u32(stsz.data + 8);
+  requireValue(samples > 0 && samples <= SELECTED_OUTPUT_SHARE_VIDEO_LIMITS.samples && stsz.end - stsz.data === 12 + (uniform ? 0 : samples * 4));
+  const chunks = c.u32(stco.data + 4), mappingCount = c.u32(stsc.data + 4), timingCount = c.u32(stts.data + 4);
+  requireValue(chunks > 0 && chunks <= samples && stco.end - stco.data === 8 + chunks * 4 && mappingCount > 0 && mappingCount <= chunks && stsc.end - stsc.data === 8 + mappingCount * 12
+    && timingCount > 0 && timingCount <= samples && stts.end - stts.data === 8 + timingCount * 8);
+  const stss = tables.find(box => box.type === "stss"), syncSamples = new Set<number>();
+  if (stss) { c.full(stss); const count = c.u32(stss.data + 4); requireValue(count > 0 && count <= samples && stss.end - stss.data === 8 + count * 4); let previous = 0; for (let at = stss.data + 8; at < stss.end; at += 4) { const sample = c.u32(at); requireValue(sample > previous && sample <= samples); previous = sample; syncSamples.add(sample); } }
+  let mapping = 0, sample = 0, end = mdat.data, nals = 0;
+  for (let chunk = 1; chunk <= chunks; chunk += 1) {
+    if (mapping + 1 < mappingCount && chunk === c.u32(stsc.data + 8 + (mapping + 1) * 12)) mapping += 1;
+    const at = stsc.data + 8 + mapping * 12, first = c.u32(at), count = c.u32(at + 4);
+    requireValue((mapping !== 0 || first === 1) && first <= chunk && count > 0 && count <= samples && c.u32(at + 8) === 1);
+    requireValue(c.u32(stco.data + 8 + (chunk - 1) * 4) === end, "unqualified_metadata");
+    for (let index = 0; index < count; index += 1) {
+      requireValue(sample < samples); const size = uniform || c.u32(stsz.data + 12 + sample * 4); sample += 1;
+      let cursor = end, idr: boolean | undefined; end += size; requireValue(size > 0 && end <= mdat.end);
+      while (cursor < end) {
+        requireValue(++nals <= SELECTED_OUTPUT_SHARE_VIDEO_LIMITS.nals && cursor + 4 <= end);
+        const length = c.u32(cursor); cursor += 4; requireValue(length >= 2 && length <= end - cursor);
+        const type = bytes[cursor]! & 31; requireValue((bytes[cursor]! & 128) === 0 && (type === 1 || type === 5), "unqualified_metadata");
+        // Closed slice prefix binds the only configured PPS. Remaining coded
+        // picture bytes require decoding/playback review, not a metadata claim.
+        const bits = new Bits(bytes.subarray(cursor, Math.min(cursor + length, cursor + 64)), type); bits.ue(); const sliceType = bits.ue(9); requireValue(bits.ue(255) === ppsId && (type !== 5 || sliceType % 5 === 2));
+        requireValue(idr === undefined || idr === (type === 5), "unsupported_mp4"); idr = type === 5;
+        cursor += length;
+      }
+      requireValue(cursor === end && idr === (stss ? syncSamples.has(sample) : true));
+    }
+  }
+  requireValue(sample === samples && mapping + 1 === mappingCount && end === mdat.end, "unqualified_metadata");
+}
+
+/** Captures exact bytes before awaiting. No source custody, rights, visible
+ * content, covert encoded-picture data, or publication permission is inferred.
+ * No stripping, transcoding, provider call or public route is performed. */
+export async function qualifySelectedOutputShareVideo(input: unknown, expected: unknown): Promise<SelectedOutputShareVideoQualification> {
+  const refused = (reason: SelectedOutputShareVideoRefusal): SelectedOutputShareVideoQualification => Object.freeze({ status: "unqualified", policy: SELECTED_OUTPUT_SHARE_VIDEO_POLICY, reason });
+  let bytes: Uint8Array<ArrayBuffer> | null = null, retained = false;
+  try {
+    const facts = expectedFacts(expected); if (!facts) return refused("invalid_input"); bytes = captureBytes(input); if (!bytes) return refused("invalid_input");
+    if (bytes.length !== facts.byteLength) return refused("selection_mismatch");
+    publicMp4(bytes);
+    const inspection = await inspectOutputAsset(bytes, "video.mp4", { snapshot: false });
+    if (inspection.status !== "inspected" || inspection.kind !== "video" || inspection.mimeType !== "video/mp4" || inspection.extension !== "mp4"
+      || inspection.facts.codec !== "avc1" || inspection.facts.audioCodec !== undefined || inspection.facts.durationBasis !== "mp4-track-timeline") return refused("invalid_mp4");
+    if (inspection.sha256 !== facts.sha256 || inspection.byteLength !== facts.byteLength || inspection.facts.width !== facts.width || inspection.facts.height !== facts.height || inspection.facts.durationSeconds !== facts.durationSeconds) return refused("selection_mismatch");
+    const result = Object.freeze({ status: "qualified", policy: SELECTED_OUTPUT_SHARE_VIDEO_POLICY, mimeType: "video/mp4", ...facts }) as QualifiedSelectedOutputShareVideo;
+    ownedVideos.set(result, bytes); retained = true; return result;
+  } catch (error) { return refused(error instanceof Refusal ? error.reason : "invalid_input"); }
+  finally { if (!retained) bytes?.fill(0); }
+}
+/** Fresh copy; serialized/forged facts are not a byte-access capability. The
+ * caller must separately recheck current source and publishing authority. */
+export function copySelectedOutputShareVideoBytes(qualification: unknown): Uint8Array<ArrayBuffer> | null {
+  if (qualification === null || typeof qualification !== "object") return null;
+  const bytes = ownedVideos.get(qualification as QualifiedSelectedOutputShareVideo); return bytes ? new Uint8Array(bytes) : null;
+}
