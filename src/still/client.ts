@@ -3,9 +3,9 @@ import { documentArtifactRevision } from '../model/document-artifacts.ts';
 import type { DocumentJob } from '../model/document-jobs.ts';
 import { DEFAULT_MODEL3D_SETTINGS, validateModel3dRequest } from '../model/model3d.ts';
 import { isSceneCostPreview, type SceneCostPreview } from '../model/scene-cost-consent.ts';
-import type { Abilities, Position } from './decisions.ts';
+import { POLICY_VERSION, type Abilities, type Position } from './decisions.ts';
 import { adaptDocumentToModel3d, model3dAdaptationReceipt, type Model3dDocumentAdaptation } from '../model/model3d-prompt-adapter.ts';
-import { documentSnapshot } from './context.ts';
+import { documentSnapshot, documentSource } from './context.ts';
 import { operationJournal, digest, type WriteJournal } from './operation-journal.ts';
 
 export type Session = {
@@ -28,7 +28,7 @@ export async function api<T>(path: string, body?: unknown, method = body === und
   if (!response.ok) throw new ApiError(response.status, data);
   return data as T;
 }
-export type GenerationDraft = { format: string; prompt: string; itemCount: number; tone: string; audience: string; requestId: string; sourceHead: number; documentId: string; scopeKey: string; attempted?: boolean; sourceSnapshot?: Record<string, unknown>; sourceBlockVersions?: Array<Record<string, unknown>>; sourceRevision?: string; adaptation?: Model3dDocumentAdaptation; scenePreview?: SceneCostPreview; acknowledgements?: Record<string, boolean> };
+export type GenerationDraft = { format: string; prompt: string; itemCount: number; tone: string; audience: string; requestId: string; sourceHead: number; documentId: string; scopeKey: string; attempted?: boolean; sourceSnapshot?: ReturnType<typeof documentSnapshot>; sourceBlockVersions?: Array<Record<string, unknown>>; sourceRevision?: string; adaptation?: Model3dDocumentAdaptation; scenePreview?: SceneCostPreview; acknowledgements?: Record<string, boolean> };
 
 export class StillClient {
   session: Session | null = null;
@@ -47,6 +47,7 @@ export class StillClient {
   recoveredWrite = false;
   private creation: { signature: string; projectId: string; documentId: string } | null = null;
   get hasUnconfirmedWrite() { return !!this.pendingWrite || !!operationJournal.write(this.journalScope); }
+  get pendingGeneration() { return operationJournal.generation(this.journalScope, this.position.documentId); }
   get scopeKey() { return scope(this.session); }
   get projection() { return foldEvents(this.events, Infinity, this.position.documentId, this.position.projectId); }
   get abilities(): Abilities {
@@ -118,7 +119,7 @@ export class StillClient {
     const check = await this.verifyScope();
     const exportOnly = events.every(e => ['ObjectExported', 'DocumentArtifactExported'].includes(e.type));
     if (!this.abilities.author && !(exportOnly && this.session?.projectContext)) throw new Error('This workspace is read only.');
-    const inputs: EventInput[] = events.map(e => ({ ...e, payload: { ...e.payload, source_surface: 'still', interaction_policy: 'still-2' } }));
+    const inputs: EventInput[] = events.map(e => ({ ...e, payload: { ...e.payload, source_surface: 'still', interaction_policy: POLICY_VERSION } }));
     this.pendingWrite ??= operationJournal.write(this.journalScope);
     const signature = await digest(inputs); check();
     if (this.pendingWrite) {
@@ -189,6 +190,16 @@ export class StillClient {
     await this.refresh();
   }
   model3dAdaptation() { return adaptDocumentToModel3d(documentSnapshot(this.projection, this.position.documentId), { referenceCount: 0 }); }
+  prepareGeneration(format: string, previous?: GenerationDraft): GenerationDraft {
+    const pending = this.pendingGeneration;
+    if (previous?.attempted || pending && pending.format !== format) throw new Error('Check the earlier generation before changing format.');
+    const p = this.projection;
+    if (!pending && (!this.abilities.generate || !this.abilities.formats.includes(format))) throw new Error('Choose an available format.');
+    if (!p.documents.some(d => d.id === p.documentId && !d.removed)) throw new Error('Select a document.');
+    const source = documentSource(p, p.documentId);
+    const adaptation = format === 'model3d' ? this.model3dAdaptation() : undefined;
+    return { format, prompt: adaptation?.prompt ?? '', ...(adaptation ? { adaptation } : {}), documentId:p.documentId, scopeKey:this.scopeKey, itemCount:format === 'slides' ? 6 : format === 'storyboard' ? 4 : 1, tone:'', audience:'', requestId:crypto.randomUUID(), sourceHead:this.head, sourceSnapshot:source.snapshot, sourceBlockVersions:source.sourceBlockVersions, sourceRevision:source.revision, ...(pending ? { attempted:true } : {}) };
+  }
   generationPayload(draft: GenerationDraft) {
     const payload: Record<string, unknown> = { locale: 'en', productionMode: 'manual', promptTechnique: 'prose', requestKey: `still:${draft.documentId}:${draft.sourceHead}:${draft.requestId}`, ...(draft.sourceSnapshot ? {snapshot:draft.sourceSnapshot,sourceBlockVersions:draft.sourceBlockVersions,expectedDocumentRevision:draft.sourceRevision} : {}), ...(draft.format === 'image' ? {} : { artifactKind: draft.format, itemCount: draft.itemCount, tone: draft.tone, audience: draft.audience }) };
     if (draft.format === 'scene') Object.assign(payload, { sceneRequestId: draft.requestId, sceneMedium: 'visual', ...(draft.scenePreview ? { sceneCostConsent: { ...draft.scenePreview, confirmed: true } } : {}) });

@@ -7,9 +7,9 @@ import './vendor/elements/define/toolbar.js';
 import './vendor/elements/define/textarea.js';
 import './style.css';
 import './context-flow.ts';
-import { ACTIONS, eligibleActions, selectActions, type Action } from './decisions.ts';
+import { ACTIONS, POLICY_VERSION, eligibleActions, selectActions, type Action } from './decisions.ts';
 import { isContextCompositionRelation } from '../model/combined-context.ts';
-import { documentSource } from './context.ts';
+import { documentSnapshot } from './context.ts';
 import { api, ApiError, StillClient, type GenerationDraft } from './client.ts';
 import { documentArtifactRevision, model3dArtifactMediaFile, parseDocumentArtifactContent, type DocumentArtifact } from '../model/document-artifacts.ts';
 import { estimateModel3dCostMicrousd } from '../model/model3d.ts';
@@ -73,13 +73,15 @@ export class StillApp extends LitElement {
     const q = new URL(location.href).searchParams;
     const projectId = q.get('project') ?? this.client.session?.projectContext?.projectId ?? '';
     const documentId = q.get('document') ?? '';
-    this.client.position = { ...this.client.position, projectId, documentId, outputId: q.get('work') ?? '', blockId: '', view: q.has('work') ? 'artifact' : documentId ? 'document' : projectId ? 'documents' : 'projects' };
+    const changedDocument = projectId !== this.client.position.projectId || documentId !== this.client.position.documentId;
+    this.client.position = { ...this.client.position, ...(changedDocument ? { intent:'', recentActions:[] } : {}), projectId, documentId, outputId: q.get('work') ?? '', blockId: '', view: q.has('work') ? 'artifact' : documentId ? 'document' : projectId ? 'documents' : 'projects' };
     const p = this.client.projection;
     if (projectId && !p.projects.some(x => x.id === projectId) || documentId && !p.documents.some(x => x.id === documentId && !x.removed)) { this.error = 'Work unavailable in this workspace.'; this.client.position.projectId = this.client.session?.projectContext?.projectId ?? ''; this.client.position.documentId = ''; this.client.position.view = this.client.position.projectId ? 'documents' : 'projects'; }
   }
   private navigate(view: string, ids: Partial<StillClient['position']> = {}) {
     ++this.decisionTicket; this.mode = ''; this.page = 0; this.itemIndex = 0; this.error = ''; this.generationGate = null;
-    this.client.position = { ...this.client.position, blockId: '', outputId: '', ...ids, view };
+    const changedDocument = ids.documentId !== undefined && ids.documentId !== this.client.position.documentId || ids.projectId !== undefined && ids.projectId !== this.client.position.projectId;
+    this.client.position = { ...this.client.position, ...(changedDocument ? { intent:'', recentActions:[] } : {}), blockId: '', outputId: '', ...ids, view };
     const p = this.client.position, url = new URL(location.href);
     for (const [key, value] of [['project', p.projectId], ['document', p.documentId], ['work', p.outputId]]) value ? url.searchParams.set(key, value) : url.searchParams.delete(key);
     history.pushState(null, '', url); this.changed(); this.focusContent(); this.decide();
@@ -93,10 +95,10 @@ export class StillApp extends LitElement {
     this.decisionTimer = window.setTimeout(async () => {
       const snapshot = JSON.stringify(this.client.position), head = this.client.head;
       try {
-        const result = await api<{ actions: Action[]; source: string; head: number }>('/api/still/decision', this.client.position);
+        const result = await api<{ actions: Action[]; source: string; head: number; policy: string }>('/api/still/decision', this.client.position);
         if (ticket !== this.decisionTicket || snapshot !== JSON.stringify(this.client.position) || head !== this.client.head || this.mode || this.disposed) return;
         if (this.querySelector('.action-dock')?.contains(document.activeElement)) return; // Never move the focused action.
-        if (Array.isArray(result.actions) && (result.actions.length || result.source === 'jev') && result.head === head) { const allowed = new Map(this.candidates().map(a => [a.id, a])); this.suggestions = result.actions.map(a => allowed.get(a.id)).filter((a): a is Action => !!a).slice(0, 4); this.decisionSource = result.source; this.changed(); }
+        if (result.policy === POLICY_VERSION && Array.isArray(result.actions) && (result.actions.length || result.source === 'jev') && result.head === head) { const allowed = new Map(this.candidates().map(a => [a.id, a])); this.suggestions = result.actions.map(a => allowed.get(a.id)).filter((a): a is Action => !!a).slice(0, 4); this.decisionSource = result.source; this.changed(); }
       } catch { /* Local contextual actions remain fully usable. */ }
     }, 700);
   }
@@ -107,8 +109,8 @@ export class StillApp extends LitElement {
     }, this.client.jobs.some(j => activeJobs.has(j.status)) ? 2000 : 12000);
   }
   private button(label: string, action: () => void, primary = false, disabled = false) { return html`<en-button variant=${primary ? 'primary' : 'ghost'} .disabled=${this.busy || this.composing || disabled} @click=${action}>${label}</en-button>`; }
-  private field(label: string, value: string, change: (v: string) => void, rows = 3, placeholder = '') { return html`<en-textarea label=${label} .value=${live(value)} rows=${rows} placeholder=${placeholder} .disabled=${this.busy || this.client.hasUnconfirmedWrite} @en-input=${(e: CustomEvent<{ value: string; isComposing: boolean }>) => { change(e.detail.value); this.composing = e.detail.isComposing; if (!this.composing) this.changed(); }}></en-textarea>`; }
-  private closeMode() { this.mode = ''; this.bodyDraft = ''; this.titleDraft = ''; this.generationGate = null; this.generation = null; this.error = ''; this.decide(); this.focusContent(); }
+  private field(label: string, value: string, change: (v: string) => void, rows = 3, placeholder = '') { return html`<en-textarea label=${label} .value=${live(value)} rows=${rows} placeholder=${placeholder} .disabled=${this.busy || this.client.hasUnconfirmedWrite || !!this.generation?.attempted} @en-input=${(e: CustomEvent<{ value: string; isComposing: boolean }>) => { change(e.detail.value); this.composing = e.detail.isComposing; if (!this.composing) this.changed(); }}></en-textarea>`; }
+  private closeMode() { if (this.mode === 'generate') this.client.position.intent = ''; this.mode = ''; this.bodyDraft = ''; this.titleDraft = ''; this.generationGate = null; this.generation = null; this.error = ''; this.decide(); this.focusContent(); }
   private begin(mode: string) {
     this.pendingBlock = null; this.mode = mode; ++this.decisionTicket; clearTimeout(this.decisionTimer); this.error = ''; this.choice = ''; this.titleDraft = ''; this.bodyDraft = ''; this.kindDraft = 'direction';
     if (mode === 'actions') this.choice = this.candidates()[0]?.id ?? '';
@@ -132,12 +134,21 @@ export class StillApp extends LitElement {
     if (['lock', 'unlock', 'toggle-context'].includes(id)) {
       void this.run(async () => { const b = this.client.projection.blocks.find(x => x.id === this.client.position.blockId); if (!b) return; await this.client.append([{ type: id === 'toggle-context' ? 'BlockWeightSet' : id === 'lock' ? 'BlockLocked' : 'BlockUnlocked', payload: { block_id: b.id, ...(id === 'toggle-context' ? { weight: Number(b.properties.weight ?? 1) > 0 ? 0 : .8, previous_weight: b.properties.weight ?? 1 } : {}) } }]); this.notice = 'Updated.'; this.decide(); }); return;
     }
-    if (FORMATS[id]) {
-      const p = this.client.projection;
-      this.generation = { format: id, prompt: id === 'model3d' ? this.client.model3dAdaptation().prompt : '', ...(id === 'model3d' ? { adaptation: this.client.model3dAdaptation() } : {}), documentId:p.documentId, scopeKey:this.client.scopeKey, itemCount: id === 'slides' ? 6 : id === 'storyboard' ? 4 : 1, tone: '', audience: '', requestId: crypto.randomUUID(), sourceHead: this.client.head, sourceSnapshot: documentSource(p,p.documentId).snapshot, sourceBlockVersions:documentSource(p,p.documentId).sourceBlockVersions, sourceRevision:documentSource(p,p.documentId).revision };
+    if (id === 'create' || FORMATS[id]) {
+      this.generation = null; this.generationGate = null;
+      try {
+        const format = this.client.pendingGeneration?.format ?? (id === 'create' ? '' : id);
+        if (format) this.generation = this.client.prepareGeneration(format);
+      } catch (error) { this.error = error instanceof Error ? error.message : 'Format unavailable.'; this.changed(); return; }
       this.begin('generate'); return;
     }
     this.begin(id);
+  }
+  private chooseFormat(format: string) {
+    if (this.busy || this.composing || this.generation?.attempted) return;
+    try { this.generation = format ? this.client.prepareGeneration(format, this.generation ?? undefined) : null; this.generationGate = null; this.error = ''; }
+    catch (error) { this.error = error instanceof Error ? error.message : 'Format unavailable.'; }
+    this.changed();
   }
   private async save() {
     const c = this.client, p = c.projection;
@@ -162,7 +173,7 @@ export class StillApp extends LitElement {
   }
   private async generate() {
     const draft = this.generation; if (!draft) return;
-    if (draft.format === 'scene' && !draft.scenePreview) { const quote = await this.client.previewScene(draft); if (quote) draft.scenePreview = quote; this.changed(); return; }
+    if (!draft.attempted && draft.format === 'scene' && !draft.scenePreview) { const quote = await this.client.previewScene(draft); if (quote) draft.scenePreview = quote; this.changed(); return; }
     if (this.generationGate) { draft.acknowledgements = { ...draft.acknowledgements, [this.generationGate.key]: true }; this.generationGate = null; }
     try { await this.client.generate(draft); this.closeMode(); this.notice = 'Generating…'; }
     catch (error) {
@@ -224,9 +235,25 @@ export class StillApp extends LitElement {
   private renderMode() {
     const mode = this.mode, p = this.client.projection;
     if (['split-context','research-context','find-references','compose'].includes(mode)) return html`<still-context-flow .client=${this.client} .action=${mode} @context-back=${()=>this.closeMode()} @context-done=${()=>{this.notice='Saved.';this.closeMode();}}></still-context-flow>`;
-    if (mode === 'generate' && this.generation) {
+    if (mode === 'generate') {
       const g = this.generation;
-      return html`<section class="form-page generation-page"><span class="eyebrow">${p.documentTitle}</span><h1>${FORMATS[g.format]}</h1>${g.format === 'model3d' ? this.field('Prompt · 1,024 characters max', g.prompt, v => { g.prompt = v; }, 6) : html`<div class="generation-context">${p.blocks.filter(b => !b.removed && Number(b.properties.weight ?? 1) > 0).slice(0, 3).map(b => html`<p><span>${b.handle}</span>${text(b.properties.text).slice(0, 220)}</p>`)}</div>`}${['slides', 'storyboard'].includes(g.format) ? html`<label class="select-label">Length<select .value=${String(g.itemCount)} @change=${(e: Event) => { g.itemCount = Number((e.target as HTMLSelectElement).value); this.changed(); }}>${[3, 4, 6, 8, 10].map(n => html`<option value=${n}>${n} ${g.format === 'slides' ? 'slides' : 'frames'}</option>`)}</select></label>` : nothing}${!['model3d', 'image'].includes(g.format) ? this.field('Tone', g.tone, v => { g.tone = v; g.scenePreview = undefined; }, 1, 'Optional') : nothing}${g.adaptation?.omittedBlockIds.length ? html`<p class="cost-note">${g.adaptation.omittedBlockIds.length} blocks omitted to fit. Review the prompt.</p>` : nothing}${g.adaptation?.issues.map(i => html`<p class="gate-notice">${i.message}</p>`)}<p class="cost-note">${g.format === 'model3d' ? `Estimated cost: $${(estimateModel3dCostMicrousd() / 1e6).toFixed(2)} · GLB · text to 3D` : g.scenePreview ? `Maximum cost: $${(g.scenePreview.maximumMicrousd / 1e6).toFixed(2)} · ${g.scenePreview.model}` : g.format === 'scene' ? 'Cost approval required.' : 'Forma provider and spending limits apply.'}</p>${this.generationGate ? html`<p class="gate-notice">${this.generationGate.message}</p>` : nothing}<div class="form-actions">${this.button(g.format === 'scene' && !g.scenePreview ? 'Check cost' : g.attempted ? 'Check generation' : this.generationGate ? 'Approve' : 'Generate', () => void this.run(() => this.generate()), true)}${this.button('Back', () => this.closeMode())}</div></section>`;
+      const source = g?.sourceSnapshot ?? documentSnapshot(p, p.documentId);
+      const formats = this.candidates().filter(a => !!FORMATS[a.id]);
+      return html`<section class="form-page generation-page">
+        <span class="eyebrow">${p.projectName}</span><h1>${p.documentTitle}</h1>
+        <div class="generation-context">${source.facts.filter(b => b.active).map(b => html`<p><span>${b.handle || b.type}${b.locked ? ' · locked' : ''}</span>${safeMedia(text(b.properties.media_url)) && b.type === 'reference' ? html`<img class="context-reference" src=${safeMedia(text(b.properties.media_url))} alt=${b.handle}/>` : nothing}${text(b.properties.text) || text(b.properties.description)}</p>`)}</div>
+        <label class="select-label">Output<select .value=${live(g?.format ?? '')} ?disabled=${this.busy || this.composing || !!g?.attempted} @change=${(e: Event) => this.chooseFormat((e.target as HTMLSelectElement).value)}>
+          <option value="" .selected=${!g}>Choose a format</option>${formats.map(a => html`<option value=${a.id} .selected=${g?.format === a.id}>${FORMATS[a.id]}</option>`)}${g && !formats.some(a => a.id === g.format) ? html`<option value=${g.format} .selected=${true}>${FORMATS[g.format]}</option>` : nothing}
+        </select></label>
+        ${g?.format === 'model3d' ? this.field('Prompt · 1,024 characters max', g.prompt, v => { g.prompt = v; }, 6) : nothing}
+        ${g && ['slides', 'storyboard'].includes(g.format) ? html`<label class="select-label">Length<select .value=${String(g.itemCount)} ?disabled=${this.busy || !!g.attempted} @change=${(e: Event) => { g.itemCount = Number((e.target as HTMLSelectElement).value); this.changed(); }}>${[3, 4, 6, 8, 10].map(n => html`<option value=${n} .selected=${g.itemCount === n}>${n} ${g.format === 'slides' ? 'slides' : 'frames'}</option>`)}</select></label>` : nothing}
+        ${g && !['model3d', 'image'].includes(g.format) ? this.field('Tone', g.tone, v => { g.tone = v; g.scenePreview = undefined; }, 1, 'Optional') : nothing}
+        ${g?.adaptation?.omittedBlockIds.length ? html`<p class="cost-note">${g.adaptation.omittedBlockIds.length} blocks omitted to fit. Review the prompt.</p>` : nothing}
+        ${g?.adaptation?.issues.map(i => html`<p class="gate-notice">${i.message}</p>`)}
+        ${g ? html`<p class="cost-note">${g.attempted ? `Checking an earlier ${FORMATS[g.format].toLowerCase()} request.` : g.format === 'model3d' ? `Estimated cost: $${(estimateModel3dCostMicrousd() / 1e6).toFixed(2)} · GLB · text to 3D` : g.scenePreview ? `Maximum cost: $${(g.scenePreview.maximumMicrousd / 1e6).toFixed(2)} · ${g.scenePreview.model}` : g.format === 'scene' ? 'Cost approval required.' : 'Forma provider and spending limits apply.'}</p>` : nothing}
+        ${this.generationGate ? html`<p class="gate-notice">${this.generationGate.message}</p>` : nothing}
+        <div class="form-actions">${this.button(g?.attempted ? 'Check generation' : g?.format === 'scene' && !g.scenePreview ? 'Check cost' : this.generationGate ? 'Approve' : 'Generate', () => void this.run(() => this.generate()), true, !g)}${this.button('Back', () => this.closeMode())}</div>
+      </section>`;
     }
     if (mode === 'actions') return html`<section class="form-page"><h1>Actions</h1><label class="select-label">Action<select .value=${this.choice} @change=${(e: Event) => { this.choice = (e.target as HTMLSelectElement).value; this.changed(); }}>${this.candidates().map(a => html`<option value=${a.id}>${a.label}</option>`)}</select></label><div class="form-actions">${this.button('Go', () => this.choose(this.choice), true)}${this.button('Workspaces', () => { this.mode = 'workspaces'; this.changed(); })}${this.button('Refresh', () => void this.run(async () => { await this.client.load(); this.readRoute(); this.closeMode(); }))}${this.button('Back', () => this.closeMode())}</div></section>`;
     if (mode === 'workspaces') return html`<section class="form-page"><h1>Workspaces</h1><label class="select-label">Workspace<select .value=${this.choice} @change=${(e: Event) => { this.choice = (e.target as HTMLSelectElement).value; this.changed(); }}><option value="">Personal projects</option>${this.client.session?.projects?.map(p => html`<option value=${p.projectAccessId}>${p.projectName} · ${p.role}</option>`)}</select></label><div class="form-actions">${this.button('Open', () => void this.run(async () => { await this.client.switchWorkspace(this.client.session?.projects?.find(p => p.projectAccessId === this.choice)); this.navigate(this.client.position.view, this.client.position); }), true)}${this.button('Back', () => this.closeMode())}</div></section>`;

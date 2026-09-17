@@ -76,7 +76,8 @@ test('creative evidence changes tied action rankings without changing eligibilit
   const p=foldEvents(events,Infinity,'d','p'), candidates=eligibleActions(p,{...position,blockId:''},abilities);
   const answers=Object.fromEntries(candidates.map(a=>[`use_${a.id}`,{type:'score',score:2,confidence:.9}]));
   answers.model_subject={type:'noul',noul:1}; answers.model_scale={type:'noul',noul:1}; answers.model_material={type:'noul',noul:1};
-  assert.equal(selectActions(candidates,position,answers)[0].id,'model3d');
+  answers.requested_model3d={type:'noul',noul:1};
+  assert.equal(selectActions(candidates,{...position,intent:'Create a 3D model'},answers)[0].id,'model3d');
 });
 test('large multilingual histories retain the selected block in a bounded state',()=>{
   const full=[...events,...Array.from({length:100},(_,i)=>input('BlockCreated',{project_id:'p',document_id:'d',block_id:`long-${i}`,type:'direction',handle:'方向'.repeat(100),position:String(i+5),properties:{text:'創造的な世界'.repeat(1200),weight:1}},i+5))];
@@ -100,4 +101,58 @@ test('a stale personal save is refreshed but never automatically resubmitted',as
   globalThis.fetch=async(url,init)=>{if(url==='/api/session')return json(session);if(init?.method==='POST'){posts++;return json({error:'stale_sequence'},409);}return json({events:[changed],head:5,nextAfter:5,hasMore:false,content:{}});};
   const write={type:'BlockPropertyEdited',payload:{block_id:'b',property_path:'text',old_value:'A ceramic observatory on a brass tripod',new_value:'My obsolete text'}};
   try {await assert.rejects(c.append([write]),/workspace changed/);await assert.rejects(c.append([write]),/changed while you were writing/);assert.equal(posts,1);assert.equal(c.projection.blocks.find(b=>b.id==='b').properties.text,'Collaborator text');}finally{globalThis.fetch=original;}
+});
+
+
+test('source content and past output choices never imply a format',()=>{
+  const p=foldEvents(events,Infinity,'d','p');
+  for (const blockId of ['', 'b']) {
+    const pos={...position,blockId,recentActions:['image','model3d','image']};
+    const candidates=eligibleActions(p,pos,abilities);
+    const fallback=selectActions(candidates,pos);
+    assert.ok(fallback.some(a=>a.id==='create'));
+    assert.ok(!fallback.some(a=>abilities.formats.includes(a.id)));
+    const questions=questionsFor(candidates,pos);
+    assert.equal(questions.model_subject,undefined);assert.equal(questions.use_image,undefined);
+    assert.ok(questions.use_create);assert.ok(questions.manage_ideas);
+    const misleading={use_image:{type:'score',score:3,confidence:1},requested_image:{type:'noul',noul:1},subject:{type:'noul',noul:1},light:{type:'noul',noul:1}};
+    assert.ok(!selectActions(candidates,pos,misleading).some(a=>a.id==='image'));
+  }
+});
+test('specific creation suggestions require current intent and explicit format evidence',()=>{
+  const candidates=eligibleActions(foldEvents(events,Infinity,'d','p'),position,abilities);
+  const pos={...position,intent:'Explore what this brass object could become'};
+  const answers={use_image:{type:'score',score:3,confidence:1},use_create:{type:'score',score:2,confidence:1}};
+  assert.deepEqual(selectActions(candidates,pos,answers).map(a=>a.id),['create']);
+  assert.deepEqual(selectActions(candidates,pos,{...answers,requested_image:{type:'noul',noul:.5}}).map(a=>a.id),['create']);
+  const specific=selectActions(candidates,{...pos,intent:'Create an image'}, {...answers,requested_image:{type:'noul',noul:1}});
+  assert.deepEqual(specific.map(a=>a.id),['image']);
+  const viewed=questionsFor(candidates,{...position,view:'artifact'},'short_story');
+  assert.ok(viewed.protagonist);assert.equal(viewed.use_short_story,undefined);
+});
+test('choosing and changing formats is local and resets request-specific approval state',()=>{
+  const c=client(), before=JSON.stringify(c.events);
+  assert.throws(()=>c.prepareGeneration(''),/Choose an available format/);
+  assert.throws(()=>c.prepareGeneration('video'),/Choose an available format/);
+  const scene=c.prepareGeneration('scene');
+  scene.scenePreview={maximumMicrousd:1};scene.acknowledgements={budgetAcknowledged:true};scene.tone='Old tone';
+  const model=c.prepareGeneration('model3d',scene);
+  assert.equal(model.format,'model3d');assert.ok(model.adaptation);assert.match(model.prompt,/people/);
+  assert.equal(model.scenePreview,undefined);assert.equal(model.acknowledgements,undefined);assert.equal(model.tone,'');
+  assert.notEqual(scene.requestId,model.requestId);assert.equal(model.sourceRevision,scene.sourceRevision);
+  const slides=c.prepareGeneration('slides',model);assert.equal(slides.itemCount,6);assert.equal(slides.adaptation,undefined);
+  assert.equal(JSON.stringify(c.events),before);assert.equal(c.pendingGeneration,null);
+  c.events.push(input('BlockPropertyEdited',{block_id:'b',property_path:'text',old_value:'A ceramic observatory on a brass tripod',new_value:'New content'},5));
+  assert.equal(slides.sourceSnapshot.facts.find(b=>b.block_id==='b').properties.text,'A ceramic observatory on a brass tripod');
+});
+test('an unconfirmed generation locks the original format even after returning to the document',()=>{
+  const c=client();
+  const original=c.prepareGeneration('image');original.attempted=true;
+  assert.throws(()=>c.prepareGeneration('model3d',original),/earlier generation/);
+  operationJournal.saveGeneration('test:personal',{documentId:'d',format:'scene',requestKey:'earlier'});
+  try {
+    assert.throws(()=>c.prepareGeneration('image'),/earlier generation/);
+    const recovered=c.prepareGeneration(c.pendingGeneration.format);
+    assert.equal(recovered.format,'scene');assert.equal(recovered.attempted,true);assert.equal(recovered.scenePreview,undefined);
+  } finally {operationJournal.clearGeneration('test:personal','d');}
 });
