@@ -1,0 +1,9 @@
+forma-native-retained-model3d { display:block; min-inline-size:0; }
+.native-retained-model3d-open { min-inline-size:44px; min-block-size:44px; touch-action:manipulation; }
+.native-retained-model3d-dialog { box-sizing:border-box; inline-size:min(44rem,calc(100dvi - 2rem)); max-inline-size:calc(100dvi - 2rem); max-block-size:calc(100dvb - 2rem); padding:1rem; border:1px solid var(--line); border-radius:.75rem; background:var(--panel); color:var(--ink); overflow:auto; overscroll-behavior:contain; }
+.native-retained-model3d-dialog::backdrop { background:rgb(0 0 0 / .5); }
+.native-retained-model3d-dialog > header { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:.75rem; margin-block-end:1rem; }
+.native-retained-model3d-dialog > header h2 { margin:0; overflow-wrap:anywhere; }
+.native-retained-model3d-dialog > header button { min-inline-size:44px; min-block-size:44px; }
+.native-retained-model3d-inspection { min-inline-size:0; }
+.native-retained-model3d-dialog :focus-visible { outline-offset:3px; scroll-margin:.5rem; }
