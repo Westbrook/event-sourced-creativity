@@ -10,7 +10,7 @@ import { readOutputModel3dPayload, requireModel3dMiniAppCostApproval } from "./o
 import { requireSponsorAdmission, sponsorAdmissionPayer, sponsorAdmissionPlan, sponsorSceneAdmissionPreparation, sponsorAudioAdmissionPreparation, type SponsorAdmissionAuthority } from "./experience-sponsor-admission.ts";
 import { requireSponsorExecution, sponsorSceneRunPreparation, sponsorAudioRunPreparation, type SponsorExecutionAuthority } from "./experience-sponsor-execution.ts";
 import { prepareSceneSponsorAdmission, prepareSceneSponsorRun, requireSceneSponsorAdmissionForTarget, requireSceneSponsorAdmissionCurrent, sceneSponsorRunTransaction } from "./output-scene-sponsored-handoff.ts";
-import { prepareAudioSponsorAdmission, prepareAudioSponsorRun, requireAudioSponsorAdmissionForTarget, requireAudioSponsorAdmissionCurrent, audioSponsorRunTransaction } from "./output-audio-sponsored-handoff.ts";
+import { prepareAudioSponsorReview, prepareAudioSponsorAdmission, prepareAudioSponsorRun, requireAudioSponsorAdmissionForTarget, requireAudioSponsorAdmissionCurrent, audioSponsorRunTransaction } from "./output-audio-sponsored-handoff.ts";
 import { readSponsorInternalCommand } from "./experience-sponsor-approval.ts";
 import { readSponsoredAudioActorRequest, readSponsoredAudioReview } from "../src/experiences/sponsored-audio-actor-intent.ts";
 import { outputModel3dPreflightAssertions } from "./output-model3d-preflight.ts";
@@ -1433,6 +1433,44 @@ export const outputExperienceCommands = {
       return own(result, "success") !== true || !audioAcknowledgementErrorClear(result) || !Array.isArray(rows) || own(rows, "length") !== 1 || own(own(rows, 0), "current") !== 1;
     }).some(Boolean)) fail("sponsor_audio_handoff_changed", 403);
     current(); return { kind: "retained" as const, receipt, marker: structuredClone(marker), envelope: structuredClone(envelope) };
+  },
+  /** Passive existing-Document review. It never writes a plan/preflight or consent. */
+  async prepareSponsoredAudioReview(trusted: OutputTrustedContext, preflightId: string) {
+    requireCurrentSource(trusted);
+    const body = { preflightId: identifier(preflightId, "preflight_id_required") }, current = audioSponsorPreparationCurrent(trusted, body);
+    const row = await trusted.env.DB.prepare(`SELECT preflight.event_id,preflight.expires_at,preflight.terms_digest,
+      plan.plan_revision_id,plan.revision,plan.confirmed_event_id,plan.source_digest,plan.requirements_digest
+      FROM output_preflights preflight JOIN output_plan_revisions plan ON plan.scope_key=preflight.scope_key AND plan.plan_revision_id=preflight.plan_revision_id
+      WHERE preflight.scope_key=? AND preflight.preflight_id=? AND preflight.actor_user_id=? AND plan.scope_kind='personal'
+        AND plan.document_id=? AND plan.owner_user_id=? AND plan.project_id=?`)
+      .bind(trusted.scope.key, body.preflightId, trusted.scope.actorUserId, trusted.scope.documentId, trusted.scope.ownerUserId, trusted.scope.projectId)
+      .first<{ event_id: string; expires_at: string; terms_digest: string; plan_revision_id: string; revision: number;
+        confirmed_event_id: string; source_digest: string; requirements_digest: string }>();
+    current();
+    if (!row || row.expires_at <= nowIso()) fail("output_preflight_expired", 409);
+    const quote = record((await privateEventBody(trusted.env, trusted.scope, row.event_id)).preflight) as OutputPreflight;
+    current();
+    if (quote.id !== body.preflightId || quote.termsDigest !== row.terms_digest || quote.expiresAt !== row.expires_at
+      || quote.planRevisionId !== row.plan_revision_id) fail("output_preflight_evidence_mismatch", 409);
+    // Capture the exact native row and the private body reached through its
+    // original pointer. Old bytes alone cannot prove that pointer is current.
+    const stored = record((await privateEventBody(trusted.env, trusted.scope, row.confirmed_event_id)).confirmed_plan); current();
+    if (!stored.plan || stored.revisionId !== row.plan_revision_id || stored.revision !== row.revision
+      || stored.sourceDigest !== row.source_digest || stored.requirementsDigest !== row.requirements_digest) fail("output_plan_evidence_mismatch", 409);
+    const plan = currentPlan(trusted, stored as OutputConfirmedPlan);
+    if (plan.plan.targets.length !== 1 || quote.targets.length !== 1 || !Object.hasOwn(plan.plan.targets[0]!, "audio_contract")) fail("sponsor_audio_handoff_changed", 403);
+    const quoteAssertions: OutputSqlAssertion[] = [...retainedOutputBodyAssertions(trusted.scope), {
+      sql: `EXISTS(SELECT 1 FROM output_preflights WHERE scope_key=? AND preflight_id=? AND actor_user_id=? AND event_id=? AND terms_digest=? AND expires_at=? AND plan_revision_id=?)`,
+      bindings: [trusted.scope.key, body.preflightId, trusted.scope.actorUserId, row.event_id, row.terms_digest, row.expires_at, plan.revisionId], deadlineMs: Date.parse(row.expires_at),
+    }, {
+      sql: `EXISTS(SELECT 1 FROM output_plan_revisions plan WHERE plan.scope_key=? AND plan.document_id=? AND plan.plan_revision_id=? AND plan.revision=? AND plan.source_digest=? AND plan.requirements_digest=?
+        AND plan.confirmed_event_id=? AND plan.scope_kind='personal' AND plan.owner_user_id=? AND plan.project_id=?
+        AND NOT EXISTS(SELECT 1 FROM output_plan_revisions newer WHERE newer.scope_key=plan.scope_key AND newer.revision>plan.revision))`,
+      bindings: [trusted.scope.key, trusted.scope.documentId, plan.revisionId, plan.revision, trusted.sourceDigest, trusted.requirementsDigest,
+        row.confirmed_event_id, trusted.scope.ownerUserId, trusted.scope.projectId],
+    }];
+    const prepared = await prepareAudioSponsorReview({ source: bridgeTarget(trusted, plan, plan.plan.targets[0]!), quote, quoteAssertions });
+    current(); if (Date.now() >= Date.parse(row.expires_at)) fail("output_preflight_expired", 409); return prepared;
   },
   /** Dormant Audio preparation. The exact original POST is consumed inside its opaque owner. */
   async prepareSponsoredAudioAdmission(trusted: OutputTrustedContext, body: Record<string, unknown>, review: unknown) {

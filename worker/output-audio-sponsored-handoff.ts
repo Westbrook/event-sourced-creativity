@@ -16,10 +16,12 @@ import { readSponsorInternalCommand } from "./experience-sponsor-approval.ts";
 import { readSponsorAudioActorEvidence } from "./experience-sponsor-audio-actor-evidence.ts";
 
 declare const admissionBrand: unique symbol;
+declare const reviewBrand: unique symbol;
 declare const runBrand: unique symbol;
 declare const dispatchBrand: unique symbol;
 declare const dispatchOwnerBrand: unique symbol;
 export type AudioSponsorAdmissionPreparation = Readonly<{ [admissionBrand]: true }>;
+export type AudioSponsorReviewPreparation = Readonly<{ [reviewBrand]: true }>;
 export type AudioSponsorRunPreparation = Readonly<{ [runBrand]: true }>;
 export type AudioSponsorDispatchEvidence = Readonly<{ [dispatchBrand]: true }>;
 export type AudioSponsorDispatchOwner = Readonly<{ [dispatchOwnerBrand]: true }>;
@@ -94,6 +96,7 @@ type Base = { source: AudioNativeSource; request: Request; signal: AbortSignal; 
   quote: OutputPreflight; quoteJson: string; assertions: OutputSqlAssertion[]; deadlineMs: number;
   identities: {scope: AudioNativeSource["scope"]; principal: AudioNativeSource["principal"]; context: AudioNativeSource["context"]; events: AudioNativeSource["sourceEvents"]; plan: AudioNativeSource["confirmedPlan"]; target: AudioNativeSource["target"]} };
 const admissions = new WeakMap<AudioSponsorAdmissionPreparation, Base & { actor: ActorEvidence; actorIntent: AudioSponsorActorIntent }>();
+const reviews = new WeakMap<AudioSponsorReviewPreparation, Base>();
 const runs = new WeakMap<AudioSponsorRunPreparation, Base & { slot: OutputOperationSlot; slotJson: string; correlationId: string }>();
 function allowedAssertions(state: Base, assertions: readonly OutputSqlAssertion[] | undefined) {
   const candidate = json(assertions ?? []), original = JSON.parse(state.originalAssertionsJson) as OutputSqlAssertion[];
@@ -146,6 +149,49 @@ function evidenceSource(state: Base, trusted: OutputTrustedContext): AudioNative
   return { ...state.source, request: trusted.request, env: trusted.env, scope: trusted.scope, principal: trusted.principal,
     context: trusted.context, ownerHead: trusted.ownerHead, sourceEvents: trusted.events, sourceAssertions: trusted.sourceAssertions,
     sourceDigest: trusted.sourceDigest, requirementsDigest: trusted.requirementsDigest };
+}
+/** Consent-free native quote proof for an already-owned ordinary Document.
+ * This separate capability cannot be used for admission, Run or dispatch. */
+export async function prepareAudioSponsorReview(input: { source: AudioNativeSource; quote: OutputPreflight; quoteAssertions: readonly OutputSqlAssertion[] }): Promise<AudioSponsorReviewPreparation> {
+  personal(input.source);
+  const request = input.source.request, signal = signalOf(request), env = input.source.env, database = env.DB;
+  const identities = { scope: input.source.scope, principal: input.source.principal, context: input.source.context, events: input.source.sourceEvents };
+  const facts = () => json({ source: sourceFacts(input.source), assertions: input.source.sourceAssertions ?? [], quote: input.quote,
+    quoteAssertions: input.quoteAssertions, request: requestFacts(request), environment: environmentFacts(env) });
+  const captured = facts(), expiresAt = Date.parse(input.quote.expiresAt);
+  const current = () => {
+    requireSignal(signal);
+    if (input.source.request !== request || signalOf(request) !== signal || input.source.env !== env || env.DB !== database
+      || input.source.scope !== identities.scope || input.source.principal !== identities.principal || input.source.context !== identities.context
+      || input.source.sourceEvents !== identities.events || facts() !== captured || !Number.isFinite(expiresAt)
+      || !Number.isFinite(Date.now()) || Date.now() >= expiresAt) fail();
+  };
+  current();
+  const settings = input.quote.targets[0]?.settings;
+  const payload = settings && record(settings.payload) ? settings.payload : null;
+  const contract = payload && readOutputAudioPayload(payload);
+  if (!contract || !input.quoteAssertions.length) fail();
+  const classification = await classifySponsorIntakeDraft(env, contract.source.draftId); current();
+  if (classification.kind !== "ordinary") fail();
+  const state = await nativeBase({ source: input.source, quote: input.quote,
+    command: { action: "sponsor-audio-review", preflightId: input.quote.id } });
+  current(); currentBase(state);
+  state.assertions.push(copy(classification.guard), ...copy(input.quoteAssertions));
+  state.deadlineMs = Math.min(state.deadlineMs, ...input.quoteAssertions.flatMap(value => value.deadlineMs === undefined ? [] : [value.deadlineMs]));
+  await check(env, state.assertions, () => { current(); currentBase(state); }); current(); currentBase(state);
+  const handle = Object.freeze({}) as AudioSponsorReviewPreparation;
+  reviews.set(handle, state); return handle;
+}
+/** Internal display metadata and a final-current guard, never wire authority. */
+export async function requireAudioSponsorReviewForDisplay(handle: AudioSponsorReviewPreparation, trusted: OutputTrustedContext) {
+  const state = reviews.get(handle); if (!state) fail();
+  const assertCurrent = () => currentBase(state, evidenceSource(state, trusted));
+  assertCurrent(); await check(state.env, state.assertions, assertCurrent); assertCurrent();
+  const { preview, contract } = proofOf(state.native);
+  const result = { quote: copy(state.quote), preview, draftHash: contract.source.draftHash,
+    releaseHash: contract.source.releaseHash, targetId: state.native.targetId,
+    expectedRevision: `output:${state.source.ownerHead}`, assertions: copy(state.assertions), deadlineMs: state.deadlineMs, assertCurrent };
+  assertCurrent(); return result;
 }
 /** The actual original Request is consumed by actor31e inside this capability owner.
  * An externally supplied actor/native DTO cannot mint this handle. */
