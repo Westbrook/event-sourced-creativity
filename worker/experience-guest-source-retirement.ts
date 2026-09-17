@@ -32,9 +32,11 @@ const sessionPolicyColumns = ["policy_id", "terms_digest", "terms_json", "review
 const draftColumns = ["content_id", "owner_id", "kind", "content", "created_at", "expires_at", "redacted_at"];
 const commitColumns = ["session_id", "draft_hash", "head", "event_ids_json"];
 const eventColumns = ["event_id", "stream_id", "sequence", "occurred_at", "recorded_at", "actor", "client_id", "correlation_id", "causation_id", "compensates_event_id", "schema_version", "type", "payload"];
-const eventWitness = `json_object(${eventColumns.flatMap(column => [`'${column}'`, `e.${column}`]).join(",")},
-  'owner_id',body.owner_id,'project_id',body.project_id,'document_id',body.document_id,'private_json',body.private_json,
-  'created_at',body.created_at,'redacted_at',body.redacted_at,'receipt_key',receipt.client_event_id,'receipt_created_at',receipt.created_at)`;
+// Preserve the flat, ordered witness including explicit nulls. D1 caps SQL
+// function arguments at 32: the base object uses 26 and json_set uses 17.
+const eventWitness = `json_set(${objectSql(eventColumns, "e.")},
+  '$.owner_id',body.owner_id,'$.project_id',body.project_id,'$.document_id',body.document_id,'$.private_json',body.private_json,
+  '$.created_at',body.created_at,'$.redacted_at',body.redacted_at,'$.receipt_key',receipt.client_event_id,'$.receipt_created_at',receipt.created_at)`;
 const eventJoins = `JOIN events e ON e.event_id=expected.value
   JOIN event_private_payloads body ON body.private_event_id=e.event_id
   JOIN event_client_receipts receipt ON receipt.event_id=e.event_id AND receipt.stream_id=e.stream_id AND receipt.sequence=e.sequence`;

@@ -92,8 +92,12 @@ test('expired prepared-only source erases its native draft and preserves immutab
 });
 test('expired committed source retires only original private copies and exact repeat is inert',async t=>{
   const f=await fixture(t),committed=await f.commit(),before=history(f);await expire(f);
-  expectRetired(f,await f.retire(),committed.eventIds.length,false);assert.deepEqual(history(f),before);
-  const erased=privateRows(f);expectRetired(f,await f.retire(),committed.eventIds.length,true);assert.deepEqual(privateRows(f),erased);
+  const limits=enforceD1ExpressionDepth(f,{queryLimits:{functionArguments:32,parameters:100,sqlBytes:100000}});
+  let erased;
+  try{expectRetired(f,await f.retire(),committed.eventIds.length,false);assert.deepEqual(history(f),before);
+    erased=privateRows(f);expectRetired(f,await f.retire(),committed.eventIds.length,true);assert.deepEqual(privateRows(f),erased);
+    limits.assertVerified();t.diagnostic(JSON.stringify({schema:'absent',maxBindings:Math.max(...limits.boundCounts),maxSqlBytes:Math.max(...limits.records.map(r=>r.statementBytes)),qualifiedQueries:limits.records.length}));
+  }finally{limits.restore();}
   await assert.rejects(prepareGuestImageSource(request(),f.env,f.input));await assert.rejects(f.commit());
   assert.deepEqual(privateRows(f),erased);assert.deepEqual(history(f),before);
 });
@@ -228,8 +232,10 @@ function memoryMarker(f,version=1){
 }
 test('native memory complete empty migrations preserve ordinary due guest cleanup',async t=>{
   const f=await fixture(t),committed=await f.commit();for(const kind of ['native','structured','job'])installMemorySchema(f,kind);
-  const before=history(f);await expire(f);const depth=enforceD1ExpressionDepth(f);
-  try{expectRetired(f,await f.retire(),committed.eventIds.length,false);depth.assertVerified();}finally{depth.restore();}
+  const before=history(f);await expire(f);const depth=enforceD1ExpressionDepth(f,{queryLimits:{functionArguments:32,parameters:100,sqlBytes:100000}});
+  try{expectRetired(f,await f.retire(),committed.eventIds.length,false);depth.assertVerified();
+    t.diagnostic(JSON.stringify({schema:'complete',maxBindings:Math.max(...depth.boundCounts),maxSqlBytes:Math.max(...depth.records.map(r=>r.statementBytes)),qualifiedQueries:depth.records.length}));
+  }finally{depth.restore();}
   assert.deepEqual(history(f),before);
 });
 for(const kind of ['structured','job'])for(const slot of ['user_content_id','answer_content_id','manifest_content_ref'])
