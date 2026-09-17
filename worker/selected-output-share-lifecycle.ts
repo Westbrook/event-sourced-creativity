@@ -1,16 +1,22 @@
-import { parseSelectedOutputShareApproval, parseSelectedOutputShareSelection, projectSelectedOutputShareCandidate,
-  SELECTED_OUTPUT_SHARE_PURPOSE, type SelectedOutputShareSelection } from "../src/model/selected-output-share.ts";
+import { parseSelectedOutputShareAnyApproval, parseSelectedOutputShareAnySelection, projectSelectedOutputShareCandidate,
+  projectSelectedOutputShareMediaCandidate, selectedOutputShareNativeMediaSelection,
+  SELECTED_OUTPUT_SHARE_PURPOSE, type SelectedOutputShareAnySelection } from "../src/model/selected-output-share.ts";
 import { hostedIdentity, readNativeRetainedTextCustody, nativeRetainedTextCustodySnapshot,
   type NativeRetainedIdentity } from "./native-retained-text-custody.ts";
-import { readSelectedOutputShareAuthority, selectedOutputShareAuthoritySnapshot,
+import { readSelectedOutputShareAuthority, readSelectedOutputShareMediaAuthority, selectedOutputShareAuthoritySnapshot,
   selectedOutputShareAuthorityAssertion } from "./selected-output-share-authority.ts";
+import { readNativeRetainedMediaCustody, nativeRetainedMediaCustodySnapshot } from "./native-retained-media-custody.ts";
+import { readNativeRetainedMediaBytes, copyCurrentNativeRetainedMediaBytes, assertNativeRetainedMediaBytesCurrent,
+  NATIVE_RETAINED_MEDIA_BYTES_BUDGET_MS, type NativeRetainedMediaBytes } from "./native-retained-media-bytes.ts";
+import { SELECTED_OUTPUT_SHARE_VIDEO_X264_POLICY } from "../src/model/selected-output-share-video.ts";
 import { selectedOutputShareSchemaState, selectedOutputShareSchemaAssertion } from "./selected-output-share-readiness.ts";
 import type { WorkerEnv } from "./runtime.ts";
 import { selectedSharePredicateProof, selectedShareProofStatement, type SelectedShareProofQuery } from "./selected-output-share-proof.ts";
 
 // The finite selected-share dispatcher exposes read/revoke only while creation
-// remains closed. No initializer, provider, budget or private-media entry is
-// imported here. Every source proof is freshly obtained inside the call.
+// remains closed. There is no initializer, provider or budget entry here. The
+// media branch uses only opaque current native custody and bounded owned bytes.
+// Every source and publication proof is freshly obtained inside the call.
 const encoder = new TextEncoder();
 const id = (value: unknown): value is string => typeof value === "string" && /^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$/u.test(value);
 const digest = (value: unknown): value is string => typeof value === "string" && /^[a-f0-9]{64}$/u.test(value);
@@ -38,10 +44,10 @@ const timestamp = (value: unknown): value is string => typeof value === "string"
   && Number.isFinite(Date.parse(value)) && new Date(value).toISOString() === value;
 const exact = (value: unknown, keys: string[]): value is Record<string, unknown> => value !== null && typeof value === "object" && !Array.isArray(value)
   && Object.keys(value).length === keys.length && keys.every(key => Object.hasOwn(value, key));
-function frame(request: Request, env: WorkerEnv) {
+function frame(request: Request, env: WorkerEnv, operationSignal: AbortSignal = request.signal) {
   const db = env.DB, cohort = env.FORMA_PILOT_COHORT_ID, administrators = env.FORMA_ADMIN_EMAILS;
   return () => {
-    if (env.DB !== db || env.FORMA_PILOT_COHORT_ID !== cohort || env.FORMA_ADMIN_EMAILS !== administrators || request.signal.aborted) fail();
+    if (env.DB !== db || env.FORMA_PILOT_COHORT_ID !== cohort || env.FORMA_ADMIN_EMAILS !== administrators || request.signal.aborted || operationSignal.aborted) fail();
   };
 }
 function origin(request: Request) {
@@ -88,7 +94,7 @@ function row(value: unknown): Row {
   return result;
 }
 function selectionOf(current: Row) {
-  try { return parseSelectedOutputShareSelection(JSON.parse(current.selection_json!)) ?? fail(); } catch { return fail(); }
+  try { return parseSelectedOutputShareAnySelection(JSON.parse(current.selection_json!)) ?? fail(); } catch { return fail(); }
 }
 function rowAssertion(current: Row): Assertion {
   return { sql: `EXISTS(SELECT 1 FROM selected_output_shares WHERE ${rowColumns.map(column => `${column} IS ?`).join(" AND ")})`,
@@ -103,14 +109,32 @@ function live(current: Row, active = false): Assertion {
     AND expires_at>${nowSql} AND source_expires_at>${nowSql} AND provenance_expires_at>${nowSql}${active ? " AND token_hash IS NOT NULL AND issued_at IS NOT NULL" : ""})`,
   bindings: [current.share_id, SELECTED_OUTPUT_SHARE_PURPOSE] };
 }
-async function fresh(env: WorkerEnv, principal: NativeRetainedIdentity, selection: SelectedOutputShareSelection, review: unknown) {
+async function fresh(env: WorkerEnv, principal: NativeRetainedIdentity, selection: SelectedOutputShareAnySelection,
+  review: unknown, signal: AbortSignal) {
+  if (selection.output === "audio" || selection.output === "video" || selection.output === "model3d") {
+    const nativeSelection = selectedOutputShareNativeMediaSelection(selection);
+    if (!nativeSelection) fail();
+    const custody = await readNativeRetainedMediaCustody(env, principal, nativeSelection, signal);
+    const source = nativeRetainedMediaCustodySnapshot(custody, env);
+    const authority = await readSelectedOutputShareMediaAuthority(env, custody);
+    const provenance = selectedOutputShareAuthoritySnapshot(authority, env);
+    const media = await readNativeRetainedMediaBytes(custody, env);
+    const disclosure = source.dto.output === "audio"
+      ? { watermark: source.dto.content.synthIdWatermarked === true ? "synthid-declared" : "not-declared" }
+      : source.dto.output === "video" ? { encoderDeclaration: nativeSelection.policy === SELECTED_OUTPUT_SHARE_VIDEO_X264_POLICY ? "x264-163-r3060" : null } : {};
+    const candidate = await projectSelectedOutputShareMediaCandidate(selection,
+      { descriptor: media.descriptor, sourceExpiresAt: source.expiresAt, disclosure }, review);
+    if (!candidate || candidate.publicOutput.expiresAt > provenance.expiresAt) fail();
+    return { source, provenance, candidate, media, sourceExpiry: candidate.sourceExpiresAt,
+      authHash: await hash(source.authSnapshot), proof: selectedOutputShareAuthorityAssertion(authority, env) };
+  }
   const custody = await readNativeRetainedTextCustody(env, principal, selection);
   const source = nativeRetainedTextCustodySnapshot(custody, env);
   const authority = await readSelectedOutputShareAuthority(env, custody);
   const provenance = selectedOutputShareAuthoritySnapshot(authority, env);
   const candidate = await projectSelectedOutputShareCandidate(selection, source.dto, review);
   if (!candidate || candidate.publicOutput.expiresAt > provenance.expiresAt) fail();
-  return { source, provenance, candidate, authHash: await hash(source.authSnapshot),
+  return { source, provenance, candidate, media: null, sourceExpiry: source.sourceExpiresAt, authHash: await hash(source.authSnapshot),
     // The authority witness includes this exact native custody assertion.
     proof: selectedOutputShareAuthorityAssertion(authority, env) };
 }
@@ -119,14 +143,15 @@ function matches(current: Row, value: Awaited<ReturnType<typeof fresh>>) {
     || current.owner_id !== value.source.identity.userId || current.owner_email !== value.source.identity.email
     || current.project_id !== value.source.projectId || current.job_id !== value.provenance.jobId
     || current.completion_event_id !== value.source.completionId || current.completion_event_id !== value.provenance.completionId
-    || current.source_expires_at !== value.source.sourceExpiresAt || current.provenance_expires_at !== value.provenance.expiresAt
+    || current.source_expires_at !== value.sourceExpiry || current.provenance_expires_at !== value.provenance.expiresAt
     || current.selection_json !== JSON.stringify(value.candidate.selection) || current.review_title !== value.candidate.publicOutput.title
     || current.expires_at !== value.candidate.publicOutput.expiresAt) fail();
 }
-async function finalProof(env: WorkerEnv, assertion: readonly SelectedShareProofQuery[]) {
+async function finalProof(env: WorkerEnv, assertion: readonly SelectedShareProofQuery[], media: NativeRetainedMediaBytes | null) {
   const proof = selectedShareProofStatement(joined(selectedOutputShareSchemaAssertion(), assertion));
   const result = await env.DB.prepare(`${proof.withSql} SELECT 1 AS permitted WHERE ${proof.sql}`).bind(...proof.bindings).first<{ permitted: number }>();
   if (result?.permitted !== 1) fail();
+  if (media) assertNativeRetainedMediaBytesCurrent(media, env);
 }
 const shareMetadata = (current: Row) => ({ shareId: current.share_id, expiresAt: current.expires_at, active: true as const });
 
@@ -136,20 +161,20 @@ export async function prepareSelectedOutputShare(request: Request, env: WorkerEn
   try {
     const stable = frame(request, env), principal = identity(request), input = await command(request); stable();
     if (!exact(input, ["intentKey", "selection", "review"]) || !id(input.intentKey)) fail("selected_output_share_command_invalid", 400);
-    const selection = parseSelectedOutputShareSelection(input.selection);
+    const selection = parseSelectedOutputShareAnySelection(input.selection);
     if (!selection) fail("selected_output_share_command_invalid", 400);
     await ready(env); stable();
     const intent = await replayKey(principal.userId, input.intentKey); stable();
     let existing = await env.DB.prepare(`SELECT ${rowColumns.join(",")} FROM selected_output_shares WHERE replay_key=?`)
       .bind(intent).first(); stable();
     if (existing) row(existing); // A minimized intent remains consumed without reading source content.
-    const value = await fresh(env, principal, selection, input.review); stable();
+    const value = await fresh(env, principal, selection, input.review, request.signal); stable();
     let replayed = Boolean(existing);
     if (!existing) {
       const current: Row = { share_id: crypto.randomUUID(), purpose: SELECTED_OUTPUT_SHARE_PURPOSE, replay_key: intent, owner_id: principal.userId,
         owner_email: principal.email, intent_key: input.intentKey, project_id: value.source.projectId, job_id: value.provenance.jobId,
         completion_event_id: value.source.completionId, selection_json: JSON.stringify(value.candidate.selection),
-        review_title: value.candidate.publicOutput.title, source_expires_at: value.source.sourceExpiresAt,
+        review_title: value.candidate.publicOutput.title, source_expires_at: value.sourceExpiry,
         provenance_expires_at: value.provenance.expiresAt, expires_at: value.candidate.publicOutput.expiresAt,
         candidate_sha256: value.candidate.candidateSha256, issuer_authority_sha256: value.authHash, created_at: new Date().toISOString(),
         token_hash: null, issued_at: null, revoked_at: null, minimized_at: null };
@@ -171,7 +196,7 @@ export async function prepareSelectedOutputShare(request: Request, env: WorkerEn
     }
     const current = row(existing); future(current); matches(current, value);
     if (current.issued_at !== null) fail("selected_output_share_already_issued", 409);
-    stable(); await finalProof(env, joined(value.proof, rowAssertion(current), live(current))); stable(); future(current);
+    stable(); await finalProof(env, joined(value.proof, rowAssertion(current), live(current)), value.media); stable(); future(current);
     return json({ candidateId: current.share_id, candidate: value.candidate, replayed });
   } catch (error) { return rejected(error); }
 }
@@ -185,16 +210,17 @@ export async function commitSelectedOutputShare(request: Request, env: WorkerEnv
     await ready(env); stable();
     const current = row(await env.DB.prepare(`SELECT ${rowColumns.join(",")} FROM selected_output_shares WHERE share_id=? AND owner_id=?`)
       .bind(input.candidateId, principal.userId).first()); stable(); future(current);
-    const value = await fresh(env, principal, selectionOf(current), { title: current.review_title, expiresAt: current.expires_at });
+    const value = await fresh(env, principal, selectionOf(current), { title: current.review_title, expiresAt: current.expires_at }, request.signal);
     stable(); matches(current, value);
-    if (!parseSelectedOutputShareApproval(input.approval, value.candidate)) fail("selected_output_share_approval_required", 400);
+    if (!parseSelectedOutputShareAnyApproval(input.approval, value.candidate)) fail("selected_output_share_approval_required", 400);
     if (current.issued_at !== null) {
-      await finalProof(env, joined(value.proof, rowAssertion(current), live(current, true))); stable(); future(current);
+      await finalProof(env, joined(value.proof, rowAssertion(current), live(current, true)), value.media); stable(); future(current);
       return json({ share: shareMetadata(current), replayed: true });
     }
     const secret = btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(24)))).replaceAll("+", "-").replaceAll("/", "_");
     const token = await tokenHash(secret), issuedAt = new Date().toISOString(); stable();
-    const proof = selectedShareProofStatement(joined(selectedOutputShareSchemaAssertion(), value.proof, rowAssertion(current), live(current)));
+    const proof = selectedShareProofStatement(joined(selectedOutputShareSchemaAssertion(), value.proof, rowAssertion(current), live(current)),
+      value.media ? "balanced" : "linear");
     const issued = await env.DB.prepare(`${proof.withSql} UPDATE selected_output_shares SET token_hash=?,issued_at=?
       WHERE share_id=? AND minimized_at IS NULL AND token_hash IS NULL AND issued_at IS NULL AND revoked_at IS NULL AND (${proof.sql}) AND ?>=${nowSql}`)
       // The database deadline is the reviewed expiry, not a prepared wall-clock snapshot.
@@ -203,34 +229,77 @@ export async function commitSelectedOutputShare(request: Request, env: WorkerEnv
       const observed = row(await env.DB.prepare(`SELECT ${rowColumns.join(",")} FROM selected_output_shares WHERE share_id=? AND owner_id=?`)
         .bind(current.share_id, principal.userId).first()); stable(); future(observed); matches(observed, value);
       if (observed.issued_at === null) fail();
-      await finalProof(env, joined(value.proof, rowAssertion(observed), live(observed, true))); stable(); future(observed);
+      await finalProof(env, joined(value.proof, rowAssertion(observed), live(observed, true)), value.media); stable(); future(observed);
       return json({ share: shareMetadata(observed), replayed: true });
     }
     future(current);
+    if (value.media) assertNativeRetainedMediaBytesCurrent(value.media, env);
     return json({ share: { ...shareMetadata(current), token: secret }, replayed: false });
   } catch (error) { return rejected(error); }
 }
 
 /** The token supplies only a selected-output read scope. Its bound stored
  * canonical principal is checked directly; no authenticated headers are forged. */
-export async function readSelectedOutputShare(request: Request, env: WorkerEnv, rawToken: string): Promise<Response> {
+async function readPublic(request: Request, env: WorkerEnv, rawToken: string, file: boolean, operationSignal: AbortSignal = request.signal): Promise<Response> {
   try {
     if (request.method !== "GET") fail("method_not_allowed", 405);
     if (typeof rawToken !== "string" || !/^[A-Za-z0-9_-]{32}$/u.test(rawToken)) fail();
-    const stable = frame(request, env);
+    const stable = frame(request, env, operationSignal); stable();
     await ready(env); stable();
     const token = await tokenHash(rawToken); stable();
     const current = row(await env.DB.prepare(`SELECT ${rowColumns.map(column => `share.${column}`).join(",")} FROM selected_output_shares share
       JOIN users owner ON owner.user_id=share.owner_id AND owner.email=share.owner_email
       WHERE share.token_hash=? AND share.purpose=? AND share.minimized_at IS NULL AND share.issued_at IS NOT NULL AND share.revoked_at IS NULL AND share.expires_at>${nowSql}`)
       .bind(token, SELECTED_OUTPUT_SHARE_PURPOSE).first()); stable(); future(current);
+    const selection = selectionOf(current);
+    if (file && selection.output !== "audio" && selection.output !== "video" && selection.output !== "model3d") fail();
     const principal: NativeRetainedIdentity = { userId: current.owner_id!, email: current.owner_email!, source: "openai-workspace" };
-    const value = await fresh(env, principal, selectionOf(current), { title: current.review_title, expiresAt: current.expires_at });
+    const value = await fresh(env, principal, selectionOf(current), { title: current.review_title, expiresAt: current.expires_at }, operationSignal);
     stable(); matches(current, value);
     const serialized = JSON.stringify(value.candidate.publicOutput);
-    await finalProof(env, joined(value.proof, rowAssertion(current), live(current, true))); stable(); future(current);
+    // Obtain a locally owned complete buffer after its own current custody
+    // check; never expose an R2 stream, key, redirect or caller-selected asset.
+    const fileBytes = file && value.media ? await copyCurrentNativeRetainedMediaBytes(value.media, env) : null;
+    if (file && !fileBytes) fail();
+    await finalProof(env, joined(value.proof, rowAssertion(current), live(current, true)), value.media); stable(); future(current);
+    if (fileBytes && value.media) {
+      const descriptor = value.media.descriptor;
+      const filename = descriptor.kind === "audio" ? "forma-audio.wav" : descriptor.kind === "video" ? "forma-video.mp4" : "forma-3d.glb";
+      return new Response(fileBytes, { status: 200, headers: {
+        ...headers, "content-type": descriptor.mimeType, "content-length": String(fileBytes.byteLength),
+        "content-disposition": `attachment; filename="${filename}"`,
+        "content-security-policy": "default-src 'none'; sandbox",
+      } });
+    }
     return new Response(serialized, { status: 200, headers });
   } catch (error) { return rejected(error); }
+}
+
+/** Existing JSON delivery remains the finite reviewed public projection. */
+export function readSelectedOutputShare(request: Request, env: WorkerEnv, rawToken: string): Promise<Response> {
+  return readPublic(request, env, rawToken, false);
+}
+/** Full-file delivery only, from the exact current qualified native buffer. */
+export async function readSelectedOutputShareMediaFile(request: Request, env: WorkerEnv, rawToken: string): Promise<Response> {
+  // Bound the entire file operation, including schema/token lookup, native
+  // provenance and the last share proof. Derive cancellation from the actual
+  // request; no replacement Request, headers or principal are manufactured.
+  if (request.signal.aborted) return rejected(new Refusal("selected_output_share_unavailable", 404));
+  const controller = new AbortController();
+  let timer: ReturnType<typeof setTimeout> | undefined, cancel: (() => void) | undefined;
+  const stopped = new Promise<never>((_, reject) => {
+    cancel = () => { controller.abort(); reject(new Refusal("selected_output_share_unavailable", 404)); };
+    request.signal.addEventListener("abort", cancel, { once: true });
+    timer = setTimeout(cancel, NATIVE_RETAINED_MEDIA_BYTES_BUDGET_MS);
+    if (request.signal.aborted) cancel();
+  });
+  const pending = readPublic(request, env, rawToken, true, controller.signal);
+  try { return await Promise.race([pending, stopped]); }
+  catch (error) { return rejected(error); }
+  finally {
+    clearTimeout(timer); if (cancel) request.signal.removeEventListener("abort", cancel); controller.abort();
+    void pending.catch(() => {});
+  }
 }
 
 /** Revocation only removes access. Source expiry, loss of creator role and

@@ -184,3 +184,12 @@ export async function copyCurrentNativeRetainedMediaBytes(proof: NativeRetainedM
   if (!bytes) throw unavailable();
   return bytes;
 }
+
+/** After a separately executed final publication/share SELECT, synchronously
+ * recheck this exact local byte observation's environment, signal and lifetimes.
+ * This neither executes SQL nor grants publication authority or copies bytes. */
+export function assertNativeRetainedMediaBytesCurrent(proof: NativeRetainedMediaBytes, env: WorkerEnv): void {
+  const value = observations.get(proof);
+  if (!value || value.env !== env) throw unavailable();
+  current(value);
+}

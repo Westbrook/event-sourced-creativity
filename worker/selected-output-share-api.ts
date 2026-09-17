@@ -18,7 +18,8 @@ export function isSelectedOutputShareApiPath(pathname: string): boolean {
 }
 
 /** Finite additive routes. These do not initialize schema, provision principals,
- * schedule retention, load private media or fall back to Document sharing. */
+ * schedule retention or fall back to Document sharing. The exact file route
+ * privately resolves one fully qualified owned media buffer after all proofs. */
 export async function handleSelectedOutputShareApi(request: Request, env: WorkerEnv): Promise<Response> {
   const url = new URL(request.url), path = url.pathname;
   if (request.signal.aborted || !isSelectedOutputShareApiPath(path)) return refused();
@@ -41,6 +42,12 @@ export async function handleSelectedOutputShareApi(request: Request, env: Worker
     if (!creationEnabled) return json({ error: "selected_output_share_creation_unavailable" }, 503);
     const { prepareSelectedOutputShare, commitSelectedOutputShare } = await import("./selected-output-share-lifecycle.ts");
     return path.endsWith("/prepare") ? prepareSelectedOutputShare(request, env) : commitSelectedOutputShare(request, env);
+  }
+  const publicFile = path.match(/^\/api\/selected-output-shared\/([A-Za-z0-9_-]{32})\/file$/u);
+  if (publicFile) {
+    if (request.method !== "GET") return wrongMethod("GET");
+    const { readSelectedOutputShareMediaFile } = await import("./selected-output-share-lifecycle.ts");
+    return readSelectedOutputShareMediaFile(request, env, publicFile[1]!);
   }
   const publicRead = path.match(/^\/api\/selected-output-shared\/([A-Za-z0-9_-]{32})$/u);
   if (publicRead) {

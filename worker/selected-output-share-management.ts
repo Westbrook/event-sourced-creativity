@@ -1,3 +1,7 @@
+import { SELECTED_OUTPUT_SHARE_MEDIA_PROJECTION_POLICY } from "../src/model/selected-output-share.ts";
+import { SELECTED_OUTPUT_SHARE_AUDIO_POLICY } from "../src/model/selected-output-share-audio.ts";
+import { SELECTED_OUTPUT_SHARE_VIDEO_POLICY, SELECTED_OUTPUT_SHARE_VIDEO_X264_POLICY } from "../src/model/selected-output-share-video.ts";
+import { SELECTED_OUTPUT_SHARE_MODEL3D_POLICY, SELECTED_OUTPUT_SHARE_MODEL3D_TEXTURE_POLICY } from "../src/model/selected-output-share-model3d.ts";
 import { hostedIdentity } from "./native-retained-text-custody.ts";
 import { selectedOutputShareSchemaAssertion, selectedOutputShareSchemaState } from "./selected-output-share-readiness.ts";
 import type { WorkerEnv } from "./runtime.ts";
@@ -78,7 +82,7 @@ function query(request: Request) {
   return { documentId, artifactId, cursor: params.has("cursor") ? decodeCursor(params.get("cursor")!) : null };
 }
 const rowKeys = ["permitted", "metadata_valid", "share_id", "review_title", "output", "revision", "expires_at", "issued_at", "created_at"] as const;
-type Metadata = { shareId: string; title: string; output: "short_story" | "scene" | "slides"; revision: number; expiresAt: string; issuedAt: string };
+type Metadata = { shareId: string; title: string; output: "short_story" | "scene" | "slides" | "audio" | "video" | "model3d"; revision: number; expiresAt: string; issuedAt: string };
 function readRows(result: unknown): Array<{ metadata: Metadata; cursor: Cursor }> {
   if (!record(result) || own(result, "success") !== true || own(result, "error") !== undefined
     || Object.getOwnPropertyDescriptor(result, "error") && !Object.hasOwn(Object.getOwnPropertyDescriptor(result, "error")!, "value")) return fail();
@@ -97,7 +101,7 @@ function readRows(result: unknown): Array<{ metadata: Metadata; cursor: Cursor }
     }
     if (row.metadata_valid !== 1 || !identifier(row.share_id) || typeof row.review_title !== "string" || !row.review_title.trim()
       || encoder.encode(row.review_title).length > 512 || hasControl(row.review_title)
-      || typeof row.output !== "string" || !["short_story", "scene", "slides"].includes(row.output)
+      || typeof row.output !== "string" || !["short_story", "scene", "slides", "audio", "video", "model3d"].includes(row.output)
       || !Number.isSafeInteger(row.revision) || Number(row.revision) < 0
       || !timestamp(row.created_at) || !timestamp(row.expires_at) || !timestamp(row.issued_at)
       || row.created_at > row.issued_at || row.issued_at >= row.expires_at) return fail();
@@ -129,7 +133,7 @@ export async function listSelectedOutputShares(request: Request, env: WorkerEnv)
       AND revoked_at IS NULL AND minimized_at IS NULL AND json_extract(selection_json,'$.documentId')=?
       AND json_extract(selection_json,'$.artifactId')=?`;
     const boundedId = "typeof(share_id)='text' AND length(CAST(share_id AS BLOB)) BETWEEN 1 AND 160";
-    const validSelection = `json_type(selection_json)='object'
+    const validTextSelection = `json_type(selection_json)='object'
       AND (SELECT count(*) FROM json_each(selection_json))=5
       AND (SELECT count(DISTINCT key) FROM json_each(selection_json)
         WHERE key IN('output','documentId','artifactId','revision','contentSha256'))=5
@@ -139,6 +143,28 @@ export async function listSelectedOutputShares(request: Request, env: WorkerEnv)
       AND json_type(selection_json,'$.contentSha256')='text' AND length(json_extract(selection_json,'$.contentSha256'))=64
       AND length(CAST(json_extract(selection_json,'$.contentSha256') AS BLOB))=64
       AND json_extract(selection_json,'$.contentSha256') NOT GLOB '*[^0-9a-f]*'`;
+    // Separate closed media branch: preserve text selection semantics and the
+    // same single-statement owner/schema/cursor proof. Listing metadata never
+    // reads a native result, proves paid provenance or obtains media bytes.
+    const validMediaSelection = `json_type(selection_json)='object'
+      AND (SELECT count(*) FROM json_each(selection_json))=8
+      AND (SELECT count(DISTINCT key) FROM json_each(selection_json)
+        WHERE key IN('output','documentId','artifactId','revision','contentSha256','mediaSha256','policy','projectionPolicy'))=8
+      AND json_type(selection_json,'$.documentId')='text' AND json_type(selection_json,'$.artifactId')='text'
+      AND json_type(selection_json,'$.revision')='integer' AND json_extract(selection_json,'$.revision') BETWEEN 0 AND 9007199254740991
+      AND json_type(selection_json,'$.contentSha256')='text' AND length(json_extract(selection_json,'$.contentSha256'))=64
+      AND length(CAST(json_extract(selection_json,'$.contentSha256') AS BLOB))=64
+      AND json_extract(selection_json,'$.contentSha256') NOT GLOB '*[^0-9a-f]*'
+      AND json_type(selection_json,'$.mediaSha256')='text' AND length(json_extract(selection_json,'$.mediaSha256'))=64
+      AND length(CAST(json_extract(selection_json,'$.mediaSha256') AS BLOB))=64
+      AND json_extract(selection_json,'$.mediaSha256') NOT GLOB '*[^0-9a-f]*'
+      AND json_type(selection_json,'$.projectionPolicy')='text'
+      AND json_extract(selection_json,'$.projectionPolicy')='${SELECTED_OUTPUT_SHARE_MEDIA_PROJECTION_POLICY}'
+      AND json_type(selection_json,'$.output')='text' AND json_type(selection_json,'$.policy')='text'
+      AND ((json_extract(selection_json,'$.output')='audio' AND json_extract(selection_json,'$.policy')='${SELECTED_OUTPUT_SHARE_AUDIO_POLICY}')
+        OR (json_extract(selection_json,'$.output')='video' AND json_extract(selection_json,'$.policy') IN('${SELECTED_OUTPUT_SHARE_VIDEO_POLICY}','${SELECTED_OUTPUT_SHARE_VIDEO_X264_POLICY}'))
+        OR (json_extract(selection_json,'$.output')='model3d' AND json_extract(selection_json,'$.policy') IN('${SELECTED_OUTPUT_SHARE_MODEL3D_POLICY}','${SELECTED_OUTPUT_SHARE_MODEL3D_TEXTURE_POLICY}')))`;
+    const validSelection = `((${validTextSelection}) OR (${validMediaSelection}))`;
     const selectionBindings = [principal.userId, purpose, selected.documentId, selected.artifactId];
     const cursorProof = selected.cursor ? `AND EXISTS(SELECT 1 FROM selected_output_shares WHERE ${selectedRows} AND created_at=? AND share_id=? AND (${validSelection}))` : "";
     const after = selected.cursor ? "AND (created_at<? OR (created_at=? AND share_id<?))" : "";
