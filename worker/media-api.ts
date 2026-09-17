@@ -10,6 +10,9 @@ import { normalizeModel3dView } from "../src/model/model3d-view.ts";
 import { normalizeReferenceComposition } from "../src/model/reference-composition.ts";
 import type { WorkerEnv } from "./runtime.ts";
 import { SAFE_UPLOADED_IMAGE_TYPES, sha256Hex, ownedCompositionSourcesValid } from "./source-reference-evidence.ts";
+import { beginSponsorNativeImageRead } from "./experience-sponsor-native-image-read.ts";
+import { readSponsorGeneratedImageMedia } from "./generated-image-api.ts";
+import { SponsorReadLimitError } from "./experience-sponsor-read-attempts.ts";
 export { verifyReferenceCompositionAssets, verifySourceDocumentEvidence } from "./source-reference-evidence.ts";
 
 const SAFE_UPLOADED_DOCUMENT_TYPES = new Set([
@@ -287,6 +290,19 @@ export async function getMedia(request:Request,key:string,env:WorkerEnv){
   }else if(selected.context)return new Response("Forbidden",{status:403});
   const owner=resource?.owner_user_id??auth.user.userId;
   if(!mediaKeyMatchesOwnerNamespace(key,owner))return new Response("Forbidden",{status:403});
+  {
+    try{
+      const sponsored=await beginSponsorNativeImageRead(request,env,auth.user,{mediaKey:key,ownerUserId:owner});
+      if(sponsored){
+        const response=await readSponsorGeneratedImageMedia(request,env,auth.user,key,sponsored);
+        applySafeMediaResponseHeaders(response.headers);return response;
+      }
+    }catch(error){
+      const headers=new Headers();applySafeMediaResponseHeaders(headers);
+      if(error instanceof SponsorReadLimitError){headers.set('retry-after',String(Math.max(1,Math.ceil(error.retryAfterMs/1000))));return new Response('Read limit reached',{status:429,headers});}
+      return new Response('Unavailable',{status:409,headers});
+    }
+  }
   const object=await env.MEDIA.get(key);if(!object)return new Response("Not found",{status:404});
   if(object.customMetadata?.ownerId!==owner)return new Response("Forbidden",{status:403});
   const headers=new Headers();object.writeHttpMetadata(headers);headers.set("etag",object.httpEtag);applySafeMediaResponseHeaders(headers);
