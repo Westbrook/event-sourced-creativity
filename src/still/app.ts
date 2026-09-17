@@ -37,6 +37,7 @@ const safeMedia = (url: string | null | undefined) => url?.startsWith('/api/medi
 export class StillApp extends LitElement {
   private client = new StillClient();
   private loading = true;
+  private startupFailed = false;
   private busy = false;
   private error = '';
   private notice = '';
@@ -113,7 +114,7 @@ export class StillApp extends LitElement {
     window.addEventListener('beforeunload', this.beforeUnload);
     window.addEventListener('focus', this.resumeSync);
     document.addEventListener('visibilitychange', this.resumeSync);
-    void this.run(async () => { await this.client.load(); this.readRoute(); this.loading = false; this.lastHistoryPoll = Date.now(); this.decide(); this.poll(); });
+    void this.run(() => this.loadWorkspace());
   }
   disconnectedCallback() { super.disconnectedCallback(); this.desktop.removeEventListener('change', this.developerViewportChanged); this.disposed = true; ++this.developerEpoch; this.developerApplied=undefined;this.developerReceived=undefined;this.dockObserver.disconnect(); clearTimeout(this.pollTimer); clearTimeout(this.decisionTimer); window.removeEventListener('popstate', this.popstate); window.removeEventListener('beforeunload', this.beforeUnload); window.removeEventListener('focus', this.resumeSync); document.removeEventListener('visibilitychange', this.resumeSync); }
   private draftSignature(){const g=this.generation;return JSON.stringify([this.titleDraft,this.bodyDraft,this.kindDraft,g?.prompt,g?.tone,g?.audience,g?.itemCount]);}
@@ -154,6 +155,13 @@ export class StillApp extends LitElement {
     this.busy = true; this.error = ''; this.changed();
     try { await work(); } catch (error) { this.error = error instanceof Error ? error.message : 'Could not complete this step.'; }
     finally { this.busy = false; this.loading = false; this.changed(); }
+  }
+  private async loadWorkspace() {
+    this.loading = true; this.startupFailed = false; this.changed();
+    try {
+      await this.client.load(); this.readRoute(); this.loading = false;
+      this.lastHistoryPoll = Date.now(); this.decide(); this.poll();
+    } catch (error) { this.startupFailed = true; throw error; }
   }
   private readRoute() {
     const q = new URL(location.href).searchParams, route=parseStillRoute(location.href);
@@ -408,7 +416,7 @@ export class StillApp extends LitElement {
   private renderCanvas() {
     const c = this.client, p = c.projection, pos = c.position;
     if (this.loading) return html`<section class="quiet-state"><div class="still-mark" aria-hidden="true"></div><h1>Loading…</h1></section>`;
-    if (!c.session) return html`<section class="quiet-state"><h1>Session unavailable</h1>${this.button('Try again', () => void this.run(async () => { await c.load(); this.readRoute(); this.decide(); }), true)}</section>`;
+    if (this.startupFailed || !c.session) return html`<section class="quiet-state"><h1>Couldn’t load Still</h1>${this.button('Try again', () => void this.run(() => this.loadWorkspace()), true)}</section>`;
     if (!c.session.policy.accepted) return html`<section class="form-page"><h1>Before you begin</h1><p>Your context is processed by generation providers and TypeSafe. Forma’s access and retention rules apply.</p><label class="check"><input type="checkbox" .checked=${this.ownership} @change=${(e: Event) => { this.ownership = (e.target as HTMLInputElement).checked; this.changed(); }} /> I have permission to use this content.</label><label class="check"><input type="checkbox" .checked=${this.providerConsent} @change=${(e: Event) => { this.providerConsent = (e.target as HTMLInputElement).checked; this.changed(); }} /> I consent to private provider processing.</label>${this.button('Continue', () => void this.run(async () => { await c.acceptTerms(); this.readRoute(); this.decide(); }), true, !this.ownership || !this.providerConsent)}</section>`;
     const routeProblem=this.currentRouteProblem(p);
     if (routeProblem) return html`<section class="quiet-state"><h1>${routeProblem}</h1>${this.button('Projects',()=>this.navigate('projects',{projectId:'',documentId:''}))}</section>`;
@@ -478,7 +486,7 @@ export class StillApp extends LitElement {
   }
   private renderDock() {
     const c = this.client, p = c.projection, view = c.position.view;
-    if (this.loading || !c.session?.policy.accepted || this.mode || this.currentRouteProblem(p)) return nothing;
+    if (this.loading || this.startupFailed || !c.session?.policy.accepted || this.mode || this.currentRouteProblem(p)) return nothing;
     let actions: TemplateResult[];
     if (view === 'projects' || view === 'documents' || view === 'results') {
       const count = view === 'projects' ? p.projects.length : view === 'documents' ? p.documents.filter(d => !d.removed).length : p.outputs.filter(o => !o.discarded).length + p.artifacts.length;

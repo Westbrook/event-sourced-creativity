@@ -12,10 +12,10 @@ function client() { operationJournal.clearWrite('economy:personal');operationJou
 async function network(handler,run) { const saved=globalThis.fetch,calls=[];globalThis.fetch=async(url,init)=>{calls.push({url,init});return handler(url,init);};try {await run(calls);}finally{globalThis.fetch=saved;} }
 const deferred = () => {let resolve;const promise=new Promise(r=>resolve=r);return {promise,resolve};};
 
-test('bootstrap uses one session and one full history read',async()=>{
+test('bootstrap uses one session and the compact workspace history',async()=>{
   const c=new StillClient();
   await network(url=>url==='/api/session'?json(session):page(initial,2,{body:'Saved content'}),async calls=>{
-    await c.load();assert.deepEqual(calls.map(c=>c.url),['/api/session','/api/events?after=0&limit=5000&content=1']);assert.equal(c.content.body,'Saved content');
+    await c.load();assert.deepEqual(calls.map(c=>c.url),['/api/session','/api/events?after=0&limit=6500&profile=workspace&content=0']);assert.equal(c.content.body,'Saved content');
   });
 });
 test('a normal save completes from its receipt with no history reload',async()=>{
