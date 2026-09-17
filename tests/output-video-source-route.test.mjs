@@ -330,9 +330,10 @@ test('actual authorization handoff carries the captured owner head into fresh Vi
  const f=quoteFixture(),preflight=await f.preflightOutputVideoTarget(f.input),proof=f.outputVideoPreflightProof(preflight);
  const statement=source('worker/output-requirements-api.ts').match(/const prepared = (await bridge\.prepareAdmission\([^\n]+\));/u);assert(statement,'actual native admission handoff');
  const trusted={...f.input,events:f.input.sourceEvents,ownerHead:f.input.ownerHead},slots=[{targetId:f.input.target.id,jobId:proof.requestId,attemptOrdinal:0,previousSlotId:null}];
- const ports={trusted,body:{},plan:f.input.confirmedPlan,context:f.input.context,grantId:'grant',preflight:{targets:[preflight]},slots,sceneTargets:[],audioTargets:[],model3dTargets:[],bridge:{prepareAdmission:async input=>input}};
+ const ports={trusted,body:{},plan:f.input.confirmedPlan,context:f.input.context,grantId:'grant',preflight:{targets:[preflight]},slots,sceneTargets:[],audioTargets:[],model3dTargets:[],sponsorAdmission:undefined,bridge:{prepareAdmission:async input=>input}};
  const forward=new Function(...Object.keys(ports),stripTypeScriptTypes('async function handoff(){return '+statement[1]+';}')+';return handoff();');
  const admitted=await forward(...Object.values(ports));assert.equal(admitted.ownerHead,trusted.ownerHead);assert.equal(admitted.sourceEvents,trusted.events);
+ assert.equal(Object.hasOwn(admitted,'sponsorAdmission'),false,'ordinary Video admission carries no sponsor authority');
  const current=await f.preflightOutputVideoTarget({...f.input,...admitted,target:f.input.target});assert.equal(current.available,true);
  assert.equal(f.requireOutputVideoOriginal({...f.input,...admitted,target:f.input.target},current,slots[0]).proof.requestId,proof.requestId);
 });

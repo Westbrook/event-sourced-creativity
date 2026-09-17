@@ -16,16 +16,26 @@ const root = realpathSync(rootInput);
 const manifest = JSON.parse(readFileSync(manifestInput, 'utf8'));
 assert.equal(manifest.reviewedFor, 'experience-fresh-intake-join-local-sqlite');
 const modulePaths = [
+  "db/scene-source-generation-tables.ts",
+  "db/scene-source-generations.ts",
   "src/experiences/catalog.ts",
   "src/experiences/compiler.ts",
+  "src/experiences/contracts.ts",
   "src/experiences/image-ratio.ts",
   "src/experiences/intake.ts",
+  "src/experiences/model3d-reference-plan.ts",
+  "src/experiences/model3d-reference.ts",
+  "src/experiences/scene-context.ts",
+  "src/experiences/video-reference-plan.ts",
+  "src/experiences/video-reference.ts",
   "src/model/block-types.ts",
   "src/model/generation-execution-evidence.ts",
+  "src/model/model3d-view.ts",
   "src/model/output-requirement-events.ts",
   "src/model/presentation-candidates.ts",
   "src/model/project-intake.ts",
   "src/model/provider-submission.ts",
+  "src/model/reference-composition-media-url.ts",
   "src/platform/capabilities.ts",
   "worker/access-policy.ts",
   "worker/canvas-governance-policy.ts",
@@ -35,6 +45,9 @@ const modulePaths = [
   "worker/event-stream-read.ts",
   "worker/event-write-primitives.ts",
   "worker/experience-intake-read.ts",
+  "worker/experience-sponsor-admission.ts",
+  "worker/experience-sponsor-entitlement.ts",
+  "worker/experience-sponsor-policy.ts",
   "worker/image-adapter-evaluation-evidence.ts",
   "worker/intake-authority.ts",
   "worker/memory-document-job-origin-schema.ts",
@@ -43,14 +56,18 @@ const modulePaths = [
   "worker/output-admission-reads.ts",
   "worker/output-command-core.ts",
   "worker/output-governance-witness.ts",
+  "worker/output-proof-capacity-diagnostic.ts",
   "worker/pilot-policy-primitives.ts",
   "worker/policy-version.ts",
   "worker/principal-request-core.ts",
   "worker/private-content-identity.ts",
   "worker/private-content-storage.ts",
+  "worker/project-intake-diagnostic.ts",
   "worker/project-intake-read.ts",
   "worker/project-intake.ts",
-  "worker/project-request-context.ts"
+  "worker/project-request-context.ts",
+  "worker/scene-job-source-witness.ts",
+  "worker/scene-source-generation.ts"
 ];
 const fixtureBuiltins = { 'tests/fixtures/fresh-intake-join-sqlite.mjs': ['node:assert/strict', 'node:sqlite'] };
 const extensionlessEdges = [{ from: 'src/model/project-intake.ts', specifier: './block-types', to: 'src/model/block-types.ts' }];
