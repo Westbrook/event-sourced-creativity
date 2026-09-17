@@ -1,10 +1,12 @@
-import { canonicalJson, compileExperience, digest, freeze, jsonIssues, valueIssues } from "./compiler.ts";
+import { canonicalJson, compileExperience, digest, exactKeys, freeze, jsonIssues, record, valueIssues } from "./compiler.ts";
 import type { CompiledRelease, DecisionValue, ExperienceValue, Issue } from "./contracts.ts";
 import { buildExperiencePlan, experienceDocumentRoute, initialValues, intakeValueIssues, isDraftId, isIntentId, type ExperiencePlan, type IntakeRequest, type ExperienceReferenceIntent, readExperienceReferenceIntent } from "./intake.ts";
 import type { ExperienceIntakeReceipt } from "./native-host.ts";
 
 type State = Readonly<{ phase: "setup" | "preparing" | "review" | "submitting" | "complete" | "uncertain"; draft: { values: Readonly<Record<string, DecisionValue>>; reference?: ExperienceReferenceIntent }; issues: readonly Issue[] }>;
 type Fetcher = (input: string, init?: RequestInit) => Promise<Response>;
+/** Expected authenticated display context only; the server retains authority. */
+export type SponsorImageIntakeBinding = Readonly<{ version: 1; campaignId: string; actorUserId: string }>;
 /** A retained context-authoring flow. Completion means Document creation, not generation. */
 export class ExperienceIntakeRuntime {
   readonly mode = "intake" as const;
@@ -18,12 +20,23 @@ export class ExperienceIntakeRuntime {
   #receipt?: ExperienceIntakeReceipt;
   #listeners = new Set<() => void>();
   #fetch: Fetcher;
+  #sponsorImage?: SponsorImageIntakeBinding;
   #epoch = 0;
   #disposed = false;
   #referenceReady = true;
   #abort = new AbortController();
-  constructor(release: CompiledRelease, fetcher: Fetcher = fetch) {
-    this.#release = release; this.admissionRelease = release; this.#fetch = (path, init) => fetcher(path, init);
+  constructor(release: CompiledRelease, fetcher?: Fetcher, sponsorImage?: SponsorImageIntakeBinding) {
+    if (sponsorImage !== undefined) {
+      if (typeof fetcher !== "function" || jsonIssues(sponsorImage).length || !record(sponsorImage)
+        || !exactKeys(sponsorImage, ["version", "campaignId", "actorUserId"]) || sponsorImage.version !== 1
+        || typeof sponsorImage.campaignId !== "string" || !/^[A-Za-z0-9][A-Za-z0-9_.:@/-]{0,199}$/u.test(sponsorImage.campaignId)
+        || typeof sponsorImage.actorUserId !== "string" || !sponsorImage.actorUserId || sponsorImage.actorUserId.trim() !== sponsorImage.actorUserId
+        || sponsorImage.actorUserId.length > 240 || [...sponsorImage.actorUserId].some(character => character.codePointAt(0)! < 32 || character.codePointAt(0) === 127)
+        || release.definition.id !== "image" || release.output.output !== "image") throw new Error("sponsor_intake_client_binding_invalid");
+      this.#sponsorImage = freeze(structuredClone(sponsorImage));
+    }
+    const request = fetcher === undefined ? fetch : fetcher;
+    this.#release = release; this.admissionRelease = release; this.#fetch = (path, init) => request(path, init);
     this.#referenceReady = release.output.output !== "video";
     this.#state = freeze({ phase: "setup", draft: { values: initialValues(release) }, issues: [] });
   }
@@ -57,7 +70,16 @@ export class ExperienceIntakeRuntime {
     if (this.#resume && (this.#resume.byIntent ? plan.request.intentId : plan.draftId) !== this.#resume.id) throw new Error("experience_result_mismatch");
     if (typeof plan.streamId !== "string" || !plan.streamId.startsWith("creative:")) throw new Error("experience_result_mismatch");
     const rebuilt = await buildExperiencePlan(plan.streamId.slice("creative:".length), plan.request, plan.release, plan.reference);
-    if (canonicalJson(rebuilt) !== canonicalJson(plan)) throw new Error("experience_result_mismatch");
+    let expected = rebuilt;
+    if (this.#sponsorImage) {
+      if (plan.streamId !== `creative:${this.#sponsorImage.actorUserId}` || plan.release.definition.id !== "image" || plan.release.output.output !== "image"
+        || !exactKeys(plan.request, ["intentId", "experienceId", "releaseHash", "values"]) || Object.hasOwn(plan, "reference")) throw new Error("experience_result_mismatch");
+      const { draftHash: _nativeHash, ...nativeBase } = rebuilt;
+      const receiptId = `sponsor-intake-${(await digest({ campaignId: this.#sponsorImage.campaignId, actor: this.#sponsorImage.actorUserId, intent: plan.request.intentId })).slice(7)}`;
+      const marked = { ...nativeBase, sponsor_intake: { version: 1 as const, receiptId } };
+      expected = { ...marked, draftHash: await digest(marked) };
+    }
+    if (canonicalJson(expected) !== canonicalJson(plan)) throw new Error("experience_result_mismatch");
     const { draftHash, ...base } = plan;
     if (await digest(base) !== draftHash) throw new Error("experience_result_mismatch");
     return freeze(plan);
