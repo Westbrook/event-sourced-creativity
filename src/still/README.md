@@ -1,3 +1,19 @@
+# Still deep links
+
+Still uses path-based addresses. Every route serves the Still entry point on direct GET or HEAD requests, including refreshes:
+
+- `/still` — projects; `/still/project/:project` — documents.
+- `/still/project/:project/document/:document` — a document.
+- `…/block/:block` — a selected idea; `…/results` — saved results.
+- `…/result/:result` — a result; `…/result/:result/item/:number` — a slide or frame.
+- `…/page/:number` — a library page; numbers start at 1.
+- `…/create` or `…/create/:format` — format selection or generation review.
+- `…/action/:action` — an available editing or context workflow.
+
+Legacy `project`, `document`, and `work` query links convert to canonical paths. Developer and progress-report flags remain query parameters. Project, document, idea, and result links support opening in another tab. Back and Forward restore views; unfinished edits and requests guard navigation. Draft text and generation approvals stay out of URLs. Visiting a creation link opens review without starting generation.
+
+The server rejects malformed routes. After loading authorized events, Still verifies the requested project/document/content relationship; unavailable content never falls back to another document. Tests cover route round trips, legacy links, ownership, pagination, and direct GET/HEAD handling through the built Worker.
+
 # Still developer console
 
 Open **More → Developer console → Go**, or add `developer` to the `/still` query string. The **Decisions** button opens the design-system Drawer. Escape or Close dismisses it; **Exit developer mode** removes the flag and clears the in-memory traces.

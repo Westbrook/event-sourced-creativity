@@ -26,6 +26,7 @@ export class StillContextFlow extends LitElement {
   private member = '';
   private members: string[] = [];
   private application = 'isolate';
+  private compositionBaseline = '';
   private plan: EventInput[] = [];
   private revision = '';
   private scopeKey = '';
@@ -34,7 +35,8 @@ export class StillContextFlow extends LitElement {
   private intake: IdeaCandidate | null = null;
   private uploadUncertain = false;
   private referenceEvents: EventInput[] | null = null;
-  private beforeUnload = (e: BeforeUnloadEvent) => { if (this.busy || this.flow?.quote?.status === 'uncertain' || this.flow?.status === 'applying' || this.phase !== 'start') { e.preventDefault(); e.returnValue = ''; } };
+  private beforeUnload = (e: BeforeUnloadEvent) => { if (this.preventsRouteChange) { e.preventDefault(); e.returnValue = ''; } };
+  get preventsRouteChange(){return this.busy||this.composing||!!this.query||this.flow?.quote?.status==='uncertain'||this.flow?.status==='applying'||(this.action==='compose'&&this.phase==='compose'?JSON.stringify([this.members,this.application])!==this.compositionBaseline:this.phase!=='start');}
   createRenderRoot() { return this; }
   connectedCallback() { super.connectedCallback(); window.addEventListener('beforeunload',this.beforeUnload); }
   disconnectedCallback() { super.disconnectedCallback(); window.removeEventListener('beforeunload',this.beforeUnload); }
@@ -45,7 +47,7 @@ export class StillContextFlow extends LitElement {
       const block = this.client.projection.blocks.find(b => b.id === this.targetId);
       this.application = value((block?.properties.context_group as Record<string,unknown>)?.application) || 'isolate';
       this.members = this.client.projection.blockRelations.filter(r=>!r.removed && r.fromBlockId===this.targetId && isContextCompositionRelation(r.kind)).sort((a,b)=>Number(a.properties.member_order??0)-Number(b.properties.member_order??0)).map(r=>r.toBlockId);
-      this.phase = 'compose'; this.requestUpdate();
+      this.compositionBaseline=JSON.stringify([this.members,this.application]);this.phase = 'compose'; this.requestUpdate();
     } else {
       this.flow = new ContextWorkflow(this.client,this.action==='split-context'?'decompose':'research');
       void this.run(async()=>{await this.flow.resume();this.phase=this.flow.preview?'review':'start'; if(this.flow.status==='applied') this.phase='completed';});

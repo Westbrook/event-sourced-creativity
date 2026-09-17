@@ -3,6 +3,7 @@ import { handleGenerationAccounting } from "./generation-accounting-api.ts";
 import { handleVideoReconciliation } from "./managed-video-reconciliation-api.ts";
 import { handleEvents, type WorkerEnv } from "./events-api";
 import { handleStillDecision } from "./still-api";
+import { isStillNamespace, parseStillRoute } from "../src/still/routes.ts";
 import { getMedia, uploadMedia } from "./media-api";
 import { handleAdminUsers, handleImpersonation, handleSession, hasCapability, requireCapability, requireConsent, requireUser } from "./pilot-policy";
 import { handleShares, handleSharedMedia, handleSharedView } from "./shares-api";
@@ -226,12 +227,14 @@ async function routeRequest(request: Request, env: WorkerEnv, context: WorkerExe
       headers.append("vary","Cookie, oai-authenticated-user-id, oai-authenticated-user-email, cf-access-authenticated-user-email");
       return new Response(asset.body,{status:asset.status,statusText:asset.statusText,headers});
     }
-    if ((request.method === "GET" || request.method === "HEAD") && (url.pathname === "/still" || url.pathname === "/still/" || url.pathname === "/still.html")) {
+    if (isStillNamespace(url.pathname)) {
+      if (!parseStillRoute(url)) return new Response("Page not found", {status:404,headers:{"cache-control":"private, no-store"}});
+      if (request.method !== "GET" && request.method !== "HEAD") return new Response(null,{status:405,headers:{allow:"GET, HEAD"}});
       const asset = await env.ASSETS.fetch(new Request(new URL("/still", request.url), request));
       const headers = new Headers(asset.headers);
       headers.set("cache-control", "private, no-store");
       headers.set("x-forma-application", "still");
-      return new Response(asset.body, { status: asset.status, headers });
+      return new Response(request.method === "HEAD" ? null : asset.body, { status: asset.status, headers });
     }
     if(request.method==="GET"||request.method==="HEAD"){
       const route=resolveServerRoute(url.pathname);

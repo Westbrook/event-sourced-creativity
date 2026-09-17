@@ -5,6 +5,7 @@ import { readFile } from 'node:fs/promises';
 import { resolve, extname } from 'node:path';
 import { createSceneCostFixture } from './helpers/scene-cost-fixture.mjs';
 import { memoryMedia } from './helpers/still-media-fixture.mjs';
+import { isStillNamespace, parseStillRoute } from '../src/still/routes.ts';
 const f=await createSceneCostFixture(1,'visual');f.env.FORMA_ASSISTANT_PROVIDER_USER_IDS=f.owner;f.env.MEDIA=memoryMedia();
 f.env.JEV_API_KEY='fixture-only-no-external-network';
 const json=input=>({method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(input)});
@@ -36,9 +37,10 @@ const server=http.createServer(async(req,res)=>{
       const response=await f.request(req.url,{method:req.method,headers,...(bytes.length?{body:bytes}:{})});
       res.writeHead(response.status,Object.fromEntries(response.headers));res.end(Buffer.from(await response.arrayBuffer()));return;
     }
-    const file=resolve(clientRoot,path==='/still'?'still.html':`.${path}`);
+    if(isStillNamespace(path)&&!parseStillRoute(req.url)){res.writeHead(404);res.end('Page not found');return;}
+    const file=resolve(clientRoot,isStillNamespace(path)?'still.html':`.${path}`);
     if(!file.startsWith(clientRoot+'/')){res.writeHead(404);res.end();return;}
     const content=await readFile(file);res.writeHead(200,{'content-type':({'.html':'text/html','.js':'text/javascript','.css':'text/css','.svg':'image/svg+xml','.woff2':'font/woff2'})[extname(file)]??'application/octet-stream','cache-control':'no-store'});res.end(content);
   }catch(error){res.writeHead(500,{'content-type':'text/plain'});res.end(String(error.message));}
 });
-server.listen(5175,'127.0.0.1',()=>console.log(`Isolated context verification: http://127.0.0.1:5175/still?project=${f.projectId}&document=${f.documentId}`));
+server.listen(5175,'127.0.0.1',()=>console.log(`Isolated context verification: http://127.0.0.1:5175/still/project/${f.projectId}/document/${f.documentId}`));
