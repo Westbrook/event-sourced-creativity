@@ -1,3 +1,5 @@
+import './decision-lab-panel.ts';
+import { actionLimit, type ExperimentResult } from './decision-lab.ts';
 import { PRIMARY_POLICY } from './presentation.ts';
 import './vendor/elements/define/badge.js';
 import { LitElement, css, html, nothing } from 'lit';
@@ -5,7 +7,7 @@ import { keyed } from 'lit/directives/keyed.js';
 import './exchange-inspector.ts';
 import './json-tree.ts';
 import type { DecisionDiagnostics, ReceivedDecision } from './diagnostics.ts';
-import { ConsoleWindowHost, type ConsoleContext, type ConsoleControl } from './console-window.ts';
+import { ConsoleWindowHost, type ConsoleContext, type ConsoleControl, type ConsoleSnapshot } from './console-window.ts';
 export type { ConsoleContext } from './console-window.ts';
 const numeric=(n:number|undefined)=>n===undefined?'—':Number(n.toFixed(3)).toString();
 const percent=(n:number)=>`${(n*100).toFixed(1)}%`;
@@ -35,9 +37,11 @@ export class StillDeveloperConsole extends LitElement {
   disconnectedCallback(){super.disconnectedCallback();this.windowHost?.dispose();this.observer.disconnect();this.root?.removeEventListener('change',this.readControls);}
   protected updated(){this.windowHost?.publish();}
   show(){(this.renderRoot.querySelector('h2') as HTMLElement|null)?.focus({preventScroll:true});}
+  private snapshot():ConsoleSnapshot{return {scope:this.scope,context:this.context,applied:this.applied,received:this.received,pending:this.pending,controls:this.controls};}
+  private density=(value:number)=>this.dispatchEvent(new CustomEvent('developer-density',{bubbles:true,composed:true,detail:{value:actionLimit(value)}}));
   private detach=()=>{
     this.readControls();
-    this.windowHost??=new ConsoleWindowHost(window,()=>({scope:this.scope,context:this.context,applied:this.applied,received:this.received,pending:this.pending,controls:this.controls}),(open,connected)=>{this.windowOpen=open;this.windowConnected=connected;},()=>{void this.updateComplete.then(()=>this.show());});
+    this.windowHost??=new ConsoleWindowHost(window,()=>({scope:this.scope,context:this.context,applied:this.applied,received:this.received,pending:this.pending,controls:this.controls}),(open,connected)=>{this.windowOpen=open;this.windowConnected=connected;},()=>{void this.updateComplete.then(()=>this.show());},data=>{if(data.type==='density')this.density(data.value??5);if(data.type==='experiment'&&data.scope===this.scope)this.dispatchEvent(new CustomEvent('developer-experiment',{bubbles:true,composed:true,detail:{scope:data.scope,request:data.request,complete:(result?:ExperimentResult,error?:string)=>this.windowHost?.result(data.id!,result,error)}}));});
     this.windowError=this.windowHost.open()?'':'Allow pop-ups for Still, then try again.';
   };
   private reattach=()=>{this.windowHost?.dispose();void this.updateComplete.then(()=>this.show());};
@@ -82,8 +86,10 @@ export class StillDeveloperConsole extends LitElement {
           <header class="panel-heading"><h2 tabindex="-1">Decisions${this.detached?' · Live':''}</h2><div class="window-tools">${this.detached?html`<en-button variant="secondary" size="small" @click=${()=>this.dispatchEvent(new CustomEvent('developer-return'))}>Return to panel</en-button>`:html`<en-button variant="secondary" size="small" @click=${this.detach}>${this.windowOpen?'Focus window':'Open in window'}</en-button>${this.windowOpen?html`<en-button variant="ghost" size="small" @click=${this.reattach}>Close window</en-button>`:nothing}<en-button variant="ghost" size="small" aria-label="Close developer panel" @click=${()=>this.dispatchEvent(new CustomEvent('developer-disable',{bubbles:true,composed:true}))}>Close</en-button>`}</div><div class="jev-state" role="status" aria-live="polite" aria-atomic="true"><strong>Jev state</strong><div class="jev-state-badges">${['Not Requested','Pending','Received'].map(state=>html`<en-badge variant=${state===jevState?'success':'neutral'} aria-current=${state===jevState?'step':nothing}><span slot="prefix" aria-hidden="true">${state===jevState?'●':'○'}</span>${state}</en-badge>`)}</div><span class="sr-only">Current: ${jevState}</span></div></header>
           ${this.windowError?html`<p role="alert">${this.windowError}</p>`:nothing}
           <div class="status"><strong>${this.pending?'Jev pending':this.received?.disposition??'Local controls'}</strong><span>${c.view}${c.mode?` / ${c.mode}`:''} · head ${c.head}</span></div>
-          <details open><summary>On page · ${this.controls.length} controls</summary>
-            <p class="muted">${c.paletteOpen?'The command palette lists eligible actions.':c.more?'Up to three next-ranked actions, Back, and Palette.':c.mode?'The open workflow supplies its own controls.':c.view==='projects'||c.view==='documents'||c.view==='results'?'Browse content and pagination share the control budget.':'Up to four suggestions, plus More. Slides reserve two places for paging.'} Primary: score ≥ ${PRIMARY_POLICY.score}/3, confidence ≥ ${PRIMARY_POLICY.confidence*100}%, useful probability ≥ ${PRIMARY_POLICY.usefulProbability*100}%, and lead ≥ ${PRIMARY_POLICY.gap} over the other visible suggestions. At most one primary. Ties and missing evidence remain equal. The palette is always available with ⌘K.</p>
+          <label>On the page limit<select .value=${String(c.actionLimit??5)} @change=${(e:Event)=>this.density(Number((e.target as HTMLSelectElement).value))}>${Array.from({length:10},(_,i)=>i+3).map(n=>html`<option value=${n} .selected=${n===(c.actionLimit??5)}>${n}${n===5?' · default':''}</option>`)}</select></label><p class="muted">Suggested actions only. Project listings, document context, results and their content controls do not count. Density changes locally; the next Jev request includes this limit.</p>
+          <still-decision-lab .snapshot=${this.snapshot()}></still-decision-lab>
+          <h3>Live detail</h3><details open><summary>On page · ${this.controls.filter(x=>x.region==='dock'||x.region==='formats').length} action controls · ${this.controls.filter(x=>x.region!=='dock'&&x.region!=='formats').length} content / workflow controls</summary>
+            <p class="muted">${c.paletteOpen?'The command palette lists eligible actions.':c.more?'Next-ranked actions, Back, and Palette.':c.mode?'The open workflow supplies its own controls.':c.view==='projects'||c.view==='documents'||c.view==='results'?'Content listings are outside the action budget.':'Suggested actions plus More. Toolbar paging counts toward the action limit.'} Primary: score ≥ ${PRIMARY_POLICY.score}/3, confidence ≥ ${PRIMARY_POLICY.confidence*100}%, useful probability ≥ ${PRIMARY_POLICY.usefulProbability*100}%, and lead ≥ ${PRIMARY_POLICY.gap} over the other visible suggestions. At most one primary. Ties and missing evidence remain equal. The palette is always available with ⌘K.</p>
             <ul class="controls">${this.controls.map(x=>html`<li><b>${x.label}</b><code>${x.id}</code><span>${x.region} · ${x.variant} · ${x.size}${x.disabled?' · disabled':''}</span>${x.emphasis?html`<span>${x.emphasis}</span>`:nothing}${x.options.length?html`<details><summary>Picker options</summary>${x.options.join(' · ')}</details>`:nothing}</li>`)}</ul>
             ${c.selectedFormat?html`<p>Selected format: <code>${c.selectedFormat}</code>. Selection does not start generation.</p>`:nothing}
           </details>

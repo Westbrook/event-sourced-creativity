@@ -34,7 +34,6 @@ still-app en-toolbar { --en-space-actions: 5px; max-width: 100%; }
 still-app en-toolbar::part(base) { border: 1px solid var(--line); border-radius: 9999px; padding: 6px; gap: 5px; background: #fbfaf7; box-shadow: 0 5px 26px #3c342708; }
 still-app en-button { font-size: 13px; }
 still-app en-button::part(control) { border-radius: 100px; min-block-size: 44px; padding-inline: 19px; font-size: 13px; font-weight: 400; }
-still-app en-button[variant='primary'] { --en-color-action: #393d32; --en-color-action-hover: #25291f; --en-color-on-action: #fff; --en-color-action-pressed: #25291f; --en-color-focus: #8e6246; --en-color-action-text: #393d32; --en-color-selected: #e8e8df; }
 still-app .document-page { max-width: 900px; margin: 5vh auto; }
 still-app .document-page h1 { margin-bottom: 50px; }
 still-app .context-blocks { display: flex; flex-direction: column; gap: 0; }
@@ -147,8 +146,6 @@ still-app h1, still-app h2, still-app .location-label, still-app .work-row stron
 still-app .work-row > span, still-app .masthead > span { min-width:0; }
 still-app main h1:focus { outline:none; }
 
-still-app en-button { --en-color-action-text:#4f5148; --en-color-focus:#8e6246; --en-button-color:#4f5148; }
-still-app en-button[variant="primary"] { --en-button-color:#fff; }
 
 .context-flow .analysis-input { margin: 2rem 0; border-block: 1px solid var(--line, #d9d5cd); padding: 1.5rem 0; }
 .context-flow pre { white-space: pre-wrap; overflow-wrap: anywhere; font: .8rem/1.65 ui-monospace, monospace; max-height: 28rem; overflow: auto; }

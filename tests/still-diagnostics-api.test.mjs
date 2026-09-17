@@ -17,7 +17,7 @@ test('authenticated diagnostic opt-in preserves decisions and writes no creative
   try{
     const counts=f.counts(),head=(await (await f.request('/api/events?after=0')).json()).head;
     const ordinary=await request();assert.equal(ordinary.diagnostics,undefined);
-    const debug=await request({developer:true});assert.deepEqual(debug.formats,ordinary.formats);assert.deepEqual(debug.actions,ordinary.actions);
+    const debug=await request({developer:true,actionLimit:8});assert.equal(debug.diagnostics.exchange.request.state.current.actionLimit,8);assert.deepEqual(debug.formats,ordinary.formats);assert.deepEqual(debug.actions,ordinary.actions);
     assert.deepEqual(debug.diagnostics.exchange.request,submitted);
     assert.equal(debug.diagnostics.exchange.responseStatus,200);
     assert.match(debug.diagnostics.exchange.requestId,/^[0-9a-f-]{36}$/);

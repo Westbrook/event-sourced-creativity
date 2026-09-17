@@ -7,12 +7,12 @@ const valid=(n:number|undefined,max:number):n is number=>typeof n==='number'&&Nu
 const meets=(value:number,minimum:number)=>value+1e-9>=minimum;
 
 /** Compare only the choices on screen, without changing their order or inventing evidence. */
-export function presentEvidence(ids:string[],evidence:Record<string,EmphasisEvidence>={}):Record<string,Emphasis>{
+export function presentEvidence(ids:string[],evidence:Record<string,EmphasisEvidence>={},policy=PRIMARY_POLICY):Record<string,Emphasis>{
   const choices=[...new Set(ids)], scores=choices.map(id=>({id,...evidence[id]}));
   const complete=scores.every(a=>valid(a.score,3)&&valid(a.confidence,1));
   const best=scores.reduce<(typeof scores)[number]|undefined>((leader,a)=>valid(a.score,3)&&(!leader||a.score>leader.score!)?a:leader,undefined);
   const runner=Math.max(0,...scores.filter(a=>a.id!==best?.id).map(a=>valid(a.score,3)?a.score:3));
-  const gap=best?best.score!-runner:0,p=PRIMARY_POLICY;
+  const gap=best?best.score!-runner:0,p=policy;
   const failure=!best||!complete?'Missing or invalid score/confidence':!meets(best.score!,p.score)?`Leading score below ${p.score}/3`:!meets(best.confidence!,p.confidence)?`Leading confidence below ${p.confidence*100}%`:!valid(best.usefulProbability,1)?'Leading distribution unavailable or invalid':!meets(best.usefulProbability,p.usefulProbability)?`Useful probability below ${p.usefulProbability*100}%`:!meets(gap,p.gap)?`Lead below ${p.gap} points`:'';
   return Object.fromEntries(scores.map(a=>{
     const lead=!failure&&a.id===best?.id,alternative=!failure&&!lead&&(a.score!<2||a.confidence!<.55);

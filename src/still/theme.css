@@ -1,0 +1,21 @@
+/* Still owns its semantic palette. Inheritance reaches component shadow roots,
+   including the standalone developer window; vendor defaults stay untouched. */
+still-app,
+still-developer-console {
+  color-scheme: light;
+  --en-color-canvas: #f7f6f2;
+  --en-color-surface: #fbfaf7;
+  --en-color-surface-raised: #fbfaf7;
+  --en-color-surface-subtle: #efeee8;
+  --en-color-text: #302f2b;
+  --en-color-line: #dedbd2;
+  --en-color-boundary: #c5c3b8;
+  --en-color-selected: #e7e6df;
+  --en-color-action: #393d32;
+  --en-color-action-hover: #2e3228;
+  --en-color-action-pressed: #25291f;
+  --en-color-action-text: #4f5148;
+  --en-color-on-action: #ffffff;
+  --en-color-focus: #8e6246;
+  --en-color-focus-halo: #8e6246;
+}
