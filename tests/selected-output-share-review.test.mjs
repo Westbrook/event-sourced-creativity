@@ -5,6 +5,9 @@ import ts from "typescript";
 import * as lit from "lit";
 import { selectedOutputShareCopy } from "../src/components/selected-output-share-messages.ts";
 import { projectSelectedOutputShareCandidate, projectSelectedOutputShareMediaCandidate } from "../src/model/selected-output-share.ts";
+import { isSelectedOutputShareStableAudioSelection, SELECTED_OUTPUT_SHARE_STABLE_AUDIO_SOURCE_PROFILE,
+  SELECTED_OUTPUT_SHARE_STABLE_AUDIO_PROJECTION_POLICY } from "../src/model/selected-output-share-mp3-contract.ts";
+import { accessVerifiedSelectedOutputShareMedia, disposeVerifiedSelectedOutputShareMedia } from "../src/selected-output-share-media-client.ts";
 
 // Actual complete review component, client and content/slide renderers, synthetic HTTP streams,
 // and the existing finite native DOM ports. This is not browser, physical-device,
@@ -56,6 +59,10 @@ const COMPONENT = "src/components/forma-selected-output-share-review.ts";
 const NOW = Date.parse("2030-01-01T00:00:00.000Z"), TOKEN = "A".repeat(32);
 const SELECTION = Object.freeze({ output: "scene", documentId: "document-a", artifactId: "artifact-a", revision: 3, contentSha256: "a".repeat(64) });
 const BODY = "Exact authored العربية 日本語\n<img src='https://private.invalid/no-fetch'> [link](javascript:void(0))";
+// Exact previously qualified synthetic stereo20 output, prepared once from the
+// existing synthetic MP3. No decoder/provider is invoked by this UI test.
+const preparedWav = new Uint8Array(fs.readFileSync(new URL("./selected-output-share-mp3-browser/stereo-20-prepared.wav", import.meta.url)));
+const preparedWavHash = "eae13159a5b9273dee41f064db6cd44bb6e93ecf8138ebf424fbca2deb08b1a7";
 const iso = value => new Date(value).toISOString();
 const localDate = value => { const d = new Date(value), pad = part => String(part).padStart(2, "0"); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`; };
 const deferred = () => { let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; };
@@ -65,7 +72,10 @@ const metadata = (id = "candidate-a") => ({ shareId: id, title: "An existing lin
 async function candidate(selection, review) {
   if (selection.projectionPolicy) {
     const output = selection.output;
-    const descriptor = { kind: output, mimeType: output === "audio" ? "audio/wav" : output === "video" ? "video/mp4" : "model/gltf-binary",
+    const descriptor = isSelectedOutputShareStableAudioSelection(selection) ? {
+      kind: "audio", mimeType: "audio/wav", sha256: preparedWavHash, byteLength: 3_528_044,
+      sampleRate: 44100, channels: 2, sampleCount: 882000, durationSeconds: 20, durationBasis: "pcm-samples",
+    } : { kind: output, mimeType: output === "audio" ? "audio/wav" : output === "video" ? "video/mp4" : "model/gltf-binary",
       sha256: selection.mediaSha256, byteLength: output === "audio" ? 8044 : 408,
       ...(output === "audio" ? { sampleRate: 8000, channels: 1, sampleCount: 4000, durationSeconds: 0.5, durationBasis: "pcm-samples" }
         : output === "video" ? { width: 16, height: 16, durationSeconds: 1 } : {}) };
@@ -84,6 +94,11 @@ function response(url, value) {
   const result = new Response(bytes, { headers: { "content-type": "application/json", "content-length": String(bytes.byteLength) } });
   Object.defineProperty(result, "url", { value: String(url) });
   return result;
+}
+function preparedResponse(url, bytes = preparedWav) {
+  const result = new Response(bytes, { headers: { "content-type": "audio/wav",
+    "content-disposition": 'attachment; filename="forma-audio.wav"' } });
+  Object.defineProperty(result, "url", { value: String(url) }); return result;
 }
 let mountCommit, mediaMount;
 async function loadComponent() {
@@ -146,6 +161,8 @@ function fixture(t, { enabled = true, available = true, reply, shares = [], curs
         candidate: await candidate(selection, review), replayed: false });
     }
     if (path.endsWith("/commit")) return response(url, { share: { shareId: "candidate-a", expiresAt: iso(NOW + 3_600_000), active: true, token: TOKEN }, replayed: false });
+    if (isSelectedOutputShareStableAudioSelection(selection) && /^\/api\/selected-output-shares\/candidate-[a-z]\/file$/u.test(path))
+      return preparedResponse(url);
     if (init.method === "DELETE") { shares = shares.filter(share => share.shareId !== decodeURIComponent(path.split("/").at(-1))); cursor = null; return response(url, { ok: true }); }
     return response(url, { shares, nextCursor: cursor });
   };
@@ -338,6 +355,94 @@ test("changing the trusted media reader within a lease retires the old source", 
   f.source.readMedia = async () => { throw new Error("Changed port"); }; f.draw();
   assert.equal(view.disposed, true); assert.equal(view.controls.isCurrent(), false);
   assert.equal(f.nodes("button").length, 0, "changed authority port cannot leave a sharing entry behind");
+});
+
+const mp3Selection = () => ({ ...SELECTION, output: "audio", revision: 0,
+  mediaSha256: "3cfa31bd59c5f8eb92b525b5f718d6e379824f8407b45ed5e793afe2fcf6ab8d",
+  policy: "selected-output-share-audio-v1", sourceProfile: SELECTED_OUTPUT_SHARE_STABLE_AUDIO_SOURCE_PROFILE,
+  projectionPolicy: SELECTED_OUTPUT_SHARE_STABLE_AUDIO_PROJECTION_POLICY });
+const fileRequests = f => f.requests.filter(item => String(item.url).endsWith("/file"));
+
+test("native MP3 review uses the same client's prepared WAV reader and keeps separate explicit approval", async t => {
+  const f = fixture(t, { selection: mp3Selection() });
+  await f.open(); await f.fill(); await f.act(f.find("button", "Review"));
+  assert.equal(f.mediaViews.length, 1, "no native source reader is required for the server derivative");
+  const view = f.mediaViews[0];
+  assert.equal(view.output.content.media.sha256, preparedWavHash);
+  assert.notEqual(view.output.content.media.sha256, f.source.selection.mediaSha256);
+  assert.equal(fileRequests(f).length, 0, "opening and preparing never load media");
+  for (const locale of ["fr", "ja", "ar", "en"]) f.locale(locale);
+  assert.equal(f.mediaViews.length, 1); assert.equal(fileRequests(f).length, 0);
+  await f.find("button", "Publish link").handlers.click(); await f.settle();
+  assert.equal(f.requests.filter(item => String(item.url).endsWith("/commit")).length, 0);
+  // The finite leaf port invokes the actual client/byte reader. Real leaf
+  // gestures, readiness and playback are checked separately in the browser.
+  const handle = await view.controls.readMedia(view.output, view.controls);
+  try {
+    const access = accessVerifiedSelectedOutputShareMedia(handle, view.output); assert.ok(access);
+    assert.equal(access.blob.size, 3_528_044); assert.equal(access.fileName, "forma-audio.wav");
+    assert.equal(fileRequests(f).length, 1);
+    assert.equal(fileRequests(f)[0].url, "https://fixture.invalid/api/selected-output-shares/candidate-a/file");
+    assert.equal(Object.hasOwn(f.find("button", "Publish link").attributes, "disabled"), true, "byte return alone does not forge leaf readiness");
+    view.controls.onReady(true); await f.settle();
+    await f.act(f.find("button", "Publish link"));
+    assert.equal(f.requests.filter(item => String(item.url).endsWith("/commit")).length, 1);
+    assert.equal(view.disposed, true); assert.equal(view.controls.signal.aborted, true);
+    assert.equal(accessVerifiedSelectedOutputShareMedia(handle, view.output), null);
+  } finally { disposeVerifiedSelectedOutputShareMedia(handle); }
+});
+
+test("native MP3 preview never falls back to a supplied source reader when prepared bytes fail", async t => {
+  let nativeReads = 0;
+  const bytes = preparedWav.slice(); bytes[44] ^= 1;
+  const f = fixture(t, { selection: mp3Selection(), readMedia: async () => { nativeReads++; throw new Error("private MP3 must not be read"); },
+    reply: (url, init, fallback) => String(url).endsWith("/file") ? preparedResponse(url, bytes) : fallback(url, init) });
+  await f.open(); await f.fill(); await f.act(f.find("button", "Review"));
+  const view = f.mediaViews[0]; assert.ok(view);
+  await assert.rejects(view.controls.readMedia(view.output, view.controls));
+  view.controls.onReady(false); await f.settle();
+  assert.equal(nativeReads, 0); assert.equal(fileRequests(f).length, 1);
+  assert.equal(Object.hasOwn(f.find("button", "Publish link").attributes, "disabled"), true);
+  await f.find("button", "Publish link").handlers.click(); await f.settle();
+  assert.equal(f.requests.filter(item => String(item.url).endsWith("/commit")).length, 0);
+});
+
+test("native MP3 candidate replacement retires the old prepared reader without requesting its file", async t => {
+  const f = fixture(t, { selection: mp3Selection() });
+  await f.open(); await f.fill(); await f.act(f.find("button", "Review"));
+  const first = f.mediaViews[0]; assert.ok(first);
+  await f.edit("share-title", "New public title"); await f.act(f.find("button", "Review"));
+  const second = f.mediaViews[1]; assert.ok(second); assert.notEqual(second.controls.readMedia, first.controls.readMedia);
+  await assert.rejects(first.controls.readMedia(first.output, { signal: new AbortController().signal, isCurrent: () => true }));
+  assert.equal(fileRequests(f).length, 0);
+  first.controls.onReady(true); await f.settle();
+  assert.equal(Object.hasOwn(f.find("button", "Publish link").attributes, "disabled"), true);
+  const handle = await second.controls.readMedia(second.output, second.controls);
+  disposeVerifiedSelectedOutputShareMedia(handle);
+  assert.equal(fileRequests(f)[0].url, "https://fixture.invalid/api/selected-output-shares/candidate-b/file");
+});
+
+for (const reason of ["source", "edit", "close", "disconnect", "expiry"]) test(`native MP3 ${reason} retires a pending prepared file and rejects late readiness`, async t => {
+  const held = deferred(); let cancelled = 0;
+  const f = fixture(t, { selection: mp3Selection(),
+    reply: (url, init, fallback) => String(url).endsWith("/file") ? held.promise : fallback(url, init) });
+  await f.open(); await f.fill(); await f.act(f.find("button", "Review"));
+  const view = f.mediaViews[0]; assert.ok(view);
+  const pending = view.controls.readMedia(view.output, view.controls), refused = assert.rejects(pending);
+  await f.settle(() => fileRequests(f).length === 1);
+  if (reason === "source") f.sourceAbort.abort();
+  if (reason === "edit") await f.edit("share-title", "Changed");
+  if (reason === "close") await f.act(f.find("button", "Close"));
+  if (reason === "disconnect") f.disconnect();
+  if (reason === "expiry") f.clocks(NOW - 86_400_000, 3_600_001);
+  assert.equal(fileRequests(f)[0].init.signal.aborted, true);
+  await refused;
+  const late = new Response(new ReadableStream({ cancel() { cancelled++; } }), { headers: { "content-type": "audio/wav" } });
+  Object.defineProperty(late, "url", { value: fileRequests(f)[0].url }); held.resolve(late);
+  await f.settle(() => cancelled === 1);
+  assert.equal(view.disposed, true); assert.equal(view.controls.isCurrent(), false);
+  view.controls.onReady(true); await f.settle();
+  assert.equal(f.requests.filter(item => String(item.url).endsWith("/commit")).length, 0);
 });
 
 test("four saved locales preserve authored inputs and active composition without requests or publication", async t => {

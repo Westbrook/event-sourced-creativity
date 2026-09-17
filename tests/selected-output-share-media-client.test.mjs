@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import test from "node:test";
-import { readSelectedOutputShareSourceMedia, createSelectedOutputShareTokenMediaReader,
+import { readSelectedOutputShareSourceMedia, createSelectedOutputShareTokenMediaReader, createSelectedOutputSharePreparedMediaReader,
   accessVerifiedSelectedOutputShareMedia, disposeVerifiedSelectedOutputShareMedia,
   withVerifiedSelectedOutputShareMediaBytes, SELECTED_OUTPUT_SHARE_MEDIA_BUDGET_BYTES,
   SELECTED_OUTPUT_SHARE_MEDIA_READ_TIMEOUT_MS } from "../src/selected-output-share-media-client.ts";
@@ -379,4 +379,272 @@ test("finite read timeout aborts the request and cancels a response that arrives
   timer(); await rejected; assert.equal(f.calls[0].init.signal.aborted, true); assert.equal(cleared, true);
   const stream = new ReadableStream({ cancel() { cancels++; } }, { highWaterMark: 0 });
   held.resolve(f.response({ body: stream })); await eventually(() => cancels === 1, "late timed-out response cancellation");
+});
+
+// Prepared Stable20 files are private server-derived WAVs, never a native MP3
+// URL. These synthetic bytes exercise transport integrity only: no decoder,
+// provider, real media, publication authority or container qualification runs.
+// The prepared backend route matches this finite identifier grammar directly
+// in URL.pathname; unlike management DELETE it does not decode percent escapes.
+const PREPARED_ID = "candidate-1:stable_audio", PREPARED_FILE = `${ORIGIN}/api/selected-output-shares/${PREPARED_ID}/file`;
+const STABLE_BYTES = wav({ samples: 32000 * 20, sampleRate: 32000, channels: 1 });
+function preparedFixture(t) {
+  t.mock.method(Date, "now", () => NOW);
+  const bytes = STABLE_BYTES;
+  const output = validateSelectedOutputShareMediaPublicOutput({ schemaVersion: 1, kind: "selected-output-read", output: "audio",
+    title: "Reviewed synthetic Stable20 audio", expiresAt: new Date(NOW + 60_000).toISOString(), attribution: "Forma",
+    content: { media: { kind: "audio", mimeType: "audio/wav", byteLength: bytes.length, sha256: hash(bytes),
+      sampleRate: 32000, channels: 1, sampleCount: 640000, durationSeconds: 20, durationBasis: "pcm-samples" },
+    disclosure: { watermark: "not-declared" } } }, NOW);
+  assert.ok(output);
+  const owner = new AbortController(), preview = new AbortController(), calls = [], handles = [];
+  let ownerCurrent = true, previewCurrent = true, reply;
+  const ownerControls = { signal: owner.signal, isCurrent: () => ownerCurrent };
+  const previewControls = { signal: preview.signal, isCurrent: () => previewCurrent };
+  const response = ({ body = bytes, status = 200, url = PREPARED_FILE, redirected = false, headers = {}, omitLength = false } = {}) => {
+    const value = new Response(body, { status, headers: { "content-type": "audio/wav", "content-length": String(bytes.length),
+      "content-disposition": 'attachment; filename="forma-audio.wav"', ...headers } });
+    if (omitLength) value.headers.delete("content-length");
+    Object.defineProperty(value, "url", { value: url }); Object.defineProperty(value, "redirected", { value: redirected });
+    return value;
+  };
+  reply = () => response();
+  const request = async (url, init) => { calls.push({ url, init }); return reply(url, init); };
+  const create = (candidateId = PREPARED_ID, expected = output, origin = ORIGIN, controls = ownerControls, fetcher = request) =>
+    createSelectedOutputSharePreparedMediaReader(candidateId, expected, origin, controls, fetcher);
+  const reader = create();
+  const read = async (expected = output, controls = previewControls, selected = reader) => {
+    const handle = await selected(expected, controls); handles.push(handle); return handle;
+  };
+  t.after(() => { owner.abort(); preview.abort(); for (const handle of handles) disposeVerifiedSelectedOutputShareMedia(handle); });
+  return { bytes, output, owner, preview, ownerControls, previewControls, calls, handles, reader, create, read, request, response,
+    setReply(value) { reply = value; }, retireOwner() { ownerCurrent = false; }, retirePreview() { previewCurrent = false; } };
+}
+
+test("prepared Stable20 factory is synchronous and fetch-free; review reads only its exact private candidate file", async t => {
+  const f = preparedFixture(t); assert.equal(typeof f.reader, "function"); assert.equal(f.calls.length, 0);
+  for (const omitLength of [true, false]) {
+    f.setReply(() => f.response({ omitLength })); const handle = await f.read();
+    const access = accessVerifiedSelectedOutputShareMedia(handle, f.output);
+    assert.ok(access); assert.equal(access.fileName, "forma-audio.wav"); assert.equal(access.blob.type, "audio/wav");
+    assert.deepEqual(new Uint8Array(await access.blob.arrayBuffer()), f.bytes);
+  }
+  assert.equal(f.calls.length, 2);
+  for (const call of f.calls) {
+    assert.equal(call.url, PREPARED_FILE); assert.equal(call.init.method, "GET");
+    assert.equal(call.init.credentials, "same-origin"); assert.equal(call.init.cache, "no-store");
+    assert.equal(call.init.redirect, "error"); assert.equal(call.init.referrerPolicy, "no-referrer");
+    assert.equal(new Headers(call.init.headers).get("accept"), "audio/wav");
+    assert.equal(new Headers(call.init.headers).get("range"), null); assert.ok(call.init.signal instanceof AbortSignal);
+  }
+});
+
+test("prepared factory rejects candidate path injection, foreign origins and non-Stable20 descriptors before transport", async t => {
+  const f = preparedFixture(t);
+  for (const candidate of ["", ".", "..", "_bad", "-bad", "a/other", "a%2Fother", "a?x=1", "a#x", "a\\other", " a", "a\n", "a".repeat(161), null, 1])
+    assert.throws(() => f.create(candidate));
+  for (const origin of [ORIGIN + "/", ORIGIN + "/path", "https://foreign.invalid/path", "https://user@forma.test", "data:text/plain,x", "null"])
+    assert.throws(() => f.create(PREPARED_ID, f.output, origin));
+  for (const output of [publicOutput(wav({ samples: 8 })), publicOutput(wav({ samples: 8 }), "video"), publicOutput(wav({ samples: 8 }), "model3d")])
+    assert.throws(() => f.create(PREPARED_ID, output));
+  const wrongRate = structuredClone(f.output); wrongRate.content.media.sampleRate = 8000;
+  wrongRate.content.media.sampleCount = 160000; wrongRate.content.media.byteLength = 320044;
+  assert.ok(validateSelectedOutputShareMediaPublicOutput(wrongRate, NOW)); assert.throws(() => f.create(PREPARED_ID, wrongRate));
+  assert.equal(f.calls.length, 0);
+});
+
+test("prepared finite candidate identifiers retain the literal pathname accepted by the backend route", async t => {
+  const f = preparedFixture(t);
+  for (const id of ["a", "candidate.with_underscore-and:colon", "a".repeat(160)]) {
+    const reader = f.create(id), url = `${ORIGIN}/api/selected-output-shares/${id}/file`;
+    f.setReply(() => f.response({ url }));
+    assert.ok(accessVerifiedSelectedOutputShareMedia(await f.read(f.output, f.previewControls, reader), f.output));
+    assert.equal(f.calls.at(-1).url, url); assert.equal(new URL(f.calls.at(-1).url).pathname.includes("%"), false);
+  }
+});
+
+test("prepared factory captures the whole public signature and rejects cross-profile or retargeted previews without a GET", async t => {
+  const f = preparedFixture(t), mutable = structuredClone(f.output), reader = f.create(PREPARED_ID, mutable);
+  mutable.title = "Changed caller title"; mutable.content.media.sha256 = "b".repeat(64);
+  const mutations = [value => { value.title += " changed"; }, value => { value.expiresAt = new Date(NOW + 30_000).toISOString(); },
+    value => { value.content.disclosure.watermark = "synthid-declared"; }, value => { value.content.media.sha256 = "c".repeat(64); },
+    value => { value.content.media.sampleRate = 44100; value.content.media.sampleCount = 882000; value.content.media.byteLength = 1764044; }];
+  for (const mutate of mutations) { const changed = structuredClone(f.output); mutate(changed); await refuses(f.read(changed, f.previewControls, reader)); }
+  await refuses(f.read(mutable, f.previewControls, reader));
+  await refuses(f.read(publicOutput(wav({ samples: 8 })), f.previewControls, reader));
+  assert.equal(f.calls.length, 0);
+  const handle = await f.read(structuredClone(f.output), f.previewControls, reader);
+  assert.ok(accessVerifiedSelectedOutputShareMedia(handle, f.output)); assert.equal(accessVerifiedSelectedOutputShareMedia(handle, mutable), null);
+});
+
+test("prepared public data accessors cannot run at factory or preview capture", async t => {
+  const f = preparedFixture(t); let getters = 0;
+  const getter = structuredClone(f.output); Object.defineProperty(getter, "content", { enumerable: true, get() { getters++; return f.output.content; } });
+  assert.throws(() => f.create(PREPARED_ID, getter)); await refuses(f.read(getter));
+  assert.equal(getters, 0); assert.equal(f.calls.length, 0);
+});
+
+test("prepared responses require exact attachment, identity encoding, canonical length and the candidate URL", async t => {
+  const f = preparedFixture(t);
+  const failures = [
+    { status: 206 }, { status: 404 }, { redirected: true }, { url: FILE }, { url: ORIGIN + SOURCE },
+    { url: PREPARED_FILE.replace(PREPARED_ID, "different-candidate") }, { url: PREPARED_FILE + "?x=1" }, { url: PREPARED_FILE + "#x" },
+    { headers: { "content-type": "audio/mpeg" } }, { headers: { "content-type": "audio/x-wav" } },
+    { headers: { "content-range": `bytes 0-${f.bytes.length - 1}/${f.bytes.length}` } },
+    ...["gzip", "br", "", "identity, gzip"].map(value => ({ headers: { "content-encoding": value }, omitLength: true })),
+    ...["", "0", "-1", "1.5", "01", String(f.bytes.length - 1), String(f.bytes.length + 1), "9007199254740992"].map(value => ({ headers: { "content-length": value } })),
+    ...["", "inline", 'attachment; filename="private.wav"', 'attachment; filename="forma-audio.mp3"',
+      'attachment; filename="forma-audio.wav"; filename*=UTF-8\'\'other.wav'].map(value => ({ headers: { "content-disposition": value } })),
+  ];
+  for (const failure of failures) { f.setReply(() => f.response(failure)); await refuses(f.read()); }
+  f.setReply(() => f.response({ headers: { "content-encoding": "identity" }, omitLength: true }));
+  assert.ok(accessVerifiedSelectedOutputShareMedia(await f.read(), f.output));
+});
+
+test("prepared absent Content-Length still enforces exact final size and SHA", async t => {
+  const f = preparedFixture(t), wrong = new Uint8Array(f.bytes); wrong[wrong.length - 1] ^= 1;
+  for (const body of [f.bytes.slice(0, -1), new Uint8Array(f.bytes.length + 1), wrong]) {
+    f.setReply(() => f.response({ body, omitLength: true })); await refuses(f.read());
+  }
+});
+
+test("prepared owner controls are captured at factory time, before any preview or await", async t => {
+  for (const mode of ["abort", "retire"]) await t.test(mode, async child => {
+    const f = preparedFixture(child), replacement = new AbortController();
+    f.ownerControls.signal = replacement.signal; f.ownerControls.isCurrent = () => true;
+    if (mode === "abort") f.owner.abort(); else f.retireOwner();
+    await refuses(f.read()); assert.equal(f.calls.length, 0);
+  });
+});
+
+test("prepared factory expiry cannot be restarted by later previews or a backward wall clock", async t => {
+  let monotonic = 100; t.mock.method(performance, "now", () => monotonic);
+  const f = preparedFixture(t); monotonic += 60_001;
+  t.mock.method(Date, "now", () => NOW - 60_000);
+  await refuses(f.read()); await refuses(f.read(f.output, { signal: new AbortController().signal, isCurrent: () => true }));
+  assert.equal(f.calls.length, 0);
+});
+
+for (const layer of ["owner", "preview"]) {
+  test(`prepared ${layer} abort simultaneous with response settlement cancels an unread body`, async t => {
+    const f = preparedFixture(t), held = deferred(); let pulls = 0, cancels = 0;
+    f.setReply(() => held.promise); const rejected = refuses(f.read());
+    await eventually(() => f.calls.length === 1, "prepared request is pending");
+    const body = new ReadableStream({ pull() { pulls++; }, cancel() { cancels++; } }, { highWaterMark: 0 });
+    held.resolve(f.response({ body })); f[layer].abort(); await rejected;
+    await eventually(() => cancels === 1, "settled but unread response is cancelled"); assert.equal(pulls, 0);
+  });
+
+  test(`prepared ${layer} abort cancels pending fetch and disposes a late body without reading it`, async t => {
+    const f = preparedFixture(t), held = deferred(); let pulls = 0, cancels = 0;
+    f.setReply(() => held.promise); const rejected = refuses(f.read());
+    await eventually(() => f.calls.length === 1, "prepared request started");
+    f[layer].abort(); await rejected; assert.equal(f.calls[0].init.signal.aborted, true);
+    const body = new ReadableStream({ pull() { pulls++; }, cancel() { cancels++; } }, { highWaterMark: 0 });
+    held.resolve(f.response({ body })); await eventually(() => cancels === 1, "late prepared body cancelled"); assert.equal(pulls, 0);
+  });
+
+  test(`prepared ${layer} abort interrupts a blocked stream and original controls cannot be replaced`, async t => {
+    const f = preparedFixture(t); let reading = false, cancels = 0;
+    const body = new ReadableStream({ pull() { reading = true; }, cancel() { cancels++; } }, { highWaterMark: 0 });
+    f.setReply(() => f.response({ body })); const rejected = refuses(f.read());
+    await eventually(() => reading, "prepared stream read pending");
+    const controls = layer === "owner" ? f.ownerControls : f.previewControls;
+    controls.signal = new AbortController().signal; controls.isCurrent = () => true;
+    f[layer].abort(); await rejected;
+    await eventually(() => cancels === 1, "prepared stream cancelled"); assert.equal(f.calls[0].init.signal.aborted, true);
+  });
+
+  test(`prepared ${layer} abort during a non-abortable digest never admits later hash success`, { timeout: 5000 }, async t => {
+    const f = preparedFixture(t), started = deferred(), held = deferred(), digest = crypto.subtle.digest.bind(crypto.subtle);
+    t.mock.method(crypto.subtle, "digest", async (...args) => { const result = await digest(...args); started.resolve(); await held.promise; return result; });
+    const rejected = refuses(f.read()); await started.promise; f[layer].abort(); await rejected; held.resolve();
+    await new Promise(setImmediate); assert.equal(f.handles.length, 0);
+  });
+
+  test(`prepared ${layer} retirement during body delivery refuses without a verified handle`, async t => {
+    const f = preparedFixture(t); let cancels = 0;
+    const body = new ReadableStream({ pull(controller) {
+      if (layer === "owner") f.retireOwner(); else f.retirePreview(); controller.enqueue(f.bytes.slice(0, 8));
+    }, cancel() { cancels++; } }, { highWaterMark: 0 });
+    f.setReply(() => f.response({ body })); await refuses(f.read()); assert.equal(cancels, 1);
+  });
+}
+
+test("prepared preview cancellation is isolated while owner retirement invalidates all surviving previews", async t => {
+  const f = preparedFixture(t), a = new AbortController(), b = new AbortController(), first = deferred(); let requests = 0;
+  f.setReply(() => ++requests === 1 ? first.promise : f.response());
+  const rejected = refuses(f.read(f.output, { signal: a.signal, isCurrent: () => true }));
+  await eventually(() => f.calls.length === 1, "first independent preview pending");
+  const handle = await f.read(f.output, { signal: b.signal, isCurrent: () => true });
+  a.abort(); await rejected; first.resolve(f.response());
+  assert.ok(accessVerifiedSelectedOutputShareMedia(handle, f.output)); assert.equal(b.signal.aborted, false);
+  f.owner.abort(); assert.equal(accessVerifiedSelectedOutputShareMedia(handle, f.output), null);
+  await refuses(f.read(f.output, { signal: new AbortController().signal, isCurrent: () => true })); assert.equal(f.calls.length, 2);
+});
+
+test("prepared verified handles keep both original predicates after caller control replacement", async t => {
+  for (const layer of ["owner", "preview"]) await t.test(layer, async child => {
+    const f = preparedFixture(child), handle = await f.read(); assert.ok(accessVerifiedSelectedOutputShareMedia(handle, f.output));
+    if (layer === "owner") f.retireOwner(); else f.retirePreview();
+    f.ownerControls.isCurrent = () => true; f.previewControls.isCurrent = () => true;
+    assert.equal(accessVerifiedSelectedOutputShareMedia(handle, f.output), null);
+  });
+});
+
+test("prepared cancelled digest retains shared capacity until actual digest settlement", { timeout: 5000 }, async t => {
+  const started = deferred(), heldDigest = deferred(), digest = crypto.subtle.digest.bind(crypto.subtle);
+  t.mock.method(crypto.subtle, "digest", async (...args) => { const result = await digest(...args); started.resolve(); await heldDigest.promise; return result; });
+  const prepared = preparedFixture(t), preparedRejected = refuses(prepared.read()); await started.promise;
+  const active = [];
+  for (let index = 0; index < 3; index++) {
+    const f = fixture(t, { kind: "video", byteLength: 24_000_000 }), held = deferred(); f.setReply(() => held.promise);
+    active.push({ f, held, rejected: refuses(f.read()) }); await eventually(() => f.calls.length === 1, "shared source reservation");
+  }
+  const probe = fixture(t, { kind: "video", byteLength: Math.floor((SELECTED_OUTPUT_SHARE_MEDIA_BUDGET_BYTES - 3 * 24_000_000 * 3) / 3) });
+  prepared.owner.abort(); await preparedRejected;
+  await refuses(probe.read()); assert.equal(probe.calls.length, 0, "prepared digest allocation is still owned");
+  heldDigest.resolve(); await new Promise(setImmediate);
+  probe.setReply(() => probe.response({ status: 404 })); await refuses(probe.read()); assert.equal(probe.calls.length, 1);
+  for (const { f, held, rejected } of active) { f.controller.abort(); held.resolve(f.response({ status: 404 })); await rejected; }
+});
+
+test("prepared successful-handle abort detaches both original listeners and returns its shared Blob capacity", async t => {
+  for (const layer of ["owner", "preview"]) await t.test(layer, async child => {
+    const f = preparedFixture(child), removals = { owner: 0, preview: 0 };
+    for (const key of ["owner", "preview"]) {
+      const original = f[key].signal.removeEventListener;
+      child.mock.method(f[key].signal, "removeEventListener", function (...args) {
+        if (args[0] === "abort") removals[key]++; return original.apply(this, args);
+      });
+    }
+    const handle = await f.read(); assert.ok(accessVerifiedSelectedOutputShareMedia(handle, f.output));
+    assert.deepEqual(removals, { owner: 0, preview: 0 }, "both retained-handle cancellations stay attached");
+    const active = [];
+    for (let index = 0; index < 3; index++) {
+      const pending = fixture(child, { kind: "video", byteLength: 24_000_000 }), held = deferred(); pending.setReply(() => held.promise);
+      active.push({ pending, held, rejected: refuses(pending.read()) });
+      await eventually(() => pending.calls.length === 1, "shared source reservation acquired");
+    }
+    const probe = fixture(child, { kind: "video", byteLength: Math.floor((SELECTED_OUTPUT_SHARE_MEDIA_BUDGET_BYTES - 3 * 24_000_000 * 3) / 3) });
+    await refuses(probe.read()); assert.equal(probe.calls.length, 0, "prepared immutable Blob owns its share of capacity");
+    f[layer].abort(); assert.equal(accessVerifiedSelectedOutputShareMedia(handle, f.output), null);
+    assert.deepEqual(removals, { owner: 1, preview: 1 });
+    disposeVerifiedSelectedOutputShareMedia(handle); assert.deepEqual(removals, { owner: 1, preview: 1 }, "disposal is idempotent");
+    probe.setReply(() => probe.response({ status: 404 })); await refuses(probe.read()); assert.equal(probe.calls.length, 1);
+    for (const { pending, held, rejected } of active) { pending.controller.abort(); held.resolve(pending.response({ status: 404 })); await rejected; }
+  });
+});
+
+test("prepared reader captures its default fetch at factory time and rejects a revived owner predicate", async t => {
+  const f = preparedFixture(t); let current = true;
+  const owner = { signal: f.owner.signal, isCurrent: () => current };
+  t.mock.method(globalThis, "fetch", f.request);
+  const reader = createSelectedOutputSharePreparedMediaReader(PREPARED_ID, f.output, ORIGIN, owner);
+  t.mock.method(globalThis, "fetch", () => { throw Error("replacement global fetch must not be used"); });
+  assert.equal(f.calls.length, 0);
+  assert.ok(accessVerifiedSelectedOutputShareMedia(await f.read(f.output, f.previewControls, reader), f.output));
+  current = false; await refuses(f.read(f.output, f.previewControls, reader));
+  current = true; await refuses(f.read(f.output, f.previewControls, reader));
+  assert.equal(f.calls.length, 1, "once observed stale, the prepared owner lease cannot revive");
 });

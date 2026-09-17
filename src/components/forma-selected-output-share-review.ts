@@ -8,6 +8,7 @@ import { renderSelectedOutputShareContent } from "./selected-output-share-conten
 import { selectedOutputShareCopy, selectedOutputShareExpiryLabel } from "./selected-output-share-messages.ts";
 import type { SelectedOutputShareReadMedia } from "../selected-output-share-media-client.ts";
 import { mountSelectedOutputShareMedia } from "./selected-output-share-media-view.ts";
+import { isSelectedOutputShareStableAudioSelection } from "../model/selected-output-share-mp3-contract.ts";
 import "./forma-selected-output-share-review.css";
 
 type Owner = { epoch: number; abort: AbortController; current: () => boolean; client: SelectedOutputShareClient;
@@ -419,15 +420,18 @@ export class FormaSelectedOutputShareReview extends FormaPresentationalElement {
       this.#media.view?.refresh(this.i18n); return;
     }
     this.#clearMedia();
-    if (!owner.readMedia) return;
+    const derivative = isSelectedOutputShareStableAudioSelection(candidate.candidate.selection);
+    if (!derivative && !owner.readMedia) return;
     const preview: MediaPreview = { candidate, mount, abort: new AbortController() };
     this.#media = preview;
     const current = () => this.#media === preview && !preview.abort.signal.aborted && owner.current()
       && this.#owner === owner && this.#candidate === candidate && this.#open
       && Date.parse(output.expiresAt) > Date.now() && this.#expiryDeadline !== null && this.#expiryDeadline > performance.now();
     try {
+      const readMedia = derivative ? owner.client.createPreparedMediaReader(candidate) : owner.readMedia;
+      if (!readMedia) throw new Error("selected_output_share_unavailable");
       preview.view = mountSelectedOutputShareMedia(mount, output, { locale: this.i18n,
-        readMedia: owner.readMedia, signal: preview.abort.signal, isCurrent: current,
+        readMedia, signal: preview.abort.signal, isCurrent: current,
         onReady: ready => {
           if (!current() || this.#mediaReady === ready) return;
           this.#mediaReady = ready; this.requestUpdate();

@@ -10,6 +10,10 @@ const { projectSelectedOutputShareCandidate, projectSelectedOutputShareMediaCand
 const { SELECTED_OUTPUT_SHARE_AUDIO_POLICY: audioPolicy } = await import("../src/model/selected-output-share-audio.ts");
 const { SELECTED_OUTPUT_SHARE_VIDEO_POLICY: videoPolicy, SELECTED_OUTPUT_SHARE_VIDEO_X264_POLICY: encoderPolicy } = await import("../src/model/selected-output-share-video.ts");
 const { SELECTED_OUTPUT_SHARE_MODEL3D_POLICY: modelPolicy, SELECTED_OUTPUT_SHARE_MODEL3D_TEXTURE_POLICY: texturePolicy } = await import("../src/model/selected-output-share-model3d.ts");
+const { SELECTED_OUTPUT_SHARE_STABLE_AUDIO_SOURCE_PROFILE: sourceProfile,
+  SELECTED_OUTPUT_SHARE_STABLE_AUDIO_PROJECTION_POLICY: derivativePolicy } = await import("../src/model/selected-output-share-mp3-contract.ts");
+const { accessVerifiedSelectedOutputShareMedia, disposeVerifiedSelectedOutputShareMedia } = await import("../src/selected-output-share-media-client.ts");
+const { wav } = await import("./output-asset-fixtures.mjs");
 imports.deregister();
 
 const origin = "https://forma.test", base = origin + "/api/selected-output-shares";
@@ -47,6 +51,15 @@ async function mediaCandidate(output = "audio", policy = audioPolicy, choices = 
       : output === "video" ? { encoderDeclaration: policy === encoderPolicy ? "x264-163-r3060" : null } : {},
   }, choices); assert(value); return value;
 }
+async function derivativeCandidate(choices = review(), bytes) {
+  const selected = { ...mediaSelection("audio", audioPolicy), sourceProfile, projectionPolicy: derivativePolicy };
+  const descriptor = { kind: "audio", mimeType: "audio/wav", sha256: bytes
+    ? createHash("sha256").update(bytes).digest("hex") : "c".repeat(64), byteLength: 1_280_044,
+    sampleRate: 32000, channels: 1, sampleCount: 640000, durationSeconds: 20, durationBasis: "pcm-samples" };
+  const value = await projectSelectedOutputShareMediaCandidate(selected, { descriptor,
+    sourceExpiresAt: new Date(Date.now() + 86400000).toISOString(), disclosure: { watermark: "not-declared" } }, choices);
+  assert(value, "actual model accepts the closed Stable20 derivative fixture"); return value;
+}
 function rehash(value) {
   const { candidateSha256: _digest, ...preimage } = value;
   return { ...preimage, candidateSha256: createHash("sha256").update(JSON.stringify(preimage)).digest("hex") };
@@ -62,7 +75,7 @@ function fixture(selected = selection("short_story"), readMedia) {
   };
   const lease = { selection: selected, signal: controller.signal, isCurrent: () => current, ...(readMedia ? { readMedia } : {}) };
   const options = { origin, fetcher }, client = createSelectedOutputShareClient(lease, options);
-  return { client, calls, replies, controller, lease, options, retire() { current = false; },
+  return { client, calls, replies, controller, lease, options, retire() { current = false; }, setCurrent(value) { current = value; },
     json(value) { replies.push(Response.json(value)); },
     async enable() { replies.push(Response.json({ creationAvailable: true })); assert.equal(await client.availability(), true); },
   };
@@ -72,6 +85,423 @@ async function prepare(f, value) {
   f.json({ candidateId: "candidate-1", candidate: value, replayed: false });
   return f.client.prepare({ title: value.publicOutput.title, expiresAt: value.publicOutput.expiresAt }, "intent-1");
 }
+const mediaUnavailable = error => error instanceof Error && /^selected_output_(?:share|media)_unavailable$/u.test(error.message);
+async function eventually(check, label) {
+  for (let index = 0; index < 40; index++) { if (check()) return; await new Promise(setImmediate); }
+  assert(check(), label);
+}
+async function previewFixture(t, choices = review()) {
+  // Synthetic public WAV only. No MP3 decoding, native custody or provider call
+  // is represented by this client transport fixture.
+  const bytes = wav({ samples: 640000, sampleRate: 32000 }), value = await derivativeCandidate(choices, bytes);
+  const f = fixture(value.selection), controller = new AbortController(), handles = [];
+  let current = true;
+  const controls = { signal: controller.signal, isCurrent: () => current };
+  await f.enable(); const result = await prepare(f, value);
+  t.after(() => { controller.abort(); f.controller.abort(); handles.forEach(disposeVerifiedSelectedOutputShareMedia); });
+  return { ...f, bytes, value, result, controls, reviewController: controller,
+    retireReview() { current = false; },
+    response(body = bytes) { return new Response(body, { headers: { "content-type": "audio/wav",
+      "content-length": String(bytes.byteLength), "content-disposition": 'attachment; filename="forma-audio.wav"' } }); },
+    async read(reader, output = value.publicOutput, inputControls = controls) {
+      const handle = await reader(output, inputControls); handles.push(handle); return handle;
+    },
+  };
+}
+
+test("Stable20 derivative identity and closed profile cannot be repaired by recomputing the candidate digest", async () => {
+  const original = await derivativeCandidate();
+  for (const mutate of [
+    value => { value.mediaIdentity.sourceMediaSha256 = value.mediaIdentity.publicMediaSha256; },
+    value => { value.mediaIdentity.publicMediaSha256 = value.mediaIdentity.sourceMediaSha256; },
+    value => { value.mediaIdentity.qualificationPolicy = derivativePolicy; },
+    value => { value.mediaIdentity.projectionPolicy = projectionPolicy; },
+    value => { value.mediaIdentity.sourceProfile = sourceProfile; },
+    value => { value.selection.sourceProfile = "forma.audio.instrumental-20.wav@1"; },
+    value => { delete value.selection.sourceProfile; },
+    value => { value.selection.projectionPolicy = projectionPolicy; },
+    value => { value.selection.policy = derivativePolicy; },
+    value => { value.publicOutput.content.media.mimeType = "audio/mpeg"; },
+    value => { value.publicOutput.content.media.byteLength += 2; },
+    value => { const media = value.publicOutput.content.media; media.sampleCount--; media.durationSeconds = media.sampleCount / media.sampleRate; media.byteLength -= 2; },
+    value => { const media = value.publicOutput.content.media; media.sampleRate = 8000; media.sampleCount = 160000; media.byteLength = 320044; },
+    value => { value.publicOutput.content.disclosure.watermark = "verified"; },
+    value => { value.publicOutput.content.media.sourceMediaSha256 = value.selection.mediaSha256; },
+    value => { value.publicOutput.sourceProfile = sourceProfile; },
+  ]) {
+    const f = fixture(original.selection); await f.enable(); const changed = structuredClone(original); mutate(changed);
+    f.json({ candidateId: "candidate-1", candidate: rehash(changed), replayed: false });
+    await assert.rejects(f.client.prepare({ title: original.publicOutput.title, expiresAt: original.publicOutput.expiresAt }, "intent"), unavailable);
+    const before = f.calls.length; await assert.rejects(f.client.commit("candidate-1", original), unavailable); assert.equal(f.calls.length, before);
+  }
+});
+
+test("exact-byte WAV, Video and GLB policies still reject distinct source and public hashes after rehash", async () => {
+  for (const [output, policy] of profiles) {
+    const value = await mediaCandidate(output, policy), changed = structuredClone(value), f = fixture(value.selection); await f.enable();
+    changed.publicOutput.content.media.sha256 = "c".repeat(64); changed.mediaIdentity.publicMediaSha256 = "c".repeat(64);
+    f.json({ candidateId: "candidate-1", candidate: rehash(changed), replayed: false });
+    await assert.rejects(f.client.prepare({ title: value.publicOutput.title, expiresAt: value.publicOutput.expiresAt }, "intent"), unavailable);
+    assert.equal(f.calls.length, 2);
+  }
+});
+
+test("prepared media reader is synchronous, performs no factory transport and reads the exact private candidate file", async t => {
+  const f = await previewFixture(t), before = f.calls.length;
+  const reader = f.client.createPreparedMediaReader(f.result);
+  assert.equal(typeof reader, "function"); assert.equal(f.calls.length, before);
+  let substitutedFetch = 0;
+  f.options.fetcher = async () => { substitutedFetch++; throw Error("mutated options must not replace captured fetcher"); };
+  f.options.origin = "https://foreign.test";
+  f.replies.push(f.response()); const handle = await f.read(reader), accessed = accessVerifiedSelectedOutputShareMedia(handle, f.value.publicOutput);
+  assert(accessed); assert.equal(accessed.fileName, "forma-audio.wav");
+  assert.deepEqual(new Uint8Array(await accessed.blob.arrayBuffer()), f.bytes);
+  const call = f.calls.at(-1); assert.equal(call.url, base + "/candidate-1/file");
+  assert.equal(call.init.method, "GET"); assert.equal(call.init.credentials, "same-origin"); assert.equal(call.init.cache, "no-store");
+  assert.equal(call.init.redirect, "error"); assert.equal(call.init.referrerPolicy, "no-referrer");
+  assert.equal(new Headers(call.init.headers).get("accept"), "audio/wav"); assert.equal(new Headers(call.init.headers).get("range"), null);
+  assert.equal(call.init.body, undefined); assert.equal(substitutedFetch, 0); assert.equal(f.calls.length, before + 1);
+});
+
+test("prepared media reader factory requires the exact genuine object from the same client and rejects text", async t => {
+  const f = await previewFixture(t), foreign = fixture(f.value.selection); await foreign.enable(); const other = await prepare(foreign, f.value);
+  let getters = 0;
+  const getter = { get candidateId() { getters++; return f.result.candidateId; }, candidate: f.result.candidate, replayed: false };
+  for (const value of [undefined, null, {}, structuredClone(f.result), { ...f.result }, other, getter,
+    Object.assign(Object.create(f.result), {}), { ...f.result, candidateId: "candidate-2" }]) {
+    const before = f.calls.length; assert.throws(() => f.client.createPreparedMediaReader(value), unavailable); assert.equal(f.calls.length, before);
+  }
+  assert.equal(getters, 0);
+  const text = fixture(); await text.enable(); const result = await prepare(text); const before = text.calls.length;
+  assert.throws(() => text.client.createPreparedMediaReader(result), unavailable); assert.equal(text.calls.length, before);
+});
+
+test("prepared reader binds the complete canonical public output before any file transport", async t => {
+  const f = await previewFixture(t), reader = f.client.createPreparedMediaReader(f.result), original = f.value.publicOutput;
+  for (const mutate of [
+    value => { value.title = "Different reviewed title"; },
+    value => { value.expiresAt = new Date(Date.parse(value.expiresAt) - 1).toISOString(); },
+    value => { value.attribution = "Other"; },
+    value => { value.content.disclosure.watermark = "synthid-declared"; },
+    value => { value.content.media.sha256 = f.value.selection.mediaSha256; },
+    value => { value.content.media.sampleRate = 48000; value.content.media.durationSeconds = value.content.media.sampleCount / 48000; },
+    value => { value.content.media.url = "/api/media/private"; },
+    value => { value.output = "video"; },
+  ]) {
+    const changed = structuredClone(original); mutate(changed); const before = f.calls.length;
+    await assert.rejects(reader(changed, f.controls), mediaUnavailable); assert.equal(f.calls.length, before);
+  }
+  f.replies.push(f.response()); const handle = await f.read(reader, structuredClone(original));
+  assert(accessVerifiedSelectedOutputShareMedia(handle, original), "equal closed data is accepted without requiring the output object's identity");
+});
+
+test("new prepare immediately retires an older reader even when its request is pending or fails", async t => {
+  const f = await previewFixture(t), reader = f.client.createPreparedMediaReader(f.result), delayed = Promise.withResolvers();
+  f.replies.push(() => delayed.promise);
+  const next = f.client.prepare({ title: f.value.publicOutput.title, expiresAt: f.value.publicOutput.expiresAt }, "intent-2");
+  const before = f.calls.length;
+  assert.throws(() => f.client.createPreparedMediaReader(f.result), unavailable);
+  await assert.rejects(reader(f.value.publicOutput, f.controls), mediaUnavailable); assert.equal(f.calls.length, before);
+  delayed.reject(Error("prepare acknowledgment lost")); await assert.rejects(next, /acknowledgment lost/u);
+  assert.throws(() => f.client.createPreparedMediaReader(f.result), unavailable);
+});
+
+test("same-ID successful reprepare replaces only the genuine object and cannot revive the old reader", async t => {
+  const f = await previewFixture(t), reader = f.client.createPreparedMediaReader(f.result);
+  f.json({ candidateId: f.result.candidateId, candidate: f.value, replayed: true });
+  const replacement = await f.client.prepare({ title: f.value.publicOutput.title, expiresAt: f.value.publicOutput.expiresAt }, "intent-1");
+  assert.notEqual(replacement, f.result); assert.throws(() => f.client.createPreparedMediaReader(f.result), unavailable);
+  const before = f.calls.length; await assert.rejects(reader(f.value.publicOutput, f.controls), mediaUnavailable); assert.equal(f.calls.length, before);
+  const current = f.client.createPreparedMediaReader(replacement); f.replies.push(f.response());
+  assert(accessVerifiedSelectedOutputShareMedia(await f.read(current), f.value.publicOutput));
+});
+
+test("any availability request immediately retires previews and later success cannot revive them", async t => {
+  const f = await previewFixture(t), reader = f.client.createPreparedMediaReader(f.result), delayed = Promise.withResolvers();
+  f.replies.push(() => delayed.promise); const pending = f.client.availability(), before = f.calls.length;
+  assert.throws(() => f.client.createPreparedMediaReader(f.result), unavailable);
+  await assert.rejects(reader(f.value.publicOutput, f.controls), mediaUnavailable); assert.equal(f.calls.length, before);
+  delayed.resolve(Response.json({ creationAvailable: true })); assert.equal(await pending, true);
+  assert.throws(() => f.client.createPreparedMediaReader(f.result), unavailable);
+});
+
+test("rejecting an old-epoch preparation factory leaves the newer epoch's genuine preview usable", async t => {
+  const f = await previewFixture(t); await f.enable(); const current = await prepare(f, f.value), before = f.calls.length;
+  assert.throws(() => f.client.createPreparedMediaReader(f.result), unavailable);
+  const reader = f.client.createPreparedMediaReader(current); assert.equal(f.calls.length, before);
+  f.replies.push(f.response()); const handle = await f.read(reader);
+  assert(accessVerifiedSelectedOutputShareMedia(handle, f.value.publicOutput));
+  assert.equal(f.calls.at(-1).url, base + "/candidate-1/file"); assert.equal(f.calls.length, before + 1);
+});
+
+test("a delayed prepare response from an old epoch cannot retire the newer epoch's current preview", async t => {
+  const f = await previewFixture(t), delayed = Promise.withResolvers(); f.replies.push(() => delayed.promise);
+  const older = f.client.prepare({ title: f.value.publicOutput.title, expiresAt: f.value.publicOutput.expiresAt }, "intent-old-epoch");
+  await f.enable(); const current = await prepare(f, f.value);
+  delayed.resolve(Response.json({ candidateId: "candidate-old-epoch", candidate: f.value, replayed: false }));
+  await assert.rejects(older, unavailable); const before = f.calls.length, reader = f.client.createPreparedMediaReader(current);
+  assert.equal(f.calls.length, before); f.replies.push(f.response()); const handle = await f.read(reader);
+  assert(accessVerifiedSelectedOutputShareMedia(handle, f.value.publicOutput));
+  assert.equal(f.calls.at(-1).url, base + "/candidate-1/file"); assert.equal(f.calls.length, before + 1);
+});
+
+test("lost commit acknowledgment closes previews permanently but preserves explicit metadata-only replay", async t => {
+  const f = await previewFixture(t), reader = f.client.createPreparedMediaReader(f.result), delayed = Promise.withResolvers();
+  f.replies.push(() => delayed.promise); const pending = f.client.commit(f.result.candidateId, f.result.candidate);
+  const noRead = f.calls.length; assert.throws(() => f.client.createPreparedMediaReader(f.result), unavailable);
+  await assert.rejects(reader(f.value.publicOutput, f.controls), mediaUnavailable);
+  await eventually(() => f.calls.length === noRead + 1, "explicit commit reaches transport after hashing");
+  delayed.reject(Error("lost commit acknowledgment")); await assert.rejects(pending, /lost commit acknowledgment/u);
+  assert.equal(f.calls.length, noRead + 1, "only the pending commit may reach transport after candidate hashing");
+  f.json({ candidateId: f.result.candidateId, candidate: f.value, replayed: true });
+  const replayPreparation = await f.client.prepare({ title: f.value.publicOutput.title, expiresAt: f.value.publicOutput.expiresAt }, "intent-1");
+  assert.throws(() => f.client.createPreparedMediaReader(replayPreparation), unavailable);
+  const share = { shareId: f.result.candidateId, expiresAt: f.value.publicOutput.expiresAt, active: true };
+  f.json({ share, replayed: true }); assert.deepEqual(await f.client.commit(f.result.candidateId, f.result.candidate), { share, replayed: true });
+});
+
+test("a known-ID malformed commit attempt still retires preview without discarding the accepted digest", async t => {
+  const f = await previewFixture(t), before = f.calls.length;
+  await assert.rejects(f.client.commit(f.result.candidateId, { ...f.result.candidate, candidateSha256: "0".repeat(64) }), unavailable);
+  assert.equal(f.calls.length, before); assert.throws(() => f.client.createPreparedMediaReader(f.result), unavailable);
+  const share = { shareId: f.result.candidateId, expiresAt: f.value.publicOutput.expiresAt, active: true, token: "M".repeat(32) };
+  f.json({ share, replayed: false }); assert.deepEqual(await f.client.commit(f.result.candidateId, f.result.candidate), { share, replayed: false });
+});
+
+test("revocation closes the affected preview before transport and failed acknowledgment cannot reopen it", async t => {
+  const f = await previewFixture(t), reader = f.client.createPreparedMediaReader(f.result), delayed = Promise.withResolvers();
+  f.replies.push(() => delayed.promise); const pending = f.client.revoke(f.result.candidateId), before = f.calls.length;
+  assert.throws(() => f.client.createPreparedMediaReader(f.result), unavailable);
+  await assert.rejects(reader(f.value.publicOutput, f.controls), mediaUnavailable); assert.equal(f.calls.length, before);
+  delayed.reject(Error("lost revoke acknowledgment")); await assert.rejects(pending, /lost revoke acknowledgment/u);
+  const replacement = await prepare(f, f.value); assert.throws(() => f.client.createPreparedMediaReader(replacement), unavailable);
+});
+
+test("revoking another owned ID does not retire the current preparation", async t => {
+  const f = await previewFixture(t); f.json({ ok: true }); await f.client.revoke("other-owned-share");
+  const reader = f.client.createPreparedMediaReader(f.result); f.replies.push(f.response());
+  assert(accessVerifiedSelectedOutputShareMedia(await f.read(reader), f.value.publicOutput));
+});
+
+test("prepared preview factory and reader refuse expired, aborted or noncurrent source leases without transport", async t => {
+  for (const mode of ["expiry", "abort", "retire"]) await t.test(mode, async child => {
+    const f = await previewFixture(child), reader = f.client.createPreparedMediaReader(f.result), before = f.calls.length;
+    if (mode === "expiry") child.mock.method(Date, "now", () => Date.parse(f.value.publicOutput.expiresAt));
+    else if (mode === "abort") f.controller.abort(); else f.retire();
+    assert.throws(() => f.client.createPreparedMediaReader(f.result), unavailable);
+    await assert.rejects(reader(f.value.publicOutput, f.controls), mediaUnavailable); assert.equal(f.calls.length, before);
+  });
+});
+
+test("prepared preview captures supplied read controls instead of accepting later signal or currentness replacement", async t => {
+  for (const mode of ["abort", "retire"]) await t.test(mode, async child => {
+    const f = await previewFixture(child), reader = f.client.createPreparedMediaReader(f.result), delayed = Promise.withResolvers();
+    f.replies.push(() => delayed.promise); const pending = f.read(reader); let cancelled = false;
+    f.controls.signal = new AbortController().signal; f.controls.isCurrent = () => true;
+    if (mode === "abort") f.reviewController.abort(); else f.retireReview();
+    const response = f.response(new ReadableStream({ cancel() { cancelled = true; } })); delayed.resolve(response);
+    await assert.rejects(pending, mediaUnavailable); await eventually(() => cancelled, "retired late body is cancelled");
+    assert.equal(f.calls.length, 3);
+  });
+});
+
+test("in-flight candidate file reads and retained handles retire on preparation, availability, commit and revoke", async t => {
+  for (const mode of ["prepare", "availability", "commit", "revoke"]) await t.test(mode, async child => {
+    const f = await previewFixture(child), reader = f.client.createPreparedMediaReader(f.result);
+    f.replies.push(f.response()); const handle = await f.read(reader); assert(accessVerifiedSelectedOutputShareMedia(handle, f.value.publicOutput));
+    const delayed = Promise.withResolvers(); f.replies.push(() => delayed.promise); const pendingRead = f.read(reader);
+    let operation;
+    if (mode === "prepare") operation = prepare(f, f.value);
+    else if (mode === "availability") { f.json({ creationAvailable: true }); operation = f.client.availability(); }
+    else if (mode === "commit") {
+      f.json({ share: { shareId: f.result.candidateId, expiresAt: f.value.publicOutput.expiresAt, active: true, token: "R".repeat(32) }, replayed: false });
+      operation = f.client.commit(f.result.candidateId, f.result.candidate);
+    } else { f.json({ ok: true }); operation = f.client.revoke(f.result.candidateId); }
+    assert.equal(accessVerifiedSelectedOutputShareMedia(handle, f.value.publicOutput), null);
+    let cancelled = false; delayed.resolve(f.response(new ReadableStream({ cancel() { cancelled = true; } })));
+    await assert.rejects(pendingRead, mediaUnavailable); await operation;
+    await eventually(() => cancelled, "retired in-flight candidate response is cancelled");
+  });
+});
+
+test("prepared lifetime is monotonic across repeated factory calls, wall clock rollback and same-ID reprepare", async t => {
+  const wallStart = Date.now(); let wall = wallStart, monotonic = 100;
+  t.mock.method(Date, "now", () => wall); t.mock.method(performance, "now", () => monotonic);
+  const f = await previewFixture(t, { title: "Audio", expiresAt: new Date(wallStart + 2000).toISOString() });
+  const originalReader = f.client.createPreparedMediaReader(f.result);
+  monotonic = 1000; wall = wallStart - 10000;
+  assert.equal(typeof f.client.createPreparedMediaReader(f.result), "function", "locale/rerender factory calls do not read bytes");
+  const replacement = await prepare(f, f.value), currentReader = f.client.createPreparedMediaReader(replacement);
+  monotonic = 2100;
+  const before = f.calls.length; assert.throws(() => f.client.createPreparedMediaReader(replacement), unavailable);
+  await assert.rejects(originalReader(f.value.publicOutput, f.controls), mediaUnavailable);
+  await assert.rejects(currentReader(f.value.publicOutput, f.controls), mediaUnavailable);
+  assert.equal(f.calls.length, before, "reprepare preserves the earliest deadline for this candidate ID");
+});
+
+test("initial prepare network delay cannot reset a candidate lifetime after wall clock rollback", async t => {
+  const wallStart = Date.now(); let wall = wallStart, monotonic = 100;
+  t.mock.method(Date, "now", () => wall); t.mock.method(performance, "now", () => monotonic);
+  const value = await derivativeCandidate({ title: "Audio", expiresAt: new Date(wallStart + 2000).toISOString() });
+  const f = fixture(value.selection); await f.enable(); const delayed = Promise.withResolvers();
+  f.replies.push(() => delayed.promise);
+  const pending = f.client.prepare({ title: value.publicOutput.title, expiresAt: value.publicOutput.expiresAt }, "intent-1");
+  wall = wallStart - 10000; monotonic = 1000;
+  delayed.resolve(Response.json({ candidateId: "candidate-1", candidate: value, replayed: false })); const result = await pending;
+  assert.equal(typeof f.client.createPreparedMediaReader(result), "function");
+  monotonic = 2100; const before = f.calls.length;
+  assert.throws(() => f.client.createPreparedMediaReader(result), unavailable); assert.equal(f.calls.length, before);
+});
+
+async function commitClockFixture(t, kind = "derivative") {
+  const start = Date.now(), clock = { wall: start, monotonic: 100 };
+  t.mock.method(Date, "now", () => clock.wall); t.mock.method(performance, "now", () => clock.monotonic);
+  const choices = { title: "Reviewed output", expiresAt: new Date(start + 2000).toISOString() };
+  const value = kind === "derivative" ? await derivativeCandidate(choices)
+    : kind === "audio" ? await mediaCandidate("audio", audioPolicy, choices) : await candidate("short_story", choices);
+  const f = fixture(value.selection); await f.enable(); const result = await prepare(f, value);
+  const share = { shareId: result.candidateId, expiresAt: value.publicOutput.expiresAt, active: true };
+  clock.wall = start - 10000;
+  return { ...f, value, result, share, clock, deadline: 2100 };
+}
+
+test("commit monotonic: Stable20 refuses at the original deadline before hashing or approval transport despite wall rollback", async t => {
+  const f = await commitClockFixture(t), before = f.calls.length; f.clock.monotonic = f.deadline;
+  const digest = crypto.subtle.digest.bind(crypto.subtle); let hashes = 0;
+  t.mock.method(crypto.subtle, "digest", (...args) => { hashes++; return digest(...args); });
+  f.json({ share: { ...f.share, token: "S".repeat(32) }, replayed: false });
+  await assert.rejects(f.client.commit(f.result.candidateId, f.result.candidate), unavailable,
+    "expired Stable20 commit must not use rolled-back wall time to create approval");
+  assert.equal(hashes, 0); assert.equal(f.calls.length, before);
+});
+
+test("commit monotonic: Stable20 expiry during candidate hashing prevents approval transport", async t => {
+  const f = await commitClockFixture(t), before = f.calls.length, blocked = Promise.withResolvers(), release = Promise.withResolvers();
+  const digest = crypto.subtle.digest.bind(crypto.subtle);
+  t.mock.method(crypto.subtle, "digest", async (...args) => { blocked.resolve(); await release.promise; return digest(...args); });
+  f.json({ share: { ...f.share, token: "T".repeat(32) }, replayed: false });
+  const pending = f.client.commit(f.result.candidateId, f.result.candidate); await blocked.promise;
+  f.clock.monotonic = f.deadline; release.resolve();
+  await assert.rejects(pending, unavailable, "hash completion must recheck the original monotonic deadline");
+  assert.equal(f.calls.length, before);
+});
+
+test("commit monotonic: Stable20 expiry while awaiting final acknowledgment prevents successful token return", async t => {
+  const f = await commitClockFixture(t), before = f.calls.length, requested = Promise.withResolvers(), response = Promise.withResolvers();
+  f.replies.push(() => { requested.resolve(); return response.promise; });
+  const pending = f.client.commit(f.result.candidateId, f.result.candidate); await requested.promise;
+  assert.equal(f.calls.length, before + 1); f.clock.monotonic = f.deadline;
+  response.resolve(Response.json({ share: { ...f.share, token: "U".repeat(32) }, replayed: false }));
+  await assert.rejects(pending, unavailable, "a late successful acknowledgment cannot revive an expired Stable20 commit");
+  assert.equal(f.calls.length, before + 1, "the client never retries a late acknowledgment automatically");
+});
+
+test("commit monotonic: Stable20 lost-acknowledgment retry and same-ID reprepare remain usable within the original deadline", async t => {
+  const f = await commitClockFixture(t), before = f.calls.length; f.clock.monotonic = 600;
+  f.replies.push(() => { throw Error("synthetic lost acknowledgment within original deadline"); });
+  await assert.rejects(f.client.commit(f.result.candidateId, f.result.candidate), /synthetic lost acknowledgment/u);
+  assert.equal(f.calls.length, before + 1);
+  f.clock.monotonic = 1000;
+  f.json({ candidateId: f.result.candidateId, candidate: f.value, replayed: true });
+  const replacement = await f.client.prepare({ title: f.value.publicOutput.title, expiresAt: f.value.publicOutput.expiresAt }, "intent-1");
+  assert.throws(() => f.client.createPreparedMediaReader(replacement), unavailable, "retry never reopens preview after a commit attempt");
+  f.clock.monotonic = f.deadline - 1; f.json({ share: f.share, replayed: true });
+  assert.deepEqual(await f.client.commit(f.result.candidateId, f.result.candidate), { share: f.share, replayed: true });
+  assert.equal(f.calls.length, before + 3); assert.equal(Object.hasOwn(f.share, "token"), false);
+  assert.deepEqual(JSON.parse(f.calls.at(-1).init.body), { candidateId: f.result.candidateId,
+    approval: { purpose: "selected-output-read-v1", candidateSha256: f.value.candidateSha256, allowPublicRead: true } });
+});
+
+test("commit monotonic: Stable20 same-ID reprepare cannot renew a lost-acknowledgment retry deadline", async t => {
+  const f = await commitClockFixture(t); f.clock.monotonic = 600;
+  f.replies.push(() => { throw Error("synthetic lost acknowledgment"); });
+  await assert.rejects(f.client.commit(f.result.candidateId, f.result.candidate), /synthetic lost acknowledgment/u);
+  f.clock.monotonic = 1000;
+  f.json({ candidateId: f.result.candidateId, candidate: f.value, replayed: true });
+  const replacement = await f.client.prepare({ title: f.value.publicOutput.title, expiresAt: f.value.publicOutput.expiresAt }, "intent-1");
+  f.clock.monotonic = f.deadline; const before = f.calls.length;
+  f.json({ share: f.share, replayed: true });
+  await assert.rejects(f.client.commit(replacement.candidateId, replacement.candidate), unavailable,
+    "same-ID reprepare must preserve the earliest monotonic deadline even after wall rollback");
+  assert.equal(f.calls.length, before);
+});
+
+test("commit monotonic: existing exact-byte and text commit policies remain unchanged", async t => {
+  for (const kind of ["audio", "short_story"]) await t.test(kind, async child => {
+    const f = await commitClockFixture(child, kind), before = f.calls.length; f.clock.monotonic = f.deadline;
+    f.json({ share: { ...f.share, token: "V".repeat(32) }, replayed: false });
+    assert.deepEqual(await f.client.commit(f.result.candidateId, f.result.candidate),
+      { share: { ...f.share, token: "V".repeat(32) }, replayed: false });
+    assert.equal(f.calls.length, before + 1);
+  });
+});
+
+test("a previously observed loss of owner currentness cannot resurrect the same preview", async t => {
+  const f = await previewFixture(t), reader = f.client.createPreparedMediaReader(f.result), before = f.calls.length;
+  f.setCurrent(false); await assert.rejects(f.client.list(), unavailable); f.setCurrent(true);
+  assert.throws(() => f.client.createPreparedMediaReader(f.result), unavailable);
+  await assert.rejects(reader(f.value.publicOutput, f.controls), mediaUnavailable); assert.equal(f.calls.length, before);
+});
+
+test("an older prepare response or digest cannot replace the latest successfully returned preparation", async t => {
+  for (const mode of ["response", "digest"]) await t.test(mode, async child => {
+    const value = await derivativeCandidate(), f = fixture(value.selection); await f.enable();
+    const delayed = Promise.withResolvers(), blocked = Promise.withResolvers();
+    if (mode === "response") f.replies.push(() => { blocked.resolve(); return delayed.promise; });
+    else {
+      const digest = crypto.subtle.digest.bind(crypto.subtle); let first = true;
+      child.mock.method(crypto.subtle, "digest", async (...args) => {
+        if (first) { first = false; blocked.resolve(); await delayed.promise; } return digest(...args);
+      });
+      f.json({ candidateId: "candidate-old", candidate: value, replayed: false });
+    }
+    const older = f.client.prepare({ title: value.publicOutput.title, expiresAt: value.publicOutput.expiresAt }, "intent-old"); await blocked.promise;
+    f.json({ candidateId: "candidate-new", candidate: value, replayed: false });
+    const newer = await f.client.prepare({ title: value.publicOutput.title, expiresAt: value.publicOutput.expiresAt }, "intent-new");
+    delayed.resolve(mode === "response" ? Response.json({ candidateId: "candidate-old", candidate: value, replayed: false }) : undefined);
+    await assert.rejects(older, unavailable); const before = f.calls.length;
+    assert.equal(typeof f.client.createPreparedMediaReader(newer), "function");
+    await assert.rejects(f.client.commit("candidate-old", value), unavailable); assert.equal(f.calls.length, before);
+  });
+});
+
+test("the prepared derivative factory does not widen existing exact-byte profiles into candidate file readers", async () => {
+  for (const [output, policy] of profiles) {
+    const value = await mediaCandidate(output, policy), f = fixture(value.selection); await f.enable(); const result = await prepare(f, value);
+    const before = f.calls.length; assert.throws(() => f.client.createPreparedMediaReader(result), unavailable); assert.equal(f.calls.length, before);
+  }
+});
+
+test("derivative canonical hashing rejects reordered-preimage digests and altered data retaining the original digest", async () => {
+  const original = await derivativeCandidate();
+  const altered = [Object.fromEntries(Object.entries(structuredClone(original)).reverse()), structuredClone(original), structuredClone(original)];
+  altered[0] = rehash(altered[0]); altered[1].mediaIdentity.publicMediaSha256 = "f".repeat(64);
+  altered[2].publicOutput.content.disclosure.watermark = "synthid-declared";
+  assert.notEqual(altered[0].candidateSha256, original.candidateSha256);
+  for (const value of altered) {
+    const f = fixture(original.selection); await f.enable(); f.json({ candidateId: "candidate-1", candidate: value, replayed: false });
+    await assert.rejects(f.client.prepare({ title: original.publicOutput.title, expiresAt: original.publicOutput.expiresAt }, "intent-1"), unavailable);
+    assert.equal(f.calls.length, 2);
+  }
+});
+
+test("Stable20 actual model derivative candidate preserves distinct source and public hashes through prepare and approval", async () => {
+  const value = await derivativeCandidate(), f = fixture(value.selection); await f.enable();
+  assert.notEqual(value.mediaIdentity.sourceMediaSha256, value.mediaIdentity.publicMediaSha256);
+  const result = await prepare(f, value);
+  assert.equal(JSON.stringify(result.candidate), JSON.stringify(value));
+  for (const item of [result, result.candidate, result.candidate.selection, result.candidate.mediaIdentity,
+    result.candidate.publicOutput, result.candidate.publicOutput.content, result.candidate.publicOutput.content.media,
+    result.candidate.publicOutput.content.disclosure]) assert(Object.isFrozen(item));
+  assert.deepEqual(result.candidate.selection, value.selection);
+  assert.equal(result.candidate.selection.sourceProfile, sourceProfile);
+  assert.equal(result.candidate.mediaIdentity.projectionPolicy, derivativePolicy);
+  const share = { shareId: result.candidateId, expiresAt: value.publicOutput.expiresAt, active: true, token: "D".repeat(32) };
+  f.json({ share, replayed: false }); assert.deepEqual(await f.client.commit(result.candidateId, result.candidate), { share, replayed: false });
+  assert.deepEqual(JSON.parse(f.calls.at(-1).init.body), { candidateId: result.candidateId,
+    approval: { purpose: "selected-output-read-v1", candidateSha256: value.candidateSha256, allowPublicRead: true } });
+  assert.equal(f.calls.length, 3, "decoding and approval do not fetch source bytes or run a decoder");
+});
 
 test("actual model candidates for all three outputs retain exact reviewed data and fixed request policy", async () => {
   for (const output of ["short_story", "scene", "slides"]) {

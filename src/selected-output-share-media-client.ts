@@ -1,5 +1,6 @@
 import { validateSelectedOutputShareMediaPublicOutput, type SelectedOutputShareMediaPublicOutput } from "./model/selected-output-share.ts";
 import { nativeRetainedAudioMediaUrl } from "./model/native-retained-audio.ts";
+import { selectedOutputShareStableAudioDescriptorMatches } from "./model/selected-output-share-mp3-contract.ts";
 
 export type SelectedOutputShareMediaControls = Readonly<{ signal: AbortSignal; isCurrent: () => boolean }>;
 declare const verifiedMedia: unique symbol;
@@ -55,7 +56,7 @@ function cancel(operation: (() => Promise<unknown>) | undefined) {
   try { if (operation) void operation().catch(() => undefined); } catch { /* Retirement never waits for cancellation. */ }
 }
 
-async function readFile(output: SelectedOutputShareMediaPublicOutput, url: URL, publicFile: boolean,
+async function readFile(output: SelectedOutputShareMediaPublicOutput, url: URL, mode: "source" | "token" | "prepared",
   controls: SelectedOutputShareMediaControls, request: typeof fetch): Promise<VerifiedSelectedOutputShareMedia> {
   const descriptor = output.content.media, signature = JSON.stringify(output), expiresAt = Date.parse(output.expiresAt);
   // A caller may still hold its JavaScript object despite the readonly type.
@@ -82,7 +83,12 @@ async function readFile(output: SelectedOutputShareMediaPublicOutput, url: URL, 
     check();
     const pending = request(url.href, { method: "GET", credentials: "same-origin", cache: "no-store", redirect: "error",
       referrerPolicy: "no-referrer", headers: { accept: descriptor.mimeType }, signal: controller.signal });
-    void pending.then(late => { if (controller.signal.aborted || !current()) cancel(late.body ? () => late.body!.cancel() : undefined); }, () => undefined).catch(() => undefined);
+    void pending.then(late => {
+      // Own the body before an abort can win the awaiting continuation, even
+      // when the response and cancellation settle in the same microtask turn.
+      response = late;
+      if (controller.signal.aborted || !current()) cancel(late.body ? () => late.body!.cancel() : undefined);
+    }, () => undefined).catch(() => undefined);
     response = await settle(pending); check();
     if (response.status !== 200 || response.redirected || response.url !== url.href
       || response.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase() !== descriptor.mimeType
@@ -91,7 +97,7 @@ async function readFile(output: SelectedOutputShareMediaPublicOutput, url: URL, 
     const identity = encoding === null || encoding.trim().toLowerCase() === "identity";
     if (length !== null && (!/^[1-9][0-9]*$/u.test(length) || !Number.isSafeInteger(Number(length))
       || identity && Number(length) !== descriptor.byteLength)) throw unavailable();
-    if (publicFile && (!identity || length !== String(descriptor.byteLength)
+    if (mode !== "source" && (!identity || mode === "token" && length !== String(descriptor.byteLength)
       || response.headers.get("content-disposition") !== `attachment; filename="${fileName(output)}"`)) throw unavailable();
     reader = response.body.getReader();
     bytes = new Uint8Array(descriptor.byteLength);
@@ -133,14 +139,72 @@ export async function readSelectedOutputShareSourceMedia(output: SelectedOutputS
   source: SelectedOutputShareMediaSource, controls: SelectedOutputShareMediaControls & { origin: string; request?: typeof fetch }) {
   const selected = captured(output), origin = originValue(controls.origin), path = sourceValue(source, selected), url = new URL(path, origin);
   if (url.origin !== origin || url.pathname !== path || url.search || url.hash) throw unavailable();
-  return readFile(selected, url, false, controls, controls.request ?? fetch);
+  return readFile(selected, url, "source", controls, controls.request ?? fetch);
 }
 
 /** A recipient can request only this exact token-bound file, never a native URL. */
 export function createSelectedOutputShareTokenMediaReader(token: string, origin: string): SelectedOutputShareReadMedia {
   if (typeof token !== "string" || !/^[A-Za-z0-9_-]{32}$/u.test(token)) throw unavailable();
   const url = new URL(`/api/selected-output-shared/${token}/file`, originValue(origin));
-  return (output, controls) => readFile(captured(output), url, true, controls, fetch);
+  return (output, controls) => readFile(captured(output), url, "token", controls, fetch);
+}
+
+function capturedControls(value: SelectedOutputShareMediaControls): SelectedOutputShareMediaControls {
+  if (!value || typeof value !== "object") throw unavailable();
+  const signal = Object.getOwnPropertyDescriptor(value, "signal"), current = Object.getOwnPropertyDescriptor(value, "isCurrent");
+  if (!signal?.enumerable || !Object.hasOwn(signal, "value") || !(signal.value instanceof AbortSignal)
+    || !current?.enumerable || !Object.hasOwn(current, "value") || typeof current.value !== "function") throw unavailable();
+  const sourceSignal: AbortSignal = signal.value, sourceCurrent: () => boolean = current.value;
+  let alive = true;
+  return Object.freeze({ signal: sourceSignal, isCurrent: () => {
+    if (alive) { try { alive = !sourceSignal.aborted && sourceCurrent.call(value) === true; } catch { alive = false; } }
+    return alive;
+  } });
+}
+
+/** Owner-only prepared WAV transport. Its candidate ID is a row selector, not
+ * a bearer capability. The client binds the authentic returned preparation;
+ * the server independently authorizes every request. This factory does no I/O. */
+export function createSelectedOutputSharePreparedMediaReader(candidateId: string, output: SelectedOutputShareMediaPublicOutput,
+  origin: string, ownerControls: SelectedOutputShareMediaControls, request: typeof fetch = fetch): SelectedOutputShareReadMedia {
+  if (typeof candidateId !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$/u.test(candidateId)) throw unavailable();
+  const selected = captured(output), owner = capturedControls(ownerControls), signature = JSON.stringify(selected);
+  if (selected.output !== "audio" || !selectedOutputShareStableAudioDescriptorMatches(selected.content.media)) throw unavailable();
+  // The finite server route matches this raw identifier grammar, including
+  // colon. Unlike DELETE management it does not decode an encoded path segment.
+  const path = `/api/selected-output-shares/${candidateId}/file`, url = new URL(path, originValue(origin));
+  if (url.pathname !== path || url.search || url.hash) throw unavailable();
+  const expiresAt = Date.parse(selected.expiresAt), expiryDeadline = performance.now() + Math.max(0, expiresAt - Date.now());
+  let ownerAlive = true;
+  const currentOwner = () => {
+    if (ownerAlive) ownerAlive = safeCurrent(owner) && Date.now() < expiresAt && performance.now() < expiryDeadline;
+    return ownerAlive;
+  };
+  if (!currentOwner()) throw unavailable();
+  return async (supplied, controls) => {
+    if (JSON.stringify(captured(supplied)) !== signature || !currentOwner()) throw unavailable();
+    const preview = capturedControls(controls), controller = new AbortController();
+    const current = () => currentOwner() && safeCurrent(preview);
+    if (!current()) throw unavailable();
+    let handle: VerifiedSelectedOutputShareMedia | undefined;
+    const abort = () => { controller.abort(); if (handle) disposeVerifiedSelectedOutputShareMedia(handle); };
+    const detach = () => { owner.signal.removeEventListener("abort", abort); preview.signal.removeEventListener("abort", abort); };
+    owner.signal.addEventListener("abort", abort, { once: true }); preview.signal.addEventListener("abort", abort, { once: true });
+    try {
+      if (!current()) throw unavailable();
+      handle = await readFile(selected, url, "prepared", { signal: controller.signal, isCurrent: current }, request);
+      if (!current()) throw unavailable();
+      // Keep both cancellations attached to the retained handle. Disposal (or
+      // either abort) releases the Blob reservation and removes the listeners.
+      const state = owned.get(handle)!;
+      const release = state.release;
+      state.release = () => { detach(); release(); };
+      return handle;
+    } catch (error) {
+      detach(); controller.abort(); if (handle) disposeVerifiedSelectedOutputShareMedia(handle);
+      throw error;
+    }
+  };
 }
 
 export function accessVerifiedSelectedOutputShareMedia(handle: unknown, output: SelectedOutputShareMediaPublicOutput): Access | null {

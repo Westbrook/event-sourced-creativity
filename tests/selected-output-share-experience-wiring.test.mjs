@@ -7,6 +7,8 @@ import { parseSelectedOutputShareSelection, parseSelectedOutputShareMediaRequest
   SELECTED_OUTPUT_SHARE_MEDIA_PROJECTION_POLICY } from "../src/model/selected-output-share.ts";
 import { SELECTED_OUTPUT_SHARE_VIDEO_X264_POLICY } from "../src/model/selected-output-share-video.ts";
 import { SELECTED_OUTPUT_SHARE_MODEL3D_TEXTURE_POLICY } from "../src/model/selected-output-share-model3d.ts";
+import { SELECTED_OUTPUT_SHARE_AUDIO_POLICY } from "../src/model/selected-output-share-audio.ts";
+import { SELECTED_OUTPUT_SHARE_STABLE_AUDIO_SOURCE_PROFILE, SELECTED_OUTPUT_SHARE_STABLE_AUDIO_PROJECTION_POLICY } from "../src/model/selected-output-share-mp3-contract.ts";
 import { readSelectedOutputShareSourceMedia, accessVerifiedSelectedOutputShareMedia,
   disposeVerifiedSelectedOutputShareMedia } from "../src/selected-output-share-media-client.ts";
 
@@ -18,7 +20,9 @@ assert.ok(begin >= 0 && end > begin, "exact new host sharing lifetime members");
 // fragment nor claimed as full browser/host acceptance.
 const dependencies = { parseSelectedOutputShareSelection, parseSelectedOutputShareMediaRequestSelection,
   SELECTED_OUTPUT_SHARE_MEDIA_PROJECTION_POLICY, SELECTED_OUTPUT_SHARE_VIDEO_X264_POLICY,
-  SELECTED_OUTPUT_SHARE_MODEL3D_TEXTURE_POLICY, readSelectedOutputShareSourceMedia };
+  SELECTED_OUTPUT_SHARE_MODEL3D_TEXTURE_POLICY, SELECTED_OUTPUT_SHARE_AUDIO_POLICY,
+  SELECTED_OUTPUT_SHARE_STABLE_AUDIO_SOURCE_PROFILE, SELECTED_OUTPUT_SHARE_STABLE_AUDIO_PROJECTION_POLICY,
+  readSelectedOutputShareSourceMedia };
 const SharingHost = new Function(...Object.keys(dependencies), stripTypeScriptTypes(
   "class SharingHost {" + source.slice(begin, end).replaceAll("#", "") + "}") + ";return SharingHost;")(...Object.values(dependencies));
 function fixture(output = "short_story") {
@@ -187,7 +191,7 @@ for (const output of ["video", "model3d"]) {
   });
 }
 
-test("original media sharing rejects edited revisions, missing sizes, mismatched private references and unsupported Audio", () => {
+test("original media sharing rejects edited revisions, missing sizes, mismatched private references and incomplete Audio receipts", () => {
   for (const output of ["video", "model3d"]) for (const change of ["revision", "size", "reference"]) {
     const f = mediaFixture(output);
     if (change === "revision") f.native.revision = 1;
@@ -199,4 +203,63 @@ test("original media sharing rejects edited revisions, missing sizes, mismatched
   const audio = fixture("audio"); audio.result.audio = { selection: audio.native,
     content: { media: { url: "/api/media/original.mp3", mediaType: "audio/mpeg", sha256: mediaHash } } };
   assert.equal(audio.host.selectedShareSource(audio.result, audio.binding), null);
+});
+
+// These fixtures enter only the actual sharing members after the host's native
+// read stage. They prove selection/lifetime wiring, not source/payment custody.
+function audioFixture() {
+  const f = fixture("audio"); f.native.revision = 0;
+  const media = { url: "/api/media/owner%2Fgenerated%2Fartifact.mp3", mediaType: "audio/mpeg", sha256: mediaHash };
+  f.host.ownerDocument = { location: { origin: "https://fixture.invalid" } };
+  f.result.audio = { selection: f.native, expiresAt: "2099-01-01T00:00:00.000Z",
+    content: { inputRef: "private-input", role: "score", lyrics: "", media } };
+  f.result.candidate = { output: "audio", artifactId: "artifact", inputRef: "private-input",
+    mediaUrl: media.url, audio: { mediaSha256: media.sha256 } };
+  return f;
+}
+
+test("current original native MP3 offers only its nine-field derivative selection without a source reader", t => {
+  t.mock.method(globalThis, "fetch", () => assert.fail("selection must not fetch or decode media"));
+  const f = audioFixture(), lease = f.host.selectedShareSource(f.result, f.binding);
+  assert.ok(lease, "the already validated current original Audio result supplies a publisher selection");
+  assert.deepEqual(lease.selection, { ...f.native, output: "audio", mediaSha256: mediaHash,
+    policy: SELECTED_OUTPUT_SHARE_AUDIO_POLICY, sourceProfile: SELECTED_OUTPUT_SHARE_STABLE_AUDIO_SOURCE_PROFILE,
+    projectionPolicy: SELECTED_OUTPUT_SHARE_STABLE_AUDIO_PROJECTION_POLICY });
+  assert.equal(Object.keys(lease.selection).length, 9); assert.equal(Object.hasOwn(lease, "readMedia"), false);
+  assert.ok(Object.isFrozen(lease) && Object.isFrozen(lease.selection)); assert.equal(lease.isCurrent(), true);
+  assert.equal(f.host.selectedShareSource(f.result, f.binding), lease, "locale/rerender preserves the current source");
+  assert.doesNotMatch(JSON.stringify(lease.selection), /private-input|api\/media|artifact\.mp3/u);
+});
+
+test("native MP3 hint refuses unsupported current lineage or crossed source receipt without a fallback", () => {
+  for (const mutate of [
+    f => { f.native.revision = 1; }, f => { f.native.documentId = "foreign"; },
+    f => { f.native.artifactId = "foreign"; }, f => { f.native.contentSha256 = "invalid"; },
+    f => { f.result.candidate.output = "video"; }, f => { f.result.candidate.inputRef = "foreign"; },
+    f => { f.result.candidate.mediaUrl = "/api/media/different.mp3"; },
+    f => { f.result.candidate.audio.mediaSha256 = "f".repeat(64); },
+    f => { f.result.audio.content.media.mediaType = "audio/wav"; },
+    f => { f.result.audio.content.role = "speech"; }, f => { f.result.audio.content.lyrics = "not empty"; },
+    f => { delete f.result.audio.content.media; }, f => { delete f.result.candidate.audio; },
+  ]) {
+    const f = audioFixture(); mutate(f);
+    assert.equal(f.host.selectedShareSource(f.result, f.binding), null);
+  }
+});
+
+for (const change of ["media", "content", "expiry", "input", "visibility", "authority"]) test(`native MP3 ${change} retirement cannot revive an earlier source`, () => {
+  const f = audioFixture(), lease = f.host.selectedShareSource(f.result, f.binding); assert.ok(lease);
+  const old = { hash: f.native.contentSha256, media: f.result.audio.content.media.sha256,
+    expiry: f.result.audio.expiresAt, input: f.result.audio.content.inputRef };
+  if (change === "media") { f.result.audio.content.media.sha256 = "e".repeat(64); f.result.candidate.audio.mediaSha256 = "e".repeat(64); }
+  if (change === "content") f.native.contentSha256 = "d".repeat(64);
+  if (change === "expiry") f.result.audio.expiresAt = "2099-02-01T00:00:00.000Z";
+  if (change === "input") { f.result.audio.content.inputRef = "other-input"; f.result.candidate.inputRef = "other-input"; }
+  if (change === "visibility") f.hide();
+  if (change === "authority") f.host.shareWithdraw(); else f.host.shareSync();
+  assert.equal(lease.signal.aborted, true); assert.equal(lease.isCurrent(), false);
+  f.native.contentSha256 = old.hash; f.result.audio.content.media.sha256 = f.result.candidate.audio.mediaSha256 = old.media;
+  f.result.audio.expiresAt = old.expiry; f.result.audio.content.inputRef = f.result.candidate.inputRef = old.input; f.show();
+  assert.equal(f.host.selectedShareSource(f.result, f.binding), null);
+  assert.equal(Object.hasOwn(lease, "readMedia"), false, "retired source cannot expose historical MP3 bytes");
 });

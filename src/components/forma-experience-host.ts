@@ -58,6 +58,8 @@ import { parseSelectedOutputShareSelection, parseSelectedOutputShareMediaRequest
   SELECTED_OUTPUT_SHARE_MEDIA_PROJECTION_POLICY } from "../model/selected-output-share.ts";
 import { SELECTED_OUTPUT_SHARE_VIDEO_X264_POLICY } from "../model/selected-output-share-video.ts";
 import { SELECTED_OUTPUT_SHARE_MODEL3D_TEXTURE_POLICY } from "../model/selected-output-share-model3d.ts";
+import { SELECTED_OUTPUT_SHARE_AUDIO_POLICY } from "../model/selected-output-share-audio.ts";
+import { SELECTED_OUTPUT_SHARE_STABLE_AUDIO_SOURCE_PROFILE, SELECTED_OUTPUT_SHARE_STABLE_AUDIO_PROJECTION_POLICY } from "../model/selected-output-share-mp3-contract.ts";
 import { readSelectedOutputShareSourceMedia, type SelectedOutputShareReadMedia } from "../selected-output-share-media-client.ts";
 import type { SelectedOutputShareLease } from "../selected-output-share-client.ts";
 import "./forma-selected-output-share-review.ts";
@@ -152,6 +154,21 @@ export class FormaExperienceHost extends FormaElement {
     this.#shareSource = undefined; this.#shareResult = undefined;
   }
   #selectedShareMedia(result: Result) {
+    if (result.output === "audio") {
+      const native = result.audio, candidate = result.candidate, media = native?.content.media;
+      if (!native || candidate.output !== "audio" || !candidate.audio || native.selection.revision !== 0 || !media
+        || media.mediaType !== "audio/mpeg" || media.url !== candidate.mediaUrl || media.sha256 !== candidate.audio.mediaSha256
+        || native.content.inputRef !== candidate.inputRef || native.content.role !== "score" || native.content.lyrics !== "") return null;
+      const selection = parseSelectedOutputShareMediaRequestSelection({ output: "audio",
+        documentId: native.selection.documentId, artifactId: native.selection.artifactId, revision: native.selection.revision,
+        contentSha256: native.selection.contentSha256, mediaSha256: media.sha256, policy: SELECTED_OUTPUT_SHARE_AUDIO_POLICY,
+        sourceProfile: SELECTED_OUTPUT_SHARE_STABLE_AUDIO_SOURCE_PROFILE, projectionPolicy: SELECTED_OUTPUT_SHARE_STABLE_AUDIO_PROJECTION_POLICY });
+      // The validated current native Result supplies a selection hint only.
+      // The server proves the recipe and derives the separately reviewed WAV;
+      // the publisher must never preview the private MP3 as that public file.
+      return selection ? Object.freeze({ selection, media: null,
+        sourceIdentity: JSON.stringify([native.expiresAt, native.content.inputRef, media.url, media.mediaType, media.sha256]) }) : null;
+    }
     if (result.output !== "video" && result.output !== "model3d") return null;
     const native = result.output === "video" ? result.video : result.model3d;
     if (!native || native.selection.revision !== 0) return null;
@@ -181,7 +198,7 @@ export class FormaExperienceHost extends FormaElement {
     return selection ? Object.freeze({ selection, media }) : null;
   }
   #selectedShareSource(result: Result | undefined, binding: Binding | undefined): SelectedOutputShareLease | null {
-    if (!result || !binding || !["short_story", "scene", "slides", "video", "model3d"].includes(result.output)
+    if (!result || !binding || !["short_story", "scene", "slides", "audio", "video", "model3d"].includes(result.output)
       || this.#result !== result || this.#binding !== binding || this.#busy || this.#loading
       || !this.#visible(binding) || !result.current()) { this.#retireSelectedShare(); return null; }
     if (this.#shareSource && this.#shareResult === result) {
@@ -203,7 +220,8 @@ export class FormaExperienceHost extends FormaElement {
       && this.#result === result && this.#binding === binding && !this.#busy && !this.#loading && this.#visible(binding) && result.current()
       && (mediaIdentity === null || JSON.stringify(this.#selectedShareMedia(result)) === mediaIdentity);
     const origin = media ? this.ownerDocument.location.origin : null;
-    const readMedia: SelectedOutputShareReadMedia | undefined = media && origin ? async (output, controls) => {
+    const sourceMedia = media?.media;
+    const readMedia: SelectedOutputShareReadMedia | undefined = sourceMedia && origin ? async (output, controls) => {
       const reader = new AbortController(), retire = () => reader.abort();
       abort.signal.addEventListener("abort", retire, { once: true });
       controls.signal.addEventListener("abort", retire, { once: true });
@@ -211,7 +229,7 @@ export class FormaExperienceHost extends FormaElement {
         && this.ownerDocument.location.origin === origin && output.output === selection.output;
       try {
         if (!current()) throw new Error("selected_output_share_unavailable");
-        return await readSelectedOutputShareSourceMedia(output, media.media, { origin, signal: reader.signal, isCurrent: current });
+        return await readSelectedOutputShareSourceMedia(output, sourceMedia, { origin, signal: reader.signal, isCurrent: current });
       } finally {
         abort.signal.removeEventListener("abort", retire); controls.signal.removeEventListener("abort", retire);
       }
