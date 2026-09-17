@@ -8,37 +8,37 @@ export type Position = { projectId: string; documentId: string; blockId: string;
 export type Abilities = { author: boolean; generate: boolean; projectCreate: boolean; formats: string[] };
 export type Action = { id: string; label: string; group: 'navigate' | 'write' | 'context' | 'make' | 'reflect'; description: string };
 export const ACTIONS: readonly Action[] = [
-  { id: 'projects', label: 'Your projects', group: 'navigate', description: 'Browse and resume an accessible creative project.' },
-  { id: 'documents', label: 'Another document', group: 'navigate', description: 'Browse documents in this project.' },
-  { id: 'new-project', label: 'Begin something', group: 'write', description: 'Create a new shared Forma project from a name and an idea.' },
-  { id: 'new-document', label: 'A fresh page', group: 'write', description: 'Create another document in the current project.' },
-  { id: 'add-context', label: 'Add a thought', group: 'context', description: 'Write an authored context block that will guide the creative work.' },
-  { id: 'edit-block', label: 'Shape this thought', group: 'write', description: 'Edit the selected context block without replacing other work.' },
-  { id: 'split-context', label: 'Separate this thought', group: 'context', description: 'Review a cost, then extract independently useful decisions into editable child blocks while keeping their source and relationships.' },
-  { id: 'research-context', label: 'Find grounding', group: 'context', description: 'Review research cost, then find related project ideas or sourced information for the selected thought. Public search uses a separately supplied public subject.' },
-  { id: 'find-references', label: 'Find a reference', group: 'context', description: 'Research examples for this thought, inspect licensed image candidates, and explicitly acquire a chosen image with attribution into shared Forma context.' },
-  { id: 'compose', label: 'Bring ideas together', group: 'context', description: 'Arrange existing editable ideas under the selected thought, retaining their identities, sources, and order. Members can be removed, replaced, and re-added in a different order.' },
-  { id: 'replace-part', label: 'Replace this idea', group: 'write', description: 'Write a replacement for only the selected editable idea. Surrounding blocks and relationships remain, and the original text stays in event history.' },
-  { id: 'rename', label: 'Give it a name', group: 'write', description: 'Rename the current creative document.' },
-  { id: 'context', label: 'Return to the idea', group: 'navigate', description: 'Read the document context and creative direction.' },
-  { id: 'reuse', label: 'Bring context along', group: 'context', description: 'Reuse an existing context block from this project in the current document.' },
-  { id: 'lock', label: 'Keep this constant', group: 'context', description: 'Lock the selected context block as a creative constraint.' },
-  { id: 'unlock', label: 'Open this up', group: 'context', description: 'Unlock the selected block for further editing.' },
-  { id: 'toggle-context', label: 'Change its influence', group: 'context', description: 'Include or exclude the selected context block from generation.' },
-  { id: 'results', label: 'Look at the work', group: 'reflect', description: 'Review generated images, stories, scenes, presentations, audio, video, or 3D models.' },
-  { id: 'edit-artifact', label: 'Refine the writing', group: 'write', description: 'Edit the selected story, scene, or presentation text as a versioned Forma artifact.' },
-  { id: 'export', label: 'Take it with you', group: 'reflect', description: 'Download the selected creative result.' },
-  { id: 'image', label: 'Picture it', group: 'make', description: 'Review options for generating an image from the active context.' },
-  { id: 'short_story', label: 'Tell the story', group: 'make', description: 'Review options for generating a short story from the active context.' },
-  { id: 'scene', label: 'Set the scene', group: 'make', description: 'Review options for generating a visual or audio scene from the active context.' },
-  { id: 'slides', label: 'Give it a stage', group: 'make', description: 'Review options for generating a presentation.' },
-  { id: 'storyboard', label: 'Find the sequence', group: 'make', description: 'Review options for generating a storyboard before committing to motion.' },
-  { id: 'video', label: 'Set it in motion', group: 'make', description: 'Review options for generating video from the active context.' },
-  { id: 'audio', label: 'Hear it', group: 'make', description: 'Review options for generating audio from the active context.' },
-  { id: 'model3d', label: 'Give it dimension', group: 'make', description: 'Review an exact prompt and options for generating a 3D model.' },
-  { id: 'surprise', label: 'A bolder direction', group: 'context', description: 'Open a new context draft inviting a change of scale, setting, medium, or point of view. The user writes and accepts the direction.' },
-  { id: 'clarify', label: 'Find the heart of it', group: 'context', description: 'Write a focused statement of audience, emotional effect, or essential idea.' },
-  { id: 'intent', label: 'Follow a thought', group: 'reflect', description: 'Tell the decision layer what you want next, without automatically changing or generating work.' },
+  { id: 'projects', label: 'Projects', group: 'navigate', description: 'Browse and resume an accessible creative project.' },
+  { id: 'documents', label: 'Documents', group: 'navigate', description: 'Browse documents in this project.' },
+  { id: 'new-project', label: 'New project', group: 'write', description: 'Create a new shared Forma project from a name and an idea.' },
+  { id: 'new-document', label: 'New document', group: 'write', description: 'Create another document in the current project.' },
+  { id: 'add-context', label: 'Add idea', group: 'context', description: 'Write an authored context block that will guide the creative work.' },
+  { id: 'edit-block', label: 'Edit idea', group: 'write', description: 'Edit the selected context block without replacing other work.' },
+  { id: 'split-context', label: 'Split idea', group: 'context', description: 'Review a cost, then extract independently useful decisions into editable child blocks while keeping their source and relationships.' },
+  { id: 'research-context', label: 'Research', group: 'context', description: 'Review research cost, then find related project ideas or sourced information for the selected thought. Public search uses a separately supplied public subject.' },
+  { id: 'find-references', label: 'Find references', group: 'context', description: 'Research examples for this thought, inspect licensed image candidates, and explicitly acquire a chosen image with attribution into shared Forma context.' },
+  { id: 'compose', label: 'Arrange ideas', group: 'context', description: 'Arrange existing editable ideas under the selected thought, retaining their identities, sources, and order. Members can be removed, replaced, and re-added in a different order.' },
+  { id: 'replace-part', label: 'Replace idea', group: 'write', description: 'Write a replacement for only the selected editable idea. Surrounding blocks and relationships remain, and the original text stays in event history.' },
+  { id: 'rename', label: 'Rename', group: 'write', description: 'Rename the current creative document.' },
+  { id: 'context', label: 'Document', group: 'navigate', description: 'Read the document context and creative direction.' },
+  { id: 'reuse', label: 'Reuse idea', group: 'context', description: 'Reuse an existing context block from this project in the current document.' },
+  { id: 'lock', label: 'Lock idea', group: 'context', description: 'Lock the selected context block as a creative constraint.' },
+  { id: 'unlock', label: 'Unlock idea', group: 'context', description: 'Unlock the selected block for further editing.' },
+  { id: 'toggle-context', label: 'Toggle context', group: 'context', description: 'Include or exclude the selected context block from generation.' },
+  { id: 'results', label: 'Results', group: 'reflect', description: 'Review generated images, stories, scenes, presentations, audio, video, or 3D models.' },
+  { id: 'edit-artifact', label: 'Edit writing', group: 'write', description: 'Edit the selected story, scene, or presentation text as a versioned Forma artifact.' },
+  { id: 'export', label: 'Download', group: 'reflect', description: 'Download the selected creative result.' },
+  { id: 'image', label: 'Create image', group: 'make', description: 'Review options for generating an image from the active context.' },
+  { id: 'short_story', label: 'Write story', group: 'make', description: 'Review options for generating a short story from the active context.' },
+  { id: 'scene', label: 'Create scene', group: 'make', description: 'Review options for generating a visual or audio scene from the active context.' },
+  { id: 'slides', label: 'Create slides', group: 'make', description: 'Review options for generating a presentation.' },
+  { id: 'storyboard', label: 'Create storyboard', group: 'make', description: 'Review options for generating a storyboard before committing to motion.' },
+  { id: 'video', label: 'Create video', group: 'make', description: 'Review options for generating video from the active context.' },
+  { id: 'audio', label: 'Create audio', group: 'make', description: 'Review options for generating audio from the active context.' },
+  { id: 'model3d', label: 'Create 3D', group: 'make', description: 'Review an exact prompt and options for generating a 3D model.' },
+  { id: 'surprise', label: 'Try a variation', group: 'context', description: 'Open a new context draft inviting a change of scale, setting, medium, or point of view. The user writes and accepts the direction.' },
+  { id: 'clarify', label: 'Clarify idea', group: 'context', description: 'Write a focused statement of audience, emotional effect, or essential idea.' },
+  { id: 'intent', label: 'Set direction', group: 'reflect', description: 'Tell the decision layer what you want next, without automatically changing or generating work.' },
 ] as const;
 
 export function eligibleActions(p: CreativeProjection, pos: Position, abilities: Abilities): Action[] {
@@ -66,7 +66,7 @@ export function eligibleActions(p: CreativeProjection, pos: Position, abilities:
     if (a.id === 'toggle-context') return !!block && !block.locked;
     if (a.id === 'reuse') return p.libraryBlocks.some(b => !b.removed && b.documentId !== pos.documentId);
     return true;
-  });
+  }).map(a => a.id === 'toggle-context' && block ? { ...a, label: Number(block.properties.weight ?? 1) > 0 ? 'Exclude idea' : 'Include idea' } : a);
 }
 
 export type Question = { type: 'noul'; instructions: string } | { type: 'score'; instructions: string; criteria: string[] } | { type: 'choice'; instructions: string; criteria: Record<string, string> };

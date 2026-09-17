@@ -24,7 +24,7 @@ const scope = (s: Session | null) => s ? [s.user.userId, s.projectContext?.proje
 export async function api<T>(path: string, body?: unknown, method = body === undefined ? 'GET' : 'POST'): Promise<T> {
   const response = await fetch(path, { method, credentials: 'same-origin', headers: body === undefined ? {} : { 'content-type': 'application/json' }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
   let data: Record<string, unknown>;
-  try { data = await response.json(); } catch { throw new Error('The response was interrupted. Refresh to check whether your work was saved before trying again.'); }
+  try { data = await response.json(); } catch { throw new Error('Response interrupted. Refresh to check the save before retrying.'); }
   if (!response.ok) throw new ApiError(response.status, data);
   return data as T;
 }
@@ -55,7 +55,7 @@ export class StillClient {
     const p = s?.provider;
     return { author, generate: !!s && !s.impersonation && (shared ? shared.permissions.includes('project.output.request') : author), projectCreate: author && !shared, formats: [...(p?.configured ? ['image', 'storyboard'] : []), ...(p?.plannerConfigured ? ['short_story', 'scene', 'slides'] : []), ...(p?.videoConfigured ? ['video'] : []), ...(p?.audioConfigured ? ['audio'] : []), ...(p?.model3dConfigured ? ['model3d'] : [])] };
   }
-  fence() { const epoch = this.epoch, key = scope(this.session); return () => { if (epoch !== this.epoch || key !== scope(this.session)) throw new Error('The workspace changed. Your draft has not been submitted to another workspace.'); }; }
+  fence() { const epoch = this.epoch, key = scope(this.session); return () => { if (epoch !== this.epoch || key !== scope(this.session)) throw new Error('Workspace changed. Check the original workspace.'); }; }
   async load() {
     const epoch = ++this.epoch;
     this.events = []; this.content = {}; this.head = 0; this.jobs = [];
@@ -70,7 +70,7 @@ export class StillClient {
     let fresh: Session;
     try { fresh = await api<Session>('/api/session'); } catch (error) { if (error instanceof ApiError && [401,403,404].includes(error.status)) { ++this.epoch; this.session = null; this.events = []; this.content = {}; this.head = 0; this.jobs = []; this.onChange(); } throw error; }
     check();
-    if (scope(fresh) !== scope(this.session)) { ++this.epoch; this.session = fresh; this.pendingWrite = operationJournal.write(this.journalScope); this.creation = null; this.events = []; this.content = {}; this.head = 0; this.jobs = []; this.position = { ...this.position, projectId: fresh.projectContext?.projectId ?? '', documentId: '', outputId: '', blockId: '', view: 'projects' }; this.onChange(); throw new Error('Your account or workspace changed. Reopen the workspace before saving.'); }
+    if (scope(fresh) !== scope(this.session)) { ++this.epoch; this.session = fresh; this.pendingWrite = operationJournal.write(this.journalScope); this.creation = null; this.events = []; this.content = {}; this.head = 0; this.jobs = []; this.position = { ...this.position, projectId: fresh.projectContext?.projectId ?? '', documentId: '', outputId: '', blockId: '', view: 'projects' }; this.onChange(); throw new Error('Your workspace changed. Reopen before saving.'); }
     return check;
   }
   async refresh() {
@@ -126,16 +126,16 @@ export class StillClient {
       await this.refresh(); check();
       if (await this.recoverPendingWrite()) {
         if (original.signature === signature) return;
-        throw new Error('The earlier save was confirmed. Review it before submitting a different change.');
+        throw new Error('The earlier save was confirmed. Review it before saving again.');
       }
-      throw new Error('The earlier save is still unconfirmed. It has not been repeated. Keep your draft and check the workspace again.');
+      throw new Error('Save still unconfirmed. It was not repeated. Refresh to check.');
     }
     const projection = this.projection;
     for (const event of events) {
       const block = projection.libraryBlocks.find(b => b.id === event.payload.block_id);
-      if (event.type === 'BlockPropertyEdited' && block && JSON.stringify(block.properties[String(event.payload.property_path)] ?? null) !== JSON.stringify(event.payload.old_value ?? null)) throw new Error('This thought changed while you were writing. Your draft is preserved; reopen the current version before saving.');
-      if (event.type === 'DocumentRenamed' && projection.documents.find(d => d.id === event.payload.document_id)?.title !== event.payload.old_title) throw new Error('The document name changed. Reopen its current name before saving.');
-      if (event.type === 'BlockWeightSet' && block && Number(block.properties.weight ?? 1) !== Number(event.payload.previous_weight)) throw new Error('This context changed. Review its current influence before saving.');
+      if (event.type === 'BlockPropertyEdited' && block && JSON.stringify(block.properties[String(event.payload.property_path)] ?? null) !== JSON.stringify(event.payload.old_value ?? null)) throw new Error('This thought changed while you were writing. Draft kept; reopen before saving.');
+      if (event.type === 'DocumentRenamed' && projection.documents.find(d => d.id === event.payload.document_id)?.title !== event.payload.old_title) throw new Error('Name changed. Reopen before saving.');
+      if (event.type === 'BlockWeightSet' && block && Number(block.properties.weight ?? 1) !== Number(event.payload.previous_weight)) throw new Error('Context changed. Review its influence before saving.');
     }
     const correlationId = crypto.randomUUID();
     const journal: WriteJournal = { correlationId, signature, receipts: await Promise.all(inputs.map(async e => ({type:e.type, keys:Object.keys(e.payload), digest:await digest(e.payload)}))) }; check();
@@ -147,11 +147,11 @@ export class StillClient {
     try { result = await submit(); } catch (error) {
       if (error instanceof ApiError && [400, 401, 403, 409, 422, 428].includes(error.status)) this.retirePendingWrite();
       if (!(error instanceof ApiError) || error.status !== 409 || error.body.error !== 'stale_sequence') throw error;
-      await this.refresh(); check(); throw new Error('The workspace changed before this save. Your draft is preserved. Review the current work before trying again.');
+      await this.refresh(); check(); throw new Error('The workspace changed. Draft kept; review before retrying.');
     }
     check();
     if (result.rejected?.length || !Array.isArray(result.appended) || !inputs.every(input => result.appended.some(e => receiptMatches(e, input, this.session!)))) {
-      await this.refresh(); throw new Error('The save was not fully confirmed. Your draft is still here; inspect the refreshed document before retrying.');
+      await this.refresh(); throw new Error('Save was not fully confirmed. Draft kept; check the document before retrying.');
     }
     this.retirePendingWrite();
     const ids = new Set(this.events.map(e => e.eventId)); this.events.push(...result.appended.filter(e => !ids.has(e.eventId))); this.events.sort((a,b) => a.sequence-b.sequence); this.head = result.head; this.onChange();
@@ -159,14 +159,14 @@ export class StillClient {
   }
   async createProject(name: string, thought: string) {
     const signature = JSON.stringify(['project', name, thought]);
-    if (!this.creation || this.creation.signature !== signature) { if(this.hasUnconfirmedWrite) { await this.refresh(); await this.recoverPendingWrite(); throw new Error(this.hasUnconfirmedWrite ? 'Check the earlier save before starting another project.' : 'The earlier project was saved. Return to your projects to open it.'); } this.creation = { signature, projectId: crypto.randomUUID(), documentId: crypto.randomUUID() }; }
+    if (!this.creation || this.creation.signature !== signature) { if(this.hasUnconfirmedWrite) { await this.refresh(); await this.recoverPendingWrite(); throw new Error(this.hasUnconfirmedWrite ? 'Check the earlier save before starting another project.' : 'Project saved. Open it in Projects.'); } this.creation = { signature, projectId: crypto.randomUUID(), documentId: crypto.randomUUID() }; }
     const { projectId, documentId } = this.creation;
     await this.append([{ type: 'ProjectCreated', payload: { project_id: projectId, name, state: 'active' } }, { type: 'DocumentCreated', payload: { project_id: projectId, document_id: documentId, handle: 'first-idea', title: name } }, ...(thought ? [{ ...this.blockEvent(thought, 'Creative direction', 'direction', projectId, documentId), payload: { ...this.blockEvent(thought, 'Creative direction', 'direction', projectId, documentId).payload, block_id: `first-${documentId}` } }] : [])]);
     this.creation = null; return { projectId, documentId };
   }
   async createDocument(title: string, thought: string) {
     const signature = JSON.stringify(['document', this.position.projectId, title, thought]);
-    if (!this.creation || this.creation.signature !== signature) { if(this.hasUnconfirmedWrite) { await this.refresh(); await this.recoverPendingWrite(); throw new Error(this.hasUnconfirmedWrite ? 'Check the earlier save before starting another document.' : 'The earlier document was saved. Return to your documents to open it.'); } this.creation = { signature, projectId: this.position.projectId, documentId: crypto.randomUUID() }; }
+    if (!this.creation || this.creation.signature !== signature) { if(this.hasUnconfirmedWrite) { await this.refresh(); await this.recoverPendingWrite(); throw new Error(this.hasUnconfirmedWrite ? 'Check the earlier save before starting another document.' : 'Document saved. Open it in Documents.'); } this.creation = { signature, projectId: this.position.projectId, documentId: crypto.randomUUID() }; }
     const { projectId, documentId } = this.creation;
     await this.append([{ type: 'DocumentCreated', payload: { project_id: projectId, document_id: documentId, title, handle: `page-${documentId.slice(0, 8)}` } }, ...(thought ? [{ ...this.blockEvent(thought, 'Creative direction', 'direction', projectId, documentId), payload: { ...this.blockEvent(thought, 'Creative direction', 'direction', projectId, documentId).payload, block_id: `first-${documentId}` } }] : [])]);
     this.creation = null; return { projectId, documentId };
@@ -183,9 +183,9 @@ export class StillClient {
   }
   async editArtifact(id: string, markdown: string, expectedRevision: number, items?: { index: number; body: string }[]) {
     const check = await this.verifyScope();
-    if (documentArtifactRevision(this.events, id) !== expectedRevision) throw new Error('This work changed while you were writing. Your draft is preserved; reopen the current revision before saving.');
+    if (documentArtifactRevision(this.events, id) !== expectedRevision) throw new Error('This work changed while you were writing. Draft kept; reopen before saving.');
     const result = await api<{appended?:CreativeEvent[]}>(`/api/artifacts/${encodeURIComponent(id)}`, { markdown, expectedRevision, ...(items ? {items}: {}) }, 'PATCH'); check();
-    if (!result.appended?.some(e => e.type === 'DocumentArtifactEdited' && e.payload.artifact_id === id)) throw new Error('The edit is unconfirmed. Check the original revision before retrying.');
+    if (!result.appended?.some(e => e.type === 'DocumentArtifactEdited' && e.payload.artifact_id === id)) throw new Error('Edit unconfirmed. Check the original before retrying.');
     await this.refresh();
   }
   model3dAdaptation() { return adaptDocumentToModel3d(documentSnapshot(this.projection, this.position.documentId), { referenceCount: 0 }); }
@@ -206,7 +206,7 @@ export class StillClient {
   }
   async generate(draft: GenerationDraft) {
     const check = await this.verifyScope();
-    if (draft.scopeKey !== this.scopeKey || draft.documentId !== this.position.documentId) throw new Error('This generation belongs to a different document. Review a fresh request.');
+    if (draft.scopeKey !== this.scopeKey || draft.documentId !== this.position.documentId) throw new Error('Document changed. Review generation again.');
     if (!this.abilities.generate) throw new Error('Generation is unavailable for this account.');
     const pending = operationJournal.generation(this.journalScope,draft.documentId);
     if (draft.attempted || pending) {
@@ -215,11 +215,11 @@ export class StillClient {
       const key = pending?.requestKey ?? String(this.generationPayload(draft).payload.requestKey);
       const job = this.jobs.find(j => j.requestKey === key || j.requestKey.startsWith(`${key}:`));
       if (job) { operationJournal.clearGeneration(this.journalScope,draft.documentId); return job; }
-      throw new Error('The original generation is unconfirmed. It has not been submitted again. Check back for its original receipt.');
+      throw new Error('The original generation is unconfirmed. It was not repeated. Check again.');
     }
     if (draft.sourceSnapshot) {
       await this.refresh(); check();
-      if (await digest(documentSnapshot(this.projection,draft.documentId)) !== await digest(draft.sourceSnapshot)) throw new Error('The document changed after you reviewed it. Reopen generation to review the current context.');
+      if (await digest(documentSnapshot(this.projection,draft.documentId)) !== await digest(draft.sourceSnapshot)) throw new Error('Document changed. Reopen generation to review it.');
     }
     if (draft.format === 'model3d') {
       if (draft.adaptation && draft.prompt === draft.adaptation.prompt && !draft.adaptation.valid) throw new Error(draft.adaptation.issues.map(i => i.message).join(' '));
@@ -234,7 +234,7 @@ export class StillClient {
     try { result = await api<{ job: DocumentJob }>('/api/document-jobs', request); }
     catch(error) { if(error instanceof ApiError && [400,401,403,409,422,428].includes(error.status)) { draft.attempted = false; operationJournal.clearGeneration(this.journalScope,draft.documentId); } throw error; }
     check();
-    if (!result.job?.jobId || result.job.documentId !== this.position.documentId) throw new Error('The generation receipt could not be verified. Check the work before submitting again.');
+    if (!result.job?.jobId || result.job.documentId !== this.position.documentId) throw new Error('Generation unconfirmed. Check results before retrying.');
     operationJournal.clearGeneration(this.journalScope,draft.documentId);
     this.jobs = [result.job, ...this.jobs.filter(j => j.jobId !== result.job.jobId)]; this.onChange();
     void api(`/api/document-jobs/${encodeURIComponent(result.job.jobId)}/run`, {}).catch(() => {});

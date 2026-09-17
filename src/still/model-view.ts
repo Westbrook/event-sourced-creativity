@@ -14,7 +14,7 @@ export class StillModelView extends HTMLElement {
     this.clean(); const generation = ++this.generation;
     this.replaceChildren();
     const source = this.getAttribute('src') ?? '';
-    if (!source.startsWith('/api/media/')) { this.textContent = 'This model is available to download.'; return; }
+    if (!source.startsWith('/api/media/')) { this.textContent = 'Download available.'; return; }
     const scene = new THREE.Scene();
     const camera = new THREE.PerspectiveCamera(36, 1, .01, 1000);
     const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
@@ -36,7 +36,7 @@ export class StillModelView extends HTMLElement {
       model = loaded.scene; const box = new THREE.Box3().setFromObject(model), size = box.getSize(new THREE.Vector3()), center = box.getCenter(new THREE.Vector3());
       model.position.sub(center); scene.add(model);
       const extent = Math.max(size.x, size.y, size.z, .1); camera.position.set(extent * 1.5, extent * .7, extent * 2); controls.target.set(0, 0, 0); controls.update(); render();
-    } catch { if (generation === this.generation) { this.clean(); this.textContent = 'The interactive preview could not load. Your original model is still available to download.'; } }
+    } catch { if (generation === this.generation) { this.clean(); this.textContent = 'Preview unavailable. Download the original model.'; } }
   }
 }
 if (!customElements.get('still-model-view')) customElements.define('still-model-view', StillModelView);
