@@ -1,4 +1,5 @@
 import { outputJobIsDurable, requireOutputDurableBinding } from "./output-durable-control.ts";
+import { STILL_GENERATION_CLOSED, isStillGenerationKey, stillGenerationMatch, stillGenerationDigest, stillGenerationOpen, stillGenerationAdmission } from './still-generation-recovery.ts';
 import { requireSponsorExecution, readSponsorFinancialBinding, sponsorFinancialIdentity, sponsorTerminalReleaseStatement, type SponsorExecutionAuthority, type SponsorFinancialBinding } from "./experience-sponsor-execution.ts";
 import { retainedPlannerResponseShape, retainedStoryboardResponseShape } from "./output-planner-response-shape.ts";
 import { readStoryboardInspectionWitness } from "./output-storyboard-inspection-witness.ts";
@@ -2776,6 +2777,40 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
   const readOnlyScene=Boolean(sceneInspection&&project&&hasCapability(principal,"project.read",{organizationId:project.organizationId,projectAccessId:project.projectAccessId}));
   if(!canRequestOutputs&&!readOnlyPlanning&&!readOnlyScene)return Response.json({error:"project_read_only"},{status:403});
   const user:PilotUser=project?{...principal,streamId:`creative:${project.ownerUserId}`,projectExecution:{organizationId:project.organizationId,projectAccessId:project.projectAccessId,projectId:project.projectId,ownerUserId:project.ownerUserId,actorUserId:principal.userId}}:principal;
+  if(path==='still-reconcile'){
+    const headers={'cache-control':'private, no-store'};
+    if(request.method!=='POST')return Response.json({error:'method_not_allowed'},{status:405,headers});
+    const consent=requireConsent(principal);if(consent)return consent;
+    if(request.headers.has('origin')&&request.headers.get('origin')!==new URL(request.url).origin)return Response.json({error:'same_origin_required'},{status:403,headers});
+    let input:{documentId?:unknown;requestKey?:unknown};
+    try{const raw=await request.text();if(raw.length>2048)throw new Error();input=JSON.parse(raw);}catch{return Response.json({error:'invalid_generation_request'},{status:400,headers});}
+    const documentId=typeof input?.documentId==='string'?input.documentId:'';
+    if(!documentId||documentId.length>160||!isStillGenerationKey(documentId,input?.requestKey))return Response.json({error:'invalid_generation_request'},{status:400,headers});
+    const requestKey=input.requestKey;
+    if(project&&!await activeProjectExecution(env,user,documentId))return Response.json({error:'document_not_found'},{status:404,headers});
+    const events=project?await readProjectSourceEvents(env,project):await readWorkspaceEvents(env,user.streamId);
+    const document=foldEvents(events,Infinity,documentId,project?.projectId??'').documents.find(d=>d.id===documentId&&!d.removed);
+    if(!document||project&&document.projectId!==project.projectId)return Response.json({error:'document_not_found'},{status:404,headers});
+    const open=await stillGenerationOpen(user,documentId,requestKey);
+    // Close an unadmitted request before reading its receipt. A delayed admission
+    // either already inserted its job or will fail its atomic closure exclusion.
+    if(await env.DB.prepare(`SELECT 1 AS present WHERE ${open.sql}`).bind(...open.bindings).first())
+      await appendAuditEvent(env,user.streamId,`user:${user.userId}`,STILL_GENERATION_CLOSED,{document_id:documentId,project_id:document.projectId,request_digest:await stillGenerationDigest(requestKey),source_surface:'still',...(project?{project_access_id:project.projectAccessId,organization_id:project.organizationId}: {})});
+    const match=stillGenerationMatch(user,documentId,requestKey);
+    const rows=await env.DB.prepare(`SELECT * FROM document_jobs WHERE ${match.sql} ORDER BY requested_at DESC LIMIT 2`).bind(...match.bindings).all<DocumentJobRow>();
+    if(project&&!await activeProjectExecution(env,user,documentId))return Response.json({error:'project_access_revoked'},{status:403,headers});
+    if(rows.results.length>1)return Response.json({error:'generation_receipt_ambiguous'},{status:409,headers});
+    const row=rows.results[0];
+    if(row){
+      const allowed=project?await activeProjectExecution(env,user,documentId,row.job_id):!await env.DB.prepare("SELECT 1 AS present FROM project_resource_scopes WHERE resource_kind='job' AND resource_id=?").bind(row.job_id).first();
+      if(!allowed)return Response.json({error:'generation_receipt_unavailable'},{status:409,headers});
+      if(Date.parse(row.expires_at)<=Date.now())return Response.json({documentId,requestKey,status:'closed',reason:'receipt_expired'},{headers});
+      return Response.json({documentId,requestKey,status:'found',job:project?safeScopedJob(row):serializeJob(row)},{headers});
+    }
+    // Absence is not a historical billing certificate (retention and legacy
+    // deployments may have removed evidence). A new purchase still needs review.
+    return Response.json({documentId,requestKey,status:'closed'},{headers});
+  }
   if(sponsor){
     if(project||user.fictional||user.projectExecution||(user.billingUserId??user.userId)!==user.userId)return Response.json({error:"sponsor_personal_principal_required"},{status:403});
     // Actor eligibility is independent of the sponsor's financial identity.
@@ -3679,6 +3714,21 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
   const documentId = String(input.documentId ?? projection.documentId); const documentRecord = projection.documents.find((document) => document.id === documentId);
   if (!documentRecord) return Response.json({ error: "document_not_found" }, { status: 404 });
   if(project&&documentRecord.projectId!==project.projectId)return Response.json({error:"document_not_found"},{status:404});
+  const stillRequest=!outputPreparation&&input.sourceSurface==='still'&&(kind==='generate'||kind==='render_document')&&isStillGenerationKey(documentId,payload.requestKey)?payload.requestKey:null;
+  const retainedStillRequest=async()=>{
+    if(!stillRequest)return null;
+    const match=stillGenerationMatch(user,documentId,stillRequest);
+    const row=await env.DB.prepare(`SELECT * FROM document_jobs WHERE ${match.sql} ORDER BY requested_at DESC LIMIT 1`).bind(...match.bindings).first<DocumentJobRow>();
+    if(!row)return null;
+    const allowed=project?await activeProjectExecution(env,user,documentId,row.job_id):!await env.DB.prepare("SELECT 1 AS present FROM project_resource_scopes WHERE resource_kind='job' AND resource_id=?").bind(row.job_id).first();
+    if(!allowed||Date.parse(row.expires_at)<=Date.now())return Response.json({error:'generation_receipt_unavailable'},{status:409});
+    return Response.json({job:project?safeScopedJob(row):serializeJob(row),reused:true},{status:202});
+  };
+  if(stillRequest){
+    const retained=await retainedStillRequest();if(retained)return retained;
+    const open=await stillGenerationOpen(user,documentId,stillRequest);
+    if(!await env.DB.prepare(`SELECT 1 AS present WHERE ${open.sql}`).bind(...open.bindings).first())return Response.json({error:'generation_request_closed',message:'Review a new generation request.'},{status:409});
+  }
   if(sponsor&&(await readOutputAdmissionValue(outputPreparation?.readScope,"budget-scopes",()=>ownerDocumentBudgetScopes(env,user.userId,documentId,documentRecord.projectId))).length)
     return Response.json({error:"sponsor_organization_budget_unsupported"},{status:403});
   if(kind==="structure_adaptive"&&(String(input.sourceSurface??payload.sourceSurface??"")==="canvas"||payload.canvasId!==undefined)){
@@ -4024,7 +4074,8 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
       }};
     return Response.json({prepared:true},{status:200});
   }
-  const inserted=documentJobInsert(env,admissionUser,documentId,"?,?,?,?,?,'queued',?,?,?,?,?,NULL,0,?,NULL,NULL,NULL,NULL,?,?",[jobId,user.userId,user.streamId,documentId,kind,sourceSurface,jobId,requestedSequence,JSON.stringify(payload),initialResult?JSON.stringify(initialResult):null,createdAt,expiresAt,createdAt],kind==="render_document"||kind==="structure_adaptive"?{kind,key:String(payload.idempotencyKey??""),sourceSurface,canvasId:typeof payload.canvasId==="string"?payload.canvasId:"",projectId:documentRecord.projectId}:undefined,scenePrepared?sceneRequestExclusion(jobId,{sql:"1",bindings:[]}):undefined);
+  const sceneGuard=scenePrepared?sceneRequestExclusion(jobId,{sql:"1",bindings:[]}):undefined;
+  const inserted=documentJobInsert(env,admissionUser,documentId,"?,?,?,?,?,'queued',?,?,?,?,?,NULL,0,?,NULL,NULL,NULL,NULL,?,?",[jobId,user.userId,user.streamId,documentId,kind,sourceSurface,jobId,requestedSequence,JSON.stringify(payload),initialResult?JSON.stringify(initialResult):null,createdAt,expiresAt,createdAt],kind==="render_document"||kind==="structure_adaptive"?{kind,key:String(payload.idempotencyKey??""),sourceSurface,canvasId:typeof payload.canvasId==="string"?payload.canvasId:"",projectId:documentRecord.projectId}:undefined,stillRequest?await stillGenerationAdmission(user,documentId,stillRequest,sceneGuard):sceneGuard);
   const resource=projectJobResource(env,admissionUser,jobId,documentId,createdAt,Boolean(scenePrepared));
   let created=false;
   let sceneAssertionFailure:unknown;
@@ -4046,6 +4097,7 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
   }else if(resource){const results=await env.DB.batch([inserted,resource]);created=results.every((result)=>Number(result.meta.changes??0)===1);if(!created&&Number(results[0]?.meta.changes??0)!==0)return Response.json({error:"project_access_revoked"},{status:403});}
   else created=Number((await inserted.run()).meta.changes??0)===1;
   if(!created){
+    if(stillRequest){const retained=await retainedStillRequest();if(retained)return retained;return Response.json({error:'generation_request_closed',message:'Review a new generation request.'},{status:409});}
     if(scenePrepared){
       // Same-ID recovery is an authorized retained read, not a second insertion.
       try{const retained=await readExistingSceneRequest(env,user,documentId,payload.sceneRequestId,project?.contextId??null,{certifyUnused:sceneInspection});if(retained)return retainedSceneResponse(retained);}

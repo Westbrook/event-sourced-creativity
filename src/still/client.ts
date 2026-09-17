@@ -28,7 +28,7 @@ export async function api<T>(path: string, body?: unknown, method = body === und
   if (!response.ok) throw new ApiError(response.status, data);
   return data as T;
 }
-export type GenerationDraft = { format: string; prompt: string; itemCount: number; tone: string; audience: string; requestId: string; sourceHead: number; documentId: string; scopeKey: string; attempted?: boolean; sourceSnapshot?: ReturnType<typeof documentSnapshot>; sourceBlockVersions?: Array<Record<string, unknown>>; sourceRevision?: string; adaptation?: Model3dDocumentAdaptation; scenePreview?: SceneCostPreview; acknowledgements?: Record<string, boolean> };
+export type GenerationDraft = { format: string; prompt: string; itemCount: number; tone: string; audience: string; requestId: string; sourceHead: number; documentId: string; scopeKey: string; attempted?: boolean; recoveryClosed?: boolean; previousUnconfirmed?: boolean; sourceSnapshot?: ReturnType<typeof documentSnapshot>; sourceBlockVersions?: Array<Record<string, unknown>>; sourceRevision?: string; adaptation?: Model3dDocumentAdaptation; scenePreview?: SceneCostPreview; acknowledgements?: Record<string, boolean> };
 
 export class StillClient {
   session: Session | null = null;
@@ -198,7 +198,13 @@ export class StillClient {
     if (!p.documents.some(d => d.id === p.documentId && !d.removed)) throw new Error('Select a document.');
     const source = documentSource(p, p.documentId);
     const adaptation = format === 'model3d' ? this.model3dAdaptation() : undefined;
-    return { format, prompt: adaptation?.prompt ?? '', ...(adaptation ? { adaptation } : {}), documentId:p.documentId, scopeKey:this.scopeKey, itemCount:format === 'slides' ? 6 : format === 'storyboard' ? 4 : 1, tone:'', audience:'', requestId:crypto.randomUUID(), sourceHead:this.head, sourceSnapshot:source.snapshot, sourceBlockVersions:source.sourceBlockVersions, sourceRevision:source.revision, ...(pending ? { attempted:true } : {}) };
+    return { format, prompt: adaptation?.prompt ?? '', ...(adaptation ? { adaptation } : {}), documentId:p.documentId, scopeKey:this.scopeKey, itemCount:format === 'slides' ? 6 : format === 'storyboard' ? 4 : 1, tone:'', audience:'', requestId:crypto.randomUUID(), sourceHead:this.head, sourceSnapshot:source.snapshot, sourceBlockVersions:source.sourceBlockVersions, sourceRevision:source.revision, ...(pending ? { attempted:true,recoveryClosed:pending.closed===true } : {}) };
+  }
+  reviewNewGeneration(draft: GenerationDraft) {
+    const pending=this.pendingGeneration;
+    if(draft.scopeKey!==this.scopeKey||draft.documentId!==this.position.documentId||!pending?.closed)throw new Error('Check the original generation first.');
+    operationJournal.clearGeneration(this.journalScope,draft.documentId);
+    return { ...this.prepareGeneration(draft.format), previousUnconfirmed:true };
   }
   generationPayload(draft: GenerationDraft) {
     const payload: Record<string, unknown> = { locale: 'en', productionMode: 'manual', promptTechnique: 'prose', requestKey: `still:${draft.documentId}:${draft.sourceHead}:${draft.requestId}`, ...(draft.sourceSnapshot ? {snapshot:draft.sourceSnapshot,sourceBlockVersions:draft.sourceBlockVersions,expectedDocumentRevision:draft.sourceRevision} : {}), ...(draft.format === 'image' ? {} : { artifactKind: draft.format, itemCount: draft.itemCount, tone: draft.tone, audience: draft.audience }) };
@@ -222,11 +228,22 @@ export class StillClient {
     const pending = operationJournal.generation(this.journalScope,draft.documentId);
     if (draft.attempted || pending) {
       draft.attempted = true;
-      await this.pollJobs(); check();
       const key = pending?.requestKey ?? String(this.generationPayload(draft).payload.requestKey);
-      const job = this.jobs.find(j => j.requestKey === key || j.requestKey.startsWith(`${key}:`));
-      if (job) { operationJournal.clearGeneration(this.journalScope,draft.documentId); return job; }
-      throw new Error('The original generation is unconfirmed. It was not repeated. Check again.');
+      const result=await api<{documentId:string;requestKey:string;status:string;job?:DocumentJob}>('/api/document-jobs/still-reconcile',{documentId:draft.documentId,requestKey:key});check();
+      if(draft.documentId!==this.position.documentId||result.documentId!==draft.documentId||result.requestKey!==key)throw new Error('Generation check unconfirmed. Reopen the original document.');
+      const job=result.job,format=pending?.format??draft.format;
+      if(result.status==='found'&&job?.jobId&&job.documentId===draft.documentId&&job.requestKey===key&&job.kind===(format==='image'?'generate':'render_document')&&(format==='image'||job.result?.artifactKind===format)) {
+        operationJournal.clearGeneration(this.journalScope,draft.documentId);
+        this.jobs=[job,...this.jobs.filter(j=>j.jobId!==job.jobId)];this.onChange();
+        if(job.status==='queued')void api(`/api/document-jobs/${encodeURIComponent(job.jobId)}/run`,{}).catch(()=>{});
+        else if(['completed','partial'].includes(job.status))void this.refresh().catch(()=>{});
+        return job;
+      }
+      if(result.status==='closed'&&!job){
+        operationJournal.saveGeneration(this.journalScope,{documentId:draft.documentId,format,requestKey:key,closed:true});draft.recoveryClosed=true;
+        throw new Error('Original status unknown. Starting another may duplicate it.');
+      }
+      throw new Error('Generation check unconfirmed. Check again.');
     }
     if (draft.sourceSnapshot) {
       await this.refresh(); check();
@@ -243,7 +260,14 @@ export class StillClient {
     draft.attempted = true;
     let result: {job:DocumentJob};
     try { result = await api<{ job: DocumentJob }>('/api/document-jobs', request); }
-    catch(error) { if(error instanceof ApiError && [400,401,403,409,422,428].includes(error.status)) { draft.attempted = false; operationJournal.clearGeneration(this.journalScope,draft.documentId); } throw error; }
+    catch(error) {
+      if(error instanceof ApiError && error.body.error==='generation_request_closed') {
+        operationJournal.saveGeneration(this.journalScope,{documentId:draft.documentId,format:draft.format,requestKey:String(request.payload.requestKey),closed:true});draft.recoveryClosed=true;
+      } else if(error instanceof ApiError && [400,401,403,409,422,428].includes(error.status)&&!String(error.body.error).startsWith('generation_receipt_')) {
+        draft.attempted = false; operationJournal.clearGeneration(this.journalScope,draft.documentId);
+      }
+      throw error;
+    }
     check();
     if (!result.job?.jobId || result.job.documentId !== this.position.documentId) throw new Error('Generation unconfirmed. Check results before retrying.');
     operationJournal.clearGeneration(this.journalScope,draft.documentId);

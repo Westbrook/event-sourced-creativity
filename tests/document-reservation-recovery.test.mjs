@@ -7,6 +7,7 @@ import { documentJobCanRecoverProviderRender } from "../src/model/document-jobs.
 import { buildManagedProductionPlan } from "../src/model/managed-production.ts";
 import { interruptedDocumentJobUsage, recordedDocumentPlannerUsage } from "../worker/document-job-reservations.ts";
 import {
+  adoptLegacyCostReservation,
   claimCostBudgetReservation,
   costBudgetReservation,
   readBudgets,
@@ -926,7 +927,7 @@ async function assertBundledOutputReconciliationHistory(context,present){
     const beforeConsent=fixture.sqlite.prepare("SELECT COUNT(*) AS count FROM events WHERE stream_id=? AND type='ConsentAccepted'").get(stream).count;
     const witnesses=[
       {name:"known-receipt",kind:"first",prefix:"SELECT slot.scope_key,slot.slot_id,slot.token_reservation_id,slot.cost_reservation_id,slot.updated_at, job.job_id,job.kind,job.owner_id,job.stream_id,job.document_id,job.status,job.correlation_id,",count:0},
-      {name:"expired-grant",kind:"all",prefix:"SELECT grant_row.scope_key,grant_row.grant_id,grant_row.actor_user_id,grant_row.context_id, plan.scope_kind,plan.owner_user_id,plan.project_id,plan.document_id,plan.organization_id,plan.project_access_id FROM output_execution_grants grant_row JOIN output_plan_revisions plan ON plan.scope_key=grant_row.scope_key AND plan.plan_revision_id=grant_row.plan_revision_id WHERE grant_row.payer_user_id=? AND grant_row.actor_user_id=? AND grant_row.expires_at<=?",count:0},
+      {name:"expired-grant",kind:"all",prefix:"SELECT grant_row.scope_key,grant_row.grant_id,grant_row.actor_user_id,grant_row.context_id,grant_row.payer_user_id, plan.scope_kind,plan.owner_user_id,plan.project_id,plan.document_id,plan.organization_id,plan.project_access_id FROM output_execution_grants grant_row JOIN output_plan_revisions plan ON plan.scope_key=grant_row.scope_key AND plan.plan_revision_id=grant_row.plan_revision_id WHERE (grant_row.payer_user_id=? OR (plan.scope_kind='personal' AND grant_row.payer_user_id<>grant_row.actor_user_id)) AND grant_row.actor_user_id=? AND grant_row.expires_at<=?",count:0},
       {name:"native-storage",kind:"run",prefix:"WITH retained_fal_grants AS MATERIALIZED (",count:0},
     ];
     const prototype=Object.getPrototypeOf(fixture.environment.DB.prepare("SELECT 1"));
@@ -1146,6 +1147,18 @@ test("administrative hold: later provider evidence cannot silently charge or reo
   const verified=await verifyHoldDisposition(f.env,f.user.userId,f.command.dispositionId);
   assert.equal(verified.transactionVerified,true);
   assert.equal(verified.checks.providerEvidenceUnchanged,false);
+});
+
+test("administrative hold: old reservation reconciliation skips an existing reviewed hold",async()=>{
+  const f=await administrativeHoldFixture();await applyHoldDisposition(f.env,f.user,f.command);
+  const before=f.fullSnapshot();
+  await reconcileFailedBudgetReservations(f.env,f.user,Date.now()+10*60_000);
+  assert.equal(f.fullSnapshot(),before);
+  const held=f.sqlite.prepare("SELECT * FROM cost_budget_reservations WHERE reservation_id=?").get(f.cost.reservationId);
+  await reserveCostBudget(f.env,f.user.userId,held.reserved_microusd,{streamId:f.user.streamId,correlationId:"unrelated-new-request",operation:"image-generation"});
+  const withUnrelated=f.fullSnapshot();
+  assert.equal(await adoptLegacyCostReservation(f.env,f.user.userId,{reservationId:held.reservation_id,amountMicrousd:held.reserved_microusd,period:held.period,streamId:held.stream_id,correlationId:held.correlation_id,operation:held.operation}),false);
+  assert.equal(f.fullSnapshot(),withUnrelated);
 });
 
 test("administrative hold: follow-up allows unrelated later activity but detects counter drift",async()=>{

@@ -45,15 +45,33 @@ test('canonical context creation and 3D adaptation retain exclusions',()=>{
 });
 test('an interrupted generation admission is reconciled without a second purchase',async()=>{
   const c=client(), original=globalThis.fetch;let admissions=0;
-  globalThis.fetch=async (url,init)=>{if(url==='/api/session')return json(session);if(url==='/api/document-jobs'){admissions++;throw new Error('connection lost');}if(String(url).startsWith('/api/document-jobs?'))return json({jobs:[]});throw new Error(`Unexpected ${url}`);};
+  globalThis.fetch=async (url,init)=>{if(url==='/api/session')return json(session);if(url==='/api/document-jobs'){admissions++;throw new Error('connection lost');}if(url==='/api/document-jobs/still-reconcile')throw new Error('Generation check unconfirmed');throw new Error(`Unexpected ${url}`);};
   const draft={format:'model3d',prompt:'A bronze bowl',itemCount:1,tone:'',audience:'',requestId:'request',sourceHead:4,documentId:'d',scopeKey:c.scopeKey};
-  try {await assert.rejects(c.generate(draft),/connection lost/);assert.equal(draft.attempted,true);await assert.rejects(c.generate(draft),/original generation is unconfirmed/);assert.equal(admissions,1);}finally{globalThis.fetch=original;}
+  try {await assert.rejects(c.generate(draft),/connection lost/);assert.equal(draft.attempted,true);await assert.rejects(c.generate(draft),/[Gg]eneration check unconfirmed/);assert.equal(admissions,1);}finally{globalThis.fetch=original;}
 });
 test('a definitive budget gate does not count as a purchased generation',async()=>{
   const c=client(), original=globalThis.fetch;
   globalThis.fetch=async url=>url==='/api/session'?json(session):json({error:'generation_budget_acknowledgement_required'},428);
   const draft={format:'image',prompt:'',itemCount:1,tone:'',audience:'',requestId:'request',sourceHead:4,documentId:'d',scopeKey:c.scopeKey};
   try {await assert.rejects(c.generate(draft));assert.equal(draft.attempted,false);}finally{globalThis.fetch=original;}
+});
+test('recovering an accepted queued image resumes its original job without another admission',async()=>{
+  const c=client(),saved=globalThis.fetch,key='still:d:4:original';let admissions=0,runs=[];
+  operationJournal.saveGeneration('test:personal',{documentId:'d',format:'image',requestKey:key});
+  globalThis.fetch=async(url,init)=>{
+    if(url==='/api/session')return json(session);
+    if(url==='/api/document-jobs/still-reconcile')return json({documentId:'d',requestKey:key,status:'found',job:{jobId:'accepted',documentId:'d',requestKey:key,kind:'generate',status:'queued'}});
+    if(url==='/api/document-jobs'){admissions++;throw new Error('Unexpected new purchase');}
+    if(url==='/api/document-jobs/accepted/run'){runs.push(url);return json({});}
+    throw new Error(`Unexpected ${url}`);
+  };
+  try{const job=await c.generate(c.prepareGeneration('image'));assert.equal(job.jobId,'accepted');assert.equal(c.pendingGeneration,null);assert.equal(admissions,0);assert.equal(runs.length,1);}finally{globalThis.fetch=saved;}
+});
+test('an admission closed during submission opens explicit review instead of retrying the closed key',async()=>{
+  const c=client(),saved=globalThis.fetch;let posts=0;
+  const draft={format:'image',prompt:'',itemCount:1,tone:'',audience:'',requestId:'closed',sourceHead:4,documentId:'d',scopeKey:c.scopeKey};
+  globalThis.fetch=async url=>{if(url==='/api/session')return json(session);posts++;return json({error:'generation_request_closed'},409);};
+  try{await assert.rejects(c.generate(draft));assert.equal(draft.recoveryClosed,true);assert.equal(c.pendingGeneration.closed,true);const fresh=c.reviewNewGeneration(draft);assert.notEqual(fresh.requestId,draft.requestId);assert.equal(fresh.previousUnconfirmed,true);assert.equal(posts,1);}finally{globalThis.fetch=saved;}
 });
 test('a changed account scope retires all previously rendered private content',async()=>{
   const c=client(), original=globalThis.fetch;c.content={private:'old workspace'};
@@ -91,9 +109,9 @@ test('a lost export receipt never authorizes a different artifact',async()=>{
 });
 test('generation recovery survives constructing a fresh client and request',async()=>{
   const c=client(), original=globalThis.fetch;let posts=0;
-  globalThis.fetch=async(url,init)=>{if(url==='/api/session')return json(session);if(init?.method==='POST'){posts++;throw new Error('lost');}return json({jobs:[]});};
+  globalThis.fetch=async(url,init)=>{if(url==='/api/session')return json(session);if(url==='/api/document-jobs/still-reconcile')throw new Error('Generation check unconfirmed');if(init?.method==='POST'){posts++;throw new Error('lost');}return json({jobs:[]});};
   const draft={format:'image',prompt:'',itemCount:1,tone:'',audience:'',requestId:'request',sourceHead:4,documentId:'d',scopeKey:c.scopeKey};
-  try {await assert.rejects(c.generate(draft));const reopened=new StillClient();reopened.session=structuredClone(session);reopened.position={...position};await assert.rejects(reopened.generate({...draft,attempted:false,requestId:'different'}),/original generation is unconfirmed/);assert.equal(posts,1);}finally{globalThis.fetch=original;}
+  try {await assert.rejects(c.generate(draft));const reopened=new StillClient();reopened.session=structuredClone(session);reopened.position={...position};await assert.rejects(reopened.generate({...draft,attempted:false,requestId:'different'}),/[Gg]eneration check unconfirmed/);assert.equal(posts,1);}finally{globalThis.fetch=original;}
 });
 test('a stale personal save is refreshed but never automatically resubmitted',async()=>{
   const c=client(), original=globalThis.fetch;let posts=0;

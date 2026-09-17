@@ -339,8 +339,10 @@ async function budgetReservation(env: WorkerEnv, userId: string, reservationId: 
 
 async function adoptLegacyBudgetReservation(env: WorkerEnv, userId: string, reservationId: string, reservedTokens: number, context: BudgetReservationContext) {
   const now = new Date().toISOString(); const createdAt = context.createdAt ?? now;
-  await env.DB.prepare("INSERT OR IGNORE INTO budget_reservations (reservation_id,owner_id,stream_id,correlation_id,operation,period,reserved_tokens,used_tokens,status,settlement_reason,created_at,settled_at,updated_at) VALUES (?,?,?,?,?,?,?,0,'active',NULL,?,NULL,?)")
-    .bind(reservationId,userId,context.streamId??"",context.correlationId??"",context.operation??"legacy-provider-operation",context.period??createdAt.slice(0,7),Math.max(0,Math.floor(reservedTokens)),createdAt,now).run();
+  // BEFORE INSERT guards run even for INSERT OR IGNORE. Existing reservations,
+  // including reviewed holds, must never be proposed for adoption again.
+  await env.DB.prepare("INSERT OR IGNORE INTO budget_reservations (reservation_id,owner_id,stream_id,correlation_id,operation,period,reserved_tokens,used_tokens,status,settlement_reason,created_at,settled_at,updated_at) SELECT ?,?,?,?,?,?,?,0,'active',NULL,?,NULL,? WHERE NOT EXISTS (SELECT 1 FROM budget_reservations WHERE reservation_id=?)")
+    .bind(reservationId,userId,context.streamId??"",context.correlationId??"",context.operation??"legacy-provider-operation",context.period??createdAt.slice(0,7),Math.max(0,Math.floor(reservedTokens)),createdAt,now,reservationId).run();
 }
 
 /** Correlated checks share the existing reservation read and settlement transaction. */
@@ -671,6 +673,7 @@ export async function reconcileFailedBudgetReservations(env: WorkerEnv, user: Pi
     FROM events reserved
     WHERE reserved.stream_id=? AND reserved.type='BudgetReserved' AND reserved.occurred_at<=?
       AND json_extract(reserved.payload,'$.reservation_id') IS NOT NULL
+      AND NOT EXISTS (SELECT 1 FROM budget_reservations ledger WHERE ledger.reservation_id=json_extract(reserved.payload,'$.reservation_id'))
       AND NOT EXISTS (SELECT 1 FROM events terminal WHERE terminal.stream_id=reserved.stream_id AND terminal.type IN ('BudgetReleased','GenerationUsageRecorded') AND json_extract(terminal.payload,'$.reservation_id')=json_extract(reserved.payload,'$.reservation_id'))
     ORDER BY reserved.occurred_at ASC LIMIT 200`).bind(user.streamId,cutoff);
   const [legacy,outputHistory]=await env.DB.batch<Record<string,unknown>>([legacyStatement,
@@ -1415,8 +1418,9 @@ export async function adoptLegacyCostReservation(env: WorkerEnv, userId: string,
     SELECT ?,?,'forma',?,?,?,?,?,0,'active',0,?,NULL,?
     WHERE EXISTS (SELECT 1 FROM cost_budget_counters WHERE scope='user' AND scope_id=? AND period=? AND reserved_microusd>=?)
     AND EXISTS (SELECT 1 FROM cost_budget_counters WHERE scope='workspace' AND scope_id='forma' AND period=? AND reserved_microusd>=?)
-    AND NOT EXISTS (SELECT 1 FROM cost_budget_reservations WHERE owner_id=? AND stream_id=? AND correlation_id=? AND status IN ('active','executing'))`)
-    .bind(input.reservationId,userId,input.streamId,input.correlationId,input.operation,input.period,amount,now,now,userId,input.period,amount,input.period,amount,userId,input.streamId,input.correlationId).run();
+    AND NOT EXISTS (SELECT 1 FROM cost_budget_reservations WHERE owner_id=? AND stream_id=? AND correlation_id=? AND status IN ('active','executing'))
+    AND NOT EXISTS (SELECT 1 FROM cost_budget_reservations WHERE reservation_id=?)`)
+    .bind(input.reservationId,userId,input.streamId,input.correlationId,input.operation,input.period,amount,now,now,userId,input.period,amount,input.period,amount,userId,input.streamId,input.correlationId,input.reservationId).run();
   return Number(result.meta.changes ?? 0) === 1;
 }
 

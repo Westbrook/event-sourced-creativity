@@ -1,7 +1,7 @@
 /** Tab-local recovery metadata. Contains identifiers and hashes, never creative text or credentials. */
 export type WriteReceipt = { type: string; keys: string[]; digest: string };
 export type WriteJournal = { correlationId: string; receipts: WriteReceipt[]; signature: string };
-export type GenerationJournal = { documentId: string; format: string; requestKey: string };
+export type GenerationJournal = { documentId: string; format: string; requestKey: string; closed?: boolean };
 const memory = new Map<string,string>();
 function read(key: string) { try { return typeof sessionStorage === 'undefined' ? memory.get(key) : sessionStorage.getItem(key); } catch { return memory.get(key); } }
 function write(key: string, value: unknown) {
