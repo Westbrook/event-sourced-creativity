@@ -128,6 +128,42 @@ async function view(f) {
 }
 function noLeaseLeaks(f) { assert.equal(f.doc.count(), 0); assert.equal(f.doc.defaultView.count(), 0); }
 
+test("current output recovers one interrupted hydration without binding empty content", async () => {
+  for (const initial of [undefined, ""]) {
+    const f = fixture(), ref = f.artifact.contentRef, retained = f.bytes[ref];
+    if (initial === undefined) delete f.bytes[ref]; else f.bytes[ref] = initial;
+    let reads = 0;
+    f.host.store.ensurePrivateContent = async (reference, options) => {
+      reads++; assert.equal(reference, ref); assert.equal(options.validate(""), false);
+      if (reads === 1) return null;
+      f.bytes[ref] = retained; return retained;
+    };
+    f.host._artifactBinding = async () => f.bytes[ref] ? f.binding : null;
+    assert.equal(await f.host._openArtifact(f.artifact), true);
+    assert.equal(reads, 2); assert.equal(f.host._deliveryBinding.content, retained);
+    noLeaseLeaks(f);
+  }
+});
+
+test("content recovery stops at two reads and never continues after authority or route retirement", async () => {
+  for (const interrupt of [null, f => { f.authorized = false; }, f => { f.sourceCurrent = false; }, f => { f.route = "/document/other"; }, f => { f.revision++; }]) {
+    const f = fixture(); delete f.bytes[f.artifact.contentRef]; let reads = 0;
+    f.host.store.ensurePrivateContent = async () => { reads++; interrupt?.(f); return null; };
+    f.host._artifactBinding = async () => null;
+    assert.equal(await f.host._openArtifact(f.artifact), !interrupt);
+    assert.equal(reads, interrupt ? 1 : 2); assert.equal(f.host._deliveryBinding, null);
+    noLeaseLeaks(f);
+  }
+});
+
+test("a recovered current payload never satisfies a stale exact-content link", async () => {
+  const f = fixture(), ref = f.artifact.contentRef; delete f.bytes[ref]; let reads = 0;
+  f.host.store.ensurePrivateContent = async () => { if (++reads === 2) f.bytes[ref] = "current retained bytes"; };
+  assert.equal(await f.host._openArtifact(f.artifact, () => true, 1, { expectedContentSha256: "b".repeat(64) }), false);
+  assert.equal(reads, 2); assert.equal(f.ensureCalls, 0); assert.equal(f.host._deliveryBinding, null);
+  noLeaseLeaks(f);
+});
+
 test("closed dialog has no target boxes: actual helper opens natively before geometry and cleans autofocus", async () => {
   const f = fixture(); assert.equal(f.stage.getClientRects().length, 0); f.hiddenGeometryReads = 0;
   assert.equal(await view(f), true); assert.equal(f.ensureCalls, 1); assert.equal(f.hiddenGeometryReads, 0);
