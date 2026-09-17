@@ -13066,7 +13066,7 @@
               "kind": "field",
               "name": "source",
               "type": {
-                "text": "Readonly<{ selection: import(\"./src/model/selected-output-share\").SelectedOutputShareSelection; signal: AbortSignal; isCurrent: () => boolean; }> | null"
+                "text": "Readonly<{ selection: import(\"./src/model/selected-output-share\").SelectedOutputShareAnySelection; signal: AbortSignal; isCurrent: () => boolean; readMedia?: SelectedOutputShareReadMedia; }> | null"
               }
             }
           ],
