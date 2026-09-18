@@ -113,7 +113,7 @@ export async function memoryProof(ctx: Context, draftId: string) {
 }
 
 type SponsorSchemaFamily = { required: boolean; sql: readonly string[]; alternatives?: readonly (readonly string[])[] };
-const sponsorFamilies: readonly SponsorSchemaFamily[] = [
+const sponsorFamilies = (): readonly SponsorSchemaFamily[] => [
   { required: false, sql: GUEST_CONTEXT_ADOPTION_SCHEMA }, { required: false, sql: GUEST_PLAN_CUSTODY_SCHEMA },
   { required: true, sql: SPONSOR_ENTITLEMENT_SCHEMA }, { required: true, sql: SPONSOR_RESOURCE_SCHEMA }, { required: true, sql: SPONSOR_APPROVAL_SCHEMA },
   { required: false, sql: SPONSOR_ISSUER_SCHEMA }, { required: false, sql: SPONSOR_DRIVER_SCHEMA }, { required: false, sql: SPONSOR_INTAKE_SCHEMA },
@@ -142,8 +142,8 @@ function schemaProfile(families: readonly SponsorSchemaFamily[]) {
     WHERE name IN(${sponsorNames.map(name => `'${name}'`).join(",")}) OR tbl_name IN(${sponsorTables.map(name => `'${name}'`).join(",")}) ORDER BY name,type))`;
   return { sponsorVariants, sponsorNames, sponsorTables, sponsorSchemaSql };
 }
-const firstSaveSchemaProfile = schemaProfile(sponsorFamilies);
-const laterStageSchemaProfile = schemaProfile([...sponsorFamilies.map(family => family.sql === SPONSOR_DRIVER_SCHEMA ? { ...family, required: true } : family),
+const firstSaveSchemaProfile = () => schemaProfile(sponsorFamilies());
+const laterStageSchemaProfile = () => schemaProfile([...sponsorFamilies().map(family => family.sql === SPONSOR_DRIVER_SCHEMA ? { ...family, required: true } : family),
   { required: false, sql: GUEST_IMAGE_SAVE_CLAIM_SCHEMA }]);
 async function readSponsorSchema(ctx: Context, profile: ReturnType<typeof schemaProfile>) {
   const { sponsorVariants, sponsorNames, sponsorTables, sponsorSchemaSql } = profile;
@@ -178,8 +178,8 @@ async function readSponsorSchema(ctx: Context, profile: ReturnType<typeof schema
   return { proof: { sql: `${sponsorSchemaSql}=?`, bindings: [row.snapshot] } as Proof, tables, snapshot: row.snapshot };
 }
 
-export async function sponsorSchema(ctx: Context) { return readSponsorSchema(ctx, firstSaveSchemaProfile); }
-export async function laterStageSponsorSchema(ctx: Context) { return readSponsorSchema(ctx, laterStageSchemaProfile); }
+export async function sponsorSchema(ctx: Context) { return readSponsorSchema(ctx, firstSaveSchemaProfile()); }
+export async function laterStageSponsorSchema(ctx: Context) { return readSponsorSchema(ctx, laterStageSchemaProfile()); }
 
 export const nativeBranches = [
   ["events", "d.actor=s.guest AND d.event_id NOT IN(SELECT value FROM json_each(s.ids))"],
