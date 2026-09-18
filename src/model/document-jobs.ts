@@ -4,7 +4,7 @@ export type DocumentJobStatus = "queued" | "running" | "committing" | "completed
 export type ProviderFailureCategory = "safety" | "authentication" | "access" | "quota" | "rate_limit" | "network" | "canceled" | "provider" | "server" | "unknown";
 export type ProviderFailureScope = "request" | "user" | "workspace" | "account" | "project" | "organization" | "model" | "region" | "network" | "provider" | "unknown";
 export type ProviderFailureAction = "edit_request" | "check_credentials" | "check_project" | "verify_organization" | "add_credits" | "raise_limit" | "review_budget" | "wait_and_retry" | "retry" | "contact_support" | "none";
-export type DocumentJobError = { code: string; category: ProviderFailureCategory; scope: ProviderFailureScope; action: ProviderFailureAction; message: string; retryable: boolean; retryAfterMs: number | null; requestId: string | null; httpStatus: number | null; riskCategories?: string[]; contributingBlockIds?: string[]; contributingReferenceIds?: string[]; probe?: string | null; validationIssues?: import("./presentation-candidates.ts").PresentationCandidateValidationIssue[] };
+export type DocumentJobError = { code: string; category: ProviderFailureCategory; scope: ProviderFailureScope; action: ProviderFailureAction; message: string; retryable: boolean; retryAfterMs: number | null; requestId: string | null; httpStatus: number | null; riskCategories?: string[]; contributingBlockIds?: string[]; contributingReferenceIds?: string[]; probe?: string | null; safetyInputDigest?: string; validationIssues?: import("./presentation-candidates.ts").PresentationCandidateValidationIssue[] };
 export type PromptFanMember = { jobId: string; promptTechnique: "prose" | "bullets" | "json" | "xml"; status: Exclude<DocumentJobStatus, "partial">; error: DocumentJobError | null; moderationPromptRef: string | null; attemptCount: number; updatedAt: string };
 
 /** A stop is not a refund: these states describe existing canonical reservations only. */
@@ -68,6 +68,7 @@ export type DocumentJob = {
   /** Separate explicit recall lane; never a generic queued/paid chat job. */
   memoryMode?: "recall";
   noAutomaticRetry?: true;
+  safetyDeliveryAvailable?: boolean;
   executionOwner?: "durable";
   observation?: import("./output-durable-observation.ts").OutputDurableObservation;
   jobId: string;
@@ -105,6 +106,11 @@ export type DocumentJob = {
   stage: string;
   progressMessage: string;
 };
+
+/** Only the server offers this separate action after an exact-prompt preflight stop. */
+export function documentJobCanAcknowledgeSafety(job: DocumentJob): boolean {
+  return job.safetyDeliveryAvailable === true && job.status === "failed" && (job.kind === "preview" || job.kind === "generate") && job.errorDetail?.code === "safety_preflight_flagged";
+}
 
 /** Unknown or malformed future Memory markers also stay out of generic execution. */
 export function documentJobIsMemory(job: DocumentJob): boolean { return Object.hasOwn(job, "memoryMode"); }

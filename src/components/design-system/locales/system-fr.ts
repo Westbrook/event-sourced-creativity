@@ -1,5 +1,7 @@
 /** Audited Forma-owned interface, metadata, and component-documentation copy. */
 const messages: Record<string, string> = {
+  "generation.deliveryUnconfirmed": "L’envoi de la demande de génération n’a pas pu être confirmé.",
+  "generation.riskDeliveryHint": "Cela envoie la demande examinée au modèle et peut entraîner des frais. Le fournisseur peut toujours la refuser.",
   "generation.acknowledgeRisks": "Je comprends les risques",
   "system.auto.mnnucx.13": "Résultat partagé",
   "system.auto.1h1pgn9.12": "Partager le résultat",

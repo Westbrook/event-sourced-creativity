@@ -1,3 +1,4 @@
+import { imageSafetyInputDigest, consumeImageSafetyDelivery } from "./image-safety-acknowledgement.ts";
 import { OPENAI_IMAGE_DIRECTION_CONTRACT, OPENAI_IMAGE_GENERATION_CONTRACT } from "./openai-image-route-contract.ts";
 import { outputPlannerResponseShape } from "./output-planner-response-shape.ts";
 import { captureVideoPlannerEnvelope, videoPlannerEnvelopeText, type VideoPlannerRawEnvelope } from "./output-video-planner-envelope.ts";
@@ -60,6 +61,7 @@ export type ImageReference = { bytes: Uint8Array; mimeType: string; blockId?: st
 export type ImageOutputFormat = "png" | "jpeg" | "webp";
 export type CreativeImagePartial = { bytes: Uint8Array; index: number; mimeType: string; width: number; height: number };
 export type CreativeImageOptions = {
+  safetyAcknowledgement?: import("./image-safety-acknowledgement.ts").ImageSafetyAcknowledgement;
   onBeforeProviderAttempt?:(attempt:ProviderAttemptPreflight)=>void|Promise<void>;
   onBeforeSourceTransmission?:()=>void|Promise<void>;
   onBeforeProviderDispatch?:(clientRequestId:string)=>void;
@@ -453,11 +455,11 @@ export async function generateCreativeImage(env:WorkerEnv,userId:string,snapshot
   if(!env.OPENAI_API_KEY)throw new Error("provider_not_configured");
   const model=env.OPENAI_IMAGE_MODEL??OPENAI_IMAGE_GENERATION_CONTRACT.defaults.model;const quality=options.quality??OPENAI_IMAGE_GENERATION_CONTRACT.defaults.quality;const size=options.size??OPENAI_IMAGE_GENERATION_CONTRACT.defaults.size;const sizeValidation=validateProviderImageSize(size);
   if(model.startsWith("gpt-image-2")&&!sizeValidation.valid)throw new ProviderRequestError({code:"invalid_image_size",category:"provider",scope:"request",action:"edit_request",message:`The requested image size ${size} cannot be submitted to ${model}. ${sizeValidation.issues.join(" ")}`,retryable:false,retryAfterMs:null,requestId:null,httpStatus:400});
-  const references=validateImageReferences(options.references??[]);const promptTechnique=normalizePromptTechnique(options.promptTechnique);const prompt=options.preparedPrompt?.trim()||buildCreativeImagePrompt(snapshot,direction,references,promptTechnique,{size,quality,partialImages:options.partialImages});const started=Date.now();
+  const references=validateImageReferences(options.references??[]);const promptTechnique=normalizePromptTechnique(options.promptTechnique);const safetyInputDigest=await imageSafetyInputDigest(snapshot,{model,quality,size,promptTechnique},references);const acknowledgedPrompt=consumeImageSafetyDelivery(options.safetyAcknowledgement,safetyInputDigest);const prompt=acknowledgedPrompt||options.preparedPrompt?.trim()||buildCreativeImagePrompt(snapshot,direction,references,promptTechnique,{size,quality,partialImages:options.partialImages});const started=Date.now();
   await options.onStage?.("safety-review","Reviewing the exact image prompt and selected reference pixels.");
   let moderation:Awaited<ReturnType<typeof moderateExactImagePrompt>>;try{moderation=await moderateExactImagePrompt(env,prompt,references,options.signal);}catch(error){if(error instanceof ProviderRequestError)throw new ProviderRequestError(error.detail,prompt);throw error;}
-  if(moderation.flagged)throw new ProviderRequestError({code:"safety_preflight_flagged",category:"safety",scope:"request",action:"edit_request",message:`A preflight review identified likely safety concerns${moderation.categories.length?` in ${moderation.categories.join(", ")}`:""}. Review the exact prompt and the contributing context before retrying.`,retryable:false,retryAfterMs:null,requestId:moderation.requestId,httpStatus:400,riskCategories:moderation.categories,contributingReferenceIds:moderation.referenceIds,probe:"exact-prompt-and-reference-moderation",moderationReceipt:moderation},prompt);
-  await options.onStage?.("provider-wait","Safety preflight passed. Waiting for the image provider.");
+  if(moderation.flagged&&!acknowledgedPrompt)throw new ProviderRequestError({safetyInputDigest,code:"safety_preflight_flagged",category:"safety",scope:"request",action:"edit_request",message:`A preflight review identified likely safety concerns${moderation.categories.length?` in ${moderation.categories.join(", ")}`:""}. Review the exact prompt and the contributing context before retrying.`,retryable:false,retryAfterMs:null,requestId:moderation.requestId,httpStatus:400,riskCategories:moderation.categories,contributingReferenceIds:moderation.referenceIds,probe:"exact-prompt-and-reference-moderation",moderationReceipt:moderation},prompt);
+  await options.onStage?.("provider-wait",acknowledgedPrompt?"Risks acknowledged. Sending the reviewed request to the image provider.":"Safety preflight passed. Waiting for the image provider.");
   const outputFormat=options.outputFormat??OPENAI_IMAGE_GENERATION_CONTRACT.defaults.outputFormat;const outputCompression=Math.max(0,Math.min(100,Math.round(options.outputCompression??OPENAI_IMAGE_GENERATION_CONTRACT.defaults.outputCompression)));const partialImages=options.partialImages??OPENAI_IMAGE_GENERATION_CONTRACT.defaults.partialImages;const user=await safetyIdentifier(userId);
   let response:Response;
   if(references.length){

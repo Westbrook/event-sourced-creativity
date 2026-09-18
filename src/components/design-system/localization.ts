@@ -1684,6 +1684,8 @@ export const FORMA_DEFAULT_MESSAGES: FormaMessageCatalog = {
   "impersonation.description": "You are about to {action}. This will change the saved mock account and become part of its durable history; it will not change {actor}’s regular account.",
   "impersonation.heading": "You’re acting as {name}",
   "impersonation.safeguard": "Fictional account safeguard",
+  "generation.deliveryUnconfirmed": "Generation delivery could not be confirmed.",
+  "generation.riskDeliveryHint": "This sends the reviewed request to the model and may incur usage. The provider can still decline it.",
   "generation.acknowledgeRisks": "I understand the risks",
   "lab.atomsDescription": "Every control has a visible state, an accessible name, and a stable layout.",
   "lab.atomsHeading": "Small, predictable decisions",

@@ -1,5 +1,7 @@
 /** Audited Forma-owned interface, metadata, and component-documentation copy. */
 const messages: Record<string, string> = {
+  "generation.deliveryUnconfirmed": "تعذّر تأكيد إرسال طلب التوليد.",
+  "generation.riskDeliveryHint": "يُرسل هذا الطلب الذي راجعته إلى النموذج وقد تترتب عليه رسوم استخدام. ويمكن للمزوّد رفضه.",
   "generation.acknowledgeRisks": "أفهم المخاطر",
   "system.auto.mnnucx.13": "النتيجة المشتركة",
   "system.auto.1h1pgn9.12": "مشاركة النتيجة",
