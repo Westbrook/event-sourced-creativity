@@ -17,7 +17,7 @@ function event(sequence, type, payload = {}, options = {}) {
     clientId: "test:intent",
     correlationId: `intent-correlation-${sequence}`,
     causationId: null,
-    compensatesEventId: null,
+    compensatesEventId: options.compensatesEventId ?? null,
     schemaVersion: 1,
     type,
     payload,
@@ -128,6 +128,98 @@ test("ready presentations deep-link to the exact artifact and consumed goals dis
   assert.match(composed.payload.items[0].destination.route, /\/library\/artifact\/presentation-a/);
   const consumed = [...history, event(6, "DocumentArtifactViewed", { ...scope, artifact_id: "presentation-a", artifact_kind: "slides" })];
   assert.equal(unfinishedIntentTrajectories(consumed).length, 0);
+});
+
+const artifactScope = { project_id: "project-a", document_id: "document-a", workflow_id: "workflow-a",
+  artifact_id: "presentation-a", artifact_kind: "slides" };
+const artifactHash = "a".repeat(64), revisedArtifactHash = "b".repeat(64);
+function artifactIntentHistory(completion = {}) {
+  return [event(1, "ProjectCreated", { project_id: "project-a" }), event(2, "DocumentCreated", artifactScope),
+    event(3, "DocumentRenderRequested", artifactScope), event(4, "DocumentRenderCompleted", { ...artifactScope, ...completion })];
+}
+const artifactIntentStatus = history => deriveIntentTrajectories(history).find(row => row.id === "presentation-a")?.status;
+
+test("versioned artifact consumption requires the current exact revision and bytes", () => {
+  const history = artifactIntentHistory({ artifact_revision: 0, content_sha256: artifactHash });
+  for (const type of ["DocumentArtifactViewed", "DocumentArtifactExported", "ObjectViewed"]) {
+    const exact = { ...artifactScope, artifact_revision: 0, content_sha256: artifactHash };
+    assert.equal(artifactIntentStatus([...history, event(5, type, exact)]), "completed", type);
+    for (const patch of [
+      { artifact_revision: undefined }, { artifact_revision: "0" }, { artifact_revision: -1 },
+      { artifact_revision: 1 }, { artifact_revision: 0.5 }, { artifact_revision: Number.MAX_SAFE_INTEGER + 1 },
+      { content_sha256: undefined }, { content_sha256: revisedArtifactHash }, { content_sha256: "not-a-hash" },
+      { content_sha256: "A".repeat(64) }, { document_id: "another-document" }, { project_id: "another-project" },
+      { workflow_id: "another-workflow" }, { destination_kind: "soundtrack-companion" },
+    ]) assert.equal(artifactIntentStatus([...history, event(5, type, { ...exact, ...patch })]), "ready", `${type}: ${JSON.stringify(patch)}`);
+    assert.equal(artifactIntentStatus([...history, event(5, type, artifactScope)]), "ready", "missing exact receipt");
+  }
+});
+
+test("artifact-derived objects cannot bypass exact review through an object ID", () => {
+  for (const mapped of [{ object_id: "artifact-object" }, { object_ids: ["artifact-object"] }]) {
+    const history = [...artifactIntentHistory({ ...mapped, artifact_revision: 0, content_sha256: artifactHash }),
+      event(5, "DocumentArtifactEdited", { ...artifactScope, revision: 1, content_sha256: revisedArtifactHash })];
+    for (const type of ["ObjectViewed", "ObjectSaved", "DocumentArtifactViewed"]) {
+      const exact = { ...artifactScope, object_id: "artifact-object", artifact_revision: 1, content_sha256: revisedArtifactHash };
+      assert.equal(artifactIntentStatus([...history, event(6, type, exact)]), "completed");
+      assert.equal(artifactIntentStatus([...history, event(6, type, { ...exact, artifact_id: undefined })]), "completed", "native object mapping retains artifact identity");
+      for (const patch of [{ artifact_revision: 0, content_sha256: artifactHash }, { artifact_revision: undefined },
+        { content_sha256: undefined }, { artifact_id: "different-artifact" }, { destination_kind: "soundtrack-companion" }])
+        assert.equal(artifactIntentStatus([...history, event(6, type, { ...exact, ...patch })]), "ready", type + JSON.stringify(patch));
+    }
+  }
+  const legacy = artifactIntentHistory({ object_id: "artifact-object" });
+  assert.equal(artifactIntentStatus([...legacy, event(5, "ObjectViewed", { object_id: "artifact-object" })]), "completed");
+  const partial = [...legacy, event(5, "ObjectViewed", { object_id: "artifact-object", artifact_revision: 0 })];
+  assert.equal(artifactIntentStatus([...partial, event(6, "ObjectViewed", { object_id: "artifact-object" })]), "ready", "partial exact object receipt cannot fall back to legacy");
+});
+
+test("initial renders without a hash accept a new exact witness while wholly unversioned history remains compatible", () => {
+  const history = artifactIntentHistory(), exact = { ...artifactScope, artifact_revision: 0, content_sha256: artifactHash };
+  assert.equal(artifactIntentStatus([...history, event(5, "DocumentArtifactViewed", exact)]), "completed");
+  assert.equal(artifactIntentStatus([...history, event(5, "DocumentArtifactViewed", artifactScope)]), "completed", "historical identity-only receipt");
+  for (const partial of [{ artifact_revision: 0 }, { content_sha256: artifactHash }]) {
+    const observed = [...history, event(5, "DocumentArtifactViewed", { ...artifactScope, ...partial })];
+    assert.equal(artifactIntentStatus(observed), "ready");
+    assert.equal(artifactIntentStatus([...observed, event(6, "DocumentArtifactViewed", artifactScope)]), "ready", "version evidence cannot fall back to legacy");
+  }
+  const reviewRequested = [...history, event(5, "ArtifactReviewRequested", exact)];
+  assert.equal(artifactIntentStatus([...reviewRequested, event(6, "DocumentArtifactViewed", artifactScope)]), "ready");
+  const completed = [...history, event(5, "DocumentArtifactViewed", exact)];
+  assert.equal(artifactIntentStatus([...completed, event(6, "DocumentArtifactEdited", {
+    ...artifactScope, revision: 1, content_sha256: revisedArtifactHash,
+  })]), "completed", "later editing does not retroactively reopen a completed goal");
+});
+
+test("artifact edits advance the scoped revision and require their own current hash", () => {
+  const history = artifactIntentHistory({ artifact_revision: 0, content_sha256: artifactHash });
+  const edit = event(5, "DocumentArtifactEdited", { ...artifactScope, revision: 1, content_sha256: revisedArtifactHash });
+  const reviewed = event(6, "DocumentArtifactViewed", { ...artifactScope, artifact_revision: 1, content_sha256: revisedArtifactHash });
+  assert.equal(artifactIntentStatus([...history, edit, reviewed]), "completed");
+  for (const patch of [{ artifact_revision: 0, content_sha256: artifactHash }, { artifact_revision: 2 }, { content_sha256: artifactHash }])
+    assert.equal(artifactIntentStatus([...history, edit, { ...reviewed, payload: { ...reviewed.payload, ...patch } }]), "ready");
+  for (const patch of [{ revision: 2 }, { revision: undefined }, { content_sha256: undefined }, { content_sha256: "malformed" }])
+    assert.equal(artifactIntentStatus([...history, { ...edit, payload: { ...edit.payload, ...patch } }, reviewed]), "ready", JSON.stringify(patch));
+  for (const patch of [{ document_id: "other-document" }, { project_id: "other-project" }, { workflow_id: "other-workflow" }])
+    assert.equal(artifactIntentStatus([...history, { ...edit, payload: { ...edit.payload, ...patch } },
+      event(6, "DocumentArtifactViewed", { ...artifactScope, artifact_revision: 0, content_sha256: artifactHash })]), "completed", "foreign edit cannot alter this artifact");
+  assert.equal(artifactIntentStatus([...history, { ...edit, streamId: "creative:other" },
+    event(6, "DocumentArtifactViewed", { ...artifactScope, artifact_revision: 0, content_sha256: artifactHash })]), "completed");
+});
+
+test("compensated artifact observations cannot complete a goal and compensating edits still advance revision", () => {
+  const history = artifactIntentHistory({ artifact_revision: 0, content_sha256: artifactHash });
+  const viewed = event(5, "DocumentArtifactViewed", { ...artifactScope, artifact_revision: 0, content_sha256: artifactHash });
+  const undo = event(6, "DocumentArtifactViewed", viewed.payload, { compensatesEventId: viewed.eventId });
+  assert.equal(artifactIntentStatus([...history, viewed, undo]), "ready", "withdraw both original and compensating observation");
+  assert.equal(artifactIntentStatus([...history, { ...viewed, compensatesEventId: "earlier-observation" }]), "ready");
+  assert.equal(artifactIntentStatus([...history, viewed, { ...undo, streamId: "creative:other" }]), "completed", "compensation cannot cross streams");
+  assert.equal(artifactIntentStatus([...history, viewed, undo, event(7, "DocumentArtifactViewed", viewed.payload)]), "completed", "a new independent review remains usable");
+  const forward = event(5, "DocumentArtifactViewed", viewed.payload, { compensatesEventId: "intent-event-6" });
+  assert.equal(artifactIntentStatus([...history, forward, event(6, "DocumentArtifactViewed", viewed.payload)]), "completed", "forward compensation cannot suppress a future review");
+  const edited = [...history, event(5, "DocumentArtifactEdited", { ...artifactScope, revision: 1, content_sha256: revisedArtifactHash }),
+    event(6, "DocumentArtifactEdited", { ...artifactScope, revision: 2, content_sha256: artifactHash }, { compensatesEventId: "intent-event-5" })];
+  assert.equal(artifactIntentStatus([...edited, event(7, "DocumentArtifactViewed", { ...artifactScope, artifact_revision: 2, content_sha256: artifactHash })]), "completed");
 });
 
 test("normalizes every isolated capability study without inventing cross-workflow history", () => {

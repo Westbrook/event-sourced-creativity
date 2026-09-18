@@ -37,6 +37,8 @@ import { handleGeneratedImageEdit } from "./generated-image-api";
 import { handleAssistant, handleAssistantBillingReconciliation, handleAssistantProposal, handleAssistantTask, handleAssistantSpecialist } from "./assistant-api";
 import { handlePlatformAssistant } from "./platform-assistant-api";
 import { handleLiveMemory } from "./memory-live-api.ts";
+import { runLiveMemoryScheduled } from "./memory-live-jobs.ts";
+import { handleNativeMemoryBenchmark, purgeExpiredNativeMemoryBenchmark } from "./memory-benchmark/native.ts";
 import { handleMemoryDocumentProfile } from "./memory-document-profile-api.ts";
 import { sweepExpiredDocumentProfileSuppressions } from "./memory-document-profile-store.ts";
 import { handleEventPrivacy } from "./privacy-api";
@@ -149,6 +151,7 @@ async function routeRequest(request: Request, env: WorkerEnv, context: WorkerExe
     if(url.pathname==="/api/platform/assistant")return handlePlatformAssistant(request,env);
     if(url.pathname==="/api/assistant/specialist")return handleAssistantSpecialist(request,env,context);
     if(url.pathname==="/api/assistant")return handleAssistant(request,env,context);
+    if(url.pathname==="/api/internal/memory-benchmark"||url.pathname==="/api/internal/memory-benchmark/approval"||url.pathname==="/api/internal/memory-benchmark/reconcile"||url.pathname==="/api/internal/memory-benchmark/release-undispatched")return handleNativeMemoryBenchmark(request,env);
     if(url.pathname==="/api/memory/settings")return handleLiveMemory(request,env,"settings");
     if(url.pathname==="/api/memory/recall")return handleLiveMemory(request,env,"recall");
     if(url.pathname==="/api/memory/export")return handleLiveMemory(request,env,"export");
@@ -322,7 +325,8 @@ export default {
     const pathname=new URL(request.url).pathname;
     const retainedStoryRead=pathname==="/api/retained-story"||pathname.startsWith("/api/retained-story/")
       ||pathname==="/api/retained-output"||pathname.startsWith("/api/retained-output/");
-    if(pathname.startsWith("/api/")&&pathname!==OUTPUT_SCHEMA_PREFLIGHT_PATH&&pathname!=="/api/admin/budget-hold-dispositions"&&pathname!=="/api/admin/generation-accounting"&&pathname!=="/api/admin/managed-video-reconciliation"&&!retainedStoryRead)schedulePrivateContentRetention(env,context);
+    const memoryBenchmarkRequest=pathname==="/api/internal/memory-benchmark"||pathname==="/api/internal/memory-benchmark/approval"||pathname==="/api/internal/memory-benchmark/reconcile"||pathname==="/api/internal/memory-benchmark/release-undispatched";
+    if(pathname.startsWith("/api/")&&!memoryBenchmarkRequest&&pathname!==OUTPUT_SCHEMA_PREFLIGHT_PATH&&pathname!=="/api/admin/budget-hold-dispositions"&&pathname!=="/api/admin/generation-accounting"&&pathname!=="/api/admin/managed-video-reconciliation"&&!retainedStoryRead)schedulePrivateContentRetention(env,context);
     const headers=new Headers(response.headers);
     headers.append("server-timing",`app;dur=${Math.max(0,performance.now()-started).toFixed(1)}`);
     if(new URL(request.url).pathname.startsWith("/api/")&&!headers.has("cache-control"))headers.set("cache-control","private, no-store");
@@ -338,9 +342,18 @@ export default {
     try {
       // Privacy cleanup is independent of profile rollout and never performs inference or enrollment.
       await sweepExpiredDocumentProfileSuppressions(env,128);
+      // Native worker event only: the runner separately requires literal scheduling
+      // admission, actor rollout and each existing background-purpose enrollment.
+      await runLiveMemoryScheduled(env);
     } finally {
-      // A profile-cleanup failure must not prevent the existing reminder pass.
-      await processReviewReminders(env,100);
+      try {
+        // Synthetic payload expiry is independent of spending/enrollment flags.
+        // Missing optional schema is a no-op; a partial schema fails visibly.
+        await purgeExpiredNativeMemoryBenchmark(env);
+      } finally {
+        // A Memory-cleanup failure must not prevent the existing reminder pass.
+        await processReviewReminders(env,100);
+      }
     }
   },
 };

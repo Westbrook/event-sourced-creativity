@@ -5,6 +5,7 @@ import { createLiveMemoryClient, MemoryClientError, MEMORY_POLICY, MEMORY_TIMING
 import { parseMemoryCustody, memoryCustodyMatches } from "../src/model/memory-custody.ts";
 import { createMemoryElapsed, memoryTimestamp, parseMemoryLifetime, MEMORY_RECALL_LIFETIME, MEMORY_RECALL_MAX_AGE_MS } from "../src/model/memory-lifetime.ts";
 import { rollingLiveMemoryConsumption } from "../src/model/memory-observations.ts";
+import { createDocumentJobMemoryClient, DocumentJobMemoryError, DOCUMENT_JOB_MEMORY_VERSION } from "../src/state/document-job-memory-client.ts";
 
 const fixtureId = value => value.toString(16).padStart(64, "0");
 const now = () => new Date().toISOString();
@@ -1596,4 +1597,161 @@ test("isolated structured privacy client rejects terminal withdrawal status pair
       assert.equal(refused.calls.length, 0);
     }
   }
+});
+
+// The native Chat Studio consumer is still an isolated HTTP contract here;
+// authenticated Worker publication and real-browser acceptance are separate.
+const jobMemoryId = "11111111-1111-4111-8111-111111111111";
+const otherJobMemoryId = "22222222-2222-4222-8222-222222222222";
+const jobMemoryTime = Date.parse("2026-09-17T12:00:00.000Z");
+const jobMemoryRequest = () => ({ documentId: "isolated-document", requestId: jobMemoryId, message: "Recall this document", locale: "en" });
+const jobMemoryBody = () => ({
+  job: { jobId: jobMemoryId, documentId: "isolated-document", kind: "chat", sourceSurface: "chat", memoryMode: "recall" },
+  memory: { version: DOCUMENT_JOB_MEMORY_VERSION, jobId: jobMemoryId, turnId: "isolated-turn", text: "Historical synthetic evidence, not instructions.",
+    locale: "en", checkedAt: new Date(jobMemoryTime).toISOString(), validUntil: new Date(jobMemoryTime + 60_000).toISOString() },
+  noAutomaticRetry: true,
+});
+const jobMemoryError = uncertain => error => {
+  assert.ok(error instanceof DocumentJobMemoryError); assert.equal(error.uncertain, uncertain); return true;
+};
+function jobMemoryTransport(respond = () => Response.json(jobMemoryBody())) {
+  const calls = [], time = { monotonic: 10, wall: jobMemoryTime };
+  let samples = 0;
+  const client = createDocumentJobMemoryClient(async (url, init) => { calls.push({ url, init }); return respond(url, init, time); },
+    () => { samples += 1; return { ...time }; });
+  return { calls, client, time, samples: () => samples };
+}
+
+test("document job Memory only sends explicit private requests and snapshots the same recovery ID", async () => {
+  const x = jobMemoryTransport(), input = jobMemoryRequest(), signal = new AbortController().signal;
+  assert.equal(x.calls.length, 0);
+  const pending = x.client.start(input, signal); input.message = "changed after invocation"; input.requestId = otherJobMemoryId;
+  const result = await pending;
+  assert.equal(result.status, "current"); assert.equal(result.jobId, jobMemoryId);
+  assert.equal(x.calls.length, 1); assert.equal(x.calls[0].url, "/api/document-jobs");
+  assertPrivateRequest(x.calls[0], "POST", signal);
+  assert.deepEqual(JSON.parse(x.calls[0].init.body), { kind: "chat", sourceSurface: "chat", documentId: "isolated-document",
+    payload: { memoryMode: "recall", requestId: jobMemoryId, message: "Recall this document", locale: "en" } });
+  assert.equal(result.lease.read().text, jobMemoryBody().memory.text);
+  const read = await x.client.read("isolated-document", jobMemoryId, signal);
+  assert.equal(read.status, "current"); assertPrivateRequest(x.calls[1], "GET", signal);
+  assert.equal(x.calls[1].url, `/api/document-jobs/${jobMemoryId}?memoryMode=recall`);
+  assert.equal(x.calls[1].init.body, undefined);
+  result.lease.retire(); read.lease.retire();
+  await Promise.resolve(); assert.equal(x.calls.length, 2, "leases and client construction never poll or retry");
+});
+
+test("document job Memory pending and lost ACK preserve the original ID for manual recovery only", async () => {
+  for (const body of [
+    { job: jobMemoryBody().job, pending: true, noAutomaticRetry: true },
+    { error: "memory_job_submission_unconfirmed", jobId: jobMemoryId, noAutomaticRetry: true },
+  ]) {
+    const x = jobMemoryTransport(() => Response.json(body, { status: 202 }));
+    assert.deepEqual(await x.client.start(jobMemoryRequest()), { jobId: jobMemoryId, status: "pending", lease: null });
+    await Promise.resolve(); assert.equal(x.calls.length, 1);
+    await x.client.start(jobMemoryRequest());
+    assert.equal(x.calls.length, 2); assert.equal(x.calls[0].init.body, x.calls[1].init.body);
+  }
+});
+
+test("document job Memory rejects malformed status, scope, identity and text contracts without fallback", async () => {
+  const mutations = [
+    body => { body.noAutomaticRetry = false; }, body => { body.job.documentId = "another-document"; },
+    body => { body.job.jobId = otherJobMemoryId; body.memory.jobId = otherJobMemoryId; },
+    body => { body.job.kind = "preview"; }, body => { body.job.sourceSurface = "assistant"; },
+    body => { delete body.job.memoryMode; }, body => { body.memory.jobId = otherJobMemoryId; },
+    body => { body.memory.version = "unknown"; }, body => { body.memory.turnId = ""; },
+    body => { body.memory.locale = "de"; }, body => { body.memory.text = "\ud800"; },
+    body => { body.memory.text = "界".repeat(2_731); }, body => { body.memory.text = "  "; },
+    body => { body.pending = true; }, body => { body.error = "unavailable"; },
+    body => { body.memory.validUntil = new Date(jobMemoryTime + 60_001).toISOString(); },
+    body => { body.memory.validUntil = body.memory.checkedAt; },
+    body => { body.memory.checkedAt = "2026-09-17T12:00:00Z"; },
+  ];
+  for (const mutate of mutations) {
+    const body = jobMemoryBody(); mutate(body);
+    const x = jobMemoryTransport(() => Response.json(body));
+    await assert.rejects(x.client.start(jobMemoryRequest()), jobMemoryError(true));
+    assert.equal(x.calls.length, 1);
+  }
+  for (const status of [201, 202]) {
+    const x = jobMemoryTransport(() => Response.json(jobMemoryBody(), { status }));
+    await assert.rejects(x.client.start(jobMemoryRequest()), jobMemoryError(true)); assert.equal(x.calls.length, 1);
+  }
+  for (const body of [
+    { job: jobMemoryBody().job, noAutomaticRetry: true },
+    { error: "memory_job_submission_unconfirmed", jobId: otherJobMemoryId, noAutomaticRetry: true },
+    { error: "memory_job_submission_unconfirmed", jobId: jobMemoryId, noAutomaticRetry: true, memory: jobMemoryBody().memory },
+  ]) {
+    const x = jobMemoryTransport(() => Response.json(body, { status: 202 }));
+    await assert.rejects(x.client.start(jobMemoryRequest()), jobMemoryError(true)); assert.equal(x.calls.length, 1);
+  }
+  const get = jobMemoryTransport(() => Response.json({ error: "memory_job_submission_unconfirmed", jobId: jobMemoryId, noAutomaticRetry: true }, { status: 202 }));
+  await assert.rejects(get.client.read("isolated-document", jobMemoryId), jobMemoryError(false));
+});
+
+test("document job Memory validates input before dispatch and has no paid or automatic error path", async () => {
+  for (const changes of [{ requestId: "invalid" }, { documentId: "" }, { message: " " }, { message: "x".repeat(4_001) }, { locale: "de" }]) {
+    const x = jobMemoryTransport();
+    await assert.rejects(x.client.start({ ...jobMemoryRequest(), ...changes }), jobMemoryError(false)); assert.equal(x.calls.length, 0);
+  }
+  const aborted = jobMemoryTransport(), controller = new AbortController(); controller.abort();
+  await assert.rejects(aborted.client.start(jobMemoryRequest(), controller.signal), jobMemoryError(false));
+  assert.equal(aborted.calls.length, 0);
+  for (const status of [401, 403, 404, 409, 429, 500, 503]) {
+    const x = jobMemoryTransport(() => Response.json({ error: "unavailable" }, { status }));
+    await assert.rejects(x.client.start(jobMemoryRequest()), jobMemoryError(status >= 500)); assert.equal(x.calls.length, 1);
+  }
+  const network = jobMemoryTransport(() => { throw new Error("synthetic network failure"); });
+  await assert.rejects(network.client.start(jobMemoryRequest()), jobMemoryError(true)); assert.equal(network.calls.length, 1);
+});
+
+test("document job Memory immutable display lease includes transport time and samples clocks once", async () => {
+  const x = jobMemoryTransport((_url, _init, time) => {
+    time.monotonic += 5_000; time.wall += 5_000; return Response.json(jobMemoryBody());
+  });
+  const { lease } = await x.client.start(jobMemoryRequest());
+  assert.equal(lease.remainingMs(), 55_000);
+  const before = x.samples(); assert.equal(lease.remainingMs(), 55_000); assert.equal(x.samples() - before, 1);
+  x.time.monotonic += 54_999; x.time.wall += 54_999;
+  assert.equal(lease.remainingMs(), 1); assert.ok(lease.read());
+  x.time.monotonic += 1; x.time.wall += 1; assert.equal(lease.read(), null);
+  x.time.monotonic -= 30_000; x.time.wall -= 30_000; assert.equal(lease.read(), null, "backward clocks cannot renew an expired lease");
+  assert.equal(x.calls.length, 1);
+});
+
+test("document job Memory retires on invalid clocks and permits only an explicit fresh certified GET", async () => {
+  for (const mutate of [time => { time.wall -= 1; }, time => { time.monotonic -= 1; }, time => { time.wall = NaN; }]) {
+    const x = jobMemoryTransport(), { lease } = await x.client.start(jobMemoryRequest());
+    mutate(x.time); assert.equal(lease.remainingMs(), 0); assert.equal(lease.read(), null);
+    x.time.wall = jobMemoryTime; x.time.monotonic = 10; assert.equal(lease.read(), null);
+  }
+  const x = jobMemoryTransport((_url, _init, time) => {
+    const body = jobMemoryBody(); body.memory.checkedAt = new Date(time.wall).toISOString();
+    body.memory.validUntil = new Date(time.wall + 60_000).toISOString(); return Response.json(body);
+  });
+  const first = await x.client.start(jobMemoryRequest()); x.time.monotonic += 60_001; x.time.wall += 60_001;
+  assert.equal(first.lease.read(), null); assert.equal(x.calls.length, 1);
+  const fresh = await x.client.read("isolated-document", jobMemoryId);
+  assert.equal(fresh.lease.remainingMs(), 60_000); assert.equal(first.lease.read(), null);
+  fresh.lease.retire(); assert.equal(fresh.lease.read(), null);
+});
+
+test("document job Memory bounds and cancels response streams without retaining an unsafe view", async () => {
+  for (const response of [
+    new Response("{}", { headers: { "content-type": "text/html" } }),
+    new Response("{".repeat(262_145), { headers: { "content-type": "application/json" } }),
+    new Response(new Uint8Array([0xff]), { headers: { "content-type": "application/json" } }),
+  ]) {
+    const x = jobMemoryTransport(() => response);
+    await assert.rejects(x.client.start(jobMemoryRequest()), jobMemoryError(true)); assert.equal(x.calls.length, 1);
+  }
+  let cancelCount = 0, started;
+  const ready = new Promise(resolve => { started = resolve; });
+  const controller = new AbortController();
+  const x = jobMemoryTransport(() => new Response(new ReadableStream({
+    pull() { started(); return new Promise(() => {}); }, cancel() { cancelCount += 1; },
+  }), { headers: { "content-type": "application/json" } }));
+  const pending = x.client.start(jobMemoryRequest(), controller.signal); await ready; controller.abort();
+  await assert.rejects(pending, jobMemoryError(true)); assert.equal(cancelCount, 1); assert.equal(x.calls.length, 1);
 });

@@ -76,6 +76,7 @@ type MutableTrajectory = Omit<IntentTrajectory, "generationIds" | "artifactIds" 
 const text = (value: unknown) => String(value ?? "").trim();
 const record = (value: unknown): Record<string, unknown> => value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
 const humanActor = (event: CreativeEvent) => event.actor === "user" || event.actor.startsWith("user:");
+const artifactHash = (value: unknown): value is string => typeof value === "string" && /^[0-9a-f]{64}$/.test(value);
 const terminal = new Set<IntentTrajectoryStatus>(["completed", "abandoned", "superseded"]);
 const directProgress = new Set(["BlockCreated", "BlockPropertyEdited", "BlockLocked", "ChipEdited", "ChatMessageSent", "CanvasInteractionRecorded", "ContextSetFormalized", "IdeationPromoted", "PromptFanOutputPromoted", "DocumentOpened"]);
 const formatLabels: Record<IntentOutputKind, string> = {
@@ -188,6 +189,13 @@ export function deriveIntentTrajectories(events: readonly CreativeEvent[], optio
   const byGeneration = new Map<string, MutableTrajectory>();
   const byArtifact = new Map<string, MutableTrajectory>();
   const byObject = new Map<string, MutableTrajectory>();
+  const objectArtifacts = new Map<string, string>();
+  const artifactReviews = new Map<string, { revision: number; hash: string | null; exact: boolean; valid: boolean }>();
+  // A later undo must withdraw its earlier consumption even though completion is terminal.
+  const eventSequences = new Map(ordered.map(event => [JSON.stringify([event.streamId, event.eventId]), event.sequence]));
+  const compensated = new Set(ordered.filter(event => event.compensatesEventId
+    && (eventSequences.get(JSON.stringify([event.streamId, event.compensatesEventId])) ?? Infinity) < event.sequence)
+    .map(event => JSON.stringify([event.streamId, event.compensatesEventId])));
   const byScope = new Map<string, MutableTrajectory[]>();
   const pendingRights = new Map<string, Set<string>>();
   const reopenedStreams = new Set<string>();
@@ -305,6 +313,23 @@ export function deriveIntentTrajectories(events: readonly CreativeEvent[], optio
     if (event.type === "DocumentCreated" && documentId) documents.set(`${event.streamId}:${documentId}`, projectId);
     const kind = outputKind(payload.expected_output_kind ?? payload.desired_output_kind ?? payload.artifact_kind ?? payload.requested_output);
     const scope = scopeKey(event.streamId, projectId, documentId);
+    const artifactId = text(payload.artifact_id), artifactKey = `${event.streamId}:${artifactId}`;
+    const artifactTrajectory = artifactId ? byArtifact.get(artifactKey) : undefined;
+    const artifactScopeMatches = artifactTrajectory && (!documentId || artifactTrajectory.documentId === documentId)
+      && (!projectId || !artifactTrajectory.projectId || artifactTrajectory.projectId === projectId)
+      && (!text(payload.workflow_id) || artifactTrajectory.workflowId === text(payload.workflow_id));
+    if (artifactScopeMatches) {
+      const review = artifactReviews.get(artifactKey)!;
+      review.exact ||= Object.hasOwn(payload, "artifact_revision") || Object.hasOwn(payload, "content_sha256");
+      if (event.type === "DocumentArtifactEdited") {
+        // Persisted edits (including restores/compensating edits) advance the native revision.
+        review.revision++;
+        review.exact = true;
+        review.hash = artifactHash(payload.content_sha256) ? payload.content_sha256 : null;
+        review.valid = payload.revision === review.revision && review.hash !== null;
+        continue;
+      }
+    }
 
     if (event.type === "SessionOpened") {
       reopenedStreams.add(event.streamId);
@@ -404,6 +429,8 @@ export function deriveIntentTrajectories(events: readonly CreativeEvent[], optio
       if (artifactId) {
         trajectory.artifactIds.add(artifactId);
         byArtifact.set(`${event.streamId}:${artifactId}`, trajectory);
+        if (!artifactReviews.has(`${event.streamId}:${artifactId}`)) artifactReviews.set(`${event.streamId}:${artifactId}`,
+          { revision: 0, hash: null, exact: Object.hasOwn(payload, "artifact_revision") || Object.hasOwn(payload, "content_sha256"), valid: true });
       }
       if (trajectory.interrupted && reopenedStreams.has(event.streamId)) {
         trajectory.resumed = true;
@@ -450,7 +477,18 @@ export function deriveIntentTrajectories(events: readonly CreativeEvent[], optio
         if (trajectory.blocker === "reference-rights" && (pendingRights.get(scopeKey(trajectory.streamId, trajectory.projectId, trajectory.documentId))?.size ?? 0) > 0) continue;
         trajectory.blocker = null;
         trajectory.approvalRequired = false;
-        for (const objectId of [text(payload.object_id), ...(Array.isArray(payload.object_ids) ? payload.object_ids.map(text) : [])]) if (objectId) byObject.set(`${event.streamId}:${objectId}`, trajectory);
+        for (const objectId of [text(payload.object_id), ...(Array.isArray(payload.object_ids) ? payload.object_ids.map(text) : [])]) if (objectId) {
+          const key = `${event.streamId}:${objectId}`;
+          byObject.set(key, trajectory);
+          if (event.type === "DocumentRenderCompleted") objectArtifacts.set(key, artifactId);
+          else objectArtifacts.delete(key);
+        }
+        if (event.type === "DocumentRenderCompleted" && artifactScopeMatches) {
+          const review = artifactReviews.get(artifactKey)!;
+          review.hash = artifactHash(payload.content_sha256) ? payload.content_sha256 : null;
+          review.valid = (!Object.hasOwn(payload, "artifact_revision") || payload.artifact_revision === review.revision)
+            && (!Object.hasOwn(payload, "content_sha256") || review.hash !== null);
+        }
         advance(trajectory, event, "ready");
       }
       continue;
@@ -463,6 +501,20 @@ export function deriveIntentTrajectories(events: readonly CreativeEvent[], optio
       const providedIntent = text(payload.intent_id ?? payload.target_intent_id);
       const providedWorkflow = text(payload.workflow_id);
       if (trajectory && trajectory.status === "ready" && (!documentId || trajectory.documentId === documentId) && (!projectId || !trajectory.projectId || trajectory.projectId === projectId) && (!providedIntent || trajectory.id === providedIntent) && (!providedWorkflow || trajectory.workflowId === providedWorkflow)) {
+        if (event.compensatesEventId || compensated.has(JSON.stringify([event.streamId, event.eventId]))) continue;
+        const mappedArtifact = objectId ? objectArtifacts.get(`${event.streamId}:${objectId}`) : undefined;
+        if (mappedArtifact !== undefined || !objectId && artifactId) {
+          const inspectedArtifact = mappedArtifact ?? artifactId;
+          if (!inspectedArtifact || artifactId && artifactId !== inspectedArtifact) continue;
+          const review = artifactReviews.get(`${event.streamId}:${inspectedArtifact}`);
+          if (review) review.exact ||= Object.hasOwn(payload, "artifact_revision") || Object.hasOwn(payload, "content_sha256");
+          // Only wholly unversioned history retains legacy identity-only completion.
+          // Initial renders may lack a hash; new observations still carry the exact
+          // native binding. Later edits must supply their own current hash.
+          if (!review || !review.valid || payload.destination_kind === "soundtrack-companion"
+            || review.exact && (!Number.isSafeInteger(payload.artifact_revision) || payload.artifact_revision !== review.revision
+              || !artifactHash(payload.content_sha256) || review.hash !== null && payload.content_sha256 !== review.hash)) continue;
+        }
         advance(trajectory, event, "completed");
         const parentIntentId = text(payload.parent_intent_id) || trajectory.parentIntentId;
         const parent = parentIntentId ? intentFor(trajectory.streamId,trajectory.documentId,trajectory.projectId,parentIntentId,trajectory.workflowId) : undefined;

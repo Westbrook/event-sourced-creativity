@@ -1,6 +1,16 @@
 # Forma: scope-aware memory expansion plan
 
-**Status:** Architecture and delivery plan, 2026-09-02. The [first offline foundation](forma-memory-foundation-status-2026-09-02.md), [second isolated persistence slice](forma-memory-persistence-status-2026-09-02.md), and [third durable review-job slice](forma-memory-review-jobs-status-2026-09-02.md) have been implemented and tested in a separate worktree. Local synthetic storage, restart-safe job orchestration and recurrent extractive derivation are exercised; live source authority, semantic models, deployed scheduling and UI/assistant integration remain off. Shared publication is held during the specialist team's release freeze. The full plan is not implemented or deployed. Proposed defaults below are starting points for evaluation, not measurements or authorization to collect more data, retain it longer, or incur background provider costs.
+**Historical checkpoint — 2026-09-02:** Architecture and delivery plan. The [first offline foundation](forma-memory-foundation-status-2026-09-02.md), [second isolated persistence slice](forma-memory-persistence-status-2026-09-02.md), and [third durable review-job slice](forma-memory-review-jobs-status-2026-09-02.md) have been implemented and tested in a separate worktree. Local synthetic storage, restart-safe job orchestration and recurrent extractive derivation are exercised; live source authority, semantic models, deployed scheduling and UI/assistant integration remain off. Shared publication is held during the specialist team's release freeze. The full plan is not implemented or deployed. Proposed defaults below are starting points for evaluation, not measurements or authorization to collect more data, retain it longer, or incur background provider costs.
+
+## Current reconciliation — 2026-09-17
+
+The status paragraph above is the historical September 2 checkpoint, not current
+release status. Later native Memory foundations and privacy work were integrated;
+the current branch is synchronized with local main. See the [implementation
+reconciliation](forma-memory-implementation-2026-09-17.md) for current source
+boundaries and the [non-implementation checklist](forma-memory-nonimplementation-work-2026-09-17.md)
+for rollout/qualification work. **The full semantic, inferred-profile and nested-scope
+plan is not complete.** Track continuing work in [backlog MEM-001/MEM-002](backlog.md#memory).
 
 ## 1. Product outcome
 
