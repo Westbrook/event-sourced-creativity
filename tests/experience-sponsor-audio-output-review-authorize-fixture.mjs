@@ -1350,7 +1350,12 @@ export async function actualWorkerD1(t,f,{scenario='positive'}={}){
     catch(error){applicationError=error;}
     // The application promise is settled before any evidence endpoint is called.
     // A host timeout is an unknown in-flight result: leave it to owned disposal.
-    if(!applicationError||applicationError.code!=='FORMA_FIXTURE_WAIT_TIMEOUT')await collectSafely();
+    // Miniflare wraps an undici response around the same transport stream. Hold
+    // that stream unread while collecting evidence so an unreachable original
+    // response's finalizer cannot cancel it during this unrelated async work.
+    const transportReader=response?.body?.getReader();
+    try{if(!applicationError||applicationError.code!=='FORMA_FIXTURE_WAIT_TIMEOUT')await collectSafely();}
+    finally{transportReader?.releaseLock();}
     if(applicationError)throw applicationError;
     if(collectionFailures.length)throw new AggregateError(collectionFailures,'Direct Worker observation is incomplete');return response;
   }
