@@ -19,7 +19,7 @@ export class GenerationInputDialog extends FormaElement {
     const inspection=this.inspection;if(!inspection)return nothing;
     const failed=inspection.outcome==="failed",running=inspection.outcome==="in_progress";
     const storyboard=savedStoryboardInspection(inspection);
-    const receipt=JSON.stringify(inspection.receipt,null,2),accounting=record(inspection.receipt.generation_receipt);
+    const receipt=JSON.stringify(inspection.receipt,null,2),accounting=record(inspection.receipt.generation_receipt),technicalError=record(inspection.receipt.technical_error),moderation=record(technicalError.moderationReceipt);
     const render=record(inspection.receipt.render);
     const frozenInputs=Array.isArray(inspection.receipt.frozen_inputs)?inspection.receipt.frozen_inputs.map(record):[];
     const frozenReferences=frozenInputs.flatMap((input)=>Array.isArray(input.reference_inputs)?input.reference_inputs:[]);

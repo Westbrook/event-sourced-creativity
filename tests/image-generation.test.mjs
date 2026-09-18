@@ -42,12 +42,12 @@ test("turns every spatial block scope into an explicit image-generation directiv
   assert.doesNotMatch(prompt,/polished chrome/);
 });
 
-test("calls the direct Image API with gpt-image-2, project attribution, and decodes one private image",async()=>{
+test("calls the direct Image API with GPT-image-2.5 Sunburst, project attribution, and decodes one private image",async()=>{
   const originalFetch=globalThis.fetch;let requestBody;let requestHeaders;
   globalThis.fetch=async(url,init)=>{if(String(url).endsWith("/moderations"))return moderationPass();assert.equal(url,"https://api.openai.com/v1/images/generations");requestBody=JSON.parse(String(init.body));requestHeaders=new Headers(init.headers);return Response.json({created:1786406400,data:[{b64_json:btoa("png-bytes")}],usage:{input_tokens:120,output_tokens:900,total_tokens:1020}});};
   try{
     const result=await generateCreativeImage({OPENAI_API_KEY:"test-only",OPENAI_PROJECT:"proj_test"},"user-1",{facts:[]},{title:"Study"});
-    assert.equal(requestBody.model,"gpt-image-2");assert.equal(requestBody.size,"1536x1024");assert.equal(requestBody.quality,"high");assert.equal(requestBody.n,1);
+    assert.equal(requestBody.model,"gpt-image-2.5-sunburst");assert.equal(requestBody.size,"1536x1024");assert.equal(requestBody.quality,"high");assert.equal(requestBody.n,1);
     assert.equal(requestHeaders.get("OpenAI-Project"),"proj_test");
     assert.equal(new TextDecoder().decode(result.bytes),"png-bytes");assert.equal(result.usage.totalTokens,1020);assert.equal(result.mimeType,"image/png");
   }finally{globalThis.fetch=originalFetch;}
