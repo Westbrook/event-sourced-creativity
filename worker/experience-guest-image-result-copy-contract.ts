@@ -127,7 +127,7 @@ export function readGuestImageResultMediaKey(value: unknown): Readonly<{ destina
   const match = /^guest-image-result-media-v1\/(u-(?:[a-f0-9]{2})+)\/([a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12})\/(object-[a-f0-9]{8})(?:\/revisions\/([a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}))?\.png$/u.exec(value);
   if (!match) return fail();
   let destinationUserId: string;
-  try { destinationUserId = new TextDecoder("utf-8", { fatal: true }).decode(Uint8Array.from(match[1]!.slice(2).match(/../gu)!, pair => Number.parseInt(pair, 16))); }
+  try { destinationUserId = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(Uint8Array.from(match[1]!.slice(2).match(/../gu)!, pair => Number.parseInt(pair, 16))); }
   catch { return fail(); }
   const input = { destinationUserId, custodyId: match[2]!, outputId: match[3]!, ...(match[4] ? { revisionId: match[4] } : {}) };
   if (guestImageResultMediaKey(input) !== value) return fail();

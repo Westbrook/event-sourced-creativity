@@ -118,6 +118,34 @@ test('original and revision keys use injective UTF-8 ownership and reserve malfo
     assert.throws(() => contract.readGuestImageResultMediaKey(key));
 });
 
+test('media-key UTF-8 roundtrip preserves ordinary owners', () => {
+  for (const destinationUserId of ['ordinary-owner', 'synthetic:\u00e9']) {
+    for (const revisionId of [undefined, uuid(80)]) {
+      const input = { destinationUserId, custodyId: uuid(42), outputId: 'object-00000007', ...(revisionId ? { revisionId } : {}) };
+      assert.deepEqual(contract.readGuestImageResultMediaKey(contract.guestImageResultMediaKey(input)), { ...input, revisionId: revisionId ?? null });
+    }
+  }
+});
+
+test('media-key UTF-8 roundtrip preserves leading BOM as owner data', () => {
+  for (const destinationUserId of ['\ufeffordinary-owner', '\ufeff', '\ufeff\ufeffordinary-owner']) {
+    for (const revisionId of [undefined, uuid(80)]) {
+      const input = { destinationUserId, custodyId: uuid(42), outputId: 'object-00000007', ...(revisionId ? { revisionId } : {}) };
+      const key = contract.guestImageResultMediaKey(input);
+      assert.match(key, /\/u-efbbbf/u);
+      assert.deepEqual(contract.readGuestImageResultMediaKey(key), { ...input, revisionId: revisionId ?? null });
+    }
+  }
+});
+
+test('media-key UTF-8 roundtrip rejects invalid owner byte sequences', () => {
+  const key = contract.guestImageResultMediaKey({ destinationUserId: 'ordinary-owner', custodyId: uuid(42), outputId: 'object-00000007' });
+  for (const encoded of ['ff', 'c0af', 'eda080', 'f4908080', 'efbbbf80']) {
+    const malformed = key.replace(/\/u-[a-f0-9]+\//u, `/u-${encoded}/`);
+    assert.throws(() => contract.readGuestImageResultMediaKey(malformed), /guest_image_result_copy_contract_invalid/u, encoded);
+  }
+});
+
 test('native lease IDs and canonical history retain their exact accepted grammar and bounds', async () => {
   const { descriptor } = await guestImageResultCopyContractFixture(), lease = descriptor.leaseSnapshot;
   const history = Array.from({ length: 100 }, (_, index) => `request-${String(index).padStart(3, '0')}-`.padEnd(160, 'a'));
