@@ -7,6 +7,7 @@ import { DecisionMemo, stableDecisionKey } from './decision-cache.ts';
 import { StillAttentionObserver } from './attention-observer.ts';
 import { generationActive, generationPreview, generationFormat, generationResult, generationStatus, stillResults } from './results.ts';
 import { failureNotification, canContinueReview } from './notifications.ts';
+import { generationCompletion, generationNoticeKey } from './generation-activity.ts';
 import type { DocumentJob } from '../model/document-jobs.ts';
 import './form-elements.js';
 import type { PaletteFeedback } from './palette-feedback.ts';
@@ -209,6 +210,7 @@ export class StillApp extends LitElement {
   private beforeUnload = (e: BeforeUnloadEvent) => { if (this.preventsRouteChange()) { e.preventDefault(); e.returnValue = ''; } };
   private changed() { this.requestUpdate(); }
   protected updated() {
+    this.reconcileGenerationNotices();
     this.reconcileGeneration();
     this.hydrateVisibleWriting();
     const actionIds=[...new Set([...this.querySelectorAll<HTMLElement>('.action-dock en-button')].map(button=>button.dataset.actionId||button.id.replace('still-help-','')).filter(id=>ACTIONS.some(a=>a.id===id)))].slice(0,7);
@@ -409,8 +411,8 @@ export class StillApp extends LitElement {
     try {
       // Keep collaborator edits current independently of whether this page has jobs.
       if (force || now - this.lastHistoryPoll >= 30000) { this.lastHistoryPoll = now; work.push(this.client.refresh()); }
-      const interval = this.client.jobs.some(j => activeJobs.has(j.status)) ? 2000 : 60000;
-      if (this.client.position.documentId && (force || now - this.lastJobsPoll >= interval)) { this.lastJobsPoll = now; work.push(this.client.pollJobs()); }
+      const interval = this.client.generationActivity.hasActive || this.client.jobs.some(j => activeJobs.has(j.status)) ? 2000 : 60000;
+      if (force || now - this.lastJobsPoll >= interval) { this.lastJobsPoll = now; work.push(this.client.pollJobs()); }
       await Promise.allSettled(work);
     } finally { this.syncPending = false; }
   }
@@ -683,7 +685,7 @@ export class StillApp extends LitElement {
     return this.startGeneration(format);
   }
   private renderInlineGeneration() {
-    if(!this.isInlineGeneration())return nothing;
+    if(!this.isInlineGeneration()||this.busy||this.directGeneration)return nothing;
     const draft=this.generation,review=this.generationGate;
     const message=this.busy||this.directGeneration?'Preparing new video…':review?.message||this.error||(draft?.recoveryClosed?'Review a new request before starting another.':draft?.attempted?'Check the new request before starting another.':draft?.previousUnconfirmed?'A new request may duplicate the earlier attempt. Review before generating.':'Ready to generate a new video.');
     return html`<section class="generation-inline-review" tabindex="-1" aria-label="New video request"><p role="status" aria-live="polite">${message}</p>${review?.issues.map(issue=>html`<p>${issue.summary}</p>`)}</section>`;
@@ -701,22 +703,30 @@ export class StillApp extends LitElement {
     return [
       ...(inline?[{id:'ui:continue-generation',label:this.busy?'Preparing…':draft?.recoveryClosed?'Review another':draft?.attempted?'Check generation':review?(canContinueReview(review)?'I understand the risks':'Blocked'):'Generate new video',variant:'primary' as const,disabled:!draft||!!review&&!canContinueReview(review),run:()=>void this.run(()=>this.generate())}]:this.canAcknowledgeSafety(job)?[{id:'ui:acknowledge-safety',label:'I understand the risks',variant:'primary' as const,disabled:false,run:()=>this.acknowledgeSafety(job!)}]:this.canGenerateAgain(job)?[{id:'ui:generate-new',label:`Generate new ${(FORMATS[format!]??format).toLowerCase()}`,variant:'primary' as const,disabled:false,run:()=>this.generateAgain(job!.jobId)}]:[]),
       ...(review?[{id:'ui:review-context',label:'Review context',variant:'secondary' as const,run:()=>this.reviewContext()}]:[]),
-      {id:'ui:refresh-generation',label:'Refresh status',variant:'secondary' as const,run:()=>void this.refreshGenerationStatus()},
+      ...(!job||!generationActive(job)?[{id:'ui:refresh-generation',label:'Refresh status',variant:'secondary' as const,run:()=>void this.refreshGenerationStatus()}]:[]),
       {id:'document',label:'Document',variant:'secondary' as const,run:()=>this.navigate('document')},
       {id:'results',label:'Results',variant:'secondary' as const,run:()=>this.navigate('results')},
       {id:'ui:palette',label:'Palette',variant:'ghost' as const,run:()=>this.openFinder('shortcut')},
     ];
   }
   private renderGenerationStatusDock() {
+    if(this.busy||this.directGeneration)return this.renderBusyDock();
     const actions=this.generationRecoveryActions();
-    if(this.pageActionLimit<actions.length)return this.compactDock(actions);
-    return html`<footer class="action-dock"><en-toolbar label="Your next step" keyboard-navigation="tab">${actions.map(a=>a.id==='ui:palette'?this.paletteButton('shortcut'):this.button(a.label,a.run,false,'disabled' in a&&a.disabled,a.id,a.variant))}</en-toolbar></footer>`;
+    const job=this.selectedGeneration(),format=job&&generationFormat(job);
+    const status=job&&generationActive(job)?`${job.status==='queued'?'Queued':job.status==='committing'?'Saving':'Generating'} ${(FORMATS[format!]??format).toLowerCase()}…`:'';
+    if(this.pageActionLimit<actions.length)return this.compactDock(actions,'Menu',status);
+    return html`<footer class="action-dock"><en-toolbar label="Your next step" keyboard-navigation="tab">${this.toolbarStatus(status)}${actions.map(a=>a.id==='ui:palette'?this.paletteButton('shortcut'):this.button(a.label,a.run,false,'disabled' in a&&a.disabled,a.id,a.variant))}</en-toolbar></footer>`;
+  }
+  private toolbarStatus(message:string) { return message?html`<span class="toolbar-status" role="status" aria-live="polite">${message}</span>`:nothing; }
+  private renderBusyDock() {
+    const message=this.generationCheck?.message==='Checking status…'?'Checking status…':this.directGeneration||this.isInlineGeneration()&&this.generation ? `Preparing ${(FORMATS[this.generation?.format??'video']??'generation').toLowerCase()}…` : this.client.position.view==='generation'?'Submitting request…':'Working…';
+    return html`<footer class="action-dock"><en-toolbar label="Progress">${this.toolbarStatus(message)}</en-toolbar></footer>`;
   }
   private renderGeneration() {
     const c=this.client,p=c.projection,job=c.jobs.find(j=>j.jobId===c.position.outputId&&j.documentId===p.documentId);
     if(!job||!generationFormat(job))return html`<section class="quiet-state"><h1>${c.jobsError?'Couldn’t load generation':c.jobsLoaded?'Generation unavailable':'Loading generation…'}</h1>${c.jobsError?this.button('Try again',()=>void this.run(()=>c.pollJobs())):nothing}</section>`;
     const active=generationActive(job),kind=generationFormat(job),preview=generationPreview(job,p,c.events);
-    return html`<section class="generation-stage"><span class="eyebrow">${FORMATS[kind]??kind}</span><h1>${preview.title}</h1>${preview.width&&preview.height?html`<p class="caption">${preview.width} × ${preview.height}</p>`:nothing}${job.status==='failed'?html`<p class="caption">This attempt failed.</p>`:nothing}<p role="status">${active?(job.progressMessage||generationStatus(job)):job.status==='completed'?'The result is being loaded.':job.errorDetail?.message||job.error||generationStatus(job)}</p>${active?html`<div class=${`generation-placeholder ${kind} ${preview.width?'known-size':''}`} style=${preview.width&&preview.height?`--generation-ratio:${preview.width/preview.height}`:nothing} aria-label="Generation in progress"><en-skeleton shape="rectangle"></en-skeleton></div>`:nothing}${this.canAcknowledgeSafety(job)?html`<p class="caption">Nothing is sent automatically. “I understand the risks” sends the reviewed request to the model and may incur usage. The provider can still decline it.</p>`:this.canGenerateAgain(job)?html`<p class="caption">A new generation uses your current document and allowance.</p>`:nothing}${this.generationCheck?.key===this.generationCheckKey()?html`<p class="caption" role="status" aria-live="polite">${this.generationCheck.message}</p>`:nothing}${this.renderInlineGeneration()}</section>`;
+    return html`<section class="generation-stage"><span class="eyebrow">${FORMATS[kind]??kind}</span><h1>${preview.title}</h1>${preview.width&&preview.height?html`<p class="caption">${preview.width} × ${preview.height}</p>`:nothing}${job.status==='failed'?html`<p class="caption">This attempt failed.</p>`:nothing}${active?nothing:html`<p role="status">${job.status==='completed'?'The result is being loaded.':job.errorDetail?.message||job.error||generationStatus(job)}</p>`}${active?html`<div class=${`generation-placeholder ${kind} ${preview.width?'known-size':''}`} style=${preview.width&&preview.height?`--generation-ratio:${preview.width/preview.height}`:nothing} aria-label="Generation in progress"><en-skeleton shape="rectangle"></en-skeleton></div>`:nothing}${this.canAcknowledgeSafety(job)?html`<p class="caption">Nothing is sent automatically. “I understand the risks” sends the reviewed request to the model and may incur usage. The provider can still decline it.</p>`:this.canGenerateAgain(job)?html`<p class="caption">A new generation uses your current document and allowance.</p>`:nothing}${this.generationCheck?.key===this.generationCheckKey()?html`<p class="caption" role="status" aria-live="polite">${this.generationCheck.message}</p>`:nothing}${this.renderInlineGeneration()}</section>`;
   }
   private renderCanvas() {
     const c = this.client, p = c.projection, pos = c.position;
@@ -781,10 +791,10 @@ export class StillApp extends LitElement {
     return html`<section class="form-page">${p.projectName ? html`<span class="eyebrow">${p.projectName}</span>` : nothing}<h1>${titles[mode] ?? 'New idea'}</h1>${named ? this.field('Name', this.titleDraft, v => { this.titleDraft = v; }, 1) : nothing}${mode === 'add-context' ? html`<en-select class="select-label" label="Type" .value=${this.kindDraft} @en-change=${(e: CustomEvent<{proposed:string;value:string}>) => { this.kindDraft = e.detail.proposed; }}>${blockKinds.map(k => html`<en-select-option value=${k}>${k[0].toUpperCase() + k.slice(1)}</en-select-option>`)}</en-select>` : nothing}${mode !== 'rename' ? this.field(mode === 'intent' ? 'Your direction' : mode === 'edit-artifact' ? 'Writing' : 'Idea', this.bodyDraft, v => { this.bodyDraft = v; }, mode === 'edit-artifact' ? 16 : 6, '') : nothing}<div class="form-actions">${this.button(mode === 'intent' ? 'Suggest actions' : this.client.hasUnconfirmedWrite ? 'Check save' : 'Save', () => void this.run(() => this.save()), true)}${this.button('Back', () => this.closeMode())}</div></section>`;
   }
   private paletteButton(entry:PaletteFeedback['entry']) { return html`<en-button id="still-help-ui:palette" data-action-id="ui:palette" variant="ghost" size="medium" aria-keyshortcuts="Meta+K Control+K" .disabled=${this.busy||this.composing} @click=${()=>this.openFinder(entry)}>Palette<en-badge slot="suffix" variant="neutral">⌘+K</en-badge></en-button>${this.help("still-help-ui:palette","Palette")}`; }
-  private compactDock(options:{id:string;label:string;run:()=>void;variant?:Emphasis['variant'];disabled?:boolean}[],menuLabel='Menu') {
+  private compactDock(options:{id:string;label:string;run:()=>void;variant?:Emphasis['variant'];disabled?:boolean}[],menuLabel='Menu',status='') {
     const shown=options.slice(0,this.pageActionLimit-1),rest=options.slice(shown.length);
     return html`<footer class="action-dock" @pointerdown=${()=>{this.dockTouched=true;if(this.mode==='generate')this.formatTouched=true;}} @focusin=${()=>{this.dockTouched=true;if(this.mode==='generate')this.formatTouched=true;}}><en-toolbar label="Your next step" keyboard-navigation="tab">
-      ${shown.map(option=>this.button(option.label,option.run,false,!!option.disabled,option.id,option.variant??'secondary'))}
+      ${this.toolbarStatus(status)}${shown.map(option=>this.button(option.label,option.run,false,!!option.disabled,option.id,option.variant??'secondary'))}
       ${rest.length?html`<en-button id="still-compact-menu" variant="ghost" size="medium" .disabled=${this.busy||this.composing}>${menuLabel}</en-button>`:nothing}
     </en-toolbar>${rest.length?html`<en-menu for="still-compact-menu" label="More actions" @en-action=${(event:CustomEvent<{action:string}>)=>{const option=rest.find(x=>x.id===event.detail.action);if(option&&!option.disabled&&!this.busy&&!this.composing)option.run();}}>
       ${rest.map(option=>html`<en-menu-item action=${option.id} ?disabled=${option.disabled}>${option.label}${option.id==='ui:palette'?html`<en-badge slot="suffix" variant="neutral">⌘+K</en-badge>`:nothing}</en-menu-item>`)}
@@ -815,6 +825,7 @@ export class StillApp extends LitElement {
   private renderDock() {
     const c = this.client, p = c.projection, view = c.position.view;
     if (this.loading || this.startupFailed || !c.session?.policy.accepted || this.currentRouteProblem(p)) return nothing;
+    if(this.busy||this.directGeneration)return this.renderBusyDock();
     if(this.mode==='generate')return this.renderGenerationDock();
     if(this.mode)return nothing;
     if(view==='generation')return this.renderGenerationStatusDock();
@@ -853,8 +864,8 @@ export class StillApp extends LitElement {
     const block=this.client.projection.blocks.find(b=>!b.removed && (ids.includes(b.id) || refs.includes(String(b.properties.reference_id??''))));
     this.navigate('document',{blockId:block?.id??'',outputId:''});
   }
-  private notification(key:string,message:string,variant:'info'|'success'|'warning'|'danger',actions:{label:string;run:()=>void}[],dismiss?:()=>void) {
-    const identity=`${this.client.scopeKey}:${this.client.position.documentId}:${key}`;
+  private notification(key:string,message:string,variant:'info'|'success'|'warning'|'danger',actions:{label:string;run:()=>void;disabled?:boolean}[],dismiss?:()=>void,documentId=this.client.position.documentId) {
+    const identity=`${this.client.scopeKey}:${documentId}:${key}`;
     if(this.dismissedNotifications.has(identity))return nothing;
     return keyed(identity,html`<en-toast .announcement=${message} variant=${variant} priority="polite" duration="0" dismiss-label="Dismiss message" @en-change=${(event:CustomEvent<{proposed:boolean}>)=>{
       if(event.target!==event.currentTarget||event.detail.proposed!==false)return;
@@ -866,11 +877,12 @@ export class StillApp extends LitElement {
         dismiss?.();this.changed();
         if(focused)void this.updateComplete.then(()=>this.focusContent());
       });
-    }}>${message}${actions.map(action=>html`<en-button slot="actions" variant="secondary" size="small" ?disabled=${this.busy||this.composing} @click=${()=>{this.dismissedNotifications.add(identity);action.run();this.changed();}}>${action.label}</en-button>`)}</en-toast>`);
+    }}>${message}${actions.map(action=>html`<en-button slot="actions" variant="secondary" size="small" ?disabled=${this.busy||this.composing||action.disabled} @click=${()=>{this.dismissedNotifications.add(identity);action.run();this.changed();}}>${action.label}</en-button>`)}</en-toast>`);
   }
   private renderNotifications(failed?:DocumentJob) {
     const inline=this.isInlineGeneration(),review=inline?null:this.generationGate, failure=failed?failureNotification(failed):null;
     return html`<en-toast-region class="generation-notifications" placement="block-start-end" label="Notifications" max="2">
+      ${this.renderGenerationCompletions()}
       ${this.error&&!inline?this.notification(`error:${this.errorVersion}`,this.error,'danger',[
         this.generation?.attempted?{label:'Check generation',run:()=>void this.run(()=>this.generate())}:
         this.mode==='generate'?{label:'Review context',run:()=>this.reviewContext()}:
@@ -880,7 +892,7 @@ export class StillApp extends LitElement {
         {label:'Review context',run:()=>this.reviewContext()},
         ...(canContinueReview(review)?[{label:'I understand the risks',run:()=>void this.run(()=>this.generate())}]:[]),
       ]):nothing}
-      ${!this.mode&&failed&&failure?this.notification(`job:${failure.key}`,failure.message,failed.errorDetail?.category==='safety'?'warning':'danger',[
+      ${!this.mode&&failed&&failure&&!this.client.generationActivity.hasSeen(failed)&&!this.client.generationActivity.notices.some(job=>job.jobId===failed.jobId)?this.notification(`job:${failure.key}`,failure.message,failed.errorDetail?.category==='safety'?'warning':'danger',[
         ...(this.canAcknowledgeSafety(failed)?[{label:'I understand the risks',run:()=>this.acknowledgeSafety(failed)}]:[]),
         {label:failure.label,run:()=>{
           if(failure.action==='context')this.reviewContext(failed);
@@ -891,10 +903,35 @@ export class StillApp extends LitElement {
       ${this.notice?this.notification(`notice:${this.noticeVersion}`,this.notice,'success',[],()=>{this.notice='';}):nothing}
     </en-toast-region>`;
   }
+  private generationIsVisible(job:DocumentJob) {
+    const c=this.client,p=c.position;
+    return !this.loading&&!this.mode&&p.documentId===job.documentId&&(p.view==='generation'&&p.outputId===job.jobId||p.view==='artifact'&&p.outputId===generationResult(job,c.projection,c.events));
+  }
+  private reconcileGenerationNotices() {
+    for(const job of this.client.generationActivity.notices)if(this.generationIsVisible(job))this.client.generationActivity.consume(job);
+  }
+  private renderGenerationCompletions() {
+    const c=this.client;
+    return c.generationActivity.notices.filter(job=>!this.generationIsVisible(job)).map(job=>{
+      const notice=generationCompletion(job);
+      return this.notification(`completion:${generationNoticeKey(job)}`,notice.message,notice.variant,[{label:notice.label,disabled:this.preventsRouteChange(),run:()=>void this.openGenerationNotice(job)}],()=>c.generationActivity.consume(job),job.documentId);
+    });
+  }
+  private async openGenerationNotice(job:DocumentJob) {
+    if(this.preventsRouteChange())return;
+    await this.run(async()=>{
+      const c=this.client;
+      if(!c.historyComplete)await c.completeHistory();
+      const doc=c.projection.documents.find(d=>d.id===job.documentId&&!d.removed);
+      if(!doc)throw new Error('This generation is no longer available.');
+      c.generationActivity.consume(job);
+      this.navigate('generation',{projectId:doc.projectId,documentId:job.documentId,outputId:job.jobId});
+    });
+  }
   render() {
     const c = this.client, displayedGeneration = !this.loading && !this.mode && c.position.view === 'generation' ? c.position.outputId : '';
-    const running = c.jobs.filter(j => activeJobs.has(j.status) && j.documentId === c.position.documentId && !(j.jobId === displayedGeneration && generationFormat(j))), failed = c.jobs.find(j => j.status === 'failed' && !j.dismissedAt && j.documentId === c.position.documentId && j.jobId !== displayedGeneration);
-    return html`<div class=${this.developer?'still-layout has-developer':'still-layout'}><div class="still-shell"><header class="masthead"><a class="wordmark" href=${this.viewURL('projects',{projectId:'',documentId:''})} aria-label="Still home" @click=${this.home}>still<span aria-hidden="true">.</span></a><span class="working-status" role="status" aria-live="polite">${this.busy ? 'Working…' : ''}</span><span class="session-status">${c.session?.impersonation ? 'Preview · read only' : c.session && !c.abilities.author ? 'Read only' : ''}</span></header><div class="feedback-strip">${running.length ? html`<aside class="job-status" role="status"><i></i>${generationFormat(running[0])?html`<a href=${this.viewURL('generation',{outputId:running[0].jobId})} @click=${(e:MouseEvent)=>this.follow(e,'generation',{outputId:running[0].jobId})}>${running[0].progressMessage || 'Generating…'}</a>`:running[0].progressMessage||'Working…'}${running.length > 1 ? ` · ${running.length} in progress` : ''}</aside>` : nothing}</div><main id="still-content" aria-busy=${this.loading}>${this.renderCanvas()}</main>${this.renderDock()}${this.renderPalette()}</div>${this.developer ? html`<aside class="developer-panel" aria-label="Developer panel"><still-developer-console @developer-flags=${this.setOnboarding} @developer-refresh=${this.refreshDecision} @developer-density=${this.setDensity} @developer-experiment=${this.experiment} @developer-disable=${()=>this.setDeveloper(false)}></still-developer-console></aside>` : nothing}${new URL(location.href).searchParams.has('progress-report') ? html`<a class="progress-return" href=${REPORT_URL}>Progress Report ↗</a>` : nothing}</div>${this.renderNotifications(failed)}`;
+    const failed = c.jobs.find(j => j.status === 'failed' && !j.dismissedAt && j.documentId === c.position.documentId && j.jobId !== displayedGeneration);
+    return html`<div class=${this.developer?'still-layout has-developer':'still-layout'}><div class="still-shell"><header class="masthead"><a class="wordmark" href=${this.viewURL('projects',{projectId:'',documentId:''})} aria-label="Still home" @click=${this.home}>still<span aria-hidden="true">.</span></a><span class="session-status">${c.session?.impersonation ? 'Preview · read only' : c.session && !c.abilities.author ? 'Read only' : ''}</span></header><main id="still-content" aria-busy=${this.loading}>${this.renderCanvas()}</main>${this.renderDock()}${this.renderPalette()}</div>${this.developer ? html`<aside class="developer-panel" aria-label="Developer panel"><still-developer-console @developer-flags=${this.setOnboarding} @developer-refresh=${this.refreshDecision} @developer-density=${this.setDensity} @developer-experiment=${this.experiment} @developer-disable=${()=>this.setDeveloper(false)}></still-developer-console></aside>` : nothing}${new URL(location.href).searchParams.has('progress-report') ? html`<a class="progress-return" href=${REPORT_URL}>Progress Report ↗</a>` : nothing}</div>${this.renderNotifications(failed)}`;
   }
 }
 if (!customElements.get('still-app')) customElements.define('still-app', StillApp);

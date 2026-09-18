@@ -10,8 +10,7 @@ still-app .still-shell { min-height: 100dvh; padding: 0 48px max(148px, var(--do
 still-app .masthead { height: 104px; display: flex; align-items: center; gap: 32px; }
 still-app .wordmark { color: inherit; text-decoration: none; font-family: Georgia, 'Times New Roman', serif; font-size: 35px; letter-spacing: -2px; line-height: 1; }
 still-app .wordmark > span { color: var(--accent); }
-still-app .location-label, still-app .session-status, still-app .working-status { color: var(--soft); font-size: 12px; letter-spacing: .01em; }
-still-app .working-status { flex: 0 0 64px; }
+still-app .location-label, still-app .session-status { color: var(--soft); font-size: 12px; letter-spacing: .01em; }
 still-app .session-status { margin-left: auto; }
 still-app main { width: 100%; min-height: calc(100dvh - 252px); }
 still-app h1, still-app h2, still-app p, still-app figure { margin: 0; }
@@ -30,6 +29,7 @@ still-app .row-arrow { margin-left: auto; font-size: 22px; color: var(--soft); }
 still-app .empty-copy { color: var(--soft); font-size: 17px; margin-top: 36px; line-height: 1.8; }
 still-app .action-dock { position: fixed; z-index: 5; bottom: 0; left: 0; right: 0; padding: 36px 24px max(25px, env(safe-area-inset-bottom)); background: linear-gradient(transparent, var(--paper) 24%); display: flex; align-items: center; flex-direction: column; gap: 10px; }
 still-app .dock-caption { font-size: 11px; letter-spacing: .03em; color: var(--soft); }
+still-app .toolbar-status { display: inline-flex; align-items: center; min-height: 44px; padding: 8px 18px; font-size: 14px; color: var(--soft); }
 still-app en-toolbar { --en-space-actions: 5px; max-width: 100%; }
 still-app en-toolbar::part(base) { border: 1px solid var(--line); border-radius: 9999px; padding: 6px; gap: 5px; background: #fbfaf7; box-shadow: 0 5px 26px #3c342708; }
 still-app en-button { font-size: 13px; }
@@ -73,11 +73,6 @@ still-app .quiet-state { min-height: 52vh; display: flex; justify-content: cente
 still-app .quiet-state p { color: var(--soft); }
 still-app .still-mark { width: 30px; height: 30px; border: 1px solid #a9a391; border-radius: 50%; box-shadow: 8px 0 0 -1px var(--paper), 9px 0 0 0 #c1bbaa; }
 still-app .check { display:block;margin:16px 0; }
-still-app .feedback-strip { position: sticky; top: env(safe-area-inset-top, 0px); z-index: 6; background: var(--paper); max-height: 40dvh; overflow: auto; }
-still-app .feedback-strip:has(> *) { padding-block: 12px; border-bottom: 1px solid var(--line); }
-still-app .feedback-strip > * + * { margin-top: 8px; }
-still-app .job-status { display: flex; align-items: center; justify-content: center; gap: 10px; font-size: 12px; color: var(--soft); overflow-wrap: anywhere; }
-still-app .job-status i { display: inline-block; flex: 0 0 6px; height: 6px; border-radius: 50%; background: #82916d; animation: still-pulse 2s ease-in-out infinite; }
 still-app .image-stage { display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: calc(100dvh - 265px); }
 still-app .image-stage img { max-width: 100%; max-height: calc(100dvh - 300px); object-fit: contain; }
 still-app figcaption, still-app .caption { font-size: 12px; color: var(--soft); margin-top: 16px; text-align: center; }
@@ -202,6 +197,5 @@ still-app .generation-inline-review p + p { margin-top: 12px; }
 still-app .generation-placeholder { width: min(100%, 720px); height: min(42dvh, 460px); }
 still-app .generation-placeholder en-skeleton { height: 100%; --en-skeleton-size: 100%; }
 still-app .generation-placeholder.audio { height: min(20dvh, 160px); }
-still-app .job-status a { color: inherit; text-underline-offset: .2em; }
 
 still-app .generation-placeholder.known-size { width: min(100%, 720px, calc(42dvh * var(--generation-ratio))); height: auto; aspect-ratio: var(--generation-ratio); }

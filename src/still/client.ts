@@ -1,5 +1,6 @@
 import { documentJobCanAcknowledgeSafety } from "../model/document-jobs.ts";
 import { generationResult } from './results.ts';
+import { GenerationActivity } from './generation-activity.ts';
 import { foldEvents, type CreativeEvent, type EventInput } from '../model/events.ts';
 import { documentArtifactRevision } from '../model/document-artifacts.ts';
 import type { DocumentJob } from '../model/document-jobs.ts';
@@ -49,6 +50,7 @@ export class StillClient {
   head = 0;
   historyComplete = true;
   jobs: DocumentJob[] = [];
+  readonly generationActivity = new GenerationActivity();
   private jobsReadKey = '';
   jobsError = '';
   private get jobsKey() { return `${this.epoch}:${this.scopeKey}:${this.position.documentId}:${this.position.view==='generation'?this.position.outputId:''}`; }
@@ -81,7 +83,7 @@ export class StillClient {
     const value = foldEvents(this.events, Infinity, document, project);
     this.projected = { events: this.events, length: this.events.length, document, project, value }; return value;
   }
-  private clearSource() { ++this.epoch; this.events = []; this.content = {}; this.head = 0; this.jobs = []; this.creation = null; this.projected = null; this.contentWrites.clear(); }
+  private clearSource() { ++this.epoch; this.generationActivity.clear(); this.events = []; this.content = {}; this.head = 0; this.jobs = []; this.creation = null; this.projected = null; this.contentWrites.clear(); }
   private async request<T>(path: string, body?: unknown, method?: string): Promise<T> {
     const check = this.fence();
     try { const result = await api<T>(path, body, method); check(); return result; }
@@ -119,6 +121,7 @@ export class StillClient {
   fence() { const epoch = this.epoch, key = scope(this.session); return () => { if (epoch !== this.epoch || key !== scope(this.session)) throw new Error('Workspace changed. Check the original workspace.'); }; }
   async load(options: { hydrateContent?: boolean; route?: {documentId:string} } = {}) {
     const epoch = ++this.epoch;
+    this.generationActivity.clear();
     this.events = []; this.content = {}; this.head = 0; this.jobs = []; this.session = null; this.projected = null; this.contentWrites.clear();
     const session = await api<Session>('/api/session?profile=still');
     if (epoch !== this.epoch) return;
@@ -308,6 +311,7 @@ export class StillClient {
     return { type: 'BlockCreated', payload: { block_id: crypto.randomUUID(), project_id: projectId, document_id: documentId, scope: 'document', type, handle, position: String(this.head + 1), properties: { text, weight: .8, authority: 'authored' } } };
   }
   async switchWorkspace(project?: NonNullable<Session['projects']>[number]) {
+    this.generationActivity.clear();
     ++this.epoch; this.events = []; this.content = {}; this.head = 0; this.jobs = []; this.onChange();
     if (project) await api(`/api/workspaces/${encodeURIComponent(project.organizationId)}/projects/${encodeURIComponent(project.projectAccessId)}/context`, {}, 'POST');
     else await api('/api/workspaces/context', undefined, 'DELETE');
@@ -368,6 +372,7 @@ export class StillClient {
       const job=result.job,format=pending?.format??draft.format;
       if(result.status==='found'&&job?.jobId&&job.documentId===draft.documentId&&job.requestKey===key&&job.kind===(format==='image'?'generate':'render_document')&&(format==='image'||job.result?.artifactKind===format)) {
         operationJournal.clearGeneration(this.journalScope,draft.documentId);
+        this.generationActivity.observe([job],false);
         this.jobs=[job,...this.jobs.filter(j=>j.jobId!==job.jobId)];this.onChange();
         if(job.status==='queued')void this.request(`/api/document-jobs/${encodeURIComponent(job.jobId)}/run`,{}).catch(()=>{});
         else if(['completed','partial'].includes(job.status))void this.refresh().catch(()=>{});
@@ -408,6 +413,7 @@ export class StillClient {
     check();
     if (!result.job?.jobId || result.job.documentId !== this.position.documentId) throw new Error('Generation unconfirmed. Check results before retrying.');
     operationJournal.clearGeneration(this.journalScope,draft.documentId);
+    this.generationActivity.observe([result.job],false);
     this.jobs = [result.job, ...this.jobs.filter(j => j.jobId !== result.job.jobId)]; this.onChange();
     void this.request(`/api/document-jobs/${encodeURIComponent(result.job.jobId)}/run`, {}).catch(() => {});
     return result.job;
@@ -417,6 +423,7 @@ export class StillClient {
     if(!this.abilities.generate||!documentJobCanAcknowledgeSafety(job)||job.documentId!==this.position.documentId)throw new Error('This request cannot be submitted. Refresh its status.');
     const result=await this.request<{job:DocumentJob}>(`/api/document-jobs/${encodeURIComponent(job.jobId)}/acknowledge-safety`,{acknowledged:true,attemptCount:job.attemptCount});check();
     if(result.job?.jobId!==job.jobId||result.job.documentId!==job.documentId)throw new Error('Generation delivery unconfirmed. Refresh status before trying again.');
+    this.generationActivity.observe([result.job],false);
     this.jobs=this.jobs.map(current=>current.jobId===job.jobId?result.job:current);this.onChange();
     void this.request(`/api/document-jobs/${encodeURIComponent(job.jobId)}/run`,{}).catch(()=>{});
     return result.job;
@@ -429,7 +436,6 @@ export class StillClient {
   }
   async pollJobs() {
     const document = this.position.documentId, key = this.jobsKey;
-    if (!document) return;
     if (this.polling?.key === key) return this.polling.promise;
     const read = ++this.jobRead;
     const operation = (async () => {
@@ -437,7 +443,7 @@ export class StillClient {
       if (read !== this.jobRead || document !== this.position.documentId) return;
       const known=new Set(this.jobs.map(j=>j.jobId));
       const selected=this.position.view==='generation'?this.position.outputId:'';
-      const result = await this.request<{ jobs: DocumentJob[] }>(`/api/document-jobs?document=${encodeURIComponent(document)}`); check();
+      const result = await this.request<{ jobs: DocumentJob[] }>(document ? `/api/document-jobs?document=${encodeURIComponent(document)}` : '/api/document-jobs?scope=active'); check();
       if (read !== this.jobRead || document !== this.position.documentId) return;
       if (!Array.isArray(result.jobs) || result.jobs.some(j => !j || typeof j.documentId !== 'string' || typeof j.jobId !== 'string')) throw new Error('The job history could not be verified.');
       // Forma also returns authorized active/unnotified jobs from other documents.
@@ -452,6 +458,10 @@ export class StillClient {
         } catch(error) { if(!(error instanceof ApiError&&error.status===404))throw error; }
       }
       if(read!==this.jobRead||document!==this.position.documentId)return;
+      // The feed contains authorized active/unnotified work across documents.
+      // Keep result lists scoped, but observe completions across navigation.
+      const noticesBefore=JSON.stringify(this.generationActivity.notices);
+      this.generationActivity.observe([...result.jobs,...jobs.filter(j=>!result.jobs.some(row=>row.jobId===j.jobId))]);
       const terminal = (job: DocumentJob) => ['completed', 'partial', 'failed', 'canceled'].includes(job.status);
       const changed = this.jobs.some(j => j.documentId !== document) || JSON.stringify(previous) !== JSON.stringify(jobs);
       const needsRefresh = jobs.some(j => terminal(j) && JSON.stringify(j) !== JSON.stringify(previous.find(p => p.jobId === j.jobId)))
@@ -459,7 +469,7 @@ export class StillClient {
         || previous.some(j => !terminal(j) && !jobs.some(next => next.jobId === j.jobId));
       const loaded=this.jobsLoaded,hadError=!!this.jobsError;
       this.jobsReadKey=key;this.jobsError='';
-      if (changed || !loaded || hadError) { this.jobs = jobs; this.onChange(); }
+      if (changed || !loaded || hadError || noticesBefore!==JSON.stringify(this.generationActivity.notices)) { this.jobs = jobs; this.onChange(); }
       if (needsRefresh) {
         // A read already in flight may predate this completion. Follow it with a
         // delta that is known to start after the job acknowledgement.

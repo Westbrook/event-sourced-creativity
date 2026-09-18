@@ -97,7 +97,8 @@ test('Still builds recovery controls without submitting; only clicking the ackno
   const app=source.statements.find(node=>ts.isClassDeclaration(node)&&node.name?.text==='StillApp');
   const method=app.members.find(node=>node.name?.getText(source)==='generationRecoveryActions');
   const code=ts.transpileModule(`function controls() ${method.body.getText(source)}`,{compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText;
-  const controls=new Function('generationFormat','FORMATS',`${code};return controls;`)(()=> 'image',{image:'Image'});
+  const {generationActive}=await import('../src/still/results.ts');
+  const controls=new Function('generationFormat','generationActive','FORMATS',`${code};return controls;`)(()=> 'image',generationActive,{image:'Image'});
   const job={jobId:'reviewed'},calls=[];
   const actions=controls.call({isInlineGeneration:()=>false,selectedGeneration:()=>job,canAcknowledgeSafety:()=>true,acknowledgeSafety:actual=>calls.push(actual),canGenerateAgain:()=>true});
   assert.deepEqual(calls,[]);assert.equal(actions[0].label,'I understand the risks');

@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import ts from 'typescript';
-import {generationFormat} from '../src/still/results.ts';
+import {generationFormat,generationActive} from '../src/still/results.ts';
 import {ApiError} from '../src/still/client.ts';
 import {generationReview} from '../src/still/generation-review.ts';
 import {canContinueReview} from '../src/still/notifications.ts';
@@ -10,10 +10,10 @@ import {documentJobCanAcknowledgeSafety} from '../src/model/document-jobs.ts';
 
 const source=ts.createSourceFile('app.ts',readFileSync(new URL('../src/still/app.ts',import.meta.url),'utf8'),ts.ScriptTarget.Latest,true);
 const app=source.statements.find(n=>ts.isClassDeclaration(n)&&n.name?.text==='StillApp');
-const methods=['canAcknowledgeSafety','acknowledgeSafety','generationCheckKey','isInlineGeneration','selectedGeneration','canGenerateAgain','refreshGenerationStatus','generateAgain','generationRecoveryActions','renderGenerationStatusDock','renderInlineGeneration','startGeneration','generate','run'];
+const methods=['canAcknowledgeSafety','acknowledgeSafety','generationCheckKey','isInlineGeneration','selectedGeneration','canGenerateAgain','refreshGenerationStatus','generateAgain','generationRecoveryActions','renderGenerationStatusDock','renderInlineGeneration','toolbarStatus','renderBusyDock','startGeneration','generate','run'];
 const code=ts.transpileModule(`class Recovery {${app.members.filter(n=>methods.includes(n.name?.getText(source))).map(n=>n.getText(source)).join('\n')}}`,{compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText;
 const html=(parts,...values)=>parts.reduce((s,p,i)=>s+p+(Array.isArray(values[i])?values[i].join(''):values[i]??''),'');
-const Recovery=new Function('documentJobCanAcknowledgeSafety','generationFormat','FORMATS','ApiError','generationReview','canContinueReview','html','nothing',`${code};return Recovery;`)(documentJobCanAcknowledgeSafety,generationFormat,{video:'Video',image:'Image'},ApiError,generationReview,canContinueReview,html,'');
+const Recovery=new Function('documentJobCanAcknowledgeSafety','generationFormat','generationActive','FORMATS','ApiError','generationReview','canContinueReview','html','nothing',`${code};return Recovery;`)(documentJobCanAcknowledgeSafety,generationFormat,generationActive,{video:'Video',image:'Image'},ApiError,generationReview,canContinueReview,html,'');
 function fixture(status='failed') {
  const view=new Recovery();
  const calls=[];
@@ -47,11 +47,17 @@ function executionFixture() {
  view.client.prepareGeneration=format=>({format,documentId:'doc',requestId:'new-request'});
  return {view,calls};
 }
+test('accepted generation keeps only useful navigation and one toolbar progress status',()=>{
+ const {view}=fixture('running');
+ const actions=view.generationRecoveryActions();assert.deepEqual(actions.map(a=>a.id),['document','results','ui:palette']);
+ view.button=label=>label;view.paletteButton=()=> 'Palette';view.pageActionLimit=5;
+ const output=view.renderGenerationStatusDock();assert.match(output,/Generating video/);assert.equal(output.split('role="status"').length-1,1);assert.doesNotMatch(output,/Refresh status|Preparing/);
+});
 test('preparation stays inline and acceptance navigates once directly to the new job',async()=>{
  const {view,calls}=executionFixture();let accept,count=0;
  view.client.generate=()=>{count++;return new Promise(resolve=>{accept=resolve;});};
  const pending=view.generateAgain('job');
- assert.equal(view.client.position.outputId,'job');assert.equal(view.mode,undefined);assert.match(view.renderInlineGeneration(),/Preparing new video/);assert.deepEqual(calls,[]);
+ assert.equal(view.client.position.outputId,'job');assert.equal(view.mode,undefined);assert.equal(view.renderInlineGeneration(),'');assert.match(view.renderGenerationStatusDock(),/Preparing video/);assert.doesNotMatch(view.renderGenerationStatusDock(),/<en-button/);assert.deepEqual(calls,[]);
  await view.generateAgain('job');assert.equal(count,1);
  accept({jobId:'new-job'});await pending;
  assert.deepEqual(calls,[['navigate','generation','new-job']]);

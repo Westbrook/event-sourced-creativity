@@ -62,7 +62,7 @@ test('Review generation opens the original job even without generation permissio
  for(const formats of [[],['image','video']])for(const job of [{kind:'generate'},{kind:'render_document',result:{artifactKind:'video'}}]){
   const failed={...job,jobId:'original-failed-job',documentId:'original-document',status:'failed',attemptCount:1,errorDetail:{category:'network',action:'retry',code:'provider_network_error',message:'Unavailable.'}};
   let review;const navigations=[];
-  const app={canAcknowledgeSafety:()=>false,isInlineGeneration:()=>false,renderInlineGeneration:()=>'',client:{abilities:{formats}},notification:(_key,_message,_tone,actions)=>{review=actions[0];},navigate:(view,ids)=>navigations.push({view,ids}),choose:()=>assert.fail('Review must not choose a new format'),startGeneration:()=>assert.fail('Review must not start generation')};
+  const app={canAcknowledgeSafety:()=>false,isInlineGeneration:()=>false,renderInlineGeneration:()=>'',renderGenerationCompletions:()=>[],client:{abilities:{formats},generationActivity:{notices:[],hasSeen:()=>false}},notification:(_key,_message,_tone,actions)=>{review=actions[0];},navigate:(view,ids)=>navigations.push({view,ids}),choose:()=>assert.fail('Review must not choose a new format'),startGeneration:()=>assert.fail('Review must not start generation')};
   render.call(app,failed);assert.equal(review.label,'Review generation');review.run();
   assert.deepEqual(navigations,[{view:'generation',ids:{outputId:failed.jobId}}]);
  }
