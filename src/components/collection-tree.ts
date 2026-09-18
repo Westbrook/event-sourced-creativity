@@ -1,8 +1,11 @@
 import { html, nothing, type TemplateResult } from "lit";
 import { FormaElement, icon } from "./forma-element";
+import { navigateInApp } from "./command-departure";
 import "./icons-authoring";
 import "./icons-navigation";
 import { ensureModalDialog } from "./modal-dialog";
+import { nextFormaId } from "./design-system/contracts";
+import { observeNativePopoverPosition, positionNativePopover } from "./native-popover";
 
 type CollectionDialog = { mode: "create" | "rename"; parentId: string | null; collectionId: string | null; current: string };
 
@@ -15,6 +18,17 @@ export class CollectionTree extends FormaElement {
   #dialog: CollectionDialog | null = null;
   #handle = "";
   #openMenuId = "";
+  #menuInstance = nextFormaId("collection");
+  #menuScope = "";
+  #stopMenuPosition?:()=>void;
+  #currentMenuScope() {
+    const authorization=this.store.captureAuthorizationScope(),projection=this.store.projection.get();
+    return authorization?JSON.stringify([authorization.key,this.store.route.get(),projection.projectId,projection.documentId,this.itemKind,this.itemId,this.destination]):"";
+  }
+  #canUseMenu() { const session=this.store.session.get();return Boolean(session&&(!session.projectContext||session.projectContext.permissions.includes("project.author"))&&this.#menuScope&&this.#menuScope===this.#currentMenuScope()); }
+  #closeMenus() { this.#stopMenuPosition?.();this.#stopMenuPosition=undefined;for(const panel of this.querySelectorAll<HTMLElement>(".tree-menu[popover]"))if(panel.matches(":popover-open"))panel.hidePopover();this.#openMenuId=""; }
+  protected override willUpdate() { const scope=this.#currentMenuScope();if(scope!==this.#menuScope)this.#closeMenus();this.#menuScope=scope; }
+  override disconnectedCallback() { this.#closeMenus();super.disconnectedCallback(); }
 
   protected override updated() {
     ensureModalDialog(this.querySelector<HTMLDialogElement>(".collection-dialog"));
@@ -29,24 +43,32 @@ export class CollectionTree extends FormaElement {
     void this.updateComplete.then(()=>this.querySelector<HTMLInputElement>(".collection-dialog input")?.select());
   }
   #dismiss() { this.querySelector<HTMLDialogElement>(".collection-dialog")?.close();this.#dialog=null;this.requestUpdate(); }
-  #menuId(id: string) { return `collection-menu-${id.replace(/[^a-zA-Z0-9_-]/g,"-")}`; }
+  #menuId(id: string) { return `${this.#menuInstance}-${encodeURIComponent(id)}`; }
   #closeMenu(id: string) {
-    const menu=this.querySelector<HTMLElement>(`#${this.#menuId(id)}`);
+    const menu=this.querySelector<HTMLElement>(`[id="${this.#menuId(id)}"]`);
     if(menu?.matches(":popover-open"))menu.hidePopover();
-    if(this.#openMenuId===id){this.#openMenuId="";this.requestUpdate();}
+    if(this.#openMenuId===id){this.#stopMenuPosition?.();this.#stopMenuPosition=undefined;this.#openMenuId="";this.requestUpdate();}
   }
-  #toggleMenu(event: MouseEvent,id: string) {
-    const trigger=event.currentTarget as HTMLButtonElement;const menu=this.querySelector<HTMLElement>(`#${this.#menuId(id)}`);if(!menu)return;
-    if(menu.matches(":popover-open")){this.#closeMenu(id);return;}
-    const rect=trigger.getBoundingClientRect();const width=Math.min(208,window.innerWidth-16);const left=Math.max(8,Math.min(rect.right-width,window.innerWidth-width-8));
-    menu.style.setProperty("--collection-menu-top",`${rect.bottom+4}px`);menu.style.setProperty("--collection-menu-left",`${left}px`);menu.showPopover();this.#openMenuId=id;this.requestUpdate();
+  #positionMenu(event: MouseEvent,id: string) {
+    if(!this.#canUseMenu()){event.preventDefault();this.#closeMenus();return;}
+    const menu=this.querySelector<HTMLElement>(`[id="${this.#menuId(id)}"]`);
+    if(menu)positionNativePopover(event.currentTarget as HTMLButtonElement,menu);
   }
   #menuToggle(event: Event,id: string) {
-    const state=(event as Event&{newState?:string}).newState;
-    if(state==="open")this.#openMenuId=id;else if(this.#openMenuId===id)this.#openMenuId="";
+    const panel=event.currentTarget as HTMLElement,open=panel.matches(":popover-open")&&this.isConnected;
+    if(open){
+      this.#stopMenuPosition?.();this.#openMenuId=id;
+      const trigger=this.querySelector<HTMLButtonElement>(`[popovertarget="${this.#menuId(id)}"]`);
+      this.#stopMenuPosition=trigger?observeNativePopoverPosition(trigger,panel):undefined;
+    }else if(this.#openMenuId===id){this.#stopMenuPosition?.();this.#stopMenuPosition=undefined;this.#openMenuId="";}
     this.requestUpdate();
   }
-  #fromMenu(id: string,action:()=>void) { this.#closeMenu(id);action(); }
+  #fromMenu(id: string,action:()=>void) {
+    if(!this.#canUseMenu()){this.#closeMenus();return;}
+    this.#closeMenu(id);
+    this.querySelector<HTMLButtonElement>(`[popovertarget="${this.#menuId(id)}"]`)?.focus({preventScroll:true});
+    action();
+  }
   async #save(event: SubmitEvent) {
     event.preventDefault();const dialog=this.#dialog;const handle=this.#handle.trim();if(!dialog||!handle)return;
     const input=dialog.mode==="create"
@@ -61,14 +83,22 @@ export class CollectionTree extends FormaElement {
     const appended=await this.store.append({type:membership?"CollectionItemMoved":"CollectionItemAdded",payload:membership?{item_ref:itemRef,from_collection_id:membership.collectionId,to_collection_id:collectionId,position:"a0"}:{collection_id:collectionId,item_ref:itemRef,position:"a0"}});
     if(appended.length)this.store.toast(this.i18n.system(membership?(this.itemKind==="block"?"Block moved to this collection.":"Current document moved to this collection."):(this.itemKind==="block"?"Block filed in this collection.":"Current document filed in this collection.")));
   }
-  #openCollection(id: string) { this.store.patchUi({focusCollectionId:id});this.store.setRoute(this.destination);window.scrollTo({top:0}); }
-  #clearCollection(){this.store.patchUi({focusCollectionId:""});this.store.setRoute(this.destination);window.scrollTo({top:0});}
+  #openCollection(id:string){
+    if(this.store.ui.focusCollectionId===id&&this.store.route.get()===this.destination){window.scrollTo({top:0});return;}
+    void navigateInApp(this,async navigation=>{
+      this.store.patchUi({focusCollectionId:id});
+      const opened=await navigation.route(this.destination);
+      if(opened&&navigation.current())window.scrollTo({top:0});
+      return opened;
+    });
+  }
+  #clearCollection(){this.#openCollection("");}
 
   override render() {
     const p=this.store.projection.get();const roots=p.collections.filter((collection)=>!collection.parentId);const children=(id:string)=>p.collections.filter((collection)=>collection.parentId===id);const activeCollection=p.collections.find((collection)=>collection.id===this.store.ui.focusCollectionId);const subjectId=this.itemKind==="block"?this.itemId:p.documentId;const currentMembership=subjectId?p.membership[subjectId]:undefined;const subjectName=this.itemKind==="block"?(this.itemLabel||this.i18n.system("Block")):this.i18n.system("Document");const fileLabel=this.itemKind==="block"?"File this block":"File open document";const context=this.store.session.get()?.projectContext;const canAuthor=!context||context.permissions.includes("project.author");
     const node=(collection:typeof p.collections[number]):TemplateResult=>html`<li class=${this.store.ui.focusCollectionId===collection.id?"brief-focus":""} data-collection-id=${collection.id}>
-      <div class="tree-row"><span aria-hidden="true">${icon("folder")}</span><button type="button" class="tree-name" title=${this.i18n.system("Filter project contents to {handle}", { handle: collection.handle })} aria-current=${this.store.ui.focusCollectionId===collection.id?"true":nothing} @click=${()=>this.#openCollection(collection.id)}>${collection.handle}</button><span class="tree-count">${Object.values(p.membership).filter((membership)=>membership.collectionId===collection.id).length}</span>${canAuthor?html`<button type="button" class="tree-more" aria-label=${this.i18n.system("Open actions for {handle}", { handle: collection.handle })} title="Collection actions" aria-controls=${this.#menuId(collection.id)} aria-expanded=${this.#openMenuId===collection.id} @click=${(event:MouseEvent)=>this.#toggleMenu(event,collection.id)}>${icon("dots")}</button>`:nothing}</div>
-      ${canAuthor?html`<div id=${this.#menuId(collection.id)} class="tree-menu" popover="auto" role="group" aria-label=${this.i18n.system("{handle} actions", { handle: collection.handle })} @toggle=${(event:Event)=>this.#menuToggle(event,collection.id)}>
+      <div class="tree-row"><span aria-hidden="true">${icon("folder")}</span><button type="button" class="tree-name" title=${this.i18n.system("Filter project contents to {handle}", { handle: collection.handle })} aria-current=${this.store.ui.focusCollectionId===collection.id?"true":nothing} @click=${()=>this.#openCollection(collection.id)}>${collection.handle}</button><span class="tree-count">${Object.values(p.membership).filter((membership)=>membership.collectionId===collection.id).length}</span>${canAuthor?html`<button type="button" class="tree-more" aria-label=${this.i18n.system("Open actions for {handle}", { handle: collection.handle })} title="Collection actions" popovertarget=${this.#menuId(collection.id)} aria-controls=${this.#menuId(collection.id)} aria-expanded=${this.#openMenuId===collection.id} @click=${(event:MouseEvent)=>this.#positionMenu(event,collection.id)}>${icon("dots")}</button>`:nothing}</div>
+      ${canAuthor?html`<div id=${this.#menuId(collection.id)} class="tree-menu" popover="auto" role="group" aria-label=${this.i18n.system("{handle} actions", { handle: collection.handle })} @beforetoggle=${(event:ToggleEvent)=>{if(event.newState==="open"&&!this.#canUseMenu())event.preventDefault();}} @toggle=${(event:Event)=>this.#menuToggle(event,collection.id)}>
         <button type="button" @click=${()=>this.#fromMenu(collection.id,()=>this.#openRename(collection.id,collection.handle))}>${icon("edit")} Rename</button>
         <button type="button" @click=${()=>this.#fromMenu(collection.id,()=>this.#openCreate(collection.id))}>${icon("plus")} New nested collection</button>
         <hr>

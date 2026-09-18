@@ -1,6 +1,8 @@
 {
   "version": "6",
   "dialect": "sqlite",
+  "id": "592e25ea-b787-48ba-bcf1-797c41bae69e",
+  "prevId": "dc8443f5-c38a-4897-960d-64d329b5a696",
   "tables": {
     "artifact_revisions": {
       "name": "artifact_revisions",
@@ -579,6 +581,242 @@
           "columns": [
             "organization_id",
             "capability"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "consequential_execution_steps": {
+      "name": "consequential_execution_steps",
+      "columns": {
+        "execution_id": {
+          "name": "execution_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "step_index": {
+          "name": "step_index",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "token_reservation_id": {
+          "name": "token_reservation_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "cost_reservation_id": {
+          "name": "cost_reservation_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "maximum_tokens": {
+          "name": "maximum_tokens",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "maximum_microusd": {
+          "name": "maximum_microusd",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "provider_request_id": {
+          "name": "provider_request_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "verified_tokens": {
+          "name": "verified_tokens",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "verified_microusd": {
+          "name": "verified_microusd",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {
+        "consequential_execution_steps_execution_id_step_index_pk": {
+          "columns": [
+            "execution_id",
+            "step_index"
+          ],
+          "name": "consequential_execution_steps_execution_id_step_index_pk"
+        }
+      },
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "consequential_executions": {
+      "name": "consequential_executions",
+      "columns": {
+        "execution_id": {
+          "name": "execution_id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "actor_user_id": {
+          "name": "actor_user_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "stream_id": {
+          "name": "stream_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "project_id": {
+          "name": "project_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "document_id": {
+          "name": "document_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "organization_id": {
+          "name": "organization_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "project_access_id": {
+          "name": "project_access_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "operation": {
+          "name": "operation",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "intent_hash": {
+          "name": "intent_hash",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "binding_hash": {
+          "name": "binding_hash",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "consent_ref": {
+          "name": "consent_ref",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "result_ref": {
+          "name": "result_ref",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "error_code": {
+          "name": "error_code",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "expires_at": {
+          "name": "expires_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "idx_consequential_executions_actor_scope": {
+          "name": "idx_consequential_executions_actor_scope",
+          "columns": [
+            "actor_user_id",
+            "project_id",
+            "document_id",
+            "status",
+            "created_at"
           ],
           "isUnique": false
         }
@@ -3367,2222 +3605,6 @@
       "uniqueConstraints": {},
       "checkConstraints": {}
     },
-    "output_asset_storage_writes": {
-      "name": "output_asset_storage_writes",
-      "columns": {
-        "scope_key": {
-          "name": "scope_key",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "asset_id": {
-          "name": "asset_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "owner_user_id": {
-          "name": "owner_user_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "actor_user_id": {
-          "name": "actor_user_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "organization_id": {
-          "name": "organization_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "project_access_id": {
-          "name": "project_access_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "project_id": {
-          "name": "project_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "document_id": {
-          "name": "document_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "context_id": {
-          "name": "context_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "command_key": {
-          "name": "command_key",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "request_digest": {
-          "name": "request_digest",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "source_digest": {
-          "name": "source_digest",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "storage_key": {
-          "name": "storage_key",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "content_sha256": {
-          "name": "content_sha256",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "byte_length": {
-          "name": "byte_length",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "status": {
-          "name": "status",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "write_acknowledged": {
-          "name": "write_acknowledged",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": 0
-        },
-        "publication_event_id": {
-          "name": "publication_event_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "updated_at": {
-          "name": "updated_at",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        }
-      },
-      "indexes": {
-        "idx_output_asset_storage_writes_unique_1": {
-          "name": "idx_output_asset_storage_writes_unique_1",
-          "columns": [
-            "scope_key",
-            "actor_user_id",
-            "command_key"
-          ],
-          "isUnique": true
-        },
-        "idx_output_asset_storage_writes_unique_2": {
-          "name": "idx_output_asset_storage_writes_unique_2",
-          "columns": [
-            "storage_key"
-          ],
-          "isUnique": true
-        }
-      },
-      "foreignKeys": {
-        "output_asset_storage_writes_publication_event_id_events_event_id_fk": {
-          "name": "output_asset_storage_writes_publication_event_id_events_event_id_fk",
-          "tableFrom": "output_asset_storage_writes",
-          "tableTo": "events",
-          "columnsFrom": [
-            "publication_event_id"
-          ],
-          "columnsTo": [
-            "event_id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {
-        "output_asset_storage_writes_scope_key_asset_id_pk": {
-          "columns": [
-            "scope_key",
-            "asset_id"
-          ],
-          "name": "output_asset_storage_writes_scope_key_asset_id_pk"
-        }
-      },
-      "uniqueConstraints": {},
-      "checkConstraints": {
-        "output_asset_storage_writes_check_1": {
-          "name": "output_asset_storage_writes_check_1",
-          "value": "typeof(byte_length)='integer' AND byte_length>0 AND byte_length<=24000000"
-        },
-        "output_asset_storage_writes_check_2": {
-          "name": "output_asset_storage_writes_check_2",
-          "value": "status IN('writing','written','cleanup_pending','deleted')"
-        },
-        "output_asset_storage_writes_check_3": {
-          "name": "output_asset_storage_writes_check_3",
-          "value": "write_acknowledged IN(0,1)"
-        },
-        "output_asset_storage_writes_check_4": {
-          "name": "output_asset_storage_writes_check_4",
-          "value": "(organization_id IS NULL AND project_access_id IS NULL AND context_id IS NULL) OR (organization_id IS NOT NULL AND project_access_id IS NOT NULL AND context_id IS NOT NULL)"
-        }
-      }
-    },
-    "output_assets": {
-      "name": "output_assets",
-      "columns": {
-        "scope_key": {
-          "name": "scope_key",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "asset_id": {
-          "name": "asset_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "document_id": {
-          "name": "document_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "owner_user_id": {
-          "name": "owner_user_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "created_by_user_id": {
-          "name": "created_by_user_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "source_digest": {
-          "name": "source_digest",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "storage_key": {
-          "name": "storage_key",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "content_sha256": {
-          "name": "content_sha256",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "byte_length": {
-          "name": "byte_length",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "mime_type": {
-          "name": "mime_type",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "media_kind": {
-          "name": "media_kind",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "created_event_id": {
-          "name": "created_event_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "redacted_at": {
-          "name": "redacted_at",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        }
-      },
-      "indexes": {
-        "idx_output_assets_unique_1": {
-          "name": "idx_output_assets_unique_1",
-          "columns": [
-            "storage_key"
-          ],
-          "isUnique": true
-        }
-      },
-      "foreignKeys": {
-        "output_assets_created_event_id_events_event_id_fk": {
-          "name": "output_assets_created_event_id_events_event_id_fk",
-          "tableFrom": "output_assets",
-          "tableTo": "events",
-          "columnsFrom": [
-            "created_event_id"
-          ],
-          "columnsTo": [
-            "event_id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {
-        "output_assets_scope_key_asset_id_pk": {
-          "columns": [
-            "scope_key",
-            "asset_id"
-          ],
-          "name": "output_assets_scope_key_asset_id_pk"
-        }
-      },
-      "uniqueConstraints": {},
-      "checkConstraints": {
-        "output_assets_check_1": {
-          "name": "output_assets_check_1",
-          "value": "typeof(byte_length)='integer' AND byte_length>0"
-        },
-        "output_assets_check_2": {
-          "name": "output_assets_check_2",
-          "value": "media_kind IN('image','slides','audio','video','document')"
-        }
-      }
-    },
-    "output_atomic_assertions": {
-      "name": "output_atomic_assertions",
-      "columns": {
-        "token": {
-          "name": "token",
-          "type": "text",
-          "primaryKey": true,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "passed": {
-          "name": "passed",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        }
-      },
-      "indexes": {},
-      "foreignKeys": {},
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "checkConstraints": {
-        "output_atomic_assertions_check_1": {
-          "name": "output_atomic_assertions_check_1",
-          "value": "passed=1"
-        }
-      }
-    },
-    "output_commands": {
-      "name": "output_commands",
-      "columns": {
-        "scope_key": {
-          "name": "scope_key",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "actor_user_id": {
-          "name": "actor_user_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "command_key": {
-          "name": "command_key",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "request_digest": {
-          "name": "request_digest",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "action": {
-          "name": "action",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "event_id": {
-          "name": "event_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        }
-      },
-      "indexes": {},
-      "foreignKeys": {
-        "output_commands_event_id_events_event_id_fk": {
-          "name": "output_commands_event_id_events_event_id_fk",
-          "tableFrom": "output_commands",
-          "tableTo": "events",
-          "columnsFrom": [
-            "event_id"
-          ],
-          "columnsTo": [
-            "event_id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {
-        "output_commands_scope_key_actor_user_id_command_key_pk": {
-          "columns": [
-            "scope_key",
-            "actor_user_id",
-            "command_key"
-          ],
-          "name": "output_commands_scope_key_actor_user_id_command_key_pk"
-        }
-      },
-      "uniqueConstraints": {},
-      "checkConstraints": {}
-    },
-    "output_delivery_manifests": {
-      "name": "output_delivery_manifests",
-      "columns": {
-        "scope_key": {
-          "name": "scope_key",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "manifest_id": {
-          "name": "manifest_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "document_id": {
-          "name": "document_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "plan_revision_id": {
-          "name": "plan_revision_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "created_by_user_id": {
-          "name": "created_by_user_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "event_id": {
-          "name": "event_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "is_partial": {
-          "name": "is_partial",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        }
-      },
-      "indexes": {},
-      "foreignKeys": {
-        "output_delivery_manifests_scope_key_plan_revision_id_output_plan_revisions_scope_key_plan_revision_id_fk": {
-          "name": "output_delivery_manifests_scope_key_plan_revision_id_output_plan_revisions_scope_key_plan_revision_id_fk",
-          "tableFrom": "output_delivery_manifests",
-          "tableTo": "output_plan_revisions",
-          "columnsFrom": [
-            "scope_key",
-            "plan_revision_id"
-          ],
-          "columnsTo": [
-            "scope_key",
-            "plan_revision_id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        },
-        "output_delivery_manifests_event_id_events_event_id_fk": {
-          "name": "output_delivery_manifests_event_id_events_event_id_fk",
-          "tableFrom": "output_delivery_manifests",
-          "tableTo": "events",
-          "columnsFrom": [
-            "event_id"
-          ],
-          "columnsTo": [
-            "event_id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {
-        "output_delivery_manifests_scope_key_manifest_id_pk": {
-          "columns": [
-            "scope_key",
-            "manifest_id"
-          ],
-          "name": "output_delivery_manifests_scope_key_manifest_id_pk"
-        }
-      },
-      "uniqueConstraints": {},
-      "checkConstraints": {
-        "output_delivery_manifests_check_1": {
-          "name": "output_delivery_manifests_check_1",
-          "value": "is_partial IN(0,1)"
-        }
-      }
-    },
-    "output_execution_grants": {
-      "name": "output_execution_grants",
-      "columns": {
-        "scope_key": {
-          "name": "scope_key",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "grant_id": {
-          "name": "grant_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "plan_revision_id": {
-          "name": "plan_revision_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "actor_user_id": {
-          "name": "actor_user_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "payer_user_id": {
-          "name": "payer_user_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "context_id": {
-          "name": "context_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "preflight_id": {
-          "name": "preflight_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "authorization_event_id": {
-          "name": "authorization_event_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "maximum_microusd": {
-          "name": "maximum_microusd",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "maximum_calls": {
-          "name": "maximum_calls",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "status": {
-          "name": "status",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "expires_at": {
-          "name": "expires_at",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        }
-      },
-      "indexes": {
-        "idx_output_execution_grants_unique_1": {
-          "name": "idx_output_execution_grants_unique_1",
-          "columns": [
-            "scope_key",
-            "preflight_id"
-          ],
-          "isUnique": true
-        }
-      },
-      "foreignKeys": {
-        "output_execution_grants_scope_key_plan_revision_id_output_plan_revisions_scope_key_plan_revision_id_fk": {
-          "name": "output_execution_grants_scope_key_plan_revision_id_output_plan_revisions_scope_key_plan_revision_id_fk",
-          "tableFrom": "output_execution_grants",
-          "tableTo": "output_plan_revisions",
-          "columnsFrom": [
-            "scope_key",
-            "plan_revision_id"
-          ],
-          "columnsTo": [
-            "scope_key",
-            "plan_revision_id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        },
-        "output_execution_grants_scope_key_preflight_id_output_preflights_scope_key_preflight_id_fk": {
-          "name": "output_execution_grants_scope_key_preflight_id_output_preflights_scope_key_preflight_id_fk",
-          "tableFrom": "output_execution_grants",
-          "tableTo": "output_preflights",
-          "columnsFrom": [
-            "scope_key",
-            "preflight_id"
-          ],
-          "columnsTo": [
-            "scope_key",
-            "preflight_id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        },
-        "output_execution_grants_authorization_event_id_events_event_id_fk": {
-          "name": "output_execution_grants_authorization_event_id_events_event_id_fk",
-          "tableFrom": "output_execution_grants",
-          "tableTo": "events",
-          "columnsFrom": [
-            "authorization_event_id"
-          ],
-          "columnsTo": [
-            "event_id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {
-        "output_execution_grants_scope_key_grant_id_pk": {
-          "columns": [
-            "scope_key",
-            "grant_id"
-          ],
-          "name": "output_execution_grants_scope_key_grant_id_pk"
-        }
-      },
-      "uniqueConstraints": {},
-      "checkConstraints": {
-        "output_execution_grants_check_1": {
-          "name": "output_execution_grants_check_1",
-          "value": "typeof(maximum_microusd)='integer' AND maximum_microusd>0 AND maximum_microusd<=1000000000000"
-        },
-        "output_execution_grants_check_2": {
-          "name": "output_execution_grants_check_2",
-          "value": "typeof(maximum_calls)='integer' AND maximum_calls>0 AND maximum_calls<=10000"
-        },
-        "output_execution_grants_check_3": {
-          "name": "output_execution_grants_check_3",
-          "value": "status IN('authorized','active','completed','revoked','exceeded')"
-        }
-      }
-    },
-    "output_native_storage_writes": {
-      "name": "output_native_storage_writes",
-      "columns": {
-        "scope_key": {
-          "name": "scope_key",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "slot_id": {
-          "name": "slot_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "storage_key": {
-          "name": "storage_key",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "content_sha256": {
-          "name": "content_sha256",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "status": {
-          "name": "status",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "write_acknowledged": {
-          "name": "write_acknowledged",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": 0
-        },
-        "publication_event_id": {
-          "name": "publication_event_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "updated_at": {
-          "name": "updated_at",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        }
-      },
-      "indexes": {
-        "idx_output_native_storage_writes_unique_1": {
-          "name": "idx_output_native_storage_writes_unique_1",
-          "columns": [
-            "storage_key"
-          ],
-          "isUnique": true
-        }
-      },
-      "foreignKeys": {
-        "output_native_storage_writes_scope_key_slot_id_output_operation_slots_scope_key_slot_id_fk": {
-          "name": "output_native_storage_writes_scope_key_slot_id_output_operation_slots_scope_key_slot_id_fk",
-          "tableFrom": "output_native_storage_writes",
-          "tableTo": "output_operation_slots",
-          "columnsFrom": [
-            "scope_key",
-            "slot_id"
-          ],
-          "columnsTo": [
-            "scope_key",
-            "slot_id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        },
-        "output_native_storage_writes_publication_event_id_events_event_id_fk": {
-          "name": "output_native_storage_writes_publication_event_id_events_event_id_fk",
-          "tableFrom": "output_native_storage_writes",
-          "tableTo": "events",
-          "columnsFrom": [
-            "publication_event_id"
-          ],
-          "columnsTo": [
-            "event_id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {
-        "output_native_storage_writes_scope_key_slot_id_storage_key_pk": {
-          "columns": [
-            "scope_key",
-            "slot_id",
-            "storage_key"
-          ],
-          "name": "output_native_storage_writes_scope_key_slot_id_storage_key_pk"
-        }
-      },
-      "uniqueConstraints": {},
-      "checkConstraints": {
-        "output_native_storage_writes_check_1": {
-          "name": "output_native_storage_writes_check_1",
-          "value": "status IN('writing','written','cleanup_pending','deleted')"
-        },
-        "output_native_storage_writes_check_2": {
-          "name": "output_native_storage_writes_check_2",
-          "value": "write_acknowledged IN(0,1)"
-        }
-      }
-    },
-    "output_operation_routes": {
-      "name": "output_operation_routes",
-      "columns": {
-        "scope_key": {
-          "name": "scope_key",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "slot_id": {
-          "name": "slot_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "stage_key": {
-          "name": "stage_key",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "provider": {
-          "name": "provider",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "model": {
-          "name": "model",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "maximum_calls": {
-          "name": "maximum_calls",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        }
-      },
-      "indexes": {},
-      "foreignKeys": {
-        "output_operation_routes_scope_key_slot_id_output_operation_slots_scope_key_slot_id_fk": {
-          "name": "output_operation_routes_scope_key_slot_id_output_operation_slots_scope_key_slot_id_fk",
-          "tableFrom": "output_operation_routes",
-          "tableTo": "output_operation_slots",
-          "columnsFrom": [
-            "scope_key",
-            "slot_id"
-          ],
-          "columnsTo": [
-            "scope_key",
-            "slot_id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {
-        "output_operation_routes_scope_key_slot_id_stage_key_pk": {
-          "columns": [
-            "scope_key",
-            "slot_id",
-            "stage_key"
-          ],
-          "name": "output_operation_routes_scope_key_slot_id_stage_key_pk"
-        }
-      },
-      "uniqueConstraints": {},
-      "checkConstraints": {
-        "output_operation_routes_check_1": {
-          "name": "output_operation_routes_check_1",
-          "value": "typeof(maximum_calls)='integer' AND maximum_calls>0 AND maximum_calls<=1000"
-        }
-      }
-    },
-    "output_operation_slots": {
-      "name": "output_operation_slots",
-      "columns": {
-        "scope_key": {
-          "name": "scope_key",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "slot_id": {
-          "name": "slot_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "grant_id": {
-          "name": "grant_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "plan_revision_id": {
-          "name": "plan_revision_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "target_id": {
-          "name": "target_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "target_contract_digest": {
-          "name": "target_contract_digest",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "source_digest": {
-          "name": "source_digest",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "provider": {
-          "name": "provider",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "model": {
-          "name": "model",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "route_digest": {
-          "name": "route_digest",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "job_id": {
-          "name": "job_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "cost_reservation_id": {
-          "name": "cost_reservation_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "token_reservation_id": {
-          "name": "token_reservation_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "maximum_microusd": {
-          "name": "maximum_microusd",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "maximum_calls": {
-          "name": "maximum_calls",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "maximum_tokens": {
-          "name": "maximum_tokens",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "attempt_ordinal": {
-          "name": "attempt_ordinal",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": 0
-        },
-        "previous_slot_id": {
-          "name": "previous_slot_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "status": {
-          "name": "status",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "outcome_event_id": {
-          "name": "outcome_event_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "updated_at": {
-          "name": "updated_at",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        }
-      },
-      "indexes": {
-        "idx_output_operation_slots_unique_1": {
-          "name": "idx_output_operation_slots_unique_1",
-          "columns": [
-            "scope_key",
-            "grant_id",
-            "target_id"
-          ],
-          "isUnique": true
-        },
-        "idx_output_operation_slots_unique_2": {
-          "name": "idx_output_operation_slots_unique_2",
-          "columns": [
-            "scope_key",
-            "target_id",
-            "target_contract_digest",
-            "attempt_ordinal"
-          ],
-          "isUnique": true
-        },
-        "idx_output_operation_slots_unique_3": {
-          "name": "idx_output_operation_slots_unique_3",
-          "columns": [
-            "job_id"
-          ],
-          "isUnique": true
-        },
-        "idx_output_operation_slots_unique_4": {
-          "name": "idx_output_operation_slots_unique_4",
-          "columns": [
-            "cost_reservation_id"
-          ],
-          "isUnique": true
-        },
-        "idx_output_operation_slots_unique_5": {
-          "name": "idx_output_operation_slots_unique_5",
-          "columns": [
-            "token_reservation_id"
-          ],
-          "isUnique": true
-        }
-      },
-      "foreignKeys": {
-        "output_operation_slots_scope_key_grant_id_output_execution_grants_scope_key_grant_id_fk": {
-          "name": "output_operation_slots_scope_key_grant_id_output_execution_grants_scope_key_grant_id_fk",
-          "tableFrom": "output_operation_slots",
-          "tableTo": "output_execution_grants",
-          "columnsFrom": [
-            "scope_key",
-            "grant_id"
-          ],
-          "columnsTo": [
-            "scope_key",
-            "grant_id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        },
-        "output_operation_slots_scope_key_previous_slot_id_output_operation_slots_scope_key_slot_id_fk": {
-          "name": "output_operation_slots_scope_key_previous_slot_id_output_operation_slots_scope_key_slot_id_fk",
-          "tableFrom": "output_operation_slots",
-          "tableTo": "output_operation_slots",
-          "columnsFrom": [
-            "scope_key",
-            "previous_slot_id"
-          ],
-          "columnsTo": [
-            "scope_key",
-            "slot_id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        },
-        "output_operation_slots_scope_key_plan_revision_id_target_id_output_plan_targets_scope_key_plan_revision_id_target_id_fk": {
-          "name": "output_operation_slots_scope_key_plan_revision_id_target_id_output_plan_targets_scope_key_plan_revision_id_target_id_fk",
-          "tableFrom": "output_operation_slots",
-          "tableTo": "output_plan_targets",
-          "columnsFrom": [
-            "scope_key",
-            "plan_revision_id",
-            "target_id"
-          ],
-          "columnsTo": [
-            "scope_key",
-            "plan_revision_id",
-            "target_id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {
-        "output_operation_slots_scope_key_slot_id_pk": {
-          "columns": [
-            "scope_key",
-            "slot_id"
-          ],
-          "name": "output_operation_slots_scope_key_slot_id_pk"
-        }
-      },
-      "uniqueConstraints": {},
-      "checkConstraints": {
-        "output_operation_slots_check_1": {
-          "name": "output_operation_slots_check_1",
-          "value": "typeof(maximum_microusd)='integer' AND maximum_microusd>0 AND maximum_microusd<=1000000000000"
-        },
-        "output_operation_slots_check_2": {
-          "name": "output_operation_slots_check_2",
-          "value": "typeof(maximum_calls)='integer' AND maximum_calls>0 AND maximum_calls<=1000"
-        },
-        "output_operation_slots_check_3": {
-          "name": "output_operation_slots_check_3",
-          "value": "typeof(maximum_tokens)='integer' AND maximum_tokens>0"
-        },
-        "output_operation_slots_check_4": {
-          "name": "output_operation_slots_check_4",
-          "value": "typeof(attempt_ordinal)='integer' AND attempt_ordinal>=0"
-        },
-        "output_operation_slots_check_5": {
-          "name": "output_operation_slots_check_5",
-          "value": "status IN('authorized','queued','running','succeeded','failed','cancelled','unavailable','uncertain')"
-        },
-        "output_operation_slots_check_6": {
-          "name": "output_operation_slots_check_6",
-          "value": "(attempt_ordinal=0 AND previous_slot_id IS NULL) OR (attempt_ordinal>0 AND previous_slot_id IS NOT NULL)"
-        }
-      }
-    },
-    "output_plan_fulfillments": {
-      "name": "output_plan_fulfillments",
-      "columns": {
-        "scope_key": {
-          "name": "scope_key",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "plan_revision_id": {
-          "name": "plan_revision_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "target_id": {
-          "name": "target_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "acceptance_id": {
-          "name": "acceptance_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "eligibility_event_id": {
-          "name": "eligibility_event_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "checked_at": {
-          "name": "checked_at",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        }
-      },
-      "indexes": {},
-      "foreignKeys": {
-        "output_plan_fulfillments_scope_key_plan_revision_id_target_id_output_plan_targets_scope_key_plan_revision_id_target_id_fk": {
-          "name": "output_plan_fulfillments_scope_key_plan_revision_id_target_id_output_plan_targets_scope_key_plan_revision_id_target_id_fk",
-          "tableFrom": "output_plan_fulfillments",
-          "tableTo": "output_plan_targets",
-          "columnsFrom": [
-            "scope_key",
-            "plan_revision_id",
-            "target_id"
-          ],
-          "columnsTo": [
-            "scope_key",
-            "plan_revision_id",
-            "target_id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        },
-        "output_plan_fulfillments_scope_key_acceptance_id_output_target_acceptances_scope_key_acceptance_id_fk": {
-          "name": "output_plan_fulfillments_scope_key_acceptance_id_output_target_acceptances_scope_key_acceptance_id_fk",
-          "tableFrom": "output_plan_fulfillments",
-          "tableTo": "output_target_acceptances",
-          "columnsFrom": [
-            "scope_key",
-            "acceptance_id"
-          ],
-          "columnsTo": [
-            "scope_key",
-            "acceptance_id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        },
-        "output_plan_fulfillments_eligibility_event_id_events_event_id_fk": {
-          "name": "output_plan_fulfillments_eligibility_event_id_events_event_id_fk",
-          "tableFrom": "output_plan_fulfillments",
-          "tableTo": "events",
-          "columnsFrom": [
-            "eligibility_event_id"
-          ],
-          "columnsTo": [
-            "event_id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {
-        "output_plan_fulfillments_scope_key_plan_revision_id_target_id_pk": {
-          "columns": [
-            "scope_key",
-            "plan_revision_id",
-            "target_id"
-          ],
-          "name": "output_plan_fulfillments_scope_key_plan_revision_id_target_id_pk"
-        }
-      },
-      "uniqueConstraints": {},
-      "checkConstraints": {}
-    },
-    "output_plan_revisions": {
-      "name": "output_plan_revisions",
-      "columns": {
-        "scope_key": {
-          "name": "scope_key",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "scope_kind": {
-          "name": "scope_kind",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "owner_user_id": {
-          "name": "owner_user_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "project_id": {
-          "name": "project_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "document_id": {
-          "name": "document_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "organization_id": {
-          "name": "organization_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "project_access_id": {
-          "name": "project_access_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "plan_revision_id": {
-          "name": "plan_revision_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "plan_id": {
-          "name": "plan_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "revision": {
-          "name": "revision",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "confirmed_event_id": {
-          "name": "confirmed_event_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "requirements_digest": {
-          "name": "requirements_digest",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "source_digest": {
-          "name": "source_digest",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "resolver_version": {
-          "name": "resolver_version",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "source_head": {
-          "name": "source_head",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "target_count": {
-          "name": "target_count",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        }
-      },
-      "indexes": {
-        "idx_output_plans_document": {
-          "name": "idx_output_plans_document",
-          "columns": [
-            "scope_key",
-            "document_id",
-            "\"revision\" DESC"
-          ],
-          "isUnique": false
-        },
-        "idx_output_plan_revisions_unique_1": {
-          "name": "idx_output_plan_revisions_unique_1",
-          "columns": [
-            "scope_key",
-            "plan_id",
-            "revision"
-          ],
-          "isUnique": true
-        }
-      },
-      "foreignKeys": {
-        "output_plan_revisions_confirmed_event_id_events_event_id_fk": {
-          "name": "output_plan_revisions_confirmed_event_id_events_event_id_fk",
-          "tableFrom": "output_plan_revisions",
-          "tableTo": "events",
-          "columnsFrom": [
-            "confirmed_event_id"
-          ],
-          "columnsTo": [
-            "event_id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {
-        "output_plan_revisions_scope_key_plan_revision_id_pk": {
-          "columns": [
-            "scope_key",
-            "plan_revision_id"
-          ],
-          "name": "output_plan_revisions_scope_key_plan_revision_id_pk"
-        }
-      },
-      "uniqueConstraints": {},
-      "checkConstraints": {
-        "output_plan_revisions_check_1": {
-          "name": "output_plan_revisions_check_1",
-          "value": "scope_kind IN('personal','project')"
-        },
-        "output_plan_revisions_check_2": {
-          "name": "output_plan_revisions_check_2",
-          "value": "typeof(revision)='integer' AND revision>0"
-        },
-        "output_plan_revisions_check_3": {
-          "name": "output_plan_revisions_check_3",
-          "value": "typeof(source_head)='integer' AND source_head>=0"
-        },
-        "output_plan_revisions_check_4": {
-          "name": "output_plan_revisions_check_4",
-          "value": "typeof(target_count)='integer' AND target_count>=0 AND target_count<=1000"
-        },
-        "output_plan_revisions_check_5": {
-          "name": "output_plan_revisions_check_5",
-          "value": "(scope_kind='personal' AND organization_id IS NULL AND project_access_id IS NULL) OR (scope_kind='project' AND organization_id IS NOT NULL AND project_access_id IS NOT NULL)"
-        }
-      }
-    },
-    "output_plan_targets": {
-      "name": "output_plan_targets",
-      "columns": {
-        "scope_key": {
-          "name": "scope_key",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "plan_revision_id": {
-          "name": "plan_revision_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "target_id": {
-          "name": "target_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "target_contract_digest": {
-          "name": "target_contract_digest",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "media_kind": {
-          "name": "media_kind",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "required": {
-          "name": "required",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "selected": {
-          "name": "selected",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "ordinal": {
-          "name": "ordinal",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        }
-      },
-      "indexes": {},
-      "foreignKeys": {
-        "output_plan_targets_scope_key_plan_revision_id_output_plan_revisions_scope_key_plan_revision_id_fk": {
-          "name": "output_plan_targets_scope_key_plan_revision_id_output_plan_revisions_scope_key_plan_revision_id_fk",
-          "tableFrom": "output_plan_targets",
-          "tableTo": "output_plan_revisions",
-          "columnsFrom": [
-            "scope_key",
-            "plan_revision_id"
-          ],
-          "columnsTo": [
-            "scope_key",
-            "plan_revision_id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {
-        "output_plan_targets_scope_key_plan_revision_id_target_id_pk": {
-          "columns": [
-            "scope_key",
-            "plan_revision_id",
-            "target_id"
-          ],
-          "name": "output_plan_targets_scope_key_plan_revision_id_target_id_pk"
-        }
-      },
-      "uniqueConstraints": {},
-      "checkConstraints": {
-        "output_plan_targets_check_1": {
-          "name": "output_plan_targets_check_1",
-          "value": "media_kind IN('image','slides','audio','video','document','unknown')"
-        },
-        "output_plan_targets_check_2": {
-          "name": "output_plan_targets_check_2",
-          "value": "required IN(0,1)"
-        },
-        "output_plan_targets_check_3": {
-          "name": "output_plan_targets_check_3",
-          "value": "selected IN(0,1)"
-        },
-        "output_plan_targets_check_4": {
-          "name": "output_plan_targets_check_4",
-          "value": "typeof(ordinal)='integer' AND ordinal>=0"
-        }
-      }
-    },
-    "output_preflights": {
-      "name": "output_preflights",
-      "columns": {
-        "scope_key": {
-          "name": "scope_key",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "preflight_id": {
-          "name": "preflight_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "plan_revision_id": {
-          "name": "plan_revision_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "actor_user_id": {
-          "name": "actor_user_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "terms_digest": {
-          "name": "terms_digest",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "event_id": {
-          "name": "event_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "expires_at": {
-          "name": "expires_at",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        }
-      },
-      "indexes": {},
-      "foreignKeys": {
-        "output_preflights_scope_key_plan_revision_id_output_plan_revisions_scope_key_plan_revision_id_fk": {
-          "name": "output_preflights_scope_key_plan_revision_id_output_plan_revisions_scope_key_plan_revision_id_fk",
-          "tableFrom": "output_preflights",
-          "tableTo": "output_plan_revisions",
-          "columnsFrom": [
-            "scope_key",
-            "plan_revision_id"
-          ],
-          "columnsTo": [
-            "scope_key",
-            "plan_revision_id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        },
-        "output_preflights_event_id_events_event_id_fk": {
-          "name": "output_preflights_event_id_events_event_id_fk",
-          "tableFrom": "output_preflights",
-          "tableTo": "events",
-          "columnsFrom": [
-            "event_id"
-          ],
-          "columnsTo": [
-            "event_id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {
-        "output_preflights_scope_key_preflight_id_pk": {
-          "columns": [
-            "scope_key",
-            "preflight_id"
-          ],
-          "name": "output_preflights_scope_key_preflight_id_pk"
-        }
-      },
-      "uniqueConstraints": {},
-      "checkConstraints": {}
-    },
-    "output_provider_calls": {
-      "name": "output_provider_calls",
-      "columns": {
-        "scope_key": {
-          "name": "scope_key",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "slot_id": {
-          "name": "slot_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "call_key": {
-          "name": "call_key",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "client_request_id": {
-          "name": "client_request_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "request_digest": {
-          "name": "request_digest",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "stage_key": {
-          "name": "stage_key",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "provider": {
-          "name": "provider",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "model": {
-          "name": "model",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "reserved_microusd": {
-          "name": "reserved_microusd",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "used_microusd": {
-          "name": "used_microusd",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "status": {
-          "name": "status",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "provider_response_id": {
-          "name": "provider_response_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "settled_at": {
-          "name": "settled_at",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        }
-      },
-      "indexes": {
-        "idx_output_provider_calls_unique_1": {
-          "name": "idx_output_provider_calls_unique_1",
-          "columns": [
-            "client_request_id"
-          ],
-          "isUnique": true
-        }
-      },
-      "foreignKeys": {
-        "output_provider_calls_scope_key_slot_id_stage_key_output_operation_routes_scope_key_slot_id_stage_key_fk": {
-          "name": "output_provider_calls_scope_key_slot_id_stage_key_output_operation_routes_scope_key_slot_id_stage_key_fk",
-          "tableFrom": "output_provider_calls",
-          "tableTo": "output_operation_routes",
-          "columnsFrom": [
-            "scope_key",
-            "slot_id",
-            "stage_key"
-          ],
-          "columnsTo": [
-            "scope_key",
-            "slot_id",
-            "stage_key"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {
-        "output_provider_calls_scope_key_slot_id_call_key_pk": {
-          "columns": [
-            "scope_key",
-            "slot_id",
-            "call_key"
-          ],
-          "name": "output_provider_calls_scope_key_slot_id_call_key_pk"
-        }
-      },
-      "uniqueConstraints": {},
-      "checkConstraints": {
-        "output_provider_calls_check_1": {
-          "name": "output_provider_calls_check_1",
-          "value": "typeof(reserved_microusd)='integer' AND reserved_microusd>0"
-        },
-        "output_provider_calls_check_2": {
-          "name": "output_provider_calls_check_2",
-          "value": "used_microusd IS NULL OR typeof(used_microusd)='integer' AND used_microusd>=0"
-        },
-        "output_provider_calls_check_3": {
-          "name": "output_provider_calls_check_3",
-          "value": "status IN('pending','uncertain','settled','rejected')"
-        }
-      }
-    },
-    "output_results": {
-      "name": "output_results",
-      "columns": {
-        "scope_key": {
-          "name": "scope_key",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "result_id": {
-          "name": "result_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "document_id": {
-          "name": "document_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "plan_revision_id": {
-          "name": "plan_revision_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "target_id": {
-          "name": "target_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "target_contract_digest": {
-          "name": "target_contract_digest",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "source_digest": {
-          "name": "source_digest",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "asset_id": {
-          "name": "asset_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "result_revision": {
-          "name": "result_revision",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "content_sha256": {
-          "name": "content_sha256",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "validation_policy": {
-          "name": "validation_policy",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "checks_status": {
-          "name": "checks_status",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "created_by_user_id": {
-          "name": "created_by_user_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "bound_event_id": {
-          "name": "bound_event_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        }
-      },
-      "indexes": {},
-      "foreignKeys": {
-        "output_results_scope_key_asset_id_output_assets_scope_key_asset_id_fk": {
-          "name": "output_results_scope_key_asset_id_output_assets_scope_key_asset_id_fk",
-          "tableFrom": "output_results",
-          "tableTo": "output_assets",
-          "columnsFrom": [
-            "scope_key",
-            "asset_id"
-          ],
-          "columnsTo": [
-            "scope_key",
-            "asset_id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        },
-        "output_results_scope_key_plan_revision_id_target_id_output_plan_targets_scope_key_plan_revision_id_target_id_fk": {
-          "name": "output_results_scope_key_plan_revision_id_target_id_output_plan_targets_scope_key_plan_revision_id_target_id_fk",
-          "tableFrom": "output_results",
-          "tableTo": "output_plan_targets",
-          "columnsFrom": [
-            "scope_key",
-            "plan_revision_id",
-            "target_id"
-          ],
-          "columnsTo": [
-            "scope_key",
-            "plan_revision_id",
-            "target_id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        },
-        "output_results_bound_event_id_events_event_id_fk": {
-          "name": "output_results_bound_event_id_events_event_id_fk",
-          "tableFrom": "output_results",
-          "tableTo": "events",
-          "columnsFrom": [
-            "bound_event_id"
-          ],
-          "columnsTo": [
-            "event_id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {
-        "output_results_scope_key_result_id_pk": {
-          "columns": [
-            "scope_key",
-            "result_id"
-          ],
-          "name": "output_results_scope_key_result_id_pk"
-        }
-      },
-      "uniqueConstraints": {},
-      "checkConstraints": {
-        "output_results_check_1": {
-          "name": "output_results_check_1",
-          "value": "checks_status IN('passed','failed','unavailable')"
-        }
-      }
-    },
-    "output_target_acceptances": {
-      "name": "output_target_acceptances",
-      "columns": {
-        "scope_key": {
-          "name": "scope_key",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "acceptance_id": {
-          "name": "acceptance_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "target_id": {
-          "name": "target_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "target_contract_digest": {
-          "name": "target_contract_digest",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "result_id": {
-          "name": "result_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "result_revision": {
-          "name": "result_revision",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "content_sha256": {
-          "name": "content_sha256",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "source_digest": {
-          "name": "source_digest",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "validation_policy": {
-          "name": "validation_policy",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "reviewer_user_id": {
-          "name": "reviewer_user_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "approval_event_id": {
-          "name": "approval_event_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        }
-      },
-      "indexes": {},
-      "foreignKeys": {
-        "output_target_acceptances_scope_key_result_id_output_results_scope_key_result_id_fk": {
-          "name": "output_target_acceptances_scope_key_result_id_output_results_scope_key_result_id_fk",
-          "tableFrom": "output_target_acceptances",
-          "tableTo": "output_results",
-          "columnsFrom": [
-            "scope_key",
-            "result_id"
-          ],
-          "columnsTo": [
-            "scope_key",
-            "result_id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        },
-        "output_target_acceptances_approval_event_id_events_event_id_fk": {
-          "name": "output_target_acceptances_approval_event_id_events_event_id_fk",
-          "tableFrom": "output_target_acceptances",
-          "tableTo": "events",
-          "columnsFrom": [
-            "approval_event_id"
-          ],
-          "columnsTo": [
-            "event_id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {
-        "output_target_acceptances_scope_key_acceptance_id_pk": {
-          "columns": [
-            "scope_key",
-            "acceptance_id"
-          ],
-          "name": "output_target_acceptances_scope_key_acceptance_id_pk"
-        }
-      },
-      "uniqueConstraints": {},
-      "checkConstraints": {}
-    },
     "pilot_cohorts": {
       "name": "pilot_cohorts",
       "columns": {
@@ -8025,20 +6047,11 @@
   "views": {},
   "enums": {},
   "_meta": {
+    "schemas": {},
     "tables": {},
     "columns": {}
   },
   "internal": {
-    "indexes": {
-      "idx_output_plans_document": {
-        "columns": {
-          "\"revision\" DESC": {
-            "isExpression": true
-          }
-        }
-      }
-    }
-  },
-  "id": "bf24355f-2406-5fad-af45-b45c024f0440",
-  "prevId": "dc8443f5-c38a-4897-960d-64d329b5a696"
+    "indexes": {}
+  }
 }

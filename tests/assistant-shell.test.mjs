@@ -38,7 +38,9 @@ test("every privileged page gets an independent accessible platform host with no
   assert.match(host, /\.models=\$\{\[\]\}/u);
   assert.match(host, /\.pageLabel=\$\{this\.#pageLabel\(\)\}/u);
   assert.match(host, /destination\.application !== session\.audience/u);
-  assert.match(host, /location\.assign\(destination\.route\)/u);
+  assert.match(host, /if \(!host\?\.navigateFrom\(this, destination\.route\)\) return;/u);
+  assert.match(shell, /applicationIdFromRoute\(path\) !== applicationIdFromRoute\(location\.pathname\)[\s\S]*?location\.assign\(path\)/u);
+  assert.doesNotMatch(host, /history\.pushState|location\.assign/u);
   assert.match(host, /session\.availableApplications\?\.some/u);
   assert.match(host, /platformSession\.subscribe\(\(\) => \{ this\.#sessionChanged\(\); \}\)/u);
   assert.match(host, /this\.#unsubscribe\?\.\(\)/u);
@@ -52,40 +54,49 @@ test("every privileged page gets an independent accessible platform host with no
   assert.match(panel, /this\.guidanceOnly(?: && this\.#activeMode === "guidance")? \? html`<p[^`]*assistant\.guidanceOnly/u);
 });
 
-test("the visible assistant exposes governed model choice, explicit premium approval, task progress, and safe recovery", async () => {
-  const [panel, host, policy, composer] = await Promise.all([
+test("free guidance separates exact specialist approval, durable task recovery and legacy financial controls", async () => {
+  const [panel, host, policy, composer, assistantApi] = await Promise.all([
     read("src/components/design-system/assistant-panel.ts"),
     read("src/components/forma-creative-assistant.ts"),
     read("worker/pilot-policy.ts"),
     read("src/components/design-system/conversation-composer.ts"),
+    read("worker/assistant-api.ts"),
   ]);
-  assert.match(panel, /class="forma-assistant-model"/u);
-  assert.match(panel, /assistant\.model\.automatic/u);
+  assert.match(panel, /#specialistView\(\)/u);
+  assert.match(panel, /consequentialPreview\(quote, this\.i18n\)/u);
+  assert.match(panel, /ensureNativeModalDialog/u);
   assert.match(panel, /premiumApprovalRequired/u);
-  assert.match(panel, /type="checkbox"/u);
-  assert.match(panel, /premiumApproval:\s*true/u);
-  assert.match(panel, /#premiumApproved\s*=\s*false/u);
-  assert.match(panel, /\.submitDisabled=\$\{Boolean\(selectedModel\?\.premiumApprovalRequired && !this\.#premiumApproved \|\| this\.#?busyModes\.includes\(this\.#activeMode\)\)\}/u);
+  assert.doesNotMatch(panel, /type="checkbox"|premiumApproval:\s*true|#premiumApproved/u);
+  const submit = panel.slice(panel.indexOf("  #submit("), panel.indexOf("  #contextName("));
+  assert.doesNotMatch(submit, /model:|premiumApproval/u);
+  assert.match(submit, /retainGuidanceDraft/u);
   assert.match(composer, /\?disabled=\$\{this\.disabled \|\| this\.submitDisabled \|\| this\.busy \|\| !this\.value\.trim\(\)\}/u);
   assert.match(panel, /class="forma-assistant-task"/u);
+  assert.match(panel, /assistant\.specialist\.retrieve/u);
+  assert.match(panel, /!task\.executionId && task\.status === "queued"/u);
   assert.match(panel, /assistant\.task\.estimatedCost/u);
-  assert.match(panel, /assistant\.task\.cancel/u);
-  assert.match(panel, /\["needs-review", "reconciling"\]\.includes\(task\.status\) && this\.canReconcile/u);
-  assert.match(panel, /\["needs-review", "reconciling"\]\.includes\(task\.status\) && !this\.canReconcile/u);
-  assert.match(panel, /task\.status === "needs-review" \|\| task\.status === "reconciling" \? "needsReview"/u);
   assert.match(panel, /assistant\.task\.contactAdministrator/u);
-  assert.match(panel, /assistant\.task\.reviewReference/u);
-  assert.match(host, /premiumApproval:\s*true/u);
-  assert.match(host, /\/api\/assistant\/tasks\//u);
-  assert.match(host, /confirmedNoProviderCharge:\s*true/u);
-  assert.match(host, /task\.status === "queued" \|\| task\.status === "running" \|\| task\.status === "reconciling"/u);
+  assert.match(host, /\/api\/assistant\/specialist/u);
+  assert.match(host, /approvedBindingHash: approvedHash/u);
+  assert.match(host, /request\.turnId, message: request\.message, locale: request\.locale/u);
+  assert.doesNotMatch(host, /premiumApproval:\s*true/u);
+  assert.match(host, /if \(detail\.action !== "cancel"\) return;/u);
+  assert.match(host, /\.canReconcile=\$\{false\}/u);
+  assert.doesNotMatch(host, /confirmedNoProviderCharge|\/reconcile/u);
+  const actorTask = assistantApi.slice(assistantApi.indexOf("export async function handleAssistantTask("), assistantApi.indexOf("/** The historical no-charge attestation"));
+  assert.match(actorTask, /if \(operation === "reconcile"\) \{[\s\S]*?return json\(\{ error: "assistant_independent_reviewer_required" \}, 403\);/u);
+  const billing = assistantApi.slice(assistantApi.indexOf("export async function handleAssistantBillingReconciliation("));
+  assert.match(billing, /actorUserId === reviewer\.userId/u);
+  assert.match(billing, /body\.confirmedNoProviderCharge !== true/u);
+  assert.match(host, /if \(detail\.task\.executionId\) \{[\s\S]*assistantApprovedRequestCanStop/u);
+  assert.match(panel, /assistant\.specialist\.stopLabel/u);
+  assert.match(host, /action === "stop" \? undefined : \{ action/u);
   assert.match(host, /@forma-assistant-task=/u);
   assert.match(policy, /assistantPremiumUsers/u);
-  assert.match(panel,/assistant\.coverage\.visible/u,"on-screen context is honestly distinguished from provider-visible evidence");
-  assert.match(panel,/assistant\.coverage\.readable/u);
-  assert.match(panel,/assistant\.coverage\.withheld/u);
-  assert.match(panel,/assistant\.coverage\.protectedOverflow/u);
-  assert.match(panel,/item\.providerEligible&&\(!item\.immutable\|\|item\.providerVisibility==="governed"\)/u);
+  for (const key of ["visible", "readable", "withheld", "protectedOverflow"]) {
+    assert.ok(panel.includes("assistant.coverage." + key));
+  }
+  assert.match(panel, /item\.providerEligible&&\(!item\.immutable\|\|item\.providerVisibility==="governed"\)/u);
 });
 
 test("the assistant keeps all four locales and exact interpolation placeholders aligned", () => {
@@ -146,4 +157,137 @@ test("specialized assistants preserve exact scope, truthful readiness, reviewed 
   assert.match(panelStyles,/grid-template-rows:\s*auto minmax\(0, 1fr\) auto/u);
   assert.match(worker,/error:"canvas_context_required"/u);
   assert.match(worker,/error:"project_context_required"/u);
+});
+
+// E compact-launcher source contracts only. A decorative icon is emitted as
+// a span too; these checks preserve its existing native-button/name contract.
+// They do not measure a browser compact state or collision/settling latency.
+const eCompactLauncher = 'forma-assistant-panel[data-compact-launcher="true"] .forma-assistant-launcher';
+
+test("E compact assistant retains its named native launcher, shared spark span and existing label-hiding declarations", async () => {
+  const [panel, icons, styles] = await Promise.all([
+    read("src/components/design-system/assistant-panel.ts"),
+    read("src/components/icons.ts"),
+    read("src/components/design-system/assistant-panel.css"),
+  ]);
+  for (const fragment of [
+    'if (!this.open) return html`<button type="button" class="forma-assistant-launcher"',
+    'aria-haspopup="dialog" aria-label=${this.i18n.t("assistant.open")} title=${this.i18n.t("assistant.open")}',
+    '@click=${() => { this.#toggle(true); }}>',
+    '${icon("spark")}<span>${this.i18n.t("assistant.open")}</span></button>',
+  ]) assert.ok(panel.includes(fragment), "preserve the existing native closed launcher: " + fragment);
+  assert.ok(icons.includes("spark: sparkSvg,"));
+  assert.ok(icons.includes('return html`<span class="forma-icon" aria-hidden="true">${unsafeHTML(source)}</span>`;'),
+    "the actual reused icon helper produces a decorative direct span, not a new icon or control");
+  assert.match(styles, /\.forma-assistant-launcher \{[^}]*min-block-size: 2\.75rem;/u);
+  const rowStart = styles.indexOf(eCompactLauncher + " {"), rowEnd = styles.indexOf("\n}", rowStart);
+  assert.ok(rowStart >= 0 && rowEnd > rowStart);
+  const row = styles.slice(rowStart, rowEnd);
+  for (const declaration of [
+    "inline-size: var(--forma-control-min-size, 2.75rem);",
+    "min-inline-size: var(--forma-control-min-size, 2.75rem);",
+    "justify-content: center;", "padding-inline: 0;",
+  ]) assert.ok(row.includes(declaration), "retain the existing compact native target: " + declaration);
+  const hiddenStart = styles.indexOf(eCompactLauncher + " > span");
+  const bodyStart = styles.indexOf("{", hiddenStart), bodyEnd = styles.indexOf("\n}", bodyStart);
+  assert.ok(hiddenStart >= 0 && bodyStart > hiddenStart && bodyEnd > bodyStart,
+    "the existing compact label-hiding block must be present before the desired selector assertion");
+  assert.deepEqual(styles.slice(bodyStart + 1, bodyEnd).trim().split("\n").map(line => line.trim()), [
+    "position: absolute;", "inline-size: 1px;", "block-size: 1px;", "overflow: hidden;",
+    "clip: rect(0, 0, 0, 0);", "clip-path: inset(50%);", "white-space: nowrap;",
+  ], "keep the existing text-only visually-hidden treatment; do not change size, offsets, names or behavior");
+});
+
+test("E compact assistant hides only its label span and leaves the existing spark icon eligible to paint", async () => {
+  const styles = await read("src/components/design-system/assistant-panel.css");
+  const labelOnly = eCompactLauncher + " > span:not(.forma-icon) {";
+  assert.equal(styles.split(labelOnly).length - 1, 1,
+    "the compact label-hiding selector must explicitly exclude the reused decorative icon span");
+  assert.equal(styles.includes(eCompactLauncher + " > span {"), false,
+    "the old broad selector must not also hide both direct children");
+});
+
+
+test("D411 short-landscape assistant placement retains the same solver-owned offset as other postures", async () => {
+  const styles = await read("src/components/design-system/assistant-panel.css");
+  const media = "@media (max-height: 34rem) and (orientation: landscape) {";
+  const start = styles.indexOf(media), host = styles.indexOf("  forma-assistant-panel {", start);
+  const end = styles.indexOf("\n  }", host);
+  assert.ok(start >= 0 && host > start && end > host, "the existing short-landscape host override must be present");
+  assert.ok(styles.includes("max(1rem, env(safe-area-inset-bottom, 0px)) + var(--forma-keyboard-offset, 0px) + var(--forma-assistant-obstacle-offset, 0px)"),
+    "the ordinary desktop inset already honors the same solver-owned offset");
+  assert.ok(styles.includes("max(var(--forma-bottom-nav-size, 0px), var(--forma-keyboard-offset, 0px), env(safe-area-inset-bottom, 0px)) + var(--forma-assistant-obstacle-offset, 0px)"),
+    "the existing narrow inset retains its real navigation/keyboard/safe-area owners");
+  const declarations = styles.slice(host + "  forma-assistant-panel {".length, end).trim().split("\n").map(line => line.trim());
+  assert.deepEqual(declarations, [
+    "inset-block-end: calc(max(.5rem, var(--forma-keyboard-offset, 0px), env(safe-area-inset-bottom, 0px)) + var(--forma-assistant-obstacle-offset, 0px));",
+  ], "short landscape must consume the existing finite solver offset without changing its base/safe/keyboard inset or adding another position system");
+});
+
+test("D428 tight launcher uses existing native inset-focus tokens and the same bounded focus-triggered placement", async () => {
+  const [panel, styles] = await Promise.all([
+    read("src/components/design-system/assistant-panel.ts"),
+    read("src/components/design-system/assistant-panel.css"),
+  ]);
+  const tight = 'forma-assistant-panel[data-tight-launcher="true"] .forma-assistant-launcher';
+  const block = (selector, start = 0) => {
+    const at = styles.indexOf(selector + " {", start), end = styles.indexOf("\n}", at);
+    assert.ok(at >= start && end > at, "one explicit current tight-launcher source rule: " + selector);
+    return styles.slice(at, end + 2);
+  };
+  assert.ok(styles.includes("min-inline-size: var(--forma-control-min-size, 2.75rem);"));
+  assert.ok(styles.includes("min-block-size: 2.75rem;"));
+  assert.ok(panel.includes("if (!launcher || this.open || launcher.contains(focused)) return;"));
+  assert.ok(panel.includes("for (let attempt = 0; attempt < 8; attempt += 1)"));
+  assert.ok(panel.includes("for (let attempt = 0; attempt < 4; attempt += 1)"));
+  assert.ok(block(tight).includes("box-shadow: none;"), "tight placement must not paint a decorative shadow across neighboring focus");
+  const focus = block(tight + ":focus-visible");
+  assert.ok(focus.includes("outline: var(--forma-focus-ring-width, .1875rem) solid var(--forma-focus-ring-color, currentColor);"));
+  assert.ok(focus.includes("outline-offset: calc(-1 * var(--forma-focus-ring-width, .1875rem));"),
+    "the complete visible native ring stays within the existing 44px footprint");
+  const forced = styles.indexOf("@media (forced-colors: active)");
+  assert.ok(forced >= 0);
+  assert.ok(block(tight + ":focus-visible", forced).includes("outline-color: Highlight;"));
+  assert.ok(panel.includes('window.addEventListener("focusin", this.#schedulePosition, { passive: true });'));
+  assert.ok(panel.includes('window.removeEventListener("focusin", this.#schedulePosition);'));
+  // The original finite Window port does not dispatch focusin. This source
+  // contract is not a claim of real event delivery or rendered focus paint.
+});
+
+test("E3 Studio utility reserves real space only beside an eligible current floating Assistant and retains the original scroll owner", async () => {
+  const [panel, styles, studio] = await Promise.all([
+    read("src/components/design-system/assistant-panel.ts"),
+    read("src/components/design-system/assistant-panel.css"),
+    read("src/components/studio-navigation.css"),
+  ]);
+  assert.ok(panel.includes('if (!launcher || this.open || launcher.contains(focused)) return;'));
+  assert.ok(panel.includes('for (let attempt = 0; attempt < 8; attempt += 1)'));
+  assert.ok(panel.includes('for (let attempt = 0; attempt < 4; attempt += 1)'));
+  assert.ok(studio.includes('scroll-padding-inline: var(--forma-focus-clearance);'));
+  assert.ok(studio.includes('max-block-size: none;'));
+  const scope = '.application-creative[data-layout-intent="workbench"]:is([data-nav-posture="compact"], [data-short-height="true"]):has(> forma-creative-assistant > forma-assistant-panel)';
+  const selector = scope + ' .studio-header-stack > forma-studio-mode-nav';
+  const block = (target, start = 0) => {
+    const at = styles.indexOf(target + ' {', start), end = styles.indexOf('}', at);
+    assert.ok(at >= start && end > at, 'exact scoped Studio utility source rule: ' + target);
+    return styles.slice(at, end + 1);
+  };
+  const reservation = block(selector);
+  for (const declaration of ['--forma-assistant-studio-slot: 1;', 'display: grid;',
+    'grid-template-columns: minmax(0, 1fr) var(--forma-assistant-studio-control);',
+    'column-gap: var(--forma-focus-clearance, .5rem);',
+    'padding-inline-end: max(var(--forma-focus-clearance, .5rem), var(--forma-safe-inline-end, 0px));'])
+    assert.ok(reservation.includes(declaration), declaration);
+  assert.equal(reservation.includes('max-block-size:'), false, 'a control minimum is not a row ceiling');
+  assert.equal(reservation.includes('overflow:'), false, 'the utility host must not acquire another scroll clip');
+  const nav = block(selector + ' > .studio-mode-nav');
+  for (const declaration of ['grid-column: 1;', 'min-inline-size: 0;', 'max-inline-size: 100%;']) assert.ok(nav.includes(declaration));
+  const coarse = styles.indexOf('@media (pointer: coarse)', styles.indexOf(selector));
+  assert.ok(coarse >= 0);
+  assert.ok(block(selector, coarse).includes('max(var(--forma-control-min-size, 2.75rem), var(--forma-hit-target-coarse, 3rem))'));
+  const launcher = block('forma-assistant-panel[data-studio-launcher="true"] > .forma-assistant-launcher');
+  for (const property of ['inline-size', 'min-inline-size', 'block-size', 'min-block-size'])
+    assert.ok(launcher.includes(property + ': var(--forma-assistant-studio-size);'), 'the button matches the same real cell in both dimensions');
+  assert.ok(styles.includes('forma-assistant-panel[data-studio-launcher="true"]:has(> .forma-assistant-launcher)'));
+  assert.ok(panel.includes('this.dataset.studioLauncher = "true";\n    this.style.removeProperty("--forma-assistant-obstacle-offset");'));
 });

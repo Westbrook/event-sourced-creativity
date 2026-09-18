@@ -386,18 +386,35 @@ class FormaOutputPreview {
     this.#next = next;
     this.#status = status;
     this.#navigation = navigation;
-    if (typeof dialog.showModal !== "function") return;
+    const nativeModal = typeof dialog.showModal === "function";
 
     for (const details of document.querySelectorAll<HTMLDetailsElement>("[data-output-preview]")) {
       const summary = details.querySelector<HTMLElement>("summary");
       if (!summary || !details.querySelector<HTMLElement>("[data-preview-panel]")) continue;
-      summary.setAttribute("aria-haspopup", "dialog");
-      summary.setAttribute("aria-controls", dialog.id);
-      summary.addEventListener("click", (event) => {
-        event.preventDefault();
-        this.#open(details, summary);
-      });
+      const linked = [...document.querySelectorAll<HTMLAnchorElement>("[data-demo-preview]")].filter(link =>
+        summary.id && link.dataset.demoPreview === details.dataset.outputPreview
+        && link.getAttribute("href") === "#" + summary.id);
+      // The fixed walkthrough uses this same preview owner, not a copy or a
+      // generation/review command. Native fragment links remain the fallback.
+      for (const invoker of [...(nativeModal ? [summary] : []), ...linked]) {
+        if (nativeModal) {
+          invoker.setAttribute("aria-haspopup", "dialog");
+          invoker.setAttribute("aria-controls", dialog.id);
+        }
+        invoker.addEventListener("click", (event) => {
+          const fromLink = invoker !== summary;
+          if (fromLink && (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey
+            || !invoker.isConnected || !details.isConnected || !summary.isConnected
+            || invoker.getAttribute("href") !== "#" + summary.id)) return;
+          if (!fromLink) event.preventDefault();
+          this.#open(details, invoker);
+          // Failed/unsupported top layers reopen the exact native disclosure;
+          // its ordinary fragment navigation must still reach that summary.
+          if (fromLink && dialog.open) event.preventDefault();
+        });
+      }
     }
+    if (!nativeModal) return;
 
     close.addEventListener("click", () => dialog.close());
     previous.addEventListener("click", () => this.#show(this.#index - 1));
@@ -762,6 +779,8 @@ if (ambientToggle) {
     ambientToggle.hidden = reduced;
     ambientToggle.setAttribute("aria-pressed", String(ambientPaused));
     const key: MarketingMessageKey = ambientPaused ? "motionResumeLabel" : "motionPauseLabel";
+    ambientToggle.dataset.copy = key;
+    ambientToggle.textContent = messages[key];
     ambientToggle.dataset.copyAria = key;
     ambientToggle.setAttribute("aria-label", messages[key]);
   };

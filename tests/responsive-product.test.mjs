@@ -200,6 +200,45 @@ test("production workflows adapt to their actual artifact pane instead of the ou
   assert.equal(winning(".production-workflow-footer > small", "flex", desktop, narrowPane)?.value, "1 1 auto");
 });
 
+test("E Library narrow header keeps native file-picker peers content-led before wrapping", () => {
+  // Source/cascade contract only; existing native file actions and physical fit remain separate gates.
+  const start = library.indexOf('<header class="page-header page-header--library">');
+  const end = library.indexOf("</header>", start);
+  assert.ok(start >= 0 && end > start, "inspect the actual shared Library header");
+  const header = library.slice(start, end);
+  assert.ok(header.includes('<div class="page-header-actions">'));
+  assert.ok(header.includes('class="button primary" data-context-controls-id="__new__"'));
+  assert.ok(header.includes('</form><button class="button secondary"'));
+  for (const key of ["projects.newReusableBlock", "projects.importDocument", "projects.exportProject"])
+    assert.ok(header.includes('this.i18n.t("' + key + '",'), "retain the actual localized peer: " + key);
+  assert.match(header, /<form @submit=\$\{\(event:SubmitEvent\)=>event\.preventDefault\(\)\}><label class="button secondary file-button">[\s\S]*?<input type="file" accept="application\/json" @change=\$\{this\.#import\}>/);
+
+  const viewport = viewports.find(entry => entry.name === "portrait phone");
+  assert.ok(viewport);
+  // Reuse the existing portrait viewport as a declared Library container; this is not measured geometry.
+  const container = { name: "library", width: viewport.width };
+  const row = ".page-header--library .page-header-actions";
+  const rows = ":is(.page-header-actions,.family-actions,.generation-failure-actions,.forma-activity-header-actions)";
+  const fileForm = rows + ' > form:has(> label.button.file-button:only-child > input[type="file"])';
+  const peers = [row + " > *", ".page-header.page-header--library .page-header-actions > *", ".page-header-actions > *"];
+  const buttons = [...peers, "button", ".button", ".page-header-actions .button",
+    rows + " > :is(.button,.icon-button,forma-ui-button,forma-ui-icon-button,forma-ui-link)"];
+  // The later mobile descendant-button rule matches New/Export, but not the Import form.
+  for (const [name, selectors] of [["New", [...buttons, ".button.primary"]], ["Import form", [...peers, fileForm]], ["Export", [...buttons, ".button.secondary"]]])
+    assert.equal(winning(selectors, "flex", viewport, container)?.value, "1 1 auto",
+      name + ": the complete actual peer cascade must retain a content-led basis");
+  assert.equal(winning([row, ".page-header-actions"], "flex-wrap", viewport, container)?.value, "wrap");
+  assert.equal(winning(fileForm, "display", viewport, container)?.value, "flex");
+  assert.equal(winning(fileForm, "align-self", viewport, container)?.value, "stretch");
+  assert.equal(winning(fileForm, "flex", viewport, container)?.value, undefined, "the peer row still owns allocation, not an unrelated form-wide override");
+  const fileLabel = fileForm + " > label.button.file-button";
+  const fileLabelRules = [".button", ".button.secondary", ".file-button", ".page-header-actions .button", fileLabel];
+  assert.equal(winning(fileLabelRules, "flex", viewport, container)?.value, "1 1 auto", "the nested native label keeps its own stronger stretch rule");
+  assert.equal(winning(fileLabel, "align-self", viewport, container)?.value, "stretch");
+  assert.equal(winning(fileLabel, "white-space", viewport, container)?.value, "normal");
+  assert.equal(winning(fileLabel, "overflow-wrap", viewport, container)?.value, "anywhere");
+});
+
 test("every posture keeps text, actions, and trailing icons inside a shared logical edge inset", () => {
   const insetCases = [
     [[".context-next-actions>button", ".context-column > .context-next-actions > button"], "--forma-pane-inset"],
@@ -277,7 +316,13 @@ test("safe-area gutters, scroll focus, and analytics separators adapt correctly 
   assert.match(winning(".application-creative .composer-dock", "inset-inline-end", landscape)?.value ?? "", /--forma-safe-inline-end/);
   assert.match(winning(chatResult, "inset-inline-start", landscape)?.value ?? "", /--forma-landscape-rail-width/);
   assert.match(winning(chatResult, "inset-inline-end", landscape)?.value ?? "", /--forma-safe-inline-end/);
-  assert.equal(winning(".application-canvas :is(.canvas-intent-dock, .canvas-organize-menu)", "inset-inline-start", landscape)?.value, "auto");
+  assert.equal(winning(".application-canvas .canvas-intent-dock", "inset-inline-start", landscape)?.value, "auto");
+  for(const viewport of viewports){
+    assert.equal(winning(".canvas-organize-menu", "position", viewport)?.value, undefined, "Organize content no longer creates an independent overlay");
+    assert.equal(winning(".ui-popover-panel[popover]", "position", viewport)?.value, "fixed");
+    assert.match(winning(".canvas-organize-control .ui-popover-panel", "max-inline-size", viewport)?.value ?? "", /--forma-popover-max-width/);
+    assert.match(winning(".canvas-organize-control .ui-popover-panel", "max-block-size", viewport)?.value ?? "", /--forma-popover-max-height/);
+  }
   assert.equal(winning(".application-canvas .canvas-intent-stack", "inset-inline-end", landscape)?.value, "auto");
   assert.match(winning(".application-canvas .canvas-zoom-hud", "inset-inline-start", landscape)?.value ?? "", /--forma-safe-inline-start/);
 });
@@ -357,7 +402,7 @@ test("generation failure recovery cards adapt to their actual pane instead of cr
   assert.match(artifacts, /class="document-artifact-failure-copy"/);
   assert.match(artifacts, /class="document-artifact-failure-actions"/);
   assert.match(artifacts, /class="document-artifact-failure-format"/);
-  assert.match(artifacts, /<h3>\$\{guidance\.title\}<\/h3>/);
+  assert.match(artifacts, /<h3 aria-label=\$\{applicationEligibility\?`\$\{guidance\.title\} · \$\{requestContext\}`:nothing\}>\$\{guidance\.title\}<\/h3>/, "the visible heading remains intact while exact Scene requests have distinct accessible names");
   const cardRule = sheets.find((sheet) => sheet.name === "responsive-foundation.css")?.root.nodes.find((rule) =>
     rule.type === "rule" && rule.selector === ".document-artifact-failures > article.document-artifact-failure-card",
   );
@@ -472,7 +517,9 @@ test("the final responsive cascade keeps Search, Ask, and every collection acces
   }
   assert.match(responsive, /data-nav-posture="compact"/);
   assert.match(responsive, /data-nav-posture="rail"\]\[data-short-height="true"/);
-  assert.match(responsive, /\.project-rail\.expanded \.rail-content\s*\{[^}]*position:\s*absolute/s);
+  assert.doesNotMatch(responsive, /\.project-rail\.expanded \.rail-content\s*\{[^}]*position:\s*absolute/s, "overlaid navigation uses the existing native top layer, not a body-relative float");
+  assert.match(projectRail, /popover=\$\{this\.#nativePanel\?"auto":nothing\}/);
+  assert.match(projectRail, /popovertarget=\$\{this\.#nativePanel\?this\.#contentId:nothing\}/);
 });
 
 test("the collapsed document rail stays coherent across the 760–768px compact-posture seam", () => {
@@ -522,9 +569,11 @@ test("the collapsed document rail stays coherent across the 760–768px compact-
     assert.equal(winning(composer, "inset-inline-start", viewport)?.value, compact ? "0" : "var(--forma-nav-rail-width)", `${viewport.name}: composer starts at the correct logical edge`);
 
     if (compact) {
-      const overlay = [".application-creative .project-rail.expanded .rail-content", '.application-creative[data-nav-posture="compact"] .project-rail.expanded .rail-content'];
-      assert.equal(winning(overlay, "position", viewport)?.value, "absolute", `${viewport.name}: expanded project navigation remains usable`);
+      const overlay = [".ui-popover-panel[popover]", ".project-rail .rail-content[popover]"];
+      assert.equal(winning(overlay, "position", viewport)?.value, "fixed", `${viewport.name}: expanded project navigation uses shared native positioning`);
       assert.equal(winning(overlay, "overflow-y", viewport)?.value, "auto");
+      assert.match(winning(overlay, "max-block-size", viewport)?.value??"", /--forma-popover-max-height/);
+      assert.equal(winning(".ui-popover-panel[popover]:not(:popover-open)", "display", viewport)?.value, "none", `${viewport.name}: closed native navigation does not leak into body layout`);
       assert.equal(winning('.application-creative[data-nav-posture="compact"] .composer-dock', "inset-inline", viewport)?.value, "0", `${viewport.name}: expanding the project rail never reintroduces a desktop composer offset`);
     }
   }
@@ -608,7 +657,7 @@ test("Activity and Deliver are refresh-safe, least-privilege Creator destination
   assert.doesNotMatch(publicShare, /extends FormaElement|from "\.\/forma-element"|from "\.\.\/state\/store"/);
 });
 
-test("Activity rejects orphan, removed, cross-tenant, unauthorized, and impersonated records", () => {
+test("Activity rejects orphan, removed, cross-tenant, unauthorized, and impersonated records", async () => {
   const grant = { organizationId: "org-a", projectAccessId: "access-a", projectId: "project-a" };
   const context = { ...grant, permissions: ["project.review.approve", "project.output.request"] };
   const projection = { projectId: "project-a", documents: [
@@ -647,12 +696,46 @@ test("Activity rejects orphan, removed, cross-tenant, unauthorized, and imperson
   assert.equal(viewer.reviews.length, 0);
   assert.equal(viewer.jobs.length, 0);
 
+  const planningJobs=[{jobId:"paid-own",planningExecutionId:"paid-own",kind:"structure_adaptive",documentId:"doc-a",status:"completed"},{jobId:"legacy",kind:"structure_adaptive",documentId:"doc-a",status:"completed"},{jobId:"foreign",planningExecutionId:"foreign",kind:"structure_adaptive",documentId:"doc-b",status:"completed"},...jobs];
+  const reader=scopedFormaActivity({...session,projectContext:{...context,permissions:["project.read"]}},projection,notifications,reviews,planningJobs);
+  assert.deepEqual(reader.jobs.map(job=>job.jobId),["paid-own"],"Current read authority exposes only exact previously authorized planning, not legacy or another project's jobs");
+
   const personal = { ...session, projectContext: undefined };
   const noPersonalProject = { ...projection, projectId: "", documents: [], libraryArtifacts: [] };
   assert.deepEqual(scopedFormaActivity(personal, noPersonalProject, notifications, reviews, jobs).reviews.map((item) => item.id), ["review-a"]);
   assert.equal(scopedFormaActivity({ ...personal, projects: undefined }, noPersonalProject, notifications, reviews, jobs).reviews.length, 0);
   assert.equal(scopedFormaActivity({ ...personal, impersonation: { active: true } }, noPersonalProject, notifications, reviews, jobs).reviews.length, 0);
-  assert.match(activity, /leaveProjectContext\(\)[\s\S]*?setRoute\("\/activity"\)/);
+  // The visible View-all control requests one guarded Store-owned commit;
+  // it must not append a second route after a context operation has completed.
+  assert.match(activity, /import \{ navigateInApp, type CommandDeparture \} from "\.\/command-departure";/);
+  assert.match(activity, /@click=\$\{\(\) => void navigateInApp\(this,navigation=>this\.store\.leaveProjectContext\(\{\.\.\.navigation,destination:"\/activity"\}\)\)\}>\$\{this\.i18n\.t\("activity\.viewAllAssignments", "View all my assigned reviews"\)\}/);
+  assert.equal((activity.match(/this\.store\.leaveProjectContext\(/g) ?? []).length, 1);
+  assert.doesNotMatch(activity, /this\.store\.setRoute\("\/activity"\)/);
+  const store = await read("../src/state/store.ts");
+  const from = store.indexOf("  async leaveProjectContext("), to = store.indexOf("  async acceptTerms(", from);
+  assert.ok(from >= 0 && to > from, "The actual Store context-exit implementation is present");
+  const leave = store.slice(from, to).replace(/\s+/gu, "");
+  assert.ok(leave.includes('options:Pick<WorkspaceNavigationOptions,"current"|"focus"|"onOriginHandoff"|"onDestinationSource">&{destination?:"/projects"|"/activity"}={}'));
+  assert.ok(leave.includes('if(!workspaceNavigationCurrent(options))returnfalse;constselection=this.beginProjectContextSelection({current:()=>workspaceNavigationCurrent(options)});'));
+  assert.ok(leave.includes('if(!this.session.get()?.projectContext&&!this.#projectContextHandshake)returnoptions.destination!=="/activity";'));
+  assert.ok(leave.includes('constresponse=awaitselection.request(null);if(!response)returnfalse;constbody=awaitresponse.json()as{error?:string};if(!selection.sourceCurrent())returnfalse;'
+    +'if(!response.ok)thrownewError(body.error??"project_context_exit_failed");if(options.onOriginHandoff&&(!workspaceNavigationCurrent(options)||!options.onOriginHandoff()))returnfalse;'
+    +'if(!awaitselection.refreshSession(options.onDestinationSource)||!selection.current())returnfalse;'));
+  const branchFrom = leave.indexOf('if(options.destination==="/activity"){'), branchTo = leave.indexOf('this.setRoute("/projects",', branchFrom);
+  assert.ok(branchFrom >= 0 && branchTo > branchFrom, "The optional destination is separate from default Return");
+  const branch = leave.slice(branchFrom, branchTo);
+  assert.ok(branch.includes('constsource=this.captureSourceOwnership();if(!source||!this.sourceOwnershipActive(source))returnfalse;'));
+  assert.ok(branch.includes('constrouteHandoff=newPromise<void>(resolve=>{finishRouteHandoff=resolve;});'));
+  assert.ok(branch.includes('constloadRevision=this.#loadRevision+1;awaitthis.load({routeHandoff});'
+    +'if(loadRevision!==this.#loadRevision||this.loading.get()||!selection.current()||!workspaceNavigationCurrent(options)||!this.sourceOwnershipActive(source)'
+    +'||this.session.get()?.projectContext||this.error.get())returnfalse;'));
+  assert.ok(branch.includes('constdocumentId=foldEvents(this.events.get(),this.asOf.get()).documentId;'
+    +'constdestination=withProjectTaskDocumentInRoute("/activity",documentId);'
+    +'this.setRoute(destination,{documentId,current:()=>selection.current()&&workspaceNavigationCurrent(options),focus:options.focus});'
+    +'returnthis.route.get()===destination&&this.sourceOwnershipActive(source)&&workspaceNavigationCurrent(options);'));
+  assert.equal((branch.match(/this\.setRoute\(/g) ?? []).length, 1, "One final commit uses the committed personal Document, including the empty-history route");
+  assert.doesNotMatch(branch, /this\.(?:projection|eventView)\.get\(/);
+  assert.ok(branch.includes('}finally{finishRouteHandoff();}'));
   assert.match(activity, /acknowledgeProjectNotification\(notification\.id\)/);
   assert.match(deliver, /documentIds\.has\(artifact\.documentId\)/);
   assert.match(deliver, /documentIds\.has\(output\.documentId\)/);
@@ -768,4 +851,835 @@ test("two-finger Canvas navigation preserves its world anchor without generating
   assert.match(responsive, /@container chat/);
   assert.match(canvasApplication,/!target\.closest\("\.canvas-resize-handle"\)/);
   assert.match(canvasApplication,/this\.i18n\.t\("canvas\.touchSelectionHint"/);
+});
+
+test("native overlay panels retain closed-state hiding and one RTL-safe positioning owner",()=>{
+  const closed=[".ui-popover-panel[popover]:not(:popover-open)",".tree-menu[popover]:not(:popover-open)",".presentation-deck-export-menu[popover]:not(:popover-open)"];
+  for(const viewport of viewports){
+    for(const selector of closed)assert.equal(winning(selector,"display",viewport)?.value,"none");
+    assert.equal(winning(".ui-popover-panel[popover]","position",viewport)?.value,"fixed");
+    assert.equal(winning(".ui-popover-panel[popover]","inset",viewport)?.value,"auto");
+    assert.match(winning(".ui-popover-panel[popover]","left",viewport)?.value??"",/--forma-popover-left/);
+    assert.match(winning(".ui-popover-panel[popover]","max-inline-size",viewport)?.value??"",/--forma-popover-max-width/);
+    assert.match(winning(".ui-popover-panel[popover]","max-block-size",viewport)?.value??"",/--forma-popover-max-height/);
+    assert.equal(winning(".ui-popover-panel[popover]","scroll-padding",viewport)?.value,".25rem",
+      "retain the existing inline native-scroll clearance");
+    assert.equal(winning(".ui-popover-panel[popover]","scroll-padding-block",viewport)?.value,"var(--forma-focus-clearance,.5rem)",
+      "E3: native vertical reveal reserves the shared outward focus-ring clearance");
+  }
+  for(const sheet of sheets)sheet.root.walkRules(rule=>{
+    if(!rule.selector.includes("canvas-view-menu")||!rule.selector.includes("ui-popover-panel"))return;
+    rule.walkDecls(decl=>assert.equal(/^(?:right|left|inset|inset-inline(?:-start|-end)?|position)$/.test(decl.prop),false,"View must not override the common finite RTL-aware position: "+decl.toString()));
+  });
+});
+
+test("Slides More actions remain visible at every viewport while their panel is native",()=>{
+  const trigger=".artifact-viewer-actions-popover .ui-popover-trigger";
+  for(const viewport of viewports){
+    assert.equal(winning(trigger,"display",viewport)?.value,"inline-flex",viewport.name);
+    assert.match(winning(trigger,"min-block-size",viewport)?.value??"",/2\.75rem/);
+    assert.match(winning(trigger,"min-inline-size",viewport)?.value??"",/2\.75rem/);
+  }
+  assert.doesNotMatch(responsive,/footer\[data-actions-open="false"\] > div|artifact-viewer-actions-toggle/,"obsolete floating-footer toggles cannot hide the only native invoker");
+});
+
+test("the final slide-toolbar cascade keeps its genuine inline disclosure even in wide short landscape",()=>{
+  const selectors=[".presentation-deck-toolbar",':is(.document-artifact-view, .canvas-artifact-viewer)[data-artifact-kind="slides"] .presentation-deck-toolbar',':is(.document-artifact-view,.canvas-artifact-viewer)[data-artifact-kind="slides"] .presentation-deck-toolbar'];
+  for(const width of [320,844,1280]){
+    const viewport={width,height:390,pointer:"fine"},container={name:"presentation-deck-host",width};
+    assert.equal(winning(selectors,"position",viewport,container)?.value,"relative");
+    assert.equal(winning(selectors,"inset",viewport,container)?.value,"auto");
+  }
+});
+
+test("E rail Current marker keeps a content-led nonfragmenting slot beside the current document title", () => {
+  // Source/style contract, not glyph measurements or a native-popover geometry claim.
+  const start = projectRail.indexOf('<nav class="rail-links rail-destinations rail-document-links"');
+  const end = projectRail.indexOf("</nav>", start);
+  assert.ok(start >= 0 && end > start, "inspect the real document-link group, not E1's View marker");
+  const links = projectRail.slice(start, end);
+  assert.match(links, /this\.i18n\.t\("pattern\.current","Current"\)/);
+  assert.match(links, /aria-current=.*active\?"page":nothing/);
+  assert.match(links, /this\.#openDocument\(event,document\.id,documentDestination\)/);
+  assert.ok(links.includes('<span dir="auto">'));
+  assert.ok(projectRail.includes('popover=' + String.fromCharCode(36) + '{this.#nativePanel?"auto":nothing}'));
+  assert.doesNotMatch(links, /<details\b/, "the existing rail remains native navigation, not a details overlay");
+  const row = [".rail-links a", ".rail-links.rail-document-links > a", ".rail-document-links > a"];
+  const marker = [".rail-links small", ".rail-document-links > a > small"];
+  for (const viewport of [...viewports, { name: "observed compact window", width: 656, height: 883, pointer: "fine" }]) {
+    assert.equal(winning(marker, "flex", viewport)?.value, "0 0 auto", viewport.name + ": reserve the short localized marker's content width");
+    assert.equal(winning(marker, "white-space", viewport)?.value, "nowrap", "Current must not become a letter column");
+    assert.equal(winning(marker, "overflow-wrap", viewport)?.value, "normal");
+    assert.equal(winning(row, "flex-wrap", viewport)?.value, "wrap", "the row may wrap instead of squeezing its marker");
+    assert.equal(winning(row, "gap", viewport)?.value, "var(--forma-cluster-gap)");
+    assert.equal(winning(".rail-document-links > a > span", "min-width", viewport)?.value, "0", "the existing title still yields space");
+    assert.equal(winning(".rail-document-links > a > span > span", "text-overflow", viewport)?.value, "ellipsis", "do not replace the existing title policy");
+  }
+  const fitted = new Set([".rail-document-links > a", ".rail-document-links > a > small"]);
+  for (const sheet of sheets) sheet.root.walkRules(rule => {
+    if (!(rule.selectors ?? []).some(selector => fitted.has(selector))) return;
+    rule.walkDecls(declaration => {
+      assert.equal(/^(?:height|block-size|max-height|max-block-size|text-overflow|(?:-webkit-)?line-clamp)$/.test(declaration.prop), false, "do not fake marker fit with a fixed height or truncation");
+      if (declaration.prop === "overflow") assert.notEqual(declaration.value, "hidden");
+      if (declaration.prop === "display") assert.notEqual(declaration.value, "none");
+    });
+  });
+});
+
+test("E Output-pane compact generation controls wrap their complete options and status outside the composer", async () => {
+  // Source/style contract: no generation, provider request, job action, or DOM measurement.
+  const generation = await read("../src/components/generation-actions.ts");
+  const pane = workspace.indexOf('<section id="document-results-panel" class="output-column"');
+  const host = workspace.indexOf('<section class="document-result-generation"', pane);
+  const composer = workspace.indexOf('<div class="composer-dock">', pane);
+  assert.ok(pane >= 0 && host > pane && composer > host, "the current Output pane is not the composer dock");
+  assert.ok(workspace.slice(host, workspace.indexOf("</section>", host)).includes('<forma-generation-actions source="document"'));
+  const controls = generation.split("\n").find(line => line.includes('const compactControls=html'));
+  assert.ok(controls?.includes('class="generation-actions compact"') && controls.includes('role="group"'));
+  assert.ok(controls.includes('aria-haspopup="dialog"') && controls.includes("this.openConfiguration()"));
+  assert.ok(controls.includes("Image options, {ratio} frame, {statusLabel}{label}") && controls.includes("<b>" + String.fromCharCode(36) + "{statusLabel}</b>"));
+  assert.match(generation, /this\.i18n\.plural\("generation\.unread",unreadFailures,"\{count\} unread failure","\{count\} unread failures"\)/);
+  const scope = ".document-result-generation .generation-actions.compact";
+  const rows = [".generation-actions", ".generation-actions.compact", scope];
+  const peer = scope + " > button", detail = scope + " > .generation-details-trigger";
+  const copy = detail + " > :is(span, small, b)";
+  for (const viewport of [...viewports, { name: "observed Output window", width: 1280, height: 720, pointer: "fine" }, { name: "observed compact window", width: 656, height: 883, pointer: "fine" }]) {
+    assert.equal(winning(rows, "flex-wrap", viewport)?.value, "wrap", viewport.name + ": the actual pane row must not inherit compact nowrap");
+    assert.equal(winning(rows, "align-items", viewport)?.value, "stretch", "native action peers share their wrapped row height");
+    assert.equal(winning(rows, "gap", viewport)?.value, "var(--forma-cluster-gap)");
+    assert.equal(winning(rows, "min-inline-size", viewport)?.value, "0");
+    assert.equal(winning(rows, "max-inline-size", viewport)?.value, "100%");
+    assert.equal(winning(peer, "flex", viewport)?.value, "0 1 auto", "content-led peers may wrap; no equal shrinking columns");
+    assert.equal(winning(peer, "align-self", viewport)?.value, "stretch");
+    assert.equal(winning(peer, "max-inline-size", viewport)?.value, "100%");
+    assert.equal(winning(peer, "white-space", viewport)?.value, "normal");
+    assert.equal(winning([".generation-details-trigger", peer, detail], "flex-wrap", viewport)?.value, "wrap");
+    assert.equal(winning(copy, "min-inline-size", viewport)?.value, "0");
+    assert.equal(winning(copy, "max-inline-size", viewport)?.value, "100%");
+    assert.equal(winning(copy, "white-space", viewport)?.value, "normal");
+    assert.equal(winning(copy, "overflow-wrap", viewport)?.value, "anywhere", "long localized tokens may emergency-wrap without clipping the status");
+    assert.equal(winning(".generation-details-trigger", "min-block-size", viewport)?.value, "var(--forma-hit-target)");
+    assert.equal(winning(".generation-details-trigger", "padding-inline", viewport)?.value, "var(--forma-control-inset-inline)");
+  }
+  for (const sheet of sheets) sheet.root.walkRules(rule => {
+    if (!rule.selector.includes(".document-result-generation") || !rule.selector.includes("generation-actions")) return;
+    rule.walkDecls(declaration => {
+      assert.equal(/^(?:height|block-size|max-height|max-block-size|text-overflow|(?:-webkit-)?line-clamp)$/.test(declaration.prop), false, "fit is not a fixed-height or truncated substitute");
+      if (declaration.prop === "overflow") assert.notEqual(declaration.value, "hidden");
+      if (declaration.prop === "display") assert.notEqual(declaration.value, "none");
+    });
+  });
+});
+
+// Source/CSS contracts only: reuse this file's existing PostCSS/cascade helpers.
+// Root's actual 431px Document observation is the physical baseline; these
+// checks neither compute layout nor exercise recipe/save/provider behavior.
+function d337OutputPaneGutter() {
+  const found = [];
+  sheets.find(sheet => sheet.name === "responsive-foundation.css").root.walkRules(rule => {
+    const selector = rule.selectors?.find(value => value.startsWith(".context-column > :is(")
+      && value.includes(".context-provenance"));
+    if (selector) found.push({ rule, selector });
+  });
+  assert.equal(found.length, 1, "reuse the single existing parent-owned context gutter rule");
+  return found[0];
+}
+
+test("D337 recipe entry, draft and retained card share the direct Document pane gutter", async () => {
+  const output = await read("../src/components/forma-output-requirements.ts");
+  const component = postcss.parse(await read("../src/components/forma-output-requirements.css"));
+  const paneStart = workspace.indexOf('<section id="document-context-panel" class="context-column"');
+  const hostStart = workspace.indexOf("<forma-output-requirements ", paneStart);
+  const paneEnd = workspace.indexOf("</section>", paneStart);
+  assert.ok(paneStart >= 0 && hostStart > paneStart && paneEnd > hostStart,
+    "the existing output host is authored inside the actual Document context pane");
+  assert.equal((workspace.match(/<forma-output-requirements\b/gu) ?? []).length, 1);
+  assert.ok(output.includes('<details class="output-recipe-entry"'));
+  assert.ok(output.includes('<section class="output-recipe-draft"'));
+  assert.ok(output.includes("const empty = !rows.length && !snapshot.confirmedPlan;"));
+  assert.match(output, /class=\$\{empty \? nothing : "output-requirements"\}/u);
+  assert.ok(output.includes("this.#recipeEntry(snapshot)") && output.includes("this.#recipeCard(snapshot)"));
+  assert.match(output, /\.newDraft=\$\{row \? null : draft\}\s+\.snapshot=\$\{row \? this\.#cardSnapshot\(snapshot, row\) : null\}/u,
+    "the same existing Card remains mounted through draft and observed saved-row states");
+  assert.ok(output.includes('if (!snapshot) return html') && output.includes("this.#recipeEntry(null)"),
+    "unavailable/loading delivery remains within the same host rather than an entry-only wrapper");
+
+  const host = component.nodes.filter(node => node.type === "rule" && node.selector === "forma-output-requirements");
+  assert.equal(host.length, 1);
+  const hostProperties = Object.fromEntries(host[0].nodes.filter(node => node.type === "decl").map(node => [node.prop, node.value]));
+  assert.equal(hostProperties.display, "block"); assert.equal(hostProperties["min-inline-size"], "0");
+  for (const property of ["width", "inline-size", "margin-inline", "padding-inline", "margin-left", "margin-right"])
+    assert.equal(hostProperties[property], undefined, "the shared component does not own a second pane offset: " + property);
+  const summary = component.nodes.find(node => node.type === "rule" && node.selector === "forma-output-requirements summary");
+  assert.ok(summary);
+  const summaryProperties = Object.fromEntries(summary.nodes.filter(node => node.type === "decl").map(node => [node.prop, node.value]));
+  assert.equal(summaryProperties["min-block-size"], "var(--forma-control-min-size,2.75rem)");
+  assert.equal(summaryProperties["padding-inline"], ".5rem", "native disclosure hit-area padding is distinct from the pane gutter");
+
+  const { selector } = d337OutputPaneGutter();
+  const members = selector.match(/^\.context-column > :is\(([^()]*)\)$/u)?.[1].split(",").map(value => value.trim());
+  assert.ok(members);
+  for (const sibling of [".blank-context", ".add-block", ".document-insight", ".context-provenance"])
+    assert.ok(members.includes(sibling), "preserve the existing gutter sibling " + sibling);
+  assert.ok(members.includes("forma-output-requirements"),
+    "the whole direct host, not only its current recipe entry, must share the existing pane inset");
+});
+
+test("D337 delivery inset uses the same logical parent rule at all existing postures", () => {
+  const { rule, selector } = d337OutputPaneGutter();
+  const outputSibling = ".output-column > :is(forma-document-artifacts, forma-output-card, .output-card, .output-filmstrip, .reference-picker-form)";
+  assert.ok(rule.selectors.includes(outputSibling), "the other original pane consumers remain in their unchanged shared rule");
+  assert.equal(rule.selectors.length, 2); assert.equal(rule.parent.type, "root",
+    "pane spacing is not restricted to a phone, pointer, direction or recipe-state condition");
+  assert.deepEqual(rule.nodes.filter(node => node.type === "decl").map(node => [node.prop, node.value]),
+    [["margin-inline", "var(--forma-pane-inset)"]],
+    "use the existing logical margin, not physical offsets, a second padding system or width arithmetic");
+  const postures = [...viewports,
+    { name: "observed 431px Document, fine pointer", width: 431, height: 883, pointer: "fine" },
+    { name: "431px Document, coarse pointer", width: 431, height: 883, pointer: "coarse" }];
+  for (const viewport of postures) {
+    assert.equal(winning(":root", "--forma-pane-inset", viewport)?.value, "clamp(1rem, 1.6vi, 1.25rem)", viewport.name);
+    assert.equal(winning(".context-column > .section-heading", "padding-inline", viewport)?.value,
+      "var(--forma-pane-inset)", viewport.name + ": the neighboring heading owns the same logical edge token");
+    assert.equal(winning(selector, "margin-inline", viewport)?.value, "var(--forma-pane-inset)",
+      viewport.name + ": preserve existing parent spacing before checking the missing host member");
+  }
+  const expected = ".context-column > :is(.blank-context, .add-block, .document-insight, .context-provenance, forma-output-requirements)";
+  const missing = postures.filter(viewport => winning(expected, "margin-inline", viewport)?.value !== "var(--forma-pane-inset)")
+    .map(viewport => viewport.name);
+  assert.deepEqual(missing, [],
+    "the direct Document host inherits the same gutter without matching nested Output blocks, Library, Project or Deliver hosts");
+});
+
+// D406 source-policy regressions, not DOM geometry or browser zoom simulation.
+// Reuse the existing cascade helper with explicit actual short-rail selectors;
+// the earlier compact-only checks do not cover the observed rail posture.
+test("D406 short-rail Document header wraps useful copy and intrinsic native actions before squeezing labels", () => {
+  const header = '.application-creative[data-nav-posture="rail"][data-short-height="true"][data-layout-intent="workbench"] .workspace-page[data-workbench="document"] .page-header--document';
+  const copy = header + " > .page-header-copy";
+  const actions = header + " > .page-header-actions";
+  const peer = actions + " > :is(.button, .icon-button)";
+  const existingHeader = '.workspace-page[data-workbench="document"] .page-header--document';
+  assert.match(shell, /const posture = short && inline > block \? "rail"/);
+  assert.ok(workspace.includes('<div class="document-bar page-header page-header--document"><div class="page-header-copy">'));
+  assert.ok(workspace.includes('<div class="document-actions page-header-actions" @focusin=${(event: FocusEvent) => this.#revealDocumentActionFocus(event, () => this.store === actionStore && actionStore.sourceOwnershipActive(actionSource) && actionStore.route.get() === actionRoute && actionStore.projection.get().projectId === p.projectId && actionStore.projection.get().documentId === p.documentId)}>'));
+  for (const binding of ['?disabled=${!this.store.canUndo()}', '?disabled=${!this.store.canRedo()}',
+    '?disabled=${!canCompare}', '?disabled=${p.documents.length<=1}', '@click=${() => this.store.undo()}',
+    '@click=${() => this.store.redo()}', '@click=${this.#compare}', '@click=${this.#openDeleteDocument}'])
+    assert.ok(workspace.includes(binding), "preserve the existing native action and its admission: " + binding);
+
+  const postures = [
+    { name: "observed D406 dimensions, fine source branch", width: 419, height: 398, pointer: "fine" },
+    { name: "same dimensions, coarse source counterexample", width: 419, height: 398, pointer: "coarse" },
+    { name: "existing landscape phone branch", width: 844, height: 390, pointer: "coarse" },
+    { name: "existing shallow desktop branch", width: 1280, height: 390, pointer: "fine" },
+  ];
+  for (const viewport of postures) {
+    assert.equal(winning(existingHeader, "min-block-size", viewport)?.value, "var(--forma-hit-target)", viewport.name + ": retain the current header floor");
+    assert.equal(winning([".page-header", ".page-header--document", existingHeader, header], "flex-wrap", viewport)?.value,
+      "wrap", viewport.name + ": wrap complete title/action groups instead of retaining the squeezed row");
+    assert.equal(winning([".page-header-copy", copy], "flex", viewport)?.value, "1 1 min(100%, 16rem)",
+      viewport.name + ": reuse the existing useful-copy preferred basis, not a zero-basis column");
+    for (const property of ["width", "inline-size"])
+      assert.equal(winning([".page-header-actions", ".page-header--document .page-header-actions", actions], property, viewport)?.value, "auto");
+    assert.equal(winning(actions, "max-inline-size", viewport)?.value, "100%");
+    assert.equal(winning(actions, "flex-wrap", viewport)?.value, "wrap");
+    assert.equal(winning(actions, "flex", viewport)?.value, "0 1 auto");
+    assert.equal(winning([".page-header-actions > *", ".document-actions > *", ".page-header-actions .button", peer], "flex", viewport)?.value,
+      "0 1 auto", viewport.name + ": actual Compare must not inherit the narrow button's zero basis");
+    assert.equal(winning(peer, "min-inline-size", viewport)?.value, "var(--forma-hit-target)");
+    assert.equal(winning(peer, "max-inline-size", viewport)?.value, "100%");
+    for (const selector of [header, copy, actions, peer]) for (const property of
+      ["height", "block-size", "max-height", "max-block-size", "font-size", "line-height", "overflow", "overflow-x", "overflow-y", "white-space", "word-break"])
+      assert.equal(winning(selector, property, viewport), undefined, "this scoped correction must not add a cap, clipping, font reduction, or forced text posture: " + selector + " " + property);
+  }
+  for (const viewport of [viewports[0], viewports[1], viewports[5], viewports[6]])
+    assert.equal(winning(header, "flex-wrap", viewport), undefined, viewport.name + ": this new rail rule is not a compact/tall restyle");
+  const compact = '.application-creative[data-nav-posture="compact"][data-layout-intent="workbench"] .page-header--document .page-header-actions';
+  assert.equal(winning(compact, "overflow-x", viewports[0])?.value, "auto", "the separate existing compact strip keeps its owner");
+  assert.equal(winning(compact + " > *", "flex", viewports[0])?.value, "0 0 auto");
+});
+
+test("D406 narrow Document action labels may compact without hiding their existing icon spans", () => {
+  for (const [glyph, label] of [["undo", "Undo"], ["redo", "Redo"], ["trash", "Remove"]])
+    assert.ok(workspace.includes('${icon("' + glyph + '")}<span>' + label + '</span>'),
+      "retain the actual shared icon followed by its unchanged native button label");
+  const oldLabel = ".document-actions .labeled span";
+  const textLabel = ".document-actions .labeled span:not(.forma-icon)";
+  const narrow = { name: "D406 narrow toolbar source branch", width: 419, height: 398, pointer: "fine" };
+  assert.equal(winning(".forma-icon", "display", narrow)?.value, "inline-grid", "the existing icon primitive already supplies the glyph box");
+  assert.equal(winning([oldLabel, textLabel], "display", narrow)?.value, "none", "text-only compact labels retain their existing treatment");
+  assert.equal(winning([".forma-icon", oldLabel], "display", narrow)?.value, "inline-grid",
+    "the label-only rule must stop matching the current aria-hidden icon span");
+  assert.equal(winning(textLabel, "display", narrow)?.value, "none");
+  assert.equal(winning(textLabel, "display", viewports[5]), undefined, "ordinary wide toolbar text remains untouched");
+});
+
+test("D406 Document panes reserve dock space only for a real direct composer and otherwise use symmetric focus clearance", () => {
+  const pane = '.workspace-page[data-workbench="document"] .studio-grid > :is(.context-column, .output-column)';
+  const dockPane = '.workspace-page[data-workbench="document"]:has(> .composer-dock) .studio-grid > :is(.context-column, .output-column)';
+  const existingDockPadding = '.workspace-page[data-workbench="document"]:has(> .composer-dock) .studio-grid > :is(.context-column, .output-column, .document-workbench-inspector)';
+  assert.ok(workspace.includes('${!assistantActive&&canAuthor&&canGenerate?html' + '`<div class="composer-dock">'),
+    "the actual direct composer remains conditionally present; no readiness/DPR substitute owns its reserved space");
+  for (const viewport of [...viewports, { name: "observed D406 dimensions", width: 419, height: 398, pointer: "fine" }]) {
+    assert.equal(winning(pane, "overflow-y", viewport)?.value, "auto", "retain the actual pane scroll owner");
+    assert.equal(winning(pane, "min-block-size", viewport)?.value, "0");
+    assert.equal(winning(existingDockPadding, "padding-block-end", viewport)?.value, "calc(7rem + var(--forma-keyboard-offset))",
+      "the genuine composer's physical padding and inspector exception are unchanged");
+    assert.equal(winning(pane, "scroll-padding-block", viewport)?.value, "var(--forma-focus-clearance)",
+      viewport.name + ": an undocked pane needs balanced existing focus clearance, not a phantom 112px end reserve");
+    assert.equal(winning(pane, "scroll-padding-block-end", viewport), undefined, "no unconditional longhand may restore the phantom reserve");
+    assert.equal(winning(dockPane, "scroll-padding-block-end", viewport)?.value, "calc(7rem + var(--forma-keyboard-offset))",
+      "the exact original end reserve belongs only to the real direct dock");
+    assert.equal(winning(dockPane, "scroll-padding-block-start", viewport), undefined, "the dock does not replace the base start clearance");
+  }
+});
+
+// D428 source-policy coverage for the measured short-header Account focus clip.
+// Uses the existing stylesheet/cascade fixture; these dimensions are not a
+// browser-zoom simulation or a forced-colors rendering certification.
+test("D428 short Creative and Canvas headers keep the Account focus ring inside its unchanged 44px control", () => {
+  const hit = ".topbar > .top-actions > .avatar";
+  const short = [
+    { name: "observed true-200 CSS dimensions", width: 419, height: 398, pointer: "fine" },
+    { name: "observed shallow landscape dimensions", width: 844, height: 390, pointer: "fine" },
+    { name: "same shallow coarse branch", width: 844, height: 390, pointer: "coarse" },
+  ];
+  assert.ok(shell.includes('popovertarget="account-popover"'), "retain the existing native Account invoker");
+  assert.match(responsive, /--forma-short-topbar-height:\s*3rem;/);
+  for (const viewport of short) {
+    for (const property of ["inline-size", "block-size", "min-inline-size", "min-block-size"])
+      assert.equal(winning(hit, property, viewport)?.value, "var(--forma-hit-target)", "preserve the shared 44px floor and actual box");
+    assert.equal(winning(hit, "flex", viewport)?.value, "0 0 var(--forma-hit-target)");
+    for (const app of [".application-creative", ".application-canvas"]) {
+      assert.equal(winning(app + " > .topbar", "block-size", viewport)?.value, "var(--forma-short-topbar-height)");
+      assert.equal(winning(app + " > .topbar", "min-block-size", viewport)?.value, "var(--forma-short-topbar-height)",
+        "do not consume the already-tight Document content height to make room for an exterior ring");
+    }
+  }
+  const conditions = rule => {
+    const result = [];
+    for (let parent = rule.parent; parent; parent = parent.parent)
+      if (parent.type === "atrule" && parent.name === "media") result.push(parent.params);
+    return result;
+  };
+  const declarations = rule => Object.fromEntries(rule.nodes.filter(node => node.type === "decl").map(node => [node.prop, node.value]));
+  for (const app of [".application-creative", ".application-canvas"]) {
+    const selector = app + " > .topbar > .top-actions > .avatar:focus-visible";
+    for (const viewport of short) {
+      assert.equal(winning([":focus-visible", selector], "outline-offset", viewport)?.value,
+        "calc(-1 * var(--forma-focus-ring-width, .1875rem))", viewport.name + ": reuse the shared inset-focus treatment instead of clipping the ring at y=0");
+      assert.equal(winning(selector, "outline-color", viewport)?.value, "currentColor",
+        "ordinary colors reuse the filled avatar's contrast-paired foreground");
+    }
+    const rules = [];
+    sheets.find(sheet => sheet.name === "responsive-foundation.css").root.walkRules(rule => {
+      if (rule.selectors?.includes(selector)) rules.push(rule);
+    });
+    const inset = rules.find(rule => rule.nodes.some(node => node.type === "decl" && node.prop === "outline-offset"));
+    const color = rules.find(rule => rule.nodes.some(node => node.type === "decl" && node.prop === "outline-color"));
+    assert.ok(inset && color);
+    assert.deepEqual(declarations(inset), { "outline-offset": "calc(-1 * var(--forma-focus-ring-width, .1875rem))" },
+      "inset paint must not change dimensions, typography, overflow, outline width or style");
+    assert.deepEqual(declarations(color), { "outline-color": "currentColor" });
+    assert.deepEqual(conditions(inset), ["(max-height: 37.5rem) and (orientation: landscape)"],
+      "forced-colors users also need the ring inset");
+    assert.deepEqual(conditions(color), ["(forced-colors: none)", "(max-height: 37.5rem) and (orientation: landscape)"],
+      "currentColor must not override the existing forced-colors Highlight rule");
+    for (const viewport of [viewports[0], viewports[1], viewports[5], viewports[6]]) {
+      assert.equal(winning(selector, "outline-offset", viewport), undefined, "ordinary tall/portrait avatar treatment stays unchanged");
+      assert.equal(winning(selector, "outline-color", viewport), undefined);
+    }
+  }
+  assert.match(design, /@media \(forced-colors: active\)\s*\{[\s\S]*?:focus-visible\s*\{\s*outline:\s*3px solid Highlight;/,
+    "retain the existing high-contrast focus policy; this is a source assertion, not an HC browser result");
+});
+
+// D428 source-policy regression for the measured 844x390 shortcut-dock overlap.
+// The actual expanded/collapsed interaction and hit stack remain browser gates.
+test("D428 the floating short-landscape Document rail keeps only its Expand control while collapsed", () => {
+  const posture = '.application-creative[data-nav-posture="rail"][data-short-height="true"][data-layout-intent="workbench"]';
+  const page = posture + ' .workspace-page[data-workbench="document"]';
+  const collapsed = page + ':has(> forma-project-rail > .project-rail.collapsed)';
+  const host = page + ' > forma-project-rail:has(> .project-rail.collapsed)';
+  const dock = page + ' > forma-project-rail > .project-rail.collapsed > .rail-dock';
+  const oldDocks = [".rail-dock", ".project-rail.collapsed .rail-dock", ".application-creative .project-rail.collapsed .rail-dock"];
+  const short = [
+    { name: "observed shallow Document", width: 844, height: 390, pointer: "fine" },
+    { name: "same shallow coarse branch", width: 844, height: 390, pointer: "coarse" },
+    { name: "first wide non-popover seam", width: 768, height: 390, pointer: "fine" },
+    { name: "wide shallow window", width: 1280, height: 390, pointer: "fine" },
+  ];
+  assert.ok(projectRail.includes('matchMedia("(max-width: 47.99rem)")'), "do not broaden native popover mode to repair a presentation-only gap");
+  assert.ok(projectRail.includes('collapsed&&!this.#nativePanel ? html'));
+  assert.ok(projectRail.includes('aria-controls=${this.#contentId}'));
+  assert.ok(projectRail.includes('aria-expanded=${!collapsed}'));
+  assert.ok(projectRail.includes('if(!this.#nativePanel)this.#setCollapsed(!collapsed);'),
+    "the existing native Expand button still opens the actual full inline rail");
+  assert.ok(projectRail.includes("this.#compactChoice = collapsed;"));
+  for (const destination of ['class="rail-project-overview"', 'class="rail-links rail-destinations rail-document-links"',
+    'class="rail-links rail-library-links"'])
+    assert.ok(projectRail.includes(destination), "expanded navigation retains the original destination family " + destination);
+  assert.equal(winning(".application-creative[data-nav-posture=\"compact\"] .project-rail.collapsed .rail-dock",
+    "display", viewports[1])?.value, "none", "reuse the already-established collapsed compact treatment");
+  for (const viewport of short) {
+    assert.equal(winning(collapsed, "grid-template-columns", viewport)?.value, "minmax(0, 1fr)");
+    assert.equal(winning(host, "position", viewport)?.value, "absolute");
+    assert.equal(winning(host, "inline-size", viewport)?.value, "var(--forma-hit-target)");
+    assert.equal(winning(".rail-collapse-toggle", "min-inline-size", viewport)?.value, "var(--forma-hit-target)");
+    assert.equal(winning(".rail-collapse-toggle", "min-block-size", viewport)?.value,
+      viewport.pointer === "coarse" ? "var(--forma-hit-target-coarse)" : "var(--forma-hit-target)",
+      "preserve the existing 48px coarse-pointer height as well as the 44px fine-pointer floor");
+    assert.equal(winning([".workspace-page", ".application-creative .workspace-page", '.workspace-page[data-workbench="document"]', page],
+      "grid-template-columns", viewport)?.value, "15rem minmax(0, 1fr)",
+      "the expanded inline case excludes collapsed-only selectors and keeps its reserved rail column");
+  }
+  for (const viewport of short)
+    assert.equal(winning([...oldDocks, dock], "display", viewport)?.value, "none",
+      viewport.name + ": the floating header control must not retain a desktop dock over Document copy and actions");
+  const rules = [];
+  sheets.find(sheet => sheet.name === "responsive-foundation.css").root.walkRules(rule => {
+    if (rule.selectors?.includes(dock)) rules.push(rule);
+  });
+  assert.equal(rules.length, 1);
+  assert.deepEqual(Object.fromEntries(rules[0].nodes.filter(node => node.type === "decl").map(node => [node.prop, node.value])), { display: "none" },
+    "hide only the collapsed shortcut duplicate, without changing the rail, button, expanded content, focus, or typography");
+  assert.equal(rules[0].parent.name, "media");
+  assert.equal(rules[0].parent.params, "(max-height: 37.5rem) and (orientation: landscape)");
+  for (const viewport of [viewports[0], viewports[1], viewports[5], viewports[6],
+    { name: "wide tall seam", width: 768, height: 900, pointer: "fine" }])
+    assert.equal(winning(dock, "display", viewport), undefined, "this correction does not replace portrait, tall, Library, or existing native-panel policy");
+  for (const viewport of [viewports[5], viewports[6], { name: "wide tall seam", width: 768, height: 900, pointer: "fine" }])
+    assert.equal(winning([...oldDocks, dock], "display", viewport)?.value, "grid", "true tall side rails keep their shortcut dock");
+});
+
+// D428 R6's wide inline rail keeps its 44px floating invoker. E6 reached a
+// translated native-popover invoker whose body needs its own intrinsic row.
+// This fixture checks the two source policies, not native paint or keyboard delivery.
+test("D428 Document rail retains inset focus across floating inline and intrinsic native-popover owners", () => {
+  const posture = '.application-creative[data-nav-posture="rail"][data-short-height="true"][data-layout-intent="workbench"]';
+  const page = posture + ' .workspace-page[data-workbench="document"]';
+  const collapsed = page + ':has(> forma-project-rail > .project-rail.collapsed)';
+  const host = page + ' > forma-project-rail:has(> .project-rail.collapsed)';
+  const nativePage = page + ':has(> forma-project-rail > .project-rail > .rail-toolbar > .rail-collapse-toggle[popovertarget])';
+  const nativeHost = nativePage + ' > forma-project-rail';
+  const nativeRail = nativeHost + ' > .project-rail';
+  const nativeToolbar = nativeRail + ' > .rail-toolbar';
+  const nativeToggle = nativeToolbar + ' > .rail-collapse-toggle';
+  const selector = page + ' > forma-project-rail > .project-rail.collapsed > .rail-toolbar > .rail-collapse-toggle:focus-visible';
+  const inset = "calc(-1 * var(--forma-focus-ring-width, .1875rem))";
+  const short = [
+    { name: "observed shallow inline rail", width: 844, height: 390, pointer: "fine", nativePanel: false },
+    { name: "same shallow coarse inline rail", width: 844, height: 390, pointer: "coarse", nativePanel: false },
+    { name: "first wide inline seam", width: 768, height: 390, pointer: "fine", nativePanel: false },
+    { name: "observed true-200 native owner", width: 419, height: 398, pointer: "fine", nativePanel: true },
+    { name: "same short native coarse owner", width: 419, height: 398, pointer: "coarse", nativePanel: true },
+    { name: "existing short native media branch", width: 700, height: 390, pointer: "fine", nativePanel: true },
+    { name: "wide shallow inline rail", width: 1280, height: 390, pointer: "fine", nativePanel: false },
+  ];
+  assert.ok(projectRail.includes('<button type="button" class="rail-collapse-toggle"'));
+  assert.ok(projectRail.includes('"projects.railExpand"') && projectRail.includes('"projects.railCollapse"'));
+  assert.ok(projectRail.includes('popovertarget=${this.#nativePanel?this.#contentId:nothing}'));
+  assert.ok(projectRail.includes('popover=${this.#nativePanel?"auto":nothing}'));
+  assert.ok(projectRail.includes('matchMedia("(max-width: 47.99rem)")'),
+    "the runtime native-owner decision is unchanged; the CSS condition follows its actual trigger");
+  assert.ok(projectRail.includes('if(!this.#nativePanel)this.#setCollapsed(!collapsed);'),
+    "retain the same named native control and inline expansion path");
+  assert.equal(winning(".ui-audience-navigation a:focus-visible", "outline-offset", short[0])?.value, inset,
+    "reuse the established inset focus treatment");
+  for (const viewport of short) {
+    // As elsewhere in this fixture, list only selectors matching this declared
+    // actual owner. Native host tests and the browser verify the owner itself.
+    const hosts = [host, ...(viewport.nativePanel ? [nativeHost] : [])];
+    const pages = [collapsed, ...(viewport.nativePanel ? [nativePage] : [])];
+    assert.equal(winning(hosts, "position", viewport)?.value, viewport.nativePanel ? "relative" : "absolute");
+    assert.equal(winning(hosts, "inline-size", viewport)?.value, viewport.nativePanel ? "100%" : "var(--forma-hit-target)");
+    assert.equal(winning(pages, "grid-template-columns", viewport)?.value, "minmax(0, 1fr)");
+    if (viewport.nativePanel) {
+      assert.equal(winning(pages, "grid-template-rows", viewport)?.value, "auto minmax(0, 1fr)",
+        "reserve the full native trigger row instead of putting translated content over the document header");
+      assert.equal(winning(nativeHost, "grid-row", viewport)?.value, "1");
+      assert.equal(winning(nativePage + " > .studio-main", "grid-row", viewport)?.value, "2");
+      assert.equal(winning(nativeHost, "inset", viewport)?.value, "auto");
+      const oldRail = page + " > forma-project-rail > .project-rail.collapsed";
+      assert.equal(winning([oldRail, nativeRail], "inline-size", viewport)?.value, "100%");
+      assert.equal(winning(nativeRail, "height", viewport)?.value, "auto");
+      const oldToolbar = posture + " .project-rail.collapsed .rail-toolbar";
+      assert.equal(winning([".rail-toolbar", oldToolbar, nativeToolbar], "height", viewport)?.value, "auto");
+      assert.equal(winning(nativeToolbar, "padding-block", viewport)?.value, "var(--forma-focus-clearance)");
+      assert.equal(winning(nativeToolbar, "flex-wrap", viewport)?.value, "wrap");
+      assert.equal(winning([".project-rail.collapsed .rail-collapse-toggle", nativeToggle], "width", viewport)?.value, "auto");
+      assert.equal(winning(nativeToggle, "max-inline-size", viewport)?.value, "100%");
+      assert.equal(winning(nativeToggle, "white-space", viewport)?.value, "normal");
+      assert.equal(winning(nativeToggle, "overflow-wrap", viewport)?.value, "anywhere");
+      const label = ".project-rail.collapsed .rail-collapse-toggle b";
+      for (const [property, value] of [["position", "static"], ["width", "auto"], ["height", "auto"], ["overflow", "visible"], ["clip", "auto"]])
+        assert.equal(winning(label, property, viewport)?.value, value, "retain the visible native invoker wording");
+      const copy = nativePage + " > .studio-main > .studio-header-stack > .page-header--document > .page-header-copy";
+      assert.equal(winning([posture + " .page-header-copy", copy], "padding-inline-start", viewport)?.value, "0",
+        "the reserved row consumes no obsolete floating-invoker gap inside document copy");
+    }
+    assert.equal(winning(".rail-collapse-toggle", "min-inline-size", viewport)?.value, "var(--forma-hit-target)");
+    assert.equal(winning(".rail-collapse-toggle", "min-block-size", viewport)?.value,
+      viewport.pointer === "coarse" ? "var(--forma-hit-target-coarse)" : "var(--forma-hit-target)",
+      "preserve the existing 48px coarse height and 44px fine target");
+  }
+  for (const viewport of short)
+    assert.equal(winning([":focus-visible", selector], "outline-offset", viewport)?.value, inset,
+      viewport.name + ": retain the established inward ring for either short rail owner");
+  const rules = [];
+  sheets.find(sheet => sheet.name === "responsive-foundation.css").root.walkRules(rule => {
+    if (rule.selectors?.includes(selector)) rules.push(rule);
+  });
+  assert.equal(rules.length, 1);
+  assert.deepEqual(Object.fromEntries(rules[0].nodes.filter(node => node.type === "decl").map(node => [node.prop, node.value])),
+    { "outline-offset": inset }, "change only paint offset, not size, grid, type, clipping, outline color, width, or style");
+  const media = [];
+  for (let parent = rules[0].parent; parent; parent = parent.parent)
+    if (parent.type === "atrule" && parent.name === "media") media.push(parent.params);
+  assert.deepEqual(media, ["(max-height: 37.5rem) and (orientation: landscape)"],
+    "the same inset applies in forced colors without overriding the existing Highlight paint");
+  assert.match(design, /@media \(forced-colors: active\)\s*\{[\s\S]*?:focus-visible\s*\{\s*outline:\s*3px solid Highlight;/);
+  for (const viewport of [viewports[0], viewports[1], viewports[5], viewports[6]])
+    assert.equal(winning(selector, "outline-offset", viewport), undefined,
+      "the original floating-rail selector remains short-landscape only");
+});
+
+// E6 JA768 reached a healthy 44px native body whose outward ring crossed the
+// same fixed toolbar edge already handled in the compact rail. No geometry or
+// focus-event change is needed for this separate measured tall-rail condition.
+test("E6 tall Document rail reuses inset focus for its actual toolbar toggle", () => {
+  const selector = '.application-creative[data-nav-posture="rail"][data-short-height="false"][data-layout-intent="workbench"] .workspace-page[data-workbench="document"] > forma-project-rail > .project-rail > .rail-toolbar > .rail-collapse-toggle:focus-visible';
+  const inset = "calc(-1 * var(--forma-focus-ring-width, .1875rem))";
+  for (const viewport of [
+    { name: "observed JA tall rail", width: 768, height: 900, pointer: "fine" },
+    { name: "same tall coarse rail", width: 768, height: 900, pointer: "coarse" },
+    { name: "existing tall rail owner", width: 934, height: 882, pointer: "fine" },
+  ]) {
+    assert.equal(winning([":focus-visible", selector], "outline-offset", viewport)?.value, inset, viewport.name);
+    assert.equal(winning(".rail-toolbar", "height", viewport)?.value, "52px");
+    assert.equal(winning(".rail-collapse-toggle", "min-inline-size", viewport)?.value, "var(--forma-hit-target)");
+    assert.equal(winning(".rail-collapse-toggle", "min-block-size", viewport)?.value,
+      viewport.pointer === "coarse" ? "var(--forma-hit-target-coarse)" : "var(--forma-hit-target)");
+  }
+  const rules = [];
+  sheets.find(sheet => sheet.name === "responsive-foundation.css").root.walkRules(rule => {
+    if (rule.selectors?.includes(selector)) rules.push(rule);
+  });
+  assert.equal(rules.length, 1);
+  assert.deepEqual(rules[0].selectors, [selector], "only the actual tall rail toggle, not its popover descendants or other postures");
+  assert.equal(rules[0].parent.type, "root");
+  assert.deepEqual(Object.fromEntries(rules[0].nodes.filter(node => node.type === "decl").map(node => [node.prop, node.value])),
+    { "outline-offset": inset }, "retain body size, clipping, text and existing focus ownership");
+  assert.match(design, /@media \(forced-colors: active\)\s*\{[\s\S]*?:focus-visible\s*\{\s*outline:\s*3px solid Highlight;/);
+});
+
+// D428 R9 reached the compact rail's project link with a clear 44px body,
+// but its outward focus ring crossed the Workspace's top clip by 2.5px.
+// Library shares this exact toolbar; its physical paint is not measured here.
+test("D428 compact Workspace and Library rail peers reuse inset focus without changing their shared toolbar", () => {
+  const posture = '.application-creative[data-nav-posture="compact"]';
+  const toolbar = posture + ' :is(.workspace-page, .library-page) > forma-project-rail > .project-rail > .rail-toolbar';
+  const selectors = [
+    toolbar + ' > .rail-toolbar-context > .rail-project-switch:focus-visible',
+    toolbar + ' > .rail-collapse-toggle:focus-visible',
+  ];
+  const inset = "calc(-1 * var(--forma-focus-ring-width, .1875rem))";
+  const compact = [
+    { name: "observed R9 320px keyboard viewport", width: 320, height: 800, pointer: "fine" },
+    { name: "same compact coarse controls", width: 320, height: 800, pointer: "coarse" },
+    viewports[1],
+    viewports[7],
+  ];
+  assert.ok(projectRail.includes('<header class="rail-toolbar">'));
+  assert.ok(projectRail.includes('<span class="rail-toolbar-context"><a class="rail-project-switch"'));
+  assert.ok(projectRail.includes('href=${projectIdentityRoute}'));
+  assert.ok(projectRail.includes('this.#go(event,projectIdentityRoute)'));
+  assert.ok(projectRail.includes('<button type="button" class="rail-collapse-toggle"'));
+  assert.ok(projectRail.includes('aria-expanded=${!collapsed}'));
+  assert.ok(projectRail.includes('popovertarget=${this.#nativePanel?this.#contentId:nothing}'));
+  assert.ok(projectRail.includes('popover=${this.#nativePanel?"auto":nothing}'));
+  assert.ok(library.includes('<section class="library-page"><forma-project-rail surface="library"></forma-project-rail>'),
+    "Library uses the same existing rail, not a parallel toolbar");
+  assert.equal(winning(".ui-audience-navigation a:focus-visible", "outline-offset", compact[0])?.value, inset,
+    "reuse the existing inset treatment, including the earlier floating rail correction");
+  assert.match(design, /@media \(forced-colors: active\)\s*\{[\s\S]*?:focus-visible\s*\{\s*outline:\s*3px solid Highlight;/);
+  for (const viewport of compact) {
+    assert.equal(winning(".rail-toolbar", "display", viewport)?.value, "flex");
+    assert.equal(winning(".rail-toolbar", "align-items", viewport)?.value, "center");
+    assert.equal(winning(".rail-toolbar", "height", viewport)?.value, "52px");
+    assert.equal(winning(".rail-project-switch", "min-height", viewport)?.value, "2.75rem");
+    assert.equal(winning(".rail-collapse-toggle", "min-inline-size", viewport)?.value, "var(--forma-hit-target)");
+    assert.equal(winning(".rail-collapse-toggle", "min-block-size", viewport)?.value,
+      viewport.pointer === "coarse" ? "var(--forma-hit-target-coarse)" : "var(--forma-hit-target)",
+      "retain the existing 44px fine target and 48px coarse toggle height");
+    for (const page of ["workspace-page", "library-page"]) {
+      const host = posture + " ." + page + " > forma-project-rail";
+      assert.equal(winning(host, "position", viewport)?.value, "relative");
+      assert.equal(winning(host, "width", viewport)?.value, "100%");
+    }
+  }
+  for (const viewport of compact) for (const selector of selectors)
+    assert.equal(winning([":focus-visible", selector], "outline-offset", viewport)?.value, inset,
+      viewport.name + ": keep either shared toolbar peer's ring inside its unchanged body");
+  const rules = [];
+  sheets.find(sheet => sheet.name === "responsive-foundation.css").root.walkRules(rule => {
+    if (rule.selectors?.some(selector => selectors.includes(selector))) rules.push(rule);
+  });
+  assert.equal(rules.length, 1);
+  assert.deepEqual(rules[0].selectors, selectors,
+    "only the two direct toolbar peers, in either open state; never sibling popover links or noncompact rails");
+  assert.deepEqual(Object.fromEntries(rules[0].nodes.filter(node => node.type === "decl").map(node => [node.prop, node.value])),
+    { "outline-offset": inset }, "no control, header, clip, typography, outline width/style/color or focus-handler change");
+  assert.equal(rules[0].parent.type, "root",
+    "the existing measured compact posture owns this policy; it is not a new viewport or forced-colors exception");
+});
+
+// R6/R7 recorded Compare's raw 114.234375x44 body in a 158x44 native
+// horizontal scroller, with only 54x44 currently visible. Compare was NOT
+// focused before those runs stopped. This case checks the conditional paint
+// policy only; native horizontal reveal and full-body fit remain browser gates.
+test("E7 compact Document toolbar focus uses shared inset paint without replacing native horizontal scrolling", () => {
+  const posture = '.application-creative[data-nav-posture="compact"][data-layout-intent="workbench"]';
+  const strip = posture + ' .page-header--document .page-header-actions';
+  const selector = posture + ' .workspace-page[data-workbench="document"] .page-header--document > .page-header-actions > :is(.button, .icon-button):focus-visible';
+  const inset = "calc(-1 * var(--forma-focus-ring-width, .1875rem))";
+  const compact = [
+    { name: "recorded narrow portrait", width: 320, height: 800, pointer: "fine" },
+    { name: "same narrow coarse branch", width: 320, height: 800, pointer: "coarse" },
+    { name: "existing compact portrait", width: 390, height: 844, pointer: "coarse" },
+  ];
+  assert.ok(workspace.includes('class="document-actions page-header-actions"'));
+  assert.ok(workspace.includes('@click=' + '$' + '{this.#compare}'));
+  assert.ok(workspace.includes('?disabled=' + '$' + '{!canCompare}'),
+    "the actual Compare control retains its existing handler and admission");
+  assert.equal(winning(".ui-audience-navigation a:focus-visible", "outline-offset", compact[0])?.value, inset);
+  for (const viewport of compact) {
+    assert.equal(winning(strip, "max-inline-size", viewport)?.value, "100%");
+    assert.equal(winning(strip, "flex-wrap", viewport)?.value, "nowrap");
+    assert.equal(winning(strip, "overflow-x", viewport)?.value, "auto");
+    assert.equal(winning(strip, "overscroll-behavior-inline", viewport)?.value, "contain");
+    assert.equal(winning(strip + " > *", "min-inline-size", viewport)?.value, "var(--forma-hit-target)");
+    assert.equal(winning(strip + " > *", "flex", viewport)?.value, "0 0 auto");
+    assert.equal(winning(strip + " > .button", "white-space", viewport)?.value, "nowrap",
+      "retain the intentional native action strip, not a clipping workaround or new menu");
+  }
+  for (const viewport of compact)
+    assert.equal(winning([":focus-visible", selector], "outline-offset", viewport)?.value, inset,
+      viewport.name + ": protect ring paint without claiming native horizontal reveal has occurred");
+  const rules = [];
+  sheets.find(sheet => sheet.name === "responsive-foundation.css").root.walkRules(rule => {
+    if (rule.selectors?.includes(selector)) rules.push(rule);
+  });
+  assert.equal(rules.length, 1);
+  assert.equal(rules[0].parent.type, "root", "follow the existing compact-posture condition, not a guessed device");
+  assert.deepEqual(Object.fromEntries(rules[0].nodes.filter(node => node.type === "decl").map(node => [node.prop, node.value])),
+    { "outline-offset": inset }, "do not change target size, strip dimensions, scroll position, clipping, outline color, width, or style");
+  assert.match(design, /@media \(forced-colors: active\)\s*\{[\s\S]*?:focus-visible\s*\{\s*outline:\s*3px solid Highlight;/,
+    "the existing forced-colors focus paint remains authoritative");
+});
+
+// Conditional D428 follow-up: the narrow task strip has recorded overflow,
+// but a native task-button focus failure has not yet been reached. This is
+// source-policy coverage only, not proof of paint, focus delivery or body reveal.
+test("D428 Document task-strip peers reuse inset focus without changing native scrolling or pane selection", () => {
+  const strip = ".document-workbench-tasks";
+  const button = strip + " > button";
+  const selector = button + ":focus-visible";
+  const pressed = button + '[aria-pressed="true"]';
+  const inset = "calc(-1 * var(--forma-focus-ring-width, .1875rem))";
+  const root = sheets.find(sheet => sheet.name === "responsive-foundation.css").root;
+  assert.ok(workspace.includes('class="document-workbench-tasks"'));
+  assert.ok(workspace.includes('data-has-reviews=' + '$' + '{String(documentReviews.length>0)}'));
+  assert.ok(workspace.includes('role="group"'));
+  assert.ok(workspace.includes('@keydown=' + '$' + '{this.#navigateWorkbenchPanes}'));
+  assert.ok(workspace.includes('data-workbench-pane=' + '$' + '{pane}'));
+  assert.ok(workspace.includes('aria-pressed=' + '$' + '{String(this.#workbenchPane===pane)}'));
+  assert.ok(workspace.includes('@click=' + '$' + '{()=>this.#selectWorkbenchPane(pane)}'),
+    "retain the actual native pane controls, selected-state semantics and handlers");
+  assert.equal(winning(".ui-audience-navigation a:focus-visible", "outline-offset", viewports[0])?.value, inset);
+  const sharedRules = [], pressedRules = [];
+  root.walkRules(rule => {
+    if (rule.selectors?.includes(strip) || rule.selectors?.includes(strip + '[data-has-reviews="true"]')) sharedRules.push(rule);
+    if (rule.selectors?.includes(pressed)) pressedRules.push(rule);
+  });
+  assert.ok(sharedRules.some(rule => rule.selectors.includes(strip + '[data-has-reviews="true"]')
+    && rule.parent.type === "root" && rule.nodes.some(node => node.prop === "display" && node.value === "flex")),
+    "the same task strip is available with reviews outside narrow postures");
+  assert.ok(sharedRules.some(rule => rule.selectors.includes(strip) && rule.parent.name === "container"
+    && rule.parent.params === "studio (width < 46rem)"
+    && rule.nodes.some(node => node.prop === "display" && node.value === "flex")),
+    "retain the existing narrow-container presentation rather than inventing a new breakpoint");
+  for (const viewport of viewports) {
+    assert.equal(winning(strip, "overflow-x", viewport)?.value, "auto");
+    assert.equal(winning(strip, "padding-inline", viewport)?.value, "var(--forma-pane-inset)");
+    assert.equal(winning(strip, "scroll-padding-inline", viewport)?.value, "var(--forma-pane-inset)");
+    assert.equal(winning(button, "flex", viewport)?.value, "0 0 auto");
+    assert.equal(winning(button, "white-space", viewport)?.value, "nowrap");
+    assert.equal(winning(button, "min-block-size", viewport)?.value,
+      viewport.pointer === "coarse" ? "var(--forma-hit-target-coarse)" : "var(--forma-hit-target)",
+      "retain the existing 48px coarse height and 44px fine target");
+  }
+  const forced = pressedRules.find(rule => rule.parent.name === "media" && rule.parent.params === "(forced-colors: active)");
+  assert.ok(forced, "preserve the existing selected-task forced-colors treatment");
+  assert.deepEqual(Object.fromEntries(forced.nodes.filter(node => node.type === "decl").map(node => [node.prop, node.value])),
+    { outline: "2px solid Highlight", "outline-offset": "-2px" });
+  assert.deepEqual(specificity(selector), specificity(pressed),
+    "the later selected-task forced-colors rule must keep its existing precedence");
+  for (const viewport of viewports)
+    assert.equal(winning([":focus-visible", selector], "outline-offset", viewport)?.value, inset,
+      viewport.name + ": keep the ring inside a native task button without claiming full-body reveal");
+  const rules = [];
+  root.walkRules(rule => { if (rule.selectors?.includes(selector)) rules.push(rule); });
+  assert.equal(rules.length, 1);
+  assert.deepEqual(rules[0].selectors, [selector]);
+  assert.equal(rules[0].parent.type, "root", "the shared strip owns the rule, not one device or open-state subset");
+  assert.deepEqual(Object.fromEntries(rules[0].nodes.filter(node => node.type === "decl").map(node => [node.prop, node.value])),
+    { "outline-offset": inset }, "no size, scroll, typography, outline color/width/style, focus or pane-selection change");
+  assert.ok(rules[0].source.start.line < forced.source.start.line,
+    "the existing later forced-colors selected-task inset remains authoritative");
+});
+
+test("D428 Library native header buttons reserve existing focus clearance when scrolled into view", () => {
+  // R28 reached a fully visible French Export body with an outward ring below
+  // the viewport. This checks the source policy only; actual native Tab must
+  // establish whether the browser honors it before any behavioral correction.
+  const start = library.indexOf('<header class="page-header page-header--library">');
+  const end = library.indexOf("</header>", start);
+  assert.ok(start >= 0 && end > start);
+  const header = library.slice(start, end);
+  assert.ok(header.includes('<button type="button" class="button primary" data-context-controls-id="__new__"'));
+  assert.ok(header.includes('</form><button class="button secondary"'));
+  assert.ok(header.includes('this.store.authorizeProjectExport(receipt,authorization)'),
+    "native scroll clearance must not change or activate the actual Export authorization/action");
+  const selector = "forma-library .page-header--library > .page-header-actions > button";
+  for (const viewport of viewports) {
+    assert.equal(winning(":root", "--forma-focus-clearance", viewport)?.value, ".5rem");
+    assert.equal(winning(":focus-visible", "outline-offset", viewport)?.value, "3px",
+      "retain the existing outward native focus indicator");
+    assert.equal(winning(selector, "scroll-margin-block", viewport)?.value, "var(--forma-focus-clearance)",
+      viewport.name + ": reserve the existing clearance for native button reveal, not an inset or size workaround");
+  }
+  const rules = [];
+  sheets.find(sheet => sheet.name === "styles.css").root.walkRules(rule => {
+    if (rule.selectors?.includes(selector)) rules.push(rule);
+  });
+  assert.equal(rules.length, 1); assert.equal(rules[0].parent.type, "root");
+  assert.deepEqual(Object.fromEntries(rules[0].nodes.filter(node => node.type === "decl").map(node => [node.prop, node.value])),
+    { "scroll-margin-block": "var(--forma-focus-clearance)" });
+});
+
+// The native 200% journey reached a 94px pane containing a 94.78px textarea.
+// These are source-policy cases; physical focus/body visibility remains a
+// whole native-suite gate with the unchanged strict observer.
+test("E6 short native-rail Document keeps a usable pane behind scrollable header rows", () => {
+  const page = '.application-creative[data-nav-posture="rail"][data-short-height="true"][data-layout-intent="workbench"] .workspace-page[data-workbench="document"]:has(> forma-project-rail > .project-rail > .rail-toolbar > .rail-collapse-toggle[popovertarget])';
+  const stage = page + " > .studio-main";
+  const baseStage = '.workspace-page[data-workbench="document"] > .studio-main';
+  const dockStage = page + ':has(> .composer-dock) > .studio-main';
+  const pane = '.workspace-page[data-workbench="document"] .studio-grid > :is(.context-column, .output-column)';
+  for (const viewport of [
+    { name: "observed true-200 native owner", width: 419, height: 398, pointer: "fine" },
+    { name: "same native coarse owner", width: 419, height: 398, pointer: "coarse" },
+    { name: "short native media branch", width: 700, height: 390, pointer: "fine" },
+    { name: "native owner above existing 760px static-header seam", width: 767, height: 390, pointer: "fine" },
+    { name: "existing short-height boundary", width: 700, height: 600, pointer: "fine" },
+  ]) {
+    assert.equal(winning([baseStage, stage], "grid-template-rows", viewport)?.value, "auto auto minmax(16rem, 1fr)",
+      viewport.name + ": header rows cannot consume the complete editing pane");
+    assert.equal(winning(stage, "overflow-y", viewport)?.value, "auto", "native scrollIntoView can reveal the pane through this ancestor");
+    assert.equal(winning(stage, "overscroll-behavior", viewport)?.value, "contain");
+    assert.equal(winning([".studio-header-stack", stage + " > .studio-header-stack"], "position", viewport)?.value, "static",
+      "the complete header scrolls out of the way even above the old 760px seam");
+    assert.equal(winning(stage + " > .studio-header-stack", "top", viewport)?.value, "auto");
+    assert.equal(winning(stage, "scroll-padding-block", viewport)?.value, "var(--forma-focus-clearance)");
+    assert.equal(winning(stage, "scroll-padding-block-end", viewport), undefined, "an undocked stage has no phantom composer reserve");
+    assert.equal(winning(dockStage, "scroll-padding-block-end", viewport)?.value, "calc(7rem + var(--forma-keyboard-offset))",
+      "a real direct composer remains clear of the newly scrollable ancestor");
+    assert.equal(winning(pane, "overflow-y", viewport)?.value, "auto", "the existing native pane stays independently scrollable");
+    assert.equal(winning(pane, "scroll-padding-block", viewport)?.value, "var(--forma-focus-clearance)");
+    assert.equal(winning(stage, "grid-row", viewport)?.value, "2", "the native invoker keeps its preceding full row");
+    for (const property of ["font-size", "line-height", "height", "block-size", "max-height", "max-block-size", "display"])
+      assert.equal(winning(stage, property, viewport), undefined, "do not shrink copy, cap the scroll owner, or hide content: " + property);
+  }
+  for (const viewport of [
+    { name: "immediately taller native owner", width: 700, height: 601, pointer: "fine" },
+    { name: "compact portrait owner", width: 390, height: 844, pointer: "coarse" },
+    { name: "square seam", width: 600, height: 600, pointer: "fine" },
+  ]) {
+    assert.equal(winning([baseStage, stage], "grid-template-rows", viewport)?.value, "auto auto minmax(0, 1fr)");
+    assert.equal(winning(stage, "overflow-y", viewport), undefined, viewport.name + ": preserve the ordinary bounded stage");
+  }
+  // Existing fixture matching lists only actual owners: an inline rail has no
+  // popovertarget and therefore does not match the new native-stage selector.
+  for (const viewport of [viewports[2], viewports[8]]) {
+    assert.equal(winning(baseStage, "grid-template-rows", viewport)?.value, "auto auto minmax(0, 1fr)");
+    assert.equal(winning(baseStage, "overflow-y", viewport), undefined);
+  }
+});
+
+test("E6 short shared chrome removes only the application title already represented by the native current workspace", async () => {
+  // Source/selector policy, not native :has(), text geometry or identity paint.
+  // Keep the original whole-file membership and all earlier focus contracts.
+  const navigationSource = await read("../src/components/design-system/navigation.ts");
+  const switcherStart = navigationSource.indexOf("export class FormaUiWorkspaceSwitcher");
+  const switcherEnd = navigationSource.indexOf("export class ", switcherStart + 1);
+  assert.ok(switcherStart >= 0);
+  const switcher = navigationSource.slice(switcherStart, switcherEnd < 0 ? undefined : switcherEnd);
+  assert.ok(switcher.includes("const destinations = this.destinations.filter((destination) => !destination.disabled);"));
+  assert.ok(switcher.includes("if (destinations.length < 2) return nothing;"),
+    "zero/one available workspace has no emitted current link, so the title fallback must remain");
+  assert.ok(switcher.includes("const current = destinations.find((destination) => destination.value === this.value) ?? destinations[0];"));
+  assert.ok(switcher.includes('aria-current=' + '$' + '{destination.value === this.value ? "page" : nothing}'),
+    "the proposed presence guard requires the real current application, not the fallback first option");
+  assert.ok(switcher.includes('<span dir="auto">' + '$' + '{current.label}</span>'));
+  assert.ok(switcher.includes("if (destinations.length === 2) return html"));
+  assert.ok(switcher.includes('<nav class="ui-workspace-switcher application-switcher"'));
+  assert.ok(switcher.includes('<div class="ui-workspace-switcher platform-switcher ui-popover">'),
+    "the same current-link criterion serves both native two-link and popover presentations");
+  assert.ok(shell.includes('label:this.i18n.t("shell."+candidate.id,candidate.label)'));
+  assert.ok(shell.includes('.value=' + '$' + '{applicationId} .destinations=' + '$' + '{workspaceDestinations}'));
+  assert.ok(shell.includes('<div class="application-context"><b>' + '$' + '{this.i18n.t("shell."+applicationId,application.label)}</b>'),
+    "both current application labels use the same localized identity key; no English-text predicate");
+  const actorStart = shell.indexOf('<span class="document-focus-actor"');
+  const actorEnd = shell.indexOf('</span><button', actorStart);
+  assert.ok(actorStart >= 0 && actorEnd > actorStart);
+  const actor = shell.slice(actorStart, actorEnd);
+  for (const identity of ["session.user.displayName", "focusedOrganization.name", "focusedMembership.role", "workspace.admin.role."])
+    assert.ok(actor.includes(identity), "retain the distinct current actor/organization/role source: " + identity);
+  assert.ok(shell.includes('class="button ghost compact document-focus-activity"'));
+  assert.ok(shell.includes('this.#route(withProjectTaskDocumentInRoute("/activity",projection.documentId, this.store.route.get()))'));
+  const shallow = { name: "retained shallow header", width: 844, height: 390, pointer: "fine" };
+  assert.equal(winning(".application-context", "display", shallow)?.value, "flex");
+  assert.equal(winning(".application-context", "flex", shallow)?.value, "1");
+  assert.equal(winning(".application-context b", "flex", shallow)?.value, "none",
+    "the current duplicate is nonshrinking while its context column may collapse");
+  assert.equal(winning(".application-context span", "overflow", shallow)?.value, "hidden",
+    "the distinct application description already owns its bounded text policy");
+  assert.equal(winning(".document-focus-actor", "display", shallow)?.value, "grid");
+  assert.equal(winning('.application-creative > .topbar', "block-size", shallow)?.value, "var(--forma-short-topbar-height)");
+  assert.equal(winning('.application-canvas > .topbar', "block-size", shallow)?.value, "var(--forma-short-topbar-height)");
+  assert.equal(winning(".ui-workspace-switcher-trigger", "min-block-size", shallow)?.value,
+    "var(--forma-control-min-size, 2.75rem)");
+  assert.equal(winning(".topbar > .top-actions > .avatar", "inline-size", shallow)?.value, "var(--forma-hit-target)");
+  const compactHide = 'html[data-document-focus] .application-creative[data-nav-posture="compact"][data-layout-intent="workbench"] > .topbar > forma-ui-workspace-switcher';
+  assert.equal(winning(compactHide, "display", shallow)?.value, "none",
+    "the existing measured-compact policy can hide the switcher; do not use its unpainted link as an identity replacement");
+
+  const selector = ':is(.application-creative, .application-canvas):not([data-nav-posture="compact"]) > .topbar:has(> forma-ui-workspace-switcher > .ui-workspace-switcher a[aria-current="page"]) > .application-context > b';
+  const root = sheets.find(sheet => sheet.name === "responsive-foundation.css").root;
+  const rules = [];
+  root.walkRules(rule => { if (rule.selectors?.includes(selector)) rules.push(rule); });
+  assert.equal(rules.length, 1, "desired source policy: deduplicate only when the same native current identity is present");
+  assert.deepEqual(rules[0].selectors, [selector]);
+  assert.equal(rules[0].parent.type, "atrule");
+  assert.equal(rules[0].parent.name, "media");
+  assert.equal(rules[0].parent.params, "(max-height: 37.5rem) and (orientation: landscape)");
+  assert.equal(rules[0].parent.parent.type, "root");
+  assert.deepEqual(Object.fromEntries(rules[0].nodes.filter(node => node.type === "decl").map(node => [node.prop, node.value])),
+    { display: "none" }, "only the duplicate B, not its description, actor, role, Activity or any native control");
+  for (const viewport of viewports) {
+    const shortLandscape = viewport.height <= 600 && viewport.width > viewport.height;
+    assert.equal(ruleActive(rules[0], viewport), shortLandscape, viewport.name + ": retain the existing short-chrome media scope");
+  }
 });

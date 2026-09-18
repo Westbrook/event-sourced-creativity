@@ -1,18 +1,39 @@
-import { OUTPUT_REQUIREMENTS_SCHEMA } from "./output-requirements-schema.ts";
+import { OUTPUT_REQUIREMENTS_SCHEMA, OUTPUT_MODEL3D_SCHEMA_STATE_SQL, upgradeOutputRequirementsSchema } from "./output-requirements-schema.ts";
 import { markOutputSchemaReady } from "./output-schema-state.ts";
 import { PROFILE_EXCLUDED_EVENT_TYPES, PROJECT_BOOTSTRAP_EVENT_TYPES } from "../src/model/event-profiles.ts";
 import { PHANTOM_ATTENTION_EVENT_SQL } from "../db/event-predicates.ts";
-import { publicEventPayload } from "./event-privacy.ts";
+import { uuidV7, makeEvent, EVENT_WRITE_COLUMNS, eventWriteBindings, EVENT_WRITE_STAGE_TRIGGER_SQL, type EventRow } from "./event-write-primitives.ts";
+export { uuidV7, makeEvent, EVENT_WRITE_COLUMNS, eventWriteBindings, EVENT_WRITE_STAGE_TRIGGER_SQL };
+export type { EventRow };
+import { serializeEvent } from "./event-read-primitives.ts";
+export { serializeEvent };
+import { streamHead, EVENT_PAGE_SIZE, readEventPage, readEvents } from "./event-stream-read.ts";
+export { streamHead, EVENT_PAGE_SIZE, readEventPage, readEvents };
+import { insertEventAtHead, StaleSequenceError, appendEvents } from "./event-append.ts";
+export { StaleSequenceError, appendEvents };
 
 export { PHANTOM_ATTENTION_EVENT_SQL } from "../db/event-predicates.ts";
 
 export interface WorkerEnv {
+  /** Default-off native memory read rollout; explicit enrollment and authority are still required. */
+  FORMA_MEMORY_ENABLED?: string;
+  FORMA_MEMORY_USER_IDS?: string;
+  /** Separate default-off document-profile purpose; no implicit reference-memory upgrade. */
+  FORMA_MEMORY_PROFILE_ENABLED?: string;
+  FORMA_MEMORY_PROFILE_USER_IDS?: string;
+  /** Separate exact-true admission for the existing scheduled memory job; unset stays disabled. */
+  FORMA_MEMORY_SCHEDULING_ENABLED?: string;
   ASSETS: Fetcher;
+  JEV_API_KEY?: string;
   DB: D1Database;
   MEDIA: R2Bucket;
   OPENAI_API_KEY?: string;
   OPENAI_PROJECT?: string;
   OPENAI_MODEL?: string;
+  OPENAI_SLIDES_COMPOSITION_MODEL?: string;
+  OPENAI_SLIDES_COMPOSITION_REASONING_EFFORT?: string;
+  OPENAI_SLIDES_REPAIR_MODEL?: string;
+  OPENAI_SLIDES_REPAIR_REASONING_EFFORT?: string;
   OPENAI_IMAGE_MODEL?: string;
   FAL_KEY?: string;
   FAL_IMAGE_MODEL?: string;
@@ -25,6 +46,7 @@ export interface WorkerEnv {
   FORMA_VIDEO_PROVIDER?: string;
   FORMA_AUDIO_PROVIDER?: string;
   FORMA_ADMIN_EMAILS?: string;
+  FORMA_HOLD_DISPOSITION_ENABLED?: string;
   FORMA_RETENTION_DAYS?: string;
   FORMA_EVIDENCE_RETENTION_DAYS?: string;
   FORMA_USER_TOKEN_LIMIT?: string;
@@ -45,19 +67,6 @@ export interface WorkerEnv {
 
 export interface WorkerExecutionContext { waitUntil(promise: Promise<unknown>): void; }
 
-export type EventRow = {
-  eventId: string; streamId: string; sequence: number; occurredAt: string; recordedAt: string;
-  actor: string; clientId: string; correlationId: string; causationId: string | null;
-  compensatesEventId: string | null; schemaVersion: number; type: string; payload: Record<string, unknown>;
-};
-
-export const uuidV7 = () => {
-  const time = Date.now().toString(16).padStart(12, "0");
-  const bytes = crypto.getRandomValues(new Uint8Array(10));
-  const hex = Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
-  const variant = ((bytes[4] & 0x3f) | 0x80).toString(16).padStart(2, "0");
-  return `${time.slice(0, 8)}-${time.slice(8)}-7${hex.slice(0, 3)}-${variant}${hex.slice(5, 7)}-${hex.slice(7, 19)}`;
-};
 
 const initializedSchemas = new WeakMap<D1Database, Promise<void>>();
 const readySchemas = new WeakSet<D1Database>();
@@ -72,14 +81,6 @@ export function inheritRuntimeSchemaReadiness(source: D1Database, guarded: D1Dat
 }
 const retentionSweeps = new WeakMap<D1Database, number>();
 
-export const EVENT_WRITE_STAGE_TRIGGER_SQL = `CREATE TRIGGER IF NOT EXISTS event_write_stage_after_insert AFTER INSERT ON event_write_stage BEGIN
-  SELECT CASE WHEN NEW.stream_id LIKE 'creative:%' AND NEW.owner_id<>substr(NEW.stream_id,10) THEN RAISE(ABORT,'event_owner_mismatch') END;
-  INSERT INTO events(event_id,stream_id,sequence,occurred_at,recorded_at,actor,client_id,correlation_id,causation_id,compensates_event_id,schema_version,type,payload)
-    VALUES(NEW.event_id,NEW.stream_id,NEW.sequence,NEW.occurred_at,NEW.recorded_at,NEW.actor,NEW.client_id,NEW.correlation_id,NEW.causation_id,NEW.compensates_event_id,NEW.schema_version,NEW.type,NEW.payload);
-  INSERT INTO event_private_payloads(private_event_id,owner_id,project_id,document_id,private_json,created_at,redacted_at)
-    SELECT NEW.event_id,NEW.owner_id,NEW.project_id,NEW.document_id,NEW.private_json,NEW.recorded_at,NULL WHERE NEW.private_json IS NOT NULL;
-  DELETE FROM event_write_stage WHERE event_id=NEW.event_id;
-END`;
 
 export const PROJECT_NOTIFICATION_TRIGGER_SQL = `CREATE TRIGGER IF NOT EXISTS project_notification_after_event AFTER INSERT ON project_event_scopes
   WHEN (SELECT type FROM events WHERE event_id=NEW.event_id) IN('ArtifactReviewRequested','ArtifactApproved','ArtifactChangesRequested','DocumentArtifactEdited','DocumentRenderCompleted','DocumentRemoved','BlockCreated','BlockPropertyEdited','BlockRenamed','BlockWeightSet','BlockLocked','BlockUnlocked','BlockRehomed','BlockRemoved','BlockRestored','BlockRelationAdded','BlockRelationRemoved','ChipEdited','ExtractionRequested','ExtractionCompleted','ExtractionFailed','FocalPointSet','RightsAsserted')
@@ -248,7 +249,7 @@ export const PILOT_COHORT_DELETION_TRIGGER_SQL=`CREATE TRIGGER IF NOT EXISTS pil
 export function ensureSchema(env: WorkerEnv): Promise<void> {
   const initialized = initializedSchemas.get(env.DB);
   if (initialized) return initialized;
-  const initialization = env.DB.batch([
+  const initialization = env.DB.batch<{ current: number }>([
     env.DB.prepare(`CREATE TABLE IF NOT EXISTS events (
       event_id TEXT PRIMARY KEY NOT NULL, stream_id TEXT NOT NULL, sequence INTEGER NOT NULL,
       occurred_at TEXT NOT NULL, recorded_at TEXT NOT NULL, actor TEXT NOT NULL, client_id TEXT NOT NULL,
@@ -289,6 +290,11 @@ export function ensureSchema(env: WorkerEnv): Promise<void> {
     env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_cost_budget_reservations_owner_status_period ON cost_budget_reservations(owner_id,status,period)"),
     env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_cost_budget_reservations_owner_correlation ON cost_budget_reservations(owner_id,correlation_id)"),
     env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_cost_budget_reservations_workspace_period_status ON cost_budget_reservations(workspace_id,period,status)"),
+    env.DB.prepare("CREATE TABLE IF NOT EXISTS consequential_executions (execution_id TEXT PRIMARY KEY NOT NULL,actor_user_id TEXT NOT NULL,stream_id TEXT NOT NULL,project_id TEXT NOT NULL,document_id TEXT NOT NULL,organization_id TEXT,project_access_id TEXT,operation TEXT NOT NULL,intent_hash TEXT NOT NULL,binding_hash TEXT NOT NULL,consent_ref TEXT NOT NULL,result_ref TEXT,status TEXT NOT NULL,error_code TEXT,created_at TEXT NOT NULL,expires_at TEXT NOT NULL,updated_at TEXT NOT NULL)"),
+    env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_consequential_executions_actor_scope ON consequential_executions(actor_user_id,project_id,document_id,status,created_at)"),
+    env.DB.prepare("CREATE TABLE IF NOT EXISTS consequential_execution_steps (execution_id TEXT NOT NULL,step_index INTEGER NOT NULL,token_reservation_id TEXT NOT NULL,cost_reservation_id TEXT NOT NULL,maximum_tokens INTEGER NOT NULL,maximum_microusd INTEGER NOT NULL,status TEXT NOT NULL,provider_request_id TEXT,verified_tokens INTEGER,verified_microusd INTEGER,updated_at TEXT NOT NULL,PRIMARY KEY(execution_id,step_index))"),
+    env.DB.prepare("CREATE TABLE IF NOT EXISTS authoring_commits (preview_id TEXT PRIMARY KEY NOT NULL,actor_user_id TEXT NOT NULL,operation TEXT NOT NULL,project_id TEXT NOT NULL,document_id TEXT NOT NULL,block_id TEXT NOT NULL,canvas_id TEXT,organization_id TEXT,project_access_id TEXT,approval_hash TEXT NOT NULL,result_json TEXT NOT NULL,last_event_id TEXT NOT NULL,verified INTEGER NOT NULL CONSTRAINT authoring_commit_verified CHECK(verified=1),created_at TEXT NOT NULL)"),
+    env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_authoring_commits_actor_document ON authoring_commits(actor_user_id,project_id,document_id)"),
     env.DB.prepare("CREATE TABLE IF NOT EXISTS shares (share_id TEXT PRIMARY KEY NOT NULL, token_hash TEXT NOT NULL, owner_id TEXT NOT NULL, stream_id TEXT NOT NULL, expires_at TEXT NOT NULL, revoked_at TEXT, created_at TEXT NOT NULL)"),
     env.DB.prepare("CREATE UNIQUE INDEX IF NOT EXISTS idx_shares_token_hash ON shares(token_hash)"),
     env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_shares_owner ON shares(owner_id, created_at)"),
@@ -312,7 +318,7 @@ export function ensureSchema(env: WorkerEnv): Promise<void> {
     env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_replay_personas_owner_updated ON replay_personas(owner_id, updated_at)"),
     env.DB.prepare("CREATE TABLE IF NOT EXISTS impersonation_sessions (impersonation_id TEXT PRIMARY KEY NOT NULL, actor_user_id TEXT NOT NULL, persona_id TEXT NOT NULL, fictional_user_id TEXT NOT NULL, replay_session_id TEXT NOT NULL, status TEXT NOT NULL, started_at TEXT NOT NULL, expires_at TEXT NOT NULL, ended_at TEXT)"),
     env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_impersonation_actor_status ON impersonation_sessions(actor_user_id, status, expires_at)"),
-    env.DB.prepare("CREATE TABLE IF NOT EXISTS document_jobs (job_id TEXT PRIMARY KEY NOT NULL, owner_id TEXT NOT NULL, stream_id TEXT NOT NULL, document_id TEXT NOT NULL, kind TEXT NOT NULL, status TEXT NOT NULL, source_surface TEXT NOT NULL, correlation_id TEXT NOT NULL, requested_sequence INTEGER NOT NULL, request_json TEXT NOT NULL, result_json TEXT, error_message TEXT, attempt_count INTEGER NOT NULL DEFAULT 0, requested_at TEXT NOT NULL, started_at TEXT, completed_at TEXT, lease_expires_at TEXT, notified_at TEXT, expires_at TEXT NOT NULL, updated_at TEXT NOT NULL)"),
+    env.DB.prepare("CREATE TABLE IF NOT EXISTS document_jobs (job_id TEXT PRIMARY KEY NOT NULL, owner_id TEXT NOT NULL, stream_id TEXT NOT NULL, document_id TEXT NOT NULL, kind TEXT NOT NULL, status TEXT NOT NULL, source_surface TEXT NOT NULL, correlation_id TEXT NOT NULL, requested_sequence INTEGER NOT NULL, request_json TEXT NOT NULL, result_json TEXT, scene_source_version_json TEXT, scene_source_protocol INTEGER NOT NULL DEFAULT 0 CHECK(scene_source_protocol IN(0,1)), error_message TEXT, attempt_count INTEGER NOT NULL DEFAULT 0, requested_at TEXT NOT NULL, started_at TEXT, completed_at TEXT, lease_expires_at TEXT, notified_at TEXT, expires_at TEXT NOT NULL, updated_at TEXT NOT NULL)"),
     env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_document_jobs_owner_status ON document_jobs(owner_id, status, requested_at)"),
     env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_document_jobs_stream_document ON document_jobs(stream_id, document_id, requested_at)"),
     env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_document_jobs_stream_status_requested ON document_jobs(stream_id,status,requested_at,job_id)"),
@@ -466,7 +472,11 @@ export function ensureSchema(env: WorkerEnv): Promise<void> {
     env.DB.prepare(PILOT_PARTICIPANT_OWNER_DELETION_TRIGGER_SQL),
     env.DB.prepare(PILOT_COHORT_DELETION_TRIGGER_SQL),
     ...OUTPUT_REQUIREMENTS_SCHEMA.map((sql) => env.DB.prepare(sql)),
-  ]).then(() => {
+    // Read the migration route in this existing bootstrap round trip. The
+    // following migration/validation transaction still rechecks all guards.
+    env.DB.prepare(OUTPUT_MODEL3D_SCHEMA_STATE_SQL),
+  ]).then(async (results) => {
+    await upgradeOutputRequirementsSchema(env.DB, results.at(-1)?.results[0]?.current);
     readySchemas.add(env.DB);
     markOutputSchemaReady(env.DB);
   }).catch((error: unknown) => {
@@ -477,69 +487,255 @@ export function ensureSchema(env: WorkerEnv): Promise<void> {
   return initialization;
 }
 
-/** Physically redact eligible private evidence and revision bodies within one shared bounded allowance. */
-export async function sweepExpiredPrivateContent(env: WorkerEnv, limit = 250): Promise<number> {
-  await ensureSchema(env);
-  const now = new Date().toISOString();
-  const maximum = Math.max(1, Math.min(1_000, Math.floor(limit) || 250));
-  const unheld=`NOT EXISTS(SELECT 1 FROM private_content_retention_scopes scope JOIN organization_retention_policies policy ON policy.organization_id=scope.organization_id AND policy.legal_hold=1 WHERE scope.content_id=private_content.content_id AND scope.classification='governed-evidence')
-    AND NOT EXISTS(SELECT 1 FROM private_content_retention_scopes scope JOIN organization_legal_holds hold ON hold.organization_id=scope.organization_id AND hold.status='active'
-      WHERE scope.content_id=private_content.content_id AND (hold.scope_kind='organization' OR hold.scope_kind='project' AND hold.resource_id=scope.project_access_id OR hold.scope_kind='content' AND hold.resource_id=scope.content_id))`;
-  const revisionUnheld=`NOT EXISTS(SELECT 1 FROM organization_retention_policies policy WHERE policy.organization_id=artifact_revisions.organization_id AND policy.legal_hold=1)
-    AND NOT EXISTS(SELECT 1 FROM organization_legal_holds hold WHERE hold.organization_id=artifact_revisions.organization_id AND hold.status='active'
-      AND (hold.scope_kind='organization' OR hold.scope_kind='project' AND hold.resource_id=artifact_revisions.project_access_id OR hold.scope_kind='artifact' AND hold.resource_id=artifact_revisions.artifact_id))`;
-  const candidate = await env.DB.prepare(`SELECT content_id FROM private_content WHERE redacted_at IS NULL AND kind!='document-artifact' AND expires_at<=? AND ${unheld} ORDER BY expires_at LIMIT 1`).bind(now).first<{content_id:string}>();
-  let processed=0;
-  if(candidate){
-    const result=await env.DB.prepare(`UPDATE private_content SET content='',redacted_at=? WHERE rowid IN (
-      SELECT rowid FROM private_content WHERE redacted_at IS NULL AND kind!='document-artifact' AND expires_at<=? AND ${unheld} ORDER BY expires_at LIMIT ?
-    )`).bind(now,now,maximum).run();
-    processed=Number(result.meta.changes??0);
+const ordinaryPrivateRetentionUnheld = `NOT EXISTS(SELECT 1 FROM private_content_retention_scopes scope JOIN organization_retention_policies policy ON policy.organization_id=scope.organization_id AND policy.legal_hold=1 WHERE scope.content_id=private_content.content_id AND scope.classification='governed-evidence')
+  AND NOT EXISTS(SELECT 1 FROM private_content_retention_scopes scope JOIN organization_legal_holds hold ON hold.organization_id=scope.organization_id AND hold.status='active'
+    WHERE scope.content_id=private_content.content_id AND (hold.scope_kind='organization' OR hold.scope_kind='project' AND hold.resource_id=scope.project_access_id OR hold.scope_kind='content' AND hold.resource_id=scope.content_id))`;
+const ordinaryRevisionRetentionUnheld = `NOT EXISTS(SELECT 1 FROM organization_retention_policies policy WHERE policy.organization_id=artifact_revisions.organization_id AND policy.legal_hold=1)
+  AND NOT EXISTS(SELECT 1 FROM organization_legal_holds hold WHERE hold.organization_id=artifact_revisions.organization_id AND hold.status='active'
+    AND (hold.scope_kind='organization' OR hold.scope_kind='project' AND hold.resource_id=artifact_revisions.project_access_id OR hold.scope_kind='artifact' AND hold.resource_id=artifact_revisions.artifact_id))`;
+
+/** Dedicated answer/origin retirement owns its bodies even after consent or ledger rows disappear. */
+async function ordinaryStructuredOriginExclusion(env: WorkerEnv): Promise<{sql:string;bindings:(string|number|null)[]}> {
+  const db=env.DB;
+  try {
+    const { nativeStructuredOriginSchema, nativeStructuredMemoryOriginAnswerExclusion } = await import("./memory-native-origin.ts");
+    const schema=await nativeStructuredOriginSchema(env),answer=nativeStructuredMemoryOriginAnswerExclusion(schema.present,"private_content");
+    if(env.DB!==db)throw new Error("retention-cleanup-binding-changed");
+    return{sql:"("+schema.guard.condition+") AND ("+answer.sql+")",bindings:[...schema.guard.bindings,...answer.bindings]};
+  } catch(error) {
+    if(env.DB!==db)throw new Error("retention-cleanup-binding-changed",{cause:error});
+    if(!(error instanceof Error)||error.message!=="native_structured_origin_schema_unavailable")throw error;
+    // Only this optional ordinary class is withheld. The dedicated preparation
+    // and backlog still report unavailable provenance; they cannot certify empty.
+    return{sql:"0",bindings:[]};
   }
-  const remaining=maximum-processed;
-  if(remaining>0){
-    const expiredRevision=await env.DB.prepare(`SELECT revision_id FROM artifact_revisions WHERE redacted_at IS NULL AND expires_at<=?
-      AND ${revisionUnheld}
-      ORDER BY expires_at LIMIT 1`).bind(now).first<{revision_id:string}>();
-    if(expiredRevision){
-      const revisions=await env.DB.prepare(`UPDATE artifact_revisions SET content_json='',redacted_at=? WHERE rowid IN(
-        SELECT rowid FROM artifact_revisions WHERE redacted_at IS NULL AND expires_at<=?
-          AND ${revisionUnheld}
-        ORDER BY expires_at LIMIT ?)`)
-        .bind(now,now,remaining).run();
-      processed+=Number(revisions.meta.changes??0);
-    }
+}
+
+async function ordinaryRetentionShape(env:WorkerEnv,now:string,workClass:number){
+  const db=env.DB;
+  if(workClass===0){
+    const origin=await ordinaryStructuredOriginExclusion(env);
+    if(env.DB!==db)throw new Error("retention-cleanup-binding-changed");
+    return{table:"private_content",identity:"content_id",body:"content",
+      eligible:"redacted_at IS NULL AND kind NOT IN('document-artifact','memory-structured-ledger','memory-structured-origin') AND expires_at<=? AND "+ordinaryPrivateRetentionUnheld+" AND "+origin.sql,
+      bindings:[now,...origin.bindings]};
   }
-  if(processed<maximum){
-    const platform=await env.DB.prepare("SELECT 1 AS available FROM sqlite_schema WHERE type='table' AND name='platform_assistant_private_content' LIMIT 1")
-      .first<{available:number}>();
-    if(platform){
-      const expired=await env.DB.prepare("SELECT content_id FROM platform_assistant_private_content WHERE redacted_at IS NULL AND expires_at<=? ORDER BY expires_at LIMIT 1")
-        .bind(now).first<{content_id:string}>();
-      if(expired){
-        const redacted=await env.DB.prepare(`UPDATE platform_assistant_private_content SET content='',redacted_at=? WHERE rowid IN(
-          SELECT rowid FROM platform_assistant_private_content WHERE redacted_at IS NULL AND expires_at<=? ORDER BY expires_at LIMIT ?)`)
-          .bind(now,now,maximum-processed).run();
-        processed+=Number(redacted.meta.changes??0);
+  if(workClass===1)return{table:"artifact_revisions",identity:"revision_id",body:"content_json",
+    eligible:"redacted_at IS NULL AND expires_at<=? AND "+ordinaryRevisionRetentionUnheld,bindings:[now]};
+  if(workClass===2){
+    const platform=await db.prepare("SELECT 1 AS available FROM sqlite_schema WHERE type='table' AND name='platform_assistant_private_content' LIMIT 1").first();
+    if(env.DB!==db)throw new Error("retention-cleanup-binding-changed");
+    return platform?{table:"platform_assistant_private_content",identity:"content_id",body:"content",eligible:"redacted_at IS NULL AND expires_at<=?",bindings:[now]}:null;
+  }
+  throw new Error("retention-cleanup-class-invalid");
+}
+
+/** Existing ordinary cleanup excludes every dedicated structured body. */
+async function ordinaryRetentionStatement(env: WorkerEnv, now: string, workClass: number, maximum: number): Promise<D1PreparedStatement | null> {
+  const db=env.DB,shape=await ordinaryRetentionShape(env,now,workClass);
+  if(env.DB!==db)throw new Error("retention-cleanup-binding-changed");
+  if(!shape)return null;
+  const candidate=await db.prepare("SELECT "+shape.identity+" FROM "+shape.table+" WHERE "+shape.eligible+" ORDER BY expires_at LIMIT 1").bind(...shape.bindings).first();
+  if(env.DB!==db)throw new Error("retention-cleanup-binding-changed");
+  if(!candidate)return null;
+  return db.prepare("UPDATE "+shape.table+" SET "+shape.body+"='',redacted_at=? WHERE rowid IN (SELECT rowid FROM "+shape.table+" WHERE "+shape.eligible+" ORDER BY expires_at LIMIT ?)").bind(now,...shape.bindings,maximum);
+}
+
+/** A FIFO candidate is a one-use exact snapshot, not a reusable cleanup capability. */
+async function ordinaryRetentionCandidate(env:WorkerEnv,now:string,workClass:number){
+  const db=env.DB,shape=await ordinaryRetentionShape(env,now,workClass);
+  if(env.DB!==db)throw new Error("retention-cleanup-binding-changed");
+  if(!shape)return null;
+  const selection="SELECT "+shape.identity+" AS identity,expires_at FROM "+shape.table+" WHERE "+shape.eligible+" ORDER BY expires_at,"+shape.identity+" LIMIT 1";
+  const row=await db.prepare(selection).bind(...shape.bindings).first<{identity:string;expires_at:string}>();
+  if(env.DB!==db)throw new Error("retention-cleanup-binding-changed");
+  if(!row)return null;
+  if(typeof row.identity!=="string"||!row.identity||row.identity.length>1024||typeof row.expires_at!=="string"
+    ||row.expires_at.length!==24||!Number.isFinite(Date.parse(row.expires_at))||new Date(row.expires_at).toISOString()!==row.expires_at||row.expires_at>now)
+    throw new Error("retention-cleanup-unavailable");
+  const assertion=(condition:string,bindings:(string|number|null)[])=>db.prepare("SELECT CASE WHEN ("+condition+") THEN 1 ELSE json('retention_cleanup_changed') END AS verified").bind(...bindings);
+  const statements=[
+    assertion("EXISTS(SELECT 1 FROM ("+selection+") selected WHERE selected.identity=? AND selected.expires_at=?)",[...shape.bindings,row.identity,row.expires_at]),
+    db.prepare("UPDATE "+shape.table+" SET "+shape.body+"='',redacted_at=? WHERE "+shape.identity+"=? AND expires_at=? AND "+shape.eligible).bind(now,row.identity,row.expires_at,...shape.bindings),
+    assertion("changes()=1",[]),
+    assertion("EXISTS(SELECT 1 FROM "+shape.table+" WHERE "+shape.identity+"=? AND expires_at=? AND "+shape.body+"='' AND redacted_at=?)",[row.identity,row.expires_at,now]),
+  ];
+  let consumed=false;
+  return{oldest:row.expires_at,selectionKey:String(workClass)+":"+row.identity,async commit():Promise<1>{
+    if(consumed||env.DB!==db)throw new Error("retention-cleanup-stale");consumed=true;
+    try{
+      const results=await db.batch(statements);
+      if(env.DB!==db||!Array.isArray(results)||results.length!==statements.length||results.some(result=>!result||typeof result!=="object"||Array.isArray(result)
+        ||!Object.hasOwn(result,"success")||result.success!==true||(result as typeof result & {error?:unknown}).error!==undefined||!Object.hasOwn(result,"results")||!Array.isArray(result.results)))throw new Error("retention-cleanup-unconfirmed");
+      for(const index of [0,2,3]){
+        const rows=results[index]!.results;
+        if(rows.length!==1||!rows[0]||typeof rows[0]!=="object"||Array.isArray(rows[0])||Object.keys(rows[0]).length!==1
+          ||Object.keys(rows[0])[0]!=="verified"||(rows[0] as Record<string,unknown>).verified!==1)throw new Error("retention-cleanup-unconfirmed");
       }
+      if(!Object.hasOwn(results[1]!,"meta")||!results[1]!.meta||typeof results[1]!.meta!=="object"||Array.isArray(results[1]!.meta)||!Object.hasOwn(results[1]!.meta,"changes")||results[1]!.meta.changes!==1)throw new Error("retention-cleanup-unconfirmed");
+      return 1;
+    }catch(error){throw new Error("retention-cleanup-unconfirmed",{cause:error});}
+  }};
+}
+
+function ordinaryRetentionCommitted(result: D1Result, maximum: number): number {
+  const changes = result?.meta?.changes;
+  if (!result || result.success !== true || ("error" in result && result.error !== undefined)
+    || typeof changes !== "number" || !Number.isSafeInteger(changes) || changes < 0 || changes > maximum) throw new Error("retention-cleanup-unconfirmed");
+  return changes;
+}
+
+async function sweepOrdinaryExpiredPrivateContent(env: WorkerEnv, now: string, maximum: number): Promise<number> {
+  const db = env.DB;
+  let processed = 0;
+  for (let workClass = 0; workClass < 3 && processed < maximum; workClass++) {
+    const statement = await ordinaryRetentionStatement(env, now, workClass, maximum - processed);
+    if (env.DB !== db) throw new Error("retention-cleanup-binding-changed");
+    if (statement) {
+      const result = await statement.run();
+      if (env.DB !== db) throw new Error("retention-cleanup-binding-changed");
+      processed += ordinaryRetentionCommitted(result, maximum - processed);
     }
   }
   return processed;
 }
 
+/** Retire eligible private data within the existing shared work-unit allowance.
+ * Ordinary units still redact one body, plus at most one anchor cursor row.
+ * A ledger unit changes at most one body, revision, exact custody resource,
+ * retention row and head/cursor (five rows);
+ * a head-only transition costs its own unit. A dedicated origin operation costs
+ * one unit, with an anchor cursor update in the same transaction when present.
+ * This return value is NOT a count of physically erased rows or a claim that
+ * held/pending data is gone. */
+export async function sweepExpiredPrivateContent(env: WorkerEnv, limit = 250): Promise<number> {
+  const db = env.DB;
+  const bindingCurrent = () => { if (env.DB !== db) throw new Error("retention-cleanup-binding-changed"); };
+  await ensureSchema(env);
+  bindingCurrent();
+  const now = new Date().toISOString();
+  const maximum = Math.max(1, Math.min(1_000, Math.floor(limit) || 250));
+  // Import only when the existing retention path runs. No schema installation,
+  // consumer activation, enrollment or additional scheduling is introduced.
+  const { prepareStructuredConversationRetentionStep } = await import("./memory-live-store.ts");
+  const { prepareNativeStructuredOriginRetentionStep } = await import("./memory-native-origin.ts");
+  bindingCurrent();
+  let processed = 0;
+  const preparationErrors: unknown[] = [];
+  let ledgerUnavailable = false, originUnavailable = false;
+  while (processed < maximum) {
+    let step: Awaited<ReturnType<typeof prepareStructuredConversationRetentionStep>> = null;
+    let origin: Awaited<ReturnType<typeof prepareNativeStructuredOriginRetentionStep>> = null;
+    // Each preparation is read-only and independent. Withhold an unavailable
+    // class for this invocation, but let other genuine plans use the remaining
+    // shared allowance. Fresh plans are still required after every committed unit.
+    if (!ledgerUnavailable) {
+      try {
+        step = await prepareStructuredConversationRetentionStep(env, { now });
+        bindingCurrent();
+        if (step && (!Number.isInteger(step.nextClass) || step.nextClass < 0 || step.nextClass > 3)) throw new Error("retention-cleanup-class-invalid");
+        if (step && (typeof step.oldest!=="string"||step.oldest.length!==24||!Number.isFinite(Date.parse(step.oldest))
+          ||new Date(step.oldest).toISOString()!==step.oldest||step.oldest>now)) throw new Error("retention-cleanup-unavailable");
+      } catch (error) {
+        bindingCurrent();
+        step = null; ledgerUnavailable = true; preparationErrors.push(error);
+      }
+    }
+    if (!originUnavailable) {
+      try {
+        origin = await prepareNativeStructuredOriginRetentionStep(env, { now });
+        bindingCurrent();
+        if(origin&&(origin.workUnits!==1||typeof origin.oldest!=="string"||origin.oldest.length!==24
+          ||!Number.isFinite(Date.parse(origin.oldest))||new Date(origin.oldest).toISOString()!==origin.oldest||origin.oldest>now
+          ||typeof origin.selectionKey!=="string"||!origin.selectionKey||origin.selectionKey.length>1024))throw new Error("retention-cleanup-unavailable");
+      } catch (error) {
+        bindingCurrent();
+        origin = null; originUnavailable = true; preparationErrors.push(error);
+      }
+    }
+    if (!step) {
+      bindingCurrent();
+      if(!origin){
+        processed += await sweepOrdinaryExpiredPrivateContent(env, now, maximum - processed);
+        bindingCurrent();
+        break;
+      }
+      const selectedOrigin=origin;
+      const candidates:{oldest:string;selectionKey:string;commit:()=>Promise<1>}[]=[{oldest:origin.oldest,selectionKey:"3:"+origin.selectionKey,commit:async()=>{
+        bindingCurrent();
+        try{
+          const statements=selectedOrigin.statements.map(query=>db.prepare(query.sql).bind(...query.bindings));
+          const results=await db.batch(statements);
+          bindingCurrent();
+          if(!selectedOrigin.acknowledge(results))throw new Error("retention-cleanup-unconfirmed");
+          return 1;
+        }catch(error){throw new Error("retention-cleanup-unconfirmed",{cause:error});}
+      }}];
+      for(let workClass=0;workClass<3;workClass++){
+        const candidate=await ordinaryRetentionCandidate(env,now,workClass);
+        bindingCurrent();if(candidate)candidates.push(candidate);
+      }
+      // With no ledger anchor, use exact global FIFO candidates. Newer traffic
+      // cannot continually jump ahead of an older durable origin cleanup unit.
+      candidates.sort((left,right)=>left.oldest<right.oldest?-1:left.oldest>right.oldest?1:left.selectionKey<right.selectionKey?-1:left.selectionKey>right.selectionKey?1:0);
+      if(await candidates[0]!.commit()!==1)throw new Error("retention-cleanup-unconfirmed");
+      bindingCurrent();processed++;continue;
+    }
+    let committed = false;
+    // The native head's persisted cursor rotates all four classes while an
+    // executable ledger target exists, including across fresh limit-one calls.
+    // Empty/held classes cost no writes and are skipped in this finite scan.
+    for (let offset = 0; offset < 4; offset++) {
+      const workClass = (step.nextClass + offset) % 4;
+      bindingCurrent();
+      if (workClass === 3) {
+        // The existing anchor cursor still rotates ordinary classes. Dedicated
+        // origins and ledger work share this slot in immutable timestamp order.
+        const committed=origin&&origin.oldest<step.oldest?await step.commitOrigin(origin):await step.commitLedger();
+        if (committed !== 1) throw new Error("retention-cleanup-unconfirmed");
+      } else {
+        const statement = await ordinaryRetentionStatement(env, now, workClass, 1);
+        bindingCurrent();
+        if (!statement) continue;
+        if (await step.commitOrdinary(workClass, statement) !== 1) throw new Error("retention-cleanup-unconfirmed");
+      }
+      bindingCurrent();
+      // Each commit also CAS-advances the exact anchor cursor to this slot's
+      // successor. An unconfirmed commit throws without retrying or reusing its
+      // attempted allowance; the next invocation reads persisted progress.
+      processed++;
+      committed = true;
+      break;
+    }
+    if (!committed) throw new Error("retention-cleanup-unavailable");
+  }
+  // Confirmed progress does not turn unavailable provenance into a completed
+  // sweep. Commit/ACK failures bypass this deferred error and stop immediately.
+  if (preparationErrors.length) throw preparationErrors[0];
+  return processed;
+}
+
 /** Only an actual scheduled invocation creates an auditable, content-free run receipt. */
 export async function observeScheduledRetention(env: WorkerEnv, limit = 1_000): Promise<number> {
+  const db = env.DB;
+  const bindingCurrent = () => { if (env.DB !== db) throw new Error("retention-cleanup-binding-changed"); };
   await ensureSchema(env);
+  bindingCurrent();
   const runId=uuidV7(),startedAt=new Date().toISOString();
-  await env.DB.prepare("INSERT INTO retention_sweep_runs(run_id,trigger_kind,status,started_at,finished_at,processed_count,remaining_count,oldest_expired_at,error_code) VALUES(?,'scheduled','running',?,NULL,0,0,NULL,NULL)").bind(runId,startedAt).run();
+  await db.prepare("INSERT INTO retention_sweep_runs(run_id,trigger_kind,status,started_at,finished_at,processed_count,remaining_count,oldest_expired_at,error_code) VALUES(?,'scheduled','running',?,NULL,0,0,NULL,NULL)").bind(runId,startedAt).run();
   try{
+    bindingCurrent();
     const processed=await sweepExpiredPrivateContent(env,limit);
+    bindingCurrent();
     const now=new Date().toISOString();
-    const platform=await env.DB.prepare("SELECT 1 AS available FROM sqlite_schema WHERE type='table' AND name='platform_assistant_private_content' LIMIT 1")
+    const platform=await db.prepare("SELECT 1 AS available FROM sqlite_schema WHERE type='table' AND name='platform_assistant_private_content' LIMIT 1")
       .first<{available:number}>();
+    bindingCurrent();
     const platformBacklog=platform?" UNION ALL SELECT platform.expires_at FROM platform_assistant_private_content platform WHERE platform.redacted_at IS NULL AND platform.expires_at<=?":"";
-    const backlog=await env.DB.prepare(`SELECT COUNT(*) AS count,MIN(expires_at) AS oldest FROM(
-      SELECT private_content.expires_at FROM private_content WHERE private_content.redacted_at IS NULL AND private_content.kind!='document-artifact' AND private_content.expires_at<=?
+    const ordinaryOrigin=await ordinaryStructuredOriginExclusion(env);
+    bindingCurrent();
+    const backlog=await db.prepare(`SELECT COUNT(*) AS count,MIN(expires_at) AS oldest FROM(
+      SELECT private_content.expires_at FROM private_content WHERE private_content.redacted_at IS NULL AND private_content.kind NOT IN('document-artifact','memory-structured-ledger','memory-structured-origin') AND private_content.expires_at<=? AND (${ordinaryOrigin.sql})
         AND NOT EXISTS(SELECT 1 FROM private_content_retention_scopes scope JOIN organization_retention_policies policy ON policy.organization_id=scope.organization_id AND policy.legal_hold=1
           WHERE scope.content_id=private_content.content_id AND scope.classification='governed-evidence')
         AND NOT EXISTS(SELECT 1 FROM private_content_retention_scopes scope JOIN organization_legal_holds hold ON hold.organization_id=scope.organization_id AND hold.status='active'
@@ -548,13 +744,30 @@ export async function observeScheduledRetention(env: WorkerEnv, limit = 1_000): 
         AND NOT EXISTS(SELECT 1 FROM organization_retention_policies policy WHERE policy.organization_id=artifact_revisions.organization_id AND policy.legal_hold=1)
         AND NOT EXISTS(SELECT 1 FROM organization_legal_holds hold WHERE hold.organization_id=artifact_revisions.organization_id AND hold.status='active'
           AND (hold.scope_kind='organization' OR hold.scope_kind='project' AND hold.resource_id=artifact_revisions.project_access_id OR hold.scope_kind='artifact' AND hold.resource_id=artifact_revisions.artifact_id))${platformBacklog})`)
-      .bind(now,now,...(platform?[now]:[])).first<{count:number;oldest:string|null}>();
-    await env.DB.prepare("UPDATE retention_sweep_runs SET status='completed',finished_at=?,processed_count=?,remaining_count=?,oldest_expired_at=? WHERE run_id=?")
-      .bind(now,processed,Number(backlog?.count??0),backlog?.oldest??null,runId).run();
-    await env.DB.prepare("DELETE FROM retention_sweep_runs WHERE run_id NOT IN(SELECT run_id FROM retention_sweep_runs ORDER BY started_at DESC,run_id DESC LIMIT 500)").run();
+      .bind(now,...ordinaryOrigin.bindings,now,...(platform?[now]:[])).first<{count:number;oldest:string|null}>();
+    bindingCurrent();
+    // Count eligible work units, not physical rows; held or unavailable data is
+    // never represented as erased. Absent/partial ledger schema is checked by
+    // the native helper, including stray dedicated-kind bodies.
+    const { structuredConversationRetentionBacklog } = await import("./memory-live-store.ts");
+    bindingCurrent();
+    const ledgerBacklog = await structuredConversationRetentionBacklog(env, { now });
+    bindingCurrent();
+    const { nativeStructuredOriginRetentionBacklog } = await import("./memory-native-origin.ts");
+    const originBacklog=await nativeStructuredOriginRetentionBacklog(env,{now});
+    bindingCurrent();
+    const oldest = [backlog?.oldest, ledgerBacklog.oldest, originBacklog.oldest].filter((value): value is string => typeof value === "string").sort()[0] ?? null;
+    await db.prepare("UPDATE retention_sweep_runs SET status='completed',finished_at=?,processed_count=?,remaining_count=?,oldest_expired_at=? WHERE run_id=?")
+      .bind(now,processed,Number(backlog?.count??0)+ledgerBacklog.count+originBacklog.count,oldest,runId).run();
+    bindingCurrent();
+    await db.prepare("DELETE FROM retention_sweep_runs WHERE run_id NOT IN(SELECT run_id FROM retention_sweep_runs ORDER BY started_at DESC,run_id DESC LIMIT 500)").run();
+    bindingCurrent();
     return processed;
   }catch(error){
-    await env.DB.prepare("UPDATE retention_sweep_runs SET status='failed',finished_at=?,error_code='retention_cleanup_failed' WHERE run_id=?")
+    // Failed-run counts were not finalized and are incomplete/unknown, not
+    // evidence that no cleanup committed before the failure or lost receipt.
+    // Record failure only on the original binding, never a replacement target.
+    await db.prepare("UPDATE retention_sweep_runs SET status='failed',finished_at=?,error_code='retention_cleanup_failed' WHERE run_id=?")
       .bind(new Date().toISOString(),runId).run();
     throw error;
   }
@@ -568,49 +781,8 @@ export function schedulePrivateContentRetention(env: WorkerEnv, context: WorkerE
   context.waitUntil(sweepExpiredPrivateContent(env).catch(() => { retentionSweeps.delete(env.DB); }));
 }
 
-export function makeEvent(streamId: string, sequence: number, actor: string, clientId: string, correlationId: string, type: string, payload: Record<string, unknown>, options: { causationId?: string | null; compensatesEventId?: string | null } = {}): EventRow {
-  const now = new Date().toISOString();
-  return { eventId: uuidV7(), streamId, sequence, occurredAt: now, recordedAt: now, actor, clientId, correlationId, causationId: options.causationId ?? null, compensatesEventId: options.compensatesEventId ?? null, schemaVersion: 1, type, payload };
-}
-
-export const EVENT_WRITE_COLUMNS = "event_id,stream_id,sequence,occurred_at,recorded_at,actor,client_id,correlation_id,causation_id,compensates_event_id,schema_version,type,payload,owner_id,project_id,document_id,private_json";
-
-export function eventWriteBindings(event: EventRow): Array<string | number | null> {
-  // Envelope every event, not only today's known authored types. Otherwise a
-  // newly introduced or historically overlooked event can strand customer
-  // text in immutable history while privacy controls report complete erasure.
-  const split = publicEventPayload(event.eventId, event.payload, true);
-  const owner = event.streamId.startsWith("creative:") ? event.streamId.slice("creative:".length) : event.streamId;
-  return [event.eventId,event.streamId,event.sequence,event.occurredAt,event.recordedAt,event.actor,event.clientId,event.correlationId,event.causationId,event.compensatesEventId,event.schemaVersion,event.type,JSON.stringify(split.payload),owner,String(event.payload.project_id??"")||null,String(event.payload.document_id??"")||null,split.privateJson];
-}
 
 export const insertEvent = (env: WorkerEnv, event: EventRow) => env.DB.prepare(`INSERT INTO event_write_stage (${EVENT_WRITE_COLUMNS}) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).bind(...eventWriteBindings(event));
-
-const insertEventAtHead = (env: WorkerEnv, event: EventRow, expectedHead: number) => env.DB.prepare(`INSERT INTO event_write_stage (${EVENT_WRITE_COLUMNS})
-  SELECT ?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?
-  WHERE (SELECT COALESCE(MAX(sequence),0) FROM events WHERE stream_id=?)=?`).bind(...eventWriteBindings(event),event.streamId,expectedHead);
-
-export class StaleSequenceError extends Error {
-  readonly expected: number;
-  readonly head: number;
-  constructor(expected: number, head: number) { super("stale_sequence"); this.expected=expected;this.head=head;this.name = "StaleSequenceError"; }
-}
-
-/** Reserve and append one contiguous event range in a single D1 batch. */
-export async function appendEvents(env: WorkerEnv, events: EventRow[], options: { expectedHead?: number; initialHead?:number; retries?: number; prepareSidecars?:(events:EventRow[])=>D1PreparedStatement[];onSidecarsCommitted?:(results:D1Result[])=>void } = {}) {
-  if (!events.length) return events;
-  const streamId = events[0].streamId; if (!events.every((event) => event.streamId === streamId)) throw new Error("mixed_event_stream_batch");
-  const retries = options.expectedHead === undefined ? Math.max(1, options.retries ?? 4) : 1;
-  for (let attempt = 0; attempt < retries; attempt += 1) {
-    const head = options.expectedHead ?? (attempt===0?options.initialHead:undefined) ?? await streamHead(env, streamId);
-    events.forEach((event, index) => { event.sequence = head + index + 1; });
-    const sidecars=options.prepareSidecars?.(events)??[];
-    const results = await env.DB.batch([...events.map((event, index) => insertEventAtHead(env, event, head + index)),...sidecars]);
-    if (results.slice(0,events.length).every((result) => Number(result.meta.changes ?? 0) > 0)){options.onSidecarsCommitted?.(results.slice(events.length));return events;}
-    if (options.expectedHead !== undefined) throw new StaleSequenceError(options.expectedHead, await streamHead(env,streamId));
-  }
-  throw new Error("event_append_contention");
-}
 
 export async function readEventsByClientEventIds(env:WorkerEnv,streamId:string,clientEventIds:string[]){
   const ids=[...new Set(clientEventIds.filter(Boolean))];const events=new Map<string,EventRow>();
@@ -628,25 +800,27 @@ export async function readEventsByClientEventIds(env:WorkerEnv,streamId:string,c
  * A retry after a lost response therefore resolves to the original events
  * instead of duplicating a move, resize, text edit, or placement.
  */
-export async function appendEventsWithClientReceipts(env:WorkerEnv,events:EventRow[],clientEventIds:string[],options:{retries?:number}={}){
+export async function appendEventsWithClientReceipts(env:WorkerEnv,events:EventRow[],clientEventIds:string[],options:{retries?:number;expectedHead?:number}={}){
   if(events.length!==clientEventIds.length)throw new Error("client_receipt_count_mismatch");if(!events.length)return events;
   const streamId=events[0].streamId;if(!events.every((event)=>event.streamId===streamId))throw new Error("mixed_event_stream_batch");
-  for(let attempt=0;attempt<Math.max(1,options.retries??8);attempt+=1){
+  const retries=options.expectedHead===undefined?Math.max(1,options.retries??8):1;
+  for(let attempt=0;attempt<retries;attempt+=1){
     const existing=await readEventsByClientEventIds(env,streamId,clientEventIds);const missing=events.map((event,index)=>({event,clientEventId:clientEventIds[index]})).filter((item)=>!existing.has(item.clientEventId));if(!missing.length)return events;
-    const head=await streamHead(env,streamId);missing.forEach((item,index)=>{item.event.sequence=head+index+1;});const createdAt=new Date().toISOString();const statements=missing.flatMap((item,index)=>[insertEventAtHead(env,item.event,head+index),env.DB.prepare("INSERT INTO event_client_receipts (stream_id,client_event_id,event_id,sequence,created_at) SELECT ?,?,?,?,? WHERE EXISTS (SELECT 1 FROM events WHERE event_id=?)").bind(streamId,item.clientEventId,item.event.eventId,item.event.sequence,createdAt,item.event.eventId)]);
+    const head=options.expectedHead??await streamHead(env,streamId);missing.forEach((item,index)=>{item.event.sequence=head+index+1;});const createdAt=new Date().toISOString();const statements=missing.flatMap((item,index)=>[insertEventAtHead(env,item.event,head+index),env.DB.prepare("INSERT INTO event_client_receipts (stream_id,client_event_id,event_id,sequence,created_at) SELECT ?,?,?,?,? WHERE EXISTS (SELECT 1 FROM events WHERE event_id=?)").bind(streamId,item.clientEventId,item.event.eventId,item.event.sequence,createdAt,item.event.eventId)]);
     try{const results=await env.DB.batch(statements);if(missing.every((_,index)=>Number(results[index*2]?.meta.changes??0)>0))return events;}catch{/* A competing retry may have committed the same client receipt. */}
+    if(options.expectedHead!==undefined){
+      // The original validated head is fixed inside the event/receipt batch.
+      // An ambiguous acknowledgement may recover only the exact old receipts;
+      // it must never rebase a stale requirement against a newer source.
+      const committed=await readEventsByClientEventIds(env,streamId,clientEventIds);
+      if(clientEventIds.every((id)=>committed.has(id)))return events;
+      throw new StaleSequenceError(options.expectedHead,await streamHead(env,streamId));
+    }
   }
   throw new Error("event_append_contention");
 }
 
-export async function streamHead(env: WorkerEnv, streamId: string) {
-  const row = await env.DB.prepare("SELECT COALESCE(MAX(sequence),0) AS head FROM events WHERE stream_id=?").bind(streamId).first<{ head: number }>();
-  return Number(row?.head ?? 0);
-}
 
-export function serializeEvent(row: Record<string, unknown>): EventRow {
-  return { eventId: String(row.event_id), streamId: String(row.stream_id), sequence: Number(row.sequence), occurredAt: String(row.occurred_at), recordedAt: String(row.recorded_at), actor: String(row.actor), clientId: String(row.client_id), correlationId: String(row.correlation_id), causationId: row.causation_id ? String(row.causation_id) : null, compensatesEventId: row.compensates_event_id ? String(row.compensates_event_id) : null, schemaVersion: Number(row.schema_version), type: String(row.type), payload: JSON.parse(typeof row.private_json==="string"?row.private_json:String(row.payload)) as Record<string, unknown> };
-}
 
 /** Recover job receipts without replaying an account's entire event ledger. */
 export async function readCorrelatedEvents(env:WorkerEnv,streamId:string,correlationIds:string[]){
@@ -657,18 +831,12 @@ export async function readCorrelatedEvents(env:WorkerEnv,streamId:string,correla
   return pages.flatMap((page)=>page.results.map(serializeEvent)).sort((left,right)=>left.sequence-right.sequence);
 }
 
-export const EVENT_PAGE_SIZE = 5000;
 export const SCOPED_EVENT_PAGE_SIZE = 6500;
 
 export type EventReadProfile = import("../src/model/event-profiles.ts").ScopedEventProfile;
 export { PROJECT_BOOTSTRAP_EVENT_TYPES } from "../src/model/event-profiles.ts";
 export const PROJECTION_IGNORED_EVENT_TYPES = PROFILE_EXCLUDED_EVENT_TYPES.workspace;
 
-export async function readEventPage(env: WorkerEnv, streamId: string, afterSequence = 0, limit = EVENT_PAGE_SIZE) {
-  const pageSize=Math.max(1,Math.min(EVENT_PAGE_SIZE,Math.floor(limit)));
-  const result=await env.DB.prepare("SELECT * FROM events LEFT JOIN event_private_payloads secret ON secret.private_event_id=events.event_id AND secret.redacted_at IS NULL WHERE stream_id=? AND sequence>? ORDER BY sequence ASC LIMIT ?").bind(streamId,Math.max(0,Math.floor(afterSequence)),pageSize).all<Record<string,unknown>>();
-  return result.results.map(serializeEvent);
-}
 
 /** Keep a transport page and its head on the same consistent D1 snapshot. */
 export async function readEventPageWithHead(env: WorkerEnv, streamId: string, afterSequence = 0, limit = EVENT_PAGE_SIZE) {
@@ -686,6 +854,14 @@ export async function readEventPageWithHead(env: WorkerEnv, streamId: string, af
   return { events, head, nextAfter, hasMore: nextAfter < head };
 }
 
+/** Server-only original source proof, read alongside each hydrated page. The
+ * verifier is synchronous and must reject every failed/missing assertion and any
+ * expired deadline before rows are serialized or consumed by a projection. */
+export type EventReadProof = Readonly<{
+  statements: readonly D1PreparedStatement[];
+  verify: (results: Array<D1Result<Record<string, unknown>>>) => void;
+}>;
+
 /** Read a route-specific page and its authoritative stream head in one D1 round trip. */
 export async function readProfileEventPage(
   env: WorkerEnv,
@@ -693,6 +869,7 @@ export async function readProfileEventPage(
   profile: EventReadProfile,
   afterSequence = 0,
   limit = SCOPED_EVENT_PAGE_SIZE,
+  proof?: EventReadProof,
 ) {
   const pageSize = Math.max(1, Math.min(SCOPED_EVENT_PAGE_SIZE, Math.floor(limit)));
   const eventTypes = profile === "projects" ? PROJECT_BOOTSTRAP_EVENT_TYPES : PROFILE_EXCLUDED_EVENT_TYPES[profile];
@@ -700,11 +877,19 @@ export async function readProfileEventPage(
   const operator = profile === "projects" ? "IN" : "NOT IN";
   const index = profile === "projects" ? " INDEXED BY idx_events_stream_type" : "";
   const attentionFilter = profile !== "projects" ? ` AND NOT (${PHANTOM_ATTENTION_EVENT_SQL})` : "";
-  const [page, current] = await env.DB.batch<Record<string, unknown>>([
+  const checkedProof = proof ? { statements: [...proof.statements], verify: proof.verify } : null;
+  const [page, current, ...sourceChecks] = await env.DB.batch<Record<string, unknown>>([
     env.DB.prepare(`SELECT * FROM events${index} LEFT JOIN event_private_payloads secret ON secret.private_event_id=events.event_id AND secret.redacted_at IS NULL WHERE stream_id=? AND sequence>? AND type ${operator} (${placeholders})${attentionFilter} ORDER BY sequence ASC LIMIT ?`)
       .bind(streamId, Math.max(0, Math.floor(afterSequence)), ...eventTypes, pageSize),
     env.DB.prepare("SELECT COALESCE(MAX(sequence),0) AS head FROM events WHERE stream_id=?").bind(streamId),
+    ...(checkedProof?.statements ?? []),
   ]);
+  if (checkedProof && (!page || page.success !== true || !Array.isArray(page.results) || page.results.length > pageSize
+    || !current || current.success !== true || !Array.isArray(current.results) || current.results.length !== 1
+    || typeof current.results[0]?.head !== "number" || !Number.isSafeInteger(current.results[0].head) || current.results[0].head < 0)) {
+    throw new Error("output_source_changed_during_read");
+  }
+  checkedProof?.verify(sourceChecks);
   const events = (page?.results ?? []).map(serializeEvent);
   const head = Number(current?.results[0]?.head ?? 0);
   // Excluded telemetry can trail the final useful event; advance past it.
@@ -713,9 +898,9 @@ export async function readProfileEventPage(
 }
 
 /** Load every projection-relevant account event without replaying telemetry. */
-export async function readWorkspaceEvents(env:WorkerEnv,streamId:string){
+export async function readWorkspaceEvents(env:WorkerEnv,streamId:string,proof?:EventReadProof){
   const events:EventRow[]=[];let after=0;
-  while(true){const page=await readProfileEventPage(env,streamId,"workspace",after,SCOPED_EVENT_PAGE_SIZE);events.push(...page.events);if(!page.hasMore)return events;after=page.nextAfter;}
+  while(true){const page=await readProfileEventPage(env,streamId,"workspace",after,SCOPED_EVENT_PAGE_SIZE,proof);events.push(...page.events);if(!page.hasMore)return events;after=page.nextAfter;}
 }
 
 /** Intelligence interactions need genuine attention evidence, not timer artifacts or raw admin telemetry. */
@@ -780,13 +965,6 @@ export async function readAuditEventPage(env: WorkerEnv, streamId: string, optio
   };
 }
 
-/** Read a complete stream in bounded D1 pages. Callers that only need transport pages should use readEventPage. */
-export async function readEvents(env: WorkerEnv, streamId: string, limit = Number.POSITIVE_INFINITY) {
-  const requested=Number.isFinite(limit)?Math.max(0,Math.floor(limit)):Number.POSITIVE_INFINITY;
-  const events:EventRow[]=[];let cursor=0;
-  while(events.length<requested){const page=await readEventPage(env,streamId,cursor,Math.min(EVENT_PAGE_SIZE,requested-events.length));if(!page.length)break;events.push(...page);cursor=page.at(-1)!.sequence;if(page.length<EVENT_PAGE_SIZE)break;}
-  return events;
-}
 
 export async function appendAuditEvent(env: WorkerEnv, streamId: string, actor: string, type: string, payload: Record<string, unknown>, correlationId = uuidV7()) {
   const event = makeEvent(streamId, 0, actor, "server:policy", correlationId, type, payload);

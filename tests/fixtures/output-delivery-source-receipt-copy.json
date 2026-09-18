@@ -47,7 +47,7 @@
   "output.delivery.operationReceiptAccessChanged": "The operation receipt is no longer available in this scope. No result from the previous scope was shown.",
   "output.delivery.operationReceiptCheckFailed": "The receipt check could not be confirmed. No new provider request was submitted. Refresh the saved state or give the technical receipt to an authorized operator.",
   "output.delivery.operationReceiptRefreshFailed": "The saved receipt was checked, but current Output state could not be loaded. Refresh before acting; no new provider request was submitted.",
-  "output.delivery.operationReceiptStillUnknown": "Provider acceptance or cost is still unknown. Its reservation remains held. Copy the technical receipt and ask an authorized operator to investigate; do not submit a replacement.",
+  "output.delivery.operationReceiptStillUnknown": "The original receipt check could not establish provider acceptance or cost. Review the refreshed operation and accounting for the current state. If acceptance or cost remains unknown, do not submit a replacement; copy the technical receipt and ask an authorized operator to investigate.",
   "output.delivery.operationReceiptKnown": "Persisted provider evidence was reconciled. No provider request was sent. Review the updated operation and spending before considering further work.",
   "output.delivery.operationReceiptNoChange": "The saved receipt needs no further financial reconciliation. No provider request was sent and no new work was started."
 }

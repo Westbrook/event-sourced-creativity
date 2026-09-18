@@ -43,6 +43,7 @@ for (const [name, action] of Object.entries(actions)) {
     test(`actual Output controller ${name}: ${transition} while response is pending`, async () => {
       const fixture = await controllerFixture();
       const pending = action.start(fixture);
+      await fixture.waitForRequest(pending);
       assert.equal(fixture.requests.length, 1, "the control scenario must actually dispatch once");
       assert.equal(fixture.requests[0].documentId, "doc-a", "dispatch uses the originating Document");
       if (transition === "other-document" || transition === "return-to-document") changeDocument(fixture.controller, "doc-b");
@@ -63,6 +64,7 @@ for (const [name, action] of Object.entries(actions)) {
 test("actual Output controller can start fresh work after disconnect/reconnect in the same Document", async () => {
   const fixture = await controllerFixture();
   const pending = startPreflight(fixture);
+  await fixture.waitForRequest(pending);
   assert.equal(fixture.requests.length, 1);
   fixture.controller.disconnectedCallback();
   fixture.controller.connectedCallback();
@@ -72,4 +74,21 @@ test("actual Output controller can start fresh work after disconnect/reconnect i
   assert.equal(actions.preflight.completed(fixture), false, "the old view's reply stays discarded after reconnection");
   await startPreflight(fixture);
   assert.equal(fixture.requests.length, 2, "retired-view busy state must not permanently block the reconnected view");
+});
+
+
+test("request-entry wait observes the actual digest boundary without consuming the pending response", async () => {
+  const fixture = await controllerFixture(), pending = startPreflight(fixture);
+  assert.equal(fixture.requests.length, 0, "the actual asynchronous digest has not dispatched yet");
+  await fixture.waitForRequest(pending);
+  assert.equal(fixture.requests.length, 1); assert.equal(fixture.requests[0].action, "preflight");
+  assert.equal(actions.preflight.completed(fixture), false, "entry is not completion of the held private response");
+  fixture.pending.resolve(actions.preflight.response()); await pending;
+  assert.equal(actions.preflight.completed(fixture), true); assert.equal(fixture.requests.length, 1);
+});
+test("request-entry wait terminates on real view denial while preserving a zero-dispatch assertion", async () => {
+  const fixture = await controllerFixture(), pending = startPreflight(fixture);
+  changeDocument(fixture.controller, "doc-b");
+  await fixture.waitForRequest(pending); await pending;
+  assert.equal(fixture.requests.length, 0); assert.equal(actions.preflight.completed(fixture), false);
 });

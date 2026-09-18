@@ -1,10 +1,13 @@
 // Adapter/scoped-transport tests only: these do not establish real DOM or server behavior.
 import assert from "node:assert/strict";
+import { installSourceOwnershipPort } from "./helpers/source-ownership-port.mjs";
 import test from "node:test";
+import ts from "typescript";
+import { controllerFixture } from "./output-ui-source-harness.mjs";
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { createOutputControllerFixture, reconcileOutputFixtureReceipt, OUTPUT_CONTROLLER_SCENARIOS, FIXTURE_DOCUMENT_IDS, FIXTURE_ACTOR, FIXTURE_PROJECT } from "./output-controller-fixture-model.mjs";
+import { createOutputControllerFixture, reconcileOutputFixtureReceipt, OUTPUT_CONTROLLER_SCENARIOS, FIXTURE_DOCUMENT_IDS, FIXTURE_ACTOR, FIXTURE_PROJECT, FIXTURE_PROJECT_ACCESS } from "./output-controller-fixture-model.mjs";
 
 const sourceRoot = resolve(process.env.FORMA_OUTPUT_REGRESSION_ROOT || resolve(dirname(fileURLToPath(import.meta.url)), ".."));
 const source = (path) => import(pathToFileURL(resolve(sourceRoot, path)).href);
@@ -935,4 +938,120 @@ test("history-only visible fixture refuses packages through the real client whil
   assert.ok(after.capabilities.limitationCodes.includes("output_scope_history_reason_unverified"));
   assert.equal(after.summary.delivery_ready, false); assert.equal(after.sourceVerification.status, "verified");
   assert.deepEqual(after.grants, snapshot.grants); assert.equal(after.assets.length, 1);
+});
+
+
+// Compatibility of the exact browser-fixture Store literal with the current
+// complete controller class. Native browser scheduling and actual Store/server
+// authority are deliberately not claimed by this deterministic fixture test.
+function browserFixtureStore(adapter, controller, records, fixtureLocation) {
+  const file = new URL("./output-controller.fixture.mjs", import.meta.url);
+  const script = readFileSync(file, "utf8"), tree = ts.createSourceFile(file.pathname, script, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
+  const assignment = tree.statements.find(node => ts.isExpressionStatement(node) && ts.isBinaryExpression(node.expression)
+    && node.expression.left.getText(tree) === "store" && ts.isObjectLiteralExpression(node.expression.right));
+  const snapshotDeclaration = tree.statements.filter(ts.isVariableStatement).flatMap(node => [...node.declarationList.declarations])
+    .find(node => node.name.getText(tree) === "isFixtureSnapshot");
+  assert.ok(assignment && snapshotDeclaration?.initializer, "use the existing browser fixture definitions");
+  const bindings = { adapter, controller, listeners: new Set(), notify() {}, record: entry => records.push(entry),
+    FIXTURE_DOCUMENT_IDS, FIXTURE_ACTOR, FIXTURE_PROJECT, FIXTURE_PROJECT_ACCESS, window: { location: fixtureLocation } };
+  const evaluate = node => new Function(...Object.keys(bindings), '"use strict"; return (' + node.getText(tree) + ");")(...Object.values(bindings));
+  const store = evaluate(assignment.expression.right);
+  installSourceOwnershipPort(store);
+  store.outputRequirements = new transport.OutputRequirementsClient({
+    captureScope: () => adapter.scope(), scopeActive: scope => adapter.scopeActive(scope), fetch: (...args) => adapter.fetch(...args),
+    notify: bindings.notify, isSnapshot: evaluate(snapshotDeclaration.initializer),
+  });
+  return store;
+}
+
+async function browserControllerBoundary(t) {
+  t.mock.method(globalThis, "fetch", async () => assert.fail("The synthetic fixture must never call a real API/provider"));
+  const records = [], adapter = await fixture(entry => records.push(entry)), host = await controllerFixture();
+  const fixtureLocation = new URL("http://fixture.invalid/tests/output-controller.fixture.html?qa=automated&locale=fr#synthetic");
+  const store = browserFixtureStore(adapter, host.controller, records, fixtureLocation);
+  host.controller.store = store; host.controller.documentId = doc;
+  return { controller: host.controller, store, adapter, records, fixtureLocation };
+}
+
+test("browser fixture missing route port reproduces the current pre-read controller failure", async t => {
+  const f = await browserControllerBoundary(t);
+  delete f.store.route; // Exact old fixture shape; no production method is substituted.
+  assert.throws(() => f.controller.willUpdate(new Map()), error => error instanceof TypeError
+    && /reading 'get'/u.test(error.message) && /sourceRefreshScopeKey/u.test(error.stack));
+  assert.equal(f.records.filter(entry => entry.type === "fixture-request").length, 0, "failure occurs before the first synthetic GET");
+});
+
+test("actual browser fixture Store mounts every scenario through the real controller and scoped client without a command", async t => {
+  const f = await browserControllerBoundary(t);
+  for (const scenario of Object.keys(OUTPUT_CONTROLLER_SCENARIOS)) {
+    f.adapter.seed(doc, scenario); f.adapter.changeScope(); f.store.outputRequirements.clear();
+    const before = f.adapter.snapshot(doc), requestCount = f.records.filter(entry => entry.type === "fixture-request").length;
+    f.controller.willUpdate(new Map()); f.controller.updated();
+    for (let attempts = 0; attempts < 30 && f.store.outputRequirements.resource(doc).state !== "ready"; attempts++) await nextTurn();
+    const resource = f.store.outputRequirements.resource(doc);
+    assert.equal(resource.state, "ready", scenario + ": the first API-shaped fixture read completed");
+    f.controller.willUpdate(new Map());
+    assert.ok(JSON.stringify(f.controller.render()).length > 100, scenario + ": the complete real class renders");
+    assert.deepEqual(f.adapter.snapshot(doc), before, scenario + ": rendering does not change the fictional source, receipts or spending");
+    const requests = f.records.filter(entry => entry.type === "fixture-request").slice(requestCount);
+    assert.equal(requests.length, 1, scenario); assert.equal(requests[0].detail.action, "read", scenario);
+  }
+  assert.equal(f.store.session.get().capabilities, undefined, "no project-read/author permission is invented");
+  assert.equal(f.store.session.get().projectContext, undefined, "no real selected-project scope is emulated");
+  assert.equal(f.store.refreshOutputSource, undefined, "this fix does not invent a source-authority bridge");
+  assert.equal(f.store.inspectOutputNativeJob, undefined, "this fix does not invent private job inspection");
+});
+
+test("browser fixture route observes its real URL while setRoute remains an explicit diagnostic intent", async t => {
+  const f = await browserControllerBoundary(t), before = f.adapter.snapshot(doc), original = f.fixtureLocation.href;
+  assert.equal(f.store.route.get(), f.fixtureLocation.pathname + f.fixtureLocation.search + f.fixtureLocation.hash);
+  f.store.setRoute("/document/not-an-actual-navigation");
+  assert.equal(f.fixtureLocation.href, original);
+  assert.equal(f.records.at(-1).type, "fixture-navigation-intent");
+  assert.equal(f.records.at(-1).detail.route, "/document/not-an-actual-navigation");
+  f.fixtureLocation.hash = "#newer-fixture-view";
+  assert.equal(f.store.route.get(), f.fixtureLocation.pathname + f.fixtureLocation.search + "#newer-fixture-view");
+  assert.deepEqual(f.adapter.snapshot(doc), before);
+  assert.equal(f.records.filter(entry => entry.type === "fixture-request").length, 0);
+});
+
+test("browser fixture keeps its original CSP and executable global network blockade", async () => {
+  const html = readFileSync(new URL("./output-controller.fixture.html", import.meta.url), "utf8");
+  assert.match(html, /connect-src 'none'/u); assert.match(html, /form-action 'none'/u);
+  const script = html.match(/<script>([\s\S]*?)<\/script>/u)?.[1]; assert.ok(script);
+  const events = [], fixtureWindow = { dispatchEvent: event => events.push(event) };
+  class FixtureEvent { constructor(type, options) { this.type = type; this.detail = options.detail; } }
+  new Function("window", "CustomEvent", script)(fixtureWindow, FixtureEvent);
+  for (const path of ["/api/output-requirements", "https://provider.invalid/synthetic-only"]) {
+    await assert.rejects(fixtureWindow.fetch(path), /SYNTHETIC fixture refused global fetch/u);
+  }
+  assert.equal(fixtureWindow.__formaOutputFixtureBlockedRequests.length, 2);
+  assert.deepEqual(events.map(event => event.type), ["fixture-network-blocked", "fixture-network-blocked"]);
+  assert.ok(events.every(event => event.detail.blocked === true));
+});
+
+
+test("the original synthetic extra-message CAS response cannot discard the real client's unknown original owner", async () => {
+  const records = [], adapter = await fixture(entry => records.push(entry));
+  adapter.seed(doc, "planning-saved");
+  const originalFetch = adapter.fetch;
+  const malformedAdapter = { ...adapter, fetch: async (...args) => {
+    const response = await originalFetch(...args);
+    if (response.status !== 409) return response;
+    const value = await response.clone().json();
+    if (value.error !== "output_revision_conflict") return response;
+    return Response.json({ error: value.error, message: "SYNTHETIC fixture: " + value.error }, { status: 409 });
+  } };
+  const client = realClient(malformedAdapter); await client.ensure(doc);
+  const denied = await client.command(doc, { action: "confirm", expectedRevision: "old-revision",
+    clientMutationId: "original-malformed-cas" }, "SYNTHETIC stale confirmation");
+  assert.equal(denied.status, "conflict");
+  assert.deepEqual(denied.body, { error: "output_revision_conflict", message: "SYNTHETIC fixture: output_revision_conflict" });
+  const owner = client.retainedWrite(doc);
+  assert.equal(owner.clientMutationId, "original-malformed-cas"); assert.equal(owner.status, "unknown");
+  await client.ensure(doc, { force: true }); const before = records.length;
+  const next = await client.command(doc, { action: "confirm", expectedRevision: client.resource(doc).snapshot.revision,
+    clientMutationId: "different-reviewed-confirm" }, "SYNTHETIC later confirmation");
+  assert.equal(next.status, "not-attempted"); assert.equal(records.length, before);
+  assert.deepEqual(client.retainedWrite(doc), owner); assert.equal(adapter.snapshot(doc).confirmedPlan, null);
 });

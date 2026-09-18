@@ -1,9 +1,24 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { PAID_PROVIDER_FINANCIAL_FIELDS } from "../src/model/provider-submission.ts";
 
 import { buildManagedProductionPlan, productionSceneSnapshot } from "../src/model/managed-production.ts";
-import { buildPresentationSourceContract } from "../src/model/presentation-source.ts";
-import { combinedSceneSnapshot, generateManagedArtifactDraft } from "../worker/managed-production.ts";
+import { buildPresentationSourceContract, providerFacingPresentationSourceContract } from "../src/model/presentation-source.ts";
+import { assessStoredPresentationCandidate, buildDocumentPresentationSourceContract, PRESENTATION_ADAPTER_VERSION } from "../worker/openai-adapter.ts";
+import { documentArtifactValidationIssues } from "../src/model/document-artifacts.ts";
+import { bindPresentationPageAnchors, combinedSceneSnapshot, generateManagedArtifactDraft } from "../worker/managed-production.ts";
+
+// Paid response and validation completion are snapshots of one immutable charge.
+function completedProviderCalls(submissions) {
+  const calls = new Map();
+  const financial = (receipt) => Object.fromEntries(PAID_PROVIDER_FINANCIAL_FIELDS.filter((key) => Object.hasOwn(receipt, key)).map((key) => [key, receipt[key]]));
+  for (const receipt of submissions.filter((entry) => entry.status === "completed")) {
+    const previous = calls.get(receipt.clientRequestId);
+    if (previous) assert.deepEqual(financial(receipt), financial(previous), "validation progress cannot rewrite an already observed charge");
+    calls.set(receipt.clientRequestId, receipt);
+  }
+  return [...calls.values()];
+}
 
 const studies = [
   { key: "orchard", title: "Orchard irrigation", requirement: "Explain orchard irrigation and rainwater reservoirs.", evidence: "Orchard irrigation fills rainwater reservoirs during wet weather so fruit trees can survive dry spells.", emphasis: "Stored rainfall" },
@@ -218,10 +233,10 @@ test("real managed contract and adapter paths accept two bounded mocked pages wi
         visual: { kind: "hero-type", label: "", value: study.emphasis, data: [] },
       } };
     });
-    return Response.json({ id: `mock-outline-page-${requests.length}`, model: "gpt-managed-outline-test", output_text: JSON.stringify({ title: "Field studies", summary: "Independent research observations.", content_markdown: items.map((item) => item.body).join("\n\n"), presentation, items }), usage: { input_tokens: 100, output_tokens: 50, total_tokens: 150 } });
+    return Response.json({ id: `mock-outline-page-${requests.length}`, model: "gpt-5.6-terra", output_text: JSON.stringify({ title: "Field studies", summary: "Independent research observations.", content_markdown: items.map((item) => item.body).join("\n\n"), presentation, items }), usage: { input_tokens: 100, output_tokens: 50, total_tokens: 150 } });
   });
 
-  const result = await generateManagedArtifactDraft({ OPENAI_API_KEY: "test-only", OPENAI_MODEL: "gpt-managed-outline-test" }, "isolated-test-actor", "slides", { documentTitle: "Isolated managed outline fixture", snapshot, production, requestedSlideCount: 9, presentationStyle: "field-notes", presentationFidelity: "faithful" });
+  const result = await generateManagedArtifactDraft({ OPENAI_API_KEY: "test-only", OPENAI_MODEL: "gpt-5.6-terra" }, "isolated-test-actor", "slides", { documentTitle: "Isolated managed outline fixture", snapshot, production, requestedSlideCount: 9, presentationStyle: "field-notes", presentationFidelity: "faithful" });
   assert.equal(requests.length, 2);
   assert.deepEqual(requests.map((provider) => provider.presentation_source.outline.map((slide) => slide.number)), [[1, 2, 3, 4, 5, 6, 7, 8], [9]]);
   assert.equal(result.output.items.length, 9);
@@ -233,3 +248,293 @@ test("real managed contract and adapter paths accept two bounded mocked pages wi
   assert.deepEqual(result.inputReceipt.whole_work_validation.issues, []);
   assert.equal(result.usage.totalTokens, 300);
 });
+
+function managedAnchorFixture(t, { alter = () => {}, configure = () => {} } = {}) {
+  const snapshot = outlineFixture({ count: 9, sharedBlock: true }); configure(snapshot);
+  const production = buildManagedProductionPlan("slides", snapshot);
+  const originalSnapshot = structuredClone(snapshot), originalProduction = structuredClone(production);
+  const requests = [], rawResponses = [], attempts = [], receipts = [], receiptCopies = [], submissions = [];
+  const presentation = { aspect_ratio: "16:9", theme: "Field studies", footer_label: "Research collection", style_preset: "field-notes", mode: "light", palette: { background: "#edf1ef", foreground: "#14211d", accent: "#287260", muted: "#586b64", surface: "#d9e3df" } };
+  t.mock.method(globalThis, "fetch", async (url, init) => {
+    assert.equal(String(url), "https://api.openai.com/v1/responses"); assert.equal(init.method, "POST");
+    const request = JSON.parse(String(init.body)), provider = JSON.parse(request.input);
+    requests.push({ request, provider });
+    assert.ok(provider.production?.assigned_scenes);
+    assert.doesNotMatch(JSON.stringify(request), /FICTIONAL_SCENE_SENTINEL|Comet geology|PRIVATE_MANAGED_/);
+    const items = provider.production.assigned_scenes.map((scene) => {
+      const study = studies[scene.narrative_order - 1];
+      const requirement = provider.presentation_source.outline.find((slide) => slide.number === scene.narrative_order);
+      const passage = provider.presentation_source.passages.find((candidate) => requirement.evidencePassageIds.includes(candidate.id) && candidate.content === study.evidence);
+      assert.ok(passage, "every returned anchor is copied from this exact page's disclosed evidence");
+      return { title: study.title, body: study.evidence, notes: study.evidence, image_prompt: "", context_group_ids: scene.context_keys ?? [], slide: {
+        layout: scene.narrative_order === 1 ? "cover" : scene.narrative_order === 9 ? "closing" : "split",
+        kicker: "", bullets: [], source_order: scene.narrative_order, source_ids: [passage.sourceAlias],
+        citations: [{ source_id: passage.sourceAlias, label: "Field research", excerpt: passage.content, anchor: passage.id }],
+        visual: { kind: "hero-type", label: "", value: study.emphasis, data: [] },
+      } };
+    });
+    const output = { title: "Field studies", summary: "Independent research observations.", content_markdown: items.map((item) => item.body).join("\n\n"), presentation: structuredClone(presentation), items };
+    alter({ output, provider, request, call: requests.length });
+    const id = "mock-exact-page-" + requests.length, raw = JSON.stringify(output);
+    rawResponses.push({ id, raw });
+    return Response.json({ id, model: "gpt-5.6-terra", output_text: raw, usage: { input_tokens: 100, output_tokens: 50, total_tokens: 150 } });
+  });
+  const sourceOptions = (pageIndex) => {
+    const start = pageIndex * 8, scenes = production.scenes.slice(start, start + 8);
+    return { itemCount: scenes.length, requestedSlideCount: 9, presentationStyle: "field-notes", presentationFidelity: "faithful",
+      productionScenes: scenes, productionPage: { pageIndex, pageCount: 2, globalStartIndex: start, totalItems: 9,
+        phase: pageIndex ? "final" : "opening", priorSummary: "", priorEnding: "", priorVisibleCopy: [],
+        authoredSlideNumbers: buildPresentationSourceContract(snapshot).numberedOutline.map((slide) => slide.number) } };
+  };
+  const run = () => generateManagedArtifactDraft({ OPENAI_API_KEY: "isolated-mock-only", OPENAI_MODEL: "gpt-5.6-terra" }, "isolated-test-actor", "slides", {
+    documentTitle: "Exact page anchor test", snapshot, production, requestedSlideCount: 9, presentationStyle: "field-notes", presentationFidelity: "faithful",
+    plannerAttempt: (attempt) => attempts.push(structuredClone(attempt)),
+    plannerResponse: (receipt) => { receipts.push(receipt); receiptCopies.push(structuredClone(receipt)); },
+    onProviderSubmission: (submission) => submissions.push(structuredClone(submission)),
+  });
+  return { snapshot, originalSnapshot, production, originalProduction, requests, rawResponses, attempts, receipts, receiptCopies, submissions, sourceOptions, run };
+}
+
+test("page anchors R2: nine valid anchored slides use two real adapter calls and retain truthful page-local raw evidence", async (t) => {
+  const f = managedAnchorFixture(t), result = await f.run();
+  assert.equal(PRESENTATION_ADAPTER_VERSION, "2026-09-02-durable-calls-source-bookends-v7");
+  assert.equal(f.requests.length, 2); assert.equal(result.output.items.length, 9);
+  const canonical = buildDocumentPresentationSourceContract(f.snapshot, { itemCount: 9, requestedSlideCount: 9, presentationStyle: "field-notes", presentationFidelity: "faithful" });
+  const expected = studies.map((study) => canonical.passages.find((passage) => passage.content === study.evidence).id);
+  assert.deepEqual(result.output.items.map((item) => item.slide.citations[0].anchor), expected);
+  assert.equal(expected[8], "passage_009");
+  assert.deepEqual(f.requests.map(({ provider }) => provider.presentation_source.passages.length), [8, 1]);
+  assert.equal(f.requests[1].provider.presentation_source.passages[0].id, "passage_001");
+  assert.equal(JSON.parse(f.rawResponses[1].raw).items[0].slide.citations[0].anchor, "passage_001");
+  assert.equal(result.inputReceipt.pages[1].providerInput.presentation_source.passages[0].id, "passage_001");
+  assert.deepEqual(result.inputReceipt.pages.map((page) => page.providerInput), f.requests.map(({ provider }) => provider));
+  assert.deepEqual(documentArtifactValidationIssues("slides", result.output, { itemCount: 9, sourceContract: canonical, requireSourceGrounding: true, requireAllProtectedContent: true }), []);
+
+  for (const pageIndex of [0, 1]) {
+    const options = f.sourceOptions(pageIndex), page = combinedSceneSnapshot(f.snapshot, options.productionScenes);
+    const assessment = assessStoredPresentationCandidate(f.rawResponses[pageIndex].raw, page, options);
+    assert.deepEqual(assessment.issues, [], "retained raw candidates use their original page-local authority, not global IDs");
+    assert.deepEqual(providerFacingPresentationSourceContract(assessment.sourceContract).passages, f.requests[pageIndex].provider.presentation_source.passages);
+    assert.deepEqual(assessment.output.items.map((item) => item.slide.citations[0].anchor), JSON.parse(f.rawResponses[pageIndex].raw).items.map((item) => item.slide.citations[0].anchor));
+  }
+  assert.deepEqual(result.usage, { inputTokens: 200, outputTokens: 100, totalTokens: 300 });
+  assert.deepEqual(result.responseIds, ["mock-exact-page-1", "mock-exact-page-2"]);
+  assert.deepEqual(f.attempts.map((attempt) => attempt.usage.totalTokens), [150, 300]);
+  assert.equal(result.inputReceipt.provider_request_count, 2); assert.equal(result.inputReceipt.whole_work_validation.repaired_pages, 0);
+  assert.deepEqual(f.receipts, f.receiptCopies); assert.deepEqual(f.receipts.map((receipt) => receipt.candidateRaw), f.rawResponses.map((response) => response.raw));
+  assert.deepEqual(f.snapshot, f.originalSnapshot); assert.deepEqual(f.production, f.originalProduction);
+  assert.equal(completedProviderCalls(f.submissions).length, 2);
+  assert.deepEqual(completedProviderCalls(f.submissions).map((submission) => submission.costMicrousd), [800, 800]);
+});
+
+for (const repair of ["adapter", "whole-work"]) test("page anchors R2: " + repair + " repair reuses exact page identities without changing paid history", async (t) => {
+  const f = managedAnchorFixture(t, { alter: ({ output, provider, request }) => {
+    if (provider.production.page.page_index !== 1) return;
+    if (repair === "adapter" && request.text.format.name !== "document_slides_repair") output.items[0].body = "";
+    if (repair === "whole-work" && !provider.production.page.repair_issues?.length) output.presentation.theme = "Different authored movement";
+  } });
+  const result = await f.run();
+  assert.equal(f.requests.length, 3); assert.equal(result.output.items.length, 9);
+  const lastPages = f.requests.slice(1).map(({ provider }) => provider.presentation_source);
+  assert.deepEqual(lastPages[0], lastPages[1], "both paid attempts disclose exactly the same bounded page source");
+  assert.deepEqual(f.rawResponses.slice(1).map(({ raw }) => JSON.parse(raw).items[0].slide.citations[0].anchor), ["passage_001", "passage_001"]);
+  assert.equal(result.output.items[8].slide.citations[0].anchor, "passage_009");
+  assert.equal(result.inputReceipt.whole_work_validation.repaired_pages, repair === "whole-work" ? 1 : 0);
+  assert.equal(f.requests[2].request.text.format.name, repair === "adapter" ? "document_slides_repair" : "document_slides");
+  assert.equal(result.inputReceipt.provider_request_count, 3);
+  assert.deepEqual(result.usage, { inputTokens: 300, outputTokens: 150, totalTokens: 450 });
+  assert.deepEqual(result.responseIds, ["mock-exact-page-1", "mock-exact-page-2", "mock-exact-page-3"]);
+  assert.deepEqual(f.attempts.map((attempt) => attempt.usage.totalTokens), [150, 300, 450]);
+  assert.deepEqual(f.receipts, f.receiptCopies); assert.deepEqual(f.receipts.map((receipt) => receipt.candidateRaw), f.rawResponses.map((response) => response.raw));
+  assert.deepEqual(f.snapshot, f.originalSnapshot); assert.deepEqual(f.production, f.originalProduction);
+  assert.equal(completedProviderCalls(f.submissions).length, 3);
+});
+
+for (const anchor of ["passage_002", "passage_009", "passage_999", "passage_bogus", "PASSAGE_001", "legacy_passage_bad"]) {
+  test("page anchors R2: an undisclosed or malformed second-page anchor remains rejected: " + anchor, async (t) => {
+    const f = managedAnchorFixture(t, { alter: ({ output, provider }) => {
+      if (provider.production.page.page_index === 1) output.items[0].slide.citations[0].anchor = anchor;
+    } });
+    await assert.rejects(f.run(), (error) => error.detail?.code === "source_fidelity_validation_failed"
+      && error.detail.validationIssues.some((issue) => issue.code === "incorrect_citation_anchor"));
+    assert.equal(f.requests.length, 3, "one correct first page plus one bounded repair of the rejected second page");
+    assert.equal(f.requests[2].request.text.format.name, "document_slides_repair");
+    assert.deepEqual(f.requests[1].provider.presentation_source, f.requests[2].provider.presentation_source);
+    assert.deepEqual(f.attempts.map((attempt) => attempt.usage.totalTokens), [150, 300, 450]);
+    assert.deepEqual(f.receipts, f.receiptCopies); assert.deepEqual(f.receipts.map((receipt) => receipt.candidateRaw), f.rawResponses.map((response) => response.raw));
+    assert.equal(completedProviderCalls(f.submissions).length, 3);
+    const options = f.sourceOptions(1), assessment = assessStoredPresentationCandidate(f.rawResponses[1].raw, combinedSceneSnapshot(f.snapshot, options.productionScenes), options);
+    assert.ok(assessment.issues.some((issue) => issue.code === "incorrect_citation_anchor"), "private raw assessment retains the original anchor failure");
+  });
+}
+
+test("page anchors R2: wrong assigned passage cannot be repaired by ordinal or matching citation text", async (t) => {
+  const f = managedAnchorFixture(t, { alter: ({ output, provider }) => {
+    if (provider.production.page.page_index === 0) output.items[0].slide.citations[0].anchor = "passage_002";
+  } });
+  await assert.rejects(f.run(), (error) => error.detail?.code === "source_fidelity_validation_failed");
+  assert.equal(f.requests.length, 2, "the invalid first page never admits the second page");
+  assert.ok(f.requests.every(({ provider }) => provider.production.page.page_index === 0));
+  assert.deepEqual(f.attempts.map((attempt) => attempt.usage.totalTokens), [150, 300]);
+});
+
+test("page anchors R2: ambiguous duplicate passage identity fails before any provider submission", async (t) => {
+  const f = managedAnchorFixture(t, { configure: (snapshot) => { snapshot.facts[0].properties.text += "\n\n" + studies[8].evidence; } });
+  await assert.rejects(f.run(), (error) => error.detail?.code === "presentation_source_contract_invalid");
+  assert.equal(f.requests.length, 0); assert.equal(f.submissions.length, 0); assert.equal(f.receipts.length, 0);
+  assert.deepEqual(f.snapshot, f.originalSnapshot); assert.deepEqual(f.production, f.originalProduction);
+});
+
+function isolatedPageAnchorContracts() {
+  const membership = (number) => ({ context_set_id: "anchor-chapter-" + number, name: "Chapter " + number,
+    target: "Slide " + number, role: "slide_chapter", application: "isolate", relativity: 1, member_order: 0 });
+  const snapshot = { facts: [1, 2].flatMap((number) => [
+    { block_id: "anchor-outline-" + number, type: "format", properties: { presentation_source_mode: "outline",
+      text: "Slide " + number + ": " + (number === 1 ? "Reservoir protection" : "Dry weather continuity") + ". Explain orchard irrigation.",
+      combined_context_memberships: [membership(number)] } },
+    { block_id: "anchor-research-" + number, type: "message", locked: true, properties: {
+      text: studies[0].evidence, combined_context_memberships: [membership(number)] } },
+  ]) };
+  const production = buildManagedProductionPlan("slides", snapshot);
+  const canonical = buildDocumentPresentationSourceContract(snapshot, { itemCount: 2, requestedSlideCount: 2 });
+  const page = buildDocumentPresentationSourceContract(combinedSceneSnapshot(snapshot, production.scenes.slice(1)), {
+    itemCount: 1, requestedSlideCount: 2, productionPage: {
+      pageIndex: 1, pageCount: 2, globalStartIndex: 1, totalItems: 2, phase: "final",
+      priorSummary: "", priorEnding: "", priorVisibleCopy: [], authoredSlideNumbers: [1, 2],
+    },
+  });
+  return { canonical, page };
+}
+
+test("page anchors R2: identical source text in different owners keeps distinct canonical passage identity", () => {
+  const { canonical, page } = isolatedPageAnchorContracts(), original = structuredClone({ canonical, page });
+  assert.equal(canonical.passages.length, 2);
+  assert.equal(canonical.passages[0].content, canonical.passages[1].content);
+  assert.notEqual(canonical.passages[0].sourceBlockId, canonical.passages[1].sourceBlockId);
+  const mapping = bindPresentationPageAnchors(page, canonical);
+  assert.deepEqual([...mapping], [["passage_001", "passage_002"]], "a page-local ordinal never chooses another evidence owner");
+  assert.deepEqual({ canonical, page }, original);
+});
+
+for (const change of ["added membership", "different owner", "out-of-target extra evidence", "changed slide scope", "weakened required evidence"]) {
+  test("page anchors R2: the pre-dispatch identity proof refuses " + change, () => {
+    const { canonical, page } = isolatedPageAnchorContracts(), original = structuredClone(canonical);
+    if (change === "added membership") page.passages[0].contextGroupIds.push("forged-unassigned-group");
+    if (change === "different owner") {
+      page.passages[0].sourceBlockId = canonical.passages[0].sourceBlockId;
+      page.passages[0].contextGroupIds = [...canonical.passages[0].contextGroupIds];
+    }
+    if (change === "out-of-target extra evidence") page.passages.push({ ...structuredClone(canonical.passages[0]), id: "passage_002" });
+    if (change === "changed slide scope") page.numberedOutline[0].contextGroupIds = [...canonical.numberedOutline[0].contextGroupIds];
+    if (change === "weakened required evidence") page.passages[0].required = false;
+    assert.throws(() => bindPresentationPageAnchors(page, canonical), (error) => error.detail?.code === "presentation_source_contract_invalid");
+    assert.deepEqual(canonical, original, "the original source contract is never repaired or recertified in place");
+  });
+}
+
+const sharedAnchorGroups = ["PRIVATE_SHARED_ANCHOR_GROUP_ONE", "PRIVATE_SHARED_ANCHOR_GROUP_NINE"];
+function configureSharedAnchorGraph(snapshot, sharedNumber) {
+  const [groupOne, groupLater] = sharedAnchorGroups;
+  snapshot.facts[0].properties.text = [studies[0].evidence, studies[sharedNumber - 1].evidence].join("\n\n");
+  snapshot.facts.find((fact) => fact.block_id === "PRIVATE_MANAGED_OUTLINE").properties.text =
+    "Presentation outline\n" + studies.map((study, index) => "Slide " + (index + 1) + ": " + study.title + ". " + study.requirement).join("\n");
+  snapshot.facts.push(...studies.filter((_, index) => index !== 0 && index !== sharedNumber - 1).map((study) => ({ block_id: "PRIVATE_MANAGED_RESEARCH_" + study.key, type: "message", properties: { label: study.title + " evidence", text: study.evidence } })),
+    { block_id: groupOne, type: "format", properties: { context_group: { name: "Opening research chapter", target: "Slide 1", role: "slide_chapter", application: "isolate", relativity: 1 } } },
+    { block_id: groupLater, type: "format", properties: { context_group: { name: "Reused research chapter", target: "Slide " + sharedNumber, role: "slide_chapter", application: "isolate", relativity: 1 } } });
+  snapshot.relationships = [
+    { relation_id: "group-one-outline", from_block_id: groupOne, to_block_id: "PRIVATE_MANAGED_OUTLINE", kind: "context_contains", properties: { member_order: 0 } },
+    { relation_id: "group-one-research", from_block_id: groupOne, to_block_id: "PRIVATE_MANAGED_RESEARCH_SHARED", kind: "context_contains", properties: { member_order: 1 } },
+    { relation_id: "group-later-research", from_block_id: groupLater, to_block_id: "PRIVATE_MANAGED_RESEARCH_SHARED", kind: "context_contains", properties: { member_order: 0 } },
+  ];
+}
+
+test("page anchors R2: relationship-scoped shared research keeps canonical identity across two narrowed provider pages", async (t) => {
+  const groupOne = "PRIVATE_SHARED_ANCHOR_GROUP_ONE", groupNine = "PRIVATE_SHARED_ANCHOR_GROUP_NINE";
+  const f = managedAnchorFixture(t, { configure: (snapshot) => configureSharedAnchorGraph(snapshot, 9) });
+  const canonical = buildDocumentPresentationSourceContract(f.snapshot, { itemCount: 9, requestedSlideCount: 9 });
+  const canonicalShared = canonical.passages.filter((passage) => passage.sourceBlockId === "PRIVATE_MANAGED_RESEARCH_SHARED");
+  assert.equal(canonicalShared.length, 2);
+  assert.ok(canonicalShared.every((passage) => JSON.stringify([...passage.contextGroupIds].sort()) === JSON.stringify([groupOne, groupNine].sort())));
+  for (const pageIndex of [0, 1]) {
+    const options = f.sourceOptions(pageIndex), snapshot = combinedSceneSnapshot(f.snapshot, options.productionScenes);
+    const page = buildDocumentPresentationSourceContract(snapshot, options);
+    const shared = page.passages.filter((passage) => passage.sourceBlockId === "PRIVATE_MANAGED_RESEARCH_SHARED");
+    assert.equal(shared.length, 2);
+    assert.ok(shared.every((passage) => JSON.stringify(passage.contextGroupIds) === JSON.stringify([pageIndex ? groupNine : groupOne])));
+    const mapping = bindPresentationPageAnchors(page, canonical);
+    for (const passage of shared) assert.equal(mapping.get(passage.id), canonicalShared.find((original) => original.content === passage.content).id);
+  }
+  const result = await f.run();
+  assert.equal(f.requests.length, 2); assert.equal(result.output.items.length, 9);
+  assert.deepEqual(result.output.items[0].context_group_ids, [groupOne]);
+  assert.deepEqual(result.output.items[8].context_group_ids, [groupNine]);
+  for (const index of [0, 8]) assert.equal(result.output.items[index].slide.citations[0].anchor, canonicalShared.find((passage) => passage.content === studies[index].evidence).id);
+  assert.deepEqual(result.inputReceipt.whole_work_validation.issues, []);
+  assert.equal(result.usage.totalTokens, 300); assert.deepEqual(f.receipts, f.receiptCopies);
+  assert.deepEqual(f.snapshot, f.originalSnapshot); assert.deepEqual(f.production, f.originalProduction);
+  assert.ok(f.requests.every(({ request }) => !/PRIVATE_SHARED_ANCHOR_GROUP_/u.test(JSON.stringify(request))));
+});
+
+test("page anchors R2: same-page shared research infers only each granted chapter in managed and retained manual output", async (t) => {
+  const f = managedAnchorFixture(t, { configure: (snapshot) => configureSharedAnchorGraph(snapshot, 8) });
+  const result = await f.run();
+  assert.equal(f.requests.length, 2);
+  for (const [index, group] of [[0, sharedAnchorGroups[0]], [7, sharedAnchorGroups[1]]]) {
+    assert.deepEqual(result.output.items[index].context_group_ids, [group]);
+  }
+  const { productionScenes, ...manualOptions } = f.sourceOptions(0);
+  const page = combinedSceneSnapshot(f.snapshot, productionScenes);
+  const assessment = assessStoredPresentationCandidate(f.rawResponses[0].raw, page, manualOptions);
+  assert.deepEqual(assessment.issues, []);
+  assert.deepEqual(assessment.output.items[0].context_group_ids, [sharedAnchorGroups[0]]);
+  assert.deepEqual(assessment.output.items[7].context_group_ids, [sharedAnchorGroups[1]]);
+  const foreign = f.requests[0].provider.production.assigned_scenes.find((scene) => scene.narrative_order === 8).context_keys[0];
+  const altered = JSON.parse(f.rawResponses[0].raw);
+  altered.items[0].context_group_ids = [foreign];
+  const invalid = assessStoredPresentationCandidate(JSON.stringify(altered), page, manualOptions);
+  assert.ok(invalid.issues.some((issue) => issue.code === "incorrect_context_group_assignment"), "explicit foreign groups remain invalid without managed scenes too");
+  assert.ok(invalid.output.items[0].context_group_ids.includes(sharedAnchorGroups[1]), "validation does not silently erase the provider's invalid claim");
+  assert.deepEqual(f.receipts, f.receiptCopies);
+  assert.equal(result.usage.totalTokens, 300);
+});
+
+test("page anchors R2: a provider's explicit foreign chapter is never filtered into an accepted shared-source slide", async (t) => {
+  const f = managedAnchorFixture(t, {
+    configure: (snapshot) => configureSharedAnchorGraph(snapshot, 8),
+    alter: ({ output, provider }) => {
+      if (provider.production.page.page_index !== 0) return;
+      const foreign = provider.production.assigned_scenes.find((scene) => scene.narrative_order === 8).context_keys[0];
+      output.items[0].context_group_ids = [foreign];
+    },
+  });
+  await assert.rejects(f.run(), (error) => error.detail?.code === "source_fidelity_validation_failed"
+    && error.detail.validationIssues.some((issue) => issue.code === "incorrect_context_group_assignment"));
+  assert.equal(f.requests.length, 2, "one invalid page and its bounded repair; no later page is purchased");
+  assert.deepEqual(f.attempts.map((attempt) => attempt.usage.totalTokens), [150, 300]);
+  assert.deepEqual(f.receipts, f.receiptCopies);
+  assert.ok(f.rawResponses.every(({ raw }) => JSON.parse(raw).items[0].context_group_ids.length === 1));
+});
+
+for (const currentIssue of ["late-page ambiguous requirement", "new mandatory unmatched research"]) {
+  test("page anchors R2: a retained plan never dispatches before the complete current source preflight: " + currentIssue, async (t) => {
+    const f = managedAnchorFixture(t);
+    if (currentIssue === "late-page ambiguous requirement") {
+      const outline = f.snapshot.facts.find((fact) => fact.block_id === "PRIVATE_MANAGED_OUTLINE");
+      outline.properties.text = outline.properties.text.replace(studies[8].requirement, studies[8].requirement + " Make this magical.");
+    } else {
+      f.snapshot.facts.find((fact) => fact.block_id === "PRIVATE_MANAGED_UNRELATED").locked = true;
+    }
+    const currentSnapshot = structuredClone(f.snapshot);
+    const current = buildDocumentPresentationSourceContract(f.snapshot, { itemCount: 9, requestedSlideCount: 9 });
+    assert.ok(current.sourceIssues.length);
+    if (currentIssue === "late-page ambiguous requirement") {
+      assert.ok(current.sourceIssues.some((issue) => issue.code === "ambiguous_presentation_requirement" && issue.parameters?.slideNumber === 9));
+      const page = combinedSceneSnapshot(f.snapshot, f.production.scenes.slice(0, 8));
+      assert.deepEqual(buildDocumentPresentationSourceContract(page, f.sourceOptions(0)).sourceIssues, [], "the first page alone cannot detect the later current-source problem");
+    } else assert.ok(current.sourceIssues.some((issue) => issue.code === "unassigned_required_presentation_source"));
+    await assert.rejects(f.run(), (error) => error.detail?.code === "presentation_source_contract_invalid");
+    assert.equal(f.requests.length, 0, "all canonical source issues are resolved before any paid page is dispatched");
+    assert.equal(f.submissions.length, 0); assert.equal(f.receipts.length, 0); assert.equal(f.attempts.length, 0);
+    assert.deepEqual(f.snapshot, currentSnapshot); assert.deepEqual(f.production, f.originalProduction);
+  });
+}

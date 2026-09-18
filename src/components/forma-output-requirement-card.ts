@@ -21,6 +21,7 @@ import {
   type OutputInterpretationChange, type OutputInterpretationDecision,
 } from "./output-requirement-editor.ts";
 import "./forma-output-requirement-card.css";
+import { outcomeRecipeDraftMessage } from "./design-system/locales/outcome-recipe-draft-messages";
 
 export type OutputCardScope = { projectId: string; documentId: string; authorizationScopeKey: string };
 export type OutputCardRevision = string | number | null;
@@ -29,6 +30,10 @@ export type OutputCardPlanSuggestions = { countPolicies: Record<string, OutputCo
 export type OutputRequirementCardSnapshot = {
   scope: OutputCardScope;
   requirementId: string;
+  /** Position in the current authorized view; presentation only, not saved state. */
+  requirementOrdinal?: number;
+  /** Current Document display context only; never part of an edit or approval intent. */
+  documentContext?: { projectId: string; documentId: string; title: string; ordinal: number };
   revision: OutputCardRevision;
   label: string;
   originalText: string;
@@ -46,7 +51,7 @@ export type OutputRequirementCardSnapshot = {
   results?: Array<{ targetId: string; artifactId: string; revision: string; title: string; stateLabel: string; canOpen: boolean }>;
 };
 export type OutputCardEditorState = {
-  status: "idle" | "saving" | "saved" | "conflict" | "invalid" | "forbidden" | "unavailable";
+  status: "idle" | "saving" | "saved" | "conflict" | "invalid" | "forbidden" | "unavailable" | "not-attempted";
   clientMutationId?: string;
   issues?: Array<{ path: string; message: string }>;
   latest?: OutputRequirementCardSnapshot;
@@ -70,14 +75,17 @@ type DraftSession = {
   pendingMutation: { id: string; fingerprint: string; editVersion: number } | null;
 };
 type CoverageOwner = Pick<OutputDeliverable, "id" | "source_scope" | "coverage">;
-type TextFieldOptions = { multiline?: boolean; rows?: number; help?: string; numeric?: boolean; direction?: "auto" | "ltr"; errorKey?: string };
-const MEDIA: OutputMediaKind[] = ["unknown", "image", "slides", "audio", "video", "document"];
+type TextFieldOptions = { multiline?: boolean; rows?: number; help?: string; numeric?: boolean; direction?: "auto" | "ltr"; errorKey?: string; ownerId?: string; sectionLabel?: string };
+const MEDIA: OutputMediaKind[] = ["unknown", "image", "slides", "audio", "video", "document", "model3d"];
 const scopeKey = (scope: OutputCardScope, requirementId: string) => JSON.stringify([scope.authorizationScopeKey, scope.projectId, scope.documentId, requirementId]);
+/** Explicit unsaved presentation. It has no canonical summary, result or plan authority. */
+export type OutputRequirementCardDraft = Omit<OutputRequirementCardSnapshot, "summary" | "results" | "canReviewPlan">;
 
 /**
  * @tag forma-output-requirement-card
  * @summary Author requested deliverables with native forms and inspect authoritative output status.
  * @property {OutputRequirementCardSnapshot | null} snapshot - Authorized property-only requirement and whole-scope status.
+ * @property {OutputRequirementCardDraft | null} newDraft - Current-owned unsaved requirement, distinct from a saved snapshot.
  * @property {OutputCardResourceState} resourceState - Loading, ready, refreshing, or unavailable; never inferred from empty rows.
  * @property {"full" | "compact"} presentation - Full editor or compact saved-status summary.
  * @property {OutputCardEditorState} editorState - Command response, matched by mutation identity before a draft is closed.
@@ -95,9 +103,12 @@ const scopeKey = (scope: OutputCardScope, requirementId: string) => JSON.stringi
 export class FormaOutputRequirementCard extends FormaPresentationalElement {
   static properties = {
     snapshot: { attribute: false }, resourceState: { attribute: false }, presentation: { attribute: false },
-    editorState: { attribute: false }, readOnlyReason: { attribute: false },
+    editorState: { attribute: false }, readOnlyReason: { attribute: false }, newDraft: { attribute: false }, originalSaveId: { attribute: false },
   };
   snapshot: OutputRequirementCardSnapshot | null = null;
+  newDraft: OutputRequirementCardDraft | null = null;
+  /** Recipe host's unresolved original ID only; no body, receipt or retry permission. */
+  originalSaveId = "";
   resourceState: OutputCardResourceState = "loading";
   presentation: "full" | "compact" = "full";
   editorState: OutputCardEditorState = { status: "idle" };
@@ -130,6 +141,84 @@ export class FormaOutputRequirementCard extends FormaPresentationalElement {
     const scoped = this.i18n.messages[id];
     return (scoped && scoped !== FORMA_OUTPUT_REQUIREMENT_MESSAGES.en[id] ? scoped : fallback).replace(/\{(\w+)\}/gu, (_, name: string) => String(values[name] ?? ""));
   }
+  #isolate(value: string) { return "\u2068" + value + "\u2069"; }
+  #input() { return this.snapshot ?? this.newDraft; }
+  #draftMessage(key: Parameters<typeof outcomeRecipeDraftMessage>[1]) { return outcomeRecipeDraftMessage(this.i18n.locale, key); }
+  get hasOpenDraft() { return this.#editing || this.#waiting || Boolean(this.#session?.dirty); }
+  /** Explicit presentation only; the host supplies current ownership, never a fabricated saved row. */
+  async openNewDraft(opener: HTMLElement | null, current: () => boolean): Promise<boolean> {
+    if (!current() || !this.newDraft || this.snapshot || !this.#canEdit() || this.resourceState !== "ready" || this.hasOpenDraft) return false;
+    const input = this.newDraft, key = scopeKey(input.scope, input.requirementId);
+    this.#opener = opener; this.#session = this.#newSession(input); this.#session.dirty = true;
+    this.#editing = true; this.#status = ""; this.#errors.clear(); this.#interpretationReviewedAt = -1;
+    this.requestUpdate(); await this.updateComplete;
+    if (!current() || this.#activeKey !== key || !this.#editing) return false;
+    this.querySelector<HTMLElement>(`#${this.#fieldId("originalText")}`)?.focus({ preventScroll: false });
+    return true;
+  }
+  /** Explicitly resend this session's original Save; never materialize or rebase newer edits. */
+  retryOriginalSave(clientMutationId: string, current: () => boolean): boolean {
+    const session = this.#session, pending = session?.pendingMutation, input = this.#input();
+    if (typeof current !== "function" || !current() || !this.isConnected || !session || !pending || !input || !this.#editing
+      || !clientMutationId || this.originalSaveId !== clientMutationId || pending.id !== clientMutationId
+      || this.editorState.clientMutationId !== clientMutationId || this.#fieldsDisabled() || this.#composing.size
+      || this.editorState.status === "forbidden" || this.editorState.status === "saved" || this.editorState.status === "idle"
+      || this.resourceState !== "ready" || this.#activeKey !== scopeKey(session.scope, session.requirementId)
+      || this.#activeKey !== scopeKey(input.scope, input.requirementId)) return false;
+    let original: unknown;
+    try { original = JSON.parse(pending.fingerprint); } catch { return false; }
+    if (!Array.isArray(original) || original.length !== 3 || original[0] === null || original[0] !== session.baseRevision
+      || JSON.stringify(original) !== pending.fingerprint || inspectOutputRequirement(original[1]).status !== "valid"
+      || (original[1] as OutputRequirementSpec).id !== session.requirementId) return false;
+    const plan = original[2] as OutputCardPlanSuggestions | null;
+    if (!plan || typeof plan !== "object" || Array.isArray(plan) || Object.keys(plan).sort().join(",") !== "countPolicies,suggestedCounts"
+      || !plan.countPolicies || typeof plan.countPolicies !== "object" || Array.isArray(plan.countPolicies)
+      || !plan.suggestedCounts || typeof plan.suggestedCounts !== "object" || Array.isArray(plan.suggestedCounts) || !current()) return false;
+    // Preserve pending.editVersion: an original ACK cannot close newer raw edits.
+    this.#waiting = true; this.#status = ""; this.requestUpdate();
+    this.#emit<OutputRequirementSaveIntent>("forma-output-save", { ...this.#intent(session)!, clientMutationId,
+      draft: original[1] as OutputRequirementSpec, planSuggestions: plan });
+    return true;
+  }
+  #documentContext() {
+    const scope = this.#input()?.scope, context = this.#input()?.documentContext;
+    if (!scope) return "";
+    return context?.projectId === scope.projectId && context.documentId === scope.documentId
+      && typeof context.title === "string" && Number.isSafeInteger(context.ordinal) && context.ordinal > 0
+      ? this.#t("contextDocument", { number: this.i18n.number(context.ordinal), name: this.#isolate(context.title) })
+      : this.#t("contextDocumentIdentity", { identity: this.#isolate(scope.documentId) });
+  }
+  #requirementContext() {
+    const name = this.#isolate(this.#session?.label || this.#input()?.label || this.#t("heading"));
+    const ordinal = this.#input()?.requirementOrdinal;
+    const requirement = typeof ordinal === "number" && Number.isSafeInteger(ordinal) && ordinal > 0
+      ? this.#t("contextRequirement", { number: this.i18n.number(ordinal), name })
+      : this.#t("contextRequirementIdentity", { name, identity: this.#isolate(this.#input()?.requirementId || this.#id) });
+    return [this.#documentContext(), requirement].filter(Boolean).join(" · ");
+  }
+  #context(ownerId = "") {
+    const spec = this.#session?.spec ?? outputRequirementEditableDraft(this.#input()?.spec);
+    const requirement = this.#requirementContext();
+    const rows = (spec?.deliverables ?? []).flatMap((deliverable, index) => {
+      const parent = this.#t("contextDeliverable", { number: this.i18n.number(index + 1), name: this.#isolate(deliverable.label || this.#t("untitledGroup")) });
+      return [
+        { id: deliverable.id, deliverable, labels: [requirement, parent] },
+        ...(deliverable.format_variants ?? []).map((variant, position) => ({ id: variant.id, deliverable, labels: [requirement, parent,
+          this.#t("contextFormat", { number: this.i18n.number(position + 1), name: this.#isolate(variant.label || this.#t("unnamedFormat")) })] })),
+        ...(deliverable.series?.members ?? []).map((member, position) => ({ id: member.id, deliverable, labels: [requirement, parent,
+          this.#t("contextMember", { number: this.i18n.number(position + 1), name: this.#isolate(member.label || this.#t("unnamedVideo")) })] })),
+      ];
+    });
+    // A native field key may contain another row ID; callers supply its exact render owner.
+    const owner = rows.find(row => row.id === ownerId);
+    if (!owner) return requirement;
+    return owner.labels.join(" · ");
+  }
+  #controlName(label: string, ownerId = "", detail = "") { return [label, this.#context(ownerId), detail].filter(Boolean).join(" · "); }
+  #resultContext(result: NonNullable<OutputRequirementCardSnapshot["results"]>[number]) {
+    const position = this.snapshot?.results?.findIndex(candidate => candidate.targetId === result.targetId && candidate.artifactId === result.artifactId && candidate.revision === result.revision) ?? -1;
+    return this.#t("contextResult", { number: this.i18n.number(position + 1), name: this.#isolate(result.title) });
+  }
   #fieldId(key: string) {
     let id = this.#fieldIds.get(key);
     if (!id) { id = `${this.#id}-field-${this.#fieldIds.size + 1}`; this.#fieldIds.set(key, id); }
@@ -138,7 +227,7 @@ export class FormaOutputRequirementCard extends FormaPresentationalElement {
   #emit<T>(name: string, detail: T) { this.dispatchEvent(new CustomEvent<T>(name, { detail, bubbles: true, composed: true, cancelable: true })); }
   #intent(session = this.#session): OutputCardIntentScope | null {
     if (session) return { scope: { ...session.scope }, requirementId: session.requirementId, expectedRevision: session.baseRevision };
-    const value = this.snapshot;
+    const value = this.#input();
     return value ? { scope: { ...value.scope }, requirementId: value.requirementId, expectedRevision: value.revision } : null;
   }
   #latest() {
@@ -151,15 +240,16 @@ export class FormaOutputRequirementCard extends FormaPresentationalElement {
     const latest = this.#latest();
     return !!latest && (latest.revision !== this.#session.baseRevision || (this.editorState.status === "conflict" && this.#resolvedConflictMarker !== this.#conflictMarker()));
   }
-  #unsupported() { return this.snapshot?.spec != null && inspectOutputRequirement(this.snapshot.spec).status === "unsupported"; }
+  #newDraftChanged() { return !this.snapshot && this.newDraft && this.#session && this.newDraft.revision !== this.#session.baseRevision; }
+  #unsupported() { const input = this.#input(); return input?.spec != null && inspectOutputRequirement(input.spec).status === "unsupported"; }
   #nestedForm() { return this.closest("form") !== null; }
-  #canEdit() { return !!this.snapshot?.canEdit && !this.readOnlyReason && !this.#unsupported() && !this.#nestedForm(); }
+  #canEdit() { return !!this.#input()?.canEdit && !this.readOnlyReason && !this.#unsupported() && !this.#nestedForm(); }
   #fieldsDisabled() { return !this.#canEdit() || this.#waiting || this.editorState.status === "saving"; }
-  #canSave() { return this.#canEdit() && this.resourceState === "ready" && !this.#waiting && this.editorState.status !== "saving" && this.editorState.status !== "forbidden" && !this.#hasConflict(); }
+  #canSave() { return !this.originalSaveId && this.#canEdit() && this.resourceState === "ready" && !this.#waiting && this.editorState.status !== "saving" && this.editorState.status !== "forbidden" && !this.#hasConflict() && !this.#newDraftChanged() && (!this.newDraft || this.snapshot || !this.#session || !outputRequirementInterpretationNeedsReview(this.#comparisonDraft())); }
 
   protected override willUpdate(changed: PropertyValues) {
-    if (changed.has("snapshot")) {
-      const next = this.snapshot;
+    if (changed.has("snapshot") || changed.has("newDraft")) {
+      const next = this.#input();
       const nextAuthorization = next?.scope.authorizationScopeKey ?? "";
       const nextKey = next ? scopeKey(next.scope, next.requirementId) : "";
       if (this.#authorizationKey && nextAuthorization !== this.#authorizationKey) {
@@ -183,7 +273,7 @@ export class FormaOutputRequirementCard extends FormaPresentationalElement {
       } else this.#status = "newerDraftRetained";
     }
   }
-  #focus(key: string) { void this.updateComplete.then(() => this.querySelector<HTMLElement>(`#${this.#fieldId(key)}`)?.focus({ preventScroll: true })); }
+  #focus(key: string, preventScroll = true) { void this.updateComplete.then(() => this.querySelector<HTMLElement>(`#${this.#fieldId(key)}`)?.focus({ preventScroll })); }
   #focusSummary() { void this.updateComplete.then(() => this.querySelector<HTMLElement>(`#${this.#id}-heading`)?.focus({ preventScroll: true })); }
   #blankSpec(id: string, label: string, originalText: string): OutputRequirementSpec {
     return { schema_version: 1, id, label, original_text: originalText, deliverables: [], value_origins: {} };
@@ -193,7 +283,7 @@ export class FormaOutputRequirementCard extends FormaPresentationalElement {
     copy.deliverables = copy.deliverables.map((value) => ({ ...value, ...(value.content_quantity ? {} : value.media_kind === "slides" ? { content_quantity: { kind: "unknown" as const, unit: "slide" as const } } : value.media_kind === "audio" || value.media_kind === "video" ? { content_quantity: { kind: "unknown" as const, unit: "second" as const } } : {}) }));
     return copy;
   }
-  #newSession(snapshot: OutputRequirementCardSnapshot): DraftSession {
+  #newSession(snapshot: OutputRequirementCardDraft): DraftSession {
     const editable = outputRequirementEditableDraft(snapshot.spec);
     const spec = editable ? this.#editableSpec(editable) : this.#blankSpec(snapshot.requirementId, snapshot.label, snapshot.originalText);
     return {
@@ -205,10 +295,12 @@ export class FormaOutputRequirementCard extends FormaPresentationalElement {
     };
   }
   #open(event: Event) {
-    if (!this.#canEdit() || !this.snapshot) return;
+    const input = this.#input();
+    if (!this.#canEdit() || !input) return;
     this.#opener = event.currentTarget as HTMLElement;
-    this.#session = this.#cache.get(this.#activeKey) ?? this.#newSession(this.snapshot);
-    this.#editing = true; this.#status = inspectOutputRequirement(this.snapshot.spec).status === "invalid" && outputRequirementEditableDraft(this.snapshot.spec) ? "invalidLabelsPreserved" : ""; this.#waiting = false; this.#errors.clear();
+    this.#session = this.#cache.get(this.#activeKey) ?? this.#newSession(input);
+    if (!this.snapshot) this.#session.dirty = true;
+    this.#editing = true; this.#status = inspectOutputRequirement(input.spec).status === "invalid" && outputRequirementEditableDraft(input.spec) ? "invalidLabelsPreserved" : ""; this.#waiting = false; this.#errors.clear();
     this.#interpretationReviewedAt = -1; this.#conflictReviewedAt = "";
     this.#emit<OutputRequirementEditIntent>("forma-output-edit", { ...this.#intent()!, action: "open" });
     this.requestUpdate(); this.#focus("originalText");
@@ -250,7 +342,7 @@ export class FormaOutputRequirementCard extends FormaPresentationalElement {
     session.spec = structuredClone(proposal.spec); session.acceptedWording = session.originalText;
     session.planSuggestions = structuredClone(proposal.planning); session.planningBasisSpec = structuredClone(proposal.spec);
     session.quantities.clear(); session.text.clear(); session.policies.clear(); session.editedPolicyIds.clear();
-    session.dirty = true; session.structuredDirty = true; session.pendingMutation = null; session.editVersion += 1;
+    session.dirty = true; session.structuredDirty = true; if (!this.originalSaveId) session.pendingMutation = null; session.editVersion += 1;
     this.#status = proposal.recognized ? "proposalDraft" : "proposalNotRecognized";
     this.#errors.clear(); this.#parseProposal = null; this.requestUpdate(); this.#focus("groups");
   }
@@ -269,19 +361,21 @@ export class FormaOutputRequirementCard extends FormaPresentationalElement {
     this.#touch(); this.#status = "retainedInterpretationConfirmed"; this.requestUpdate();
   }
   #cancel() {
-    if (!this.#session || this.#waiting) return;
-    if (this.#session.dirty) { this.#cancelIntent = "cancel"; this.requestUpdate(); this.#focus("keepEditing"); return; }
+    if (!this.#session || this.#waiting || this.originalSaveId) return;
+    if (this.#session.dirty) { this.#cancelIntent = "cancel"; this.requestUpdate(); this.#focus("keepEditing", false); return; }
     this.#close(false);
   }
   #close(discarded: boolean) {
     const intent = this.#intent();
+    const revealOpener = discarded && !this.snapshot && Boolean(this.newDraft);
     this.#cache.delete(this.#activeKey); this.#session = null; this.#editing = false;
     this.#cancelIntent = null; this.#parseProposal = null; this.#errors.clear(); this.#status = ""; this.#interpretationReviewedAt = -1; this.#conflictReviewedAt = "";
     if (intent) this.#emit<OutputRequirementCancelIntent>("forma-output-cancel", { ...intent, discarded });
     this.requestUpdate();
-    void this.updateComplete.then(() => { if (this.#opener?.isConnected) this.#opener.focus({ preventScroll: true }); else this.#focusSummary(); });
+    void this.updateComplete.then(() => { if (this.#opener?.isConnected) this.#opener.focus({ preventScroll: !revealOpener }); else this.#focusSummary(); });
   }
   #discard() {
+    if (this.originalSaveId) return;
     if (this.#cancelIntent === "reload") {
       const latest = this.#latest();
       if (latest) { this.#session = this.#newSession(latest); this.#resolvedConflictMarker = this.#conflictMarker(); this.#cancelIntent = null; this.#status = ""; this.#errors.clear(); this.#interpretationReviewedAt = -1; this.#conflictReviewedAt = ""; this.requestUpdate(); this.#focus("originalText"); }
@@ -289,7 +383,7 @@ export class FormaOutputRequirementCard extends FormaPresentationalElement {
   }
   #reapply() {
     const latest = this.#latest();
-    if (!latest || !this.#session || this.resourceState !== "ready" || !this.#canEdit() || inspectOutputRequirement(latest.spec).status !== "valid" || this.#conflictReviewedAt !== `${this.#conflictMarker()}:${this.#session.editVersion}`) return;
+    if (this.originalSaveId || !latest || !this.#session || this.resourceState !== "ready" || !this.#canEdit() || inspectOutputRequirement(latest.spec).status !== "valid" || this.#conflictReviewedAt !== `${this.#conflictMarker()}:${this.#session.editVersion}`) return;
     this.#session.baseRevision = latest.revision; this.#session.pendingMutation = null;
     this.#conflictReviewedAt = "";
     this.#resolvedConflictMarker = this.#conflictMarker(); this.#status = "reapplied";
@@ -568,27 +662,27 @@ export class FormaOutputRequirementCard extends FormaPresentationalElement {
     const onInput = (event: Event) => { if (this.#composing.has(key) || (event instanceof InputEvent && event.isComposing)) return; if (isLabel) this.#errors.delete(options.errorKey ?? key); update((event.currentTarget as HTMLInputElement).value); };
     const compositionEnd = (event: CompositionEvent) => { this.#composing.delete(key); onInput(event); };
     return html`<label class="ui-field output-requirement-field" for=${id}><span>${label}</span>
-      ${options.multiline ? html`<textarea id=${id} name=${key} form=${`${this.#id}-form`} rows=${options.rows ?? 3} maxlength=${isLabel ? OUTPUT_REQUIREMENT_LABEL_MAX_LENGTH : nothing} dir=${options.direction ?? "auto"} .value=${this.#composing.has(key) ? noChange : live(value)} ?disabled=${this.#fieldsDisabled()} aria-invalid=${issue ? "true" : "false"} aria-describedby=${descriptions || nothing} aria-errormessage=${issue ? `${id}-error` : nothing} @input=${onInput} @compositionstart=${() => this.#composing.add(key)} @compositionend=${compositionEnd}></textarea>`
-        : html`<input id=${id} type="text" inputmode=${options.numeric ? "decimal" : "text"} name=${key} form=${`${this.#id}-form`} maxlength=${isLabel ? OUTPUT_REQUIREMENT_LABEL_MAX_LENGTH : nothing} dir=${options.direction ?? (options.numeric ? "ltr" : "auto")} .value=${this.#composing.has(key) ? noChange : live(value)} ?disabled=${this.#fieldsDisabled()} aria-invalid=${issue ? "true" : "false"} aria-describedby=${descriptions || nothing} aria-errormessage=${issue ? `${id}-error` : nothing} @input=${onInput} @compositionstart=${() => this.#composing.add(key)} @compositionend=${compositionEnd}>`}
+      ${options.multiline ? html`<textarea id=${id} aria-label=${this.#controlName(label, options.ownerId, options.sectionLabel)} name=${key} form=${`${this.#id}-form`} rows=${options.rows ?? 3} maxlength=${isLabel ? OUTPUT_REQUIREMENT_LABEL_MAX_LENGTH : nothing} dir=${options.direction ?? "auto"} .value=${this.#composing.has(key) ? noChange : live(value)} ?disabled=${this.#fieldsDisabled()} aria-invalid=${issue ? "true" : "false"} aria-describedby=${descriptions || nothing} aria-errormessage=${issue ? `${id}-error` : nothing} @input=${onInput} @compositionstart=${() => this.#composing.add(key)} @compositionend=${compositionEnd}></textarea>`
+        : html`<input id=${id} aria-label=${this.#controlName(label, options.ownerId, options.sectionLabel)} type="text" inputmode=${options.numeric ? "decimal" : "text"} name=${key} form=${`${this.#id}-form`} maxlength=${isLabel ? OUTPUT_REQUIREMENT_LABEL_MAX_LENGTH : nothing} dir=${options.direction ?? (options.numeric ? "ltr" : "auto")} .value=${this.#composing.has(key) ? noChange : live(value)} ?disabled=${this.#fieldsDisabled()} aria-invalid=${issue ? "true" : "false"} aria-describedby=${descriptions || nothing} aria-errormessage=${issue ? `${id}-error` : nothing} @input=${onInput} @compositionstart=${() => this.#composing.add(key)} @compositionend=${compositionEnd}>`}
       ${help ? html`<small id=${`${id}-help`}>${help}</small>` : nothing}${issue ? html`<small class="output-requirement-error" id=${`${id}-error`}>${this.#t(issue, { max: OUTPUT_REQUIREMENT_LABEL_MAX_LENGTH })}</small>` : nothing}
     </label>`;
   }
-  #select(key: string, label: string, value: string, options: Array<{ value: string; label: string }>, update: (value: string) => void) {
+  #select(key: string, label: string, value: string, options: Array<{ value: string; label: string }>, update: (value: string) => void, ownerId = "", sectionLabel = "") {
     const id = this.#fieldId(key);
-    return html`<label class="ui-field output-requirement-field" for=${id}><span>${label}</span><select id=${id} name=${key} form=${`${this.#id}-form`} .value=${live(value)} ?disabled=${this.#fieldsDisabled()} @change=${(event: Event) => update((event.currentTarget as HTMLSelectElement).value)}>${options.map((option) => html`<option value=${option.value} ?selected=${value === option.value}>${option.label}</option>`)}</select></label>`;
+    return html`<label class="ui-field output-requirement-field" for=${id}><span>${label}</span><select id=${id} aria-label=${this.#controlName(label, ownerId, sectionLabel)} name=${key} form=${`${this.#id}-form`} .value=${live(value)} ?disabled=${this.#fieldsDisabled()} @change=${(event: Event) => update((event.currentTarget as HTMLSelectElement).value)}>${options.map((option) => html`<option value=${option.value} ?selected=${value === option.value}>${option.label}</option>`)}</select></label>`;
   }
-  #checkbox(key: string, label: string, checked: boolean, update: (value: boolean) => void, help = "") {
+  #checkbox(key: string, label: string, checked: boolean, update: (value: boolean) => void, help = "", ownerId = "", sectionLabel = "") {
     const id = this.#fieldId(key);
-    return html`<label class="ui-choice output-requirement-choice" for=${id}><input id=${id} type="checkbox" name=${key} form=${`${this.#id}-form`} .checked=${checked} ?disabled=${this.#fieldsDisabled()} aria-describedby=${help ? `${id}-help` : nothing} @change=${(event: Event) => update((event.currentTarget as HTMLInputElement).checked)}><span>${label}${help ? html`<small id=${`${id}-help`}>${help}</small>` : nothing}</span></label>`;
+    return html`<label class="ui-choice output-requirement-choice" for=${id}><input id=${id} aria-label=${this.#controlName(label, ownerId, sectionLabel)} type="checkbox" name=${key} form=${`${this.#id}-form`} .checked=${checked} ?disabled=${this.#fieldsDisabled()} aria-describedby=${help ? `${id}-help` : nothing} @change=${(event: Event) => update((event.currentTarget as HTMLInputElement).checked)}><span>${label}${help ? html`<small id=${`${id}-help`}>${help}</small>` : nothing}</span></label>`;
   }
-  #quantity(key: string, label: string, value: OutputQuantity) {
+  #quantity(key: string, label: string, value: OutputQuantity, ownerId = "") {
     const draft = this.#quantityDraft(key, value);
     const update = (property: "kind" | "exact" | "min" | "max", text: string) => { this.#session!.quantities.set(key, { ...draft, [property]: text }); this.#touch(true, `${key}:${property}`); };
-    return html`<fieldset class="output-requirement-quantity"><legend>${label} <span>· ${this.#t(`unit.${draft.unit}`)}</span></legend>
+    return html`<fieldset class="output-requirement-quantity" aria-label=${this.#controlName(label + " · " + this.#t(`unit.${draft.unit}`), ownerId)}><legend>${label} <span>· ${this.#t(`unit.${draft.unit}`)}</span></legend>
       <div class="output-requirement-fields">
-        ${this.#select(`${key}:kind`, this.#t("quantityMode"), draft.kind, (["unknown", "exact", "range"] as const).map((kind) => ({ value: kind, label: this.#t(`quantity.${kind}`) })), (next) => update("kind", next))}
-        ${draft.kind === "exact" ? this.#textField(`${key}:exact`, this.#t("value"), draft.exact, (next) => update("exact", next), { numeric: true }) : nothing}
-        ${draft.kind === "range" ? html`${this.#textField(`${key}:min`, this.#t("minimum"), draft.min, (next) => update("min", next), { numeric: true })}${this.#textField(`${key}:max`, this.#t("maximum"), draft.max, (next) => update("max", next), { numeric: true })}` : nothing}
+        ${this.#select(`${key}:kind`, this.#t("quantityMode"), draft.kind, (["unknown", "exact", "range"] as const).map((kind) => ({ value: kind, label: this.#t(`quantity.${kind}`) })), (next) => update("kind", next), ownerId, label)}
+        ${draft.kind === "exact" ? this.#textField(`${key}:exact`, this.#t("value"), draft.exact, (next) => update("exact", next), { numeric: true , ownerId: ownerId, sectionLabel: label}) : nothing}
+        ${draft.kind === "range" ? html`${this.#textField(`${key}:min`, this.#t("minimum"), draft.min, (next) => update("min", next), { numeric: true , ownerId: ownerId, sectionLabel: label})}${this.#textField(`${key}:max`, this.#t("maximum"), draft.max, (next) => update("max", next), { numeric: true , ownerId: ownerId, sectionLabel: label})}` : nothing}
       </div><small>${this.#t(draft.unit === "second" ? "durationHelp" : "blankHelp")}</small>
     </fieldset>`;
   }
@@ -600,15 +694,15 @@ export class FormaOutputRequirementCard extends FormaPresentationalElement {
   }
   #coverage(owner: CoverageOwner, update: (next: Partial<CoverageOwner>) => void) {
     const selected = owner.source_scope.kind === "blocks" ? owner.source_scope.block_ids : [];
-    const sources = this.snapshot?.sourceOptions ?? [];
+    const sources = this.#input()?.sourceOptions ?? [];
     const coverage = owner.coverage;
     return html`<div class="output-requirement-coverage">
-      ${this.#select(`${owner.id}:coverage`, this.#t("coverage"), coverage.kind, (["document_context", "document_outline", "topics", "unresolved"] as const).map((kind) => ({ value: kind, label: this.#t(`coverage.${kind}`) })), (kind) => update({ coverage: kind === "document_outline" || kind === "document_context" ? { kind } : kind === "topics" ? { kind, topics: [] } : { kind: "unresolved", description: "" } }))}
-      ${coverage.kind === "topics" ? this.#textField(`${owner.id}:topics`, this.#t("topics"), this.#textValue(`${owner.id}:topics`, coverage.topics.join("\n")), (value) => { this.#setText(`${owner.id}:topics`, value); update({ coverage: { ...coverage } }); }, { multiline: true }) : nothing}
-      ${coverage.kind === "unresolved" ? this.#textField(`${owner.id}:coverageDescription`, this.#t("coverageDescription"), coverage.description, (description) => update({ coverage: { kind: "unresolved", description } }), { multiline: true, rows: 2 }) : nothing}
-      ${this.#select(`${owner.id}:source`, this.#t("sourceScope"), owner.source_scope.kind, (["document", "blocks", "unknown"] as const).map((kind) => ({ value: kind, label: this.#t(`source.${kind}`) })), (kind) => update({ source_scope: kind === "document" ? { kind } : kind === "blocks" ? { kind, block_ids: [] } : { kind: "unknown", reason: "not_decided" } }))}
-      ${owner.source_scope.kind === "blocks" ? html`<fieldset class="output-requirement-source-options"><legend>${this.#t("source.blocks")}</legend>
-        ${sources.length ? repeat(sources, (source) => source.id, (source) => this.#checkbox(`${owner.id}:source:${source.id}`, source.label, selected.includes(source.id), (checked) => update({ source_scope: { kind: "blocks", block_ids: checked ? [...new Set([...selected, source.id])] : selected.filter((id) => id !== source.id) } }))) : html`<p>${this.#t("sourceNone")}</p>`}
+      ${this.#select(`${owner.id}:coverage`, this.#t("coverage"), coverage.kind, (["document_context", "document_outline", "topics", "unresolved"] as const).map((kind) => ({ value: kind, label: this.#t(`coverage.${kind}`) })), (kind) => update({ coverage: kind === "document_outline" || kind === "document_context" ? { kind } : kind === "topics" ? { kind, topics: [] } : { kind: "unresolved", description: "" } }), owner.id, "")}
+      ${coverage.kind === "topics" ? this.#textField(`${owner.id}:topics`, this.#t("topics"), this.#textValue(`${owner.id}:topics`, coverage.topics.join("\n")), (value) => { this.#setText(`${owner.id}:topics`, value); update({ coverage: { ...coverage } }); }, { multiline: true , ownerId: owner.id, sectionLabel: ""}) : nothing}
+      ${coverage.kind === "unresolved" ? this.#textField(`${owner.id}:coverageDescription`, this.#t("coverageDescription"), coverage.description, (description) => update({ coverage: { kind: "unresolved", description } }), { multiline: true, rows: 2 , ownerId: owner.id, sectionLabel: ""}) : nothing}
+      ${this.#select(`${owner.id}:source`, this.#t("sourceScope"), owner.source_scope.kind, (["document", "blocks", "unknown"] as const).map((kind) => ({ value: kind, label: this.#t(`source.${kind}`) })), (kind) => update({ source_scope: kind === "document" ? { kind } : kind === "blocks" ? { kind, block_ids: [] } : { kind: "unknown", reason: "not_decided" } }), owner.id, "")}
+      ${owner.source_scope.kind === "blocks" ? html`<fieldset class="output-requirement-source-options" aria-label=${this.#controlName(this.#t("source.blocks"), owner.id)}><legend>${this.#t("source.blocks")}</legend>
+        ${sources.length ? repeat(sources, (source) => source.id, (source) => this.#checkbox(`${owner.id}:source:${source.id}`, this.#isolate(source.label), selected.includes(source.id), (checked) => update({ source_scope: { kind: "blocks", block_ids: checked ? [...new Set([...selected, source.id])] : selected.filter((id) => id !== source.id) } }), "", owner.id, this.#t("contextSource", { number: this.i18n.number(sources.findIndex((candidate) => candidate.id === source.id) + 1) }))) : html`<p>${this.#t("sourceNone")}</p>`}
         ${selected.some((id) => !sources.some((source) => source.id === id)) ? html`<p class="output-requirement-note">${this.#t("sourceMissing")}</p>` : nothing}
       </fieldset>` : nothing}
     </div>`;
@@ -619,75 +713,75 @@ export class FormaOutputRequirementCard extends FormaPresentationalElement {
     if (authored?.kind !== "range") return nothing;
     const policy = this.#policyDraft(deliverable);
     const update = (field: keyof OutputCountPolicyDraft, value: string) => { this.#session!.policies.set(deliverable.id, { ...policy, [field]: value }); this.#session!.editedPolicyIds.add(deliverable.id); this.#touch(true, `${deliverable.id}:policy:${field}`); };
-    return html`<fieldset class="output-requirement-policy"><legend>${this.#t("proposedTreatment")}</legend>
+    return html`<fieldset class="output-requirement-policy" aria-label=${this.#controlName(this.#t("proposedTreatment"), deliverable.id)}><legend>${this.#t("proposedTreatment")}</legend>
       <p>${this.#t("authoredRange", { range: this.#quantityLabel(authored) })}</p>
-      ${this.#select(`${deliverable.id}:policy:kind`, this.#t("proposedTreatment"), policy.kind, [{ value: "flexible", label: this.#t("flexible") }, { value: "exact", label: this.#t("exactTreatment") }], (value) => update("kind", value))}
-      ${policy.kind === "flexible" ? this.#textField(`${deliverable.id}:policy:aim`, this.#t("aim"), policy.aim, (value) => update("aim", value), { numeric: true }) : this.#textField(`${deliverable.id}:policy:exact`, this.#t("value"), policy.exact, (value) => update("exact", value), { numeric: true })}
+      ${this.#select(`${deliverable.id}:policy:kind`, this.#t("proposedTreatment"), policy.kind, [{ value: "flexible", label: this.#t("flexible") }, { value: "exact", label: this.#t("exactTreatment") }], (value) => update("kind", value), deliverable.id, this.#t("proposedTreatment"))}
+      ${policy.kind === "flexible" ? this.#textField(`${deliverable.id}:policy:aim`, this.#t("aim"), policy.aim, (value) => update("aim", value), { numeric: true , ownerId: deliverable.id, sectionLabel: this.#t("proposedTreatment")}) : this.#textField(`${deliverable.id}:policy:exact`, this.#t("value"), policy.exact, (value) => update("exact", value), { numeric: true , ownerId: deliverable.id, sectionLabel: this.#t("proposedTreatment")})}
       <small>${this.#t("aimHelp")}</small>
     </fieldset>`;
   }
   #variant(deliverable: OutputDeliverable, variant: OutputFormatVariant) {
     const name = variant.label || this.#t("unnamedFormat");
-    return html`<li class="output-requirement-subrow" data-output-variant=${variant.id}>
+    return html`<li class="output-requirement-subrow" data-output-variant=${variant.id} aria-label=${this.#context(variant.id)}>
       <div class="output-requirement-fields">
-        ${this.#textField(`${variant.id}:label`, this.#t("label"), variant.label, (label) => this.#updateVariant(deliverable.id, variant.id, (value) => ({ ...value, label })))}
-        ${this.#textField(`${variant.id}:ratio`, this.#t("ratio"), this.#textValue(`${variant.id}:ratio`, variant.aspect_ratio ? formatOutputAspectRatio(variant.aspect_ratio) : ""), (value) => this.#setText(`${variant.id}:ratio`, value), { direction: "ltr", help: this.#t("ratioHelp") })}
+        ${this.#textField(`${variant.id}:label`, this.#t("label"), variant.label, (label) => this.#updateVariant(deliverable.id, variant.id, (value) => ({ ...value, label })), { ownerId: variant.id, sectionLabel: "" })}
+        ${this.#textField(`${variant.id}:ratio`, this.#t("ratio"), this.#textValue(`${variant.id}:ratio`, variant.aspect_ratio ? formatOutputAspectRatio(variant.aspect_ratio) : ""), (value) => this.#setText(`${variant.id}:ratio`, value), { direction: "ltr", help: this.#t("ratioHelp") , ownerId: variant.id, sectionLabel: ""})}
       </div>
-      ${this.#checkbox(`${variant.id}:required`, this.#t("required"), variant.required, (required) => this.#updateVariant(deliverable.id, variant.id, (value) => ({ ...value, required })), this.#t("requiredHelp"))}
-      ${this.#quantity(`${variant.id}:quantity`, this.#t("quantity"), variant.quantity)}
-      ${this.#textField(`${variant.id}:placements`, this.#t("placements"), this.#textValue(`${variant.id}:placements`, variant.placements.join("\n")), (value) => this.#setText(`${variant.id}:placements`, value), { multiline: true, rows: 2 })}
-      <button type="button" class="output-requirement-secondary" ?disabled=${this.#fieldsDisabled()} @click=${() => {
+      ${this.#checkbox(`${variant.id}:required`, this.#t("required"), variant.required, (required) => this.#updateVariant(deliverable.id, variant.id, (value) => ({ ...value, required })), this.#t("requiredHelp"), variant.id, "")}
+      ${this.#quantity(`${variant.id}:quantity`, this.#t("quantity"), variant.quantity, variant.id)}
+      ${this.#textField(`${variant.id}:placements`, this.#t("placements"), this.#textValue(`${variant.id}:placements`, variant.placements.join("\n")), (value) => this.#setText(`${variant.id}:placements`, value), { multiline: true, rows: 2 , ownerId: variant.id, sectionLabel: ""})}
+      <button aria-label=${this.#controlName(this.#t("remove", { name: this.#isolate(name) }), variant.id)} type="button" class="output-requirement-secondary" ?disabled=${this.#fieldsDisabled()} @click=${() => {
         const rows = deliverable.format_variants ?? []; const index = rows.findIndex((value) => value.id === variant.id); const next = rows.filter((value) => value.id !== variant.id);
         this.#updateDeliverable(deliverable.id, (value) => ({ ...value, format_variants: next }));
         this.#announcement = this.#t("removed", { name }); const neighbor = next[index] ?? next[index - 1]; this.#focus(neighbor ? `${neighbor.id}:label` : `${deliverable.id}:formats`);
-      }}>${this.#t("remove", { name })}</button>
+      }}>${this.#t("remove", { name: this.#isolate(name) })}</button>
     </li>`;
   }
   #series(deliverable: OutputDeliverable) {
     const series = deliverable.series;
-    if (!series) return html`${deliverable.format_variants?.length ? html`<p class="output-requirement-note">${this.#t("seriesFormatLimit")}</p>` : nothing}<button type="button" class="output-requirement-secondary" ?disabled=${this.#fieldsDisabled() || !!deliverable.format_variants?.length} @click=${() => this.#updateDeliverable(deliverable.id, (value) => ({ ...value, series: { state: "unresolved", members: [], description: "" } }))}>${this.#t("makeSeries")}</button>`;
+    if (!series) return html`${deliverable.format_variants?.length ? html`<p class="output-requirement-note">${this.#t("seriesFormatLimit")}</p>` : nothing}<button aria-label=${this.#controlName(this.#t("makeSeries"), deliverable.id)} type="button" class="output-requirement-secondary" ?disabled=${this.#fieldsDisabled() || !!deliverable.format_variants?.length} @click=${() => this.#updateDeliverable(deliverable.id, (value) => ({ ...value, series: { state: "unresolved", members: [], description: "" } }))}>${this.#t("makeSeries")}</button>`;
     const seriesError = this.#errors.get(`${deliverable.id}:series`);
     return html`<section class="output-requirement-series" aria-labelledby=${this.#fieldId(`${deliverable.id}:series`)}>
-      <h5 tabindex="-1" id=${this.#fieldId(`${deliverable.id}:series`)}>${this.#t("series")}</h5><p>${this.#t(series.state === "resolved" ? "seriesResolved" : "seriesUnresolved")}</p><small>${this.#t("seriesHelp")}</small>
-      ${this.#textField(`${deliverable.id}:seriesDescription`, this.#t("seriesDescription"), series.description, (description) => this.#updateDeliverable(deliverable.id, (value) => value.series ? { ...value, series: { ...value.series, description } } : value), { multiline: true, rows: 2 })}
-      <ol class="output-requirement-subrows">${repeat(series.members, (member) => member.id, (member, index) => html`<li class="output-requirement-subrow" data-output-member=${member.id}>
-        ${this.#textField(`${member.id}:label`, this.#t("label"), member.label, (label) => this.#updateMember(deliverable.id, member.id, (value) => ({ ...value, label })))}
-        ${this.#checkbox(`${member.id}:required`, this.#t("required"), member.required, (required) => this.#updateMember(deliverable.id, member.id, (value) => ({ ...value, required })), this.#t("requiredHelp"))}
+      <h5 tabindex="-1" aria-label=${this.#controlName(this.#t("series"), deliverable.id)} id=${this.#fieldId(`${deliverable.id}:series`)}>${this.#t("series")}</h5><p>${this.#t(series.state === "resolved" ? "seriesResolved" : "seriesUnresolved")}</p><small>${this.#t("seriesHelp")}</small>
+      ${this.#textField(`${deliverable.id}:seriesDescription`, this.#t("seriesDescription"), series.description, (description) => this.#updateDeliverable(deliverable.id, (value) => value.series ? { ...value, series: { ...value.series, description } } : value), { multiline: true, rows: 2 , ownerId: deliverable.id, sectionLabel: ""})}
+      <ol class="output-requirement-subrows">${repeat(series.members, (member) => member.id, (member, index) => html`<li class="output-requirement-subrow" data-output-member=${member.id} aria-label=${this.#context(member.id)}>
+        ${this.#textField(`${member.id}:label`, this.#t("label"), member.label, (label) => this.#updateMember(deliverable.id, member.id, (value) => ({ ...value, label })), { ownerId: member.id, sectionLabel: "" })}
+        ${this.#checkbox(`${member.id}:required`, this.#t("required"), member.required, (required) => this.#updateMember(deliverable.id, member.id, (value) => ({ ...value, required })), this.#t("requiredHelp"), member.id, "")}
         ${this.#coverage(member, (next) => this.#updateMember(deliverable.id, member.id, (value) => ({ ...value, ...next })))}
         <div class="output-requirement-actions">
-          <button type="button" ?disabled=${this.#fieldsDisabled() || index === 0} @click=${() => this.#moveMember(deliverable, member, -1)}>${this.#t("moveUp", { name: member.label || this.#t("unnamedVideo") })}</button>
-          <button type="button" ?disabled=${this.#fieldsDisabled() || index === series.members.length - 1} @click=${() => this.#moveMember(deliverable, member, 1)}>${this.#t("moveDown", { name: member.label || this.#t("unnamedVideo") })}</button>
-          <button type="button" ?disabled=${this.#fieldsDisabled()} @click=${() => this.#removeMember(deliverable, member)}>${this.#t("remove", { name: member.label || this.#t("unnamedVideo") })}</button>
+          <button aria-label=${this.#controlName(this.#t("moveUp", { name: this.#isolate(member.label || this.#t("unnamedVideo")) }), member.id)} type="button" ?disabled=${this.#fieldsDisabled() || index === 0} @click=${() => this.#moveMember(deliverable, member, -1)}>${this.#t("moveUp", { name: this.#isolate(member.label || this.#t("unnamedVideo")) })}</button>
+          <button aria-label=${this.#controlName(this.#t("moveDown", { name: this.#isolate(member.label || this.#t("unnamedVideo")) }), member.id)} type="button" ?disabled=${this.#fieldsDisabled() || index === series.members.length - 1} @click=${() => this.#moveMember(deliverable, member, 1)}>${this.#t("moveDown", { name: this.#isolate(member.label || this.#t("unnamedVideo")) })}</button>
+          <button aria-label=${this.#controlName(this.#t("remove", { name: this.#isolate(member.label || this.#t("unnamedVideo")) }), member.id)} type="button" ?disabled=${this.#fieldsDisabled()} @click=${() => this.#removeMember(deliverable, member)}>${this.#t("remove", { name: this.#isolate(member.label || this.#t("unnamedVideo")) })}</button>
         </div>
       </li>`)}</ol>
       ${seriesError ? html`<p class="output-requirement-error">${this.#t(seriesError)}</p>` : nothing}
-      <div class="output-requirement-actions"><button type="button" ?disabled=${this.#fieldsDisabled()} @click=${() => this.#addMember(deliverable)}>${this.#t("addVideo")}</button><button type="button" ?disabled=${this.#fieldsDisabled() || series.state === "resolved"} @click=${() => this.#confirmSeries(deliverable)}>${this.#t("confirmSeries")}</button></div>
+      <div class="output-requirement-actions"><button aria-label=${this.#controlName(this.#t("addVideo"), deliverable.id)} type="button" ?disabled=${this.#fieldsDisabled()} @click=${() => this.#addMember(deliverable)}>${this.#t("addVideo")}</button><button aria-label=${this.#controlName(this.#t("confirmSeries"), deliverable.id)} type="button" ?disabled=${this.#fieldsDisabled() || series.state === "resolved"} @click=${() => this.#confirmSeries(deliverable)}>${this.#t("confirmSeries")}</button></div>
     </section>`;
   }
   #deliverable(value: OutputDeliverable) {
     const name = value.label || this.#t("untitledGroup");
-    return html`<li class="output-requirement-group" data-output-deliverable=${value.id}>
-      <header><h4 dir="auto">${name}</h4><span>${this.#t(value.required ? "required" : "optional")}</span></header>
+    return html`<li class="output-requirement-group" data-output-deliverable=${value.id} aria-labelledby=${this.#fieldId(`${value.id}:heading`)}>
+      <header><h4 id=${this.#fieldId(`${value.id}:heading`)} aria-label=${this.#controlName(this.#isolate(name), value.id)} dir="auto">${name}</h4><span>${this.#t(value.required ? "required" : "optional")}</span></header>
       <div class="output-requirement-fields">
-        ${this.#textField(`${value.id}:label`, this.#t("label"), value.label, (label) => this.#updateDeliverable(value.id, (current) => ({ ...current, label })))}
+        ${this.#textField(`${value.id}:label`, this.#t("label"), value.label, (label) => this.#updateDeliverable(value.id, (current) => ({ ...current, label })), { ownerId: value.id, sectionLabel: "" })}
         ${this.#select(`${value.id}:medium`, this.#t("medium"), value.media_kind, MEDIA.map((kind) => ({ value: kind, label: this.#t(`media.${kind}`) })), (next) => {
           if (next === value.media_kind) return;
           if (value.media_kind === "unknown") this.#changeMedium(value.id, next as OutputMediaKind);
           else { this.#mediumChange = { deliverableId: value.id, kind: next as OutputMediaKind }; this.requestUpdate(); }
-        })}
+        }, value.id, "")}
       </div>
-      ${this.#mediumChange?.deliverableId === value.id ? html`<div class="output-requirement-warning"><h5>${this.#t("mediumChangeTitle")}</h5><p>${this.#t("mediumChangeDetail")}</p><div class="output-requirement-actions"><button type="button" @click=${() => { this.#mediumChange = null; this.requestUpdate(); }}>${this.#t("keepProposal")}</button><button type="button" ?disabled=${this.#fieldsDisabled()} @click=${() => { if (this.#mediumChange) this.#changeMedium(value.id, this.#mediumChange.kind); }}>${this.#t("changeMedium")}</button></div></div>` : nothing}
-      ${this.#checkbox(`${value.id}:required`, this.#t("required"), value.required, (required) => this.#updateDeliverable(value.id, (current) => ({ ...current, required })), this.#t("requiredHelp"))}
-      ${this.#quantity(`${value.id}:quantity`, this.#t("quantity"), value.quantity)}
-      ${value.content_quantity ? this.#quantity(`${value.id}:content`, this.#t(value.content_quantity.unit === "slide" ? "slidesCount" : "duration"), value.content_quantity) : nothing}
+      ${this.#mediumChange?.deliverableId === value.id ? html`<div class="output-requirement-warning"><h5>${this.#t("mediumChangeTitle")}</h5><p>${this.#t("mediumChangeDetail")}</p><div class="output-requirement-actions"><button aria-label=${this.#controlName(this.#t("keepProposal"), value.id)} type="button" @click=${() => { this.#mediumChange = null; this.requestUpdate(); }}>${this.#t("keepProposal")}</button><button aria-label=${this.#controlName(this.#t("changeMedium"), value.id)} type="button" ?disabled=${this.#fieldsDisabled()} @click=${() => { if (this.#mediumChange) this.#changeMedium(value.id, this.#mediumChange.kind); }}>${this.#t("changeMedium")}</button></div></div>` : nothing}
+      ${this.#checkbox(`${value.id}:required`, this.#t("required"), value.required, (required) => this.#updateDeliverable(value.id, (current) => ({ ...current, required })), this.#t("requiredHelp"), value.id, "")}
+      ${this.#quantity(`${value.id}:quantity`, this.#t("quantity"), value.quantity, value.id)}
+      ${value.content_quantity ? this.#quantity(`${value.id}:content`, this.#t(value.content_quantity.unit === "slide" ? "slidesCount" : "duration"), value.content_quantity, value.id) : nothing}
       ${value.media_kind === "slides" ? this.#policy(value) : nothing}
       ${this.#coverage(value, (next) => this.#updateDeliverable(value.id, (current) => ({ ...current, ...next })))}
-      ${value.media_kind === "image" || value.media_kind === "video" ? html`<section class="output-requirement-formats"><h5 tabindex="-1" id=${this.#fieldId(`${value.id}:formats`)}>${this.#t("formats")}</h5><small>${this.#t("formatHelp")}</small>
+      ${value.media_kind === "image" || value.media_kind === "video" ? html`<section class="output-requirement-formats" aria-labelledby=${this.#fieldId(`${value.id}:formats`)}><h5 tabindex="-1" aria-label=${this.#controlName(this.#t("formats"), value.id)} id=${this.#fieldId(`${value.id}:formats`)}>${this.#t("formats")}</h5><small>${this.#t("formatHelp")}</small>
         <ul class="output-requirement-subrows">${repeat(value.format_variants ?? [], (variant) => variant.id, (variant) => this.#variant(value, variant))}</ul>
-        ${value.series ? html`<p class="output-requirement-note">${this.#t("seriesFormatLimit")}</p>` : nothing}<button type="button" ?disabled=${this.#fieldsDisabled() || !!value.series} @click=${() => this.#addVariant(value)}>${this.#t("addFormat")}</button>
+        ${value.series ? html`<p class="output-requirement-note">${this.#t("seriesFormatLimit")}</p>` : nothing}<button aria-label=${this.#controlName(this.#t("addFormat"), value.id)} type="button" ?disabled=${this.#fieldsDisabled() || !!value.series} @click=${() => this.#addVariant(value)}>${this.#t("addFormat")}</button>
       </section>` : nothing}
       ${value.media_kind === "video" ? this.#series(value) : nothing}
-      <button type="button" class="output-requirement-secondary" ?disabled=${this.#fieldsDisabled()} @click=${() => this.#removeDeliverable(value)}>${this.#t("remove", { name })}</button>
+      <button aria-label=${this.#controlName(this.#t("remove", { name: this.#isolate(name) }), value.id)} type="button" class="output-requirement-secondary" ?disabled=${this.#fieldsDisabled()} @click=${() => this.#removeDeliverable(value)}>${this.#t("remove", { name: this.#isolate(name) })}</button>
     </li>`;
   }
   #readOnlyGroups(spec: unknown) {
@@ -711,7 +805,7 @@ export class FormaOutputRequirementCard extends FormaPresentationalElement {
       if (field === "source") {
         if (record.kind === "document") return this.#t("source.document");
         if (record.kind === "unknown") return this.#t("source.unknown");
-        if (Array.isArray(record.block_ids)) return record.block_ids.map((id) => this.snapshot?.sourceOptions.find((source) => source.id === id)?.label ?? this.#t("comparisonUnavailableSource")).join(" · ");
+        if (Array.isArray(record.block_ids)) return record.block_ids.map((id) => this.#input()?.sourceOptions.find((source) => source.id === id)?.label ?? this.#t("comparisonUnavailableSource")).join(" · ");
       }
       if (field === "coverage") {
         if (record.kind === "document_context" || record.kind === "document_outline") return this.#t(`coverage.${record.kind}`);
@@ -742,13 +836,13 @@ export class FormaOutputRequirementCard extends FormaPresentationalElement {
     const wordingChosen = session.originalText === session.acceptedWording;
     const decisions = outputInterpretationDecisions(current, this.#currentPlanning(current));
     return html`<div class="output-requirement-warning"><h4>${this.#t("interpretationNeedsReview")}</h4><p>${this.#t("interpretationWarning")}</p>
-      ${basis === null ? html`<p>${this.#t("interpretationBasisUnknown")}</p>` : html`<details><summary>${this.#t("interpretationBasis")}</summary><p class="output-requirement-prose" dir="auto">${basis}</p></details>`}
-      <details><summary>${this.#t("reviewRetainedDecisions")}</summary><p>${this.#t("retainedDecisionHelp")}</p>
+      ${basis === null ? html`<p>${this.#t("interpretationBasisUnknown")}</p>` : html`<details><summary aria-label=${this.#controlName(this.#t("interpretationBasis"), "")}>${this.#t("interpretationBasis")}</summary><p class="output-requirement-prose" dir="auto">${basis}</p></details>`}
+      <details><summary aria-label=${this.#controlName(this.#t("reviewRetainedDecisions"), "")}>${this.#t("reviewRetainedDecisions")}</summary><p>${this.#t("retainedDecisionHelp")}</p>
         <ol class="output-requirement-subrows">${repeat(decisions, (decision) => decision.key, (decision) => html`<li class="output-requirement-subrow"><h5><bdi dir="auto">${decision.label || this.#t("untitledGroup")}</bdi> · ${this.#t(`changeField.${decision.field}`)}</h5><div class="output-requirement-prose">${this.#decisionValue(decision.field, decision.value)}</div></li>`)}</ol>
         ${!valid ? html`<p class="output-requirement-error">${this.#t("retainedReviewInvalid")}</p>` : nothing}
         ${!wordingChosen ? html`<p>${this.#t("chooseWordingFirst")}</p>` : nothing}
         ${this.#checkbox("interpretation-reviewed", this.#t("retainedReviewAcknowledgment"), this.#interpretationReviewedAt === session.editVersion, (checked) => { this.#interpretationReviewedAt = checked ? session.editVersion : -1; this.requestUpdate(); })}
-        <button type="button" ?disabled=${this.#fieldsDisabled() || !valid || !wordingChosen || this.#interpretationReviewedAt !== session.editVersion} @click=${this.#confirmRetainedInterpretation}>${this.#t("acceptRetainedInterpretation")}</button>
+        <button aria-label=${this.#controlName(this.#t("acceptRetainedInterpretation"), "")} type="button" ?disabled=${this.#fieldsDisabled() || !valid || !wordingChosen || this.#interpretationReviewedAt !== session.editVersion} @click=${this.#confirmRetainedInterpretation}>${this.#t("acceptRetainedInterpretation")}</button>
       </details>
     </div>`;
   }
@@ -757,23 +851,35 @@ export class FormaOutputRequirementCard extends FormaPresentationalElement {
     if (!proposal) return nothing;
     return html`<div class="output-requirement-warning"><h4 id=${this.#fieldId("proposalComparison")} tabindex="-1">${this.#t("replaceProposalTitle")}</h4><p>${this.#t("replaceProposalDetail")}</p>
       ${this.#decisionChanges(proposal.changes)}
-      <div class="output-requirement-actions"><button type="button" @click=${() => { this.#parseProposal = null; this.#status = "proposalCancelled"; this.requestUpdate(); this.#focus("originalText"); }}>${this.#t("keepProposal")}</button><button type="button" ?disabled=${this.#fieldsDisabled()} @click=${this.#acceptParseProposal}>${this.#t("replaceProposal")}</button></div>
+      <div class="output-requirement-actions"><button aria-label=${this.#controlName(this.#t("keepProposal"), "")} type="button" @click=${() => { this.#parseProposal = null; this.#status = "proposalCancelled"; this.requestUpdate(); this.#focus("originalText"); }}>${this.#t("keepProposal")}</button><button aria-label=${this.#controlName(this.#t("replaceProposal"), "")} type="button" ?disabled=${this.#fieldsDisabled()} @click=${this.#acceptParseProposal}>${this.#t("replaceProposal")}</button></div>
     </div>`;
   }
   #conflictView() {
+    if (this.#newDraftChanged() && this.newDraft && this.#session) {
+      const marker = JSON.stringify([this.newDraft.revision, this.#session.editVersion]);
+      return html`<div class="output-requirement-warning"><p>${this.#draftMessage("changed")}</p>
+        ${this.#checkbox("new-draft-source-reviewed", this.#draftMessage("reviewed"), this.#conflictReviewedAt === marker, checked => { this.#conflictReviewedAt = checked ? marker : ""; this.requestUpdate(); })}
+        <button type="button" ?disabled=${Boolean(this.originalSaveId) || this.#fieldsDisabled() || this.resourceState !== "ready" || this.#conflictReviewedAt !== marker} @click=${() => {
+          if (this.originalSaveId || !this.#newDraftChanged() || !this.newDraft || !this.#session || this.#fieldsDisabled() || this.resourceState !== "ready"
+            || this.#conflictReviewedAt !== JSON.stringify([this.newDraft.revision, this.#session.editVersion])) return;
+          this.#session.baseRevision = this.newDraft.revision; this.#session.pendingMutation = null; this.#conflictReviewedAt = "";
+          this.#touch(false); this.requestUpdate();
+        }}>${this.#draftMessage("rebase")}</button>
+      </div>`;
+    }
     const latest = this.#latest();
     if (!this.#hasConflict() || !latest || !this.#session) return nothing;
     const inspected = inspectOutputRequirement(latest.spec);
     const current = this.#comparisonDraft();
     const changes = inspected.spec ? [...compareOutputInterpretations(inspected.spec, current, latest.planSuggestions ?? { countPolicies: {}, suggestedCounts: {} }, this.#currentPlanning(current)), ...this.#uncommittedDraftChanges()] : null;
     const checked = this.#conflictReviewedAt === `${this.#conflictMarker()}:${this.#session.editVersion}`;
-    return html`<div class="output-requirement-warning"><p>${this.#t("conflict")}</p><details><summary>${this.#t("compare")}</summary>
+    return html`<div class="output-requirement-warning"><p>${this.#t("conflict")}</p><details><summary aria-label=${this.#controlName(this.#t("compare"), "")}>${this.#t("compare")}</summary>
       <h4>${this.#t("latest")}</h4><p class="output-requirement-prose" dir="auto">${latest.originalText}</p>${this.#readOnlyGroups(latest.spec)}
       <h4>${this.#t("draft")}</h4><p class="output-requirement-prose" dir="auto">${this.#session.originalText}</p>${this.#readOnlyGroups(current)}<p>${this.#t("dirtyState")}</p>
       ${changes ? this.#decisionChanges(changes) : html`<p>${this.#t("conflictComparisonUnavailable")}</p>`}
       <p>${this.#t("conflictReplacementHelp")}</p>
       ${this.#checkbox("conflict-reviewed", this.#t("conflictReplacementAcknowledgment"), checked, (value) => { this.#conflictReviewedAt = value ? `${this.#conflictMarker()}:${this.#session!.editVersion}` : ""; this.requestUpdate(); })}
-      <div class="output-requirement-actions"><button type="button" ?disabled=${this.#fieldsDisabled() || this.resourceState !== "ready" || !checked || !changes} @click=${this.#reapply}>${this.#t("reapply")}</button><button type="button" ?disabled=${this.#waiting} @click=${() => { this.#cancelIntent = "reload"; this.requestUpdate(); this.#focus("keepEditing"); }}>${this.#t("reloadLatest")}</button></div>
+      <div class="output-requirement-actions"><button aria-label=${this.#controlName(this.#t("reapply"), "")} type="button" ?disabled=${Boolean(this.originalSaveId) || this.#fieldsDisabled() || this.resourceState !== "ready" || !checked || !changes} @click=${this.#reapply}>${this.#t("reapply")}</button><button aria-label=${this.#controlName(this.#t("reloadLatest"), "")} type="button" ?disabled=${this.#waiting || Boolean(this.originalSaveId)} @click=${() => { if (this.originalSaveId) return; this.#cancelIntent = "reload"; this.requestUpdate(); this.#focus("keepEditing"); }}>${this.#t("reloadLatest")}</button></div>
     </details></div>`;
   }
   #editor() {
@@ -783,29 +889,30 @@ export class FormaOutputRequirementCard extends FormaPresentationalElement {
       <p class="output-requirement-note">${this.#t("proposalDraft")}</p><p>${this.#t("dirtyState")}</p>
       ${this.#textField("packageLabel", this.#t("packageLabel"), session.label, (label) => { session.label = label; this.#touch(false, "packageLabel"); })}
       ${this.#textField("originalText", this.#t("originalProse"), session.originalText, (value) => { session.originalText = value; this.#touch(false, "originalText"); }, { multiline: true, rows: 5, help: this.#t("parserHelp") })}
-      ${session.originalText !== session.acceptedWording && session.spec.deliverables.length ? html`<div class="output-requirement-warning"><p>${this.#t("wordingOnlyHelp")}</p>${this.#readOnlyGroups(this.#comparisonDraft())}<button type="button" ?disabled=${this.#fieldsDisabled()} @click=${this.#keepWordingOnly}>${this.#t("keepRequirementsUpdateWording")}</button></div>` : nothing}
-      <button type="button" ?disabled=${this.#fieldsDisabled() || !session.originalText.trim()} @click=${() => this.#parse()}>${this.#t("parseProposal")}</button>
+      ${session.originalText !== session.acceptedWording && session.spec.deliverables.length ? html`<div class="output-requirement-warning"><p>${this.#t("wordingOnlyHelp")}</p>${this.#readOnlyGroups(this.#comparisonDraft())}<button aria-label=${this.#controlName(this.#t("keepRequirementsUpdateWording"), "")} type="button" ?disabled=${this.#fieldsDisabled()} @click=${this.#keepWordingOnly}>${this.#t("keepRequirementsUpdateWording")}</button></div>` : nothing}
+      <button aria-label=${this.#controlName(this.#t("parseProposal"), "")} type="button" ?disabled=${this.#fieldsDisabled() || !session.originalText.trim()} @click=${() => this.#parse()}>${this.#t("parseProposal")}</button>
       ${this.#parseProposalView()}
       ${this.#retainedInterpretationView()}
       ${this.#conflictView()}
-      <h3 id=${this.#fieldId("groups")} tabindex="-1">${this.#t("deliverables")}</h3>
+      <h3 id=${this.#fieldId("groups")} aria-label=${this.#controlName(this.#t("deliverables"))} tabindex="-1">${this.#t("deliverables")}</h3>
       ${this.#errors.has("groups") ? html`<p class="output-requirement-error">${this.#t(this.#errors.get("groups")!)}</p>` : nothing}
-      <ol class="output-requirement-groups">${repeat(session.spec.deliverables, (value) => value.id, (value) => this.#deliverable(value))}</ol>
-      <button type="button" ?disabled=${this.#fieldsDisabled()} @click=${this.#addDeliverable}>${this.#t("addDeliverable")}</button>
+      <ol class="output-requirement-groups" aria-labelledby=${this.#fieldId("groups")}>${repeat(session.spec.deliverables, (value) => value.id, (value) => this.#deliverable(value))}</ol>
+      <button aria-label=${this.#controlName(this.#t("addDeliverable"), "")} type="button" ?disabled=${this.#fieldsDisabled()} @click=${this.#addDeliverable}>${this.#t("addDeliverable")}</button>
       ${this.editorState.status === "invalid" && this.editorState.issues?.length ? html`<ul class="output-requirement-error">${this.editorState.issues.map((issue) => html`<li>${issue.message}</li>`)}</ul>` : nothing}
-      <footer class="output-requirement-form-footer"><p>${this.#t("noGeneration")}</p><div class="output-requirement-actions"><button id=${this.#fieldId("save")} type="submit" form=${`${this.#id}-form`} ?disabled=${!this.#canSave()} aria-keyshortcuts="Control+Enter Meta+Enter">${this.#t(this.#waiting || this.editorState.status === "saving" ? "saving" : "save")}</button><button type="button" ?disabled=${this.#waiting} @click=${this.#cancel}>${this.#t("cancel")}</button></div></footer>
-      ${this.#cancelIntent ? html`<div class="output-requirement-warning"><h4>${this.#t("discardTitle")}</h4><div class="output-requirement-actions"><button id=${this.#fieldId("keepEditing")} type="button" @click=${() => { this.#cancelIntent = null; this.requestUpdate(); this.#focus("originalText"); }}>${this.#t("keepEditing")}</button><button type="button" @click=${this.#discard}>${this.#t("discard")}</button></div></div>` : nothing}
+      <footer class="output-requirement-form-footer"><p>${this.#t("noGeneration")}</p><div class="output-requirement-actions"><button aria-label=${this.#controlName(this.#t(this.#waiting || this.editorState.status === "saving" ? "saving" : "save"), "")} id=${this.#fieldId("save")} type="submit" form=${`${this.#id}-form`} ?disabled=${!this.#canSave()} aria-keyshortcuts="Control+Enter Meta+Enter">${this.#t(this.#waiting || this.editorState.status === "saving" ? "saving" : "save")}</button><button aria-label=${this.#controlName(this.#t("cancel"), "")} type="button" ?disabled=${this.#waiting || Boolean(this.originalSaveId)} @click=${this.#cancel}>${this.#t("cancel")}</button></div></footer>
+      ${this.#cancelIntent ? html`<div class="output-requirement-warning"><h4>${this.#t("discardTitle")}</h4><div class="output-requirement-actions"><button aria-label=${this.#controlName(this.#t("keepEditing"), "")} id=${this.#fieldId("keepEditing")} type="button" @click=${() => { this.#cancelIntent = null; this.requestUpdate(); this.#focus("originalText", false); }}>${this.#t("keepEditing")}</button><button aria-label=${this.#controlName(this.#t("discard"), "")} type="button" ?disabled=${Boolean(this.originalSaveId)} @click=${this.#discard}>${this.#t("discard")}</button></div></div>` : nothing}
     </form>`;
   }
   override render() {
     const snapshot = this.snapshot;
+    const input = this.#input();
     const resourceNotice = this.resourceState === "ready" ? "" : this.resourceState === "loading" ? "loading" : this.resourceState === "refreshing" ? "refreshing" : "unavailable";
-    const editNotice = this.#editing && this.editorState.status === "unavailable" ? "unavailableDraft" : this.#editing && (this.editorState.status === "forbidden" || !snapshot?.canEdit) ? "forbiddenDraft" : "";
-    const reason = this.#unsupported() ? this.#t("unsupported") : this.#nestedForm() ? this.#t("nestedForm") : this.readOnlyReason || (snapshot && !snapshot.canEdit ? this.#t("readOnly") : "");
+    const editNotice = this.#editing && this.editorState.status === "unavailable" ? "unavailableDraft" : this.#editing && (this.editorState.status === "forbidden" || !input?.canEdit) ? "forbiddenDraft" : "";
+    const reason = this.#unsupported() ? this.#t("unsupported") : this.#nestedForm() ? this.#t("nestedForm") : this.readOnlyReason || (input && !input.canEdit ? this.#t("readOnly") : "");
     return html`<section class="output-requirement-card" data-presentation=${this.presentation} data-state=${this.resourceState} dir=${this.i18n.direction} aria-labelledby=${`${this.#id}-heading`} @keydown=${this.#keydown}>
-      <header class="output-requirement-header"><div><span>${this.#t("heading")}</span><h2 id=${`${this.#id}-heading`} tabindex="-1" dir="auto">${snapshot?.label || this.#t("heading")}</h2></div><div class="output-requirement-actions">
-        ${!this.#editing && this.#canEdit() ? html`<button type="button" @click=${this.#open}>${this.#t("edit")}</button>` : nothing}
-        ${snapshot?.canReviewPlan ? html`<button type="button" ?disabled=${this.resourceState !== "ready" || this.#unsupported() || !!this.#session?.dirty} @click=${this.#reviewPlan}>${this.#t("reviewPlan")}</button>` : nothing}
+      <header class="output-requirement-header"><div><span>${!snapshot && this.newDraft ? this.#draftMessage("unsaved") : this.#t("heading")}</span><h2 id=${`${this.#id}-heading`} aria-label=${this.#controlName(this.#isolate(input?.label || this.#t("heading")))} tabindex="-1" dir="auto">${input?.label || this.#t("heading")}</h2></div><div class="output-requirement-actions">
+        ${!this.#editing && this.#canEdit() ? html`<button aria-label=${this.#controlName(this.#t("edit"), "")} type="button" @click=${this.#open}>${this.#t("edit")}</button>` : nothing}
+        ${snapshot?.canReviewPlan ? html`<button aria-label=${this.#controlName(this.#t("reviewPlan"), "")} type="button" ?disabled=${this.resourceState !== "ready" || this.#unsupported() || !!this.#session?.dirty} @click=${this.#reviewPlan}>${this.#t("reviewPlan")}</button>` : nothing}
       </div></header>
       ${resourceNotice ? html`<p class="output-requirement-note">${this.#t(resourceNotice)}</p>` : nothing}
       ${reason ? html`<p class="output-requirement-warning">${reason}</p>` : nothing}
@@ -818,8 +925,8 @@ export class FormaOutputRequirementCard extends FormaPresentationalElement {
           ${snapshot.summary.selectedResultFiles !== null ? html`<li>${this.#t("files", { count: this.i18n.number(snapshot.summary.selectedResultFiles) })}</li>` : nothing}
         </ul>
       </div>` : nothing}
-      ${this.#editing ? this.#editor() : snapshot ? html`${this.#readOnlyGroups(snapshot.spec)}${this.presentation === "full" || this.#unsupported() ? html`<details><summary>${this.#t("originalProse")}</summary><p class="output-requirement-prose" dir="auto">${snapshot.originalText}</p></details>` : nothing}` : nothing}
-      ${snapshot?.results?.length ? html`<ul class="output-requirement-results">${repeat(snapshot.results, (result) => JSON.stringify([result.targetId, result.artifactId, result.revision]), (result) => html`<li><div><b dir="auto">${result.title}</b><span>${result.stateLabel}</span></div><button type="button" ?disabled=${!result.canOpen || this.resourceState !== "ready"} @click=${() => this.#openResult(result)}>${this.#t("inspectResult")}</button></li>`)}</ul>` : nothing}
+      ${this.#editing ? this.#editor() : snapshot ? html`${this.#readOnlyGroups(snapshot.spec)}${this.presentation === "full" || this.#unsupported() ? html`<details><summary aria-label=${this.#controlName(this.#t("originalProse"), "")}>${this.#t("originalProse")}</summary><p class="output-requirement-prose" dir="auto">${snapshot.originalText}</p></details>` : nothing}` : nothing}
+      ${snapshot?.results?.length ? html`<ul class="output-requirement-results">${repeat(snapshot.results, (result) => JSON.stringify([result.targetId, result.artifactId, result.revision]), (result) => html`<li><div><b dir="auto">${result.title}</b><span>${result.stateLabel}</span></div><button aria-label=${this.#controlName(this.#t("inspectResult"), "", this.#resultContext(result))} type="button" ?disabled=${!result.canOpen || this.resourceState !== "ready"} @click=${() => this.#openResult(result)}>${this.#t("inspectResult")}</button></li>`)}</ul>` : nothing}
       <p class="output-requirement-live" role="status" aria-live="polite" aria-atomic="true">${this.#hasConflict() ? this.#t("conflict") : editNotice ? this.#t(editNotice) : this.#status ? this.#t(this.#status) : this.#announcement}</p>
     </section>`;
   }

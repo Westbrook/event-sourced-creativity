@@ -1,0 +1,25 @@
+/* NEW reconstruction; the unavailable I3 stylesheet is not reused. */
+.native-image-inline-result {
+  --native-image-inline-gutter: max(1rem, env(safe-area-inset-left, 0px), env(safe-area-inset-right, 0px));
+  padding: var(--native-image-inline-gutter);
+  gap: 1rem;
+}
+.native-image-inline-result__status {
+  margin-block: 0;
+  overflow-wrap: anywhere;
+}
+.native-image-inline-result__edit {
+  justify-self: start;
+  min-inline-size: 44px;
+  min-block-size: 44px;
+  max-inline-size: 100%;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  scroll-margin: var(--forma-focus-clearance, 8px);
+}
+@media (any-pointer: coarse) {
+  .native-image-inline-result__edit {
+    min-inline-size: 48px;
+    min-block-size: 48px;
+  }
+}

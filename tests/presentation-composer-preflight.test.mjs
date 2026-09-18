@@ -6,6 +6,7 @@ import { html, nothing } from "lit";
 import ts from "typescript";
 import { buildManagedProductionPlan, MAX_MANAGED_PRESENTATION_SLIDES, minimumPresentationSlideCount } from "../src/model/managed-production.ts";
 import { buildPresentationSourceContract, inferPresentationSourceOutline } from "../src/model/presentation-source.ts";
+import { formatPresentationSourceIssue, formatPresentationSourceIssues } from "../src/components/presentation-source-guidance.ts";
 
 const source = await readFile(new URL("../src/components/document-artifacts.ts", import.meta.url), "utf8");
 const syntax = ts.createSourceFile("document-artifacts.ts", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
@@ -22,7 +23,7 @@ const locale = {
 };
 
 function bindPreflight(body, suffix = "") {
-  return new Function("buildPresentationSourceContract", "inferPresentationSourceOutline", "buildManagedProductionPlan", "minimumPresentationSlideCount", "MAX_MANAGED_PRESENTATION_SLIDES", stripTypeScriptTypes(`
+  return new Function("buildPresentationSourceContract", "inferPresentationSourceOutline", "buildManagedProductionPlan", "minimumPresentationSlideCount", "MAX_MANAGED_PRESENTATION_SLIDES", "formatPresentationSourceIssue", "formatPresentationSourceIssues", stripTypeScriptTypes(`
     function actualPreflight() {
       const references = { items: [] };
       const authoredSlideCount = inferPresentationSourceOutline(this.presentationPlanningSnapshot()).authoredSlideCount;
@@ -30,7 +31,7 @@ function bindPreflight(body, suffix = "") {
       ${suffix}
     }
   `) + "\nreturn actualPreflight;")(
-    buildPresentationSourceContract, inferPresentationSourceOutline, buildManagedProductionPlan, minimumPresentationSlideCount, MAX_MANAGED_PRESENTATION_SLIDES,
+    buildPresentationSourceContract, inferPresentationSourceOutline, buildManagedProductionPlan, minimumPresentationSlideCount, MAX_MANAGED_PRESENTATION_SLIDES, formatPresentationSourceIssue, formatPresentationSourceIssues,
   );
 }
 

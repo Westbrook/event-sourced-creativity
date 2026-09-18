@@ -1,0 +1,144 @@
+import type {CreativeEvent} from '../src/model/events.ts';
+import type {WorkerEnv} from './runtime.ts';
+import {serializeEvent} from './event-read-primitives.ts';
+import {OutputConflictError,type OutputSqlAssertion,type OutputSqlValue} from './output-command-core.ts';
+import {sceneHistorySourceRelation,sceneHistoryMetadataSelect,sceneHistoryMetadataFields,type SceneHistoryScope} from './scene-history-proof.ts';
+import {sceneSourceVersionAssertions,type SceneSourceVersion} from './scene-source-generation.ts';
+import {recordOutputProofCapacity,type OutputProofCapacityReason} from './output-proof-capacity-diagnostic.ts';
+import {recordSceneReadFailure,type SceneReadFailureReason} from './scene-read-diagnostic.ts';
+
+/** Qualification limits, not an activated production path. No history truncation:
+ * limits throw before finish(). Current-state memory needs a bounded consumer. */
+export const SCENE_VERSIONED_READ_LIMITS=Object.freeze({rows:40_000,pageRows:256,pageBytes:512*1024,eventBytes:128*1024,
+  rawBytes:64*1024*1024,batches:400,guardStatements:64,guardBytes:512*1024});
+const encoder=new TextEncoder(),bytes=(value:string)=>encoder.encode(value).length;
+const metadataFields=[...sceneHistoryMetadataFields,'metadata_valid'];
+const metadataJson=`json_object(${metadataFields.map(field=>`'${field}',${field}`).join(',')})`;
+const hydratedFields={event_id:'event_id',stream_id:'event_stream',sequence:'sequence',occurred_at:'occurred_at',recorded_at:'recorded_at',
+  actor:'actor',client_id:'client_id',correlation_id:'correlation_id',causation_id:'causation_id',compensates_event_id:'compensates_event_id',schema_version:'schema_version',type:'event_type',order_sequence:'order_sequence'};
+type Consumer<T>={accept(event:CreativeEvent):boolean;finish():T;checkpoint?():unknown};
+const integer=(value:unknown):value is number=>typeof value==='number'&&Number.isSafeInteger(value)&&value>=0;
+const identifier=(value:unknown):value is string=>typeof value==='string'&&value.length>0&&new TextEncoder().encode(value).length<=160;
+const changed=(reason:SceneReadFailureReason='metadata'):never=>{throw recordSceneReadFailure(new OutputConflictError('output_source_changed_during_read',409),reason);};
+const capacity=(reason:OutputProofCapacityReason='scene_versioned_history_capacity'):never=>{
+  throw recordOutputProofCapacity(new OutputConflictError('output_source_proof_too_large',413),reason);
+};
+
+/** Pure reduction of complete, original-version source pages. The caller must
+ * supply existing live authority/rights guards and retain returned assertions at
+ * every consequential boundary. This helper does not grant authority or admit a
+ * generation. A rejected read never finalizes its private accumulator. */
+export async function reduceSceneVersionedHistory<T>(env:Pick<WorkerEnv,'DB'>,input:{scope:SceneHistoryScope;
+  version:SceneSourceVersion;readAssertions:readonly OutputSqlAssertion[];createConsumer():Consumer<T>}){
+  const scope:SceneHistoryScope=Object.freeze({...input.scope,...(input.scope.project?{project:Object.freeze({...input.scope.project})}:{})});
+  if(!identifier(scope.streamId)||!integer(scope.expectedOwnerHead)||!Number.isFinite(scope.deadlineMs)
+    ||scope.project&&(!Object.values(scope.project).every(identifier)||scope.streamId!=='creative:'+scope.project.ownerUserId)
+    ||input.version.streamId!==scope.streamId||input.version.projectAccessId!==scope.project?.projectAccessId
+    ||!input.readAssertions.length)changed('input');
+  const callerDeadlines=input.readAssertions.flatMap(value=>value.deadlineMs===undefined?[]:[value.deadlineMs]);
+  if(callerDeadlines.some(value=>!Number.isFinite(value)))changed('input');
+  const deadlineMs=Math.min(scope.deadlineMs!,...callerDeadlines);
+  const deadline=()=>{if(Date.now()>=deadlineMs)changed('deadline');};
+  const assertions:readonly OutputSqlAssertion[]=Object.freeze([
+    ...sceneSourceVersionAssertions(input.version),...input.readAssertions,
+    {sql:'(SELECT COALESCE(MAX(sequence),0) FROM events WHERE stream_id=?)=?',bindings:[scope.streamId,scope.expectedOwnerHead]},
+    {sql:"(CAST(strftime('%s','now') AS INTEGER)*1000+CAST(substr(strftime('%f','now'),4,3) AS INTEGER))<?",bindings:[deadlineMs],deadlineMs},
+  ].map(value=>Object.freeze({...value,bindings:Object.freeze([...(value.bindings??[])])}) as unknown as OutputSqlAssertion));
+  // D1's parameter limit is per statement, not per transaction. Keep every
+  // original predicate in the same atomic page batch; never truncate lineage or
+  // recapture its evidence merely to fit it into a single SELECT.
+  const guards:Array<{sql:string;bindings:OutputSqlValue[];categories:SceneReadFailureReason[]}>=[];
+  let parts:string[]=[],bindings:OutputSqlValue[]=[],categories:SceneReadFailureReason[]=[],guardBytes=0;
+  // Evaluate each original predicate once in the SAME atomic read batch. Only
+  // fixed category names leave this module; no SQL, source, IDs or bindings.
+  const statement=(values:string[])=>{const columns=values.map((_,index)=>`guard_${index}`);
+    return 'SELECT CASE WHEN '+columns.join(' AND ')+' THEN 1 ELSE 0 END AS current,'+columns.join(',')
+      +' FROM (SELECT '+values.map((value,index)=>`CASE WHEN (${value}) THEN 1 ELSE 0 END AS guard_${index}`).join(',')+')';};
+  const flush=()=>{if(!parts.length)return;const sql=statement(parts);guardBytes+=bytes(sql);
+    guards.push({sql,bindings,categories});parts=[];bindings=[];categories=[];
+    if(guards.length>SCENE_VERSIONED_READ_LIMITS.guardStatements)capacity('scene_versioned_guard_count');
+    if(guardBytes>SCENE_VERSIONED_READ_LIMITS.guardBytes)capacity('scene_versioned_guard_bytes');};
+  for(const [index,assertion] of assertions.entries()){
+    const values=[...(assertion.bindings??[])];
+    if(bytes(statement([assertion.sql]))>99_000)capacity('scene_history_sql_bytes');
+    if(values.length>99)capacity('scene_history_bindings');
+    if(values.some(value=>typeof value==='string'&&bytes(value)>128*1024))capacity('scene_history_binding_bytes');
+    if(parts.length&&(parts.length>=8||bindings.length+values.length>99||bytes(statement([...parts,assertion.sql]))>99_000))flush();
+    parts.push(assertion.sql);bindings.push(...values);
+    categories.push(index===0?'guard_schema':index===1?'guard_generation':index<2+input.readAssertions.length?'guard_caller_proof':index===2+input.readAssertions.length?'guard_owner_head':'guard_deadline');
+  }
+  flush();
+  let batches=0;
+  const read=async(sql:string,bindings:OutputSqlValue[])=>{
+    deadline();if(++batches>SCENE_VERSIONED_READ_LIMITS.batches)capacity();
+    const result=await env.DB.batch<Record<string,unknown>>([env.DB.prepare(sql).bind(...bindings),...guards.map(guard=>env.DB.prepare(guard.sql).bind(...guard.bindings))]);
+    deadline();if(!Array.isArray(result)||result.length!==guards.length+1||result[0]?.success!==true||!Array.isArray(result[0].results))changed('batch_shape');
+    for(let index=0;index<guards.length;index++){
+      const guard=result[index+1];
+      if(guard?.success!==true||!Array.isArray(guard.results)||guard.results.length!==1||![0,1].includes(guard.results[0]?.current as number))changed('batch_shape');
+      const bits=guards[index]!.categories.map((_,part)=>guard.results[0]?.[`guard_${part}`]);
+      if(bits.some(bit=>bit!==0&&bit!==1)||Number(bits.every(bit=>bit===1))!==guard.results[0]?.current)changed('batch_shape');
+      if(guard.results[0]?.current!==1)changed(guards[index]!.categories[bits.indexOf(0)]??'guard_false');
+    }
+    return result[0].results;
+  };
+  const relation=sceneHistorySourceRelation(scope),cte=`WITH source AS NOT MATERIALIZED (${relation.sql})`;
+  const totals=await read(`${cte} SELECT COUNT(*) AS count,COALESCE(MAX(order_sequence),0) AS head FROM source`,relation.bindings);
+  if(totals.length!==1||!integer(totals[0]?.count)||!integer(totals[0]?.head))changed();
+  const count=totals[0]!.count as number,head=totals[0]!.head as number;
+  if(count>SCENE_VERSIONED_READ_LIMITS.rows)capacity();
+  const consumer=input.createConsumer();let cursor=0,consumed=0,rawBytes=0,maximumHydratedPageBytes=0,maximumMetadataPageBytes=0;
+  while(true){
+    const metadata=await read(`${cte}, metadata AS NOT MATERIALIZED (${sceneHistoryMetadataSelect}), page AS MATERIALIZED
+      (SELECT * FROM metadata WHERE order_sequence>? ORDER BY order_sequence LIMIT ${SCENE_VERSIONED_READ_LIMITS.pageRows}),
+      budgeted AS (SELECT *,SUM(length(CAST(${metadataJson} AS BLOB))+1) OVER (ORDER BY order_sequence) AS running_bytes FROM page)
+      SELECT ${metadataFields.join(',')} FROM budgeted WHERE running_bytes<=${SCENE_VERSIONED_READ_LIMITS.pageBytes-2} ORDER BY order_sequence`,[...relation.bindings,cursor]);
+    if(metadata.length>SCENE_VERSIONED_READ_LIMITS.pageRows)changed();
+    const metadataBytes=bytes(JSON.stringify(metadata));if(metadataBytes>SCENE_VERSIONED_READ_LIMITS.pageBytes)capacity();
+    maximumMetadataPageBytes=Math.max(maximumMetadataPageBytes,metadataBytes);
+    if(!metadata.length){if(consumed!==count||cursor!==head)changed();break;}
+    const selected:Record<string,unknown>[]=[];let pageBytes=0,previous=cursor;
+    for(const row of metadata){
+      if(row.metadata_valid!==1||row.event_present!==1||row.event_stream!==scope.streamId||!identifier(row.event_id)
+        ||!integer(row.sequence)||row.sequence<1||!integer(row.order_sequence)||row.order_sequence<=previous
+        ||!integer(row.schema_version)||row.schema_version<1||!integer(row.public_bytes)||!integer(row.private_bytes)
+        ||row.public_type!=='text'||!['null','text','blob'].includes(String(row.private_type))
+        ||row.member_source_sequence!==null&&!integer(row.member_source_sequence)
+        ||scope.project&&(row.member_source_stream!==scope.streamId||row.member_source_sequence!==row.sequence))changed();
+      previous=Number(row.order_sequence);
+      // Include actual bounded metadata as well as both returned bodies. This
+      // counts UTF-8 content, not a claim about transport escaping or JS heap.
+      const size=Number(row.public_bytes)+(row.redacted_at===null?Number(row.private_bytes):0)+new TextEncoder().encode(JSON.stringify(row)).length;
+      if(size>SCENE_VERSIONED_READ_LIMITS.eventBytes)capacity();
+      if(selected.length&&pageBytes+size>SCENE_VERSIONED_READ_LIMITS.pageBytes)break;
+      pageBytes+=size;selected.push(row);
+    }
+    if(!selected.length)changed();
+    const expected=selected.map(row=>[row.event_id,row.order_sequence]);
+    const rows=await read(`${cte} SELECT source.event_id,source.event_stream AS stream_id,source.sequence,source.occurred_at,source.recorded_at,
+      source.actor,source.client_id,source.correlation_id,source.causation_id,source.compensates_event_id,source.schema_version,source.event_type AS type,
+      source.public_body AS payload,CASE WHEN source.redacted_at IS NULL THEN source.private_body ELSE NULL END AS private_json,source.order_sequence
+      FROM json_each(?) expected CROSS JOIN source WHERE source.event_id=json_extract(expected.value,'$[0]')
+        AND source.order_sequence=json_extract(expected.value,'$[1]') ORDER BY CAST(expected.key AS INTEGER)`,[...relation.bindings,JSON.stringify(expected)]);
+    if(rows.length!==selected.length)changed('hydration');
+    let hydratedPageBytes=0;
+    for(let index=0;index<rows.length;index++){
+      const row=rows[index]!,metadata=selected[index]!;
+      if(Object.entries(hydratedFields).some(([field,expected])=>row[field]!==metadata[expected])
+        ||typeof row.payload!=='string'||row.private_json!==null&&typeof row.private_json!=='string')changed('hydration');
+      if(bytes(String(row.payload))!==metadata.public_bytes
+        ||(metadata.redacted_at===null&&metadata.private_type==='text'
+          ?typeof row.private_json!=='string'||bytes(row.private_json)!==metadata.private_bytes:row.private_json!==null))changed('hydration');
+      const size=bytes(JSON.stringify(Object.fromEntries(Object.keys(hydratedFields).map(field=>[field,row[field]]))))
+        +bytes(String(row.payload))+(typeof row.private_json==='string'?bytes(row.private_json):0);
+      hydratedPageBytes+=size;if(size>SCENE_VERSIONED_READ_LIMITS.eventBytes||hydratedPageBytes>SCENE_VERSIONED_READ_LIMITS.pageBytes)capacity();
+      rawBytes+=Number(metadata.public_bytes)+Number(metadata.private_bytes);if(rawBytes>SCENE_VERSIONED_READ_LIMITS.rawBytes)capacity();
+      if(!consumer.accept(serializeEvent(row)))changed('consumer');
+      cursor=Number(metadata.order_sequence);consumed++;if(consumed>count)changed();
+    }
+    maximumHydratedPageBytes=Math.max(maximumHydratedPageBytes,hydratedPageBytes);
+    consumer.checkpoint?.();deadline();
+  }
+  deadline();consumer.checkpoint?.();const value=consumer.finish();deadline();
+  return {value,assertions,rows:consumed,rawBytes,batches,maximumHydratedPageBytes,maximumMetadataPageBytes};
+}

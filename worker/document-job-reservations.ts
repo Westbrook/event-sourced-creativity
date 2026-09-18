@@ -121,6 +121,23 @@ export function remainingDocumentPlannerCost(model:string,usage:ProviderUsage,re
   return{...full,textInputMicrousd:full.textInputMicrousd-paidInput,textOutputMicrousd:full.textOutputMicrousd-paidOutput,totalMicrousd:full.totalMicrousd-paid};
 }
 
+/** New slideshow calls retain their own tariff. Never reprice mixed-model totals. */
+export function frozenPresentationPlannerCost(checkpoint: Checkpoint, recordedCostMicrousd=0): ProviderCostBreakdown | null {
+  const calls=providerSubmissions(checkpoint).filter(call=>call.operation==="planning"&&call.status==="completed");
+  if(!calls.some(call=>call.pricingVersion))return null; // Historical pricing remains unchanged.
+  const seen=new Set<string>();
+  let input=0,output=0;
+  for(const call of calls){
+    const identity=call.providerRequestId??call.clientRequestId;
+    if(seen.has(identity)||![call.costMicrousd,call.textInputCostMicrousd,call.textOutputCostMicrousd].every(value=>Number.isSafeInteger(value)&&Number(value)>=0)
+      ||Number(call.textInputCostMicrousd)+Number(call.textOutputCostMicrousd)!==call.costMicrousd)throw new Error("presentation_call_cost_evidence_incomplete");
+    seen.add(identity);input+=Number(call.textInputCostMicrousd);output+=Number(call.textOutputCostMicrousd);
+  }
+  if(!Number.isSafeInteger(input+output))throw new Error("presentation_call_cost_evidence_incomplete");
+  const paid=Math.min(input+output,positiveInteger(recordedCostMicrousd)),paidInput=Math.min(input,paid);
+  return{textInputMicrousd:input-paidInput,textOutputMicrousd:output-(paid-paidInput),imageTextInputMicrousd:0,imageInputMicrousd:0,imageOutputMicrousd:0,totalMicrousd:input+output-paid};
+}
+
 /** Recover only documented, account-owned work; old anchor receipts retain their historical conservative allowance. */
 export function interruptedDocumentJobUsage(
   checkpoint: Checkpoint,
@@ -199,7 +216,10 @@ export function interruptedDocumentJobUsage(
     &&!(receipt.unitId==="continuity-anchor"&&prepaidAnchor)&&!prepaidSceneIds.has(String(receipt.unitId??"").replace(/^scene:/,""))
     &&!represented.some((item)=>item.providerSubmissionId===receipt.clientRequestId||item.provider_submission_id===receipt.clientRequestId
       ||receipt.providerRequestId&&(item.providerJobId===receipt.providerRequestId||item.provider_request_id===receipt.providerRequestId))
-    &&!(receipt.operation!=="image"&&receipt.providerRequestId&&checkpoint.providerJobId===receipt.providerRequestId));
+    // Only audio/video have a dedicated single-provider charge above. A Rodin
+    // completion remains billable when its request ID is also in the checkpoint.
+    &&!((receipt.operation==="video"&&request.artifactKind==="video"||receipt.operation==="audio"&&request.artifactKind==="audio")
+      &&receipt.providerRequestId&&checkpoint.providerJobId===receipt.providerRequestId));
   for(const receipt of unattached){inputTokens+=positiveInteger(receipt.inputTokens);outputTokens+=positiveInteger(receipt.outputTokens);totalTokens+=positiveInteger(receipt.totalTokens);}
   const unattachedMediaCostMicrousd=unattached.reduce((total,receipt)=>total+positiveInteger(receipt.costMicrousd),0);
   const plannerCostMicrousd = paidPlanning.length?options.plannerAlreadyRecorded||options.plannerCostAlreadyRecorded?0:Math.max(0,paidPlanning.reduce((total,receipt)=>total+positiveInteger(receipt.costMicrousd),0)-positiveInteger(options.plannerCostAlreadyRecordedMicrousd)):remainingDocumentPlannerCost(plannerModel,costedPlannerUsage,options.plannerCostAlreadyRecordedMicrousd).totalMicrousd;

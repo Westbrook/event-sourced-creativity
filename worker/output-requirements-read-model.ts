@@ -2,7 +2,7 @@ import type { CreativeEvent } from "../src/model/events.ts";
 import type { OutputAssetInspection } from "../src/model/output-asset-inspection.ts";
 import type { OutputAssetRow, OutputConfirmedPlan, OutputGrantRow, OutputPreflight, OutputResultRow } from "../src/model/output-delivery-contract.ts";
 import type { WorkerEnv } from "./runtime.ts";
-import { OutputConflictError, type OutputScope, type OutputSqlAssertion } from "./output-requirements-ledger.ts";
+import { OutputConflictError, type OutputScope, type OutputSqlAssertion } from "./output-command-core.ts";
 import { outputAssetDocumentPrefix } from "./output-asset-storage-identity.ts";
 
 /** A limit makes the read unavailable; it never changes the authored assignment. */
@@ -38,6 +38,8 @@ export type OutputReadModel = {
   /** Membership is independent of historical approval. Both are checked before release. */
   fulfillments: Map<string, Map<string, string>>;
   custody: OutputCustodyInventory;
+  /** Server-only exact read dependencies, never a response DTO or source facts. */
+  assertions: OutputSqlAssertion[];
 };
 export type OutputReadModelOptions = {
   /** Records exact raw JSON in the request's retained-private-body transaction proof. */
@@ -125,13 +127,84 @@ function boundedPrivateColumns(columns: Array<[string, string]>, order: string) 
     `CASE WHEN ${cumulative}>${MAX_OUTPUT_READ_QUERY_PRIVATE_BYTES} THEN 1 ELSE 0 END AS private_read_incomplete`].join(",");
 }
 
-/** Six scoped queries share one D1 binding call, independent of the number of targets. */
+
+/** Exact bounded metadata rows supplement, never replace, the retained-body proof. */
+type OutputReadRows = { table: string; keys: string[]; columns: string; rows: readonly Row[] };
+const OUTPUT_ASSET_READ_COLUMNS = "scope_key asset_id document_id owner_user_id created_by_user_id source_digest storage_key content_sha256 byte_length mime_type media_kind created_event_id created_at redacted_at";
+function outputReadEvidenceChunks(values: unknown[][]) {
+  const result: string[] = []; let items: unknown[][] = [], bytes = 2;
+  for (const row of values) {
+    const size = new TextEncoder().encode(JSON.stringify(row)).byteLength + 1;
+    if (size + 2 > 128 * 1024) throw new OutputConflictError("output_read_model_private_evidence_incomplete", 410);
+    if (items.length && bytes + size > 128 * 1024) { result.push(JSON.stringify(items)); items = []; bytes = 2; }
+    items.push(row); bytes += size;
+  }
+  if (items.length) result.push(JSON.stringify(items));
+  return result;
+}
+
+/** One pure exact-row builder serves inventory and standalone private-file disclosure. */
+function outputExactReadRowAssertions(scope: OutputScope, definition: OutputReadRows): OutputSqlAssertion[] {
+  const columns = definition.columns.split(" "), join = definition.keys.map(key => `current.${key}=json_extract(expected.value,'$[${columns.indexOf(key)}]')`).join(" AND ");
+  return outputReadEvidenceChunks(definition.rows.map(row => columns.map(column => row[column] ?? null))).map(expected => ({
+    sql: `NOT EXISTS(SELECT 1 FROM json_each(?) expected LEFT JOIN ${definition.table} current ON current.scope_key=? AND ${join}
+      WHERE current.scope_key IS NULL OR json_array(${columns.map(column => "current." + column).join(",")}) IS NOT expected.value)`,
+    bindings: [expected, scope.key],
+  }));
+}
+export function outputAssetReadAssertions(scope: OutputScope, rows: readonly Row[]): OutputSqlAssertion[] {
+  return outputExactReadRowAssertions(scope, { table: "output_assets", keys: ["asset_id"], columns: OUTPUT_ASSET_READ_COLUMNS, rows });
+}
+
+function outputReadRowAssertions(scope: OutputScope, rows: Row[][]): OutputSqlAssertion[] {
+  const definitions: OutputReadRows[] = [
+    { table: "output_plan_revisions", keys: ["plan_revision_id"], columns: "scope_key scope_kind owner_user_id project_id document_id organization_id project_access_id plan_revision_id plan_id revision confirmed_event_id requirements_digest source_digest resolver_version source_head target_count created_at", rows: rows[0] },
+    { table: "output_assets", keys: ["asset_id"], columns: OUTPUT_ASSET_READ_COLUMNS, rows: rows[1] },
+    { table: "output_results", keys: ["result_id"], columns: "scope_key result_id document_id plan_revision_id target_id target_contract_digest source_digest asset_id result_revision content_sha256 validation_policy checks_status created_by_user_id bound_event_id created_at", rows: rows[2] },
+    { table: "output_execution_grants", keys: ["grant_id"], columns: "scope_key grant_id plan_revision_id actor_user_id payer_user_id context_id preflight_id authorization_event_id maximum_microusd maximum_calls status expires_at created_at", rows: rows[3] },
+    { table: "output_operation_slots", keys: ["slot_id"], columns: "scope_key slot_id grant_id plan_revision_id target_id target_contract_digest source_digest provider model route_digest job_id cost_reservation_id token_reservation_id maximum_microusd maximum_calls maximum_tokens attempt_ordinal previous_slot_id status outcome_event_id created_at updated_at", rows: rows[4] },
+    { table: "output_plan_fulfillments", keys: ["plan_revision_id", "target_id"], columns: "scope_key plan_revision_id target_id acceptance_id eligibility_event_id checked_at", rows: rows[5] },
+    { table: "output_preflights", keys: ["preflight_id"], columns: "scope_key preflight_id event_id", rows: rows[3].filter(row => typeof row.preflight_event_id === "string").map(row => ({ scope_key: row.scope_key, preflight_id: row.preflight_id, event_id: row.preflight_event_id })) },
+  ];
+  const assertions: OutputSqlAssertion[] = [];
+  for (const definition of definitions) assertions.push(...outputExactReadRowAssertions(scope, definition));
+  assertions.push({ sql: `(SELECT plan_revision_id FROM output_plan_revisions WHERE scope_key=? AND document_id=? AND project_id=? AND owner_user_id=? ORDER BY revision DESC LIMIT 1) IS ?`,
+    bindings: [scope.key, scope.documentId, scope.projectId, scope.ownerUserId, typeof rows[0][0]?.plan_revision_id === "string" ? rows[0][0].plan_revision_id : null] });
+  for (const expected of outputReadEvidenceChunks(rows[2].map(row => [row.result_id, row.acceptance_id ?? null, row.approval_event_id ?? null]))) assertions.push({
+    sql: `NOT EXISTS(SELECT 1 FROM json_each(?) expected WHERE
+      (SELECT json_array(acceptance_id,approval_event_id) FROM output_target_acceptances
+        WHERE scope_key=? AND result_id=json_extract(expected.value,'$[0]') ORDER BY created_at DESC,acceptance_id DESC LIMIT 1)
+      IS NOT CASE WHEN json_extract(expected.value,'$[1]') IS NULL THEN NULL ELSE json_array(json_extract(expected.value,'$[1]'),json_extract(expected.value,'$[2]')) END)`,
+    bindings: [expected, scope.key],
+  });
+  // Reconcile the same aggregate observations without copying provider history
+  // into the source corpus or retaining a second accounting ledger.
+  for (const [index, key, prefix] of [[3, "grant_id", "grant_"], [4, "slot_id", ""]] as const) {
+    for (const expected of outputReadEvidenceChunks(rows[index].map(row => [row[key], number(row[prefix + "used"]), number(row[prefix === "" ? "exposed" : "grant_exposed"]), number(row[prefix === "" ? "used_calls" : "grant_used_calls"]), number(row[prefix === "" ? "pending_calls" : "grant_pending_calls"])]))) assertions.push({
+      sql: `NOT EXISTS(WITH current_costs AS MATERIALIZED (
+        SELECT slot.${key} AS id,COALESCE(SUM(call.used_microusd),0) AS used,
+          COALESCE(SUM(CASE WHEN call.used_microusd IS NULL THEN call.reserved_microusd ELSE 0 END),0) AS exposed,
+          COUNT(call.call_key) AS calls,
+          COALESCE(SUM(CASE WHEN call.call_key IS NOT NULL AND (call.used_microusd IS NULL OR call.status IN('pending','uncertain')) THEN 1 ELSE 0 END),0) AS pending
+        FROM output_operation_slots slot LEFT JOIN output_provider_calls call ON call.scope_key=slot.scope_key AND call.slot_id=slot.slot_id
+        WHERE slot.scope_key=? GROUP BY slot.${key})
+        SELECT 1 FROM json_each(?) expected LEFT JOIN current_costs current ON current.id=json_extract(expected.value,'$[0]')
+        WHERE json_array(COALESCE(current.used,0),COALESCE(current.exposed,0),COALESCE(current.calls,0),COALESCE(current.pending,0))
+          IS NOT json_array(json_extract(expected.value,'$[1]'),json_extract(expected.value,'$[2]'),json_extract(expected.value,'$[3]'),json_extract(expected.value,'$[4]')))`,
+      bindings: [scope.key, expected],
+    });
+  }
+  return assertions;
+}
+
+/** Scoped queries share one D1 binding call, independent of the number of targets. */
 export async function readOutputReadModel(env: WorkerEnv, scope: OutputScope, events: readonly CreativeEvent[], options: OutputReadModelOptions): Promise<OutputReadModel> {
   const maximumRows = Math.max(1, Math.min(MAX_OUTPUT_READ_ROWS, options.maxRows ?? MAX_OUTPUT_READ_ROWS));
   const maximumPlans = Math.max(1, Math.min(MAX_OUTPUT_READ_PLANS, options.maxPlans ?? MAX_OUTPUT_READ_PLANS));
   const maximumPrivateBytes = Math.max(1, Math.min(MAX_OUTPUT_READ_PRIVATE_BYTES, options.maxPrivateBytes ?? MAX_OUTPUT_READ_PRIVATE_BYTES));
   const privateScope = [scope.ownerUserId, scope.projectId, scope.documentId];
   const documentScope = [scope.key, scope.documentId, scope.projectId, scope.ownerUserId];
+  const amendments = events.filter(event => event.type === "OutputPlanConfirmed" && event.payload.document_id === scope.documentId && event.payload.project_id === scope.projectId && event.payload.scope_amendment !== undefined);
   const queries = [
     env.DB.prepare(`SELECT plan.*,${boundedPrivateColumns([["body", "plan_private_json"]], "plan.revision DESC")} FROM output_plan_revisions plan
       ${scopedPrivateJoin("body", "plan.confirmed_event_id")}
@@ -185,6 +258,10 @@ export async function readOutputReadModel(env: WorkerEnv, scope: OutputScope, ev
       WHERE fulfillment.scope_key=? AND plan.document_id=? AND plan.project_id=? AND plan.owner_user_id=? ORDER BY plan.revision DESC,fulfillment.target_id LIMIT ?`)
       .bind(...privateScope, ...documentScope, maximumRows + 1),
   ];
+  if (amendments.length) queries.push(env.DB.prepare(`SELECT body.private_event_id,${boundedPrivateColumns([["body", "amendment_private_json"]], "body.private_event_id")}
+      FROM event_private_payloads body WHERE body.owner_id=? AND body.project_id=? AND body.document_id=?
+        AND body.private_event_id IN(SELECT value FROM json_each(?)) AND body.redacted_at IS NULL ORDER BY body.private_event_id LIMIT ?`)
+    .bind(...privateScope, JSON.stringify(amendments.map(event => event.eventId)), maximumRows + 1));
   const batches = await env.DB.batch<Row>(queries);
   if (batches.length !== queries.length || batches.some((batch) => batch.success === false || !Array.isArray(batch.results))) throw new OutputConflictError("output_read_model_unavailable", 503);
   const reasons = new Set<string>();
@@ -209,6 +286,15 @@ export async function readOutputReadModel(env: WorkerEnv, scope: OutputScope, ev
     remembered.set(id, { raw, body: parsed });
     return parsed;
   };
+  if (amendments.length) {
+    const current = rowSets[6] ?? [];
+    if (current.length !== amendments.length) throw new OutputConflictError("output_private_evidence_unavailable", 410);
+    for (const row of current) {
+      const saved = body(row.private_event_id, row.amendment_private_json), original = amendments.find(event => event.eventId === row.private_event_id);
+      if (!saved || !original || JSON.stringify(saved) !== JSON.stringify(original.payload)) throw new OutputConflictError("output_private_evidence_unavailable", 410);
+    }
+  }
+  const assertions = outputReadRowAssertions(scope, rowSets);
   const plans = new Map<string, OutputConfirmedPlan>();
   for (const [index, row] of rowSets[0].entries()) {
     const saved = body(row.confirmed_event_id, row.plan_private_json);
@@ -278,7 +364,7 @@ export async function readOutputReadModel(env: WorkerEnv, scope: OutputScope, ev
     membership.set(string(row.target_id), string(row.acceptance_id)); fulfillments.set(string(row.plan_revision_id), membership);
   }
   if (reasons.size) for (const result of results) result.reviewAllowed = false;
-  return { complete: reasons.size === 0, reasonCodes: [...reasons], databaseBindingCalls: 1, listPages: custody.listPages, legacyReads: custody.legacyReads, confirmedPlan: plans.values().next().value ?? null, plans, assets, assetEvidence, results, grants, fulfillments, custody };
+  return { complete: reasons.size === 0, reasonCodes: [...reasons], databaseBindingCalls: 1, listPages: custody.listPages, legacyReads: custody.legacyReads, confirmedPlan: plans.values().next().value ?? null, plans, assets, assetEvidence, results, grants, fulfillments, custody, assertions };
 }
 
 export type OutputDeliveryEntryIdentity = { targetId: string; assetId: string; acceptanceId: string; resultId: string; resultRevision: string; sha256: string; targetContractDigest: string };

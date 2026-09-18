@@ -31,7 +31,7 @@ function database() {
     CREATE TABLE project_context_sessions(context_id TEXT,principal_user_id TEXT,project_access_id TEXT,organization_id TEXT,revoked_at TEXT,expires_at TEXT);
     CREATE TABLE capability_grants(user_id TEXT,capability TEXT,scope_type TEXT,organization_id TEXT,project_access_id TEXT,status TEXT,revoked_at TEXT,expires_at TEXT);
     CREATE TABLE pilot_cohorts(cohort_id TEXT,organization_id TEXT,status TEXT);
-    CREATE TABLE pilot_participants(cohort_id TEXT,organization_id TEXT,user_id TEXT,status TEXT,revoked_at TEXT,role TEXT);
+    CREATE TABLE pilot_participants(participant_id TEXT PRIMARY KEY NOT NULL,cohort_id TEXT NOT NULL,organization_id TEXT NOT NULL,email_normalized TEXT NOT NULL,user_id TEXT,role TEXT NOT NULL DEFAULT 'member',status TEXT NOT NULL DEFAULT 'active',invited_by_user_id TEXT NOT NULL,created_at TEXT NOT NULL,revoked_at TEXT);
     CREATE TABLE cost_budget_reservations(reservation_id TEXT PRIMARY KEY,owner_id TEXT,status TEXT,reserved_microusd INTEGER,used_microusd INTEGER);
     CREATE TABLE document_jobs(job_id TEXT PRIMARY KEY,status TEXT,attempt_count INTEGER,request_json TEXT,result_json TEXT,error_message TEXT,updated_at TEXT,completed_at TEXT,lease_expires_at TEXT);
     CREATE TABLE organization_deletion_items(job_id TEXT,organization_id TEXT,resource_kind TEXT,resource_id TEXT,status TEXT);
@@ -211,7 +211,7 @@ test("live Output authority rechecks selected project, grants and revocation in 
 test("a managed reviewer cannot inherit authoring rights, even with an old author grant", () => {
   const fixture = database(), { sqlite, insert } = fixture, scope = sharedPrincipal(fixture, "reviewer");
   insert("pilot_cohorts", { cohort_id: "pilot", organization_id: "org-one", status: "active" });
-  insert("pilot_participants", { cohort_id: "pilot", organization_id: "org-one", user_id: "reviewer", status: "active", revoked_at: null, role: "reviewer" });
+  insert("pilot_participants", { participant_id: "participant-reviewer", cohort_id: "pilot", organization_id: "org-one", email_normalized: "reviewer@example.test", user_id: "reviewer", status: "active", revoked_at: null, role: "reviewer", invited_by_user_id: "owner", created_at: now });
   const testPermission = (permission) => { const guard = outputScopeAuthority(scope, permission, now); return sqlite.prepare(`SELECT (${guard.sql}) AS allowed`).get(...guard.bindings).allowed; };
   assert.equal(testPermission("author"), 0); assert.equal(testPermission("request"), 0); assert.equal(testPermission("review"), 1); assert.equal(testPermission("read"), 1);
 });

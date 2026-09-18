@@ -288,12 +288,13 @@ for (const action of ["authorize", "run"]) test(`clearing only the next-check se
   assert.equal(f.effects.syncCalls, 0);
   assert.ok(!templates(f.controller.render()).some((part) => part.strings.some((text) => text.includes('class="output-provider-disclosure"'))));
   if (action === "authorize") {
-    const row = templates(f.controller.render()).find((part) => part.strings.some((text) => text.includes('<label><input type="checkbox"')) && part.strings.some((text) => text.includes('<span dir="auto">')));
+    const row = templates(f.controller.render()).find((part) => part.strings.some((text) => text.includes('<label><input class="output-run-target" data-output-run-target=')) && part.strings.some((text) => text.includes(' type="checkbox"')) && part.strings.some((text) => text.includes('<span dir="auto">')));
     eventHandlers(row, "change")[0]({ target: { checked: true } });
     await handler(f.controller.render(), "submit", "#inspectRun").call(f.controller, submitEvent());
     const disclosure = region(f.controller.render(), 'class="output-provider-disclosure"');
     assert.equal(binding(disclosure, ".checked"), false, "a new offer requires a new acknowledgement after Clear");
-    assert.equal(binding(disclosure, "?disabled"), true);
+    const disabledValues = disclosure.values.filter((_value, index) => disclosure.strings[index].trimEnd().endsWith("?disabled="));
+    assert.deepEqual(disabledValues, [false, true], "new acknowledgement is enabled; paid submit remains disabled until acknowledged");
     assert.equal(f.paidRequests().length, 0);
   }
 });

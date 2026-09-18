@@ -6,9 +6,19 @@ export type RouteCapabilities = {
   jobHistory: boolean;
 };
 
+/** Existing retained readers own one exact output, not the generic background job feed. */
+export function isRetainedOutputReaderRoute(path: string): boolean {
+  const pathname = path.split(/[?#]/)[0]?.replace(/\/+$/, "") || "/";
+  return ["/make/short-story", "/make/scene", "/make/slides", "/make/storyboard", "/make/model3d", "/make/audio", "/make/video"].includes(pathname);
+}
+
 /** Keep startup work proportional to the information the active surface actually renders. */
 export function routeCapabilities(path: string): RouteCapabilities {
   const pathname = path.split(/[?#]/)[0]?.replace(/\/+$/, "") || "/";
+
+  if (isRetainedOutputReaderRoute(pathname)) {
+    return { profile: "workspace", privateContent: false, jobHistory: false };
+  }
 
   if (pathname === "/projects" || pathname.startsWith("/projects/") || pathname === "/canvas/projects" || pathname.startsWith("/canvas/projects/") || pathname === "/creative") {
     return { profile: "projects", privateContent: false, jobHistory: false };

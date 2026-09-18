@@ -8,6 +8,46 @@ forma-assistant-panel {
   pointer-events: none;
 }
 
+/* When no floating gap exists, the current browse main gives this same native
+   button a real side gutter. Keep that space while its panel is open. */
+.application-creative[data-layout-intent="browse"] > forma-creative-assistant > forma-assistant-panel {
+  --forma-assistant-browse-lane-available: 1;
+  --forma-assistant-browse-lane-target: max(44px, var(--forma-control-min-size, 2.75rem));
+}
+
+.application-creative[data-layout-intent="browse"]:has(> forma-creative-assistant > forma-assistant-panel[data-browse-lane="true"]) > #main-content {
+  --forma-assistant-browse-lane-target: max(44px, var(--forma-control-min-size, 2.75rem));
+  box-sizing: border-box;
+  padding-inline-end: calc(var(--forma-assistant-browse-lane-base-inset, 0px) + var(--forma-assistant-browse-lane-target) + 2 * max(.625rem, var(--forma-focus-clearance, .5rem), var(--forma-safe-inline-end, 0px)));
+}
+
+@media (pointer: coarse) {
+  forma-assistant-panel > .forma-assistant-launcher {
+    min-block-size: max(48px, var(--forma-control-min-size, 2.75rem), var(--forma-hit-target-coarse, 3rem));
+  }
+
+  .application-creative[data-layout-intent="browse"] > forma-creative-assistant > forma-assistant-panel,
+  .application-creative[data-layout-intent="browse"]:has(> forma-creative-assistant > forma-assistant-panel[data-browse-lane="true"]) > #main-content {
+    --forma-assistant-browse-lane-target: max(48px, var(--forma-control-min-size, 2.75rem), var(--forma-hit-target-coarse, 3rem));
+  }
+}
+
+forma-assistant-panel[data-browse-lane="true"]:has(> .forma-assistant-launcher) {
+  inset: auto;
+  left: var(--forma-assistant-browse-lane-left, 8px);
+  top: var(--forma-assistant-browse-lane-top, 8px);
+  inline-size: var(--forma-assistant-browse-lane-target);
+  block-size: var(--forma-assistant-browse-lane-target);
+  display: block;
+}
+
+.application-creative[data-layout-intent="browse"] > forma-creative-assistant > forma-assistant-panel[data-browse-lane="true"] > .forma-assistant-launcher {
+  inline-size: var(--forma-assistant-browse-lane-target);
+  min-inline-size: var(--forma-assistant-browse-lane-target);
+  block-size: var(--forma-assistant-browse-lane-target);
+  min-block-size: var(--forma-assistant-browse-lane-target);
+}
+
 .forma-assistant-launcher {
   min-inline-size: 7rem;
   min-block-size: 2.75rem;
@@ -24,6 +64,10 @@ forma-assistant-panel {
   pointer-events: auto;
 }
 
+.forma-assistant-launcher:focus-visible {
+  box-shadow: none;
+}
+
 forma-assistant-panel[data-compact-launcher="true"] .forma-assistant-launcher {
   inline-size: var(--forma-control-min-size, 2.75rem);
   min-inline-size: var(--forma-control-min-size, 2.75rem);
@@ -31,7 +75,22 @@ forma-assistant-panel[data-compact-launcher="true"] .forma-assistant-launcher {
   padding-inline: 0;
 }
 
-forma-assistant-panel[data-compact-launcher="true"] .forma-assistant-launcher > span {
+@media (pointer: coarse) {
+  forma-assistant-panel[data-compact-launcher="true"] .forma-assistant-launcher {
+    min-inline-size: max(48px, var(--forma-control-min-size, 2.75rem), var(--forma-hit-target-coarse, 3rem));
+  }
+}
+
+forma-assistant-panel[data-tight-launcher="true"] .forma-assistant-launcher {
+  box-shadow: none;
+}
+
+forma-assistant-panel[data-tight-launcher="true"] .forma-assistant-launcher:focus-visible {
+  outline: var(--forma-focus-ring-width, .1875rem) solid var(--forma-focus-ring-color, currentColor);
+  outline-offset: calc(-1 * var(--forma-focus-ring-width, .1875rem));
+}
+
+forma-assistant-panel[data-compact-launcher="true"] .forma-assistant-launcher > span:not(.forma-icon) {
   position: absolute;
   inline-size: 1px;
   block-size: 1px;
@@ -68,9 +127,14 @@ forma-assistant-panel[data-compact-launcher="true"] .forma-assistant-launcher > 
   border-block-end: 1px solid color-mix(in srgb, currentColor 10%, transparent);
 }
 
-.forma-assistant-header strong,
+.forma-assistant-header h2,
 .forma-assistant-header small {
   display: block;
+}
+
+.forma-assistant-header h2 {
+  margin: 0;
+  font-size: inherit;
 }
 
 .forma-assistant-header small,
@@ -94,6 +158,27 @@ forma-assistant-panel[data-compact-launcher="true"] .forma-assistant-launcher > 
   padding: 1rem;
   overflow: auto;
   overscroll-behavior: contain;
+}
+
+.forma-assistant-conversation {
+  display: grid;
+  align-content: start;
+  gap: inherit;
+}
+
+.forma-assistant-continuation {
+  min-inline-size: 0;
+}
+
+.forma-assistant-continuation > fieldset {
+  min-inline-size: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.forma-assistant-continuation .exact-next-actions {
+  margin-block: .5rem 0;
 }
 
 .forma-assistant-message {
@@ -190,18 +275,23 @@ forma-assistant-panel[data-compact-launcher="true"] .forma-assistant-launcher > 
 
 .forma-assistant-model > label:first-child {
   display: grid;
-  gap: .3rem;
-  font-size: .78rem;
+  min-inline-size: 0;
+  gap: var(--forma-space-1, .25rem);
+  font-size: var(--forma-font-size-supporting, .875rem);
 }
 
 .forma-assistant-model select {
-  min-block-size: 2.75rem;
-  padding-inline: .65rem;
+  min-inline-size: 0;
+  min-block-size: var(--forma-control-min-size, 2.75rem);
+  max-inline-size: 100%;
+  padding: var(--forma-space-2, .5rem) var(--forma-control-inset-inline, .75rem);
   border: 1px solid color-mix(in srgb, currentColor 16%, transparent);
   border-radius: .55rem;
   background: transparent;
   color: inherit;
-  font: inherit;
+  font-family: inherit;
+  font-size: var(--forma-font-size-supporting, .875rem);
+  line-height: var(--forma-body-line-height, 1.6);
 }
 
 .forma-assistant-premium {
@@ -219,7 +309,7 @@ forma-assistant-panel[data-compact-launcher="true"] .forma-assistant-launcher > 
 }
 
 .forma-assistant-input {
-  min-block-size: 2.75rem;
+  min-block-size: max(2.75rem, calc(2lh + 1.3rem + 2px));
   max-block-size: 8rem;
   resize: vertical;
   padding: .65rem .75rem;
@@ -322,7 +412,7 @@ forma-assistant-panel[data-compact-launcher="true"] .forma-assistant-launcher > 
 
 @media (max-height: 34rem) and (orientation: landscape) {
   forma-assistant-panel {
-    inset-block-end: max(.5rem, var(--forma-keyboard-offset, 0px), env(safe-area-inset-bottom, 0px));
+    inset-block-end: calc(max(.5rem, var(--forma-keyboard-offset, 0px), env(safe-area-inset-bottom, 0px)) + var(--forma-assistant-obstacle-offset, 0px));
   }
 
   .forma-assistant-panel {
@@ -339,6 +429,10 @@ forma-assistant-panel[data-compact-launcher="true"] .forma-assistant-launcher > 
   .forma-assistant-model select {
     border: 1px solid CanvasText;
   }
+
+  forma-assistant-panel[data-tight-launcher="true"] .forma-assistant-launcher:focus-visible {
+    outline-color: Highlight;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -349,4 +443,186 @@ forma-assistant-panel[data-compact-launcher="true"] .forma-assistant-launcher > 
     animation: none;
     transition: none;
   }
+}
+
+/* The assistant reuses the native approval dialog; this is not another panel or queue. */
+.forma-assistant-guidance-recovery {
+  grid-column: 1 / -1;
+  display: grid;
+  gap: .5rem;
+}
+.forma-assistant-guidance-recovery p { margin: 0; overflow-wrap: anywhere; }
+.forma-assistant-guidance-recovery button,
+.forma-assistant-specialist button,
+.forma-assistant-specialist select,
+.forma-assistant-specialist summary {
+  min-block-size: var(--forma-control-min-size, 2.75rem);
+}
+.forma-assistant-specialist {
+  pointer-events: auto;
+  inline-size: min(46rem, calc(100vw - 2rem));
+  max-inline-size: calc(100vw - 2rem);
+  max-block-size: calc(100dvh - 2rem - var(--forma-keyboard-offset, 0px));
+  margin: auto;
+  overflow: auto;
+  overscroll-behavior: contain;
+  color: var(--ink, #18211e);
+  background: var(--surface, #fffdf9);
+}
+.forma-assistant-specialist .modal-card {
+  min-inline-size: 0;
+  max-block-size: none;
+  overflow: visible;
+}
+.forma-assistant-specialist p,
+.forma-assistant-specialist dd { overflow-wrap: anywhere; }
+.forma-assistant-specialist textarea {
+  box-sizing: border-box;
+  inline-size: 100%;
+  max-inline-size: 100%;
+  min-block-size: 8rem;
+  resize: vertical;
+}
+.forma-assistant-specialist summary {
+  display: list-item;
+  align-content: center;
+  cursor: pointer;
+}
+.forma-assistant-specialist footer { display: flex; min-inline-size: 0; flex-wrap: wrap; align-items: stretch; gap: var(--forma-cluster-gap, .75rem); }
+.forma-assistant-specialist footer button { min-inline-size: 0; max-inline-size: 100%; flex: 1 1 12rem; white-space: normal; overflow-wrap: anywhere; }
+.forma-assistant-specialist-result p { white-space: pre-wrap; }
+@media (forced-colors: active) {
+  .forma-assistant-specialist { border: 1px solid CanvasText; }
+}
+
+/* Reserve actual space beside, not inside, the compact Studio scrollport.
+   The same floating owner keeps this width while its panel is open. */
+.application-creative[data-layout-intent="workbench"]:is([data-nav-posture="compact"], [data-short-height="true"]):has(> forma-creative-assistant > forma-assistant-panel) .studio-header-stack > forma-studio-mode-nav {
+  --forma-assistant-studio-slot: 1;
+  --forma-assistant-studio-control: var(--forma-control-min-size, 2.75rem);
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) var(--forma-assistant-studio-control);
+  column-gap: var(--forma-focus-clearance, .5rem);
+  align-items: center;
+  padding-inline-end: max(var(--forma-focus-clearance, .5rem), var(--forma-safe-inline-end, 0px));
+  box-sizing: border-box;
+}
+
+.application-creative[data-layout-intent="workbench"]:is([data-nav-posture="compact"], [data-short-height="true"]):has(> forma-creative-assistant > forma-assistant-panel) .studio-header-stack > forma-studio-mode-nav > .studio-mode-nav {
+  grid-column: 1;
+  min-inline-size: 0;
+  max-inline-size: 100%;
+}
+
+@media (pointer: coarse) {
+  .application-creative[data-layout-intent="workbench"]:is([data-nav-posture="compact"], [data-short-height="true"]):has(> forma-creative-assistant > forma-assistant-panel) .studio-header-stack > forma-studio-mode-nav {
+    --forma-assistant-studio-control: max(var(--forma-control-min-size, 2.75rem), var(--forma-hit-target-coarse, 3rem));
+  }
+}
+
+/* Placement affects only the existing collapsed button. Opening uses the
+   original viewport-sized panel; the compact/tight rules retain name/ring. */
+.application-creative[data-layout-intent="workbench"]:is([data-nav-posture="compact"], [data-short-height="true"]) > forma-creative-assistant > forma-assistant-panel[data-studio-launcher="true"]:has(> .forma-assistant-launcher) {
+  inset: auto;
+  left: var(--forma-assistant-studio-left);
+  top: var(--forma-assistant-studio-top);
+  inline-size: var(--forma-assistant-studio-size);
+  block-size: var(--forma-assistant-studio-size);
+  display: block;
+}
+
+forma-assistant-panel[data-studio-launcher="true"] > .forma-assistant-launcher {
+  inline-size: var(--forma-assistant-studio-size);
+  min-inline-size: var(--forma-assistant-studio-size);
+  block-size: var(--forma-assistant-studio-size);
+  min-block-size: var(--forma-assistant-studio-size);
+}
+/* A compact browse row can reserve real space for the existing Ask button.
+   Source keeps this reservation only while all five destinations still fit.
+   The separate short-landscape policy retains its one-column rail. */
+@media not all and (max-height: 37.5rem) and (orientation: landscape) {
+  .application-creative[data-layout-intent="browse"][data-nav-posture="compact"] > forma-creative-assistant > forma-assistant-panel {
+    --forma-assistant-browse-slot: 1;
+  }
+
+  .application-creative[data-layout-intent="browse"][data-nav-posture="compact"]:has(> forma-creative-assistant > forma-assistant-panel[data-browse-slot="true"]) > forma-ui-audience-navigation.application-task-navigation[data-primary-navigation="true"] {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) var(--forma-control-min-size, 2.75rem);
+    column-gap: var(--forma-focus-clearance, .5rem);
+    align-items: center;
+    padding-inline-end: max(var(--forma-focus-clearance, .5rem), var(--forma-safe-inline-end, 0px));
+    box-sizing: border-box;
+  }
+
+  .application-creative[data-layout-intent="browse"][data-nav-posture="compact"]:has(> forma-creative-assistant > forma-assistant-panel[data-browse-slot="true"]) > forma-ui-audience-navigation.application-task-navigation[data-primary-navigation="true"] > .ui-audience-navigation {
+    grid-column: 1;
+    min-inline-size: 0;
+    max-inline-size: 100%;
+  }
+
+  @media (pointer: coarse) {
+    .application-creative[data-layout-intent="browse"][data-nav-posture="compact"]:has(> forma-creative-assistant > forma-assistant-panel[data-browse-slot="true"]) > forma-ui-audience-navigation.application-task-navigation[data-primary-navigation="true"] {
+      grid-template-columns: minmax(0, 1fr) max(var(--forma-control-min-size, 2.75rem), var(--forma-hit-target-coarse, 3rem));
+    }
+  }
+}
+
+/* The existing side rail already owns space outside the reading lane. Keep
+   all five destinations above a measured utility cell, including while open. */
+@media (max-height: 37.5rem) and (orientation: landscape) {
+  .application-creative[data-layout-intent="browse"][data-nav-posture="compact"] > forma-creative-assistant > forma-assistant-panel,
+  .application-creative[data-layout-intent="browse"][data-nav-posture="rail"][data-short-height="true"] > forma-creative-assistant > forma-assistant-panel {
+    --forma-assistant-browse-slot: rail;
+  }
+
+  .application-creative[data-layout-intent="browse"][data-nav-posture="compact"]:has(> forma-creative-assistant > forma-assistant-panel[data-browse-slot="true"]) > forma-ui-audience-navigation.application-task-navigation[data-primary-navigation="true"],
+  .application-creative[data-layout-intent="browse"][data-nav-posture="rail"][data-short-height="true"]:has(> forma-creative-assistant > forma-assistant-panel[data-browse-slot="true"]) > forma-ui-audience-navigation.application-task-navigation[data-primary-navigation="true"] {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr) var(--forma-control-min-size, 2.75rem);
+    row-gap: var(--forma-focus-clearance, .5rem);
+    padding-block-end: max(var(--forma-focus-clearance, .5rem), env(safe-area-inset-bottom, 0px));
+    box-sizing: border-box;
+  }
+
+  .application-creative[data-layout-intent="browse"][data-nav-posture="compact"]:has(> forma-creative-assistant > forma-assistant-panel[data-browse-slot="true"]) > forma-ui-audience-navigation.application-task-navigation[data-primary-navigation="true"] > .ui-audience-navigation,
+  .application-creative[data-layout-intent="browse"][data-nav-posture="rail"][data-short-height="true"]:has(> forma-creative-assistant > forma-assistant-panel[data-browse-slot="true"]) > forma-ui-audience-navigation.application-task-navigation[data-primary-navigation="true"] > .ui-audience-navigation {
+    grid-row: 1;
+    min-block-size: 0;
+    block-size: 100%;
+    max-block-size: 100%;
+    min-inline-size: 0;
+  }
+
+  .application-creative[data-layout-intent="browse"][data-nav-posture="compact"]:has(> forma-creative-assistant > forma-assistant-panel[data-browse-slot="true"]) > forma-ui-audience-navigation.application-task-navigation[data-primary-navigation="true"] > .ui-audience-navigation > .ui-audience-navigation-list,
+  .application-creative[data-layout-intent="browse"][data-nav-posture="rail"][data-short-height="true"]:has(> forma-creative-assistant > forma-assistant-panel[data-browse-slot="true"]) > forma-ui-audience-navigation.application-task-navigation[data-primary-navigation="true"] > .ui-audience-navigation > .ui-audience-navigation-list {
+    box-sizing: border-box;
+    min-block-size: 0;
+    max-block-size: 100%;
+    padding-block: var(--forma-focus-clearance, .5rem);
+    padding-inline-start: max(var(--forma-focus-clearance, .5rem), var(--forma-safe-inline-start, 0px));
+    padding-inline-end: max(var(--forma-focus-clearance, .5rem), var(--forma-safe-inline-end, 0px));
+  }
+
+  @media (pointer: coarse) {
+    .application-creative[data-layout-intent="browse"][data-nav-posture="compact"]:has(> forma-creative-assistant > forma-assistant-panel[data-browse-slot="true"]) > forma-ui-audience-navigation.application-task-navigation[data-primary-navigation="true"],
+    .application-creative[data-layout-intent="browse"][data-nav-posture="rail"][data-short-height="true"]:has(> forma-creative-assistant > forma-assistant-panel[data-browse-slot="true"]) > forma-ui-audience-navigation.application-task-navigation[data-primary-navigation="true"] {
+      grid-template-rows: minmax(0, 1fr) max(var(--forma-control-min-size, 2.75rem), var(--forma-hit-target-coarse, 3rem));
+    }
+  }
+}
+
+forma-assistant-panel[data-browse-launcher="true"]:has(> .forma-assistant-launcher) {
+  inset: auto;
+  left: var(--forma-assistant-browse-left);
+  top: var(--forma-assistant-browse-top);
+  inline-size: var(--forma-assistant-browse-size);
+  block-size: var(--forma-assistant-browse-size);
+}
+
+forma-assistant-panel[data-browse-launcher="true"] > .forma-assistant-launcher {
+  inline-size: var(--forma-assistant-browse-size);
+  min-inline-size: var(--forma-assistant-browse-size);
+  block-size: var(--forma-assistant-browse-size);
+  min-block-size: var(--forma-assistant-browse-size);
 }

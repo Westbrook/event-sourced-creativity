@@ -1,4 +1,8 @@
 import { ApiError, createFalClient } from "@fal-ai/client";
+import { captureOutputAudioAttempt, readOutputAudioEnvelope, type OutputAudioAttempt } from "./output-audio-execution.ts";
+import { parseAudioOutputContract } from "../src/model/output-audio-contract.ts";
+import { definitiveProviderRejection, type PaidProviderSubmissionObserver } from "../src/model/provider-submission.ts";
+import type { ProviderAttemptPreflight } from "./openai-adapter.ts";
 import {
   AUDIO_ADAPTER_CONTRACT, MAX_AUDIO_UPLOAD_BYTES, audioAdapterContractForModel,
   AudioAdapterSelectionError, estimateAudioProviderCostMicrousd, normalizeAudioRequestProfile,
@@ -53,6 +57,12 @@ export type CreativeAudioPreparedReceipt = {
 };
 
 export type CreativeAudioOptions = {
+  outputAudio?: unknown;
+  onBeforeProviderAttempt?: (attempt: ProviderAttemptPreflight) => void | Promise<void>;
+  onBeforeProviderDispatch?: (clientRequestId: string) => void;
+  onBeforeSourceTransmission?: () => Promise<void>;
+  onProviderSubmission?: PaidProviderSubmissionObserver;
+  onOutputAudioRequest?: (request: OutputAudioAttempt & {clientRequestId:string; requestDigest:string}) => Promise<void>;
   imageReference?: AudioImageReference;
   videoReference?: AudioVideoReference;
   profile?: AudioRequestProfile;
@@ -87,13 +97,16 @@ function queueUrls(model: string, requestId: string, receipt: Partial<FalAudioQu
   return { statusUrl: trusted(receipt.status_url, `${base}/status`), responseUrl: trusted(receipt.response_url, base), cancelUrl: trusted(receipt.cancel_url, `${base}/cancel`) };
 }
 
-async function fetchJson(url: string, init: RequestInit, prompt: string, requestId: string | null = null): Promise<{ response: Response; body: Record<string, unknown> }> {
+async function fetchJson(url: string, init: RequestInit, prompt: string, requestId: string | null = null, bounded = false): Promise<{ response: Response; body: Record<string, unknown> }> {
   let response: Response;
   try { response = await fetch(url, init); }
   catch (error) { throw new ProviderRequestError({ ...classifyProviderFailure(error), requestId }, prompt); }
+  if (response.status >= 300 && response.status < 400) {
+    throw providerError("fal_audio_redirect_refused", "The original audio request returned an unexpected redirect. No redirected request was sent.", prompt, { requestId, status: response.status, category: "server" });
+  }
   let body: Record<string, unknown>;
-  try { body = await response.json() as Record<string, unknown>; }
-  catch { throw providerError("fal_audio_response_invalid", "Fal returned an invalid audio-generation response. The original request can be recovered without purchasing another output.", prompt, { requestId, retryable: true, status: response.status, category: "server" }); }
+  try { body = (bounded ? JSON.parse(await readOutputAudioEnvelope(response)) : await response.json()) as Record<string, unknown>; }
+  catch { if(bounded)throw new Error("output_audio_response_unreadable"); throw providerError("fal_audio_response_invalid", "Fal returned an invalid audio-generation response. The original request can be recovered without purchasing another output.", prompt, { requestId, retryable: true, status: response.status, category: "server" }); }
   if (!response.ok) {
     const error = providerErrorFromResponse(response, body, `fal_audio_${response.status}`, prompt);
     throw new ProviderRequestError({ ...error.detail, code: error.detail.code.startsWith("fal_") ? error.detail.code : `fal_${error.detail.code}`, requestId: error.detail.requestId ?? requestId }, prompt);
@@ -135,7 +148,7 @@ async function videoReceipt(reference: AudioVideoReference) {
 async function readAcceptedAudio(
   env: WorkerEnv,
   accepted: { model: string; providerJobId: string; urls: ReturnType<typeof queueUrls>; profile: AudioRequestProfile; prepared: CreativeAudioPreparedReceipt; estimatedCostMicrousd: number; started: number },
-  options: Pick<CreativeAudioOptions, "signal" | "onStage"> & { verifyIdentity?: boolean },
+  options: Pick<CreativeAudioOptions, "signal" | "onStage" | "onBeforeSourceTransmission"> & { verifyIdentity?: boolean },
 ) {
   const { model, providerJobId, urls, profile, prepared, estimatedCostMicrousd, started } = accepted;
   const contract = audioAdapterContractForModel(model)!;
@@ -144,7 +157,8 @@ async function readAcceptedAudio(
   let state: FalAudioQueueState = { status: "IN_QUEUE" };
   while (state.status !== "COMPLETED") {
     if (Date.now() >= deadline) throw providerError("fal_audio_timeout", `${contract.label} has not finished yet. Resume the saved provider request instead of purchasing another audio output.`, submittedPrompt, { requestId: providerJobId, retryable: true, status: 504, category: "server" });
-    const checked = await fetchJson(`${urls.statusUrl}${urls.statusUrl.includes("?") ? "&" : "?"}logs=1`, { method: "GET", headers: headers(env), signal: options.signal, ...(options.verifyIdentity ? { redirect: "manual" as const } : {}) }, submittedPrompt, providerJobId);
+    await options.onBeforeSourceTransmission?.();
+    const checked = await fetchJson(`${urls.statusUrl}${urls.statusUrl.includes("?") ? "&" : "?"}logs=1`, { method: "GET", headers: headers(env), signal: options.signal, ...(options.verifyIdentity ? { redirect: "manual" as const } : {}) }, submittedPrompt, providerJobId, options.verifyIdentity === true);
     state = checked.body as FalAudioQueueState;
     if (options.verifyIdentity && state.request_id !== undefined && state.request_id !== providerJobId) throw providerError("fal_audio_receipt_mismatch", "The provider returned a different audio request identifier.", submittedPrompt, { requestId: providerJobId, status: 409 });
     if (options.verifyIdentity && state.error != null) throw providerError("fal_audio_result_rejected", "The saved audio request returned a provider error; no replacement was submitted.", submittedPrompt, { requestId: providerJobId, status: 422 });
@@ -158,7 +172,8 @@ async function readAcceptedAudio(
   }
 
   await options.onStage?.("finalizing", "The requested audio is complete. Verifying its provider receipt.");
-  const response = await fetchJson(urls.responseUrl, { method: "GET", headers: headers(env), signal: options.signal, ...(options.verifyIdentity ? { redirect: "manual" as const } : {}) }, submittedPrompt, providerJobId);
+  await options.onBeforeSourceTransmission?.();
+  const response = await fetchJson(urls.responseUrl, { method: "GET", headers: headers(env), signal: options.signal, ...(options.verifyIdentity ? { redirect: "manual" as const } : {}) }, submittedPrompt, providerJobId, options.verifyIdentity === true);
   if (options.verifyIdentity && response.body.request_id !== undefined && response.body.request_id !== providerJobId) throw providerError("fal_audio_receipt_mismatch", "The provider returned a different audio result identifier.", submittedPrompt, { requestId: providerJobId, status: 409 });
   if (options.verifyIdentity && response.body.error != null) throw providerError("fal_audio_result_rejected", "The saved audio result contains a provider error; no replacement was submitted.", submittedPrompt, { requestId: providerJobId, status: 422 });
   const result = response.body as FalAudioResult;
@@ -171,6 +186,7 @@ async function readAcceptedAudio(
   let downloaded: Response;
   // Workers support manual/follow only. Manual also keeps redirects from
   // escaping the trusted media host; the non-2xx check below rejects them.
+  await options.onBeforeSourceTransmission?.();
   try { downloaded = await fetch(media.toString(), { signal: options.signal, redirect: "manual" }); }
   catch (error) { throw new ProviderRequestError({ ...classifyProviderFailure(error), requestId: providerJobId }, submittedPrompt); }
   if (!downloaded.ok) throw providerError("fal_audio_download_failed", "Fal completed the audio request but its media could not be downloaded. Resume the retained provider request.", submittedPrompt, { requestId: providerJobId, retryable: true, status: downloaded.status, category: "server" });
@@ -179,7 +195,7 @@ async function readAcceptedAudio(
   const reader = downloaded.body?.getReader();
   const chunks: Uint8Array[] = [];
   let total = 0;
-  if (reader) for (;;) { const chunk = await reader.read(); if (chunk.done) break; total += chunk.value.byteLength; if (total > MAX_AUDIO_UPLOAD_BYTES) { await reader.cancel(); throw providerError("fal_audio_too_large", "The generated audio exceeds Forma’s private 25 MB media limit.", submittedPrompt, { requestId: providerJobId }); } chunks.push(chunk.value); }
+  if (reader) try { for (;;) { const chunk = await reader.read(); if (chunk.done) break; total += chunk.value.byteLength; if (total > MAX_AUDIO_UPLOAD_BYTES) { try { void reader.cancel().catch(() => undefined); } catch { /* Preserve overflow. */ } throw providerError("fal_audio_too_large", "The generated audio exceeds Forma’s private 25 MB media limit.", submittedPrompt, { requestId: providerJobId }); } chunks.push(chunk.value); } } finally { reader.releaseLock(); }
   else { const fallback = new Uint8Array(await downloaded.arrayBuffer()); total = fallback.byteLength; if (total > MAX_AUDIO_UPLOAD_BYTES) throw providerError("fal_audio_too_large", "The generated audio exceeds Forma’s private 25 MB media limit.", submittedPrompt, { requestId: providerJobId }); chunks.push(fallback); }
   const bytes = new Uint8Array(total); let offset = 0; for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
   if (!bytes.length) throw providerError("fal_audio_empty", "Fal returned empty audio. The original provider request can be inspected and recovered.", submittedPrompt, { requestId: providerJobId, retryable: true, status: 502, category: "server" });
@@ -239,11 +255,14 @@ export async function recoverAcceptedAudio(env: WorkerEnv, options: CreativeAudi
   if (!Number.isSafeInteger(estimatedCostMicrousd) || estimatedCostMicrousd <= 0) {
     throw providerError("audio_recovery_receipt_invalid", "The original audio cost evidence is unavailable.", "", { requestId: options.providerJobId, status: 409 });
   }
-  return readAcceptedAudio(env, { model: options.providerModel, providerJobId: options.providerJobId, urls, profile: normalizeAudioRequestProfile(options.profile), prepared, estimatedCostMicrousd, started: Date.now() }, { signal: options.signal, onStage: options.onStage, verifyIdentity: true });
+  return readAcceptedAudio(env, { model: options.providerModel, providerJobId: options.providerJobId, urls, profile: normalizeAudioRequestProfile(options.profile), prepared, estimatedCostMicrousd, started: Date.now() }, { signal: options.signal, onStage: options.onStage, onBeforeSourceTransmission: options.onBeforeSourceTransmission, verifyIdentity: true });
 }
 
 /** Route an approved specialist schema through one recoverable Fal queue transport. */
 export async function generateCreativeAudio(env: WorkerEnv, prompt: string, options: CreativeAudioOptions = {}) {
+  const nativePresent=Object.hasOwn(options,"outputAudio"), nativeAudio=nativePresent?parseAudioOutputContract(options.outputAudio):null;
+  if(nativePresent&&(!nativeAudio||options.providerJobId||options.retainedReceipt||options.imageReference||options.videoReference||options.spokenScript||options.voiceDirection
+    ||options.providerModel!=="fal-ai/stable-audio-3/medium/text-to-audio"||!options.onBeforeProviderAttempt||!options.onBeforeProviderDispatch||!options.onBeforeSourceTransmission||!options.onProviderSubmission||!options.onOutputAudioRequest))throw new Error("output_audio_dispatch_hooks_required");
   if (!env.FAL_KEY?.trim()) throw providerError("audio_provider_not_configured", "Fal audio generation is not configured for this environment.", prompt, { status: 503, category: "authentication", action: "check_credentials" });
   if (env.FORMA_AUDIO_PROVIDER && env.FORMA_AUDIO_PROVIDER !== "fal") throw providerError("audio_provider_unsupported", "The configured audio provider is not supported.", prompt, { status: 503, category: "access", action: "check_credentials" });
   const model = options.retainedReceipt?.model ?? options.providerModel ?? env.FAL_AUDIO_MODEL ?? AUDIO_ADAPTER_CONTRACT.model;
@@ -343,6 +362,8 @@ export async function generateCreativeAudio(env: WorkerEnv, prompt: string, opti
     ...(videoReference ? { videoReference } : {}),
   };
   await options.onPrepared?.(options.retainedReceipt ?? prepared);
+  let nativeAttempt: Awaited<ReturnType<typeof captureOutputAudioAttempt>> | null=null, nativeDispatched=false;
+  const nativeReceipt=(status:"pending"|"accepted"|"completed"|"rejected")=>({clientRequestId:nativeAttempt!.clientRequestId,provider:"fal" as const,operation:"audio" as const,model,status,unitId:"audio:initial",requestDigest:nativeAttempt!.requestDigest,...(providerJobId?{providerRequestId:providerJobId}:{})});
 
   try {
     if (!providerJobId) {
@@ -382,17 +403,34 @@ export async function generateCreativeAudio(env: WorkerEnv, prompt: string, opti
         throw error;
       }
       await options.onStage?.("submitting", `Submitting the approved audio request to ${contract.label}.`);
-      const submitted = await fetchJson(`https://queue.fal.run/${model}`, { method: "POST", headers: headers(env), body: JSON.stringify(input), signal: options.signal }, submittedPrompt);
+      const requestBody=JSON.stringify(input);
+      if(nativeAudio){
+        nativeAttempt=await captureOutputAudioAttempt(nativeAudio,requestBody,`forma-audio-${crypto.randomUUID()}`,"audio:initial");
+        await options.onBeforeProviderAttempt!(nativeAttempt);
+        await options.onOutputAudioRequest!({...nativeAttempt.audio,clientRequestId:nativeAttempt.clientRequestId,requestDigest:nativeAttempt.requestDigest});
+        await options.onBeforeSourceTransmission!();
+        await options.onProviderSubmission!(nativeReceipt("pending"));
+        options.onBeforeProviderDispatch!(nativeAttempt.clientRequestId);nativeDispatched=true;
+      }
+      const submitted = await fetchJson(`https://queue.fal.run/${model}`, { method: "POST", headers: headers(env), body: requestBody, signal: options.signal, ...(nativeAudio?{redirect:"manual" as const}:{}) }, submittedPrompt, null, Boolean(nativeAudio));
       providerJobId = String(submitted.body.request_id ?? submitted.response.headers.get("x-fal-request-id") ?? "");
       if (!providerJobId) throw providerError("fal_audio_submission_receipt_missing", "Fal accepted no durable audio request identifier. No completed output can be reported.", submittedPrompt, { retryable: true, status: 502, category: "server" });
       urls = queueUrls(model, providerJobId, submitted.body as FalAudioQueueState);
+      if(nativeAudio){
+        if(submitted.body.request_id!==providerJobId||!/^[-A-Za-z0-9_]{1,200}$/u.test(providerJobId))throw new Error("output_audio_receipt_invalid");
+        urls=verifiedAudioRecoveryQueue(model,providerJobId,{providerStatusUrl:urls.statusUrl,providerResponseUrl:urls.responseUrl,providerCancelUrl:urls.cancelUrl});
+        await options.onProviderSubmission!(nativeReceipt("accepted"));
+      }
       await options.onReceipt?.({ providerJobId, provider: "fal", model, providerStatusUrl: urls.statusUrl, providerResponseUrl: urls.responseUrl, providerCancelUrl: urls.cancelUrl });
     } else {
       await options.onReceipt?.({ providerJobId, provider: "fal", model, providerStatusUrl: urls.statusUrl, providerResponseUrl: urls.responseUrl, providerCancelUrl: urls.cancelUrl });
     }
 
-    return await readAcceptedAudio(env, { model, providerJobId, urls, profile, prepared: options.retainedReceipt ?? prepared, estimatedCostMicrousd, started }, options);
+    const result=await readAcceptedAudio(env, { model, providerJobId, urls, profile, prepared: options.retainedReceipt ?? prepared, estimatedCostMicrousd, started }, {...options,...(nativeAudio?{verifyIdentity:true}:{})});
+    if(nativeAudio){await options.onProviderSubmission!({...nativeReceipt("completed"),costMicrousd:result.costMicrousd,inputTokens:0,outputTokens:0,totalTokens:0});if(result.lyrics.trim())throw new Error("output_audio_lyrics_returned");}
+    return result;
   } catch (error) {
+    if(nativeAttempt&&nativeDispatched&&!providerJobId&&error instanceof ProviderRequestError&&definitiveProviderRejection(Number(error.detail.httpStatus)))await options.onProviderSubmission!({...nativeReceipt("rejected"),costMicrousd:0});
     if (options.signal?.aborted && providerJobId) {
       try { await fetch(urls.cancelUrl, { method: "PUT", headers: headers(env) }); } catch { /* Cancellation is best-effort and the durable job records the local stop. */ }
     }

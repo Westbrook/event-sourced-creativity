@@ -104,6 +104,7 @@ export const hasKnownTextModelPricing=(model:string)=>Object.hasOwn(TEXT_RATES,m
 
 const IMAGE_RATES: Record<string, ImageRates> = {
   "gpt-image-2": { textInput: 5, imageInput: 8, output: 30 },
+  "gpt-image-2.5-sunburst": { textInput: 5, imageInput: 8, output: 30 },
 };
 
 /** An application allowance must never rely on fallback image-model pricing. */

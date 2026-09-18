@@ -1,6 +1,7 @@
 import { html, nothing } from "lit";
 import { icon } from "../icons";
 import { FormaPresentationalElement } from "../presentational-element";
+import { captureOutputNavigationFocus, type OutputNavigationFocusLease } from "../output-navigation-focus";
 import { defineFormaElements, emitFormaEvent, nextFormaId, type FormaOption } from "./contracts";
 
 export type FormaNavigationDestination = FormaOption & { href: string; icon?: string; badge?: number; badgeLabel?: string };
@@ -98,27 +99,62 @@ export class FormaUiWorkspaceSwitcher extends FormaPresentationalElement {
   #id = nextFormaId("workspace-switcher");
   #open = false;
   #returnFocus = false;
+  #focus: { panel: HTMLElement; closing: boolean; lease: OutputNavigationFocusLease } | null = null;
+
+  #retireFocus() { this.#focus?.lease.dispose(); this.#focus = null; }
+  #beginFocus(panel: HTMLElement, closing: boolean) {
+    this.#retireFocus();
+    const trigger = this.querySelector<HTMLButtonElement>(".ui-workspace-switcher-trigger");
+    // Native dismissal may itself restore the exact invoker synchronously.
+    // A newer pointer/key or focus anywhere else still retires this lease.
+    const lease = captureOutputNavigationFocus(this.ownerDocument, {
+      ownedRouteFocus: element => closing && element === trigger && Boolean(trigger?.isConnected),
+    });
+    return this.#focus = { panel, closing, lease };
+  }
+  #beforeToggle(event: ToggleEvent) {
+    const panel = event.currentTarget as HTMLElement | null;
+    if (!this.isConnected || !panel?.isConnected || panel !== this.querySelector(".ui-workspace-switcher-panel")) return;
+    const closing = event.newState === "closed";
+    this.#beginFocus(panel, closing);
+  }
+  override disconnectedCallback() { this.#retireFocus(); this.#returnFocus = false; super.disconnectedCallback(); }
+  protected override updated() {
+    if (this.#focus && this.querySelector(".ui-workspace-switcher-panel") !== this.#focus.panel) this.#retireFocus();
+    if (!this.querySelector(".ui-workspace-switcher-panel")) { this.#open = false; this.#returnFocus = false; }
+  }
 
   #toggle(event: ToggleEvent) {
-    this.#open = event.newState === "open";
-    if (this.#open) {
-      const panel = event.currentTarget as HTMLElement;
-      (panel.querySelector<HTMLAnchorElement>('a[aria-current="page"]') ?? panel.querySelector<HTMLAnchorElement>("a"))?.focus();
-    } else if (this.#returnFocus) {
-      this.querySelector<HTMLButtonElement>(".ui-workspace-switcher-trigger")?.focus();
+    const panel = event.currentTarget as HTMLElement | null, open = event.newState === "open";
+    if (!this.isConnected || !panel?.isConnected || panel !== this.querySelector(".ui-workspace-switcher-panel")
+      || panel.matches(":popover-open") !== open) return;
+    const focus = this.#focus;
+    this.#open = open;
+    try {
+      if (focus?.panel === panel && focus.closing === !open) {
+        const target = open ? panel.querySelector<HTMLAnchorElement>('a[aria-current="page"]') ?? panel.querySelector<HTMLAnchorElement>("a")
+          : this.#returnFocus ? this.querySelector<HTMLButtonElement>(".ui-workspace-switcher-trigger") : null;
+        if (target) focus.lease.run(target, () => { target.focus(); return true; });
+      }
+    } finally {
+      if (this.#focus === focus) this.#retireFocus();
+      this.#returnFocus = false;
+      this.requestUpdate();
     }
-    this.#returnFocus = false;
-    this.requestUpdate();
   }
 
   #activate(event: MouseEvent, destination: FormaNavigationDestination) {
     if(event.defaultPrevented||event.button!==0||event.metaKey||event.ctrlKey||event.shiftKey||event.altKey)return;
-    if (!emitFormaEvent(this, "forma-navigate", { value: destination.value, href: destination.href }, { cancelable: true })) event.preventDefault();
     const panel = this.querySelector<HTMLElement>(".ui-workspace-switcher-panel");
     if (panel?.matches(":popover-open")) {
-      this.#returnFocus = true;
+      // Finish this menu's synchronous handoff before the destination captures
+      // its own load-focus lease. Queued close cannot restore afterward.
+      this.#returnFocus = false;
       panel.hidePopover();
+      this.#retireFocus();
+      this.querySelector<HTMLButtonElement>(".ui-workspace-switcher-trigger")?.focus();
     }
+    if (!emitFormaEvent(this, "forma-navigate", { value: destination.value, href: destination.href }, { cancelable: true })) event.preventDefault();
   }
 
   override render() {
@@ -133,7 +169,7 @@ export class FormaUiWorkspaceSwitcher extends FormaPresentationalElement {
       <button type="button" class="button secondary compact ui-popover-trigger ui-workspace-switcher-trigger" popovertarget=${this.#id} aria-controls=${this.#id} aria-expanded=${String(this.#open)} aria-label=${triggerLabel}>
         <span dir="auto">${current.label}</span><span class="ui-workspace-switcher-indicator" aria-hidden="true"></span>
       </button>
-      <nav id=${this.#id} class="ui-popover-panel ui-workspace-switcher-panel" popover="auto" aria-label=${label} @toggle=${this.#toggle} @keydown=${(event: KeyboardEvent) => { if (event.key === "Escape") this.#returnFocus = true; }}>${links}</nav>
+      <nav id=${this.#id} class="ui-popover-panel ui-workspace-switcher-panel" popover="auto" aria-label=${label} @beforetoggle=${this.#beforeToggle} @toggle=${this.#toggle} @keydown=${(event: KeyboardEvent) => { if (event.key === "Escape") this.#returnFocus = true; }}>${links}</nav>
     </div>`;
   }
 }

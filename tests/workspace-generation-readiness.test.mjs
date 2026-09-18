@@ -120,18 +120,33 @@ test("a failed preflight never starts paid work and explains the connection prob
   });
 });
 
-test("every paid next-step recommendation uses the shared readiness dispatcher", async () => {
+test("next-step recommendations only open exact saved work or free configuration", async () => {
   const workspace = await readFile(new URL("../src/components/forma-workspace.ts", import.meta.url), "utf8");
-  assert.match(workspace, /action\.id==="make-draft"[^\n]*runReadyImageGeneration\(this\.store,"preview"/);
-  assert.match(workspace, /action\.id==="refine-image"[^\n]*runReadyImageGeneration\(this\.store,"generate"/);
-  assert.doesNotMatch(workspace, /action\.id==="(?:make-draft|refine-image)"[^\n]*this\.store\.(?:preview|generate)\(/);
+  assert.match(workspace,/followCreativeNextTarget\(action.target/);
+  // The same free receiver now carries the original current/focus ownership.
+  // This is a source wiring oracle; native arrival and no-command companions
+  // remain separate from the paid-generation readiness harness above.
+  assert.match(workspace,/configure:\(target\)=>this\.#prepareFormat\(target,options\?\.current,options\?\.focus\)/);
+  const followStart = workspace.indexOf("  async #followNextAction("), prepareStart = workspace.indexOf("  async #prepareFormat("),
+    prepareEnd = workspace.indexOf("  async #chooseFormat(");
+  assert.ok(followStart >= 0 && prepareStart > followStart && prepareEnd > prepareStart);
+  const opening = workspace.slice(followStart, prepareEnd), preparation = workspace.slice(prepareStart, prepareEnd);
+  assert.match(opening,/output:\(target\)=>this\.#openNextOutput\(target,options\?\.current\)/);
+  assert.match(opening,/openArtifactById\(target\.artifactId,\{\s*expectedRevision:target\.revision/);
+  assert.match(preparation,/\(!required\|\|required\(stage\)\)&&creativePreparationTargetAvailable\(target,this\.#nextFacts\(target\),stage\)/);
+  assert.match(preparation,/if\(!current\("opening"\)\)return false/);
+  assert.match(preparation,/host\.openConfiguration\(current\)/);
+  assert.match(preparation,/host\.openRender\(target\.medium,target\.documentId,\{current\}\)/);
+  assert.doesNotMatch(opening,/this\.store\.(?:append(?:Batch)?|preview|generate|approve\w*|renderDocumentArtifact)\s*\(/,
+    "Opening exact saved work or settings does not append, generate, render a result, or approve it");
+  assert.doesNotMatch(workspace,/runReadyImageGeneration/);
 });
 
 test("compact document controls defer hidden fan checks without skipping their safety gates", async () => {
   const controls = await readFile(new URL("../src/components/generation-actions.ts", import.meta.url), "utf8");
   assert.match(controls, /kind\.includes\("fan"\)&&this\.compact&&!this\.#detailsOpen/);
   assert.match(controls, /@toggle=\$\{warmOnOpen\}/);
-  assert.match(controls, /this\.#detailsOpen=true;this\.requestUpdate\(\);\}/);
+  assert.match(controls, /@click=\$\{\(\)=>void this\.openConfiguration\(\)\}/);
   assert.match(controls, /requiredReadinessRows=this\.compact&&!this\.#detailsOpen\?readinessRows\.slice\(0,2\):readinessRows/);
   assert.match(controls, /ensureGenerationReadiness\(row\.kind/);
   assert.match(controls, /formaGenerationFirstResolvedMs/);

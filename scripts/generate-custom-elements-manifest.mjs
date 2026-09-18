@@ -2,6 +2,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import ts from "typescript";
+import { portableManifestType } from "./lib/component-manifest-types.mjs";
 
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const checkOnly = process.argv.includes("--check");
@@ -14,6 +15,8 @@ const checker = program.getTypeChecker();
 const compareMachine = (left, right) => left < right ? -1 : left > right ? 1 : 0;
 const sources = program.getSourceFiles()
   .filter((source) => !source.isDeclarationFile && source.fileName.startsWith(`${root}/src/`))
+  // Still is a separate application and does not participate in Forma's UI catalog.
+  .filter((source) => !source.fileName.startsWith(`${root}/src/still/`))
   .sort((left, right) => compareMachine(left.fileName, right.fileName));
 
 const modulePath = (source) => path.relative(root, source.fileName).split(path.sep).join("/");
@@ -39,7 +42,7 @@ const typeText = (node) => {
   try {
     const type = checker.getTypeAtLocation(node);
     const literalUnion = type.isUnion() && type.types.every((item) => item.isStringLiteral() || item.isNumberLiteral() || (item.flags & ts.TypeFlags.BooleanLiteral) !== 0);
-    const text = checker.typeToString(type, node, ts.TypeFormatFlags.NoTruncation | (literalUnion ? ts.TypeFormatFlags.InTypeAlias : 0));
+    const text = portableManifestType(checker.typeToString(type, node, ts.TypeFormatFlags.NoTruncation | (literalUnion ? ts.TypeFormatFlags.InTypeAlias : 0)), root);
     return text === "FormaOption[]"
       ? "{ label: string; value: string; disabled?: boolean; description?: string }[]"
       : text === "FormaNavigationDestination[]"
@@ -283,7 +286,7 @@ function fieldsOf(node, properties) {
       const method = { kind: "method", name };
       if (member.parameters.length) method.parameters = member.parameters.map((parameter) => ({ name: propertyName(parameter.name), type: { text: typeText(parameter) } }));
       const signature = checker.getSignatureFromDeclaration(member);
-      if (signature) method.return = { type: { text: checker.typeToString(signature.getReturnType()) } };
+      if (signature) method.return = { type: { text: portableManifestType(checker.typeToString(signature.getReturnType()), root) } };
       const description = documentation(member);
       if (description) method.description = description;
       results.set(name, method);
@@ -464,7 +467,7 @@ function moduleFor(name) {
   return modules.get(name);
 }
 
-const authorTextAttributes = new Set(["label", "heading", "detail", "help", "error", "placeholder", "action", "busy-label", "summary", "trigger", "confirm", "cancel", "eyebrow"]);
+const authorTextAttributes = new Set(["label", "heading", "detail", "help", "error", "placeholder", "action", "busy-label", "summary", "trigger", "trigger-accessible-name", "confirm", "cancel", "eyebrow"]);
 const invariantValueElements = new Set(["forma-ui-button", "forma-ui-icon-button", "forma-ui-choice-card", "forma-ui-chip", "forma-ui-checkbox", "forma-ui-switch", "forma-ui-radio-group", "forma-ui-select", "forma-ui-language-picker", "forma-ui-segmented-control", "forma-ui-tabs", "forma-ui-list-item", "forma-ui-card", "forma-ui-page-header", "forma-ui-notice", "forma-ui-workspace-switcher", "forma-ui-audience-navigation"]);
 const internalMessagesByTag = {
   "forma-ui-button": ["action.default", "action.working", "action.busy"],

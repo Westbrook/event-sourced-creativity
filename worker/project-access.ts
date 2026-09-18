@@ -1,22 +1,33 @@
+import { parseModel3dMediaRevision, parseModel3dCurrentProjection, type Model3dCurrentProjection } from "../src/model/model3d-media-revision.ts";
+import { validWorkspaceQuickEditEvents } from "../src/model/workspace-local-proposal.ts";
 import { foldEvents, type CreativeEvent, type CreativeProjection } from "../src/model/events.ts";
 import { foldCanvasEvents } from "../src/canvas/model.ts";
-import { FORMA_CAPABILITIES, type FormaCapability } from "../src/platform/capabilities.ts";
-import { DURABLE_WORK_RETENTION_END, POLICY_VERSION, hasCapability, type PilotUser } from "./pilot-policy.ts";
-import { appendEvents, EVENT_WRITE_COLUMNS, eventWriteBindings, makeEvent, readEvents, readEventsByClientEventIds, serializeEvent, streamHead, uuidV7, type EventRow, type WorkerEnv } from "./runtime.ts";
+import type { ProjectRequestContext } from "./project-request-context.ts";
+export type { ProjectRequestContext };
+export { hasProjectContextCookie, projectContextCookie, rejectProjectContext, readProjectRequestContext } from "./project-request-context.ts";
+import { DURABLE_WORK_RETENTION_END, POLICY_VERSION, hasCapability, type BudgetReservationGuard, type PilotUser } from "./pilot-policy.ts";
+import { appendEvents, EVENT_WRITE_COLUMNS, eventWriteBindings, makeEvent, readEvents, readEventsByClientEventIds, serializeEvent, streamHead, uuidV7, type EventRow, type WorkerEnv, type EventReadProof } from "./runtime.ts";
 import { validateCanvasEvent } from "./realtime/canvas-admission.ts";
-import { ARTIFACT_REVIEW_EVENT_TYPES, validateArtifactReview } from "./artifact-review.ts";
+import { ARTIFACT_REVIEW_EVENT_TYPES, artifactExactBatchGuard, artifactSourceEvidenceGuard, artifactReviewCompletionGuard, validateArtifactReview, type ExactArtifactContentBinding } from "./artifact-review.ts";
+import { artifactApprovalMatches, artifactCurrentRightsBlockers } from "../src/model/artifact-delivery.ts";
 import { managedPilotSourceClassificationValid, verifySourceDocumentEvidence } from "./media-api.ts";
 import { effectivePilotParticipantSql, effectivePilotReviewerSql } from "./access-policy.ts";
 import { artifactReviewState, artifactSourceVersions } from "../src/model/context-health.ts";
 import { productionWorkflowIssues, type ProductionWorkflow } from "../src/model/production-workflow.ts";
 import { ACTION_PARTICIPANT_RELATION, ACTION_REFERENCE_ROLES, isContextCompositionRelation, normalizeActionBlockReferences, validateContextCompositionGraph } from "../src/model/combined-context.ts";
 import { ASSISTANT_STATE_EVENT_SQL } from "../src/model/assistant-event-views.ts";
-import { governedPackageSourceRightsCurrent } from "./context-package-rights.ts";
+import { governedPackageSourceRightsValidity, sourceRightsDispatchGuard } from "./context-package-rights.ts";
+import { CANVAS_ARRANGEMENT_MAX_EVENTS, validateAtomicCanvasArrangementEvents } from "./canvas-arrangement-contract.ts";
+import { combineAuthoringGuards, prepareAuthoringEventBatch, prepareAuthoringMediaBatch, prepareAuthoringSidecarBatch } from "./authoring-event-batches.ts";
 
 import { OUTPUT_REQUIREMENT_EVENT_TYPES, isOutputRequirementEvent } from "../src/model/output-requirement-events.ts";
 import { outputAuthoringBlocksFromEvents, outputRequirementHeadGuard, prepareOutputRequirementClientEvents } from "./output-requirement-event-guards.ts";
+import { validateModel3dAssetEvents } from "./model3d-event-guards.ts";
+import { assistantStructuredOwnSendGuard, assistantStructuredOwnSendProjectIndexGuard, type AssistantContextReadObserver, type AssistantContextReadDescriptor, type AssistantStructuredOwnSendFootprint } from "./assistant-context-source.ts";
+import { projectSourceProjectionAssertion, projectSourceProjectionCurrentAssertion, prepareProjectSourceEventsStatement, type ProjectSourceScope } from "./project-source-read.ts";
+export { projectSourceProjectionCurrentAssertion, prepareProjectSourceEventsStatement };
+export type { ProjectSourceScope };
 
-const CONTEXT_COOKIE="forma_project_context";
 const PROJECT_EVENT_TYPES=new Set([
   ...OUTPUT_REQUIREMENT_EVENT_TYPES,
   "ProjectCreated","ProjectRenamed","ProjectStateChanged","DocumentCreated","DocumentForked","DocumentRenamed","DocumentRemoved","DocumentRestored","DocumentProductionWorkflowConfigured","EmptyCanvasChosen",
@@ -53,17 +64,13 @@ const artifactContentHoldSql=(content:string,artifact:string)=>`EXISTS(SELECT 1 
         AND retention.project_access_id=${artifact}.project_access_id AND retention.classification='governed-evidence'
     WHERE policy.organization_id=${artifact}.organization_id AND policy.legal_hold=1)`;
 
-export type ProjectRequestContext={
-  contextId:string;organizationId:string;projectAccessId:string;projectId:string;ownerUserId:string;
-  principalUserId:string;role:string;permissions:FormaCapability[];expiresAt:string;
-};
 
 /** Resolve billing only from an exact, active owner/document/tenant relationship. */
 export async function ownerDocumentBudgetScopes(env:WorkerEnv,userId:string,documentId:string,verifiedProjectId=""){
   if(!userId||!documentId)return[];
   const rows=await env.DB.prepare(`SELECT project.organization_id,project.project_access_id
     FROM organization_projects project
-    JOIN project_migration_states migration ON migration.project_access_id=project.project_access_id AND migration.organization_id=project.organization_id AND migration.status='active'
+    JOIN project_migration_states migration ON migration.project_access_id=project.project_access_id AND migration.organization_id=project.organization_id AND migration.owner_user_id=project.owner_user_id AND migration.status='active'
     JOIN organizations organization ON organization.organization_id=project.organization_id AND organization.status='active'
     JOIN organization_memberships membership ON membership.organization_id=project.organization_id AND membership.user_id=?
       AND membership.status='active' AND membership.accepted_at IS NOT NULL AND membership.revoked_at IS NULL
@@ -78,47 +85,30 @@ export async function ownerDocumentBudgetScopes(env:WorkerEnv,userId:string,docu
   return rows.results.map((row)=>({organizationId:String(row.organization_id),projectAccessId:String(row.project_access_id),actorUserId:userId}));
 }
 
-const readCookie=(request:Request,name:string)=>{
-  const value=request.headers.get("cookie")?.split(";").map((part)=>part.trim()).find((part)=>part.startsWith(`${name}=`))?.slice(name.length+1)??"";
-  try{return decodeURIComponent(value);}catch{return"";}
-};
-
-export const projectContextCookie=(request:Request,value:string,maxAge:number)=>`${CONTEXT_COOKIE}=${encodeURIComponent(value)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAge}${new URL(request.url).protocol==="https:"?"; Secure":""}`;
-
-export function rejectProjectContext(request:Request,error="project_access_revoked"){
-  return Response.json({error},{status:403,headers:{"set-cookie":projectContextCookie(request,"",0),"cache-control":"private, no-store"}});
+/** An absent context cookie is not permission to bill tenant work to a personal account. */
+export async function resolveOwnerExecutionScope(env:WorkerEnv,user:PilotUser,documentId:string,projectId:string,authority:"execute"|"author"|"read"="execute"){
+  const custody=await env.DB.prepare(`SELECT project_access_id,organization_id,owner_user_id FROM organization_projects
+    WHERE project_id=? AND (owner_user_id=? OR EXISTS(SELECT 1 FROM project_resource_scopes resource
+      WHERE resource.project_access_id=organization_projects.project_access_id AND resource.resource_kind='document'
+        AND resource.resource_id=? AND resource.owner_user_id=?)) LIMIT 2`)
+    .bind(projectId,user.userId,documentId,user.userId).all<{project_access_id:string;organization_id:string;owner_user_id:string}>();
+  const resources=await env.DB.prepare("SELECT DISTINCT project_access_id,organization_id,project_id FROM project_resource_scopes WHERE owner_user_id=? AND resource_kind='document' AND resource_id=? LIMIT 2")
+    .bind(user.userId,documentId).all<{project_access_id:string;organization_id:string;project_id:string}>();
+  const eventCustody=await env.DB.prepare("SELECT DISTINCT project_access_id,organization_id FROM project_event_scopes WHERE owner_user_id=? AND project_id=? LIMIT 2")
+    .bind(user.userId,projectId).all<{project_access_id:string;organization_id:string}>();
+  if(!custody.results.length)return{scope:undefined,denied:Boolean(resources.results.length||eventCustody.results.length)};
+  if(resources.results.some((row)=>row.project_id!==projectId||row.project_access_id!==custody.results[0].project_access_id||row.organization_id!==custody.results[0].organization_id)
+    ||eventCustody.results.some((row)=>row.project_access_id!==custody.results[0].project_access_id||row.organization_id!==custody.results[0].organization_id))return{scope:undefined,denied:true};
+  const active=authority==="execute"?await ownerDocumentBudgetScopes(env,user.userId,documentId,projectId):(await env.DB.prepare(`SELECT project.organization_id,project.project_access_id
+    FROM organization_projects project JOIN organizations organization ON organization.organization_id=project.organization_id AND organization.status='active'
+    JOIN project_migration_states migration ON migration.project_access_id=project.project_access_id AND migration.organization_id=project.organization_id AND migration.owner_user_id=project.owner_user_id AND migration.status='active'
+    JOIN organization_memberships member ON member.organization_id=project.organization_id AND member.user_id=project.owner_user_id AND member.status='active' AND member.revoked_at IS NULL AND member.accepted_at IS NOT NULL
+    WHERE project.project_id=? AND project.owner_user_id=? AND project.status='active' LIMIT 2`).bind(projectId,user.userId).all<{organization_id:string;project_access_id:string}>()).results.map((row)=>({organizationId:row.organization_id,projectAccessId:row.project_access_id,actorUserId:user.userId}));
+  if(custody.results.length!==1||active.length!==1||active[0].projectAccessId!==custody.results[0].project_access_id
+    ||!hasCapability(user,authority==="read"?"project.read":"project.author",active[0])||authority==="execute"&&!hasCapability(user,"project.output.request",active[0]))return{scope:undefined,denied:true as const};
+  return{scope:{...active[0],projectId,ownerUserId:user.userId},denied:false as const};
 }
 
-/** Resolve the opaque selection against live membership and migration state on every request. */
-export async function readProjectRequestContext(request:Request,env:WorkerEnv,principal:PilotUser):Promise<{context:ProjectRequestContext|null;response:Response|null}>{
-  const contextId=readCookie(request,CONTEXT_COOKIE);
-  if(!contextId)return{context:null,response:null};
-  if(principal.fictional||readCookie(request,"forma_impersonation"))return{context:null,response:Response.json({error:"project_context_impersonation_unavailable"},{status:409,headers:{"set-cookie":projectContextCookie(request,"",0)}})};
-  const now=new Date().toISOString();
-  const row=await env.DB.prepare(`SELECT context.context_id,context.organization_id,context.project_access_id,context.expires_at,
-      project.project_id,project.owner_user_id,CASE WHEN project.owner_user_id=? THEN 'owner' ELSE project_member.role END AS role
-    FROM project_context_sessions context
-    JOIN organization_projects project ON project.project_access_id=context.project_access_id AND project.organization_id=context.organization_id AND project.status='active'
-    JOIN project_migration_states migration ON migration.project_access_id=project.project_access_id AND migration.organization_id=project.organization_id AND migration.status='active'
-    JOIN organizations organization ON organization.organization_id=project.organization_id AND organization.status='active'
-    JOIN organization_memberships member ON member.organization_id=project.organization_id AND member.user_id=? AND member.status='active' AND member.accepted_at IS NOT NULL AND member.revoked_at IS NULL
-    JOIN organization_memberships owner_member ON owner_member.organization_id=project.organization_id AND owner_member.user_id=project.owner_user_id
-      AND owner_member.status='active' AND owner_member.accepted_at IS NOT NULL AND owner_member.revoked_at IS NULL
-    LEFT JOIN project_memberships project_member ON project_member.project_access_id=project.project_access_id AND project_member.organization_id=project.organization_id AND project_member.project_id=project.project_id AND project_member.user_id=? AND project_member.status='active' AND project_member.revoked_at IS NULL
-    WHERE context.context_id=? AND context.principal_user_id=? AND context.revoked_at IS NULL AND context.expires_at>?
-      AND (project.owner_user_id=? OR project_member.membership_id IS NOT NULL)
-      AND NOT EXISTS(SELECT 1 FROM pilot_cohorts cohort WHERE cohort.organization_id=project.organization_id AND cohort.status IN ('active','paused','closed')
-        AND (cohort.status!='closed' OR NOT EXISTS(SELECT 1 FROM pilot_cohorts successor WHERE successor.organization_id=cohort.organization_id AND successor.status IN ('active','paused')))
-        AND NOT EXISTS(SELECT 1 FROM pilot_participants participant WHERE participant.cohort_id=cohort.cohort_id AND participant.organization_id=project.organization_id
-          AND participant.user_id=? AND participant.status='active' AND participant.revoked_at IS NULL))`)
-    .bind(principal.userId,principal.userId,principal.userId,contextId,principal.userId,now,principal.userId,principal.userId).first<Record<string,unknown>>();
-  if(!row)return{context:null,response:rejectProjectContext(request)};
-  const scope={organizationId:String(row.organization_id),projectAccessId:String(row.project_access_id)};
-  if(!hasCapability(principal,"project.read",scope))return{context:null,response:rejectProjectContext(request)};
-  const permissions=FORMA_CAPABILITIES.filter((capability)=>capability.startsWith("project.")&&hasCapability(principal,capability,scope));
-  const effectiveRole=principal.access.projects.find((project)=>project.organizationId===scope.organizationId&&project.projectAccessId===scope.projectAccessId)?.role??String(row.role);
-  return{response:null,context:{contextId,organizationId:scope.organizationId,projectAccessId:scope.projectAccessId,projectId:String(row.project_id),ownerUserId:String(row.owner_user_id),principalUserId:principal.userId,role:effectiveRole,permissions,expiresAt:String(row.expires_at)}};
-}
 
 type ProjectIndex={
   projectId:string;documentIds:Set<string>;blockIds:Set<string>;relationIds:Set<string>;collectionIds:Set<string>;
@@ -183,6 +173,14 @@ const mediaKey=(value:unknown)=>{
   try{return decodeURIComponent(value.slice(prefix.length));}catch{return"";}
 };
 
+/** A generated model can contain a primary mesh, other export formats, textures and previews. */
+const artifactMediaKeys=(artifact:CreativeProjection["libraryArtifacts"][number])=>{
+  const modelFiles=artifact.kind==="model3d"&&Array.isArray(artifact.settings.model3d_files)?artifact.settings.model3d_files:[];
+  return [artifact.mediaUrl,...artifact.items.map((item)=>item.mediaUrl),...modelFiles.flatMap((file)=>
+    file&&typeof file==="object"&&!Array.isArray(file)?[(file as Record<string,unknown>).url]:[])]
+    .map(mediaKey).filter(Boolean);
+};
+
 export type ProjectPublicationResource={kind:string;id:string;visibility:"collaborative_output"|"actor_private"|"internal";sourceEventId:string|null;actorUserId:string};
 
 /** One resource mapping serves full synchronization and trusted native publication. */
@@ -197,8 +195,7 @@ export function projectPublicationResources(outputs:CreativeProjection["libraryO
   for(const artifact of artifacts){
     if(artifact.contentRef)add("content",artifact.contentRef,artifact.sourceEventId);
     if(artifact.inputRef)add("content",artifact.inputRef,artifact.sourceEventId,"actor_private");
-    if(artifact.mediaUrl)add("media",mediaKey(artifact.mediaUrl),artifact.sourceEventId);
-    for(const item of artifact.items)if(item.mediaUrl)add("media",mediaKey(item.mediaUrl),artifact.sourceEventId);
+    for(const key of new Set(artifactMediaKeys(artifact)))add("media",key,artifact.sourceEventId);
   }
   return resources;
 }
@@ -210,28 +207,65 @@ export function prepareProjectResourceScopeStatement(env:WorkerEnv,scope:Project
 }
 
 /** Reuse the ordinary event allowlist and document membership predicate. */
-export function projectDocumentPublicationEvents(events:CreativeEvent[],projectId:string,documentId:string){
+export function projectDocumentPublicationEvents(events:CreativeEvent[],projectId:string,documentId:string|null){
   const empty=new Set<string>();
-  const index:ProjectIndex={projectId,documentIds:new Set([documentId]),blockIds:empty,relationIds:empty,collectionIds:empty,outputIds:empty,artifactIds:empty,
+  const index:ProjectIndex={projectId,documentIds:new Set(documentId?[documentId]:[]),blockIds:empty,relationIds:empty,collectionIds:empty,outputIds:empty,artifactIds:empty,
     generationIds:empty,referenceIds:empty,canvasIds:empty,canvasItemIds:empty,arrangementIds:empty,contextSetIds:empty,
     canvasItemBoards:new Map(),arrangementBoards:new Map(),contextSetBoards:new Map()};
-  return events.filter((event)=>event.payload.document_id===documentId&&scopedEvent(event,index));
+  return events.filter((event)=>(documentId?event.payload.document_id===documentId:!event.payload.document_id)&&scopedEvent(event,index));
 }
 
 /** Rebuild an exact manifest from one immutable owner history; ambiguous/private rows never enter it. */
 export async function synchronizeProjectScope(env:WorkerEnv,input:{organizationId:string;projectAccessId:string;projectId:string;ownerUserId:string}){
   const ownerStream=`creative:${input.ownerUserId}`;
+  const ledgerDb=env.DB;
+  const {structuredConversationLedgerSchema}=await import("./memory-live-store.ts");
+  const ledgerSchema=await structuredConversationLedgerSchema(env);
+  const {nativeStructuredOriginSchema,nativeStructuredOriginMinimizedIntegrity}=await import("./memory-native-origin.ts");
+  const originSchema=await nativeStructuredOriginSchema(env);
+  const minimizedIntegrity=originSchema.present?nativeStructuredOriginMinimizedIntegrity():{sql:"1",bindings:[]};
+  const ledgerSchemaAssertion=()=>ledgerDb.prepare(`SELECT CASE WHEN (${ledgerSchema.guard.condition}) AND (${originSchema.guard.condition}) AND (${minimizedIntegrity.sql}) THEN 1
+    ELSE json('memory_structured_schema_changed') END AS verified`).bind(...ledgerSchema.guard.bindings,...originSchema.guard.bindings,...minimizedIntegrity.bindings);
+  const sameLedgerDatabase=()=>{if(env.DB!==ledgerDb)throw new Error("memory_structured_database_changed");};
+  // An incomplete acknowledgement is unconfirmed, not evidence that earlier chunks rolled back.
+  const confirmLedgerBatch=(results:Awaited<ReturnType<WorkerEnv["DB"]["batch"]>>,count:number)=>{
+    if(!Array.isArray(results)||results.length!==count||Array.from(results).some(result=>!result||typeof result!=="object"||Array.isArray(result)
+      ||!Object.hasOwn(result,"success")||result.success!==true||(result as typeof result & {error?: unknown}).error!==undefined
+      ||!Object.hasOwn(result,"results")||!Array.isArray(result.results)))throw new Error("project_scope_sync_unconfirmed");
+    for(const index of [0,count-1]){
+      const rows=results[index]!.results;
+      if(rows.length!==1||!rows[0]||typeof rows[0]!=="object"||Array.isArray(rows[0])
+        ||Object.keys(rows[0]).length!==1||Object.keys(rows[0])[0]!=="verified"
+        ||(rows[0] as Record<string,unknown>).verified!==1)throw new Error("project_scope_sync_unconfirmed");
+    }
+    for(let index=1;index<count-1;index++){
+      const result=results[index]!,meta=result.meta,changes=meta?.changes;
+      if(!Object.hasOwn(result,"meta")||!meta||typeof meta!=="object"||Array.isArray(meta)||!Object.hasOwn(meta,"changes")
+        ||!Number.isSafeInteger(changes)||Number(changes)<0)throw new Error("project_scope_sync_unconfirmed");
+    }
+  };
+  sameLedgerDatabase();
+  // Canonical minimized headers grant no custody, and their removed scope fields
+  // are never interpreted as personal scope. Reject recreated answer/manifest
+  // bodies or sidecars even when the ordinary project fast path would return.
+  // The user's original authored content is deliberately outside this proof.
+  const originIntegrity=await ledgerSchemaAssertion().all();
+  sameLedgerDatabase();
+  confirmLedgerBatch([originIntegrity],1);
   // The fast-path decision and its exact custody counts share one SQLite snapshot.
-  const state=await env.DB.prepare(`SELECT migration.status,migration.last_owner_sequence,
+  const state=await env.DB.prepare(`SELECT CASE WHEN (${ledgerSchema.guard.condition}) AND (${originSchema.guard.condition}) AND (${minimizedIntegrity.sql}) THEN 1
+      ELSE json('memory_structured_schema_changed') END AS origin_integrity,migration.status,migration.last_owner_sequence,
     (SELECT COALESCE(MAX(sequence),0) FROM events WHERE stream_id=?) AS owner_head,
     (SELECT COALESCE(MAX(project_sequence),0) FROM project_event_scopes WHERE project_access_id=? AND organization_id=? AND project_id=? AND owner_user_id=?) AS event_count,
     (SELECT COUNT(*) FROM project_resource_scopes WHERE project_access_id=? AND organization_id=? AND project_id=? AND owner_user_id=? AND resource_kind='document') AS document_count,
     EXISTS(SELECT 1 FROM project_resource_scopes WHERE project_access_id=? AND organization_id=? AND project_id=? AND owner_user_id=? AND resource_kind='manifest_version' AND resource_id='canvas-v1') AS manifest_current
     FROM project_migration_states migration WHERE migration.project_access_id=? AND migration.organization_id=? AND migration.owner_user_id=?`)
-    .bind(ownerStream,input.projectAccessId,input.organizationId,input.projectId,input.ownerUserId,
+    .bind(...ledgerSchema.guard.bindings,...originSchema.guard.bindings,...minimizedIntegrity.bindings,ownerStream,input.projectAccessId,input.organizationId,input.projectId,input.ownerUserId,
       input.projectAccessId,input.organizationId,input.projectId,input.ownerUserId,input.projectAccessId,input.organizationId,input.projectId,input.ownerUserId,
       input.projectAccessId,input.organizationId,input.ownerUserId)
-    .first<{status:string;last_owner_sequence:number;owner_head:number;event_count:number;document_count:number;manifest_current:number}>();
+    .first<{origin_integrity:number;status:string;last_owner_sequence:number;owner_head:number;event_count:number;document_count:number;manifest_current:number}>();
+  sameLedgerDatabase();
+  if(state&&state.origin_integrity!==1)throw new Error("project_scope_sync_unconfirmed");
   if(state?.status==="active"&&Number(state.last_owner_sequence)===Number(state.owner_head)&&Number(state.manifest_current)===1)
     return{eventCount:Number(state.event_count),documentCount:Number(state.document_count)};
   const events=await readEvents(env,ownerStream);
@@ -248,13 +282,89 @@ export async function synchronizeProjectScope(env:WorkerEnv,input:{organizationI
   const outputIds=new Set(projectOutputs.map((output)=>output.id));
   const artifactIds=new Set(projectArtifacts.map((artifact)=>artifact.id));
   const generationIds=new Set(projectOutputs.map((output)=>output.generationId).filter(Boolean));
-  const referenceIds=new Set(projection.libraryBlocks.map((block)=>String(block.properties.reference_id??"")).filter(Boolean));
-  const referenceMedia=projection.libraryBlocks.map((block)=>({key:mediaKey(block.properties.media_url),sourceEventId:block.sourceEvents.at(-1)??null})).filter((item)=>item.key);
+  const referenceIds=new Set(projection.libraryBlocks.flatMap((block)=>[block.properties.reference_id,block.properties.model_reference_id]).map((value)=>String(value??"")).filter(Boolean));
+  const referenceMedia=projection.libraryBlocks.flatMap((block)=>[block.properties.media_url,block.properties.model_url]
+    .map((url)=>({key:mediaKey(url),sourceEventId:block.sourceEvents.at(-1)??null}))).filter((item)=>item.key);
+  // Preserve custody, not read authority: historical/retiring revision bodies may still await held-data cleanup.
+  // Matching stored hashes are not proof of the body bytes; the ledger reader independently verifies them.
+  const structuredLedgerCustody=ledgerSchema.present?`EXISTS(SELECT 1 FROM memory_structured_conversation_heads ledger_head
+    JOIN memory_structured_conversation_revisions ledger_revision ON ledger_revision.ledger_id=ledger_head.ledger_id
+    JOIN private_content ledger_body ON ledger_body.content_id=ledger_revision.body_ref
+    JOIN private_content_retention_scopes ledger_retention ON ledger_retention.content_id=ledger_body.content_id
+    WHERE resource.resource_kind='content' AND resource.visibility='actor_private'
+      AND (ledger_head.actor_user_id,ledger_head.owner_user_id,ledger_head.organization_id,ledger_head.project_access_id,ledger_head.project_id)
+        IS (resource.actor_user_id,resource.owner_user_id,resource.organization_id,resource.project_access_id,resource.project_id)
+      AND ledger_head.actor_user_id=ledger_head.owner_user_id AND ledger_head.state IN('active','retiring')
+      AND ledger_revision.revision>0 AND ledger_revision.revision<=ledger_head.storage_revision
+      AND ledger_revision.schema_version=1 AND ledger_revision.recipe_version='native-declared-ledger-v1'
+      AND ledger_body.content_id=resource.resource_id AND ledger_body.kind='memory-structured-ledger'
+      AND ledger_body.owner_id=ledger_head.actor_user_id AND ledger_body.created_at=ledger_revision.created_at
+      AND (typeof(ledger_body.expires_at)='text' AND length(ledger_body.expires_at)=24
+        AND strftime('%Y-%m-%dT%H:%M:%fZ',ledger_body.expires_at)=ledger_body.expires_at)
+      AND (typeof(ledger_revision.expires_at)='text' AND length(ledger_revision.expires_at)=24
+        AND strftime('%Y-%m-%dT%H:%M:%fZ',ledger_revision.expires_at)=ledger_revision.expires_at)
+      AND ledger_body.expires_at<=ledger_revision.expires_at
+      AND (ledger_retention.organization_id,ledger_retention.project_access_id,ledger_retention.project_id,ledger_retention.actor_user_id)
+        IS (resource.organization_id,resource.project_access_id,resource.project_id,resource.actor_user_id)
+      AND ledger_retention.classification='transient-private' AND typeof(ledger_retention.policy_version)='integer'
+      AND ledger_retention.policy_version BETWEEN 0 AND 9007199254740991 AND ledger_retention.created_at=ledger_body.created_at
+      AND (typeof(ledger_retention.assigned_expires_at)='text' AND length(ledger_retention.assigned_expires_at)=24
+        AND strftime('%Y-%m-%dT%H:%M:%fZ',ledger_retention.assigned_expires_at)=ledger_retention.assigned_expires_at)
+      AND ledger_retention.assigned_expires_at<=ledger_revision.expires_at)`:'0';
+  // Durable origin headers retain custody independently of removed ledger/enrollment
+  // rows. This does not restore answer visibility or validate manifest prose.
+  const structuredOriginCustody=originSchema.present?`EXISTS(SELECT 1 FROM memory_structured_answer_origins origin
+    JOIN private_content origin_body ON origin_body.content_id IN(origin.answer_content_id,origin.manifest_content_ref)
+    JOIN private_content_retention_scopes origin_retention ON origin_retention.content_id=origin_body.content_id
+    WHERE resource.resource_kind='content' AND resource.visibility='actor_private'
+      AND (origin.actor_user_id,origin.owner_user_id,origin.organization_id,origin.project_access_id,origin.project_id)
+        IS (resource.actor_user_id,resource.owner_user_id,resource.organization_id,resource.project_access_id,resource.project_id)
+      AND origin.schema_version=1 AND origin.recipe_version='native-structured-answer-origin-v1' AND origin.status IN('active','withdrawn')
+      AND origin_body.content_id=resource.resource_id AND origin_body.owner_id=origin.actor_user_id
+      AND origin_body.kind=CASE WHEN origin_body.content_id=origin.manifest_content_ref THEN 'memory-structured-origin' ELSE 'chat-assistant-memory' END
+      AND origin_body.created_at=origin.created_at AND resource.created_at=origin.created_at AND resource.source_event_id IS NULL
+      AND typeof(origin.created_at)='text' AND length(origin.created_at)=24 AND strftime('%Y-%m-%dT%H:%M:%fZ',origin.created_at)=origin.created_at
+      AND typeof(origin_body.expires_at)='text' AND length(origin_body.expires_at)=24 AND strftime('%Y-%m-%dT%H:%M:%fZ',origin_body.expires_at)=origin_body.expires_at
+      AND typeof(origin.source_retention_ceiling)='text' AND length(origin.source_retention_ceiling)=24
+        AND strftime('%Y-%m-%dT%H:%M:%fZ',origin.source_retention_ceiling)=origin.source_retention_ceiling
+      AND typeof(origin.answer_expires_at)='text' AND length(origin.answer_expires_at)=24
+        AND strftime('%Y-%m-%dT%H:%M:%fZ',origin.answer_expires_at)=origin.answer_expires_at
+      AND typeof(origin.manifest_expires_at)='text' AND length(origin.manifest_expires_at)=24
+        AND strftime('%Y-%m-%dT%H:%M:%fZ',origin.manifest_expires_at)=origin.manifest_expires_at
+      AND origin_body.expires_at<=origin.source_retention_ceiling
+      AND origin_body.expires_at<=CASE WHEN origin_body.content_id=origin.manifest_content_ref THEN origin.manifest_expires_at ELSE origin.answer_expires_at END
+      AND (origin_retention.organization_id,origin_retention.project_access_id,origin_retention.project_id,origin_retention.actor_user_id)
+        IS (resource.organization_id,resource.project_access_id,resource.project_id,resource.actor_user_id)
+      AND origin_retention.classification='transient-private' AND typeof(origin_retention.policy_version)='integer'
+      AND origin_retention.policy_version BETWEEN 0 AND 9007199254740991 AND origin_retention.created_at=origin_body.created_at
+      AND typeof(origin_retention.assigned_expires_at)='text' AND length(origin_retention.assigned_expires_at)=24
+        AND strftime('%Y-%m-%dT%H:%M:%fZ',origin_retention.assigned_expires_at)=origin_retention.assigned_expires_at
+      AND origin_retention.assigned_expires_at<=origin.source_retention_ceiling
+      AND origin_retention.assigned_expires_at<=CASE WHEN origin_body.content_id=origin.manifest_content_ref THEN origin.manifest_expires_at ELSE origin.answer_expires_at END)`:'0';
   const previousResources=await env.DB.prepare(`SELECT resource.resource_kind,resource.resource_id,resource.source_event_id,resource.actor_user_id,
+    ${structuredLedgerCustody} AS private_structured_ledger,
+    ${structuredOriginCustody} AS private_structured_origin,
     CASE WHEN retained.content_id IS NULL THEN 0 ELSE 1 END AS private_provider_response
     FROM project_resource_scopes resource LEFT JOIN private_content retained ON resource.resource_kind='content'
       AND retained.content_id=resource.resource_id AND retained.owner_id=resource.actor_user_id
-      AND(retained.kind IN('provider-response','assistant-action') OR retained.kind IN('document-artifact-input','activity-issue-note') AND json_valid(retained.content)=1
+      AND(retained.kind IN('provider-response','assistant-action')
+        OR retained.kind IN('chat-user','chat-assistant','chat-assistant-memory') AND resource.visibility='actor_private' AND retained.expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now')
+          AND EXISTS(SELECT 1 FROM private_content_retention_scopes conversation
+            JOIN organization_projects current_project ON current_project.project_access_id=conversation.project_access_id
+              AND current_project.organization_id=conversation.organization_id AND current_project.project_id=conversation.project_id
+              AND current_project.owner_user_id=resource.owner_user_id AND current_project.status='active'
+            JOIN organizations current_organization ON current_organization.organization_id=current_project.organization_id AND current_organization.status='active'
+            JOIN organization_memberships current_actor ON current_actor.organization_id=current_project.organization_id AND current_actor.user_id=resource.actor_user_id
+              AND current_actor.status='active' AND current_actor.accepted_at IS NOT NULL AND current_actor.revoked_at IS NULL
+            WHERE conversation.content_id=retained.content_id AND conversation.organization_id=resource.organization_id
+              AND conversation.project_access_id=resource.project_access_id AND conversation.project_id=resource.project_id
+              AND conversation.actor_user_id=resource.actor_user_id AND conversation.classification='transient-private')
+        OR retained.kind IN('execution-consent','context-proposal','authoring-preview') AND resource.visibility='actor_private'
+          AND EXISTS(SELECT 1 FROM private_content_retention_scopes governed WHERE governed.content_id=retained.content_id
+            AND governed.organization_id=resource.organization_id AND governed.project_access_id=resource.project_access_id
+            AND governed.project_id=resource.project_id AND governed.actor_user_id=resource.actor_user_id
+            AND governed.classification='governed-evidence')
+        OR retained.kind IN('document-artifact-input','activity-issue-note') AND json_valid(retained.content)=1
         AND EXISTS(SELECT 1 FROM project_resource_scopes anchored JOIN document_jobs job ON job.job_id=anchored.resource_id
           WHERE anchored.resource_kind='job' AND anchored.project_access_id=resource.project_access_id
             AND anchored.organization_id=resource.organization_id AND anchored.project_id=resource.project_id
@@ -269,7 +379,7 @@ export async function synchronizeProjectScope(env:WorkerEnv,input:{organizationI
                 AND json_extract(issue_note.payload,'$.document_id')=job.document_id))))
       AND retained.redacted_at IS NULL AND retained.expires_at>?
     WHERE resource.project_access_id=? AND resource.organization_id=?`)
-    .bind(new Date().toISOString(),input.projectAccessId,input.organizationId).all<{resource_kind:string;resource_id:string;source_event_id:string|null;actor_user_id:string;private_provider_response:number}>();
+    .bind(new Date().toISOString(),input.projectAccessId,input.organizationId).all<{resource_kind:string;resource_id:string;source_event_id:string|null;actor_user_id:string;private_structured_ledger:number;private_structured_origin:number;private_provider_response:number}>();
   const actorJobs=previousResources.results.filter((resource)=>resource.resource_kind==="job");
   const actorByJobCorrelation=new Map<string,string>();
   if(actorJobs.length){
@@ -339,12 +449,13 @@ export async function synchronizeProjectScope(env:WorkerEnv,input:{organizationI
   let sequence=Number(existing.results.at(-1)?.project_sequence??0);
   const now=new Date().toISOString();
   const statements:D1PreparedStatement[]=[];
+  const retainedResourceKeys=new Set(previousResources.results.map((resource)=>`${resource.resource_kind}\u0000${resource.resource_id}`));
   const activeResources=new Map<string,Set<string>>([
     ["project",new Set([input.projectId])],["document",documentIds],["block",blockIds],["relation",relationIds],
     ["collection",collectionIds],["output",outputIds],["artifact",artifactIds],["reference",referenceIds],["canvas",canvasIds],
     ["canvas_item",canvasItemIds],["canvas_arrangement",arrangementIds],["canvas_context",contextSetIds],["manifest_version",new Set(["canvas-v1"])],
-    ["content",new Set([...projectArtifacts.flatMap((artifact)=>[artifact.contentRef,artifact.inputRef]).filter((value):value is string=>Boolean(value)),...conversationContent.map((item)=>item.id),...previousResources.results.filter((resource)=>resource.resource_kind==="content"&&(resource.actor_user_id!==input.ownerUserId||resource.private_provider_response===1)).map((resource)=>resource.resource_id)])],
-    ["media",new Set([...projectOutputs.map((output)=>mediaKey(output.mediaUrl)),...projectArtifacts.flatMap((artifact)=>[mediaKey(artifact.mediaUrl),...artifact.items.map((item)=>mediaKey(item.mediaUrl))]),...referenceMedia.map((item)=>item.key)].filter(Boolean))],
+    ["content",new Set([...projectOutputs.flatMap((output)=>[output.contentRef,output.promptRef]).filter((value):value is string=>Boolean(value)),...projectArtifacts.flatMap((artifact)=>[artifact.contentRef,artifact.inputRef]).filter((value):value is string=>Boolean(value)),...conversationContent.map((item)=>item.id),...previousResources.results.filter((resource)=>resource.resource_kind==="content"&&(resource.actor_user_id!==input.ownerUserId||resource.private_provider_response===1||resource.private_structured_ledger===1||resource.private_structured_origin===1)).map((resource)=>resource.resource_id)])],
+    ["media",new Set([...projectOutputs.map((output)=>mediaKey(output.mediaUrl)),...projectArtifacts.flatMap(artifactMediaKeys),...referenceMedia.map((item)=>item.key)].filter(Boolean))],
   ]);
   for(const resource of previousResources.results){
     if(resource.resource_kind==="job"||resource.resource_kind==="share")continue;
@@ -355,12 +466,22 @@ export async function synchronizeProjectScope(env:WorkerEnv,input:{organizationI
         .bind(input.projectAccessId,resource.resource_id,new Date(Date.now()-15*60_000).toISOString()).first();
       if(pending)continue;
     }
+    retainedResourceKeys.delete(`${resource.resource_kind}\u0000${resource.resource_id}`);
     statements.push(env.DB.prepare("DELETE FROM project_resource_scopes WHERE project_access_id=? AND organization_id=? AND resource_kind=? AND resource_id=?")
       .bind(input.projectAccessId,input.organizationId,resource.resource_kind,resource.resource_id));
   }
   const insertResource=(kind:string,id:string,visibility:ProjectPublicationResource["visibility"]="collaborative_output",sourceEventId:string|null=null,actorUserId=input.ownerUserId)=>{
-    if(!id)return;
-    statements.push(prepareProjectResourceScopeStatement(env,input,{kind,id,visibility,sourceEventId,actorUserId},now));
+    const key=`${kind}\u0000${id}`;
+    if(!id||retainedResourceKeys.has(key))return; // The shared publication helper's INSERT OR IGNORE would be a no-op.
+    retainedResourceKeys.add(key);
+    // Old conversation/output references cannot recreate a minimized answer's
+    // permission row. The live before/after integrity proof also rejects any
+    // concurrent or trigger-created residue; original user content is unchanged.
+    statements.push(originSchema.present&&kind==="content"?env.DB.prepare(`INSERT OR IGNORE INTO project_resource_scopes(project_access_id,resource_kind,resource_id,organization_id,project_id,owner_user_id,visibility,source_event_id,actor_user_id,created_at)
+      SELECT ?,?,?,?,?,?,?,?,?,? WHERE NOT EXISTS(SELECT 1 FROM memory_structured_answer_origins origin
+        WHERE origin.status='minimized' AND (origin.answer_content_id=? OR origin.manifest_content_ref=?))`)
+      .bind(input.projectAccessId,kind,id,input.organizationId,input.projectId,input.ownerUserId,visibility,sourceEventId,actorUserId,now,id,id)
+      :prepareProjectResourceScopeStatement(env,input,{kind,id,visibility,sourceEventId,actorUserId},now));
   };
   insertResource("project",input.projectId);
   for(const id of documentIds)insertResource("document",id);
@@ -388,9 +509,15 @@ export async function synchronizeProjectScope(env:WorkerEnv,input:{organizationI
     statements.push(env.DB.prepare("INSERT OR IGNORE INTO project_event_scopes(event_id,project_access_id,organization_id,project_id,owner_user_id,source_stream_id,source_sequence,project_sequence,actor_user_id,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)")
       .bind(event.eventId,input.projectAccessId,input.organizationId,input.projectId,input.ownerUserId,ownerStream,event.sequence,sequence,attributedActor,now));
   }
-  for(let offset=0;offset<statements.length;offset+=75)await env.DB.batch(statements.slice(offset,offset+75));
+  for(let offset=0;offset<statements.length;offset+=75){
+    sameLedgerDatabase();
+    const chunk=statements.slice(offset,offset+75);
+    const results=await ledgerDb.batch([ledgerSchemaAssertion(),...chunk,ledgerSchemaAssertion()]);
+    sameLedgerDatabase();
+    confirmLedgerBatch(results,chunk.length+2);
+  }
   const ownerHead=events.at(-1)?.sequence??0;
-  const activated=await env.DB.prepare(`INSERT INTO project_migration_states(project_access_id,organization_id,owner_user_id,status,last_owner_sequence,updated_at)
+  const activation=env.DB.prepare(`INSERT INTO project_migration_states(project_access_id,organization_id,owner_user_id,status,last_owner_sequence,updated_at)
     SELECT ?,?,?,'active',?,? WHERE EXISTS(SELECT 1 FROM organization_projects project
       JOIN organizations organization ON organization.organization_id=project.organization_id AND organization.status='active'
       JOIN organization_memberships owner ON owner.organization_id=project.organization_id AND owner.user_id=project.owner_user_id
@@ -400,8 +527,13 @@ export async function synchronizeProjectScope(env:WorkerEnv,input:{organizationI
     ON CONFLICT(project_access_id) DO UPDATE SET status='active',last_owner_sequence=excluded.last_owner_sequence,updated_at=excluded.updated_at
       WHERE project_migration_states.organization_id=excluded.organization_id
         AND project_migration_states.owner_user_id=excluded.owner_user_id`)
-    .bind(input.projectAccessId,input.organizationId,input.ownerUserId,ownerHead,now,input.projectAccessId,input.organizationId,input.ownerUserId).run();
-  if(Number(activated.meta.changes??0)!==1)throw new Error("project_owner_authorization_changed");
+    .bind(input.projectAccessId,input.organizationId,input.ownerUserId,ownerHead,now,input.projectAccessId,input.organizationId,input.ownerUserId);
+  sameLedgerDatabase();
+  const activationResults=await ledgerDb.batch([ledgerSchemaAssertion(),activation,ledgerSchemaAssertion()]);
+  sameLedgerDatabase();
+  confirmLedgerBatch(activationResults,3);
+  const activated=activationResults[1];
+  if(Number(activated?.meta.changes??0)!==1)throw new Error("project_owner_authorization_changed");
   return{eventCount:sequence,documentCount:documentIds.size};
 }
 
@@ -430,9 +562,9 @@ function redactProjectPayload(payload:Record<string,unknown>,contentIds:Set<stri
     if(!value||typeof value!=="object")return value;
     const safe:Record<string,unknown>={};
     for(const [key,item] of Object.entries(value as Record<string,unknown>)){
-      if(/prompt|input_ref|planner_input|chat|attention|taste|authorization|credential|standing_constraints|preference_id|source_event_refs|evidence_refs|provider_(?:status|response|cancel)_url|provider_request|provider_response|(?:video|audio)_input_receipt|artifact_plan/i.test(key))continue;
+      if(key==="model3d_current_projection"||/prompt|input_ref|planner_input|chat|attention|taste|authorization|credential|standing_constraints|preference_id|source_event_refs|evidence_refs|provider_(?:status|response|cancel)_url|provider_request|provider_response|(?:video|audio)_input_receipt|artifact_plan/i.test(key))continue;
       if(key==="content_ref"&&!contentIds.has(String(item)))continue;
-      if((key==="media_url"||key==="source_ref")&&typeof item==="string"&&mediaKey(item)&&!activeResources.get("media")?.has(mediaKey(item)))continue;
+      if(typeof item==="string"&&mediaKey(item)&&!activeResources.get("media")?.has(mediaKey(item)))continue;
       safe[key]=redact(item);
     }
     return safe;
@@ -440,78 +572,297 @@ function redactProjectPayload(payload:Record<string,unknown>,contentIds:Set<stri
   return redact(payload) as Record<string,unknown>;
 }
 
-function presentProjectEvent(row:Record<string,unknown>,context:ProjectRequestContext,activeResources:Map<string,Set<string>>,contentIds=new Set<string>()){
+type ProjectPresentationResources=Map<string,Set<string>>&{retiredCanvasItems:Set<string>};
+
+/** A read-only current-file witness from one already-authorized page snapshot.
+ * No historical URL is restored and metadata-only readers never hydrate bodies. */
+async function projectModel3dCurrentProjections(rows:Record<string,unknown>[],context:ProjectRequestContext,
+  active:ProjectPresentationResources,resources:Record<string,unknown>[],contents:Record<string,unknown>[]){
+  const result=new Map<string,Model3dCurrentProjection>();
+  const resource=(kind:string,id:string,artifactId:string,documentId:string,contentRef:string)=>{
+    const matches=resources.filter(row=>row.resource_kind===kind&&row.resource_id===id&&row.visibility==="collaborative_output"
+      &&row.publication_project_id===context.projectId&&typeof row.publication_source_event_id==="string"&&row.publication_source_event_id
+      &&row.publication_event_id===row.publication_source_event_id&&row.publication_artifact_id===artifactId
+      &&row.publication_document_id===documentId&&row.publication_content_ref===contentRef&&row.publication_source_project_id===context.projectId);
+    return matches.length===1?matches[0]:null;
+  };
+  for(const row of rows){
+    const event=serializeEvent(row),p=event.payload;
+    if(event.type!=="DocumentArtifactEdited"||row.model3d_current_edit_id!==event.eventId)continue;
+    let operational:Record<string,unknown>;
+    try{const value:unknown=typeof row.payload==="string"?JSON.parse(row.payload):row.payload;
+      if(!value||typeof value!=="object"||Array.isArray(value))continue;operational=value as Record<string,unknown>;}catch{continue;}
+    if(["artifact_id","artifact_kind","document_id","project_id","content_ref","revision","content_sha256"].some(key=>operational[key]!==p[key]))continue;
+    const artifactId=String(p.artifact_id??"");
+    if(event.streamId!==`creative:${context.ownerUserId}`||p.artifact_kind!=="model3d"||p.project_id!==context.projectId
+      ||typeof p.document_id!=="string"||!active.get("document")?.has(p.document_id)
+      ||typeof p.content_ref!=="string"||!active.get("artifact")?.has(artifactId)||!active.get("content")?.has(p.content_ref)
+      ||!Number.isSafeInteger(p.revision)||Number(p.revision)<1||typeof p.content_sha256!=="string"||!(/^[a-f0-9]{64}$/u).test(p.content_sha256)
+      ||Object.hasOwn(p,"audio_revision")||Object.hasOwn(p,"video_revision"))continue;
+    const revision=parseModel3dMediaRevision(p.model3d_revision);if(!revision||revision.source.revision>=Number(p.revision))continue;
+    const key=mediaKey(revision.media.url);if(!key||!active.get("media")?.has(key))continue;
+    const artifactScope=resource("artifact",artifactId,artifactId,p.document_id,p.content_ref),contentScope=resource("content",p.content_ref,artifactId,p.document_id,p.content_ref),mediaScope=resource("media",key,artifactId,p.document_id,p.content_ref);
+    if(!artifactScope||!contentScope||!mediaScope||artifactScope.publication_source_event_id!==contentScope.publication_source_event_id
+      ||artifactScope.publication_source_event_id!==mediaScope.publication_source_event_id)continue;
+    const bodies=contents.filter(value=>value.content_id===p.content_ref);
+    if(bodies.length!==1)continue;
+    // Metadata-only pages already select the immutable private event receipt.
+    // Scope association qualifies display; it grants no review/write authority.
+    // Content pages additionally bind the exact current authored bytes.
+    if(typeof bodies[0]!.content==="string"){
+      if(bodies[0]!.publication_project_id!==context.projectId||bodies[0]!.publication_source_event_id!==artifactScope.publication_source_event_id)continue;
+      const raw=bodies[0]!.content as string;let body:Record<string,unknown>;
+      try{const parsed:unknown=JSON.parse(raw);if(!parsed||typeof parsed!=="object"||Array.isArray(parsed))continue;body=parsed as Record<string,unknown>;}catch{continue;}
+      if(!Array.isArray(body.items)||body.items.length!==0||body.presentation!==null||Object.hasOwn(body,"audio_revision")||Object.hasOwn(body,"video_revision"))continue;
+      const authored=parseModel3dMediaRevision(body.model3d_revision);
+      if(!authored||JSON.stringify(authored)!==JSON.stringify(revision))continue;
+      const digest=Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256",new TextEncoder().encode(raw))),byte=>byte.toString(16).padStart(2,"0")).join("");
+      if(digest!==p.content_sha256)continue;
+    }
+    const projection=parseModel3dCurrentProjection({schemaVersion:1,revision:p.revision,contentSha256:p.content_sha256,media:revision.media});
+    if(projection)result.set(event.eventId,projection);
+  }
+  return result;
+}
+
+function presentProjectEvent(row:Record<string,unknown>,context:ProjectRequestContext,activeResources:ProjectPresentationResources,contentIds=new Set<string>(),model3dCurrent?:Model3dCurrentProjection){
   const event=serializeEvent(row);
   const privateConversation=event.type==="ChatMessageSent"||event.type==="AssistantReasoned"&&event.payload.operation==="creative-chat";
-  if(PROJECT_CANVAS_MUTATION_TYPES.has(event.type)&&!context.permissions.includes("project.canvas.use")||privateConversation&&String(row.actor_user_id)!==context.principalUserId)
+  const payload=event.payload,operation=payload.operation&&typeof payload.operation==="object"?payload.operation as Record<string,unknown>:{};
+  const object=operation.object&&typeof operation.object==="object"?operation.object as Record<string,unknown>:{};
+  const sketch=operation.sketch&&typeof operation.sketch==="object"?operation.sketch as Record<string,unknown>:{};
+  const itemIds=[payload.item_id,payload.reference_item_id,object.item_id,sketch.item_id].filter(value=>value!==null&&value!==undefined).map(String);
+  const missingCanvasSource=PROJECT_CANVAS_MUTATION_TYPES.has(event.type)&&(
+    Boolean(payload.canvas_id&&!activeResources.get("canvas")?.has(String(payload.canvas_id)))
+    ||itemIds.some(id=>!activeResources.get("canvas_item")?.has(id))
+    ||Boolean(object.block_id&&(!activeResources.get("block")?.has(String(object.block_id))||activeResources.retiredCanvasItems.has(String(object.block_id))))
+    ||Boolean(payload.arrangement_id&&!activeResources.get("canvas_arrangement")?.has(String(payload.arrangement_id)))
+    ||Boolean(payload.context_set_id&&!activeResources.get("canvas_context")?.has(String(payload.context_set_id))));
+  // A removed:true placement still creates a visible item in the Canvas fold.
+  // Withhold the event type as well as its copied private presentation instead.
+  // Real removal events keep their redacted IDs so incremental clients can
+  // still remove previously rendered objects; they never recreate an item.
+  if(missingCanvasSource&&!["CanvasRemoved","CanvasItemRemoved","CanvasArrangementRemoved"].includes(event.type)
+    ||PROJECT_CANVAS_MUTATION_TYPES.has(event.type)&&!context.permissions.includes("project.canvas.use")||privateConversation&&String(row.actor_user_id)!==context.principalUserId)
     return{...event,streamId:`project:${context.projectAccessId}`,sequence:Number(row.project_sequence),actor:`user:${String(row.actor_user_id)}`,type:"ProjectResourceRestricted",payload:{project_id:context.projectId,restricted:true}};
   const visibleContent=privateConversation?new Set([...contentIds,String(event.payload.content_ref??"")]):contentIds;
-  return{...event,streamId:`project:${context.projectAccessId}`,sequence:Number(row.project_sequence),actor:event.actor.startsWith("user")?`user:${String(row.actor_user_id)}`:event.actor,payload:redactProjectPayload(event.payload,visibleContent,activeResources)};
+  const presentedPayload=missingCanvasSource?{project_id:context.projectId,
+    ...(payload.canvas_id?{canvas_id:String(payload.canvas_id)}:{}),
+    ...(payload.item_id?{item_id:String(payload.item_id)}:{}),
+    ...(payload.arrangement_id?{arrangement_id:String(payload.arrangement_id)}:{}),removed:true}
+    :redactProjectPayload(event.payload,visibleContent,activeResources);
+  if(model3dCurrent)presentedPayload.model3d_current_projection=model3dCurrent;
+  return{...event,streamId:`project:${context.projectAccessId}`,sequence:Number(row.project_sequence),actor:event.actor.startsWith("user")?`user:${String(row.actor_user_id)}`:event.actor,payload:presentedPayload};
+}
+
+/** Same-snapshot structural witnesses for shared Canvas presentation. Observed
+ * reads retain raw provenance only for server-local final-response validation;
+ * resourceIndex and event serialization never expose it. */
+function prepareProjectPresentationResources(env:WorkerEnv,context:ProjectRequestContext,observed=false,descriptors?:AssistantContextReadDescriptor[],model3dPublication=false){
+  const body="COALESCE(secret.private_json,source.payload)";
+  const provenance=observed?`,json_array(resource.project_access_id,resource.resource_kind,resource.resource_id,resource.organization_id,resource.project_id,
+    resource.owner_user_id,resource.visibility,resource.source_event_id,resource.actor_user_id,resource.created_at) AS source_resource_record,
+    CASE WHEN source.event_id IS NULL THEN NULL ELSE json_array(source.event_id,source.stream_id,source.sequence,source.occurred_at,source.recorded_at,
+      source.actor,source.client_id,source.correlation_id,source.causation_id,source.compensates_event_id,source.schema_version,source.type,source.payload) END AS source_event_record,
+    CASE WHEN custody.event_id IS NULL THEN NULL ELSE json_array(custody.event_id,custody.project_access_id,custody.organization_id,custody.project_id,
+      custody.owner_user_id,custody.source_stream_id,custody.source_sequence,custody.project_sequence,custody.actor_user_id,custody.created_at) END AS source_custody_record,
+    CASE WHEN secret.private_event_id IS NULL THEN NULL ELSE json_array(secret.private_event_id,secret.owner_id,secret.project_id,secret.document_id,
+      secret.private_json,secret.created_at,secret.redacted_at) END AS source_private_record`:"";
+  const sql=`SELECT resource.resource_kind,resource.resource_id,resource.visibility,${model3dPublication?`
+    resource.source_event_id AS publication_source_event_id,resource.project_id AS publication_project_id,
+    publication.event_id AS publication_event_id,json_extract(publication.payload,'$.artifact_id') AS publication_artifact_id,
+    json_extract(publication.payload,'$.document_id') AS publication_document_id,json_extract(publication.payload,'$.content_ref') AS publication_content_ref,
+    json_extract(publication.payload,'$.project_id') AS publication_source_project_id,`:""}
+    CASE WHEN custody.event_id IS NOT NULL AND(source.payload IS NOT NULL)
+      AND(json_extract(source.payload,'$._private_ref') IS NULL OR secret.private_event_id IS NOT NULL) THEN source.type ELSE NULL END AS source_type,
+    json_extract(${body},'$.canvas_id') AS source_canvas_id,
+    json_extract(${body},'$.item_id') AS source_item_id,json_extract(${body},'$.reference_item_id') AS source_reference_item_id,
+    json_extract(${body},'$.arrangement_id') AS source_arrangement_id,json_extract(${body},'$.context_set_id') AS source_context_set_id,
+    json_extract(${body},'$.source_kind') AS source_kind,json_extract(${body},'$.source_id') AS source_id,
+    json_extract(${body},'$.block_id') AS source_block_id,json_extract(${body},'$.document_id') AS source_document_id,
+    json_extract(${body},'$.object_id') AS source_object_id,json_extract(${body},'$.item_ids') AS source_item_ids,
+    (SELECT json_group_array(CASE WHEN frame.type='object' THEN json_extract(frame.value,'$.item_id') ELSE NULL END)
+      FROM json_each(CASE WHEN source.type='CanvasArrangementCreated' THEN ${body} ELSE '{}' END,'$.frames') frame) AS source_frame_ids,
+    (SELECT json_group_array(CASE WHEN frame.type='object' THEN json_extract(frame.value,'$.item_id') ELSE NULL END)
+      FROM json_each(CASE WHEN source.type='CanvasArrangementCreated' THEN ${body} ELSE '{}' END,'$.previous_frames') frame) AS source_previous_frame_ids${provenance}
+    FROM project_resource_scopes resource${model3dPublication?`
+    LEFT JOIN events publication ON publication.event_id=resource.source_event_id AND publication.stream_id='creative:'||resource.owner_user_id
+      AND publication.type='DocumentRenderCompleted' AND json_extract(publication.payload,'$.artifact_kind')='model3d'
+      AND resource.resource_kind IN('artifact','content','media')`:""}
+    LEFT JOIN events source ON source.event_id=resource.source_event_id AND source.stream_id='creative:'||resource.owner_user_id
+      AND resource.resource_kind IN('canvas','canvas_item','canvas_context','canvas_arrangement')
+    LEFT JOIN project_event_scopes custody ON custody.event_id=source.event_id
+      AND(custody.project_access_id,custody.organization_id,custody.project_id,custody.owner_user_id,custody.source_stream_id,custody.source_sequence)
+        =(resource.project_access_id,resource.organization_id,resource.project_id,resource.owner_user_id,source.stream_id,source.sequence)
+    LEFT JOIN event_private_payloads secret ON secret.private_event_id=source.event_id AND secret.owner_id=resource.owner_user_id AND secret.redacted_at IS NULL
+    WHERE resource.project_access_id=? AND resource.organization_id=? AND resource.project_id=? AND resource.owner_user_id=?`;
+  const bindings=[context.projectAccessId,context.organizationId,context.projectId,context.ownerUserId];
+  descriptors?.push({sql,bindings,role:"resources"});
+  return env.DB.prepare(sql).bind(...bindings);
 }
 
 function resourceIndex(rows:Record<string,unknown>[]){
-  const activeResources=new Map<string,Set<string>>();
+  const activeResources:ProjectPresentationResources=Object.assign(new Map<string,Set<string>>(),{retiredCanvasItems:new Set<string>()});
   for(const row of rows){const kind=String(row.resource_kind),ids=activeResources.get(kind)??new Set<string>();ids.add(String(row.resource_id));activeResources.set(kind,ids);}
+  const key=(kind:string,id:string)=>JSON.stringify([kind,id]);
+  const collaborative=new Map(rows.filter(row=>row.visibility==="collaborative_output").map(row=>[key(String(row.resource_kind),String(row.resource_id)),row]));
+  const dependents=new Map<string,string[]>(),invalid=new Set<string>(),queue:string[]=[];
+  const reject=(id:string)=>{if(!invalid.has(id)){invalid.add(id);queue.push(id);}};
+  const members=(raw:unknown):string[]=>{
+    if(raw===null||raw===undefined)return[];
+    const value=typeof raw==="string"?JSON.parse(raw):raw;
+    if(!Array.isArray(value)||value.some(id=>typeof id!=="string"||!id))throw new Error("invalid_canvas_source_members");
+    return value;
+  };
+  for(const row of rows){
+    const kind=String(row.resource_kind),id=String(row.resource_id),own=key(kind,id),board=String(row.source_canvas_id??"");
+    if(!["canvas","canvas_item","canvas_context","canvas_arrangement"].includes(kind))continue;
+    const needs:Array<[string,string]>=[];
+    if(!collaborative.has(own)||!board){reject(own);continue;}
+    if(kind==="canvas"){
+      if(row.source_type!=="CanvasCreated"||board!==id)reject(own);
+    }else{
+      needs.push(["canvas",board]);
+      if(kind==="canvas_item"){
+        if(!["CanvasItemPlaced","CanvasReferenceCreated"].includes(String(row.source_type))||String(row.source_item_id??row.source_reference_item_id??"")!==id){reject(own);continue;}
+        const raw=String(row.source_kind??(row.source_type==="CanvasReferenceCreated"?"reference":"block"));
+        const sourceKind=["document","output","artifact","context","reference","sketch","block"].includes(raw)?raw:"block";
+        const sourceId=String(row.source_id??row.source_block_id??row.source_document_id??row.source_object_id??id);
+        const targetKind=sourceKind==="context"?"canvas_context":["reference","sketch"].includes(sourceKind)?"block":sourceKind;
+        if(!sourceId||targetKind==="canvas_context"&&String(collaborative.get(key(targetKind,sourceId))?.source_canvas_id??"")!==board)reject(own);
+        needs.push([targetKind,sourceId]);
+      }else{
+        if(row.source_type!==(kind==="canvas_context"?"ContextSetFormalized":"CanvasArrangementCreated")
+          ||String(kind==="canvas_context"?row.source_context_set_id:row.source_arrangement_id)!==id){reject(own);continue;}
+        try{
+          const ids=kind==="canvas_context"?members(row.source_item_ids):[...members(row.source_item_ids),...members(row.source_frame_ids),...members(row.source_previous_frame_ids)];
+          for(const member of new Set(ids)){
+            if(String(collaborative.get(key("canvas_item",member))?.source_canvas_id??"")!==board)reject(own);
+            needs.push(["canvas_item",member]);
+          }
+        }catch{reject(own);}
+      }
+    }
+    for(const [targetKind,targetId] of needs){
+      const target=key(targetKind,targetId);
+      if(!collaborative.has(target))reject(own);
+      const parents=dependents.get(target)??[];parents.push(own);dependents.set(target,parents);
+    }
+  }
+  // Propagate withdrawal through context cards and saved arrangements without
+  // rescanning history or granting authority from an incomplete item page.
+  for(let index=0;index<queue.length;index++){
+    const current=queue[index]!,[kind,id]=JSON.parse(current) as [string,string];
+    activeResources.get(kind)?.delete(id);
+    if(kind==="canvas_item")activeResources.retiredCanvasItems.add(id);
+    for(const parent of dependents.get(current)??[])reject(parent);
+  }
   return activeResources;
 }
 
+// Server-only provenance for exact replay of the original context source SELECTs.
+// The ordinary event serializer ignores these additional columns.
+const assistantContextEventProvenance=`,json_array(scope.event_id,scope.project_access_id,scope.organization_id,scope.project_id,scope.owner_user_id,
+  scope.source_stream_id,scope.source_sequence,scope.project_sequence,scope.actor_user_id,scope.created_at) AS source_scope_record,
+  CASE WHEN secret.private_event_id IS NULL THEN NULL ELSE json_array(secret.private_event_id,secret.owner_id,secret.project_id,secret.document_id,
+    secret.created_at,secret.redacted_at) END AS source_private_record`;
+
 /** Shared reads use dense project cursors and an explicit output-only private-content allowlist. */
-export async function readProjectEventPage(env:WorkerEnv,context:ProjectRequestContext,after:number,limit:number,includeContent:boolean){
+export async function readProjectEventPage(env:WorkerEnv,context:ProjectRequestContext,after:number,limit:number,includeContent:boolean,sourceObserver?:AssistantContextReadObserver){
   await synchronizeProjectScope(env,context);
   const size=Math.max(1,Math.min(5000,Math.floor(limit)||5000));
-  const statements=[
-    env.DB.prepare(`SELECT event.*,secret.private_json,scope.project_sequence,scope.actor_user_id FROM project_event_scopes scope JOIN events event ON event.event_id=scope.event_id
+  const eventSql=`SELECT event.*,secret.private_json,scope.project_sequence,scope.actor_user_id${!sourceObserver?`,
+      CASE WHEN event.type='DocumentArtifactEdited' AND json_extract(event.payload,'$.artifact_kind')='model3d' THEN(
+        SELECT current_event.event_id FROM project_event_scopes current_scope JOIN events current_event ON current_event.event_id=current_scope.event_id
+        WHERE current_scope.project_access_id=scope.project_access_id AND current_scope.organization_id=scope.organization_id
+          AND current_scope.owner_user_id=scope.owner_user_id AND current_scope.project_id=scope.project_id
+          AND current_scope.source_stream_id=event.stream_id AND current_event.stream_id=event.stream_id
+          AND current_event.type='DocumentArtifactEdited'
+          AND json_extract(current_event.payload,'$.artifact_id')=json_extract(event.payload,'$.artifact_id')
+        ORDER BY current_scope.project_sequence DESC LIMIT 1) ELSE NULL END AS model3d_current_edit_id`:""}${sourceObserver?assistantContextEventProvenance:""} FROM project_event_scopes scope JOIN events event ON event.event_id=scope.event_id
       LEFT JOIN event_private_payloads secret ON secret.private_event_id=event.event_id AND secret.redacted_at IS NULL
-      WHERE scope.project_access_id=? AND scope.organization_id=? AND scope.owner_user_id=? AND scope.project_sequence>? ORDER BY scope.project_sequence LIMIT ?`)
-      .bind(context.projectAccessId,context.organizationId,context.ownerUserId,Math.max(0,Math.floor(after)||0),size),
-    env.DB.prepare("SELECT COALESCE(MAX(project_sequence),0) AS head FROM project_event_scopes WHERE project_access_id=? AND organization_id=?").bind(context.projectAccessId,context.organizationId),
-    env.DB.prepare("SELECT resource_kind,resource_id FROM project_resource_scopes WHERE project_access_id=? AND organization_id=? AND owner_user_id=?")
-      .bind(context.projectAccessId,context.organizationId,context.ownerUserId),
+      WHERE scope.project_access_id=? AND scope.organization_id=? AND scope.owner_user_id=? AND scope.project_sequence>? ORDER BY scope.project_sequence LIMIT ?`;
+  const eventBindings=[context.projectAccessId,context.organizationId,context.ownerUserId,Math.max(0,Math.floor(after)||0),size];
+  const headSql="SELECT COALESCE(MAX(project_sequence),0) AS head FROM project_event_scopes WHERE project_access_id=? AND organization_id=?",headBindings=[context.projectAccessId,context.organizationId];
+  const descriptors:AssistantContextReadDescriptor[]=[{sql:eventSql,bindings:eventBindings,role:"ascending-events"},
+    {sql:headSql,bindings:headBindings,role:"project-head",projectAccessId:context.projectAccessId,organizationId:context.organizationId}];
+  const statements=[
+    env.DB.prepare(eventSql).bind(...eventBindings),env.DB.prepare(headSql).bind(...headBindings),
+    prepareProjectPresentationResources(env,context,Boolean(sourceObserver),descriptors,!sourceObserver),
   ];
-  if(includeContent)statements.push(env.DB.prepare(`SELECT content.content_id,content.content FROM project_resource_scopes scope INDEXED BY sqlite_autoindex_project_resource_scopes_1
+  // Metadata pages retain only references eligible for this exact reader. Body
+  // hydration is separate; content=0 must neither select bytes nor erase live IDs.
+  // Ordinary Assistant metadata compilation does not consume chat bodies: its
+  // recentTurns are replaced by independently certified history. Authorized
+  // conversation event pointers are preserved in presentProjectEvent itself.
+  // Keep the page certificate on document-artifact eligibility; otherwise an
+  // unrelated retired answer could invalidate a fresh document-derived reply.
+  const assistantMetadataOnly=Boolean(sourceObserver)&&!includeContent;
+  const contentProvenance=sourceObserver?`,json_array(content.content_id,content.owner_id,content.kind,content.created_at,content.expires_at,content.redacted_at) AS source_content_record,
+    json_array(scope.project_access_id,scope.resource_kind,scope.resource_id,scope.organization_id,scope.project_id,scope.owner_user_id,
+      scope.visibility,scope.source_event_id,scope.actor_user_id,scope.created_at) AS source_resource_record,
+    CASE WHEN scope.visibility='actor_private' THEN(SELECT json_array(retention.content_id,retention.organization_id,retention.project_access_id,retention.project_id,
+      retention.actor_user_id,retention.classification,retention.policy_version,retention.assigned_expires_at,retention.created_at)
+      FROM private_content_retention_scopes retention WHERE retention.content_id=content.content_id
+        AND retention.organization_id=scope.organization_id AND retention.project_access_id=scope.project_access_id
+        AND retention.project_id=scope.project_id AND retention.actor_user_id=scope.actor_user_id) ELSE NULL END AS source_retention_record`:"";
+  const { nativeMemoryAnswerExclusion } = await import("./memory-native-boundary.ts");
+  const ordinaryContent=await nativeMemoryAnswerExclusion(env,{answerAlias:"content"});
+  const contentSql=`SELECT content.content_id${includeContent?",content.content":""}${includeContent&&!sourceObserver?",scope.source_event_id AS publication_source_event_id,scope.project_id AS publication_project_id":""}${contentProvenance} FROM project_resource_scopes scope INDEXED BY sqlite_autoindex_project_resource_scopes_1
     CROSS JOIN private_content content ON content.content_id=scope.resource_id
     WHERE scope.project_access_id=? AND scope.organization_id=? AND scope.owner_user_id=? AND scope.resource_kind='content'
       AND ((scope.visibility='collaborative_output' AND content.owner_id=scope.owner_user_id AND content.kind='document-artifact')
-        OR(scope.visibility='actor_private' AND scope.actor_user_id=? AND content.owner_id=? AND content.kind IN('chat-user','chat-assistant')
+        OR(${assistantMetadataOnly?"0 AND ":""}scope.visibility='actor_private' AND scope.actor_user_id=? AND content.owner_id=? AND content.kind IN('chat-user','chat-assistant')
           AND EXISTS(SELECT 1 FROM private_content_retention_scopes retention WHERE retention.content_id=content.content_id
             AND retention.organization_id=scope.organization_id AND retention.project_access_id=scope.project_access_id
             AND retention.project_id=scope.project_id AND retention.actor_user_id=scope.actor_user_id)))
-      AND content.redacted_at IS NULL AND content.expires_at>?`)
-    .bind(context.projectAccessId,context.organizationId,context.ownerUserId,context.principalUserId,context.principalUserId,new Date().toISOString()));
-  const [rows,headRow,resourceRows,contentRow]=await env.DB.batch<Record<string,unknown>>(statements);
-  const content=Object.fromEntries((contentRow?.results??[]).map((row)=>[String(row.content_id),String(row.content)]));
-  const allowedContent=new Set(Object.keys(content));
+      AND content.redacted_at IS NULL AND content.expires_at>${sourceObserver?"strftime('%Y-%m-%dT%H:%M:%fZ','now')":"?"} AND ${ordinaryContent.sql}`;
+  const contentBindings=[context.projectAccessId,context.organizationId,context.ownerUserId,context.principalUserId,context.principalUserId,...(sourceObserver?[]:[new Date().toISOString()]),...ordinaryContent.bindings];
+  statements.push(env.DB.prepare(contentSql).bind(...contentBindings));descriptors.push({sql:contentSql,bindings:contentBindings,role:"content-allowlist"});
+  const reads=await env.DB.batch<Record<string,unknown>>(statements);
+  sourceObserver?.(statements,reads,descriptors);
+  const [rows,headRow,resourceRows,contentRow]=reads;
+  const content=includeContent?Object.fromEntries((contentRow?.results??[]).map((row)=>[String(row.content_id),String(row.content)])):{};
+  const allowedContent=new Set((contentRow?.results??[]).map((row)=>String(row.content_id)));
   const activeResources=resourceIndex(resourceRows?.results??[]);
-  const events=(rows?.results??[]).map((row)=>presentProjectEvent(row,context,activeResources,allowedContent));
-  const head=Number(headRow?.results[0]?.head??0),nextAfter=Number(events.at(-1)?.sequence??after);
+  const head=Number(headRow?.results[0]?.head??0);
+  const model3dCurrent=!sourceObserver?await projectModel3dCurrentProjections(rows?.results??[],context,activeResources,resourceRows?.results??[],contentRow?.results??[]):new Map<string,Model3dCurrentProjection>();
+  const events=(rows?.results??[]).map((row)=>presentProjectEvent(row,context,activeResources,allowedContent,model3dCurrent.get(String(row.event_id))));
+  const nextAfter=Number(events.at(-1)?.sequence??after);
   return{events,head,nextAfter,hasMore:nextAfter<head,...(includeContent?{content}:{}),permissionSchemaVersion:1};
 }
 
 /** Reconstruct semantic resource state without replaying unrelated activity or bypassing actor redaction. */
-export async function readProjectAssistantEventView(env:WorkerEnv,context:ProjectRequestContext,selection:{documentId?:string|null;canvasId?:string|null}={}){
-  await synchronizeProjectScope(env,context);
+export async function readProjectAssistantEventView(env:WorkerEnv,context:ProjectRequestContext,selection:{documentId?:string|null;canvasId?:string|null;sourceObserver?:AssistantContextReadObserver}={}){
+  const sourceObserver=selection.sourceObserver;
   const documentId=selection.documentId??"",canvasId=selection.canvasId??"";
+  await synchronizeProjectScope(env,context);
   const scope="scope.project_access_id=? AND scope.organization_id=? AND scope.owner_user_id=?";
   const joins="FROM project_event_scopes scope JOIN events event ON event.event_id=scope.event_id LEFT JOIN event_private_payloads secret ON secret.private_event_id=event.event_id AND secret.redacted_at IS NULL";
   const eventDocument="COALESCE(json_extract(event.payload,'$.document_id'),(SELECT json_extract(previous.payload,'$.document_id') FROM events previous WHERE previous.stream_id=event.stream_id AND previous.sequence<=event.sequence AND previous.type IN('DocumentCreated','DocumentOpened') ORDER BY previous.sequence DESC LIMIT 1))";
-  const bootstrap=env.DB.prepare(`SELECT event.*,secret.private_json,scope.project_sequence,scope.actor_user_id ${joins}
+  const bootstrapSql=`SELECT event.*,secret.private_json,scope.project_sequence,scope.actor_user_id${sourceObserver?assistantContextEventProvenance:""} ${joins}
     WHERE ${scope} AND(event.type='ProjectCreated'
       OR event.type IN('DocumentCreated','DocumentForked','DocumentRenamed','DocumentRemoved','DocumentRestored') AND(?='' OR json_extract(event.payload,'$.document_id')=?)
       OR event.type IN('CanvasCreated','CanvasRenamed','CanvasRemoved','CanvasRestored') AND(?='' OR json_extract(event.payload,'$.canvas_id')=?))
-    ORDER BY scope.project_sequence DESC LIMIT 96`).bind(context.projectAccessId,context.organizationId,context.ownerUserId,documentId,documentId,canvasId,canvasId);
-  const semantic=env.DB.prepare(`SELECT event.*,secret.private_json,scope.project_sequence,scope.actor_user_id ${joins}
+    ORDER BY scope.project_sequence DESC LIMIT 96`;
+  const bootstrapBindings=[context.projectAccessId,context.organizationId,context.ownerUserId,documentId,documentId,canvasId,canvasId];
+  const semanticSql=`SELECT event.*,secret.private_json,scope.project_sequence,scope.actor_user_id${sourceObserver?assistantContextEventProvenance:""} ${joins}
     WHERE ${scope} AND event.type IN(${ASSISTANT_STATE_EVENT_SQL})
       AND((?='' AND ?='') OR ${eventDocument}=? OR json_extract(event.payload,'$.canvas_id')=?
         OR json_extract(event.payload,'$.source_canvas_id')=? OR event.type IN('ProjectCreated','ProjectOpened','ProjectRenamed'))
-    ORDER BY scope.project_sequence DESC LIMIT 384`).bind(context.projectAccessId,context.organizationId,context.ownerUserId,documentId,canvasId,documentId,canvasId,canvasId);
-  const boundaries=env.DB.prepare(`SELECT event.*,secret.private_json,scope.project_sequence,scope.actor_user_id ${joins}
+    ORDER BY scope.project_sequence DESC LIMIT 384`;
+  const semanticBindings=[context.projectAccessId,context.organizationId,context.ownerUserId,documentId,canvasId,documentId,canvasId,canvasId];
+  const boundariesSql=`SELECT event.*,secret.private_json,scope.project_sequence,scope.actor_user_id${sourceObserver?assistantContextEventProvenance:""} ${joins}
     WHERE ${scope} AND event.type='BlockCreated' AND(?='' OR ${eventDocument}=?)
       AND(json_extract(event.payload,'$.type')='exclusion' OR json_extract(secret.private_json,'$.properties.intent')='prohibit'
-        OR json_extract(secret.private_json,'$.properties.locked')=1) ORDER BY scope.project_sequence DESC LIMIT 32`)
-    .bind(context.projectAccessId,context.organizationId,context.ownerUserId,documentId,documentId);
-  const resource=env.DB.prepare("SELECT resource_kind,resource_id FROM project_resource_scopes WHERE project_access_id=? AND organization_id=? AND owner_user_id=?")
-    .bind(context.projectAccessId,context.organizationId,context.ownerUserId);
-  const [basics,state,limits,resources]=await env.DB.batch<Record<string,unknown>>([bootstrap,semantic,boundaries,resource]);
+        OR json_extract(secret.private_json,'$.properties.locked')=1) ORDER BY scope.project_sequence DESC LIMIT 32`;
+  const boundariesBindings=[context.projectAccessId,context.organizationId,context.ownerUserId,documentId,documentId];
+  const descriptors:AssistantContextReadDescriptor[]=[{sql:bootstrapSql,bindings:bootstrapBindings},{sql:semanticSql,bindings:semanticBindings},{sql:boundariesSql,bindings:boundariesBindings}];
+  const resource=prepareProjectPresentationResources(env,context,Boolean(sourceObserver),descriptors);
+  const statements=[env.DB.prepare(bootstrapSql).bind(...bootstrapBindings),env.DB.prepare(semanticSql).bind(...semanticBindings),env.DB.prepare(boundariesSql).bind(...boundariesBindings),resource];
+  const reads=await env.DB.batch<Record<string,unknown>>(statements);
+  sourceObserver?.(statements,reads,descriptors);
+  const [basics,state,limits,resources]=reads;
   const activeResources=resourceIndex(resources.results??[]);
   const unique=new Map<string,Record<string,unknown>>();
   for(const row of [...(basics.results??[]),...(state.results??[]),...(limits.results??[])])unique.set(String(row.event_id),row);
@@ -520,34 +871,41 @@ export async function readProjectAssistantEventView(env:WorkerEnv,context:Projec
     .filter((event)=>event.type!=="ProjectResourceRestricted");
 }
 
-export type ProjectSourceScope={organizationId:string;projectAccessId:string;projectId:string;ownerUserId:string};
 
-/** A read may require a current projection, but cannot reactivate or repair one. */
-export function projectSourceProjectionCurrentAssertion(scope:ProjectSourceScope){
-  return{sql:`EXISTS(SELECT 1 FROM project_migration_states migration
-    JOIN organization_projects project ON project.project_access_id=migration.project_access_id AND project.organization_id=migration.organization_id
-      AND project.owner_user_id=migration.owner_user_id AND project.status='active'
-    JOIN organizations organization ON organization.organization_id=project.organization_id AND organization.status='active'
-    WHERE migration.project_access_id=? AND migration.organization_id=? AND migration.owner_user_id=? AND project.project_id=?
-      AND migration.status='active' AND migration.last_owner_sequence=(SELECT COALESCE(MAX(sequence),0) FROM events WHERE stream_id=?)
-      AND EXISTS(SELECT 1 FROM project_resource_scopes resource WHERE resource.project_access_id=migration.project_access_id
-        AND resource.organization_id=migration.organization_id AND resource.project_id=project.project_id AND resource.owner_user_id=migration.owner_user_id
-        AND resource.resource_kind='manifest_version' AND resource.resource_id='canvas-v1'))`,
-    bindings:[scope.projectAccessId,scope.organizationId,scope.ownerUserId,scope.projectId,`creative:${scope.ownerUserId}`]};
+/** Final-only structured publication proof: never substitutes for the original prewrite source guard. */
+export function projectStructuredSourceProjectionCurrentAssertion(scope:ProjectSourceScope,own:AssistantStructuredOwnSendFootprint){
+  if(!own.scope||own.streamId!=="creative:"+scope.ownerUserId||own.scope.organizationId!==scope.organizationId
+    ||own.scope.projectAccessId!==scope.projectAccessId||own.scope.projectId!==scope.projectId||own.scope.ownerUserId!==scope.ownerUserId
+    ||own.projectId!==scope.projectId)throw new Error("context_structured_own_send_scope");
+  const suffix=assistantStructuredOwnSendGuard(own),index=assistantStructuredOwnSendProjectIndexGuard(own,true);
+  const current=projectSourceProjectionAssertion(scope,{sql:"migration.last_owner_sequence=?",bindings:[own.sourceHead+2]});
+  return{sql:`(${current.sql}) AND (${suffix.sql}) AND (${index.sql})`,bindings:[...current.bindings,...suffix.bindings,...index.bindings]};
 }
 
-/** Shared source SELECT for ordinary refresh and guarded read-only Output execution. */
-export function prepareProjectSourceEventsStatement(env:WorkerEnv,scope:ProjectSourceScope){
-  return env.DB.prepare(`SELECT event.*,secret.private_json FROM project_event_scopes scope JOIN events event ON event.event_id=scope.event_id
-    LEFT JOIN event_private_payloads secret ON secret.private_event_id=event.event_id AND secret.redacted_at IS NULL
-    WHERE scope.project_access_id=? AND scope.organization_id=? AND scope.project_id=? AND scope.owner_user_id=?
-    ORDER BY scope.project_sequence`).bind(scope.projectAccessId,scope.organizationId,scope.projectId,scope.ownerUserId);
+/** Same custody proof after guarded event INSERTs, before projection advancement. */
+export function projectSourceProjectionPublicationAssertion(scope:ProjectSourceScope){
+  return projectSourceProjectionAssertion(scope,null);
 }
+
 
 /** Internal generation receives exact project history, never an owner's account-wide stream. */
-export async function readProjectSourceEvents(env:WorkerEnv,scope:ProjectSourceScope){
-  await synchronizeProjectScope(env,scope);
-  const rows=await prepareProjectSourceEventsStatement(env,scope).all<Record<string,unknown>>();
+export async function readProjectSourceEvents(env:WorkerEnv,scope:ProjectSourceScope,options:{synchronize?:boolean;sourceProof?:EventReadProof}={}){
+  const readonlyHead=options.synchronize===false?await env.DB.prepare("SELECT migration.last_owner_sequence AS indexed_head,(SELECT COALESCE(MAX(sequence),0) FROM events WHERE stream_id=?) AS source_head FROM project_migration_states migration WHERE migration.project_access_id=? AND migration.organization_id=? AND migration.owner_user_id=? AND migration.status='active'")
+    .bind("creative:"+scope.ownerUserId,scope.projectAccessId,scope.organizationId,scope.ownerUserId).first<{indexed_head:number;source_head:number}>():null;
+  if(options.synchronize!==false)await synchronizeProjectScope(env,scope);
+  else if(!readonlyHead||Number(readonlyHead.indexed_head)!==Number(readonlyHead.source_head))throw new Error("project_source_index_stale");
+  const sourceStatement=prepareProjectSourceEventsStatement(env,scope);
+  const proof=options.sourceProof?{statements:[...options.sourceProof.statements],verify:options.sourceProof.verify}:null;
+  const [rows,...sourceChecks]=proof
+    ?await env.DB.batch<Record<string,unknown>>([sourceStatement,...proof.statements])
+    :[await sourceStatement.all<Record<string,unknown>>()];
+  if(proof&&(!rows||rows.success!==true||!Array.isArray(rows.results)))throw new Error("output_source_changed_during_read");
+  if(!rows)throw new Error("project_source_index_stale");
+  if(options.synchronize===false&&!await env.DB.prepare("SELECT 1 FROM project_migration_states migration WHERE (migration.project_access_id,migration.organization_id,migration.owner_user_id,migration.status,migration.last_owner_sequence)=(?,?,?,'active',?) AND (SELECT COALESCE(MAX(sequence),0) FROM events WHERE stream_id=?)=?")
+    .bind(scope.projectAccessId,scope.organizationId,scope.ownerUserId,Number(readonlyHead!.source_head),"creative:"+scope.ownerUserId,Number(readonlyHead!.source_head)).first())throw new Error("project_source_index_stale");
+  // Verify after the final awaited index check so expiry cannot cross the
+  // remaining round trip and still permit serialization of these captured rows.
+  proof?.verify(sourceChecks);
   return rows.results.map((row)=>serializeEvent(row));
 }
 
@@ -600,8 +958,7 @@ async function resourceBelongsToCanvas(env:WorkerEnv,context:ProjectRequestConte
 async function readProjectReceiptEvents(env:WorkerEnv,context:ProjectRequestContext,eventIds:string[],actorUserId:string){
   const unique=[...new Set(eventIds)];
   if(!unique.length)return new Map<string,ReturnType<typeof presentProjectEvent>>();
-  const statements:D1PreparedStatement[]=[env.DB.prepare("SELECT resource_kind,resource_id FROM project_resource_scopes WHERE project_access_id=? AND organization_id=? AND owner_user_id=?")
-    .bind(context.projectAccessId,context.organizationId,context.ownerUserId)];
+  const statements:D1PreparedStatement[]=[prepareProjectPresentationResources(env,context)];
   for(let offset=0;offset<unique.length;offset+=70){
     const chunk=unique.slice(offset,offset+70);
     statements.push(env.DB.prepare(`SELECT event.*,secret.private_json,scope.project_sequence,scope.actor_user_id FROM project_event_scopes scope JOIN events event ON event.event_id=scope.event_id
@@ -632,7 +989,9 @@ async function historicalCanvasCreation(env:WorkerEnv,context:ProjectRequestCont
   try{const value=JSON.parse(source.payload) as unknown;return value&&typeof value==="object"&&!Array.isArray(value)?value as Record<string,unknown>:null;}catch{return null;}
 }
 
-async function ownerResourceExists(env:WorkerEnv,context:ProjectRequestContext,kind:"document"|"block"|"collection"|"relation"|"reference"|"canvas"|"canvas_item"|"canvas_arrangement"|"canvas_context",id:string){
+async function ownerResourceExists(env:WorkerEnv,context:ProjectRequestContext,kind:"document"|"block"|"collection"|"relation"|"reference"|"canvas"|"canvas_item"|"canvas_arrangement"|"canvas_context",id:string,pending?:PendingProjectResources){
+  const known=pending?.get(`owner-history:${kind}`);
+  if(known)return known.has(id);
   const types=kind==="document"?["DocumentCreated","DocumentForked"]:kind==="block"?["BlockCreated"]:kind==="collection"?["CollectionCreated"]:kind==="reference"?["ReferenceIngested"]:kind==="canvas"?["CanvasCreated"]:kind==="canvas_item"?["CanvasItemPlaced","CanvasReferenceCreated"]:kind==="canvas_arrangement"?["CanvasArrangementCreated"]:kind==="canvas_context"?["ContextSetFormalized"]:["BlockRelationAdded"];
   const property=kind==="relation"?"relation_id":kind==="canvas_item"?"item_id":kind==="canvas_arrangement"?"arrangement_id":kind==="canvas_context"?"context_set_id":`${kind}_id`;
   return Boolean(await env.DB.prepare(`SELECT 1 AS present FROM events WHERE stream_id=? AND type IN(${types.map(()=>"?").join(",")})
@@ -653,13 +1012,13 @@ async function validateProjectMutation(env:WorkerEnv,context:ProjectRequestConte
   const requiresCanvas=canvasMutation||canvasAction;
   if(requiresCanvas&&!canvas)return"canvas_id_required";
   if(requiresCanvas&&type!=="CanvasCreated"&&!await exists("canvas",canvas)&&!(type==="CanvasRestored"&&await historicalCanvasCreation(env,context,"canvas",canvas,canvas)))return"foreign_canvas_resource";
-  if(type==="CanvasCreated"&&(pending.get("canvas")?.has(canvas)||await ownerResourceExists(env,context,"canvas",canvas)))return"resource_identifier_already_exists";
+  if(type==="CanvasCreated"&&(pending.get("canvas")?.has(canvas)||await ownerResourceExists(env,context,"canvas",canvas,pending)))return"resource_identifier_already_exists";
   const itemId=String(payload.item_id??payload.reference_item_id??"");
   const createsCanvasItem=type==="CanvasItemPlaced"||type==="CanvasReferenceCreated";
   const restoredItem=type==="CanvasItemRestored"&&itemId?await historicalCanvasCreation(env,context,"canvas_item",itemId,canvas):null;
   if(canvasMutation&&itemId&&!createsCanvasItem&&!restoredItem&&!await exists("canvas_item",itemId))return"foreign_canvas_item_resource";
   if(createsCanvasItem){
-    if(await exists("canvas_item",itemId)||await ownerResourceExists(env,context,"canvas_item",itemId))return"resource_identifier_already_exists";
+    if(await exists("canvas_item",itemId)||await ownerResourceExists(env,context,"canvas_item",itemId,pending))return"resource_identifier_already_exists";
     const sourceKind=String(payload.source_kind??(type==="CanvasReferenceCreated"?"reference":""));
     const sourceId=String(payload.source_id??payload.block_id??payload.document_id??payload.object_id??"");
     const kind=sourceKind==="document"?"document":sourceKind==="output"?"output":sourceKind==="artifact"?"artifact":sourceKind==="context"?"canvas_context":["block","reference","sketch"].includes(sourceKind)?"block":"";
@@ -676,14 +1035,14 @@ async function validateProjectMutation(env:WorkerEnv,context:ProjectRequestConte
   const arrangement=String(payload.arrangement_id??"");
   const restoredArrangement=type==="CanvasArrangementRestored"&&arrangement?await historicalCanvasCreation(env,context,"canvas_arrangement",arrangement,canvas):null;
   if(["CanvasArrangementRemoved","CanvasArrangementRestored"].includes(type)&&!restoredArrangement&&(!await exists("canvas_arrangement",arrangement)||!await resourceBelongsToCanvas(env,context,"canvas_arrangement",arrangement,canvas,pending)))return"foreign_canvas_arrangement";
-  if(type==="CanvasArrangementCreated"&&(await exists("canvas_arrangement",arrangement)||await ownerResourceExists(env,context,"canvas_arrangement",arrangement)))return"resource_identifier_already_exists";
+  if(type==="CanvasArrangementCreated"&&(await exists("canvas_arrangement",arrangement)||await ownerResourceExists(env,context,"canvas_arrangement",arrangement,pending)))return"resource_identifier_already_exists";
   if(restoredArrangement){
     const restoredFrames=[...(Array.isArray(restoredArrangement.frames)?restoredArrangement.frames:[]),...(Array.isArray(restoredArrangement.previous_frames)?restoredArrangement.previous_frames:[])];
     const restoredIds=[...(Array.isArray(restoredArrangement.item_ids)?restoredArrangement.item_ids:[]).map(String),...restoredFrames.map((frame)=>frame&&typeof frame==="object"?String((frame as Record<string,unknown>).item_id??""):"")];
     for(const id of restoredIds)if(!id||!await exists("canvas_item",id)||!await resourceBelongsToCanvas(env,context,"canvas_item",id,canvas,pending))return"foreign_canvas_item_resource";
   }
   const contextSet=String(payload.context_set_id??"");
-  if(type==="ContextSetFormalized"&&(await exists("canvas_context",contextSet)||await ownerResourceExists(env,context,"canvas_context",contextSet)))return"resource_identifier_already_exists";
+  if(type==="ContextSetFormalized"&&(await exists("canvas_context",contextSet)||await ownerResourceExists(env,context,"canvas_context",contextSet,pending)))return"resource_identifier_already_exists";
   const operation=payload.operation&&typeof payload.operation==="object"?payload.operation as Record<string,unknown>:{};
   const operationObject=operation.object&&typeof operation.object==="object"?operation.object as Record<string,unknown>:{};
   const sketch=operation.sketch&&typeof operation.sketch==="object"?operation.sketch as Record<string,unknown>:{};
@@ -736,19 +1095,19 @@ async function validateProjectMutation(env:WorkerEnv,context:ProjectRequestConte
   const relation=String(payload.relation_id??"");
   if(type.startsWith("BlockRelation")&&!relation)return"relation_id_required";
   if(type==="BlockRelationRemoved"&&!await exists("relation",relation))return"foreign_relation_resource";
-  if(type==="DocumentCreated"&&(pending.get("document")?.has(document)||await ownerResourceExists(env,context,"document",document)))return"resource_identifier_already_exists";
+  if(type==="DocumentCreated"&&(pending.get("document")?.has(document)||await ownerResourceExists(env,context,"document",document,pending)))return"resource_identifier_already_exists";
   if(type==="BlockCreated"){
     if(!block)return"block_id_required";
     if(document&&!await exists("document",document))return"foreign_document_resource";
     if(!document&&payload.scope!=="library"&&!(payload.scope==="canvas"&&canvas&&await exists("canvas",canvas)))return"document_and_block_required";
-    if(pending.get("block")?.has(block)||await ownerResourceExists(env,context,"block",block))return"resource_identifier_already_exists";
+    if(pending.get("block")?.has(block)||await ownerResourceExists(env,context,"block",block,pending))return"resource_identifier_already_exists";
   }
-  if(type==="CollectionCreated"&&(pending.get("collection")?.has(collection)||await ownerResourceExists(env,context,"collection",collection)))return"resource_identifier_already_exists";
-  if(type==="BlockRelationAdded"&&(pending.get("relation")?.has(relation)||await ownerResourceExists(env,context,"relation",relation)))return"resource_identifier_already_exists";
+  if(type==="CollectionCreated"&&(pending.get("collection")?.has(collection)||await ownerResourceExists(env,context,"collection",collection,pending)))return"resource_identifier_already_exists";
+  if(type==="BlockRelationAdded"&&(pending.get("relation")?.has(relation)||await ownerResourceExists(env,context,"relation",relation,pending)))return"resource_identifier_already_exists";
   const reference=String(payload.reference_id??"");
   if(["ReferenceIngested","RightsAsserted"].includes(type)&&!reference)return"reference_id_required";
   if(type==="ReferenceIngested"){
-    if(pending.get("reference")?.has(reference)||await ownerResourceExists(env,context,"reference",reference))return"resource_identifier_already_exists";
+    if(pending.get("reference")?.has(reference)||await ownerResourceExists(env,context,"reference",reference,pending))return"resource_identifier_already_exists";
     const key=mediaKey(payload.source_ref);
     if(!key||!await exists("media",key))return"foreign_media_resource";
     const claimedHash=String(payload.content_hash??"");
@@ -789,8 +1148,10 @@ async function validateProjectMutation(env:WorkerEnv,context:ProjectRequestConte
     if(action?.type!=="action")return"invalid_action_participant_owner";
     if(!action||!participant||action.scope!==participant.scope)return"cross_scene_action_reference";
   }
-  if(guardedProperties.reference_id&&!await exists("reference",String(guardedProperties.reference_id)))return"foreign_reference_resource";
-  if(guardedProperties.media_url){const key=mediaKey(guardedProperties.media_url);if(!key||!await exists("media",key))return"foreign_media_resource";}
+  for(const property of ["reference_id","model_reference_id"] as const)
+    if(guardedProperties[property]&&!await exists("reference",String(guardedProperties[property])))return"foreign_reference_resource";
+  for(const property of ["media_url","model_url"] as const)
+    if(guardedProperties[property]){const key=mediaKey(guardedProperties[property]);if(!key||!await exists("media",key))return"foreign_media_resource";}
   if(type==="BlockCreated"&&String(payload.type??"")==="reference"&&properties.media_url){
     if(!await verifySourceDocumentEvidence(env,context.ownerUserId,properties.media_url,properties))return"source_evidence_not_verified";
     if(properties.source_evidence_hash){const sources=pending.get("verified_source")??new Set<string>();sources.add(block);pending.set("verified_source",sources);}
@@ -835,27 +1196,63 @@ async function validateProjectMutation(env:WorkerEnv,context:ProjectRequestConte
 /** Append the owner event and project sidecar together after checking active ACL within the transaction. */
 export type ArtifactRevisionSnapshot={revisionId:string;revision:number;contentJson:string;contentSha256:string;createdByUserId:string;createdAt:string;expiresAt:string};
 
-async function currentProjectArtifactDigest(env:WorkerEnv,context:ProjectRequestContext,contentRef:string){
+async function currentProjectArtifactBinding(env:WorkerEnv,context:ProjectRequestContext,contentRef:string){
   const retained=await env.DB.prepare(`SELECT content.content FROM private_content content JOIN project_resource_scopes resource
     ON resource.resource_kind='content' AND resource.resource_id=content.content_id AND resource.project_access_id=? AND resource.organization_id=?
       AND resource.project_id=? AND resource.owner_user_id=? AND resource.visibility='collaborative_output'
     WHERE content.content_id=? AND content.owner_id=? AND content.kind='document-artifact' AND content.redacted_at IS NULL AND content.expires_at>?`)
     .bind(context.projectAccessId,context.organizationId,context.projectId,context.ownerUserId,contentRef,context.ownerUserId,new Date().toISOString()).first<{content:string}>();
-  return retained?Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256",new TextEncoder().encode(retained.content))),(byte)=>byte.toString(16).padStart(2,"0")).join(""):"";
+  if(!retained)return null;
+  const contentSha256=Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256",new TextEncoder().encode(retained.content))),(byte)=>byte.toString(16).padStart(2,"0")).join("");
+  return{contentId:contentRef,content:retained.content,contentSha256};
+}
+
+async function currentArtifactRightsBinding(env:WorkerEnv,context:ProjectRequestContext,document:ReturnType<typeof foldEvents>,events:CreativeEvent[],artifactIds:readonly string[]){
+  const validity=await governedPackageSourceRightsValidity(env,context.organizationId,document.blocks,(scope)=>synchronizeProjectScope(env,scope));
+  if(!validity.current||artifactCurrentRightsBlockers(document.blocks,events).length)return null;
+  const native=await artifactSourceEvidenceGuard(env,context,document.documentId,events,artifactIds);
+  if(!native)return null;
+  const snapshots:unknown[]=JSON.parse(String(native.guard.bindings[0])) as unknown[],deadlines=[validity.validUntil,native.validUntil];
+  const upstream=new Map<string,{scope:{projectAccessId:string;organizationId:string;projectId:string;ownerUserId:string};documentId:string}>();
+  for(const dependency of validity.dispatchDependencies??[])if(dependency.kind==="package"){
+    const snapshot=JSON.parse(dependency.contentJson) as {sourceProjectAccessId:string;sourceDocumentId:string};
+    const origin=validity.dispatchDependencies?.find(item=>item.kind==="source"&&item.projectAccessId===snapshot.sourceProjectAccessId);
+    if(origin?.kind==="source")upstream.set(origin.projectAccessId+":"+snapshot.sourceDocumentId,{scope:origin,documentId:snapshot.sourceDocumentId});
+  }
+  for(const origin of upstream.values()){
+    const source=await env.DB.prepare(`SELECT event.*,secret.private_json FROM project_event_scopes custody JOIN events event ON event.event_id=custody.event_id
+      LEFT JOIN event_private_payloads secret ON secret.private_event_id=event.event_id AND secret.redacted_at IS NULL
+      WHERE custody.project_access_id=? AND custody.organization_id=? AND custody.project_id=? AND custody.owner_user_id=?
+        AND event.type IN(${ASSISTANT_STATE_EVENT_SQL}) ORDER BY custody.project_sequence`)
+      .bind(origin.scope.projectAccessId,origin.scope.organizationId,origin.scope.projectId,origin.scope.ownerUserId).all<Record<string,unknown>>();
+    let sourceEvents:CreativeEvent[];try{sourceEvents=source.results.map(serializeEvent);}catch{return null;}
+    const retained=await artifactSourceEvidenceGuard(env,origin.scope,origin.documentId,sourceEvents);
+    if(!retained)return null;snapshots.push(...JSON.parse(String(retained.guard.bindings[0])) as unknown[]);deadlines.push(retained.validUntil);
+  }
+  const packed=JSON.stringify(snapshots);if(new TextEncoder().encode(packed).byteLength>1_000_000)return null;
+  const rights=sourceRightsDispatchGuard(validity);
+  const rightsGuard={sql:`(${rights.sql}) AND (${native.guard.sql})`,bindings:[...rights.bindings,packed]};
+  if(!await env.DB.prepare("SELECT 1 AS artifact_rights_retained WHERE "+rightsGuard.sql).bind(...rightsGuard.bindings).first())return null;
+  return{rightsGuard,rightsValidUntil:deadlines.filter((value):value is string=>value!==null).sort()[0]??null};
 }
 
 export async function appendProjectEvents(env:WorkerEnv,context:ProjectRequestContext,principal:PilotUser,body:{action?:string;event?:{type?:string;payload?:Record<string,unknown>;compensatesEventId?:string|null};events?:Array<{type?:string;payload?:Record<string,unknown>;compensatesEventId?:string|null}>;clientId?:string;correlationId?:string;expectedSequence?:number},atomicEdit?:{artifactId:string;contentId:string;oldContent:string;newContent:string;expectedRevision:number;documentId:string;revisions:ArtifactRevisionSnapshot[];restoreSource?:{revision:number;contentSha256:string;contentJson:string}},atomicSidecars?:{
   statements?:D1PreparedStatement[];
-  buildStatements?:(eventId:string)=>D1PreparedStatement[];
+  buildStatements?:(lastEventId:string,writeProof?:BudgetReservationGuard,allocatedEvents?:readonly EventRow[])=>D1PreparedStatement[];
   guardSql?:string;
   guardBindings?:Array<string|number|null>;
   expectedOwnerHead?:number;
   preserveGovernance?:true;
+  authoringOperation?:"context-proposal"|"document-duplicate"|"canvas-arrangement"|"adaptive-proposal"|"workspace-quick-edit";
   assistantAcceptance?:{proposalId:string;turnId:string;actorUserId:string;scopeKey:string;organizationId:string;projectAccessId:string;projectId:string;documentId:string};
 }){
   const action=String(body.action??"append");
   if(!["append","batch","canvas_sync"].includes(action))return Response.json({error:"project_operation_unavailable"},{status:403});
   const original=Array.isArray(body.events)?body.events:body.event?[body.event]:[];
+  if(atomicSidecars?.authoringOperation&&(!atomicSidecars.preserveGovernance||!atomicSidecars.guardSql||!atomicSidecars.buildStatements||!Number.isSafeInteger(atomicSidecars.expectedOwnerHead)
+    ||(atomicSidecars.authoringOperation==="canvas-arrangement"
+      ? action!=="batch"||validateAtomicCanvasArrangementEvents(original,principal.userId)!==null
+      : (atomicSidecars.authoringOperation==="workspace-quick-edit"?!validWorkspaceQuickEditEvents(original):original.some((event)=>!(atomicSidecars.authoringOperation==="adaptive-proposal"?["BlockCreated","BlockPropertyEdited","CanvasItemPlaced"]:["DocumentCreated","BlockCreated","BlockPropertyEdited","BlockLocked","BlockRelationAdded","CollectionItemAdded"]).includes(String(event.type)))))))return Response.json({error:"invalid_authoring_operation"},{status:403});
   const assistantAcceptance=atomicSidecars?.assistantAcceptance;
   if(assistantAcceptance){
     const accepted=original[0],mutation=original[1],payload=accepted?.payload??{};
@@ -869,6 +1266,7 @@ export async function appendProjectEvents(env:WorkerEnv,context:ProjectRequestCo
       ||String(mutation?.payload?.project_id??"")!==context.projectId||String(mutation?.payload?.document_id??"")!==assistantAcceptance.documentId)
       return Response.json({error:"invalid_assistant_approval"},{status:403});
   }
+  const bulkAuthoring=Boolean(atomicSidecars?.authoringOperation&&atomicSidecars.authoringOperation!=="context-proposal"&&action==="batch"&&!atomicEdit&&!atomicSidecars.statements?.length);
   const privilegedPackageSidecars=Boolean(atomicSidecars&&!atomicSidecars.preserveGovernance);
   if(!privilegedPackageSidecars&&original.some((event)=>{
     if(event.type==="BlockCreated"){
@@ -897,13 +1295,16 @@ export async function appendProjectEvents(env:WorkerEnv,context:ProjectRequestCo
       }
     }
     if(governedBlockIds.size){
-      const placeholders=[...governedBlockIds].map(()=>"?").join(",");
+      const ids=[...governedBlockIds];
+      for(let offset=0;offset<ids.length;offset+=96){
+      const page=ids.slice(offset,offset+96),placeholders=page.map(()=>"?").join(",");
       const governed=await env.DB.prepare(`SELECT member.target_block_id FROM project_context_package_members member
         JOIN project_context_package_bindings binding ON binding.binding_id=member.binding_id
           AND binding.organization_id=member.organization_id AND binding.status='active'
         WHERE binding.project_access_id=? AND binding.organization_id=? AND member.target_block_id IN(${placeholders}) LIMIT 1`)
-        .bind(context.projectAccessId,context.organizationId,...governedBlockIds).first();
+        .bind(context.projectAccessId,context.organizationId,...page).first();
       if(governed)return Response.json({error:"organization_context_package_decision_immutable",message:"Published organization decisions and their relationships can change only by explicitly accepting an approved package version."},{status:403});
+      }
     }
   }
   if(original.some((event)=>event.type==="DocumentArtifactEdited")&&(!atomicEdit||original.length!==1||String(original[0]?.payload?.artifact_id??"")!==atomicEdit.artifactId))return Response.json({error:"artifact_edit_endpoint_required"},{status:403});
@@ -913,6 +1314,20 @@ export async function appendProjectEvents(env:WorkerEnv,context:ProjectRequestCo
   if(original.some((event)=>["ObjectExported","DocumentArtifactExported"].includes(String(event.type??"")))&&!exportOnly)return Response.json({error:"mixed_export_batch_forbidden",message:"Export approval must be verified separately from any project changes."},{status:400});
   const ownerStream=`creative:${context.ownerUserId}`;
   let releaseValidationHead:number|null=null;
+  const exactArtifactBindings=new Map<string,ExactArtifactContentBinding>();
+  const exportArtifactIds=new Map<(typeof original)[number],string[]>();
+  const rightsBindings=new Map<string,ReturnType<typeof currentArtifactRightsBinding>>();
+  const currentRights=(document:ReturnType<typeof foldEvents>,events:CreativeEvent[])=>{
+    const key=document.documentId;let pending=rightsBindings.get(key);
+    if(!pending){
+      const identifiers=new Set(original.map(input=>String(input.payload?.artifact_id??input.payload?.object_id??"")));
+      const artifactIds=document.libraryArtifacts.filter(artifact=>artifact.documentId===key&&(identifiers.has(artifact.id)||identifiers.has(key))).map(artifact=>artifact.id);
+      pending=currentArtifactRightsBinding(env,context,document,events,artifactIds);rightsBindings.set(key,pending);
+    }
+    return pending;
+  };
+  if((exportOnly||original.some(event=>ARTIFACT_REVIEW_EVENT_TYPES.has(String(event.type??""))))&&original.length>50)
+    return Response.json({error:"invalid_project_event_batch",maximum:50},{status:400});
   const reviewOnly=original.length>0&&action!=="canvas_sync"&&original.every((event)=>["ArtifactApproved","ArtifactChangesRequested"].includes(String(event.type??"")))
     &&hasCapability(principal,"project.review.approve",{organizationId:context.organizationId,projectAccessId:context.projectAccessId});
   if(!hasCapability(principal,"project.author",{organizationId:context.organizationId,projectAccessId:context.projectAccessId})
@@ -925,7 +1340,10 @@ export async function appendProjectEvents(env:WorkerEnv,context:ProjectRequestCo
     for(const request of original){
       const identifier=String(request.payload?.artifact_id??request.payload?.object_id??"");
       const target=all.libraryArtifacts.find((artifact)=>artifact.id===identifier);
+      if(request.type==="DocumentArtifactExported"&&(!target||target.documentId!==String(request.payload?.document_id??"")))
+        return Response.json({error:"artifact_document_mismatch"},{status:403});
       const relevant=target?[target]:all.documents.some((document)=>document.id===identifier)?all.libraryArtifacts.filter((artifact)=>artifact.documentId===identifier):[];
+      exportArtifactIds.set(request,relevant.map(artifact=>artifact.id));
       if(request.payload?.presenter_notes_included===true){
         const completed=target?source.find((event)=>event.eventId===target.sourceEventId&&event.type==="DocumentRenderCompleted"):undefined;
         if(request.type!=="DocumentArtifactExported"||!target||target.kind!=="slides"
@@ -933,29 +1351,32 @@ export async function appendProjectEvents(env:WorkerEnv,context:ProjectRequestCo
           return Response.json({error:"presenter_export_creator_required",message:"Private presenter notes and source excerpts can be released only by the presentation's authorized generating creator."},{status:403});
       }
       for(const artifact of relevant){
-        if(!artifactSourceVersions(artifact.id,source)){
-          if(managedPilot)return Response.json({error:"artifact_source_revision_unavailable",message:"Controlled-pilot outputs require verified source revisions and independent approval before release."},{status:409});
-          continue; // Unmanaged legacy organizations retain their existing compatibility contract.
-        }
+        const verifiableSources=Boolean(artifactSourceVersions(artifact.id,source));
+        if(!verifiableSources&&managedPilot)return Response.json({error:"artifact_source_revision_unavailable",message:"Controlled-pilot outputs require verified source revisions and independent approval before release."},{status:409});
         const document=foldEvents(source,Number.POSITIVE_INFINITY,artifact.documentId,context.projectId);
-        if(!await governedPackageSourceRightsCurrent(env,context.organizationId,document.blocks))return Response.json({error:"context_source_rights_expired",message:"The original rights for an adopted organizational source are no longer valid."},{status:409});
-        if(artifactReviewState(artifact,document.blocks,source).status!=="approved")return Response.json({error:"artifact_approval_required",message:"This output cannot leave its shared project until a separate reviewer approves its current source and output revision."},{status:409});
+        const rightsBinding=await currentRights(document,source);
+        if(!rightsBinding)return Response.json({error:"context_source_rights_expired",message:"The original rights for an adopted organizational source are no longer valid."},{status:409});
+        if(verifiableSources&&artifactReviewState(artifact,document.blocks,source).status!=="approved")return Response.json({error:"artifact_approval_required",message:"This output cannot leave its shared project until a separate reviewer approves its current source and output revision."},{status:409});
+        if(request.type==="DocumentArtifactExported")request.payload={...request.payload,export_class:verifiableSources?"independently-approved":"unreviewed-draft"};
         const exactArtifactExport=request.type==="DocumentArtifactExported";
+        const currentRevision=source.filter((event)=>event.type==="DocumentArtifactEdited"&&String(event.payload.artifact_id??"")===artifact.id).length;
         if(exactArtifactExport||request.payload?.artifact_revision!==undefined){
-          const currentRevision=source.filter((event)=>event.type==="DocumentArtifactEdited"&&String(event.payload.artifact_id??"")===artifact.id).length;
           if(!Number.isSafeInteger(request.payload?.artifact_revision)||Number(request.payload?.artifact_revision)!==currentRevision)return Response.json({error:"stale_release_context",message:"The finished output changed before it could be released. Reopen its latest approved revision."},{status:409});
         }
+        const actual=await currentProjectArtifactBinding(env,context,artifact.contentRef??"");
+        if(!actual)return Response.json({error:"stale_release_context",message:"The approved output is no longer retained in this project."},{status:409});
         if(exactArtifactExport||request.payload?.content_sha256!==undefined){
           const expected=String(request.payload?.content_sha256??"");
-          const actual=await currentProjectArtifactDigest(env,context,artifact.contentRef??"");
-          if(!expected||expected!==actual)return Response.json({error:"stale_release_context",message:"The approved output no longer matches the exact document prepared for download."},{status:409});
+          if(!expected||expected!==actual.contentSha256)return Response.json({error:"stale_release_context",message:"The approved output no longer matches the exact document prepared for download."},{status:409});
         }
+        if(verifiableSources&&!artifactApprovalMatches(artifact,source,currentRevision,actual.contentSha256))return Response.json({error:"artifact_approval_required",message:"An independent reviewer must approve these exact output bytes before release."},{status:409});
+        exactArtifactBindings.set(artifact.id,{contentId:actual.contentId,content:actual.content,revision:currentRevision,...rightsBinding});
       }
     }
   }
   const canvasAction=action==="canvas_sync"||original.some((event)=>PROJECT_CANVAS_MUTATION_TYPES.has(String(event.type??""))||Boolean(event.payload?.canvas_id));
   if(canvasAction&&!hasCapability(principal,"project.canvas.use",{organizationId:context.organizationId,projectAccessId:context.projectAccessId}))return Response.json({error:"project_canvas_access_required"},{status:403});
-  const maximumEvents=action==="canvas_sync"?120:privilegedPackageSidecars?384:50;
+  const maximumEvents=atomicSidecars?.authoringOperation==="canvas-arrangement"?CANVAS_ARRANGEMENT_MAX_EVENTS:atomicSidecars?.authoringOperation==="workspace-quick-edit"?2:atomicSidecars?.authoringOperation?512:action==="canvas_sync"?120:privilegedPackageSidecars?384:50;
   if(!original.length||original.length>maximumEvents)return Response.json({error:"invalid_project_event_batch",maximum:maximumEvents},{status:400});
   if(action==="canvas_sync"&&original.some((event)=>!String(event.payload?.client_event_id??"")))return Response.json({error:"client_event_id_required"},{status:400});
   if(original.some((event)=>event.type==="ArtifactApproved")&&original.some((event)=>/^(?:Block|Chip|DocumentArtifactEdited)/.test(String(event.type??""))))return Response.json({error:"review_context_changed",message:"Approve the output separately after its latest context changes have been reviewed."},{status:409});
@@ -1050,6 +1471,12 @@ export async function appendProjectEvents(env:WorkerEnv,context:ProjectRequestCo
       if(typeof payload.new_title==="string")target.title=payload.new_title.normalize("NFC").trim();
     }
   }
+  if(incoming.some((event)=>event.type==="BlockCreated"
+    ?event.payload?.type==="model3d"||Object.keys(event.payload?.properties&&typeof event.payload.properties==="object"?event.payload.properties:{}).some((key)=>key.startsWith("model_"))
+    :["BlockPropertyEdited","ChipEdited"].includes(String(event.type))&&["type","model_url","model_mime_type","model_content_hash","model_reference_id","model_view","media_url","media_type","source_mime_type","source_content_hash","reference_id","pixel_reference_mode"].includes(String(event.type==="ChipEdited"?event.payload?.property:event.payload?.property_path)))){
+    const issue=await validateModel3dAssetEvents({env,ownerId:context.ownerUserId,sourceEvents:await readProjectSourceEvents(env,context),events:incoming,projectAccessId:context.projectAccessId});
+    if(issue)return Response.json(issue,{status:issue.status});
+  }
   const pending:PendingProjectResources=new Map();
   const currentResources=await env.DB.prepare(`SELECT resource.resource_kind,resource.resource_id,json_extract(event.payload,'$.canvas_id') AS canvas_id
     FROM project_resource_scopes resource LEFT JOIN events event ON event.event_id=resource.source_event_id
@@ -1059,6 +1486,17 @@ export async function appendProjectEvents(env:WorkerEnv,context:ProjectRequestCo
     const kind=String(resource.resource_kind),id=String(resource.resource_id),key=`existing:${kind}`,values=pending.get(key)??new Set<string>();
     values.add(id);pending.set(key,values);
     if(resource.canvas_id&&["canvas_item","canvas_arrangement","canvas_context"].includes(kind))pending.set(`parent:${kind}:${id}`,new Set([String(resource.canvas_id)]));
+  }
+  if(bulkAuthoring){
+    const resourceKinds:Record<string,string>={DocumentCreated:"document",DocumentForked:"document",BlockCreated:"block",CollectionCreated:"collection",BlockRelationAdded:"relation",ReferenceIngested:"reference",CanvasCreated:"canvas",CanvasItemPlaced:"canvas_item",CanvasReferenceCreated:"canvas_item",CanvasArrangementCreated:"canvas_arrangement",ContextSetFormalized:"canvas_context"};
+    for(const kind of new Set(Object.values(resourceKinds)))pending.set(`owner-history:${kind}`,new Set());
+    const historical=await env.DB.prepare(`SELECT type,payload FROM events WHERE stream_id=? AND type IN(${Object.keys(resourceKinds).map((type)=>"'"+type+"'").join(",")})`)
+      .bind(ownerStream).all<{type:string;payload:string}>();
+    for(const row of historical.results){
+      const kind=resourceKinds[row.type],payload=JSON.parse(row.payload) as Record<string,unknown>;
+      const property=kind==="relation"?"relation_id":kind==="canvas_item"?"item_id":kind==="canvas_arrangement"?"arrangement_id":kind==="canvas_context"?"context_set_id":`${kind}_id`;
+      for(const value of [payload[property],...(kind==="canvas_item"?[payload.reference_item_id]:[])])if(value)pending.get(`owner-history:${kind}`)!.add(String(value));
+    }
   }
   const needsReviewValidation=incoming.some((event)=>ARTIFACT_REVIEW_EVENT_TYPES.has(String(event.type??"")));
   const validatedOwnerHead=needsReviewValidation?await streamHead(env,ownerStream):null;
@@ -1073,16 +1511,23 @@ export async function appendProjectEvents(env:WorkerEnv,context:ProjectRequestCo
     return Response.json({error:"review_context_changed",message:"Approve the output separately after its latest context changes have been reviewed."},{status:409});
   }
   for(const [index,event] of incoming.entries()){
-    if(assistantAcceptance&&index===0&&event.type==="ProposalAccepted")continue;
+    if((assistantAcceptance||atomicSidecars?.authoringOperation==="workspace-quick-edit")&&index===0&&event.type==="ProposalAccepted")continue;
     const reason=await validateProjectMutation(env,context,event,pending,principal,canvasAction);if(reason)return Response.json({error:reason},{status:403});
     if(reviewEvents&&ARTIFACT_REVIEW_EVENT_TYPES.has(String(event.type??""))){
       const type=String(event.type),artifactId=String(event.payload?.artifact_id??"");
       const completed=[...reviewEvents].reverse().find((candidate)=>candidate.type==="DocumentRenderCompleted"&&String(candidate.payload.artifact_id??"")===artifactId);
       const exactReview=["ArtifactReviewRequested","ArtifactApproved","ArtifactChangesRequested"].includes(type);
       const expectedArtifactRevision=exactReview?reviewEvents.filter((candidate)=>candidate.type==="DocumentArtifactEdited"&&String(candidate.payload.artifact_id??"")===artifactId).length:undefined;
-      const expectedContentSha256=exactReview?await currentProjectArtifactDigest(env,context,String(completed?.payload.content_ref??"")):undefined;
+      const exactBinding=exactReview?await currentProjectArtifactBinding(env,context,String(completed?.payload.content_ref??"")):null;
+      const expectedContentSha256=exactBinding?.contentSha256;
       const validation=validateArtifactReview({type,payload:event.payload??{},events:reviewEvents,actorUserId:principal.userId,projectId:context.projectId,canApprove:hasCapability(principal,"project.review.approve",{organizationId:context.organizationId,projectAccessId:context.projectAccessId}),independentReviewer:true,...(exactReview?{expectedArtifactRevision,expectedContentSha256}:{})});
       if(!validation.ok)return Response.json({error:validation.code,message:validation.message},{status:validation.status});
+      if(exactBinding&&expectedArtifactRevision!==undefined){
+        const document=foldEvents(reviewEvents,Number.POSITIVE_INFINITY,String(completed?.payload.document_id??""),context.projectId);
+        const rightsBinding=await currentRights(document,reviewEvents);
+        if(!rightsBinding)return Response.json({error:"context_source_rights_expired"},{status:409});
+        exactArtifactBindings.set(artifactId,{contentId:exactBinding.contentId,content:exactBinding.content,revision:expectedArtifactRevision,...rightsBinding});
+      }
       if(type==="ArtifactReviewRequested"&&!String(event.payload?.assigned_reviewer_user_id??"")){
         const controlled=await env.DB.prepare("SELECT 1 AS present FROM pilot_cohorts WHERE organization_id=? AND status IN('active','paused') LIMIT 1")
           .bind(context.organizationId).first();
@@ -1122,6 +1567,7 @@ export async function appendProjectEvents(env:WorkerEnv,context:ProjectRequestCo
     }
   }
   const ownerHead=await streamHead(env,ownerStream);
+  if(atomicSidecars?.authoringOperation&&ownerHead!==atomicSidecars.expectedOwnerHead)return Response.json({error:"authoring_source_stale"},{status:409});
   if(validatedOutputOwnerHead!==null&&ownerHead!==validatedOutputOwnerHead)return Response.json({error:"output_requirement_context_changed"},{status:409});
   if(assistantAcceptance&&ownerHead!==atomicSidecars?.expectedOwnerHead)return Response.json({error:"assistant_proposal_stale"},{status:409});
   if(validatedOwnerHead!==null&&ownerHead!==validatedOwnerHead)return Response.json({error:"stale_review_context",message:"The project changed while this review was being checked. Refresh and review the latest version."},{status:409});
@@ -1130,6 +1576,9 @@ export async function appendProjectEvents(env:WorkerEnv,context:ProjectRequestCo
   let projectHead=Number(current?.head??0);
   if(action!=="canvas_sync"&&Number.isSafeInteger(body.expectedSequence)&&Number(body.expectedSequence)!==projectHead)return Response.json({error:"stale_sequence",expected:body.expectedSequence,head:projectHead},{status:409});
   const now=new Date().toISOString(),appended:EventRow[]=[],statements:D1PreparedStatement[]=[];
+  let bulkAdmission:BudgetReservationGuard|null=null,bulkAdmissionKey="";
+  const bulkProjectRows:Array<Array<string|number|null>>=[],bulkResourceRows:Array<Array<string|number|null>>=[];
+  const bulkMediaRows:Array<[string,string,string,string]>=[];
   if(validatedOutputOwnerHead!==null)statements.push(outputRequirementHeadGuard(env,ownerStream,validatedOutputOwnerHead));
   for(const [offset,input] of incoming.entries()){
     const payload:Record<string,unknown>={...(input.payload??{}),project_id:context.projectId,...(canvasAction?{history_owner_id:principal.userId}:{})};
@@ -1146,7 +1595,7 @@ export async function appendProjectEvents(env:WorkerEnv,context:ProjectRequestCo
         AND (${event.type==="ArtifactReviewRequested"&&!String(payload.assigned_reviewer_user_id??"")?1:0}=0
           OR NOT EXISTS(SELECT 1 FROM pilot_cohorts controlled WHERE controlled.organization_id=project.organization_id AND controlled.status IN('active','paused')))
         AND (?='' OR EXISTS(SELECT 1 FROM project_context_sessions selected WHERE selected.context_id=? AND selected.principal_user_id=?
-          AND selected.project_access_id=project.project_access_id AND selected.organization_id=project.organization_id AND selected.revoked_at IS NULL AND selected.expires_at>?))
+          AND selected.project_access_id=project.project_access_id AND selected.organization_id=project.organization_id AND selected.revoked_at IS NULL AND selected.expires_at>? AND selected.expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now')))
         AND (?=0 OR project.owner_user_id=? OR EXISTS(SELECT 1 FROM capability_grants canvas_grant WHERE canvas_grant.user_id=?
           AND canvas_grant.capability='project.canvas.use' AND canvas_grant.scope_type='project' AND canvas_grant.organization_id=project.organization_id
           AND canvas_grant.project_access_id=project.project_access_id AND canvas_grant.status='active' AND canvas_grant.revoked_at IS NULL
@@ -1154,13 +1603,17 @@ export async function appendProjectEvents(env:WorkerEnv,context:ProjectRequestCo
         AND (?=0 OR project.owner_user_id=? OR EXISTS(SELECT 1 FROM capability_grants review_grant WHERE review_grant.user_id=?
           AND review_grant.capability='project.review.approve' AND review_grant.scope_type='project' AND review_grant.organization_id=project.organization_id
           AND review_grant.project_access_id=project.project_access_id AND review_grant.status='active' AND review_grant.revoked_at IS NULL
-          AND (review_grant.expires_at IS NULL OR review_grant.expires_at>?))))`;
+          AND (review_grant.expires_at IS NULL OR review_grant.expires_at>? AND review_grant.expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now')))))`;
     const contentGuard=atomicEdit?` AND EXISTS(SELECT 1 FROM private_content content
       JOIN project_resource_scopes artifact ON artifact.project_access_id=? AND artifact.organization_id=? AND artifact.project_id=? AND artifact.owner_user_id=? AND artifact.resource_kind='artifact' AND artifact.resource_id=?
       JOIN project_resource_scopes retained ON retained.project_access_id=artifact.project_access_id AND retained.organization_id=artifact.organization_id AND retained.project_id=artifact.project_id AND retained.owner_user_id=artifact.owner_user_id AND retained.resource_kind='content' AND retained.resource_id=content.content_id AND retained.visibility='collaborative_output'
       WHERE content.content_id=? AND content.owner_id=? AND content.kind='document-artifact' AND content.redacted_at IS NULL
         AND(content.expires_at>? OR ${artifactContentHoldSql("content","artifact")}) AND content.content=?)
       AND (SELECT COUNT(*) FROM events revision WHERE revision.stream_id=? AND revision.type='DocumentArtifactEdited' AND json_extract(revision.payload,'$.artifact_id')=?)=?`:"";
+    const exactContentProof=exportOnly
+      ?artifactExactBatchGuard(context,new Map((exportArtifactIds.get(input)??[]).map(id=>[id,exactArtifactBindings.get(id)!])))
+      :artifactExactBatchGuard(context,new Map(exactArtifactBindings.has(String(payload.artifact_id??""))?[[String(payload.artifact_id??""),exactArtifactBindings.get(String(payload.artifact_id??""))!]]:[]));
+    if(!exactContentProof)return Response.json({error:"artifact_review_evidence_too_large"},{status:409});
     const restoreGuard=atomicEdit?.restoreSource?` AND EXISTS(SELECT 1 FROM artifact_revisions retained WHERE retained.owner_id=? AND retained.organization_id=? AND retained.project_access_id=?
       AND retained.project_id=? AND retained.artifact_id=? AND retained.revision=? AND retained.redacted_at IS NULL
       AND(retained.expires_at>? OR ${artifactRevisionHoldSql("retained")})
@@ -1178,7 +1631,7 @@ export async function appendProjectEvents(env:WorkerEnv,context:ProjectRequestCo
           WHERE assigned_grant.user_id=assigned_member.user_id AND assigned_grant.capability='project.review.approve'
             AND assigned_grant.scope_type='project' AND assigned_grant.organization_id=assigned_project.organization_id
             AND assigned_grant.project_access_id=assigned_project.project_access_id AND assigned_grant.status='active'
-            AND assigned_grant.revoked_at IS NULL AND (assigned_grant.expires_at IS NULL OR assigned_grant.expires_at>?)))
+            AND assigned_grant.revoked_at IS NULL AND (assigned_grant.expires_at IS NULL OR assigned_grant.expires_at>? AND assigned_grant.expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now'))))
         AND ${effectivePilotParticipantSql("assigned_member.organization_id","assigned_member.user_id")})`:"";
     const decision=["ArtifactApproved","ArtifactChangesRequested"].includes(event.type);
     const decisionGuard=decision?` AND EXISTS(SELECT 1 FROM project_review_tasks exact_task
@@ -1189,19 +1642,30 @@ export async function appendProjectEvents(env:WorkerEnv,context:ProjectRequestCo
           WHERE requested_scope.project_access_id=? AND requested_scope.organization_id=? AND requested_event.type='ArtifactReviewRequested'
             AND json_extract(requested_event.payload,'$.artifact_id')=? ORDER BY requested_scope.project_sequence DESC LIMIT 1))`:"";
     const sidecarGuard=atomicSidecars?.guardSql?` AND (${atomicSidecars.guardSql})`:"";
-    statements.push(env.DB.prepare(`INSERT INTO event_write_stage(${EVENT_WRITE_COLUMNS})
-      SELECT ?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,? WHERE (SELECT COALESCE(MAX(sequence),0) FROM events WHERE stream_id=?)=? AND ${guard}${contentGuard}${restoreGuard}${assignmentGuard}${decisionGuard}${sidecarGuard}`)
-      .bind(...eventWriteBindings(event),ownerStream,event.sequence-1,
+    const writeBindings:Array<string|number|null>=[
         principal.userId,POLICY_VERSION,principal.userId,principal.userId,context.projectAccessId,context.organizationId,principal.userId,Number(exportOnly||reviewOnly),
-        context.contextId,context.contextId,principal.userId,now,canvasAction?1:0,principal.userId,principal.userId,now,reviewOnly||event.type==="ArtifactApproved"?1:0,principal.userId,principal.userId,now,
+        context.contextId,context.contextId,principal.userId,now,canvasAction?1:0,principal.userId,principal.userId,now,reviewOnly||["ArtifactApproved","ArtifactChangesRequested"].includes(event.type)?1:0,principal.userId,principal.userId,now,
         ...(atomicEdit?[context.projectAccessId,context.organizationId,context.projectId,context.ownerUserId,atomicEdit.artifactId,atomicEdit.contentId,context.ownerUserId,now,atomicEdit.oldContent,ownerStream,atomicEdit.artifactId,atomicEdit.expectedRevision]:[]),
+        ...exactContentProof.bindings,
         ...(atomicEdit?.restoreSource?[context.ownerUserId,context.organizationId,context.projectAccessId,context.projectId,atomicEdit.artifactId,atomicEdit.restoreSource.revision,now,atomicEdit.restoreSource.contentSha256,atomicEdit.restoreSource.contentJson]:[]),
         ...(assigned?[assigned,context.projectAccessId,context.organizationId,principal.userId,now]:[]),
         ...(decision?[context.projectAccessId,context.organizationId,String(payload.artifact_id??""),principal.userId,Number(payload.artifact_revision??-1),String(payload.content_sha256??""),context.projectAccessId,context.organizationId,String(payload.artifact_id??"")]:[]),
-        ...(atomicSidecars?.guardBindings??[])));
+        ...(atomicSidecars?.guardBindings??[])
+    ];
+    if(bulkAuthoring){
+      const sql=`${guard}${contentGuard}${exactContentProof.sql}${restoreGuard}${assignmentGuard}${decisionGuard}${sidecarGuard}`,key=JSON.stringify([sql,writeBindings]);
+      if(bulkAdmission&&bulkAdmissionKey!==key)throw new Error("invalid_authoring_operation");
+      bulkAdmission={sql,bindings:writeBindings};bulkAdmissionKey=key;
+    }else{
+      statements.push(env.DB.prepare(`INSERT INTO event_write_stage(${EVENT_WRITE_COLUMNS})
+        SELECT ?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,? WHERE (SELECT COALESCE(MAX(sequence),0) FROM events WHERE stream_id=?)=? AND ${guard}${contentGuard}${exactContentProof.sql}${restoreGuard}${assignmentGuard}${decisionGuard}${sidecarGuard}`)
+        .bind(...eventWriteBindings(event),ownerStream,event.sequence-1,...writeBindings));
+    }
     projectHead+=1;
-    statements.push(env.DB.prepare("INSERT INTO project_event_scopes(event_id,project_access_id,organization_id,project_id,owner_user_id,source_stream_id,source_sequence,project_sequence,actor_user_id,created_at) SELECT ?,?,?,?,?,?,?,?,?,? WHERE EXISTS(SELECT 1 FROM events WHERE event_id=?)")
-      .bind(event.eventId,context.projectAccessId,context.organizationId,context.projectId,context.ownerUserId,ownerStream,event.sequence,projectHead,principal.userId,now,event.eventId));
+    const projectRow=[event.eventId,context.projectAccessId,context.organizationId,context.projectId,context.ownerUserId,ownerStream,event.sequence,projectHead,principal.userId,now];
+    if(bulkAuthoring)bulkProjectRows.push(projectRow);
+    else statements.push(env.DB.prepare("INSERT INTO project_event_scopes(event_id,project_access_id,organization_id,project_id,owner_user_id,source_stream_id,source_sequence,project_sequence,actor_user_id,created_at) SELECT ?,?,?,?,?,?,?,?,?,? WHERE EXISTS(SELECT 1 FROM events WHERE event_id=?)")
+      .bind(...projectRow,event.eventId));
     if(atomicEdit)for(const revision of atomicEdit.revisions)statements.push(env.DB.prepare(`INSERT INTO artifact_revisions(revision_id,owner_id,organization_id,project_access_id,project_id,document_id,artifact_id,revision,content_json,content_sha256,created_by_user_id,created_at,expires_at,redacted_at)
       SELECT ?,?,?,?,?,?,?,?,?,?,?,?,?,NULL WHERE EXISTS(SELECT 1 FROM events WHERE event_id=?)`)
       .bind(revision.revisionId,context.ownerUserId,context.organizationId,context.projectAccessId,context.projectId,atomicEdit.documentId,atomicEdit.artifactId,revision.revision,revision.contentJson,revision.contentSha256,revision.createdByUserId,revision.createdAt,revision.expiresAt,event.eventId));
@@ -1213,13 +1677,19 @@ export async function appendProjectEvents(env:WorkerEnv,context:ProjectRequestCo
     const resourceKind=event.type==="DocumentCreated"?"document":event.type==="BlockCreated"?"block":event.type==="CollectionCreated"?"collection":event.type==="BlockRelationAdded"?"relation":event.type==="ReferenceIngested"?"reference":event.type==="CanvasCreated"?"canvas":["CanvasItemPlaced","CanvasReferenceCreated"].includes(event.type)?"canvas_item":event.type==="CanvasArrangementCreated"?"canvas_arrangement":event.type==="ContextSetFormalized"?"canvas_context":"";
     const resourceProperty=resourceKind==="document"?"document_id":resourceKind==="block"?"block_id":resourceKind==="relation"?"relation_id":resourceKind==="reference"?"reference_id":resourceKind==="canvas"?"canvas_id":resourceKind==="canvas_item"?(payload.item_id?"item_id":"reference_item_id"):resourceKind==="canvas_arrangement"?"arrangement_id":resourceKind==="canvas_context"?"context_set_id":"collection_id";
     const resourceId=String(payload[resourceProperty]??"");
-    if(resourceKind&&resourceId)statements.push(env.DB.prepare("INSERT INTO project_resource_scopes(project_access_id,resource_kind,resource_id,organization_id,project_id,owner_user_id,visibility,source_event_id,actor_user_id,created_at) SELECT ?,?,?,?,?,?,'collaborative_output',?,?,? WHERE EXISTS(SELECT 1 FROM events WHERE event_id=?)")
-      .bind(context.projectAccessId,resourceKind,resourceId,context.organizationId,context.projectId,context.ownerUserId,event.eventId,principal.userId,now,event.eventId));
+    if(resourceKind&&resourceId){
+      const resourceRow=[context.projectAccessId,resourceKind,resourceId,context.organizationId,context.projectId,context.ownerUserId,"collaborative_output",event.eventId,principal.userId,now];
+      if(bulkAuthoring)bulkResourceRows.push(resourceRow);
+      else statements.push(env.DB.prepare("INSERT INTO project_resource_scopes(project_access_id,resource_kind,resource_id,organization_id,project_id,owner_user_id,visibility,source_event_id,actor_user_id,created_at) SELECT ?,?,?,?,?,?,?,?,?,? WHERE EXISTS(SELECT 1 FROM events WHERE event_id=?)")
+        .bind(...resourceRow,event.eventId));
+    }
     if(event.type==="BlockCreated"){
       const properties=payload.properties&&typeof payload.properties==="object"?payload.properties as Record<string,unknown>:{};
-      const key=mediaKey(properties.media_url);
-      if(key)statements.push(env.DB.prepare("UPDATE project_resource_scopes SET source_event_id=? WHERE project_access_id=? AND organization_id=? AND resource_kind='media' AND resource_id=? AND EXISTS(SELECT 1 FROM events WHERE event_id=?)")
-        .bind(event.eventId,context.projectAccessId,context.organizationId,key,event.eventId));
+      for(const key of new Set([mediaKey(properties.media_url),mediaKey(properties.model_url)].filter(Boolean))){
+        if(bulkAuthoring)bulkMediaRows.push([event.eventId,context.projectAccessId,context.organizationId,key]);
+        else statements.push(env.DB.prepare("UPDATE project_resource_scopes SET source_event_id=? WHERE project_access_id=? AND organization_id=? AND resource_kind='media' AND resource_id=? AND EXISTS(SELECT 1 FROM events WHERE event_id=?)")
+          .bind(event.eventId,context.projectAccessId,context.organizationId,key,event.eventId));
+      }
     }
     if(action==="canvas_sync"){
       const originalIndex=original.indexOf(input);
@@ -1229,14 +1699,32 @@ export async function appendProjectEvents(env:WorkerEnv,context:ProjectRequestCo
     appended.push(event);
   }
   const invalidatesResources=incoming.some(({type,payload})=>/Removed$|Restored$|Discarded$|Rehomed$/.test(String(type??""))
-    ||(type==="BlockPropertyEdited"||type==="ChipEdited")&&["media_url","reference_id","source_document_id","source_block_id","source_output_id"].includes(String(type==="BlockPropertyEdited"?payload?.property_path:payload?.property)));
+    ||(type==="BlockPropertyEdited"||type==="ChipEdited")&&["media_url","model_url","reference_id","model_reference_id","source_document_id","source_block_id","source_output_id"].includes(String(type==="BlockPropertyEdited"?payload?.property_path:payload?.property)));
+  let writeProof:BudgetReservationGuard|undefined;
+  if(bulkAuthoring){
+    if(!bulkAdmission)throw new Error("invalid_authoring_operation");
+    const authored=prepareAuthoringEventBatch(env,appended,ownerHead,bulkAdmission);
+    const scoped=prepareAuthoringSidecarBatch(env,"project_event_scopes",bulkProjectRows);
+    const resources=prepareAuthoringSidecarBatch(env,"project_resource_scopes",bulkResourceRows);
+    const media=prepareAuthoringMediaBatch(env,bulkMediaRows);
+    statements.push(...authored.statements,...scoped.statements,...resources.statements,...media.statements);
+    writeProof=combineAuthoringGuards(authored.proof,scoped.proof,resources.proof,media.proof);
+  }
   if(atomicSidecars?.statements?.length)statements.push(...atomicSidecars.statements);
-  if(atomicSidecars?.buildStatements&&appended.length)statements.push(...atomicSidecars.buildStatements(appended.at(-1)!.eventId));
-  statements.push(env.DB.prepare("UPDATE project_migration_states SET last_owner_sequence=?,updated_at=? WHERE project_access_id=? AND organization_id=? AND owner_user_id=? AND status='active' AND (?='' OR EXISTS(SELECT 1 FROM events WHERE event_id=?))")
-    .bind(invalidatesResources?ownerHead:ownerHead+incoming.length,now,context.projectAccessId,context.organizationId,context.ownerUserId,atomicEdit||atomicSidecars?appended.at(-1)?.eventId??"":"",atomicEdit||atomicSidecars?appended.at(-1)?.eventId??"":""));
+  if(atomicSidecars?.buildStatements&&appended.length)statements.push(...atomicSidecars.buildStatements(appended.at(-1)!.eventId,writeProof,appended));
+  if(needsReviewValidation||exportOnly){
+    const completion=artifactReviewCompletionGuard(context,appended);
+    // last_owner_sequence is already NOT NULL: a suppressed row aborts all event, task, notification, and index writes.
+    statements.push(env.DB.prepare(`UPDATE project_migration_states SET last_owner_sequence=CASE WHEN ${completion.sql} THEN ? ELSE NULL END,updated_at=?
+      WHERE project_access_id=? AND organization_id=? AND owner_user_id=? AND status='active'`)
+      .bind(...completion.bindings,ownerHead+incoming.length,now,context.projectAccessId,context.organizationId,context.ownerUserId));
+  }else{
+    statements.push(env.DB.prepare("UPDATE project_migration_states SET last_owner_sequence=?,updated_at=? WHERE project_access_id=? AND organization_id=? AND owner_user_id=? AND status='active' AND (?='' OR EXISTS(SELECT 1 FROM events WHERE event_id=?))")
+      .bind(invalidatesResources?ownerHead:ownerHead+incoming.length,now,context.projectAccessId,context.organizationId,context.ownerUserId,atomicEdit||atomicSidecars?appended.at(-1)?.eventId??"":"",atomicEdit||atomicSidecars?appended.at(-1)?.eventId??"":""));
+  }
   try{
     const results=await env.DB.batch(statements);
-    if(results.slice(validatedOutputOwnerHead===null?0:1).some((result)=>Number(result.meta.changes??0)!==1))return Response.json({error:"project_access_revoked"},{status:403});
+    if(!bulkAuthoring&&results.slice(validatedOutputOwnerHead===null?0:1).some((result)=>Number(result.meta.changes??0)!==1))return Response.json({error:"project_access_revoked"},{status:403});
   }catch{return Response.json({error:"stale_sequence",head:projectHead-incoming.length},{status:409});}
   const first=projectHead-appended.length+1;
   const newEvents=new Map(incoming.map((input,index)=>[input,{...appended[index]!,streamId:`project:${context.projectAccessId}`,sequence:first+index}] as const));

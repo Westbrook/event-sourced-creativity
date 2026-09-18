@@ -11,7 +11,7 @@ const [domain, planning, harness, requirements] = await Promise.all([
   source("src/model/output-plan.ts"), source("src/components/output-plan-proposal-state.ts"),
   source("tests/output-ui-source-harness.mjs"), source("src/model/output-requirements.ts"),
 ]);
-const { binding, controllerFixture, deferred, eventHandlers, handler, loadController, region, submitEvent, templates } = harness;
+const { binding, controllerFixture, deferred, eventHandlers, handler, loadController, outputFixtureFocusDocument, region, submitEvent, templates } = harness;
 const tagged = (part, key) => part.values.some((value) => typeof value === "string" && value.includes(`output.delivery.${key}`));
 const attributes = (part, key) => part.values.filter((value, index) => part.strings[index].trimEnd().endsWith(`${key}=`));
 const scope = "fixture-actor:project:1\u0000doc-a";
@@ -107,10 +107,11 @@ test("optional choice readback and edits preserve an inherited sibling commitmen
 
 async function controllerReview() {
   const f = await controllerFixture(), current = configure(f.snapshots.get("doc-a"));
-  const opener = { isConnected: true, disabled: false, focus() {} };
+  const focusDocument = outputFixtureFocusDocument();
+  const opener = { isConnected: true, disabled: false, focus() { focusDocument.focus(this); } };
   const focuses = { preview: 0 };
   class Base {
-    constructor() { this.store = f.store; this.isConnected = true; this.i18n = f.controller.i18n; this.updateComplete = Promise.resolve(); }
+    constructor() { this.store = f.store; this.ownerDocument = focusDocument; this.isConnected = true; this.i18n = f.controller.i18n; this.updateComplete = Promise.resolve(); }
     requestUpdate() {} connectedCallback() {} disconnectedCallback() {}
     querySelector(selector) { return selector === "[data-output-selection-preview]" ? { focus() { focuses.preview++; } } : null; }
   }
@@ -123,7 +124,7 @@ async function controllerReview() {
   const reset = () => templates(review()).find((part) => tagged(part, "planIncludeCommittedTargets"));
   return { ...f, current, review, reset, open, focuses };
 }
-const runRows = (f) => templates(region(f.controller.render(), 'class="output-execution"')).filter((part) => part.strings.some((text) => text.includes('<label><input type="checkbox"')) && part.strings.some((text) => text.includes('<span dir="auto">')));
+const runRows = (f) => templates(region(f.controller.render(), 'class="output-execution"')).filter((part) => part.strings.some((text) => text.includes('<label><input class="output-run-target" data-output-run-target=')) && part.strings.some((text) => text.includes(' type="checkbox"')) && part.strings.some((text) => text.includes('<span dir="auto">')));
 
 test("actual compiled required and already-owed optional exclusions have accurate author and viewer guidance", async () => {
   for (const canAuthor of [true, false]) {

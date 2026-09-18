@@ -1,4 +1,12 @@
 import { html, nothing, type TemplateResult } from "lit";
+import { navigateInApp, type CommandDeparture } from "./command-departure";
+import { cache } from "lit/directives/cache.js";
+import { localizeTemplateResult } from "./design-system/localized-template";
+import { keyed } from "lit/directives/keyed.js";
+import { repeat } from "lit/directives/repeat.js";
+import { contextControlName, suspendContextControls } from "./context-controls";
+import { captureOutputNavigationFocus, type OutputNavigationFocusLease } from "./output-navigation-focus";
+import "./context-controls.css";
 import { FormaElement, icon } from "./forma-element";
 import { blockIconName } from "./icon-semantics";
 import "./icons-authoring";
@@ -15,26 +23,45 @@ import { localizedSourceAnchor } from "../model/source-anchor";
 import { referenceMedium, type ReferenceMedium } from "../model/reference-media";
 import { renderVideoReel } from "./video-reel";
 import { renderAudioPlayer } from "./audio-playback";
-import { MAX_AUDIO_UPLOAD_BYTES, normalizeAudioCues } from "../model/audio";
+import { MAX_AUDIO_UPLOAD_BYTES, normalizeAudioCues, audioPlaybackTiming } from "../model/audio";
 import { analyzeAudioLocally } from "../model/audio-browser";
+import { normalizeModel3dView, type Model3dCaptureDetail } from "../model/model3d-view";
+import "./model3d-viewer";
 import "./reference-image";
 import "./reference-palette-picker";
 import "./reference-findings";
 import "./spatial-scope-editor";
 import "./reference-pixel-policy";
+import "./reference-composition-editor";
 import "./image-format-editor";
 import "./output-input-editor";
 import "./context-intelligence";
 
+type ContextControlFocus = { lease: OutputNavigationFocusLease; current: () => boolean };
+
 export class ContextBlock extends FormaElement {
-  static properties = { block: { attribute: false }, surface: { type: String } };
+  static properties = { block: { attribute: false }, surface: { type: String }, readOnly: { type: Boolean, attribute: "read-only" } };
   block!: CreativeBlock;
   surface = "document";
+  /** Inspection never grants the containing surface authoring rights. */
+  readOnly = false;
+  #controlsOpen = false;
+  #controlsWereVisible = false;
+  #controlsIdentity = "";
+  #editingRequest = "";
+  #draftActive = false;
+  #draftChanged = false;
+  #structuredEditor: HTMLElementTagNameMap["forma-output-input-editor"] | null = null;
+  #draftInitialized = false;
+  #draftRevision = 0;
+  #savingDraft: object | null = null;
+  #controlFocus: ContextControlFocus | null = null;
   #draft = "";
   #imageLabel = "";
   #imagePalette: string[] = [];
   #editingFocused = false;
   #analyzingAudio=false;
+  #savingModelView: object | null = null;
   #detailDraft:{parentId:string;label:string;value:string;type:BlockKind}|null=null;
   #reuseParentId="";
   #characterSaving:Promise<void>=Promise.resolve();
@@ -42,50 +69,238 @@ export class ContextBlock extends FormaElement {
   #confirmRemove = false; #paletteOpen = false; #dropPosition: ""|"before"|"after" = "";
 
   #beginEdit() {
-    if (this.block.locked || this.block.properties.source_evidence_hash) return;
+    if (!this.#canEdit() || this.block.locked || this.block.properties.source_evidence_hash) return;
+    this.#initializeDraft();
+    this.#draftRevision++;
+    this.#draftActive = true;
+    this.#editingFocused = true;
+    this.store.patchUi({ focusBlockId: this.block.id, editingBlockId: this.block.id });
+    this.#focusAfterUpdate(() => this.#editorFocusTarget());
+  }
+
+  #cancelEdit() { this.#finishEdit(this.#captureControlFocus()); }
+
+  #finishEdit(focus: ContextControlFocus) {
+    this.querySelector("forma-output-input-editor")?.reset();
+    this.#structuredEditor = null;
+    this.#draftRevision++;
+    this.#savingDraft = null;
+    if (this.store.ui.editingBlockId === this.block.id) this.store.patchUi({ editingBlockId: "" });
+    this.#draftActive = false; this.#draftChanged = false; this.#draftInitialized = false; this.#editingFocused = false;
+    this.requestUpdate();
+    this.#focusAfterUpdate(() => this.querySelector<HTMLButtonElement>(".block-copy"), focus);
+  }
+
+  async #saveEdit() {
+    if (this.#savingDraft || !this.isConnected || !this.#draftActive || !this.#canEdit() || this.block.locked || this.block.properties.source_evidence_hash) return;
+    const workbench = this.querySelector("forma-output-input-editor");
+    const submitted = workbench?.draft ?? null;
+    const revision = this.#draftRevision, identity = this.#controlsScope(), route = this.store.route.get();
+    const submission = {}, focus = this.#captureControlFocus();
+    const current = () => this.#savingDraft === submission && this.#draftRevision === revision
+      && this.#draftActive && this.isConnected && this.#controlsScope() === identity && this.store.route.get() === route
+      && this.#canEdit() && !this.block.locked && !this.block.properties.source_evidence_hash
+      && (!workbench || this.querySelector("forma-output-input-editor") === workbench && JSON.stringify(workbench.draft) === JSON.stringify(submitted));
+    let completed = false;
+    const complete = () => { if (current()) { completed = true; this.#finishEdit(focus); } };
+    this.#savingDraft = submission;
+    this.requestUpdate();
+    try {
+      if (submitted) {
+        if (await this.store.saveOutputInput(this.block.id, submitted, `${this.surface}-output-input-editor`)) complete();
+        return;
+      }
+      const previous = String(this.block.properties.text ?? this.block.properties.label ?? "");
+      const derived = Boolean(this.block.properties.source_output_id || this.block.properties.source_artifact_item_id);
+      const next = derived ? this.#draft : this.#draft.trim();
+      const changes = this.store.outputBlockTextEvents(this.block.id, next, `${this.surface}-context-block`);
+      if (this.block.properties.source_output_id && this.#imageLabel !== String(this.block.properties.label ?? "")) {
+        changes.push({ type: "BlockPropertyEdited", payload: { block_id: this.block.id, property_path: "label", old_value: this.block.properties.label ?? "", new_value: this.#imageLabel, source_surface: `${this.surface}-context-block` } });
+        changes.push({ type: "BlockPropertyEdited", payload: { block_id: this.block.id, property_path: "image_caption", old_value: this.block.properties.image_caption ?? "", new_value: this.#imageLabel, source_surface: `${this.surface}-context-block` } });
+      }
+      if (this.block.properties.source_output_id && JSON.stringify(this.#imagePalette) !== JSON.stringify(this.block.properties.output_palette ?? [])) for (const property of ["output_palette", "palette"]) changes.push({ type: "BlockPropertyEdited", payload: { block_id: this.block.id, property_path: property, old_value: this.block.properties[property] ?? [], new_value: [...this.#imagePalette], source_surface: `${this.surface}-context-block` } });
+      if (!changes.length) {
+        if (next === previous) complete();
+        else this.store.toast("Unlock the parent storyboard input before editing this frame.");
+        return;
+      }
+      const appended = await this.store.appendBatch(changes);
+      if (appended.length) complete();
+    } finally {
+      if (this.#savingDraft === submission) { this.#savingDraft = null; this.requestUpdate(); }
+      if (!completed) this.#disposeControlFocus(focus);
+    }
+  }
+
+  #initializeDraft() {
+    if (this.#draftInitialized) return;
+    this.#draftInitialized = true;
+    this.#draftRevision++;
+    this.#draftChanged = false;
     this.#draft = String(this.block.properties.text ?? this.block.properties.label ?? "");
     this.#imageLabel = String(this.block.properties.label ?? "");
     this.#imagePalette = Array.isArray(this.block.properties.output_palette) ? this.block.properties.output_palette.map(String) : [];
-    this.store.patchUi({ editingBlockId: this.block.id });
-    void this.updateComplete.then(() => (this.querySelector<HTMLTextAreaElement>(".block-editor forma-ui-rich-text textarea") ?? this.querySelector<HTMLTextAreaElement>(".block-editor textarea"))?.focus());
   }
-  #cancelEdit() { this.store.patchUi({ editingBlockId: "" }); this.#editingFocused = false; void this.updateComplete.then(() => this.querySelector<HTMLButtonElement>(".block-copy")?.focus({ preventScroll: true })); }
-  async #saveEdit() {
-    const workbench = this.querySelector("forma-output-input-editor");
-    if (workbench?.draft) { if (await this.store.saveOutputInput(this.block.id, workbench.draft, `${this.surface}-output-input-editor`)) this.#cancelEdit(); return; }
-    const current = String(this.block.properties.text ?? this.block.properties.label ?? ""); const derived = Boolean(this.block.properties.source_output_id || this.block.properties.source_artifact_item_id); const next = derived ? this.#draft : this.#draft.trim();
-    const changes = this.store.outputBlockTextEvents(this.block.id, next, `${this.surface}-context-block`);
-    if (this.block.properties.source_output_id && this.#imageLabel !== String(this.block.properties.label ?? "")) {
-      changes.push({ type: "BlockPropertyEdited", payload: { block_id: this.block.id, property_path: "label", old_value: this.block.properties.label ?? "", new_value: this.#imageLabel, source_surface: `${this.surface}-context-block` } });
-      changes.push({ type: "BlockPropertyEdited", payload: { block_id: this.block.id, property_path: "image_caption", old_value: this.block.properties.image_caption ?? "", new_value: this.#imageLabel, source_surface: `${this.surface}-context-block` } });
+
+  #markDraftChanged() { this.#draftRevision++; this.#draftChanged = true; }
+
+  #markStructuredDraftChanged() { this.#structuredEditor = this.querySelector("forma-output-input-editor"); this.#markDraftChanged(); }
+
+  #structuredDraftDiffers() { const current = outputInputDraft(this.block), editor = this.#structuredEditor; return Boolean(current && editor && editor.block.id === this.block.id && JSON.stringify(editor.draft) !== JSON.stringify(current)); }
+
+  #ordinaryDraftDiffers() { const p = this.block.properties; return this.#draft !== String(p.text ?? p.label ?? "") || this.#imageLabel !== String(p.label ?? "") || JSON.stringify(this.#imagePalette) !== JSON.stringify(Array.isArray(p.output_palette) ? p.output_palette.map(String) : []); }
+
+  #controlsScope() { return JSON.stringify([this.store.captureAuthorizationScope()?.key ?? "", this.block.projectId, this.block.documentId, this.block.id, this.surface, this.readOnly, this.#canEdit(), this.block.properties.source_artifact_id ?? null, this.block.properties.source_artifact_kind ?? null]); }
+
+  /** Content-free custody shared by this view's existing navigation owners. */
+  captureCommandDeparture(): CommandDeparture {
+    const store = this.store, scope = this.#controlsScope(), revision = this.#draftRevision;
+    return {
+      element: this,
+      current: () => this.isConnected && FormaElement.hasStoreIdentity(this, store)
+        && this.#controlsScope() === scope && this.#draftRevision === revision,
+      blocked: () => {
+        const editor = this.querySelector("forma-output-input-editor") ?? this.#structuredEditor;
+        const sameEditor = editor && FormaElement.hasStoreIdentity(editor, this.store)
+          && editor.block.projectId === this.block.projectId && editor.block.documentId === this.block.documentId
+          && editor.block.id === this.block.id && editor.source === this.surface
+          && editor.block.properties.source_artifact_id === this.block.properties.source_artifact_id
+          && editor.block.properties.source_artifact_kind === this.block.properties.source_artifact_kind;
+        return Boolean(this.#savingDraft || this.#savingModelView
+          || this.#draftChanged && (outputInputDraft(this.block) ? this.#structuredDraftDiffers() : this.#ordinaryDraftDiffers())
+          || sameEditor && editor?.localWorkBlocked);
+      },
+      reason: () => "next.lifecycle.currentWorkOpen",
+    };
+  }
+
+  #disposeControlFocus(focus = this.#controlFocus) {
+    focus?.lease.dispose();
+    if (this.#controlFocus === focus) this.#controlFocus = null;
+  }
+
+  #captureControlFocus(editingRequest?: string): ContextControlFocus {
+    this.#disposeControlFocus();
+    const identity = this.#controlsScope(), route = this.store.route.get(), selection = this.store.ui.focusBlockId, open = this.#controlsOpen, revision = this.#draftRevision;
+    const lease = captureOutputNavigationFocus(this.ownerDocument);
+    const focus: ContextControlFocus = { lease, current: () => this.#controlFocus === focus && this.isConnected
+      && this.#controlsScope() === identity && this.store.route.get() === route && this.store.ui.focusBlockId === selection
+      && this.#controlsOpen === open && (editingRequest === undefined || this.store.ui.editingBlockId === editingRequest && this.#draftRevision === revision) && lease.current() };
+    this.#controlFocus = focus;
+    return focus;
+  }
+
+  #focusAfterUpdate(target: () => HTMLElement | null, focus = this.#captureControlFocus(), reveal = false) {
+    void this.updateComplete.then(() => {
+      try {
+        if (!focus.current() || this.ownerDocument.querySelector("dialog[open]")) return;
+        const element = target();
+        if (element) focus.lease.run(element, () => {
+          if (reveal) {
+            element.scrollIntoView({ block: "center", inline: "nearest", behavior: "instant" });
+            if (!focus.current() || !element.isConnected || target() !== element || this.ownerDocument.querySelector("dialog[open]")) return false;
+          }
+          element.focus({ preventScroll: true }); return true;
+        });
+      } finally { this.#disposeControlFocus(focus); }
+    }, () => this.#disposeControlFocus(focus));
+  }
+
+  #editorFocusTarget() { return this.querySelector<HTMLTextAreaElement>(".block-editor forma-ui-rich-text textarea") ?? this.querySelector<HTMLTextAreaElement>(".block-editor textarea"); }
+
+  #calmSurface() { return this.surface === "document" || this.surface === "library"; }
+  #canEdit() { const session = this.store.session.get(), permissions = session?.projectContext?.permissions ?? session?.capabilities ?? []; return Boolean(this.store.captureAuthorizationScope()) && !this.readOnly && permissions.includes("project.read") && permissions.includes("project.author"); }
+  #controlsVisible() { return this.#controlsOpen && this.store.ui.focusBlockId === this.block.id; }
+  #selectDecision() { this.store.patchUi({ focusBlockId: this.block.id }); }
+  #controlsLabel() { const context = this.store.session.get()?.projectContext; const readOnly = this.readOnly || Boolean(context && !context.permissions.includes("project.author")); return this.i18n.t(readOnly ? "context.controls.inspect" : "context.controls.named", readOnly ? "Inspect {name}" : "Controls for {name}", { name: `\u2068${String(this.block.properties.label ?? this.block.handle)}\u2069` }); }
+
+  protected override willUpdate() {
+    if (!this.block) return;
+    const identity = this.#controlsScope();
+    if (this.#controlsIdentity && identity !== this.#controlsIdentity) {
+      suspendContextControls(this);
+      this.#draftRevision++; this.#savingDraft = null; this.#structuredEditor = null;
+      if (this.store.ui.editingBlockId === this.block.id) this.store.patchUi({ editingBlockId: "" });
+      this.#controlsOpen = false; this.#draftActive = false; this.#draftChanged = false; this.#draftInitialized = false; this.#draft = ""; this.#imageLabel = ""; this.#imagePalette = []; this.#editingFocused = false; this.#editingRequest = "";
+      this.#detailDraft = null; this.#reuseParentId = ""; this.#confirmRemove = false; this.#paletteOpen = false;
     }
-    if (this.block.properties.source_output_id && JSON.stringify(this.#imagePalette) !== JSON.stringify(this.block.properties.output_palette ?? [])) for(const property of ["output_palette","palette"])changes.push({ type: "BlockPropertyEdited", payload: { block_id: this.block.id, property_path: property, old_value: this.block.properties[property] ?? [], new_value: this.#imagePalette, source_surface: `${this.surface}-context-block` } });
-    if (!changes.length) { if (next === current) return this.#cancelEdit(); this.store.toast("Unlock the parent storyboard input before editing this frame."); return; }
-    const appended = await this.store.appendBatch(changes);
-    if (appended.length) this.#cancelEdit();
+    this.#controlsIdentity = identity;
+    const requested = this.store.ui.editingBlockId;
+    if (requested === this.block.id && requested !== this.#editingRequest && this.#canEdit()) {
+      this.#initializeDraft(); this.#draftRevision++; this.#draftActive = true;
+      if (this.#calmSurface()) this.#controlsOpen = true;
+    }
+    this.#editingRequest = requested;
+    if (this.#draftInitialized && !this.#draftChanged && !outputInputDraft(this.block) && this.#ordinaryDraftDiffers()) { this.#draftInitialized = false; this.#initializeDraft(); }
+    const visible = !this.#calmSurface() || this.#controlsVisible();
+    if (this.#controlsWereVisible && !visible) { suspendContextControls(this); this.#controlsOpen = false; }
+    this.#controlsWereVisible = visible;
+    if (this.#controlFocus && !this.#controlFocus.current()) this.#disposeControlFocus();
   }
 
   protected override updated() {
-    const editing = this.store.ui.editingBlockId === this.block?.id;
-    if (!editing) { this.#editingFocused = false; return; }
+    const currentEditor = this.querySelector("forma-output-input-editor");
+    if (currentEditor) {
+      if (!this.#draftChanged) {
+        const current = outputInputDraft(this.block);
+        if (JSON.stringify(currentEditor.draft) !== JSON.stringify(current)) currentEditor.reset();
+      }
+      // The existing cache may detach this same child when controls close.
+      this.#structuredEditor = currentEditor;
+    }
+    const editing = this.#calmSurface() ? this.#draftActive : this.store.ui.editingBlockId === this.block?.id;
+    if (!editing || this.#calmSurface() && !this.#controlsVisible()) { this.#editingFocused = false; return; }
     if (this.#editingFocused) return;
     this.#editingFocused = true;
-    if (!this.#draft) this.#draft = String(this.block.properties.text ?? this.block.properties.label ?? "");
-    if (!this.#imageLabel) this.#imageLabel = String(this.block.properties.label ?? "");
-    if (!this.#imagePalette.length && Array.isArray(this.block.properties.output_palette)) this.#imagePalette = this.block.properties.output_palette.map(String);
-    if (!document.querySelector("dialog[open]")) (this.querySelector<HTMLTextAreaElement>("forma-ui-rich-text textarea") ?? this.querySelector<HTMLTextAreaElement>(".block-editor textarea"))?.focus({ preventScroll: true });
+    this.#initializeDraft();
+    if (!this.#calmSurface() && !this.#controlFocus) this.#focusAfterUpdate(() => this.#editorFocusTarget());
+  }
+
+  override disconnectedCallback() { this.#disposeControlFocus(); this.#draftRevision++; this.#savingDraft = null; this.#structuredEditor = null; suspendContextControls(this); super.disconnectedCallback(); }
+
+  #closeControls() {
+    suspendContextControls(this);
+    this.#draftRevision++;
+    this.#editingRequest = "";
+    if (this.store.ui.editingBlockId === this.block.id) this.store.patchUi({ editingBlockId: "" });
+    this.#controlsOpen = false; this.#editingFocused = false; this.requestUpdate();
+    this.#focusAfterUpdate(() => this.querySelector<HTMLButtonElement>(".context-controls-toggle"), this.#captureControlFocus(this.store.ui.editingBlockId), this.surface === "document");
+  }
+
+  #toggleControls() {
+    if (this.#controlsVisible()) { this.#closeControls(); return; }
+    this.#controlsOpen = true;
+    const editable = this.#canEdit() && !this.block.locked && !this.block.properties.source_evidence_hash;
+    if (editable) { this.#initializeDraft(); this.#draftRevision++; this.#draftActive = true; this.#editingFocused = true; }
+    this.store.patchUi({ focusBlockId: this.block.id, ...(editable ? { editingBlockId: this.block.id } : {}) });
+    this.requestUpdate();
+    this.#focusAfterUpdate(() => this.querySelector<HTMLElement>(".context-controls-panel"));
+  }
+
+  #controlsKeys(event: KeyboardEvent) {
+    if (event.isComposing || event.key !== "Escape" || (event.target as Element | null)?.closest("dialog")) return;
+    event.preventDefault(); event.stopPropagation(); this.#closeControls();
+  }
+
+  #openPalette() {
+    this.#paletteOpen = true; this.requestUpdate();
+    void this.updateComplete.then(() => this.querySelector("forma-reference-palette-picker")?.openControls());
   }
 
   #editorKeys(event: KeyboardEvent) {
     if (event.isComposing) return;
-    if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); this.#cancelEdit(); }
+    if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); if (this.#calmSurface()) this.#closeControls(); else this.#cancelEdit(); }
     else if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) { event.preventDefault(); event.stopPropagation(); (event.currentTarget as HTMLFormElement).requestSubmit(); }
   }
 
   #editor(properties: Record<string, unknown>) {
-    if (outputInputDraft(this.block)) return html`<form class="block-editor output-derived-block-editor" @submit=${(event: SubmitEvent) => { event.preventDefault(); void this.#saveEdit(); }} @keydown=${this.#editorKeys}><forma-output-input-editor .block=${this.block} .source=${this.surface}></forma-output-input-editor><div><small>⌘/Ctrl + Enter to save · Esc to cancel</small><button type="button" class="button ghost" @click=${this.#cancelEdit}>Cancel</button><button type="submit" class="button primary">Save input</button></div></form>`;
-    if (properties.source_output_id || properties.source_artifact_item_id) return html`<form class="block-editor output-derived-block-editor" @submit=${(event: SubmitEvent) => { event.preventDefault(); void this.#saveEdit(); }} @keydown=${this.#editorKeys}>${properties.source_output_id ? html`<label>Image title<input .value=${this.#imageLabel} @input=${(event: InputEvent) => { this.#imageLabel = (event.target as HTMLInputElement).value; }}></label>` : nothing}<forma-ui-rich-text .label=${properties.source_artifact_item_id ? properties.source_artifact_kind==="video"?this.i18n.system("Scene {value} direction", { value: String(properties.video_scene_index??properties.narrative_order??"") }):this.i18n.system("Frame {value} shot direction", { value: String(properties.storyboard_frame_index ?? "") }) : this.i18n.system("Image description and creative direction")} .value=${this.#draft} .rows=${5} .help=${this.i18n.system("Command or Control plus Enter saves; Escape cancels.")} @forma-input=${(event: CustomEvent<{ value: string }>) => { this.#draft = event.detail.value; }}></forma-ui-rich-text>${properties.source_output_id&&this.#imagePalette.length?html`<fieldset class="output-input-image-palette"><legend>Creative image palette</legend>${this.#imagePalette.map((color,index)=>html`<label>Palette color ${index+1}<input .value=${color} @input=${(event:InputEvent)=>{this.#imagePalette=this.#imagePalette.map((value,position)=>position===index?(event.target as HTMLInputElement).value:value);}}></label>`)}</fieldset>`:nothing}<div><small>⌘/Ctrl + Enter to save · Esc to cancel</small><button type="button" class="button ghost" @click=${this.#cancelEdit}>Cancel</button><button type="submit" class="button primary">Save input</button></div></form>`;
-    return html`<form class="block-editor" @submit=${(event:SubmitEvent)=>{event.preventDefault();void this.#saveEdit();}}><label for=${`block-copy-${this.block.id}`}>Edit ${this.block.type} content</label><textarea id=${`block-copy-${this.block.id}`} rows="3" .value=${this.#draft} placeholder=${String(properties.placeholder??"Describe a direction…")} @input=${(event:InputEvent)=>{this.#draft=(event.target as HTMLTextAreaElement).value;this.requestUpdate();}} @keydown=${(event:KeyboardEvent)=>{if(event.key==="Escape"){event.preventDefault();event.stopPropagation();this.#cancelEdit();}else if(event.key==="Enter"&&!event.isComposing&&(event.metaKey||event.ctrlKey)){event.preventDefault();(event.currentTarget as HTMLTextAreaElement).form?.requestSubmit();}}}></textarea><div><small>⌘/Ctrl + Enter to save · Esc to cancel</small><button type="button" class="button ghost" @click=${this.#cancelEdit}>Cancel</button><button type="submit" class="button primary">Save</button></div></form>`;
+    const cancelLabel = this.#savingDraft ? this.i18n.t("context.controls.discardLocal", "Discard local edits") : this.i18n.system("Cancel");
+    const editHelp = this.#savingDraft
+      ? this.i18n.t("context.controls.saveRequestedHelp", "A save was already requested and may still finish. Discarding these local edits does not cancel it.")
+      : this.#calmSurface() ? this.i18n.t("context.controls.shortcut", "⌘/Ctrl + Enter to save · Esc to close controls") : this.i18n.system("⌘/Ctrl + Enter to save · Esc to cancel");
+    if (outputInputDraft(this.block)) return html`<form class="block-editor output-derived-block-editor" @submit=${(event: SubmitEvent) => { event.preventDefault(); void this.#saveEdit(); }} @keydown=${this.#editorKeys}><forma-output-input-editor .block=${this.block} .source=${this.surface} .shortcutHelp=${this.#calmSurface()?this.i18n.t("context.controls.shortcutHelp","Command or Control plus Enter saves; Escape closes controls and keeps unsaved edits."):""} @output-input-change=${this.#markStructuredDraftChanged}></forma-output-input-editor><div><small>${editHelp}</small><button type="button" class="button ghost" @click=${this.#cancelEdit}>${cancelLabel}</button><button type="submit" class="button primary" ?disabled=${Boolean(this.#savingDraft)}>Save input</button></div></form>`;
+    if (properties.source_output_id || properties.source_artifact_item_id) return html`<form class="block-editor output-derived-block-editor" @submit=${(event: SubmitEvent) => { event.preventDefault(); void this.#saveEdit(); }} @keydown=${this.#editorKeys}>${properties.source_output_id ? html`<label>Image title<input .value=${this.#imageLabel} @input=${(event: InputEvent) => { this.#imageLabel = (event.target as HTMLInputElement).value; this.#markDraftChanged(); }}></label>` : nothing}<forma-ui-rich-text .label=${properties.source_artifact_item_id ? properties.source_artifact_kind==="video"?this.i18n.system("Scene {value} direction", { value: String(properties.video_scene_index??properties.narrative_order??"") }):this.i18n.system("Frame {value} shot direction", { value: String(properties.storyboard_frame_index ?? "") }) : this.i18n.system("Image description and creative direction")} .value=${this.#draft} .rows=${5} .help=${this.#calmSurface()?this.i18n.t("context.controls.shortcutHelp","Command or Control plus Enter saves; Escape closes controls and keeps unsaved edits."):this.i18n.system("Command or Control plus Enter saves; Escape cancels.")} @forma-input=${(event: CustomEvent<{ value: string }>) => { this.#draft = event.detail.value; this.#markDraftChanged(); }}></forma-ui-rich-text>${properties.source_output_id&&this.#imagePalette.length?html`<fieldset class="output-input-image-palette"><legend>Creative image palette</legend>${this.#imagePalette.map((color,index)=>html`<label>Palette color ${index+1}<input .value=${color} @input=${(event:InputEvent)=>{this.#imagePalette=this.#imagePalette.map((value,position)=>position===index?(event.target as HTMLInputElement).value:value);this.#markDraftChanged();}}></label>`)}</fieldset>`:nothing}<div><small>${editHelp}</small><button type="button" class="button ghost" @click=${this.#cancelEdit}>${cancelLabel}</button><button type="submit" class="button primary" ?disabled=${Boolean(this.#savingDraft)}>Save input</button></div></form>`;
+    return html`<form class="block-editor" @submit=${(event:SubmitEvent)=>{event.preventDefault();void this.#saveEdit();}}><label for=${`block-copy-${this.block.id}`}>Edit ${this.block.type} content</label><textarea id=${`block-copy-${this.block.id}`} rows="3" .value=${this.#draft} placeholder=${String(properties.placeholder??"Describe a direction…")} @input=${(event:InputEvent)=>{this.#draft=(event.target as HTMLTextAreaElement).value;this.#markDraftChanged();this.requestUpdate();}} @keydown=${(event:KeyboardEvent)=>{if(event.key==="Escape"&&!event.isComposing){event.preventDefault();event.stopPropagation();if(this.#calmSurface())this.#closeControls();else this.#cancelEdit();}else if(event.key==="Enter"&&!event.isComposing&&(event.metaKey||event.ctrlKey)){event.preventDefault();(event.currentTarget as HTMLTextAreaElement).form?.requestSubmit();}}}></textarea><div><small>${editHelp}</small><button type="button" class="button ghost" @click=${this.#cancelEdit}>${cancelLabel}</button><button type="submit" class="button primary" ?disabled=${Boolean(this.#savingDraft)}>Save</button></div></form>`;
   }
   async #rename() {
     const previous = this.block.handle;
@@ -154,8 +369,8 @@ export class ContextBlock extends FormaElement {
   }
   #audioContext(properties:Record<string,unknown>,readOnly=false){if(this.block.type!=="audio")return nothing;const label=String(properties.label??this.block.handle);return html`<section class="context-audio" aria-label=${this.i18n.t("audio.reference.private","Private audio reference")}>
     ${renderAudioPlayer(String(properties.media_url??""),label,this.i18n,{transcript:String(properties.transcript??properties.lyrics??"")})}
-    ${properties.duration_seconds?html`<p class="context-audio-duration">${this.i18n.number(Math.round(Number(properties.duration_seconds)))}s</p>`:nothing}
-    ${readOnly?nothing:html`${properties.media_url?html`<section class="context-audio-analysis"><button type="button" class="button secondary compact" ?disabled=${this.block.locked||this.#analyzingAudio} aria-describedby=${`audio-analysis-hint-${this.block.id}`} @click=${()=>void this.#analyzeAudio()}>${this.#analyzingAudio?this.i18n.t("audio.analysis.running","Analyzing locally…"):this.i18n.t("audio.analysis.action","Analyze on this device")}</button><small id=${`audio-analysis-hint-${this.block.id}`}>${this.i18n.t("audio.analysis.detail","Measures loudness, quiet passages, pulse, and dynamics in your browser. No provider receives the recording; speech and instruments are not identified.")}</small></section>`:nothing}<div class="context-audio-notes"><label><span>${this.i18n.t("audio.reference.description","Describe what you hear")}</span><textarea rows="2" ?disabled=${this.block.locked} .value=${String(properties.description??"")} @change=${(event:Event)=>this.#audioField("description",(event.currentTarget as HTMLTextAreaElement).value.trim())}></textarea></label><label><span>${this.i18n.t("audio.reference.mood","Mood and emotional arc")}</span><input ?disabled=${this.block.locked} .value=${String(properties.mood??"")} @change=${(event:Event)=>this.#audioField("mood",(event.currentTarget as HTMLInputElement).value.trim())}></label><label><span>${this.i18n.t("audio.reference.arc","Emotional progression")}</span><input ?disabled=${this.block.locked} .value=${String(properties.emotional_arc??"")} @change=${(event:Event)=>this.#audioField("emotional_arc",(event.currentTarget as HTMLInputElement).value.trim())}></label><label><span>${this.i18n.t("audio.reference.purpose","Narrative purpose")}</span><input ?disabled=${this.block.locked} .value=${String(properties.narrative_purpose??"")} @change=${(event:Event)=>this.#audioField("narrative_purpose",(event.currentTarget as HTMLInputElement).value.trim())}></label><label><span>${this.i18n.t("audio.reference.instruments","Instruments and texture")}</span><input ?disabled=${this.block.locked} .value=${Array.isArray(properties.instrumentation)?properties.instrumentation.join(", "):String(properties.instrumentation??"")} @change=${(event:Event)=>this.#audioField("instrumentation",(event.currentTarget as HTMLInputElement).value.split(",").map((value)=>value.trim()).filter(Boolean))}></label><label><span>${this.i18n.t("audio.reference.tempo","Tempo in BPM")}</span><input type="number" min="1" max="400" ?disabled=${this.block.locked} .value=${properties.tempo_bpm?String(properties.tempo_bpm):""} @change=${(event:Event)=>this.#audioField("tempo_bpm",(event.currentTarget as HTMLInputElement).value?Number((event.currentTarget as HTMLInputElement).value):null)}></label><label><span>${this.i18n.t("audio.reference.vocals","Voice and vocals")}</span><select ?disabled=${this.block.locked} .value=${String(properties.vocal_policy??"unspecified")} @change=${(event:Event)=>this.#audioField("vocal_policy",(event.currentTarget as HTMLSelectElement).value)}><option value="unspecified">${this.i18n.t("audio.reference.vocals.unspecified","No preference")}</option><option value="instrumental">${this.i18n.t("audio.reference.vocals.instrumental","Instrumental only")}</option><option value="vocals">${this.i18n.t("audio.reference.vocals.allowed","Original vocals allowed")}</option></select></label><label><span>${this.i18n.t("audio.reference.transcript","Transcript or listening notes")}</span><textarea rows="2" ?disabled=${this.block.locked} .value=${String(properties.transcript??"")} @change=${(event:Event)=>this.#audioField("transcript",(event.currentTarget as HTMLTextAreaElement).value.trim())}></textarea></label></div>
+    ${(() => { const timing=audioPlaybackTiming(properties,String(properties.media_url??"")); return timing?html`<p class="context-audio-duration">${this.i18n.t(`audio.duration.${timing.basis}`,"",{seconds:this.i18n.number(timing.seconds)})}</p>`:nothing; })()}
+    ${readOnly?nothing:html`${properties.media_url?html`<section class="context-audio-analysis"><button type="button" class="button secondary compact" ?disabled=${this.block.locked||this.#analyzingAudio} aria-describedby=${`audio-analysis-hint-${this.block.id}`} @click=${()=>void this.#analyzeAudio()}>${this.#analyzingAudio?this.i18n.t("audio.analysis.running","Analyzing locally…"):this.i18n.t("audio.analysis.action","Analyze on this device")}</button><small id=${`audio-analysis-hint-${this.block.id}`}>${this.i18n.t("audio.analysis.detail","Measures loudness, quiet passages, pulse, and dynamics in your browser. No provider receives the recording; speech and instruments are not identified.")}</small></section>`:nothing}<div class="context-audio-notes"><label><span>${this.i18n.t("audio.reference.description","Describe what you hear")}</span><textarea rows="2" ?disabled=${this.block.locked} .value=${String(properties.description??"")} @change=${(event:Event)=>this.#audioField("description",(event.currentTarget as HTMLTextAreaElement).value.trim())}></textarea></label><label><span>${this.i18n.t("audio.reference.mood","Mood and emotional arc")}</span><input ?disabled=${this.block.locked} .value=${String(properties.mood??"")} @change=${(event:Event)=>this.#audioField("mood",(event.currentTarget as HTMLInputElement).value.trim())}></label><label><span>${this.i18n.t("audio.reference.arc","Emotional progression")}</span><input ?disabled=${this.block.locked} .value=${String(properties.emotional_arc??"")} @change=${(event:Event)=>this.#audioField("emotional_arc",(event.currentTarget as HTMLInputElement).value.trim())}></label><label><span>${this.i18n.t("audio.reference.purpose","Narrative purpose")}</span><input ?disabled=${this.block.locked} .value=${String(properties.narrative_purpose??"")} @change=${(event:Event)=>this.#audioField("narrative_purpose",(event.currentTarget as HTMLInputElement).value.trim())}></label><label><span>${this.i18n.t("audio.reference.instruments","Instruments and texture")}</span><input ?disabled=${this.block.locked} .value=${Array.isArray(properties.instrumentation)?properties.instrumentation.join(", "):String(properties.instrumentation??"")} @change=${(event:Event)=>this.#audioField("instrumentation",(event.currentTarget as HTMLInputElement).value.split(",").map((value)=>value.trim()).filter(Boolean))}></label><label><span>${this.i18n.t("audio.reference.tempo","Tempo in BPM")}</span><input type="number" min="1" max="400" ?disabled=${this.block.locked} .value=${properties.tempo_bpm?String(properties.tempo_bpm):""} @change=${(event:Event)=>this.#audioField("tempo_bpm",(event.currentTarget as HTMLInputElement).value?Number((event.currentTarget as HTMLInputElement).value):null)}></label><label><span>${this.i18n.t("audio.reference.vocals","Voice and vocals")}</span><select ?disabled=${this.block.locked} .value=${String(properties.vocal_policy??"unspecified")} @change=${(event:Event)=>this.#audioField("vocal_policy",(event.currentTarget as HTMLSelectElement).value)}><option value="unspecified" ?selected=${!properties.vocal_policy||properties.vocal_policy==="unspecified"}>${this.i18n.t("audio.reference.vocals.unspecified","No preference")}</option><option value="instrumental" ?selected=${properties.vocal_policy==="instrumental"}>${this.i18n.t("audio.reference.vocals.instrumental","Instrumental only")}</option><option value="vocals" ?selected=${properties.vocal_policy==="vocals"}>${this.i18n.t("audio.reference.vocals.allowed","Original vocals allowed")}</option></select></label><label><span>${this.i18n.t("audio.reference.transcript","Transcript or listening notes")}</span><textarea rows="2" ?disabled=${this.block.locked} .value=${String(properties.transcript??"")} @change=${(event:Event)=>this.#audioField("transcript",(event.currentTarget as HTMLTextAreaElement).value.trim())}></textarea></label></div>
       <fieldset class="context-audio-cue-editor" ?disabled=${this.block.locked}><legend>${this.i18n.t("audio.generation.cues","Musical cue sheet")}</legend>${normalizeAudioCues(properties.audio_cues).map((cue,index)=>html`<div class="context-audio-cue"><label><span>${this.i18n.t("audio.cues.start","Start in seconds")}</span><input type="number" min="0" step="0.1" .value=${String(cue.startSeconds)} @change=${(event:Event)=>this.#audioCue(index,{start_seconds:Number((event.currentTarget as HTMLInputElement).value)})}></label><label><span>${this.i18n.t("audio.cues.end","End in seconds")}</span><input type="number" min=${String(cue.startSeconds)} step="0.1" .value=${cue.endSeconds===null?"":String(cue.endSeconds)} @change=${(event:Event)=>{const field=event.currentTarget as HTMLInputElement,value=field.value?Number(field.value):null;field.setCustomValidity(value!==null&&value<=cue.startSeconds?this.i18n.t("audio.cues.end","End in seconds"):"");if(field.reportValidity())this.#audioCue(index,{end_seconds:value});}}></label><label><span>${this.i18n.t("audio.cues.target","Target")}</span><select .value=${cue.targetKind} @change=${(event:Event)=>this.#audioCue(index,{target_kind:(event.currentTarget as HTMLSelectElement).value})}>${(["moment","scene","slide","frame","chapter"] as const).map((kind)=>html`<option value=${kind}>${this.i18n.t(`audio.target.${kind}`,kind)}</option>`)}</select></label><label><span>${this.i18n.t("audio.cues.targetName","Target name or number")}</span><input .value=${cue.targetId} @change=${(event:Event)=>this.#audioCue(index,{target_id:(event.currentTarget as HTMLInputElement).value.trim()})}></label><label><span>${this.i18n.t("audio.cues.label","Cue label")}</span><input .value=${cue.label} @change=${(event:Event)=>this.#audioCue(index,{label:(event.currentTarget as HTMLInputElement).value.trim()})}></label><label><span>${this.i18n.t("audio.cues.intent","Emotional intention")}</span><input .value=${cue.emotionalIntent} @change=${(event:Event)=>this.#audioCue(index,{emotional_intent:(event.currentTarget as HTMLInputElement).value.trim()})}></label><button type="button" class="button ghost compact" aria-label=${this.i18n.t("audio.cues.remove","Remove cue {number}",{number:this.i18n.number(index+1)})} @click=${()=>this.#audioCue(index,null)}>${icon("trash")}</button></div>`)}<button type="button" class="button secondary compact" @click=${()=>this.#audioCue(normalizeAudioCues(properties.audio_cues).length,{})}>${this.i18n.t("audio.cues.add","Add a musical cue")}</button></fieldset>
       <fieldset class="audio-permissions" ?disabled=${this.block.locked}><legend>${this.i18n.t("artifact.audio.label","Audio")}</legend>${([{"path":"inform_generation","key":"inform"},{"path":"include_in_output","key":"include"},{"path":"allow_provider_audio_transfer","key":"transfer"}] as const).map(({path,key})=>{const hint=`audio-hint-${this.block.id}-${key}`;return html`<label class="audio-permission"><input type="checkbox" aria-describedby=${hint} .checked=${properties[path]===true} @change=${(event:Event)=>this.#audioField(path,(event.currentTarget as HTMLInputElement).checked)}><span><b>${this.i18n.t(`audio.use.${key}.label`,"")}</b><small id=${hint}>${this.i18n.t(`audio.use.${key}.description`,"")}</small></span></label>`;})}</fieldset>`}
   </section>`;}
@@ -254,14 +469,14 @@ export class ContextBlock extends FormaElement {
     const value=String(block.properties.character_trait_value??block.properties.text??"");
     const actions=html`<div class="context-tree-node"><div class="context-tree-copy"><label><span>${label}</span>${readOnly?html`<span class="context-tree-value" dir="auto">${value}</span>`:html`<input ?disabled=${locked} .value=${value} @change=${(event:Event)=>this.#saveContextValue(block,(event.currentTarget as HTMLInputElement).value)}>`}</label></div><div class="context-tree-actions"><button type="button" class="icon-button" aria-label=${this.i18n.t("context.composition.inspect")} @click=${()=>this.store.patchUi({inspectorOpen:true,selectedEventId:block.sourceEvents.at(-1)??relation.sourceEvents.at(-1)??""})}>${icon("info")}</button>${readOnly?nothing:html`<button type="button" class="icon-button" aria-label=${this.i18n.t("context.composition.moveUp")} ?disabled=${locked||index===0} @click=${()=>void this.#moveContext(parent,index,-1)}>${icon("up")}</button><button type="button" class="icon-button" aria-label=${this.i18n.t("context.composition.moveDown")} ?disabled=${locked||index>=this.#contextChildren(parent.id).length-1} @click=${()=>void this.#moveContext(parent,index,1)}>${icon("down")}</button><button type="button" class="icon-button" aria-label=${block.locked?this.i18n.system("Unlock block"):this.i18n.system("Lock block")} ?disabled=${this.block.locked||parent.locked} @click=${()=>void this.store.append({type:block.locked?"BlockUnlocked":"BlockLocked",payload:{block_id:block.id,locked_by:"user"}})}>${icon(block.locked?"lock":"unlock")}</button><button type="button" class="button ghost compact" ?disabled=${locked} @click=${()=>void this.#detachContext(parent,block,relation)}>${this.i18n.t("context.composition.detach")}</button>`}</div></div>`;
     const nested=children.length&&!ancestors.has(block.id)?html`<ol role="group" class="context-tree-children">${children.map((child,position)=>this.#contextNode(block,child,position,depth+1,readOnly,new Set([...ancestors,block.id])))}</ol>`:nothing;
-    return html`<li role="treeitem" aria-level=${String(depth)} aria-expanded=${children.length?"true":nothing}>${children.length?html`<details class="context-tree-branch" ?open=${depth<2}><summary><span>${label}</span><small>${this.i18n.t("context.composition.summary","",{count:this.i18n.number(this.#contextDescendants(block.id).size-1)})}</small></summary>${actions}${nested}</details>`:actions}${readOnly?nothing:html`<div class="context-tree-add"><button type="button" class="button ghost compact" ?disabled=${locked} @click=${()=>this.#beginDetail(block)}>${icon("plus")}${this.i18n.t("context.composition.add")}</button><button type="button" class="button ghost compact" ?disabled=${locked} @click=${()=>{this.#detailDraft=null;this.#reuseParentId=this.#reuseParentId===block.id?"":block.id;this.requestUpdate();}}>${this.i18n.t("context.composition.reuse")}</button><forma-context-intelligence .block=${block} .surface=${this.surface} .compact=${true}></forma-context-intelligence></div>${this.#detailComposer(block)}${this.#reuseChooser(block)}`}</li>`;
+    return html`<li role="treeitem" aria-level=${String(depth)} aria-expanded=${children.length?"true":nothing}>${children.length?html`<details class="context-tree-branch" ?open=${this.#calmSurface()||depth<2}><summary><span>${label}</span><small>${this.i18n.t("context.composition.summary","",{count:this.i18n.number(this.#contextDescendants(block.id).size-1)})}</small></summary>${actions}${nested}</details>`:actions}${readOnly?nothing:html`<div class="context-tree-add"><button type="button" class="button ghost compact" ?disabled=${locked} @click=${()=>this.#beginDetail(block)}>${icon("plus")}${this.i18n.t("context.composition.add")}</button><button type="button" class="button ghost compact" ?disabled=${locked} @click=${()=>{this.#detailDraft=null;this.#reuseParentId=this.#reuseParentId===block.id?"":block.id;this.requestUpdate();}}>${this.i18n.t("context.composition.reuse")}</button><forma-context-intelligence .block=${block} .surface=${this.surface} .compact=${true}></forma-context-intelligence></div>${this.#detailComposer(block)}${this.#reuseChooser(block)}`}</li>`;
   }
 
   #contextComposition(readOnly=false):TemplateResult{
     const children=this.#contextChildren(this.block.id),descendants=this.#contextDescendants(this.block.id).size-1;
     const metadata=this.block.properties.context_group&&typeof this.block.properties.context_group==="object"?this.block.properties.context_group as Record<string,unknown>:{};
-    const settings=children.length&&!readOnly?html`<details class="context-composition-settings"><summary>${this.i18n.t("context.composition.groupName")}</summary><div><label><span>${this.i18n.t("context.composition.groupName")}</span><input ?disabled=${this.block.locked} .value=${String(metadata.name??this.block.properties.label??this.block.properties.text??this.block.handle)} @change=${(event:Event)=>this.#groupSetting("name",(event.currentTarget as HTMLInputElement).value.trim())}></label><label><span>${this.i18n.t("context.composition.target")}</span><input ?disabled=${this.block.locked} .value=${String(metadata.target??metadata.name??this.block.handle)} @change=${(event:Event)=>this.#groupSetting("target",(event.currentTarget as HTMLInputElement).value.trim())}></label><label><span>${this.i18n.t("context.composition.role")}</span><select ?disabled=${this.block.locked} .value=${String(metadata.role??combinedContextRoleForBlockType(this.block.type))} @change=${(event:Event)=>this.#groupSetting("role",(event.currentTarget as HTMLSelectElement).value)}>${COMBINED_CONTEXT_ROLE_DEFINITIONS.map((option)=>html`<option value=${option.id}>${this.i18n.system(option.label)}</option>`)}</select></label><label><span>${this.i18n.t("context.composition.behavior")}</span><select ?disabled=${this.block.locked} .value=${String(metadata.application??"isolate")} @change=${(event:Event)=>this.#groupSetting("application",(event.currentTarget as HTMLSelectElement).value)}>${COMBINED_CONTEXT_APPLICATION_DEFINITIONS.map((option)=>html`<option value=${option.id}>${this.i18n.system(option.label)}</option>`)}</select></label></div></details>`:nothing;
-    return html`<details class="context-composition" ?open=${Boolean(children.length||this.#detailDraft?.parentId===this.block.id||this.#reuseParentId===this.block.id)}><summary><span>${icon("branch")}${this.i18n.t("context.composition.heading")}</span><small>${this.i18n.t("context.composition.summary","",{count:this.i18n.number(descendants)})}</small></summary>${children.length?html`<ol role="tree" class="context-tree" aria-label=${this.i18n.t("context.composition.heading")}>${children.map((child,index)=>this.#contextNode(this.block,child,index,1,readOnly,new Set([this.block.id])))}</ol>`:html`<p class="context-composition-empty">${this.i18n.t("context.composition.empty")}</p>`}${settings}${readOnly?nothing:html`<div class="context-composition-actions"><button type="button" class="button secondary compact" ?disabled=${this.block.locked} @click=${()=>this.#beginDetail(this.block)}>${icon("plus")}${this.i18n.t("context.composition.add")}</button><button type="button" class="button ghost compact" ?disabled=${this.block.locked} @click=${()=>{this.#detailDraft=null;this.#reuseParentId=this.#reuseParentId===this.block.id?"":this.block.id;this.requestUpdate();}}>${this.i18n.t("context.composition.reuse")}</button></div>${this.#detailComposer(this.block)}${this.#reuseChooser(this.block)}`}</details>`;
+    const settings=children.length&&!readOnly?html`<details class="context-composition-settings" ?open=${this.#calmSurface()}><summary>${this.i18n.t("context.composition.groupName")}</summary><div><label><span>${this.i18n.t("context.composition.groupName")}</span><input ?disabled=${this.block.locked} .value=${String(metadata.name??this.block.properties.label??this.block.properties.text??this.block.handle)} @change=${(event:Event)=>this.#groupSetting("name",(event.currentTarget as HTMLInputElement).value.trim())}></label><label><span>${this.i18n.t("context.composition.target")}</span><input ?disabled=${this.block.locked} .value=${String(metadata.target??metadata.name??this.block.handle)} @change=${(event:Event)=>this.#groupSetting("target",(event.currentTarget as HTMLInputElement).value.trim())}></label><label><span>${this.i18n.t("context.composition.role")}</span><select ?disabled=${this.block.locked} .value=${String(metadata.role??combinedContextRoleForBlockType(this.block.type))} @change=${(event:Event)=>this.#groupSetting("role",(event.currentTarget as HTMLSelectElement).value)}>${COMBINED_CONTEXT_ROLE_DEFINITIONS.map((option)=>html`<option value=${option.id}>${this.i18n.system(option.label)}</option>`)}</select></label><label><span>${this.i18n.t("context.composition.behavior")}</span><select ?disabled=${this.block.locked} .value=${String(metadata.application??"isolate")} @change=${(event:Event)=>this.#groupSetting("application",(event.currentTarget as HTMLSelectElement).value)}>${COMBINED_CONTEXT_APPLICATION_DEFINITIONS.map((option)=>html`<option value=${option.id}>${this.i18n.system(option.label)}</option>`)}</select></label></div></details>`:nothing;
+    return html`<details class="context-composition" ?open=${this.#calmSurface()||Boolean(children.length||this.#detailDraft?.parentId===this.block.id||this.#reuseParentId===this.block.id)}><summary><span>${icon("branch")}${this.i18n.t("context.composition.heading")}</span><small>${this.i18n.t("context.composition.summary","",{count:this.i18n.number(descendants)})}</small></summary>${children.length?html`<ol role="tree" class="context-tree" aria-label=${this.i18n.t("context.composition.heading")}>${children.map((child,index)=>this.#contextNode(this.block,child,index,1,readOnly,new Set([this.block.id])))}</ol>`:html`<p class="context-composition-empty">${this.i18n.t("context.composition.empty")}</p>`}${settings}${readOnly?nothing:html`<div class="context-composition-actions"><button type="button" class="button secondary compact" ?disabled=${this.block.locked} @click=${()=>this.#beginDetail(this.block)}>${icon("plus")}${this.i18n.t("context.composition.add")}</button><button type="button" class="button ghost compact" ?disabled=${this.block.locked} @click=${()=>{this.#detailDraft=null;this.#reuseParentId=this.#reuseParentId===this.block.id?"":this.block.id;this.requestUpdate();}}>${this.i18n.t("context.composition.reuse")}</button></div>${this.#detailComposer(this.block)}${this.#reuseChooser(this.block)}`}</details>`;
   }
 
   #characterField(sectionId:string,fieldId:string,value:string){
@@ -347,7 +562,7 @@ export class ContextBlock extends FormaElement {
         <p class="character-identity-notice">${this.i18n.t("context.character.identityNotice")}</p>
         <div class="character-context-sections">
           ${CHARACTER_FIELD_SECTIONS.map((section,index)=>html`
-            <details class="character-context-section" ?open=${index===0}>
+            <details class="character-context-section" ?open=${this.#calmSurface()||index===0}>
               <summary>
                 <span>${this.i18n.t(`context.character.section.${section.id}`,section.label)}</span>
                 <small>${this.i18n.number(section.fields.filter((field)=>Boolean(characterProfileValue(properties,section.id,field.id))).length)}</small>
@@ -357,7 +572,7 @@ export class ContextBlock extends FormaElement {
                 ${section.fields.map((field)=>html`
                   <label>
                     <span>${this.i18n.t(`context.character.field.${field.id}`,field.label)}</span>
-                    ${field.multiline
+                    ${readOnly ? html`<span class="context-tree-value" dir="auto">${characterProfileValue(properties,section.id,field.id)}</span>` : field.multiline
                       ?html`<textarea rows="2" .value=${characterProfileValue(properties,section.id,field.id)} @change=${(event:Event)=>this.#characterField(section.id,field.id,(event.currentTarget as HTMLTextAreaElement).value)}></textarea>`
                       :html`<input .value=${characterProfileValue(properties,section.id,field.id)} @change=${(event:Event)=>this.#characterField(section.id,field.id,(event.currentTarget as HTMLInputElement).value)}>`}
                   </label>
@@ -427,7 +642,7 @@ export class ContextBlock extends FormaElement {
       const citation=item as Record<string,unknown>;
       return typeof citation.anchor==="string"&&typeof citation.excerpt==="string"?[{anchor:citation.anchor,excerpt:citation.excerpt}]:[];
     }):[];
-    return html`<details class="source-evidence-inspector"><summary>Verified source evidence · ${citations.length} ${citations.length===1?this.i18n.system("cited section"):this.i18n.system("cited sections")}${properties.source_excerpt_truncated?" " + this.i18n.system("· truncated"):""}</summary>
+    return html`<details class="source-evidence-inspector" ?open=${this.#calmSurface()}><summary>Verified source evidence · ${citations.length} ${citations.length===1?this.i18n.system("cited section"):this.i18n.system("cited sections")}${properties.source_excerpt_truncated?" " + this.i18n.system("· truncated"):""}</summary>
       <p>${properties.source_excerpt_truncated?this.i18n.system("This source exceeds the supported evidence window; only the listed sections were included."):this.i18n.system("These excerpts and locations were extracted by Forma and verified against the exact uploaded file.")}</p>
       ${properties.extraction_message?html`<p>${this.i18n.system(String(properties.extraction_message))}</p>`:nothing}
       ${citations.length?html`<ol>${citations.map((citation)=>html`<li><b>${localizedSourceAnchor(citation.anchor,(source,values)=>this.i18n.system(source,values),(value)=>this.i18n.number(value))}</b><blockquote>${citation.excerpt}</blockquote></li>`)}</ol>`:nothing}
@@ -443,35 +658,36 @@ export class ContextBlock extends FormaElement {
     return html`<div class="reference-source-kind" role="note">${icon("document")}<b>${label}</b>${citation ? html`<small>${citation}</small>` : nothing}</div>`;
   }
 
-  override render() {
+  #fullEditor() {
     if (!this.block) return nothing;
-    if (this.block.type.toLowerCase() === "output") return html`<forma-output-requirements .documentId=${this.block.documentId} .blockId=${this.block.id}></forma-output-requirements>`;
     const p = this.block.properties; const memberships=combinedContextMemberships(p); const definition=blockTypeDefinition(this.block.type); const sourceKind=isDocumentArtifactKind(p.source_artifact_kind)&&!p.source_artifact_item_id?p.source_artifact_kind:null; const readableType=sourceKind?`${this.i18n.system(documentArtifactDefinition(sourceKind).label)} ${this.i18n.system("input")}`:definition?this.i18n.system(definition.label):this.block.type; const subtypes=definition?[...new Set([String(p.subtype??""),...definition.subtypes].filter(Boolean))]:[]; const intent=blockIntentFor(this.block.type,p); const intentLabel=this.i18n.system(BLOCK_INTENTS.find((option)=>option.id===intent)?.label??intent); const authority = String(p.authority ?? "authored"); const confidence = Number(p.confidence ?? 1); const colors = Array.isArray(p.colors) ? p.colors as string[] : []; const dimensions = p.dimensions && typeof p.dimensions === "object" ? p.dimensions as Record<string, unknown> : null; const extractionStatus = String(p.extraction_status ?? "");
     const medium = this.block.type === "reference" ? referenceMedium(p) : null;
     const symbol = this.block.type !== "reference" ? blockIconName(this.block.type) : medium === "image" ? "image" : medium === "audio" ? "audio" : medium === "video" ? "video" : medium === "unknown" ? "info" : "document";
     const formatKind = this.block.type === "format" ? inferDocumentArtifactKind([{ type: "format", properties: p }]) : null;
     const imageFormat = this.block.type === "format" && (formatKind === "storyboard" || !formatKind && Boolean(p.image_format || /\b(?:images?|photo(?:graphs?)?|illustrations?|posters?|visuals?|graphics?|portrait|png|jpe?g|webp|aspect\s*ratio|pixels?|resolution)\b/i.test([p.medium,p.format,p.deliverable,p.label,p.text,p.subtype].filter((value): value is string => typeof value === "string").join(" "))));
-    const copy = String(p.artifact_markdown ?? p.text ?? p.label ?? ""); const displayCopy = copy || String(p.placeholder ?? "Describe a direction…"); const focused = this.store.ui.focusBlockId === this.block.id; const editing = this.store.ui.editingBlockId === this.block.id;
+    const copy = String(p.artifact_markdown ?? p.text ?? p.source_excerpt ?? p.description ?? p.label ?? ""); const displayCopy = copy || String(p.placeholder ?? "Describe a direction…"); const focused = this.store.ui.focusBlockId === this.block.id; const editing = this.#calmSurface() ? this.#draftActive : this.store.ui.editingBlockId === this.block.id;
     const context=this.store.session.get()?.projectContext;
-    const canAuthor=!context||context.permissions.includes("project.author");
+    const canAuthor=this.#canEdit();
     const governed=context&&p.organization_context_package_binding_id?this.store.organizationContextBindings.get()
       .find((binding)=>binding.id===String(p.organization_context_package_binding_id)&&binding.projectAccessId===context.projectAccessId):undefined;
     const governedPackage=governed?this.store.organizationContextPackages.get().find((item)=>item.id===governed.packageId):undefined;
     const governedVersion=governed?this.store.organizationContextVersions.get()[governed.versionId]:undefined;
-    if(!canAuthor||governed)return html`<article class="context-block context-block--read-only intent-${intent} ${focused?"brief-focus":""}" tabindex="0" data-block-id=${this.block.id} aria-label="${readableType}, ${sourceKind?String(p.label??this.block.handle):this.block.handle}, intent ${intentLabel}"><div class="block-rail"><span class="block-rail-code" aria-hidden="true">${icon(symbol)}</span></div><div class="block-body"><header class="block-heading"><div class="block-heading-copy"><h3 class="block-type">${readableType}</h3><span class="handle" dir="auto">${sourceKind?String(p.label??this.block.handle):this.block.handle}</span></div><div class="block-heading-state"><span class=${`block-intent-badge ${intent}`}>${intentLabel}</span></div></header>${governed?html`<p class="block-governed-context"><b dir="auto">${governedPackage?.name??this.i18n.system("Organization context")}</b>${governedVersion?` · v${governedVersion.version}`:""} <button type="button" class="button ghost compact" @click=${()=>this.store.setRoute("/library")}>${this.i18n.system("Organization context")}</button></p>`:nothing}${colors.length?html`<div class="palette-strip" aria-label="Saved palette">${colors.map((color)=>html`<i style=${`--swatch:${color}`}></i>`)}</div>`:nothing}${copy?html`<p class="block-copy" data-forma-content="primary" dir="auto">${copy.length>320?`${copy.slice(0,320)}…`:displayCopy}</p>`:nothing}${this.#referenceSource(p,medium)}${this.block.type==="reference"&&p.media_url&&medium==="image"?html`<img src=${String(p.media_url)} alt=${String(p.label??this.block.handle)} loading="lazy">`:nothing}${this.#audioContext(p,true)}${this.#characterContext(p,true)}${this.#contextComposition(true)}${this.#sourceEvidence(p)}<div class="block-meta"><span>${Math.round(Number(p.weight??.5)*100)}%</span><span class=${`authority ${authority}`}>${this.i18n.t(`context.authority.${authority}`,this.i18n.system(authority))}</span><button class="why-button" aria-label="Why does this block have these values?" @click=${()=>this.store.patchUi({inspectorOpen:true,selectedEventId:this.block.sourceEvents.at(-1)??""})}>Why?</button></div></div></article>`;
+    if(!canAuthor||governed)return html`<article class="context-block context-block--read-only intent-${intent} ${focused?"brief-focus":""}" tabindex="0" data-block-id=${this.block.id} aria-label="${readableType}, ${sourceKind?String(p.label??this.block.handle):this.block.handle}, intent ${intentLabel}"><div class="block-rail"><span class="block-rail-code" aria-hidden="true">${icon(symbol)}</span></div><div class="block-body"><header class="block-heading"><div class="block-heading-copy"><h3 class="block-type">${readableType}</h3><span class="handle" dir="auto">${sourceKind?String(p.label??this.block.handle):this.block.handle}</span></div><div class="block-heading-state"><span class=${`block-intent-badge ${intent}`}>${intentLabel}</span><span class="context-lock-state">${this.i18n.t(this.block.locked?"context.controls.locked":"context.controls.unlocked",this.block.locked?"Locked":"Unlocked")}</span></div></header>${governed?html`<p class="block-governed-context"><b dir="auto">${governedPackage?.name??this.i18n.system("Organization context")}</b>${governedVersion?` · v${governedVersion.version}`:""} <button type="button" class="button ghost compact" @click=${()=>navigateInApp(this,navigation=>navigation.route("/library"))}>${this.i18n.system("Organization context")}</button></p>`:nothing}${colors.length?html`<div class="palette-strip" aria-label="Saved palette">${colors.map((color)=>html`<i style=${`--swatch:${color}`}></i>`)}</div>`:nothing}${copy?html`<p class="block-copy" data-forma-content="primary" dir="auto">${displayCopy}</p>`:nothing}${this.#referenceSource(p,medium)}${this.block.type==="reference"&&p.media_url&&medium==="image"?html`<img src=${String(p.media_url)} alt=${String(p.label??this.block.handle)} loading="lazy">`:nothing}${this.#modelContext(p,true)}${this.#audioContext(p,true)}${this.#characterContext(p,true)}${this.#contextComposition(true)}${this.#sourceEvidence(p)}${this.#protectedCopy(p)}<forma-context-intelligence .block=${this.block} .surface=${this.surface} .readOnly=${true}></forma-context-intelligence><div class="block-meta"><span>${Math.round(Number(p.weight??.5)*100)}%</span><span class=${`authority ${authority}`}>${this.i18n.t(`context.authority.${authority}`,this.i18n.system(authority))}</span><button class="why-button" aria-label="Why does this block have these values?" @click=${()=>this.store.patchUi({inspectorOpen:true,selectedEventId:this.block.sourceEvents.at(-1)??""})}>Why?</button></div></div></article>`;
     return html`<article class="context-block intent-${intent} ${focused?"brief-focus":""} ${this.#dropPosition?`drop-${this.#dropPosition}`:""}" tabindex="0" data-block-id=${this.block.id} aria-label="${readableType}, ${sourceKind?String(p.label??this.block.handle):this.block.handle}, intent ${intentLabel}" @dragover=${this.#dragOver} @dragleave=${()=>{this.#dropPosition="";this.requestUpdate();}} @drop=${this.#drop}>
       <div class="block-rail">
         <button class="drag-handle" .draggable=${!this.block.locked} aria-label=${this.block.locked?this.i18n.system("Unlock block to reorder"):this.i18n.system("Drag block to reorder")} title=${this.block.locked?this.i18n.system("Unlock block to reorder"):this.i18n.system("Drag to reorder")} @dragstart=${this.#dragStart} @dragend=${()=>{this.#dropPosition="";this.requestUpdate();}}><span class="block-rail-code" aria-hidden="true">${icon(symbol)}</span><span class="block-drag-dots" aria-hidden="true">${icon("dots")}</span></button>
         <div class="reorder-buttons"><button aria-label="Move block up" @click=${() => this.#move(-1)}>${icon("up")}</button><button aria-label="Move block down" @click=${() => this.#move(1)}>${icon("down")}</button></div>
       </div>
       <div class="block-body">
-        <header class="block-heading"><div class="block-heading-copy"><h3 class="block-type">${readableType}</h3><button class="handle" @click=${sourceKind?this.#beginEdit:this.#rename}>${sourceKind?String(p.label??this.block.handle):this.block.handle} ${icon("edit")}</button></div><div class="block-heading-state"><span class=${`block-intent-badge ${intent}`}>${intentLabel}</span><button class="icon-button lock-button" aria-label=${this.block.locked ? this.i18n.system("Unlock block") : this.i18n.system("Lock block")} title=${this.block.locked ? this.i18n.system("Unlock block") : this.i18n.system("Lock block")} @click=${() => this.store.append({ type: this.block.locked ? "BlockUnlocked" : "BlockLocked", payload: { block_id: this.block.id, locked_by: "user" } })}>${icon(this.block.locked ? "lock" : "unlock")}<span class="lock-label">${this.block.locked ? this.i18n.system("Locked") : this.i18n.system("Lock")}</span></button></div></header>
-        ${colors.length && this.block.type === "reference" ? html`<div class="reference-palette"><div class="palette-strip" aria-label="Extracted reference colors">${colors.map(color=>html`<i style=${`--swatch:${color}`}></i>`)}</div><div><span><b>Extracted palette</b><small>Read-only evidence from this reference</small></span><button class="button secondary compact" @click=${()=>{this.#paletteOpen=true;this.requestUpdate();}}>Explore palettes</button></div></div>${p.source_output_id||p.source_artifact_item_id?editing?this.#editor(p):html`<button class="block-copy ${copy?"":"placeholder"}" data-forma-content="primary" ?disabled=${this.block.locked} title="Edit reusable image direction" @click=${this.#beginEdit}>${displayCopy}</button>`:nothing}` : colors.length ? html`<form class="palette-row" aria-label="Editable palette" @submit=${(event:SubmitEvent)=>event.preventDefault()}>${colors.map((color, i) => html`<label class="swatch" style="--swatch:${color}" title="Edit swatch ${i+1}"><input type="color" .value=${color} @change=${(e: Event) => this.#changeColor(i, (e.target as HTMLInputElement).value)}><span></span><small>${color}</small></label>`)}</form>` : editing ? this.#editor(p) : html`<button class="block-copy ${copy?"":"placeholder"}" data-forma-content="primary" ?disabled=${this.block.locked} title=${this.block.locked?this.i18n.system("Unlock this block to edit"):sourceKind?this.i18n.system("Edit {value} input", { value: this.i18n.system(documentArtifactDefinition(sourceKind).label).toLocaleLowerCase(this.i18n.locale) }):this.i18n.system("Edit block content")} @click=${this.#beginEdit}>${sourceKind&&copy.length>320?`${copy.slice(0,320)}…`:displayCopy}</button>`}
+        <header class="block-heading"><div class="block-heading-copy"><h3 class="block-type">${readableType}</h3><button class="handle" @click=${sourceKind?this.#beginEdit:this.#rename}>${sourceKind?String(p.label??this.block.handle):this.block.handle} ${icon("edit")}</button></div><div class="block-heading-state"><span class=${`block-intent-badge ${intent}`}>${intentLabel}</span><button class="icon-button lock-button" aria-label=${this.block.locked ? this.i18n.system("Unlock block") : this.i18n.system("Lock block")} title=${this.block.locked ? this.i18n.system("Unlock block") : this.i18n.system("Lock block")} @click=${() => this.store.append({ type: this.block.locked ? "BlockUnlocked" : "BlockLocked", payload: { block_id: this.block.id, locked_by: "user" } })}>${icon(this.block.locked ? "lock" : "unlock")}<span class="lock-label">${this.i18n.t(this.block.locked ? "context.controls.locked" : "context.controls.unlocked", this.block.locked ? "Locked" : "Unlocked")}</span></button></div></header>
+        ${colors.length && this.block.type === "reference" ? html`<div class="reference-palette"><div class="palette-strip" aria-label="Extracted reference colors">${colors.map(color=>html`<i style=${`--swatch:${color}`}></i>`)}</div><div><span><b>Extracted palette</b><small>Read-only evidence from this reference</small></span><button class="button secondary compact" @click=${this.#openPalette}>Explore palettes</button></div></div>${p.source_output_id||p.source_artifact_item_id?editing?this.#editor(p):html`<button class="block-copy ${copy?"":"placeholder"}" data-forma-content="primary" ?disabled=${this.block.locked} title="Edit reusable image direction" @click=${this.#beginEdit}>${displayCopy}</button>`:nothing}` : colors.length ? html`<form class="palette-row" aria-label="Editable palette" @submit=${(event:SubmitEvent)=>event.preventDefault()}>${colors.map((color, i) => html`<label class="swatch" style="--swatch:${color}" title="Edit swatch ${i+1}"><input type="color" .value=${color} @change=${(e: Event) => this.#changeColor(i, (e.target as HTMLInputElement).value)}><span></span><small>${color}</small></label>`)}</form>` : editing ? this.#editor(p) : html`<button class="block-copy ${copy?"":"placeholder"}" data-forma-content="primary" ?disabled=${this.block.locked} title=${this.block.locked?this.i18n.system("Unlock this block to edit"):sourceKind?this.i18n.system("Edit {value} input", { value: this.i18n.system(documentArtifactDefinition(sourceKind).label).toLocaleLowerCase(this.i18n.locale) }):this.i18n.system("Edit block content")} @click=${this.#beginEdit}>${displayCopy}</button>`}
         <form class="block-classifiers" @submit=${(event:SubmitEvent)=>event.preventDefault()}>
-          ${definition?html`<label class="block-subtype"><span>Kind</span><select ?disabled=${this.block.locked} aria-label=${this.i18n.system("{readableType} subtype", { readableType: readableType })} .value=${String(p.subtype??definition.subtypes[0])} @change=${(event:Event)=>this.#changeSubtype((event.target as HTMLSelectElement).value)}>${subtypes.map((subtype)=>html`<option value=${subtype}>${this.i18n.system(subtype)}</option>`)}</select></label>`:nothing}
-          <label class="block-intent"><span>Use as</span><select ?disabled=${this.block.locked} aria-label=${this.i18n.system("{value} intent", { value: definition?.label??this.block.type })} .value=${intent} @change=${(event:Event)=>this.#changeIntent((event.target as HTMLSelectElement).value as BlockIntent)}>${BLOCK_INTENTS.map((option)=>html`<option value=${option.id}>${this.i18n.system(option.label)}</option>`)}</select></label>
+          ${definition?html`<label class="block-subtype"><span>Kind</span><select ?disabled=${this.block.locked} aria-label=${this.i18n.system("{readableType} subtype", { readableType: readableType })} .value=${String(p.subtype??definition.subtypes[0])} @change=${(event:Event)=>this.#changeSubtype((event.target as HTMLSelectElement).value)}>${repeat(subtypes,(subtype)=>subtype,(subtype)=>html`<option value=${subtype} ?selected=${subtype===String(p.subtype??definition?.subtypes[0])}>${this.i18n.system(subtype)}</option>`)}</select></label>`:nothing}
+          <label class="block-intent"><span>Use as</span><select ?disabled=${this.block.locked} aria-label=${this.i18n.system("{value} intent", { value: definition?.label??this.block.type })} .value=${intent} @change=${(event:Event)=>this.#changeIntent((event.target as HTMLSelectElement).value as BlockIntent)}>${BLOCK_INTENTS.map((option)=>html`<option value=${option.id} ?selected=${option.id===intent}>${this.i18n.system(option.label)}</option>`)}</select></label>
         </form>
         ${this.#referenceSource(p,medium)}
+        ${this.#modelContext(p)}
+        ${p.reference_composition ? html`<forma-reference-composition-editor .block=${this.block} .surface=${this.surface}></forma-reference-composition-editor>` : nothing}
         ${this.block.type === "reference"&&medium==="image" ? html`<forma-reference-image .src=${String(p.media_url??"")} .alt=${String(p.label??this.block.handle)} .targetId=${this.block.id} .referenceId=${String(p.reference_id??"")} .focalPoint=${p.focal_point}></forma-reference-image>` : nothing}
         ${this.#audioContext(p)}
         ${this.#characterContext(p)}
@@ -481,8 +697,8 @@ export class ContextBlock extends FormaElement {
           ${dimensions&&medium==="image" ? html`<b>${String(dimensions.width)} × ${String(dimensions.height)}</b><b>${String(p.dominant_edges ?? "balanced")} edges</b>` : nothing}
           ${extractionStatus === "complete" ? html`<small>${Math.round(confidence * 100)}% confidence · ${String(p.extractor ?? "deterministic suite")}</small>` : nothing}
         </div>` : nothing}
-        ${this.#sourceEvidence(p)}
-        ${this.block.type === "reference"&&medium==="image" ? html`<forma-reference-findings .block=${this.block} @reference-palette-request=${() => { this.#paletteOpen = true; this.requestUpdate(); }}></forma-reference-findings>` : nothing}
+        ${this.#sourceEvidence(p)}${this.#protectedCopy(p)}
+        ${this.block.type === "reference"&&medium==="image" ? html`<forma-reference-findings .block=${this.block} @reference-palette-request=${this.#openPalette}></forma-reference-findings>` : nothing}
         ${this.block.type === "reference"&&medium==="image" ? html`<forma-reference-pixel-policy .block=${this.block} surface=${this.surface}></forma-reference-pixel-policy>` : nothing}
         ${imageFormat ? html`<forma-image-format-editor .block=${this.block} surface=${this.surface}></forma-image-format-editor>` : nothing}
         ${memberships.length?html`<section class="block-combined-contexts" aria-label="Combined context membership"><header><span>Travels with</span><b>${memberships.length} combined context${memberships.length===1?"":"s"}</b></header>${memberships.map((membership)=>html`<form class="block-combined-context" @submit=${(event:SubmitEvent)=>{event.preventDefault();const target=(event.currentTarget as HTMLFormElement).querySelector<HTMLInputElement>('.block-combined-context-target input');if(target&&!this.block.locked)this.#updateCombinedContext(membership.contextSetId,{target:target.value.trim()||membership.name});}}><div class="block-combined-context-heading"><span><b>${membership.name}</b><small>Applies only to ${membership.target}</small></span><em>${membership.memberOrder+1}</em></div><div class="block-combined-context-controls"><label><span>Defines</span><select ?disabled=${this.block.locked} .value=${membership.role} @change=${(event:Event)=>this.#updateCombinedContext(membership.contextSetId,{role:(event.target as HTMLSelectElement).value as CombinedContextRole})}>${COMBINED_CONTEXT_ROLE_DEFINITIONS.map((option)=>html`<option value=${option.id}>${this.i18n.system(option.label)}</option>`)}</select></label><label><span>Behavior</span><select ?disabled=${this.block.locked} .value=${membership.application} @change=${(event:Event)=>this.#updateCombinedContext(membership.contextSetId,{application:(event.target as HTMLSelectElement).value as CombinedContextApplication})}>${COMBINED_CONTEXT_APPLICATION_DEFINITIONS.map((option)=>html`<option value=${option.id}>${this.i18n.system(option.label)}</option>`)}</select></label><label class="block-combined-context-target"><span>Named target</span><input ?disabled=${this.block.locked} .value=${membership.target} @change=${(event:Event)=>this.#updateCombinedContext(membership.contextSetId,{target:(event.target as HTMLInputElement).value.trim()||membership.name})}></label></div><label class="block-relativity"><span>Relativity <small>How tightly this decision stays bound to the group</small></span><input aria-label=${this.i18n.system("{name} relativity", { name: membership.name })} ?disabled=${this.block.locked} type="range" min="0" max="1" step=".05" .value=${String(membership.relativity)} @change=${(event:Event)=>this.#updateCombinedContext(membership.contextSetId,{relativity:Number((event.target as HTMLInputElement).value)})}><output>${Math.round(membership.relativity*100)}%</output></label></form>`)}</section>`:nothing}
@@ -501,6 +717,79 @@ export class ContextBlock extends FormaElement {
       ${this.#paletteOpen?html`<forma-reference-palette-picker .referenceBlockId=${this.block.id} .referenceId=${String(p.reference_id??"")} .mediaUrl=${String(p.media_url??"")} .label=${String(p.label??this.block.handle)} .colors=${colors} .focalPoint=${p.focal_point} @picker-close=${()=>{this.#paletteOpen=false;this.requestUpdate();}}></forma-reference-palette-picker>`:nothing}
     </article>`;
   }
+
+  #protectedCopy(properties: Record<string, unknown>) {
+    const exact = typeof properties.exact_text === "string" ? properties.exact_text : "";
+    const phrases = Array.isArray(properties.protected_phrases) ? properties.protected_phrases.flatMap((value) => typeof value === "string" ? [value] : value && typeof value === "object" && typeof value.text === "string" ? [value.text] : []) : [];
+    if (!exact && !phrases.length) return nothing;
+    return html`<section class="context-protected-copy"><b>${this.i18n.t("context.controls.protected", "Protected wording")}</b>${[...new Set([exact, ...phrases].filter(Boolean))].map((phrase) => html`<p dir="auto">${phrase}</p>`)}</section>`;
+  }
+
+  async #saveModelView(event: CustomEvent<Model3dCaptureDetail>) {
+    event.stopPropagation();
+    if (this.#savingModelView || !this.#canEdit() || this.block.locked || this.block.type !== "model3d") return;
+    const store = this.store, source = store.captureSourceOwnership(), blockId = this.block.id;
+    const route = store.route.get(), modelUrl = String(this.block.properties.model_url ?? ""), modelHash = this.block.properties.model_content_hash;
+    const pending = {};
+    const current = () => this.isConnected && this.#savingModelView === pending && this.store === store
+      && store.sourceOwnershipActive(source) && store.route.get() === route && this.#canEdit()
+      && this.block.id === blockId && !this.block.locked && this.block.properties.model_url === modelUrl
+      && this.block.properties.model_content_hash === modelHash;
+    if (!modelUrl || event.detail.src !== modelUrl || !store.sourceOwnershipActive(source)) return;
+    this.#savingModelView = pending; this.requestUpdate();
+    try { await store.saveModel3dView(blockId, event.detail, current); }
+    finally { if (this.#savingModelView === pending) { this.#savingModelView = null; this.requestUpdate(); } }
+  }
+
+  #modelContext(properties: Record<string, unknown>, readOnly = false) {
+    if (this.block.type !== "model3d") return nothing;
+    const src = String(properties.model_url ?? ""), view = normalizeModel3dView(properties.model_view);
+    const saved = Boolean(properties.media_url && properties.source_content_hash && view);
+    return html`<section class="model3d-context" aria-label=${this.i18n.t("model3d.context.title", "3D model and saved view")}>
+      ${src ? html`<forma-model3d-viewer .src=${src} .view=${view} .readonly=${readOnly || this.block.locked} .disabled=${Boolean(this.#savingModelView)} @model3d-capture=${this.#saveModelView}></forma-model3d-viewer>` : nothing}
+      <p>${this.i18n.t("model3d.context.explanation", "Choose a view here and save it as an image. Generations use that saved view; rotating the preview does not change it.")}</p>
+      ${saved ? html`<figure><img src=${String(properties.media_url)} alt=${this.i18n.t("model3d.context.savedAlt", "Saved model view for generation")} loading="lazy"><figcaption>${this.i18n.t("model3d.context.saved", "Saved image view")}</figcaption></figure>` : html`<p role="status">${this.i18n.t("model3d.context.missingView", "Save a view before using this model as an image reference.")}</p>`}
+      <forma-reference-pixel-policy .block=${this.block} .surface=${this.surface} .readOnly=${readOnly} .disabled=${Boolean(this.#savingModelView)}></forma-reference-pixel-policy>
+      ${src ? html`<a href=${src} download=${String(properties.model_filename ?? "model.glb")}>${this.i18n.t("model3d.context.download", "Download original GLB")}</a>` : nothing}
+    </section>`;
+  }
+
+  #authoredSummary(block = this.block, ancestors = new Set<string>()): TemplateResult {
+    const p = block.properties, intent = blockIntentFor(block.type, p), definition = blockTypeDefinition(block.type);
+    const copy = String(p.artifact_markdown ?? p.text ?? p.source_excerpt ?? p.description ?? p.label ?? "");
+    const children = ancestors.has(block.id) ? [] : this.#contextChildren(block.id);
+    const colors = Array.isArray(p.colors) ? p.colors.map(String) : [];
+    return html`<article class="context-block context-block--summary" data-block-id=${block.id} tabindex="-1">
+      <div class="block-body">
+        <header class="block-heading"><div class="block-heading-copy"><h3 class="block-type">${definition ? this.i18n.system(definition.label) : block.type}</h3><span class="handle" dir="auto">${block.handle}</span></div><div class="block-heading-state"><span class=${`block-intent-badge ${intent}`}>${this.i18n.system(BLOCK_INTENTS.find((item) => item.id === intent)?.label ?? intent)}</span><span class="context-lock-state">${icon(block.locked ? "lock" : "unlock")}${this.i18n.t(block.locked ? "context.controls.locked" : "context.controls.unlocked", block.locked ? "Locked" : "Unlocked")}</span></div></header>
+        ${copy ? html`<p class="block-copy" data-forma-content="primary" dir="auto">${copy}</p>` : nothing}
+        ${this.#protectedCopy(p)}
+        ${colors.length ? html`<div class="palette-strip" aria-label=${this.i18n.t("context.controls.palette", "Saved palette")}>${colors.map((color) => html`<i style=${`--swatch:${color}`}><span class="sr-only">${color}</span></i>`)}</div>` : nothing}
+        ${block.type === "reference" && referenceMedium(p) === "image" && p.media_url ? html`<forma-reference-image .src=${String(p.media_url)} .alt=${String(p.label ?? block.handle)} .targetId=${block.id} .referenceId=${String(p.reference_id ?? "")} .focalPoint=${p.focal_point}></forma-reference-image>` : nothing}
+        ${block.type === "model3d" ? html`${p.media_url ? html`<img class="model3d-saved-view" src=${String(p.media_url)} alt=${this.i18n.t("model3d.context.savedAlt", "Saved model view for generation")} loading="lazy">` : nothing}<p>${p.media_url ? this.i18n.t("model3d.context.saved", "Saved image view") : this.i18n.t("model3d.context.missingView", "Save a view before using this model as an image reference.")}</p>` : nothing}
+        ${block.type === "audio" ? renderAudioPlayer(String(p.media_url ?? ""), String(p.label ?? block.handle), this.i18n, { transcript: String(p.transcript ?? p.lyrics ?? "") }) : nothing}
+        ${isCharacterContext(block.type, p) ? html`<p class="character-context-summary" dir="auto">${characterProfileSummary(p)}</p>` : nothing}
+        ${children.length ? html`<ol class="context-authored-children">${children.map(({ block: child }) => html`<li>${this.#authoredSummary(child, new Set([...ancestors, block.id]))}</li>`)}</ol>` : nothing}
+      </div>
+    </article>`;
+  }
+
+  override render() {
+    if (!this.block || !this.store.captureAuthorizationScope()) return nothing;
+    if (this.block.type.toLowerCase() === "output") return html`<forma-output-requirements .documentId=${this.block.documentId} .blockId=${this.block.id} .inspectionOnly=${this.readOnly}></forma-output-requirements>`;
+    if (!this.#calmSurface()) return this.#fullEditor();
+    const open = this.#controlsVisible(), selected = this.store.ui.focusBlockId === this.block.id;
+    const selectionLabel = this.i18n.t(selected ? "context.controls.selected" : "context.controls.select", selected ? "Selected decision" : "Select decision");
+    return html`<section class="context-decision" data-controls-open=${String(open)} data-selected=${String(selected)}>
+      <div class="context-decision-actions">
+        ${this.surface === "document" ? html`<label class="context-decision-select"><input type="radio" name=${`context-selection-${this.block.projectId}-${this.block.documentId}`} .checked=${selected} aria-label=${contextControlName(candidate=>this.i18n.t("context.controls.selectNamed", "{selection}: {name}", { selection: selectionLabel, name: `\u2068${String(candidate.properties.label ?? candidate.handle)}\u2069` }), this.block, this.store.projection.get().blocks, this.i18n)} @change=${this.#selectDecision}><span>${selectionLabel}</span></label>` : nothing}
+        ${selected || this.surface === "library" ? html`<button type="button" class="button ghost context-controls-toggle" aria-expanded=${String(open)} aria-controls=${`context-controls-${this.surface}-${this.block.id}`} @click=${this.#toggleControls}>${icon(open ? "close" : "edit")}${this.#controlsLabel()}</button>` : nothing}
+      </div>
+      ${!open && this.#draftChanged && (outputInputDraft(this.block) ? this.#structuredDraftDiffers() : this.#ordinaryDraftDiffers()) ? html`<small class="context-draft-note">${this.i18n.t("context.controls.retained", "Unsaved edits retained")}</small>` : nothing}
+      ${keyed(this.#controlsIdentity, html`${cache(localizeTemplateResult(open ? html`<div id=${`context-controls-${this.surface}-${this.block.id}`} class="context-controls-panel" tabindex="-1" role="region" aria-label=${this.#controlsLabel()} @keydown=${this.#controlsKeys}>${this.#fullEditor()}</div>` : html`<div id=${`context-controls-${this.surface}-${this.block.id}`}>${this.#authoredSummary()}</div>`, this.i18n))}`)}
+    </section>`;
+  }
+
 }
 if (!customElements.get("forma-context-block")) customElements.define("forma-context-block", ContextBlock);
 

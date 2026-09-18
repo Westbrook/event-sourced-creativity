@@ -1,0 +1,64 @@
+/* Native-only reading layout transposed from the accepted Storyboard reader. */
+forma-native-retained-storyboard {
+  display: block;
+  min-inline-size: 0;
+}
+.native-retained-storyboard-reader {
+  box-sizing: border-box;
+  inline-size: min(100%, 75ch);
+  min-inline-size: 0;
+  margin-inline: auto;
+  padding-block: max(1rem, env(safe-area-inset-top, 0px)) max(1rem, env(safe-area-inset-bottom, 0px));
+  padding-inline: max(1rem, var(--forma-safe-inline-start, 0px)) max(1rem, var(--forma-safe-inline-end, 0px));
+  color: var(--ink, #18181b);
+  font: inherit;
+  line-height: 1.65;
+}
+.native-retained-storyboard-reader > .native-retained-storyboard-list {
+  display: grid;
+  gap: var(--space-6, 1.5rem);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.native-retained-storyboard-reader > .native-retained-storyboard-list > li {
+  display: grid;
+  min-inline-size: 0;
+  gap: var(--space-2, .5rem);
+}
+.native-retained-storyboard-reader > .native-retained-storyboard-title,
+.native-retained-storyboard-reader > .native-retained-storyboard-list > li > :is(b, p),
+.native-retained-storyboard-reader .native-retained-storyboard-details > :is(dt, dd) {
+  min-inline-size: 0;
+  margin: 0;
+  color: inherit;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  unicode-bidi: plaintext;
+}
+.native-retained-storyboard-reader > .native-retained-storyboard-title {
+  margin-block-end: var(--space-6, 1.5rem);
+  font-size: clamp(1.35rem, 4vi, 2rem);
+  line-height: 1.3;
+}
+.native-retained-storyboard-reader .native-retained-storyboard-image {
+  display: block;
+  inline-size: 100%;
+  max-inline-size: 100%;
+  block-size: auto;
+  margin: 0;
+  object-fit: contain;
+}
+.native-retained-storyboard-reader .native-retained-storyboard-details {
+  display: grid;
+  min-inline-size: 0;
+  gap: var(--space-2, .5rem);
+  margin: 0;
+}
+.native-retained-storyboard-reader .native-retained-storyboard-details > dt {
+  color: var(--muted, #667069);
+  font-size: .875em;
+}
+.native-retained-storyboard-reader > .native-retained-storyboard-list > li > .native-retained-storyboard-unavailable {
+  color: var(--muted, #667069);
+}

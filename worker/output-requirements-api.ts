@@ -1,50 +1,57 @@
+import { prepareOutputDurableRun, wakeOutputDurableJobs } from "./output-durable-control.ts";
+import { jsonIssues } from "../src/experiences/compiler.ts";
+import { readOutputModel3dPayload, requireModel3dMiniAppCostApproval } from "./output-model3d-execution.ts";
+import { requireSponsorAdmission, sponsorAdmissionPayer, sponsorAdmissionPlan, type SponsorAdmissionAuthority } from "./experience-sponsor-admission.ts";
+import { requireSponsorExecution, type SponsorExecutionAuthority } from "./experience-sponsor-execution.ts";
+import { outputModel3dPreflightAssertions } from "./output-model3d-preflight.ts";
+import { model3dMiniAppAttemptMatches } from "../src/model/model3d-mini-app-consent.ts";
+import { resolveOutputModel3dRecoverySource } from "./output-model3d-source.ts";
+import { parseAudioMiniAppCostPreview } from "../src/model/audio-mini-app-consent.ts";
+import { requireAudioMiniAppCostApproval } from "./output-audio-execution.ts";
+import { readOutputScenePayload } from "./output-scene-preflight-contract.ts";
+import { outputAudioPreflightAssertions } from "./output-audio-preflight.ts";
+import { outputVideoPreflightProof, requireOutputVideoOriginal } from "./output-video-preflight.ts";
+import { outputStoryboardPreflightProof } from "./output-storyboard-preflight.ts";
+import { readStoryboardExecutionOffer } from "../src/model/output-storyboard-offer.ts";
+import { requireSceneMiniAppCostApproval } from "./scene-mini-app-consent.ts";
+import type { SceneSourceVersion } from './scene-source-generation.ts';
+import { readSceneJobSourceWitness } from './scene-job-source-witness.ts';
 import { foldEvents, type CreativeEvent, type CreativeProjection } from "../src/model/events.ts";
-import { inspectOutputRequirement, parseOutputRequirement, outputCountSatisfies, outputRequirementInterpretationNeedsReview, validateOutputCountPolicy, type OutputCountPolicy, type OutputQuantity, type OutputRequirementSpec } from "../src/model/output-requirements.ts";
-import { compileOutputPlan, summarizeOutputPlan, type OutputPlan, type OutputPlanTarget, type OutputTargetState } from "../src/model/output-plan.ts";
-import { inspectOutputAsset, MAX_OUTPUT_ASSET_BYTES, validOutputAssetName, type OutputAssetInspection } from "../src/model/output-asset-inspection.ts";
-import { createOutputDeliveryArchive, outputDeliveryScopeForPlan, planOutputDeliveryParts, type OutputDeliveryManifestInput, type OutputDeliveryScopeInput, type OutputDeliveryPart, type OutputDeliveryScopeAmendmentInput } from "../src/model/output-delivery-archive.ts";
+import { inspectOutputRequirement, outputCountSatisfies, outputRequirementInterpretationNeedsReview, type OutputRequirementSpec } from "../src/model/output-requirements.ts";
+import { compileOutputPlan, type OutputPlan, type OutputPlanTarget } from "../src/model/output-plan.ts";
+import { inspectOutputAsset, MAX_OUTPUT_ASSET_BYTES, MAX_OUTPUT_MODEL3D_ASSET_BYTES, validOutputAssetName, type OutputAssetInspection } from "../src/model/output-asset-inspection.ts";
+import { createOutputDeliveryArchive, createOutputDeliveryArchiveStream, outputDeliveryScopeForPlan, planOutputDeliveryParts, type OutputDeliveryManifestInput, type OutputDeliveryScopeInput, type OutputDeliveryPart, type OutputDeliveryScopeAmendmentInput } from "../src/model/output-delivery-archive.ts";
 import { OUTPUT_PREFLIGHT_TARGET_MAX_COUNT } from "../src/model/output-delivery-contract.ts";
 import type { OutputAssetRow, OutputCommandResponse, OutputConfirmedPlan, OutputConfirmationOptions, OutputPlanSuggestions, OutputGrantRow, OutputNativeTargetPreflight, OutputPreflight, OutputRequirementRow, OutputRequirementsSnapshot, OutputResultRow } from "../src/model/output-delivery-contract.ts";
 import { outputScopeAmendmentReasonIssue } from "../src/model/output-scope-amendment.ts";
 import { authoritativeCreativeContext, ContextIntegrityError } from "./context-authority.ts";
 import { captureOutputGovernanceAssertions } from "./output-requirement-governance-assertions.ts";
-import { issueOutputGovernanceWitness, type OutputGovernanceWitness } from "./output-governance-witness.ts";
+import type { OutputGovernanceWitness } from "./output-governance-witness.ts";
 import { claimOutputAssetStorage, acknowledgeOutputAssetStorage, cleanupOutputAssetStorage, outputAssetPublicationAssertion, outputAssetPublicationStatements } from "./output-asset-storage-control.ts";
-import { outputAssetDocumentPrefix, outputAssetObjectKeys, outputAssetStorageCustodyMatches } from "./output-asset-storage-identity.ts";
-import { verifyOutputSourceEvidence, outputExtractedSourceReferences, type OutputSourceEvidenceCheck } from "./output-source-evidence-capacity.ts";
-import { hasCapability, requireConsent, requireUser, type PilotUser } from "./pilot-policy.ts";
-import { readProjectRequestContext, prepareProjectSourceEventsStatement, projectSourceProjectionCurrentAssertion, type ProjectRequestContext } from "./project-access.ts";
-import { readEvents, serializeEvent, streamHead, uuidV7, type EventRow, type WorkerEnv, type WorkerExecutionContext } from "./runtime.ts";
-import { commitOutputCommand, ensureOutputRequirementsSchema, outputAssertionStatements, outputScopeAuthority, outputSourceEpochAssertion, outputRevision, parseOutputRevision, OutputConflictError, readOutputCommand, readOutputSlots, outputSlotFromRow,
-  type OutputCommandPermission, type OutputOperationSlot, type OutputScope, type OutputSqlAssertion, type OutputCommandWrite } from "./output-requirements-ledger.ts";
+import { outputAssetObjectKeys, outputAssetStorageCustodyMatches } from "./output-asset-storage-identity.ts";
+import { verifyOutputSourceEvidence, type OutputSourceEvidenceCheck } from "./output-source-evidence-capacity.ts";
+import { hasCapability, requireUser, type PilotUser } from "./pilot-policy.ts";
+import type { ProjectRequestContext } from "./project-access.ts";
+import { readEvents, streamHead, uuidV7, type EventRow, type WorkerEnv, type WorkerExecutionContext } from "./runtime.ts";
+import { commitOutputCommand, ensureOutputRequirementsSchema, outputAssertionStatements, outputScopeAuthority, outputSourceEpochAssertion, parseOutputRevision, OutputConflictError, readOutputCommand, readOutputSlots, outputSlotFromRow,
+  retainedOutputBodyAssertions, rememberOutputPrivateBody, inheritRetainedOutputPrivateBodies, outputCommandReceiptAssertion,
+  type OutputCommandReceipt, type OutputCommandPermission, type OutputOperationSlot, type OutputScope, type OutputSqlAssertion, type OutputCommandWrite } from "./output-requirements-ledger.ts";
 
-import { readOutputReadModel, outputBulkDeliveryAssertion, MAX_OUTPUT_DELIVERY_PART_READS, type OutputReadModel, type OutputBulkAssetEvidence } from "./output-requirements-read-model.ts";
+import { outputBulkDeliveryAssertion, outputAssetReadAssertions, MAX_OUTPUT_DELIVERY_PART_READS, type OutputReadModel, type OutputBulkAssetEvidence } from "./output-requirements-read-model.ts";
+import { idPattern, record, json, fail, identifier, ownedBuffer, canonicalOutputJson, outputDigest, captureOutputPrivateSources, outputProofReadStatements, outputActiveSourceDeadlineAssertions, discloseOutputResponse, discloseOutputJson } from "./output-disclosure-proof.ts";
+import { continueOutputTrustedContext, OUTPUT_NATIVE_SOURCE_OBJECT_CAPACITY, OUTPUT_GOVERNANCE_CAPTURE_BATCH_LIMIT, outputSourceDigests, outputRequirements, normalizePlanSuggestions, readOutputProjectSourceSnapshot } from "./output-trusted-context.ts";
+import { outputReviewEligibility, readOutputModel } from "./output-read-model-producer.ts";
+import { buildSnapshot, retainedOutputAmendments } from "./output-requirements-snapshot.ts";
+export { canonicalOutputJson, outputDigest, outputActiveSourceDeadlineAssertions, outputReviewEligibility };
 
 const BASE = "/api/output-requirements";
 const RESOLVER_VERSION = "output-plan-v1";
 const VALIDATION_POLICY = "output-owned-file-v1";
 const MAX_COMMAND_BYTES = 512_000;
-// These are verification limits, never changes to the authored source scope.
-// Native and owned-file limits retain measured request headroom for their complete routes.
-const OUTPUT_OWNED_SOURCE_OBJECT_CAPACITY = 4;
-const OUTPUT_NATIVE_SOURCE_OBJECT_CAPACITY = 1;
-const OUTPUT_GOVERNANCE_CAPTURE_BATCH_LIMIT = 2;
-const idPattern = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$/u;
 const nowIso = () => new Date().toISOString();
-const record = (value: unknown): Record<string, unknown> => value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
-const json = (value: unknown, status = 200) => Response.json(typeof record(value).error === "string" ? { ...record(value), errorCode: record(value).error, errorValues: record(record(value).errorValues) } : value, { status, headers: { "cache-control": "private, no-store", "x-content-type-options": "nosniff" } });
-function fail(code: string, status = 400): never { throw new OutputConflictError(code, status); }
-const identifier = (value: unknown, code = "invalid_identifier") => typeof value === "string" && idPattern.test(value) ? value : fail(code);
-const ownedBuffer = (bytes: Uint8Array): ArrayBuffer => { const copy = new Uint8Array(bytes.byteLength); copy.set(bytes); return copy.buffer; };
+/** Internal model bytes are privately owned for this request; avoid a second 64 MiB allocation. */
+const assetBuffer = (bytes: Uint8Array): ArrayBuffer => bytes.byteLength > MAX_OUTPUT_ASSET_BYTES && bytes.buffer instanceof ArrayBuffer && bytes.byteOffset === 0 && bytes.byteLength === bytes.buffer.byteLength ? bytes.buffer : ownedBuffer(bytes);
 
-export function canonicalOutputJson(value: unknown): string {
-  if (value === null || typeof value !== "object") return JSON.stringify(value) ?? "null";
-  if (Array.isArray(value)) return `[${value.map(canonicalOutputJson).join(",")}]`;
-  return `{${Object.keys(value).sort().filter((key) => (value as Record<string, unknown>)[key] !== undefined).map((key) => `${JSON.stringify(key)}:${canonicalOutputJson((value as Record<string, unknown>)[key])}`).join(",")}}`;
-}
-export async function outputDigest(value: unknown) {
-  return Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(canonicalOutputJson(value)))), (byte) => byte.toString(16).padStart(2, "0")).join("");
-}
 
 export type OutputTrustedContext = {
   request: Request; env: WorkerEnv; scope: OutputScope; principal: PilotUser; projectContext: ProjectRequestContext | null;
@@ -52,6 +59,9 @@ export type OutputTrustedContext = {
   requirements: OutputRequirementRow[]; requirementsDigest: string; sourceDigest: string;
   context: ReturnType<typeof authoritativeCreativeContext> | null; sourceProblems: string[];
   sourceAssertions: OutputSqlAssertion[];
+  /** Internal adapters only: exact original command body retained with its atomic receipt. */
+  retainedCommandEnvelope?: Record<string, unknown>;
+  sourcePrivateCaptured: boolean;
   sourceEvidence: OutputSourceEvidenceCheck;
   governanceWitness?: OutputGovernanceWitness;
 };
@@ -59,11 +69,23 @@ export type OutputBridgeTargetInput = {
   request: Request; env: WorkerEnv; scope: OutputScope; principal: PilotUser;
   confirmedPlan: OutputConfirmedPlan; target: OutputPlanTarget;
   context: ReturnType<typeof authoritativeCreativeContext>;
+  /** Captured owner stream epoch; required by cross-Document Video source custody. */
+  ownerHead?: number;
+  /** Already authorized source events for read-only reference rights verification. */
+  sourceEvents?: readonly CreativeEvent[];
+  /** Current retained source assertions, required by native Scene. */
+  sourceAssertions?: readonly OutputSqlAssertion[];
+  /** Private original/same-transaction successor; never a wire authority. */
+  sceneSourceVersion?: SceneSourceVersion;
+  /** Initial server preparation only. Execution must provide its persisted
+   * successor instead of asking for a newly captured source baseline. */
+  sceneUseVersionedHistory?: boolean;
   sourceDigest: string; requirementsDigest: string;
 };
 export type OutputPreparedAdmission = {
   /** Retained source proofs run before command events in the same admission transaction. */
   sourceAssertions?: OutputSqlAssertion[];
+  sceneJobAdmissions?: OutputCommandWrite['sceneJobAdmissions'];
   /** Existing queue-anchor events, known before transaction allocation. No creative text in public envelopes. */
   events: Array<{ type: string; payload: Record<string, unknown> }>;
   /** Must be side-effect free until these statements run in the enclosing D1 batch. */
@@ -72,7 +94,8 @@ export type OutputPreparedAdmission = {
 export interface OutputExecutionBridge {
   preflight(input: OutputBridgeTargetInput): Promise<OutputNativeTargetPreflight>;
   prepareAdmission(input: Omit<OutputBridgeTargetInput, "target"> & {
-    grantId: string; preflight: OutputPreflight; slots: OutputOperationSlot[]; governanceWitness?: OutputGovernanceWitness;
+    grantId: string; preflight: OutputPreflight; slots: OutputOperationSlot[]; governanceWitness?: OutputGovernanceWitness; sceneCostConsent?: unknown; audioCostConsent?: unknown; model3dCostConsent?: unknown;
+    sponsorAdmission?: SponsorAdmissionAuthority;
   }): Promise<OutputPreparedAdmission>;
   /** May schedule existing admitted job IDs only. The runner rechecks slot/grant/current authority before every call. */
   dispatch(input: { request: Request; env: WorkerEnv; scope: OutputScope; principal: PilotUser; executionContext: WorkerExecutionContext; slots: OutputOperationSlot[] }): Promise<void>;
@@ -81,230 +104,16 @@ export interface OutputExecutionBridge {
   cleanupExpiredOrRevoked?(input: { request: Request; env: WorkerEnv; scope: OutputScope; principal: PilotUser; slots: OutputOperationSlot[] }): Promise<void>;
 }
 
-const retainedBodies = new WeakMap<OutputScope, Map<string, string>>();
-export function retainedOutputBodyAssertions(scope: OutputScope): OutputSqlAssertion[] {
-  const encoder = new TextEncoder(), maximumPayload = 128 * 1024, maximumEvidence = 16 * 1024 * 1024;
-  const batches: string[] = []; let batch: Array<Record<string, string | number>> = [], batchBytes = 2, evidenceBytes = 0;
-  for (const [id, raw] of retainedBodies.get(scope)?.entries() ?? []) {
-    evidenceBytes += encoder.encode(raw).byteLength;
-    if (evidenceBytes > maximumEvidence) fail("output_source_proof_too_large", 413);
-    // SQLite substr counts Unicode code points, not JavaScript UTF-16 units.
-    const pieces: Array<{ offset: number; length: number; part: string }> = [];
-    let characters: string[] = [], total = 0, offset = 1;
-    for (const character of raw) {
-      characters.push(character); total++;
-      if (characters.length === 16000) { pieces.push({ offset, length: characters.length, part: characters.join("") }); offset += characters.length; characters = []; }
-    }
-    if (characters.length || !pieces.length) pieces.push({ offset, length: characters.length, part: characters.join("") });
-    for (const piece of pieces) {
-      const expected = { id, total, ...piece }, bytes = encoder.encode(JSON.stringify(expected)).byteLength + 1;
-      if (bytes + 2 > maximumPayload) fail("output_source_proof_too_large", 413);
-      if (batch.length && batchBytes + bytes > maximumPayload) { batches.push(JSON.stringify(batch)); batch = []; batchBytes = 2; }
-      batch.push(expected); batchBytes += bytes;
-    }
-  }
-  if (batch.length) batches.push(JSON.stringify(batch));
-  return batches.map((expected) => ({ sql: `NOT EXISTS(SELECT 1 FROM json_each(?) expected LEFT JOIN event_private_payloads body
-    ON body.private_event_id=json_extract(expected.value,'$.id') AND body.owner_id=?
-    WHERE body.private_event_id IS NULL OR body.redacted_at IS NOT NULL OR length(body.private_json)<>json_extract(expected.value,'$.total')
-      OR substr(body.private_json,json_extract(expected.value,'$.offset'),json_extract(expected.value,'$.length'))<>json_extract(expected.value,'$.part'))`, bindings: [expected, scope.ownerUserId] }));
-}
-async function captureOutputPrivateSources(env: WorkerEnv, scope: OutputScope, events: CreativeEvent[], projection: CreativeProjection, expectedHead?: number, readAssertions: OutputSqlAssertion[] = []) {
-  const pins = projection.outputs.filter((output) => output.pinned);
-  const identifiers = [...new Set([...projection.blocks.flatMap((block) => block.sourceEvents), ...projection.blockRelations.flatMap((relation) => relation.sourceEvents),
-    ...(projection.documents.find((document) => document.id === scope.documentId)?.sourceEvents ?? []), ...pins.map((output) => output.sourceEventId)])].filter(Boolean);
-  const bodyStatement = env.DB.prepare("SELECT private_event_id,private_json FROM event_private_payloads WHERE owner_id=? AND private_event_id IN(SELECT value FROM json_each(?)) AND redacted_at IS NULL")
-    .bind(scope.ownerUserId, JSON.stringify(identifiers));
-  const results = expectedHead === undefined ? [await bodyStatement.all<Record<string, unknown>>()] : await env.DB.batch<Record<string, unknown>>([
-    bodyStatement, env.DB.prepare("SELECT COALESCE(MAX(sequence),0) AS head FROM events WHERE stream_id=?").bind(`creative:${scope.ownerUserId}`),
-    ...outputProofReadStatements(env, readAssertions),
-  ]);
-  if (expectedHead !== undefined && Number(results[1]?.results[0]?.head ?? -1) !== expectedHead) fail("output_revision_or_authority_changed", 409);
-  if (expectedHead !== undefined) assertOutputProofRead(results.slice(2), readAssertions.length);
-  const rows = results[0].results as Array<{ private_event_id: string; private_json: string }>;
-  if (rows.length !== identifiers.length) fail("output_source_private_evidence_unavailable", 409);
-  const captured = new Map<string, string>();
-  for (const row of rows) {
-    const previous = events.find((event) => event.eventId === row.private_event_id);
-    if (!previous || canonicalOutputJson(JSON.parse(row.private_json)) !== canonicalOutputJson(previous.payload)) fail("output_source_changed_during_read", 409);
-    captured.set(row.private_event_id, row.private_json);
-  }
-  retainedBodies.set(scope, captured);
-  return retainedOutputBodyAssertions(scope);
-}
-
-/** Keep each proof statement within D1 limits; never combine all bindings into one expression. */
-function outputProofReadStatements(env: WorkerEnv, assertions: readonly OutputSqlAssertion[]) {
-  const encoder = new TextEncoder();
-  return assertions.map((assertion) => {
-    const sql = `SELECT CASE WHEN (${assertion.sql}) THEN 1 ELSE 0 END AS current`;
-    const bindings = assertion.bindings ?? [];
-    if (encoder.encode(sql).byteLength > 100_000 || bindings.length > 100 || bindings.some((value) => typeof value === "string" && encoder.encode(value).byteLength > 2_000_000)) fail("output_source_proof_too_large", 413);
-    return env.DB.prepare(sql).bind(...bindings);
-  });
-}
-function assertOutputProofRead(results: Array<D1Result<Record<string, unknown>>>, expected: number) {
-  if (results.length !== expected || results.some((result) => result.success === false || Number(result.results[0]?.current) !== 1)) fail("output_source_changed_during_read", 409);
-}
-async function verifyOutputSourceRead(env: WorkerEnv, scope: OutputScope, expectedHead: number, assertions: readonly OutputSqlAssertion[]) {
-  const [head, ...checked] = await env.DB.batch<Record<string, unknown>>([
-    env.DB.prepare("SELECT COALESCE(MAX(sequence),0) AS head FROM events WHERE stream_id=?").bind(`creative:${scope.ownerUserId}`),
-    ...outputProofReadStatements(env, assertions),
-  ]);
-  if (Number(head?.results[0]?.head ?? -1) !== expectedHead) fail("output_revision_or_authority_changed", 409);
-  assertOutputProofRead(checked, assertions.length);
-}
-
-async function outputSourceDigests(projection: CreativeProjection, requirements: OutputRequirementRow[], documentId: string, projectId: string, context: ReturnType<typeof authoritativeCreativeContext> | null) {
-  const document = projection.documents.find((candidate) => candidate.id === documentId);
-  return {
-    sourceDigest: await outputDigest({ version: 3, documentId, projectId,
-      document: document ? { id: document.id, projectId: document.projectId, title: document.title, handle: document.handle, removed: document.removed } : null,
-      context: context ? { snapshot: context.snapshot, sourceBlockVersions: context.sourceBlockVersions } : null,
-      pinnedResults: projection.outputs.filter((output) => output.pinned),
-      blocks: projection.blocks.filter((block) => !block.removed).map((block) => ({ id: block.id, type: block.type, properties: block.properties, sourceEvents: block.sourceEvents, locked: block.locked, position: block.position })),
-      relations: projection.blockRelations.filter((relation) => !relation.removed) }),
-    requirementsDigest: await outputDigest(requirements.map((row) => ({ blockId: row.blockId, content: row.content, subtype: row.subtype, stored: row.preserved, status: row.status, planSuggestions: row.planSuggestions }))),
-  };
-}
-
-function outputRequirements(projection: CreativeProjection): OutputRequirementRow[] {
-  return projection.blocks.filter((block) => String(block.type).toLowerCase() === "output" && !block.removed).map((block) => {
-    const content = String(block.properties.text ?? block.properties.content ?? "");
-    const subtype = String(block.properties.subtype ?? block.handle ?? "Output");
-    if (block.properties.output_spec !== undefined) {
-      const inspected = inspectOutputRequirement(block.properties.output_spec);
-      return { blockId: block.id, subtype, content, locked: block.locked, status: inspected.status, spec: inspected.spec, preserved: inspected.preserved, issues: inspected.issues, planSuggestions: normalizePlanSuggestions(inspected.spec, block.properties.output_plan_suggestions, false) };
-    }
-    const draft = parseOutputRequirement({ id: block.id, type: "output", subtype, content });
-    return { blockId: block.id, subtype, content, locked: block.locked, status: "draft", spec: draft.spec, preserved: { type: "output", subtype, content }, issues: draft.issues, planSuggestions: normalizePlanSuggestions(draft.spec, block.properties.output_plan_suggestions, false) };
-  });
-}
-
-/** Planning proposals belong to one authored requirement and never grant dispatch. */
-function normalizePlanSuggestions(spec: OutputRequirementSpec | null, value: unknown, strict: boolean): OutputPlanSuggestions {
-  const input = record(value), policies: Record<string, OutputCountPolicy> = {}, suggestions: Record<string, number> = {};
-  const reject = () => { if (strict) fail("invalid_output_plan_suggestions"); };
-  if (value !== undefined && (value === null || typeof value !== "object" || Array.isArray(value) || Object.keys(input).some((key) => !["count_policies", "suggested_counts"].includes(key)))) reject();
-  const quantities = new Map<string, OutputQuantity[]>(), content = new Map<string, OutputQuantity>();
-  for (const deliverable of spec?.deliverables ?? []) {
-    const rows = [...(deliverable.format_variants ?? []), ...(deliverable.series?.members ?? [])];
-    const subjects = [{ id: deliverable.id, quantity: deliverable.quantity }, ...rows, ...(deliverable.series?.state === "unresolved" ? [{ id: `${deliverable.id}:membership`, quantity: deliverable.quantity }] : [])];
-    for (const subject of subjects) {
-      const values = [subject.quantity, ...(deliverable.content_quantity ? [deliverable.content_quantity] : [])];
-      quantities.set(subject.id, values);
-      for (const quantity of values) quantities.set(`${subject.id}:${quantity.unit}`, [quantity]);
-      if (deliverable.content_quantity) content.set(subject.id, deliverable.content_quantity);
-    }
-  }
-  for (const key of ["count_policies", "suggested_counts"] as const) if (input[key] !== undefined && (input[key] === null || typeof input[key] !== "object" || Array.isArray(input[key]) || Object.keys(record(input[key])).length > 1000)) reject();
-  for (const [key, unknownPolicy] of Object.entries(record(input.count_policies)).slice(0, 1000)) {
-    const policy = record(unknownPolicy) as OutputCountPolicy;
-    const applicable = quantities.get(key)?.filter((quantity) => quantity.unit === policy.unit);
-    if (!applicable?.length || !["exact", "flexible"].includes(policy.kind) || Object.keys(policy).some((field) => !(policy.kind === "exact" ? ["kind", "unit", "value"] : ["kind", "unit", "min", "max", "aim"]).includes(field)) || applicable.some((quantity) => validateOutputCountPolicy(quantity, policy).length)) { reject(); continue; }
-    policies[key] = structuredClone(policy);
-  }
-  for (const [key, proposed] of Object.entries(record(input.suggested_counts)).slice(0, 1000)) {
-    const quantity = content.get(key);
-    if (!quantity || typeof proposed !== "number" || !Number.isFinite(proposed) || proposed <= 0 || proposed > Number.MAX_SAFE_INTEGER || quantity.unit !== "second" && !Number.isSafeInteger(proposed) || quantity.kind === "exact" && proposed !== quantity.value || quantity.kind === "range" && (proposed < quantity.min || proposed > quantity.max)) { reject(); continue; }
-    suggestions[key] = proposed;
-  }
-  return { count_policies: policies, suggested_counts: suggestions };
-}
-
-/** Reads the existing project projection without repairing or reactivating it. */
-async function readOutputProjectSourceSnapshot(env: WorkerEnv, scope: OutputScope, permission: OutputCommandPermission) {
-  if (scope.kind !== "project" || !scope.organizationId || !scope.projectAccessId) fail("invalid_output_scope", 403);
-  const project = { organizationId: scope.organizationId, projectAccessId: scope.projectAccessId, projectId: scope.projectId, ownerUserId: scope.ownerUserId };
-  const authority = outputScopeAuthority(scope, permission), projection = projectSourceProjectionCurrentAssertion(project);
-  const [metadata, source] = await env.DB.batch<Record<string, unknown>>([
-    env.DB.prepare(`SELECT CASE WHEN (${authority.sql}) THEN 1 ELSE 0 END AS permitted,CASE WHEN (${projection.sql}) THEN 1 ELSE 0 END AS projection_current,
-      (SELECT COALESCE(MAX(sequence),0) FROM events WHERE stream_id=?) AS owner_head,
-      (SELECT COALESCE(MAX(project_sequence),0) FROM project_event_scopes WHERE project_access_id=? AND organization_id=? AND project_id=? AND owner_user_id=?) AS project_head`)
-      .bind(...(authority.bindings ?? []), ...projection.bindings, `creative:${scope.ownerUserId}`, scope.projectAccessId, scope.organizationId, scope.projectId, scope.ownerUserId),
-    prepareProjectSourceEventsStatement(env, project),
-  ]);
-  const row = metadata.results[0];
-  if (!Number(row?.permitted)) fail("output_execution_authority_revoked", 403);
-  if (!Number(row?.projection_current)) fail("output_source_projection_stale", 409);
-  return { head: Number(row.owner_head), projectHead: Number(row.project_head), events: source.results.map(serializeEvent), assertion: projection as OutputSqlAssertion };
-}
+export { retainedOutputBodyAssertions, rememberOutputPrivateBody } from "./output-requirements-ledger.ts";
 
 /** Read the real selected project; no owner-account fallback for a governed Document. */
 export async function loadOutputTrustedContext(request: Request, env: WorkerEnv, documentId: string, permission: OutputCommandPermission = "read"): Promise<OutputTrustedContext | Response> {
   identifier(documentId, "document_id_required");
   const auth = await requireUser(request, env, "viewer", { account: "principal" });
-  if (auth.response || !auth.user) return auth.response ?? json({ error: "authentication_required" }, 401);
-  const principal = auth.user, consent = requireConsent(principal);
-  if (consent) return consent;
-  const selected = await readProjectRequestContext(request, env, principal);
-  if (selected.response) return selected.response;
-  const selectedContext = selected.context;
-  const owner = selectedContext?.ownerUserId ?? principal.userId;
-  const selectedScope: OutputScope | null = selectedContext ? { kind: "project", key: `project:${selectedContext.organizationId}:${selectedContext.projectAccessId}`,
-    actorUserId: principal.userId, ownerUserId: owner, documentId, projectId: selectedContext.projectId,
-    organizationId: selectedContext.organizationId, projectAccessId: selectedContext.projectAccessId, contextId: selectedContext.contextId } : null;
-  const projectSource = selectedScope ? await readOutputProjectSourceSnapshot(env, selectedScope, permission) : null;
-  const head = projectSource?.head ?? await streamHead(env, `creative:${owner}`);
-  const events = projectSource?.events ?? await readEvents(env, principal.streamId);
-  const initial = foldEvents(events, Number.POSITIVE_INFINITY, documentId, selectedContext?.projectId ?? "");
-  const document = initial.documents.find((candidate) => candidate.id === documentId && !candidate.removed);
-  if (!document || selectedContext && document.projectId !== selectedContext.projectId) return json({ error: "document_not_found" }, 404);
-  if (!selectedContext) {
-    const governed = await env.DB.prepare("SELECT 1 AS present FROM organization_projects WHERE owner_user_id=? AND project_id=? LIMIT 1").bind(owner, document.projectId).first();
-    if (governed) return json({ error: "project_context_required", message: "Open this Document in its authorized shared project before using Outputs." }, 403);
-  }
-  const scope: OutputScope = selectedScope ?? { kind: "personal", key: `personal:${owner}:${document.projectId}`,
-    actorUserId: principal.userId, ownerUserId: owner, documentId, projectId: document.projectId,
-    organizationId: null, projectAccessId: null, contextId: null };
-  const capabilityScope = selectedContext ? { organizationId: selectedContext.organizationId, projectAccessId: selectedContext.projectAccessId } : undefined;
-  const required = permission === "author" ? "project.author" : permission === "request" ? "project.output.request" : permission === "review" && selectedContext ? "project.review.approve" : permission === "review" ? "project.author" : "project.read";
-  if (selectedContext ? !hasCapability(principal, required, capabilityScope) : permission !== "read" && !["creator", "admin"].includes(principal.role)) return json({ error: "output_action_not_authorized" }, 403);
-  const projection = foldEvents(events, Number.POSITIVE_INFINITY, documentId, document.projectId);
-  const requirements = outputRequirements(projection);
-  // A complete Document binding is intentionally conservative; no selective-dependency claims.
-  let context: ReturnType<typeof authoritativeCreativeContext> | null = null;
-  const sourceProblems: string[] = [];
-  try { context = authoritativeCreativeContext(events, { documentId, projectId: document.projectId }); }
-  catch (error) { if (error instanceof ContextIntegrityError) sourceProblems.push(error.code); else throw error; }
-  const { sourceDigest, requirementsDigest } = await outputSourceDigests(projection, requirements, documentId, document.projectId, context);
-  const sourceAssertions: OutputSqlAssertion[] = projectSource ? [projectSource.assertion] : [];
-  try { sourceAssertions.push(...await captureOutputPrivateSources(env, scope, events, projection)); }
-  catch (error) { if (error instanceof OutputConflictError) sourceProblems.push(error.code); else throw error; }
-  let governanceAssertions: OutputSqlAssertion[] = [];
-  if (selectedContext) try {
-    governanceAssertions = await captureOutputGovernanceAssertions(env, selectedContext.organizationId, projection.blocks, { deferValidation: true, maximumCaptureBatches: OUTPUT_GOVERNANCE_CAPTURE_BATCH_LIMIT });
-  } catch (error) { if (error instanceof OutputConflictError) sourceProblems.push(error.code); else throw error; }
-  const sourceEvidence = await verifyOutputSourceEvidence(env, owner, projection.blocks, { maximumDistinctObjects: permission === "request" ? OUTPUT_NATIVE_SOURCE_OBJECT_CAPACITY : OUTPUT_OWNED_SOURCE_OBJECT_CAPACITY });
-  if (sourceEvidence.reasonCode) sourceProblems.push(sourceEvidence.reasonCode);
-  // The complete governance proof includes the former generic rights predicate,
-  // immutable lineage and current permissions. Validate once with the final head,
-  // then retain these exact same guards for every consequential transaction.
-  await verifyOutputSourceRead(env, scope, head, [outputScopeAuthority(scope, permission), ...sourceAssertions, ...governanceAssertions]);
-  sourceAssertions.push(...governanceAssertions);
-  const governanceWitness = selectedContext && context && !sourceProblems.length ? issueOutputGovernanceWitness({ request, env,
-    actorUserId: scope.actorUserId, ownerUserId: scope.ownerUserId, organizationId: selectedContext.organizationId,
-    projectAccessId: selectedContext.projectAccessId, projectId: scope.projectId, documentId: scope.documentId, contextId: selectedContext.contextId,
-    sourceDigest, contextSnapshotDigest: await outputDigest(context.snapshot) }, governanceAssertions) : undefined;
-  return { request, env, scope, principal, projectContext: selectedContext, events, projection, ownerHead: head, projectHead: projectSource?.projectHead ?? 0, requirements, requirementsDigest, sourceDigest, context, sourceProblems, sourceAssertions, sourceEvidence, governanceWitness };
+  return continueOutputTrustedContext(request, env, documentId, permission, auth);
 }
 
 const sourceDeadlinePrepared = new WeakSet<OutputTrustedContext>();
-/** Only active facts from the existing authorized context supply this deadline. */
-export function outputActiveSourceDeadlineAssertions(context: ReturnType<typeof authoritativeCreativeContext>): OutputSqlAssertion[] {
-  let earliest = Number.POSITIVE_INFINITY;
-  for (const fact of context.snapshot.facts) {
-    if (fact.active === false) continue;
-    const properties = record(fact.properties);
-    for (const field of ["source_expires_at", "license_expires_at", "rights_expires_at"] as const) {
-      const value = properties[field];
-      if (value === undefined || value === null || value === "") continue;
-      if (typeof value !== "string" || !Number.isSafeInteger(Date.parse(value))) fail("context_source_rights_expired", 409);
-      earliest = Math.min(earliest, Date.parse(value));
-    }
-  }
-  return Number.isFinite(earliest) ? [{ sql: "(CAST(strftime('%s','now') AS INTEGER)*1000+CAST(substr(strftime('%f','now'),4,3) AS INTEGER))<?", bindings: [earliest] }] : [];
-}
 
 function requireCurrentSource(trusted: OutputTrustedContext) {
   if (!trusted.context || trusted.sourceProblems.length) fail(trusted.sourceProblems[0] ?? "source_context_unavailable", 409);
@@ -315,32 +124,6 @@ function requireCurrentSource(trusted: OutputTrustedContext) {
   return trusted.context;
 }
 
-function outputSourceNames(blocks: CreativeProjection["blocks"]) {
-  const sources: Array<{ blockId: string; label: string }> = [];
-  let sourcesComplete = blocks.length <= 32;
-  for (const block of blocks.slice(0, 32)) {
-    if (!idPattern.test(block.id)) { sourcesComplete = false; continue; }
-    const authored = [block.properties.label, block.properties.title, block.handle].find((value) => typeof value === "string" && value.trim());
-    const display = (typeof authored === "string" ? authored : "").replace(/[\p{Cc}\p{Cf}]/gu, " ").trim();
-    const characters = [...display];
-    if (characters.length > 120) sourcesComplete = false;
-    sources.push({ blockId: block.id, label: characters.slice(0, 120).join("") });
-  }
-  return { sources, sourcesComplete };
-}
-function sourceCapacityDisclosure(trusted: OutputTrustedContext): OutputRequirementsSnapshot["sourceVerification"]["capacity"] {
-  return { referenceCount: trusted.sourceEvidence.referenceCount, distinctObjectCount: trusted.sourceEvidence.distinctObjectCount,
-    countsComplete: trusted.sourceEvidence.countsComplete, ownedReadLimit: OUTPUT_OWNED_SOURCE_OBJECT_CAPACITY, nativeLimit: OUTPUT_NATIVE_SOURCE_OBJECT_CAPACITY,
-    ...outputSourceNames(outputExtractedSourceReferences(trusted.projection.blocks)) };
-}
-function sourceGovernanceDisclosure(trusted: OutputTrustedContext): OutputRequirementsSnapshot["sourceVerification"]["governance"] {
-  if (trusted.scope.kind !== "project") return undefined;
-  const fields = ["organization_context_package_id", "organization_context_package_version_id", "organization_context_package_binding_id", "organization_context_source_block_id"];
-  const blocks = trusted.projection.blocks.filter((block) => fields.some((field) => block.properties[field] !== undefined && block.properties[field] !== null && block.properties[field] !== ""));
-  // Names come only from the current authorized Document projection, never the
-  // live origin rows traversed by the governance proof.
-  return { captureBatchLimit: OUTPUT_GOVERNANCE_CAPTURE_BATCH_LIMIT, ...outputSourceNames(blocks) };
-}
 
 async function privateEventBody(env: WorkerEnv, scope: OutputScope, eventId: string): Promise<Record<string, unknown>> {
   const row = await env.DB.prepare("SELECT private_json FROM event_private_payloads WHERE private_event_id=? AND owner_id=? AND project_id=? AND document_id=? AND redacted_at IS NULL")
@@ -349,21 +132,6 @@ async function privateEventBody(env: WorkerEnv, scope: OutputScope, eventId: str
   return rememberOutputPrivateBody(scope, eventId, row.private_json);
 }
 
-/** Call only with rows joined to this scope's owner/project/Document and nonredacted body. */
-export function rememberOutputPrivateBody(scope: OutputScope, eventId: string, raw: string): Record<string, unknown> {
-  const expected = retainedBodies.get(scope) ?? new Map<string, string>();
-  if (expected.has(eventId) && expected.get(eventId) !== raw) fail("output_private_evidence_changed", 409);
-  expected.set(eventId, raw); retainedBodies.set(scope, expected);
-  return record(JSON.parse(raw));
-}
-
-export function outputReviewEligibility(scope: OutputScope, principal: PilotUser, resultCreatedByUserId: string, assetCreatedByUserId: string | null, origin: Record<string, unknown> | null) {
-  const canReview = scope.kind === "project" ? hasCapability(principal, "project.review.approve", { organizationId: scope.organizationId!, projectAccessId: scope.projectAccessId! }) : ["creator", "admin"].includes(principal.role);
-  const nativeContributorUnknown = origin?.kind === "native_job" && (typeof origin.createdByUserId !== "string" || !origin.createdByUserId);
-  const contributors = [resultCreatedByUserId, assetCreatedByUserId, origin?.createdByUserId, ...(Array.isArray(origin?.editedByUserIds) ? origin.editedByUserIds : [])];
-  const independentReviewBlocked = scope.kind === "project" && (!assetCreatedByUserId || !origin || Boolean(nativeContributorUnknown) || contributors.includes(scope.actorUserId));
-  return { reviewAllowed: canReview && Boolean(assetCreatedByUserId && origin) && !independentReviewBlocked, independentReviewBlocked };
-}
 
 async function readConfirmedPlan(trusted: OutputTrustedContext, requestedId?: string): Promise<OutputConfirmedPlan | null> {
   const row = await trusted.env.DB.prepare(`SELECT * FROM output_plan_revisions WHERE scope_key=? AND document_id=? ${requestedId ? "AND plan_revision_id=?" : ""} ORDER BY revision DESC LIMIT 1`)
@@ -386,26 +154,6 @@ export async function outputTargetContractDigest(target: OutputPlanTarget, sourc
   return outputDigest({ policy: VALIDATION_POLICY, sourceDigest, contract });
 }
 
-const outputReadModels = new WeakMap<OutputTrustedContext, Promise<OutputReadModel>>();
-function readOutputModel(trusted: OutputTrustedContext) {
-  let pending = outputReadModels.get(trusted);
-  if (!pending) {
-    pending = readOutputReadModel(trusted.env, trusted.scope, trusted.events, {
-      rememberPrivateBody: (id, raw) => rememberOutputPrivateBody(trusted.scope, id, raw),
-      reviewEligibility: (resultAuthor, assetAuthor, origin) => outputReviewEligibility(trusted.scope, trusted.principal, resultAuthor, assetAuthor, origin),
-      storagePrefixes: () => [outputAssetDocumentPrefix(trusted.scope)],
-      legacyStorageKeys: (rows) => rows.flatMap((row) => {
-        const extension = /\.([a-z0-9]+)$/u.exec(String(row.storage_key))?.[1];
-        if (!extension) return [];
-        try { const legacy = outputAssetObjectKeys(trusted.scope, String(row.asset_id), String(row.content_sha256), extension).legacyKey; return legacy && row.storage_key === legacy ? [legacy] : []; }
-        catch { return []; }
-      }),
-      storageIdentityMatches: (row, _inspection, object) => outputAssetStorageCustodyMatches({ ownerUserId: trusted.scope.ownerUserId, projectId: trusted.scope.projectId, documentId: trusted.scope.documentId, assetId: String(row.asset_id), scopeKey: trusted.scope.key, sha256: String(row.content_sha256), storageKey: String(row.storage_key) }, object.customMetadata),
-    });
-    outputReadModels.set(trusted, pending);
-  }
-  return pending;
-}
 function requireCompleteOutputReadModel(model: OutputReadModel) {
   if (!model.complete) fail(model.reasonCodes[0] ?? "output_read_model_unavailable", 503);
   return model;
@@ -414,61 +162,6 @@ async function readAssets(trusted: OutputTrustedContext): Promise<OutputAssetRow
 async function readResults(trusted: OutputTrustedContext): Promise<OutputResultRow[]> { return (await readOutputModel(trusted)).results; }
 async function readGrants(trusted: OutputTrustedContext): Promise<OutputGrantRow[]> { return (await readOutputModel(trusted)).grants; }
 
-function retainedOutputAmendments(trusted: OutputTrustedContext) {
-  return trusted.events.filter((event) => event.type === "OutputPlanConfirmed" && event.payload.document_id === trusted.scope.documentId && event.payload.project_id === trusted.scope.projectId && event.payload.scope_amendment !== undefined);
-}
-
-async function buildSnapshot(trusted: OutputTrustedContext, bridge?: OutputExecutionBridge): Promise<OutputRequirementsSnapshot> {
-  const model = await readOutputModel(trusted);
-  const { confirmedPlan, assets, grants } = model;
-  const retainedAmendments = retainedOutputAmendments(trusted);
-  const historyProblems = retainedAmendments.some((event) => outputScopeAmendmentReasonIssue(record(event.payload.scope_amendment).reason, { required: true })) ? ["output_scope_history_reason_unverified"] : [];
-  const qualifyPackageSummary = (summary: NonNullable<OutputRequirementsSnapshot["summary"]>): NonNullable<OutputRequirementsSnapshot["summary"]> => historyProblems.length ? {
-    ...summary, delivery_ready: false,
-    ...(summary.completion === "complete" ? { completion: "unknown", headline: "The retained amendment history needs investigation before packaging." } : {}),
-  } : summary;
-  const sourceVerification: OutputRequirementsSnapshot["sourceVerification"] = { status: trusted.sourceProblems.length ? "unavailable" : "verified", reasonCodes: [...new Set(trusted.sourceProblems)], capacity: sourceCapacityDisclosure(trusted), governance: sourceGovernanceDisclosure(trusted) };
-  const results = model.results.map((result) => ({ ...result, reviewAllowed: result.reviewAllowed && model.complete && sourceVerification.status === "verified" }));
-  const memberships = confirmedPlan ? model.fulfillments.get(confirmedPlan.revisionId) : undefined;
-  const targetStates: OutputTargetState[] = [];
-  for (const target of confirmedPlan?.plan.targets ?? []) {
-    const selectedAcceptance = memberships?.get(target.id);
-    const fulfillment = selectedAcceptance ? { acceptance_id: selectedAcceptance } : null;
-    const accepted = fulfillment ? results.find((candidate) => candidate.acceptanceId === fulfillment.acceptance_id && candidate.review === "approved" && candidate.targetContractDigest === confirmedPlan!.targetContractDigests[target.id]) : undefined;
-    const candidate = accepted ?? results.find((result) => result.targetId === target.id && result.planRevisionId === confirmedPlan!.revisionId);
-    const asset = candidate && assets.find((value) => value.id === candidate.assetId && value.sha256 === candidate.sha256 && value.available);
-    const slot = grants.flatMap((grant) => grant.operations).find((operation) => operation.targetId === target.id);
-    const freshness = confirmedPlan!.sourceDigest === trusted.sourceDigest && confirmedPlan!.requirementsDigest === trusted.requirementsDigest && !trusted.sourceProblems.length && (!candidate || candidate.sourceDigest === trusted.sourceDigest) ? "current" : "stale";
-    // A GET does not claim bytes were freshly downloaded or content was reviewed; release rechecks both.
-    const availability = !model.complete ? "unknown" : asset ? "available" : candidate ? "missing" : "unknown";
-    const execution: OutputTargetState["execution"] = candidate ? "succeeded" : slot && ["queued", "running", "succeeded", "failed", "cancelled", "uncertain"].includes(slot.status) ? slot.status as OutputTargetState["execution"] : "not_started";
-    targetStates.push({ target_id: target.id, execution, checks: candidate ? candidate.checksStatus === "passed" ? "passed" : candidate.checksStatus === "failed" ? "failed" : "unknown" : "not_checked",
-      review: accepted ? "accepted" : candidate?.review === "changes_requested" ? "rejected" : candidate ? "pending" : "not_reviewed", freshness, availability,
-      capability: asset ? "supported" : "unknown", export_available: Boolean(model.complete && accepted && asset && freshness === "current"), source_revision: trusted.sourceDigest, requirement_revision: trusted.requirementsDigest, ...(candidate ? { result_id: candidate.id } : {}) });
-  }
-  const capScope = trusted.projectContext ? { organizationId: trusted.projectContext.organizationId, projectAccessId: trusted.projectContext.projectAccessId } : undefined;
-  const canAuthor = trusted.projectContext ? hasCapability(trusted.principal, "project.author", capScope) : ["creator", "admin"].includes(trusted.principal.role), canReview = trusted.projectContext ? hasCapability(trusted.principal, "project.review.approve", capScope) : canAuthor;
-  const availability = { state: !model.complete ? "unavailable" as const : confirmedPlan?.requirementsDigest === trusted.requirementsDigest && confirmedPlan?.sourceDigest === trusted.sourceDigest && !trusted.sourceProblems.length ? "ready" as const : "stale" as const, source_revision: trusted.sourceDigest, requirement_revision: trusted.requirementsDigest };
-  const requirementSummaries: OutputRequirementsSnapshot["requirementSummaries"] = {};
-  const requirementFileCounts: OutputRequirementsSnapshot["requirementFileCounts"] = {};
-  if (confirmedPlan) for (const requirement of trusted.requirements) {
-    const filtered = { ...confirmedPlan.plan, groups: confirmedPlan.plan.groups.filter((group) => group.requirement_id === requirement.blockId), obligations: confirmedPlan.plan.obligations.filter((obligation) => obligation.requirement_id === requirement.blockId), targets: confirmedPlan.plan.targets.filter((target) => target.requirement_id === requirement.blockId), unresolved_groups: confirmedPlan.plan.unresolved_groups.filter((group) => group.requirement_id === requirement.blockId) };
-    requirementSummaries[requirement.blockId] = qualifyPackageSummary(summarizeOutputPlan(filtered, targetStates.filter((state) => filtered.targets.some((target) => target.id === state.target_id)), availability));
-    const acceptedFiles = new Set(targetStates.filter((state) => state.export_available && filtered.targets.some((target) => target.id === state.target_id)).map((state) => results.find((result) => result.id === state.result_id)?.assetId).filter((id): id is string => Boolean(id)));
-    requirementFileCounts[requirement.blockId] = requirementSummaries[requirement.blockId].scope_known ? acceptedFiles.size : null;
-  }
-  for (const requirement of trusted.requirements) if (!(requirement.blockId in requirementFileCounts)) requirementFileCounts[requirement.blockId] = null;
-  const scopeAmendments: OutputRequirementsSnapshot["scopeAmendments"] = retainedAmendments.map((event) => {
-    const amendment = record(event.payload.scope_amendment);
-    return { eventId: event.eventId, previousPlanRevisionId: String(amendment.previous_plan_revision_id ?? ""), planRevisionId: String(event.payload.plan_revision_id ?? ""), actorUserId: String(event.payload.actor_user_id ?? ""), occurredAt: event.occurredAt, reason: String(amendment.reason ?? ""), withdrawnTargetIds: Array.isArray(amendment.withdrawn_target_ids) ? amendment.withdrawn_target_ids.map(String) : [], withdrawnObligationIds: Array.isArray(amendment.withdrawn_obligation_ids) ? amendment.withdrawn_obligation_ids.map(String) : [] };
-  });
-  return { schemaVersion: 1, documentId: trusted.scope.documentId, projectId: trusted.scope.projectId,
-    scope: { kind: trusted.scope.kind, organizationId: trusted.scope.organizationId, projectAccessId: trusted.scope.projectAccessId, actorUserId: trusted.scope.actorUserId },
-    revision: outputRevision(trusted.ownerHead), requirementRevision: trusted.requirementsDigest, sourceRevision: trusted.sourceDigest, sourceVerification, requirements: trusted.requirements, confirmedPlan, targetStates,
-    summary: confirmedPlan ? qualifyPackageSummary(summarizeOutputPlan(confirmedPlan.plan, targetStates, availability)) : null, requirementSummaries, requirementFileCounts, scopeAmendments,
-    assets, results, grants, permissions: { canAuthor: model.complete && canAuthor, canRequest: model.complete && (trusted.projectContext ? hasCapability(trusted.principal, "project.output.request", capScope) : canAuthor), canReview: model.complete && canReview, canDownload: model.complete && (trusted.projectContext ? hasCapability(trusted.principal, "project.read", capScope) : true), independentReview: trusted.scope.kind === "project" },
-    capabilities: { nativeGeneration: model.complete && Boolean(bridge), ownedFileAdoption: model.complete, supportedFileExtensions: ["png", "jpg", "wav", "mp3", "mp4", "pptx"], limitations: ["Stored source and target versions are checked conservatively against the full Document.", "File inspection checks structure and measured properties; human content and rights review remains required.", ...trusted.sourceProblems, ...model.reasonCodes, ...historyProblems, ...(!bridge ? ["Native generation has no installed execution bridge."] : [])], limitationCodes: ["output_full_document_recheck", "output_inspection_requires_human_review", ...trusted.sourceProblems, ...model.reasonCodes, ...historyProblems, ...(!bridge ? ["output_native_execution_unavailable"] : [])] } };
-}
 
 /** Trusted worker-only resolver shared by admission, dispatch, provider guards and recovery. */
 export async function loadOutputCurrentContext(env: WorkerEnv, scope: OutputScope) {
@@ -491,13 +184,48 @@ export async function loadOutputCurrentContext(env: WorkerEnv, scope: OutputScop
   return { ...digests, context, head, events, requirements, assertions: [authority, ...(projectSource ? [projectSource.assertion] : []), ...sourceAssertion, ...governanceAssertions, ...outputActiveSourceDeadlineAssertions(context), { sql: "(SELECT COALESCE(MAX(sequence),0) FROM events WHERE stream_id=?)=?", bindings: [`creative:${scope.ownerUserId}`, head] }] as OutputSqlAssertion[] };
 }
 
-type OutputGrantEvidence = { row: Record<string, unknown>; confirmedPlan: OutputConfirmedPlan; preflight: OutputPreflight; slots: OutputOperationSlot[] };
+/** A time bound for the same currently selected request capability, not new authority. */
+function outputRequestDeadlineCapture(scope: OutputScope): OutputSqlAssertion | null {
+  if (scope.kind !== "project") return null;
+  return { sql: `(SELECT json_array(selected.expires_at,project.owner_user_id,
+      (SELECT member.role FROM project_memberships member WHERE member.project_access_id=project.project_access_id
+        AND member.organization_id=project.organization_id AND member.project_id=project.project_id AND member.user_id=?
+        AND member.status='active' AND member.revoked_at IS NULL),
+      json((SELECT json_group_array(json_array(grant_id,expires_at)) FROM (
+        SELECT grant_id,expires_at FROM capability_grants WHERE user_id=? AND capability='project.output.request'
+          AND scope_type='project' AND organization_id=project.organization_id AND project_access_id=project.project_access_id
+          AND status='active' AND revoked_at IS NULL ORDER BY grant_id))))
+    FROM project_context_sessions selected JOIN organization_projects project
+      ON project.project_access_id=selected.project_access_id AND project.organization_id=selected.organization_id
+    WHERE selected.context_id=? AND selected.principal_user_id=? AND selected.project_access_id=?
+      AND selected.organization_id=? AND project.project_id=? AND project.owner_user_id=?)`,
+    bindings: [scope.actorUserId, scope.actorUserId, scope.contextId, scope.actorUserId, scope.projectAccessId, scope.organizationId, scope.projectId, scope.ownerUserId] };
+}
+function outputRequestDeadline(scope: OutputScope, raw: unknown) {
+  if (scope.kind !== "project") return null;
+  if (typeof raw !== "string" || raw.length > 32_768) fail("output_execution_authority_revoked", 403);
+  const tuple: unknown = JSON.parse(raw);
+  if (!Array.isArray(tuple) || tuple.length !== 4 || typeof tuple[0] !== "string" || !Number.isFinite(Date.parse(tuple[0]))
+    || tuple[1] !== scope.ownerUserId || !Array.isArray(tuple[3]) || tuple[3].length > 128) fail("output_execution_authority_revoked", 403);
+  const deadlines = tuple[3].map((row: unknown) => {
+    if (!Array.isArray(row) || row.length !== 2 || typeof row[0] !== "string"
+      || row[1] !== null && (typeof row[1] !== "string" || !Number.isFinite(Date.parse(row[1])))) fail("output_execution_authority_revoked", 403);
+    return row[1] === null ? Number.POSITIVE_INFINITY : Date.parse(row[1]);
+  });
+  const permissionDeadline = scope.actorUserId === scope.ownerUserId || tuple[2] === "editor"
+    ? Number.POSITIVE_INFINITY : Math.max(...deadlines);
+  return Math.min(Date.parse(tuple[0]), permissionDeadline);
+}
+
+type OutputGrantEvidence = { row: Record<string, unknown>; authorization: Record<string, unknown>; confirmedPlan: OutputConfirmedPlan; preflight: OutputPreflight; slots: OutputOperationSlot[] };
 
 /** One scoped read retains both immutable creative bodies; it never synthesizes a grant. */
 async function readOutputGrantEvidence(env: WorkerEnv, scope: OutputScope, grantId: string, includeSlots = false): Promise<OutputGrantEvidence> {
+  const requestDeadline = outputRequestDeadlineCapture(scope);
   const statements = [env.DB.prepare(`SELECT grant_row.*,plan.confirmed_event_id,plan.source_digest AS plan_source_digest,plan.requirements_digest AS plan_requirements_digest,
       preflight.event_id AS preflight_event_id,preflight.terms_digest,plan_body.private_json AS plan_private_json,preflight_body.private_json AS preflight_private_json,
       authorization_body.private_json AS authorization_private_json,
+      ${requestDeadline?.sql ?? "NULL"} AS dispatch_scope,
       grant_row.expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now') AS deadline_current
     FROM output_execution_grants grant_row JOIN output_plan_revisions plan ON plan.scope_key=grant_row.scope_key AND plan.plan_revision_id=grant_row.plan_revision_id
     JOIN output_preflights preflight ON preflight.scope_key=grant_row.scope_key AND preflight.preflight_id=grant_row.preflight_id
@@ -505,7 +233,7 @@ async function readOutputGrantEvidence(env: WorkerEnv, scope: OutputScope, grant
     LEFT JOIN event_private_payloads preflight_body ON preflight_body.private_event_id=preflight.event_id AND preflight_body.owner_id=plan.owner_user_id AND preflight_body.project_id=plan.project_id AND preflight_body.document_id=plan.document_id AND preflight_body.redacted_at IS NULL
     LEFT JOIN event_private_payloads authorization_body ON authorization_body.private_event_id=grant_row.authorization_event_id AND authorization_body.owner_id=plan.owner_user_id AND authorization_body.project_id=plan.project_id AND authorization_body.document_id=plan.document_id AND authorization_body.redacted_at IS NULL
     WHERE grant_row.scope_key=? AND grant_row.grant_id=? AND grant_row.actor_user_id=? AND plan.document_id=? AND plan.project_id=? AND plan.owner_user_id=?`)
-    .bind(scope.key, grantId, scope.actorUserId, scope.documentId, scope.projectId, scope.ownerUserId)];
+    .bind(...(requestDeadline?.bindings ?? []), scope.key, grantId, scope.actorUserId, scope.documentId, scope.projectId, scope.ownerUserId)];
   if (includeSlots) statements.push(env.DB.prepare(`SELECT slot.* FROM output_operation_slots slot JOIN output_execution_grants grant_row ON grant_row.scope_key=slot.scope_key AND grant_row.grant_id=slot.grant_id
     JOIN output_plan_revisions plan ON plan.scope_key=slot.scope_key AND plan.plan_revision_id=slot.plan_revision_id
     WHERE slot.scope_key=? AND slot.grant_id=? AND grant_row.actor_user_id=? AND plan.document_id=? AND plan.project_id=? AND plan.owner_user_id=? ORDER BY slot.created_at,slot.slot_id`)
@@ -520,7 +248,7 @@ async function readOutputGrantEvidence(env: WorkerEnv, scope: OutputScope, grant
   const authorization = rememberOutputPrivateBody(scope, String(row.authorization_event_id), row.authorization_private_json);
   if (confirmedPlan.id !== scope.documentId || confirmedPlan.revisionId !== row.plan_revision_id || confirmedPlan.sourceDigest !== row.plan_source_digest || confirmedPlan.requirementsDigest !== row.plan_requirements_digest
     || preflight.id !== row.preflight_id || preflight.planRevisionId !== confirmedPlan.revisionId || preflight.termsDigest !== row.terms_digest || authorization.grant_id !== row.grant_id) fail("output_execution_contract_changed", 409);
-  return { row, confirmedPlan, preflight, slots: (slotsResult?.results ?? []).map((slot) => outputSlotFromRow(scope.key, slot)) };
+  return { row, authorization, confirmedPlan, preflight, slots: (slotsResult?.results ?? []).map((slot) => outputSlotFromRow(scope.key, slot)) };
 }
 
 async function validateOutputExecutionTarget(current: { sourceDigest: string; requirementsDigest: string }, evidence: OutputGrantEvidence, slot: OutputOperationSlot) {
@@ -539,7 +267,84 @@ export async function resolveOutputExecutionAuthority(env: WorkerEnv, scope: Out
   const evidence = await readOutputGrantEvidence(env, scope, slot.grantId);
   if (!["authorized", "active"].includes(String(evidence.row.status)) || !Number(evidence.row.deadline_current)) fail("output_execution_grant_inactive", 403);
   const { target, targetPreflight } = await validateOutputExecutionTarget(current, evidence, slot);
-  return { ...current, confirmedPlan: evidence.confirmedPlan, target, preflight: evidence.preflight, targetPreflight, assertions: [...current.assertions, ...retainedOutputBodyAssertions(scope)] };
+  const grantDeadline = Date.parse(String(evidence.row.expires_at));
+  if (!Number.isFinite(grantDeadline)) fail("output_execution_grant_inactive", 403);
+  const requestCapture = outputRequestDeadlineCapture(scope), requestDeadline = outputRequestDeadline(scope, evidence.row.dispatch_scope);
+  const deadlineAssertions: OutputSqlAssertion[] = [{ sql: "EXISTS(SELECT 1 FROM output_execution_grants WHERE scope_key=? AND grant_id=? AND actor_user_id=? AND context_id IS ? AND expires_at=?)",
+    bindings: [scope.key, slot.grantId, scope.actorUserId, scope.contextId, String(evidence.row.expires_at)], deadlineMs: grantDeadline }];
+  if (requestCapture && requestDeadline !== null) deadlineAssertions.push({ sql: `${requestCapture.sql}=?`, bindings: [...(requestCapture.bindings ?? []), String(evidence.row.dispatch_scope)], deadlineMs: requestDeadline });
+  return { ...current, confirmedPlan: evidence.confirmedPlan, target, preflight: evidence.preflight, targetPreflight, assertions: [...current.assertions, ...retainedOutputBodyAssertions(scope), ...deadlineAssertions] };
+}
+
+/** Current read/publication proof for the original personal Image result. This
+ * deliberately does not grant a provider dispatch deadline or paid capability. */
+export async function resolveOutputFalRecoveryAuthority(env:WorkerEnv,scope:OutputScope,slot:OutputOperationSlot){
+  if(scope.kind!=="personal"||scope.contextId!==null||scope.organizationId!==null||scope.projectAccessId!==null||scope.key!==slot.scopeKey
+    ||scope.actorUserId!==scope.ownerUserId||slot.attemptOrdinal!==0||slot.previousSlotId!==null)fail("output_fal_recovery_scope_unsupported",403);
+  const current=await loadOutputCurrentContext(env,scope),evidence=await readOutputGrantEvidence(env,scope,slot.grantId);
+  if(!["authorized","active","completed"].includes(String(evidence.row.status)))fail("output_execution_grant_inactive",403);
+  const {target,targetPreflight}=await validateOutputExecutionTarget(current,evidence,slot);
+  if(target.media_kind!=="image"||targetPreflight.provider!=="fal"||targetPreflight.route!=="document-image-fal-manual-v1")fail("output_fal_recovery_route_unsupported",403);
+  const proof=prepareOutputExecutionProof(scope,{...current,confirmedPlan:evidence.confirmedPlan,target,preflight:evidence.preflight,targetPreflight,
+    assertions:[...current.assertions,...retainedOutputBodyAssertions(scope),{sql:`EXISTS(SELECT 1 FROM output_execution_grants WHERE scope_key=? AND grant_id=? AND actor_user_id=? AND context_id IS NULL AND status IN('authorized','active','completed'))`,bindings:[scope.key,slot.grantId,scope.actorUserId]}]});
+  return proof;
+}
+
+/** Original Video read/publication authority, never paid dispatch. */
+export async function resolveOutputVideoRecoveryAuthority(env:WorkerEnv,scope:OutputScope,slot:OutputOperationSlot){
+  if(scope.kind!=="personal"||scope.contextId!==null||scope.organizationId!==null||scope.projectAccessId!==null||scope.key!==slot.scopeKey
+    ||scope.actorUserId!==scope.ownerUserId||slot.attemptOrdinal!==0||slot.previousSlotId!==null)fail("output_video_recovery_scope_unsupported",403);
+  const current=await loadOutputCurrentContext(env,scope),evidence=await readOutputGrantEvidence(env,scope,slot.grantId);
+  if(!["authorized","active","completed"].includes(String(evidence.row.status)))fail("output_execution_grant_inactive",403);
+  const {target,targetPreflight}=await validateOutputExecutionTarget(current,evidence,slot);
+  if(target.media_kind!=="video"||targetPreflight.provider!=="fal"||targetPreflight.route!=="document-video-owned-still-four-seconds-manual-v1")fail("output_video_recovery_route_unsupported",403);
+  const proof=prepareOutputExecutionProof(scope,{...current,confirmedPlan:evidence.confirmedPlan,target,preflight:evidence.preflight,targetPreflight,
+    assertions:[...current.assertions,...retainedOutputBodyAssertions(scope),{sql:`EXISTS(SELECT 1 FROM output_execution_grants WHERE scope_key=? AND grant_id=? AND actor_user_id=? AND context_id IS NULL AND status IN('authorized','active','completed'))`,bindings:[scope.key,slot.grantId,scope.actorUserId]}]});
+  return proof;
+}
+
+/** Original Audio read/publication authority, never renewed paid dispatch. */
+export async function resolveOutputAudioRecoveryAuthority(env:WorkerEnv,scope:OutputScope,slot:OutputOperationSlot){
+  if(scope.kind!=="personal"||scope.contextId!==null||scope.organizationId!==null||scope.projectAccessId!==null||scope.key!==slot.scopeKey
+    ||scope.actorUserId!==scope.ownerUserId||slot.attemptOrdinal!==0||slot.previousSlotId!==null)fail("output_audio_recovery_scope_unsupported",403);
+  const current=await loadOutputCurrentContext(env,scope),evidence=await readOutputGrantEvidence(env,scope,slot.grantId);
+  if(!["authorized","active","completed"].includes(String(evidence.row.status)))fail("output_execution_grant_inactive",403);
+  const {target,targetPreflight}=await validateOutputExecutionTarget(current,evidence,slot);
+  if(target.media_kind!=="audio"||targetPreflight.provider!=="fal"||targetPreflight.model!=="fal-ai/stable-audio-3/medium/text-to-audio"
+    ||targetPreflight.route!=="document-audio-timed-music-manual-v1")fail("output_audio_recovery_route_unsupported",403);
+  return prepareOutputExecutionProof(scope,{...current,confirmedPlan:evidence.confirmedPlan,target,preflight:evidence.preflight,targetPreflight,
+    assertions:[...current.assertions,...retainedOutputBodyAssertions(scope),{sql:`EXISTS(SELECT 1 FROM output_execution_grants WHERE scope_key=? AND grant_id=? AND actor_user_id=? AND context_id IS NULL AND status IN('authorized','active','completed'))`,bindings:[scope.key,slot.grantId,scope.actorUserId]}]});
+}
+
+/** Authority to read and publish one already accepted original, never to submit
+ * a replacement or renew its paid dispatch deadline. The recovery lease must
+ * additionally bind the private checkpoint and the original provider call. */
+export async function resolveOutputModel3dRecoveryAuthority(env:WorkerEnv,scope:OutputScope,slot:OutputOperationSlot, caller?: {request:Request;user:PilotUser}){
+  if(scope.kind!=="personal"||scope.contextId!==null||scope.organizationId!==null||scope.projectAccessId!==null||scope.key!==slot.scopeKey
+    ||scope.actorUserId!==scope.ownerUserId||!(slot.attemptOrdinal===0&&slot.previousSlotId===null
+      ||slot.attemptOrdinal===1&&Boolean(slot.previousSlotId)&&caller?.user.userId===scope.actorUserId))fail("output_model3d_recovery_scope_unsupported",403);
+  const current=await loadOutputCurrentContext(env,scope),evidence=await readOutputGrantEvidence(env,scope,slot.grantId);
+  if(!["authorized","active","completed"].includes(String(evidence.row.status)))fail("output_execution_grant_inactive",403);
+  const {target,targetPreflight}=await validateOutputExecutionTarget(current,evidence,slot);
+  const payload=await readOutputModel3dPayload(targetPreflight.settings.payload);
+  if(target.media_kind!=="model3d"||targetPreflight.provider!=="fal"||targetPreflight.route!=="model3d-mini-app-static-glb-v1"
+    ||targetPreflight.maximumCalls!==1||!payload||targetPreflight.model!==payload.preview.model
+    ||payload.preview.requestId!==slot.jobId||payload.preview.documentId!==scope.documentId
+    ||payload.preview.projectId!==scope.projectId||payload.preview.actorUserId!==scope.actorUserId||!model3dMiniAppAttemptMatches(payload.preview,slot))
+    fail("output_model3d_recovery_route_unsupported",403);
+  // Reference recovery rechecks the same owned origin, distinct Document copy,
+  // rights, exact pixels and retention through the actual current caller. The
+  // retained provider receipt alone never grants current source authority.
+  const needsSource=slot.attemptOrdinal===1||payload.contract.reference!==null;
+  if(needsSource&&(!caller||caller.user.userId!==scope.actorUserId))fail("output_model3d_recovery_scope_unsupported",403);
+  const originalSource=needsSource?await resolveOutputModel3dRecoverySource({request:caller!.request,env,scope,principal:caller!.user,
+    confirmedPlan:evidence.confirmedPlan,target,context:current.context,sourceEvents:current.events,sourceAssertions:current.assertions,
+    sourceDigest:current.sourceDigest,requirementsDigest:current.requirementsDigest},slot):null;
+  if(originalSource&&(originalSource.requestId!==slot.jobId||originalSource.expiresAt!==payload.preview.expiresAt
+    ||(slot.attemptOrdinal===0?originalSource.replacement!==null:
+      originalSource.replacement?.id!==payload.preview.replacementCycleId||originalSource.replacement?.predecessor.providerRequestId!==payload.preview.previousProviderRequestId)))fail("output_model3d_recovery_route_unsupported",403);
+  return prepareOutputExecutionProof(scope,{...current,confirmedPlan:evidence.confirmedPlan,target,preflight:evidence.preflight,targetPreflight,
+    assertions:[...current.assertions,...(originalSource?.sourceAssertions??[]),...retainedOutputBodyAssertions(scope),{sql:`EXISTS(SELECT 1 FROM output_execution_grants WHERE scope_key=? AND grant_id=? AND actor_user_id=? AND context_id IS NULL AND status IN('authorized','active','completed'))`,bindings:[scope.key,slot.grantId,scope.actorUserId]}]});
 }
 
 /** Reuse retained evidence only while every later event is proven nonsemantic.
@@ -566,13 +371,13 @@ function isGovernancePlanningCapacity(code: string) {
   return code === "output_source_governance_capacity_exceeded" || code === "output_source_governance_proof_too_large";
 }
 
-function commandWrite(trusted: OutputTrustedContext, body: Record<string, unknown>, digest: string, permission: OutputCommandPermission): Pick<OutputCommandWrite, "scope" | "permission" | "expectedHead" | "expectedProjectHead" | "key" | "digest" | "action" | "sourceAssertions"> {
+function commandWrite(trusted: OutputTrustedContext, body: Record<string, unknown>, digest: string, permission: OutputCommandPermission): Pick<OutputCommandWrite, "scope" | "permission" | "expectedHead" | "expectedProjectHead" | "key" | "digest" | "action" | "sourceAssertions" | "retainedEnvelope"> {
   const expected = parseOutputRevision(body.expectedRevision);
   if (expected !== trusted.ownerHead) fail("output_revision_conflict", 409);
   const freeStructureEdit = permission === "author" && ["save", "confirm"].includes(String(body.action));
   const sourceProblem = trusted.sourceProblems.find((code) => code.startsWith("output_source_") && !(freeStructureEdit && isGovernancePlanningCapacity(code)));
   if (sourceProblem) fail(isGovernancePlanningCapacity(sourceProblem) ? sourceProblem : "output_source_private_evidence_unavailable", 409);
-  return { scope: trusted.scope, permission, expectedHead: expected, expectedProjectHead: trusted.projectHead, key: identifier(body.clientMutationId, "client_mutation_id_required"), digest, action: String(body.action), sourceAssertions: [...trusted.sourceAssertions, ...retainedOutputBodyAssertions(trusted.scope)] };
+  return { scope: trusted.scope, permission, expectedHead: expected, expectedProjectHead: trusted.projectHead, key: identifier(body.clientMutationId, "client_mutation_id_required"), digest, action: String(body.action), ...(trusted.retainedCommandEnvelope ? { retainedEnvelope: trusted.retainedCommandEnvelope } : {}), sourceAssertions: [...trusted.sourceAssertions, ...retainedOutputBodyAssertions(trusted.scope)] };
 }
 
 async function saveRequirement(trusted: OutputTrustedContext, body: Record<string, unknown>, digest: string) {
@@ -682,7 +487,8 @@ async function confirmPlan(trusted: OutputTrustedContext, body: Record<string, u
 }
 
 function bridgeTarget(trusted: OutputTrustedContext, plan: OutputConfirmedPlan, target: OutputPlanTarget): OutputBridgeTargetInput {
-  return { request: trusted.request, env: trusted.env, scope: trusted.scope, principal: trusted.principal, confirmedPlan: plan, target, context: requireCurrentSource(trusted), sourceDigest: trusted.sourceDigest, requirementsDigest: trusted.requirementsDigest };
+  return { request: trusted.request, env: trusted.env, scope: trusted.scope, principal: trusted.principal, confirmedPlan: plan, target, context: requireCurrentSource(trusted), ownerHead: trusted.ownerHead, sourceEvents: trusted.events, sourceAssertions: trusted.sourceAssertions, sourceDigest: trusted.sourceDigest, requirementsDigest: trusted.requirementsDigest,
+    ...(Object.hasOwn(target,'scene_contract')?{sceneUseVersionedHistory:true}:{}) };
 }
 
 async function preflightPlan(trusted: OutputTrustedContext, body: Record<string, unknown>, digest: string, bridge?: OutputExecutionBridge) {
@@ -693,6 +499,10 @@ async function preflightPlan(trusted: OutputTrustedContext, body: Record<string,
   const selected = requested.map((id) => plan.plan.targets.find((target) => target.id === id));
   if (selected.some((target) => !target?.selected)) fail("target_not_selected_in_confirmed_plan", 409);
   const targets: OutputNativeTargetPreflight[] = [];
+  let model3dOriginalDeadline: number | null = null;
+  let audioOriginalDeadline: number | null = null;
+  let storyboardOriginalDeadline: number | null = null;
+  let videoOriginalDeadline: number | null = null;
   const operationAttempts: OutputPreflight["operationAttempts"] = {};
   if (body.alternativeOfSlotId && selected.length !== 1) fail("choose_one_target_for_explicit_alternative");
   const identities = (selected as OutputPlanTarget[]).map((target) => ({ targetId: target.id, contract: plan.targetContractDigests[target.id] }));
@@ -706,10 +516,17 @@ async function preflightPlan(trusted: OutputTrustedContext, body: Record<string,
   const lastAttempt = new Map(attempts.results.map((row) => [String(row.target_id), row]));
   for (const target of selected as OutputPlanTarget[]) {
     const initial = lastAttempt.get(target.id);
+    const replacementCycle = record(record(body.experienceBinding).replacementCycle);
+    // This only permits running the unpaid verifier below. Its server-owned
+    // source/lineage proof must succeed before any preflight can be recorded.
+    const replacementRequested = Boolean(body.alternativeOfSlotId && initial?.status === "uncertain" && initial.attempt_ordinal === 0
+      && initial.previous_slot_id === null && Object.hasOwn(target, "model3d_contract")
+      && /^\/api\/experiences\/drafts\/experience-draft-[a-f0-9]{64}\/output\/prepare$/u.test(new URL(trusted.request.url).pathname)
+      && replacementCycle.ordinal === 1 && record(replacementCycle.predecessor).slotId === initial.slot_id);
     let recoveryReason = "";
     if (body.alternativeOfSlotId) {
-      if (!initial || initial.slot_id !== body.alternativeOfSlotId || !["succeeded", "failed", "cancelled", "unavailable"].includes(String(initial.status))) fail("previous_output_operation_not_terminal", 409);
-      if (Number(initial.unresolved_cost)) fail("reconcile_previous_output_cost_before_alternative", 409);
+      if (!initial || initial.slot_id !== body.alternativeOfSlotId || !replacementRequested && !["succeeded", "failed", "cancelled", "unavailable"].includes(String(initial.status))) fail("previous_output_operation_not_terminal", 409);
+      if (Number(initial.unresolved_cost) && !replacementRequested) fail("reconcile_previous_output_cost_before_alternative", 409);
       operationAttempts[target.id] = { ordinal: Number(initial.attempt_ordinal) + 1, previousSlotId: String(initial.slot_id) };
     } else if (initial) recoveryReason = "This target already has an authorized operation. Recover its stored result or explicitly authorize an alternative; a second initial operation will not be created.";
     else operationAttempts[target.id] = { ordinal: 0, previousSlotId: null };
@@ -719,13 +536,53 @@ async function preflightPlan(trusted: OutputTrustedContext, body: Record<string,
     }
     const result = await bridge.preflight(bridgeTarget(trusted, plan, target));
     if (result.targetId !== target.id) fail("bridge_target_mismatch", 500);
+    if (replacementRequested) {
+      const payload = await readOutputModel3dPayload(record(result.settings).payload), proof = outputModel3dPreflightAssertions(result);
+      if (!result.available || !payload || !proof?.length || payload.preview.version !== "model3d-mini-app-replacement-cost-v1"
+        || payload.preview.previousSlotId !== initial?.slot_id || payload.preview.previousJobId !== initial?.job_id
+        || payload.preview.replacementCycleId !== replacementCycle.id || payload.preview.maximumMicrousd !== 400000
+        || payload.preview.priorHeldMicrousd !== 400000 || payload.preview.cumulativeMaximumMicrousd !== 800000)
+        fail("experience_model3d_replacement_unavailable", 409);
+    }
+    if (Object.hasOwn(target, "model3d_contract") && (result.available || result.reasonCode === "output_native_model3d_unconfigured")) {
+      const proof = outputModel3dPreflightAssertions(result);
+      const deadlines = proof?.flatMap(value => value.deadlineMs === undefined ? [] : [value.deadlineMs]);
+      if (!proof?.length || !deadlines?.length || deadlines.some(value => !Number.isFinite(value))) fail("output_model3d_original_unavailable", 409);
+      model3dOriginalDeadline = Math.min(model3dOriginalDeadline ?? Infinity, ...deadlines);
+      trusted.sourceAssertions.push(...proof);
+    }
+    if (Object.hasOwn(target, "audio_contract") && result.available) {
+      const audioSource = outputAudioPreflightAssertions(result);
+      if (!audioSource?.length) fail("output_audio_original_unavailable", 409);
+      const deadlines = audioSource.flatMap(value => value.deadlineMs === undefined ? [] : [value.deadlineMs]);
+      if (!deadlines.length || deadlines.some(value => !Number.isFinite(value))) fail("output_audio_original_unavailable", 409);
+      audioOriginalDeadline = Math.min(audioOriginalDeadline ?? Infinity, ...deadlines);
+      trusted.sourceAssertions.push(...audioSource);
+    }
+    if (Object.hasOwn(target, "video_contract") && result.available) {
+      const proof = outputVideoPreflightProof(result);
+      if (!proof?.sourceAssertions.length || !Number.isFinite(Date.parse(proof.expiresAt))) fail("output_video_original_unavailable", 409);
+      videoOriginalDeadline = Math.min(videoOriginalDeadline ?? Infinity, Date.parse(proof.expiresAt));
+      trusted.sourceAssertions.push(...proof.sourceAssertions);
+    }
+    if (Object.hasOwn(target, "storyboard_contract") && result.available) {
+      const proof = outputStoryboardPreflightProof(result);
+      if (!proof?.sourceAssertions.length || !Number.isFinite(Date.parse(proof.expiresAt))) fail("output_storyboard_original_unavailable", 409);
+      storyboardOriginalDeadline = Math.min(storyboardOriginalDeadline ?? Infinity, Date.parse(proof.expiresAt));
+      trusted.sourceAssertions.push(...proof.sourceAssertions);
+    }
     if (result.available && (![result.maximumMicrousd, result.maximumCalls, result.maximumTokens].every((number) => Number.isSafeInteger(number) && number > 0) || !result.provider || !result.model || !result.route)) fail("bridge_preflight_incomplete", 500);
     if (result.available) outputProviderStages(result);
     targets.push(result);
   }
   const createdAt = nowIso(), preflightId = uuidV7();
+  if (videoOriginalDeadline !== null && videoOriginalDeadline <= Date.now()) fail("output_video_original_expired", 409);
+  if (storyboardOriginalDeadline !== null && storyboardOriginalDeadline <= Date.now()) fail("output_storyboard_original_expired", 409);
+  if (model3dOriginalDeadline !== null && model3dOriginalDeadline <= Date.now()) fail("output_model3d_original_expired", 409);
+  const expiresAtMs = Math.min(Date.now() + 15 * 60_000, audioOriginalDeadline ?? Infinity, storyboardOriginalDeadline ?? Infinity, model3dOriginalDeadline ?? Infinity, videoOriginalDeadline ?? Infinity);
+  if (expiresAtMs <= Date.now()) fail("output_audio_original_expired", 409);
   const withoutDigest = { id: preflightId, planRevisionId: plan.revisionId, sourceDigest: trusted.sourceDigest, requirementsDigest: trusted.requirementsDigest, targets, operationAttempts,
-    maximumMicrousd: targets.filter((target) => target.available).reduce((sum, target) => sum + target.maximumMicrousd, 0), maximumCalls: targets.filter((target) => target.available).reduce((sum, target) => sum + target.maximumCalls, 0), expiresAt: new Date(Date.now() + 15 * 60_000).toISOString(), createdAt };
+    maximumMicrousd: targets.filter((target) => target.available).reduce((sum, target) => sum + target.maximumMicrousd, 0), maximumCalls: targets.filter((target) => target.available).reduce((sum, target) => sum + target.maximumCalls, 0), expiresAt: new Date(expiresAtMs).toISOString(), createdAt };
   const preflight: OutputPreflight = { ...withoutDigest, termsDigest: await outputDigest(withoutDigest) };
   return commitOutputCommand(trusted.env, { ...commandWrite(trusted, body, digest, "request"), events: [{ type: "OutputPlanPreflighted", payload: { preflight_id: preflightId, plan_revision_id: plan.revisionId, preflight } }],
     buildSidecars: (events) => ({ statements: [trusted.env.DB.prepare("INSERT INTO output_preflights(scope_key,preflight_id,plan_revision_id,actor_user_id,terms_digest,event_id,expires_at,created_at) VALUES(?,?,?,?,?,?,?,?)")
@@ -739,8 +596,9 @@ function outputProviderStages(offered: OutputNativeTargetPreflight): Array<{ sta
   return calls as Array<{ stage: string; provider: string; model: string }>;
 }
 
-async function authorizePlan(trusted: OutputTrustedContext, body: Record<string, unknown>, digest: string, bridge?: OutputExecutionBridge) {
+async function authorizePlan(trusted: OutputTrustedContext, body: Record<string, unknown>, digest: string, bridge?: OutputExecutionBridge, sponsorAdmission?: SponsorAdmissionAuthority) {
   if (!bridge) fail("native_execution_unavailable", 409);
+  if (Object.hasOwn(body, "sponsor_entitlement") !== Boolean(sponsorAdmission)) fail("sponsor_authority_unavailable", 403);
   if (body.explicitAuthorization !== true || !Number.isSafeInteger(body.maximumMicrousd) || Number(body.maximumMicrousd) <= 0) fail("explicit_spending_authorization_required", 403);
   const preflightId = identifier(body.preflightId, "preflight_id_required");
   const row = await trusted.env.DB.prepare("SELECT * FROM output_preflights WHERE scope_key=? AND preflight_id=? AND actor_user_id=?").bind(trusted.scope.key, preflightId, trusted.scope.actorUserId).first<Record<string, unknown>>();
@@ -750,8 +608,25 @@ async function authorizePlan(trusted: OutputTrustedContext, body: Record<string,
   if (!preflight.targets.length || preflight.targets.some((target) => !target.available)) fail("unavailable_selected_output_route", 409);
   if (preflight.maximumMicrousd > Number(body.maximumMicrousd) || Number(body.maximumMicrousd) > 1_000_000_000_000) fail("output_authorization_ceiling_insufficient", 403);
   const plan = currentPlan(trusted, await readConfirmedPlan(trusted, preflight.planRevisionId));
+  const model3dTargets=plan.plan.targets.filter(target=>target.selected&&Object.hasOwn(target,"model3d_contract"));
+  if(model3dTargets.length&&(!/^\/api\/experiences\/drafts\/experience-draft-[a-f0-9]{64}\/output\/authorize$/u.test(new URL(trusted.request.url).pathname)
+    ||model3dTargets.length!==1||preflight.targets.length!==1||trusted.scope.kind!=="personal"||trusted.scope.contextId))fail("model3d_mini_app_route_required",403);
+  if(Boolean(model3dTargets.length)!==Object.hasOwn(body,"model3dCostConsent"))fail("model3d_mini_app_confirmation_required",403);
+  const audioTargets=plan.plan.targets.filter(target=>target.selected&&Object.hasOwn(target,"audio_contract"));
+  if(audioTargets.length&&!/^\/api\/experiences\/drafts\/experience-draft-[a-f0-9]{64}\/output\/authorize$/u.test(new URL(trusted.request.url).pathname))fail("audio_mini_app_route_required",403);
+  if(audioTargets.length>1||audioTargets.length&&preflight.targets.length!==1||Boolean(audioTargets.length)!==Object.hasOwn(body,"audioCostConsent"))fail("audio_mini_app_confirmation_required",403);
+  const storyboardTargets=plan.plan.targets.filter(target=>target.selected&&Object.hasOwn(target,"storyboard_contract"));
+  if(storyboardTargets.length&&(!/^\/api\/experiences\/drafts\/experience-draft-[a-f0-9]{64}\/output\/authorize$/u.test(new URL(trusted.request.url).pathname)
+    ||storyboardTargets.length!==1||preflight.targets.length!==1||trusted.scope.kind!=="personal"||trusted.scope.contextId))fail("storyboard_mini_app_route_required",403);
+  const videoTargets=plan.plan.targets.filter(target=>target.selected&&Object.hasOwn(target,"video_contract"));
+  if(videoTargets.length&&(!/^\/api\/experiences\/drafts\/experience-draft-[a-f0-9]{64}\/output\/authorize$/u.test(new URL(trusted.request.url).pathname)
+    ||videoTargets.length!==1||preflight.targets.length!==1||trusted.scope.kind!=="personal"||trusted.scope.contextId))fail("video_mini_app_route_required",403);
   const context = requireCurrentSource(trusted), grantId = uuidV7(), createdAt = nowIso();
   const slots: OutputOperationSlot[] = [];
+  const sceneTargets = plan.plan.targets.filter(target => target.selected && Object.hasOwn(target, "scene_contract"));
+  if (sceneTargets.length > 1 || sceneTargets.length && preflight.targets.length !== 1
+    || Boolean(sceneTargets.length) !== Object.hasOwn(body, "sceneCostConsent")) fail("scene_mini_app_confirmation_required", 403);
+  let sceneExpiresAt: string | null = null;
   for (const offered of preflight.targets) {
     const target = plan.plan.targets.find((value) => value.id === offered.targetId);
     if (!target || !target.selected || target.blocking_issues.length) fail("output_target_no_longer_executable", 409);
@@ -759,30 +634,81 @@ async function authorizePlan(trusted: OutputTrustedContext, body: Record<string,
     if (canonicalOutputJson(current) !== canonicalOutputJson(offered)) fail("output_provider_terms_changed", 409);
     const attempt = preflight.operationAttempts[target.id];
     if (!attempt || !Number.isSafeInteger(attempt.ordinal) || attempt.ordinal < 0) fail("output_attempt_identity_missing", 409);
-    slots.push({ scopeKey: trusted.scope.key, slotId: uuidV7(), grantId, planRevisionId: plan.revisionId, targetId: target.id, targetContractDigest: plan.targetContractDigests[target.id], sourceDigest: trusted.sourceDigest, provider: offered.provider!, model: offered.model!, routeDigest: await outputDigest(offered), jobId: uuidV7(), costReservationId: uuidV7(), tokenReservationId: uuidV7(), maximumMicrousd: offered.maximumMicrousd, maximumCalls: offered.maximumCalls, maximumTokens: offered.maximumTokens, status: "authorized", attemptOrdinal: attempt.ordinal, previousSlotId: attempt.previousSlotId });
+    let jobId = uuidV7();
+    if(Object.hasOwn(target,"video_contract")){
+      const {proof}=requireOutputVideoOriginal(bridgeTarget(trusted,plan,target),current,{attemptOrdinal:attempt.ordinal,previousSlotId:attempt.previousSlotId});
+      jobId=proof.requestId;sceneExpiresAt=proof.expiresAt;trusted.sourceAssertions.push(...proof.sourceAssertions);
+    }
+    if(Object.hasOwn(target,"model3d_contract")){
+      const original=await readOutputModel3dPayload(record(offered.settings).payload),fresh=await readOutputModel3dPayload(record(current.settings).payload),proof=outputModel3dPreflightAssertions(current);
+      if(!original||!fresh||!proof?.length||!model3dMiniAppAttemptMatches(fresh.preview,{jobId:fresh.preview.requestId,attemptOrdinal:attempt.ordinal,previousSlotId:attempt.previousSlotId})||fresh.preview.actorUserId!==trusted.scope.actorUserId
+        ||fresh.preview.documentId!==trusted.scope.documentId||fresh.preview.projectId!==trusted.scope.projectId
+        ||fresh.preview.sourceDigest!==trusted.sourceDigest||fresh.preview.requirementsDigest!==trusted.requirementsDigest)fail("output_model3d_original_attempt_required",403);
+      requireModel3dMiniAppCostApproval(body.model3dCostConsent,original.preview,fresh.preview);
+      jobId=fresh.preview.requestId;sceneExpiresAt=fresh.preview.expiresAt;trusted.sourceAssertions.push(...proof);
+    }
+    if(Object.hasOwn(target,"storyboard_contract")){
+      const original=readStoryboardExecutionOffer(offered),offer=readStoryboardExecutionOffer(current),proof=outputStoryboardPreflightProof(current);
+      if(!original||!offer||!proof?.sourceAssertions.length||attempt.ordinal!==0||attempt.previousSlotId
+        ||offer.original.actorUserId!==trusted.scope.actorUserId||offer.original.documentId!==trusted.scope.documentId||offer.original.projectId!==trusted.scope.projectId
+        ||offer.original.sourceDigest!==trusted.sourceDigest||offer.original.requirementsDigest!==trusted.requirementsDigest
+        ||proof.requestId!==offer.original.requestId||proof.expiresAt!==offer.original.expiresAt||Date.parse(proof.expiresAt)<=Date.now())fail("output_storyboard_original_attempt_required",403);
+      jobId=proof.requestId;sceneExpiresAt=proof.expiresAt;trusted.sourceAssertions.push(...proof.sourceAssertions);
+    }
+    if (Object.hasOwn(target, "scene_contract")) {
+      const [originalScene, currentScene] = await Promise.all([
+        readOutputScenePayload(record(offered.settings).payload), readOutputScenePayload(record(current.settings).payload),
+      ]);
+      if (!originalScene || !currentScene || attempt.ordinal !== 0 || attempt.previousSlotId) fail("output_scene_original_attempt_required", 409);
+      const preview = currentScene.outputScene.costPreview;
+      if (preview.actorUserId !== trusted.scope.actorUserId || preview.projectId !== trusted.scope.projectId
+        || preview.documentId !== trusted.scope.documentId || preview.contextSessionId !== trusted.scope.contextId) fail("output_scene_scope_mismatch", 403);
+      requireSceneMiniAppCostApproval(body.sceneCostConsent, originalScene.outputScene.costPreview, preview);
+      jobId = preview.requestId;
+      sceneExpiresAt = preview.expiresAt;
+    }
+    if(Object.hasOwn(target,"audio_contract")){
+      const preview=parseAudioMiniAppCostPreview(record(current.settings).costPreview);
+      if(!preview||attempt.ordinal!==0||attempt.previousSlotId||preview.actorUserId!==trusted.scope.actorUserId||preview.documentId!==trusted.scope.documentId||preview.projectId!==trusted.scope.projectId||trusted.scope.kind!=="personal"||trusted.scope.contextId)fail("output_audio_original_attempt_required",403);
+      requireAudioMiniAppCostApproval(body.audioCostConsent,record(offered.settings).costPreview,preview);
+      jobId=preview.requestId;sceneExpiresAt=preview.expiresAt;
+    }
+    slots.push({ scopeKey: trusted.scope.key, slotId: uuidV7(), grantId, planRevisionId: plan.revisionId, targetId: target.id, targetContractDigest: plan.targetContractDigests[target.id], sourceDigest: trusted.sourceDigest, provider: offered.provider!, model: offered.model!, routeDigest: await outputDigest(offered), jobId, costReservationId: uuidV7(), tokenReservationId: uuidV7(), maximumMicrousd: offered.maximumMicrousd, maximumCalls: offered.maximumCalls, maximumTokens: offered.maximumTokens, status: "authorized", attemptOrdinal: attempt.ordinal, previousSlotId: attempt.previousSlotId });
   }
   if (slots.reduce((sum, slot) => sum + slot.maximumMicrousd, 0) !== preflight.maximumMicrousd || slots.reduce((sum, slot) => sum + slot.maximumCalls, 0) !== preflight.maximumCalls) fail("output_allocation_mismatch", 500);
-  const prepared = await bridge.prepareAdmission({ request: trusted.request, env: trusted.env, scope: trusted.scope, principal: trusted.principal, confirmedPlan: plan, context, sourceDigest: trusted.sourceDigest, requirementsDigest: trusted.requirementsDigest, grantId, preflight, slots, governanceWitness: trusted.governanceWitness });
+  const prepared = await bridge.prepareAdmission({ request: trusted.request, env: trusted.env, scope: trusted.scope, principal: trusted.principal, confirmedPlan: plan, context, ownerHead: trusted.ownerHead, sourceEvents: trusted.events, sourceAssertions: trusted.sourceAssertions, sourceDigest: trusted.sourceDigest, requirementsDigest: trusted.requirementsDigest, grantId, preflight, slots, ...(sponsorAdmission ? { sponsorAdmission } : {}), governanceWitness: trusted.governanceWitness, ...(sceneTargets.length ? { sceneCostConsent: body.sceneCostConsent,sceneUseVersionedHistory:true } : {}), ...(audioTargets.length?{audioCostConsent:body.audioCostConsent}:{}), ...(model3dTargets.length?{model3dCostConsent:body.model3dCostConsent}:{}) });
   if (!prepared.events.length) fail("output_admission_receipt_required", 500);
+  // Preserve the original Scene quote deadline through final atomic admission.
+  if (sceneExpiresAt && Date.parse(sceneExpiresAt) <= Date.now()) fail("scene_mini_app_confirmation_required", 403);
+  const grantExpiresAt = sceneExpiresAt && sceneExpiresAt < preflight.expiresAt ? sceneExpiresAt : preflight.expiresAt;
   const write = commandWrite(trusted, body, digest, "request");
-  const sourceAssertions = [...(write.sourceAssertions ?? [])], captured = new Set(sourceAssertions.map(canonicalOutputJson));
+  const sourceAssertions = [...(write.sourceAssertions ?? []), ...(sceneExpiresAt ? [{ sql: "?>strftime('%Y-%m-%dT%H:%M:%fZ','now')", bindings: [sceneExpiresAt], deadlineMs: Date.parse(sceneExpiresAt) }] : [])], captured = new Set(sourceAssertions.map(canonicalOutputJson));
   for (const assertion of prepared.sourceAssertions ?? []) {
     const key = canonicalOutputJson(assertion);
     if (!captured.has(key)) { captured.add(key); sourceAssertions.push(assertion); }
   }
-  return commitOutputCommand(trusted.env, { ...write, sourceAssertions, events: [...prepared.events, { type: "OutputExecutionAuthorized", payload: { grant_id: grantId, plan_revision_id: plan.revisionId, preflight_id: preflightId, maximum_microusd: Number(body.maximumMicrousd), maximum_calls: preflight.maximumCalls, authorized_targets: slots.map((slot) => ({ target_id: slot.targetId, operation_slot_id: slot.slotId, job_id: slot.jobId, route_digest: slot.routeDigest })), source_digest: trusted.sourceDigest } }],
+  const sponsor = sponsorAdmission ? sponsorAdmissionPayer(sponsorAdmission, { request: trusted.request, env: trusted.env, actorUserId: trusted.scope.actorUserId, documentId: trusted.scope.documentId }) : null;
+  if (sponsor && (slots.length !== 1 || trusted.scope.kind !== "personal")) fail("sponsor_recipe_unsupported", 403);
+  const sponsoredPlan = sponsorAdmission ? await sponsorAdmissionPlan(sponsorAdmission, trusted, { scopeKey: trusted.scope.key,
+    planRevisionId: plan.revisionId, slotId: slots[0]!.slotId, executionGrantId: grantId, jobId: slots[0]!.jobId,
+    costReservationId: slots[0]!.costReservationId, tokenReservationId: slots[0]!.tokenReservationId, commandKey: write.key }) : null;
+  return commitOutputCommand(trusted.env, { ...write, sourceAssertions,sceneJobAdmissions:prepared.sceneJobAdmissions, events: [...prepared.events, { type: "OutputExecutionAuthorized", payload: { grant_id: grantId, plan_revision_id: plan.revisionId, preflight_id: preflightId, maximum_microusd: Number(body.maximumMicrousd), maximum_calls: preflight.maximumCalls, authorized_targets: slots.map((slot) => ({ target_id: slot.targetId, operation_slot_id: slot.slotId, job_id: slot.jobId, route_digest: slot.routeDigest })), source_digest: trusted.sourceDigest } }],
     assertions: [{ sql: "EXISTS(SELECT 1 FROM output_preflights preflight JOIN event_private_payloads body ON body.private_event_id=preflight.event_id AND body.redacted_at IS NULL WHERE preflight.scope_key=? AND preflight.preflight_id=? AND preflight.actor_user_id=? AND preflight.terms_digest=? AND preflight.expires_at>MAX(?,strftime('%Y-%m-%dT%H:%M:%fZ','now')))", bindings: [trusted.scope.key, preflightId, trusted.scope.actorUserId, preflight.termsDigest, createdAt] }],
     buildSidecars: (events) => {
       const native = prepared.buildStatements(events);
       if (!native.statements.length || !native.assertions.length) throw new Error("output_atomic_native_admission_required");
       return { statements: [trusted.env.DB.prepare("INSERT INTO output_execution_grants(scope_key,grant_id,plan_revision_id,actor_user_id,payer_user_id,context_id,preflight_id,authorization_event_id,maximum_microusd,maximum_calls,status,expires_at,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,'authorized',?,?)")
-        .bind(trusted.scope.key, grantId, plan.revisionId, trusted.scope.actorUserId, trusted.scope.actorUserId, trusted.scope.contextId, preflightId, events.at(-1)!.eventId, Number(body.maximumMicrousd), preflight.maximumCalls, preflight.expiresAt, createdAt),
+        .bind(trusted.scope.key, grantId, plan.revisionId, trusted.scope.actorUserId, sponsor?.payerUserId ?? trusted.scope.actorUserId, trusted.scope.contextId, preflightId, events.at(-1)!.eventId, Number(body.maximumMicrousd), preflight.maximumCalls, grantExpiresAt, createdAt),
         ...slots.map((slot) => trusted.env.DB.prepare(`INSERT INTO output_operation_slots(scope_key,slot_id,grant_id,plan_revision_id,target_id,target_contract_digest,source_digest,provider,model,route_digest,job_id,cost_reservation_id,token_reservation_id,maximum_microusd,maximum_calls,maximum_tokens,attempt_ordinal,previous_slot_id,status,created_at,updated_at)
           VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'authorized',?,?)`).bind(slot.scopeKey, slot.slotId, slot.grantId, slot.planRevisionId, slot.targetId, slot.targetContractDigest, slot.sourceDigest, slot.provider, slot.model, slot.routeDigest, slot.jobId, slot.costReservationId, slot.tokenReservationId, slot.maximumMicrousd, slot.maximumCalls, slot.maximumTokens, slot.attemptOrdinal, slot.previousSlotId, createdAt, createdAt)),
         ...slots.flatMap((slot) => outputProviderStages(preflight.targets.find((target) => target.targetId === slot.targetId)!).map((call) => trusted.env.DB.prepare("INSERT INTO output_operation_routes(scope_key,slot_id,stage_key,provider,model,maximum_calls) VALUES(?,?,?,?,?,1)").bind(slot.scopeKey, slot.slotId, call.stage, call.provider, call.model))),
-        ...native.statements], assertions: [
+        ...native.statements, ...(sponsoredPlan?.admissionStatements ?? []).map(statement => trusted.env.DB.prepare(statement.sql).bind(...statement.bindings))], receiptAssertions: sponsoredPlan ? [sponsoredPlan.nativeAssertion] : [], assertions: [
+          ...(sponsor?.assertions ?? []),
           { sql: "(SELECT COALESCE(SUM(maximum_microusd),0) FROM output_operation_slots WHERE scope_key=? AND grant_id=?)<=? AND (SELECT COALESCE(SUM(maximum_calls),0) FROM output_operation_slots WHERE scope_key=? AND grant_id=?)=?", bindings: [trusted.scope.key, grantId, Number(body.maximumMicrousd), trusted.scope.key, grantId, preflight.maximumCalls] },
-          ...slots.filter((slot) => slot.previousSlotId).map((slot) => ({ sql: "EXISTS(SELECT 1 FROM output_operation_slots previous WHERE previous.scope_key=? AND previous.slot_id=? AND previous.target_id=? AND previous.target_contract_digest=? AND previous.attempt_ordinal=? AND previous.status IN('succeeded','failed','cancelled','unavailable') AND NOT EXISTS(SELECT 1 FROM output_provider_calls pending WHERE pending.scope_key=previous.scope_key AND pending.slot_id=previous.slot_id AND pending.used_microusd IS NULL))", bindings: [slot.scopeKey, slot.previousSlotId, slot.targetId, slot.targetContractDigest, slot.attemptOrdinal - 1] })),
+          // Typed 3D children carried exact parent/hold/one-child assertions in
+          // the pre-write source proof above. All generic alternatives retain
+          // their original terminal-and-settled requirement.
+          ...slots.filter((slot) => slot.previousSlotId && !model3dTargets.some(target => target.id === slot.targetId)).map((slot) => ({ sql: "EXISTS(SELECT 1 FROM output_operation_slots previous WHERE previous.scope_key=? AND previous.slot_id=? AND previous.target_id=? AND previous.target_contract_digest=? AND previous.attempt_ordinal=? AND previous.status IN('succeeded','failed','cancelled','unavailable') AND NOT EXISTS(SELECT 1 FROM output_provider_calls pending WHERE pending.scope_key=previous.scope_key AND pending.slot_id=previous.slot_id AND pending.used_microusd IS NULL))", bindings: [slot.scopeKey, slot.previousSlotId, slot.targetId, slot.targetContractDigest, slot.attemptOrdinal - 1] })),
           ...native.assertions] };
     } });
 }
@@ -806,32 +732,56 @@ async function validateRecordedOutputRun(trusted: OutputTrustedContext, evidence
   return ready;
 }
 
-async function runGrant(trusted: OutputTrustedContext, body: Record<string, unknown>, digest: string, bridge: OutputExecutionBridge | undefined, executionContext: WorkerExecutionContext) {
+// Only the dormant internal entry can supply a fresh execution seal. Registered
+// requests retain their existing refusal of sponsored personal execution.
+async function requireRecordedSponsorExecution(trusted: OutputTrustedContext, grantId: string, evidence: OutputGrantEvidence, authority?: SponsorExecutionAuthority) {
+  const envelope = record(evidence.authorization.output_command_envelope);
+  if (trusted.scope.kind !== "personal" || !Object.hasOwn(envelope, "sponsor_entitlement")) {
+    if (authority) fail("sponsor_execution_binding_changed", 403);
+    return null;
+  }
+  if (!authority) fail("sponsor_execution_not_enabled", 403);
+  const sponsor = await requireSponsorExecution(authority, trusted.env, trusted.scope.actorUserId, { grantId, scopeKey: trusted.scope.key });
+  if (canonicalOutputJson(envelope.sponsor_entitlement) !== canonicalOutputJson(sponsor.marker)) fail("sponsor_execution_binding_changed", 403);
+  return sponsor;
+}
+
+async function runGrant(trusted: OutputTrustedContext, body: Record<string, unknown>, digest: string, bridge: OutputExecutionBridge | undefined, executionContext: WorkerExecutionContext, executionAuthority?: SponsorExecutionAuthority) {
   if (!bridge) fail("native_execution_unavailable", 409);
   const grantId = identifier(body.grantId, "grant_id_required");
   const evidence = await readOutputGrantEvidence(trusted.env, trusted.scope, grantId, true);
+  const sponsor = await requireRecordedSponsorExecution(trusted, grantId, evidence, executionAuthority);
   const ready = await validateRecordedOutputRun(trusted, evidence, bridge, ["authorized", "queued", "running"]);
   const readyIds = ready.map((slot) => slot.slotId);
-  const saved = await commitOutputCommand(trusted.env, { ...commandWrite(trusted, body, digest, "request"), events: [{ type: "OutputExecutionRunRequested", payload: { grant_id: grantId, job_ids: evidence.slots.map((slot) => slot.jobId), existing_jobs_only: true } }],
-    assertions: ready.length ? [outputRunGrantAssertion(trusted.scope, grantId), { sql: "NOT EXISTS(SELECT 1 FROM output_operation_slots slot WHERE slot.scope_key=? AND slot.grant_id=? AND slot.status IN('authorized','queued','running') AND slot.slot_id NOT IN(SELECT value FROM json_each(?)))", bindings: [trusted.scope.key, grantId, JSON.stringify(readyIds)] }] : [],
-    buildSidecars: () => ({ statements: [trusted.env.DB.prepare("UPDATE output_operation_slots SET status='queued',updated_at=? WHERE scope_key=? AND grant_id=? AND status='authorized' AND slot_id IN(SELECT value FROM json_each(?))").bind(nowIso(), trusted.scope.key, grantId, JSON.stringify(readyIds)), trusted.env.DB.prepare("UPDATE output_execution_grants SET status='active' WHERE scope_key=? AND grant_id=? AND status='authorized'").bind(trusted.scope.key, grantId)], assertions: ready.length ? [outputRunGrantAssertion(trusted.scope, grantId)] : [] }) });
+  const sceneJobRuns:NonNullable<OutputCommandWrite['sceneJobRuns']>=[];
+  for(const slot of ready){
+    if(!evidence.confirmedPlan.plan.targets.some(target=>target.id===slot.targetId&&Object.hasOwn(target,'scene_contract')))continue;
+    const retained=await trusted.env.DB.prepare('SELECT scene_source_version_json IS NOT NULL AS present,scene_source_protocol,correlation_id FROM document_jobs WHERE job_id=? AND owner_id=?').bind(slot.jobId,trusted.scope.ownerUserId).first<{present:number;scene_source_protocol:number;correlation_id:string}>();
+    if(retained&&Boolean(retained.scene_source_protocol===1)!==Boolean(retained.present))throw new OutputConflictError('output_scene_source_witness_unavailable',409);
+    if(retained?.present){const receipt=await readSceneJobSourceWitness(trusted.env,trusted.scope,slot,retained.correlation_id);
+      sceneJobRuns.push({slot,version:receipt.witness.successor,previousRaw:receipt.raw});}
+  }
+  const saved = await commitOutputCommand(trusted.env, { ...commandWrite(trusted, body, digest, "request"),sceneJobRuns, events: [{ type: "OutputExecutionRunRequested", payload: { grant_id: grantId, job_ids: evidence.slots.map((slot) => slot.jobId), existing_jobs_only: true } }],
+    assertions: [...(sponsor?.assertions ?? []), ...(ready.length ? [outputRunGrantAssertion(trusted.scope, grantId), { sql: "NOT EXISTS(SELECT 1 FROM output_operation_slots slot WHERE slot.scope_key=? AND slot.grant_id=? AND slot.status IN('authorized','queued','running') AND slot.slot_id NOT IN(SELECT value FROM json_each(?)))", bindings: [trusted.scope.key, grantId, JSON.stringify(readyIds)] }] : [])],
+    buildSidecars: (events) => { const durable = prepareOutputDurableRun(trusted.env, trusted.scope, ready, events.at(-1)!.eventId); return ({ statements: [trusted.env.DB.prepare("UPDATE output_operation_slots SET status='queued',updated_at=? WHERE scope_key=? AND grant_id=? AND status='authorized' AND slot_id IN(SELECT value FROM json_each(?))").bind(nowIso(), trusted.scope.key, grantId, JSON.stringify(readyIds)), trusted.env.DB.prepare("UPDATE output_execution_grants SET status='active' WHERE scope_key=? AND grant_id=? AND status='authorized'").bind(trusted.scope.key, grantId), ...durable.statements], assertions: [...(ready.length ? [outputRunGrantAssertion(trusted.scope, grantId)] : []), ...durable.assertions] }); } });
   // Dispatch is an existing-job wake-up only. No new source read, slot, budget,
   // provider call or alternative is created here; the job HTTP runner owns work.
-  if (ready.length) await bridge.dispatch({ request: trusted.request, env: trusted.env, scope: trusted.scope, principal: trusted.principal, executionContext,
+  if (ready.length && !await wakeOutputDurableJobs(trusted.env, ready)) await bridge.dispatch({ request: trusted.request, env: trusted.env, scope: trusted.scope, principal: trusted.principal, executionContext,
     slots: ready.map((slot) => slot.status === "authorized" ? { ...slot, status: "queued" } : slot) });
   return saved;
 }
 
-async function resumeRecordedOutputRun(trusted: OutputTrustedContext, grantId: string, bridge: OutputExecutionBridge | undefined, executionContext: WorkerExecutionContext) {
+async function resumeRecordedOutputRun(trusted: OutputTrustedContext, grantId: string, bridge: OutputExecutionBridge | undefined, executionContext: WorkerExecutionContext, executionAuthority?: SponsorExecutionAuthority) {
   if (!bridge) fail("native_execution_unavailable", 409);
   const evidence = await readOutputGrantEvidence(trusted.env, trusted.scope, grantId, true);
+  const sponsor = await requireRecordedSponsorExecution(trusted, grantId, evidence, executionAuthority);
   const pending = await validateRecordedOutputRun(trusted, evidence, bridge, ["queued", "running"]);
   if (!pending.length) return;
   // Identical replay resumes only recorded jobs under fresh authority. Exact
   // provider receipts and leases decide whether a logical call was consumed.
-  await trusted.env.DB.batch([outputScopeAuthority(trusted.scope, "request"), outputRunGrantAssertion(trusted.scope, grantId), ...trusted.sourceAssertions, ...retainedOutputBodyAssertions(trusted.scope),
+  await trusted.env.DB.batch([...(sponsor?.assertions ?? []), outputScopeAuthority(trusted.scope, "request"), outputRunGrantAssertion(trusted.scope, grantId), ...trusted.sourceAssertions, ...retainedOutputBodyAssertions(trusted.scope),
     { sql: "(SELECT COALESCE(MAX(sequence),0) FROM events WHERE stream_id=?)=?", bindings: [`creative:${trusted.scope.ownerUserId}`, trusted.ownerHead] }].flatMap((assertion) => outputAssertionStatements(trusted.env, assertion)));
-  await bridge.dispatch({ request: trusted.request, env: trusted.env, scope: trusted.scope, principal: trusted.principal, executionContext, slots: pending });
+  if (!await wakeOutputDurableJobs(trusted.env, pending)) await bridge.dispatch({ request: trusted.request, env: trusted.env, scope: trusted.scope, principal: trusted.principal, executionContext, slots: pending });
 }
 
 export function outputAssetStorageIdentity(scope: OutputScope, assetId: string, inspection: OutputAssetInspection) {
@@ -862,7 +812,7 @@ async function readBoundedRequest(request: Request, maximumBytes: number): Promi
 type PreparedAsset = { id: string; name: string; storageKey: string; inspection: OutputAssetInspection; mediaKind: OutputAssetRow["mediaKind"]; createdAt: string; sourceDigest: string; origin: Record<string, unknown> };
 async function prepareOwnedAsset(trusted: OutputTrustedContext, bytes: Uint8Array, name: string, origin: Record<string, unknown>, command: { key: string; digest: string; assertions?: OutputSqlAssertion[] }): Promise<PreparedAsset> {
   if (!validOutputAssetName(name)) fail("invalid_output_asset_name");
-  const inspection = await inspectOutputAsset(bytes, name);
+  const inspection = await inspectOutputAsset(bytes, name, { snapshot: false });
   if (inspection.status !== "inspected" || !inspection.kind || !inspection.sha256 || !inspection.mimeType) return fail(inspection.errors[0] ?? "output_asset_unsupported", 415);
   const candidateId = uuidV7(), candidateStorage = outputAssetStorageIdentity(trusted.scope, candidateId, inspection);
   const claimed = await claimOutputAssetStorage(trusted.env, { scope: trusted.scope, assetId: candidateId, commandKey: command.key, requestDigest: command.digest, sourceDigest: trusted.sourceDigest, storageKey: candidateStorage.key, sha256: inspection.sha256, byteLength: bytes.byteLength, expectedHead: trusted.ownerHead, expectedProjectHead: trusted.projectHead, sourceAssertions: [...trusted.sourceAssertions, ...(command.assertions ?? []), ...retainedOutputBodyAssertions(trusted.scope)] });
@@ -872,7 +822,7 @@ async function prepareOwnedAsset(trusted: OutputTrustedContext, bytes: Uint8Arra
   if (!claimed.claimed && (receipt.status !== "written" || receipt.write_acknowledged !== 1 || receipt.publication_event_id)) fail("output_asset_write_reconciliation_required", 409);
   try {
     if (claimed.claimed) {
-      const acknowledgement = await trusted.env.MEDIA.put(storage.key, ownedBuffer(bytes), { httpMetadata: { contentType: inspection.mimeType }, customMetadata: storage.metadata });
+      const acknowledgement = await trusted.env.MEDIA.put(storage.key, assetBuffer(bytes), { httpMetadata: { contentType: inspection.mimeType }, customMetadata: storage.metadata });
       if (!acknowledgement || record(acknowledgement).key !== storage.key) fail("output_asset_write_unacknowledged", 409);
       await acknowledgeOutputAssetStorage(trusted.env, receipt);
     } else {
@@ -907,11 +857,11 @@ async function storeUpload(trusted: OutputTrustedContext, request: Request) {
   if (request.headers.get("x-output-rights-confirmed") !== "true") fail("owned_file_rights_attestation_required", 403);
   let name = "";
   try { name = decodeURIComponent(request.headers.get("x-output-filename") ?? ""); } catch { fail("invalid_output_asset_name"); }
-  const bytes = await readBoundedRequest(request, MAX_OUTPUT_ASSET_BYTES);
-  const inspection = await inspectOutputAsset(bytes, name);
+  const bytes = await readBoundedRequest(request, /\.glb$/iu.test(name) ? MAX_OUTPUT_MODEL3D_ASSET_BYTES : MAX_OUTPUT_ASSET_BYTES);
+  const inspection = await inspectOutputAsset(bytes, name, { snapshot: false });
   if (inspection.status !== "inspected") return json({ error: "output_asset_not_inspectable", inspection }, 415);
   const digest = await outputDigest({ ...body, name, sha256: inspection.sha256, rightsAttested: true });
-  const previous = await readOutputCommand(trusted.env, trusted.scope, identifier(body.clientMutationId, "client_mutation_id_required"), digest);
+  const previous = await readOutputCommand(trusted.env, trusted.scope, identifier(body.clientMutationId, "client_mutation_id_required"), digest, { allowUnavailableReceipt: true });
   if (previous) return { replayed: true, receipt: previous, events: [] as EventRow[] };
   commandWrite(trusted, body, digest, "author");
   requireCurrentSource(trusted);
@@ -944,9 +894,9 @@ async function loadOutputAssetEvidence(trusted: OutputTrustedContext, assetId: s
 async function loadExactAsset(trusted: OutputTrustedContext, assetId: string, preloaded?: OutputBulkAssetEvidence) {
   const { row, name, origin } = await loadOutputAssetEvidence(trusted, assetId, preloaded);
   const object = await trusted.env.MEDIA.get(String(row.storage_key));
-  if (!object || Number(object.size ?? 0) > MAX_OUTPUT_ASSET_BYTES || !outputAssetStorageCustodyMatches({ ownerUserId: trusted.scope.ownerUserId, projectId: trusted.scope.projectId, documentId: trusted.scope.documentId, scopeKey: trusted.scope.key, assetId, sha256: String(row.content_sha256), storageKey: String(row.storage_key) }, object.customMetadata)) fail("output_asset_custody_mismatch", 409);
+  if (!object || Number(object.size ?? 0) > (row.media_kind === "model3d" ? MAX_OUTPUT_MODEL3D_ASSET_BYTES : MAX_OUTPUT_ASSET_BYTES) || !outputAssetStorageCustodyMatches({ ownerUserId: trusted.scope.ownerUserId, projectId: trusted.scope.projectId, documentId: trusted.scope.documentId, scopeKey: trusted.scope.key, assetId, sha256: String(row.content_sha256), storageKey: String(row.storage_key) }, object.customMetadata)) fail("output_asset_custody_mismatch", 409);
   const bytes = new Uint8Array(await new Response(object.body).arrayBuffer());
-  const inspection = await inspectOutputAsset(bytes, name);
+  const inspection = await inspectOutputAsset(bytes, name, { snapshot: false });
   if (inspection.status !== "inspected" || inspection.sha256 !== row.content_sha256 || inspection.byteLength !== row.byte_length || inspection.mimeType !== row.mime_type) fail("output_asset_bytes_changed", 409);
   const expectedStorage = outputAssetStorageIdentity(trusted.scope, assetId, inspection);
   if (expectedStorage.key !== row.storage_key && expectedStorage.legacyKey !== row.storage_key) fail("output_asset_custody_mismatch", 409);
@@ -954,6 +904,12 @@ async function loadExactAsset(trusted: OutputTrustedContext, assetId: string, pr
 }
 
 export function inspectOutputTargetFile(target: OutputPlanTarget, inspection: OutputAssetInspection) {
+  if (Object.hasOwn(target, "video_contract")) return { status: "failed" as const, checks: [], problems: ["video_contract_media_validation_unavailable"] };
+  // Generic Markdown/file inspection cannot prove the narrative body contract.
+  // This fence also protects reuse, human approval and final delivery rechecks.
+  if (Object.hasOwn(target, "audio_contract")) return { status: "failed" as const, checks: [], problems: ["audio_contract_media_validation_unavailable"] };
+  if (Object.hasOwn(target, "storyboard_contract")) return { status: "failed" as const, checks: [], problems: ["storyboard_contract_media_validation_unavailable"] };
+  if (Object.hasOwn(target, "narrative_contract")) return { status: "failed" as const, checks: [], problems: ["narrative_body_validation_unavailable"] };
   const problems = target.blocking_issues.map((issue) => issue.code);
   const checks = [...inspection.checks];
   const kind = inspection.kind === "presentation" ? "slides" : inspection.kind;
@@ -1147,7 +1103,7 @@ async function prepareDelivery(trusted: OutputTrustedContext, body: Record<strin
   const scope = outputDeliveryScopeForPlan(plan.plan, { status: snapshot.summary?.scope_known ? partial ? "partial" : "complete" : "unknown", inventoryComplete: snapshot.summary?.scope_known === true, includedTargetIds: entries.map((entry) => entry.targetId) });
   const archiveInput: OutputDeliveryManifestInput = { schemaVersion: 1, deliveryId: manifestId, planId: plan.id, planRevision: plan.revisionId, createdAt, targets: entries.map((entry) => ({ targetId: entry.targetId, fileId: entry.assetId, acceptanceId: entry.acceptanceId })), scope, ...history };
   const fileIds = new Set(entries.map((entry) => entry.assetId));
-  const files = snapshot.assets.filter((asset) => fileIds.has(asset.id)).map((asset) => ({ id: asset.id, byteLength: asset.byteLength }));
+  const files = snapshot.assets.filter((asset) => fileIds.has(asset.id)).map((asset) => ({ id: asset.id, byteLength: asset.byteLength, kind: asset.mediaKind }));
   if (files.length !== fileIds.size) fail("output_delivery_file_inventory_changed", 409);
   const parts = planOutputDeliveryParts(files, archiveInput);
   const manifest = { schemaVersion: 1, id: manifestId, planId: plan.id, planRevisionId: plan.revisionId, sourceDigest: trusted.sourceDigest, requirementsDigest: trusted.requirementsDigest, isPartial: partial, createdAt, entries, summary: snapshot.summary, scope, parts, ...history };
@@ -1178,7 +1134,7 @@ async function downloadDelivery(trusted: OutputTrustedContext, manifestId: strin
   const archiveInput: OutputDeliveryManifestInput = { schemaVersion: 1, deliveryId: manifestId, planId: plan.id, planRevision: plan.revisionId, createdAt: String(manifest.createdAt), targets: pinned.map((entry) => ({ targetId: entry.targetId, fileId: entry.assetId, acceptanceId: entry.acceptanceId })), ...(savedScope ? { scope: savedScope } : {}), ...history };
   const model = requireCompleteOutputReadModel(await readOutputModel(trusted));
   const fileIds = new Set(pinned.map((entry) => entry.assetId));
-  const files = model.assets.filter((asset) => fileIds.has(asset.id)).map((asset) => ({ id: asset.id, byteLength: asset.byteLength }));
+  const files = model.assets.filter((asset) => fileIds.has(asset.id)).map((asset) => ({ id: asset.id, byteLength: asset.byteLength, kind: asset.mediaKind }));
   if (files.length !== fileIds.size) fail("output_delivery_file_inventory_changed", 409);
   const currentParts = planOutputDeliveryParts(files, archiveInput);
   const parts = Array.isArray(manifest.parts) ? manifest.parts as OutputDeliveryPart[] : currentParts;
@@ -1194,18 +1150,44 @@ async function downloadDelivery(trusted: OutputTrustedContext, manifestId: strin
     if (!evidence) fail("output_asset_unavailable", 404);
     assets.set(fileId, await loadExactAsset(trusted, fileId, evidence));
   }
-  const archive = await createOutputDeliveryArchive([...assets.entries()].map(([id, asset]) => ({ id, name: asset.name, bytes: asset.bytes, expectedSha256: asset.inspection.sha256! })), { ...archiveInput, packagePart: { index: part.index, parts } });
-  // Close the read/check/release race with current permission, revision and exact acceptance guards.
-  await trusted.env.DB.batch([outputScopeAuthority(trusted.scope, "read"), ...trusted.sourceAssertions, ...retainedOutputBodyAssertions(trusted.scope), { sql: "(SELECT COALESCE(MAX(sequence),0) FROM events WHERE stream_id=?)=?", bindings: [`creative:${trusted.scope.ownerUserId}`, trusted.ownerHead] }, ...deliveryAssertions(trusted, plan, pinned)].flatMap((guard) => outputAssertionStatements(trusted.env, guard as OutputSqlAssertion)));
+  const archiveFiles = [...assets.entries()].map(([id, asset]) => ({ id, name: asset.name, bytes: asset.bytes, expectedSha256: asset.inspection.sha256! }));
+  const archiveManifest = { ...archiveInput, packagePart: { index: part.index, parts } };
+  if (archiveFiles.some(file => file.bytes.byteLength > MAX_OUTPUT_ASSET_BYTES)) {
+    // Large meshes remain singleton parts. Their hashes are rechecked before
+    // the same final authority proof discloses a bounded streaming ZIP.
+    const archive = await createOutputDeliveryArchiveStream(archiveFiles, archiveManifest, { snapshot: false });
+    const completion = archive.manifest.deliveryStatus, packageCount = archive.manifest.packagePart.count;
+    return discloseOutputResponse(trusted, () => ({ body: archive.stream, init: { headers: { "content-type": archive.mimeType, "content-length": String(archive.byteLength), "content-disposition": `attachment; filename="forma-outputs-${completion}${packageCount > 1 ? `-part-${part.index}-of-${packageCount}` : ""}.zip"`, "cache-control": "private, no-store", "x-content-type-options": "nosniff", "x-output-delivery-completion": completion, "x-output-delivery-scope": "entire-delivery-package", "x-output-package-part": String(part.index), "x-output-package-parts": String(packageCount), "x-output-contains-complete-package": packageCount === 1 ? "true" : "false" } } }), deliveryAssertions(trusted, plan, pinned));
+  }
+  const archive = await createOutputDeliveryArchive(archiveFiles, archiveManifest);
   const completion = archive.manifest.deliveryStatus, packageCount = archive.manifest.packagePart.count;
-  return new Response(ownedBuffer(archive.bytes), { headers: { "content-type": archive.mimeType, "content-disposition": `attachment; filename="forma-outputs-${completion}${packageCount > 1 ? `-part-${part.index}-of-${packageCount}` : ""}.zip"`, "cache-control": "private, no-store", "x-content-type-options": "nosniff", "x-output-delivery-completion": completion, "x-output-delivery-scope": "entire-delivery-package", "x-output-package-part": String(part.index), "x-output-package-parts": String(packageCount), "x-output-contains-complete-package": packageCount === 1 ? "true" : "false", "x-output-sha256": archive.sha256 } });
+  // The shared final proof owns synchronous construction of this exact archive response.
+  return discloseOutputResponse(trusted, () => ({ body: ownedBuffer(archive.bytes), init: { headers: { "content-type": archive.mimeType, "content-disposition": `attachment; filename="forma-outputs-${completion}${packageCount > 1 ? `-part-${part.index}-of-${packageCount}` : ""}.zip"`, "cache-control": "private, no-store", "x-content-type-options": "nosniff", "x-output-delivery-completion": completion, "x-output-delivery-scope": "entire-delivery-package", "x-output-package-part": String(part.index), "x-output-package-parts": String(packageCount), "x-output-contains-complete-package": packageCount === 1 ? "true" : "false", "x-output-sha256": archive.sha256 } } }),
+    deliveryAssertions(trusted, plan, pinned));
 }
 
 async function downloadAsset(trusted: OutputTrustedContext, assetId: string) {
   const asset = await loadExactAsset(trusted, assetId);
-  await trusted.env.DB.batch([outputScopeAuthority(trusted.scope, "read"), ...trusted.sourceAssertions, ...retainedOutputBodyAssertions(trusted.scope), { sql: "(SELECT COALESCE(MAX(sequence),0) FROM events WHERE stream_id=?)=?", bindings: [`creative:${trusted.scope.ownerUserId}`, trusted.ownerHead] },
-    { sql: "EXISTS(SELECT 1 FROM output_assets asset JOIN event_private_payloads body ON body.private_event_id=asset.created_event_id AND body.redacted_at IS NULL WHERE asset.scope_key=? AND asset.asset_id=? AND asset.document_id=? AND asset.redacted_at IS NULL AND asset.content_sha256=?)", bindings: [trusted.scope.key, assetId, trusted.scope.documentId, asset.inspection.sha256!] }].flatMap((guard) => outputAssertionStatements(trusted.env, guard as OutputSqlAssertion)));
-  return new Response(ownedBuffer(asset.bytes), { headers: { "content-type": asset.inspection.mimeType!, "content-disposition": `attachment; filename="output.${asset.inspection.extension}"; filename*=UTF-8''${encodeURIComponent(asset.name)}`, "cache-control": "private, no-store", "x-content-type-options": "nosniff", "x-output-sha256": asset.inspection.sha256!, "x-output-review": "File inspection download does not establish assignment acceptance or complete delivery." } });
+  return discloseOutputResponse(trusted, () => ({ body: assetBuffer(asset.bytes), init: { headers: { "content-type": asset.inspection.mimeType!, "content-disposition": `attachment; filename="output.${asset.inspection.extension}"; filename*=UTF-8''${encodeURIComponent(asset.name)}`, "cache-control": "private, no-store", "x-content-type-options": "nosniff", "x-output-sha256": asset.inspection.sha256!, "x-output-review": "File inspection download does not establish assignment acceptance or complete delivery." } } }), [
+    { sql: "EXISTS(SELECT 1 FROM output_assets asset JOIN event_private_payloads body ON body.private_event_id=asset.created_event_id AND body.redacted_at IS NULL WHERE asset.scope_key=? AND asset.asset_id=? AND asset.document_id=? AND asset.redacted_at IS NULL AND asset.content_sha256=?)", bindings: [trusted.scope.key, assetId, trusted.scope.documentId, asset.inspection.sha256!] }], outputAssetReadAssertions(trusted.scope, [asset.row]));
+}
+
+
+type OutputCommittedDisclosure = { scope: OutputScope; receipt: OutputCommandReceipt; replayed: boolean };
+
+
+/** A verified commit is never relabeled as a failed purchase merely because its view was withdrawn. */
+async function withholdCommittedOutput(env: WorkerEnv, committed: OutputCommittedDisclosure, status: number) {
+  const proof = outputCommandReceiptAssertion(committed.scope, committed.receipt);
+  const [authority, checked] = await env.DB.batch<Record<string, unknown>>(outputProofReadStatements(env, [outputScopeAuthority(committed.scope, "read"), proof]));
+  const authorityDenied = status === 401 || status === 403 || authority?.success === false || Number(authority?.results[0]?.current) !== 1;
+  const responseStatus = authorityDenied ? status === 401 ? 401 : 403 : 410;
+  const code = authorityDenied ? "output_execution_authority_revoked" : "output_private_evidence_unavailable";
+  if (checked?.success === false || Number(checked?.results[0]?.current) !== 1) return json({ error: code }, responseStatus);
+  const { receipt, replayed } = committed;
+  return Response.json({ ok: true, replayed, command: { action: receipt.action, eventId: receipt.eventId }, appended: [], snapshot: null,
+    privateUnavailable: true, receipt: { committed: true, clientMutationId: receipt.key, action: receipt.action, eventId: receipt.eventId },
+    error: code, errorCode: code }, { status: responseStatus, headers: { "cache-control": "private, no-store", "x-content-type-options": "nosniff" } });
 }
 
 function responseCommand(receipt: { action: string; eventId: string; payload: Record<string, unknown> }, documentId: string): OutputCommandResponse["command"] {
@@ -1223,8 +1205,67 @@ function responseCommand(receipt: { action: string; eventId: string; payload: Re
     ...(downloadUrl ? { manifestId: String(payload.manifest_id), downloadUrl, downloadUrls: Array.from({ length: partCount }, (_, index) => `${downloadUrl}${partCount > 1 ? `&part=${index + 1}` : ""}`), partCount } : {}) };
 }
 
+async function executeExperienceCommand(trusted: OutputTrustedContext, body: Record<string, unknown>, bridge: OutputExecutionBridge, executionContext: WorkerExecutionContext, sponsorAdmission?: SponsorAdmissionAuthority, executionAuthority?: SponsorExecutionAuthority) {
+    const action = String(body.action);
+    if (!["save", "confirm", "preflight", "authorize", "run"].includes(action)) fail("experience_output_action_unsupported", 400);
+    const envelope = structuredClone(body), digest = await outputDigest(envelope);
+    const key = identifier(envelope.clientMutationId, "client_mutation_id_required");
+    const replay = await readOutputCommand(trusted.env, trusted.scope, key, digest, { allowUnavailableReceipt: true });
+    if (replay) {
+      if (replay.privateUnavailable) fail("original_command_content_unavailable", 410);
+      // This branch is invoked only by an explicit POST run, never passive re-entry.
+      if (action === "run") await resumeRecordedOutputRun(trusted, identifier(replay.payload.grant_id, "grant_id_required"), bridge, executionContext, executionAuthority);
+      return { replayed: true, receipt: replay, events: [] as EventRow[] };
+    }
+    const bound = { ...trusted, retainedCommandEnvelope: envelope };
+    return action === "save" ? saveRequirement(bound, envelope, digest)
+      : action === "confirm" ? confirmPlan(bound, envelope, digest)
+      : action === "preflight" ? preflightPlan(bound, envelope, digest, bridge)
+      : action === "authorize" ? authorizePlan(bound, envelope, digest, bridge, sponsorAdmission)
+      : runGrant(bound, envelope, digest, bridge, executionContext, executionAuthority);
+}
+
+/** Internal, server-bound mini-app adapter. No HTTP caller chooses these capabilities. */
+export const outputExperienceCommands = {
+  readConfirmedPlan,
+  readGrantEvidence: readOutputGrantEvidence,
+  snapshot: buildSnapshot,
+  disclose: discloseOutputJson,
+  async execute(trusted: OutputTrustedContext, body: Record<string, unknown>, bridge: OutputExecutionBridge, executionContext: WorkerExecutionContext) {
+    if (Object.hasOwn(body, "sponsor_entitlement")) fail("sponsor_authority_unavailable", 403);
+    return executeExperienceCommand(trusted, body, bridge, executionContext);
+  },
+  /** Dormant internal entry only. No registered HTTP route can issue or pass a seal. */
+  async executeSponsored(trusted: OutputTrustedContext, body: Record<string, unknown>, authority: SponsorAdmissionAuthority, bridge: OutputExecutionBridge, executionContext: WorkerExecutionContext) {
+    if (jsonIssues(body).length) fail("sponsor_command_invalid", 403);
+    const command = structuredClone(body);
+    const { request, env, governanceWitness, ...data } = trusted;
+    const captured = { ...structuredClone(data), request, env, governanceWitness };
+    inheritRetainedOutputPrivateBodies(trusted.scope, captured.scope);
+    if (command.action !== "authorize" || Object.hasOwn(command, "sponsor_entitlement")) fail("sponsor_command_invalid", 403);
+    const sponsorship = await requireSponsorAdmission(authority, captured, command);
+    const envelope = { ...command, sponsor_entitlement: sponsorship.marker };
+    return executeExperienceCommand(captured, envelope, bridge, executionContext, authority);
+
+  },
+  /** Dormant internal Run only. Registered routes cannot construct this seal. */
+  async executeSponsoredRun(trusted: OutputTrustedContext, body: Record<string, unknown>, authority: SponsorExecutionAuthority, bridge: OutputExecutionBridge, executionContext: WorkerExecutionContext) {
+    if (jsonIssues(body).length) fail("sponsor_command_invalid", 403);
+    const command = structuredClone(body);
+    const { request, env, governanceWitness, ...data } = trusted;
+    const captured = { ...structuredClone(data), request, env, governanceWitness };
+    inheritRetainedOutputPrivateBodies(trusted.scope, captured.scope);
+    if (command.action !== "run" || Object.hasOwn(command, "sponsor_entitlement")) fail("sponsor_command_invalid", 403);
+    const sponsor = await requireSponsorExecution(authority, env, captured.scope.actorUserId, {
+      request, command, grantId: identifier(command.grantId, "grant_id_required"), scopeKey: captured.scope.key,
+    });
+    return executeExperienceCommand(captured, { ...command, sponsor_entitlement: sponsor.marker }, bridge, executionContext, undefined, authority);
+  },
+};
+
 export async function handleOutputRequirements(request: Request, env: WorkerEnv, path: string, executionContext: WorkerExecutionContext, bridge?: OutputExecutionBridge): Promise<Response> {
   if (path !== BASE && !path.startsWith(`${BASE}/`)) return json({ error: "not_found" }, 404);
+  let committed: OutputCommittedDisclosure | null = null;
   try {
     const url = new URL(request.url), isUpload = path === `${BASE}/assets` && request.method === "POST";
     let body: Record<string, unknown> = {};
@@ -1239,7 +1280,7 @@ export async function handleOutputRequirements(request: Request, env: WorkerEnv,
     if (trusted instanceof Response) return trusted;
     await ensureOutputRequirementsSchema(env);
     if (request.method === "GET") {
-      if (path === BASE) return json(await buildSnapshot(trusted, bridge));
+      if (path === BASE) return await discloseOutputJson(trusted, await buildSnapshot(trusted, bridge));
       const asset = /^\/api\/output-requirements\/assets\/([^/]+)$/u.exec(path), delivery = /^\/api\/output-requirements\/deliveries\/([^/]+)$/u.exec(path);
       if (asset) return await downloadAsset(trusted, identifier(decodeURIComponent(asset[1])));
       if (delivery) return await downloadDelivery(trusted, identifier(decodeURIComponent(delivery[1])));
@@ -1248,15 +1289,21 @@ export async function handleOutputRequirements(request: Request, env: WorkerEnv,
     if (request.method !== "POST") return json({ error: "method_not_allowed" }, 405);
     if (!isUpload && path !== BASE) return json({ error: "not_found" }, 404);
     if (!isUpload && !["save", "remove", "confirm", "preflight", "authorize", "run", "bind", "review", "export"].includes(action)) return json({ error: "unknown_output_action" }, 400);
+    if (!isUpload && Object.hasOwn(body, "sponsor_entitlement")) fail("sponsor_authority_unavailable", 403);
     const digest = isUpload ? "" : await outputDigest(body);
     if (!isUpload) {
       parseOutputRevision(body.expectedRevision);
-      const replay = await readOutputCommand(env, trusted.scope, identifier(body.clientMutationId, "client_mutation_id_required"), digest);
+      const replay = await readOutputCommand(env, trusted.scope, identifier(body.clientMutationId, "client_mutation_id_required"), digest, { allowUnavailableReceipt: true });
       if (replay) {
+        committed = { scope: trusted.scope, receipt: replay, replayed: true };
+        if (replay.privateUnavailable) return await withholdCommittedOutput(env, committed, 410);
         if (replay.action === "run") await resumeRecordedOutputRun(trusted, identifier(replay.payload.grant_id, "grant_id_required"), bridge, executionContext);
         const current = replay.action === "run" ? await loadOutputTrustedContext(request, env, documentId, "read") : trusted;
-        if (current instanceof Response) return current;
-        return json({ ok: true, replayed: true, command: responseCommand(replay, documentId), appended: [], snapshot: await buildSnapshot(current, bridge) } satisfies OutputCommandResponse);
+        if (current instanceof Response) return await withholdCommittedOutput(env, committed, current.status);
+        inheritRetainedOutputPrivateBodies(trusted.scope, current.scope);
+        const snapshot = await buildSnapshot(current, bridge);
+        return await discloseOutputJson(current, { ok: true, replayed: true, command: responseCommand(replay, documentId), appended: [], snapshot } satisfies OutputCommandResponse,
+          200, [outputCommandReceiptAssertion(committed.scope, replay)]);
       }
       commandWrite(trusted, body, digest, permission);
     }
@@ -1270,11 +1317,23 @@ export async function handleOutputRequirements(request: Request, env: WorkerEnv,
       : action === "bind" ? await bindResult(trusted, body, digest, bridge)
       : action === "review" ? await reviewResult(trusted, body, digest)
       : await prepareDelivery(trusted, body, digest, bridge);
-    if (saved instanceof Response) return saved;
+    if (saved instanceof Response) {
+      const bytes = saved.body === null ? null : await saved.arrayBuffer();
+      return await discloseOutputResponse(trusted, () => ({ body: bytes, init: { status: saved.status, statusText: saved.statusText, headers: saved.headers } }));
+    }
+    committed = { scope: trusted.scope, receipt: saved.receipt, replayed: saved.replayed };
+    if (saved.receipt.privateUnavailable) return await withholdCommittedOutput(env, committed, 410);
     const latest = await loadOutputTrustedContext(request, env, documentId, "read");
-    if (latest instanceof Response) return latest;
-    return json({ ok: true, replayed: saved.replayed, command: responseCommand(saved.receipt, documentId), appended: saved.events, snapshot: await buildSnapshot(latest, bridge) } satisfies OutputCommandResponse);
+    if (latest instanceof Response) return await withholdCommittedOutput(env, committed, latest.status);
+    inheritRetainedOutputPrivateBodies(trusted.scope, latest.scope);
+    const snapshot = await buildSnapshot(latest, bridge);
+    return await discloseOutputJson(latest, { ok: true, replayed: saved.replayed, command: responseCommand(saved.receipt, documentId), appended: saved.events, snapshot } satisfies OutputCommandResponse,
+      200, [outputCommandReceiptAssertion(committed.scope, saved.receipt)]);
   } catch (error) {
+    if (committed) {
+      try { return await withholdCommittedOutput(env, committed, error instanceof OutputConflictError ? error.status : 410); }
+      catch { return json({ error: "output_private_evidence_unavailable" }, 410); }
+    }
     if (error instanceof OutputConflictError) return json({ error: error.code }, error.status);
     if (error instanceof ContextIntegrityError) return json({ error: error.code }, 409);
     if (String(error).includes("CHECK constraint failed")) return json({ error: "output_revision_or_authority_changed" }, 409);

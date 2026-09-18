@@ -1,9 +1,10 @@
 import { OUTPUT_REQUIREMENT_EVENT_TYPES } from "../src/model/output-requirement-events.ts";
 import { creativeContextRightsIssue } from "../src/model/context-health.ts";
 import { foldEvents, type CreativeBlock, type CreativeEvent } from "../src/model/events.ts";
-import { licensedPackageSourceBlocks } from "./context-package-rights.ts";
-import { serializeEvent, type WorkerEnv } from "./runtime.ts";
-import { OutputConflictError, type OutputSqlAssertion, type OutputSqlValue } from "./output-requirements-ledger.ts";
+import { licensedPackageSourceBlocks } from "./context-package-source-selection.ts";
+import { serializeEvent } from "./event-read-primitives.ts";
+import type { WorkerEnv } from "./runtime.ts";
+import { OutputConflictError, type OutputSqlAssertion, type OutputSqlValue } from "./output-command-core.ts";
 
 type GovernedBlock = Pick<CreativeBlock, "id" | "projectId" | "documentId" | "properties">;
 type Row = Record<string, string | number | null>;
@@ -13,7 +14,8 @@ type SnapshotBlock = {
 };
 type Snapshot = { schema: 1; organizationId: string; sourceProjectAccessId: string; sourceDocumentId: string; blocks: SnapshotBlock[] };
 type Origin = { row: Row; events: CreativeEvent[]; rows: Row[] };
-type ProofRead = { select: string; orderBy: string; columns: readonly string[]; bindings: OutputSqlValue[]; maximum: number };
+type ProofRead = { select: string; orderBy: string; columns: readonly string[]; bindings: OutputSqlValue[]; maximum: number }
+  | { condition: string; bindings: OutputSqlValue[]; failureCode: string };
 export type OutputGovernanceCaptureOptions = {
   /** The caller must validate EVERY returned assertion in its existing final read batch. */
   deferValidation?: boolean;
@@ -35,6 +37,15 @@ function unavailable(code = "output_source_governance_unavailable"): never { thr
 function textId(value: unknown): string { return typeof value === "string" && value.length > 0 && value.length <= 160 ? value : unavailable(); }
 const digest = async (value: string) => Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", encoder.encode(value))), (byte) => byte.toString(16).padStart(2, "0")).join("");
 
+// Regroup, never omit, terms: D1 has a depth-100 expression limit. These are
+// only associative integer byte sums and SQL conjunctions (including NULL).
+function balancedSql(operator: "+" | "AND", expressions: readonly (string | number)[]): string {
+  if (!expressions.length) return operator === "+" ? "0" : "1";
+  if (expressions.length === 1) return "(" + String(expressions[0]) + ")";
+  const middle = Math.floor(expressions.length / 2);
+  return "(" + balancedSql(operator, expressions.slice(0, middle)) + " " + operator + " " + balancedSql(operator, expressions.slice(middle)) + ")";
+}
+
 /**
  * Capture a complete, ordered row set, not just the rows which happened to exist.
  * The returned SQL is an assertion for the caller's write batch. Its bindings may
@@ -44,6 +55,7 @@ class GovernanceProof {
   readonly assertions: OutputSqlAssertion[] = [];
   readonly env: WorkerEnv;
   private bytes = 0;
+  private conditionFailure: string | null = null;
   private deadline: number | null = null;
   private captureBatches = 0;
   private readonly maximumCaptureBatches: number;
@@ -64,7 +76,9 @@ class GovernanceProof {
     // Every read uses the remaining complete-proof budget, never a truncated set.
     const maximumJsonBytes = Math.min(MAX_PROOF_BYTES - this.bytes, MAX_PROOF_BYTES - 64);
     if (maximumJsonBytes < 2) unavailable("output_source_governance_proof_too_large");
-    const queries = reads.map(({ select, orderBy, columns, maximum }) => {
+    const queries = reads.map((read) => {
+      if ("condition" in read) return "(" + read.condition + ")";
+      const { select, orderBy, columns, maximum } = read;
       // D1 permits 32 function arguments. json_set preserves null-valued keys;
       // json_patch would delete them and weaken exact retained-body assertions.
       const first = columns.slice(0, 16).map(column => `'${column}',proof.${column}`).join(",");
@@ -75,8 +89,8 @@ class GovernanceProof {
       }
       const rowOverhead = 2 + Math.max(0, columns.length - 1)
         + columns.reduce((sum, column) => sum + encoder.encode(JSON.stringify(column)).byteLength + 1, 0);
-      const minimumRowBytes = [rowOverhead, ...columns.map(column => `COALESCE(length(CAST(proof.${column} AS BLOB)),0)`)].join("+");
-      const exactRowBytes = [rowOverhead, ...columns.map(column => {
+      const minimumRowBytes = balancedSql("+", [rowOverhead, ...columns.map(column => `COALESCE(length(CAST(proof.${column} AS BLOB)),0)`)]);
+      const exactRowBytes = balancedSql("+", [rowOverhead, ...columns.map(column => {
         const value = `proof.${column}`, bytes = `length(CAST(${value} AS BLOB))`;
         // JSON escapes ASCII bytes but keeps UTF-8 bytes, even across a slice
         // boundary. Blob slices retain embedded NULs, unlike text substr(). Each
@@ -85,7 +99,7 @@ class GovernanceProof {
           THEN 2+(SELECT SUM(length(CAST(json_quote(CAST(substr(CAST(${value} AS BLOB),part.offset,4096) AS TEXT)) AS BLOB))-2)
             FROM proof_parts part WHERE part.offset<=${bytes})
           ELSE length(CAST(json_quote(${value}) AS BLOB)) END`;
-      })].join("+");
+      })]);
       const arrayBytes = (rowBytes: string) => `2+COALESCE(SUM(1+${rowBytes}),0)-CASE WHEN COUNT(*)>0 THEN 1 ELSE 0 END`;
       // An outer CASE around the aggregate itself is too late: SQLite evaluates
       // it first. These scalar subqueries are lazy CASE branches. Count and raw
@@ -109,12 +123,17 @@ class GovernanceProof {
     });
     if (queries.some((sql, index) => encoder.encode(sql).byteLength > 99_000 || reads[index]!.bindings.length > 99)) unavailable("output_source_governance_proof_too_large");
     this.captureBatches++;
-    const results = await this.env.DB.batch<{ proof_json: string | null }>(queries.map((sql, index) => this.env.DB.prepare(`SELECT ${sql} AS proof_json`).bind(...reads[index]!.bindings)));
+    const results = await this.env.DB.batch<{ proof_json?: string | null; proof_current?: number }>(queries.map((sql, index) => this.env.DB.prepare(`SELECT ${sql} AS ${"condition" in reads[index]! ? "proof_current" : "proof_json"}`).bind(...reads[index]!.bindings)));
     if (results.length !== reads.length) unavailable();
     let capturedBytes = this.bytes;
     const captured = results.map((result, index) => {
-      const json = result.results[0]?.proof_json, read = reads[index]!;
+      const read = reads[index]!;
       if (result.success === false) unavailable();
+      if ("condition" in read) {
+        return { rows: [], conditionFailure: Number(result.results[0]?.proof_current) === 1 ? null : read.failureCode,
+          assertion: { sql: queries[index]!, bindings: [...read.bindings] } };
+      }
+      const json = result.results[0]?.proof_json;
       if (json === null) unavailable("output_source_governance_proof_too_large");
       if (typeof json !== "string") unavailable();
       capturedBytes += encoder.encode(json).byteLength;
@@ -122,10 +141,11 @@ class GovernanceProof {
       const rows = JSON.parse(json) as Row[];
       if (!Array.isArray(rows)) unavailable();
       if (rows.length > read.maximum) unavailable("output_source_governance_proof_too_large");
-      return { rows, assertion: { sql: `${queries[index]}=?`, bindings: [...read.bindings, json] } };
+      return { rows, conditionFailure: null, assertion: { sql: `${queries[index]}=?`, bindings: [...read.bindings, json] } };
     });
     // A sentinel anywhere in this batch must not retain partial read witnesses.
     this.bytes = capturedBytes;
+    this.conditionFailure ??= captured.find(item => item.conditionFailure !== null)?.conditionFailure ?? null;
     this.assertions.push(...captured.map(item => item.assertion));
     return captured.map(item => item.rows);
   }
@@ -144,9 +164,13 @@ class GovernanceProof {
   }
 
   async finish() {
+    // Preserve the existing row/head validation order before classifying a failed
+    // companion predicate. A false capture cannot escape, even when the caller
+    // defers the final current-SQL assertion to its existing atomic decision.
+    if (this.conditionFailure !== null) unavailable(this.conditionFailure);
     // A source license is evaluated against the database's commit clock, including
     // while retained bytes are under a legal hold. Retention is not a license.
-    if (this.deadline !== null) this.assertions.push({ sql: "?>strftime('%Y-%m-%dT%H:%M:%fZ','now')", bindings: [new Date(this.deadline).toISOString()] });
+    if (this.deadline !== null) this.assertions.push({ sql: "?>strftime('%Y-%m-%dT%H:%M:%fZ','now')", bindings: [new Date(this.deadline).toISOString()], deadlineMs: this.deadline });
     if (!this.deferValidation && this.assertions.length) {
       const checked = await this.env.DB.batch<{ current: number }>(this.assertions.map((assertion) =>
         this.env.DB.prepare(`SELECT CASE WHEN (${assertion.sql}) THEN 1 ELSE 0 END AS current`).bind(...(assertion.bindings ?? []))));
@@ -278,9 +302,9 @@ async function capture(env: WorkerEnv, organizationId: string, blocks: readonly 
   // authority stays in the private body; the other eight fields are public IDs.
   const queuePublicFields = ["job_id", "document_id", "kind", "organization_id", "project_access_id", "project_id", "history_owner_user_id", "actor_user_id"];
   const queuePrivateFields = [...queuePublicFields, "output_slot_id", "output_grant_id"];
-  const queueIdentity = queuePublicFields.map(field => `json_extract(${queuePayload},'$.${field}') IS json_extract(queue_event.payload,'$.${field}')`).join(" AND ");
+  const queueIdentity = balancedSql("AND", queuePublicFields.map(field => `json_extract(${queuePayload},'$.${field}') IS json_extract(queue_event.payload,'$.${field}')`));
   const identityFields = [...Object.keys(targetFields), "project_id", "type", "kind", "property_path", "actor_user_id", "object_ids", "job_id", "organization_id", "resource_kind", "resource_id"];
-  const matchingPrivateIdentity = identityFields.map(field => `json_extract(${privatePayload},'$.${field}') IS json_extract(event.payload,'$.${field}')`).join(" AND ");
+  const matchingPrivateIdentity = balancedSql("AND", identityFields.map(field => `json_extract(${privatePayload},'$.${field}') IS json_extract(event.payload,'$.${field}')`));
   const affectedIds = `SELECT value FROM json_each(json_array(COALESCE(json_extract(event.payload,'$.document_id'),plan.document_id),${Object.keys(targetFields).filter(field => field !== "document_id").map(field => `json_extract(event.payload,'$.${field}')`).join(",")}))
     UNION ALL SELECT value FROM json_each(COALESCE(json_extract(event.payload,'$.object_ids'),'[]'))`;
 
@@ -289,14 +313,22 @@ async function capture(env: WorkerEnv, organizationId: string, blocks: readonly 
   // recursively scanning unrelated editorial content or normalizing its meaning.
   const unambiguousObject = (value: string, path = "$") => `(json_type(${value},'${path}')='object'
     AND NOT EXISTS(SELECT 1 FROM json_each(${value},'${path}') identity GROUP BY identity.key HAVING COUNT(*)>1))`;
-  const retainedOtherIdentity = (body: string, event: string, fields: readonly string[]) => `${event}.schema_version=1 AND ${event}.compensates_event_id IS NULL
-    AND ${body}.owner_id=project.owner_user_id AND ${body}.redacted_at IS NULL AND json_valid(${body}.private_json)
-    AND ${unambiguousObject(`CASE WHEN json_valid(${body}.private_json) THEN ${body}.private_json ELSE '{}' END`)}
-    AND ${unambiguousObject(`${event}.payload`)}
-    AND json_extract(${event}.payload,'$._private_ref')=${event}.event_id
-    AND ${body}.project_id=other.project_id AND ${body}.document_id=json_extract(${event}.payload,'$.document_id')
-    AND ${fields.map(field => `json_extract(CASE WHEN json_valid(${body}.private_json) THEN ${body}.private_json ELSE '{}' END,'$.${field}') IS json_extract(${event}.payload,'$.${field}')`).join(" AND ")}`;
-  const historicalBlockCustody = (blockId: string) => `EXISTS(SELECT 1 FROM events created
+  const retainedOtherIdentity = (body: string, event: string, fields: readonly string[]) => balancedSql("AND", [
+    `${event}.schema_version=1`,
+    `${event}.compensates_event_id IS NULL`,
+    `${body}.owner_id=project.owner_user_id`,
+    `${body}.redacted_at IS NULL`,
+    `json_valid(${body}.private_json)`,
+    `${unambiguousObject(`CASE WHEN json_valid(${body}.private_json) THEN ${body}.private_json ELSE '{}' END`)}`,
+    `${unambiguousObject(`${event}.payload`)}`,
+    `json_extract(${event}.payload,'$._private_ref')=${event}.event_id`,
+    `${body}.project_id=other.project_id`,
+    `${body}.document_id=json_extract(${event}.payload,'$.document_id')`,
+    `${balancedSql("AND", fields.map(field => `json_extract(CASE WHEN json_valid(${body}.private_json) THEN ${body}.private_json ELSE '{}' END,'$.${field}') IS json_extract(${event}.payload,'$.${field}')`))}`,
+  ]);
+  // Flatten only the independent retained reference/block existentials. Each
+  // original row identity, retained byte check and custody predicate remains.
+  const historicalBlockCustody = (blockId: string, referenceId?: string) => `EXISTS(SELECT 1 FROM ${referenceId === undefined ? "" : "events reference_block JOIN event_private_payloads reference_body ON reference_body.private_event_id=reference_block.event_id CROSS JOIN "}events created
     JOIN project_event_scopes created_scope ON created_scope.event_id=created.event_id
     JOIN event_private_payloads created_body ON created_body.private_event_id=created.event_id
     JOIN events removed ON removed.event_id=(SELECT lifecycle.event_id FROM events lifecycle WHERE lifecycle.stream_id=event.stream_id
@@ -304,40 +336,69 @@ async function capture(env: WorkerEnv, organizationId: string, blocks: readonly 
       AND lifecycle.sequence<=(${fixedHead}) ORDER BY lifecycle.sequence DESC LIMIT 1)
     JOIN project_event_scopes removed_scope ON removed_scope.event_id=removed.event_id
     JOIN event_private_payloads removed_body ON removed_body.private_event_id=removed.event_id
-    WHERE created.stream_id=event.stream_id AND created.type='BlockCreated' AND created.sequence<=(${fixedHead})
-      AND json_extract(created.payload,'$.block_id')=${blockId} AND json_extract(created.payload,'$.project_id')=other.project_id
-      AND json_extract(created.payload,'$.document_id')=json_extract(event.payload,'$.document_id')
-      AND (SELECT COUNT(*) FROM events identity_event WHERE identity_event.stream_id=event.stream_id AND identity_event.type='BlockCreated'
-        AND json_extract(identity_event.payload,'$.block_id')=${blockId} AND identity_event.sequence<=(${fixedHead}))=1
-      AND removed.type='BlockRemoved' AND removed.sequence>created.sequence AND removed.stream_id=event.stream_id
-      AND json_extract(removed.payload,'$.project_id')=other.project_id AND json_extract(removed.payload,'$.document_id')=json_extract(created.payload,'$.document_id')
-      AND created.actor='user:'||created_scope.actor_user_id AND removed.actor='user:'||removed_scope.actor_user_id
-      AND created_scope.project_access_id=other.project_access_id AND created_scope.organization_id=other.organization_id
-      AND created_scope.project_id=other.project_id AND created_scope.owner_user_id=other.owner_user_id
-      AND created_scope.source_stream_id=created.stream_id AND created_scope.source_sequence=created.sequence
-      AND removed_scope.project_access_id=other.project_access_id AND removed_scope.organization_id=other.organization_id
-      AND removed_scope.project_id=other.project_id AND removed_scope.owner_user_id=other.owner_user_id
-      AND removed_scope.source_stream_id=removed.stream_id AND removed_scope.source_sequence=removed.sequence
-      AND ${retainedOtherIdentity("created_body", "created", ["project_id", "document_id", "block_id", "type"])}
-      AND ${retainedOtherIdentity("removed_body", "removed", ["project_id", "document_id", "block_id"])})`;
-  const historicalReferenceCustody = (referenceId: string) => `EXISTS(SELECT 1 FROM events ingested
+    WHERE ${balancedSql("AND", [
+    `created.stream_id=event.stream_id`,
+    `created.type='BlockCreated'`,
+    `created.sequence<=(${fixedHead})`,
+    `json_extract(created.payload,'$.block_id')=${blockId}`,
+    `json_extract(created.payload,'$.project_id')=other.project_id`,
+    `json_extract(created.payload,'$.document_id')=json_extract(event.payload,'$.document_id')`,
+    `(SELECT COUNT(*) FROM events identity_event WHERE identity_event.stream_id=event.stream_id AND identity_event.type='BlockCreated'
+        AND json_extract(identity_event.payload,'$.block_id')=${blockId} AND identity_event.sequence<=(${fixedHead}))=1`,
+    `removed.type='BlockRemoved'`,
+    `removed.sequence>created.sequence`,
+    `removed.stream_id=event.stream_id`,
+    `json_extract(removed.payload,'$.project_id')=other.project_id`,
+    `json_extract(removed.payload,'$.document_id')=json_extract(created.payload,'$.document_id')`,
+    `created.actor='user:'||created_scope.actor_user_id`,
+    `removed.actor='user:'||removed_scope.actor_user_id`,
+    `created_scope.project_access_id=other.project_access_id`,
+    `created_scope.organization_id=other.organization_id`,
+    `created_scope.project_id=other.project_id`,
+    `created_scope.owner_user_id=other.owner_user_id`,
+    `created_scope.source_stream_id=created.stream_id`,
+    `created_scope.source_sequence=created.sequence`,
+    `removed_scope.project_access_id=other.project_access_id`,
+    `removed_scope.organization_id=other.organization_id`,
+    `removed_scope.project_id=other.project_id`,
+    `removed_scope.owner_user_id=other.owner_user_id`,
+    `removed_scope.source_stream_id=removed.stream_id`,
+    `removed_scope.source_sequence=removed.sequence`,
+    `${retainedOtherIdentity("created_body", "created", ["project_id", "document_id", "block_id", "type"])}`,
+    `${retainedOtherIdentity("removed_body", "removed", ["project_id", "document_id", "block_id"])}`,
+    ...(referenceId === undefined ? [] : [
+      `reference_block.stream_id=event.stream_id`,
+      `reference_block.type='BlockCreated'`,
+      `reference_block.sequence<=(${fixedHead})`,
+      `${unambiguousObject("CASE WHEN json_valid(reference_body.private_json) THEN reference_body.private_json ELSE '{}' END")}`,
+      `${unambiguousObject("CASE WHEN json_valid(reference_body.private_json) THEN reference_body.private_json ELSE '{}' END", "$.properties")}`,
+      `json_extract(CASE WHEN json_valid(reference_body.private_json) THEN reference_body.private_json ELSE '{}' END,'$.properties.reference_id')=${referenceId}`,
+    ]),
+  ])})`;
+  const historicalReferenceCustody = (referenceId: string) => balancedSql("AND", [
+    `EXISTS(SELECT 1 FROM events ingested
     JOIN project_event_scopes ingested_scope ON ingested_scope.event_id=ingested.event_id
     JOIN event_private_payloads ingested_body ON ingested_body.private_event_id=ingested.event_id
-    WHERE ingested.stream_id=event.stream_id AND ingested.type='ReferenceIngested' AND ingested.sequence<=(${fixedHead})
-      AND json_extract(ingested.payload,'$.reference_id')=${referenceId} AND json_extract(ingested.payload,'$.project_id')=other.project_id
-      AND json_extract(ingested.payload,'$.document_id')=json_extract(event.payload,'$.document_id')
-      AND (SELECT COUNT(*) FROM events identity_event WHERE identity_event.stream_id=event.stream_id AND identity_event.type='ReferenceIngested'
-        AND json_extract(identity_event.payload,'$.reference_id')=${referenceId} AND identity_event.sequence<=(${fixedHead}))=1
-      AND ingested.actor='user:'||ingested_scope.actor_user_id AND ingested_scope.project_access_id=other.project_access_id
-      AND ingested_scope.organization_id=other.organization_id AND ingested_scope.project_id=other.project_id AND ingested_scope.owner_user_id=other.owner_user_id
-      AND ingested_scope.source_stream_id=ingested.stream_id AND ingested_scope.source_sequence=ingested.sequence
-      AND ${retainedOtherIdentity("ingested_body", "ingested", ["project_id", "document_id", "reference_id"])}
-      AND EXISTS(SELECT 1 FROM events reference_block JOIN event_private_payloads reference_body ON reference_body.private_event_id=reference_block.event_id
-        WHERE reference_block.stream_id=event.stream_id AND reference_block.type='BlockCreated' AND reference_block.sequence<=(${fixedHead})
-          AND ${unambiguousObject("CASE WHEN json_valid(reference_body.private_json) THEN reference_body.private_json ELSE '{}' END")}
-          AND ${unambiguousObject("CASE WHEN json_valid(reference_body.private_json) THEN reference_body.private_json ELSE '{}' END", "$.properties")}
-          AND json_extract(CASE WHEN json_valid(reference_body.private_json) THEN reference_body.private_json ELSE '{}' END,'$.properties.reference_id')=${referenceId}
-          AND ${historicalBlockCustody("json_extract(reference_block.payload,'$.block_id')")}))`;
+    WHERE ${balancedSql("AND", [
+    `ingested.stream_id=event.stream_id`,
+    `ingested.type='ReferenceIngested'`,
+    `ingested.sequence<=(${fixedHead})`,
+    `json_extract(ingested.payload,'$.reference_id')=${referenceId}`,
+    `json_extract(ingested.payload,'$.project_id')=other.project_id`,
+    `json_extract(ingested.payload,'$.document_id')=json_extract(event.payload,'$.document_id')`,
+    `(SELECT COUNT(*) FROM events identity_event WHERE identity_event.stream_id=event.stream_id AND identity_event.type='ReferenceIngested'
+        AND json_extract(identity_event.payload,'$.reference_id')=${referenceId} AND identity_event.sequence<=(${fixedHead}))=1`,
+    `ingested.actor='user:'||ingested_scope.actor_user_id`,
+    `ingested_scope.project_access_id=other.project_access_id`,
+    `ingested_scope.organization_id=other.organization_id`,
+    `ingested_scope.project_id=other.project_id`,
+    `ingested_scope.owner_user_id=other.owner_user_id`,
+    `ingested_scope.source_stream_id=ingested.stream_id`,
+    `ingested_scope.source_sequence=ingested.sequence`,
+    `${retainedOtherIdentity("ingested_body", "ingested", ["project_id", "document_id", "reference_id"])}`,
+  ])})`,
+    historicalBlockCustody("json_extract(reference_block.payload,'$.block_id')", referenceId),
+  ]);
   const plannedNativeArtifactCustody = `job.kind='render_document'
     AND event.type IN('DocumentRenderRequested','DocumentRenderFailed','GenerationUsageRecorded','BudgetReserved','BudgetReleased','BudgetExceeded')
     AND EXISTS(SELECT 1 FROM events requested JOIN event_private_payloads requested_body ON requested_body.private_event_id=requested.event_id
@@ -345,7 +406,7 @@ async function capture(env: WorkerEnv, organizationId: string, blocks: readonly 
         AND requested.sequence<=event.sequence AND requested.sequence<=(${fixedHead})
         AND requested.correlation_id=job.correlation_id AND requested.client_id='server:document-job:render_document'
         AND requested.actor='user:'||job.owner_id AND json_extract(requested.payload,'$.artifact_id')=target.id
-        AND json_extract(requested.payload,'$.artifact_kind')='slides'
+        AND json_extract(requested.payload,'$.artifact_kind') IN('slides','model3d')
         AND json_extract(requested.payload,'$.project_id')=plan.project_id AND json_extract(requested.payload,'$.document_id')=plan.document_id
         AND ${retainedOtherIdentity("requested_body", "requested", ["project_id", "document_id", "artifact_id", "artifact_kind"])})`;
 
@@ -388,6 +449,40 @@ async function capture(env: WorkerEnv, organizationId: string, blocks: readonly 
         bindings: [null, JSON.stringify(projects)], maximum: MAX_SOURCE_EVENTS }, rows => distribute(originRows, projects, rows, row => String(row.project_access_id), MAX_SOURCE_EVENTS), true);
       // Read only metadata from other projects. Retained private bodies are
       // checked inside SQL; their text never enters this row set or its binding.
+      // The boolean custody query has the same complete tail and pinned bounds.
+      // Keep it out of the JSON escape-size expression; both its predicate and
+      // these exact ordered rows are mandatory in the same final read/write batch.
+      const tailFrom = `        FROM organization_projects project JOIN project_migration_states migration ON migration.project_access_id=project.project_access_id AND migration.organization_id=project.organization_id
+        ${capturedJoin}
+        JOIN events event ON event.stream_id='creative:'||project.owner_user_id AND event.sequence>(${fixedCursor}) AND event.sequence<=(${fixedHead})
+        LEFT JOIN event_private_payloads body ON body.private_event_id=event.event_id
+        LEFT JOIN project_event_scopes scope ON scope.event_id=event.event_id
+        LEFT JOIN document_jobs job ON job.stream_id=event.stream_id AND((event.type IN(${nativeTypesSql}) AND job.correlation_id=event.correlation_id)
+          OR(event.type='ProjectDocumentJobQueued' AND job.job_id=json_extract(event.payload,'$.job_id')))
+        LEFT JOIN output_operation_slots slot ON slot.job_id=job.job_id
+        LEFT JOIN output_plan_revisions plan ON plan.scope_key=slot.scope_key AND plan.plan_revision_id=slot.plan_revision_id
+        LEFT JOIN output_execution_grants grant_row ON grant_row.scope_key=slot.scope_key AND grant_row.grant_id=slot.grant_id
+        LEFT JOIN project_resource_scopes custody ON custody.resource_kind='job' AND custody.resource_id=job.job_id AND custody.project_access_id=plan.project_access_id
+        LEFT JOIN events queue_event ON queue_event.event_id=custody.source_event_id
+        LEFT JOIN event_private_payloads queue_body ON queue_body.private_event_id=queue_event.event_id
+        LEFT JOIN organization_projects other ON other.project_access_id=COALESCE(scope.project_access_id,plan.project_access_id)
+        LEFT JOIN project_migration_states other_migration ON other_migration.project_access_id=other.project_access_id AND other_migration.organization_id=other.organization_id
+        WHERE project.project_access_id IN(SELECT value FROM json_each(?)) AND project.organization_id=?`;
+      const tailResourceCurrent = `NOT EXISTS(SELECT 1 FROM(
+          SELECT 'document' AS kind,COALESCE(json_extract(event.payload,'$.document_id'),plan.document_id) AS id
+          ${Object.entries(targetFields).filter(([field])=>field!=='document_id').map(([field,kind])=>`UNION ALL SELECT '${kind}',json_extract(event.payload,'$.${field}')`).join(" ")}
+          UNION ALL SELECT 'output',value FROM json_each(COALESCE(json_extract(event.payload,'$.object_ids'),'[]'))
+        ) target WHERE target.id IS NOT NULL AND target.id<>'' AND NOT(
+          EXISTS(SELECT 1 FROM project_resource_scopes resource WHERE resource.project_access_id=other.project_access_id AND resource.organization_id=other.organization_id
+            AND resource.project_id=other.project_id AND resource.owner_user_id=other.owner_user_id
+            AND resource.resource_kind=target.kind AND resource.resource_id=target.id AND resource.visibility='collaborative_output')
+          OR(target.kind='artifact' AND ${plannedNativeArtifactCustody})
+          OR(target.kind='block' AND ${historicalBlockCustody("target.id")})
+          OR(target.kind='reference' AND ${historicalReferenceCustody("target.id")})
+          OR(target.kind='relation' AND event.type='BlockRelationAdded' AND target.id=json_extract(event.payload,'$.relation_id')
+            AND(SELECT COUNT(*) FROM events relation_identity WHERE relation_identity.stream_id=event.stream_id AND relation_identity.type='BlockRelationAdded'
+              AND json_extract(relation_identity.payload,'$.relation_id')=target.id AND relation_identity.sequence<=(${fixedHead}))=1)
+        ))`;
       add({ select: `WITH captured AS(SELECT ? AS heads) SELECT project.project_access_id AS origin_project_access_id,
         event.event_id,event.stream_id,event.sequence,event.actor,event.client_id,event.correlation_id,event.type,event.payload,event.schema_version,event.compensates_event_id,
         (SELECT COUNT(*) FROM organization_audit_events audit WHERE audit.organization_id=project.organization_id
@@ -407,78 +502,86 @@ async function capture(env: WorkerEnv, organizationId: string, blocks: readonly 
         other.project_access_id,other.project_id,other.organization_id,other.owner_user_id,other.status AS project_status,
         other_migration.status AS migration_status,other_migration.owner_user_id AS migration_owner,
         body.owner_id AS private_owner_id,body.project_id AS private_project_id,body.document_id AS private_document_id,body.redacted_at AS private_redacted_at,
-        CASE WHEN body.private_event_id=event.event_id AND body.owner_id=project.owner_user_id AND body.redacted_at IS NULL
-          AND json_valid(body.private_json) AND json_extract(event.payload,'$._private_ref')=event.event_id
-          AND ${unambiguousObject(privatePayload)} AND ${unambiguousObject("event.payload")}
-          AND body.project_id IS json_extract(event.payload,'$.project_id') AND body.document_id IS json_extract(event.payload,'$.document_id')
-          AND ${matchingPrivateIdentity}
-          AND(event.type NOT IN('OrganizationContextPackageCreated','OrganizationContextPackageVersionDrafted','OrganizationContextPackageVersionPublished','OrganizationContextPackageAdopted')
-            OR NOT EXISTS(SELECT 1 FROM json_each(${privatePayload}) property WHERE property.key NOT IN('organization_id','resource_kind','resource_id')))
-          THEN 1 ELSE 0 END AS private_current,
+        CASE WHEN ${balancedSql("AND", [
+          `body.private_event_id=event.event_id`,
+          `body.owner_id=project.owner_user_id`,
+          `body.redacted_at IS NULL`,
+          `json_valid(body.private_json)`,
+          `json_extract(event.payload,'$._private_ref')=event.event_id`,
+          `${unambiguousObject(privatePayload)}`,
+          `${unambiguousObject("event.payload")}`,
+          `body.project_id IS json_extract(event.payload,'$.project_id')`,
+          `body.document_id IS json_extract(event.payload,'$.document_id')`,
+          `${matchingPrivateIdentity}`,
+          `(event.type NOT IN('OrganizationContextPackageCreated','OrganizationContextPackageVersionDrafted','OrganizationContextPackageVersionPublished','OrganizationContextPackageAdopted')
+            OR NOT EXISTS(SELECT 1 FROM json_each(${privatePayload}) property WHERE property.key NOT IN('organization_id','resource_kind','resource_id')))`,
+        ])} THEN 1 ELSE 0 END AS private_current,
         job.job_id,job.owner_id AS job_owner_id,job.kind AS job_kind,plan.document_id AS job_document_id,slot.slot_id,plan.scope_key,
         plan.plan_revision_id,slot.grant_id,queue_event.event_id AS queue_event_id,
-        CASE WHEN job.job_id IS NOT NULL AND slot.slot_id IS NOT NULL AND plan.scope_kind='project'
-          AND plan.owner_user_id=project.owner_user_id AND plan.organization_id=project.organization_id
-          AND grant_row.actor_user_id=job.owner_id AND grant_row.plan_revision_id=slot.plan_revision_id
-          AND job.stream_id=event.stream_id AND job.document_id=plan.document_id AND job.source_surface='outputs'
-          AND custody.visibility='actor_private' AND custody.actor_user_id=job.owner_id
-          AND custody.organization_id=plan.organization_id AND custody.project_access_id=plan.project_access_id
-          AND custody.project_id=plan.project_id AND custody.owner_user_id=plan.owner_user_id
-          AND queue_event.stream_id=event.stream_id AND queue_event.type='ProjectDocumentJobQueued' AND queue_event.actor='user:'||job.owner_id
-          AND queue_event.sequence=job.requested_sequence AND queue_event.sequence<=event.sequence AND queue_event.sequence<=(${fixedHead})
-          AND queue_event.schema_version=1 AND queue_event.compensates_event_id IS NULL AND queue_event.client_id='server:output-requirements'
-          AND json_extract(queue_event.payload,'$._private_ref')=queue_event.event_id
-          AND queue_body.owner_id=project.owner_user_id AND queue_body.redacted_at IS NULL AND json_valid(queue_body.private_json)
-          AND queue_body.project_id=plan.project_id AND queue_body.document_id=plan.document_id
-          AND ${queueIdentity}
-          AND (SELECT COUNT(*) FROM json_each(${queuePayload}))=${queuePrivateFields.length}
-          AND NOT EXISTS(SELECT 1 FROM json_each(${queuePayload}) property WHERE property.key NOT IN(${queuePrivateFields.map(field => `'${field}'`).join(",")}))
-          AND (SELECT COUNT(*) FROM json_each(queue_event.payload))=${queuePublicFields.length + 1}
-          AND NOT EXISTS(SELECT 1 FROM json_each(queue_event.payload) property WHERE property.key NOT IN(${[...queuePublicFields, "_private_ref"].map(field => `'${field}'`).join(",")}))
-          AND json_extract(${queuePayload},'$.history_owner_user_id')=project.owner_user_id
-          AND json_extract(${queuePayload},'$.job_id')=job.job_id AND json_extract(${queuePayload},'$.kind')=job.kind AND json_extract(${queuePayload},'$.document_id')=plan.document_id
-          AND json_extract(${queuePayload},'$.project_id')=plan.project_id AND json_extract(${queuePayload},'$.project_access_id')=plan.project_access_id
-          AND json_extract(${queuePayload},'$.organization_id')=plan.organization_id AND json_extract(${queuePayload},'$.actor_user_id')=job.owner_id
-          AND json_extract(${queuePayload},'$.output_slot_id')=slot.slot_id AND json_extract(${queuePayload},'$.output_grant_id')=slot.grant_id
-          AND(other.project_access_id=plan.project_access_id AND other.project_id=plan.project_id AND other.owner_user_id=plan.owner_user_id)
-          THEN 1 ELSE 0 END AS native_custody,
-        NOT EXISTS(SELECT 1 FROM(
-          SELECT 'document' AS kind,COALESCE(json_extract(event.payload,'$.document_id'),plan.document_id) AS id
-          ${Object.entries(targetFields).filter(([field])=>field!=='document_id').map(([field,kind])=>`UNION ALL SELECT '${kind}',json_extract(event.payload,'$.${field}')`).join(" ")}
-          UNION ALL SELECT 'output',value FROM json_each(COALESCE(json_extract(event.payload,'$.object_ids'),'[]'))
-        ) target WHERE target.id IS NOT NULL AND target.id<>'' AND NOT(
-          EXISTS(SELECT 1 FROM project_resource_scopes resource WHERE resource.project_access_id=other.project_access_id AND resource.organization_id=other.organization_id
-            AND resource.project_id=other.project_id AND resource.owner_user_id=other.owner_user_id
-            AND resource.resource_kind=target.kind AND resource.resource_id=target.id AND resource.visibility='collaborative_output')
-          OR(target.kind='artifact' AND ${plannedNativeArtifactCustody})
-          OR(target.kind='block' AND ${historicalBlockCustody("target.id")})
-          OR(target.kind='reference' AND ${historicalReferenceCustody("target.id")})
-          OR(target.kind='relation' AND event.type='BlockRelationAdded' AND target.id=json_extract(event.payload,'$.relation_id')
-            AND(SELECT COUNT(*) FROM events relation_identity WHERE relation_identity.stream_id=event.stream_id AND relation_identity.type='BlockRelationAdded'
-              AND json_extract(relation_identity.payload,'$.relation_id')=target.id AND relation_identity.sequence<=(${fixedHead}))=1)
-        )) AS resources_current,
+        CASE WHEN ${balancedSql("AND", [
+          `job.job_id IS NOT NULL`,
+          `slot.slot_id IS NOT NULL`,
+          `plan.scope_kind='project'`,
+          `plan.owner_user_id=project.owner_user_id`,
+          `plan.organization_id=project.organization_id`,
+          `grant_row.actor_user_id=job.owner_id`,
+          `grant_row.plan_revision_id=slot.plan_revision_id`,
+          `job.stream_id=event.stream_id`,
+          `job.document_id=plan.document_id`,
+          `job.source_surface='outputs'`,
+          `custody.visibility='actor_private'`,
+          `custody.actor_user_id=job.owner_id`,
+          `custody.organization_id=plan.organization_id`,
+          `custody.project_access_id=plan.project_access_id`,
+          `custody.project_id=plan.project_id`,
+          `custody.owner_user_id=plan.owner_user_id`,
+          `queue_event.stream_id=event.stream_id`,
+          `queue_event.type='ProjectDocumentJobQueued'`,
+          `queue_event.actor='user:'||job.owner_id`,
+          `queue_event.sequence=job.requested_sequence`,
+          `queue_event.sequence<=event.sequence`,
+          `queue_event.sequence<=(${fixedHead})`,
+          `queue_event.schema_version=1`,
+          `queue_event.compensates_event_id IS NULL`,
+          `queue_event.client_id='server:output-requirements'`,
+          `json_extract(queue_event.payload,'$._private_ref')=queue_event.event_id`,
+          `queue_body.owner_id=project.owner_user_id`,
+          `queue_body.redacted_at IS NULL`,
+          `json_valid(queue_body.private_json)`,
+          `queue_body.project_id=plan.project_id`,
+          `queue_body.document_id=plan.document_id`,
+          `${queueIdentity}`,
+          `(SELECT COUNT(*) FROM json_each(${queuePayload}))=${queuePrivateFields.length}`,
+          `NOT EXISTS(SELECT 1 FROM json_each(${queuePayload}) property WHERE property.key NOT IN(${queuePrivateFields.map(field => `'${field}'`).join(",")}))`,
+          `(SELECT COUNT(*) FROM json_each(queue_event.payload))=${queuePublicFields.length + 1}`,
+          `NOT EXISTS(SELECT 1 FROM json_each(queue_event.payload) property WHERE property.key NOT IN(${[...queuePublicFields, "_private_ref"].map(field => `'${field}'`).join(",")}))`,
+          `json_extract(${queuePayload},'$.history_owner_user_id')=project.owner_user_id`,
+          `json_extract(${queuePayload},'$.job_id')=job.job_id`,
+          `json_extract(${queuePayload},'$.kind')=job.kind`,
+          `json_extract(${queuePayload},'$.document_id')=plan.document_id`,
+          `json_extract(${queuePayload},'$.project_id')=plan.project_id`,
+          `json_extract(${queuePayload},'$.project_access_id')=plan.project_access_id`,
+          `json_extract(${queuePayload},'$.organization_id')=plan.organization_id`,
+          `json_extract(${queuePayload},'$.actor_user_id')=job.owner_id`,
+          `json_extract(${queuePayload},'$.output_slot_id')=slot.slot_id`,
+          `json_extract(${queuePayload},'$.output_grant_id')=slot.grant_id`,
+          `(other.project_access_id=plan.project_access_id AND other.project_id=plan.project_id AND other.owner_user_id=plan.owner_user_id)`,
+        ])} THEN 1 ELSE 0 END AS native_custody,
+        1 AS resources_current,
         EXISTS(SELECT 1 FROM project_resource_scopes protected WHERE protected.project_access_id=project.project_access_id
           AND protected.organization_id=project.organization_id AND protected.project_id=project.project_id AND protected.owner_user_id=project.owner_user_id
           AND protected.resource_id IN(${affectedIds})) AS origin_resource_conflict
-        FROM organization_projects project JOIN project_migration_states migration ON migration.project_access_id=project.project_access_id AND migration.organization_id=project.organization_id
-        ${capturedJoin}
-        JOIN events event ON event.stream_id='creative:'||project.owner_user_id AND event.sequence>(${fixedCursor}) AND event.sequence<=(${fixedHead})
-        LEFT JOIN event_private_payloads body ON body.private_event_id=event.event_id
-        LEFT JOIN project_event_scopes scope ON scope.event_id=event.event_id
-        LEFT JOIN document_jobs job ON job.stream_id=event.stream_id AND((event.type IN(${nativeTypesSql}) AND job.correlation_id=event.correlation_id)
-          OR(event.type='ProjectDocumentJobQueued' AND job.job_id=json_extract(event.payload,'$.job_id')))
-        LEFT JOIN output_operation_slots slot ON slot.job_id=job.job_id
-        LEFT JOIN output_plan_revisions plan ON plan.scope_key=slot.scope_key AND plan.plan_revision_id=slot.plan_revision_id
-        LEFT JOIN output_execution_grants grant_row ON grant_row.scope_key=slot.scope_key AND grant_row.grant_id=slot.grant_id
-        LEFT JOIN project_resource_scopes custody ON custody.resource_kind='job' AND custody.resource_id=job.job_id AND custody.project_access_id=plan.project_access_id
-        LEFT JOIN events queue_event ON queue_event.event_id=custody.source_event_id
-        LEFT JOIN event_private_payloads queue_body ON queue_body.private_event_id=queue_event.event_id
-        LEFT JOIN organization_projects other ON other.project_access_id=COALESCE(scope.project_access_id,plan.project_access_id)
-        LEFT JOIN project_migration_states other_migration ON other_migration.project_access_id=other.project_access_id AND other_migration.organization_id=other.organization_id
-        WHERE project.project_access_id IN(SELECT value FROM json_each(?)) AND project.organization_id=?
-        `, orderBy: "origin_project_access_id,sequence,scoped_project_access_id,job_id,slot_id",
+        ${tailFrom}`, orderBy: "origin_project_access_id,sequence,scoped_project_access_id,job_id,slot_id",
         columns: ["origin_project_access_id", "event_id", "stream_id", "sequence", "actor", "client_id", "correlation_id", "type", "payload", "schema_version", "compensates_event_id", "audit_count", "audit_id", "audit_resource_current", "scoped_project_access_id", "scoped_organization_id", "scoped_project_id", "scoped_owner_user_id", "source_stream_id", "source_sequence", "actor_user_id", "project_access_id", "project_id", "organization_id", "owner_user_id", "project_status", "migration_status", "migration_owner", "private_owner_id", "private_project_id", "private_document_id", "private_redacted_at", "private_current", "job_id", "job_owner_id", "job_kind", "job_document_id", "slot_id", "scope_key", "plan_revision_id", "grant_id", "queue_event_id", "native_custody", "resources_current", "origin_resource_conflict"],
         bindings: [null, JSON.stringify(projects), organizationId], maximum: MAX_SOURCE_EVENTS }, rows => distribute(tailRows, projects, rows, row => String(row.origin_project_access_id), MAX_SOURCE_EVENTS), true);
+      // The exact row proof separately refuses any tail beyond MAX_SOURCE_EVENTS.
+      // Thus max+1 witnesses overflow; it never authorizes a truncated tail.
+      add({ condition: `NOT EXISTS(SELECT 1 FROM (
+        WITH captured AS(SELECT ? AS heads) SELECT ${tailResourceCurrent} AS current
+        ${tailFrom}
+        LIMIT ${MAX_SOURCE_EVENTS + 1}
+      ) tail_resources WHERE tail_resources.current IS NOT 1)`,
+      bindings: [null, JSON.stringify(projects), organizationId], failureCode: "output_source_projection_stale" }, () => {}, true);
     }
     if (targets.length) add(assignmentRead(targets), rows => distribute(assignmentRows, targets, rows, row => String(row.target_block_id), 4096));
     const firstAssertion = proof.assertions.length;

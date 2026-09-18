@@ -1,4 +1,6 @@
 export type DocumentView = "document" | "board" | "guided" | "layers" | "adaptive" | "editor" | "chat";
+import type { ArtifactDeliveryIntent } from "./artifact-delivery.ts";
+
 export type LibraryFocusKind = "block" | "output" | "artifact" | "family";
 export type LibraryFocus = { kind: LibraryFocusKind; id: string };
 export type LibraryBlockEditorTarget = { blockId: string | null };
@@ -22,6 +24,38 @@ const safeDecode = (value: string) => { try { return decodeURIComponent(value); 
 export function routePathname(route: string) {
   const pathname = routeUrl(route).pathname;
   return pathname.length > 1 ? pathname.replace(/\/+$/, "") : pathname;
+}
+
+
+/** Only project-scoped task views carry a Document context; this does not change Document-view or job-feed routing. */
+export function isProjectTaskRoute(route: string) {
+  const pathname = routePathname(route);
+  if (["/deliver", "/activity", "/make/short-story", "/make/scene", "/make/slides", "/make/storyboard", "/make/model3d", "/make/audio", "/make/video"].includes(pathname)) return true;
+  const base = libraryBaseRoute(route);
+  if (pathname === base) return true;
+  if (!pathname.startsWith(base + "/")) return false;
+  const parts = pathname.slice(base.length + 1).split("/");
+  return parts.every(Boolean) && ((parts.length === 2 || parts.length === 3) && Boolean(libraryFocusFromRoute(route))
+    || parts.length === 3 && Boolean(libraryBlockEditorFromRoute(route)));
+}
+
+/** null means no task context; an empty string means an invalid/ambiguous claimed context, never a fallback. */
+export function projectTaskDocumentIdFromRoute(route: string): string | null {
+  if (!isProjectTaskRoute(route)) return null;
+  const values = routeUrl(route).searchParams.getAll("document");
+  return !values.length ? null : values.length === 1 ? values[0]! : "";
+}
+
+/** A view address only. An unavailable current task address may be carried, never promoted to authority. */
+export function withProjectTaskDocumentInRoute(route: string, documentId: string, currentTaskRoute?: string) {
+  if (!isProjectTaskRoute(route)) return route;
+  const url = routeUrl(route);
+  if (documentId) url.searchParams.set("document", documentId);
+  else if (currentTaskRoute !== undefined) {
+    if (!url.searchParams.has("document") && isProjectTaskRoute(currentTaskRoute))
+      for (const value of routeUrl(currentTaskRoute).searchParams.getAll("document")) url.searchParams.append("document", value);
+  } else url.searchParams.delete("document");
+  return `${url.pathname}${url.search}${url.hash}`;
 }
 
 function documentRouteParts(route: string) {
@@ -85,7 +119,7 @@ export function libraryFocusFromRoute(route: string): LibraryFocus | null {
 
 export function libraryFocusRoute(kind: LibraryFocusKind, id: string, label = "", currentRoute = "/library") {
   const slug = documentSlug(label);
-  return `${libraryBaseRoute(currentRoute)}/${kind}/${encodeURIComponent(id)}${slug ? `/${slug}` : ""}`;
+  return withProjectTaskDocumentInRoute(`${libraryBaseRoute(currentRoute)}/${kind}/${encodeURIComponent(id)}${slug ? `/${slug}` : ""}`, documentIdFromRoute(currentRoute) ?? projectTaskDocumentIdFromRoute(currentRoute) ?? "", currentRoute);
 }
 
 export function libraryBlockEditorFromRoute(route: string): LibraryBlockEditorTarget | null {
@@ -96,7 +130,7 @@ export function libraryBlockEditorFromRoute(route: string): LibraryBlockEditorTa
 }
 
 export function libraryBlockEditorRoute(blockId = "", currentRoute = "/library") {
-  return `${libraryBaseRoute(currentRoute)}/blocks/editor/${blockId ? encodeURIComponent(blockId) : "new"}`;
+  return withProjectTaskDocumentInRoute(`${libraryBaseRoute(currentRoute)}/blocks/editor/${blockId ? encodeURIComponent(blockId) : "new"}`, documentIdFromRoute(currentRoute) ?? projectTaskDocumentIdFromRoute(currentRoute) ?? "", currentRoute);
 }
 
 export function libraryRootRoute(route: string) {
@@ -131,4 +165,29 @@ export function documentEntryPath(route: string) {
   const view = documentViewFromRoute(route);
   if (!view || view === "document") return "/";
   return `/studio/${view}/`;
+}
+
+export type ArtifactFocusOptions = { expectedRevision: number; expectedContentSha256?: string; intent: ArtifactDeliveryIntent };
+
+/** A deep link names a revision; it never silently substitutes the newest output. */
+export function artifactFocusRoute(
+  artifactId: string, title: string, options: ArtifactFocusOptions, currentRoute = "/library",
+) {
+  const url = routeUrl(libraryFocusRoute("artifact", artifactId, title, currentRoute));
+  url.searchParams.set("revision", String(options.expectedRevision));
+  url.searchParams.set("intent", options.intent);
+  if (options.expectedContentSha256) url.searchParams.set("sha256", options.expectedContentSha256);
+  return `${url.pathname}${url.search}${url.hash}`;
+}
+
+export function artifactFocusOptionsFromRoute(route: string): ArtifactFocusOptions | null | "invalid" {
+  if (libraryFocusFromRoute(route)?.kind !== "artifact") return null;
+  const query = routeUrl(route).searchParams;
+  if (!["revision", "sha256", "intent"].some(key => query.has(key))) return null;
+  const revision = query.get("revision"), intent = query.get("intent"), digest = query.get("sha256");
+  if (["revision", "sha256", "intent"].some(key => query.getAll(key).length > 1)
+    || revision === null || !/^(0|[1-9]\d*)$/.test(revision) || !Number.isSafeInteger(Number(revision))
+    || !["inspect", "review", "export"].includes(intent ?? "") || digest !== null && !/^[a-f0-9]{64}$/.test(digest)) return "invalid";
+  return { expectedRevision: Number(revision), intent: intent as ArtifactDeliveryIntent,
+    ...(digest === null ? {} : { expectedContentSha256: digest }) };
 }

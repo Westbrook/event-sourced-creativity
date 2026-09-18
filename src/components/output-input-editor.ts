@@ -10,11 +10,14 @@ import "./reference-image";
 
 /** A single format-aware workbench for every adopted document work product. */
 export class OutputInputEditor extends FormaElement {
-  static properties = { block: { attribute: false }, standalone: { type: Boolean }, source: { type: String } };
+  static properties = { block: { attribute: false }, standalone: { type: Boolean }, source: { type: String }, shortcutHelp: { type: String, attribute: false } };
   block!: CreativeBlock;
   standalone = false;
   source = "output-input-editor";
+  // Display-only copy supplied by the owning form; it does not handle keys.
+  shortcutHelp = "";
   #loaded = "";
+  #edited = false;
   #draft: OutputInputDraft | null = null;
   #saving = false;
   #error = "";
@@ -22,16 +25,26 @@ export class OutputInputEditor extends FormaElement {
 
   get draft() { return this.#draft ? structuredClone(this.#draft) : null; }
 
-  reset(){this.#loaded="";this.#draft=null;this.#error="";this.#load();this.requestUpdate();}
+  /** Existing local work only; no permission, receipt or navigation authority. */
+  get localWorkBlocked() {
+    return this.#saving || this.#composing || this.#edited && JSON.stringify(this.#draft) !== JSON.stringify(outputInputDraft(this.block));
+  }
+
+  reset(){this.#loaded="";this.#draft=null;this.#edited=false;this.#error="";this.#load();this.requestUpdate();}
 
   #load() {
-    if (!this.block || this.#loaded === this.block.id) return;
-    this.#loaded = this.block.id;
-    this.#draft = outputInputDraft(this.block);
+    if (!this.block) return;
+    const draft = outputInputDraft(this.block);
+    const identity = JSON.stringify([this.block.projectId, this.block.documentId, this.block.id, this.block.properties.source_artifact_id ?? null, draft?.kind ?? null]);
+    if (this.#loaded === identity && (!this.standalone || this.#edited || JSON.stringify(this.#draft) === JSON.stringify(draft))) return;
+    this.#loaded = identity;
+    this.#draft = draft;
+    this.#edited = false;
     this.#error = "";
   }
 
   #change(next: OutputInputDraft) {
+    this.#edited = true;
     this.#draft = next;
     this.#error = "";
     this.dispatchEvent(new CustomEvent("output-input-change", { detail: { blockId: this.block.id, draft: structuredClone(next) }, bubbles: true, composed: true }));
@@ -102,7 +115,7 @@ export class OutputInputEditor extends FormaElement {
 
   #items(draft: OutputInputDraft) {
     if (!draft.items.length) return nothing;
-    const noun = draft.kind === "storyboard" ? "Frame" : draft.kind === "slides" ? "Slide" : draft.kind === "scene" ? "Scene section" : draft.kind === "video" ? "Video scene" : "Story section";
+    const noun = draft.kind === "storyboard" ? "Frame" : draft.kind === "slides" ? "Slide" : draft.kind === "scene" ? "Scene section" : draft.kind === "video" ? "Video scene" : draft.kind === "audio" ? "Audio section" : "Story section";
     const open = (draft.kind === "storyboard" || draft.kind === "slides" || draft.kind === "video") && draft.items.length <= 6;
     const ownedFrameIds=new Set(this.store.projection.get().libraryBlockRelations.filter((relation)=>relation.kind==="artifact_contains"&&relation.fromBlockId===this.block.id).map((relation)=>relation.toBlockId));
     return html`<details class="output-input-sections" ?open=${open}><summary>${this.i18n.system(draft.items.length===1?"{count} editable {noun}":"{count} editable {noun}s",{count:this.i18n.number(draft.items.length),noun:this.i18n.system(noun).toLocaleLowerCase(this.i18n.locale)})}</summary>
@@ -122,12 +135,13 @@ export class OutputInputEditor extends FormaElement {
 
   #deck(presentation: SlidePresentation | null) {
     if (!presentation) return nothing;
+    const roleLabels = new Map([["background", this.i18n.system("Background")], ["foreground", this.i18n.system("Foreground")], ["accent", this.i18n.system("Accent")], ["muted", this.i18n.system("Muted")], ["surface", this.i18n.system("Surface")]]);
     return html`<details class="output-input-presentation"><summary>Presentation style and labels</summary><div class="output-input-field-grid">
       <label>Presentation theme<input .value=${presentation.theme} @input=${(event: InputEvent) => this.#presentation({ theme: (event.target as HTMLInputElement).value })}></label>
       <label>Presentation footer<input .value=${presentation.footerLabel} @input=${(event: InputEvent) => this.#presentation({ footerLabel: (event.target as HTMLInputElement).value })}></label>
       <label>Presentation style<select .value=${presentation.stylePreset} @change=${(event: Event) => this.#presentation(applySlideStylePreset(presentation, (event.target as HTMLSelectElement).value as SlideStylePresetId))}>${SLIDE_STYLE_PRESETS.map((preset) => html`<option value=${preset.id}>${this.i18n.system(preset.label)}</option>`)}</select></label>
       <label>Presentation appearance<select .value=${presentation.mode} @change=${(event: Event) => this.#presentation({ mode: (event.target as HTMLSelectElement).value as "light" | "dark" })}><option value="light">Light</option><option value="dark">Dark</option></select></label>
-      ${Object.entries(presentation.palette).map(([key, value]) => html`<label>Presentation ${key} color<input type="color" .value=${value} @input=${(event: InputEvent) => this.#presentation({ palette: { ...presentation.palette, [key]: (event.target as HTMLInputElement).value } })}></label>`)}
+      ${Object.entries(presentation.palette).map(([key, value]) => html`<label>Presentation ${roleLabels.get(key) ?? key} color<input type="color" .value=${value} @input=${(event: InputEvent) => this.#presentation({ palette: { ...presentation.palette, [key]: (event.target as HTMLInputElement).value } })}></label>`)}
     </div></details>`;
   }
 
@@ -136,14 +150,14 @@ export class OutputInputEditor extends FormaElement {
     const draft = this.#draft;
     if (!draft) return nothing;
     const label = this.i18n.system(documentArtifactDefinition(draft.kind).label);
-    const narrative = draft.kind === "short_story" ? "Story manuscript" : draft.kind === "scene" ? "Scene and dialogue" : draft.kind === "storyboard" ? "Storyboard narrative" : draft.kind === "slides" ? "Presentation narrative" : "Video direction and transcript";
+    const narrative = draft.kind === "short_story" ? "Story manuscript" : draft.kind === "scene" ? "Scene and dialogue" : draft.kind === "storyboard" ? "Storyboard narrative" : draft.kind === "slides" ? "Presentation narrative" : draft.kind === "audio" ? "Audio transcript, lyrics, and direction" : "Video direction and transcript";
     return html`<section class="output-input-editor" aria-label=${this.i18n.system("{label} input editor", { label: label })} @compositionstart=${()=>{this.#composing=true;}} @compositionend=${()=>{this.#composing=false;this.requestUpdate();}}>
-      <header><div><span>${label} input</span><p>The original stays unchanged. Every saved edit becomes part of future work.</p></div></header>
+      <header><div><span>${label} input</span><p>${draft.kind === "audio" ? this.i18n.t("output.input.audioGuidance", "Edits change only this reusable text, not the original recording. Saving does not generate audio or enable provider audio transfer.") : this.i18n.system("The original stays unchanged. Every saved edit becomes part of future work.")}</p></div></header>
       ${draft.kind === "video" ? renderVideoReel(draft.items, typeof this.block.properties.media_url === "string" ? this.block.properties.media_url : null, draft.title, this.i18n) : nothing}
       <fieldset class="output-input-primary" ?disabled=${this.block.locked || this.#saving}>
         <label>${label} title<input .value=${draft.title} @input=${(event: InputEvent) => this.#change({ ...draft, title: (event.target as HTMLInputElement).value })}></label>
         <label>${label} summary<textarea rows="3" .value=${draft.summary} @input=${(event: InputEvent) => this.#change({ ...draft, summary: (event.target as HTMLTextAreaElement).value })}></textarea></label>
-        <forma-ui-rich-text .label=${this.i18n.system(narrative)} .value=${draft.markdown} .rows=${draft.kind === "short_story" || draft.kind === "scene" ? 12 : 8} .help=${this.i18n.system("Your complete writing remains separate from the original output. Command or Control plus Enter saves; Escape cancels.")} ?disabled=${this.block.locked || this.#saving} @forma-input=${(event: CustomEvent<{ value: string }>) => this.#change({ ...this.#draft!, markdown: event.detail.value })}></forma-ui-rich-text>
+        <forma-ui-rich-text .label=${this.i18n.system(narrative)} .value=${draft.markdown} .rows=${draft.kind === "short_story" || draft.kind === "scene" ? 12 : 8} .help=${this.shortcutHelp || this.i18n.system("Your complete writing remains separate from the original output. Command or Control plus Enter saves; Escape cancels.")} ?disabled=${this.block.locked || this.#saving} @forma-input=${(event: CustomEvent<{ value: string }>) => this.#change({ ...this.#draft!, markdown: event.detail.value })}></forma-ui-rich-text>
         ${draft.kind === "slides" ? this.#deck(draft.presentation) : nothing}
         ${this.#items(draft)}
       </fieldset>

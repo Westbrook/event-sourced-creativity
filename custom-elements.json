@@ -311,6 +311,17 @@
             "name": "FormaPresentationalElement",
             "module": "src/components/presentational-element.ts"
           },
+          "members": [
+            {
+              "kind": "method",
+              "name": "captureCommandDeparture",
+              "return": {
+                "type": {
+                  "text": "Omit<CommandDeparture, \"element\"> & { readonly element: HTMLElement; }"
+                }
+              }
+            }
+          ],
           "x-forma": {
             "category": "application",
             "renderRoot": "light",
@@ -352,6 +363,17 @@
             "name": "FormaPresentationalElement",
             "module": "src/components/presentational-element.ts"
           },
+          "members": [
+            {
+              "kind": "method",
+              "name": "captureCommandDeparture",
+              "return": {
+                "type": {
+                  "text": "Omit<CommandDeparture, \"element\"> & { readonly element: HTMLElement; }"
+                }
+              }
+            }
+          ],
           "x-forma": {
             "category": "application",
             "renderRoot": "light",
@@ -557,6 +579,17 @@
             "name": "FormaPresentationalElement",
             "module": "src/components/presentational-element.ts"
           },
+          "members": [
+            {
+              "kind": "method",
+              "name": "captureCommandDeparture",
+              "return": {
+                "type": {
+                  "text": "Omit<CommandDeparture, \"element\"> & { readonly element: HTMLElement; }"
+                }
+              }
+            }
+          ],
           "x-forma": {
             "category": "application",
             "renderRoot": "light",
@@ -639,6 +672,17 @@
             "name": "FormaRoleDashboard",
             "module": "src/components/forma-role-dashboard.ts"
           },
+          "members": [
+            {
+              "kind": "method",
+              "name": "captureCommandDeparture",
+              "return": {
+                "type": {
+                  "text": "Omit<CommandDeparture, \"element\"> & { readonly element: HTMLElement; }"
+                }
+              }
+            }
+          ],
           "x-forma": {
             "category": "application",
             "renderRoot": "light",
@@ -885,6 +929,34 @@
             "name": "FormaElement",
             "module": "src/components/forma-element.ts"
           },
+          "members": [
+            {
+              "kind": "method",
+              "name": "captureCommandDeparture",
+              "return": {
+                "type": {
+                  "text": "CommandDeparture"
+                }
+              }
+            },
+            {
+              "kind": "method",
+              "name": "captureLocalNavigation",
+              "parameters": [
+                {
+                  "name": "path",
+                  "type": {
+                    "text": "string"
+                  }
+                }
+              ],
+              "return": {
+                "type": {
+                  "text": "LocalNavigation | null"
+                }
+              }
+            }
+          ],
           "x-forma": {
             "category": "application",
             "renderRoot": "light",
@@ -1047,6 +1119,93 @@
     },
     {
       "kind": "javascript-module",
+      "path": "src/components/audio-trim-editor.ts",
+      "declarations": [
+        {
+          "kind": "class",
+          "name": "AudioTrimEditor",
+          "tagName": "forma-audio-trim-editor",
+          "customElement": true,
+          "summary": "Audio trim editor application interface.",
+          "description": "The host owns private access and Save. This leaf only displays verified PCM\nbytes and creates an explicitly requested local preview of its exact range.",
+          "superclass": {
+            "name": "FormaPresentationalElement",
+            "module": "src/components/presentational-element.ts"
+          },
+          "members": [
+            {
+              "kind": "field",
+              "name": "disabled",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "attribute": "disabled",
+              "description": "Whether user interaction is disabled."
+            },
+            {
+              "kind": "field",
+              "name": "selection",
+              "type": {
+                "text": "Readonly<{ bytes: Uint8Array; info: PcmWavInfo; startFrame: number; endFrame: number; }> | null"
+              }
+            }
+          ],
+          "attributes": [
+            {
+              "name": "disabled",
+              "fieldName": "disabled",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "description": "Whether user interaction is disabled."
+            }
+          ],
+          "events": [
+            {
+              "name": "audio-trim-change",
+              "type": {
+                "text": "CustomEvent<{ startFrame: number; endFrame: number; }>"
+              },
+              "description": "Bubbles and crosses component boundaries."
+            },
+            {
+              "name": "audio-trim-invalid",
+              "type": {
+                "text": "CustomEvent<null>"
+              },
+              "description": "Bubbles and crosses component boundaries."
+            }
+          ],
+          "x-forma": {
+            "category": "application",
+            "renderRoot": "light",
+            "stateful": false
+          }
+        }
+      ],
+      "exports": [
+        {
+          "kind": "custom-element-definition",
+          "name": "forma-audio-trim-editor",
+          "declaration": {
+            "name": "AudioTrimEditor",
+            "module": "src/components/audio-trim-editor.ts"
+          }
+        },
+        {
+          "kind": "js",
+          "name": "AudioTrimEditor",
+          "declaration": {
+            "name": "AudioTrimEditor",
+            "module": "src/components/audio-trim-editor.ts"
+          }
+        }
+      ]
+    },
+    {
+      "kind": "javascript-module",
       "path": "src/components/collection-tree.ts",
       "declarations": [
         {
@@ -1193,6 +1352,26 @@
               }
             },
             {
+              "kind": "method",
+              "name": "captureCommandDeparture",
+              "return": {
+                "type": {
+                  "text": "CommandDeparture"
+                }
+              },
+              "description": "Content-free custody shared by this view's existing navigation owners."
+            },
+            {
+              "kind": "field",
+              "name": "readOnly",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "description": "Inspection never grants the containing surface authoring rights.",
+              "attribute": "read-only"
+            },
+            {
               "kind": "field",
               "name": "surface",
               "type": {
@@ -1203,6 +1382,15 @@
             }
           ],
           "attributes": [
+            {
+              "name": "read-only",
+              "fieldName": "readOnly",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "description": "Inspection never grants the containing surface authoring rights."
+            },
             {
               "name": "surface",
               "fieldName": "surface",
@@ -1273,12 +1461,32 @@
             },
             {
               "kind": "field",
+              "name": "readOnly",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "description": "Inspection never grants the containing surface authoring rights.",
+              "attribute": "read-only"
+            },
+            {
+              "kind": "field",
               "name": "surface",
               "type": {
                 "text": "string"
               },
               "default": "\"document\"",
               "attribute": "surface"
+            },
+            {
+              "kind": "method",
+              "name": "suspendControls",
+              "return": {
+                "type": {
+                  "text": "void"
+                }
+              },
+              "description": "Close the owned top layer without discarding an unfinished review or receipt."
             }
           ],
           "attributes": [
@@ -1290,6 +1498,15 @@
               },
               "default": "false",
               "description": "Whether the compact presentation is requested."
+            },
+            {
+              "name": "read-only",
+              "fieldName": "readOnly",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "description": "Inspection never grants the containing surface authoring rights."
             },
             {
               "name": "surface",
@@ -1799,7 +2016,7 @@
               "kind": "field",
               "name": "iconName",
               "type": {
-                "text": "\"layers\" | \"document\" | \"palette\" | \"audio\" | \"admin\" | \"arrow\" | \"back\" | \"bold\" | \"branch\" | \"bullets\" | \"check\" | \"clock\" | \"close\" | \"collapse\" | \"compare\" | \"contrast\" | \"copy\" | \"dashboard\" | \"dots\" | \"down\" | \"download\" | \"draw\" | \"edit\" | \"expand\" | \"eye\" | \"families\" | \"flask\" | \"focal-point\" | \"folder\" | \"grid\" | \"heading\" | \"hidden\" | \"home\" | \"image\" | \"info\" | \"italic\" | \"link\" | \"lock\" | \"marquee\" | \"menu\" | \"minus\" | \"next\" | \"numbered\" | \"open\" | \"pan\" | \"pause\" | \"pin\" | \"play\" | \"plus\" | \"previous\" | \"quote\" | \"redo\" | \"replay\" | \"save\" | \"scene\" | \"scope\" | \"search\" | \"select\" | \"selection\" | \"send\" | \"share\" | \"slides\" | \"spark\" | \"step\" | \"story\" | \"storyboard\" | \"swap\" | \"trash\" | \"undo\" | \"unlock\" | \"up\" | \"user\" | \"video\" | \"warning\""
+                "text": "\"layers\" | \"palette\" | \"audio\" | \"admin\" | \"arrow\" | \"back\" | \"bold\" | \"branch\" | \"bullets\" | \"check\" | \"clock\" | \"close\" | \"collapse\" | \"compare\" | \"contrast\" | \"copy\" | \"dashboard\" | \"document\" | \"dots\" | \"down\" | \"download\" | \"draw\" | \"edit\" | \"expand\" | \"eye\" | \"families\" | \"flask\" | \"focal-point\" | \"folder\" | \"grid\" | \"heading\" | \"hidden\" | \"home\" | \"image\" | \"info\" | \"italic\" | \"link\" | \"lock\" | \"marquee\" | \"menu\" | \"minus\" | \"next\" | \"numbered\" | \"open\" | \"pan\" | \"pause\" | \"pin\" | \"play\" | \"plus\" | \"previous\" | \"quote\" | \"redo\" | \"replay\" | \"save\" | \"scene\" | \"scope\" | \"search\" | \"select\" | \"selection\" | \"send\" | \"share\" | \"slides\" | \"spark\" | \"step\" | \"story\" | \"storyboard\" | \"swap\" | \"trash\" | \"undo\" | \"unlock\" | \"up\" | \"user\" | \"video\" | \"warning\""
               },
               "default": "\"spark\"",
               "attribute": "icon-name",
@@ -1847,7 +2064,7 @@
               "name": "icon-name",
               "fieldName": "iconName",
               "type": {
-                "text": "\"layers\" | \"document\" | \"palette\" | \"audio\" | \"admin\" | \"arrow\" | \"back\" | \"bold\" | \"branch\" | \"bullets\" | \"check\" | \"clock\" | \"close\" | \"collapse\" | \"compare\" | \"contrast\" | \"copy\" | \"dashboard\" | \"dots\" | \"down\" | \"download\" | \"draw\" | \"edit\" | \"expand\" | \"eye\" | \"families\" | \"flask\" | \"focal-point\" | \"folder\" | \"grid\" | \"heading\" | \"hidden\" | \"home\" | \"image\" | \"info\" | \"italic\" | \"link\" | \"lock\" | \"marquee\" | \"menu\" | \"minus\" | \"next\" | \"numbered\" | \"open\" | \"pan\" | \"pause\" | \"pin\" | \"play\" | \"plus\" | \"previous\" | \"quote\" | \"redo\" | \"replay\" | \"save\" | \"scene\" | \"scope\" | \"search\" | \"select\" | \"selection\" | \"send\" | \"share\" | \"slides\" | \"spark\" | \"step\" | \"story\" | \"storyboard\" | \"swap\" | \"trash\" | \"undo\" | \"unlock\" | \"up\" | \"user\" | \"video\" | \"warning\""
+                "text": "\"layers\" | \"palette\" | \"audio\" | \"admin\" | \"arrow\" | \"back\" | \"bold\" | \"branch\" | \"bullets\" | \"check\" | \"clock\" | \"close\" | \"collapse\" | \"compare\" | \"contrast\" | \"copy\" | \"dashboard\" | \"document\" | \"dots\" | \"down\" | \"download\" | \"draw\" | \"edit\" | \"expand\" | \"eye\" | \"families\" | \"flask\" | \"focal-point\" | \"folder\" | \"grid\" | \"heading\" | \"hidden\" | \"home\" | \"image\" | \"info\" | \"italic\" | \"link\" | \"lock\" | \"marquee\" | \"menu\" | \"minus\" | \"next\" | \"numbered\" | \"open\" | \"pan\" | \"pause\" | \"pin\" | \"play\" | \"plus\" | \"previous\" | \"quote\" | \"redo\" | \"replay\" | \"save\" | \"scene\" | \"scope\" | \"search\" | \"select\" | \"selection\" | \"send\" | \"share\" | \"slides\" | \"spark\" | \"step\" | \"story\" | \"storyboard\" | \"swap\" | \"trash\" | \"undo\" | \"unlock\" | \"up\" | \"user\" | \"video\" | \"warning\""
               },
               "default": "\"spark\"",
               "description": "Stable, locale-invariant icon identifier."
@@ -2553,10 +2770,43 @@
             },
             {
               "kind": "field",
+              "name": "canSpecialist",
+              "type": {
+                "text": "boolean"
+              },
+              "attribute": "canspecialist"
+            },
+            {
+              "kind": "method",
+              "name": "clearConversationDrafts",
+              "return": {
+                "type": {
+                  "text": "void"
+                }
+              }
+            },
+            {
+              "kind": "field",
+              "name": "commandDepartureBlocked",
+              "type": {
+                "text": "boolean"
+              },
+              "description": "Closing a settled recovery is not cancellation; raw drafts and active work still own departure."
+            },
+            {
+              "kind": "field",
               "name": "context",
               "type": {
                 "text": "AssistantContext | null"
               }
+            },
+            {
+              "kind": "field",
+              "name": "continuation",
+              "type": {
+                "text": "typeof nothing | TemplateResult"
+              },
+              "description": "Local presentation only; never a conversation message or tool request."
             },
             {
               "kind": "field",
@@ -2565,6 +2815,14 @@
                 "text": "string"
               },
               "attribute": "conversationscope"
+            },
+            {
+              "kind": "field",
+              "name": "guidanceDelivery",
+              "type": {
+                "text": "\"\" | \"uncertain\" | \"sending\""
+              },
+              "attribute": "guidancedelivery"
             },
             {
               "kind": "field",
@@ -2595,6 +2853,14 @@
               "type": {
                 "text": "readonly AssistantInteractionMode[]"
               }
+            },
+            {
+              "kind": "field",
+              "name": "navigationBlocked",
+              "type": {
+                "text": "boolean"
+              },
+              "description": "Read existing owners; navigation must not acknowledge or discard their work."
             },
             {
               "kind": "field",
@@ -2638,7 +2904,7 @@
             },
             {
               "kind": "method",
-              "name": "resolveToolRequest",
+              "name": "resolveGuidanceRequest",
               "parameters": [
                 {
                   "name": "accepted",
@@ -2661,6 +2927,35 @@
             },
             {
               "kind": "method",
+              "name": "resolveToolRequest",
+              "parameters": [
+                {
+                  "name": "accepted",
+                  "type": {
+                    "text": "boolean"
+                  }
+                },
+                {
+                  "name": "message",
+                  "type": {
+                    "text": "string"
+                  }
+                },
+                {
+                  "name": "controls",
+                  "type": {
+                    "text": "{ current?: () => boolean; focus?: OutputNavigationFocusLease; }"
+                  }
+                }
+              ],
+              "return": {
+                "type": {
+                  "text": "Promise<void>"
+                }
+              }
+            },
+            {
+              "kind": "method",
               "name": "restoreDraft",
               "parameters": [
                 {
@@ -2674,6 +2969,21 @@
                 "type": {
                   "text": "void"
                 }
+              }
+            },
+            {
+              "kind": "field",
+              "name": "retainGuidanceDraft",
+              "type": {
+                "text": "boolean"
+              },
+              "attribute": "retainguidancedraft"
+            },
+            {
+              "kind": "field",
+              "name": "specialist",
+              "type": {
+                "text": "AssistantSpecialistReview | null"
               }
             },
             {
@@ -2693,10 +3003,24 @@
               }
             },
             {
+              "name": "canspecialist",
+              "fieldName": "canSpecialist",
+              "type": {
+                "text": "boolean"
+              }
+            },
+            {
               "name": "conversationscope",
               "fieldName": "conversationScope",
               "type": {
                 "text": "string"
+              }
+            },
+            {
+              "name": "guidancedelivery",
+              "fieldName": "guidanceDelivery",
+              "type": {
+                "text": "\"\" | \"uncertain\" | \"sending\""
               }
             },
             {
@@ -2734,13 +3058,27 @@
                 "text": "boolean"
               },
               "description": "Whether the native control can be read but not edited."
+            },
+            {
+              "name": "retainguidancedraft",
+              "fieldName": "retainGuidanceDraft",
+              "type": {
+                "text": "boolean"
+              }
             }
           ],
           "events": [
             {
+              "name": "forma-assistant-guidance-recovery",
+              "type": {
+                "text": "CustomEvent<{ action: string; }>"
+              },
+              "description": "Bubbles and crosses component boundaries."
+            },
+            {
               "name": "forma-assistant-message",
               "type": {
-                "text": "CustomEvent<{ message: string; mode: \"creative-chat\" | \"quick-edit\" | \"plan-document\" | \"plan-board\"; } | { premiumApproval?: true | undefined; model?: \"gpt-5.6-luna\" | \"gpt-5.6-terra\" | \"gpt-5.6-sol\" | undefined; message: string; }>"
+                "text": "CustomEvent<{ message: string; mode: \"creative-chat\" | \"quick-edit\" | \"plan-document\" | \"plan-board\"; } | { message: string; }>"
               },
               "description": "Bubbles and crosses component boundaries."
             },
@@ -2755,6 +3093,34 @@
               "name": "forma-assistant-review",
               "type": {
                 "text": "CustomEvent<{ mode: \"plan-document\" | \"plan-board\"; }>"
+              },
+              "description": "Bubbles and crosses component boundaries."
+            },
+            {
+              "name": "forma-assistant-specialist-action",
+              "type": {
+                "text": "CustomEvent<AssistantSpecialistControl>"
+              },
+              "description": "Bubbles and crosses component boundaries."
+            },
+            {
+              "name": "forma-assistant-specialist-close",
+              "type": {
+                "text": "CustomEvent<{ reviewId: string; }>"
+              },
+              "description": "Bubbles and crosses component boundaries."
+            },
+            {
+              "name": "forma-assistant-specialist-model",
+              "type": {
+                "text": "CustomEvent<AssistantSpecialistControl>"
+              },
+              "description": "Bubbles and crosses component boundaries."
+            },
+            {
+              "name": "forma-assistant-specialist-review",
+              "type": {
+                "text": "CustomEvent<{ task?: AssistantDisplayedTask | undefined; turnId: string; }>"
               },
               "description": "Bubbles and crosses component boundaries."
             },
@@ -3204,7 +3570,7 @@
               "kind": "field",
               "name": "name",
               "type": {
-                "text": "\"layers\" | \"document\" | \"palette\" | \"audio\" | \"admin\" | \"arrow\" | \"back\" | \"bold\" | \"branch\" | \"bullets\" | \"check\" | \"clock\" | \"close\" | \"collapse\" | \"compare\" | \"contrast\" | \"copy\" | \"dashboard\" | \"dots\" | \"down\" | \"download\" | \"draw\" | \"edit\" | \"expand\" | \"eye\" | \"families\" | \"flask\" | \"focal-point\" | \"folder\" | \"grid\" | \"heading\" | \"hidden\" | \"home\" | \"image\" | \"info\" | \"italic\" | \"link\" | \"lock\" | \"marquee\" | \"menu\" | \"minus\" | \"next\" | \"numbered\" | \"open\" | \"pan\" | \"pause\" | \"pin\" | \"play\" | \"plus\" | \"previous\" | \"quote\" | \"redo\" | \"replay\" | \"save\" | \"scene\" | \"scope\" | \"search\" | \"select\" | \"selection\" | \"send\" | \"share\" | \"slides\" | \"spark\" | \"step\" | \"story\" | \"storyboard\" | \"swap\" | \"trash\" | \"undo\" | \"unlock\" | \"up\" | \"user\" | \"video\" | \"warning\""
+                "text": "\"layers\" | \"palette\" | \"audio\" | \"admin\" | \"arrow\" | \"back\" | \"bold\" | \"branch\" | \"bullets\" | \"check\" | \"clock\" | \"close\" | \"collapse\" | \"compare\" | \"contrast\" | \"copy\" | \"dashboard\" | \"document\" | \"dots\" | \"down\" | \"download\" | \"draw\" | \"edit\" | \"expand\" | \"eye\" | \"families\" | \"flask\" | \"focal-point\" | \"folder\" | \"grid\" | \"heading\" | \"hidden\" | \"home\" | \"image\" | \"info\" | \"italic\" | \"link\" | \"lock\" | \"marquee\" | \"menu\" | \"minus\" | \"next\" | \"numbered\" | \"open\" | \"pan\" | \"pause\" | \"pin\" | \"play\" | \"plus\" | \"previous\" | \"quote\" | \"redo\" | \"replay\" | \"save\" | \"scene\" | \"scope\" | \"search\" | \"select\" | \"selection\" | \"send\" | \"share\" | \"slides\" | \"spark\" | \"step\" | \"story\" | \"storyboard\" | \"swap\" | \"trash\" | \"undo\" | \"unlock\" | \"up\" | \"user\" | \"video\" | \"warning\""
               },
               "default": "\"spark\"",
               "attribute": "name",
@@ -3234,7 +3600,7 @@
               "name": "name",
               "fieldName": "name",
               "type": {
-                "text": "\"layers\" | \"document\" | \"palette\" | \"audio\" | \"admin\" | \"arrow\" | \"back\" | \"bold\" | \"branch\" | \"bullets\" | \"check\" | \"clock\" | \"close\" | \"collapse\" | \"compare\" | \"contrast\" | \"copy\" | \"dashboard\" | \"dots\" | \"down\" | \"download\" | \"draw\" | \"edit\" | \"expand\" | \"eye\" | \"families\" | \"flask\" | \"focal-point\" | \"folder\" | \"grid\" | \"heading\" | \"hidden\" | \"home\" | \"image\" | \"info\" | \"italic\" | \"link\" | \"lock\" | \"marquee\" | \"menu\" | \"minus\" | \"next\" | \"numbered\" | \"open\" | \"pan\" | \"pause\" | \"pin\" | \"play\" | \"plus\" | \"previous\" | \"quote\" | \"redo\" | \"replay\" | \"save\" | \"scene\" | \"scope\" | \"search\" | \"select\" | \"selection\" | \"send\" | \"share\" | \"slides\" | \"spark\" | \"step\" | \"story\" | \"storyboard\" | \"swap\" | \"trash\" | \"undo\" | \"unlock\" | \"up\" | \"user\" | \"video\" | \"warning\""
+                "text": "\"layers\" | \"palette\" | \"audio\" | \"admin\" | \"arrow\" | \"back\" | \"bold\" | \"branch\" | \"bullets\" | \"check\" | \"clock\" | \"close\" | \"collapse\" | \"compare\" | \"contrast\" | \"copy\" | \"dashboard\" | \"document\" | \"dots\" | \"down\" | \"download\" | \"draw\" | \"edit\" | \"expand\" | \"eye\" | \"families\" | \"flask\" | \"focal-point\" | \"folder\" | \"grid\" | \"heading\" | \"hidden\" | \"home\" | \"image\" | \"info\" | \"italic\" | \"link\" | \"lock\" | \"marquee\" | \"menu\" | \"minus\" | \"next\" | \"numbered\" | \"open\" | \"pan\" | \"pause\" | \"pin\" | \"play\" | \"plus\" | \"previous\" | \"quote\" | \"redo\" | \"replay\" | \"save\" | \"scene\" | \"scope\" | \"search\" | \"select\" | \"selection\" | \"send\" | \"share\" | \"slides\" | \"spark\" | \"step\" | \"story\" | \"storyboard\" | \"swap\" | \"trash\" | \"undo\" | \"unlock\" | \"up\" | \"user\" | \"video\" | \"warning\""
               },
               "default": "\"spark\"",
               "description": "Stable native form field or technical identifier; never translate machine identifiers."
@@ -3323,7 +3689,7 @@
               "kind": "field",
               "name": "iconName",
               "type": {
-                "text": "\"layers\" | \"document\" | \"palette\" | \"audio\" | \"admin\" | \"arrow\" | \"back\" | \"bold\" | \"branch\" | \"bullets\" | \"check\" | \"clock\" | \"close\" | \"collapse\" | \"compare\" | \"contrast\" | \"copy\" | \"dashboard\" | \"dots\" | \"down\" | \"download\" | \"draw\" | \"edit\" | \"expand\" | \"eye\" | \"families\" | \"flask\" | \"focal-point\" | \"folder\" | \"grid\" | \"heading\" | \"hidden\" | \"home\" | \"image\" | \"info\" | \"italic\" | \"link\" | \"lock\" | \"marquee\" | \"menu\" | \"minus\" | \"next\" | \"numbered\" | \"open\" | \"pan\" | \"pause\" | \"pin\" | \"play\" | \"plus\" | \"previous\" | \"quote\" | \"redo\" | \"replay\" | \"save\" | \"scene\" | \"scope\" | \"search\" | \"select\" | \"selection\" | \"send\" | \"share\" | \"slides\" | \"spark\" | \"step\" | \"story\" | \"storyboard\" | \"swap\" | \"trash\" | \"undo\" | \"unlock\" | \"up\" | \"user\" | \"video\" | \"warning\""
+                "text": "\"layers\" | \"palette\" | \"audio\" | \"admin\" | \"arrow\" | \"back\" | \"bold\" | \"branch\" | \"bullets\" | \"check\" | \"clock\" | \"close\" | \"collapse\" | \"compare\" | \"contrast\" | \"copy\" | \"dashboard\" | \"document\" | \"dots\" | \"down\" | \"download\" | \"draw\" | \"edit\" | \"expand\" | \"eye\" | \"families\" | \"flask\" | \"focal-point\" | \"folder\" | \"grid\" | \"heading\" | \"hidden\" | \"home\" | \"image\" | \"info\" | \"italic\" | \"link\" | \"lock\" | \"marquee\" | \"menu\" | \"minus\" | \"next\" | \"numbered\" | \"open\" | \"pan\" | \"pause\" | \"pin\" | \"play\" | \"plus\" | \"previous\" | \"quote\" | \"redo\" | \"replay\" | \"save\" | \"scene\" | \"scope\" | \"search\" | \"select\" | \"selection\" | \"send\" | \"share\" | \"slides\" | \"spark\" | \"step\" | \"story\" | \"storyboard\" | \"swap\" | \"trash\" | \"undo\" | \"unlock\" | \"up\" | \"user\" | \"video\" | \"warning\""
               },
               "default": "\"dots\"",
               "attribute": "icon-name",
@@ -3400,7 +3766,7 @@
               "name": "icon-name",
               "fieldName": "iconName",
               "type": {
-                "text": "\"layers\" | \"document\" | \"palette\" | \"audio\" | \"admin\" | \"arrow\" | \"back\" | \"bold\" | \"branch\" | \"bullets\" | \"check\" | \"clock\" | \"close\" | \"collapse\" | \"compare\" | \"contrast\" | \"copy\" | \"dashboard\" | \"dots\" | \"down\" | \"download\" | \"draw\" | \"edit\" | \"expand\" | \"eye\" | \"families\" | \"flask\" | \"focal-point\" | \"folder\" | \"grid\" | \"heading\" | \"hidden\" | \"home\" | \"image\" | \"info\" | \"italic\" | \"link\" | \"lock\" | \"marquee\" | \"menu\" | \"minus\" | \"next\" | \"numbered\" | \"open\" | \"pan\" | \"pause\" | \"pin\" | \"play\" | \"plus\" | \"previous\" | \"quote\" | \"redo\" | \"replay\" | \"save\" | \"scene\" | \"scope\" | \"search\" | \"select\" | \"selection\" | \"send\" | \"share\" | \"slides\" | \"spark\" | \"step\" | \"story\" | \"storyboard\" | \"swap\" | \"trash\" | \"undo\" | \"unlock\" | \"up\" | \"user\" | \"video\" | \"warning\""
+                "text": "\"layers\" | \"palette\" | \"audio\" | \"admin\" | \"arrow\" | \"back\" | \"bold\" | \"branch\" | \"bullets\" | \"check\" | \"clock\" | \"close\" | \"collapse\" | \"compare\" | \"contrast\" | \"copy\" | \"dashboard\" | \"document\" | \"dots\" | \"down\" | \"download\" | \"draw\" | \"edit\" | \"expand\" | \"eye\" | \"families\" | \"flask\" | \"focal-point\" | \"folder\" | \"grid\" | \"heading\" | \"hidden\" | \"home\" | \"image\" | \"info\" | \"italic\" | \"link\" | \"lock\" | \"marquee\" | \"menu\" | \"minus\" | \"next\" | \"numbered\" | \"open\" | \"pan\" | \"pause\" | \"pin\" | \"play\" | \"plus\" | \"previous\" | \"quote\" | \"redo\" | \"replay\" | \"save\" | \"scene\" | \"scope\" | \"search\" | \"select\" | \"selection\" | \"send\" | \"share\" | \"slides\" | \"spark\" | \"step\" | \"story\" | \"storyboard\" | \"swap\" | \"trash\" | \"undo\" | \"unlock\" | \"up\" | \"user\" | \"video\" | \"warning\""
               },
               "default": "\"dots\"",
               "description": "Stable, locale-invariant icon identifier."
@@ -5768,12 +6134,47 @@
           "members": [
             {
               "kind": "field",
+              "name": "actionCurrent",
+              "type": {
+                "text": "((value: string) => boolean) | undefined"
+              },
+              "description": "Optional opening-ownership check for rendered actions; never authorization."
+            },
+            {
+              "kind": "field",
               "name": "actions",
               "type": {
                 "text": "{ label: string; value: string; disabled?: boolean; description?: string }[]"
               },
               "default": "[]",
               "description": "Property-only actions with author-localized labels and descriptions and locale-invariant values."
+            },
+            {
+              "kind": "method",
+              "name": "close",
+              "parameters": [
+                {
+                  "name": "returnFocus",
+                  "type": {
+                    "text": "boolean"
+                  }
+                }
+              ],
+              "return": {
+                "type": {
+                  "text": "void"
+                }
+              },
+              "description": "Close before handing off an action; never queue focus over a newer surface."
+            },
+            {
+              "kind": "field",
+              "name": "content",
+              "type": {
+                "text": "typeof nothing | TemplateResult"
+              },
+              "default": "nothing",
+              "description": "Authored light-DOM controls keep their native semantics and event handlers."
             },
             {
               "kind": "field",
@@ -5804,6 +6205,24 @@
               "default": "\"\"",
               "attribute": "label",
               "description": "Author-supplied, localized visible label or accessible action name."
+            },
+            {
+              "kind": "field",
+              "name": "triggerAccessibleName",
+              "type": {
+                "text": "string"
+              },
+              "default": "\"\"",
+              "description": "Optional accessible name for the native trigger; visible text remains unchanged.",
+              "attribute": "trigger-accessible-name"
+            },
+            {
+              "kind": "field",
+              "name": "triggerId",
+              "type": {
+                "text": "string"
+              },
+              "default": "`${this.#id}-trigger`"
             }
           ],
           "attributes": [
@@ -5833,6 +6252,15 @@
               },
               "default": "\"\"",
               "description": "Author-supplied, localized visible label or accessible action name."
+            },
+            {
+              "name": "trigger-accessible-name",
+              "fieldName": "triggerAccessibleName",
+              "type": {
+                "text": "string"
+              },
+              "default": "\"\"",
+              "description": "Optional accessible name for the native trigger; visible text remains unchanged."
             }
           ],
           "events": [
@@ -5877,7 +6305,8 @@
               "authorTextAttributes": [
                 "detail",
                 "heading",
-                "label"
+                "label",
+                "trigger-accessible-name"
               ],
               "authorOwnedSlots": [],
               "optionTextPaths": [
@@ -8428,7 +8857,7 @@
               "kind": "field",
               "name": "alignment",
               "type": {
-                "text": "string"
+                "text": "\"center\" | \"stretch\""
               },
               "default": "\"center\"",
               "attribute": "alignment",
@@ -8450,7 +8879,7 @@
               "name": "alignment",
               "fieldName": "alignment",
               "type": {
-                "text": "string"
+                "text": "\"center\" | \"stretch\""
               },
               "default": "\"center\""
             },
@@ -10334,6 +10763,24 @@
           },
           "members": [
             {
+              "kind": "method",
+              "name": "allowsNavigationPresentation",
+              "parameters": [
+                {
+                  "name": "context",
+                  "type": {
+                    "text": "NavigationPresentationContext | undefined"
+                  }
+                }
+              ],
+              "return": {
+                "type": {
+                  "text": "boolean"
+                }
+              },
+              "description": "Only this exact current readonly viewer may be subtracted from its parent."
+            },
+            {
               "kind": "field",
               "name": "compact",
               "type": {
@@ -10370,11 +10817,63 @@
                   "type": {
                     "text": "string"
                   }
+                },
+                {
+                  "name": "options",
+                  "type": {
+                    "text": "{ expectedRevision?: number; expectedContentSha256?: string; intent?: ArtifactDeliveryIntent; current?: (stage: CreativePreparationStage) => boolean; }"
+                  }
                 }
               ],
               "return": {
                 "type": {
-                  "text": "Promise<void>"
+                  "text": "Promise<boolean>"
+                }
+              }
+            },
+            {
+              "kind": "method",
+              "name": "openJobById",
+              "parameters": [
+                {
+                  "name": "jobId",
+                  "type": {
+                    "text": "string"
+                  }
+                },
+                {
+                  "name": "options",
+                  "type": {
+                    "text": "{ current?: () => boolean; }"
+                  }
+                }
+              ],
+              "return": {
+                "type": {
+                  "text": "Promise<boolean | undefined>"
+                }
+              }
+            },
+            {
+              "kind": "method",
+              "name": "openNativeShortStory",
+              "parameters": [
+                {
+                  "name": "documentId",
+                  "type": {
+                    "text": "string"
+                  }
+                },
+                {
+                  "name": "options",
+                  "type": {
+                    "text": "{ current?: (stage: CreativePreparationStage) => boolean; }"
+                  }
+                }
+              ],
+              "return": {
+                "type": {
+                  "text": "Promise<boolean>"
                 }
               }
             },
@@ -10385,7 +10884,7 @@
                 {
                   "name": "kind",
                   "type": {
-                    "text": "\"audio\" | \"scene\" | \"slides\" | \"storyboard\" | \"video\" | \"short_story\" | undefined"
+                    "text": "\"audio\" | \"model3d\" | \"scene\" | \"slides\" | \"storyboard\" | \"video\" | \"short_story\" | undefined"
                   }
                 },
                 {
@@ -10397,15 +10896,25 @@
                 {
                   "name": "options",
                   "type": {
-                    "text": "{ videoSeconds?: VideoDurationSeconds; sceneMedium?: SceneMedium; }"
+                    "text": "{ videoSeconds?: VideoDurationSeconds; sceneMedium?: SceneMedium; current?: (stage: CreativePreparationStage) => boolean; }"
                   }
                 }
               ],
               "return": {
                 "type": {
-                  "text": "Promise<void>"
+                  "text": "Promise<boolean>"
                 }
               }
+            },
+            {
+              "kind": "method",
+              "name": "retireNativeShortStory",
+              "return": {
+                "type": {
+                  "text": "void"
+                }
+              },
+              "description": "Parent calls before the result pane becomes hidden, including responsive changes."
             },
             {
               "kind": "field",
@@ -10470,7 +10979,7 @@
             {
               "name": "document-artifact-queued",
               "type": {
-                "text": "CustomEvent<{ documentId: string; kind: \"audio\" | \"scene\" | \"slides\" | \"storyboard\" | \"video\" | \"short_story\"; }>"
+                "text": "CustomEvent<{ documentId: string; kind: \"audio\" | \"slides\" | \"storyboard\" | \"video\" | \"short_story\"; } | { documentId: string; kind: string; }>"
               },
               "description": "Bubbles and crosses component boundaries."
             },
@@ -10698,6 +11207,14 @@
           "members": [
             {
               "kind": "field",
+              "name": "correctionEditorOwner",
+              "type": {
+                "text": "Readonly<{ notificationId: string; artifactId: string; documentId: string; phase: \"loading\" | \"editing\"; }> | null"
+              },
+              "description": "Identity only: the draft itself remains owned by this connected editor."
+            },
+            {
+              "kind": "field",
               "name": "documentName",
               "type": {
                 "text": "string"
@@ -10715,6 +11232,14 @@
             },
             {
               "kind": "field",
+              "name": "navigationBlocked",
+              "type": {
+                "text": "boolean"
+              },
+              "description": "Content-free origin admission; the original note, review and correction owners stay here."
+            },
+            {
+              "kind": "field",
               "name": "notification",
               "type": {
                 "text": "ProjectNotification | null"
@@ -10728,6 +11253,14 @@
                 "text": "AssignedReviewTask | null"
               },
               "default": "null"
+            },
+            {
+              "kind": "field",
+              "name": "reviewContext",
+              "type": {
+                "text": "{ identity: string; name: string; } | null"
+              },
+              "default": "null"
             }
           ],
           "attributes": [
@@ -10738,6 +11271,15 @@
                 "text": "string"
               },
               "default": "\"\""
+            }
+          ],
+          "events": [
+            {
+              "name": "forma-activity-correction-state-changed",
+              "type": {
+                "text": "CustomEvent<null>"
+              },
+              "description": "Bubbles and crosses component boundaries."
             }
           ],
           "x-forma": {
@@ -10781,6 +11323,17 @@
             "name": "FormaElement",
             "module": "src/components/forma-element.ts"
           },
+          "members": [
+            {
+              "kind": "method",
+              "name": "captureCommandDeparture",
+              "return": {
+                "type": {
+                  "text": "CommandDeparture"
+                }
+              }
+            }
+          ],
           "x-forma": {
             "category": "application",
             "renderRoot": "light",
@@ -10954,6 +11507,17 @@
             "name": "FormaElement",
             "module": "src/components/forma-element.ts"
           },
+          "members": [
+            {
+              "kind": "method",
+              "name": "captureCommandDeparture",
+              "return": {
+                "type": {
+                  "text": "CommandDeparture"
+                }
+              }
+            }
+          ],
           "x-forma": {
             "category": "application",
             "renderRoot": "light",
@@ -10995,6 +11559,17 @@
             "name": "FormaElement",
             "module": "src/components/forma-element.ts"
           },
+          "members": [
+            {
+              "kind": "method",
+              "name": "captureCommandDeparture",
+              "return": {
+                "type": {
+                  "text": "CommandDeparture"
+                }
+              }
+            }
+          ],
           "events": [
             {
               "name": "forma-assistant-tool-request",
@@ -11045,6 +11620,17 @@
             "name": "AlternativeStudio",
             "module": "src/components/forma-studio-alternatives.ts"
           },
+          "members": [
+            {
+              "kind": "method",
+              "name": "captureCommandDeparture",
+              "return": {
+                "type": {
+                  "text": "CommandDeparture"
+                }
+              }
+            }
+          ],
           "x-forma": {
             "category": "application",
             "renderRoot": "light",
@@ -11086,6 +11672,17 @@
             "name": "FormaElement",
             "module": "src/components/forma-element.ts"
           },
+          "members": [
+            {
+              "kind": "method",
+              "name": "captureCommandDeparture",
+              "return": {
+                "type": {
+                  "text": "CommandDeparture"
+                }
+              }
+            }
+          ],
           "x-forma": {
             "category": "application",
             "renderRoot": "light",
@@ -11201,6 +11798,58 @@
     },
     {
       "kind": "javascript-module",
+      "path": "src/components/forma-experience-host.ts",
+      "declarations": [
+        {
+          "kind": "class",
+          "name": "FormaExperienceHost",
+          "tagName": "forma-experience-host",
+          "customElement": true,
+          "summary": "Experience host application interface.",
+          "description": "Same-Document native admission view. All original command/grant identities are\nretained by the server; mounting and recovery read them without admitting work.",
+          "superclass": {
+            "name": "FormaElement",
+            "module": "src/components/forma-element.ts"
+          },
+          "members": [
+            {
+              "kind": "method",
+              "name": "captureCommandDeparture",
+              "return": {
+                "type": {
+                  "text": "CommandDeparture"
+                }
+              }
+            }
+          ],
+          "x-forma": {
+            "category": "application",
+            "renderRoot": "light",
+            "stateful": true
+          }
+        }
+      ],
+      "exports": [
+        {
+          "kind": "custom-element-definition",
+          "name": "forma-experience-host",
+          "declaration": {
+            "name": "FormaExperienceHost",
+            "module": "src/components/forma-experience-host.ts"
+          }
+        },
+        {
+          "kind": "js",
+          "name": "FormaExperienceHost",
+          "declaration": {
+            "name": "FormaExperienceHost",
+            "module": "src/components/forma-experience-host.ts"
+          }
+        }
+      ]
+    },
+    {
+      "kind": "javascript-module",
       "path": "src/components/forma-focal-point-lab.ts",
       "declarations": [
         {
@@ -11296,6 +11945,82 @@
             "name": "FormaElement",
             "module": "src/components/forma-element.ts"
           },
+          "members": [
+            {
+              "kind": "method",
+              "name": "artifactRouteOpeningCompletion",
+              "parameters": [
+                {
+                  "name": "route",
+                  "type": {
+                    "text": "string"
+                  }
+                },
+                {
+                  "name": "focus",
+                  "type": {
+                    "text": "OutputNavigationFocusLease"
+                  }
+                }
+              ],
+              "return": {
+                "type": {
+                  "text": "Promise<boolean> | null"
+                }
+              }
+            },
+            {
+              "kind": "method",
+              "name": "awaitArtifactRouteOpening",
+              "parameters": [
+                {
+                  "name": "target",
+                  "type": {
+                    "text": "{ artifactId: string; documentId: string; revision: number; contentSha256: string; }"
+                  }
+                },
+                {
+                  "name": "options",
+                  "type": {
+                    "text": "{ current: () => boolean; }"
+                  }
+                }
+              ],
+              "return": {
+                "type": {
+                  "text": "Promise<boolean>"
+                }
+              },
+              "description": "Await the same exact route opening; a successful Store route is not viewer-arrival evidence."
+            },
+            {
+              "kind": "method",
+              "name": "captureCommandDeparture",
+              "return": {
+                "type": {
+                  "text": "CommandDeparture"
+                }
+              },
+              "description": "Content-free admission; the caller still owns Source, route and native focus."
+            },
+            {
+              "kind": "method",
+              "name": "captureLocalNavigation",
+              "parameters": [
+                {
+                  "name": "path",
+                  "type": {
+                    "text": "string"
+                  }
+                }
+              ],
+              "return": {
+                "type": {
+                  "text": "LocalNavigation | null"
+                }
+              }
+            }
+          ],
           "x-forma": {
             "category": "application",
             "renderRoot": "light",
@@ -11337,6 +12062,17 @@
             "name": "FormaElement",
             "module": "src/components/forma-element.ts"
           },
+          "members": [
+            {
+              "kind": "method",
+              "name": "captureCommandDeparture",
+              "return": {
+                "type": {
+                  "text": "CommandDeparture"
+                }
+              }
+            }
+          ],
           "x-forma": {
             "category": "application",
             "renderRoot": "light",
@@ -11389,6 +12125,54 @@
             },
             {
               "kind": "field",
+              "name": "hasOpenDraft",
+              "type": {
+                "text": "boolean"
+              }
+            },
+            {
+              "kind": "field",
+              "name": "newDraft",
+              "type": {
+                "text": "OutputRequirementCardDraft | null"
+              },
+              "default": "null"
+            },
+            {
+              "kind": "method",
+              "name": "openNewDraft",
+              "parameters": [
+                {
+                  "name": "opener",
+                  "type": {
+                    "text": "HTMLElement | null"
+                  }
+                },
+                {
+                  "name": "current",
+                  "type": {
+                    "text": "() => boolean"
+                  }
+                }
+              ],
+              "return": {
+                "type": {
+                  "text": "Promise<boolean>"
+                }
+              },
+              "description": "Explicit presentation only; the host supplies current ownership, never a fabricated saved row."
+            },
+            {
+              "kind": "field",
+              "name": "originalSaveId",
+              "type": {
+                "text": "string"
+              },
+              "default": "\"\"",
+              "description": "Recipe host's unresolved original ID only; no body, receipt or retry permission."
+            },
+            {
+              "kind": "field",
               "name": "presentation",
               "type": {
                 "text": "\"full\" | \"compact\""
@@ -11410,6 +12194,30 @@
                 "text": "\"loading\" | \"ready\" | \"refreshing\" | \"unavailable\""
               },
               "default": "\"loading\""
+            },
+            {
+              "kind": "method",
+              "name": "retryOriginalSave",
+              "parameters": [
+                {
+                  "name": "clientMutationId",
+                  "type": {
+                    "text": "string"
+                  }
+                },
+                {
+                  "name": "current",
+                  "type": {
+                    "text": "() => boolean"
+                  }
+                }
+              ],
+              "return": {
+                "type": {
+                  "text": "boolean"
+                }
+              },
+              "description": "Explicitly resend this session's original Save; never materialize or rebase newer edits."
             },
             {
               "kind": "field",
@@ -11540,6 +12348,14 @@
             },
             {
               "kind": "field",
+              "name": "commandDepartureBlocked",
+              "type": {
+                "text": "boolean"
+              },
+              "description": "Departure protects local edits/in-flight work, not settled original metadata alone."
+            },
+            {
+              "kind": "field",
               "name": "documentId",
               "type": {
                 "text": "string"
@@ -11553,6 +12369,30 @@
               }
             },
             {
+              "kind": "method",
+              "name": "focusOutputReference",
+              "parameters": [
+                {
+                  "name": "reference",
+                  "type": {
+                    "text": "OutputNavigationReference"
+                  }
+                },
+                {
+                  "name": "options",
+                  "type": {
+                    "text": "{ section?: OutputNavigationSection; current: () => boolean; focus?: OutputNavigationFocusLease; }"
+                  }
+                }
+              ],
+              "return": {
+                "type": {
+                  "text": "Promise<boolean>"
+                }
+              },
+              "description": "Exact navigation only. Never changes a run selection, draft, offer, or authored decision."
+            },
+            {
               "kind": "field",
               "name": "inspectionOnly",
               "type": {
@@ -11561,9 +12401,95 @@
             },
             {
               "kind": "field",
+              "name": "navigationBlocked",
+              "type": {
+                "text": "boolean"
+              },
+              "description": "Local work only. A false value is not current Source, read, route, or authoring permission."
+            },
+            {
+              "kind": "method",
+              "name": "receiveIntakeRecipe",
+              "parameters": [
+                {
+                  "name": "input",
+                  "type": {
+                    "text": "OutcomeRecipeInput"
+                  }
+                },
+                {
+                  "name": "source",
+                  "type": {
+                    "text": "OutcomeRecipeInputSource"
+                  }
+                },
+                {
+                  "name": "options",
+                  "type": {
+                    "text": "{ current: () => boolean; opener: HTMLElement | null; focus: OutputNavigationFocusLease; }"
+                  }
+                }
+              ],
+              "return": {
+                "type": {
+                  "text": "Promise<\"unavailable\" | \"opened\" | \"retained\" | \"existing-draft\" | \"stale\" | \"forbidden\">"
+                }
+              },
+              "description": "Transfer only authored input into this existing entry; full Output authority is required again before staging."
+            },
+            {
+              "kind": "method",
+              "name": "revealAuthoredRequirement",
+              "parameters": [
+                {
+                  "name": "target",
+                  "type": {
+                    "text": "{ projectId: string; documentId: string; blockId: string; }"
+                  }
+                },
+                {
+                  "name": "options",
+                  "type": {
+                    "text": "{ current: () => boolean; focus?: OutputNavigationFocusLease; }"
+                  }
+                }
+              ],
+              "return": {
+                "type": {
+                  "text": "Promise<boolean>"
+                }
+              },
+              "description": "Reveal one current authored Output's existing status only; never create a snapshot or action grant."
+            },
+            {
+              "kind": "method",
+              "name": "stageRecipeDraft",
+              "parameters": [
+                {
+                  "name": "proposal",
+                  "type": {
+                    "text": "OutcomeRecipeDraft"
+                  }
+                },
+                {
+                  "name": "options",
+                  "type": {
+                    "text": "{ current: () => boolean; opener: HTMLElement | null; }"
+                  }
+                }
+              ],
+              "return": {
+                "type": {
+                  "text": "Promise<\"unavailable\" | \"opened\" | \"existing-draft\" | \"stale\" | \"forbidden\">"
+                }
+              },
+              "description": "One current-owned local proposal. Only the existing card's explicit Save can persist it."
+            },
+            {
+              "kind": "field",
               "name": "surface",
               "type": {
-                "text": "\"document\" | \"deliver\" | \"project\""
+                "text": "\"document\" | \"project\" | \"deliver\""
               }
             }
           ],
@@ -11615,6 +12541,68 @@
     },
     {
       "kind": "javascript-module",
+      "path": "src/components/forma-personal-memory.ts",
+      "declarations": [
+        {
+          "kind": "class",
+          "name": "FormaPersonalMemory",
+          "tagName": "forma-personal-memory",
+          "customElement": true,
+          "summary": "Personal memory application interface.",
+          "description": "Consent controls only. Mounting this component never enrolls or captures activity.",
+          "superclass": {
+            "name": "FormaElement",
+            "module": "src/components/forma-element.ts"
+          },
+          "members": [
+            {
+              "kind": "method",
+              "name": "captureCommandDeparture",
+              "return": {
+                "type": {
+                  "text": "CommandDeparture"
+                }
+              }
+            },
+            {
+              "kind": "method",
+              "name": "suspendPresentation",
+              "return": {
+                "type": {
+                  "text": "void"
+                }
+              },
+              "description": "Closing the composing host retires work before its next DOM update. Reopening requires a fresh mount."
+            }
+          ],
+          "x-forma": {
+            "category": "application",
+            "renderRoot": "light",
+            "stateful": true
+          }
+        }
+      ],
+      "exports": [
+        {
+          "kind": "custom-element-definition",
+          "name": "forma-personal-memory",
+          "declaration": {
+            "name": "FormaPersonalMemory",
+            "module": "src/components/forma-personal-memory.ts"
+          }
+        },
+        {
+          "kind": "js",
+          "name": "FormaPersonalMemory",
+          "declaration": {
+            "name": "FormaPersonalMemory",
+            "module": "src/components/forma-personal-memory.ts"
+          }
+        }
+      ]
+    },
+    {
+      "kind": "javascript-module",
       "path": "src/components/forma-platform-assistant.ts",
       "declarations": [
         {
@@ -11629,6 +12617,15 @@
             "module": "src/components/presentational-element.ts"
           },
           "members": [
+            {
+              "kind": "method",
+              "name": "captureCommandDeparture",
+              "return": {
+                "type": {
+                  "text": "Omit<CommandDeparture, \"element\"> & { readonly element: HTMLElement; }"
+                }
+              }
+            },
             {
               "kind": "field",
               "name": "route",
@@ -11688,6 +12685,32 @@
             "name": "FormaPresentationalElement",
             "module": "src/components/presentational-element.ts"
           },
+          "members": [
+            {
+              "kind": "method",
+              "name": "navigateFrom",
+              "parameters": [
+                {
+                  "name": "origin",
+                  "type": {
+                    "text": "HTMLElement"
+                  }
+                },
+                {
+                  "name": "path",
+                  "type": {
+                    "text": "string"
+                  }
+                }
+              ],
+              "return": {
+                "type": {
+                  "text": "boolean"
+                }
+              },
+              "description": "Admit only a current ordinary UI departure; never gate privacy or load retirement."
+            }
+          ],
           "demos": [
             {
               "url": "/knowledge/design-system#forma-platform-shell"
@@ -11781,6 +12804,40 @@
             "name": "FormaElement",
             "module": "src/components/forma-element.ts"
           },
+          "members": [
+            {
+              "kind": "method",
+              "name": "captureCommandDeparture",
+              "return": {
+                "type": {
+                  "text": "CommandDeparture"
+                }
+              }
+            },
+            {
+              "kind": "method",
+              "name": "captureCommandOperation",
+              "parameters": [
+                {
+                  "name": "operation",
+                  "type": {
+                    "text": "string"
+                  }
+                },
+                {
+                  "name": "event",
+                  "type": {
+                    "text": "Event"
+                  }
+                }
+              ],
+              "return": {
+                "type": {
+                  "text": "CommandOperation | null"
+                }
+              }
+            }
+          ],
           "x-forma": {
             "category": "application",
             "renderRoot": "light",
@@ -11900,6 +12957,47 @@
     },
     {
       "kind": "javascript-module",
+      "path": "src/components/forma-retained-short-story.ts",
+      "declarations": [
+        {
+          "kind": "class",
+          "name": "FormaRetainedShortStory",
+          "tagName": "forma-retained-short-story",
+          "customElement": true,
+          "summary": "Output",
+          "description": "Output",
+          "superclass": {
+            "name": "FormaElement",
+            "module": "src/components/forma-element.ts"
+          },
+          "x-forma": {
+            "category": "application",
+            "renderRoot": "light",
+            "stateful": true
+          }
+        }
+      ],
+      "exports": [
+        {
+          "kind": "custom-element-definition",
+          "name": "forma-retained-short-story",
+          "declaration": {
+            "name": "FormaRetainedShortStory",
+            "module": "src/components/forma-retained-short-story.ts"
+          }
+        },
+        {
+          "kind": "js",
+          "name": "FormaRetainedShortStory",
+          "declaration": {
+            "name": "FormaRetainedShortStory",
+            "module": "src/components/forma-retained-short-story.ts"
+          }
+        }
+      ]
+    },
+    {
+      "kind": "javascript-module",
       "path": "src/components/forma-scout.ts",
       "declarations": [
         {
@@ -11954,6 +13052,17 @@
             "name": "FormaElement",
             "module": "src/components/forma-element.ts"
           },
+          "members": [
+            {
+              "kind": "method",
+              "name": "captureCommandDeparture",
+              "return": {
+                "type": {
+                  "text": "CommandDeparture"
+                }
+              }
+            }
+          ],
           "x-forma": {
             "category": "application",
             "renderRoot": "light",
@@ -12002,7 +13111,6 @@
               "type": {
                 "text": "string"
               },
-              "default": "\"\"",
               "attribute": "token"
             }
           ],
@@ -12012,8 +13120,7 @@
               "fieldName": "token",
               "type": {
                 "text": "string"
-              },
-              "default": "\"\""
+              }
             }
           ],
           "x-forma": {
@@ -12057,6 +13164,182 @@
             "name": "FormaElement",
             "module": "src/components/forma-element.ts"
           },
+          "members": [
+            {
+              "kind": "method",
+              "name": "adoptedCallback",
+              "return": {
+                "type": {
+                  "text": "void"
+                }
+              }
+            },
+            {
+              "kind": "field",
+              "name": "nativeImageAvailable",
+              "type": {
+                "text": "boolean"
+              }
+            },
+            {
+              "kind": "method",
+              "name": "navigateFrom",
+              "parameters": [
+                {
+                  "name": "origin",
+                  "type": {
+                    "text": "FormaElement"
+                  }
+                },
+                {
+                  "name": "run",
+                  "type": {
+                    "text": "InAppNavigationAction"
+                  }
+                },
+                {
+                  "name": "preferences",
+                  "type": {
+                    "text": "NavigationPresentationContext"
+                  }
+                }
+              ],
+              "return": {
+                "type": {
+                  "text": "Promise<boolean>"
+                }
+              },
+              "description": "Deliberate UI navigation only; internal save, recovery and permission retirement do not call this."
+            },
+            {
+              "kind": "method",
+              "name": "openNativeImage",
+              "parameters": [
+                {
+                  "name": "origin",
+                  "type": {
+                    "text": "FormaElement"
+                  }
+                },
+                {
+                  "name": "setup",
+                  "type": {
+                    "text": "unknown"
+                  }
+                },
+                {
+                  "name": "presentation",
+                  "type": {
+                    "text": "Readonly<{ current: () => boolean; subscribe: (recheck: () => void) => () => void; }>"
+                  }
+                }
+              ],
+              "return": {
+                "type": {
+                  "text": "Readonly<{ id: number; documentId: string; }> | null"
+                }
+              }
+            },
+            {
+              "kind": "method",
+              "name": "performOperationFrom",
+              "parameters": [
+                {
+                  "name": "origin",
+                  "type": {
+                    "text": "FormaElement"
+                  }
+                },
+                {
+                  "name": "operation",
+                  "type": {
+                    "text": "string"
+                  }
+                },
+                {
+                  "name": "event",
+                  "type": {
+                    "text": "Event"
+                  }
+                }
+              ],
+              "return": {
+                "type": {
+                  "text": "Promise<void>"
+                }
+              },
+              "description": "One registered owner's exact consumed-form operation; no route or focus lease is acquired."
+            },
+            {
+              "kind": "method",
+              "name": "releaseExactRetainedArtifactFocus",
+              "parameters": [
+                {
+                  "name": "route",
+                  "type": {
+                    "text": "string"
+                  }
+                },
+                {
+                  "name": "focus",
+                  "type": {
+                    "text": "OutputNavigationFocusLease"
+                  }
+                }
+              ],
+              "return": {
+                "type": {
+                  "text": "void"
+                }
+              }
+            },
+            {
+              "kind": "method",
+              "name": "renderNativeImage",
+              "parameters": [
+                {
+                  "name": "origin",
+                  "type": {
+                    "text": "FormaElement"
+                  }
+                }
+              ],
+              "return": {
+                "type": {
+                  "text": "unique symbol | TemplateResult<1>"
+                }
+              }
+            },
+            {
+              "kind": "method",
+              "name": "retireNativeImage",
+              "parameters": [
+                {
+                  "name": "origin",
+                  "type": {
+                    "text": "FormaElement"
+                  }
+                },
+                {
+                  "name": "presentation",
+                  "type": {
+                    "text": "Readonly<{ current: () => boolean; subscribe: (recheck: () => void) => () => void; }> | undefined"
+                  }
+                },
+                {
+                  "name": "notify",
+                  "type": {
+                    "text": "(() => void) | undefined"
+                  }
+                }
+              ],
+              "return": {
+                "type": {
+                  "text": "PromiseSettledResult<void>"
+                }
+              }
+            }
+          ],
           "x-forma": {
             "category": "application",
             "renderRoot": "light",
@@ -12098,6 +13381,17 @@
             "name": "AlternativeStudio",
             "module": "src/components/forma-studio-alternatives.ts"
           },
+          "members": [
+            {
+              "kind": "method",
+              "name": "captureCommandDeparture",
+              "return": {
+                "type": {
+                  "text": "CommandDeparture"
+                }
+              }
+            }
+          ],
           "x-forma": {
             "category": "application",
             "renderRoot": "light",
@@ -12115,6 +13409,17 @@
             "name": "AlternativeStudio",
             "module": "src/components/forma-studio-alternatives.ts"
           },
+          "members": [
+            {
+              "kind": "method",
+              "name": "captureCommandDeparture",
+              "return": {
+                "type": {
+                  "text": "CommandDeparture"
+                }
+              }
+            }
+          ],
           "x-forma": {
             "category": "application",
             "renderRoot": "light",
@@ -12175,6 +13480,15 @@
           "members": [
             {
               "kind": "method",
+              "name": "captureCommandDeparture",
+              "return": {
+                "type": {
+                  "text": "CommandDeparture"
+                }
+              }
+            },
+            {
+              "kind": "method",
               "name": "legacyRender",
               "return": {
                 "type": {
@@ -12201,6 +13515,15 @@
             "module": "src/components/forma-studio-alternatives.ts"
           },
           "members": [
+            {
+              "kind": "method",
+              "name": "captureCommandDeparture",
+              "return": {
+                "type": {
+                  "text": "CommandDeparture"
+                }
+              }
+            },
             {
               "kind": "method",
               "name": "legacyRender",
@@ -12309,6 +13632,17 @@
             "name": "FormaElement",
             "module": "src/components/forma-element.ts"
           },
+          "members": [
+            {
+              "kind": "method",
+              "name": "captureCommandDeparture",
+              "return": {
+                "type": {
+                  "text": "CommandDeparture"
+                }
+              }
+            }
+          ],
           "demos": [
             {
               "url": "/knowledge/design-system#forma-workspace-settings"
@@ -12364,13 +13698,111 @@
           "members": [
             {
               "kind": "method",
-              "name": "openContextComposer",
+              "name": "adoptedCallback",
               "return": {
                 "type": {
                   "text": "void"
                 }
+              }
+            },
+            {
+              "kind": "method",
+              "name": "captureCommandDeparture",
+              "return": {
+                "type": {
+                  "text": "CommandDeparture"
+                }
+              }
+            },
+            {
+              "kind": "method",
+              "name": "openContextComposer",
+              "parameters": [
+                {
+                  "name": "options",
+                  "type": {
+                    "text": "{ current: (stage: CreativePreparationStage) => boolean; focus?: OutputNavigationFocusLease; } | undefined"
+                  }
+                }
+              ],
+              "return": {
+                "type": {
+                  "text": "void | Promise<boolean>"
+                }
               },
               "description": "Shared entry point: choosing a command never creates placeholder content."
+            },
+            {
+              "kind": "method",
+              "name": "openCreativeNextAction",
+              "parameters": [
+                {
+                  "name": "action",
+                  "type": {
+                    "text": "CreativeNextAction"
+                  }
+                },
+                {
+                  "name": "options",
+                  "type": {
+                    "text": "{ current: (stage: CreativePreparationStage) => boolean; focus?: OutputNavigationFocusLease; }"
+                  }
+                }
+              ],
+              "return": {
+                "type": {
+                  "text": "Promise<boolean>"
+                }
+              },
+              "description": "Same existing local executor. Cross-surface routing remains the stateless opening helper's job."
+            },
+            {
+              "kind": "method",
+              "name": "openOutputPreparation",
+              "parameters": [
+                {
+                  "name": "target",
+                  "type": {
+                    "text": "import(\"./src/model/workspace-intelligence\").CreativeActionScope & { kind: \"configure\"; medium: CreativeMedium | null; sourceRevision: string; }"
+                  }
+                },
+                {
+                  "name": "options",
+                  "type": {
+                    "text": "{ current: (stage: CreativePreparationStage) => boolean; focus?: OutputNavigationFocusLease; }"
+                  }
+                }
+              ],
+              "return": {
+                "type": {
+                  "text": "Promise<boolean>"
+                }
+              },
+              "description": "Existing preparation entry, with caller ownership retained through its native opening."
+            },
+            {
+              "kind": "method",
+              "name": "revealOutputNavigation",
+              "parameters": [
+                {
+                  "name": "documentId",
+                  "type": {
+                    "text": "string"
+                  }
+                },
+                {
+                  "name": "current",
+                  "type": {
+                    "text": "() => boolean"
+                  }
+                }
+              ],
+              "return": {
+                "type": {
+                  "text": "boolean"
+                }
+              },
+              "description": "Panel-only navigation. The existing Output controller still owns exact focus and all decisions."
             }
           ],
           "x-forma": {
@@ -12401,6 +13833,66 @@
     },
     {
       "kind": "javascript-module",
+      "path": "src/components/generated-image-editor.ts",
+      "declarations": [
+        {
+          "kind": "class",
+          "name": "GeneratedImageEditor",
+          "tagName": "forma-generated-image-editor",
+          "customElement": true,
+          "summary": "Generated image editor application interface.",
+          "description": "Application-connected generated image editor interface. Inspect its actual attributes, JavaScript properties, and events before composing it.",
+          "superclass": {
+            "name": "FormaElement",
+            "module": "src/components/forma-element.ts"
+          },
+          "members": [
+            {
+              "kind": "field",
+              "name": "opening",
+              "type": {
+                "text": "Readonly<{ token: object; ownerId: string; projectId: string; documentId: string; outputId: string; current(): boolean; read(): Promise<GeneratedImageEditSnapshot | null>; capture(sourceId: string): Promise<CurrentGeneratedImageEdit | null>; adopt(): Promise<boolean>; save(request: GeneratedImageEditRequest, privatePNG: Uint8Array): Promise<GeneratedImageEditAcknowledgment>; check(operationSHA: string): Promise<GeneratedImageEditAcknowledgment>; }> | null"
+              },
+              "default": "null"
+            }
+          ],
+          "events": [
+            {
+              "name": "generated-image-editor-close",
+              "type": {
+                "text": "CustomEvent<{ opening: Readonly<{ token: object; ownerId: string; projectId: string; documentId: string; outputId: string; current(): boolean; read(): Promise<GeneratedImageEditSnapshot | null>; capture(sourceId: string): Promise<CurrentGeneratedImageEdit | null>; adopt(): Promise<boolean>; save(request: GeneratedImageEditRequest, privatePNG: Uint8Array): Promise<GeneratedImageEditAcknowledgment>; check(operationSHA: string): Promise<GeneratedImageEditAcknowledgment>; }>; reason: \"cancel\" | \"done\"; } | { opening: Readonly<{ token: object; ownerId: string; projectId: string; documentId: string; outputId: string; current(): boolean; read(): Promise<GeneratedImageEditSnapshot | null>; capture(sourceId: string): Promise<CurrentGeneratedImageEdit | null>; adopt(): Promise<boolean>; save(request: GeneratedImageEditRequest, privatePNG: Uint8Array): Promise<GeneratedImageEditAcknowledgment>; check(operationSHA: string): Promise<GeneratedImageEditAcknowledgment>; }>; reason: string; }>"
+              },
+              "description": "Bubbles and crosses component boundaries."
+            }
+          ],
+          "x-forma": {
+            "category": "application",
+            "renderRoot": "light",
+            "stateful": true
+          }
+        }
+      ],
+      "exports": [
+        {
+          "kind": "custom-element-definition",
+          "name": "forma-generated-image-editor",
+          "declaration": {
+            "name": "GeneratedImageEditor",
+            "module": "src/components/generated-image-editor.ts"
+          }
+        },
+        {
+          "kind": "js",
+          "name": "GeneratedImageEditor",
+          "declaration": {
+            "name": "GeneratedImageEditor",
+            "module": "src/components/generated-image-editor.ts"
+          }
+        }
+      ]
+    },
+    {
+      "kind": "javascript-module",
       "path": "src/components/generation-actions.ts",
       "declarations": [
         {
@@ -12424,6 +13916,47 @@
               "default": "false",
               "attribute": "compact",
               "description": "Whether the compact presentation is requested."
+            },
+            {
+              "kind": "field",
+              "name": "nativeImageAvailable",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false"
+            },
+            {
+              "kind": "field",
+              "name": "onNativeImage",
+              "type": {
+                "text": "((actions: GenerationActions) => void) | null"
+              },
+              "default": "null"
+            },
+            {
+              "kind": "field",
+              "name": "onNativeImageDisconnect",
+              "type": {
+                "text": "((actions: GenerationActions) => void) | null"
+              },
+              "default": "null"
+            },
+            {
+              "kind": "method",
+              "name": "openConfiguration",
+              "parameters": [
+                {
+                  "name": "required",
+                  "type": {
+                    "text": "(stage: CreativePreparationStage) => boolean"
+                  }
+                }
+              ],
+              "return": {
+                "type": {
+                  "text": "Promise<boolean>"
+                }
+              }
             },
             {
               "kind": "field",
@@ -12532,6 +14065,14 @@
               },
               "default": "false",
               "attribute": "open"
+            },
+            {
+              "kind": "field",
+              "name": "openingCurrent",
+              "type": {
+                "text": "(() => boolean) | null"
+              },
+              "default": "null"
             }
           ],
           "attributes": [
@@ -12604,6 +14145,15 @@
               "default": "null"
             },
             {
+              "kind": "method",
+              "name": "captureCommandDeparture",
+              "return": {
+                "type": {
+                  "text": "CommandDeparture"
+                }
+              }
+            },
+            {
               "kind": "field",
               "name": "compact",
               "type": {
@@ -12612,6 +14162,13 @@
               "default": "false",
               "attribute": "compact",
               "description": "Whether the compact presentation is requested."
+            },
+            {
+              "kind": "field",
+              "name": "localWorkBlocked",
+              "type": {
+                "text": "boolean"
+              }
             },
             {
               "kind": "field",
@@ -12683,6 +14240,60 @@
             "name": "FormaElement",
             "module": "src/components/forma-element.ts"
           },
+          "members": [
+            {
+              "kind": "method",
+              "name": "allowsNavigationPresentation",
+              "parameters": [
+                {
+                  "name": "context",
+                  "type": {
+                    "text": "NavigationPresentationContext | undefined"
+                  }
+                }
+              ],
+              "return": {
+                "type": {
+                  "text": "boolean"
+                }
+              }
+            },
+            {
+              "kind": "field",
+              "name": "blockId",
+              "type": {
+                "text": "string | null | undefined"
+              },
+              "default": "undefined",
+              "description": "Pin a retained form to its original decision; undefined uses the current route."
+            },
+            {
+              "kind": "field",
+              "name": "navigationBlocked",
+              "type": {
+                "text": "boolean"
+              }
+            },
+            {
+              "kind": "method",
+              "name": "suspendControls",
+              "return": {
+                "type": {
+                  "text": "void"
+                }
+              },
+              "description": "Suspend owned modal layers while retaining native fields and child editors."
+            }
+          ],
+          "events": [
+            {
+              "name": "library-use-copy",
+              "type": {
+                "text": "CustomEvent<{ blockId: string; }>"
+              },
+              "description": "Bubbles and crosses component boundaries."
+            }
+          ],
           "x-forma": {
             "category": "application",
             "renderRoot": "light",
@@ -12711,6 +14322,580 @@
     },
     {
       "kind": "javascript-module",
+      "path": "src/components/model3d-geometry-editor.ts",
+      "declarations": [
+        {
+          "kind": "class",
+          "name": "Model3dGeometryEditor",
+          "tagName": "forma-model3d-geometry-editor",
+          "customElement": true,
+          "summary": "Model3d geometry editor application interface.",
+          "description": "Application-connected model3d geometry editor interface. Inspect its actual attributes, JavaScript properties, and events before composing it.",
+          "superclass": {
+            "name": "FormaElement",
+            "module": "src/components/forma-element.ts"
+          },
+          "members": [
+            {
+              "kind": "field",
+              "name": "blockId",
+              "type": {
+                "text": "string"
+              },
+              "default": "\"\""
+            },
+            {
+              "kind": "field",
+              "name": "busy",
+              "type": {
+                "text": "boolean"
+              },
+              "description": "Whether an action is currently in progress."
+            },
+            {
+              "kind": "field",
+              "name": "guard",
+              "type": {
+                "text": "() => boolean"
+              },
+              "default": "() => true"
+            },
+            {
+              "kind": "field",
+              "name": "navigationBlocked",
+              "type": {
+                "text": "boolean"
+              }
+            },
+            {
+              "kind": "field",
+              "name": "readOnly",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "attribute": "readonly",
+              "description": "Whether the native control can be read but not edited."
+            }
+          ],
+          "attributes": [
+            {
+              "name": "readonly",
+              "fieldName": "readOnly",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "description": "Whether the native control can be read but not edited."
+            }
+          ],
+          "events": [
+            {
+              "name": "model3d-geometry-saved",
+              "type": {
+                "text": "CustomEvent<{ blockId: string; }>"
+              },
+              "description": "Bubbles and crosses component boundaries."
+            },
+            {
+              "name": "model3d-geometry-state",
+              "type": {
+                "text": "CustomEvent<null>"
+              },
+              "description": "Bubbles and crosses component boundaries."
+            }
+          ],
+          "x-forma": {
+            "category": "application",
+            "renderRoot": "light",
+            "stateful": true
+          }
+        }
+      ],
+      "exports": [
+        {
+          "kind": "custom-element-definition",
+          "name": "forma-model3d-geometry-editor",
+          "declaration": {
+            "name": "Model3dGeometryEditor",
+            "module": "src/components/model3d-geometry-editor.ts"
+          }
+        },
+        {
+          "kind": "js",
+          "name": "Model3dGeometryEditor",
+          "declaration": {
+            "name": "Model3dGeometryEditor",
+            "module": "src/components/model3d-geometry-editor.ts"
+          }
+        }
+      ]
+    },
+    {
+      "kind": "javascript-module",
+      "path": "src/components/model3d-settings-editor.ts",
+      "declarations": [
+        {
+          "kind": "class",
+          "name": "Model3dSettingsEditor",
+          "tagName": "forma-model3d-settings-editor",
+          "customElement": true,
+          "summary": "Model3d settings editor application interface.",
+          "description": "Exact provider settings; the owning generation form manages references and submission.",
+          "superclass": {
+            "name": "FormaElement",
+            "module": "src/components/forma-element.ts"
+          },
+          "members": [
+            {
+              "kind": "field",
+              "name": "adaptation",
+              "type": {
+                "text": "Model3dDocumentAdaptation | null"
+              },
+              "default": "null"
+            },
+            {
+              "kind": "field",
+              "name": "blockLabels",
+              "type": {
+                "text": "Record<string, string>"
+              },
+              "default": "{}"
+            },
+            {
+              "kind": "field",
+              "name": "disabled",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "attribute": "disabled",
+              "description": "Whether user interaction is disabled."
+            },
+            {
+              "kind": "field",
+              "name": "prompt",
+              "type": {
+                "text": "string"
+              },
+              "default": "\"\"",
+              "attribute": "prompt"
+            },
+            {
+              "kind": "field",
+              "name": "promptSource",
+              "type": {
+                "text": "\"document\" | \"exact\""
+              },
+              "default": "\"exact\"",
+              "attribute": "prompt-source"
+            },
+            {
+              "kind": "field",
+              "name": "referenceCount",
+              "type": {
+                "text": "number"
+              },
+              "default": "0",
+              "attribute": "reference-count"
+            },
+            {
+              "kind": "field",
+              "name": "settings",
+              "type": {
+                "text": "Model3dSettings"
+              },
+              "default": "normalizeModel3dSettings()"
+            }
+          ],
+          "attributes": [
+            {
+              "name": "disabled",
+              "fieldName": "disabled",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "description": "Whether user interaction is disabled."
+            },
+            {
+              "name": "prompt",
+              "fieldName": "prompt",
+              "type": {
+                "text": "string"
+              },
+              "default": "\"\""
+            },
+            {
+              "name": "prompt-source",
+              "fieldName": "promptSource",
+              "type": {
+                "text": "\"document\" | \"exact\""
+              },
+              "default": "\"exact\""
+            },
+            {
+              "name": "reference-count",
+              "fieldName": "referenceCount",
+              "type": {
+                "text": "number"
+              },
+              "default": "0"
+            }
+          ],
+          "events": [
+            {
+              "name": "model3d-settings-change",
+              "type": {
+                "text": "CustomEvent<Model3dSettingsChange>"
+              },
+              "description": "Bubbles and crosses component boundaries."
+            }
+          ],
+          "x-forma": {
+            "category": "application",
+            "renderRoot": "light",
+            "stateful": true
+          }
+        }
+      ],
+      "exports": [
+        {
+          "kind": "custom-element-definition",
+          "name": "forma-model3d-settings-editor",
+          "declaration": {
+            "name": "Model3dSettingsEditor",
+            "module": "src/components/model3d-settings-editor.ts"
+          }
+        },
+        {
+          "kind": "js",
+          "name": "Model3dSettingsEditor",
+          "declaration": {
+            "name": "Model3dSettingsEditor",
+            "module": "src/components/model3d-settings-editor.ts"
+          }
+        }
+      ]
+    },
+    {
+      "kind": "javascript-module",
+      "path": "src/components/model3d-viewer.ts",
+      "declarations": [
+        {
+          "kind": "class",
+          "name": "FormaModel3dViewer",
+          "tagName": "forma-model3d-viewer",
+          "customElement": true,
+          "summary": "Model3d viewer application interface.",
+          "description": "Local orbit/capture control. Its parent owns media permission and durable saves.",
+          "superclass": {
+            "name": "FormaPresentationalElement",
+            "module": "src/components/presentational-element.ts"
+          },
+          "members": [
+            {
+              "kind": "field",
+              "name": "disabled",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "attribute": "disabled",
+              "description": "Whether user interaction is disabled."
+            },
+            {
+              "kind": "field",
+              "name": "expectedSha256",
+              "type": {
+                "text": "string"
+              }
+            },
+            {
+              "kind": "field",
+              "name": "label",
+              "type": {
+                "text": "string"
+              },
+              "default": "\"\"",
+              "attribute": "label",
+              "description": "Author-supplied, localized visible label or accessible action name."
+            },
+            {
+              "kind": "field",
+              "name": "readonly",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "attribute": "readonly",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "src",
+              "type": {
+                "text": "string"
+              },
+              "attribute": "src"
+            },
+            {
+              "kind": "field",
+              "name": "view",
+              "type": {
+                "text": "Model3dView | null"
+              },
+              "default": "null"
+            }
+          ],
+          "attributes": [
+            {
+              "name": "disabled",
+              "fieldName": "disabled",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "description": "Whether user interaction is disabled."
+            },
+            {
+              "name": "label",
+              "fieldName": "label",
+              "type": {
+                "text": "string"
+              },
+              "default": "\"\"",
+              "description": "Author-supplied, localized visible label or accessible action name."
+            },
+            {
+              "name": "readonly",
+              "fieldName": "readonly",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false"
+            },
+            {
+              "name": "src",
+              "fieldName": "src",
+              "type": {
+                "text": "string"
+              }
+            }
+          ],
+          "events": [
+            {
+              "name": "model3d-capture",
+              "type": {
+                "text": "CustomEvent<{ blob: Blob; view: Model3dView; src: string; }>"
+              },
+              "description": "Bubbles and crosses component boundaries."
+            }
+          ],
+          "x-forma": {
+            "category": "application",
+            "renderRoot": "light",
+            "stateful": false
+          }
+        }
+      ],
+      "exports": [
+        {
+          "kind": "custom-element-definition",
+          "name": "forma-model3d-viewer",
+          "declaration": {
+            "name": "FormaModel3dViewer",
+            "module": "src/components/model3d-viewer.ts"
+          }
+        },
+        {
+          "kind": "js",
+          "name": "FormaModel3dViewer",
+          "declaration": {
+            "name": "FormaModel3dViewer",
+            "module": "src/components/model3d-viewer.ts"
+          }
+        }
+      ]
+    },
+    {
+      "kind": "javascript-module",
+      "path": "src/components/native-retained-audio.ts",
+      "declarations": [
+        {
+          "kind": "class",
+          "name": "NativeRetainedAudio",
+          "tagName": "forma-native-retained-audio",
+          "customElement": true,
+          "summary": "Native retained audio application interface.",
+          "description": "Store-independent native retained audio interface. Inspect its actual attributes, JavaScript properties, and events before composing it.",
+          "superclass": {
+            "name": "FormaPresentationalElement",
+            "module": "src/components/presentational-element.ts"
+          },
+          "members": [
+            {
+              "kind": "field",
+              "name": "locale",
+              "type": {
+                "text": "AudioLocale | null"
+              },
+              "default": "null"
+            },
+            {
+              "kind": "field",
+              "name": "result",
+              "type": {
+                "text": "(Readonly<{ schemaVersion: 1; kind: \"native-retained-output\"; selection: import(\"./src/model/retained-short-story\").RetainedStorySelection; title: string; expiresAt: string; }> & Readonly<{ output: \"audio\"; content: import(\"./src/model/native-retained-audio\").NativeRetainedAudioContent; }>) | null"
+              }
+            }
+          ],
+          "x-forma": {
+            "category": "application",
+            "renderRoot": "light",
+            "stateful": false
+          }
+        }
+      ],
+      "exports": [
+        {
+          "kind": "custom-element-definition",
+          "name": "forma-native-retained-audio",
+          "declaration": {
+            "name": "NativeRetainedAudio",
+            "module": "src/components/native-retained-audio.ts"
+          }
+        },
+        {
+          "kind": "js",
+          "name": "NativeRetainedAudio",
+          "declaration": {
+            "name": "NativeRetainedAudio",
+            "module": "src/components/native-retained-audio.ts"
+          }
+        }
+      ]
+    },
+    {
+      "kind": "javascript-module",
+      "path": "src/components/native-retained-model3d.ts",
+      "declarations": [
+        {
+          "kind": "class",
+          "name": "NativeRetainedModel3d",
+          "tagName": "forma-native-retained-model3d",
+          "customElement": true,
+          "summary": "Native retained model3d application interface.",
+          "description": "Store-independent native retained model3d interface. Inspect its actual attributes, JavaScript properties, and events before composing it.",
+          "superclass": {
+            "name": "FormaPresentationalElement",
+            "module": "src/components/presentational-element.ts"
+          },
+          "members": [
+            {
+              "kind": "field",
+              "name": "locale",
+              "type": {
+                "text": "Model3dLocale | null"
+              },
+              "default": "null"
+            },
+            {
+              "kind": "field",
+              "name": "result",
+              "type": {
+                "text": "(Readonly<{ schemaVersion: 1; kind: \"native-retained-output\"; selection: import(\"./src/model/retained-short-story\").RetainedStorySelection; title: string; expiresAt: string; }> & Readonly<{ output: \"model3d\"; content: import(\"./src/model/native-retained-model3d\").NativeRetainedModel3dContent; }>) | null"
+              }
+            }
+          ],
+          "x-forma": {
+            "category": "application",
+            "renderRoot": "light",
+            "stateful": false
+          }
+        }
+      ],
+      "exports": [
+        {
+          "kind": "custom-element-definition",
+          "name": "forma-native-retained-model3d",
+          "declaration": {
+            "name": "NativeRetainedModel3d",
+            "module": "src/components/native-retained-model3d.ts"
+          }
+        },
+        {
+          "kind": "js",
+          "name": "NativeRetainedModel3d",
+          "declaration": {
+            "name": "NativeRetainedModel3d",
+            "module": "src/components/native-retained-model3d.ts"
+          }
+        }
+      ]
+    },
+    {
+      "kind": "javascript-module",
+      "path": "src/components/native-retained-storyboard.ts",
+      "declarations": [
+        {
+          "kind": "class",
+          "name": "NativeRetainedStoryboard",
+          "tagName": "forma-native-retained-storyboard",
+          "customElement": true,
+          "summary": "Native retained storyboard application interface.",
+          "description": "Store-independent native retained storyboard interface. Inspect its actual attributes, JavaScript properties, and events before composing it.",
+          "superclass": {
+            "name": "FormaPresentationalElement",
+            "module": "src/components/presentational-element.ts"
+          },
+          "members": [
+            {
+              "kind": "field",
+              "name": "locale",
+              "type": {
+                "text": "StoryboardLocale | null"
+              },
+              "default": "null"
+            },
+            {
+              "kind": "field",
+              "name": "result",
+              "type": {
+                "text": "(Readonly<{ schemaVersion: 1; kind: \"native-retained-output\"; selection: import(\"./src/model/retained-short-story\").RetainedStorySelection; title: string; expiresAt: string; }> & Readonly<{ output: \"storyboard\"; content: Readonly<{ frames: readonly NativeRetainedStoryboardFrame[]; }>; }>) | null"
+              },
+              "default": "null"
+            }
+          ],
+          "x-forma": {
+            "category": "application",
+            "renderRoot": "light",
+            "stateful": false
+          }
+        }
+      ],
+      "exports": [
+        {
+          "kind": "custom-element-definition",
+          "name": "forma-native-retained-storyboard",
+          "declaration": {
+            "name": "NativeRetainedStoryboard",
+            "module": "src/components/native-retained-storyboard.ts"
+          }
+        },
+        {
+          "kind": "js",
+          "name": "NativeRetainedStoryboard",
+          "declaration": {
+            "name": "NativeRetainedStoryboard",
+            "module": "src/components/native-retained-storyboard.ts"
+          }
+        }
+      ]
+    },
+    {
+      "kind": "javascript-module",
       "path": "src/components/output-card.ts",
       "declarations": [
         {
@@ -12725,6 +14910,15 @@
             "module": "src/components/forma-element.ts"
           },
           "members": [
+            {
+              "kind": "method",
+              "name": "captureCommandDeparture",
+              "return": {
+                "type": {
+                  "text": "CommandDeparture"
+                }
+              }
+            },
             {
               "kind": "field",
               "name": "output",
@@ -12809,6 +15003,14 @@
               }
             },
             {
+              "kind": "field",
+              "name": "localWorkBlocked",
+              "type": {
+                "text": "boolean"
+              },
+              "description": "Existing local work only; no permission, receipt or navigation authority."
+            },
+            {
               "kind": "method",
               "name": "reset",
               "return": {
@@ -12816,6 +15018,14 @@
                   "text": "void"
                 }
               }
+            },
+            {
+              "kind": "field",
+              "name": "shortcutHelp",
+              "type": {
+                "text": "string"
+              },
+              "default": "\"\""
             },
             {
               "kind": "field",
@@ -12955,11 +15165,17 @@
                   "type": {
                     "text": "HTMLElement | undefined"
                   }
+                },
+                {
+                  "name": "options",
+                  "type": {
+                    "text": "{ current?: () => boolean; }"
+                  }
                 }
               ],
               "return": {
                 "type": {
-                  "text": "void"
+                  "text": "boolean"
                 }
               }
             },
@@ -13030,7 +15246,7 @@
             {
               "name": "forma-fan-image-navigated",
               "type": {
-                "text": "CustomEvent<{ comparisonId: string; promptFanId: string | null; objectId: string; previousObjectId: string; direction: string; navigationMethod: \"keyboard\" | \"button\"; index: number; count: number; }>"
+                "text": "CustomEvent<{ comparisonId: string; promptFanId: string | null; objectId: string; previousObjectId: string; direction: string; navigationMethod: \"button\" | \"keyboard\"; index: number; count: number; }>"
               },
               "description": "Bubbles and crosses component boundaries."
             }
@@ -13512,6 +15728,18 @@
             "name": "FormaElement",
             "module": "src/components/forma-element.ts"
           },
+          "members": [
+            {
+              "kind": "method",
+              "name": "willUpdate",
+              "return": {
+                "type": {
+                  "text": "void"
+                }
+              },
+              "description": "Close the rail popover when its navigation scope or panel mode changes."
+            }
+          ],
           "events": [
             {
               "name": "edit-project",
@@ -13710,6 +15938,220 @@
           "declaration": {
             "name": "PromptFanVisual",
             "module": "src/components/prompt-fan-visual.ts"
+          }
+        }
+      ]
+    },
+    {
+      "kind": "javascript-module",
+      "path": "src/components/reference-composition-editor.ts",
+      "declarations": [
+        {
+          "kind": "class",
+          "name": "ReferenceCompositionEditor",
+          "tagName": "forma-reference-composition-editor",
+          "customElement": true,
+          "summary": "Reference composition editor application interface.",
+          "description": "Reopens a retained scene without replacing its block identity or losing source provenance.",
+          "superclass": {
+            "name": "FormaElement",
+            "module": "src/components/forma-element.ts"
+          },
+          "members": [
+            {
+              "kind": "field",
+              "name": "block",
+              "type": {
+                "text": "CreativeBlock | null"
+              },
+              "default": "null"
+            },
+            {
+              "kind": "field",
+              "name": "readOnly",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "attribute": "readonly",
+              "description": "Whether the native control can be read but not edited."
+            },
+            {
+              "kind": "field",
+              "name": "surface",
+              "type": {
+                "text": "string"
+              },
+              "default": "\"document\"",
+              "attribute": "surface"
+            }
+          ],
+          "attributes": [
+            {
+              "name": "readonly",
+              "fieldName": "readOnly",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "description": "Whether the native control can be read but not edited."
+            },
+            {
+              "name": "surface",
+              "fieldName": "surface",
+              "type": {
+                "text": "string"
+              },
+              "default": "\"document\""
+            }
+          ],
+          "x-forma": {
+            "category": "application",
+            "renderRoot": "light",
+            "stateful": true
+          }
+        }
+      ],
+      "exports": [
+        {
+          "kind": "custom-element-definition",
+          "name": "forma-reference-composition-editor",
+          "declaration": {
+            "name": "ReferenceCompositionEditor",
+            "module": "src/components/reference-composition-editor.ts"
+          }
+        },
+        {
+          "kind": "js",
+          "name": "ReferenceCompositionEditor",
+          "declaration": {
+            "name": "ReferenceCompositionEditor",
+            "module": "src/components/reference-composition-editor.ts"
+          }
+        }
+      ]
+    },
+    {
+      "kind": "javascript-module",
+      "path": "src/components/reference-compositor.ts",
+      "declarations": [
+        {
+          "kind": "class",
+          "name": "ReferenceCompositor",
+          "tagName": "forma-reference-compositor",
+          "customElement": true,
+          "summary": "Reference compositor application interface.",
+          "description": "Store-independent reference compositor interface. Inspect its actual attributes, JavaScript properties, and events before composing it.",
+          "superclass": {
+            "name": "FormaPresentationalElement",
+            "module": "src/components/presentational-element.ts"
+          },
+          "members": [
+            {
+              "kind": "method",
+              "name": "closeForOwner",
+              "return": {
+                "type": {
+                  "text": "void"
+                }
+              }
+            },
+            {
+              "kind": "field",
+              "name": "disabled",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "attribute": "disabled",
+              "description": "Whether user interaction is disabled."
+            },
+            {
+              "kind": "field",
+              "name": "label",
+              "type": {
+                "text": "string"
+              },
+              "default": "\"\"",
+              "attribute": "label",
+              "description": "Author-supplied, localized visible label or accessible action name."
+            },
+            {
+              "kind": "field",
+              "name": "recipe",
+              "type": {
+                "text": "ReferenceCompositionRecipe | null"
+              },
+              "default": "null"
+            },
+            {
+              "kind": "field",
+              "name": "sources",
+              "type": {
+                "text": "readonly ReferenceCompositionSource[]"
+              },
+              "default": "[]"
+            },
+            {
+              "kind": "field",
+              "name": "usageHint",
+              "type": {
+                "text": "string"
+              },
+              "default": "\"\""
+            }
+          ],
+          "attributes": [
+            {
+              "name": "disabled",
+              "fieldName": "disabled",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "description": "Whether user interaction is disabled."
+            },
+            {
+              "name": "label",
+              "fieldName": "label",
+              "type": {
+                "text": "string"
+              },
+              "default": "\"\"",
+              "description": "Author-supplied, localized visible label or accessible action name."
+            }
+          ],
+          "events": [
+            {
+              "name": "composition-capture",
+              "type": {
+                "text": "CustomEvent<{ blob: Blob; recipe: ReferenceCompositionRecipe; label: string; }>"
+              },
+              "description": "Bubbles and crosses component boundaries."
+            }
+          ],
+          "x-forma": {
+            "category": "application",
+            "renderRoot": "light",
+            "stateful": false
+          }
+        }
+      ],
+      "exports": [
+        {
+          "kind": "custom-element-definition",
+          "name": "forma-reference-compositor",
+          "declaration": {
+            "name": "ReferenceCompositor",
+            "module": "src/components/reference-compositor.ts"
+          }
+        },
+        {
+          "kind": "js",
+          "name": "ReferenceCompositor",
+          "declaration": {
+            "name": "ReferenceCompositor",
+            "module": "src/components/reference-compositor.ts"
           }
         }
       ]
@@ -14009,6 +16451,15 @@
               "attribute": "mediaurl"
             },
             {
+              "kind": "method",
+              "name": "openControls",
+              "return": {
+                "type": {
+                  "text": "void"
+                }
+              }
+            },
+            {
               "kind": "field",
               "name": "referenceBlockId",
               "type": {
@@ -14025,6 +16476,16 @@
               },
               "default": "\"\"",
               "attribute": "referenceid"
+            },
+            {
+              "kind": "method",
+              "name": "suspendControls",
+              "return": {
+                "type": {
+                  "text": "void"
+                }
+              },
+              "description": "Retain sampled colors while leaving the native top layer."
             }
           ],
           "attributes": [
@@ -14124,6 +16585,26 @@
             },
             {
               "kind": "field",
+              "name": "disabled",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "attribute": "disabled",
+              "description": "Whether user interaction is disabled."
+            },
+            {
+              "kind": "field",
+              "name": "readOnly",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "attribute": "readonly",
+              "description": "Whether the native control can be read but not edited."
+            },
+            {
+              "kind": "field",
               "name": "surface",
               "type": {
                 "text": "string"
@@ -14141,6 +16622,24 @@
               },
               "default": "false",
               "description": "Whether the compact presentation is requested."
+            },
+            {
+              "name": "disabled",
+              "fieldName": "disabled",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "description": "Whether user interaction is disabled."
+            },
+            {
+              "name": "readonly",
+              "fieldName": "readOnly",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "description": "Whether the native control can be read but not edited."
             },
             {
               "name": "surface",
@@ -14199,6 +16698,16 @@
               "type": {
                 "text": "CreativeBlock"
               }
+            },
+            {
+              "kind": "method",
+              "name": "suspendControls",
+              "return": {
+                "type": {
+                  "text": "void"
+                }
+              },
+              "description": "Keep uncommitted scope geometry while the containing controls are detached."
             }
           ],
           "x-forma": {
@@ -14453,6 +16962,93 @@
           "declaration": {
             "name": "VideoReferencePreflight",
             "module": "src/components/video-reference-preflight.ts"
+          }
+        }
+      ]
+    },
+    {
+      "kind": "javascript-module",
+      "path": "src/components/video-trim-editor.ts",
+      "declarations": [
+        {
+          "kind": "class",
+          "name": "VideoTrimEditor",
+          "tagName": "forma-video-trim-editor",
+          "customElement": true,
+          "summary": "Video trim editor application interface.",
+          "description": "The host owns private access and Save. This quiet leaf selects an exact\nencoded sample boundary without loading, decoding or playing media.",
+          "superclass": {
+            "name": "FormaPresentationalElement",
+            "module": "src/components/presentational-element.ts"
+          },
+          "members": [
+            {
+              "kind": "field",
+              "name": "disabled",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "attribute": "disabled",
+              "description": "Whether user interaction is disabled."
+            },
+            {
+              "kind": "field",
+              "name": "selection",
+              "type": {
+                "text": "Readonly<{ info: VideoPrefixInfo; startSample: 0; endSample: number; }> | null"
+              }
+            }
+          ],
+          "attributes": [
+            {
+              "name": "disabled",
+              "fieldName": "disabled",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "description": "Whether user interaction is disabled."
+            }
+          ],
+          "events": [
+            {
+              "name": "video-trim-change",
+              "type": {
+                "text": "CustomEvent<{ startSample: number; endSample: number; }>"
+              },
+              "description": "Bubbles and crosses component boundaries."
+            },
+            {
+              "name": "video-trim-invalid",
+              "type": {
+                "text": "CustomEvent<null>"
+              },
+              "description": "Bubbles and crosses component boundaries."
+            }
+          ],
+          "x-forma": {
+            "category": "application",
+            "renderRoot": "light",
+            "stateful": false
+          }
+        }
+      ],
+      "exports": [
+        {
+          "kind": "custom-element-definition",
+          "name": "forma-video-trim-editor",
+          "declaration": {
+            "name": "VideoTrimEditor",
+            "module": "src/components/video-trim-editor.ts"
+          }
+        },
+        {
+          "kind": "js",
+          "name": "VideoTrimEditor",
+          "declaration": {
+            "name": "VideoTrimEditor",
+            "module": "src/components/video-trim-editor.ts"
           }
         }
       ]

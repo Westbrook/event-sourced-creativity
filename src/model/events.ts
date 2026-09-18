@@ -1,6 +1,11 @@
+import {measureRetainedState,RETAINED_STATE_LIMITS} from './retained-state.ts';
+import { projectGeneratedImageEdit, type GeneratedImageOutputEdit } from "./generated-image-revision.ts";
+import { audioMetadataAfterSourceEdit } from "./audio.ts";
 import { normalizeImageFocalPoint, type ImageFocalPoint } from "./focal-point.ts";
 import { normalizePromptTechnique, PROMPT_TECHNIQUES, type PromptTechnique } from "./prompt-structures.ts";
-import { isDocumentArtifactKind, normalizeSlidePresentation, normalizeSlideVisual, type DocumentArtifact } from "./document-artifacts.ts";
+import { isDocumentArtifactKind, normalizeSlidePresentation, normalizeSlideVisual, parseAudioMediaRevision, parseVideoMediaRevision, videoArtifactMediaItem, type DocumentArtifact } from "./document-artifacts.ts";
+import { model3dCurrentProjectionFile, model3dRevisionFile, parseModel3dCurrentProjection, parseModel3dMediaRevision } from "./model3d-media-revision.ts";
+import { projectNativeRetainedModel3d, selectRetainedModel3dEditFile } from "./native-retained-model3d.ts";
 
 export type EventActor = "user" | `worker:${string}` | `model:${string}`;
 
@@ -89,6 +94,7 @@ export type CreativeDocument = {
 };
 
 export type CreativeOutput = {
+  imageRevision?: GeneratedImageOutputEdit;
   id: string;
   documentId: string;
   title?: string;
@@ -222,6 +228,14 @@ const itemId = (value: unknown) => {
 };
 
 export function foldEvents(events: CreativeEvent[], asOf = Number.POSITIVE_INFINITY, selectedDocumentId = "", selectedProjectId = ""): CreativeProjection {
+  const fold = createCreativeEventFold(asOf, selectedDocumentId, selectedProjectId);
+  for (const event of events) if (!fold.accept(event)) break;
+  return fold.finish();
+}
+
+/** Consume complete ordered history without retaining the event array. Selection
+ * and membership cleanup run once, after the terminal source page is verified. */
+export function createCreativeEventFold(asOf = Number.POSITIVE_INFINITY, selectedDocumentId = "", selectedProjectId = "") {
   const projects = new Map<string, Omit<CreativeProject, "documentCount" | "collectionCount" | "blockCount" | "outputCount" | "artifactCount" | "recentGenerations" | "recentArtifacts">>();
   const blocks = new Map<string, CreativeBlock>();
   const blockRelations = new Map<string, CreativeBlockRelation>();
@@ -230,6 +244,12 @@ export function foldEvents(events: CreativeEvent[], asOf = Number.POSITIVE_INFIN
   const membership: Record<string, { collectionId: string; position: string }> = {};
   const outputs = new Map<string, CreativeOutput>();
   const artifacts = new Map<string, DocumentArtifact>();
+  const originalAudio = new Map<string, Pick<DocumentArtifact, "mediaUrl" | "mediaType" | "settings">>();
+  const originalVideo = new Map<string, Pick<DocumentArtifact, "mediaUrl" | "mediaType" | "settings" | "items">>();
+  const videoEditCounts = new Map<string, number>();
+  const originalModel3d = new Map<string, Pick<DocumentArtifact, "mediaUrl" | "mediaType" | "settings">>();
+  const model3dEditCounts = new Map<string, number>();
+  const revisedModel3d = new Set<string>();
   const generationCanvas = new Map<string,{canvasId:string;contextSetId:string}>();
   const documentCompiles = new Map<string, Record<string, unknown>>();
   const previewOutputByEvent = new Map<string, string>();
@@ -257,8 +277,10 @@ export function foldEvents(events: CreativeEvent[], asOf = Number.POSITIVE_INFIN
   const scopedFamily = (id: string, payload: Record<string, unknown>, objectId = "") =>
     families.get(scopedFamilyKey(id, familyProjectId(payload, objectId)));
 
-  for (const event of events) {
-    if (event.sequence > asOf) break;
+  let ended = false, finished = false;
+  const accept = (event: CreativeEvent): boolean => {
+    if (finished) throw new Error("creative_fold_already_finished");
+    if (ended || event.sequence > asOf) { ended = true; return false; }
     const p = event.payload;
     switch (event.type) {
       case "ProjectCreated": {
@@ -302,7 +324,7 @@ export function foldEvents(events: CreativeEvent[], asOf = Number.POSITIVE_INFIN
         const b = blocks.get(String(p.block_id)); const path = String(p.property_path ?? "");
         if (b && path === "position") b.position = String(p.new_value ?? b.position);
         else if (b && path === "type") b.type = String(p.new_value ?? b.type);
-        else if (b && path) b.properties[path] = p.new_value;
+        else if (b && path) { b.properties = audioMetadataAfterSourceEdit(b.type, b.properties, path, p.new_value); b.properties[path] = p.new_value; }
         if (b) b.sourceEvents.push(event.eventId);
         break;
       }
@@ -320,7 +342,7 @@ export function foldEvents(events: CreativeEvent[], asOf = Number.POSITIVE_INFIN
         break;
       }
       case "BlockRelationRemoved": { const relation=blockRelations.get(String(p.relation_id??""));if(relation){relation.removed=true;relation.sourceEvents.push(event.eventId);if(relation.kind==="context_contains"||relation.kind==="action_participant"){blocks.get(relation.fromBlockId)?.sourceEvents.push(event.eventId);blocks.get(relation.toBlockId)?.sourceEvents.push(event.eventId);}}break; }
-      case "ChipEdited": { const b = blocks.get(String(p.block_id)); if (b) { b.properties[String(p.property ?? "value")] = p.new_value; b.properties.authority = event.compensatesEventId ? "inferred" : "authored"; b.sourceEvents.push(event.eventId); } break; }
+      case "ChipEdited": { const b = blocks.get(String(p.block_id)); if (b) { b.properties = audioMetadataAfterSourceEdit(b.type, b.properties, String(p.property ?? "value"), p.new_value); b.properties[String(p.property ?? "value")] = p.new_value; b.properties.authority = event.compensatesEventId ? "inferred" : "authored"; b.sourceEvents.push(event.eventId); } break; }
       case "ExtractionRequested": { const b = blocks.get(String(p.block_id)); if (b) { b.properties.extraction_status = "pending"; b.sourceEvents.push(event.eventId); } break; }
       case "ExtractionCompleted": {
         const b = blocks.get(String(p.block_id)); const chips = Array.isArray(p.chips) ? p.chips : [];
@@ -351,6 +373,20 @@ export function foldEvents(events: CreativeEvent[], asOf = Number.POSITIVE_INFIN
         ids.forEach((value) => { const id = String(value); const promotedFromEventId=p.reference_preview_event_id?String(p.reference_preview_event_id):null;const receipt=generationCanvas.get(String(p.generation_id??""));const generatedTitle=String(p.title??asRecord(p.output_brief).title??"").trim(); outputs.set(id, { id, documentId: String(p.document_id ?? state.documentId),...(generatedTitle?{title:generatedTitle,titleSource:"generated" as const}:{}),createdAt:event.occurredAt, canvasId:p.canvas_id?String(p.canvas_id):receipt?.canvasId??null,contextSetId:p.context_set_id?String(p.context_set_id):receipt?.contextSetId??null,generationId: String(p.generation_id ?? ""), modelId: String(p.model_id ?? "adapter-neutral"), variant: Number(p.variant ?? outputs.size % 4), latency: Number(p.latency_ms ?? 0), sequence: event.sequence, pinned: false, saved: false, discarded: false, library: false, contentRef: p.output_ref ? String(p.output_ref) : null, promptRef:p.prompt_ref?String(p.prompt_ref):null,promptTechnique:normalizePromptTechnique(p.prompt_technique),promptFanId:p.prompt_fan_id?String(p.prompt_fan_id):null, provider: String(p.provider ?? (p.simulation ? "simulation" : "unknown")), mediaUrl: p.media_url ? String(p.media_url) : null, mediaType: p.media_type ? String(p.media_type) : null, width: p.image_width ? Number(p.image_width) : null, height: p.image_height ? Number(p.image_height) : null, plannerModelId: p.planner_model_id ? String(p.planner_model_id) : null, quality:p.quality==="low"?"low":p.quality==="medium"?"medium":"high",purpose:p.purpose==="ideate"?"ideate":"final",sourceEventId:event.eventId,sourceSurface:p.source_surface?String(p.source_surface):null,promotionId:p.promotion_id?String(p.promotion_id):null,promotedFromId:p.promoted_from_object_id?String(p.promoted_from_object_id):promotedFromEventId?previewOutputByEvent.get(promotedFromEventId)??null:null,promotedFromEventId,focalPoint:normalizeImageFocalPoint(p.focal_point),standalone:!p.prompt_fan_id,standaloneSequence:p.prompt_fan_id?null:event.sequence,...(p.production_mode==="managed"?{productionMode:"managed" as const,productionTeam:p.production_team?String(p.production_team):null}:{}) }); });
         break;
       }
+      case "GeneratedImageEdited": {
+        // A server-only event overlays current pixels, preserving the immutable
+        // producer identity. A contradictory targeted edit cannot leave the old
+        // image looking like the newly edited current result.
+        const ids=new Set([p.output_id,p.object_id].filter((id):id is string=>typeof id==="string"&&Boolean(id)));
+        for(const id of ids){
+          const output=outputs.get(id);if(!output)continue;
+          const ownerId=event.streamId.startsWith("creative:")?event.streamId.slice("creative:".length):"";
+          const projectId=documents.get(output.documentId)?.projectId??"";
+          const edited=projectGeneratedImageEdit(output,event,{ownerId,projectId});
+          outputs.set(id,edited??{...output,mediaUrl:null,mediaType:null,width:null,height:null,focalPoint:null});
+        }
+        break;
+      }
       case "DocumentRenderCompleted": {
         const kind = p.artifact_kind;
         if (!isDocumentArtifactKind(kind)) break;
@@ -365,6 +401,113 @@ export function foldEvents(events: CreativeEvent[], asOf = Number.POSITIVE_INFIN
           provider: String(p.provider ?? "openai"), modelId: String(p.model_id ?? "adapter-neutral"), latency: Number(p.latency_ms ?? 0), sequence: event.sequence, library: false,
           sourceEventId: event.eventId, sourceSurface: p.source_surface ? String(p.source_surface) : null, settings: asRecord(p.settings), presentation:normalizeSlidePresentation(p.presentation),
         });
+        if (kind === "audio") { const audio = artifacts.get(id)!; originalAudio.set(id, { mediaUrl: audio.mediaUrl, mediaType: audio.mediaType, settings: { ...audio.settings } }); }
+        if (kind === "video") { const video = artifacts.get(id)!; originalVideo.set(id, { mediaUrl: video.mediaUrl, mediaType: video.mediaType, settings: { ...video.settings }, items: video.items.map(item => ({ ...item })) }); videoEditCounts.set(id, 0); }
+        if (kind === "model3d") { const model = artifacts.get(id)!; originalModel3d.set(id, { mediaUrl: model.mediaUrl, mediaType: model.mediaType, settings: { ...model.settings } }); model3dEditCounts.set(id, 0); revisedModel3d.delete(id); }
+        break;
+      }
+      case "DocumentArtifactEdited": {
+        const artifact = artifacts.get(String(p.artifact_id ?? ""));
+        if (artifact?.kind === "model3d") {
+          const count = (model3dEditCounts.get(artifact.id) ?? 0) + 1; model3dEditCounts.set(artifact.id, count);
+          if (Object.hasOwn(p, "model3d_current_projection")) {
+            const projection = parseModel3dCurrentProjection(p.model3d_current_projection), file = model3dCurrentProjectionFile(projection);
+            // The server owns project-access authorization and creates this
+            // marker after validating the private revision and current resource.
+            const identity = /^project:.+$/u.test(event.streamId) && typeof p.project_id === "string" && p.project_id.length > 0
+              && p.artifact_id === artifact.id && p.artifact_kind === "model3d" && p.document_id === artifact.documentId
+              && artifact.contentRef !== null && p.content_ref === artifact.contentRef && p.project_id === documents.get(artifact.documentId)?.projectId
+              && Number.isSafeInteger(count) && p.revision === count && artifact.itemCount === 0 && artifact.items.length === 0
+              && !Object.hasOwn(p, "audio_revision") && !Object.hasOwn(p, "video_revision");
+            if (identity && projection && file && projection.revision === count && projection.contentSha256 === p.content_sha256) {
+              artifact.mediaUrl = file.url; artifact.mediaType = file.mimeType;
+              artifact.settings = { ...artifact.settings, model3d_files: [file], source_media_sha256: file.sha256 };
+              revisedModel3d.add(artifact.id);
+            } else {
+              artifact.mediaUrl = null; artifact.mediaType = null;
+              artifact.settings = { ...artifact.settings, model3d_files: [], source_media_sha256: null };
+            }
+            break;
+          }
+          // Legacy prose-only edits retain original files. A derivative requires its
+          // propagated binding on every later edit; omission cannot witness it.
+          if (!Object.hasOwn(p, "model3d_revision") && !Object.hasOwn(p, "audio_revision") && !Object.hasOwn(p, "video_revision")
+            && p.source_surface !== "document-artifact-model3d-scale" && !revisedModel3d.has(artifact.id)) break;
+          const original = originalModel3d.get(artifact.id);
+          const originals = original && projectNativeRetainedModel3d({ artifact_kind: "model3d", settings: original.settings });
+          const source = originals ? selectRetainedModel3dEditFile(originals.files, original?.mediaUrl) : null;
+          const revised = parseModel3dMediaRevision(p.model3d_revision), file = model3dRevisionFile(revised);
+          const identity = p.artifact_id === artifact.id && p.artifact_kind === "model3d" && p.document_id === artifact.documentId
+            && artifact.contentRef !== null && p.content_ref === artifact.contentRef && p.project_id === documents.get(artifact.documentId)?.projectId
+            && Number.isSafeInteger(count) && p.revision === count && artifact.itemCount === 0 && artifact.items.length === 0
+            && !Object.hasOwn(p, "audio_revision") && !Object.hasOwn(p, "video_revision");
+          if (identity && original && source && revised && file && revised.source.revision < count
+            && (revised.source.revision !== 0 || revised.source.url === source.url
+              && revised.source.sha256 === source.sha256 && revised.source.byteLength === source.fileSize)) {
+            artifact.mediaUrl = revised.media.url; artifact.mediaType = revised.media.mediaType;
+            artifact.settings = { ...artifact.settings, model3d_files: [file], source_media_sha256: revised.media.sha256 };
+            revisedModel3d.add(artifact.id);
+          } else if (identity && original && source && p.model3d_revision === null && p.revision_action === "restore"
+            && p.source_surface === "document-artifact-history" && Number.isSafeInteger(p.restored_from_revision)
+            && Number(p.restored_from_revision) >= 0 && Number(p.restored_from_revision) < count) {
+            artifact.mediaUrl = original.mediaUrl; artifact.mediaType = original.mediaType; artifact.settings = { ...original.settings };
+            revisedModel3d.delete(artifact.id);
+          } else {
+            // A malformed or unwitnessed binding never falls back to the original inventory.
+            artifact.mediaUrl = null; artifact.mediaType = null;
+            artifact.settings = { ...artifact.settings, model3d_files: [], source_media_sha256: null };
+          }
+          break;
+        }
+        if (artifact?.kind === "video") {
+          const count = (videoEditCounts.get(artifact.id) ?? 0) + 1; videoEditCounts.set(artifact.id, count);
+          if (!Object.hasOwn(p, "video_revision") && !Object.hasOwn(p, "audio_revision") && p.source_surface !== "document-artifact-video-trim") break;
+          const original = originalVideo.get(artifact.id), item = original && videoArtifactMediaItem({ ...artifact, ...original });
+          const revised = parseVideoMediaRevision(p.video_revision);
+          const identity = p.artifact_kind === "video" && p.document_id === artifact.documentId && p.content_ref === artifact.contentRef
+            && p.project_id === documents.get(artifact.documentId)?.projectId && p.revision === count && !Object.hasOwn(p, "audio_revision");
+          if (identity && original && item && revised && revised.source.itemId === item.id && revised.source.revision < count
+            && (revised.source.revision !== 0 || revised.source.url === original.mediaUrl
+              && (!Object.hasOwn(original.settings, "source_media_sha256") || original.settings.source_media_sha256 === revised.source.sha256))) {
+            artifact.mediaUrl = revised.media.url; artifact.mediaType = revised.media.mediaType;
+            artifact.items = artifact.items.map(candidate => candidate.id === item.id ? { ...candidate, mediaUrl: revised.media.url,
+              mediaType: revised.media.mediaType, durationSeconds: revised.durationSeconds, width: revised.width, height: revised.height } : candidate);
+            artifact.settings = { ...artifact.settings, source_media_sha256: revised.media.sha256, duration_seconds: revised.durationSeconds, video_seconds: revised.durationSeconds,
+              estimated_duration_seconds: null, duration_basis: "media-container", duration_media_url: revised.media.url, duration_media_sha256: revised.media.sha256 };
+          } else if (identity && original && item && p.video_revision === null && p.revision_action === "restore"
+            && p.source_surface === "document-artifact-history" && Number.isSafeInteger(p.restored_from_revision)
+            && Number(p.restored_from_revision) >= 0 && Number(p.restored_from_revision) < count) {
+            artifact.mediaUrl = original.mediaUrl; artifact.mediaType = original.mediaType; artifact.settings = { ...original.settings };
+            artifact.items = original.items.map(candidate => ({ ...candidate }));
+          } else {
+            artifact.mediaUrl = null; artifact.mediaType = null;
+            artifact.items = artifact.items.map(candidate => candidate.mediaUrl !== null || candidate.mediaType !== null
+              ? { ...candidate, mediaUrl: null, mediaType: null, durationSeconds: null, width: null, height: null } : candidate);
+            artifact.settings = { ...artifact.settings, source_media_sha256: null, duration_seconds: null, video_seconds: null,
+              estimated_duration_seconds: null, duration_media_url: null, duration_media_sha256: null };
+          }
+          break;
+        }
+        if (!artifact || artifact.kind !== "audio" || !Object.hasOwn(p, "audio_revision")
+          || p.document_id !== artifact.documentId || p.content_ref !== artifact.contentRef
+          || p.project_id !== documents.get(artifact.documentId)?.projectId) break;
+        const revised = parseAudioMediaRevision(p.audio_revision);
+        if (revised && Number.isSafeInteger(p.revision) && revised.source.revision < Number(p.revision)) {
+          artifact.mediaUrl = revised.media.url; artifact.mediaType = revised.media.mediaType;
+          artifact.settings = { ...artifact.settings, source_media_sha256: revised.media.sha256,
+            duration_seconds: revised.durationSeconds, estimated_duration_seconds: null, duration_basis: "media-container",
+            duration_media_url: revised.media.url, duration_media_sha256: revised.media.sha256 };
+        } else if (p.audio_revision === null && p.revision_action === "restore" && p.source_surface === "document-artifact-history"
+          && Number.isSafeInteger(p.restored_from_revision) && Number(p.restored_from_revision) >= 0
+          && Number(p.restored_from_revision) < Number(p.revision) && originalAudio.has(artifact.id)) {
+          const original = originalAudio.get(artifact.id)!;
+          artifact.mediaUrl = original.mediaUrl; artifact.mediaType = original.mediaType; artifact.settings = { ...original.settings };
+        } else {
+          // A malformed edited binding is unavailable; never relabel the original file as this revision.
+          artifact.mediaUrl = null; artifact.mediaType = null;
+          artifact.settings = { ...artifact.settings, source_media_sha256: null, duration_seconds: null,
+            estimated_duration_seconds: null, duration_media_url: null, duration_media_sha256: null };
+        }
         break;
       }
       case "OutputRenamed": {
@@ -379,7 +522,7 @@ export function foldEvents(events: CreativeEvent[], asOf = Number.POSITIVE_INFIN
       }
       case "ImageFocalPointCalculated": {
         const focalPoint=normalizeImageFocalPoint(p.focal_point);if(!focalPoint)break;
-        if(p.target_kind==="generation"){const output=outputs.get(String(p.target_id??""));if(output){output.focalPoint=focalPoint;}}
+        if(p.target_kind==="generation"){const output=outputs.get(String(p.target_id??""));if(output&&!output.imageRevision){output.focalPoint=focalPoint;}}
         else if(p.target_kind==="artifact"){for(const artifact of artifacts.values()){const item=artifact.items.find((candidate)=>candidate.id===String(p.target_id??""));if(item){item.focalPoint=focalPoint;break;}}}
         else {const block=blocks.get(String(p.block_id??p.target_id??""));if(block){block.properties.focal_point=focalPoint;block.sourceEvents.push(event.eventId);}}
         break;
@@ -424,7 +567,12 @@ export function foldEvents(events: CreativeEvent[], asOf = Number.POSITIVE_INFIN
       case "ConditionSet": conditions.set(String(p.condition_id), { ...p, fired: false }); break;
       case "ConditionFired": { const c = conditions.get(String(p.condition_id)); if (c) c.fired = true; break; }
     }
-  }
+    return true;
+  };
+  const finish = (selection?:{documentId:string;projectId?:string}): CreativeProjection => {
+  if (finished) throw new Error("creative_fold_already_finished");
+  if(selection){selectedDocumentId=selection.documentId;selectedProjectId=selection.projectId??"";}
+  finished = true;
   const requestedDocument=selectedDocumentId?documents.get(selectedDocumentId):undefined;
   if(requestedDocument&&!requestedDocument.removed&&requestedDocument.projectId!==state.projectId){const requestedProject=projects.get(requestedDocument.projectId);state.projectId=requestedDocument.projectId;if(requestedProject){state.projectName=requestedProject.name;state.projectState=requestedProject.state;}}
   if(selectedProjectId&&selectedProjectId!==state.projectId){const requestedProject=projects.get(selectedProjectId);if(requestedProject){state.projectId=requestedProject.id;state.projectName=requestedProject.name;state.projectState=requestedProject.state;}}
@@ -468,6 +616,11 @@ export function foldEvents(events: CreativeEvent[], asOf = Number.POSITIVE_INFIN
   state.projects=[...projects.values()].map((project)=>{const projectDocuments=[...documents.values()].filter((document)=>document.projectId===project.id&&!document.removed);const documentIds=new Set(projectDocuments.map((document)=>document.id));const projectOutputs=[...outputs.values()].filter((output)=>documentIds.has(output.documentId)&&!output.discarded);const projectArtifacts=[...artifacts.values()].filter((artifact)=>documentIds.has(artifact.documentId)).sort((left,right)=>right.sequence-left.sequence);const history=generationHistoryItems(projectOutputs);return{...project,documentCount:projectDocuments.length,collectionCount:[...collections.values()].filter((collection)=>collection.projectId===project.id&&!collection.removed).length,blockCount:[...blocks.values()].filter((block)=>block.projectId===project.id&&!block.removed&&(block.scope==="library"||block.scope==="canvas"||documentIds.has(block.documentId))).length,outputCount:history.length+projectArtifacts.length,artifactCount:projectArtifacts.length,recentGenerations:history.slice(0,2),recentArtifacts:projectArtifacts.slice(0,2)};}).sort((a,b)=>a.id===state.projectId?-1:b.id===state.projectId?1:b.lastSequence-a.lastSequence);
   if(!state.projects.length&&state.projectId){const history=generationHistoryItems(state.libraryOutputs);state.projects=[{id:state.projectId,name:state.projectName,state:state.projectState,createdSequence:0,lastSequence:0,documentCount:state.documents.length,collectionCount:state.collections.length,blockCount:state.libraryBlocks.length,outputCount:history.length+state.libraryArtifacts.length,artifactCount:state.libraryArtifacts.length,recentGenerations:history.slice(0,2),recentArtifacts:state.libraryArtifacts.slice(0,2)}];}
   return state;
+  };
+  const retainedState=()=>[projects,blocks,blockRelations,documents,collections,membership,outputs,artifacts,
+    originalAudio,originalVideo,videoEditCounts,originalModel3d,model3dEditCounts,revisedModel3d,generationCanvas,
+    documentCompiles,previewOutputByEvent,annotations,families,preferences,conditions,state];
+  return { accept, finish, measureRetainedState:(limits=RETAINED_STATE_LIMITS)=>measureRetainedState(retainedState(),limits) };
 }
 
 export const shortEventType = (type: string) => type.replace(/([a-z])([A-Z])/g, "$1 $2");

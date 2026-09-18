@@ -1,4 +1,6 @@
-import { html } from "lit";
+import { html, nothing } from "lit";
+import { cache } from "lit/directives/cache.js";
+import { localizeTemplateResult } from "./design-system/localized-template";
 import { FormaElement, icon } from "./forma-element";
 import { ensureModalDialog } from "./modal-dialog";
 import { focalPointCss } from "../model/focal-point";
@@ -20,7 +22,12 @@ export class ReferencePalettePicker extends FormaElement {
   referenceBlockId = ""; referenceId = ""; mediaUrl = ""; label = "Reference"; colors: string[] = [];focalPoint:unknown=null;
   #strategy: PaletteStrategy = "extracted"; #sampled: string[] = []; #sampleCursor = 0; #lastSample = "";
 
-  protected override firstUpdated() { ensureModalDialog(this.querySelector<HTMLDialogElement>(".palette-picker")); }
+  #suspended = false;
+  /** Retain sampled colors while leaving the native top layer. */
+  suspendControls() { this.#suspended = true; this.querySelector<HTMLDialogElement>(".palette-picker")?.close(); this.requestUpdate(); }
+  openControls() { if (!this.isConnected) return; this.#suspended = false; this.requestUpdate(); void this.updateComplete.then(() => { if (this.isConnected && !this.#suspended) ensureModalDialog(this.querySelector<HTMLDialogElement>(".palette-picker")); }); }
+  override disconnectedCallback() { this.suspendControls(); super.disconnectedCallback(); }
+  protected override firstUpdated() { if (!this.#suspended) this.openControls(); }
 
   #base() { return this.colors.length ? this.colors.slice(0,6) : ["#24242b","#7f716b","#c79670","#e7d5b9"]; }
   #palette(strategy = this.#strategy) {
@@ -52,14 +59,15 @@ export class ReferencePalettePicker extends FormaElement {
   }
   #close() { this.querySelector<HTMLDialogElement>(".palette-picker")?.close(); this.dispatchEvent(new Event("picker-close",{bubbles:true,composed:true})); }
 
-  override render() {
+  #dialog() {
     const strategies: Array<[PaletteStrategy,string,string]> = [["extracted","Extracted","Deterministic colors from this image"],["muted","Muted","Lower contrast, quieter relationships"],["warm","Warm shift","A warmer interpretation of the source"],["nocturne","Nocturne","Deeper values for low-light work"]];
     const nextSample = this.#sampleCursor % Math.max(1,this.#palette("sampled").length);
-    return html`<dialog class="modal palette-picker" closedby="any" aria-modal="true" aria-labelledby="palette-picker-title" @click=${(event:MouseEvent)=>{if(event.target===event.currentTarget)this.#close();}} @cancel=${(event:Event)=>{event.preventDefault();this.#close();}} @close=${()=>this.dispatchEvent(new Event("picker-close",{bubbles:true,composed:true}))}><div class="modal-card wide"><button class="icon-button modal-close" aria-label="Close palette picker" @click=${this.#close}>${icon("close")}</button><span class="eyebrow">Reference-derived palette</span><h2 id="palette-picker-title">Adopt colors from ${this.label}</h2><p>The reference stays unchanged. Choosing a palette creates a separate authored palette block with a citation back to this image.</p>
+    return html`<dialog class="modal palette-picker" closedby="any" aria-modal="true" aria-labelledby="palette-picker-title" @click=${(event:MouseEvent)=>{if(event.target===event.currentTarget)this.#close();}} @cancel=${(event:Event)=>{event.preventDefault();this.#close();}} @close=${()=>{if(!this.#suspended)this.dispatchEvent(new Event("picker-close",{bubbles:true,composed:true}));}}><div class="modal-card wide"><button class="icon-button modal-close" aria-label="Close palette picker" @click=${this.#close}>${icon("close")}</button><span class="eyebrow">Reference-derived palette</span><h2 id="palette-picker-title">Adopt colors from ${this.label}</h2><p>The reference stays unchanged. Choosing a palette creates a separate authored palette block with a citation back to this image.</p>
       <div class="palette-picker-grid"><div class="palette-source"><div class="palette-source-frame"><img src=${this.mediaUrl} alt=${this.label} style=${focalPointCss(this.focalPoint)} @load=${(event:Event)=>positionImageAtFocalPoint(event.currentTarget as HTMLImageElement,this.focalPoint)} @click=${this.#sampleImage}><span>Click image → set swatch ${nextSample+1}</span></div><small>${this.#lastSample?`${this.#lastSample} `:""}The next click replaces swatch ${nextSample+1}; samples can only be taken from this image.</small></div><div class="palette-options">${strategies.map(([key,title,description])=>html`<button aria-pressed=${this.#strategy===key} @click=${()=>this.#choose(key)}><span class="palette-strip">${this.#palette(key).map(color=>html`<i style=${`--swatch:${color}`}></i>`)}</span><b>${this.i18n.system(title)}</b><small>${this.i18n.system(description)}</small></button>`)}<button aria-pressed=${this.#strategy==="sampled"} @click=${()=>this.#choose("sampled")}><span class="palette-strip">${this.#palette("sampled").map((color,index)=>html`<i class=${this.#strategy==="sampled"&&index===nextSample?"sample-target":""} style=${`--swatch:${color}`}></i>`)}</span><b>Your samples</b><small>Click the image to replace the highlighted swatch.</small></button></div></div>
       ${this.#strategy==="sampled"?html`<div class="sampled-swatches" aria-label=${this.i18n.system("Image samples. Next image click will replace swatch {value}.", { value: this.i18n.number(nextSample+1) })}>${this.#palette("sampled").map((color,index)=>html`<div class=${index===nextSample?"next":""}><span style=${`--swatch:${color}`}></span><small>${index===nextSample?this.i18n.system("Next · {color}", { color: color }):color}</small></div>`)}</div>`:""}
       <footer class="palette-picker-actions"><button class="button ghost" @click=${this.#close}>Cancel</button><button class="button primary" @click=${this.#adopt}>Adopt ${this.#strategy} palette</button></footer></div></dialog>`;
   }
+  override render() { return cache(this.#suspended ? nothing : localizeTemplateResult(this.#dialog(), this.i18n)); }
 }
 
 if (!customElements.get("forma-reference-palette-picker")) customElements.define("forma-reference-palette-picker", ReferencePalettePicker);

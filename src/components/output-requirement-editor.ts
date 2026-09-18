@@ -79,6 +79,7 @@ export function outputMediaQuantityUnit(kind: OutputMediaKind): OutputQuantityUn
   if (kind === "video") return "video";
   if (kind === "image") return "image";
   if (kind === "document") return "document";
+  if (kind === "model3d") return "model";
   return "member";
 }
 

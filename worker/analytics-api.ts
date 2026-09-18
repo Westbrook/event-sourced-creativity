@@ -1,5 +1,7 @@
 import { buildAnalyticsReport, type AnalyticsStream } from "../src/model/analytics.ts";
 import { LIVE_REPLAY_PRICING_VERSION } from "./replay-cost.ts";
+import { prepareOutcomeTelemetryLiveEvidence } from "./outcome-telemetry.ts";
+import { outputHistoryReceiptMetadata } from "../src/model/outcome-telemetry.ts";
 import { requireUser } from "./pilot-policy.ts";
 import { ensureSchema, PHANTOM_ATTENTION_EVENT_SQL, serializeEvent, type WorkerEnv, type WorkerExecutionContext } from "./runtime.ts";
 
@@ -11,9 +13,9 @@ const MAX_DURABLE_ANALYTICS_BYTES=1_500_000;
 const DURABLE_ANALYTICS_REFRESH_EVENTS=256;
 const allowedRanges=new Set([7,30,90,365]);
 const analyticsPayload="CASE WHEN type='ContextCompiled' THEN json_remove(payload,'$.compiled_snapshot') WHEN type='CanvasRegisterSet' THEN json_remove(payload,'$.operation','$.selected_item_ids','$.previous_frame','$.next_frame','$.normalization_delta') WHEN type='DocumentRenderCompleted' THEN json_remove(payload,'$.reference_inputs') WHEN type='BriefComposed' THEN json_remove(payload,'$.items') ELSE payload END";
-const analyticsColumns=`event_id e,stream_id s,sequence q,occurred_at o,actor a,type t,${analyticsPayload} p`;
+const analyticsColumns=`event_id e,stream_id s,sequence q,occurred_at o,actor a,type t,${analyticsPayload} p,client_id c,correlation_id r`;
 type CachedAnalyticsEvents={head:number;personas:string;streams:Map<string,ReturnType<typeof serializeEvent>[]>;count:number;usedAt:number;durableHead:number};
-type DurableAnalyticsSource={schema:2;owner:string;epoch:string;synthetic:boolean;pricing:string;head:number;personas:string;count:number;payload:string};
+type DurableAnalyticsSource={schema:2;outcomeBindings:2;owner:string;epoch:string;synthetic:boolean;pricing:string;head:number;personas:string;count:number;payload:string};
 const cachedAnalyticsEvents=new WeakMap<D1Database,Map<string,CachedAnalyticsEvents>>();
 
 const SAFE_ANALYTICS_FIELDS=new Set([
@@ -44,6 +46,10 @@ export function projectAnalyticsPayload(type:string,input:Record<string,unknown>
     if(!SAFE_ANALYTICS_FIELDS.has(key)||value!==null&&!["string","number","boolean"].includes(typeof value))continue;
     projected[key]=typeof value==="string"?value.slice(0,160):value;
   }
+  if(type==="ArtifactApproved"||type==="DocumentArtifactExported"){
+    if(typeof input.artifact_revision==="number"&&Number.isSafeInteger(input.artifact_revision)&&input.artifact_revision>=0)projected.artifact_revision=input.artifact_revision;
+    if(typeof input.content_sha256==="string"&&/^[a-f0-9]{64}$/i.test(input.content_sha256))projected.content_sha256=input.content_sha256;
+  }
   if(Array.isArray(input.object_ids))projected.object_ids=input.object_ids.filter((value)=>typeof value==="string").map((value)=>String(value).slice(0,160));
   if(Array.isArray(input.source_block_versions))projected.source_block_versions=input.source_block_versions.map((value)=>value&&typeof value==="object"?{block_id:String((value as Record<string,unknown>).block_id??"").slice(0,160),version:Number((value as Record<string,unknown>).version??0)}:null).filter(Boolean);
   if(Array.isArray(input.probe_results))projected.probe_results=input.probe_results.map((value)=>value&&typeof value==="object"?{id:String((value as Record<string,unknown>).id??"").slice(0,80),status:String((value as Record<string,unknown>).status??"").slice(0,24)}:null).filter(Boolean);
@@ -71,21 +77,30 @@ export function projectAnalyticsPayload(type:string,input:Record<string,unknown>
 }
 
 function analyticsAccounts(database:D1Database){let accounts=cachedAnalyticsEvents.get(database);if(!accounts){accounts=new Map();cachedAnalyticsEvents.set(database,accounts);}return accounts;}
-function analyticsEvent(row:Record<string,unknown>):ReturnType<typeof serializeEvent>{const type=String(row.t);const raw=(typeof row.p==="string"?JSON.parse(row.p):row.p) as Record<string,unknown>;return{eventId:String(row.e),streamId:String(row.s),sequence:Number(row.q),occurredAt:String(row.o),recordedAt:String(row.o),actor:String(row.a),clientId:"",correlationId:"",causationId:null,compensatesEventId:null,schemaVersion:1,type,payload:projectAnalyticsPayload(type,raw)};}
+function analyticsEvent(row:Record<string,unknown>):ReturnType<typeof serializeEvent>{
+  const type=String(row.t),raw=(typeof row.p==="string"?JSON.parse(row.p):row.p) as Record<string,unknown>;
+  const output=outputHistoryReceiptMetadata({type,actor:typeof row.a==="string"?row.a:"",clientId:typeof row.c==="string"?row.c:"",
+    correlationId:typeof row.r==="string"?row.r:"",payload:raw});
+  // Ordinary client/correlation fields can contain arbitrary caller text. They
+  // stay empty unless this is an exact supported server Output receipt.
+  return{eventId:String(row.e),streamId:String(row.s),sequence:Number(row.q),occurredAt:String(row.o),recordedAt:String(row.o),actor:String(row.a),
+    clientId:output?.clientId??"",correlationId:output?.correlationId??"",causationId:null,compensatesEventId:null,schemaVersion:1,type,
+    payload:{...projectAnalyticsPayload(type,raw),...(output?.payload??{})}};
+}
 
 async function restoreAnalyticsSource(value:unknown,now:number,ownerId:string,epoch:string,includeSynthetic:boolean):Promise<CachedAnalyticsEvents|null>{
   if(typeof value!=="string")return null;
   try{
     const source=JSON.parse(value) as Partial<DurableAnalyticsSource>;
-    if(source.schema!==2||source.owner!==ownerId||source.epoch!==epoch||source.synthetic!==includeSynthetic||source.pricing!==LIVE_REPLAY_PRICING_VERSION||!Number.isSafeInteger(source.head)||Number(source.head)<0||typeof source.personas!=="string"||!Number.isSafeInteger(source.count)||Number(source.count)<0||Number(source.count)>MAX_CACHED_ANALYTICS_EVENTS||typeof source.payload!=="string"||source.payload.length>MAX_DURABLE_ANALYTICS_BYTES)return null;
+    if(source.schema!==2||source.outcomeBindings!==2||source.owner!==ownerId||source.epoch!==epoch||source.synthetic!==includeSynthetic||source.pricing!==LIVE_REPLAY_PRICING_VERSION||!Number.isSafeInteger(source.head)||Number(source.head)<0||typeof source.personas!=="string"||!Number.isSafeInteger(source.count)||Number(source.count)<0||Number(source.count)>MAX_CACHED_ANALYTICS_EVENTS||typeof source.payload!=="string"||source.payload.length>MAX_DURABLE_ANALYTICS_BYTES)return null;
     const binary=atob(source.payload),bytes=new Uint8Array(binary.length);for(let index=0;index<binary.length;index+=1)bytes[index]=binary.charCodeAt(index);
     const stream=new Blob([bytes]).stream().pipeThrough(new DecompressionStream("gzip"));
     const rows=JSON.parse(await new Response(stream).text()) as unknown;
     if(!Array.isArray(rows)||rows.length!==source.count)return null;
     const streams=new Map<string,ReturnType<typeof serializeEvent>[]>();
     for(const row of rows){
-      if(!Array.isArray(row)||row.length!==7||typeof row[0]!=="string"||typeof row[1]!=="string"||!Number.isSafeInteger(row[2])||typeof row[3]!=="string"||typeof row[4]!=="string"||typeof row[5]!=="string"||typeof row[6]!=="object"||row[6]===null||Array.isArray(row[6]))return null;
-      const event=analyticsEvent({e:row[0],s:row[1],q:row[2],o:row[3],a:row[4],t:row[5],p:row[6]});
+      if(!Array.isArray(row)||row.length!==9||typeof row[0]!=="string"||typeof row[1]!=="string"||!Number.isSafeInteger(row[2])||typeof row[3]!=="string"||typeof row[4]!=="string"||typeof row[5]!=="string"||typeof row[6]!=="object"||row[6]===null||Array.isArray(row[6])||typeof row[7]!=="string"||typeof row[8]!=="string")return null;
+      const event=analyticsEvent({e:row[0],s:row[1],q:row[2],o:row[3],a:row[4],t:row[5],p:row[6],c:row[7],r:row[8]});
       const bucket=streams.get(event.streamId);if(bucket){if(event.sequence<=(bucket.at(-1)?.sequence??0))return null;bucket.push(event);}else streams.set(event.streamId,[event]);
     }
     return{head:Number(source.head),personas:source.personas,streams,count:rows.length,usedAt:now,durableHead:Number(source.head)};
@@ -93,12 +108,12 @@ async function restoreAnalyticsSource(value:unknown,now:number,ownerId:string,ep
 }
 
 async function persistAnalyticsSource(database:D1Database,contentId:string,ownerId:string,epoch:string,includeSynthetic:boolean,entry:CachedAnalyticsEvents):Promise<boolean>{
-  const rows=[...entry.streams.values()].flatMap((events)=>events.map((event)=>[event.eventId,event.streamId,event.sequence,event.occurredAt,event.actor,event.type,event.payload]));
+  const rows=[...entry.streams.values()].flatMap((events)=>events.map((event)=>[event.eventId,event.streamId,event.sequence,event.occurredAt,event.actor,event.type,event.payload,event.clientId,event.correlationId]));
   const stream=new Blob([JSON.stringify(rows)]).stream().pipeThrough(new CompressionStream("gzip"));
   const bytes=new Uint8Array(await new Response(stream).arrayBuffer());
   let binary="";for(let index=0;index<bytes.length;index+=16_384)binary+=String.fromCharCode(...bytes.subarray(index,index+16_384));
   const payload=btoa(binary);if(payload.length>MAX_DURABLE_ANALYTICS_BYTES)return false;
-  const content=JSON.stringify({schema:2,owner:ownerId,epoch,synthetic:includeSynthetic,pricing:LIVE_REPLAY_PRICING_VERSION,head:entry.head,personas:entry.personas,count:entry.count,payload} satisfies DurableAnalyticsSource);
+  const content=JSON.stringify({schema:2,outcomeBindings:2,owner:ownerId,epoch,synthetic:includeSynthetic,pricing:LIVE_REPLAY_PRICING_VERSION,head:entry.head,personas:entry.personas,count:entry.count,payload} satisfies DurableAnalyticsSource);
   await database.prepare("INSERT INTO external_content(content_id,owner_id,content,created_at) VALUES (?,?,?,?) ON CONFLICT(content_id) DO UPDATE SET content=excluded.content,created_at=excluded.created_at WHERE external_content.owner_id=excluded.owner_id AND CASE WHEN json_valid(external_content.content) THEN COALESCE(CAST(json_extract(external_content.content,'$.head') AS INTEGER),-1)<=CAST(json_extract(excluded.content,'$.head') AS INTEGER) ELSE 1 END").bind(contentId,ownerId,content,new Date().toISOString()).run();
   return true;
 }
@@ -117,31 +132,54 @@ export async function handleAnalytics(request:Request,env:WorkerEnv,context?:Wor
   const usersQuery="SELECT user_id,display_name,(SELECT COALESCE(MAX(rowid),0) FROM events) AS analytics_head,COALESCE((SELECT json_group_array(json_object('projectId',allowed.project_id,'organizationId',allowed.organization_id)) FROM organization_projects allowed WHERE allowed.owner_user_id=users.user_id AND allowed.project_access_id IN(SELECT value FROM json_each(?))),'[]') AS analytics_projects FROM users WHERE user_id=? OR EXISTS(SELECT 1 FROM replay_personas owned_persona WHERE owned_persona.owner_id=? AND owned_persona.fictional_user_id=users.user_id AND owned_persona.status='ready') OR EXISTS(SELECT 1 FROM organization_projects allowed_project WHERE allowed_project.owner_user_id=users.user_id AND allowed_project.project_access_id IN(SELECT value FROM json_each(?))) ORDER BY created_at";
   const personasQuery="SELECT fictional_user_id,fictional_stream_id,display_name FROM replay_personas WHERE owner_id=? AND status='ready' ORDER BY created_at";
   const eventFilter=`${syntheticFilter}NOT (${PHANTOM_ATTENTION_EVENT_SQL}) AND ${authorizedEvent}`;
-  const adaptiveEventQuery=`WITH snapshot(head) AS MATERIALIZED (SELECT CAST(json_extract(content,'$.head') AS INTEGER) FROM external_content WHERE content_id=? AND owner_id=? AND CASE WHEN json_valid(content) THEN json_extract(content,'$.schema')=2 AND json_extract(content,'$.epoch')=? AND json_type(content,'$.head')='integer' ELSE 0 END) SELECT * FROM (SELECT ${analyticsColumns} FROM events WHERE rowid>(SELECT head FROM snapshot) AND ${eventFilter} ORDER BY rowid LIMIT ?) UNION ALL SELECT * FROM (SELECT ${analyticsColumns} FROM events WHERE NOT EXISTS(SELECT 1 FROM snapshot) AND ${eventFilter} ORDER BY stream_id,sequence LIMIT ?)`;
+  const adaptiveEventQuery=`WITH snapshot(head) AS MATERIALIZED (SELECT CAST(json_extract(content,'$.head') AS INTEGER) FROM external_content WHERE content_id=? AND owner_id=? AND CASE WHEN json_valid(content) THEN json_extract(content,'$.schema')=2 AND json_extract(content,'$.outcomeBindings')=2 AND json_extract(content,'$.epoch')=? AND json_type(content,'$.head')='integer' ELSE 0 END) SELECT * FROM (SELECT ${analyticsColumns} FROM events WHERE rowid>(SELECT head FROM snapshot) AND ${eventFilter} ORDER BY rowid LIMIT ?) UNION ALL SELECT * FROM (SELECT ${analyticsColumns} FROM events WHERE NOT EXISTS(SELECT 1 FROM snapshot) AND ${eventFilter} ORDER BY stream_id,sequence LIMIT ?)`;
   const snapshotQuery="SELECT content FROM external_content WHERE content_id=? AND owner_id=?";
-  const dashboardBatch=(cached?:CachedAnalyticsEvents,full=false)=>env.DB.batch<Record<string,unknown>>([
-    env.DB.prepare(usersQuery).bind(projectIds,auth.user!.userId,auth.user!.userId,projectIds),env.DB.prepare(personasQuery).bind(auth.user!.userId),
-    cached?env.DB.prepare(deltaEventQuery).bind(cached.head,...scopeBindings,MAX_ANALYTICS_EVENTS+1):full?env.DB.prepare(fullEventQuery).bind(...scopeBindings,MAX_ANALYTICS_EVENTS+1):env.DB.prepare(adaptiveEventQuery).bind(contentId,auth.user!.userId,epoch,...scopeBindings,MAX_ANALYTICS_EVENTS+1,...scopeBindings,MAX_ANALYTICS_EVENTS+1),
-    ...(!cached&&!full?[env.DB.prepare(snapshotQuery).bind(contentId,auth.user!.userId)]:[]),
-  ]);
-  const databaseStarted=performance.now();const initialRows=await dashboardBatch(previous);let [userRows,personaRows,eventRows]=initialRows;const snapshotRows=initialRows[3];
-  if(!previous&&snapshotRows?.results.length){previous=await restoreAnalyticsSource(snapshotRows.results[0]?.content,now,auth.user.userId,epoch,includeSynthetic)??undefined;durableHit=Boolean(previous);if(!previous)[userRows,personaRows,eventRows]=await dashboardBatch(undefined,true);}
+  const unavailable=()=>Response.json({error:"outcome_telemetry_unavailable"},{status:503,headers:{"cache-control":"private, no-store"}});
+  let liveRead:ReturnType<typeof prepareOutcomeTelemetryLiveEvidence>;
+  try{liveRead=prepareOutcomeTelemetryLiveEvidence(env,auth.user,now);}catch{return unavailable();}
+  if(!liveRead)return Response.json({error:"analytics_access_changed"},{status:403,headers:{"cache-control":"private, no-store"}});
+  const preparedLive=liveRead;let latestLiveRows:D1Result<Record<string,unknown>>[]=[];
+  // One atomic dashboard/live snapshot, followed by a separate current-access proof.
+  const dashboardBatch=async(cached?:CachedAnalyticsEvents,full=false)=>{
+    try{
+      const rows=await env.DB.batch<Record<string,unknown>>([
+        env.DB.prepare(usersQuery).bind(projectIds,auth.user!.userId,auth.user!.userId,projectIds),env.DB.prepare(personasQuery).bind(auth.user!.userId),
+        cached?env.DB.prepare(deltaEventQuery).bind(cached.head,...scopeBindings,MAX_ANALYTICS_EVENTS+1):full?env.DB.prepare(fullEventQuery).bind(...scopeBindings,MAX_ANALYTICS_EVENTS+1):env.DB.prepare(adaptiveEventQuery).bind(contentId,auth.user!.userId,epoch,...scopeBindings,MAX_ANALYTICS_EVENTS+1,...scopeBindings,MAX_ANALYTICS_EVENTS+1),
+        ...(!cached&&!full?[env.DB.prepare(snapshotQuery).bind(contentId,auth.user!.userId)]:[]),
+        ...preparedLive.statements,
+      ]);
+      if(rows.some((row)=>row.success===false))return null;
+      latestLiveRows=rows.slice(-preparedLive.statements.length);
+      return rows;
+    }catch{return null;}
+  };
+  const databaseStarted=performance.now();const initialRows=await dashboardBatch(previous);if(!initialRows)return unavailable();
+  let [userRows,personaRows,eventRows]=initialRows;const snapshotRows=!previous?initialRows[3]:undefined;
+  if(!previous&&snapshotRows?.results.length){
+    previous=await restoreAnalyticsSource(snapshotRows.results[0]?.content,now,auth.user.userId,epoch,includeSynthetic)??undefined;durableHit=Boolean(previous);
+    if(!previous){const fallbackRows=await dashboardBatch(undefined,true);if(!fallbackRows)return unavailable();[userRows,personaRows,eventRows]=fallbackRows;}
+  }
   let head=Number(userRows.results[0]?.analytics_head??0);let personaStreams=JSON.stringify(personaRows.results.map((row)=>String(row.fictional_stream_id)).sort());
   if(previous&&(head<previous.head||!includeSynthetic&&personaStreams!==previous.personas||previous.count+eventRows.results.length>MAX_ANALYTICS_EVENTS)){
-    previous=undefined;durableHit=false;[userRows,personaRows,eventRows]=await dashboardBatch(undefined,true);head=Number(userRows.results[0]?.analytics_head??0);personaStreams=JSON.stringify(personaRows.results.map((row)=>String(row.fictional_stream_id)).sort());
+    previous=undefined;durableHit=false;const fallbackRows=await dashboardBatch(undefined,true);if(!fallbackRows)return unavailable();
+    [userRows,personaRows,eventRows]=fallbackRows;head=Number(userRows.results[0]?.analytics_head??0);personaStreams=JSON.stringify(personaRows.results.map((row)=>String(row.fictional_stream_id)).sort());
   }
   const databaseMs=Math.max(0,performance.now()-databaseStarted);
   const users=new Map(userRows.results.map((row)=>{let projects:Array<{projectId:string;organizationId:string}>=[];try{const value=JSON.parse(String(row.analytics_projects??"[]"));if(Array.isArray(value))projects=value as Array<{projectId:string;organizationId:string}>;}catch{/* Invalid metadata can never grant scope. */}return[String(row.user_id),{name:String(row.display_name),projects}] as const;}));const personas=new Map(personaRows.results.map((row)=>[String(row.fictional_stream_id),{id:String(row.fictional_user_id),name:String(row.display_name)}]));
   const grouped=new Map<string,ReturnType<typeof serializeEvent>[]>(previous?[...previous.streams.entries()].map(([stream,events])=>[stream,[...events]]):[]);
   for(const row of eventRows.results.slice(0,MAX_ANALYTICS_EVENTS)){const event=analyticsEvent(row);const bucket=grouped.get(event.streamId);if(bucket){if(event.sequence>(bucket.at(-1)?.sequence??0))bucket.push(event);}else grouped.set(event.streamId,[event]);}
   const count=[...grouped.values()].reduce((total,events)=>total+events.length,0);
+  const streams:AnalyticsStream[]=[...grouped.entries()].sort(([left],[right])=>left<right?-1:left>right?1:0).map(([streamId,events])=>{const persona=personas.get(streamId);const inferredId=streamId.startsWith("creative:")?streamId.slice("creative:".length):streamId;const user=users.get(inferredId);const entitled=user?.projects.find((project)=>events.some((event)=>String(event.payload.project_id??"")===project.projectId));const organization=entitled?auth.user!.access.organizations.find((candidate)=>candidate.organizationId===entitled.organizationId):undefined;return{streamId,userId:persona?.id??inferredId,userName:persona?.name??user?.name??"Authorized creator",organizationId:organization?.organizationId??`personal:${auth.user!.userId}`,organizationName:organization?.name??"Personal workspace",fictional:Boolean(persona),events};});
+  const metadataStarted=performance.now();const live=await preparedLive.finish(latestLiveRows);
+  if(!live.ok)return Response.json({error:live.code},{status:live.code==="analytics_access_changed"?403:503,headers:{"cache-control":"private, no-store"}});
+  const metadataMs=Math.max(0,performance.now()-metadataStarted);
+  // Never publish or schedule a checkpoint before the final access proof succeeds.
   if(count<=MAX_CACHED_ANALYTICS_EVENTS&&eventRows.results.length<=MAX_ANALYTICS_EVENTS){
     const entry={head,personas:personaStreams,streams:grouped,count,usedAt:now,durableHead:previous?.durableHead??0};const latest=accounts.get(key);
     if(!latest||latest===previous||latest.head<=head)accounts.set(key,entry);
     while(accounts.size>MAX_CACHED_ANALYTICS_ACCOUNTS){const oldest=[...accounts.entries()].sort((left,right)=>left[1].usedAt-right[1].usedAt)[0];if(oldest)accounts.delete(oldest[0]);}
     if(context&&(!entry.durableHead||head-entry.durableHead>=DURABLE_ANALYTICS_REFRESH_EVENTS)){entry.durableHead=head;context.waitUntil(persistAnalyticsSource(env.DB,contentId,auth.user.userId,epoch,includeSynthetic,entry).then((saved)=>{if(!saved)entry.durableHead=0;}).catch(()=>{entry.durableHead=0;}));}
   }else accounts.delete(key);
-  const streams:AnalyticsStream[]=[...grouped.entries()].sort(([left],[right])=>left<right?-1:left>right?1:0).map(([streamId,events])=>{const persona=personas.get(streamId);const inferredId=streamId.startsWith("creative:")?streamId.slice("creative:".length):streamId;const user=users.get(inferredId);const entitled=user?.projects.find((project)=>events.some((event)=>String(event.payload.project_id??"")===project.projectId));const organization=entitled?auth.user!.access.organizations.find((candidate)=>candidate.organizationId===entitled.organizationId):undefined;return{streamId,userId:persona?.id??inferredId,userName:persona?.name??user?.name??"Authorized creator",organizationId:organization?.organizationId??`personal:${auth.user!.userId}`,organizationName:organization?.name??"Personal workspace",fictional:Boolean(persona),events};});
-  const foldStarted=performance.now();const report=buildAnalyticsReport(streams,{rangeDays,includeSynthetic,truncated:eventRows.results.length>MAX_ANALYTICS_EVENTS,pricingVersion:LIVE_REPLAY_PRICING_VERSION});const foldMs=Math.max(0,performance.now()-foldStarted);
-  return Response.json({report},{headers:{"cache-control":"private, no-store","x-forma-analytics-cache":durableHit?"durable":localHit&&previous?"delta":"miss","x-forma-analytics-source-rows":String(eventRows.results.length),"server-timing":`analytics-db;dur=${databaseMs.toFixed(1)}, analytics-fold;dur=${foldMs.toFixed(1)}`}});
+  const foldStarted=performance.now();const report=buildAnalyticsReport(streams,{rangeDays,includeSynthetic,now,truncated:eventRows.results.length>MAX_ANALYTICS_EVENTS,pricingVersion:LIVE_REPLAY_PRICING_VERSION,outcomeLiveEvidence:live.evidence});const foldMs=Math.max(0,performance.now()-foldStarted);
+  return Response.json({report},{headers:{"cache-control":"private, no-store","x-forma-analytics-cache":durableHit?"durable":localHit&&previous?"delta":"miss","x-forma-analytics-source-rows":String(eventRows.results.length),"server-timing":`analytics-db;dur=${(databaseMs+metadataMs).toFixed(1)}, analytics-fold;dur=${foldMs.toFixed(1)}`}});
 }

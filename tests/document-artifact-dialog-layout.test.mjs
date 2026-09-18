@@ -61,7 +61,7 @@ test("storyboard and video choices stay visible, operable, and independently scr
 
   assert.match(component, /<fieldset class="artifact-kind-picker" aria-label="Artifact type">/u);
   assert.match(component, /<input type="radio" name="artifact-kind" value=\$\{kind\} \.checked=/u);
-  assert.match(component, /@change=\$\{\(\)=>\{this\.#selectArtifactKind\(kind\)/u);
+  assert.match(component, /@change=\$\{\(\)=>\{this\.#retireRequestReview\(\);this\.#selectArtifactKind\(kind\)/u);
 
   for (const viewport of [
     { width: 320, height: 568 },

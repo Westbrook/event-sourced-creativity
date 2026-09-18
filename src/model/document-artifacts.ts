@@ -1,10 +1,19 @@
 import { slideCountAccepted, type SlideCountPolicy } from "./presentation-count-policy.ts";
+import { parseAudioLocalConversion, type AudioLocalConversion, type AudioTrimOperationRequest } from "./audio-local-conversion.ts";
 import type { ImageFocalPoint } from "./focal-point.ts";
+import type { CreativeEvent } from "./events.ts";
 import { presentationAudienceText } from "./presentation-delivery.ts";
-import { protectedPresentationScoreContradictions, validatePresentationSourceCoverage, type PresentationSourceContract } from "./presentation-source.ts";
+import { protectedPresentationScoreContradictions, resolvePresentationSourceReferences, validatePresentationSourceCoverage, type PresentationSourceContract } from "./presentation-source.ts";
+import { parseModel3dMediaRevision, type Model3dMediaRevision } from "./model3d-media-revision.ts";
+import { projectNativeRetainedModel3d, selectRetainedModel3dEditFile, type NativeRetainedModel3dFile } from "./native-retained-model3d.ts";
 
-export const DOCUMENT_ARTIFACT_KINDS = ["short_story", "scene", "slides", "storyboard", "video", "audio"] as const;
+export const DOCUMENT_ARTIFACT_KINDS = ["short_story", "scene", "slides", "storyboard", "video", "audio", "model3d"] as const;
 export type DocumentArtifactKind = typeof DOCUMENT_ARTIFACT_KINDS[number];
+
+/** Editable revision, distinct from the immutable generation/creation sequence. */
+export function documentArtifactRevision(events:readonly CreativeEvent[],artifactId:string):number{
+  return events.filter((event)=>event.type==="DocumentArtifactEdited"&&String(event.payload.artifact_id??"")===artifactId).length;
+}
 
 export const SLIDE_LAYOUTS = ["cover", "statement", "split", "columns", "metric", "timeline", "closing", "quote", "scorecard", "comparison", "matrix", "architecture", "personas", "roadmap"] as const;
 export type SlideLayout = typeof SLIDE_LAYOUTS[number];
@@ -139,7 +148,169 @@ export type DocumentArtifactDraft = {
   content_markdown: string;
   presentation: SlidePresentation | null;
   items: DocumentArtifactDraftItem[];
+  audio_revision?: AudioMediaRevision;
+  video_revision?: VideoMediaRevision;
+  model3d_revision?: Model3dMediaRevision;
 };
+
+/** An explicit private GLB descriptor. Multiple variants require the exact
+ * recorded primary URL; a root URL never substitutes for retained metadata. */
+export function model3dArtifactMediaFile(artifact: Pick<DocumentArtifact, "kind" | "settings"> & Partial<Pick<DocumentArtifact, "mediaUrl">>): NativeRetainedModel3dFile | null {
+  if (artifact.kind !== "model3d") return null;
+  const retained = projectNativeRetainedModel3d({ artifact_kind: "model3d", settings: artifact.settings });
+  return retained ? selectRetainedModel3dEditFile(retained.files, artifact.mediaUrl) : null;
+}
+
+/** Immutable authored clip provenance; the enclosing edit event identifies its current revision. */
+export type AudioMediaRevision = {
+  schemaVersion: 1; operation: "trim" | "client-converted-trim";
+  conversion?: AudioLocalConversion;
+  media: { url: string; mediaType: "audio/wav"; sha256: string; byteLength: number };
+  source: { url: string; sha256: string; revision: number; contentSha256: string; frameCount: number };
+  startFrame: number; endFrame: number; sampleRate: number; channels: 1 | 2; bitsPerSample: 16;
+  frameCount: number; durationSeconds: number;
+};
+export type AudioTrimEditRequest = AudioTrimOperationRequest;
+export type AudioTrimEditCode = "saved" | "unchanged" | "source_changed" | "invalid_range" | "unsupported" | "unavailable" | "access_denied" | "unconfirmed" | "retired";
+export type AudioTrimEditResult =
+  | { status: "saved"; code: "saved"; revision: number; contentSha256: string; audioRevision: AudioMediaRevision }
+  | { status: "unchanged"; code: "unchanged" }
+  | { status: "conflict"; code: "source_changed" }
+  | { status: "refused"; code: "invalid_range" | "unsupported" | "unavailable" | "access_denied" }
+  | { status: "unconfirmed"; code: "unconfirmed" }
+  | { status: "retired"; code: "retired" };
+
+/** An immutable encoded-prefix edit; the enclosing event carries the current revision. */
+export type VideoMediaRevision = {
+  schemaVersion: 1; operation: "prefix-trim";
+  media: { url: string; mediaType: "video/mp4"; sha256: string; byteLength: number };
+  source: { url: string; sha256: string; revision: number; contentSha256: string; itemId: string;
+    sampleCount: number; timescale: number; durationTicks: number; width: number; height: number };
+  startSample: 0; endSample: number; sampleCount: number; timescale: number; durationTicks: number;
+  durationSeconds: number; width: number; height: number;
+};
+export type VideoTrimEditRequest = {
+  expectedRevision: number; expectedContentSha256: string;
+  videoTrim: { sourceMediaSha256: string; sourceSampleCount: number; startSample: 0; endSample: number; resultMediaSha256: string };
+};
+export type VideoTrimEditCode = AudioTrimEditCode;
+export type VideoTrimEditResult =
+  | { status: "saved"; code: "saved"; revision: number; contentSha256: string; videoRevision: VideoMediaRevision }
+  | { status: "unchanged"; code: "unchanged" }
+  | { status: "conflict"; code: "source_changed" }
+  | { status: "refused"; code: "invalid_range" | "unsupported" | "unavailable" | "access_denied" }
+  | { status: "unconfirmed"; code: "unconfirmed" }
+  | { status: "retired"; code: "retired" };
+
+function closedVideoRecord(value: unknown, names: readonly string[]): Record<string, unknown> | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const prototype = Object.getPrototypeOf(value), keys = Reflect.ownKeys(value);
+  if (prototype !== Object.prototype && prototype !== null || keys.length !== names.length
+    || keys.some(key => typeof key !== "string" || !names.includes(key))
+    || names.some(key => { const property = Object.getOwnPropertyDescriptor(value, key); return !property?.enumerable || !Object.hasOwn(property, "value"); })) return null;
+  return value as Record<string, unknown>;
+}
+const videoRevisionInteger = (value: unknown, minimum: number, maximum = Number.MAX_SAFE_INTEGER): value is number =>
+  typeof value === "number" && Number.isSafeInteger(value) && value >= minimum && value <= maximum;
+const videoRevisionDigest = (value: unknown): value is string => typeof value === "string" && /^[a-f0-9]{64}$/u.test(value);
+function videoRevisionMediaUrl(value: unknown): value is string {
+  if (typeof value !== "string" || value.length > 2048 || !/^\/api\/media\/(?:[A-Za-z0-9._~!'()*-]|%[A-Fa-f0-9]{2})+$/u.test(value)) return false;
+  try { const segment = value.slice("/api/media/".length), key = decodeURIComponent(segment);
+    return !!key && encodeURIComponent(key) === segment && !/[\p{Cc}\\]/u.test(key) && !key.split("/").some(part => part === "." || part === "..");
+  } catch { return false; }
+}
+/** Returns a canonical closed request so client and Worker fingerprint identical fields/order. */
+export function parseVideoTrimEditRequest(value: unknown): VideoTrimEditRequest | null {
+  try {
+    const row = closedVideoRecord(value, ["expectedRevision", "expectedContentSha256", "videoTrim"]);
+    const trim = row && closedVideoRecord(row.videoTrim, ["sourceMediaSha256", "sourceSampleCount", "startSample", "endSample", "resultMediaSha256"]);
+    if (!row || !trim || !videoRevisionInteger(row.expectedRevision, 0) || !videoRevisionDigest(row.expectedContentSha256)
+      || !videoRevisionDigest(trim.sourceMediaSha256) || !videoRevisionDigest(trim.resultMediaSha256)
+      || !videoRevisionInteger(trim.sourceSampleCount, 1, 100_000) || trim.startSample !== 0
+      || !videoRevisionInteger(trim.endSample, 1, trim.sourceSampleCount)) return null;
+    return { expectedRevision: row.expectedRevision, expectedContentSha256: row.expectedContentSha256,
+      videoTrim: { sourceMediaSha256: trim.sourceMediaSha256, sourceSampleCount: trim.sourceSampleCount,
+        startSample: 0, endSample: trim.endSample, resultMediaSha256: trim.resultMediaSha256 } };
+  } catch { return null; }
+}
+/** Malformed present metadata is unavailable; it never silently selects the original file. */
+export function parseVideoMediaRevision(value: unknown): VideoMediaRevision | null {
+  try {
+    const row = closedVideoRecord(value, ["schemaVersion", "operation", "media", "source", "startSample", "endSample", "sampleCount", "timescale", "durationTicks", "durationSeconds", "width", "height"]);
+    const media = row && closedVideoRecord(row.media, ["url", "mediaType", "sha256", "byteLength"]);
+    const source = row && closedVideoRecord(row.source, ["url", "sha256", "revision", "contentSha256", "itemId", "sampleCount", "timescale", "durationTicks", "width", "height"]);
+    if (!row || !media || !source || row.schemaVersion !== 1 || row.operation !== "prefix-trim" || row.startSample !== 0
+      || !videoRevisionMediaUrl(media.url) || !videoRevisionMediaUrl(source.url) || media.url === source.url || media.mediaType !== "video/mp4"
+      || !videoRevisionDigest(media.sha256) || !videoRevisionDigest(source.sha256) || media.sha256 === source.sha256 || !videoRevisionDigest(source.contentSha256)
+      || !videoRevisionInteger(media.byteLength, 32, 24_000_000) || !videoRevisionInteger(source.revision, 0)
+      || typeof source.itemId !== "string" || !source.itemId || source.itemId.length > 1024 || /\p{Cc}/u.test(source.itemId)
+      || !videoRevisionInteger(source.sampleCount, 2, 100_000) || !videoRevisionInteger(row.endSample, 1, source.sampleCount - 1)
+      || row.sampleCount !== row.endSample || !videoRevisionInteger(source.timescale, 1, 0xffffffff) || row.timescale !== source.timescale
+      || !videoRevisionInteger(source.durationTicks, source.sampleCount, 0xffffffff)
+      || !videoRevisionInteger(row.durationTicks, row.sampleCount as number, source.durationTicks - 1)
+      || row.durationSeconds !== row.durationTicks / source.timescale
+      || !videoRevisionInteger(source.width, 1, 0xffff) || !videoRevisionInteger(source.height, 1, 0xffff)
+      || row.width !== source.width || row.height !== source.height) return null;
+    return { schemaVersion: 1, operation: "prefix-trim", media: { url: media.url, mediaType: "video/mp4", sha256: media.sha256, byteLength: media.byteLength },
+      source: { url: source.url, sha256: source.sha256, revision: source.revision, contentSha256: source.contentSha256, itemId: source.itemId,
+        sampleCount: source.sampleCount, timescale: source.timescale, durationTicks: source.durationTicks, width: source.width, height: source.height },
+      startSample: 0, endSample: row.endSample, sampleCount: row.endSample, timescale: source.timescale, durationTicks: row.durationTicks,
+      durationSeconds: row.durationSeconds as number, width: source.width, height: source.height };
+  } catch { return null; }
+}
+/** This first slice edits exactly one immutable Video item sharing the retained root MP4. */
+export function videoArtifactMediaItem(artifact: DocumentArtifact): DocumentArtifactItem | null {
+  if (artifact.kind !== "video" || artifact.mediaType !== "video/mp4" || !videoRevisionMediaUrl(artifact.mediaUrl)) return null;
+  const media = artifact.items.filter(item => item.mediaUrl !== null || item.mediaType !== null);
+  if (media.length !== 1 || !media[0]!.id || media[0]!.mediaUrl !== artifact.mediaUrl || media[0]!.mediaType !== "video/mp4") return null;
+  return artifact.items.filter(item => item.id === media[0]!.id).length === 1 ? media[0]! : null;
+}
+
+/** Closed, non-coercing parser. A malformed present override must never select the original media. */
+export function parseAudioMediaRevision(value: unknown): AudioMediaRevision | null {
+  const closed = (candidate: unknown, names: readonly string[]): Record<string, unknown> | null => {
+    if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) return null;
+    const prototype = Object.getPrototypeOf(candidate);
+    if (prototype !== Object.prototype && prototype !== null) return null;
+    const keys = Reflect.ownKeys(candidate);
+    if (keys.length !== names.length || keys.some(key => typeof key !== "string" || !names.includes(key))) return null;
+    if (names.some(key => { const property = Object.getOwnPropertyDescriptor(candidate, key); return !property?.enumerable || !Object.hasOwn(property, "value"); })) return null;
+    return candidate as Record<string, unknown>;
+  };
+  const mediaUrl = (candidate: unknown): candidate is string => {
+    if (typeof candidate !== "string" || candidate.length > 2048 || !/^\/api\/media\/(?:[A-Za-z0-9._~!'()*-]|%[A-Fa-f0-9]{2})+$/u.test(candidate)) return false;
+    try {
+      const segment = candidate.slice("/api/media/".length), key = decodeURIComponent(segment);
+      return !!key && encodeURIComponent(key) === segment
+        && ![...key].some(character => { const code = character.charCodeAt(0); return code < 0x20 || code === 0x7f || code === 0x5c; })
+        && !key.split("/").some(part => part === "." || part === "..");
+    } catch { return false; }
+  };
+  const integer = (candidate: unknown, minimum: number): candidate is number => typeof candidate === "number" && Number.isSafeInteger(candidate) && candidate >= minimum;
+  const digest = (candidate: unknown): candidate is string => typeof candidate === "string" && /^[a-f0-9]{64}$/u.test(candidate);
+  try {
+    const converted = Boolean(value && typeof value === "object" && Object.hasOwn(value, "conversion"));
+    const row = closed(value, ["schemaVersion", "operation", "media", "source", "startFrame", "endFrame", "sampleRate", "channels", "bitsPerSample", "frameCount", "durationSeconds", ...(converted ? ["conversion"] : [])]);
+    const conversion = converted && row ? parseAudioLocalConversion(row.conversion) : null;
+    if (!row || row.schemaVersion !== 1 || row.operation !== (converted ? "client-converted-trim" : "trim") || converted && !conversion) return null;
+    const media = closed(row.media, ["url", "mediaType", "sha256", "byteLength"]), source = closed(row.source, ["url", "sha256", "revision", "contentSha256", "frameCount"]);
+    if (!media || !source || !mediaUrl(media.url) || !mediaUrl(source.url) || media.mediaType !== "audio/wav"
+      || !digest(media.sha256) || !digest(source.sha256) || !digest(source.contentSha256)
+      || !integer(media.byteLength, 45) || media.byteLength > 25 * 1024 * 1024 || !integer(source.revision, 0)
+      || !integer(source.frameCount, 1) || !integer(row.startFrame, 0) || !integer(row.endFrame, 1)
+      || !integer(row.sampleRate, 1) || !integer(row.frameCount, 1) || row.channels !== 1 && row.channels !== 2
+      || row.bitsPerSample !== 16 || row.endFrame > source.frameCount || row.startFrame >= row.endFrame
+      || row.frameCount !== row.endFrame - row.startFrame || (converted ? row.frameCount > source.frameCount : row.frameCount >= source.frameCount)
+      || conversion && (conversion.frameCount !== source.frameCount || conversion.sampleRate !== row.sampleRate || conversion.channels !== row.channels)
+      || row.sampleRate * row.channels * 2 > 0xffffffff || 44 + source.frameCount * row.channels * 2 > 25 * 1024 * 1024
+      || media.byteLength !== 44 + row.frameCount * row.channels * 2
+      || row.durationSeconds !== row.frameCount / row.sampleRate || media.url === source.url) return null;
+    return { schemaVersion: 1, operation: converted ? "client-converted-trim" : "trim", ...(conversion ? { conversion } : {}), media: { url: media.url, mediaType: "audio/wav", sha256: media.sha256, byteLength: media.byteLength },
+      source: { url: source.url, sha256: source.sha256, revision: source.revision, contentSha256: source.contentSha256, frameCount: source.frameCount },
+      startFrame: row.startFrame, endFrame: row.endFrame, sampleRate: row.sampleRate, channels: row.channels, bitsPerSample: 16,
+      frameCount: row.frameCount, durationSeconds: row.durationSeconds as number };
+  } catch { return null; }
+}
 
 export const documentArtifactDefinition = (kind: DocumentArtifactKind) => ({
   short_story: { label: "Short story", description: "A complete narrative shaped by the document’s intent, characters, setting, and constraints." },
@@ -148,6 +319,7 @@ export const documentArtifactDefinition = (kind: DocumentArtifactKind) => ({
   storyboard: { label: "Storyboard", description: "A shot-by-shot previz sequence rendered as connected draft frames." },
   video: { label: "Video", description: "A playable motion interpretation rendered by the configured video provider." },
   audio: { label: "Audio", description: "An original, playable soundtrack shaped by the document’s creative direction." },
+  model3d: { label: "3D model", description: "A downloadable 3D asset created from a description or selected image references." },
 }[kind]);
 
 export function isDocumentArtifactKind(value: unknown): value is DocumentArtifactKind {
@@ -171,6 +343,13 @@ const leadingCopySentence = (value: unknown) => {
 const repeatedCopyLeadIn = (left: unknown, right: unknown) => {
   const first=leadingCopySentence(left),second=leadingCopySentence(right);
   return Boolean(first&&second&&first.sentence===second.sentence||first&&first.sentence===contentKey(right)||second&&second.sentence===contentKey(left));
+};
+// A body may use its heading as the subject of a longer claim. Strict
+// word-prefix overlap is not evidence that the additional claim is redundant.
+// A repeated complete opening sentence still uses the existing lead-in repair.
+const extendsSlideHeading = (heading: unknown, body: unknown) => {
+  const headingKey=contentKey(heading),bodyKey=contentKey(body);
+  return Boolean(headingKey&&bodyKey.startsWith(headingKey+" ")&&!repeatedCopyLeadIn(heading,body));
 };
 export const slideCopyIsNearDuplicate = (left: unknown, right: unknown) => {
   const leftKey=contentKey(left),rightKey=contentKey(right);if(!leftKey||!rightKey||!isProseCopy(left)||!isProseCopy(right))return false;if(leftKey===rightKey)return true;
@@ -310,12 +489,14 @@ export function normalizeSlideVisual(value: unknown, item: { title?: unknown; bo
 }
 
 export function normalizeSlideItem(value: unknown,index=0):DocumentArtifactDraftItem {
-  const input=record(value);const title=text(input.title);const requestedBody=text(input.body);let body=distinctText(requestedBody,title?[title]:[]);
+  const input=record(value);const title=text(input.title);const requestedBody=text(input.body);let body=distinctText(requestedBody,title&&!extendsSlideHeading(title,requestedBody)?[title]:[]);
   const contextGroupIds=Array.isArray(input.context_group_ids)?[...new Set(input.context_group_ids.map(text).filter(Boolean))]:[];
   let slide=input.slide?normalizeSlideVisual(input.slide,{title,body},index):null;
   if(slide&&body&&body.length<=160&&slide.visual.kind==="hero-type"&&!slide.visual.value&&!slide.quote&&!slide.visual.unit&&!slide.visual.exactValue&&!slide.visual.displayValue){
-    slide=normalizeSlideVisual({...slide,visual:{...slide.visual,value:body}},{title,body:""},index);
-    body="";
+    const promoted=normalizeSlideVisual({...slide,visual:{...slide.visual,value:body}},{title,body:""},index);
+    // A visual normalization may reject this distinct body as title overlap.
+    // Commit the transfer only if the complete claim survives verbatim.
+    if(promoted.visual.value===body){slide=promoted;body="";}
   }
   if(slide&&body&&["architecture","diagram"].includes(slide.visual.kind)&&slide.visual.data.length>=2&&!slide.quote&&!slide.visual.unit&&!slide.visual.exactValue&&!slide.visual.displayValue){
     const titleKey=contentKey(title),bodyKey=contentKey(body),narrativeKeys=new Set([titleKey,bodyKey].filter(Boolean));
@@ -323,8 +504,8 @@ export function normalizeSlideItem(value: unknown,index=0):DocumentArtifactDraft
     const narrativeOnly=rows.every((datum)=>narrativeKeys.has(contentKey(datum.label))&&(!datum.value||narrativeKeys.has(contentKey(datum.value)))&&!datum.exactValue&&!datum.displayValue&&preciseNumber(datum.label)===null&&preciseNumber(datum.value)===null);
     if(narrativeOnly&&rows.some((datum)=>contentKey(datum.label)===titleKey)&&rows.some((datum)=>contentKey(datum.label)===bodyKey)){
       const sourceIds=[...new Set([...(slide.sourceIds??[]),...rows.flatMap((datum)=>datum.sourceIds??[])])];
-      slide=normalizeSlideVisual({...slide,layout:index===0?"cover":"statement",...(sourceIds.length?{sourceIds}:{}),visual:{kind:"hero-type",label:slide.visual.label,value:body,data:[]}},{title,body:""},index);
-      body="";
+      const promoted=normalizeSlideVisual({...slide,layout:index===0?"cover":"statement",...(sourceIds.length?{sourceIds}:{}),visual:{kind:"hero-type",label:slide.visual.label,value:body,data:[]}},{title,body:""},index);
+      if(promoted.visual.value===body){slide=promoted;body="";}
     }
   }
   return{title,body,notes:text(input.notes),image_prompt:text(input.image_prompt),context_group_ids:contextGroupIds,slide};
@@ -338,6 +519,7 @@ export function slideCopyIssues(value:unknown):SlideCopyIssue[]{
   for(let left=0;left<fields.length;left+=1)for(let right=left+1;right<fields.length;right+=1){
     const first=fields[left],second=fields[right];
     if(!first||!second||!slideCopyIsNearDuplicate(first.value,second.value))continue;
+    if(first.path==="title"&&second.path==="body"&&extendsSlideHeading(first.value,second.value))continue;
     const categoryLabel=first.path==="body"||first.path==="title"?/^slide\.visual\.data\.(\d+)\.label$/u.exec(second.path):null;
     if(categoryLabel&&Array.isArray(visualData)&&visualData.length>=2){
       const label=contentKey(second.value),narrative=contentKey(first.value),labelTokens=copyTokens(second.value);
@@ -513,8 +695,33 @@ export type DocumentArtifactValidationOptions={
   requireAllProtectedContent?:boolean;
 };
 
+/** An unnumbered source may explicitly require one exact phrase at both bookends. */
+function sourceAuthorizedUnnumberedBookendCopy(values:readonly unknown[],duplicate:SlideDeckCopyIssue,contract:PresentationSourceContract,pageStart:number){
+  const audienceCopy=/^(?:title|body|slide\.visual\.value|slide\.quote\.text|slide\.bullets\.\d+)$/u;
+  if(contract.numberedOutline.length||pageStart!==0||duplicate.firstSlide!==0
+    ||duplicate.secondSlide!==values.length-1||duplicate.secondSlide<=0
+    ||!audienceCopy.test(duplicate.firstPath)||!audienceCopy.test(duplicate.secondPath)
+    ||duplicate.firstPath==="title"&&duplicate.secondPath==="title"
+    ||text(duplicate.first)!==text(duplicate.second))return false;
+  const phrase=text(duplicate.first);
+  const opening=contract.protectedMessages.filter((message)=>message.placement==="opening"&&message.slideNumber===1&&message.text===phrase);
+  const closing=contract.protectedMessages.filter((message)=>message.placement==="closing"&&message.text===phrase
+    &&(contract.slideCountPolicy?.kind==="flexible"?values.length-1:message.slideNumber-1)===duplicate.secondSlide);
+  if(!opening.length||!closing.length)return false;
+  const attributed=(slideIndex:number,message:PresentationSourceContract["protectedMessages"][number])=>{
+    const resolved=resolvePresentationSourceReferences(slideSourceIds(values[slideIndex]),contract,{allowDurableIds:true});
+    return resolved.valid&&(message.sourceBlockId?resolved.blockIds.includes(message.sourceBlockId)
+      :Boolean(message.sourceAlias&&resolved.sourceAliases.includes(message.sourceAlias)));
+  };
+  // A matching phrase cannot authenticate a foreign source or an unrelated block.
+  // Keep the generic comparator and every within-slide/other-copy check unchanged.
+  return opening.some((message)=>attributed(duplicate.firstSlide,message))
+    &&closing.some((message)=>attributed(duplicate.secondSlide,message));
+}
+
 /** Preserve only independently authored visual evidence and an exact opening-to-closing promise. */
 function sourceAuthorizedRepeatedPresentationCopy(values:readonly unknown[],duplicate:SlideDeckCopyIssue,contract:PresentationSourceContract,pageStart=0){
+  if(sourceAuthorizedUnnumberedBookendCopy(values,duplicate,contract,pageStart))return true;
   const visualEvidence=duplicate.firstPath==="slide.visual.value"&&/^slide\.visual\.data\.\d+\.value$/u.test(duplicate.secondPath);
   const opening=contract.numberedOutline.find((slide)=>slide.index===0);
   const closing=contract.numberedOutline.find((slide)=>slide.index===(contract.authoredSlideCount??contract.numberedOutline.length)-1);
@@ -642,6 +849,11 @@ export function parseDocumentArtifactContent(value: string | undefined): Documen
   try {
     const parsed = JSON.parse(value) as Partial<DocumentArtifactDraft>;
     if (!parsed || typeof parsed !== "object" || typeof parsed.title !== "string" || typeof parsed.content_markdown !== "string" || !Array.isArray(parsed.items)) return null;
+    const audioRevision = Object.hasOwn(parsed, "audio_revision") ? parseAudioMediaRevision(parsed.audio_revision) : undefined;
+    const videoRevision = Object.hasOwn(parsed, "video_revision") ? parseVideoMediaRevision(parsed.video_revision) : undefined;
+    const model3dRevision = Object.hasOwn(parsed, "model3d_revision") ? parseModel3dMediaRevision(parsed.model3d_revision) : undefined;
+    if (audioRevision === null || videoRevision === null || model3dRevision === null
+      || [audioRevision, videoRevision, model3dRevision].filter(Boolean).length > 1) return null;
     const presentation=normalizeSlidePresentation(parsed.presentation);if(presentation&&!presentation.footerLabel){const fallback=text(parsed.title);if(fallback&&!processDerivedSlideLabel(fallback))presentation.footerLabel=fallback;}
     return {
       title: parsed.title,
@@ -649,6 +861,9 @@ export function parseDocumentArtifactContent(value: string | undefined): Documen
       content_markdown: parsed.content_markdown,
       presentation,
       items:parsed.items.map((item,index)=>normalizeSlideItem(item,index)),
+      ...(audioRevision ? { audio_revision: audioRevision } : {}),
+      ...(videoRevision ? { video_revision: videoRevision } : {}),
+      ...(model3dRevision ? { model3d_revision: model3dRevision } : {}),
     };
   } catch { return null; }
 }

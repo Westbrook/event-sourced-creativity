@@ -392,3 +392,39 @@ test("keeps completed inspection truthful after provider settlement",()=>{
   assert.equal(inspection.receipt.generation_receipt.actual_provider_call_count,1);
   assert.equal(inspection.receipt.generation_receipt.actual_slide_count,12);
 });
+
+
+test("restored requests use only the selected attempt's authorized frozen settings",async()=>{
+  const {restoreDocumentRenderSettings,captureDocumentRenderSettings}=await import("../src/model/document-render-request.ts");
+  const job={jobId:"restore-selected",documentId:"source",kind:"render_document",result:{artifactKind:"slides",generationReceipt:{input_ref:"restore-input"}}};
+  const request={audience:"Selected slide audience",tone:"x".repeat(121),production_mode:"managed",requested_slide_count:6,presentation_style:"field-notes",presentation_fidelity:"faithful"};
+  const retained={job_id:job.jobId,document_id:job.documentId,artifact_kind:"slides",request};
+  const content={"restore-input":JSON.stringify(retained),"other-input":JSON.stringify({...retained,job_id:"other",request:{...request,tone:"Podcast"}})};
+  const result=restoreDocumentRenderSettings(job,content);
+  assert.equal(result.tone.length,121,"historical invalid values remain editable instead of silently clipped");assert.equal(result.audience,request.audience);assert.equal(result.itemCount,6);assert.equal(result.productionMode,"managed");assert.equal(result.presentationStyle,"field-notes");
+  for(const patch of [{job_id:"other"},{document_id:"other"},{artifact_kind:"audio"}])assert.equal(restoreDocumentRenderSettings(job,{"restore-input":JSON.stringify({...retained,...patch})}),null);
+  assert.equal(restoreDocumentRenderSettings(job,{}),null);assert.equal(restoreDocumentRenderSettings(job,{"restore-input":"{}"}),null);
+  assert.equal(restoreDocumentRenderSettings(job,{"restore-input":JSON.stringify({...retained,request:{...request,tone:{}}})}),null);
+  const captured=captureDocumentRenderSettings({artifactKind:"slides",productionMode:"manual",itemCount:6,audience:"Audience",tone:"Tone",presentationStyle:"editorial",presentationFidelity:"creative",providerJobId:"DO_NOT_COPY",snapshot:{private:"DO_NOT_COPY"},paidRetryConfirmed:true,costReservationId:"DO_NOT_COPY"});
+  assert.doesNotMatch(JSON.stringify(captured),/DO_NOT_COPY|paidRetryConfirmed/);
+  const current=restoreDocumentRenderSettings(job,{"restore-input":JSON.stringify({...retained,request:{editable_settings:captured}})});
+  assert.equal(current.tone,"Tone");assert.equal(current.presentationFidelity,"creative");
+  const model3dJob={...job,result:{...job.result,artifactKind:"model3d"}};
+  const model3dCaptured=captureDocumentRenderSettings({artifactKind:"model3d",itemCount:1,productionMode:"manual",model3dPrompt:"  Exact private prompt  ",model3dSettings:{seed:42},model3dReferenceBlockIds:["view-b","view-a"]});
+  const model3dInput={...retained,artifact_kind:"model3d",request:{editable_settings:model3dCaptured}};
+  assert.equal(restoreDocumentRenderSettings(model3dJob,{"restore-input":JSON.stringify(model3dInput)}),null,"unsupported 3D restoration must not substitute current settings for missing frozen controls");
+});
+
+test("video resolution remains in the exact private editable request and rejects unsupported restoration", async () => {
+  const { captureDocumentRenderSettings, restoreDocumentRenderSettings } = await import("../src/model/document-render-request.ts");
+  const selected = { jobId: "resolution-job", documentId: "resolution-document", kind: "render_document", result: { artifactKind: "video", generationReceipt: { input_ref: "resolution-input" } } };
+  const restore = resolution => {
+    const captured = captureDocumentRenderSettings({ artifactKind: "video", videoSeconds: 4, videoAudioMode: "silent", ...(resolution === undefined ? {} : { videoResolution: resolution }) });
+    const retained = { job_id: selected.jobId, document_id: selected.documentId, artifact_kind: "video", request: { editable_settings: captured } };
+    return restoreDocumentRenderSettings(selected, { "resolution-input": JSON.stringify(retained) });
+  };
+  assert.equal(restore("480p").videoResolution, "480p");
+  assert.equal(restore("720p").videoResolution, "720p");
+  assert.equal(restore(undefined).videoResolution, undefined);
+  for (const invalid of ["1080p", "480P", " 480p", 480, null, {}]) assert.equal(restore(invalid), null);
+});

@@ -1,3 +1,4 @@
+import {measureRetainedState,combineRetainedStateMeasurements,RETAINED_STATE_LIMITS} from '../model/retained-state.ts';
 import type { CreativeEvent } from "../model/events";
 
 export type CanvasHlc = { pt: number; c: number; site: string };
@@ -228,18 +229,32 @@ export function canvasImagePresentationSignals(events:CreativeEvent[]):CanvasIma
 }
 
 export function foldCanvasText(events: CreativeEvent[], objectId: string, field = "value") {
+  const fold=createCanvasTextFold(objectId,field);
+  for(const event of events)fold.accept(event);
+  return fold.finish();
+}
+
+/** Retain CRDT operations, not their original event envelopes or page arrays. */
+export function createCanvasTextFold(objectId: string, field = "value") {
   const inserts = new Map<string, TextInsert>(); const deletes: TextDelete[] = [];
-  for (const event of events) {
-    if (event.type !== "CanvasTextApplied") continue;
+  let finished=false;
+  const accept=(event:CreativeEvent)=>{
+    if(finished)throw new Error('canvas_text_fold_already_finished');
+    if (event.type !== "CanvasTextApplied") return true;
     const payload=event.payload;const operation=record(payload.operation);
-    const object=record(operation.object);if(String(object.item_id??object.block_id??payload.item_id??"")!==objectId||String(operation.field??payload.field??"value")!==field)continue;
+    const object=record(operation.object);if(String(object.item_id??object.block_id??payload.item_id??"")!==objectId||String(operation.field??payload.field??"value")!==field)return true;
     for(const raw of Array.isArray(operation.ops)?operation.ops:[]){const op=record(raw);const ins=record(op.ins);const del=record(op.del);const id=tuple(ins.id);const target=tuple(del.target);if(id)inserts.set(opKey(id),{id,left:tuple(ins.left),right:tuple(ins.right),chars:String(ins.chars??"")});if(target)deletes.push({target,len:Math.max(0,Number(del.len??0))});}
-  }
+    return true;
+  };
+  const finish=()=>{
+  if(finished)throw new Error('canvas_text_fold_already_finished');finished=true;
   const children=new Map<string,TextInsert[]>();for(const insert of inserts.values()){const parent=insert.left?opKey(insert.left):"root";children.set(parent,[...(children.get(parent)??[]),insert]);}
   for(const values of children.values())values.sort((a,b)=>opKey(a.id).localeCompare(opKey(b.id),"en-US"));
   const ordered:TextInsert[]=[];const visit=(parent:string)=>{for(const child of children.get(parent)??[]){ordered.push(child);visit(opKey(child.id));}};visit("root");
   const deleted=new Map<string,number>();for(const removal of deletes)deleted.set(opKey(removal.target),Math.max(deleted.get(opKey(removal.target))??0,removal.len));
   return ordered.map((insert)=>{const count=deleted.get(opKey(insert.id))??0;return insert.chars.slice(Math.min(count,insert.chars.length));}).join("");
+  };
+  return {accept,finish,measureRetainedState:(limits=RETAINED_STATE_LIMITS)=>measureRetainedState([inserts,deletes],limits)};
 }
 
 export function canvasTextReplacementOperations(events: CreativeEvent[], objectId: string, nextValue: string, site: string, counter = Date.now()) {
@@ -254,13 +269,24 @@ export function canvasProjectId(events: CreativeEvent[], canvasId: string) {
 }
 
 export function foldCanvasEvents(events: CreativeEvent[], selectedProjectId = "", selectedCanvasId = "", now = Date.now()): CanvasProjection {
+  const fold=createCanvasEventFold(selectedProjectId,selectedCanvasId,now);
+  for(const event of events)fold.accept(event);
+  return fold.finish();
+}
+
+/** Finalize once, only after every source page has passed its original guard. */
+export function createCanvasEventFold(selectedProjectId = "", selectedCanvasId = "", now = Date.now()) {
   const canvases=new Map<string,ProjectCanvas>();const items=new Map<string,CanvasItem>();const registers=new Map<string,Map<string,RegisterValue>>();
   const strokes=new Map<string,Map<string,CanvasStroke>>();const erasedStrokes=new Map<string,Set<string>>();const arrangements=new Map<string,CanvasArrangement>();const contextSets=new Map<string,CanvasContextSet>();const proposals=new Map<string,CanvasProposal>();const memberships=new Map<string,CanvasMembership>();
-  const textEventsByItem=new Map<string,CreativeEvent[]>();
+  const textByItem=new Map<string,ReturnType<typeof createCanvasTextFold>>();
+  let finished=false;
   let latestProjectId=selectedProjectId;
   const applyRegister=(event:CreativeEvent,itemId:string,prop:string,value:unknown,hlc:CanvasHlc)=>{const item=items.get(itemId);if(!item)return;const itemRegisters=registers.get(itemId)??new Map<string,RegisterValue>();const previous=itemRegisters.get(prop);if(previous&&compareCanvasHlc(previous.hlc,hlc)>=0)return;itemRegisters.set(prop,{value,hlc});registers.set(itemId,itemRegisters);if(prop==="x")item.x=numeric(value,item.x);else if(prop==="y")item.y=numeric(value,item.y);else if(prop==="w")item.w=Math.max(120,numeric(value,item.w));else if(prop==="h")item.h=Math.max(90,numeric(value,item.h));else if(prop==="rot")item.rot=numeric(value,item.rot);else if(prop==="z")item.z=String(value??item.z);else if(prop==="visible")item.visible=Boolean(value);item.sourceEvents.push(event.eventId);};
-  for(const event of events){const p=event.payload;
-    if(event.type==="CanvasTextApplied"){const operation=record(p.operation);const object=record(operation.object);const itemId=String(object.item_id??object.block_id??p.item_id??"");if(itemId){const existing=textEventsByItem.get(itemId);if(existing)existing.push(event);else textEventsByItem.set(itemId,[event]);}continue;}
+  const accept=(next:CreativeEvent)=>{
+  if(finished)throw new Error('canvas_event_fold_already_finished');
+  // Preserve the reducer's branch-local continue semantics for a single input.
+  for(const event of [next]){const p=event.payload;
+    if(event.type==="CanvasTextApplied"){const operation=record(p.operation);const object=record(operation.object);const itemId=String(object.item_id??object.block_id??p.item_id??"");if(itemId){const fold=textByItem.get(itemId)??createCanvasTextFold(itemId);fold.accept(event);textByItem.set(itemId,fold);}continue;}
     if(event.type==="ProjectCreated"&&!latestProjectId)latestProjectId=String(p.project_id??"");
     if(event.type==="CanvasCreated"){const id=String(p.canvas_id??"");if(!id)continue;const projectId=String(p.project_id??latestProjectId);canvases.set(id,{id,projectId,name:String(p.name??"Untitled canvas"),slug:String(p.slug??"canvas"),removed:false,createdSequence:event.sequence,sourceEvents:[event.eventId]});latestProjectId=projectId;continue;}
     if(event.type==="CanvasRenamed"){const canvas=canvases.get(String(p.canvas_id??""));if(canvas){canvas.name=String(p.new_name??canvas.name);canvas.slug=String(p.slug??canvas.slug);canvas.sourceEvents.push(event.eventId);}continue;}
@@ -281,11 +307,21 @@ export function foldCanvasEvents(events: CreativeEvent[], selectedProjectId = ""
     if(event.type==="MembershipAdded"){const id=String(p.membership_id??"");if(id)memberships.set(id,{id,canvasId:String(p.canvas_id??""),projectId:String(p.project_id??latestProjectId),principalType:p.principal_type==="team"?"team":"user",principalRef:String(p.principal_ref??"Unknown member"),role:["viewer","commenter","editor","owner"].includes(String(p.role))?String(p.role) as CanvasMembership["role"]:"viewer",sourceEvents:[event.eventId]});continue;}
     if(event.type==="MembershipRemoved"){const membership=memberships.get(String(p.membership_id??""));if(membership){membership.sourceEvents.push(event.eventId);memberships.delete(membership.id);}continue;}
   }
-  for(const item of items.values()){if(item.lockedUntil&&(Date.parse(item.lockedUntil)||0)<=now){item.lockedBy=null;item.lockedUntil=null;}item.strokes=[...(strokes.get(item.id)?.values()??[])];const textEvents=textEventsByItem.get(item.id);if(textEvents?.length){const mergedText=foldCanvasText(textEvents,item.id);if(mergedText)item.body=mergedText;}}
+  return true;
+  };
+  const finish=():CanvasProjection=>{
+  if(finished)throw new Error('canvas_event_fold_already_finished');finished=true;
+  for(const item of items.values()){if(item.lockedUntil&&(Date.parse(item.lockedUntil)||0)<=now){item.lockedBy=null;item.lockedUntil=null;}item.strokes=[...(strokes.get(item.id)?.values()??[])];const text=textByItem.get(item.id);if(text){const mergedText=text.finish();if(mergedText)item.body=mergedText;}}
   const requestedCanvas=selectedCanvasId?canvases.get(selectedCanvasId):undefined;const projectId=requestedCanvas?.projectId??selectedProjectId??latestProjectId;
   const visibleCanvases=[...canvases.values()].filter((canvas)=>!canvas.removed&&(!projectId||canvas.projectId===projectId)).sort((a,b)=>b.createdSequence-a.createdSequence);
   const selected=requestedCanvas&&!requestedCanvas.removed?requestedCanvas:visibleCanvases[0];
   return{projectId:selected?.projectId??projectId,selectedCanvasId:selected?.id??"",canvases:visibleCanvases,items:[...items.values()].filter((item)=>!item.removed&&item.canvasId===selected?.id&&item.visible).sort((a,b)=>a.z.localeCompare(b.z)),arrangements:[...arrangements.values()].filter((arrangement)=>!arrangement.removed&&arrangement.canvasId===selected?.id).sort((a,b)=>a.createdSequence-b.createdSequence),contextSets:[...contextSets.values()].filter((set)=>set.canvasId===selected?.id),proposals:[...proposals.values()].filter((proposal)=>proposal.projectId===(selected?.projectId??projectId)),memberships:[...memberships.values()].filter((membership)=>membership.projectId===(selected?.projectId??projectId)&&(!membership.canvasId||membership.canvasId===selected?.id))};
+  };
+  const measure=(limits=RETAINED_STATE_LIMITS)=>combineRetainedStateMeasurements([
+    measureRetainedState([canvases,items,registers,strokes,erasedStrokes,arrangements,contextSets,proposals,memberships,[...textByItem.keys()]],limits),
+    ...[...textByItem.values()].map(text=>text.measureRetainedState(limits)),
+  ],limits);
+  return {accept,finish,measureRetainedState:measure};
 }
 
 export function canvasItemAccessibleName(item: CanvasItem) {

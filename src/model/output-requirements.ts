@@ -1,3 +1,10 @@
+import { parseModel3dOutputContract, type Model3dOutputContract } from "./output-model3d-contract.ts";
+import { parseVideoOutputContract, type VideoOutputContract } from "./output-video-contract.ts";
+import { parseStoryboardOutputContract, type StoryboardOutputContract } from "./output-storyboard-contract.ts";
+import { parseAudioOutputContract, type AudioOutputContract } from "./output-audio-contract.ts";
+import { parseSceneOutputContract, type SceneOutputContract } from "./output-scene-contract.ts";
+import { parseShortStoryNarrativeContract, type ShortStoryNarrativeContract } from "./output-narrative-contract.ts";
+
 /** Authored output intent. These values do not grant permission, spend money, or accept results. */
 export const OUTPUT_REQUIREMENTS_SCHEMA_VERSION = 1 as const;
 /** Leave room for a finite target suffix within the server's 160-character opaque ID limit. */
@@ -8,8 +15,8 @@ export const OUTPUT_REQUIREMENT_LABEL_MAX_LENGTH = 240;
 export const OUTPUT_PLAN_TARGET_LABEL_MAX_LENGTH = OUTPUT_REQUIREMENT_LABEL_MAX_LENGTH + 5;
 /** Match portable scope capacity without deleting any row from an oversized saved assignment. */
 export const OUTPUT_PLAN_SCOPE_ITEM_MAX_COUNT = 1024;
-export type OutputMediaKind = "image" | "slides" | "audio" | "video" | "document" | "unknown";
-export type OutputQuantityUnit = "presentation" | "slide" | "episode" | "video" | "image" | "second" | "document" | "member";
+export type OutputMediaKind = "image" | "slides" | "audio" | "video" | "document" | "model3d" | "unknown";
+export type OutputQuantityUnit = "presentation" | "slide" | "episode" | "video" | "image" | "second" | "document" | "model" | "member";
 export type OutputQuantity =
   | { kind: "unknown"; unit: OutputQuantityUnit; reason?: string }
   | { kind: "exact"; unit: OutputQuantityUnit; value: number }
@@ -46,6 +53,13 @@ export type OutputDeliverable = {
   required: boolean;
   quantity: OutputQuantity;
   content_quantity?: OutputQuantity;
+  /** Explicit versioned narrative intent; omission preserves legacy document semantics. */
+  narrative_contract?: ShortStoryNarrativeContract;
+  scene_contract?: SceneOutputContract;
+  audio_contract?: AudioOutputContract;
+  video_contract?: VideoOutputContract;
+  storyboard_contract?: StoryboardOutputContract;
+  model3d_contract?: Model3dOutputContract;
   source_scope: OutputSourceScope;
   coverage: OutputCoverage;
   format_variants?: OutputFormatVariant[];
@@ -70,8 +84,8 @@ export type OutputRequirementInspection = { status: "valid" | "invalid" | "unsup
 export type OutputParseResult = { recognized: boolean; spec: OutputRequirementSpec | null; issues: OutputIssue[]; needs_confirmation: true };
 export type OutputRequirementInput = { id: string; [key: string]: unknown };
 
-const mediaKinds = new Set<OutputMediaKind>(["image", "slides", "audio", "video", "document", "unknown"]);
-const units = new Set<OutputQuantityUnit>(["presentation", "slide", "episode", "video", "image", "second", "document", "member"]);
+const mediaKinds = new Set<OutputMediaKind>(["image", "slides", "audio", "video", "document", "model3d", "unknown"]);
+const units = new Set<OutputQuantityUnit>(["presentation", "slide", "episode", "video", "image", "second", "document", "model", "member"]);
 const originKinds = new Set(["authored", "interpreted", "suggested", "confirmed"]);
 const object = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === "object" && !Array.isArray(value) && (Object.getPrototypeOf(value) === Object.prototype || Object.getPrototypeOf(value) === null);
 const nonempty = (value: unknown): value is string => typeof value === "string" && value.trim().length > 0;
@@ -205,13 +219,62 @@ function member(value: unknown, path: string, issues: OutputIssue[], ids: Set<st
 
 function deliverable(value: unknown, path: string, issues: OutputIssue[], ids: Set<string>) {
   if (!object(value)) { issues.push(issue("invalid_deliverable", path, "Expected a deliverable.")); return; }
-  keys(value, ["id", "label", "media_kind", "required", "quantity", "content_quantity", "source_scope", "coverage", "format_variants", "series", "original_text", "value_origins"], path, issues);
+  keys(value, ["id", "label", "media_kind", "required", "quantity", "content_quantity", "narrative_contract", "scene_contract", "audio_contract", "video_contract", "storyboard_contract", "model3d_contract", "source_scope", "coverage", "format_variants", "series", "original_text", "value_origins"], path, issues);
   identity(value.id, `${path}.id`, issues, ids);
   label(value.label, `${path}.label`, issues);
   if (!mediaKinds.has(value.media_kind as OutputMediaKind)) issues.push(issue("invalid_media_kind", `${path}.media_kind`, "This media kind is not supported."));
   if (typeof value.required !== "boolean") issues.push(issue("invalid_requiredness", `${path}.required`, "Requiredness must be explicit."));
   quantity(value.quantity, `${path}.quantity`, issues);
   if (value.content_quantity !== undefined) quantity(value.content_quantity, `${path}.content_quantity`, issues);
+  if (Object.hasOwn(value, "model3d_contract")) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, "model3d_contract")!;
+    if (!("value" in descriptor) || !parseModel3dOutputContract(descriptor.value)) issues.push(issue("invalid_model3d_contract", `${path}.model3d_contract`, "3D object contract unavailable"));
+    if (value.media_kind !== "model3d" || value.required !== true || !object(value.quantity) || value.quantity.kind !== "exact" || value.quantity.unit !== "model" || value.quantity.value !== 1
+      || !object(value.source_scope) || value.source_scope.kind !== "document" || !object(value.coverage) || value.coverage.kind !== "document_context"
+      || ["narrative_contract", "scene_contract", "audio_contract", "video_contract", "storyboard_contract", "content_quantity", "format_variants", "series"].some(key => Object.hasOwn(value, key)))
+      issues.push(issue("model3d_deliverable_shape_unsupported", `${path}.model3d_contract`, "One static GLB target with full Document context required"));
+  }
+  if (Object.hasOwn(value, "narrative_contract")) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, "narrative_contract")!;
+    if (!("value" in descriptor) || !parseShortStoryNarrativeContract(descriptor.value)) issues.push(issue("invalid_narrative_contract", `${path}.narrative_contract`, "Narrative contract unavailable."));
+    if (value.media_kind !== "document" || !object(value.quantity) || value.quantity.kind !== "exact" || value.quantity.unit !== "document" || value.quantity.value !== 1
+      || !object(value.source_scope) || value.source_scope.kind !== "document" || !object(value.coverage) || value.coverage.kind !== "document_context"
+      || ["content_quantity", "format_variants", "series"].some(key => Object.hasOwn(value, key)))
+      issues.push(issue("narrative_deliverable_shape_unsupported", `${path}.narrative_contract`, "One narrative Document with full Document context required."));
+  }
+  if (Object.hasOwn(value, "video_contract")) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, "video_contract")!;
+    if (!("value" in descriptor) || !parseVideoOutputContract(descriptor.value)) issues.push(issue("invalid_video_contract", `${path}.video_contract`, "Video contract unavailable"));
+    if (value.media_kind !== "video" || !object(value.quantity) || value.quantity.kind !== "exact" || value.quantity.unit !== "video" || value.quantity.value !== 1
+      || !object(value.content_quantity) || value.content_quantity.kind !== "exact" || value.content_quantity.unit !== "second" || value.content_quantity.value !== 4
+      || !object(value.source_scope) || value.source_scope.kind !== "document" || !object(value.coverage) || value.coverage.kind !== "document_context"
+      || ["audio_contract", "scene_contract", "narrative_contract", "format_variants", "series"].some(key => Object.hasOwn(value, key)))
+      issues.push(issue("video_deliverable_shape_unsupported", `${path}.video_contract`, "1 video · 4 seconds · 1 image"));
+  }
+  if (Object.hasOwn(value, "audio_contract")) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, "audio_contract")!;
+    if (!("value" in descriptor) || !parseAudioOutputContract(descriptor.value)) issues.push(issue("invalid_audio_contract", `${path}.audio_contract`, "Audio contract unavailable"));
+    if (value.media_kind !== "audio" || !object(value.quantity) || value.quantity.kind !== "exact" || value.quantity.unit !== "episode" || value.quantity.value !== 1
+      || !object(value.source_scope) || value.source_scope.kind !== "document" || !object(value.coverage) || value.coverage.kind !== "document_context"
+      || ["narrative_contract", "scene_contract", "content_quantity", "format_variants", "series"].some(key => Object.hasOwn(value, key)))
+      issues.push(issue("audio_deliverable_shape_unsupported", `${path}.audio_contract`, "One instrumental Audio track with full Document context required"));
+  }
+  if (Object.hasOwn(value, "storyboard_contract")) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, "storyboard_contract")!;
+    if (!("value" in descriptor) || !parseStoryboardOutputContract(descriptor.value)) issues.push(issue("invalid_storyboard_contract", `${path}.storyboard_contract`, "Storyboard contract unavailable"));
+    if (value.media_kind !== "document" || !object(value.quantity) || value.quantity.kind !== "exact" || value.quantity.unit !== "document" || value.quantity.value !== 1
+      || !object(value.source_scope) || value.source_scope.kind !== "document" || !object(value.coverage) || value.coverage.kind !== "document_context"
+      || ["narrative_contract", "scene_contract", "audio_contract", "video_contract", "content_quantity", "format_variants", "series"].some(key => Object.hasOwn(value, key)))
+      issues.push(issue("storyboard_deliverable_shape_unsupported", `${path}.storyboard_contract`, "One four-frame Storyboard with full Document context required"));
+  }
+  if (Object.hasOwn(value, "scene_contract")) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, "scene_contract")!;
+    if (!("value" in descriptor) || !parseSceneOutputContract(descriptor.value)) issues.push(issue("invalid_scene_contract", `${path}.scene_contract`, "Scene contract unavailable"));
+    if (value.media_kind !== "document" || !object(value.quantity) || value.quantity.kind !== "exact" || value.quantity.unit !== "document" || value.quantity.value !== 1
+      || !object(value.source_scope) || value.source_scope.kind !== "document" || !object(value.coverage) || value.coverage.kind !== "document_context"
+      || ["narrative_contract", "content_quantity", "format_variants", "series"].some(key => Object.hasOwn(value, key)))
+      issues.push(issue("scene_deliverable_shape_unsupported", `${path}.scene_contract`, "Scene Document required"));
+  }
   sourceScope(value.source_scope, `${path}.source_scope`, issues);
   coverage(value.coverage, `${path}.coverage`, issues);
   text(value.original_text, `${path}.original_text`, issues);
@@ -236,7 +299,7 @@ function deliverable(value: unknown, path: string, issues: OutputIssue[], ids: S
   if (Array.isArray(value.format_variants) && value.format_variants.length && object(value.series)) issues.push(issue("unsupported_series_variants", path, "Schema 1 does not implicitly cross-multiply series members and format variants; use explicit deliverables."));
   if (value.required === true && Array.isArray(value.format_variants) && value.format_variants.length && value.format_variants.every((entry) => object(entry) && entry.required === false)) issues.push(issue("required_group_without_required_member", `${path}.format_variants`, "A required group needs required members; optional choices alone cannot fulfill an unspecified obligation."));
   if (value.required === true && object(value.series) && value.series.state === "resolved" && Array.isArray(value.series.members) && value.series.members.length && value.series.members.every((entry) => object(entry) && entry.required === false)) issues.push(issue("required_group_without_required_member", `${path}.series.members`, "A required series needs required members; optional choices alone cannot fulfill an unspecified obligation."));
-  const expectedUnits: Partial<Record<OutputMediaKind, OutputQuantityUnit>> = { image: "image", slides: "presentation", audio: "episode", video: "video", document: "document" };
+  const expectedUnits: Partial<Record<OutputMediaKind, OutputQuantityUnit>> = { image: "image", slides: "presentation", audio: "episode", video: "video", document: "document", model3d: "model" };
   const expected = expectedUnits[value.media_kind as OutputMediaKind];
   if (expected && object(value.quantity) && value.quantity.unit !== expected) issues.push(issue("media_quantity_unit_mismatch", `${path}.quantity.unit`, `This deliverable uses ${expected} quantities.`));
   if (value.media_kind === "slides" && object(value.content_quantity) && value.content_quantity.unit !== "slide") issues.push(issue("content_quantity_unit_mismatch", `${path}.content_quantity.unit`, "Presentation content is counted in slides."));
@@ -402,13 +465,24 @@ export function parseOutputRequirement(input: OutputRequirementInput, previous?:
   const make = (kind: OutputMediaKind, key: string, title: string, clause: string, series = false): OutputDeliverable => {
     const candidates = prior?.deliverables.filter((entry) => entry.media_kind === kind && Boolean(entry.series) === series) ?? [];
     const id = matchIdentity(`${input.id}:deliverable:${key}`, candidates, used, issues, `deliverables.${key}`, priorIds);
-    const unit: OutputQuantityUnit = kind === "image" ? "image" : kind === "slides" ? "presentation" : kind === "audio" ? "episode" : kind === "video" ? "video" : kind === "document" ? "document" : "member";
+    const unit: OutputQuantityUnit = kind === "image" ? "image" : kind === "slides" ? "presentation" : kind === "audio" ? "episode" : kind === "video" ? "video" : kind === "document" ? "document" : kind === "model3d" ? "model" : "member";
     return { id, label: title, media_kind: kind, required: true, quantity: unknownQuantity(unit, "Agree how many finished deliverables are required."), source_scope: { kind: "document" }, coverage: { kind: "unresolved", description: "Confirm which Document content this deliverable should cover." }, original_text: clause, value_origins: { media_kind: interpreted(clause), required: interpreted(clause), quantity: interpreted(), source_scope: interpreted("Use the complete Document as the initial evidence scope; Output instructions are separate."), coverage: interpreted() } };
   };
   const imageRequest = /social\s+media\s+images?/i.test(label) || /^\s*output\s+images?\b/i.test(content);
   const videoRequest = /social\s+media\s+videos?/i.test(label) || /^\s*output\s+videos?\b/i.test(content);
+  const modelRequest = /\b(?:3d|three[ -]dimensional)\s+models?\b/i.test(label) || /^\s*(?:output|create|generate|make|deliver|export)\s+(?:(?:one|a|an|\d+(?:\s*(?:[-–—]|to)\s*\d+)?)[ ]+)?(?:3d|three[ -]dimensional)\s+models?\b/i.test(content);
   const executiveRequest = /executive\s+summary/i.test(label) || /\b(?:slideshow|slide\s+show|presentation|deck)\b/i.test(content) && /\b(?:podcast|episode|series)\b/i.test(content);
-  if (imageRequest || videoRequest) {
+  if (modelRequest) {
+    const entry = make("model3d", "model3d", "3D models", content);
+    const ranged = content.match(/\b(\d+)\s*(?:[-–—]|to)\s*(\d+)\s+(?:3d|three[ -]dimensional)\s+models?\b/i);
+    const exact = content.match(/\b(one|a|an|\d+)\s+(?:3d|three[ -]dimensional)\s+models?\b/i);
+    const count = exact ? /^(?:a|an)$/i.test(exact[1]!) ? 1 : singularCount(exact[1]) : null;
+    entry.quantity = ranged ? { kind: "range", unit: "model", min: Number(ranged[1]), max: Number(ranged[2]) } : count === null ? unknownQuantity("model", "Agree how many finished 3D models are required.") : { kind: "exact", unit: "model", value: count };
+    entry.value_origins.quantity = ranged || exact ? authored((ranged ?? exact)![0]) : interpreted();
+    entry.coverage = { kind: "document_context" };
+    entry.value_origins.coverage = interpreted("Use the authorized Document's creative context. A saved model view is a separate image reference, not the original mesh.");
+    deliverables.push(entry);
+  } else if (imageRequest || videoRequest) {
     const kind = imageRequest ? "image" : "video", entry = make(kind, kind, imageRequest ? "Social media images" : "Social media videos", content);
     entry.coverage = { kind: "document_context" };
     entry.value_origins.coverage = interpreted("Use the authorized Document's creative context. This does not assert exhaustive topic coverage.");

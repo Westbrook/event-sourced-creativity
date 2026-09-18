@@ -2,7 +2,7 @@ import { blockEffectFor, blockIntentFor } from "../src/model/block-types.ts";
 import { combinedContextGroups } from "../src/model/combined-context.ts";
 import { artifactReviewState } from "../src/model/context-health.ts";
 import { DOCUMENT_ARTIFACT_KINDS, parseDocumentArtifactContent, type DocumentArtifact, type DocumentArtifactDraft } from "../src/model/document-artifacts.ts";
-import { foldEvents, type CreativeEvent, type CreativeOutput } from "../src/model/events.ts";
+import { foldEvents, type CreativeEvent, type CreativeOutput, type CreativeProjection } from "../src/model/events.ts";
 import { artifactContextEvents, imageOutputContextEvents } from "../src/model/output-context.ts";
 import {
   MAX_PRODUCTION_WORKFLOW_SOURCES,
@@ -14,7 +14,7 @@ import {
   type ProductionWorkflowSource,
 } from "../src/model/production-workflow.ts";
 import type { SceneConfiguration } from "../src/model/scene-configuration.ts";
-import type { ProjectExecutionScope } from "./pilot-policy.ts";
+import type { BudgetReservationGuard, ProjectExecutionScope } from "./pilot-policy.ts";
 import type { WorkerEnv } from "./runtime.ts";
 
 const SOURCE_FIELDS = new Set([
@@ -84,7 +84,7 @@ function normalizedSources(raw: unknown, documentId: string): ProductionWorkflow
   });
 }
 
-async function scopedArtifactContent(env: WorkerEnv, artifact: DocumentArtifact, ownerId: string, scope?: ProjectExecutionScope) {
+async function scopedArtifactContent(env: WorkerEnv, artifact: DocumentArtifact, ownerId: string, scope?: ProjectExecutionScope, guards?: BudgetReservationGuard[], deadlines?: string[]) {
   const now = new Date().toISOString();
   if (!artifact.contentRef) throw new ProductionWorkflowContextError("workflow_source_unavailable", "The selected output no longer has readable retained content.", 404);
   const scopeGuard = scope
@@ -95,38 +95,53 @@ async function scopedArtifactContent(env: WorkerEnv, artifact: DocumentArtifact,
           AND artifact.resource_kind='artifact' AND artifact.resource_id=?
           AND(private_content.expires_at>? OR ${contentHoldSql("private_content", "artifact")}))`
     : " AND private_content.expires_at>?";
-  const retained = await env.DB.prepare(`SELECT content FROM private_content WHERE content_id=? AND owner_id=? AND kind='document-artifact' AND redacted_at IS NULL${scopeGuard}`)
+  const retained = await env.DB.prepare(`SELECT content,expires_at FROM private_content WHERE content_id=? AND owner_id=? AND kind='document-artifact' AND redacted_at IS NULL${scopeGuard}`)
     .bind(artifact.contentRef, ownerId, ...(scope
       ? [scope.projectAccessId, scope.organizationId, scope.projectId, ownerId, artifact.id, now]
-      : [now])).first<{ content: string }>();
+      : [now])).first<{ content: string; expires_at: string }>();
   if (!retained) throw new ProductionWorkflowContextError("workflow_source_unavailable", "The selected output is unavailable or is not authorized for this project.", 404);
   const parsed = parseDocumentArtifactContent(retained.content);
   if (!parsed) throw new ProductionWorkflowContextError("workflow_source_invalid", "The selected output cannot be safely read.", 409);
+  const liveScope = scopeGuard.replace("private_content.expires_at>?", "private_content.expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now')");
+  guards?.push({
+    sql: "EXISTS(SELECT 1 FROM private_content WHERE content_id=? AND owner_id=? AND kind='document-artifact' AND redacted_at IS NULL" + liveScope + " AND expires_at=? AND content=?)",
+    bindings: [artifact.contentRef, ownerId, ...(scope ? [scope.projectAccessId, scope.organizationId, scope.projectId, ownerId, artifact.id] : []), retained.expires_at, retained.content],
+  });
+  // A source expired at the original read was admitted only by the existing legal-hold query.
+  // That retention hold never extends a source-license or permission deadline.
+  if(Date.parse(retained.expires_at)>Date.parse(now))deadlines?.push(retained.expires_at);
   return { content: parsed, digest: await sha256(retained.content) };
 }
 
-async function scopedImageDirection(env: WorkerEnv, output: CreativeOutput, ownerId: string, scope?: ProjectExecutionScope) {
+async function scopedImageDirection(env: WorkerEnv, output: CreativeOutput, ownerId: string, scope?: ProjectExecutionScope, guards?: BudgetReservationGuard[], deadlines?: string[]) {
   if (scope) {
     const allowed = await env.DB.prepare(`SELECT 1 AS present FROM project_resource_scopes
       WHERE project_access_id=? AND organization_id=? AND project_id=? AND owner_user_id=?
         AND resource_kind='output' AND resource_id=? AND visibility='collaborative_output' LIMIT 1`)
       .bind(scope.projectAccessId, scope.organizationId, scope.projectId, ownerId, output.id).first();
     if (!allowed) throw new ProductionWorkflowContextError("workflow_source_unauthorized", "The selected image is not authorized for this project.", 403);
+    guards?.push({sql:"EXISTS(SELECT 1 FROM project_resource_scopes WHERE (project_access_id,organization_id,project_id,owner_user_id,resource_kind,resource_id,visibility)=(?,?,?,?,'output',?,'collaborative_output'))",bindings:[scope.projectAccessId,scope.organizationId,scope.projectId,ownerId,output.id]});
     // A shared image never grants another creator access to its actor-private planner receipt.
     // Its original creator may still reuse their own already-authorized written direction.
     if (!output.contentRef) return null;
-    const own = await env.DB.prepare(`SELECT content FROM private_content
+    const own = await env.DB.prepare(`SELECT content,expires_at FROM private_content
       WHERE content_id=? AND owner_id=? AND kind='provider-output' AND redacted_at IS NULL AND expires_at>? LIMIT 1`)
-      .bind(output.contentRef, scope.actorUserId, new Date().toISOString()).first<{ content: string }>();
+      .bind(output.contentRef, scope.actorUserId, new Date().toISOString()).first<{ content: string; expires_at: string }>();
+    const retainedSql = "SELECT 1 FROM private_content WHERE content_id=? AND owner_id=? AND kind='provider-output' AND redacted_at IS NULL AND expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now')";
+    guards?.push(own ? {sql:"EXISTS("+retainedSql+" AND expires_at=? AND content=?)",bindings:[output.contentRef,scope.actorUserId,own.expires_at,own.content]} : {sql:"NOT EXISTS("+retainedSql+")",bindings:[output.contentRef,scope.actorUserId]});
     if (!own) return null;
+    deadlines?.push(own.expires_at);
     try { const parsed = JSON.parse(own.content) as unknown; return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed as Record<string, unknown> : null; }
     catch { return null; }
   }
   if (!output.contentRef) return null;
-  const retained = await env.DB.prepare(`SELECT content FROM private_content
+  const retained = await env.DB.prepare(`SELECT content,expires_at FROM private_content
     WHERE content_id=? AND owner_id=? AND kind='provider-output' AND redacted_at IS NULL AND expires_at>? LIMIT 1`)
-    .bind(output.contentRef, ownerId, new Date().toISOString()).first<{ content: string }>();
+    .bind(output.contentRef, ownerId, new Date().toISOString()).first<{ content: string; expires_at: string }>();
+  const retainedSql = "SELECT 1 FROM private_content WHERE content_id=? AND owner_id=? AND kind='provider-output' AND redacted_at IS NULL AND expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now')";
+  guards?.push(retained ? {sql:"EXISTS("+retainedSql+" AND expires_at=? AND content=?)",bindings:[output.contentRef,ownerId,retained.expires_at,retained.content]} : {sql:"NOT EXISTS("+retainedSql+")",bindings:[output.contentRef,ownerId]});
   if (!retained) return null;
+  deadlines?.push(retained.expires_at);
   try {
     const parsed = JSON.parse(retained.content) as unknown;
     return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed as Record<string, unknown> : null;
@@ -237,7 +252,24 @@ export async function resolveProductionWorkflowContext(input: {
   snapshot: Record<string, unknown>;
   sources: ProductionWorkflowSource[];
   sceneConfiguration?: SceneConfiguration;
+  /** Server-only proof of the exact retained reads; never serialize it as a client preview. */
+  dispatchGuard?: BudgetReservationGuard;
+  dispatchExpiresAt?: string | null;
 }> {
+  return resolveProductionWorkflowContextState(input);
+}
+
+/** Reuse the complete certified projection and workflow journal from the same
+ * original read. Never accept either value from a browser snapshot. */
+export function resolveProductionWorkflowContextFromProjection(
+  input:Parameters<typeof resolveProductionWorkflowContext>[0]&{projection:CreativeProjection},
+):ReturnType<typeof resolveProductionWorkflowContext>{
+  return resolveProductionWorkflowContextState(input,input.projection);
+}
+
+async function resolveProductionWorkflowContextState(
+  input:Parameters<typeof resolveProductionWorkflowContext>[0],certifiedProjection?:CreativeProjection,
+):ReturnType<typeof resolveProductionWorkflowContext>{
   const sources = normalizedSources(input.workflowSources, input.documentId);
   if (!sources.length) {
     if (input.workflowId === undefined && input.workflowStageId === undefined) return { snapshot: input.snapshot, sources };
@@ -246,7 +278,7 @@ export async function resolveProductionWorkflowContext(input: {
     || typeof input.workflowStageId !== "string" || !input.workflowStageId || input.workflowStageId.length > 120) {
     throw new ProductionWorkflowContextError("workflow_identity_invalid", "The selected production stage is unavailable.", 400);
   }
-  const projection = foldEvents(input.events, Number.POSITIVE_INFINITY, input.documentId, input.projectId);
+  const projection = certifiedProjection??foldEvents(input.events, Number.POSITIVE_INFINITY, input.documentId, input.projectId);
   const document = projection.documents.find((candidate) => candidate.id === input.documentId && candidate.projectId === input.projectId);
   if (!document) throw new ProductionWorkflowContextError("workflow_document_unavailable", "The selected production document is unavailable.", 404);
   const workflow = productionWorkflows(input.events, document.id, document.projectId).find((candidate) => candidate.id === input.workflowId);
@@ -264,13 +296,15 @@ export async function resolveProductionWorkflowContext(input: {
     throw new ProductionWorkflowContextError("workflow_sources_changed", "The selected production inputs changed. Review the current path before continuing.", 409);
   }
   const resolved: ResolvedProductionSource[] = [];
+  const dispatchGuards: BudgetReservationGuard[] = [];
+  const dispatchDeadlines: string[] = [];
   for (const source of sources) {
     if (source.outputKind === "image") {
       const image = projection.libraryOutputs.find((candidate) => candidate.id === source.outputId && candidate.documentId === document.id && !candidate.discarded);
       if (!image || image.sourceEventId !== source.sourceEventId || !image.mediaUrl) {
         throw new ProductionWorkflowContextError("workflow_source_stale", "The selected image has changed or is no longer available.", 409);
       }
-      const direction = await scopedImageDirection(input.env, image, input.ownerId, input.scope);
+      const direction = await scopedImageDirection(input.env, image, input.ownerId, input.scope, dispatchGuards, dispatchDeadlines);
       resolved.push({ source, image, direction });
       continue;
     }
@@ -289,7 +323,7 @@ export async function resolveProductionWorkflowContext(input: {
     if ((input.scope || source.approvalRequired) && review.status !== "approved") {
       throw new ProductionWorkflowContextError("workflow_source_approval_required", "An independent current approval is required before this output can inform the next stage.", 409);
     }
-    const retained = await scopedArtifactContent(input.env, artifact, input.ownerId, input.scope);
+    const retained = await scopedArtifactContent(input.env, artifact, input.ownerId, input.scope, dispatchGuards, dispatchDeadlines);
     if (retained.digest !== source.contentSha256) {
       throw new ProductionWorkflowContextError("workflow_source_stale", "A selected output's exact content changed. Review and choose it again.", 409);
     }
@@ -302,6 +336,8 @@ export async function resolveProductionWorkflowContext(input: {
   return {
     snapshot: appendSourceContext(input.snapshot, resolved, input.workflowId, input.workflowStageId),
     sources: resolved.map((entry) => entry.source),
+    dispatchExpiresAt: dispatchDeadlines.length ? dispatchDeadlines.reduce((earliest, value) => Date.parse(value) < Date.parse(earliest) ? value : earliest) : null,
+    dispatchGuard: { sql: dispatchGuards.map(guard => "(" + guard.sql + ")").join(" AND ") || "1", bindings: dispatchGuards.flatMap(guard => guard.bindings) },
     ...(sceneConfiguration ? { sceneConfiguration } : {}),
   };
 }

@@ -1,0 +1,18 @@
+.delivery-planning .delivery-decision-list[hidden] {
+  display: none !important;
+}
+.delivery-decision-list .delivery-editor-toggle {
+  max-inline-size: 100%;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  text-align: start;
+}
+.delivery-decision-list :is(.delivery-editor-note,.delivery-editor-conflict,.delivery-editor-actions) {
+  grid-column: 1 / -1;
+}
+.delivery-decision-list .delivery-editor-note {
+  margin: 0;
+}
+.delivery-decision-list .delivery-decision-notice {
+  overflow-wrap: anywhere;
+}

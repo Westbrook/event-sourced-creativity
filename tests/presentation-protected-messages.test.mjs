@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { readFile } from "node:fs/promises";
 
 import {
   buildPresentationSourceContract,
@@ -11,7 +12,7 @@ import {
 import { assessStoredPresentationCandidate, generateDocumentArtifact } from "../worker/openai-adapter.ts";
 import { buildManagedProductionPlan } from "../src/model/managed-production.ts";
 import { combinedSceneSnapshot, generateManagedArtifactDraft } from "../worker/managed-production.ts";
-import { documentArtifactValidationIssues, normalizeSlideDeckItems, parseDocumentArtifactContent } from "../src/model/document-artifacts.ts";
+import { documentArtifactValidationIssues, normalizeSlideDeckItems, parseDocumentArtifactContent, slideCopyIsNearDuplicate } from "../src/model/document-artifacts.ts";
 import { collectProductionEvidence } from "../src/model/production-evidence.ts";
 
 const promise = "Your content. One context. Infinite paths to your target.";
@@ -145,9 +146,9 @@ for (const lateRepair of [false, true]) test(`isolated ninth-slide promise survi
     if (lateRepair && requests.length === 2) items[0].slide.layout = "cover";
     const candidate = { ...output({ providerAliases: true }), items,
       content_markdown: items.map((item) => [item.title, item.body, item.slide.visual.value].filter(Boolean).join("\n")).join("\n\n") };
-    return Response.json({ id: `isolated-pitch-${requests.length}`, model: "gpt-presentation-test", output_text: JSON.stringify(candidate), usage: { input_tokens: 120, output_tokens: 80, total_tokens: 200 } });
+    return Response.json({ id: `isolated-pitch-${requests.length}`, model: "gpt-5.6-terra", output_text: JSON.stringify(candidate), usage: { input_tokens: 120, output_tokens: 80, total_tokens: 200 } });
   });
-  const result = await generateManagedArtifactDraft({ OPENAI_API_KEY: "mock-provider-key", OPENAI_MODEL: "gpt-presentation-test" }, "owner", "slides", {
+  const result = await generateManagedArtifactDraft({ OPENAI_API_KEY: "mock-provider-key", OPENAI_MODEL: "gpt-5.6-terra" }, "owner", "slides", {
     documentTitle: "Pitch context", snapshot: authored, production, requestedSlideCount: 9, presentationStyle: "editorial", presentationFidelity: "faithful",
   });
   assert.equal(requests.length, lateRepair ? 3 : 2);
@@ -233,9 +234,9 @@ test("an exhausted local artifact repair is not mislabeled as a retryable upstre
   let calls=0;
   context.mock.method(globalThis,"fetch",async()=>{
     calls++;
-    return Response.json({id:`incomplete-layout-${calls}`,model:"gpt-presentation-test",output_text:'{"items": [',usage:{input_tokens:120,output_tokens:80,total_tokens:200}});
+    return Response.json({id:`incomplete-layout-${calls}`,model:"gpt-5.6-terra",output_text:'{"items": [',usage:{input_tokens:120,output_tokens:80,total_tokens:200}});
   });
-  await assert.rejects(generateDocumentArtifact({OPENAI_API_KEY:"mock-provider-key",OPENAI_MODEL:"gpt-presentation-test"},"owner","slides",{documentTitle:"Pitch context",snapshot:snapshot(),options:{itemCount:3,presentationStyle:"editorial"}}),(error)=>{
+  await assert.rejects(generateDocumentArtifact({OPENAI_API_KEY:"mock-provider-key",OPENAI_MODEL:"gpt-5.6-terra"},"owner","slides",{documentTitle:"Pitch context",snapshot:snapshot(),options:{itemCount:3,presentationStyle:"editorial"}}),(error)=>{
     assert.equal(error.detail.code,"provider_returned_incomplete_document_artifact");
     assert.equal(error.detail.action,"edit_request");
     assert.equal(error.detail.retryable,false);
@@ -344,6 +345,121 @@ test("protects an intake-authored exact promise on the planned opening and closi
   }), []);
 });
 
+const benefitsFixture = JSON.parse(await readFile(new URL("./fixtures/presentation-forma-benefits-source.json", import.meta.url), "utf8"));
+const benefitsPromise = "One source. Many outputs.";
+const benefitsSource = () => structuredClone(benefitsFixture.sourceSnapshot);
+const benefitsOutput = () => parseDocumentArtifactContent(JSON.stringify(benefitsFixture.syntheticOutput));
+const benefitsOptions = (sourceContract) => ({ itemCount: 6, sourceContract, requireSourceGrounding: true, requireAllProtectedContent: true });
+
+test("the frozen six-beat source preserves its exact unnumbered bookends through full validation and normalization", () => {
+  const contract = buildPresentationSourceContract(benefitsSource(), benefitsFixture.request);
+  const candidate = benefitsOutput(), before = structuredClone(candidate);
+  assert.equal(contract.numberedOutline.length, 0, "numbered narrative beats are not a numbered authored slide outline");
+  assert.deepEqual(contract.protectedMessages.map(({ text, placement, slideNumber }) => ({ text, placement, slideNumber })), [
+    { text: benefitsPromise, placement: "opening", slideNumber: 1 },
+    { text: benefitsPromise, placement: "closing", slideNumber: 6 },
+  ]);
+  assert.ok(documentArtifactValidationIssues("slides", candidate, { itemCount: 6 }).some(issue => issue.code === "duplicate_deck_copy" && issue.path === "items.5.body"), "the generic duplicate detector is unchanged");
+  assert.deepEqual(documentArtifactValidationIssues("slides", candidate, benefitsOptions(contract)), []);
+  const normalized = { ...candidate, items: normalizeSlideDeckItems(candidate.items, { sourceContract: contract }) };
+  assert.equal(normalized.items[5].body, benefitsPromise);
+  assert.deepEqual(documentArtifactValidationIssues("slides", normalized, benefitsOptions(contract)), []);
+  assert.deepEqual(candidate, before, "source-aware normalization never changes the retained response");
+});
+
+test("observed paid-repair copy distinguishes three genuine within-slide repeats from required body bookends", () => {
+  const observed = benefitsFixture.observedRepairCopy, fifth = observed.slideFive;
+  for (const pair of observed.genuineRedundantPairs) {
+    assert.equal(slideCopyIsNearDuplicate(fifth.bullets[pair.bullet], fifth.data[pair.datum][pair.field]), true, pair.reportedPath);
+  }
+  const contract = buildPresentationSourceContract(benefitsSource(), benefitsFixture.request);
+  const candidate = benefitsOutput();
+  candidate.items[0].title = "One document. More ways to use it.";
+  candidate.items[0].body = observed.openingBody;
+  candidate.items[5].body = observed.closingBody;
+  // Layout and all other slides remain test-authored: this is not a recovered paid deck.
+  candidate.items[4].title = fifth.title;
+  candidate.items[4].body = fifth.body;
+  candidate.items[4].slide.bullets = structuredClone(fifth.bullets);
+  candidate.items[4].slide.visual = { kind: "comparison", label: fifth.visualLabel, value: "", data: structuredClone(fifth.data) };
+  const issues = documentArtifactValidationIssues("slides", candidate, benefitsOptions(contract));
+  assert.deepEqual(issues.filter(issue => issue.code === "duplicate_slide_copy").map(issue => issue.path), observed.genuineRedundantPairs.map(pair => pair.reportedPath));
+  assert.equal(issues.some(issue => issue.code === "duplicate_deck_copy" && issue.path === "items.5.body"), false);
+});
+
+test("an unnumbered protected message does not exempt middle slides, approximate wording, titles, or unrelated copy", () => {
+  const contract = buildPresentationSourceContract(benefitsSource(), benefitsFixture.request);
+  const cases = [
+    ["intermediate echo", candidate => { candidate.items[3].body = benefitsPromise; }, "items.3.body"],
+    ["case-only rewrite", candidate => { candidate.items[5].body = benefitsPromise.toUpperCase(); }, "items.5.body"],
+    ["longer repeated claim", candidate => { candidate.items[5].body = `${benefitsPromise} Deliver it everywhere.`; }, "items.5.body"],
+    ["repeated title", candidate => { candidate.items[5].title = benefitsPromise; candidate.items[5].body = ""; }, "items.5.title"],
+    ["unrelated visual echo", candidate => { candidate.items[5].slide.visual.value = candidate.items[1].slide.visual.value; }, "items.5.slide.visual.value"],
+  ];
+  for (const [label, mutate, path] of cases) {
+    const candidate = benefitsOutput(); mutate(candidate);
+    assert.ok(documentArtifactValidationIssues("slides", candidate, benefitsOptions(contract)).some(issue => issue.code === "duplicate_deck_copy" && issue.path === path), label);
+  }
+  const sameSlide = benefitsOutput();
+  sameSlide.items[5].slide.bullets = [benefitsPromise];
+  assert.ok(documentArtifactValidationIssues("slides", sameSlide, benefitsOptions(contract)).some(issue => issue.code === "duplicate_slide_copy"), "an endpoint exemption never suppresses within-slide duplication");
+  const noClosing = benefitsSource();
+  const message = noClosing.facts.find(fact => fact.properties.exact_text === benefitsPromise);
+  message.properties.exact_placements = ["opening"];
+  message.properties.protected_phrases = [{ text: benefitsPromise, placement: "opening" }];
+  const openingOnly = buildPresentationSourceContract(noClosing, benefitsFixture.request);
+  assert.ok(documentArtifactValidationIssues("slides", benefitsOutput(), benefitsOptions(openingOnly)).some(issue => issue.code === "duplicate_deck_copy" && issue.path === "items.5.body"), "source authorization for one occurrence cannot authorize two");
+});
+
+test("each unnumbered bookend must retain its exact protected-message source without foreign aliases", () => {
+  const source = benefitsSource(), contract = buildPresentationSourceContract(source, benefitsFixture.request);
+  const messageSource = source.facts.find(fact => fact.properties.exact_text === benefitsPromise).block_id;
+  const unrelatedSource = source.facts.find(fact => fact.type === "reference").block_id;
+  for (const position of [0, 5]) for (const references of [[unrelatedSource], [messageSource, "blk_999"]]) {
+    const candidate = benefitsOutput(); candidate.items[position].slide.sourceIds = references;
+    const issues = documentArtifactValidationIssues("slides", candidate, benefitsOptions(contract));
+    assert.ok(issues.some(issue => issue.code === "duplicate_deck_copy" && issue.path === "items.5.body"), `slide ${position + 1}: ${references.join(",")}`);
+    if (references.includes("blk_999")) assert.ok(issues.some(issue => issue.code === "unknown_source_reference"), "cosmetic repetition cannot authenticate a foreign source");
+    assert.equal(normalizeSlideDeckItems(candidate.items, { sourceContract: contract })[5].body, "");
+  }
+});
+
+test("unnumbered bookend placement follows the complete requested deck or its explicit flexible range", () => {
+  const source = benefitsSource(), fixed = buildPresentationSourceContract(source, benefitsFixture.request);
+  const partial = benefitsOutput(); partial.items = partial.items.slice(0, 3); partial.items[2].body = benefitsPromise;
+  const issues = documentArtifactValidationIssues("slides", partial, { ...benefitsOptions(fixed), itemCount: 3, sourcePageStart: 0, sourcePageSize: 3, requireAllProtectedContent: false });
+  assert.ok(issues.some(issue => issue.code === "duplicate_deck_copy" && issue.path === "items.2.body"), "the last item of an intermediate provider page is not the document closing");
+  assert.equal(normalizeSlideDeckItems(partial.items, { sourceContract: fixed })[2].body, "");
+  const countPolicy = { kind: "flexible", unit: "slide", min: 5, max: 8, aim: 7 };
+  const flexible = buildPresentationSourceContract(source, { itemCount: 7, slideCountPolicy: countPolicy });
+  const candidate = benefitsOutput();
+  assert.equal(flexible.protectedMessages.find(message => message.placement === "closing").slideNumber, 7, "the proposed count is not an exact commitment");
+  assert.deepEqual(documentArtifactValidationIssues("slides", candidate, { ...benefitsOptions(flexible), itemCount: 7, slideCountPolicy: countPolicy }), []);
+  assert.equal(normalizeSlideDeckItems(candidate.items, { sourceContract: flexible })[5].body, benefitsPromise);
+});
+
+test("a synthetic response to the frozen unnumbered source needs one mocked provider call and no paid-repair attempt", async context => {
+  const source = benefitsSource(), contract = buildPresentationSourceContract(source, benefitsFixture.request);
+  const candidate = structuredClone(benefitsFixture.syntheticOutput);
+  for (const item of candidate.items) item.slide.sourceIds = item.slide.sourceIds.map(id => contract.sources.find(source => source.sourceId === id).alias);
+  let calls = 0;
+  context.mock.method(globalThis, "fetch", async url => {
+    assert.equal(String(url), "https://api.openai.com/v1/responses");
+    calls += 1;
+    assert.equal(calls, 1, "the explicit authored bookends must not trigger another provider attempt");
+    return Response.json({ id: "synthetic-benefits-response", model: "gpt-5.6-terra", output_text: JSON.stringify(candidate), usage: { input_tokens: 120, output_tokens: 80, total_tokens: 200 } });
+  });
+  const result = await generateDocumentArtifact({ OPENAI_API_KEY: "mock-provider-key", OPENAI_MODEL: "gpt-5.6-terra" }, "synthetic-benefits-owner", "slides", {
+    documentTitle: "Forma benefits", snapshot: source, options: benefitsFixture.request,
+  });
+  assert.equal(result.output.items[5].body, benefitsPromise);
+  assert.equal(result.inputReceipt.validation.repair_attempted, false);
+  const retained = assessStoredPresentationCandidate(JSON.stringify(candidate), source, benefitsFixture.request);
+  assert.deepEqual(retained.issues, []);
+  assert.equal(retained.output.items[5].body, benefitsPromise);
+  assert.equal(calls, 1, "local retained-response assessment cannot contact a provider");
+});
+
 test("citation excerpts, provenance labels, and presenter notes never satisfy exact audience message delivery", () => {
   const contract = buildPresentationSourceContract(snapshot(), { requestedSlideCount: 3 });
 
@@ -429,7 +545,7 @@ test("promotes a citation-only exact closing promise before validation with one 
     requests.push({ instructions: request.instructions, input: JSON.parse(request.input) });
     return Response.json({
       id: `protected-message-provider-${requests.length}`,
-      model: "gpt-presentation-test",
+      model: "gpt-5.6-terra",
       output_text: JSON.stringify(candidate),
       usage: { input_tokens: 120, output_tokens: 80, total_tokens: 200 },
     });
@@ -437,7 +553,7 @@ test("promotes a citation-only exact closing promise before validation with one 
 
   try {
     const result = await generateDocumentArtifact(
-      { OPENAI_API_KEY: "mock-provider-key", OPENAI_MODEL: "gpt-presentation-test" },
+      { OPENAI_API_KEY: "mock-provider-key", OPENAI_MODEL: "gpt-5.6-terra" },
       "authorized-pitch-owner",
       "slides",
       {
@@ -484,7 +600,7 @@ test("a genuinely missing protected opening uses the one bounded repair while re
     requests.push({ instructions: request.instructions, input: JSON.parse(request.input) });
     return Response.json({
       id: `protected-message-bounded-repair-${requests.length}`,
-      model: "gpt-presentation-test",
+      model: "gpt-5.6-terra",
       output_text: JSON.stringify(candidates[requests.length - 1]),
       usage: { input_tokens: 120, output_tokens: 80, total_tokens: 200 },
     });
@@ -492,7 +608,7 @@ test("a genuinely missing protected opening uses the one bounded repair while re
 
   try {
     const result = await generateDocumentArtifact(
-      { OPENAI_API_KEY: "mock-provider-key", OPENAI_MODEL: "gpt-presentation-test" },
+      { OPENAI_API_KEY: "mock-provider-key", OPENAI_MODEL: "gpt-5.6-terra" },
       "authorized-pitch-owner",
       "slides",
       {

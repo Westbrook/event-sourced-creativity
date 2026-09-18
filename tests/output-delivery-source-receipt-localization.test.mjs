@@ -46,7 +46,10 @@ test("receipt actions distinguish persisted reconciliation, uncertainty, and cop
   assert.equal(english("checkSavedReceipt"), "Check saved receipt · no generation");
   assert.match(english("receiptCheckExplanation"), /only evidence already stored by Forma/);
   assert.match(english("receiptCheckExplanation"), /does not contact a provider, generate work, release an unknown charge, or alter the required output/);
-  assert.match(english("operationReceiptStillUnknown"), /reservation remains held/);
+  assert.match(english("operationReceiptStillUnknown"), /^The original receipt check could not establish provider acceptance or cost\./);
+  assert.match(english("operationReceiptStillUnknown"), /Review the refreshed operation and accounting for the current state\./);
+  assert.match(english("operationReceiptStillUnknown"), /If acceptance or cost remains unknown, do not submit a replacement; copy the technical receipt and ask an authorized operator to investigate\.$/);
+  assert.doesNotMatch(english("operationReceiptStillUnknown"), /Its reservation remains held|cost is still unknown/);
   assert.match(english("operationReceiptStillUnknown"), /do not submit a replacement/);
   assert.match(english("operationReceiptKnown"), /No provider request was sent/);
   assert.match(english("operationReceiptNoChange"), /no new work was started/);

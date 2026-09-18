@@ -63,7 +63,7 @@ test("a real scoped Output read refuses a stale projection without updating its 
   await appendEvents(state.env, [makeEvent(`creative:${owner}`, 0, `user:${owner}`, "fixture", "opened-after-refresh", "DocumentOpened", { project_id: project, document_id: doc })]);
   const response = await state.get();
   assert.equal(response.status, 409, await response.clone().text());
-  assert.equal((await response.json()).errorCode, "output_source_projection_stale");
+  assert.equal((await response.json()).errorCode, "output_target_source_projection_stale");
   assert.equal(state.sqlite.prepare("SELECT last_owner_sequence FROM project_migration_states WHERE project_access_id=?").get(state.projectAccessId).last_owner_sequence, cursor);
 });
 

@@ -1,3 +1,5 @@
+import { generationExecutionSummary } from "./generation-execution-evidence.ts";
+import { hasUnresolvedProviderSubmission, hasUnsettledProviderSubmission, providerSubmissions } from "./provider-submission.ts";
 import type { SlideCountPolicy } from "./presentation-count-policy.ts";
 import type { DocumentArtifactDraftItem, DocumentArtifactValidationIssue, SlidePresentation, SlideVisualData } from "./document-artifacts.ts";
 
@@ -42,9 +44,9 @@ export type PresentationCandidateSummary = {
   plannedSlideCount: number;
   providerBatchCount: number;
   providerCalls: number;
-  settledCostMicrousd: number;
+  settledCostMicrousd: number | null;
   complete: boolean;
-  reviewOnlyReason?: "historical-validation-rejection";
+  reviewOnlyReason?: "historical-validation-rejection" | "validation-provenance-unavailable";
   missingContextGroupLabels: string[];
   issues: PresentationCandidateValidationIssue[];
 };
@@ -75,6 +77,8 @@ export type PresentationCandidateDetail = PresentationCandidateSummary & {
   presentation: SlidePresentation | null;
   slides: PresentationCandidateSlide[];
   citationChecks?: PresentationCandidateCitationCheck[];
+  accounting?: PresentationCandidateAccounting;
+  revision?: { token: string; fields: PresentationCandidateEdit[] };
   normalizationChanges: Array<{ path: string; originalValue: string; normalizedValue: string; reason: string }>;
 };
 
@@ -272,4 +276,202 @@ export function sanitizePresentationCandidateSlides(
       },
     } : null,
   }));
+}
+
+export type PresentationCandidateAccounting = {
+  /** Verified charge only: a final total when complete, otherwise the settled portion so far. */
+  settled_cost_microusd: number | null;
+  settled_cost_complete: boolean;
+  /** Current outstanding hold, never the original reservation allocation. */
+  reservation_microusd: number | null;
+  reservation_status: "active" | "executing" | "settled" | "released" | "administratively_released" | "unknown";
+  actual_provider_call_count: number | null;
+  attempted_provider_call_count: number | null;
+  unresolved_provider_call_count: number | null;
+  provider_submission_uncertain: boolean;
+};
+
+const candidateRecord = (value: unknown): Record<string, unknown> => value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+const candidateCount = (value: unknown): number | null => typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : null;
+const candidateText = (value: unknown) => typeof value === "string" && value ? value : null;
+
+/** Project original receipts without reconciling, releasing a hold, or repricing historical usage.
+ * The worker supplies only exact actor/job-owned ledger rows and immutable usage receipts. */
+export function presentationCandidateAccounting(checkpoint: Record<string, unknown>, evidence: {
+  reservations: readonly Record<string, unknown>[];
+  usage: readonly Record<string, unknown>[];
+  responseIds: readonly string[];
+  minimumAttempt: number;
+  preserved: readonly Record<string, unknown>[];
+}): PresentationCandidateAccounting {
+  const receipt = candidateRecord(generationExecutionSummary(checkpoint));
+  const submissions = providerSubmissions(checkpoint);
+  const pending = submissions.filter(entry => entry.status === "pending");
+  const originalReceipt = candidateRecord(checkpoint.generationReceipt);
+  const hasCurrentCalls = submissions.length > 0 || hasUnresolvedProviderSubmission(checkpoint)
+    || checkpoint.presentationProviderSubmission === "pending" || checkpoint.presentationProviderSubmission === "confirmed"
+    || ["submitted", "completed", "not_submitted", "submission_unknown"].includes(String(originalReceipt.provider_request_status));
+  const preserved = evidence.preserved.filter(value => value.schema_version === 1).map(value => candidateRecord(value.accounting));
+  const previousCount = (field: string) => preserved.reduce<number | null>((maximum, value) => {
+    const count = candidateCount(value[field]);
+    return count === null ? maximum : Math.max(maximum ?? 0, count);
+  }, null);
+  const confirmed = new Set(evidence.responseIds);
+  for (const id of Array.isArray(checkpoint.plannerResponseIds) ? checkpoint.plannerResponseIds : []) if (candidateText(id)) confirmed.add(String(id));
+  if (candidateText(checkpoint.plannerResponseId)) confirmed.add(String(checkpoint.plannerResponseId));
+  for (const submission of submissions) if (submission.status !== "pending" && candidateText(submission.providerRequestId)) confirmed.add(String(submission.providerRequestId));
+  const currentCount = candidateCount(receipt.actual_provider_call_count);
+  const actual = confirmed.size || currentCount !== null || previousCount("actual_provider_call_count") !== null
+    ? Math.max(confirmed.size, currentCount ?? 0, previousCount("actual_provider_call_count") ?? 0) : null;
+  const legacyPending = checkpoint.presentationProviderSubmission === "pending" && !pending.some(entry => entry.operation === "planning");
+  const currentUncertain = hasUnresolvedProviderSubmission(checkpoint) || legacyPending
+    || receipt.provider_submission_uncertain === true || receipt.provider_request_status === "submission_unknown";
+  const savedUncertain = preserved.some(value => value.provider_submission_uncertain !== false);
+  const uncertain = hasCurrentCalls ? currentUncertain : !preserved.length || savedUncertain;
+  const pendingCount = candidateCount(receipt.unresolved_provider_call_count);
+  const unresolved = hasCurrentCalls
+    ? currentUncertain ? pending.length || legacyPending ? Math.max(pending.length + (legacyPending ? 1 : 0), pendingCount ?? 0) : pendingCount && pendingCount > 0 ? pendingCount : null : 0
+    : preserved.length && !preserved.some(value => candidateCount(value.unresolved_provider_call_count) === null)
+      ? previousCount("unresolved_provider_call_count") : null;
+  const attempted = actual !== null && unresolved !== null
+    ? Math.max(actual + unresolved, evidence.minimumAttempt, previousCount("attempted_provider_call_count") ?? 0) : null;
+
+  let invalid = false;
+  const reservations = new Map<string, Record<string, unknown>>();
+  for (const row of evidence.reservations) {
+    const id = candidateText(row.reservation_id);
+    if (!id || reservations.has(id) || candidateCount(row.used_microusd) === null || candidateCount(row.reserved_microusd) === null
+      || !["active", "executing", "settled", "released", "administratively_released"].includes(String(row.status))) { invalid = true; continue; }
+    reservations.set(id, row);
+  }
+  const charges = new Map<string, number>();
+  let explicitZero = false;
+  for (const row of evidence.usage) {
+    const cost = candidateCount(row.cost_microusd);
+    const id = candidateText(row.cost_reservation_id);
+    if (cost === null || !id) { invalid = true; continue; }
+    charges.set(id, (charges.get(id) ?? 0) + cost);
+    if (cost === 0) explicitZero = true;
+  }
+  for (const [id, row] of reservations) {
+    if (row.status === "settled") { charges.set(id, Number(row.used_microusd)); explicitZero ||= row.used_microusd === 0; }
+  }
+  const amount = [...charges.values()].reduce((total, charge) => total + charge, 0);
+  if (!Number.isSafeInteger(amount)) invalid = true;
+  const held = [...reservations.values()].filter(row => row.status === "active" || row.status === "executing");
+  const holdAmount = held.reduce((total, row) => total + Number(row.reserved_microusd), 0);
+  const status = invalid || !reservations.size ? "unknown"
+    : held.some(row => row.status === "executing") ? "executing" : held.length ? "active"
+      : [...reservations.values()].some(row => row.status === "administratively_released") ? "administratively_released"
+      : [...reservations.values()].some(row => row.status === "settled") ? "settled" : "released";
+  const settled = !Number.isSafeInteger(amount) ? null : amount > 0 ? amount : explicitZero && !uncertain && !held.length ? 0 : null;
+  const complete = status !== "administratively_released" && settled !== null && !invalid && reservations.size > 0 && !held.length && !uncertain
+    && unresolved === 0 && attempted !== null && !hasUnsettledProviderSubmission(checkpoint)
+    && (hasCurrentCalls || preserved.some(value => value.settled_cost_complete === true));
+  return {
+    settled_cost_microusd: settled, settled_cost_complete: complete,
+    reservation_microusd: status === "unknown" || !Number.isSafeInteger(holdAmount) ? null : holdAmount,
+    reservation_status: status, actual_provider_call_count: actual, attempted_provider_call_count: attempted,
+    unresolved_provider_call_count: unresolved, provider_submission_uncertain: uncertain,
+  };
+}
+
+/** The stored provider verdict is independent of a future adapter's current reassessment. */
+export function presentationCandidateOriginalValidation(checkpoint: Record<string, unknown>, locallyRecoverable: boolean) {
+  const receipt = candidateRecord(checkpoint.generationReceipt), detail = candidateRecord(checkpoint.errorDetail);
+  const codes = new Set(["source_fidelity_validation_failed", "provider_returned_incomplete_document_artifact"]);
+  const rejected = receipt.failure_stage === "source_fidelity_validation" || codes.has(String(receipt.failure_code ?? ""))
+    || codes.has(String(detail.code ?? "")) || Array.isArray(detail.validationIssues) && detail.validationIssues.length > 0;
+  // The exact checkpoint candidate records the original source/shape assessment before local persistence.
+  // An explicit original rejection always outranks that earlier positive flag.
+  const accepted = locallyRecoverable;
+  return { schema_version: 1 as const, adapter_version: candidateText(receipt.presentation_adapter_version),
+    outcome: rejected ? "rejected" as const : accepted ? "accepted" as const : "unconfirmed" as const };
+}
+
+export type PresentationCandidateEdit = { path: string; value: string };
+export type PresentationCandidateRevisionRequest = {
+  revisionToken: string;
+  idempotencyKey: string;
+  confirmed: true;
+  edits: PresentationCandidateEdit[];
+};
+export type PresentationCandidateRevisionResult = {
+  jobId: string; documentId: string; responseId: string; artifactId: string;
+  providerCalls: 0; incrementalCostMicrousd: 0; approval: "unapproved"; reused: boolean;
+};
+
+const revisionFieldPath = /^items\.(?:0|[1-9]\d*)\.(?:title|body|slide\.(?:kicker|bullets\.(?:0|[1-9]\d*)|visual\.(?:label|value|data\.(?:0|[1-9]\d*)\.(?:label|value))))$/u;
+const revisionRecord = (value: unknown): Record<string, unknown> | null => value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
+
+/** Catalog only existing visible string leaves. This is not the sanitized preview round-tripped as an artifact. */
+export function presentationCandidateEditableFields(raw: string, privateReferences: readonly string[] = []): PresentationCandidateEdit[] {
+  let parsed: unknown;
+  try { parsed = JSON.parse(raw); } catch { return []; }
+  const root = revisionRecord(parsed), fields: PresentationCandidateEdit[] = [];
+  if (!root || !Array.isArray(root.items)) return fields;
+  const add = (path: string, value: unknown) => {
+    if (typeof value === "string" && value.length <= 8_000
+      && sanitizePresentationCandidateText(value, privateReferences) === value) fields.push({ path, value });
+  };
+  root.items.forEach((value, index) => {
+    const item = revisionRecord(value); if (!item) return;
+    const prefix = `items.${index}`;
+    add(`${prefix}.title`, item.title); add(`${prefix}.body`, item.body);
+    const slide = revisionRecord(item.slide); if (!slide) return;
+    add(`${prefix}.slide.kicker`, slide.kicker);
+    if (Array.isArray(slide.bullets)) slide.bullets.forEach((bullet, i) => add(`${prefix}.slide.bullets.${i}`, bullet));
+    const visual = revisionRecord(slide.visual); if (!visual) return;
+    add(`${prefix}.slide.visual.label`, visual.label); add(`${prefix}.slide.visual.value`, visual.value);
+    if (Array.isArray(visual.data)) visual.data.forEach((datum, i) => {
+      const row = revisionRecord(datum); if (!row) return;
+      add(`${prefix}.slide.visual.data.${i}.label`, row.label); add(`${prefix}.slide.visual.data.${i}.value`, row.value);
+    });
+  });
+  return fields.length <= 512 ? fields : [];
+}
+
+/** Strict patches preserve source assignments, quotations, citation provenance, numeric precision and item/layout identity. */
+export function applyPresentationCandidateEdits(raw: string, edits: unknown, privateReferences: readonly string[] = []): { raw: string; changedPaths: string[] } | null {
+  if (!Array.isArray(edits) || edits.length > 128 || new TextEncoder().encode(JSON.stringify(edits)).byteLength > 64 * 1024) return null;
+  const allowed = new Map(presentationCandidateEditableFields(raw, privateReferences).map(field => [field.path, field.value]));
+  if (!allowed.size) return null;
+  let parsed: Record<string, unknown>;
+  try { parsed = JSON.parse(raw) as Record<string, unknown>; } catch { return null; }
+  const seen = new Set<string>(), changedPaths: string[] = [];
+  for (const edit of edits) {
+    const entry = revisionRecord(edit);
+    if (!entry || Object.keys(entry).some(key => key !== "path" && key !== "value")
+      || typeof entry.path !== "string" || !revisionFieldPath.test(entry.path) || !allowed.has(entry.path) || seen.has(entry.path)
+      || typeof entry.value !== "string" || entry.value.length > 8_000
+      || sanitizePresentationCandidateText(entry.value, privateReferences) !== entry.value) return null;
+    seen.add(entry.path);
+    const parts = entry.path.split("."), key = parts.pop()!;
+    let target: unknown = parsed;
+    for (const part of parts) {
+      if (!target || typeof target !== "object" || !Object.hasOwn(target, part)) return null;
+      target = (target as Record<string, unknown>)[part];
+    }
+    if (!target || typeof target !== "object" || !Object.hasOwn(target, key) || typeof (target as Record<string, unknown>)[key] !== "string") return null;
+    if (allowed.get(entry.path) !== entry.value) changedPaths.push(entry.path);
+    (target as Record<string, unknown>)[key] = entry.value;
+  }
+  return { raw: JSON.stringify(parsed), changedPaths: changedPaths.sort() };
+}
+
+/** Markdown follows the resulting audience-facing slides, never stale rejected provider prose. */
+export function presentationCandidateRevisionMarkdown(output: { title: string; items: DocumentArtifactDraftItem[] }): string {
+  return [`# ${output.title}`, ...output.items.map((item, index) => {
+    const slide = item.slide, visual = slide?.visual, quote = slide?.quote;
+    return [
+      `## ${index + 1}. ${item.title}`, ...(slide?.kicker ? [slide.kicker] : []), item.body,
+      ...(quote?.text ? [`> ${quote.text} — ${[quote.speaker, quote.role].filter((value, i, all) => value && all.indexOf(value) === i).join(", ")}`] : []),
+      ...(slide?.bullets ?? []).map(value => `- ${value}`),
+      ...(visual?.value && visual.value !== quote?.text ? [visual.label ? `${visual.label}: ${visual.value}` : visual.value] : visual?.label ? [visual.label] : []),
+      ...(visual?.exactValue ? [`Exact value: ${visual.exactValue}${visual.unit ? ` ${visual.unit}` : ""}`] : []),
+      ...(visual?.displayValue ? [`Displayed value: ${visual.displayValue}${visual.unit ? ` ${visual.unit}` : ""}`] : []),
+      ...(visual?.data ?? []).map(datum => `- ${datum.label}: ${datum.displayValue || datum.value}${datum.exactValue && datum.exactValue !== (datum.displayValue || datum.value) ? ` (exact: ${datum.exactValue})` : ""}`),
+      ...(item.notes ? [item.notes] : []),
+    ].filter(Boolean).join("\n");
+  })].join("\n\n");
 }

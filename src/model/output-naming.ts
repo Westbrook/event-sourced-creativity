@@ -1,5 +1,6 @@
 import { documentArtifactDefinition, isDocumentArtifactKind, type DocumentArtifactKind } from "./document-artifacts.ts";
 import type { CreativeEvent, CreativeOutput } from "./events.ts";
+import type { CreativeNextAction } from "./workspace-intelligence.ts";
 
 export type OutputNamingKind = DocumentArtifactKind | "image";
 
@@ -37,6 +38,8 @@ export type OutputNamingOptions = {
   maxSummaryLength?: number;
   formatTake?: (take: number) => string;
   formatKind?: (kind: OutputNamingKind) => string;
+  /** Optional project-list presentation; never an authority or routing identity. */
+  scopedLabels?: { documents: readonly { id: string; title: string }[]; formatDocument: (number: number) => string; formatResult: (number: number) => string };
 };
 
 export type OutputPresentation = {
@@ -55,6 +58,7 @@ export type OutputPresentation = {
   sourceLabel: string;
   isCustomTitle: boolean;
   disambiguator: string;
+  displayScope?: { key: string; title: string; documentTitle: string; qualifier: string; context: string; showDocument: boolean };
 };
 
 type Creation = { id: string; documentId: string; kind: OutputNamingKind; sequence: number; index: number };
@@ -190,6 +194,120 @@ function semanticDetails(candidate: OutputNamingCandidate, locale: string, title
   return { details: distinct, intent, sourceLabel };
 }
 
+type ScopedOutputDisplay = NonNullable<OutputPresentation["displayScope"]>;
+type DisplayLabel = { key: string; label: string };
+
+// Compare presentation only. Authored titles and exact object identities are never rewritten.
+const displayCollisionKey = (value: string) => value.replace(/[\u2066-\u2069]/gu, "").normalize("NFC").replace(/\s+/gu, " ").trim();
+const scopedOutputKey = (candidate: OutputNamingCandidate) => JSON.stringify([candidate.documentId ?? "", kindOf(candidate), candidate.id]);
+const outputTitle = (value: OutputPresentation) => value.disambiguator ? value.disambiguator + " — " + value.title : value.title;
+
+export function qualifyDisplayCollisions(rows: readonly DisplayLabel[], format: (number: number) => string, identityFallback?: (key: string) => string) {
+  const unique = [...new Map(rows.map(row => [row.key, row])).values()];
+  const groups = new Map<string, DisplayLabel[]>();
+  for (const row of unique) { const key = displayCollisionKey(row.label); groups.set(key, [...(groups.get(key) ?? []), row]); }
+  const ranks = new Map<string, number>();
+  for (const group of groups.values()) [...group].sort((a, b) => a.key < b.key ? -1 : a.key > b.key ? 1 : 0)
+    .forEach((row, index) => ranks.set(row.key, index + 1));
+  const qualifiers = new Map<string, string>();
+  const label = (row: DisplayLabel) => row.label + (qualifiers.has(row.key) ? " · " + qualifiers.get(row.key) : "");
+  // A composed qualifier can itself equal another authored name. Recheck the
+  // final text, adding a qualifier only to newly colliding exact identities.
+  for (let remaining = unique.length; remaining > 0; remaining--) {
+    const composed = new Map<string, DisplayLabel[]>();
+    for (const row of unique) { const key = displayCollisionKey(label(row)); composed.set(key, [...(composed.get(key) ?? []), row]); }
+    const next = [...composed.values()].filter(group => group.length > 1).flat().filter(row => !qualifiers.has(row.key));
+    if (!next.length) break;
+    for (const row of next) qualifiers.set(row.key, format(ranks.get(row.key)!));
+  }
+  const result = new Map(unique.map(row => [row.key, { label: label(row), qualifier: qualifiers.get(row.key) ?? "" }]));
+  // Optional final fallback only after human context and stable ordinal qualifiers
+  // still collide. Callers must use a non-secret, injectively encoded exact ID.
+  // Existing Output callers omit this argument and keep their presentation unchanged.
+  if (identityFallback) {
+    const identified = new Set<string>();
+    for (let remaining = unique.length; remaining > 0; remaining--) {
+      const composed = new Map<string, DisplayLabel[]>();
+      for (const row of unique) {
+        const key = displayCollisionKey(result.get(row.key)!.label);
+        composed.set(key, [...(composed.get(key) ?? []), row]);
+      }
+      const next = [...composed.values()].filter(group => group.length > 1).flat().filter(row => !identified.has(row.key));
+      if (!next.length) break;
+      for (const row of next) {
+        const current = result.get(row.key)!, identity = identityFallback(row.key);
+        result.set(row.key, { label: current.label + " · " + identity, qualifier: [current.qualifier, identity].filter(Boolean).join(" · ") });
+        identified.add(row.key);
+      }
+    }
+  }
+  return result;
+}
+
+export type CreativeNextActionDisplayLocale = {
+  t: (id: string, fallback?: string, values?: Record<string, string | number>) => string;
+  number?: (value: number) => string;
+  date?: (value: Date | number, options?: Intl.DateTimeFormatOptions) => string;
+};
+
+/** Shared visible names, never selection, authorization or recovery policy.
+ * An existing host may retain its executor-specific localized action copy.
+ * Opaque target identities order collision qualifiers but are never displayed. */
+export function creativeNextActionDisplayLabels(
+  actions: readonly CreativeNextAction[], locale: CreativeNextActionDisplayLocale, baseLabels?: readonly string[],
+): string[] {
+  const isolate = (value: string) => "\u2068" + value + "\u2069";
+  const rows = actions.map((action, index) => {
+    const label = baseLabels?.[index] ?? locale.t(action.labelKey ?? `next.exact.${action.id}.label`, action.label);
+    const title = action.title && action.target.kind !== "job" ? action.target.kind === "configure"
+      ? locale.t(`artifact.${action.title}.label`, action.title.replaceAll("_", " ")) : action.title : "";
+    return { key: JSON.stringify(action.target), action, label: title ? `${label}: ${title}` : label };
+  });
+  const jobs = rows.filter(row => row.action.target.kind === "job" && row.action.jobDisplay);
+  const collisions = qualifyDisplayCollisions(jobs, number => String(number));
+  const described = jobs.map(row => {
+    if (!collisions.get(row.key)!.qualifier) return row;
+    const { artifactKind, kind, requestedAt } = row.action.jobDisplay!;
+    const format = artifactKind ? locale.t(`artifact.${artifactKind}.label`, documentArtifactDefinition(artifactKind).label)
+      : locale.t(`activity.kind.${kind}`, locale.t("activity.documentOperation", "Document operation"));
+    const requested = new Date(requestedAt);
+    const time = Number.isFinite(requested.getTime()) && locale.date
+      ? locale.date(requested, { dateStyle: "medium", timeStyle: "short" }) : "";
+    return { ...row, label: row.label + ": " + [format, time].filter(Boolean).map(isolate).join(" · ") };
+  });
+  const qualifier = (number: number, key: string, fallback: string) => isolate(locale.number
+    ? locale.t(key, fallback, { number: locale.number(number) }) : String(number));
+  const jobLabels = qualifyDisplayCollisions(described, number =>
+    qualifier(number, "next.exact.jobRequestQualifier", "Request {number}"));
+  const labels = qualifyDisplayCollisions(rows.map(row => ({ ...row, label: jobLabels.get(row.key)?.label ?? row.label })),
+    number => qualifier(number, "next.exact.choiceQualifier", "Choice {number}"));
+  return rows.map(row => labels.get(row.key)!.label);
+}
+
+function scopedOutputPresentations(candidates: readonly OutputNamingCandidate[], presentations: OutputPresentation[], options: OutputNamingOptions): OutputPresentation[] {
+  const scope = options.scopedLabels!;
+  const documents = new Set(scope.documents.map(document => document.id));
+  const peers = [...new Map([...(options.peers ?? candidates).filter(candidate => documents.has(candidate.documentId ?? "")), ...candidates]
+    .map(candidate => [scopedOutputKey(candidate), candidate])).values()];
+  const described = describeOutputs(peers, { ...options, peers, scopedLabels: undefined });
+  const documentLabels = qualifyDisplayCollisions(scope.documents.map(document => ({ key: document.id, label: document.title })), scope.formatDocument);
+  const titles = new Map<string, number>();
+  const rows = peers.map((candidate, index) => {
+    const key = scopedOutputKey(candidate), title = outputTitle(described[index]!);
+    titles.set(displayCollisionKey(title), (titles.get(displayCollisionKey(title)) ?? 0) + 1);
+    const documentTitle = documentLabels.get(candidate.documentId ?? "")?.label ?? candidate.documentId ?? "";
+    return { key, title, documentTitle, label: [title, documentTitle].filter(Boolean).join(" · ") };
+  });
+  const labels = qualifyDisplayCollisions(rows, scope.formatResult), isolate = (value: string) => "\u2068" + value + "\u2069";
+  const scoped = new Map<string, ScopedOutputDisplay>(rows.map(row => {
+    const qualifier = labels.get(row.key)?.qualifier ?? "";
+    return [row.key, { key: row.key, title: row.title, documentTitle: row.documentTitle, qualifier,
+      context: [row.title, row.documentTitle, qualifier].filter(Boolean).map(isolate).join(" · "),
+      showDocument: (titles.get(displayCollisionKey(row.title)) ?? 0) > 1 || Boolean(qualifier) }];
+  }));
+  return presentations.map((presentation, index) => ({ ...presentation, displayScope: scoped.get(scopedOutputKey(candidates[index]!))! }));
+}
+
 /** Describe immutable generation takes without confusing them with edited-content revisions. */
 export function describeOutputs(candidates: readonly OutputNamingCandidate[], options: OutputNamingOptions = {}): OutputPresentation[] {
   const locale = options.locale || "en", copy = copyFor(locale), peers = options.peers ?? candidates;
@@ -211,7 +329,7 @@ export function describeOutputs(candidates: readonly OutputNamingCandidate[], op
   }
   for (const entries of populations.values()) entries.sort((left, right) => left.sequence - right.sequence || left.index - right.index || left.id.localeCompare(right.id));
 
-  return candidates.map((candidate) => {
+  const presentations = candidates.map((candidate) => {
     const kind = kindOf(candidate), documentId = candidate.documentId ?? "";
     const kindLabel = options.formatKind?.(kind) ?? (kind === "image" ? copy.image : documentArtifactDefinition(kind).label);
     const authored = clean(candidate.customTitle) || (candidate.titleSource === "authored" ? clean(candidate.title) : "");
@@ -245,6 +363,7 @@ export function describeOutputs(candidates: readonly OutputNamingCandidate[], op
       disambiguator,
     };
   });
+  return options.scopedLabels ? scopedOutputPresentations(candidates, presentations, options) : presentations;
 }
 
 export function describeOutput(candidate: OutputNamingCandidate, peers: readonly OutputNamingCandidate[], options: OutputNamingOptions = {}): OutputPresentation {

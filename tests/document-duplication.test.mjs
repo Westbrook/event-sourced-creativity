@@ -122,6 +122,24 @@ test("refuses to silently duplicate governed organization context", () => {
   }), /Published organization context cannot be duplicated/);
 });
 
+test("composition copies retain the exact saved PNG recipe and original source identities", () => {
+  const original = baseline();
+  const recipe = { version: 1, aspect: "1:1", width: 1536, height: 1536, background: "#ffffff",
+    sources: [{ id: "reference:image", blockId: "reference", label: "Original image", mediaUrl: "/api/media/source", contentHash: "a".repeat(64), kind: "image" }],
+    layers: [{ id: "layer-one", sourceId: "reference:image", x: 50, y: 50, scale: 70, opacity: 100 }] };
+  original.push(event(10, "BlockCreated", { project_id: "project-a", document_id: "original", block_id: "composition", type: "reference", properties: {
+    media_url: "/api/media/composite.png", reference_id: "composition-reference", reference_composition: recipe,
+  } }));
+  let ordinal = 0;
+  const plan = buildDocumentDuplicationPlan({ projection: foldEvents(original), sourceDocumentId: "original", title: "Composition copy", sourceStreamId: "creative:owner", sourceSequence: 10, createId: () => "copy-" + ++ordinal });
+  const composite = plan.events.find(item => item.type === "BlockCreated" && item.payload.copied_from_block_id === "composition");
+  const source = plan.events.find(item => item.type === "BlockCreated" && item.payload.copied_from_block_id === "reference");
+  assert.equal(composite.payload.properties.media_url, "/api/media/composite.png");
+  assert.deepEqual(composite.payload.properties.reference_composition, recipe);
+  assert.notEqual(source.payload.block_id, recipe.sources[0].blockId, "new decisions get new identities while the captured raster retains its actual source lineage");
+  assert.notEqual(composite.payload.properties.reference_composition, recipe);
+});
+
 test("supports empty documents and rejects documents outside the current project", () => {
   const projection = foldEvents([
     event(1, "ProjectCreated", { project_id: "project-a", name: "A" }),
@@ -137,10 +155,13 @@ test("supports empty documents and rejects documents outside the current project
   }), /no longer available/);
 });
 
-test("project contents exposes a named, author-only document duplication action", async () => {
+test("project contents reuses its copy slot for author confirmation and reader-only recovery", async () => {
   const source = await readFile(new URL("../src/components/forma-project-contents.ts", import.meta.url), "utf8");
   assert.match(source, /document-duplicate-trigger/);
-  assert.match(source, /canAuthor\?html`<button type="button" class="button ghost document-duplicate-trigger"/);
-  assert.match(source, /buildDocumentDuplicationPlan/);
-  assert.match(source, /rebaseAttempts:6/);
+  assert.match(source, /copyAccess\.canRead\?html`<button type="button" class="button ghost document-duplicate-trigger"/);
+  assert.match(source, /copyAccess\.canAuthor\?this\.i18n\.system\("Duplicate"\)/);
+  assert.match(source, /document\.copy\.check/);
+  assert.match(source, /previewDocumentCopy/);
+  assert.match(source, /applyDocumentCopy/);
+  assert.doesNotMatch(source, /buildDocumentDuplicationPlan|rebaseAttempts:6/);
 });

@@ -89,6 +89,45 @@ forma-generation-actions,
   max-inline-size: 100%;
 }
 
+/* The inline Image entry precedes the compact action row. Keep its native
+ * focus ring inside the independently scrolling result pane. */
+.document-result-generation .generation-actions-shell > .native-image-entry {
+  margin-inline: var(--forma-focus-clearance);
+}
+
+/* Output-pane controls wrap by their own available width. Keep the composer
+ * and expanded configuration/dialog rows on their existing contracts. */
+.document-result-generation .generation-actions.compact {
+  flex-wrap: wrap;
+  align-items: stretch;
+  gap: var(--forma-cluster-gap);
+}
+
+.document-result-generation .generation-actions.compact > button {
+  flex: 0 1 auto;
+  align-self: stretch;
+  max-inline-size: 100%;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.document-result-generation .generation-actions.compact > .generation-details-trigger {
+  flex-wrap: wrap;
+}
+
+.document-result-generation .generation-actions.compact > .generation-details-trigger > :is(span, small, b) {
+  min-inline-size: 0;
+  max-inline-size: 100%;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+/* Ordinary project-header peers reuse Cluster's content-led action widths.
+ * Keep the separate Document workbench strips and all shared metrics intact. */
+forma-project-contents .studio-main > .page-header--document > .page-header-actions > .button {
+  flex: 0 1 auto;
+}
+
 .composer-dock {
   container: composer-dock / inline-size;
 }
@@ -200,7 +239,7 @@ forma-generation-actions,
   flex: 0 0 auto;
 }
 
-.context-column > :is(.blank-context, .add-block, .document-insight, .context-provenance),
+.context-column > :is(.blank-context, .add-block, .document-insight, .context-provenance, forma-output-requirements),
 .output-column > :is(forma-document-artifacts, forma-output-card, .output-card, .output-filmstrip, .reference-picker-form) {
   margin-inline: var(--forma-pane-inset);
 }
@@ -546,7 +585,7 @@ html[data-document-focus] .studio-subpage-body {
   max-inline-size: 100%;
   flex: 1 1 auto;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  align-items: start;
+  align-items: stretch;
   justify-content: start;
   gap: var(--forma-cluster-gap);
 }
@@ -772,6 +811,15 @@ html[data-document-focus] .studio-subpage-body {
   inset-inline-end: 1rem;
 }
 
+/* Reserve the native Close target and focus clearance without shortening titles. */
+.collection-dialog > .collection-form > h2,
+.project-settings-dialog > .project-settings-form > h2 {
+  min-inline-size: 0;
+  padding-inline-end: calc(var(--forma-hit-target) + var(--forma-focus-clearance));
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
 .context-set-picker-panel > header {
   padding-right: 0;
   padding-inline-end: calc(var(--forma-hit-target) + var(--forma-focus-clearance));
@@ -783,6 +831,84 @@ html[data-document-focus] .studio-subpage-body {
   grid-auto-rows: auto;
   overflow-y: auto;
   overscroll-behavior: contain;
+}
+
+/* A narrow ordinary Video gives its identity a full row above the controls. */
+@media (max-width: 720px) {
+  dialog.document-artifact-view[data-artifact-kind="video"][data-output-focus="false"] > article.document-artifact-reader > header.artifact-viewer-header {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  dialog.document-artifact-view[data-artifact-kind="video"][data-output-focus="false"] > article.document-artifact-reader > header.artifact-viewer-header > .artifact-viewer-identity > h2 {
+    display: block;
+    overflow: visible;
+    -webkit-line-clamp: unset;
+  }
+
+  dialog.document-artifact-view[data-artifact-kind="video"][data-output-focus="false"] > article.document-artifact-reader > header.artifact-viewer-header > .document-artifact-reader-actions {
+    flex-wrap: wrap;
+  }
+
+  dialog.document-artifact-view[data-artifact-kind="video"][data-output-focus="false"] > article.document-artifact-reader > header.artifact-viewer-header > .document-artifact-reader-actions > .button {
+    max-inline-size: 100%;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+}
+
+/* A narrow native Story keeps evidence above its controls, with footer paint room. */
+@media (max-width: 720px) {
+  dialog.document-artifact-view[data-artifact-kind="short_story"][data-output-focus="false"] > article.document-artifact-reader > header.artifact-viewer-header {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  dialog.document-artifact-view[data-artifact-kind="short_story"][data-output-focus="false"] > article.document-artifact-reader > header.artifact-viewer-header > .document-artifact-reader-actions {
+    flex-wrap: wrap;
+  }
+
+  dialog.document-artifact-view[data-artifact-kind="short_story"][data-output-focus="false"] > article.document-artifact-reader > header.artifact-viewer-header > .document-artifact-reader-actions > .button {
+    max-inline-size: 100%;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
+  dialog.document-artifact-view[data-artifact-kind="short_story"][data-output-focus="false"] > article.document-artifact-reader > footer {
+    padding-block-end: calc(.65rem + var(--forma-focus-clearance));
+  }
+
+  /* The existing reader scrolls the complete edit form before its actions. */
+  dialog.document-artifact-view[data-artifact-kind="short_story"][data-output-focus="false"] > article.document-artifact-reader:has(> .document-artifact-reader-content.artifact-reader-short_story > section.artifact-direct-editor) {
+    grid-template-rows: auto max-content;
+    scroll-padding-block-start: var(--forma-focus-clearance);
+  }
+
+  dialog.document-artifact-view[data-artifact-kind="short_story"][data-output-focus="false"] > article.document-artifact-reader:has(> .document-artifact-reader-content.artifact-reader-short_story > section.artifact-direct-editor) > footer {
+    position: static;
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  dialog.document-artifact-view[data-artifact-kind="short_story"][data-output-focus="false"] > article.document-artifact-reader:has(> .document-artifact-reader-content.artifact-reader-short_story > section.artifact-direct-editor) > footer > .artifact-viewer-actions-body {
+    flex-wrap: wrap;
+    padding: var(--forma-focus-clearance);
+  }
+
+  dialog.document-artifact-view[data-artifact-kind="short_story"][data-output-focus="false"] > article.document-artifact-reader:has(> .document-artifact-reader-content.artifact-reader-short_story > section.artifact-direct-editor) > footer > .artifact-viewer-actions-body > button.button {
+    flex: 1 1 auto;
+    max-inline-size: 100%;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
+  dialog.document-artifact-view[data-artifact-kind="short_story"][data-output-focus="false"] > article.document-artifact-reader:has(> .document-artifact-reader-content.artifact-reader-short_story > section.artifact-direct-editor) > footer > .artifact-viewer-actions-body > button.button {
+    scroll-margin-block: var(--forma-focus-clearance);
+  }
+}
+
+dialog.document-artifact-view[data-artifact-kind="short_story"][data-output-focus="false"] > article.document-artifact-reader:has(> .document-artifact-reader-content.artifact-reader-short_story > section.artifact-direct-editor) > .document-artifact-reader-content > .artifact-direct-editor > label > textarea[rows="12"] {
+  scroll-margin-block: var(--forma-focus-clearance);
 }
 
 .document-artifact-reader > .artifact-review-guidance,
@@ -873,12 +999,12 @@ html[data-document-focus] .studio-subpage-body {
   gap: var(--forma-row-inset-block);
 }
 
-.access-grant-form > label > select,
+.access-grant-form > label > :is(input, select),
 .access-grant-form > button {
   min-block-size: var(--forma-hit-target);
 }
 
-.access-grant-form > label > select {
+.access-grant-form > label > :is(input, select) {
   inline-size: 100%;
   min-inline-size: 0;
 }
@@ -1007,6 +1133,88 @@ html[data-document-focus] .studio-subpage-body {
   flex: 0 0 var(--forma-hit-target);
 }
 
+/* Match the ordinary topbar to Shell's measured compact posture. Focused
+ * Document retains its separate actor and locale policy below. */
+html:not([data-document-focus]) .application-creative[data-nav-posture="compact"] > .topbar {
+  gap: .375rem;
+  padding-inline-start: max(.5rem, var(--forma-safe-inline-start));
+  padding-inline-end: max(.5rem, var(--forma-safe-inline-end));
+}
+
+html:not([data-document-focus]) .application-creative[data-nav-posture="compact"] > .topbar > .brand {
+  flex: 0 0 var(--forma-hit-target);
+  justify-content: center;
+}
+
+html:not([data-document-focus]) .application-creative[data-nav-posture="compact"] > .topbar > .brand > span:last-child,
+html:not([data-document-focus]) .application-creative[data-nav-posture="compact"] > .topbar > .top-actions > .button.secondary {
+  display: none;
+}
+
+html:not([data-document-focus]) .application-creative[data-nav-posture="compact"] > .topbar > .top-actions {
+  margin-inline-start: 0;
+  gap: .25rem;
+}
+
+html:not([data-document-focus]) .application-creative[data-nav-posture="compact"] > .topbar > .top-actions > .locale-picker-form {
+  flex: 0 0 auto;
+}
+
+html:not([data-document-focus]) .application-creative[data-nav-posture="compact"] > .topbar .locale-switcher {
+  gap: .375rem;
+}
+
+html:not([data-document-focus]) .application-creative[data-nav-posture="compact"] > .topbar .locale-switcher > span {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0,0,0,0);
+  white-space: nowrap;
+  border: 0;
+}
+
+html:not([data-document-focus]) .application-creative[data-nav-posture="compact"] > .topbar .locale-switcher > select {
+  inline-size: max-content;
+  min-inline-size: var(--forma-hit-target);
+  max-inline-size: none;
+  flex: 0 0 auto;
+  padding-inline: .3rem;
+}
+
+html:not([data-document-focus]) .application-creative[data-nav-posture="compact"] > .topbar .command-trigger.forma-global-search {
+  display: inline-flex;
+  inline-size: var(--forma-hit-target);
+  min-inline-size: var(--forma-hit-target);
+  min-block-size: var(--forma-hit-target);
+  flex: 0 0 var(--forma-hit-target);
+  justify-content: center;
+  padding: 0;
+}
+
+html:not([data-document-focus]) .application-creative[data-nav-posture="compact"] > .topbar .command-trigger.forma-global-search > .command-label,
+html:not([data-document-focus]) .application-creative[data-nav-posture="compact"] > .topbar .command-trigger.forma-global-search > kbd {
+  display: none;
+}
+
+/* The existing viewport policy also makes Search compact in rail posture.
+ * Reserve the native language name and picker icon instead of letting the
+ * capped SELECT paint into the adjacent Search button. */
+@media (max-width: 1050px) {
+  html:not([data-document-focus]) .application-creative > .topbar > .top-actions > .locale-picker-form {
+    flex: 0 0 auto;
+  }
+
+  html:not([data-document-focus]) .application-creative > .topbar > .top-actions .locale-switcher > select {
+    inline-size: max-content;
+    min-inline-size: var(--forma-hit-target);
+    max-inline-size: none;
+    flex: 0 0 auto;
+  }
+}
+
 .application-task-navigation[data-primary-navigation="true"] .ui-audience-navigation a {
   position: relative;
   gap: .5rem;
@@ -1070,6 +1278,13 @@ html[data-document-focus] .studio-subpage-body {
 .studio-mode-families > .studio-mode-family.selected {
   color: var(--forma-color-accent-text);
   background: var(--forma-color-accent-subtle);
+}
+
+/* The shell alert is a sibling of main, with its own readable wrapping flow. */
+.app-shell > .error-banner {
+  min-inline-size: 0;
+  flex-wrap: wrap;
+  overflow-wrap: anywhere;
 }
 
 /* Measured shell posture also works when Forma is narrower than its viewport. */
@@ -1171,22 +1386,307 @@ html[data-document-focus] .studio-subpage-body {
   clip: auto;
 }
 
+.application-creative[data-nav-posture="compact"] :is(.workspace-page, .library-page) > forma-project-rail > .project-rail > .rail-toolbar > .rail-toolbar-context > .rail-project-switch:focus-visible,
+.application-creative[data-nav-posture="compact"] :is(.workspace-page, .library-page) > forma-project-rail > .project-rail > .rail-toolbar > .rail-collapse-toggle:focus-visible {
+  outline-offset: calc(-1 * var(--forma-focus-ring-width, .1875rem));
+}
+
+/* The tall rail has the same bounded toolbar as the compact rail. */
+.application-creative[data-nav-posture="rail"][data-short-height="false"][data-layout-intent="workbench"] .workspace-page[data-workbench="document"] > forma-project-rail > .project-rail > .rail-toolbar > .rail-collapse-toggle:focus-visible {
+  outline-offset: calc(-1 * var(--forma-focus-ring-width, .1875rem));
+}
+
+/* Library's inline and native rail triggers share the bounded toolbar paint. */
+.application-creative[data-nav-posture="rail"] .library-page > forma-project-rail > .project-rail > .rail-toolbar > .rail-collapse-toggle:focus-visible {
+  outline-offset: calc(-1 * var(--forma-focus-ring-width, .1875rem));
+}
+
+/* Library browsing and its block editor own root-scroll timing before native focus traversal.
+ * Keep this owner policy independent of whichever control is focused. */
+html:has(.application-creative[data-layout-intent="browse"] > #main-content > forma-creative-application > forma-library > .library-page > .library-main > :is(.page-header--library, forma-library-block-editor)):not(:has(.application-creative[data-layout-intent="browse"] > .impersonation-banner)) {
+  scroll-behavior: auto;
+}
+
+/* Current Projects browsing owns native focus and reading scroll timing. */
+html:has(.application-creative[data-layout-intent="browse"] > #main-content > .projects-source-owner:not([hidden]):not([inert]) > forma-creative-application > forma-projects > .projects-page):not(:has(.application-creative[data-layout-intent="browse"] > .impersonation-banner)) {
+  scroll-behavior: auto;
+}
+
+/* Library's tall browsing shell and page heading scroll in natural order.
+ * The project rail retains its separate full-height context. */
+.application-creative[data-nav-posture="rail"][data-short-height="false"][data-layout-intent="browse"]:not(:has(> .impersonation-banner)):has(> #main-content > forma-creative-application > forma-library > .library-page > .library-main > :is(.page-header--library, forma-library-block-editor)) > .topbar {
+  position: relative;
+  top: auto;
+}
+
+.application-creative[data-nav-posture="rail"][data-short-height="false"][data-layout-intent="browse"]:not(:has(> .impersonation-banner)):has(> #main-content > forma-creative-application > forma-library > .library-page > .library-main > .page-header--library) .library-page > .library-main > .page-header--library {
+  position: relative;
+  inset-block-start: auto;
+}
+
+.application-creative[data-nav-posture="rail"][data-short-height="false"][data-layout-intent="browse"]:not(:has(> .impersonation-banner)):has(> #main-content > forma-creative-application > forma-library > .library-page > .library-main > :is(.page-header--library, forma-library-block-editor)) .library-page > forma-project-rail > .project-rail {
+  inset-block-start: 0;
+  block-size: 100dvb;
+}
+
+/* Match Library's existing small-viewport local header and rail flow. */
+@media (max-width: 760px) {
+  .application-creative:is([data-nav-posture="compact"], [data-nav-posture="rail"])[data-layout-intent="browse"]:not(:has(> .impersonation-banner)):has(> #main-content > forma-creative-application > forma-library > .library-page > .library-main > :is(.page-header--library, forma-library-block-editor)) > .topbar {
+    position: relative;
+    top: auto;
+  }
+}
+
+/* The shared Library keeps its sticky account context. Native focus on its
+ * near-start navigation must expose that complete context, including a wrapped
+ * banner, without guessing its height or moving keyboard focus in script. */
+html:not([data-document-focus]) .application-creative[data-nav-posture="expanded"][data-short-height="false"][data-layout-intent="browse"]:has(> .workspace-shared-banner):not(:has(> .impersonation-banner:not(.workspace-shared-banner))):has(> #main-content > forma-creative-application > forma-library > .library-page) > .application-task-navigation[data-primary-navigation="true"] .ui-audience-navigation a {
+  scroll-margin-block-start: 100dvb;
+}
+
+/* Library output history keeps complete peers in its own wrapping heading. */
+.application-creative forma-library .library-content > section > .section-heading:has(> forma-ui-segmented-control.compact-segmented) {
+  flex-wrap: wrap;
+}
+
+.application-creative forma-library .library-content > section > .section-heading > forma-ui-segmented-control.compact-segmented {
+  flex: 0 1 auto;
+  inline-size: max-content;
+  max-inline-size: 100%;
+}
+
+.application-creative forma-library .library-content > section > .section-heading > forma-ui-segmented-control.compact-segmented > .ui-segmented > button {
+  flex: 0 0 auto;
+  min-inline-size: var(--forma-hit-target, 2.75rem);
+  min-block-size: var(--forma-hit-target, 2.75rem);
+}
+
+.application-creative forma-library .library-content > section > .section-heading > forma-ui-segmented-control.compact-segmented > .ui-segmented > button:focus-visible {
+  outline-offset: calc(-1 * var(--forma-focus-ring-width, .1875rem));
+}
+
+/* Empty output history reserves following reading space for native focus.
+ * This is a bounded viewport budget, not a measurement of the sibling copy. */
+.application-creative forma-library .library-content > section:has(> .family-empty[data-forma-empty-state]) > .section-heading > forma-ui-segmented-control.compact-segmented > .ui-segmented > button {
+  scroll-margin-block-end: max(0px, min(calc(50dvb + var(--forma-bottom-nav-size) + var(--forma-focus-clearance)), calc(100dvb - 5rem)));
+}
+
+/* Library form actions and the current content field retain native flow. */
+.application-creative forma-library forma-library-block-editor .library-block-form > footer {
+  position: static;
+  bottom: auto;
+}
+
+.application-creative forma-library forma-library-block-editor .library-block-form forma-ui-rich-text.block-editor-copy > .ui-rich-text > textarea,
+.application-creative forma-library forma-library-block-editor .library-block-form > fieldset > .library-weight > input[type="range"] {
+  scroll-margin-block: var(--forma-focus-clearance);
+  scroll-margin-block-end: calc(var(--forma-bottom-nav-size) + var(--forma-focus-clearance));
+}
+
+/* The next native field keeps the preceding content help readable in short views.
+ * This is an authoring budget, not a measurement of localized help height. */
+.application-creative[data-layout-intent="browse"][data-short-height="true"]:not(:has(> .impersonation-banner)) forma-library forma-library-block-editor .library-block-form > fieldset > .library-weight > input[type="range"] {
+  scroll-margin-block-start: min(60dvb, 20rem);
+}
+
+/* Native entry to full Board history reserves room for the preceding copy.
+ * This is an authoring budget, not a measurement of localized copy height. */
+html:not([data-document-focus]) .application-creative[data-layout-intent="browse"][data-short-height="true"]:not(:has(> .impersonation-banner)) forma-context-board > section.workspace-page.studio-alternative > .studio-main > .studio-subpage-body > forma-document-generations[view="board"] > section.document-generations > header > .document-generation-header-actions > button.document-generation-collapse {
+  scroll-margin-block-start: min(60dvb, 20rem);
+}
+
+/* The view toolbar has its own rounded native scroller, separate from history. */
+.application-creative forma-library .library-toolbar > forma-ui-segmented-control.segmented > .ui-segmented > button {
+  flex: 0 0 auto;
+  min-inline-size: var(--forma-hit-target);
+  min-block-size: var(--forma-hit-target);
+}
+
+.application-creative forma-library .library-toolbar > forma-ui-segmented-control.segmented > .ui-segmented > button:focus-visible {
+  outline-offset: calc(-1 * var(--forma-focus-ring-width, .1875rem));
+}
+
+/* Existing native influence sliders retain the common target floor. */
+.application-creative forma-library forma-library-block-editor .library-block-form > fieldset > .library-weight > input[type="range"],
+.application-creative forma-reality-layers .layers-panel > form.layer-inspector[data-layer-inspector] > label > input[type="range"][name="weight"] {
+  min-inline-size: var(--forma-hit-target);
+  min-block-size: var(--forma-hit-target);
+}
+
+@media (pointer: coarse) {
+  .application-creative forma-library forma-library-block-editor .library-block-form > fieldset > .library-weight > input[type="range"],
+  .application-creative forma-reality-layers .layers-panel > form.layer-inspector[data-layer-inspector] > label > input[type="range"][name="weight"] {
+    min-inline-size: var(--forma-hit-target-coarse);
+    min-block-size: var(--forma-hit-target-coarse);
+  }
+}
+
+/* Current Layers fields and footer buttons reserve native focus paint during root scrolling. */
+html:not([data-document-focus]) .application-creative[data-layout-intent="browse"]:not(:has(> .impersonation-banner)) forma-reality-layers .reality-editor[data-forma-content="primary"] > .layers-panel > form.layer-inspector[data-layer-inspector] > label > :is(input, textarea, select),
+html:not([data-document-focus]) .application-creative[data-layout-intent="browse"]:not(:has(> .impersonation-banner)) forma-reality-layers .reality-editor[data-forma-content="primary"] > .layers-panel > form.layer-inspector[data-layer-inspector] > footer.platform-form-actions > button.button {
+  scroll-margin-block: var(--forma-focus-clearance);
+}
+
+html:not([data-document-focus]) .application-creative[data-layout-intent="browse"]:not(:has(> .impersonation-banner)) forma-reality-layers .reality-editor[data-forma-content="primary"] > .layers-panel > form.layer-inspector[data-layer-inspector] > label > textarea[name="instructions"] {
+  scroll-margin-block-end: min(50dvb, 8rem);
+}
+
+/* The existing small-container layout is a natural-flow stack. Its frame and
+ * inspector panel must not retain clipping from the separate bounded workbench. */
+@container studio (max-width: 720px) {
+  html:not([data-document-focus]) .application-creative[data-layout-intent="browse"]:not(:has(> .impersonation-banner)) forma-reality-layers .reality-editor[data-forma-content="primary"],
+  html:not([data-document-focus]) .application-creative[data-layout-intent="browse"]:not(:has(> .impersonation-banner)) forma-reality-layers .reality-editor[data-forma-content="primary"] > .layers-panel {
+    overflow: visible;
+  }
+}
+
+/* Layers uses the same root-owned native reading policy as Library/Projects. */
+html:not([data-document-focus]):has(.application-creative[data-layout-intent="browse"] > #main-content > forma-creative-application > forma-reality-layers > .workspace-page.studio-alternative > .studio-main > .studio-header-stack):not(:has(.application-creative[data-layout-intent="browse"] > .impersonation-banner)) {
+  scroll-behavior: auto;
+}
+
+/* The tall-rail inspector reserves root reading space for native field arrival.
+ * Keep the inset on the current owner, independent of which field has focus. */
+html:not([data-document-focus]):has(.application-creative[data-layout-intent="browse"][data-nav-posture="rail"][data-short-height="false"] > #main-content > forma-creative-application > forma-reality-layers > .workspace-page.studio-alternative > .studio-main > .studio-subpage-body > .reality-editor[data-forma-content="primary"] > .layers-panel > form.layer-inspector[data-layer-inspector]):not(:has(.application-creative[data-layout-intent="browse"] > .impersonation-banner)) {
+  scroll-padding-block-end: min(50dvb, 12rem);
+}
+
+html:not([data-document-focus]) .application-creative[data-nav-posture="rail"][data-short-height="false"][data-layout-intent="browse"]:not(:has(> .impersonation-banner)):has(> #main-content > forma-creative-application > forma-reality-layers > .workspace-page.studio-alternative > .studio-main > .studio-header-stack) > .topbar {
+  position: relative;
+  top: auto;
+}
+
+html:not([data-document-focus]) .application-creative[data-nav-posture="rail"][data-short-height="false"][data-layout-intent="browse"]:not(:has(> .impersonation-banner)) > #main-content > forma-creative-application > forma-reality-layers > .workspace-page.studio-alternative > .studio-main > .studio-header-stack {
+  position: static;
+  top: auto;
+}
+
+html:not([data-document-focus]) .application-creative[data-nav-posture="rail"][data-short-height="false"][data-layout-intent="browse"]:not(:has(> .impersonation-banner)) > #main-content > forma-creative-application > forma-reality-layers > .workspace-page.studio-alternative > forma-project-rail > .project-rail {
+  inset-block-start: 0;
+  block-size: 100dvb;
+}
+
+@media (max-width: 760px) {
+  html:not([data-document-focus]) .application-creative:is([data-nav-posture="compact"], [data-nav-posture="rail"])[data-layout-intent="browse"]:not(:has(> .impersonation-banner)):has(> #main-content > forma-creative-application > forma-reality-layers > .workspace-page.studio-alternative > .studio-main > .studio-header-stack) > .topbar {
+    position: relative;
+    top: auto;
+  }
+}
+
+/* Library landing and long editors keep mobile task navigation in an early native row,
+ * so browsing controls do not pass behind the dock. Retain the short-landscape side rail. */
+@media not all and (max-height: 37.5rem) and (orientation: landscape) {
+  /* Native text editing retains a bounded authoring inset in the root view.
+   * It does not reserve a fixed dock: navigation is already in natural flow. */
+  html:not([data-document-focus]):has(.application-creative[data-layout-intent="browse"][data-nav-posture="compact"] > #main-content > forma-creative-application > forma-library > .library-page > .library-main > forma-library-block-editor):not(:has(.application-creative[data-layout-intent="browse"] > .impersonation-banner)) {
+    scroll-padding-block-end: min(50dvb, 12rem);
+  }
+
+  html:not([data-document-focus]) .application-creative[data-layout-intent="browse"]:not(:has(> .impersonation-banner))[data-nav-posture="compact"]:has(> #main-content > forma-creative-application > forma-library > .library-page > .library-main > :is(.page-header--library, forma-library-block-editor), > #main-content > forma-creative-application > forma-reality-layers > .workspace-page.studio-alternative > .studio-main > .studio-header-stack) > .application-task-navigation[data-primary-navigation="true"] {
+    position: relative;
+    inset: auto;
+    inline-size: auto;
+    padding-block-end: 0;
+  }
+
+  html:not([data-document-focus]) .application-creative[data-layout-intent="browse"]:not(:has(> .impersonation-banner))[data-nav-posture="compact"]:has(> #main-content > forma-creative-application > forma-library > .library-page > .library-main > :is(.page-header--library, forma-library-block-editor), > #main-content > forma-creative-application > forma-reality-layers > .workspace-page.studio-alternative > .studio-main > .studio-header-stack) > #main-content {
+    padding-block-end: 0;
+  }
+
+  @media (max-width: 47.99rem) {
+    html:not([data-document-focus]) .application-creative:is([data-nav-posture="compact"], [data-nav-posture="rail"])[data-layout-intent="browse"]:not(:has(> .impersonation-banner)):has(> #main-content > forma-creative-application > forma-library > .library-page > .library-main > :is(.page-header--library, forma-library-block-editor), > #main-content > forma-creative-application > forma-reality-layers > .workspace-page.studio-alternative > .studio-main > .studio-header-stack) > .application-task-navigation[data-primary-navigation="true"] {
+      position: relative;
+      inset: auto;
+      inline-size: auto;
+      padding-block-end: 0;
+    }
+
+    html:not([data-document-focus]) .application-creative:is([data-nav-posture="compact"], [data-nav-posture="rail"])[data-layout-intent="browse"]:not(:has(> .impersonation-banner)):has(> #main-content > forma-creative-application > forma-library > .library-page > .library-main > :is(.page-header--library, forma-library-block-editor), > #main-content > forma-creative-application > forma-reality-layers > .workspace-page.studio-alternative > .studio-main > .studio-header-stack) > #main-content {
+      padding-block-end: 0;
+    }
+  }
+}
+
+/* A translated native-popover invoker owns a row in the short rail posture.
+ * The existing wide inline rail keeps its separate floating control policy. */
+@media (max-height: 37.5rem) and (orientation: landscape) {
+  .application-creative[data-nav-posture="rail"][data-short-height="true"][data-layout-intent="workbench"] .workspace-page[data-workbench="document"]:has(> forma-project-rail > .project-rail > .rail-toolbar > .rail-collapse-toggle[popovertarget]) {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+
+  .application-creative[data-nav-posture="rail"][data-short-height="true"][data-layout-intent="workbench"] .workspace-page[data-workbench="document"]:has(> forma-project-rail > .project-rail > .rail-toolbar > .rail-collapse-toggle[popovertarget]) > forma-project-rail {
+    position: relative;
+    inset: auto;
+    grid-column: 1;
+    grid-row: 1;
+    inline-size: 100%;
+    width: 100%;
+    block-size: auto;
+  }
+
+  .application-creative[data-nav-posture="rail"][data-short-height="true"][data-layout-intent="workbench"] .workspace-page[data-workbench="document"]:has(> forma-project-rail > .project-rail > .rail-toolbar > .rail-collapse-toggle[popovertarget]) > forma-project-rail > .project-rail {
+    inline-size: 100%;
+    width: 100%;
+    block-size: auto;
+    height: auto;
+    max-block-size: none;
+  }
+
+  .application-creative[data-nav-posture="rail"][data-short-height="true"][data-layout-intent="workbench"] .workspace-page[data-workbench="document"]:has(> forma-project-rail > .project-rail > .rail-toolbar > .rail-collapse-toggle[popovertarget]) > forma-project-rail > .project-rail > .rail-toolbar {
+    height: auto;
+    min-block-size: var(--forma-hit-target);
+    flex-wrap: wrap;
+    padding-block: var(--forma-focus-clearance);
+    padding-inline: var(--forma-row-inset-inline);
+  }
+
+  .application-creative[data-nav-posture="rail"][data-short-height="true"][data-layout-intent="workbench"] .workspace-page[data-workbench="document"]:has(> forma-project-rail > .project-rail > .rail-toolbar > .rail-collapse-toggle[popovertarget]) > forma-project-rail > .project-rail > .rail-toolbar > .rail-collapse-toggle {
+    flex: 0 1 auto;
+    inline-size: auto;
+    width: auto;
+    max-inline-size: 100%;
+    padding-inline: var(--forma-control-inset-inline);
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
+  /* Keep a usable pane when the native rail and complete header need rows.
+   * Native focus can scroll this ancestor as well as the existing pane. */
+  .application-creative[data-nav-posture="rail"][data-short-height="true"][data-layout-intent="workbench"] .workspace-page[data-workbench="document"]:has(> forma-project-rail > .project-rail > .rail-toolbar > .rail-collapse-toggle[popovertarget]) > .studio-main {
+    grid-column: 1;
+    grid-row: 2;
+    grid-template-rows: auto auto minmax(16rem, 1fr);
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    scroll-padding-block: var(--forma-focus-clearance);
+  }
+
+  .application-creative[data-nav-posture="rail"][data-short-height="true"][data-layout-intent="workbench"] .workspace-page[data-workbench="document"]:has(> forma-project-rail > .project-rail > .rail-toolbar > .rail-collapse-toggle[popovertarget]) > .studio-main > .studio-header-stack {
+    position: static;
+    top: auto;
+  }
+
+  .application-creative[data-nav-posture="rail"][data-short-height="true"][data-layout-intent="workbench"] .workspace-page[data-workbench="document"]:has(> forma-project-rail > .project-rail > .rail-toolbar > .rail-collapse-toggle[popovertarget]):has(> .composer-dock) > .studio-main {
+    scroll-padding-block-end: calc(7rem + var(--forma-keyboard-offset));
+  }
+
+  .application-creative[data-nav-posture="rail"][data-short-height="true"][data-layout-intent="workbench"] .workspace-page[data-workbench="document"]:has(> forma-project-rail > .project-rail > .rail-toolbar > .rail-collapse-toggle[popovertarget]) > .studio-main > .studio-header-stack > .page-header--document > .page-header-copy {
+    padding-inline-start: 0;
+  }
+}
+
+.project-rail .rail-content[popover] {
+  /* Shared native panel positioning owns the top layer and safe-area bounds. */
+  block-size: auto;
+  max-block-size: min(24rem, var(--forma-popover-max-height, calc(100dvb - 1rem)));
+  overflow-y: auto;
+}
+
 .application-creative[data-nav-posture="compact"] .project-rail.collapsed .rail-dock {
   display: none;
 }
 
-.application-creative[data-nav-posture="compact"] .project-rail.expanded .rail-content {
-  position: absolute;
-  z-index: 37;
-  inset-block-start: 100%;
-  inset-inline: 0;
-  max-block-size: calc(70dvb - var(--forma-bottom-nav-size));
-  overflow-y: auto;
-  background: var(--forma-color-surface);
-  border-block-end: 1px solid var(--forma-color-border);
-  box-shadow: var(--shadow);
-  overscroll-behavior: contain;
-}
 
 .application-creative[data-nav-posture="compact"] .workspace-page:has(> forma-project-rail > .project-rail.collapsed) > .composer-dock {
   inset-inline-start: 0;
@@ -1213,6 +1713,10 @@ html[data-document-focus] .studio-subpage-body {
   padding-block-end: 0;
 }
 
+.application-creative[data-nav-posture="rail"][data-short-height="true"] > .error-banner {
+  margin-inline-start: var(--forma-landscape-rail-width);
+}
+
 .page-header-copy > p,
 .project-card-title > p,
 .forma-activity-card-copy > p,
@@ -1226,10 +1730,13 @@ html[data-document-focus] .studio-subpage-body {
   padding-block-end: clamp(2rem, 7vb, 5rem);
 }
 
-.forma-activity-sections,
-.forma-deliver-section,
-.forma-deliver-summary {
+.forma-activity-sections {
   margin-inline: var(--page-gutter);
+}
+
+.forma-deliver-body {
+  min-inline-size: 0;
+  padding-inline: var(--page-gutter);
 }
 
 .forma-activity-sections {
@@ -1609,6 +2116,10 @@ forma-activity-issue-panel {
 
 .forma-deliver-preview > * {
   inline-size: 100%;
+}
+
+.forma-deliver-card--visual > .forma-deliver-preview {
+  position: relative;
 }
 
 .forma-deliver-copy {
@@ -2475,18 +2986,6 @@ html[data-document-focus] .application-creative > #main-content:has(.chat-view-p
     display: none;
   }
 
-  .application-creative .project-rail.expanded .rail-content {
-    position: absolute;
-    z-index: 37;
-    inset-block-start: 100%;
-    inset-inline: 0;
-    max-block-size: calc(70dvb - var(--forma-bottom-nav-size));
-    overflow-y: auto;
-    background: var(--forma-color-surface);
-    border-block-end: 1px solid var(--forma-color-border);
-    box-shadow: var(--shadow);
-    overscroll-behavior: contain;
-  }
 
   .project-rail .collection-tree {
     display: grid;
@@ -2546,7 +3045,7 @@ html[data-document-focus] .application-creative > #main-content:has(.chat-view-p
 
   .studio-mode-nav {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) var(--forma-hit-target) var(--forma-hit-target);
+    grid-template-columns: minmax(0, 1fr) max-content max-content;
     grid-template-rows: repeat(2, var(--forma-hit-target));
     align-items: center;
     gap: .25rem;
@@ -2636,6 +3135,26 @@ html[data-document-focus] .application-creative > #main-content:has(.chat-view-p
     padding-inline-end: max(.5rem, var(--forma-safe-inline-end));
   }
 
+  /* The native current-workspace link already carries this same application
+     identity. Keep the description and distinct actor/organization/role. */
+  :is(.application-creative, .application-canvas):not([data-nav-posture="compact"]) > .topbar:has(> forma-ui-workspace-switcher > .ui-workspace-switcher a[aria-current="page"]) > .application-context > b {
+    display: none;
+  }
+
+  .application-creative > .topbar > .top-actions > .avatar:focus-visible,
+  .application-canvas > .topbar > .top-actions > .avatar:focus-visible,
+  .application-creative > .topbar > .top-actions > .forma-global-search:focus-visible,
+  .application-creative > .topbar > .top-actions .locale-switcher > select:focus-visible {
+    outline-offset: calc(-1 * var(--forma-focus-ring-width, .1875rem));
+  }
+
+  @media (forced-colors: none) {
+    .application-creative > .topbar > .top-actions > .avatar:focus-visible,
+    .application-canvas > .topbar > .top-actions > .avatar:focus-visible {
+      outline-color: currentColor;
+    }
+  }
+
   .application-creative > .application-task-navigation[data-primary-navigation="true"] {
     position: fixed;
     z-index: 45;
@@ -2684,6 +3203,10 @@ html[data-document-focus] .application-creative > #main-content:has(.chat-view-p
     padding-block-end: 0;
   }
 
+  .application-creative > .error-banner {
+    margin-inline-start: var(--forma-landscape-rail-width);
+  }
+
   .application-creative .composer-dock {
     inset-inline-start: var(--forma-landscape-rail-width);
     inset-inline-end: var(--forma-safe-inline-end);
@@ -2697,6 +3220,11 @@ html[data-document-focus] .application-creative > #main-content:has(.chat-view-p
   .page-header--document,
   .page-header--library {
     padding-block: .5rem;
+  }
+
+  /* Give the existing compact Ask lane room below the short Library rail. */
+  .application-creative[data-nav-posture="rail"][data-short-height="true"][data-layout-intent="browse"]:has(> forma-creative-assistant > forma-assistant-panel) forma-library > .library-page > .library-main > .page-header--library {
+    padding-block-start: calc(.5rem + var(--forma-focus-clearance));
   }
 
   .application-creative .chat-view-page {
@@ -2922,6 +3450,17 @@ html[data-document-focus] .application-creative > #main-content:has(.chat-view-p
   overflow-y: auto;
   overscroll-behavior: contain;
   scrollbar-gutter: stable;
+  scroll-padding-block: var(--forma-focus-clearance);
+}
+
+/* Keep the centered empty-state copy above the collapsed floating assistant.
+ * Padding belongs inside this existing border-box reading area, so it moves
+ * the text as well as retaining scrollable room below it. */
+.application-creative[data-layout-intent="workbench"]:has(> forma-creative-assistant > forma-assistant-panel:not([data-studio-launcher="true"]) > .forma-assistant-launcher) #document-results-panel > .empty-output[data-forma-empty-state] {
+  padding-block-end: calc(max(var(--forma-control-min-size, 2.75rem), var(--forma-hit-target-coarse, 3rem)) + max(1rem, env(safe-area-inset-bottom, 0px)) + var(--forma-focus-clearance, .5rem));
+}
+
+.workspace-page[data-workbench="document"]:has(> .composer-dock) .studio-grid > :is(.context-column, .output-column) {
   scroll-padding-block-end: calc(7rem + var(--forma-keyboard-offset));
 }
 
@@ -2978,6 +3517,10 @@ html[data-document-focus] .application-creative > #main-content:has(.chat-view-p
   white-space: nowrap;
 }
 
+.document-workbench-tasks > button:focus-visible {
+  outline-offset: calc(-1 * var(--forma-focus-ring-width, .1875rem));
+}
+
 .document-workbench-tasks > button[aria-pressed="true"] {
   color: var(--forma-color-text);
   border-color: var(--forma-color-accent, currentColor);
@@ -3005,14 +3548,15 @@ html[data-document-focus] .application-creative > #main-content:has(.chat-view-p
   gap: var(--forma-cluster-gap);
 }
 
-@container studio (width < 46rem) {
-  .document-workbench-tasks {
-    display: flex;
-  }
+/* Pane visibility, its switcher, and track count share one rendered posture.
+   An independently evaluated container breakpoint can otherwise leave a
+   hidden pane's track behind while scrollbar width is changing. */
+.workspace-page[data-workbench="document"][data-workbench-narrow="true"] .document-workbench-tasks {
+  display: flex;
+}
 
-  .workspace-page[data-workbench="document"] .studio-grid {
-    grid-template-columns: minmax(0, 1fr);
-  }
+.workspace-page[data-workbench="document"][data-workbench-narrow="true"] .studio-grid {
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .document-workbench-critical {
@@ -3054,6 +3598,23 @@ html[data-document-focus] .application-creative > #main-content:has(.chat-view-p
   overflow-wrap: anywhere;
 }
 
+.document-title-row > .icon-button {
+  min-inline-size: var(--forma-hit-target);
+  min-block-size: var(--forma-hit-target);
+  flex: 0 0 auto;
+}
+
+/* Keep Rename's ring inside the short rail header's existing scrollport. */
+.application-creative[data-nav-posture="rail"][data-short-height="true"][data-layout-intent="workbench"] .workspace-page[data-workbench="document"] .page-header--document .document-title-row > .icon-button:focus-visible {
+  outline-offset: calc(-1 * var(--forma-focus-ring-width, .1875rem));
+}
+
+/* Keep title controls inside the paint boundary of their adjacent chrome. */
+.application-creative[data-nav-posture="compact"][data-layout-intent="workbench"] .workspace-page[data-workbench="document"] .page-header--document .document-title-row > .icon-button:focus-visible,
+.application-creative[data-nav-posture="rail"][data-short-height="true"][data-layout-intent="workbench"] .workspace-page[data-workbench="document"] .page-header--document .document-title-editor > .button:focus-visible {
+  outline-offset: calc(-1 * var(--forma-focus-ring-width, .1875rem));
+}
+
 .application-creative[data-nav-posture="compact"][data-layout-intent="workbench"] .workspace-page[data-workbench="document"] {
   grid-template-rows: auto minmax(0, 1fr);
 }
@@ -3061,6 +3622,7 @@ html[data-document-focus] .application-creative > #main-content:has(.chat-view-p
 .application-creative[data-nav-posture="compact"][data-layout-intent="workbench"] .workspace-page[data-workbench="document"] .page-header--document {
   min-block-size: var(--forma-hit-target);
   flex-direction: row;
+  flex-wrap: wrap;
   align-items: center;
   gap: var(--forma-cluster-gap);
   padding-block: .125rem;
@@ -3068,13 +3630,13 @@ html[data-document-focus] .application-creative > #main-content:has(.chat-view-p
 
 .application-creative[data-nav-posture="compact"][data-layout-intent="workbench"] .page-header--document .page-header-copy {
   min-inline-size: 0;
-  flex: 1 1 auto;
+  flex: 1 1 min(100%, 16rem);
 }
 
 .application-creative[data-nav-posture="compact"][data-layout-intent="workbench"] .page-header--document .page-header-actions {
   inline-size: auto;
   width: auto;
-  max-inline-size: 55%;
+  max-inline-size: 100%;
   flex-wrap: nowrap;
   overflow-x: auto;
   overscroll-behavior-inline: contain;
@@ -3088,6 +3650,10 @@ html[data-document-focus] .application-creative > #main-content:has(.chat-view-p
 .application-creative[data-nav-posture="compact"][data-layout-intent="workbench"] .page-header--document .page-header-actions > .button {
   white-space: nowrap;
   overflow-wrap: normal;
+}
+
+.application-creative[data-nav-posture="compact"][data-layout-intent="workbench"] .workspace-page[data-workbench="document"] .page-header--document > .page-header-actions > :is(.button, .icon-button):focus-visible {
+  outline-offset: calc(-1 * var(--forma-focus-ring-width, .1875rem));
 }
 
 .application-creative[data-nav-posture="compact"][data-layout-intent="workbench"] .studio-mode-nav,
@@ -3111,7 +3677,8 @@ html[data-document-focus] .application-creative > #main-content:has(.chat-view-p
 
 .application-creative[data-nav-posture="compact"][data-layout-intent="workbench"] .studio-mode-nav > button,
 .application-creative[data-short-height="true"][data-layout-intent="workbench"] .studio-mode-nav > button {
-  flex: 0 0 var(--forma-hit-target);
+  flex: 0 0 auto;
+  min-inline-size: var(--forma-hit-target);
   grid-column: auto;
   grid-row: auto;
 }
@@ -3151,6 +3718,14 @@ html[data-document-focus] .application-creative > #main-content:has(.chat-view-p
     width: var(--forma-hit-target);
   }
 
+  .application-creative[data-nav-posture="rail"][data-short-height="true"][data-layout-intent="workbench"] .workspace-page[data-workbench="document"] > forma-project-rail > .project-rail.collapsed > .rail-dock {
+    display: none;
+  }
+
+  .application-creative[data-nav-posture="rail"][data-short-height="true"][data-layout-intent="workbench"] .workspace-page[data-workbench="document"] > forma-project-rail > .project-rail.collapsed > .rail-toolbar > .rail-collapse-toggle:focus-visible {
+    outline-offset: calc(-1 * var(--forma-focus-ring-width, .1875rem));
+  }
+
   .application-creative[data-nav-posture="rail"][data-short-height="true"][data-layout-intent="workbench"] .project-rail.collapsed .rail-toolbar {
     justify-content: center;
     padding-inline: 0;
@@ -3170,6 +3745,30 @@ html[data-document-focus] .application-creative > #main-content:has(.chat-view-p
     align-items: center;
     gap: .25rem;
     padding-block: .125rem;
+  }
+
+  /* The short side-rail posture needs whole-group wrapping, not zero-basis
+     buttons competing with the title. Keep the separate compact strip intact. */
+  .application-creative[data-nav-posture="rail"][data-short-height="true"][data-layout-intent="workbench"] .workspace-page[data-workbench="document"] .page-header--document {
+    flex-wrap: wrap;
+  }
+
+  .application-creative[data-nav-posture="rail"][data-short-height="true"][data-layout-intent="workbench"] .workspace-page[data-workbench="document"] .page-header--document > .page-header-copy {
+    flex: 1 1 min(100%, 16rem);
+  }
+
+  .application-creative[data-nav-posture="rail"][data-short-height="true"][data-layout-intent="workbench"] .workspace-page[data-workbench="document"] .page-header--document > .page-header-actions {
+    inline-size: auto;
+    width: auto;
+    max-inline-size: 100%;
+    flex: 0 1 auto;
+    flex-wrap: wrap;
+  }
+
+  .application-creative[data-nav-posture="rail"][data-short-height="true"][data-layout-intent="workbench"] .workspace-page[data-workbench="document"] .page-header--document > .page-header-actions > :is(.button, .icon-button) {
+    min-inline-size: var(--forma-hit-target);
+    max-inline-size: 100%;
+    flex: 0 1 auto;
   }
 }
 
@@ -3291,6 +3890,17 @@ html[data-document-focus] .application-creative[data-nav-posture="compact"][data
   padding-block-start: 0;
 }
 
+/* Native footer focus retains the existing outward ring at the page edge. */
+.application-creative[data-layout-intent="browse"] > #main-content > .projects-source-owner:not([hidden]):not([inert]) > forma-creative-application > forma-projects > .projects-page > .projects-grid > .project-card > footer > button.button {
+  scroll-margin-block: var(--forma-focus-clearance);
+}
+
+/* Short Projects pages reserve a bounded reading lane after the first action
+   for its following peers and summary, without measuring or shortening copy. */
+.application-creative[data-layout-intent="browse"][data-short-height="true"] > #main-content > .projects-source-owner:not([hidden]):not([inert]) > forma-creative-application > forma-projects > .projects-page > .projects-grid > .project-card > footer:has(+ .project-card-summary) > button.button:first-child {
+  scroll-margin-block-end: calc(50dvb + 2 * var(--forma-focus-clearance));
+}
+
 .library-main .library-body {
   padding-block-start: var(--forma-section-gap);
 }
@@ -3355,6 +3965,7 @@ html[data-document-focus] .application-creative[data-nav-posture="compact"][data
 }
 
 .shared-output > .shared-presentation-open {
+  color: var(--forma-color-text);
   justify-self: start;
   margin-inline: var(--forma-row-inset-inline);
 }
@@ -3382,7 +3993,7 @@ html[data-document-focus] .application-creative[data-nav-posture="compact"][data
   flex-direction: row;
   flex-wrap: nowrap;
   gap: .375rem;
-  padding-block: .25rem;
+  padding-block: var(--forma-focus-clearance);
   padding-inline: clamp(.375rem, 1vi, .75rem);
   overflow-x: auto;
 }
@@ -3397,9 +4008,7 @@ html[data-document-focus] .application-creative[data-nav-posture="compact"][data
   display: none;
 }
 
-.presentation-deck-jump--compact,
-.artifact-viewer-actions-toggle,
-.artifact-viewer-actions-toggle[hidden] {
+.presentation-deck-jump--compact {
   display: none;
 }
 
@@ -3408,10 +4017,6 @@ html[data-document-focus] .application-creative[data-nav-posture="compact"][data
   gap: .375rem;
   padding-block: .375rem;
   padding-inline: clamp(.25rem, .8vi, .625rem);
-}
-
-:is(.document-artifact-view, .canvas-artifact-viewer)[data-artifact-kind="slides"] .presentation-deck-supporting > :is(.presentation-deck-notes, .presentation-deck-reader) {
-  margin-block: 0;
 }
 
 @media (min-width: 48rem) and (max-width: 75rem) and (orientation: landscape) {
@@ -3530,32 +4135,8 @@ html[data-document-focus] .application-creative[data-nav-posture="compact"][data
   }
 
   .document-artifact-view[data-artifact-kind="slides"] > .document-artifact-reader > footer > span,
-  .canvas-artifact-viewer[data-artifact-kind="slides"] > .canvas-artifact-viewer-card > footer > span,
-  .document-artifact-view[data-artifact-kind="slides"] > .document-artifact-reader > footer[data-actions-open="false"] > div,
-  .canvas-artifact-viewer[data-artifact-kind="slides"] > .canvas-artifact-viewer-card > footer[data-actions-open="false"] > div {
+  .canvas-artifact-viewer[data-artifact-kind="slides"] > .canvas-artifact-viewer-card > footer > span {
     display: none;
-  }
-
-  .document-artifact-view[data-artifact-kind="slides"] > .document-artifact-reader > footer > .artifact-viewer-actions-toggle,
-  .canvas-artifact-viewer[data-artifact-kind="slides"] > .canvas-artifact-viewer-card > footer > .artifact-viewer-actions-toggle {
-    display: inline-flex;
-    min-inline-size: var(--forma-hit-target);
-    min-block-size: var(--forma-hit-target);
-    flex: 0 0 auto;
-  }
-
-  .document-artifact-view[data-artifact-kind="slides"] > .document-artifact-reader > footer[data-actions-open="true"] > div,
-  .canvas-artifact-viewer[data-artifact-kind="slides"] > .canvas-artifact-viewer-card > footer[data-actions-open="true"] > div {
-    display: flex;
-    max-inline-size: calc(100dvi - 5rem);
-    flex-wrap: nowrap;
-    overflow-x: auto;
-  }
-
-  .document-artifact-view[data-artifact-kind="slides"] > .document-artifact-reader > footer[data-actions-open="true"] > div > .button,
-  .canvas-artifact-viewer[data-artifact-kind="slides"] > .canvas-artifact-viewer-card > footer[data-actions-open="true"] > div > .button {
-    flex: 0 0 auto;
-    white-space: nowrap;
   }
 
   :is(.document-artifact-view, .canvas-artifact-viewer)[data-artifact-kind="slides"] .presentation-deck--slideshow {
@@ -3676,44 +4257,6 @@ html[data-document-focus] .application-creative[data-nav-posture="compact"][data
     overflow: visible;
   }
 
-  :is(.document-artifact-view, .canvas-artifact-viewer)[data-artifact-kind="slides"] .presentation-deck-supporting > :is(.presentation-deck-notes, .presentation-deck-reader) {
-    inline-size: var(--forma-hit-target);
-    min-inline-size: var(--forma-hit-target);
-    padding: 0;
-    border: 1px solid var(--forma-color-border);
-    border-radius: .375rem;
-    background: var(--forma-color-surface);
-  }
-
-  :is(.document-artifact-view, .canvas-artifact-viewer)[data-artifact-kind="slides"] .presentation-deck-supporting > :is(.presentation-deck-notes, .presentation-deck-reader) > summary {
-    display: grid;
-    inline-size: var(--forma-hit-target);
-    min-block-size: var(--forma-hit-target);
-    place-items: center;
-    padding: 0;
-    font-size: 0;
-  }
-
-  :is(.document-artifact-view, .canvas-artifact-viewer)[data-artifact-kind="slides"] .presentation-deck-supporting > .presentation-deck-notes > summary::before {
-    content: "N";
-    font-size: var(--type-small);
-  }
-
-  :is(.document-artifact-view, .canvas-artifact-viewer)[data-artifact-kind="slides"] .presentation-deck-supporting > .presentation-deck-reader > summary::before {
-    content: "Aa";
-    font-size: var(--type-small);
-  }
-
-  :is(.document-artifact-view, .canvas-artifact-viewer)[data-artifact-kind="slides"] .presentation-deck-supporting > :is(.presentation-deck-notes, .presentation-deck-reader)[open] {
-    position: absolute;
-    inset-block-end: 0;
-    inset-inline-start: 0;
-    inline-size: min(32rem, calc(100dvi - 1rem));
-    max-block-size: min(75dvb, 28rem);
-    overflow: auto;
-    padding: .5rem;
-  }
-
   .document-artifact-view[data-artifact-kind="slides"] .artifact-viewer-identity {
     display: flex;
     min-inline-size: 0;
@@ -3817,25 +4360,6 @@ html[data-document-focus] .application-creative[data-nav-posture="compact"][data
     inset-inline-start: max(.25rem, var(--forma-safe-inline-start));
     inline-size: var(--forma-hit-target);
     padding: 0;
-  }
-
-  .shared-presentation-dialog .shared-presentation-reader > summary {
-    display: grid;
-    min-inline-size: var(--forma-hit-target);
-    min-block-size: var(--forma-hit-target);
-    place-items: center;
-    font-size: 0;
-  }
-
-  .shared-presentation-dialog .shared-presentation-reader > summary::before {
-    content: "Aa";
-    font-size: var(--type-small);
-  }
-
-  .shared-presentation-dialog .shared-presentation-reader[open] {
-    inline-size: min(32rem, calc(100dvi - 1rem));
-    max-block-size: min(75dvb, 28rem);
-    padding: .5rem;
   }
 
   .document-artifact-view[data-output-focus="true"][data-artifact-kind="slides"] > .document-artifact-reader,
@@ -4220,6 +4744,12 @@ forma-presentation-deck {
   min-block-size: 0;
 }
 
+/* Keep the reading owner’s outward focus ring inside the clipped viewport. */
+dialog.document-artifact-view[data-artifact-kind="slides"] .presentation-deck-stage[data-slide-posture="reading"] > .presentation-deck-viewport {
+  box-sizing: border-box;
+  padding: var(--forma-focus-clearance);
+}
+
 .presentation-deck--slideshow .presentation-deck-stage[data-slide-posture] > nav,
 :is(.document-artifact-view,.canvas-artifact-viewer)[data-artifact-kind="slides"] .presentation-deck-stage[data-slide-posture] > nav {
   position: static;
@@ -4236,6 +4766,15 @@ forma-presentation-deck {
   gap: .35rem;
   overflow: hidden;
   pointer-events: auto;
+}
+
+/* Give the native navigation its own focus gutters while retaining clipping. */
+@media (min-height: 37.5rem) {
+  dialog.document-artifact-view[data-artifact-kind="slides"] .presentation-deck-stage[data-slide-posture] > nav {
+    box-sizing: border-box;
+    padding: var(--forma-focus-clearance);
+    scroll-padding: var(--forma-focus-clearance);
+  }
 }
 
 .presentation-deck--slideshow .presentation-deck-stage[data-slide-posture] > nav > button,
@@ -4453,5 +4992,826 @@ forma-presentation-deck {
     padding-inline: .45rem;
     overflow: visible;
     white-space: normal;
+  }
+}
+
+/* Public share chrome follows the existing reading-region width policy.
+ * Keep the full-bleed hero, shared page gutter and independent guest shell. */
+.shared-locale-switcher,
+.shared-view > header,
+.shared-view > .shared-hero {
+  padding-inline: max(var(--page-gutter), calc((100% - 1300px) / 2 + var(--page-gutter)));
+}
+
+.shared-view > :is(header, .shared-hero) {
+  min-inline-size: 0;
+  overflow-wrap: anywhere;
+}
+
+.shared-view > header {
+  flex-wrap: wrap;
+  gap: var(--forma-cluster-gap);
+}
+
+.shared-view > .shared-grid {
+  box-sizing: border-box;
+  inline-size: 100%;
+  max-inline-size: 1300px;
+  padding-inline: var(--page-gutter);
+}
+
+.shared-view > .shared-grid > :is(.shared-results, .shared-direction) {
+  min-inline-size: 0;
+}
+
+@media (min-width: 90rem) {
+  .shared-locale-switcher,
+  .shared-view > header,
+  .shared-view > .shared-hero {
+    padding-inline: var(--page-gutter);
+  }
+
+  .shared-view > .shared-grid {
+    max-inline-size: none;
+  }
+}
+
+/* Only the three existing Slides viewers: 44px is a control floor, not a
+ * ceiling on a translated header. Reserve the header in normal flow and
+ * leave the existing contain-fit artboard and reading posture unchanged. */
+@media (max-height: 37.5rem) and (orientation: landscape) {
+  :is(.document-artifact-view[data-artifact-kind="slides"], .canvas-artifact-viewer[data-artifact-kind="slides"], .shared-presentation-dialog)[data-output-focus] > :is(.document-artifact-reader, .canvas-artifact-viewer-card, .shared-presentation-card) {
+    grid-template-rows: auto minmax(0, 1fr);
+    row-gap: var(--forma-focus-clearance);
+  }
+
+  :is(.document-artifact-view[data-artifact-kind="slides"], .canvas-artifact-viewer[data-artifact-kind="slides"], .shared-presentation-dialog)[data-output-focus] > :is(.document-artifact-reader, .canvas-artifact-viewer-card, .shared-presentation-card) > :is(header, .artifact-viewer-header) {
+    position: relative;
+    z-index: auto;
+    inset: auto;
+    display: flex;
+    block-size: auto;
+    min-block-size: var(--forma-hit-target);
+    min-inline-size: 0;
+    max-inline-size: 100%;
+    flex-wrap: wrap;
+    align-items: stretch;
+    gap: var(--forma-cluster-gap);
+    overflow: visible;
+    pointer-events: auto;
+  }
+
+  :is(.document-artifact-view[data-artifact-kind="slides"], .canvas-artifact-viewer[data-artifact-kind="slides"], .shared-presentation-dialog)[data-output-focus] > :is(.document-artifact-reader, .canvas-artifact-viewer-card, .shared-presentation-card) > :is(header, .artifact-viewer-header) > :is(.artifact-viewer-identity, div:first-child, h2) {
+    flex: 1 1 16rem;
+    min-inline-size: 0;
+    max-inline-size: 100%;
+  }
+
+  :is(.document-artifact-view[data-artifact-kind="slides"], .canvas-artifact-viewer[data-artifact-kind="slides"], .shared-presentation-dialog)[data-output-focus] > :is(.document-artifact-reader, .canvas-artifact-viewer-card, .shared-presentation-card) > :is(header, .artifact-viewer-header) > :is(.document-artifact-reader-actions, .shared-presentation-actions) {
+    position: static;
+    inset: auto;
+    display: flex;
+    flex: 0 1 auto;
+    min-inline-size: 0;
+    max-inline-size: 100%;
+    flex-wrap: wrap;
+    align-items: stretch;
+    gap: var(--forma-cluster-gap);
+    pointer-events: auto;
+  }
+
+  :is(.document-artifact-view[data-artifact-kind="slides"], .canvas-artifact-viewer[data-artifact-kind="slides"], .shared-presentation-dialog)[data-output-focus] > :is(.document-artifact-reader, .canvas-artifact-viewer-card, .shared-presentation-card) > :is(header, .artifact-viewer-header) > .button,
+  :is(.document-artifact-view[data-artifact-kind="slides"], .canvas-artifact-viewer[data-artifact-kind="slides"], .shared-presentation-dialog)[data-output-focus] > :is(.document-artifact-reader, .canvas-artifact-viewer-card, .shared-presentation-card) > :is(header, .artifact-viewer-header) > :is(.document-artifact-reader-actions, .shared-presentation-actions) > :is(.button, .icon-button) {
+    inline-size: auto;
+    block-size: auto;
+    min-inline-size: var(--forma-hit-target);
+    min-block-size: var(--forma-hit-target);
+    max-inline-size: 100%;
+    align-self: stretch;
+  }
+
+  :is(.document-artifact-view[data-artifact-kind="slides"], .canvas-artifact-viewer[data-artifact-kind="slides"], .shared-presentation-dialog)[data-output-focus] > :is(.document-artifact-reader, .canvas-artifact-viewer-card, .shared-presentation-card) > :is(header, .artifact-viewer-header) > .button,
+  :is(.document-artifact-view[data-artifact-kind="slides"], .canvas-artifact-viewer[data-artifact-kind="slides"], .shared-presentation-dialog)[data-output-focus] > :is(.document-artifact-reader, .canvas-artifact-viewer-card, .shared-presentation-card) > :is(header, .artifact-viewer-header) > :is(.document-artifact-reader-actions, .shared-presentation-actions) > .button {
+    flex: 0 1 auto;
+    padding-inline: var(--forma-control-inset-inline);
+    overflow: visible;
+    overflow-wrap: anywhere;
+    white-space: normal;
+  }
+}
+
+/* Sessions and Memory reuse their viewport stacking policy at page width. */
+.sessions-page,
+.memory-page {
+  container: forma-intelligence-page / inline-size;
+}
+
+@container forma-intelligence-page (max-width: 1050px) {
+  .sessions-page > .session-grid,
+  .memory-page > .memory-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  :is(.sessions-page > .session-grid, .memory-page > .memory-layout) > aside {
+    padding: 0;
+    border: 0;
+  }
+}
+
+/* The existing narrow Sessions reading layout follows its own page width,
+ * including when the page sits inside a narrow area of a wide window. */
+@container forma-intelligence-page (max-width: 760px) {
+  .sessions-page .brief-block {
+    grid-template-columns: 32px minmax(0, 1fr);
+  }
+
+  .sessions-page .brief-actions {
+    grid-column: 2;
+  }
+
+  .sessions-page .brief-card > footer {
+    align-items: flex-start;
+    gap: 10px;
+    flex-direction: column-reverse;
+  }
+
+  .sessions-page .brief-empty {
+    grid-template-columns: 30px minmax(0, 1fr);
+  }
+
+  .sessions-page .brief-empty .button {
+    grid-column: 2;
+    justify-self: start;
+  }
+
+  .sessions-page .blank-document-form {
+    grid-template-columns: minmax(0, 1fr);
+    align-items: stretch;
+  }
+}
+
+/* Memory's existing narrow reading and authoring layouts follow page width.
+ * Preserve every current field, action and its existing owner. */
+@container forma-intelligence-page (max-width: 760px) {
+  .memory-page > .page-header--hero {
+    display: block;
+    margin-bottom: 25px;
+  }
+
+  .memory-page > .page-header--hero > .page-header-actions {
+    width: 100%;
+    margin-top: 18px;
+    flex-wrap: wrap;
+    justify-content: flex-start;
+  }
+
+  .memory-page > .page-header--hero > .page-header-actions > .button {
+    flex: 0 1 auto;
+    max-inline-size: 100%;
+  }
+
+  .memory-page .belief-list,
+  .memory-page .preference-author {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .memory-page .condition-author {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .memory-page .condition-author > .condition-copy {
+    grid-column: 1 / -1;
+  }
+}
+
+@container forma-intelligence-page (max-width: 480px) {
+  .memory-page .condition-author {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* Residual native controls use the same target floor as the shared A family.
+ * These selectors match current forms, not decorative badges or artboards. */
+.sessions-page .scout-gate > button,
+.sessions-page .blank-document-form input,
+:is(.collection-form, .project-settings-form) :is(input, select),
+.output-critique .taste-signal > button,
+.output-critique .taste-value > input {
+  min-height: var(--forma-hit-target);
+  min-block-size: var(--forma-hit-target);
+}
+
+.sessions-page .scout-gate > button {
+  min-inline-size: var(--forma-hit-target);
+  max-inline-size: 100%;
+  padding-inline: var(--forma-control-inset-inline);
+  font-size: var(--forma-font-size-supporting, var(--type-small));
+  line-height: var(--forma-body-line-height, 1.6);
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+/* Native popover scrolling must retain the shared six-pixel focus outline. */
+.tree-menu[popover] {
+  padding: var(--forma-space-4, var(--space-4));
+  scroll-padding-block: var(--forma-focus-clearance);
+}
+
+/* Native form scrolling must reveal each focused control's paint. */
+.memory-page .belief-actions > .button,
+.sessions-page .blank-document-form > input,
+.sessions-page .blank-document-form > div > .button,
+.upload-rights-modal > .reference-upload-card > footer > .button,
+.output-critique > footer > .button {
+  scroll-margin-block: var(--forma-focus-clearance);
+}
+
+/* Wrap peer actions before shrinking two independent labels into narrow
+ * columns. Native controls retain their own existing handlers and order. */
+.memory-page .belief-actions,
+.sessions-page .blank-document-form > div,
+.collection-form > footer,
+.project-settings-form > footer,
+.upload-rights-modal > .reference-upload-card > footer,
+.output-critique > footer {
+  min-inline-size: 0;
+  flex-wrap: wrap;
+  align-items: stretch;
+  gap: var(--forma-cluster-gap);
+}
+
+:is(.memory-page .belief-actions, .sessions-page .blank-document-form > div, .collection-form > footer, .project-settings-form > footer, .upload-rights-modal > .reference-upload-card > footer, .output-critique > footer) > .button {
+  flex: 0 1 auto;
+  max-inline-size: 100%;
+  align-self: stretch;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+/* Resume and Not now are native peers. Keep their row intrinsic within the
+ * brief grid so stretching peers does not stretch them to the summary height. */
+.sessions-page .brief-actions {
+  min-inline-size: 0;
+  max-inline-size: 100%;
+  flex-wrap: wrap;
+  align-items: stretch;
+  align-self: center;
+  gap: var(--forma-cluster-gap);
+}
+
+.sessions-page .brief-actions > .button {
+  flex: 0 1 auto;
+  min-height: var(--forma-hit-target);
+  min-block-size: var(--forma-hit-target);
+  min-inline-size: var(--forma-hit-target);
+  max-inline-size: 100%;
+  align-self: stretch;
+  padding-block: var(--forma-space-2, var(--space-2));
+  padding-inline: var(--forma-control-inset-inline);
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+/* Settings cards can be narrow inside a wide viewport. Reuse Library's
+ * existing copy/action row policy, including nested current member rows. */
+.workspace-settings-card > .workspace-settings-list > li,
+.workspace-settings-card > .workspace-settings-project-list > li > .workspace-settings-list > li {
+  flex-wrap: wrap;
+}
+
+.workspace-settings-card > .workspace-settings-list > li > div,
+.workspace-settings-card > .workspace-settings-project-list > li > .workspace-settings-list > li > div {
+  flex: 1 1 min(100%, 16rem);
+  min-inline-size: 0;
+  overflow-wrap: anywhere;
+}
+
+.workspace-settings-card > .workspace-settings-list > li > .button,
+.workspace-settings-card > .workspace-settings-project-list > li > .workspace-settings-list > li > .button {
+  flex: 0 1 auto;
+  min-height: var(--forma-hit-target);
+  min-block-size: var(--forma-hit-target);
+  max-inline-size: 100%;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  scroll-margin-block: var(--forma-focus-clearance);
+}
+
+.workspace-settings-project-list > li > header > .button {
+  scroll-margin-block: var(--forma-focus-clearance);
+}
+
+/* Equalize actual same-line button peers. A member's sole Revoke does not
+ * become as tall as the adjacent role and permission-control column. */
+.workspace-settings-card > .workspace-settings-list > li:has(> .button ~ .button),
+.workspace-settings-card > .workspace-settings-project-list > li > .workspace-settings-list > li:has(> .button ~ .button) {
+  align-items: stretch;
+}
+
+.workspace-settings-card > .workspace-settings-list > li:has(> .button ~ .button) > .button,
+.workspace-settings-card > .workspace-settings-project-list > li > .workspace-settings-list > li:has(> .button ~ .button) > .button {
+  align-self: stretch;
+}
+
+/* Keep the existing Document rename field and its direct actions as peers.
+ * A shared target floor must not become a ceiling on translated labels. */
+.document-title-editor {
+  min-inline-size: 0;
+  flex-wrap: wrap;
+  align-items: stretch;
+  gap: var(--forma-cluster-gap);
+}
+
+.document-title-editor > input {
+  flex: 1 1 min(100%, 16rem);
+  min-inline-size: 0;
+  min-height: var(--forma-hit-target);
+  min-block-size: var(--forma-hit-target);
+  max-inline-size: 100%;
+}
+
+.document-title-editor > .button {
+  flex: 0 1 auto;
+  max-inline-size: 100%;
+  align-self: stretch;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+/* The shared compact ghost control supplies the target and padding.
+ * Override only the older, more-specific micro-text rule on this row. */
+.collection-filter > .button {
+  max-inline-size: 100%;
+  font-size: var(--forma-font-size-supporting, var(--type-small));
+  line-height: var(--forma-body-line-height, 1.6);
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+/* These E6 native controls keep the existing coarse target floor when
+ * natural wrapping leaves their labels short enough for a single line. */
+@media (pointer: coarse) {
+  .memory-page .belief-actions > .button,
+  .sessions-page .brief-actions > .button,
+  .sessions-page .blank-document-form > div > .button,
+  .sessions-page .blank-document-form input,
+  .sessions-page .scout-gate > button,
+  .tree-menu[popover] > button,
+  :is(.collection-form, .project-settings-form) :is(input, select),
+  .collection-form > footer > .button,
+  .project-settings-form > footer > .button,
+  .upload-rights-modal > .reference-upload-card > footer > .button,
+  .output-critique .taste-signal > button,
+  .output-critique .taste-value > input,
+  .output-critique > footer > .button,
+  .workspace-settings-card > .workspace-settings-list > li > .button,
+  .workspace-settings-card > .workspace-settings-project-list > li > .workspace-settings-list > li > .button,
+  .workspace-settings-project-list > li > header > .button {
+    min-height: var(--forma-hit-target-coarse);
+    min-block-size: var(--forma-hit-target-coarse);
+    min-inline-size: var(--forma-hit-target-coarse);
+  }
+}
+
+/* The shared viewer deliberately stacks its narrow header. Its identity
+ * uses content height there, rather than the row layout's 16rem basis. */
+@media (max-width: 30rem) and (max-height: 37.5rem) and (orientation: landscape) {
+  .modal.shared-presentation-dialog[data-output-focus] > .modal-card.shared-presentation-card > header > div:first-child {
+    flex-basis: auto;
+  }
+}
+
+/* Shared native chrome gets clear paint space; only content owns clipping. */
+@media (max-height: 37.5rem) and (orientation: landscape) {
+  .modal.shared-presentation-dialog[data-output-focus] > .modal-card.shared-presentation-card {
+    overflow: visible;
+    padding-block: max(var(--forma-focus-clearance), env(safe-area-inset-top, 0px)) max(var(--forma-focus-clearance), env(safe-area-inset-bottom, 0px));
+    padding-inline: max(var(--forma-focus-clearance), var(--forma-safe-inline-start, 0px)) max(var(--forma-focus-clearance), var(--forma-safe-inline-end, 0px));
+    row-gap: var(--forma-focus-clearance);
+  }
+
+  .modal.shared-presentation-dialog[data-output-focus] > .modal-card.shared-presentation-card > header {
+    padding-block: 0;
+  }
+
+  .modal.shared-presentation-dialog[data-output-focus] > .modal-card.shared-presentation-card > .shared-presentation-stage[data-slide-posture] {
+    overflow: visible;
+  }
+}
+
+/* Slides chrome owns background shape, not content clipping. The actual
+ * content viewport/readers retain their own clipping and scrolling. */
+@media (max-height: 37.5rem) and (orientation: landscape) {
+  dialog.document-artifact-view[data-artifact-kind="slides"][data-output-focus="false"] {
+    block-size: calc(100dvb - (var(--artifact-viewer-edge,1rem) * 2));
+  }
+
+  dialog.document-artifact-view[data-artifact-kind="slides"][data-output-focus] {
+    overflow: visible;
+  }
+
+  dialog.document-artifact-view[data-artifact-kind="slides"][data-output-focus] > article.document-artifact-reader {
+    block-size: 100%;
+    max-block-size: 100%;
+    overflow: visible;
+    border-radius: inherit;
+  }
+
+  dialog.document-artifact-view[data-artifact-kind="slides"]:not([data-output-focus="true"]) > article.document-artifact-reader:has(> .artifact-review-actions:not([hidden]),> .artifact-review-guidance,> .artifact-revision-history:not([hidden])) {
+    overflow-x: hidden;
+    overflow-y: auto;
+  }
+
+  dialog.canvas-artifact-viewer[data-artifact-kind="slides"][data-output-focus] > article.modal-card.canvas-artifact-viewer-card {
+    overflow: visible;
+  }
+
+  dialog.document-artifact-view[data-artifact-kind="slides"][data-output-focus] > article.document-artifact-reader > .artifact-viewer-header,
+  dialog.canvas-artifact-viewer[data-artifact-kind="slides"][data-output-focus] > article.modal-card.canvas-artifact-viewer-card > header {
+    border-start-start-radius: inherit;
+    border-start-end-radius: inherit;
+  }
+
+  dialog.document-artifact-view[data-artifact-kind="slides"][data-output-focus] > article.document-artifact-reader > footer,
+  dialog.canvas-artifact-viewer[data-artifact-kind="slides"][data-output-focus] > article.modal-card.canvas-artifact-viewer-card > footer {
+    border-end-start-radius: inherit;
+    border-end-end-radius: inherit;
+  }
+}
+
+/* Normal portrait decks give navigation and supporting copy separate rows. */
+@media (max-width: 720px) and (orientation: portrait) {
+  dialog.document-artifact-view[data-artifact-kind="slides"][data-output-focus="false"] .presentation-deck--slideshow > .presentation-deck-stage[data-slide-posture] {
+    padding-inline: var(--forma-focus-clearance);
+    grid-template-columns: minmax(0,1fr);
+    grid-template-rows: minmax(0,1fr) auto auto;
+  }
+
+  dialog.document-artifact-view[data-artifact-kind="slides"][data-output-focus="false"] .presentation-deck--slideshow > .presentation-deck-stage[data-slide-posture] > .presentation-deck-supporting {
+    grid-column: 1;
+    grid-row: 3;
+    display: grid;
+    grid-template-columns: minmax(0,1fr) auto;
+    justify-self: stretch;
+    align-items: center;
+    gap: var(--forma-focus-clearance);
+  }
+
+  dialog.document-artifact-view[data-artifact-kind="slides"][data-output-focus="false"] .presentation-deck--slideshow > .presentation-deck-stage[data-slide-posture] > .presentation-deck-supporting > .presentation-deck-reading-toggle {
+    grid-column: 2;
+  }
+
+  dialog.document-artifact-view[data-artifact-kind="slides"][data-output-focus="false"] .presentation-deck--slideshow > .presentation-deck-stage[data-slide-posture] > .presentation-deck-supporting > .presentation-slide-fit-warning {
+    min-inline-size: 0;
+    overflow-wrap: anywhere;
+  }
+}
+
+/* Coarse pointers keep the existing 48px floor on both deck navigation peers. */
+@media (pointer: coarse) {
+  dialog.document-artifact-view[data-artifact-kind="slides"][data-output-focus="false"] .presentation-deck--slideshow > .presentation-deck-stage[data-slide-posture] > :is(nav, .presentation-deck-supporting) > button {
+    min-inline-size: var(--forma-hit-target-coarse);
+    min-block-size: var(--forma-hit-target-coarse);
+  }
+}
+
+/* Narrow portrait Slides and their direct editor keep their identity above the existing action row. */
+@media (max-width: 720px) and (orientation: portrait) {
+  dialog.document-artifact-view[data-artifact-kind="slides"][data-output-focus="false"] > article.document-artifact-reader:has(> .document-artifact-reader-content > forma-presentation-deck, > .document-artifact-reader-content > section.artifact-direct-editor) > .artifact-viewer-header {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  dialog.document-artifact-view[data-artifact-kind="slides"][data-output-focus="false"] > article.document-artifact-reader:has(> .document-artifact-reader-content > forma-presentation-deck, > .document-artifact-reader-content > section.artifact-direct-editor) > .artifact-viewer-header > .document-artifact-reader-actions {
+    flex-wrap: wrap;
+  }
+
+  dialog.document-artifact-view[data-artifact-kind="slides"][data-output-focus="false"] > article.document-artifact-reader:has(> .document-artifact-reader-content > forma-presentation-deck, > .document-artifact-reader-content > section.artifact-direct-editor) > .artifact-viewer-header > .document-artifact-reader-actions > .button {
+    max-inline-size: 100%;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
+  /* Keep the complete edit form and its wrapping actions in one scrolling reader. */
+  dialog.document-artifact-view[data-artifact-kind="slides"][data-output-focus="false"] > article.document-artifact-reader:has(> .document-artifact-reader-content > section.artifact-direct-editor) {
+    grid-template-rows: auto max-content;
+    overflow-y: auto;
+    scroll-padding-block: var(--forma-focus-clearance);
+  }
+
+  dialog.document-artifact-view[data-artifact-kind="slides"][data-output-focus="false"] > article.document-artifact-reader:has(> .document-artifact-reader-content > section.artifact-direct-editor) > footer {
+    position: static;
+    flex-direction: column;
+    align-items: stretch;
+    padding-block-end: calc(.65rem + var(--forma-focus-clearance));
+  }
+
+  dialog.document-artifact-view[data-artifact-kind="slides"][data-output-focus="false"] > article.document-artifact-reader:has(> .document-artifact-reader-content > section.artifact-direct-editor) > footer > .artifact-viewer-actions-body {
+    flex-wrap: wrap;
+    padding: var(--forma-focus-clearance);
+  }
+
+  dialog.document-artifact-view[data-artifact-kind="slides"][data-output-focus="false"] > article.document-artifact-reader:has(> .document-artifact-reader-content > section.artifact-direct-editor) > footer > .artifact-viewer-actions-body > button.button {
+    flex: 1 1 auto;
+    max-inline-size: 100%;
+    white-space: normal;
+    overflow-wrap: anywhere;
+    scroll-margin-block: var(--forma-focus-clearance);
+  }
+
+  dialog.document-artifact-view[data-artifact-kind="slides"][data-output-focus="false"] > article.document-artifact-reader:has(> .document-artifact-reader-content > section.artifact-direct-editor) > .document-artifact-reader-content > .artifact-direct-editor :is(input,textarea) {
+    scroll-margin-block: var(--forma-focus-clearance);
+  }
+}
+
+/* Normal Document Slides keep full identity and evidence in ordinary flow.
+ * The existing card scrolls past a growing header to a complete content track;
+ * focused and direct-editor owners keep their independent policies. */
+@media (max-height: 37.5rem) and (orientation: landscape) {
+  dialog.document-artifact-view[data-artifact-kind="slides"][data-output-focus="false"] > article.document-artifact-reader:has(> .document-artifact-reader-content > forma-presentation-deck) {
+    grid-template-rows: max-content 100% auto;
+    overflow-x: hidden;
+    overflow-y: auto;
+    padding: var(--forma-focus-clearance);
+    scroll-padding-block: var(--forma-focus-clearance);
+  }
+
+  dialog.document-artifact-view[data-artifact-kind="slides"][data-output-focus="false"] > article.document-artifact-reader:has(> .document-artifact-reader-content > forma-presentation-deck) > .artifact-viewer-header > .artifact-viewer-identity {
+    display: block;
+  }
+
+  dialog.document-artifact-view[data-artifact-kind="slides"][data-output-focus="false"] > article.document-artifact-reader:has(> .document-artifact-reader-content > forma-presentation-deck) > .artifact-viewer-header > .artifact-viewer-identity > :is(.artifact-viewer-kicker, h2),
+  dialog.document-artifact-view[data-artifact-kind="slides"][data-output-focus="false"] > article.document-artifact-reader:has(> .document-artifact-reader-content > forma-presentation-deck) > .artifact-viewer-header > .artifact-viewer-identity > .artifact-viewer-details > summary {
+    max-inline-size: 100%;
+    overflow: visible;
+    text-overflow: clip;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
+  dialog.document-artifact-view[data-artifact-kind="slides"][data-output-focus="false"] > article.document-artifact-reader:has(> .document-artifact-reader-content > forma-presentation-deck) > .artifact-viewer-header > .artifact-viewer-identity > .artifact-viewer-kicker > span {
+    max-inline-size: 100%;
+  }
+
+  dialog.document-artifact-view[data-artifact-kind="slides"][data-output-focus="false"] > article.document-artifact-reader:has(> .document-artifact-reader-content > forma-presentation-deck) > .artifact-viewer-header > .artifact-viewer-identity > h2 {
+    display: block;
+    -webkit-line-clamp: unset;
+  }
+
+  dialog.document-artifact-view[data-artifact-kind="slides"][data-output-focus="false"] > article.document-artifact-reader:has(> .document-artifact-reader-content > forma-presentation-deck) > .artifact-viewer-header > .document-artifact-reader-actions {
+    align-self: flex-start;
+  }
+
+  dialog.document-artifact-view[data-artifact-kind="slides"][data-output-focus="false"] > article.document-artifact-reader:has(> .document-artifact-reader-content > forma-presentation-deck) > .artifact-viewer-header :is(button, summary):not([popover] *),
+  dialog.document-artifact-view[data-artifact-kind="slides"][data-output-focus="false"] > article.document-artifact-reader:has(> .document-artifact-reader-content > forma-presentation-deck) > footer :is(button, a[href]):not([popover] *) {
+    scroll-margin-block: var(--forma-focus-clearance);
+  }
+}
+
+/* Normal Canvas Slides reuse the Document card's independent content track.
+ * The existing card scrolls past complete chrome; Focus stays optional. */
+@media (max-height: 37.5rem) and (orientation: landscape) {
+  dialog.canvas-artifact-viewer[data-artifact-kind="slides"][data-output-focus="false"] > article.modal-card.canvas-artifact-viewer-card:has(> .canvas-artifact-viewer-content--slides > forma-presentation-deck) {
+    grid-template-rows: max-content 100% auto;
+    overflow-x: hidden;
+    overflow-y: auto;
+    padding: var(--forma-focus-clearance);
+    scroll-padding-block: var(--forma-focus-clearance);
+  }
+
+  dialog.canvas-artifact-viewer[data-artifact-kind="slides"][data-output-focus="false"] > article.modal-card.canvas-artifact-viewer-card:has(> .canvas-artifact-viewer-content--slides > forma-presentation-deck) > :is(button.canvas-viewer-focus-toggle, button.modal-close),
+  dialog.canvas-artifact-viewer[data-artifact-kind="slides"][data-output-focus="false"] > article.modal-card.canvas-artifact-viewer-card:has(> .canvas-artifact-viewer-content--slides > forma-presentation-deck) > header :is(button, summary):not([popover] *),
+  dialog.canvas-artifact-viewer[data-artifact-kind="slides"][data-output-focus="false"] > article.modal-card.canvas-artifact-viewer-card:has(> .canvas-artifact-viewer-content--slides > forma-presentation-deck) > footer :is(button, a[href]):not([popover] *) {
+    scroll-margin-block: var(--forma-focus-clearance);
+  }
+}
+
+/* Canvas Close shares its existing Focus peer's native paint priority. */
+@media (max-height: 37.5rem) and (orientation: landscape) {
+  .canvas-artifact-viewer[data-artifact-kind="slides"][data-output-focus] > .canvas-artifact-viewer-card > .modal-close {
+    z-index: 2;
+  }
+}
+
+/* Focused Canvas keeps the same horizontal native peers, with real space
+ * for their external focus paint and the natural-flow header beside them. */
+@media (max-height: 37.5rem) and (orientation: landscape) {
+  dialog.canvas-artifact-viewer[data-artifact-kind="slides"][data-output-focus="true"] > article.modal-card.canvas-artifact-viewer-card > :is(button.canvas-viewer-focus-toggle, button.modal-close) {
+    inset-block-start: calc(env(safe-area-inset-top, 0px) + var(--forma-focus-clearance));
+    inset-inline-end: calc(var(--forma-safe-inline-end, 0px) + var(--forma-focus-clearance));
+  }
+
+  dialog.canvas-artifact-viewer[data-artifact-kind="slides"][data-output-focus="true"] > article.modal-card.canvas-artifact-viewer-card > button.canvas-viewer-focus-toggle {
+    inset-inline-end: calc(var(--forma-safe-inline-end, 0px) + var(--forma-hit-target) + (var(--forma-focus-clearance) * 2));
+  }
+
+  dialog.canvas-artifact-viewer[data-artifact-kind="slides"][data-output-focus="true"] > article.modal-card.canvas-artifact-viewer-card > header {
+    min-block-size: calc(var(--forma-hit-target) + (var(--forma-focus-clearance) * 2));
+    padding-inline-start: var(--forma-focus-clearance);
+    padding-inline-end: calc((var(--forma-hit-target) * 2) + (var(--forma-focus-clearance) * 3));
+  }
+}
+
+/* Normal Canvas chrome reserves the height of its existing absolute peers
+ * before the next in-flow content row, independently of title wrapping. */
+@media (max-height: 37.5rem) and (orientation: landscape) {
+  dialog.canvas-artifact-viewer[data-artifact-kind="slides"][data-output-focus="false"] > article.modal-card.canvas-artifact-viewer-card > header {
+    min-block-size: calc(var(--forma-hit-target) + (var(--forma-focus-clearance) * 2));
+  }
+}
+
+/* The current Slides navigation owns its count, including in reading mode. */
+@media (max-height: 37.5rem) and (orientation: landscape) {
+  :is(.document-artifact-view, .canvas-artifact-viewer)[data-artifact-kind="slides"] .presentation-deck-stage[data-slide-posture] > nav > .presentation-deck-position {
+    position: static;
+    min-inline-size: 3.25rem;
+    padding: 0;
+    background: transparent;
+  }
+}
+
+/* Closed Canvas deck tools retain one native target, not an empty full row. */
+@media (max-height: 37.5rem) and (orientation: landscape) {
+  .canvas-artifact-viewer[data-artifact-kind="slides"] .presentation-deck-toolbar[data-tools-open="false"] {
+    inline-size: max-content;
+    justify-self: end;
+    padding: var(--forma-focus-clearance);
+  }
+}
+
+/* Closed Document deck tools reuse the same native intrinsic footprint. */
+@media (max-height: 37.5rem) and (orientation: landscape) {
+  .document-artifact-view[data-artifact-kind="slides"] .presentation-deck-toolbar[data-tools-open="false"] {
+    inline-size: max-content;
+    justify-self: end;
+    padding: var(--forma-focus-clearance);
+  }
+}
+
+/* Closed tools contain only their intrinsic native trigger; the open
+ * disclosure keeps its independently owned scrolling policy. */
+@media (max-height: 37.5rem) and (orientation: landscape) {
+  :is(dialog.document-artifact-view, dialog.canvas-artifact-viewer)[data-artifact-kind="slides"] .presentation-deck-toolbar[data-tools-open="false"] {
+    overflow: visible;
+  }
+}
+
+/* Open tools keep standard gutters. The existing deck scrolls between their
+ * natural height and a full available-height stage, instead of erasing reading. */
+@media (max-height: 37.5rem) and (orientation: landscape) {
+  :is(dialog.document-artifact-view, dialog.canvas-artifact-viewer)[data-artifact-kind="slides"] .presentation-deck-toolbar[data-tools-open="true"] {
+    padding-block: var(--forma-focus-clearance);
+    padding-inline: var(--forma-row-inset-inline);
+  }
+
+  :is(dialog.document-artifact-view, dialog.canvas-artifact-viewer)[data-artifact-kind="slides"] .presentation-deck--slideshow:not(.presentation-deck--export-status):has(> .presentation-deck-toolbar[data-tools-open="true"]) {
+    grid-template-rows: max-content 100%;
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    scroll-padding-block: var(--forma-focus-clearance);
+  }
+
+  :is(dialog.document-artifact-view, dialog.canvas-artifact-viewer)[data-artifact-kind="slides"] .presentation-deck--slideshow:not(.presentation-deck--export-status):has(> .presentation-deck-toolbar[data-tools-open="true"]) > .presentation-deck-toolbar[data-tools-open="true"] {
+    max-block-size: none;
+    overflow: visible;
+    flex-wrap: wrap;
+  }
+
+  :is(dialog.document-artifact-view, dialog.canvas-artifact-viewer)[data-artifact-kind="slides"] .presentation-deck--slideshow:not(.presentation-deck--export-status):has(> .presentation-deck-toolbar[data-tools-open="true"]) > .presentation-deck-toolbar > div {
+    max-inline-size: 100%;
+    flex-wrap: wrap;
+  }
+
+  :is(dialog.document-artifact-view, dialog.canvas-artifact-viewer)[data-artifact-kind="slides"] .presentation-deck--slideshow:not(.presentation-deck--export-status):has(> .presentation-deck-toolbar[data-tools-open="true"]) > .presentation-deck-stage[data-slide-posture] {
+    block-size: auto;
+    margin: var(--forma-focus-clearance);
+    padding-block: var(--forma-focus-clearance);
+    padding-inline: var(--forma-focus-clearance);
+    row-gap: var(--forma-focus-clearance);
+  }
+
+  :is(dialog.document-artifact-view, dialog.canvas-artifact-viewer)[data-artifact-kind="slides"] .presentation-deck--slideshow:not(.presentation-deck--export-status):has(> .presentation-deck-toolbar[data-tools-open="true"]) > .presentation-deck-toolbar :is(button, select, input):not([popover] *),
+  :is(dialog.document-artifact-view, dialog.canvas-artifact-viewer)[data-artifact-kind="slides"] .presentation-deck--slideshow:not(.presentation-deck--export-status):has(> .presentation-deck-toolbar[data-tools-open="true"]) > .presentation-deck-stage[data-slide-posture] > :is(nav, .presentation-deck-supporting) > button,
+  :is(dialog.document-artifact-view, dialog.canvas-artifact-viewer)[data-artifact-kind="slides"] .presentation-deck-stage[data-slide-posture="reading"] > .presentation-deck-viewport > .presentation-deck-reading > .presentation-deck-reader-content > details > summary {
+    scroll-margin-block: var(--forma-focus-clearance);
+  }
+
+  :is(dialog.document-artifact-view, dialog.canvas-artifact-viewer)[data-artifact-kind="slides"] .presentation-deck-stage[data-slide-posture="reading"] > .presentation-deck-viewport {
+    box-sizing: border-box;
+    padding: var(--forma-focus-clearance);
+  }
+
+  :is(dialog.document-artifact-view, dialog.canvas-artifact-viewer)[data-artifact-kind="slides"] .presentation-deck-stage[data-slide-posture="reading"] > .presentation-deck-viewport > .presentation-deck-reading {
+    scroll-padding-block: var(--forma-focus-clearance);
+    scroll-margin-block: var(--forma-focus-clearance);
+    padding-block-end: var(--forma-focus-clearance);
+  }
+}
+
+/* Closing Tools keeps the same complete-height native stage. The intrinsic
+ * trigger scrolls in the existing deck instead of consuming reading space. */
+@media (max-height: 37.5rem) and (orientation: landscape) {
+  :is(dialog.document-artifact-view, dialog.canvas-artifact-viewer)[data-artifact-kind="slides"] .presentation-deck--slideshow:not(.presentation-deck--export-status):has(> .presentation-deck-toolbar[data-tools-open="false"]) {
+    grid-template-rows: max-content 100%;
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    scroll-padding-block: var(--forma-focus-clearance);
+  }
+
+  :is(dialog.document-artifact-view, dialog.canvas-artifact-viewer)[data-artifact-kind="slides"] .presentation-deck--slideshow:not(.presentation-deck--export-status):has(> .presentation-deck-toolbar[data-tools-open="false"]) > .presentation-deck-stage[data-slide-posture] {
+    block-size: auto;
+    margin: var(--forma-focus-clearance);
+    padding-block: var(--forma-focus-clearance);
+    padding-inline: var(--forma-focus-clearance);
+    row-gap: var(--forma-focus-clearance);
+  }
+
+  :is(dialog.document-artifact-view, dialog.canvas-artifact-viewer)[data-artifact-kind="slides"] .presentation-deck--slideshow:not(.presentation-deck--export-status):has(> .presentation-deck-toolbar[data-tools-open="false"]) > .presentation-deck-toolbar :is(button, select, input):not([popover] *),
+  :is(dialog.document-artifact-view, dialog.canvas-artifact-viewer)[data-artifact-kind="slides"] .presentation-deck--slideshow:not(.presentation-deck--export-status):has(> .presentation-deck-toolbar[data-tools-open="false"]) > .presentation-deck-stage[data-slide-posture] > :is(nav, .presentation-deck-supporting) > button {
+    scroll-margin-block: var(--forma-focus-clearance);
+  }
+}
+
+/* List uses the same sequential native fit as open slideshow Tools. Its
+ * existing list remains the content scroller, with room to reveal controls. */
+@media (max-height: 37.5rem) and (orientation: landscape) {
+  :is(dialog.document-artifact-view, dialog.canvas-artifact-viewer)[data-artifact-kind="slides"] .presentation-deck--list:not(.presentation-deck--export-status):has(> .presentation-deck-toolbar[data-tools-open="true"]) {
+    grid-template-rows: max-content 100%;
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    scroll-padding-block: var(--forma-focus-clearance);
+  }
+
+  :is(dialog.document-artifact-view, dialog.canvas-artifact-viewer)[data-artifact-kind="slides"] .presentation-deck--list:not(.presentation-deck--export-status):has(> .presentation-deck-toolbar[data-tools-open="true"]) > .presentation-deck-toolbar[data-tools-open="true"] {
+    max-block-size: none;
+    overflow: visible;
+    flex-wrap: wrap;
+  }
+
+  :is(dialog.document-artifact-view, dialog.canvas-artifact-viewer)[data-artifact-kind="slides"] .presentation-deck--list:not(.presentation-deck--export-status):has(> .presentation-deck-toolbar[data-tools-open="true"]) > .presentation-deck-toolbar > div {
+    max-inline-size: 100%;
+    flex-wrap: wrap;
+  }
+
+  :is(dialog.document-artifact-view, dialog.canvas-artifact-viewer)[data-artifact-kind="slides"] .presentation-deck--list:not(.presentation-deck--export-status):has(> .presentation-deck-toolbar[data-tools-open="true"]) > .presentation-deck-toolbar :is(button, select, input):not([popover] *) {
+    scroll-margin-block: var(--forma-focus-clearance);
+  }
+
+  :is(dialog.document-artifact-view, dialog.canvas-artifact-viewer)[data-artifact-kind="slides"] .presentation-deck--list:not(.presentation-deck--export-status):has(> .presentation-deck-toolbar[data-tools-open="true"]) > .presentation-deck-list {
+    scroll-padding-block: var(--forma-focus-clearance);
+  }
+
+  :is(dialog.document-artifact-view, dialog.canvas-artifact-viewer)[data-artifact-kind="slides"] .presentation-deck--list:not(.presentation-deck--export-status):has(> .presentation-deck-toolbar[data-tools-open="true"]) > .presentation-deck-list :is(button, summary, a[href]) {
+    scroll-margin-block: var(--forma-focus-clearance);
+  }
+}
+
+/* Compact navigation has no clipped inner viewport: keep native focus paint
+ * in the stage gutters and let its existing peers wrap when space is tight. */
+@media (max-height: 37.5rem) and (orientation: landscape) {
+  :is(dialog.document-artifact-view, dialog.canvas-artifact-viewer)[data-artifact-kind="slides"] .presentation-deck-stage[data-slide-posture] > nav {
+    overflow: visible;
+    flex-wrap: wrap;
+  }
+}
+
+/* The Canvas Slides footer is a native action row, not a deck overlay. */
+@media (max-height: 37.5rem) and (orientation: landscape) {
+  .canvas-artifact-viewer[data-artifact-kind="slides"][data-output-focus] > .canvas-artifact-viewer-card {
+    grid-template-rows: auto minmax(0, 1fr) auto;
+  }
+
+  .canvas-artifact-viewer[data-artifact-kind="slides"][data-output-focus] > .canvas-artifact-viewer-card > footer {
+    position: static;
+    inset: auto;
+    z-index: auto;
+    display: flex;
+    max-inline-size: 100%;
+    padding: var(--forma-focus-clearance);
+    border: 0;
+    border-block-start: 1px solid var(--forma-color-border);
+    border-radius: 0;
+  }
+}
+
+/* The Document Slides footer reuses the native action row, not a deck overlay. */
+@media (max-height: 37.5rem) and (orientation: landscape) {
+  .document-artifact-view[data-artifact-kind="slides"][data-output-focus] > .document-artifact-reader {
+    grid-template-rows: auto minmax(0, 1fr) auto;
+  }
+
+  .document-artifact-view[data-artifact-kind="slides"][data-output-focus] > .document-artifact-reader > footer {
+    position: static;
+    inset: auto;
+    z-index: auto;
+    display: flex;
+    max-inline-size: 100%;
+    padding: var(--forma-focus-clearance);
+    border: 0;
+    border-block-start: 1px solid var(--forma-color-border);
+    border-radius: 0;
   }
 }

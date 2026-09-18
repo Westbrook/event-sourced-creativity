@@ -1,0 +1,118 @@
+/* Document-view disclosure only. The existing Studio header, task shortcuts,
+   focus posture and responsive scroll strips remain owned by their shared CSS. */
+.studio-mode-nav .studio-view-menu {
+  display: block;
+  min-inline-size: 0;
+  max-inline-size: 100%;
+}
+.studio-mode-nav .studio-view-menu .ui-popover {
+  display: block;
+}
+.studio-mode-nav .studio-view-menu .ui-popover-trigger {
+  max-inline-size: 100%;
+  text-align: start;
+}
+.studio-mode-nav .studio-view-options {
+  display: grid;
+  gap: max(var(--forma-space-1, .25rem), var(--forma-focus-clearance, .5rem));
+}
+.studio-mode-nav .studio-view-options > a {
+  display: flex;
+  min-inline-size: 0;
+  min-block-size: var(--forma-control-min-size, 2.75rem);
+  inline-size: 100%;
+  max-inline-size: 100%;
+  align-items: center;
+  padding: var(--forma-space-2, .5rem) var(--forma-space-3, .75rem);
+  white-space: normal;
+  overflow-wrap: anywhere;
+  text-align: start;
+}
+.studio-mode-nav .studio-current-view {
+  display: inline-flex;
+  min-block-size: var(--forma-control-min-size, 2.75rem);
+  align-items: center;
+  padding-inline: var(--forma-space-3, .75rem);
+}
+
+/* Match the existing direct toolbar buttons on coarse pointers. Keep the
+   bounded scroll-strip owners and the native top-layer panel independent. */
+@media (pointer: coarse) {
+  .studio-mode-nav > .studio-mode-families > a,
+  .studio-mode-nav .studio-view-menu > .ui-popover > .ui-popover-trigger {
+    min-block-size: var(--forma-hit-target-coarse);
+  }
+}
+
+/* A control minimum is not a ceiling on its padded Chat toolbar. Keep the
+   existing horizontal scroll owner and let the normal-flow header fit. */
+@media (pointer: coarse) and (max-height: 37.5rem) and (orientation: landscape) {
+  .application-creative .chat-view-page forma-studio-mode-nav > .studio-mode-nav {
+    min-block-size: var(--forma-hit-target-coarse);
+    max-block-size: none;
+    flex-direction: row;
+  }
+}
+
+/* Narrow rows admit the controls' existing minimum and translated content.
+   Keep the two-row arrangement and its independent horizontal scroll owners. */
+@media (max-width: 47.99rem) {
+  forma-studio-mode-nav > .studio-mode-nav {
+    grid-template-rows: repeat(2, minmax(var(--forma-hit-target), auto));
+  }
+}
+
+/* This padded compact strip cannot use a child's minimum as its own ceiling.
+   Natural height preserves padding, while explicit row flow overrides the
+   older narrow-screen column posture when workbench switches back to flex. */
+.application-creative[data-nav-posture="compact"][data-layout-intent="workbench"] forma-studio-mode-nav > .studio-mode-nav,
+.application-creative[data-short-height="true"][data-layout-intent="workbench"] forma-studio-mode-nav > .studio-mode-nav {
+  max-block-size: none;
+  flex-direction: row;
+}
+
+/* Compact workbenches use one horizontal owner. Intrinsic nested groups no
+   longer reserve whole rows or carry a second scroll-clip/clearance budget.
+   Inset native paint reuses the task-strip policy without reducing controls. */
+.application-creative[data-layout-intent="workbench"]:is([data-nav-posture="compact"], [data-short-height="true"]) forma-studio-mode-nav > .studio-mode-nav {
+  padding-block: var(--forma-space-1, .25rem);
+  scroll-padding-inline: var(--forma-focus-clearance);
+}
+
+.application-creative[data-layout-intent="workbench"]:is([data-nav-posture="compact"], [data-short-height="true"]) forma-studio-mode-nav > .studio-mode-nav > :is(.studio-mode-families, .studio-mode-links) {
+  inline-size: auto;
+  overflow: visible;
+  scroll-padding-inline: 0;
+}
+
+.application-creative[data-layout-intent="workbench"]:is([data-nav-posture="compact"], [data-short-height="true"]) forma-studio-mode-nav > .studio-mode-nav > .studio-mode-links {
+  margin-block: 0;
+  padding: 0;
+}
+
+.application-creative[data-layout-intent="workbench"]:is([data-nav-posture="compact"], [data-short-height="true"]) forma-studio-mode-nav > .studio-mode-nav > .studio-mode-families > a:focus-visible,
+.application-creative[data-layout-intent="workbench"]:is([data-nav-posture="compact"], [data-short-height="true"]) forma-studio-mode-nav > .studio-mode-nav > .studio-mode-links > .studio-view-menu > .ui-popover > .ui-popover-trigger:focus-visible,
+.application-creative[data-layout-intent="workbench"]:is([data-nav-posture="compact"], [data-short-height="true"]) forma-studio-mode-nav > .studio-mode-nav > button:focus-visible {
+  outline-offset: calc(-1 * var(--forma-focus-ring-width, .1875rem));
+}
+
+/* Collapsed text remains owned by its native action inside the scroll strip. */
+.studio-mode-nav > :is(.context-set-trigger, .document-focus-toggle) {
+  position: relative;
+}
+
+/* Keep Add context's native floor when the Studio container hides its label. */
+.studio-mode-nav > button.context-set-trigger {
+  min-inline-size: var(--forma-hit-target);
+}
+
+/* Inline links do not honor the inherited Studio control block-size floor. */
+.context-set-picker-dialog > .context-set-picker-panel > .context-set-picker-empty > a {
+  display: inline-flex;
+  align-items: center;
+}
+
+/* The modal scroll owner may reveal a complete choice body at its edge. */
+.context-set-picker-dialog > .context-set-picker-panel > .context-entry-choices > forma-ui-choice-card > button.ui-choice-card:focus-visible {
+  outline-offset: calc(-1 * var(--forma-focus-ring-width, .1875rem));
+}

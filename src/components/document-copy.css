@@ -1,0 +1,6 @@
+.document-copy-dialog .modal-card{max-block-size:calc(100dvb - 2rem);overflow:auto;overscroll-behavior:contain;overflow-wrap:anywhere;margin-block:1rem}
+.document-copy-dialog h2{padding-inline-end:3rem}
+.document-copy-dialog label{display:grid;gap:.5rem;margin-block:1rem}
+.document-copy-dialog :is(input,select){inline-size:100%;min-inline-size:0}
+.document-copy-dialog :is(button,input,select,a.button){min-block-size:var(--forma-control-min-size,44px)}
+.document-copy-dialog footer{display:flex;flex-wrap:wrap;gap:.5rem;justify-content:flex-end;margin-block-start:1rem}

@@ -1,0 +1,45 @@
+.artifact-model3d-scale {
+  min-inline-size: 0;
+  padding: var(--forma-focus-clearance, .5rem);
+  padding-inline: clamp(.8rem,2.5vi,2rem);
+  overflow-wrap: anywhere;
+}
+.artifact-model3d-scale-field {
+  display: grid;
+  gap: .75rem;
+  min-inline-size: 0;
+}
+.artifact-model3d-scale-factor {
+  box-sizing: border-box;
+  inline-size: min(100%, 20rem);
+  min-block-size: 2.75rem;
+  padding: .625rem .75rem;
+  font: inherit;
+  scroll-margin-block: var(--forma-focus-clearance, .5rem);
+}
+.artifact-model3d-scale-dimensions {
+  display: grid;
+  gap: 1rem;
+  margin: .5rem 0;
+}
+.artifact-model3d-scale-dimensions dt {
+  font-weight: 600;
+}
+.artifact-model3d-scale-dimensions dd {
+  margin: .25rem 0 0;
+}
+.artifact-model3d-scale-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: max(var(--forma-focus-clearance, .5rem), .75rem);
+  padding-block: var(--forma-focus-clearance, .5rem);
+  min-inline-size: 0;
+}
+.artifact-model3d-scale-actions > button {
+  min-block-size: 2.75rem;
+  max-inline-size: 100%;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  scroll-margin-block: var(--forma-focus-clearance, .5rem);
+}

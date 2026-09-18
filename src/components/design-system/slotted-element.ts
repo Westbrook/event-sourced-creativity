@@ -12,9 +12,10 @@ const compositionStyles = css`
     min-inline-size: 0;
     color: var(--forma-color-text, var(--ink));
     font-family: var(--forma-font-family, var(--sans));
-    line-height: 1.6;
+    line-height: var(--forma-body-line-height, 1.6);
   }
 
+  :host(forma-ui-notice) { container: forma-notice / inline-size; }
   *, *::before, *::after { box-sizing: border-box; }
   .forma-icon {
     display: inline-grid;
@@ -48,10 +49,19 @@ const compositionStyles = css`
     align-items: center;
     justify-content: center;
   }
+  ::slotted(button[slot="actions"]), ::slotted(a[slot="actions"]),
+  ::slotted(button[slot="trailing"]), ::slotted(a[slot="trailing"]),
+  ::slotted(forma-ui-button[slot="actions"]), ::slotted(forma-ui-icon-button[slot="actions"]),
+  ::slotted(forma-ui-link[slot="actions"]), ::slotted(forma-ui-button[slot="trailing"]),
+  ::slotted(forma-ui-icon-button[slot="trailing"]), ::slotted(forma-ui-link[slot="trailing"]),
+  :is(.ui-card-actions,.ui-page-header-actions,.ui-notice-actions,.ui-list-item-trailing) > :is(.button,.icon-button),
+  :is(.ui-card-actions,.ui-page-header-actions,.ui-notice-actions,.ui-list-item-trailing) > slot > :is(.button,.icon-button) {
+    align-self: stretch;
+  }
   slot:not([name])::slotted(p) {
     color: var(--forma-color-text-muted, var(--muted));
     font-size: var(--forma-font-size-supporting, var(--type-small));
-    line-height: 1.6;
+    line-height: var(--forma-body-line-height, 1.6);
   }
   ::slotted(:focus-visible) {
     outline: var(--forma-focus-ring-width, .1875rem) solid
@@ -62,7 +72,7 @@ const compositionStyles = css`
   button {
     min-block-size: var(--forma-control-min-size, 2.75rem);
     color: inherit;
-    border: 0;
+    border: 1px solid transparent;
     background: none;
     font: inherit;
     cursor: pointer;
@@ -78,10 +88,12 @@ const compositionStyles = css`
     align-items: center;
     justify-content: center;
     gap: var(--forma-space-2, var(--space-2));
+    padding-block: var(--forma-space-2, var(--space-2));
     padding-inline: var(--forma-space-4, var(--space-4));
     border-radius: var(--forma-radius-small, var(--radius-small));
     font-size: var(--forma-font-size-supporting, var(--type-small));
-    font-weight: 650;
+    font-weight: 600;
+    line-height: var(--forma-body-line-height, 1.6);
   }
   .button.primary {
     color: var(--forma-color-on-strong, var(--on-strong));
@@ -158,16 +170,27 @@ const compositionStyles = css`
   .ui-list-item {
     display: flex;
     min-inline-size: 0;
+    flex-wrap: wrap;
     min-block-size: var(--forma-control-min-size, 2.75rem);
     align-items: center;
     gap: var(--forma-space-3, var(--space-3));
     padding-inline: var(--forma-row-inset-inline, var(--forma-space-3, .75rem));
   }
+  .ui-list-item-main {
+    display: flex;
+    min-inline-size: 0;
+    flex: 1 1 min(100%, 16rem);
+    align-items: center;
+    gap: var(--forma-space-3, var(--space-3));
+  }
+  .ui-list-item-main > slot[name="leading"]::slotted(*),
+  .ui-list-item-main > slot[name="leading"] > * { flex: none; }
   .ui-list-item-copy {
     display: grid;
     min-inline-size: 0;
     flex: 1;
     gap: .125rem;
+    overflow-wrap: anywhere;
   }
   .ui-list-item strong {
     font-size: var(--forma-font-size-supporting, var(--type-small));
@@ -186,6 +209,7 @@ const compositionStyles = css`
   .ui-page-header-copy {
     display: grid;
     min-inline-size: 0;
+    flex: 1 1 min(100%, 24rem);
     gap: var(--forma-space-1, var(--space-1));
   }
 
@@ -199,6 +223,10 @@ const compositionStyles = css`
     color: var(--forma-color-text, var(--ink));
     background: var(--forma-color-surface-subtle, var(--panel-2));
     border-radius: var(--forma-radius-medium, var(--radius-medium));
+  }
+  @container forma-notice (max-width: 32rem) {
+    .ui-notice { grid-template-columns: 1.5rem minmax(0, 1fr); }
+    .ui-notice-actions { grid-column: 2; justify-self: start; }
   }
   .ui-notice-symbol { padding-block-start: .15rem; }
   .ui-notice-copy { min-inline-size: 0; }

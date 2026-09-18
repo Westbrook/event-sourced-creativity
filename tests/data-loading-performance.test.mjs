@@ -26,6 +26,44 @@ import { EXTRACTOR_EVAL_FIXTURES } from "../src/model/extractors.ts";
 import { foldCanvasEvents } from "../src/canvas/model.ts";
 import { ownerMediaNamespace } from "../src/model/media-ownership.ts";
 
+test("retained output routed refusals do not schedule background writes or hydrate unrelated work", async t => {
+  const { database, environment, context, drainBackground } = await productionWorker();
+  const waitUntil = context.waitUntil;
+  t.after(async () => {
+    context.waitUntil = waitUntil;
+    const failures = [];
+    try { await drainBackground(); } catch (error) { failures.push(error); }
+    try { database.sqlite.close(); } catch (error) { failures.push(error); }
+    if (failures.length === 1) throw failures[0];
+    if (failures.length > 1) throw new AggregateError(failures, "Retained output routing cleanup failed", { cause: failures[0] });
+  });
+  await drainBackground();
+  for (const route of ["/make/short-story", "/make/scene", "/make/slides"]) {
+    assert.deepEqual(routeCapabilities(route + "/?document=doc-a"), { profile: "workspace", privateContent: false, jobHistory: false });
+  }
+  for (const prefix of ["/api/retained-story", "/api/retained-output/scene", "/api/retained-output/slides"]) {
+    const exact = prefix + "/document-a/artifact-a?revision=0&sha256=" + "a".repeat(64);
+    for (const [path, init, status] of [
+      [prefix, {}, 400], [prefix + "/invalid", {}, 400],
+      [exact, { method: "POST" }, 405], [exact, { method: "HEAD" }, 405],
+      [exact, { method: "POST", headers: { origin: "https://other.invalid" } }, 403],
+      [exact, {}, 401],
+    ]) {
+      let scheduled = 0;
+      context.waitUntil = promise => { scheduled += 1; waitUntil(promise); };
+      database.reset();
+      // Fresh DB identity prevents a warm retention throttle from concealing a scheduled write.
+      const DB = { prepare: sql => database.DB.prepare(sql), batch: statements => database.DB.batch(statements) };
+      const response = await worker.fetch(new Request("http://localhost" + path, init), { ...environment, DB }, context);
+      await drainBackground();
+      const label = `${init.method ?? "GET"} ${path}`;
+      assert.equal(response.status, status, label);
+      assert.equal(scheduled, 0, label + " background work");
+      assert.equal(database.writeCount(), 0, label + " database writes");
+    }
+  }
+});
+
 function measuredDatabase() {
   const sqlite = new DatabaseSync(":memory:");
   const calls = [];
@@ -92,6 +130,14 @@ async function productionWorker() {
   assert.equal((await request("/api/events?after=0&limit=2000&content=0")).status, 200);
   database.reset();
   return { database, environment, request, context, drainBackground };
+}
+
+function adaptivePlanningClient(request,headers,body){
+  const send=(action,quote)=>request("/api/document-jobs/adaptive",{method:"POST",headers:{...headers,"content-type":"application/json"},body:JSON.stringify({...body,action,...(quote?{executionId:quote.executionId,approvedBindingHash:quote.bindingHash}:{})})});
+  return{
+    quote:async()=>{const response=await send("quote");assert.equal(response.status,200,JSON.stringify(await response.clone().json()));return(await response.json()).quote;},
+    execute:quote=>send("execute",quote),
+  };
 }
 
 async function specialistIdentity(database,request,userId,capabilities=[]){
@@ -504,9 +550,12 @@ test("background visits and unrelated job polling begin after meaningful route p
   assert.match(store, /addEventListener\("forma-performance"/);
   assert.match(store, /this\.#scheduleJobPoll\(1_200\)/);
   assert.match(store, /documentViewFromRoute\(path\)==="chat"\)void sessionPromise\.then/);
-  assert.match(store, /contentScope=\$\{required\}/);
+  assert.match(store, /fetch\("\/api\/events\?after="\+this\.head\.get\(\)\+"&limit=1&content=1"\+\(required!=="all"\?"&contentScope="\+required:""\)\)/, "chat/memory hydration keeps its exact scope; all-content hydration omits the scope parameter");
   assert.match(store, /profile==="memory"\?"memory"/);
-  assert.match(store, /this\.content\.set\(\{\.\.\.this\.content\.get\(\),\.\.\.body\.content\}\)/);
+  assert.match(store, /const body=await response\.json\(\) as \{content\?:Record<string,string>\};this\.#assertSourceRead\(read\);this\.#assertSourceOwnership\(source\)/, "private hydration verifies its original read and source ownership after the body await");
+  assert.match(store, /this\.#publishSourceContent\(read,\(\)=>\{this\.#privateContentScope=required;if\(Object\.keys\(content\)\.length\)this\.#mergeSourceContent\(read,content\);\}\)/);
+  assert.match(store, /const previous=this\.content\.get\(\),next=replace\?\{\.\.\.incoming\}:\{\.\.\.previous,\.\.\.incoming\}/, "owned partial hydration merges retained content instead of replacing it");
+  assert.match(store, /this\.content\.set\(next\)/);
   assert.match(analytics, /#expandedEvidence=new Set<string>\(\)/);
   assert.match(analytics, /data-evidence-key=\$\{item\.key\}/);
   assert.match(analytics, /\?open=\$\{expanded\} @toggle=\$\{this\.#toggleEvidence\}/);
@@ -904,12 +953,12 @@ test("analytics excludes fictional streams in SQL and batches all dashboard read
   const body = await response.json();
   assert.ok(body.report.source.eventCount > 0);
   const batch = database.calls.find((call) => call.kind === "batch");
-  assert.equal(batch?.statements.length, 4);
+  assert.equal(batch?.statements.length, 7);
   assert.match(batch.statements[2].sql, /stream_id NOT IN \(SELECT fictional_stream_id/);
   assert.match(batch.statements[2].sql, /SELECT event_id e,stream_id s,sequence q,occurred_at o,actor a,type t,CASE/);
   assert.match(batch.statements[2].sql, /json_remove\(payload,'\$\.compiled_snapshot'\)/);
   assert.doesNotMatch(batch.statements[2].sql, /SELECT \* FROM events/);
-  assert.ok(database.calls.length <= 2, `expected admin authentication plus one dashboard batch, received ${database.calls.length}`);
+  assert.ok(database.calls.length <= 3, `expected admin authentication plus one combined dashboard/live batch and a final access proof, received ${database.calls.length}`);
   assert.equal(database.writeCount(), 0);
   assert.equal(response.headers.get("cache-control"), "private, no-store");
   await drainBackground();
@@ -917,7 +966,7 @@ test("analytics excludes fictional streams in SQL and batches all dashboard read
   const synthetic = await request("/api/analytics?days=all&includeSynthetic=true");
   assert.equal(synthetic.status, 200);
   const included = database.calls.find((call) => call.kind === "batch");
-  assert.equal(included?.statements.length, 4);
+  assert.equal(included?.statements.length, 7);
   assert.doesNotMatch(included.statements[2].sql, /NOT IN/);
   await drainBackground();
   database.sqlite.prepare("UPDATE users SET role='creator' WHERE user_id=?").run("dev-local-creative");
@@ -950,13 +999,13 @@ test("analytics reuses immutable account evidence while every fresh report inclu
   assert.deepEqual(unchangedBody.report.source, initialBody.report.source);
   assert.deepEqual(unchangedBody.report.totals, initialBody.report.totals);
   const incremental = database.calls.find((call) => call.kind === "batch");
-  assert.equal(incremental?.statements.length, 3);
+  assert.equal(incremental?.statements.length, 6);
   const delta = incremental.statements[2];
   assert.match(delta.sql, /rowid>\?/);
   assert.match(database.sqlite.prepare(`EXPLAIN QUERY PLAN ${delta.sql}`).all(...delta.values).map((step) => step.detail).join(" "), /INTEGER PRIMARY KEY \(rowid>\?\)/);
   const deltaBytes = JSON.stringify(database.sqlite.prepare(delta.sql).all(...delta.values)).length;
   assert.ok(deltaBytes < coldBytes / 20, `expected meaningful transfer reduction: ${coldBytes} -> ${deltaBytes}`);
-  assert.ok(database.calls.length <= 2,`cold analytics should use at most two D1 round trips; observed ${JSON.stringify(database.calls.map((call)=>({kind:call.kind,sql:call.sql.slice(0,160)})))}`);
+  assert.ok(database.calls.length <= 3,`cold analytics should use at most three D1 round trips including the final access proof; observed ${JSON.stringify(database.calls.map((call)=>({kind:call.kind,sql:call.sql.slice(0,160)})))}`);
   assert.equal(database.writeCount(), 0);
 
   addCorrelatedTerminal(database.sqlite, "creative:dev-local-creative", "analytics-new-event");
@@ -1008,12 +1057,12 @@ test("analytics restores exact owner-bound evidence across cold worker instances
   assert.equal(cold.headers.get("cache-control"), "private, no-store");
   assert.equal(current.source.eventCount, baseline.source.eventCount + 1);
   const batch = database.calls.find((call) => call.kind === "batch");
-  assert.equal(batch?.statements.length, 4);
+  assert.equal(batch?.statements.length, 7);
   assert.match(batch.statements[2].sql, /WITH snapshot\(head\) AS MATERIALIZED/);
   const plan = database.sqlite.prepare(`EXPLAIN QUERY PLAN ${batch.statements[2].sql}`).all(...batch.statements[2].values);
   assert.match(plan.map((step) => step.detail).join(" "), /INTEGER PRIMARY KEY \(rowid>\?\)/);
   assert.match(plan.map((step) => step.detail).join(" "), /idx_events_nonphantom_stream_sequence/);
-  assert.ok(database.calls.length <= 2,`cold analytics should use at most two D1 round trips; observed ${JSON.stringify(database.calls.map((call)=>({kind:call.kind,sql:call.sql.slice(0,160)})))}`);
+  assert.ok(database.calls.length <= 3,`cold analytics should use at most three D1 round trips including the final access proof; observed ${JSON.stringify(database.calls.map((call)=>({kind:call.kind,sql:call.sql.slice(0,160)})))}`);
   assert.equal(database.writeCount(), 0);
 
   database.reset();
@@ -1201,7 +1250,7 @@ test("production-shaped idle histories collapse to one scoped page while raw aud
     assert.match(plan.map((step)=>step.detail).join(" "),/idx_events_nonphantom_stream_sequence/,profile);
   }
   database.reset();const analytics=await(await request("/api/analytics?days=all")).json();
-  assert.ok(analytics.report.source.eventCount<5_000);assert.match(database.calls.find((call)=>call.kind==="batch")?.statements[2].sql??"",/capture_version/);assert.ok(database.calls.length<=2);assert.equal(database.writeCount(),0);
+  assert.ok(analytics.report.source.eventCount<5_000);assert.match(database.calls.find((call)=>call.kind==="batch")?.statements[2].sql??"",/capture_version/);assert.ok(database.calls.length<=3);assert.equal(database.writeCount(),0);
   const analyticsStatement=database.calls.find((call)=>call.kind==="batch")?.statements[2];const analyticsPlan=database.sqlite.prepare(`EXPLAIN QUERY PLAN ${analyticsStatement.sql}`).all(...analyticsStatement.values);
   assert.match(analyticsPlan.map((step)=>step.detail).join(" "),/idx_events_nonphantom_stream_sequence/);
 
@@ -1887,7 +1936,9 @@ test("customer workspace administration enforces verified invitations, exact pro
   assert.equal((await request(`/api/media/${encodeURIComponent(referenceKey)}`,{headers:scoped})).status,200,"existing owner references remain available inside their exact shared project");
   assert.equal((await request(`/api/media/${encodeURIComponent(secretKey)}`,{headers:scoped})).status,403);
   assert.equal((await request(`/api/workspaces/${organizationB}/projects/${projectB}/events`,{headers:scoped})).status,403);
-  for(const path of ["/api/document-jobs","/api/shares"]){database.reset();assert.equal((await request(path,{headers:scoped})).status,403,path);assert.equal(database.writeCount(),0,path);}
+  database.reset();const readerPlanningJobs=await request("/api/document-jobs",{headers:scoped});assert.equal(readerPlanningJobs.status,200);assert.deepEqual((await readerPlanningJobs.json()).jobs,[]);assert.equal(database.writeCount(),0,"a reader sees no other actor's planning jobs and polling stays read-only");
+  database.reset();assert.equal((await request("/api/shares",{headers:scoped})).status,403);assert.equal(database.writeCount(),0);
+  database.reset();assert.equal((await request("/api/document-jobs",json(scoped,{kind:"generate",documentId:"doc-atmosphere",payload:{}}))).status,403);assert.equal(database.writeCount(),0,"readable planning history never grants a new paid request");
   database.reset();assert.equal((await request("/api/generation-readiness",json(scoped,{documentId:"doc-atmosphere"}))).status,403);assert.equal(database.writeCount(),0);
   for(const path of ["/api/generation-readiness/provider/refresh","/api/generation-readiness/prompt-techniques"]){
     database.reset();assert.equal((await request(path,json(scoped,{documentId:"doc-atmosphere"}))).status,403,path);
@@ -2003,19 +2054,26 @@ test("viewer-only independent review, governed release, source attestation, arti
   const open=async(identity)=>{const opened=await request(`/api/workspaces/${organizationId}/projects/${projectId}/context`,{method:"POST",headers:identity});assert.equal(opened.status,200);return{...identity,cookie:opened.headers.get("set-cookie")?.split(";")[0]??""};};
   let reviewerScope=await open(reviewer);const ownerScope=await open(owner);
   const binding=()=>({artifact_revision:Number(database.sqlite.prepare("SELECT COUNT(*) AS count FROM events WHERE stream_id=? AND type='DocumentArtifactEdited' AND json_extract(payload,'$.artifact_id')='governed-output'").get(stream).count),content_sha256:createHash("sha256").update(database.sqlite.prepare("SELECT content FROM private_content WHERE content_id='governed-output-content'").get().content).digest("hex")});
-  const action=(type)=>({type,payload:{artifact_id:"governed-output",artifact_kind:"short_story",document_id:"doc-atmosphere",...binding(),source_block_versions:versions}});
+  const action=(type)=>({type,payload:{artifact_id:"governed-output",artifact_kind:"short_story",document_id:"doc-atmosphere",...binding(),source_block_versions:versions,...(type==="ArtifactReviewRequested"?{assigned_reviewer_user_id:"governed-review-viewer"}:{})}});
   const append=(identity,event)=>request("/api/events",json(identity,{action:"append",event}));
   const revise=(identity,markdown,expectedRevision)=>request("/api/artifacts/governed-output",json(identity,{markdown,expectedRevision},"PATCH"));
   assert.equal((await append(reviewerScope,action("ArtifactApproved"))).status,403,"viewer has no ambient approval authority");
   assert.equal((await revise(reviewerScope,"Forbidden viewer edit",0)).status,403,"read-only reviewer cannot alter the retained output");
-  assert.equal((await request("/api/document-jobs",{headers:reviewerScope})).status,403,"review access does not imply provider job access");
+  database.reset();const reviewerPlanningJobs=await request("/api/document-jobs",{headers:reviewerScope});assert.equal(reviewerPlanningJobs.status,200);assert.deepEqual((await reviewerPlanningJobs.json()).jobs,[]);assert.equal(database.writeCount(),0,"review access exposes neither another actor's jobs nor new writes");
+  database.reset();assert.equal((await request("/api/document-jobs",json(reviewerScope,{kind:"generate",documentId:"doc-atmosphere",payload:{}}))).status,403);assert.equal(database.writeCount(),0,"review access never grants paid queue admission");
   const unapprovedShare=await request("/api/shares",json(ownerScope,{resourceKind:"document",documentId:"doc-atmosphere",projectId:"project-atmosphere"}));assert.equal(unapprovedShare.status,409,JSON.stringify(await unapprovedShare.json()));
   const unapprovedExport=await append(reviewerScope,{type:"DocumentArtifactExported",payload:{artifact_id:"governed-output",document_id:"doc-atmosphere",format:"markdown"}});assert.equal(unapprovedExport.status,409);
   assert.equal((await request(memberPath,json(owner,{reviewAccess:true},"PATCH"))).status,200,"customer owner can delegate approval directly to a viewer");
   assert.equal((await request(memberPath,json(owner,{reviewAccess:true},"PATCH"))).status,409,"duplicate reviewer grants cannot accumulate");
   const members=await(await request(`/api/workspaces/${organizationId}/projects/${projectId}/members`,{headers:owner})).json();assert.equal(members.members.find((member)=>member.user_id==="governed-review-viewer").review_access,1);assert.equal(members.members.find((member)=>member.user_id==="governed-review-owner").role,"owner");assert.equal(members.members.find((member)=>member.user_id==="governed-review-owner").review_access,1,"an eligible non-contributing project owner remains discoverable for independent teammate review");
   const session=await(await request("/api/session",{headers:reviewerScope})).json();assert.equal(session.projectContext.permissions.includes("project.review.approve"),true);assert.equal(session.projectContext.permissions.includes("project.author"),false);assert.equal(session.projectContext.permissions.includes("project.output.request"),false);
+  const unassigned=action("ArtifactReviewRequested");delete unassigned.payload.assigned_reviewer_user_id;
+  assert.equal((await append(ownerScope,unassigned)).status,200,"legacy unassigned review remains readable project history");
+  assert.equal((await append(reviewerScope,action("ArtifactApproved"))).status,200);
+  database.reset();const unassignedRelease=await append(reviewerScope,{type:"DocumentArtifactExported",payload:{artifact_id:"governed-output",document_id:"doc-atmosphere",format:"markdown",...binding()}});
+  assert.equal(unassignedRelease.status,409);assert.equal((await unassignedRelease.json()).error,"artifact_approval_required");assert.equal(database.writeCount(),0,"legacy approval without a named reviewer is not exact delivery authorization");
   const submitted=await append(ownerScope,action("ArtifactReviewRequested"));assert.equal(submitted.status,200,JSON.stringify(await submitted.clone().json()));
+  assert.equal((await submitted.clone().json()).appended[0].payload.assigned_reviewer_user_id,"governed-review-viewer","the actual owner request names its independent reviewer");
   assert.equal((await append(ownerScope,action("ArtifactApproved"))).status,403,"creator/requester cannot approve their own deliverable");
   const mixed=await request("/api/events",json(ownerScope,{action:"batch",events:[{type:"BlockPropertyEdited",payload:{block_id:versions[0].block_id,property_path:"text",new_value:"Race attempt"}},action("ArtifactApproved")]}));assert.equal(mixed.status,409,"context mutations cannot hide in an approval batch");
   const approved=await append(reviewerScope,action("ArtifactApproved"));assert.equal(approved.status,200,JSON.stringify(await approved.clone().json()));
@@ -2073,7 +2131,10 @@ test("shared Canvas permissions, actor-isolated outputs, removal, restoration, a
   const insertEvent=database.sqlite.prepare("INSERT INTO events(event_id,stream_id,sequence,occurred_at,recorded_at,actor,client_id,correlation_id,causation_id,compensates_event_id,schema_version,type,payload) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)");
   const append=(type,payload)=>{const id=crypto.randomUUID();insertEvent.run(id,stream,++ownerSequence,timestamp,timestamp,"user","server:canvas-test",crypto.randomUUID(),null,null,1,type,JSON.stringify(payload));return id;};
   append("GenerationCompleted",{project_id:"project-atmosphere",document_id:"doc-atmosphere",generation_id:"shared-generation",object_ids:["shared-output"],quality:"high"});
-  append("DocumentRenderCompleted",{project_id:"project-atmosphere",document_id:"doc-atmosphere",artifact_id:"shared-artifact",artifact_kind:"short_story",title:"Shared story",summary:"Approved shared output",item_count:1,items:[]});
+  const sharedArtifactContent=JSON.stringify({title:"Shared story",summary:"Approved shared output",content_markdown:"Exact retained shared story.",presentation:null,items:[{title:"Opening",body:"Exact retained shared story.",notes:"",image_prompt:"",context_group_ids:[],slide:null}]});
+  const sharedArtifactStored=await storePrivateContent(environment,"canvas-project-owner","document-artifact",sharedArtifactContent);
+  const sharedArtifactBinding={artifact_revision:0,content_sha256:createHash("sha256").update(sharedArtifactContent).digest("hex")};
+  append("DocumentRenderCompleted",{project_id:"project-atmosphere",document_id:"doc-atmosphere",artifact_id:"shared-artifact",artifact_kind:"short_story",title:"Shared story",summary:"Approved shared output",item_count:1,items:[],content_ref:sharedArtifactStored.contentId});
   append("CanvasCreated",{project_id:"project-atmosphere",canvas_id:"shared-board",name:"Shared board",slug:"shared-board"});
   append("CanvasItemPlaced",{project_id:"project-atmosphere",canvas_id:"shared-board",item_id:"shared-item",source_kind:"document",source_id:"doc-atmosphere",title:"PRIVATE BOARD CARD TITLE",frame:{x:10,y:20,w:320,h:220,z:"a1"}});
   append("ProjectCreated",{project_id:"private-project",name:"Private project"});
@@ -2115,17 +2176,21 @@ test("shared Canvas permissions, actor-isolated outputs, removal, restoration, a
     .run(crypto.randomUUID(),"canvas-project-editor","project.output.request",organizationId,projectAccessId,"project-atmosphere","canvas-project-owner",timestamp,timestamp);
   const viewerSession=await(await request("/api/session",{headers:scoped})).json();assert.equal(viewerSession.canvas.access,true);assert.equal(viewerSession.projectContext.permissions.includes("project.canvas.use"),true);
   assert.equal(viewerSession.projectContext.permissions.includes("project.output.request"),false,"viewer membership remains a hard ceiling even after a separately supplied output grant");
-  for(const path of ["/api/generation-readiness","/api/document-jobs"]){database.reset();assert.equal((await request(path,{method:path==="/api/generation-readiness"?"POST":"GET",headers:scoped})).status,403);assert.equal(database.writeCount(),0,"an explicit output grant cannot elevate a project viewer");}
+  database.reset();assert.equal((await request("/api/generation-readiness",json(scoped,{documentId:"doc-atmosphere"}))).status,403);assert.equal(database.writeCount(),0,"an explicit output grant cannot elevate a project viewer");
+  database.reset();const viewerPlanningJobs=await request("/api/document-jobs",{headers:scoped});assert.equal(viewerPlanningJobs.status,200);assert.deepEqual((await viewerPlanningJobs.json()).jobs,[]);assert.equal(database.writeCount(),0,"the viewer can only discover their own already-approved planning jobs");
+  database.reset();assert.equal((await request("/api/document-jobs",json(scoped,{kind:"generate",documentId:"doc-atmosphere",payload:{}}))).status,403);assert.equal(database.writeCount(),0,"an explicit output grant still cannot admit a project viewer's paid request");
   assert.equal((await request("/canvas",{headers:scoped})).status,200);
   const visible=await(await request("/api/events?after=0&limit=5000&content=0",{headers:scoped})).json();assert.ok(visible.events.some((event)=>event.type==="CanvasCreated"&&event.payload.canvas_id==="shared-board"));assert.doesNotMatch(JSON.stringify(visible),/PRIVATE PROJECT CARD|private-board|private-item/);
-  for(const event of [{type:"ObjectExported",payload:{object_id:"shared-output",destination_class:"download",format:"image/png"}},{type:"DocumentArtifactExported",payload:{artifact_id:"shared-artifact",document_id:"doc-atmosphere",format:"markdown"}}]){
+  database.reset();const unboundExport=await request("/api/events",json(scoped,{action:"append",event:{type:"DocumentArtifactExported",payload:{artifact_id:"shared-artifact",document_id:"doc-atmosphere",format:"markdown"}}}));
+  assert.equal(unboundExport.status,409);assert.equal((await unboundExport.json()).error,"stale_release_context");assert.equal(database.writeCount(),0,"a viewer cannot release retained artifact content without its exact revision and digest");
+  for(const event of [{type:"ObjectExported",payload:{object_id:"shared-output",destination_class:"download",format:"image/png"}},{type:"DocumentArtifactExported",payload:{artifact_id:"shared-artifact",document_id:"doc-atmosphere",format:"markdown",...sharedArtifactBinding}}]){
     const exported=await request("/api/events",json(scoped,{action:"append",event}));const receipt=await exported.json();assert.equal(exported.status,200,JSON.stringify(receipt));assert.equal(receipt.appended[0].actor,"user:canvas-project-editor","viewer downloads retain an actor-attributed project audit receipt");
   }
   database.reset();assert.equal((await request("/api/events",json(scoped,{action:"append",event:{type:"DocumentArtifactExported",payload:{artifact_id:"private-artifact",document_id:"doc-atmosphere"}}}))).status,403);assert.equal(database.writeCount(),0,"viewer export receipts cannot reference another project");
   const makeEvent=(type,payload,id=crypto.randomUUID())=>({type,payload:{project_id:"project-atmosphere",canvas_id:"shared-board",history_owner_id:"canvas-project-editor",client_event_id:id,...payload}});
   const register=makeEvent("CanvasRegisterSet",{item_id:"shared-item",operation:{object:{item_id:"shared-item"},prop:"x",value:120,hlc:{pt:Date.now(),c:0,site:"canvas-project-editor:device"}}},"first-collaborative-receipt");
   database.reset();assert.equal((await request("/api/events",json(scoped,{action:"canvas_sync",events:[register]}))).status,403);assert.equal(database.writeCount(),0,"Canvas viewers cannot mutate a board");
-  database.reset();assert.equal((await request("/api/document-jobs",{headers:scoped})).status,403);assert.equal(database.writeCount(),0,"project viewers cannot inspect another actor's output jobs");
+  database.reset();const isolatedViewerJobs=await request("/api/document-jobs",{headers:scoped});assert.equal(isolatedViewerJobs.status,200);assert.deepEqual((await isolatedViewerJobs.json()).jobs,[]);assert.equal(database.writeCount(),0,"project viewers cannot inspect another actor's output jobs");
   assert.equal((await request("/api/portfolio/product/insights",{headers:collaborator})).status,200,"the collaborator has real principal reporting access outside the selected project");
   database.sqlite.prepare("UPDATE users SET role='admin' WHERE user_id=?").run("canvas-project-editor");
   assert.equal((await request("/api/analytics",{headers:collaborator})).status,200,"an authorized principal can use account analytics outside the selected project");
@@ -2402,7 +2467,7 @@ test("managed pilots enforce named participants, whole-pilot spending, prospecti
 });
 
 test("controlled pilot authorization remains atomic when enrollment changes during spending, project edits, or uploads",async()=>{
-  const {database,environment,request}=await productionWorker();
+  const {database,environment,request,drainBackground}=await productionWorker();
   const owner=await specialistIdentity(database,request,"pilot-boundary-owner"),author=await specialistIdentity(database,request,"pilot-boundary-author");
   const json=(headers,body)=>({method:"POST",headers:{...headers,"content-type":"application/json"},body:JSON.stringify(body)});
   for(const identity of [owner,author])assert.equal((await request("/api/events?after=0&content=0",{headers:identity})).status,200);
@@ -2434,7 +2499,40 @@ test("controlled pilot authorization remains atomic when enrollment changes duri
     try{assert.equal(await claimCostBudgetReservation(environment,"pilot-boundary-author",reservation.reservationId),false,`${condition.name} between scope inspection and execution never reaches the provider`);assert.equal(interleaved,true,condition.name);assert.equal(database.sqlite.prepare("SELECT status FROM cost_budget_reservations WHERE reservation_id=?").get(reservation.reservationId).status,"released",`${condition.name} releases the abandoned claim`);assert.equal(database.sqlite.prepare("SELECT reserved_microusd FROM cost_budget_counters WHERE scope='pilot_user' AND scope_id=? AND period=?").get("pilot-boundary-author",`pilot:${cohort.cohortId}`).reserved_microusd,0,`${condition.name} never strands fixed pilot spending`);}finally{environment.DB.prepare=previousPrepare;condition.restore();}
   }
   environment.OPENAI_API_KEY="synthetic-pilot-no-provider-calls";const originalFetch=globalThis.fetch;let providerCalls=0;globalThis.fetch=async()=>{providerCalls+=1;return Response.json({error:{message:"provider must not receive withdrawn pilot work"}},{status:500});};
-  try{for(const [action,body] of [["chat",{action:"chat",documentId:"doc-atmosphere",message:"Can you clarify this direction?",livePreview:false,budgetAcknowledged:true}],["structure_adaptive",{action:"structure_adaptive",documentId:"doc-atmosphere",prompt:"Clarify the current project decisions.",budgetAcknowledged:true}],["preview",{action:"preview",documentId:"doc-atmosphere",budgetAcknowledged:true}],["generate",{action:"generate",documentId:"doc-atmosphere",budgetAcknowledged:true}]]){const previousPrepare=environment.DB.prepare;let deniedAtExecution=false;environment.DB.prepare=function(sql){const prepared=previousPrepare.call(this,sql);if(sql.startsWith("UPDATE cost_budget_reservations SET status='executing'")){const previousBind=prepared.bind.bind(prepared);prepared.bind=(...values)=>{const bound=previousBind(...values),previousRun=bound.run.bind(bound);bound.run=async()=>{database.sqlite.prepare("UPDATE pilot_cohorts SET status='paused' WHERE cohort_id=?").run(cohort.cohortId);deniedAtExecution=true;return previousRun();};return bound;};}return prepared;};try{const response=await request("/api/events",json(owner,body));assert.equal(deniedAtExecution,true,`${action} attempts a real guarded provider claim`);assert.equal(response.status,403,`${action} stops when its cohort pauses immediately before provider execution`);assert.equal((await response.json()).error,"active_pilot_participation_required");assert.equal(providerCalls,0,`${action} never invokes an external provider after its authorization changes`);assert.equal(database.sqlite.prepare("SELECT reserved_microusd FROM cost_budget_counters WHERE scope='pilot_user' AND scope_id=? AND period=?").get("pilot-boundary-owner",`pilot:${cohort.cohortId}`).reserved_microusd,0,`${action} releases pilot spending`);assert.equal(database.sqlite.prepare("SELECT reserved_tokens FROM budget_counters WHERE scope='user' AND scope_id=?").get("pilot-boundary-owner").reserved_tokens,0,`${action} releases token spending`);}finally{environment.DB.prepare=previousPrepare;database.sqlite.prepare("UPDATE pilot_cohorts SET status='active' WHERE cohort_id=?").run(cohort.cohortId);}}}finally{globalThis.fetch=originalFetch;}
+  try{for(const [action,body] of [["chat",{action:"chat",documentId:"doc-atmosphere",message:"Can you clarify this direction?",livePreview:false,budgetAcknowledged:true}],["preview",{action:"preview",documentId:"doc-atmosphere",budgetAcknowledged:true}],["generate",{action:"generate",documentId:"doc-atmosphere",budgetAcknowledged:true}]]){const previousPrepare=environment.DB.prepare;let deniedAtExecution=false;environment.DB.prepare=function(sql){const prepared=previousPrepare.call(this,sql);if(sql.startsWith("UPDATE cost_budget_reservations SET status='executing'")){const previousBind=prepared.bind.bind(prepared);prepared.bind=(...values)=>{const bound=previousBind(...values),previousRun=bound.run.bind(bound);bound.run=async()=>{database.sqlite.prepare("UPDATE pilot_cohorts SET status='paused' WHERE cohort_id=?").run(cohort.cohortId);deniedAtExecution=true;return previousRun();};return bound;};}return prepared;};try{const response=await request("/api/events",json(owner,body));assert.equal(deniedAtExecution,true,`${action} attempts a real guarded provider claim`);assert.equal(response.status,403,`${action} stops when its cohort pauses immediately before provider execution`);assert.equal((await response.json()).error,"active_pilot_participation_required");assert.equal(providerCalls,0,`${action} never invokes an external provider after its authorization changes`);assert.equal(database.sqlite.prepare("SELECT reserved_microusd FROM cost_budget_counters WHERE scope='pilot_user' AND scope_id=? AND period=?").get("pilot-boundary-owner",`pilot:${cohort.cohortId}`).reserved_microusd,0,`${action} releases pilot spending`);assert.equal(database.sqlite.prepare("SELECT reserved_tokens FROM budget_counters WHERE scope='user' AND scope_id=?").get("pilot-boundary-owner").reserved_tokens,0,`${action} releases token spending`);}finally{environment.DB.prepare=previousPrepare;database.sqlite.prepare("UPDATE pilot_cohorts SET status='active' WHERE cohort_id=?").run(cohort.cohortId);}}
+    const selected=await request(`/api/workspaces/${organizationId}/projects/${projectAccessId}/context`,{method:"POST",headers:owner});
+    assert.equal(selected.status,200,JSON.stringify(await selected.clone().json()));
+    const ownerScoped={...owner,cookie:selected.headers.get("set-cookie")?.split(";")[0]??""};
+    const adaptive=adaptivePlanningClient(request,ownerScoped,{projectId:"project-atmosphere",documentId:"doc-atmosphere",sourceSurface:"adaptive",projectScope:false,prompt:"Clarify the current project decisions.",locale:"en"});
+    const quote=await adaptive.quote();assert.equal(quote.canExecute,true);assert.equal(quote.workspaceId,organizationId);
+    const previousPrepare=environment.DB.prepare;let deniedAtAdaptiveSubmit=false;
+    environment.DB.prepare=function(sql){
+      const statement=previousPrepare.call(this,sql);if(!/^\s*UPDATE consequential_execution_steps SET status='submitting'/u.test(sql))return statement;
+      const bind=statement.bind.bind(statement);statement.bind=(...values)=>{
+        const bound=bind(...values),run=bound.run.bind(bound);bound.run=async()=>{
+          assert.equal(deniedAtAdaptiveSubmit,false,"The original approved step has only one submission boundary");
+          assert.equal(database.sqlite.prepare("SELECT status FROM cost_budget_reservations WHERE reservation_id=?").get(quote.executionId+":usd:0").status,"executing");
+          assert.equal(database.sqlite.prepare("SELECT status FROM budget_reservations WHERE reservation_id=?").get(quote.executionId+":tokens:0").status,"active");
+          database.sqlite.prepare("UPDATE pilot_cohorts SET status='paused' WHERE cohort_id=?").run(cohort.cohortId);deniedAtAdaptiveSubmit=true;
+          return run();
+        };return bound;
+      };return statement;
+    };
+    try{
+      const accepted=await adaptive.execute(quote);assert.equal(accepted.status,202,JSON.stringify(await accepted.clone().json()));
+      assert.equal((await accepted.json()).job.jobId,quote.executionId);await drainBackground();
+      assert.equal(deniedAtAdaptiveSubmit,true,"Adaptive planning reaches the real guarded approved provider step");
+      const job=database.sqlite.prepare("SELECT status,correlation_id,error_message FROM document_jobs WHERE job_id=?").get(quote.executionId);
+      assert.equal(job.status,"failed");assert.equal(job.correlation_id,quote.executionId);assert.equal(job.error_message,"context_authorization_changed");
+      const execution=database.sqlite.prepare("SELECT status FROM consequential_executions WHERE execution_id=?").get(quote.executionId),step=database.sqlite.prepare("SELECT status FROM consequential_execution_steps WHERE execution_id=? AND step_index=0").get(quote.executionId);
+      assert.equal(execution.status,"failed");assert.equal(step.status,"not-submitted");
+      assert.equal(database.sqlite.prepare("SELECT status FROM budget_reservations WHERE reservation_id=?").get(quote.executionId+":tokens:0").status,"released");
+      assert.equal(database.sqlite.prepare("SELECT status FROM cost_budget_reservations WHERE reservation_id=?").get(quote.executionId+":usd:0").status,"released");
+      for(const[scope,scopeId]of[["pilot_user","pilot-boundary-owner"],["pilot_org",cohort.cohortId]])assert.equal(database.sqlite.prepare("SELECT reserved_microusd FROM cost_budget_counters WHERE scope=? AND scope_id=? AND period=?").get(scope,scopeId,`pilot:${cohort.cohortId}`).reserved_microusd,0,"Paused adaptive work releases each fixed pilot envelope");
+      assert.equal(database.sqlite.prepare("SELECT reserved_tokens FROM budget_counters WHERE scope='user' AND scope_id=? AND period=?").get("pilot-boundary-owner",quote.period).reserved_tokens,0);
+      assert.equal(providerCalls,0,"Pausing the cohort at the last SQL boundary never invokes the provider");
+    }finally{environment.DB.prepare=previousPrepare;await drainBackground();database.sqlite.prepare("UPDATE pilot_cohorts SET status='active' WHERE cohort_id=?").run(cohort.cohortId);}
+}finally{globalThis.fetch=originalFetch;}
   const membershipId=database.sqlite.prepare("SELECT membership_id FROM project_memberships WHERE project_access_id=? AND user_id=?").get(projectAccessId,"pilot-boundary-author").membership_id;
   const reviewPermission=await request(`/api/workspaces/${organizationId}/projects/${projectAccessId}/members/${membershipId}`,{method:"PATCH",headers:{...owner,"content-type":"application/json"},body:JSON.stringify({reviewAccess:true})});assert.equal(reviewPermission.status,200);
   database.sqlite.prepare("UPDATE pilot_participants SET role='reviewer' WHERE participant_id=?").run(participantId);
@@ -2454,7 +2552,7 @@ test("controlled pilot authorization remains atomic when enrollment changes duri
 });
 
 test("activating a controlled pilot closes existing legacy shares and excludes previously unattested source material",async()=>{
-  const {database,environment,request}=await productionWorker();const owner=await specialistIdentity(database,request,"pilot-transition-owner");
+  const {database,environment,request,drainBackground}=await productionWorker();const owner=await specialistIdentity(database,request,"pilot-transition-owner");
   assert.equal((await request("/api/events?after=0&content=0",{headers:owner})).status,200);
   const json=(headers,body)=>({method:"POST",headers:{...headers,"content-type":"application/json"},body:JSON.stringify(body)});
   const organization=await request("/api/workspaces",json(owner,{name:"Existing customer project"}));assert.equal(organization.status,201);const organizationId=(await organization.json()).organizationId;
@@ -2486,10 +2584,26 @@ test("activating a controlled pilot closes existing legacy shares and excludes p
   assert.equal((await request(sharedPath)).status,404,"an existing external link closes immediately when its legacy unapproved output enters a controlled pilot");assert.equal((await request(mediaPath)).status,404,"existing public media links obey the same upgraded pilot boundary");
   assert.equal((await request("/api/events?after=0&content=0",{headers:scoped})).status,200);
   database.reset();const reused=await append({type:"ReferenceIngested",payload:{reference_id:"another-legacy-source",document_id:"doc-atmosphere",source_type:"upload",source_ref:unattached.url,content_hash:unattached.contentHash,rights_class:"asserted"}});assert.equal(reused.status,403);assert.equal((await reused.json()).error,"pilot_non_sensitive_source_confirmation_required");assert.equal(database.writeCount(),0,"a legacy stored file cannot be newly attached without a cohort-bound source confirmation");
-  environment.OPENAI_API_KEY="synthetic-pilot-provider-never-called";for(const [endpoint,body] of [["/api/events",{action:"generate",documentId:"doc-atmosphere",budgetAcknowledged:true}],["/api/document-jobs",{kind:"generate",documentId:"doc-atmosphere",payload:{budgetAcknowledged:true}}]]){const generated=await request(endpoint,json(endpoint==="/api/events"?owner:scoped,body));assert.equal(generated.status,428,`${endpoint} excludes already-attached pre-pilot source material from paid context`);assert.equal((await generated.json()).error,"pilot_non_sensitive_source_confirmation_required");}
+  environment.OPENAI_API_KEY="synthetic-pilot-provider-never-called";const originalFetch=globalThis.fetch;let providerCalls=0;globalThis.fetch=async()=>{providerCalls++;assert.fail("Unattested sources must not reach an external provider");};try{for(const [endpoint,body] of [["/api/events",{action:"generate",documentId:"doc-atmosphere",budgetAcknowledged:true}],["/api/document-jobs",{kind:"generate",documentId:"doc-atmosphere",payload:{budgetAcknowledged:true}}]]){const generated=await request(endpoint,json(endpoint==="/api/events"?owner:scoped,body));assert.equal(generated.status,428,`${endpoint} excludes already-attached pre-pilot source material from paid context`);assert.equal((await generated.json()).error,"pilot_non_sensitive_source_confirmation_required");}
   const removedDocumentSource=await append({type:"BlockRemoved",payload:{block_id:"existing-pilot-source-block",document_id:"doc-atmosphere",reason:"remove unapproved legacy document source"}});assert.equal(removedDocumentSource.status,200,JSON.stringify(await removedDocumentSource.clone().json()));const visible=await(await request("/api/events?after=0&limit=5000&content=0",{headers:scoped})).json();const isolated=foldEvents(visible.events,Number.POSITIVE_INFINITY,"doc-atmosphere","project-atmosphere");assert.ok(!isolated.blocks.some((block)=>block.id==="legacy-library-reference-block"),"the unclassified reusable reference does not exist in the document-only provider context");assert.ok(isolated.libraryBlocks.some((block)=>block.id==="legacy-library-reference-block"),"the selected reusable context remains available in the project library");
-  for(const [label,endpoint,identity,body] of [["direct approved board context","/api/events",owner,{action:"generate",documentId:"doc-atmosphere",canvasId:"legacy-library-board",contextSetId:"legacy-library-context",budgetAcknowledged:true}],["queued approved board context","/api/document-jobs",scoped,{kind:"generate",documentId:"doc-atmosphere",payload:{canvasId:"legacy-library-board",contextSetId:"legacy-library-context",budgetAcknowledged:true}}],["direct project-wide adaptation","/api/events",owner,{action:"structure_adaptive",documentId:"doc-atmosphere",projectScope:true,prompt:"Structure this complete project.",budgetAcknowledged:true}],["queued project-wide adaptation","/api/document-jobs",scoped,{kind:"structure_adaptive",documentId:"doc-atmosphere",payload:{projectScope:true,prompt:"Structure this complete project.",budgetAcknowledged:true}}]]){const generated=await request(endpoint,json(identity,body));assert.equal(generated.status,428,`${label} validates its actual provider-facing reusable source blocks`);assert.equal((await generated.json()).error,"pilot_non_sensitive_source_confirmation_required");}
+  for(const [label,endpoint,identity,body] of [["direct approved board context","/api/events",owner,{action:"generate",documentId:"doc-atmosphere",canvasId:"legacy-library-board",contextSetId:"legacy-library-context",budgetAcknowledged:true}],["queued approved board context","/api/document-jobs",scoped,{kind:"generate",documentId:"doc-atmosphere",payload:{canvasId:"legacy-library-board",contextSetId:"legacy-library-context",budgetAcknowledged:true}}]]){const generated=await request(endpoint,json(identity,body));assert.equal(generated.status,428,`${label} validates its actual provider-facing reusable source blocks`);assert.equal((await generated.json()).error,"pilot_non_sensitive_source_confirmation_required");}
+
+    for(const identity of[owner,scoped]){
+      const adaptive=adaptivePlanningClient(request,identity,{projectId:"project-atmosphere",documentId:"doc-atmosphere",sourceSurface:"adaptive",projectScope:true,prompt:"Structure this complete project.",locale:"en"});
+      const quote=await adaptive.quote();assert.equal(quote.workspaceId,organizationId);assert.equal(quote.providerAvailable,true);assert.equal(quote.canExecute,false);
+      assert.ok(quote.unavailableReasons.includes("adaptive_pilot_source_denied"),"The free quote explains the unattested-source blocker");
+      const input=JSON.parse(quote.privateInput.providerRequest.input);
+      assert.ok(input.blocks.some(block=>block.id==="legacy-library-reference-block"),"The proposal evaluates the actual project-wide reusable source, not a smaller document-only substitute");
+      const denied=await adaptive.execute(quote);assert.equal(denied.status,403,JSON.stringify(await denied.clone().json()));assert.equal((await denied.json()).error,"adaptive_pilot_source_denied");
+    }
+    for(const[endpoint,identity,body]of[
+      ["/api/events",owner,{action:"structure_adaptive",documentId:"doc-atmosphere",projectScope:true,prompt:"Structure this complete project.",budgetAcknowledged:true}],
+      ["/api/document-jobs",scoped,{kind:"structure_adaptive",documentId:"doc-atmosphere",payload:{projectScope:true,prompt:"Structure this complete project.",budgetAcknowledged:true}}],
+    ]){const denied=await request(endpoint,json(identity,body));assert.equal(denied.status,428);assert.equal((await denied.json()).error,endpoint==="/api/events"?"pilot_non_sensitive_source_confirmation_required":"adaptive_consent_required","A legacy route cannot bypass its earliest source or approval gate");}
+    assert.equal(providerCalls,0,"Neither source disclosure nor denied approval contacts a provider");
+    assert.equal(database.sqlite.prepare("SELECT COUNT(*) AS count FROM budget_reservations").get().count,0,"Unattested sources never reserve tokens");
   assert.equal(database.sqlite.prepare("SELECT COUNT(*) AS count FROM cost_budget_reservations WHERE operation!=''").get().count,0,"unclassified legacy context never reserves provider spending");assert.equal(database.sqlite.prepare("SELECT COUNT(*) AS count FROM document_jobs").get().count,0,"unclassified legacy context never creates a background provider job");assert.ok(cohortId);
+  }finally{await drainBackground();globalThis.fetch=originalFetch;}
 });
 
 test("workspace settings HTML and usage policies require exact organization-scoped server capability",async()=>{
@@ -3384,13 +3498,350 @@ test("cold schema initialization preserves every account's existing finished-out
 });
 
 test("capability and delivery migrations safely replay after runtime initialization without altering the schema",async()=>{
-  const {database}=await productionWorker();const migrations=await Promise.all(["0011_swift_redwing.sql","0012_green_james_howlett.sql","0013_long_midnight.sql","0014_perfect_robbie_robertson.sql","0015_true_lila_cheney.sql","0016_living_tarantula.sql","0017_previous_pixie.sql","0018_output_requirements.sql"].map((name)=>readFile(new URL(`../drizzle/${name}`,import.meta.url),"utf8")));
+  const {database}=await productionWorker();const migrations=await Promise.all(["0011_swift_redwing.sql","0012_green_james_howlett.sql","0013_long_midnight.sql","0014_perfect_robbie_robertson.sql","0015_true_lila_cheney.sql","0016_living_tarantula.sql","0017_previous_pixie.sql","0018_consequential_consent.sql","0019_authoring_commits.sql","0018_output_requirements.sql"].map((name)=>readFile(new URL(`../drizzle/${name}`,import.meta.url),"utf8")));
   const snapshot=()=>database.sqlite.prepare("SELECT type,name,sql FROM sqlite_master WHERE type IN ('table','index') ORDER BY type,name").all();const initial=snapshot();
   for(let attempt=0;attempt<2;attempt+=1)for(const migration of migrations)database.sqlite.exec(migration);
-  assert.deepEqual(snapshot(),initial);assert.equal(database.sqlite.prepare("SELECT COUNT(*) AS count FROM sqlite_master WHERE type='table'").get().count,90);assert.ok(initial.some((item)=>item.name==="output_operation_slots"));assert.ok(initial.some((item)=>item.name==="output_provider_calls"));assert.ok(initial.some((item)=>item.name==="output_native_storage_writes"));assert.ok(initial.some((item)=>item.name==="output_asset_storage_writes"));assert.ok(initial.some((item)=>item.name==="capability_grants"));assert.ok(initial.some((item)=>item.name==="delivery_decisions"));assert.ok(initial.some((item)=>item.name==="project_event_scopes"));assert.ok(initial.some((item)=>item.name==="event_private_payloads"));assert.ok(initial.some((item)=>item.name==="event_write_stage"));assert.ok(initial.some((item)=>item.name==="project_notifications"));assert.ok(initial.some((item)=>item.name==="organization_invitations"));assert.ok(initial.some((item)=>item.name==="route_performance_samples"));assert.ok(initial.some((item)=>item.name==="pilot_cohorts"));assert.ok(initial.some((item)=>item.name==="artifact_revisions"));assert.ok(initial.some((item)=>item.name==="organization_context_packages"));assert.ok(initial.some((item)=>item.name==="project_review_tasks"));assert.ok(initial.some((item)=>item.name==="organization_recovery_snapshots"));
+  assert.deepEqual(snapshot(),initial);assert.equal(database.sqlite.prepare("SELECT COUNT(*) AS count FROM sqlite_master WHERE type='table'").get().count,93);assert.ok(initial.some((item)=>item.name==="output_operation_slots"));assert.ok(initial.some((item)=>item.name==="output_provider_calls"));assert.ok(initial.some((item)=>item.name==="output_native_storage_writes"));assert.ok(initial.some((item)=>item.name==="output_asset_storage_writes"));assert.ok(initial.some((item)=>item.name==="capability_grants"));assert.ok(initial.some((item)=>item.name==="delivery_decisions"));assert.ok(initial.some((item)=>item.name==="project_event_scopes"));assert.ok(initial.some((item)=>item.name==="event_private_payloads"));assert.ok(initial.some((item)=>item.name==="event_write_stage"));assert.ok(initial.some((item)=>item.name==="project_notifications"));assert.ok(initial.some((item)=>item.name==="organization_invitations"));assert.ok(initial.some((item)=>item.name==="route_performance_samples"));assert.ok(initial.some((item)=>item.name==="pilot_cohorts"));assert.ok(initial.some((item)=>item.name==="artifact_revisions"));assert.ok(initial.some((item)=>item.name==="organization_context_packages"));assert.ok(initial.some((item)=>item.name==="project_review_tasks"));assert.ok(initial.some((item)=>item.name==="organization_recovery_snapshots"));
 });
 
 test("creator provenance defaults to human-readable history and exposes Engineering handoffs only to exact event specialists",async()=>{
   const sources=await Promise.all(["forma-workspace.ts","event-inspector.ts"].map((name)=>readFile(new URL(`../src/components/${name}`,import.meta.url),"utf8")));
-  for(const source of sources){assert.match(source,/capabilities\?\.includes\("engineering\.events\.read"\)===true/);assert.match(source,/\$\{engineering\?html`<details class="provenance-technical"/);assert.match(source,/workspace\.provenance\.description/);assert.match(source,/setRoute\("\/engineering\/events"\)/);assert.doesNotMatch(source,/Open in Operations|setRoute\("\/operations\/events"\)/);}
+  for(const source of sources){
+    assert.match(source,/capabilities\?\.includes\("engineering\.events\.read"\)===true/);
+    assert.match(source,/workspace\.provenance\.description/);
+    assert.match(source,/import\s*\{[^}]*\bnavigateInApp\b[^}]*\}\s*from\s*"\.\/command-departure";/u);
+    const technical=source.match(/\$\{engineering\?html\x60<details class="provenance-technical">[\s\S]*?<\/details>\x60:nothing\}/u);
+    assert.ok(technical,"technical details remain collapsed and exact-capability gated");
+    assert.match(technical[0],/<button @click=\$\{\(\)\s*=>\s*navigateInApp\(this,navigation=>navigation\.route\("\/engineering\/events"\)\)\}>/u);
+    assert.doesNotMatch(source,/setRoute\("\/engineering\/events"\)/);
+    assert.doesNotMatch(source,/Open in Operations|setRoute\("\/operations\/events"\)/);
+  }
+  const [bridge,shell]=await Promise.all(["command-departure.ts","forma-shell.ts"].map(name=>readFile(new URL("../src/components/"+name,import.meta.url),"utf8")));
+  const section=(source,start,end)=>{
+    const from=source.indexOf(start),to=end?source.indexOf(end,from+start.length):source.length;
+    assert.ok(from>=0&&to>from,"the actual navigation declaration is retained: "+start);
+    return source.slice(from,to).replace(/\s+/gu,"");
+  };
+  const forwarding=section(bridge,"export function navigateInApp(");
+  assert.ok(forwarding.includes('consthost=origin.closest<InAppNavigationHost>("forma-shell");'));
+  assert.ok(forwarding.includes("returnhost?host.navigateFrom(origin,run,context):Promise.resolve(false);"));
+  const admission=section(shell,"  async navigateFrom(","  async #runCommand(");
+  assert.ok(admission.includes("if(!this.isConnected||!origin.isConnected||!this.contains(origin)||!FormaElement.hasStoreIdentity(origin,this.store)||this.store.ui.commandOpen)returnfalse;"));
+  assert.ok(admission.includes("constowner=this.#captureNavigationOpening();if(!owner)returnfalse;"));
+  // Ordinary provenance keeps its captured origin. Only the exact admitted
+  // Library native-close chain can consume its one already-known root route.
+  assert.ok(admission.includes("letexpectedOriginRoute=owner.route;constoriginRoute=()=>{constpath=this.store.route.get();"));
+  assert.ok(admission.includes("if(nativeCloseEvent&&expectedOriginRoute===owner.route&&nativeAfterCloseRoute===path)expectedOriginRoute=path;returnexpectedOriginRoute;};"));
+  assert.ok(admission.includes('if(after!==undefined&&(!parent.matches("forma-library")||origin.closest("forma-library")!==parent||parent.querySelector("forma-document-artifacts")!==origin||libraryFocusFromRoute(owner.route)?.kind!=="artifact"||after!==libraryRootRoute(owner.route)))returnfalse;'));
+  assert.ok(admission.includes("nativeAfterCloseRoute=after;presentationClosed=true;"));
+  assert.ok(admission.includes("current,close:()=>close(current),closing:value=>{nativeCloseEvent=value;},returned:()=>{closeReturned=true;},"));
+  assert.ok(admission.includes("nativeCloseEvent=false;nativeAfterCloseRoute=undefined;if(!nativeClosed)nativeClosing=null;"));
+  assert.ok(admission.includes("constcaptured=this.#captureNavigation(owner,true,context,presentationCurrent,originRoute),navigation=captured.navigation,focus=navigation.focus;"));
+  // A deliberate positive context handoff replaces the origin authorization
+  // check only with its one Store-issued successor, not route equality alone.
+  assert.ok(admission.includes("constcurrent=()=>captured.sourceCurrent()&&focus.current();"));
+  assert.ok(admission.includes("constoptions={current,focus,onOriginHandoff:()=>navigation.handoff(),onDestinationSource:(source:CapturedSourceOwnership)=>navigation.adoptSource(source)};"));
+  // Shared admission still reports the original guarded refusal; its local
+  // wrapper forwards only an actually reported reason to the optional caller.
+  assert.ok(admission.includes("constreportUnavailable=()=>{constreason=captured.reportUnavailable();if(reason)preferences.onRefusal?.(reason);};"));
+  assert.ok(admission.includes("if(!current()){if(captured.refusalCurrent()&&captured.blocked())reportUnavailable();returnfalse;}"));
+  // The artifact-opening wrapper retains, rather than replaces, the same
+  // guarded route/options/lease. Engineering is a non-artifact pass-through.
+  assert.ok(admission.includes("constretainArtifactOpening=(opened:boolean,sameRoute=false)=>{"));
+  assert.ok(admission.includes('if(!opened||linked?.kind!=="artifact"||route===owner.route&&!sameRoute)returnopened;'));
+  assert.ok(admission.includes('constopened=this.#route(path,{...options,...preferences},false);returntypeofopened==="boolean"?retainArtifactOpening(opened):opened.then(retainArtifactOpening);'));
+  assert.ok(admission.includes("constsource=this.store.captureSourceOwnership(),arrival=this.store.captureWorkspaceNavigationFocus(route,focus);"));
+  assert.ok(admission.includes("if(!current()||!source||!artifact||!arrival?.current())returnfalse;"));
+  assert.ok(admission.includes("constrouteCurrent=()=>captured.sourceCurrent()&&this.store.sourceOwnershipActive(source)"
+    +"&&arrival.routeCurrent()&&this.store.route.get()===route&&this.store.projection.get().libraryArtifacts.some(value=>value.id===target.id"
+    +"&&value.documentId===target.documentId&&value.sequence===target.sequence&&value.sourceEventId===target.sourceEventId&&value.contentRef===target.contentRef);"));
+  assert.ok(admission.includes("this.#commandRouteFocus={route,focus,current:()=>routeCurrent()&&arrival.current()};navigation.retain();this.#joinRetainedArtifactOpening(route,focus);returntrue;"));
+  const owner=section(shell,"  #captureNavigation(","  /** Deliberate UI navigation only;");
+  assert.ok(owner.includes("originRoute:()=>string=()=>owner.route){"));
+  assert.ok(owner.includes("constoriginScope=()=>this.#commandContextCurrent(owner)&&this.store.route.get()===originRoute()&&(!owner.sourceReadable||this.store.sourceOwnershipActive(owner.source));"));
+  assert.ok(owner.includes("letdestinationSource:CapturedSourceOwnership|null=null,destinationRoute:{routeCurrent():boolean}|null=null;"));
+  assert.ok(owner.includes("if(!this.#commandIntentCurrent(owner)||!handedOff&&!routeHandoff&&(!originScope()||replaces&&!this.#commandOriginsCurrent(owner,context)||!presentationCurrent()))retired=\"identity\";"));
+  assert.ok(owner.includes("if(destinationSource){if(!this.store.sourceOwnershipActive(destinationSource))retired=\"identity\";"
+    +"destinationRoute??=this.store.captureWorkspaceNavigationFocus(this.store.route.get(),expectedFocus);"
+    +"if(destinationRoute?!destinationRoute.routeCurrent():this.store.route.get()!==originRoute())retired=\"identity\";}"));
+  assert.ok(owner.includes("if(retired)returnfalse;if(routeHandoff)handedOff=true;if(!handedOff&&blocked())retired=\"blocked\";return!retired;"));
+  assert.ok(owner.includes("handoff:()=>{if(!navigation.current()||!focus.current())returnfalse;handedOff=true;returntrue;},"));
+  assert.ok(owner.includes("adoptSource:source=>{if(!handedOff||destinationSource||!navigation.current()||!focus.current()||this.store.route.get()!==originRoute()"
+    +"||!this.store.sourceOwnershipActive(source))returnfalse;destinationSource=source;returnnavigation.current()&&focus.current();},"));
+  assert.ok(owner.includes("sourceCurrent:()=>navigation.current()&&(destinationSource!==null||this.#commandContextCurrent(owner)),"));
+  assert.ok(owner.includes("constunsubscribe=this.store.subscribe(()=>{navigation.current();});"));
+  const authority=section(shell,"  #commandContextCurrent(","  #commandOriginElements(");
+  assert.ok(authority.includes("returnthis.#commandIntentCurrent(owner)&&this.store.captureAuthorizationScope()?.key===owner.authorityKey;"));
+  const route=section(shell,"  #route(","  #page()");
+  assert.ok(route.includes("if(options&&(!options.current()||!options.focus.current()))returnfalse;"));
+  assert.ok(route.includes("this.store.transitionWorkspace(path,options)"));
+  assert.ok(route.includes("this.store.setRoute(path,options);returnfinish();"));
+  // The same expected native-focus record owns the adopted route revision.
+  // Its routeCurrent is intentionally focus-independent to avoid recursion
+  // through the existing review wrapper; both outer current/focus guards stay.
+  const store=await readFile(new URL("../src/state/store.ts",import.meta.url),"utf8");
+  const receipt=section(store,"  captureWorkspaceNavigationFocus(","  #loadRevision=");
+  assert.ok(receipt.includes("constowner=this.#workspaceNavigationFocus;if(!owner||owner.route!==route||(expected&&owner.focus!==expected))returnnull;"));
+  assert.ok(receipt.includes("routeCurrent:()=>this.#workspaceNavigationFocus===owner&&this.route.get()===route&&this.#workspaceTransition===owner.revision,"));
+  assert.ok(receipt.includes("current:()=>this.#workspaceNavigationFocus===owner&&this.route.get()===route&&owner.focus.current()"));
+  const commit=section(store,"  #commitRoute(","  async syncDocumentFromRoute(");
+  assert.ok(commit.includes("if(!workspaceNavigationCurrent(options))return;path=this.#projectTaskRoute(path,options);if(options.onOriginHandoff&&!options.onOriginHandoff())return;this.#workspaceTransition+=1;"));
+  assert.ok(commit.includes("this.#workspaceNavigationFocus=options.focus?{route:routedPath,focus:options.focus,revision:this.#workspaceTransition}:null;this.route.set(routedPath);"));
+  const source=section(store,"  captureSourceOwnership(","  #assertSourceOwnership(");
+  assert.ok(source.includes("constauthorization=this.captureAuthorizationScope();if(!authorization)returnnull;"
+    +"constsource=Object.freeze({authorization:Object.freeze({...authorization}),generation:this.#sourceGeneration});"
+    +"this.#sourceOwners.set(source,this.session.get()?.projectContext?.expiresAt??null);returnsource;"));
+  assert.ok(source.includes("returnBoolean(source&&this.#sourceOwners.has(source)&&this.authorizationScopeActive(source.authorization));"));
+  assert.ok(source.includes("returnBoolean(source&&this.#sourceExpiryValid(this.#sourceOwners.get(source))&&this.#sourceExpiryValid(this.session.get()?.projectContext?.expiresAt??null));"));
+  assert.ok(source.includes("returnBoolean(source&&this.sourceOwnershipScopeActive(source)&&source.generation===this.#sourceGeneration&&!this.#sourceRetired&&this.#sourceDeadlineCurrent(source));"));
+});
+
+// Live metadata shares the real dashboard batch; these controls keep the
+// separate post-snapshot proof and safe-source cache boundary observable.
+async function analyticsLiveFixture() {
+  const fixture = await productionWorker();
+  await fixture.drainBackground();
+  fixture.database.reset();
+  return fixture;
+}
+
+function assertAnalyticsLiveBatchCalls(database, sizes) {
+  assert.deepEqual(database.calls.map((call) => call.kind), ["first", ...sizes.map(() => "batch"), "first"]);
+  const batches = database.calls.filter((call) => call.kind === "batch");
+  assert.deepEqual(batches.map((call) => call.statements.length), sizes);
+  for (const batch of batches) {
+    assert.match(batch.statements[0].sql, /AS analytics_head/);
+    assert.match(batch.statements[1].sql, /FROM replay_personas WHERE owner_id=\?/);
+    assert.match(batch.statements[2].sql, /FROM events/);
+    if (batch.statements.length === 7) assert.match(batch.statements[3].sql, /^SELECT content FROM external_content WHERE content_id=\? AND owner_id=\?$/);
+    const live = batch.statements.slice(-3);
+    assert.match(live[0].sql, /^SELECT 1 AS authorized WHERE EXISTS/);
+    assert.match(live[1].sql, /FROM cost_budget_reservations WHERE owner_id=\?/);
+    assert.match(live[2].sql, /^WITH visible AS/);
+    assert.ok(batch.statements.every((statement) => /^\s*(?:SELECT|WITH)/.test(statement.sql)));
+    assert.ok(batch.statements.every((statement) => statement.values.length <= 100));
+    assert.equal(database.calls.at(-1).sql, live[0].sql, "the final proof is a separate read of the same current-authority guard");
+  }
+  assert.equal(database.writeCount(), 0, "no foreground analytics D1 writes");
+}
+
+function addAnalyticsLiveHold(database, id) {
+  const stamp = new Date().toISOString();
+  database.sqlite.prepare("INSERT INTO cost_budget_reservations(reservation_id,owner_id,workspace_id,stream_id,correlation_id,operation,period,reserved_microusd,used_microusd,status,allow_user_overage,created_at,settled_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,0,?,NULL,?)")
+    .run(id, "dev-local-creative", "forma", "creative:dev-local-creative", id + ":correlation", "document-render:video", "2026-08", 19_644_000, 0, "executing", stamp, stamp);
+}
+
+async function analyticsLiveColdRequest(fixture) {
+  const binding = { prepare: (sql) => fixture.database.DB.prepare(sql), batch: (statements) => fixture.database.DB.batch(statements) };
+  const environment = { ...fixture.environment, DB: binding };
+  const request = (path) => worker.fetch(new Request(`http://localhost${path}`), environment, fixture.context);
+  assert.equal((await request("/api/session")).status, 200);
+  await fixture.drainBackground();
+  fixture.database.reset();
+  return request;
+}
+
+for (const mode of ["cold", "warm", "durable"]) {
+  test(`analytics live batch ${mode} discards the entire routed response after post-snapshot revocation`, async () => {
+    const fixture = await analyticsLiveFixture();
+    const { database, context, drainBackground } = fixture;
+    addAnalyticsLiveHold(database, "private-held-" + mode);
+    if (mode !== "cold") {
+      assert.equal((await fixture.request("/api/analytics?days=all")).status, 200);
+      await drainBackground();
+    }
+    const request = mode === "durable" ? await analyticsLiveColdRequest(fixture) : fixture.request;
+    addCorrelatedTerminal(database.sqlite, "creative:dev-local-creative", "revoked-new-event-" + mode);
+    const checkpoints = () => database.sqlite.prepare("SELECT content_id,owner_id,content FROM external_content ORDER BY content_id").all();
+    const before = checkpoints();
+    let scheduled = 0, revoked = false;
+    const waitUntil = context.waitUntil;
+    context.waitUntil = (promise) => { scheduled += 1; waitUntil(promise); };
+    const batch = database.DB.batch;
+    database.DB.batch = async (statements) => {
+      const rows = await batch(statements);
+      if (statements.some((statement) => statement.sql.includes("FROM cost_budget_reservations WHERE owner_id=?"))) {
+        assert.equal(revoked, false);
+        revoked = true;
+        // This is an actual SQLite mutation after the measured transaction's
+        // COMMIT, not fabricated guard output or an in-batch revocation.
+        database.sqlite.prepare("UPDATE users SET role='creator' WHERE user_id=?").run("dev-local-creative");
+      }
+      return rows;
+    };
+    database.reset();
+    let response;
+    try { response = await request("/api/analytics?days=all"); }
+    finally { database.DB.batch = batch; }
+    assert.equal(revoked, true);
+    assert.equal(response.status, 403);
+    assert.deepEqual(await response.json(), { error: "analytics_access_changed" });
+    assert.equal(response.headers.get("cache-control"), "private, no-store");
+    assertAnalyticsLiveBatchCalls(database, [mode === "warm" ? 6 : 7]);
+    assert.equal(scheduled, 0, "denied evidence cannot schedule a source checkpoint");
+    await drainBackground();
+    assert.equal(database.writeCount(), 0);
+    assert.deepEqual(checkpoints(), before);
+
+    database.sqlite.prepare("UPDATE users SET role='admin' WHERE user_id=?").run("dev-local-creative");
+    database.reset();
+    const recovered = await request("/api/analytics?days=all");
+    assert.equal(recovered.status, 200);
+    assert.equal(recovered.headers.get("x-forma-analytics-cache"), mode === "cold" ? "miss" : mode === "warm" ? "delta" : "durable",
+      "the denied batch never publishes a new in-memory source entry");
+    if (mode !== "cold") assert.equal(recovered.headers.get("x-forma-analytics-source-rows"), "1");
+    assert.equal((await recovered.json()).report.outcomes.live.finance.heldMicrousd, 19_644_000);
+    assertAnalyticsLiveBatchCalls(database, [mode === "warm" ? 6 : 7]);
+    await drainBackground();
+  });
+}
+
+test("analytics live batch refreshes the ledger on a routed zero-event delta without caching live evidence", async () => {
+  const { database, request, drainBackground } = await analyticsLiveFixture();
+  const id = "private-ledger-not-event-evidence";
+  addAnalyticsLiveHold(database, id);
+  const first = await request("/api/analytics?days=all");
+  assert.equal(first.status, 200);
+  const initial = (await first.json()).report;
+  assert.equal(initial.outcomes.live.finance.heldMicrousd, 19_644_000);
+  assertAnalyticsLiveBatchCalls(database, [7]);
+  await drainBackground();
+  const saved = JSON.parse(database.sqlite.prepare("SELECT content FROM external_content WHERE content_id LIKE 'analytics-source:v1:%'").get().content);
+  assert.deepEqual(Object.keys(saved).sort(), ["schema", "outcomeBindings", "owner", "epoch", "synthetic", "pricing", "head", "personas", "count", "payload"].sort());
+  const compressed = Uint8Array.from(atob(saved.payload), (value) => value.charCodeAt(0));
+  const payload = await new Response(new Blob([compressed]).stream().pipeThrough(new DecompressionStream("gzip"))).text();
+  assert.equal(payload.includes(id), false);
+  assert.equal(saved.live, undefined);
+  assert.equal(saved.finance, undefined);
+  assert.equal(saved.jobs, undefined);
+  database.sqlite.prepare("UPDATE cost_budget_reservations SET status='settled',used_microusd=3000000,settled_at=? WHERE reservation_id=?").run(new Date().toISOString(), id);
+  database.reset();
+  const second = await request("/api/analytics?days=all");
+  assert.equal(second.status, 200);
+  assert.equal(second.headers.get("x-forma-analytics-cache"), "delta");
+  assert.equal(second.headers.get("x-forma-analytics-source-rows"), "0");
+  const current = (await second.json()).report;
+  assert.deepEqual(current.source, initial.source);
+  assert.deepEqual(current.totals, initial.totals);
+  assert.equal(current.outcomes.live.finance.heldMicrousd, 0);
+  assert.equal(current.outcomes.live.finance.settledMicrousd, 3_000_000);
+  assert.equal(current.outcomes.usage.recordedMicrousd, initial.outcomes.usage.recordedMicrousd);
+  assertAnalyticsLiveBatchCalls(database, [6]);
+  await drainBackground();
+});
+
+test("analytics live batch corrupt-source fallback uses the latest ledger and retention snapshot in four explicit trips", async () => {
+  const fixture = await analyticsLiveFixture();
+  const { database, drainBackground } = fixture;
+  const id = "fallback-live-hold", jobId = "fallback-live-job";
+  addAnalyticsLiveHold(database, id);
+  const documentId = "fallback-live-document";
+  // The legacy seed document has no project_id; create the required personal
+  // document anchor through the real public event route, not by repairing it.
+  const created = await fixture.request("/api/events", { method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ action: "append", event: { type: "DocumentCreated", payload: {
+      project_id: "project-atmosphere", document_id: documentId, title: "Fallback live snapshot",
+    } } }),
+  });
+  const createdBody = await created.json();
+  assert.equal(created.status, 200, JSON.stringify(createdBody));
+  assert.deepEqual(createdBody.rejected, []);
+  assert.deepEqual(createdBody.appended.map((event) => [event.type, event.payload.document_id, event.payload.project_id]),
+    [["DocumentCreated", documentId, "project-atmosphere"]]);
+  await drainBackground();
+  database.reset();
+  const stamp = new Date().toISOString();
+  database.sqlite.prepare("INSERT INTO document_jobs(job_id,owner_id,stream_id,document_id,kind,status,source_surface,correlation_id,requested_sequence,request_json,result_json,attempt_count,requested_at,expires_at,updated_at) VALUES(?,?,?,?,'render_document','completed','test',?,1,'{}',?,1,?,?,?)")
+    .run(jobId, "dev-local-creative", "creative:dev-local-creative", documentId, jobId + ":correlation", JSON.stringify({ body: "PRIVATE checkpoint", media_url: "https://private.invalid/media" }), stamp, "2100-01-01T00:00:00.000Z", stamp);
+  const first = await fixture.request("/api/analytics?days=all");
+  assert.equal(first.status, 200);
+  const initial = (await first.json()).report;
+  assert.equal(initial.outcomes.live.finance.heldMicrousd, 19_644_000);
+  assert.ok(initial.outcomes.live.jobs.retainedCheckpointCount >= 1);
+  await drainBackground();
+  const saved = database.sqlite.prepare("SELECT content_id,content FROM external_content WHERE content_id LIKE 'analytics-source:v1:%'").get();
+  const corrupt = { ...JSON.parse(saved.content), payload: "not-valid-gzip" };
+  database.sqlite.prepare("UPDATE external_content SET content=? WHERE content_id=?").run(JSON.stringify(corrupt), saved.content_id);
+  const request = await analyticsLiveColdRequest(fixture);
+  const batch = database.DB.batch;
+  let combined = 0;
+  database.DB.batch = async (statements) => {
+    const rows = await batch(statements);
+    if (statements.some((statement) => statement.sql.includes("FROM cost_budget_reservations WHERE owner_id=?")) && ++combined === 1) {
+      database.sqlite.prepare("UPDATE cost_budget_reservations SET status='settled',used_microusd=3000000,settled_at=? WHERE reservation_id=?").run(stamp, id);
+      database.sqlite.prepare("UPDATE document_jobs SET expires_at=? WHERE job_id=?").run("2000-01-01T00:00:00.000Z", jobId);
+    }
+    return rows;
+  };
+  let response;
+  try { response = await request("/api/analytics?days=all"); }
+  finally { database.DB.batch = batch; }
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get("x-forma-analytics-cache"), "miss");
+  const current = (await response.json()).report;
+  assert.deepEqual(current.totals, initial.totals);
+  assert.equal(current.outcomes.live.finance.heldMicrousd, 0);
+  assert.equal(current.outcomes.live.finance.settledMicrousd, 3_000_000);
+  assert.equal(current.outcomes.live.jobs.total, initial.outcomes.live.jobs.total - 1);
+  assert.equal(current.outcomes.live.jobs.retainedCheckpointCount, initial.outcomes.live.jobs.retainedCheckpointCount - 1);
+  assert.equal(current.outcomes.live.jobs.usableResultCount, null);
+  assert.equal(current.outcomes.live.jobs.mediaAvailability, "not-checked");
+  assert.ok(!/PRIVATE checkpoint|private.invalid/.test(JSON.stringify(current)));
+  assert.equal(combined, 2);
+  assertAnalyticsLiveBatchCalls(database, [7, 6]);
+  await drainBackground();
+});
+
+test("analytics live batch schedules no checkpoint while its separate final proof is pending", { timeout: 30_000 }, async () => {
+  const { database, request, context, drainBackground } = await analyticsLiveFixture();
+  let enter, release, scheduled = 0;
+  const entered = new Promise((resolve) => { enter = resolve; });
+  const gate = new Promise((resolve) => { release = resolve; });
+  const waitUntil = context.waitUntil;
+  context.waitUntil = (promise) => { scheduled += 1; waitUntil(promise); };
+  const prepare = database.DB.prepare;
+  database.DB.prepare = (sql) => {
+    const statement = prepare(sql), bind = statement.bind;
+    statement.bind = (...values) => {
+      const bound = bind.apply(statement, values);
+      if (/^SELECT 1 AS authorized WHERE EXISTS/.test(sql)) {
+        const first = bound.first;
+        bound.first = async (...args) => { enter(); await gate; return first.apply(bound, args); };
+      }
+      return bound;
+    };
+    return statement;
+  };
+  const pending = request("/api/analytics?days=all");
+  try {
+    await entered;
+    assert.deepEqual(database.calls.map((call) => call.kind), ["first", "batch"]);
+    assert.equal(scheduled, 0);
+    assert.equal(database.writeCount(), 0);
+    assert.equal(database.sqlite.prepare("SELECT COUNT(*) AS count FROM external_content WHERE content_id LIKE 'analytics-source:v1:%'").get().count, 0);
+  } finally { release(); database.DB.prepare = prepare; }
+  const response = await pending;
+  assert.equal(response.status, 200);
+  assertAnalyticsLiveBatchCalls(database, [7]);
+  assert.equal(scheduled, 1);
+  await drainBackground();
+  assert.equal(database.writeCount(), 1, "only the existing post-response safe-source checkpoint is persisted");
+});
+
+test("analytics live batch fails closed without cache publication when the combined native SQL read fails", async () => {
+  const { database, request, context, drainBackground } = await analyticsLiveFixture();
+  let scheduled = 0;
+  const waitUntil = context.waitUntil;
+  context.waitUntil = (promise) => { scheduled += 1; waitUntil(promise); };
+  database.sqlite.exec("DROP TABLE cost_budget_reservations");
+  const response = await request("/api/analytics?days=all");
+  assert.equal(response.status, 503);
+  assert.deepEqual(await response.json(), { error: "outcome_telemetry_unavailable" });
+  assert.equal(response.headers.get("cache-control"), "private, no-store");
+  assert.deepEqual(database.calls.map((call) => call.kind), ["first", "batch"]);
+  assert.equal(database.calls[1].statements.length, 7);
+  assert.equal(database.writeCount(), 0);
+  assert.equal(scheduled, 0);
+  await drainBackground();
+  assert.equal(database.sqlite.prepare("SELECT COUNT(*) AS count FROM external_content WHERE content_id LIKE 'analytics-source:v1:%'").get().count, 0);
 });

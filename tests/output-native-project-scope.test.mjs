@@ -10,7 +10,9 @@ const [runtime, projectAccess, ledger, policy, publication] = await Promise.all(
   import("../worker/output-requirements-ledger.ts"),
   import("../worker/pilot-policy.ts"),
   import("../worker/output-native-project-publication.ts"),
-]).finally(() => imports.deregister());
+]).catch(error => { imports.deregister(); throw error; });
+// ensureSchema also imports source modules lazily while the tests execute.
+test.after(() => imports.deregister());
 const { ensureSchema, eventWriteBindings, EVENT_WRITE_COLUMNS, makeEvent, serializeEvent } = runtime;
 const { synchronizeProjectScope, prepareProjectSourceEventsStatement, projectSourceProjectionCurrentAssertion } = projectAccess;
 const { ensureOutputRequirementsSchema, outputAssertionStatements } = ledger;
@@ -80,16 +82,33 @@ async function fixture() {
   return { sqlite, env, scope, insert, append, guard, read, reset, transport, now };
 }
 
-test("an already current project manifest uses one exact-scoped read and performs no writes", async () => {
+function assertCurrentManifestReads(state) {
+  // Memory custody qualification precedes the one exact-scoped manifest read.
+  // This same four-read path predates sponsor admission (dc9c429 baseline).
+  assert.equal(state.transport.d1, 4);
+  assert.equal(state.transport.queries.length, 4);
+  const [ledger, origin, integrity, manifest] = state.transport.queries;
+  for (const sql of state.transport.queries) {
+    assert.match(sql, /^SELECT/u, "a current manifest requires no writes or rebuild");
+    assert.equal(sql.includes("experience_sponsor"), false, "ordinary project scope has no sponsor read");
+  }
+  for (const sql of [ledger, origin]) assert.match(sql, /AS schema_json$/u);
+  assert.match(ledger, /memory_structured_conversation_heads/u);
+  assert.match(origin, /memory_structured_answer_origins/u);
+  assert.match(integrity, /END AS verified$/u);
+  assert.match(integrity, /memory_structured_schema_changed/u);
+  assert.match(manifest, /END AS origin_integrity,migration\.status,migration\.last_owner_sequence/u);
+  for (const field of ["owner_head", "event_count", "document_count", "manifest_current"]) assert.ok(manifest.includes("AS " + field));
+}
+
+test("an already current project manifest qualifies Memory custody and uses one exact-scoped read without writes", async () => {
   const state = await fixture();
   assert.deepEqual(await synchronizeProjectScope(state.env, state.scope), { eventCount: 2, documentCount: 1 });
-  assert.equal(state.transport.d1, 1);
-  assert.equal(state.transport.queries.length, 1);
-  assert.match(state.transport.queries[0], /^SELECT/u);
+  assertCurrentManifestReads(state);
   assert.equal(state.sqlite.prepare("SELECT last_owner_sequence FROM project_migration_states").get().last_owner_sequence, 2);
 });
 
-test("a stale project still takes the existing complete rebuild before the single-read fast path", async () => {
+test("a stale project still takes the existing complete rebuild before the qualified manifest fast path", async () => {
   const state = await fixture();
   const compiled = state.append("ContextCompiled", { project_id: "project", document_id: "document", compiled_snapshot: { document: { id: "document" } } }, "worker:compiler");
   assert.deepEqual(await synchronizeProjectScope(state.env, state.scope), { eventCount: 3, documentCount: 1 });
@@ -97,7 +116,7 @@ test("a stale project still takes the existing complete rebuild before the singl
   assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM project_event_scopes WHERE event_id=?").get(compiled.eventId).n, 1);
   state.reset();
   await synchronizeProjectScope(state.env, state.scope);
-  assert.equal(state.transport.d1, 1);
+  assertCurrentManifestReads(state);
 });
 
 test("a matching cursor without its exact manifest marker cannot bypass the existing rebuild", async () => {
@@ -114,7 +133,7 @@ test("fast-path document counts do not include another owner or organization und
     state.insert("project_resource_scopes", { project_access_id: "project-access", resource_kind: "document", resource_id: id, organization_id: organization, project_id: "project", owner_user_id: owner, actor_user_id: owner, visibility: "collaborative_output", created_at: state.now });
   }
   assert.deepEqual(await synchronizeProjectScope(state.env, state.scope), { eventCount: 2, documentCount: 1 });
-  assert.equal(state.transport.d1, 1);
+  assertCurrentManifestReads(state);
 });
 
 test("the shared prepared SELECT preserves exact source hydration without synchronizing or writing a migration", async () => {
@@ -125,6 +144,37 @@ test("the shared prepared SELECT preserves exact source hydration without synchr
   assert.equal(state.transport.d1, 1);
   assert.equal(state.transport.queries.some((sql) => /(?:UPDATE|INSERT INTO) project_migration_states/u.test(sql)), false);
   assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM output_atomic_assertions").get().n, 0);
+});
+
+test("project media custody includes model originals, saved views and every generated model file", async () => {
+  const state = await fixture();
+  try {
+    const url = key => "/api/media/" + encodeURIComponent(key);
+    const original = "owner/models/original.glb", view = "owner/models/front.png", mesh = "owner/generated/model.glb", alternate = "owner/generated/model.obj", texture = "owner/generated/albedo.png", preview = "owner/generated/preview.webp";
+    state.append("ReferenceIngested", { reference_id: "original-reference", source_ref: url(original), content_hash: "a".repeat(64), rights_class: "owned" });
+    state.append("ReferenceIngested", { reference_id: "view-reference", source_ref: url(view), content_hash: "b".repeat(64), rights_class: "owned" });
+    const created = state.append("BlockCreated", { project_id: "project", document_id: "document", block_id: "model-block", type: "model3d", properties: {
+      model_reference_id: "original-reference", reference_id: "view-reference", model_url: url(original), model_mime_type: "model/gltf-binary", media_url: url(view), media_type: "image/png",
+    } });
+    const completed = state.append("DocumentRenderCompleted", { project_id: "project", document_id: "document", artifact_id: "model-output", artifact_kind: "model3d", title: "Vessel", media_url: url(mesh), media_type: "model/gltf-binary", items: [], settings: { model3d_files: [
+      { url: url(mesh), mimeType: "model/gltf-binary", role: "mesh" }, { url: url(alternate), mimeType: "model/obj", role: "mesh" },
+      { url: url(texture), mimeType: "image/png", role: "texture" }, { url: url(preview), mimeType: "image/webp", role: "preview" },
+    ] } }, "worker:renderer");
+    await synchronizeProjectScope(state.env, state.scope);
+    const media = state.sqlite.prepare("SELECT resource_id,source_event_id FROM project_resource_scopes WHERE resource_kind='media'").all();
+    assert.deepEqual(media.map(row => row.resource_id).sort(), [original, view, mesh, alternate, texture, preview].sort());
+    for (const row of media) assert.equal(row.source_event_id, [original, view].includes(row.resource_id) ? created.eventId : completed.eventId);
+    assert.deepEqual(state.sqlite.prepare("SELECT resource_id FROM project_resource_scopes WHERE resource_kind='reference' ORDER BY resource_id").all().map(row => row.resource_id), ["original-reference", "view-reference"]);
+    const context = { ...state.scope, principalUserId: "owner", permissions: ["project.read"], role: "owner" };
+    const page = await projectAccess.readProjectEventPage(state.env, context, 0, 5000, false);
+    assert.equal(page.events.find(event => event.eventId === created.eventId).payload.properties.model_url, url(original));
+    assert.deepEqual(page.events.find(event => event.eventId === completed.eventId).payload.settings.model3d_files.map(file => file.url), [mesh, alternate, texture, preview].map(url));
+    state.append("BlockPropertyEdited", { project_id: "project", document_id: "document", block_id: "model-block", property_path: "model_url", old_value: url(original), new_value: null });
+    await synchronizeProjectScope(state.env, state.scope);
+    const removed = await projectAccess.readProjectEventPage(state.env, context, 0, 5000, false);
+    assert.equal(removed.events.find(event => event.eventId === created.eventId).payload.properties.model_url, undefined, "former mesh URL is removed from shared event payloads");
+    assert.equal(JSON.stringify(removed.events).includes(url(original)), false, "a property-edit old value cannot disclose the detached mesh");
+  } finally { state.sqlite.close(); }
 });
 
 test("read-only Output source proof refuses a stale or quarantined project and never reactivates it", async () => {

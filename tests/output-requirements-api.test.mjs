@@ -773,8 +773,10 @@ test("source erasure during exact-file release prevents bytes from leaving", asy
     return object;
   };
   const response = await state.send(uploaded.snapshot.assets[0].downloadUrl);
-  assert.equal(response.status, 409);
-  assert.equal((await response.json()).error, "output_revision_or_authority_changed");
+  assert.equal(response.status, 410);
+  const body = await response.json();
+  assert.equal(body.error, "output_private_evidence_unavailable");
+  assert.equal(body.errorCode, "output_private_evidence_unavailable");
   assert.equal(state.media.size, 1, "retention history is independent from current release eligibility");
 });
 

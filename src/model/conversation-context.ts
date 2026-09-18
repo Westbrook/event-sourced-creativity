@@ -2,6 +2,7 @@ import type { CanvasProjection } from "../canvas/model.ts";
 import type { FormaCapability } from "../platform/capabilities.ts";
 import { assistantSurfaceForRoute, assistantPlaybookForSurface, type AssistantSurface } from "./assistant-route-policy.ts";
 import { blockIntentFor } from "./block-types.ts";
+import { DOCUMENT_ARTIFACT_KINDS } from "./document-artifacts.ts";
 import type { CreativeBlock, CreativeEvent, CreativeProjection } from "./events.ts";
 import { unfinishedIntentTrajectories } from "./intent-trajectories.ts";
 import { promptFactIsActive } from "./prompt-policy.ts";
@@ -21,7 +22,7 @@ export const ASSISTANT_CONTEXT_LIMITS = {
   maxBytes: 16_384,
 } as const;
 
-export const ASSISTANT_OUTPUT_KINDS = ["image", "short_story", "scene", "slides", "storyboard", "video", "audio"] as const;
+export const ASSISTANT_OUTPUT_KINDS = ["image", ...DOCUMENT_ARTIFACT_KINDS] as const;
 
 export type AssistantConversationTurn = { id: string; role: "user" | "assistant"; text: string; sequence: number };
 export type AssistantDecisionAtom = { id: string; type: string; text: string; intent: string; locked: boolean; focused: boolean; version: number; immutable: boolean; providerEligible: boolean; protected?:boolean; providerVisibility?:"editable"|"governed"|"restricted" };
@@ -133,7 +134,7 @@ export function compileAssistantContext(input: AssistantContextInput): Assistant
     const governed=Boolean(block.properties.organization_context_package_binding_id||block.properties.organization_context_package_id);
     const immutable=Boolean(block.properties.source_evidence_hash||governed||block.properties.source_artifact_id
       ||block.properties.source_artifact_item_id||block.properties.context_set_root_id||outputOwnedBlockIds.has(block.id));
-    const providerVisibility:AssistantDecisionAtom["providerVisibility"]=block.type==="reference"||block.type==="audio"&&immutable
+    const providerVisibility:AssistantDecisionAtom["providerVisibility"]=block.type==="reference"||block.type==="model3d"||block.type==="audio"&&immutable
       ?"restricted":governed?"governed":immutable?"restricted":"editable";
     return{
       id:block.id,type:block.type,text:displayText(block),intent:blockIntentFor(block.type,block.properties),locked:block.locked,protected:protectedAssistantDecision(block),

@@ -268,7 +268,8 @@ test("late private-body changes, membership changes, and access revocation rejec
     };
     state.counters.reset();
     const response = await state.send(exported.command.downloadUrls[0]);
-    assert.equal(response.status, 409, mode);
+    assert.equal(response.status, mode === "access" ? 403 : 410, mode);
+    assert.equal((await response.json()).errorCode, mode === "access" ? "output_execution_authority_revoked" : "output_private_evidence_unavailable", mode);
     assert.notEqual(response.headers.get("content-type"), "application/zip", mode);
     assert.ok(state.counters.r2Get <= 16, mode);
     assert.ok(state.counters.total <= 40, mode);

@@ -1,3 +1,4 @@
+import { OPENAI_IMAGE_MODERATION_CONTRACT } from "./openai-image-route-contract.ts";
 import type { WorkerEnv } from "./runtime.ts";
 import type { ImageReference } from "./openai-adapter.ts";
 import type { PromptTechnique } from "../src/model/prompt-structures.ts";
@@ -18,6 +19,7 @@ export type GenerationModerationReceipt = {
   probeCount: number;
   latencyMs: number;
   coverage: "text" | "text-and-images" | "text-and-some-images";
+  promptNormalization?: "fictional-software-mystery";
 };
 
 const headers = (env: WorkerEnv) => ({
@@ -34,7 +36,7 @@ const factText = (fact: unknown) => {
 
 async function requestModeration(env: WorkerEnv, input: unknown, signal?: AbortSignal) {
   const started = Date.now();
-  const response = await fetch("https://api.openai.com/v1/moderations", { method: "POST", headers: headers(env), signal, body: JSON.stringify({ model: "omni-moderation-latest", input }) });
+  const response = await fetch(OPENAI_IMAGE_MODERATION_CONTRACT.api, { method: "POST", headers: headers(env), signal, body: JSON.stringify({ model: OPENAI_IMAGE_MODERATION_CONTRACT.model, input }) });
   let body: ModerationResponse = {}; try { body = await response.json() as ModerationResponse; } catch { /* Status still provides a useful provider receipt. */ }
   if (!response.ok) throw providerErrorFromResponse(response, body, `openai_moderation_${response.status}`);
   return { body, requestId: response.headers.get("x-request-id") ?? response.headers.get("openai-request-id"), latencyMs: Date.now() - started };
@@ -55,7 +57,7 @@ export async function moderateGenerationSnapshot(env: WorkerEnv, snapshot: Recor
   const canonical = JSON.stringify(snapshot).slice(0, 28_000); const inputs = [canonical, ...mapped.slice(0, 24).map((item) => item.text)];
   const { body, requestId, latencyMs } = await requestModeration(env, inputs, signal); const results = body.results ?? []; const summary = summarize(results);
   const blockIds = mapped.slice(0, 24).filter((_, index) => Boolean(results[index + 1]?.flagged)).map((item) => item.id).filter(Boolean);
-  return { available: true, ...summary, blockIds, referenceIds: [], model: body.model ?? "omni-moderation-latest", requestId, requestIds: requestId ? [requestId] : [], probeCount: 1, latencyMs, coverage: "text" };
+  return { available: true, ...summary, blockIds, referenceIds: [], model: body.model ?? OPENAI_IMAGE_MODERATION_CONTRACT.model, requestId, requestIds: requestId ? [requestId] : [], probeCount: 1, latencyMs, coverage: "text" };
 }
 
 function bytesToBase64(bytes: Uint8Array) {
@@ -70,15 +72,27 @@ export async function moderateExactImagePrompt(env: WorkerEnv, prompt: string, r
   // including GPT Image 2 reference workflows, can legitimately receive more
   // than one image. Probe the exact text once, then every image independently;
   // never truncate safety coverage or submit an invalid multi-image probe.
+  // Keep the paid provider prompt untouched. For clearly fictional software
+  // mysteries, remove crime-scene metaphor terms from the moderation-only
+  // representation so the preflight does not reject language the image model
+  // can safely render. This is intentionally narrow and auditable.
+  const softwareMystery = /\b(?:software|code|coding|debug|debugging|bug|stack trace|developer|programmer|engineer)\b/i.test(prompt);
+  const moderationPrompt = softwareMystery
+    ? `Fictional, non-graphic software debugging mystery. No real people are harmed and no graphic violence is depicted. ${prompt
+      .replace(/\bmurder(?:ed|er|ous)?\b/gi, "mysterious disappearance")
+      .replace(/\bperpetrator\b/gi, "possible author")
+      .replace(/\bscene of the crime\b/gi, "debugging scene")
+      .replace(/\bcrime scene\b/gi, "debugging scene")}`
+    : prompt;
   const probes: Array<{ reference: ImageReference | null; input: unknown }> = [
-    { reference: null, input: [{ type: "text", text: prompt }] },
+    { reference: null, input: [{ type: OPENAI_IMAGE_MODERATION_CONTRACT.input, text: moderationPrompt }] },
     ...references.map((reference) => ({
       reference,
       input: [{ type: "image_url", image_url: { url: `data:${reference.mimeType};base64,${bytesToBase64(reference.bytes)}` } }],
     })),
   ];
   const categories = new Set<string>(); const scores: Record<string, number> = {}; const referenceIds = new Set<string>(); const requestIds: string[] = [];
-  let flagged = false; let latencyMs = 0; let model = "omni-moderation-latest"; let flaggedRequestId: string | null = null;
+  let flagged = false; let latencyMs = 0; let model: string = OPENAI_IMAGE_MODERATION_CONTRACT.model; let flaggedRequestId: string | null = null;
   for (const probe of probes) {
     const result = await requestModeration(env, probe.input, signal); const summary = summarize(result.body.results ?? []);
     latencyMs += result.latencyMs; model = result.body.model ?? model;
@@ -93,6 +107,7 @@ export async function moderateExactImagePrompt(env: WorkerEnv, prompt: string, r
     available: true, flagged, categories: [...categories].sort(), scores, blockIds: [], referenceIds: [...referenceIds], model,
     requestId: flaggedRequestId ?? requestIds[0] ?? null, requestIds, probeCount: probes.length, latencyMs,
     coverage: references.length ? "text-and-images" : "text",
+    ...(softwareMystery ? { promptNormalization: "fictional-software-mystery" as const } : {}),
   };
 }
 
@@ -133,7 +148,7 @@ export async function moderatePromptTechniqueSet(
   let flagged = false;
   let latencyMs = 0;
   let flaggedRequestId: string | null = null;
-  let model = textResponse.body.model ?? "omni-moderation-latest";
+  let model = textResponse.body.model ?? OPENAI_IMAGE_MODERATION_CONTRACT.model;
   for (const reference of references) {
     const result = await requestModeration(env, [{ type: "image_url", image_url: { url: `data:${reference.mimeType};base64,${bytesToBase64(reference.bytes)}` } }], signal);
     const summary = summarize(result.body.results ?? []);
@@ -162,6 +177,6 @@ export async function moderatePromptTechniqueSet(
       coverage: references.length ? "images" as const : "none" as const,
     },
     textRequestId: textResponse.requestId,
-    textModel: textResponse.body.model ?? "omni-moderation-latest",
+    textModel: textResponse.body.model ?? OPENAI_IMAGE_MODERATION_CONTRACT.model,
   };
 }

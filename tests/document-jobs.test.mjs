@@ -13,6 +13,8 @@ import {
   generationFailureGuidance,
   documentJobIsStale,
   documentJobMaxAttempts,
+  documentJobHasNoBudgetHold,
+  planningStopBudget,
 } from "../src/model/document-jobs.ts";
 import { documentJobCompletionBindings } from "../worker/document-job-sql.ts";
 import { failedGenerationInputInspection } from "../src/model/generation-inputs.ts";
@@ -48,6 +50,20 @@ const job = (patch = {}) => ({
   stage: "queued",
   progressMessage: "",
   ...patch,
+});
+
+test("canonical budget evidence proves no hold only for three exact ledger pairs",()=>{
+  const proven=new Set(["settled/settled","released/not-incurred","not-reserved/not-incurred"]);
+  for(const reservationStatus of["not-reserved","released","retained","settled","unknown"]){
+    for(const billingStatus of["not-incurred","pending","settled","unknown"]){
+      const budget=planningStopBudget({planningStopBudget:{reservationStatus,billingStatus}});
+      assert.deepEqual(budget,{reservationStatus,billingStatus});
+      assert.equal(documentJobHasNoBudgetHold(budget),proven.has(reservationStatus+"/"+billingStatus),reservationStatus+"/"+billingStatus);
+    }
+  }
+  for(const value of[undefined,null,{},[],"released",{reservationStatus:"released"},{reservationStatus:"released",billingStatus:"refunded"}]){
+    assert.equal(documentJobHasNoBudgetHold(planningStopBudget({planningStopBudget:value})),false);
+  }
 });
 
 test("bounds automatic retries for costly image work and avoids replaying chat turns", () => {
@@ -215,14 +231,17 @@ test("a manual presentation bypasses only a verified video in another project",a
 
 test("atomically hands both paid-render reservations to the recovered provider attempt", async (context) => {
   const jobsApi = await readFile(new URL("../worker/document-jobs-api.ts", import.meta.url), "utf8");
-  const handoff = jobsApi.match(/const\s+claims\s*=\s*outputBinding\s*\?\s*await\s+env\.DB\.batch\(([^;]+?)\)\s*:\s*await\s+env\.DB\.batch\(([^;]+?)\);/);
+  const handoff = jobsApi.match(/const\s+claimStatements\s*=\s*outputBinding\s*\?\s*(\[[^;]+?)\s*:\s*(\[claimAttempt,\s*tokenReservationHandoff,\s*costReservationHandoff\]);/);
   assert.ok(handoff, "reservation handoff distinguishes Output grants from the legacy job path");
   assert.match(handoff[2], /^\s*\[\s*claimAttempt\s*,\s*tokenReservationHandoff\s*,\s*costReservationHandoff\s*\]\s*$/);
   const outputBatch = handoff[1].replace(/\s+/gu, "");
-  assert.ok(outputBatch.startsWith('[claimAttempt,...outputAssertionStatements(env,{sql:"changes()=1"}),tokenReservationHandoff,...outputAssertionStatements(env,{sql:"changes()=1"}),costReservationHandoff,...outputAssertionStatements(env,{sql:"changes()=1"}),'), "every Output claim and reservation handoff is followed by an atomic rollback guard");
+  assert.ok(outputBatch.startsWith('[...sceneClaimPrefix,claimAttempt,...outputAssertionStatements(env,{sql:"changes()=1"}),tokenReservationHandoff,...outputAssertionStatements(env,{sql:"changes()=1"}),costReservationHandoff,...outputAssertionStatements(env,{sql:"changes()=1"}),'), "Scene custody precedes the claim; every Output claim and reservation handoff is followed by an atomic rollback guard");
   const admissionGuards='...outputAdmissionAssertions.flatMap(assertion=>outputAssertionStatements(env,assertion))';
   const freshCallGuard='...(freshOutput?outputAssertionStatements(env,{sql:"NOT EXISTS(SELECT 1 FROM output_provider_calls WHERE scope_key=? AND slot_id=?)",bindings:[outputBinding.scope.key,outputBinding.slot.slotId]}):[])'.replace(/\s+/gu, "");
-  assert.ok(outputBatch.endsWith(`${admissionGuards},${freshCallGuard}]`), "source and actor-private assertions precede the additional fresh-slot call guard in the same atomic batch");
+  assert.ok(outputBatch.endsWith(`${admissionGuards},${freshCallGuard},...(sceneClaim?.after??[])]`), "source and actor-private assertions precede the fresh-slot guard and Scene witness handoff in the same atomic batch");
+  assert.match(jobsApi,/const claims=await env\.DB\.batch\(claimStatements\);/u);
+  assert.match(jobsApi,/claims\.length!==claimStatements\.length/u,"the complete atomic acknowledgement is required");
+  assert.match(jobsApi,/claimed = claims\[sceneClaimPrefix\.length\];/u,"the claim result accounts for the preceding Scene assertions");
   assert.match(jobsApi,/outputAdmissionAssertions=\[\.\.\.outputProof\.assertions,\.\.\.\(jobAuthority\?\[jobAuthority\]:\[\]\)\]/u,
     "the retained admission assertions contain both current source proof and exact actor-private project-job custody");
   assert.match(jobsApi,/const jobAuthority=documentJobProjectAuthority\(user,row\.document_id,jobId\)/u);
@@ -231,7 +250,7 @@ test("atomically hands both paid-render reservations to the recovered provider a
   const freshCallSql=handoff[1].match(/freshOutput\?outputAssertionStatements\(env,\{sql:"([^"]+)"/u)?.[1];
   assert.ok(freshCallSql);
   assert.equal((freshCallSql.match(/\?/gu)??[]).length,2);
-  assert.match(jobsApi, /if \(previousAttempt > 0 && !handoffPaidProviderReservations\) await releaseInterruptedAttempt/);
+  assert.match(jobsApi, /if \(previousAttempt > 0 && !handoffPaidProviderReservations&&!settledModel3dRecovery\) await releaseInterruptedAttempt/);
 
   const tokenHandoff = jobsApi.match(/const TOKEN_RESERVATION_HANDOFF_SQL = "([^"]+)";/)?.[1];
   const costHandoff = jobsApi.match(/const COST_RESERVATION_HANDOFF_SQL = "([^"]+)";/)?.[1];
@@ -386,7 +405,7 @@ test("exposes retained document failure history to document and Canvas surfaces"
   const [jobsApi,eventsApi,actions,canvas,inputDialog]=await Promise.all([
     readFile(new URL("../worker/document-jobs-api.ts",import.meta.url),"utf8"),readFile(new URL("../worker/events-api.ts",import.meta.url),"utf8"),readFile(new URL("../src/components/generation-actions.ts",import.meta.url),"utf8"),readFile(new URL("../src/canvas/canvas-application.ts",import.meta.url),"utf8"),readFile(new URL("../src/components/generation-input-dialog.ts",import.meta.url),"utf8"),
   ]);
-  assert.match(jobsApi,/kind IN \('preview','generate','prompt_fan','render_document'\)/);assert.match(jobsApi,/expires_at>\?/);assert.match(jobsApi,/response\.ok\?\{\}:parseResult\(row\)/);
+  assert.match(jobsApi,/kind IN \('preview','generate','prompt_fan','render_document','structure_adaptive'\)/);assert.match(jobsApi,/expires_at>\?/);assert.match(jobsApi,/response\.ok\?\{\}:parseResult\(row\)/);
   assert.match(eventsApi,/retainFailurePrompt/);assert.doesNotMatch(eventsApi,/detail\.category==="safety"\?providerFailurePrompt/);
   assert.match(actions,/Failed generation attempts/);assert.match(actions,/Inspect failed inputs/);assert.match(actions,/Review all \$\{allFailures\.length\} failed attempts/);assert.match(actions,/failedGenerationInputInspection/);
   assert.match(actions,/#actorInputContent:Record<string,string>/);
@@ -427,10 +446,126 @@ test("settles generation capacity by reservation identity and repairs orphaned f
   assert.match(eventsApi,/settleBudget\(env,billingOwnerId,reservation\.reservationId/);
   assert.match(eventsApi,/const plannerCharge=\(failedBillableTokens>0\|\|failedActualCost>0\)\?makeEvent/);
   assert.match(actions,/aria-describedby=\$\{previewFanBudgetBlocked&&budgetNoteVisible\?this\.#budgetNoteId:nothing\}/);
-  assert.match(actions,/Failed work releases its reservation automatically/);
+  assert.match(actions,/const reservationMessage=this\.i18n\.t\("generation\.reservationUncertainty"/);
+  assert.match(actions,/\$\{reservationMessage\}/);
+  assert.doesNotMatch(actions,/Failed work releases its (?:unused )?reservation automatically/);
   assert.match(actions,/Dismiss generation capacity notification/);
   assert.match(actions,/sessionStorage\.setItem\(key,"dismissed"\)/);
   assert.match(actions,/budgetBand/);
   assert.match(actions,/<button class="button ghost compact" aria-label="Dismiss this generation issue"/);
   assert.doesNotMatch(actions,/category==="safety"\?html`<button class="button ghost compact" aria-label="Dismiss/);
+});
+
+// Native Image interrupted-worker coverage. Actual private worker functions and
+// SQL run against isolated metadata; no production rows or provider calls.
+async function imageInterruptedWorkerFunctions(){
+  const {stripTypeScriptTypes}=await import('node:module');
+  const jobs=await readFile(new URL('../worker/document-jobs-api.ts',import.meta.url),'utf8');
+  const provider=await readFile(new URL('../src/model/provider-submission.ts',import.meta.url),'utf8');
+  const policy=await readFile(new URL('../worker/output-fal-recovery-policy.ts',import.meta.url),'utf8');
+  const outcome=await readFile(new URL('../worker/output-execution-control.ts',import.meta.url),'utf8');
+  const between=(source,start,end)=>{const a=source.indexOf(start),b=source.indexOf(end,a);assert(a>=0&&b>a);return source.slice(a,b).replace(/^export /gm,'');};
+  const paid=new Function(stripTypeScriptTypes(provider.replace(/^export /gm,''))+';return {providerSubmissions,hasUnresolvedProviderSubmission,hasUnsettledProviderSubmission};')();
+  const readCheckpoint=new Function('object',stripTypeScriptTypes(between(policy,'export function readFalRecoveryCheckpoint','/** Original format'))+';return readFalRecoveryCheckpoint;')(v=>v&&typeof v==='object'&&!Array.isArray(v)?v:{});
+  const project=new Function(stripTypeScriptTypes(between(outcome,'export function prepareOutputJobOutcomeStatements','export async function synchronizeOutputJobOutcome'))+';return prepareOutputJobOutcomeStatements;')();
+  const ports={...paid,readFalRecoveryCheckpoint:readCheckpoint,parseResult:r=>JSON.parse(r.result_json??'{}'),parseRequest:r=>JSON.parse(r.request_json??'{}'),
+    requiresForegroundDocumentExecution:()=>true,isPresentationJob:()=>false,unresolvedModel3dSubmission:()=>false,trustedStoryboardSafeRecovery:()=>false,unsafePresentationRecovery:()=>null,
+    parseDocumentArtifactContent:raw=>{const v=JSON.parse(raw);return Array.isArray(v.items)?v:null;},
+    consentedAdaptiveJob:()=>false,DOCUMENT_JOB_STALE_AFTER_MS:60_000,unresolvedAudioSubmission:()=>false,unresolvedStoryboardSubmission:()=>false,unresolvedPresentationSubmission:()=>false,
+    parentJobIdFromRequest:()=>null,failureProgressMessage:d=>d.message,prepareOutputJobOutcomeStatements:project,
+    appendAuditEvent:async()=>{},refreshGenerationReceipt:async()=>{},reconcileParentForChild:async()=>{},releaseInterruptedAttempt:async()=>{},
+    operationFinished:()=>null,readCorrelatedEvents:async()=>[]};
+  const guard=new Function(...Object.keys(ports),stripTypeScriptTypes(between(jobs,'function unsafePaidRecovery(','function generationRevisionFromRequest('))+';return unsafePaidRecovery;')(...Object.values(ports));
+  const stop=new Function(...Object.keys(ports),stripTypeScriptTypes(between(jobs,'async function failStaleJob(','function operationFinished('))+';return failStaleJob;')(...Object.values(ports));
+  return {guard,stop};
+}
+function imageInterruptedRow(){
+  return {job_id:'job',owner_id:'owner',stream_id:'creative:owner',document_id:'doc',kind:'generate',output_slot_id:'slot',correlation_id:'original',attempt_count:1,status:'running',request_json:'{}',
+    result_json:JSON.stringify({providerSubmissionProtocol:1,outputFalCheckpoint:{version:'output-fal-checkpoint-v1',stage:'image:initial',provider:'fal',model:'ideogram/v4',clientRequestId:'media',requestDigest:'a'.repeat(64),requestRef:'request',requestSha256:'b'.repeat(64),planningRef:'direction',planningSha256:'c'.repeat(64),expiresAt:'2099-01-01T00:00:00.000Z'},
+      providerSubmissions:{planning:{clientRequestId:'planning',provider:'openai',operation:'planning',model:'planner',status:'completed',providerRequestId:'planner-original',costMicrousd:5076},media:{clientRequestId:'media',provider:'fal',operation:'image',model:'ideogram/v4',status:'accepted',providerRequestId:'image-original'}}})};
+}
+test('native Image direction checkpoint remains terminal and nonretryable without claiming document-plan loss',async()=>{
+  const {guard}=await imageInterruptedWorkerFunctions(),row=imageInterruptedRow(),before=row.result_json;
+  const failure=guard(row);assert.equal(failure.code,'execution_interrupted');assert.equal(failure.retryable,false);assert.equal(failure.action,'contact_support');assert.equal(row.result_json,before);
+});
+test('Image classifier keeps unknown submissions and missing private checkpoints closed; document plans remain separately required',async()=>{
+  const {guard}=await imageInterruptedWorkerFunctions();
+  for(const mode of ['pending','missing','malformed','legacy','document']){
+    const row=imageInterruptedRow(),data=JSON.parse(row.result_json);
+    if(mode==='pending')data.providerSubmissions.media.status='pending';
+    if(mode==='missing')delete data.outputFalCheckpoint;
+    if(mode==='malformed')data.outputFalCheckpoint.planningSha256='';
+    if(mode==='legacy')delete row.output_slot_id;
+    if(mode==='document')row.kind='render_document';
+    row.result_json=JSON.stringify(data);const failure=guard(row);
+    assert.equal(failure.code,mode==='pending'?'provider_submission_uncertain':'provider_result_recovery_unavailable',mode);assert.equal(failure.retryable,false,mode);
+  }
+});
+async function imageInterruptedDatabase(row,{sidecarFailure=false}={}){
+  const db=new DatabaseSync(':memory:');
+  db.exec(`CREATE TABLE document_jobs(job_id TEXT,owner_id TEXT,stream_id TEXT,document_id TEXT,kind TEXT,correlation_id TEXT,attempt_count INTEGER,status TEXT,request_json TEXT,result_json TEXT,error_message TEXT,completed_at TEXT,lease_expires_at TEXT,notified_at TEXT,updated_at TEXT);
+    CREATE TABLE output_operation_slots(scope_key TEXT,slot_id TEXT,grant_id TEXT,job_id TEXT,status TEXT,outcome_event_id TEXT,updated_at TEXT);
+    CREATE TABLE output_provider_calls(scope_key TEXT,slot_id TEXT,status TEXT,used_microusd INTEGER,maximum_microusd INTEGER);
+    CREATE TABLE output_execution_grants(scope_key TEXT,grant_id TEXT,status TEXT);
+    CREATE TABLE events(event_id TEXT,stream_id TEXT,correlation_id TEXT,type TEXT,sequence INTEGER);`);
+  db.prepare('INSERT INTO document_jobs VALUES(?,?,?,?,?,?,?,?,?,?,NULL,NULL,?,NULL,?)').run(row.job_id,row.owner_id,row.stream_id,row.document_id,row.kind,row.correlation_id,row.attempt_count,row.status,row.request_json,row.result_json,'2000-01-01','2000-01-01');
+  db.exec("INSERT INTO output_operation_slots VALUES('scope','slot','grant','job','running',NULL,'2000-01-01'); INSERT INTO output_execution_grants VALUES('scope','grant','active'); INSERT INTO output_provider_calls VALUES('scope','slot','settled',5076,100000),('scope','slot','uncertain',NULL,900000)");
+  const env={DB:{prepare(sql){return{bind(...args){return{sql,args,async run(){return{meta:{changes:db.prepare(sql).run(...args).changes}};}};}};},async batch(statements){db.exec('BEGIN');try{const results=[];for(const [index,s] of statements.entries()){if(index===1&&sidecarFailure)throw Error('projection_failed');results.push(await s.run());}db.exec('COMMIT');return results;}catch(error){db.exec('ROLLBACK');throw error;}}}};
+  return{db,env,close:()=>db.close()};
+}
+test('stale native job failure atomically projects uncertain operation without releasing original calls',async()=>{
+  const {guard,stop}=await imageInterruptedWorkerFunctions(),row=imageInterruptedRow(),f=await imageInterruptedDatabase(row);
+  try{const calls=f.db.prepare('SELECT * FROM output_provider_calls').all();await stop(f.env,{userId:'owner',streamId:'creative:owner'},row,guard(row));
+    const saved=f.db.prepare('SELECT * FROM document_jobs').get();assert.equal(saved.status,'failed');assert.equal(saved.correlation_id,'original');assert.equal(saved.attempt_count,1);
+    assert.deepEqual(JSON.parse(saved.result_json).outputFalCheckpoint,JSON.parse(row.result_json).outputFalCheckpoint);
+    assert.equal(f.db.prepare('SELECT status FROM output_operation_slots').get().status,'uncertain');assert.equal(f.db.prepare('SELECT status FROM output_execution_grants').get().status,'active');assert.deepEqual(f.db.prepare('SELECT * FROM output_provider_calls').all(),calls);
+  }finally{f.close();}
+});
+test('failed operation projection rolls back stale job transition',async()=>{
+  const {guard,stop}=await imageInterruptedWorkerFunctions(),row=imageInterruptedRow(),f=await imageInterruptedDatabase(row,{sidecarFailure:true});
+  try{await assert.rejects(stop(f.env,{userId:'owner',streamId:'creative:owner'},row,guard(row)),/projection_failed/);assert.equal(f.db.prepare('SELECT status FROM document_jobs').get().status,'running');assert.equal(f.db.prepare('SELECT status FROM output_operation_slots').get().status,'running');assert.equal(f.db.prepare('SELECT result_json FROM document_jobs').get().result_json,row.result_json);}finally{f.close();}
+});
+test('newer checkpoint prevents stale failure from overwriting the current worker',async()=>{
+  const {guard,stop}=await imageInterruptedWorkerFunctions(),row=imageInterruptedRow(),f=await imageInterruptedDatabase(row);
+  try{const newer=JSON.stringify({...JSON.parse(row.result_json),newer:true});f.db.prepare('UPDATE document_jobs SET result_json=?,lease_expires_at=?,updated_at=?').run(newer,'2099-01-01','2099-01-01');await stop(f.env,{userId:'owner',streamId:'creative:owner'},row,guard(row));assert.equal(f.db.prepare('SELECT status FROM document_jobs').get().status,'running');assert.equal(f.db.prepare('SELECT result_json FROM document_jobs').get().result_json,newer);assert.equal(f.db.prepare('SELECT status FROM output_execution_grants').get().status,'active');}finally{f.close();}
+});
+test('stale native failure cannot project an old correlation over current job or grant',async()=>{
+  const {guard,stop}=await imageInterruptedWorkerFunctions();
+  for(const liveStatus of ['running','failed']){
+    const row=imageInterruptedRow(),f=await imageInterruptedDatabase(row);
+    try{
+      f.db.prepare('UPDATE document_jobs SET correlation_id=?,status=?').run('newer',liveStatus);
+      f.db.exec("UPDATE output_operation_slots SET outcome_event_id='newer-evidence',status='failed'; UPDATE output_provider_calls SET status='settled'; INSERT INTO events VALUES('old-failure','creative:owner','original','GenerationFailed',10)");
+      const before=f.db.prepare('SELECT * FROM output_operation_slots').get();
+      await stop(f.env,{userId:'owner',streamId:'creative:owner'},row,guard(row));
+      assert.deepEqual(f.db.prepare('SELECT * FROM output_operation_slots').get(),before);
+      assert.equal(f.db.prepare('SELECT status FROM output_execution_grants').get().status,'active');
+      assert.equal(f.db.prepare('SELECT correlation_id FROM document_jobs').get().correlation_id,'newer');
+    }finally{f.close();}
+  }
+});
+test('lost checkpoint CAS leaves same-correlation projection and grant untouched',async()=>{
+  const {guard,stop}=await imageInterruptedWorkerFunctions(),row=imageInterruptedRow(),f=await imageInterruptedDatabase(row);
+  try{
+    f.db.exec("UPDATE document_jobs SET status='failed',result_json='{}',completed_at='2001-01-01'; UPDATE output_operation_slots SET status='failed'; UPDATE output_provider_calls SET status='settled'");
+    const before=f.db.prepare('SELECT * FROM output_operation_slots').get();
+    await stop(f.env,{userId:'owner',streamId:'creative:owner'},row,guard(row));
+    assert.deepEqual(f.db.prepare('SELECT * FROM output_operation_slots').get(),before);
+    assert.equal(f.db.prepare('SELECT status FROM output_execution_grants').get().status,'active');
+  }finally{f.close();}
+});
+test('settled stale native jobs project failure and complete the existing grant without changing usage',async()=>{
+  const {stop}=await imageInterruptedWorkerFunctions();
+  for(const kind of ['generate','render_document']){
+    const row=imageInterruptedRow();row.kind=kind;const f=await imageInterruptedDatabase(row);
+    try{
+      f.db.exec("UPDATE output_provider_calls SET status='settled',used_microusd=maximum_microusd; INSERT INTO events VALUES('original-failure','creative:owner','original','GenerationFailed',10)");
+      const calls=f.db.prepare('SELECT * FROM output_provider_calls').all();
+      await stop(f.env,{userId:'owner',streamId:'creative:owner'},row);
+      assert.equal(f.db.prepare('SELECT status FROM document_jobs').get().status,'failed');
+      const slot=f.db.prepare('SELECT * FROM output_operation_slots').get();assert.equal(slot.status,'failed');assert.equal(slot.outcome_event_id,'original-failure');
+      assert.equal(f.db.prepare('SELECT status FROM output_execution_grants').get().status,'completed');
+      assert.deepEqual(f.db.prepare('SELECT * FROM output_provider_calls').all(),calls);
+    }finally{f.close();}
+  }
 });

@@ -5,6 +5,13 @@ spatial canvases, images, stories, screen scenes, presentations, storyboards, an
 videos are coherent projections over durable append-only history. The underlying
 history is infrastructure; the product experience is the creative work.
 
+## Work tracking
+
+Start with the [central backlog](./docs/backlog.md) for remaining work, blockers,
+completion criteria, and links to implementation and activation guides. Update
+the relevant backlog item when taking on or completing work. The
+[plan-coverage ledger](./docs/plan-coverage.md) retains the detailed phase history.
+
 ## Applications
 
 The platform has six independently loaded, explicitly authorized applications
@@ -73,6 +80,11 @@ pnpm lint
 pnpm test
 pnpm cem:check
 ```
+
+Native keyboard, focus visibility, and genuine Chromium browser-zoom checks
+run with `pnpm test:a11y` against the existing local preview. See
+[the browser test guide](./tests/browser/README.md) for setup, read-only safety,
+coverage, and the remaining assistive-technology review boundaries.
 
 The UI uses documented browser-native custom elements: Lit powers reactive
 application composition, while dependency-free native `HTMLElement` components
@@ -169,6 +181,13 @@ pnpm replay --file ./creative-loop-50000.json --as-of 32000 --projection context
 
 The Sites runtime reads logical D1 and R2 bindings from
 `.openai/hosting.json`. Database migrations live in `drizzle/`.
+
+For repeatable local SQLite migrations, preview with
+`pnpm db:migrate:local --database ./local.sqlite`, then add `--apply` to persist
+the changes. The runner verifies existing schema before skipping declarations
+or column additions, and rolls back the entire run on failure. See
+[local migration execution](docs/local-migrations.md) for supported operations,
+history handling, and the separate Sites deployment boundary.
 
 Provider credentials remain server-only. Never commit an API key, run a paid
 actual-data fixture or provider evaluation without explicit human authorization,

@@ -62,10 +62,46 @@ const replacements = [
   ["new requirements and a freshly confirmed eligible plan", (s) => { s.requirementRevision = "requirements-2"; s.confirmedPlan.requirementsDigest = "requirements-2"; s.confirmedPlan.revisionId = "new-confirmed-plan"; }, false],
   ["source proof lost without digest changes", (s) => { s.sourceVerification.status = "unavailable"; s.sourceVerification.reasonCodes = ["context_source_evidence_unavailable"]; }, false],
 ];
+test("blocked existing-attempt preflight preserves its reason without allocating or authorizing a new attempt", async () => {
+  const f = await fixture();
+  f.preflight.operationAttempts = {};
+  f.preflight.maximumMicrousd = 0; f.preflight.maximumCalls = 0;
+  Object.assign(f.preflight.targets[0], { available: false, reasonCode: "output_existing_operation_requires_recovery",
+    reason: "This target already has an authorized operation.", provider: null, model: null, route: null,
+    maximumMicrousd: 0, maximumCalls: 0, transferCode: "output_transfer_none_authorized" });
+  const pending = f.start(); f.resolve(); await pending;
+  const disclosure = region(f.controller.render(), 'class="output-provider-disclosure"');
+  assert.ok(disclosure);
+  assert.ok(!JSON.stringify(f.controller.render()).includes("output.delivery.preflightRetired"));
+  assert.ok(JSON.stringify(disclosure).includes("output.delivery.message.existingOperation"));
+  assert.equal(binding(disclosure, "?disabled"), true);
+  eventHandlers(disclosure, "change")[0].call(f.controller, { target: { checked: true } });
+  await handler(disclosure, "submit", "#authorize").call(f.controller, submitEvent());
+  assert.equal(f.requests.length, 1, "showing a refusal cannot dispatch authorize or run");
+});
+
+test("available target without an attempt allocation remains rejected", async () => {
+  const f = await fixture(); f.preflight.operationAttempts = {};
+  const pending = f.start(); f.resolve(); await pending;
+  assert.ok(!templates(f.controller.render()).some((part) => part.strings.some((text) => text.includes('class="output-provider-disclosure"'))));
+  assert.ok(JSON.stringify(f.controller.render()).includes("output.delivery.preflightRetired"));
+  assert.equal(f.requests.length, 1);
+});
+
+test("blocked offer still rejects a mismatched supplied attempt", async () => {
+  const f = await fixture(); f.preflight.targets[0].available = false;
+  Object.values(f.preflight.operationAttempts)[0].previousSlotId = "wrong-predecessor";
+  const pending = f.start(); f.resolve(); await pending;
+  assert.ok(!templates(f.controller.render()).some((part) => part.strings.some((text) => text.includes('class="output-provider-disclosure"'))));
+  assert.ok(JSON.stringify(f.controller.render()).includes("output.delivery.preflightRetired"));
+  assert.equal(f.requests.length, 1);
+});
+
 for (const alternative of [false, true]) for (const [name, mutate, mayOffer] of replacements) {
   test(`actual ${alternative ? "alternative" : "initial"} preflight reply after ${name}`, async () => {
     const f = await fixture({ alternative });
     const pending = f.start();
+    await f.waitForRequest(pending);
     assert.equal(f.requests.length, 1);
     assert.equal(f.requests[0].action, "preflight");
     if (alternative) assert.equal(f.requests[0].alternativeOfSlotId, "failed-slot");
@@ -101,7 +137,7 @@ for (const [name, mutate] of replacements.slice(1, 4)) {
 
 const tagged = (part, key) => part.values.some((value) => typeof value === "string" && value.includes(`output.delivery.${key}`));
 const execution = (f) => region(f.controller.render(), 'class="output-execution"');
-const runRows = (f) => templates(execution(f)).filter((part) => part.strings.some((value) => value.includes('<label><input type="checkbox"'))
+const runRows = (f) => templates(execution(f)).filter((part) => part.strings.some((value) => value.includes('<label><input class="output-run-target" data-output-run-target=')) && part.strings.some((value) => value.includes(' type="checkbox"'))
   && part.strings.some((value) => value.includes('<span dir="auto">')));
 const check = (f) => templates(execution(f)).find((part) => tagged(part, "checkRun"));
 function offerForAll(snapshot, targets) {
@@ -120,6 +156,35 @@ function publishTargets(f, count) {
   return current;
 }
 
+for (const missingAvailableAttempt of [false, true]) test(`mixed blocked offer preserves only valid available-attempt proof (missing=${missingAvailableAttempt})`, async () => {
+  const f = await fixture(), current = publishTargets(f, 2), preflight = offerForAll(current, current.confirmedPlan.plan.targets);
+  const [available, blocked] = preflight.targets;
+  blocked.available = false; blocked.reasonCode = "output_existing_operation_requires_recovery";
+  blocked.transferCode = "output_transfer_none_authorized";
+  blocked.provider = null; blocked.model = null; blocked.route = null;
+  blocked.maximumMicrousd = 0; blocked.maximumCalls = 0;
+  delete preflight.operationAttempts[blocked.targetId];
+  if (missingAvailableAttempt) delete preflight.operationAttempts[available.targetId];
+  preflight.maximumMicrousd = available.maximumMicrousd; preflight.maximumCalls = available.maximumCalls;
+  const pending = f.start(); await f.waitForRequest(pending);
+  f.pending.resolve({ status: "saved", body: { snapshot: current, command: { preflight } } }); await pending;
+  const disclosure = templates(f.controller.render()).find((part) => part.strings.some((text) => text.includes('class="output-provider-disclosure"')));
+  if (missingAvailableAttempt) {
+    assert.equal(disclosure, undefined);
+    assert.ok(JSON.stringify(f.controller.render()).includes("output.delivery.preflightRetired"));
+  } else {
+    assert.ok(disclosure);
+    assert.ok(JSON.stringify(disclosure).includes("output.delivery.message.existingOperation"));
+    const disabledValues = disclosure.values.filter((_value, index) => disclosure.strings[index].trimEnd().endsWith("?disabled="));
+    assert.deepEqual(disabledValues, [true, true], "both acknowledgement and paid submission are disabled");
+    eventHandlers(disclosure, "change")[0].call(f.controller, { target: { checked: true } });
+    const form = {}, button = new f.FakeButton(form);
+    eventHandlers(disclosure, "click")[0].call(f.controller, { type: "click", isTrusted: true, currentTarget: button, defaultPrevented: false });
+    await handler(disclosure, "submit", "#authorize").call(f.controller, { ...submitEvent(), isTrusted: true, currentTarget: form, submitter: button });
+  }
+  assert.equal(f.requests.length, 1, "mixed refusal cannot arm or dispatch paid work");
+});
+
 test("256 selected targets can be checked without changing the complete assignment", async () => {
   const f = await fixture(), current = publishTargets(f, 256), before = structuredClone(current);
   assert.equal(runRows(f).length, 256);
@@ -127,6 +192,7 @@ test("256 selected targets can be checked without changing the complete assignme
   assert.equal(binding(check(f), "?disabled"), false);
   assert.ok(JSON.stringify(execution(f)).includes("at most 256 targets at a time"));
   const pending = f.start();
+  await f.waitForRequest(pending);
   assert.equal(f.requests.length, 1); assert.equal(f.requests[0].targetIds.length, 256);
   assert.deepEqual(new Set(f.requests[0].targetIds), new Set(current.confirmedPlan.plan.targets.map((target) => target.id)));
   f.pending.resolve({ status: "saved", body: { snapshot: current, command: { preflight: offerForAll(current, current.confirmedPlan.plan.targets) } } });
@@ -149,6 +215,7 @@ test("257 selected targets remain visible and owed, require an explicit smaller 
   assert.equal(runRows(f).length, 257); assert.equal(runRows(f).filter((row) => binding(row, ".checked")).length, 256);
   assert.equal(binding(check(f), "?disabled"), false);
   const pending = f.start();
+  await f.waitForRequest(pending);
   assert.equal(f.requests.length, 1); assert.equal(f.requests[0].targetIds.length, 256);
   assert.ok(!f.requests[0].targetIds.includes("target-256"));
   assert.deepEqual(f.snapshots.get("doc-a"), before, "local run selection cannot withdraw any committed target");
@@ -180,7 +247,7 @@ test("a committed optional target can be unchecked for a run without withdrawing
   assert.equal(binding(row, ".checked"), true); assert.equal(binding(row, "?disabled"), false);
   eventHandlers(row, "change")[0]({ target: { checked: false } });
   assert.equal(current.confirmedPlan.plan.targets[1].selected, true);
-  const pending = f.start(); assert.deepEqual(f.requests[0].targetIds, ["target-0"]);
+  const pending = f.start(); await f.waitForRequest(pending); assert.deepEqual(f.requests[0].targetIds, ["target-0"]);
   f.pending.resolve({ status: "saved", body: { snapshot: current, command: { preflight: offerForAll(current, [current.confirmedPlan.plan.targets[0]]) } } });
   await pending;
   assert.equal(current.confirmedPlan.plan.targets.length, 2);
@@ -196,7 +263,7 @@ test("a one-target alternative offer is bound to its slot, not silently expanded
   f.preflight.planRevisionId = current.confirmedPlan.revisionId;
   f.controller.willUpdate(new Map());
   assert.equal(runRows(f).filter((row) => binding(row, ".checked")).length, 2);
-  const pending = f.start(); assert.deepEqual(f.requests[0].targetIds, [original.id]);
+  const pending = f.start(); await f.waitForRequest(pending); assert.deepEqual(f.requests[0].targetIds, [original.id]);
   f.resolve(); await pending;
   assert.ok(region(f.controller.render(), 'class="output-provider-disclosure"'));
   assert.equal(runRows(f).filter((row) => binding(row, ".checked")).length, 2, "preparing an alternative does not rewrite the general run selection");
@@ -260,6 +327,7 @@ test("one explicit Clear narrows an actual 1000-target plan to zero locally, the
   assert.equal(binding(check(f), "?disabled"), false);
   assert.ok(!JSON.stringify(clearControl(f)).includes("output.delivery.runSelectionCleared"));
   const pending = startPreflight(f), first = current.confirmedPlan.plan.targets[0];
+  await f.waitForRequest(pending);
   assert.equal(f.requests.length, 1); assert.equal(f.requests[0].action, "preflight");
   assert.deepEqual(f.requests[0].targetIds, [first.id]);
   f.pending.resolve({ status: "saved", body: { snapshot: current, command: { preflight: offerForAll(current, [first]) } } });

@@ -106,7 +106,7 @@ test("preserves usable controls when document navigation and editors get narrow"
   assert.match(navigation, /aria-label=\$\{this\.#focused \? (?:this\.i18n\.system\()?"Exit focused document view"\)? : (?:this\.i18n\.system\()?"Enter focused document view"\)?\}/);
   assert.match(navigation, /class="studio-mode-links"/);
   assert.match(navigation, /#revealActiveMode\(\)/);
-  assert.match(navigation, /a\[aria-current="page"\]/);
+  assert.match(navigation, /querySelector<HTMLElement>\("\.ui-popover-trigger"\)/, "the named current-view trigger, not hidden choices, stays in the navigation scrollport");
   assert.match(navigation, /scroller\.scrollLeft \+= activeBounds\.(?:left|right)/);
 });
 
@@ -191,10 +191,13 @@ test("keeps the account menu inside the dynamic viewport with accessible interna
   assert.match(design,/\.account-popover\s*\{[^}]*box-sizing:\s*border-box;[^}]*inline-size:\s*min\(22rem,[^;]*100dvw[^;]*safe-area-inset-left[^;]*safe-area-inset-right[^;]*\);[^}]*max-block-size:\s*calc\(100dvh\s*-\s*var\(--account-popover-top,\s*52px\)\s*-\s*max\([^;]*safe-area-inset-bottom[^;]*\)\);[^}]*overflow-x:\s*hidden;[^}]*overflow-y:\s*auto;[^}]*overscroll-behavior:\s*contain;[^}]*scrollbar-gutter:\s*auto;/s);
   assert.match(design,/\.account-popover bdi\s*\{\s*overflow-wrap:\s*anywhere/);
   assert.match(shell,/popovertarget="account-popover" aria-controls="account-popover" aria-expanded=\$\{this\.store\.ui\.accountOpen\}/);
-  assert.match(shell,/<div id="account-popover" class="account-popover" popover="auto" @toggle=\$\{this\.#accountToggle\}>/);
+  assert.match(shell,/<div id="account-popover" class="account-popover" popover="auto" @beforetoggle=\$\{this\.#accountBeforeToggle\} @toggle=\$\{this\.#accountToggle\}>/);
   assert.match(shell,/#accountToggle = \(event: ToggleEvent\) => \{[\s\S]*?event\.newState === "open"[\s\S]*?this\.store\.patchUi\(\{ accountOpen: open \}\)/);
   assert.match(shell,/if\(!this\.store\.ui\.accountOpen&&accountPopover\?\.matches\(":popover-open"\)\)accountPopover\.hidePopover\(\)/);
-  assert.match(shell,/const returnAccountFocus=this\.store\.ui\.accountOpen[\s\S]*?if\(returnAccountFocus\)queueMicrotask\(\(\)=>this\.querySelector<HTMLButtonElement>\("\.avatar"\)\?\.focus\(\)\)/);
+  assert.match(shell,/this\.#accountReturnFocus=Boolean\(this\.querySelector<HTMLElement>\("#account-popover"\)\?\.matches\(":popover-open"\)\)/);
+  assert.match(shell,/#accountBeforeToggle[\s\S]*?this\.#captureShellFocus\([\s\S]*?panel\.isConnected&&panel===this\.querySelector\("#account-popover"\)/);
+  assert.match(shell,/:this\.#accountReturnFocus\?this\.querySelector<HTMLButtonElement>\("\.avatar"\):null/);
+  assert.match(shell,/if\(target\)focus\.owner\.focus\.run\(target,\(\)=>\{target\.focus\(\);return true;\}\)/);
 });
 
 test("keeps document sharing reachable through the auto-dismissing account menu on narrow screens",async()=>{
@@ -237,7 +240,7 @@ test("keeps the fixed document composer task-focused while disclosing generation
   assert.match(workspace,/forma-generation-actions source="document"[\s\S]*?compact/);
   assert.match(actions,/generation-details-trigger/);
   assert.match(actions,/Image options, (?:\$\{ratio\}|\{ratio\}) frame, (?:\$\{statusLabel\}|\{statusLabel\})/);
-  assert.match(actions,/this\.compact&&this\.#detailsOpen\?html`<dialog class="modal generation-details-dialog"/);
+  assert.match(actions,/this\.compact&&this\.#detailsOpen&&\(!this\.#configurationCurrent\|\|this\.#configurationCurrent\(\)\)\?html`<dialog class="modal generation-details-dialog"/);
   assert.match(actions,/Output frame/);assert.match(actions,/Generation choices/);assert.match(actions,/Readiness and recovery/);assert.match(actions,/Compare prompt fans/);
   assert.match(styles,/\.modal-card\.generation-details-card\s*\{[^}]*grid-template-rows:\s*auto minmax\(0,1fr\) auto;[^}]*overflow:\s*hidden/);
   assert.match(styles,/\.generation-details-body\s*\{[^}]*min-height:\s*0;[^}]*overflow:\s*auto/);

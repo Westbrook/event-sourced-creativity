@@ -368,7 +368,7 @@ All forms share the same structure:
 - Inputs, textareas, and selects use a white surface, balanced 1px border, 6px radius, and visible accent focus ring.
 - Do not use placeholder text as the only label.
 - Related fields align to a responsive grid and become one column before compression harms readability.
-- Advanced and infrequent field groups should use `details` with a meaningful summary.
+- Advanced and infrequent field groups should use inline `<details>/<summary>` with a meaningful summary, never an overlay menu or floating control panel. Floating actions reuse `forma-ui-popover`, native `popovertarget`, and the existing current-owner APIs documented in `docs/components.md`.
 - Checkboxes and radios keep their native semantics and large clickable labels.
 
 ### Cards and lists

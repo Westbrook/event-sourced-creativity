@@ -1,10 +1,10 @@
-import { createOfficeArchive } from "./office-documents.ts";
-import { inspectOutputAsset, MAX_OUTPUT_ASSET_BYTES, outputAssetSha256, validOutputAssetName, type OutputAssetFacts, type OutputAssetKind } from "./output-asset-inspection.ts";
+import { createOutputDeliveryZip, streamOutputDeliveryZip, type OutputDeliveryZipEntry } from "./output-delivery-zip.ts";
+import { inspectOutputAsset, MAX_OUTPUT_ASSET_BYTES, MAX_OUTPUT_MODEL3D_ASSET_BYTES, outputAssetSha256, validOutputAssetName, type OutputAssetFacts, type OutputAssetKind } from "./output-asset-inspection.ts";
 import { evaluateOutputDeliveryScope, evaluateOutputDeliveryHistory, type OutputDeliveryScopeInput, type OutputDeliveryScopeManifest, type OutputDeliveryScopeSummary, type OutputDeliveryMissingWork, type OutputDeliveryScopeHistoryInput, type OutputDeliveryScopeHistoryManifest } from "./output-delivery-manifest.ts";
 export { outputDeliveryScopeForPlan } from "./output-delivery-manifest.ts";
 export type { OutputDeliveryScopeInput, OutputDeliveryStatus, OutputDeliveryCompletionStatus, OutputDeliveryScopeAmendmentInput } from "./output-delivery-manifest.ts";
 
-/** These limits cover the complete in-memory ZIP, not a metadata-only preview. */
+/** Normal packages and the buffered API remain bounded to this complete ZIP size. */
 export const MAX_OUTPUT_DELIVERY_PAYLOAD_BYTES = 32 * 1024 * 1024;
 export const MAX_OUTPUT_DELIVERY_FILES = 64;
 /** Runtime default leaves room for current authorization and metadata binding calls. */
@@ -13,7 +13,11 @@ export const MAX_OUTPUT_DELIVERY_TARGETS = 1024;
 export const MAX_OUTPUT_DELIVERY_MANIFEST_BYTES = 4 * 1024 * 1024;
 const ZIP_OVERHEAD_RESERVE_BYTES = 128 * 1024;
 const PART_FILE_PAYLOAD_BYTES = MAX_OUTPUT_DELIVERY_PAYLOAD_BYTES - MAX_OUTPUT_DELIVERY_MANIFEST_BYTES - ZIP_OVERHEAD_RESERVE_BYTES;
+/** Only a streamed singleton 3D model can use this larger complete ZIP budget. */
+export const MAX_OUTPUT_DELIVERY_MODEL3D_PAYLOAD_BYTES = MAX_OUTPUT_MODEL3D_ASSET_BYTES + MAX_OUTPUT_DELIVERY_MANIFEST_BYTES + ZIP_OVERHEAD_RESERVE_BYTES;
 export type OutputDeliveryFile = { id: string; name: string; bytes: Uint8Array; expectedSha256: string };
+/** Accept inspected kinds or persisted Output kinds; only model3d changes the cap. */
+export type OutputDeliveryFileMetadata = { id: string; byteLength: number; kind?: OutputAssetKind | "document" | "slides" };
 export type OutputDeliveryPart = { index: number; fileIds: string[]; payloadByteLength: number };
 export type OutputDeliveryManifestInput = OutputDeliveryScopeHistoryInput & {
   schemaVersion: 1;
@@ -101,7 +105,8 @@ function packagePartFor(input: OutputDeliveryManifestInput["packagePart"], curre
   requireValue(raw && Array.isArray(raw.parts) && raw.parts.length > 0 && raw.parts.length <= MAX_OUTPUT_DELIVERY_TARGETS && Number.isInteger(raw.index) && raw.index >= 1 && raw.index <= raw.parts.length, "invalid_output_delivery_part");
   const seen = new Set<string>(), exactIds = new Set<string>();
   const parts = raw.parts.map((part, index) => {
-    requireValue(part && part.index === index + 1 && Array.isArray(part.fileIds) && part.fileIds.length > 0 && part.fileIds.length <= MAX_OUTPUT_DELIVERY_FILES && Number.isSafeInteger(part.payloadByteLength) && part.payloadByteLength > 0 && part.payloadByteLength <= MAX_OUTPUT_DELIVERY_PAYLOAD_BYTES, "invalid_output_delivery_part");
+    requireValue(part && part.index === index + 1 && Array.isArray(part.fileIds) && part.fileIds.length > 0 && part.fileIds.length <= MAX_OUTPUT_DELIVERY_FILES && Number.isSafeInteger(part.payloadByteLength) && part.payloadByteLength > 0
+      && part.payloadByteLength <= (part.fileIds.length === 1 ? MAX_OUTPUT_MODEL3D_ASSET_BYTES : MAX_OUTPUT_DELIVERY_PAYLOAD_BYTES), "invalid_output_delivery_part");
     const fileIds = part.fileIds.map(value => { requireValue(fileId(value) && !seen.has(value.toLowerCase()), "duplicate_output_delivery_part_file"); seen.add(value.toLowerCase()); exactIds.add(value); return value; });
     return { index: index + 1, fileIds, payloadByteLength: part.payloadByteLength };
   });
@@ -113,7 +118,7 @@ function packagePartFor(input: OutputDeliveryManifestInput["packagePart"], curre
 }
 
 /** Deterministic metadata-only partitioning; it never reads or fetches asset bytes. */
-export function planOutputDeliveryParts(files: Array<{ id: string; byteLength: number }>, manifest: Omit<OutputDeliveryManifestInput, "packagePart">, options: { maxFilesPerPart?: number } = {}): OutputDeliveryPart[] {
+export function planOutputDeliveryParts(files: OutputDeliveryFileMetadata[], manifest: Omit<OutputDeliveryManifestInput, "packagePart">, options: { maxFilesPerPart?: number } = {}): OutputDeliveryPart[] {
   requireValue(options && typeof options === "object" && !Array.isArray(options), "invalid_output_delivery_part_file_limit");
   const maxFilesPerPart = options.maxFilesPerPart === undefined ? MAX_OUTPUT_DELIVERY_DEFAULT_PART_FILES : options.maxFilesPerPart;
   requireValue(Number.isInteger(maxFilesPerPart) && maxFilesPerPart >= 1 && maxFilesPerPart <= MAX_OUTPUT_DELIVERY_FILES, "invalid_output_delivery_part_file_limit");
@@ -122,15 +127,21 @@ export function planOutputDeliveryParts(files: Array<{ id: string; byteLength: n
   const history = evaluateOutputDeliveryHistory(manifest, coverage.deliveryStatus, requested.createdAt, requested.planRevision);
   const seen = new Set<string>();
   const sorted = files.map(file => {
-    requireValue(file && fileId(file.id) && !seen.has(file.id.toLowerCase()) && Number.isSafeInteger(file.byteLength) && file.byteLength > 0 && file.byteLength <= MAX_OUTPUT_ASSET_BYTES, "invalid_output_delivery_package_file");
+    requireValue(file && fileId(file.id) && !seen.has(file.id.toLowerCase()) && Number.isSafeInteger(file.byteLength) && file.byteLength > 0
+      && file.byteLength <= (file.kind === "model3d" ? MAX_OUTPUT_MODEL3D_ASSET_BYTES : MAX_OUTPUT_ASSET_BYTES), "invalid_output_delivery_package_file");
     seen.add(file.id.toLowerCase()); return { id: file.id, byteLength: file.byteLength };
   }).sort((first, second) => first.id < second.id ? -1 : first.id > second.id ? 1 : 0);
   const expected = new Set(requested.targets.map(target => target.fileId));
   requireValue(expected.size === sorted.length && sorted.every(file => expected.has(file.id)), "output_delivery_file_mapping_mismatch");
   const parts: OutputDeliveryPart[] = [];
   for (const file of sorted) {
+    if (file.byteLength > MAX_OUTPUT_ASSET_BYTES) {
+      parts.push({ index: parts.length + 1, fileIds: [file.id], payloadByteLength: file.byteLength });
+      continue;
+    }
     let current = parts.at(-1);
-    if (!current || current.fileIds.length >= maxFilesPerPart || current.payloadByteLength + file.byteLength > PART_FILE_PAYLOAD_BYTES) { current = { index: parts.length + 1, fileIds: [], payloadByteLength: 0 }; parts.push(current); }
+    const previousLargeModel = current?.fileIds.length === 1 && current.payloadByteLength > MAX_OUTPUT_ASSET_BYTES;
+    if (!current || previousLargeModel || current.fileIds.length >= maxFilesPerPart || current.payloadByteLength + file.byteLength > PART_FILE_PAYLOAD_BYTES) { current = { index: parts.length + 1, fileIds: [], payloadByteLength: 0 }; parts.push(current); }
     current.fileIds.push(file.id); current.payloadByteLength += file.byteLength;
   }
   // The known inventory must fit even before file facts are added. The actual
@@ -147,43 +158,47 @@ export function planOutputDeliveryParts(files: Array<{ id: string; byteLength: n
   return parts;
 }
 
-/**
- * Package original, rehashed bytes with one canonical inventory and no aliases.
- *
- * The caller MUST verify current authorization, rights and exact acceptance IDs
- * before calling. A supplied acceptanceId is not itself an authorization check.
- * Scope consistency is checked against all pinned targets, but only the server
- * can prove the inventory is the whole authoritative plan or grant acceptance.
- * No filenames or URLs are used as filesystem paths; no network is contacted.
- */
-export async function createOutputDeliveryArchive(filesInput: OutputDeliveryFile[], manifestInput: OutputDeliveryManifestInput): Promise<{ bytes: Uint8Array; mimeType: "application/zip"; sha256: string; manifest: OutputDeliveryManifest }> {
+type PreparedOutputDeliveryArchive = { entries: OutputDeliveryZipEntry[]; manifest: OutputDeliveryManifest; byteLength: number };
+function hasGlbSignature(bytes: Uint8Array): boolean {
+  return bytes.byteLength >= 4 && bytes[0] === 0x67 && bytes[1] === 0x6c && bytes[2] === 0x54 && bytes[3] === 0x46;
+}
+async function prepareOutputDeliveryArchive(filesInput: OutputDeliveryFile[], manifestInput: OutputDeliveryManifestInput, options: { snapshot: boolean; allowLargeModel: boolean }): Promise<PreparedOutputDeliveryArchive> {
   requireValue(Array.isArray(filesInput) && filesInput.length > 0 && filesInput.length <= MAX_OUTPUT_DELIVERY_FILES, "invalid_output_delivery_file_count");
   const requested = snapshotManifestInput(manifestInput);
   const coverage = evaluateOutputDeliveryScope(manifestInput.scope, requested.targets.map(target => target.targetId));
   const history = evaluateOutputDeliveryHistory(manifestInput, coverage.deliveryStatus, requested.createdAt, requested.planRevision);
-  let totalBytes = 0;
+  let totalBytes = 0, largeModel = false;
   const canonicalIds = new Set<string>();
   // Validate every bound before allocating snapshots or doing asynchronous work.
   for (const file of filesInput) {
     requireValue(file && fileId(file.id) && !canonicalIds.has(file.id.toLowerCase()), "unsafe_or_duplicate_output_file_id");
     requireValue(validOutputAssetName(file.name), "unsafe_output_asset_name");
-    requireValue(file.bytes instanceof Uint8Array && file.bytes.byteLength > 0 && file.bytes.byteLength <= MAX_OUTPUT_ASSET_BYTES, "invalid_output_delivery_file_size");
+    requireValue(file.bytes instanceof Uint8Array && file.bytes.byteLength > 0
+      && file.bytes.byteLength <= (hasGlbSignature(file.bytes) ? MAX_OUTPUT_MODEL3D_ASSET_BYTES : MAX_OUTPUT_ASSET_BYTES), "invalid_output_delivery_file_size");
+    if (!options.snapshot) requireValue(file.bytes.buffer instanceof ArrayBuffer, "output_delivery_owned_bytes_required");
     requireValue(typeof file.expectedSha256 === "string" && /^[a-f0-9]{64}$/u.test(file.expectedSha256), "invalid_output_delivery_expected_hash");
     canonicalIds.add(file.id.toLowerCase()); totalBytes += file.bytes.byteLength;
+    largeModel ||= file.bytes.byteLength > MAX_OUTPUT_ASSET_BYTES;
   }
-  requireValue(totalBytes <= MAX_OUTPUT_DELIVERY_PAYLOAD_BYTES, "output_delivery_archive_too_large");
+  // The exception is bounded to one model. It never increases a mixed-media or
+  // multi-model package's memory budget, even when supplied metadata claims to.
+  requireValue(!largeModel || filesInput.length === 1, "output_delivery_large_model_requires_singleton");
+  const archiveLimit = largeModel && options.allowLargeModel ? MAX_OUTPUT_DELIVERY_MODEL3D_PAYLOAD_BYTES : MAX_OUTPUT_DELIVERY_PAYLOAD_BYTES;
+  requireValue(totalBytes <= archiveLimit, "output_delivery_archive_too_large");
   const packagePart = packagePartFor(manifestInput.packagePart, filesInput.map(file => ({ id: file.id, byteLength: file.bytes.byteLength })), requested.targets);
   requireValue(filesInput.every(file => requested.targets.some(target => target.fileId === file.id)), "output_delivery_file_mapping_mismatch");
-  const snapshots = filesInput.map(file => ({ id: file.id, name: file.name, expectedSha256: file.expectedSha256, bytes: new Uint8Array(file.bytes) }));
+  const snapshots = filesInput.map(file => ({ id: file.id, name: file.name, expectedSha256: file.expectedSha256, bytes: options.snapshot ? new Uint8Array(file.bytes) : file.bytes }));
   const manifest: OutputDeliveryManifest = {
     format: "forma-output-delivery", ...requested,
     deliveryStatusScope: "entire_delivery_package", ...coverage, ...history, packagePart,
     validationScope: "Exact bytes, hashes and listed structural checks apply only to files in this ZIP. Completion describes the whole pinned current delivery package, not receipt of one part or completion of withdrawn work. The authoritative server separately verifies the full plan inventory and ancestry, access, rights and target acceptance. Playback, layout and useful grounded content require review.",
     files: [],
   };
-  const entries: Array<{ name: string; content: Uint8Array }> = [], hashes = new Set<string>();
+  const entries: OutputDeliveryZipEntry[] = [], hashes = new Set<string>();
   for (const file of snapshots) {
-    const inspection = await inspectOutputAsset(file.bytes, file.name);
+    // These are already private snapshots, or explicitly owned server bytes.
+    // Inspection must not make another model-sized copy while hashing them.
+    const inspection = await inspectOutputAsset(file.bytes, file.name, { snapshot: false });
     requireValue(inspection.sha256 === file.expectedSha256, "output_delivery_hash_mismatch");
     requireValue(inspection.status === "inspected" && inspection.kind && inspection.mimeType && inspection.extension, "output_delivery_file_inspection_failed");
     requireValue(!hashes.has(inspection.sha256), "duplicate_output_delivery_file_bytes"); hashes.add(inspection.sha256);
@@ -195,11 +210,46 @@ export async function createOutputDeliveryArchive(filesInput: OutputDeliveryFile
   requireValue(json.byteLength + csv.byteLength <= MAX_OUTPUT_DELIVERY_MANIFEST_BYTES, "output_delivery_manifest_too_large");
   entries.push({ name: "manifest.json", content: json });
   entries.push({ name: "manifest.csv", content: csv });
-  // ZIP STORE overhead is exact for this existing writer: no compression,
+  // ZIP STORE overhead is exact for this writer: no compression,
   // descriptors, path comments, ZIP64 or extra fields are introduced.
   const archiveSize = entries.reduce((size, entry) => size + entry.content.byteLength + 76 + 2 * encoder.encode(entry.name).length, 22);
-  requireValue(archiveSize <= MAX_OUTPUT_DELIVERY_PAYLOAD_BYTES, "output_delivery_archive_too_large");
-  const bytes = createOfficeArchive(entries, { media: true });
-  requireValue(bytes.byteLength === archiveSize, "output_delivery_archive_size_mismatch");
-  return { bytes, mimeType: "application/zip", sha256: await outputAssetSha256(bytes), manifest };
+  requireValue(archiveSize <= archiveLimit, "output_delivery_archive_too_large");
+  return { entries, manifest, byteLength: archiveSize };
+}
+
+/**
+ * Package original, rehashed bytes with one canonical inventory and no aliases.
+ *
+ * The caller MUST verify current authorization, rights and exact acceptance IDs
+ * before calling. A supplied acceptanceId is not itself an authorization check.
+ * Scope consistency is checked against all pinned targets, but only the server
+ * can prove the inventory is the whole authoritative plan or grant acceptance.
+ * No filenames or URLs are used as filesystem paths; no network is contacted.
+ * The buffered API retains the complete 32 MiB ZIP bound. Larger models use the
+ * streaming API to avoid another complete model-sized allocation and ZIP hash.
+ */
+export async function createOutputDeliveryArchive(filesInput: OutputDeliveryFile[], manifestInput: OutputDeliveryManifestInput): Promise<{ bytes: Uint8Array; mimeType: "application/zip"; sha256: string; manifest: OutputDeliveryManifest }> {
+  const prepared = await prepareOutputDeliveryArchive(filesInput, manifestInput, { snapshot: true, allowLargeModel: false });
+  const bytes = createOutputDeliveryZip(prepared.entries);
+  requireValue(bytes.byteLength === prepared.byteLength, "output_delivery_archive_size_mismatch");
+  return { bytes, mimeType: "application/zip", sha256: await outputAssetSha256(bytes), manifest: prepared.manifest };
+}
+
+/**
+ * Stream exact inspected bytes, including singleton GLBs up to 64 MiB. Per-file
+ * SHA-256 values remain in the manifests; a whole-ZIP SHA is deliberately absent.
+ * The same authorization and acceptance requirements as the buffered API apply.
+ *
+ * Snapshotting is the safe default. `snapshot: false` is an internal server path:
+ * the caller promises exclusive ownership of every supplied ArrayBuffer and must
+ * not mutate any view of it until the returned stream completes or is canceled.
+ * Use it for freshly loaded, privately held object-storage bytes to avoid another
+ * 64 MiB model copy. It must never be selected from an untrusted request option.
+ */
+export async function createOutputDeliveryArchiveStream(filesInput: OutputDeliveryFile[], manifestInput: OutputDeliveryManifestInput, options: { snapshot?: boolean } = {}): Promise<{ stream: ReadableStream<Uint8Array>; mimeType: "application/zip"; byteLength: number; manifest: OutputDeliveryManifest }> {
+  requireValue(options && typeof options === "object" && !Array.isArray(options) && (options.snapshot === undefined || typeof options.snapshot === "boolean"), "invalid_output_delivery_stream_options");
+  const prepared = await prepareOutputDeliveryArchive(filesInput, manifestInput, { snapshot: options.snapshot !== false, allowLargeModel: true });
+  const { stream, byteLength } = streamOutputDeliveryZip(prepared.entries);
+  requireValue(byteLength === prepared.byteLength, "output_delivery_archive_size_mismatch");
+  return { stream, byteLength, mimeType: "application/zip", manifest: prepared.manifest };
 }

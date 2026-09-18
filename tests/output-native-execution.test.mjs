@@ -9,7 +9,7 @@ const [
  {handleEvents}, {handleDocumentJobs}, {handleWorkspaces}, {outputImageBudget},
  {reconcileOutputNativeStorage}, {handleOutputRequirements},
  {outputDocumentExecutionBridge,outputExactImageRender},
- {appendAuditEvent,streamHead,readWorkspaceEvents}, {parseOutputRequirement}, {inspectOutputAsset}, {releaseUndispatchedOutputReservations},
+ {appendAuditEvent,streamHead,readWorkspaceEvents}, {parseOutputRequirement}, {inspectOutputAsset}, {releaseUndispatchedOutputReservations,loadOutputJobBinding,createOutputEventExecution},
 ]=await Promise.all([
  import('../worker/pilot-policy.ts'),import('../worker/events-api.ts'),import('../worker/document-jobs-api.ts'),
  import('../worker/workspaces-api.ts'),import('../worker/output-image-budget.ts'),import('../worker/output-private-execution.ts'),
@@ -17,6 +17,7 @@ const [
  import('../src/model/output-requirements.ts'),import('../src/model/output-asset-inspection.ts'),import('../worker/output-execution-control.ts'),
 ]);
 
+const {estimateOpenAITextCallMaximumMicrousd}=await import('../worker/openai-text-cost.ts');
 const BASE='/api/output-requirements';
 const init=body=>({method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)});
 const stream='creative:dev-local-creative';
@@ -140,6 +141,8 @@ test('two required image targets preserve successful sibling, optional off, unce
  assert.ok(auth.terms.targets.every(target=>JSON.stringify(target.settings.calls.map(call=>call.stage))===JSON.stringify(['planning:initial','image:initial'])),'the authorized count covers generation stages only');
  await f.ok(await f.startAndDrive({action:'run',grantId:auth.grantId}));
  assert.equal(plannerCalls,2,JSON.stringify(f.sqlite.prepare("SELECT job_id,status,error_message,result_json FROM document_jobs").all()));assert.equal(imageCalls,2);
+ const imageUsage=(await readWorkspaceEvents(f.env,stream)).find(event=>event.type==='GenerationUsageRecorded'&&event.payload.operation==='image-generation').payload;
+ assert.equal(imageUsage.pricing_version,'openai-2026-07-30');assert.equal(imageUsage.provider_call_labels,undefined,'slideshow label changes do not relabel image pricing');
  const jobs=f.sqlite.prepare('SELECT * FROM document_jobs ORDER BY requested_at,job_id').all();assert.deepEqual(jobs.map(job=>job.status),['completed','failed'],JSON.stringify(jobs.map(job=>({status:job.status,error:job.error_message,result:JSON.parse(job.result_json)}))));
  const slots=jobs.map(job=>f.sqlite.prepare('SELECT * FROM output_operation_slots WHERE job_id=?').get(job.job_id));assert.equal(slots[0].status,'succeeded');assert.equal(slots[1].status,'uncertain');
  const held=f.sqlite.prepare('SELECT * FROM cost_budget_reservations WHERE reservation_id=?').get(slots[1].cost_reservation_id);assert.equal(held.status,'executing');assert.equal(held.reserved_microusd,slots[1].maximum_microusd);
@@ -485,4 +488,95 @@ test('a known provider receipt survives a failed ledger settlement and ordinary 
  await f.startAndDrive({action:'run',grantId:auth.grantId});
  assert.deepEqual(f.sqlite.prepare('SELECT used_microusd,reserved_microusd FROM cost_budget_counters ORDER BY scope,scope_id').all(),counters);assert.equal(calls,1);
  assert.equal(f.sqlite.prepare('SELECT COUNT(*) AS n FROM document_jobs').get().n,1);
+});
+
+
+test('native slideshow quotes bind each workflow model, effort, cache policy, output cap and current price independently',async context=>{
+ let network=0;context.mock.method(globalThis,'fetch',async()=>{network++;throw new Error('Quotes cannot contact providers');});
+ const facts=snapshot().facts.filter(fact=>String(fact.type).toLowerCase()!=='output');
+ facts[0].properties.text+=' Source details stay authorized.'.repeat(1_600);
+ const f=await fixture(facts);context.after(()=>f.sqlite.close());const plan=await saveDeck(f);
+ const offer=async()=>{const pre=await f.ok(await f.send({action:'preflight',planRevisionId:plan.planId,targetIds:[plan.targetId]}));return pre.command.preflight.targets[0];};
+ const defaults=await offer();assert.equal(defaults.available,true,JSON.stringify(defaults));
+ assert.deepEqual(defaults.settings.calls.map(call=>call.stage),['planning:0:initial','planning:0:repair']);
+ assert.ok(defaults.settings.calls.every(call=>call.presentationRoute.model==='gpt-5.6-terra'&&call.presentationRoute.reasoningEffort==='low'));
+ Object.assign(f.env,{OPENAI_MODEL:'unpriced-non-slideshow-model',OPENAI_SLIDES_COMPOSITION_MODEL:'gpt-5.6-sol',OPENAI_SLIDES_COMPOSITION_REASONING_EFFORT:'medium',OPENAI_SLIDES_REPAIR_MODEL:'gpt-5.6-terra',OPENAI_SLIDES_REPAIR_REASONING_EFFORT:'high'});
+ const offered=await offer();assert.equal(offered.available,true,JSON.stringify(offered));
+ const [composition,repair]=offered.settings.calls;
+ assert.equal(offered.model,'gpt-5.6-sol');
+ assert.deepEqual([composition.presentationRoute.workflow,repair.presentationRoute.workflow],['slides.composition','slides.editorial_repair']);
+ assert.deepEqual([composition.presentationRoute.reasoningEffort,repair.presentationRoute.reasoningEffort],['medium','high']);
+ for(const call of offered.settings.calls){
+  assert.equal(call.presentationRoute.cachePolicy,'disabled-explicit');assert.equal(call.presentationRoute.serviceTier,'default');
+  assert.equal(call.presentationRoute.pricingVersion,'openai-text-2026-09-02');
+  assert.equal(call.maximumOutputTokens,13_500,'the existing flexible count cap does not grow with model effort');
+  assert.equal(call.maximumMicrousd,Math.max(500_000,estimateOpenAITextCallMaximumMicrousd(call.model,call.maximumInputTokens,call.maximumOutputTokens)));
+ }
+ assert.ok(composition.maximumMicrousd>repair.maximumMicrousd);
+ assert.equal(offered.maximumMicrousd,composition.maximumMicrousd+repair.maximumMicrousd);
+ f.env.OPENAI_SLIDES_REPAIR_REASONING_EFFORT='ultra';const invalid=await offer();assert.equal(invalid.available,false);assert.equal(invalid.reasonCode,'presentation_model_configuration_invalid');
+ assert.equal(network,0);assert.equal(f.sqlite.prepare('SELECT COUNT(*) AS n FROM document_jobs').get().n,0);
+});
+
+test('effort-only slideshow route drift rejects the frozen authorization before admitting work',async context=>{
+ let calls=0;context.mock.method(globalThis,'fetch',async()=>{calls++;throw new Error('Changed quote must not transmit');});
+ const f=await fixture();context.after(()=>f.sqlite.close());const plan=await saveDeck(f);
+ const pre=await f.ok(await f.send({action:'preflight',planRevisionId:plan.planId,targetIds:[plan.targetId]}));const terms=pre.command.preflight;
+ f.env.OPENAI_SLIDES_REPAIR_REASONING_EFFORT='high';
+ const denied=await f.send({action:'authorize',preflightId:terms.id,termsDigest:terms.termsDigest,maximumMicrousd:terms.maximumMicrousd,explicitAuthorization:true});
+ assert.equal(denied.status,409,JSON.stringify(await denied.clone().json()));
+ for(const table of['document_jobs','output_execution_grants','output_operation_slots','budget_reservations','cost_budget_reservations'])assert.equal(f.sqlite.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get().n,0,table);
+ assert.equal(calls,0);
+});
+
+test('native slideshow dispatch refuses metadata or cap drift before consuming a provider-call identity',async context=>{
+ let calls=0;context.mock.method(globalThis,'fetch',async()=>{calls++;throw new Error('Unapproved settings must not transmit');});
+ const f=await fixture();context.after(()=>f.sqlite.close());const plan=await saveDeck(f),auth=await authorize(f,plan.planId,[plan.targetId]);
+ await f.ok(await f.send({action:'run',grantId:auth.grantId}));
+ const lease=new Date(Date.now()+120_000).toISOString();
+ f.sqlite.prepare("UPDATE document_jobs SET status='running',attempt_count=1,lease_expires_at=?").run(lease);
+ const job=f.sqlite.prepare('SELECT * FROM document_jobs').get(),account=await requireUser(new Request('http://localhost/api/session'),f.env);
+ const binding=await loadOutputJobBinding(f.env,account.user,job);assert.ok(binding);
+ const execution=await createOutputEventExecution(f.env,account.user,job,binding);
+ const quoted=auth.terms.targets[0].settings.calls[0];
+ const valid={model:quoted.model,maximumInputTokens:100,maximumOutputTokens:quoted.maximumOutputTokens,clientRequestId:'unconsumed-route-test',logicalCallKey:quoted.stage,requestDigest:'route-test-digest',presentationRoute:quoted.presentationRoute};
+ for(const change of [
+  {presentationRoute:undefined},{maximumInputTokens:quoted.maximumInputTokens+1},{maximumOutputTokens:quoted.maximumOutputTokens+1},{maximumOutputTokens:quoted.maximumOutputTokens-1},
+  ...[{reasoningEffort:'high'},{cachePolicy:'implicit'},{serviceTier:'fast'},{pricingVersion:'old-price'},{routingVersion:'old-route'},{workflow:'slides.editorial_repair'}].map(patch=>({presentationRoute:{...quoted.presentationRoute,...patch}})),
+ ])await assert.rejects(execution.beforeProviderAttempt({...valid,...change}),{code:'output_provider_route_changed'});
+ await assert.rejects(execution.beforeProviderAttempt({...valid,logicalCallKey:'planning:0:editorial-initial'}),{code:'output_provider_stage_not_authorized'});
+ assert.equal(f.sqlite.prepare('SELECT COUNT(*) AS n FROM output_provider_calls').get().n,0);
+ assert.equal(calls,0);
+});
+
+
+test('mixed slideshow success and failure label each charged model and current tariff without repricing',async context=>{
+ for(const fail of[false,true]){
+  const f=await fixture();let calls=0;const requests=[];
+  try{
+   Object.assign(f.env,{OPENAI_SLIDES_COMPOSITION_REASONING_EFFORT:'medium',OPENAI_SLIDES_REPAIR_MODEL:'gpt-5.6-sol',OPENAI_SLIDES_REPAIR_REASONING_EFFORT:'high'});
+   context.mock.method(globalThis,'fetch',async(url,init)=>{
+    assert.equal(String(url),'https://api.openai.com/v1/responses');const request=JSON.parse(init.body);requests.push(request);calls++;assert.ok(calls<=2);
+    const input=calls===1?120:150,output=calls===1?80:95;
+    return Response.json({id:`labels-${fail}-${calls}`,model:request.model,service_tier:'default',status:'completed',output_text:JSON.stringify(calls===1||fail?{...outputFor(),items:[]}:outputFor()),usage:{input_tokens:input,output_tokens:output,total_tokens:input+output,input_tokens_details:{cached_tokens:0,cache_write_tokens:0},output_tokens_details:{reasoning_tokens:20}}});
+   });
+   const plan=await saveDeck(f),auth=await authorize(f,plan.planId,[plan.targetId]);await f.ok(await f.startAndDrive({action:'run',grantId:auth.grantId}));assert.equal(calls,2);
+   const job=f.sqlite.prepare('SELECT * FROM document_jobs').get();assert.equal(job.status,fail?'failed':'completed',job.error_message);
+   const events=await readWorkspaceEvents(f.env,stream),usage=events.find(event=>event.type==='GenerationUsageRecorded'&&event.payload.document_id===f.documentId&&event.payload.operation===`document-render:slides${fail?':failed-plan':''}`).payload;
+   assert.equal(usage.cost_microusd,3_700);assert.equal(usage.planner_cost_microusd,3_700);
+   assert.equal(usage.pricing_version,'openai-text-2026-09-02');assert.deepEqual(usage.pricing_versions,['openai-text-2026-09-02']);
+   assert.deepEqual(usage.model_ids,['gpt-5.6-terra','gpt-5.6-sol']);assert.deepEqual(usage.requested_reasoning_efforts,['medium','high']);
+   assert.equal(usage.cost_precision,'frozen-per-call-published-tariff');assert.equal(usage.cost_aggregation,'sum-of-frozen-per-call-costs');
+   assert.deepEqual(usage.provider_call_labels.map(call=>[call.requested_model,call.effective_model,call.requested_reasoning_effort]),[['gpt-5.6-terra','gpt-5.6-terra','medium'],['gpt-5.6-sol','gpt-5.6-sol','high']]);
+   const detail=await handleDocumentJobs(new Request(`http://localhost/api/document-jobs/${job.job_id}`),f.env,job.job_id);assert.equal(detail.status,200);
+   const visible=(await detail.json()).job.result.generationReceipt;assert.equal(visible.model,null);assert.deepEqual(visible.model_ids,usage.model_ids);assert.deepEqual(visible.requested_reasoning_efforts,['medium','high']);
+   if(!fail){
+    const completed=events.find(event=>event.type==='DocumentRenderCompleted'&&event.payload.document_id===f.documentId).payload;
+    assert.equal(completed.model_id,'gpt-5.6-sol','the final complete artifact still identifies its own response model');
+    assert.equal(completed.planner_model_id,null);assert.deepEqual(completed.planner_model_ids,usage.model_ids);
+    const privateReceipt=JSON.parse(f.sqlite.prepare('SELECT content FROM private_content WHERE content_id=?').get(completed.input_ref).content);
+    assert.equal(privateReceipt.planner.model,null);assert.deepEqual(privateReceipt.planner.model_ids,usage.model_ids);
+   }
+  }finally{context.mock.restoreAll();f.sqlite.close();}
+ }
 });

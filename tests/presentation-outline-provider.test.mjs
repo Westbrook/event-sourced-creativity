@@ -4,7 +4,19 @@ import test from "node:test";
 import { buildPresentationSourceContract } from "../src/model/presentation-source.ts";
 import { presentationAudienceItem } from "../src/model/presentation-delivery.ts";
 import { assessStoredPresentationCandidate, generateDocumentArtifact, PRESENTATION_ADAPTER_VERSION } from "../worker/openai-adapter.ts";
-import { priceTextUsageBreakdownMicrousd } from "../worker/replay-cost.ts";
+import { PAID_PROVIDER_FINANCIAL_FIELDS } from "../src/model/provider-submission.ts";
+
+// Paid response and validation completion are snapshots of one immutable charge.
+function completedProviderCalls(submissions) {
+  const calls = new Map();
+  const financial = (receipt) => Object.fromEntries(PAID_PROVIDER_FINANCIAL_FIELDS.filter((key) => Object.hasOwn(receipt, key)).map((key) => [key, receipt[key]]));
+  for (const receipt of submissions.filter((entry) => entry.status === "completed")) {
+    const previous = calls.get(receipt.clientRequestId);
+    if (previous) assert.deepEqual(financial(receipt), financial(previous), "validation progress cannot rewrite an already observed charge");
+    calls.set(receipt.clientRequestId, receipt);
+  }
+  return [...calls.values()];
+}
 
 // Newly authored deterministic fixtures, never retained provider drafts or a live Document.
 const research = [
@@ -287,7 +299,7 @@ for (const defect of [
     await assert.rejects(async () => {
       accepted = await generate(outlineSnapshot(), {
         onProviderAttempt: (receipt) => attempts.push(receipt),
-        onProviderSubmission: (receipt) => submissions.push(receipt),
+        onProviderSubmission: (receipt) => submissions.push(structuredClone(receipt)),
       });
     }, (error) => {
       assert.equal(error.detail?.code, "source_fidelity_validation_failed");
@@ -295,16 +307,18 @@ for (const defect of [
       assert.equal(error.providerCallCount, 2);
       assert.deepEqual(error.providerResponseIds, ["outline-response-1", "outline-response-2"]);
       assert.deepEqual(error.providerUsage, { inputTokens: 240, outputTokens: 160, totalTokens: 400 });
-      const actualCost = priceTextUsageBreakdownMicrousd(error.providerModel, error.providerUsage).totalMicrousd;
-      assert.equal(actualCost, 2400, "failure accounting preserves observed provider usage for route settlement");
-      assert.equal(submissions.filter((receipt) => receipt.status === "completed").reduce((total, receipt) => total + receipt.costMicrousd, 0), actualCost);
+      const completed = completedProviderCalls(submissions);
+      assert.deepEqual(completed.map((receipt) => receipt.providerRequestId), error.providerResponseIds);
+      const actualCost = completed.reduce((total, receipt) => total + receipt.costMicrousd, 0);
+      assert.equal(actualCost, 2400, "failure accounting preserves each immutable paid call once for route settlement");
       assert.doesNotMatch(JSON.stringify(error.detail), /PRIVATE_OUTLINE_/u);
       return true;
     });
     assert.equal(accepted, undefined, "rejected responses never become accepted artifacts");
     assert.equal(requests.length, 2);
     assert.deepEqual(attempts.map((receipt) => receipt.usage.totalTokens), [200, 400]);
-    assert.deepEqual(submissions.map((receipt) => receipt.status), ["pending", "completed", "pending", "completed"]);
+    assert.deepEqual(submissions.map((receipt) => receipt.status), ["pending", "completed", "completed", "pending", "completed", "completed"]);
+    assert.deepEqual(submissions.filter((receipt) => receipt.status === "completed").map((receipt) => receipt.validationStatus), ["pending", "invalid", "pending", "invalid"]);
   });
 }
 

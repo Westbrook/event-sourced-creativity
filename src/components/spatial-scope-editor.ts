@@ -53,6 +53,11 @@ export class SpatialScopeEditor extends FormaElement {
   static properties = { block: { attribute: false } };
   block!: CreativeBlock;
   #open = false;
+  #suspended = false;
+
+  /** Keep uncommitted scope geometry while the containing controls are detached. */
+  suspendControls() { this.#suspended = this.#open || this.#suspended; this.#open = false; this.querySelector<HTMLDialogElement>(".spatial-scope-dialog")?.close(); this.requestUpdate(); }
+  override disconnectedCallback() { this.suspendControls(); super.disconnectedCallback(); }
   #draft: SpatialScope = { ...WHOLE_DOCUMENT_SCOPE };
   #pathDraft = "";
   #directTool: "rectangle" | "freeform" = "rectangle";
@@ -65,6 +70,7 @@ export class SpatialScopeEditor extends FormaElement {
 
   #openEditor() {
     if (this.block.locked) return;
+    if (this.#suspended) { this.#suspended = false; this.#open = true; this.requestUpdate(); return; }
     this.#draft = normalizeSpatialScope(this.block.properties.spatial_scope);
     this.#pathDraft = formatSpatialPath(this.#draft.path);
     this.#directTool = this.#draft.kind === "path" ? "freeform" : "rectangle";
@@ -73,6 +79,7 @@ export class SpatialScopeEditor extends FormaElement {
   }
 
   #close() {
+    this.#suspended = false;
     this.querySelector<HTMLDialogElement>(".spatial-scope-dialog")?.close();
     this.#open = false;
     this.requestUpdate();

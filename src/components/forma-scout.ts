@@ -2,6 +2,7 @@ import { html, nothing } from "lit";
 import { buildScoutEnvelope, buildScoutTrajectory, scoutPrecisionLedger } from "../model/scout";
 import type { CreativeEvent } from "../model/events";
 import { FormaElement, icon } from "./forma-element";
+import { navigateInApp } from "./command-departure";
 import { documentViewWorkflow } from "../model/document-view-signals";
 import "./area-navigation";
 import "./design-primitives";
@@ -28,20 +29,22 @@ export class FormaScout extends FormaElement {
   async #promote(observation: CreativeEvent) {
     const candidate = record(observation.payload.candidate); const kind = String(candidate.kind ?? "");
     if (!kind) return;
-    const blockId = crypto.randomUUID(); const label = String(candidate.label ?? "Scout candidate");
+    const blockId = crypto.randomUUID(); const documentId = this.store.projection.get().documentId;
+    const label = String(candidate.label ?? "Scout candidate");
     const type = kind === "palette-anchor" ? "palette" : "style";
     const properties = type === "palette"
       ? { label, colors: list(candidate.colors).map(String), weight: .65, authority: "authored", source_claim_ref: `observation:${String(observation.payload.observation_id)}` }
       : { text: label, weight: .65, authority: "authored", source_claim_ref: `observation:${String(observation.payload.observation_id)}` };
     const appended = await this.store.append({ type: "BlockCreated", payload: {
       block_id: blockId,
-      document_id: this.store.projection.get().documentId,
+      document_id: documentId,
       type,
       handle: `${type}/scout-${blockId.slice(0, 8)}`,
       position: `z${String(this.store.head.get()).padStart(8, "0")}`,
       properties,
     } });
-    if (appended.length) this.store.toast("Scout candidate promoted as an authored document block.");
+    if (appended.some(event => event.type === "BlockCreated" && event.payload.block_id === blockId
+      && event.payload.document_id === documentId)) this.store.toast("Scout candidate promoted as an authored document block.");
   }
 
   override render() {
@@ -56,7 +59,7 @@ export class FormaScout extends FormaElement {
     const latestTerminal = [...events].reverse().find((event) => ["ScoutRunCompleted", "ScoutBudgetExhausted"].includes(event.type) && event.payload.run_id === latestRunId);
     return html`<section class="scout-page page-pad">
       <forma-area-navigation area="intelligence" active="scout"></forma-area-navigation>
-      <header class="page-header page-header--hero"><div class="page-header-copy"><span class="eyebrow">Creative intelligence / Scout</span><h1>Find your next direction</h1><p>Discover patterns, promising alternatives, and places where your creative work may be getting stuck. Every decision remains yours.</p></div><div class="page-header-actions"><span class="session-state ${advanced ? "open" : "closed"}">${advanced ? this.i18n.system("Suggestions available") : this.i18n.system("Awaiting approval")}</span><button class="button secondary" @click=${() => this.store.setRoute("/sessions")}>Return to recent work</button></div></header>
+      <header class="page-header page-header--hero"><div class="page-header-copy"><span class="eyebrow">Creative intelligence / Scout</span><h1>Find your next direction</h1><p>Discover patterns, promising alternatives, and places where your creative work may be getting stuck. Every decision remains yours.</p></div><div class="page-header-actions"><span class="session-state ${advanced ? "open" : "closed"}">${advanced ? this.i18n.system("Suggestions available") : this.i18n.system("Awaiting approval")}</span><button class="button secondary" @click=${() => void navigateInApp(this,navigation=>navigation.route("/sessions"))}>Return to recent work</button></div></header>
       <div class="scout-layout"><main>
         <form class="scout-run-panel" @submit=${(event:SubmitEvent)=>{event.preventDefault();if(advanced&&envelope.fits&&busy!=="run-scout")void this.store.runScout(this.#maxObservations);}}><div><span class="eyebrow">You stay in control</span><h2>Find useful next steps</h2><p>Forma looks for meaningful patterns without changing your document or exceeding the limits shown here.</p></div><label>Maximum suggestions<select .value=${String(this.#maxObservations)} @change=${(event: Event) => { this.#maxObservations = Number((event.target as HTMLSelectElement).value); this.requestUpdate(); }}><option value="1">1 suggestion</option><option value="2">2 suggestions</option><option value="3">3 suggestions</option><option value="4">4 suggestions</option></select></label><button type="submit" class="button primary" ?disabled=${!advanced || !envelope.fits || busy === "run-scout"}>${busy === "run-scout" ? this.i18n.system("Finding suggestions…") : envelope.fits ? this.i18n.system("Find suggestions") : this.i18n.system("Not enough budget")}</button></form>
         <section class="view-workflow-report"><div class="section-heading"><div><span class="eyebrow">How you prefer to work</span><h2>Where progress is happening</h2></div><span>${workflow.usedViews} mode${workflow.usedViews===1?"":"s"} used</span></div><p>Your direct edits, requests, and retained results identify useful ways to work. Optional attention signals can suggest a sticking point, but never become taste or generation instructions.</p>${workflowRows.length?html`<div class="view-workflow-list">${workflowRows.map((row)=>html`<article class=${row.view===workflow.preferredView?.view?"preferred":""}><header><b>${row.label}</b>${row.view===workflow.preferredView?.view?html`<span>Strongest progress</span>`:nothing}</header><div><span><b>${row.visits}</b> visits</span><span><b>${row.edits}</b> edits</span><span><b>${row.generationRequests}</b> requests</span><span><b>${row.outcomes}</b> retained</span></div>${row.frictionEpisodes?html`<small>${row.frictionEpisodes} possible sticking point${row.frictionEpisodes===1?"":"s"}</small>`:nothing}</article>`)}</div>`:html`<div class="empty-inline">Try a document view to begin learning which working mode helps you most.</div>`}</section>

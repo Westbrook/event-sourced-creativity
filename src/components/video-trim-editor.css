@@ -1,0 +1,11 @@
+forma-video-trim-editor { display: block; min-width: 0; }
+.video-trim-editor { display: grid; gap: 1rem; min-width: 0; }
+.video-trim-editor p { margin: 0; overflow-wrap: anywhere; }
+.video-trim-bound, .video-trim-bound label { display: grid; gap: .5rem; min-width: 0; }
+.video-trim-bound input { box-sizing: border-box; width: 100%; min-width: 0; min-height: 2.75rem; margin: 0; scroll-margin-block: var(--forma-focus-clearance, .5rem); accent-color: var(--forma-color-accent, #d95f2d); }
+.video-trim-duration { display: grid; gap: .375rem; }
+.video-trim-duration small { color: var(--forma-color-text-muted); }
+.artifact-video-trim { display: grid; gap: 1rem; min-width: 0; padding: 1rem; }
+.artifact-video-trim > * { min-width: 0; overflow-wrap: anywhere; }
+.artifact-video-trim-actions { display: flex; flex-wrap: wrap; gap: .75rem; }
+.artifact-video-trim-actions button { max-width: 100%; white-space: normal; scroll-margin-block: var(--forma-focus-clearance, .5rem); }

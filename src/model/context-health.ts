@@ -1,5 +1,6 @@
+import {measureRetainedState,RETAINED_STATE_LIMITS} from './retained-state.ts';
 import { blockIntentFor, blockTypeDefinition, isNegativeIntent } from "./block-types.ts";
-import type { DocumentArtifact } from "./document-artifacts.ts";
+import { documentArtifactRevision, type DocumentArtifact } from "./document-artifacts.ts";
 import { inferDocumentArtifactKind } from "./document-output-intent.ts";
 import type { CreativeBlock, CreativeEvent, CreativeProjection } from "./events.ts";
 import { audioRightsAllowed } from "./audio.ts";
@@ -62,21 +63,57 @@ const allowedProtectedPlacement = (value: unknown) => value === "opening"
   || value === "opening_and_closing";
 
 /** Every declared license boundary is authoritative; malformed metadata never widens rights. */
-export function creativeContextRightsIssue(properties: Record<string, unknown>, now = Date.now()): "revoked" | "invalid" | "expired" | null {
+export function creativeContextRightsValidity(properties: Record<string, unknown>, now = Date.now()): {issue:"revoked"|"invalid"|"expired"|null;validUntil:string|null} {
   if (properties.rights_revoked === true || properties.source_rights_revoked === true
     || ["revoked", "denied", "unlicensed"].includes(String(properties.rights_class ?? "").trim().toLowerCase())
-    || ["revoked", "denied"].includes(String(properties.rights_status ?? "").trim().toLowerCase())) return "revoked";
+    || ["revoked", "denied"].includes(String(properties.rights_status ?? "").trim().toLowerCase())) return {issue:"revoked",validUntil:null};
+  let validUntil:number|null=null;
   for (const field of ["source_expires_at", "license_expires_at", "rights_expires_at"] as const) {
     const value = properties[field];
     if (value === undefined || value === null || value === "") continue;
-    if (typeof value !== "string" || !Number.isFinite(Date.parse(value))) return "invalid";
-    if (Date.parse(value) <= now) return "expired";
+    if (typeof value !== "string" || !Number.isFinite(Date.parse(value))) return {issue:"invalid",validUntil:null};
+    const deadline=Date.parse(value);
+    if (deadline <= now) return {issue:"expired",validUntil:null};
+    validUntil=validUntil===null?deadline:Math.min(validUntil,deadline);
   }
-  return null;
+  return {issue:null,validUntil:validUntil===null?null:new Date(validUntil).toISOString()};
+}
+
+export function creativeContextRightsIssue(properties: Record<string, unknown>, now = Date.now()): "revoked" | "invalid" | "expired" | null {
+  return creativeContextRightsValidity(properties,now).issue;
 }
 
 /** Actionable readiness is derived from durable evidence, never a decorative score. */
+export type ContextRightsReceipts = {rights: ReadonlySet<string>;audioRights: ReadonlySet<string>};
+
+/** Keep the last authoritative classification, including explicit revocations. */
+export function createContextRightsFold(){
+  const rights=new Set<string>(),audioRights=new Set<string>();let finished=false;
+  return {
+    accept(event:CreativeEvent){
+      if(finished)throw new Error('context_rights_fold_already_finished');
+      if(event.type!=="RightsAsserted"&&event.type!=="ReferenceIngested")return true;
+      const id=String(event.payload.reference_id??"");if(!id)return true;
+      const classification=String(event.payload.rights_class??"");
+      if(["owned","owned_or_licensed","account-generated"].includes(classification))rights.add(id);else rights.delete(id);
+      if(audioRightsAllowed(classification))audioRights.add(id);else audioRights.delete(id);
+      return true;
+    },
+    finish():ContextRightsReceipts{
+      if(finished)throw new Error('context_rights_fold_already_finished');finished=true;
+      return {rights,audioRights};
+    },
+    measureRetainedState:(limits=RETAINED_STATE_LIMITS)=>measureRetainedState([rights,audioRights],limits),
+  };
+}
+
 export function assessCreativeContext(projection: Pick<CreativeProjection, "blocks">, events: CreativeEvent[], now = Date.now()): ContextHealthReport {
+  const fold=createContextRightsFold();for(const event of events)fold.accept(event);
+  return assessCreativeContextFromRights(projection,fold.finish(),now);
+}
+
+/** Receipts must come from the same complete authorized history as projection. */
+export function assessCreativeContextFromRights(projection: Pick<CreativeProjection,"blocks">, receipts:ContextRightsReceipts, now=Date.now()):ContextHealthReport {
   const blocks = projection.blocks.filter((block) => !block.removed && Number(block.properties.weight ?? .5) > 0);
   const issues: ContextHealthIssue[] = [];
   const byType = (type: string) => blocks.filter((block) => block.type === type);
@@ -143,15 +180,7 @@ export function assessCreativeContext(projection: Pick<CreativeProjection, "bloc
   if (invalidProtectedPlacement.size) issues.push({ id: "invalid-protected-message-placement", severity: "warning", label: "Choose a valid protected-message placement", detail: "Protected wording can be required on the opening slide, the closing slide, or both.", blockIds: [...invalidProtectedPlacement] });
   if (ungroundedProtectedMessage.size) issues.push({ id: "protected-message-not-in-context", severity: "warning", label: "Include protected wording in the message", detail: "The exact protected wording must also appear verbatim in its authored Message so every approved output can preserve it.", blockIds: [...ungroundedProtectedMessage] });
 
-  const rights=new Set<string>(),audioRights=new Set<string>();
-  for(const event of events){
-    if(event.type!=="RightsAsserted"&&event.type!=="ReferenceIngested")continue;
-    const id=String(event.payload.reference_id??"");
-    if(!id)continue;
-    const classification=String(event.payload.rights_class??"");
-    if(["owned","owned_or_licensed","account-generated"].includes(classification))rights.add(id);else rights.delete(id);
-    if(audioRightsAllowed(classification))audioRights.add(id);else audioRights.delete(id);
-  }
+  const {rights,audioRights}=receipts;
   let verifiedSources = 0;
   for(const decision of blocks.filter((block)=>block.type!=="reference")){
     const rightsIssue=creativeContextRightsIssue(decision.properties,now);
@@ -243,7 +272,7 @@ function artifactReviewStateFromSources(artifact: Pick<DocumentArtifact, "id" | 
     if(!sourceId||String(source.documentId??"")!==artifact.documentId){changedBlockIds.push(`output:${sourceId||"unknown"}`);continue;}
     if(source.outputKind==="artifact"){
       const exact=sourceEvent?.type==="DocumentRenderCompleted"&&String(sourceEvent.payload.artifact_id??"")===sourceId&&String(sourceEvent.payload.document_id??"")===artifact.documentId;
-      const revision=events.filter((event)=>event.type==="DocumentArtifactEdited"&&String(event.payload.artifact_id??"")===sourceId).length;
+      const revision=documentArtifactRevision(events,sourceId);
       if(!exact||revision!==Number(source.revision??-1)){changedBlockIds.push(`output:${sourceId}`);continue;}
       const upstream=artifactReviewStateFromSources({id:sourceId,documentId:artifact.documentId,sequence:sourceEvent.sequence},blocks,events,ancestors);
       if(upstream.status==="stale"||upstream.status==="unverified"||upstream.status==="changes-requested"||source.approvalRequired===true&&upstream.status!=="approved")changedBlockIds.push(`output:${sourceId}`);

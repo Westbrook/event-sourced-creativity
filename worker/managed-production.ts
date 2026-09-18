@@ -12,7 +12,7 @@ import {
   type ManagedProductionPlan,
   type ProductionScene,
 } from "../src/model/managed-production.ts";
-import { buildPresentationSourceContract, inferPresentationAudienceLocale } from "../src/model/presentation-source.ts";
+import { inferPresentationAudienceLocale, presentationCitationEvidenceChecks, type PresentationSourceContract, type PresentationSourcePassage } from "../src/model/presentation-source.ts";
 import { safePresentationCandidateIssues } from "../src/model/presentation-candidates.ts";
 import type { SceneConfiguration, SceneMedium } from "../src/model/scene-configuration.ts";
 import { VIDEO_ADAPTER_CONTRACT, type VideoAudioMode } from "../src/model/video-adapter.ts";
@@ -26,6 +26,7 @@ import { readGeneratedImageReference, storeGeneratedImage, storeGeneratedMedia }
 import {
   generateCreativeVideo,
   generateDocumentArtifact,
+  buildDocumentPresentationSourceContract,
   PRESENTATION_ADAPTER_VERSION,
   type CreativeVideoPreparedReceipt,
   type ImageReference,
@@ -84,13 +85,15 @@ export type ProductionFrameReceipt = {
 };
 
 type ManagedProductionCallbacks = {
+  presentationModelRoutes?: import("./presentation-model-routing.ts").PresentationModelRoutes;
   onProviderSubmission?: import("../src/model/provider-submission.ts").PaidProviderSubmissionObserver;
   signal?: AbortSignal;
   progress?: (stage: string, message: string, checkpoint?: ProductionCheckpoint) => void | Promise<void>;
   checkpoint?: (state: ProductionCheckpoint) => void;
   plannerAttempt?: (state: { model: string; responseId: string; responseIds: string[]; usage: ProviderUsage; latencyMs: number }) => void | Promise<void>;
-  plannerResponse?: (state:ProviderResponseReceipt&{pageIndex:number;pageCount:number;globalStartIndex:number})=>void|Promise<void>;
+  plannerResponse?: (state:ProviderResponseReceipt&{pageIndex:number;pageCount:number;globalStartIndex:number})=>void|{responseRef:string}|Promise<void|{responseRef:string}>;
   plannerPreflight?: (attempt: ProviderAttemptPreflight) => void | Promise<void>;
+  plannerDispatchGuard?: () => void;
 };
 
 const addUsage = (left: ProviderUsage, right: ProviderUsage): ProviderUsage => ({
@@ -161,6 +164,82 @@ export function combinedSceneSnapshot(snapshot: Record<string, unknown>, scenes:
   // shared prose block may contain several slides or evidence passages; the
   // per-scene map above must not leave only its last scene's text behind.
   return productionPresentationSnapshot(snapshot, scenes, { ...snapshot, facts: selected, relationships: retainedRelationships, context_groups: combinedContextGroups({ facts: selected, relationships: retainedRelationships }) });
+}
+
+type ManagedPresentationPageSources = {
+  snapshot: Record<string, unknown>;
+  contract: PresentationSourceContract;
+  anchors: ReadonlyMap<string, string>;
+};
+
+function presentationPageIdentityFailure(): never {
+  throw new ProviderRequestError({
+    code: "presentation_source_contract_invalid", category: "provider", scope: "request", action: "edit_request",
+    message: "A presentation page cannot be matched uniquely to its authorized source passages. Review its source assignments before generation.",
+    retryable: false, retryAfterMs: null, requestId: null, httpStatus: 422,
+  });
+}
+
+/** Server-derived contracts only: local IDs may differ, but exact source and assignment authority cannot. */
+export function bindPresentationPageAnchors(page: PresentationSourceContract, canonical: PresentationSourceContract): ReadonlyMap<string, string> {
+  const identity = (passage: PresentationSourcePassage) => JSON.stringify([
+    passage.sourceBlockId, passage.content, passage.slideNumber, passage.required === true,
+  ]);
+  const originals = new Map<string, PresentationSourcePassage[]>();
+  const canonicalIds = new Set<string>();
+  for (const passage of canonical.passages ?? []) {
+    if (!/^(?:passage|legacy_passage)_\d+$/u.test(passage.id) || canonicalIds.has(passage.id)) presentationPageIdentityFailure();
+    canonicalIds.add(passage.id);
+    originals.set(identity(passage), [...(originals.get(identity(passage)) ?? []), passage]);
+  }
+  const anchors = new Map<string, string>();
+  for (const passage of page.passages ?? []) {
+    // A bounded page may omit another chapter's group parent. Narrowing is
+    // safe only alongside the exact per-slide assignment proof below; new
+    // memberships, different owners, different bytes and ambiguity grant nothing.
+    const matches = (originals.get(identity(passage)) ?? []).filter((original) =>
+      passage.contextGroupIds.every((groupId) => original.contextGroupIds.includes(groupId)));
+    if (!/^(?:passage|legacy_passage)_\d+$/u.test(passage.id) || matches.length !== 1 || anchors.has(passage.id)) presentationPageIdentityFailure();
+    anchors.set(passage.id, matches[0]!.id);
+  }
+  for (const slide of page.numberedOutline) {
+    const matches = canonical.numberedOutline.filter((original) => original.number === slide.number
+      && original.sourceBlockId === slide.sourceBlockId && original.content === slide.content
+      && (original.sourceMode ?? "authored") === (slide.sourceMode ?? "authored")
+      && JSON.stringify([...new Set(original.contextGroupIds)].sort()) === JSON.stringify([...new Set(slide.contextGroupIds)].sort()));
+    if (matches.length !== 1) presentationPageIdentityFailure();
+    const assigned = (slide.evidencePassageIds ?? []).map((id) => anchors.get(id));
+    if (assigned.some((id) => !id)
+      || JSON.stringify([...new Set(assigned)].sort()) !== JSON.stringify([...new Set(matches[0]!.evidencePassageIds ?? [])].sort())) presentationPageIdentityFailure();
+  }
+  if (page.numberedOutline.some((slide) => slide.sourceMode === "outline")) {
+    const permitted = new Set(page.numberedOutline.flatMap((slide) => slide.evidencePassageIds ?? []));
+    if ((page.passages ?? []).some((passage) => !permitted.has(passage.id))) presentationPageIdentityFailure();
+  }
+  return anchors;
+}
+
+/** Translate only validated copies; the provider body and its page-local receipt stay immutable. */
+function assemblePresentationPageItems(
+  items: DocumentArtifactDraftItem[], page: ManagedPresentationPageSources,
+  options: { globalStartIndex: number; pageCount: number; providerAttempt: number },
+): DocumentArtifactDraftItem[] {
+  const checks = presentationCitationEvidenceChecks(items, page.contract, { pageStart: options.globalStartIndex, pageSize: items.length });
+  return items.map((item, slideIndex) => !item.slide?.citations?.length ? item : ({
+    ...item, slide: { ...item.slide, citations: item.slide.citations.map((citation, citationIndex) => {
+      const anchor = citation.anchor ?? "";
+      if (!/^(?:passage|legacy_passage)_/iu.test(anchor)) return citation;
+      const canonical = page.anchors.get(anchor);
+      const check = checks.find((candidate) => candidate.slideIndex === slideIndex && candidate.citationIndex === citationIndex);
+      if (!canonical || check?.sourceStatus !== "authorized" || check.excerptStatus !== "grounded" || check.anchorStatus !== "valid") {
+        throw managedProductionValidationFailure("slides", [{
+          code: "incorrect_citation_anchor", path: `items.${options.globalStartIndex + slideIndex}.slide.citations.${citationIndex}.anchor`,
+          message: "A citation does not identify its exact authorized page evidence.",
+        }], "assembly", options);
+      }
+      return { ...citation, anchor: canonical };
+    }) },
+  }));
 }
 
 function attributedSlideQuote(item: DocumentArtifactDraftItem): string {
@@ -353,13 +432,21 @@ export async function generateManagedArtifactDraft(
   const pageSize = MANAGED_PRODUCTION_BATCH_SIZE;
   const pageCount = Math.ceil(input.production.scenes.length / pageSize);
   const presentationSources = kind === "slides"
-    ? buildPresentationSourceContract(input.snapshot, {
+    ? buildDocumentPresentationSourceContract(input.snapshot, {
+      productionMode: "managed",
       itemCount: input.production.scenes.length,
       requestedSlideCount: input.production.scenes.length,
       presentationStyle: input.presentationStyle,
-      fidelity: input.presentationFidelity,
+      presentationFidelity: input.presentationFidelity,
     })
     : null;
+  // A retained plan is not proof that every current source requirement is
+  // still resolvable. Check the full deck before any otherwise-valid early page.
+  if (presentationSources?.sourceIssues?.length) throw new ProviderRequestError({
+    code: "presentation_source_contract_invalid", category: "provider", scope: "request", action: "edit_request",
+    message: "The presentation outline has unresolved source assignments or output boundaries. Clarify its requirements and assigned evidence before generating. No provider request was made.",
+    retryable: false, retryAfterMs: null, requestId: null, httpStatus: 422,
+  });
   const presentationAudienceLocale=presentationSources?inferPresentationAudienceLocale(presentationSources.outline.sourceText,input.locale??"en"):input.locale??"en";
   const privateSourceIdentifiers = [...new Set([
     ...input.production.claims.flatMap((claim) => [claim.id, claim.blockId, ...claim.contextGroupIds]),
@@ -388,13 +475,26 @@ export async function generateManagedArtifactDraft(
       ...(repairIssues.length ? { repairIssues } : {}),
     };
   };
+  // Freeze the page projection and its identity correspondence before any paid
+  // request. Bounded repair reuses this exact projection, never a re-numbered guess.
+  const presentationPages: ManagedPresentationPageSources[] | null = presentationSources
+    ? Array.from({ length: pageCount }, (_, pageIndex) => {
+      const index = pageIndex * pageSize, scenes = input.production.scenes.slice(index, index + pageSize);
+      const snapshot = combinedSceneSnapshot(input.snapshot, scenes);
+      const contract = buildDocumentPresentationSourceContract(snapshot, {
+        itemCount: scenes.length, requestedSlideCount: input.requestedSlideCount,
+        presentationStyle: input.presentationStyle, presentationFidelity: input.presentationFidelity,
+        productionPage: pageOptions(index),
+      });
+      return { snapshot, contract, anchors: bindPresentationPageAnchors(contract, presentationSources) };
+    }) : null;
   for (let index = 0; index < input.production.scenes.length; index += pageSize) {
     const scenes = input.production.scenes.slice(index, index + pageSize);
     const pageIndex = Math.floor(index / pageSize);
     await input.progress?.("planning", `${input.production.team.label}: planning ${kind === "slides" ? "slides" : "scenes"} ${index + 1}–${index + scenes.length} of ${input.production.scenes.length} (provider request ${pageIndex + 1} of ${pageCount}).`);
     const result = await generateDocumentArtifact(env, ownerId, kind, {
       documentTitle: input.documentTitle,
-      snapshot: combinedSceneSnapshot(input.snapshot, scenes),
+      snapshot: presentationPages?.[pageIndex]?.snapshot ?? combinedSceneSnapshot(input.snapshot, scenes),
       options: {
         itemCount: scenes.length,
         audience: input.audience,
@@ -413,11 +513,11 @@ export async function generateManagedArtifactDraft(
         productionMode: "managed",
         productionPlan: input.production,
         productionScenes: scenes,
-        productionPage: pageOptions(index),
+        presentationModelRoutes: input.presentationModelRoutes, productionPage: pageOptions(index),
         signal: input.signal,
         ...(input.plannerResponse?{onProviderResponse:(receipt:ProviderResponseReceipt)=>input.plannerResponse!({...receipt,pageIndex,pageCount,globalStartIndex:index})}:{}),
         onProviderAttempt:recordPaidAttempt,
-        onProviderSubmission:input.onProviderSubmission,onBeforeProviderAttempt:input.plannerPreflight,
+        onProviderSubmission:input.onProviderSubmission,onBeforeProviderAttempt:input.plannerPreflight,onBeforeProviderDispatch:input.plannerDispatchGuard,
       },
     });
     pages.push(result);
@@ -426,7 +526,9 @@ export async function generateManagedArtifactDraft(
   }
   const assemble = (normalizeSlides = false): DocumentArtifactDraft => {
     const first = pages[0]!;
-    let items = pages.flatMap((page) => page.output.items);
+    let items = pages.flatMap((page, pageIndex) => presentationPages
+      ? assemblePresentationPageItems(page.output.items, presentationPages[pageIndex]!, { globalStartIndex: pageIndex * pageSize, pageCount, providerAttempt: observedProviderAttempts })
+      : page.output.items);
     if (kind === "slides") {
       const acceptedTitles:string[]=[];
       const acceptedItems:DocumentArtifactDraftItem[]=[];
@@ -565,8 +667,8 @@ export async function generateManagedArtifactDraft(
       }).map((issue) => redactRepairIssue(issue.message));
       const repaired = await generateDocumentArtifact(env, ownerId, kind, {
         documentTitle: input.documentTitle,
-        snapshot: combinedSceneSnapshot(input.snapshot, scenes),
-        options: { itemCount: scenes.length, audience: input.audience, tone: input.tone, locale: input.locale, outputLocale:presentationAudienceLocale,presentationStyle: input.presentationStyle, presentationFidelity: input.presentationFidelity, requestedSlideCount: input.requestedSlideCount, authoredSlideCount: input.authoredSlideCount, videoSize: input.videoSize, videoAudioMode: input.videoAudioMode, audioProfile: input.audioProfile, audioProviderModel: input.audioProviderModel, sceneMedium: input.sceneMedium, sceneConfiguration: input.sceneConfiguration, productionMode: "managed", productionPlan: input.production, productionScenes: scenes, productionPage: pageOptions(index, issues), signal: input.signal,...(input.plannerResponse?{onProviderResponse:(receipt:ProviderResponseReceipt)=>input.plannerResponse!({...receipt,pageIndex,pageCount,globalStartIndex:index})}:{}),onProviderAttempt:recordPaidAttempt,onProviderSubmission:input.onProviderSubmission,onBeforeProviderAttempt:input.plannerPreflight },
+        snapshot: presentationPages?.[pageIndex]?.snapshot ?? combinedSceneSnapshot(input.snapshot, scenes),
+        options: { itemCount: scenes.length, audience: input.audience, tone: input.tone, locale: input.locale, outputLocale:presentationAudienceLocale,presentationStyle: input.presentationStyle, presentationFidelity: input.presentationFidelity, requestedSlideCount: input.requestedSlideCount, authoredSlideCount: input.authoredSlideCount, videoSize: input.videoSize, videoAudioMode: input.videoAudioMode, audioProfile: input.audioProfile, audioProviderModel: input.audioProviderModel, sceneMedium: input.sceneMedium, sceneConfiguration: input.sceneConfiguration, productionMode: "managed", presentationModelRoutes:input.presentationModelRoutes, productionPlan: input.production, productionScenes: scenes, productionPage: pageOptions(index, issues), signal: input.signal,...(input.plannerResponse?{onProviderResponse:(receipt:ProviderResponseReceipt)=>input.plannerResponse!({...receipt,pageIndex,pageCount,globalStartIndex:index})}:{}),onProviderAttempt:recordPaidAttempt,onProviderSubmission:input.onProviderSubmission,onBeforeProviderAttempt:input.plannerPreflight,onBeforeProviderDispatch:input.plannerDispatchGuard },
       });
       pages[pageIndex] = repaired;
       attempts.push(repaired);

@@ -1,0 +1,42 @@
+/* The existing document and Library block editors share one calm disclosure. */
+.context-decision{display:grid;min-inline-size:0;gap:.75rem;padding:1rem;margin-block:.75rem;border:1px solid transparent;border-radius:var(--forma-radius-control,6px);container-type:inline-size}
+.context-decision[data-controls-open="true"]{border-color:var(--accent);background:var(--accent-soft,var(--panel-2))}
+.context-decision .context-block{grid-template-columns:44px minmax(0,1fr);border:0;background:transparent;transition:none}
+.context-decision .context-block:hover,.context-decision .context-block.brief-focus{background:transparent;border:0;box-shadow:none}
+.context-decision .context-block--summary{display:block}
+.context-decision .block-body{min-inline-size:0;padding:0}
+.context-decision .block-heading{flex-wrap:wrap;gap:.75rem}
+.context-decision .block-heading-copy,.context-decision .block-heading-state{min-inline-size:0}
+.context-decision .block-heading-state{flex-wrap:wrap}
+.context-decision .handle{max-inline-size:100%;white-space:normal;overflow-wrap:anywhere}
+.context-decision .block-copy,.context-protected-copy p{max-block-size:none;overflow:visible;white-space:pre-wrap;overflow-wrap:anywhere;text-align:start;-webkit-line-clamp:unset}
+.context-decision .block-copy{margin-block:.5rem;padding-block:.5rem;font-family:var(--sans);line-height:1.6}
+.context-decision .block-rail{padding-block-start:.25rem}
+.context-decision .drag-handle{inline-size:44px}
+.context-decision .reorder-buttons{display:flex;margin-block-start:.5rem}
+.context-decision :is(button,select,input:not([type="checkbox"]):not([type="radio"])),.context-decision .context-intelligence-actions.compact .button{min-inline-size:44px;min-block-size:44px}
+.context-decision summary{min-block-size:44px;align-content:center;cursor:pointer}
+.context-decision-actions{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:.5rem;min-inline-size:0}
+.context-decision-select{display:flex;align-items:center;gap:.5rem;min-inline-size:44px;min-block-size:44px;color:var(--muted);font-size:var(--type-caption);cursor:pointer}
+.context-decision-select input{inline-size:1.25rem;block-size:1.25rem;accent-color:var(--accent)}
+.context-controls-toggle{justify-self:end;max-inline-size:100%;gap:.5rem;text-align:start;white-space:normal;overflow-wrap:anywhere}
+.context-controls-panel{min-inline-size:0;scroll-margin-block:1rem}
+.context-controls-panel:focus-visible,.context-decision :is(button,input,textarea,select,summary,a):focus-visible{outline:3px solid var(--accent);outline-offset:3px}
+.context-lock-state{display:inline-flex;align-items:center;gap:.25rem;color:var(--muted);font-size:var(--type-caption);white-space:normal}
+.context-decision .block-meta{grid-template-columns:repeat(auto-fit,minmax(min(100%,8rem),1fr));gap:.75rem;overflow:visible;border:0}
+.context-decision .block-meta .meta-long{display:inline}
+.context-decision .block-meta .meta-short{display:none}
+.context-authored-children{display:grid;gap:1rem;padding-inline-start:1.25rem;margin-block:1rem 0}
+.context-protected-copy{min-inline-size:0;margin-block:.75rem}
+.context-protected-copy p{margin-block:.5rem}
+.context-library-state{display:block;color:var(--muted);font-size:var(--type-caption);line-height:1.5;overflow-wrap:anywhere}
+.library-page .asset-card>p{max-block-size:none;overflow:visible;white-space:pre-wrap;overflow-wrap:anywhere;-webkit-line-clamp:unset}
+.library-page .asset-card-actions :is(button,a){min-inline-size:44px;min-block-size:44px;text-align:start;white-space:normal;overflow-wrap:anywhere}
+.library-block-editor{container-type:inline-size}
+.library-block-editor :is(.library-panel-toggle,.library-block-browser-section>button){min-inline-size:44px;min-block-size:44px;text-align:start}
+.library-block-editor .library-block-browser-section button strong{overflow:visible;white-space:normal;overflow-wrap:anywhere}
+.library-block-editor :is(button,input,textarea,select,summary,a):focus-visible{outline:3px solid var(--accent);outline-offset:3px}
+.library-block-inspection .context-decision{padding-inline:0}
+@container(max-width:42rem){.context-decision[data-controls-open="true"] .block-heading{align-items:stretch;flex-direction:column}.context-decision .block-heading-state{align-items:center;flex-direction:row}.context-controls-toggle{justify-self:stretch}.library-block-editor-layout{grid-template-columns:minmax(0,1fr)}.library-block-browser,.library-block-filing{position:static;max-block-size:none}.library-block-editor-header{align-items:stretch;flex-direction:column}}
+@media(prefers-reduced-motion:reduce){.context-decision,.context-decision *,.library-block-inspection *{animation:none!important;transition:none!important;scroll-behavior:auto!important}}
+@media(forced-colors:active){.context-decision[data-controls-open="true"]{border-color:Highlight;background:Canvas}.context-lock-state,.context-library-state{color:CanvasText}.context-controls-panel:focus-visible,.context-decision :is(button,input,textarea,select,summary,a):focus-visible,.library-block-editor :is(button,input,textarea,select,summary,a):focus-visible{outline-color:Highlight}.context-decision .block-intent-badge{border:1px solid CanvasText;color:CanvasText;background:Canvas}}

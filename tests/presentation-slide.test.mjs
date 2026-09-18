@@ -584,7 +584,108 @@ test("native slide rendering preserves a safe authored brand typeface",()=>{
   assert.match(markup,/--slide-font:(?:&quot;|")Helvetica Neue(?:&quot;|"),sans-serif/);
 });
 
-function fitHarness(context) {
+test("Safe departures receives the hero word cap in full and compact rendering",()=>{
+  for(const compact of [false,true]){
+    const markup=renderSlide({layout:"statement",kicker:"",bullets:[],visual:{kind:"hero-type",label:"Travel promise",value:"Safe departures",data:[]}},{compact});
+    assert.match(markup,/--slide-visual-size:6\.4cqi/);
+    assert.ok(markup.includes('<strong dir="auto">Safe departures</strong>'));
+    assert.ok(markup.includes('<span dir="auto">Travel promise</span>'));
+  }
+});
+
+for(const [name,value,size,sourceValue=value] of [
+  ["brief two-word hero","Set sail","10cqi"],
+  ["eight-grapheme word","departed","10cqi"],
+  ["nine-grapheme word","departure","6.4cqi"],
+  ["eight decomposed graphemes","e\u0301".repeat(8),"10cqi"],
+  ["nine decomposed graphemes","e\u0301".repeat(9),"6.4cqi"],
+  ["nonword punctuation",".........","10cqi","Intentional punctuation"],
+  ["short nonword emoji sequence","👩🏽‍💻".repeat(3),"10cqi"],
+  ["emoji already in the middle legacy tier","👩🏽‍💻".repeat(4),"6.4cqi"],
+  ["emoji already in the smallest legacy tier","👩🏽‍💻".repeat(8),"4.2cqi"],
+  ["long unbroken word below the total-length cutoff","x".repeat(24),"6.4cqi"],
+  ["long unbroken word at the final legacy boundary","x".repeat(48),"6.4cqi"],
+  ["long unbroken word beyond the final legacy boundary","x".repeat(49),"4.2cqi"],
+])test(`real hero rendering preserves ${name} and its bounded size`,()=>{
+  // A punctuation-only source is intentionally incomplete; its authored
+  // display value still reaches hero sizing through a meaningful source value.
+  const slide={layout:"statement",kicker:"",bullets:[],visual:{kind:"hero-type",label:"Authored message",
+    value:sourceValue,...(sourceValue!==value?{displayValue:value}:{}),data:[]}};
+  const original=structuredClone(slide),markup=renderSlide(slide);
+  assert.ok(markup.includes(`--slide-visual-size:${size}`));
+  assert.ok(markup.includes(`<strong dir="auto">${value}</strong>`),"the exact authored Unicode value remains complete");
+  assert.deepEqual(slide,original,"sizing does not rewrite the authored visual");
+});
+
+for(const [name,locale,value,size] of [
+  ["Japanese words without spaces","ja-JP","猫と犬と鳥と花と月","10cqi"],
+  ["Arabic short words","ar","السفر الآمن للجميع","10cqi"],
+  ["Arabic long word","ar","الاستقلال","6.4cqi"],
+  ["Arabic combining marks","ar","مَرْحَبًا","10cqi"],
+])test(`hero word segmentation preserves ${name}`,()=>{
+  const language={locale,t:(_key,fallback)=>fallback,system:source=>source,number:value=>String(value)};
+  // Distinct same-language context keeps audience-locale inference without
+  // asking normalization to repeat the title as the hero value.
+  const title=locale==="ja-JP"?"短いことばの紹介":"رسالة للقراء";
+  const markup=renderSlide({layout:"statement",kicker:"",bullets:[],visual:{kind:"hero-type",label:"",value,data:[]}},
+    {item:{title,body:"",notes:""},locale:language});
+  assert.ok(markup.includes(`--slide-visual-size:${size}`));
+  assert.ok(markup.includes(`<strong dir="auto">${value}</strong>`));
+});
+
+for(const kind of ["hero-type","metric"]){
+  for(const [length,value,size] of [
+    [24,"a ".repeat(11)+"ab","10cqi"],
+    [25,"a ".repeat(12)+"a","6.4cqi"],
+    [48,"e\u0301 ".repeat(15)+"abc","6.4cqi"],
+    [49,"e\u0301 ".repeat(15)+"abcd","4.2cqi"],
+  ])test(`${kind} preserves the existing ${length}-unit total-length tier`,()=>{
+    assert.equal(value.length,length,"fixture straddles the original UTF-16 boundary");
+    const markup=renderSlide({layout:"statement",kicker:"",bullets:[],visual:{kind,label:"",value,data:[]}});
+    assert.ok(markup.includes(`--slide-visual-size:${size}`));
+    assert.ok(markup.includes(`<strong dir="auto">${value}</strong>`));
+  });
+}
+
+for(const [name,value,size] of [
+  ["Safe departures","Safe departures","10cqi"],
+  ["nine-grapheme decomposed word","e\u0301".repeat(9),"10cqi"],
+  ["long UTF-16 emoji sequence","👩🏽‍💻".repeat(8),"4.2cqi"],
+])test(`metric rendering keeps its existing size for ${name}`,()=>{
+  const markup=renderSlide({layout:"statement",kicker:"",bullets:[],visual:{kind:"metric",label:"",value,data:[]}});
+  assert.ok(markup.includes(`--slide-visual-size:${size}`));
+  assert.ok(markup.includes(`<strong dir="auto">${value}</strong>`));
+});
+
+test("displayValue drives the hero cap while exact precision, label and supplemental data remain intact",()=>{
+  const slide={layout:"statement",kicker:"",bullets:[],visual:{kind:"hero-type",label:"Measured outcome",
+    value:"Go",displayValue:"Safe departures",exactValue:"61.125",unit:"/ 100",
+    data:[{label:"Authorized sample",value:"1500",displayValue:"1,500",weight:.5}]}};
+  const original=structuredClone(slide),markup=renderSlide(slide);
+  assert.match(markup,/--slide-visual-size:6\.4cqi/);
+  assert.ok(markup.includes('<strong dir="auto">Safe departures</strong>'));
+  assert.ok(!markup.includes('<strong dir="auto">Go</strong>'));
+  assert.ok(markup.includes('<span dir="auto">Measured outcome</span>'));
+  assert.match(markup,/<dt>Exact<\/dt>\s*<dd><data value=61\.125>61\.125 \/ 100<\/data><\/dd>/);
+  assert.match(markup,/<dt>Displayed<\/dt>\s*<dd><data value=Safe departures>Safe departures<\/data><\/dd>/);
+  assert.ok(markup.includes('<dt class="presentation-slide__datum-label" dir="auto">Authorized sample</dt>'));
+  assert.ok(markup.includes('<dd class="presentation-slide__datum-value" dir="auto">1,500</dd>'));
+  assert.deepEqual(slide,original);
+});
+
+test("a short numeric displayValue retains its large tier despite a long underlying hero value",()=>{
+  const value="x".repeat(49),slide={layout:"statement",kicker:"",bullets:[],visual:{kind:"hero-type",label:"Precision",
+    value,displayValue:"61.13",exactValue:"61.125",unit:"/ 100",data:[]}};
+  const original=structuredClone(slide),markup=renderSlide(slide);
+  assert.match(markup,/--slide-visual-size:10cqi/);
+  assert.ok(markup.includes('<strong dir="auto">61.13</strong>'));
+  assert.ok(!markup.includes(`<strong dir="auto">${value}</strong>`));
+  assert.match(markup,/<data value=61\.125>61\.125 \/ 100<\/data>/);
+  assert.match(markup,/<data value=61\.13>61\.13 \/ 100<\/data>/);
+  assert.deepEqual(slide,original);
+});
+
+function fitHarness(context, options = {}) {
   const descriptors = Object.fromEntries(["document", "requestAnimationFrame", "cancelAnimationFrame"].map((key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
   const frames = new Map(), events = [], fonts = new EventTarget();
   fonts.status = "loaded";
@@ -613,17 +714,26 @@ function fitHarness(context) {
     clientWidth: { value: 960 },
     clientHeight: { value: 540 },
   });
-  element.querySelector = () => hasArtboard ? artboard : null;
+  // Optional exact hero scroll metrics exercise the real bounded fit lifecycle;
+  // they are declared native geometry inputs, not font or browser measurements.
+  let heroSize = "";
+  const hero = options.hero ? { clientWidth: options.hero.width, clientHeight: 180,
+    scrollWidth: options.hero.scrollWidth, scrollHeight: 180,
+    parentElement: { style: { getPropertyValue: name => name === "--slide-visual-size" ? heroSize : "" } } } : null;
+  element.querySelector = selector => !hasArtboard ? null : selector === ".presentation-slide" ? artboard
+    : selector === ".presentation-slide.visual-hero-type .presentation-visual-type > strong" ? hero : null;
   element.querySelectorAll = () => hasArtboard ? [artboard, section] : [];
   element.dispatchEvent = (event) => { events.push(event.detail); return true; };
   element.requestUpdate = () => {};
   const render = () => {
     const markup = renderMarkup(element.render());
     artboard.dataset.layoutDensity = markup.match(/data-layout-density=(\w+)/)[1];
+    heroSize = markup.match(/--slide-visual-size:([\d.]+cqi)/)?.[1] ?? "";
     element.updated();
+    return markup;
   };
   const flush = () => { const pending = [...frames.values()]; frames.clear(); pending.forEach((callback) => callback()); };
-  return { element, artboard, section, events, fonts, frames, render, flush,
+  return { element, artboard, section, hero, events, fonts, frames, render, flush,
     connect: (value) => { connected = value; }, show: (value) => { hasArtboard = value; } };
 }
 
@@ -708,4 +818,68 @@ test("empty and hidden artboards remain pending but collapsed visible content is
   assert.equal(fit.events.length, 1);
   assert.equal(fit.events[0].contentFits, false);
   assert.equal(fit.events[0].density, "dense");
+});
+
+
+const setHeroValue = (fit, value, kind = "hero-type") => {
+  fit.element.item = { ...fit.element.item, slide: { ...fit.element.item.slide,
+    visual: { ...fit.element.item.slide.visual, kind, value } } };
+};
+
+test("actual hero width overflow selects the next existing tier without splitting The Context Company", context => {
+  const fit = fitHarness(context, { hero: { width: 355, scrollWidth: 420 } });
+  setHeroValue(fit, "The Context Company");
+  const original = structuredClone(fit.element.item);
+  assert.match(fit.render(), /--slide-visual-size:10cqi/u); fit.flush();
+  assert.equal(fit.events.length, 0, "an overflowing large tier cannot publish a fitting receipt");
+  fit.hero.scrollWidth = 355;
+  const markup = fit.render(); fit.flush();
+  assert.match(markup, /--slide-visual-size:6\.4cqi/u);
+  assert.ok(markup.includes('<strong dir="auto">The Context Company</strong>'));
+  assert.deepEqual(fit.element.item, original, "measurement never rewrites the original proposition");
+  assert.equal(fit.events.at(-1).contentFits, true);
+});
+
+test("a fitting short hero retains its authored large tier", context => {
+  const fit = fitHarness(context, { hero: { width: 355, scrollWidth: 355 } });
+  setHeroValue(fit, "Set sail");
+  for (let observation = 0; observation < 3; observation++) {
+    assert.match(fit.render(), /--slide-visual-size:10cqi/u); fit.flush();
+  }
+  assert.equal(fit.events.length, 3); assert.ok(fit.events.every(event => event.contentFits));
+});
+
+test("an already capped hero uses only the remaining existing tier when its actual word is still too wide", context => {
+  const fit = fitHarness(context, { hero: { width: 355, scrollWidth: 410 } });
+  setHeroValue(fit, "Safe departures");
+  assert.match(fit.render(), /--slide-visual-size:6\.4cqi/u); fit.flush();
+  assert.equal(fit.events.length, 0);
+  fit.hero.scrollWidth = 355;
+  assert.match(fit.render(), /--slide-visual-size:4\.2cqi/u); fit.flush();
+  assert.equal(fit.events.at(-1).contentFits, true);
+});
+
+test("residual hero overflow stays a failure at the existing minimum even when every ancestor fits", context => {
+  const fit = fitHarness(context, { hero: { width: 355, scrollWidth: 700 } });
+  setHeroValue(fit, "The Context Company");
+  const tiers = [];
+  for (let observation = 0; observation < 5; observation++) {
+    tiers.push(fit.render().match(/--slide-visual-size:([\d.]+cqi)/)[1]); fit.flush();
+  }
+  assert.deepEqual(tiers, ["10cqi", "6.4cqi", "4.2cqi", "4.2cqi", "4.2cqi"]);
+  assert.deepEqual(fit.events.map(({ contentFits, density }) => ({ contentFits, density })),
+    [{ contentFits: false, density: "dense" }]);
+  assert.equal(fit.element.dataset.presentationFitState, "overflow");
+});
+
+test("changed hero content retires its old measured size instead of inheriting an unnecessary reduction", context => {
+  const fit = fitHarness(context, { hero: { width: 355, scrollWidth: 420 } });
+  setHeroValue(fit, "The Context Company");
+  fit.render(); fit.flush(); fit.hero.scrollWidth = 355;
+  assert.match(fit.render(), /--slide-visual-size:6\.4cqi/u); fit.flush();
+  const priorKey = fit.events.at(-1).renderKey;
+  setHeroValue(fit, "Set sail");
+  assert.match(fit.render(), /--slide-visual-size:10cqi/u); fit.flush();
+  assert.notEqual(fit.events.at(-1).renderKey, priorKey);
+  assert.equal(fit.events.at(-1).contentFits, true);
 });

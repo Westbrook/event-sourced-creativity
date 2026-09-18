@@ -1,43 +1,61 @@
 import { foldCanvasEvents } from "../src/canvas/model.ts";
 import { ASSISTANT_MESSAGES } from "../src/components/design-system/locales/assistant-messages.ts";
 import { isBlockKind } from "../src/model/block-types.ts";
-import { ASSISTANT_MODELS, selectAssistantModel, type AssistantModel, type AssistantTask } from "../src/model/assistant-model-policy.ts";
+import { ASSISTANT_MODELS, type AssistantModel, type AssistantTask } from "../src/model/assistant-model-policy.ts";
 import { assistantSurfaceForRoute, type AssistantSurface } from "../src/model/assistant-route-policy.ts";
 import { ASSISTANT_STATE_EVENT_SQL } from "../src/model/assistant-event-views.ts";
+import type { MemoryAnswerPresentation } from "../src/model/memory-answer.ts";
 import { assistantActionEvents, normalizeAssistantActions, type AssistantContextAction } from "../src/model/assistant-proposals.ts";
 import { validateContextCompositionGraph } from "../src/model/combined-context.ts";
+import { creativeContextRightsValidity } from "../src/model/context-health.ts";
 import { ASSISTANT_CONTEXT_LIMITS, boundAssistantContext, compileAssistantContext, protectedAssistantDecision, type AssistantContext } from "../src/model/conversation-context.ts";
 import { foldEvents, type CreativeEvent, type EventInput } from "../src/model/events.ts";
 import { outputBlockRemovalEvents, outputBlockTextEditEvents } from "../src/model/output-authoring.ts";
 import type { FormaCapability } from "../src/platform/capabilities.ts";
 import { readCanvasGovernance } from "./canvas-governance-policy.ts";
 import {
-  claimCostBudgetReservation,
   hasCapability,
-  pilotExecutionAllowance,
-  readAccountBudgets,
   releaseBudget,
   releaseCostBudget,
   requireCapability,
   requireConsent,
   requireUser,
-  reserveBudget,
-  reserveCostBudget,
   settleBudget,
   settleCostBudget,
   type PilotUser,
+  type BudgetReservationGuard,
 } from "./pilot-policy.ts";
-import { AssistantProviderRejectedError, requestAssistantProvider, type AssistantProviderResult } from "./assistant-provider.ts";
-import { governedPackageSourceRightsCurrent } from "./context-package-rights.ts";
+import { type AssistantProviderResult } from "./assistant-provider.ts";
+import { reconcileConsequentialUsage } from "./consequential-consent.ts";
+import { assistantPaidReplyReadGuard, assistantSubmissionStatus, assistantReadAuthorityGuard, assistantMemoryPreparedDocument, certifiedAssistantTaskFeed, certifiedAssistantTurnResponse, rememberAssistantFeedTurnSource, rememberAssistantMemoryTurnSource, type AssistantTaskFeedEntry, assistantTurnContentCustody, ensureAssistantSpecialistColumns, savedAssistantRequest, handleAssistantSpecialistConsent, parkUnsignedAssistantTasks, cancelConsentedAssistantTask, type SpecialistActor, type SpecialistTaskRecord, type AssistantSpecialistHost } from "./assistant-specialist-consent.ts";
+import { readNativeDocumentMemory, prepareNativeStructuredConversationContext, nativeStructuredConversationContextPrecommitStatements, nativeStructuredConversationContextMatches,
+  prepareNativeStructuredConversationOwnSend, nativeStructuredConversationOwnSendStatements, nativeStructuredConversationOwnSendMatches,
+  type NativeDocumentMemoryContext, type PreparedNativeStructuredConversationContext } from "./memory-live-context.ts";
+import { NATIVE_MEMORY_ANSWER_KIND, nativeMemoryOriginCapture, prepareNativeMemoryOrigin,
+  nativeStructuredMemoryOriginCapture, nativeStructuredMemoryOriginPublicationCurrent, prepareNativeStructuredMemoryOrigin } from "./memory-native-origin.ts";
+import { revalidateNativeAnswerOrigin, revalidateNativeStructuredAnswerOrigin, nativeStructuredMemoryOriginReadStatements,
+  nativeStructuredMemoryOriginReadMatches } from "./memory-native-origin-reader.ts";
+import { nativeMemoryAnswerExclusion } from "./memory-native-boundary.ts";
+import { nativeMemoryAssistantReply, nativeStructuredMemoryAssistantReply } from "./memory-assistant-reply.ts";
+import { liveMemoryEnabled, liveMemoryOriginWithdrawalStatements, prepareNativeMemorySelection, nativeMemorySelectionStatements,
+  discoverNativeStructuredConversationOriginals, type NativeMemorySelection } from "./memory-live-store.ts";
+import { governedPackageSourceRightsCurrent, governedPackageSourceRightsValidity, sourceRightsDispatchGuard, sourceRightsDispatchGuardForAssistant,
+  sourceRightsDispatchGuardForStructuredAssistant } from "./context-package-rights.ts";
+import { AssistantContextReadWitness, assistantOwnSendProjectIndexGuard, assistantStructuredOwnSendProjectIndexGuard, rememberAssistantContextRead,
+  type AssistantContextReadDescriptor, type AssistantOwnSendFootprint, type AssistantStructuredOwnSendFootprint } from "./assistant-context-source.ts";
 import { prepareOutputRequirementClientEvents } from "./output-requirement-event-guards.ts";
-import { appendProjectEvents, readProjectAssistantEventView, readProjectEventPage, readProjectRequestContext, type ProjectRequestContext } from "./project-access.ts";
+import { appendProjectEvents, projectDocumentPublicationEvents, projectSourceProjectionCurrentAssertion, projectStructuredSourceProjectionCurrentAssertion, readProjectAssistantEventView, readProjectEventPage, readProjectRequestContext, resolveOwnerExecutionScope, synchronizeProjectScope } from "./project-access.ts";
 import { priceTextUsageBreakdownMicrousd } from "./replay-cost.ts";
 import { EVENT_WRITE_COLUMNS, eventWriteBindings, makeEvent, serializeEvent, streamHead, uuidV7, type WorkerEnv, type WorkerExecutionContext } from "./runtime.ts";
 
 type AssistantReply = { key?: string; values?: Record<string, string | number>; text?: string };
 type AssistantProposal = { id: string; key: string; route?: string; kind: "navigate" | AssistantContextAction["kind"]; turnId: string; summary?: string };
-type AssistantTurn = { id: string; user: string; reply: AssistantReply; proposal: AssistantProposal | null; proposals?: AssistantProposal[] };
-type AuthorizedAssistant = { principal: PilotUser; project: ProjectRequestContext | null; surface: AssistantSurface; projectId: string | null; canPropose: boolean };
+type AssistantTurn = { id: string; user: string; reply: AssistantReply; proposal: AssistantProposal | null; proposals?: AssistantProposal[]; originalRequest?: unknown;
+  memory?:MemoryAnswerPresentation };
+type AssistantRecallMemory=
+  |{mode:"extractive";selection:NativeMemorySelection;value:NativeDocumentMemoryContext;source:AssistantContextReadWitness<NativeDocumentMemoryContext>}
+  |{mode:"structured";selection:NativeMemorySelection;value:PreparedNativeStructuredConversationContext};
+type AuthorizedAssistant = SpecialistActor;
 type PreparedAssistantAction = {
   id: string;
   turnId: string;
@@ -46,7 +64,10 @@ type PreparedAssistantAction = {
   summary: string;
   sourceVersions: Array<{ blockId: string; version: number }>;
 };
-type AssistantTurnRow = { turn_id: string; proposal_json: string | null; user_content: string; assistant_content: string };
+type AssistantTurnRow = { turn_id: string; proposal_json: string | null; user_content: string; assistant_content: string; request_json?: string|null;
+  source_created_at?:string;source_sequence?:number;
+  source_user_ref?:string;source_answer_ref?:string;source_turn_record?:string;source_message_id?:string;source_response_id?:string;
+  source_message_record?:string;source_response_record?:string;source_metadata_checked?:number;source_metadata_record?:string|null };
 type StoredAssistantProposal = {
   proposal_id: string;
   actor_user_id: string;
@@ -65,41 +86,7 @@ type StoredAssistantProposal = {
   expires_at: string;
   content: string;
 };
-type PreparedAssistantTask = {
-  id: string;
-  turnId: string;
-  kind: AssistantTask;
-  model: AssistantModel;
-  tokenReservationId: string;
-  costReservationId: string;
-  estimatedMicrousd: number;
-  inputTokens: number;
-  outputTokens: number;
-  locale: string;
-};
-type StoredAssistantTask = {
-  task_id: string;
-  actor_user_id: string;
-  scope_key: string;
-  turn_id: string;
-  organization_id: string | null;
-  project_access_id: string | null;
-  project_id: string | null;
-  document_id: string | null;
-  task_kind: string;
-  selected_model: string;
-  token_reservation_id: string;
-  cost_reservation_id: string;
-  estimated_microusd: number;
-  maximum_input_tokens: number;
-  maximum_output_tokens: number;
-  locale: string;
-  permission_epoch: string;
-  status: string;
-  error_code: string | null;
-  lease_expires_at: string | null;
-  provider_submitted: number;
-};
+type StoredAssistantTask = SpecialistTaskRecord;
 
 const initializedAssistants = new WeakMap<D1Database, Promise<void>>();
 const privateHeaders = { "cache-control": "private, no-store", vary: "Cookie, oai-authenticated-user-id, oai-authenticated-user-email" };
@@ -121,6 +108,7 @@ async function ensureAssistantSchema(env: WorkerEnv) {
         env.DB.prepare("CREATE TRIGGER IF NOT EXISTS assistant_billing_reconciliation_block_update BEFORE UPDATE ON assistant_billing_reconciliations BEGIN SELECT RAISE(ABORT,'assistant billing audit is append-only'); END"),
         env.DB.prepare("CREATE TRIGGER IF NOT EXISTS assistant_billing_reconciliation_block_delete BEFORE DELETE ON assistant_billing_reconciliations BEGIN SELECT RAISE(ABORT,'assistant billing audit is append-only'); END"),
       ]);
+      await ensureAssistantSpecialistColumns(env);
     })().catch((error) => { initializedAssistants.delete(env.DB); throw error; });
     initializedAssistants.set(env.DB, pending);
   }
@@ -143,13 +131,6 @@ function assistantActionsEnabled(env: WorkerEnv, actor: AuthorizedAssistant) {
   return featureUsers(env.FORMA_ASSISTANT_ACTION_USER_IDS).has(actor.principal.userId) && actor.canPropose;
 }
 
-function assistantProviderEnabled(env: WorkerEnv, actor: AuthorizedAssistant) {
-  const scope = actor.project ? { organizationId: actor.project.organizationId, projectAccessId: actor.project.projectAccessId } : undefined;
-  return Boolean(env.OPENAI_API_KEY && featureUsers(env.FORMA_ASSISTANT_PROVIDER_USER_IDS).has(actor.principal.userId)
-    && actor.canPropose && (scope ? hasCapability(actor.principal, "project.output.request", scope)
-      : actor.principal.access.capabilities.includes("project.output.request")));
-}
-
 function assistantTaskKind(message: string, actions: PreparedAssistantAction[]): AssistantTask {
   if (/\b(?:governance|compliance|security policy|procurement|audit policy)\b/iu.test(message)) return "governance-review";
   if (/\b(?:across|compare|synthesize)\b.{0,30}\b(?:documents|projects)\b/iu.test(message)) return "cross-document-synthesis";
@@ -160,78 +141,6 @@ function assistantAllowedModels(env: WorkerEnv): AssistantModel[] {
   if (!env.FORMA_ASSISTANT_ALLOWED_MODELS) return ["gpt-5.6-luna", "gpt-5.6-terra"];
   return [...new Set(env.FORMA_ASSISTANT_ALLOWED_MODELS.split(",").map((item) => item.trim()))]
     .filter((item): item is AssistantModel => ASSISTANT_MODELS.includes(item as AssistantModel));
-}
-
-async function prepareAssistantTask(env: WorkerEnv, actor: AuthorizedAssistant, input: {
-  turnId: string;
-  message: string;
-  actions: PreparedAssistantAction[];
-  locale: unknown;
-  model: unknown;
-  premiumApproval: unknown;
-}): Promise<PreparedAssistantTask | null> {
-  if (!assistantProviderEnabled(env, actor)) return null;
-  const scope = actor.project ? { organizationId: actor.project.organizationId, projectAccessId: actor.project.projectAccessId, actorUserId: actor.principal.userId } : undefined;
-  if (!(await pilotExecutionAllowance(env, actor.principal.userId, scope)).allowed) return null;
-  const budgets = await readAccountBudgets(env, actor.principal.userId, scope?.organizationId);
-  const kind = assistantTaskKind(input.message, input.actions);
-  const premiumApproved = input.premiumApproval === true && actor.principal.role === "admin"
-    && featureUsers(env.FORMA_ASSISTANT_SOL_USER_IDS).has(actor.principal.userId);
-  const selection = selectAssistantModel(kind, {
-    allowedModels: assistantAllowedModels(env),
-    remainingMicrousd: Math.min(budgets.costBudgets.user.remainingMicrousd, budgets.costBudgets.workspace.remainingMicrousd),
-    premiumApproved,
-    ...(typeof input.model === "string" ? { requestedModel: input.model } : {}),
-  });
-  if (selection.blocked || !selection.model) return null;
-  const streamId = actor.project ? `creative:${actor.project.ownerUserId}` : actor.principal.streamId;
-  const correlation = `assistant-specialist:${actor.principal.userId}:${input.turnId}`;
-  const token = await reserveBudget(env, actor.principal.userId, selection.inputTokens + selection.outputTokens, {
-    streamId,
-    correlationId: correlation,
-    operation: `assistant:${kind}:${selection.model}`,
-    ...(scope ? { projectScope: scope } : {}),
-  });
-  if (!token.ok) return null;
-  try {
-    const cost = await reserveCostBudget(env, actor.principal.userId, selection.estimatedMicrousd, {
-      maximumMicrousd: selection.estimatedMicrousd,
-      allowUserOverage: false,
-      period: token.period,
-      streamId,
-      correlationId: correlation,
-      operation: `assistant:${kind}:${selection.model}`,
-      ...(scope ? { projectScope: scope } : {}),
-    });
-    if (!cost.ok) {
-      await releaseBudget(env, actor.principal.userId, token.reservationId, { reason: "assistant_cost_budget_unavailable" });
-      return null;
-    }
-    return {
-      id: uuidV7(),
-      turnId: input.turnId,
-      kind,
-      model: selection.model,
-      tokenReservationId: token.reservationId,
-      costReservationId: cost.reservationId,
-      estimatedMicrousd: selection.estimatedMicrousd,
-      inputTokens: selection.inputTokens,
-      outputTokens: selection.outputTokens,
-      locale: responseLocale(input.locale),
-    };
-  } catch {
-    await releaseBudget(env, actor.principal.userId, token.reservationId, { reason: "assistant_admission_failed" });
-    return null;
-  }
-}
-
-async function releasePreparedAssistantTask(env: WorkerEnv, actor: AuthorizedAssistant, task: PreparedAssistantTask | null) {
-  if (!task) return;
-  const retained = await env.DB.prepare("SELECT 1 AS present FROM assistant_specialist_tasks WHERE task_id=? AND actor_user_id=?")
-    .bind(task.id, actor.principal.userId).first();
-  if (retained) return;
-  await releaseCostBudget(env, actor.principal.userId, task.costReservationId);
-  await releaseBudget(env, actor.principal.userId, task.tokenReservationId, { reason: "assistant_turn_not_committed" });
 }
 
 function workspaceCapabilities(path: string): { organizationId: string; capabilities: readonly FormaCapability[] } | null {
@@ -248,7 +157,14 @@ function workspaceCapabilities(path: string): { organizationId: string; capabili
   return { organizationId, capabilities };
 }
 
-async function authorizeAssistant(request: Request, env: WorkerEnv): Promise<{ authorized: AuthorizedAssistant | null; response: Response | null }> {
+async function observedContextFirst<T>(env:WorkerEnv,sql:string,bindings:readonly (string|number|null)[],source?:AssistantContextReadWitness){
+  const statement=env.DB.prepare(sql).bind(...bindings);
+  if(!source)return statement.first<T>();
+  const rows=await statement.all<Record<string,unknown>>();source.observe([statement],[rows],[{sql,bindings}]);
+  return(rows.results[0]??null) as T|null;
+}
+
+async function authorizeAssistant(request: Request, env: WorkerEnv, source?:AssistantContextReadWitness): Promise<{ authorized: AuthorizedAssistant | null; response: Response | null }> {
   const auth = await requireUser(request, env, "viewer", { account: "principal" });
   if (auth.response || !auth.user) return { authorized: null, response: auth.response ?? json({ error: "authentication_required" }, 401) };
   const principal = auth.user;
@@ -261,8 +177,8 @@ async function authorizeAssistant(request: Request, env: WorkerEnv): Promise<{ a
   if (!surface.available || surface.host !== "creator") return { authorized: null, response: json({ error: "assistant_surface_denied" }, 403) };
   const selected = await readProjectRequestContext(request, env, principal);
   if (selected.response) return { authorized: null, response: selected.response };
-  const project = selected.context;
-  const scope = project ? { organizationId: project.organizationId, projectAccessId: project.projectAccessId } : undefined;
+  let project = selected.context;
+  let scope = project ? { organizationId: project.organizationId, projectAccessId: project.projectAccessId } : undefined;
   if (project && !hasCapability(principal, "project.read", scope)) return { authorized: null, response: json({ error: "assistant_project_denied" }, 403) };
   if (surface.application === "canvas") {
     const governance = await readCanvasGovernance(env, principal.role);
@@ -279,63 +195,90 @@ async function authorizeAssistant(request: Request, env: WorkerEnv): Promise<{ a
   if (project && requestedProjectId && requestedProjectId !== project.projectId) return { authorized: null, response: json({ error: "assistant_project_mismatch" }, 403) };
   let projectId = project?.projectId ?? null;
   if (!project && requestedProjectId) {
-    const owned = await env.DB.prepare("SELECT 1 AS authorized FROM events WHERE stream_id=? AND type='ProjectCreated' AND json_extract(payload,'$.project_id')=? LIMIT 1")
-      .bind(principal.streamId, requestedProjectId).first();
+    const owned = await observedContextFirst(env,"SELECT 1 AS authorized FROM events WHERE stream_id=? AND type='ProjectCreated' AND json_extract(payload,'$.project_id')=? LIMIT 1",
+      [principal.streamId, requestedProjectId],source);
     if (!owned) return { authorized: null, response: json({ error: "assistant_project_denied" }, 403) };
     projectId = requestedProjectId;
   }
   if (surface.documentId) {
     if (project) {
-      const resource = await env.DB.prepare("SELECT 1 AS authorized FROM project_resource_scopes WHERE project_access_id=? AND organization_id=? AND project_id=? AND owner_user_id=? AND resource_kind='document' AND resource_id=? LIMIT 1")
-        .bind(project.projectAccessId, project.organizationId, project.projectId, project.ownerUserId, surface.documentId).first();
+      const resource = await observedContextFirst(env,"SELECT 1 AS authorized FROM project_resource_scopes WHERE project_access_id=? AND organization_id=? AND project_id=? AND owner_user_id=? AND resource_kind='document' AND resource_id=? LIMIT 1",
+        [project.projectAccessId, project.organizationId, project.projectId, project.ownerUserId, surface.documentId],source);
       if (!resource) return { authorized: null, response: json({ error: "assistant_document_denied" }, 403) };
     } else {
-      const resource = await env.DB.prepare(`SELECT COALESCE(json_extract(document.payload,'$.project_id'),
+      const resource = await observedContextFirst<{project_id:string}>(env,`SELECT COALESCE(json_extract(document.payload,'$.project_id'),
         (SELECT json_extract(project.payload,'$.project_id') FROM events project WHERE project.stream_id=document.stream_id
           AND project.sequence<=document.sequence AND project.type IN('ProjectCreated','ProjectOpened') ORDER BY project.sequence DESC LIMIT 1)) AS project_id
-        FROM events document WHERE document.stream_id=? AND document.type='DocumentCreated' AND json_extract(document.payload,'$.document_id')=? LIMIT 1`)
-        .bind(principal.streamId, surface.documentId).first<{ project_id: string }>();
+        FROM events document WHERE document.stream_id=? AND document.type='DocumentCreated' AND json_extract(document.payload,'$.document_id')=? LIMIT 1`,
+        [principal.streamId, surface.documentId],source);
       if (!resource || projectId && String(resource.project_id) !== projectId) return { authorized: null, response: json({ error: "assistant_document_denied" }, 403) };
       projectId = String(resource.project_id);
     }
   }
-  return { authorized: { principal, project, surface, projectId, canPropose: !project || hasCapability(principal, "project.author", scope) }, response: null };
+  let legacyScopeKey:string|undefined;
+  if(!project&&projectId){
+    const custody=await resolveOwnerExecutionScope(env,principal,surface.documentId??"",projectId,"read");
+    if(custody.denied)return{authorized:null,response:json({error:"assistant_project_custody_unavailable"},403)};
+    if(custody.scope){
+      legacyScopeKey=assistantScopeKey({principal,project:null,surface,projectId,canPropose:false});
+      scope={organizationId:custody.scope.organizationId,projectAccessId:custody.scope.projectAccessId};
+      project={contextId:"",organizationId:custody.scope.organizationId,projectAccessId:custody.scope.projectAccessId,projectId,ownerUserId:custody.scope.ownerUserId,principalUserId:principal.userId,role:"owner",permissions:principal.access.capabilities.filter(capability=>hasCapability(principal,capability,custody.scope)),expiresAt:""};
+      if(workspace&&workspace.organizationId!==project.organizationId)return{authorized:null,response:json({error:"assistant_workspace_project_mismatch"},403)};
+    }
+  }
+  return { authorized: { principal, project, surface, projectId, canPropose: scope?hasCapability(principal,"project.author",scope):principal.access.capabilities.includes("project.author"),...(legacyScopeKey?{legacyScopeKey}:{}) }, response: null };
 }
 
-async function scopedAssistantEvents(env: WorkerEnv, actor: AuthorizedAssistant) {
+async function scopedAssistantEvents(env: WorkerEnv, actor: AuthorizedAssistant, source?:AssistantContextReadWitness) {
   if (actor.project) {
     const headRow = await env.DB.prepare("SELECT COALESCE(MAX(project_sequence),0) AS head FROM project_event_scopes WHERE project_access_id=? AND organization_id=?")
       .bind(actor.project.projectAccessId, actor.project.organizationId).first<{ head: number }>();
     const head = Number(headRow?.head ?? 0);
-    const state = await readProjectAssistantEventView(env, actor.project, { documentId: actor.surface.documentId, canvasId: actor.surface.canvasId });
-    const recent = await readProjectEventPage(env, actor.project, Math.max(0, head - 32), 32, false);
+    const state = await readProjectAssistantEventView(env, actor.project, { documentId: actor.surface.documentId, canvasId: actor.surface.canvasId,sourceObserver:source?.observe });
+    const recent = await readProjectEventPage(env, actor.project, Math.max(0, head - 32), 32, false,source?.observe);
+    if(source){
+      const descriptor:AssistantContextReadDescriptor={sql:"SELECT COALESCE(MAX(sequence),0) AS head FROM events WHERE stream_id=?",bindings:[`creative:${actor.project.ownerUserId}`],role:"owner-head",streamId:`creative:${actor.project.ownerUserId}`};
+      const statement=env.DB.prepare(descriptor.sql).bind(...descriptor.bindings);
+      source.observe([statement],[await statement.all<Record<string,unknown>>()],[descriptor]);
+      source.require(projectSourceProjectionCurrentAssertion(actor.project),own=>projectSourceProjectionCurrentAssertion(actor.project!,own),
+        own=>projectStructuredSourceProjectionCurrentAssertion(actor.project!,own));
+    }
     return [...new Map([...state, ...recent.events].map((event) => [event.eventId, event])).values()]
       .filter((event) => event.type !== "ProjectResourceRestricted")
       .sort((left, right) => left.sequence - right.sequence) as CreativeEvent[];
   }
-  const head = await streamHead(env, actor.principal.streamId);
+  let head:number;
+  if(source){
+    const descriptor:AssistantContextReadDescriptor={sql:"SELECT COALESCE(MAX(sequence),0) AS head FROM events WHERE stream_id=?",bindings:[actor.principal.streamId],role:"owner-head",streamId:actor.principal.streamId};
+    const statement=env.DB.prepare(descriptor.sql).bind(...descriptor.bindings);
+    const result=await statement.all<Record<string,unknown>>();source.observe([statement],[result],[descriptor]);head=Number(result.results[0]?.head??0);
+  }else head=await streamHead(env, actor.principal.streamId);
   const documentId = actor.surface.documentId ?? "", canvasId = actor.surface.canvasId ?? "", projectId = actor.projectId ?? "";
   const joins = "FROM events event LEFT JOIN event_private_payloads secret ON secret.private_event_id=event.event_id AND secret.owner_id=? AND secret.redacted_at IS NULL";
+  const selected=source?"event.*,secret.private_json,CASE WHEN secret.private_event_id IS NULL THEN NULL ELSE json_array(secret.private_event_id,secret.owner_id,secret.project_id,secret.document_id,secret.created_at,secret.redacted_at) END AS source_private_record":"event.*,secret.private_json";
   const documentProject = "COALESCE(json_extract(event.payload,'$.project_id'),(SELECT json_extract(previous.payload,'$.project_id') FROM events previous WHERE previous.stream_id=event.stream_id AND previous.sequence<=event.sequence AND previous.type IN('ProjectCreated','ProjectOpened') ORDER BY previous.sequence DESC LIMIT 1))";
   const eventDocument = "COALESCE(json_extract(event.payload,'$.document_id'),(SELECT json_extract(previous.payload,'$.document_id') FROM events previous WHERE previous.stream_id=event.stream_id AND previous.sequence<=event.sequence AND previous.type IN('DocumentCreated','DocumentOpened') ORDER BY previous.sequence DESC LIMIT 1))";
-  const bootstrap = env.DB.prepare(`SELECT event.*,secret.private_json ${joins} WHERE event.stream_id=?
+  const bootstrap:AssistantContextReadDescriptor = {sql:`SELECT ${selected} ${joins} WHERE event.stream_id=?
     AND(event.type IN('ProjectCreated','ProjectOpened','ProjectRenamed') AND(?='' OR json_extract(event.payload,'$.project_id')=?)
       OR event.type IN('DocumentCreated','DocumentForked','DocumentRenamed','DocumentRemoved','DocumentRestored')
         AND((?<>'' AND json_extract(event.payload,'$.document_id')=?) OR(?='' AND(?='' OR ${documentProject}=?)))
       OR event.type IN('CanvasCreated','CanvasRenamed','CanvasRemoved','CanvasRestored') AND(?='' OR json_extract(event.payload,'$.canvas_id')=?) AND(?='' OR json_extract(event.payload,'$.project_id')=?))
-    ORDER BY event.sequence DESC LIMIT 128`).bind(actor.principal.userId, actor.principal.streamId, projectId, projectId, documentId, documentId, documentId, projectId, projectId, canvasId, canvasId, projectId, projectId);
-  const semantic = env.DB.prepare(`SELECT event.*,secret.private_json ${joins} WHERE event.stream_id=? AND event.type IN(${ASSISTANT_STATE_EVENT_SQL})
+    ORDER BY event.sequence DESC LIMIT 128`,bindings:[actor.principal.userId, actor.principal.streamId, projectId, projectId, documentId, documentId, documentId, projectId, projectId, canvasId, canvasId, projectId, projectId]};
+  const semantic:AssistantContextReadDescriptor = {sql:`SELECT ${selected} ${joins} WHERE event.stream_id=? AND event.type IN(${ASSISTANT_STATE_EVENT_SQL})
     AND((?='' AND ?='') AND(?='' OR json_extract(event.payload,'$.project_id')=? OR event.type='DocumentCreated' AND ${documentProject}=?)
       OR ${eventDocument}=? OR json_extract(event.payload,'$.canvas_id')=? OR json_extract(event.payload,'$.source_canvas_id')=?
       OR event.type IN('ProjectCreated','ProjectOpened','ProjectRenamed') AND json_extract(event.payload,'$.project_id')=?)
-    ORDER BY event.sequence DESC LIMIT 384`).bind(actor.principal.userId, actor.principal.streamId, documentId, canvasId, projectId, projectId, projectId, documentId, canvasId, canvasId, projectId);
-  const boundaries = env.DB.prepare(`SELECT event.*,secret.private_json ${joins} WHERE event.stream_id=? AND event.type='BlockCreated'
+    ORDER BY event.sequence DESC LIMIT 384`,bindings:[actor.principal.userId, actor.principal.streamId, documentId, canvasId, projectId, projectId, projectId, documentId, canvasId, canvasId, projectId]};
+  const boundaries:AssistantContextReadDescriptor = {sql:`SELECT ${selected} ${joins} WHERE event.stream_id=? AND event.type='BlockCreated'
     AND(?='' OR ${eventDocument}=?)
     AND(json_extract(event.payload,'$.type')='exclusion' OR json_extract(secret.private_json,'$.properties.intent')='prohibit' OR json_extract(secret.private_json,'$.properties.locked')=1)
-    ORDER BY event.sequence DESC LIMIT 32`).bind(actor.principal.userId, actor.principal.streamId, documentId, documentId);
-  const latest = env.DB.prepare(`SELECT event.*,secret.private_json ${joins} WHERE event.stream_id=? AND event.sequence>? ORDER BY event.sequence ASC LIMIT 32`)
-    .bind(actor.principal.userId, actor.principal.streamId, Math.max(0, head - 32));
-  const results = await env.DB.batch<Record<string, unknown>>([bootstrap, semantic, boundaries, latest]);
+    ORDER BY event.sequence DESC LIMIT 32`,bindings:[actor.principal.userId, actor.principal.streamId, documentId, documentId]};
+  const latest:AssistantContextReadDescriptor = {sql:`SELECT ${selected} ${joins} WHERE event.stream_id=? AND event.sequence>? ORDER BY event.sequence ASC LIMIT 32`,
+    bindings:[actor.principal.userId, actor.principal.streamId, Math.max(0, head - 32)],role:"ascending-events"};
+  const descriptors=[bootstrap,semantic,boundaries,latest];
+  const statements=descriptors.map(item=>env.DB.prepare(item.sql).bind(...item.bindings));
+  const results = await env.DB.batch<Record<string, unknown>>(statements);
+  source?.observe(statements,results,descriptors);
   return [...new Map(results.flatMap((result) => result.results).map((row) => { const event = serializeEvent(row); return [event.eventId, event]; })).values()]
     .sort((left, right) => left.sequence - right.sequence) as CreativeEvent[];
 }
@@ -371,7 +314,14 @@ function preparedAssistantActions(message: string, context: AssistantContext, tu
   return prepareTypedAssistantActions(normalizeAssistantActions(message, context), context, turnId);
 }
 
-async function pendingTurnProposals(env: WorkerEnv, actor: AuthorizedAssistant, turnId: string, raw: string | null): Promise<AssistantProposal[]> {
+const assistantProposalSourceRecord="json_array(proposal.proposal_id,proposal.actor_user_id,proposal.scope_key,proposal.turn_id,proposal.organization_id,proposal.project_access_id,proposal.project_id,proposal.document_id,proposal.action_kind,proposal.action_content_ref,proposal.source_versions_json,proposal.expected_head,proposal.permission_epoch,proposal.status,proposal.expires_at,content.owner_id,content.kind,content.content,content.expires_at)";
+
+function encodedAssistantProposals(actions:PreparedAssistantAction[],proposal:AssistantProposal|null){
+  return actions.length?JSON.stringify({proposals:actions.map(({id,turnId,key,action})=>({id,turnId,key,kind:action.kind}))})
+    :proposal?JSON.stringify(proposal):null;
+}
+
+async function pendingTurnProposals(env: WorkerEnv, actor: AuthorizedAssistant, turnId: string, raw: string | null,sourceRecords?:string[],freshActions?:PreparedAssistantAction[]): Promise<AssistantProposal[]> {
   if (!raw) return [];
   let metadata: AssistantProposal[];
   try {
@@ -382,14 +332,14 @@ async function pendingTurnProposals(env: WorkerEnv, actor: AuthorizedAssistant, 
   } catch { return []; }
   if (!metadata.some((proposal) => proposal.kind !== "navigate")) return metadata.filter((proposal) => proposal.kind === "navigate");
   const now = new Date().toISOString();
-  const rows = await env.DB.prepare(`SELECT proposal.proposal_id,proposal.action_kind,content.content
+  const rows = await env.DB.prepare(`SELECT proposal.proposal_id,proposal.action_kind,proposal.source_versions_json,content.content,${assistantProposalSourceRecord} AS source_record
     FROM assistant_action_proposals proposal JOIN private_content content
       ON content.content_id=proposal.action_content_ref AND content.owner_id=proposal.actor_user_id
         AND content.redacted_at IS NULL AND content.expires_at>?
     WHERE proposal.actor_user_id=? AND proposal.scope_key=? AND proposal.turn_id=?
       AND proposal.status='pending' AND proposal.expires_at>?
     ORDER BY proposal.created_at,proposal.proposal_id`).bind(now, actor.principal.userId, assistantScopeKey(actor), turnId, now)
-    .all<{ proposal_id: string; action_kind: string; content: string }>();
+    .all<{ proposal_id: string; action_kind: string; source_versions_json:string;content: string;source_record:string }>();
   const pending = new Map(rows.results.map((row) => [String(row.proposal_id), row]));
   return metadata.flatMap((proposal) => {
     if (proposal.kind === "navigate") return [proposal];
@@ -398,34 +348,221 @@ async function pendingTurnProposals(env: WorkerEnv, actor: AuthorizedAssistant, 
     try {
       const action = JSON.parse(row.content) as AssistantContextAction;
       if (action.kind !== proposal.kind) return [];
-      const summary = action.kind === "context.create" || action.kind === "context.edit" ? String(action.text ?? "").slice(0, 600) : "";
+      const fresh=freshActions?.find(item=>item.id===proposal.id);
+      if(freshActions&&(!fresh||fresh.turnId!==proposal.turnId||fresh.key!==proposal.key||fresh.action.kind!==proposal.kind
+        ||JSON.stringify(fresh.action)!==row.content||JSON.stringify(fresh.sourceVersions)!==row.source_versions_json))return[];
+      // Fresh summary prose is request-local presentation, not a stored memory or
+      // a claim about current document text. Never attach it to a changed action.
+      const summary = fresh?fresh.summary:action.kind === "context.create" || action.kind === "context.edit" ? String(action.text ?? "").slice(0, 600) : "";
+      sourceRecords?.push(row.source_record);
       return [{ ...proposal, ...(summary ? { summary } : {}) }];
     } catch { return []; }
   });
 }
 
-async function assistantTurnFromRow(env: WorkerEnv, actor: AuthorizedAssistant, row: AssistantTurnRow): Promise<AssistantTurn> {
-  const proposals = await pendingTurnProposals(env, actor, String(row.turn_id), row.proposal_json);
-  return {
-    id: String(row.turn_id),
-    user: String(row.user_content),
-    reply: { text: String(row.assistant_content) },
-    proposal: proposals[0] ?? null,
-    ...(proposals.length > 1 ? { proposals } : {}),
-  };
+function assistantProposalSourceProof(actor:AuthorizedAssistant,records:string[]):BudgetReservationGuard{
+  if(!records.length)return{sql:"1",bindings:[]};
+  const custody=assistantTurnContentCustody(actor,"authored");
+  return{sql:`NOT EXISTS(SELECT 1 FROM json_each(?) expected WHERE NOT EXISTS(
+    SELECT 1 FROM assistant_action_proposals proposal JOIN private_content content
+      ON content.content_id=proposal.action_content_ref AND content.owner_id=proposal.actor_user_id
+      AND content.redacted_at IS NULL AND content.expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now')
+    WHERE proposal.proposal_id=json_extract(expected.value,'$[0]') AND proposal.status='pending'
+      AND proposal.expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now') AND ${assistantProposalSourceRecord}=expected.value
+      AND ${custody.sql.replaceAll("authored.","content.")}))`,bindings:[JSON.stringify(records),...custody.bindings]};
 }
 
-async function recentAssistantTurns(env: WorkerEnv, actor: AuthorizedAssistant): Promise<AssistantTurn[]> {
+const assistantHistoryTurnRecord="json_array(turn.actor_user_id,turn.scope_key,turn.turn_id,turn.organization_id,turn.project_access_id,turn.project_id,turn.document_id,turn.user_content_ref,turn.assistant_content_ref,turn.proposal_json,turn.request_json)";
+const assistantHistoryEventRecord=(alias:"message"|"response")=>"json_array("+["event_id","stream_id","sequence","type","actor","correlation_id","payload"].map(column=>alias+"."+column).join(",")+")";
+const assistantHistoryContentSources="authored.content_id AS source_user_ref,answer.content_id AS source_answer_ref";
+const assistantHistoryEventSources="message.event_id AS source_message_id,response.event_id AS source_response_id,"+assistantHistoryEventRecord("message")+" AS source_message_record,"+assistantHistoryEventRecord("response")+" AS source_response_record";
+const assistantTurnOrder=new WeakMap<AssistantTurn,string>();
+const assistantMemoryRequests=new WeakMap<AssistantTurn,string|null>();
+const assistantMemoryOriginIds=new WeakMap<AssistantTurn,string>();
+async function ordinaryAssistantExclusion(env:WorkerEnv,turnAlias?:"turn"|"metadata"):Promise<BudgetReservationGuard>{
+  const [answer,authored]=await Promise.all([nativeMemoryAnswerExclusion(env,{answerAlias:"answer",turnAlias}),
+    nativeMemoryAnswerExclusion(env,{answerAlias:"authored"})]);
+  return{sql:`(${answer.sql}) AND (${authored.sql})`,bindings:[...answer.bindings,...authored.bindings]};
+}
+
+/** A retired marked turn is not a new empty slot. Do not attempt to derive or
+ * overwrite another answer for its old id when its origin is unavailable. */
+async function unavailableNativeMemoryTurn(env:WorkerEnv,actor:AuthorizedAssistant,turnId:string):Promise<boolean>{
+  const exclusion=await ordinaryAssistantExclusion(env,"turn");
+  if(await env.DB.prepare(`SELECT 1 AS marked FROM assistant_turns turn
+    LEFT JOIN private_content authored ON authored.content_id=turn.user_content_ref AND authored.owner_id=turn.actor_user_id
+    LEFT JOIN private_content answer ON answer.content_id=turn.assistant_content_ref AND answer.owner_id=turn.actor_user_id
+    WHERE turn.actor_user_id=? AND turn.scope_key=? AND turn.turn_id=? AND NOT(${exclusion.sql}) LIMIT 1`)
+    .bind(actor.principal.userId,assistantScopeKey(actor),turnId,...exclusion.bindings).first())return true;
+  // Erasure may remove the turn row while retaining its immutable event marker
+  // or origin tombstone. That historical id must not become a new write slot.
+  const marker=await nativeMemoryAnswerExclusion(env,{answerAlias:"answer",turnAlias:"turn"});
+  return Boolean(await env.DB.prepare(`WITH turn AS(SELECT ? AS actor_user_id,? AS scope_key,? AS turn_id,? AS project_id,? AS document_id,? AS organization_id,? AS project_access_id),
+    answer AS(SELECT NULL AS content_id,'chat-assistant' AS kind)
+    SELECT 1 AS marked FROM turn,answer WHERE NOT(${marker.sql}) LIMIT 1`)
+    .bind(actor.principal.userId,assistantScopeKey(actor),turnId,actor.projectId,actor.surface.documentId??null,actor.project?.organizationId??null,actor.project?.projectAccessId??null,...marker.bindings).first());
+}
+
+type MemoryTurnRow=AssistantTurnRow&{origin_id:string;answer_event_id:string;answer_content_id:string};
+/** Marked history has its own dependency witness, never the ordinary chat lane.
+ * Even when the feature is disabled, no marked bytes fall back to plain history. */
+async function nativeMemoryAssistantTurnsForProtocol(env:WorkerEnv,actor:AuthorizedAssistant,version:1|2,turnId?:string):Promise<AssistantTurn[]>{
+  try{
+  if(!liveMemoryEnabled(env,actor.principal.userId)||!actor.surface.documentId||!actor.projectId)return[];
+  const schema=await env.DB.prepare(version===1
+    ?"SELECT COUNT(*) AS count FROM sqlite_schema WHERE type='table' AND name IN('memory_native_answer_origins','memory_native_answer_dependencies')"
+    :"SELECT COUNT(*) AS count FROM sqlite_schema WHERE type='table' AND name IN('memory_structured_answer_origins','memory_structured_answer_originals','memory_structured_answer_ledger_revisions')").first<{count:number}>();
+  if(schema?.count!==(version===1?2:3))return[];
+  const originTable=version===1?"memory_native_answer_origins":"memory_structured_answer_origins";
+  const baseSql=`SELECT turn.turn_id,turn.proposal_json,turn.request_json,turn.created_at AS source_created_at,origin.answer_source_sequence AS source_sequence,
+    authored.content AS user_content,answer.content AS assistant_content,origin.origin_id,origin.answer_event_id,origin.answer_content_id
+    FROM assistant_turns turn JOIN ${originTable} origin ON origin.actor_user_id=turn.actor_user_id
+      AND origin.scope_key=turn.scope_key AND origin.turn_id=turn.turn_id AND origin.answer_content_id=turn.assistant_content_ref
+    JOIN private_content authored ON authored.content_id=turn.user_content_ref AND authored.owner_id=turn.actor_user_id AND authored.kind='chat-user'
+    JOIN private_content answer ON answer.content_id=turn.assistant_content_ref AND answer.owner_id=turn.actor_user_id AND answer.kind=?
+    JOIN events response ON response.event_id=origin.answer_event_id AND json_extract(response.payload,'$.memory_origin_version')=${version}
+    WHERE turn.actor_user_id=? AND turn.scope_key=? AND turn.document_id=?`;
+  const baseBindings=[NATIVE_MEMORY_ANSWER_KIND,actor.principal.userId,assistantScopeKey(actor),actor.surface.documentId];
+  const selected=await env.DB.prepare(baseSql+`${turnId?" AND turn.turn_id=?":""} ORDER BY origin.answer_source_sequence DESC,turn.turn_id DESC LIMIT ?`)
+    .bind(...baseBindings,...(turnId?[turnId]:[]),turnId?2:ASSISTANT_CONTEXT_LIMITS.turns).all<MemoryTurnRow>();
+  if(!selected.success||turnId&&selected.results.length!==1)return[];
+  const result:AssistantTurn[]=[];
+  for(const candidate of selected.results){
+    const exact={sql:baseSql+" AND turn.turn_id=? AND origin.origin_id=? LIMIT 2",bindings:[...baseBindings,candidate.turn_id,candidate.origin_id]};
+    const statement=env.DB.prepare(exact.sql).bind(...exact.bindings);
+    const rows=structuredClone(await statement.all<MemoryTurnRow>());
+    if(!rows.success||rows.results.length!==1)continue;
+    const row=rows.results[0]!;
+    if(row.proposal_json!==null)continue;
+    const witness=new AssistantContextReadWitness<AssistantTurn>(env);
+    witness.observe([statement],[rows as D1Result<Record<string,unknown>>],[exact]);
+    const target={originId:row.origin_id,turnId:row.turn_id,answerEventId:row.answer_event_id,answerContentId:row.answer_content_id,answer:row.assistant_content};
+    const structuredRetained=version===2?await revalidateNativeStructuredAnswerOrigin(env,assistantMemoryPreparedDocument(actor),target,witness):null;
+    const retained=version===1?await revalidateNativeAnswerOrigin(env,assistantMemoryPreparedDocument(actor),target,witness):structuredRetained;
+    if(!retained)continue;
+    const turn:AssistantTurn={id:row.turn_id,user:row.user_content,reply:{text:row.assistant_content},proposal:null,
+      memory:{...(version===1?{version:"native-memory-answer-v1" as const,method:"extractive-not-semantic" as const}
+        :{version:"native-memory-answer-v2" as const,method:"structured-not-semantic" as const}),checkedAt:new Date().toISOString(),validUntil:retained.validUntil}};
+    if(Date.parse(turn.memory!.checkedAt)>=Date.parse(retained.validUntil))continue;
+    witness.seal(turn);if(!witness.statements().length)continue;
+    assistantTurnOrder.set(turn,String(row.source_sequence).padStart(20,"0"));
+    assistantMemoryRequests.set(turn,row.request_json??null);
+    assistantMemoryOriginIds.set(turn,row.origin_id);
+    const retainedSource=structuredRetained?{
+      statements(){
+        const observed=witness.statements(),native=nativeStructuredMemoryOriginReadStatements(env,structuredRetained);
+        return observed.length&&native?.length?[...observed,...native]:[];
+      },
+      matches(results:readonly D1Result<Record<string,unknown>>[]){
+        const observed=witness.statements(),native=nativeStructuredMemoryOriginReadStatements(env,structuredRetained);
+        return Boolean(observed.length&&native?.length&&results.length===observed.length+native.length
+          &&witness.matches(results.slice(0,observed.length))
+          &&nativeStructuredMemoryOriginReadMatches(env,structuredRetained,results.slice(observed.length)));
+      },
+    }:witness;
+    result.push(rememberAssistantMemoryTurnSource(turn,retainedSource));
+  }
+  return result.reverse();
+  }catch{return[];}
+}
+
+async function nativeMemoryAssistantTurns(env:WorkerEnv,actor:AuthorizedAssistant,turnId?:string):Promise<AssistantTurn[]>{
+  const remembered=[...await nativeMemoryAssistantTurnsForProtocol(env,actor,1,turnId),...await nativeMemoryAssistantTurnsForProtocol(env,actor,2,turnId)];
+  // A same-turn cross-protocol collision never picks a preferred set of bytes.
+  // Each reader also proves the negative other-protocol claim for its origin.
+  const unique=remembered.filter(item=>remembered.filter(other=>other.id===item.id).length===1);
+  return unique.sort((left,right)=>(assistantTurnOrder.get(left)??"").localeCompare(assistantTurnOrder.get(right)??"")).slice(-ASSISTANT_CONTEXT_LIMITS.turns);
+}
+
+async function withNativeMemoryAssistantTurns(env:WorkerEnv,actor:AuthorizedAssistant,ordinary:AssistantTurn[]):Promise<AssistantTurn[]>{
+  const remembered=await nativeMemoryAssistantTurns(env,actor);
+  return [...ordinary,...remembered].sort((left,right)=>(assistantTurnOrder.get(left)??"").localeCompare(assistantTurnOrder.get(right)??""))
+    .slice(-ASSISTANT_CONTEXT_LIMITS.turns);
+}
+
+/** A committed send advances the head captured by prior memory display proofs.
+ * Reissue only those bounded historical reads; never rebase the new derivation. */
+async function refreshAssistantMemoryHistory(env:WorkerEnv,actor:AuthorizedAssistant,
+  state:{context:AssistantContext;turns:AssistantTurn[]}):Promise<{context:AssistantContext;turns:AssistantTurn[]}>{
+  const context=state.context,history=[...state.turns],turns:AssistantTurn[]=[];
+  const semantics=(turn:AssistantTurn)=>JSON.stringify({...turn,
+    memory:turn.memory?{version:turn.memory.version,method:turn.memory.method}:undefined});
+  for(const previous of history){
+    if(previous.memory?.version!=="native-memory-answer-v2"){turns.push(previous);continue;}
+    const originId=assistantMemoryOriginIds.get(previous),request=assistantMemoryRequests.get(previous),expected=semantics(previous);
+    // A new object deliberately has no private source association. If its
+    // original origin no longer validates, final proof filtering retires its ID.
+    const unavailable={...previous};
+    const candidates=await nativeMemoryAssistantTurns(env,actor,previous.id),current=candidates.length===1?candidates[0]:undefined;
+    turns.push(originId&&request!==undefined&&current&&assistantMemoryOriginIds.get(current)===originId
+      &&assistantMemoryRequests.get(current)===request&&semantics(current)===expected?current:unavailable);
+  }
+  return{context,turns};
+}
+
+/** Recheck the exact hydrated source in its original custody lane inside the final SELECT-only snapshot. */
+function assistantHistorySourceProof(actor:AuthorizedAssistant,row:AssistantTurnRow,sourceCustody:BudgetReservationGuard,scopeKey=assistantScopeKey(actor),exclusion:BudgetReservationGuard={sql:"1",bindings:[]}):BudgetReservationGuard{
+  if(!row.source_user_ref||!row.source_answer_ref)return{sql:"0",bindings:[]};
+  const table=typeof row.source_turn_record==="string";
+  if(!table&&(!row.source_message_id||!row.source_response_id||!row.source_message_record||!row.source_response_record))return{sql:"0",bindings:[]};
+  const expected=JSON.stringify({actor:actor.principal.userId,scopeKey,turnId:row.turn_id,userRef:row.source_user_ref,answerRef:row.source_answer_ref,
+    user:String(row.user_content),reply:String(row.assistant_content),turn:row.source_turn_record??null,messageId:row.source_message_id??null,responseId:row.source_response_id??null,
+    message:row.source_message_record??null,response:row.source_response_record??null,metadata:row.source_metadata_record??null});
+  const source=table?`JOIN assistant_turns turn ON turn.actor_user_id=json_extract(expected.value,'$.actor')
+      AND turn.scope_key=json_extract(expected.value,'$.scopeKey') AND turn.turn_id=json_extract(expected.value,'$.turnId')`
+    :`JOIN events message ON message.event_id=json_extract(expected.value,'$.messageId')
+      JOIN events response ON response.event_id=json_extract(expected.value,'$.responseId') AND response.stream_id=message.stream_id AND response.correlation_id=message.correlation_id`;
+  const metadata=!table&&row.source_metadata_checked===1?`LEFT JOIN assistant_turns metadata ON metadata.actor_user_id=json_extract(expected.value,'$.actor')
+    AND metadata.scope_key=json_extract(expected.value,'$.scopeKey') AND metadata.turn_id=json_extract(expected.value,'$.turnId')`:"";
+  const metadataExact=metadata?` AND (CASE WHEN metadata.turn_id IS NULL THEN NULL ELSE ${assistantHistoryTurnRecord.replaceAll("turn.","metadata.")} END) IS json_extract(expected.value,'$.metadata')`:"";
+  const exact=table?`${assistantHistoryTurnRecord}=json_extract(expected.value,'$.turn') AND turn.user_content_ref=authored.content_id AND turn.assistant_content_ref=answer.content_id`
+    :`${assistantHistoryEventRecord("message")}=json_extract(expected.value,'$.message') AND ${assistantHistoryEventRecord("response")}=json_extract(expected.value,'$.response')
+      AND json_extract(message.payload,'$.content_ref')=authored.content_id AND json_extract(response.payload,'$.content_ref')=answer.content_id`;
+  return{sql:`EXISTS(SELECT 1 FROM(SELECT ? AS value) expected ${source} ${metadata}
+    JOIN private_content authored ON authored.content_id=json_extract(expected.value,'$.userRef') AND authored.owner_id=json_extract(expected.value,'$.actor')
+      AND authored.kind='chat-user' AND authored.redacted_at IS NULL AND authored.expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now')
+    JOIN private_content answer ON answer.content_id=json_extract(expected.value,'$.answerRef') AND answer.owner_id=json_extract(expected.value,'$.actor')
+      AND answer.kind='chat-assistant' AND answer.redacted_at IS NULL AND answer.expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now')
+    WHERE ${exact}${metadataExact} AND authored.content=json_extract(expected.value,'$.user') AND answer.content=json_extract(expected.value,'$.reply') AND (${sourceCustody.sql}) AND (${exclusion.sql}))`,
+    bindings:[expected,...sourceCustody.bindings,...exclusion.bindings]};
+}
+
+async function assistantTurnFromRow(env: WorkerEnv, actor: AuthorizedAssistant, row: AssistantTurnRow,sourceProof?:BudgetReservationGuard,presentation?:AssistantReply,freshActions?:PreparedAssistantAction[]): Promise<AssistantTurn> {
+  const proposalSources:string[]=[];
+  const proposals = await pendingTurnProposals(env, actor, String(row.turn_id), row.proposal_json,sourceProof?proposalSources:undefined,freshActions);
+  let originalRequest:unknown;try{if(row.request_json)originalRequest=JSON.parse(row.request_json);}catch{/* Old free history may lack a reviewable request snapshot. */}
+  const turn:AssistantTurn={
+    id: String(row.turn_id),
+    user: String(row.user_content),
+    reply: presentation ?? { text: String(row.assistant_content) },
+    proposal: proposals[0] ?? null,
+    ...(proposals.length > 1 ? { proposals } : {}),
+    ...(originalRequest?{originalRequest}:{}),
+  };
+  assistantTurnOrder.set(turn,Number.isSafeInteger(row.source_sequence)?String(row.source_sequence).padStart(20,"0"):row.source_created_at??"");
+  if(!sourceProof)return turn;
+  const proposalProof=freshActions&&proposals.filter(proposal=>proposal.kind!=="navigate").length!==freshActions.length
+    ?{sql:"0",bindings:[]}:assistantProposalSourceProof(actor,proposalSources);
+  return rememberAssistantFeedTurnSource(turn,{sql:`(${sourceProof.sql}) AND (${proposalProof.sql})`,bindings:[...sourceProof.bindings,...proposalProof.bindings]});
+}
+
+async function recentAssistantTurns(env: WorkerEnv, actor: AuthorizedAssistant,generationTurns?:AssistantTurn[]): Promise<AssistantTurn[]> {
+  const replyProof=assistantPaidReplyReadGuard(actor,assistantScopeKey(actor),actor.surface.documentId?"json_extract(message.payload,'$.turn_id')":"turn.turn_id");
+  const authoredCustody=assistantTurnContentCustody(actor,"authored"),answerCustody=assistantTurnContentCustody(actor,"answer");
   if (!actor.surface.documentId) {
-    const rows = await env.DB.prepare(`SELECT turn.turn_id,turn.proposal_json,authored.content AS user_content,answer.content AS assistant_content
+    const exclusion=await ordinaryAssistantExclusion(env,"turn");
+    const rows = await env.DB.prepare(`SELECT turn.turn_id,turn.proposal_json,turn.request_json,turn.created_at AS source_created_at,authored.content AS user_content,answer.content AS assistant_content,
+      ${assistantHistoryContentSources},${assistantHistoryTurnRecord} AS source_turn_record
       FROM assistant_turns turn
-      JOIN private_content authored ON authored.content_id=turn.user_content_ref AND authored.owner_id=turn.actor_user_id AND authored.redacted_at IS NULL AND authored.expires_at>?
-      JOIN private_content answer ON answer.content_id=turn.assistant_content_ref AND answer.owner_id=turn.actor_user_id AND answer.redacted_at IS NULL AND answer.expires_at>?
-      WHERE turn.actor_user_id=? AND turn.scope_key=?
+      JOIN private_content authored ON authored.content_id=turn.user_content_ref AND authored.owner_id=turn.actor_user_id AND authored.kind='chat-user' AND authored.redacted_at IS NULL AND authored.expires_at>?
+      JOIN private_content answer ON answer.content_id=turn.assistant_content_ref AND answer.owner_id=turn.actor_user_id AND answer.kind='chat-assistant' AND answer.redacted_at IS NULL AND answer.expires_at>?
+      WHERE turn.actor_user_id=? AND turn.scope_key=? AND ${authoredCustody.sql} AND ${answerCustody.sql} AND (${exclusion.sql}) AND (${replyProof.sql})
       ORDER BY turn.created_at DESC LIMIT ?`)
-      .bind(new Date().toISOString(), new Date().toISOString(), actor.principal.userId, assistantScopeKey(actor), ASSISTANT_CONTEXT_LIMITS.turns)
+      .bind(new Date().toISOString(), new Date().toISOString(), actor.principal.userId, assistantScopeKey(actor),...authoredCustody.bindings,...answerCustody.bindings,...exclusion.bindings,...replyProof.bindings, ASSISTANT_CONTEXT_LIMITS.turns)
       .all<AssistantTurnRow>();
-    return Promise.all(rows.results.reverse().map((row) => assistantTurnFromRow(env, actor, row)));
+    const sourceCustody={sql:`(${authoredCustody.sql}) AND (${answerCustody.sql})`,bindings:[...authoredCustody.bindings,...answerCustody.bindings]};
+    const turns=await Promise.all(rows.results.reverse().map((row) => assistantTurnFromRow(env, actor, row,assistantHistorySourceProof(actor,row,sourceCustody,undefined,exclusion))));
+    generationTurns?.push(...turns);return turns;
   }
 
   const scope = actor.project;
@@ -445,11 +582,13 @@ async function recentAssistantTurns(env: WorkerEnv, actor: AuthorizedAssistant):
       bindings.push(scope.organizationId, scope.projectAccessId, scope.projectId, actor.principal.userId);
     }
   } else {
-    guard = " AND NOT EXISTS(SELECT 1 FROM private_content_retention_scopes custody WHERE custody.content_id=authored.content_id)"
-      + " AND NOT EXISTS(SELECT 1 FROM private_content_retention_scopes custody WHERE custody.content_id=answer.content_id)";
+    guard = " AND "+authoredCustody.sql+" AND "+answerCustody.sql;
   }
 
-  const rows = await env.DB.prepare(`SELECT json_extract(message.payload,'$.turn_id') AS turn_id,metadata.proposal_json,authored.content AS user_content,answer.content AS assistant_content
+  const exclusion=await ordinaryAssistantExclusion(env,"metadata");
+  const rows = await env.DB.prepare(`SELECT json_extract(message.payload,'$.turn_id') AS turn_id,metadata.proposal_json,metadata.request_json,message.recorded_at AS source_created_at,message.sequence AS source_sequence,authored.content AS user_content,answer.content AS assistant_content,
+    ${assistantHistoryContentSources},${assistantHistoryEventSources},1 AS source_metadata_checked,
+    CASE WHEN metadata.turn_id IS NULL THEN NULL ELSE ${assistantHistoryTurnRecord.replaceAll("turn.","metadata.")} END AS source_metadata_record
     FROM events message INDEXED BY idx_events_stream_type
     JOIN private_content authored ON authored.content_id=json_extract(message.payload,'$.content_ref') AND authored.owner_id=?
       AND authored.kind='chat-user' AND authored.redacted_at IS NULL AND authored.expires_at>?
@@ -459,10 +598,10 @@ async function recentAssistantTurns(env: WorkerEnv, actor: AuthorizedAssistant):
     JOIN private_content answer ON answer.content_id=json_extract(response.payload,'$.content_ref') AND answer.owner_id=?
       AND answer.kind='chat-assistant' AND answer.redacted_at IS NULL AND answer.expires_at>?
     LEFT JOIN assistant_turns metadata ON metadata.actor_user_id=? AND metadata.scope_key=? AND metadata.turn_id=json_extract(message.payload,'$.turn_id')
-    WHERE message.stream_id=? AND message.type='ChatMessageSent' AND json_extract(message.payload,'$.document_id')=?${guard}
+    WHERE message.stream_id=? AND message.type='ChatMessageSent' AND json_extract(message.payload,'$.document_id')=?${guard} AND (${exclusion.sql}) AND (${replyProof.sql})
     ORDER BY message.sequence DESC,response.sequence DESC LIMIT ?`)
     .bind(actor.principal.userId, now, actor.surface.documentId, actor.principal.userId, now, actor.principal.userId,
-      assistantScopeKey(actor), stream, actor.surface.documentId, ...bindings, ASSISTANT_CONTEXT_LIMITS.turns * 3)
+      assistantScopeKey(actor), stream, actor.surface.documentId, ...bindings,...exclusion.bindings,...replyProof.bindings, ASSISTANT_CONTEXT_LIMITS.turns * 3)
     .all<AssistantTurnRow>();
   const seen = new Set<string>();
   const unique = rows.results.filter((row) => {
@@ -471,7 +610,44 @@ async function recentAssistantTurns(env: WorkerEnv, actor: AuthorizedAssistant):
     seen.add(id);
     return true;
   }).slice(0, ASSISTANT_CONTEXT_LIMITS.turns).reverse();
-  return Promise.all(unique.map((row) => assistantTurnFromRow(env, actor, row)));
+  const sourceCustody={sql:"1"+guard,bindings:[...bindings]};
+  const ordinary=await Promise.all(unique.map((row) => assistantTurnFromRow(env, actor, row,assistantHistorySourceProof(actor,row,sourceCustody,undefined,exclusion))));
+  const current=await withNativeMemoryAssistantTurns(env,actor,ordinary);
+  if(!actor.legacyScopeKey){generationTurns?.push(...ordinary);return current;}
+  const legacy=await legacyAssistantTurns(env,actor);
+  generationTurns?.push(...[...legacy.filter(turn=>!ordinary.some(item=>item.id===turn.id)),...ordinary].slice(-ASSISTANT_CONTEXT_LIMITS.turns));
+  return[...legacy.filter(turn=>!current.some(item=>item.id===turn.id)),...current].slice(-ASSISTANT_CONTEXT_LIMITS.turns);
+}
+
+/** Retain an owner's pre-migration free history without adopting its private bytes into tenant custody. */
+
+async function legacyAssistantTurns(env:WorkerEnv,actor:AuthorizedAssistant){
+  if(!actor.legacyScopeKey||actor.project?.ownerUserId!==actor.principal.userId)return[];
+  const tableExclusion=await ordinaryAssistantExclusion(env,"turn");
+  const eventExclusion=await ordinaryAssistantExclusion(env);
+  const rows=await env.DB.prepare(`SELECT turn.turn_id,turn.proposal_json,turn.request_json,turn.created_at AS source_created_at,authored.content AS user_content,answer.content AS assistant_content,
+    ${assistantHistoryContentSources},${assistantHistoryTurnRecord} AS source_turn_record
+    FROM assistant_turns turn JOIN private_content authored ON authored.content_id=turn.user_content_ref AND authored.owner_id=turn.actor_user_id AND authored.kind='chat-user' AND authored.redacted_at IS NULL AND authored.expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now')
+    JOIN private_content answer ON answer.content_id=turn.assistant_content_ref AND answer.owner_id=turn.actor_user_id AND answer.kind='chat-assistant' AND answer.redacted_at IS NULL AND answer.expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now')
+    WHERE turn.actor_user_id=? AND turn.scope_key=? AND turn.organization_id IS NULL AND turn.project_access_id IS NULL AND turn.project_id=?
+      AND NOT EXISTS(SELECT 1 FROM private_content_retention_scopes retention WHERE retention.content_id IN(authored.content_id,answer.content_id)) AND ${tableExclusion.sql}
+    ORDER BY turn.created_at DESC LIMIT ?`).bind(actor.principal.userId,actor.legacyScopeKey,actor.projectId,...tableExclusion.bindings,ASSISTANT_CONTEXT_LIMITS.turns).all<AssistantTurnRow>();
+  // Historical owner chat may predate assistant_turns. A derived resource index alone is not tenant adoption.
+  const historical=actor.surface.documentId?(await env.DB.prepare(`SELECT json_extract(message.payload,'$.turn_id') AS turn_id,NULL AS proposal_json,message.recorded_at AS source_created_at,authored.content AS user_content,answer.content AS assistant_content,
+    ${assistantHistoryContentSources},${assistantHistoryEventSources}
+    FROM events message JOIN private_content authored ON authored.content_id=json_extract(message.payload,'$.content_ref') AND authored.owner_id=? AND authored.kind='chat-user' AND authored.redacted_at IS NULL AND authored.expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now')
+    JOIN events response ON response.stream_id=message.stream_id AND response.correlation_id=message.correlation_id AND response.type='AssistantReasoned'
+      AND json_extract(response.payload,'$.operation')='creative-chat' AND json_extract(response.payload,'$.document_id')=json_extract(message.payload,'$.document_id')
+      AND json_extract(response.payload,'$.turn_id')=json_extract(message.payload,'$.turn_id')
+    JOIN private_content answer ON answer.content_id=json_extract(response.payload,'$.content_ref') AND answer.owner_id=? AND answer.kind='chat-assistant' AND answer.redacted_at IS NULL AND answer.expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now')
+    WHERE message.stream_id=? AND message.type='ChatMessageSent' AND json_extract(message.payload,'$.document_id')=?
+      AND COALESCE(json_extract(message.payload,'$.project_id'),?)=?
+      AND NOT EXISTS(SELECT 1 FROM private_content_retention_scopes retention WHERE retention.content_id IN(authored.content_id,answer.content_id)) AND ${eventExclusion.sql}
+    ORDER BY message.sequence DESC,response.sequence DESC LIMIT ?`).bind(actor.principal.userId,actor.principal.userId,actor.principal.streamId,actor.surface.documentId,actor.projectId,actor.projectId,...eventExclusion.bindings,ASSISTANT_CONTEXT_LIMITS.turns).all<AssistantTurnRow>()).results:[];
+  const sourceCustody={sql:"NOT EXISTS(SELECT 1 FROM private_content_retention_scopes retention WHERE retention.content_id IN(authored.content_id,answer.content_id))",bindings:[]};
+  const seen=new Set<string>();return[...rows.results,...historical].filter(row=>Boolean(row.turn_id)&&!seen.has(row.turn_id)&&Boolean(seen.add(row.turn_id))).slice(0,ASSISTANT_CONTEXT_LIMITS.turns).reverse()
+    .map(row=>rememberAssistantFeedTurnSource({id:row.turn_id,user:row.user_content,reply:{text:row.assistant_content},proposal:null}as AssistantTurn,
+      assistantHistorySourceProof(actor,row,sourceCustody,actor.legacyScopeKey,row.source_turn_record?tableExclusion:eventExclusion)));
 }
 
 function assistantScopeKey(actor: AuthorizedAssistant) {
@@ -488,21 +664,38 @@ function assistantScopeKey(actor: AuthorizedAssistant) {
   return JSON.stringify(scope);
 }
 
-async function exactAssistantTurn(env: WorkerEnv, actor: AuthorizedAssistant, turnId: string): Promise<AssistantTurn | null> {
+async function exactAssistantTurn(env: WorkerEnv, actor: AuthorizedAssistant, turnId: string,
+  expected?:{user:string;reply:string;requestJson:string;presentation:AssistantReply;actions:PreparedAssistantAction[];proposal:AssistantProposal|null}): Promise<AssistantTurn | null> {
+  const replyProof=assistantPaidReplyReadGuard(actor,assistantScopeKey(actor),"turn.turn_id");
+  const authoredCustody=assistantTurnContentCustody(actor,"authored"),answerCustody=assistantTurnContentCustody(actor,"answer");
+  const memory=(await nativeMemoryAssistantTurns(env,actor,turnId))[0];
+  if(memory){
+    if(expected&&(memory.user!==expected.user||memory.reply.text!==expected.reply||assistantMemoryRequests.get(memory)!==expected.requestJson||expected.actions.length||expected.proposal!==null))return null;
+    return memory;
+  }
+  const exclusion=await ordinaryAssistantExclusion(env,"turn");
   const now = new Date().toISOString();
-  const row = await env.DB.prepare(`SELECT turn.turn_id,turn.proposal_json,authored.content AS user_content,answer.content AS assistant_content
+  const row = await env.DB.prepare(`SELECT turn.turn_id,turn.proposal_json,turn.request_json,turn.created_at AS source_created_at,authored.content AS user_content,answer.content AS assistant_content,
+    ${assistantHistoryContentSources},${assistantHistoryTurnRecord} AS source_turn_record
     FROM assistant_turns turn
-    JOIN private_content authored ON authored.content_id=turn.user_content_ref AND authored.owner_id=turn.actor_user_id AND authored.redacted_at IS NULL AND authored.expires_at>?
-    JOIN private_content answer ON answer.content_id=turn.assistant_content_ref AND answer.owner_id=turn.actor_user_id AND answer.redacted_at IS NULL AND answer.expires_at>?
-    WHERE turn.actor_user_id=? AND turn.scope_key=? AND turn.turn_id=? LIMIT 1`)
-    .bind(now, now, actor.principal.userId, assistantScopeKey(actor), turnId)
+    JOIN private_content authored ON authored.content_id=turn.user_content_ref AND authored.owner_id=turn.actor_user_id AND authored.kind='chat-user' AND authored.redacted_at IS NULL AND authored.expires_at>?
+    JOIN private_content answer ON answer.content_id=turn.assistant_content_ref AND answer.owner_id=turn.actor_user_id AND answer.kind='chat-assistant' AND answer.redacted_at IS NULL AND answer.expires_at>?
+    WHERE turn.actor_user_id=? AND turn.scope_key=? AND turn.turn_id=? AND ${authoredCustody.sql} AND ${answerCustody.sql} AND (${exclusion.sql}) AND (${replyProof.sql}) LIMIT 1`)
+    .bind(now, now, actor.principal.userId, assistantScopeKey(actor), turnId,...authoredCustody.bindings,...answerCustody.bindings,...exclusion.bindings,...replyProof.bindings)
     .first<AssistantTurnRow>();
-  if (!row) return null;
-  return assistantTurnFromRow(env, actor, row);
+  if (!row) return !expected&&actor.legacyScopeKey?(await legacyAssistantTurns(env,actor)).find(turn=>turn.id===turnId)??null:null;
+  // Preserve the fresh response's localized key/values only when the committed
+  // source still contains this exact message, rendered reply and request snapshot.
+  if(expected&&(row.user_content!==expected.user||row.assistant_content!==expected.reply||row.request_json!==expected.requestJson
+    ||row.proposal_json!==encodedAssistantProposals(expected.actions,expected.proposal)))return null;
+  const sourceCustody={sql:`(${authoredCustody.sql}) AND (${answerCustody.sql})`,bindings:[...authoredCustody.bindings,...answerCustody.bindings]};
+  return assistantTurnFromRow(env, actor, row,assistantHistorySourceProof(actor,row,sourceCustody,undefined,exclusion),expected?.presentation,expected?.actions);
 }
 
-async function assistantContext(request: Request, env: WorkerEnv, actor: AuthorizedAssistant) {
-  const candidates = await scopedAssistantEvents(env, actor);
+async function assistantContext(request: Request, env: WorkerEnv, actor: AuthorizedAssistant, source?:AssistantContextReadWitness) {
+  // Ordinary reads capture complete source rows. POST binds this certificate
+  // to its exact server-allocated write suffix before replaying it.
+  const candidates = await scopedAssistantEvents(env, actor,source);
   const knownDocuments = new Set(candidates.filter((event) => event.type === "DocumentCreated" || event.type === "DocumentForked").map((event) => String(event.payload.document_id ?? "")));
   const events = candidates.filter((event) => {
     const projectId = String(event.payload.project_id ?? "");
@@ -516,6 +709,9 @@ async function assistantContext(request: Request, env: WorkerEnv, actor: Authori
   });
   const projection = foldEvents(events, Number.POSITIVE_INFINITY, actor.surface.documentId ?? "", actor.projectId ?? "");
   const canvasProjection = actor.surface.canvasId ? foldCanvasEvents(events, actor.projectId ?? "", actor.surface.canvasId) : null;
+  // Retain deadlines before compilation or any subsequent await; an expiry
+  // during the rights read must not turn a formerly future deadline into null.
+  if(source)for(const block of [...projection.blocks,...projection.libraryBlocks])source.before(creativeContextRightsValidity(block.properties).validUntil);
   const context = compileAssistantContext({
     route: actor.surface.route,
     events,
@@ -527,70 +723,126 @@ async function assistantContext(request: Request, env: WorkerEnv, actor: Authori
     projectId: actor.projectId,
     selectedItemIds: new URL(request.url).searchParams.getAll("selected"),
   });
-  if(actor.project&&!await governedPackageSourceRightsCurrent(env,actor.project.organizationId,projection.blocks))
-    context.totals.unsafeRightsDecisions=Math.max(1,Number(context.totals.unsafeRightsDecisions??0));
-  const turns = await recentAssistantTurns(env, actor);
-  context.recentTurns = turns.slice(-Math.floor(ASSISTANT_CONTEXT_LIMITS.turns / 2)).flatMap((turn, index) => [
+  if(actor.project){
+    if(source){
+      const rights=await governedPackageSourceRightsValidity(env,actor.project.organizationId,projection.blocks,(scope)=>synchronizeProjectScope(env,scope));
+      // An unavailable rights read has incomplete dependencies. It cannot
+      // certify a page just because the earlier eligibility flag was unsafe.
+      if(!rights.current){source.invalidate();context.totals.unsafeRightsDecisions=Math.max(1,Number(context.totals.unsafeRightsDecisions??0));}
+      else{try{source.require(sourceRightsDispatchGuard(rights),own=>sourceRightsDispatchGuardForAssistant(rights,own),
+        own=>sourceRightsDispatchGuardForStructuredAssistant(rights,own));source.before(rights.validUntil);}catch{source.invalidate();}}
+    }else if(!await governedPackageSourceRightsCurrent(env,actor.project.organizationId,projection.blocks))
+      context.totals.unsafeRightsDecisions=Math.max(1,Number(context.totals.unsafeRightsDecisions??0));
+  }
+  const generationTurns:AssistantTurn[]=[];
+  const turns = await recentAssistantTurns(env, actor,generationTurns);
+  // Display-only memory turns cannot contribute prose or displace the ordinary
+  // generation window. Any consumer of remembered text must retain its origin.
+  context.recentTurns = generationTurns.slice(-Math.floor(ASSISTANT_CONTEXT_LIMITS.turns / 2)).flatMap((turn, index) => [
     { id: `${turn.id}:user`, role: "user" as const, text: turn.user.slice(0, ASSISTANT_CONTEXT_LIMITS.turnChars), sequence: index * 2 },
     { id: `${turn.id}:assistant`, role: "assistant" as const, text: String(turn.reply.text ?? turn.reply.key ?? "").slice(0, ASSISTANT_CONTEXT_LIMITS.turnChars), sequence: index * 2 + 1 },
   ]);
-  return { context:boundAssistantContext(context), turns };
+  const bounded=boundAssistantContext(context);
+  if(source)rememberAssistantContextRead(bounded,source);
+  return { context:bounded, turns };
 }
 
-async function commitAssistantTurn(env: WorkerEnv, actor: AuthorizedAssistant, input: {
+async function prepareAssistantTurn(env: WorkerEnv, actor: AuthorizedAssistant, input: {
   turnId: string;
   message: string;
   reply: string;
   proposal: AssistantProposal | null;
   documentId: string | null;
   actions?: PreparedAssistantAction[];
-  task?: PreparedAssistantTask | null;
-}) {
+  requestJson:string;
+  memory?:AssistantRecallMemory;
+},source:AssistantContextReadWitness) {
   const scope = actor.project;
   const policy = scope ? await env.DB.prepare("SELECT transient_days,version FROM organization_retention_policies WHERE organization_id=?").bind(scope.organizationId)
     .first<{ transient_days: number; version: number }>() : null;
+  const structuredCapture=input.memory?.mode==="structured"?await nativeStructuredMemoryOriginCapture(env,input.memory.value):null;
+  const capture=input.memory?.mode==="structured"?structuredCapture:input.memory?await nativeMemoryOriginCapture(input.memory.value):null;
+  if(input.memory&&(!capture||input.proposal!==null||(input.actions?.length??0)!==0))throw new Error("assistant_memory_unavailable");
   const now = new Date();
   const createdAt = now.toISOString();
   const retentionDays = Math.max(1, Math.min(365, Number(policy?.transient_days ?? Number(env.FORMA_RETENTION_DAYS ?? 30)) || 30));
   const expiresAt = new Date(now.getTime() + retentionDays * 86_400_000).toISOString();
+  const answerExpiresAt=capture?new Date(Math.min(Date.parse(expiresAt),Date.parse(capture.sourceRetentionCeiling))).toISOString():expiresAt;
   const authoredId = uuidV7();
   const answerId = uuidV7();
   const actions = input.actions ?? [];
   const actionContents = new Map(actions.map((action) => [action.id, uuidV7()]));
-  const active = `EXISTS(SELECT 1 FROM project_context_sessions context
+  const active = scope&&!scope.contextId?`EXISTS(SELECT 1 FROM organization_projects project
+    JOIN organizations organization ON organization.organization_id=project.organization_id AND organization.status=\'active\'
+    JOIN project_migration_states migration ON migration.project_access_id=project.project_access_id AND migration.organization_id=project.organization_id AND migration.owner_user_id=project.owner_user_id AND migration.status=\'active\'
+    JOIN organization_memberships member ON member.organization_id=project.organization_id AND member.user_id=project.owner_user_id AND member.status=\'active\' AND member.accepted_at IS NOT NULL AND member.revoked_at IS NULL
+    WHERE project.project_access_id=? AND project.organization_id=? AND project.project_id=? AND project.owner_user_id=? AND project.owner_user_id=? AND project.status=\'active\')`:`EXISTS(SELECT 1 FROM project_context_sessions context
       JOIN organization_projects project ON project.project_access_id=context.project_access_id AND project.organization_id=context.organization_id AND project.status='active'
       JOIN organizations organization ON organization.organization_id=project.organization_id AND organization.status='active'
       JOIN organization_memberships member ON member.organization_id=project.organization_id AND member.user_id=? AND member.status='active' AND member.accepted_at IS NOT NULL AND member.revoked_at IS NULL
       JOIN organization_memberships owner_member ON owner_member.organization_id=project.organization_id AND owner_member.user_id=project.owner_user_id AND owner_member.status='active' AND owner_member.accepted_at IS NOT NULL AND owner_member.revoked_at IS NULL
       LEFT JOIN project_memberships project_member ON project_member.project_access_id=project.project_access_id AND project_member.organization_id=project.organization_id AND project_member.project_id=project.project_id AND project_member.user_id=? AND project_member.status='active' AND project_member.revoked_at IS NULL
-      WHERE context.context_id=? AND context.principal_user_id=? AND context.revoked_at IS NULL AND context.expires_at>? AND project.project_access_id=? AND project.organization_id=? AND project.project_id=? AND project.owner_user_id=? AND(project.owner_user_id=? OR project_member.membership_id IS NOT NULL))`;
+      WHERE context.context_id=? AND context.principal_user_id=? AND context.revoked_at IS NULL AND context.expires_at>? AND context.expires_at>strftime(\'%Y-%m-%dT%H:%M:%fZ\',\'now\') AND project.project_access_id=? AND project.organization_id=? AND project.project_id=? AND project.owner_user_id=? AND(project.owner_user_id=? OR project_member.membership_id IS NOT NULL))`;
+  const activeBindings=scope?!scope.contextId?[scope.projectAccessId,scope.organizationId,scope.projectId,scope.ownerUserId,actor.principal.userId]:[actor.principal.userId,actor.principal.userId,scope.contextId,actor.principal.userId,createdAt,scope.projectAccessId,scope.organizationId,scope.projectId,scope.ownerUserId,actor.principal.userId]:[];
 
-  const statements: D1PreparedStatement[] = [];
-  const privateEntries: Array<[string, string, string]> = [
-    [authoredId, "chat-user", input.message],
-    [answerId, "chat-assistant", input.reply],
-    ...actions.map((action): [string, string, string] => [actionContents.get(action.id)!, "assistant-action", JSON.stringify(action.action)]),
+  const authority=assistantReadAuthorityGuard(actor);
+  const selectionStatements=input.memory?nativeMemorySelectionStatements(env,input.memory.selection):[];
+  const memoryPrecommit=input.memory?.mode==="structured"?nativeStructuredConversationContextPrecommitStatements(env,input.memory.value.proof)
+    :input.memory?.source.precommitStatements()??[];
+  if(input.memory&&(!selectionStatements?.length||!memoryPrecommit?.length))throw new Error("assistant_memory_unavailable");
+  const streamId = scope ? `creative:${scope.ownerUserId}` : actor.principal.streamId;
+  const correlation = `${actor.principal.userId}:${input.turnId}`;
+  const head = source.ownerHead(streamId);
+  if(head===null)throw new Error("assistant_context_source_unavailable");
+  const projectHead=scope?source.projectHead(scope.projectAccessId,scope.organizationId):null;
+  if(scope&&projectHead===null)throw new Error("assistant_context_source_unavailable");
+  if(input.memory?.mode==="structured"&&structuredCapture?.sourceHead!==head)throw new Error("assistant_memory_unavailable");
+  const base = { ...(actor.projectId ? { project_id: actor.projectId } : {}), ...(input.documentId ? { document_id: input.documentId } : {}), actor_user_id: actor.principal.userId, source_surface: actor.surface.page, turn_id: input.turnId };
+  const authored = makeEvent(streamId, head + 1, `user:${actor.principal.userId}`, "web:assistant", correlation, "ChatMessageSent", { ...base, content_ref: authoredId });
+  const answer = makeEvent(streamId, head + 2, `user:${actor.principal.userId}`, "web:assistant", correlation, "AssistantReasoned", { ...base, operation: "creative-chat", content_ref: answerId, deterministic: true,
+    ...(input.memory?{memory_origin_version:input.memory.mode==="structured"?2:1,organization_id:scope?.organizationId??null,project_access_id:scope?.projectAccessId??null,owner_user_id:scope?.ownerUserId??actor.principal.userId}:{}),
+    ...(actions.length ? { proposal_count: actions.length } : {}) }, { causationId: authored.eventId });
+  if(input.memory?.mode==="structured"){
+    // One server publication timestamp binds both event receipts and all three
+    // private bodies. makeEvent's independently sampled clocks are kept for v1.
+    authored.occurredAt=createdAt;authored.recordedAt=createdAt;
+    answer.occurredAt=createdAt;answer.recordedAt=createdAt;
+  }
+  const originInput={originId:uuidV7(),turnId:input.turnId,
+    userEventId:authored.eventId,userContentId:authoredId,userSourceSequence:authored.sequence,user:input.message,
+    answerEventId:answer.eventId,answerContentId:answerId,answerSourceSequence:answer.sequence,answer:input.reply,createdAt,answerExpiresAt};
+  const structuredOrigin=input.memory?.mode==="structured"?await prepareNativeStructuredMemoryOrigin(env,input.memory.value,
+    {...originInput,manifestContentRef:uuidV7(),manifestExpiresAt:answerExpiresAt}):null;
+  const extractiveOrigin=input.memory?.mode==="extractive"?await prepareNativeMemoryOrigin(input.memory.value,originInput):null;
+  if(input.memory&&!(structuredOrigin??extractiveOrigin))throw new Error("assistant_memory_unavailable");
+  // Every source assertion runs before any private copy or authored event in
+  // this one atomic batch. A failure must roll back, not merely hide the reply.
+  const statements: D1PreparedStatement[] = [
+    env.DB.prepare("SELECT CASE WHEN ("+authority.sql+") THEN 1 ELSE json('assistant_read_scope_denied') END AS assistant_commit_authorized").bind(...authority.bindings),
+    ...source.precommitStatements(),
+    ...(selectionStatements??[]),
+    ...(memoryPrecommit??[]),
   ];
-  for (const [contentId, kind, content] of privateEntries) {
+  const privateEntries: Array<[string, string, string,string]> = [
+    [authoredId, "chat-user", input.message,expiresAt],
+    [answerId, input.memory?NATIVE_MEMORY_ANSWER_KIND:"chat-assistant", input.reply,answerExpiresAt],
+    ...(structuredOrigin?[[structuredOrigin.manifest.contentRef,structuredOrigin.manifest.kind,structuredOrigin.manifest.text,structuredOrigin.manifest.expiresAt] as [string,string,string,string]]:[]),
+    ...actions.map((action): [string, string, string,string] => [actionContents.get(action.id)!, "assistant-action", JSON.stringify(action.action),expiresAt]),
+  ];
+  for (const [contentId, kind, content,contentExpiresAt] of privateEntries) {
     if (scope) {
       statements.push(env.DB.prepare(`INSERT INTO private_content(content_id,owner_id,kind,content,created_at,expires_at,redacted_at) SELECT ?,?,?,?,?,?,NULL WHERE ${active}`)
-        .bind(contentId, actor.principal.userId, kind, content, createdAt, expiresAt, actor.principal.userId, actor.principal.userId, scope.contextId, actor.principal.userId, createdAt, scope.projectAccessId, scope.organizationId, scope.projectId, scope.ownerUserId, actor.principal.userId));
+        .bind(contentId, actor.principal.userId, kind, content, createdAt, contentExpiresAt,...activeBindings));
       statements.push(env.DB.prepare("INSERT INTO project_resource_scopes(project_access_id,resource_kind,resource_id,organization_id,project_id,owner_user_id,visibility,source_event_id,actor_user_id,created_at) SELECT ?,'content',?,?,?,?,'actor_private',NULL,?,? WHERE EXISTS(SELECT 1 FROM private_content WHERE content_id=? AND owner_id=?)")
         .bind(scope.projectAccessId, contentId, scope.organizationId, scope.projectId, scope.ownerUserId, actor.principal.userId, createdAt, contentId, actor.principal.userId));
       statements.push(env.DB.prepare("INSERT INTO private_content_retention_scopes(content_id,organization_id,project_access_id,project_id,actor_user_id,classification,policy_version,assigned_expires_at,created_at) SELECT ?,?,?,?,?,'transient-private',?,?,? WHERE EXISTS(SELECT 1 FROM project_resource_scopes WHERE project_access_id=? AND organization_id=? AND resource_kind='content' AND resource_id=? AND actor_user_id=?)")
-        .bind(contentId, scope.organizationId, scope.projectAccessId, scope.projectId, actor.principal.userId, Number(policy?.version ?? 0), expiresAt, createdAt, scope.projectAccessId, scope.organizationId, contentId, actor.principal.userId));
+        .bind(contentId, scope.organizationId, scope.projectAccessId, scope.projectId, actor.principal.userId, Number(policy?.version ?? 0), contentExpiresAt, createdAt, scope.projectAccessId, scope.organizationId, contentId, actor.principal.userId));
     } else {
       statements.push(env.DB.prepare("INSERT INTO private_content(content_id,owner_id,kind,content,created_at,expires_at,redacted_at) VALUES(?,?,?,?,?,?,NULL)")
-        .bind(contentId, actor.principal.userId, kind, content, createdAt, expiresAt));
+        .bind(contentId, actor.principal.userId, kind, content, createdAt, contentExpiresAt));
     }
   }
 
-  const streamId = scope ? `creative:${scope.ownerUserId}` : actor.principal.streamId;
-  const correlation = `${actor.principal.userId}:${input.turnId}`;
-  const head = await streamHead(env, streamId);
-  const base = { ...(actor.projectId ? { project_id: actor.projectId } : {}), ...(input.documentId ? { document_id: input.documentId } : {}), actor_user_id: actor.principal.userId, source_surface: actor.surface.page, turn_id: input.turnId };
-  const authored = makeEvent(streamId, head + 1, `user:${actor.principal.userId}`, "web:assistant", correlation, "ChatMessageSent", { ...base, content_ref: authoredId });
-  const answer = makeEvent(streamId, head + 2, `user:${actor.principal.userId}`, "web:assistant", correlation, "AssistantReasoned", { ...base, operation: "creative-chat", content_ref: answerId, deterministic: true, ...(actions.length ? { proposal_count: actions.length } : {}) }, { causationId: authored.eventId });
   const proposals = actions.map((action, index) => makeEvent(streamId, head + 3 + index, "model:forma-assistant", "server:assistant", correlation, "MutationProposed", {
     ...base,
     proposal_id: action.id,
@@ -604,11 +856,42 @@ async function commitAssistantTurn(env: WorkerEnv, actor: AuthorizedAssistant, i
     `assistant:${actor.principal.userId}:${scope?.projectAccessId ?? "personal"}:${input.documentId ?? "page"}:${input.turnId}:assistant`,
     ...actions.map((action) => `assistant:${actor.principal.userId}:${scope?.projectAccessId ?? "personal"}:${input.documentId ?? "page"}:${input.turnId}:proposal:${action.id}`),
   ];
+  if(structuredOrigin){
+    // Materialize exactly two ordered rows from one captured head. Both events
+    // enter the existing staging gate together; no first-event success can be
+    // used as a head allowance for a later, separately guarded INSERT.
+    statements.push(env.DB.prepare(`INSERT INTO event_write_stage(${EVENT_WRITE_COLUMNS})
+      SELECT ${EVENT_WRITE_COLUMNS} FROM (SELECT ${EVENT_WRITE_COLUMNS.split(",").map(column=>`? AS ${column}`).join(",")} UNION ALL SELECT ${placeholders})
+      WHERE(SELECT COALESCE(MAX(sequence),0) FROM events WHERE stream_id=?)=? ORDER BY sequence`)
+      .bind(...eventWriteBindings(authored),...eventWriteBindings(answer),streamId,head));
+  }
   for (const [index, event] of [authored, answer, ...proposals].entries()) {
-    statements.push(env.DB.prepare(`INSERT INTO event_write_stage(${EVENT_WRITE_COLUMNS}) SELECT ${placeholders} WHERE(SELECT COALESCE(MAX(sequence),0) FROM events WHERE stream_id=?)=?`)
+    if(!structuredOrigin)statements.push(env.DB.prepare(`INSERT INTO event_write_stage(${EVENT_WRITE_COLUMNS}) SELECT ${placeholders} WHERE(SELECT COALESCE(MAX(sequence),0) FROM events WHERE stream_id=?)=?`)
       .bind(...eventWriteBindings(event), streamId, head + index));
     statements.push(env.DB.prepare("INSERT INTO event_client_receipts(stream_id,client_event_id,event_id,sequence,created_at) SELECT ?,?,?,?,? WHERE EXISTS(SELECT 1 FROM events WHERE event_id=? AND stream_id=?)")
       .bind(streamId, receipts[index], event.eventId, event.sequence, createdAt, event.eventId, streamId));
+  }
+
+  if(scope){
+    // Publish native custody before a review can advance past these raw owner
+    // sequences. Reuse the ordinary projection allowlist, including page chat;
+    // proposal events deliberately advance only the owner head, not this index.
+    const published=projectDocumentPublicationEvents([authored,answer,...proposals] as CreativeEvent[],scope.projectId,input.documentId);
+    if(published.length!==2||published[0]?.eventId!==authored.eventId||published[1]?.eventId!==answer.eventId)
+      throw new Error("assistant_publication_contract_changed");
+    for(const[index,event]of published.entries()){
+      statements.push(env.DB.prepare(`INSERT INTO project_event_scopes(event_id,project_access_id,organization_id,project_id,owner_user_id,source_stream_id,source_sequence,project_sequence,actor_user_id,created_at)
+        SELECT ?,?,?,?,?,?,?,?,?,? WHERE EXISTS(SELECT 1 FROM events WHERE event_id=? AND stream_id=? AND sequence=?)
+          AND(SELECT COALESCE(MAX(project_sequence),0) FROM project_event_scopes WHERE project_access_id=? AND organization_id=?)=?
+          AND EXISTS(SELECT 1 FROM project_migration_states WHERE project_access_id=? AND organization_id=? AND owner_user_id=? AND status='active' AND last_owner_sequence=?)`)
+        .bind(event.eventId,scope.projectAccessId,scope.organizationId,scope.projectId,scope.ownerUserId,streamId,event.sequence,projectHead!+index+1,actor.principal.userId,createdAt,
+          event.eventId,streamId,event.sequence,scope.projectAccessId,scope.organizationId,projectHead!+index,
+          scope.projectAccessId,scope.organizationId,scope.ownerUserId,head));
+    }
+    statements.push(env.DB.prepare(`UPDATE project_migration_states SET last_owner_sequence=?,updated_at=?
+      WHERE project_access_id=? AND organization_id=? AND owner_user_id=? AND status='active' AND last_owner_sequence=?
+        AND(SELECT COALESCE(MAX(sequence),0) FROM events WHERE stream_id=?)=?`)
+      .bind(head+2+proposals.length,createdAt,scope.projectAccessId,scope.organizationId,scope.ownerUserId,head,streamId,head+2+proposals.length));
   }
 
   const proposalExpiresAt = new Date(now.getTime() + 15 * 60_000).toISOString();
@@ -628,19 +911,6 @@ async function commitAssistantTurn(env: WorkerEnv, actor: AuthorizedAssistant, i
         createdAt, proposalExpiresAt, contentId, actor.principal.userId,
         ...(scope ? [scope.projectAccessId, scope.organizationId, contentId, actor.principal.userId] : [])));
   }
-  if (input.task) {
-    const task = input.task;
-    statements.push(env.DB.prepare(`INSERT INTO assistant_specialist_tasks(task_id,actor_user_id,scope_key,turn_id,organization_id,project_access_id,project_id,document_id,
-      route_family,task_kind,selected_model,token_reservation_id,cost_reservation_id,estimated_microusd,maximum_input_tokens,maximum_output_tokens,locale,
-      permission_epoch,status,error_code,created_at,updated_at,started_at,completed_at)
-      SELECT ?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'queued',NULL,?,?,NULL,NULL
-      WHERE EXISTS(SELECT 1 FROM private_content WHERE content_id=? AND owner_id=?)
-        AND EXISTS(SELECT 1 FROM private_content WHERE content_id=? AND owner_id=?)`)
-      .bind(task.id, actor.principal.userId, assistantScopeKey(actor), input.turnId, scope?.organizationId ?? null, scope?.projectAccessId ?? null,
-        actor.projectId, input.documentId, actor.surface.canonicalFamily, task.kind, task.model, task.tokenReservationId, task.costReservationId,
-        task.estimatedMicrousd, task.inputTokens, task.outputTokens, task.locale, actor.principal.access.permissionEpoch, createdAt, createdAt,
-        authoredId, actor.principal.userId, answerId, actor.principal.userId));
-  }
 
   const complete = `EXISTS(SELECT 1 FROM private_content WHERE content_id=? AND owner_id=?)
     AND EXISTS(SELECT 1 FROM private_content WHERE content_id=? AND owner_id=?)
@@ -649,23 +919,92 @@ async function commitAssistantTurn(env: WorkerEnv, actor: AuthorizedAssistant, i
     AND EXISTS(SELECT 1 FROM event_client_receipts WHERE stream_id=? AND client_event_id=? AND event_id=?)
     AND EXISTS(SELECT 1 FROM event_client_receipts WHERE stream_id=? AND client_event_id=? AND event_id=?)
     AND (SELECT COUNT(*) FROM assistant_action_proposals WHERE actor_user_id=? AND scope_key=? AND turn_id=? AND status='pending')=?
-    AND (?='' OR EXISTS(SELECT 1 FROM assistant_specialist_tasks WHERE task_id=? AND actor_user_id=? AND scope_key=? AND turn_id=? AND status='queued'))`;
-  const encodedProposal = actions.length
-    ? JSON.stringify({ proposals: actions.map(({ id, turnId, key, action }) => ({ id, turnId, key, kind: action.kind })) })
-    : input.proposal ? JSON.stringify(input.proposal) : null;
+    `;
+  const encodedProposal = encodedAssistantProposals(actions,input.proposal);
   // NULL violates the NOT NULL status constraint and atomically rolls back every
   // private row, scope, event, and receipt if authorization or the event head moved.
-  statements.push(env.DB.prepare(`INSERT INTO assistant_turns(turn_id,actor_user_id,scope_key,organization_id,project_access_id,project_id,document_id,route_family,user_content_ref,assistant_content_ref,proposal_json,permission_epoch,status,created_at,completed_at)
-    VALUES(?,?,?,?,?,?,?,?,?,?,?,?,CASE WHEN ${complete} THEN 'completed' ELSE NULL END,?,?)`).bind(
+  statements.push(env.DB.prepare(`INSERT INTO assistant_turns(turn_id,actor_user_id,scope_key,organization_id,project_access_id,project_id,document_id,route_family,user_content_ref,assistant_content_ref,proposal_json,permission_epoch,request_json,status,created_at,completed_at)
+    VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,CASE WHEN ${complete} THEN 'completed' ELSE NULL END,?,?)`).bind(
     input.turnId, actor.principal.userId, assistantScopeKey(actor), scope?.organizationId ?? null, scope?.projectAccessId ?? null, actor.projectId, input.documentId,
-    actor.surface.canonicalFamily, authoredId, answerId, encodedProposal, actor.principal.access.permissionEpoch,
+    actor.surface.canonicalFamily, authoredId, answerId, encodedProposal, actor.principal.access.permissionEpoch,input.requestJson,
     authoredId, actor.principal.userId, answerId, actor.principal.userId, authored.eventId, streamId, head + 1, answer.eventId, streamId, head + 2,
     streamId, receipts[0], authored.eventId, streamId, receipts[1], answer.eventId,
     actor.principal.userId, assistantScopeKey(actor), input.turnId, actions.length,
-    input.task?.id ?? "", input.task?.id ?? "", actor.principal.userId, assistantScopeKey(actor), input.turnId, createdAt, createdAt,
+    createdAt, createdAt,
   ));
+  const origin=structuredOrigin??extractiveOrigin;
+  if(origin){
+    statements.push(...origin.statements.map(statement=>env.DB.prepare(statement.sql).bind(...statement.bindings)));
+  }
 
-  await env.DB.batch(statements);
+  const footprintBase={
+    streamId,sourceHead:head,actorUserId:actor.principal.userId,turnId:input.turnId,
+    scope:scope?{organizationId:scope.organizationId,projectAccessId:scope.projectAccessId,projectId:scope.projectId,ownerUserId:scope.ownerUserId}:null,
+    eventWrites:[authored,answer,...proposals].map(event=>eventWriteBindings(event)),
+    contents:privateEntries.map(([id,kind,content,contentExpiresAt])=>[id,actor.principal.userId,kind,content,createdAt,contentExpiresAt,null]),
+    receipts:[authored,answer,...proposals].map((event,index)=>[streamId,receipts[index]!,event.eventId,event.sequence,createdAt]),
+    resources:scope?privateEntries.map(([id])=>[scope.projectAccessId,"content",id,scope.organizationId,scope.projectId,scope.ownerUserId,"actor_private",null,actor.principal.userId,createdAt]):[],
+    retentions:scope?privateEntries.map(([id,,,contentExpiresAt])=>[id,scope.organizationId,scope.projectAccessId,scope.projectId,actor.principal.userId,"transient-private",Number(policy?.version??0),contentExpiresAt,createdAt]):[],
+  };
+  const footprint:AssistantOwnSendFootprint|AssistantStructuredOwnSendFootprint=structuredOrigin?{
+    ...footprintBase,memoryAnswer:{version:2 as const},projectId:actor.projectId!,documentId:input.documentId!,manifestContentId:structuredOrigin.manifest.contentRef,
+  }:{...footprintBase,...(input.memory?{memoryAnswer:{version:1 as const}}:{})};
+  if(scope){
+    const indexed=structuredOrigin?assistantStructuredOwnSendProjectIndexGuard(footprint as AssistantStructuredOwnSendFootprint,true)
+      :assistantOwnSendProjectIndexGuard(footprint as AssistantOwnSendFootprint,true);
+    statements.push(env.DB.prepare(`SELECT CASE WHEN (${indexed.sql}) AND EXISTS(SELECT 1 FROM project_migration_states
+      WHERE project_access_id=? AND organization_id=? AND owner_user_id=? AND status='active' AND last_owner_sequence=?)
+      THEN 1 ELSE json('assistant_publication_incomplete') END AS assistant_publication_verified`)
+      .bind(...indexed.bindings,scope.projectAccessId,scope.organizationId,scope.ownerUserId,head+2+proposals.length));
+  }
+  const bound=structuredOrigin?source.bindStructuredOwnSend(footprint as AssistantStructuredOwnSendFootprint):source.bindOwnSend(footprint as AssistantOwnSendFootprint);
+  if(bound.statements().length===0)throw new Error("assistant_context_source_unavailable");
+  const structuredOwn=input.memory?.mode==="structured"?await prepareNativeStructuredConversationOwnSend(env,input.memory.value,footprint as AssistantStructuredOwnSendFootprint):null;
+  if(input.memory?.mode==="structured"&&!structuredOwn)throw new Error("assistant_memory_unavailable");
+  const publicationCurrent=()=>!structuredOrigin||input.memory?.mode==="structured"&&nativeStructuredMemoryOriginPublicationCurrent(env,input.memory.value,structuredOrigin);
+  if(!publicationCurrent())throw new Error("assistant_memory_unavailable");
+  const memorySource=structuredOwn?{
+    statements:()=>publicationCurrent()?nativeStructuredConversationOwnSendStatements(env,structuredOwn)??[]:[],
+    matches:(results:readonly D1Result<Record<string,unknown>>[])=>publicationCurrent()&&nativeStructuredConversationOwnSendMatches(env,structuredOwn,results),
+  }:input.memory?.mode==="extractive"?input.memory.source:undefined;
+  if(structuredOwn){
+    const ownFinal=memorySource!.statements();
+    if(!ownFinal.length)throw new Error("assistant_memory_unavailable");
+    const pageOwnFinal=bound.structuredOwnPrecommitStatements();
+    if(!pageOwnFinal.length)throw new Error("assistant_context_source_unavailable");
+    statements.push(...ownFinal,...pageOwnFinal);
+  }
+  // Absence is certified in the FINAL response batch, not inferred from equal
+  // reply bytes or a racy recovery read. Immutable own event IDs distinguish a
+  // concurrent winner from a successful commit whose response was lost.
+  let competingSendGuard:BudgetReservationGuard={sql:"NOT EXISTS(SELECT 1 FROM events WHERE event_id IN(SELECT value FROM json_each(?)))",
+    bindings:[JSON.stringify(footprint.eventWrites.map(event=>event[0]))]};
+  if(structuredOrigin){
+    const eventIds=JSON.stringify(footprint.eventWrites.map(event=>event[0])),contentIds=JSON.stringify(footprint.contents.map(content=>content[0]));
+    const absent:BudgetReservationGuard[]=[
+      competingSendGuard,
+      {sql:"NOT EXISTS(SELECT 1 FROM event_write_stage WHERE event_id IN(SELECT value FROM json_each(?)))",bindings:[eventIds]},
+      {sql:"NOT EXISTS(SELECT 1 FROM event_private_payloads WHERE private_event_id IN(SELECT value FROM json_each(?)))",bindings:[eventIds]},
+      // Client receipt names intentionally match a concurrent same-turn winner.
+      // Candidate EVENT identities, not those reusable names, prove absence.
+      {sql:"NOT EXISTS(SELECT 1 FROM event_client_receipts WHERE event_id IN(SELECT value FROM json_each(?)))",bindings:[eventIds]},
+      {sql:"NOT EXISTS(SELECT 1 FROM private_content WHERE content_id IN(SELECT value FROM json_each(?)))",bindings:[contentIds]},
+      {sql:"NOT EXISTS(SELECT 1 FROM assistant_turns WHERE user_content_ref IN(SELECT value FROM json_each(?)) OR assistant_content_ref IN(SELECT value FROM json_each(?)))",bindings:[contentIds,contentIds]},
+      {sql:"NOT EXISTS(SELECT 1 FROM memory_structured_answer_origins WHERE origin_id=?)",bindings:[structuredOrigin.header.origin_id]},
+      {sql:"NOT EXISTS(SELECT 1 FROM memory_structured_answer_originals WHERE origin_id=?)",bindings:[structuredOrigin.header.origin_id]},
+      {sql:"NOT EXISTS(SELECT 1 FROM memory_structured_answer_ledger_revisions WHERE origin_id=?)",bindings:[structuredOrigin.header.origin_id]},
+      ...(scope?[
+        {sql:"NOT EXISTS(SELECT 1 FROM project_event_scopes WHERE event_id IN(SELECT value FROM json_each(?)))",bindings:[eventIds]},
+        {sql:"NOT EXISTS(SELECT 1 FROM project_resource_scopes WHERE resource_kind='content' AND resource_id IN(SELECT value FROM json_each(?)))",bindings:[contentIds]},
+        {sql:"NOT EXISTS(SELECT 1 FROM private_content_retention_scopes WHERE content_id IN(SELECT value FROM json_each(?)))",bindings:[contentIds]},
+      ]:[]),
+    ];
+    // A sanitized failed-write or concurrent-winner response must not silently
+    // leave any of this candidate's private manifest, custody, or provenance.
+    const condition=absent.map(guard=>"("+guard.sql+")").join(" AND "),bindings=absent.flatMap(guard=>guard.bindings);
+    competingSendGuard={sql:condition,bindings};
+  }
+  return{statements,source:bound,competingSendGuard,memorySource,publicationCurrent,structuredOriginId:structuredOrigin?.header.origin_id};
 }
 
 const outputIntents = [
@@ -717,6 +1056,7 @@ function answerFor(context: AssistantContext, message: string, requestedLocale: 
 }
 
 function localizedAnswer(reply: AssistantReply, requestedLocale: unknown) {
+  if(typeof reply.text==="string")return reply.text;
   const locale = responseLocale(requestedLocale);
   const key = String(reply.key ?? "");
   const messages: Readonly<Record<string, string>> = ASSISTANT_MESSAGES[locale];
@@ -764,6 +1104,7 @@ function validAssistantAction(value: unknown, expectedKind: string): AssistantCo
 function activeAssistantProjectGuard(actor: AuthorizedAssistant, now: string) {
   const selected = actor.project;
   if (!selected) return { sql: "", bindings: [] as Array<string | number | null> };
+  if(!selected.contextId)return{sql:" AND EXISTS(SELECT 1 FROM organization_projects project JOIN organizations organization ON organization.organization_id=project.organization_id AND organization.status=\'active\' JOIN organization_memberships owner ON owner.organization_id=project.organization_id AND owner.user_id=project.owner_user_id AND owner.status=\'active\' AND owner.accepted_at IS NOT NULL AND owner.revoked_at IS NULL JOIN project_migration_states migration ON migration.project_access_id=project.project_access_id AND migration.organization_id=project.organization_id AND migration.owner_user_id=project.owner_user_id AND migration.status=\'active\' WHERE project.project_access_id=? AND project.organization_id=? AND project.project_id=? AND project.owner_user_id=? AND project.owner_user_id=? AND project.status=\'active\')",bindings:[selected.projectAccessId,selected.organizationId,selected.projectId,selected.ownerUserId,actor.principal.userId]};
   const sql = ` AND EXISTS(SELECT 1 FROM project_context_sessions context
     JOIN organization_projects project ON project.project_access_id=context.project_access_id AND project.organization_id=context.organization_id AND project.status='active'
     JOIN organizations organization ON organization.organization_id=project.organization_id AND organization.status='active'
@@ -806,6 +1147,25 @@ async function commitStandaloneAssistantDecision(env: WorkerEnv, actor: Authoriz
     mutation.type, mutation.payload, { causationId: event.eventId })] : [])];
   const guard = proposalGuard(actor, proposal, now);
   const statements: D1PreparedStatement[] = [];
+  const sharedRejection=decision==="rejected"?actor.project:null;
+  let projectHead:number|null=null;
+  let rejectionAuthority:BudgetReservationGuard|null=null;
+  let publication:BudgetReservationGuard={sql:"1",bindings:[]};
+  if(sharedRejection){
+    // A private proposal decision is not a generic authoring operation. Publish
+    // only this server-generated rejection, without changing its admission gate.
+    if(events.length!==1||event.type!=="ProposalRejected")throw new Error("assistant_rejection_publication_invalid");
+    const row=await env.DB.prepare("SELECT COALESCE(MAX(project_sequence),0) AS head FROM project_event_scopes WHERE project_access_id=? AND organization_id=?")
+      .bind(sharedRejection.projectAccessId,sharedRejection.organizationId).first<{head:number}>();
+    projectHead=Number(row?.head);
+    if(!Number.isSafeInteger(projectHead)||projectHead<0)throw new Error("assistant_rejection_publication_invalid");
+    rejectionAuthority=assistantReadAuthorityGuard(actor);
+    statements.push(env.DB.prepare(`SELECT CASE WHEN (${rejectionAuthority.sql}) THEN 1 ELSE json('assistant_rejection_authority_changed') END AS assistant_rejection_authorized`)
+      .bind(...rejectionAuthority.bindings));
+    const current=projectSourceProjectionCurrentAssertion(sharedRejection);
+    statements.push(env.DB.prepare(`SELECT CASE WHEN (${current.sql}) THEN 1 ELSE json('assistant_rejection_projection_stale') END AS assistant_rejection_projection_current`)
+      .bind(...current.bindings));
+  }
   const placeholders = EVENT_WRITE_COLUMNS.split(",").map(() => "?").join(",");
   for (const [index, current] of events.entries()) {
     const receipt = `assistant-${decision}:${actor.principal.userId}:${proposal.proposal_id}:${index}`;
@@ -815,15 +1175,42 @@ async function commitStandaloneAssistantDecision(env: WorkerEnv, actor: Authoriz
     statements.push(env.DB.prepare("INSERT INTO event_client_receipts(stream_id,client_event_id,event_id,sequence,created_at) SELECT ?,?,?,?,? WHERE EXISTS(SELECT 1 FROM events WHERE event_id=? AND stream_id=? AND actor=?)")
       .bind(streamId, receipt, current.eventId, current.sequence, now, current.eventId, streamId, `user:${actor.principal.userId}`));
   }
+  if(sharedRejection){
+    const scope=sharedRejection;
+    const custody=[event.eventId,scope.projectAccessId,scope.organizationId,scope.projectId,scope.ownerUserId,streamId,event.sequence,projectHead!+1,actor.principal.userId,now];
+    statements.push(env.DB.prepare(`INSERT INTO project_event_scopes(event_id,project_access_id,organization_id,project_id,owner_user_id,source_stream_id,source_sequence,project_sequence,actor_user_id,created_at)
+      SELECT ?,?,?,?,?,?,?,?,?,? WHERE EXISTS(SELECT 1 FROM events WHERE event_id=? AND stream_id=? AND sequence=? AND actor=? AND type='ProposalRejected')
+        AND(SELECT COALESCE(MAX(project_sequence),0) FROM project_event_scopes WHERE project_access_id=? AND organization_id=?)=?
+        AND EXISTS(SELECT 1 FROM project_migration_states WHERE project_access_id=? AND organization_id=? AND owner_user_id=? AND status='active' AND last_owner_sequence=?)`)
+      .bind(...custody,event.eventId,streamId,event.sequence,`user:${actor.principal.userId}`,scope.projectAccessId,scope.organizationId,projectHead,
+        scope.projectAccessId,scope.organizationId,scope.ownerUserId,head));
+    statements.push(env.DB.prepare(`UPDATE project_migration_states SET last_owner_sequence=?,updated_at=?
+      WHERE project_access_id=? AND organization_id=? AND owner_user_id=? AND status='active' AND last_owner_sequence=?
+        AND(SELECT COALESCE(MAX(sequence),0) FROM events WHERE stream_id=?)=?`)
+      .bind(event.sequence,now,scope.projectAccessId,scope.organizationId,scope.ownerUserId,head,streamId,event.sequence));
+    publication={sql:`EXISTS(SELECT 1 FROM project_event_scopes custody
+      WHERE(custody.event_id,custody.project_access_id,custody.organization_id,custody.project_id,custody.owner_user_id,custody.source_stream_id,custody.source_sequence,custody.project_sequence,custody.actor_user_id,custody.created_at)
+        IS(?,?,?,?,?,?,?,?,?,?))
+      AND(SELECT COALESCE(MAX(project_sequence),0) FROM project_event_scopes WHERE project_access_id=? AND organization_id=?)=?
+      AND EXISTS(SELECT 1 FROM project_migration_states WHERE project_access_id=? AND organization_id=? AND owner_user_id=? AND status='active' AND last_owner_sequence=?)
+      AND(SELECT COALESCE(MAX(sequence),0) FROM events WHERE stream_id=?)=?
+      AND EXISTS(SELECT 1 FROM event_client_receipts WHERE(stream_id,client_event_id,event_id,sequence,created_at) IS(?,?,?,?,?))`,
+    bindings:[...custody,scope.projectAccessId,scope.organizationId,projectHead!+1,scope.projectAccessId,scope.organizationId,scope.ownerUserId,event.sequence,
+      streamId,event.sequence,streamId,`assistant-rejected:${actor.principal.userId}:${proposal.proposal_id}:0`,event.eventId,event.sequence,now]};
+  }
   statements.push(env.DB.prepare(`UPDATE assistant_action_proposals SET status=?,resolved_at=?
     WHERE proposal_id=? AND actor_user_id=? AND scope_key=? AND status='pending' AND permission_epoch=? AND expires_at>?`)
     .bind(decision, now, proposal.proposal_id, actor.principal.userId, assistantScopeKey(actor), actor.principal.access.permissionEpoch, now));
   const eventChecks = events.map(() => "EXISTS(SELECT 1 FROM events WHERE event_id=? AND stream_id=? AND actor=?)").join(" AND ");
   statements.push(env.DB.prepare(`INSERT INTO assistant_action_commits(commit_id,verified,created_at)
     VALUES(?,CASE WHEN EXISTS(SELECT 1 FROM assistant_action_proposals WHERE proposal_id=? AND actor_user_id=? AND scope_key=? AND status=?)
-      AND ${eventChecks} THEN 1 ELSE 0 END,?)`)
+      AND ${eventChecks} AND (${publication.sql}) THEN 1 ELSE 0 END,?)`)
     .bind(`${proposal.proposal_id}:${decision}`, proposal.proposal_id, actor.principal.userId, assistantScopeKey(actor), decision,
-      ...events.flatMap((current) => [current.eventId, streamId, `user:${actor.principal.userId}`]), now));
+      ...events.flatMap((current) => [current.eventId, streamId, `user:${actor.principal.userId}`]),...publication.bindings, now));
+  // Reuse the original request's authority; the new event/scope does not mint a
+  // replacement principal. Keep this outside the commit predicate's SQL depth.
+  if(rejectionAuthority)statements.push(env.DB.prepare(`SELECT CASE WHEN (${rejectionAuthority.sql}) THEN 1 ELSE json('assistant_rejection_authority_changed') END AS assistant_rejection_authority_current`)
+    .bind(...rejectionAuthority.bindings));
   await env.DB.batch(statements);
   return events;
 }
@@ -1001,23 +1388,10 @@ function providerAssistantActions(result: AssistantProviderResult, context: Assi
   });
 }
 
-function assistantTaskGuard(actor: AuthorizedAssistant, task: StoredAssistantTask, now: string) {
-  const project = activeAssistantProjectGuard(actor, now);
-  const sql = `EXISTS(SELECT 1 FROM assistant_specialist_tasks specialist JOIN assistant_turns turn
-      ON turn.actor_user_id=specialist.actor_user_id AND turn.scope_key=specialist.scope_key AND turn.turn_id=specialist.turn_id
-      JOIN private_content answer ON answer.content_id=turn.assistant_content_ref AND answer.owner_id=turn.actor_user_id
-        AND answer.redacted_at IS NULL AND answer.expires_at>?
-      WHERE specialist.task_id=? AND specialist.actor_user_id=? AND specialist.scope_key=? AND specialist.turn_id=?
-        AND specialist.permission_epoch=? AND specialist.selected_model=? AND specialist.status='running')${project.sql}`;
-  return {
-    sql,
-    bindings: [now, task.task_id, actor.principal.userId, assistantScopeKey(actor), task.turn_id,
-      actor.principal.access.permissionEpoch, task.selected_model, ...project.bindings] as Array<string | number | null>,
-  };
-}
-
 async function commitAssistantSpecialistResult(env: WorkerEnv, actor: AuthorizedAssistant, task: StoredAssistantTask,
-  result: AssistantProviderResult, context: AssistantContext) {
+  result: AssistantProviderResult, context: AssistantContext, proof:BudgetReservationGuard) {
+  if(!await env.DB.prepare("SELECT 1 AS current WHERE "+proof.sql).bind(...proof.bindings).first())throw new Error("assistant_result_custody_changed");
+  if(await env.DB.prepare("SELECT 1 AS committed FROM assistant_action_commits WHERE commit_id=? AND verified=1").bind("task:"+task.task_id).first())return;
   const existing = await env.DB.prepare(`SELECT turn.assistant_content_ref,turn.proposal_json FROM assistant_turns turn
     WHERE turn.actor_user_id=? AND turn.scope_key=? AND turn.turn_id=?`).bind(actor.principal.userId, assistantScopeKey(actor), task.turn_id)
     .first<{ assistant_content_ref: string; proposal_json: string | null }>();
@@ -1037,10 +1411,10 @@ async function commitAssistantSpecialistResult(env: WorkerEnv, actor: Authorized
   const createdAt = now.toISOString();
   const expiresAt = new Date(now.getTime() + Math.max(1, Math.min(365, Number(policy?.transient_days ?? Number(env.FORMA_RETENTION_DAYS ?? 30)) || 30)) * 86_400_000).toISOString();
   const proposalExpiresAt = new Date(now.getTime() + 15 * 60_000).toISOString();
-  const guard = assistantTaskGuard(actor, task, createdAt);
+  const guard = proof;
   const streamId = scope ? `creative:${scope.ownerUserId}` : actor.principal.streamId;
   const head = await streamHead(env, streamId);
-  const correlation = `assistant-specialist:${actor.principal.userId}:${task.turn_id}`;
+  const correlation = task.task_id;
   const base = { ...(actor.projectId ? { project_id: actor.projectId } : {}), ...(task.document_id ? { document_id: task.document_id } : {}),
     actor_user_id: actor.principal.userId, source_surface: actor.surface.page, turn_id: task.turn_id, task_id: task.task_id };
   const answered = makeEvent(streamId, head + 1, `user:${actor.principal.userId}`, "server:assistant", correlation, "AssistantReasoned", {
@@ -1051,9 +1425,14 @@ async function commitAssistantSpecialistResult(env: WorkerEnv, actor: Authorized
   const proposed = actions.map((action, index) => makeEvent(streamId, head + 2 + index, "model:forma-assistant", "server:assistant", correlation,
     "MutationProposed", { ...base, proposal_id: action.id, action_kind: action.action.kind, content_ref: actionContents.get(action.id), requires_approval: true },
     { causationId: answered.eventId }));
+  const originWrites=await liveMemoryOriginWithdrawalStatements(env,{contentId:existing.assistant_content_ref},"source-changed",createdAt);
   const statements: D1PreparedStatement[] = [
-    env.DB.prepare(`UPDATE private_content SET content=? WHERE content_id=? AND owner_id=? AND redacted_at IS NULL AND expires_at>? AND ${guard.sql}`)
+    env.DB.prepare(`UPDATE private_content SET content=? WHERE content_id=? AND owner_id=? AND kind='chat-assistant' AND redacted_at IS NULL AND expires_at>? AND expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now') AND ${guard.sql}`)
       .bind(result.reply, existing.assistant_content_ref, actor.principal.userId, createdAt, ...guard.bindings),
+    // Content equality alone would also admit an ignored UPDATE of an identical
+    // reply. Prove the guarded replacement matched before retiring its lineage.
+    env.DB.prepare("SELECT CASE WHEN changes()=1 THEN 1 ELSE json('assistant_result_content_changed') END AS verified"),
+    ...originWrites,
   ];
   for (const action of actions) {
     const contentId = actionContents.get(action.id)!;
@@ -1089,148 +1468,39 @@ async function commitAssistantSpecialistResult(env: WorkerEnv, actor: Authorized
     ...actions.map(({ id, turnId, key, action }) => ({ id, turnId, key, kind: action.kind })),
   ];
   const encoded = metadata.length ? JSON.stringify({ proposals: metadata }) : existing.proposal_json;
-  statements.push(env.DB.prepare("UPDATE assistant_turns SET proposal_json=? WHERE actor_user_id=? AND scope_key=? AND turn_id=?")
-    .bind(encoded, actor.principal.userId, assistantScopeKey(actor), task.turn_id));
+  statements.push(env.DB.prepare("UPDATE assistant_turns SET proposal_json=? WHERE actor_user_id=? AND scope_key=? AND turn_id=? AND "+guard.sql)
+    .bind(encoded, actor.principal.userId, assistantScopeKey(actor), task.turn_id,...guard.bindings));
   statements.push(env.DB.prepare(`UPDATE assistant_specialist_tasks SET status='completed',error_code=NULL,updated_at=?,completed_at=?
-    WHERE task_id=? AND actor_user_id=? AND scope_key=? AND permission_epoch=? AND status='running'`)
-    .bind(createdAt, createdAt, task.task_id, actor.principal.userId, assistantScopeKey(actor), actor.principal.access.permissionEpoch));
+    WHERE task_id=? AND actor_user_id=? AND scope_key=? AND ${guard.sql}`)
+    .bind(createdAt, createdAt, task.task_id, actor.principal.userId, assistantScopeKey(actor),...guard.bindings));
   const exactActions = actions.length ? ` AND (SELECT COUNT(*) FROM assistant_action_proposals WHERE proposal_id IN(${actions.map(() => "?").join(",")})
     AND actor_user_id=? AND scope_key=? AND turn_id=? AND status='pending')=?` : "";
   statements.push(env.DB.prepare(`INSERT INTO assistant_action_commits(commit_id,verified,created_at) VALUES(?,CASE WHEN
     EXISTS(SELECT 1 FROM assistant_specialist_tasks WHERE task_id=? AND actor_user_id=? AND scope_key=? AND status='completed')
-    AND EXISTS(SELECT 1 FROM events WHERE event_id=? AND stream_id=? AND type='AssistantReasoned')${exactActions} THEN 1 ELSE 0 END,?)`)
+    AND EXISTS(SELECT 1 FROM events WHERE event_id=? AND stream_id=? AND type='AssistantReasoned')${exactActions}
+    AND EXISTS(SELECT 1 FROM private_content WHERE content_id=? AND owner_id=? AND kind='chat-assistant' AND content=? AND redacted_at IS NULL AND expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now')) AND ${guard.sql} THEN 1 ELSE 0 END,?)`)
     .bind(`task:${task.task_id}`, task.task_id, actor.principal.userId, assistantScopeKey(actor), answered.eventId, streamId,
-      ...(actions.length ? [...actions.map((action) => action.id), actor.principal.userId, assistantScopeKey(actor), task.turn_id, actions.length] : []), createdAt));
+      ...(actions.length ? [...actions.map((action) => action.id), actor.principal.userId, assistantScopeKey(actor), task.turn_id, actions.length] : []),existing.assistant_content_ref,actor.principal.userId,result.reply,...guard.bindings, createdAt));
   await env.DB.batch(statements);
 }
 
-async function finishAssistantTask(env: WorkerEnv, task: StoredAssistantTask, status: "failed" | "needs-review" | "canceled", code: string) {
-  const now = new Date().toISOString();
-  await env.DB.prepare("UPDATE assistant_specialist_tasks SET status=?,error_code=?,updated_at=?,completed_at=? WHERE task_id=? AND actor_user_id=? AND status IN('queued','running')")
-    .bind(status, code, now, now, task.task_id, task.actor_user_id).run();
+/** A history read can park unsigned legacy rows, but cannot buy work or release an unknown bill. */
+async function resumeAssistantTasks(_request:Request,env:WorkerEnv,actor:AuthorizedAssistant,_execution:WorkerExecutionContext){
+  await parkUnsignedAssistantTasks(env,actor,assistantScopeKey(actor));
 }
 
-async function runAssistantSpecialist(request: Request, env: WorkerEnv, taskId: string): Promise<void> {
-  const task = await env.DB.prepare("SELECT * FROM assistant_specialist_tasks WHERE task_id=? LIMIT 1").bind(taskId).first<StoredAssistantTask>();
-  if (!task || task.status !== "queued") return;
-  const now = new Date().toISOString();
-  const lease = new Date(Date.now() + 10 * 60_000).toISOString();
-  const claimed = await env.DB.prepare(`UPDATE assistant_specialist_tasks SET status='running',updated_at=?,started_at=?,lease_expires_at=?
-    WHERE task_id=? AND actor_user_id=? AND status='queued'
-      AND (SELECT COUNT(*) FROM assistant_specialist_tasks active WHERE active.actor_user_id=? AND active.status='running')<2`)
-    .bind(now, now, lease, task.task_id, task.actor_user_id, task.actor_user_id).run();
-  if (Number(claimed.meta.changes ?? 0) !== 1) return;
-  task.status = "running";
-  let dispatched = false;
-  let settled = false;
-  try {
-    const live = await authorizeAssistant(request, env);
-    const actor = live.authorized;
-    if (live.response || !actor || actor.principal.userId !== task.actor_user_id || assistantScopeKey(actor) !== task.scope_key
-      || actor.principal.access.permissionEpoch !== task.permission_epoch || !assistantProviderEnabled(env, actor)
-      || !assistantAllowedModels(env).includes(task.selected_model as AssistantModel)
-      || task.selected_model === "gpt-5.6-sol" && (actor.principal.role !== "admin" || !featureUsers(env.FORMA_ASSISTANT_SOL_USER_IDS).has(actor.principal.userId))) {
-      throw new Error("assistant_authorization_changed");
-    }
-    const turn = await exactAssistantTurn(env, actor, task.turn_id);
-    if (!turn) throw new Error("assistant_turn_missing");
-    const current = await assistantContext(request, env, actor);
-    if (!await claimCostBudgetReservation(env, task.actor_user_id, task.cost_reservation_id)) throw new Error("assistant_budget_claim_denied");
-    const dispatchedAt = new Date().toISOString();
-    const submission = await env.DB.prepare(`UPDATE assistant_specialist_tasks SET provider_submitted=1,updated_at=?,lease_expires_at=?
-      WHERE task_id=? AND actor_user_id=? AND scope_key=? AND permission_epoch=? AND status='running' AND provider_submitted=0`)
-      .bind(dispatchedAt, new Date(Date.now() + 10 * 60_000).toISOString(), task.task_id, task.actor_user_id, task.scope_key, task.permission_epoch).run();
-    if (Number(submission.meta.changes ?? 0) !== 1) throw new Error("assistant_authorization_changed");
-    task.provider_submitted = 1;
-    dispatched = true;
-    const result = await requestAssistantProvider(env, task.actor_user_id, {
-      model: task.selected_model as AssistantModel,
-      context: current.context,
-      message: turn.user,
-      locale: task.locale,
-      maximumInputTokens:task.maximum_input_tokens,
-      maximumOutputTokens: task.maximum_output_tokens,
-    });
-    const pricedModel = ASSISTANT_MODELS.includes(result.model as AssistantModel) ? result.model : task.selected_model;
-    const actual = priceTextUsageBreakdownMicrousd(pricedModel, result.usage).totalMicrousd;
-    await settleBudget(env, task.actor_user_id, task.token_reservation_id, result.usage.totalTokens || result.usage.inputTokens + result.usage.outputTokens);
-    await settleCostBudget(env, task.actor_user_id, task.cost_reservation_id, actual);
-    settled = true;
-    if (result.model !== task.selected_model) throw new Error("assistant_provider_model_mismatch");
-    if (actual > task.estimated_microusd) throw new Error("assistant_provider_budget_exceeded");
-    const final = await authorizeAssistant(request, env);
-    if (!final.authorized || final.response || final.authorized.principal.userId !== task.actor_user_id
-      || final.authorized.principal.access.permissionEpoch !== task.permission_epoch || assistantScopeKey(final.authorized) !== task.scope_key) {
-      throw new Error("assistant_authorization_changed");
-    }
-    const refreshed = await assistantContext(request, env, final.authorized);
-    for (let attempt = 0; attempt < 3; attempt += 1) {
-      try {
-        await commitAssistantSpecialistResult(env, final.authorized, task, result, refreshed.context);
-        return;
-      } catch (error) {
-        if (attempt === 2 || !/assistant_action_commits|events\.stream_id|events\.sequence|CHECK constraint/iu.test(error instanceof Error ? error.message : String(error))) throw error;
-      }
-    }
-  } catch (error) {
-    const code = error instanceof Error && /^assistant_[a-z_]+(?:_\d+)?$/u.test(error.message) ? error.message : "assistant_specialist_failed";
-    if (!dispatched || error instanceof AssistantProviderRejectedError) {
-      await releaseCostBudget(env, task.actor_user_id, task.cost_reservation_id);
-      await releaseBudget(env, task.actor_user_id, task.token_reservation_id, { reason: code });
-      await finishAssistantTask(env, task, "failed", code);
-    } else if (!settled) {
-      // A paid POST may have reached its provider. Never duplicate or release its uncertain charge automatically.
-      await finishAssistantTask(env, task, "needs-review", code);
-    } else {
-      await finishAssistantTask(env, task, "failed", code);
-    }
-  } finally {
-    const next = await env.DB.prepare("SELECT task_id FROM assistant_specialist_tasks WHERE actor_user_id=? AND scope_key=? AND status='queued' ORDER BY created_at LIMIT 1")
-      .bind(task.actor_user_id, task.scope_key).first<{ task_id: string }>();
-    if (next) await runAssistantSpecialist(request, env, String(next.task_id));
-  }
-}
-
-/** Polling can recover an interrupted request without ever replaying an ambiguous paid submission. */
-async function resumeAssistantTasks(request: Request, env: WorkerEnv, actor: AuthorizedAssistant, execution: WorkerExecutionContext) {
-  const now = new Date().toISOString();
-  const expired = await env.DB.prepare(`SELECT * FROM assistant_specialist_tasks WHERE actor_user_id=? AND scope_key=?
-    AND status='running' AND lease_expires_at IS NOT NULL AND lease_expires_at<=? LIMIT 8`)
-    .bind(actor.principal.userId, assistantScopeKey(actor), now).all<StoredAssistantTask>();
-  for (const task of expired.results) {
-    if (Number(task.provider_submitted) === 1) {
-      await finishAssistantTask(env, task, "needs-review", "assistant_provider_submission_uncertain");
-      continue;
-    }
-    await env.DB.batch([
-      env.DB.prepare("UPDATE cost_budget_reservations SET status='active',updated_at=? WHERE reservation_id=? AND owner_id=? AND status='executing'")
-        .bind(now, task.cost_reservation_id, actor.principal.userId),
-      env.DB.prepare("UPDATE assistant_specialist_tasks SET status='queued',updated_at=?,started_at=NULL,lease_expires_at=NULL WHERE task_id=? AND actor_user_id=? AND scope_key=? AND status='running' AND provider_submitted=0 AND lease_expires_at<=?")
-        .bind(now, task.task_id, actor.principal.userId, assistantScopeKey(actor), now),
-    ]);
-  }
-  const pending = await env.DB.prepare("SELECT task_id FROM assistant_specialist_tasks WHERE actor_user_id=? AND scope_key=? AND status='queued' ORDER BY created_at LIMIT 2")
-    .bind(actor.principal.userId, assistantScopeKey(actor)).all<{ task_id: string }>();
-  for (const task of pending.results) {
-    const background = new Request(request.url, { method: "GET", headers: request.headers });
-    execution.waitUntil(runAssistantSpecialist(background, env, String(task.task_id)).catch(() => undefined));
-  }
-}
-
-async function recentAssistantTasks(env: WorkerEnv, actor: AuthorizedAssistant) {
-  const rows = await env.DB.prepare(`SELECT task_id,turn_id,task_kind,selected_model,status,error_code,estimated_microusd
-    FROM assistant_specialist_tasks WHERE actor_user_id=? AND scope_key=? ORDER BY created_at DESC LIMIT 8`)
-    .bind(actor.principal.userId, assistantScopeKey(actor)).all<{
-      task_id: string;
-      turn_id: string;
-      task_kind: string;
-      selected_model: string;
-      status: string;
-      error_code: string | null;
-      estimated_microusd: number;
-    }>();
-  return rows.results.map((row) => ({ id: row.task_id, turnId: row.turn_id, kind: row.task_kind,
-    model: row.selected_model, status: row.status, error: row.error_code, estimatedMicrousd: Number(row.estimated_microusd) }));
+async function recentAssistantTasks(env: WorkerEnv, actor: AuthorizedAssistant):Promise<AssistantTaskFeedEntry[]> {
+  const keys=[assistantScopeKey(actor),...(actor.legacyScopeKey?[actor.legacyScopeKey]:[])];
+  const rows=await env.DB.prepare(`SELECT task.*,
+    execution.execution_id AS consent_execution_id,execution.binding_hash AS consent_binding_hash,step.status AS step_status
+    FROM assistant_specialist_tasks task LEFT JOIN consequential_executions execution ON execution.execution_id=task.task_id AND execution.actor_user_id=task.actor_user_id AND execution.operation='assistant-specialist'
+      AND json_extract(task.result_json,'$.specialistConsentVersion')=1 AND execution.binding_hash=json_extract(task.result_json,'$.bindingHash')
+      AND task.token_reservation_id=task.task_id||':tokens:0' AND task.cost_reservation_id=task.task_id||':usd:0'
+    LEFT JOIN consequential_execution_steps step ON step.execution_id=execution.execution_id AND step.step_index=0
+    WHERE task.actor_user_id=? AND task.scope_key IN(${keys.map(()=>"?").join(",")}) ORDER BY task.created_at DESC LIMIT 8`)
+    .bind(actor.principal.userId,...keys).all<SpecialistTaskRecord&{consent_execution_id:string|null;consent_binding_hash:string|null;step_status:string|null}>();
+  return rows.results.map(row=>({record:row,display:{id:row.task_id,turnId:row.turn_id,kind:row.task_kind,model:row.selected_model,status:row.status,error:row.error_code,estimatedMicrousd:Number(row.estimated_microusd),
+    ...(row.consent_execution_id?{executionId:row.consent_execution_id,bindingHash:row.consent_binding_hash,canExecute:false,submission:assistantSubmissionStatus(row.step_status)}:{})}}));
 }
 
 export async function handleAssistantTask(request: Request, env: WorkerEnv, taskId: string, operation: string): Promise<Response> {
@@ -1251,21 +1521,25 @@ export async function handleAssistantTask(request: Request, env: WorkerEnv, task
   const task = await env.DB.prepare("SELECT * FROM assistant_specialist_tasks WHERE task_id=? AND actor_user_id=? AND scope_key=? LIMIT 1")
     .bind(taskId, actor.principal.userId, assistantScopeKey(actor)).first<StoredAssistantTask>();
   if (!task) return json({ error: "assistant_task_not_found" }, 404);
+  if(operation==="cancel"){const signed=await cancelConsentedAssistantTask(env,actor,assistantSpecialistHost,task);if(signed)return signed;}
   if (task.permission_epoch !== actor.principal.access.permissionEpoch) return json({ error: "assistant_authorization_changed" }, 403);
   if (operation === "reconcile") {
     // The task-owner route can never provide the independent reviewer required for
     // an ambiguous paid submission, even when that owner is a platform admin.
     return json({ error: "assistant_independent_reviewer_required" }, 403);
   }
-  if (task.status === "canceled") return json({ taskId, status: "canceled", idempotent: true });
-  if (task.status !== "queued") return json({ error: "assistant_task_already_started" }, 409);
-  const now = new Date().toISOString();
-  const canceled = await env.DB.prepare("UPDATE assistant_specialist_tasks SET status='canceled',error_code='assistant_canceled',updated_at=?,completed_at=? WHERE task_id=? AND actor_user_id=? AND scope_key=? AND status='queued'")
-    .bind(now, now, taskId, actor.principal.userId, assistantScopeKey(actor)).run();
-  if (Number(canceled.meta.changes ?? 0) !== 1) return json({ error: "assistant_task_already_started" }, 409);
-  await releaseCostBudget(env, actor.principal.userId, task.cost_reservation_id);
-  await releaseBudget(env, actor.principal.userId, task.token_reservation_id, { reason: "assistant_user_canceled" });
-  return json({ taskId, status: "canceled" });
+  await parkUnsignedAssistantTasks(env,actor,assistantScopeKey(actor));
+  return json({error:"assistant_legacy_approval_required",taskId,noAutomaticRetry:true},409);
+}
+
+/** The historical no-charge attestation must never overwrite a signed receipt or already recorded spend. */
+function legacyAssistantNoChargeSql(task:string){
+  return `${task}.result_json IS NULL
+    AND NOT EXISTS(SELECT 1 FROM consequential_executions execution WHERE execution.actor_user_id=${task}.actor_user_id AND(
+      execution.execution_id=${task}.task_id OR EXISTS(SELECT 1 FROM consequential_execution_steps step WHERE step.execution_id=execution.execution_id
+        AND(step.token_reservation_id=${task}.token_reservation_id OR step.cost_reservation_id=${task}.cost_reservation_id))))
+    AND NOT EXISTS(SELECT 1 FROM budget_reservations tokens WHERE tokens.reservation_id=${task}.token_reservation_id AND tokens.owner_id=${task}.actor_user_id AND tokens.used_tokens>0)
+    AND NOT EXISTS(SELECT 1 FROM cost_budget_reservations cost WHERE cost.reservation_id=${task}.cost_reservation_id AND cost.owner_id=${task}.actor_user_id AND cost.used_microusd>0)`;
 }
 
 /** Rescue another actor's uncertain bill without exposing their conversation or widening project authority. */
@@ -1324,6 +1598,21 @@ export async function handleAssistantBillingReconciliation(request: Request, env
     AND organization_id IS ? AND project_access_id IS ? LIMIT 1`)
     .bind(taskId, actorUserId, organizationId, projectAccessId).first<StoredAssistantTask>();
   if (!task) return json({ error: "assistant_task_not_found" }, 404);
+  const signed=await env.DB.prepare(`SELECT execution.execution_id,execution.operation,execution.organization_id,execution.project_access_id
+    FROM consequential_executions execution WHERE execution.actor_user_id=? AND(execution.execution_id=? OR EXISTS(
+      SELECT 1 FROM consequential_execution_steps step WHERE step.execution_id=execution.execution_id AND(step.token_reservation_id=? OR step.cost_reservation_id=?)))
+    ORDER BY execution.execution_id=? DESC LIMIT 1`).bind(actorUserId,taskId,task.token_reservation_id,task.cost_reservation_id,taskId)
+    .first<{execution_id:string;operation:string;organization_id:string|null;project_access_id:string|null}>();
+  if(task.result_json!==null&&task.result_json!==undefined||signed){
+    if(signed?.execution_id===taskId&&signed.operation==="assistant-specialist"&&signed.organization_id===organizationId&&signed.project_access_id===projectAccessId){
+      // An independent reviewer may finish persisted usage accounting, but this legacy checkbox is not a signed no-charge receipt.
+      try{await reconcileConsequentialUsage(env,actorUserId,taskId);}catch{/* Keep the exact retained evidence and remaining hold for free recovery. */}
+    }
+    return json({error:"assistant_signed_billing_evidence_required",taskId,noAutomaticRetry:true},409);
+  }
+  const knownUsage=await env.DB.prepare(`SELECT 1 AS present FROM assistant_specialist_tasks task WHERE task.task_id=? AND task.actor_user_id=? AND NOT(${legacyAssistantNoChargeSql("task")})`)
+    .bind(taskId,actorUserId).first();
+  if(knownUsage)return json({error:"assistant_recorded_usage_cannot_be_reconciled_as_free",taskId,noAutomaticRetry:true},409);
   if (task.status === "reconciled") return json({ taskId, status: "reconciled", idempotent: true });
   if (!["needs-review", "reconciling"].includes(task.status)) return json({ error: "assistant_task_reconciliation_unavailable" }, 409);
 
@@ -1334,11 +1623,11 @@ export async function handleAssistantBillingReconciliation(request: Request, env
   const statements = [
     env.DB.prepare(`UPDATE assistant_specialist_tasks SET status='reconciling',updated_at=?
       WHERE task_id=? AND actor_user_id=? AND scope_key=? AND organization_id IS ? AND project_access_id IS ?
-        AND status IN('needs-review','reconciling')`)
+        AND status IN('needs-review','reconciling') AND ${legacyAssistantNoChargeSql("assistant_specialist_tasks")}`)
       .bind(started, taskId, actorUserId, task.scope_key, organizationId, projectAccessId),
     env.DB.prepare(`INSERT OR IGNORE INTO assistant_billing_reconciliations(reconciliation_id,task_id,actor_user_id,reviewer_user_id,organization_id,project_access_id,evidence_classification,occurred_at)
       SELECT ?,?,?,?,?,?,'verified-no-provider-charge',? WHERE EXISTS(SELECT 1 FROM assistant_specialist_tasks
-        WHERE task_id=? AND actor_user_id=? AND scope_key=? AND status='reconciling')`)
+        WHERE task_id=? AND actor_user_id=? AND scope_key=? AND status='reconciling' AND ${legacyAssistantNoChargeSql("assistant_specialist_tasks")})`)
       .bind(auditId, taskId, actorUserId, reviewer.userId, organizationId, projectAccessId, started, taskId, actorUserId, task.scope_key),
   ];
   if (organizationId) {
@@ -1346,13 +1635,16 @@ export async function handleAssistantBillingReconciliation(request: Request, env
       SELECT ?,?,?, 'AssistantProviderChargeReconciled','assistant-billing',?,?,? WHERE EXISTS(SELECT 1 FROM assistant_billing_reconciliations
         WHERE task_id=? AND actor_user_id=? AND reviewer_user_id=? AND organization_id=? AND project_access_id IS ?)
         AND NOT EXISTS(SELECT 1 FROM organization_audit_events WHERE organization_id=? AND action='AssistantProviderChargeReconciled'
-          AND resource_kind='assistant-billing' AND resource_id=? AND actor_user_id=?)`)
+          AND resource_kind='assistant-billing' AND resource_id=? AND actor_user_id=?)
+        AND EXISTS(SELECT 1 FROM assistant_specialist_tasks task WHERE task.task_id=? AND task.actor_user_id=? AND task.status='reconciling' AND ${legacyAssistantNoChargeSql("task")})`)
       .bind(uuidV7(), organizationId, reviewer.userId, taskId, JSON.stringify(evidence), started,
-        taskId, actorUserId, reviewer.userId, organizationId, projectAccessId, organizationId, taskId, reviewer.userId));
+        taskId, actorUserId, reviewer.userId, organizationId, projectAccessId, organizationId, taskId, reviewer.userId, taskId, actorUserId));
   }
   try {
     const results = await env.DB.batch(statements);
     if (Number(results[0]?.meta.changes ?? 0) !== 1) return json({ error: "assistant_task_reconciliation_unavailable" }, 409);
+    if(!await env.DB.prepare(`SELECT 1 AS current FROM assistant_specialist_tasks task WHERE task.task_id=? AND task.actor_user_id=? AND task.status=\'reconciling\' AND ${legacyAssistantNoChargeSql("task")}`).bind(taskId,actorUserId).first())
+      return json({error:"assistant_recorded_usage_cannot_be_reconciled_as_free",taskId,noAutomaticRetry:true},409);
     await releaseCostBudget(env, actorUserId, task.cost_reservation_id);
     await releaseBudget(env, actorUserId, task.token_reservation_id, { reason: "assistant_admin_verified_no_provider_charge" });
     const ended = new Date().toISOString();
@@ -1360,70 +1652,112 @@ export async function handleAssistantBillingReconciliation(request: Request, env
       WHERE task_id=? AND actor_user_id=? AND scope_key=? AND organization_id IS ? AND project_access_id IS ? AND status='reconciling'
         AND NOT EXISTS(SELECT 1 FROM cost_budget_reservations WHERE reservation_id=? AND owner_id=? AND status IN('active','executing'))
         AND NOT EXISTS(SELECT 1 FROM budget_reservations WHERE reservation_id=? AND owner_id=? AND status IN('active','executing'))
-        AND EXISTS(SELECT 1 FROM assistant_billing_reconciliations WHERE task_id=? AND actor_user_id=? AND reviewer_user_id=?)`)
+        AND EXISTS(SELECT 1 FROM assistant_billing_reconciliations WHERE task_id=? AND actor_user_id=? AND reviewer_user_id=?)
+        AND ${legacyAssistantNoChargeSql("assistant_specialist_tasks")}`)
       .bind(ended, ended, taskId, actorUserId, task.scope_key, organizationId, projectAccessId,
         task.cost_reservation_id, actorUserId, task.token_reservation_id, actorUserId, taskId, actorUserId, reviewer.userId).run();
     return Number(completed.meta.changes ?? 0) === 1 ? json({ taskId, status: "reconciled" }) : json({ error: "assistant_reconciliation_incomplete" }, 409);
   } catch { return json({ error: "assistant_reconciliation_incomplete" }, 409); }
 }
 
+const assistantSpecialistHost:AssistantSpecialistHost={
+  authorize:authorizeAssistant,scopeKey:assistantScopeKey,ensure:ensureAssistantSchema,
+  kind:(message,context,turnId)=>assistantTaskKind(message,preparedAssistantActions(message,context,turnId)),
+  allowedModels:assistantAllowedModels,providerEnrolled:(env,userId)=>featureUsers(env.FORMA_ASSISTANT_PROVIDER_USER_IDS).has(userId),
+  solEnrolled:(env,userId)=>featureUsers(env.FORMA_ASSISTANT_SOL_USER_IDS).has(userId),
+  turn:exactAssistantTurn,commit:commitAssistantSpecialistResult,
+};
+export async function handleAssistantSpecialist(request:Request,env:WorkerEnv,execution:WorkerExecutionContext){
+  return handleAssistantSpecialistConsent(request,env,execution,assistantSpecialistHost);
+}
+
 export async function handleAssistant(request: Request, env: WorkerEnv, execution: WorkerExecutionContext): Promise<Response> {
-  if (request.method !== "GET" && request.method !== "POST") return json({ error: "method_not_allowed" }, 405);
-  const authorization = await authorizeAssistant(request, env);
-  if (authorization.response || !authorization.authorized) return authorization.response!;
-  const actor = authorization.authorized;
-  await ensureAssistantSchema(env);
-  const state = await assistantContext(request, env, actor);
-  if (request.method === "GET") {
-    await resumeAssistantTasks(request, env, actor, execution);
-    return json({ ...state, tasks: await recentAssistantTasks(env, actor) });
+  if(request.method!=="GET"&&request.method!=="POST")return json({error:"method_not_allowed"},405);
+  const source=new AssistantContextReadWitness(env);
+  const authorization=await authorizeAssistant(request,env,source);if(authorization.response||!authorization.authorized)return authorization.response!;
+  const actor=authorization.authorized;await ensureAssistantSchema(env);const state=await assistantContext(request,env,actor,source);
+  if(request.method==="GET"){await resumeAssistantTasks(request,env,actor,execution);return certifiedAssistantTaskFeed(env,actor,assistantScopeKey(actor),state,await recentAssistantTasks(env,actor));}
+  let body:{turnId?:unknown;message?:unknown;locale?:unknown;model?:unknown;premiumApproval?:unknown;memoryMode?:unknown};
+  try{body=await request.json()as typeof body;}catch{return json({error:"assistant_request_invalid"},400);}
+  if(!body||typeof body!=="object"||Array.isArray(body))return json({error:"assistant_request_invalid"},400);
+  const turnId=typeof body.turnId==="string"?body.turnId.trim():"",message=typeof body.message==="string"?body.message.trim():"";
+  if(!/^[a-zA-Z0-9_-]{8,80}$/u.test(turnId))return json({error:"assistant_turn_invalid"},400);
+  if(!message||message.length>ASSISTANT_CONTEXT_LIMITS.turnChars)return json({error:"assistant_message_invalid"},400);
+  if(Object.hasOwn(body,"memoryMode")&&body.memoryMode!=="recall")return json({error:"assistant_memory_mode_invalid"},400);
+  // Select from fresh native enrollment and ledger metadata before *any* saved
+  // turn early return. No selected structured failure can fall through to v1.
+  const memoryPrepared=assistantMemoryPreparedDocument(actor);
+  const selection=body.memoryMode==="recall"?await prepareNativeMemorySelection(env,memoryPrepared):undefined;
+  if(body.memoryMode==="recall"&&!selection)return json({error:"assistant_memory_unavailable",noAutomaticRetry:true},409);
+  const selectionOptions=selection?{memorySelection:selection}:{};
+  const selectedTurn=(turn:AssistantTurn)=>selection?turn.memory?.version===(selection.mode==="structured"?"native-memory-answer-v2":"native-memory-answer-v1"):!turn.memory;
+  const recallConflict=(turn:AssistantTurn)=>{
+    const changedProtocol=turn.user===message&&Boolean(turn.memory)===Boolean(selection)&&Boolean(selection);
+    return json({error:changedProtocol?"assistant_memory_unavailable":"assistant_turn_conflict",...(changedProtocol?{noAutomaticRetry:true}:{})},409);
+  };
+  const previous=await exactAssistantTurn(env,actor,turnId);
+  if(previous)return previous.user===message&&selectedTurn(previous)
+    ?certifiedAssistantTurnResponse(env,actor,assistantScopeKey(actor),state,previous,200,selectionOptions)
+    :recallConflict(previous);
+  if(await unavailableNativeMemoryTurn(env,actor,turnId))return json({error:"assistant_turn_unavailable",noAutomaticRetry:true},409);
+  // Send always remains zero-cost, even when an old caller supplies a model or premium flag.
+  const generationContext=source.context();
+  if(!generationContext)return certifiedAssistantTurnResponse(env,actor,assistantScopeKey(actor),state,null,200,{freshContextSource:source,persistenceFailed:true,neverSubmitted:true,...selectionOptions});
+  let memory:AssistantRecallMemory|undefined;
+  let reply:AssistantReply;
+  if(selection?.mode==="structured"){
+    const streamId=actor.project?`creative:${actor.project.ownerUserId}`:actor.principal.streamId;
+    const sourceHead=source.ownerHead(streamId);
+    const preparedDocument=sourceHead===null?null:{...memoryPrepared,sourceHead};
+    const originals=preparedDocument?await discoverNativeStructuredConversationOriginals(env,preparedDocument,selection):null;
+    const value=originals&&preparedDocument?await prepareNativeStructuredConversationContext(env,originals.enrollment,preparedDocument,originals.captures):null;
+    const text=value?nativeStructuredMemoryAssistantReply(value.context,body.locale):null;
+    if(!value||!text)return json({error:"assistant_memory_unavailable",noAutomaticRetry:true},409);
+    memory={mode:"structured",selection,value};reply={text};
+  }else if(selection){
+    const memorySource=new AssistantContextReadWitness<NativeDocumentMemoryContext>(env);
+    const value=await readNativeDocumentMemory(env,assistantMemoryPreparedDocument(actor),memorySource);
+    const text=value?nativeMemoryAssistantReply(value,body.locale):null;
+    if(!value||!text||!await nativeMemoryOriginCapture(value))return json({error:"assistant_memory_unavailable",noAutomaticRetry:true},409);
+    memorySource.seal(value);
+    if(!memorySource.statements().length)return json({error:"assistant_memory_unavailable",noAutomaticRetry:true},409);
+    memory={mode:"extractive",selection,value,source:memorySource};reply={text};
+  }else reply=answerFor(generationContext,message,body.locale);
+  const originalMemorySource=memory?.mode==="structured"?(()=>{
+    const value=memory.value;
+    return{statements:()=>nativeStructuredConversationContextPrecommitStatements(env,value.proof)??[],
+      matches:(results:readonly D1Result<Record<string,unknown>>[])=>nativeStructuredConversationContextMatches(env,value,results)};
+  })():memory?.source;
+  const actions=!memory&&assistantActionsEnabled(env,actor)?preparedAssistantActions(message,generationContext,turnId):[];
+  const actionProposals:AssistantProposal[]=actions.map(({id,turnId:sourceTurn,key,summary,action})=>({id,turnId:sourceTurn,key,summary,kind:action.kind})),proposal=memory?null:actionProposals[0]??proposalFor(generationContext,turnId,actor.canPropose);
+  const originalRequest={...savedAssistantRequest(request,actor,turnId,responseLocale(body.locale)),...(memory?{memoryMode:"recall"}:{})},requestJson=JSON.stringify(originalRequest);
+  const expected={user:message,reply:localizedAnswer(reply,body.locale),requestJson,presentation:reply,actions,proposal};
+  let prepared:Awaited<ReturnType<typeof prepareAssistantTurn>>|undefined;
+  try{
+    prepared=await prepareAssistantTurn(env,actor,{turnId,message,reply:expected.reply,proposal,documentId:generationContext.scope.documentId,actions,requestJson,memory},source);
+    if(!prepared.publicationCurrent())throw new Error("assistant_memory_unavailable");
+    await env.DB.batch(prepared.statements);
+  }catch{
+    // Keep the prepared, server-allocated footprint even if a successful batch
+    // lost its response. Never advance the head and reuse the old derivation.
+    const accepted=await exactAssistantTurn(env,actor,turnId,expected);
+    if(accepted&&prepared&&selectedTurn(accepted)&&(!prepared.structuredOriginId||assistantMemoryOriginIds.get(accepted)===prepared.structuredOriginId))return certifiedAssistantTurnResponse(env,actor,assistantScopeKey(actor),await refreshAssistantMemoryHistory(env,actor,state),accepted,200,{freshContextSource:prepared.source,
+      ...(prepared.memorySource?{freshMemorySource:prepared.memorySource}:{}),...selectionOptions,allowConcurrentDuplicateIf:prepared.competingSendGuard});
+    if(memory?.mode==="structured"&&!prepared)return json({error:"assistant_memory_unavailable",noAutomaticRetry:true},409);
+    const concurrent=await exactAssistantTurn(env,actor,turnId);
+    if(concurrent)return concurrent.user===message&&selectedTurn(concurrent)?certifiedAssistantTurnResponse(env,actor,assistantScopeKey(actor),await refreshAssistantMemoryHistory(env,actor,state),concurrent,200,
+      {...selectionOptions,...(prepared?{freshContextSource:prepared.source,allowConcurrentDuplicateIf:prepared.competingSendGuard,
+        // A different persisted origin is independently certified. It cannot use
+        // our own-final proof; this branch proves our complete candidate absent.
+        ...(memory?.mode==="structured"?{requireConcurrentDuplicate:true}:prepared.memorySource?{freshMemorySource:prepared.memorySource}:{})}:{})})
+      :recallConflict(concurrent);
+    return certifiedAssistantTurnResponse(env,actor,assistantScopeKey(actor),state,null,200,{freshContextSource:source,
+      // A failed write can report a retryable persistence error only while its
+      // ORIGINAL strict derivation still holds and its complete candidate is absent.
+      ...(originalMemorySource?{freshMemorySource:originalMemorySource}:{}),...selectionOptions,persistenceFailed:true,
+      ...(prepared?{allowConcurrentDuplicateIf:prepared.competingSendGuard,...(memory?.mode==="structured"?{requireConcurrentDuplicate:true}:{})}:{neverSubmitted:true})});
   }
-
-  let body: { turnId?: unknown; message?: unknown; locale?: unknown; model?: unknown; premiumApproval?: unknown };
-  try { body = await request.json() as typeof body; } catch { return json({ error: "assistant_request_invalid" }, 400); }
-  const turnId = typeof body.turnId === "string" ? body.turnId.trim() : "";
-  const message = typeof body.message === "string" ? body.message.trim() : "";
-  if (!/^[a-zA-Z0-9_-]{8,80}$/u.test(turnId)) return json({ error: "assistant_turn_invalid" }, 400);
-  if (!message || message.length > ASSISTANT_CONTEXT_LIMITS.turnChars) return json({ error: "assistant_message_invalid" }, 400);
-  const previous = await exactAssistantTurn(env, actor, turnId);
-  if (previous) return previous.user === message ? json({ context: state.context, turn: previous }) : json({ error: "assistant_turn_conflict" }, 409);
-
-  const reply = answerFor(state.context, message, body.locale);
-  const actions = assistantActionsEnabled(env, actor) ? preparedAssistantActions(message, state.context, turnId) : [];
-  const actionProposals: AssistantProposal[] = actions.map(({ id, turnId: sourceTurn, key, summary, action }) => ({ id, turnId: sourceTurn, key, summary, kind: action.kind }));
-  const proposal = actionProposals[0] ?? proposalFor(state.context, turnId, actor.canPropose);
-  let task: PreparedAssistantTask | null = null;
-  try {
-    const visibleProtected=state.context.decisionAtoms.filter((decision)=>decision.providerEligible&&(decision.protected||decision.locked||decision.type==="exclusion"||decision.intent==="prohibit")).length;
-    const protectedComplete=visibleProtected>=Number(state.context.totals.protectedDecisions??visibleProtected);
-    const safeRights=Number(state.context.totals.unsafeRightsDecisions??0)===0;
-    const completeProtectedText=Number(state.context.totals.truncatedProtectedDecisions??0)===0;
-    const synthesisAvailable=assistantTaskKind(message,actions)!=="cross-document-synthesis";
-    if(protectedComplete&&completeProtectedText&&safeRights&&synthesisAvailable)task=await prepareAssistantTask(env,actor,{turnId,message,actions,locale:body.locale,model:body.model,premiumApproval:body.premiumApproval});
-  } catch { /* Account, policy, or provider unavailability never blocks zero-cost page guidance. */ }
-  for (let attempt = 0; attempt < 4; attempt += 1) {
-    try {
-      await commitAssistantTurn(env, actor, { turnId, message, reply: localizedAnswer(reply, body.locale), proposal, documentId: state.context.scope.documentId, actions, task });
-      if (task) {
-        const background = new Request(request.url, { method: "GET", headers: request.headers });
-        execution.waitUntil(runAssistantSpecialist(background, env, task.id).catch(() => undefined));
-      }
-      return json({ context: state.context,
-        turn: { id: turnId, user: message, reply, proposal, ...(actionProposals.length > 1 ? { proposals: actionProposals } : {}) },
-        ...(task ? { task: { id: task.id, turnId, kind: task.kind, model: task.model, status: "queued", estimatedMicrousd: task.estimatedMicrousd } } : {}),
-      }, 201);
-    } catch (error) {
-      const accepted = await exactAssistantTurn(env, actor, turnId);
-      if (accepted) {
-        await releasePreparedAssistantTask(env, actor, task);
-        return accepted.user === message ? json({ context: state.context, turn: accepted }) : json({ error: "assistant_turn_conflict" }, 409);
-      }
-      if (attempt === 3 || !/assistant_turns\.status|events\.stream_id|events\.sequence|event_append_contention/iu.test(error instanceof Error ? error.message : String(error))) {
-        await releasePreparedAssistantTask(env, actor, task);
-        return json({ error: "assistant_persistence_failed" }, 503);
-      }
-    }
-  }
-  await releasePreparedAssistantTask(env, actor, task);
-  return json({ error: "assistant_persistence_failed" }, 503);
+  const committed=await exactAssistantTurn(env,actor,turnId,expected);
+  return certifiedAssistantTurnResponse(env,actor,assistantScopeKey(actor),await refreshAssistantMemoryHistory(env,actor,state),committed,201,{freshContextSource:prepared.source,
+    ...(prepared.memorySource?{freshMemorySource:prepared.memorySource}:{}),...selectionOptions});
 }

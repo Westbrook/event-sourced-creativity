@@ -1,5 +1,7 @@
+import {measureRetainedState,RETAINED_STATE_LIMITS} from './retained-state.ts';
 import { artifactReviewState } from "./context-health.ts";
-import { DOCUMENT_ARTIFACT_KINDS, type DocumentArtifact, type DocumentArtifactKind } from "./document-artifacts.ts";
+import { artifactReviewBindingMatches, artifactReviewParticipants } from "./artifact-delivery.ts";
+import { DOCUMENT_ARTIFACT_KINDS, documentArtifactRevision, type DocumentArtifact, type DocumentArtifactKind } from "./document-artifacts.ts";
 import type { CreativeEvent, CreativeOutput, CreativeProjection } from "./events.ts";
 import type { ProductionFormat } from "./managed-production.ts";
 import { createSceneConfiguration, isSceneMedium, type SceneConfiguration, type SceneMedium } from "./scene-configuration.ts";
@@ -68,6 +70,8 @@ export type ProductionWorkflowStageState = {
 type StageRecipe = { format: ProductionFormat; optional?: boolean; dependsOn?: ProductionFormat[] };
 
 const PRODUCTION_WORKFLOW_RECIPES: Record<ProductionFormat, readonly StageRecipe[]> = {
+  // The dedicated 3D adapter is a single explicit generation; no planner stages are implied.
+  model3d: [],
   image: [
     { format: "short_story", optional: true },
     { format: "scene", optional: true, dependsOn: ["short_story"] },
@@ -242,8 +246,25 @@ export function productionWorkflows(events: readonly CreativeEvent[], documentId
   return [...workflows.values()];
 }
 
-const sourceRevision = (events: readonly CreativeEvent[], artifactId: string) =>
-  events.filter((event) => event.type === "DocumentArtifactEdited" && String(event.payload.artifact_id ?? "") === artifactId).length;
+/** Complete evidence needed by workflow selection, artifact lineage, rights and
+ * review bindings. Other authoring events belong to the creative projection.
+ * Preserve input order and full relevant payloads; do not coalesce approvals,
+ * edit counts or ancestral completions. The Scene consumer bounds this journal. */
+export function createProductionWorkflowHistoryFold(){
+  const types=new Set([DOCUMENT_PRODUCTION_WORKFLOW_EVENT,'DocumentRenderRequested','DocumentRenderCompleted',
+    'DocumentArtifactEdited','GenerationCompleted','IdeationPreviewCompleted','ObjectDiscarded',
+    'RightsAsserted','ReferenceIngested','ArtifactReviewRequested','ArtifactApproved','ArtifactChangesRequested']);
+  const events:CreativeEvent[]=[];let finished=false;
+  return {
+    accept(event:CreativeEvent){
+      if(finished)throw new Error('workflow_history_fold_already_finished');
+      if(types.has(event.type))events.push(event);
+      return true;
+    },
+    finish(){if(finished)throw new Error('workflow_history_fold_already_finished');finished=true;return events;},
+    measureRetainedState:(limits=RETAINED_STATE_LIMITS)=>measureRetainedState([events],limits),
+  };
+}
 
 const recordedSceneMedium = (value: unknown): SceneMedium | null =>
   value === undefined || value === null ? "visual" : isSceneMedium(value) ? value : null;
@@ -375,7 +396,9 @@ export function productionWorkflowStageStates(
       if (!artifact) status = "complete";
       else {
         const review = artifactReviewState(artifact, projection.libraryBlocks, events);
-        status = review.status === "approved" ? "approved"
+        status = review.status === "approved" && (!workflow.approvalRequired || artifactReviewBindingMatches(
+          artifact, events, documentArtifactRevision(events, artifact.id), artifactReviewParticipants(artifact, events).latest?.payload.content_sha256,
+        )) ? "approved"
           : review.status === "stale" || review.status === "unverified" ? "stale"
           : review.status === "changes-requested" ? "changes-requested"
           : review.status === "in-review" ? "in-review"
@@ -388,7 +411,7 @@ export function productionWorkflowStageStates(
     else if (inputFreshness === "changed") status = "stale";
     else if (stage.source.outputKind === "image") {
       status = image && image.sourceEventId === stage.source.sourceEventId ? "selected" : "stale";
-    } else if (!artifact || artifact.sourceEventId !== stage.source.sourceEventId || sourceRevision(events, artifact.id) !== stage.source.revision
+    } else if (!artifact || artifact.sourceEventId !== stage.source.sourceEventId || documentArtifactRevision(events, artifact.id) !== stage.source.revision
       || stage.format === "scene" && recordedSceneMedium(artifact.settings.scene_medium) !== expectedSceneMedium) {
       status = "stale";
     } else {
@@ -396,7 +419,8 @@ export function productionWorkflowStageStates(
       if (review.status === "stale" || review.status === "unverified") status = "stale";
       else if (review.status === "changes-requested") status = "changes-requested";
       else if (stage.approvalRequired || stage.source.approvalRequired) {
-        status = review.status === "approved" ? "approved" : review.status === "in-review" ? "in-review" : "needs-review";
+        status = review.status === "approved" && artifactReviewBindingMatches(artifact, events, stage.source.revision, stage.source.contentSha256)
+          ? "approved" : review.status === "in-review" ? "in-review" : "needs-review";
       } else status = review.status === "approved" ? "approved" : "selected";
     }
     states.set(stage.id, {

@@ -1,3 +1,4 @@
+import { createDeliveryWithReceipt } from "./product-delivery-create.ts";
 import { APPLICATIONS } from "../src/platform/applications.ts";
 import type { FormaCapability } from "../src/platform/capabilities.ts";
 import { canonicalDeliveryStatus, deliveryNeedsCompleteDependencies, deliveryNeedsEvidence, deliveryNeedsReleaseAuthority, deliveryTransitionAllowed, type DeliveryDecisionStatus } from "../src/platform/delivery-lifecycle.ts";
@@ -61,17 +62,32 @@ async function mutateDelivery(request: Request, env: WorkerEnv, actor: PilotUser
   if (!hasCapability(actor, "product.delivery.manage")) return Response.json({ error: "access_denied" }, { status: 403, headers: privateHeaders });
   let body: Record<string, unknown>;
   try { body = await request.json() as Record<string, unknown>; } catch { return Response.json({ error: "invalid_delivery_decision" }, { status: 400 }); }
+  const refuseCreate = (error: string, status: number) => Response.json({ error,
+    ...(request.method === "POST" && Object.hasOwn(body, "requestId") ? { createDisposition: "rejected_before_write" } : {}) }, { status });
   const title = typeof body.title === "string" ? body.title.trim() : "";
   const evidence = typeof body.evidence === "string" ? body.evidence.trim() : "";
   const status=canonicalDeliveryStatus(body.status??"planned");
-  if(!title||title.length>160||evidence.length>800||!status)return Response.json({error:"invalid_delivery_decision"},{status:400});
+  if(!title||title.length>160||evidence.length>800||!status)return refuseCreate("invalid_delivery_decision",400);
 
   if (request.method === "POST") {
-    if("owner" in body)return Response.json({error:"immutable_delivery_decision_fields"},{status:400});
-    if(!["planned","running","failed"].includes(status))return Response.json({error:"invalid_initial_delivery_status"},{status:409});
+    if("owner" in body)return refuseCreate("immutable_delivery_decision_fields",400);
+    if(!["planned","running","failed"].includes(status))return refuseCreate("invalid_initial_delivery_status",409);
     const audience = typeof body.audience === "string" ? body.audience : "";
     const dependencies = Array.isArray(body.dependencyIds) ? body.dependencyIds : [];
-    if (!AUDIENCE_IDS.has(audience) || dependencies.length > 10 || dependencies.some((dependency) => typeof dependency !== "string" || !dependency.trim()) || new Set(dependencies).size !== dependencies.length) return Response.json({ error: "invalid_delivery_dependencies" }, { status: 400 });
+    if (!AUDIENCE_IDS.has(audience) || dependencies.length > 10 || dependencies.some((dependency) => typeof dependency !== "string" || !dependency.trim()) || new Set(dependencies).size !== dependencies.length) return refuseCreate("invalid_delivery_dependencies",400);
+    if (Object.hasOwn(body, "requestId")) {
+      const ownerUserId = typeof body.ownerUserId === "string" && body.ownerUserId.trim() ? body.ownerUserId.trim() : actor.userId;
+      return createDeliveryWithReceipt(request, env, actor, body.requestId,
+        { title, audience, status, ownerUserId, evidence, dependencyIds: dependencies as string[] }, async () => {
+          if (dependencies.length) {
+            const existing = await env.DB.prepare(`SELECT decision_id FROM delivery_decisions WHERE decision_id IN (${dependencies.map(() => "?").join(",")})`).bind(...dependencies).all<{ decision_id: string }>();
+            if (existing.results.length !== dependencies.length) return Response.json({ error: "unknown_delivery_dependency" }, { status: 409 });
+          }
+          const invalid = await validateDeliveryState(env, actor, status, evidence, dependencies as string[]);
+          if (invalid) return invalid;
+          return await eligibleDeliveryOwner(env, ownerUserId) ?? Response.json({ error: "eligible_delivery_owner_required" }, { status: 403 });
+        });
+    }
     if (dependencies.length) {
       const existing = await env.DB.prepare(`SELECT decision_id FROM delivery_decisions WHERE decision_id IN (${dependencies.map(() => "?").join(",")})`).bind(...dependencies).all<{ decision_id: string }>();
       if (existing.results.length !== dependencies.length) return Response.json({ error: "unknown_delivery_dependency" }, { status: 409 });
@@ -107,8 +123,11 @@ async function mutateDelivery(request: Request, env: WorkerEnv, actor: PilotUser
     .bind(title,status,evidence,owner.user_id,owner.display_name,now,decisionId,expectedUpdatedAt).run();
   if (Number(result.meta.changes ?? 0) !== 1) return Response.json({ error: "delivery_decision_revision_conflict" }, { status: 409, headers: privateHeaders });
   await appendAuditEvent(env,"platform:product-delivery","user","ProductDeliveryDecisionUpdated",{decision_id:decisionId,actor_user_id:actor.userId,previous_status:canonicalDeliveryStatus(previous.status),status,previous_owner_user_id:previous.owner_user_id,owner_user_id:owner.user_id});
-  const row=await env.DB.prepare("SELECT decision_id,title,audience,status,owner_user_id,owner_display_name,evidence,dependency_ids_json,created_at,updated_at FROM delivery_decisions WHERE decision_id=?").bind(decisionId).first<DecisionRow>();
-  return Response.json({decision:row?safeDecision(row,true):null},{headers:privateHeaders});
+  // The audit await can overlap another update. Acknowledge this successful
+  // write's revision; a later report remains the source of current state.
+  const row:DecisionRow={...previous,title,status,evidence,owner_user_id:owner.user_id,
+    owner_display_name:owner.display_name,updated_at:now};
+  return Response.json({decision:safeDecision(row,true)},{headers:privateHeaders});
 }
 
 export async function handlePortfolio(request: Request, env: WorkerEnv, area: string, view: string): Promise<Response> {

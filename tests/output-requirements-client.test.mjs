@@ -4,6 +4,12 @@ import { OutputRequirementsClient, outputDownloadFilename } from "../src/state/o
 
 const deferred = () => { let resolve; const promise = new Promise((done) => { resolve = done; }); return { promise, resolve }; };
 const snapshot = (revision, documentId = "doc", projectId = "project") => ({ revision, documentId, projectId, summary: { required: 3 } });
+// SIMULATED current command envelope, bound to the action on this request.
+// This unit transport is not evidence of an actual server commit.
+const simulatedCommittedEnvelope = (request, revision) => ({
+  ok: true, replayed: false, appended: [],
+  command: { action: JSON.parse(request.body).action, eventId: "simulated-command-event" }, snapshot: snapshot(revision),
+});
 function fixture(fetch) {
   let scope = { key: "user:permission:1", projectId: "project" };
   let notifications = 0;
@@ -91,7 +97,7 @@ test("saving uses the captured revision and command ID exactly once without auto
 
 test("a late read cannot replace the snapshot returned by a successful write", async () => {
   const read = deferred();
-  const { client } = fixture((path, init) => init?.method === "POST" ? Promise.resolve(Response.json({ snapshot: snapshot("2") })) : read.promise);
+  const { client } = fixture((path, init) => init?.method === "POST" ? Promise.resolve(Response.json(simulatedCommittedEnvelope(init, "2"))) : read.promise);
   const reading = client.ensure("doc");
   const result = await client.command("doc", { action: "save", expectedRevision: "1", clientMutationId: "save" }, "save requirements");
   assert.equal(result.status, "saved");
@@ -101,12 +107,17 @@ test("a late read cannot replace the snapshot returned by a successful write", a
 });
 
 test("write response is discarded after a permission scope change during JSON parsing", async () => {
-  const parsed = deferred();
-  const fixtureState = fixture(async () => ({ ok: true, status: 200, json: () => parsed.promise }));
+  const parsed = deferred(), parsingEntered = deferred();
+  let calls = 0, parses = 0, request;
+  const fixtureState = fixture(async (path, init) => {
+    assert.equal(path, "/api/output-requirements"); calls++; request = init;
+    return { ok: true, status: 200, json: () => { parses++; parsingEntered.resolve(); return parsed.promise; } };
+  });
   const writing = fixtureState.client.command("doc", { action: "save", expectedRevision: "1", clientMutationId: "save" }, "save requirements");
-  await Promise.resolve();
+  await Promise.race([parsingEntered.promise, writing]);
+  assert.equal(calls, 1); assert.equal(parses, 1, "the private body parser really began before the permission change");
   fixtureState.setScope(null);
-  parsed.resolve({ snapshot: snapshot("2") });
+  parsed.resolve(simulatedCommittedEnvelope(request, "2"));
   assert.equal((await writing).status, "forbidden");
   assert.equal(fixtureState.client.resource("doc").snapshot, null);
 });
@@ -152,4 +163,45 @@ test("unsafe or malformed extended download names cannot introduce paths or spoo
     assert.equal(outputDownloadFilename(`attachment; filename="safe.png"; filename*=UTF-8''${encodeURIComponent(name)}`), "safe.png");
   }
   assert.equal(outputDownloadFilename('attachment; filename="../bad"; filename*=UTF-8\'\'%FF'), "forma-delivery.bin");
+});
+
+
+test("the original snapshot-only 200 is not a receipt and cannot discard its unknown original operation", async () => {
+  let calls = 0;
+  const { client } = fixture(async () => { calls++; return Response.json({ snapshot: snapshot("2") }); });
+  const result = await client.command("doc", { action: "save", expectedRevision: "1", clientMutationId: "original-malformed-save" }, "save requirements");
+  assert.equal(result.status, "unavailable"); assert.equal(result.receipt, undefined);
+  const owner = client.retainedWrite("doc");
+  assert.equal(owner.clientMutationId, "original-malformed-save"); assert.equal(owner.status, "unknown");
+  const next = await client.command("doc", { action: "save", expectedRevision: "2", clientMutationId: "different-new-save" }, "save requirements");
+  assert.equal(next.status, "not-attempted"); assert.equal(calls, 1); assert.deepEqual(client.retainedWrite("doc"), owner);
+});
+
+test("a permission change during real digest preparation is not-attempted and never reaches JSON parsing", async () => {
+  let calls = 0, parses = 0;
+  const fixtureState = fixture(async () => {
+    calls++;
+    return { ok: true, status: 200, json: async () => { parses++; return { snapshot: snapshot("2") }; } };
+  });
+  const writing = fixtureState.client.command("doc", { action: "save", expectedRevision: "1", clientMutationId: "before-dispatch-save" }, "save requirements");
+  await Promise.resolve(); // The old microtask boundary, explicitly tested as pre-dispatch rather than response parsing.
+  fixtureState.setScope(null);
+  assert.equal((await writing).status, "not-attempted");
+  assert.equal(calls, 0); assert.equal(parses, 0); assert.equal(fixtureState.client.resource("doc").snapshot, null);
+});
+
+test("the healthy current-scope parsing control accepts only its completed simulated canonical receipt", async () => {
+  const parsed = deferred(), parsingEntered = deferred();
+  let calls = 0, request;
+  const { client } = fixture(async (path, init) => {
+    assert.equal(path, "/api/output-requirements"); calls++; request = init;
+    return { ok: true, status: 200, json: () => { parsingEntered.resolve(); return parsed.promise; } };
+  });
+  const writing = client.command("doc", { action: "save", expectedRevision: "1", clientMutationId: "healthy-parsed-save" }, "save requirements");
+  await Promise.race([parsingEntered.promise, writing]);
+  assert.equal(calls, 1); assert.equal(client.retainedWrite("doc").status, "pending");
+  parsed.resolve(simulatedCommittedEnvelope(request, "2"));
+  assert.equal((await writing).status, "saved"); assert.equal(client.resource("doc").snapshot.revision, "2");
+  assert.equal(client.retainedWrite("doc").clientMutationId, "healthy-parsed-save");
+  assert.equal(client.retainedWrite("doc").status, "acknowledged"); assert.equal(calls, 1);
 });

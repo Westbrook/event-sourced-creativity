@@ -1,23 +1,11 @@
-import { EVENT_WRITE_COLUMNS, eventWriteBindings, makeEvent, uuidV7, type EventRow, type WorkerEnv } from "./runtime.ts";
-import { POLICY_VERSION } from "./pilot-policy.ts";
-import { effectivePilotParticipantSql, effectivePilotReviewerSql } from "./access-policy.ts";
+import type { WorkerEnv } from "./runtime.ts";
+import { OutputConflictError, outputAssertionStatements, outputScopeAuthority, type OutputScope, type OutputSqlAssertion } from "./output-command-core.ts";
 import { markOutputSchemaReady, outputSchemaIsReady } from "./output-schema-state.ts";
-import { OUTPUT_REQUIREMENTS_SCHEMA } from "./output-requirements-schema.ts";
+import { OUTPUT_REQUIREMENTS_SCHEMA, upgradeOutputRequirementsSchema } from "./output-requirements-schema.ts";
+import type { OutputProviderFinancialCheckpoint } from "./output-provider-financial-checkpoint.ts";
 
-export type OutputSqlValue = string | number | null;
-export type OutputSqlAssertion = { sql: string; bindings?: OutputSqlValue[] };
-export type OutputScope = {
-  kind: "personal" | "project";
-  key: string;
-  ownerUserId: string;
-  actorUserId: string;
-  projectId: string;
-  documentId: string;
-  organizationId: string | null;
-  projectAccessId: string | null;
-  contextId: string | null;
-};
-export type OutputCommandPermission = "read" | "author" | "request" | "review";
+export { OutputConflictError, outputAssertionStatements, outputScopeAuthority, retainedOutputBodyAssertions, rememberOutputPrivateBody, resetRetainedOutputPrivateBodies, inheritRetainedOutputPrivateBodies, outputCommandReceiptAssertion, readOutputCommand, commitOutputCommand } from "./output-command-core.ts";
+export type { OutputSqlValue, OutputSqlAssertion, OutputScope, OutputCommandPermission, OutputCommandReceipt, OutputCommandWrite } from "./output-command-core.ts";
 
 export { OUTPUT_REQUIREMENTS_SCHEMA } from "./output-requirements-schema.ts";
 
@@ -25,6 +13,7 @@ const initialized = new WeakSet<object>();
 export async function ensureOutputRequirementsSchema(env: WorkerEnv) {
   if (initialized.has(env.DB) || outputSchemaIsReady(env.DB)) { markOutputSchemaReady(env.DB); return; }
   await env.DB.batch(OUTPUT_REQUIREMENTS_SCHEMA.map((sql) => env.DB.prepare(sql)));
+  await upgradeOutputRequirementsSchema(env.DB);
   initialized.add(env.DB);
   markOutputSchemaReady(env.DB);
 }
@@ -40,133 +29,14 @@ export function outputSourceEpochAssertion(scope: OutputScope, epoch: OutputSour
     bindings: [`creative:${scope.ownerUserId}`, epoch.head, scope.key, epoch.sourceDigest] };
 }
 
-export class OutputConflictError extends Error {
-  readonly code: string;
-  readonly status: number;
-  constructor(code: string, status = 409) { super(code); this.code = code; this.status = status; this.name = "OutputConflictError"; }
-}
 
-export const outputRevision = (head: number) => `output:${head}`;
+export { outputRevision } from "./output-revision.ts";
 export function parseOutputRevision(value: unknown) {
   const match = typeof value === "string" ? /^output:(0|[1-9]\d*)$/u.exec(value) : null;
   if (!match || !Number.isSafeInteger(Number(match[1]))) throw new OutputConflictError("expected_revision_required", 400);
   return Number(match[1]);
 }
 
-/** This table's CHECK aborts inside DB.batch, including when a guarded write matched zero rows. */
-export function outputAssertionStatements(env: WorkerEnv, assertion: OutputSqlAssertion) {
-  const token = uuidV7();
-  return [
-    env.DB.prepare(`INSERT INTO output_atomic_assertions(token,passed) VALUES(?,CASE WHEN (${assertion.sql}) THEN 1 ELSE 0 END)`)
-      .bind(token, ...(assertion.bindings ?? [])),
-    env.DB.prepare("DELETE FROM output_atomic_assertions WHERE token=?").bind(token),
-  ];
-}
-
-/** Repeat live authority in the transaction; a pre-read principal is not a commit-time capability. */
-export function outputScopeAuthority(scope: OutputScope, permission: OutputCommandPermission, now = new Date().toISOString()): OutputSqlAssertion {
-  const capability = permission === "author" ? "project.author" : permission === "request" ? "project.output.request" : permission === "review" ? "project.review.approve" : "project.read";
-  if (scope.kind === "personal") return {
-    sql: `?=? AND EXISTS(SELECT 1 FROM users actor WHERE actor.user_id=? AND actor.consent_version=?
-        AND (?=1 OR actor.role IN('admin','creator')))
-      AND NOT EXISTS(SELECT 1 FROM organization_projects project WHERE project.owner_user_id=? AND project.project_id=?)`,
-    bindings: [scope.actorUserId, scope.ownerUserId, scope.actorUserId, POLICY_VERSION, permission === "read" ? 1 : 0, scope.ownerUserId, scope.projectId],
-  };
-  return {
-    sql: `EXISTS(SELECT 1 FROM organization_projects project
-      JOIN organizations organization ON organization.organization_id=project.organization_id AND organization.status='active'
-      JOIN project_migration_states migration ON migration.project_access_id=project.project_access_id AND migration.organization_id=project.organization_id AND migration.status='active'
-      JOIN users actor ON actor.user_id=? AND actor.consent_version=?
-      JOIN organization_memberships member ON member.organization_id=project.organization_id AND member.user_id=actor.user_id
-        AND member.status='active' AND member.accepted_at IS NOT NULL AND member.revoked_at IS NULL
-      JOIN organization_memberships owner_member ON owner_member.organization_id=project.organization_id AND owner_member.user_id=project.owner_user_id
-        AND owner_member.status='active' AND owner_member.accepted_at IS NOT NULL AND owner_member.revoked_at IS NULL
-      LEFT JOIN project_memberships project_member ON project_member.project_access_id=project.project_access_id
-        AND project_member.organization_id=project.organization_id AND project_member.project_id=project.project_id
-        AND project_member.user_id=actor.user_id AND project_member.status='active' AND project_member.revoked_at IS NULL
-      JOIN project_context_sessions selected ON selected.context_id=? AND selected.principal_user_id=actor.user_id
-        AND selected.project_access_id=project.project_access_id AND selected.organization_id=project.organization_id
-        AND selected.revoked_at IS NULL AND selected.expires_at>MAX(?,strftime('%Y-%m-%dT%H:%M:%fZ','now'))
-      WHERE project.project_access_id=? AND project.organization_id=? AND project.project_id=? AND project.owner_user_id=? AND project.status='active'
-        AND (project.owner_user_id=actor.user_id OR project_member.membership_id IS NOT NULL)
-        AND ${effectivePilotParticipantSql("project.organization_id", "actor.user_id")}
-        AND (?=1 OR NOT ${effectivePilotReviewerSql("project.organization_id", "actor.user_id")})
-        AND (project.owner_user_id=actor.user_id OR ?='project.read' OR (project_member.role='editor' AND ? IN('project.author','project.output.request')) OR EXISTS(SELECT 1 FROM capability_grants granted
-          WHERE granted.user_id=actor.user_id AND granted.capability=? AND granted.scope_type='project'
-            AND granted.organization_id=project.organization_id AND granted.project_access_id=project.project_access_id
-            AND granted.status='active' AND granted.revoked_at IS NULL AND (granted.expires_at IS NULL OR granted.expires_at>MAX(?,strftime('%Y-%m-%dT%H:%M:%fZ','now'))))))`,
-    bindings: [scope.actorUserId, POLICY_VERSION, scope.contextId, now, scope.projectAccessId, scope.organizationId, scope.projectId, scope.ownerUserId,
-      permission === "read" || permission === "review" ? 1 : 0, capability, capability, capability, now],
-  };
-}
-
-export type OutputCommandReceipt = { action: string; eventId: string; payload: Record<string, unknown>; createdAt: string };
-export async function readOutputCommand(env: WorkerEnv, scope: OutputScope, key: string, digest: string): Promise<OutputCommandReceipt | null> {
-  const row = await env.DB.prepare(`SELECT command.action,command.event_id,command.request_digest,command.created_at,body.private_json
-    FROM output_commands command LEFT JOIN event_private_payloads body ON body.private_event_id=command.event_id
-      AND body.owner_id=? AND body.document_id=? AND body.redacted_at IS NULL
-    WHERE command.scope_key=? AND command.actor_user_id=? AND command.command_key=?`)
-    .bind(scope.ownerUserId, scope.documentId, scope.key, scope.actorUserId, key).first<Record<string, unknown>>();
-  if (!row) return null;
-  if (row.request_digest !== digest) throw new OutputConflictError("mutation_key_reused_with_different_content");
-  if (typeof row.private_json !== "string") throw new OutputConflictError("original_command_content_unavailable", 410);
-  return { action: String(row.action), eventId: String(row.event_id), payload: JSON.parse(row.private_json), createdAt: String(row.created_at) };
-}
-
-export type OutputCommandWrite = {
-  scope: OutputScope; permission: OutputCommandPermission; expectedHead: number; expectedProjectHead: number;
-  key: string; digest: string; action: string;
-  events: Array<{ type: string; payload: Record<string, unknown> }>;
-  assertions?: OutputSqlAssertion[];
-  sourceAssertions?: OutputSqlAssertion[];
-  buildSidecars?: (events: EventRow[]) => { statements: D1PreparedStatement[]; assertions?: OutputSqlAssertion[] };
-};
-
-/** The event, private body, scoped projections, grants/slots and command receipt commit together. */
-export async function commitOutputCommand(env: WorkerEnv, input: OutputCommandWrite) {
-  const previous = await readOutputCommand(env, input.scope, input.key, input.digest);
-  if (previous) return { replayed: true, receipt: previous, events: [] as EventRow[] };
-  if (!input.events.length) throw new Error("output_event_required");
-  const scope = input.scope, stream = `creative:${scope.ownerUserId}`, now = new Date().toISOString();
-  if (scope.kind === "personal" && (scope.actorUserId !== scope.ownerUserId || scope.organizationId || scope.projectAccessId)) throw new OutputConflictError("invalid_output_scope", 403);
-  if (scope.kind === "project" && (!scope.organizationId || !scope.projectAccessId || !scope.contextId)) throw new OutputConflictError("invalid_output_scope", 403);
-  const events = input.events.map((event, index) => makeEvent(stream, input.expectedHead + index + 1, `user:${scope.actorUserId}`, "server:output-requirements", input.key,
-    event.type, { ...event.payload, project_id: scope.projectId, document_id: scope.documentId, actor_user_id: scope.actorUserId }));
-  const guards = [outputScopeAuthority(scope, input.permission, now),
-    { sql: "(SELECT COALESCE(MAX(sequence),0) FROM events WHERE stream_id=?)=?", bindings: [stream, input.expectedHead] },
-    ...(scope.kind === "project" ? [{ sql: "(SELECT COALESCE(MAX(project_sequence),0) FROM project_event_scopes WHERE project_access_id=? AND organization_id=?)=?", bindings: [scope.projectAccessId, scope.organizationId, input.expectedProjectHead] }] : []),
-    ...(input.sourceAssertions ?? []), ...(input.assertions ?? [])] as OutputSqlAssertion[];
-  const statements = guards.flatMap((guard) => outputAssertionStatements(env, guard));
-  for (const [index, event] of events.entries()) {
-    statements.push(env.DB.prepare(`INSERT INTO event_write_stage(${EVENT_WRITE_COLUMNS}) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).bind(...eventWriteBindings(event)));
-    statements.push(...outputAssertionStatements(env, { sql: "EXISTS(SELECT 1 FROM events event JOIN event_private_payloads body ON body.private_event_id=event.event_id AND body.redacted_at IS NULL WHERE event.event_id=? AND body.owner_id=? AND body.document_id=?)", bindings: [event.eventId, scope.ownerUserId, scope.documentId] }));
-    if (scope.kind === "project") {
-      statements.push(env.DB.prepare(`INSERT INTO project_event_scopes(event_id,project_access_id,organization_id,project_id,owner_user_id,source_stream_id,source_sequence,project_sequence,actor_user_id,created_at)
-        VALUES(?,?,?,?,?,?,?,?,?,?)`).bind(event.eventId, scope.projectAccessId, scope.organizationId, scope.projectId, scope.ownerUserId, stream, event.sequence, input.expectedProjectHead + index + 1, scope.actorUserId, now));
-      if (event.type === "BlockCreated") statements.push(env.DB.prepare(`INSERT INTO project_resource_scopes(project_access_id,resource_kind,resource_id,organization_id,project_id,owner_user_id,visibility,source_event_id,actor_user_id,created_at)
-        VALUES(?,'block',?,?,?,?,'collaborative_output',?,?,?)`).bind(scope.projectAccessId, String(event.payload.block_id), scope.organizationId, scope.projectId, scope.ownerUserId, event.eventId, scope.actorUserId, now));
-    }
-  }
-  const sidecars = input.buildSidecars?.(events);
-  statements.push(...(sidecars?.statements ?? []), ...(sidecars?.assertions ?? []).flatMap((guard) => outputAssertionStatements(env, guard)));
-  const last = events.at(-1)!;
-  statements.push(env.DB.prepare(`INSERT INTO output_commands(scope_key,actor_user_id,command_key,request_digest,action,event_id,created_at) VALUES(?,?,?,?,?,?,?)`)
-    .bind(scope.key, scope.actorUserId, input.key, input.digest, input.action, last.eventId, now));
-  if (scope.kind === "project") {
-    statements.push(env.DB.prepare("UPDATE project_migration_states SET last_owner_sequence=?,updated_at=? WHERE project_access_id=? AND organization_id=? AND owner_user_id=? AND status='active'")
-      .bind(last.sequence, now, scope.projectAccessId, scope.organizationId, scope.ownerUserId));
-    statements.push(...outputAssertionStatements(env, { sql: "changes()=1" }));
-  }
-  try { await env.DB.batch(statements); }
-  catch (error) {
-    // A competing identical command may have committed. Its immutable digest must still agree.
-    const replay = await readOutputCommand(env, scope, input.key, input.digest);
-    if (replay) return { replayed: true, receipt: replay, events: [] as EventRow[] };
-    if (String(error).includes("CHECK constraint failed") || String(error).includes("UNIQUE constraint failed")) throw new OutputConflictError("output_revision_or_authority_changed");
-    throw error;
-  }
-  return { replayed: false, receipt: { action: input.action, eventId: last.eventId, payload: last.payload, createdAt: last.recordedAt }, events };
-}
 
 export type OutputOperationSlot = {
   scopeKey: string; slotId: string; grantId: string; planRevisionId: string; targetId: string; targetContractDigest: string; sourceDigest: string;
@@ -243,12 +113,23 @@ export async function settleOutputProviderCall(env: WorkerEnv, input: {
   status: "settled" | "uncertain" | "rejected"; providerResponseId?: string;
   /** HTTP reconciliation supplies current caller/job authority; provider observers omit it. */
   assertions?: OutputSqlAssertion[];
+  /** Internal source-free observation; committed atomically with this receipt. */
+  financialCheckpoint?: OutputProviderFinancialCheckpoint;
 }) {
   if (input.usedMicrousd !== null && (!Number.isSafeInteger(input.usedMicrousd) || input.usedMicrousd < 0)) throw new Error("invalid_provider_cost");
   if (input.status === "settled" && input.usedMicrousd === null || input.status === "uncertain" && input.usedMicrousd !== null || input.status === "rejected" && input.usedMicrousd !== 0) throw new Error("invalid_provider_settlement");
+  if (input.financialCheckpoint) {
+    const { binding } = input.financialCheckpoint, { receipt } = binding;
+    const status = receipt.status === "rejected" ? "rejected" : receipt.status === "completed" && receipt.costMicrousd !== undefined ? "settled" : "uncertain";
+    const cost = status === "rejected" ? 0 : status === "settled" ? receipt.costMicrousd : null;
+    if (binding.scopeKey !== input.scopeKey || binding.slotId !== input.slotId || binding.callKey !== input.callKey
+      || receipt.clientRequestId !== input.clientRequestId || receipt.providerRequestId !== input.providerResponseId
+      || status !== input.status || cost !== input.usedMicrousd) throw new Error("provider_observation_binding_mismatch");
+  }
   const read = async () => {
-    const statement = env.DB.prepare("SELECT used_microusd,status,provider_response_id FROM output_provider_calls WHERE scope_key=? AND slot_id=? AND call_key=? AND client_request_id=?")
-      .bind(input.scopeKey, input.slotId, input.callKey, input.clientRequestId);
+    const proof = input.financialCheckpoint?.matches;
+    const statement = env.DB.prepare(`SELECT used_microusd,status,provider_response_id,(${proof?.sql ?? "1"}) AS checkpoint_matches FROM output_provider_calls WHERE scope_key=? AND slot_id=? AND call_key=? AND client_request_id=?`)
+      .bind(...(proof?.bindings ?? []), input.scopeKey, input.slotId, input.callKey, input.clientRequestId);
     if (!input.assertions?.length) return statement.first<Record<string, unknown>>();
     try {
       // A denied HTTP write cannot turn into an unauthorized canonical-receipt
@@ -265,10 +146,18 @@ export async function settleOutputProviderCall(env: WorkerEnv, input: {
   const now = new Date().toISOString();
   try { await env.DB.batch([
     ...(input.assertions ?? []).flatMap((assertion) => outputAssertionStatements(env, assertion)),
-    env.DB.prepare(`UPDATE output_provider_calls SET used_microusd=?,status=?,provider_response_id=?,settled_at=?
-      WHERE scope_key=? AND slot_id=? AND call_key=? AND client_request_id=? AND status IN('pending','uncertain')`)
-      .bind(input.usedMicrousd, input.status, input.providerResponseId ?? null, input.status === "uncertain" ? null : now, input.scopeKey, input.slotId, input.callKey, input.clientRequestId),
+    // Once acceptance identifies an external request, every later observation
+    // belongs to that request. An omitted ID cannot erase it, and neither a
+    // different ID nor a rejection can replace accepted-request custody.
+    env.DB.prepare(`UPDATE output_provider_calls SET used_microusd=?,status=?,provider_response_id=COALESCE(provider_response_id,?),settled_at=?
+      WHERE scope_key=? AND slot_id=? AND call_key=? AND client_request_id=? AND status IN('pending','uncertain')
+        AND (provider_response_id IS NULL OR ? IS NULL OR provider_response_id=?)
+        AND (?<>'rejected' OR provider_response_id IS NULL)`)
+      .bind(input.usedMicrousd, input.status, input.providerResponseId ?? null, input.status === "uncertain" ? null : now, input.scopeKey, input.slotId, input.callKey, input.clientRequestId,
+        input.providerResponseId ?? null, input.providerResponseId ?? null, input.status),
     ...outputAssertionStatements(env, { sql: "changes()=1" }),
+    ...(input.financialCheckpoint ? [input.financialCheckpoint.write, ...outputAssertionStatements(env, { sql: "changes()=1" }),
+      ...outputAssertionStatements(env, input.financialCheckpoint.matches)] : []),
     env.DB.prepare(`UPDATE output_execution_grants SET status='exceeded' WHERE scope_key=? AND grant_id=(SELECT grant_id FROM output_operation_slots WHERE scope_key=? AND slot_id=?)
       AND (EXISTS(SELECT 1 FROM output_operation_slots child WHERE child.scope_key=output_execution_grants.scope_key AND child.grant_id=output_execution_grants.grant_id
         AND (SELECT COALESCE(SUM(COALESCE(calls.used_microusd,calls.reserved_microusd)),0) FROM output_provider_calls calls WHERE calls.scope_key=child.scope_key AND calls.slot_id=child.slot_id)>child.maximum_microusd)
@@ -279,7 +168,10 @@ export async function settleOutputProviderCall(env: WorkerEnv, input: {
     // Attempt the guarded write first. A concurrent callback or lost D1
     // acknowledgement is successful only when the exact canonical receipt agrees.
     const committed = await read();
-    if (committed && committed.status === input.status && committed.used_microusd === input.usedMicrousd && committed.provider_response_id === (input.providerResponseId ?? null)) return { replayed: true };
+    if (committed && committed.status === input.status && committed.used_microusd === input.usedMicrousd
+      && (input.providerResponseId === undefined || committed.provider_response_id === input.providerResponseId)
+      && Number(committed.checkpoint_matches) === 1) return { replayed: true };
+    if (committed?.provider_response_id && (input.status === "rejected" || input.providerResponseId !== undefined && committed.provider_response_id !== input.providerResponseId)) throw new OutputConflictError("provider_settlement_conflict");
     if (committed && ["settled", "rejected"].includes(String(committed.status))) throw new OutputConflictError("provider_settlement_conflict");
     if (!committed && String(error).includes("constraint failed")) throw new OutputConflictError("output_provider_call_missing", 404);
     throw error;

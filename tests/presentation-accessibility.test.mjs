@@ -63,7 +63,8 @@ test("architecture diagrams reserve stable readable geometry across embedded and
   assert.match(presentation,/forma-presentation-slide > \.presentation-slide\[data-presentation-artboard\] \{[^}]*width:\s*960px[^}]*height:\s*540px[^}]*scale:\s*var\(--presentation-slide-scale,1\)/,"each slide has one invariant 960-by-540 composition");
   assert.match(presentation,/forma-presentation-slide > \.presentation-slide\[data-presentation-artboard\] \{[^}]*margin:\s*0;[^}]*border:\s*0;[^}]*color:\s*var\(--slide-ink\);[^}]*background:\s*var\(--slide-bg\)/,"shared-page article chrome cannot offset or recolor protected slide artwork");
   assert.doesNotMatch(styles,/\.shared-grid\s+article(?:\s+(?:h3|p|small))?\s*\{/u,"shared-page card typography cannot overwrite protected slide typography");
-  assert.match(presentation,/@supports \(scale:\s*calc\(100cqi\s*\/\s*960px\)\)/,"modern browsers progressively enhance to native two-axis scaling");
+  const scaleDeclarations = [...presentation.matchAll(/(?:[{;])\s*scale:\s*([^;}]+)/gu)].map((match) => match[1].trim());
+  assert.deepEqual(scaleDeclarations, ["var(--presentation-slide-scale,1)"], "the measured host scale remains authoritative; query-unit overrides must not rescale the artboard");
   assert.match(presentation,/(?:^|\n)\.presentation-slide \{[^}]*container:\s*presentation-slide\s*\/\s*inline-size/,"existing presentation-slide container queries remain intact");
 
   const satellite=rule(".presentation-visual-diagram span");

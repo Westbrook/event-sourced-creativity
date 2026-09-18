@@ -246,6 +246,39 @@ test("PowerPoint scorecards keep all six independently editable categories and d
   }
 });
 
+test("narrow PowerPoint precision summaries reserve wrapped values and translated labels before the caption",()=>{
+  const item={title:"Verified PNG",body:"One unbranded teal teapot appears on a warm tabletop.",notes:"",image_prompt:"",slide:{layout:"statement",bullets:[],visual:{kind:"metric",label:"File size",value:"1,063,520 bytes",exactValue:"1,063,520 bytes",displayValue:"1,063,520 bytes",unit:"bytes",data:[]}}};
+  for(const translate of [undefined,(text)=>text==="Rounded display"?"Rounded display for the delivered artifact":text]){
+    const parts=verifyOfficeArchive(createPowerPointDocument([item],defaultSlidePresentation(),{translate}));
+    const xml=parts.get("ppt/slides/slide1.xml"),caption=shapeBox(xml,"Editable visual label");
+    for(const kind of ["exact","displayed"]){
+      const label=shapeBox(xml,`Editable ${kind} value label`),value=shapeBox(xml,`Editable ${kind} value`);
+      assert.equal(shapeText(xml,`Editable ${kind} value`),"1,063,520 bytes");
+      assert.ok(value.height>=2*19*12700*1.2,"two lines at the emitted 19pt remain inside the value box");
+      assert.ok(value.y>=label.y+label.height+30000,"wrapped labels precede values");
+      assert.ok(caption.y>=value.y+value.height+90000,"caption stays below the complete wrapped value");
+    }
+    if(translate)assert.ok(shapeBox(xml,"Editable displayed value label").height>=3*12*12700*1.2,"translated label receives multiple lines at the actual 12pt font");
+  }
+});
+
+test("PowerPoint precision summaries budget separate units and reject an overflowing metric",()=>{
+  const item={title:"Delivered file",body:"Preserved exact quantity",notes:"",image_prompt:"",slide:{layout:"statement",bullets:[],visual:{kind:"metric",label:"File size",value:"1063520",exactValue:"1063520",displayValue:"1063520",unit:"bytes",data:[]}}};
+  const parts=verifyOfficeArchive(createPowerPointDocument([item],defaultSlidePresentation()));
+  const xml=parts.get("ppt/slides/slide1.xml"),caption=shapeBox(xml,"Editable visual label");
+  for(const kind of ["exact","displayed"]){
+    const unit=shapeBox(xml,`Editable ${kind} value unit`);
+    assert.equal(shapeText(xml,`Editable ${kind} value unit`),"bytes");
+    assert.ok(unit.height>=2*12.5*12700*1.2,"narrow unit wraps without exceeding its box");
+    assert.ok(caption.y>=unit.y+unit.height+90000);
+  }
+  const crowded=structuredClone(item);
+  crowded.slide.visual.exactValue="1,063,520 bytes";
+  crowded.slide.visual.displayValue="1,063,520 bytes";
+  crowded.slide.visual.label="Complete delivered file size with all authored precision preserved";
+  assert.throws(()=>createPowerPointDocument([crowded],defaultSlidePresentation(),{translate:(text)=>text==="Rounded display"?"Rounded display\nfor the delivered\nartifact\nretaining every\nsource value\nwithout removal\nor shortening\nof labels":text}),/office_archive_slide_layout_overflow/);
+});
+
 test("dense architecture bullets reflow without collisions or clipped editable labels",()=>{
   const long="A responsive creative experience must preserve every authored source decision, reviewer boundary, accessibility requirement, reusable evidence relationship, and cross-device continuity checkpoint without hiding the enterprise controls that keep ownership and accountability clear.";
   const bullets=[long,...Array.from({length:7},(_,index)=>`Distinct authored supporting argument ${index+2}`)];
@@ -391,6 +424,94 @@ test("comparison matrices, persona cards, architecture diagrams, and roadmaps re
   assert.match(architecture,/<a:srgbClr val="121715"\/>/,"the authored dark background survives layout-aware export");
   assert.match(parts.get("ppt/theme/theme1.xml"),/<a:latin typeface="Aptos Display"\/>/);
   assert.ok(![...parts.keys()].some((name)=>name.startsWith("ppt/charts/")||name.startsWith("ppt/media/")),"native editable shapes are not misrepresented as embedded chart or image packages");
+});
+
+test("editable exports preserve each visual caption once across early-return layouts and mixed quotations",async()=>{
+  const caption="Synthetic visual & <evidence> — 東京",escaped="Synthetic visual &amp; &lt;evidence&gt; — 東京";
+  const kinds=["timeline","roadmap","diagram","architecture","quote","color-field","scorecard","comparison","matrix","hero-type"];
+  const items=kinds.map(kind=>({title:`Synthetic ${kind}`,body:"Approved public context",notes:"PRIVATE_EXPORT_NOTE",image_prompt:"PRIVATE_EXPORT_PROMPT",slide:{layout:kind,kicker:"Evidence",bullets:[],citations:[{sourceId:"PRIVATE_EXPORT_ID",label:"Public report",anchor:"",excerpt:"PRIVATE_EXPORT_EXCERPT"}],...(kind==="quote"?{quote:{text:"A complete approved quotation.",speaker:"Reviewer",role:"Author"}}:{}),visual:{kind,label:caption,value:kind==="quote"?"A complete approved quotation.":kind==="hero-type"?"":"Approved summary",data:kind==="hero-type"||kind==="quote"?[]:[{label:"First",value:kind==="color-field"?"#2563EB":"1",weight:.5},{label:"Second",value:kind==="color-field"?"#10B981":"2",weight:1}]}}}));
+  const mixed=structuredClone(items[1]);mixed.slide.quote={text:"A complete second quotation.",speaker:"Reviewer",role:"Author"};items.push(mixed);
+  const before=structuredClone(items),presentation=defaultSlidePresentation(),parts=verifyOfficeArchive(createPowerPointDocument(items,presentation));
+  const asyncParts=verifyOfficeArchive(await createPowerPointDocumentAsync(items,presentation));
+  for(let index=0;index<items.length;index++){
+    const xml=parts.get(`ppt/slides/slide${index+1}.xml`),captionParts=[...xml.matchAll(/<p:sp>[\s\S]*?<\/p:sp>/gu)].map(match=>match[0]).filter(part=>part.includes(`<a:t>${escaped}</a:t>`));
+    assert.equal(captionParts.length,1,`${items[index].slide.visual.kind} owns one visible editable caption`);
+    assert.match(captionParts[0],/<p:txBody>/u);assert.doesNotMatch(xml,/PRIVATE_EXPORT_/u);
+    assert.equal(parts.get(`ppt/notesSlides/notesSlide${index+1}.xml`).includes("PRIVATE_EXPORT_NOTE"),false);
+    assert.equal(xml,asyncParts.get(`ppt/slides/slide${index+1}.xml`),"sync and async slide geometry/text agree");
+    if(["timeline","roadmap","diagram","architecture","quote","color-field"].includes(items[index].slide.visual.kind)&&!items[index].slide.quote?.text){
+      const cap=shapeBox(xml,"Editable visual label"),next=shapeBox(xml,["timeline","roadmap"].includes(items[index].slide.visual.kind)?"Editable roadmap duration":["diagram","architecture"].includes(items[index].slide.visual.kind)?"Editable diagram summary":"Editable color swatch 1");
+      assert.ok(cap.y+cap.height<=next.y,"caption reserves space before visual content");
+    }
+  }
+  assert.equal(shapeText(parts.get("ppt/slides/slide11.xml"),"Editable quotation"),mixed.slide.quote.text);
+  assert.equal(shapeText(parts.get("ppt/slides/slide11.xml"),"Editable timeline label 2"),"Second");
+  const presenter=verifyOfficeArchive(createPowerPointDocument(items,presentation,{includePresenterNotes:true}));
+  for(let index=1;index<=items.length;index++){assert.equal(presenter.get(`ppt/slides/slide${index}.xml`),parts.get(`ppt/slides/slide${index}.xml`));assert.match(presenter.get(`ppt/notesSlides/notesSlide${index}.xml`),/PRIVATE_EXPORT_NOTE/u);}
+  assert.deepEqual(items,before,"display corrections never rewrite canonical source or notes");
+});
+
+test("chapter labels deduplicate case and whitespace only while preserving first authored copy",()=>{
+  for(const [section,kicker,expected]of[["Release Plan","release   plan","Release Plan"],["  Release\u00a0Plan  ","RELEASE PLAN","  Release\u00a0Plan  "],["Direction","Delivery","Direction · Delivery"],["","Delivery","Delivery"],["  ","\t","Slide 1"]]){
+    const item={title:"Synthetic chapter",body:"Source remains unchanged.",notes:"",image_prompt:"",slide:{layout:"cover",section,kicker,bullets:[],visual:{kind:"hero-type",label:"",value:"",data:[]}}},before=structuredClone(item);
+    const xml=verifyOfficeArchive(createPowerPointDocument([item],defaultSlidePresentation())).get("ppt/slides/slide1.xml");
+    assert.equal(shapeText(xml,"Chapter label"),expected);assert.deepEqual(item,before);
+    if(!section.trim()&&!kicker.trim())assert.equal(shapeText(verifyOfficeArchive(createPowerPointDocument([item],defaultSlidePresentation(),{translate:s=>s==="Slide"?"Page":s,number:n=>`N${n}`})).get("ppt/slides/slide1.xml"),"Chapter label"),"Page N1");
+  }
+});
+
+test("caption ownership follows the effective mixed renderer and multiline captions reserve every paragraph",()=>{
+  for(const[layout,kind]of[["columns","color-field"],["scorecard","timeline"],["timeline","bars"],["matrix","diagram"],["comparison","roadmap"]]){
+    const item={title:"Mixed renderer",body:"",notes:"",image_prompt:"",slide:{layout,kicker:"",bullets:[],visual:{kind,label:"ONE CAPTION",value:"",data:[{label:"First",value:"1",weight:.5},{label:"Second",value:"2",weight:1}]}}};
+    const xml=verifyOfficeArchive(createPowerPointDocument([item],defaultSlidePresentation())).get("ppt/slides/slide1.xml");assert.equal((xml.match(/<a:t>ONE CAPTION<\/a:t>/gu)??[]).length,1,`${layout}/${kind} caption is rendered once`);
+  }
+  const item={title:"Multiline caption",body:"",notes:"",image_prompt:"",slide:{layout:"roadmap",kicker:"",bullets:[],visual:{kind:"roadmap",label:"First line\nSecond line\nThird line",value:"12 weeks",data:[{label:"First",value:"Outcome",weight:1}]}}};
+  const xml=verifyOfficeArchive(createPowerPointDocument([item],defaultSlidePresentation())).get("ppt/slides/slide1.xml"),caption=shapeBox(xml,"Editable visual label");assert.ok(caption.height>=3*205000);assert.equal(shapeText(xml,"Editable visual label"),item.slide.visual.label);assert.ok(caption.y+caption.height<=shapeBox(xml,"Editable roadmap duration").y);
+  const dense={...item,title:"Dense protected quote",body:"Approved body",slide:{layout:"quote",kicker:"",bullets:Array.from({length:20},(_,i)=>`Point ${i+1}`),quote:{text:"Complete approved quotation",speaker:"Reviewer",role:"Author"},visual:{kind:"quote",label:"Caption",value:"",data:[]}}};
+  const before=structuredClone(dense);assert.throws(()=>createPowerPointDocument([dense],defaultSlidePresentation()),/office_archive_slide_layout_overflow/u);assert.deepEqual(dense,before,"an impossible quotation layout never clips or edits protected content");
+  for(const kind of["quote","color-field"]){const overfull=structuredClone(dense);overfull.slide.layout=kind;overfull.slide.visual={kind,label:"Caption\n".repeat(20),value:kind==="quote"?"Full quotation":"",data:kind==="color-field"?[{label:"Color",value:"#2563EB",weight:1}]:[]};delete overfull.slide.quote;overfull.slide.citations=[{label:"Public technical report",anchor:"Appendix A",excerpt:""}];assert.throws(()=>createPowerPointDocument([overfull],defaultSlidePresentation()),/office_archive_slide_layout_overflow/u,"caption cannot manufacture space below its local visual budget");}
+});
+
+test("diagram cells budget complete multiline values or reject without changing content",()=>{
+  const item={title:"Multiline architecture",body:"",notes:"",image_prompt:"",slide:{layout:"architecture",kicker:"",bullets:[],visual:{kind:"architecture",label:"Complete ordered relationships",value:"",data:Array.from({length:5},(_,i)=>({label:`Node ${i+1}`,value:"First\nSecond\nThird",weight:1}))}}},before=structuredClone(item);
+  const xml=verifyOfficeArchive(createPowerPointDocument([item],defaultSlidePresentation())).get("ppt/slides/slide1.xml");
+  for(let i=1;i<=5;i++){
+    const node=shapeBox(xml,`Editable diagram node ${i}`),label=shapeBox(xml,`Editable diagram label ${i}`),value=shapeBox(xml,`Editable diagram value ${i}`);
+    assert.equal(shapeText(xml,`Editable diagram value ${i}`),"First\nSecond\nThird");
+    assert.ok(value.height>=Math.ceil(3*12*12700*1.2),"all three authored lines receive a text budget");
+    assert.ok(label.y>=node.y&&label.y+label.height<value.y&&value.y+value.height<=node.y+node.height,"text stays within its own cell");
+  }
+  assert.deepEqual(item,before);
+  const overfull=structuredClone(item);overfull.slide.visual.data[0].value=Array.from({length:40},(_,i)=>`Line ${i+1}`).join("\n");const retained=structuredClone(overfull);
+  assert.throws(()=>createPowerPointDocument([overfull],defaultSlidePresentation()),/office_archive_slide_layout_overflow/u);assert.deepEqual(overfull,retained);
+});
+
+test("wrapped timelines retain every adjacent editable connection without crossing text",()=>{
+  const segment=(xml,index)=>{
+    const part=editableShape(xml,`Editable timeline connector ${index}`,"cxnSp"),transform=part.match(/<a:xfrm([^>]*)><a:off x="(\d+)" y="(\d+)"\/><a:ext cx="(\d+)" cy="(\d+)"\/>/u);
+    assert.ok(transform);const[,flags,rawX,rawY,rawWidth,rawHeight]=transform,x=Number(rawX),y=Number(rawY),width=Number(rawWidth)>1?Number(rawWidth):0,height=Number(rawHeight)>1?Number(rawHeight):0;
+    assert.ok(!width||!height,"continuation segments are orthogonal, never diagonal across text");
+    return{from:[x+(flags.includes("flipH")?width:0),y+(flags.includes("flipV")?height:0)],to:[x+(flags.includes("flipH")?0:width),y+(flags.includes("flipV")?0:height)]};
+  };
+  for(const direction of["ltr","rtl"])for(const count of[1,4,5,8,9]){
+    const item={title:"Synthetic connected sequence",body:"Approved context",notes:"",image_prompt:"",slide:{layout:"roadmap",kicker:"Delivery",bullets:[],visual:{kind:"roadmap",label:"Ordered milestones",value:"12 weeks",data:Array.from({length:count},(_,i)=>({label:`Milestone ${i+1}`,value:`Outcome ${i+1}`,weight:.5}))}}},before=structuredClone(item);
+    const xml=verifyOfficeArchive(createPowerPointDocument([item],defaultSlidePresentation(),{direction,language:direction==="rtl"?"ar":"en-US"})).get("ppt/slides/slide1.xml"),boxes=[];
+    const ids=[...xml.matchAll(/<p:cNvPr id="(\d+)"/gu)].map(match=>match[1]);assert.equal(new Set(ids).size,ids.length);
+    for(let i=1;i<=count;i++){
+      assert.equal(shapeText(xml,`Editable timeline label ${i}`),`Milestone ${i}`);assert.equal(shapeText(xml,`Editable timeline value ${i}`),`Outcome ${i}`);
+      const label=shapeBox(xml,`Editable timeline label ${i}`),value=shapeBox(xml,`Editable timeline value ${i}`);assert.ok(label.y+label.height<=value.y);assert.ok(value.height>=12.5*12700);boxes.push(label,value);
+    }
+    let next=1;
+    for(let i=1;i<count;i++){
+      const from=shapeBox(xml,`Editable timeline milestone ${i}`),to=shapeBox(xml,`Editable timeline milestone ${i+1}`),legs=Array.from({length:i%4===0?5:1},()=>segment(xml,next++));
+      assert.deepEqual(legs[0].from,[from.x+from.width,from.y+from.height/2]);assert.deepEqual(legs.at(-1).to,[to.x,to.y+to.height/2]);
+      for(let n=1;n<legs.length;n++)assert.deepEqual(legs[n-1].to,legs[n].from,"wrap endpoints join continuously");
+      for(const leg of legs)for(const box of boxes){const[x1,y1]=leg.from,[x2,y2]=leg.to;assert.ok(y1===y2?!(y1>box.y&&y1<box.y+box.height&&Math.max(x1,x2)>box.x&&Math.min(x1,x2)<box.x+box.width):!(x1>box.x&&x1<box.x+box.width&&Math.max(y1,y2)>box.y&&Math.min(y1,y2)<box.y+box.height),"connectors stay out of all text boxes");}
+    }
+    assert.equal((xml.match(/<p:cxnSp>/gu)??[]).length,next-1,"no extra or terminal connection");assert.deepEqual(item,before);
+    if(count===5)for(const field of["label","value"]){const multiline=structuredClone(item);multiline.slide.visual.data[0][field]="A\nB\nC\nD\nE\nF";const retained=structuredClone(multiline);assert.throws(()=>createPowerPointDocument([multiline],defaultSlidePresentation()),/office_archive_slide_layout_overflow/u,"multiline content cannot expand into a continuation corridor");assert.deepEqual(multiline,retained);}
+    if(count===9){const dense=structuredClone(item);dense.slide.quote={text:"A complete protected quotation sharing the visual area.",speaker:"Reviewer",role:"Author"};assert.throws(()=>createPowerPointDocument([dense],defaultSlidePresentation()),/office_archive_slide_layout_overflow/u);assert.equal(dense.slide.visual.data.length,9);}
+  }
 });
 
 test("a managed 23-slide presentation preserves every slide, citation, editable speaker-note part, and semantic visual",()=>{

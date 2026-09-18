@@ -1,0 +1,94 @@
+/* Deliberately scoped: no changes to shared responsive foundations or finish rows. */
+.document-artifact-create.native-short-story-create {
+  --native-story-content-gutter: 1.5rem;
+  --native-story-inline-gutter: max(1rem, env(safe-area-inset-left), env(safe-area-inset-right));
+  --native-story-block-gutter: max(1rem, env(safe-area-inset-top), env(safe-area-inset-bottom));
+  inline-size: min(36rem, calc(100% - 2 * var(--native-story-inline-gutter)));
+  max-inline-size: calc(100% - 2 * var(--native-story-inline-gutter));
+  max-block-size: calc(100dvh - 2 * var(--native-story-block-gutter));
+}
+.native-short-story-create > .native-short-story-dialog {
+  min-inline-size: 0;
+  max-block-size: calc(100dvh - 2 * var(--native-story-block-gutter));
+  display: grid;
+  grid-template-rows: none;
+  grid-auto-rows: max-content;
+  overflow: auto;
+  overscroll-behavior: contain;
+  scroll-padding-block: 1rem;
+}
+.native-short-story-dialog > header {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+.native-short-story-dialog :is(h2, p, dd, label) {
+  min-inline-size: 0;
+  overflow-wrap: anywhere;
+}
+.native-short-story-dialog .native-story-context {
+  display: grid;
+  gap: .75rem;
+  margin: 0;
+}
+.native-short-story-dialog .native-story-context > div {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 2fr);
+  gap: 1rem;
+}
+.native-short-story-dialog dd { margin: 0; }
+.native-short-story-dialog > :is(header, .native-story-context, .native-story-fields, .native-story-status, footer) {
+  padding-inline: var(--native-story-content-gutter);
+}
+.native-short-story-dialog > :is(.native-story-context, .native-story-fields, .native-story-status) {
+  padding-block: .75rem;
+}
+.native-short-story-dialog :is(label, dt, button) { font-size: max(.875rem, 14px); }
+.native-short-story-dialog :is(dd, p) { font-size: max(1rem, 16px); }
+.native-short-story-dialog .native-story-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
+}
+.native-short-story-dialog label { display: grid; gap: .375rem; }
+.native-short-story-dialog input {
+  inline-size: 100%;
+  min-inline-size: 0;
+  box-sizing: border-box;
+  font-size: max(1rem, 16px);
+}
+.native-short-story-dialog :is(button, input) {
+  min-block-size: max(2.75rem, 44px);
+}
+.native-short-story-dialog button {
+  min-inline-size: max(2.75rem, 44px);
+  block-size: auto;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.native-short-story-dialog button[aria-disabled="true"] { opacity: .6; cursor: default; }
+.document-artifacts > header:has(> .native-story-launch) { align-items: stretch; }
+.document-artifacts .button.native-story-launch {
+  min-block-size: max(2.75rem, 44px);
+  min-inline-size: max(2.75rem, 44px);
+  block-size: auto;
+  white-space: normal;
+}
+.native-short-story-dialog .native-story-count { text-align: end; }
+.native-short-story-dialog .native-story-status { min-block-size: 1.5em; margin: 0; }
+.native-short-story-create > .native-short-story-dialog > footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: stretch;
+  gap: .75rem;
+  position: static;
+  inset-block-end: auto;
+  padding-block-end: max(1rem, env(safe-area-inset-bottom));
+}
+@media (max-width: 40rem) {
+  .native-short-story-dialog .native-story-fields,
+  .native-short-story-dialog .native-story-context > div { grid-template-columns: minmax(0, 1fr); }
+  .native-short-story-dialog > footer { flex-direction: column; }
+  .native-short-story-dialog > footer > button { inline-size: 100%; }
+}

@@ -4,13 +4,23 @@ export const OUTPUT_NATIVE_EXECUTION_POLICY = Object.freeze({
   heartbeatMilliseconds: 60_000,
   maximumRenewals: 3,
 });
+/** Queued mesh generation needs a longer bounded polling window than images. */
+export const OUTPUT_MODEL3D_EXECUTION_POLICY = Object.freeze({
+  maximumMilliseconds: 900_000,
+  heartbeatMilliseconds: 60_000,
+  maximumRenewals: 14,
+});
+/** Video shares the bounded queued-media window. Original grant/source expiry
+ * remains the upper bound; this policy does not renew either authority. */
+export const OUTPUT_VIDEO_EXECUTION_POLICY = OUTPUT_MODEL3D_EXECUTION_POLICY;
+export type OutputNativeExecutionPolicy = typeof OUTPUT_NATIVE_EXECUTION_POLICY | typeof OUTPUT_MODEL3D_EXECUTION_POLICY;
 
 /** An offered contract must match the bounded native transport policy exactly. */
-export function readOutputNativeExecutionPolicy(value:unknown):typeof OUTPUT_NATIVE_EXECUTION_POLICY|null {
+export function readOutputNativeExecutionPolicy(value:unknown):OutputNativeExecutionPolicy|null {
   if(!value||typeof value!=="object"||Array.isArray(value))return null;
   const candidate=value as Record<string,unknown>;
-  return candidate.maximumMilliseconds===OUTPUT_NATIVE_EXECUTION_POLICY.maximumMilliseconds
-    &&candidate.heartbeatMilliseconds===OUTPUT_NATIVE_EXECUTION_POLICY.heartbeatMilliseconds
-    &&candidate.maximumRenewals===OUTPUT_NATIVE_EXECUTION_POLICY.maximumRenewals
-    ?OUTPUT_NATIVE_EXECUTION_POLICY:null;
+  return [OUTPUT_NATIVE_EXECUTION_POLICY, OUTPUT_MODEL3D_EXECUTION_POLICY].find(policy =>
+    candidate.maximumMilliseconds===policy.maximumMilliseconds
+    &&candidate.heartbeatMilliseconds===policy.heartbeatMilliseconds
+    &&candidate.maximumRenewals===policy.maximumRenewals) ?? null;
 }

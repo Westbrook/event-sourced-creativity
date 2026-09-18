@@ -1,5 +1,6 @@
 import { html } from "lit";
 import { FormaElement } from "./forma-element";
+import { navigateInApp } from "./command-departure";
 import { applicationDefinition, navigationItemAccessible } from "../platform/applications";
 import "./design-system/navigation";
 
@@ -10,8 +11,12 @@ const intelligenceIds = new Set(["sessions", "scout", "memory"]);
 export class AreaNavigation extends FormaElement {
   #go(event: Event, href: string) {
     event.preventDefault();
-    this.store.setRoute(href);
-    window.scrollTo({ top: 0 });
+    if(href===this.store.route.get())return;
+    void navigateInApp(this,async navigation=>{
+      const opened=await navigation.route(href);
+      if(opened&&navigation.current())window.scrollTo({top:0});
+      return opened;
+    });
   }
 
   override render() {

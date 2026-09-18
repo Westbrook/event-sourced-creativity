@@ -34,7 +34,7 @@ function renderedOffer(controller) {
   return templates(controller.render()).some((part) => part.strings.some((text) => text.includes('class="output-provider-disclosure"')));
 }
 
-async function actualTransportFixture(alternative) {
+async function actualTransportFixture(alternative, { malformedCommit = false } = {}) {
   const f = await controllerFixture();
   let serverSnapshot = structuredClone(f.snapshots.get("doc-a"));
   if (alternative) {
@@ -49,7 +49,8 @@ async function actualTransportFixture(alternative) {
   }
   const offer = currentOffer(serverSnapshot, alternative);
   const refreshResponse = deferred(), refreshEntered = deferred();
-  const network = [], states = [];
+  const network = [], states = [], notifications = [];
+  let lastPublishedResource;
   let readCount = 0, eventRefreshCount = 0;
   const scope = { key: f.store.captureAuthorizationScope().key, projectId: "fixture-project" };
   const client = new OutputRequirementsClient({
@@ -63,7 +64,13 @@ async function actualTransportFixture(alternative) {
       if (init?.method === "POST") {
         // Real preflight saves a receipt; only the row/head revision advances here.
         serverSnapshot = { ...serverSnapshot, revision: "2" };
-        return Response.json({ snapshot: serverSnapshot, command: { preflight: offer } });
+        if (malformedCommit) return Response.json({ snapshot: serverSnapshot, command: { preflight: offer } });
+        // SIMULATED canonical envelope; identities come from this exact request.
+        // The old incomplete envelope remains a separate unknown-owner negative.
+        const command = JSON.parse(init.body);
+        assert.equal(command.action, "preflight"); assert.equal(command.documentId, serverSnapshot.documentId);
+        return Response.json({ ok: true, replayed: false, appended: [], snapshot: serverSnapshot,
+          command: { action: command.action, eventId: "simulated-preflight-event", preflight: offer } });
       }
       readCount += 1;
       if (readCount === 1) return Response.json(serverSnapshot);
@@ -73,7 +80,10 @@ async function actualTransportFixture(alternative) {
     },
     notify: () => {
       const resource = client.resource("doc-a");
-      states.push(resource.state);
+      notifications.push(resource.state);
+      // Write-owner notifications are not resource publications. Still invoke
+      // the actual observer on every notification, including those extra signals.
+      if (resource !== lastPublishedResource) { states.push(resource.state); lastPublishedResource = resource; }
       // Simulate the observer consuming each real scoped-client publication.
       f.controller.willUpdate(new Map());
     },
@@ -84,14 +94,14 @@ async function actualTransportFixture(alternative) {
   f.store.outputRequirementCommand = actualStore.outputRequirementCommand.bind(f.store);
   await client.ensure("doc-a");
   f.controller.willUpdate(new Map());
-  states.length = 0;
+  states.length = 0; notifications.length = 0;
   const start = () => {
     if (!alternative) return startPreflight(f);
     const callback = eventHandlers(f.controller.render(), "click").find((candidate) => candidate.toString().includes("#alternative("));
     assert.ok(callback, "the actual failed-attempt alternative action must be rendered");
     return callback.call(f.controller);
   };
-  return { ...f, client, network, states, refreshEntered, offer, start,
+  return { ...f, client, network, states, notifications, refreshEntered, offer, start,
     completeRefresh: (mutate) => {
       const next = structuredClone(serverSnapshot);
       mutate?.(next);
@@ -132,3 +142,28 @@ for (const alternative of [false, true]) {
     });
   }
 }
+
+
+test("the original malformed preflight success terminates without a forced read or invented receipt", async () => {
+  const f = await actualTransportFixture(false, { malformedCommit: true }), pending = f.start();
+  const boundary = await Promise.race([f.refreshEntered.promise.then(() => "refresh-entered"), pending.then(() => "original-terminal")]);
+  assert.equal(boundary, "original-terminal"); assert.equal(f.eventRefreshCount, 0);
+  assert.deepEqual(f.network.map(request => request.method), ["GET", "POST"]);
+  const owner = f.client.retainedWrite("doc-a");
+  assert.equal(owner.clientMutationId, f.network[1].body.clientMutationId);
+  assert.equal(owner.action, "preflight"); assert.equal(owner.status, "unknown");
+  assert.equal(renderedOffer(f.controller), false);
+  await f.start();
+  assert.deepEqual(f.network.map(request => request.method), ["GET", "POST"]);
+  assert.deepEqual(f.client.retainedWrite("doc-a"), owner);
+});
+test("actual write notifications stay observable but do not masquerade as extra resource-publication states", async () => {
+  const f = await actualTransportFixture(false), pending = f.start();
+  await Promise.race([f.refreshEntered.promise, pending]);
+  assert.equal(f.client.resource("doc-a").state, "refreshing");
+  f.completeRefresh(); await pending;
+  assert.deepEqual(f.states, ["ready", "refreshing", "ready"]);
+  assert.ok(f.notifications.length > f.states.length);
+  assert.equal(renderedOffer(f.controller), true);
+  assert.deepEqual(f.network.map(request => request.method), ["GET", "POST", "GET"]);
+});

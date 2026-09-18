@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 
@@ -6,6 +7,7 @@ import { documentJobCanRecoverProviderRender } from "../src/model/document-jobs.
 import { buildManagedProductionPlan } from "../src/model/managed-production.ts";
 import { interruptedDocumentJobUsage, recordedDocumentPlannerUsage } from "../worker/document-job-reservations.ts";
 import {
+  adoptLegacyCostReservation,
   claimCostBudgetReservation,
   costBudgetReservation,
   readBudgets,
@@ -16,6 +18,7 @@ import {
   settleBudget,
   settleCostBudget,
   settleInterruptedDocumentJobReservations,
+  settleLegacyPresentationReservations,
 } from "../worker/pilot-policy.ts";
 import { appendAuditEvent, ensureSchema } from "../worker/runtime.ts";
 
@@ -114,12 +117,34 @@ async function integratedProductionWorker() {
     ASSETS:{fetch:async()=>new Response(null,{status:404})},
     MEDIA:{put:async()=>undefined,get:async()=>null},
   };
-  const context={waitUntil(promise){background.push(promise);}};
+  const context={waitUntil(promise){
+    const pending=Promise.resolve(promise);
+    // Observe rejection immediately while retaining the original settlement.
+    void pending.catch(()=>{});
+    background.push(pending);
+  }};
+  const drainBackground=async()=>{
+    const failures=[];
+    while(background.length){
+      const settled=await Promise.allSettled(background.splice(0));
+      for(const result of settled)if(result.status==="rejected")failures.push(result.reason);
+    }
+    if(failures.length===1)throw failures[0];
+    if(failures.length>1)throw new AggregateError(failures,"Integrated worker background failed");
+  };
   const request=(path,init)=>worker.fetch(new Request(`http://localhost${path}`,init),environment,context);
-  assert.equal((await request("/api/session")).status,200);
-  sqlite.prepare("UPDATE users SET consent_version=?").run("pilot-2026-08-10");
-  assert.equal((await request("/api/events?after=0&limit=2000&content=0")).status,200);
-  return{sqlite,environment,request,async drainBackground(){while(background.length)await Promise.all(background.splice(0));}};
+  try{
+    assert.equal((await request("/api/session")).status,200);
+    sqlite.prepare("UPDATE users SET consent_version=?").run("pilot-2026-08-10");
+    assert.equal((await request("/api/events?after=0&limit=2000&content=0")).status,200);
+    return{sqlite,environment,request,drainBackground};
+  }catch(error){
+    const failures=[error];
+    try{await drainBackground();}catch(cleanupError){failures.push(cleanupError);}
+    try{sqlite.close();}catch(cleanupError){failures.push(cleanupError);}
+    if(failures.length===1)throw error;
+    throw new AggregateError(failures,"Integrated worker setup and cleanup failed");
+  }
 }
 
 async function integratedInterruptedRender(worker,{
@@ -741,4 +766,554 @@ test("the bundled worker resumes a submitted scene without a duplicate provider 
     assert.equal((await readBudgets(environment,owner)).user.used,16_781);
     assert.equal((await readCostBudgets(environment,owner)).user.usedMicrousd,92_092+scene.durationSeconds*302_400+500_000);
   }finally{globalThis.fetch=originalFetch;}
+});
+
+async function legacySlidesSettlementFixture(){
+  const {sqlite,env}=reconciliationDatabase();await ensureSchema(env);
+  assert.equal(sqlite.prepare("SELECT COUNT(*) AS n FROM sqlite_schema WHERE name='budget_hold_dispositions'").get().n,0,"runtime initialization must not create the administrative schema");
+  sqlite.exec(await readFile(new URL("../db/operations/budget-hold-dispositions.sql",import.meta.url),"utf8"));
+  const user={userId:"slides-owner",streamId:"creative:slides-owner"},jobId="paid-slides",correlation=jobId+":attempt:1",operation="document-render:slides",now=new Date().toISOString();
+  const token=await reserveBudget(env,user.userId,1000,{streamId:user.streamId,correlationId:correlation,operation});assert.equal(token.ok,true);
+  const cost=await reserveCostBudget(env,user.userId,1000,{reservationId:"slides-cost",maximumMicrousd:1000,allowUserOverage:false,streamId:user.streamId,correlationId:correlation,operation,period:token.period});assert.equal(cost.ok,true);
+  assert.equal(await claimCostBudgetReservation(env,user.userId,cost.reservationId),true);
+  const call=(id,model,input,output,costMicrousd)=>({clientRequestId:id,provider:"openai",operation:"planning",model,unitId:"planning:0:"+id,status:"completed",providerRequestId:"response-"+id,inputTokens:input,outputTokens:output,totalTokens:input+output,costMicrousd});
+  const checkpoint={artifactKind:"slides",reservationId:token.reservationId,costReservationId:cost.reservationId,costReservationPeriod:token.period,
+    providerSubmissionProtocol:1,providerSubmissions:{initial:call("initial","gpt-5.6-terra",100,40,990),repair:call("repair","gpt-5.6-sol",70,30,1234)},
+    presentationProviderSubmission:"confirmed",presentationProviderClientRequestId:"repair",plannerModel:"gpt-5.6-terra",plannerResponseId:"response-repair",plannerResponseIds:["response-initial","response-repair"],
+    generationReceipt:{version:1,provider_request_status:"submitted",actual_provider_call_count:2}};
+  sqlite.prepare("INSERT INTO document_jobs(job_id,owner_id,stream_id,document_id,kind,status,source_surface,correlation_id,requested_sequence,request_json,result_json,error_message,attempt_count,requested_at,started_at,completed_at,lease_expires_at,notified_at,expires_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
+    .run(jobId,user.userId,user.streamId,"slides-document","render_document","failed","studio",correlation,1,JSON.stringify({artifactKind:"slides",itemCount:6}),JSON.stringify(checkpoint),"execution_interrupted",1,now,now,now,null,null,new Date(Date.now()+86400000).toISOString(),now);
+  await appendAuditEvent(env,user.streamId,"worker:policy","BudgetReserved",{operation,reservation_id:token.reservationId,cost_reservation_id:cost.reservationId,reserved_tokens:1000,reserved_microusd:1000,period:token.period},correlation);
+  const job=()=>sqlite.prepare("SELECT * FROM document_jobs WHERE job_id=?").get(jobId);
+  const save=(value)=>sqlite.prepare("UPDATE document_jobs SET result_json=? WHERE job_id=?").run(JSON.stringify(value),jobId);
+  const usages=()=>sqlite.prepare("SELECT payload FROM events WHERE type='GenerationUsageRecorded' ORDER BY sequence").all().map(row=>JSON.parse(row.payload));
+  const snapshot=()=>JSON.stringify({tokens:sqlite.prepare("SELECT * FROM budget_reservations").all(),cost:sqlite.prepare("SELECT * FROM cost_budget_reservations").all(),tokenCounters:sqlite.prepare("SELECT * FROM budget_counters ORDER BY scope,scope_id").all(),costCounters:sqlite.prepare("SELECT * FROM cost_budget_counters ORDER BY scope,scope_id").all(),events:sqlite.prepare("SELECT * FROM events ORDER BY sequence").all()});
+  return{sqlite,env,user,token,cost,checkpoint,correlation,job,save,usages,snapshot};
+}
+
+test("legacy slide reconciliation settles immutable per-call prices without clipping or repricing",async()=>{
+  const f=await legacySlidesSettlementFixture();
+  const result=await settleLegacyPresentationReservations(f.env,f.user,f.job());
+  assert.equal(result.status,"known");assert.equal(result.settled,true);assert.equal(result.usedTokens,240);assert.equal(result.usedMicrousd,2224,"actual paid cost may exceed the original hold");
+  for(const scope of ["user","workspace"]){
+    assert.deepEqual({...f.sqlite.prepare("SELECT used_tokens,reserved_tokens FROM budget_counters WHERE scope=?").get(scope)},{used_tokens:240,reserved_tokens:0});
+    assert.deepEqual({...f.sqlite.prepare("SELECT used_microusd,reserved_microusd FROM cost_budget_counters WHERE scope=?").get(scope)},{used_microusd:2224,reserved_microusd:0});
+  }
+  const usage=f.usages();assert.equal(usage.length,1);assert.equal(usage[0].input_tokens,170);assert.equal(usage[0].output_tokens,70);assert.equal(usage[0].cost_microusd,2224);
+  const before=f.snapshot();assert.equal((await settleLegacyPresentationReservations(f.env,f.user,f.job())).settled,false);assert.equal(f.snapshot(),before);
+});
+
+for(const paidInitial of [true,false])test("legacy slide reconciliation accepts exact definitive rejection with "+(paidInitial?"paid initial work":"no paid work"),async()=>{
+  const f=await legacySlidesSettlementFixture(),rejected={clientRequestId:"repair",provider:"openai",operation:"planning",model:"gpt-5.6-sol",unitId:"planning:0:repair",status:"rejected",costMicrousd:0};
+  f.checkpoint.providerSubmissions=paidInitial?{initial:f.checkpoint.providerSubmissions.initial,repair:rejected}:{repair:rejected};
+  f.checkpoint.plannerResponseId=paidInitial?"response-initial":null;f.checkpoint.plannerResponseIds=paidInitial?["response-initial"]:[];f.checkpoint.generationReceipt.actual_provider_call_count=paidInitial?2:1;f.save(f.checkpoint);
+  const result=await settleLegacyPresentationReservations(f.env,f.user,f.job());assert.equal(result.status,"known");assert.equal(result.usedTokens,paidInitial?140:0);assert.equal(result.usedMicrousd,paidInitial?990:0);
+  assert.equal((await readCostBudgets(f.env,f.user.userId)).user.reservedMicrousd,0);assert.equal(f.usages().length,paidInitial?1:0);
+});
+
+for(const previousCost of [0,1000])test("legacy slide reconciliation repairs an already-settled audit gap of "+(2224-previousCost)+" microusd without touching counters",async()=>{
+  const f=await legacySlidesSettlementFixture();
+  await settleBudget(f.env,f.user.userId,f.token.reservationId,240);await settleCostBudget(f.env,f.user.userId,f.cost.reservationId,2224);
+  if(previousCost)await appendAuditEvent(f.env,f.user.streamId,"worker:policy","GenerationUsageRecorded",{document_id:"slides-document",reservation_id:f.token.reservationId,cost_reservation_id:f.cost.reservationId,total_tokens:240,cost_microusd:previousCost},f.correlation);
+  const ledger=()=>JSON.stringify({tokens:f.sqlite.prepare("SELECT * FROM budget_reservations").all(),cost:f.sqlite.prepare("SELECT * FROM cost_budget_reservations").all(),tokenCounters:f.sqlite.prepare("SELECT * FROM budget_counters").all(),costCounters:f.sqlite.prepare("SELECT * FROM cost_budget_counters").all()});
+  const before=ledger(),result=await settleLegacyPresentationReservations(f.env,f.user,f.job());
+  assert.equal(result.status,"known");assert.equal(result.settled,false);assert.equal(result.auditRepaired,true);assert.equal(ledger(),before);
+  assert.equal(f.usages().reduce((sum,value)=>sum+value.total_tokens,0),240);assert.equal(f.usages().reduce((sum,value)=>sum+value.cost_microusd,0),2224);
+  const after=f.snapshot();assert.equal((await settleLegacyPresentationReservations(f.env,f.user,f.job())).auditRepaired,false);assert.equal(f.snapshot(),after);
+});
+
+for(const tokenFirst of [true,false])test("legacy slide reconciliation finishes the other ledger after "+(tokenFirst?"tokens":"dollars")+" settled first",async()=>{
+  const f=await legacySlidesSettlementFixture();
+  if(tokenFirst)await settleBudget(f.env,f.user.userId,f.token.reservationId,240);else await settleCostBudget(f.env,f.user.userId,f.cost.reservationId,2224);
+  const result=await settleLegacyPresentationReservations(f.env,f.user,f.job());assert.equal(result.status,"known");assert.equal(result.settled,true);
+  assert.equal((await readBudgets(f.env,f.user.userId)).user.used,240);assert.equal((await readCostBudgets(f.env,f.user.userId)).user.usedMicrousd,2224);
+  assert.equal(f.usages().length,1);assert.equal(f.usages()[0].total_tokens,240);assert.equal(f.usages()[0].cost_microusd,2224);
+});
+
+test("legacy slide reconciliation leaves unresolved, mismatched and invalid call evidence untouched",async()=>{
+  const cases=[
+    ["pending repair",c=>{c.providerSubmissions.repair.status="pending";}],
+    ["legacy pending repair",c=>{delete c.providerSubmissions.repair;c.presentationProviderSubmission="pending";}],
+    ["different current client",c=>{c.presentationProviderClientRequestId="unrecorded-repair";}],
+    ["unidentified legacy uncertainty",c=>{delete c.presentationProviderClientRequestId;c.generationReceipt.provider_request_status="submission_unknown";}],
+    ["legacy uncertain flag",c=>{c.providerSubmissionLegacyUncertain=true;}],
+    ["invalid generic map",c=>{c.providerSubmissions=[];}],
+    ["missing cost",c=>{delete c.providerSubmissions.repair.costMicrousd;}],
+    ["inconsistent tokens",c=>{c.providerSubmissions.repair.totalTokens=99;}],
+    ["fractional cost",c=>{c.providerSubmissions.repair.costMicrousd=0.5;}],
+    ["duplicate response",c=>{c.providerSubmissions.repair.providerRequestId="response-initial";}],
+    ["other operation",c=>{c.providerSubmissions.repair.operation="image";}],
+    ["aggregate records another response",c=>{c.plannerUsage={inputTokens:180,outputTokens:70,totalTokens:250};}],
+    ["request count records another call",c=>{c.plannerInput={provider_request_count:3};}],
+  ];
+  for(const [name,change] of cases){const f=await legacySlidesSettlementFixture();change(f.checkpoint);f.save(f.checkpoint);const before=f.snapshot();assert.equal((await settleLegacyPresentationReservations(f.env,f.user,f.job())).status,"uncertain",name);assert.equal(f.snapshot(),before,name);}
+});
+
+test("legacy slide reconciliation does not consume another attempt, scope or operation",async()=>{
+  for(const [field,value] of [["correlation_id","paid-slides:attempt:2"],["operation","document-render:audio"],["stream_id","creative:another-owner"],["period","1900-01"]]){
+    const f=await legacySlidesSettlementFixture();f.sqlite.prepare("UPDATE cost_budget_reservations SET "+field+"=?").run(value);const before=f.snapshot();
+    assert.equal((await settleLegacyPresentationReservations(f.env,f.user,f.job())).status,"conflict");assert.equal(f.snapshot(),before);
+  }
+  const f=await legacySlidesSettlementFixture(),before=f.snapshot();assert.equal((await settleLegacyPresentationReservations(f.env,f.user,f.job(),{assertions:[{sql:"0"}]})).status,"conflict");assert.equal(f.snapshot(),before);
+});
+
+test("legacy slide reconciliation does not recharge when positive audit usage conflicts with an active ledger",async()=>{
+  const f=await legacySlidesSettlementFixture();await appendAuditEvent(f.env,f.user.streamId,"worker:policy","GenerationUsageRecorded",{document_id:"slides-document",reservation_id:f.token.reservationId,cost_reservation_id:f.cost.reservationId,total_tokens:240,cost_microusd:2224},f.correlation);
+  const before=f.snapshot();assert.equal((await settleLegacyPresentationReservations(f.env,f.user,f.job())).status,"conflict");assert.equal(f.snapshot(),before);
+});
+
+test("legacy slide reconciliation rolls back silent audit or counter no-ops",async()=>{
+  for(const trigger of ["CREATE TRIGGER reject_reconciliation BEFORE INSERT ON events WHEN NEW.type='GenerationUsageRecorded' BEGIN SELECT RAISE(IGNORE); END", "CREATE TRIGGER reject_reconciliation BEFORE UPDATE ON cost_budget_counters WHEN NEW.scope='user' BEGIN SELECT RAISE(IGNORE); END"]){
+    const f=await legacySlidesSettlementFixture();f.sqlite.exec(trigger);const before=f.snapshot();
+    assert.equal((await settleLegacyPresentationReservations(f.env,f.user,f.job())).status,"conflict");assert.equal(f.snapshot(),before,"the entire settlement must roll back");
+    f.sqlite.exec("DROP TRIGGER reject_reconciliation");assert.equal((await settleLegacyPresentationReservations(f.env,f.user,f.job())).status,"known");assert.equal(f.usages().length,1);
+  }
+});
+
+for(const auditOnly of [false,true])test("concurrent legacy slide reconciliation "+(auditOnly?"repairs settled audit gaps":"settles and audits")+" exactly once",async()=>{
+  const f=await legacySlidesSettlementFixture(),row=f.job();
+  if(auditOnly){await settleBudget(f.env,f.user.userId,f.token.reservationId,240);await settleCostBudget(f.env,f.user.userId,f.cost.reservationId,2224);}
+  const results=await Promise.all([settleLegacyPresentationReservations(f.env,f.user,row),settleLegacyPresentationReservations(f.env,f.user,row)]);
+  assert.deepEqual(results.map(value=>value.status),["known","known"]);assert.equal(results.filter(value=>auditOnly?value.auditRepaired:value.settled).length,1);assert.equal(f.usages().length,1);
+  assert.equal((await readBudgets(f.env,f.user.userId)).user.used,240);assert.equal((await readCostBudgets(f.env,f.user.userId)).user.usedMicrousd,2224);
+});
+
+test("legacy slide reconciliation recognizes a committed transaction after losing its acknowledgement",async()=>{
+  const f=await legacySlidesSettlementFixture(),batch=f.env.DB.batch.bind(f.env.DB);let lost=false;
+  f.env.DB.batch=async(statements)=>{const result=await batch(statements);if(!lost&&statements.some(statement=>statement.sql.startsWith("INSERT INTO output_atomic_assertions"))){lost=true;throw new Error("lost_settlement_ack");}return result;};
+  assert.equal((await settleLegacyPresentationReservations(f.env,f.user,f.job())).status,"known");assert.equal(lost,true);assert.equal(f.usages().length,1);
+  const before=f.snapshot();assert.equal((await settleLegacyPresentationReservations(f.env,f.user,f.job())).settled,false);assert.equal(f.snapshot(),before);
+});
+
+test("legacy slide reconciliation cannot settle over a concurrently persisted pending repair",async()=>{
+  const f=await legacySlidesSettlementFixture(),batch=f.env.DB.batch.bind(f.env.DB),row=f.job(),before=f.snapshot();let raced=false;
+  f.env.DB.batch=async(statements)=>{if(!raced&&statements.some(statement=>statement.sql.startsWith("INSERT INTO output_atomic_assertions"))){raced=true;f.checkpoint.presentationProviderSubmission="pending";f.checkpoint.presentationProviderClientRequestId="later-repair";f.save(f.checkpoint);}return batch(statements);};
+  assert.equal((await settleLegacyPresentationReservations(f.env,f.user,row)).status,"conflict");assert.equal(raced,true);assert.equal(f.snapshot(),before);
+  assert.equal(JSON.parse(f.job().result_json).presentationProviderClientRequestId,"later-repair");
+});
+
+async function assertBundledOutputReconciliationHistory(context,present){
+  const failures=[];
+  let fixture;
+  let fetchCalls=0;
+  const owner="dev-local-creative",stream="creative:dev-local-creative",actor="user:dev-local-creative";
+  const historySql="SELECT EXISTS(SELECT 1 FROM events WHERE type='OutputExecutionAuthorized' AND (stream_id=? OR actor=?)) AS present";
+  const tables=["output_execution_grants","output_operation_slots","document_jobs","budget_reservations","cost_budget_reservations","output_provider_calls","output_native_storage_writes"];
+  const emptyOutputRows=()=>{
+    for(const table of tables){
+      const exists=fixture.sqlite.prepare("SELECT 1 AS present FROM sqlite_master WHERE type='table' AND name=?").get(table);
+      if(exists)assert.equal(fixture.sqlite.prepare("SELECT COUNT(*) AS count FROM "+table).get().count,0,table);
+      // Absence is valid: do not initialize output schema in the no-history branch.
+    }
+  };
+  const collect=async action=>{try{await action();}catch(error){failures.push(error);}};
+  try{
+    context.mock.method(globalThis,"fetch",async()=>{
+      fetchCalls++;
+      throw new Error("bundled_output_reconciliation_network_forbidden");
+    });
+    fixture=await integratedProductionWorker();
+    await fixture.drainBackground();
+    emptyOutputRows();
+    assert.equal(fixture.sqlite.prepare(historySql).get(stream,actor).present,0);
+    if(present){
+      // A synthetic history marker, not a grant or provider authorization.
+      await appendAuditEvent(fixture.environment,stream,actor,"OutputExecutionAuthorized",{
+        grant_id:"f-historical-linkage-only",scope_kind:"personal",
+        owner_user_id:owner,actor_user_id:owner,fixture_only:true,
+      },"f-output-reconciliation-history");
+    }
+    assert.equal(fixture.sqlite.prepare(historySql).get(stream,actor).present,Number(present));
+    const beforeConsent=fixture.sqlite.prepare("SELECT COUNT(*) AS count FROM events WHERE stream_id=? AND type='ConsentAccepted'").get(stream).count;
+    const witnesses=[
+      {name:"known-receipt",kind:"first",prefix:"SELECT slot.scope_key,slot.slot_id,slot.token_reservation_id,slot.cost_reservation_id,slot.updated_at, job.job_id,job.kind,job.owner_id,job.stream_id,job.document_id,job.status,job.correlation_id,",count:0},
+      {name:"expired-grant",kind:"all",prefix:"SELECT grant_row.scope_key,grant_row.grant_id,grant_row.actor_user_id,grant_row.context_id,grant_row.payer_user_id, plan.scope_kind,plan.owner_user_id,plan.project_id,plan.document_id,plan.organization_id,plan.project_access_id FROM output_execution_grants grant_row JOIN output_plan_revisions plan ON plan.scope_key=grant_row.scope_key AND plan.plan_revision_id=grant_row.plan_revision_id WHERE (grant_row.payer_user_id=? OR (plan.scope_kind='personal' AND grant_row.payer_user_id<>grant_row.actor_user_id)) AND grant_row.actor_user_id=? AND grant_row.expires_at<=?",count:0},
+      {name:"native-storage",kind:"run",prefix:"WITH retained_fal_grants AS MATERIALIZED (",count:0},
+    ];
+    const prototype=Object.getPrototypeOf(fixture.environment.DB.prepare("SELECT 1"));
+    const execute=prototype.execute;
+    context.mock.method(prototype,"execute",function(kind){
+      const sql=this.sql.replace(/\s+/gu," ").trim();
+      const witness=witnesses.find(candidate=>sql.startsWith(candidate.prefix));
+      if(witness)assert.equal(kind,witness.kind,witness.name+" execution kind");
+      const result=Reflect.apply(execute,this,[kind]);
+      if(witness)witness.count++;
+      return result;
+    });
+    const response=await fixture.request("/api/session",{
+      method:"POST",headers:{"content-type":"application/json"},
+      body:JSON.stringify({action:"accept_terms",ownershipConfirmed:true,providerProcessingConfirmed:true}),
+    });
+    assert.equal(response.status,200);
+    const body=await response.json();
+    assert.equal(body.user?.userId,owner);
+    assert.equal(body.audience,"creative");
+    assert.equal(body.policy?.accepted,true);
+    assert.ok(Array.isArray(body.capabilities));
+    await fixture.drainBackground();
+    assert.deepEqual(witnesses.map(({name,count})=>[name,count]),witnesses.map(({name})=>[name,Number(present)]));
+    assert.equal(fixture.sqlite.prepare(historySql).get(stream,actor).present,Number(present));
+    assert.equal(fixture.sqlite.prepare("SELECT COUNT(*) AS count FROM events WHERE stream_id=? AND type='ConsentAccepted'").get(stream).count,beforeConsent+1);
+    emptyOutputRows();
+  }catch(error){failures.push(error);}
+  finally{
+    if(fixture){
+      await collect(()=>fixture.drainBackground());
+      await collect(emptyOutputRows);
+      await collect(()=>fixture.sqlite.close());
+    }
+    await collect(()=>assert.equal(fetchCalls,0,"no fetch during setup, request, or background cleanup"));
+    await collect(()=>context.mock.restoreAll());
+  }
+  if(failures.length===1)throw failures[0];
+  if(failures.length>1)throw new AggregateError(failures,"Bundled output reconciliation regression and cleanup failed");
+}
+
+test("bundled output reconciliation skips the producer with no authorization history",async context=>{
+  await assertBundledOutputReconciliationHistory(context,false);
+});
+
+test("bundled output reconciliation reaches the producer with authorization history",async context=>{
+  await assertBundledOutputReconciliationHistory(context,true);
+});
+
+import { applyHoldDisposition, previewHoldDisposition, HOLD_ACKNOWLEDGEMENT } from "../worker/budget-hold-dispositions.ts";
+import { verifyHoldDisposition } from "../worker/budget-hold-verification.ts";
+import { handleHoldDispositions } from "../worker/budget-hold-api.ts";
+import { requireExistingHoldAdministrator, releaseBudget, releaseCostBudget, POLICY_VERSION } from "../worker/pilot-policy.ts";
+import { presentationCandidateAccounting } from "../src/model/presentation-candidates.ts";
+
+async function administrativeHoldFixture() {
+  const f=await legacySlidesSettlementFixture();
+  const now=new Date().toISOString();
+  f.sqlite.prepare("INSERT INTO users(user_id,email,display_name,role,consent_version,consented_at,created_at,updated_at) VALUES(?,?,?,'admin',?,?,?,?)")
+    .run(f.user.userId,"hold-admin@example.test","Hold admin",POLICY_VERSION,now,now,now);
+  f.env.FORMA_HOLD_DISPOSITION_ENABLED="true";
+  f.save({...f.checkpoint,presentationProviderSubmission:"pending",generationReceipt:{provider_request_status:"submission_unknown"}});
+  f.headers={origin:"https://forma.test","content-type":"application/json","oai-authenticated-user-id":f.user.userId,"oai-authenticated-user-email":"hold-admin@example.test"};
+  f.request=(body,extra={})=>new Request("https://forma.test/api/admin/budget-hold-dispositions",{method:"POST",headers:{...f.headers,...extra},body:JSON.stringify(body)});
+  f.user=(await requireExistingHoldAdministrator(f.request({}),f.env)).user;
+  const preview=await previewHoldDisposition(f.env,f.user,f.job().job_id);
+  f.command={dispositionId:"hold-test-1",jobId:f.job().job_id,previewSha256:preview.previewSha256,approvalRef:"test-fixture-approval",supportRef:"test-fixture-support",
+    reason:"Synthetic test: provider cannot resolve historical billing",evidenceSha256:"e".repeat(64),acknowledgement:HOLD_ACKNOWLEDGEMENT};
+  f.fullSnapshot=()=>JSON.stringify({finance:f.snapshot(),holds:f.sqlite.prepare("SELECT * FROM budget_hold_dispositions").all(),job:f.job()});
+  return f;
+}
+
+function denyWrites(env) {
+  return {...env,DB:{prepare(sql){assert.match(sql,/^\s*SELECT\b/i,"follow-up must issue SELECT only");return env.DB.prepare(sql);},batch(statements){return env.DB.batch(statements);}}};
+}
+
+test("administrative hold: atomic capacity release preserves unknown provider evidence and settled spending",async()=>{
+  const f=await administrativeHoldFixture(),original=f.job().result_json;
+  const result=await applyHoldDisposition(f.env,f.user,f.command);
+  assert.equal(result.applied,true);
+  const verified=await verifyHoldDisposition(denyWrites(f.env),f.user.userId,f.command.dispositionId);
+  assert.equal(verified.verified,true,JSON.stringify(verified.checks));
+  assert.equal(f.job().result_json,original);
+  assert.equal(f.usages().length,0);
+  for(const table of ["budget_counters","cost_budget_counters"]){
+    const unit=table==="budget_counters"?"tokens":"microusd";
+    for(const row of f.sqlite.prepare(`SELECT * FROM ${table}`).all())assert.deepEqual([row[`used_${unit}`],row[`reserved_${unit}`]],[0,0]);
+  }
+  assert.equal(f.sqlite.prepare("SELECT COUNT(*) AS n FROM events WHERE type='BudgetHoldAdministrativelyReleased'").get().n,1);
+  assert.throws(()=>f.sqlite.exec("UPDATE budget_hold_dispositions SET created_at='changed'"),/append_only/);
+  assert.throws(()=>f.sqlite.exec("DELETE FROM budget_hold_dispositions"),/append_only/);
+  for(const table of ["budget_reservations","cost_budget_reservations"]){
+    assert.throws(()=>f.sqlite.exec(`UPDATE ${table} SET status='active'`),/requires_review/);
+    assert.throws(()=>f.sqlite.exec(`DELETE FROM ${table}`),/requires_review/);
+  }
+});
+
+for(const recursiveTriggers of [0,1])test(`administrative hold: replacement writes cannot replace immutable records with recursive_triggers=${recursiveTriggers}`,async()=>{
+  const f=await administrativeHoldFixture();
+  try{
+    f.sqlite.exec(`PRAGMA recursive_triggers=${recursiveTriggers}`);
+    await applyHoldDisposition(f.env,f.user,f.command);
+    const before=f.fullSnapshot();
+    const replace=(table,row)=>{
+      const columns=Object.keys(row);
+      return f.sqlite.prepare(`INSERT OR REPLACE INTO ${table} (${columns.join(",")}) VALUES (${columns.map(()=>"?").join(",")})`).run(...Object.values(row));
+    };
+    const original=f.sqlite.prepare("SELECT * FROM budget_hold_dispositions").get();
+    // Exercise every unique-key collision, not only replacement of the primary key.
+    for(const keys of [["disposition_id"],["token_reservation_id"],["cost_reservation_id"],["event_id"],["job_id","correlation_id"]]){
+      const candidate={...original,disposition_id:"replacement-decision",token_reservation_id:"replacement-token",cost_reservation_id:"replacement-cost",event_id:"replacement-event",job_id:"replacement-job",correlation_id:"replacement-attempt"};
+      for(const key of keys)candidate[key]=original[key];
+      assert.throws(()=>replace("budget_hold_dispositions",candidate),/append_only/,keys.join(","));
+      assert.equal(f.fullSnapshot(),before,keys.join(","));
+    }
+    for(const table of ["budget_reservations","cost_budget_reservations"]){
+      const originalReservation=f.sqlite.prepare(`SELECT * FROM ${table}`).get();
+      assert.throws(()=>replace(table,{...originalReservation,status:"active"}),/requires_review/,table);
+      assert.equal(f.fullSnapshot(),before,table);
+      const unrelatedId=`unrelated-${table}`;
+      replace(table,{...originalReservation,reservation_id:unrelatedId,status:"released"});
+      const beforeUpdate=f.fullSnapshot();
+      assert.throws(()=>f.sqlite.prepare(`UPDATE OR REPLACE ${table} SET reservation_id=? WHERE reservation_id=?`).run(originalReservation.reservation_id,unrelatedId),/requires_review/,`${table} update replacement`);
+      assert.equal(f.fullSnapshot(),beforeUpdate,`${table} update replacement`);
+      f.sqlite.prepare(`DELETE FROM ${table} WHERE reservation_id=?`).run(unrelatedId);
+      assert.equal(f.fullSnapshot(),before,`${table} synthetic unrelated row removed`);
+    }
+    assert.equal((await verifyHoldDisposition(denyWrites(f.env),f.user.userId,f.command.dispositionId)).verified,true);
+  }finally{f.sqlite.close();}
+});
+
+test("administrative hold: exact duplicate and concurrent command cannot release twice",async()=>{
+  const f=await administrativeHoldFixture();
+  const result=await Promise.allSettled([applyHoldDisposition(f.env,f.user,f.command),applyHoldDisposition(f.env,f.user,f.command)]);
+  assert.equal(result.filter(x=>x.status==="fulfilled"&&x.value.applied).length,1);
+  const before=f.fullSnapshot();
+  assert.equal((await applyHoldDisposition(f.env,f.user,{...f.command})).replayed,true);
+  assert.equal(f.fullSnapshot(),before);
+  await assert.rejects(()=>applyHoldDisposition(f.env,f.user,{...f.command,reason:"A changed replay is never the same decision"}));
+  assert.equal(f.fullSnapshot(),before);
+});
+
+test("administrative hold: a lost commit acknowledgment is recognized by its exact durable receipt",async()=>{
+  const f=await administrativeHoldFixture(),batch=f.env.DB.batch;
+  f.env.DB.batch=async statements=>{const result=await batch(statements);if(statements.some(s=>s.sql.startsWith("INSERT INTO budget_hold_dispositions")))throw Error("ack lost");return result;};
+  const result=await applyHoldDisposition(f.env,f.user,f.command);
+  assert.equal(result.replayed,true);
+  assert.equal((await verifyHoldDisposition(f.env,f.user.userId,f.command.dispositionId)).verified,true);
+});
+
+test("administrative hold: disabled feature and missing explicit acknowledgement cannot mutate",async()=>{
+  const f=await administrativeHoldFixture(),before=f.fullSnapshot();
+  f.env.FORMA_HOLD_DISPOSITION_ENABLED=undefined;
+  await assert.rejects(()=>applyHoldDisposition(f.env,f.user,f.command),/disabled/);
+  f.env.FORMA_HOLD_DISPOSITION_ENABLED="true";
+  await assert.rejects(()=>applyHoldDisposition(f.env,f.user,{...f.command,acknowledgement:"yes"}),/explicit_command/);
+  assert.equal(f.fullSnapshot(),before);
+});
+
+test("administrative hold: stale preview and invalid scope fail without an adjustment",async()=>{
+  for(const sql of [
+    "UPDATE document_jobs SET result_json=json_set(result_json,'$.newReceipt','late')",
+    "UPDATE budget_reservations SET correlation_id='different-attempt'",
+    "UPDATE cost_budget_reservations SET period='2025-12'",
+    "UPDATE budget_reservations SET owner_id='different-owner'",
+    "UPDATE cost_budget_reservations SET stream_id='creative:another'",
+    "UPDATE cost_budget_reservations SET operation='document-render:video'",
+    "UPDATE cost_budget_reservations SET workspace_id='another-workspace'",
+    "UPDATE document_jobs SET status='running'",
+    "UPDATE cost_budget_counters SET reserved_microusd=999",
+    "DELETE FROM budget_counters WHERE scope='workspace'",
+    "UPDATE budget_counters SET reserved_tokens=1000.5",
+    "INSERT INTO project_budget_reservation_scopes SELECT 'tokens',reservation_id,'org','project','slides-owner','org',created_at FROM budget_reservations",
+  ]){
+    const f=await administrativeHoldFixture();f.sqlite.exec(sql);const before=f.fullSnapshot();
+    await assert.rejects(()=>applyHoldDisposition(f.env,f.user,f.command),undefined,sql);
+    assert.equal(f.fullSnapshot(),before,sql);
+  }
+});
+
+test("administrative hold: state and authority races inside the transaction abort the full batch",async()=>{
+  for(const sql of [
+    "UPDATE users SET role='creator'",
+    "UPDATE users SET consent_version='revoked'",
+    "UPDATE document_jobs SET result_json=json_set(result_json,'$.lateReceipt',1)",
+    "UPDATE cost_budget_counters SET reserved_microusd=999",
+    "INSERT INTO impersonation_sessions VALUES('session','slides-owner','persona','fictional','replay','active','2020-01-01','2099-01-01',NULL)",
+  ]){
+    const f=await administrativeHoldFixture(),batch=f.env.DB.batch;let raced=false,before;
+    f.env.DB.batch=async statements=>{if(!raced&&statements.some(s=>s.sql.startsWith("INSERT INTO budget_hold_dispositions"))){raced=true;f.sqlite.exec(sql);before=f.fullSnapshot();}return batch(statements);};
+    await assert.rejects(()=>applyHoldDisposition(f.env,f.user,f.command),/write_conflict/,sql);
+    assert.equal(f.fullSnapshot(),before,sql);
+  }
+});
+
+test("administrative hold: silent counter, reservation, and event failures roll back every change",async()=>{
+  for(const [table,action] of [["cost_budget_counters","UPDATE"],["budget_reservations","UPDATE"],["events","INSERT"],["budget_hold_dispositions","INSERT"]]){
+    const f=await administrativeHoldFixture(),before=f.fullSnapshot();
+    f.sqlite.exec(`CREATE TRIGGER injected_noop BEFORE ${action} ON ${table} BEGIN SELECT RAISE(IGNORE); END`);
+    await assert.rejects(()=>applyHoldDisposition(f.env,f.user,f.command),/write_conflict/);
+    assert.equal(f.fullSnapshot(),before,table);
+  }
+});
+
+test("administrative hold: later provider evidence cannot silently charge or reopen the original hold",async()=>{
+  const f=await administrativeHoldFixture();await applyHoldDisposition(f.env,f.user,f.command);
+  f.save(f.checkpoint);
+  const stable=()=>JSON.stringify(JSON.parse(f.fullSnapshot()),(key,value)=>key==="finance"?JSON.parse(value,(k,v)=>k==="updated_at"?undefined:v):value);
+  const before=stable();
+  assert.equal((await settleLegacyPresentationReservations(f.env,f.user,f.job())).reason,"administrative_disposition_requires_review");
+  assert.equal((await settleBudget(f.env,f.user.userId,f.token.reservationId,240,"late" )).settled,false);
+  assert.equal((await settleCostBudget(f.env,f.user.userId,f.cost.reservationId,2224)).settled,false);
+  await releaseBudget(f.env,f.user.userId,f.token.reservationId,"late");
+  await releaseCostBudget(f.env,f.user.userId,f.cost.reservationId);
+  await reconcileFailedBudgetReservations(f.env,f.user);
+  assert.equal(stable(),before);
+  const verified=await verifyHoldDisposition(f.env,f.user.userId,f.command.dispositionId);
+  assert.equal(verified.transactionVerified,true);
+  assert.equal(verified.checks.providerEvidenceUnchanged,false);
+});
+
+test("administrative hold: old reservation reconciliation skips an existing reviewed hold",async()=>{
+  const f=await administrativeHoldFixture();await applyHoldDisposition(f.env,f.user,f.command);
+  const before=f.fullSnapshot();
+  await reconcileFailedBudgetReservations(f.env,f.user,Date.now()+10*60_000);
+  assert.equal(f.fullSnapshot(),before);
+  const held=f.sqlite.prepare("SELECT * FROM cost_budget_reservations WHERE reservation_id=?").get(f.cost.reservationId);
+  await reserveCostBudget(f.env,f.user.userId,held.reserved_microusd,{streamId:f.user.streamId,correlationId:"unrelated-new-request",operation:"image-generation"});
+  const withUnrelated=f.fullSnapshot();
+  assert.equal(await adoptLegacyCostReservation(f.env,f.user.userId,{reservationId:held.reservation_id,amountMicrousd:held.reserved_microusd,period:held.period,streamId:held.stream_id,correlationId:held.correlation_id,operation:held.operation}),false);
+  assert.equal(f.fullSnapshot(),withUnrelated);
+});
+
+test("administrative hold: follow-up allows unrelated later activity but detects counter drift",async()=>{
+  const f=await administrativeHoldFixture();await applyHoldDisposition(f.env,f.user,f.command);
+  await reserveBudget(f.env,f.user.userId,300,{streamId:f.user.streamId,correlationId:"unrelated",operation:"chat"});
+  await reserveCostBudget(f.env,f.user.userId,400,{reservationId:"unrelated",maximumMicrousd:400,allowUserOverage:false,streamId:f.user.streamId,correlationId:"unrelated",operation:"chat"});
+  assert.equal((await verifyHoldDisposition(denyWrites(f.env),f.user.userId,f.command.dispositionId)).verified,true);
+  f.sqlite.exec("UPDATE cost_budget_counters SET reserved_microusd=reserved_microusd+1 WHERE scope='user'");
+  const v=await verifyHoldDisposition(denyWrites(f.env),f.user.userId,f.command.dispositionId);
+  assert.equal(v.transactionVerified,true);assert.equal(v.verified,false);assert.equal(v.checks.currentReservedProjection,false);
+});
+
+test("administrative hold: HTTP preview and follow-up are SELECT-only and scoped to the administrator",async()=>{
+  const f=await administrativeHoldFixture();
+  assert.equal((await handleHoldDispositions(f.request({action:"preview",jobId:f.job().job_id}),denyWrites(f.env))).status,200);
+  assert.equal((await handleHoldDispositions(f.request({action:"apply",command:f.command}),f.env)).status,200);
+  const url=`https://forma.test/api/admin/budget-hold-dispositions?dispositionId=${f.command.dispositionId}`;
+  const get=(extra={})=>new Request(url,{headers:{...f.headers,...extra}});
+  const before=f.fullSnapshot();
+  const result=await handleHoldDispositions(get(),denyWrites(f.env));assert.equal(result.status,200);assert.equal((await result.json()).verified,true);
+  assert.equal(f.fullSnapshot(),before);
+  assert.equal((await handleHoldDispositions(get({cookie:"forma_impersonation=unknown"}),denyWrites(f.env))).status,409);
+  assert.equal((await handleHoldDispositions(get({cookie:"forma_project_context=unknown"}),denyWrites(f.env))).status,409);
+  f.sqlite.exec("UPDATE users SET role='creator'");
+  assert.equal((await handleHoldDispositions(get(),denyWrites(f.env))).status,403);
+});
+
+test("administrative hold: HTTP rejects cross-origin, malformed, excessive and identity-forged requests",async()=>{
+  const f=await administrativeHoldFixture(),before=f.fullSnapshot();
+  for(const origin of ["https://attacker.test",""]){assert.equal((await handleHoldDispositions(f.request({action:"apply",command:f.command},{origin}),f.env)).status,403);}
+  assert.equal((await handleHoldDispositions(f.request({action:"apply",command:{...f.command,operatorId:f.user.userId}}),f.env)).status,400);
+  assert.equal((await handleHoldDispositions(f.request({action:"preview",jobId:"other-owner-job"}),f.env)).status,404);
+  assert.equal((await handleHoldDispositions(f.request({action:"apply",command:{...f.command,reason:"x".repeat(9000)}}),f.env)).status,413);
+  assert.equal(f.fullSnapshot(),before);
+});
+
+test("administrative hold: organization identity-policy revocation is checked at commit",async()=>{
+  const f=await administrativeHoldFixture(),now=new Date().toISOString();
+  f.sqlite.prepare("INSERT INTO organizations VALUES('hold-org','Synthetic org',?,'active',?,?)").run(f.user.userId,now,now);
+  f.sqlite.prepare("INSERT INTO organization_memberships(membership_id,organization_id,user_id,role,status,invited_by_user_id,accepted_at,created_at,updated_at) VALUES('hold-membership','hold-org',?,'owner','active',?,?,?,?)")
+    .run(f.user.userId,f.user.userId,now,now,now);
+  f.sqlite.prepare("INSERT INTO organization_security_policies(organization_id,updated_by_user_id,updated_at) VALUES('hold-org',?,?)").run(f.user.userId,now);
+  f.user=(await requireExistingHoldAdministrator(f.request({}),f.env)).user;
+  f.command.previewSha256=(await previewHoldDisposition(f.env,f.user,f.job().job_id)).previewSha256;
+  const batch=f.env.DB.batch;let before,changed=false;
+  f.env.DB.batch=async statements=>{
+    if(!changed&&statements.some(s=>s.sql.startsWith("INSERT INTO budget_hold_dispositions"))){
+      changed=true;f.sqlite.exec("UPDATE organization_security_policies SET require_mfa=1,version=version+1");before=f.fullSnapshot();
+    }
+    return batch(statements);
+  };
+  await assert.rejects(()=>applyHoldDisposition(f.env,f.user,f.command),/write_conflict/);
+  assert.equal(f.fullSnapshot(),before);
+});
+
+test("administrative hold: candidate and account summaries distinguish released capacity from unknown billing",async()=>{
+  const f=await administrativeHoldFixture();await applyHoldDisposition(f.env,f.user,f.command);
+  const accounting=presentationCandidateAccounting(JSON.parse(f.job().result_json),{
+    reservations:f.sqlite.prepare("SELECT * FROM cost_budget_reservations").all(),usage:[],responseIds:[],minimumAttempt:1,preserved:[],
+  });
+  assert.equal(accounting.reservation_status,"administratively_released");
+  assert.equal(accounting.reservation_microusd,0);
+  assert.equal(accounting.settled_cost_microusd,null);
+  assert.equal(accounting.settled_cost_complete,false);
+  assert.equal(accounting.provider_submission_uncertain,true);
+  const {readOutcomeTelemetryLiveEvidence}=await import("../worker/outcome-telemetry.ts");
+  const live=await readOutcomeTelemetryLiveEvidence(f.env,f.user);
+  assert.equal(live.ok,true);
+  assert.equal(live.evidence.finance.periods[0].releasedCount,1);
+  assert.equal(live.evidence.finance.periods[0].unclassifiedCount,0);
+  assert.equal(live.evidence.finance.heldMicrousd,0);
+  assert.equal(live.evidence.finance.providerInvoiceReconciled,null);
+});
+
+test("administrative hold: full worker follow-up neither writes nor schedules cleanup or provider work",async()=>{
+  const f=await administrativeHoldFixture();await applyHoldDisposition(f.env,f.user,f.command);
+  const worker=(await import("../dist/server/index.js")).default;
+  const noWrites=denyWrites(f.env),originalFetch=globalThis.fetch;
+  globalThis.fetch=()=>{throw Error("unexpected network request");};
+  try{
+    const result=await worker.fetch(new Request(`https://forma.test/api/admin/budget-hold-dispositions?dispositionId=${f.command.dispositionId}`,{headers:f.headers}),noWrites,
+      {waitUntil(){throw Error("unexpected background work");}});
+    assert.equal(result.status,200);
+    assert.equal((await result.json()).verified,true);
+  }finally{globalThis.fetch=originalFetch;}
+});
+
+test("administrative hold: a missing schema fails closed without creating it during verification",async()=>{
+  const {env,sqlite}=reconciliationDatabase();
+  const request=new Request("https://forma.test/api/admin/budget-hold-dispositions?dispositionId=hold-test-1",{headers:{"oai-authenticated-user-id":"owner","oai-authenticated-user-email":"owner@example.test"}});
+  assert.equal((await handleHoldDispositions(request,denyWrites(env))).status,503);
+  assert.equal(sqlite.prepare("SELECT COUNT(*) AS n FROM sqlite_schema").get().n,0);
+});
+
+test("administrative hold: used-counter changes require review rather than passing silently",async()=>{
+  for(const [table,unit] of [["budget_counters","tokens"],["cost_budget_counters","microusd"]]){
+    const f=await administrativeHoldFixture();await applyHoldDisposition(f.env,f.user,f.command);
+    f.sqlite.exec(`UPDATE ${table} SET used_${unit}=used_${unit}+1 WHERE scope='user'`);
+    const v=await verifyHoldDisposition(denyWrites(f.env),f.user.userId,f.command.dispositionId);
+    assert.equal(v.transactionVerified,true);assert.equal(v.verified,false);
+    assert.deepEqual(v.requiresReview,["settledCountersUnchanged"]);
+  }
+});
+
+test("administrative hold: follow-up revalidates exact live document and attempt metadata",async()=>{
+  for(const column of ["document_id","correlation_id","status","attempt_count"]){
+    const f=await administrativeHoldFixture();await applyHoldDisposition(f.env,f.user,f.command);
+    f.sqlite.exec(`UPDATE document_jobs SET ${column}=${column==="attempt_count"?"attempt_count+1":"'changed'"}`);
+    const v=await verifyHoldDisposition(denyWrites(f.env),f.user.userId,f.command.dispositionId);
+    assert.equal(v.checks.providerEvidenceUnchanged,true,"JSON bytes alone do not prove the attempt binding");
+    assert.equal(v.checks.liveJobBinding,false);assert.equal(v.verified,false);
+  }
+});
+
+test("administrative hold: generated migration and idempotent reference verify all table, index and guard definitions",async()=>{
+  const {holdSchemaProof}=await import("../worker/budget-hold-schema.ts");
+  const reference=await readFile(new URL("../db/operations/budget-hold-dispositions.sql",import.meta.url),"utf8");
+  const migration=await readFile(new URL("../drizzle/0036_budget_hold_dispositions.sql",import.meta.url),"utf8");
+  const sqlite=new DatabaseSync(":memory:");
+  sqlite.exec("CREATE TABLE budget_reservations(reservation_id TEXT); CREATE TABLE cost_budget_reservations(reservation_id TEXT)");
+  sqlite.exec(migration);sqlite.exec(reference);sqlite.exec(reference);
+  const proof=holdSchemaProof();
+  assert.equal(proof.bindings.length,28,"one table, four unique indexes and nine immutable guards are pinned");
+  assert.equal(sqlite.prepare("SELECT 1 AS ready WHERE "+proof.sql).get(...proof.bindings).ready,1);sqlite.close();
+});
+
+test("administrative hold: missing immutable guards or unique indexes fail closed",async()=>{
+  const {holdSchemaProof}=await import("../worker/budget-hold-schema.ts");
+  const proof=holdSchemaProof();
+  for(const name of proof.bindings.filter((_,index)=>index%2===0).filter(name=>name!=="budget_hold_dispositions")){
+    const f=await administrativeHoldFixture(),before=f.fullSnapshot();
+    try{
+      const objectType=f.sqlite.prepare("SELECT type FROM sqlite_schema WHERE name=?").get(name).type;
+      assert.ok(["index","trigger"].includes(objectType));
+      f.sqlite.exec(`DROP ${objectType.toUpperCase()} ${name}`);
+      await assert.rejects(()=>previewHoldDisposition(f.env,f.user,f.job().job_id),/schema_not_ready/,name);
+      await assert.rejects(()=>applyHoldDisposition(f.env,f.user,f.command),/write_conflict/,name);
+      assert.equal(f.fullSnapshot(),before,name);
+    }finally{f.sqlite.close();}
+  }
+});
+
+test("administrative hold: a same-named nonunique replacement index cannot satisfy the installed proof",async()=>{
+  const {holdSchemaProof}=await import("../worker/budget-hold-schema.ts");
+  const proof=holdSchemaProof();
+  for(let index=0;index<proof.bindings.length;index+=2){
+    const [name,sql]=proof.bindings.slice(index,index+2);
+    if(!sql.startsWith("CREATE UNIQUE INDEX "))continue;
+    const f=await administrativeHoldFixture(),before=f.fullSnapshot();
+    try{
+      f.sqlite.exec(`DROP INDEX ${name}`);
+      f.sqlite.exec(sql.replace("CREATE UNIQUE INDEX ","CREATE INDEX "));
+      await assert.rejects(()=>previewHoldDisposition(f.env,f.user,f.job().job_id),/schema_not_ready/,name);
+      await assert.rejects(()=>applyHoldDisposition(f.env,f.user,f.command),/write_conflict/,name);
+      assert.equal(f.fullSnapshot(),before,name);
+    }finally{f.sqlite.close();}
+  }
 });

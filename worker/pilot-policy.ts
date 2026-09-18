@@ -1,26 +1,34 @@
-import { assertOutputAdmissionActor, assertOutputAdmissionBudget, readOutputAdmissionValue, type OutputAdmissionReads } from "./output-admission-reads.ts";
+import { assertOutputAdmissionBudget, readOutputAdmissionValue, type OutputAdmissionReads } from "./output-admission-reads.ts";
+import { intEnv, activeProjectBillingSql } from "./pilot-policy-primitives.ts";
+import { DEFAULT_EVIDENCE_RETENTION_DAYS } from "./private-content-storage.ts";
+export { DURABLE_WORK_RETENTION_END, DEFAULT_EVIDENCE_RETENTION_DAYS, privateContentRetentionClass, preparePrivateContent, storePrivateContent } from "./private-content-storage.ts";
 import { outputSchemaIsReady } from "./output-schema-state.ts";
-import { appendAuditEvent, ensureSchema, uuidV7, type WorkerEnv, type WorkerExecutionContext } from "./runtime.ts";
+import type { OutputSqlAssertion } from "./output-command-core.ts";
+import { appendAuditEvent, ensureSchema, EVENT_WRITE_COLUMNS, eventWriteBindings, makeEvent, uuidV7, type WorkerEnv, type WorkerExecutionContext } from "./runtime.ts";
 import { MICRO_USD_PER_USD } from "./replay-cost.ts";
 import { interruptedDocumentJobUsage, recordedDocumentPlannerUsage } from "./document-job-reservations.ts";
 import { providerSubmissions, hasUnsettledProviderSubmission, unsettledProviderSubmissionSql } from "../src/model/provider-submission.ts";
 import { readCanvasGovernance } from "./canvas-governance-policy.ts";
 import { DEFAULT_REFERENCE_VIDEO_MODEL, DEFAULT_VIDEO_MODEL, VIDEO_ADAPTER_CONTRACT } from "../src/model/video-adapter.ts";
 import { AUDIO_ADAPTER_CONTRACTS, audioAdapterContractForModel } from "../src/model/audio.ts";
-import { PLATFORM_PRINCIPAL_WITH_ACCESS_SQL, PRINCIPAL_WITH_ACCESS_SQL, principalAccessFromRow, principalHasCapability, type PrincipalAccess } from "./access-policy.ts";
+import { PLATFORM_PRINCIPAL_WITH_ACCESS_SQL, PRINCIPAL_WITH_ACCESS_SQL, principalAccessFromRow, type PrincipalAccess } from "./access-policy.ts";
 import type { FormaCapability } from "../src/platform/capabilities.ts";
 import { APPLICATIONS, applicationDefinition, applicationIdFromRoute, authorizedApplicationHome, routeRequiredCapabilities, type ApplicationId } from "../src/platform/applications.ts";
 import { ASSISTANT_MODELS, assistantModelCostMicrousd, type AssistantModel } from "../src/model/assistant-model-policy.ts";
 import { readProjectRequestContext } from "./project-access.ts";
+import { readExistingPrincipalRequest, completePrincipalRequest, identityFromRequest, decodedCookieValue, roleRank,
+  hasCapability, requireConsent } from "./principal-request-core.ts";
+export { hasCapability, requireConsent };
+import { configuredPilotAdmissionGuard } from "./intake-authority.ts";
+export { configuredPilotAdmissionGuard };
 
-export const POLICY_VERSION = "pilot-2026-08-10";
+import { POLICY_VERSION } from "./policy-version.ts";
+export { POLICY_VERSION };
 export type PilotRole = "admin" | "creator" | "agent" | "viewer";
 export type ProjectExecutionScope={organizationId:string;projectAccessId:string;projectId:string;ownerUserId:string;actorUserId:string};
-export type PilotUser = { userId: string; email: string; displayName: string; role: PilotRole; consentVersion: string | null; consentedAt: string | null; streamId: string; access: PrincipalAccess; fictional?: boolean; billingUserId?: string;projectExecution?:ProjectExecutionScope };
+export type PilotUser = { userId: string; email: string; displayName: string; role: PilotRole; consentVersion: string | null; consentedAt: string | null; streamId: string; access: PrincipalAccess; fictional?: boolean; billingUserId?: string;projectExecution?:ProjectExecutionScope; authorizationSnapshot?:{updatedAt:string;rawEpoch:string;grants:string;organizations:string;projects:string;identityPolicies:string;canvasRequirements:number} };
 export type PilotImpersonation = { impersonationId:string; personaId:string; replaySessionId:string; actor:PilotUser; fictionalUser:PilotUser; startedAt:string; expiresAt:string };
 
-const roleRank: Record<PilotRole, number> = { viewer: 0, agent: 1, creator: 2, admin: 3 };
-const intEnv = (value: string | undefined, fallback: number) => { const parsed = Number(value); return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : fallback; };
 const moneyEnv = (value: string | undefined, fallbackUsd: number) => { const parsed = Number(value); return Math.round((Number.isFinite(parsed) && parsed > 0 ? parsed : fallbackUsd) * MICRO_USD_PER_USD); };
 
 /** Free creative guidance is available only to a live named participant in the exact active organization. */
@@ -39,68 +47,17 @@ export async function assistantPilotEntitled(env:WorkerEnv,userId:string,organiz
   return Boolean(admitted);
 }
 
-function decodeName(request: Request) {
-  const encoded = request.headers.get("oai-authenticated-user-full-name");
-  if (!encoded || request.headers.get("oai-authenticated-user-full-name-encoding") !== "percent-encoded-utf-8") return "";
-  try { return decodeURIComponent(encoded); } catch { return ""; }
-}
 
-function identityFromRequest(request: Request) {
-  const url = new URL(request.url);
-  const oaiId = request.headers.get("oai-authenticated-user-id");
-  const oaiEmail = request.headers.get("oai-authenticated-user-email");
-  if (oaiId && oaiEmail) return { userId: oaiId, email: oaiEmail.toLowerCase(), displayName: decodeName(request) || oaiEmail.split("@")[0], source: "openai-workspace" };
-  // A bare cf-access-authenticated-user-email header is not a verified identity assertion.
-  // Hosted Sites authenticates visitors through its trusted OpenAI identity headers.
-  if (url.hostname === "localhost" || url.hostname === "127.0.0.1") return { userId: "dev-local-creative", email: "creative@local.forma", displayName: "Local creative", source: "local-development" };
-  return null;
-}
-
-const cookieValue=(request:Request,name:string)=>request.headers.get("cookie")?.split(";").map((value)=>value.trim()).find((value)=>value.startsWith(`${name}=`))?.slice(name.length+1)??"";
-const decodedCookieValue=(request:Request,name:string)=>{const value=cookieValue(request,name);try{return decodeURIComponent(value);}catch{return "";}};
 const impersonationCookie=(request:Request,value:string,maxAge:number)=>`forma_impersonation=${encodeURIComponent(value)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAge}${new URL(request.url).protocol==="https:"?"; Secure":""}`;
-const impersonationMutationExempt=(request:Request)=>{const url=new URL(request.url);if(["GET","HEAD","OPTIONS"].includes(request.method))return true;if(url.pathname.startsWith("/api/impersonation")||url.pathname.startsWith("/api/replay-sessions")||url.pathname.startsWith("/api/admin/")||url.pathname==="/api/session")return true;return /^\/api\/document-jobs\/[^/]+\/(?:run|ack)$/.test(url.pathname);};
 
-async function activeImpersonation(request:Request,env:WorkerEnv,actor:PilotUser):Promise<PilotImpersonation|null>{
-  const id=decodedCookieValue(request,"forma_impersonation");if(!id)return null;const row=await env.DB.prepare(`SELECT impersonation.*,persona.display_name,fictional.email,fictional.role AS fictional_role,fictional.consent_version,fictional.consented_at
-    FROM impersonation_sessions impersonation JOIN replay_personas persona ON persona.persona_id=impersonation.persona_id JOIN users fictional ON fictional.user_id=impersonation.fictional_user_id
-    WHERE impersonation.impersonation_id=? AND impersonation.actor_user_id=? AND impersonation.status='active' AND impersonation.expires_at>? AND persona.status='ready'`).bind(id,actor.userId,new Date().toISOString()).first<Record<string,unknown>>();
-  if(!row)return null;const fictionalUser:PilotUser={userId:String(row.fictional_user_id),email:String(row.email),displayName:String(row.display_name),role:String(row.fictional_role??"creator") as PilotRole,consentVersion:row.consent_version?String(row.consent_version):null,consentedAt:row.consented_at?String(row.consented_at):null,streamId:`creative:${String(row.fictional_user_id)}`,access:await principalAccessFromRow({updated_at:row.updated_at??""},"creator"),fictional:true,billingUserId:actor.userId};
-  return{impersonationId:String(row.impersonation_id),personaId:String(row.persona_id),replaySessionId:String(row.replay_session_id),actor,fictionalUser,startedAt:String(row.started_at),expiresAt:String(row.expires_at)};
-}
+
 
 export async function requireUser(request: Request, env: WorkerEnv, minimum: PilotRole = "viewer", options:{account?:"effective"|"principal"}={}) {
   await ensureSchema(env);
-  const identity = identityFromRequest(request);
-  if (!identity) return { response: Response.json({ error: "authentication_required" }, { status: 401 }), user: null };
-  const restrictedCohort=env.FORMA_PILOT_COHORT_ID?.trim()??"";
-  type AdmittedPilotParticipant={participant_id:string;user_id:string|null;cohort_id:string;participant_cap_microusd:number};
-  let admittedParticipant:AdmittedPilotParticipant|null=null;
-  if(restrictedCohort){
-    const now=new Date().toISOString();
-    admittedParticipant=await env.DB.prepare(`SELECT participant.participant_id,participant.user_id,cohort.cohort_id,cohort.participant_cap_microusd
-      FROM pilot_cohorts cohort JOIN organizations organization ON organization.organization_id=cohort.organization_id AND organization.status='active'
-      JOIN pilot_participants participant ON participant.cohort_id=cohort.cohort_id AND participant.organization_id=cohort.organization_id
-      WHERE cohort.organization_id=(SELECT selected.organization_id FROM pilot_cohorts selected WHERE selected.cohort_id=?)
-        AND cohort.status IN ('active','paused') AND cohort.starts_at<=? AND cohort.ends_at>?
-        AND participant.email_normalized=? AND participant.status='active' AND participant.revoked_at IS NULL
-        AND (participant.user_id IS NULL OR participant.user_id=?) ORDER BY cohort.created_at DESC LIMIT 1`)
-      .bind(restrictedCohort,now,now,identity.email,identity.userId).first<AdmittedPilotParticipant>();
-    const breakglass=new Set((env.FORMA_ADMIN_EMAILS??"").split(",").map((value)=>value.trim().toLowerCase()).filter(Boolean));
-    if(!admittedParticipant&&!breakglass.has(identity.email)){
-      const ownerRecovery=await env.DB.prepare(`SELECT 1 AS authorized FROM pilot_cohorts cohort
-        JOIN organizations organization ON organization.organization_id=cohort.organization_id AND organization.status='active'
-        JOIN organization_memberships member ON member.organization_id=cohort.organization_id AND member.user_id=? AND member.role='owner'
-          AND member.status='active' AND member.accepted_at IS NOT NULL AND member.revoked_at IS NULL
-        JOIN users principal ON principal.user_id=member.user_id AND principal.email=?
-        WHERE cohort.cohort_id=? AND (cohort.status='closed' OR cohort.ends_at<=? OR cohort.starts_at>?)
-          AND NOT EXISTS(SELECT 1 FROM pilot_cohorts successor WHERE successor.organization_id=cohort.organization_id
-            AND successor.status IN ('active','paused') AND successor.starts_at<=? AND successor.ends_at>?)`)
-        .bind(identity.userId,identity.email,restrictedCohort,now,now,now,now).first();
-      if(!ownerRecovery)return{response:Response.json({error:"pilot_participant_required"},{status:403}),user:null};
-    }
-  }
-  let row = await env.DB.prepare(PRINCIPAL_WITH_ACCESS_SQL).bind(identity.userId).first<Record<string, unknown>>();
+  const current = await readExistingPrincipalRequest(request, env, minimum, options);
+  if (!("kind" in current)) return current;
+  const { identity, admittedParticipant } = current;
+  let { row } = current;
   if (!row) {
     const now = new Date().toISOString();
     const count = await env.DB.prepare("SELECT COUNT(*) AS count FROM users").first<{ count: number }>();
@@ -126,14 +83,9 @@ export async function requireUser(request: Request, env: WorkerEnv, minimum: Pil
     }
     row = await env.DB.prepare(PRINCIPAL_WITH_ACCESS_SQL).bind(identity.userId).first<Record<string, unknown>>();
   } else {
-    const observed = { email: identity.email, source: identity.source, subject: identity.userId };
-    const access = await principalAccessFromRow(row, String(row.role), observed);
-    if (access.identityPolicyDeniedCustody || row.email !== identity.email && access.deniedOrganizationIds?.length) {
-      return { response: Response.json({ error: "organization_identity_policy_required" }, { status: 403 }), user: null, principal: null, impersonation: null };
-    }
     if (row.email !== identity.email || row.display_name !== identity.displayName) {
       await env.DB.prepare("UPDATE users SET email=?, display_name=?, updated_at=? WHERE user_id=?").bind(identity.email, identity.displayName, new Date().toISOString(), identity.userId).run();
-      row = { ...row, email: identity.email, display_name: identity.displayName };
+      row = await env.DB.prepare(PRINCIPAL_WITH_ACCESS_SQL).bind(identity.userId).first<Record<string, unknown>>();
     }
   }
   if(admittedParticipant&&!admittedParticipant.user_id){
@@ -145,24 +97,27 @@ export async function requireUser(request: Request, env: WorkerEnv, minimum: Pil
         .bind(identity.userId,`pilot:${admittedParticipant.cohort_id}`,admittedParticipant.participant_cap_microusd,now),
     ]);
   }
-  const role=String(row?.role) as PilotRole;
-  if(!Object.hasOwn(roleRank,role)||!Object.hasOwn(roleRank,minimum))return{response:Response.json({error:"invalid_account_role"},{status:403}),user:null,principal:null,impersonation:null};
-  const access=await principalAccessFromRow(row??{},role,{email:identity.email,source:identity.source,subject:identity.userId});
-  if(access.identityPolicyDeniedCustody)return{response:Response.json({error:"organization_identity_policy_required"},{status:403}),user:null,principal:null,impersonation:null};
-  const principal: PilotUser = { userId: String(row?.user_id), email: String(row?.email), displayName: String(row?.display_name), role, consentVersion: row?.consent_version ? String(row?.consent_version) : null, consentedAt: row?.consented_at ? String(row.consented_at) : null, streamId: `creative:${identity.userId}`, access };
-  if (roleRank[principal.role] < roleRank[minimum]) return { response: Response.json({ error: "insufficient_role", required: minimum, role: principal.role }, { status: 403 }), user: null, principal, impersonation:null };
-  const principalOnly=options.account==="principal";
-  const checkPrincipalImpersonation=principalOnly&&new URL(request.url).pathname!=="/api/impersonation"&&Boolean(decodedCookieValue(request,"forma_impersonation"));
-  const impersonation=principalOnly&&!checkPrincipalImpersonation?null:await activeImpersonation(request,env,principal);
-  if(principalOnly&&impersonation)return{response:Response.json({error:"return_to_principal_before_internal_access"},{status:409}),user:null,principal,impersonation};
-  const user=impersonation?.fictionalUser??principal;
-  if(impersonation&&!impersonationMutationExempt(request)&&request.headers.get("x-forma-impersonation-confirmation")!=="I understand, continue")return{response:Response.json({error:"impersonation_confirmation_required",message:`You are acting as ${user.displayName}. Confirm this individual interaction before it changes the fictional account.`},{status:428}),user:null,principal,impersonation};
-  return { response: null, user, principal, impersonation };
+  return completePrincipalRequest(request, env, identity, row, minimum, options);
 }
 
-export function hasCapability(user: PilotUser, capability: FormaCapability, scope?: { organizationId?: string | null; projectAccessId?: string | null }) {
-  return principalHasCapability(user.access, capability, scope);
+/** Existing-account administrative reads must not bootstrap schema, identity, or counters. */
+export async function requireExistingHoldAdministrator(request: Request, env: WorkerEnv) {
+  const deny = (error: string, status = 403) => ({user: null, response: Response.json({error}, {status, headers:{"cache-control":"private, no-store"}})});
+  if (/(?:^|;\s*)(?:forma_impersonation|forma_project_context)=/.test(request.headers.get("cookie") ?? "")) return deny("return_to_principal_before_internal_access",409);
+  const identity = identityFromRequest(request); if (!identity) return deny("authentication_required",401);
+  const row = await env.DB.prepare(PRINCIPAL_WITH_ACCESS_SQL).bind(identity.userId).first<Record<string,unknown>>();
+  if (!row || row.email !== identity.email || row.role !== "admin" || row.consent_version !== POLICY_VERSION) return deny("hold_principal_administrator_required");
+  const admission = configuredPilotAdmissionGuard(env, {userId:identity.userId,email:identity.email});
+  if (!await env.DB.prepare("SELECT 1 AS allowed WHERE " + admission.sql).bind(...admission.bindings).first()) return deny("pilot_participant_required");
+  const access = await principalAccessFromRow(row,"admin",{email:identity.email,source:identity.source,subject:identity.userId});
+  if (access.identityPolicyDeniedCustody) return deny("organization_identity_policy_required");
+  const user: PilotUser = {userId:identity.userId,email:identity.email,displayName:String(row.display_name),role:"admin",consentVersion:POLICY_VERSION,
+    consentedAt:row.consented_at?String(row.consented_at):null,streamId:`creative:${identity.userId}`,access,
+    authorizationSnapshot:{updatedAt:String(row.updated_at??""),rawEpoch:String(row.permission_epoch??""),grants:String(row.grants_json??"[]"),
+      organizations:String(row.organizations_json??"[]"),projects:String(row.projects_json??"[]"),identityPolicies:String(row.identity_policies_json??"[]"),canvasRequirements:Number(row.approved_canvas_requirements??0)}};
+  return {user,response:null};
 }
+
 
 /** Evaluate the real principal and current accepted membership before any protected response. */
 export async function requireCapability(
@@ -180,9 +135,6 @@ export async function requireCapability(
   return authorization;
 }
 
-export function requireConsent(user: PilotUser) {
-  return user.consentVersion === POLICY_VERSION ? null : Response.json({ error: "pilot_terms_required", policyVersion: POLICY_VERSION }, { status: 428 });
-}
 
 export type PlatformAssistantPrincipal = {
   userId: string;
@@ -249,16 +201,21 @@ const budgetLimits = (env: WorkerEnv) => {
 const BUDGET_RECONCILIATION_AGE_MS = 5 * 60_000;
 type BudgetReservationRow = { output_bound?:number;output_uncertain?:number; reservation_id: string; owner_id: string; stream_id: string; correlation_id: string; operation: string; period: string; reserved_tokens: number; used_tokens: number; status: string; settlement_reason: string | null; created_at: string; settled_at: string | null; updated_at: string };
 export type ProjectBudgetScope={organizationId:string;projectAccessId:string;actorUserId:string};
-type BudgetReservationContext = { outputAdmissionReads?:OutputAdmissionReads; streamId?: string; correlationId?: string; operation?: string; period?: string; createdAt?: string;reservationId?:string;projectScope?:ProjectBudgetScope };
-
-const activeProjectBillingSql=`EXISTS(SELECT 1 FROM organization_projects project
-  JOIN organizations organization ON organization.organization_id=project.organization_id AND organization.status='active'
-  JOIN organization_memberships member ON member.organization_id=project.organization_id AND member.user_id=? AND member.status='active' AND member.accepted_at IS NOT NULL AND member.revoked_at IS NULL
-  JOIN organization_memberships owner_member ON owner_member.organization_id=project.organization_id AND owner_member.user_id=project.owner_user_id
-    AND owner_member.status='active' AND owner_member.accepted_at IS NOT NULL AND owner_member.revoked_at IS NULL
-  LEFT JOIN project_memberships project_member ON project_member.project_access_id=project.project_access_id AND project_member.organization_id=project.organization_id AND project_member.project_id=project.project_id
-    AND project_member.user_id=? AND project_member.status='active' AND project_member.revoked_at IS NULL
-  WHERE project.project_access_id=? AND project.organization_id=? AND project.status='active' AND (project.owner_user_id=? OR project_member.role IN('owner','editor')))`;
+/** Internal SQL capability; never accept this guard from request JSON. */
+export type BudgetReservationGuard={sql:string;bindings:Array<string|number|null>};
+async function budgetReservationAdmitted(env:WorkerEnv,guard:BudgetReservationGuard|undefined){return !guard||Boolean(await env.DB.prepare(`SELECT 1 AS admitted WHERE ${guard.sql}`).bind(...guard.bindings).first());}
+/** Server-only SQL proofs. The caller must supply original captured assertions,
+ * never wire-authored SQL. Missing schema is an unavailable guarded boundary,
+ * not permission to initialize output schema from a read-only preparation path. */
+async function budgetReservationAssertionStatements(env:WorkerEnv,assertions:readonly OutputSqlAssertion[]=[]){
+  if(!assertions.length)return[];
+  // Capture before the lazy import yields; callers cannot swap source bindings.
+  const captured=assertions.map(assertion=>({...assertion,bindings:[...(assertion.bindings??[])]}));
+  if(!outputSchemaIsReady(env.DB))throw new Error("output_budget_assertion_schema_unavailable");
+  const {outputAssertionStatements}=await import("./output-command-core.ts");
+  return captured.flatMap(assertion=>outputAssertionStatements(env,assertion));
+}
+type BudgetReservationContext = { batchCounterInitialization?:boolean;outputAdmissionReads?:OutputAdmissionReads;reservationGuard?:BudgetReservationGuard;reservationAssertions?:readonly OutputSqlAssertion[]; streamId?: string; correlationId?: string; operation?: string; period?: string; createdAt?: string;reservationId?:string;projectScope?:ProjectBudgetScope };
 
 async function projectBudgetPolicy(env:WorkerEnv,userId:string,scope:ProjectBudgetScope){
   if(!scope.organizationId||!scope.projectAccessId||scope.actorUserId!==userId)return null;
@@ -281,14 +238,15 @@ async function ensureBudgetRow(env: WorkerEnv, scope: "user" | "workspace", scop
   await budgetRowStatement(env,scope,scopeId,limit,reservationPeriod).run();
 }
 
-export async function readBudgets(env: WorkerEnv, userId: string) {
+export async function readBudgets(env: WorkerEnv, userId: string, options: { initialize?: boolean } = {}) {
+  const initialize = options.initialize !== false;
   const limits = budgetLimits(env);
   const currentPeriod = period();
   const select = () => env.DB.prepare("SELECT scope,used_tokens,reserved_tokens,hard_limit_tokens FROM budget_counters WHERE period=? AND ((scope='user' AND scope_id=?) OR (scope='workspace' AND scope_id='forma'))").bind(currentPeriod, userId);
   let rows = (await select().all<Record<string, unknown>>()).results;
   const userRow = rows.find((row) => row.scope === "user");
   const workspaceRow = rows.find((row) => row.scope === "workspace");
-  if (!userRow || !workspaceRow || Number(userRow.hard_limit_tokens) !== limits.user || Number(workspaceRow.hard_limit_tokens) !== limits.workspace) {
+  if (initialize && (!userRow || !workspaceRow || Number(userRow.hard_limit_tokens) !== limits.user || Number(workspaceRow.hard_limit_tokens) !== limits.workspace)) {
     const now = new Date().toISOString();
     const upsert = (scope: "user" | "workspace", scopeId: string, limit: number) => env.DB.prepare(`INSERT INTO budget_counters (scope,scope_id,period,used_tokens,reserved_tokens,hard_limit_tokens,updated_at)
       VALUES (?,?,?,0,0,?,?) ON CONFLICT(scope,scope_id,period) DO UPDATE
@@ -301,7 +259,9 @@ export async function readBudgets(env: WorkerEnv, userId: string) {
     ]);
     rows = result.at(-1)?.results ?? [];
   }
-  const map = Object.fromEntries(rows.map((row) => [String(row.scope), { used: Number(row.used_tokens), reserved: Number(row.reserved_tokens), limit: Number(row.hard_limit_tokens) }]));
+  // Preview the same effective limits the eventual reservation batch installs,
+  // without initializing or changing counters during read-only preparation.
+  const map = Object.fromEntries(rows.map((row) => [String(row.scope), { used: Number(row.used_tokens), reserved: Number(row.reserved_tokens), limit: !initialize ? (row.scope === "user" ? limits.user : limits.workspace) : Number(row.hard_limit_tokens) }]));
   return { period: currentPeriod, user: map.user ?? { used: 0, reserved: 0, limit: limits.user }, workspace: map.workspace ?? { used: 0, reserved: 0, limit: limits.workspace } };
 }
 
@@ -309,13 +269,20 @@ export async function readBudgets(env: WorkerEnv, userId: string) {
  * is metadata only. The caller must commit these statements together with its
  * authorization and assert the returned reservation inside that same transaction. */
 export async function prepareBudgetReservation(env: WorkerEnv, userId: string, tokens: number, context: BudgetReservationContext = {}) {
+  const reservationGuard=context.reservationGuard;
+  const reservationChecks=context.reservationAssertions?.length?await budgetReservationAssertionStatements(env,context.reservationAssertions):[];
   const amount = Math.max(0, Math.floor(tokens)); const limits = budgetLimits(env); const reservationPeriod = context.period ?? period();
   const scope=context.projectScope;
   assertOutputAdmissionBudget(context.outputAdmissionReads,env,userId,reservationPeriod,scope);
   const policy=scope?await readOutputAdmissionValue(context.outputAdmissionReads,"project-budget-policy",()=>projectBudgetPolicy(env,userId,scope)):null;
   if(scope&&!policy)return{ok:false as const,scope:"workspace" as const};
-  if(context.outputAdmissionReads)await initializeOutputAdmissionCounters(env,userId,reservationPeriod,scope,policy,context.outputAdmissionReads);
-  else {
+  const counterInitialization:Array<ReturnType<WorkerEnv["DB"]["prepare"]>>=[];
+  if(context.outputAdmissionReads&&!reservationChecks.length)await initializeOutputAdmissionCounters(env,userId,reservationPeriod,scope,policy,context.outputAdmissionReads);
+  else if(context.batchCounterInitialization||reservationChecks.length){
+    // Same metadata writes and live reservation guards, committed together.
+    counterInitialization.push(budgetRowStatement(env,"user",userId,limits.user,reservationPeriod),budgetRowStatement(env,"workspace","forma",limits.workspace,reservationPeriod));
+    if(scope&&policy)counterInitialization.push(budgetRowStatement(env,"workspace",scope.organizationId,Number(policy.token_limit),reservationPeriod));
+  }else {
     await ensureBudgetRow(env,"user",userId,limits.user,reservationPeriod);await ensureBudgetRow(env,"workspace","forma",limits.workspace,reservationPeriod);
     if(scope&&policy)await ensureBudgetRow(env,"workspace",scope.organizationId,Number(policy.token_limit),reservationPeriod);
   }
@@ -326,10 +293,11 @@ export async function prepareBudgetReservation(env: WorkerEnv, userId: string, t
       SELECT ?,?,?,?,?,?,?,0,'authorizing',NULL,?,NULL,?
       WHERE ?>0
       AND EXISTS (SELECT 1 FROM budget_counters WHERE scope='user' AND scope_id=? AND period=? AND used_tokens+reserved_tokens+?<=hard_limit_tokens)
-      AND EXISTS (SELECT 1 FROM budget_counters WHERE scope='workspace' AND scope_id='forma' AND period=? AND used_tokens+reserved_tokens+?<=hard_limit_tokens)${scopedPredicates}`)
-    .bind(reservationId,userId,context.streamId??"",context.correlationId??"",context.operation??"provider-operation",reservationPeriod,amount,now,now,amount,userId,reservationPeriod,amount,reservationPeriod,amount,...(scope&&policy?[scope.organizationId,reservationPeriod,amount,scope.organizationId,scope.organizationId,Number(policy.token_limit),userId,userId,scope.projectAccessId,scope.organizationId,userId]:[]));
+      AND EXISTS (SELECT 1 FROM budget_counters WHERE scope='workspace' AND scope_id='forma' AND period=? AND used_tokens+reserved_tokens+?<=hard_limit_tokens)${scopedPredicates}${reservationGuard?` AND (${reservationGuard.sql})`:""}`)
+    .bind(reservationId,userId,context.streamId??"",context.correlationId??"",context.operation??"provider-operation",reservationPeriod,amount,now,now,amount,userId,reservationPeriod,amount,reservationPeriod,amount,...(scope&&policy?[scope.organizationId,reservationPeriod,amount,scope.organizationId,scope.organizationId,Number(policy.token_limit),userId,userId,scope.projectAccessId,scope.organizationId,userId]:[]),...(reservationGuard?.bindings??[]));
+  const reservationStatementIndex=reservationChecks.length+counterInitialization.length;
   const statements=[
-    reservationStatement,
+    ...reservationChecks,...counterInitialization,reservationStatement,
     env.DB.prepare("UPDATE budget_counters SET reserved_tokens=reserved_tokens+?,updated_at=? WHERE scope='user' AND scope_id=? AND period=? AND EXISTS (SELECT 1 FROM budget_reservations WHERE reservation_id=? AND status='authorizing')").bind(amount,now,userId,reservationPeriod,reservationId),
     env.DB.prepare("UPDATE budget_counters SET reserved_tokens=reserved_tokens+?,updated_at=? WHERE scope='workspace' AND scope_id='forma' AND period=? AND EXISTS (SELECT 1 FROM budget_reservations WHERE reservation_id=? AND status='authorizing')").bind(amount,now,reservationPeriod,reservationId),
   ];
@@ -339,16 +307,18 @@ export async function prepareBudgetReservation(env: WorkerEnv, userId: string, t
       .bind(reservationId,scope.organizationId,scope.projectAccessId,userId,scope.organizationId,now,reservationId,userId));
   }
   statements.push(env.DB.prepare("UPDATE budget_reservations SET status='active',updated_at=? WHERE reservation_id=? AND owner_id=? AND status='authorizing'").bind(now,reservationId,userId));
-  return { ok: true as const, statements, reservationId, reservedTokens: amount, period: reservationPeriod };
+  return { ok: true as const, statements, reservationStatementIndex, reservationId, reservedTokens: amount, period: reservationPeriod };
 }
 
 export async function reserveBudget(env: WorkerEnv, userId: string, tokens: number, context: BudgetReservationContext = {}) {
+  const reservationGuard=context.reservationGuard;
   const prepared = await prepareBudgetReservation(env,userId,tokens,context);
   if(!prepared.ok)return prepared;
   const {statements,reservationId,reservedTokens:amount,period:reservationPeriod}=prepared;
   const scope=context.projectScope;
   const results=await env.DB.batch(statements);
-  if (Number(results[0]?.meta.changes ?? 0) !== 1) {
+  if (Number(results[prepared.reservationStatementIndex]?.meta.changes ?? 0) !== 1) {
+    if(!await budgetReservationAdmitted(env,reservationGuard))return{ok:false as const,scope:"authorization" as const};
     if(context.reservationId){
       const existing=await budgetReservation(env,userId,reservationId);
       if(existing?.status==="active"&&existing.reserved_tokens===amount&&existing.period===reservationPeriod&&existing.stream_id===(context.streamId??"")&&existing.correlation_id===(context.correlationId??"")&&existing.operation===(context.operation??"provider-operation")){
@@ -369,8 +339,10 @@ async function budgetReservation(env: WorkerEnv, userId: string, reservationId: 
 
 async function adoptLegacyBudgetReservation(env: WorkerEnv, userId: string, reservationId: string, reservedTokens: number, context: BudgetReservationContext) {
   const now = new Date().toISOString(); const createdAt = context.createdAt ?? now;
-  await env.DB.prepare("INSERT OR IGNORE INTO budget_reservations (reservation_id,owner_id,stream_id,correlation_id,operation,period,reserved_tokens,used_tokens,status,settlement_reason,created_at,settled_at,updated_at) VALUES (?,?,?,?,?,?,?,0,'active',NULL,?,NULL,?)")
-    .bind(reservationId,userId,context.streamId??"",context.correlationId??"",context.operation??"legacy-provider-operation",context.period??createdAt.slice(0,7),Math.max(0,Math.floor(reservedTokens)),createdAt,now).run();
+  // BEFORE INSERT guards run even for INSERT OR IGNORE. Existing reservations,
+  // including reviewed holds, must never be proposed for adoption again.
+  await env.DB.prepare("INSERT OR IGNORE INTO budget_reservations (reservation_id,owner_id,stream_id,correlation_id,operation,period,reserved_tokens,used_tokens,status,settlement_reason,created_at,settled_at,updated_at) SELECT ?,?,?,?,?,?,?,0,'active',NULL,?,NULL,? WHERE NOT EXISTS (SELECT 1 FROM budget_reservations WHERE reservation_id=?)")
+    .bind(reservationId,userId,context.streamId??"",context.correlationId??"",context.operation??"legacy-provider-operation",context.period??createdAt.slice(0,7),Math.max(0,Math.floor(reservedTokens)),createdAt,now,reservationId).run();
 }
 
 /** Correlated checks share the existing reservation read and settlement transaction. */
@@ -473,6 +445,18 @@ export async function settleInterruptedDocumentJobReservations(
   const checkpoint=parseDocumentReservationJson(job.result_json);
   const request=parseDocumentReservationJson(job.request_json);
   const kind=job.kind;
+  if(kind==="render_document"&&request.artifactKind==="slides"&&checkpoint.providerSubmissionProtocol===1&&providerSubmissions(checkpoint).length){
+    // New per-call accounting must never fall through to aggregate repricing or
+    // non-atomic release, including scheduler and historical cleanup callers.
+    const terminal=await env.DB.prepare(`SELECT * FROM document_jobs WHERE job_id=? AND owner_id=? AND stream_id=? AND correlation_id=?
+      AND request_json IS ? AND result_json IS ? AND status IN('failed','canceled','completed','partial')`)
+      .bind(job.job_id,user.userId,job.stream_id,job.correlation_id,job.request_json,job.result_json).first<DocumentReservationJob>();
+    if(!terminal||options.tokenReservationId&&options.tokenReservationId!==checkpoint.reservationId||options.costReservationId&&options.costReservationId!==checkpoint.costReservationId)
+      return{settled:false,usedTokens:0,releasedTokens:0,usedMicrousd:0,releasedMicrousd:0};
+    const settlement=await settleLegacyPresentationReservations(env,user,terminal,{reason:options.reason});
+    return{settled:settlement.status==="known"&&(settlement.settled||settlement.auditRepaired),usedTokens:settlement.usedTokens,
+      usedMicrousd:settlement.usedMicrousd,releasedTokens:settlement.releasedTokens,releasedMicrousd:settlement.releasedMicrousd};
+  }
   const inconclusiveLegacyImage=(kind==="preview"||kind==="generate")&&checkpoint.providerSubmissionProtocol!==1;
   if(inconclusiveLegacyImage||hasUnsettledProviderSubmission(checkpoint)||request.artifactKind==="storyboard"&&(checkpoint.storyboardProviderSubmission==="pending"||checkpoint.storyboardProviderSubmission==="confirmed"))return{settled:false,usedTokens:0,releasedTokens:0,usedMicrousd:0,releasedMicrousd:0};
   const billingUserId=user.billingUserId??user.userId;
@@ -532,6 +516,152 @@ export async function settleInterruptedDocumentJobReservations(
   return{settled:true,usedTokens,releasedTokens,usedMicrousd,releasedMicrousd};
 }
 
+/** Reconcile only an exact terminal legacy slide attempt; never admit or repeat provider work. */
+export async function settleLegacyPresentationReservations(
+  env:WorkerEnv,user:PilotUser,job:DocumentReservationJob,
+  options:{reason?:string;assertions?:import("./output-requirements-ledger.ts").OutputSqlAssertion[]}={},
+){
+  const stop=(reason:string,status:"uncertain"|"conflict"="uncertain")=>({status,reason,settled:false,auditRepaired:false,usedTokens:0,usedMicrousd:0,releasedTokens:0,releasedMicrousd:0});
+  const checkpoint=parseDocumentReservationJson(job.result_json),request=parseDocumentReservationJson(job.request_json);
+  const integer=(value:unknown)=>typeof value==="number"&&Number.isSafeInteger(value)&&value>=0;
+  const receipt=parseDocumentReservationJson(JSON.stringify(checkpoint.generationReceipt??{}));
+  if(job.owner_id!==user.userId||job.stream_id!==user.streamId||job.kind!=="render_document"||request.artifactKind!=="slides"
+    ||!["failed","canceled","completed","partial"].includes(job.status))return stop("legacy_presentation_attempt_mismatch","conflict");
+  await ensureSchema(env);
+  if(await env.DB.prepare("SELECT 1 AS disposed FROM budget_hold_dispositions WHERE job_id=? AND operator_id=? AND correlation_id=?")
+    .bind(job.job_id,user.userId,job.correlation_id).first())return stop("administrative_disposition_requires_review","conflict");
+  if(checkpoint.providerSubmissionProtocol!==1||hasUnsettledProviderSubmission(checkpoint))return stop("legacy_presentation_unresolved_provider_call");
+  const calls=providerSubmissions(checkpoint);
+  if(!calls.length)return stop("legacy_presentation_per_call_evidence_missing");
+  const currentClient=String(checkpoint.presentationProviderClientRequestId??"");
+  if(checkpoint.presentationProviderSubmission==="pending"&&(!currentClient||!calls.some(call=>call.clientRequestId===currentClient&&["completed","rejected"].includes(call.status))))return stop("legacy_presentation_unresolved_provider_call");
+  if(currentClient&&!calls.some(call=>call.clientRequestId===currentClient))return stop("legacy_presentation_current_client_mismatch");
+  if(!currentClient&&(receipt.provider_request_status==="submission_unknown"||receipt.provider_submission_uncertain===true))return stop("legacy_presentation_current_client_missing");
+  let inputTokens=0,outputTokens=0,usedTokens=0,usedMicrousd=0;
+  const responseIds=new Set<string>();
+  for(const call of calls){
+    if(call.provider!=="openai"||call.operation!=="planning")return stop("legacy_presentation_call_identity_mismatch");
+    if(call.status==="rejected"){
+      if([call.costMicrousd,call.inputTokens,call.outputTokens,call.totalTokens].some(value=>value!==undefined&&value!==0))return stop("legacy_presentation_rejection_usage_conflict");
+      continue;
+    }
+    if(call.status!=="completed"||!call.providerRequestId||responseIds.has(call.providerRequestId)
+      ||![call.inputTokens,call.outputTokens,call.totalTokens,call.costMicrousd].every(integer)
+      ||call.totalTokens!==Number(call.inputTokens)+Number(call.outputTokens))return stop("legacy_presentation_usage_unverified");
+    responseIds.add(call.providerRequestId);
+    inputTokens+=Number(call.inputTokens);outputTokens+=Number(call.outputTokens);usedTokens+=Number(call.totalTokens);usedMicrousd+=Number(call.costMicrousd);
+  }
+  if(![inputTokens,outputTokens,usedTokens,usedMicrousd].every(integer))return stop("legacy_presentation_usage_unverified");
+  const aggregate=parseDocumentReservationJson(JSON.stringify(checkpoint.plannerUsage??{})),plannerInput=parseDocumentReservationJson(JSON.stringify(checkpoint.plannerInput??{}));
+  const validation=parseDocumentReservationJson(JSON.stringify(plannerInput.validation??{}));
+  if(checkpoint.plannerResponseId&&!responseIds.has(String(checkpoint.plannerResponseId))
+    ||checkpoint.plannerResponseIds!==undefined&&(!Array.isArray(checkpoint.plannerResponseIds)||checkpoint.plannerResponseIds.some(id=>typeof id!=="string"||!responseIds.has(id)))
+    ||[receipt.actual_provider_call_count,receipt.planner_provider_call_count,plannerInput.provider_request_count,validation.provider_call_count].some(value=>Number(value??0)>calls.length)
+    ||Number(aggregate.inputTokens??0)>inputTokens||Number(aggregate.outputTokens??0)>outputTokens||Number(aggregate.totalTokens??0)>usedTokens)return stop("legacy_presentation_call_history_incomplete");
+  const tokenId=String(checkpoint.reservationId??""),costId=String(checkpoint.costReservationId??""),payer=user.billingUserId??user.userId;
+  if(!tokenId||!costId)return stop("legacy_presentation_reservations_missing","conflict");
+  await ensureSchema(env);
+  const {ensureOutputRequirementsSchema,outputAssertionStatements}=await import("./output-requirements-ledger.ts");
+  await ensureOutputRequirementsSchema(env);
+  const jobProof={sql:"EXISTS(SELECT 1 FROM document_jobs WHERE job_id=? AND owner_id=? AND stream_id=? AND document_id=? AND kind=? AND status=? AND correlation_id=? AND request_json IS ? AND result_json IS ?)",
+    bindings:[job.job_id,job.owner_id,job.stream_id,job.document_id,job.kind,job.status,job.correlation_id,job.request_json,job.result_json]};
+  const auditWhere="stream_id=? AND type='GenerationUsageRecorded' AND (json_extract(payload,'$.reservation_id')=? OR json_extract(payload,'$.cost_reservation_id')=?)";
+  const auditBindings=[job.stream_id,tokenId,costId];
+  const reads=await env.DB.batch([
+    env.DB.prepare("SELECT 1 AS matches WHERE "+jobProof.sql).bind(...jobProof.bindings),
+    env.DB.prepare("SELECT * FROM budget_reservations WHERE reservation_id=? AND owner_id=?").bind(tokenId,payer),
+    env.DB.prepare("SELECT * FROM cost_budget_reservations WHERE reservation_id=? AND owner_id=?").bind(costId,payer),
+    env.DB.prepare("SELECT * FROM project_budget_reservation_scopes WHERE reservation_kind='tokens' AND reservation_id=?").bind(tokenId),
+    env.DB.prepare("SELECT * FROM project_budget_reservation_scopes WHERE reservation_kind='usd' AND reservation_id=?").bind(costId),
+    env.DB.prepare("SELECT * FROM pilot_cost_reservation_scopes WHERE reservation_id=?").bind(costId),
+    env.DB.prepare("SELECT event_id,correlation_id,payload FROM events WHERE "+auditWhere).bind(...auditBindings),
+    env.DB.prepare("SELECT slot_id FROM output_operation_slots WHERE job_id=? OR token_reservation_id=? OR cost_reservation_id=? LIMIT 1").bind(job.job_id,tokenId,costId),
+  ]);
+  const token=reads[1]?.results[0] as BudgetReservationRow|undefined,cost=reads[2]?.results[0] as CostBudgetReservationRow|undefined;
+  type ScopeRow=Record<string,string|number|null>;
+  const tokenScope=reads[3]?.results[0] as ScopeRow|undefined,costScope=reads[4]?.results[0] as ScopeRow|undefined,fixedScope=reads[5]?.results[0] as ScopeRow|undefined;
+  if(!reads[0]?.results.length)return stop("legacy_presentation_evidence_changed","conflict");
+  if(reads[7]?.results.length)return stop("legacy_presentation_output_bound","conflict");
+  if(!token||!cost||token.stream_id!==job.stream_id||cost.stream_id!==job.stream_id
+    ||token.correlation_id!==job.correlation_id||cost.correlation_id!==job.correlation_id||token.operation!=="document-render:slides"||cost.operation!==token.operation||token.period!==cost.period
+    ||checkpoint.costReservationPeriod!==undefined&&checkpoint.costReservationPeriod!==cost.period
+    ||![token.reserved_tokens,token.used_tokens,cost.reserved_microusd,cost.used_microusd].every(integer)
+    ||!((token.status==="active"&&token.used_tokens===0)||(token.status===(usedTokens?"settled":"released")&&token.used_tokens===usedTokens))
+    ||!((["active","executing"].includes(cost.status)&&cost.used_microusd===0)||(cost.status===(usedMicrousd?"settled":"released")&&cost.used_microusd===usedMicrousd)))return stop("legacy_presentation_reservation_mismatch","conflict");
+  if(Boolean(tokenScope)!==Boolean(costScope)||tokenScope&&(!costScope||["organization_id","project_access_id","actor_user_id","workspace_scope_id"].some(key=>tokenScope[key]!==costScope[key])
+    ||tokenScope.actor_user_id!==payer||tokenScope.organization_id!==cost.workspace_id||tokenScope.workspace_scope_id!==cost.workspace_id)
+    ||!costScope&&cost.workspace_id!=="forma"||fixedScope&&(!costScope||fixedScope.actor_user_id!==payer||fixedScope.organization_id!==cost.workspace_id))return stop("legacy_presentation_billing_scope_mismatch","conflict");
+  let recordedTokens=0,recordedCost=0,recordedInput=0,recordedOutput=0;
+  const audits=(reads[6]?.results??[]) as Array<{event_id:string;correlation_id:string;payload:string}>;
+  for(const row of audits){
+    const value=parseDocumentReservationJson(String(row.payload));
+    if(row.correlation_id!==token.correlation_id||value.document_id&&value.document_id!==job.document_id||value.job_id&&value.job_id!==job.job_id
+      ||value.reservation_id&&value.reservation_id!==tokenId||value.cost_reservation_id&&value.cost_reservation_id!==costId
+      ||value.planner_response_id&&!responseIds.has(String(value.planner_response_id))
+      ||![value.total_tokens??0,value.cost_microusd??0,value.input_tokens??0,value.output_tokens??0].every(integer))return stop("legacy_presentation_audit_conflict","conflict");
+    if(value.reservation_id===tokenId){recordedTokens+=Number(value.total_tokens??0);recordedInput+=Number(value.input_tokens??0);recordedOutput+=Number(value.output_tokens??0);}
+    if(value.cost_reservation_id===costId)recordedCost+=Number(value.cost_microusd??0);
+  }
+  if(![recordedTokens,recordedCost,recordedInput,recordedOutput].every(integer)||recordedTokens>usedTokens||recordedCost>usedMicrousd)return stop("legacy_presentation_audit_conflict","conflict");
+  const missingTokens=usedTokens-recordedTokens,missingCost=usedMicrousd-recordedCost;
+  if(missingTokens&&(recordedInput+recordedOutput!==recordedTokens||recordedInput>inputTokens||recordedOutput>outputTokens))return stop("legacy_presentation_audit_breakdown_unverified");
+  const tokenActive=token.status==="active",costActive=["active","executing"].includes(cost.status),settled=tokenActive||costActive;
+  if(tokenActive&&recordedTokens>0||costActive&&recordedCost>0)return stop("legacy_presentation_audit_ahead_of_ledger","conflict");
+  const known=(didSettle:boolean,auditRepaired:boolean)=>({status:"known" as const,settled:didSettle,auditRepaired,usedTokens,usedMicrousd,
+    releasedTokens:didSettle&&tokenActive?Math.max(0,token.reserved_tokens-usedTokens):0,releasedMicrousd:didSettle&&costActive?Math.max(0,cost.reserved_microusd-usedMicrousd):0,
+    receipt:{reservation_id:cost.reservation_id,reserved_microusd:cost.reserved_microusd,used_microusd:usedMicrousd,status:usedMicrousd?"settled":"released"}});
+  if(!settled&&!missingTokens&&!missingCost)return known(false,false);
+  const assert=(proof:import("./output-requirements-ledger.ts").OutputSqlAssertion)=>outputAssertionStatements(env,proof);
+  const rowProof=(table:string,row:ScopeRow)=>({sql:"EXISTS(SELECT 1 FROM "+table+" WHERE "+Object.keys(row).map(key=>key+" IS ?").join(" AND ")+")",bindings:Object.values(row)});
+  const scopeProof=(table:string,row:ScopeRow|undefined,predicate:string,bindings:Array<string|number|null>)=>row?rowProof(table,row):{sql:"NOT EXISTS(SELECT 1 FROM "+table+" WHERE "+predicate+")",bindings};
+  const nativeProof={sql:"NOT EXISTS(SELECT 1 FROM output_operation_slots WHERE job_id=? OR token_reservation_id=? OR cost_reservation_id=?)",bindings:[job.job_id,tokenId,costId]};
+  const proofs=[...(options.assertions??[]),jobProof,nativeProof,rowProof("budget_reservations",token as unknown as ScopeRow),rowProof("cost_budget_reservations",cost as unknown as ScopeRow),
+    scopeProof("project_budget_reservation_scopes",tokenScope,"reservation_kind='tokens' AND reservation_id=?",[tokenId]),scopeProof("project_budget_reservation_scopes",costScope,"reservation_kind='usd' AND reservation_id=?",[costId]),
+    scopeProof("pilot_cost_reservation_scopes",fixedScope,"reservation_id=?",[costId]),{sql:"(SELECT COUNT(*) FROM events WHERE "+auditWhere+")=?",bindings:[...auditBindings,audits.length]}];
+  const counterProof=(table:string,unit:string,scope:string,id:string,reserved:number,used:number,counterPeriod=token.period)=>({sql:"EXISTS(SELECT 1 FROM "+table+" WHERE scope=? AND scope_id=? AND period=? AND typeof(used_"+unit+")='integer' AND used_"+unit+">=0 AND used_"+unit+"<=? AND typeof(reserved_"+unit+")='integer' AND reserved_"+unit+">=?)",bindings:[scope,id,counterPeriod,Number.MAX_SAFE_INTEGER-used,reserved]});
+  if(tokenActive){
+    proofs.push(counterProof("budget_counters","tokens","user",payer,token.reserved_tokens,usedTokens),counterProof("budget_counters","tokens","workspace","forma",token.reserved_tokens,usedTokens));
+    if(tokenScope)proofs.push(counterProof("budget_counters","tokens","workspace",String(tokenScope.organization_id),token.reserved_tokens,usedTokens));
+  }
+  if(costActive){
+    proofs.push(counterProof("cost_budget_counters","microusd","user",payer,cost.reserved_microusd,usedMicrousd),counterProof("cost_budget_counters","microusd","workspace",cost.workspace_id,cost.reserved_microusd,usedMicrousd));
+    if(cost.workspace_id!=="forma")proofs.push(counterProof("cost_budget_counters","microusd","workspace","forma",cost.reserved_microusd,usedMicrousd));
+    if(fixedScope)proofs.push(counterProof("cost_budget_counters","microusd","pilot_org",String(fixedScope.cohort_id),cost.reserved_microusd,usedMicrousd,"pilot:"+fixedScope.cohort_id),counterProof("cost_budget_counters","microusd","pilot_user",payer,cost.reserved_microusd,usedMicrousd,"pilot:"+fixedScope.cohort_id));
+  }
+  const statements=proofs.flatMap(assert),reason=options.reason??"legacy_presentation_provider_reconciled";
+  const appendSettlement=(batch:D1PreparedStatement[],counterCount:number)=>batch.forEach((statement,index)=>{statements.push(statement);if(index<counterCount||index===batch.length-1)statements.push(...assert({sql:"changes()=1"}));});
+  if(tokenActive)appendSettlement(tokenSettlementStatements(env,payer,tokenId,token,tokenScope?{organization_id:String(tokenScope.organization_id),project_access_id:String(tokenScope.project_access_id),actor_user_id:String(tokenScope.actor_user_id)}:null,usedTokens,reason).statements,2+(tokenScope?1:0));
+  if(costActive)appendSettlement(costSettlementStatements(env,payer,cost,fixedScope?{cohort_id:String(fixedScope.cohort_id),organization_id:String(fixedScope.organization_id),actor_user_id:String(fixedScope.actor_user_id)}:null,usedMicrousd).statements,2+(cost.workspace_id!=="forma"?1:0)+(fixedScope?2:0));
+  const eventIds:string[]=[];
+  const appendFinancialEvent=async(type:string,payload:Record<string,unknown>,identity:unknown)=>{
+    const digest=Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256",new TextEncoder().encode(JSON.stringify(["legacy-slides-settlement-v1",job.job_id,job.correlation_id,tokenId,costId,type,identity]))))).map(value=>value.toString(16).padStart(2,"0")).join("");
+    const event=makeEvent(job.stream_id,0,"worker:policy","server:policy",token.correlation_id,type,payload);
+    event.eventId=digest.slice(0,8)+"-"+digest.slice(8,12)+"-5"+digest.slice(13,16)+"-8"+digest.slice(17,20)+"-"+digest.slice(20,32);
+    const bindings=eventWriteBindings(event);
+    statements.push(env.DB.prepare("INSERT INTO event_write_stage ("+EVENT_WRITE_COLUMNS+") SELECT ?,?,COALESCE((SELECT MAX(sequence) FROM events WHERE stream_id=?),0)+1,"+Array(14).fill("?").join(","))
+      .bind(...bindings.slice(0,2),job.stream_id,...bindings.slice(3)));
+    eventIds.push(event.eventId);
+  };
+  const common={job_id:job.job_id,document_id:job.document_id,artifact_kind:"slides",reservation_id:tokenId,cost_reservation_id:costId,reason};
+  if(missingTokens||missingCost)await appendFinancialEvent("GenerationUsageRecorded",{...common,operation:"document-render:slides:reconciliation",
+    input_tokens:missingTokens?inputTokens-recordedInput:0,output_tokens:missingTokens?outputTokens-recordedOutput:0,total_tokens:missingTokens,planner_tokens:missingTokens,
+    cost_microusd:missingCost,planner_cost_microusd:missingCost,reserved_tokens:token.reserved_tokens,reserved_microusd:cost.reserved_microusd,
+    planner_response_id:String(checkpoint.plannerResponseId??"")||[...responseIds].at(-1)||null,model_ids:[...new Set(calls.map(call=>call.model))],provider_call_count:calls.length},[recordedTokens,recordedCost,usedTokens,usedMicrousd]);
+  if(settled)await appendFinancialEvent("BudgetReleased",{...common,operation:"document-render:slides",reserved_tokens:tokenActive?token.reserved_tokens:0,used_tokens:tokenActive?usedTokens:0,released_tokens:tokenActive?Math.max(0,token.reserved_tokens-usedTokens):0,
+    reserved_microusd:costActive?cost.reserved_microusd:0,used_microusd:costActive?usedMicrousd:0,released_microusd:costActive?Math.max(0,cost.reserved_microusd-usedMicrousd):0},[tokenActive,costActive,usedTokens,usedMicrousd]);
+  const finalProof={sql:"EXISTS(SELECT 1 FROM budget_reservations WHERE reservation_id=? AND owner_id=? AND status=? AND used_tokens=?) AND EXISTS(SELECT 1 FROM cost_budget_reservations WHERE reservation_id=? AND owner_id=? AND status=? AND used_microusd=?)"
+    +" AND (SELECT COALESCE(SUM(COALESCE(json_extract(payload,'$.total_tokens'),0)),0) FROM events WHERE stream_id=? AND type='GenerationUsageRecorded' AND json_extract(payload,'$.reservation_id')=?)=?"
+    +" AND (SELECT COALESCE(SUM(COALESCE(json_extract(payload,'$.cost_microusd'),0)),0) FROM events WHERE stream_id=? AND type='GenerationUsageRecorded' AND json_extract(payload,'$.cost_reservation_id')=?)=?",
+    bindings:[tokenId,payer,usedTokens?"settled":"released",usedTokens,costId,payer,usedMicrousd?"settled":"released",usedMicrousd,job.stream_id,tokenId,usedTokens,job.stream_id,costId,usedMicrousd]};
+  statements.push(...assert(finalProof),...assert({sql:"(SELECT COUNT(*) FROM events WHERE event_id IN(SELECT value FROM json_each(?)))=?",bindings:[JSON.stringify(eventIds),eventIds.length]}));
+  try{await env.DB.batch(statements);return known(settled,!settled&&Boolean(missingTokens||missingCost));}
+  catch{
+    // Lost acknowledgement or a competing reconciler is success only after an exact durable re-read.
+    const confirmed=await env.DB.prepare("SELECT 1 AS confirmed WHERE "+jobProof.sql+" AND "+nativeProof.sql+" AND "+finalProof.sql).bind(...jobProof.bindings,...nativeProof.bindings,...finalProof.bindings).first();
+    return confirmed?known(false,false):stop("legacy_presentation_accounting_write_conflict","conflict");
+  }
+}
+
 /** Repairs orphaned owner-and-stream-scoped reservations without discarding documented provider usage. */
 export async function reconcileFailedBudgetReservations(env: WorkerEnv, user: PilotUser, now = Date.now()) {
   await ensureSchema(env);const cutoff=new Date(now-BUDGET_RECONCILIATION_AGE_MS).toISOString();const billingUserId=user.billingUserId??user.userId;
@@ -543,18 +673,28 @@ export async function reconcileFailedBudgetReservations(env: WorkerEnv, user: Pi
     FROM events reserved
     WHERE reserved.stream_id=? AND reserved.type='BudgetReserved' AND reserved.occurred_at<=?
       AND json_extract(reserved.payload,'$.reservation_id') IS NOT NULL
+      AND NOT EXISTS (SELECT 1 FROM budget_reservations ledger WHERE ledger.reservation_id=json_extract(reserved.payload,'$.reservation_id'))
       AND NOT EXISTS (SELECT 1 FROM events terminal WHERE terminal.stream_id=reserved.stream_id AND terminal.type IN ('BudgetReleased','GenerationUsageRecorded') AND json_extract(terminal.payload,'$.reservation_id')=json_extract(reserved.payload,'$.reservation_id'))
     ORDER BY reserved.occurred_at ASC LIMIT 200`).bind(user.streamId,cutoff);
   const [legacy,outputHistory]=await env.DB.batch<Record<string,unknown>>([legacyStatement,
     env.DB.prepare("SELECT EXISTS(SELECT 1 FROM events WHERE type='OutputExecutionAuthorized' AND (stream_id=? OR actor=?)) AS present").bind(user.streamId,`user:${user.userId}`)]);
   if(outputHistory.results[0]?.present){
     await(await import("./output-requirements-ledger.ts")).ensureOutputRequirementsSchema(env);
-    await(await import("./output-execution-control.ts")).reconcileExpiredOutputAuthorizations(env,user,now);
+    await(await import("./output-reconciliation-entry.ts")).reconcileExpiredOutputAuthorizations(env,user,now);
   }
   for(const row of legacy.results){const reservationId=String(row.reservation_id??"");const reservedTokens=Number(row.reserved_tokens??0);if(!reservationId||reservedTokens<=0)continue;await adoptLegacyBudgetReservation(env,billingUserId,reservationId,reservedTokens,{streamId:user.streamId,correlationId:String(row.correlation_id??""),operation:String(row.operation??"image-generation"),period:String(row.period??period()),createdAt:String(row.occurred_at??new Date(now).toISOString())});}
 
   const active=await env.DB.prepare(`SELECT * FROM budget_reservations reservation
     WHERE reservation.owner_id=? AND reservation.stream_id=? AND reservation.status='active' AND reservation.created_at<=?
+      -- Legacy planning lacks an exact non-submission boundary, including attempt-correlated orphan holds.
+      -- Only explicit proven-unused release paths may release this historical operation.
+      AND reservation.operation!='adaptive-structure'
+      -- Both historical assistant formats can outlive their task row; neither is proof of non-submission.
+      AND reservation.operation NOT LIKE 'assistant:%' AND reservation.operation NOT LIKE 'assistant-specialist:%'
+      AND reservation.correlation_id NOT LIKE 'assistant:%' AND reservation.correlation_id NOT LIKE 'assistant-specialist:%'
+      AND NOT EXISTS (SELECT 1 FROM consequential_execution_steps step WHERE step.token_reservation_id=reservation.reservation_id
+        AND(step.status IN('reserved','submitting','uncertain','usage-recorded','settled') OR step.verified_tokens IS NOT NULL
+          OR step.verified_microusd IS NOT NULL OR step.provider_request_id IS NOT NULL))
       AND NOT EXISTS (SELECT 1 FROM document_jobs job WHERE job.stream_id=? AND job.owner_id=? AND (job.status IN ('queued','running','committing') OR job.status IN ('failed','canceled') AND (${unsettledProviderSubmissionSql("job.result_json")} OR json_extract(COALESCE(job.result_json,'{}'),'$.presentationProviderSubmission')='pending' OR json_extract(COALESCE(job.request_json,'{}'),'$.artifactKind')='storyboard' AND json_extract(COALESCE(job.result_json,'{}'),'$.storyboardProviderSubmission') IN ('pending','confirmed') OR json_extract(COALESCE(job.request_json,'{}'),'$.artifactKind')='audio' AND json_extract(COALESCE(job.result_json,'{}'),'$.audioProviderSubmission')='pending'))
         AND (job.correlation_id=reservation.correlation_id OR json_extract(COALESCE(job.result_json,'{}'),'$.reservationId')=reservation.reservation_id))
     ORDER BY reservation.created_at ASC LIMIT 100`).bind(billingUserId,user.streamId,cutoff,user.streamId,user.userId).all<BudgetReservationRow>();
@@ -636,13 +776,14 @@ function initializeOutputAdmissionCounters(env:WorkerEnv,userId:string,reservati
   });
 }
 
-export async function readCostBudgets(env: WorkerEnv, userId: string) {
+export async function readCostBudgets(env: WorkerEnv, userId: string, options: { initialize?: boolean } = {}) {
+  const initialize = options.initialize !== false;
   const limits = costBudgetLimits(env);
   const currentPeriod=period();
   const select=()=>env.DB.prepare("SELECT scope,used_microusd,reserved_microusd,hard_limit_microusd FROM cost_budget_counters WHERE period=? AND ((scope='user' AND scope_id=?) OR (scope='workspace' AND scope_id='forma'))").bind(currentPeriod,userId);
   let rows=(await select().all<Record<string,unknown>>()).results;
   const userRow=rows.find((row)=>row.scope==="user"),workspaceRow=rows.find((row)=>row.scope==="workspace");
-  if(!userRow||!workspaceRow||Number(userRow.hard_limit_microusd)!==limits.user||Number(workspaceRow.hard_limit_microusd)!==limits.workspace){
+  if(initialize&&(!userRow||!workspaceRow||Number(userRow.hard_limit_microusd)!==limits.user||Number(workspaceRow.hard_limit_microusd)!==limits.workspace)){
     const now=new Date().toISOString();
     const upsert=(scope:"user"|"workspace",scopeId:string,limit:number)=>env.DB.prepare(`INSERT INTO cost_budget_counters (scope,scope_id,period,used_microusd,reserved_microusd,hard_limit_microusd,updated_at)
       VALUES (?,?,?,0,0,?,?) ON CONFLICT(scope,scope_id,period) DO UPDATE
@@ -652,7 +793,7 @@ export async function readCostBudgets(env: WorkerEnv, userId: string) {
     rows=result.at(-1)?.results??[];
   }
   const map = Object.fromEntries(rows.map((row) => {
-    const usedMicrousd = Number(row.used_microusd); const reservedMicrousd = Number(row.reserved_microusd); const limitMicrousd = Number(row.hard_limit_microusd);
+    const usedMicrousd = Number(row.used_microusd); const reservedMicrousd = Number(row.reserved_microusd); const limitMicrousd = !initialize ? (row.scope === "user" ? limits.user : limits.workspace) : Number(row.hard_limit_microusd);
     return [String(row.scope), { usedMicrousd, reservedMicrousd, limitMicrousd, remainingMicrousd: Math.max(0, limitMicrousd - usedMicrousd - reservedMicrousd) } satisfies CostBudgetSnapshot];
   }));
   const empty = (limitMicrousd: number): CostBudgetSnapshot => ({ usedMicrousd: 0, reservedMicrousd: 0, limitMicrousd, remainingMicrousd: limitMicrousd });
@@ -749,7 +890,11 @@ export type CostBudgetReservationRow = {
 };
 
 type CostReservationOptions = {
+  batchCounterInitialization?:boolean;
   outputAdmissionReads?:OutputAdmissionReads;
+  reservationGuard?:BudgetReservationGuard;
+  /** Server-only original proofs, committed with counters/reservation/scopes. */
+  reservationAssertions?:readonly OutputSqlAssertion[];
   maximumMicrousd: number;
   allowUserOverage: boolean;
   reservationId?: string;
@@ -805,6 +950,8 @@ export async function costBudgetReservation(env: WorkerEnv, userId: string, rese
 /** Build the existing dollar reservation for composition with a guarded admission.
  * This does not reserve money. There is no separate Output budget authority. */
 export async function prepareCostBudgetReservation(env: WorkerEnv, userId: string, requestedMicrousd: number, options: CostReservationOptions) {
+  const reservationGuard=options.reservationGuard;
+  const reservationChecks=options.reservationAssertions?.length?await budgetReservationAssertionStatements(env,options.reservationAssertions):[];
   const amount = Math.max(0, Math.floor(requestedMicrousd));
   if (!amount || amount > Math.floor(options.maximumMicrousd)) return { ok: false as const, scope: "authorization" as const };
   const limits = costBudgetLimits(env);
@@ -820,9 +967,16 @@ export async function prepareCostBudgetReservation(env: WorkerEnv, userId: strin
   const policy=scope?await readOutputAdmissionValue(options.outputAdmissionReads,"project-budget-policy",()=>projectBudgetPolicy(env,userId,scope)):null;
   if(scope&&!policy)return{ok:false as const,scope:"workspace" as const};
   const workspaceId=scope?.organizationId??"forma";
-  let userBefore:Record<string,unknown>|null;
-  if(options.outputAdmissionReads)userBefore=await initializeOutputAdmissionCounters(env,userId,reservationPeriod,scope,policy,options.outputAdmissionReads);
-  else {
+  let userBefore:Record<string,unknown>|null=null;
+  const counterInitialization:Array<ReturnType<WorkerEnv["DB"]["prepare"]>>=[];
+  let userBeforeStatementIndex:number|undefined;
+  if(options.outputAdmissionReads&&!reservationChecks.length)userBefore=await initializeOutputAdmissionCounters(env,userId,reservationPeriod,scope,policy,options.outputAdmissionReads);
+  else if(options.batchCounterInitialization||reservationChecks.length){
+    counterInitialization.push(costBudgetRowStatement(env,"user",userId,limits.user,reservationPeriod),costBudgetRowStatement(env,"workspace","forma",limits.workspace,reservationPeriod));
+    if(scope&&policy)counterInitialization.push(costBudgetRowStatement(env,"workspace",scope.organizationId,Number(policy.microusd_limit),reservationPeriod));
+    userBeforeStatementIndex=reservationChecks.length+counterInitialization.length;
+    counterInitialization.push(env.DB.prepare("SELECT used_microusd,reserved_microusd,hard_limit_microusd FROM cost_budget_counters WHERE scope='user' AND scope_id=? AND period=?").bind(userId,reservationPeriod));
+  }else {
     await ensureCostBudgetRow(env, "user", userId, limits.user, reservationPeriod);
     await ensureCostBudgetRow(env, "workspace", "forma", limits.workspace, reservationPeriod);
     if(scope&&policy)await ensureCostBudgetRow(env,"workspace",scope.organizationId,Number(policy.microusd_limit),reservationPeriod);
@@ -838,13 +992,15 @@ export async function prepareCostBudgetReservation(env: WorkerEnv, userId: strin
         AND participant.user_id=? AND participant.status='active' AND participant.revoked_at IS NULL AND participant.role!='reviewer')
     AND EXISTS(SELECT 1 FROM cost_budget_counters WHERE scope='pilot_org' AND scope_id=? AND period=? AND used_microusd+reserved_microusd+?<=hard_limit_microusd)
     AND EXISTS(SELECT 1 FROM cost_budget_counters WHERE scope='pilot_user' AND scope_id=? AND period=? AND used_microusd+reserved_microusd+?<=hard_limit_microusd)`:"";
+  const reservationStatementIndex=reservationChecks.length+counterInitialization.length;
   const statements=[
+    ...reservationChecks,...counterInitialization,
     env.DB.prepare(`INSERT OR IGNORE INTO cost_budget_reservations (reservation_id,owner_id,workspace_id,stream_id,correlation_id,operation,period,reserved_microusd,used_microusd,status,allow_user_overage,created_at,settled_at,updated_at)
       SELECT ?,?,?,?,?,?,?,?,0,'authorizing',?,?,NULL,?
       WHERE ?>0
       AND EXISTS (SELECT 1 FROM cost_budget_counters WHERE scope='user' AND scope_id=? AND period=? AND (?=1 OR used_microusd+reserved_microusd+?<=hard_limit_microusd))
-      AND EXISTS (SELECT 1 FROM cost_budget_counters WHERE scope='workspace' AND scope_id='forma' AND period=? AND used_microusd+reserved_microusd+?<=hard_limit_microusd)${scopedPredicates}${pilotPredicates}`)
-      .bind(reservationId,userId,workspaceId,options.streamId??"",options.correlationId??"",options.operation??"provider-operation",reservationPeriod,amount,userOverageAllowed?1:0,now,now,amount,userId,reservationPeriod,userOverageAllowed?1:0,amount,reservationPeriod,amount,...(scope&&policy?[scope.organizationId,reservationPeriod,amount,scope.organizationId,scope.organizationId,Number(policy.microusd_limit),userId,userId,scope.projectAccessId,scope.organizationId,userId]:[]),...(pilot?[pilot.cohort_id,pilot.organization_id,now,now,userId,pilot.cohort_id,pilotPeriod,amount,userId,pilotPeriod,amount]:[])),
+      AND EXISTS (SELECT 1 FROM cost_budget_counters WHERE scope='workspace' AND scope_id='forma' AND period=? AND used_microusd+reserved_microusd+?<=hard_limit_microusd)${scopedPredicates}${pilotPredicates}${reservationGuard?` AND (${reservationGuard.sql})`:""}`)
+      .bind(reservationId,userId,workspaceId,options.streamId??"",options.correlationId??"",options.operation??"provider-operation",reservationPeriod,amount,userOverageAllowed?1:0,now,now,amount,userId,reservationPeriod,userOverageAllowed?1:0,amount,reservationPeriod,amount,...(scope&&policy?[scope.organizationId,reservationPeriod,amount,scope.organizationId,scope.organizationId,Number(policy.microusd_limit),userId,userId,scope.projectAccessId,scope.organizationId,userId]:[]),...(pilot?[pilot.cohort_id,pilot.organization_id,now,now,userId,pilot.cohort_id,pilotPeriod,amount,userId,pilotPeriod,amount]:[]),...(reservationGuard?.bindings??[])),
     env.DB.prepare(`UPDATE cost_budget_counters SET reserved_microusd=reserved_microusd+?,updated_at=? WHERE scope='user' AND scope_id=? AND period=? AND ${authorizing}`).bind(amount, now, userId, reservationPeriod, reservationId, userId),
     env.DB.prepare(`UPDATE cost_budget_counters SET reserved_microusd=reserved_microusd+?,updated_at=? WHERE scope='workspace' AND scope_id='forma' AND period=? AND ${authorizing}`).bind(amount, now, reservationPeriod, reservationId, userId),
   ];
@@ -862,17 +1018,20 @@ export async function prepareCostBudgetReservation(env: WorkerEnv, userId: strin
       SELECT ?,?,?,?,? WHERE ${authorizing}`).bind(reservationId,pilot.cohort_id,pilot.organization_id,userId,now,reservationId,userId));
   }
   statements.push(env.DB.prepare("UPDATE cost_budget_reservations SET status='active',updated_at=? WHERE reservation_id=? AND owner_id=? AND status='authorizing'").bind(now,reservationId,userId));
-  return { ok:true as const, statements, reservationId, reservedMicrousd:amount, period:reservationPeriod, workspaceId, userBefore, userOverageAllowed, pilot, pilotPeriod, limits };
+  return { ok:true as const, statements, reservationStatementIndex, userBeforeStatementIndex, reservationId, reservedMicrousd:amount, period:reservationPeriod, workspaceId, userBefore, userOverageAllowed, pilot, pilotPeriod, limits };
 }
 
 export async function reserveCostBudget(env: WorkerEnv, userId: string, requestedMicrousd: number, options: CostReservationOptions) {
+  const reservationGuard=options.reservationGuard;
   const prepared=await prepareCostBudgetReservation(env,userId,requestedMicrousd,options);
   if(!prepared.ok)return prepared;
-  const {statements,reservationId,reservedMicrousd:amount,period:reservationPeriod,workspaceId,userBefore,userOverageAllowed,pilot,pilotPeriod,limits}=prepared;
+  const {statements,reservationId,reservedMicrousd:amount,period:reservationPeriod,workspaceId,userOverageAllowed,pilot,pilotPeriod,limits}=prepared;
   const scope=options.projectScope;
-  const results=await env.DB.batch(statements);
-  if (Number(results[0]?.meta.changes ?? 0) !== 1) {
+  const results=await env.DB.batch<Record<string,unknown>>(statements);
+  const userBefore=prepared.userBeforeStatementIndex===undefined?prepared.userBefore:results[prepared.userBeforeStatementIndex]?.results[0]??null;
+  if (Number(results[prepared.reservationStatementIndex]?.meta.changes ?? 0) !== 1) {
     const existing = options.reservationId ? await costBudgetReservation(env, userId, reservationId) : null;
+    if(!await budgetReservationAdmitted(env,reservationGuard))return{ok:false as const,scope:"authorization" as const};
     if(existing?.status==="active"&&Number(existing.reserved_microusd)===amount&&existing.period===reservationPeriod&&existing.workspace_id===workspaceId&&existing.stream_id===(options.streamId??"")&&existing.correlation_id===(options.correlationId??"")&&existing.operation===(options.operation??"provider-operation")){
       if(!scope)return{ok:true as const,reservationId,reservedMicrousd:amount,period:reservationPeriod,userOverageMicrousd:0,reused:true as const};
       const bound=await env.DB.prepare("SELECT organization_id,project_access_id,actor_user_id FROM project_budget_reservation_scopes WHERE reservation_kind='usd' AND reservation_id=?").bind(reservationId).first<Record<string,unknown>>();
@@ -1014,6 +1173,105 @@ function costSettlementStatements(env:WorkerEnv,userId:string,row:CostBudgetRese
   return {statements,used,status};
 }
 
+/** Server-only identity of an already claimed Scene purchase; never accepted from request JSON. */
+export type ClaimedSceneBudget = {
+  actorUserId: string;
+  streamId: string;
+  correlationId: string;
+  period: string;
+  tokenReservationId: string;
+  costReservationId: string;
+  reservedTokens: number;
+  reservedMicrousd: number;
+  projectScope: ProjectExecutionScope | null;
+  pilotCohortId: string | null;
+};
+
+/**
+ * Read-only dispatch proof for the original reservation, not another reservation or a release.
+ * Current counters already include this hold. Comparing their totals never adds the hold twice.
+ */
+export function claimedSceneBudgetGuard(env: WorkerEnv, claim: ClaimedSceneBudget): BudgetReservationGuard {
+  const tokens=budgetLimits(env), money=costBudgetLimits(env), scope=claim.projectScope;
+  if (!claim.actorUserId || !claim.streamId || !claim.correlationId || claim.period!==period()
+    || !claim.tokenReservationId || !claim.costReservationId
+    || !Number.isSafeInteger(claim.reservedTokens) || claim.reservedTokens<=0
+    || !Number.isSafeInteger(claim.reservedMicrousd) || claim.reservedMicrousd<=0
+    || scope && scope.actorUserId!==claim.actorUserId || claim.pilotCohortId && !scope) return {sql:"0",bindings:[]};
+  const value=JSON.stringify({...claim,workspaceId:scope?.organizationId??"forma",
+    tokenUserLimit:tokens.user,tokenGlobalLimit:tokens.workspace,
+    costUserLimit:money.user,costGlobalLimit:money.workspace,now:new Date().toISOString()});
+  const counter=(alias:string,unit:"tokens"|"microusd",held:string,limit?:string)=>`
+    typeof(${alias}.used_${unit})='integer' AND typeof(${alias}.reserved_${unit})='integer'
+    AND typeof(${alias}.hard_limit_${unit})='integer' AND ${alias}.used_${unit}>=0
+    AND ${alias}.reserved_${unit}>=${held} AND ${alias}.hard_limit_${unit}>0
+    AND ${alias}.used_${unit}+${alias}.reserved_${unit}<=${limit?`MIN(${alias}.hard_limit_${unit},${limit})`:`${alias}.hard_limit_${unit}`}`;
+  const sql=`EXISTS(
+    SELECT 1 FROM (SELECT ? AS value) pinned
+    JOIN budget_reservations token ON token.reservation_id=json_extract(pinned.value,'$.tokenReservationId')
+    JOIN cost_budget_reservations cost ON cost.reservation_id=json_extract(pinned.value,'$.costReservationId')
+    JOIN budget_counters token_user ON token_user.scope='user' AND token_user.scope_id=token.owner_id AND token_user.period=token.period
+    JOIN budget_counters token_global ON token_global.scope='workspace' AND token_global.scope_id='forma' AND token_global.period=token.period
+    JOIN cost_budget_counters cost_user ON cost_user.scope='user' AND cost_user.scope_id=cost.owner_id AND cost_user.period=cost.period
+    JOIN cost_budget_counters cost_global ON cost_global.scope='workspace' AND cost_global.scope_id='forma' AND cost_global.period=cost.period
+    WHERE (token.owner_id,token.stream_id,token.correlation_id,token.operation,token.period,token.reserved_tokens,token.used_tokens,token.status)=
+      (json_extract(pinned.value,'$.actorUserId'),json_extract(pinned.value,'$.streamId'),json_extract(pinned.value,'$.correlationId'),
+       'document-render:scene',json_extract(pinned.value,'$.period'),json_extract(pinned.value,'$.reservedTokens'),0,'active')
+      AND token.settled_at IS NULL
+      AND (cost.owner_id,cost.stream_id,cost.correlation_id,cost.operation,cost.period,cost.reserved_microusd,cost.used_microusd,cost.status,cost.allow_user_overage,cost.workspace_id)=
+      (token.owner_id,token.stream_id,token.correlation_id,token.operation,token.period,
+       json_extract(pinned.value,'$.reservedMicrousd'),0,'executing',0,json_extract(pinned.value,'$.workspaceId'))
+      AND cost.settled_at IS NULL
+      AND (${counter("token_user","tokens","token.reserved_tokens","json_extract(pinned.value,'$.tokenUserLimit')")})
+      AND (${counter("token_global","tokens","token.reserved_tokens","json_extract(pinned.value,'$.tokenGlobalLimit')")})
+      AND (${counter("cost_user","microusd","cost.reserved_microusd","json_extract(pinned.value,'$.costUserLimit')")})
+      AND (${counter("cost_global","microusd","cost.reserved_microusd","json_extract(pinned.value,'$.costGlobalLimit')")})
+      AND ${scope?`EXISTS(
+        SELECT 1 FROM project_budget_reservation_scopes token_scope
+        JOIN project_budget_reservation_scopes cost_scope ON cost_scope.reservation_kind='usd' AND cost_scope.reservation_id=cost.reservation_id
+        JOIN budget_scope_policies policy ON policy.scope='workspace' AND policy.scope_id=cost.workspace_id AND policy.organization_id=cost.workspace_id
+        JOIN budget_counters workspace_tokens ON workspace_tokens.scope='workspace' AND workspace_tokens.scope_id=cost.workspace_id AND workspace_tokens.period=token.period
+        JOIN cost_budget_counters workspace_cost ON workspace_cost.scope='workspace' AND workspace_cost.scope_id=cost.workspace_id AND workspace_cost.period=cost.period
+        WHERE token_scope.reservation_kind='tokens' AND token_scope.reservation_id=token.reservation_id
+          AND (token_scope.organization_id,token_scope.project_access_id,token_scope.actor_user_id,token_scope.workspace_scope_id)=
+            (cost.workspace_id,json_extract(pinned.value,'$.projectScope.projectAccessId'),token.owner_id,cost.workspace_id)
+          AND (cost_scope.organization_id,cost_scope.project_access_id,cost_scope.actor_user_id,cost_scope.workspace_scope_id)=
+            (token_scope.organization_id,token_scope.project_access_id,token_scope.actor_user_id,token_scope.workspace_scope_id)
+          AND typeof(policy.token_limit)='integer' AND policy.token_limit>0
+          AND typeof(policy.microusd_limit)='integer' AND policy.microusd_limit>0
+          AND (${counter("workspace_tokens","tokens","token.reserved_tokens","policy.token_limit")})
+          AND (${counter("workspace_cost","microusd","cost.reserved_microusd","policy.microusd_limit")})
+          AND ${activeProjectBillingSql}
+      )`:`NOT EXISTS(SELECT 1 FROM project_budget_reservation_scopes billing
+        WHERE (billing.reservation_kind,billing.reservation_id) IN (('tokens',token.reservation_id),('usd',cost.reservation_id)))`}
+      AND ${claim.pilotCohortId?`EXISTS(
+        SELECT 1 FROM pilot_cost_reservation_scopes fixed
+        JOIN pilot_cohorts cohort ON cohort.cohort_id=fixed.cohort_id AND cohort.organization_id=fixed.organization_id
+        JOIN pilot_participants participant ON participant.cohort_id=cohort.cohort_id AND participant.organization_id=cohort.organization_id
+        JOIN cost_budget_counters pilot_org ON pilot_org.scope='pilot_org' AND pilot_org.scope_id=cohort.cohort_id AND pilot_org.period='pilot:'||cohort.cohort_id
+        JOIN cost_budget_counters pilot_user ON pilot_user.scope='pilot_user' AND pilot_user.scope_id=cost.owner_id AND pilot_user.period=pilot_org.period
+        WHERE (fixed.reservation_id,fixed.cohort_id,fixed.organization_id,fixed.actor_user_id)=
+          (cost.reservation_id,json_extract(pinned.value,'$.pilotCohortId'),cost.workspace_id,cost.owner_id)
+          AND cohort.status='active' AND cohort.starts_at<=json_extract(pinned.value,'$.now')
+          AND cohort.ends_at>json_extract(pinned.value,'$.now') AND cohort.ends_at>strftime('%Y-%m-%dT%H:%M:%fZ','now')
+          AND participant.user_id=cost.owner_id AND participant.status='active' AND participant.revoked_at IS NULL AND participant.role!='reviewer'
+          AND typeof(cohort.participant_cap_microusd)='integer' AND cohort.participant_cap_microusd>0
+          AND typeof(cohort.organization_cap_microusd)='integer' AND cohort.organization_cap_microusd>0
+          AND (${counter("pilot_org","microusd","cost.reserved_microusd","cohort.organization_cap_microusd")})
+          AND (${counter("pilot_user","microusd","cost.reserved_microusd","cohort.participant_cap_microusd")})
+      )`:`(NOT EXISTS(SELECT 1 FROM pilot_cost_reservation_scopes fixed WHERE fixed.reservation_id=cost.reservation_id)
+        AND NOT EXISTS(SELECT 1 FROM pilot_cohorts cohort
+          WHERE cohort.status IN ('active','paused','closed')
+            AND (cohort.status!='closed' OR NOT EXISTS(SELECT 1 FROM pilot_cohorts successor
+              WHERE successor.organization_id=cohort.organization_id AND successor.status IN ('active','paused')))
+            AND (cohort.organization_id=cost.workspace_id OR cost.workspace_id='forma' AND EXISTS(
+              SELECT 1 FROM pilot_participants participant WHERE participant.cohort_id=cohort.cohort_id
+                AND participant.organization_id=cohort.organization_id AND participant.user_id=cost.owner_id
+                AND participant.status='active' AND participant.revoked_at IS NULL))))`}
+  )`;
+  return {sql,bindings:[value,...(scope?[claim.actorUserId,claim.actorUserId,scope.projectAccessId,scope.organizationId,claim.actorUserId]:[])]};
+}
+
 export async function settleCostBudget(env: WorkerEnv, userId: string, reservation: string | number, usedMicrousd: number, options:{activeOnly?:boolean}={}) {
   const row = await resolveCostReservation(env, userId, reservation);
   if (!row) return { settled: false as const, reservedMicrousd: 0, usedMicrousd: 0, status: "missing" as const };
@@ -1031,6 +1289,55 @@ export async function settleCostBudget(env: WorkerEnv, userId: string, reservati
   const results=await env.DB.batch(statements);
   const settled=Number(results.at(-1)?.meta.changes??0)===1;
   return { settled, reservationId: row.reservation_id, reservedMicrousd: row.reserved_microusd, usedMicrousd: settled ? used : row.used_microusd, period: row.period, status: settled ? status : row.status };
+}
+
+/** Original personal foreground Slides only. Reuse the established settlement
+ * writers, but qualify the exact pair and acknowledge its final row atomically. */
+export async function settlePersonalPresentationBudgets(env:WorkerEnv,userId:string,input:{jobId:string;streamId:string;correlationId:string;reservationId:string;costReservationId:string;usedTokens:number;usedMicrousd:number}){
+  input=Object.freeze({...input});
+  const db=env.DB,fail=():never=>{throw new Error("presentation_settlement_unavailable");};
+  if(![input.usedTokens,input.usedMicrousd].every(n=>Number.isSafeInteger(n)&&n>=0))return fail();
+  const read=structuredClone(await db.batch([
+    db.prepare(`SELECT budget_reservations.*${outputReservationColumns(env,"budget_reservations")} FROM budget_reservations WHERE reservation_id=? AND owner_id=?`).bind(input.reservationId,userId),
+    db.prepare(`SELECT cost_budget_reservations.*${outputReservationColumns(env,"cost_budget_reservations")} FROM cost_budget_reservations WHERE reservation_id=? AND owner_id=?`).bind(input.costReservationId,userId),
+  ]));
+  const complete=(results:unknown,count:number):results is D1Result<Record<string,unknown>>[]=>Array.isArray(results)&&results.length===count&&Array.from({length:count},(_,i)=>i).every(i=>Object.hasOwn(results,i)&&results[i]?.success===true&&results[i]?.error===undefined);
+  const single=(result:D1Result<Record<string,unknown>>)=>Array.isArray(result.results)&&result.results.length===1&&Object.hasOwn(result.results,0)&&result.results[0]&&typeof result.results[0]==="object"&&!Array.isArray(result.results[0]);
+  if(env.DB!==db||!complete(read,2)||!read.every(single))return fail();
+  const token=read[0].results[0] as unknown as BudgetReservationRow,cost=read[1].results[0] as unknown as CostBudgetReservationRow;
+  if(token.reservation_id!==input.reservationId||cost.reservation_id!==input.costReservationId||token.owner_id!==userId||cost.owner_id!==userId
+    ||token.stream_id!==input.streamId||cost.stream_id!==input.streamId||token.correlation_id!==input.correlationId||cost.correlation_id!==input.correlationId
+    ||token.operation!=="document-render:slides"||cost.operation!==token.operation||token.period!==cost.period||cost.workspace_id!=="forma"
+    ||token.output_bound||cost.output_bound||token.output_uncertain||cost.output_uncertain
+    ||token.status!=="active"||!["active","executing"].includes(cost.status)
+    ||![token.reserved_tokens,cost.reserved_microusd].every(n=>Number.isSafeInteger(n)&&n>0)
+    ||token.used_tokens!==0||cost.used_microusd!==0||token.settled_at!==null||cost.settled_at!==null)return fail();
+  const tokens=tokenSettlementStatements(env,userId,token.reservation_id,token,null,input.usedTokens,"document_slides_completed");
+  const dollars=costSettlementStatements(env,userId,cost,null,input.usedMicrousd);
+  const {outputAssertionStatements}=await import("./output-requirements-ledger.ts");
+  const guard=outputAssertionStatements(env,{sql:`EXISTS(SELECT 1 FROM budget_reservations token JOIN cost_budget_reservations cost
+    ON cost.owner_id=token.owner_id AND cost.stream_id=token.stream_id AND cost.correlation_id=token.correlation_id AND cost.operation=token.operation AND cost.period=token.period
+    JOIN document_jobs job ON job.owner_id=token.owner_id AND job.stream_id=token.stream_id AND job.correlation_id=token.correlation_id
+    WHERE token.reservation_id=? AND cost.reservation_id=? AND token.owner_id=? AND token.stream_id=? AND token.correlation_id=?
+      AND token.operation='document-render:slides' AND token.period=? AND token.status='active' AND cost.status=? AND cost.workspace_id='forma'
+      AND token.reserved_tokens=? AND cost.reserved_microusd=? AND token.updated_at IS ? AND cost.updated_at IS ?
+      AND job.job_id=? AND job.kind='render_document' AND job.status='committing' AND job.lease_expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now')
+      AND json_extract(job.request_json,'$.artifactKind')='slides'
+      AND json_extract(job.result_json,'$.reservationId')=token.reservation_id AND json_extract(job.result_json,'$.costReservationId')=cost.reservation_id
+      AND NOT EXISTS(SELECT 1 FROM project_budget_reservation_scopes scope WHERE scope.reservation_id IN(token.reservation_id,cost.reservation_id))
+      AND NOT EXISTS(SELECT 1 FROM pilot_cost_reservation_scopes fixed WHERE fixed.reservation_id=cost.reservation_id)
+      AND NOT EXISTS(SELECT 1 FROM output_operation_slots slot WHERE slot.token_reservation_id=token.reservation_id OR slot.cost_reservation_id=cost.reservation_id)
+      AND NOT EXISTS(SELECT 1 FROM budget_hold_dispositions disposition WHERE disposition.token_reservation_id=token.reservation_id OR disposition.cost_reservation_id=cost.reservation_id))`,
+    bindings:[token.reservation_id,cost.reservation_id,userId,input.streamId,input.correlationId,token.period,cost.status,token.reserved_tokens,cost.reserved_microusd,token.updated_at,cost.updated_at,input.jobId]});
+  const acknowledged=(statements:D1PreparedStatement[])=>statements.flatMap(statement=>[statement,...outputAssertionStatements(env,{sql:"changes()=1"})]);
+  const statements=[...guard,...acknowledged(tokens.statements),...acknowledged(dollars.statements),
+    db.prepare("SELECT reservation_id,reserved_microusd,used_microusd,status FROM cost_budget_reservations WHERE reservation_id=? AND owner_id=?").bind(cost.reservation_id,userId)];
+  if(env.DB!==db)return fail();
+  const written=structuredClone(await db.batch(statements));
+  if(env.DB!==db||!complete(written,statements.length)||!single(written[written.length-1]))return fail();
+  const receipt=written[written.length-1].results[0];
+  if(Object.keys(receipt).length!==4||receipt.reservation_id!==cost.reservation_id||receipt.reserved_microusd!==cost.reserved_microusd||receipt.used_microusd!==input.usedMicrousd||receipt.status!==dollars.status)return fail();
+  return Object.freeze({reservation_id:cost.reservation_id,reserved_microusd:cost.reserved_microusd,used_microusd:input.usedMicrousd,status:dollars.status});
 }
 
 /** Compose the existing account settlements for one durable Output slot. */
@@ -1070,7 +1377,7 @@ export async function settleDocumentGenerationBudgets(env:WorkerEnv,userId:strin
   let usedTokens=0,usedMicrousd=0;
   for(const call of calls){
     const receipt=receipts.find(item=>item.clientRequestId===call.clientRequestId);
-    if(!receipt||receipt.provider!==call.provider||receipt.model!==call.model||receipt.operation!==(call.stage.startsWith("planning:")?"planning":"image")
+    if(!receipt||receipt.provider!==call.provider||receipt.model!==call.model||receipt.operation!==(call.stage.startsWith("planning:")?"planning":call.stage==="audio:initial"?"audio":call.stage==="model3d:initial"?"model3d":call.stage==="video:initial"?"video":"image")
       ||!Number.isSafeInteger(call.usedMicrousd)||Number(call.usedMicrousd)<0
       ||call.status==="rejected"&&(receipt.status!=="rejected"||call.usedMicrousd!==0)
       ||call.status==="settled"&&(receipt.status!=="completed"||receipt.costMicrousd!==call.usedMicrousd||(receipt.providerRequestId??null)!==call.providerRequestId
@@ -1111,8 +1418,9 @@ export async function adoptLegacyCostReservation(env: WorkerEnv, userId: string,
     SELECT ?,?,'forma',?,?,?,?,?,0,'active',0,?,NULL,?
     WHERE EXISTS (SELECT 1 FROM cost_budget_counters WHERE scope='user' AND scope_id=? AND period=? AND reserved_microusd>=?)
     AND EXISTS (SELECT 1 FROM cost_budget_counters WHERE scope='workspace' AND scope_id='forma' AND period=? AND reserved_microusd>=?)
-    AND NOT EXISTS (SELECT 1 FROM cost_budget_reservations WHERE owner_id=? AND stream_id=? AND correlation_id=? AND status IN ('active','executing'))`)
-    .bind(input.reservationId,userId,input.streamId,input.correlationId,input.operation,input.period,amount,now,now,userId,input.period,amount,input.period,amount,userId,input.streamId,input.correlationId).run();
+    AND NOT EXISTS (SELECT 1 FROM cost_budget_reservations WHERE owner_id=? AND stream_id=? AND correlation_id=? AND status IN ('active','executing'))
+    AND NOT EXISTS (SELECT 1 FROM cost_budget_reservations WHERE reservation_id=?)`)
+    .bind(input.reservationId,userId,input.streamId,input.correlationId,input.operation,input.period,amount,now,now,userId,input.period,amount,input.period,amount,userId,input.streamId,input.correlationId,input.reservationId).run();
   return Number(result.meta.changes ?? 0) === 1;
 }
 
@@ -1122,78 +1430,41 @@ export async function releaseCostReservationsForCorrelation(env: WorkerEnv, user
   return active.results.length;
 }
 
-export const DURABLE_WORK_RETENTION_END = "9999-12-31T23:59:59.999Z";
-export const DEFAULT_EVIDENCE_RETENTION_DAYS = 365;
-
-type PrivateContentKind = "prompt" | "provider-output" | "provider-response" | "intent" | "condition" | "critique" | "adaptive-intent" | "adaptive-structure" | "chat-user" | "chat-assistant" | "ideation-prompt" | "document-artifact" | "document-artifact-input" | "activity-issue-note";
-
-export function privateContentRetentionClass(kind: PrivateContentKind): "durable-work" | "governed-evidence" | "transient-private" {
-  return kind === "document-artifact" ? "durable-work" : kind === "document-artifact-input" || kind === "activity-issue-note" ? "governed-evidence" : "transient-private";
+/** Ordinary hydration needs current read membership, not permission to buy new work. */
+const activeProjectReadSql=`EXISTS(SELECT 1 FROM organization_projects project
+  JOIN organizations organization ON organization.organization_id=project.organization_id AND organization.status='active'
+  JOIN organization_memberships member ON member.organization_id=project.organization_id AND member.user_id=? AND member.status='active' AND member.accepted_at IS NOT NULL AND member.revoked_at IS NULL
+  JOIN organization_memberships owner_member ON owner_member.organization_id=project.organization_id AND owner_member.user_id=project.owner_user_id
+    AND owner_member.status='active' AND owner_member.accepted_at IS NOT NULL AND owner_member.revoked_at IS NULL
+  LEFT JOIN project_memberships project_member ON project_member.project_access_id=project.project_access_id AND project_member.organization_id=project.organization_id AND project_member.project_id=project.project_id
+    AND project_member.user_id=? AND project_member.status='active' AND project_member.revoked_at IS NULL
+  WHERE project.project_access_id=? AND project.organization_id=? AND project.status='active' AND (project.owner_user_id=? OR project_member.role IN('owner','editor','viewer')))`;
+function privateContentScopeGuardFor(ownerId:string,projectScope:ProjectExecutionScope|undefined,projectAuthoritySql:string){
+  if(projectScope&&projectScope.actorUserId!==ownerId)return{sql:"0",bindings:[] as string[]};
+  const containment=projectScope?` AND EXISTS(SELECT 1 FROM project_resource_scopes resource WHERE resource.resource_kind='content' AND resource.resource_id=private_content.content_id
+    AND resource.project_access_id=? AND resource.organization_id=? AND resource.project_id=? AND resource.owner_user_id=? AND resource.actor_user_id=? AND resource.visibility='actor_private'
+    AND(private_content.kind NOT IN('chat-user','chat-assistant','chat-assistant-memory','memory-structured-ledger','memory-structured-origin','memory-document-job-origin') OR EXISTS(SELECT 1 FROM private_content_retention_scopes retention
+      WHERE retention.content_id=private_content.content_id AND retention.organization_id=resource.organization_id
+        AND retention.project_access_id=resource.project_access_id AND retention.project_id=resource.project_id
+        AND retention.actor_user_id=resource.actor_user_id
+        AND(private_content.kind NOT IN('memory-structured-ledger','memory-structured-origin','memory-document-job-origin') OR (retention.classification='transient-private'
+          AND typeof(retention.policy_version)='integer' AND retention.policy_version BETWEEN 0 AND 9007199254740991
+          AND retention.created_at=private_content.created_at))))) AND ${projectAuthoritySql}`:
+    " AND NOT EXISTS(SELECT 1 FROM project_resource_scopes resource WHERE resource.resource_kind='content' AND resource.resource_id=private_content.content_id AND resource.actor_user_id=private_content.owner_id AND resource.owner_user_id!=private_content.owner_id AND resource.visibility='actor_private')"
+    + " AND(private_content.kind NOT IN('chat-user','chat-assistant','chat-assistant-memory','memory-structured-ledger','memory-structured-origin','memory-document-job-origin') OR NOT EXISTS(SELECT 1 FROM private_content_retention_scopes retention WHERE retention.content_id=private_content.content_id))";
+  return{sql:containment.replace(/^ AND /u,""),bindings:projectScope?[projectScope.projectAccessId,projectScope.organizationId,projectScope.projectId,projectScope.ownerUserId,ownerId,ownerId,ownerId,projectScope.projectAccessId,projectScope.organizationId,ownerId]:[]};
 }
-
-export async function preparePrivateContent(env: WorkerEnv, ownerId: string, kind: PrivateContentKind, content: string, projectScope?: ProjectExecutionScope, admissionReads?:OutputAdmissionReads) {
-  if(projectScope&&projectScope.actorUserId!==ownerId)throw new Error("project_private_content_actor_mismatch");
-  assertOutputAdmissionActor(admissionReads,env,ownerId,projectScope?.organizationId??null,projectScope?.projectAccessId??null);
-  const policy=projectScope?await readOutputAdmissionValue(admissionReads,"private-retention-policy",()=>env.DB.prepare("SELECT transient_days,evidence_days,version FROM organization_retention_policies WHERE organization_id=?")
-    .bind(projectScope.organizationId).first<{transient_days:number;evidence_days:number;version:number}>()):null;
-  const contentId = uuidV7(); const createdAt = new Date(); const category=privateContentRetentionClass(kind);
-  const days=category==="governed-evidence"?Number(policy?.evidence_days??Math.max(1,Math.min(3650,intEnv(env.FORMA_EVIDENCE_RETENTION_DAYS,DEFAULT_EVIDENCE_RETENTION_DAYS)))):Number(policy?.transient_days??intEnv(env.FORMA_RETENTION_DAYS,30));
-  const expiresAt=category==="durable-work"?new Date(DURABLE_WORK_RETENTION_END):new Date(createdAt.getTime()+days*86_400_000);
-  const now=createdAt.toISOString();
-  const statements=projectScope?[
-    env.DB.prepare(`INSERT INTO private_content(content_id,owner_id,kind,content,created_at,expires_at,redacted_at)
-      SELECT ?,?,?,?,?,?,NULL WHERE ${activeProjectBillingSql}
-        AND EXISTS(SELECT 1 FROM organization_projects WHERE project_access_id=? AND organization_id=? AND project_id=? AND owner_user_id=? AND status='active')
-        AND ((?=0 AND NOT EXISTS(SELECT 1 FROM organization_retention_policies current_policy WHERE current_policy.organization_id=?))
-          OR EXISTS(SELECT 1 FROM organization_retention_policies current_policy WHERE current_policy.organization_id=? AND current_policy.version=?))`)
-      .bind(contentId,ownerId,kind,content,now,expiresAt.toISOString(),ownerId,ownerId,projectScope.projectAccessId,projectScope.organizationId,ownerId,projectScope.projectAccessId,projectScope.organizationId,projectScope.projectId,projectScope.ownerUserId,Number(policy?.version??0),projectScope.organizationId,projectScope.organizationId,Number(policy?.version??0)),
-    env.DB.prepare(`INSERT INTO project_resource_scopes(project_access_id,resource_kind,resource_id,organization_id,project_id,owner_user_id,visibility,source_event_id,actor_user_id,created_at)
-      SELECT ?,'content',?,?,?,?,'actor_private',NULL,?,? WHERE EXISTS(SELECT 1 FROM private_content WHERE content_id=? AND owner_id=?)`)
-      .bind(projectScope.projectAccessId,contentId,projectScope.organizationId,projectScope.projectId,projectScope.ownerUserId,ownerId,now,contentId,ownerId),
-    env.DB.prepare(`INSERT INTO private_content_retention_scopes(content_id,organization_id,project_access_id,project_id,actor_user_id,classification,policy_version,assigned_expires_at,created_at)
-      SELECT ?,?,?,?,?,?,?,?,? WHERE EXISTS(SELECT 1 FROM project_resource_scopes resource WHERE resource.project_access_id=? AND resource.organization_id=?
-        AND resource.project_id=? AND resource.resource_kind='content' AND resource.resource_id=? AND resource.actor_user_id=?)`)
-      .bind(contentId,projectScope.organizationId,projectScope.projectAccessId,projectScope.projectId,ownerId,category,Number(policy?.version??0),expiresAt.toISOString(),now,projectScope.projectAccessId,projectScope.organizationId,projectScope.projectId,contentId,ownerId),
-  ]:[env.DB.prepare("INSERT INTO private_content (content_id,owner_id,kind,content,created_at,expires_at,redacted_at) VALUES (?,?,?,?,?,?,NULL)").bind(contentId,ownerId,kind,content,now,expiresAt.toISOString())];
-  statements.push(projectScope?env.DB.prepare(`UPDATE private_content SET content='',redacted_at=? WHERE owner_id=? AND redacted_at IS NULL AND kind!='document-artifact' AND expires_at<=?
-    AND EXISTS(SELECT 1 FROM private_content_retention_scopes governed WHERE governed.content_id=private_content.content_id AND governed.organization_id=?)
-    AND NOT EXISTS(SELECT 1 FROM private_content_retention_scopes governed JOIN organization_retention_policies policy ON policy.organization_id=governed.organization_id AND policy.legal_hold=1
-      WHERE governed.content_id=private_content.content_id AND governed.classification='governed-evidence')
-    AND NOT EXISTS(SELECT 1 FROM private_content_retention_scopes governed JOIN organization_legal_holds hold
-      ON hold.organization_id=governed.organization_id AND hold.status='active'
-      WHERE governed.content_id=private_content.content_id
-        AND(hold.scope_kind='organization'
-          OR hold.scope_kind='project' AND hold.resource_id=governed.project_access_id
-          OR hold.scope_kind='content' AND hold.resource_id=governed.content_id))
-    AND EXISTS(SELECT 1 FROM private_content inserted WHERE inserted.content_id=? AND inserted.owner_id=?)`)
-    .bind(now,ownerId,now,projectScope.organizationId,contentId,ownerId):env.DB.prepare(`UPDATE private_content SET content='',redacted_at=? WHERE owner_id=? AND redacted_at IS NULL AND kind!='document-artifact' AND expires_at<=?
-      AND NOT EXISTS(SELECT 1 FROM project_resource_scopes resource WHERE resource.resource_kind='content' AND resource.resource_id=private_content.content_id)`)
-    .bind(now,ownerId,now));
-  return { contentId, expiresAt: expiresAt.toISOString(), statements, requiredInserts:projectScope?3:1 };
-}
-
-/** Existing callers keep their original storage behavior; atomic admissions collect the same statements. */
-export async function storePrivateContent(env: WorkerEnv, ownerId: string, kind: PrivateContentKind, content: string, projectScope?: ProjectExecutionScope) {
-  const prepared=await preparePrivateContent(env,ownerId,kind,content,projectScope);
-  const results=await env.DB.batch(prepared.statements);
-  if(results.slice(0,prepared.requiredInserts).some(result=>Number(result.meta.changes??0)!==1))throw new Error("project_private_content_access_revoked");
-  return {contentId:prepared.contentId,expiresAt:prepared.expiresAt};
+/** Reused by atomic recovery writes; retain the original billing predicate exactly. */
+export function privateContentScopeGuard(ownerId:string,projectScope?:ProjectExecutionScope){
+  return privateContentScopeGuardFor(ownerId,projectScope,activeProjectBillingSql);
 }
 
 export async function loadPrivateContent(env: WorkerEnv, ownerId: string, scope: "all" | "chat" | "memory" = "all", projectScope?: ProjectExecutionScope) {
-  const now = new Date().toISOString();
-  if(projectScope&&projectScope.actorUserId!==ownerId)return{};
+  const now = new Date().toISOString(),guard=privateContentScopeGuardFor(ownerId,projectScope,activeProjectReadSql);
+  const { nativeMemoryAnswerExclusion } = await import("./memory-native-boundary.ts");
+  const ordinary = await nativeMemoryAnswerExclusion(env,{answerAlias:"private_content"});
   const restricted = scope === "chat" ? " AND kind IN ('chat-user','chat-assistant')" : scope === "memory" ? " AND kind='condition'" : "";
-  const containment=projectScope?` AND EXISTS(SELECT 1 FROM project_resource_scopes resource WHERE resource.resource_kind='content' AND resource.resource_id=private_content.content_id
-    AND resource.project_access_id=? AND resource.organization_id=? AND resource.project_id=? AND resource.owner_user_id=? AND resource.actor_user_id=? AND resource.visibility='actor_private'
-    AND(private_content.kind NOT IN('chat-user','chat-assistant') OR EXISTS(SELECT 1 FROM private_content_retention_scopes retention
-      WHERE retention.content_id=private_content.content_id AND retention.organization_id=resource.organization_id
-        AND retention.project_access_id=resource.project_access_id AND retention.project_id=resource.project_id
-        AND retention.actor_user_id=resource.actor_user_id))) AND ${activeProjectBillingSql}`:
-    " AND NOT EXISTS(SELECT 1 FROM project_resource_scopes resource WHERE resource.resource_kind='content' AND resource.resource_id=private_content.content_id AND resource.actor_user_id=private_content.owner_id AND resource.owner_user_id!=private_content.owner_id AND resource.visibility='actor_private')"
-    + " AND(private_content.kind NOT IN('chat-user','chat-assistant') OR NOT EXISTS(SELECT 1 FROM private_content_retention_scopes retention WHERE retention.content_id=private_content.content_id))";
-  const bindings=projectScope?[ownerId,now,projectScope.projectAccessId,projectScope.organizationId,projectScope.projectId,projectScope.ownerUserId,ownerId,ownerId,ownerId,projectScope.projectAccessId,projectScope.organizationId,ownerId]:[ownerId,now];
-  const rows=await env.DB.prepare(`SELECT content_id,content FROM private_content WHERE owner_id=? AND redacted_at IS NULL AND expires_at>? AND kind NOT IN('provider-response','activity-issue-note')${restricted}${containment}`).bind(...bindings).all<{content_id:string;content:string}>();
+  const rows=await env.DB.prepare(`SELECT content_id,content FROM private_content WHERE owner_id=? AND redacted_at IS NULL AND expires_at>? AND expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now') AND kind NOT IN('provider-response','activity-issue-note','execution-consent','context-proposal','authoring-preview','memory-structured-ledger','memory-structured-origin','memory-document-job-origin')${restricted} AND ${guard.sql} AND ${ordinary.sql}`).bind(ownerId,now,...guard.bindings,...ordinary.bindings).all<{content_id:string;content:string}>();
   return Object.fromEntries(rows.results.map((row) => [row.content_id, row.content]));
 }
 
@@ -1234,6 +1505,9 @@ export async function handleSession(request: Request, env: WorkerEnv, _context?:
     if(auth.impersonation)return Response.json({error:"return_to_principal_before_internal_access"},{status:409,headers:{"cache-control":"private, no-store"}});
     const allowed=new Set<FormaCapability>(applicationDefinition(audience).requiredCapabilities);
     if(audience==="product"&&principal.role==="admin")allowed.add("evaluation.actual.run");
+    // This Engineering control needs both existing grants; exposing the grant
+    // does not create it or relax the metadata endpoint's fresh authorization.
+    if(audience==="engineering"&&hasCapability(principal,"engineering.diagnostics.read")&&hasCapability(principal,"platform.identity.manage"))allowed.add("platform.identity.manage");
     const capabilities=principal.access.capabilities.filter((capability)=>allowed.has(capability));
     const access={role:principal.role,capabilities:principal.access.capabilities,canvasAccess:principal.access.canvasAccess};
     const availableApplications=APPLICATIONS.filter((application)=>application.id==="creative"||application.id==="canvas"&&principal.access.canvasAccess||application.requiredCapabilities.some((capability)=>principal.access.capabilities.includes(capability)))
@@ -1253,7 +1527,7 @@ export async function handleSession(request: Request, env: WorkerEnv, _context?:
     .bind(selected.context.organizationId).first<{transient_days:number|null;evidence_days:number|null;pilot_status:string|null}>():null;
   const privileged=audience==="operations"&&(hasCapability(principal,"platform.provider.configure")||hasCapability(principal,"platform.policy.manage"));
   const selectedImageProvider=env.FORMA_IMAGE_PROVIDER??"openai";
-  const provider={name:"Approved creative generation",model:env.OPENAI_IMAGE_MODEL??"gpt-image-2",plannerModel:env.OPENAI_MODEL??"gpt-5.6-terra",plannerConfigured:Boolean(env.OPENAI_API_KEY),configured:Boolean(env.OPENAI_API_KEY&&(!["fal","fal-ideogram","ideogram"].includes(selectedImageProvider)||env.FAL_KEY)),videoModel:env.FAL_VIDEO_MODEL??DEFAULT_VIDEO_MODEL,videoReferenceModel:env.FAL_REFERENCE_VIDEO_MODEL??DEFAULT_REFERENCE_VIDEO_MODEL,videoConfigured:Boolean(env.OPENAI_API_KEY&&env.FAL_KEY),audioModel:env.FAL_AUDIO_MODEL??"fal-ai/lyria3/pro",audioConfigured:Boolean(env.OPENAI_API_KEY&&env.FAL_KEY&&(!env.FORMA_AUDIO_PROVIDER||env.FORMA_AUDIO_PROVIDER==="fal")&&(!env.FAL_AUDIO_MODEL||audioAdapterContractForModel(env.FAL_AUDIO_MODEL))),audioModels:AUDIO_ADAPTER_CONTRACTS.map((contract)=>({model:contract.model,label:contract.label,capabilities:contract.capabilities,maximumDurationSeconds:contract.maximumAdvertisedDurationSeconds,pricing:contract.pricing})),...(privileged?{name:"OpenAI Responses · OpenAI + Fal image adapters · Fal video and audio specialists",imageProvider:selectedImageProvider,imageProviders:[{provider:"openai",model:env.OPENAI_IMAGE_MODEL??"gpt-image-2",configured:Boolean(env.OPENAI_API_KEY)},{provider:"fal",model:env.FAL_IMAGE_MODEL??"ideogram/v4",previewModel:env.FAL_IMAGE_PREVIEW_MODEL??"ideogram/v4/fast",editModel:env.FAL_IMAGE_EDIT_MODEL??"ideogram/v4/image-to-image",configured:Boolean(env.FAL_KEY)}],videoProvider:env.FORMA_VIDEO_PROVIDER??"fal",audioProvider:env.FORMA_AUDIO_PROVIDER??"fal",videoAdapterVersion:VIDEO_ADAPTER_CONTRACT.adapterVersion,videoApiSunset:null}:{})};
+  const provider={name:"Approved creative generation",model:env.OPENAI_IMAGE_MODEL??"gpt-image-2",plannerModel:env.OPENAI_MODEL??"gpt-5.6-terra",plannerConfigured:Boolean(env.OPENAI_API_KEY),configured:Boolean(env.OPENAI_API_KEY&&(!["fal","fal-ideogram","ideogram"].includes(selectedImageProvider)||env.FAL_KEY)),videoModel:env.FAL_VIDEO_MODEL??DEFAULT_VIDEO_MODEL,videoReferenceModel:env.FAL_REFERENCE_VIDEO_MODEL??DEFAULT_REFERENCE_VIDEO_MODEL,videoConfigured:Boolean(env.OPENAI_API_KEY&&env.FAL_KEY),model3dConfigured:Boolean(env.FAL_KEY),model3dModel:"fal-ai/hyper3d/rodin/v2.5/text-to-3d",model3dReferenceModel:"fal-ai/hyper3d/rodin/v2.5",audioModel:env.FAL_AUDIO_MODEL??"fal-ai/lyria3/pro",audioConfigured:Boolean(env.OPENAI_API_KEY&&env.FAL_KEY&&(!env.FORMA_AUDIO_PROVIDER||env.FORMA_AUDIO_PROVIDER==="fal")&&(!env.FAL_AUDIO_MODEL||audioAdapterContractForModel(env.FAL_AUDIO_MODEL))),audioModels:AUDIO_ADAPTER_CONTRACTS.map((contract)=>({model:contract.model,label:contract.label,capabilities:contract.capabilities,maximumDurationSeconds:contract.maximumAdvertisedDurationSeconds,pricing:contract.pricing})),...(privileged?{name:"OpenAI Responses · OpenAI + Fal image adapters · Fal video and audio specialists",imageProvider:selectedImageProvider,imageProviders:[{provider:"openai",model:env.OPENAI_IMAGE_MODEL??"gpt-image-2",configured:Boolean(env.OPENAI_API_KEY)},{provider:"fal",model:env.FAL_IMAGE_MODEL??"ideogram/v4",previewModel:env.FAL_IMAGE_PREVIEW_MODEL??"ideogram/v4/fast",editModel:env.FAL_IMAGE_EDIT_MODEL??"ideogram/v4/image-to-image",configured:Boolean(env.FAL_KEY)}],videoProvider:env.FORMA_VIDEO_PROVIDER??"fal",audioProvider:env.FORMA_AUDIO_PROVIDER??"fal",videoAdapterVersion:VIDEO_ADAPTER_CONTRACT.adapterVersion,videoApiSunset:null}:{})};
   const selectedCanvasAccess=Boolean(selected.context&&canvas.access&&hasCapability(principal,"project.canvas.use",{organizationId:selected.context.organizationId,projectAccessId:selected.context.projectAccessId}));
   const safeCanvas=selected.context?{...canvas,access:selectedCanvasAccess,blockedBy:[],requirements:[]}:privileged?canvas:{...canvas,blockedBy:[],requirements:[]};
   const effectiveAccess=auth.impersonation?user.access:principal.access;

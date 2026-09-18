@@ -85,6 +85,65 @@ the Forma brand never silently exits the current workspace. Only genuine
 document-editing handoffs cross to Creator, with an explicit localized visible
 label and accessible name naming **Creator Workspace**.
 
+## Shared control metrics and wrapping composition
+
+Comparable supporting controls reuse `--forma-font-size-supporting`,
+`--forma-body-line-height`, `--forma-space-2`, and
+`--forma-control-min-size`. Their native button/input/select borders and block
+padding share one box model; a 44px minimum alone does not make two controls
+the same height. Comparable same-line action peers share the applicable minimum
+and stretch through wrappers as labels wrap and controls grow. Keep widths
+content-led; a minimum must never become a height ceiling. Textareas, native
+checkbox glyphs, and larger editorial calls to action retain their own roles.
+Account preferences give the whole native checkbox label the minimum target.
+The same peer-only sizing is consumed by real page-header actions, Library
+result/family actions, Activity headers, generation failure actions and specialist
+approval footers. Noninteractive badges and intentional scroll strips retain
+their existing alignment/overflow. Document failure grids stretch only their
+button cells; labelled specialist fields retain their own responsive grid.
+
+`<forma-ui-cluster>` preserves authored light-DOM children. Its reflected
+`alignment` accepts `center` (default) or `stretch`; unsupported values retain
+the default centered layout. Keep badge/status rows centered. Use `stretch`
+only for comparable peer actions: it stretches each wrapped row and propagates
+through `forma-ui-button`, `forma-ui-icon-button`, and `forma-ui-link` to their
+inner native control without changing native events or link destinations.
+
+```html
+<forma-ui-cluster alignment="stretch" gap="small">
+  <button type="button" class="button secondary">Cancel</button>
+  <forma-ui-button label="Save direction" variant="primary"></forma-ui-button>
+  <forma-ui-link href="#history" label="View history"></forma-ui-link>
+</forma-ui-cluster>
+```
+
+Do not use action-row stretching to fill the entire height of a labelled field
+and its help text. Forms retain responsive label/control/help grids with
+bottom-aligned actions. The shared slotted page header and list item reserve a
+useful main-content flex basis before wrapping actions; allowing shrinkage alone
+does not reserve room for full headings and supporting copy. Wrap text and then
+actions instead of clipping either. List items keep the leading
+visual and copy in one group so wrapping cannot strand the icon or avatar on
+its own row. Notices move their actions below
+the copy when their own container is narrow. Body copy inherits the locale's
+leading token through both light and shadow DOM.
+
+Each route owns one logical outer gutter. Full-bleed header backgrounds may
+extend beyond it, but equivalent header/body content uses that same gutter;
+nested controls add only their genuine object inset. Deliver applies its body
+inset once around the existing keyed Output hosts, results and final caveat.
+Media stages and intentional timeline, filmstrip, or table scrollports retain
+their documented local sizing and overflow; those exceptions must not clip
+neighboring task copy or introduce a second peer gutter.
+
+The real Cluster catalog example includes a centered badge row and an opt-in
+row with both native and wrapped actions. Stylesheet-contract tests verify the
+declared rules. Companion actual-source catalog/primitive tests exercise native
+and wrapped labels, events and destinations with finite template ports; neither
+suite certifies rendered heights, real slot layout, text fit, focus or accessibility.
+Acceptance still requires four-locale, narrow-container, 200%-text and native
+browser checks; regenerate both Custom Elements Manifests after API changes.
+
 ## Shared language selection
 
 `<forma-ui-language-picker>` is the single native, light-DOM language control
@@ -157,6 +216,48 @@ guidance-only; public share pages never mount an assistant. Authored session
 intentions, individual creative decisions, sources, reviews, and search remain
 distinct nonconversational forms.
 
+## Selection-scoped context controls
+
+Document decisions keep their complete authored wording, protected phrases, type,
+intent, and lock state in the reading surface. `forma-context-block` uses the
+existing focused decision and a native radio group; **Controls for {decision}**
+appears only for the selected decision and reveals its full editor, including the
+editable text or adopted input without a third navigation choice. No first
+decision is automatically selected. Escape closes these controls and restores their trigger without
+discarding unfinished edits. Explicit Cancel inside a form retains its existing
+discard behavior. Read-only consumers use the `read-only` attribute and receive
+named inspection without authoring or paid actions.
+
+Document lists use keyed decision identity. The editor template is retained with
+Lit’s `cache` directive outside the connected DOM, so inactive buttons and
+selects do not contribute to the page. Identity includes the current
+authorization scope; a changed actor, project, document, or role cannot reuse a
+retained private editor. Context intelligence, spatial scope, and palette controls
+expose `suspendControls()` to leave their owned native top layer before detachment
+while retaining unfinished drafts and the original request identity. Closing an
+intelligence review with its close button, backdrop, or Escape suspends it;
+explicit Cancel and server Dismiss/Done keep their existing discard semantics.
+A guarded review lookup can finish while suspended without restarting its quote.
+Re-entry does not approve or submit work. Nested context and character settings
+start expanded inside the selected editor, keeping their controls within the
+same disclosure.
+
+Library uses the same inspection organism and keeps its existing
+`forma-library-block-editor` for reusable authoring and document-owned forks.
+The property-only `blockId` pins a retained editor to its exact decision;
+`null` addresses the existing new-block form and `undefined` follows the route.
+Its bubbling `library-use-copy` event carries `{ blockId }` to the Library host,
+which executes the same permission-checked copy operation. Closing and switching
+Library editors retain their native fields and child editor instances within the
+current authorization scope. Viewer routes never mount disabled authoring forms. A selected read-only decision
+has one **Inspect saved review** action. It uses the existing actor-private
+`resume`, `retrieve`, and `dismiss` authoring-review operations; it cannot quote,
+buy, preview project changes, or apply them. Authorization changes scrub the
+old cached review before a fresh read. Personal surfaces use server-issued
+session capabilities, not the absence of a shared-project context. An author
+without generation permission can still inspect and save an already-retained
+review through the existing free human-authoring path.
+
 ## Shared native dialog foundation
 
 `ensureNativeModalDialog` in `src/components/design-system/native-dialog.ts`
@@ -174,6 +275,8 @@ translated labels. Every dismissible host retains explicit close controls,
 backdrop and Escape behavior, focus restoration, and reduced-motion support.
 
 ## Context creation and reusable choice cards
+
+`<forma-ui-choice-card>` also presents the shared exact next actions in Document and Canvas. The host supplies at most one primary and two alternatives, translated labels, and the immutable object target. Activating the card revalidates the current actor, project, document, board, object and source before opening saved work or free configuration. It never generates, approves, copies or exports on its own. See `src/components/next-action-cards.ts` and `src/model/workspace-intelligence.ts`; no second card or canonical data store is introduced.
 
 `<forma-ui-choice-card>` is the shared, light-DOM molecule for a real actionable
 choice. Document block types, the create-or-reuse context entry, Canvas source
@@ -380,7 +483,24 @@ and account-partitioned offline work.
 - Prefer native anchors, ordinary keyboard navigation, browser-managed
   popovers/dialogs, and real forms. Reserve `<details>/<summary>` for persistent
   supporting information, such as evidence, receipts, and technical details;
-  do not use it as the transient cross-workspace navigation picker.
+  do not use it as a floating menu, language picker, or floating control panel.
+- Reuse `forma-ui-popover` for native auto-dismiss action groups and rich controls.
+  Its property-only `content` accepts a Lit template in light DOM; authored form,
+  link, audio, and disclosure semantics remain unchanged. `triggerId` is an
+  optional host-owned stable unique invoker ID; the panel always receives its
+  own instance-unique target. Use native buttons with `popovertarget`, ordinary
+  group or navigation semantics, and `:popover-open`-gated layout. Do not declare
+  an ARIA menu without implementing its full keyboard contract.
+  Its optional property-only `actionCurrent(value)` checks current opening and
+  target ownership before an action closes, focuses, or emits. It is not an
+  authorization check; the existing action executor retains that responsibility.
+  Call `close(true)` before handing off an action and `close()` on authority,
+  route, or lifetime teardown; never queue focus after the destination opens.
+  The framework-free native-popover helper only positions an already native
+  surface, using RTL, visual-viewport and safe-area bounds. It cannot authorize,
+  submit, open, or persist work. Browser light-dismiss and Escape own closure.
+  Public language fallback links use the same native attributes without JavaScript;
+  the existing language-picker enhancement continues to use a native select.
 - Bound account menus and floating panels to the dynamic viewport minus their
   trigger offset and bottom safe-area inset. Keep excess content independently
   scrollable, contain scroll chaining, and preserve visible keyboard focus so
@@ -499,3 +619,74 @@ contract, and generated manifest agrees.
 
 `DESIGN.md` owns visual and interaction policy; `ARCHITECTURE.md` owns
 authorization, application boundaries, and protected delivery contracts.
+
+## Exact artifact review and export entry
+
+Document, Canvas, Activity, Library, and Deliver retain the same generated artifact,
+source-health projection, review events, assignment records, and export executor.
+`forma-document-artifacts.openArtifactById` accepts an expected revision, an
+optional SHA-256 of the exact retained content, and an `inspect`, `review`, or
+`export` disclosure intent. These intents never approve, download, or generate
+anything by themselves. Canvas may provide a current-scope callback; it checks
+source and board identity while opening and preserves authorized output editing
+after the viewer has opened. Source changes still invalidate review and release.
+
+Revision links preserve their requested revision and hash. A stale link offers an
+explicit way to open the current output rather than substituting it. The shared
+viewer displays the actual retained byte hash, exact review assignment, current
+source blockers, and existing export choices. Each action remains server-checked
+against current permissions, independent authorship, retained bytes, rights, and
+revision at commit. The standard buttons, disclosure, native modal, and focus
+foundation remain in use; no new visual primitive is introduced.
+
+A `DocumentArtifactExported` event is the existing pre-download authorization
+receipt. It does not prove a completed local download or recipient delivery.
+Independent approval records, export acknowledgments, and saved work are counted
+separately. Unmanaged legacy outputs without a source manifest retain a clearly
+labeled **Export unreviewed draft** path, with current access, rights, private
+retention, and exact bytes checked. They are never counted as independently
+approved delivery, and inspecting or exporting them does not require new spending.
+
+## Exact paid adaptive proposal changes
+
+Document Adaptive path and Canvas paid suggestion buttons share the
+component-lifetime `AdaptiveProposalReviewController` and
+`renderAdaptiveProposalDialog`. The latter consumes the same
+`renderAuthoringPreview` as Context Intelligence and free document copying;
+it does not create a second approval model or authoring store.
+
+The read-only `FormaStore.adaptiveProposalSource` exposes only an exact
+current-authority paid execution and its retained binding proof. General job
+pages do not supply that private proof. A surviving exact job’s metadata
+binding hash supports receipt lookup only, with no private structure or Apply
+authority. The explicit **Retrieve this original proposal** action uses the
+existing exact job inspection, never a new quote or provider execution. Suggestions keep their immutable JSON-pointer IDs;
+new native decisions are the default, edits require a named same-destination
+native target, and Canvas creation previews include the reviewed placement.
+
+Only `/api/context/adaptive/apply` applies paid suggestions. A server preview
+discloses original/current source hashes, exact destinations and changes.
+Apply submits only its immutable preview ID and approval hash. The hosts do not
+append client events or treat a partial append as success. Closing preserves
+the current component's own draft and exact handle; a lost response permits
+read-only retrieval, not automatic reapplication. Source/permission withdrawal
+removes private review bytes while retaining content-free recovery identity.
+A certified expired lease permits only an explicit same-handle retry; a stale
+expired lease permits explicit same-handle dismissal before a fresh review.
+Read-only checking recognizes a completed dismissal after a lost response.
+
+Fresh hosts can resume a retained unapplied review. If legacy resume returns a
+latest applied result without an exact handle or selection, it only offers
+explicit receipt discovery; it does not select that latest result. After private
+preview expiry, exact
+paid-execution receipt discovery shows explicit paginated choices without
+reconstructing private edits or selecting a latest result. This lookup requires
+the exact paid execution and binding identity. Private-content erasure does
+not itself erase the job’s metadata binding; that existing metadata is reused
+first when available. If the job has also expired or its identity is absent,
+explicit destination-scoped metadata discovery lists only the current actor’s
+canonical receipts in this exact destination. Each row remains an explicit read-only choice; neither path invents
+a missing hash or reconstructs text from the current document. Canonical receipts
+confirm authorship, never independent approval, export, delivery, provider
+quality, or ROI. Native dialog and keyboard/assistive-technology verification
+remains an integration obligation, separate from mocked host tests.

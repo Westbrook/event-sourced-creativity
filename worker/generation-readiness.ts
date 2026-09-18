@@ -1,5 +1,7 @@
-import { assertOutputAdmissionActor, readOutputAdmissionValue, type OutputAdmissionReads } from "./output-admission-reads.ts";
+import { assertOutputAdmissionActor, outputAdmissionBudgetOwner, outputAdmissionSponsor, readOutputAdmissionValue, type OutputAdmissionReads } from "./output-admission-reads.ts";
 import { referencePixelMode, sendsReferencePixels } from "../src/model/block-types.ts";
+import { hasSavedModel3dView } from "../src/model/reference-media.ts";
+import { promptFactIsActive } from "../src/model/prompt-policy.ts";
 import { foldEvents } from "../src/model/events.ts";
 import { documentGenerationRevision } from "../src/model/document-jobs.ts";
 import { authoritativeCreativeContext, ContextIntegrityError } from "./context-authority.ts";
@@ -10,8 +12,8 @@ import { standingConstraints } from "../src/model/taste.ts";
 import { readGeneratedImageReference } from "./media-api.ts";
 import { moderateGenerationSnapshot, moderatePromptTechniqueSet } from "./openai-moderation.ts";
 import type { ImageReference } from "./openai-adapter.ts";
-import { hasCapability, readAccountBudgets, readBudgets, requireConsent, requireUser, type PilotUser } from "./pilot-policy.ts";
-import { ownerDocumentBudgetScopes, readProjectRequestContext, readProjectSourceEvents } from "./project-access.ts";
+import { hasCapability, pilotExecutionAllowance, readAccountBudgets, readBudgets, requireConsent, requireUser, type PilotUser, type ProjectExecutionScope } from "./pilot-policy.ts";
+import { hasProjectContextCookie, ownerDocumentBudgetScopes, readProjectRequestContext, readProjectSourceEvents } from "./project-access.ts";
 import { classifyProviderFailure, type ProviderFailureDetail } from "./provider-errors.ts";
 import { appendAuditEvent, ensureSchema, readWorkspaceEvents, uuidV7, type EventRow, type WorkerEnv } from "./runtime.ts";
 import { validateFalImageSize } from "./fal-image-adapter.ts";
@@ -19,6 +21,7 @@ import { buildManagedProductionPlan, productionTeamFor, providerFacingProduction
 import { ProductionWorkflowContextError, resolveProductionWorkflowContext } from "./production-workflow.ts";
 import { governedPackageSourceRightsCurrent } from "./context-package-rights.ts";
 import type { ProductionWorkflowSource } from "../src/model/production-workflow.ts";
+import { assertDerivedReferenceProvenance } from "./derived-reference-guard.ts";
 
 export type GenerationPreflightInput = { kind: GenerationReadinessKind; documentId: string; documentRevision?: string; requestKey?: string; sourcePreviewId?: string | null; promptTechnique?: PromptTechnique; productionMode?:ProductionMode; snapshot?: Record<string, unknown>; sourceBlockVersions?:Array<Record<string,unknown>>;canvasId?:string;contextSetId?:string;contextRootBlockId?:string;characterOutputKind?:"headshot"|"character_sheet"; force?: boolean; sourceSurface?: string;workflowId?:string;workflowStageId?:string;workflowSources?:ProductionWorkflowSource[] };
 export type PromptTechniqueComparisonInput = { documentId: string; documentRevision?: string; sourcePreviewId?: string | null; failedTechnique?: PromptTechnique; failedPrompt?: string; kind?: "preview" | "generate"; productionMode?:ProductionMode; snapshot?: Record<string, unknown>; sourceSurface?: string };
@@ -29,7 +32,8 @@ const CONTEXT_MUTATION_TYPES=["ProjectCreated","ProjectRenamed","ProjectStateCha
 const CONTEXT_MUTATION_SQL=`type IN (${CONTEXT_MUTATION_TYPES.map((type)=>`'${type}'`).join(",")})`;
 
 const usesFalImages=(env:WorkerEnv)=>["fal","fal-ideogram","ideogram"].includes((env.FORMA_IMAGE_PROVIDER??"openai").trim().toLowerCase());
-const providerScopeKey = (env: WorkerEnv) => usesFalImages(env)?`fal:${env.FAL_IMAGE_MODEL??"ideogram/v4"}`:`openai:${env.OPENAI_PROJECT ?? "default"}:${env.OPENAI_IMAGE_MODEL ?? "gpt-image-2"}`;
+export const configuredImageHealthIdentity=(env:WorkerEnv):{provider:"fal"|"openai";model:string}=>usesFalImages(env)?{provider:"fal",model:env.FAL_IMAGE_MODEL??"ideogram/v4"}:{provider:"openai",model:env.OPENAI_IMAGE_MODEL??"gpt-image-2"};
+const providerScopeKey=(env:WorkerEnv)=>{const selected=configuredImageHealthIdentity(env);return selected.provider==="fal"?`fal:${selected.model}`:`openai:${env.OPENAI_PROJECT??"default"}:${selected.model}`;};
 const nowIso = () => new Date().toISOString();
 
 function productionPreflightSnapshot(snapshot:Record<string,unknown>,mode:ProductionMode){
@@ -70,14 +74,16 @@ const techniqueReferenceDescriptors = (references: ImageReference[]): PromptRefe
   source: reference.source,
 }));
 
-async function promptTechniqueReferences(env: WorkerEnv, ownerId: string, projection: ReturnType<typeof foldEvents>, events: EventRow[], sourcePreviewId?: string | null) {
+async function promptTechniqueReferences(env: WorkerEnv, ownerId: string, projection: ReturnType<typeof foldEvents>, events: EventRow[], sourcePreviewId?: string | null,projectScope?:ProjectExecutionScope) {
   const references: ImageReference[] = [];
   for (const block of projection.blocks) {
-    if (block.type !== "reference" || Number(block.properties.weight ?? .5) <= 0 || !sendsReferencePixels(block.properties.pixel_reference_mode)) continue;
+    if (!["reference","model3d"].includes(block.type) || Number(block.properties.weight ?? .5) <= 0 || !sendsReferencePixels(block.properties.pixel_reference_mode)) continue;
     const referenceId = String(block.properties.reference_id ?? "");
     const rightsConfirmed = events.some((event) => event.type === "RightsAsserted" && String(event.payload.reference_id ?? "") === referenceId)
       || events.some((event) => event.type === "ReferenceIngested" && String(event.payload.reference_id ?? "") === referenceId && Boolean(event.payload.rights_class));
     if (!referenceId || !rightsConfirmed) throw new Error(`reference_pixel_rights_required:${block.id}`);
+    if(block.type==="model3d"&&!hasSavedModel3dView(block.properties))throw new Error(`model3d_view_unavailable:${block.id}`);
+    await assertDerivedReferenceProvenance({env,ownerId,properties:block.properties,blockId:block.id,sourceEvents:events,projectScope});
     const image = await readGeneratedImageReference(env, ownerId, block.properties.media_url);
     if (!image) throw new Error(`reference_pixel_input_unavailable:${block.id}`);
     references.push({ ...image, blockId: block.id, referenceId, label: String(block.properties.label ?? block.handle), mode: referencePixelMode(block.properties.pixel_reference_mode), source: "uploaded-reference" });
@@ -98,7 +104,7 @@ export async function comparePromptTechniqueSafety(env: WorkerEnv, user: PilotUs
   const projection = foldEvents(events, Number.POSITIVE_INFINITY, input.documentId);
   if (!projection.documentId || projection.documentId !== input.documentId) throw new Error("document_not_found");
   const baseSnapshot = authoritativeCreativeContext(events,{documentId:input.documentId,snapshot:input.snapshot}).snapshot;
-  const references = await promptTechniqueReferences(env, user.userId, projection, events, input.sourcePreviewId);
+  const references = await promptTechniqueReferences(env, user.projectExecution?.ownerUserId??user.userId, projection, events, input.sourcePreviewId,user.projectExecution);
   const snapshot = productionPreflightSnapshot({
     ...baseSnapshot,
     document: { id: projection.documentId, title: projection.documentTitle },
@@ -173,6 +179,8 @@ export async function comparePromptTechniqueSafety(env: WorkerEnv, user: PilotUs
 
 export async function preflightGeneration(env:WorkerEnv,user:PilotUser,input:GenerationPreflightInput,options:{appendEvents?:boolean;allowCache?:boolean;sourceEvents?:EventRow[];allowProviderCalls?:boolean;persist?:boolean;outputAdmissionReads?:OutputAdmissionReads;outputImageRender?:{format:ImageFormat;size:`${number}x${number}`}}={}):Promise<GenerationReadiness>{
   assertOutputAdmissionActor(options.outputAdmissionReads,env,user.userId,user.projectExecution?.organizationId??null,user.projectExecution?.projectAccessId??null,input.documentId);
+  const sponsor=outputAdmissionSponsor(options.outputAdmissionReads);
+  if(sponsor&&(user.projectExecution||user.fictional||(user.billingUserId??user.userId)!==user.userId))throw new Error("sponsor_personal_principal_required");
   if(options.outputAdmissionReads&&(options.allowProviderCalls!==false||options.persist!==false||options.appendEvents!==false||options.allowCache!==false))throw new Error("output_admission_readiness_must_be_local");
   await ensureSchema(env);const checkedAt=nowIso();const technique=normalizePromptTechnique(input.promptTechnique);const productionMode:ProductionMode=input.productionMode==="managed"?"managed":"manual";
   const hasWorkflow=input.workflowId!==undefined||input.workflowStageId!==undefined||input.workflowSources!==undefined;
@@ -196,6 +204,12 @@ export async function preflightGeneration(env:WorkerEnv,user:PilotUser,input:Gen
     }catch{prefetched=null;/* Recompute malformed cache rows. */}
   }
   const events=options.sourceEvents??await readWorkspaceEvents(env,user.streamId);const trusted=authoritativeCreativeContext(events,{documentId:input.documentId,projectId:execution?.projectId,canvasId:input.canvasId,contextSetId:input.contextSetId,contextRootBlockId:input.contextRootBlockId,characterOutputKind:input.characterOutputKind,snapshot:input.snapshot,sourceBlockVersions:input.sourceBlockVersions});const projection=trusted.projection;const baseSnapshot=trusted.snapshot;const documentRevision=trusted.documentRevision;
+  if(sponsor){
+    const actorAllowance=await readOutputAdmissionValue(options.outputAdmissionReads,"sponsor-actor-pilot-allowance",()=>pilotExecutionAllowance(env,user.userId));
+    if(!actorAllowance.allowed||actorAllowance.pilot)throw new Error("sponsor_managed_pilot_unsupported");
+    const scopes=await readOutputAdmissionValue(options.outputAdmissionReads,"budget-scopes",()=>ownerDocumentBudgetScopes(env,user.userId,projection.documentId,projection.projectId));
+    if(scopes.length)throw new Error("sponsor_organization_budget_unsupported");
+  }
   let effectiveSnapshot:Record<string,unknown>=baseSnapshot;
   if(hasWorkflow){
     if(input.kind!=="generate")throw new ProductionWorkflowContextError("workflow_stage_unavailable","Production source checkpoints can only inform an explicitly requested final-quality image.",409);
@@ -218,21 +232,31 @@ export async function preflightGeneration(env:WorkerEnv,user:PilotUser,input:Gen
   }
   let previous:GenerationReadiness|null=null;const previousRow=await readOutputAdmissionValue(options.outputAdmissionReads,"previous-image-preflight",()=>env.DB.prepare("SELECT result_json,expires_at FROM generation_preflights WHERE owner_id=? AND document_id=? AND request_key LIKE ? ORDER BY created_at DESC LIMIT 1").bind(user.userId,projection.documentId,`${cachePrefix}%`).first<PreflightRow>());if(previousRow)try{previous=JSON.parse(previousRow.result_json) as GenerationReadiness;}catch{/* A malformed historical cache must not block a new check. */}
   const preflightId=uuidV7();const expiresAt=new Date(Date.now()+10*60_000).toISOString();const probes:GenerationReadinessProbe[]=[];const add=(probe:GenerationReadinessProbe)=>probes.push(probe);if(options.appendEvents!==false){if(previous&&previous.documentRevision!==documentRevision)await appendAuditEvent(env,user.streamId,"worker:policy","GenerationPreflightInvalidated",{preflight_id:previous.preflightId,document_id:projection.documentId,previous_document_revision:previous.documentRevision,document_revision:documentRevision,reason:"document-or-request-changed",source_surface:input.sourceSurface??"generation-controls",preflight_version:GENERATION_PREFLIGHT_VERSION});await appendAuditEvent(env,user.streamId,"worker:policy","GenerationPreflightRequested",{preflight_id:preflightId,document_id:projection.documentId,document_revision:documentRevision,request_key:requestKey,kind:input.kind,prompt_technique:technique,source_surface:input.sourceSurface??"generation-controls",preflight_version:GENERATION_PREFLIGHT_VERSION});}
-  const estimatedTokens=generationReadinessReservation(input.kind);const budgets=execution?(await readOutputAdmissionValue(options.outputAdmissionReads,"account-budgets",()=>readAccountBudgets(env,user.userId,execution.organizationId))).budgets:await readOutputAdmissionValue(options.outputAdmissionReads,"token-budgets",()=>readBudgets(env,user.billingUserId??user.userId));const remaining=Math.max(0,Math.min(budgets.user.limit-budgets.user.used-budgets.user.reserved,budgets.workspace.limit-budgets.workspace.used-budgets.workspace.reserved));
-  const canReadWorkspaceBudget=!execution||hasCapability(user,"workspace.usage.read",{organizationId:execution.organizationId});
+  const budgetOwner=outputAdmissionBudgetOwner(options.outputAdmissionReads,env,user.userId,user.billingUserId??user.userId);
+  const estimatedTokens=generationReadinessReservation(input.kind);const budgets=execution?(await readOutputAdmissionValue(options.outputAdmissionReads,"account-budgets",()=>readAccountBudgets(env,user.userId,execution.organizationId))).budgets:await readOutputAdmissionValue(options.outputAdmissionReads,"token-budgets",()=>readBudgets(env,budgetOwner,sponsor?{initialize:false}:{}));const remaining=Math.max(0,Math.min(budgets.user.limit-budgets.user.used-budgets.user.reserved,budgets.workspace.limit-budgets.workspace.used-budgets.workspace.reserved));
+  const canReadWorkspaceBudget=!sponsor&&(!execution||hasCapability(user,"workspace.usage.read",{organizationId:execution.organizationId}));
   add(remaining>=estimatedTokens?{id:"application-budget",label:"Application budget",status:"pass",severity:"info",summary:canReadWorkspaceBudget?`${remaining.toLocaleString()} tokens remain; this request reserves ${estimatedTokens.toLocaleString()}.`:"This request is within your personal and organization generation limits.",action:"none"}:{id:"application-budget",label:"Application budget",status:"fail",severity:"blocking",summary:canReadWorkspaceBudget?`Only ${remaining.toLocaleString()} tokens remain; this request needs ${estimatedTokens.toLocaleString()}.`:"This request exceeds a personal or organization generation limit.",action:"review_budget"});
   let provider=await readOutputAdmissionValue(options.outputAdmissionReads,"provider-health",()=>readProviderHealth(env));if(!env.OPENAI_API_KEY){provider={...emptyProvider("The OpenAI planner and safety preflight are not configured."),status:"authentication_failed",scope:"account"};}else if(usesFalImages(env)&&!env.FAL_KEY){provider={...emptyProvider("Fal is selected for images but no Fal credential is configured."),status:"authentication_failed",scope:"account"};}
   const providerLabel=usesFalImages(env)?"Fal + safety availability":"OpenAI availability";add(statusBlocksProvider(provider)?{id:"provider-health",label:providerLabel,status:"fail",severity:"blocking",summary:provider.message,action:provider.status==="rate_limited"?"wait":"refresh_provider"}:{id:"provider-health",label:providerLabel,status:"pass",severity:"info",summary:provider.status==="healthy"?provider.message:"No recent account, project, or model block has been observed.",action:"none"});
   const selected=options.outputImageRender?{format:options.outputImageRender.format,blockId:null}:documentImageFormat(snapshot);const render=options.outputImageRender??providerRenderFormat(selected.format,input.kind.startsWith("preview")?"preview":"full");const falSize=usesFalImages(env)?validateFalImageSize(render.size):null;const openaiSize=falSize?null:validateProviderImageSize(render.size);const sizeValid=falSize?.valid??openaiSize?.valid??false;const sizeIssues=falSize?[falSize.reason]:openaiSize?.issues??["The image size is not supported."];
   add(sizeValid?{id:"image-format",label:"Image format",status:"pass",severity:"info",summary:`${render.size} is accepted by the configured image adapter.`,action:"none"}:{id:"image-format",label:"Image format",status:"fail",severity:"blocking",summary:sizeIssues.join(" "),action:"review_blocks",blockIds:selected.blockId?[selected.blockId]:[]});
   const payloadLength=JSON.stringify(snapshot).length;add(payloadLength>650_000?{id:"context-size",label:"Compiled context",status:"fail",severity:"blocking",summary:`The document context is ${payloadLength.toLocaleString()} characters and exceeds the durable job limit.`,action:"review_blocks"}:payloadLength>240_000?{id:"context-size",label:"Compiled context",status:"warning",severity:"warning",summary:"The document is unusually large. Safe compaction will run before the image request, but review very long block instructions.",action:"review_blocks"}:{id:"context-size",label:"Compiled context",status:"pass",severity:"info",summary:`${payloadLength.toLocaleString()} characters can be safely compiled.`,action:"none"});
-  const facts=Array.isArray(snapshot.facts)?snapshot.facts as Array<Record<string,unknown>>:[];const missingReferences=facts.filter((fact)=>fact.type==="reference"&&sendsReferencePixels((fact.properties??{}) as Record<string,unknown>)&&!String(((fact.properties??{}) as Record<string,unknown>).media_url??"")).map((fact)=>String(fact.block_id??"")).filter(Boolean);
+  const facts=Array.isArray(snapshot.facts)?snapshot.facts as Array<Record<string,unknown>>:[];
+  const pixelFacts=facts.filter((fact)=>["reference","model3d"].includes(String(fact.type))&&promptFactIsActive(fact)&&sendsReferencePixels(((fact.properties??{}) as Record<string,unknown>).pixel_reference_mode));
+  const missingReferences=pixelFacts.filter((fact)=>!String(((fact.properties??{}) as Record<string,unknown>).media_url??"")||fact.type==="model3d"&&!hasSavedModel3dView((fact.properties??{}) as Record<string,unknown>)).map((fact)=>String(fact.block_id??"")).filter(Boolean);
   if(input.sourcePreviewId&&!projection.outputs.some((output)=>output.id===input.sourcePreviewId))missingReferences.push(String(input.sourcePreviewId));
-  add(missingReferences.length?{id:"reference-availability",label:"Reference pixels",status:"fail",severity:"blocking",summary:`${missingReferences.length} requested image reference${missingReferences.length===1?" is":"s are"} unavailable.`,action:"review_references",blockIds:missingReferences}:{id:"reference-availability",label:"Reference pixels",status:"pass",severity:"info",summary:"Requested reference inputs are available or context-only.",action:"none"});
+  const provenanceFailures:Array<{blockId:string;summary:string}>=[];
+  for(const fact of pixelFacts){
+    const blockId=String(fact.block_id??"");if(missingReferences.includes(blockId))continue;
+    try{await assertDerivedReferenceProvenance({env,ownerId:execution?.ownerUserId??user.userId,properties:(fact.properties??{}) as Record<string,unknown>,blockId,sourceEvents:events,projectScope:execution});}
+    catch(error){const detail=classifyProviderFailure(error);provenanceFailures.push({blockId,summary:detail.message});}
+  }
+  const unavailableReferenceIds=[...new Set([...missingReferences,...provenanceFailures.map(failure=>failure.blockId)])];
+  add(unavailableReferenceIds.length?{id:"reference-availability",label:"Reference pixels",status:"fail",severity:"blocking",summary:provenanceFailures[0]?.summary??(pixelFacts.some(fact=>fact.type==="model3d"&&missingReferences.includes(String(fact.block_id??"")))?"Open the 3D model and save the image view you want to send before generating.":`${missingReferences.length} requested image reference${missingReferences.length===1?" is":"s are"} unavailable.`),action:"review_references",blockIds:unavailableReferenceIds}:{id:"reference-availability",label:"Reference pixels",status:"pass",severity:"info",summary:"Requested reference images and saved 3D views are available or context-only.",action:"none"});
   const previousSafety=previous?.documentRevision===documentRevision&&(previous.productionMode??"manual")===productionMode&&(!hasWorkflow||previous.requestKey===requestKey)&&Date.parse(previous.expiresAt)>Date.now()?previous.probes.find((probe)=>probe.id==="context-safety"):null;
   if(options.allowProviderCalls===false)add({id:"context-safety",label:"Context safety review",status:"unknown",severity:"warning",summary:"No source has been sent. The exact prompt and selected reference pixels will be checked after authorization before image generation.",action:"review_prompt"});
   else if(previousSafety)add({...previousSafety,summary:`${previousSafety.summary} Reused for the same document revision; the exact prompt and selected pixels will still be checked before image work.`});
-  else if(env.OPENAI_API_KEY&&!statusBlocksProvider(provider)&&remaining>=estimatedTokens)try{
+  else if(env.OPENAI_API_KEY&&!statusBlocksProvider(provider)&&remaining>=estimatedTokens&&!unavailableReferenceIds.length)try{
     const moderation=await moderateGenerationSnapshot(env,snapshot);
     add(moderation.flagged?{id:"context-safety",label:"Context safety review",status:"warning",severity:"warning",summary:`Likely moderation concern${moderation.categories.length?`: ${moderation.categories.join(", ")}`:""}. Review the named context before sending it to the image workflow.`,action:"review_blocks",blockIds:moderation.blockIds,categories:moderation.categories}:{id:"context-safety",label:"Context safety review",status:"pass",severity:"info",summary:`Text context passed an advisory ${moderation.model} review in ${moderation.latencyMs}ms. Exact prompt and selected reference pixels will be checked again before image generation.`,action:"none"});
   }catch(error){const detail=classifyProviderFailure(error);const observed=await observeProviderFailure(env,detail);if(observed){provider=observed;add({id:"context-safety",label:"Context safety review",status:statusBlocksProvider(observed)?"fail":"unknown",severity:statusBlocksProvider(observed)?"blocking":"warning",summary:observed.message,action:statusBlocksProvider(observed)?"refresh_provider":"none"});}else add({id:"context-safety",label:"Context safety review",status:"unknown",severity:"warning",summary:"The advisory safety probe was unavailable. Generation can continue only after acknowledging that the request was not pre-screened.",action:"review_prompt"});}
@@ -247,7 +271,7 @@ export async function preflightGeneration(env:WorkerEnv,user:PilotUser,input:Gen
 
 export async function handleGenerationReadiness(request:Request,env:WorkerEnv,path=""){
   await ensureSchema(env);
-  const scoped=/(?:^|;\s*)forma_project_context=/.test(request.headers.get("cookie")??"");
+  const scoped=hasProjectContextCookie(request);
   const auth=await requireUser(request,env,scoped?"viewer":request.method==="GET"?"viewer":"creator",scoped?{account:"principal"}:{});
   if(auth.response||!auth.user)return auth.response!;
   const principal=auth.user,selected=scoped?await readProjectRequestContext(request,env,principal):{context:null,response:null};

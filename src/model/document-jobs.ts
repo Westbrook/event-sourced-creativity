@@ -7,18 +7,73 @@ export type ProviderFailureAction = "edit_request" | "check_credentials" | "chec
 export type DocumentJobError = { code: string; category: ProviderFailureCategory; scope: ProviderFailureScope; action: ProviderFailureAction; message: string; retryable: boolean; retryAfterMs: number | null; requestId: string | null; httpStatus: number | null; riskCategories?: string[]; contributingBlockIds?: string[]; contributingReferenceIds?: string[]; probe?: string | null; validationIssues?: import("./presentation-candidates.ts").PresentationCandidateValidationIssue[] };
 export type PromptFanMember = { jobId: string; promptTechnique: "prose" | "bullets" | "json" | "xml"; status: Exclude<DocumentJobStatus, "partial">; error: DocumentJobError | null; moderationPromptRef: string | null; attemptCount: number; updatedAt: string };
 
+/** A stop is not a refund: these states describe existing canonical reservations only. */
+export type DocumentJobStopBudget = {
+  reservationStatus: "not-reserved" | "released" | "retained" | "settled" | "unknown";
+  billingStatus: "not-incurred" | "pending" | "settled" | "unknown";
+};
+
+/** Only an exact canonical ledger pair proves that no reservation remains held. */
+export function documentJobHasNoBudgetHold(budget?:DocumentJobStopBudget):boolean {
+  return budget?.reservationStatus === "settled" && budget.billingStatus === "settled"
+    || (budget?.reservationStatus === "released" || budget?.reservationStatus === "not-reserved") && budget.billingStatus === "not-incurred";
+}
+
+export function documentJobStopBudgetMessage(budget?: DocumentJobStopBudget): string {
+  if (budget?.reservationStatus === "retained") return budget.billingStatus === "not-incurred"
+    ? "Provider work was not submitted. A budget hold remains pending release."
+    : "The provider request may still be billable; its budget hold is retained.";
+  if (budget?.reservationStatus === "released" && budget.billingStatus === "not-incurred") return "Unused reserved budget was released.";
+  if (budget?.reservationStatus === "not-reserved" && budget.billingStatus === "not-incurred") return "No budget was reserved and no provider work was submitted.";
+  if (budget?.reservationStatus === "settled" && budget.billingStatus === "settled") return "Verified provider usage remains charged; no budget hold remains.";
+  return "Billing is not yet confirmed. Check Activity for details.";
+}
+
+/** Current response-only ledger state, separate from the historical cancellation receipt. */
+export function planningStopBudget(result:unknown):DocumentJobStopBudget|undefined{
+  const candidate=result&&typeof result==="object"?(result as Record<string,unknown>).planningStopBudget:undefined;
+  if(!candidate||typeof candidate!=="object"||Array.isArray(candidate))return;
+  const value=candidate as Record<string,unknown>;
+  if(typeof value.reservationStatus!=="string"||typeof value.billingStatus!=="string"||!["not-reserved","released","retained","settled","unknown"].includes(value.reservationStatus)||!["not-incurred","pending","settled","unknown"].includes(value.billingStatus))return;
+  return{reservationStatus:value.reservationStatus as DocumentJobStopBudget["reservationStatus"],billingStatus:value.billingStatus as DocumentJobStopBudget["billingStatus"]};
+}
+
+/** Presentation-only recognition of canonical Forma copy; never reconstructs billing state from text. */
+const DOCUMENT_JOB_STOP_EXPLANATIONS=new Set([
+  documentJobStopBudgetMessage({reservationStatus:"retained",billingStatus:"not-incurred"}),
+  documentJobStopBudgetMessage({reservationStatus:"retained",billingStatus:"pending"}),
+  documentJobStopBudgetMessage({reservationStatus:"released",billingStatus:"not-incurred"}),
+  documentJobStopBudgetMessage({reservationStatus:"not-reserved",billingStatus:"not-incurred"}),
+  documentJobStopBudgetMessage({reservationStatus:"settled",billingStatus:"settled"}),
+  documentJobStopBudgetMessage(),
+  "The existing provider request may still be billable; its hold is retained.",
+]);
+export function documentJobStopStatusParts(message:string,budget?:DocumentJobStopBudget):string[]|null{
+  if(message==="Planning was stopped before provider submission.")return budget?["Planning was stopped.",documentJobStopBudgetMessage(budget)]:[message];
+  const prefix="Planning was stopped.",explanation=message.startsWith(prefix+" ")?message.slice(prefix.length+1):"";
+  return DOCUMENT_JOB_STOP_EXPLANATIONS.has(explanation)?[prefix,budget?documentJobStopBudgetMessage(budget):explanation]:null;
+}
+
 export type GenerationFailureGuidance = {
   title: string;
   summary: string;
   actionLabel: string | null;
   actionUrl: string | null;
   retryAllowed: boolean;
+  /** Exact application-side Scene stop; not provider failure or a billing certificate. */
+  applicationEligibility?: true;
 };
 
 export type DocumentJob = {
+  executionOwner?: "durable";
+  observation?: import("./output-durable-observation.ts").OutputDurableObservation;
   jobId: string;
   documentId: string;
   canvasId?: string | null;
+  /** Exact existing paid-planning identity; never a new-purchase request. */
+  planningExecutionId?: string;
+  planningProjectScope?: boolean;
+  planningLocale?: string;
   kind: DocumentJobKind;
   status: DocumentJobStatus;
   sourceSurface: string;
@@ -222,8 +277,9 @@ export function documentJobFailure(job: DocumentJob) {
 
 /** A saved provider request can only be resumed after a genuinely recoverable transport/result failure. */
 export function documentJobCanRecoverProviderRender(job: DocumentJob) {
-  if (job.kind !== "render_document" || job.status !== "failed" || job.result?.artifactKind !== "video" && job.result?.artifactKind !== "audio" && job.result?.artifactKind !== "storyboard") return false;
+  if (job.kind !== "render_document" || job.status !== "failed" || job.result?.artifactKind !== "video" && job.result?.artifactKind !== "audio" && job.result?.artifactKind !== "storyboard" && job.result?.artifactKind !== "model3d") return false;
   if (job.result.artifactKind === "storyboard" && !confirmedStoryboardProviderRequest(job.result)) return false;
+  if (job.result.artifactKind === "model3d" && !confirmedModel3dProviderRequest(job.result)) return false;
   const sceneReceipts = job.result.productionSceneReceipts && typeof job.result.productionSceneReceipts === "object"
     ? Object.values(job.result.productionSceneReceipts as Record<string, Record<string, unknown>>)
     : [];
@@ -235,7 +291,7 @@ export function documentJobCanRecoverProviderRender(job: DocumentJob) {
     && job.result.audioProviderSubmission === "confirmed" && typeof job.result.providerJobId === "string"
     && /^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$/u.test(job.result.providerJobId)
     && !["pending", "submitted", "unknown"].includes(job.result.providerJobId.toLowerCase());
-  const recoverableReservationFailure=failure?.code==="cost_reservation_invalid_or_expired"||failure?.code==="cost_reservation_already_in_use"||failure?.code==="execution_interrupted";
+  const recoverableReservationFailure=failure?.code==="cost_reservation_invalid_or_expired"||failure?.code==="cost_reservation_already_in_use"||failure?.code==="execution_interrupted"||job.result.artifactKind==="model3d"&&failure?.code==="local_persistence_failed";
   return Boolean((failure?.retryable||recoverableReservationFailure||originalSourceAudio)&&failure?.category!=="safety"&&failure?.httpStatus!==400&&failure?.httpStatus!==422);
 }
 
@@ -246,6 +302,13 @@ function confirmedStoryboardProviderRequest(result: Record<string, unknown>) {
     && typeof providerJobId === "string"
     && /^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$/u.test(providerJobId)
     && !["pending", "submitted", "unknown"].includes(providerJobId.toLowerCase());
+}
+
+function confirmedModel3dProviderRequest(result: Record<string, unknown>) {
+  return result.model3dProviderSubmission === "confirmed"
+    && typeof result.providerJobId === "string"
+    && /^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$/u.test(result.providerJobId)
+    && !["pending", "submitted", "unknown"].includes(result.providerJobId.toLowerCase());
 }
 
 /** Only advertise a paid slideshow replay when its newest rejection can be repaired without relaxing validation. */
@@ -267,14 +330,25 @@ const TRUSTED_GENERATION_FAILURE_FALLBACKS = new Set([
 ]);
 
 export function generationFailureGuidance(detail: DocumentJobError | null, fallback = "", job?: Pick<DocumentJob,"kind"|"status"|"stage"|"result">) : GenerationFailureGuidance {
+  if(detail?.code==="adaptive_canceled"||detail?.code==="adaptive_force_failed"){
+    const budget=planningStopBudget(job?.result);
+    const summary=budget?"Planning was stopped. "+documentJobStopBudgetMessage(budget):documentJobStopStatusParts(detail.message)?.join(" ")??"Planning was stopped. "+documentJobStopBudgetMessage();
+    return{title:"Planning was stopped.",summary,actionLabel:null,actionUrl:null,retryAllowed:false};
+  }
+  if(job?.kind==="render_document"&&job.status==="failed"&&job.result?.artifactKind==="scene"
+    &&detail?.code==="scene_paid_authority_changed"&&detail.category==="access"&&detail.scope==="project"
+    &&detail.action==="check_project"&&detail.httpStatus===403&&detail.retryable===false&&detail.retryAfterMs===null&&detail.requestId===null){
+    return{title:"Scene stopped at an application eligibility check",summary:"Forma could not confirm current application eligibility, access, or spending limits before the next provider request. Review these settings with an authorized administrator. Earlier confirmed usage remains recorded; this stop does not clear uncertain charges or budget holds.",actionLabel:"Review application settings",actionUrl:"/operations",retryAllowed:false,applicationEligibility:true};
+  }
   const result=job?.result&&typeof job.result==="object"?job.result:{};
   const receipt=result.generationReceipt&&typeof result.generationReceipt==="object"&&!Array.isArray(result.generationReceipt)?result.generationReceipt as Record<string,unknown>:{};
+  if(detail?.code==="document_render_guidance_too_long"||detail?.code==="document_render_guidance_invalid")return{title:"Request settings need attention",summary:"Audience and Tone must be text, each no longer than 120 UTF-16 code units after trimming outer whitespace. This is an application validation error, not a provider failure.",actionLabel:null,actionUrl:null,retryAllowed:false};
   const providerStatus=typeof receipt.provider_request_status==="string"?receipt.provider_request_status:"";
   const transmissionStatus=typeof receipt.source_transmission_status==="string"?receipt.source_transmission_status:"";
   const failureStage=typeof receipt.failure_stage==="string"?receipt.failure_stage:job?.stage??"";
   const acceptedStoryboardRender=result.artifactKind==="storyboard"&&confirmedStoryboardProviderRequest(result);
   const uncertainStoryboardRender=result.artifactKind==="storyboard"&&(result.storyboardProviderSubmission==="pending"||result.storyboardProviderSubmission==="confirmed"&&!acceptedStoryboardRender);
-  const recoverableSubmittedRender=job?.kind==="render_document"&&((result.artifactKind==="video"||result.artifactKind==="audio")&&Boolean(result.providerJobId||result.recoverableProductionProviderRequest)||acceptedStoryboardRender);
+  const recoverableSubmittedRender=job?.kind==="render_document"&&((result.artifactKind==="video"||result.artifactKind==="audio")&&Boolean(result.providerJobId||result.recoverableProductionProviderRequest)||acceptedStoryboardRender||result.artifactKind==="model3d"&&confirmedModel3dProviderRequest(result));
   if(uncertainStoryboardRender&&(detail?.code==="execution_interrupted"||detail?.code==="provider_submission_uncertain"||detail?.category==="network"||detail?.category==="server"||providerStatus==="submission_unknown"))return{title:"Storyboard submission could not be confirmed",summary:"A paid storyboard frame may already have been submitted, but Forma has no confirmed provider request to resume. Automatic resubmission was stopped to prevent a duplicate charge.",actionLabel:null,actionUrl:null,retryAllowed:false};
   if(detail?.code==="execution_interrupted"||!detail&&fallback==="execution_interrupted"){
     if(providerStatus==="submission_unknown")return{title:"Provider submission could not be confirmed",summary:"The generation worker stopped while a paid provider request may have been in flight. Do not submit another request until the original attempt is reconciled.",actionLabel:null,actionUrl:null,retryAllowed:false};
@@ -284,6 +358,15 @@ export function generationFailureGuidance(detail: DocumentJobError | null, fallb
   }
   if (!detail) {
     return { title: "The generation could not be completed", summary: TRUSTED_GENERATION_FAILURE_FALLBACKS.has(fallback) ? fallback : "The provider could not complete this request. Review the saved inputs and technical receipt before trying again.", actionLabel: null, actionUrl: null, retryAllowed: true };
+  }
+  if(result.artifactKind==="model3d"||detail.code.startsWith("model3d_")||detail.code.startsWith("fal_model3d_")){
+    if(detail.category==="safety")return{title:"Rodin stopped this 3D request",summary:"Review the subject, prompt, and selected image views for the provider’s content restrictions before starting a changed request. A text request also creates an internal image that must pass the provider’s checks.",actionLabel:null,actionUrl:null,retryAllowed:false};
+    if(detail.code==="model3d_prompt_too_long")return{title:"Shorten the 3D prompt",summary:"Use 1,024 characters or fewer. Review the exact prompt and keep the subject, shape, and material details that matter most; Forma does not truncate your text.",actionLabel:null,actionUrl:null,retryAllowed:false};
+    if(detail.code==="model3d_provider_not_configured"||detail.category==="authentication")return{title:"Fal 3D generation is not configured",summary:"Configure a valid server-side Fal key before creating this model.",actionLabel:"Review Fal keys",actionUrl:"https://fal.ai/dashboard/keys",retryAllowed:false};
+    if(detail.category==="quota")return{title:"The Fal account cannot fund this 3D model",summary:"Resolve the Fal account limit or add credits before starting another model.",actionLabel:"Review Fal billing",actionUrl:"https://fal.ai/dashboard/billing",retryAllowed:false};
+    if(detail.httpStatus===400||detail.httpStatus===422)return{title:"Review the 3D settings and references",summary:"Choose supported Rodin settings and up to five JPG, PNG, or WebP views of the same subject. The first selected view guides the materials. Review the saved provider detail before changing this request.",actionLabel:null,actionUrl:null,retryAllowed:false};
+    if(confirmedModel3dProviderRequest(result)&&(detail.retryable||detail.code==="local_persistence_failed"||detail.code==="execution_interrupted"))return{title:"The saved 3D model can be recovered",summary:"Retrieve the accepted Rodin request using its saved prompt, reference views, and payment receipt. Recovery does not purchase another generation.",actionLabel:null,actionUrl:null,retryAllowed:true};
+    if(detail.category==="rate_limit")return{title:"Fal is limiting 3D generation",summary:detail.retryAfterMs?`Wait about ${Math.max(1,Math.ceil(detail.retryAfterMs/1000))} seconds before trying again.`:"Wait briefly before requesting more 3D models.",actionLabel:null,actionUrl:null,retryAllowed:detail.retryable};
   }
   if(job?.kind==="render_document"&&job.status==="failed"&&result.artifactKind==="audio"
     &&detail.code==="context_source_version_mismatch"&&detail.category!=="safety"&&detail.httpStatus===409
@@ -312,7 +395,7 @@ export function generationFailureGuidance(detail: DocumentJobError | null, fallb
     if(detail.category==="safety"||detail.riskCategories?.includes("audio-copyright"))return{title:"The original composition was rejected",summary:"Remove named-artist imitation, recognizable melodies, copyrighted lyrics, or unauthorized vocal references before requesting a new original track.",actionLabel:null,actionUrl:null,retryAllowed:false};
     if(detail.httpStatus===400||detail.httpStatus===422||detail.category==="provider")return{title:"The audio composition or reference was not accepted",summary:"Review the requested audio, spoken script, approved image or video reference, recording rights, and retained provider receipt before trying a changed request.",actionLabel:null,actionUrl:null,retryAllowed:false};
   }
-  if (detail.category === "safety" && (detail.riskCategories?.includes("audio-copyright") || /\baudio\b.*\bcopyright\b/i.test(detail.message))) return { title: "The generated soundtrack was rejected", summary: "The provider flagged generated audio as a potential copyright issue. Create a silent video, or explicitly choose original environmental ambience without music or voices. This rejected provider render cannot be recovered.", actionLabel: null, actionUrl: null, retryAllowed: false };
+  if (detail.category === "safety" && (detail.riskCategories?.includes("audio-copyright") || /\baudio\b.*\bcopyright\b/i.test(detail.message))) return { title: "The generated audio was rejected", summary: "The provider flagged generated audio as a potential copyright issue. Inspect the retained request and saved work. This rejection does not establish which source caused it, and it does not confirm the final charge. Automatic retry and recovery of this rejected render are unavailable.", actionLabel: null, actionUrl: null, retryAllowed: false };
   if (detail.code.startsWith("fal_") && detail.category !== "safety" && (detail.httpStatus === 400 || detail.httpStatus === 422)) return { title: "The video settings or references were not accepted", summary: "Review the requested duration, frame, reference images, and submitted prompt before trying again. The complete failed-attempt receipt remains available.", actionLabel: null, actionUrl: null, retryAllowed: false };
   if (detail.code === "video_provider_not_configured") return { title: "Fal video generation is not configured", summary: "Add a valid server-side Fal key before retrying this video. Other document renderers remain available.", actionLabel: "Review Fal keys", actionUrl: "https://fal.ai/dashboard/keys", retryAllowed: false };
   if (detail.code.startsWith("fal_") && detail.category === "authentication") return { title: "The Fal credential was rejected", summary: "Replace the server-side Fal key, then retry this video. The app will not keep retrying an invalid credential.", actionLabel: "Review Fal keys", actionUrl: "https://fal.ai/dashboard/keys", retryAllowed: false };
@@ -354,10 +437,23 @@ const PROVIDER_POLICY_DESTINATIONS = new Set([
 /** Privileged provider destinations are visible only to the exact nonimpersonating platform principal. */
 export function authorizedGenerationFailureRemediation(
   guidance: GenerationFailureGuidance,
-  principal: { capabilities?: readonly string[]; projectContext?: unknown; impersonation?: unknown } | null,
+  principal: { capabilities?: readonly string[]; projectContext?: unknown; impersonation?: unknown; organizations?: readonly { organizationId: string; role: string }[] } | null,
 ) {
-  if (!principal || principal.projectContext || principal.impersonation || guidance.retryAllowed || !guidance.actionUrl || !guidance.actionLabel || !Array.isArray(principal.capabilities)) return null;
+  if (!principal || principal.impersonation || guidance.retryAllowed || !guidance.actionUrl || !guidance.actionLabel || !Array.isArray(principal.capabilities)) return null;
   const capabilities = principal.capabilities;
+  if(guidance.applicationEligibility){
+    if(guidance.actionUrl!=="/operations")return null;
+    if(principal.projectContext){
+      const context=typeof principal.projectContext==="object"&&!Array.isArray(principal.projectContext)?principal.projectContext as Record<string,unknown>:{};
+      const organization=typeof context.organizationId==="string"&&context.organizationId&&Array.isArray(principal.organizations)
+        ?principal.organizations.find(item=>item.organizationId===context.organizationId):null;
+      return organization&&["owner","administrator"].includes(organization.role)
+        ?{href:`/settings/workspaces/${encodeURIComponent(organization.organizationId)}/usage`,label:guidance.actionLabel,external:false}:null;
+    }
+    return capabilities.includes("platform.policy.manage")?{href:"/operations",label:guidance.actionLabel,external:false}
+      :capabilities.includes("self.usage.read")?{href:"/settings",label:guidance.actionLabel,external:false}:null;
+  }
+  if(principal.projectContext)return null;
   const provider = capabilities.includes("platform.provider.configure");
   const policy = capabilities.includes("platform.policy.manage");
   const destination = guidance.actionUrl;

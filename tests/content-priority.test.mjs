@@ -31,6 +31,8 @@ const [base, design, responsive, canvasCss, shell, workspace, artifacts, canvas,
   read("../src/performance.ts"),
 ]);
 
+const feedback = await read("../src/components/design-system/feedback.ts");
+
 const sheets = [
   ["styles.css", base],
   ["design-system.css", design],
@@ -123,32 +125,44 @@ function winning(selectors, property, viewport, container) {
   return result;
 }
 
-test("content-priority style sheets parse and modern fractional container ranges have no dead zone", () => {
-  for (const width of [735.84, 735.85, 735.9, 735.99]) {
+test("document pane tracks and switcher share rendered posture across fractional and scrollbar boundaries", () => {
+  const narrow='.workspace-page[data-workbench="document"][data-workbench-narrow="true"]';
+  for (const width of [730, 735.84, 735.85, 735.9, 735.99, 736, 745, 760, 761, 768, 793, 808, 847, 977, 991, 991.99]) {
     const container = { name: "studio", width };
-    assert.equal(winning(".document-workbench-tasks", "display", portrait, container)?.value, "flex", `${width}px still exposes the narrow work selector`);
-    assert.equal(winning([".studio-grid", '.workspace-page[data-workbench="document"] .studio-grid'], "grid-template-columns", portrait, container)?.value, "minmax(0, 1fr)", `${width}px stays in the actual one-pane posture`);
+    assert.equal(winning([".document-workbench-tasks", narrow+" .document-workbench-tasks"], "display", portrait, container)?.value, "flex", `${width}px exposes the same rendered narrow selector`);
+    assert.equal(winning([".studio-grid", '.workspace-page[data-workbench="document"] .studio-grid',narrow+" .studio-grid"], "grid-template-columns", portrait, container)?.value, "minmax(0, 1fr)", `${width}px cannot reserve a hidden pane's track`);
   }
 
-  const expanded = { name: "studio", width: 736 };
+  const expanded = { name: "studio", width: 992 };
   assert.equal(winning(".document-workbench-tasks", "display", portrait, expanded)?.value, "none");
   assert.match(winning(".studio-grid", "grid-template-columns", portrait, expanded)?.value ?? "", /minmax\(18rem,\s*\.72fr\).*minmax\(25rem,\s*1fr\)/);
 
   const zoomed = { ...portrait, rootRem: 20 };
-  assert.equal(winning(".document-workbench-tasks", "display", zoomed, { name: "studio", width: 919.99 })?.value, "flex");
-  assert.equal(winning(".document-workbench-tasks", "display", zoomed, { name: "studio", width: 920 })?.value, "none");
+  assert.equal(winning([".document-workbench-tasks",narrow+" .document-workbench-tasks"], "display", zoomed, { name: "studio", width: 1239.99 })?.value, "flex");
+  assert.equal(winning(".document-workbench-tasks", "display", zoomed, { name: "studio", width: 1240 })?.value, "none");
   assert.equal(winning(['.studio-grid', '.workspace-page[data-workbench="document"] .studio-grid'], "display", portrait, { name: "studio", width: 320 })?.value, "grid");
+  assert.match(workspace,/data-workbench-narrow=\$\{String\(this\.#narrowWorkbench\)\}/);
+  assert.equal(winning(".studio-mode-nav","grid-template-columns",portrait,{name:"studio",width:390})?.value,"minmax(0, 1fr) max-content max-content");
+  const compact='.application-creative[data-nav-posture="compact"][data-layout-intent="workbench"] .studio-mode-nav > button';
+  assert.equal(winning(compact,"flex",portrait,{name:"studio",width:745})?.value,"0 0 auto");
+  assert.equal(winning(compact,"min-inline-size",portrait,{name:"studio",width:745})?.value,"var(--forma-hit-target)");
+  assert.equal(winning(".dropzone","position",portrait,{name:"studio",width:745})?.value,"relative","the visually hidden file input remains contained by its upload control");
 });
 
 test("document-only containment preserves neutral writing intent and exact result-directed project navigation", () => {
   assert.match(shell, /data-layout-intent=\$\{isCreative&&\(documentViewFromRoute\(path\)==="document"\|\|pathname==="\/creative\/create"\|\|pathname\.startsWith\("\/creative\/create\/"\)\)\?"workbench":"browse"\}/);
   assert.match(workspace, /#workbenchPane:"write"\|"result"\|"review"="write"/);
-  assert.match(workspace, /#syncInspectorPosture=\(entries:ResizeObserverEntry\[\]\)=>\{[\s\S]*?const narrow=width<46\*rootSize/);
+  assert.match(workspace, /#syncInspectorPosture=\(entries:ResizeObserverEntry\[\]\)=>\{[\s\S]*?const narrow=width<62\*rootSize/);
   const resize = workspace.split("#syncInspectorPosture=")[1].split("\n  #toggleWorkbenchInspector")[0];
   assert.doesNotMatch(resize, /#selectWorkbenchPane|setRoute\(|append\(|renderDocumentArtifact/);
   assert.match(projects, /displayArtifact\?\.documentId\?\?latest\?\.documentId/);
   assert.match(projects, /!canvas&&resultDocumentId\?withDocumentInRoute\("\/#output-title",resultDocumentId/);
-  assert.match(projects, /@click=\$\{\(\)=>this\.store\.openProject\(project\.id,destination\)\}/);
+  // The same exact destinations now pass through current-origin admission.
+  // Keep the result-source builder tied to its actual native click, not only a route literal.
+  assert.match(projects, /import \{ navigateInApp, performOperationInApp, type CommandDeparture, type CommandOperation, type OwnOperationAdmission \} from "\.\/command-departure";/);
+  assert.match(projects, /#openProject\(projectId:string,destination:string\)\{\s*return navigateInApp\(this,navigation=>this\.store\.openProject\(projectId,destination,navigation\)\);\s*\}/);
+  assert.match(projects, /@click=\$\{\(\)=>this\.#openProject\(project\.id,destination\)\}/);
+  assert.match(projects, /@click=\$\{\(\)=>\{const resultDocumentId=displayArtifact\?\.documentId\?\?latest\?\.documentId;const resultDestination=!canvas&&resultDocumentId\?withDocumentInRoute\("\/#output-title",resultDocumentId,p\.documents\.find\(\(document\)=>document\.id===resultDocumentId\)\?\.title\?\?""\):destination;void this\.#openProject\(project\.id,resultDestination\);\}\}/);
   const route = withDocumentInRoute("/#output-title", "the-exact-source", "Signed-off design");
   assert.equal(documentIdFromRoute(route), "the-exact-source");
   assert.match(route, /#output-title$/);
@@ -189,7 +203,7 @@ test("retained work leads failures and retains explicit, scoped, paid-once recov
   assert.match(artifacts, /documentJobCanRecoverPresentation\(job\)/,"only validated or safely repairable paid slideshow responses advertise free recovery");
   assert.match(artifacts, /documentJobCanRecoverProviderRender/);
   assert.match(artifacts, /session&&!session\.impersonation/);
-  assert.match(artifacts, /productionOwner&&\(artifact\.kind==="slides"\|\|artifact\.kind==="audio"\|\|artifact\.kind==="storyboard"\|\|artifact\.kind==="video"\)/, "settled generation costs remain owner-only across every paid presentation, audio, storyboard, and video output");
+  assert.match(artifacts, /productionOwner&&\(artifact\.kind==="slides"\|\|artifact\.kind==="audio"\|\|artifact\.kind==="storyboard"\|\|artifact\.kind==="video"\|\|artifact\.kind==="short_story"\|\|artifact\.kind==="scene"\|\|artifact\.kind==="model3d"\)/, "settled generation costs remain owner-only across all seven artifact families, including Story, Scene and 3D");
 });
 
 test("independent approval freshness resolves the exact artifact source document, not an identically named block elsewhere", () => {
@@ -235,9 +249,9 @@ test("Library prioritizes matching results, merges all artifact types by real se
 test("delivery labels approval truthfully without blocking already releasable personal outputs", () => {
   assert.match(deliver, /documentIds\.has\(artifact\.documentId\)/);
   assert.match(deliver, /documentIds\.has\(output\.documentId\)/);
-  assert.match(deliver, /const approvedArtifacts = reviewedArtifacts\.filter\(\(\{ review \}\) => review\.status === "approved"\)/);
-  assert.match(deliver, /session\?\.projectContext && \(session\.projectContext\.managedPilot \|\| artifactSourceVersions\(artifact\.id, events\)\) && review\.status !== "approved"/);
-  assert.match(deliver, /const readyArtifacts = reviewedArtifacts\.filter\(\(entry\) => entry\.review\.status !== "approved" && !independentlyGated\(entry\)\)/);
+  assert.match(deliver, /const approvedArtifacts = reviewedArtifacts\.filter\(\(\{ delivery \}\) => delivery\.approved\)/);
+  assert.match(deliver, /session\?\.projectContext && \(session\.projectContext\.managedPilot \|\| artifactSourceVersions\(artifact\.id, events\)\) && !delivery\.approved/);
+  assert.match(deliver, /const readyArtifacts = reviewedArtifacts\.filter\(\(entry\) => !entry\.delivery\.approved && !independentlyGated\(entry\)\)/);
   assert.match(deliver, /artifactSection\(approvedArtifacts,[\s\S]*?artifactSection\(readyArtifacts,[\s\S]*?artifactSection\(pendingArtifacts,/);
   assert.match(deliver, /const reviewed = approvedArtifacts\.length/);
   assert.ok(deliver.indexOf("artifactSection(approvedArtifacts") < deliver.indexOf('class="forma-deliver-summary"'));
@@ -261,8 +275,10 @@ test("project documents and concrete specialist evidence precede aggregate dashb
   assert.ok(dashboard.indexOf('class="role-evidence"') < dashboard.indexOf('class="role-metric-grid"'));
   assert.match(dashboard, /dashboardHeadingLevel===1\?html`<h1/);
   assert.match(dashboard, /:html`<h2 id="role-dashboard-heading"/);
-  assert.ok(delivery.indexOf('class="delivery-decision-list"') < delivery.indexOf('class="delivery-decision-form"'));
-  assert.ok(delivery.indexOf('class="delivery-decision-list"') < delivery.lastIndexOf("this.dashboard("));
+  const deliveryRender = delivery.slice(delivery.indexOf("  override render() {"));
+  assert.match(deliveryRender, /class="delivery-decision-list"[\s\S]*?#decisionRow\([\s\S]*?class="delivery-decision-form"/u);
+  assert.ok(deliveryRender.indexOf('class="delivery-decision-list"') < deliveryRender.indexOf('class="delivery-decision-form"'));
+  assert.ok(deliveryRender.indexOf('class="delivery-decision-list"') < deliveryRender.lastIndexOf("this.dashboard("));
   assert.ok(adapter.indexOf('class="adapter-preview-form"') < adapter.lastIndexOf("super.render()"));
 });
 
@@ -340,7 +356,7 @@ test("alternative creator lenses mount their real task before explanatory readin
   assert.match(alternatives, /const body = html`\s*<div class="context-board" data-forma-content="primary">[\s\S]*?\$\{capture\}\s*\$\{readiness\}`/);
   assert.match(alternatives, /const body = html`\s*<form id=\$\{guidedFormId\}[\s\S]*?<section class="guided-brief guided-brief--focused">[\s\S]*?\$\{steps\}\s*\$\{readiness\}/);
   assert.match(editorAlternatives, /const body = html`\s*<div class="reality-editor" data-forma-content="primary">[\s\S]*?<\/div>\s*\$\{readiness\}/);
-  assert.match(editorAlternatives, /const body = html`\$\{suggestions\}\s*<div class=\$\{`adaptive-workspace adaptive-stage--\$\{stage\}`\} data-forma-content="primary">[\s\S]*?\$\{intent\}\s*\$\{readiness\}`/);
+  assert.match(editorAlternatives, /const body = html`\$\{suggestions\}(?:<button class="text-button" type="button" @click=\$\{this\.#resumeProposalReview\}>\$\{this\.i18n\.t\("adaptive\.changes\.resume"\)\}<\/button>\$\{this\.#proposalDialog\(\)\})?\s*<div class=\$\{`adaptive-workspace adaptive-stage--\$\{stage\}`\} data-forma-content="primary">[\s\S]*?\$\{intent\}\s*\$\{readiness\}`/);
 });
 
 test("wide-screen support panes remain bounded and truly empty overviews do not claim the work surface", () => {
@@ -390,9 +406,18 @@ test("slide tools, source reading, direct jump, authorization and 44px controls 
   assert.match(deck, /aria-label=\$\{this\.i18n\.system\("Next"\)\}[\s\S]*?aria-keyshortcuts=/);
   assert.match(deck, /presentation-deck-reader-content[\s\S]*?Authorized source evidence/);
   assert.match(deck, /!this\.releaseAllowed/);
-  assert.match(artifacts, /artifact-viewer-actions-toggle" aria-label=\$\{this\.i18n\.t\("action\.more","More actions"\)\} aria-expanded=\$\{String\(this\.#viewerActionsOpen\)\} aria-controls=\$\{actionsPanelId\}/);
-  assert.match(canvas, /artifact-viewer-actions-toggle" aria-label=\$\{this\.i18n\.t\("action\.more","More actions"\)\} aria-expanded=\$\{String\(this\.#viewerActionsOpen\)\} aria-controls=\$\{actionsPanelId\}/);
-  assert.equal(winning(".artifact-viewer-actions-toggle[hidden]", "display", portrait)?.value, "none");
+  for (const viewer of [artifacts, canvas]) {
+    const popover = viewer.match(/<forma-ui-popover class="artifact-viewer-actions-popover"[\s\S]*?<\/forma-ui-popover>/)?.[0];
+    assert.ok(popover, "More actions remains in the shared native popover");
+    assert.match(popover, /\.label=\$\{this\.i18n\.t\("action\.more","More actions"\)\}/);
+    assert.match(popover, /\.content=\$\{viewerActions\}/);
+    assert.match(popover, /@forma-toggle=[\s\S]*this\.#viewerActionsOpen=event\.detail\.open/);
+    assert.match(viewer, /class="artifact-viewer-actions-body"/);
+  }
+  assert.match(feedback, /class="button secondary ui-popover-trigger" popovertarget=\$\{this\.#id\} aria-controls=\$\{this\.#id\} aria-expanded=\$\{String\(this\.#open\)\}/, "the native trigger owns the same expanded panel ID");
+  assert.match(feedback, /<section id=\$\{this\.#id\} class="ui-popover-panel" popover="auto" aria-label=\$\{this\.heading \|\| label\}/, "the browser-owned panel keeps an accessible name");
+  assert.equal(winning(".ui-popover-panel[popover]:not(:popover-open)", "display", portrait)?.value, "none");
+  for (const property of ["min-inline-size", "min-block-size"]) assert.equal(winning(".ui-popover-trigger", property, landscape)?.value, "var(--forma-control-min-size,2.75rem)", "native actions retain a 44px floor");
 });
 
 test("focused private and Canvas presentations retain a visible, readable, correctly scoped independent-review state", () => {

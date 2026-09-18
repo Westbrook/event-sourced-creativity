@@ -18,7 +18,7 @@ export type OutputConfirmedPlan = {
   confirmationOptions: OutputConfirmationOptions;
 };
 export type OutputAssetRow = {
-  id: string; name: string; mimeType: string; mediaKind: "image" | "slides" | "audio" | "video" | "document";
+  id: string; name: string; mimeType: string; mediaKind: "image" | "slides" | "audio" | "video" | "document" | "model3d";
   byteLength: number; sha256: string; sourceDigest: string; createdByUserId: string; createdAt: string;
   inspection: OutputAssetInspection; downloadUrl: string; available: boolean;
 };

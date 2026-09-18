@@ -1,0 +1,17 @@
+/* Reuse native reader flow and the retained media donor's native picker policy.
+   No nested scroller, fixed media height, gesture, zoom or focus override. */
+.native-retained-video:lang(ar) { --forma-heading-letter-spacing: 0; }
+.native-retained-video > .native-video-open { min-block-size: 2.75rem; min-inline-size: 2.75rem; margin-block-end: 1rem; }
+.native-retained-video :is(.native-video-primary, .native-video-scenes) { min-inline-size: 0; max-inline-size: 100%; margin-block-end: 1.5rem; }
+.native-retained-video :is(.forma-video-reel-player, .native-video-primary-player) { display: block; inline-size: 100%; max-inline-size: 100%; min-inline-size: 0; object-fit: contain; }
+.native-retained-video .forma-video-reel-picker { display: grid; gap: .5rem; min-inline-size: 0; }
+.native-retained-video .forma-video-reel-picker select {
+  appearance: auto; display: block; box-sizing: border-box; inline-size: 100%; max-inline-size: 100%;
+  min-inline-size: 0; min-block-size: 2.75rem; white-space: nowrap; overflow-wrap: normal;
+}
+.native-retained-video .forma-video-reel-picker select::picker(select) { appearance: auto; }
+.native-retained-video > .native-video-clips { margin-block: 1.5rem 0; padding-inline: 1.5rem; }
+.native-video-clips > li { min-inline-size: 0; margin-block: 0 1.5rem; }
+.native-video-clips > li > :is(h3, p, small) { min-inline-size: 0; white-space: pre-wrap; overflow-wrap: anywhere; word-break: normal; unicode-bidi: plaintext; }
+.native-video-clips > li > :is(p, small) { font-size: var(--forma-font-size-body, 1rem); line-height: 1.6; }
+.native-video-clips > li > small { display: block; }

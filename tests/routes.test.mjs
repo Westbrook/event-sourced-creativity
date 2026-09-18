@@ -1,7 +1,26 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { documentContextBlockFromRoute, documentContextBlockRoute, documentEntryPath, documentFocusFromRoute, documentIdFromRoute, documentViewFromRoute, isDocumentViewRoute, libraryBaseRoute, libraryBlockEditorFromRoute, libraryBlockEditorRoute, libraryFocusFromRoute, libraryFocusRoute, libraryRootRoute, routePathname, withDocumentFocusInRoute, withDocumentInRoute } from "../src/model/routes.ts";
+import { artifactFocusRoute, artifactFocusOptionsFromRoute, projectTaskDocumentIdFromRoute, documentContextBlockFromRoute, documentContextBlockRoute, documentEntryPath, documentFocusFromRoute, documentIdFromRoute, documentViewFromRoute, isDocumentViewRoute, libraryBaseRoute, libraryBlockEditorFromRoute, libraryBlockEditorRoute, libraryFocusFromRoute, libraryFocusRoute, libraryRootRoute, routePathname, withDocumentFocusInRoute, withDocumentInRoute } from "../src/model/routes.ts";
 import { applicationEntryPath, applicationIdFromRoute } from "../src/platform/applications.ts";
+
+test("retained output task routes preserve exact Document and artifact Edit selection", () => {
+  const options = { expectedRevision: 3, intent: "inspect", expectedContentSha256: "a".repeat(64) };
+  for (const path of ["/make/short-story", "/make/scene", "/make/slides"]) {
+    for (const documents of [["doc-a"], ["文書/د"], [""], ["doc-a", "doc-b"]]) {
+      const route = new URL(path + "/", "https://fixture.invalid");
+      for (const document of documents) route.searchParams.append("document", document);
+      const current = route.pathname + route.search;
+      assert.equal(documentViewFromRoute(current), null, "a retained read never opens a Document editor");
+      assert.equal(projectTaskDocumentIdFromRoute(current), documents.length === 1 ? documents[0] : "");
+      const href = artifactFocusRoute("artifact-one", "", options, current);
+      assert.deepEqual(new URL(href, route).searchParams.getAll("document"), documents);
+      assert.deepEqual(artifactFocusOptionsFromRoute(href), options);
+      assert.deepEqual(libraryFocusFromRoute(href), { kind: "artifact", id: "artifact-one" });
+    }
+    assert.equal(projectTaskDocumentIdFromRoute(path), null);
+    assert.equal(projectTaskDocumentIdFromRoute(path + "/extra?document=doc-a"), null);
+  }
+});
 
 test("document views use a readable path for the selected durable document", () => {
   const paths = [["/", "document"], ["/studio/board", "board"], ["/studio/guided", "guided"], ["/studio/layers", "layers"], ["/studio/adaptive", "adaptive"], ["/studio/editor", "editor"], ["/studio/chat", "chat"]];
@@ -106,4 +125,69 @@ test("application routes select one canonical runtime boundary",()=>{
   assert.equal(applicationIdFromRoute("/laboratory/replay"),"product");
   assert.equal(applicationIdFromRoute("/admin/events/replay"),"product");
   assert.equal(applicationEntryPath("/system/focal-points"),"/knowledge/");
+});
+
+
+test("artifact deep links keep the byte-identical three-argument option contract", () => {
+  for (const intent of ["inspect", "review", "export"]) for (const expectedRevision of [0, 3, Number.MAX_SAFE_INTEGER]) for (const expectedContentSha256 of [undefined, "a".repeat(64)]) {
+    const options = { expectedRevision, intent, ...(expectedContentSha256 ? { expectedContentSha256 } : {}) };
+    const href = artifactFocusRoute("artifact/one", "An output", options);
+    assert.equal(href, "/library/artifact/artifact%2Fone/an-output?revision=" + expectedRevision + "&intent=" + intent + (expectedContentSha256 ? "&sha256=" + expectedContentSha256 : ""));
+    assert.deepEqual(artifactFocusOptionsFromRoute(href), options);
+    assert.equal(projectTaskDocumentIdFromRoute(href), null);
+  }
+});
+
+test("artifact deep links merge exact options into an existing Document query", () => {
+  const options = { expectedRevision: 3, intent: "review", expectedContentSha256: "b".repeat(64) };
+  for (const current of ["/document/doc-a/name", "/?document=doc-a", "/deliver?document=doc-a", "/activity?document=doc-a", "/library?document=doc-a", "/canvas/library?document=doc-a"]) {
+    const href = artifactFocusRoute("artifact/one", "An output", options, current), url = new URL(href, "https://fixture.invalid");
+    assert.deepEqual(url.searchParams.getAll("document"), ["doc-a"]); assert.equal(projectTaskDocumentIdFromRoute(href), "doc-a");
+    assert.deepEqual(artifactFocusOptionsFromRoute(href), options);
+    assert.deepEqual(libraryFocusFromRoute(href), { kind: "artifact", id: "artifact/one" });
+    assert.equal(libraryBaseRoute(href), current.startsWith("/canvas/") ? "/canvas/library" : "/library");
+    assert.deepEqual([...url.searchParams.keys()], ["document", "revision", "intent", "sha256"]);
+  }
+});
+
+test("artifact deep links retain literal and ambiguous task addresses without selecting a replacement", () => {
+  const options = { expectedRevision: 0, intent: "inspect" };
+  for (const values of [[""], ["missing original"], [" doc-a\u00a0"], ["doc-a\u200b"], ["文書/د"], ["doc-a", "", "doc-b"], ["doc-a", "doc-a"]]) {
+    const current = new URL("/activity", "https://fixture.invalid"); for (const value of values) current.searchParams.append("document", value);
+    const href = artifactFocusRoute("exact", "Exact output", options, current.pathname + current.search), url = new URL(href, "https://fixture.invalid");
+    assert.deepEqual(url.searchParams.getAll("document"), values);
+    assert.equal(projectTaskDocumentIdFromRoute(href), values.length === 1 ? values[0] : "");
+    assert.deepEqual(artifactFocusOptionsFromRoute(href), options, "A valid artifact intent does not repair an unavailable Document identity");
+  }
+});
+
+test("artifact deep links do not copy unrelated queries or superseded artifact options", () => {
+  const current = "/canvas/library/artifact/old/old?document=doc-a&revision=1&revision=2&intent=inspect&sha256=old&scope=unrelated#old";
+  const options = { expectedRevision: 8, intent: "export", expectedContentSha256: "c".repeat(64) };
+  const href = artifactFocusRoute("new?/#%", "New output", options, current), url = new URL(href, "https://fixture.invalid");
+  assert.equal(url.pathname, "/canvas/library/artifact/new%3F%2F%23%25/new-output");
+  assert.equal(projectTaskDocumentIdFromRoute(href), "doc-a"); assert.deepEqual(artifactFocusOptionsFromRoute(href), options);
+  assert.equal(url.hash, ""); assert.equal(url.searchParams.has("scope"), false);
+  assert.equal(url.searchParams.getAll("revision").length, 1); assert.equal(url.searchParams.getAll("intent").length, 1);
+  assert.deepEqual(libraryFocusFromRoute(href), { kind: "artifact", id: "new?/#%" });
+});
+
+test("artifact deep links retain the existing unrelated-route context boundary", () => {
+  const options = { expectedRevision: 0, intent: "inspect" };
+  for (const current of ["/library", "/canvas/library", "/settings?document=not-authority", "/projects?document=not-authority"]) {
+    const href = artifactFocusRoute("exact", "", options, current);
+    assert.equal(href, libraryBaseRoute(current) + "/artifact/exact?revision=0&intent=inspect");
+    assert.equal(projectTaskDocumentIdFromRoute(href), null); assert.deepEqual(artifactFocusOptionsFromRoute(href), options);
+  }
+});
+
+test("scoped artifact deep links still reject malformed or duplicate delivery options", () => {
+  const options = { expectedRevision: 3, intent: "review", expectedContentSha256: "d".repeat(64) };
+  const href = artifactFocusRoute("exact", "", options, "/deliver?document=doc-a");
+  assert.deepEqual(artifactFocusOptionsFromRoute(href), options);
+  for (const suffix of ["&revision=3", "&intent=export", "&sha256=" + "e".repeat(64)]) assert.equal(artifactFocusOptionsFromRoute(href + suffix), "invalid");
+  for (const malformed of [{ ...options, expectedRevision: -1 }, { ...options, expectedRevision: 0.5 }, { ...options, intent: "publish" }, { ...options, expectedContentSha256: "not-a-hash" }]) {
+    const invalid = artifactFocusRoute("exact", "", malformed, "/deliver?document=doc-a");
+    assert.equal(projectTaskDocumentIdFromRoute(invalid), "doc-a"); assert.equal(artifactFocusOptionsFromRoute(invalid), "invalid");
+  }
 });

@@ -1,6 +1,133 @@
 /** Stable, server-owned messages only. Authored content is never passed through this registry. */
 type Translation = readonly [string, string, string, string];
 const groups = {
+
+  storyboardContract: { codes: "output_storyboard_contract_unsupported", text: [
+    "These requirements are not supported for Storyboard. Review the saved delivery plan in Forma; this check starts no generation.",
+    "Ces exigences ne sont pas prises en charge pour Storyboard. Consultez le plan de livraison enregistré dans Forma ; cette vérification ne lance aucune génération.",
+    "هذه المتطلبات غير مدعومة للوحة القصة. راجع خطة التسليم المحفوظة في Forma؛ لا يبدأ هذا الفحص أي توليد.",
+    "この要件はストーリーボードでサポートされていません。Formaで保存済みの納品計画を確認してください。この確認では生成を開始しません。",
+  ] },
+  storyboardProvider: { codes: "output_storyboard_provider_unavailable", text: [
+    "Storyboard generation is not configured for this workspace. Contact a workspace administrator; this check starts no generation.",
+    "La génération de storyboards n’est pas configurée pour cet espace de travail. Contactez un administrateur ; cette vérification ne lance aucune génération.",
+    "توليد لوحات القصة غير مهيأ لمساحة العمل هذه. تواصل مع مسؤول مساحة العمل؛ لا يبدأ هذا الفحص أي توليد.",
+    "このワークスペースではストーリーボード生成が設定されていません。管理者に連絡してください。この確認では生成を開始しません。",
+  ] },
+  storyboardExpired: { codes: "output_storyboard_original_expired", text: [
+    "The saved Storyboard preparation has expired. If it was never authorized, use Renew preparation in the Storyboard mini-app when available. After an authorized attempt, prepare a fresh Storyboard draft using the same story beats and visual direction. Your previous Document, history, and any charges or holds remain; preparation does not start generation.",
+    "La préparation du storyboard enregistré a expiré. Si elle n’a jamais été autorisée, utilisez Renouveler la préparation dans la mini-app Storyboard lorsque cette option est disponible. Après une tentative autorisée, préparez un nouveau brouillon Storyboard avec les mêmes étapes du récit et la même direction visuelle. Le document précédent, son historique et les frais ou réservations restent conservés ; la préparation ne lance aucune génération.",
+    "انتهت صلاحية إعداد لوحة القصة المحفوظة. إذا لم يُصرّح به سابقًا، فاستخدم تجديد الإعداد في تطبيق لوحة القصة المصغّر عند توفره. بعد محاولة مصرّح بها، جهّز مسودة جديدة باستخدام أحداث القصة نفسها والتوجيه البصري نفسه. يبقى المستند السابق وسجله وأي رسوم أو مبالغ محجوزة محفوظة؛ لا يبدأ الإعداد أي توليد.",
+    "保存済みストーリーボードの準備期限が切れました。未承認の場合は、ストーリーボードのミニアプリで利用可能なら「準備を更新」を使用してください。承認済みの試行後は、同じ物語の展開と視覚的な方針を使って新しい下書きを準備してください。以前のドキュメント、履歴、請求や予約額は保持されます。準備では生成を開始しません。",
+  ] },
+  storyboardChanged: { codes: "output_storyboard_source_changed", text: [
+    "The saved Storyboard preparation no longer matches the current Document. Review the Document and saved delivery plan in Forma. This check starts no generation and does not remove earlier charges or holds.",
+    "La préparation du storyboard enregistré ne correspond plus au document actuel. Consultez le document et le plan de livraison enregistré dans Forma. Cette vérification ne lance aucune génération et ne supprime ni frais ni réservations antérieurs.",
+    "لم يعد إعداد لوحة القصة المحفوظة مطابقًا للمستند الحالي. راجع المستند وخطة التسليم المحفوظة في Forma. لا يبدأ هذا الفحص أي توليد ولا يلغي الرسوم أو المبالغ المحجوزة السابقة.",
+    "保存済みストーリーボードの準備内容が現在のドキュメントと一致しません。Formaでドキュメントと保存済み納品計画を確認してください。この確認では生成を開始せず、以前の請求や予約額も取り消しません。",
+  ] },
+  storyboardContext: { codes: "output_storyboard_context_limit", text: [
+    "This Storyboard exceeds the supported context limit. Review the selected source material in Forma; nothing was silently omitted and this check starts no generation.",
+    "Ce storyboard dépasse la limite de contexte prise en charge. Consultez les sources sélectionnées dans Forma ; rien n’a été omis sans vous en informer et cette vérification ne lance aucune génération.",
+    "تتجاوز لوحة القصة هذه حد السياق المدعوم. راجع المواد المصدرية المحددة في Forma؛ لم يُحذف أي شيء دون إبلاغك ولا يبدأ هذا الفحص أي توليد.",
+    "このストーリーボードは対応するコンテキスト上限を超えています。Formaで選択済みの資料を確認してください。内容を黙って省略しておらず、この確認では生成を開始しません。",
+  ] },
+  storyboardOffer: { codes: "output_storyboard_offer_invalid", text: [
+    "The Storyboard cost and source-transfer terms could not be verified. No new spending approval or generation is available; earlier charges and holds remain recorded.",
+    "Les conditions de coût et de transfert des sources du storyboard n’ont pas pu être vérifiées. Aucune nouvelle autorisation de dépense ni génération n’est disponible ; les frais et réservations antérieurs restent enregistrés.",
+    "تعذر التحقق من شروط تكلفة لوحة القصة ونقل مصادرها. لا تتوفر موافقة جديدة على الإنفاق أو عملية توليد؛ تبقى الرسوم والمبالغ المحجوزة السابقة مسجلة.",
+    "ストーリーボードの費用と資料転送の条件を検証できませんでした。新たな支出承認も生成も利用できません。以前の請求や予約額は記録に残ります。",
+  ] },
+  storyboardReady: { codes: "output_storyboard_ready", text: [
+    "Exactly 4 frames from the authored story and visual direction. Review the resulting images; completion does not guarantee creative acceptance.",
+    "Exactement 4 images à partir du récit et de la direction visuelle rédigés. Examinez les images produites ; la fin de la génération ne garantit pas leur acceptation créative.",
+    "أربعة إطارات بالضبط من القصة والتوجيه البصري المؤلّفين. راجع الصور الناتجة؛ لا يضمن اكتمال التوليد قبولها إبداعيًا.",
+    "作成した物語と視覚的な方針から正確に4フレームを生成します。生成された画像を確認してください。完了しても創作上の承認は保証されません。",
+  ] },
+  storyboardTransfer: { codes: "output_transfer_storyboard_after_authorization", text: [
+    "This check sends nothing. After authorization and Create, Forma sends the current Document context to OpenAI once to plan exactly four frames, then each planned frame direction to fal.ai / Ideogram 4 for one PNG. Before each of the four images, the exact final text prompt also goes to OpenAI (omni-moderation-latest) for its existing safety check. Those up to four safety checks are separate from the five paid generation stages; no reference pixels, repair request or automatic retry is authorized. This is a published-rate allowance, not a provider invoice.",
+    "Cette vérification n’envoie rien. Après autorisation et création, Forma envoie une fois le contexte du document actuel à OpenAI pour planifier exactement quatre images, puis la direction de chaque image à fal.ai / Ideogram 4 pour un PNG. Avant chacune des quatre images, le texte final exact est aussi envoyé à OpenAI (omni-moderation-latest) pour le contrôle de sécurité existant. Ces quatre contrôles au maximum sont distincts des cinq étapes de génération payantes ; aucun pixel de référence, demande de correction ni nouvelle tentative automatique n’est autorisé. Il s’agit d’une provision aux tarifs publiés, pas d’une facture du fournisseur.",
+    "لا يرسل هذا الفحص شيئًا. بعد التصريح والإنشاء، ترسل Forma سياق المستند الحالي إلى OpenAI مرة واحدة لتخطيط أربعة إطارات بالضبط، ثم توجيه كل إطار إلى fal.ai / Ideogram 4 لإنشاء صورة PNG واحدة. قبل كل صورة من الصور الأربع، يُرسل النص النهائي نفسه أيضًا إلى OpenAI (omni-moderation-latest) للفحص الأمني الحالي. هذه الفحوص الأربعة كحد أقصى منفصلة عن مراحل التوليد الخمس المدفوعة؛ لا يُصرّح بإرسال بكسلات مرجعية أو طلب إصلاح أو إعادة محاولة تلقائية. هذا مخصص وفق الأسعار المنشورة، وليس فاتورة من المزوّد.",
+    "この確認では何も送信しません。承認して作成すると、Formaは現在のドキュメントのコンテキストをOpenAIに1回送信して正確に4フレームを計画し、各フレームの方針をfal.ai / Ideogram 4に送信してPNGを1枚ずつ生成します。各画像の生成前には、最終テキストプロンプトをそのままOpenAI（omni-moderation-latest）にも送り、既存の安全確認を行います。最大4回の安全確認は5段階の有料生成とは別です。参照画像の画素、修正依頼、自動再試行は許可されません。これは公開料金に基づく予算枠であり、プロバイダーの請求書ではありません。",
+  ] },
+  sceneContract: { codes: "output_scene_contract_unsupported", text: [
+    "These output requirements are not supported for Scene. Review the saved delivery plan in Forma.",
+    "Ces exigences de sortie ne sont pas prises en charge pour Scène. Consultez le plan de livraison enregistré dans Forma.",
+    "متطلبات المخرجات هذه غير مدعومة للمشهد. راجع خطة التسليم المحفوظة في Forma.",
+    "この納品要件はシーンでサポートされていません。Formaで保存済みの納品計画を確認してください。",
+  ] },
+  sceneProvider: { codes: "output_scene_provider_unavailable", text: [
+    "Scene generation is not configured for this workspace. Contact a workspace administrator.",
+    "La génération de scènes n’est pas configurée pour cet espace de travail. Contactez un administrateur.",
+    "توليد المشاهد غير مهيأ لمساحة العمل هذه. تواصل مع مسؤول مساحة العمل.",
+    "このワークスペースではシーン生成が設定されていません。ワークスペース管理者に連絡してください。",
+  ] },
+  sceneExpired: { codes: "output_scene_original_expired", text: [
+    "The saved Scene preparation window has expired. Your Document is retained; this request cannot start generation.",
+    "Le délai de préparation de la scène enregistrée a expiré. Votre document est conservé ; cette demande ne peut pas lancer la génération.",
+    "انتهت مهلة إعداد المشهد المحفوظ. مستندك محفوظ؛ لا يمكن لهذا الطلب بدء التوليد.",
+    "保存済みシーンの準備期限が切れました。ドキュメントは保持されていますが、このリクエストでは生成を開始できません。",
+  ] },
+  sceneChanged: { codes: "output_scene_source_changed", text: [
+    "The saved Scene preparation no longer matches the current Document. Review the Document and delivery plan in Forma.",
+    "La préparation de la scène enregistrée ne correspond plus au document actuel. Consultez le document et le plan de livraison dans Forma.",
+    "لم يعد إعداد المشهد المحفوظ مطابقًا للمستند الحالي. راجع المستند وخطة التسليم في Forma.",
+    "保存済みシーンの準備内容が現在のドキュメントと一致しません。Formaでドキュメントと納品計画を確認してください。",
+  ] },
+  sceneRequest: { codes: "output_scene_request_unavailable", text: [
+    "The saved Scene request could not be verified. Review the Document and delivery plan in Forma; generation has not started.",
+    "La demande de scène enregistrée n’a pas pu être vérifiée. Consultez le document et le plan de livraison dans Forma ; la génération n’a pas commencé.",
+    "تعذر التحقق من طلب المشهد المحفوظ. راجع المستند وخطة التسليم في Forma؛ لم يبدأ التوليد.",
+    "保存済みシーンのリクエストを検証できませんでした。Formaでドキュメントと納品計画を確認してください。生成は開始されていません。",
+  ] },
+  sceneContext: { codes: "output_scene_context_limit", text: [
+    "This Scene exceeds the supported context limit. Review the selected source material in Forma; nothing was silently omitted.",
+    "Cette scène dépasse la limite de contexte prise en charge. Consultez les sources sélectionnées dans Forma ; rien n’a été omis sans vous en informer.",
+    "يتجاوز هذا المشهد حد السياق المدعوم. راجع المواد المصدرية المحددة في Forma؛ لم يُحذف أي شيء دون إبلاغك.",
+    "このシーンは対応するコンテキスト上限を超えています。Formaで選択済みの資料を確認してください。内容を黙って省略していません。",
+  ] },
+  sceneCost: { codes: "output_scene_cost_unavailable", text: [
+    "The cost terms for this saved Scene request could not be verified. No spending approval or generation is available.",
+    "Les conditions tarifaires de cette demande de scène enregistrée n’ont pas pu être vérifiées. Aucune autorisation de dépense ni génération n’est disponible.",
+    "تعذر التحقق من شروط تكلفة طلب المشهد المحفوظ. لا تتوفر الموافقة على الإنفاق أو عملية التوليد.",
+    "保存済みシーンのリクエストの費用条件を検証できませんでした。支出の承認も生成も利用できません。",
+  ] },
+  model3dReady: { codes: "output_native_model3d_ready", text: [
+    "One Rodin request creates a GLB using the exact reviewed prompt, ordered reference images, and disclosed settings. Provider content checks apply; acceptance is not guaranteed. Review the mesh and materials before accepting delivery.",
+    "Une requête Rodin crée un GLB avec l’instruction exacte relue, les images de référence ordonnées et les paramètres affichés. Les contrôles de contenu du fournisseur s’appliquent ; l’acceptation n’est pas garantie. Vérifiez le maillage et les matériaux avant d’accepter la livraison.",
+    "ينشئ طلب Rodin واحد ملف GLB باستخدام النص الدقيق الذي راجعته والصور المرجعية المرتبة والإعدادات الموضحة. تُطبّق فحوص محتوى المزوّد ولا يُضمن القبول. راجع الشبكة والمواد قبل قبول التسليم.",
+    "Rodinへの1回の依頼で、確認済みの正確なプロンプト、順序付き参照画像、表示された設定を使ってGLBを作成します。プロバイダーのコンテンツ審査が適用され、受理は保証されません。納品を承認する前にメッシュとマテリアルを確認してください。",
+  ] },
+  model3dTransfer: { codes: "output_transfer_model3d_after_authorization", text: [
+    "After authorization and Start, Forma sends the exact displayed prompt, settings, and listed reference images in order to fal.ai / Hyper3D Rodin. The first reference guides materials. Original mesh files are not sent. This preflight sends nothing.",
+    "Après l’autorisation et le démarrage, Forma envoie l’instruction exacte affichée, les paramètres et les images de référence dans l’ordre à fal.ai / Hyper3D Rodin. La première référence guide les matériaux. Les fichiers de maillage originaux ne sont pas envoyés. Cette vérification préalable n’envoie rien.",
+    "بعد الإذن والبدء، ترسل Forma النص المعروض كما هو والإعدادات والصور المرجعية المدرجة بالترتيب إلى fal.ai / Hyper3D Rodin. يوجّه المرجع الأول المواد. لا تُرسل ملفات الشبكة الأصلية. لا يرسل هذا الفحص المسبق شيئًا.",
+    "許可して開始すると、Formaは表示された正確なプロンプト、設定、一覧の参照画像を順番にfal.ai / Hyper3D Rodinへ送信します。最初の参照画像がマテリアルを方向付けます。元のメッシュファイルは送信されません。この事前確認では何も送信しません。",
+  ] },
+  model3dUnconfigured: { codes: "output_native_model3d_unconfigured", text: [
+    "Configure the fal provider before creating a 3D model. Owned GLB adoption remains available.", "Configurez le fournisseur fal avant de créer un modèle 3D. L’importation de vos GLB reste disponible.", "اضبط مزوّد fal قبل إنشاء نموذج ثلاثي الأبعاد. يظل استيراد ملفات GLB التي تملكها متاحًا.", "3Dモデルを作成する前にfalプロバイダーを設定してください。所有するGLBの取り込みは引き続き利用できます。",
+  ] },
+  model3dContract: { codes: "output_native_model3d_contract_unsupported", text: [
+    "A 3D model has no image aspect ratio or slide/duration count. Review these output requirements before creating it.", "Un modèle 3D n’a pas de rapport d’image ni de nombre de diapositives ou de durée. Revoyez ces exigences avant de le créer.", "لا يملك النموذج ثلاثي الأبعاد نسبة أبعاد صورة أو عدد شرائح أو مدة. راجع متطلبات المخرجات هذه قبل إنشائه.", "3Dモデルには画像の縦横比、スライド数、時間の条件はありません。作成前に納品要件を確認してください。",
+  ] },
+  model3dReferences: { codes: "model3d_reference_count model3d_reference_selection_invalid", text: [
+    "Rodin accepts at most five ordered reference images. Select fewer active pixel references or choose references in the 3D generation dialog. No reference is silently dropped.", "Rodin accepte au plus cinq images de référence ordonnées. Activez moins de références en pixels ou choisissez-les dans la fenêtre de génération 3D. Aucune référence n’est supprimée silencieusement.", "يقبل Rodin خمس صور مرجعية مرتبة على الأكثر. قلّل المراجع النشطة التي ترسل بكسلاتها أو اختر المراجع في نافذة التوليد ثلاثي الأبعاد. لا يُحذف أي مرجع دون إعلامك.", "Rodinの参照画像は順序付きで最大5枚です。有効なピクセル参照を減らすか、3D生成ダイアログで参照を選択してください。参照を黙って省くことはありません。",
+  ] },
+  model3dReferenceUnavailable: { codes: "output_native_model3d_reference_unavailable", text: [
+    "Review the selected reference images and confirm their saved rights. Save a current PNG view for each 3D model reference before trying again.", "Vérifiez les images de référence sélectionnées et confirmez leurs droits enregistrés. Enregistrez une vue PNG actuelle de chaque modèle 3D utilisé comme référence avant de réessayer.", "راجع الصور المرجعية المحددة وأكّد حقوقها المحفوظة. احفظ عرض PNG حديثًا لكل نموذج ثلاثي الأبعاد مرجعي قبل المحاولة مجددًا.", "選択した参照画像と保存済みの利用権限を確認してください。再試行する前に各3Dモデル参照の最新のPNGビューを保存してください。",
+  ] },
+  model3dPromptRequired: { codes: "model3d_prompt_required model3d_prompt_invalid", text: [
+    "Write the exact 3D subject description in this deliverable’s instructions, or select an image reference. The prompt is sent unchanged.", "Décrivez exactement le sujet 3D dans les instructions du livrable ou sélectionnez une image de référence. L’instruction est envoyée sans modification.", "اكتب الوصف الدقيق للعنصر ثلاثي الأبعاد في تعليمات هذا المخرج أو اختر صورة مرجعية. يُرسل النص دون تغيير.", "この成果物の指示に3D対象の正確な説明を入力するか、参照画像を選択してください。プロンプトは変更せずに送信します。",
+  ] },
+  model3dPromptLength: { codes: "model3d_prompt_too_long", text: [
+    "The exact 3D prompt has {promptCharacters} characters. Shorten the deliverable instructions to {maximumCharacters} characters or fewer. Your text is retained without truncation.", "L’instruction 3D exacte compte {promptCharacters} caractères. Réduisez les instructions du livrable à {maximumCharacters} caractères ou moins. Votre texte est conservé sans troncature.", "يتكون النص الدقيق للنموذج ثلاثي الأبعاد من {promptCharacters} حرفًا. اختصر تعليمات المخرج إلى {maximumCharacters} حرفًا أو أقل. يُحفظ نصك دون اقتطاع.", "正確な3Dプロンプトは{promptCharacters}文字です。成果物の指示を{maximumCharacters}文字以内に短くしてください。元の文章は切り詰めずに保持します。",
+  ] },
+  model3dInvalid: { codes: "invalid_glb_model", text: [
+    "This GLB could not be verified as a self-contained 3D model. Export it again as GLB 2.0 with embedded textures and uncompressed geometry, then inspect the new file.", "Ce GLB n’a pas pu être vérifié comme modèle 3D autonome. Exportez-le à nouveau en GLB 2.0 avec textures intégrées et géométrie non compressée, puis inspectez le nouveau fichier.", "تعذر التحقق من ملف GLB كنموذج ثلاثي الأبعاد مكتفٍ بذاته. أعد تصديره بصيغة GLB 2.0 مع أنسجة مضمنة وهندسة غير مضغوطة ثم افحص الملف الجديد.", "このGLBを自己完結型の3Dモデルとして検証できませんでした。テクスチャを埋め込み、ジオメトリを非圧縮にしてGLB 2.0で書き出し直し、新しいファイルを検査してください。",
+  ] },
+  model3dReview: { codes: "output_model3d_visual_review_required", text: [
+    "GLB structure and embedded assets were checked. Inspect the 3D geometry, materials, scale, and intended use before accepting delivery. Rendering and useful content were not verified.", "La structure GLB et les ressources intégrées ont été vérifiées. Examinez la géométrie 3D, les matériaux, l’échelle et l’usage prévu avant d’accepter la livraison. Le rendu et l’utilité du contenu n’ont pas été vérifiés.", "فُحصت بنية GLB والموارد المضمنة. افحص الشكل ثلاثي الأبعاد والمواد والمقياس والاستخدام المقصود قبل قبول التسليم. لم يُتحقق من العرض أو فائدة المحتوى.", "GLB構造と埋め込みアセットを検査しました。納品を承認する前に3D形状、マテリアル、縮尺、用途を確認してください。レンダリングと内容の有用性は未検証です。",
+  ] },
   unknown: { codes: "", text: [
     "Forma could not identify this problem. Keep your draft and check the current plan and recorded operations before trying again.",
     "Forma n’a pas pu identifier ce problème. Conservez votre brouillon et vérifiez le plan actuel et les opérations enregistrées avant de réessayer.",
@@ -84,6 +211,12 @@ const groups = {
     "Les exigences de livrables n’ont pas pu être chargées. Le périmètre de livraison est inconnu ; actualisez avant d’agir.",
     "تعذر تحميل متطلبات المخرجات. نطاق التسليم غير معروف؛ حدّث البيانات قبل اتخاذ إجراء.",
     "納品要件を読み込めませんでした。納品範囲が不明なため、操作前に更新してください。",
+  ] },
+  requestNotAttempted: { codes: "output_client_write_not_attempted", text: [
+    "This request was not sent. Keep any original operation ID until its receipt is confirmed.",
+    "Cette demande n’a pas été envoyée. Conservez tout identifiant d’opération d’origine jusqu’à confirmation de son reçu.",
+    "لم يُرسل هذا الطلب. احتفظ بأي معرّف للعملية الأصلية حتى تأكيد إيصالها.",
+    "このリクエストは送信されていません。元の処理IDがある場合は、その記録を確認できるまで保持してください。",
   ] },
   responseLost: { codes: "output_client_response_lost output_client_write_unconfirmed output_client_transport_failed", text: [
     "The response was not confirmed. Keep this draft and recover the same operation ID before starting another request.",
@@ -832,6 +965,18 @@ const groups = {
     "يشمل عدد الشرائح الشرائح المخفية، التي تُحصى منفصلة أيضًا. راجع العرض وفائدة المحتوى والاستشهادات وإمكانية الوصول وسلامة الصفحات المرتبطة؛ لم تُجلب الروابط الخارجية.",
     "スライド数には非表示のスライドも含まれ、非表示分は別途数えています。表示、有用な内容、引用、アクセシビリティ、リンク先の安全性を確認してください。外部リンクは取得していません。",
   ] },
+  markdownReview: { codes: "output_markdown_content_review_required", text: [
+    "Inspection verifies bounded UTF-8 text bytes only. Review the script, exact source coverage and rights separately. Markdown was not rendered; links and embedded media were not fetched. Script acceptance does not establish a composed film.",
+    "L’inspection vérifie uniquement des octets de texte UTF-8 dans les limites prises en charge. Examinez séparément le scénario, la couverture exacte des sources et les droits. Le Markdown n’a pas été rendu ; les liens et médias intégrés n’ont pas été chargés. L’acceptation du scénario n’établit pas l’existence d’un film monté.",
+    "يتحقق الفحص من بايتات نص UTF-8 ضمن الحدود المدعومة فقط. راجع السيناريو ونطاق تغطية المصادر بدقة والحقوق بشكل منفصل. لم يُعرض Markdown ولم تُجلب الروابط أو الوسائط المضمنة. اعتماد السيناريو لا يثبت وجود فيلم مركّب.",
+    "検査は対応上限内のUTF-8テキストのバイト列のみを検証します。脚本、正確な出典の範囲、利用権を別途確認してください。Markdownの表示処理やリンク・埋め込みメディアの取得は行っていません。脚本の承認は編集済み映画の存在を証明しません。",
+  ] },
+  markdownInvalid: { codes: "invalid_markdown_text", text: [
+    "The Markdown file must contain nonblank, valid UTF-8 text without binary control characters. Export an owned text file with a .md name, then inspect it again.",
+    "Le fichier Markdown doit contenir du texte UTF-8 valide, non vide et non limité aux espaces, sans caractères de contrôle binaires. Exportez un fichier texte détenu portant l’extension .md, puis inspectez-le à nouveau.",
+    "يجب أن يحتوي ملف Markdown على نص UTF-8 صالح لا يقتصر على الفراغات وخالٍ من محارف التحكم الثنائية. صدّر ملفًا نصيًا مملوكًا باسم ينتهي بـ .md، ثم افحصه مجددًا.",
+    "Markdownファイルには、空白のみではない有効なUTF-8テキストが必要です。バイナリ制御文字は使用できません。所有するテキストファイルを.md拡張子で書き出し、再度検査してください。",
+  ] },
   assetEmpty: { codes: "empty_output_asset", text: [
     "The file is empty. Select the finished file before uploading it.", "Le fichier est vide. Sélectionnez le fichier terminé avant de l’importer.", "الملف فارغ. اختر الملف النهائي قبل رفعه.", "ファイルが空です。完成したファイルを選択してからアップロードしてください。",
   ] },
@@ -848,10 +993,10 @@ const groups = {
     "対応する長さの範囲で、パス、制御文字、予約されたデバイス名を含まない通常のファイル名を使用してください。",
   ] },
   assetFormat: { codes: "output_asset_format_unsupported", text: [
-    "This file format is not supported for adoption. Use a supported PNG, JPEG, WAV, MP3, MP4, or macro-free PPTX file; extension names alone are not proof.",
-    "Ce format de fichier ne peut pas être adopté. Utilisez un fichier PNG, JPEG, WAV, MP3, MP4 ou PPTX sans macros pris en charge ; l’extension seule ne constitue pas une preuve.",
-    "تنسيق الملف هذا غير مدعوم للاعتماد. استخدم ملف PNG أو JPEG أو WAV أو MP3 أو MP4 أو PPTX دون وحدات ماكرو مدعومًا؛ فالامتداد وحده ليس دليلًا.",
-    "このファイル形式は採用に対応していません。対応するPNG、JPEG、WAV、MP3、MP4、またはマクロなしのPPTXを使用してください。拡張子だけでは形式を証明できません。",
+    "This file format is not supported for adoption. Use a supported PNG, JPEG, WAV, MP3, MP4, macro-free PPTX, GLB, or UTF-8 Markdown (.md) file; extension names alone are not proof.",
+    "Ce format de fichier ne peut pas être adopté. Utilisez un fichier PNG, JPEG, WAV, MP3, MP4, PPTX sans macros, GLB ou Markdown UTF-8 (.md) pris en charge ; l’extension seule ne constitue pas une preuve.",
+    "تنسيق الملف هذا غير مدعوم للاعتماد. استخدم ملف PNG أو JPEG أو WAV أو MP3 أو MP4 أو PPTX دون وحدات ماكرو أو GLB أو Markdown بترميز UTF-8 وامتداد .md مدعومًا؛ فالامتداد وحده ليس دليلًا.",
+    "このファイル形式は採用に対応していません。対応するPNG、JPEG、WAV、MP3、MP4、マクロなしのPPTX、GLB、またはUTF-8のMarkdown（.md）を使用してください。拡張子だけでは形式を証明できません。",
   ] },
   decompressionUnavailable: { codes: "decompression_unavailable decompression_format_unavailable", text: [
     "This environment cannot inspect the file’s compression format. Use a supported export or ask an administrator to restore the inspection capability.",
@@ -1034,10 +1179,52 @@ const groups = {
     "組織のコンテキストパッケージは、まだ納品要件に対応していません。ドキュメント内で作成またはコピーしてください。",
   ] },
   sourceProjectionStale: { codes: "output_source_projection_stale", text: [
-    "The licensed source project needs an authorized refresh before this Output can proceed.",
-    "Le projet source sous licence doit être actualisé par une personne autorisée avant de poursuivre ce livrable.",
-    "يحتاج مشروع المصدر المرخّص إلى تحديث مصرّح به قبل متابعة هذا المخرج.",
-    "この納品物を進める前に、許可されたソースプロジェクトを権限のある人が更新する必要があります。",
+    "The licensed origin needs a refresh by someone authorized to open that source project. Refreshing this Document does not refresh the origin.",
+    "L’origine sous licence doit être actualisée par une personne autorisée à ouvrir ce projet source. Actualiser ce document n’actualise pas l’origine.",
+    "يحتاج المصدر الأصلي المرخّص إلى تحديث من شخص مخوّل بفتح مشروعه. تحديث هذا المستند لا يحدّث المصدر الأصلي.",
+    "ライセンス元のソースプロジェクトを開く権限のある人による更新が必要です。このドキュメントを更新しても、ライセンス元は更新されません。",
+  ] },
+  targetSourceProjectionStale: { codes: "output_target_source_projection_stale", text: [
+    "This Document’s project source index is out of date. Refresh the current project sources before checking Outputs again.",
+    "L’index des sources du projet de ce document n’est plus à jour. Actualisez les sources du projet actuel avant de revérifier les livrables.",
+    "فهرس مصادر مشروع هذا المستند غير محدّث. حدّث مصادر المشروع الحالي قبل التحقق من المخرجات مجددًا.",
+    "このドキュメントのプロジェクトのソース索引が古くなっています。現在のプロジェクトのソースを更新してから、納品物を再確認してください。",
+  ] },
+  targetSourceRefresh: { codes: "output_target_source_refresh", text: [
+    "Refresh project sources · free",
+    "Actualiser les sources du projet · gratuit",
+    "تحديث مصادر المشروع · مجانًا",
+    "プロジェクトのソースを更新 · 無料",
+  ] },
+  targetSourceRefreshNeedsProject: { codes: "output_target_source_refresh_needs_project", text: [
+    "In Workspace settings, open this Document’s existing shared project, then return to this Document. No project will be selected automatically.",
+    "Dans les paramètres des espaces de travail, ouvrez le projet partagé existant de ce document, puis revenez à ce document. Aucun projet ne sera sélectionné automatiquement.",
+    "في إعدادات مساحات العمل، افتح المشروع المشترك الموجود لهذا المستند، ثم عُد إلى هذا المستند. لن يُختار أي مشروع تلقائيًا.",
+    "ワークスペース設定で、このドキュメントの既存の共有プロジェクトを開いてから、このドキュメントに戻ってください。プロジェクトが自動で選択されることはありません。",
+  ] },
+  targetSourceOpenProjects: { codes: "output_target_source_open_projects", text: [
+    "Choose shared project",
+    "Choisir le projet partagé",
+    "اختيار المشروع المشترك",
+    "共有プロジェクトを選択",
+  ] },
+  targetSourceRefreshFailed: { codes: "output_target_source_refresh_failed", text: [
+    "The current project source refresh could not finish. Your Output work is unchanged. Check your current project access and try again.",
+    "L’actualisation des sources du projet actuel n’a pas abouti. Votre travail sur les livrables est inchangé. Vérifiez votre accès actuel au projet, puis réessayez.",
+    "تعذر إكمال تحديث مصادر المشروع الحالي. لم يتغير عملك على المخرجات. تحقق من صلاحية وصولك الحالية إلى المشروع وحاول مجددًا.",
+    "現在のプロジェクトのソース更新を完了できませんでした。納品物の作業内容は変わっていません。現在のプロジェクトへのアクセス権を確認して、再試行してください。",
+  ] },
+  targetSourceRefreshDone: { codes: "output_target_source_refresh_done", text: [
+    "The current project source index was refreshed and Output checks reloaded. No work was generated or authorized.",
+    "L’index des sources du projet actuel a été actualisé et les vérifications des livrables rechargées. Aucun travail n’a été généré ni autorisé.",
+    "حُدّث فهرس مصادر المشروع الحالي وأُعيد تحميل فحوص المخرجات. لم يُولّد أي عمل ولم يُمنح أي تفويض.",
+    "現在のプロジェクトのソース索引を更新し、納品物のチェックを再読み込みしました。作業の生成や許可は行っていません。",
+  ] },
+  targetSourceDocumentContext: { codes: "output_target_source_document_context", text: [
+    "Document {number}: {name}",
+    "Document {number} : {name}",
+    "المستند {number}: {name}",
+    "ドキュメント {number}：{name}",
   ] },
   sourceGovernanceUnavailable: { codes: "output_source_governance_unavailable output_source_governance_cycle", text: [
     "The source authorization chain is unavailable or circular. Restore a valid, verifiable source chain before generation, review, or delivery.",
@@ -1255,6 +1442,12 @@ const groups = {
     "Cette tentative enregistrée est indisponible dans l’espace de travail actuel. Vérifiez le document sélectionné et vos droits d’accès avant de vérifier son reçu.",
     "هذه المحاولة المحفوظة غير متاحة في مساحة العمل الحالية. تحقق من المستند المحدد وصلاحيات الوصول قبل فحص إيصالها.",
     "現在のワークスペースでは、この保存済みの試行を利用できません。処理記録を確認する前に、選択したドキュメントとアクセス権を確認してください。"
+  ] },
+  artifactNoChanges: { codes: "", text: [
+    "No changes to this finished output.",
+    "Aucune modification de ce résultat final.",
+    "لا توجد تغييرات على هذا المخرج النهائي.",
+    "この完成済みの出力に変更はありません。",
   ] },
   sourceGovernanceCapacity: { codes: "output_source_governance_capacity_exceeded", text: [
     "This route cannot fully verify the governed sources within the pilot’s verification capacity. Inspect this Document’s governed sources and contact a workspace administrator.",

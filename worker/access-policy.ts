@@ -27,33 +27,32 @@ export type PrincipalAccess = {
   identityPolicyDeniedCustody?: boolean;
 };
 
-/** An effective managed cohort hides its tenant from anyone without current named enrollment. */
+/** An effective managed cohort hides its tenant from anyone without current named enrollment.
+ * The anti-join retains the same NOT EXISTS rule without another nested WHERE tree.
+ * participant_id is NOT NULL, so only an unmatched enrollment is treated as missing. */
 export const effectivePilotParticipantSql=(organizationId:string,userId:string)=>`NOT EXISTS(
   SELECT 1 FROM pilot_cohorts effective_cohort
+    LEFT JOIN pilot_participants effective_participant ON effective_participant.cohort_id=effective_cohort.cohort_id
+      AND effective_participant.organization_id=effective_cohort.organization_id AND effective_participant.user_id=${userId}
+      AND effective_participant.status='active' AND effective_participant.revoked_at IS NULL
   WHERE effective_cohort.organization_id=${organizationId} AND effective_cohort.status IN ('active','paused','closed')
     AND (effective_cohort.status!='closed' OR NOT EXISTS(
       SELECT 1 FROM pilot_cohorts effective_successor
       WHERE effective_successor.organization_id=effective_cohort.organization_id AND effective_successor.status IN ('active','paused')
     ))
-    AND NOT EXISTS(
-      SELECT 1 FROM pilot_participants effective_participant
-      WHERE effective_participant.cohort_id=effective_cohort.cohort_id
-        AND effective_participant.organization_id=effective_cohort.organization_id
-        AND effective_participant.user_id=${userId}
-        AND effective_participant.status='active' AND effective_participant.revoked_at IS NULL
-    )
+    AND effective_participant.participant_id IS NULL
 )`;
 
-/** Named reviewers retain read/review access but never inherit earlier project authoring. */
+/** Named reviewers retain read/review access but never inherit earlier project authoring.
+ * A NOT NULL successor id is an equivalent anti-join for the closed-cohort exception. */
 export const effectivePilotReviewerSql=(organizationId:string,userId:string)=>`EXISTS(
   SELECT 1 FROM pilot_cohorts reviewer_cohort
     JOIN pilot_participants reviewer_participant ON reviewer_participant.cohort_id=reviewer_cohort.cohort_id
       AND reviewer_participant.organization_id=reviewer_cohort.organization_id
+    LEFT JOIN pilot_cohorts reviewer_successor ON reviewer_successor.organization_id=reviewer_cohort.organization_id
+      AND reviewer_successor.status IN ('active','paused')
   WHERE reviewer_cohort.organization_id=${organizationId} AND reviewer_cohort.status IN ('active','paused','closed')
-    AND (reviewer_cohort.status!='closed' OR NOT EXISTS(
-      SELECT 1 FROM pilot_cohorts reviewer_successor
-      WHERE reviewer_successor.organization_id=reviewer_cohort.organization_id AND reviewer_successor.status IN ('active','paused')
-    ))
+    AND (reviewer_cohort.status!='closed' OR reviewer_successor.cohort_id IS NULL)
     AND reviewer_participant.user_id=${userId} AND reviewer_participant.status='active'
     AND reviewer_participant.revoked_at IS NULL AND reviewer_participant.role='reviewer'
 )`;

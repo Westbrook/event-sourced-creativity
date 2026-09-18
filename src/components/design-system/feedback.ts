@@ -1,6 +1,7 @@
-import { html, nothing } from "lit";
+import { html, nothing, type TemplateResult } from "lit";
 import { icon } from "../icons";
 import { ensureModalDialog } from "../modal-dialog";
+import { observeNativePopoverPosition, positionNativePopover } from "../native-popover";
 import { FormaPresentationalElement } from "../presentational-element";
 import { copyInterfaceText } from "./clipboard";
 import { defineFormaElements, emitFormaEvent, nextFormaId, type FormaOption, type FormaTone } from "./contracts";
@@ -79,11 +80,82 @@ export class FormaUiDisclosure extends FormaSlottedElement {
  * @cssprop {<color>} --forma-color-border-strong - Accessible popover boundary.
  */
 export class FormaUiPopover extends FormaPresentationalElement {
-  static properties = { label: { type: String }, heading: { type: String }, detail: { type: String }, actions: { attribute: false } };
-  label = ""; heading = ""; detail = ""; actions: FormaOption[] = []; #id = nextFormaId("popover"); #open = false;
-  #toggle(event: ToggleEvent) { this.#open = event.newState === "open"; emitFormaEvent(this, "forma-toggle", { open: this.#open }); this.requestUpdate(); }
-  #action(value: string) { emitFormaEvent(this, "forma-action", { value }); this.querySelector<HTMLElement>("[popover]")?.hidePopover?.(); this.querySelector<HTMLButtonElement>(".ui-popover-trigger")?.focus(); }
-  override render() { const label = this.label || this.i18n.t("popover.open"); return html`<div class="ui-popover"><button type="button" class="button secondary ui-popover-trigger" popovertarget=${this.#id} aria-controls=${this.#id} aria-expanded=${String(this.#open)}>${label}</button><section id=${this.#id} class="ui-popover-panel" popover="auto" aria-label=${this.heading || label} @toggle=${this.#toggle}>${this.heading ? html`<h3>${this.heading}</h3>` : nothing}${this.detail ? html`<p>${this.detail}</p>` : nothing}${this.actions.map((action) => html`<button type="button" ?disabled=${action.disabled ?? false} @click=${() => this.#action(action.value)}>${action.label}</button>`)}</section></div>`; }
+  static properties = {
+    label: { type: String }, heading: { type: String }, detail: { type: String },
+    triggerAccessibleName: { type: String, attribute: "trigger-accessible-name" },
+    actions: { attribute: false }, actionCurrent: { attribute: false }, content: { attribute: false }, triggerId: { attribute: false },
+  };
+  label = ""; heading = ""; detail = ""; actions: FormaOption[] = [];
+  /** Optional accessible name for the native trigger; visible text remains unchanged. */
+  triggerAccessibleName = "";
+  /** Optional opening-ownership check for rendered actions; never authorization. */
+  actionCurrent?: (value: string) => boolean;
+  /** Authored light-DOM controls keep their native semantics and event handlers. */
+  content: TemplateResult | typeof nothing = nothing;
+  #id = nextFormaId("popover");
+  triggerId = `${this.#id}-trigger`;
+  #open = false;
+  #actionOpening = 0;
+  #stopPosition?: () => void;
+  #position = () => {
+    const trigger = this.querySelector<HTMLButtonElement>(".ui-popover-trigger");
+    const panel = this.querySelector<HTMLElement>(".ui-popover-panel");
+    if (trigger && panel) positionNativePopover(trigger, panel);
+  };
+  #listen(open: boolean) {
+    this.#stopPosition?.();
+    this.#stopPosition = undefined;
+    const trigger=this.querySelector<HTMLButtonElement>(".ui-popover-trigger"),panel=this.querySelector<HTMLElement>(".ui-popover-panel");
+    if(open&&trigger&&panel)this.#stopPosition=observeNativePopoverPosition(trigger,panel);
+  }
+  #toggle(event: ToggleEvent) {
+    const panel = event.currentTarget as HTMLElement;
+    if (panel !== this.querySelector(".ui-popover-panel")) return;
+    this.#open = this.isConnected && panel.matches(":popover-open");
+    this.#listen(this.#open);
+    if (this.#open) this.#position();
+    emitFormaEvent(this, "forma-toggle", { open: this.#open });
+    this.requestUpdate();
+  }
+  #beforeToggle(event: ToggleEvent) {
+    if(event.currentTarget!==this.querySelector(".ui-popover-panel"))return;
+    if(event.newState==="open")this.#position();
+    else {this.#actionOpening+=1;this.requestUpdate();}
+  }
+  /** Close before handing off an action; never queue focus over a newer surface. */
+  close(returnFocus = false) {
+    this.#actionOpening+=1;
+    const panel = this.querySelector<HTMLElement>(".ui-popover-panel");
+    if (panel?.matches(":popover-open")) panel.hidePopover();
+    this.#open = false;
+    this.#listen(false);
+    if (returnFocus && this.isConnected) this.querySelector<HTMLButtonElement>(".ui-popover-trigger")?.focus({ preventScroll: true });
+  }
+  override disconnectedCallback() { this.close(); super.disconnectedCallback(); }
+  #key(event: KeyboardEvent) { if(this.querySelector(".ui-popover-panel")?.matches(":popover-open"))event.stopPropagation(); }
+  #action(event: Event, action: FormaOption, value: string, opening: number, actions: FormaOption[], index: number) {
+    const button=event.currentTarget as HTMLButtonElement|null,panel=this.querySelector<HTMLElement>(".ui-popover-panel");
+    const current=()=>Boolean(this.isConnected&&button?.isConnected&&!button.disabled&&panel?.isConnected
+      &&button.parentElement===panel&&button.closest("forma-ui-popover")===this
+      &&panel.querySelectorAll<HTMLButtonElement>(":scope > button[data-forma-action]")[index]===button
+      &&panel.matches(":popover-open")&&opening===this.#actionOpening
+      &&actions===this.actions&&actions[index]===action&&action.value===value&&!action.disabled);
+    try {if(!current()||(this.actionCurrent&&!this.actionCurrent(value))||!current())return;}catch{return;}
+    this.close(true);
+    emitFormaEvent(this, "forma-action", { value });
+  }
+  override render() {
+    const label = this.label || this.i18n.t("popover.open"),opening=this.#actionOpening,actions=this.actions;
+    return html`<div class="ui-popover" @keydown=${this.#key}>
+      <button type="button" id=${this.triggerId} class="button secondary ui-popover-trigger" popovertarget=${this.#id} aria-controls=${this.#id} aria-expanded=${String(this.#open)} aria-label=${this.triggerAccessibleName?.trim() || nothing} @click=${this.#position}>${label}</button>
+      <section id=${this.#id} class="ui-popover-panel" popover="auto" aria-label=${this.heading || label} @beforetoggle=${this.#beforeToggle} @toggle=${this.#toggle}>
+        ${this.heading ? html`<h3>${this.heading}</h3>` : nothing}
+        ${this.detail ? html`<p>${this.detail}</p>` : nothing}
+        ${this.content}
+        ${actions.map((action,index) => {const value=action.value;return html`<button type="button" data-forma-action=${index} ?disabled=${action.disabled ?? false} @click=${(event: Event) => this.#action(event,action,value,opening,actions,index)}>${action.label}</button>`;})}
+      </section>
+    </div>`;
+  }
 }
 
 /**

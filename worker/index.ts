@@ -1,10 +1,23 @@
+import { handleStillExperiment } from './still-experiment.ts';
+import { handleHoldDispositions } from "./budget-hold-api.ts";
+import { handleGenerationAccounting } from "./generation-accounting-api.ts";
+import { handleVideoReconciliation } from "./managed-video-reconciliation-api.ts";
 import { handleEvents, type WorkerEnv } from "./events-api";
+import { handleStillDecision } from "./still-api";
+import { isStillNamespace, parseStillRoute } from "../src/still/routes.ts";
 import { getMedia, uploadMedia } from "./media-api";
 import { handleAdminUsers, handleImpersonation, handleSession, hasCapability, requireCapability, requireConsent, requireUser } from "./pilot-policy";
 import { handleShares, handleSharedMedia, handleSharedView } from "./shares-api";
 import { applicationDefinition, authorizedApplicationHome, resolveServerRoute, routeRequiredCapabilities, type ApplicationId } from "../src/platform/applications";
 import { handleReplayApproval, handleReplayEstimate, handleReplaySessions } from "./replay-sessions-api";
-import { handleDocumentJobs } from "./document-jobs-api";
+import { handleDocumentJobs, runDocumentJob } from "./document-jobs-api";
+import { withExperienceOutputDispatch } from "./experience-output-dispatch.ts";
+import { handleExperienceVideoReference } from "./experience-video-reference.ts";
+import { handleExperienceIntake } from "./experience-intake-api";
+import { handleExperienceOutput } from "./experience-output-api";
+import { handleDocumentDuplication } from "./document-duplication-api";
+import { handleCanvasArrangements } from "./canvas-arrangements";
+import { handleAdaptiveProposalApplication } from "./adaptive-proposal-application-api";
 import { handleOutputRequirements } from "./output-requirements-api";
 import { outputDocumentExecutionBridge } from "./output-document-execution";
 import { observeScheduledRetention, schedulePrivateContentRetention, streamHead, type WorkerExecutionContext } from "./runtime";
@@ -17,11 +30,15 @@ import { handlePortfolio } from "./portfolio-api";
 import { readCanvasGovernance } from "./canvas-governance-policy";
 import { handleCapabilityGrants } from "./access-api";
 import { handleWorkspaces } from "./workspaces-api";
-import { readProjectRequestContext } from "./project-access";
+import { hasProjectContextCookie, readProjectRequestContext } from "./project-access";
 import { handlePerformanceSample } from "./performance-api";
 import { handleArtifactEdit } from "./artifact-api";
-import { handleAssistant, handleAssistantBillingReconciliation, handleAssistantProposal, handleAssistantTask } from "./assistant-api";
+import { handleGeneratedImageEdit } from "./generated-image-api";
+import { handleAssistant, handleAssistantBillingReconciliation, handleAssistantProposal, handleAssistantTask, handleAssistantSpecialist } from "./assistant-api";
 import { handlePlatformAssistant } from "./platform-assistant-api";
+import { handleLiveMemory } from "./memory-live-api.ts";
+import { handleMemoryDocumentProfile } from "./memory-document-profile-api.ts";
+import { sweepExpiredDocumentProfileSuppressions } from "./memory-document-profile-store.ts";
 import { handleEventPrivacy } from "./privacy-api";
 import { handleProjectNotifications } from "./project-notifications-api";
 import { processReviewReminders } from "./review-automation-api";
@@ -29,6 +46,10 @@ import { handleProvisioning } from "./provisioning-api";
 import { negotiateMarketingLocale, renderMarketingDocument } from "./marketing-localization";
 import { parseMarketingRoute } from "../src/marketing/profiles";
 import { handleContextIntelligence } from "./context-intelligence-api";
+import { handleContextApplication } from "./context-application-api";
+import { handleWorkspaceLocalProposal } from "./workspace-local-proposal-api";
+import { handleOutputSchemaPreflight, OUTPUT_SCHEMA_PREFLIGHT_PATH } from "./output-schema-preflight";
+import { handleRetainedStoryRead, handleNativeRetainedOutputRead } from "./retained-story-api";
 
 async function authorizeApplication(request: Request, env: WorkerEnv, application: ApplicationId, path: string) {
     if(application==="creative"){
@@ -71,10 +92,16 @@ async function authorizeApplication(request: Request, env: WorkerEnv, applicatio
 
 async function routeRequest(request: Request, env: WorkerEnv, context: WorkerExecutionContext): Promise<Response> {
     const url=new URL(request.url);
+    if(url.pathname===OUTPUT_SCHEMA_PREFLIGHT_PATH)return handleOutputSchemaPreflight(request,env);
     if(url.pathname.startsWith("/api/")&&!['GET','HEAD','OPTIONS'].includes(request.method)){
       const origin=request.headers.get("origin");
       if(origin&&origin!==url.origin)return Response.json({error:"same_origin_required"},{status:403,headers:{"cache-control":"private, no-store"}});
     }
+    if(url.pathname==="/api/retained-story"||url.pathname.startsWith("/api/retained-story/"))return handleRetainedStoryRead(request,env);
+    if(url.pathname==="/api/retained-output"||url.pathname.startsWith("/api/retained-output/"))return handleNativeRetainedOutputRead(request,env);
+    if(/^\/api\/experiences\/drafts\/experience-draft-[a-f0-9]{64}\/output(?:\/(?:prepare|authorize|run|recover-result))?$/u.test(url.pathname))return handleExperienceOutput(request,env,context,withExperienceOutputDispatch(outputDocumentExecutionBridge,runDocumentJob));
+    if(url.pathname==="/api/experiences/video/reference/inspect")return handleExperienceVideoReference(request,env);
+    if(url.pathname==="/api/experiences"||url.pathname.startsWith("/api/experiences/"))return handleExperienceIntake(request,env);
     const marketingRoute=parseMarketingRoute(url.pathname);
     if(marketingRoute){
       if(request.method!=="GET"&&request.method!=="HEAD")return new Response(null,{status:405,headers:{allow:"GET, HEAD"}});
@@ -94,7 +121,9 @@ async function routeRequest(request: Request, env: WorkerEnv, context: WorkerExe
       return new Response(renderMarketingDocument(await asset.text(),locale,marketingRoute.profile),{status:asset.status,statusText:asset.statusText,headers});
     }
     if(url.pathname.startsWith("/welcome/"))return new Response(null,{status:404,headers:{"cache-control":"public, max-age=0, must-revalidate"}});
-    const scopedCookie=/(?:^|;\s*)forma_project_context=/.test(request.headers.get("cookie")??"");
+    // Raw presence remains conservative for response caching, never for account selection.
+    const projectCookieHeaderPresent=/(?:^|;\s*)forma_project_context=/.test(request.headers.get("cookie")??"");
+    const scopedCookie=hasProjectContextCookie(request);
     const accountOnly=url.pathname.startsWith("/api/generation-readiness/")||url.pathname==="/api/analytics"||url.pathname.startsWith("/api/portfolio/")||url.pathname.startsWith("/api/replay-sessions")||url.pathname.startsWith("/api/replay-approval");
     if(scopedCookie&&accountOnly){
       const principal=await requireUser(request,env,"viewer",{account:"principal"});
@@ -114,11 +143,22 @@ async function routeRequest(request: Request, env: WorkerEnv, context: WorkerExe
       const headers=new Headers(response.headers);headers.set("cache-control","private, no-store");headers.append("vary","Cookie, oai-authenticated-user-id, oai-authenticated-user-email, cf-access-authenticated-user-email");
       return new Response(response.body,{status:response.status,statusText:response.statusText,headers});
     }
+    if(url.pathname==="/api/still/experiment")return handleStillExperiment(request,env,context);
+    if(url.pathname==="/api/still/decision")return handleStillDecision(request,env,context);
     if(url.pathname==="/api/session")return handleSession(request,env,context);
     if(url.pathname==="/api/platform/assistant")return handlePlatformAssistant(request,env);
+    if(url.pathname==="/api/assistant/specialist")return handleAssistantSpecialist(request,env,context);
     if(url.pathname==="/api/assistant")return handleAssistant(request,env,context);
+    if(url.pathname==="/api/memory/settings")return handleLiveMemory(request,env,"settings");
+    if(url.pathname==="/api/memory/recall")return handleLiveMemory(request,env,"recall");
+    if(url.pathname==="/api/memory/export")return handleLiveMemory(request,env,"export");
+    if(url.pathname==="/api/memory/document-profile/settings")return handleMemoryDocumentProfile(request,env,"settings");
+    if(url.pathname==="/api/memory/document-profile/inspect")return handleMemoryDocumentProfile(request,env,"inspect");
+    if(url.pathname==="/api/memory/document-profile/suppress")return handleMemoryDocumentProfile(request,env,"suppress");
     if(url.pathname==="/api/context/decompose")return handleContextIntelligence(request,env,"decompose");
     if(url.pathname==="/api/context/research")return handleContextIntelligence(request,env,"research");
+    if(url.pathname==="/api/context/apply")return handleContextApplication(request,env);
+    if(url.pathname==="/api/workspace/quick-edit")return handleWorkspaceLocalProposal(request,env);
     const assistantProposal=url.pathname.match(/^\/api\/assistant\/proposals\/([^/]+)\/(accept|reject)$/);
     if(assistantProposal)return handleAssistantProposal(request,env,assistantProposal[1]!,assistantProposal[2]!);
     const assistantTask=url.pathname.match(/^\/api\/assistant\/tasks\/([^/]+)\/(cancel|reconcile)$/);
@@ -139,6 +179,9 @@ async function routeRequest(request: Request, env: WorkerEnv, context: WorkerExe
     }
     if(url.pathname==="/api/performance")return handlePerformanceSample(request,env);
     if(url.pathname==="/api/impersonation")return handleImpersonation(request,env);
+    if(url.pathname==="/api/admin/budget-hold-dispositions")return handleHoldDispositions(request,env);
+    if(url.pathname==="/api/admin/generation-accounting")return handleGenerationAccounting(request,env);
+    if(url.pathname==="/api/admin/managed-video-reconciliation")return handleVideoReconciliation(request,env);
     if(url.pathname==="/api/admin/users")return handleAdminUsers(request,env);
     if(url.pathname==="/api/analytics")return handleAnalytics(request,env,context);
     if(url.pathname==="/api/generation-readiness")return handleGenerationReadiness(request,env);
@@ -152,13 +195,22 @@ async function routeRequest(request: Request, env: WorkerEnv, context: WorkerExe
     if(url.pathname==="/api/document-jobs")return handleDocumentJobs(request,env,"",context);
     if(url.pathname==="/api/output-requirements"||url.pathname.startsWith("/api/output-requirements/"))return handleOutputRequirements(request,env,url.pathname,context,outputDocumentExecutionBridge);
     if(url.pathname.startsWith("/api/document-jobs/"))return handleDocumentJobs(request,env,url.pathname.slice("/api/document-jobs/".length),context);
+    if(url.pathname==="/api/documents/duplicate")return handleDocumentDuplication(request,env);
+    if(url.pathname==="/api/canvas/arrangements")return handleCanvasArrangements(request,env);
+    if(url.pathname==="/api/context/adaptive/apply")return handleAdaptiveProposalApplication(request,env);
+    if(url.pathname.startsWith("/api/generated-images/")){
+      const encoded=url.pathname.slice("/api/generated-images/".length);let outputId:string;
+      try{outputId=decodeURIComponent(encoded);}catch{return Response.json({error:"invalid_output_id"},{status:400});}
+      if(!outputId||encoded.includes("/")||encodeURIComponent(outputId)!==encoded)return Response.json({error:"not_found"},{status:404});
+      return handleGeneratedImageEdit(request,env,outputId);
+    }
     if(url.pathname.startsWith("/api/artifacts/")){
       const segments=url.pathname.slice("/api/artifacts/".length).split("/").map((segment)=>decodeURIComponent(segment));
       return handleArtifactEdit(request,env,segments[0]??"",segments.slice(1));
     }
     if(url.pathname==="/api/events"||url.pathname==="/api/events/hot"){
       const response=await handleEvents(request,env,url.pathname.endsWith("/hot"));
-      if(!scopedCookie)return response;
+      if(!projectCookieHeaderPresent)return response;
       const headers=new Headers(response.headers);headers.set("cache-control","private, no-store");headers.append("vary","Cookie, oai-authenticated-user-id, oai-authenticated-user-email");
       return new Response(response.body,{status:response.status,statusText:response.statusText,headers});
     }
@@ -176,6 +228,15 @@ async function routeRequest(request: Request, env: WorkerEnv, context: WorkerExe
       headers.set("cache-control","private, no-store");
       headers.append("vary","Cookie, oai-authenticated-user-id, oai-authenticated-user-email, cf-access-authenticated-user-email");
       return new Response(asset.body,{status:asset.status,statusText:asset.statusText,headers});
+    }
+    if (isStillNamespace(url.pathname)) {
+      if (!parseStillRoute(url)) return new Response("Page not found", {status:404,headers:{"cache-control":"private, no-store"}});
+      if (request.method !== "GET" && request.method !== "HEAD") return new Response(null,{status:405,headers:{allow:"GET, HEAD"}});
+      const asset = await env.ASSETS.fetch(new Request(new URL("/still", request.url), request));
+      const headers = new Headers(asset.headers);
+      headers.set("cache-control", "private, no-store");
+      headers.set("x-forma-application", "still");
+      return new Response(request.method === "HEAD" ? null : asset.body, { status: asset.status, headers });
     }
     if(request.method==="GET"||request.method==="HEAD"){
       const route=resolveServerRoute(url.pathname);
@@ -258,7 +319,10 @@ export default {
   async fetch(request: Request, env: WorkerEnv, context: WorkerExecutionContext): Promise<Response> {
     const started=performance.now();
     const response=await routeRequest(request,env,context);
-    if(new URL(request.url).pathname.startsWith("/api/"))schedulePrivateContentRetention(env,context);
+    const pathname=new URL(request.url).pathname;
+    const retainedStoryRead=pathname==="/api/retained-story"||pathname.startsWith("/api/retained-story/")
+      ||pathname==="/api/retained-output"||pathname.startsWith("/api/retained-output/");
+    if(pathname.startsWith("/api/")&&pathname!==OUTPUT_SCHEMA_PREFLIGHT_PATH&&pathname!=="/api/admin/budget-hold-dispositions"&&pathname!=="/api/admin/generation-accounting"&&pathname!=="/api/admin/managed-video-reconciliation"&&!retainedStoryRead)schedulePrivateContentRetention(env,context);
     const headers=new Headers(response.headers);
     headers.append("server-timing",`app;dur=${Math.max(0,performance.now()-started).toFixed(1)}`);
     if(new URL(request.url).pathname.startsWith("/api/")&&!headers.has("cache-control"))headers.set("cache-control","private, no-store");
@@ -271,6 +335,12 @@ export default {
   },
   async scheduled(_controller: unknown, env: WorkerEnv): Promise<void> {
     await observeScheduledRetention(env,1_000);
-    await processReviewReminders(env,100);
+    try {
+      // Privacy cleanup is independent of profile rollout and never performs inference or enrollment.
+      await sweepExpiredDocumentProfileSuppressions(env,128);
+    } finally {
+      // A profile-cleanup failure must not prevent the existing reminder pass.
+      await processReviewReminders(env,100);
+    }
   },
 };

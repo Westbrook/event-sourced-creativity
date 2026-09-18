@@ -150,3 +150,78 @@ test("inspection exposes stable localized limitation codes without replacing aut
   }
   for (const bytes of [new Uint8Array(), utf8("unsupported"), png().slice(0, -1)]) assert.deepEqual((await inspectOutputAsset(bytes)).limitationCodes, ["output_inspection_not_acceptance"]);
 });
+
+test("explicit Markdown inspection preserves multilingual UTF-8, BOM and line-ending identities without inferring a screenplay", async () => {
+  const prose = "# Harbor script — نص المشهد / 港の脚本\n\nMAYA: Café at dawn.\n\tThe boat waits. �\n";
+  const variants = [utf8(prose), utf8(prose.replaceAll("\n", "\r\n")), join(Uint8Array.of(0xef, 0xbb, 0xbf), utf8(prose.replaceAll("\n", "\r\n")))];
+  const hashes = new Set();
+  for (const bytes of variants) {
+    const original = bytes.slice(), result = await inspectOutputAsset(bytes, "Harbor script.MD");
+    assert.equal(result.status, "inspected", result.errors.join(","));
+    assert.equal(result.kind, "document"); assert.equal(result.mimeType, "text/markdown"); assert.equal(result.extension, "md");
+    assert.equal(result.sha256, digest(original)); assert.equal(result.byteLength, original.length); assert.deepEqual(bytes, original);
+    assert.deepEqual(result.facts, {}); assert.deepEqual(result.errors, []);
+    assert.deepEqual(result.limitationCodes, ["output_inspection_not_acceptance", "output_markdown_content_review_required"]);
+    assert.match(result.limitations.join(" "), /screenplay structure, completeness, source coverage, rights/);
+    assert.match(result.limitations.join(" "), /no links or embedded media were fetched/);
+    hashes.add(result.sha256);
+  }
+  assert.equal(hashes.size, 3, "BOM and CRLF remain distinct original byte identities");
+});
+
+test("text requires an explicit safe Markdown filename instead of inheriting a binary or missing suffix", async () => {
+  const bytes = utf8("# Authored script\nA boat arrives.\n");
+  for (const name of [undefined, "script", "script.txt", "script.markdown", "script.png", "script.md.png"]) {
+    const result = await inspectOutputAsset(bytes, name);
+    assert.equal(result.status, "unsupported"); assert.deepEqual(result.errors, ["output_asset_format_unsupported"]); assert.equal(result.sha256, digest(bytes));
+  }
+  for (const name of ["../script.md", "a/b.md", "a\\b.md", "CON.md", ".md", "script.md ", "script.md.", "script\u202e.md", "script\n.md"]) {
+    const result = await inspectOutputAsset(bytes, name);
+    assert.deepEqual(result.errors, ["unsafe_output_asset_name"]); assert.equal(result.sha256, null); rejected(result);
+  }
+});
+
+test("Markdown rejects malformed UTF-8 instead of silently decoding replacement text", async () => {
+  const malformed = [Uint8Array.of(0x80), Uint8Array.of(0xc0, 0xaf), Uint8Array.of(0xe2, 0x82), Uint8Array.of(0xed, 0xa0, 0x80), Uint8Array.of(0xf4, 0x90, 0x80, 0x80)];
+  for (const suffix of malformed) {
+    const bytes = join(utf8("# Script\n"), suffix), result = await inspectOutputAsset(bytes, "script.md");
+    assert.equal(result.status, "invalid"); assert.deepEqual(result.errors, ["invalid_markdown_text"]); assert.equal(result.sha256, digest(bytes)); rejected(result);
+  }
+});
+
+test("Markdown refuses blank and binary-control text while permitting ordinary text whitespace", async () => {
+  for (const text of [" \t\r\n", "\u00a0\u2003", "\ufeff\r\n", ...[0, 1, 8, 11, 12, 14, 31, 127, 128, 133, 159].map(code => `# Script\nA${String.fromCharCode(code)}B`)]) {
+    const bytes = utf8(text), result = await inspectOutputAsset(bytes, "script.md");
+    assert.equal(result.status, "invalid"); assert.deepEqual(result.errors, ["invalid_markdown_text"]); assert.equal(result.sha256, digest(bytes)); rejected(result);
+  }
+  assert.equal((await inspectOutputAsset(utf8("# Script\r\n\tAn ordinary line.\rNext line.\n"), "script.md")).status, "inspected");
+});
+
+test("recognized binary and unsupported-format signatures outrank a Markdown filename", async () => {
+  for (const bytes of [png(), jpeg(), wav(), mp3(), mp4(), zip(presentationEntries())]) {
+    const original = await inspectOutputAsset(bytes), renamed = await inspectOutputAsset(bytes, "script.md");
+    assert.equal(original.status, "inspected"); assert.deepEqual(renamed, original); assert.notEqual(renamed.kind, "document");
+  }
+  const unsupported = [utf8("GIF89a0000"), utf8("GIF87a0000"), join(utf8("RIFF"), new Uint8Array(4), utf8("WEBP")), utf8("%PDF-1.7\nnot a supported document format")];
+  const invalid = [png().slice(0, -1), jpeg().slice(0, -2), wav().slice(0, -1), utf8("ID3"), utf8("glTF"), Uint8Array.of(80, 75, 3, 4)];
+  for (const bytes of [...unsupported, ...invalid]) {
+    const original = await inspectOutputAsset(bytes), renamed = await inspectOutputAsset(bytes, "script.md");
+    rejected(original); assert.deepEqual(renamed, original, "renaming cannot weaken an existing binary refusal");
+  }
+});
+
+test("Markdown inspection hashes and validates its entry snapshot through caller mutation", async () => {
+  const bytes = utf8("# Original script\r\nThe boat waits.\r\n"), original = bytes.slice();
+  const pending = inspectOutputAsset(bytes, "script.md"); bytes.fill(0);
+  const result = await pending;
+  assert.equal(result.status, "inspected"); assert.equal(result.sha256, digest(original)); assert.equal(result.byteLength, original.length);
+  const invalid = utf8("# Script\nA\u0000B"), invalidHash = digest(invalid), rejectedPending = inspectOutputAsset(invalid, "script.md"); invalid.fill(65);
+  const rejectedResult = await rejectedPending; assert.deepEqual(rejectedResult.errors, ["invalid_markdown_text"]); assert.equal(rejectedResult.sha256, invalidHash);
+});
+
+test("Markdown applies the existing 24 MB bound before attempting a hash", async t => {
+  let hashCalls = 0;
+  t.mock.method(crypto.subtle, "digest", () => { hashCalls += 1; throw new Error("oversize bytes must not reach the hash function"); });
+  const result = await inspectOutputAsset(new Uint8Array(MAX_OUTPUT_ASSET_BYTES + 1), "script.md");
+  assert.deepEqual(result.errors, ["output_asset_too_large"]); assert.equal(result.sha256, null); assert.equal(hashCalls, 0);
+});

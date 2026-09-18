@@ -1,8 +1,9 @@
 // Unit-boundary harness: execute the actual application class/method bodies.
 // Synthetic Lit templates and store inputs are not DOM, browser, or API authority tests.
 import assert from "node:assert/strict";
+import { installSourceOwnershipPort } from "./helpers/source-ownership-port.mjs";
 import { readFile } from "node:fs/promises";
-import { createRequire } from "node:module";
+import { createRequire, registerHooks } from "node:module";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -16,6 +17,18 @@ export const deferred = () => {
   return { promise, resolve: resolvePromise };
 };
 export const template = (strings, ...values) => ({ strings: [...strings], values });
+
+// Only the native event surface used by the actual focus lease in the two
+// existing planning units. Full mounted focus tests remain separate evidence.
+export function outputFixtureFocusDocument() {
+  const listeners = new Map();
+  return { activeElement: null,
+    addEventListener(type, listener) { const entries = listeners.get(type) ?? new Set(); entries.add(listener); listeners.set(type, entries); },
+    removeEventListener(type, listener) { listeners.get(type)?.delete(listener); },
+    focus(target) { this.activeElement = target;
+      for (const listener of [...(listeners.get("focusin") ?? [])]) listener({ type: "focusin", target, currentTarget: this }); },
+  };
+}
 
 function transpile(source, name) {
   return ts.transpileModule(source, { fileName: name, compilerOptions: {
@@ -44,9 +57,20 @@ export async function loadStoreMethods() {
 
 export async function loadController(Base, bindings = {}) {
   const source = await classSource("src/components/forma-output-requirements.ts", "FormaOutputRequirements");
+  const { OutputRequirementsClient } = await import(pathToFileURL(resolve(sourceRoot, "src/state/output-requirements-client.ts")).href);
   const deliveryMessages = await import(pathToFileURL(resolve(sourceRoot, "src/components/design-system/locales/output-delivery-messages.ts")).href);
   const recovery = await import(pathToFileURL(resolve(sourceRoot, "src/components/output-controller-recovery.ts")).href);
   const planning = await import(pathToFileURL(resolve(sourceRoot, "src/components/output-plan-proposal-state.ts")).href);
+  // The actual focus module has a bundler-style local routes import. Resolve
+  // only source-relative extensionless dependencies during this import, using
+  // the same native module hook as the existing document-copy unit fixture.
+  const sourceURL = pathToFileURL(resolve(sourceRoot, "src") + "/").href;
+  const focusImports = registerHooks({ resolve(specifier, context, nextResolve) {
+    return nextResolve(context.parentURL?.startsWith(sourceURL) && specifier.startsWith(".")
+      && !/\.[a-z0-9]+$/iu.test(specifier) ? specifier + ".ts" : specifier, context);
+  } });
+  const navigationFocus = await import(pathToFileURL(resolve(sourceRoot, "src/components/output-navigation-focus.ts")).href)
+    .finally(() => focusImports.deregister());
   const operationReceipts = await import(pathToFileURL(resolve(sourceRoot, "src/components/output-operation-support-receipt.ts")).href);
   const clipboard = await import(pathToFileURL(resolve(sourceRoot, "src/components/design-system/clipboard.ts")).href);
   const readiness = await import(pathToFileURL(resolve(sourceRoot, "src/components/output-source-readiness.ts")).href);
@@ -54,11 +78,38 @@ export async function loadController(Base, bindings = {}) {
   const deliveryContract = await import(pathToFileURL(resolve(sourceRoot, "src/model/output-delivery-contract.ts")).href);
   const scopeAmendment = await import(pathToFileURL(resolve(sourceRoot, "src/model/output-scope-amendment.ts")).href);
   const runtimeMessages = await import(pathToFileURL(resolve(sourceRoot, "src/components/design-system/locales/output-delivery-runtime-messages.ts")).href);
+  const reviewPreview = await import(pathToFileURL(resolve(sourceRoot, "src/model/output-review-preview.ts")).href);
+  const reviewPreviewMessages = await import(pathToFileURL(resolve(sourceRoot, "src/components/design-system/locales/output-review-preview-messages.ts")).href);
   let activation = {};
   try { activation = await import(pathToFileURL(resolve(sourceRoot, "src/components/output-direct-activation.ts")).href); }
   catch (error) { if (error?.code !== "ERR_MODULE_NOT_FOUND") throw error; }
+  class SourceOwnerBase extends Base { constructor(...args) { super(...args); if (this.store && !this.store.captureSourceOwnership) installSourceOwnershipPort(this.store);
+    // This partial Store fixture has no transport owner. Full Store/client tests
+    // below exercise the real retainedWrite; never replace an existing method.
+    if (this.store?.outputRequirements && !this.store.outputRequirements.retainedWrite) this.store.outputRequirements.retainedWrite = () => null;
+    if (this.store?.outputRequirements && !this.store.outputRequirements.withholdCommandBody) {
+      const store = this.store;
+      // This synthetic resource facade has no canonical snapshot/transport owner.
+      // Reuse actual receipt validation; never fabricate an acknowledgment or POST.
+      const receipts = new OutputRequirementsClient({
+        captureScope: () => {
+          const authorization = store.captureAuthorizationScope();
+          return authorization ? { key: authorization.key, projectId: store.projection?.get()?.projectId ?? null } : null;
+        },
+        scopeActive: scope => {
+          const authorization = store.captureAuthorizationScope();
+          return Boolean(authorization && authorization.key === scope.key && store.authorizationScopeActive(authorization)
+            && (store.projection?.get()?.projectId ?? null) === scope.projectId);
+        },
+        isSnapshot: () => false,
+        fetch: () => { throw new Error("synthetic_resource_receipt_port_must_not_dispatch"); },
+        notify() {},
+      });
+      store.outputRequirements.withholdCommandBody = receipts.withholdCommandBody.bind(receipts);
+    }
+  } }
   const globals = {
-    FormaElement: Base, html: template, nothing: null,
+    FormaElement: SourceOwnerBase, html: template, nothing: null,
     repeat: (rows, _key, render) => [...rows].map(render),
     compileOutputPlan: () => { throw new Error("This boundary test must not compile a second fake output plan."); },
     customElements: { get: () => true },
@@ -66,6 +117,7 @@ export async function loadController(Base, bindings = {}) {
     ...deliveryMessages,
     ...recovery,
     ...planning,
+    ...navigationFocus,
     ...operationReceipts,
     ...clipboard,
     ...readiness,
@@ -73,6 +125,8 @@ export async function loadController(Base, bindings = {}) {
     ...deliveryContract,
     ...scopeAmendment,
     ...runtimeMessages,
+    ...reviewPreview,
+    ...reviewPreviewMessages,
     ...activation,
     ...bindings,
   };
@@ -154,23 +208,34 @@ export function snapshot(documentId, revision = "1") {
 
 export async function controllerFixture(overrides = {}) {
   const pending = deferred();
-  const requests = [];
+  const requests = [], requestEntries = new Set();
+  const recordRequest = request => { requests.push(request); for (const entered of requestEntries) entered(); };
+  const waitForRequest = async (pending, previousCount = 0) => {
+    if (requests.length > previousCount) return;
+    let entered;
+    const entry = new Promise(resolve => { entered = () => { if (requests.length > previousCount) resolve(); }; requestEntries.add(entered); entered(); });
+    // A legitimate no-dispatch terminal also releases the wait. The caller's
+    // unchanged count assertion then fails instead of hanging on a nonexistent POST.
+    try { await Promise.race([entry, Promise.resolve(pending)]); }
+    finally { requestEntries.delete(entered); }
+  };
   const snapshots = new Map(["doc-a", "doc-b"].map((id) => [id, snapshot(id)]));
   const effects = { uploadResets: 0, downloads: 0, revoked: [], notices: [] };
   const resources = {
     resource: (id) => ({ state: "ready", snapshot: snapshots.get(id), error: null }),
     ensure: async (id) => resources.resource(id),
-    download: (documentId, path) => { requests.push({ kind: "download", documentId, path }); return pending.promise; },
+    download: (documentId, path) => { recordRequest({ kind: "download", documentId, path }); return pending.promise; },
   };
   const store = {
     captureAuthorizationScope: () => ({ key: "fixture-actor:project:1", shared: false }),
     authorizationScopeActive: () => true,
     outputRequirements: resources,
-    outputRequirementCommand: (command) => { requests.push({ kind: "command", ...command }); return pending.promise; },
-    uploadOutputAsset: (documentId, file, revision, mutationId, rights) => { requests.push({ kind: "upload", documentId, file, revision, mutationId, rights }); return pending.promise; },
+    outputRequirementCommand: (command) => { recordRequest({ kind: "command", ...command }); return pending.promise; },
+    uploadOutputAsset: (documentId, file, revision, mutationId, rights) => { recordRequest({ kind: "upload", documentId, file, revision, mutationId, rights }); return pending.promise; },
     syncDocumentJobs: async () => {},
     documentJobs: { get: () => [] },
-    projection: { get: () => ({ libraryBlocks: [] }) },
+    projection: { get: () => ({ projectId: "fixture-project", documentId: controller.documentId, documents: [...snapshots.keys()].map(id => ({ id, projectId: "fixture-project", title: id })), libraryBlocks: [] }) },
+    route: { get: () => "/document/" + controller.documentId },
     session: { get: () => ({ user: { userId: "fixture-actor" } }) },
     ...overrides,
   };
@@ -195,7 +260,7 @@ export async function controllerFixture(overrides = {}) {
   const controller = new Controller();
   controller.documentId = "doc-a"; controller.surface = "deliver";
   controller.willUpdate(new Map());
-  return { controller, store, pending, requests, snapshots, effects };
+  return { controller, store, pending, requests, snapshots, effects, waitForRequest };
 }
 
 export const submitEvent = () => ({ preventDefault() {}, stopPropagation() {} });

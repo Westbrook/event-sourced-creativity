@@ -506,7 +506,8 @@ test("workspace navigation opens an accessible native link popover instead of a 
   assert.match(switcher,/@toggle=\$\{this\.#toggle\}/);
   assert.match(switcher,/querySelector<HTMLAnchorElement>\('a\[aria-current="page"\]'\)/);
   assert.match(switcher,/event\.key === "Escape"[\s\S]*?this\.#returnFocus = true/);
-  assert.match(switcher,/querySelector<HTMLButtonElement>\("\.ui-workspace-switcher-trigger"\)\?\.focus\(\)/);
+  assert.match(switcher,/querySelector<HTMLButtonElement>\("\.ui-workspace-switcher-trigger"\)/);
+  assert.match(switcher,/focus\.lease\.run\(target, \(\) => \{ target\.focus\(\); return true; \}\)/);
   assert.match(switcher,/panel\.hidePopover\(\)/);
   assert.match(switcher,/event\.button!==0\|\|event\.metaKey\|\|event\.ctrlKey\|\|event\.shiftKey\|\|event\.altKey/);
   assert.match(switcher,/<a href=\$\{destination\.href\}/);

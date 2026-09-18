@@ -1,0 +1,15 @@
+forma-projects .project-intake { min-inline-size:0; scroll-padding:var(--forma-focus-clearance,.5rem); }
+forma-projects .project-intake > h2 {
+  min-inline-size:0;
+  padding-inline-end:calc(var(--forma-hit-target) + var(--forma-focus-clearance));
+  white-space:normal;
+  overflow-wrap:anywhere;
+}
+forma-projects .project-intake :is(details,fieldset,label) { min-inline-size:0; }
+forma-projects .project-intake fieldset { display:grid; gap:var(--forma-space-3,.75rem); border:0; margin:0; padding:0; }
+forma-projects .project-intake details[open] { display:grid; gap:var(--forma-space-3,.75rem); }
+forma-projects .project-intake summary { min-block-size:var(--forma-control-min-size,2.75rem); align-content:center; cursor:pointer; overflow-wrap:anywhere; }
+forma-projects .project-intake summary:focus-visible { outline:3px solid var(--forma-focus-ring-color,Highlight); outline-offset:3px; }
+forma-projects .project-intake-summary { display:grid; gap:.5rem; margin:0; }
+forma-projects .project-intake-summary dd { margin:0; white-space:pre-wrap; overflow-wrap:anywhere; max-block-size:18rem; overflow:auto; }
+forma-projects .project-intake footer { display:flex; flex-wrap:wrap; gap:var(--forma-space-2,.5rem); }

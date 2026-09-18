@@ -13,7 +13,8 @@ const sourceResolution=registerHooks({resolve(specifier,context,nextResolve){
   const local=typeof context.parentURL==="string"&&context.parentURL.startsWith(workspaceRoot)&&!context.parentURL.includes("/node_modules/");
   return nextResolve(local&&specifier.startsWith(".")&&!/\.[a-z0-9]+$/iu.test(specifier)?`${specifier}.ts`:specifier,context);
 }});
-const {handleArtifactEdit}=await import("../worker/artifact-api.ts").finally(()=>sourceResolution.deregister());
+test.after(()=>sourceResolution.deregister());
+const {handleArtifactEdit}=await import("../worker/artifact-api.ts");
 
 const PROMISE="Your content. One context. Infinite paths to your target.";
 const OWNER="dev-local-creative";
@@ -127,6 +128,21 @@ async function governedFixture(){
   state.sqlite.prepare("INSERT INTO private_content_retention_scopes(content_id,organization_id,project_access_id,project_id,actor_user_id,classification,policy_version,assigned_expires_at,created_at) VALUES(?,?,?,?,?,'governed-evidence',1,?,?)")
     .run(INPUT,organizationId,projectAccessId,PROJECT,OWNER,"9999-12-31T23:59:59.999Z",now);
   return{...state,organizationId,projectAccessId,ownerHeaders,open,json};
+}
+
+async function exactArtifactReleaseBinding(state,headers){
+  // Reuse the same scoped source refresh and exact output-history metadata
+  // available to a project editor; never read the author's private input receipt.
+  const refreshed=await state.request("/api/events?after=0&limit=2000&content=0",{headers});
+  assert.equal(refreshed.status,200,JSON.stringify(await refreshed.clone().json()));
+  const response=await state.request(`/api/artifacts/${ARTIFACT}/revisions`,{headers});
+  assert.equal(response.status,200,JSON.stringify(await response.clone().json()));
+  const history=await response.json(),current=history.revisions.find(entry=>entry.current);
+  assert.equal(history.artifactId,ARTIFACT);assert.equal(history.documentId,DOCUMENT);
+  assert.equal(current?.available,true);assert.equal(current.revision,history.currentRevision);
+  assert.match(current.sha256,/^[a-f0-9]{64}$/u);
+  assert.equal(JSON.stringify(history).includes("document_snapshot"),false,"exact output metadata does not disclose private source evidence");
+  return{artifact_revision:current.revision,content_sha256:current.sha256};
 }
 
 test("persists an exact source-authorized opening-to-closing pitch correction through immutable review-aware revision history",async()=>{
@@ -251,7 +267,7 @@ test("allows another authorized project editor to revise shared outputs without 
   const membership=await state.request(`/api/workspaces/${state.organizationId}/projects/${state.projectAccessId}/members`,state.json({userId:"source-aware-other-editor",role:"editor"}));
   assert.equal(membership.status,201,JSON.stringify(await membership.clone().json()));
   const editorHeaders=await state.open(identity);
-  const receipt={type:"DocumentArtifactExported",payload:{artifact_id:ARTIFACT,artifact_kind:"slides",document_id:DOCUMENT,
+  const receipt={type:"DocumentArtifactExported",payload:{...await exactArtifactReleaseBinding(state,editorHeaders),artifact_id:ARTIFACT,artifact_kind:"slides",document_id:DOCUMENT,
     format:"application/vnd.openxmlformats-officedocument.presentationml.presentation",destination_kind:"powerpoint",presenter_notes_included:true}};
   const deniedPresenter=await state.request("/api/events",state.json({action:"append",event:receipt},editorHeaders));
   assert.equal(deniedPresenter.status,403,JSON.stringify(await deniedPresenter.clone().json()));
@@ -270,3 +286,28 @@ function updateReceipt(state,edit){
   edit(receipt);
   state.sqlite.prepare("UPDATE private_content SET content=? WHERE content_id=?").run(JSON.stringify(receipt),INPUT);
 }
+
+for(const missing of["artifact_revision","content_sha256"])test("a presenter receipt missing "+missing+" is rejected without writes before the same exact creator receipt succeeds",async()=>{
+  const state=await governedFixture();
+  try{
+    const binding=await exactArtifactReleaseBinding(state,state.ownerHeaders);
+    const receipt={type:"DocumentArtifactExported",payload:{...binding,artifact_id:ARTIFACT,artifact_kind:"slides",document_id:DOCUMENT,
+      format:"application/vnd.openxmlformats-officedocument.presentationml.presentation",destination_kind:"powerpoint",presenter_notes_included:true}};
+    const incomplete=structuredClone(receipt);delete incomplete.payload[missing];
+    const snapshot=()=>Object.fromEntries(state.sqlite.prepare("SELECT name FROM sqlite_schema WHERE type='table' ORDER BY name").all()
+      .map(({name})=>[name,state.sqlite.prepare('SELECT * FROM "'+name.replaceAll('"','""')+'"').all()]));
+    const before=snapshot(),writesBefore=state.sqlite.prepare("SELECT total_changes() AS changes").get().changes;
+    const denied=await state.request("/api/events",state.json({action:"append",event:incomplete},state.ownerHeaders));
+    assert.equal(denied.status,409,JSON.stringify(await denied.clone().json()));
+    assert.equal((await denied.json()).error,"stale_release_context");
+    assert.deepEqual(snapshot(),before,"a missing exact binding changes no fixture database row");
+    assert.equal(state.sqlite.prepare("SELECT total_changes() AS changes").get().changes,writesBefore,"a missing exact binding performs zero SQLite row writes");
+    const accepted=await state.request("/api/events",state.json({action:"append",event:receipt},state.ownerHeaders));
+    assert.equal(accepted.status,200,JSON.stringify(await accepted.clone().json()));
+    const result=await accepted.json(),exported=result.appended.find(event=>event.type==="DocumentArtifactExported");
+    assert.ok(exported);assert.equal(exported.payload.artifact_revision,binding.artifact_revision);
+    assert.equal(exported.payload.content_sha256,binding.content_sha256);
+    assert.equal(exported.payload.export_class,"unreviewed-draft","this legacy fixture receipt is not an independent approval or delivery");
+    assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS count FROM events WHERE type='DocumentArtifactExported'").get().count,1);
+  }finally{state.sqlite.close();}
+});

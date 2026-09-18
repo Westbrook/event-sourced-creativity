@@ -10,6 +10,13 @@ const locale = {
   number(value, options) { return new Intl.NumberFormat("en-US", options).format(value); },
 };
 
+function verifiedPreview(overrides = {}) {
+  return { version: "scene-cost-v1", requestId: "scene-disclosure-fixture", actorUserId: "owner", projectId: "project", documentId: "document",
+    contextSessionId: null, permissionEpoch: "epoch", period: "2026-08", requestHash: "a".repeat(64), sourceHash: "b".repeat(64), provider: "openai",
+    model: "gpt-scene-configured", sceneMedium: "visual", productionMode: "manual", itemCount: 1, reusedSourceCount: 0,
+    providerCallCount: 1, maximumProviderCallCount: 2, maximumMicrousd: 1_000_000, bindingHash: "c".repeat(64), ...overrides };
+}
+
 function renderMarkup(value) {
   if (value === null || value === undefined || typeof value === "symbol" || typeof value === "boolean") return "";
   if (Array.isArray(value)) return value.map(renderMarkup).join("");
@@ -20,8 +27,8 @@ function renderMarkup(value) {
 }
 
 test("Scene preflight discloses the configured text model, bounded calls, full ceiling, and written-only output", () => {
-  const markup = renderMarkup(renderSceneProviderDisclosure(locale, { model: "gpt-scene-configured" }));
-  assert.match(markup, /Paid provider · OpenAI Responses · gpt-scene-configured/);
+  const markup = renderMarkup(renderSceneProviderDisclosure(locale, { preview: verifiedPreview() }));
+  assert.match(markup, /Paid provider · OpenAI Responses · \u2068gpt-scene-configured\u2069/);
   assert.match(markup, /1 planned provider request; up to 2 total paid requests/);
   assert.match(markup, /application-enforced spending ceiling: \$1\.00/);
   assert.match(markup, /not a provider-enforced cap/);
@@ -41,17 +48,32 @@ for (const medium of ["visual", "audio"]) {
       assert.equal(production.providerCallCount, batches);
       assert.equal(production.maximumProviderCallCount, batches * 4);
       assert.equal(production.estimatedTotalCostMicrousd, batches * 1_000_000, "a written Scene has no media-render cost");
-      const markup = renderMarkup(renderSceneProviderDisclosure(locale, { model: "configured-text-model", production }));
+      const preview = verifiedPreview({ model: "configured-text-model", sceneMedium: medium, productionMode: "managed", itemCount: count,
+        providerCallCount: production.providerCallCount, maximumProviderCallCount: production.maximumProviderCallCount,
+        maximumMicrousd: production.estimatedTotalCostMicrousd, reusedSourceCount: 1 });
+      const markup = renderMarkup(renderSceneProviderDisclosure(locale, { preview }));
+      assert.ok(markup.includes(`${count} planned written scene${count===1?"":"s"} ·`));
+      assert.ok(markup.includes("1 reused source items included in this verified plan."));
       assert.ok(markup.includes(`${batches} planned provider request${batches === 1 ? "" : "s"}; up to ${batches * 4} total paid requests`));
       assert.ok(markup.includes(`application-enforced spending ceiling: $${batches}.00`));
     }
   });
 }
 
-test("Scene composer renders its disclosure in both production modes without substituting an image model", async () => {
+test("Scene composer uses only its verified descriptor; an absent plan has no invented model, calls or cost", async () => {
   const component = await readFile(new URL("../src/components/document-artifacts.ts", import.meta.url), "utf8");
-  assert.match(component, /this\.#kind==="scene"\?renderSceneProviderDisclosure\(this\.i18n,\{model:session\?\.provider\.plannerModel,production:managedPlan\}\):nothing/);
+  assert.ok(component.includes("renderSceneProviderDisclosure(this.i18n,{preview:sceneView?.inspection?.preview??null,existing:Boolean(sceneView?.inspection?.job)})"));
   const markup = renderMarkup(renderSceneProviderDisclosure(locale, {}));
-  assert.match(markup, /Configured text model/);
+  assert.match(markup, /Provider calls and spending ceiling are not verified/);
+  assert.match(markup, /does not generate images, video, or audio/);
+  assert.doesNotMatch(markup, /planned provider request|Initial reservation|\$[0-9]|Paid provider ·/);
   assert.doesNotMatch(markup, /gpt-image|gpt-5\.6/);
+});
+
+test("An original Scene descriptor remains a receipt, not a current-draft reservation or submission approval", () => {
+  const markup = renderMarkup(renderSceneProviderDisclosure(locale, { preview: verifiedPreview(), existing: true }));
+  assert.match(markup, /Original Scene request — not the current draft/);
+  assert.match(markup, /Original approved spending ceiling: \$1\.00/);
+  assert.match(markup, /not a settled charge or a current reservation balance/);
+  assert.doesNotMatch(markup, /Submitting sends this Document|Initial reservation/);
 });

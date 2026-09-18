@@ -1,3 +1,4 @@
+import { IDEOGRAM_PROMPT_ADAPTER_VERSION, IDEOGRAM_PROMPT_MAX_CHARS } from "../src/model/fal-image-identity.ts";
 import { productionBriefForPrompt, type PromptTechnique } from "../src/model/prompt-structures.ts";
 import { compileContextAdaptationSections, partitionContextAdaptationFactScopes, requiredContextAdaptationFacts, type ContextAdaptationPriority } from "../src/model/context-adaptation.ts";
 import { combinedContextGroups, combinedContextMemberships } from "../src/model/combined-context.ts";
@@ -15,8 +16,7 @@ type CreativeFact={
   properties?:unknown;
 };
 
-export const IDEOGRAM_PROMPT_ADAPTER_VERSION="ideogram-context-v6";
-export const IDEOGRAM_PROMPT_MAX_CHARS=4_000;
+export { IDEOGRAM_PROMPT_ADAPTER_VERSION, IDEOGRAM_PROMPT_MAX_CHARS };
 
 const clean=(value:unknown,max=700)=>String(value??"").replace(/\s+/g," ").trim().slice(0,max);
 const record=(value:unknown):Record<string,unknown>=>value&&typeof value==="object"&&!Array.isArray(value)?value as Record<string,unknown>:{};

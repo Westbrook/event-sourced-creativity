@@ -36,6 +36,8 @@ export type PresentationSourceSlide = {
   /** Missing on retained v1 contracts, which retain authored-manuscript rules. */
   sourceMode?: "authored" | "outline";
   coverageRequirements?: string[];
+  /** Producer-only directions remain binding, but are not required audience copy. */
+  productionConstraints?: string[];
   evidencePassageIds?: string[];
   evidenceAssignment?: "authored" | "explicit" | "matched" | "unresolved";
 };
@@ -171,6 +173,11 @@ export type PresentationSourceCoverageIssue = {
   code: string;
   path: string;
   message: string;
+  parameters?: {
+    slideNumber?: number;
+    requestedSlideCount?: number;
+    authoredSlideCount?: number;
+  };
 };
 
 export type PresentationSourceCoverageOptions = {
@@ -425,6 +432,31 @@ function headingMatches(text: string) {
   return numbered.length >= 2 && /\b(?:slide(?:show)?|presentation|deck|slide-by-slide)\b/iu.test(text) ? numbered : [];
 }
 
+
+// These bounded forms describe the production process, not a factual statement
+// about the presentation's subject. Do not classify by a negative prefix: for
+// example, “No actual pilot outcomes have been measured” is audience coverage.
+const productionMedia = "(?:(?:new|generated|paid|ai-generated)\\s+)*(?:images?|imagery|videos?|audio|music|soundtracks?|voiceovers?|media|illustrations?|animations?)";
+const productionMediaList = productionMedia + "(?:\\s*(?:,\\s*(?:(?:and|or)\\s+)?|(?:and|or)\\s+)" + productionMedia + ")*";
+const presentationProductionRequirements = [
+  /^(?:use|keep|retain|preserve)\s+(?:only\s+)?(?:native\s+editable|editable\s+native)\s+text(?:\s+only)?$/iu,
+  /^(?:keep|make)\s+(?:all\s+)?text\s+native\s+and\s+editable$/iu,
+  /^(?:do\s+not|never|must\s+not|avoid)\s+(?:invent(?:ing)?|fabricat(?:e|ing))\s+(?:(?:any|new|measured|actual|pilot|customer|test|study|unsupported)\s+)*(?:results|outcomes|evidence|measurements|quotes|quotations|claims|facts)(?:\s+(?:or|and)\s+(?:(?:measured|actual|unsupported)\s+)*(?:results|outcomes|evidence|measurements|quotes|quotations|claims|facts))*$/iu,
+  new RegExp("^(?:(?:do\\s+not|never|must\\s+not)\\s+(?:generate|create|request|commission|add|include|use)\\s+(?:any\\s+)?|no\\s+)" + productionMediaList + "$", "iu"),
+  new RegExp("^(?:do\\s+not|never|must\\s+not)\\s+(?:spend(?:\\s+(?:money|credits|budget))?\\s+on|pay\\s+for|purchase)\\s+" + productionMediaList + "$", "iu"),
+];
+
+function presentationOutlineRequirementKind(value: string, protectedMessages: readonly AuthoredProtectedMessage[]): "coverage" | "production" | "ambiguous" {
+  // Explicitly protected audience copy is never demoted to a production note.
+  if (protectedMessages.some((message) => sourceKey(message.text) === sourceKey(value))) return "coverage";
+  const requirement = compact(value).replace(/[.!?]+$/u, "");
+  if (presentationProductionRequirements.some((pattern) => pattern.test(requirement))) return "production";
+  // Unsupported producer commands need a free clarification. Retain their
+  // full source and coverage instead of guessing what may safely be omitted.
+  if (/^(?:do\s+not|never|must\s+not|avoid|use|generate|render|create|export|publish|spend|purchase|pay|embed|keep|make|retain|preserve)\b/iu.test(requirement)) return "ambiguous";
+  return "coverage";
+}
+
 export function inferPresentationSourceOutline(input: PresentationSourceInput): PresentationSourceOutline {
   const projections = sourceBlocks(input).map(presentationBlockProjection);
   const blocks = projections.map(({ block }) => block).filter((block) => block.text.trim());
@@ -445,16 +477,28 @@ export function inferPresentationSourceOutline(input: PresentationSourceInput): 
     for (let index = 0; index < matches.length; index += 1) {
       const match = matches[index]!;
       if (seen.has(match.number)) {
-        sourceIssues.push({ code: "ambiguous_presentation_slide_number", path: "presentation_source.outline", message: `Slide ${match.number} is specified more than once. Give the selected presentation unique numbered positions before generating.` });
+        sourceIssues.push({ code: "ambiguous_presentation_slide_number", path: "presentation_source.outline", message: `Slide ${match.number} is specified more than once. Give the selected presentation unique numbered positions before generating.`, parameters: { slideNumber: match.number } });
         continue;
       }
       const content = passages[index]!.replace(/[\s.]+$/u, (ending) => ending.includes(".") ? "." : "");
       const title = headingTitle(content, sourceMode === "outline") || `Slide ${match.number}`;
       const section = sectionBefore(block.text, match.offset, null);
       const coverage = content.startsWith(title) ? content.slice(title.length).replace(/^[\s.:—–-]+/u, "") : content;
-      const coverageRequirements = sourceMode === "outline" ? coverage.split(/(?<=[.!?])\s+(?=[\p{Lu}])|;\s+|\n+/u)
-        .map((part) => part.trim()).filter((part) => part && !/^(?:do\s+not|never|avoid|must\s+not|no\s+(?:generated|paid|actual))\b/iu.test(part)) : [];
-      slides.push({ number: match.number, order: match.number, index: slides.length, title, content, text: content, sourceBlockId: block.id, sourceAlias: null, contextGroupIds: [...block.contextGroupIds], section, sourceMode, coverageRequirements });
+      const coverageRequirements: string[] = [], productionConstraints: string[] = [];
+      if (sourceMode === "outline") for (const requirement of coverage.split(/(?<=[.!?])\s+(?=[\p{Lu}])|;\s+|\n+/u).map((part) => part.trim()).filter(Boolean)) {
+        const kind = presentationOutlineRequirementKind(requirement, block.protectedMessages);
+        if (kind === "production") productionConstraints.push(requirement);
+        else {
+          coverageRequirements.push(requirement);
+          if (kind === "ambiguous") sourceIssues.push({
+            code: "ambiguous_presentation_requirement", path: `presentation_source.outline.${slides.length}.coverageRequirements`,
+            message: `Slide ${match.number} includes a requirement that could describe audience content or an unsupported production instruction. Separate the factual coverage from a supported production constraint before generating.`,
+            parameters: { slideNumber: match.number },
+          });
+        }
+      }
+      slides.push({ number: match.number, order: match.number, index: slides.length, title, content, text: content, sourceBlockId: block.id, sourceAlias: null, contextGroupIds: [...block.contextGroupIds], section, sourceMode, coverageRequirements,
+        ...(sourceMode === "outline" ? { productionConstraints } : {}) });
       seen.add(match.number);
     }
   }
@@ -915,24 +959,34 @@ function bindPresentationEvidence(input: PresentationSourceInput, blocks: Source
   }));
   for (const slide of outline.slides) {
     if (slide.sourceMode !== "outline") continue;
-    const groups = unique([...slide.contextGroupIds, ...[...groupTargets].filter(([, range]) => slide.number >= range.start && slide.number <= range.end).map(([id]) => id)]);
+    const applies = (id: string) => {
+      const target = groupTargets.get(id);
+      return !target || slide.number >= target.start && slide.number <= target.end;
+    };
+    // An owner block may contain several slides. Its Slide 1 membership does
+    // not constrain Slide 2; the original block's memberships remain retained.
+    const groups = unique([...slide.contextGroupIds.filter(applies), ...[...groupTargets.keys()].filter(applies)]);
     const query = new Set(coverageTokens(`${slide.title} ${(slide.coverageRequirements ?? []).join(" ")}`, true));
     const selected = candidates.filter((passage) => {
-      if (passage.contextGroupIds.some((id) => {
-        const target = groupTargets.get(id);
-        return target && (slide.number < target.start || slide.number > target.end);
-      })) return false;
+      // Intentional reuse is valid through any applicable explicit membership.
+      // A second target does not veto the first, nor grant unrelated slides
+      // lexical access to a passage that has only other explicit targets.
       if (groups.length) return passage.contextGroupIds.some((id) => groups.includes(id));
+      if (passage.contextGroupIds.some((id) => groupTargets.has(id))) return false;
       const overlap = coverageTokens(passage.content, true).filter((token) => query.has(token));
       // No top-K/all-document fallback: weak or generic overlap grants nothing.
       // Keep this independent of the other available passages: page projection
       // or an unrelated source edit must not change an existing assignment.
       return overlap.filter((token) => token.length >= 4).length >= 2;
     });
+    // Preserve applicable named/recurring memberships on already-selected
+    // evidence. This metadata never selects another passage or changes whether
+    // its source assignment was explicit or a lexical match.
+    slide.contextGroupIds = unique([...groups, ...selected.flatMap((passage) => passage.contextGroupIds.filter(applies))]);
     slide.evidencePassageIds = selected.map((passage) => passage.id);
     slide.evidenceAssignment = selected.length ? groups.length ? "explicit" : "matched" : "unresolved";
     if (!selected.length) sourceIssues.push({ code: "unresolved_outline_evidence", path: `presentation_source.outline.${slide.index}.evidencePassageIds`,
-      message: `Slide ${slide.number} has coverage instructions but no resolved supporting research. Assign its research and outline to a Combined Context group, or give the outline more specific coverage terms before generating.` });
+      message: `Slide ${slide.number} has coverage instructions but no resolved supporting research. Assign its research and outline to a Combined Context group, or give the outline more specific coverage terms before generating.`, parameters: { slideNumber: slide.number } });
   }
   if (outline.slides.some((slide) => slide.sourceMode === "outline")) for (const block of research.filter((candidate) => candidate.required)) {
     if (passages.some((passage) => passage.sourceBlockId === block.id && !outline.slides.some((slide) => slide.evidencePassageIds?.includes(passage.id)))) sourceIssues.push({
@@ -970,6 +1024,7 @@ export function buildPresentationSourceContract(input: PresentationSourceInput, 
   if (outline.authoredSlideCount !== null && outline.slides.some((slide) => slide.sourceMode === "outline")
     && (slideCountPolicy ? !slideCountAccepted(outline.authoredSlideCount, slideCountPolicy) : requestedSlideCount !== null && requestedSlideCount !== outline.authoredSlideCount)) evidence.sourceIssues.push({
     code: "outline_slide_count_conflict", path: "presentation_source.outline", message: "A research-backed outline needs explicit coverage for every requested slide. Match its numbered positions or author the added requirements before generating.",
+    parameters: { ...(requestedSlideCount === null ? {} : { requestedSlideCount }), authoredSlideCount: outline.authoredSlideCount },
   });
   return {
     schemaVersion: 2,
@@ -1009,7 +1064,7 @@ export function providerFacingPresentationSourceContract(contract: PresentationS
     slideCountMismatch: contract.slideCountMismatch,
     fidelity: contract.fidelity,
     outline: contract.numberedOutline.map((slide) => ({ number: slide.number, order: slide.order, title: slide.title, content: slide.content, section: slide.section, sourceAlias: slide.sourceAlias,
-      sourceMode: slide.sourceMode ?? "authored", coverageRequirements: slide.coverageRequirements ?? [], evidencePassageIds: slide.evidencePassageIds ?? [], evidenceAssignment: slide.evidenceAssignment ?? "authored",
+      sourceMode: slide.sourceMode ?? "authored", coverageRequirements: slide.coverageRequirements ?? [], productionConstraints: slide.productionConstraints ?? [], evidencePassageIds: slide.evidencePassageIds ?? [], evidenceAssignment: slide.evidenceAssignment ?? "authored",
       contextGroupAliases: slide.contextGroupIds.flatMap((id) => { const alias = groupAliasById.get(id); return alias ? [alias] : []; }) })),
     passages: (contract.passages ?? []).map((passage) => ({ id: passage.id, sourceAlias: passage.sourceAlias, content: passage.content, slideNumber: passage.slideNumber, required: passage.required === true,
       contextGroupAliases: passage.contextGroupIds.flatMap((id) => { const alias = groupAliasById.get(id); return alias ? [alias] : []; }) })),

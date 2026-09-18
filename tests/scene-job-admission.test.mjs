@@ -6,6 +6,8 @@ import { DatabaseSync } from "node:sqlite";
 import { documentGenerationRevision } from "../src/model/document-jobs.ts";
 import { createSceneConfiguration, isSceneMedium } from "../src/model/scene-configuration.ts";
 import { buildManagedProductionPlan } from "../src/model/managed-production.ts";
+import { captureDocumentRenderSettings } from "../src/model/document-render-request.ts";
+import { readOutputAudioPayload } from "../worker/output-audio-execution.ts";
 
 const jobsApiSource = await readFile(new URL("../worker/document-jobs-api.ts", import.meta.url), "utf8");
 
@@ -127,10 +129,10 @@ function receiptBuilder(privateReceipts) {
     `async ${sourceFunction("acceptedGenerationReceipt")}`,
   ].join("\n"));
   return new Function(
-    "createSceneConfiguration", "isSceneMedium", "documentGenerationRevision", "storePrivateContent",
+    "createSceneConfiguration", "isSceneMedium", "documentGenerationRevision", "readOutputAudioPayload", "captureDocumentRenderSettings", "storePrivateContent",
     `${helpers}\nreturn acceptedGenerationReceipt;`,
   )(
-    createSceneConfiguration, isSceneMedium, documentGenerationRevision,
+    createSceneConfiguration, isSceneMedium, documentGenerationRevision, readOutputAudioPayload, captureDocumentRenderSettings,
     async (_env, ownerId, kind, content) => {
       privateReceipts.push({ ownerId, kind, value: JSON.parse(content) });
       return { contentId: `private-scene-receipt-${privateReceipts.length}`, expiresAt: "2099-01-01T00:00:00Z" };

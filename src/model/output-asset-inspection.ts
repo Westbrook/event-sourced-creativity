@@ -6,7 +6,10 @@
  * Callers must bind these facts to this SHA-256 and run their separate review
  * and authorization gates. A filename and a browser-supplied MIME are not proof.
  */
+import { MAX_MODEL3D_UPLOAD_BYTES, validateModel3dAsset } from "./model3d-assets.ts";
+
 export const MAX_OUTPUT_ASSET_BYTES = 24_000_000;
+export const MAX_OUTPUT_MODEL3D_ASSET_BYTES = MAX_MODEL3D_UPLOAD_BYTES;
 export const MAX_OUTPUT_ASSET_NAME_BYTES = 180;
 const MAX_EXPANDED_BYTES = 32 * 1024 * 1024;
 const MAX_XML_BYTES = 1024 * 1024;
@@ -18,7 +21,7 @@ const PPTX_MIME = "application/vnd.openxmlformats-officedocument.presentationml.
 const encoder = new TextEncoder();
 const decoder = new TextDecoder("utf-8", { fatal: true });
 
-export type OutputAssetKind = "image" | "audio" | "video" | "presentation";
+export type OutputAssetKind = "image" | "audio" | "video" | "presentation" | "model3d" | "document";
 export type OutputAssetFacts = {
   width?: number;
   height?: number;
@@ -38,12 +41,19 @@ export type OutputAssetFacts = {
   audioCodec?: string;
   rotationDegrees?: number;
   externalHyperlinkCount?: number;
+  meshCount?: number;
+  primitiveCount?: number;
+  vertexCount?: number;
+  materialCount?: number;
+  textureCount?: number;
+  animationCount?: number;
+  nodeCount?: number;
 };
 export type OutputAssetInspection = {
   status: "inspected" | "unsupported" | "invalid";
   kind: OutputAssetKind | null;
   mimeType: string | null;
-  extension: "png" | "jpg" | "wav" | "mp3" | "mp4" | "pptx" | null;
+  extension: "png" | "jpg" | "wav" | "mp3" | "mp4" | "pptx" | "glb" | "md" | null;
   byteLength: number;
   sha256: string | null;
   facts: OutputAssetFacts;
@@ -731,7 +741,7 @@ function readZipDirectory(bytes: Uint8Array): ZipEntry[] {
 }
 
 type XmlAttribute = { name: string; namespace: string; value: string };
-type XmlNode = { name: string; namespace: string; attributes: XmlAttribute[]; parent: number | null };
+type XmlNode = { name: string; namespace: string; attributes: XmlAttribute[]; parent: number | null; text: string };
 const XML_NS = "http://www.w3.org/XML/1998/namespace";
 const PKG_NS = "http://schemas.openxmlformats.org/package/2006/relationships";
 const TYPES_NS = "http://schemas.openxmlformats.org/package/2006/content-types";
@@ -756,13 +766,14 @@ function parseOfficeXml(bytes: Uint8Array): XmlNode[] {
   let cursor = 0, roots = 0, declaration = false;
   while (cursor < text.length) {
     const opening = text.indexOf("<", cursor), endText = opening < 0 ? text.length : opening, value = text.slice(cursor, endText);
-    xmlValue(value); requireFact(stack.length > 0 || !value.trim(), "text_outside_office_xml_root");
+    const decoded = xmlValue(value); requireFact(stack.length > 0 || !value.trim(), "text_outside_office_xml_root");
+    if (stack.length) nodes[stack.at(-1)!.index]!.text += decoded;
     if (opening < 0) { cursor = text.length; break; }
     if (text.startsWith("<!--", opening)) {
       const end = text.indexOf("-->", opening + 4); requireFact(end >= 0 && !text.slice(opening + 4, end).includes("--"), "invalid_office_xml_comment"); cursor = end + 3; continue;
     }
     if (text.startsWith("<![CDATA[", opening)) {
-      const end = text.indexOf("]]>", opening + 9); requireFact(end >= 0 && stack.length > 0, "invalid_office_xml_cdata"); cursor = end + 3; continue;
+      const end = text.indexOf("]]>", opening + 9); requireFact(end >= 0 && stack.length > 0, "invalid_office_xml_cdata"); nodes[stack.at(-1)!.index]!.text += text.slice(opening + 9, end); cursor = end + 3; continue;
     }
     if (text.startsWith("<?", opening)) {
       const end = text.indexOf("?>", opening + 2), content = text.slice(opening + 2, end);
@@ -809,7 +820,7 @@ function parseOfficeXml(bytes: Uint8Array): XmlNode[] {
     }
     requireFact(nodes.length < MAX_NODES && stack.length < 64, "excessive_office_xml_structure");
     if (!stack.length) requireFact(++roots === 1, "multiple_office_xml_roots");
-    const index = nodes.length; nodes.push({ ...resolved, attributes: resolvedAttributes, parent: stack.at(-1)?.index ?? null });
+    const index = nodes.length; nodes.push({ ...resolved, attributes: resolvedAttributes, parent: stack.at(-1)?.index ?? null, text: "" });
     if (!closed) stack.push({ index, qualified: name[1]!, namespaces });
   }
   requireFact(roots === 1 && !stack.length, "incomplete_office_xml");
@@ -836,7 +847,7 @@ type OfficeRelationship = { id: string; type: string; target: string; external: 
 function officeRelationships(nodes: XmlNode[], source: string, names: Set<string>): OfficeRelationship[] {
   const root = nodes[0]!; requireFact(root.name === "Relationships" && root.namespace === PKG_NS, "invalid_office_relationship_root");
   const relationships: OfficeRelationship[] = [], ids = new Set<string>();
-  const kinds = new Set(["officeDocument", "slide", "slideMaster", "slideLayout", "notesSlide", "notesMaster", "handoutMaster", "theme", "themeOverride", "image", "hyperlink", "presProps", "viewProps", "tableStyles", "tags", "comments", "commentAuthors", "extended-properties", "custom-properties"]);
+  const kinds = new Set(["officeDocument", "slide", "slideMaster", "slideLayout", "notesSlide", "notesMaster", "handoutMaster", "theme", "themeOverride", "image", "hyperlink", "presProps", "viewProps", "tableStyles", "tags", "comments", "commentAuthors", "extended-properties", "custom-properties", "chart", "package"]);
   for (const node of nodes.slice(1)) {
     requireFact(node.parent === 0 && node.name === "Relationship" && node.namespace === PKG_NS, "invalid_office_relationship_element");
     const id = requiredAttribute(node, "Id"), type = requiredAttribute(node, "Type"), target = requiredAttribute(node, "Target"), mode = xmlAttribute(node, "TargetMode");
@@ -855,22 +866,115 @@ function officeRelationships(nodes: XmlNode[], source: string, names: Set<string
   }
   return relationships;
 }
+const CHART_NS = "http://schemas.openxmlformats.org/drawingml/2006/chart";
+const SHEET_NS = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
+const XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+type LiteralChartWorkbook = { sheetName: string; cells: Set<string>; expandedBytes: number; entries: number };
+/** A deliberately small data-only chart workbook, not a general spreadsheet interpreter. */
+async function inspectLiteralChartWorkbook(bytes: Uint8Array): Promise<LiteralChartWorkbook> {
+  requireFact(bytes.length <= MAX_XML_BYTES, "chart_workbook_too_large");
+  const entries = readZipDirectory(bytes);
+  const allowed = new Set(["[Content_Types].xml", "_rels/.rels", "xl/workbook.xml", "xl/_rels/workbook.xml.rels", "xl/worksheets/sheet1.xml"]);
+  requireFact(entries.length === allowed.size && entries.every(entry => !entry.directory && allowed.has(entry.name)), "chart_workbook_parts_unsupported");
+  const expandedBytes = entries.reduce((sum, entry) => sum + entry.expanded, 0);
+  requireFact(expandedBytes <= MAX_XML_BYTES, "chart_workbook_too_large");
+  const parts = new Map<string, XmlNode[]>();
+  for (const entry of entries) {
+    const compressed = bytes.subarray(entry.data, entry.data + entry.compressed);
+    const expanded = entry.method === 0 ? compressed : await inflateBounded(compressed, "deflate-raw", entry.expanded);
+    requireFact(expanded.length === entry.expanded && crc32(expanded) === entry.crc, "zip_entry_size_or_crc_mismatch");
+    parts.set(entry.name, parseOfficeXml(expanded));
+  }
+  const types = parts.get("[Content_Types].xml")!;
+  const expectedTypes = new Map([
+    ["Default:rels", "application/vnd.openxmlformats-package.relationships+xml"], ["Default:xml", "application/xml"],
+    ["Override:/xl/workbook.xml", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"],
+    ["Override:/xl/worksheets/sheet1.xml", "application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"],
+  ]);
+  requireFact(types.length === 5 && types[0]!.name === "Types" && types[0]!.namespace === TYPES_NS, "chart_workbook_types_unsupported");
+  for (const node of types.slice(1)) {
+    const key = `${node.name}:${xmlAttribute(node, node.name === "Default" ? "Extension" : "PartName")}`;
+    requireFact(node.parent === 0 && node.namespace === TYPES_NS && expectedTypes.get(key) === xmlAttribute(node, "ContentType"), "chart_workbook_types_unsupported");
+    expectedTypes.delete(key);
+  }
+  requireFact(expectedTypes.size === 0, "chart_workbook_types_unsupported");
+  const relation = (part: string, type: string, target: string) => {
+    const nodes = parts.get(part)!;
+    requireFact(nodes.length === 2 && nodes[0]!.name === "Relationships" && nodes[0]!.namespace === PKG_NS, "chart_workbook_relationship_unsupported");
+    const node = nodes[1]!;
+    requireFact(node.parent === 0 && node.name === "Relationship" && node.namespace === PKG_NS && node.attributes.length === 3
+      && xmlAttribute(node, "Type") === `http://schemas.openxmlformats.org/officeDocument/2006/relationships/${type}`
+      && xmlAttribute(node, "Target") === target, "chart_workbook_relationship_unsupported");
+    return requiredAttribute(node, "Id");
+  };
+  relation("_rels/.rels", "officeDocument", "xl/workbook.xml");
+  const sheetId = relation("xl/_rels/workbook.xml.rels", "worksheet", "worksheets/sheet1.xml");
+  const workbook = parts.get("xl/workbook.xml")!;
+  requireFact(workbook.length === 3 && workbook.every(node => node.namespace === SHEET_NS && !node.text.trim())
+    && workbook[0]!.name === "workbook" && workbook[1]!.name === "sheets" && workbook[1]!.parent === 0
+    && workbook[2]!.name === "sheet" && workbook[2]!.parent === 1
+    && workbook[0]!.attributes.length === 0 && workbook[1]!.attributes.length === 0 && workbook[2]!.attributes.length === 3,
+  "chart_workbook_structure_unsupported");
+  const sheet = workbook[2]!, sheetName = requiredAttribute(sheet, "name");
+  requireFact(/^[A-Za-z0-9 _-]{1,31}$/u.test(sheetName) && xmlAttribute(sheet, "sheetId") === "1"
+    && sheet.attributes.some(attribute => attribute.name === "id" && OFFICE_NAMESPACES.has(attribute.namespace) && attribute.value === sheetId), "chart_workbook_sheet_unsupported");
+  const nodes = parts.get("xl/worksheets/sheet1.xml")!, cells = new Set<string>();
+  const children = new Map<XmlNode, XmlNode[]>();
+  for (const node of nodes) if (node.parent !== null) {
+    const parent = nodes[node.parent]!; const list = children.get(parent) ?? []; list.push(node); children.set(parent, list);
+  }
+  const parents: Record<string, string | null> = { worksheet: null, dimension: "worksheet", sheetData: "worksheet", row: "sheetData", c: "row", v: "c", is: "c", t: "is" };
+  const attrs: Record<string, string[]> = { worksheet: [], dimension: ["ref"], sheetData: [], row: ["r"], c: ["r", "t"], v: [], is: [], t: [] };
+  requireFact(nodes[0]!.name === "worksheet" && nodes.filter(node => node.name === "sheetData").length === 1, "chart_workbook_structure_unsupported");
+  for (const node of nodes) {
+    requireFact(node.namespace === SHEET_NS && Object.hasOwn(parents, node.name)
+      && (node.parent === null ? null : nodes[node.parent]!.name) === parents[node.name]
+      && node.attributes.every(attribute => attribute.namespace === "" && attrs[node.name]!.includes(attribute.name)), "chart_workbook_structure_unsupported");
+    if (node.name !== "v" && node.name !== "t") requireFact(!node.text.trim(), "chart_workbook_structure_unsupported");
+    if (node.name === "row") requireFact(/^[1-9][0-9]{0,3}$/u.test(requiredAttribute(node, "r")), "chart_workbook_range_unsupported");
+    if (node.name === "dimension") requireFact(/^[A-Z]{1,2}[1-9][0-9]{0,3}(?::[A-Z]{1,2}[1-9][0-9]{0,3})?$/u.test(requiredAttribute(node, "ref")), "chart_workbook_range_unsupported");
+    if (node.name === "c") {
+      const address = requiredAttribute(node, "r"), type = xmlAttribute(node, "t");
+      requireFact(/^[A-Z]{1,2}[1-9][0-9]{0,3}$/u.test(address) && !cells.has(address) && cells.size < 4096
+        && address.replace(/^[A-Z]+/u, "") === xmlAttribute(nodes[node.parent!]!, "r") && (type === undefined || type === "n" || type === "inlineStr"), "chart_workbook_cell_unsupported");
+      cells.add(address);
+      const content = children.get(node) ?? [];
+      requireFact(content.length === 1 && content[0]!.name === (type === "inlineStr" ? "is" : "v"), "chart_workbook_cell_unsupported");
+    }
+    if (node.name === "is") requireFact((children.get(node) ?? []).length === 1, "chart_workbook_cell_unsupported");
+    if (node.name === "v") requireFact(/^[+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[Ee][+-]?[0-9]+)?$/u.test(node.text) && Number.isFinite(Number(node.text)), "chart_workbook_cell_unsupported");
+  }
+  requireFact(cells.size > 0, "chart_workbook_cell_unsupported");
+  return { sheetName, cells, expandedBytes, entries: entries.length };
+}
+
 async function inspectPptx(bytes: Uint8Array): Promise<ParsedAsset> {
   const entries = readZipDirectory(bytes), names = new Set(entries.filter(entry => !entry.directory).map(entry => entry.name));
   requireFact(names.has("[Content_Types].xml") && names.has("_rels/.rels"), "not_an_ooxml_package");
   const retained = new Map<string, XmlNode[]>(), allRelationships = new Map<string, OfficeRelationship[]>(), slideParts = new Map<string, boolean>();
+  const charts = new Map<string, XmlNode[]>(), workbooks = new Map<string, LiteralChartWorkbook>();
+  let expandedTotal = entries.reduce((sum, entry) => sum + entry.expanded, 0), entryTotal = entries.length;
   let externalHyperlinkCount = 0, xmlBytes = 0;
   for (const entry of entries) {
     const lowered = entry.name.toLowerCase();
-    if (/(?:^|\/)(?:vbaproject|vbadata|activex|embeddings|customui)(?:\.|\/|$)/u.test(lowered) || /\.(?:bin|exe|dll|com|js|vbs|ps1|bat|cmd|scr|msi|html?)$/u.test(lowered)) fail("active_office_content_forbidden");
-    if (!entry.directory && !/\.(?:xml|rels|png|jpe?g|webp)$/iu.test(entry.name)) fail("office_embedded_format_unsupported", true);
+    const chartWorkbook = /^ppt\/embeddings\/[A-Za-z0-9_-]+\.xlsx$/u.test(entry.name);
+    if ((!chartWorkbook && /(?:^|\/)(?:vbaproject|vbadata|activex|embeddings|customui)(?:\.|\/|$)/u.test(lowered)) || /\.(?:bin|exe|dll|com|js|vbs|ps1|bat|cmd|scr|msi|html?)$/u.test(lowered)) fail("active_office_content_forbidden");
+    if (!entry.directory && !chartWorkbook && !/\.(?:xml|rels|png|jpe?g|webp)$/iu.test(entry.name)) fail("office_embedded_format_unsupported", true);
     const compressed = bytes.subarray(entry.data, entry.data + entry.compressed);
     const expanded = entry.method === 0 ? compressed : await inflateBounded(compressed, "deflate-raw", entry.expanded);
     requireFact(expanded.length === entry.expanded && crc32(expanded) === entry.crc, "zip_entry_size_or_crc_mismatch");
+    if (chartWorkbook) {
+      requireFact(workbooks.size < 8, "chart_workbook_too_large");
+      const workbook = await inspectLiteralChartWorkbook(expanded);
+      expandedTotal += workbook.expandedBytes; entryTotal += workbook.entries;
+      requireFact(expandedTotal <= 16 * MAX_XML_BYTES && entryTotal <= 2048, "chart_workbook_too_large");
+      workbooks.set(entry.name, workbook); continue;
+    }
     if (entry.directory) continue;
     if (!/\.(?:xml|rels)$/iu.test(entry.name)) continue;
     xmlBytes += expanded.length; requireFact(xmlBytes <= 12 * MAX_XML_BYTES, "excessive_office_xml_total");
     const nodes = parseOfficeXml(expanded);
+    if (nodes[0]!.name === "chartSpace" && nodes[0]!.namespace === CHART_NS) charts.set(entry.name, nodes);
     for (const node of nodes) {
       if (/^(?:oleObj|control|controls|vbaProject|activeX)$/iu.test(node.name)) fail("active_office_content_forbidden");
       for (const attribute of node.attributes) if (attribute.name === "action") {
@@ -910,6 +1014,48 @@ async function inspectPptx(bytes: Uint8Array): Promise<ParsedAsset> {
   }
   const contentType = (name: string) => overrides.get(name) ?? defaults.get(name.slice(name.lastIndexOf(".") + 1).toLowerCase());
   for (const name of names) if (name !== "[Content_Types].xml") requireFact(contentType(name), "missing_office_content_type");
+  const usedWorkbooks = new Set<string>(), linkedCharts = new Set<string>();
+  for (const [source, relationships] of allRelationships) for (const relation of relationships) {
+    if (relation.type.endsWith("/chart")) {
+      requireFact(slideParts.has(source) && charts.has(relation.target) && !relation.external, "invalid_chart_relationship");
+      linkedCharts.add(relation.target);
+    }
+    if (relation.type.endsWith("/package")) requireFact(charts.has(source) && workbooks.has(relation.target) && !relation.external, "invalid_chart_workbook_relationship");
+  }
+  for (const [name, nodes] of charts) {
+    requireFact(linkedCharts.has(name) && contentType(name) === "application/vnd.openxmlformats-officedocument.drawingml.chart+xml", "invalid_chart_relationship");
+    const relations = allRelationships.get(name) ?? [], external = nodes.filter(node => node.name === "externalData");
+    requireFact(relations.length === 1 && relations[0]!.type.endsWith("/package") && external.length === 1
+      && external[0]!.namespace === CHART_NS && external[0]!.parent === 0, "invalid_chart_workbook_relationship");
+    const relation = relations[0]!, workbook = workbooks.get(relation.target);
+    requireFact(workbook && contentType(relation.target) === XLSX_MIME && external[0]!.attributes.some(attribute => attribute.name === "id" && OFFICE_NAMESPACES.has(attribute.namespace) && attribute.value === relation.id), "invalid_chart_workbook_relationship");
+    const updates = nodes.filter(node => node.name === "autoUpdate");
+    requireFact(updates.length === 1 && updates[0]!.namespace === CHART_NS && nodes[updates[0]!.parent!] === external[0] && xmlAttribute(updates[0]!, "val") === "0", "chart_external_update_unsupported");
+    const parentsWithChildren = new Set(nodes.flatMap(node => node.parent === null ? [] : [node.parent]));
+    let referencedCells = 0;
+    for (const [nodeIndex, node] of nodes.entries()) {
+      if (/^(?:ddeLink|externalLink|AlternateContent|extLst)$/u.test(node.name)) fail("active_office_content_forbidden");
+      if (node.name === "f") {
+        const match = /^'([A-Za-z0-9 _-]{1,31})'!\$([A-Z]{1,2})\$([1-9][0-9]{0,3})(?::\$([A-Z]{1,2})\$([1-9][0-9]{0,3}))?$/u.exec(node.text);
+        const parent = node.parent === null ? undefined : nodes[node.parent];
+        requireFact(node.namespace === CHART_NS && node.attributes.length === 0 && parent?.namespace === CHART_NS
+          && ["strRef", "numRef"].includes(parent.name) && !parentsWithChildren.has(nodeIndex)
+          && match && match[1] === workbook.sheetName, "chart_formula_unsupported");
+        const column = (value: string) => [...value].reduce((n, letter) => n * 26 + letter.charCodeAt(0) - 64, 0);
+        const firstColumn = column(match[2]!), lastColumn = column(match[4] ?? match[2]!);
+        const firstRow = Number(match[3]), lastRow = Number(match[5] ?? match[3]);
+        referencedCells += (lastColumn - firstColumn + 1) * (lastRow - firstRow + 1);
+        requireFact(lastColumn >= firstColumn && lastRow >= firstRow && (firstColumn === lastColumn || firstRow === lastRow)
+          && referencedCells <= 4096, "chart_formula_unsupported");
+        for (let col = firstColumn; col <= lastColumn; col += 1) for (let row = firstRow; row <= lastRow; row += 1) {
+          const letters = col <= 26 ? String.fromCharCode(col + 64) : String.fromCharCode(Math.floor((col - 1) / 26) + 64, (col - 1) % 26 + 65);
+          requireFact(workbook.cells.has(`${letters}${row}`), "chart_formula_unsupported");
+        }
+      }
+    }
+    usedWorkbooks.add(relation.target);
+  }
+  requireFact(usedWorkbooks.size === workbooks.size, "unreferenced_chart_workbook");
   requireFact(contentType("ppt/presentation.xml") === "application/vnd.openxmlformats-officedocument.presentationml.presentation.main+xml", "not_a_macro_free_presentation");
   const rootRelations = allRelationships.get("") ?? [], officeRoots = rootRelations.filter(relation => relation.type.endsWith("/officeDocument"));
   requireFact(officeRoots.length === 1 && !officeRoots[0]!.external && officeRoots[0]!.target === "ppt/presentation.xml", "invalid_presentation_root_relationship");
@@ -937,16 +1083,57 @@ async function inspectPptx(bytes: Uint8Array): Promise<ParsedAsset> {
   requireFact(sizes.length === 1, "invalid_presentation_slide_size");
   const width = requiredAttribute(sizes[0]!, "cx"), height = requiredAttribute(sizes[0]!, "cy");
   requireFact(/^[0-9]+$/u.test(width) && /^[0-9]+$/u.test(height) && Number(width) >= 914400 && Number(height) >= 914400 && Number(width) <= 51_206_400 && Number(height) <= 51_206_400, "invalid_presentation_slide_size");
-  return { kind: "presentation", mimeType: PPTX_MIME, extension: "pptx", facts: { slideCount: slides.length, hiddenSlideCount, slideWidthEmu: Number(width), slideHeightEmu: Number(height), externalHyperlinkCount }, checks: ["zip-local-central-consistency", "zip-crc-and-expansion-bounds", "office-xml-structure", "macro-and-external-media-rejection", "ordered-presentation-slide-relationships"], limitations: ["Slide count includes hidden slides, which are separately counted. Slide rendering, useful content, citations, accessibility, and linked-page safety require review; external hyperlinks were not fetched."] };
+  return { kind: "presentation", mimeType: PPTX_MIME, extension: "pptx", facts: { slideCount: slides.length, hiddenSlideCount, slideWidthEmu: Number(width), slideHeightEmu: Number(height), externalHyperlinkCount }, checks: ["zip-local-central-consistency", "zip-crc-and-expansion-bounds", "office-xml-structure", "macro-and-external-media-rejection", "ordered-presentation-slide-relationships", ...(workbooks.size ? ["literal-chart-workbook-inspection"] : [])], limitations: ["Slide count includes hidden slides, which are separately counted. Slide rendering, useful content, citations, accessibility, and linked-page safety require review; external hyperlinks were not fetched."] };
 }
 
-/** Inspect exact file bytes; no MIME or dimension assertions from the caller are accepted. */
-export async function inspectOutputAsset(input: Uint8Array, declaredName?: string): Promise<OutputAssetInspection> {
+function inspectGlb(bytes: Uint8Array): ParsedAsset {
+  let model: Record<string, unknown>;
+  try { model = validateModel3dAsset(bytes).json; }
+  catch { return fail("invalid_glb_model"); }
+  const meshes = model.meshes as Array<{ primitives: Array<{ attributes: { POSITION: number } }> }>;
+  const accessors = model.accessors as Array<{ count: number }>;
+  let primitiveCount = 0, vertexCount = 0;
+  for (const mesh of meshes) for (const primitive of mesh.primitives) {
+    primitiveCount += 1;
+    vertexCount += accessors[primitive.attributes.POSITION]!.count;
+  }
+  const count = (key: string) => Array.isArray(model[key]) ? model[key].length : 0;
+  return {
+    kind: "model3d", mimeType: "model/gltf-binary", extension: "glb",
+    facts: { meshCount: meshes.length, primitiveCount, vertexCount, materialCount: count("materials"), textureCount: count("textures"), animationCount: count("animations"), nodeCount: count("nodes") },
+    checks: ["glb-v2-chunk-boundaries", "gltf-self-contained-resources", "gltf-buffer-and-accessor-bounds", "gltf-finite-geometry-and-index-ranges", "gltf-embedded-image-framing", "gltf-scene-references"],
+    limitations: ["Geometry and embedded resource boundaries were checked. Model appearance, materials, animation playback, and the selected view require visual review. Counts describe stored mesh primitives and their vertex attributes, not visible or unique vertices."],
+  };
+}
+
+function inspectMarkdown(bytes: Uint8Array): ParsedAsset {
+  let text: string;
+  try { text = decoder.decode(bytes); } catch { return fail("invalid_markdown_text"); }
+  requireFact(text.trim().length > 0, "invalid_markdown_text");
+  for (let index = 0; index < text.length; index += 1) {
+    const code = text.charCodeAt(index);
+    requireFact(!(code < 0x20 && code !== 0x09 && code !== 0x0a && code !== 0x0d)
+      && !(code >= 0x7f && code <= 0x9f), "invalid_markdown_text");
+  }
+  return {
+    kind: "document", mimeType: "text/markdown", extension: "md", facts: {},
+    checks: ["explicit-safe-markdown-filename", "fatal-utf8-decode", "nonblank-text", "binary-control-rejection"],
+    limitations: ["Only bounded, nonblank UTF-8 text was checked. Markdown rendering, screenplay structure, completeness, source coverage, rights, linked-content safety and film composition require separate review; no links or embedded media were fetched."],
+  };
+}
+
+/**
+ * Inspect exact file bytes; no MIME or dimension assertions from the caller are accepted.
+ * Snapshotting is the public default. Internal callers may disable it only when
+ * they own immutable input bytes and guarantee no mutation until inspection ends.
+ */
+export async function inspectOutputAsset(input: Uint8Array, declaredName?: string, options: { snapshot?: boolean } = {}): Promise<OutputAssetInspection> {
   const empty: OutputAssetInspection = { status: "invalid", kind: null, mimeType: null, extension: null, byteLength: input instanceof Uint8Array ? input.byteLength : 0, sha256: null, facts: {}, checks: [], limitations: ["Inspection does not grant acceptance, rights, provenance, or a claim of useful or grounded content."], limitationCodes: ["output_inspection_not_acceptance"], errors: [] };
   if (!(input instanceof Uint8Array) || !input.byteLength) return { ...empty, errors: ["empty_output_asset"] };
-  if (input.byteLength > MAX_OUTPUT_ASSET_BYTES) return { ...empty, errors: ["output_asset_too_large"] };
+  const isGlb = input.byteLength >= 4 && input[0] === 0x67 && input[1] === 0x6c && input[2] === 0x54 && input[3] === 0x46;
+  if (input.byteLength > (isGlb ? MAX_OUTPUT_MODEL3D_ASSET_BYTES : MAX_OUTPUT_ASSET_BYTES)) return { ...empty, errors: ["output_asset_too_large"] };
   if (declaredName !== undefined && !validOutputAssetName(declaredName)) return { ...empty, errors: ["unsafe_output_asset_name"] };
-  const bytes = new Uint8Array(input);
+  const bytes = options.snapshot === false ? input : new Uint8Array(input);
   empty.sha256 = await outputAssetSha256(bytes);
   try {
     let parsed: ParsedAsset;
@@ -956,8 +1143,15 @@ export async function inspectOutputAsset(input: Uint8Array, declaredName?: strin
     else if (bytes.length >= 3 && (ascii(bytes, 0, 3) === "ID3" || bytes[0] === 255 && (bytes[1]! & 0xe0) === 0xe0)) parsed = inspectMp3(bytes);
     else if (bytes.length >= 8 && ascii(bytes, 4) === "ftyp") parsed = inspectMp4(bytes);
     else if (bytes.length >= 4 && ascii(bytes, 0) === "PK\x03\x04") parsed = await inspectPptx(bytes);
+    else if (isGlb) parsed = inspectGlb(bytes);
+    // These recognizable unsupported formats must not become documents merely
+    // because their headers can be decoded as text and their suffix is .md.
+    else if (bytes.length >= 6 && (ascii(bytes, 0, 6) === "GIF87a" || ascii(bytes, 0, 6) === "GIF89a")
+      || bytes.length >= 12 && ascii(bytes, 0) === "RIFF" && ascii(bytes, 8) === "WEBP"
+      || bytes.length >= 5 && ascii(bytes, 0, 5) === "%PDF-") fail("output_asset_format_unsupported", true);
+    else if (declaredName !== undefined && /\.md$/iu.test(declaredName)) parsed = inspectMarkdown(bytes);
     else fail("output_asset_format_unsupported", true);
-    const formatLimitations = { png: "output_png_visual_review_required", jpg: "output_jpeg_decode_review_required", wav: "output_wav_listening_review_required", mp3: "output_mp3_listening_review_required", mp4: "output_mp4_playback_review_required", pptx: "output_pptx_content_review_required" };
+    const formatLimitations = { png: "output_png_visual_review_required", jpg: "output_jpeg_decode_review_required", wav: "output_wav_listening_review_required", mp3: "output_mp3_listening_review_required", mp4: "output_mp4_playback_review_required", pptx: "output_pptx_content_review_required", glb: "output_model3d_visual_review_required", md: "output_markdown_content_review_required" };
     return { ...empty, ...parsed, status: "inspected", errors: [], limitations: [...empty.limitations, ...parsed.limitations], limitationCodes: [...empty.limitationCodes!, ...(parsed.extension ? [formatLimitations[parsed.extension]] : [])] };
   } catch (error) {
     return { ...empty, status: error instanceof InspectionFailure && error.unsupported ? "unsupported" : "invalid", errors: [error instanceof InspectionFailure ? error.code : "asset_inspection_failed"] };

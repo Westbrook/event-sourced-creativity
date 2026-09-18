@@ -1,4 +1,4 @@
-import type { DocumentJob, DocumentJobError, DocumentJobProgress, GenerationFailureGuidance } from "../../model/document-jobs";
+import { documentJobStopStatusParts, planningStopBudget, type DocumentJob, type DocumentJobError, type DocumentJobProgress, type GenerationFailureGuidance } from "../../model/document-jobs.ts";
 import type { SourceDocumentExtraction } from "../../model/source-documents";
 import type { FormaLocaleController } from "./localization";
 
@@ -6,9 +6,13 @@ type RuntimeLocalization = Pick<FormaLocaleController, "locale" | "messages" | "
 
 const englishLocale = (locale: RuntimeLocalization) => /^en(?:-|$)/iu.test(locale.locale);
 
+/** Translate exact system-authored pieces without changing their retained receipt or financial meaning. */
+const localizedStopStatus=(message:string,locale:RuntimeLocalization,result?:unknown)=>documentJobStopStatusParts(message,planningStopBudget(result))?.map(part=>locale.system(part)).join(" ")??null;
+
 /** Raw progress remains unchanged for durable receipts and English-dependent parsing. */
 export function localizedDocumentJobProgress(job: Pick<DocumentJob, "stage" | "status" | "progressMessage" | "result">, locale: RuntimeLocalization) {
   const message = job.progressMessage.trim();
+  const stopped=localizedStopStatus(message,locale,job.result);if(stopped)return stopped;
   if (englishLocale(locale)) return message || locale.t(`job.progress.${job.stage || job.status}`);
   if (message) {
     const exact = locale.system(message);
@@ -26,6 +30,7 @@ export function localizedDocumentJobProgress(job: Pick<DocumentJob, "stage" | "s
 
 /** Translate provider progress metadata without changing customer-authored or technical values. */
 export function localizedDocumentJobProgressDetail(detail: DocumentJobProgress["detail"], job: Pick<DocumentJob, "stage" | "status" | "progressMessage" | "result" | "kind">, locale: RuntimeLocalization) {
+  const stopped=detail?localizedStopStatus(detail,locale,job.result):null;if(stopped)return stopped;
   if (!detail || englishLocale(locale)) return detail;
   const exact = locale.system(detail);
   if (exact !== detail) return exact;
@@ -41,9 +46,11 @@ export function localizedDocumentJobProgressDetail(detail: DocumentJobProgress["
 
 /** Provider-specific technical errors remain in the technical receipt, never inside translated product guidance. */
 export function localizedGenerationFailureGuidance(guidance: GenerationFailureGuidance, detail: DocumentJobError | null, fallback: string, locale: RuntimeLocalization): GenerationFailureGuidance {
+  const stopped=localizedStopStatus(guidance.summary,locale);
+  if(stopped)return{...guidance,title:locale.system(guidance.title),summary:stopped,actionLabel:guidance.actionLabel?locale.system(guidance.actionLabel):null};
   if (englishLocale(locale)) return guidance;
   let summary = guidance.summary;
-  const retry = summary.match(/^The server already retried\. Wait about (\d+) seconds before trying again\.$/iu);
+  const retry = summary.match(/^(?:The server already retried\. )?Wait about (\d+) seconds before trying again\.$/iu);
   if (retry) summary = locale.t("job.progress.detail.retrySeconds", "", { seconds: locale.number(Number(retry[1])) });
   else {
     const translated = locale.system(summary);

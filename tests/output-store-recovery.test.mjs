@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { installSourceOwnershipPort } from "./helpers/source-ownership-port.mjs";
 import test from "node:test";
 import { pathToFileURL } from "node:url";
 import { resolve } from "node:path";
@@ -9,6 +10,14 @@ import {
 const { OutputRequirementsClient } = await import(pathToFileURL(resolve(sourceRoot, "src/state/output-requirements-client.ts")).href);
 const actual = await loadStoreMethods();
 
+// This transport-only success envelope is simulated; actual committed events and
+// genuine authorization withdrawal are exercised by the full Store/Worker suite.
+function simulatedCommittedOutputEnvelope(path, init, current) {
+  const upload = path.startsWith("/api/output-requirements/assets?");
+  const command = upload ? { action: "adopt", clientMutationId: new Headers(init.headers).get("x-output-client-mutation-id") } : JSON.parse(init.body);
+  assert.ok(typeof command.clientMutationId === "string" && command.clientMutationId.length > 0, "response belongs to the original dispatched command");
+  return { ok: true, replayed: false, command: { action: command.action, eventId: "fixture-committed-output-event" }, appended: [], snapshot: current };
+}
 function realTransportFixture(mode) {
   const calls = [];
   let current = snapshot("doc-a", "1");
@@ -26,7 +35,8 @@ function realTransportFixture(mode) {
       current = commandSnapshot;
       return mode === "conflict"
         ? Response.json({ error: "output_revision_conflict" }, { status: 409 })
-        : Response.json({ snapshot: current, command: { receipt: "known-committed" } });
+        : mode === "malformed" ? Response.json({ snapshot: current, command: { receipt: "known-committed" } })
+        : Response.json(simulatedCommittedOutputEnvelope(path, init, current));
     },
   });
   let hydrationAttempts = 0;
@@ -36,7 +46,8 @@ function realTransportFixture(mode) {
     outputRequirements: client,
     refreshEvents: async () => { hydrationAttempts += 1; throw new Error("fixture event hydration unavailable after commit"); },
   };
-  store.outputRequirementCommand = (command) => actual.outputRequirementCommand.call(store, command);
+  installSourceOwnershipPort(store);
+  store.outputRequirementCommand = (...args) => actual.outputRequirementCommand.call(store, ...args);
   store.uploadOutputAsset = (...args) => actual.uploadOutputAsset.call(store, ...args);
   return { client, calls, store, get hydrationAttempts() { return hydrationAttempts; } };
 }
@@ -97,4 +108,17 @@ for (const action of ["save", "upload"]) test(`actual store + client: ${action} 
   assert.equal(response.body, null);
   assert.equal(fixture.client.resource("doc-a").snapshot, null);
   assert.equal(fixture.calls.filter((call) => call.method === "POST").length, 1);
+});
+
+test("old partial simulated command envelope is not a canonical acknowledgment", async () => {
+  const fixture = realTransportFixture("malformed"); await fixture.client.ensure("doc-a");
+  const original = { action: "save", documentId: "doc-a", blockId: "output-a", expectedRevision: "1", clientMutationId: "original-malformed-output", spec: {} };
+  const result = await fixture.store.outputRequirementCommand(original);
+  assert.equal(result.status, "unavailable"); assert.equal(result.receipt, undefined);
+  const retained = fixture.client.retainedWrite("doc-a");
+  assert.equal(retained.clientMutationId, original.clientMutationId); assert.equal(retained.status, "unknown"); assert.equal(retained.receipt, undefined);
+  assert.equal(fixture.hydrationAttempts, 0); assert.equal(fixture.calls.filter(call => call.method === "POST").length, 1);
+  const different = await fixture.store.outputRequirementCommand({ ...original, clientMutationId: "different-output-operation", spec: { label: "different request" } });
+  assert.equal(different.status, "not-attempted"); assert.equal(different.body, null); assert.equal(different.receipt, undefined);
+  assert.deepEqual(fixture.client.retainedWrite("doc-a"), retained); assert.equal(fixture.calls.filter(call => call.method === "POST").length, 1, "no automatic replay or replacement");
 });

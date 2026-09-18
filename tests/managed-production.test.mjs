@@ -814,10 +814,10 @@ test("the thirty-decision seven-chapter incident generates seven source-local he
     items[6].title=provider.presentation_source.sources.find((source)=>source.alias===scenes[0].source_keys[0]).label;
     items[6].slide.visual.value=items[6].title;
     const presentation={aspect_ratio:"16:9",theme:"Seven isolated source chapters",footer_label:"Authorized editorial evidence",style_preset:"field-notes",mode:"light",palette:{background:"#edf1ef",foreground:"#14211d",accent:"#287260",muted:"#586b64",surface:"#d9e3df"}};
-    return Response.json({id:"incident-seven-slide-mock",model:"gpt-test",output_text:JSON.stringify({title:"Seven bounded editorial positions",summary:"Seven explicitly targeted source chapters remain isolated.",content_markdown:items.map((item,index)=>`## ${index+1}. ${item.title}\n${item.body}`).join("\n\n"),presentation,items}),usage:{input_tokens:900,output_tokens:600,total_tokens:1500}});
+    return Response.json({id:"incident-seven-slide-mock",model:"gpt-5.6-terra",output_text:JSON.stringify({title:"Seven bounded editorial positions",summary:"Seven explicitly targeted source chapters remain isolated.",content_markdown:items.map((item,index)=>`## ${index+1}. ${item.title}\n${item.body}`).join("\n\n"),presentation,items}),usage:{input_tokens:900,output_tokens:600,total_tokens:1500}});
   };
   try{
-    const generated=await generateManagedArtifactDraft({OPENAI_API_KEY:"test-only",OPENAI_MODEL:"gpt-test"},"owner","slides",{documentTitle:"All approved source chapters",snapshot,production,requestedSlideCount:7});
+    const generated=await generateManagedArtifactDraft({OPENAI_API_KEY:"test-only",OPENAI_MODEL:"gpt-5.6-terra"},"owner","slides",{documentTitle:"All approved source chapters",snapshot,production,requestedSlideCount:7});
     assert.equal(requests.length,1,"seven explicitly requested slides require exactly one mocked provider request and no paid repair");
     assert.equal(generated.output.items.length,7);
     assert.equal(generated.output.items[6].title,production.contextGroups.find((group)=>group.id===production.scenes[6].contextGroupIds[0]).name,`a duplicated final title must be replaced only with its own authorized chapter label: ${JSON.stringify(generated.output.items.map((item)=>({title:item.title,visual:item.slide.visual.value})))}`);
@@ -842,10 +842,10 @@ test("managed provider planning pages long films without inheriting the legacy t
     const providerInput = JSON.parse(request.input);
     const scenes = providerInput.production.assigned_scenes;
     const output = { title: "A complete film", summary: "Every source beat has its own scene.", content_markdown: scenes.map((scene) => scene.action).join("\n"), items: scenes.map((scene) => ({ title: scene.title, body: scene.action, notes: scene.camera_direction, image_prompt: scene.action, context_group_ids: [] })) };
-    return Response.json({ id: `response-${requests.length}`, model: "gpt-test", output_text: JSON.stringify(output), usage: { input_tokens: 100, output_tokens: 80, total_tokens: 180 } });
+    return Response.json({ id: `response-${requests.length}`, model: "gpt-5.6-terra", output_text: JSON.stringify(output), usage: { input_tokens: 100, output_tokens: 80, total_tokens: 180 } });
   };
   try {
-    const planned = await generateManagedArtifactDraft({ OPENAI_API_KEY: "test-only", OPENAI_MODEL: "gpt-test" }, "owner", "video", { documentTitle: "Complete film", snapshot, production });
+    const planned = await generateManagedArtifactDraft({ OPENAI_API_KEY: "test-only", OPENAI_MODEL: "gpt-5.6-terra" }, "owner", "video", { documentTitle: "Complete film", snapshot, production });
     assert.equal(planned.output.items.length, 17);
     assert.deepEqual(requests.map((request) => JSON.parse(request.input).production.assigned_scenes.length), [8, 8, 1]);
     assert.ok(requests.every((request) => request.instructions.includes("separate 4–15 second provider generation")));
@@ -870,10 +870,10 @@ test("long-form stories and screenplays retain later-page manuscripts and repair
       const scenes = provider.production.assigned_scenes;
       const items = scenes.map((scene, index) => ({ title: scene.title, body: page.page_index === 1 && index === 0 && !repaired ? "Unique action 1" : scene.action, notes: "", image_prompt: scene.action, context_group_ids: [] }));
       const markdown = page.page_index === 0 ? `# Complete work\n\n${items.map((item) => item.body).join("\n")}\n\nFIRST_PAGE_END_SENTINEL` : `# Complete work\n\n${items.map((item) => item.body).join("\n")}\n\nFINAL_MANUSCRIPT_ONLY_SENTINEL`;
-      return Response.json({ id: `response-${requests.length}`, model: "gpt-test", output_text: JSON.stringify({ title: "Complete work", summary: "A continuous work.", content_markdown: markdown, items }), usage: { input_tokens: 100, output_tokens: 50, total_tokens: 150 } });
+      return Response.json({ id: `response-${requests.length}`, model: "gpt-5.6-terra", output_text: JSON.stringify({ title: "Complete work", summary: "A continuous work.", content_markdown: markdown, items }), usage: { input_tokens: 100, output_tokens: 50, total_tokens: 150 } });
     };
     try {
-      const output = await generateManagedArtifactDraft({ OPENAI_API_KEY: "test-only", OPENAI_MODEL: "gpt-test" }, "owner", kind, { documentTitle: "Complete work", snapshot, production, plannerAttempt: (attempt) => attempts.push(attempt) });
+      const output = await generateManagedArtifactDraft({ OPENAI_API_KEY: "test-only", OPENAI_MODEL: "gpt-5.6-terra" }, "owner", kind, { documentTitle: "Complete work", snapshot, production, plannerAttempt: (attempt) => attempts.push(attempt) });
       assert.equal(requests.length, 3, kind);
       assert.equal(output.inputReceipt.whole_work_validation.repaired_pages, 1, kind);
       assert.equal(output.inputReceipt.adapter_reconciliation.status,"pending",kind);
@@ -908,10 +908,10 @@ test("multi-page decks retain one cover, correct repeated content, and lock the 
       const position = scene.narrative_order;
       return { title: `Heading ${position}`, body: page.page_index === 1 && index === 0 && !repaired ? "Meaning 1" : `Meaning ${position}`, notes: `Speaker ${position}`, image_prompt: `Frame ${position}`, context_group_ids: [], slide: { layout: position === 1 || page.page_index === 1 && index === 0 && !repaired ? "cover" : "split", kicker: `Kicker ${position}`, bullets: [], visual: { kind: "hero-type", label: `Label ${position}`, value: `Emphasis ${position}`, data: [{ label: `Datum ${position}`, value: `Amount ${position}`, weight: .7 }] } } };
     });
-    return Response.json({ id: `slides-${requests.length}`, model: "gpt-test", output_text: JSON.stringify({ title: "Alpha deck", summary: "A coherent presentation.", content_markdown: `# Alpha deck\n\n${items.map((item) => item.body).join("\n")}`, presentation, items }), usage: { input_tokens: 100, output_tokens: 50, total_tokens: 150 } });
+    return Response.json({ id: `slides-${requests.length}`, model: "gpt-5.6-terra", output_text: JSON.stringify({ title: "Alpha deck", summary: "A coherent presentation.", content_markdown: `# Alpha deck\n\n${items.map((item) => item.body).join("\n")}`, presentation, items }), usage: { input_tokens: 100, output_tokens: 50, total_tokens: 150 } });
   };
   try {
-    const planned = await generateManagedArtifactDraft({ OPENAI_API_KEY: "test-only", OPENAI_MODEL: "gpt-test" }, "owner", "slides", { documentTitle: "Alpha deck", snapshot, production });
+    const planned = await generateManagedArtifactDraft({ OPENAI_API_KEY: "test-only", OPENAI_MODEL: "gpt-5.6-terra" }, "owner", "slides", { documentTitle: "Alpha deck", snapshot, production });
     assert.equal(requests.length, 3);
     assert.equal(planned.inputReceipt.planned_provider_request_count, 2);
     assert.equal(planned.inputReceipt.provider_request_count, 3, "the receipt must include the additional bounded whole-work repair call");
@@ -976,7 +976,7 @@ test("a realistic twenty-three-slide managed presentation keeps source-authorize
     const usage = { input_tokens: 120 + page.page_index * 10, output_tokens: 80 + page.page_index * 10 };
     return Response.json({
       id: `executive-page-${page.page_index + 1}`,
-      model: "gpt-executive-test",
+      model: "gpt-5.6-terra",
       output_text: JSON.stringify({
         title: "Forma responsive product strategy",
         summary: "One coherent, source-grounded executive presentation.",
@@ -990,7 +990,7 @@ test("a realistic twenty-three-slide managed presentation keeps source-authorize
 
   try {
     const planned = await generateManagedArtifactDraft(
-      { OPENAI_API_KEY: "test-only", OPENAI_MODEL: "gpt-executive-test" },
+      { OPENAI_API_KEY: "test-only", OPENAI_MODEL: "gpt-5.6-terra" },
       "authorized-actor",
       "slides",
       {
@@ -1136,14 +1136,14 @@ test("twelve authored executive slides deliberately expand into twenty-three gro
     });
     return Response.json({
       id: `expanded-executive-page-${requests.length}`,
-      model: "gpt-expansion-test",
+      model: "gpt-5.6-terra",
       output_text: JSON.stringify({ title: "Governed executive opportunity", summary: "Twenty-three coherent source-grounded decisions.", content_markdown: items.map((item) => item.body).join("\n"), presentation, items }),
       usage: { input_tokens: 200, output_tokens: 100, total_tokens: 300 },
     });
   };
 
   try {
-    const result = await generateManagedArtifactDraft({ OPENAI_API_KEY: "test-only", OPENAI_MODEL: "gpt-expansion-test" }, "authorized-actor", "slides", {
+    const result = await generateManagedArtifactDraft({ OPENAI_API_KEY: "test-only", OPENAI_MODEL: "gpt-5.6-terra" }, "authorized-actor", "slides", {
       documentTitle: "10 — Executive Opportunity — Slide-by-Slide Presentation Narrative",
       snapshot,
       production,
@@ -1228,14 +1228,14 @@ test("managed presentation slides retain exact authorized source blocks when the
     });
     return Response.json({
       id: `ungrouped-page-${requests.length}`,
-      model: "gpt-source-test",
+      model: "gpt-5.6-terra",
       output_text: JSON.stringify({ title: "Authorized executive source evidence", summary: "Every slide has authorized evidence.", content_markdown: items.map((item) => item.body).join("\n"), presentation, items }),
       usage: { input_tokens: 100, output_tokens: 50, total_tokens: 150 },
     });
   };
 
   try {
-    const result = await generateManagedArtifactDraft({ OPENAI_API_KEY: "test-only", OPENAI_MODEL: "gpt-source-test" }, "authorized-actor", "slides", {
+    const result = await generateManagedArtifactDraft({ OPENAI_API_KEY: "test-only", OPENAI_MODEL: "gpt-5.6-terra" }, "authorized-actor", "slides", {
       documentTitle: "Executive opportunity",
       snapshot,
       production,
@@ -1328,14 +1328,14 @@ test("managed presentation receipts count bounded adapter repairs nested inside 
     });
     return Response.json({
       id: `nested-repair-provider-request-${requests.length}`,
-      model: "gpt-repair-test",
+      model: "gpt-5.6-terra",
       output_text: JSON.stringify({ title: "Repair-safe production", summary: "One bounded provider repair chain.", content_markdown: items.map((item) => item.body).join("\n"), presentation, items }),
       usage: { input_tokens: 100, output_tokens: 50, total_tokens: 150 },
     });
   };
 
   try {
-    const result = await generateManagedArtifactDraft({ OPENAI_API_KEY: "test-only", OPENAI_MODEL: "gpt-repair-test" }, "authorized-actor", "slides", {
+    const result = await generateManagedArtifactDraft({ OPENAI_API_KEY: "test-only", OPENAI_MODEL: "gpt-5.6-terra" }, "authorized-actor", "slides", {
       documentTitle: "Repair-safe production",
       snapshot,
       production,
@@ -1405,14 +1405,14 @@ test("visible protected body quotations missing from provider speaker notes are 
     });
     return Response.json({
       id: `stakeholder-notes-page-${requests.length}`,
-      model: "gpt-stakeholder-test",
+      model: "gpt-5.6-terra",
       output_text: JSON.stringify({ title: "Stakeholder evidence", summary: "Protected body quotations retain complete speaker notes.", content_markdown: items.map((item) => item.body).join("\n"), presentation, items }),
       usage: { input_tokens: 100, output_tokens: 50, total_tokens: 150 },
     });
   };
 
   try {
-    const result = await generateManagedArtifactDraft({ OPENAI_API_KEY: "test-only", OPENAI_MODEL: "gpt-stakeholder-test" }, "authorized-actor", "slides", {
+    const result = await generateManagedArtifactDraft({ OPENAI_API_KEY: "test-only", OPENAI_MODEL: "gpt-5.6-terra" }, "authorized-actor", "slides", {
       documentTitle: "Stakeholder source evidence",
       snapshot,
       production,
@@ -1482,7 +1482,7 @@ test("an unrepaired protected stakeholder quotation fails terminally after one b
     });
     return Response.json({
       id: `protected-source-attempt-${requests.length}`,
-      model: "gpt-fidelity-test",
+      model: "gpt-5.6-terra",
       output_text: JSON.stringify({ title: "Governed source fidelity", summary: "A protected quote is persistently absent.", content_markdown: items.map((item) => item.body).join("\n"), presentation, items }),
       usage: { input_tokens: 100, output_tokens: 50, total_tokens: 150 },
     });
@@ -1490,7 +1490,7 @@ test("an unrepaired protected stakeholder quotation fails terminally after one b
 
   try {
     await assert.rejects(
-      generateManagedArtifactDraft({ OPENAI_API_KEY: "test-only", OPENAI_MODEL: "gpt-fidelity-test" }, "authorized-actor", "slides", {
+      generateManagedArtifactDraft({ OPENAI_API_KEY: "test-only", OPENAI_MODEL: "gpt-5.6-terra" }, "authorized-actor", "slides", {
         documentTitle: "Executive source fidelity",
         snapshot,
         production,
@@ -1536,10 +1536,10 @@ test("completed planning pages report billable usage even when a later provider 
     if (calls === 3) return Response.json({ error: { code: "provider_temporarily_unavailable", message: "The third page could not be generated." } }, { status: 500 });
     const provider = JSON.parse(JSON.parse(String(init.body)).input);
     const scenes = provider.production.assigned_scenes;
-    return Response.json({ id: `paid-page-${calls}`, model: "gpt-test", output_text: JSON.stringify({ title: "Long film", summary: "A complete treatment.", content_markdown: scenes.map((scene) => scene.action).join("\n"), items: scenes.map((scene) => ({ title: scene.title, body: scene.action, notes: "", image_prompt: scene.action, context_group_ids: [] })) }), usage: { input_tokens: 100, output_tokens: 80, total_tokens: 180 } });
+    return Response.json({ id: `paid-page-${calls}`, model: "gpt-5.6-terra", output_text: JSON.stringify({ title: "Long film", summary: "A complete treatment.", content_markdown: scenes.map((scene) => scene.action).join("\n"), items: scenes.map((scene) => ({ title: scene.title, body: scene.action, notes: "", image_prompt: scene.action, context_group_ids: [] })) }), usage: { input_tokens: 100, output_tokens: 80, total_tokens: 180 } });
   };
   try {
-    await assert.rejects(generateManagedArtifactDraft({ OPENAI_API_KEY: "test-only", OPENAI_MODEL: "gpt-test" }, "owner", "video", { documentTitle: "Long film", snapshot, production, plannerAttempt: (attempt) => completed.push(attempt) }));
+    await assert.rejects(generateManagedArtifactDraft({ OPENAI_API_KEY: "test-only", OPENAI_MODEL: "gpt-5.6-terra" }, "owner", "video", { documentTitle: "Long film", snapshot, production, plannerAttempt: (attempt) => completed.push(attempt) }));
     assert.equal(completed.length, 2);
     assert.equal(completed.at(-1).usage.totalTokens, 360);
     assert.deepEqual(completed.at(-1).responseIds, ["paid-page-1", "paid-page-2"]);

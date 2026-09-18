@@ -1,4 +1,4 @@
-import { integer, sqliteTable, text, uniqueIndex, index, primaryKey, check, foreignKey } from "drizzle-orm/sqlite-core";
+import { integer, sqliteTable, text, uniqueIndex, index, primaryKey, check, unique, foreignKey } from "drizzle-orm/sqlite-core";
 import { sql } from "drizzle-orm";
 import { PHANTOM_ATTENTION_EVENT_SQL } from "./event-predicates.ts";
 
@@ -47,6 +47,26 @@ export const eventPrivatePayloads = sqliteTable(
   },
   (table) => [index("idx_event_private_payloads_owner_scope").on(table.ownerId, table.projectId, table.documentId, table.redactedAt)],
 );
+
+/** Operational change witnesses, never copies of authored history. Saturation
+ * stops new certificates without preventing privacy erasure of source rows. */
+export const sceneSourceGenerations = sqliteTable("scene_source_generations", {
+  scopeKind: text("scope_kind").notNull(), scopeKey: text("scope_key").notNull(),
+  generation: integer("generation").notNull(),
+}, table => [
+  primaryKey({ columns: [table.scopeKind, table.scopeKey] }),
+  check("scene_source_generation_kind", sql`${table.scopeKind} IN ('stream','project')`),
+  check("scene_source_generation_value", sql`typeof(${table.generation})='integer' AND ${table.generation} BETWEEN 1 AND 9007199254740991`),
+]);
+export const sceneSourceEpoch = sqliteTable("scene_source_epoch", {
+  singleton: integer("singleton").primaryKey().notNull(), schemaVersion: integer("schema_version").notNull(),
+  instanceNonce: text("instance_nonce").notNull(), generation: integer("generation").notNull(),
+}, table => [
+  check("scene_source_epoch_singleton", sql`${table.singleton}=1`),
+  check("scene_source_epoch_version", sql`${table.schemaVersion}=1`),
+  check("scene_source_epoch_nonce", sql`length(${table.instanceNonce})=32 AND ${table.instanceNonce} NOT GLOB '*[^0-9a-f]*'`),
+  check("scene_source_epoch_generation", sql`typeof(${table.generation})='integer' AND ${table.generation} BETWEEN 1 AND 9007199254740991`),
+]);
 
 /** A self-cleaning SQLite trigger commits immutable metadata and its private body together. */
 export const eventWriteStage = sqliteTable(
@@ -1006,6 +1026,22 @@ export const costBudgetReservations = sqliteTable(
   ],
 );
 
+export const consequentialExecutions = sqliteTable("consequential_executions", {
+  executionId:text("execution_id").primaryKey(),actorUserId:text("actor_user_id").notNull(),streamId:text("stream_id").notNull(),projectId:text("project_id").notNull(),documentId:text("document_id").notNull(),
+  organizationId:text("organization_id"),projectAccessId:text("project_access_id"),operation:text("operation").notNull(),intentHash:text("intent_hash").notNull(),bindingHash:text("binding_hash").notNull(),consentRef:text("consent_ref").notNull(),resultRef:text("result_ref"),
+  status:text("status").notNull(),errorCode:text("error_code"),createdAt:text("created_at").notNull(),expiresAt:text("expires_at").notNull(),updatedAt:text("updated_at").notNull(),
+},(table)=>[index("idx_consequential_executions_actor_scope").on(table.actorUserId,table.projectId,table.documentId,table.status,table.createdAt)]);
+export const consequentialExecutionSteps = sqliteTable("consequential_execution_steps",{
+  executionId:text("execution_id").notNull(),stepIndex:integer("step_index").notNull(),tokenReservationId:text("token_reservation_id").notNull(),costReservationId:text("cost_reservation_id").notNull(),
+  maximumTokens:integer("maximum_tokens").notNull(),maximumMicrousd:integer("maximum_microusd").notNull(),status:text("status").notNull(),providerRequestId:text("provider_request_id"),verifiedTokens:integer("verified_tokens"),verifiedMicrousd:integer("verified_microusd"),updatedAt:text("updated_at").notNull(),
+},(table)=>[primaryKey({columns:[table.executionId,table.stepIndex]})]);
+
+export const authoringCommits=sqliteTable("authoring_commits",{
+  previewId:text("preview_id").primaryKey(),actorUserId:text("actor_user_id").notNull(),operation:text("operation").notNull(),projectId:text("project_id").notNull(),documentId:text("document_id").notNull(),
+  blockId:text("block_id").notNull(),canvasId:text("canvas_id"),
+  organizationId:text("organization_id"),projectAccessId:text("project_access_id"),approvalHash:text("approval_hash").notNull(),resultJson:text("result_json").notNull(),lastEventId:text("last_event_id").notNull(),verified:integer("verified").notNull(),createdAt:text("created_at").notNull(),
+},(table)=>[check("authoring_commit_verified",sql`${table.verified}=1`),index("idx_authoring_commits_actor_document").on(table.actorUserId,table.projectId,table.documentId)]);
+
 export const shares = sqliteTable(
   "shares",
   {
@@ -1081,6 +1117,8 @@ export const documentJobs = sqliteTable(
     requestedSequence: integer("requested_sequence").notNull(),
     requestJson: text("request_json").notNull(),
     resultJson: text("result_json"),
+    sceneSourceVersionJson: text("scene_source_version_json"),
+    sceneSourceProtocol: integer("scene_source_protocol").notNull().default(0),
     errorMessage: text("error_message"),
     attemptCount: integer("attempt_count").notNull().default(0),
     requestedAt: text("requested_at").notNull(),
@@ -1096,8 +1134,47 @@ export const documentJobs = sqliteTable(
     index("idx_document_jobs_stream_document").on(table.streamId, table.documentId, table.requestedAt),
     index("idx_document_jobs_stream_status_requested").on(table.streamId,table.status,table.requestedAt,table.jobId),
     index("idx_document_jobs_stream_correlation").on(table.streamId,table.correlationId,table.jobId,table.ownerId),
+    check("ck_document_jobs_scene_source_protocol",sql`${table.sceneSourceProtocol} IN (0,1)`),
   ],
 );
+
+/** Existing runtime assistant tables, declared without adopting legacy turns as consent. */
+export const assistantTurns = sqliteTable("assistant_turns", {
+  turnId:text("turn_id").notNull(), actorUserId:text("actor_user_id").notNull(), scopeKey:text("scope_key").notNull(),
+  organizationId:text("organization_id"), projectAccessId:text("project_access_id"), projectId:text("project_id"), documentId:text("document_id"),
+  routeFamily:text("route_family").notNull(), userContentRef:text("user_content_ref").notNull(), assistantContentRef:text("assistant_content_ref").notNull(),
+  proposalJson:text("proposal_json"), requestJson:text("request_json"), permissionEpoch:text("permission_epoch").notNull(), status:text("status").notNull(),
+  createdAt:text("created_at").notNull(), completedAt:text("completed_at").notNull(),
+}, table => [primaryKey({columns:[table.actorUserId,table.scopeKey,table.turnId]}),index("idx_assistant_turns_actor_scope").on(table.actorUserId,table.scopeKey,table.createdAt)]);
+
+export const assistantActionProposals = sqliteTable("assistant_action_proposals", {
+  proposalId:text("proposal_id").primaryKey().notNull(), actorUserId:text("actor_user_id").notNull(), scopeKey:text("scope_key").notNull(), turnId:text("turn_id").notNull(),
+  organizationId:text("organization_id"), projectAccessId:text("project_access_id"), projectId:text("project_id").notNull(), documentId:text("document_id").notNull(),
+  actionKind:text("action_kind").notNull(), actionContentRef:text("action_content_ref").notNull(), sourceVersionsJson:text("source_versions_json").notNull(),
+  expectedHead:integer("expected_head").notNull(), permissionEpoch:text("permission_epoch").notNull(), status:text("status").notNull(),
+  createdAt:text("created_at").notNull(), expiresAt:text("expires_at").notNull(), resolvedAt:text("resolved_at"),
+}, table => [index("idx_assistant_proposals_actor_scope").on(table.actorUserId,table.scopeKey,table.status,table.createdAt)]);
+
+export const assistantActionCommits = sqliteTable("assistant_action_commits", {
+  commitId:text("commit_id").primaryKey().notNull(), verified:integer("verified").notNull(), createdAt:text("created_at").notNull(),
+}, table => [check("assistant_action_commits_verified",sql`${table.verified}=1`)]);
+
+export const assistantSpecialistTasks = sqliteTable("assistant_specialist_tasks", {
+  taskId:text("task_id").primaryKey().notNull(), actorUserId:text("actor_user_id").notNull(), scopeKey:text("scope_key").notNull(), turnId:text("turn_id").notNull(),
+  organizationId:text("organization_id"), projectAccessId:text("project_access_id"), projectId:text("project_id"), documentId:text("document_id"),
+  routeFamily:text("route_family").notNull(), taskKind:text("task_kind").notNull(), selectedModel:text("selected_model").notNull(),
+  tokenReservationId:text("token_reservation_id").notNull(), costReservationId:text("cost_reservation_id").notNull(), estimatedMicrousd:integer("estimated_microusd").notNull(),
+  maximumInputTokens:integer("maximum_input_tokens").notNull(), maximumOutputTokens:integer("maximum_output_tokens").notNull(), locale:text("locale").notNull(),
+  permissionEpoch:text("permission_epoch").notNull(), status:text("status").notNull(), errorCode:text("error_code"),
+  createdAt:text("created_at").notNull(), updatedAt:text("updated_at").notNull(), startedAt:text("started_at"), completedAt:text("completed_at"),
+  leaseExpiresAt:text("lease_expires_at"), providerSubmitted:integer("provider_submitted").notNull().default(0), resultJson:text("result_json"),
+}, table => [unique().on(table.actorUserId,table.scopeKey,table.turnId,table.taskKind),index("idx_assistant_tasks_actor_scope").on(table.actorUserId,table.scopeKey,table.status,table.createdAt),uniqueIndex("idx_assistant_single_consented_turn").on(table.actorUserId,table.scopeKey,table.turnId).where(sql`${table.resultJson} IS NOT NULL`)]);
+
+/** Immutable audit rows: migration triggers also prohibit update and deletion. */
+export const assistantBillingReconciliations = sqliteTable("assistant_billing_reconciliations", {
+  reconciliationId:text("reconciliation_id").primaryKey().notNull(), taskId:text("task_id").notNull(), actorUserId:text("actor_user_id").notNull(), reviewerUserId:text("reviewer_user_id").notNull(),
+  organizationId:text("organization_id"), projectAccessId:text("project_access_id"), evidenceClassification:text("evidence_classification").notNull(), occurredAt:text("occurred_at").notNull(),
+}, table => [unique().on(table.taskId,table.reviewerUserId),check("assistant_billing_reconciliations_evidence",sql`${table.evidenceClassification}='verified-no-provider-charge'`),index("idx_assistant_billing_reconciliations_actor_scope").on(table.actorUserId,table.organizationId,table.projectAccessId,table.occurredAt)]);
 
 /** Server-owned release projection; every mutation also appends an immutable governance receipt. */
 export const canvasGovernanceRequirements = sqliteTable(
@@ -1193,7 +1270,7 @@ export const outputPlanTargets = sqliteTable(
   (table) => [
     primaryKey({ columns: [table.scopeKey, table.planRevisionId, table.targetId] }),
     foreignKey({ columns: [table.scopeKey, table.planRevisionId], foreignColumns: [outputPlanRevisions.scopeKey, outputPlanRevisions.planRevisionId] }),
-    check("output_plan_targets_check_1", sql.raw("media_kind IN('image','slides','audio','video','document','unknown')")),
+    check("output_plan_targets_check_1", sql.raw("media_kind IN('image','slides','audio','video','document','model3d','unknown')")),
     check("output_plan_targets_check_2", sql.raw("required IN(0,1)")),
     check("output_plan_targets_check_3", sql.raw("selected IN(0,1)")),
     check("output_plan_targets_check_4", sql.raw("typeof(ordinal)='integer' AND ordinal>=0")),
@@ -1360,7 +1437,7 @@ export const outputAssets = sqliteTable(
     primaryKey({ columns: [table.scopeKey, table.assetId] }),
     foreignKey({ columns: [table.createdEventId], foreignColumns: [events.eventId] }),
     check("output_assets_check_1", sql.raw("typeof(byte_length)='integer' AND byte_length>0")),
-    check("output_assets_check_2", sql.raw("media_kind IN('image','slides','audio','video','document')")),
+    check("output_assets_check_2", sql.raw("media_kind IN('image','slides','audio','video','document','model3d')")),
     uniqueIndex("idx_output_assets_unique_1").on(table.storageKey),
   ],
 );
@@ -1415,7 +1492,7 @@ export const outputAssetStorageWrites = sqliteTable(
   (table) => [
     primaryKey({ columns: [table.scopeKey, table.assetId] }),
     foreignKey({ columns: [table.publicationEventId], foreignColumns: [events.eventId] }),
-    check("output_asset_storage_writes_check_1", sql.raw("typeof(byte_length)='integer' AND byte_length>0 AND byte_length<=24000000")),
+    check("output_asset_storage_writes_check_1", sql.raw("typeof(byte_length)='integer' AND byte_length>0 AND byte_length<=67108864")),
     check("output_asset_storage_writes_check_2", sql.raw("status IN('writing','written','cleanup_pending','deleted')")),
     check("output_asset_storage_writes_check_3", sql.raw("write_acknowledged IN(0,1)")),
     check("output_asset_storage_writes_check_4", sql.raw("(organization_id IS NULL AND project_access_id IS NULL AND context_id IS NULL) OR (organization_id IS NOT NULL AND project_access_id IS NOT NULL AND context_id IS NOT NULL)")),
@@ -1512,3 +1589,624 @@ export const outputDeliveryManifests = sqliteTable(
     check("output_delivery_manifests_check_1", sql.raw("is_partial IN(0,1)")),
   ],
 );
+
+
+export const memoryLiveEnrollments = sqliteTable(
+  "memory_live_enrollments",
+  {
+    enrollmentId: text("enrollment_id").primaryKey().notNull(),
+    actorUserId: text("actor_user_id").notNull(),
+    ownerUserId: text("owner_user_id").notNull(),
+    organizationId: text("organization_id"),
+    projectAccessId: text("project_access_id"),
+    projectId: text("project_id").notNull(),
+    documentId: text("document_id").notNull(),
+    permissionEpoch: text("permission_epoch").notNull(),
+    policyVersion: text("policy_version").notNull(),
+    revision: integer("revision").notNull(),
+    learnEnabled: integer("learn_enabled").notNull(),
+    recallEnabled: integer("recall_enabled").notNull(),
+    backgroundEnabled: integer("background_enabled").notNull(),
+    retentionDays: integer("retention_days").notNull(),
+    timeZone: text("time_zone").notNull(),
+    enrolledAt: text("enrolled_at").notNull(),
+    expiresAt: text("expires_at").notNull(),
+    cursorSequence: integer("cursor_sequence").notNull(),
+    cutoffSequence: integer("cutoff_sequence"),
+    lastLocalDay: text("last_local_day"),
+    lastAdmittedAt: text("last_admitted_at"),
+    nextDueAt: text("next_due_at").notNull(),
+    leaseToken: text("lease_token"),
+    leaseExpiresAt: text("lease_expires_at"),
+    attempts: integer("attempts").default(0).notNull(),
+    failureCode: text("failure_code"),
+  },
+  (table) => [
+    check("memory_live_revision", sql.raw(`"memory_live_enrollments"."revision">0`)),
+    check("memory_live_flags", sql.raw(`"memory_live_enrollments"."learn_enabled" IN(0,1) AND "memory_live_enrollments"."recall_enabled" IN(0,1) AND "memory_live_enrollments"."background_enabled" IN(0,1)`)),
+    check("memory_live_retention", sql.raw(`"memory_live_enrollments"."retention_days" BETWEEN 1 AND 365`)),
+    index("idx_memory_live_actor").on(table.actorUserId, table.enrollmentId),
+    index("idx_memory_live_due").on(table.nextDueAt, table.enrollmentId),
+    index("idx_memory_live_organization").on(table.organizationId),
+  ],
+);
+
+export const memoryLiveRuns = sqliteTable(
+  "memory_live_runs",
+  {
+    runId: text("run_id").primaryKey().notNull(),
+    triggerKind: text("trigger_kind").notNull(),
+    status: text("status").notNull(),
+    startedAt: text("started_at").notNull(),
+    finishedAt: text("finished_at"),
+    scopes: integer("scopes").default(0).notNull(),
+    processed: integer("processed").default(0).notNull(),
+    erased: integer("erased").default(0).notNull(),
+    failed: integer("failed").default(0).notNull(),
+  },
+  (table) => [index("idx_memory_live_runs_started").on(table.startedAt)],
+);
+
+export const memoryLiveSources = sqliteTable(
+  "memory_live_sources",
+  {
+    enrollmentId: text("enrollment_id").notNull(),
+    eventId: text("event_id").notNull(),
+    sequence: integer("sequence").notNull(),
+    expiresAt: text("expires_at").notNull(),
+    conversationSegmented: integer("conversation_segmented").default(0).notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.enrollmentId, table.eventId] }),
+    foreignKey({ columns: [table.enrollmentId], foreignColumns: [memoryLiveEnrollments.enrollmentId] }).onUpdate("no action").onDelete("no action"),
+    index("idx_memory_live_source_page").on(table.enrollmentId, table.sequence),
+    index("idx_memory_live_expiry").on(table.expiresAt),
+  ],
+);
+
+export const memoryLiveConversationSegments = sqliteTable(
+  "memory_live_conversation_segments",
+  {
+    enrollmentId: text("enrollment_id").notNull(),
+    enrollmentRevision: integer("enrollment_revision").notNull(),
+    recipeVersion: text("recipe_version").notNull(),
+    firstSequence: integer("first_sequence").notNull(),
+    lastSequence: integer("last_sequence").notNull(),
+    memberCount: integer("member_count").notNull(),
+    membersJson: text("members_json").notNull(),
+    createdAt: text("created_at").notNull(),
+    expiresAt: text("expires_at").notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.enrollmentId, table.enrollmentRevision, table.recipeVersion, table.firstSequence] }),
+    foreignKey({ columns: [table.enrollmentId], foreignColumns: [memoryLiveEnrollments.enrollmentId] }).onUpdate("no action").onDelete("no action"),
+    check("memory_live_conversation_bounds", sql.raw(`"memory_live_conversation_segments"."enrollment_revision">0 AND "memory_live_conversation_segments"."first_sequence">0 AND "memory_live_conversation_segments"."last_sequence">="memory_live_conversation_segments"."first_sequence" AND "memory_live_conversation_segments"."member_count" BETWEEN 1 AND 8`)),
+    check("memory_live_conversation_members", sql.raw(`CASE WHEN json_valid("memory_live_conversation_segments"."members_json") THEN json_type("memory_live_conversation_segments"."members_json")='array' AND json_array_length("memory_live_conversation_segments"."members_json")="memory_live_conversation_segments"."member_count" AND length("memory_live_conversation_segments"."members_json")<=8192 ELSE 0 END`)),
+    index("idx_memory_live_conversation_page").on(table.enrollmentId, table.firstSequence),
+  ],
+);
+
+export const memoryNativeAnswerOrigins = sqliteTable(
+  "memory_native_answer_origins",
+  {
+    originId: text("origin_id").primaryKey().notNull(),
+    schemaVersion: integer("schema_version").notNull(),
+    recipeVersion: text("recipe_version").notNull(),
+    actorUserId: text("actor_user_id").notNull(),
+    ownerUserId: text("owner_user_id").notNull(),
+    organizationId: text("organization_id"),
+    projectAccessId: text("project_access_id"),
+    projectId: text("project_id").notNull(),
+    documentId: text("document_id").notNull(),
+    scopeKey: text("scope_key").notNull(),
+    turnId: text("turn_id").notNull(),
+    userEventId: text("user_event_id").notNull(),
+    userContentId: text("user_content_id").notNull(),
+    userSourceSequence: integer("user_source_sequence").notNull(),
+    userSha256: text("user_sha256").notNull(),
+    answerEventId: text("answer_event_id").notNull(),
+    answerContentId: text("answer_content_id").notNull(),
+    answerSourceSequence: integer("answer_source_sequence").notNull(),
+    answerSha256: text("answer_sha256").notNull(),
+    answerExpiresAt: text("answer_expires_at").notNull(),
+    consumedValueSha256: text("consumed_value_sha256").notNull(),
+    dependencyListSha256: text("dependency_list_sha256").notNull(),
+    enrollmentId: text("enrollment_id").notNull(),
+    enrollmentRevision: integer("enrollment_revision").notNull(),
+    policyVersion: text("policy_version").notNull(),
+    permissionEpoch: text("permission_epoch").notNull(),
+    enrolledAt: text("enrolled_at").notNull(),
+    enrollmentExpiresAt: text("enrollment_expires_at").notNull(),
+    retentionDays: integer("retention_days").notNull(),
+    selectionCursor: integer("selection_cursor").notNull(),
+    sourceRetentionCeiling: text("source_retention_ceiling").notNull(),
+    dependencyCount: integer("dependency_count").notNull(),
+    createdAt: text("created_at").notNull(),
+    status: text("status").notNull(),
+    withdrawnAt: text("withdrawn_at"),
+    withdrawalReason: text("withdrawal_reason"),
+  },
+  (table) => [
+    check("memory_native_answer_origins_check_1", sql.raw("schema_version=1 AND recipe_version='native-answer-origin-v1'")),
+    check("memory_native_answer_origins_check_2", sql.raw("(organization_id IS NULL)=(project_access_id IS NULL)")),
+    check("memory_native_answer_origins_check_3", sql.raw("enrollment_revision>0 AND retention_days BETWEEN 1 AND 365 AND selection_cursor>0 AND user_source_sequence>selection_cursor AND answer_source_sequence=user_source_sequence+1")),
+    check("memory_native_answer_origins_check_4", sql.raw("dependency_count BETWEEN 1 AND 128")),
+    check("memory_native_answer_origins_check_5", sql.raw("created_at<answer_expires_at AND answer_expires_at<=source_retention_ceiling")),
+    check("memory_native_answer_origins_check_6", sql.raw("status='active' AND withdrawn_at IS NULL AND withdrawal_reason IS NULL OR status='withdrawn' AND withdrawn_at IS NOT NULL AND withdrawal_reason IS NOT NULL")),
+    unique().on(table.answerEventId),
+    unique().on(table.userEventId),
+    unique().on(table.userContentId),
+    unique().on(table.answerContentId),
+    unique().on(table.actorUserId, table.scopeKey, table.turnId),
+    index("idx_memory_native_origin_actor").on(table.actorUserId, table.status),
+    index("idx_memory_native_origin_enrollment").on(table.enrollmentId, table.status),
+  ],
+);
+
+export const memoryNativeAnswerDependencies = sqliteTable(
+  "memory_native_answer_dependencies",
+  {
+    originId: text("origin_id").notNull(),
+    ordinal: integer("ordinal").notNull(),
+    eventStreamId: text("event_stream_id").notNull(),
+    eventId: text("event_id").notNull(),
+    sourceSequence: integer("source_sequence").notNull(),
+    eventType: text("event_type").notNull(),
+    recordedAt: text("recorded_at").notNull(),
+    blockId: text("block_id"),
+    turnId: text("turn_id"),
+    userContentId: text("user_content_id"),
+    assistantContentId: text("assistant_content_id"),
+    projectionSha256: text("projection_sha256").notNull(),
+    sourceRetentionCeiling: text("source_retention_ceiling").notNull(),
+    consumed: integer("consumed").notNull(),
+    segmentEnrollmentId: text("segment_enrollment_id"),
+    segmentRevision: integer("segment_revision"),
+    segmentRecipe: text("segment_recipe"),
+    segmentFirstSequence: integer("segment_first_sequence"),
+    segmentLastSequence: integer("segment_last_sequence"),
+    segmentMemberCount: integer("segment_member_count"),
+    segmentOrdinal: integer("segment_ordinal"),
+    segmentCreatedAt: text("segment_created_at"),
+    segmentRetentionCeiling: text("segment_retention_ceiling"),
+  },
+  (table) => [
+    primaryKey({ columns: [table.originId, table.ordinal] }),
+    unique().on(table.originId, table.eventId),
+    unique().on(table.originId, table.sourceSequence),
+    foreignKey({ columns: [table.originId], foreignColumns: [memoryNativeAnswerOrigins.originId] }).onDelete("cascade"),
+    check("memory_native_answer_dependencies_check_1", sql.raw("ordinal BETWEEN 0 AND 127 AND source_sequence>0 AND consumed IN(0,1)")),
+    check("memory_native_answer_dependencies_check_2", sql.raw("event_type='AssistantReasoned' AND turn_id IS NOT NULL AND user_content_id IS NOT NULL AND assistant_content_id IS NOT NULL OR event_type!='AssistantReasoned' AND turn_id IS NULL AND user_content_id IS NULL AND assistant_content_id IS NULL")),
+    check("memory_native_answer_dependencies_check_3", sql.raw("segment_enrollment_id IS NULL AND segment_revision IS NULL AND segment_recipe IS NULL AND segment_first_sequence IS NULL AND segment_last_sequence IS NULL AND segment_member_count IS NULL AND segment_ordinal IS NULL AND segment_created_at IS NULL AND segment_retention_ceiling IS NULL OR segment_enrollment_id IS NOT NULL AND segment_revision IS NOT NULL AND segment_recipe IS NOT NULL AND segment_first_sequence IS NOT NULL AND segment_last_sequence IS NOT NULL AND segment_member_count IS NOT NULL AND segment_ordinal IS NOT NULL AND segment_created_at IS NOT NULL AND segment_retention_ceiling IS NOT NULL")),
+    index("idx_memory_native_origin_source").on(table.eventStreamId, table.eventId),
+    index("idx_memory_native_origin_user_content").on(table.userContentId),
+    index("idx_memory_native_origin_answer_content").on(table.assistantContentId),
+  ],
+);
+
+export const memoryDocumentProfileGrants = sqliteTable(
+  "memory_document_profile_grants",
+  {
+    grantId: text("grant_id").primaryKey().notNull(),
+    actorUserId: text("actor_user_id").notNull(),
+    ownerUserId: text("owner_user_id").notNull(),
+    organizationId: text("organization_id"),
+    projectAccessId: text("project_access_id"),
+    projectId: text("project_id").notNull(),
+    documentId: text("document_id").notNull(),
+    permissionEpoch: text("permission_epoch").notNull(),
+    policyVersion: text("policy_version").notNull(),
+    recipeVersion: text("recipe_version").notNull(),
+    revision: integer("revision").notNull(),
+    enrollmentId: text("enrollment_id").notNull(),
+    enrollmentRevision: integer("enrollment_revision").notNull(),
+    inferEnabled: integer("infer_enabled").notNull(),
+    inspectEnabled: integer("inspect_enabled").notNull(),
+    backgroundEnabled: integer("background_enabled").notNull(),
+    sourceAfterSequence: integer("source_after_sequence").notNull(),
+    consentedAt: text("consented_at").notNull(),
+    expiresAt: text("expires_at").notNull(),
+    retentionDays: integer("retention_days").notNull(),
+    revokedAt: text("revoked_at"),
+  },
+  (table) => [
+    check("memory_document_profile_grants_check_1", sql.raw("policy_version='document-profile-v1' AND recipe_version='native-document-palette-choice-v1'")),
+    check("memory_document_profile_grants_check_2", sql.raw("(organization_id IS NULL)=(project_access_id IS NULL)")),
+    check("memory_document_profile_grants_check_3", sql.raw("organization_id IS NOT NULL OR owner_user_id=actor_user_id")),
+    check("memory_document_profile_grants_check_4", sql.raw("revision BETWEEN 1 AND 9007199254740991 AND enrollment_revision BETWEEN 1 AND 9007199254740991")),
+    check("memory_document_profile_grants_check_5", sql.raw("revoked_at IS NOT NULL OR revision<9007199254740991")),
+    check("memory_document_profile_grants_check_6", sql.raw("source_after_sequence BETWEEN 0 AND 9007199254740991 AND retention_days BETWEEN 1 AND 365")),
+    check("memory_document_profile_grants_check_7", sql.raw("infer_enabled IN(0,1) AND inspect_enabled IN(0,1) AND background_enabled IN(0,1)")),
+    check("memory_document_profile_grants_check_8", sql.raw("revoked_at IS NULL AND consented_at<expires_at\n    OR revoked_at IS NOT NULL AND infer_enabled=0 AND inspect_enabled=0 AND background_enabled=0")),
+    index("idx_document_profile_grants_actor").on(table.actorUserId, table.revokedAt),
+    index("idx_document_profile_grants_enrollment").on(table.enrollmentId, table.enrollmentRevision),
+    index("idx_document_profile_grants_organization").on(table.organizationId, table.revokedAt),
+  ],
+);
+
+export const memoryDocumentProfileSuppressions = sqliteTable(
+  "memory_document_profile_suppressions",
+  {
+    grantId: text("grant_id").notNull(),
+    grantRevision: integer("grant_revision").notNull(),
+    claimKey: text("claim_key").notNull(),
+    revision: integer("revision").notNull(),
+    state: text("state").notNull(),
+    createdAt: text("created_at").notNull(),
+    expiresAt: text("expires_at").notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.grantId, table.grantRevision, table.claimKey] }),
+    check("memory_document_profile_suppressions_check_1", sql.raw("grant_revision BETWEEN 1 AND 9007199254740991 AND revision BETWEEN 1 AND 9007199254740991")),
+    check("memory_document_profile_suppressions_check_2", sql.raw("state IN('active','revoked')")),
+    check("memory_document_profile_suppressions_check_3", sql.raw("state='revoked' OR created_at<expires_at")),
+  ],
+);
+
+export const memoryStructuredConversationHeads = sqliteTable(
+  "memory_structured_conversation_heads",
+  {
+    ledgerId: text("ledger_id").primaryKey().notNull(),
+    actorUserId: text("actor_user_id").notNull(),
+    ownerUserId: text("owner_user_id").notNull(),
+    organizationId: text("organization_id"),
+    projectAccessId: text("project_access_id"),
+    projectId: text("project_id").notNull(),
+    documentId: text("document_id").notNull(),
+    enrollmentId: text("enrollment_id"),
+    enrollmentRevision: integer("enrollment_revision"),
+    permissionEpoch: text("permission_epoch"),
+    policyVersion: text("policy_version"),
+    storageRevision: integer("storage_revision").notNull(),
+    currentBodyRef: text("current_body_ref"),
+    currentBodyHash: text("current_body_hash"),
+    annotationCount: integer("annotation_count"),
+    coverageAfterSequence: integer("coverage_after_sequence"),
+    coverageThroughSequence: integer("coverage_through_sequence"),
+    state: text("state").notNull(),
+    firstTerminalAt: text("first_terminal_at"),
+    cleanupTurn: integer("cleanup_turn").default(0).notNull(),
+    expiresAt: text("expires_at"),
+    createdAt: text("created_at").notNull(),
+    updatedAt: text("updated_at").notNull(),
+  },
+  (table) => [
+    check("memory_structured_heads_key", sql.raw("length(ledger_id)=64 AND ledger_id NOT GLOB '*[^0-9a-f]*'")),
+    check("memory_structured_heads_scope", sql.raw("length(actor_user_id)>0 AND length(owner_user_id)>0 AND length(project_id)>0 AND length(document_id)>0 AND ((organization_id IS NULL AND project_access_id IS NULL AND actor_user_id=owner_user_id) OR (organization_id IS NOT NULL AND project_access_id IS NOT NULL AND length(organization_id)>0 AND length(project_access_id)>0))")),
+    check("memory_structured_heads_counters", sql.raw("typeof(storage_revision)='integer' AND storage_revision BETWEEN 1 AND 9007199254740991 AND typeof(cleanup_turn)='integer' AND cleanup_turn BETWEEN 0 AND 3 AND (state!='retired' OR cleanup_turn=0)")),
+    check("memory_structured_heads_times", sql.raw("length(created_at)>0 AND created_at<=updated_at AND (first_terminal_at IS NULL OR (created_at<=first_terminal_at AND first_terminal_at<=updated_at))")),
+    check("memory_structured_heads_state", sql.raw("(state='active' AND first_terminal_at IS NULL AND enrollment_id IS NOT NULL AND enrollment_revision IS NOT NULL AND permission_epoch IS NOT NULL AND policy_version IS NOT NULL AND current_body_ref IS NOT NULL AND current_body_hash IS NOT NULL AND annotation_count IS NOT NULL AND coverage_after_sequence IS NOT NULL AND coverage_through_sequence IS NOT NULL AND expires_at IS NOT NULL) OR (state IN('retiring','retired') AND first_terminal_at IS NOT NULL AND enrollment_id IS NULL AND enrollment_revision IS NULL AND permission_epoch IS NULL AND policy_version IS NULL AND current_body_ref IS NULL AND current_body_hash IS NULL AND annotation_count IS NULL AND coverage_after_sequence IS NULL AND coverage_through_sequence IS NULL AND expires_at IS NULL)")),
+    check("memory_structured_heads_active", sql.raw("state!='active' OR (storage_revision BETWEEN 1 AND 64 AND length(enrollment_id)>0 AND typeof(enrollment_revision)='integer' AND enrollment_revision BETWEEN 1 AND 9007199254740991 AND length(permission_epoch)>0 AND length(policy_version)>0 AND length(current_body_ref)>0 AND length(current_body_hash)=64 AND current_body_hash NOT GLOB '*[^0-9a-f]*' AND typeof(annotation_count)='integer' AND annotation_count BETWEEN 1 AND 256 AND typeof(coverage_after_sequence)='integer' AND coverage_after_sequence BETWEEN 0 AND 9007199254740990 AND typeof(coverage_through_sequence)='integer' AND coverage_through_sequence BETWEEN 1 AND 9007199254740991 AND coverage_through_sequence>coverage_after_sequence AND created_at<expires_at)")),
+    uniqueIndex("idx_memory_structured_heads_personal").on(table.actorUserId, table.ownerUserId, table.projectId, table.documentId).where(sql.raw("organization_id IS NULL")),
+    uniqueIndex("idx_memory_structured_heads_shared").on(table.actorUserId, table.ownerUserId, table.organizationId, table.projectAccessId, table.projectId, table.documentId).where(sql.raw("organization_id IS NOT NULL")),
+    index("idx_memory_structured_heads_enrollment").on(table.enrollmentId, table.state),
+    index("idx_memory_structured_heads_organization").on(table.organizationId, table.actorUserId),
+    index("idx_memory_structured_heads_cleanup").on(table.state, table.expiresAt, table.ledgerId),
+  ],
+);
+
+export const memoryStructuredConversationRevisions = sqliteTable(
+  "memory_structured_conversation_revisions",
+  {
+    ledgerId: text("ledger_id").notNull(),
+    revision: integer("revision").notNull(),
+    predecessorRevision: integer("predecessor_revision").notNull(),
+    predecessorHash: text("predecessor_hash"),
+    bodyRef: text("body_ref").notNull(),
+    bodyHash: text("body_hash").notNull(),
+    schemaVersion: integer("schema_version").notNull(),
+    recipeVersion: text("recipe_version").notNull(),
+    annotationCount: integer("annotation_count").notNull(),
+    coverageAfterSequence: integer("coverage_after_sequence").notNull(),
+    coverageThroughSequence: integer("coverage_through_sequence").notNull(),
+    createdAt: text("created_at").notNull(),
+    expiresAt: text("expires_at").notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.ledgerId, table.revision] }),
+    foreignKey({ columns: [table.ledgerId], foreignColumns: [memoryStructuredConversationHeads.ledgerId] }).onUpdate("no action").onDelete("no action"),
+    check("memory_structured_revisions_version", sql.raw("typeof(schema_version)='integer' AND schema_version=1 AND recipe_version='native-declared-ledger-v1'")),
+    check("memory_structured_revisions_identity", sql.raw("length(ledger_id)=64 AND ledger_id NOT GLOB '*[^0-9a-f]*' AND length(body_ref)>0 AND length(body_hash)=64 AND body_hash NOT GLOB '*[^0-9a-f]*'")),
+    check("memory_structured_revisions_chain", sql.raw("typeof(revision)='integer' AND revision BETWEEN 1 AND 64 AND typeof(predecessor_revision)='integer' AND ((revision=1 AND predecessor_revision=0 AND predecessor_hash IS NULL) OR (revision>1 AND predecessor_revision=revision-1 AND predecessor_hash IS NOT NULL AND length(predecessor_hash)=64 AND predecessor_hash NOT GLOB '*[^0-9a-f]*'))")),
+    check("memory_structured_revisions_bounds", sql.raw("typeof(annotation_count)='integer' AND annotation_count BETWEEN 1 AND 256 AND typeof(coverage_after_sequence)='integer' AND coverage_after_sequence BETWEEN 0 AND 9007199254740990 AND typeof(coverage_through_sequence)='integer' AND coverage_through_sequence BETWEEN 1 AND 9007199254740991 AND coverage_through_sequence>coverage_after_sequence")),
+    check("memory_structured_revisions_times", sql.raw("length(created_at)>0 AND created_at<expires_at")),
+    uniqueIndex("idx_memory_structured_revisions_body").on(table.bodyRef),
+    index("idx_memory_structured_revisions_expiry").on(table.expiresAt, table.ledgerId, table.revision),
+  ],
+);
+
+export const memoryStructuredAnswerOrigins = sqliteTable(
+  "memory_structured_answer_origins",
+  {
+    originId: text("origin_id").primaryKey().notNull(),
+    schemaVersion: integer("schema_version").notNull(),
+    recipeVersion: text("recipe_version").notNull(),
+    actorUserId: text("actor_user_id").notNull(),
+    ownerUserId: text("owner_user_id"),
+    organizationId: text("organization_id"),
+    projectAccessId: text("project_access_id"),
+    projectId: text("project_id"),
+    documentId: text("document_id"),
+    scopeKey: text("scope_key").notNull(),
+    turnId: text("turn_id").notNull(),
+    userEventId: text("user_event_id").notNull(),
+    userContentId: text("user_content_id").notNull(),
+    userSourceSequence: integer("user_source_sequence"),
+    userSha256: text("user_sha256"),
+    answerEventId: text("answer_event_id").notNull(),
+    answerContentId: text("answer_content_id").notNull(),
+    answerSourceSequence: integer("answer_source_sequence"),
+    answerSha256: text("answer_sha256"),
+    answerExpiresAt: text("answer_expires_at"),
+    enrollmentId: text("enrollment_id"),
+    enrollmentRevision: integer("enrollment_revision"),
+    permissionEpoch: text("permission_epoch"),
+    policyVersion: text("policy_version"),
+    enrolledAt: text("enrolled_at"),
+    enrollmentExpiresAt: text("enrollment_expires_at"),
+    retentionDays: integer("retention_days"),
+    sourceHead: integer("source_head"),
+    ledgerId: text("ledger_id"),
+    ledgerStorageRevision: integer("ledger_storage_revision"),
+    ledgerBodyRef: text("ledger_body_ref"),
+    ledgerBodySha256: text("ledger_body_sha256"),
+    consumedContextSha256: text("consumed_context_sha256"),
+    sourceListSha256: text("source_list_sha256"),
+    sourceCount: integer("source_count"),
+    ledgerHistorySha256: text("ledger_history_sha256"),
+    ledgerRevisionCount: integer("ledger_revision_count"),
+    manifestContentRef: text("manifest_content_ref").notNull(),
+    manifestSha256: text("manifest_sha256"),
+    manifestExpiresAt: text("manifest_expires_at"),
+    sourceRetentionCeiling: text("source_retention_ceiling"),
+    createdAt: text("created_at"),
+    status: text("status").notNull(),
+    withdrawnAt: text("withdrawn_at"),
+    withdrawalReason: text("withdrawal_reason"),
+  },
+  (table) => [
+    check("memory_structured_origins_version", sql.raw("typeof(schema_version)='integer' AND schema_version=1 AND recipe_version='native-structured-answer-origin-v1'")),
+    check("memory_structured_origins_scope", sql.raw("length(origin_id)>0 AND length(actor_user_id)>0 AND length(scope_key)>0 AND length(turn_id)>0 AND (status='minimized' OR (length(owner_user_id)>0 AND length(project_id)>0 AND length(document_id)>0 AND ((organization_id IS NULL AND project_access_id IS NULL AND actor_user_id=owner_user_id) OR (organization_id IS NOT NULL AND project_access_id IS NOT NULL AND length(organization_id)>0 AND length(project_access_id)>0))))")),
+    check("memory_structured_origins_scope_key", sql.raw("CASE WHEN json_valid(scope_key) THEN json_type(scope_key)='array' AND json_array_length(scope_key)=4 AND json_type(scope_key,'$[0]')='text' AND json_type(scope_key,'$[1]')='text' AND json_type(scope_key,'$[2]')='text' AND json_type(scope_key,'$[3]')='text' AND ((json_extract(scope_key,'$[0]')='' AND json_extract(scope_key,'$[1]')='') OR (json_extract(scope_key,'$[0]')<>'' AND json_extract(scope_key,'$[1]')<>'')) AND json_extract(scope_key,'$[2]')<>'' AND json_extract(scope_key,'$[3]')<>'' AND scope_key=json_array(json_extract(scope_key,'$[0]'),json_extract(scope_key,'$[1]'),json_extract(scope_key,'$[2]'),json_extract(scope_key,'$[3]')) AND (status='minimized' OR (json_extract(scope_key,'$[0]')=COALESCE(organization_id,'') AND json_extract(scope_key,'$[1]')=COALESCE(project_access_id,'') AND json_extract(scope_key,'$[2]')=project_id AND json_extract(scope_key,'$[3]')=document_id)) ELSE 0 END")),
+    check("memory_structured_origins_identities", sql.raw("length(user_event_id)>0 AND length(answer_event_id)>0 AND user_event_id<>answer_event_id AND length(user_content_id)>0 AND length(answer_content_id)>0 AND length(manifest_content_ref)>0 AND user_content_id<>answer_content_id AND manifest_content_ref<>user_content_id AND manifest_content_ref<>answer_content_id AND (status='minimized' OR (length(ledger_body_ref)>0 AND length(enrollment_id)>0 AND length(permission_epoch)>0 AND length(policy_version)>0))")),
+    check("memory_structured_origins_hashes", sql.raw("status='minimized' OR (length(user_sha256)=64 AND user_sha256 NOT GLOB '*[^0-9a-f]*' AND length(answer_sha256)=64 AND answer_sha256 NOT GLOB '*[^0-9a-f]*' AND length(ledger_id)=64 AND ledger_id NOT GLOB '*[^0-9a-f]*' AND length(ledger_body_sha256)=64 AND ledger_body_sha256 NOT GLOB '*[^0-9a-f]*' AND length(consumed_context_sha256)=64 AND consumed_context_sha256 NOT GLOB '*[^0-9a-f]*' AND length(source_list_sha256)=64 AND source_list_sha256 NOT GLOB '*[^0-9a-f]*' AND length(ledger_history_sha256)=64 AND ledger_history_sha256 NOT GLOB '*[^0-9a-f]*' AND length(manifest_sha256)=64 AND manifest_sha256 NOT GLOB '*[^0-9a-f]*')")),
+    check("memory_structured_origins_enrollment", sql.raw("status='minimized' OR (typeof(enrollment_revision)='integer' AND enrollment_revision BETWEEN 1 AND 9007199254740991 AND typeof(retention_days)='integer' AND retention_days BETWEEN 1 AND 365)")),
+    check("memory_structured_origins_sequences", sql.raw("status='minimized' OR (typeof(source_head)='integer' AND source_head BETWEEN 1 AND 9007199254740989 AND typeof(user_source_sequence)='integer' AND user_source_sequence=source_head+1 AND typeof(answer_source_sequence)='integer' AND answer_source_sequence=source_head+2)")),
+    check("memory_structured_origins_counts", sql.raw("status='minimized' OR (typeof(source_count)='integer' AND source_count BETWEEN 2 AND 128 AND source_count%2=0 AND typeof(ledger_storage_revision)='integer' AND ledger_storage_revision BETWEEN 1 AND 64 AND typeof(ledger_revision_count)='integer' AND ledger_revision_count=ledger_storage_revision)")),
+    check("memory_structured_origins_lifetime", sql.raw("status='minimized' OR (length(enrolled_at)>0 AND enrolled_at<=created_at AND created_at<answer_expires_at AND created_at<manifest_expires_at AND answer_expires_at<=source_retention_ceiling AND manifest_expires_at<=source_retention_ceiling AND source_retention_ceiling<=enrollment_expires_at)")),
+    check("memory_structured_origins_state", sql.raw("(status='active' AND withdrawn_at IS NULL AND withdrawal_reason IS NULL) OR (status IN('withdrawn','minimized') AND withdrawn_at IS NOT NULL AND length(withdrawn_at)>0 AND withdrawal_reason IS NOT NULL AND (status='minimized' OR created_at<=withdrawn_at) AND withdrawal_reason IN('source-unavailable','source-changed','source-expired','enrollment-changed','access-withdrawn','erased','manual'))")),
+    check("memory_structured_origins_shape", sql.raw("(status IN('active','withdrawn') AND owner_user_id IS NOT NULL AND project_id IS NOT NULL AND document_id IS NOT NULL AND user_source_sequence IS NOT NULL AND user_sha256 IS NOT NULL AND answer_source_sequence IS NOT NULL AND answer_sha256 IS NOT NULL AND answer_expires_at IS NOT NULL AND enrollment_id IS NOT NULL AND enrollment_revision IS NOT NULL AND permission_epoch IS NOT NULL AND policy_version IS NOT NULL AND enrolled_at IS NOT NULL AND enrollment_expires_at IS NOT NULL AND retention_days IS NOT NULL AND source_head IS NOT NULL AND ledger_id IS NOT NULL AND ledger_storage_revision IS NOT NULL AND ledger_body_ref IS NOT NULL AND ledger_body_sha256 IS NOT NULL AND consumed_context_sha256 IS NOT NULL AND source_list_sha256 IS NOT NULL AND source_count IS NOT NULL AND ledger_history_sha256 IS NOT NULL AND ledger_revision_count IS NOT NULL AND manifest_sha256 IS NOT NULL AND manifest_expires_at IS NOT NULL AND source_retention_ceiling IS NOT NULL AND created_at IS NOT NULL) OR (status='minimized' AND owner_user_id IS NULL AND organization_id IS NULL AND project_access_id IS NULL AND project_id IS NULL AND document_id IS NULL AND user_source_sequence IS NULL AND user_sha256 IS NULL AND answer_source_sequence IS NULL AND answer_sha256 IS NULL AND answer_expires_at IS NULL AND enrollment_id IS NULL AND enrollment_revision IS NULL AND permission_epoch IS NULL AND policy_version IS NULL AND enrolled_at IS NULL AND enrollment_expires_at IS NULL AND retention_days IS NULL AND source_head IS NULL AND ledger_id IS NULL AND ledger_storage_revision IS NULL AND ledger_body_ref IS NULL AND ledger_body_sha256 IS NULL AND consumed_context_sha256 IS NULL AND source_list_sha256 IS NULL AND source_count IS NULL AND ledger_history_sha256 IS NULL AND ledger_revision_count IS NULL AND manifest_sha256 IS NULL AND manifest_expires_at IS NULL AND source_retention_ceiling IS NULL AND created_at IS NULL)")),
+    uniqueIndex("idx_memory_structured_origin_user_event").on(table.userEventId),
+    uniqueIndex("idx_memory_structured_origin_answer_event").on(table.answerEventId),
+    uniqueIndex("idx_memory_structured_origin_user_content").on(table.userContentId),
+    uniqueIndex("idx_memory_structured_origin_answer_content").on(table.answerContentId),
+    uniqueIndex("idx_memory_structured_origin_manifest").on(table.manifestContentRef),
+    uniqueIndex("idx_memory_structured_origin_turn").on(table.actorUserId, table.scopeKey, table.turnId),
+    index("idx_memory_structured_origin_actor").on(table.actorUserId, table.status),
+    index("idx_memory_structured_origin_enrollment").on(table.enrollmentId, table.status),
+    index("idx_memory_structured_origin_ledger").on(table.ledgerId, table.status),
+  ],
+);
+
+export const memoryStructuredAnswerOriginals = sqliteTable(
+  "memory_structured_answer_originals",
+  {
+    originId: text("origin_id").notNull(),
+    ordinal: integer("ordinal").notNull(),
+    eventStreamId: text("event_stream_id").notNull(),
+    eventId: text("event_id").notNull(),
+    sourceSequence: integer("source_sequence").notNull(),
+    eventType: text("event_type").notNull(),
+    role: text("role").notNull(),
+    turnId: text("turn_id").notNull(),
+    contentId: text("content_id").notNull(),
+    contentSha256: text("content_sha256").notNull(),
+    projectionSha256: text("projection_sha256").notNull(),
+    recordedAt: text("recorded_at").notNull(),
+    sourceRetentionCeiling: text("source_retention_ceiling").notNull(),
+    retainedByLedger: integer("retained_by_ledger").notNull(),
+    presentedInContext: integer("presented_in_context").notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.originId, table.ordinal] }),
+    foreignKey({ columns: [table.originId], foreignColumns: [memoryStructuredAnswerOrigins.originId] }).onUpdate("no action").onDelete("no action"),
+    check("memory_structured_originals_bounds", sql.raw("typeof(ordinal)='integer' AND ordinal BETWEEN 0 AND 127 AND typeof(source_sequence)='integer' AND source_sequence BETWEEN 1 AND 9007199254740991 AND typeof(retained_by_ledger)='integer' AND retained_by_ledger IN(0,1) AND typeof(presented_in_context)='integer' AND presented_in_context IN(0,1)")),
+    check("memory_structured_originals_identity", sql.raw("length(origin_id)>0 AND length(event_stream_id)>0 AND length(event_id)>0 AND length(turn_id)>0 AND length(content_id)>0 AND length(content_sha256)=64 AND content_sha256 NOT GLOB '*[^0-9a-f]*' AND length(projection_sha256)=64 AND projection_sha256 NOT GLOB '*[^0-9a-f]*'")),
+    check("memory_structured_originals_role", sql.raw("(role='user' AND event_type='ChatMessageSent') OR (role='assistant' AND event_type='AssistantReasoned')")),
+    check("memory_structured_originals_lifetime", sql.raw("length(recorded_at)>0 AND recorded_at<source_retention_ceiling")),
+    uniqueIndex("idx_memory_structured_original_event").on(table.originId, table.eventId),
+    uniqueIndex("idx_memory_structured_original_sequence").on(table.originId, table.eventStreamId, table.sourceSequence),
+    uniqueIndex("idx_memory_structured_original_content").on(table.originId, table.contentId),
+    uniqueIndex("idx_memory_structured_original_turn_role").on(table.originId, table.turnId, table.role),
+    index("idx_memory_structured_original_source").on(table.eventStreamId, table.eventId),
+    index("idx_memory_structured_original_body").on(table.contentId),
+  ],
+);
+
+export const memoryStructuredAnswerLedgerRevisions = sqliteTable(
+  "memory_structured_answer_ledger_revisions",
+  {
+    originId: text("origin_id").notNull(),
+    ordinal: integer("ordinal").notNull(),
+    ledgerId: text("ledger_id").notNull(),
+    storageRevision: integer("storage_revision").notNull(),
+    predecessorRevision: integer("predecessor_revision").notNull(),
+    predecessorHash: text("predecessor_hash"),
+    bodyRef: text("body_ref").notNull(),
+    bodyHash: text("body_hash").notNull(),
+    createdAt: text("created_at").notNull(),
+    expiresAt: text("expires_at").notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.originId, table.ordinal] }),
+    foreignKey({ columns: [table.originId], foreignColumns: [memoryStructuredAnswerOrigins.originId] }).onUpdate("no action").onDelete("no action"),
+    check("memory_structured_origin_revisions_identity", sql.raw("length(origin_id)>0 AND length(ledger_id)=64 AND ledger_id NOT GLOB '*[^0-9a-f]*' AND length(body_ref)>0 AND length(body_hash)=64 AND body_hash NOT GLOB '*[^0-9a-f]*'")),
+    check("memory_structured_origin_revisions_chain", sql.raw("typeof(ordinal)='integer' AND ordinal BETWEEN 0 AND 63 AND typeof(storage_revision)='integer' AND storage_revision=ordinal+1 AND typeof(predecessor_revision)='integer' AND ((storage_revision=1 AND predecessor_revision=0 AND predecessor_hash IS NULL) OR (storage_revision>1 AND predecessor_revision=storage_revision-1 AND predecessor_hash IS NOT NULL AND length(predecessor_hash)=64 AND predecessor_hash NOT GLOB '*[^0-9a-f]*'))")),
+    check("memory_structured_origin_revisions_lifetime", sql.raw("length(created_at)>0 AND created_at<expires_at")),
+    uniqueIndex("idx_memory_structured_origin_revision").on(table.originId, table.ledgerId, table.storageRevision),
+    uniqueIndex("idx_memory_structured_origin_revision_body").on(table.originId, table.bodyRef),
+    index("idx_memory_structured_origin_revision_content").on(table.bodyRef),
+    index("idx_memory_structured_origin_revision_ledger").on(table.ledgerId),
+  ],
+);
+
+export const memoryDocumentJobAnswerOrigins = sqliteTable(
+  "memory_document_job_answer_origins",
+  {
+    originId: text("origin_id").primaryKey().notNull(),
+    schemaVersion: integer("schema_version").notNull(),
+    recipeVersion: text("recipe_version").notNull(),
+    actorUserId: text("actor_user_id").notNull(),
+    scopeKey: text("scope_key").notNull(),
+    jobId: text("job_id").notNull(),
+    turnId: text("turn_id").notNull(),
+    userEventId: text("user_event_id").notNull(),
+    userContentId: text("user_content_id").notNull(),
+    answerEventId: text("answer_event_id").notNull(),
+    answerContentId: text("answer_content_id").notNull(),
+    manifestContentRef: text("manifest_content_ref").notNull(),
+    ownerUserId: text("owner_user_id"),
+    streamId: text("stream_id"),
+    organizationId: text("organization_id"),
+    projectAccessId: text("project_access_id"),
+    projectId: text("project_id"),
+    documentId: text("document_id"),
+    attemptCount: integer("attempt_count"),
+    correlationId: text("correlation_id"),
+    requestSha256: text("request_sha256"),
+    claimSha256: text("claim_sha256"),
+    inputContentRef: text("input_content_ref"),
+    inputSha256: text("input_sha256"),
+    inputExpiresAt: text("input_expires_at"),
+    jobRequestedAt: text("job_requested_at"),
+    jobStartedAt: text("job_started_at"),
+    jobLeaseExpiresAt: text("job_lease_expires_at"),
+    jobExpiresAt: text("job_expires_at"),
+    requestedSequence: integer("requested_sequence"),
+    sourceHead: integer("source_head"),
+    projectSourceHead: integer("project_source_head"),
+    userSourceSequence: integer("user_source_sequence"),
+    userSha256: text("user_sha256"),
+    answerSourceSequence: integer("answer_source_sequence"),
+    answerSha256: text("answer_sha256"),
+    answerExpiresAt: text("answer_expires_at"),
+    mode: text("mode"),
+    rendererRecipe: text("renderer_recipe"),
+    locale: text("locale"),
+    enrollmentId: text("enrollment_id"),
+    enrollmentRevision: integer("enrollment_revision"),
+    permissionEpoch: text("permission_epoch"),
+    policyVersion: text("policy_version"),
+    enrolledAt: text("enrolled_at"),
+    enrollmentExpiresAt: text("enrollment_expires_at"),
+    retentionDays: integer("retention_days"),
+    selectionCursor: integer("selection_cursor"),
+    consumedValueSha256: text("consumed_value_sha256"),
+    sourceCount: integer("source_count"),
+    ledgerRevisionCount: integer("ledger_revision_count"),
+    selectorCount: integer("selector_count"),
+    selectorListSha256: text("selector_list_sha256"),
+    manifestSha256: text("manifest_sha256"),
+    manifestExpiresAt: text("manifest_expires_at"),
+    proofValidUntil: text("proof_valid_until"),
+    sourceRetentionCeiling: text("source_retention_ceiling"),
+    createdAt: text("created_at"),
+    status: text("status").notNull(),
+    withdrawnAt: text("withdrawn_at"),
+    withdrawalReason: text("withdrawal_reason"),
+  },
+  (table) => [
+    check("memory_document_job_origins_version", sql.raw("COALESCE((typeof(schema_version)='integer' AND schema_version=1 AND recipe_version='native-document-job-answer-origin-v1'),0)")),
+    check("memory_document_job_origins_registrations", sql.raw("COALESCE((length(origin_id)>0 AND length(actor_user_id)>0 AND length(scope_key)>0 AND length(job_id)>0 AND length(turn_id)>0 AND length(user_event_id)>0 AND length(user_content_id)>0 AND length(answer_event_id)>0 AND length(answer_content_id)>0 AND length(manifest_content_ref)>0 AND user_event_id<>answer_event_id AND user_content_id<>answer_content_id AND user_content_id<>manifest_content_ref AND answer_content_id<>manifest_content_ref),0)")),
+    check("memory_document_job_origins_scope", sql.raw("COALESCE((status='minimized' OR (length(owner_user_id)>0 AND stream_id='creative:'||owner_user_id AND length(project_id)>0 AND length(document_id)>0 AND ((organization_id IS NULL AND project_access_id IS NULL AND project_source_head IS NULL AND actor_user_id=owner_user_id) OR (length(organization_id)>0 AND length(project_access_id)>0 AND typeof(project_source_head)='integer' AND project_source_head BETWEEN 0 AND 9007199254740989)))),0)")),
+    check("memory_document_job_origins_scope_key", sql.raw("COALESCE((CASE WHEN json_valid(scope_key) THEN json_type(scope_key)='array' AND json_array_length(scope_key)=4 AND json_type(scope_key,'$[0]')='text' AND json_type(scope_key,'$[1]')='text' AND json_type(scope_key,'$[2]')='text' AND json_type(scope_key,'$[3]')='text' AND ((json_extract(scope_key,'$[0]')='' AND json_extract(scope_key,'$[1]')='') OR (json_extract(scope_key,'$[0]')<>'' AND json_extract(scope_key,'$[1]')<>'')) AND json_extract(scope_key,'$[2]')<>'' AND json_extract(scope_key,'$[3]')<>'' AND scope_key=json_array(json_extract(scope_key,'$[0]'),json_extract(scope_key,'$[1]'),json_extract(scope_key,'$[2]'),json_extract(scope_key,'$[3]')) AND (status='minimized' OR (json_extract(scope_key,'$[0]')=COALESCE(organization_id,'') AND json_extract(scope_key,'$[1]')=COALESCE(project_access_id,'') AND json_extract(scope_key,'$[2]')=project_id AND json_extract(scope_key,'$[3]')=document_id)) ELSE 0 END),0)")),
+    check("memory_document_job_origins_identities", sql.raw("COALESCE((status='minimized' OR (length(correlation_id)>0 AND length(input_content_ref)>0 AND renderer_recipe='document-job-evidence-answer-v1' AND length(enrollment_id)>0 AND length(permission_epoch)>0 AND length(policy_version)>0 AND typeof(attempt_count)='integer' AND attempt_count BETWEEN 1 AND 9007199254740991 AND input_content_ref<>answer_content_id AND input_content_ref<>manifest_content_ref)),0)")),
+    check("memory_document_job_origins_hashes", sql.raw("COALESCE((status='minimized' OR (length(request_sha256)=64 AND request_sha256 NOT GLOB '*[^0-9a-f]*' AND length(claim_sha256)=64 AND claim_sha256 NOT GLOB '*[^0-9a-f]*' AND length(input_sha256)=64 AND input_sha256 NOT GLOB '*[^0-9a-f]*' AND length(user_sha256)=64 AND user_sha256 NOT GLOB '*[^0-9a-f]*' AND length(answer_sha256)=64 AND answer_sha256 NOT GLOB '*[^0-9a-f]*' AND length(consumed_value_sha256)=64 AND consumed_value_sha256 NOT GLOB '*[^0-9a-f]*' AND length(selector_list_sha256)=64 AND selector_list_sha256 NOT GLOB '*[^0-9a-f]*' AND length(manifest_sha256)=64 AND manifest_sha256 NOT GLOB '*[^0-9a-f]*')),0)")),
+    check("memory_document_job_origins_sequences", sql.raw("COALESCE((status='minimized' OR (typeof(source_head)='integer' AND source_head BETWEEN 1 AND 9007199254740989 AND typeof(requested_sequence)='integer' AND requested_sequence BETWEEN 0 AND source_head AND typeof(selection_cursor)='integer' AND selection_cursor<=source_head AND ((mode='extractive' AND selection_cursor>=1) OR (mode='structured' AND selection_cursor>=0)) AND typeof(user_source_sequence)='integer' AND user_source_sequence=source_head+1 AND typeof(answer_source_sequence)='integer' AND answer_source_sequence=source_head+2)),0)")),
+    check("memory_document_job_origins_evidence", sql.raw("COALESCE((status='minimized' OR (locale IN('en','fr','ar','ja') AND typeof(source_count)='integer' AND source_count BETWEEN 1 AND 128 AND typeof(ledger_revision_count)='integer' AND ((mode='extractive' AND ledger_revision_count=0) OR (mode='structured' AND source_count>=2 AND source_count%2=0 AND ledger_revision_count BETWEEN 1 AND 64)) AND typeof(selector_count)='integer' AND selector_count BETWEEN 1 AND 513)),0)")),
+    check("memory_document_job_origins_enrollment", sql.raw("COALESCE((status='minimized' OR (typeof(enrollment_revision)='integer' AND enrollment_revision BETWEEN 1 AND 9007199254740991 AND typeof(retention_days)='integer' AND retention_days BETWEEN 1 AND 365)),0)")),
+    check("memory_document_job_origins_timestamps", sql.raw("COALESCE((status='minimized' OR (length(input_expires_at)=24 AND strftime('%Y-%m-%dT%H:%M:%fZ',input_expires_at)=input_expires_at AND length(job_requested_at)=24 AND strftime('%Y-%m-%dT%H:%M:%fZ',job_requested_at)=job_requested_at AND length(job_started_at)=24 AND strftime('%Y-%m-%dT%H:%M:%fZ',job_started_at)=job_started_at AND length(job_lease_expires_at)=24 AND strftime('%Y-%m-%dT%H:%M:%fZ',job_lease_expires_at)=job_lease_expires_at AND length(job_expires_at)=24 AND strftime('%Y-%m-%dT%H:%M:%fZ',job_expires_at)=job_expires_at AND length(answer_expires_at)=24 AND strftime('%Y-%m-%dT%H:%M:%fZ',answer_expires_at)=answer_expires_at AND length(enrolled_at)=24 AND strftime('%Y-%m-%dT%H:%M:%fZ',enrolled_at)=enrolled_at AND length(enrollment_expires_at)=24 AND strftime('%Y-%m-%dT%H:%M:%fZ',enrollment_expires_at)=enrollment_expires_at AND length(manifest_expires_at)=24 AND strftime('%Y-%m-%dT%H:%M:%fZ',manifest_expires_at)=manifest_expires_at AND length(proof_valid_until)=24 AND strftime('%Y-%m-%dT%H:%M:%fZ',proof_valid_until)=proof_valid_until AND length(source_retention_ceiling)=24 AND strftime('%Y-%m-%dT%H:%M:%fZ',source_retention_ceiling)=source_retention_ceiling AND length(created_at)=24 AND strftime('%Y-%m-%dT%H:%M:%fZ',created_at)=created_at)),0)")),
+    check("memory_document_job_origins_lifetime", sql.raw("COALESCE((status='minimized' OR (job_requested_at<=job_started_at AND job_started_at<=created_at AND enrolled_at<=created_at AND created_at<proof_valid_until AND proof_valid_until<=job_lease_expires_at AND proof_valid_until<=input_expires_at AND proof_valid_until<=job_expires_at AND proof_valid_until<=source_retention_ceiling AND created_at<answer_expires_at AND answer_expires_at<=manifest_expires_at AND manifest_expires_at<=source_retention_ceiling AND source_retention_ceiling<=enrollment_expires_at AND manifest_expires_at<=input_expires_at AND manifest_expires_at<=job_expires_at)),0)")),
+    check("memory_document_job_origins_state", sql.raw("COALESCE(((status='active' AND withdrawn_at IS NULL AND withdrawal_reason IS NULL) OR (status IN('withdrawn','minimized') AND length(withdrawn_at)=24 AND strftime('%Y-%m-%dT%H:%M:%fZ',withdrawn_at)=withdrawn_at AND withdrawal_reason IN('source-unavailable','source-changed','source-expired','enrollment-changed','access-withdrawn','job-changed','erased','manual') AND (status='minimized' OR created_at<=withdrawn_at))),0)")),
+    check("memory_document_job_origins_shape", sql.raw("COALESCE(((status IN('active','withdrawn') AND owner_user_id IS NOT NULL AND stream_id IS NOT NULL AND project_id IS NOT NULL AND document_id IS NOT NULL AND attempt_count IS NOT NULL AND correlation_id IS NOT NULL AND request_sha256 IS NOT NULL AND claim_sha256 IS NOT NULL AND input_content_ref IS NOT NULL AND input_sha256 IS NOT NULL AND input_expires_at IS NOT NULL AND job_requested_at IS NOT NULL AND job_started_at IS NOT NULL AND job_lease_expires_at IS NOT NULL AND job_expires_at IS NOT NULL AND requested_sequence IS NOT NULL AND source_head IS NOT NULL AND user_source_sequence IS NOT NULL AND user_sha256 IS NOT NULL AND answer_source_sequence IS NOT NULL AND answer_sha256 IS NOT NULL AND answer_expires_at IS NOT NULL AND mode IS NOT NULL AND renderer_recipe IS NOT NULL AND locale IS NOT NULL AND enrollment_id IS NOT NULL AND enrollment_revision IS NOT NULL AND permission_epoch IS NOT NULL AND policy_version IS NOT NULL AND enrolled_at IS NOT NULL AND enrollment_expires_at IS NOT NULL AND retention_days IS NOT NULL AND selection_cursor IS NOT NULL AND consumed_value_sha256 IS NOT NULL AND source_count IS NOT NULL AND ledger_revision_count IS NOT NULL AND selector_count IS NOT NULL AND selector_list_sha256 IS NOT NULL AND manifest_sha256 IS NOT NULL AND manifest_expires_at IS NOT NULL AND proof_valid_until IS NOT NULL AND source_retention_ceiling IS NOT NULL AND created_at IS NOT NULL) OR (status='minimized' AND owner_user_id IS NULL AND stream_id IS NULL AND organization_id IS NULL AND project_access_id IS NULL AND project_id IS NULL AND document_id IS NULL AND attempt_count IS NULL AND correlation_id IS NULL AND request_sha256 IS NULL AND claim_sha256 IS NULL AND input_content_ref IS NULL AND input_sha256 IS NULL AND input_expires_at IS NULL AND job_requested_at IS NULL AND job_started_at IS NULL AND job_lease_expires_at IS NULL AND job_expires_at IS NULL AND requested_sequence IS NULL AND source_head IS NULL AND project_source_head IS NULL AND user_source_sequence IS NULL AND user_sha256 IS NULL AND answer_source_sequence IS NULL AND answer_sha256 IS NULL AND answer_expires_at IS NULL AND mode IS NULL AND renderer_recipe IS NULL AND locale IS NULL AND enrollment_id IS NULL AND enrollment_revision IS NULL AND permission_epoch IS NULL AND policy_version IS NULL AND enrolled_at IS NULL AND enrollment_expires_at IS NULL AND retention_days IS NULL AND selection_cursor IS NULL AND consumed_value_sha256 IS NULL AND source_count IS NULL AND ledger_revision_count IS NULL AND selector_count IS NULL AND selector_list_sha256 IS NULL AND manifest_sha256 IS NULL AND manifest_expires_at IS NULL AND proof_valid_until IS NULL AND source_retention_ceiling IS NULL AND created_at IS NULL)),0)")),
+    uniqueIndex("idx_memory_document_job_origin_job_id").on(table.jobId),
+    uniqueIndex("idx_memory_document_job_origin_user_event_id").on(table.userEventId),
+    uniqueIndex("idx_memory_document_job_origin_answer_event_id").on(table.answerEventId),
+    uniqueIndex("idx_memory_document_job_origin_user_content_id").on(table.userContentId),
+    uniqueIndex("idx_memory_document_job_origin_answer_content_id").on(table.answerContentId),
+    uniqueIndex("idx_memory_document_job_origin_manifest_content_ref").on(table.manifestContentRef),
+    uniqueIndex("idx_memory_document_job_origin_turn").on(table.actorUserId, table.scopeKey, table.turnId),
+    index("idx_memory_document_job_origin_actor").on(table.actorUserId, table.status),
+    index("idx_memory_document_job_origin_enrollment").on(table.enrollmentId, table.status),
+    index("idx_memory_document_job_origin_scope").on(table.actorUserId, table.scopeKey, table.status),
+    index("idx_memory_document_job_origin_expiry").on(table.status, table.answerExpiresAt),
+  ],
+);
+
+export const memoryDocumentJobOriginDependencies = sqliteTable(
+  "memory_document_job_origin_dependencies",
+  {
+    originId: text("origin_id").notNull(),
+    resourceKind: text("resource_kind").notNull(),
+    resourceId: text("resource_id").notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.originId, table.resourceKind, table.resourceId] }),
+    foreignKey({ columns: [table.originId], foreignColumns: [memoryDocumentJobAnswerOrigins.originId] }).onUpdate("no action").onDelete("cascade"),
+    check("memory_document_job_origin_dependencies_shape", sql.raw("COALESCE((length(origin_id)>0 AND resource_kind IN('event','private-content','ledger','enrollment') AND length(resource_id)>0),0)")),
+    index("idx_memory_document_job_origin_dependency").on(table.resourceKind, table.resourceId, table.originId),
+  ],
+);
+
+export const memoryDocumentJobOriginRetirementProgress = sqliteTable('memory_document_job_origin_retirement_progress', {
+  originId: text('origin_id').primaryKey().notNull(),
+  schemaVersion: integer('schema_version').notNull(),
+  evidenceJson: text('evidence_json').notNull(),
+  evidenceSha256: text('evidence_sha256').notNull(),
+  selectorCount: integer('selector_count').notNull(),
+  selectorCursor: integer('selector_cursor').notNull(),
+  phase: text('phase').notNull(),
+  revision: integer('revision').notNull(),
+  answerRedactedAt: text('answer_redacted_at'),
+  manifestRedactedAt: text('manifest_redacted_at'),
+  createdAt: text('created_at').notNull(),
+  updatedAt: text('updated_at').notNull(),
+}, () => [
+  check('memory_document_job_retirement_schema_version', sql.raw(`schema_version = 1`)),
+  check('memory_document_job_retirement_evidence_json', sql.raw(`typeof(evidence_json) = 'text' AND length(CAST(evidence_json AS BLOB)) BETWEEN 1 AND 524288 AND json_valid(evidence_json)`)),
+  check('memory_document_job_retirement_evidence_sha256', sql.raw(`length(evidence_sha256) = 64 AND evidence_sha256 NOT GLOB '*[^0-9a-f]*'`)),
+  check('memory_document_job_retirement_selector_count', sql.raw(`selector_count BETWEEN 1 AND 513`)),
+  check('memory_document_job_retirement_selector_cursor', sql.raw(`selector_cursor BETWEEN 0 AND selector_count`)),
+  check('memory_document_job_retirement_phase', sql.raw(`phase IN ('answer','manifest','selectors','answer-delete','manifest-delete','finalize')`)),
+  check('memory_document_job_retirement_revision', sql.raw(`revision BETWEEN 0 AND 517`)),
+  check('memory_document_job_retirement_timestamps', sql.raw(`COALESCE(strftime('%Y-%m-%dT%H:%M:%fZ',created_at) IS created_at AND length(created_at) = 24
+    AND strftime('%Y-%m-%dT%H:%M:%fZ',updated_at) IS updated_at AND length(updated_at) = 24 AND updated_at >= created_at,0)`)),
+  check('memory_document_job_retirement_phase_state', sql.raw(`COALESCE((phase = 'answer' AND revision = 0 AND selector_cursor = 0 AND answer_redacted_at IS NULL AND manifest_redacted_at IS NULL)
+    OR (phase = 'manifest' AND revision = 1 AND selector_cursor = 0 AND answer_redacted_at IS NOT NULL AND manifest_redacted_at IS NULL)
+    OR (phase = 'selectors' AND revision = 2 + selector_cursor AND selector_cursor < selector_count AND answer_redacted_at IS NOT NULL AND manifest_redacted_at IS NOT NULL)
+    OR (phase = 'answer-delete' AND revision = 2 + selector_count AND selector_cursor = selector_count AND answer_redacted_at IS NOT NULL AND manifest_redacted_at IS NOT NULL)
+    OR (phase = 'manifest-delete' AND revision = 3 + selector_count AND selector_cursor = selector_count AND answer_redacted_at IS NOT NULL AND manifest_redacted_at IS NOT NULL)
+    OR (phase = 'finalize' AND revision = 4 + selector_count AND selector_cursor = selector_count AND answer_redacted_at IS NOT NULL AND manifest_redacted_at IS NOT NULL),0)`)),
+  check('memory_document_job_retirement_answer_redacted_at', sql.raw(`answer_redacted_at IS NULL OR COALESCE(length(answer_redacted_at) = 24 AND strftime('%Y-%m-%dT%H:%M:%fZ',answer_redacted_at) IS answer_redacted_at
+    AND answer_redacted_at BETWEEN created_at AND updated_at,0)`)),
+  check('memory_document_job_retirement_manifest_redacted_at', sql.raw(`manifest_redacted_at IS NULL OR COALESCE(length(manifest_redacted_at) = 24 AND strftime('%Y-%m-%dT%H:%M:%fZ',manifest_redacted_at) IS manifest_redacted_at
+    AND manifest_redacted_at BETWEEN answer_redacted_at AND updated_at,0)`)),
+]);
+
+/** An administrative capacity release is not a zero-cost provider settlement. */
+export const budgetHoldDispositions = sqliteTable("budget_hold_dispositions", {
+  dispositionId: text("disposition_id").primaryKey(), operatorId: text("operator_id").notNull(),
+  jobId: text("job_id").notNull(), correlationId: text("correlation_id").notNull(),
+  tokenReservationId: text("token_reservation_id").notNull().unique(), costReservationId: text("cost_reservation_id").notNull().unique(),
+  commandSha256: text("command_sha256").notNull(), recordSha256: text("record_sha256").notNull(), recordJson: text("record_json").notNull(),
+  eventId: text("event_id").notNull().unique(), createdAt: text("created_at").notNull(),
+}, table => [uniqueIndex("idx_hold_dispositions_job_attempt").on(table.jobId, table.correlationId)]);
+
+/** Explicit operator-adjudicated usage is distinct from unknown-outcome hold release. */
+export const managedVideoReconciliations = sqliteTable("managed_video_reconciliations", {
+  reconciliationId: text("reconciliation_id").primaryKey(), operatorId: text("operator_id").notNull(),
+  jobId: text("job_id").notNull(), correlationId: text("correlation_id").notNull(),
+  tokenReservationId: text("token_reservation_id").notNull().unique(), costReservationId: text("cost_reservation_id").notNull().unique(),
+  commandSha256: text("command_sha256").notNull(), treatmentSha256: text("treatment_sha256").notNull(),
+  recordSha256: text("record_sha256").notNull(), recordJson: text("record_json").notNull(), createdAt: text("created_at").notNull(),
+}, table => [uniqueIndex("idx_video_reconciliations_job_attempt").on(table.jobId, table.correlationId)]);

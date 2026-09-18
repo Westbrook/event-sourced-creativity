@@ -296,3 +296,13 @@ test("reveals provider credentials, billing, and operational remediation only to
 
   assert.equal(authorizedGenerationFailureRemediation({ ...credential, retryAllowed: true }, providerPrincipal), null, "recoverable work never loses priority to platform settings");
 });
+
+
+test("local guidance validation never calls a request a provider failure or authorizes blind retry",()=>{
+  for(const artifactKind of ["slides","audio","video","short_story","scene"]){
+    for(const code of ["document_render_guidance_too_long","document_render_guidance_invalid"]){
+      const result=generationFailureGuidance(failure({code,category:"provider",httpStatus:400,message:"PRIVATE_GUIDANCE",retryable:false}),"",failedJob({provider_request_status:"not_submitted",source_transmission_status:"not_transmitted",settled_cost_microusd:0},{result:{artifactKind}}));
+      assert.equal(result.title,"Request settings need attention");assert.match(result.summary,/application validation error, not a provider failure/);assert.doesNotMatch(result.summary,/PRIVATE_GUIDANCE|provider rejected|OpenAI account/);assert.equal(result.retryAllowed,false);
+    }
+  }
+});

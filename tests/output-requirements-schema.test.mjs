@@ -19,8 +19,10 @@ test("checked-in schema snapshot prevents an accidental duplicate next Output mi
   const schema = await import(pathToFileURL(schemaPath).href);
   hook.deregister();
   const { generateSQLiteDrizzleJson, generateSQLiteMigration } = await import(pathToFileURL(resolve(sourceRoot, "node_modules/drizzle-kit/api.mjs")).href);
-  const stored = JSON.parse(readFileSync(resolve(localRoot, "drizzle/meta/0018_snapshot.json"), "utf8"));
-  const previous = JSON.parse(readFileSync(resolve(sourceRoot, "drizzle/meta/0017_snapshot.json"), "utf8"));
+  // Journal index 23 widens the existing Output checks; retain the deployed
+  // Output snapshot as its predecessor rather than rewriting that history.
+  const stored = JSON.parse(readFileSync(resolve(localRoot, "drizzle/meta/0023_snapshot.json"), "utf8"));
+  const previous = JSON.parse(readFileSync(resolve(localRoot, "drizzle/meta/0022_snapshot.json"), "utf8"));
   assert.equal(stored.prevId, previous.id);
   assert.equal(stored.version, "6");
   assert.ok(stored.tables.output_native_storage_writes.columns.publication_event_id);
@@ -29,7 +31,8 @@ test("checked-in schema snapshot prevents an accidental duplicate next Output mi
   // Independently execute the SQL derived from the canonical Drizzle declaration.
   // Comparing two snapshots alone cannot detect parser loss shared by both.
   const declared = coldProductionDatabase(), deployed = coldProductionDatabase();
-  const declarationMigration = await generateSQLiteMigration(previous, generated);
+  const beforeOutput = JSON.parse(readFileSync(resolve(sourceRoot, "drizzle/meta/0021_snapshot.json"), "utf8"));
+  const declarationMigration = await generateSQLiteMigration(beforeOutput, generated);
   for (const statement of declarationMigration) declared.sqlite.exec(statement);
   deployed.sqlite.exec(outputMigration);
   assert.deepEqual(outputSchema(declared.sqlite), outputSchema(deployed.sqlite));

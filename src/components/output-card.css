@@ -1,0 +1,10 @@
+/* Shared native panel; only the image-card action surface is scoped here. */
+forma-output-card > .output-card > .output-info > .output-actions { gap:max(var(--forma-cluster-gap,.5rem),var(--forma-focus-clearance,.5rem)); }
+.output-actions > .output-open { scroll-margin-block:var(--forma-focus-clearance,.5rem); }
+.output-actions-popover { display:flex; align-self:stretch; min-inline-size:0; max-inline-size:100%; }
+.output-actions-popover > .ui-popover { display:flex; flex:1 1 auto; min-inline-size:0; }
+.output-actions-popover > .ui-popover > .ui-popover-trigger { flex:1 1 auto; align-self:stretch; }
+.output-actions-popover .ui-popover-trigger { min-inline-size:var(--forma-control-min-size,2.75rem); min-block-size:var(--forma-control-min-size,2.75rem); max-inline-size:100%; padding:var(--forma-space-2,.5rem) var(--forma-space-3,.75rem); white-space:normal; text-align:start; overflow-wrap:anywhere; font-size:var(--forma-font-size-supporting,var(--type-small)); }
+.output-actions-popover .ui-popover-panel { inline-size:min(24rem,calc(100dvi - 1rem)); }
+.output-actions-popover .output-secondary-actions { display:grid; gap:var(--forma-space-2,.5rem); }
+.output-actions-popover .output-secondary-actions > button { inline-size:100%; min-inline-size:0; min-block-size:var(--forma-control-min-size,2.75rem); padding:var(--forma-space-2,.5rem) var(--forma-space-3,.75rem); white-space:normal; text-align:start; overflow-wrap:anywhere; font-size:var(--forma-font-size-supporting,var(--type-small)); }

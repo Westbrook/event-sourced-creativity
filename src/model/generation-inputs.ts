@@ -1,7 +1,9 @@
+import { safePresentationProviderLabels } from "./generation-execution-evidence.ts";
 import type { DocumentArtifact } from "./document-artifacts";
 import type { CreativeEvent, CreativeOutput } from "./events";
 import type { DocumentJob } from "./document-jobs";
 import { isSceneMedium } from "./scene-configuration.ts";
+import { generationExecutionSummary, managedProductionInputEvidence } from "./generation-execution-evidence.ts";
 
 export type GenerationInputInspection = {
   title: string;
@@ -10,6 +12,8 @@ export type GenerationInputInspection = {
   receipt: Record<string, unknown>;
   retained: boolean;
   outcome?: "completed" | "failed" | "in_progress";
+  /** System-owned presentation metadata; retained title, subtitle and receipt stay unchanged. */
+  systemHeader?: { format: "scene"; attemptCount: number };
 };
 
 const record=(value:unknown):Record<string,unknown>=>value&&typeof value==="object"&&!Array.isArray(value)?value as Record<string,unknown>:{};
@@ -68,20 +72,23 @@ function privateGenerationInput(job:DocumentJob,receipt:Record<string,unknown>,c
 function safeGenerationReceipt(value:Record<string,unknown>,privateInput:Record<string,unknown>|null){
   if(!Object.keys(value).length)return null;
   const planner=record(privateInput?.planner),source=record(privateInput?.source),request=record(privateInput?.request),accounting=record(privateInput?.accounting);
+  const presentationLabels=(value.artifact_kind??privateInput?.artifact_kind)==="slides"?safePresentationProviderLabels(value):null;
   const providerStatus=textOrNull(value.provider_request_status)??textOrNull(planner.request_status)??"unknown";
   const sourceStatus=textOrNull(value.source_transmission_status)??textOrNull(source.status)??"unknown";
   const authoredCount=numberOrNull(value.authored_slide_count)??numberOrNull(request.authored_slide_count);
   const predictedCount=numberOrNull(value.predicted_slide_count)??numberOrNull(request.predicted_slide_count);
-  const providerContacted=providerStatus==="not_submitted"?false:providerStatus==="submitted"||providerStatus==="completed"?true:null;
+  const providerContacted=providerStatus==="not_submitted"?false:providerStatus==="submitted"||providerStatus==="completed"||providerStatus==="rejected"?true:null;
   const sourceTransmitted=sourceStatus==="not_transmitted"?false:sourceStatus==="transmitted"?true:null;
   const settledCost=numberOrNull(value.settled_cost_microusd)??(providerContacted===false&&sourceTransmitted===false?numberOrNull(accounting.settled_cost_microusd):null);
   return{
     schema_version:numberOrNull(value.schema_version)??1,
+    execution_evidence_version:numberOrNull(value.execution_evidence_version),
     captured_at:textOrNull(value.captured_at)??textOrNull(privateInput?.captured_at),
     artifact_kind:textOrNull(value.artifact_kind)??textOrNull(privateInput?.artifact_kind),
     production_mode:textOrNull(value.production_mode)??textOrNull(request.production_mode),
     provider:textOrNull(value.provider)??textOrNull(planner.provider),
-    model:textOrNull(value.model)??textOrNull(planner.model),
+    model:presentationLabels?presentationLabels.model:textOrNull(value.model)??textOrNull(planner.model),
+    ...(presentationLabels??{}),
     requested_slide_count:numberOrNull(value.requested_slide_count)??numberOrNull(request.requested_slide_count),
     authored_slide_count:authoredCount,
     predicted_slide_count:predictedCount,
@@ -94,6 +101,15 @@ function safeGenerationReceipt(value:Record<string,unknown>,privateInput:Record<
     max_repair_call_count:numberOrNull(value.max_repair_call_count)??numberOrNull(request.max_repair_call_count),
     maximum_provider_call_count:numberOrNull(value.maximum_provider_call_count)??numberOrNull(request.maximum_provider_call_count),
     actual_provider_call_count:numberOrNull(value.actual_provider_call_count),
+    actual_planner_call_count:numberOrNull(value.actual_planner_call_count),
+    actual_media_call_count:numberOrNull(value.actual_media_call_count),
+    unresolved_provider_call_count:numberOrNull(value.unresolved_provider_call_count),
+    provider_submission_uncertain:typeof value.provider_submission_uncertain==="boolean"?value.provider_submission_uncertain:null,
+    provider_call_forecast_scope:textOrNull(value.provider_call_forecast_scope),
+    provider_call_breakdown_complete:typeof value.provider_call_breakdown_complete==="boolean"?value.provider_call_breakdown_complete:null,
+    retained_clip_count:numberOrNull(value.retained_clip_count),
+    recorded_provider_request_status:textOrNull(value.recorded_provider_request_status),
+    request_outcome_basis:textOrNull(value.request_outcome_basis),
     provider_call_count:numberOrNull(value.provider_call_count),
     repair_calls_may_incur_additional_usage:typeof value.repair_calls_may_incur_additional_usage==="boolean"?value.repair_calls_may_incur_additional_usage:null,
     reservation_microusd:numberOrNull(value.reservation_microusd)??numberOrNull(request.reservation_microusd)??numberOrNull(accounting.reservation_microusd),
@@ -125,7 +141,7 @@ export function outputGenerationInputInspection(output:CreativeOutput,events:Cre
 }
 
 export function artifactGenerationInputInspection(artifact:DocumentArtifact,content:Record<string,string>):GenerationInputInspection{
-  const retained=parsedRecord(artifact.inputRef?content[artifact.inputRef]:undefined);const planner=record(retained?.planner),render=record(retained?.render);const submittedPrompt=String(render.submitted_prompt??"").trim();const plannerInstructions=String(planner.instructions??"").trim();const plannerInput=planner.providerInput??planner.provider_input;const prompt=submittedPrompt||[plannerInstructions,plannerInput?JSON.stringify(plannerInput,null,2):""].filter(Boolean).join("\n\n");
+  const retained=parsedRecord(artifact.inputRef?content[artifact.inputRef]:undefined);const planner=record(retained?.planner),render=record(retained?.render);const submittedPrompt=artifact.kind==="model3d"?String(render.submitted_prompt??""):String(render.submitted_prompt??"").trim();const plannerInstructions=String(planner.instructions??"").trim();const plannerInput=planner.providerInput??planner.provider_input;const prompt=submittedPrompt||[plannerInstructions,plannerInput?JSON.stringify(plannerInput,null,2):""].filter(Boolean).join("\n\n");
   const fallback={schema_version:1,artifact:{artifact_id:artifact.id,artifact_kind:artifact.kind,document_id:artifact.documentId,provider:artifact.provider,model:artifact.modelId,settings:artifact.settings},retained_input_unavailable:true,note:"This artifact predates retained generation-input receipts. Its public provider and request settings remain available, but its exact frozen document snapshot cannot be reconstructed."};
   return{title:"Artifact inputs",subtitle:`${artifact.kind.replaceAll("_"," ")} · ${artifact.modelId}`,prompt,receipt:retained??fallback,retained:Boolean(retained)};
 }
@@ -140,7 +156,8 @@ const jobFailureEvents=(job:DocumentJob,events:CreativeEvent[])=>{
 };
 
 function inspectDocumentGenerationInputs(job:DocumentJob,events:CreativeEvent[],content:Record<string,string>,outcome:"completed"|"failed"|"in_progress"):GenerationInputInspection{
-  const checkpoint=record(job.result);const persistedGenerationReceipt=record(checkpoint.generationReceipt);const privateInput=privateGenerationInput(job,persistedGenerationReceipt,content);const generationReceipt=safeGenerationReceipt(persistedGenerationReceipt,privateInput);
+  const checkpoint=record(job.result);const persistedGenerationReceipt=record(checkpoint.generationReceipt);const privateInput=privateGenerationInput(job,persistedGenerationReceipt,content);const generationReceipt=safeGenerationReceipt(Object.keys(persistedGenerationReceipt).length?generationExecutionSummary(checkpoint,job.errorDetail):persistedGenerationReceipt,privateInput);
+  const managedInputs=managedProductionInputEvidence(checkpoint,job.errorDetail);
   const ids=eventIdsForJob(job);const failures=jobFailureEvents(job,events);const generationIds=new Set(failures.map((event)=>String(event.payload.generation_id??"")).filter(Boolean));
   const artifactIds=new Set(failures.map((event)=>String(event.payload.artifact_id??"")).filter(Boolean));
   if(textOrNull(checkpoint.generationId))generationIds.add(String(checkpoint.generationId));
@@ -161,26 +178,28 @@ function inspectDocumentGenerationInputs(job:DocumentJob,events:CreativeEvent[],
   const artifactPlan=checkpoint.artifactPlan??null;const plannerInput=checkpoint.plannerInput??null;
   const frozenInputs:Array<Record<string,unknown>>=compiled.map((event)=>({compile_event_id:event.eventId,generation_id:event.payload.generation_id??null,prompt_technique:event.payload.prompt_technique??job.promptTechnique,context_hash:event.payload.context_hash??null,document_snapshot:event.payload.compiled_snapshot??null,source_block_versions:event.payload.source_block_versions??[],reference_inputs:event.payload.reference_inputs??[],used_reference_pixels:event.payload.used_uploaded_reference_pixels===true||event.payload.used_ideation_preview_pixels===true||event.payload.used_locked_study_pixels===true}));
   if(privateInput&&privateInput.document_snapshot&&!frozenInputs.length)frozenInputs.push({compile_event_id:null,generation_id:null,prompt_technique:job.promptTechnique,context_hash:null,source_snapshot_sha256:generationReceipt?.source_snapshot_sha256??null,document_snapshot:privateInput.document_snapshot,source_block_versions:Array.isArray(privateInput.source_block_versions)?privateInput.source_block_versions:[],reference_inputs:[],used_reference_pixels:false,captured_at:generationReceipt?.captured_at??null});
-  const retainedPrivateInput=Boolean(privateInput||prompt||frozenInputs.length||artifactPlan||plannerInput||Object.keys(videoInputReceipt).length||Object.keys(audioInputReceipt).length);
+  const retainedPrivateInput=Boolean(privateInput||prompt||frozenInputs.length||artifactPlan||plannerInput||managedInputs||Object.keys(videoInputReceipt).length||Object.keys(audioInputReceipt).length);
   const retentionNote=retainedPrivateInput
     ?outcome==="in_progress"?"This receipt contains the immutable actor-private inputs captured when the request was accepted.":"This receipt contains the immutable actor-private inputs retained for this generation attempt."
     :generationReceipt?"The accepted request metadata and source snapshot hash remain available, but the actor-private frozen input is unavailable, unauthorized, or expired."
       :requests.length?"The durable request settings survived, but this failure predates complete private-input retention or its private input expired."
         :"This failure predates retained private inputs or its retention period expired. Job and event diagnostics remain available.";
   const receipt={
-    schema_version:1,outcome,job:{job_id:job.jobId,document_id:job.documentId,kind:job.kind,artifact_kind:artifactKind||null,status:job.status,stage:job.stage||null,source_surface:job.sourceSurface,document_revision:job.documentRevision,prompt_technique:job.promptTechnique,prompt_fan_id:job.promptFanId,attempt_count:job.attemptCount,requested_at:job.requestedAt,started_at:job.startedAt,completed_at:job.completedAt,dismissed_at:job.dismissedAt},
+    schema_version:1,outcome,job:{job_id:job.jobId,document_id:job.documentId,kind:job.kind,artifact_kind:artifactKind||null,production_mode:job.productionMode??null,status:job.status,stage:job.stage||null,source_surface:job.sourceSurface,document_revision:job.documentRevision,prompt_technique:job.promptTechnique,prompt_fan_id:job.promptFanId,attempt_count:job.attemptCount,requested_at:job.requestedAt,started_at:job.startedAt,completed_at:job.completedAt,dismissed_at:job.dismissedAt},
     generation_receipt:generationReceipt,
     private_input:privateInput,
     submitted_prompts:prompts.map((entry)=>({label:entry.label,prompt:entry.value})),
     request_receipts:requests.map((event)=>({event_id:event.eventId,type:event.type,sequence:event.sequence,payload:event.payload})),frozen_inputs:frozenInputs,
-    artifact_checkpoint:artifactPlan||plannerInput||Object.keys(videoInputReceipt).length||Object.keys(audioInputReceipt).length?{plan:artifactPlan,planner_input:plannerInput,planner_model:checkpoint.plannerModel??null,planner_response_id:checkpoint.plannerResponseId??null,render_input:Object.keys(audioInputReceipt).length?audioInputReceipt:Object.keys(videoInputReceipt).length?videoInputReceipt:null,rendered_items:checkpoint.renderedItems??[]}:null,
+    artifact_checkpoint:artifactPlan||plannerInput||managedInputs||Object.keys(videoInputReceipt).length||Object.keys(audioInputReceipt).length?{plan:artifactPlan,planner_input:plannerInput,planner_model:checkpoint.plannerModel??null,planner_response_id:checkpoint.plannerResponseId??null,render_input:Object.keys(audioInputReceipt).length?audioInputReceipt:Object.keys(videoInputReceipt).length?videoInputReceipt:null,managed_inputs:managedInputs,rendered_items:checkpoint.renderedItems??[]}:null,
     failures:failures.map((event)=>({event_id:event.eventId,type:event.type,sequence:event.sequence,payload:event.payload})),
     technical_error:job.errorDetail??job.error??null,
+    planner_response_diagnostics:checkpoint.plannerResponseDiagnostics??null,
     retention_note:retentionNote,
   };
   const family=job.kind==="render_document"?(artifactKind?artifactKind.replaceAll("_"," "):"document output"):job.kind==="prompt_fan"?`${job.fanKind==="preview"?"Draft":"Full-quality"} fan`:job.kind==="preview"?"Draft image":"Full-quality image";
   const title=outcome==="failed"?"Failed generation inputs":outcome==="in_progress"?"Generation in progress":"Completed generation inputs";
-  return{title,subtitle:`${family} · attempt ${job.attemptCount}`,prompt,receipt,retained:generationReceipt?retainedPrivateInput:Boolean(retainedPrivateInput||requests.length),outcome};
+  const systemHeader:GenerationInputInspection["systemHeader"]=job.kind==="render_document"&&artifactKind==="scene"?{format:"scene",attemptCount:job.attemptCount}:undefined;
+  return{title,subtitle:`${family} · attempt ${job.attemptCount}`,prompt,receipt,retained:generationReceipt?retainedPrivateInput:Boolean(retainedPrivateInput||requests.length),outcome,...(systemHeader?{systemHeader}:{})};
 }
 
 /** Inspect the same actor-private frozen request while queued, running, failed, or completed. */

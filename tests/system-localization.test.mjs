@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { html } from "lit";
+import { calmFullPageNativePorts as ports } from "./helpers/calm-full-page-fixture.mjs";
 import { formaSystemMessageId } from "../src/components/design-system/system-message-id.ts";
 import { localizeTemplateResult } from "../src/components/design-system/localized-template.ts";
 import { localizedDocumentJobProgress, localizedDocumentJobProgressDetail, localizedGenerationFailureGuidance, localizedSourceExtractionMessage } from "../src/components/design-system/localized-runtime-copy.ts";
@@ -35,6 +36,20 @@ test("every audited system message has French, Arabic, and Japanese translations
   }
 });
 
+// Explicit representation migration: translations now occupy ordinary Lit
+// values. Inspect those values through the existing renderer's native parts;
+// never concatenate unescaped translations back into structural HTML.
+function inspectLocalized(template) {
+  const renderer = new ports.RendererPort({}, {});
+  const markup = renderer.value(template, null, "system-localization");
+  const element = tag => {
+    const matches = [...markup.matchAll(new RegExp("<" + tag + "\\b([^>]*)>", "gu"))];
+    assert.equal(matches.length, 1, "one exact " + tag + " localization element");
+    return renderer.attrs(matches[0][1]);
+  };
+  return { markup, element };
+}
+
 test("static system copy and accessible attributes translate without touching authored values", () => {
   const authored = "Save";
   const callback = () => authored;
@@ -42,17 +57,21 @@ test("static system copy and accessible attributes translate without touching au
   const template = html`<button class="Save" id="Save" title="Save" aria-label="Close" @click=${callback}>Save ${authored}</button><input placeholder="Search" .value=${authored}><img alt="Preview" src="Save"><a href="/Save">Open</a>${state}`;
   const locale = translatedLocale({ Save: "保存", Close: "閉じる", Search: "検索", Preview: "プレビュー", Open: "開く" });
   const localized = localizeTemplateResult(template, locale);
-  const markup = localized.strings.join("EXPRESSION");
+  const { markup, element } = inspectLocalized(localized);
 
-  assert.match(markup, /class="Save" id="Save" title="保存" aria-label="閉じる"/);
-  assert.match(markup, />保存 EXPRESSION<\/button>/);
-  assert.match(markup, /placeholder="検索"/);
-  assert.match(markup, /alt="プレビュー" src="Save"/);
+  assert.equal(element("button").attributes.class, "Save");
+  assert.equal(element("button").attributes.id, "Save");
+  assert.equal(element("button").attributes.title, "保存");
+  assert.equal(element("button").attributes["aria-label"], "閉じる");
+  assert.match(markup, />保存 Save<\/button>/);
+  assert.equal(element("input").attributes.placeholder, "検索");
+  assert.equal(element("img").attributes.alt, "プレビュー");
+  assert.equal(element("img").attributes.src, "Save");
   assert.match(markup, /href="\/Save">開く<\/a>/);
-  assert.equal(localized.values[0], callback);
-  assert.equal(localized.values[1], authored);
-  assert.equal(localized.values[2], authored);
-  assert.equal(localized.values[3], state);
+  assert.equal(element("button").handlers.click, callback);
+  assert.equal(element("input").properties.value, authored);
+  assert.deepEqual(localized.values.filter(value => [callback, authored, state].includes(value)), [callback, authored, authored, state], "original callback and both authored values retain their exact relative order");
+  assert.equal(localized.values.at(-1), state);
   assert.notEqual(localized.strings, template.strings);
   assert.ok(Object.isFrozen(localized.strings));
   assert.ok(Object.isFrozen(localized.strings.raw));
@@ -61,7 +80,7 @@ test("static system copy and accessible attributes translate without touching au
 test("localized templates preserve technical and expressly untranslated regions", () => {
   const template = html`<pre>Save <code>Close</code></pre><code>Save</code><span translate="no">Save</span><svg><title>Save</title></svg><p>Save</p>`;
   const localized = localizeTemplateResult(template, translatedLocale({ Save: "保存", Close: "閉じる" }));
-  const markup = localized.strings.join("");
+  const { markup } = inspectLocalized(localized);
   assert.match(markup, /<pre>Save <code>Close<\/code><\/pre>/);
   assert.match(markup, /<code>Save<\/code>/);
   assert.match(markup, /<span translate="no">Save<\/span>/);
@@ -69,7 +88,7 @@ test("localized templates preserve technical and expressly untranslated regions"
   assert.match(markup, /<p>保存<\/p>/);
 });
 
-test("nested system templates are cached by immutable source and locale catalog", () => {
+test("nested system templates reuse immutable structure across locale catalogs", () => {
   const nested = html`<span>Save</span>`;
   const template = html`<main>${[nested, "Save"]}</main>`;
   const japanese = translatedLocale({ Save: "保存" });
@@ -80,17 +99,25 @@ test("nested system templates are cached by immutable source and locale catalog"
 
   assert.equal(first.strings, second.strings, "the same locale reuses Lit's cached static strings");
   assert.equal(first.values[0][0].strings, second.values[0][0].strings);
-  assert.notEqual(first.strings, changed.strings, "switching locale invalidates each static template once");
-  assert.match(first.values[0][0].strings.join(""), /保存/);
+  assert.equal(first.strings, changed.strings, "switching locale changes copy without invalidating the structural template");
+  assert.equal(first.values[0][0].strings, changed.values[0][0].strings);
+  assert.match(inspectLocalized(first.values[0][0]).markup, /保存/);
+  assert.match(inspectLocalized(changed.values[0][0]).markup, /Enregistrer/);
   assert.equal(first.values[0][1], "Save", "an authored value equal to a system phrase stays untouched");
-  assert.equal(localizeTemplateResult(template, translatedLocale({}, "en")), template);
+  const english = localizeTemplateResult(template, translatedLocale({}, "en"));
+  assert.equal(english.strings, first.strings);
+  assert.equal(english.values[0][0].strings, first.values[0][0].strings);
+  assert.match(inspectLocalized(english.values[0][0]).markup, /<span>Save<\/span>/);
+  assert.equal(english.values[0][1], "Save");
 });
 
 test("translated static markup is safely escaped and message identifiers normalize whitespace", () => {
   const localized = localizeTemplateResult(html`<p title="Save">Save</p>`, translatedLocale({ Save: '<safe & "quoted">' }));
-  const markup = localized.strings.join("");
-  assert.match(markup, /title="&lt;safe &amp; &quot;quoted&quot;&gt;"/);
+  const { markup, element } = inspectLocalized(localized);
+  assert.equal(element("p").attributes.title, '<safe & "quoted">');
   assert.match(markup, />&lt;safe &amp; "quoted"&gt;<\/p>/);
+  assert.doesNotMatch(markup, /<safe/u);
+  assert.equal(localized.strings.join("").includes('<safe & "quoted">'), false);
   assert.equal(formaSystemMessageId("  Save\n now  "), formaSystemMessageId("Save now"));
 });
 
@@ -98,8 +125,9 @@ test("punctuation-bounded system copy translates without changing authored proje
   const authored="My English Project";
   const template=html`<span>${authored} / Document view</span><a href="/documents">Open</a>`;
   const localized=localizeTemplateResult(template,translatedLocale({"Document view":"ドキュメント表示",Open:"開く"}));
-  assert.match(localized.strings.join("EXPRESSION"),/EXPRESSION \/ ドキュメント表示/);
-  assert.match(localized.strings.join(""),/href="\/documents">開く/);
+  const {markup}=inspectLocalized(localized);
+  assert.match(markup,/<span>My English Project \/ ドキュメント表示/);
+  assert.match(markup,/href="\/documents">開く/);
   assert.equal(localized.values[0],authored);
 });
 

@@ -1,9 +1,11 @@
 import { html, nothing } from "lit";
+import type { CommandDeparture } from "./command-departure";
 import { FormaElement, icon } from "./forma-element";
 import { blockIconName } from "./icon-semantics";
 import { blockTypeDefinition, type BlockKind } from "../model/block-types";
 import { generationHistoryItemIsDraft, generationHistoryItems, outputQualityLabel } from "../model/events";
 import { documentFocusFromRoute, withDocumentFocusInRoute, withDocumentInRoute } from "../model/routes";
+import { captureOutputNavigationFocus } from "./output-navigation-focus";
 import "./project-rail";
 import "./studio-navigation";
 import "./output-visual";
@@ -23,6 +25,13 @@ export class FormaChatStudio extends FormaElement {
   #sending=false;
   #showResult=false;
 
+  captureCommandDeparture():CommandDeparture {
+    const store=this.store,projection=store.projection.get(),projectId=projection.projectId,documentId=projection.documentId;
+    return {element:this,current:()=>this.isConnected&&this.store===store
+      &&store.projection.get().projectId===projectId&&store.projection.get().documentId===documentId,
+      blocked:()=>Boolean(this.#draft||this.#sending),reason:()=>"next.lifecycle.currentWorkOpen"};
+  }
+
   #lines(documentId:string){
     const content=this.store.content.get();const actorUserId=this.store.session.get()?.user.userId;const lines=new Map<string,ChatLine>();
     for(const event of this.store.events.get()){
@@ -35,17 +44,50 @@ export class FormaChatStudio extends FormaElement {
     return [...lines.values()].sort((left,right)=>left.sequence-right.sequence);
   }
 
-  async #send(event:SubmitEvent){event.preventDefault();const message=this.#draft.trim();if(!message||this.#sending||this.store.busy.get()||this.store.documentJobActive("chat"))return;this.#sending=true;this.requestUpdate();try{const accepted=await this.store.chat(message,this.#livePreview&&Boolean(this.store.session.get()?.provider.configured));if(accepted){this.#draft="";await this.updateComplete;this.querySelector(".chat-thread-end")?.scrollIntoView({behavior:matchMedia("(prefers-reduced-motion: reduce)").matches?"auto":"smooth",block:"end"});}else this.querySelector<HTMLTextAreaElement>(".chat-composer textarea")?.focus({preventScroll:true});}finally{this.#sending=false;this.requestUpdate();}}
+  async #send(event:SubmitEvent){
+    event.preventDefault();
+    const draft=this.#draft,message=draft.trim();
+    if(!message||this.#sending||this.store.busy.get()||this.store.documentJobActive("chat"))return;
+    const source=this.store.captureSourceOwnership(),route=this.store.route.get(),documentId=this.store.projection.get().documentId;
+    const focus=captureOutputNavigationFocus(this.ownerDocument);
+    const current=()=>this.isConnected&&this.store.sourceOwnershipActive(source)&&this.store.route.get()===route
+      &&this.store.projection.get().documentId===documentId;
+    const presentationCurrent=()=>current()&&focus.current()&&!this.ownerDocument.querySelector("dialog[open]");
+    this.#sending=true;this.requestUpdate();
+    try{
+      const accepted=await this.store.chat(message,this.#livePreview&&Boolean(this.store.session.get()?.provider.configured));
+      if(!current())return;
+      if(accepted){
+        if(this.#draft===draft)this.#draft="";
+        await this.updateComplete;
+        const end=this.querySelector<HTMLElement>(".chat-thread-end");
+        if(end&&presentationCurrent())focus.run(end,()=>{end.scrollIntoView({behavior:matchMedia("(prefers-reduced-motion: reduce)").matches?"auto":"smooth",block:"end"});return true;});
+      }else{
+        const field=this.querySelector<HTMLTextAreaElement>(".chat-composer textarea");
+        if(field&&presentationCurrent())focus.run(field,()=>{field.focus({preventScroll:true});return true;});
+      }
+    }finally{focus.dispose();this.#sending=false;this.requestUpdate();}
+  }
 
   #prepareContext(type: BlockKind) {
     const definition = blockTypeDefinition(type);
     if (!definition) return;
     if (!this.#draft.trim()) this.#draft = this.i18n.system(definition.prompt);
     this.requestUpdate();
-    void this.updateComplete.then(() => this.querySelector<HTMLTextAreaElement>("#creative-chat-message")?.focus({ preventScroll: true }));
+    this.#focusAfterUpdate("#creative-chat-message");
   }
 
-  #closeResult(){this.#showResult=false;this.requestUpdate();void this.updateComplete.then(()=>this.querySelector<HTMLButtonElement>(".chat-result-toggle")?.focus({preventScroll:true}));}
+  #closeResult(){this.#showResult=false;this.requestUpdate();this.#focusAfterUpdate(".chat-result-toggle");}
+  #focusAfterUpdate(selector:string){
+    const store=this.store,source=store.captureSourceOwnership(),authorization=store.captureAuthorizationScope();
+    const route=store.route.get(),documentId=store.projection.get().documentId,focus=captureOutputNavigationFocus(this.ownerDocument);
+    void this.updateComplete.then(()=>{
+      if(!this.isConnected||this.store!==store||store.route.get()!==route||store.projection.get().documentId!==documentId
+        ||!store.sourceOwnershipActive(source)||!store.authorizationScopeActive(authorization))return;
+      const target=this.querySelector<HTMLElement>(selector);
+      if(target)focus.run(target,()=>{target.focus({preventScroll:true});return true;});
+    },()=>undefined).finally(()=>focus.dispose());
+  }
 
   override render(){
     const projection=this.store.projection.get();const lines=this.#lines(projection.documentId);const history=generationHistoryItems(projection.outputs);const currentItem=history.find((item)=>(item.kind==="fan"?`fan:${item.id}`:item.id)===this.store.ui.selectedOutputId)??history[0]??null;const current=currentItem?.kind==="output"?currentItem.output:null;const previewProgress=this.store.documentPreviewProgress(projection.documentId);const previewActive=this.store.documentJobActive("preview",projection.documentId);const working=Boolean(previewProgress)||generationHistoryItemIsDraft(currentItem);const busy=this.store.busy.get();const chatActive=this.store.documentJobActive("chat");
