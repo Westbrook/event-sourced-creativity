@@ -9,7 +9,7 @@ import { observeNativeMemoryDocumentScope } from "./memory-native-scope.ts";
 import { memoryCanonical } from "./memory-sql.ts";
 import { derivationExact, derivationId, derivationInteger, derivationTime } from "./memory-derivation-policy.ts";
 import { derivationResults } from "./memory-derivation-store.ts";
-import { nativeDerivationLeaseInputs, nativeDerivationLeaseStatements, replayNativeDerivationLease, type NativeDerivationLease } from "./memory-derivation-admission.ts";
+import { nativeDerivationEvidenceInputs, nativeDerivationEvidenceStatements, replayNativeDerivationEvidence, type NativeDerivationEvidence } from "./memory-derivation-admission.ts";
 import type { MemoryDerivationSource } from "./memory-derivation-result.ts";
 import type { WorkerEnv } from "./runtime.ts";
 
@@ -21,10 +21,10 @@ type Backing = { streamId: string; eventId: string; sequence: number; contentRef
 type CaptureData = { jobId: string; purpose: MemoryDerivationSourcePurpose; scopeKey: string; checkedAt: string; validUntil: string;
   retentionCeiling: string; originals: MemoryDerivationSource[]; originalBacking: Backing[]; observations: NativeDerivationObservation[];
   coverage: { queuedReferences: number; originalPairs: number; typedObservations: number; allReferencesCaptured: true; semanticComplete: false } };
-type MemoryDerivationSourcePurpose = ReturnType<typeof nativeDerivationLeaseInputs>["grant"]["purpose"];
+type MemoryDerivationSourcePurpose = ReturnType<typeof nativeDerivationEvidenceInputs>["grant"]["purpose"];
 declare const issuedCapture: unique symbol;
 export type NativeDerivationSourceCapture = Readonly<{ [issuedCapture]: true }>;
-type Captured = { env: WorkerEnv; db: WorkerEnv["DB"]; lease: NativeDerivationLease; validUntil: string; witness: AssistantContextReadWitness<CaptureData> };
+type Captured = { env: WorkerEnv; db: WorkerEnv["DB"]; lease: NativeDerivationEvidence; validUntil: string; witness: AssistantContextReadWitness<CaptureData> };
 const captures = new WeakMap<NativeDerivationSourceCapture, Captured>();
 const unavailable = () => ({ status: "unavailable" } as const);
 const capacity = () => ({ status: "capacity" } as const);
@@ -42,16 +42,16 @@ const clean = (payload: string) => `json_valid(${payload}) AND COALESCE(json_ext
  * remain incomplete; nothing is sliced, acknowledged as processed or deleted.
  * Typed observations are descriptive evidence, NOT original human quotations.
  */
-export async function captureNativeDerivationSources(env: WorkerEnv, lease: NativeDerivationLease) {
+export async function captureNativeDerivationSources(env: WorkerEnv, lease: NativeDerivationEvidence) {
   try {
-    const db = env.DB, input = nativeDerivationLeaseInputs(env, lease), { enrollment: e, grant: g, authority: a, job } = input;
-    if (!await replayNativeDerivationLease(env, lease) || env.DB !== db) return unavailable();
+    const db = env.DB, input = nativeDerivationEvidenceInputs(env, lease), { enrollment: e, grant: g, authority: a, job } = input;
+    if (!await replayNativeDerivationEvidence(env, lease) || env.DB !== db) return unavailable();
     const witness = new AssistantContextReadWitness<CaptureData>(env);
     const read = async (query: Query) => {
-      nativeDerivationLeaseInputs(env, lease);
+      nativeDerivationEvidenceInputs(env, lease);
       const statement = db.prepare(query.sql).bind(...query.bindings), result = structuredClone(await statement.all<Row>());
       if (env.DB !== db || !derivationResults([result], 1)) throw Error("memory-derivation-source-read");
-      nativeDerivationLeaseInputs(env, lease);
+      nativeDerivationEvidenceInputs(env, lease);
       witness.observe([statement], [result], [query]); return result.results;
     };
     const q = liveMemorySourceQueryParts(e, a), joined = `${q.joins}
@@ -203,7 +203,7 @@ export async function captureNativeDerivationSources(env: WorkerEnv, lease: Nati
 function lookup(env: WorkerEnv, handle: NativeDerivationSourceCapture) {
   const captured = captures.get(handle);
   if (!captured || captured.env !== env || captured.db !== env.DB || captured.validUntil <= clock()) throw Error("memory-derivation-source-unavailable");
-  nativeDerivationLeaseInputs(env, captured.lease); return captured;
+  nativeDerivationEvidenceInputs(env, captured.lease); return captured;
 }
 /** Copied staging data, not permission to use a source. Keep the issued handle:
  * every publication must include source statements in its same atomic batch;
@@ -213,17 +213,24 @@ export function nativeDerivationSourceInputs(env: WorkerEnv, handle: NativeDeriv
   return lookup(env, handle).witness.context()!;
 }
 export function nativeDerivationSourceStatements(env: WorkerEnv, handle: NativeDerivationSourceCapture) {
-  const captured = lookup(env, handle), lease = nativeDerivationLeaseStatements(env, captured.lease), source = captured.witness.precommitStatements();
+  const captured = lookup(env, handle), lease = nativeDerivationEvidenceStatements(env, captured.lease), source = captured.witness.precommitStatements();
   if (lease.length + source.length > 32) throw Error("memory-derivation-source-capacity");
   return [...lease, ...source];
 }
 export async function replayNativeDerivationSources(env: WorkerEnv, handle: NativeDerivationSourceCapture) {
   try {
-    const captured = lookup(env, handle), statements = nativeDerivationSourceStatements(env, handle), leaseCount = nativeDerivationLeaseStatements(env, captured.lease).length;
+    const captured = lookup(env, handle), statements = nativeDerivationSourceStatements(env, handle), leaseCount = nativeDerivationEvidenceStatements(env, captured.lease).length;
     const result = structuredClone(await captured.db.batch<Row>(statements));
     return lookup(env, handle) === captured && derivationResults(result, statements.length) && result.every((entry, index) => {
       const field = index < leaseCount ? "verified" : "context_source_asserted";
       return entry.results.length === 1 && derivationExact(entry.results[0], [field]) && entry.results[0][field] === 1;
     });
   } catch { return false; }
+}
+
+/** Execution requires the exact original handle, not another read capability
+ * for the same job. This closes read-to-spend capability substitution. */
+export function nativeDerivationSourceForEvidence(env: WorkerEnv, handle: NativeDerivationSourceCapture, evidence: NativeDerivationEvidence) {
+  if (lookup(env, handle).lease !== evidence) throw Error("memory-derivation-source-authority-mismatch");
+  return nativeDerivationSourceInputs(env, handle);
 }

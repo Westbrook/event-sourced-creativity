@@ -68,6 +68,11 @@ bounded source-free financial maintenance, a durable fair scan cursor, safe
 unfunded-lease backoff/exhaustion and an existing scheduled-event code hook.
 No hosted schedule, paid derivation consumer or user activation was added.
 
+[Read-only evidence](forma-memory-native-read-evidence-2026-09-18.md) now separates
+fresh source access from execution authority. A retained job can be inspected
+after execution expiry without renewing its lease or granting another provider
+call. Durable semantic storage and public consumers are still not implemented.
+
 ## Remaining native implementation — still in scope
 
 1. Complete the durable worker consumer around the implemented purpose/source-bound

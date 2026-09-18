@@ -13990,3 +13990,50 @@ test('native derivation recovery: scan cursor schema refuses reset, replacement 
   state.sqlite.exec('UPDATE memory_derivation_recovery_cursor SET generation=1');
   assert.equal(state.sqlite.prepare('SELECT generation FROM memory_derivation_recovery_cursor').get().generation,1);
 });
+for(const shared of [false,true])test('native derivation evidence: read after execution expiry never renews the lease or issues spending authority '+shared,{timeout:60000},async t=>{
+  const state=await nativeDerivationExecutionFixture(t,{shared}),before=state.queue(),financial=adaptiveReentryFinancialState(state),actor=state.current().actor_user_id;
+  t.mock.timers.enable({apis:['Date'],now:Date.now()+360000});
+  assert.throws(()=>state.admission.nativeDerivationLeaseInputs(state.env,state.executionLease),/unavailable/);
+  const observed=await state.admission.observeNativeDerivationJob(state.env,actor,state.executionJob.job_id);assert.ok(observed);
+  assert.equal(await state.admission.replayNativeDerivationEvidence(state.env,observed),true);
+  assert.equal(await state.admission.replayNativeDerivationLease(state.env,observed),false);
+  assert.throws(()=>state.admission.nativeDerivationLeaseInputs(state.env,observed),/unavailable/);
+  const captured=await state.sources.captureNativeDerivationSources(state.env,observed);assert.equal(captured.status,'captured',state.controls.lastDatabaseError);
+  assert.equal(state.sources.nativeDerivationSourceInputs(state.env,captured.capture).originals.length,2);
+  await assert.rejects(()=>state.finance.reserveNativeDerivationFinance(state.env,observed,captured.capture,'a'.repeat(64)),/unavailable/);
+  assert.deepEqual(state.queue(),before);assert.deepEqual(adaptiveReentryFinancialState(state),financial);assert.equal(state.calls.length,0);
+});
+test('native derivation evidence: a read capture cannot substitute for the same job execution capture',{timeout:60000},async t=>{
+  const state=await nativeDerivationExecutionFixture(t),before=adaptiveReentryFinancialState(state),actor=state.current().actor_user_id;
+  const observed=await state.admission.observeNativeDerivationJob(state.env,actor,state.executionJob.job_id);assert.ok(observed);
+  const captured=await state.sources.captureNativeDerivationSources(state.env,observed);assert.equal(captured.status,'captured');
+  await assert.rejects(()=>state.finance.reserveNativeDerivationFinance(state.env,state.executionLease,captured.capture,'b'.repeat(64)),/authority-mismatch/);
+  state.env.OPENAI_API_KEY='isolated-not-a-credential';const provider=await import('../worker/memory-derivation-provider.ts'),fetch=globalThis.fetch;let sent=0;
+  globalThis.fetch=async()=>{sent++;throw Error('Read evidence must never reach transport');};t.after(()=>{globalThis.fetch=fetch;});
+  const result=await provider.executeNativeDerivationProvider(state.env,state.executionLease,captured.capture);assert.equal(result.status,'uncertain');assert.equal(sent,0);
+  assert.deepEqual(adaptiveReentryFinancialState(state),before);assert.equal(state.sqlite.prepare('SELECT COUNT(*) AS n FROM memory_derivation_finance').get().n,0);
+});
+for(const fault of ['foreign-actor','recall-disabled','withdrawn-purpose','changed-source','changed-schema','copied-handle'])test('native derivation evidence: '+fault+' fails closed',{timeout:60000},async t=>{
+  const state=await nativeDerivationExecutionFixture(t),actor=state.current().actor_user_id,job=state.executionJob.job_id,before=adaptiveReentryFinancialState(state);
+  if(fault==='foreign-actor'){assert.equal(await state.admission.observeNativeDerivationJob(state.env,'foreign-actor',job),null);return;}
+  if(fault==='recall-disabled'){state.sqlite.exec('UPDATE memory_live_enrollments SET recall_enabled=0');assert.equal(await state.admission.observeNativeDerivationJob(state.env,actor,job),null);return;}
+  const observed=await state.admission.observeNativeDerivationJob(state.env,actor,job);assert.ok(observed);
+  if(fault==='copied-handle'){assert.throws(()=>state.admission.nativeDerivationEvidenceInputs(state.env,{...observed}),/unavailable/);return;}
+  const captured=await state.sources.captureNativeDerivationSources(state.env,observed);assert.equal(captured.status,'captured');
+  if(fault==='withdrawn-purpose'){const inverse=await state.derivationStore.prepareDerivationWithdrawal(state.env,{actorUserId:actor},new Date().toISOString(),true);assert.equal(inverse.acknowledge(await state.env.DB.batch(inverse.statements)),true);}
+  if(fault==='changed-source')state.sqlite.exec("UPDATE private_content SET content=content||' changed' WHERE content_id IN(SELECT user_content_ref FROM assistant_turns)");
+  if(fault==='changed-schema')state.sqlite.exec('DROP TRIGGER memory_derivation_source_delete');
+  assert.equal(await state.sources.replayNativeDerivationSources(state.env,captured.capture),false);
+  assert.deepEqual(adaptiveReentryFinancialState(state),before);assert.equal(state.calls.length,0);
+});
+test('native derivation evidence: isolated D1 read proof is non-mutating and actor-bound',{timeout:180000},async t=>{
+  const state=await nativeDerivationExecutionFixture(t,{shared:true,hosted:true}),db=state.env.DB,actor=state.current().actor_user_id;
+  const before=await db.prepare('SELECT * FROM memory_derivation_jobs').all();
+  assert.equal(await state.admission.observeNativeDerivationJob(state.env,'foreign-actor',state.executionJob.job_id),null);
+  const observed=await state.admission.observeNativeDerivationJob(state.env,actor,state.executionJob.job_id);assert.ok(observed);
+  const captured=await state.sources.captureNativeDerivationSources(state.env,observed);assert.equal(captured.status,'captured');
+  assert.equal(await state.sources.replayNativeDerivationSources(state.env,captured.capture),true);
+  assert.equal(await state.admission.replayNativeDerivationLease(state.env,observed),false);
+  assert.deepEqual((await db.prepare('SELECT * FROM memory_derivation_jobs').all()).results,before.results);
+  assert.equal((await db.prepare('SELECT COUNT(*) AS n FROM memory_derivation_finance').first()).n,0);assert.equal(state.calls.length,0);
+});

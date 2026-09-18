@@ -5,7 +5,7 @@ import { memoryDerivationMaximumMicroUsd, derivationHash, derivationId, derivati
 import { DERIVATION_FINANCE_TABLE_COLUMNS } from "./memory-derivation-finance-schema.ts";
 import { derivationAssertion, derivationResults, derivationVerified, derivationChanged, memoryDerivationSchema, synchronizeDerivationMonthCap } from "./memory-derivation-store.ts";
 import { nativeDerivationLeaseInputs, type NativeDerivationLease } from "./memory-derivation-admission.ts";
-import { nativeDerivationSourceInputs, nativeDerivationSourceStatements, replayNativeDerivationSources, type NativeDerivationSourceCapture } from "./memory-derivation-sources.ts";
+import { nativeDerivationSourceForEvidence, nativeDerivationSourceStatements, replayNativeDerivationSources, type NativeDerivationSourceCapture } from "./memory-derivation-sources.ts";
 import { prepareBudgetReservation, prepareCostBudgetReservation, claimCostBudgetReservationWithoutRelease, claimedProviderBudgetGuard } from "./pilot-policy.ts";
 
 type Row = Record<string, string | number | null>;
@@ -31,7 +31,7 @@ const fail=():never=>{throw Error("memory-finance-unavailable");};
 const exact=(row:NativeDerivationFinancialRecord):MemorySqlGuard=>({condition:`EXISTS(SELECT 1 FROM memory_derivation_finance WHERE ${columns.map(column=>column+" IS ?").join(" AND ")})`,bindings:columns.map(column=>row[column])});
 function sourceCurrent(env:WorkerEnv,state:Held){
   if(state.env!==env||state.db!==env.DB)fail();
-  const input=nativeDerivationLeaseInputs(env,state.lease),source=nativeDerivationSourceInputs(env,state.capture);
+  const input=nativeDerivationLeaseInputs(env,state.lease),source=nativeDerivationSourceForEvidence(env,state.capture,state.lease);
   if(input.job.job_id!==source.jobId||input.grant.purpose!==source.purpose)fail();
   return input;
 }
@@ -51,7 +51,7 @@ function validSourceReceipt(row:D1Result<Record<string,unknown>>){
  * retains the original deterministic identity; it does not authorize replay. */
 export async function reserveNativeDerivationFinance(env:WorkerEnv,lease:NativeDerivationLease,capture:NativeDerivationSourceCapture,requestHash:string):Promise<NativeDerivationFinance|null>{
   if(!derivationHash(requestHash))return null;
-  const input=nativeDerivationLeaseInputs(env,lease),source=nativeDerivationSourceInputs(env,capture),db=env.DB;
+  const input=nativeDerivationLeaseInputs(env,lease),source=nativeDerivationSourceForEvidence(env,capture,lease),db=env.DB;
   if(input.job.job_id!==source.jobId||input.grant.purpose!==source.purpose)return null;
   const terms=input.qualification.terms,maximum=memoryDerivationMaximumMicroUsd(terms),schema=await memoryDerivationSchema(env);
   if(!maximum||!schema.financePresent||env.DB!==db)return null;

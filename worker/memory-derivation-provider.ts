@@ -2,7 +2,7 @@ import type { WorkerEnv } from './runtime.ts';
 import { memoryDigest } from '../src/model/scoped-memory.ts';
 import { derivationId, derivationInteger } from './memory-derivation-policy.ts';
 import { nativeDerivationLeaseInputs, type NativeDerivationLease } from './memory-derivation-admission.ts';
-import { nativeDerivationSourceInputs, type NativeDerivationSourceCapture } from './memory-derivation-sources.ts';
+import { nativeDerivationSourceInputs, nativeDerivationSourceForEvidence, type NativeDerivationSourceCapture } from './memory-derivation-sources.ts';
 import { reserveNativeDerivationFinance, claimNativeDerivationDispatch, consumeNativeDerivationDispatch, nativeDerivationDispatchData,
   recordNativeDerivationUsage, reconcileNativeDerivationFinance, nativeDerivationDispatchSource } from './memory-derivation-finance.ts';
 import { MEMORY_DERIVATION_RESULT_VERSION, memoryDerivationJsonUniqueKeys, parseMemoryDerivationResult, type ParsedMemoryDerivation } from './memory-derivation-result.ts';
@@ -19,7 +19,7 @@ function outputSchema(purpose:string){
 }
 /** Native handles only; no browser model, prompt, endpoint or reservation DTO. */
 function request(env:WorkerEnv,lease:NativeDerivationLease,capture:NativeDerivationSourceCapture){
-  const input=nativeDerivationLeaseInputs(env,lease),source=nativeDerivationSourceInputs(env,capture),terms=input.qualification.terms;
+  const input=nativeDerivationLeaseInputs(env,lease),source=nativeDerivationSourceForEvidence(env,capture,lease),terms=input.qualification.terms;
   if(source.jobId!==input.job.job_id||source.purpose!==terms.purpose||!source.originals.length)return null;
   const body=JSON.stringify({model:terms.model,instructions,input:JSON.stringify({purpose:source.purpose,
     originals:source.originals.map((original,sourceIndex)=>({sourceIndex,role:original.role,authorship:original.authorship,text:original.text})),

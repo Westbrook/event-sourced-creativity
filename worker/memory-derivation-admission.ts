@@ -20,10 +20,14 @@ type Qualification = NonNullable<Awaited<ReturnType<typeof readDerivationQualifi
 /** Process-local issuance, not a serializable job DTO or provider permission. */
 declare const issuedLease: unique symbol;
 export type NativeDerivationLease = Readonly<{ [issuedLease]: true }>;
-type Admission = { env: WorkerEnv; db: WorkerEnv["DB"]; configuration: string; until: string;
+declare const issuedRead: unique symbol;
+/** Read-only evidence; never an execution lease or permission to purchase work. */
+export type NativeDerivationRead = Readonly<{ [issuedRead]: true }>;
+export type NativeDerivationEvidence = NativeDerivationLease | NativeDerivationRead;
+type Admission = { mode: "execute" | "read"; env: WorkerEnv; db: WorkerEnv["DB"]; configuration: string; until: string;
   job: NativeJob; enrollment: LiveMemoryEnrollment; grant: MemoryDerivationGrant; qualification: Qualification;
   authority: LiveMemoryAuthority; references: Reference[]; guards: MemorySqlGuard[] };
-const issued = new WeakMap<NativeDerivationLease, Admission>();
+const issued = new WeakMap<NativeDerivationEvidence, Admission>();
 const configuration = (env: WorkerEnv) => memoryCanonical([env.FORMA_MEMORY_ENABLED, env.FORMA_MEMORY_USER_IDS,
   env.FORMA_MEMORY_DERIVATION_ENABLED, env.FORMA_MEMORY_DERIVATION_USER_IDS, memoryDerivationBinding(env),
   env.FORMA_PILOT_COHORT_ID, env.FORMA_ADMIN_EMAILS]);
@@ -69,6 +73,17 @@ function referencesShape(rows: unknown[], job: NativeJob, grant: MemoryDerivatio
  * authority to resubmit. Financial recovery must later prove non-submission.
  */
 export async function claimNativeDerivationJob(env: WorkerEnv, jobId: string): Promise<NativeDerivationLease | null> {
+  return resolveNativeDerivationAdmission(env, jobId) as Promise<NativeDerivationLease | null>;
+}
+/** Internal read capability for an authenticated actor's retained job. It does
+ * not renew, reclaim, retry, mutate, or grant authority to transmit originals.
+ * HTTP callers must derive actorUserId from current authentication, never JSON. */
+export async function observeNativeDerivationJob(env: WorkerEnv, actorUserId: string, jobId: string): Promise<NativeDerivationRead | null> {
+  if (!derivationId(actorUserId)) return null;
+  return resolveNativeDerivationAdmission(env, jobId, actorUserId) as Promise<NativeDerivationRead | null>;
+}
+async function resolveNativeDerivationAdmission(env: WorkerEnv, jobId: string, readActorId?: string): Promise<NativeDerivationEvidence | null> {
+  const mode = readActorId === undefined ? "execute" : "read";
   if (!derivationHash(jobId)) return null;
   const db = env.DB, configured = configuration(env), started = Date.now(), schema = await memoryDerivationSchema(env);
   if (!schema.jobsPresent || env.DB !== db || configured !== configuration(env)) return null;
@@ -80,10 +95,11 @@ export async function claimNativeDerivationJob(env: WorkerEnv, jobId: string): P
   const jobs = await read(`SELECT ${DERIVATION_JOB_COLUMNS.join(",")} FROM memory_derivation_jobs WHERE job_id=? LIMIT 2`, [jobId]);
   if (jobs.length !== 1 || !jobShape(jobs[0])) return null;
   const job = jobs[0], now = new Date().toISOString();
-  if (job.state !== "waiting" || job.expires_at <= now || job.not_before > now) return null;
+  if (job.expires_at <= now || (mode === "execute" ? job.state !== "waiting" || job.not_before > now : job.state !== "leased")) return null;
   const grants = await read(`SELECT ${DERIVATION_GRANT_COLUMNS.join(",")} FROM memory_derivation_grants WHERE consent_id=? LIMIT 2`, [job.consent_id]);
   if (grants.length !== 1 || !memoryDerivationGrantShape(grants[0])) return null;
   const grant = grants[0];
+  if (mode === "read" && grant.actor_user_id !== readActorId) return null;
   if (!memoryDerivationEnabled(env, grant.actor_user_id) || grant.revoked_at !== null || grant.background_enabled !== 1
     || grant.purpose !== job.purpose || job.after_sequence < grant.source_after_sequence || grant.expires_at < job.expires_at
     || grant.consented_at > job.created_at) return null;
@@ -92,7 +108,8 @@ export async function claimNativeDerivationJob(env: WorkerEnv, jobId: string): P
   const e = parents[0] as unknown as LiveMemoryEnrollment;
   if (e.revision !== grant.enrollment_revision || e.actor_user_id !== grant.actor_user_id || e.owner_user_id !== grant.owner_user_id
     || e.organization_id !== grant.organization_id || e.project_access_id !== grant.project_access_id || e.project_id !== grant.project_id
-    || e.document_id !== grant.document_id || e.permission_epoch !== grant.permission_epoch || e.learn_enabled !== 1 || e.background_enabled !== 1
+    || e.document_id !== grant.document_id || e.permission_epoch !== grant.permission_epoch
+    || (mode === "execute" ? e.learn_enabled !== 1 || e.background_enabled !== 1 : e.recall_enabled !== 1)
     || !derivationInteger(e.retention_days, grant.retention_days, 365) || !derivationTime(e.enrolled_at) || !derivationTime(e.expires_at)
     || e.enrolled_at > grant.consented_at || e.expires_at < grant.expires_at) return null;
   const qualification = await readDerivationQualification(env, grant.qualification_id);
@@ -118,45 +135,62 @@ export async function claimNativeDerivationJob(env: WorkerEnv, jobId: string): P
   if (!referencesShape(references, job, grant)) return null;
   const leaseExpires = [new Date(started + 300_000).toISOString(), job.expires_at, grant.expires_at, e.expires_at, qualification.row.expires_at].sort()[0]!;
   const until = [new Date(started + 60_000).toISOString(), leaseExpires, ...nativeDeadlines].sort()[0]!;
-  const next: NativeJob = { ...job, state: "leased", lease_token: crypto.randomUUID(), lease_expires_at: leaseExpires, attempts: job.attempts + 1 };
+  const next: NativeJob = mode === "read" ? job : { ...job, state: "leased", lease_token: crypto.randomUUID(), lease_expires_at: leaseExpires, attempts: job.attempts + 1 };
   const common = [schema.guard, { condition: "EXISTS(SELECT 1 FROM pragma_foreign_keys WHERE foreign_keys=1) AND EXISTS(SELECT 1 FROM pragma_ignore_check_constraints WHERE ignore_check_constraints=0)", bindings: [] },
-    authority.guard, ...nativeGuards, liveMemoryEnrollmentGuard(e, "learn"),
+    authority.guard, ...nativeGuards, liveMemoryEnrollmentGuard(e, mode === "read" ? "recall" : "learn"),
     derivationRowGuard("memory_live_enrollments", DERIVATION_PARENT_COLUMNS, e),
     derivationRowGuard("memory_derivation_grants", DERIVATION_GRANT_COLUMNS, grant), derivationQualificationGuard(qualification.row),
     referenceGuard(jobId, references), { condition: "?>strftime('%Y-%m-%dT%H:%M:%fZ','now')", bindings: [until] }];
-  const admission: Admission = { env, db, configuration: configured, until, job: next, enrollment: e, grant, qualification, authority, references,
+  const admission: Admission = { mode, env, db, configuration: configured, until, job: next, enrollment: e, grant, qualification, authority, references,
     guards: [...common, jobGuard(next)] };
   if (!current(admission, env)) return null;
   const statements = [...common, jobGuard(job)].map(guard => derivationAssertion(env, guard));
-  const mutationIndex = statements.length;
-  statements.push(db.prepare(`UPDATE memory_derivation_jobs SET state='leased',lease_token=?,lease_expires_at=?,attempts=attempts+1
+  const mutationIndex = mode === "execute" ? statements.length : -1;
+  if (mode === "execute") statements.push(db.prepare(`UPDATE memory_derivation_jobs SET state='leased',lease_token=?,lease_expires_at=?,attempts=attempts+1
     WHERE job_id=? AND state='waiting' AND attempts=? AND not_before<=strftime('%Y-%m-%dT%H:%M:%fZ','now')
       AND expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now')`).bind(next.lease_token, next.lease_expires_at, jobId, job.attempts),
   derivationAssertion(env, { condition: "changes()=1", bindings: [] }), ...admission.guards.map(guard => derivationAssertion(env, guard)));
   const result = structuredClone(await db.batch<Row>(statements));
-  if (!current(admission, env) || !derivationResults(result, statements.length) || !derivationChanged(result[mutationIndex]!, 1)
+  if (!current(admission, env) || !derivationResults(result, statements.length) || mode === "execute" && !derivationChanged(result[mutationIndex]!, 1)
     || !result.every((row, index) => index === mutationIndex || derivationVerified(row))) throw new Error("memory-derivation-claim-unconfirmed");
-  const handle = Object.freeze({}) as NativeDerivationLease; issued.set(handle, admission); return handle;
+  const handle = Object.freeze({}) as NativeDerivationEvidence; issued.set(handle, admission); return handle;
 }
 
-function lookup(env: WorkerEnv, handle: NativeDerivationLease): Admission {
+function lookup(env: WorkerEnv, handle: NativeDerivationEvidence, mode?: "execute"): Admission {
   const admission = issued.get(handle);
-  if (!admission || !current(admission, env)) return fail();
+  if (!admission || mode && admission.mode !== mode || !current(admission, env)) return fail();
   return admission;
 }
 /** Snapshot data is not authority; consumers must retain and replay the issued
  * handle, then include all final statements with their writes in one batch. */
 export function nativeDerivationLeaseInputs(env: WorkerEnv, handle: NativeDerivationLease) {
-  const a = lookup(env, handle);
+  const a = lookup(env, handle, "execute");
   return structuredClone({ job: a.job, enrollment: a.enrollment, grant: a.grant, qualification: a.qualification,
     authority: a.authority, references: a.references, validUntil: a.until });
 }
 export function nativeDerivationLeaseStatements(env: WorkerEnv, handle: NativeDerivationLease): D1PreparedStatement[] {
-  return lookup(env, handle).guards.map(guard => derivationAssertion(env, guard));
+  return lookup(env, handle, "execute").guards.map(guard => derivationAssertion(env, guard));
 }
 export async function replayNativeDerivationLease(env: WorkerEnv, handle: NativeDerivationLease): Promise<boolean> {
   try {
     const a = lookup(env, handle), statements = nativeDerivationLeaseStatements(env, handle), result = structuredClone(await a.db.batch<Row>(statements));
+    return current(a, env) && derivationResults(result, statements.length) && result.every(derivationVerified);
+  } catch { return false; }
+}
+
+/** Shared source-reader port accepts read evidence, but the finance/provider
+ * ports above deliberately accept only the separately branded execution lease. */
+export function nativeDerivationEvidenceInputs(env: WorkerEnv, handle: NativeDerivationEvidence) {
+  const a = lookup(env, handle);
+  return structuredClone({ job: a.job, enrollment: a.enrollment, grant: a.grant, qualification: a.qualification,
+    authority: a.authority, references: a.references, validUntil: a.until });
+}
+export function nativeDerivationEvidenceStatements(env: WorkerEnv, handle: NativeDerivationEvidence) {
+  return lookup(env, handle).guards.map(guard => derivationAssertion(env, guard));
+}
+export async function replayNativeDerivationEvidence(env: WorkerEnv, handle: NativeDerivationEvidence) {
+  try {
+    const a = lookup(env, handle), statements = nativeDerivationEvidenceStatements(env, handle), result = structuredClone(await a.db.batch<Row>(statements));
     return current(a, env) && derivationResults(result, statements.length) && result.every(derivationVerified);
   } catch { return false; }
 }
