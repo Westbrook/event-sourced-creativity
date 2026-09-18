@@ -667,7 +667,7 @@ export function createCreativeEventFold(asOf = Number.POSITIVE_INFINITY, selecte
     claimedProjects,claimedEditReviews,claimOrigins.retainedState,
     originalAudio,originalVideo,videoEditCounts,originalModel3d,model3dEditCounts,revisedModel3d,generationCanvas,
     documentCompiles,previewOutputByEvent,annotations,families,preferences,conditions,state];
-  return { accept, finish, measureRetainedState:(limits=RETAINED_STATE_LIMITS)=>measureRetainedState(retainedState(),limits) };
+  return { accept, finish, measureRetainedState:(limits:{bytes:number;nodes:number;depth:number}=RETAINED_STATE_LIMITS)=>measureRetainedState(retainedState(),limits) };
 }
 
 export const shortEventType = (type: string) => type.replace(/([a-z])([A-Z])/g, "$1 $2");

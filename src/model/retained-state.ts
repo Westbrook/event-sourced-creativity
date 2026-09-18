@@ -2,7 +2,7 @@
  * Activation still requires actual Worker-runtime qualification. */
 export const RETAINED_STATE_LIMITS=Object.freeze({bytes:8*1024*1024,nodes:100_000,depth:96});
 export class RetainedStateCapacityError extends Error {constructor(){super('retained_state_capacity');}}
-export function measureRetainedState(roots:unknown,limits=RETAINED_STATE_LIMITS){
+export function measureRetainedState(roots:unknown,limits:{bytes:number;nodes:number;depth:number}=RETAINED_STATE_LIMITS){
   let bytes=0,nodes=0;const seen=new WeakSet<object>(),pending:Array<{value:unknown;depth:number}>=[{value:roots,depth:0}];
   const refuse=():never=>{throw new RetainedStateCapacityError();};
   if(Object.values(limits).some(value=>!Number.isSafeInteger(value)||value<1))refuse();

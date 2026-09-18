@@ -19,6 +19,12 @@ import { nativeStructuredOriginSchema } from "./memory-native-origin-schema.ts";
 import { nativeDocumentJobOriginSchema } from "./memory-document-job-origin-schema.ts";
 import { OUTPUT_REQUIREMENTS_SCHEMA } from "./output-requirements-schema.ts";
 import type { WorkerEnv } from "./runtime.ts";
+import { serializeEvent } from "./event-read-primitives.ts";
+import { readImageWitness, imageWitnessAcknowledged } from "./generated-image-witness.ts";
+import { qualifyClaimedImageCurrent, type ClaimedImageCurrentFacts } from "./generated-image-claimed-current.ts";
+import { inspectOutputAsset, MAX_OUTPUT_ASSET_BYTES } from "../src/model/output-asset-inspection.ts";
+import { measureRetainedState } from "../src/model/retained-state.ts";
+import type { GuestImageResultEditSnapshot } from "../src/model/generated-image-revision.ts";
 
 type Value = string | number | null;
 type Row = Readonly<Record<string, Value>>;
@@ -122,7 +128,7 @@ export type GuestImageResultWholeGraphInput = Readonly<{
 type GraphInput = Omit<GuestImageResultWholeGraphInput, "stageBodies"> & { stageBodies?: readonly string[] };
 type CanonicalGraph = Omit<GuestImageResultPublishedGraph, "privateContents"> & { privateContents: readonly Row[] };
 
-async function construct(value: unknown, fiveBodies: boolean) {
+async function construct(value: unknown, fiveBodies: boolean, resultRole: "both" | "planner" = "both") {
   const v = capture(value);
   const keys = ["lineage", "publishedAttempt", "prefixBodies", "saveBody", "claimBody", "resultBodies", ...(fiveBodies ? ["stageBodies"] : [])];
   if (!record(v) || !exactKeys(v, keys)) return fail();
@@ -135,7 +141,8 @@ async function construct(value: unknown, fiveBodies: boolean) {
     || lineage.saveLineage.target.recorded !== t || lineage.saveLineage.target.occurred !== t) return fail();
   const prefixBodies = arrayBodies(v.prefixBodies, lineage.contextLineage.events.length, 65_536);
   const saveBody = body(v.saveBody, 65_536), claimBody = body(v.claimBody, 65_536);
-  const resultBodies = arrayBodies(v.resultBodies, 2, 65_536);
+  if (fiveBodies && resultRole !== "both") return fail();
+  const resultBodies = arrayBodies(v.resultBodies, resultRole === "planner" ? 1 : 2, 65_536);
   const stageBodies = fiveBodies ? arrayBodies(v.stageBodies, 3, 131_072) : [];
   const eventEnvelopes: GuestImageResultPublishedGraph["eventEnvelopes"][number][] = [];
   const eventClientReceipts: GuestImageResultPublishedGraph["eventClientReceipts"][number][] = [];
@@ -192,6 +199,9 @@ async function construct(value: unknown, fiveBodies: boolean) {
       created_at: copied.created_at, expires_at: copied.expires_at, redacted_at: null });
   }
   for (const [i, copied] of lineage.resultCopies.entries()) {
+    // The fixed current-snapshot role needs the planner body. Both copy rows,
+    // their original fixed expiries and the whole lineage remain unchanged.
+    if (resultRole === "planner" && i !== 0) continue;
     const raw = resultBodies[i];
     if (bytes(raw) !== copied.byte_length || await digest(raw) !== copied.original_digest) return fail();
     privateContents.push({ content_id: copied.content_id, owner_id: c.destinationUserId, kind: "guest-image-result-history", content: raw,
@@ -372,6 +382,7 @@ function readOwner(request: Request, env: WorkerEnv) {
     dispose: () => { stop(); signal.removeEventListener("abort", stop); } };
 }
 type ReadOwner = ReturnType<typeof readOwner>;
+type ProofReadOwner = Pick<ReadOwner, "db" | "env" | "current" | "wait" | "text">;
 
 function readOnlySql(sql: string): boolean {
   if (!/^\s*SELECT\b/iu.test(sql)) return false;
@@ -387,7 +398,7 @@ function readOnlySql(sql: string): boolean {
 }
 
 const normalizedDdl = (sql: string) => sql.replace(/\bIF NOT EXISTS\s+/giu, "").replace(/\s+/gu, " ").trim().replace(/;$/u, "");
-async function schemas(owner: ReadOwner): Promise<Proof> {
+async function schemas(owner: ProofReadOwner): Promise<Proof> {
   const definitions = [...GUEST_CONTEXT_ADOPTION_SCHEMA, ...GUEST_IMAGE_CLAIM_SCHEMA, ...GUEST_IMAGE_STAGE_CUSTODY_SCHEMA, ...GUEST_IMAGE_RESULT_COPY_SCHEMA];
   const expected = definitions.map(sql => {
     const match = /^CREATE (TABLE|INDEX|TRIGGER)(?: IF NOT EXISTS)? ([a-z_]+)/u.exec(sql);
@@ -417,7 +428,7 @@ async function schemas(owner: ReadOwner): Promise<Proof> {
  * definition. A table/view substitution or altered key cannot turn EXISTS
  * into an ambiguous match. Owned additive families are qualified separately
  * in full; unrelated native indexes/triggers do not become new prerequisites. */
-async function nativeTables(owner: ReadOwner): Promise<Proof> {
+async function nativeTables(owner: ProofReadOwner, currentSnapshot = false): Promise<Proof> {
   const definitions = [
     "CREATE TABLE events (event_id TEXT PRIMARY KEY NOT NULL, stream_id TEXT NOT NULL, sequence INTEGER NOT NULL, occurred_at TEXT NOT NULL, recorded_at TEXT NOT NULL, actor TEXT NOT NULL, client_id TEXT NOT NULL, correlation_id TEXT NOT NULL, causation_id TEXT, compensates_event_id TEXT, schema_version INTEGER NOT NULL DEFAULT 1, type TEXT NOT NULL, payload TEXT NOT NULL)",
     "CREATE TABLE event_private_payloads (private_event_id TEXT PRIMARY KEY NOT NULL,owner_id TEXT NOT NULL,project_id TEXT,document_id TEXT,private_json TEXT NOT NULL,created_at TEXT NOT NULL,redacted_at TEXT)",
@@ -431,6 +442,12 @@ async function nativeTables(owner: ReadOwner): Promise<Proof> {
     "CREATE UNIQUE INDEX idx_events_stream_sequence ON events(stream_id, sequence)",
     "CREATE TRIGGER events_block_update BEFORE UPDATE ON events BEGIN SELECT RAISE(ABORT, 'events are append-only'); END",
     "CREATE TRIGGER events_block_delete BEFORE DELETE ON events BEGIN SELECT RAISE(ABORT, 'events are append-only'); END",
+    ...(currentSnapshot ? [
+      "CREATE TABLE artifact_revisions(revision_id TEXT PRIMARY KEY NOT NULL,owner_id TEXT NOT NULL,organization_id TEXT,project_access_id TEXT,project_id TEXT NOT NULL,document_id TEXT NOT NULL,artifact_id TEXT NOT NULL,revision INTEGER NOT NULL,content_json TEXT NOT NULL,content_sha256 TEXT NOT NULL,created_by_user_id TEXT NOT NULL,created_at TEXT NOT NULL,expires_at TEXT NOT NULL,redacted_at TEXT)",
+      "CREATE UNIQUE INDEX idx_artifact_revisions_owner_artifact_revision ON artifact_revisions(owner_id,artifact_id,revision)",
+      "CREATE INDEX idx_artifact_revisions_project_artifact ON artifact_revisions(project_access_id,artifact_id,revision)",
+      "CREATE INDEX idx_artifact_revisions_expiry ON artifact_revisions(expires_at) WHERE redacted_at IS NULL",
+    ] : []),
   ];
   // Exact retained Drizzle declarations: 0000,0002,0007,0011,0013,0015,0016.
   // Privacy migration replays existing index/trigger SQL, so valid databases
@@ -448,17 +465,21 @@ async function nativeTables(owner: ReadOwner): Promise<Proof> {
     idx_events_stream_sequence: "CREATE UNIQUE INDEX `idx_events_stream_sequence` ON `events` (`stream_id`,`sequence`)",
     events_block_update: "CREATE TRIGGER `events_block_update` BEFORE UPDATE ON `events` BEGIN SELECT RAISE(ABORT, 'events are append-only'); END",
     events_block_delete: "CREATE TRIGGER `events_block_delete` BEFORE DELETE ON `events` BEGIN SELECT RAISE(ABORT, 'events are append-only'); END",
+    artifact_revisions: "CREATE TABLE IF NOT EXISTS `artifact_revisions` (`revision_id` text PRIMARY KEY NOT NULL, `owner_id` text NOT NULL, `organization_id` text, `project_access_id` text, `project_id` text NOT NULL, `document_id` text NOT NULL, `artifact_id` text NOT NULL, `revision` integer NOT NULL, `content_json` text NOT NULL, `content_sha256` text NOT NULL, `created_by_user_id` text NOT NULL, `created_at` text NOT NULL, `expires_at` text NOT NULL, `redacted_at` text)",
+    idx_artifact_revisions_owner_artifact_revision: "CREATE UNIQUE INDEX IF NOT EXISTS `idx_artifact_revisions_owner_artifact_revision` ON `artifact_revisions` (`owner_id`,`artifact_id`,`revision`)",
+    idx_artifact_revisions_project_artifact: "CREATE INDEX IF NOT EXISTS `idx_artifact_revisions_project_artifact` ON `artifact_revisions` (`project_access_id`,`artifact_id`,`revision`)",
+    idx_artifact_revisions_expiry: "CREATE INDEX IF NOT EXISTS `idx_artifact_revisions_expiry` ON `artifact_revisions` (`expires_at`) WHERE \"artifact_revisions\".\"redacted_at\" IS NULL",
   };
   const normalize = (sql: string) => normalizedDdl(sql).replace(/^CREATE TABLE "events"/u, "CREATE TABLE events").replace(/\s*([(),])\s*/gu, "$1");
   const expected = definitions.map(sql => {
     const match = /^CREATE (TABLE|(?:UNIQUE )?INDEX|TRIGGER)(?: IF NOT EXISTS)? ([a-z_]+)/u.exec(sql);
     if (!match) return fail(); return { type: match[1].replace("UNIQUE ", "").toLowerCase(), name: match[2], sql: normalize(sql) };
   });
-  if (expected.length !== 12) return fail();
+  if (expected.length !== (currentSnapshot ? 16 : 12)) return fail();
   const names = JSON.stringify(expected.map(item => item.name));
   const catalog = `(SELECT json_group_array(json_object('type',type,'name',name,'sql',definition)) FROM
     (SELECT type,name,CASE WHEN typeof(sql)='text' AND length(CAST(sql AS BLOB))<=16384 THEN sql ELSE NULL END AS definition
-      FROM sqlite_schema WHERE name IN(SELECT value FROM json_each(?)) ORDER BY name LIMIT 13))`;
+      FROM sqlite_schema WHERE name IN(SELECT value FROM json_each(?)) ORDER BY name LIMIT ${currentSnapshot ? 17 : 13}))`;
   const row = await owner.db.prepare(`SELECT ${catalog} AS snapshot`).bind(names).first<{ snapshot: string }>(); owner.current();
   const snapshot = owner.text(row?.snapshot, 65_536); let found: unknown;
   try { found = JSON.parse(snapshot); } catch { return fail(); }
@@ -506,7 +527,7 @@ function ownership(lineage: GuestImageResultClaimLineage): Proof {
     stream, JSON.stringify(events), m.projectId, m.documentId, JSON.stringify(blocks), output, output, m.generationId, output, `generated-image/${outputHex}`] };
 }
 
-async function memory(owner: ReadOwner, graph: CanonicalGraph): Promise<Proof[]> {
+async function memory(owner: ProofReadOwner, graph: CanonicalGraph): Promise<Proof[]> {
   const exclusion = await owner.wait(() => nativeMemoryAnswerExclusion(owner.env, { answerAlias: "content" }));
   const structured = await owner.wait(() => nativeStructuredOriginSchema(owner.env));
   const documentJob = await owner.wait(() => nativeDocumentJobOriginSchema(owner.env));
@@ -603,6 +624,508 @@ export async function readGuestImageResultCustody(request: Request, env: WorkerE
       || Object.hasOwn(result, "error") && Object.getOwnPropertyDescriptor(result, "error")?.value !== undefined
       || !Array.isArray(result.results) || result.results.length !== 1 || !isCurrent(result.results[0]))) return null;
     return receipt;
+  } catch { return null; }
+  finally { owner?.dispose(); }
+}
+
+// The current-snapshot profile is a separate fixed operation. None of these
+// private adapters or phases can be obtained from an informational receipt.
+const CURRENT_SNAPSHOT_PROFILE = Object.freeze({
+  deadlineMs: 30_000, initialCanonicalReads: 33, witnessStatements: 1733, statements: 2186,
+  boundaryStatements: 210, witnessGuardStatements: 131, nativeEnvelopeBytes: 1_048_576,
+  // 65,536 nonempty chunks plus the one terminal EOF read.
+  guardEnvelopeBytes: 16_384, metadataBytes: 65_536, metadataCaptures: 2, streamReads: 65_537,
+  ownedPngBytes: MAX_OUTPUT_ASSET_BYTES, inspectorScratchBytes: 2 * MAX_OUTPUT_ASSET_BYTES + 2 * 32 * 1024 * 1024,
+  retainedDisclosureBytes: 16_000_000, aggregateBytes: 155_108_864,
+});
+type CurrentPhase = "canonical" | "witness" | "qualify" | "before" | "get" | "inspect" | "head" | "final" | "returned";
+const currentTyped = Object.getPrototypeOf(Uint8Array.prototype);
+const currentByteLength = Object.getOwnPropertyDescriptor(currentTyped, "byteLength")!.get!;
+const currentBuffer = Object.getOwnPropertyDescriptor(currentTyped, "buffer")!.get!;
+const currentSet = Uint8Array.prototype.set, currentFill = Uint8Array.prototype.fill;
+const currentGetReader = ReadableStream.prototype.getReader, currentCancelBody = ReadableStream.prototype.cancel;
+const currentReadChunk = ReadableStreamDefaultReader.prototype.read, currentCancelReader = ReadableStreamDefaultReader.prototype.cancel;
+const currentReleaseReader = ReadableStreamDefaultReader.prototype.releaseLock;
+const currentText = (value: unknown, maximum: number): value is string => typeof value === "string" && value.length <= maximum
+  && value.isWellFormed() && !/[\p{Cc}]/u.test(value) && bytes(value) <= maximum;
+function currentCancelObject(value: unknown): void {
+  try { if (value && typeof value === "object") { const body = Reflect.get(value, "body", value);
+    if (body) void Reflect.apply(currentCancelBody, body, []).catch(() => undefined); } } catch { /* A late native object grants no disclosure. */ }
+}
+function measureCurrentRetained(value: unknown, maximum: number = CURRENT_SNAPSHOT_PROFILE.retainedDisclosureBytes): number {
+  return measureRetainedState(value, { bytes: maximum, nodes: 100_000, depth: 96 }).bytes;
+}
+function currentSnapshotOwner(request: Request, env: WorkerEnv, outputId: string) {
+  if (!(request instanceof Request)) return fail();
+  const db = env.DB, bucket = env.MEDIA, signal = request.signal, url = request.url, method = request.method;
+  const headers = JSON.stringify(Array.from(request.headers)), origin = new URL(url), site = request.headers.get("sec-fetch-site");
+  const suppliedOrigin = request.headers.get("origin"), cohort = env.FORMA_PILOT_COHORT_ID, admins = env.FORMA_ADMIN_EMAILS;
+  if (method !== "GET" || request.body !== null || origin.protocol !== "https:" || origin.username || origin.password || origin.search || origin.hash
+    || origin.pathname !== `/api/generated-images/${outputId}` || suppliedOrigin !== null && suppliedOrigin !== origin.origin
+    || site !== null && site !== "same-origin" && site !== "none" || bytes(headers) > 32_768
+    || /(?:^|;\s*)(?:forma_project_context|forma_impersonation)=/u.test(request.headers.get("cookie") ?? "")) return fail();
+  const monotonicDeadline = performance.now() + CURRENT_SNAPSHOT_PROFILE.deadlineMs;
+  const wallDeadline = Date.now() + CURRENT_SNAPSHOT_PROFILE.deadlineMs;
+  let stopped = false, phase: CurrentPhase = "canonical", prefixLength = 16, canonicalReads = 0, witnessReads = 0, totalReads = 0;
+  let witnessReservation = 0, memoryBatchUsed = false, beforeUsed = false, finalUsed = false, metadataCaptures = 0, metadataBytes = 0, streamReads = 0;
+  let requestBytes = 0, resultBytes = 0, retainedBytes = 0, owned: Uint8Array<ArrayBuffer> | null = null, users = 0;
+  let canonicalRetainedBytes = 0, witnessRetainedBytes = 0, witnessEvents = 0, witnessRevisions = 0, activeSqlBytes = 0, nativeCaptureScratch = 0;
+  let requiredExpiresAt: number | null = null;
+  let proofIdentity: readonly Proof[] | null = null;
+  const waiters = new Set<() => void>(), cancellations = new Set<() => void>();
+  const retire = () => { if (owned && users === 0) { Reflect.apply(currentFill, owned, [0]); owned = null; } };
+  const stop = () => { if (stopped) return; stopped = true; for (const reject of waiters) reject(); waiters.clear();
+    for (const cancel of cancellations) { try { cancel(); } catch { /* Best effort only. */ } } cancellations.clear(); retire(); };
+  const current = () => {
+    if (stopped || signal.aborted || request.signal !== signal || env.DB !== db || env.MEDIA !== bucket
+      || request.url !== url || request.method !== method || request.body !== null || JSON.stringify(Array.from(request.headers)) !== headers
+      || env.FORMA_PILOT_COHORT_ID !== cohort || env.FORMA_ADMIN_EMAILS !== admins
+      || performance.now() >= monotonicDeadline || Date.now() >= wallDeadline
+      || requiredExpiresAt !== null && Date.now() >= requiredExpiresAt) { stop(); return fail(); }
+  };
+  // Logical own data only. Request, D1 and R2 native implementation heaps are
+  // opaque; this is not a heap/RSS guarantee. No function or adapter escapes.
+  const ownerData = () => ({ url, method, headers, origin: origin.href, suppliedOrigin, site, cohort, admins,
+    monotonicDeadline, wallDeadline, requiredExpiresAt, phase, stopped, prefixLength, canonicalReads, witnessReads, totalReads,
+    witnessReservation, memoryBatchUsed, beforeUsed, finalUsed, metadataCaptures, metadataBytes, streamReads,
+    requestBytes, resultBytes, retainedBytes, users, canonicalRetainedBytes, witnessRetainedBytes, witnessEvents, witnessRevisions, activeSqlBytes, nativeCaptureScratch,
+    waiterCount: waiters.size, cancellationCount: cancellations.size });
+  const accounting = (roots: unknown, reserve = 0) => {
+    current(); if (!Number.isSafeInteger(reserve) || reserve < 0) return fail();
+    const measured = measureCurrentRetained([ownerData(), roots], CURRENT_SNAPSHOT_PROFILE.aggregateBytes);
+    if (measured + reserve > CURRENT_SNAPSHOT_PROFILE.aggregateBytes) return fail(); return measured;
+  };
+  current(); signal.addEventListener("abort", stop, { once: true });
+  let idleTimer = setTimeout(stop, Math.max(0, Math.min(monotonicDeadline - performance.now(), wallDeadline - Date.now())));
+  const wait = async <T>(work: () => Promise<T>, late?: (value: T) => void): Promise<T> => {
+    current(); let delivered = false, result: T, cleaned = false, refused = false, rejectStop: () => void = () => undefined;
+    const cleanup = () => { if (delivered && !cleaned && late) { cleaned = true; late(result); } };
+    const ended = new Promise<never>((_, reject) => { rejectStop = () => { refused = true; cleanup(); reject(new Error("guest_image_result_current_unavailable")); }; waiters.add(rejectStop); });
+    const pending = Promise.resolve().then(() => { current(); return work(); }).then(value => { delivered = true; result = value;
+      if (refused || stopped) cleanup(); return value; });
+    try { const value = await Promise.race([pending, ended]); current(); return value; }
+    catch (error) { refused = true; cleanup(); stop(); throw error; }
+    finally { waiters.delete(rejectStop); void pending.catch(() => undefined); }
+  };
+  const observe = <T>(value: T, maximum: number): T => {
+    current(); const seen = new Set<object>(); let nodes = 0, strings = 0;
+    const visit = (item: unknown, depth: number): void => {
+      if (++nodes > 32_768 || depth > 32) return fail();
+      if (item === null || item === undefined || typeof item === "boolean") return;
+      if (typeof item === "number") { if (!Number.isFinite(item)) fail(); return; }
+      if (typeof item === "string") { const size = bytes(item); strings += size;
+        if (!item.isWellFormed() || size > maximum || strings > maximum) fail(); return; }
+      if (typeof item !== "object" || seen.has(item) || (Array.isArray(item) ? Object.getPrototypeOf(item) !== Array.prototype : !record(item))) return fail();
+      seen.add(item); const descriptors = Object.getOwnPropertyDescriptors(item);
+      if (Reflect.ownKeys(descriptors).some(key => typeof key !== "string")) return fail();
+      for (const [key, descriptor] of Object.entries(descriptors)) {
+        if (Array.isArray(item) && key === "length") continue;
+        strings += bytes(key); if (strings > maximum || ["__proto__", "prototype", "constructor"].includes(key)
+          || !descriptor.enumerable || !Object.hasOwn(descriptor, "value") || Array.isArray(item) && !/^(0|[1-9]\d*)$/u.test(key)) return fail();
+        visit(descriptor.value, depth + 1);
+      }
+      if (Array.isArray(item) && (item.length > 256 || Object.keys(item).length !== item.length)) return fail();
+    };
+    visit(value, 0);
+    const originalSize = measureCurrentRetained(value, CURRENT_SNAPSHOT_PROFILE.aggregateBytes);
+    // Both original and detached envelopes coexist. Descriptor validation also
+    // retains per visited slot: a 4-property descriptor (value + three flags),
+    // a 2-slot Object.entries pair, entries/key-array slots, and seen-set slot.
+    // Key characters and JSON/UTF-8 encoding scratch are bounded separately
+    // by the admitted envelope size. These are finite logical reservations.
+    const reflectionSlot = (64 + 4 * 16 + 2 * (5 + 8 + 10 + 12) + 3 * 16 + 8) + (64 + 2 * 16) + 2 * 16 + 32;
+    const size = nativeEnvelopeSize(value);
+    if (size > maximum) return fail();
+    const nativeScratch = 2 * originalSize + nodes * reflectionSlot + 4 * size;
+    nativeCaptureScratch = nativeScratch;
+    accounting(null, retainedBytes + canonicalRetainedBytes + witnessRetainedBytes + activeSqlBytes + nativeScratch);
+    const detached = structuredClone(value); resultBytes += size;
+    // Cumulative envelope traffic is distinct from retained logical memory.
+    if (size > maximum || resultBytes > CURRENT_SNAPSHOT_PROFILE.statements * nativeEnvelopeBytes + 512 * 804) return fail();
+    if (phase === "canonical") {
+      canonicalRetainedBytes += originalSize;
+      accounting(null, canonicalRetainedBytes + activeSqlBytes + nativeScratch);
+    }
+    return detached;
+  };
+  type Statement = { native: D1PreparedStatement; sql: string; values: Array<string | number | null> };
+  const statements = new WeakMap<object, Statement>();
+  const retainWitness = (queries: readonly Statement[], result: unknown[]) => {
+    if (phase !== "witness") return;
+    if (witnessReads === queries.length) {
+      // Initial scene-source schema/version guard family; the final compact
+      // group keeps its SQL/bindings and three fixed assertion records.
+      witnessRetainedBytes += 2 * measureCurrentRetained(queries.map(query => ({ sql: query.sql, bindings: query.values })));
+    }
+    for (let index = 0; index < queries.length; index++) {
+      const sql = queries[index]!.sql, envelope = result[index];
+      if (!record(envelope) || !Array.isArray(envelope.results)) return fail();
+      if (sql.includes("page AS MATERIALIZED")) {
+        for (const cell of envelope.results) {
+          if (!record(cell) || typeof cell.witness !== "string" || ++witnessEvents > 50_000) return fail();
+          // generated-image-witness eventFields: 18 scalar fields, at most
+          // sixteen strings and two numbers. JSON supplies all key/character
+          // bytes; record/property/string headers and array slot add 784.
+          witnessRetainedBytes += 2 * cell.witness.length + 784;
+        }
+      } else if (sql.startsWith("SELECT CASE WHEN") && sql.includes(" AS witness FROM artifact_revisions")) {
+        if (envelope.results.length !== 1) return fail(); const cell = envelope.results[0];
+        if (!record(cell) || typeof cell.witness !== "string" || ++witnessRevisions > 128) return fail();
+        // revisionFields has fourteen scalars: at most thirteen strings and
+        // one number. Parsed row + array slot adds 632. The exact witness text
+        // is also in the un-compacted guard and its compact bindings (2 copies
+        // under the logical string meter), hence six times its UTF-16 length.
+        witnessRetainedBytes += 6 * cell.witness.length + 632 + 2 * 24;
+        // Each compact group contains <=8 predicates. Three balanced joining
+        // levels plus the original and final SQL coexist conservatively; each
+        // predicate is this fixed SELECT expression with <=128 framing chars.
+        const guardSql = sql.length + 128;
+        witnessRetainedBytes += 5 * (24 + 2 * guardSql) + measureCurrentRetained(queries[index]!.values)
+          + 2 * (64 + 3 * 16) + 2 * (64 + 6 * 16);
+      } else if (sql.includes(" AS body_bytes FROM artifact_revisions")) {
+        // The helper keeps this exact two-column roster while reading bodies.
+        witnessRetainedBytes += measureCurrentRetained(envelope.results);
+      }
+    }
+    accounting(null, canonicalRetainedBytes + witnessRetainedBytes + activeSqlBytes + nativeCaptureScratch);
+  };
+  const charge = (queries: readonly Statement[]) => {
+    current(); totalReads += queries.length; if (totalReads > CURRENT_SNAPSHOT_PROFILE.statements) return fail();
+    if (phase === "canonical") { canonicalReads += queries.length; if (canonicalReads > prefixLength + 17) return fail(); }
+    else if (phase === "witness") { if (queries.length !== witnessReservation) return fail(); witnessReservation = 0;
+      witnessReads += queries.length; if (witnessReads > CURRENT_SNAPSHOT_PROFILE.witnessStatements) return fail(); }
+    else if (phase !== "before" && phase !== "final") return fail();
+    const sqlRoots = queries.map(query => ({ sql: query.sql, bindings: query.values }));
+    activeSqlBytes = 2 * measureCurrentRetained(sqlRoots, CURRENT_SNAPSHOT_PROFILE.aggregateBytes);
+    for (const query of queries) { const bound = bytes(JSON.stringify(query.values)); if (bound > nativeEnvelopeBytes) return fail();
+      requestBytes += bytes(query.sql) + bound; activeSqlBytes += 4 * bound; }
+    accounting(null, retainedBytes + canonicalRetainedBytes + witnessRetainedBytes + activeSqlBytes);
+    if (requestBytes > CURRENT_SNAPSHOT_PROFILE.statements * (100_000 + nativeEnvelopeBytes)) return fail();
+  };
+  const wrap = (statement: D1PreparedStatement, sql: string, values: Array<string | number | null> = []): D1PreparedStatement => {
+    const query: Statement = { native: statement, sql, values };
+    const wrapped = {
+      bind: (...input: unknown[]) => {
+        current(); if (input.length > 100 || input.some(value => value !== null && typeof value !== "number" && typeof value !== "string"
+          || typeof value === "number" && !Number.isFinite(value) || typeof value === "string" && bytes(value) > nativeEnvelopeBytes)) return fail();
+        return wrap(statement.bind(...input), sql, input as Array<string | number | null>);
+      },
+      first: (...args: unknown[]) => { if (phase !== "canonical") return fail(); charge([query]);
+        return wait(() => Reflect.apply(statement.first, statement, args)).then(value => {
+          const result = observe(value, nativeEnvelopeBytes); activeSqlBytes = 0; nativeCaptureScratch = 0; return result; }); },
+      all: (...args: unknown[]) => { if (phase !== "canonical") return fail(); charge([query]);
+        return wait(() => Reflect.apply(statement.all, statement, args)).then(value => {
+          const result = observe(value, nativeEnvelopeBytes); activeSqlBytes = 0; nativeCaptureScratch = 0; return result; }); },
+      raw: fail, run: fail,
+    } as unknown as D1PreparedStatement;
+    statements.set(wrapped, query); return wrapped;
+  };
+  const boundedDb = {
+    prepare: (sql: string) => {
+      current(); if (typeof sql !== "string" || bytes(sql) > 100_000) return fail();
+      // Only the unchanged named witness emits this CTE family. Wrapping its
+      // SELECT preserves the receipt profile's strict parser unchanged.
+      const admitted = phase === "witness" && /^WITH source AS \(SELECT e\.\*,p\.owner_id private_owner,/u.test(sql)
+        ? `SELECT * FROM (${sql})` : sql;
+      if (bytes(admitted) > 100_000 || !readOnlySql(admitted)) return fail(); return wrap(db.prepare(admitted), admitted);
+    },
+    batch: (queries: D1PreparedStatement[]) => {
+      current(); if (!Array.isArray(queries) || !queries.length || queries.length > CURRENT_SNAPSHOT_PROFILE.boundaryStatements) return fail();
+      if (phase === "canonical") { if (memoryBatchUsed || queries.length !== 3) return fail(); memoryBatchUsed = true; }
+      else if (phase === "witness") { if (queries.length !== witnessReservation || queries.length > CURRENT_SNAPSHOT_PROFILE.witnessGuardStatements) return fail(); }
+      else if (phase === "before" || phase === "final") { if (!proofIdentity || queries.length !== proofIdentity.length) return fail(); }
+      else return fail();
+      const original = queries.map(query => statements.get(query) ?? fail()); charge(original);
+      const perResult = phase === "before" || phase === "final" ? CURRENT_SNAPSHOT_PROFILE.guardEnvelopeBytes : nativeEnvelopeBytes;
+      return wait(() => db.batch(original.map(query => query.native))).then(value => {
+        const result = observe(value, queries.length * perResult + 512);
+        if (!Array.isArray(result) || result.length !== queries.length || result.some(item => nativeEnvelopeSize(item) > perResult)) return fail();
+        retainWitness(original, result);
+        activeSqlBytes = 0; nativeCaptureScratch = 0;
+        return result;
+      });
+    }, exec: fail, dump: fail, withSession: fail,
+  } as unknown as WorkerEnv["DB"];
+  const readEnv = new Proxy(env, { get(target, key, receiver) { current(); return key === "DB" ? boundedDb : Reflect.get(target, key, receiver); },
+    set: fail, defineProperty: fail, deleteProperty: fail });
+  const prove = async (parts: readonly Proof[], boundary: "before" | "final") => {
+    current(); if (boundary === "before") {
+      if (phase !== "qualify" || beforeUsed || !memoryBatchUsed || parts.length < 1 || parts.length > 3 * prefixLength + 27 + 3 + 131 + 1) return fail();
+      beforeUsed = true; proofIdentity = parts;
+    } else { if (phase !== "head" || !beforeUsed || finalUsed || parts !== proofIdentity) return fail(); finalUsed = true; }
+    phase = boundary;
+    const results = await boundedDb.batch(parts.map(proof => boundedDb.prepare(`SELECT 1 AS current WHERE ${proof.sql}`).bind(...proof.bindings)));
+    current(); if (!imageWitnessAcknowledged(results, parts.length)) return fail();
+    phase = boundary === "before" ? "get" : "returned";
+  };
+  let nativeGet: unknown, nativeHead: unknown;
+  try {
+    nativeGet = Reflect.get(bucket, "get", bucket); nativeHead = Reflect.get(bucket, "head", bucket);
+    if (typeof nativeGet !== "function" || typeof nativeHead !== "function") return fail(); current();
+  } catch (error) { stop(); clearTimeout(idleTimer); signal.removeEventListener("abort", stop); throw error; }
+  return {
+    db: boundedDb, env: readEnv, origin: origin.origin, current, wait, text: body, monotonicDeadline, wallDeadline,
+    prefix(n: number) { current(); if (phase !== "canonical" || !Number.isSafeInteger(n) || n < 3 || n > 16) return fail(); prefixLength = n;
+      if (canonicalReads > prefixLength + 17) return fail(); },
+    beginWitness(roots: unknown) { current(); if (phase !== "canonical" || !memoryBatchUsed) return fail();
+      canonicalRetainedBytes = accounting(roots); phase = "witness";
+      // Version assertion/COUNT guards and their <=3 compact records are a
+      // fixed source family. Retain their actual SELECTs in the first batch;
+      // this reservation also covers the two accumulating array headers.
+      witnessRetainedBytes = 2 * 64; },
+    reserveWitness(n: number) { current(); if (phase !== "witness" || witnessReservation || !Number.isSafeInteger(n) || n < 1
+      || n > CURRENT_SNAPSHOT_PROFILE.witnessGuardStatements || witnessReads + n > CURRENT_SNAPSHOT_PROFILE.witnessStatements) return fail(); witnessReservation = n; },
+    endWitness(actual: number) { current(); if (phase !== "witness" || witnessReservation || actual !== witnessReads) return fail(); phase = "qualify"; },
+    accounting,
+    retain(value: CurrentDisclosure) { current(); if (phase !== "qualify" || requiredExpiresAt !== null) return fail();
+      const expiry = Date.parse(value.expiresAt);
+      if (!Number.isSafeInteger(expiry) || new Date(expiry).toISOString() !== value.expiresAt || expiry <= Date.now()) return fail();
+      requiredExpiresAt = expiry;
+      // Narrow this same owner's lifetime; never create a new deadline after
+      // qualification. Both full SQL batches still check live DB-now clocks.
+      clearTimeout(idleTimer);
+      idleTimer = setTimeout(stop, Math.max(0, Math.min(monotonicDeadline - performance.now(), wallDeadline - Date.now(), expiry - Date.now())));
+      canonicalRetainedBytes = 0; witnessRetainedBytes = 0;
+      retainedBytes = measureCurrentRetained([ownerData(), value]); current(); },
+    retainMedia(value: unknown) { current(); if (phase !== "inspect" && phase !== "head") return fail();
+      retainedBytes = measureCurrentRetained([ownerData(), value]); },
+    prove,
+    get(key: string) { current(); if (phase !== "get" || !beforeUsed || owned) return fail(); phase = "inspect";
+      return wait(() => Promise.resolve(Reflect.apply(nativeGet as (...args: unknown[]) => unknown, bucket, [key])), currentCancelObject); },
+    metadata(size: number) { current(); if (phase !== "inspect" && phase !== "head" || !Number.isSafeInteger(size) || size < 0
+      || ++metadataCaptures > CURRENT_SNAPSHOT_PROFILE.metadataCaptures || (metadataBytes += size) > CURRENT_SNAPSHOT_PROFILE.metadataBytes) return fail(); },
+    stream() { current(); if (phase !== "inspect" || ++streamReads > CURRENT_SNAPSHOT_PROFILE.streamReads) return fail(); },
+    own(size: number) { current(); if (phase !== "inspect" || owned || !Number.isSafeInteger(size) || size < 1 || size > MAX_OUTPUT_ASSET_BYTES
+      || retainedBytes + size + CURRENT_SNAPSHOT_PROFILE.inspectorScratchBytes > CURRENT_SNAPSHOT_PROFILE.aggregateBytes) return fail();
+      owned = new Uint8Array(size); return owned; },
+    use<T>(value: Uint8Array<ArrayBuffer>, work: () => Promise<T>): Promise<T> {
+      current(); if (phase !== "inspect" || value !== owned) return fail();
+      return wait(() => { users++; let pending: Promise<T>;
+        try { pending = Promise.resolve(work()); } catch (error) { users--; if (stopped) retire(); throw error; }
+        return pending.finally(() => { users--; if (stopped) retire(); }); });
+    },
+    head(key: string) { current(); if (phase !== "inspect" || !owned || users) return fail(); phase = "head";
+      return wait(() => Promise.resolve(Reflect.apply(nativeHead as (...args: unknown[]) => unknown, bucket, [key]))); },
+    release() { current(); if (phase !== "head" || users) return fail(); retire(); },
+    onCancel(cancel: () => void) { current(); if (cancellations.size >= 4) return fail(); cancellations.add(cancel); return () => cancellations.delete(cancel); },
+    finish() { current(); if (phase !== "returned" || !finalUsed || owned) return fail(); },
+    dispose() { stop(); clearTimeout(idleTimer); signal.removeEventListener("abort", stop); },
+  };
+}
+type CurrentSnapshotOwner = ReturnType<typeof currentSnapshotOwner>;
+
+type CurrentDisclosure = Readonly<{
+  snapshot: Readonly<GuestImageResultEditSnapshot>; parts: readonly Proof[]; mediaKey: string;
+  metadata: Readonly<Record<string, string>>; expiresAt: string;
+}>;
+function currentArtifactKey(outputId: string): string {
+  return "generated-image/" + Array.from(new TextEncoder().encode(outputId), byte => byte.toString(16).padStart(2, "0")).join("");
+}
+function currentScopeProof(ownerId: string, custodyId: string, facts: ClaimedImageCurrentFacts): Proof {
+  const snapshot = facts.snapshot, key = facts.artifactKey;
+  const urls = [snapshot.media.url, ...snapshot.sources.map(source => source.mediaUrl),
+    ...facts.retained.flatMap(value => value.envelope.imageRevision ? [value.envelope.imageRevision.media.url] : [])];
+  const resources = [...new Set([key, snapshot.outputId, ...urls.flatMap(url => {
+    if (!url.startsWith("/api/media/")) return fail(); const raw = decodeURIComponent(url.slice("/api/media/".length));
+    if (`/api/media/${encodeURIComponent(raw)}` !== url) return fail(); return [raw, url];
+  }), ...facts.localContext.resourceIds])];
+  const eventIds = [...new Set([...facts.retained.flatMap(value => value.event ? [value.event.eventId] : []), ...facts.localContext.eventIds])];
+  return { sql: `(SELECT COUNT(*) FROM experience_guest_image_result_custodies WHERE destination_user_id=? AND output_id=?)=1
+    AND EXISTS(SELECT 1 FROM experience_guest_image_result_custodies WHERE destination_user_id=? AND output_id=? AND custody_id=?)
+    AND NOT EXISTS(SELECT 1 FROM artifact_revisions WHERE owner_id=? AND artifact_id IN (?,?)
+      AND (organization_id IS NOT NULL OR project_access_id IS NOT NULL OR project_id<>? OR document_id<>?
+        OR created_by_user_id<>? OR redacted_at IS NOT NULL OR created_at>${nowSql} OR expires_at<=${nowSql}))
+    AND ?>${nowSql}
+    AND NOT EXISTS(SELECT 1 FROM project_resource_scopes WHERE resource_id IN(SELECT value FROM json_each(?)))
+    AND NOT EXISTS(SELECT 1 FROM project_event_scopes WHERE event_id IN(SELECT value FROM json_each(?)))`,
+  bindings: [ownerId, snapshot.outputId, ownerId, snapshot.outputId, custodyId, ownerId, key, snapshot.outputId,
+    snapshot.projectId, snapshot.documentId, ownerId, facts.retainedExpiresAt, JSON.stringify(resources), JSON.stringify(eventIds)] };
+}
+async function collectCurrentDisclosure(scope: CurrentSnapshotOwner, request: Request, outputId: string): Promise<CurrentDisclosure> {
+  const auth = await scope.wait(() => readExistingPrincipalRequest(request, scope.env, "creator", { account: "principal" }));
+  if ("kind" in auth || auth.response || !auth.user || requireConsent(auth.user) || auth.user.fictional || auth.user.projectExecution
+    || auth.user.userId.startsWith("guest:") || auth.user.streamId !== `creative:${auth.user.userId}`
+    || !auth.user.access.capabilities.includes("project.author")) return fail();
+  const actor = auth.user, schema = await schemas(scope), nativeSchema = await nativeTables(scope, true);
+  const custody = await scope.db.prepare(`SELECT ${custodyColumns.join(",")} FROM experience_guest_image_result_custodies
+    WHERE destination_user_id=? AND output_id=? AND length(CAST(lineage_json AS BLOB))<=262144
+      AND (SELECT COUNT(*) FROM experience_guest_image_result_custodies WHERE destination_user_id=? AND output_id=?)=1`)
+    .bind(actor.userId, outputId, actor.userId, outputId).first<Record<string, Value>>(); scope.current();
+  if (!custody) return fail();
+  const raw = scope.text(custody.lineage_json, 262_144), lineage = await scope.wait(() => readGuestImageResultClaimLineage(JSON.parse(raw)));
+  scope.prefix(lineage.copy.manifest.sourceHead);
+  const rows = await scope.wait(() => guestImageResultClaimRows(lineage));
+  if (!same(custody, rows.custody) || rows.custody.output_id !== outputId || lineage.copy.destinationUserId !== actor.userId
+    || scope.origin !== lineage.contextLineage.origin) return fail();
+  const authority = projectIntakeAuthority(scope.env, { user: actor, principal: actor, impersonation: null },
+    { projectId: lineage.copy.manifest.projectId, documentId: lineage.copy.manifest.documentId });
+  if (!isCurrent(await scope.db.prepare(`SELECT 1 AS current WHERE ${authority.sql}`).bind(...authority.bindings).first())) return fail();
+  const attempt = await scope.db.prepare(`SELECT ${GUEST_IMAGE_RESULT_COPY_COLUMNS.join(",")} FROM experience_guest_image_result_copy_attempts
+    WHERE attempt_id=? AND state='published' AND length(CAST(descriptor_json AS BLOB))<=65536 AND length(CAST(lease_snapshot_json AS BLOB))<=65536
+      AND length(CAST(destination_metadata_json AS BLOB))<=8192`).bind(lineage.copy.attemptId).first<GuestImageResultCopyAttemptRow>(); scope.current();
+  if (!attempt) return fail();
+  const privateEvent = async (id: string) => {
+    const row = await scope.db.prepare(`SELECT private_json FROM event_private_payloads WHERE private_event_id=? AND owner_id=?
+      AND redacted_at IS NULL AND length(CAST(private_json AS BLOB)) BETWEEN 1 AND 65536`).bind(id, actor.userId).first<{ private_json: string }>();
+    scope.current(); return scope.text(row?.private_json, 65_536);
+  };
+  const prefixBodies: string[] = [];
+  for (const target of lineage.contextLineage.events) prefixBodies.push(await privateEvent(target.id));
+  const saveBody = await privateEvent(lineage.saveLineage.target.id), claimBody = await privateEvent(lineage.canonical.eventId);
+  const plannerCopy = lineage.resultCopies[0];
+  const planner = await scope.db.prepare(`SELECT content FROM private_content WHERE content_id=? AND owner_id=? AND kind='guest-image-result-history'
+    AND redacted_at IS NULL AND created_at<=${nowSql} AND expires_at>${nowSql} AND length(CAST(content AS BLOB)) BETWEEN 1 AND 65536`)
+    .bind(plannerCopy.content_id, actor.userId).first<{ content: string }>(); scope.current();
+  const rawJson = scope.text(planner?.content, 65_536);
+  const graph = await scope.wait(() => construct({ lineage, publishedAttempt: attempt, prefixBodies, saveBody, claimBody, resultBodies: [rawJson] }, false, "planner"));
+  const exclusions = await memory(scope, graph.afterGraph), canonicalParts = [schema, nativeSchema, authority, ...graph.parts, ...exclusions];
+  // These bindings remain in this function's frame throughout qualification;
+  // do not pretend a const local has retired merely because it was last read.
+  const canonicalRoots = [auth, actor, schema, nativeSchema, custody, raw, lineage, rows, authority, attempt,
+    prefixBodies, saveBody, claimBody, plannerCopy, planner, rawJson, graph, exclusions, canonicalParts];
+  scope.beginWitness(canonicalRoots);
+  const witness = await readImageWitness(scope.env, actor.streamId, actor.userId, currentArtifactKey(outputId), outputId,
+    { check: scope.current, sql: scope.reserveWitness, wait: pending => scope.wait(() => pending) });
+  scope.endWitness(witness.queryCount);
+  const eventRows = freeze(witness.eventRows), revisionRows = freeze(witness.revisionRows);
+  const events: EventRow[] = [];
+  const witnessAccounting = { eventCount: witness.eventCount, head: witness.head, guards: witness.guards,
+    eventBytes: witness.eventBytes, reads: witness.reads, queryCount: witness.queryCount };
+  const capturedBytes = scope.accounting([canonicalRoots, witnessAccounting, eventRows, revisionRows]);
+  let serializedBytes = 64;
+  for (const value of eventRows) {
+    if (!record(value) || value.stream_id !== actor.streamId || typeof value.event_id !== "string"
+      || value.private_json !== null && (value.private_owner !== actor.userId || typeof value.private_json !== "string")) return fail();
+    const event = freeze(serializeEvent({ ...value, private_json: value.private_redacted === null ? value.private_json : null }));
+    serializedBytes += 16 + measureCurrentRetained(event, CURRENT_SNAPSHOT_PROFILE.aggregateBytes);
+    scope.accounting(null, capturedBytes + serializedBytes); events.push(event);
+  }
+  freeze(events);
+  const outsideRetainedBytes = scope.accounting([canonicalRoots, witnessAccounting]);
+  const facts = await scope.wait(() => qualifyClaimedImageCurrent({
+    read: { ownerId: actor.userId, projectId: lineage.copy.manifest.projectId, documentId: lineage.copy.manifest.documentId,
+      outputId, events, head: witness.head, planner: { contentRef: plannerCopy.content_id, rawJson, expiresAt: plannerCopy.expires_at, claim: graph.completedReview } },
+    eventRows, revisionRows, monotonicDeadline: scope.monotonicDeadline, wallDeadline: scope.wallDeadline,
+    outsideRetainedBytes,
+  })); scope.current();
+  const claimPairs = graph.afterGraph.eventEnvelopes.filter(pair => pair.event.event_id === graph.completedReview.claimEventId);
+  if (claimPairs.length !== 1) return fail();
+  const provedClaim = freeze(serializeEvent({ ...claimPairs[0]!.event, private_json: claimPairs[0]!.envelope.private_json }));
+  // Join every header and the complete 29-field payload to the independently
+  // reconstructed graph/privateDigest; a source counter alone is not this join.
+  if (!same(facts.canonical, provedClaim)) return fail();
+  const metadata: Readonly<Record<string, string>> = facts.snapshot.revision === 0 ? lineage.copy.destinationMetadata
+    : facts.derivativeMetadata ?? fail();
+  const compact: CurrentDisclosure = freeze({ snapshot: facts.snapshot,
+    parts: [...canonicalParts, ...witness.guards, currentScopeProof(actor.userId, lineage.copy.custodyId, facts)],
+    mediaKey: decodeURIComponent(facts.snapshot.media.url.slice("/api/media/".length)), metadata, expiresAt: facts.retainedExpiresAt });
+  // No event/revision arrays or parsed lineage are retained by the returned
+  // disclosure. All exact predicates survive in their bounded bindings.
+  scope.accounting([canonicalRoots, witnessAccounting, eventRows, revisionRows, events, facts, claimPairs, provedClaim, metadata, compact]);
+  measureCurrentRetained(compact); return compact;
+}
+
+type CurrentObjectMetadata = Readonly<{ size: number; httpEtag: string; key: string; version: string; etag: string;
+  custom: Readonly<Record<string, string>>; http: readonly (readonly [string, string])[] }>;
+function captureCurrentMetadata(scope: CurrentSnapshotOwner, object: unknown, disclosure: CurrentDisclosure): CurrentObjectMetadata {
+  scope.current(); if (!object || typeof object !== "object") return fail();
+  const size = Reflect.get(object, "size", object), httpEtag = Reflect.get(object, "httpEtag", object);
+  const custom = Reflect.get(object, "customMetadata", object), write = Reflect.get(object, "writeHttpMetadata", object);
+  scope.current();
+  if (size !== disclosure.snapshot.media.byteLength || !Number.isSafeInteger(size) || size < 1 || size > MAX_OUTPUT_ASSET_BYTES
+    || !currentText(httpEtag, 1024) || !httpEtag || !record(custom) || typeof write !== "function") return fail();
+  const expected = disclosure.metadata, names = Reflect.ownKeys(custom), required = disclosure.snapshot.revision === 0 ? 12 : 14;
+  if (names.length !== required || Object.keys(expected).length !== required) return fail();
+  const captured: Record<string, string> = Object.create(null); let total = bytes(httpEtag);
+  for (const name of names) {
+    if (typeof name !== "string" || !Object.hasOwn(expected, name)) return fail();
+    const descriptor = Object.getOwnPropertyDescriptor(custom, name);
+    if (!descriptor || !descriptor.enumerable || !Object.hasOwn(descriptor, "value") || !currentText(descriptor.value, 8192)
+      || descriptor.value !== expected[name]) return fail();
+    captured[name] = descriptor.value; total += bytes(name) + bytes(descriptor.value);
+  }
+  const identity = { key: "", version: "", etag: "" };
+  for (const name of ["key", "version", "etag"] as const) {
+    const value = Reflect.get(object, name, object); scope.current();
+    if (!currentText(value, 1024) || !value || name === "key" && value !== disclosure.mediaKey) return fail();
+    identity[name] = value; total += bytes(name) + bytes(value);
+  }
+  const headers = new Headers(); Reflect.apply(write, object, [headers]); scope.current();
+  const http: (readonly [string, string])[] = [];
+  for (const [name, value] of headers) {
+    if (http.length >= 32 || !currentText(name, 128) || !currentText(value, 8192)) return fail();
+    total += bytes(name) + bytes(value); http.push(Object.freeze([name, value] as const));
+  }
+  if (headers.get("content-type") !== "image/png" || total > 32_768) return fail();
+  scope.metadata(total); http.sort(([a], [b]) => a.localeCompare(b));
+  return freeze({ size, httpEtag, ...identity, custom: captured, http });
+}
+function sameCurrentMetadata(a: CurrentObjectMetadata, b: CurrentObjectMetadata): boolean {
+  return a.size === b.size && a.key === b.key && a.version === b.version && a.etag === b.etag && a.httpEtag === b.httpEtag
+    && canonicalJson(a.custom) === canonicalJson(b.custom) && JSON.stringify(a.http) === JSON.stringify(b.http);
+}
+async function inspectCurrentMedia(scope: CurrentSnapshotOwner, disclosure: CurrentDisclosure): Promise<void> {
+  const object = await scope.get(disclosure.mediaKey);
+  let reader: ReadableStreamDefaultReader<Uint8Array> | null = null, complete = false;
+  let removeCancel: (() => void) | undefined;
+  try {
+    const before = captureCurrentMetadata(scope, object, disclosure), body = object && Reflect.get(object, "body", object);
+    scope.current(); if (!body) return fail();
+    reader = Reflect.apply(currentGetReader, body, []) as ReadableStreamDefaultReader<Uint8Array>;
+    const cancel = () => { if (reader) void Reflect.apply(currentCancelReader, reader, []).catch(() => undefined); };
+    removeCancel = scope.onCancel(cancel); scope.retainMedia([disclosure, before]);
+    const png = scope.own(before.size); let offset = 0;
+    for (;;) {
+      scope.stream(); const result: unknown = await scope.wait(() => Reflect.apply(currentReadChunk, reader!, []));
+      if (!record(result)) return fail();
+      const done = Object.getOwnPropertyDescriptor(result, "done"), value = Object.getOwnPropertyDescriptor(result, "value");
+      if (!done || !Object.hasOwn(done, "value") || value && !Object.hasOwn(value, "value")) return fail();
+      if (done.value === true) { if (value?.value !== undefined || offset !== before.size) return fail(); complete = true; break; }
+      const chunk = value?.value;
+      if (done.value !== false || !(chunk instanceof Uint8Array) || Object.getPrototypeOf(chunk) !== Uint8Array.prototype) return fail();
+      const length = Reflect.apply(currentByteLength, chunk, []), backing = Reflect.apply(currentBuffer, chunk, []);
+      if (!(backing instanceof ArrayBuffer) || !Number.isSafeInteger(length) || length < 1 || length > png.byteLength - offset) return fail();
+      Reflect.apply(currentSet, png, [chunk, offset]); offset += length;
+    }
+    if (png.length < 8 || [137, 80, 78, 71, 13, 10, 26, 10].some((value, index) => png[index] !== value)) return fail();
+    const inspected = await scope.use(png, () => inspectOutputAsset(png, "image.png", { snapshot: false }));
+    scope.current();
+    const expected = disclosure.snapshot.media;
+    if (inspected.status !== "inspected" || inspected.kind !== "image" || inspected.mimeType !== "image/png" || inspected.extension !== "png"
+      || inspected.byteLength !== expected.byteLength || inspected.sha256 !== expected.sha256
+      || inspected.facts.width !== expected.width || inspected.facts.height !== expected.height) return fail();
+    scope.retainMedia([disclosure, before, inspected]);
+    const after = captureCurrentMetadata(scope, await scope.head(disclosure.mediaKey), disclosure);
+    if (!sameCurrentMetadata(before, after)) return fail();
+    scope.retainMedia([disclosure, before, inspected, after]);
+    scope.release();
+  } finally {
+    removeCancel?.();
+    const release = () => { try { if (reader) Reflect.apply(currentReleaseReader, reader, []); } catch { /* A pending native read may still own its lock. */ } };
+    if (!complete) {
+      if (reader) { try { void Reflect.apply(currentCancelReader, reader, []).then(release, release); } catch { release(); } }
+      else currentCancelObject(object);
+    }
+    release();
+  }
+}
+
+/** Fresh, read-only current snapshot. The scalar selector grants no authority.
+ * No native/default route calls this dormant explicit entrypoint yet. */
+export async function readGuestImageResultCurrentSnapshot(request: Request, env: WorkerEnv,
+  input: Readonly<{ outputId: string }>): Promise<Readonly<GuestImageResultEditSnapshot> | null> {
+  let owner: CurrentSnapshotOwner | undefined;
+  try {
+    const selector = capture(input);
+    if (!record(selector) || !exactKeys(selector, ["outputId"]) || typeof selector.outputId !== "string"
+      || !/^object-[a-f0-9]{8}$/u.test(selector.outputId)) return fail();
+    owner = currentSnapshotOwner(request, env, selector.outputId);
+    const disclosure = await collectCurrentDisclosure(owner, request, selector.outputId);
+    owner.retain(disclosure);
+    await owner.prove(disclosure.parts, "before");
+    await inspectCurrentMedia(owner, disclosure);
+    await owner.prove(disclosure.parts, "final");
+    owner.finish(); return disclosure.snapshot;
   } catch { return null; }
   finally { owner?.dispose(); }
 }
