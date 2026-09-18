@@ -197,6 +197,8 @@ still-app .generation-stage { max-width: 950px; margin: 2vh auto; }
 still-app .generation-stage h1 { margin-bottom: 16px; }
 still-app .generation-stage > p { margin: 12px 0 24px; }
 still-app .generation-stage > .caption { text-align: left; font-size: 14px; }
+still-app .generation-inline-review { margin-top: 28px; border-top: 1px solid var(--line); padding-top: 20px; }
+still-app .generation-inline-review p + p { margin-top: 12px; }
 still-app .generation-placeholder { width: min(100%, 720px); height: min(42dvh, 460px); }
 still-app .generation-placeholder en-skeleton { height: 100%; --en-skeleton-size: 100%; }
 still-app .generation-placeholder.audio { height: min(20dvh, 160px); }
