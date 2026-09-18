@@ -14,10 +14,15 @@ records a new additive checkpoint, source-free processing status, scoped privacy
 invalidation and no-target local migration qualification tooling. Eighteen native checkpoint tests within 79 privacy/runtime regressions, 44 SQLite/local-D1 capture and rollback tests, 47 local migration/tooling
 tests, 100 closed-guest inventory tests, 36 selected native Memory/Still routes and
 24 direct Still/safety tests pass. TypeScript, changed-file lint and the production
-build pass after preserving the latest safety/Still release (`91c06d9`, production 433).
+build pass after preserving the safety/Still release (`91c06d9`, production 433).
 The independent-cleanup test confirms checkpoint failure does not skip profile privacy maintenance. The prior release receipt below remains historical;
 publication of this continuation is not yet claimed. The original semantic/profile
 system and external service/qualification gates remain open.
+
+Final integration also preserves the Jev refresh repair published as production 434
+(`475f0b0`). Its `0041_still_decision_cache.sql` and metadata remain unchanged.
+The unpublished Memory migration was regenerated after it as **0042**, with fresh
+journal/snapshot metadata; it does not reuse or rewrite the deployed 0041 step.
 
 ## Earlier release: production 426
 

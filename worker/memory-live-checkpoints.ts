@@ -7,7 +7,7 @@ import type { NativeMemoryOriginWithdrawalSelector } from "./memory-native-origi
 /** One coalesced, disposable processing hint per enrollment. No source bodies,
  * event/content IDs, provider grant, delivery guarantee or reusable authority. */
 export const memoryCheckpointSchemaProfile = {
-  source: "0041_memory_live_change_checkpoints",
+  source: "0042_memory_live_change_checkpoints",
   names: ["idx_memory_live_checkpoint_expiry", "memory_live_change_checkpoints", "memory_live_checkpoint_enrollment_changed", "memory_live_checkpoint_source_changed", "memory_live_checkpoint_source_deleted"],
   tables: ["memory_live_change_checkpoints"], count: 5, digest: "sha256:b07fcf27422a8fcc10805eed9896fac3985a550528625613125dca6080633ee2",
 } as const;

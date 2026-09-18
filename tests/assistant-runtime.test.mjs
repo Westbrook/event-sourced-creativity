@@ -12509,7 +12509,7 @@ for(const shared of [false,true])test('completed conversation capture: '+(shared
 async function nativeCheckpointFixture(t,options={}) {
   const { readFile }=await import('node:fs/promises');
   const state=await nativeMemoryJobFixture(t,{...options,beforeEnrollment:async state=>{
-    state.sqlite.exec(await readFile(new URL('../drizzle/0041_memory_live_change_checkpoints.sql',import.meta.url),'utf8'));
+    state.sqlite.exec(await readFile(new URL('../drizzle/0042_memory_live_change_checkpoints.sql',import.meta.url),'utf8'));
   }});
   state.checkpoints=()=>state.sqlite.prepare('SELECT * FROM memory_live_change_checkpoints ORDER BY enrollment_id').all();
   state.health=()=>worker.fetch(new Request('http://localhost/api/memory/processing?id='+encodeURIComponent(state.current().enrollment_id),{headers:state.owner??{}}),state.env,{waitUntil(){}});
@@ -12622,7 +12622,7 @@ for(const mode of ['health-assertion','cleanup-count'])test('native processing c
 
 test('native processing checkpoint: schema installed after absence preflight rolls publication back',{timeout:60000},async t=>{
   const state=await nativeMemoryJobFixture(t);await state.send('checkpoint-install-race');const db=state.env.DB,batch=db.batch,cursor=state.current().cursor_sequence;let installed=0;
-  const {readFile}=await import('node:fs/promises'),migration=await readFile(new URL('../drizzle/0041_memory_live_change_checkpoints.sql',import.meta.url),'utf8');
+  const {readFile}=await import('node:fs/promises'),migration=await readFile(new URL('../drizzle/0042_memory_live_change_checkpoints.sql',import.meta.url),'utf8');
   db.batch=async statements=>{if(!installed&&statements.some(s=>/^INSERT(?: OR IGNORE)? INTO memory_live_sources/u.test(s.sql))){installed++;state.sqlite.exec(migration);}return batch.call(db,statements);};t.after(()=>{db.batch=batch;});
   state.due();assert.equal((await state.run()).status,'partial');assert.equal(installed,1);assert.equal(state.current().cursor_sequence,cursor);assert.equal(state.table('memory_live_sources').length,0);
 });

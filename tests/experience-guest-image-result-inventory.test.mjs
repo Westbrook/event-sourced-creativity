@@ -723,7 +723,7 @@ for (const reservation of ['token', 'cost'])
 
 test('Memory processing checkpoint exact schema preserves guest inventory and partial schema refuses',async t=>{
   const f=await completedResultFixture(t,{memory:true}),before=await currentManifest(f,t);
-  for(const migration of ['0025_memory_live_base.sql','0026_memory_live_conversation.sql','0041_memory_live_change_checkpoints.sql'])installQualifiedMigration(f,migration);
+  for(const migration of ['0025_memory_live_base.sql','0026_memory_live_conversation.sql','0042_memory_live_change_checkpoints.sql'])installQualifiedMigration(f,migration);
   assert.deepEqual(await currentManifest(f,t),before);
   f.sqlite.exec('DROP TRIGGER memory_live_checkpoint_source_deleted');await denied(f,t);
 });

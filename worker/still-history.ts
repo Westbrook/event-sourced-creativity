@@ -1,34 +1,45 @@
-import { preparedHistory } from '../src/still/history.ts';
+import { createHistoryCollector, installHistorySummary } from '../src/still/history.ts';
 import { readProjectEventPage } from './project-access.ts';
 import type { ProjectRequestContext } from './project-request-context.ts';
 import type { CreativeEvent, CreativeProjection } from '../src/model/events.ts';
 import { foldEvents } from '../src/model/events.ts';
-import { handleEvents } from './events-api.ts';
+import { readStillHistoryPage, STILL_REPLAY_TYPES } from './still-history-read.ts';
+import { streamHead } from './event-stream-read.ts';
 import type { PilotUser } from './pilot-policy.ts';
 import type { WorkerEnv } from './runtime.ts';
 import { captureSceneSourceVersion, sceneSourceSchemaAssertion } from './scene-source-generation.ts';
 
 // These are expendable read accelerators, never creative storage or authority.
 // Shared snapshots recheck canonical resource/retention allowlists and rebuild
-// on any head change; personal append-only streams can consume an incremental tail.
+// on any head change; certified personal revisions validate exact reuse.
 type Snapshot={events:CreativeEvent[];head:number;expires:number;projections:Map<string,CreativeProjection>};
 const stores=new WeakMap<object,Map<string,Snapshot>>();
-const maxBytes=6_000_000,ttl=300_000;
+const maxBytes=16_000_000,ttl=300_000;
 const weights=new WeakMap<Snapshot,number>();
 export type HistoryReceipt={source:'snapshot'|'incremental'|'fresh'|'shared'|'shared-snapshot';eventsRead:number;head:number;elapsedMs:number};
+// Older schemas use a bounded exact hash, never an all-history payload array.
 async function witness(env:WorkerEnv,user:PilotUser,head:number){
-  // Events are append-only. Private payloads may be withdrawn without an append:
-  // compare their exact identities/redaction markers, not merely the event head.
-  const rows=await env.DB.prepare(`SELECT event.event_id,event.sequence,event.type,event.payload,secret.private_event_id,secret.redacted_at,secret.private_json
-    FROM events event LEFT JOIN event_private_payloads secret ON secret.private_event_id=event.event_id
-    WHERE event.stream_id=? AND event.sequence<=? ORDER BY event.sequence`).bind(user.streamId,head).all();
-  return rows.results as Array<{event_id:string;sequence:number;private_event_id:string|null;redacted_at:string|null}>;
+ let after=0,digest='';
+ for(;;){
+  const page=await env.DB.prepare(`SELECT event.event_id,event.sequence,event.type,
+    CASE WHEN length(CAST(event.payload AS BLOB))<=1048576 THEN event.payload END AS payload,
+    secret.private_event_id,secret.redacted_at,
+    CASE WHEN length(CAST(secret.private_json AS BLOB))<=1048576 THEN secret.private_json END AS private_json,
+    (length(CAST(event.payload AS BLOB))>1048576 OR COALESCE(length(CAST(secret.private_json AS BLOB)),0)>1048576) AS oversized
+   FROM events event LEFT JOIN event_private_payloads secret ON secret.private_event_id=event.event_id
+   WHERE event.stream_id=? AND event.sequence>? AND event.sequence<=? ORDER BY event.sequence LIMIT 8`).bind(user.streamId,after,head).all<Record<string,unknown>>();
+  if(!page.results.length)break;
+  if(page.results.some(r=>r.oversized))throw new Error('history_event_too_large');
+  digest=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(digest+JSON.stringify(page.results)))),b=>b.toString(16).padStart(2,'0')).join('');
+  after=Number(page.results.at(-1)!.sequence);if(page.results.length<8)break;
+ }
+ return digest;
 }
 const witnesses=new WeakMap<Snapshot,string>();
 const versions=new WeakMap<Snapshot,string>();
 /** Existing transactional triggers cover appends, private-body edits/withdrawals
  * and rebuild epochs. No authored rows or cached authority are introduced. */
-async function sourceVersion(env:WorkerEnv,user:PilotUser,activate=true):Promise<string|null>{
+export async function sourceVersion(env:WorkerEnv,user:PilotUser,activate=true):Promise<string|null>{
   try{
     const guard=sceneSourceSchemaAssertion();
     const row=await env.DB.prepare(`SELECT (${guard.sql}) AS valid,
@@ -43,7 +54,8 @@ async function sourceVersion(env:WorkerEnv,user:PilotUser,activate=true):Promise
     return JSON.stringify([row.nonce,row.epoch,row.generation,row.head]);
   }catch{return null;} // Older/missing schema uses the original full witness.
 }
-export async function readStillHistory(request:Request,env:WorkerEnv,user:PilotUser,scope:string,shared:ProjectRequestContext|undefined){
+export async function readStillHistory(request:Request,env:WorkerEnv,user:PilotUser,scope:string,shared:ProjectRequestContext|undefined,position:{documentId?:string;blockId?:string;outputId?:string}={}){
+  scope+=JSON.stringify([position.documentId,position.blockId,position.outputId]);
   const started=Date.now();let store=stores.get(env.DB);if(!store){store=new Map();stores.set(env.DB,store);}
   const old=store.get(scope);
   if(shared){
@@ -59,39 +71,40 @@ export async function readStillHistory(request:Request,env:WorkerEnv,user:PilotU
   const version=await sourceVersion(env,user);
   if(version&&old&&old.expires>Date.now()&&versions.get(old)===version)
     return result(old,{source:'snapshot',eventsRead:0,head:old.head,elapsedMs:Date.now()-started});
-  const before=await witness(env,user,Number.MAX_SAFE_INTEGER);
-  const previousVersion=old?versions.get(old):undefined;
-  const sameEpoch=!previousVersion||!!version&&JSON.stringify(JSON.parse(version).slice(0,2))===JSON.stringify(JSON.parse(previousVersion).slice(0,2));
-  const valid=old&&sameEpoch&&old.expires>Date.now()&&JSON.stringify(before.filter(r=>r.sequence<=old.head))===witnesses.get(old);
-  let events=valid?old.events.slice():[],after=valid?old.head:0,target:number|undefined=before.at(-1)?.sequence??0,eventsRead=0;
+  // A certified revision covers all payload edits, withdrawals and stream changes.
+  // It replaces both expensive payload witnesses even on a cold start.
+  const target=version?Number(JSON.parse(version)[3]):await streamHead(env,user.streamId);
+  const before=version??await witness(env,user,target);
+  const events:CreativeEvent[]=[],collector=createHistoryCollector(position),replayTypes=new Set<string>(STILL_REPLAY_TYPES);let after=0,bytes=0,eventsRead=0;
   for(;;){
-    const response=await handleEvents(new Request(new URL(`/api/events?after=${after}&limit=5000&content=0`,request.url),{headers:request.headers}),env,false,user);
-    if(!response.ok)throw response;
-    const page=await response.json() as {events:CreativeEvent[];head:number;hasMore:boolean;nextAfter:number};target??=page.head;
-    if(target<after)throw new Error('History changed. Try again.');
-    const tail=page.events.filter(e=>e.sequence<=target!);events.push(...tail);eventsRead+=tail.length;
-    if(!page.hasMore||page.nextAfter>=target)break;
-    if(page.nextAfter<=after||events.length>150_000)throw new Error('History could not be verified.');after=page.nextAfter;
+    const page=await readStillHistoryPage(env,user.streamId,after,target);
+    if(!page.length)break;
+    for(const event of page){
+      eventsRead++;
+      // Remove SQL null placeholders before retaining compact history samples.
+      if(!replayTypes.has(event.type))event.payload=Object.fromEntries(Object.entries(event.payload).filter(([,v])=>v!==null));
+      collector.accept(event);
+      if(replayTypes.has(event.type)){
+        bytes+=JSON.stringify(event).length*2+256;
+        if(bytes>16_000_000)throw new Error('history_capacity');
+        events.push(event);
+      }
+      if(eventsRead>150_000)throw new Error('history_capacity');
+    }
+    after=page.at(-1)!.sequence;if(after>=target)break;
   }
-  if(!shared&&JSON.stringify(await witness(env,user,target!))!==JSON.stringify(before)){store.delete(scope);throw new Error('History changed. Try again.');}
-  const snapshot:Snapshot=valid&&eventsRead===0?old:{events,head:target!,expires:Date.now()+ttl,projections:new Map()};
-  preparedHistory(snapshot.events,valid?old.events:undefined);
-  // Verify the cached prefix against its withdrawal witness on every reuse.
-  if(!shared){
-    const proof=JSON.stringify(before);
-    if(valid&&eventsRead===0&&proof!==witnesses.get(old)){store.delete(scope);throw new Error('History changed. Try again.');}
-    witnesses.set(snapshot,proof);remember(store,scope,snapshot);
-  }
-  if(version){
-    const afterVersion=await sourceVersion(env,user,false);
-    if(afterVersion!==version){store.delete(scope);throw new Error('History changed. Try again.');}
-    versions.set(snapshot,version);
-  }
-  return result(snapshot,{source:valid?eventsRead?'incremental':'snapshot':'fresh',eventsRead,head:snapshot.head,elapsedMs:Date.now()-started});
+  const afterProof=version?await sourceVersion(env,user,false):await witness(env,user,target);
+  if(afterProof!==before){store.delete(scope);throw new Error('History changed. Try again.');}
+  const snapshot:Snapshot={events,head:target,expires:Date.now()+ttl,projections:new Map()};
+  const summary=collector.finish();installHistorySummary(events,summary);
+  weights.set(snapshot,bytes+250_000);
+  if(version)versions.set(snapshot,version);else witnesses.set(snapshot,before);
+  remember(store,scope,snapshot);
+  return result(snapshot,{source:'fresh',eventsRead,head:target,elapsedMs:Date.now()-started});
 }
 function remember(store:Map<string,Snapshot>,scope:string,snapshot:Snapshot){
  store.delete(scope);
- const bytes=weights.get(snapshot)??new TextEncoder().encode(JSON.stringify(snapshot.events)+(witnesses.get(snapshot)??'')).length;weights.set(snapshot,bytes);
+ const bytes=weights.get(snapshot)??snapshot.events.reduce((n,event)=>n+JSON.stringify(event).length*2+256,0);weights.set(snapshot,bytes);
  if(bytes<=maxBytes)store.set(scope,snapshot);
  const total=()=>[...store.values()].reduce((n,s)=>n+(weights.get(s)??0),0);
  while(store.size>8||total()>maxBytes)store.delete(store.keys().next().value!);

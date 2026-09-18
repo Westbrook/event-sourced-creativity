@@ -66,7 +66,7 @@ its omission here is not proof that no schedules exist.
 
 ## Release boundary and verification
 
-New additive migration: `0041_memory_live_change_checkpoints.sql` (five explicit
+New additive migration: `0042_memory_live_change_checkpoints.sql` (five explicit
 schema objects). The three `db/*.pending.sql` candidates remain unchanged,
 unassigned and unapplied. Runtime flags, audience, enrollment, provider credentials,
 scheduler registration and billing authority are unchanged.

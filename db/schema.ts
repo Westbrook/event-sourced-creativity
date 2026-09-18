@@ -2279,3 +2279,12 @@ export const managedVideoReconciliations = sqliteTable("managed_video_reconcilia
   commandSha256: text("command_sha256").notNull(), treatmentSha256: text("treatment_sha256").notNull(),
   recordSha256: text("record_sha256").notNull(), recordJson: text("record_json").notNull(), createdAt: text("created_at").notNull(),
 }, table => [uniqueIndex("idx_video_reconciliations_job_attempt").on(table.jobId, table.correlationId)]);
+
+/** Short-lived, private recommendation cache; never an authority or creative record. */
+export const stillDecisionCache = sqliteTable('still_decision_cache', {
+  cacheKey: text('cache_key').primaryKey(),
+  ownerId: text('owner_id').notNull(),
+  createdAt: integer('created_at').notNull(),
+  expiresAt: integer('expires_at').notNull(),
+  body: text('body').notNull(),
+}, table => [index('idx_still_decision_cache_expiry').on(table.expiresAt), index('idx_still_decision_cache_owner').on(table.ownerId, table.createdAt)]);

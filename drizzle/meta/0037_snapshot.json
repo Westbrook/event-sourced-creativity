@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "430f3f91-34d6-48f5-bd94-c50e0bd38d04",
+  "id": "6a1f8ab8-071b-4797-87ee-3093894eb49b",
   "prevId": "bb3a7672-7b33-4d6e-bf7e-81bd2e80247b",
   "tables": {
     "artifact_revisions": {
@@ -3874,115 +3874,6 @@
         "memory_document_profile_suppressions_check_3": {
           "name": "memory_document_profile_suppressions_check_3",
           "value": "state='revoked' OR created_at<expires_at"
-        }
-      }
-    },
-    "memory_live_change_checkpoints": {
-      "name": "memory_live_change_checkpoints",
-      "columns": {
-        "enrollment_id": {
-          "name": "enrollment_id",
-          "type": "text",
-          "primaryKey": true,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "enrollment_revision": {
-          "name": "enrollment_revision",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "generation": {
-          "name": "generation",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "after_sequence": {
-          "name": "after_sequence",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "through_sequence": {
-          "name": "through_sequence",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "observed_references": {
-          "name": "observed_references",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "updated_at": {
-          "name": "updated_at",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "expires_at": {
-          "name": "expires_at",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        }
-      },
-      "indexes": {
-        "idx_memory_live_checkpoint_expiry": {
-          "name": "idx_memory_live_checkpoint_expiry",
-          "columns": [
-            "expires_at",
-            "enrollment_id"
-          ],
-          "isUnique": false
-        }
-      },
-      "foreignKeys": {
-        "memory_live_change_checkpoints_enrollment_id_memory_live_enrollments_enrollment_id_fk": {
-          "name": "memory_live_change_checkpoints_enrollment_id_memory_live_enrollments_enrollment_id_fk",
-          "tableFrom": "memory_live_change_checkpoints",
-          "tableTo": "memory_live_enrollments",
-          "columnsFrom": [
-            "enrollment_id"
-          ],
-          "columnsTo": [
-            "enrollment_id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "checkConstraints": {
-        "memory_live_checkpoint_bounds": {
-          "name": "memory_live_checkpoint_bounds",
-          "value": "typeof(enrollment_revision)='integer' AND enrollment_revision BETWEEN 1 AND 9007199254740991 AND typeof(after_sequence)='integer' AND after_sequence BETWEEN 0 AND 9007199254740990 AND typeof(through_sequence)='integer' AND through_sequence BETWEEN 1 AND 9007199254740991 AND through_sequence>after_sequence AND typeof(observed_references)='integer' AND observed_references BETWEEN 1 AND 9007199254740991"
-        },
-        "memory_live_checkpoint_generation": {
-          "name": "memory_live_checkpoint_generation",
-          "value": "length(generation)=32 AND generation NOT GLOB '*[^0-9a-f]*'"
-        },
-        "memory_live_checkpoint_time": {
-          "name": "memory_live_checkpoint_time",
-          "value": "length(created_at)=24 AND length(updated_at)=24 AND length(expires_at)=24 AND created_at<=updated_at AND updated_at<expires_at"
         }
       }
     },
@@ -12971,6 +12862,67 @@
         },
         "idx_shares_owner": {
           "name": "idx_shares_owner",
+          "columns": [
+            "owner_id",
+            "created_at"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "still_decision_cache": {
+      "name": "still_decision_cache",
+      "columns": {
+        "cache_key": {
+          "name": "cache_key",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "owner_id": {
+          "name": "owner_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "expires_at": {
+          "name": "expires_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "body": {
+          "name": "body",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "idx_still_decision_cache_expiry": {
+          "name": "idx_still_decision_cache_expiry",
+          "columns": [
+            "expires_at"
+          ],
+          "isUnique": false
+        },
+        "idx_still_decision_cache_owner": {
+          "name": "idx_still_decision_cache_owner",
           "columns": [
             "owner_id",
             "created_at"

@@ -175,7 +175,7 @@ test('processing checkpoint migration and invalidation run atomically on local D
   const mf=new Miniflare({modules:true,compatibilityDate:'2026-05-15',host:'127.0.0.1',port:0,script:"export default {fetch(){return new Response('local-only',{status:404})}}",d1Databases:['Checkpoint'],d1Persist:directory,log:new Log(LogLevel.NONE),outboundService:request=>{egress.push(request.url);throw Error('External fetch forbidden');}});
   t.after(async()=>{await mf.dispose();await rm(directory,{recursive:true,force:true});assert.deepEqual(egress,[]);});
   const db=await mf.getD1Database('Checkpoint');
-  for(const file of ['0025_memory_live_base.sql','0026_memory_live_conversation.sql','0041_memory_live_change_checkpoints.sql'])await db.batch(statements(readFileSync(new URL('../drizzle/'+file,import.meta.url),'utf8')).map(sql=>db.prepare(sql)));
+  for(const file of ['0025_memory_live_base.sql','0026_memory_live_conversation.sql','0042_memory_live_change_checkpoints.sql'])await db.batch(statements(readFileSync(new URL('../drizzle/'+file,import.meta.url),'utf8')).map(sql=>db.prepare(sql)));
   await db.prepare(`INSERT INTO memory_live_enrollments(enrollment_id,actor_user_id,owner_user_id,project_id,document_id,permission_epoch,policy_version,revision,learn_enabled,recall_enabled,background_enabled,retention_days,time_zone,enrolled_at,expires_at,cursor_sequence,next_due_at,attempts)
     VALUES('e','actor','actor','project','document','epoch','personal-memory-v2',1,1,1,1,1,'UTC','2026-01-01T00:00:00.000Z','2027-01-01T00:00:00.000Z',0,'2026-01-01T00:00:00.000Z',0)`).run();
   await db.prepare("INSERT INTO memory_live_sources(enrollment_id,event_id,sequence,expires_at) VALUES('e','event',1,'2027-01-01T00:00:00.000Z')").run();

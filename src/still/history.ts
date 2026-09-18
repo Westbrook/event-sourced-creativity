@@ -42,3 +42,30 @@ export function preparedHistory(events:CreativeEvent[],previous?:CreativeEvent[]
  for(const event of incremental?retainedTail:useful)counts[event.type]=(counts[event.type]??0)+1;
  const value={useful,creative,counts,forgotten};aggregates.set(events,value);return value;
 }
+
+export type HistorySummary={useful:CreativeEvent[];creative:CreativeEvent[];counts:Record<string,number>;forgotten:number;accessibleEvents:number;summarizedEvents:number;creativeEvents:number;oldest?:string;newest?:string};
+const summaries=new WeakMap<CreativeEvent[],HistorySummary>();
+export function installHistorySummary(events:CreativeEvent[],summary:HistorySummary){summaries.set(events,summary);}
+export function historySummary(events:CreativeEvent[]){return summaries.get(events);}
+/** Exact counts and bounded evidence windows, without retaining unused raw bodies. */
+export function createHistoryCollector(position:{documentId?:string;blockId?:string;outputId?:string}){
+ let accessibleEvents=0,creativeEvents=0,forgotten=0,oldest:string|undefined,newest:string|undefined;
+ const counts:Record<string,number>={},recent:CreativeEvent[]=[],focused:CreativeEvent[]=[],creative:CreativeEvent[]=[],milestones:CreativeEvent[]=[],attention:CreativeEvent[]=[],focusedAttention:CreativeEvent[]=[],attentionSequences:number[]=[];
+ const push=(list:CreativeEvent[],e:CreativeEvent,n:number)=>{list.push(e);if(list.length>n)list.shift();};
+ const isFocused=(e:CreativeEvent)=>!!(position.documentId&&e.payload.document_id===position.documentId||position.blockId&&e.payload.block_id===position.blockId||position.outputId&&(e.payload.object_id===position.outputId||e.payload.artifact_id===position.outputId||Array.isArray(e.payload.object_ids)&&e.payload.object_ids.includes(position.outputId)));
+ return {
+  accept(e:CreativeEvent){
+   accessibleEvents++;oldest??=e.occurredAt;newest=e.occurredAt;
+   if(e.type==='AttentionSignalsForgotten'){forgotten=Math.max(forgotten,Number(e.payload.before_sequence)||e.sequence);return;}
+   if(e.type.startsWith('Attention')){if(e.type==='AttentionEpisodeObserved'){attentionSequences.push(e.sequence);push(attention,e,45);if(isFocused(e))push(focusedAttention,e,35);}return;}
+   counts[e.type]=(counts[e.type]??0)+1;push(recent,e,45);if(isFocused(e))push(focused,e,35);
+   if(isCreativeHistoryEvent(e)){creativeEvents++;push(creative,e,12);}
+   if(/Preference|Intent|Critique|Pinned|Saved|Condition|Rejected|Failed/.test(e.type))push(milestones,e,40);
+  },
+  finish():HistorySummary{
+   const attentionCount=attentionSequences.filter(n=>n>forgotten).length;if(attentionCount)counts.AttentionEpisodeObserved=attentionCount;
+   const useful=[...new Map([...recent,...focused,...creative,...milestones,...attention.filter(e=>e.sequence>forgotten),...focusedAttention.filter(e=>e.sequence>forgotten)].map(e=>[e.sequence,e])).values()].sort((a,b)=>a.sequence-b.sequence);
+   return {useful,creative,counts,forgotten,accessibleEvents,summarizedEvents:Object.values(counts).reduce((a,b)=>a+b,0),creativeEvents,oldest,newest};
+  },
+ };
+}
