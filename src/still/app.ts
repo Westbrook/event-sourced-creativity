@@ -85,7 +85,7 @@ export class StillApp extends LitElement {
   private moreOpen=false;
   private density=5;
   private get pageActionLimit(){return this.developer?this.density:5;}
-  private setDensity=(e:CustomEvent<{value:number}>)=>{this.density=actionLimit(e.detail.value);this.client.position.actionLimit=this.pageActionLimit;this.changed();};
+  private setDensity=(e:CustomEvent<{value:number}>)=>{this.density=actionLimit(e.detail.value);this.moreOpen=false;this.client.position.actionLimit=this.pageActionLimit;this.changed();};
   private experiment=async(e:CustomEvent<{scope:string;request:unknown;complete:(result?:ExperimentResult,error?:string)=>void}>)=>{const d=e.detail;if(!this.developer||d.scope!==this.diagnosticScope()){d.complete(undefined,'View changed. Copy a new request.');return;}try{const result=await api<ExperimentResult>('/api/still/experiment',d.request);d.complete(d.scope===this.diagnosticScope()?result:undefined,d.scope===this.diagnosticScope()?undefined:'View changed. Experiment discarded.');}catch(error){d.complete(undefined,error instanceof Error?error.message:'Experiment failed.');}};
   private rankedActions:Action[]=[];
   private paletteOpen=false;
@@ -650,10 +650,24 @@ export class StillApp extends LitElement {
     return html`<section class="form-page">${p.projectName ? html`<span class="eyebrow">${p.projectName}</span>` : nothing}<h1>${titles[mode] ?? 'New idea'}</h1>${named ? this.field('Name', this.titleDraft, v => { this.titleDraft = v; }, 1) : nothing}${mode === 'add-context' ? html`<en-select class="select-label" label="Type" .value=${this.kindDraft} @en-change=${(e: CustomEvent<{proposed:string;value:string}>) => { this.kindDraft = e.detail.proposed; }}>${blockKinds.map(k => html`<en-select-option value=${k}>${k[0].toUpperCase() + k.slice(1)}</en-select-option>`)}</en-select>` : nothing}${mode !== 'rename' ? this.field(mode === 'intent' ? 'Your direction' : mode === 'edit-artifact' ? 'Writing' : 'Idea', this.bodyDraft, v => { this.bodyDraft = v; }, mode === 'edit-artifact' ? 16 : 6, '') : nothing}<div class="form-actions">${this.button(mode === 'intent' ? 'Suggest actions' : this.client.hasUnconfirmedWrite ? 'Check save' : 'Save', () => void this.run(() => this.save()), true)}${this.button('Back', () => this.closeMode())}</div></section>`;
   }
   private paletteButton(entry:PaletteFeedback['entry']) { return html`<en-button data-action-id="ui:palette" variant="ghost" size="medium" aria-keyshortcuts="Meta+K Control+K" .disabled=${this.busy||this.composing} @click=${()=>this.openFinder(entry)}>Palette<en-badge slot="suffix" variant="neutral">⌘+K</en-badge></en-button>`; }
+  private compactDock(options:{id:string;label:string;run:()=>void;variant?:Emphasis['variant'];disabled?:boolean}[]) {
+    const shown=options.slice(0,this.pageActionLimit-1),rest=options.slice(shown.length);
+    return html`<footer class="action-dock" @pointerdown=${()=>{this.dockTouched=true;if(this.mode==='generate')this.formatTouched=true;}} @focusin=${()=>{this.dockTouched=true;if(this.mode==='generate')this.formatTouched=true;}}><en-toolbar label="Your next step" keyboard-navigation="tab">
+      ${shown.map(option=>this.button(option.label,option.run,false,!!option.disabled,option.id,option.variant??'secondary'))}
+      ${rest.length?html`<en-button id="still-compact-menu" variant="ghost" size="medium" .disabled=${this.busy||this.composing}>Menu</en-button>`:nothing}
+    </en-toolbar>${rest.length?html`<en-menu for="still-compact-menu" label="More actions" @en-action=${(event:CustomEvent<{action:string}>)=>{const option=rest.find(x=>x.id===event.detail.action);if(option&&!option.disabled&&!this.busy&&!this.composing)option.run();}}>
+      ${rest.map(option=>html`<en-menu-item action=${option.id} ?disabled=${option.disabled}>${option.label}${option.id==='ui:palette'?html`<en-badge slot="suffix" variant="neutral">⌘+K</en-badge>`:nothing}</en-menu-item>`)}
+    </en-menu>`:nothing}</footer>`;
+  }
   private renderGenerationDock() {
     const g=this.directGeneration?null:this.generation;
     const formats=this.candidates().filter(a=>!!FORMATS[a.id]);
     const ordered=[...new Set([...this.formatSuggestions,...rankAllFormats(formats)])].filter(id=>formats.some(a=>a.id===id));
+    if(this.pageActionLimit<3){
+      const emphasis=presentToolbar(ordered.slice(0,3),this.formatEmphasis);
+      const choices=g?[{id:'ui:generate',label:g.recoveryClosed?'Review another':g.attempted?'Check generation':g.format==='scene'&&!g.scenePreview?'Check cost':this.generationGate?(this.generationGate.key?'Continue':'Blocked'):'Generate',run:()=>void this.run(()=>this.generate()),variant:'primary' as const,disabled:!!this.generationGate&&!this.generationGate.key}]:ordered.map(id=>({id,label:FORMATS[id],run:()=>{this.formatTouched=true;void this.startGeneration(id);},variant:emphasis[id]?.variant??'secondary' as const}));
+      return this.compactDock([...choices,{id:'ui:back',label:'Back',run:()=>this.closeMode(),variant:'ghost'}]);
+    }
     const suggested=ordered.slice(0,Math.min(3,this.pageActionLimit-2));
     const remaining=ordered.filter(id=>!suggested.includes(id));
     return html`<footer class="action-dock" @pointerdown=${()=>{this.formatTouched=true;}} @focusin=${()=>{this.formatTouched=true;}}>
@@ -672,6 +686,7 @@ export class StillApp extends LitElement {
     if (this.loading || this.startupFailed || !c.session?.policy.accepted || this.currentRouteProblem(p)) return nothing;
     if(this.mode==='generate')return this.renderGenerationDock();
     if(this.mode)return nothing;
+    if(view==='generation'&&this.pageActionLimit<3)return this.compactDock([{id:'document',label:'Document',run:()=>this.navigate('document')},{id:'results',label:'Results',run:()=>this.navigate('results')},{id:'ui:palette',label:'Palette',run:()=>this.openFinder('shortcut'),variant:'ghost'}]);
     if(view==='generation')return html`<footer class="action-dock"><en-toolbar label="Your next step" keyboard-navigation="tab">${this.button('Document',()=>this.navigate('document'),false,false,'','secondary')}${this.button('Results',()=>this.navigate('results'),false,false,'','secondary')}${this.paletteButton('shortcut')}</en-toolbar></footer>`;
     const limit=this.pageActionLimit,eligible=this.candidates();
     const pool=[...this.suggestions,...(limit>5?this.rankedActions.filter(a=>!this.suggestions.some(s=>s.id===a.id)):[])].filter(a=>eligible.some(e=>e.id===a.id));
@@ -680,7 +695,16 @@ export class StillApp extends LitElement {
     const browsing=['projects','documents','results'].includes(view);
     const count=view==='projects'?p.projects.length:view==='documents'?p.documents.filter(d=>!d.removed).length:stillResults(p,c.jobs,c.events).length;
     const paging=browsing&&count>3;
-    const visible=pool.filter(a=>!browsing||a.id!==view).slice(0,limit-1-(slides?2:paging?1:0));
+    if(limit<3){
+      const choices=pool.filter(a=>!browsing||a.id!==view),emphasis=presentToolbar(choices.map(a=>a.id),this.emphasis,{view});
+      return this.compactDock([
+        ...choices.map(a=>({id:a.id,label:a.label,run:()=>this.choose(a.id),variant:emphasis[a.id]?.variant})),
+        ...(slides?[{id:'ui:previous',label:'Previous',run:()=>this.turnItem(this.itemIndex-1),disabled:this.itemIndex===0},{id:'ui:next',label:'Next',run:()=>this.turnItem(this.itemIndex+1),disabled:this.itemIndex>=a!.items.length-1}]:[]),
+        ...(paging?[{id:'ui:page',label:'More results',run:()=>this.turnPage((this.page+1)*3>=count?0:this.page+1)}]:[]),
+        {id:'ui:palette',label:'Palette',run:()=>this.openFinder('more'),variant:'ghost'},
+      ]);
+    }
+    const visible=pool.filter(a=>!browsing||a.id!==view).slice(0,Math.max(0,limit-1-(slides?2:paging?1:0)));
     const visibleIds=visible.map(a=>a.id);
     let actions:TemplateResult[]=[...this.toolbarSuggestions(visible)];
     if(slides)actions.unshift(this.button('Previous',()=>this.turnItem(this.itemIndex-1),false,this.itemIndex===0,'','secondary'),this.button('Next',()=>this.turnItem(this.itemIndex+1),false,this.itemIndex>=a!.items.length-1,'','secondary'));
