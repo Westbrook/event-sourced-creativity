@@ -112,7 +112,8 @@ export type GuestImageResultReview = Readonly<{
   custodyTransferred: false; publicReadAvailable: false; freshBytesVerified: false;
 }>;
 type Data = Readonly<{ manifest: GuestImageResultManifest; manifestDigest: string; review: GuestImageResultReview; proof: readonly Proof[] }>;
-type Captured = { life: ReadLifetime; readEnv: WorkerEnv; data: Data };
+type ProducerMetadata = Readonly<{ model: string; provider: string; adapter: string; providerRequestId: string }>;
+type Captured = { life: ReadLifetime; readEnv: WorkerEnv; data: Data; producerMetadata: ProducerMetadata };
 const inventories = new WeakMap<GuestImageResultInventory, Captured>();
 
 function state(request: Request, env: WorkerEnv, inventory: GuestImageResultInventory): Captured {
@@ -142,6 +143,10 @@ async function inspect(request: Request, env: WorkerEnv, input: { proof: GuestCl
     const facts = await life.wait(() => collectGuestImageResultFacts(history));
     const { identity, rows } = facts, source = history.original.source;
     life.expiresAtMs = Math.min(Date.parse(identity.expiresAt), Number(history.original.session.expires_at_ms)); life.check();
+    const { model_id: model, provider, adapter_version: adapter, provider_request_id: providerRequestId } = facts.completion.payload;
+    if (typeof model !== "string" || typeof provider !== "string" || typeof adapter !== "string"
+      || providerRequestId !== null && typeof providerRequestId !== "string") return fail("producer_metadata_invalid");
+    const producerMetadata: ProducerMetadata = Object.freeze({ model, provider, adapter, providerRequestId: providerRequestId ?? "" });
     const privateContents = [];
     for (const body of rows.privateContents) privateContents.push({ contentId: body.content_id, kind: body.kind,
       contentDigest: await life.wait(() => digest(body.content)), bytes: new TextEncoder().encode(String(body.content)).byteLength,
@@ -169,7 +174,7 @@ async function inspect(request: Request, env: WorkerEnv, input: { proof: GuestCl
     const data = freeze({ manifest, manifestDigest, review, proof: structuredClone(facts.parts) });
     await prove(life, readEnv, data.proof);
     const inventory = Object.freeze({}) as GuestImageResultInventory;
-    life.check(); inventories.set(inventory, { life, readEnv, data }); return inventory;
+    life.check(); inventories.set(inventory, { life, readEnv, data, producerMetadata }); return inventory;
   } catch (error) { life.stopped = true; throw error; }
 }
 
@@ -180,6 +185,24 @@ export function inspectGuestImageResultInventory(request: Request, env: WorkerEn
 }
 export function guestImageResultInventoryData(request: Request, env: WorkerEnv, inventory: GuestImageResultInventory): Data {
   return state(request, env, inventory).data;
+}
+/** Internal lifetime bounds only. This does not recheck the database, renew
+ * either limit or authorize bytes; consumers still await the full assertion. */
+export function guestImageResultInventoryBounds(
+  request: Request,
+  env: WorkerEnv,
+  inventory: GuestImageResultInventory,
+): Readonly<{ monotonicDeadline: number; expiresAtMs: number }> {
+  const { life } = state(request, env, inventory);
+  return Object.freeze({
+    monotonicDeadline: life.deadline,
+    expiresAtMs: life.expiresAtMs,
+  });
+}
+/** Internal comparison data from the qualified original completion, not a
+ * transferable proof or a substitute for the full asynchronous currentness check. */
+export function guestImageResultInventoryProducerMetadata(request: Request, env: WorkerEnv, inventory: GuestImageResultInventory): ProducerMetadata {
+  return state(request, env, inventory).producerMetadata;
 }
 /** Recheck the original captured graph; this cannot renew the deadline, replace
  * missing private content, accept a changed manifest or grant another purchase. */
