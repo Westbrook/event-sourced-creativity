@@ -1,3 +1,4 @@
+import { evaluateLocalActions, localFormatRules } from './local-policy.ts';
 import type { GenerationDecisionContext } from './generation-decision.ts';
 import type { PaletteFeedback } from './palette-feedback.ts';
 import { preparedHistory, historySummary, compactHistoryEvent } from './history.ts';
@@ -6,7 +7,7 @@ import { isContextCompositionRelation } from '../model/combined-context.ts';
 import { parseDocumentArtifactContent } from '../model/document-artifacts.ts';
 import { foldEvents, type CreativeEvent, type CreativeProjection } from '../model/events.ts';
 
-export const POLICY_VERSION = 'still-11';
+export const POLICY_VERSION = 'still-12';
 export type Position = { projectId: string; documentId: string; blockId: string; outputId: string; view: string; intent: string; recentActions: string[]; itemIndex?: number; actionLimit?:number; palette?:PaletteFeedback; generation?:GenerationDecisionContext };
 export type Abilities = { author: boolean; generate: boolean; projectCreate: boolean; formats: string[] };
 export type Action = { id: string; label: string; group: 'navigate' | 'write' | 'context' | 'make' | 'reflect'; description: string };
@@ -242,7 +243,7 @@ export function comprehensiveQuestionsFor(candidates: Action[], position?: Posit
 }
 
 export type Answer = { type?: string; score?: number; confidence?: number; noul?: number; choice?: string; probabilities?: Record<string, number> };
-export type RankingRow = { id: string; questionId: string; reason: string; base?: number; basis?: 'jev' | 'policy'; adjustments?: { label: string; delta: number; questions: string[] }[]; value?: number; rank?: number; selected?: number };
+export type RankingRow = { id: string; questionId: string; reason: string; localReason?:string; base?: number; basis?: 'jev' | 'policy'; adjustments?: { label: string; delta: number; questions: string[] }[]; value?: number; rank?: number; selected?: number };
 export function evaluateFormats(candidates: Action[], answers: Record<string, Answer> = {}) {
   const rows: RankingRow[] = candidates.map(a => {
     const answer = answers[`fit_${a.id}`];
@@ -258,14 +259,15 @@ export function rankFormats(candidates: Action[], answers: Record<string, Answer
 }
 // Complete chooser order: unavailable formats never enter; uncertain/missing answers
 // keep a stable local tail instead of making a format inaccessible.
-export function rankAllFormats(candidates: Action[], answers: Record<string, Answer> = {}): string[] {
+export function rankAllFormats(candidates: Action[], answers: Record<string, Answer> = {}, local?:{projection:CreativeProjection;position:Position}): string[] {
   const evidence = (id: string) => {
     const a = answers[`fit_${id}`];
     return a?.type === 'score' && Number.isFinite(a.score) && a.score! >= 0 && a.score! <= 3 && Number.isFinite(a.confidence) && a.confidence! >= .12 && a.confidence! <= 1 ? a : undefined;
   };
+  const localOrder=local?new Map(localFormatRules(local.projection,local.position).map((r,i)=>[r.id,i])):undefined;
   return candidates.filter(a => Object.hasOwn(MEDIUM_QUESTIONS, a.id)).sort((a, b) => {
     const left = evidence(a.id), right = evidence(b.id);
-    return Number(!!right) - Number(!!left) || (right?.score ?? 0) - (left?.score ?? 0) || (right?.confidence ?? 0) - (left?.confidence ?? 0);
+    return Number(!!right) - Number(!!left) || (right?.score ?? 0) - (left?.score ?? 0) || (right?.confidence ?? 0) - (left?.confidence ?? 0) || (localOrder ? (localOrder.get(a.id)??Infinity)-(localOrder.get(b.id)??Infinity) : 0);
   }).map(a => a.id);
 }
 
@@ -319,7 +321,8 @@ export function questionsFor(candidates: Action[], position?: Position, artifact
   }
   return Object.fromEntries(Object.entries(all).filter(([id])=>needed.has(id)));
 }
-export function evaluateActions(candidates: Action[], pos: Position, answers: Record<string, Answer> = {}) {
+export function evaluateActions(candidates: Action[], pos: Position, answers: Record<string, Answer> = {}, projection?:CreativeProjection) {
+  if(projection&&!pos.palette&&!Object.keys(answers).length)return evaluateLocalActions(candidates,projection,pos);
   if(pos.palette && pos.view!=='find-action') {
     const rows:RankingRow[]=candidates.map(a=>{
       const x=answers[`use_${a.id}`];
@@ -375,8 +378,8 @@ export function evaluateActions(candidates: Action[], pos: Position, answers: Re
   });
   return { selected:chosen, ranked:ranked.map(row=>row.a), rows, modelRanked };
 }
-export function selectActions(candidates: Action[], pos: Position, answers: Record<string, Answer> = {}): Action[] {
-  return evaluateActions(candidates,pos,answers).selected;
+export function selectActions(candidates: Action[], pos: Position, answers: Record<string, Answer> = {}, projection?:CreativeProjection): Action[] {
+  return evaluateActions(candidates,pos,answers,projection).selected;
 }
 
 const safeText = (v: unknown, max = 1000) => typeof v === 'string' ? v.replace(/https?:\/\/\S+/g, '[linked resource]').slice(0, max) : '';

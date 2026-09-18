@@ -353,7 +353,8 @@ export class StillApp extends LitElement {
       const allowed=this.candidates().some(a=>a.id===(route.mode==='generate'?'create':route.mode))||['actions','workspaces'].includes(route.mode)||route.mode==='generate'&&!!this.client.pendingGeneration;
       if(!allowed)this.routeError='Action unavailable';
       else if(route.mode==='generate'){
-        try{const format=this.client.pendingGeneration?.format??route.format;if(format)this.generation=this.client.prepareGeneration(format);this.begin('generate',false);}
+        try{const format=this.client.pendingGeneration?.format??route.format;if(format){this.generation=this.client.prepareGeneration(format);
+        this.client.position.recentActions=[...this.client.position.recentActions.filter(a=>!a.startsWith('format-choice:')),`format-choice:${format}`].slice(-12);}this.begin('generate',false);}
         catch(error){this.routeError=error instanceof Error?error.message:'Format unavailable';}
       }else this.begin(route.mode,false);
     }
@@ -389,7 +390,7 @@ export class StillApp extends LitElement {
   private navigate(view: string, ids: Partial<StillClient['position']> = {}) {
     this.resetStep();this.page = 0; this.itemIndex = 0; this.error = '';this.routeError='';this.notice='';
     const changedDocument = ids.documentId !== undefined && ids.documentId !== this.client.position.documentId || ids.projectId !== undefined && ids.projectId !== this.client.position.projectId;
-    this.client.position = { ...this.client.position, ...(changedDocument ? { intent:'', recentActions:[] } : {}), blockId: '', outputId: '', ...ids, view };
+    this.client.position = { ...this.client.position, ...(changedDocument ? { intent:'', recentActions:[] } : {recentActions:this.client.position.recentActions.filter(a=>!a.startsWith('completed:'))}), blockId: '', outputId: '', ...ids, view };
     const p = this.client.position;
     this.writeRoute(); this.changed(); this.focusContent(); this.decide();
     if (p.documentId) void this.client.pollJobs().catch(() => {});
@@ -414,7 +415,7 @@ export class StillApp extends LitElement {
     if(this.mode){clearTimeout(this.decisionTimer);if(this.mode==='generate'&&!this.generation){++this.decisionTicket;this.suggestFormats(bypass);}return;}
     clearTimeout(this.decisionTimer); const ticket = ++this.decisionTicket;
     this.lastGenerationDecision=JSON.stringify(this.decisionPosition().generation);
-    const candidates = this.candidates(); if(this.dockTouched)return;this.suggestions = selectActions(candidates, this.decisionPosition());this.rankedActions=evaluateActions(candidates,this.decisionPosition()).ranked;this.moreOpen=false;this.emphasis=presentActions(this.suggestions.map(a=>a.id));this.suggestionTargets={}; this.decisionSource = 'fallback'; this.changed();
+    const candidates = this.candidates(); if(this.dockTouched)return;this.suggestions = selectActions(candidates, this.decisionPosition(),{},this.client.projection);this.rankedActions=evaluateActions(candidates,this.decisionPosition(),{},this.client.projection).ranked;this.moreOpen=false;this.emphasis=presentActions(this.suggestions.map(a=>a.id));this.suggestionTargets={}; this.decisionSource = 'fallback'; this.changed();
     if(this.developer){this.developerScope=this.diagnosticScope();this.developerApplied=this.localDiagnostics('Local policy');this.developerReceived=undefined;this.developerPending=false;}
     if (!this.client.session?.policy.accepted || this.mode) return;
     this.onboardingDecisionPending=true;
@@ -426,7 +427,7 @@ export class StillApp extends LitElement {
         let firstResponseMs:number|undefined;
         const applyResult=(result:DecisionResponse)=>{
         firstResponseMs??=Math.max(0,performance.now()-started);
-        const disposition=responseDisposition(result,{head:this.client.head,headChanged:head!==this.client.head,stale:ticket!==this.decisionTicket||snapshot!==JSON.stringify(this.client.position)||!!this.mode||this.disposed||scope!==this.interactionScope(),focused:this.dockTouched||!!this.querySelector('.action-dock')?.contains(document.activeElement)});
+        const disposition=responseDisposition(result,{head:this.client.head,headChanged:head!==this.client.head,stale:ticket!==this.decisionTicket||snapshot!==JSON.stringify(this.decisionPosition())||!!this.mode||this.disposed||scope!==this.interactionScope(),focused:this.dockTouched||!!this.querySelector('.action-dock')?.contains(document.activeElement)});
         this.recordDecision(result,disposition,diagnosticScope,started,firstResponseMs);
         if(disposition==='Applied'){const allowed=new Map(this.candidates().map(a=>[a.id,a]));this.suggestions=result.actions!.map(a=>allowed.get(a.id)).filter((a):a is Action=>!!a).slice(0,4);this.rankedActions=(result.rankedActions??result.actions??[]).map(a=>allowed.get(a.id)).filter((a):a is Action=>!!a);this.emphasis=result.presentation??presentActions(this.suggestions.map(a=>a.id));this.suggestionTargets=result.targets??{};this.decisionSource=result.source;this.changed();}
         if(ticket===this.decisionTicket){this.developerPending=false;this.changed();}
@@ -616,12 +617,14 @@ export class StillApp extends LitElement {
       if (!menu.open && menu.isConnected && this.mode === 'generate' && !this.generation) void this.startGeneration(format);
     });
   };
+  private rememberCompletion(action:string){this.client.position.recentActions=[...this.client.position.recentActions.filter(a=>!a.startsWith('completed:')),`completed:${action}`].slice(-12);}
   private async startGeneration(format:string) {
     if(this.busy||this.composing||this.directGeneration||this.generation?.attempted)return;
     this.directGeneration=true;this.formatTouched=true;
     try {
       await this.run(async()=>{
         this.generation=this.client.prepareGeneration(format);
+        this.client.position.recentActions=[...this.client.position.recentActions.filter(a=>!a.startsWith('format-choice:')),`format-choice:${format}`].slice(-12);
         this.generationGate=null;this.draftBaseline=this.draftSignature();
         await this.generate();
       });
@@ -645,16 +648,16 @@ export class StillApp extends LitElement {
     } else if (this.mode === 'add-context') {
       if (!this.bodyDraft.trim()) throw new Error('Add an idea.');
       if (!c.hasUnconfirmedWrite || !this.pendingBlock) { const event = c.blockEvent(this.bodyDraft, this.titleDraft.trim() || 'A thought', this.kindDraft); if(this.pendingBlock) Object.assign(event.payload,{block_id:this.pendingBlock.payload.block_id,position:this.pendingBlock.payload.position}); this.pendingBlock = event; }
-      await c.append([this.pendingBlock]); this.closeMode();
+      await c.append([this.pendingBlock]); this.rememberCompletion(this.mode);this.closeMode();
     } else if (this.mode === 'edit-block') {
       const b = p.blocks.find(x => x.id === c.position.blockId); if (!b || b.locked) throw new Error('Idea is not editable.');
-      await c.append([{ type: 'BlockPropertyEdited', payload: { block_id: b.id, property_path: 'text', old_value: this.editBase.text ?? '', new_value: this.bodyDraft } }]); this.closeMode();
+      await c.append([{ type: 'BlockPropertyEdited', payload: { block_id: b.id, property_path: 'text', old_value: this.editBase.text ?? '', new_value: this.bodyDraft } }]); this.rememberCompletion('edit-block');this.closeMode();
     } else if (this.mode === 'rename') {
       if (!this.titleDraft.trim()) throw new Error('Enter a name.');
       await c.append([{ type: 'DocumentRenamed', payload: { document_id: p.documentId, old_title: this.editBase.title ?? p.documentTitle, new_title: this.titleDraft.trim() } }]); this.closeMode();
     } else if (this.mode === 'intent') { c.position.intent = this.bodyDraft.trim(); this.closeMode(); return; }
     else if (this.mode === 'edit-artifact') { if (this.missingWriting()) throw new Error('Wait for the writing to load.'); await c.editArtifact(c.position.outputId, this.editBase.item !== undefined ? (parseDocumentArtifactContent(c.content[p.artifacts.find(a => a.id === c.position.outputId)?.contentRef ?? ''])?.content_markdown ?? '') : this.bodyDraft, this.editBase.revision ?? 0, this.editBase.item !== undefined ? [{index:this.editBase.item,body:this.bodyDraft}] : undefined); this.closeMode(); }
-    else if (this.mode === 'reuse') { const b = p.libraryBlocks.find(x => x.id === this.choice); if (!b) throw new Error('Choose a context block.'); const event = c.blockEvent(text(b.properties.text), b.handle, b.type); event.payload.properties = { ...b.properties, source_block_id: b.id, weight: .8 }; if (!c.hasUnconfirmedWrite || !this.pendingBlock) { if(this.pendingBlock) Object.assign(event.payload,{block_id:this.pendingBlock.payload.block_id,position:this.pendingBlock.payload.position}); this.pendingBlock=event; } await c.append([this.pendingBlock]); this.closeMode(); }
+    else if (this.mode === 'reuse') { const b = p.libraryBlocks.find(x => x.id === this.choice); if (!b) throw new Error('Choose a context block.'); const event = c.blockEvent(text(b.properties.text), b.handle, b.type); event.payload.properties = { ...b.properties, source_block_id: b.id, weight: .8 }; if (!c.hasUnconfirmedWrite || !this.pendingBlock) { if(this.pendingBlock) Object.assign(event.payload,{block_id:this.pendingBlock.payload.block_id,position:this.pendingBlock.payload.position}); this.pendingBlock=event; } await c.append([this.pendingBlock]); this.rememberCompletion(this.mode);this.closeMode(); }
     this.notice = 'Saved.'; this.changed(); this.decide();
   }
   private async generate() {
@@ -817,7 +820,7 @@ export class StillApp extends LitElement {
     const mode = this.mode, p = this.client.projection;
     if (mode==='edit-artifact' && this.missingWriting()) return this.renderWritingLoad();
     if(mode==='use-in')return keyed(`${this.interactionScope()}/${this.client.position.blockId}/use-in`,html`<still-use-in-flow .client=${this.client} .suggestedTarget=${this.useInTarget} @context-back=${()=>this.closeMode()} @use-in-done=${(e:CustomEvent<{projectId:string;documentId:string;blockId:string}>)=>{this.navigate('document',{projectId:e.detail.projectId,documentId:e.detail.documentId,blockId:e.detail.blockId});this.notice='Saved.';}}></still-use-in-flow>`);
-    if (['split-context','research-context','find-references','compose'].includes(mode)) return keyed(`${this.client.scopeKey}/${p.projectId}/${p.documentId}/${this.client.position.blockId}/${mode}`,html`<still-context-flow .client=${this.client} .action=${mode} @context-back=${()=>this.closeMode()} @context-done=${()=>{this.notice='Saved.';this.closeMode();}}></still-context-flow>`);
+    if (['split-context','research-context','find-references','compose'].includes(mode)) return keyed(`${this.client.scopeKey}/${p.projectId}/${p.documentId}/${this.client.position.blockId}/${mode}`,html`<still-context-flow .client=${this.client} .action=${mode} @context-back=${()=>this.closeMode()} @context-done=${()=>{this.rememberCompletion(mode);this.notice='Saved.';this.closeMode();}}></still-context-flow>`);
     if (mode === 'generate') {
       const g = this.directGeneration?null:this.generation;
       const source = g?.sourceSnapshot ?? documentSnapshot(p, p.documentId);
@@ -865,7 +868,7 @@ export class StillApp extends LitElement {
   private renderGenerationDock() {
     const g=this.directGeneration?null:this.generation;
     const formats=this.candidates().filter(a=>!!FORMATS[a.id]);
-    const ordered=[...new Set([...this.formatSuggestions,...rankAllFormats(formats)])].filter(id=>formats.some(a=>a.id===id));
+    const ordered=[...new Set([...this.formatSuggestions,...rankAllFormats(formats,{}, {projection:this.client.projection,position:this.decisionPosition()})])].filter(id=>formats.some(a=>a.id===id));
     if(this.toolbarLimit<3){
       const emphasis=presentToolbar(ordered.slice(0,3),this.formatEmphasis);
     const choices=g?[{id:'ui:generate',label:g.recoveryClosed?'Review another':g.attempted?'Check generation':g.format==='scene'&&!g.scenePreview?'Check cost':this.generationGate?(this.generationGate.key?'I understand the risks':'Blocked'):'Generate',run:()=>void this.run(()=>this.generate()),variant:'primary' as const,disabled:!!this.generationGate&&!this.generationGate.key}]:ordered.map(id=>({id,label:FORMATS[id],run:()=>{this.formatTouched=true;void this.startGeneration(id);},variant:emphasis[id]?.variant??'secondary' as const}));
@@ -893,7 +896,7 @@ export class StillApp extends LitElement {
     if(view==='generation'&&(this.isInlineGeneration()||this.canAcknowledgeSafety(this.selectedGeneration())))return this.renderGenerationStatusDock();
     const limit=this.toolbarLimit,firstLimit=this.moreOpen?this.firstDockLimit:limit,eligible=this.candidates(),job=view==='generation'?this.selectedGeneration():undefined;
     const generationProgress=job&&generationActive(job)?generationStatus(job):'';
-    const pool=[...this.suggestions,...(firstLimit>5?this.rankedActions.filter(a=>!this.suggestions.some(s=>s.id===a.id)):[])].filter(a=>eligible.some(e=>e.id===a.id));
+    const pool=[...this.suggestions,...(firstLimit>5&&this.decisionSource==='jev'?this.rankedActions.filter(a=>!this.suggestions.some(s=>s.id===a.id)):[])].filter(a=>eligible.some(e=>e.id===a.id));
     const a=p.artifacts.find(x=>x.id===c.position.outputId);
     const slides=view==='artifact'&&a&&['slides','storyboard'].includes(a.kind)&&a.items.length>1;
     const browsing=['projects','documents','results'].includes(view);
@@ -923,7 +926,7 @@ export class StillApp extends LitElement {
     actions.push(...pageControls.map(control=>this.button(control.label,control.run,false,false,control.id,'secondary')));
     actions.push(this.button('More',()=>this.openMore(),false,false,'ui:more'));
     if(this.moreOpen)actions=[...this.toolbarSuggestions(nextToolbarActions(this.rankedActions,visibleIds,eligible,limit-2)),this.button('Back',()=>{this.moreOpen=false;this.changed();void this.updateComplete.then(()=>this.querySelector<HTMLElement>('[data-action-id="ui:more"]')?.focus());}),this.paletteButton('more')];
-    return html`<footer class=${this.dockClass} @focusout=${()=>this.scheduleDockFit()} @pointerenter=${()=>{this.dockTouched=true;}} @pointerdown=${()=>{this.dockTouched=true;}} @focusin=${()=>{this.dockTouched=true;}}>${this.toolbarStatus(generationProgress)}<en-toolbar label="Your next step" keyboard-navigation="tab">${actions}</en-toolbar></footer>`;
+    return html`<footer class=${this.dockClass} @focusout=${()=>this.scheduleDockFit()} @pointerdown=${()=>{this.dockTouched=true;}} @focusin=${()=>{this.dockTouched=true;}}>${this.toolbarStatus(generationProgress)}<en-toolbar label="Your next step" keyboard-navigation="tab">${actions}</en-toolbar></footer>`;
   }
   private reviewContext(job?:DocumentJob) {
     const ids=job?.errorDetail?.contributingBlockIds ?? this.generationGate?.issues.flatMap(i=>i.blockIds??[]) ?? [];

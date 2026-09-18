@@ -112,7 +112,7 @@ export async function handleStillDecision(request: Request, env: WorkerEnv, cont
   let asked=false,exchange:DecisionExchange|undefined,presentation:Record<string,Emphasis>={},adjustments:MenuAdjustment[]=[],recommended:string[]|undefined;
   const metrics=()=>({elapsedMs:Date.now()-started,providerCalls:passes.filter(p=>p.status!=='skipped').length,candidateCount:built.candidates.length,questionsAsked:passes.reduce((n,p)=>n+p.questions.filter(q=>q.asked).length,0),menuGroups:recommended?[...new Set(recommended.map(id=>built.candidates.find(a=>a.id===id)?.group))]:[],recentEscapeHatches:position.recentActions.filter(id=>id==='ui:more'||id==='ui:palette').length,destinationCandidates:evidence.destinations.length});
   const diagnostics = (source:string, reason?:string, answers?:Record<string,Answer>, model?:string, observedAnswers?:Record<string,Answer>) => input.developer===true ? {diagnostics:decisionDiagnostics(built.projection,position,abilities,{head,source,reason,answers,model,observedAnswers,asked,exchange,passes,presentation,adjustments,recommended,metrics:metrics(),artifactKind:built.state.selectedWork?.kind,coverage:built.state.history.coverage})} : {};
-  const fallback = (reason: string, observedAnswers?:Record<string,Answer>) => reply({ source: 'fallback', reason, policy: POLICY_VERSION, head, actions: palette||choosingFormat||finding ? [] : selectActions(built.candidates, position), rankedActions: palette||choosingFormat||finding ? [] : evaluateActions(built.candidates,position).ranked.map(a=>({id:a.id})), formats: [], candidateIds: built.candidates.map(a => a.id), ...diagnostics('fallback',reason,undefined,undefined,observedAnswers) });
+  const fallback = (reason: string, observedAnswers?:Record<string,Answer>) => reply({ source: 'fallback', reason, policy: POLICY_VERSION, head, actions: palette||choosingFormat||finding ? [] : selectActions(built.candidates, position,{},built.projection), rankedActions: palette||choosingFormat||finding ? [] : evaluateActions(built.candidates,position,{},built.projection).ranked.map(a=>({id:a.id})), formats: [], candidateIds: built.candidates.map(a => a.id), ...diagnostics('fallback',reason,undefined,undefined,observedAnswers) });
   if (!env.JEV_API_KEY) return fallback('not_configured');
   const callPass=async(id:string,label:string,state:unknown,askedQuestions:typeof questions,timeout:number,parentId?:string)=>{
     const body=JSON.stringify({model:'jev-latest',state,questions:askedQuestions});
@@ -150,7 +150,7 @@ export async function handleStillDecision(request: Request, env: WorkerEnv, cont
     return reply({source:'jev',model:first.model,policy:POLICY_VERSION,head,paletteActions:recommended.map(id=>({id})),actions:[],candidateIds:built.candidates.map(a=>a.id),...diagnostics('jev',undefined,answers,first.model)});
   }
   let actions=choosingFormat?[]:selectActions(built.candidates,position,answers);
-  const rankedFormats=choosingFormat?rankAllFormats(built.candidates,answers):[];
+  const rankedFormats=choosingFormat?rankAllFormats(built.candidates,answers,{projection:built.projection,position}):[];
   const formats=rankedFormats.slice(0,3);
   let target:typeof evidence.destinations[number]|undefined;
   const resultBody=()=>{

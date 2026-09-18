@@ -17,7 +17,7 @@ const Recovery=new Function('documentJobCanAcknowledgeSafety','generationFormat'
 function fixture(status='failed') {
  const view=new Recovery();
  const calls=[];
- Object.assign(view,{busy:false,composing:false,decide:()=>{},changed:()=>{},begin:mode=>calls.push(['begin',mode]),startGeneration:format=>{assert.equal(view.generation,null);calls.push(['generate',format]);},client:{scopeKey:'owner',epoch:1,position:{view:'generation',documentId:'doc',outputId:'job'},abilities:{generate:true,formats:['video']},jobs:[{jobId:'job',documentId:'doc',status,kind:'render_document',result:{artifactKind:'video'}}],pollJobs:async()=>calls.push(['poll']),refresh:async()=>calls.push(['refresh'])}});
+ Object.assign(view,{busy:false,composing:false,decide:()=>{},changed:()=>{},begin:mode=>calls.push(['begin',mode]),startGeneration:format=>{assert.equal(view.generation,null);calls.push(['generate',format]);},client:{scopeKey:'owner',epoch:1,position:{recentActions:[],view:'generation',documentId:'doc',outputId:'job'},abilities:{generate:true,formats:['video']},jobs:[{jobId:'job',documentId:'doc',status,kind:'render_document',result:{artifactKind:'video'}}],pollJobs:async()=>calls.push(['poll']),refresh:async()=>calls.push(['refresh'])}});
  return {view,calls};
 }
 test('status refresh reads only, confirms no new generation, and does not repeat provider error',async()=>{

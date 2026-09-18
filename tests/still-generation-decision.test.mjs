@@ -76,3 +76,19 @@ test('generation pages render the shared ranked toolbar and More alternatives',a
  const first=render.call(view);assert.match(first,/More/);assert.doesNotMatch(first,/Palette/);assert.ok((first.match(/<button>/g)??[]).length<=5);
  view.moreOpen=true;const more=render.call(view);assert.match(more,/Back/);assert.match(more,/Palette/);assert.ok((more.match(/<button>/g)??[]).length<=5);
 });
+
+test('generation evidence in the request snapshot does not make the response stale',async()=>{
+ const {default:ts}=await import('typescript');
+ const {evaluateActions,POLICY_VERSION}=await import('../src/still/decisions.ts');
+ const {responseDisposition}=await import('../src/still/diagnostics.ts');
+ const source=ts.createSourceFile('app.ts',readFileSync(new URL('../src/still/app.ts',import.meta.url),'utf8'),ts.ScriptTarget.Latest,true);
+ const app=source.statements.find(n=>ts.isClassDeclaration(n)&&n.name?.text==='StillApp');
+ const method=app.members.find(n=>n.name?.getText(source)==='decide');
+ const code=ts.transpileModule(`function decide(bypass=false)${method.body.getText(source)}`,{compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText;
+ let scheduled;const document={activeElement:null},window={setTimeout:fn=>{scheduled=fn;return 0;}};
+ const run=new Function('selectActions','evaluateActions','presentActions','responseDisposition','window','document','ApiError',code+';return decide;')(selectActions,evaluateActions,()=>({}),responseDisposition,window,document,Error);
+ const candidates=eligibleActions(projection,position,abilities),received=[];
+ const view={decisionTicket:0,client:{projection,position:{...position,generation:undefined},head:4,session:{policy:{accepted:true}}},currentRouteProblem:()=>false,isInlineGeneration:()=>false,canAcknowledgeSafety:()=>false,selectedGeneration:()=>failed,decisionPosition:()=>position,candidates:()=>candidates,changed(){},interactionScope:()=>'',diagnosticScope:()=>'',querySelector:()=>null,decisionBody:()=>position,requestDecision:async()=>({source:'jev',head:4,policy:POLICY_VERSION,actions:[{id:'context'}]}),recordDecision:(_r,disposition)=>received.push(disposition)};
+ run.call(view);await scheduled();assert.deepEqual(received,['Applied']);assert.equal(view.decisionSource,'jev');
+ view.dockTouched=false;run.call(view);view.client.head=5;await scheduled();assert.equal(received.at(-1),'Ignored: event head changed');
+});
