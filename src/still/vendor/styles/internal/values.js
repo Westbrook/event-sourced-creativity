@@ -1,19 +1,12 @@
 import { css, unsafeCSS } from 'lit';
-import { defaultCSSValue } from '../../tokens/defaults.js';
-import { sizingRoleCSS } from '../../tokens/sizing.js';
+import { rawTokenCSS, tokenCSS } from './token-values.js';
 /** Static, trusted token data only. Never pass user-authored strings to unsafeCSS. */
 export function rawToken(name) {
-    const value = defaultCSSValue(name);
-    if (!value)
-        throw new Error(`Missing stylesheet token default: ${name}`);
-    return css `var(${unsafeCSS(name)}, ${unsafeCSS(value)})`;
+    return unsafeCSS(rawTokenCSS(name));
 }
-const sizedRoles = new Map(sizingRoleCSS.map(({ base, role }) => [base, `--_en-sized-${role.slice(5)}`]));
 /** Select a finite role, never multiply an inherited font or dimension recursively. */
 export function token(name) {
-    const fallback = rawToken(name);
-    const sized = sizedRoles.get(name);
-    return sized ? css `var(${unsafeCSS(sized)}, ${fallback})` : fallback;
+    return unsafeCSS(tokenCSS(name));
 }
 /** Leave optional properties unset so inherited consumer overrides remain effective. */
 export function override(name, fallback) {

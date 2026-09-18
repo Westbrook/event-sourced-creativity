@@ -7,7 +7,7 @@ import { controlFrameInset, segmentedFramePadding, textControlBlockSize } from '
 export const selectionStyles = sizedStyles(css `
   /* Recompute for both frame and item; descendant overrides stay effective. */
   .en-segmented-control, .en-segmented-item {
-    --_en-text-control-block-size: ${textControlBlockSize()};
+    --_en-text-control-block-size: ${textControlBlockSize(false, true)};
   }
   .en-option, .en-tab, .en-accordion-trigger {
     min-inline-size: ${t('--en-size-target-min')};
@@ -131,7 +131,7 @@ export const selectionStyles = sizedStyles(css `
   ${focusStyles}
   @media (any-pointer: coarse) {
     .en-option, .en-tab, .en-accordion-trigger, .en-rating-item, .en-rating-clear { min-block-size: max(${t('--en-size-control-min')}, ${t('--en-size-target-touch')}); }
-    .en-segmented-control, .en-segmented-item { --_en-text-control-block-size: ${textControlBlockSize(true)}; }
+    .en-segmented-control, .en-segmented-item { --_en-text-control-block-size: ${textControlBlockSize(true, true)}; }
     .en-segmented-item { min-block-size: max(calc(var(--_en-text-control-block-size) - 2 * ${controlFrameInset}), ${t('--en-size-target-touch')}); }
     .en-rating-item { --_en-rating-target-min: ${t('--en-size-target-touch')}; min-inline-size: ${t('--en-size-target-touch')}; }
   }

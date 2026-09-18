@@ -3,6 +3,7 @@ import { tooltipWarmupGroup } from './warmup-group.js';
 import { FloatingSurface } from '../popover/floating-surface.js';
 import { tooltipTemplate } from './template.js';
 import { distanceToBounds, inHoverCorridor } from './hover-corridor.js';
+import { TooltipPositionController } from './position-controller.js';
 let nextTooltipId = 0;
 /**
  * Supplemental text for a native button or en-button, exposed on hover and keyboard focus.
@@ -17,7 +18,7 @@ let nextTooltipId = 0;
  * @tagname en-tooltip
  * @slot content - One phrasing element containing supplemental text; no controls.
  * @csspart surface - Hoverable tooltip surface in the native top layer.
- * @fires en-change - Cancelable tentative open state: {previous, proposed, reason}.
+ * @fires {import('../dialog/types.js').OverlayChangeEvent} en-change - Cancelable tentative open state: {previous, proposed, reason}.
  * @cssprop --en-overlay-background - Tooltip background.
  * @cssprop --en-overlay-color - Tooltip foreground.
  * @cssprop --en-overlay-padding - Tooltip padding.
@@ -34,7 +35,10 @@ export class EnTooltip extends FloatingSurface {
         showDelay: { type: Number, attribute: 'show-delay' },
         hideDelay: { type: Number, attribute: 'hide-delay' },
         transitDuration: { type: Number, attribute: 'transit-duration' },
+        inline: { type: String, reflect: true },
+        block: { type: String, reflect: true },
     };
+    #positioning = new TooltipPositionController(this);
     #group = null;
     #groupElement = null;
     #groupRoot = null;
@@ -76,7 +80,13 @@ export class EnTooltip extends FloatingSurface {
         this.showDelay = 300;
         this.hideDelay = 150;
         this.transitDuration = 1000;
+        this.inline = 'center';
+        this.block = 'end';
     }
+    position = () => {
+        if (this.open)
+            this.#positioning.position(this.surface, this.trigger, this.inline, this.block);
+    };
     get movesFocus() { return false; }
     get triggerAttributes() { return {}; }
     startListening() {
@@ -126,6 +136,12 @@ export class EnTooltip extends FloatingSurface {
             this.hide('hover');
         }
         super.syncPopover();
+        if (!this.changingOpen) {
+            if (this.surface?.matches(':popover-open'))
+                this.position();
+            else
+                this.#positioning.release();
+        }
         // Native beforetoggle listeners can rebind or move the trigger synchronously.
         this.syncWarmupGroup();
         this.#group?.focus(this, this.hasFocusedPresentation());
@@ -347,6 +363,7 @@ export class EnTooltip extends FloatingSurface {
         this.clearTimers();
     }
     disconnectedCallback() {
+        this.#positioning.release();
         for (const release of this.#focusDismissals.values())
             release();
         this.releaseWarmupGroup();

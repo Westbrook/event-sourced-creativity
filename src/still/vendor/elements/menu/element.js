@@ -1,3 +1,4 @@
+import { admitOverlayClick, eligibleOverlayTrigger } from '../internal/overlay-trigger.js';
 import { FloatingSurface } from '../popover/floating-surface.js';
 import { foundationStyles } from '../../styles/foundations.js';
 import { menuStyles } from '../../styles/commands.js';
@@ -44,11 +45,11 @@ import { restoreFocus } from '../dialog/focus.js';
  * @slot - Direct en-menu-item children, noninteractive separators and nested en-menu siblings using for.
  * @csspart surface - Named native menu popover.
  * @csspart back - Native menu action returning from a replacement submenu.
- * @fires en-change - Cancelable tentative boolean open state: {previous, proposed, reason}.
+ * @fires {import('../dialog/types.js').OverlayChangeEvent} en-change - Cancelable tentative boolean open state: {previous, proposed, reason}.
  * @fires en-action - Original item command intent bubbles through the menu; it is not re-emitted.
  */
 export class EnMenu extends FloatingSurface {
-    static properties = { ...FloatingSurface.properties, label: { type: String }, backLabel: { type: String, attribute: 'back-label' } };
+    static properties = { ...FloatingSurface.properties, label: { type: String, useDefault: true }, backLabel: { type: String, attribute: 'back-label', useDefault: true } };
     static styles = [foundationStyles, menuStyles];
     replacementMode = false;
     touchPresentation = false;
@@ -194,7 +195,7 @@ export class EnMenu extends FloatingSurface {
         const reverse = this.ownerDocument.defaultView?.getComputedStyle(this).direction === 'rtl' ? 'ArrowRight' : 'ArrowLeft';
         if (this.parentMenu && event.key === reverse) {
             event.preventDefault();
-            this.hide('escape');
+            this.hide('back');
         }
     };
     constructor() { super(); this.label = ''; this.backLabel = 'Back'; }
@@ -236,7 +237,7 @@ export class EnMenu extends FloatingSurface {
         return; this.needsFocus = true; this.entryFocus = this.activeElement; }
     position = () => { this.placementController.sync(); };
     triggerClick = (event) => {
-        if (event?.defaultPrevented)
+        if (!admitOverlayClick(event, eligibleOverlayTrigger(this, this.for, this.trigger)))
             return;
         this.entry = 'first';
         if (!this.open)
@@ -505,7 +506,7 @@ export class EnMenu extends FloatingSurface {
         const back = this.renderRoot?.querySelector('.en-menu-back');
         return back && this.replacementMode && this.parentMenu ? [back, ...this.items] : this.items;
     }
-    back = () => { this.hide('escape'); };
+    back = () => { this.hide('back'); };
     pointerDown = (event) => {
         if (event.composedPath().find(node => node.localName === 'en-menu') !== this)
             return;

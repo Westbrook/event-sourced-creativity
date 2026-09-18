@@ -1,3 +1,4 @@
+import { admitOverlayClick, eligibleOverlayTrigger } from '../internal/overlay-trigger.js';
 import { observeIdReference, referenceRoot } from '../internal/id-reference.js';
 /** External same-tree reference and owned ARIA restoration; no cross-root IDREF is invented. */
 export class ModalTriggerController {
@@ -48,12 +49,11 @@ export class ModalTriggerController {
         const valid = () => Boolean(this.host.isConnected && trigger?.isConnected
             && trigger === this.#trigger && this.options.id() === this.#id
             && referenceRoot(this.host) === this.#root && this.#root?.getElementById(this.#id) === trigger
-            && !trigger.disabled && !trigger.loading && !trigger.matches(':disabled,[aria-disabled="true"]'));
-        if (event.defaultPrevented || !trigger || !valid())
+            && eligibleOverlayTrigger(this.host, this.#id, trigger));
+        if (!trigger || !admitOverlayClick(event, valid()))
             return;
         // A valid associated button is an opener, including inside a form.
         // Cancel en-change to intercept the modal default independently of click listener order.
-        event.preventDefault();
         this.options.activate(trigger, valid);
     };
     sync() {

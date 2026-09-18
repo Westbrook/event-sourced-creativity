@@ -19,10 +19,17 @@ import { registerFocusParticipant } from '../internal/focus-participant.js';
  * @cssprop --en-ease-focus-exit - Supplemental focus exit timing function.
  * @cssprop --en-button-background - Action surface fill.
  * @cssprop --en-button-color - Action label color.
+ * @cssprop --en-button-rest-background - Enabled rest background refinement; precedes broad button paint across variants.
+ * @cssprop --en-button-rest-color - Enabled rest color refinement; precedes broad button paint across variants.
+ * @cssprop --en-button-hover-background - Enabled hover background refinement; precedes broad button paint across variants.
+ * @cssprop --en-button-hover-color - Enabled hover color refinement; precedes broad button paint across variants.
+ * @cssprop --en-button-pressed-background - Enabled pressed background refinement; precedes broad button paint across variants.
+ * @cssprop --en-button-pressed-color - Enabled pressed color refinement; precedes broad button paint across variants.
  * @cssprop --en-button-border-color - Action border color.
- * @cssprop --en-button-radius - Action corner radius.
+ * @cssprop --en-button-radius - Action corner radius; falls back to shared control-radius.
+ * @cssprop --en-control-radius - Shared corner radius when button-radius is unset.
  * @cssprop --en-control-min-size - Minimum control block size; also the inline floor in icon-only mode.
- * @cssprop --en-button-inline-padding - Text-button inline padding; shared control-inline-padding takes precedence. Icon buttons retain their own geometry.
+ * @cssprop --en-button-inline-padding - Text-button inline padding; takes precedence over shared control-inline-padding. Icon buttons retain their own geometry.
  * @cssprop --en-control-inline-padding - Shared horizontal control padding.
  * @slot - Default label content, used when no named label is supplied.
  * @slot label - Full accessible action label. Icon-only mode visually hides it without removing its name; keep it present while loading.

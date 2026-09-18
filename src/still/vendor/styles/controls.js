@@ -9,7 +9,7 @@ import { rangeStyles } from './internal/range.js';
 import { buttonAppearanceStyles, buttonForcedHoverStyles } from './internal/button-rules.js';
 import { linkAppearanceStyles, linkDisabledStyles, linkForcedColorStyles } from './internal/link-rules.js';
 import { controlBlockSizeStyles, controlSurfaceStyles, controlEnvelopeStyles, controlDisabledStyles, controlTouchBlockStyles, controlTouchInlineStyles, controlReducedMotionStyles, controlForcedColorStyles, controlForcedDisabledStyles } from './internal/control-shared.js';
-const inputInlinePadding = o('--en-control-inline-padding', o('--en-input-inline-padding', t('--en-space-control-inline')));
+const inputInlinePadding = o('--en-input-inline-padding', o('--en-control-inline-padding', t('--en-space-control-inline')));
 const numberGroupRadius = o('--en-control-radius', t('--en-radius-control'));
 const numberStepRadius = css `max(0px, ${numberGroupRadius} - ${t('--en-border-width')})`;
 // The single-line editor centers its line within the shared target envelope.
@@ -26,11 +26,11 @@ export const controlStyles = sizedStyles(css `
   ${controlSurfaceStyles(css `.en-control, .en-button, .en-input, .en-textarea, .en-select`)}
   ${controlEnvelopeStyles(css `.en-button:not(.en-icon-button), .en-input, .en-textarea, .en-select`)}
   /* Field tokens customize inputs without changing action and choice surfaces.
-     Existing direct control overrides retain their higher precedence. */
+     Family refinements take precedence over shared control defaults. */
   .en-input, .en-textarea, .en-select {
     padding-inline: ${inputInlinePadding};
-    background: ${o('--en-control-background', o('--en-input-background', t('--en-color-surface')))};
-    color: ${o('--en-control-color', o('--en-input-color', t('--en-color-text')))};
+    background: ${o('--en-input-background', o('--en-control-background', t('--en-color-surface')))};
+    color: ${o('--en-input-color', o('--en-control-color', t('--en-color-text')))};
   }
   ${buttonAppearanceStyles}
   ${linkAppearanceStyles}
@@ -39,6 +39,12 @@ export const controlStyles = sizedStyles(css `
   .en-input, .en-textarea, .en-select {
     inline-size: 100%;
     font: ${t('--en-font-input-weight')} ${t('--en-font-input-size')} / ${t('--en-font-input-line-height')} ${t('--en-font-input-family')};
+  }
+  /* Apply after the font shorthand so editable numeric content retains equal
+     digit widths. Input modes also cover text-based numeric editors. */
+  .en-input:is(.en-time-input, [type='number'], [type='date'], [type='time'], [type='datetime-local'], [type='month'], [type='week'], [type='tel']),
+  :is(.en-input, .en-textarea):is([inputmode='numeric'], [inputmode='decimal'], [inputmode='tel']) {
+    font-variant-numeric: tabular-nums;
   }
   /* Use the shared text-field surface and target envelope around the native
      date editor. Keep its fields, separators and calendar-picker activation. */
@@ -77,7 +83,7 @@ export const controlStyles = sizedStyles(css `
     padding: 0;
     border: ${t('--en-border-width')} solid ${o('--en-control-border-color', t('--en-color-boundary'))};
     border-radius: ${numberGroupRadius};
-    background: ${o('--en-control-background', o('--en-input-background', t('--en-color-surface')))};
+    background: ${o('--en-input-background', o('--en-control-background', t('--en-color-surface')))};
   }
   .en-number-group[data-invalid] { border-color: ${t('--en-color-danger-text')}; }
   .en-number-group > :is(.en-number-input, .en-number-step) { min-block-size: max(calc(var(--_en-text-control-block-size) - 2 * ${t('--en-border-width')}), ${t('--en-size-target-min')}); }

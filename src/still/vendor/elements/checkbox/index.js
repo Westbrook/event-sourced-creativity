@@ -10,6 +10,7 @@ import { ChoiceBase } from './choice-base.js';
  * @csspart label - The associated label.
  * @csspart label-text - Label content referenced by the native control; plain labels may be visually omitted with display:none.
  * @csspart description - Supporting text.
+ * @csspart error - Associated application or constraint validation feedback.
  * @cssprop --en-color-action - Selected control color.
  * @cssprop --en-size-target-touch - Minimum pointer target.
  * @fires {import('../../primitives/interactions/events.js').ChangeEvent<boolean>} en-change - Tentative, cancelable change; the property and form data expose the proposed state during dispatch.

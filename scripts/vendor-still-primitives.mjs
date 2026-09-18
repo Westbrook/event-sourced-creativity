@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { createHash } from 'node:crypto';
 const source = path.resolve(process.argv[2] || '../design-system');
 const target = path.resolve('src/still/vendor');
 const visited = new Set();
@@ -27,4 +28,14 @@ fs.mkdirSync(path.join(target, 'tokens'), { recursive: true });
 fs.copyFileSync(path.join(source, 'packages/tokens/dist/default.css'), path.join(target, 'tokens/default.css'));
 fs.copyFileSync(path.join(source, 'LICENSE'), path.join(target, 'LICENSE'));
 fs.writeFileSync(path.join(target, 'README.md'), '# Design-system primitives\n\nSelective built module closure from the sibling `/design-system` repository. MIT license included. Regenerate using `node scripts/vendor-still-primitives.mjs ../design-system`. Internal imports are made relative; runtime dependencies remain the existing Lit and Signal packages. No Forma UI dependencies.\n');
+const sourceHash = createHash('sha256');
+for (const file of [...visited].sort()) sourceHash.update(path.relative(source, file)).update(fs.readFileSync(file));
+sourceHash.update(fs.readFileSync(path.join(source, 'packages/tokens/dist/default.css')));
+fs.writeFileSync(path.join(target, 'provenance.json'), JSON.stringify({
+  source: 'design-system',
+  version: JSON.parse(fs.readFileSync(path.join(source, 'packages/elements/package.json'), 'utf8')).version,
+  revision: process.argv[3] || null,
+  builtClosureSha256: sourceHash.digest('hex'),
+  modules: visited.size,
+}, null, 2) + '\n');
 console.log(`Copied ${visited.size} primitive modules and token CSS.`);

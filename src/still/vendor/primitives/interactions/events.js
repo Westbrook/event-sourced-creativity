@@ -9,11 +9,12 @@ function customEvent(target, name, detail, cancelable) {
 /**
  * Dispatch one tentative, cancelable semantic change. Native editing is a separate transaction.
  * Author writes and accepted nested transactions win over an older default or rollback.
+ * extraDetail supplies compatibility fields; it cannot override previous/proposed/reason.
  */
 export function dispatchChange(target, change, options = {}) {
     if (Object.is(change.previous, change.proposed))
         return 'unchanged';
-    const detail = Object.freeze({ previous: change.previous, proposed: change.proposed, reason: change.reason });
+    const detail = Object.freeze({ ...options.extraDetail, previous: change.previous, proposed: change.proposed, reason: change.reason });
     const event = customEvent(target, options.eventName ?? 'en-change', detail, true);
     const frame = {
         authorRevision: change.getRevision(),
@@ -94,4 +95,8 @@ export function dispatchAction(target, detail, { cancelable = false } = {}) {
 }
 export function dispatchDraftInput(target, detail) {
     target.dispatchEvent(customEvent(target, 'en-input', Object.freeze({ ...detail }), false));
+}
+/** Report an already-applied state; this notification cannot veto it. */
+export function dispatchNotification(target, name, detail) {
+    target.dispatchEvent(customEvent(target, name, Object.freeze({ ...detail }), false));
 }

@@ -39,7 +39,7 @@ import { composedContains, focusedElement, restoreFocus } from './focus.js';
  * @csspart close - Native control of the internal icon-only en-button, forwarded through exportparts.
  * @csspart body - Content container.
  * @csspart footer - Footer container.
- * @fires en-change - Cancelable tentative open state: {previous, proposed, reason}.
+ * @fires {import('../dialog/types.js').OverlayChangeEvent} en-change - Cancelable tentative open state: {previous, proposed, reason}.
  * @cssprop --en-overlay-max-inline-size - Maximum surface inline size.
  * @cssprop --en-overlay-max-block-size - Maximum surface block size.
  * @cssprop --en-overlay-padding - Surface content spacing.
@@ -52,8 +52,8 @@ export class EnDialog extends EnElement {
     static properties = {
         for: { type: String, reflect: true },
         open: { type: Boolean, reflect: true, noAccessor: true },
-        label: { type: String },
-        closeLabel: { type: String, attribute: 'close-label' },
+        label: { type: String, useDefault: true },
+        closeLabel: { type: String, attribute: 'close-label', useDefault: true },
         closedBy: { type: String, attribute: 'closedby', reflect: true, noAccessor: true },
         dismissible: { type: Boolean },
         backdropDismiss: { type: Boolean, attribute: 'backdrop-dismiss', noAccessor: true },
