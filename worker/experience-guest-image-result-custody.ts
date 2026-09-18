@@ -514,6 +514,11 @@ function claimedEditWriteSchema(): Proof {
   if (scene.length !== 9) return fail();
   const triggers = [...scene.map(item => ({ name: item.name, sql: item.sql })),
     { name: "event_write_stage_after_insert", sql: EVENT_WRITE_STAGE_TRIGGER_SQL.replace(" IF NOT EXISTS", "") }];
+  // Installed workerd 1.20260515.1 declares these exact protected tables with
+  // no foreign keys. SQLite's catalog drops IF NOT EXISTS and the semicolon;
+  // only this exact name/DDL pair avoids an unauthorized private-table scan.
+  const nativeKv = "CREATE TABLE _cf_KV (\n        key TEXT PRIMARY KEY,\n        value BLOB\n      ) WITHOUT ROWID";
+  const nativeMetadata = "CREATE TABLE _cf_METADATA (\n        key INTEGER PRIMARY KEY,\n        value BLOB\n      )";
   // The existing catalog independently qualifies the two append-only trigger
   // spellings; this closure qualifies every other effect with exact source SQL.
   return { sql: `(SELECT COUNT(*) FROM main.sqlite_schema WHERE type='trigger' AND lower(tbl_name) IN(SELECT value FROM json_each(?)))=12
@@ -522,9 +527,10 @@ function claimedEditWriteSchema(): Proof {
       AND actual.name NOT IN('events_block_update','events_block_delete')
       AND NOT EXISTS(SELECT 1 FROM json_each(?) expected WHERE actual.name=json_extract(expected.value,'$.name') AND actual.sql=json_extract(expected.value,'$.sql')))
     AND NOT EXISTS(SELECT 1 FROM json_each(?) target JOIN pragma_foreign_key_list(target.value,'main'))
-    AND NOT EXISTS(SELECT 1 FROM main.sqlite_schema parent JOIN pragma_foreign_key_list(parent.name,'main') fk
+    AND NOT EXISTS(SELECT 1 FROM main.sqlite_schema parent JOIN pragma_foreign_key_list(
+      CASE WHEN (parent.name='_cf_KV' AND parent.sql=?) OR (parent.name='_cf_METADATA' AND parent.sql=?) THEN '' ELSE parent.name END,'main') fk
       WHERE parent.type='table' AND lower(fk."table") IN('event_write_stage','scene_source_generations'))`,
-  bindings: [JSON.stringify(tables), JSON.stringify(tables), JSON.stringify(triggers), JSON.stringify(tables)] };
+  bindings: [JSON.stringify(tables), JSON.stringify(tables), JSON.stringify(triggers), JSON.stringify(tables), nativeKv, nativeMetadata] };
 }
 
 function ownership(lineage: GuestImageResultClaimLineage): Proof {
