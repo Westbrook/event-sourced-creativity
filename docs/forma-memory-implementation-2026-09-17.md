@@ -13,7 +13,7 @@ external services. This does not close the semantic system or rollout gates.
 ## September 18 follow-up
 
 [Completion and release status](forma-memory-release-2026-09-18.md) records the
-production 426 / remote-main receipt, exact-schema benchmark fixes and dependency-ordered
+production 435 / remote-main receipt, exact-schema benchmark fixes and dependency-ordered
 implementation To Do list. Publishing the default-disabled source does not close
 the remaining source table below.
 

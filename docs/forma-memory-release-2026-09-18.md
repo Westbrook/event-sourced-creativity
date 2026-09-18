@@ -7,22 +7,46 @@ the verified implementation accumulated on the Memory branch with learning,
 enrollment, scheduling and the synthetic benchmark still disabled. Publication
 must not be described as completing the semantic/profile/nested-scope system.
 
-## Sites-native continuation (verified; publication pending)
+## Current release: Sites-native continuation
 
+**Published to production as version 435 on 2026-09-18 at 16:48:05 UTC**, from
+remote/local main `e068acad974617801ac59cf58a6b5611c8273a04`.
 The [Sites capability To Do](forma-memory-sites-capability-todo-2026-09-18.md)
-records a new additive checkpoint, source-free processing status, scoped privacy
-invalidation and no-target local migration qualification tooling. Eighteen native checkpoint tests within 79 privacy/runtime regressions, 44 SQLite/local-D1 capture and rollback tests, 47 local migration/tooling
-tests, 100 closed-guest inventory tests, 36 selected native Memory/Still routes and
-24 direct Still/safety tests pass. TypeScript, changed-file lint and the production
-build pass after preserving the safety/Still release (`91c06d9`, production 433).
-The independent-cleanup test confirms checkpoint failure does not skip profile privacy maintenance. The prior release receipt below remains historical;
-publication of this continuation is not yet claimed. The original semantic/profile
-system and external service/qualification gates remain open.
+records the delivered metadata checkpoint, source-free processing status, scoped
+privacy invalidation and no-target migration qualification tooling. This is not
+semantic processing or a reliable derivation/index queue.
 
-Final integration also preserves the Jev refresh repair published as production 434
-(`475f0b0`). Its `0041_still_decision_cache.sql` and metadata remain unchanged.
-The unpublished Memory migration was regenerated after it as **0042**, with fresh
-journal/snapshot metadata; it does not reuse or rewrite the deployed 0041 step.
+| Receipt | Verified value |
+| --- | --- |
+| Saved version | `appgprj_6a7a020e334881919ed8aea0363cb98f~appgver_28615b1a116c81918fe32aa2acd5e9fe` (435) |
+| Deployment | `appgdep_6aad6b34547481918fc8df4274fa0af7` — `succeeded` |
+| Source | `e068acad974617801ac59cf58a6b5611c8273a04` |
+| Environment / audience | Environment revision 13; `workspace_all`, access revision 7, zero external visitors; unchanged |
+| Packaged migration | Additive `0042_memory_live_change_checkpoints.sql`; five explicit objects, regenerated snapshot/journal |
+| Archive | 623 files; server-recorded SHA-256 `ecb62c31f59315ab95f2d19ef97566b352364b6cffdf201965433c417b6fc905` |
+| Prior production preserved | Jev refresh repair 434 (`475f0b0`), safety/Still 433 (`91c06d9`), inline recovery 432 |
+
+Verification: 79 selected privacy/runtime tests (including all 18 checkpoint
+checks), 100 closed-guest inventory tests, 47 migration/tooling tests and 44
+SQLite/local-D1 capture/rollback tests passed. After the final Jev integration,
+53 selected native routes, 28 direct Still/safety/refresh tests, the 47 migration
+checks, 44 SQLite/local-D1 tests and exact guest-checkpoint schema test passed
+again. TypeScript, changed-file lint and production build passed. These are
+focused checks, not a whole-repository green claim or hosted qualification.
+The independent-cleanup test confirms a checkpoint failure does not skip profile
+privacy maintenance. No test made a real provider call.
+
+The unpublished Memory migration was regenerated as 0042 after the already applied
+`0041_still_decision_cache.sql`; that migration and its 0037 snapshot remain unchanged.
+The installed Sites packaging helper disappeared during the run, so the validated
+Worker `dist/` output was archived using the same build-output-only command confirmed
+by the production owner; no source, pending SQL, dependencies or credentials were
+packaged. Native save/deploy returned success. No production rollback drill is claimed.
+
+The three pending Memory candidates remain unassigned/unapplied; learning flags,
+enrollment, scheduling, billing authority and provider secrets were not changed.
+The post-publication receipt update is documentation only. Remaining native code
+and external capabilities are separately tracked; the original plan stays open.
 
 ## Earlier release: production 426
 
@@ -121,8 +145,8 @@ spending or new user consent is inferred from publishing.
 
 `db/memory-benchmark.pending.sql`, `db/memory-benchmark-native.pending.sql` and
 `db/memory-conversation-capture.pending.sql` remain **unassigned and unapplied**.
-The current release intentionally packages only the unchanged historical migration
-set. Automatic reference-only capture requires the evolved conversation schema;
+The earlier 426 release packaged only unchanged historical migrations. The current 435
+continuation adds 0042 after the preserved Jev 0041 migration, without any pending SQL. Automatic reference-only capture requires the evolved conversation schema;
 the benchmark requires both of its schemas and genuine qualification.
 
 Prepare the additive benchmark schema with its exact triggers, one statement per
