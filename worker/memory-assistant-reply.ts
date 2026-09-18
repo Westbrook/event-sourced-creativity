@@ -110,7 +110,7 @@ export function nativeStructuredMemoryAssistantReply(value: NativeStructuredConv
   try {
     const language = typeof locale === "string" ? locale.trim().toLowerCase().split("-")[0] : "en";
     const copy = structuredLabels[language === "fr" || language === "ar" || language === "ja" ? language : "en"];
-    if (!value || value.mode !== "native-document-structured-conversation" || value.method !== "native-declared-ledger-projection-v1"
+    if (!value || value.mode !== "native-document-structured-conversation" || !["native-declared-ledger-projection-v1", "native-declared-ledger-projection-v2"].includes(value.method)
       || value.treatment !== "untrusted-historical-evidence" || value.declarationMeaning !== "caller-declared-not-independently-verified"
       || value.semanticCompleteness !== false || value.inferredPreferences !== false
       || !Array.isArray(value.ledger.annotations) || value.ledger.annotations.length > 256
@@ -154,7 +154,16 @@ export function nativeStructuredMemoryAssistantReply(value: NativeStructuredConv
     const withdrawn = [...heads.values()].filter(head => head.operation === "withdraw").map(item);
     if (JSON.stringify(current) !== JSON.stringify(value.ledger.currentItems) || JSON.stringify(withdrawn) !== JSON.stringify(value.ledger.withdrawnItems)) return null;
     lines.push(`${copy.current}: ${JSON.stringify(current)}`, `${copy.withdrawn}: ${JSON.stringify(withdrawn)}`, `${copy.originals}:`);
-    refs.forEach((ref, index) => lines.push(`S${index + 1}${retained.has(ref) ? " L" : ""}: ${ref}`));
+    // v1 must remain byte-for-byte reproducible for existing saved answers.
+    // v2 displays every stable source ordinal as [sequence,role]; complete
+    // event/content/hash identities still live in the certified private manifest.
+    const compact = value.method === "native-declared-ledger-projection-v2";
+    if (compact) lines.push(language === "fr" ? "S désigne la référence privée complète ; chaque ligne indique [séquence,rôle]."
+      : language === "ar" ? "يشير S إلى المرجع الخاص الكامل؛ يعرض كل سطر [التسلسل،الدور]."
+      : language === "ja" ? "S は完全な非公開の出典参照です。各行は [シーケンス,役割] を示します。"
+      : "S identifies the complete private source reference; each line shows [sequence,role].");
+    refs.forEach((ref, index) => lines.push(`S${index + 1}${retained.has(ref) ? " L" : ""}: ${compact
+      ? JSON.stringify([value.dependencies.capturedOriginals[index].sequence,value.dependencies.capturedOriginals[index].role]) : ref}`));
     const recent = value.recentOriginals.map(original => {
       const ref = refs.indexOf(encodedRef(original));
       if (ref < 0 || typeof original.text !== "string" || !original.text.isWellFormed()) throw new Error("structured_original_presentation_invalid");

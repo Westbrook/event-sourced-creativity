@@ -9,6 +9,8 @@ It did not modify the main checkout or its unrelated proposal documents.
 See the [Sites capability and implementation To Do](forma-memory-sites-capability-todo-2026-09-18.md)
 for the current checkpoint/status/tooling continuation and separately tracked
 external services. This does not close the semantic system or rollout gates.
+The subsequent [native merge-preparation record](forma-memory-native-continuation-2026-09-18.md)
+records exact locally verified changes without replacing historical production receipts.
 
 ## September 18 follow-up
 

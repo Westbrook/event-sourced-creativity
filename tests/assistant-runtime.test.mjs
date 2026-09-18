@@ -12442,10 +12442,11 @@ test('completed conversation capture: unrelated native assistant turns are exclu
   assert.deepEqual(await state.capture(),{status:'published',originalCount:4,revision:1},state.controls.lastDatabaseError);
   assert.deepEqual(state.captureBody().originals.map(row=>row.eventId),[...first,...second].map(row=>row.event_id));
 });
-test('completed conversation capture: frame capacity is explicit and does not publish a truncated prefix',{timeout:90000},async t=>{
+test('completed conversation capture: disjoint windows share one native proof without hydrating unrelated gaps',{timeout:90000},async t=>{
   const state=await completedConversationCaptureFixture(t);
   for(let index=0;index<3;index++){await state.seedCapturedTurn('Capacity source '+index);if(index<2)await state.send('capture-gap-'+index);}
-  const before=state.captureLedger();assert.deepEqual(await state.capture(),{status:'capacity'});assert.deepEqual(state.captureLedger(),before);
+  assert.deepEqual(await state.capture(),{status:'published',originalCount:6,revision:1},state.controls.lastDatabaseError);
+  assert.equal(state.captureBody().originals.length,6);
 });
 test('completed conversation capture: scheduled catch-up is not hidden behind an already advanced extractive cursor',{timeout:90000},async t=>{
   const state=await completedConversationCaptureFixture(t);await state.seedCapturedTurn();
@@ -12480,13 +12481,13 @@ test('completed conversation capture: another actor candidate in the shared docu
   assert.deepEqual(await state.capture(),{status:'published',originalCount:2,revision:1},state.controls.lastDatabaseError);
   assert.deepEqual(state.captureBody().originals.map(row=>row.eventId),own.map(row=>row.event_id));
 });
-test('completed conversation capture: capacity is partial evidence, not a stall of existing extractive learning',{timeout:90000},async t=>{
+test('completed conversation capture: disjoint capture and independent extractive learning both progress',{timeout:90000},async t=>{
   const state=await completedConversationCaptureFixture(t);
   for(let index=0;index<3;index++){await state.seedCapturedTurn('Separated source '+index);if(index<2)await state.send('capture-independent-gap-'+index);}
-  state.due();const result=await state.run();assert.equal(result.status,'partial',JSON.stringify(result)+' '+state.controls.lastDatabaseError);
-  assert.equal(result.processed,2);assert.equal(result.failed,1);assert.deepEqual(result.conversationCaptures,[{status:'capacity'}]);
-  assert.equal(state.current().failure_code,'conversation-capacity');assert.ok(state.current().cursor_sequence>0);
-  assert.deepEqual(state.captureLedger().memory_structured_conversation_heads,[]);
+  state.due();const result=await state.run();assert.equal(result.status,'completed',JSON.stringify(result)+' '+state.controls.lastDatabaseError);
+  assert.equal(result.processed,2);assert.equal(result.failed,0);assert.deepEqual(result.conversationCaptures,[{status:'published',originalCount:6,revision:1}]);
+  assert.equal(state.current().failure_code,null);assert.ok(state.current().cursor_sequence>0);
+  assert.equal(state.captureLedger().memory_structured_conversation_heads.length,1);
   assert.equal(state.table('memory_live_sources').length,2);
 });
 test('completed conversation capture: background consent revoked at append rolls back publication',{timeout:90000},async t=>{
@@ -12500,12 +12501,23 @@ test('completed conversation capture: background consent revoked at append rolls
   assert.equal(revoked,1);assert.deepEqual(state.captureLedger().memory_structured_conversation_heads,[]);
   assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS count FROM private_content WHERE kind='memory-structured-ledger'").get().count,0);
 });
-test('completed conversation capture: exact twelve-pair bound succeeds and thirteen never discards the existing prefix',{timeout:90000},async t=>{
+test('completed conversation capture: thirteenth pair retains the complete prefix and is rediscovered by native consumers',{timeout:90000},async t=>{
   const state=await completedConversationCaptureFixture(t);
   for(let index=0;index<12;index++)await state.seedCapturedTurn('Exact boundary source '+index);
   assert.deepEqual(await state.capture(),{status:'published',originalCount:24,revision:1},state.controls.lastDatabaseError);
-  const before=state.captureLedger();await state.seedCapturedTurn('Beyond the original-reference bound.');
-  assert.deepEqual(await state.capture(),{status:'capacity'});assert.deepEqual(state.captureLedger(),before);
+  const before=state.captureBody().originals;await state.seedCapturedTurn('Beyond the former twelve-pair bound.');
+  assert.deepEqual(await state.capture(),{status:'published',originalCount:26,revision:2},state.controls.lastDatabaseError);
+  assert.deepEqual(state.captureBody().originals.slice(0,before.length),before);
+  const {prepareNativeMemorySelection,discoverNativeStructuredConversationOriginals}=await import('../worker/memory-live-store.ts');
+  const prepared=await nativeMemoryPrepare(state),selection=await prepareNativeMemorySelection(state.env,prepared);
+  const discovered=await discoverNativeStructuredConversationOriginals(state.env,prepared,selection);assert.ok(discovered,state.controls.lastDatabaseError);
+  assert.equal(discovered.captures.length,1);assert.equal(discovered.captures[0].method,'native-legacy-originals-windows-v2');
+  const {prepareNativeStructuredConversationContext}=await import('../worker/memory-live-context.ts');
+  const context=await prepareNativeStructuredConversationContext(state.env,discovered.enrollment,prepared,discovered.captures);
+  assert.ok(context);assert.equal(context.context.coverage.retainedOriginalCount,26);
+  assert.equal(context.context.semanticCompleteness,false);assert.equal(context.context.coverage.notSummarized,true);
+  state.sqlite.prepare('UPDATE private_content SET redacted_at=? WHERE content_id=?').run(new Date().toISOString(),before[0].contentRef);
+  assert.equal(await discoverNativeStructuredConversationOriginals(state.env,prepared,selection),null,'The oldest original remains an independent negative dependency');
 });
 test('completed conversation capture: optional candidate schema faults do not block independent extractive work',{timeout:90000},async t=>{
   const state=await completedConversationCaptureFixture(t);await state.send('capture-schema-independent');
@@ -12664,4 +12676,159 @@ test('native processing checkpoint: checkpoint failure does not skip independent
   state.sqlite.exec('DROP TRIGGER memory_live_checkpoint_source_deleted');const db=state.env.DB,batch=db.batch;let profileSweeps=0;
   db.batch=async statements=>{if(statements.some(s=>s.sql.includes("json('document_profile_schema_unavailable')")))profileSweeps++;return batch.call(db,statements);};t.after(()=>{db.batch=batch;});
   await assert.rejects(()=>worker.scheduled({},state.env),/checkpoint-schema-unavailable/);assert.ok(profileSweeps>0);
+});
+
+for(const shared of [false,true])test('completed conversation windows: '+(shared?'shared':'personal')+' source union fits native budget and preserves its exact replay',{timeout:90000},async t=>{
+  const state=await completedConversationCaptureFixture(t,{shared}),pairs=[];
+  for(let i=0;i<13;i++)pairs.push(await state.seedCapturedTurn('Window original '+i));
+  const api=await import('../worker/events-api.ts'),prepared=await nativeMemoryPrepare(state);
+  const windows=[{afterSequence:pairs[0][0].sequence-1,throughSequence:pairs[5][1].sequence},
+    {afterSequence:pairs[6][0].sequence-1,throughSequence:pairs[11][1].sequence},
+    {afterSequence:pairs[12][0].sequence-1,throughSequence:pairs[12][1].sequence}];
+  const finances=adaptiveReentryFinancialState(state),handle=await api.captureLegacyConversationOriginalWindows(state.env,prepared,windows);
+  assert.ok(handle,state.controls.lastDatabaseError);const receipt=await api.replayLegacyConversationOriginals(state.env,prepared,handle);
+  assert.equal(receipt.method,'native-legacy-originals-windows-v2');assert.equal(receipt.interval,undefined);
+  assert.deepEqual(receipt.intervals,windows);assert.deepEqual(receipt.originals.map(row=>row.eventId),pairs.flat().map(row=>row.event_id));
+  const commit=await api.prepareLegacyConversationOriginalsCommit(state.env,prepared,[handle],{statements:4,rows:100,bytes:65536});
+  assert.ok(commit);assert.ok(commit.budget.statements+4<=32);assert.equal(commit.frameCount,1);
+  assert.deepEqual(api.legacyConversationOriginalsEvidence(state.env,commit).intervals,windows);
+  assert.equal(await api.replayLegacyConversationOriginals(state.env,prepared,{...handle}),null,'A copied handle is not source authority');
+  assert.deepEqual(adaptiveReentryFinancialState(state),finances);
+  state.sqlite.prepare('UPDATE private_content SET content=content||? WHERE content_id=?').run(' mutated',pairs[0][0].content_ref);
+  assert.equal(await api.replayLegacyConversationOriginals(state.env,prepared,handle),null);
+});
+
+for(const overlap of [false,true])test('completed conversation windows: historical v1 '+(overlap?'overlapping':'disjoint')+' witnesses retain byte-exact presentation under fresh authority',{timeout:90000},async t=>{
+  const state=await completedConversationCaptureFixture(t),pairs=[];
+  for(let i=0;i<7;i++)pairs.push(await state.seedCapturedTurn('Historical original '+i));
+  assert.equal((await state.capture()).status,'published');
+  const api=await import('../worker/events-api.ts'),store=await import('../worker/memory-live-store.ts'),context=await import('../worker/memory-live-context.ts');
+  const prepared=await nativeMemoryPrepare(state),selection=await store.prepareNativeMemorySelection(state.env,prepared);assert.equal(selection.mode,'structured');
+  const windows=[{afterSequence:pairs[0][0].sequence-1,throughSequence:pairs[5][1].sequence},
+    {afterSequence:pairs[overlap?1:6][0].sequence-1,throughSequence:pairs[6][1].sequence}],oldCaptures=[];
+  for(const window of windows){const old=await api.captureLegacyConversationOriginals(state.env,prepared,window);assert.ok(old);oldCaptures.push(old);}
+  const oldContext=await context.prepareNativeStructuredConversationContext(state.env,selection.enrollment,prepared,oldCaptures);assert.ok(oldContext,state.controls.lastDatabaseError);
+  assert.equal(oldContext.context.method,'native-declared-ledger-projection-v1');assert.equal(oldContext.context.coverage.frameCount,2);
+  const saved=JSON.stringify(oldContext.context),options={maxBytes:16384,specifiedMaxBytes:false};
+  const current=await store.discoverNativeStructuredConversationOriginals(state.env,prepared,selection,windows);assert.ok(current,state.controls.lastDatabaseError);
+  const fresh=await context.prepareNativeStructuredConversationContext(state.env,selection.enrollment,prepared,current.captures);assert.ok(fresh);
+  assert.equal(fresh.context.coverage.frameCount,overlap?2:1);
+  assert.equal(await context.revalidateNativeStructuredConversationProjection(state.env,fresh,saved,options),true);
+  const forged=JSON.parse(saved);forged.coverage.frameCount=3;
+  assert.equal(await context.revalidateNativeStructuredConversationProjection(state.env,fresh,JSON.stringify(forged),options),false);
+  state.sqlite.prepare('UPDATE private_content SET content=content||? WHERE content_id=?').run(' changed',pairs[0][0].content_ref);
+  assert.equal(await context.revalidateNativeStructuredConversationProjection(state.env,fresh,saved,options),false);
+});
+
+test('completed conversation windows: exact windows reject overlap, gaps within pairs, overflow and malformed boundaries',{timeout:90000},async t=>{
+  const state=await completedConversationCaptureFixture(t),pairs=[];
+  for(let i=0;i<7;i++)pairs.push(await state.seedCapturedTurn('Window boundary '+i));
+  const api=await import('../worker/events-api.ts'),prepared=await nativeMemoryPrepare(state);
+  const first={afterSequence:pairs[0][0].sequence-1,throughSequence:pairs[0][1].sequence};
+  const last={afterSequence:pairs[6][0].sequence-1,throughSequence:pairs[6][1].sequence};
+  for(const windows of [[],[first,first],[last,first],Array.from({length:33},()=>first),
+    [{afterSequence:-1,throughSequence:first.throughSequence}],
+    [{...first,throughSequence:prepared.sourceHead+1}],
+    [{...first,unexpected:true}],
+    [{...first,throughSequence:last.throughSequence}],
+    [{...first,throughSequence:pairs[0][0].sequence},{afterSequence:pairs[0][0].sequence,throughSequence:first.throughSequence}],
+    [{afterSequence:1,throughSequence:2}]]){
+    assert.equal(await api.captureLegacyConversationOriginalWindows(state.env,prepared,windows),null,JSON.stringify(windows));
+  }
+  assert.equal(await api.captureLegacyConversationOriginals(state.env,prepared,{...first,throughSequence:last.throughSequence}),null,'v1 keeps its six-pair bound');
+  assert.ok(await api.captureLegacyConversationOriginalWindows(state.env,prepared,[first,last]),'The union may intentionally omit unrelated windows without claiming complete history');
+});
+
+test('completed conversation capture: 64 pairs are bounded and a 65th cannot silently discard retained originals',{timeout:90000},async t=>{
+  const state=await completedConversationCaptureFixture(t);
+  for(let i=0;i<64;i++)await state.seedCapturedTurn('Bounded original '+i);
+  assert.deepEqual(await state.capture(),{status:'published',originalCount:128,revision:1},state.controls.lastDatabaseError);
+  const retained=state.captureLedger();await state.seedCapturedTurn('Overflow is not a rolling rebase');
+  assert.deepEqual(await state.capture(),{status:'capacity'});assert.deepEqual(state.captureLedger(),retained);
+});
+
+for(const [shared,count] of [[false,64],[true,64],[true,1]])test('completed conversation windows: '+(shared?'shared':'personal')+' '+count+'-pair actual Chat Studio publication, recovery and Forget preserve the full source set',{timeout:120000},async t=>{
+  const state=await completedConversationCaptureFixture(t,{shared});
+  for(let i=0;i<count;i++)await state.seedCapturedTurn('Native source '+i);
+  assert.equal((await state.capture()).status,'published');
+  const {readFile}=await import('node:fs/promises');
+  for(const name of ['0034_memory_document_job_origins.sql','0035_memory_document_job_origin_retirement_progress.sql'])state.sqlite.exec(await readFile(new URL('../drizzle/'+name,import.meta.url),'utf8'));
+  const financial=adaptiveReentryFinancialState(state),requestId=crypto.randomUUID();
+  const input={kind:'chat',sourceSurface:'chat',documentId:'doc-atmosphere',payload:{memoryMode:'recall',requestId,message:'Recall the complete bounded reference ledger.',locale:'en'}};
+  const response=await state.request('/api/document-jobs',json(input,state.owner)),body=await response.json();
+  assert.equal(response.status,200,JSON.stringify(body)+' '+state.controls.lastDatabaseError);assert.equal(body.memory.version,'native-document-job-memory-v1');
+  assert.equal((body.memory.text.match(/^S\d+ L:/gmu)??[]).length,count*2);assert.ok(Buffer.byteLength(body.memory.text)<=8192);
+  const origin=state.sqlite.prepare('SELECT * FROM memory_document_job_answer_origins').get();assert.equal(origin.source_count,count*2);
+  const raw=state.sqlite.prepare('SELECT content FROM private_content WHERE content_id=?').get(origin.manifest_content_ref).content;
+  if(count===64)assert.ok(Buffer.byteLength(raw)>65536);assert.ok(Buffer.byteLength(raw)<=262144);
+  const manifest=JSON.parse(raw);assert.equal(manifest.originals.length,count*2);assert.equal(manifest.projectionOptions.maxBytes,131072);
+  assert.equal(JSON.parse(manifest.contextJson).method,'native-declared-ledger-projection-v2');
+  const repeated=await state.request('/api/document-jobs',json(input,state.owner)),again=await repeated.json();
+  assert.equal(repeated.status,200,JSON.stringify(again)+' '+state.controls.lastDatabaseError);assert.equal(again.memory.text,body.memory.text);
+  assert.deepEqual(adaptiveReentryFinancialState(state),financial);
+  const e=state.current();
+  const forgot=await state.handleLiveMemory(new Request('http://localhost/api/memory/settings?id='+e.enrollment_id,
+    {...json({confirmation:'FORGET_MY_MEMORY',revision:e.revision},state.owner),method:'DELETE'}),state.env,'settings');
+  const erased=await forgot.json();assert.equal(forgot.status,200,JSON.stringify(erased)+' '+state.controls.lastDatabaseError);
+  assert.ok(erased.erased===true||erased.memoryWithdrawn===true);
+  const retired=state.sqlite.prepare('SELECT status FROM memory_document_job_answer_origins WHERE origin_id=?').get(origin.origin_id);
+  assert.notEqual(retired.status,'active');
+  const unavailable=await state.request('/api/document-jobs',json(input,state.owner)),unavailableBody=await unavailable.json();
+  assert.notEqual(unavailable.status,200,JSON.stringify(unavailableBody));
+  assert.equal(JSON.stringify(unavailableBody).includes(body.memory.text),false,'Logical withdrawal prevents delivery before physical retirement');
+  const native=await import('../worker/memory-native-origin.ts'),now=new Date().toISOString(),phases=[];
+  for(let index=0;index<origin.selector_count+8;index++){
+    const step=await native.prepareNativeDocumentJobOriginRetentionStep(state.env,{now});
+    if(!step)break;
+    const receipts=await state.env.DB.batch(jobOriginWithdrawalStatements(state,step));
+    assert.equal(step.acknowledge(receipts),true);phases.push(step.phase);
+  }
+  assert.ok(phases.includes('manifest'),phases.join(','));assert.ok(phases.includes('finalize'),phases.join(','));
+  assert.equal(state.sqlite.prepare('SELECT status FROM memory_document_job_answer_origins WHERE origin_id=?').get(origin.origin_id).status,'minimized');
+  assert.equal(state.sqlite.prepare('SELECT content_id FROM private_content WHERE content_id IN(?,?)').all(origin.answer_content_id,origin.manifest_content_ref).length,0);
+  assert.deepEqual(adaptiveReentryFinancialState(state),financial);
+});
+
+for(const fault of ['late-ledger-hold','partial-ledger-custody','authored-source-custody','ledger-content-restored','wrong-ledger-actor'])
+test('completed conversation retirement: shared Forget preserves negative ledger proof: '+fault,{timeout:60000},async t=>{
+  const state=await completedConversationCaptureFixture(t,{shared:true}),pair=await state.seedCapturedTurn('Retirement is not permission to read erased sources.');
+  assert.equal((await state.capture()).status,'published');
+  const {readFile}=await import('node:fs/promises');
+  for(const name of ['0034_memory_document_job_origins.sql','0035_memory_document_job_origin_retirement_progress.sql'])state.sqlite.exec(await readFile(new URL('../drizzle/'+name,import.meta.url),'utf8'));
+  const response=await state.request('/api/document-jobs',json({kind:'chat',sourceSurface:'chat',documentId:'doc-atmosphere',payload:{memoryMode:'recall',requestId:crypto.randomUUID(),message:'Recall sources.',locale:'en'}},state.owner));
+  assert.equal(response.status,200,await response.text());
+  const origin=state.sqlite.prepare('SELECT * FROM memory_document_job_answer_origins').get(),
+    manifest=JSON.parse(state.sqlite.prepare('SELECT content FROM private_content WHERE content_id=?').get(origin.manifest_content_ref).content),
+    ledgerRef=manifest.ledgerRevisions[0].body_ref,ledgerResource=state.sqlite.prepare("SELECT * FROM project_resource_scopes WHERE resource_kind='content' AND resource_id=?").get(ledgerRef),
+    e=state.current(),financial=adaptiveReentryFinancialState(state);
+  const forgot=await state.handleLiveMemory(new Request('http://localhost/api/memory/settings?id='+e.enrollment_id,
+    {...json({confirmation:'FORGET_MY_MEMORY',revision:e.revision},state.owner),method:'DELETE'}),state.env,'settings');
+  assert.equal(forgot.status,200,await forgot.text());
+  const native=await import('../worker/memory-native-origin.ts'),now=new Date().toISOString();
+  if(fault==='late-ledger-hold'){
+    const initial=await native.prepareNativeDocumentJobOriginRetentionStep(state.env,{now});assert.equal(initial.phase,'initialize');
+    assert.equal(initial.acknowledge(await state.env.DB.batch(jobOriginWithdrawalStatements(state,initial))),true);
+    const step=await native.prepareNativeDocumentJobOriginRetentionStep(state.env,{now});assert.equal(step.phase,'answer');
+    const hold=crypto.randomUUID();state.sqlite.prepare(`INSERT INTO organization_legal_holds
+      (hold_id,organization_id,scope_kind,resource_id,reason,status,created_by_user_id,created_at,released_at)
+      VALUES(?,?,'content',?,'isolated retired ledger hold','active',?,?,NULL)`).run(hold,origin.organization_id,ledgerRef,origin.actor_user_id,now);
+    await assert.rejects(()=>state.env.DB.batch(jobOriginWithdrawalStatements(state,step)));
+    assert.equal(await native.prepareNativeDocumentJobOriginRetentionStep(state.env,{now}),null,'A hold on the erased ledger still protects dependent evidence');
+    state.sqlite.prepare("UPDATE organization_legal_holds SET status='released',released_at=? WHERE hold_id=?").run(now,hold);
+    const resumed=await native.prepareNativeDocumentJobOriginRetentionStep(state.env,{now});assert.equal(resumed.phase,'answer');
+  }else{
+    if(fault==='partial-ledger-custody'){
+      const columns=Object.keys(ledgerResource);state.sqlite.prepare(`INSERT INTO project_resource_scopes(${columns.join(',')}) VALUES(${columns.map(()=>'?').join(',')})`).run(...Object.values(ledgerResource));
+    }
+    if(fault==='authored-source-custody'){
+      state.sqlite.prepare("DELETE FROM project_resource_scopes WHERE resource_kind='content' AND resource_id=?").run(pair[0].content_ref);
+      state.sqlite.prepare('DELETE FROM private_content_retention_scopes WHERE content_id=?').run(pair[0].content_ref);
+    }
+    if(fault==='ledger-content-restored')state.sqlite.prepare("UPDATE private_content SET content='unexpected restored body',redacted_at=NULL WHERE content_id=?").run(ledgerRef);
+    if(fault==='wrong-ledger-actor')state.sqlite.prepare("UPDATE memory_structured_conversation_heads SET actor_user_id='other-actor' WHERE ledger_id=?").run(manifest.ledgerHead.ledgerId);
+    await assert.rejects(()=>native.prepareNativeDocumentJobOriginRetentionStep(state.env,{now}),/memory-document-job-retirement-custody-unavailable/);
+  }
+  for(const ref of [origin.answer_content_id,origin.manifest_content_ref])assert.equal(state.sqlite.prepare('SELECT redacted_at FROM private_content WHERE content_id=?').get(ref).redacted_at,null);
+  assert.equal(state.sqlite.prepare('SELECT status FROM memory_document_job_answer_origins WHERE origin_id=?').get(origin.origin_id).status,'withdrawn');
+  assert.deepEqual(adaptiveReentryFinancialState(state),financial);
 });

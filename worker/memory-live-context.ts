@@ -20,6 +20,9 @@ export type NativeMemoryPreparedDocument = { principal: PilotUser; binding: Cons
 type SourceQuery = { joins: string; condition: string; bindings: Value[] };
 type Row = Record<string, unknown>;
 const CLOCK = "SELECT strftime('%Y-%m-%dT%H:%M:%fZ','now') AS checked_at";
+// Larger metadata is opt-in for the provider-free reference inspector only.
+// Default/provider callers retain their original 16KiB prompt allocation.
+export const NATIVE_REFERENCE_RECALL_CONTEXT_BYTES = 131_072;
 const LIMITS = { actions: 64, pairs: 8, textBytes: 512, contextBytes: 16_384, lifetimeMs: 60_000 } as const;
 const SCHEMA = "SELECT CASE WHEN (SELECT COUNT(*) FROM sqlite_schema WHERE type='table' AND name IN" +
   "('memory_live_enrollments','memory_live_sources','memory_live_runs','memory_live_conversation_segments'))=4" +
@@ -288,7 +291,7 @@ type NativeStructuredConversationItem = Readonly<Pick<StructuredConversationDecl
 export type NativeStructuredConversationContext = Readonly<{
   mode: "native-document-structured-conversation";
   treatment: "untrusted-historical-evidence";
-  method: "native-declared-ledger-projection-v1";
+  method: "native-declared-ledger-projection-v1" | "native-declared-ledger-projection-v2";
   declarationMeaning: "caller-declared-not-independently-verified";
   semanticCompleteness: false;
   inferredPreferences: false;
@@ -352,7 +355,7 @@ function nativeStructuredConversationContextBudget(options: NativeStructuredConv
   // other caller inputs while the cap is being checked.
   if (!entry || !Object.hasOwn(entry, "value")) return null;
   const maxBytes: unknown = entry.value;
-  return typeof maxBytes === "number" && Number.isSafeInteger(maxBytes) && maxBytes > 0 && maxBytes <= LIMITS.contextBytes
+  return typeof maxBytes === "number" && Number.isSafeInteger(maxBytes) && maxBytes > 0 && maxBytes <= NATIVE_REFERENCE_RECALL_CONTEXT_BYTES
     ? maxBytes : null;
 }
 function nativeStructuredConversationOptionsCurrent(options: NativeStructuredConversationContextOptions,
@@ -381,7 +384,7 @@ function nativeStructuredConversationProjection(source: StructuredConversationCo
   const context = {
     mode: "native-document-structured-conversation" as const,
     treatment: "untrusted-historical-evidence" as const,
-    method: "native-declared-ledger-projection-v1" as const,
+    method: maxBytes > LIMITS.contextBytes ? "native-declared-ledger-projection-v2" as const : "native-declared-ledger-projection-v1" as const,
     declarationMeaning: "caller-declared-not-independently-verified" as const,
     semanticCompleteness: false as const, inferredPreferences: false as const,
     scope: { ...source.scope }, enrollment: { id: source.enrollmentId, revision: source.enrollmentRevision },
@@ -601,13 +604,13 @@ function nativeStructuredConversationProjectionOptionsValue(value: NativeStructu
   const maxEntry = Object.getOwnPropertyDescriptor(value, "maxBytes"), specifiedEntry = Object.getOwnPropertyDescriptor(value, "specifiedMaxBytes");
   if (!maxEntry || !Object.hasOwn(maxEntry, "value") || !specifiedEntry || !Object.hasOwn(specifiedEntry, "value")) return null;
   const maxBytes: unknown = maxEntry.value, specifiedMaxBytes: unknown = specifiedEntry.value;
-  return typeof maxBytes === "number" && Number.isSafeInteger(maxBytes) && maxBytes >= 1 && maxBytes <= LIMITS.contextBytes
+  return typeof maxBytes === "number" && Number.isSafeInteger(maxBytes) && maxBytes >= 1 && maxBytes <= NATIVE_REFERENCE_RECALL_CONTEXT_BYTES
     && typeof specifiedMaxBytes === "boolean" && (specifiedMaxBytes || maxBytes === LIMITS.contextBytes)
     ? { maxBytes, specifiedMaxBytes } : null;
 }
 
 /** Compare an immutable saved projection with fresh GENUINE native evidence.
- * Only the old source-head/presentation lease is reconstructed for byte equality;
+ * Only the old source-head/frame-count/presentation lease is reconstructed for byte equality;
  * the reconstructed object is never passed to a store authority/proof API.
  * A saved publication lease may now be past; it does not replace the independent
  * fresh reader proof or extend any original source/ledger retention ceiling. */
@@ -616,7 +619,7 @@ export async function revalidateNativeStructuredConversationProjection(env: Work
   projectionOptions: NativeStructuredConversationProjectionOptions): Promise<boolean> {
   try {
     if (typeof savedContextJson !== "string" || !savedContextJson.isWellFormed()
-      || new TextEncoder().encode(savedContextJson).byteLength > LIMITS.contextBytes) return false;
+      || new TextEncoder().encode(savedContextJson).byteLength > NATIVE_REFERENCE_RECALL_CONTEXT_BYTES) return false;
     const originalOptions = nativeStructuredConversationProjectionOptionsValue(projectionOptions);
     if (!originalOptions) return false;
     const optionsCurrent = () => {
@@ -624,16 +627,21 @@ export async function revalidateNativeStructuredConversationProjection(env: Work
       return current !== null && current.maxBytes === originalOptions.maxBytes && current.specifiedMaxBytes === originalOptions.specifiedMaxBytes;
     };
     const saved = JSON.parse(savedContextJson) as NativeStructuredConversationContext;
-    const sourceHead = saved?.coverage?.sourceHead, validUntil = saved?.lifetime?.validUntil;
+    const sourceHead = saved?.coverage?.sourceHead, validUntil = saved?.lifetime?.validUntil,
+      frameCount = saved?.coverage?.frameCount;
     if (!Number.isSafeInteger(sourceHead) || sourceHead < 1 || timestamp(validUntil) === null) return false;
     const evidence = await nativeStructuredConversationContextEvidence(env, prepared);
     if (!evidence || !optionsCurrent() || sourceHead > evidence.source.sourceHead
+      || !Number.isSafeInteger(frameCount) || frameCount < 1 || frameCount > evidence.sourceEvidence.intervals.length
       || evidence.source.originals.some(original => original.sequence > sourceHead)
       || Date.parse(validUntil) > Date.parse(evidence.sourceEvidence.sourceRetentionCeiling)
       || evidence.source.read.expiresAt === null || Date.parse(validUntil) > Date.parse(evidence.source.read.expiresAt)) return false;
     // This is deliberately not an issued Source. The pure private projection
     // function reads data only; no native capability is reconstructed from JSON.
-    const comparisonOnly: StructuredConversationContextSource = { ...evidence.source, sourceHead,
+    // Older publications used one v1 witness per window. New reads use one
+    // shared witness for disjoint windows; the historical display count is not
+    // today's proof or read budget, and never changes the genuine source frame.
+    const comparisonOnly: StructuredConversationContextSource = { ...evidence.source, sourceHead, frameCount,
       read: { ...evidence.source.read, validUntil } };
     const expected = nativeStructuredConversationProjection(comparisonOnly, originalOptions.maxBytes);
     return expected !== null && JSON.stringify(expected) === savedContextJson

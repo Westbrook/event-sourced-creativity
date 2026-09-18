@@ -106,14 +106,14 @@ import { liveMemoryEnabled, prepareNativeMemorySelection, nativeMemorySelectionS
   discoverNativeStructuredConversationOriginals, type NativeMemorySelection } from "./memory-live-store.ts";
 import { readNativeDocumentMemory, prepareNativeStructuredConversationContext, nativeStructuredConversationContextPrecommitStatements,
   nativeStructuredConversationContextEvidence,
-  type NativeDocumentMemoryContext, type PreparedNativeStructuredConversationContext } from "./memory-live-context.ts";
+  NATIVE_REFERENCE_RECALL_CONTEXT_BYTES, type NativeDocumentMemoryContext, type PreparedNativeStructuredConversationContext } from "./memory-live-context.ts";
 import { nativeMemoryAssistantReply, nativeStructuredMemoryAssistantReply } from "./memory-assistant-reply.ts";
 import type { LegacyConversationOriginalPrepared } from "./events-api.ts";
 import { nativeMemoryCanonical, nativeMemoryFingerprint, nativeMemoryAnswerFingerprint, nativeMemoryOriginCapture,
   nativeStructuredOriginalProjection, nativeStructuredOriginSchema, type NativeMemoryOriginEnrollment,
   type NativeStructuredMemoryOriginOriginal } from "./memory-native-origin.ts";
 import { DOCUMENT_JOB_ORIGIN_MANIFEST_RECIPE, encodeDocumentJobOriginManifest,
-  type DocumentJobOriginManifest, type DocumentJobOriginManifestMaterial } from "./memory-document-job-origin-manifest.ts";
+  documentJobMemoryContextFingerprint, type DocumentJobOriginManifest, type DocumentJobOriginManifestMaterial } from "./memory-document-job-origin-manifest.ts";
 import { nativeDocumentJobOriginSchema } from "./memory-document-job-origin-schema.ts";
 import { readDocumentJobMemoryOrigin } from "./memory-document-job-origin-reader.ts";
 
@@ -5027,7 +5027,7 @@ export async function prepareDocumentJobMemoryCandidate(env:WorkerEnv,authority:
       // withdrawn declarations. No caller-selected recent tail or mode downgrade.
       const discovered=await discoverNativeStructuredConversationOriginals(env,frame.prepared,frame.selection);
       if(!discovered||!current())return null;
-      const prepared=await prepareNativeStructuredConversationContext(env,frame.selection.enrollment,frame.prepared,discovered.captures);
+      const prepared=await prepareNativeStructuredConversationContext(env,frame.selection.enrollment,frame.prepared,discovered.captures,{maxBytes:NATIVE_REFERENCE_RECALL_CONTEXT_BYTES});
       if(!prepared||!current())return null;
       text=nativeStructuredMemoryAssistantReply(prepared.context,selectedLocale);
       source={mode:"structured",prepared};sourceUntil=prepared.context.lifetime.validUntil;
@@ -5183,7 +5183,7 @@ async function prepareDocumentJobMemoryOriginManifest(env:WorkerEnv,value:Docume
           predecessor_revision:revision.predecessor_revision,predecessor_hash:revision.predecessor_hash,
           body_ref:revision.body_ref,body_hash:revision.body_hash,created_at:revision.created_at,expires_at:revision.expires_at};
       });
-      const consumedValueSha256=await nativeMemoryAnswerFingerprint(evidence.contextJson);
+      const consumedValueSha256=await documentJobMemoryContextFingerprint(evidence.contextJson);
       if(!current())return null;
       manifest={schemaVersion:1,recipeVersion:DOCUMENT_JOB_ORIGIN_MANIFEST_RECIPE,mode:"structured",job,
         enrollment:enrollmentValue(e),contextJson:evidence.contextJson,consumedValueSha256,renderer,

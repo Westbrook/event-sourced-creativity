@@ -1,3 +1,4 @@
+import { DOCUMENT_JOB_ORIGIN_MANIFEST_LIMITS } from "./memory-document-job-origin-manifest.ts";
 import { intEnv, activeProjectBillingSql } from "./pilot-policy-primitives.ts";
 import { privateContentIdentityAllowed } from "./private-content-identity.ts";
 import { assertOutputAdmissionActor, readOutputAdmissionValue, type OutputAdmissionReads } from "./output-admission-reads.ts";
@@ -73,8 +74,8 @@ async function preparePrivateContentInternal(env: WorkerEnv, ownerId: string, ki
   const documentJobManifest = kind === "memory-document-job-origin";
   const boundedMemory = kind === "memory-structured-origin" || documentJobManifest || boundedMemoryAnswer || boundedJobUser;
   // Memory evidence cannot refresh the original private lifetime.
-  if (documentJobManifest && (typeof content !== "string" || content.length === 0 || content.length > 65_536
-    || !content.isWellFormed() || new TextEncoder().encode(content).byteLength > 65_536)) throw new Error("private_content_manifest_invalid");
+  if (documentJobManifest && (typeof content !== "string" || content.length === 0 || content.length > DOCUMENT_JOB_ORIGIN_MANIFEST_LIMITS.bytes
+    || !content.isWellFormed() || new TextEncoder().encode(content).byteLength > DOCUMENT_JOB_ORIGIN_MANIFEST_LIMITS.bytes)) throw new Error("private_content_manifest_invalid");
   if (kind === "memory-structured-origin" && (typeof content !== "string" || content.length > 65_536 || new TextEncoder().encode(content).byteLength > 65_536)) throw new Error("private_content_manifest_invalid");
   if (boundedMemoryAnswer && (typeof content !== "string" || content.length === 0 || content.length > 65_536
     || !content.isWellFormed() || new TextEncoder().encode(content).byteLength > 65_536)) throw new Error("private_content_memory_answer_invalid");

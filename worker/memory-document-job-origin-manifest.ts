@@ -2,7 +2,7 @@ import type { NativeMemoryOriginDependency, NativeMemoryOriginEnrollment,
   NativeStructuredMemoryOriginOriginal, NativeStructuredMemoryOriginRevision } from "./memory-native-origin.ts";
 
 export const DOCUMENT_JOB_ORIGIN_MANIFEST_RECIPE = "native-document-job-origin-manifest-v1";
-export const DOCUMENT_JOB_ORIGIN_MANIFEST_LIMITS = { bytes: 65_536, contextBytes: 16_384,
+export const DOCUMENT_JOB_ORIGIN_MANIFEST_LIMITS = { bytes: 262_144, contextBytes: 131_072,
   originals: 128, ledgerRevisions: 64, selectors: 513 } as const;
 type Dependency = Omit<NativeMemoryOriginDependency, "origin_id">;
 type Original = Omit<NativeStructuredMemoryOriginOriginal, "origin_id">;
@@ -54,7 +54,7 @@ const sourceTypes = new Set(["DocumentOpened", "DocumentViewVisited", "ObjectVie
 function own(value: unknown, depth = 0, budget = {nodes: 0}): unknown {
   if (++budget.nodes > 8192 || depth > 20) return fail();
   if (value === null || typeof value === "boolean" || integer(value, -Number.MAX_SAFE_INTEGER)) return value;
-  if (typeof value === "string") return value.length <= 65536 && value.isWellFormed() && utf8(value).length <= 65536 ? value : fail();
+  if (typeof value === "string") return value.length <= DOCUMENT_JOB_ORIGIN_MANIFEST_LIMITS.contextBytes && value.isWellFormed() && utf8(value).length <= DOCUMENT_JOB_ORIGIN_MANIFEST_LIMITS.contextBytes ? value : fail();
   if (!value || typeof value !== "object") return fail();
   if (Array.isArray(value)) {
     const length = Object.getOwnPropertyDescriptor(value, "length");
@@ -99,7 +99,7 @@ function validate(value: unknown): DocumentJobOriginManifest {
     || !["en", "fr", "ar", "ja"].includes(m.renderer.locale)
     || !keys(m.lifetime, ["capturedAt", "publicationValidUntil", "sourceRetentionCeiling"])
     || ![m.enrollment.enrolled_at, m.enrollment.expires_at, m.lifetime.capturedAt, m.lifetime.publicationValidUntil, m.lifetime.sourceRetentionCeiling].every(at)
-    || typeof m.contextJson !== "string" || !m.contextJson || utf8(m.contextJson).length > 16384) return fail();
+    || typeof m.contextJson !== "string" || !m.contextJson || utf8(m.contextJson).length > (m.mode === "structured" ? DOCUMENT_JOB_ORIGIN_MANIFEST_LIMITS.contextBytes : 16384)) return fail();
   const parsedContext = JSON.parse(m.contextJson);
   if (!parsedContext || typeof parsedContext !== "object" || Array.isArray(parsedContext)) return fail();
   const captured = Date.parse(m.lifetime.capturedAt), enrolled = Date.parse(m.enrollment.enrolled_at), expiry = Date.parse(m.enrollment.expires_at);
@@ -149,7 +149,7 @@ function validate(value: unknown): DocumentJobOriginManifest {
       last = head.segment_last_sequence!;
     }
   } else {
-    if (!keys(m.projectionOptions, ["maxBytes", "specifiedMaxBytes"]) || !integer(m.projectionOptions.maxBytes, 1, 16384)
+    if (!keys(m.projectionOptions, ["maxBytes", "specifiedMaxBytes"]) || !integer(m.projectionOptions.maxBytes, 1, DOCUMENT_JOB_ORIGIN_MANIFEST_LIMITS.contextBytes)
       || typeof m.projectionOptions.specifiedMaxBytes !== "boolean" || !m.projectionOptions.specifiedMaxBytes && m.projectionOptions.maxBytes !== 16384
       || !keys(m.ledgerHead, ["ledgerId", "revision", "bodyRef", "bodyHash"]) || !digest(m.ledgerHead.ledgerId) || !digest(m.ledgerHead.bodyHash)
       || !id(m.ledgerHead.bodyRef) || !integer(m.ledgerHead.revision, 1, 64)
@@ -213,10 +213,15 @@ async function sha256(text: string): Promise<string> {
   const value = await crypto.subtle.digest("SHA-256", utf8(text) as BufferSource);
   return Array.from(new Uint8Array(value), byte => byte.toString(16).padStart(2, "0")).join("");
 }
+/** Bounded raw context fingerprint, distinct from the unchanged 64KiB answer bound. */
+export async function documentJobMemoryContextFingerprint(text: string): Promise<string> {
+  if (typeof text !== "string" || !text || !text.isWellFormed() || utf8(text).length > DOCUMENT_JOB_ORIGIN_MANIFEST_LIMITS.contextBytes) return fail();
+  return sha256(text);
+}
 async function material(value: unknown, exactText?: string): Promise<DocumentJobOriginManifestMaterial | null> {
   try {
     const owned = own(value), text = JSON.stringify(owned);
-    if (utf8(text).length > 65536 || exactText !== undefined && text !== exactText) return null;
+    if (utf8(text).length > DOCUMENT_JOB_ORIGIN_MANIFEST_LIMITS.bytes || exactText !== undefined && text !== exactText) return null;
     const manifest = validate(owned), selectors = selectorSet(manifest);
     // Dedicated bounded serialization: the old native canonical helper permits
     // only 256 array members, while this independently validated set permits 513.
@@ -237,7 +242,7 @@ export function encodeDocumentJobOriginManifest(value: unknown): Promise<Documen
  * grants access: GET/recovery require independent fresh original-source replay. */
 export async function decodeDocumentJobOriginManifest(text: unknown): Promise<DocumentJobOriginManifestMaterial | null> {
   try {
-    if (typeof text !== "string" || text.length > 65536 || !text.isWellFormed() || utf8(text).length > 65536) return null;
+    if (typeof text !== "string" || text.length > DOCUMENT_JOB_ORIGIN_MANIFEST_LIMITS.bytes || !text.isWellFormed() || utf8(text).length > DOCUMENT_JOB_ORIGIN_MANIFEST_LIMITS.bytes) return null;
     return await material(JSON.parse(text), text);
   } catch { return null; }
 }

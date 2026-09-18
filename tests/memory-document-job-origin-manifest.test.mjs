@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { Buffer } from 'node:buffer';
 import { createHash } from 'node:crypto';
 import test from 'node:test';
-import { encodeDocumentJobOriginManifest, decodeDocumentJobOriginManifest } from '../worker/memory-document-job-origin-manifest.ts';
+import { encodeDocumentJobOriginManifest, decodeDocumentJobOriginManifest, DOCUMENT_JOB_ORIGIN_MANIFEST_LIMITS } from '../worker/memory-document-job-origin-manifest.ts';
 
 // Syntactic comparison metadata only: these fixed IDs/digests are not a
 // published origin, native capture, job capability, ledger body or read grant.
@@ -257,16 +257,18 @@ test('job origin manifest: exact UTF-8 budgets, context hashes and historical le
   bounded.contextJson = overflowContext; bounded.consumedValueSha256 = hash(overflowContext);
   assert.equal(await encodeDocumentJobOriginManifest(bounded), null);
   const large = structured(64, 64), largeText = canonicalText(large);
-  // Do not claim a >256-selector positive fits the manifest byte ceiling.
-  // This complete, bounded-count fixture's actual literal serialization is too large.
+  // Count-complete 64-pair / 64-revision manifests now fit the independently
+  // bounded 256KiB envelope; no original selectors are truncated.
   const distinct = new Set([JSON.stringify(['enrollment', large.enrollment.enrollment_id]),
     ...large.originals.flatMap(row => [JSON.stringify(['event', row.event_id]), JSON.stringify(['private-content', row.content_id])]),
     ...large.ledgerRevisions.flatMap(row => [JSON.stringify(['ledger', row.ledger_id]), JSON.stringify(['private-content', row.body_ref])])]);
   assert.equal(large.originals.length, 128); assert.equal(large.ledgerRevisions.length, 64);
   assert.equal(distinct.size, 322); assert.ok(distinct.size <= 513);
-  assert.ok(Buffer.byteLength(largeText, 'utf8') > 65_536, 'Overflow is measured from complete literal metadata, not an assumed selector count');
-  assert.equal(await encodeDocumentJobOriginManifest(large), null);
-  assert.equal(await decodeDocumentJobOriginManifest(largeText), null);
+  assert.ok(Buffer.byteLength(largeText, 'utf8') > 65_536);
+  assert.ok(Buffer.byteLength(largeText, 'utf8') <= DOCUMENT_JOB_ORIGIN_MANIFEST_LIMITS.bytes);
+  const expanded=await encodeDocumentJobOriginManifest(large);assert.ok(expanded);assert.equal(expanded.selectors.length,322);
+  assert.deepEqual(await decodeDocumentJobOriginManifest(expanded.text),expanded);
+  assert.equal(await decodeDocumentJobOriginManifest(' '.repeat(DOCUMENT_JOB_ORIGIN_MANIFEST_LIMITS.bytes)+largeText),null);
   for (const mutate of [
     data => { data.lifetime.publicationValidUntil = data.lifetime.capturedAt; },
     data => { data.lifetime.publicationValidUntil = '2000-01-01T00:01:20.001Z'; },

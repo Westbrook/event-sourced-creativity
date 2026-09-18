@@ -1,3 +1,4 @@
+import { DOCUMENT_JOB_ORIGIN_MANIFEST_LIMITS } from "./memory-document-job-origin-manifest.ts";
 import { nativeMemoryTimestamp } from "./memory-native-deadlines.ts";
 import type { NativeDocumentMemoryContext } from "./memory-live-context.ts";
 import { NATIVE_MEMORY_ORIGIN_LIMITS, bytes, invalid, nativeMemoryCanonical, hash, nativeMemoryFingerprint, nativeStructuredOriginSchema } from "./memory-native-origin-schema.ts";
@@ -1804,13 +1805,13 @@ async function jobOriginCompareRegistered(env:StructuredOriginLifecycleEnv,heade
       if(!["active","withdrawn"].includes(String(header.status))||nativeMemoryTimestamp(header.created_at)===null||String(header.created_at)>now
         ||header.status==="withdrawn"&&(nativeMemoryTimestamp(header.withdrawn_at)===null||String(header.withdrawn_at)>now
           ||String(header.withdrawn_at)<String(header.created_at)||!reasons.has(header.withdrawal_reason as NativeMemoryOriginWithdrawalReason)))return null;
-      const query={sql:"SELECT content_id,owner_id,kind,CASE WHEN length(CAST(content AS BLOB))<=65536 THEN content ELSE NULL END AS content,created_at,expires_at,redacted_at FROM private_content WHERE content_id=?",bindings:[header.manifest_content_ref]};
+      const query={sql:`SELECT content_id,owner_id,kind,CASE WHEN length(CAST(content AS BLOB))<=${DOCUMENT_JOB_ORIGIN_MANIFEST_LIMITS.bytes} THEN content ELSE NULL END AS content,created_at,expires_at,redacted_at FROM private_content WHERE content_id=?`,bindings:[header.manifest_content_ref]};
       const result=structuredClone(await db.prepare(query.sql).bind(...query.bindings).all());if(!current())return null;
       if(!structuredOriginEnvelope(result)||result.results.length!==1||!Object.hasOwn(result.results,0))return null;
       const body=result.results[0] as StructuredOriginLifecycleRow;
       if(!body||typeof body!=="object"||Array.isArray(body)||!exactKeys(body,["content_id","owner_id","kind","content","created_at","expires_at","redacted_at"])
         ||body.content_id!==header.manifest_content_ref||body.owner_id!==header.actor_user_id||body.kind!=="memory-document-job-origin"
-        ||typeof body.content!=="string"||body.content.length>65536||!body.content.isWellFormed()||new TextEncoder().encode(body.content).byteLength>65536
+        ||typeof body.content!=="string"||body.content.length>DOCUMENT_JOB_ORIGIN_MANIFEST_LIMITS.bytes||!body.content.isWellFormed()||new TextEncoder().encode(body.content).byteLength>DOCUMENT_JOB_ORIGIN_MANIFEST_LIMITS.bytes
         ||nativeMemoryTimestamp(body.created_at)===null||String(body.created_at)>String(header.created_at)
         ||body.expires_at!==header.manifest_expires_at||body.redacted_at!==null)return null;
       // OR is active-only. This comparison-only copy restores just the immutable
@@ -2258,13 +2259,13 @@ async function jobRetirementInventory(env:StructuredOriginLifecycleEnv,input:Job
     if(!["active","withdrawn"].includes(String(header.status))||nativeMemoryTimestamp(header.created_at)===null||String(header.created_at)>now
       ||header.status==="withdrawn"&&(nativeMemoryTimestamp(header.withdrawn_at)===null||String(header.withdrawn_at)<String(header.created_at)
         ||String(header.withdrawn_at)>now||!reasons.has(header.withdrawal_reason as NativeMemoryOriginWithdrawalReason)))throw new Error("memory-document-job-retirement-unavailable");
-    const query={sql:"SELECT content_id,owner_id,kind,CASE WHEN length(CAST(content AS BLOB))<=65536 THEN content ELSE NULL END AS content,created_at,expires_at,redacted_at FROM private_content WHERE content_id=?",bindings:[header.manifest_content_ref]};
+    const query={sql:`SELECT content_id,owner_id,kind,CASE WHEN length(CAST(content AS BLOB))<=${DOCUMENT_JOB_ORIGIN_MANIFEST_LIMITS.bytes} THEN content ELSE NULL END AS content,created_at,expires_at,redacted_at FROM private_content WHERE content_id=?`,bindings:[header.manifest_content_ref]};
     const result=structuredClone(await db.prepare(query.sql).bind(...query.bindings).all());if(!current())throw new Error("memory-document-job-retirement-changed");
     if(!structuredOriginEnvelope(result)||result.results.length!==1||!Object.hasOwn(result.results,0))throw new Error("memory-document-job-retirement-unavailable");
     const body=result.results[0] as StructuredOriginLifecycleRow;
     if(!body||typeof body!=="object"||Array.isArray(body)||!exactKeys(body,["content_id","owner_id","kind","content","created_at","expires_at","redacted_at"])
       ||body.content_id!==header.manifest_content_ref||body.owner_id!==header.actor_user_id||body.kind!=="memory-document-job-origin"
-      ||typeof body.content!=="string"||body.content.length>65536||!body.content.isWellFormed()||bytes(body.content).length>65536
+      ||typeof body.content!=="string"||body.content.length>DOCUMENT_JOB_ORIGIN_MANIFEST_LIMITS.bytes||!body.content.isWellFormed()||bytes(body.content).length>DOCUMENT_JOB_ORIGIN_MANIFEST_LIMITS.bytes
       ||nativeMemoryTimestamp(body.created_at)===null||String(body.created_at)>String(header.created_at)
       ||body.expires_at!==header.manifest_expires_at||body.redacted_at!==null)throw new Error("memory-document-job-retirement-unavailable");
     const publication=header.status==="active"?header:{...header,status:"active",withdrawn_at:null,withdrawal_reason:null};
@@ -2303,12 +2304,59 @@ async function jobRetirementInventory(env:StructuredOriginLifecycleEnv,input:Job
   await structuredOriginVerifyReads(db,assertions);if(!current())throw new Error("memory-document-job-retirement-changed");
   return {db,now,current,columns,headerQuery,indexQuery,headers,stored,progress,publications,assertions,pending,supportSchema};
 }
+/** A legitimate ledger inverse can remove its custody before dependent answers
+ * reach physical retirement. Only the manifest's exact, already-redacted native
+ * ledger revisions may use that absence. This is negative cleanup evidence,
+ * never authority to read a source or to remove an authored body. */
+async function jobRetirementRetiredLedgerCustody(env:StructuredOriginLifecycleEnv,header:StructuredOriginLifecycleRow,
+  manifest:import("./memory-document-job-origin-manifest.ts").DocumentJobOriginManifest,refs:string[],now:string,current:()=>boolean) {
+  if(manifest.mode!=="structured"||header.status!=="withdrawn")throw new Error("memory-document-job-retirement-custody-unavailable");
+  const db=env.DB,{structuredConversationLedgerSchema}=await import("./memory-live-store.ts");
+  if(!current())throw new Error("memory-document-job-retirement-changed");
+  const schema=await structuredConversationLedgerSchema(env);
+  if(!schema.present||!current())throw new Error("memory-document-job-retirement-custody-unavailable");
+  const assertions=[structuredOriginAssertion(schema.guard.condition,schema.guard.bindings)];
+  for(const ref of refs){
+    const revision=manifest.ledgerRevisions.find(row=>row.body_ref===ref);
+    if(!revision)throw new Error("memory-document-job-retirement-custody-unavailable");
+    const query={sql:`SELECT json_object('ledgerId',head.ledger_id,'state',head.state,'storageRevision',head.storage_revision,
+      'terminalAt',head.first_terminal_at,'updatedAt',head.updated_at,'createdAt',head.created_at) AS negative_head,
+      json_object('contentId',body.content_id,'ownerId',body.owner_id,'kind',body.kind,'createdAt',body.created_at,
+        'expiresAt',body.expires_at,'redactedAt',body.redacted_at) AS negative_body
+      FROM memory_structured_conversation_heads head JOIN private_content body ON body.content_id=?
+      WHERE (head.ledger_id,head.actor_user_id,head.owner_user_id,head.organization_id,head.project_access_id,head.project_id,head.document_id)
+        IS (?,?,?,?,?,?,?) AND head.state IN('retiring','retired') AND head.storage_revision BETWEEN ? AND 64
+        AND strftime('%Y-%m-%dT%H:%M:%fZ',head.created_at) IS head.created_at
+        AND strftime('%Y-%m-%dT%H:%M:%fZ',head.first_terminal_at) IS head.first_terminal_at
+        AND strftime('%Y-%m-%dT%H:%M:%fZ',head.updated_at) IS head.updated_at
+        AND head.created_at<=? AND head.first_terminal_at>=head.created_at AND head.first_terminal_at<=body.redacted_at
+        AND head.updated_at<=? AND body.owner_id=? AND body.kind='memory-structured-ledger'
+        AND body.created_at=? AND body.content='' AND body.redacted_at IS NOT NULL
+        AND strftime('%Y-%m-%dT%H:%M:%fZ',body.redacted_at) IS body.redacted_at AND body.redacted_at<=?
+        AND strftime('%Y-%m-%dT%H:%M:%fZ',body.expires_at) IS body.expires_at AND body.expires_at<=?
+        AND NOT EXISTS(SELECT 1 FROM memory_structured_conversation_revisions WHERE body_ref=body.content_id)
+        AND NOT EXISTS(SELECT 1 FROM memory_structured_conversation_heads WHERE current_body_ref=body.content_id)
+        AND NOT EXISTS(SELECT 1 FROM project_resource_scopes WHERE resource_kind='content' AND resource_id=body.content_id)
+        AND NOT EXISTS(SELECT 1 FROM private_content_retention_scopes WHERE content_id=body.content_id)`,
+      bindings:[ref,revision.ledger_id,header.actor_user_id,header.owner_user_id,header.organization_id,header.project_access_id,
+        header.project_id,header.document_id,revision.storage_revision,revision.created_at,now,header.actor_user_id,revision.created_at,now,revision.expires_at]};
+    const result=structuredClone(await db.prepare(query.sql).bind(...query.bindings).all());
+    if(!current()||!structuredOriginEnvelope(result)||result.results.length!==1)throw new Error("memory-document-job-retirement-custody-unavailable");
+    const row=result.results[0] as StructuredOriginLifecycleRow;
+    if(!row||!exactKeys(row,["negative_head","negative_body"])||Object.values(row).some(value=>typeof value!=="string"||value.length>8192))
+      throw new Error("memory-document-job-retirement-custody-unavailable");
+    assertions.push(structuredOriginExact(query,[row],["negative_head","negative_body"]));
+  }
+  return assertions;
+}
+
 async function jobRetirementInitialize(env:StructuredOriginLifecycleEnv,header:StructuredOriginLifecycleRow,
   selectors:StructuredOriginLifecycleRow[],manifest:import("./memory-document-job-origin-manifest.ts").DocumentJobOriginManifest,
   now:string,current:()=>boolean) {
   const db=env.DB,assertions:NativeMemoryOriginQuery[]=[],derived:StructuredOriginLifecycleRow[]=[];
   for(const [index,ref] of [header.answer_content_id,header.manifest_content_ref].entries()){
-    const query={sql:`SELECT ${jobRetirementBodyColumns.join(",")},CASE WHEN length(CAST(content AS BLOB))<=65536 THEN content ELSE NULL END AS content
+    const maximumBytes=index?DOCUMENT_JOB_ORIGIN_MANIFEST_LIMITS.bytes:NATIVE_MEMORY_ORIGIN_LIMITS.answerBytes;
+    const query={sql:`SELECT ${jobRetirementBodyColumns.join(",")},CASE WHEN length(CAST(content AS BLOB))<=${maximumBytes} THEN content ELSE NULL END AS content
       FROM private_content WHERE content_id=?`,bindings:[ref]};
     const result=structuredClone(await db.prepare(query.sql).bind(...query.bindings).all());if(!current())throw new Error("memory-document-job-retirement-changed");
     if(!structuredOriginEnvelope(result)||result.results.length!==1||!Object.hasOwn(result.results,0))throw new Error("memory-document-job-retirement-unavailable");
@@ -2317,8 +2365,8 @@ async function jobRetirementInitialize(env:StructuredOriginLifecycleEnv,header:S
       ||body.content_id!==ref||body.owner_id!==header.actor_user_id||body.kind!==(index?"memory-document-job-origin":"chat-assistant-memory")
       ||body.redacted_at!==null||nativeMemoryTimestamp(body.created_at)===null||String(body.created_at)>String(header.created_at)
       ||body.expires_at!==(index?header.manifest_expires_at:header.answer_expires_at)||typeof body.content!=="string"
-      ||body.content.length>65536||!body.content.isWellFormed()||bytes(body.content).length>65536
-      ||await nativeMemoryAnswerFingerprint(body.content)!==(index?header.manifest_sha256:header.answer_sha256)||!current())throw new Error("memory-document-job-retirement-unavailable");
+      ||body.content.length>maximumBytes||!body.content.isWellFormed()||bytes(body.content).length>maximumBytes
+      ||await (index?hash(bytes(body.content)):nativeMemoryAnswerFingerprint(body.content))!==(index?header.manifest_sha256:header.answer_sha256)||!current())throw new Error("memory-document-job-retirement-unavailable");
     derived.push(Object.fromEntries(jobRetirementBodyColumns.map(column=>[column,body[column]])));
     assertions.push(structuredOriginExact(query,[body],[...jobRetirementBodyColumns,"content"]));
   }
@@ -2338,7 +2386,9 @@ async function jobRetirementInitialize(env:StructuredOriginLifecycleEnv,header:S
   assertions.push(structuredOriginExact(resourceQuery,resource,structuredOriginResourceColumns),structuredOriginExact(retentionQuery,retention,structuredOriginRetentionColumns));
   const custody=refs.map(ref=>({content_id:String(ref),resource:resource.filter(row=>row.resource_id===ref),retention:retention.filter(row=>row.content_id===ref)}));
   if(custody.some(group=>group.resource.length>1||group.retention.length>1
-    ||header.organization_id!==null&&(group.resource.length!==1||group.retention.length!==1)))throw new Error("memory-document-job-retirement-custody-unavailable");
+    ||header.organization_id!==null&&group.resource.length!==group.retention.length))throw new Error("memory-document-job-retirement-custody-unavailable");
+  const absent=header.organization_id===null?[]:custody.filter(group=>group.resource.length===0).map(group=>group.content_id);
+  if(absent.length)assertions.push(...await jobRetirementRetiredLedgerCustody(env,header,manifest,absent,now,current));
   for(const body of derived){
     const group=custody.find(item=>item.content_id===body.content_id)!;
     if(header.organization_id===null&&(group.resource.length||group.retention.length))throw new Error("memory-document-job-retirement-custody-unavailable");
@@ -2415,7 +2465,7 @@ export async function prepareNativeDocumentJobOriginRetentionStep(env:Structured
   statements:NativeMemoryOriginQuery[];assertionIndexes:number[];workUnits:1;oldest:string;selectionKey:string;
   phase:string;physicalWrites:number;bookkeepingWrites:number;acknowledge(results:readonly unknown[]):boolean;
 }> {
-  const {inventory,choices}=await jobRetirementChoices(env,input),{db,current,now,columns,headers,stored,progress,headerQuery,indexQuery}=inventory;
+  const {inventory,choices}=await jobRetirementChoices(env,input),{current,now,columns,headers,stored,progress,headerQuery,indexQuery}=inventory;
   if(!choices.length)return null;
   const choice=choices[0],originId=String(choice.header.origin_id),statements:NativeMemoryOriginQuery[]=[],assertionIndexes:number[]=[],
     writes:{index:number;changes:number}[]=[];

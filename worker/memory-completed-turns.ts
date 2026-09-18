@@ -1,5 +1,5 @@
 import { canonicalConsent } from "./consequential-consent.ts";
-import { captureLegacyConversationOriginals, replayLegacyConversationOriginals,
+import { captureLegacyConversationOriginalWindows, replayLegacyConversationOriginals,
   type LegacyConversationOriginalCapture, type LegacyConversationOriginalInterval,
   type LegacyConversationOriginalReceipt } from "./events-api.ts";
 import { liveMemoryAuthority, type LiveMemoryEnrollment } from "./memory-live-authority.ts";
@@ -8,10 +8,10 @@ import { appendStructuredConversationLedger, liveMemoryEnabled, prepareNativeMem
   type StructuredConversationOriginal } from "./memory-live-store.ts";
 import type { WorkerEnv } from "./runtime.ts";
 
-// A native S3 frame admits at most six complete pairs. Two frames leave space
-// for the ledger's independent authority/history reads in its 32-read budget.
-export const COMPLETED_CONVERSATION_CAPTURE_LIMIT = 12;
-const FRAME_LIMIT = 2;
+// A shared native proof admits up to 32 exact six-pair windows and 128 refs.
+// The independent ledger + proof budget stays at 32 reads / 2 MiB.
+export const COMPLETED_CONVERSATION_CAPTURE_LIMIT = 64;
+const WINDOW_LIMIT = 32;
 type Pair = { user_event_id: string; user_sequence: number; answer_event_id: string; answer_sequence: number; turn_id: string };
 export type CompletedConversationCaptureResult = Readonly<{
   status: "disabled" | "schema-unavailable" | "no-source" | "unchanged" | "published" | "capacity" | "unavailable";
@@ -74,7 +74,7 @@ export async function publishCompletedConversationReferences(env: WorkerEnv, enr
         AND json_extract(answer.payload,'$._private_ref')=answer.event_id
         AND json_type(answer.payload,'$.memory_origin_version') IS NULL
         AND message.recorded_at>=? AND answer.recorded_at>=? AND answer.sequence<=?
-      ORDER BY message.sequence,answer.sequence LIMIT 13`)
+      ORDER BY message.sequence,answer.sequence LIMIT 65`)
       .bind(authority.binding.streamId, e.organization_id===null?"user":`user:${e.actor_user_id}`,
         e.document_id, e.enrolled_at, e.enrolled_at, through).all<Pair>());
     if (!current() || !pairs || pairs.some(pair => !id(pair.user_event_id) || !id(pair.answer_event_id) || !id(pair.turn_id)
@@ -89,7 +89,7 @@ export async function publishCompletedConversationReferences(env: WorkerEnv, enr
       CASE WHEN EXISTS(SELECT 1 FROM events event WHERE event.stream_id=? AND event.type IN('ChatMessageSent','AssistantReasoned')
         AND event.sequence>json_extract(candidate.value,'$.previousThrough')
         AND event.sequence<=json_extract(candidate.value,'$.afterSequence')) THEN 1 ELSE 0 END AS separated
-      FROM json_each(?) candidate ORDER BY CAST(candidate.key AS INTEGER) LIMIT 13`)
+      FROM json_each(?) candidate ORDER BY CAST(candidate.key AS INTEGER) LIMIT 65`)
       .bind(authority.binding.streamId, JSON.stringify(boundaries)).all<{ ordinal: number; separated: number }>());
     if (!current() || !gaps || gaps.length !== pairs.length
       || gaps.some((row, index) => row.ordinal !== index || row.separated !== 0 && row.separated !== 1)) return { status: "unavailable" };
@@ -100,10 +100,10 @@ export async function publishCompletedConversationReferences(env: WorkerEnv, enr
         intervals.push({ afterSequence: pair.user_sequence - 1, throughSequence: pair.answer_sequence }); groupSize = 1;
       } else { intervals.at(-1)!.throughSequence = pair.answer_sequence; groupSize++; }
     }
-    if (intervals.length > FRAME_LIMIT) return { status: "capacity" };
+    if (intervals.length > WINDOW_LIMIT) return { status: "capacity" };
     const captures: LegacyConversationOriginalCapture[] = [], originals: StructuredConversationOriginal[] = [];
-    for (const interval of intervals) {
-      const capture = await captureLegacyConversationOriginals(env, prepared, interval);
+    {
+      const capture = await captureLegacyConversationOriginalWindows(env, prepared, intervals);
       const receipt = capture && await replayLegacyConversationOriginals(env, prepared, capture);
       if (!current() || !capture || !receipt) return { status: "unavailable" };
       captures.push(capture); originals.push(...receipt.originals.map(reference));

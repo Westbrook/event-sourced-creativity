@@ -650,7 +650,10 @@ export async function executeGuestImageEvents(request:Request,env:WorkerEnv,auth
 /** Legacy chat must inspect its selected native references before missing or
  * excluded bodies could silently pull older history into the provider window. */
 export async function legacyChatMemoryProof(env:WorkerEnv,streamId:string,selected:readonly {eventId:string;contentRef:string}[]){
-  if(selected.length>12)throw new Error("assistant_memory_paid_ancestry_unsupported");
+  return legacyChatMemoryProofBounded(env,streamId,selected,12);
+}
+async function legacyChatMemoryProofBounded(env:WorkerEnv,streamId:string,selected:readonly {eventId:string;contentRef:string}[],maximum:12|128){
+  if(selected.length>maximum)throw new Error("assistant_memory_paid_ancestry_unsupported");
   const exclusion=await nativeMemoryAnswerExclusion(env,{answerAlias:"content"});
   return{sql:`NOT EXISTS(WITH selected AS(SELECT value FROM json_each(?)), refs AS(
       SELECT json_extract(value,'$.contentRef') AS content_id FROM selected UNION
@@ -2049,12 +2052,13 @@ import { nativeMemoryDescriptor, nativeMemoryGrantDeadline, nativeMemoryPilotDea
 /** Trusted server output of document read preparation, not a browser credential or branded authority. */
 export type LegacyConversationOriginalPrepared = { principal: PilotUser; binding: ConsequentialBinding; sourceHead: number };
 export type LegacyConversationOriginalInterval = { afterSequence: number; throughSequence: number };
-export type LegacyConversationOriginalCapture = { readonly method: "native-legacy-originals-v1"; readonly validUntil: string };
+export type LegacyConversationOriginalCapture = { readonly method: "native-legacy-originals-v1" | "native-legacy-originals-windows-v2"; readonly validUntil: string };
 export type LegacyConversationOriginalReceipt = {
-  method: "native-legacy-originals-v1"; treatment: "untrusted-historical-evidence";
+  method: "native-legacy-originals-v1" | "native-legacy-originals-windows-v2"; treatment: "untrusted-historical-evidence";
   scope: { actorUserId: string; ownerUserId: string; streamId: string; projectId: string; documentId: string;
     organizationId: string | null; projectAccessId: string | null };
-  interval: LegacyConversationOriginalInterval; completeFromStart: false;
+  /** v1 is one complete interval; v2 lists exact windows, never an implied contiguous range. */
+  interval?: LegacyConversationOriginalInterval; intervals?: LegacyConversationOriginalInterval[]; completeFromStart: false;
   originals: { eventId: string; sequence: number; turnId: string; role: "user" | "assistant"; actor: string;
     correlationId: string; causationId: string; contentRef: string; text: string; contentHash: string;
     occurredAt: string; recordedAt: string; expiresAt: string }[];
@@ -2159,9 +2163,24 @@ function legacyOriginalDocumentGuard(prepared: LegacyConversationOriginalPrepare
  */
 export async function captureLegacyConversationOriginals(env: WorkerEnv, prepared: LegacyConversationOriginalPrepared,
   interval: LegacyConversationOriginalInterval): Promise<LegacyConversationOriginalCapture | null> {
+  return captureLegacyOriginalWindows(env,prepared,[interval],false);
+}
+
+/** One bounded native witness for disjoint original windows. Shared authority,
+ * schema and custody reads are captured once, not dropped from a repeated-frame
+ * budget. Every window still contains at most six WHOLE eligible pairs; unrelated
+ * gaps are neither hydrated nor advertised as covered. No rolling rebase. */
+export async function captureLegacyConversationOriginalWindows(env: WorkerEnv, prepared: LegacyConversationOriginalPrepared,
+  intervals: readonly LegacyConversationOriginalInterval[]): Promise<LegacyConversationOriginalCapture | null> {
+  return captureLegacyOriginalWindows(env,prepared,intervals,true);
+}
+async function captureLegacyOriginalWindows(env: WorkerEnv, prepared: LegacyConversationOriginalPrepared,
+  intervals: readonly LegacyConversationOriginalInterval[], multiple: boolean): Promise<LegacyConversationOriginalCapture | null> {
   try {
-    const captured = structuredClone(prepared), selected = structuredClone(interval), db = env.DB;
-    const preparedKey = canonicalConsent(prepared), intervalKey = canonicalConsent(interval), settings = legacyOriginalSettings(env);
+    const captured = structuredClone(prepared), windows = structuredClone(intervals), db = env.DB;
+    const maximum = multiple ? 128 : 12, maximumPairs = maximum / 2;
+    const method = multiple ? "native-legacy-originals-windows-v2" as const : "native-legacy-originals-v1" as const;
+    const preparedKey = canonicalConsent(prepared), intervalKey = canonicalConsent(intervals), settings = legacyOriginalSettings(env);
     const started = Date.now(), deadlines = [started + 60_000], { principal, binding } = captured, scope = binding.scope;
     if (!principal || !binding || principal.fictional || !principal.authorizationSnapshot || !legacyOriginalId(principal.userId)
       || principal.userId !== binding.actorUserId || principal.access.permissionEpoch !== binding.permissionEpoch
@@ -2169,10 +2188,14 @@ export async function captureLegacyConversationOriginals(env: WorkerEnv, prepare
       || binding.streamId !== "creative:" + (scope?.ownerUserId ?? principal.userId)
       || scope && (scope.actorUserId !== principal.userId || scope.projectId !== binding.projectId)
       || !Number.isSafeInteger(captured.sourceHead) || captured.sourceHead < 1
-      || !Number.isSafeInteger(selected.afterSequence) || selected.afterSequence < 0
-      || !Number.isSafeInteger(selected.throughSequence) || selected.throughSequence <= selected.afterSequence
-      || selected.throughSequence > captured.sourceHead) return null;
-    const fresh = () => env.DB === db && canonicalConsent(prepared) === preparedKey && canonicalConsent(interval) === intervalKey
+      || !Array.isArray(windows) || windows.length < 1 || windows.length > (multiple ? 32 : 1)
+      || windows.some((window,index) => !window || Object.keys(window).sort().join(",") !== "afterSequence,throughSequence"
+        || !Number.isSafeInteger(window.afterSequence) || window.afterSequence < 0
+        || !Number.isSafeInteger(window.throughSequence) || window.throughSequence <= window.afterSequence
+        || window.throughSequence > captured.sourceHead || index > 0 && window.afterSequence < windows[index-1].throughSequence)) return null;
+    const contains = (window: LegacyConversationOriginalInterval, sequence: unknown) => typeof sequence === "number"
+      && sequence > window.afterSequence && sequence <= window.throughSequence;
+    const fresh = () => env.DB === db && canonicalConsent(prepared) === preparedKey && canonicalConsent(intervals) === intervalKey
       && legacyOriginalSettings(env) === settings && Date.now() < Math.min(...deadlines);
     const bound = (value: string | null | undefined) => {
       if (value === null) return;
@@ -2234,17 +2257,20 @@ export async function captureLegacyConversationOriginals(env: WorkerEnv, prepare
     // The exclusion helper's absent-table branches must not survive additive schema arrival.
     const [schema, events] = await legacyOriginalRead(env, witness, [nativeMemoryDescriptor(
       "SELECT name,sql FROM sqlite_schema WHERE type='table' AND name IN('memory_native_answer_origins','assistant_turns') ORDER BY name", []),
-      nativeMemoryDescriptor("SELECT " + legacyOriginalEventColumns + " FROM events WHERE stream_id=? AND sequence>? AND sequence<=?"
-        + " AND type IN('ChatMessageSent','AssistantReasoned') ORDER BY sequence LIMIT 13",
-      [binding.streamId, selected.afterSequence, selected.throughSequence])]);
-    if (!fresh() || schema.length > 2 || events.length < 2 || events.length > 12 || events.length % 2 !== 0) return null;
+      nativeMemoryDescriptor("SELECT " + legacyOriginalEventColumns + " FROM events WHERE stream_id=?"
+        + " AND EXISTS(SELECT 1 FROM json_each(?) window WHERE sequence>json_extract(window.value,'$.afterSequence')"
+        + " AND sequence<=json_extract(window.value,'$.throughSequence'))"
+        + " AND type IN('ChatMessageSent','AssistantReasoned') ORDER BY sequence LIMIT " + (maximum+1),
+      [binding.streamId, JSON.stringify(windows)])]);
+    if (!fresh() || schema.length > 2 || events.length < 2 || events.length > maximum || events.length % 2 !== 0
+      || windows.some(window => { const count = events.filter(row => contains(window,row.sequence)).length; return count < 2 || count > 12 || count % 2 !== 0; })) return null;
     const seenIds = new Set<string>(), seenSequences = new Set<number>(), seenRoles = new Set<string>();
     const selectedEvents: { row: LegacyOriginalRow; payload: Record<string, unknown>; role: "user" | "assistant" }[] = [];
     for (const row of events) {
       const payload = legacyOriginalJson(row.payload), role = row.type === "ChatMessageSent" ? "user" : "assistant";
       if (!payload || !legacyOriginalId(row.event_id) || seenIds.has(row.event_id) || row.stream_id !== binding.streamId
         || typeof row.sequence !== "number" || !Number.isSafeInteger(row.sequence) || seenSequences.has(row.sequence)
-        || row.sequence <= selected.afterSequence || row.sequence > selected.throughSequence
+        || !windows.some(window => contains(window,row.sequence))
         || row.schema_version !== 1 || row.compensates_event_id !== null || !legacyOriginalId(row.client_id)
         || !legacyOriginalId(row.correlation_id) || !legacyOriginalId(row.causation_id)
         || !legacyOriginalHistorical(row, checked) || !legacyOriginalNative(row, payload)
@@ -2261,7 +2287,8 @@ export async function captureLegacyConversationOriginals(env: WorkerEnv, prepare
       const pair = selectedEvents.filter(other => other.payload.turn_id === entry.payload.turn_id);
       if (pair.length !== 2) return null;
       const user = pair.find(value => value.role === "user"), answer = pair.find(value => value.role === "assistant");
-      if (!user || !answer || answer.row.causation_id !== user.row.event_id || answer.row.correlation_id !== user.row.correlation_id
+      if (!user || !answer || !windows.some(window => contains(window,user.row.sequence) && contains(window,answer.row.sequence))
+        || answer.row.causation_id !== user.row.event_id || answer.row.correlation_id !== user.row.correlation_id
         || answer.row.client_id !== user.row.client_id
         || Number(answer.row.sequence) <= Number(user.row.sequence)
         || Date.parse(String(answer.row.recorded_at)) < Date.parse(String(user.row.recorded_at))) return null;
@@ -2273,17 +2300,17 @@ export async function captureLegacyConversationOriginals(env: WorkerEnv, prepare
     if (new Set(contentIds).size !== contentIds.length) return null;
     const owner = scope?.ownerUserId ?? principal.userId, custody = executionContentCustodyGuard(binding, "private_content");
     const [causes, secrets, contents, eventScopes, resources, retentions] = await legacyOriginalRead(env, witness, [
-      nativeMemoryDescriptor("SELECT " + legacyOriginalEventColumns + " FROM events WHERE event_id IN(SELECT value FROM json_each(?)) ORDER BY sequence LIMIT 7", [JSON.stringify(causeIds)]),
+      nativeMemoryDescriptor("SELECT " + legacyOriginalEventColumns + " FROM events WHERE event_id IN(SELECT value FROM json_each(?)) ORDER BY sequence LIMIT " + (maximumPairs+1), [JSON.stringify(causeIds)]),
       nativeMemoryDescriptor("SELECT private_event_id,owner_id,project_id,document_id,CASE WHEN length(CAST(private_json AS BLOB))<=65536 THEN private_json ELSE NULL END AS private_json,created_at,redacted_at"
-        + " FROM event_private_payloads WHERE owner_id=? AND private_event_id IN(SELECT value FROM json_each(?)) ORDER BY private_event_id LIMIT 19", [owner, JSON.stringify([...eventIds, ...causeIds])]),
+        + " FROM event_private_payloads WHERE owner_id=? AND private_event_id IN(SELECT value FROM json_each(?)) ORDER BY private_event_id LIMIT " + (maximum+maximumPairs+1), [owner, JSON.stringify([...eventIds, ...causeIds])]),
       nativeMemoryDescriptor("SELECT content_id,owner_id,kind,CASE WHEN length(CAST(content AS BLOB))<=16384 THEN content ELSE NULL END AS content,"
-        + "created_at,expires_at,redacted_at FROM private_content WHERE content_id IN(SELECT value FROM json_each(?)) AND owner_id=? AND (" + custody.sql + ") ORDER BY content_id LIMIT 13", [JSON.stringify(contentIds), principal.userId, ...custody.bindings]),
-      nativeMemoryDescriptor("SELECT * FROM project_event_scopes WHERE event_id IN(SELECT value FROM json_each(?)) ORDER BY event_id LIMIT 13", [JSON.stringify(eventIds)]),
+        + "created_at,expires_at,redacted_at FROM private_content WHERE content_id IN(SELECT value FROM json_each(?)) AND owner_id=? AND (" + custody.sql + ") ORDER BY content_id LIMIT " + (maximum+1), [JSON.stringify(contentIds), principal.userId, ...custody.bindings]),
+      nativeMemoryDescriptor("SELECT * FROM project_event_scopes WHERE event_id IN(SELECT value FROM json_each(?)) ORDER BY event_id LIMIT " + (maximum+1), [JSON.stringify(eventIds)]),
       nativeMemoryDescriptor("SELECT * FROM project_resource_scopes WHERE resource_kind='content' AND resource_id IN(SELECT value FROM json_each(?)) ORDER BY project_access_id,resource_id LIMIT 129", [JSON.stringify(contentIds)]),
-      nativeMemoryDescriptor("SELECT * FROM private_content_retention_scopes WHERE content_id IN(SELECT value FROM json_each(?)) ORDER BY content_id LIMIT 13", [JSON.stringify(contentIds)]),
+      nativeMemoryDescriptor("SELECT * FROM private_content_retention_scopes WHERE content_id IN(SELECT value FROM json_each(?)) ORDER BY content_id LIMIT " + (maximum+1), [JSON.stringify(contentIds)]),
     ]);
     if (!fresh() || causes.length !== causeIds.length || secrets.length !== eventIds.length + causeIds.length
-      || contents.length !== contentIds.length || resources.length > 128 || retentions.length > 12
+      || contents.length !== contentIds.length || resources.length > 128 || retentions.length > maximum
       || (scope ? eventScopes.length !== eventIds.length || retentions.length !== contentIds.length || resources.length !== contentIds.length
         : eventScopes.length !== 0 || retentions.length !== 0 || resources.length !== 0)) return null;
     const bySecret = new Map(secrets.map(row => [row.private_event_id, row])), byContent = new Map(contents.map(row => [row.content_id, row]));
@@ -2334,7 +2361,7 @@ export async function captureLegacyConversationOriginals(env: WorkerEnv, prepare
         sourceDeadlines.push(Date.parse(String(retention.assigned_expires_at)));
       }
       textBytes += new TextEncoder().encode(content.content).byteLength;
-      if (textBytes > 65_536) return null;
+      if (textBytes > (multiple ? 262_144 : 65_536)) return null;
       bound(typeof content.expires_at === "string" ? content.expires_at : undefined);
       const contentHash = await memoryDigest(content.content);
       if (!fresh()) return null;
@@ -2343,22 +2370,22 @@ export async function captureLegacyConversationOriginals(env: WorkerEnv, prepare
         contentRef: String(payload.content_ref), text: content.content, contentHash, occurredAt: String(row.occurred_at), recordedAt: String(row.recorded_at),
         expiresAt: new Date(Math.min(...sourceDeadlines)).toISOString() });
     }
-    const ordinary = await legacyChatMemoryProof(env, binding.streamId, originals.map(value => ({ eventId: value.eventId, contentRef: value.contentRef })));
+    const ordinary = await legacyChatMemoryProofBounded(env, binding.streamId, originals.map(value => ({ eventId: value.eventId, contentRef: value.contentRef })), maximum);
     if (!fresh()) return null;
     witness.require(ordinary);
     const validUntil = new Date(Math.min(...deadlines)).toISOString();
     witness.before(validUntil);
-    const receipt: LegacyConversationOriginalReceipt = { method: "native-legacy-originals-v1", treatment: "untrusted-historical-evidence",
+    const receipt: LegacyConversationOriginalReceipt = { method, treatment: "untrusted-historical-evidence",
       scope: { actorUserId: principal.userId, ownerUserId: owner, streamId: binding.streamId, projectId: binding.projectId,
         documentId: binding.documentId, organizationId: scope?.organizationId ?? null, projectAccessId: scope?.projectAccessId ?? null },
-      interval: selected, completeFromStart: false, originals, checkedAt: clock!.checked_at, validUntil };
+      ...(multiple ? {intervals: windows} : {interval: windows[0]}), completeFromStart: false, originals, checkedAt: clock!.checked_at, validUntil };
     witness.seal(receipt);
     const statements = witness.statements();
     if (!statements.length || !fresh()) return null;
     const final = structuredClone(await env.DB.batch<LegacyOriginalRow>(statements));
     if (!fresh() || final.length !== statements.length
       || final.some(result => result.success !== true || (result as typeof result & {error?:unknown}).error !== undefined || !Array.isArray(result.results)) || !witness.matches(final)) return null;
-    const handle: LegacyConversationOriginalCapture = Object.freeze({ method: "native-legacy-originals-v1", validUntil });
+    const handle: LegacyConversationOriginalCapture = Object.freeze({ method, validUntil });
     legacyOriginalFrames.set(handle, { env, db, preparedKey, settings, witness });
     return handle;
   } catch { return null; }
@@ -2479,8 +2506,9 @@ export async function prepareLegacyConversationOriginalsCommit(env: WorkerEnv, p
         if (!fits()) return null;
       }
       const receipt = frame.witness.context();
-      if (!receipt || receipt.method !== "native-legacy-originals-v1" || receipt.treatment !== "untrusted-historical-evidence"
-        || receipt.completeFromStart !== false || receipt.validUntil !== capture.validUntil || receipt.originals.length < 2 || receipt.originals.length > 12) return null;
+      if (!receipt || receipt.method !== capture.method || receipt.treatment !== "untrusted-historical-evidence"
+        || receipt.completeFromStart !== false || receipt.validUntil !== capture.validUntil || receipt.originals.length < 2
+        || receipt.originals.length > (receipt.method === "native-legacy-originals-windows-v2" ? 128 : 12)) return null;
       if (scope === null) scope = receipt.scope;
       else if (canonicalConsent(scope) !== canonicalConsent(receipt.scope)) return null;
       for (const original of receipt.originals) {
@@ -2512,7 +2540,8 @@ export async function prepareLegacyConversationOriginalsCommit(env: WorkerEnv, p
       isCurrent: current, precommitStatements });
     legacyOriginalCommitFrames.set(commit, { env, db, commit, current, witnesses: frames.map(({ frame }) => frame.witness),
       additionalBudget: Object.freeze({ ...inputBudget }),
-      intervals: Object.freeze(frames.map(({ frame }) => Object.freeze({ ...frame.witness.context()!.interval }))) });
+      intervals: Object.freeze(frames.flatMap(({ frame }) => { const receipt=frame.witness.context()!;
+        return (receipt.intervals ?? [receipt.interval!]).map(interval => Object.freeze({...interval})); })) });
     return commit;
   } catch { return null; }
 }

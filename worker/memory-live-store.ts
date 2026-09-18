@@ -554,7 +554,7 @@ import { PRINCIPAL_WITH_ACCESS_SQL } from "./access-policy.ts";
 import { nativeMemoryDescriptor, nativeMemoryGrantDeadline, nativeMemoryTimestamp, nativeMemoryPilotQuery, nativeMemoryPilotDeadline } from "./memory-native-deadlines.ts";
 import { nativeMemoryEnrollmentQuery, type NativeMemoryPreparedDocument } from "./memory-live-context.ts";
 import { LIVE_MEMORY_POLICY } from "./memory-live-authority.ts";
-import { prepareLegacyConversationOriginalsCommit, captureLegacyConversationOriginals, legacyConversationOriginalsEvidence,
+import { prepareLegacyConversationOriginalsCommit, captureLegacyConversationOriginals, captureLegacyConversationOriginalWindows, legacyConversationOriginalsEvidence,
   prepareLegacyConversationOriginalsOwnSend, legacyConversationOriginalsOwnSendStatements,
   type LegacyConversationOriginalsOwnSend, type LegacyConversationOriginalInterval,
   type LegacyConversationOriginalPrepared, type LegacyConversationOriginalCapture,
@@ -2176,9 +2176,21 @@ export async function discoverNativeStructuredConversationOriginals(env: WorkerE
     if(intervals.some(interval=>interval.throughSequence>prepared.sourceHead))return null;
     if (!intervals.length || intervals.length > 32) return null;
     const captures: LegacyConversationOriginalCapture[] = [];
-    for (const interval of intervals) {
+    // Historic internal callers could retain overlapping independently proved
+    // v1 intervals. Preserve their exact evidence and original aggregate budget;
+    // do not widen, merge, normalize or drop any saved interval on replay.
+    const legacyOverlap = selectedIntervals !== undefined
+      && intervals.some((interval, index) => index > 0 && interval.afterSequence < intervals[index - 1].throughSequence);
+    if (legacyOverlap) {
+      for (const interval of intervals) {
+        if (!current()) return null;
+        const capture = await captureLegacyConversationOriginals(env, prepared, interval);
+        if (!capture || !current()) return null;
+        captures.push(capture);
+      }
+    } else {
       if (!current()) return null;
-      const capture = await captureLegacyConversationOriginals(env, prepared, interval);
+      const capture = await captureLegacyConversationOriginalWindows(env, prepared, intervals);
       if (!capture || !current()) return null;
       captures.push(capture);
     }

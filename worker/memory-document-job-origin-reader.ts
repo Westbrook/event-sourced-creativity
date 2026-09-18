@@ -4,7 +4,7 @@ import { publicEventPayload } from "./event-privacy.ts";
 import { nativeDocumentJobOriginSchema } from "./memory-document-job-origin-schema.ts";
 import { DOCUMENT_JOB_ORIGIN_HEADER_COLUMNS, validateDocumentJobOriginRecord,
   type DocumentJobOriginHeader } from "./memory-document-job-origin-record.ts";
-import type { DocumentJobOriginManifest } from "./memory-document-job-origin-manifest.ts";
+import { DOCUMENT_JOB_ORIGIN_MANIFEST_LIMITS, type DocumentJobOriginManifest } from "./memory-document-job-origin-manifest.ts";
 import { nativeMemoryAnswerExclusion } from "./memory-native-boundary.ts";
 import { nativeMemoryCanonical, nativeMemoryFingerprint, nativeMemoryAnswerFingerprint,
   nativeMemorySourceProjection, nativeStructuredOriginalProjection } from "./memory-native-origin.ts";
@@ -75,7 +75,7 @@ function rowsOf(result: unknown): Row[] {
       if (typeof key !== "string") return fail();
       const item = data<unknown>(value, key);
       if (item !== null && typeof item !== "string" && !(typeof item === "number" && Number.isSafeInteger(item))) return fail();
-      if (typeof item === "string" && (!item.isWellFormed() || bytes(item) > 131_072)) return fail();
+      if (typeof item === "string" && (!item.isWellFormed() || bytes(item) > DOCUMENT_JOB_ORIGIN_MANIFEST_LIMITS.bytes)) return fail();
       out[key] = item as Value; size += bytes(key) + (typeof item === "string" ? bytes(item) : 16);
       if (size > 1_048_576) return fail();
     }
@@ -194,7 +194,7 @@ export async function readDocumentJobMemoryOrigin(env: WorkerEnv, prepared: Nati
     const bodyQuery = (ref: string, kind: string, limit: number) => query(`SELECT ${BODY_COLUMNS} FROM private_content body
       WHERE body.content_id=? AND body.owner_id=? AND body.kind=? AND body.redacted_at IS NULL AND body.expires_at>${NOW}
       AND length(CAST(body.content AS BLOB))<=? AND (${custody.sql}) LIMIT 2`, [ref,principal.userId,kind,limit,...custody.bindings]);
-    const manifestRows = await read([bodyQuery(text(h,"manifest_content_ref"),"memory-document-job-origin",65_536),
+    const manifestRows = await read([bodyQuery(text(h,"manifest_content_ref"),"memory-document-job-origin",DOCUMENT_JOB_ORIGIN_MANIFEST_LIMITS.bytes),
       query(`SELECT origin_id,resource_kind,resource_id FROM ${D} WHERE origin_id=? ORDER BY resource_kind,resource_id LIMIT 514`,[wanted.originId])]);
     const manifestBody = one(manifestRows[0]);
     const record = await step(() => validateDocumentJobOriginRecord(h,text(manifestBody,"content"),manifestRows[1]));

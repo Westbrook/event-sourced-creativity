@@ -35,6 +35,10 @@ suggestion or vector index is created by this change.
 
 The branch is based on local main `7d74584bb72a1ed3cbab25ee64071994f8976d2f`.
 This continuation does not change production configuration or enroll anyone.
+The [native continuation record](forma-memory-native-continuation-2026-09-18.md)
+tracks the subsequent 64-pair bounded capture, saved-answer compatibility, shared
+Forget retirement fix and unverified derivation-parser component. None completes
+the open native pipeline table below.
 
 - Canvas now records a personal artifact view only after the actual viewer opens,
   hashing the exact retained bytes and rechecking route, revision, custody and visibility.

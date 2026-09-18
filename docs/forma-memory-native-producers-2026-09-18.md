@@ -6,6 +6,13 @@ all semantic Memory is complete. The owned branch was merged with local `main`
 preserved. No deployment, schema installation, spending, enrollment, or schedule
 registration is performed by this continuation.
 
+**Historical boundary below:** the 12-pair producer description records the
+earlier release. The newer, not-yet-published
+[merge-preparation continuation](forma-memory-native-continuation-2026-09-18.md)
+extends it to 64 pairs and adds personal/current consumption v2. The canonical
+ORM now matches the deployed one-annotation constraint; the zero-annotation
+candidate remains separate, unassigned and unapplied.
+
 ## Completed-turn capture
 
 The new scheduled producer targets genuine completed Chat Studio turns. It uses
