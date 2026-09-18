@@ -1,10 +1,11 @@
+import type { ProjectRequestContext } from './project-request-context.ts';
+import { readStillHistory } from './still-history.ts';
 import { DecisionMemo, stableDecisionKey } from '../src/still/decision-cache.ts';
 import { cleanPaletteFeedback } from '../src/still/palette-feedback.ts';
 import { actionLimit } from '../src/still/decision-lab.ts';
-import { handleEvents } from './events-api.ts';
-import { handleSession, requireConsent, requireUser } from './pilot-policy.ts';
+
+import { handleSession, loadPrivateContent, requireConsent, requireUser } from './pilot-policy.ts';
 import type { WorkerEnv, WorkerExecutionContext } from './runtime.ts';
-import type { CreativeEvent } from '../src/model/events.ts';
 import { ACTIONS, buildDecisionState, evaluateActions, POLICY_VERSION, questionsFor, rankAllFormats, selectActions, type Abilities, type Answer, type Position } from '../src/still/decisions.ts';
 import { compositionIndex, connectionEvidence, shouldEnrich, enrichmentQuestions, refineMenu, type MenuAdjustment } from '../src/still/assessments.ts';
 import { presentActions, type Emphasis } from '../src/still/presentation.ts';
@@ -20,6 +21,7 @@ function decisionCache(env:WorkerEnv){
   return cache;
 }
 export async function handleStillDecision(request: Request, env: WorkerEnv, context: WorkerExecutionContext) {
+  const preparationStarted=Date.now();
   if (request.method !== 'POST') return reply({ error: 'method_not_allowed' }, 405);
   const auth = await requireUser(request, env);
   if (auth.response || !auth.user) return auth.response!;
@@ -34,33 +36,32 @@ export async function handleStillDecision(request: Request, env: WorkerEnv, cont
   position.palette=cleanPaletteFeedback(input.palette,ACTIONS.map(a=>a.id));
   const palette=!!position.palette&&position.view!=='find-action';
   // Reuse Forma's exact scope/retention checks. No client-supplied event history or arbitrary account IDs.
-  const sessionResponse = await handleSession(new Request(new URL('/api/session', request.url), { headers: request.headers }), env, context);
+  const sessionResponse = await handleSession(new Request(new URL('/api/session?profile=still', request.url), { headers: request.headers }), env, context, auth);
   if (!sessionResponse.ok) return sessionResponse;
-  const session = await sessionResponse.json() as { user: { role: string }; permissionEpoch?:unknown; impersonation?:unknown; policy: { accepted: boolean }; provider: Record<string, unknown>; projectContext?: { projectId: string; permissions: string[] } };
+  const session = await sessionResponse.json() as { user: { role: string }; permissionEpoch?:unknown; impersonation?:unknown; policy: { accepted: boolean }; provider: Record<string, unknown>; projectContext?: ProjectRequestContext };
   if (!session.policy.accepted) return reply({ error: 'consent_required' }, 403);
+  const sessionMs=Date.now()-preparationStarted;
   const scoped = session.projectContext;
   const abilities: Abilities = { author: scoped ? scoped.permissions.includes('project.author') : ['creator', 'agent', 'admin'].includes(session.user.role), generate: scoped ? scoped.permissions.includes('project.output.request') : ['creator', 'agent', 'admin'].includes(session.user.role), projectCreate: !scoped && ['creator', 'admin', 'agent'].includes(session.user.role), formats: [...(session.provider.plannerConfigured ? ['image', 'storyboard'] : []), ...(session.provider.plannerConfigured ? ['short_story', 'scene', 'slides'] : []), ...(session.provider.videoConfigured ? ['video'] : []), ...(session.provider.audioConfigured ? ['audio'] : []), ...(session.provider.model3dConfigured ? ['model3d'] : [])] };
-  const events: CreativeEvent[] = []; let after = 0; let head = 0; let content: Record<string,string> = {};
-  for (;;) {
-    const read = new URL(`/api/events?after=${after}&limit=5000&content=${after ? 0 : 1}`, request.url);
-    const response = await handleEvents(new Request(read, { headers: request.headers }), env);
-    if (!response.ok) return response;
-    const page = await response.json() as { events: CreativeEvent[]; head: number; hasMore: boolean; nextAfter: number; content?: Record<string,string> };
-    if (!head) head = page.head;
-    if (page.content) content = page.content;
-    events.push(...page.events.filter(e => e.sequence <= head));
-    if (!page.hasMore || page.nextAfter >= head) break;
-    if (page.nextAfter <= after) return reply({ error: 'history_did_not_advance' }, 503);
-    after = page.nextAfter;
-    if (events.length > 150_000) return reply({ error: 'history_too_large_for_decision' }, 503);
+  const scope=stableDecisionKey({user:auth.user.userId,stream:auth.user.streamId,session});
+  let history;try{history=await readStillHistory(request,env,auth.user,scope,scoped);}catch(error){return error instanceof Response?error:reply({error:'history_unavailable'},503);}
+  const {events,head}=history,projection=history.projection(position.documentId,position.projectId);
+  const contentStarted=Date.now();
+  const selectedRef=projection.artifacts.find(a=>a.id===position.outputId)?.contentRef;
+  // Ordinary pages do not consume retained output bodies. Resolve only the selected writing.
+  let content:Record<string,string>={};
+  if(selectedRef){
+    if(scoped){const response=await import('./events-api.ts').then(m=>m.handleEvents(new Request(new URL('/api/events?after='+head+'&limit=1&content=1&contentId='+encodeURIComponent(selectedRef),request.url),{headers:request.headers}),env,false,auth.user));if(!response.ok)return response;content=(await response.json() as {content?:Record<string,string>}).content??{};}
+    else content=await loadPrivateContent(env,auth.user.userId,'all',undefined,[selectedRef]);
   }
-  const built = buildDecisionState(events, position, abilities, head, content);
+  const selectedContentMs=Date.now()-contentStarted;
+  const built = buildDecisionState(events, position, abilities, head, content,projection);
   if (position.projectId && !built.projection.projects.some(p => p.id === position.projectId) || position.documentId && !built.projection.documents.some(d => d.id === position.documentId && !d.removed)) return reply({ error: 'selection_unavailable' }, 409);
   if(position.palette){position.palette.toolbar=position.palette.toolbar.filter(id=>built.candidates.some(a=>a.id===id));position.palette.more=position.palette.more.filter(id=>built.candidates.some(a=>a.id===id));}
   const choosingFormat = position.view === 'choose-format'&&!palette, finding=position.view==='find-action';
   const questions=questionsFor(built.candidates,position,built.state.selectedWork?.kind);
   const started=Date.now(),deadline=started+10_000;
-  const evidence=palette||choosingFormat||finding||!env.JEV_API_KEY||!built.candidates.some(a=>a.id==='use-in')?{destinations:[],details:[],source:null}:connectionEvidence(events,position);
+  const evidence=palette||choosingFormat||finding||!env.JEV_API_KEY||!built.candidates.some(a=>a.id==='use-in')?{destinations:[],details:[],source:null}:connectionEvidence(events,position,projection);
   // Hash the complete authorized decision input, not a client-provided head or cache key.
   // Retention, permissions and content reads above always run before a cache lookup.
   const keyBytes=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(stableDecisionKey({
@@ -69,6 +70,7 @@ export async function handleStillDecision(request: Request, env: WorkerEnv, cont
     provider:env.JEV_API_KEY??null,
   })));
   const key=Array.from(new Uint8Array(keyBytes),b=>b.toString(16).padStart(2,'0')).join('');
+  const preparation={...history.receipt,sessionMs,selectedContentMs,totalMs:Date.now()-preparationStarted};
   let failedPass=false;
   const compute=async()=>{
   const rateKey = auth.user.userId+(palette?':palette':'');
@@ -136,5 +138,5 @@ export async function handleStillDecision(request: Request, env: WorkerEnv, cont
     const trace=body.diagnostics as {passes?:DecisionPass[]}|undefined;
     return {status:response.status,body,reusable:!failedPass&&body.source==='jev'&&!body.reason&&typeof body.model==='string'&&!(trace?.passes?.some(p=>p.status==='failed'))};
   },input.cacheBypass===true);
-  return reply({...cached.value.body,cache:{...cached.cache,layer:'server'}},cached.value.status);
+  return reply({...cached.value.body,preparation,cache:{...cached.cache,layer:'server'}},cached.value.status);
 }

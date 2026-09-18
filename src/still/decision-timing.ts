@@ -13,6 +13,7 @@ export function decisionTiming(received:ReceivedDecision|undefined,pending=false
   if(received.cache)detail.push(`${received.cache.layer} cache: ${received.cache.status}. Original computation: ${format(received.cache.originalLatencyMs)}.`);
   if(cached&&received.cache?.layer==='browser')detail[0]=`Local cache delivery: ${label}. No new network request for a hit.`;
   if(cached)detail.push('The following timings describe the original decision, not a new Jev call.');
+  if(received.preparation)detail.push(`Preparation: ${format(received.preparation.totalMs)}; session ${format(received.preparation.sessionMs)}, history ${format(received.preparation.elapsedMs)} (${received.preparation.source}, ${received.preparation.eventsRead} events read), selected content ${format(received.preparation.selectedContentMs)}.`);
   if(duration(phase))detail.push(`Decision phase: ${format(phase)}.`);
   if(calls.length&&calls.every(p=>duration(p.elapsedMs)))detail.push(`Jev calls: ${format(calls.reduce((sum,p)=>sum+p.elapsedMs,0))} across ${calls.length} ${calls.length===1?'call':'calls'}.`);
   return {label,description:detail.join(' ')};

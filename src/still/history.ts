@@ -27,3 +27,18 @@ export function isCreativeHistoryEvent(event: CreativeEvent) {
     && !/Viewed$|Visited$|Opened$|Preflight|Presented$/.test(event.type);
 }
 export const localHistoryEvidence = (events: CreativeEvent[]) => retainedHistoryEvents(events).filter(isCreativeHistoryEvent).slice(-12).map(compactHistoryEvent);
+
+const aggregates=new WeakMap<CreativeEvent[],{useful:CreativeEvent[];creative:CreativeEvent[];counts:Record<string,number>;forgotten:number}>();
+/** Reuse deterministic full-history aggregates; raw evidence remains available. */
+export function preparedHistory(events:CreativeEvent[],previous?:CreativeEvent[]){
+ const cached=aggregates.get(events);if(cached)return cached;
+ const prior=previous?aggregates.get(previous):undefined,tail=previous?events.slice(previous.length):events;
+ const incremental=!!prior&&events.length>=previous!.length&&!tail.some(e=>e.type==='AttentionSignalsForgotten');
+ const forgotten=incremental?prior!.forgotten:events.reduce((n,e)=>e.type==='AttentionSignalsForgotten'?Math.max(n,Number(e.payload.before_sequence)||e.sequence):n,0);
+ const retainedTail=incremental?retainedHistoryEvents(tail).filter(e=>e.type!=='AttentionEpisodeObserved'||e.sequence>forgotten):[];
+ const useful=incremental?[...prior!.useful,...retainedTail]:retainedHistoryEvents(events);
+ const creative=incremental?[...prior!.creative,...retainedTail.filter(isCreativeHistoryEvent)]:useful.filter(isCreativeHistoryEvent);
+ const counts:Record<string,number>=incremental?{...prior!.counts}:{};
+ for(const event of incremental?retainedTail:useful)counts[event.type]=(counts[event.type]??0)+1;
+ const value={useful,creative,counts,forgotten};aggregates.set(events,value);return value;
+}

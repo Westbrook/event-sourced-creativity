@@ -1459,12 +1459,13 @@ export function privateContentScopeGuard(ownerId:string,projectScope?:ProjectExe
   return privateContentScopeGuardFor(ownerId,projectScope,activeProjectBillingSql);
 }
 
-export async function loadPrivateContent(env: WorkerEnv, ownerId: string, scope: "all" | "chat" | "memory" = "all", projectScope?: ProjectExecutionScope) {
+export async function loadPrivateContent(env: WorkerEnv, ownerId: string, scope: "all" | "chat" | "memory" = "all", projectScope?: ProjectExecutionScope, contentIds?: string[]) {
+  if(contentIds && !contentIds.length)return {};
   const now = new Date().toISOString(),guard=privateContentScopeGuardFor(ownerId,projectScope,activeProjectReadSql);
   const { nativeMemoryAnswerExclusion } = await import("./memory-native-boundary.ts");
   const ordinary = await nativeMemoryAnswerExclusion(env,{answerAlias:"private_content"});
   const restricted = scope === "chat" ? " AND kind IN ('chat-user','chat-assistant')" : scope === "memory" ? " AND kind='condition'" : "";
-  const rows=await env.DB.prepare(`SELECT content_id,content FROM private_content WHERE owner_id=? AND redacted_at IS NULL AND expires_at>? AND expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now') AND kind NOT IN('provider-response','activity-issue-note','execution-consent','context-proposal','authoring-preview','memory-structured-ledger','memory-structured-origin','memory-document-job-origin','guest-image-stage-history') AND substr(content_id,1,26)!='guest-image-stage-history-'${restricted} AND ${guard.sql} AND ${ordinary.sql}`).bind(ownerId,now,...guard.bindings,...ordinary.bindings).all<{content_id:string;content:string}>();
+  const rows=await env.DB.prepare(`SELECT content_id,content FROM private_content WHERE owner_id=? AND redacted_at IS NULL AND expires_at>? AND expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now') AND kind NOT IN('provider-response','activity-issue-note','execution-consent','context-proposal','authoring-preview','memory-structured-ledger','memory-structured-origin','memory-document-job-origin','guest-image-stage-history') AND substr(content_id,1,26)!='guest-image-stage-history-'${restricted}${contentIds?" AND content_id IN(SELECT value FROM json_each(?))":""} AND ${guard.sql} AND ${ordinary.sql}`).bind(ownerId,now,...(contentIds?[JSON.stringify(contentIds)]:[]),...guard.bindings,...ordinary.bindings).all<{content_id:string;content:string}>();
   return Object.fromEntries(rows.results.map((row) => [row.content_id, row.content]));
 }
 
@@ -1479,9 +1480,9 @@ export async function loadPrivateProviderResponse(env:WorkerEnv,ownerId:string,c
   return env.DB.prepare(`SELECT content,expires_at FROM private_content WHERE owner_id=? AND content_id=? AND kind='provider-response' AND redacted_at IS NULL AND expires_at>?${containment}`).bind(...bindings).first<{content:string;expires_at:string}>();
 }
 
-export async function handleSession(request: Request, env: WorkerEnv, _context?: WorkerExecutionContext) {
+export async function handleSession(request: Request, env: WorkerEnv, _context?: WorkerExecutionContext, authorization?: Awaited<ReturnType<typeof requireUser>>) {
   void _context;
-  const auth = await requireUser(request, env); if (auth.response || !auth.user) return auth.response!; const user = auth.user;
+  const auth = authorization ?? await requireUser(request, env); if (auth.response || !auth.user) return auth.response!; const user = auth.user;
   if (request.method === "POST") {
     const body = await request.json() as { action?: string; ownershipConfirmed?: boolean; providerProcessingConfirmed?: boolean };
     if (body.action !== "accept_terms" || !body.ownershipConfirmed || !body.providerProcessingConfirmed) return Response.json({ error: "explicit_consent_required" }, { status: 400 });
@@ -1516,6 +1517,15 @@ export async function handleSession(request: Request, env: WorkerEnv, _context?:
       ?{enabled:true as const,host:"platform" as const,phase:"read-only" as const}:null;
     return Response.json({user:publicUser(principal),audience,capabilities,availableApplications,permissionEpoch:principal.access.permissionEpoch,organizations:[],canvas:{access:principal.access.canvasAccess},impersonation:null,...(assistant?{assistant}:{})},{headers:{"cache-control":"private, no-store"}});
   }
+  const selectedImageProvider=env.FORMA_IMAGE_PROVIDER??"openai";
+  const provider={name:"Approved creative generation",model:env.OPENAI_IMAGE_MODEL??"gpt-image-2",plannerModel:env.OPENAI_MODEL??"gpt-5.6-terra",plannerConfigured:Boolean(env.OPENAI_API_KEY),configured:Boolean(env.OPENAI_API_KEY&&(!["fal","fal-ideogram","ideogram"].includes(selectedImageProvider)||env.FAL_KEY)),videoModel:env.FAL_VIDEO_MODEL??DEFAULT_VIDEO_MODEL,videoReferenceModel:env.FAL_REFERENCE_VIDEO_MODEL??DEFAULT_REFERENCE_VIDEO_MODEL,videoConfigured:Boolean(env.OPENAI_API_KEY&&env.FAL_KEY),model3dConfigured:Boolean(env.FAL_KEY),model3dModel:"fal-ai/hyper3d/rodin/v2.5/text-to-3d",model3dReferenceModel:"fal-ai/hyper3d/rodin/v2.5",audioModel:env.FAL_AUDIO_MODEL??"fal-ai/lyria3/pro",audioConfigured:Boolean(env.OPENAI_API_KEY&&env.FAL_KEY&&(!env.FORMA_AUDIO_PROVIDER||env.FORMA_AUDIO_PROVIDER==="fal")&&(!env.FAL_AUDIO_MODEL||audioAdapterContractForModel(env.FAL_AUDIO_MODEL))),audioModels:AUDIO_ADAPTER_CONTRACTS.map((contract)=>({model:contract.model,label:contract.label,capabilities:contract.capabilities,maximumDurationSeconds:contract.maximumAdvertisedDurationSeconds,pricing:contract.pricing})),...((audience==="operations"&&(hasCapability(principal,"platform.provider.configure")||hasCapability(principal,"platform.policy.manage")))?{name:"OpenAI Responses · OpenAI + Fal image adapters · Fal video and audio specialists",imageProvider:selectedImageProvider,imageProviders:[{provider:"openai",model:env.OPENAI_IMAGE_MODEL??"gpt-image-2",configured:Boolean(env.OPENAI_API_KEY)},{provider:"fal",model:env.FAL_IMAGE_MODEL??"ideogram/v4",previewModel:env.FAL_IMAGE_PREVIEW_MODEL??"ideogram/v4/fast",editModel:env.FAL_IMAGE_EDIT_MODEL??"ideogram/v4/image-to-image",configured:Boolean(env.FAL_KEY)}],videoProvider:env.FORMA_VIDEO_PROVIDER??"fal",audioProvider:env.FORMA_AUDIO_PROVIDER??"fal",videoAdapterVersion:VIDEO_ADAPTER_CONTRACT.adapterVersion,videoApiSunset:null}:{})};
+  if(request.method==="GET"&&url.searchParams.get("profile")==="still")return Response.json({
+    user:safeUser,permissionEpoch:user.access.permissionEpoch,impersonation:safeImpersonation,
+    projects:auth.impersonation?[]:principal.access.projects,
+    policy:{version:POLICY_VERSION,accepted:user.consentVersion===POLICY_VERSION,retentionDays:intEnv(env.FORMA_RETENTION_DAYS,30)},
+    provider:{configured:provider.configured,plannerConfigured:provider.plannerConfigured,videoConfigured:provider.videoConfigured,audioConfigured:provider.audioConfigured,model3dConfigured:provider.model3dConfigured},
+    ...(selected.context?{projectContext:{organizationId:selected.context.organizationId,projectAccessId:selected.context.projectAccessId,projectId:selected.context.projectId,ownerUserId:selected.context.ownerUserId,principalUserId:selected.context.principalUserId,permissions:selected.context.permissions,role:selected.context.role,expiresAt:selected.context.expiresAt}}:{}),
+  },{headers:{"cache-control":"private, no-store"}});
   const budgetUser=principal;
   if(request.method==="POST")await reconcileFailedBudgetReservations(env,budgetUser);
   const canReadTenantUsage=Boolean(selected.context&&hasCapability(principal,"workspace.usage.read",{organizationId:selected.context.organizationId}));
@@ -1526,8 +1536,6 @@ export async function handleSession(request: Request, env: WorkerEnv, _context?:
     FROM organizations organization LEFT JOIN organization_retention_policies policy ON policy.organization_id=organization.organization_id WHERE organization.organization_id=?`)
     .bind(selected.context.organizationId).first<{transient_days:number|null;evidence_days:number|null;pilot_status:string|null}>():null;
   const privileged=audience==="operations"&&(hasCapability(principal,"platform.provider.configure")||hasCapability(principal,"platform.policy.manage"));
-  const selectedImageProvider=env.FORMA_IMAGE_PROVIDER??"openai";
-  const provider={name:"Approved creative generation",model:env.OPENAI_IMAGE_MODEL??"gpt-image-2",plannerModel:env.OPENAI_MODEL??"gpt-5.6-terra",plannerConfigured:Boolean(env.OPENAI_API_KEY),configured:Boolean(env.OPENAI_API_KEY&&(!["fal","fal-ideogram","ideogram"].includes(selectedImageProvider)||env.FAL_KEY)),videoModel:env.FAL_VIDEO_MODEL??DEFAULT_VIDEO_MODEL,videoReferenceModel:env.FAL_REFERENCE_VIDEO_MODEL??DEFAULT_REFERENCE_VIDEO_MODEL,videoConfigured:Boolean(env.OPENAI_API_KEY&&env.FAL_KEY),model3dConfigured:Boolean(env.FAL_KEY),model3dModel:"fal-ai/hyper3d/rodin/v2.5/text-to-3d",model3dReferenceModel:"fal-ai/hyper3d/rodin/v2.5",audioModel:env.FAL_AUDIO_MODEL??"fal-ai/lyria3/pro",audioConfigured:Boolean(env.OPENAI_API_KEY&&env.FAL_KEY&&(!env.FORMA_AUDIO_PROVIDER||env.FORMA_AUDIO_PROVIDER==="fal")&&(!env.FAL_AUDIO_MODEL||audioAdapterContractForModel(env.FAL_AUDIO_MODEL))),audioModels:AUDIO_ADAPTER_CONTRACTS.map((contract)=>({model:contract.model,label:contract.label,capabilities:contract.capabilities,maximumDurationSeconds:contract.maximumAdvertisedDurationSeconds,pricing:contract.pricing})),...(privileged?{name:"OpenAI Responses · OpenAI + Fal image adapters · Fal video and audio specialists",imageProvider:selectedImageProvider,imageProviders:[{provider:"openai",model:env.OPENAI_IMAGE_MODEL??"gpt-image-2",configured:Boolean(env.OPENAI_API_KEY)},{provider:"fal",model:env.FAL_IMAGE_MODEL??"ideogram/v4",previewModel:env.FAL_IMAGE_PREVIEW_MODEL??"ideogram/v4/fast",editModel:env.FAL_IMAGE_EDIT_MODEL??"ideogram/v4/image-to-image",configured:Boolean(env.FAL_KEY)}],videoProvider:env.FORMA_VIDEO_PROVIDER??"fal",audioProvider:env.FORMA_AUDIO_PROVIDER??"fal",videoAdapterVersion:VIDEO_ADAPTER_CONTRACT.adapterVersion,videoApiSunset:null}:{})};
   const selectedCanvasAccess=Boolean(selected.context&&canvas.access&&hasCapability(principal,"project.canvas.use",{organizationId:selected.context.organizationId,projectAccessId:selected.context.projectAccessId}));
   const safeCanvas=selected.context?{...canvas,access:selectedCanvasAccess,blockedBy:[],requirements:[]}:privileged?canvas:{...canvas,blockedBy:[],requirements:[]};
   const effectiveAccess=auth.impersonation?user.access:principal.access;

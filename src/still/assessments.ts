@@ -16,8 +16,8 @@ export function questionComposition(id:string):keyof typeof COMPOSITIONS{
 }
 export function compositionIndex(questions:Record<string,Question>){return Object.entries(COMPOSITIONS).map(([id,composition])=>({id,...composition,questions:Object.keys(questions).filter(q=>questionComposition(q)===id)}));}
 const safe=(v:unknown,n:number)=>String(v??'').replace(/https?:\/\/\S+/g,'[linked resource]').slice(0,n);
-export function connectionEvidence(events:CreativeEvent[],pos:Position){
-  const p=foldEvents(events,Infinity,pos.documentId,pos.projectId),source=p.blocks.find(b=>b.id===pos.blockId);
+export function connectionEvidence(events:CreativeEvent[],pos:Position,prepared?:ReturnType<typeof foldEvents>){
+  const p=prepared??foldEvents(events,Infinity,pos.documentId,pos.projectId),source=p.blocks.find(b=>b.id===pos.blockId);
   if(!source)return {destinations:[] as Destination[],details:[] as unknown[],source:null};
   const words=new Set(`${pos.intent} ${source.handle} ${source.properties.text??''}`.toLowerCase().match(/[\p{L}\p{N}]{3,}/gu)??[]);
   const all=destinationsFor(events,pos);

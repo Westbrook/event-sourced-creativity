@@ -18,22 +18,22 @@ const json=(body,status=200)=>Response.json(body,{status});
 
 test('uncertain paid analysis is retrieved without another execution and proposals require selection',async()=>{
   const c=client(),flow=new ContextWorkflow(c,'decompose'),saved=globalThis.fetch,actions=[];
-  globalThis.fetch=async(url,init)=>{if(url==='/api/session')return json(session);const body=JSON.parse(init.body);actions.push(body.action);if(body.action==='quote')return json({quote});if(body.action==='execute')throw new Error('lost response');if(body.action==='retrieve')return json(result);throw new Error(`unexpected ${body.action}`);};
+  globalThis.fetch=async(url,init)=>{if(url==='/api/session?profile=still')return json(session);const body=JSON.parse(init.body);actions.push(body.action);if(body.action==='quote')return json({quote});if(body.action==='execute')throw new Error('lost response');if(body.action==='retrieve')return json(result);throw new Error(`unexpected ${body.action}`);};
   try {await flow.prepareQuote();await assert.rejects(flow.analyze(),/lost/);await flow.analyze();assert.deepEqual(actions,['quote','execute','retrieve']);assert.equal(flow.candidates[0].included,false);await assert.rejects(flow.prepareChanges(),/Choose at least one/);}finally{globalThis.fetch=saved;}
 });
 test('analysis never accepts a result from a different retained identity',async()=>{
   const flow=new ContextWorkflow(client(),'decompose'),saved=globalThis.fetch;flow.quote=quote;
-  globalThis.fetch=async url=>url==='/api/session'?json(session):json({...result,executionId:'different'});
+  globalThis.fetch=async url=>url==='/api/session?profile=still'?json(session):json({...result,executionId:'different'});
   try{await assert.rejects(flow.analyze(),/identity/);assert.equal(flow.candidates.length,0);assert.equal(flow.quote.status,'uncertain');}finally{globalThis.fetch=saved;}
 });
 test('unknown apply response preserves exact preview identity and retrieves rather than applying twice',async()=>{
   const flow=new ContextWorkflow(client(),'decompose'),saved=globalThis.fetch,actions=[];flow.preview={...pos,canvasId:null,previewId:'retained',approvalHash:'approved'};flow.status='review';
-  globalThis.fetch=async(url,init)=>{if(url==='/api/session')return json(session);const body=JSON.parse(init.body);actions.push(body);if(body.action==='apply')throw new Error('lost save');return json({status:'applying'});};
+  globalThis.fetch=async(url,init)=>{if(url==='/api/session?profile=still')return json(session);const body=JSON.parse(init.body);actions.push(body);if(body.action==='apply')throw new Error('lost save');return json({status:'applying'});};
   try{await assert.rejects(flow.apply(),/lost save/);await flow.apply();assert.deepEqual(actions.map(a=>a.action),['apply','retrieve']);assert.ok(actions.every(a=>a.previewId==='retained'&&a.approvalHash==='approved'));}finally{globalThis.fetch=saved;}
 });
 test('scope changes prevent old context requests',async()=>{
   const c=client(),flow=new ContextWorkflow(c,'decompose'),saved=globalThis.fetch;let requests=0;
-  globalThis.fetch=async url=>{if(url!=='/api/session')requests++;return json({...session,permissionEpoch:'2'});};
+  globalThis.fetch=async url=>{if(url!=='/api/session?profile=still')requests++;return json({...session,permissionEpoch:'2'});};
   try{await assert.rejects(flow.prepareQuote(),/workspace changed/);assert.equal(requests,0);}finally{globalThis.fetch=saved;}
 });
 test('composition keeps block identities, order, and existing relation provenance',()=>{
@@ -71,13 +71,13 @@ test('largest eligible request remains below the combined Jev budget and contain
 test('reused execution alias must carry a matching scoped server quote',async()=>{
   const flow=new ContextWorkflow(client(),'decompose'),saved=globalThis.fetch;flow.quote={...quote,sourceHash:'source',operation:'context-decompose'};
   const retained={...flow.quote,executionId:'earlier',bindingHash:'earlier-binding'};
-  globalThis.fetch=async url=>url==='/api/session'?json(session):json({...result,executionId:retained.executionId,bindingHash:retained.bindingHash,quote:retained});
+  globalThis.fetch=async url=>url==='/api/session?profile=still'?json(session):json({...result,executionId:retained.executionId,bindingHash:retained.bindingHash,quote:retained});
   try{await flow.analyze();assert.equal(flow.quote.executionId,'earlier');assert.equal(flow.candidates[0].selection.bindingHash,'earlier-binding');}finally{globalThis.fetch=saved;}
 });
 test('existing reference proposals use normal authoring while web candidates require acquisition',async()=>{
   const flow=new ContextWorkflow(client(),'research'),saved=globalThis.fetch;let selections;
   flow.candidates=[{selection:{executionId:'e',bindingHash:'h',proposalId:'existing'},research:{type:'reference',blockId:'native',area:'related'},included:true,text:'Native'},{selection:{executionId:'e',bindingHash:'h',proposalId:'web'},research:{type:'reference',blockId:null,area:'learned'},included:true,text:'Web'}];
-  globalThis.fetch=async(url,init)=>{if(url==='/api/session')return json(session);selections=JSON.parse(init.body).selections;return json({preview:{...pos,canvasId:null}});};
+  globalThis.fetch=async(url,init)=>{if(url==='/api/session?profile=still')return json(session);selections=JSON.parse(init.body).selections;return json({preview:{...pos,canvasId:null}});};
   try{await flow.prepareChanges();assert.deepEqual(selections.map(s=>s.proposalId),['existing']);}finally{globalThis.fetch=saved;}
 });
 test('explicitly poor suggestions do not fill an arbitrary action quota',()=>{

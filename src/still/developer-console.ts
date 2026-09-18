@@ -1,3 +1,4 @@
+import './vendor/elements/define/switch.js';
 import { decisionTiming } from './decision-timing.ts';
 import './form-elements.js';
 import './decision-lab-panel.ts';
@@ -43,7 +44,7 @@ export class StillDeveloperConsole extends LitElement {
   private density=(value:number)=>this.dispatchEvent(new CustomEvent('developer-density',{bubbles:true,composed:true,detail:{value:actionLimit(value)}}));
   private detach=()=>{
     this.readControls();
-    this.windowHost??=new ConsoleWindowHost(window,()=>({scope:this.scope,context:this.context,applied:this.applied,received:this.received,pending:this.pending,controls:this.controls}),(open,connected)=>{this.windowOpen=open;this.windowConnected=connected;},()=>{void this.updateComplete.then(()=>this.show());},data=>{if(data.type==='refresh')this.dispatchEvent(new CustomEvent('developer-refresh',{bubbles:true,composed:true}));if(data.type==='density')this.density(data.value??5);if(data.type==='experiment'&&data.scope===this.scope)this.dispatchEvent(new CustomEvent('developer-experiment',{bubbles:true,composed:true,detail:{scope:data.scope,request:data.request,complete:(result?:ExperimentResult,error?:string)=>this.windowHost?.result(data.id!,result,error)}}));});
+    this.windowHost??=new ConsoleWindowHost(window,()=>({scope:this.scope,context:this.context,applied:this.applied,received:this.received,pending:this.pending,controls:this.controls}),(open,connected)=>{this.windowOpen=open;this.windowConnected=connected;},()=>{void this.updateComplete.then(()=>this.show());},data=>{if(data.type==='flags')this.dispatchEvent(new CustomEvent('developer-flags',{bubbles:true,composed:true,detail:{value:data.value===true}}));if(data.type==='refresh')this.dispatchEvent(new CustomEvent('developer-refresh',{bubbles:true,composed:true}));if(data.type==='density')this.density(Number(data.value??5));if(data.type==='experiment'&&data.scope===this.scope)this.dispatchEvent(new CustomEvent('developer-experiment',{bubbles:true,composed:true,detail:{scope:data.scope,request:data.request,complete:(result?:ExperimentResult,error?:string)=>this.windowHost?.result(data.id!,result,error)}}));});
     this.windowError=this.windowHost.open()?'':'Allow pop-ups for Still, then try again.';
   };
   private reattach=()=>{this.windowHost?.dispose();void this.updateComplete.then(()=>this.show());};
@@ -93,6 +94,9 @@ export class StillDeveloperConsole extends LitElement {
             <en-button variant="ghost" size="small" ?disabled=${this.pending||!c.canRefreshDecision} @click=${()=>this.dispatchEvent(new CustomEvent('developer-refresh',{bubbles:true,composed:true}))}>Refresh decision</en-button>
           </div>
           <div class="status"><strong>${this.pending?'Jev pending':this.received?.disposition??'Local controls'}</strong><span>${c.view}${c.mode?` / ${c.mode}`:''} · head ${c.head}</span></div>
+          ${this.received?.preparation?html`<details><summary>Data preparation · ${this.received.preparation.totalMs} ms</summary><still-json-tree label="Preparation" .value=${this.received.preparation}></still-json-tree></details>`:nothing}
+          <details><summary>Flags</summary><en-switch label="Onboarding" .checked=${c.onboarding===true} @en-change=${(e:CustomEvent<{proposed:boolean}>)=>this.dispatchEvent(new CustomEvent('developer-flags',{bubbles:true,composed:true,detail:{value:e.detail.proposed}}))}>Onboarding</en-switch><p class="muted">Explain actions on hover or keyboard focus. This browser only.</p></details>
+          <p class="muted">History: ${c.historyComplete===false?'Loading wider context':'Ready'}</p>
           <en-select label="On the page limit" .value=${String(c.actionLimit??5)} @en-change=${(e: CustomEvent<{proposed:string;value:string}>)=>this.density(Number(e.detail.proposed))}>${Array.from({length:7},(_,i)=>i+1).map(n=>html`<en-select-option value=${n}>${n}${n===5?' · default':''}</en-select-option>`)}</en-select><p class="muted">Suggested actions only. Project listings, document context, results and their content controls do not count. At 1–2, remaining actions move into Menu. Density changes locally; the next Jev request includes this limit.</p>
           <details><summary>Local attention <en-badge variant="neutral">Not sent to Jev</en-badge></summary>
             <p class="muted">This tab only · last 20 pages · resets on reload or workspace change. No requests or action updates.</p>
