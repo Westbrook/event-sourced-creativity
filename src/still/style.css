@@ -219,3 +219,5 @@ still-app .dock-measure en-button[size="large"]::part(control) { min-block-size:
   still-app :is(.action-dock,.dock-measure) en-toolbar::part(base) { gap: 3px; padding: 4px; }
   still-app :is(.action-dock,.dock-measure) en-button[size]::part(control) { padding-inline: 12px; }
 }
+
+still-app .developer-panel[hidden]{display:none!important}

@@ -2288,3 +2288,14 @@ export const stillDecisionCache = sqliteTable('still_decision_cache', {
   expiresAt: integer('expires_at').notNull(),
   body: text('body').notNull(),
 }, table => [index('idx_still_decision_cache_expiry').on(table.expiresAt), index('idx_still_decision_cache_owner').on(table.ownerId, table.createdAt)]);
+
+// Ephemeral encrypted developer-panel relay. Tokens are stored only as hashes.
+export const stillPanelSessions=sqliteTable('still_panel_sessions',{
+  id:text('id').primaryKey(),ownerId:text('owner_id').notNull(),tokenHash:text('token_hash').notNull(),
+  expiresAt:integer('expires_at').notNull(),heartbeat:integer('heartbeat').notNull(),scope:text('scope').notNull(),
+  revision:integer('revision').notNull(),payload:text('payload'),
+},t=>[index('idx_still_panel_owner').on(t.ownerId),index('idx_still_panel_expiry').on(t.expiresAt)]);
+export const stillPanelCommands=sqliteTable('still_panel_commands',{
+  seq:integer('seq').primaryKey({autoIncrement:true}),sessionId:text('session_id').notNull(),
+  type:text('type').notNull(),value:text('value').notNull(),scope:text('scope').notNull(),createdAt:integer('created_at').notNull(),
+},t=>[index('idx_still_panel_commands').on(t.sessionId,t.seq)]);

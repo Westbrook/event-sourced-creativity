@@ -1,3 +1,4 @@
+import { RemotePanelHost } from './remote-panel.ts';
 import './vendor/elements/define/switch.js';
 import { decisionTiming, jevRequestState } from './decision-timing.ts';
 import './form-elements.js';
@@ -17,7 +18,7 @@ const numeric=(n:number|undefined)=>n===undefined?'—':Number(n.toFixed(3)).toS
 const percent=(n:number)=>`${(n*100).toFixed(1)}%`;
 
 export class StillDeveloperConsole extends LitElement {
-  static properties = { context:{attribute:false}, applied:{attribute:false}, received:{attribute:false}, pending:{type:Boolean}, controls:{attribute:false}, scope:{attribute:false}, detached:{type:Boolean,reflect:true}, windowOpen:{state:true}, windowConnected:{state:true}, windowError:{state:true}, showReceived:{state:true}, filter:{state:true}, actionSort:{state:true} };
+  static properties = { context:{attribute:false}, applied:{attribute:false}, received:{attribute:false}, pending:{type:Boolean}, controls:{attribute:false}, scope:{attribute:false}, detached:{type:Boolean,reflect:true}, windowOpen:{state:true}, windowConnected:{state:true}, windowError:{state:true}, showReceived:{state:true}, filter:{state:true}, actionSort:{state:true}, remote:{type:Boolean,reflect:true}, hostVisible:{type:Boolean}, shareUrl:{state:true}, shareQr:{state:true}, shareStatus:{state:true}, shareBusy:{state:true} };
   declare context:ConsoleContext;
   declare applied:DecisionDiagnostics|undefined;
   declare received:ReceivedDecision|undefined;
@@ -25,6 +26,40 @@ export class StillDeveloperConsole extends LitElement {
   controls:ConsoleControl[]=[];
   scope='';
   detached=false;
+  remote=false;
+  hostVisible=true;
+  private shareUrl='';
+  private shareQr='';
+  private shareStatus='';
+  private shareBusy=false;
+  private remoteHost?:RemotePanelHost;
+  private shareActive(value:boolean){this.dispatchEvent(new CustomEvent('developer-sharing',{bubbles:true,composed:true,detail:{value}}));}
+  private startSharing=async()=>{
+    if(this.shareBusy||this.remoteHost)return;this.shareBusy=true;this.shareStatus='Connecting…';
+    const host=new RemotePanelHost(()=>this.snapshot(),()=>this.hostVisible,c=>{
+      const name=c.type==='visibility'?'developer-visibility':c.type==='flags'?'developer-flags':'developer-density';
+      this.dispatchEvent(new CustomEvent(name,{bubbles:true,composed:true,detail:{value:c.value}}));
+    },message=>{this.shareStatus=message;},()=>{this.remoteHost=undefined;this.shareUrl='';this.shareQr='';this.shareActive(false);});
+    this.remoteHost=host;
+    try{
+      this.shareUrl=await host.start();this.shareActive(true);
+      const qr=await import('qrcode');this.shareQr=await qr.toDataURL(this.shareUrl,{width:280,margin:4,errorCorrectionLevel:'M',color:{dark:'#30332cff',light:'#ffffffff'}});
+    }catch(error){this.shareStatus=(error as Error).message;await host.stop().catch(()=>{});this.remoteHost=undefined;this.shareUrl='';this.shareActive(false);}
+    finally{this.shareBusy=false;}
+  };
+  private stopSharing=async()=>{
+    if(!this.remoteHost||this.shareBusy)return;this.shareBusy=true;
+    try{await this.remoteHost.stop();this.remoteHost=undefined;this.shareUrl='';this.shareQr='';this.shareStatus='Sharing stopped.';this.shareActive(false);}
+    catch{this.shareStatus='Could not revoke the link. Retry Stop sharing. It expires after one hour.';}
+    finally{this.shareBusy=false;}
+  };
+  private copyShare=async()=>{try{await navigator.clipboard.writeText(this.shareUrl);this.shareStatus='Link copied.';}catch{this.shareStatus='Copy unavailable. Scan the code or open the link.';}};
+  private shareSection(){return this.detached?nothing:html`<details class="share-panel"><summary>Share panel · QR code</summary>
+    <p class="muted">Anyone with this link and site access can inspect this tab’s live data and change its flags, limit and panel visibility. Expires after one hour.</p>
+    ${this.shareQr?html`<img src=${this.shareQr} width="280" height="280" decoding="async" alt="Scan to open the shared Developer Panel">`:nothing}
+    <div class="window-tools">${this.shareUrl?html`<en-button variant="secondary" size="small" @click=${this.copyShare}>Copy link</en-button><a href=${this.shareUrl} target="_blank" rel="noopener noreferrer">Open panel ↗</a><en-button variant="ghost" size="small" ?disabled=${this.shareBusy} @click=${this.stopSharing}>Stop sharing</en-button>`:html`<en-button variant="secondary" size="small" ?disabled=${this.shareBusy} @click=${this.startSharing}>Create link</en-button>`}</div>
+    <p role="status">${this.shareStatus}</p></details>`;}
+
   private windowOpen=false;
   private windowConnected=false;
   private windowError='';
@@ -39,7 +74,7 @@ export class StillDeveloperConsole extends LitElement {
     if(this.root){this.observer.observe(this.root,{subtree:true,childList:true,attributes:true,characterData:true});this.root.addEventListener('change',this.readControls);this.root.addEventListener('en-change',this.readControls);}
     void this.updateComplete.then(()=>this.readControls());
   }
-  disconnectedCallback(){super.disconnectedCallback();this.windowHost?.dispose();this.observer.disconnect();this.root?.removeEventListener('change',this.readControls);this.root?.removeEventListener('en-change',this.readControls);}
+  disconnectedCallback(){super.disconnectedCallback();void this.remoteHost?.stop().catch(()=>{});this.windowHost?.dispose();this.observer.disconnect();this.root?.removeEventListener('change',this.readControls);this.root?.removeEventListener('en-change',this.readControls);}
   protected updated(){this.windowHost?.publish();}
   show(){(this.renderRoot.querySelector('h2') as HTMLElement|null)?.focus({preventScroll:true});}
   private snapshot():ConsoleSnapshot{return {scope:this.scope,context:this.context,applied:this.applied,received:this.received,pending:this.pending,controls:this.controls};}
@@ -91,17 +126,18 @@ export class StillDeveloperConsole extends LitElement {
     const questions=trace?.questions??[];
     const jevState=jevRequestState(this.received,this.pending),timing=decisionTiming(this.received,this.pending);
     const content=html`<div class="console">
-          <header class="panel-heading"><h2 tabindex="-1">Decisions${this.detached?' · Live':''}</h2><div class="window-tools">${this.detached?html`<en-button variant="secondary" size="small" @click=${()=>this.dispatchEvent(new CustomEvent('developer-return'))}>Return to panel</en-button>`:html`<en-button variant="secondary" size="small" @click=${this.detach}>${this.windowOpen?'Focus window':'Open in window'}</en-button>${this.windowOpen?html`<en-button variant="ghost" size="small" @click=${this.reattach}>Close window</en-button>`:nothing}<en-button variant="ghost" size="small" aria-label="Close developer panel" @click=${()=>this.dispatchEvent(new CustomEvent('developer-disable',{bubbles:true,composed:true}))}>Close</en-button>`}</div><div class="jev-state" role="status" aria-live="polite" aria-atomic="true"><strong>Jev state</strong><div class="jev-state-badges">${['Not Requested','Pending','Received',...(jevState==='Failed'?['Failed']:[])].map(state=>html`<span class="jev-state-item"><en-badge variant=${state===jevState?(state==='Failed'?'danger':'success'):'neutral'} aria-current=${state===jevState?'step':nothing}><span slot="prefix" aria-hidden="true">${state===jevState?'●':'○'}</span>${state}</en-badge>${state===jevState&&timing?html`<span class="jev-timing" title=${timing.description} aria-label=${timing.description}>${timing.label}</span>`:nothing}</span>`)}</div><span class="sr-only">Current: ${jevState}</span></div></header>
+          <header class="panel-heading"><h2 tabindex="-1">Decisions${this.detached?' · Live':''}</h2><div class="window-tools">${this.remote?html`<en-switch label="Host Developer Panel" .checked=${this.hostVisible} @en-change=${(e:CustomEvent<{proposed:boolean}>)=>this.dispatchEvent(new CustomEvent('developer-visibility',{detail:{value:e.detail.proposed}}))}>Host Developer Panel</en-switch>`:this.detached?html`<en-button variant="secondary" size="small" @click=${()=>this.dispatchEvent(new CustomEvent('developer-return'))}>Return to panel</en-button>`:html`<en-button variant="secondary" size="small" @click=${this.detach}>${this.windowOpen?'Focus window':'Open in window'}</en-button>${this.windowOpen?html`<en-button variant="ghost" size="small" @click=${this.reattach}>Close window</en-button>`:nothing}<en-button variant="ghost" size="small" aria-label="Close developer panel" @click=${()=>this.dispatchEvent(new CustomEvent('developer-disable',{bubbles:true,composed:true}))}>Close</en-button>`}</div><div class="jev-state" role="status" aria-live="polite" aria-atomic="true"><strong>Jev state</strong><div class="jev-state-badges">${['Not Requested','Pending','Received',...(jevState==='Failed'?['Failed']:[])].map(state=>html`<span class="jev-state-item"><en-badge variant=${state===jevState?(state==='Failed'?'danger':'success'):'neutral'} aria-current=${state===jevState?'step':nothing}><span slot="prefix" aria-hidden="true">${state===jevState?'●':'○'}</span>${state}</en-badge>${state===jevState&&timing?html`<span class="jev-timing" title=${timing.description} aria-label=${timing.description}>${timing.label}</span>`:nothing}</span>`)}</div><span class="sr-only">Current: ${jevState}</span></div></header>
           ${timing?html`<div class="latency-breakdown" aria-label="Decision timing">${timing.steps.map(step=>html`<span><strong>${step.label}</strong> ${step.value}</span>`)}${this.received?.delivery?.stage==='initial'?html`<en-badge variant="neutral">${this.received.delivery.enrichment==='interrupted'?'Enrichment interrupted':'Enriching…'}</en-badge>`:nothing}</div>`:nothing}
+          ${this.shareSection()}
           ${this.windowError?html`<p role="alert">${this.windowError}</p>`:nothing}
           <div class="cache-status">
             <en-badge variant="neutral">${this.pending?'Checking':this.received?.cache?.status==='hit'?'Cached':this.received?.cache?.status==='shared'?'Shared request':this.received?.cache?.status==='bypass'?'Refreshed':this.received?.source==='jev'?'Fresh decision':this.received?'No usable decision':'No decision'}</en-badge>
             ${!this.pending&&this.received?.cache?html`<span>${this.received.cache.layer} · ${Math.round((this.received.cache.ageMs+Math.max(0,Date.now()-(this.received.receivedAt??Date.now())))/1000)} s old · original ${(this.received.cache.originalLatencyMs/1000).toFixed(2)} s${this.received.cache.stored?'':' · not stored'}</span>`:nothing}
-            <en-button variant="ghost" size="small" ?disabled=${this.pending||!c.canRefreshDecision} @click=${()=>this.dispatchEvent(new CustomEvent('developer-refresh',{bubbles:true,composed:true}))}>Refresh decision</en-button>
+            <en-button variant="ghost" size="small" ?disabled=${this.remote||this.pending||!c.canRefreshDecision} @click=${()=>this.dispatchEvent(new CustomEvent('developer-refresh',{bubbles:true,composed:true}))}>Refresh decision</en-button>
           </div>
           <div class="status"><strong>${this.pending?'Jev pending':this.received?.disposition??'Local controls'}</strong><span>${c.view}${c.mode?` / ${c.mode}`:''} · head ${c.head}</span></div>
           ${this.received?.preparation?html`<details><summary>Data preparation · ${this.received.preparation.totalMs} ms</summary><still-json-tree label="Preparation" .value=${this.received.preparation}></still-json-tree></details>`:nothing}
-          <details><summary>Flags</summary><en-switch label="Onboarding" .checked=${c.onboarding===true} @en-change=${(e:CustomEvent<{proposed:boolean}>)=>this.dispatchEvent(new CustomEvent('developer-flags',{bubbles:true,composed:true,detail:{value:e.detail.proposed}}))}>Onboarding</en-switch><p class="muted">Explain actions on hover or keyboard focus. This browser only.</p>${c.onboarding?html`<p class="muted">${c.onboardingText?.source==='pending'?'Generating wording…':c.onboardingText?.source==='model'?'Generated wording':'Local wording'}${c.onboardingText?.elapsedMs!==undefined?` · ${(c.onboardingText.elapsedMs/1000).toFixed(2)} s`:''}</p><still-json-tree label="Onboarding request" .value=${c.onboardingText??null}></still-json-tree>`:nothing}</details>
+          <details><summary>Flags</summary><en-switch label="Onboarding" .checked=${c.onboarding===true} @en-change=${(e:CustomEvent<{proposed:boolean}>)=>this.dispatchEvent(new CustomEvent('developer-flags',{bubbles:true,composed:true,detail:{value:e.detail.proposed}}))}>Onboarding</en-switch><p class="muted">Explain actions on hover or keyboard focus. ${this.remote?'Host browser only.':'This browser only.'}</p>${c.onboarding?html`<p class="muted">${c.onboardingText?.source==='pending'?'Generating wording…':c.onboardingText?.source==='model'?'Generated wording':'Local wording'}${c.onboardingText?.elapsedMs!==undefined?` · ${(c.onboardingText.elapsedMs/1000).toFixed(2)} s`:''}</p><still-json-tree label="Onboarding request" .value=${c.onboardingText??null}></still-json-tree>`:nothing}</details>
           <p class="muted">History: ${c.historyComplete===false?'Loading wider context':'Ready'}</p>
           <p class="muted">Maximum: ${c.actionLimit??5} · Fits: ${c.toolbarFit?.fits??c.actionLimit??5}${c.toolbarFit?.deferred?" · Keeping focused action":nothing}</p>${c.toolbarFit?.hidden.length?html`<p class="muted">Hidden for space: ${c.toolbarFit.hidden.join(", ")}</p>`:nothing}<en-select label="On the page limit" .value=${String(c.actionLimit??5)} @en-change=${(e: CustomEvent<{proposed:string;value:string}>)=>this.density(Number(e.detail.proposed))}>${Array.from({length:7},(_,i)=>i+1).map(n=>html`<en-select-option value=${n}>${n}${n===5?' · default':''}</en-select-option>`)}</en-select><p class="muted">Suggested actions only. Project listings, document context, results and their content controls do not count. This is a maximum. Actions move into More when space is limited. The next Jev request includes the maximum.</p>
           <details><summary>Local attention <en-badge variant="neutral">Not sent to Jev</en-badge></summary>
@@ -110,7 +146,7 @@ export class StillDeveloperConsole extends LitElement {
             <p class="muted">Foreground requires a visible, focused window. Idle means 30 s without input, not disengagement. Exposure requires 25% visibility. Hover may be a parked cursor; keyboard focus excludes automatic focus. IDs only; no text or pointer paths.</p>
             <still-json-tree label="Attention summary · milliseconds" .value=${c.attention??null}></still-json-tree>
           </details>
-          <still-decision-lab .snapshot=${this.snapshot()}></still-decision-lab>
+          ${this.remote?nothing:html`<still-decision-lab .snapshot=${this.snapshot()}></still-decision-lab>`}
           <h3>Live detail</h3>${c.generation?html`<still-json-tree label="Current generation evidence (local)" .value=${c.generation}></still-json-tree>`:nothing}<details open><summary>On page · ${this.controls.filter(x=>x.region==='dock'||x.region==='formats').length} action controls · ${this.controls.filter(x=>x.region!=='dock'&&x.region!=='formats').length} content / workflow controls</summary>
             <p class="muted">${c.paletteOpen?'The command palette lists eligible actions.':c.more?'Next-ranked actions, Back, and Palette.':c.mode?'The open workflow supplies its own controls.':c.view==='projects'||c.view==='documents'||c.view==='results'?'Content listings are outside the action budget.':'Suggested actions plus More. Toolbar paging counts toward the action limit.'} First-page Jev primary: score ≥ ${PRIMARY_POLICY.score}/3, confidence ≥ ${PRIMARY_POLICY.confidence*100}%, useful probability ≥ ${PRIMARY_POLICY.usefulProbability*100}%, and lead ≥ ${PRIMARY_POLICY.gap} over the other visible suggestions. At most one primary. Projects may default to New project when Jev has no clear leader. More alternatives are always secondary; escape controls are ghost. Other ties and missing evidence remain equal. The palette is always available with ⌘K.</p>
             <ul class="controls">${this.controls.map(x=>html`<li><b>${x.label}</b><code>${x.id}</code><span>${x.source??'Workflow rule'} · ${x.region} · ${x.variant} · ${x.size}${x.disabled?' · disabled':''}</span>${x.emphasis?html`<span>${x.emphasis}</span>`:nothing}${x.options.length?html`<details><summary>Picker options</summary>${x.options.join(' · ')}</details>`:nothing}</li>`)}</ul>
@@ -139,11 +175,13 @@ export class StillDeveloperConsole extends LitElement {
           })}</div>
           <details><summary>Creative questions · ${questions.filter(q=>q.asked).length} sent</summary>${questions.filter(q=>`${q.id} ${q.question.instructions}`.toLowerCase().includes(this.filter)).map(q=>html`<details><summary><code>${q.id}</code> · ${q.composition} · ${q.question.type} · ${numeric(q.score??q.noul)}${q.choice?` ${q.choice}`:''}</summary>${this.distribution(q)}</details>`)}</details>
           ${this.coverage(trace,c.current)}
-          <p class="muted">Session memory only. No creative events are added by this console.</p>
+          <p class="muted">${this.remote?'Shared live snapshot.':'Session memory; shared snapshots are encrypted and expire after one hour.'} No creative events are added by this console.</p>
         </div>`;
     return content;
   }
   static styles=css`
+    :host([hidden]){display:none!important}
+    .share-panel img{display:block;max-width:100%;height:auto;margin:12px auto}.share-panel .window-tools{justify-content:flex-start}.share-panel a{color:inherit;padding:8px;text-underline-offset:3px}
     .latency-breakdown{display:flex;flex-wrap:wrap;gap:8px 16px;margin:12px 0;font-size:12px;color:var(--en-color-text-muted,#777)}
     .latency-breakdown strong{font-weight:500;color:var(--en-color-text,#333)}
     :host{display:block;min-width:0;padding:0 20px 24px;font:13px/1.5 system-ui,sans-serif;color:#33332e;container-type:inline-size}
