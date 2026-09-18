@@ -6,6 +6,11 @@ export const MICRO_USD_PER_USD = 1_000_000;
 export const LIVE_REPLAY_COST_CONTINGENCY = 0.2;
 export const LIVE_REPLAY_PRICING_VERSION = "openai-2026-07-30";
 
+const replayImageModel = (env: Pick<WorkerEnv, "OPENAI_IMAGE_MODEL">) => env.OPENAI_IMAGE_MODEL ?? OPENAI_IMAGE_GENERATION_CONTRACT.defaults.model;
+// The replay token assumptions below were established for Image 2 only.
+// Matching token rates do not qualify a different model's token consumption.
+export const hasQualifiedReplayImageEstimate = (env: Pick<WorkerEnv, "OPENAI_IMAGE_MODEL">) => replayImageModel(env) === "gpt-image-2";
+
 export type ReplayStreamSize = 1_000 | 10_000 | 50_000;
 export type ReplayProviderCoverage = "automatic" | "minimal" | "representative" | "dense";
 export type ReplayGenerationProfile = {
@@ -161,7 +166,7 @@ function line(key: ReplayCostLine["key"], label: string, operations: number, est
 
 export function estimateLiveReplayCost(env: Pick<WorkerEnv, "OPENAI_MODEL" | "OPENAI_IMAGE_MODEL">, seed = "", options: { eventCount?: unknown; providerCoverage?: unknown; studyTypes?: unknown } = {}): ReplayCostEstimate {
   const plannerModel = env.OPENAI_MODEL ?? "gpt-5.6-terra";
-  const imageModel = env.OPENAI_IMAGE_MODEL ?? OPENAI_IMAGE_GENERATION_CONTRACT.defaults.model;
+  const imageModel = replayImageModel(env);
   const planner = textRates(plannerModel);
   const image = imageRates(imageModel);
   const profile = replayGenerationProfile(options.eventCount, options.providerCoverage, options.studyTypes);

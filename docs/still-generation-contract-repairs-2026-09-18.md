@@ -63,9 +63,31 @@ Replay estimates now read the shared generation contract's default model instead
 of independently defaulting to GPT Image 2. A regression compares an unset model
 and explicit Image 2/Sunburst overrides against actual adapter selection. This
 fixes the model identity mismatch; it does not qualify replay's historical Image 2
-token assumptions for Sunburst. Replay estimation and authorization require a
-separate model-specific budgeting review before claiming a verified Sunburst
-ceiling. No replay session was started or authorized during this repair.
+token assumptions for Sunburst.
+
+An additive repair after `00e9366473495a11433f679554a281b106d356e1` shares
+`hasQualifiedReplayImageEstimate` across Replay preflight, approval and session
+creation. Only the explicit, previously qualified Image 2 model passes. Unset or
+explicit Sunburst and unknown models return `replay_image_estimate_unqualified`;
+preflight disables both run flags, approval refuses before inserts, and creation
+refuses before consuming even a retained approval. Budget preflight reads no
+longer initialize counters. Historical approvals, receipts and templates remain
+unchanged, and the requested Sunburst default/rates remain in place.
+
+Real-handler synthetic tests prove unqualified requests perform no writes or
+fetches and retain old approvals byte-for-byte after default migration. An
+explicit Image 2 control can still approve and start against an in-memory database
+and mocked provider that definitively rejects planning. It confirms existing
+admission without a real provider request or financial hold. This does not enable
+Sunburst Replay; a model-specific estimator must be qualified first.
+
+Replay validation: all 16 focused cost/admission tests pass. The broader run
+passes 31 of 32 tests; the remaining historical source assertion in
+`tests/live-replay.test.mjs:203` expects `x-forma-impersonation-confirmation` in
+`worker/pilot-policy.ts`. That file is byte-identical to `00e9366` and lacks the
+string in both versions. The failed broader run and baseline comparison are kept
+in the independent report's evidence directory, without relabeling that suite as
+passing or changing unrelated historical tests.
 
 The Still image-policy integration test now captures the outgoing image request
 and asserts its Sunburst model outside the intercepted fetch callback, then checks
