@@ -1710,6 +1710,29 @@ export const memoryLiveSources = sqliteTable(
   ],
 );
 
+// Body-free processing metadata only. This is neither retained source evidence
+// nor permission to hydrate content, invoke a provider, or publish an inference.
+export const memoryLiveChangeCheckpoints = sqliteTable(
+  "memory_live_change_checkpoints",
+  {
+    enrollmentId: text("enrollment_id").primaryKey().notNull().references(() => memoryLiveEnrollments.enrollmentId, { onDelete: "cascade" }),
+    enrollmentRevision: integer("enrollment_revision").notNull(),
+    generation: text("generation").notNull(),
+    afterSequence: integer("after_sequence").notNull(),
+    throughSequence: integer("through_sequence").notNull(),
+    observedReferences: integer("observed_references").notNull(),
+    createdAt: text("created_at").notNull(),
+    updatedAt: text("updated_at").notNull(),
+    expiresAt: text("expires_at").notNull(),
+  },
+  (table) => [
+    index("idx_memory_live_checkpoint_expiry").on(table.expiresAt, table.enrollmentId),
+    check("memory_live_checkpoint_bounds", sql.raw("typeof(enrollment_revision)='integer' AND enrollment_revision BETWEEN 1 AND 9007199254740991 AND typeof(after_sequence)='integer' AND after_sequence BETWEEN 0 AND 9007199254740990 AND typeof(through_sequence)='integer' AND through_sequence BETWEEN 1 AND 9007199254740991 AND through_sequence>after_sequence AND typeof(observed_references)='integer' AND observed_references BETWEEN 1 AND 9007199254740991")),
+    check("memory_live_checkpoint_generation", sql.raw("length(generation)=32 AND generation NOT GLOB '*[^0-9a-f]*'")),
+    check("memory_live_checkpoint_time", sql.raw("length(created_at)=24 AND length(updated_at)=24 AND length(expires_at)=24 AND created_at<=updated_at AND updated_at<expires_at")),
+  ],
+);
+
 export const memoryLiveConversationSegments = sqliteTable(
   "memory_live_conversation_segments",
   {
@@ -1922,7 +1945,7 @@ export const memoryStructuredConversationHeads = sqliteTable(
     check("memory_structured_heads_counters", sql.raw("typeof(storage_revision)='integer' AND storage_revision BETWEEN 1 AND 9007199254740991 AND typeof(cleanup_turn)='integer' AND cleanup_turn BETWEEN 0 AND 3 AND (state!='retired' OR cleanup_turn=0)")),
     check("memory_structured_heads_times", sql.raw("length(created_at)>0 AND created_at<=updated_at AND (first_terminal_at IS NULL OR (created_at<=first_terminal_at AND first_terminal_at<=updated_at))")),
     check("memory_structured_heads_state", sql.raw("(state='active' AND first_terminal_at IS NULL AND enrollment_id IS NOT NULL AND enrollment_revision IS NOT NULL AND permission_epoch IS NOT NULL AND policy_version IS NOT NULL AND current_body_ref IS NOT NULL AND current_body_hash IS NOT NULL AND annotation_count IS NOT NULL AND coverage_after_sequence IS NOT NULL AND coverage_through_sequence IS NOT NULL AND expires_at IS NOT NULL) OR (state IN('retiring','retired') AND first_terminal_at IS NOT NULL AND enrollment_id IS NULL AND enrollment_revision IS NULL AND permission_epoch IS NULL AND policy_version IS NULL AND current_body_ref IS NULL AND current_body_hash IS NULL AND annotation_count IS NULL AND coverage_after_sequence IS NULL AND coverage_through_sequence IS NULL AND expires_at IS NULL)")),
-    check("memory_structured_heads_active", sql.raw("state!='active' OR (storage_revision BETWEEN 1 AND 64 AND length(enrollment_id)>0 AND typeof(enrollment_revision)='integer' AND enrollment_revision BETWEEN 1 AND 9007199254740991 AND length(permission_epoch)>0 AND length(policy_version)>0 AND length(current_body_ref)>0 AND length(current_body_hash)=64 AND current_body_hash NOT GLOB '*[^0-9a-f]*' AND typeof(annotation_count)='integer' AND annotation_count BETWEEN 0 AND 256 AND typeof(coverage_after_sequence)='integer' AND coverage_after_sequence BETWEEN 0 AND 9007199254740990 AND typeof(coverage_through_sequence)='integer' AND coverage_through_sequence BETWEEN 1 AND 9007199254740991 AND coverage_through_sequence>coverage_after_sequence AND created_at<expires_at)")),
+    check("memory_structured_heads_active", sql.raw("state!='active' OR (storage_revision BETWEEN 1 AND 64 AND length(enrollment_id)>0 AND typeof(enrollment_revision)='integer' AND enrollment_revision BETWEEN 1 AND 9007199254740991 AND length(permission_epoch)>0 AND length(policy_version)>0 AND length(current_body_ref)>0 AND length(current_body_hash)=64 AND current_body_hash NOT GLOB '*[^0-9a-f]*' AND typeof(annotation_count)='integer' AND annotation_count BETWEEN 1 AND 256 AND typeof(coverage_after_sequence)='integer' AND coverage_after_sequence BETWEEN 0 AND 9007199254740990 AND typeof(coverage_through_sequence)='integer' AND coverage_through_sequence BETWEEN 1 AND 9007199254740991 AND coverage_through_sequence>coverage_after_sequence AND created_at<expires_at)")),
     uniqueIndex("idx_memory_structured_heads_personal").on(table.actorUserId, table.ownerUserId, table.projectId, table.documentId).where(sql.raw("organization_id IS NULL")),
     uniqueIndex("idx_memory_structured_heads_shared").on(table.actorUserId, table.ownerUserId, table.organizationId, table.projectAccessId, table.projectId, table.documentId).where(sql.raw("organization_id IS NOT NULL")),
     index("idx_memory_structured_heads_enrollment").on(table.enrollmentId, table.state),
@@ -1954,7 +1977,7 @@ export const memoryStructuredConversationRevisions = sqliteTable(
     check("memory_structured_revisions_version", sql.raw("typeof(schema_version)='integer' AND schema_version=1 AND recipe_version='native-declared-ledger-v1'")),
     check("memory_structured_revisions_identity", sql.raw("length(ledger_id)=64 AND ledger_id NOT GLOB '*[^0-9a-f]*' AND length(body_ref)>0 AND length(body_hash)=64 AND body_hash NOT GLOB '*[^0-9a-f]*'")),
     check("memory_structured_revisions_chain", sql.raw("typeof(revision)='integer' AND revision BETWEEN 1 AND 64 AND typeof(predecessor_revision)='integer' AND ((revision=1 AND predecessor_revision=0 AND predecessor_hash IS NULL) OR (revision>1 AND predecessor_revision=revision-1 AND predecessor_hash IS NOT NULL AND length(predecessor_hash)=64 AND predecessor_hash NOT GLOB '*[^0-9a-f]*'))")),
-    check("memory_structured_revisions_bounds", sql.raw("typeof(annotation_count)='integer' AND annotation_count BETWEEN 0 AND 256 AND typeof(coverage_after_sequence)='integer' AND coverage_after_sequence BETWEEN 0 AND 9007199254740990 AND typeof(coverage_through_sequence)='integer' AND coverage_through_sequence BETWEEN 1 AND 9007199254740991 AND coverage_through_sequence>coverage_after_sequence")),
+    check("memory_structured_revisions_bounds", sql.raw("typeof(annotation_count)='integer' AND annotation_count BETWEEN 1 AND 256 AND typeof(coverage_after_sequence)='integer' AND coverage_after_sequence BETWEEN 0 AND 9007199254740990 AND typeof(coverage_through_sequence)='integer' AND coverage_through_sequence BETWEEN 1 AND 9007199254740991 AND coverage_through_sequence>coverage_after_sequence")),
     check("memory_structured_revisions_times", sql.raw("length(created_at)>0 AND created_at<expires_at")),
     uniqueIndex("idx_memory_structured_revisions_body").on(table.bodyRef),
     index("idx_memory_structured_revisions_expiry").on(table.expiresAt, table.ledgerId, table.revision),

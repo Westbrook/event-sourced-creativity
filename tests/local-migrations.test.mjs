@@ -726,3 +726,27 @@ test("local migrations: quoted names, literal values and comments containing def
   assert.deepEqual(rows(sqlite, "keyword_text"), original);
   assert.deepEqual(rows(sqlite, receiptTable), beforeReceipts);
 });
+
+test('pending Memory qualification is disposable and rejects source drift or journal assignment', async () => {
+  const { memoryMigrationCandidates, prepareMemoryMigrationCandidate, qualifyMemoryMigrationCandidates } = await import('../scripts/lib/memory-migration-candidates.mjs');
+  const report = qualifyMemoryMigrationCandidates();
+  assert.equal(report.qualification, 'local-disposable-sqlite-schema');
+  assert.equal(report.hostedQualified, false);assert.equal(report.productionApplied, false);assert.equal(report.migrationsAssigned, false);
+  assert.equal(report.candidates.length, 3);assert.ok(report.candidates.every(candidate => candidate.status === 'passed'));
+  for (const candidate of memoryMigrationCandidates) {
+    const sql = readFileSync(new URL('../db/' + candidate.file, import.meta.url), 'utf8');
+    assert.equal(prepareMemoryMigrationCandidate(candidate, sql, actualMigrations).statements.length, candidate.statements);
+    assert.throws(() => prepareMemoryMigrationCandidate(candidate, sql + '\n', actualMigrations), /source identity/);
+    assert.throws(() => prepareMemoryMigrationCandidate(candidate, sql, [...actualMigrations, {hash:candidate.hash,tag:'unexpected'}]), /assigned to journal/);
+  }
+});
+
+test('pending Memory qualification CLI has no target or apply capability', () => {
+  const command = join(root, 'scripts/qualify-memory-migrations.mjs');
+  for (const args of [['--apply'],['--database',':memory:'],['--migrations','drizzle'],['--url','https://example.invalid']]) {
+    const result = spawnSync(process.execPath, [command,...args], {cwd:root,encoding:'utf8'});
+    assert.equal(result.status, 1);assert.match(result.stderr, /accepts no target or apply options/);
+  }
+  const result = spawnSync(process.execPath, [command], {cwd:root,encoding:'utf8'});
+  assert.equal(result.status, 0, result.stderr);assert.equal(JSON.parse(result.stdout).productionApplied, false);
+});

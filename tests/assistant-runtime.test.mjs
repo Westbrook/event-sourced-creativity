@@ -12505,3 +12505,124 @@ for(const shared of [false,true])test('completed conversation capture: '+(shared
   assert.deepEqual(adaptiveReentryFinancialState(state),financial);assert.equal(state.calls.length,calls);
   const again=await state.capture();assert.deepEqual(again,{status:'unchanged',originalCount:2,revision:1},'Memory-derived recall must not become an original turn');
 });
+
+async function nativeCheckpointFixture(t,options={}) {
+  const { readFile }=await import('node:fs/promises');
+  const state=await nativeMemoryJobFixture(t,{...options,beforeEnrollment:async state=>{
+    state.sqlite.exec(await readFile(new URL('../drizzle/0041_memory_live_change_checkpoints.sql',import.meta.url),'utf8'));
+  }});
+  state.checkpoints=()=>state.sqlite.prepare('SELECT * FROM memory_live_change_checkpoints ORDER BY enrollment_id').all();
+  state.health=()=>worker.fetch(new Request('http://localhost/api/memory/processing?id='+encodeURIComponent(state.current().enrollment_id),{headers:state.owner??{}}),state.env,{waitUntil(){}});
+  return state;
+}
+for(const shared of [false,true])test('native processing checkpoint: '+(shared?'shared':'personal')+' publication and source-free health',{timeout:60000},async t=>{
+  const state=await nativeCheckpointFixture(t,{shared});await state.send('checkpoint-first');const before=nativeStructuredCallerNoSpend(state);
+  const start=state.current().cursor_sequence;state.due();const run=await state.run();
+  assert.equal(run.status,'completed',JSON.stringify(run)+' '+state.controls.lastDatabaseError);
+  const [row]=state.checkpoints();assert.ok(row);assert.equal(row.after_sequence,start);assert.equal(row.through_sequence,state.current().cursor_sequence);
+  assert.equal(row.observed_references,state.table('memory_live_sources').length);assert.match(row.generation,/^[a-f0-9]{32}$/u);
+  assert.equal(JSON.stringify(row).includes('PRIVATE_JOB_'),false);assert.deepEqual(nativeStructuredCallerNoSpend(state),before);
+  const health=await state.health(),body=await health.json();assert.equal(health.status,200,JSON.stringify(body));
+  assert.equal(body.state,'reference-checkpoint');assert.equal(body.semanticProcessing,'not-implemented');assert.equal(body.observedReferences,row.observed_references);
+  for(const value of [row.enrollment_id,row.generation,...state.table('memory_live_sources').map(x=>x.event_id)])assert.equal(JSON.stringify(body).includes(value),false);
+});
+
+test('native processing checkpoint: conversation bookkeeping coalesces without renewing earlier retention',{timeout:60000},async t=>{
+  const state=await nativeCheckpointFixture(t);await state.send('checkpoint-page-one');state.due();assert.equal((await state.run()).status,'completed');
+  const [first]=state.checkpoints();await state.send('checkpoint-page-two');
+  state.sqlite.prepare('UPDATE memory_live_enrollments SET last_local_day=NULL,last_admitted_at=NULL').run();state.due();
+  assert.equal((await state.run()).status,'completed',state.controls.lastDatabaseError);const [second]=state.checkpoints();
+  assert.equal(second.after_sequence,first.after_sequence);assert.ok(second.through_sequence>first.through_sequence);
+  assert.equal(second.created_at,first.created_at);assert.ok(second.expires_at<=first.expires_at);assert.notEqual(second.generation,first.generation);
+  assert.ok(second.observed_references>first.observed_references);
+  state.sqlite.prepare('UPDATE memory_live_sources SET conversation_segmented=conversation_segmented').run();assert.deepEqual(state.checkpoints(),[second]);
+  state.sqlite.prepare('UPDATE memory_live_sources SET expires_at=? WHERE event_id=?').run(new Date(Date.now()+60_000).toISOString(),state.table('memory_live_sources')[0].event_id);
+  assert.equal(state.checkpoints().length,0,'real source mutation invalidates the disposable hint');
+});
+
+test('native processing checkpoint: committed lost acknowledgement does not duplicate or retry publication',{timeout:60000},async t=>{
+  const state=await nativeCheckpointFixture(t);await state.send('checkpoint-lost-ack');const db=state.env.DB,batch=db.batch;let lost=0;
+  db.batch=async statements=>{const result=await batch.call(db,statements);if(!lost&&statements.some(s=>s.sql.startsWith('INSERT INTO memory_live_change_checkpoints'))){lost++;throw new Error('checkpoint-ack-lost');}return result;};
+  state.due();const run=await state.run();db.batch=batch;assert.equal(lost,1);assert.equal(run.status,'partial');const saved=state.checkpoints();assert.equal(saved.length,1);
+  const cursor=state.current().cursor_sequence;state.due();await state.run();assert.equal(state.current().cursor_sequence,cursor);assert.deepEqual(state.checkpoints(),saved);
+});
+
+for(const mutation of ['forget','settings','source-delete'])test('native processing checkpoint: '+mutation+' withdraws metadata',{timeout:60000},async t=>{
+  const state=await nativeCheckpointFixture(t);await state.send('checkpoint-withdrawal');state.due();assert.equal((await state.run()).status,'completed');assert.equal(state.checkpoints().length,1);
+  if(mutation==='source-delete')state.sqlite.prepare('DELETE FROM memory_live_sources').run();
+  else {
+    const body=mutation==='forget'?{confirmation:'FORGET_MY_MEMORY',revision:state.current().revision}:{...state.preferences,revision:state.current().revision,background:false};
+    const request=state.settingsRequest(body,mutation==='forget'?'DELETE':'PUT');const url=new URL(request.url);url.searchParams.set('id',state.current().enrollment_id);
+    const response=await state.handleLiveMemory(new Request(url,request),state.env,'settings');assert.equal(response.status,200,await response.text());
+  }
+  assert.equal(state.checkpoints().length,0);
+});
+
+for(const mode of ['schema-missing-trigger','rollback'])test('native processing checkpoint: '+mode+' cannot advance cursor',{timeout:60000},async t=>{
+  const state=await nativeCheckpointFixture(t);await state.send('checkpoint-fail');const cursor=state.current().cursor_sequence;
+  if(mode==='schema-missing-trigger')state.sqlite.exec('DROP TRIGGER memory_live_checkpoint_source_deleted');
+  else {const db=state.env.DB,batch=db.batch; t.after(()=>{db.batch=batch;});
+    db.batch=async statements=>{const index=statements.findIndex(s=>s.sql.startsWith('INSERT INTO memory_live_change_checkpoints'));
+      if(index<0)return batch.call(db,statements);
+      const changed=[...statements];changed.splice(index+1,0,db.prepare("SELECT json('checkpoint_fixture_failure')"));return batch.call(db,changed);};
+  }
+  state.due();assert.equal((await state.run()).status,'partial');assert.equal(state.current().cursor_sequence,cursor);assert.equal(state.checkpoints().length,0);assert.equal(state.table('memory_live_sources').length,0);assert.equal(state.table('memory_live_conversation_segments').length,0);
+});
+
+test('native processing checkpoint: disabled scheduling still permits bounded expiry cleanup',{timeout:60000},async t=>{
+  const state=await nativeCheckpointFixture(t);await state.send('checkpoint-expiry');state.due();await state.run();assert.equal(state.checkpoints().length,1);
+  state.sqlite.prepare("UPDATE memory_live_change_checkpoints SET created_at='2000-01-01T00:00:00.000Z',updated_at='2000-01-01T00:00:00.000Z',expires_at='2001-01-01T00:00:00.000Z'").run();
+  state.env.FORMA_MEMORY_SCHEDULING_ENABLED='false';state.env.FORMA_MEMORY_ENABLED='false';const before=nativeStructuredCallerNoSpend(state);
+  await worker.scheduled({},state.env);assert.equal(state.checkpoints().length,0);assert.deepEqual(nativeStructuredCallerNoSpend(state),before);
+});
+
+test('native processing checkpoint: missing privacy trigger prevents a false Forget receipt',{timeout:60000},async t=>{
+  const state=await nativeCheckpointFixture(t);await state.send('checkpoint-forget-schema');state.due();await state.run();const before=state.checkpoints();
+  state.sqlite.exec('DROP TRIGGER memory_live_checkpoint_source_deleted');
+  const request=state.settingsRequest({confirmation:'FORGET_MY_MEMORY',revision:state.current().revision},'DELETE'),url=new URL(request.url);url.searchParams.set('id',state.current().enrollment_id);
+  const response=await state.handleLiveMemory(new Request(url,request),state.env,'settings');assert.equal(response.status,409);assert.notEqual((await response.json()).erased,true);assert.deepEqual(state.checkpoints(),before);
+});
+
+test('native processing checkpoint: concurrent runners do not duplicate observed references',{timeout:60000},async t=>{
+  const state=await nativeCheckpointFixture(t);await state.send('checkpoint-concurrent');state.due();await Promise.all([state.run(),state.run()]);
+  assert.equal(state.checkpoints().length,1);assert.equal(state.checkpoints()[0].observed_references,state.table('memory_live_sources').length);
+});
+
+test('native processing checkpoint: health is actor-owned and refuses revoked shared access',{timeout:60000},async t=>{
+  const state=await nativeCheckpointFixture(t,{shared:true});await state.send('checkpoint-custody');state.due();await state.run();const before=state.checkpoints();
+  const stranger=await worker.fetch(new Request('http://localhost/api/memory/processing?id='+state.current().enrollment_id,{headers:{'oai-authenticated-user-id':'checkpoint-stranger','oai-authenticated-user-email':'stranger@example.test'}}),state.env,{waitUntil(){}});
+  assert.notEqual(stranger.status,200);assert.equal((await stranger.text()).includes(before[0].generation),false);
+  state.sqlite.prepare("UPDATE organization_memberships SET status='revoked',revoked_at=? WHERE organization_id=? AND user_id=?").run(new Date().toISOString(),state.current().organization_id,state.current().actor_user_id);
+  const revoked=await state.health();assert.notEqual(revoked.status,200);assert.deepEqual(state.checkpoints(),before);
+});
+
+test('native processing checkpoint: content withdrawal preserves unrelated scopes and stale revisions',{timeout:60000},async t=>{
+  const state=await nativeCheckpointFixture(t);await state.send('checkpoint-specific-content');state.due();await state.run();const original=state.checkpoints()[0],e=state.current();
+  const clone={...e,enrollment_id:crypto.randomUUID(),document_id:'unrelated-document'};
+  state.sqlite.prepare(`INSERT INTO memory_live_enrollments(${Object.keys(clone).join(',')}) VALUES(${Object.keys(clone).map(()=>'?').join(',')})`).run(...Object.values(clone));
+  const unrelated={...original,enrollment_id:clone.enrollment_id};
+  state.sqlite.prepare(`INSERT INTO memory_live_change_checkpoints(${Object.keys(unrelated).join(',')}) VALUES(${Object.keys(unrelated).map(()=>'?').join(',')})`).run(...Object.values(unrelated));
+  const {prepareLiveMemoryCheckpointWithdrawal}=await import('../worker/memory-live-checkpoints.ts');
+  const stale=await prepareLiveMemoryCheckpointWithdrawal(state.env,{enrollmentId:e.enrollment_id,currentRevision:e.revision+1});
+  await state.env.DB.batch(stale.statements);assert.equal(state.checkpoints().length,2);
+  const turn=state.sqlite.prepare('SELECT user_content_ref FROM assistant_turns WHERE actor_user_id=? AND document_id=? ORDER BY completed_at DESC LIMIT 1').get(e.actor_user_id,e.document_id);
+  const withdrawal=await prepareLiveMemoryCheckpointWithdrawal(state.env,{contentId:turn.user_content_ref});
+  assert.equal(withdrawal.acknowledge(await state.env.DB.batch(withdrawal.statements)),true);assert.deepEqual(state.checkpoints().map(row=>({...row})),[unrelated]);
+});
+
+for(const mode of ['health-assertion','cleanup-count'])test('native processing checkpoint: rejects malformed '+mode+' acknowledgement',{timeout:60000},async t=>{
+  const state=await nativeCheckpointFixture(t);await state.send('checkpoint-malformed');state.due();await state.run();const db=state.env.DB,batch=db.batch;
+  db.batch=async statements=>{const results=await batch.call(db,statements);
+    if(mode==='health-assertion'&&statements.some(s=>s.sql.includes('memory_checkpoint_authority_changed')))results[0].results.push({verified:1});
+    if(mode==='cleanup-count'&&statements.some(s=>s.sql.includes('memory_checkpoint_schema_changed')))results[1].meta.changes='0';return results;};
+  t.after(()=>{db.batch=batch;});
+  if(mode==='health-assertion')assert.equal((await state.health()).status,503);
+  else {const {sweepExpiredMemoryCheckpoints}=await import('../worker/memory-live-checkpoints.ts');await assert.rejects(()=>sweepExpiredMemoryCheckpoints(state.env),/cleanup-unconfirmed/);}
+});
+
+test('native processing checkpoint: schema installed after absence preflight rolls publication back',{timeout:60000},async t=>{
+  const state=await nativeMemoryJobFixture(t);await state.send('checkpoint-install-race');const db=state.env.DB,batch=db.batch,cursor=state.current().cursor_sequence;let installed=0;
+  const {readFile}=await import('node:fs/promises'),migration=await readFile(new URL('../drizzle/0041_memory_live_change_checkpoints.sql',import.meta.url),'utf8');
+  db.batch=async statements=>{if(!installed&&statements.some(s=>/^INSERT(?: OR IGNORE)? INTO memory_live_sources/u.test(s.sql))){installed++;state.sqlite.exec(migration);}return batch.call(db,statements);};t.after(()=>{db.batch=batch;});
+  state.due();assert.equal((await state.run()).status,'partial');assert.equal(installed,1);assert.equal(state.current().cursor_sequence,cursor);assert.equal(state.table('memory_live_sources').length,0);
+});

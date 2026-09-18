@@ -5,7 +5,8 @@ import { MEMORY_CONSUMPTION_EPISODES_VERSION } from "../src/model/memory-consump
 import { MEMORY_WRITE_CONTRACT, memoryCustodyMatches, parseMemoryCustody } from "../src/model/memory-custody.ts";
 import { requireUser, requireConsent } from "./pilot-policy.ts";
 import { prepareDocumentAuthority } from "./context-authoring-authority.ts";
-import { LIVE_MEMORY_POLICY, LIVE_MEMORY_REVIEW_CONTRACT, LIVE_MEMORY_REVIEW_TIMING, liveMemoryAuthority, type LiveMemoryEnrollment } from "./memory-live-authority.ts";
+import { LIVE_MEMORY_POLICY, LIVE_MEMORY_REVIEW_CONTRACT, LIVE_MEMORY_REVIEW_TIMING, liveMemoryAuthority, liveMemoryEnrollmentGuard, type LiveMemoryEnrollment } from "./memory-live-authority.ts";
+import { readLiveMemoryCheckpointHealth } from "./memory-live-checkpoints.ts";
 import { executionAdmissionGuard } from "./consequential-consent.ts";
 import { liveMemoryEnabled, liveMemorySchemaReady, memorySqlAssertion, revokeLiveMemoryCounted, liveMemoryOriginWithdrawalStatements, prepareStructuredConversationWithdrawal, readStructuredConversationCleanupStatuses } from "./memory-live-store.ts";
 import { recallLiveMemoryResponse } from "./memory-live-recall.ts";
@@ -31,7 +32,7 @@ async function memoryRequestText(request:Request):Promise<string|null>{
 }
 
 /** Expected custody is a consent constraint only; native code independently resolves actor, custody and authority. */
-export async function handleLiveMemory(request:Request,env:WorkerEnv,operation:"settings"|"recall"|"export"):Promise<Response> {
+export async function handleLiveMemory(request:Request,env:WorkerEnv,operation:"settings"|"recall"|"export"|"processing"):Promise<Response> {
   const requestDb=env.DB;
   const auth=await requireUser(request,env,"viewer",{account:"principal"});
   if(auth.response||!auth.user)return auth.response??reply({error:"authentication_required"},401);
@@ -70,6 +71,13 @@ export async function handleLiveMemory(request:Request,env:WorkerEnv,operation:"
     const e=await env.DB.prepare("SELECT * FROM memory_live_enrollments WHERE enrollment_id=? AND actor_user_id=?").bind(id,actor.userId).first<LiveMemoryEnrollment>();
     if(!e)return reply({error:"memory_not_found"},404);
     if(!liveMemoryEnabled(env,actor.userId))return reply({error:"memory_disabled"},503);
+    if(operation==="processing"){
+      try{
+        const authority=await liveMemoryAuthority(env,e);
+        if(!authority||env.DB!==requestDb)return reply({error:"memory_processing_unavailable"},403);
+        return reply(await readLiveMemoryCheckpointHealth(env,e,[authority.guard,liveMemoryEnrollmentGuard(e)]));
+      }catch{return reply({error:"memory_processing_unavailable"},503);}
+    }
     if(operation==="export"){
       if(e.revision!==Number(revision))return reply({error:"memory_revision_changed"},409);
       try{return await exportLiveMemory(env,e,actor);}catch{return reply({error:"memory_export_unavailable"},403);}

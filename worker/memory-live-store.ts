@@ -1,4 +1,5 @@
 import { memoryAssert, memoryGuardQuery, type MemorySqlGuard } from "./memory-sql.ts";
+import { prepareLiveMemoryCheckpointWithdrawal } from "./memory-live-checkpoints.ts";
 import { liveMemoryAuthority, liveMemoryEnrollmentGuard, liveMemoryMaintenanceAttemptFor, type LiveMemoryEnrollment, type LiveMemoryMaintenanceAttempt,
   type LiveMemoryDenialCertificate } from "./memory-live-authority.ts";
 import { liveMemorySourceQuery, liveMemoryView, type LiveSourceRow } from "./memory-live-sources.ts";
@@ -50,6 +51,10 @@ export async function liveMemoryOriginWithdrawalStatements(env:WorkerEnv,selecto
   const db=env.DB,selectorKey=canonicalConsent(selector),selected=structuredClone(selector);
   const current=()=>env.DB===db&&canonicalConsent(selector)===selectorKey;
   const legacy=await liveExtractiveMemoryOriginWithdrawalStatements(env,selected,reason,now);
+  const checkpoint=await prepareLiveMemoryCheckpointWithdrawal(env,selected);
+  directStructuredWithdrawalReceipts.set(checkpoint.statements[0]!,{statements:checkpoint.statements,acknowledge:results=>checkpoint.acknowledge(results as D1Result[])});
+  legacy.unshift(...checkpoint.statements);
+  legacy.push(checkpoint.terminal);
   if(!current())throw new Error("memory-origin-withdrawal-preparation-changed");
   // Scope-wide privacy/settings boundaries already compose the v2 inverse with
   // native ledger retirement. Direct source and answer identity withdrawals must
@@ -439,6 +444,7 @@ export async function retireDeniedLiveMemoryCounted(env:WorkerEnv,e:LiveMemoryEn
       expires_at:String(row.expires_at)<now?row.expires_at:now})));
   }
   const profileWrites=await documentProfileWithdrawalStatements(env,{enrollmentId:snapshot.enrollment_id},now);
+  const checkpoint=await prepareLiveMemoryCheckpointWithdrawal(env,{enrollmentId:snapshot.enrollment_id});
   const structuredWrites=await prepareStructuredConversationWithdrawal(env,{enrollment:snapshot},now);
   // Fixed enrollment-wide contract of the unchanged profile helper: exact
   // length and SELECT receipt offsets, never inspection of opaque SQL. A future
@@ -455,6 +461,8 @@ export async function retireDeniedLiveMemoryCounted(env:WorkerEnv,e:LiveMemoryEn
   const asserted=(statement:D1PreparedStatement)=>{assertions.push(writes.length);writes.push(statement);};
   proof.beforeMutation.forEach(asserted);
   asserted(memorySqlAssertion(env,schemaGuard));
+  assertions.push(...checkpoint.assertionIndexes.map(index=>writes.length+index));
+  writes.push(...checkpoint.statements);
   const originOffset=writes.length;
   writes.push(...originWrites);
   if(originWrites.length)assertions.push(...[0,2,4,6].map(index=>originOffset+index));
@@ -494,6 +502,7 @@ export async function retireDeniedLiveMemoryCounted(env:WorkerEnv,e:LiveMemoryEn
     asserted(memorySqlAssertion(env,{condition:"NOT EXISTS(SELECT 1 FROM memory_document_profile_suppressions)",bindings:[]}));
   }
   structuredWrites.terminalAssertions.forEach(asserted);
+  asserted(checkpoint.terminal);
   // Exact terminal enrollment first, then the same native-only denial witness
   // and its deadline last. Never replay the original enrollment after mutation.
   proof.afterRetirement.forEach(asserted);

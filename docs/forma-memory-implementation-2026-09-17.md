@@ -6,6 +6,10 @@ There is no configured Git remote in this checkout. The merge retained the newer
 main versions of both conflicted Memory model files; its tree matched main.
 It did not modify the main checkout or its unrelated proposal documents.
 
+See the [Sites capability and implementation To Do](forma-memory-sites-capability-todo-2026-09-18.md)
+for the current checkpoint/status/tooling continuation and separately tracked
+external services. This does not close the semantic system or rollout gates.
+
 ## September 18 follow-up
 
 [Completion and release status](forma-memory-release-2026-09-18.md) records the

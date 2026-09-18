@@ -40,6 +40,7 @@ import { handleAssistant, handleAssistantBillingReconciliation, handleAssistantP
 import { handlePlatformAssistant } from "./platform-assistant-api";
 import { handleLiveMemory } from "./memory-live-api.ts";
 import { runLiveMemoryScheduled } from "./memory-live-jobs.ts";
+import { sweepExpiredMemoryCheckpoints } from "./memory-live-checkpoints.ts";
 import { handleNativeMemoryBenchmark, purgeExpiredNativeMemoryBenchmark } from "./memory-benchmark/native.ts";
 import { handleMemoryDocumentProfile } from "./memory-document-profile-api.ts";
 import { sweepExpiredDocumentProfileSuppressions } from "./memory-document-profile-store.ts";
@@ -174,6 +175,7 @@ async function routeRequest(request: Request, env: WorkerEnv, context: WorkerExe
     if(url.pathname==="/api/memory/settings")return handleLiveMemory(request,env,"settings");
     if(url.pathname==="/api/memory/recall")return handleLiveMemory(request,env,"recall");
     if(url.pathname==="/api/memory/export")return handleLiveMemory(request,env,"export");
+    if(url.pathname==="/api/memory/processing")return handleLiveMemory(request,env,"processing");
     if(url.pathname==="/api/memory/document-profile/settings")return handleMemoryDocumentProfile(request,env,"settings");
     if(url.pathname==="/api/memory/document-profile/inspect")return handleMemoryDocumentProfile(request,env,"inspect");
     if(url.pathname==="/api/memory/document-profile/suppress")return handleMemoryDocumentProfile(request,env,"suppress");
@@ -360,7 +362,8 @@ export default {
     await observeScheduledRetention(env,1_000);
     try {
       // Privacy cleanup is independent of profile rollout and never performs inference or enrollment.
-      await sweepExpiredDocumentProfileSuppressions(env,128);
+      try { await sweepExpiredMemoryCheckpoints(env,128); }
+      finally { await sweepExpiredDocumentProfileSuppressions(env,128); }
       // Native worker event only: the runner separately requires literal scheduling
       // admission, actor rollout and each existing background-purpose enrollment.
       await runLiveMemoryScheduled(env);

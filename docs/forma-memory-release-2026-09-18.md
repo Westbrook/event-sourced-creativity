@@ -7,6 +7,16 @@ the verified implementation accumulated on the Memory branch with learning,
 enrollment, scheduling and the synthetic benchmark still disabled. Publication
 must not be described as completing the semantic/profile/nested-scope system.
 
+## Sites-native continuation (verification in progress)
+
+The [Sites capability To Do](forma-memory-sites-capability-todo-2026-09-18.md)
+records a new additive checkpoint, source-free processing status, scoped privacy
+invalidation and no-target local migration qualification tooling. Seventeen native
+checkpoint tests, 44 SQLite/local-D1 capture and rollback tests, and the exact-schema
+guest-custody test pass. The prior release receipt below remains historical;
+publication of this continuation is not yet claimed. The original semantic/profile
+system and external service/qualification gates remain open.
+
 ## Current release
 
 **Published to production as version 426 on 2026-09-18 at 12:50:59 UTC.**
