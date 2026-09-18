@@ -19,7 +19,7 @@ export function startConsoleWindow(){
   const receiver=new ConsoleWindowReceiver(window,source,session,async data=>{
     if(!desktop.matches){clear('Use a desktop-width window to inspect decisions.');return;}
     if(scope!==data.scope){clear('Connecting…');scope=data.scope;}
-    if(!console){console=new StillDeveloperConsole();console.detached=true;console.scope=data.scope;console.addEventListener('developer-density',e=>receiver.command('density',{value:(e as CustomEvent).detail.value}));console.addEventListener('developer-experiment',e=>{const d=(e as CustomEvent).detail,id=crypto.randomUUID();pending.set(id,d.complete);receiver.command('experiment',{id,scope,request:d.request});});console.addEventListener('developer-return',()=>receiver.returnToPanel());document.body.append(console);}
+    if(!console){console=new StillDeveloperConsole();console.detached=true;console.scope=data.scope;console.addEventListener('developer-refresh',()=>receiver.command('refresh',{}));console.addEventListener('developer-density',e=>receiver.command('density',{value:(e as CustomEvent).detail.value}));console.addEventListener('developer-experiment',e=>{const d=(e as CustomEvent).detail,id=crypto.randomUUID();pending.set(id,d.complete);receiver.command('experiment',{id,scope,request:d.request});});console.addEventListener('developer-return',()=>receiver.returnToPanel());document.body.append(console);}
     // Preserve inspector disclosure state when an unrelated live field changes.
     for(const key of ['context','applied','received','pending','controls'] as const){
       if(JSON.stringify(console[key])!==JSON.stringify(data[key]))Object.assign(console,{[key]:data[key]});

@@ -17,7 +17,7 @@ test('batched assessment and optional evidence have paired, sanitized traces; en
     }
     return Response.json({model:'simulated-assessment',answers:Object.fromEntries(Object.entries(body.questions).map(([id,q])=>[id,q.type==='score'?{...score(id==='use_use-in'?3:2.2),secret:'DO_NOT_FORWARD'}:q.type==='noul'?{type:'noul',noul:.5,legend:'DO_NOT_FORWARD'}:{type:'choice',choice:'organize',confidence:.8,secret:'DO_NOT_FORWARD'}]))});
   };
-  const request=async(developer=true)=>{clock+=2000;bodies=[];const r=await f.request('/api/still/decision',f.json({projectId:f.projectId,documentId:f.documentId,blockId:'scene-reuse-direction',view:'document',developer}));assert.equal(r.status,200,await r.clone().text());return r.json();};
+  const request=async(developer=true)=>{clock+=2000;bodies=[];const r=await f.request('/api/still/decision',f.json({projectId:f.projectId,documentId:f.documentId,blockId:'scene-reuse-direction',view:'document',developer,cacheBypass:true}));assert.equal(r.status,200,await r.clone().text());return r.json();};
   try{
     const counts=f.counts(),good=await request();assert.equal(bodies.length,2);assert.equal(good.diagnostics.passes.length,2);
     assert.equal(bodies[0].state.compositions.length,4);assert.ok(good.targets['use-in']);
@@ -29,7 +29,7 @@ test('batched assessment and optional evidence have paired, sanitized traces; en
     assert.ok(!good.diagnostics.questions.some(q=>q.id==='target_0'));assert.doesNotMatch(JSON.stringify(good),/fixture-secret-key|DO_NOT_FORWARD/);
     const ordinary=await request(false);assert.equal(ordinary.diagnostics,undefined);assert.deepEqual(ordinary.actions,good.actions);assert.deepEqual(ordinary.rankedActions,good.rankedActions);
     failSecond=true;const failed=await request();assert.equal(bodies.length,2);assert.deepEqual(failed.actions,good.actions);assert.equal(failed.targets,undefined);
-    assert.equal(failed.diagnostics.passes[1].status,'failed');assert.equal(failed.diagnostics.passes[1].model,undefined);assert.ok(failed.diagnostics.passes[1].exchange);assert.equal(failed.diagnostics.passes[1].exchange.responseStatus,undefined);
+    assert.equal(failed.cache.stored,false);assert.equal(failed.diagnostics.passes[1].status,'failed');assert.equal(failed.diagnostics.passes[1].model,undefined);assert.ok(failed.diagnostics.passes[1].exchange);assert.equal(failed.diagnostics.passes[1].exchange.responseStatus,undefined);
     assert.deepEqual(f.counts(),counts);
   }finally{globalThis.fetch=fetch;Date.now=now;await f.drainBackground();f.close();}
 });

@@ -1,3 +1,4 @@
+import { DecisionMemo, stableDecisionKey } from '../src/still/decision-cache.ts';
 import { cleanPaletteFeedback } from '../src/still/palette-feedback.ts';
 import { actionLimit } from '../src/still/decision-lab.ts';
 import { handleEvents } from './events-api.ts';
@@ -11,6 +12,13 @@ import { decisionDiagnostics, inspectAnswer, type DecisionPass, type DecisionExc
 
 const reply = (body: unknown, status = 200) => Response.json(body, { status, headers: { 'cache-control': 'private, no-store', vary: 'Cookie, oai-authenticated-user-id' } });
 const recentCalls = new Map<string, number>();
+type CachedDecision={status:number;body:Record<string,unknown>;reusable:boolean};
+const decisionCaches=new WeakMap<object,DecisionMemo<CachedDecision>>();
+function decisionCache(env:WorkerEnv){
+  let cache=decisionCaches.get(env.DB);
+  if(!cache){cache=new DecisionMemo<CachedDecision>({accept:value=>value.status===200&&value.reusable});decisionCaches.set(env.DB,cache);}
+  return cache;
+}
 export async function handleStillDecision(request: Request, env: WorkerEnv, context: WorkerExecutionContext) {
   if (request.method !== 'POST') return reply({ error: 'method_not_allowed' }, 405);
   const auth = await requireUser(request, env);
@@ -25,15 +33,10 @@ export async function handleStillDecision(request: Request, env: WorkerEnv, cont
   const position: Position = { actionLimit: actionLimit(input.actionLimit), projectId: clean('projectId'), documentId: clean('documentId'), blockId: clean('blockId'), outputId: clean('outputId'), view: clean('view', 40), itemIndex: Number.isSafeInteger(input.itemIndex) ? Math.max(0,Math.min(1000,Number(input.itemIndex))) : 0, intent: clean('intent', 2000), recentActions: Array.isArray(input.recentActions) ? input.recentActions.filter(x => typeof x === 'string').slice(-12).map(x => x.slice(0, 60)) : [] };
   position.palette=cleanPaletteFeedback(input.palette,ACTIONS.map(a=>a.id));
   const palette=!!position.palette&&position.view!=='find-action';
-  const rateKey = auth.user.userId+(palette?':palette':'');
-  const now = Date.now();
-  if ((recentCalls.get(rateKey) ?? 0) > now - 1200) return reply({ error: 'decision_cooldown' }, 429);
-  recentCalls.set(rateKey, now);
-  if (recentCalls.size > 500) for (const [key, at] of recentCalls) if (at < now - 60_000) recentCalls.delete(key);
   // Reuse Forma's exact scope/retention checks. No client-supplied event history or arbitrary account IDs.
   const sessionResponse = await handleSession(new Request(new URL('/api/session', request.url), { headers: request.headers }), env, context);
   if (!sessionResponse.ok) return sessionResponse;
-  const session = await sessionResponse.json() as { user: { role: string }; policy: { accepted: boolean }; provider: Record<string, unknown>; projectContext?: { projectId: string; permissions: string[] } };
+  const session = await sessionResponse.json() as { user: { role: string }; permissionEpoch?:unknown; impersonation?:unknown; policy: { accepted: boolean }; provider: Record<string, unknown>; projectContext?: { projectId: string; permissions: string[] } };
   if (!session.policy.accepted) return reply({ error: 'consent_required' }, 403);
   const scoped = session.projectContext;
   const abilities: Abilities = { author: scoped ? scoped.permissions.includes('project.author') : ['creator', 'agent', 'admin'].includes(session.user.role), generate: scoped ? scoped.permissions.includes('project.output.request') : ['creator', 'agent', 'admin'].includes(session.user.role), projectCreate: !scoped && ['creator', 'admin', 'agent'].includes(session.user.role), formats: [...(session.provider.plannerConfigured ? ['image', 'storyboard'] : []), ...(session.provider.plannerConfigured ? ['short_story', 'scene', 'slides'] : []), ...(session.provider.videoConfigured ? ['video'] : []), ...(session.provider.audioConfigured ? ['audio'] : []), ...(session.provider.model3dConfigured ? ['model3d'] : [])] };
@@ -58,6 +61,21 @@ export async function handleStillDecision(request: Request, env: WorkerEnv, cont
   const questions=questionsFor(built.candidates,position,built.state.selectedWork?.kind);
   const started=Date.now(),deadline=started+10_000;
   const evidence=palette||choosingFormat||finding||!env.JEV_API_KEY||!built.candidates.some(a=>a.id==='use-in')?{destinations:[],details:[],source:null}:connectionEvidence(events,position);
+  // Hash the complete authorized decision input, not a client-provided head or cache key.
+  // Retention, permissions and content reads above always run before a cache lookup.
+  const keyBytes=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(stableDecisionKey({
+    version:1,policy:POLICY_VERSION,model:'jev-latest',user:auth.user.userId,
+    session,abilities,head,state:built.state,questions,evidence,developer:input.developer===true,
+    provider:env.JEV_API_KEY??null,
+  })));
+  const key=Array.from(new Uint8Array(keyBytes),b=>b.toString(16).padStart(2,'0')).join('');
+  let failedPass=false;
+  const compute=async()=>{
+  const rateKey = auth.user.userId+(palette?':palette':'');
+  const now = Date.now();
+  if ((recentCalls.get(rateKey) ?? 0) > now - 1200) return reply({ error: 'decision_cooldown' }, 429);
+  recentCalls.set(rateKey, now);
+  if (recentCalls.size > 500) for (const [key, at] of recentCalls) if (at < now - 60_000) recentCalls.delete(key);
   const compositions=compositionIndex(questions),passes:DecisionPass[]=[];
   let asked=false,exchange:DecisionExchange|undefined,presentation:Record<string,Emphasis>={},adjustments:MenuAdjustment[]=[],recommended:string[]|undefined;
   const metrics=()=>({elapsedMs:Date.now()-started,providerCalls:passes.filter(p=>p.status!=='skipped').length,candidateCount:built.candidates.length,questionsAsked:passes.reduce((n,p)=>n+p.questions.filter(q=>q.asked).length,0),menuGroups:recommended?[...new Set(recommended.map(id=>built.candidates.find(a=>a.id===id)?.group))]:[],recentEscapeHatches:position.recentActions.filter(id=>id==='ui:more'||id==='ui:palette').length,destinationCandidates:evidence.destinations.length});
@@ -82,7 +100,7 @@ export async function handleStillDecision(request: Request, env: WorkerEnv, cont
       answers=Object.fromEntries(Object.keys(askedQuestions).filter(key=>result.answers![key]&&typeof result.answers![key]==='object'&&!Array.isArray(result.answers![key])).map(key=>[key,result.answers![key]]));
       pass.status='answered';return {answers,model:pass.model};
     }catch{pass.reason='unavailable';return {reason:pass.reason};}
-    finally{pass.elapsedMs=Date.now()-at;pass.questions=Object.entries(askedQuestions).map(([id,question])=>({id,question,asked:true,...inspectAnswer(question,answers[id])}));}
+    finally{if(pass.status==='failed')failedPass=true;pass.elapsedMs=Date.now()-at;pass.questions=Object.entries(askedQuestions).map(([id,question])=>({id,question,asked:true,...inspectAnswer(question,answers[id])}));}
   };
   const first=await callPass('assessment',palette?'Palette alternatives':'Creative assessment',{...built.state,compositions,connectionCandidates:evidence.destinations.map(d=>({...d,label:d.label.slice(0,120),project:d.project.slice(0,120),document:d.document.slice(0,120)})),compositionGuidance:'Questions in each composition supply distinct judgments, not independent votes on the same outcome. Missing evidence remains unknown. Code combines eligible results; suggestions never authorize actions.'},questions,palette?1200:6000);
   if(!first.answers)return fallback(first.reason??'unavailable');
@@ -112,4 +130,11 @@ export async function handleStillDecision(request: Request, env: WorkerEnv, cont
   for(const row of Object.values(availablePresentation))Object.assign(row,{variant:'secondary',size:'medium',tier:'peer',reason:'Not in initial menu; evaluated when shown'});
   presentation={...availablePresentation,...presentActions(recommended,answers,choosingFormat?'fit_':'use_')};
   return reply({source:'jev',model:first.model,policy:POLICY_VERSION,head,actions,rankedActions:choosingFormat?[]:evaluateActions(built.candidates,position,answers).ranked.map(a=>({id:a.id})),formats,rankedFormats,presentation,...(target?{targets:{'use-in':target.id}}:{}),candidateIds:built.candidates.map(a=>a.id),stage:questions.stage?inspectAnswer(questions.stage,answers.stage).choice:undefined,questionsEvaluated:passes.reduce((n,p)=>n+p.questions.length,0),...diagnostics('jev',undefined,answers,first.model)});
+  };
+  const cached=await decisionCache(env).run(key,async()=>{
+    const response=await compute(),body=await response.json() as Record<string,unknown>;
+    const trace=body.diagnostics as {passes?:DecisionPass[]}|undefined;
+    return {status:response.status,body,reusable:!failedPass&&body.source==='jev'&&!body.reason&&typeof body.model==='string'&&!(trace?.passes?.some(p=>p.status==='failed'))};
+  },input.cacheBypass===true);
+  return reply({...cached.value.body,cache:{...cached.cache,layer:'server'}},cached.value.status);
 }

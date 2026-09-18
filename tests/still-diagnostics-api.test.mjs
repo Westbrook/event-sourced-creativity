@@ -13,7 +13,7 @@ test('authenticated diagnostic opt-in preserves decisions and writes no creative
     return Response.json({model,secret:'do-not-leak',answers:{fit_image:{type:'score',score:2.5,confidence:invalid?.01:.8,probabilities:{0:0,1:0,2:.5,3:.5},legend:{0:'do-not-leak'}},fit_short_story:{type:'score',score:2,confidence:.1},unknown:{type:'score',score:3,secret:'do-not-leak'}}});
   };
   const input={projectId:f.projectId,documentId:f.documentId,view:'choose-format'};
-  const request=async(extra={})=>{clock+=2000;const r=await f.request('/api/still/decision',f.json({...input,...extra}));assert.equal(r.status,200,await r.clone().text());return r.json();};
+  const request=async(extra={})=>{clock+=2000;const r=await f.request('/api/still/decision',f.json({...input,cacheBypass:true,...extra}));assert.equal(r.status,200,await r.clone().text());return r.json();};
   try{
     const counts=f.counts(),head=(await (await f.request('/api/events?after=0')).json()).head;
     const ordinary=await request();assert.equal(ordinary.diagnostics,undefined);
