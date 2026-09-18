@@ -19,7 +19,7 @@ import type { OutputConfirmedPlan, OutputPreflight } from "../src/model/output-d
 import type { OutputNativeSettings } from "./output-document-execution.ts";
 import type { OutputOperationSlot } from "./output-requirements-ledger.ts";
 import { authoritativeCreativeContext } from "./context-authority.ts";
-import { collectRetainedGuestImageHistory, current, memoryProof, nativeBranches, unsupportedIdentityJson, boundedIdentityValue,
+import { collectRetainedGuestImageHistory, guestImageHistorySessionProof, current, memoryProof, nativeBranches, unsupportedIdentityJson, boundedIdentityValue,
   eventWitness, eventColumns, bodyColumns, flatRow, commandColumns, resourceColumns, type Proof, type Row, type Value } from "./experience-guest-image-history.ts";
 import { collectRetainedGuestImageStageFacts } from "./experience-guest-image-stage-facts.ts";
 import { compileRetainedGuestSponsorEnvelope, type GuestImageAuthorizationV1 } from "./experience-guest-sponsor-contract.ts";
@@ -71,8 +71,40 @@ declare const claimFactsBrand: unique symbol;
 /** Producer provenance for inert source facts only. This is not a lease,
  * inventory, reserved successor or dispatch capability. */
 export type GuestImageResultClaimFacts = Readonly<{ [claimFactsBrand]: true }>;
-type ClaimFactsCapture = Readonly<{ scope: Readonly<Record<string, Value>>; scopeJson: string; resultCopySchemaInstalled: boolean }>;
+const publishedContextColumns = ["session_id", "destination_user_id", "lease_id", "request_id", "manifest_digest", "lineage_json", "lineage_digest", "created_at_ms"] as const;
+const publishedSaveColumns = ["session_id", "destination_user_id", "lease_id", "request_id", "manifest_digest", "context_lineage_digest", "lineage_json", "lineage_digest", "created_at_ms"] as const;
+const publishedStageColumns = ["session_id", "destination_user_id", "lease_id", "request_id", "manifest_digest", "context_lineage_digest", "save_lineage_digest", "lineage_json", "lineage_digest", "created_at_ms"] as const;
+const publishedResultColumns = ["custody_id", "session_id", "destination_user_id", "lease_id", "lease_acquisition", "request_id", "manifest_digest", "native_snapshot_digest", "context_lineage_digest", "save_lineage_digest", "stage_lineage_digest", "claim_event_id", "claim_event_sequence", "original_completion_event_id", "generation_id", "output_id", "copy_attempt_id", "lineage_json", "lineage_digest", "created_at_ms", "canonical_expires_at"] as const;
+const publishedStageCopyColumns = ["session_id", "role", "content_id", "original_digest", "byte_length", "created_at", "expires_at"] as const;
+const publishedResultCopyColumns = ["custody_id", "role", "content_id", "original_content_id", "original_kind", "original_digest", "byte_length", "created_at", "expires_at"] as const;
+const publishedReceiptColumns = ["stream_id", "client_event_id", "event_id", "sequence", "created_at"] as const;
+const publishedLeaseColumns = ["session_id", "lease_id", "destination_user_id", "manifest_digest", "request_id", "request_ids_json", "acquisitions", "created_at_ms", "expires_at_ms"] as const;
+type PublishedGraphRow<C extends readonly string[]> = Readonly<Record<C[number], Value>>;
+/** Full proposed rows, never a claim capability. The genuine claim owner binds
+ * this closed graph to its original ready successor before requesting proofs. */
+export type GuestImageResultPublishedGraph = Readonly<{
+  version: 1; revokedAtMs: number;
+  contextMapping: PublishedGraphRow<typeof publishedContextColumns>;
+  saveMapping: PublishedGraphRow<typeof publishedSaveColumns>;
+  stageMapping: PublishedGraphRow<typeof publishedStageColumns>;
+  resultMapping: PublishedGraphRow<typeof publishedResultColumns>;
+  stageCopies: readonly [PublishedGraphRow<typeof publishedStageCopyColumns>, PublishedGraphRow<typeof publishedStageCopyColumns>, PublishedGraphRow<typeof publishedStageCopyColumns>];
+  resultCopies: readonly [PublishedGraphRow<typeof publishedResultCopyColumns>, PublishedGraphRow<typeof publishedResultCopyColumns>];
+  eventEnvelopes: readonly Readonly<{ event: Readonly<Row>; envelope: Readonly<Row> }>[];
+  eventClientReceipts: readonly PublishedGraphRow<typeof publishedReceiptColumns>[];
+  saveCommand: Readonly<Row>; privateContents: readonly Readonly<Row>[];
+  publishedAttempt: GuestImageResultCopyAttemptRow;
+}>;
+type ClaimFactsCapture = Readonly<{
+  scope: Readonly<Record<string, Value>>; scopeJson: string; resultCopySchemaInstalled: boolean;
+  publicationSchemaInstalled: boolean; closureRows: readonly (readonly [string, string])[];
+}>;
+type PublishedFactsCapture = Readonly<{
+  immutable: readonly Proof[]; session: Readonly<Row>; sourceHead: number;
+  completionEventId: string; generationId: string; outputId: string;
+}>;
 const claimFactsCaptures = new WeakMap<GuestImageResultClaimFacts, ClaimFactsCapture>();
+const publishedFactsCaptures = new WeakMap<GuestImageResultClaimFacts, PublishedFactsCapture>();
 const reservedAttemptColumns = Object.freeze([...GUEST_IMAGE_RESULT_COPY_COLUMNS]);
 const grantColumns = ["grant_id", "campaign_id", "policy_digest", "actor_user_id", "session_digest", "intent_key", "envelope_digest", "issued_at_ms", "expires_at_ms", "enabled"];
 const issuanceColumns = ["grant_id", "campaign_id", "actor_user_id", "intent_key", "policy_digest", "driver_command_json", "command_digest", "envelope_digest", "envelope_json"];
@@ -475,6 +507,194 @@ export function guestImageResultCleanupAttemptProof(facts: GuestImageResultClaim
   return successorAttemptProof(captured);
 }
 
+/** Admission observation only. Optional absent families remain supported for
+ * ordinary inventory, but an atomic publication requires every captured family. */
+export function guestImageResultClaimPublicationAvailable(facts: GuestImageResultClaimFacts): void {
+  const captured = facts && typeof facts === "object" ? claimFactsCaptures.get(facts) : undefined;
+  if (!captured?.publicationSchemaInstalled || !publishedFactsCaptures.has(facts)) return fail("claim_publication_schema_unavailable");
+}
+
+// These are closed native rows, including lineage strings larger than the
+// compiler's ordinary JSON-string bound. Inspect descriptors before property
+// reads, including Array prototypes; this helper neither parses authority nor
+// calls caller-supplied serialization/accessor methods.
+function publishedGraphData(value: unknown): void {
+  const seen = new Set<object>(); let nodes = 0, totalBytes = 0;
+  function visit(item: unknown, depth: number): void {
+    if (++nodes > 32768 || depth > 6) return fail("published_graph_invalid");
+    if (item === null) return;
+    if (typeof item === "string") {
+      const length = bytes(item); totalBytes += length;
+      if (!item.isWellFormed() || item.includes("\0") || length > 262144 || totalBytes > 4194304) return fail("published_graph_invalid");
+      return;
+    }
+    if (typeof item === "number") {
+      if (!Number.isSafeInteger(item) || Object.is(item, -0) || item < 0) return fail("published_graph_invalid");
+      return;
+    }
+    if (!item || typeof item !== "object" || seen.has(item)
+      || Object.getPrototypeOf(item) !== (Array.isArray(item) ? Array.prototype : Object.prototype)) return fail("published_graph_invalid");
+    seen.add(item);
+    const descriptors = Object.getOwnPropertyDescriptors(item), keys = Reflect.ownKeys(descriptors);
+    if (keys.some(key => typeof key !== "string")) return fail("published_graph_invalid");
+    const array = Array.isArray(item), length = array ? descriptors.length?.value : undefined;
+    if (array && (!Number.isSafeInteger(length) || length < 0 || length > 102 || keys.length !== length + 1)) return fail("published_graph_invalid");
+    for (const key of keys as string[]) {
+      if (array && key === "length") continue;
+      const descriptor = descriptors[key]!;
+      if (!descriptor.enumerable || !Object.hasOwn(descriptor, "value") || ["__proto__", "constructor", "prototype"].includes(key)
+        || array && (!/^(0|[1-9]\d*)$/u.test(key) || Number(key) >= length)) return fail("published_graph_invalid");
+      visit(descriptor.value, depth + 1);
+    }
+  }
+  visit(value, 0);
+}
+
+function publishedRow(value: unknown, columns: readonly string[]): Row {
+  if (!record(value) || !exactKeys(value, columns) || !flatRow(value, columns)) return fail("published_graph_row_invalid");
+  return Object.fromEntries(columns.map(column => [column, value[column] as Value]));
+}
+
+/** Fixed producer-owned after-state. This does not acquire a lease, validate a
+ * ready capability, observe bytes, authorize SQL dispatch or recover a claim.
+ * The claim owner must bind every input row to its private candidate first.
+ * Each allowed row is both a full-tuple closure exception and a required fact;
+ * all other aliases, malformed records and NULL-sensitive guards stay intact. */
+export function guestImageResultPublishedGraphProofs(facts: GuestImageResultClaimFacts,
+  input: GuestImageResultPublishedGraph): readonly Proof[] {
+  guestImageResultClaimPublicationAvailable(facts);
+  const captured = claimFactsCaptures.get(facts)!, source = publishedFactsCaptures.get(facts)!;
+  publishedGraphData(input);
+  if (!record(input) || !exactKeys(input, ["version", "revokedAtMs", "contextMapping", "saveMapping", "stageMapping", "resultMapping",
+    "stageCopies", "resultCopies", "eventEnvelopes", "eventClientReceipts", "saveCommand", "privateContents", "publishedAttempt"])
+    || input.version !== 1 || !nonnegative(input.revokedAtMs) || input.revokedAtMs < 1 || input.revokedAtMs > 8_000_000_000_000) return fail("published_graph_invalid");
+  const context = publishedRow(input.contextMapping, publishedContextColumns), save = publishedRow(input.saveMapping, publishedSaveColumns);
+  const stage = publishedRow(input.stageMapping, publishedStageColumns), result = publishedRow(input.resultMapping, publishedResultColumns);
+  const attempt = publishedRow(input.publishedAttempt, reservedAttemptColumns), command = publishedRow(input.saveCommand, commandColumns);
+  if (!Array.isArray(input.stageCopies) || input.stageCopies.length !== 3 || !Array.isArray(input.resultCopies) || input.resultCopies.length !== 2
+    || !Array.isArray(input.privateContents) || input.privateContents.length !== 5
+    || !Array.isArray(input.eventEnvelopes) || input.eventEnvelopes.length !== source.sourceHead + 2
+    || !Array.isArray(input.eventClientReceipts) || input.eventClientReceipts.length !== source.sourceHead) return fail("published_graph_invalid");
+  const stageCopies = input.stageCopies.map(row => publishedRow(row, publishedStageCopyColumns));
+  const resultCopies = input.resultCopies.map(row => publishedRow(row, publishedResultCopyColumns));
+  const contents = input.privateContents.map(row => publishedRow(row, contentColumns));
+  const receipts = input.eventClientReceipts.map(row => publishedRow(row, publishedReceiptColumns));
+  const envelopeColumns = ["private_event_id", ...bodyColumns];
+  const pairs = input.eventEnvelopes.map(pair => {
+    if (!record(pair) || !exactKeys(pair, ["event", "envelope"])) return fail("published_graph_invalid");
+    return { event: publishedRow(pair.event, eventColumns), envelope: publishedRow(pair.envelope, envelopeColumns) };
+  });
+  const t = input.revokedAtMs, at = new Date(t).toISOString(), destination = result.destination_user_id;
+  if (typeof destination !== "string" || !destination || destination.startsWith("guest:") || destination === captured.scope.guest
+    || [context, save, stage, result].some(row => row.session_id !== captured.scope.sessionId || row.destination_user_id !== destination
+      || row.lease_id !== attempt.lease_id || row.request_id !== attempt.request_id || row.manifest_digest !== attempt.manifest_digest || row.created_at_ms !== t)
+    || save.context_lineage_digest !== context.lineage_digest || stage.context_lineage_digest !== context.lineage_digest
+    || stage.save_lineage_digest !== save.lineage_digest || result.context_lineage_digest !== context.lineage_digest
+    || result.save_lineage_digest !== save.lineage_digest || result.stage_lineage_digest !== stage.lineage_digest
+    || result.original_completion_event_id !== source.completionEventId || result.generation_id !== source.generationId || result.output_id !== source.outputId
+    || result.custody_id !== attempt.custody_id || result.copy_attempt_id !== attempt.attempt_id
+    || result.lease_acquisition !== attempt.lease_acquisition || attempt.session_id !== captured.scope.sessionId || attempt.destination_user_id !== destination
+    || attempt.state !== "published" || attempt.put_outcome !== "success" || typeof attempt.row_version !== "number" || attempt.row_version < 1
+    || attempt.published_at_ms !== t || attempt.updated_at_ms !== t || attempt.published_claim_digest !== result.lineage_digest)
+    return fail("published_graph_identity_invalid");
+  const times = [attempt.created_at_ms, attempt.put_started_at_ms, attempt.put_settled_at_ms, attempt.verified_at_ms, t];
+  if (times.some((value, index) => typeof value !== "number" || value < 1 || index > 0 && value < Number(times[index - 1]))
+    || typeof attempt.source_expires_at_ms !== "number" || t >= attempt.source_expires_at_ms) return fail("published_graph_time_invalid");
+  let parsedLease: unknown;
+  try { parsedLease = JSON.parse(String(attempt.lease_snapshot_json)); } catch { return fail("published_graph_lease_invalid"); }
+  publishedGraphData(parsedLease);
+  const lease = publishedRow(parsedLease, publishedLeaseColumns);
+  if (publishedLeaseColumns.slice(0, 5).some(column => lease[column] !== attempt[column]) || lease.acquisitions !== attempt.lease_acquisition
+    || typeof lease.created_at_ms !== "number" || lease.created_at_ms > Number(attempt.created_at_ms)
+    || typeof lease.expires_at_ms !== "number" || t >= lease.expires_at_ms) return fail("published_graph_lease_invalid");
+  const sourceIds = new Set(JSON.parse(String(captured.scope.generated)) as Value[]), eventIds = new Set<Value>(), bodyIds = new Set<Value>();
+  const stream = `creative:${destination}`, firstSequence = pairs[0]!.event.sequence;
+  if (typeof firstSequence !== "number" || firstSequence < 1) return fail("published_graph_event_invalid");
+  for (const [index, pair] of pairs.entries()) {
+    const event = pair.event, envelope = pair.envelope;
+    if (typeof event.event_id !== "string" || !id(event.event_id) || sourceIds.has(event.event_id) || eventIds.has(event.event_id)
+      || event.stream_id !== stream || event.actor !== (index < source.sourceHead ? "user" : `user:${destination}`) || event.sequence !== firstSequence + index
+      || event.schema_version !== 1 || event.occurred_at !== at || event.recorded_at !== at
+      || envelope.private_event_id !== event.event_id || envelope.owner_id !== destination
+      || envelope.project_id !== captured.scope.project || envelope.document_id !== (index === 0 ? null : captured.scope.document)
+      || envelope.created_at !== at || envelope.redacted_at !== null || typeof envelope.private_json !== "string"
+      || typeof event.payload !== "string" || bytes(event.payload) > 65536 || bytes(envelope.private_json) > 131072)
+      return fail("published_graph_event_invalid");
+    eventIds.add(event.event_id);
+    if (index < source.sourceHead) {
+      const receipt = receipts[index]!;
+      if (receipt.stream_id !== stream || receipt.event_id !== event.event_id || receipt.sequence !== event.sequence || receipt.created_at !== at
+        || receipt.client_event_id !== `guest-context-adoption:v1:${captured.scope.sessionId}:${index}`) return fail("published_graph_receipt_invalid");
+    }
+  }
+  const claimEvent = pairs.at(-1)!.event, saveEvent = pairs[source.sourceHead]!.event;
+  if (claimEvent.event_id !== result.claim_event_id || claimEvent.sequence !== result.claim_event_sequence || claimEvent.type !== "GuestImageResultClaimed"
+    || command.scope_key !== `personal:${destination}:${captured.scope.project}` || command.actor_user_id !== destination
+    || command.action !== "save" || command.event_id !== saveEvent.event_id || command.created_at !== at)
+    return fail("published_graph_event_invalid");
+  for (const [index, copy] of [...stageCopies, ...resultCopies].entries()) {
+    const body = contents[index]!, stageCopy = index < 3;
+    if (stageCopy ? copy.session_id !== captured.scope.sessionId || copy.role !== ["confirmation", "quote", "construction"][index]
+      : copy.custody_id !== result.custody_id || copy.role !== ["planner", "prompt"][index - 3]) return fail("published_graph_copy_invalid");
+    if (typeof copy.content_id !== "string" || sourceIds.has(copy.content_id) || bodyIds.has(copy.content_id)
+      || body.content_id !== copy.content_id || body.owner_id !== destination || body.kind !== (stageCopy ? "guest-image-stage-history" : "guest-image-result-history")
+      || body.redacted_at !== null || typeof body.content !== "string" || bytes(body.content) !== copy.byte_length
+      || body.created_at !== copy.created_at || body.expires_at !== copy.expires_at || !iso(copy.created_at) || !iso(copy.expires_at)
+      || Date.parse(copy.created_at) < lease.created_at_ms || copy.created_at > at || copy.expires_at <= at) return fail("published_graph_copy_invalid");
+    bodyIds.add(copy.content_id);
+  }
+  if (!iso(result.canonical_expires_at) || result.canonical_expires_at !== resultCopies.map(row => String(row.expires_at)).sort()[0])
+    return fail("published_graph_time_invalid");
+  const expected: Record<string, { columns: readonly string[]; rows: Row[] }> = {
+    experience_guest_context_adoptions: { columns: publishedContextColumns, rows: [context] },
+    experience_guest_image_claims: { columns: publishedSaveColumns, rows: [save] },
+    experience_guest_image_stage_custodies: { columns: publishedStageColumns, rows: [stage] },
+    experience_guest_image_stage_copies: { columns: publishedStageCopyColumns, rows: stageCopies },
+    experience_guest_image_result_custodies: { columns: publishedResultColumns, rows: [result] },
+    experience_guest_image_result_copies: { columns: publishedResultCopyColumns, rows: resultCopies },
+    events: { columns: eventColumns, rows: pairs.map(pair => pair.event) },
+    event_private_payloads: { columns: envelopeColumns, rows: pairs.map(pair => pair.envelope) },
+    event_client_receipts: { columns: publishedReceiptColumns, rows: receipts },
+    output_commands: { columns: commandColumns, rows: [command] }, private_content: { columns: contentColumns, rows: contents },
+  };
+  const expectedJson = JSON.stringify(Object.fromEntries(Object.entries(expected).map(([table, value]) =>
+    [table, value.rows.map(row => value.columns.map(column => row[column]))])));
+  const exactAllowed = (table: string) => `EXISTS(SELECT 1 FROM expected_graph,json_each(expected_graph.value,'$.${table}') expected_row WHERE json_array(${expected[table]!.columns.map(column => `d.${column}`).join(",")})=expected_row.value)`;
+  const scopeCte = `input(value) AS(VALUES(?)),s AS(SELECT ${Object.keys(captured.scope).map(key => `json_extract(value,'$.${key}') AS ${key}`).join(",")} FROM input),expected_graph(value) AS(VALUES(?))`;
+  const rows = captured.closureRows.map(([table, predicate]) => [table,
+    Object.hasOwn(expected, table) ? `(${predicate}) AND (${exactAllowed(table)}) IS NOT TRUE` : predicate]);
+  const groups = Array.from({ length: Math.ceil(rows.length / 4) }, (_, i) => rows.slice(i * 4, i * 4 + 4));
+  const common: Proof = { sql: `NOT EXISTS(WITH ${scopeCte},
+    ${groups.map((group, index) => `bad${index} AS MATERIALIZED(${group.map(([table, predicate]) => `SELECT 1 FROM ${table} d,s WHERE ${predicate}`).join(" UNION ALL ")} LIMIT 1)`).join(",")}
+    SELECT 1 WHERE ${groups.map((_, index) => `EXISTS(SELECT 1 FROM bad${index})`).join(" OR ")})`, bindings: [captured.scopeJson, expectedJson] };
+  const attemptRelated = `d.session_id=s.sessionId OR (${resultClaimAssociationSql("attempt")})`;
+  const custodyRelated = `d.session_id=s.sessionId OR d.original_completion_event_id IN(SELECT value FROM json_each(s.ids))
+    OR d.claim_event_id IN(SELECT value FROM json_each(s.ids)) OR d.generation_id IN(SELECT value FROM json_each(s.generated))
+    OR d.output_id IN(SELECT value FROM json_each(s.generated)) OR (${resultClaimAssociationSql("custody")})
+    OR d.copy_attempt_id IN(SELECT attempt_id FROM result_related_attempts)`;
+  const family: Proof = { sql: `NOT EXISTS(WITH ${scopeCte},
+    result_related_attempts AS MATERIALIZED(SELECT d.attempt_id,d.custody_id FROM experience_guest_image_result_copy_attempts d,s WHERE ${attemptRelated}),
+    result_related_custodies AS MATERIALIZED(SELECT ${publishedResultColumns.map(column => `d.${column}`).join(",")} FROM experience_guest_image_result_custodies d,s WHERE ${custodyRelated})
+    SELECT 1 FROM result_related_custodies d WHERE (${exactAllowed("experience_guest_image_result_custodies")}) IS NOT TRUE
+    UNION ALL
+    SELECT 1 FROM experience_guest_image_result_copies d,s WHERE
+        (d.original_content_id IN(SELECT value FROM json_each(s.bodyIds)) OR d.content_id IN(SELECT value FROM json_each(s.bodyIds))
+          OR d.custody_id IN(SELECT custody_id FROM result_related_attempts) OR d.custody_id IN(SELECT custody_id FROM result_related_custodies))
+        AND (${exactAllowed("experience_guest_image_result_copies")}) IS NOT TRUE LIMIT 1)`, bindings: [captured.scopeJson, expectedJson] };
+  const positive = Object.entries(expected).flatMap(([table, value]) => value.rows.map(row => exact(table, row)));
+  return freeze([...structuredClone(source.immutable), guestImageHistorySessionProof({ session: { ...source.session } }, { revokedAtMs: t }),
+    exact("experience_guest_claim_leases", lease), successorAttemptProof({ facts: captured, values: reservedAttemptColumns.map(column => attempt[column]!), observed: attempt }),
+    common, family, ...positive,
+    { sql: `(SELECT COUNT(*) FROM experience_guest_image_stage_copies WHERE session_id=?)=3
+      AND (SELECT COUNT(*) FROM experience_guest_image_result_copies WHERE custody_id=?)=2
+      AND (SELECT COALESCE(MAX(sequence),0) FROM events WHERE stream_id=?)=?
+      AND NOT EXISTS(SELECT 1 FROM event_write_stage WHERE event_id IN(SELECT value FROM json_each(?)))
+      AND ${GUEST_DB_NOW}>=? AND ${GUEST_DB_NOW}<? AND ${GUEST_DB_NOW}<?
+      AND NOT EXISTS(SELECT 1 FROM json_each(?) expiration WHERE expiration.value<=strftime('%Y-%m-%dT%H:%M:%fZ','now'))`,
+      bindings: [captured.scope.sessionId!, result.custody_id!, stream, result.claim_event_sequence!, JSON.stringify([...eventIds]),
+        t, attempt.source_expires_at_ms!, lease.expires_at_ms!, JSON.stringify(contents.map(row => row.expires_at))] }]);
+}
+
 function runClosure(r:RunCapture): Readonly<{ common: Proof; familyCommon: Proof; leaseAbsent: Proof; attemptAbsent: Proof; resultCopySchemaInstalled: boolean; claimSourceFacts: GuestImageResultClaimFacts }> {
   const c=r.admission,{frame:f,history:h,facts}=c,blueprint=c.blueprint!,admitted=true;
   const ids = [...h.original.eventIds, ...facts.tails.map(t => t.eventId), blueprint.queue.eventId,blueprint.authorization.eventId,...r.events.map(event=>event.eventId)];
@@ -603,7 +823,11 @@ function runClosure(r:RunCapture): Readonly<{ common: Proof; familyCommon: Proof
   const resultCopySchemaInstalled = c.optionalTables.has("experience_guest_image_result_copy_attempts");
   const capturedScope = freeze(structuredClone(scope));
   const claimSourceFacts = Object.freeze({}) as GuestImageResultClaimFacts;
-  claimFactsCaptures.set(claimSourceFacts, Object.freeze({ scope: capturedScope, scopeJson: JSON.stringify(capturedScope), resultCopySchemaInstalled }));
+  const publicationSchemaInstalled = resultCopySchemaInstalled
+    && ["experience_guest_context_adoptions", "experience_guest_image_claims"].every(table => h.sponsor.tables.has(table))
+    && ["experience_guest_image_stage_custodies", "experience_guest_image_stage_copies", "experience_guest_image_result_custodies", "experience_guest_image_result_copies"].every(table => c.optionalTables.has(table));
+  claimFactsCaptures.set(claimSourceFacts, freeze({ scope: capturedScope, scopeJson: JSON.stringify(capturedScope), resultCopySchemaInstalled,
+    publicationSchemaInstalled, closureRows: rows.map(([table, predicate]) => [table!, predicate!] as [string, string]) }));
   if (!resultCopySchemaInstalled) return freeze({ common, leaseAbsent, resultCopySchemaInstalled, claimSourceFacts,
     familyCommon: { sql: "1", bindings: [] }, attemptAbsent: { sql: "1", bindings: [] } });
   const scopeCte = `input(value) AS(VALUES(?)),s AS(SELECT ${Object.keys(scope).map(k => `json_extract(value,'$.${k}') AS ${k}`).join(",")} FROM input)`;
@@ -841,6 +1065,13 @@ export async function collectGuestImageResultFacts(history:History) {
   const issuerGrantId=`sponsor-issued-${hash}`,issuerResourceId=`sponsor-resource-issue-${hash}`;
   const parts:Proof[]=[...o.parts,...history.currentGuards,history.sponsor.proof,history.memory.proof,
     ...facts.stageParts,...facts.tailProofs,facts.blockCustodyProof,facts.recordedTimeProof];
+  // Producer-owned sections: the ordinary proof below retains its original
+  // ordering. Publication replaces only the two live session observations and
+  // the custody closures; it never inspects or filters arbitrary SQL strings.
+  const originalSectionEnd = parts.length;
+  const publishedSourcePrefix: Proof[] = [...o.associationParts, history.currentPolicyProof,
+    history.sponsor.proof, history.memory.proof, ...facts.stageParts, ...facts.tailProofs,
+    facts.blockCustodyProof, facts.recordedTimeProof];
   // The read helpers need only the captured request/DB check. They do not mint
   // the live admission or Run capability and inspect no provider credentials.
   const c={ctx,history,facts,issuerGrantId,issuerResourceId,life:{wait},optionalTables:new Set<string>(),blueprint:null} as Captured;
@@ -939,8 +1170,13 @@ export async function collectGuestImageResultFacts(history:History) {
     ...observedProofs("output_native_storage_writes",storageColumns,"scope_key=? AND slot_id=?",[s.scopeKey,s.slotId],rows.storage),
     ...observedProofs("private_content",contentColumns,"owner_id=? AND content_id<>?",[actor,o.draftId],rows.content),
     {sql:"(SELECT COUNT(*) FROM events WHERE stream_id=?)=? AND (SELECT COALESCE(MAX(sequence),0) FROM events WHERE stream_id=?)=? AND (SELECT COUNT(*) FROM event_client_receipts WHERE stream_id=?)=?",bindings:[c.frame.streamId,allEvents.length,c.frame.streamId,allEvents.length,c.frame.streamId,facts.sourceHead]},
-    {sql:`?>strftime('%Y-%m-%dT%H:%M:%fZ','now') AND NOT EXISTS(SELECT 1 FROM json_each(?) observed WHERE observed.value>${GUEST_DB_NOW})`,bindings:[expiresAt,JSON.stringify(timestamps)]},closure.common,closure.familyCommon);
-  for(const body of rows.content){const memory=await memoryProof(ctx,String(body.content_id));current(ctx);equal(memory.registries,history.memory.registries);parts.push(memory.proof);}
+    {sql:`?>strftime('%Y-%m-%dT%H:%M:%fZ','now') AND NOT EXISTS(SELECT 1 FROM json_each(?) observed WHERE observed.value>${GUEST_DB_NOW})`,bindings:[expiresAt,JSON.stringify(timestamps)]});
+  const publishedSourceParts: Proof[] = [...publishedSourcePrefix, ...parts.slice(originalSectionEnd)];
+  parts.push(closure.common,closure.familyCommon);
+  for(const body of rows.content){const memory=await memoryProof(ctx,String(body.content_id));current(ctx);equal(memory.registries,history.memory.registries);parts.push(memory.proof);publishedSourceParts.push(memory.proof);}
+  publishedFactsCaptures.set(closure.claimSourceFacts, freeze({ immutable: structuredClone(publishedSourceParts),
+    session: structuredClone(o.session), sourceHead: facts.sourceHead, completionEventId: completion.eventId,
+    generationId: String(completion.payload.generation_id), outputId: String(completion.payload.object_id) }));
   // Raw fact sections carry no authority. Ordinary inventory always receives
   // the full common + no-lease + no-attempt conjunction. Later genuine owners
   // must supply their fixed exact successors, never parse or filter this SQL.

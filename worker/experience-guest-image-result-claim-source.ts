@@ -8,6 +8,9 @@ import { guestImageResultReservedAttemptProof, guestImageResultWritingAttemptPro
 import {
   handoffGuestImageResultInventory, guestImageResultClaimSeedData, guestImageResultClaimSeedBounds,
   assertGuestImageResultClaimSeedLocal, type GuestImageResultInventory, type GuestImageResultClaimSeed,
+  inspectRetainedGuestImageResultReady, takeGuestImageResultRetainedReadySeed,
+  assertGuestImageResultRetainedReadyLocal, assertGuestImageResultRetainedReadyCurrent,
+  type GuestImageResultRetainedReadyOwner, type GuestImageResultRetainedReadyData,
 } from "./experience-guest-image-result-inventory.ts";
 import {
   GUEST_IMAGE_RESULT_COPY_COLUMNS, GUEST_IMAGE_RESULT_COPY_IMMUTABLE_COLUMNS, assertGuestImageResultCopyTransition, readGuestImageResultCopyAttemptRow, validateGuestImageResultCopyDescriptor,
@@ -15,12 +18,22 @@ import {
   type GuestImageResultCopyAttemptRow, type GuestImageResultCopyDescriptor, type GuestImageResultCopyLeaseSnapshot,
 } from "./experience-guest-image-result-copy-contract.ts";
 import { takeGuestImageResultClaimMediaAdmission, retireGuestImageResultClaimMediaAdmission, takeGuestImageResultCopyUse, type GuestImageResultClaimMediaAdmission, type GuestImageResultCopyUse } from "./experience-guest-image-result-media.ts";
-import { takeGuestImageResultPutSettlement, takeGuestImageResultDestinationProof, takeGuestImageResultCleanupProof, type GuestImageResultCleanupProof, type GuestImageResultPutSettlement, type GuestImageResultDestinationProof } from "./experience-guest-image-result-copy-writer.ts";
+import { takeGuestImageResultPutSettlement, takeGuestImageResultDestinationProof, takeGuestImageResultCleanupProof, proveGuestImageResultFinalDestination, verifyRetainedGuestImageResultDestination, type GuestImageResultCleanupProof, type GuestImageResultPutSettlement, type GuestImageResultDestinationProof } from "./experience-guest-image-result-copy-writer.ts";
 import type { Proof } from "./experience-guest-image-history.ts";
 import type { WorkerEnv } from "./runtime.ts";
+import { preparePrivateContent } from "./private-content-storage.ts";
+import { nativeMemoryAnswerExclusion } from "./memory-native-boundary.ts";
+import { nativeStructuredOriginSchemaRead } from "./memory-native-origin-schema.ts";
+import { nativeDocumentJobOriginSchemaRead } from "./memory-document-job-origin-schema.ts";
+import { draftGuestImageResultClaimCandidate, finishGuestImageResultClaimCandidate } from "./experience-guest-image-result-claim.ts";
+import { guestImageResultClaimPublicationAvailable, guestImageResultPublishedGraphProofs, type GuestImageResultPublishedGraph } from "./experience-guest-image-result-facts.ts";
+import { guestImageResultWholeGraphProof } from "./experience-guest-image-result-custody.ts";
+import { readGuestImageResultClaimLineage, type GuestImageResultCompletedCustodyReview } from "./experience-guest-image-result-claim-contract.ts";
+import { insertEventAtHead } from "./event-append.ts";
+import { MAX_OUTPUT_ASSET_BYTES } from "../src/model/output-asset-inspection.ts";
 
-/** Dormant fixed lease/reserve and copy-journal owner. No schema installation,
- * route, lease reacquisition, physical PUT or final custody is provided here. */
+/** Dormant fixed lease/reserve, copy journal and atomic custody owner.
+ * No schema installation, route, lease reacquisition or physical PUT is provided here. */
 const fail = (part = "unavailable"): never => { throw new Error(`guest_image_result_claim_source_${part}`); };
 const own = (value: unknown, key: PropertyKey): unknown => {
   if (!value || typeof value !== "object") return undefined;
@@ -44,7 +57,7 @@ declare const reservedBrand: unique symbol;
 export type GuestImageResultClaimSource = Readonly<{ [sourceBrand]: true }>;
 export type GuestImageResultClaimResource = Readonly<{ [resourceBrand]: true }>;
 export type GuestImageResultReservedSource = Readonly<{ [reservedBrand]: true }>;
-type Phase = "acquiring" | "leased" | "reserving" | "reserved" | "unknown" | "copy" | "ready";
+type Phase = "acquiring" | "leased" | "reserving" | "reserved" | "unknown" | "copy" | "ready" | "claiming" | "claimed";
 type SeedData = ReturnType<typeof guestImageResultClaimSeedData>;
 class Owner {
   readonly request: Request; readonly env: WorkerEnv; readonly database: WorkerEnv["DB"]; readonly bucket: WorkerEnv["MEDIA"];
@@ -147,7 +160,7 @@ async function now(owner: Owner) {
     || value < Date.parse(owner.data.data.manifest.completedAt) || value >= owner.expiresAtMs) return fail("clock_invalid");
   return value;
 }
-function common(owner: Owner, auth: Proof): Proof[] { return [...owner.data.claimSourceProofs.common, auth]; }
+function common(owner: Owner | RetainedOwner, auth: Proof): Proof[] { return [...owner.data.claimSourceProofs.common, auth]; }
 function leasedParts(owner: Owner, auth: Proof): Proof[] {
   if (!owner.lease) return fail("lease_unavailable");
   return [...common(owner, auth), leaseProof(owner.lease), owner.data.claimSourceProofs.attemptAbsent];
@@ -455,14 +468,14 @@ async function copyProve(state: CopyState, lane: WriterLane, parts: readonly Pro
   const result = await copyBatch(state, lane, copyStatements(parts, false));
   if (!proofResults(result, parts.length)) return unavailableCopy();
 }
-function writerRowProof(state: CopyState, row: GuestImageResultCopyAttemptRow): Proof {
+function writerRowProof(state: FinalCopy, row: GuestImageResultCopyAttemptRow): Proof {
   if (row.state === "reserved") return guestImageResultReservedAttemptProof(state.owner.data.claimSourceFacts, row);
   if (row.state === "writing") return guestImageResultWritingAttemptProof(state.owner.data.claimSourceFacts, row);
   if (row.state === "ready") return guestImageResultReadyAttemptProof(state.owner.data.claimSourceFacts, row);
   if (row.state === "cleanup_pending" || row.state === "deleted") return guestImageResultCleanupAttemptProof(state.owner.data.claimSourceFacts, row);
   return unavailableCopy();
 }
-function writerParts(state: CopyState, auth: Proof, row = state.row): Proof[] {
+function writerParts(state: FinalCopy, auth: Proof, row = state.row): Proof[] {
   return [...common(state.owner, auth), leaseProof(state.owner.lease!), writerRowProof(state, row)];
 }
 const mutableCopyColumns = GUEST_IMAGE_RESULT_COPY_COLUMNS.filter(column => !GUEST_IMAGE_RESULT_COPY_IMMUTABLE_COLUMNS.some(immutable => immutable === column));
@@ -482,7 +495,7 @@ async function readCopyRow(state: CopyState, lane: WriterLane, retained = false)
     AND length(CAST(destination_metadata_json AS BLOB))<=16384`, [state.row.attempt_id]), true, retained);
   return readGuestImageResultCopyAttemptRow(raw);
 }
-async function changedRow(state: CopyState, change: Partial<GuestImageResultCopyAttemptRow>, retained = false) {
+async function changedRow(state: FinalCopy, change: Partial<GuestImageResultCopyAttemptRow>, retained = false) {
   const work = async () => {
     const next = await readGuestImageResultCopyAttemptRow({ ...state.row, ...change, row_version: state.row.row_version + 1 });
     await assertGuestImageResultCopyTransition(state.row, next); return next;
@@ -708,4 +721,480 @@ function copyPrincipalEnvironment(state: CopyState): WorkerEnv {
   return new Proxy(state.owner.env, { get(target, key, receiver) {
     state.owner.check(); return key === "DB" ? database : Reflect.get(target, key, receiver);
   } });
+}
+
+
+// Fixed final publication accounting is separate from the spent writer lanes.
+// It never refunds, replaces or extends their original owner/lifetime.
+function finalStatements(parts: readonly Proof[], throwing: boolean): SqlItem[] {
+  if (!parts.length || parts.length > 511) return unavailableCopy();
+  return parts.map(part => spec(`SELECT CASE WHEN (${part.sql}) THEN 1 ELSE ${throwing ? "json_extract('invalid', '$.assertion')" : "0"} END AS current`, part.bindings));
+}
+type ClaimLane = "principal" | "preparation" | "clock" | "head" | "before" | "transaction" | "winner" | "winner-proof";
+type ClaimLaneState = { statements: number; batches: number; spentStatements: number; spentBatches: number; large: boolean };
+class FinalClaimBudget {
+  readonly lanes: Record<ClaimLane, ClaimLaneState>;
+  readonly storage = { head: 0, metadata: 0, metadataBytes: 0 };
+  actualRequestBytes = 0; actualResultBytes = 0; principalCalls = 0;
+  requestReservation = 0; resultReservation = 0; transactionReserved = false;
+  constructor(prefix: number, beforeParts: number) {
+    if (!Number.isSafeInteger(prefix) || prefix < 3 || prefix > 16 || !Number.isSafeInteger(beforeParts) || beforeParts < 1) unavailableCopy();
+    const lane = (statements: number, batches: number, large: boolean): ClaimLaneState => ({ statements, batches, large, spentStatements: 0, spentBatches: 0 });
+    this.lanes = {
+      principal: lane(9, 0, true), preparation: lane(18, 6, true), clock: lane(1, 0, false), head: lane(1, 0, false),
+      before: lane(beforeParts, 1, false), transaction: lane(0, 0, false),
+      winner: lane(prefix + 9, 0, true), "winner-proof": lane(0, 0, false),
+    };
+    for (const entry of Object.values(this.lanes)) this.reserve(entry.statements, entry.batches, entry.large);
+  }
+  private reserve(count: number, batches: number, large: boolean) {
+    this.requestReservation += count * (100_000 + 1_048_576);
+    this.resultReservation += count * (large ? 1_048_576 : 16_384) + batches * 512;
+    if (!Number.isSafeInteger(this.requestReservation) || !Number.isSafeInteger(this.resultReservation)) return unavailableCopy();
+  }
+  reservePublication(before: number, after: number, writes: number) {
+    if (this.transactionReserved || ![before, after, writes].every(n => Number.isSafeInteger(n) && n > 0)) return unavailableCopy();
+    // This is the actual constructor size, not an assumed cost per recipe.
+    const transaction = before + writes + after;
+    if (transaction > 511 || after > 511) return fail("claim_native_batch_bound");
+    this.transactionReserved = true;
+    Object.assign(this.lanes.transaction, { statements: transaction, batches: 1 });
+    Object.assign(this.lanes["winner-proof"], { statements: after, batches: 1 });
+    this.reserve(transaction, 1, false); this.reserve(after, 1, false);
+  }
+  admit(name: ClaimLane, items: readonly SqlItem[], batch: boolean) {
+    const lane = this.lanes[name];
+    if (!items.length || items.length > 511 || lane.spentStatements + items.length > lane.statements
+      || batch && lane.spentBatches + 1 > lane.batches || !batch && items.length !== 1) return unavailableCopy();
+    let measured = 0;
+    for (const item of items) {
+      const sql = encode.encode(item.sql).byteLength;
+      if (sql > 100_000 || item.bindings.length > 100) return unavailableCopy();
+      measured += sql + envelopeBytes([...item.bindings], 1_048_576);
+    }
+    if (this.actualRequestBytes + measured > this.requestReservation) return unavailableCopy();
+    lane.spentStatements += items.length; if (batch) lane.spentBatches++; this.actualRequestBytes += measured;
+  }
+  transactionResult(value: unknown) {
+    // A bounded malformed ACK is uncertainty, not proof of rollback. Measure
+    // its complete own data (including holes/extras) before the fixed readback.
+    // Accessors, cycles or oversized envelopes still end the original owner.
+    let measured: number;
+    if (Array.isArray(value) && Object.getPrototypeOf(value) === Array.prototype) {
+      const descriptors = Object.getOwnPropertyDescriptors(value), keys = Reflect.ownKeys(descriptors);
+      if (value.length > 511 || keys.length > 512 || keys.some(key => typeof key !== "string")) return unavailableCopy();
+      measured = 2 + Math.max(0, value.length - 1);
+      for (let index = 0; index < value.length; index++) {
+        const field = descriptors[String(index)];
+        if (!field) { measured += 13; continue; }
+        if (!field.enumerable || !Object.hasOwn(field, "value")) return unavailableCopy();
+        measured += envelopeBytes(field.value, 16_384);
+      }
+      for (const key of keys as string[]) {
+        if (key === "length" || /^(0|[1-9]\d*)$/u.test(key) && Number(key) < value.length) continue;
+        const field = descriptors[key]!;
+        if (!field.enumerable || !Object.hasOwn(field, "value")) return unavailableCopy();
+        measured += encode.encode(JSON.stringify(key)).byteLength + 1 + envelopeBytes(field.value, 16_384);
+      }
+    } else measured = envelopeBytes(value, 16_384);
+    if (measured > this.lanes.transaction.statements * 16_384 + 512
+      || this.actualResultBytes + measured > this.resultReservation) return unavailableCopy();
+    this.actualResultBytes += measured;
+  }
+  result(name: ClaimLane, value: unknown, count: number, batch: boolean) {
+    const maximum = this.lanes[name].large ? 1_048_576 : 16_384;
+    let measured = 0;
+    if (batch) {
+      if (!Array.isArray(value) || Object.getPrototypeOf(value) !== Array.prototype || value.length !== count
+        || Reflect.ownKeys(Object.getOwnPropertyDescriptors(value)).length !== count + 1) return unavailableCopy();
+      measured = count + 1;
+      for (let i = 0; i < count; i++) {
+        const d = Object.getOwnPropertyDescriptor(value, String(i));
+        if (!d || !d.enumerable || !Object.hasOwn(d, "value")) return unavailableCopy();
+        measured += envelopeBytes(d.value, maximum);
+      }
+    } else measured = envelopeBytes(value, maximum);
+    if (this.actualResultBytes + measured > this.resultReservation) return unavailableCopy();
+    this.actualResultBytes += measured;
+  }
+}
+/** A fresh request can qualify an already-ready, unpublished immutable attempt.
+ * This is a distinct owner: no original seed, upload, reservation, dispatch,
+ * settlement or spent writer budget is invented or inherited. */
+class RetainedOwner {
+  readonly request: Request; readonly env: WorkerEnv; readonly database: WorkerEnv["DB"]; readonly bucket: WorkerEnv["MEDIA"];
+  readonly signal: AbortSignal; readonly deadline: number; readonly expiresAtMs: number;
+  readonly inventoryOwner: GuestImageResultRetainedReadyOwner; readonly data: GuestImageResultRetainedReadyData;
+  readonly destinationUserId: string; readonly lease: GuestImageResultCopyLeaseSnapshot;
+  stopped = false; phase: "retained-reading" | "claiming" | "claimed" = "retained-reading";
+  constructor(request: Request, env: WorkerEnv, captured: ReturnType<typeof takeGuestImageResultRetainedReadySeed>) {
+    this.request = request; this.env = env; this.database = env.DB; this.bucket = env.MEDIA; this.signal = request.signal;
+    this.inventoryOwner = captured.owner; this.data = captured.data; this.deadline = captured.bounds.monotonicDeadline;
+    this.expiresAtMs = captured.bounds.expiresAtMs; this.destinationUserId = this.data.destinationUserId; this.lease = this.data.lease;
+    this.check();
+  }
+  check() {
+    try {
+      if (this.stopped || this.request.signal !== this.signal || this.signal.aborted || this.env.DB !== this.database
+        || this.env.MEDIA !== this.bucket || performance.now() >= this.deadline || Date.now() >= this.expiresAtMs) return fail("retained_lifetime_ended");
+      assertGuestImageResultRetainedReadyLocal(this.request, this.env, this.inventoryOwner);
+    } catch (error) { this.stopped = true; throw error; }
+  }
+  async wait<T>(work: () => Promise<T>): Promise<T> {
+    this.check(); let timer: ReturnType<typeof setTimeout> | undefined, stop: (() => void) | undefined;
+    const ended = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new Error("guest_image_result_retained_deadline")),
+        Math.max(1, Math.min(this.deadline - performance.now(), this.expiresAtMs - Date.now())));
+      stop = () => reject(new Error("guest_image_result_retained_aborted"));
+      this.signal.addEventListener("abort", stop, { once: true }); if (this.signal.aborted) stop();
+    });
+    const pending = Promise.resolve().then(() => { this.check(); return work(); });
+    try { const value = await Promise.race([pending, ended]); this.check(); return value; }
+    catch (error) { this.stopped = true; throw error; }
+    finally { clearTimeout(timer); if (stop) this.signal.removeEventListener("abort", stop); void pending.catch(() => undefined); }
+  }
+}
+declare const retainedDestinationBrand: unique symbol;
+export type GuestImageResultRetainedDestinationOwner = Readonly<{ [retainedDestinationBrand]: true }>;
+export type GuestImageResultFinalClaimOwner = GuestImageResultCopyOwner | GuestImageResultRetainedDestinationOwner;
+type RetainedCharge = "get" | "head" | "stream" | "bytes" | "scratch" | "metadata" | "metadataBytes" | "inspect";
+type RetainedCopy = { owner: RetainedOwner; token: GuestImageResultRetainedDestinationOwner; row: GuestImageResultCopyAttemptRow;
+  descriptor: GuestImageResultCopyDescriptor; storage: Map<RetainedCharge, number>; sourceProofs: number };
+type FinalCopy = CopyState | RetainedCopy;
+const retainedDestinations = new WeakMap<GuestImageResultRetainedDestinationOwner, RetainedCopy>();
+function retainedDestination(request: Request, env: WorkerEnv, token: GuestImageResultRetainedDestinationOwner): RetainedCopy {
+  const state = token && typeof token === "object" ? retainedDestinations.get(token) : undefined;
+  if (!state || state.owner.request !== request || state.owner.env !== env) return unavailableCopy();
+  state.owner.check(); if (state.owner.phase !== "retained-reading" || state.row.state !== "ready") return unavailableCopy(); return state;
+}
+export function guestImageResultRetainedDestinationPlan(request: Request, env: WorkerEnv, token: GuestImageResultRetainedDestinationOwner) {
+  const state = retainedDestination(request, env, token);
+  return freeze({ descriptor: state.descriptor, byteLength: state.row.byte_length,
+    monotonicDeadline: state.owner.deadline, expiresAtMs: state.owner.expiresAtMs });
+}
+export function assertGuestImageResultRetainedDestinationCurrent(request: Request, env: WorkerEnv, token: GuestImageResultRetainedDestinationOwner): void {
+  retainedDestination(request, env, token);
+}
+export async function assertGuestImageResultRetainedDestinationSourceCurrent(request: Request, env: WorkerEnv, token: GuestImageResultRetainedDestinationOwner): Promise<void> {
+  const state = retainedDestination(request, env, token);
+  if (++state.sourceProofs > 2) return unavailableCopy();
+  await state.owner.wait(() => assertGuestImageResultRetainedReadyCurrent(request, env, state.owner.inventoryOwner));
+  retainedDestination(request, env, token);
+}
+/** Separate fixed read-only storage reservation. Every native stream read,
+ * detached body and PNG scratch allocation is charged; nothing refunds an old
+ * writer lane. Its only capability is the exact recorded destination read. */
+export function chargeGuestImageResultRetainedDestination(request: Request, env: WorkerEnv, token: GuestImageResultRetainedDestinationOwner,
+  kind: RetainedCharge, count = 1): void {
+  const state = retainedDestination(request, env, token), bytes = state.row.byte_length;
+  const limits: Record<RetainedCharge, number> = { get: 1, head: 1, stream: 65_536, bytes,
+    scratch: 2 * bytes + 2 * 32 * 1024 * 1024, metadata: 2, metadataBytes: 65_536, inspect: 1 };
+  const next = (state.storage.get(kind) ?? 0) + count;
+  if (!Number.isSafeInteger(bytes) || bytes < 1 || bytes > MAX_OUTPUT_ASSET_BYTES || !Number.isSafeInteger(count)
+    || count < 0 || !Number.isSafeInteger(next) || !Object.hasOwn(limits, kind) || next > limits[kind]) return unavailableCopy();
+  state.storage.set(kind, next);
+}
+
+type FinalClaimState = { copy: FinalCopy; budget: FinalClaimBudget; retention: WorkerEnv["FORMA_RETENTION_DAYS"];
+  sourceEnv: WorkerEnv; prepared: WeakMap<D1PreparedStatement, SqlItem>; claimed: boolean };
+const finalClaims = new WeakMap<GuestImageResultFinalClaimOwner, FinalClaimState>();
+function finalState(request: Request, env: WorkerEnv, token: GuestImageResultFinalClaimOwner): FinalClaimState {
+  const state = finalClaims.get(token);
+  if (!state || state.copy.owner.request !== request || state.copy.owner.env !== env) return unavailableCopy();
+  state.copy.owner.check();
+  if (state.copy.owner.phase !== "claiming" || state.claimed || env.FORMA_RETENTION_DAYS !== state.retention) return unavailableCopy();
+  return state;
+}
+export function assertGuestImageResultFinalClaimCurrent(request: Request, env: WorkerEnv, token: GuestImageResultFinalClaimOwner): void {
+  finalState(request, env, token);
+}
+export function chargeGuestImageResultFinalClaimDestination(request: Request, env: WorkerEnv, token: GuestImageResultFinalClaimOwner,
+  kind: "head" | "metadata" | "metadataBytes", count = 0): void {
+  const state = finalState(request, env, token), maximum = kind === "metadataBytes" ? 32_768 : 1;
+  const addition = kind === "metadataBytes" ? count : 1;
+  if (!Number.isSafeInteger(addition) || addition < 0 || state.budget.storage[kind] + addition > maximum) return unavailableCopy();
+  state.budget.storage[kind] += addition;
+}
+async function finalRead(state: FinalClaimState, name: ClaimLane, item: SqlItem): Promise<unknown> {
+  const { owner } = state.copy; finalState(owner.request, owner.env, state.copy.token);
+  state.budget.admit(name, [item], false);
+  return owner.wait(async () => {
+    const result: unknown = await owner.database.prepare(item.sql).bind(...item.bindings).first();
+    state.budget.result(name, result, 1, false); return result;
+  });
+}
+async function finalBatch(state: FinalClaimState, name: ClaimLane, items: readonly SqlItem[]): Promise<unknown> {
+  const { owner } = state.copy; finalState(owner.request, owner.env, state.copy.token);
+  state.budget.admit(name, items, true);
+  return owner.wait(async () => {
+    const result: unknown = await owner.database.batch(items.map(item => owner.database.prepare(item.sql).bind(...item.bindings)));
+    state.budget.result(name, result, items.length, true); return result;
+  });
+}
+function finalPrincipalEnvironment(state: FinalClaimState): WorkerEnv {
+  const { owner } = state.copy;
+  if (++state.budget.principalCalls > 3) return unavailableCopy();
+  const statement = (sql: string, bindings: readonly unknown[] = []): D1PreparedStatement => new Proxy({} as D1PreparedStatement, { get(_target, key) {
+    finalState(owner.request, owner.env, state.copy.token);
+    if (key === "bind") return (...values: unknown[]) => {
+      if (values.length !== copyPrincipalForms.get(sql)) return unavailableCopy(); return statement(sql, values);
+    };
+    if (key === "first") return (...args: unknown[]) => {
+      if (args.length || bindings.length !== copyPrincipalForms.get(sql)) return unavailableCopy(); return finalRead(state, "principal", spec(sql, bindings));
+    };
+    return unavailableCopy();
+  } });
+  const database = new Proxy(owner.database, { get(_target, key) {
+    finalState(owner.request, owner.env, state.copy.token);
+    if (key !== "prepare") return unavailableCopy();
+    return (sql: string) => { if (!copyPrincipalForms.has(sql)) return unavailableCopy(); return statement(sql); };
+  } });
+  return new Proxy(owner.env, { get(target, key, receiver) {
+    finalState(owner.request, owner.env, state.copy.token); return key === "DB" ? database : Reflect.get(target, key, receiver);
+  } });
+}
+async function finalAuthority(state: FinalClaimState): Promise<Proof> {
+  const { owner } = state.copy;
+  const auth = await owner.wait(() => readExistingPrincipalRequest(owner.request, finalPrincipalEnvironment(state), "creator", { account: "principal" }));
+  if ("kind" in auth || auth.response || !auth.user || requireConsent(auth.user) || auth.user.fictional || auth.user.projectExecution
+    || auth.user.userId !== owner.destinationUserId || !auth.user.access.capabilities.includes("project.author")
+    || (owner.request.headers.get("cookie") ?? "").split(";").some(part => ["forma_project_context", "forma_impersonation"].includes(part.split("=", 1)[0]!.trim()))) return unavailableCopy();
+  const m = state.copy.descriptor.manifest;
+  const proof = projectIntakeAuthority(owner.env, { user: auth.user, principal: auth.user, impersonation: null }, { projectId: m.projectId, documentId: m.documentId });
+  return freeze({ sql: proof.sql, bindings: [...proof.bindings] });
+}
+
+/** This private adapter is available only to the fixed native body preparer.
+ * It permits the exact three Memory schema reads and captures prepared native
+ * insert statements; captured writes are never executable through the adapter. */
+function finalPreparationEnvironment(state: FinalClaimState): WorkerEnv {
+  const { owner } = state.copy;
+  const statements = new WeakMap<D1PreparedStatement, SqlItem>();
+  const readForms = new Set<string>();
+  const collect = new Proxy(owner.database, { get(_target, key) {
+    if (key !== "prepare") return unavailableCopy();
+    return (sql: string) => { readForms.add(sql); return owner.database.prepare(sql); };
+  } });
+  nativeStructuredOriginSchemaRead(collect); nativeDocumentJobOriginSchemaRead(collect);
+  readForms.add("SELECT EXISTS(SELECT 1 FROM sqlite_schema WHERE type='table' AND name='memory_native_answer_origins') AS origins,EXISTS(SELECT 1 FROM sqlite_schema WHERE type='table' AND name='assistant_turns') AS turns");
+  const statement = (sql: string, bindings: readonly unknown[] = []): D1PreparedStatement => {
+    if (encode.encode(sql).byteLength > 100_000 || bindings.length > 100) return unavailableCopy();
+    envelopeBytes([...bindings], 1_048_576);
+    const token = new Proxy({} as D1PreparedStatement, { get(_target, key) {
+      finalState(owner.request, owner.env, state.copy.token);
+      if (key === "bind") return (...values: unknown[]) => statement(sql, values);
+      return unavailableCopy();
+    } });
+    const item = spec(sql, bindings); statements.set(token, item); state.prepared.set(token, item); return token;
+  };
+  const database = new Proxy(owner.database, { get(_target, key) {
+    finalState(owner.request, owner.env, state.copy.token);
+    if (key === "prepare") return (sql: string) => statement(sql);
+    if (key === "batch") return async (prepared: D1PreparedStatement[]) => {
+      if (!Array.isArray(prepared) || prepared.length !== 3) return unavailableCopy();
+      const items = prepared.map(token => statements.get(token));
+      if (items.some(item => !item || !readForms.has(item.sql) || item.bindings.length)
+        || new Set(items.map(item => item!.sql)).size !== 3) return unavailableCopy();
+      return finalBatch(state, "preparation", items as SqlItem[]);
+    };
+    return unavailableCopy();
+  } });
+  return new Proxy(owner.env, { get(target, key, receiver) {
+    finalState(owner.request, owner.env, state.copy.token); return key === "DB" ? database : Reflect.get(target, key, receiver);
+  } });
+}
+
+const claimColumns = {
+  context: ["session_id", "destination_user_id", "lease_id", "request_id", "manifest_digest", "lineage_json", "lineage_digest", "created_at_ms"],
+  save: ["session_id", "destination_user_id", "lease_id", "request_id", "manifest_digest", "context_lineage_digest", "lineage_json", "lineage_digest", "created_at_ms"],
+  stage: ["session_id", "destination_user_id", "lease_id", "request_id", "manifest_digest", "context_lineage_digest", "save_lineage_digest", "lineage_json", "lineage_digest", "created_at_ms"],
+  result: ["custody_id", "session_id", "destination_user_id", "lease_id", "lease_acquisition", "request_id", "manifest_digest", "native_snapshot_digest", "context_lineage_digest", "save_lineage_digest", "stage_lineage_digest", "claim_event_id", "claim_event_sequence", "original_completion_event_id", "generation_id", "output_id", "copy_attempt_id", "lineage_json", "lineage_digest", "created_at_ms", "canonical_expires_at"],
+  stageCopy: ["session_id", "role", "content_id", "original_digest", "byte_length", "created_at", "expires_at"],
+  resultCopy: ["custody_id", "role", "content_id", "original_content_id", "original_kind", "original_digest", "byte_length", "created_at", "expires_at"],
+  receipt: ["stream_id", "client_event_id", "event_id", "sequence", "created_at"],
+  command: ["scope_key", "actor_user_id", "command_key", "request_digest", "action", "event_id", "created_at"],
+} as const;
+function claimInsert(table: string, columns: readonly string[], row: Readonly<Record<string, unknown>>): SqlItem {
+  // All callers below select literal table/column pairs, never a caller selector.
+  if (!exactKeys(row, [...columns])) return unavailableCopy();
+  return spec(`INSERT INTO ${table}(${columns.join(",")}) VALUES(${columns.map(() => "?").join(",")})`, columns.map(column => row[column]));
+}
+function finalNativeItem(state: FinalClaimState, statement: D1PreparedStatement): SqlItem {
+  const item = state.prepared.get(statement); if (!item) return unavailableCopy(); return item;
+}
+function finalExtraProofs(state: FinalClaimState, graph: GuestImageResultPublishedGraph, exclusion: Proof): Proof[] {
+  const { owner } = state.copy, ids = JSON.stringify(graph.eventEnvelopes.map(value => value.event.event_id));
+  const bodyIds = JSON.stringify(graph.privateContents.map(value => value.content_id));
+  const result: Proof[] = [{ sql: `NOT EXISTS(SELECT 1 FROM private_content content WHERE content.content_id IN(SELECT value FROM json_each(?)) AND NOT (${exclusion.sql}))`,
+    bindings: [bodyIds, ...exclusion.bindings] }];
+  for (const table of owner.data.source.history.memory.registries) {
+    if (!["memory_native_answer_origins", "memory_structured_answer_origins", "memory_document_job_answer_origins"].includes(table)) return unavailableCopy();
+    result.push({ sql: `NOT EXISTS(SELECT 1 FROM ${table} WHERE user_event_id IN(SELECT value FROM json_each(?)) OR answer_event_id IN(SELECT value FROM json_each(?)))`, bindings: [ids, ids] });
+  }
+  return result;
+}
+function claimCollision(state: FinalClaimState, draft: Awaited<ReturnType<typeof draftGuestImageResultClaimCandidate>>): Proof {
+  const source = state.copy.owner.data.source, plan = source.history.original.plan;
+  if (!plan) return unavailableCopy();
+  const ids = JSON.stringify([...new Set([...plan.events.flatMap(event => [event.payload.project_id, event.payload.document_id, event.payload.block_id]
+    .filter(value => typeof value === "string")), source.history.saved.requirementId])]);
+  return { sql: `NOT EXISTS(SELECT 1 FROM events prior,json_tree(prior.payload) item WHERE prior.stream_id=? AND prior.sequence<=?
+    AND item.type='text' AND item.value IN(SELECT value FROM json_each(?)))`, bindings: [`creative:${state.copy.row.destination_user_id}`, draft.destinationHead, ids] };
+}
+async function claimWinner(state: FinalClaimState, exclusion: Proof): Promise<{ review: GuestImageResultCompletedCustodyReview; replayed: boolean }> {
+  const { owner, descriptor } = state.copy;
+  const raw = await finalRead(state, "winner", spec(`SELECT ${claimColumns.result.join(",")} FROM experience_guest_image_result_custodies
+    WHERE custody_id=? AND length(CAST(lineage_json AS BLOB))<=262144`, [descriptor.custodyId]));
+  if (!record(raw) || !exactKeys(raw, [...claimColumns.result]) || typeof raw.lineage_json !== "string") return unavailableCopy();
+  const lineage = await owner.wait(() => readGuestImageResultClaimLineage(JSON.parse(raw.lineage_json as string)));
+  if (canonicalJson(lineage.copy) !== canonicalJson(descriptor) || raw.lineage_digest !== await owner.wait(() => digest(lineage))) return unavailableCopy();
+  const actual = await finalRead(state, "winner", spec(`SELECT ${GUEST_IMAGE_RESULT_COPY_COLUMNS.join(",")} FROM experience_guest_image_result_copy_attempts
+    WHERE attempt_id=? AND length(CAST(descriptor_json AS BLOB))<=65536 AND length(CAST(lease_snapshot_json AS BLOB))<=32768
+    AND length(CAST(destination_metadata_json AS BLOB))<=16384`, [descriptor.attemptId]));
+  const publishedAttempt = await owner.wait(() => readGuestImageResultCopyAttemptRow(actual));
+  await owner.wait(() => assertGuestImageResultCopyTransition(state.copy.row, publishedAttempt));
+  const eventIds = [...lineage.contextLineage.events.map(event => event.id), lineage.saveLineage.target.id, lineage.canonical.eventId];
+  const bodies: string[] = [];
+  for (const id of eventIds) {
+    const row = await finalRead(state, "winner", spec(`SELECT private_json FROM event_private_payloads WHERE private_event_id=? AND owner_id=?
+      AND redacted_at IS NULL AND length(CAST(private_json AS BLOB))<=131072`, [id, descriptor.destinationUserId]));
+    if (!record(row) || !exactKeys(row, ["private_json"]) || typeof row.private_json !== "string") return unavailableCopy(); bodies.push(row.private_json);
+  }
+  const copied: string[] = [];
+  for (const entry of [...lineage.stageCopies, ...lineage.resultCopies]) {
+    const row = await finalRead(state, "winner", spec(`SELECT content FROM private_content WHERE content_id=? AND owner_id=? AND redacted_at IS NULL
+      AND expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now') AND length(CAST(content AS BLOB))<=131072`, [entry.content_id, descriptor.destinationUserId]));
+    if (!record(row) || !exactKeys(row, ["content"]) || typeof row.content !== "string") return unavailableCopy(); copied.push(row.content);
+  }
+  const witness = await owner.wait(() => guestImageResultWholeGraphProof({ lineage, publishedAttempt, prefixBodies: bodies.slice(0, -2),
+    saveBody: bodies[bodies.length - 2]!, claimBody: bodies[bodies.length - 1]!, stageBodies: copied.slice(0, 3), resultBodies: copied.slice(3) }));
+  const auth = await finalAuthority(state), after = [...guestImageResultPublishedGraphProofs(owner.data.claimSourceFacts, witness.afterGraph), auth,
+    ...witness.currentParts, ...finalExtraProofs(state, witness.afterGraph, exclusion)];
+  const checked = await finalBatch(state, "winner-proof", finalStatements(after, false));
+  if (!proofResults(checked, after.length)) return unavailableCopy();
+  owner.check(); state.claimed = true; owner.phase = "claimed";
+  return { review: witness.completedReview, replayed: false };
+}
+
+/** Dormant fixed final consumer. The actual writer's one ready token is consumed
+ * before any await. No caller-supplied proof, body, SQL, destination or deadline
+ * can substitute for its original owner. There is exactly one candidate batch
+ * and one bounded complete winner readback; no PUT or mutation retry is possible. */
+export async function claimGuestImageResult(request: Request, env: WorkerEnv, ready: GuestImageResultReadySource): Promise<Readonly<{
+  status: "claimed"; completedReview: GuestImageResultCompletedCustodyReview; replayed: boolean; custodyTransferred: true; publicReadAvailable: false;
+}>> {
+  const copy = readyState(request, env, ready);
+  readySources.delete(ready);
+  return publishGuestImageResultClaim(request, env, copy);
+}
+
+/** Fresh authenticated retry reads the exact retained ready attempt and its
+ * destination PNG. An old ready token/review, expired lease or already-published
+ * graph is not admitted. No upload, new lease or mutation retry is available. */
+export async function retryGuestImageResultClaim(request: Request, env: WorkerEnv,
+  input: Parameters<typeof inspectRetainedGuestImageResultReady>[2]): ReturnType<typeof claimGuestImageResult> {
+  const seed = await inspectRetainedGuestImageResultReady(request, env, input);
+  const owner = new RetainedOwner(request, env, takeGuestImageResultRetainedReadySeed(request, env, seed));
+  const token = Object.freeze({}) as GuestImageResultRetainedDestinationOwner;
+  const copy: RetainedCopy = { owner, token, row: owner.data.row, descriptor: owner.data.descriptor, storage: new Map(), sourceProofs: 0 };
+  retainedDestinations.set(token, copy);
+  try {
+    await owner.wait(() => verifyRetainedGuestImageResultDestination(request, env, token));
+    if (copy.sourceProofs !== 2 || copy.storage.get("get") !== 1 || copy.storage.get("head") !== 1
+      || copy.storage.get("bytes") !== copy.row.byte_length || copy.storage.get("scratch") !== 2 * copy.row.byte_length + 2 * 32 * 1024 * 1024
+      || copy.storage.get("inspect") !== 1 || copy.storage.get("metadata") !== 2) return unavailableCopy();
+    retainedDestinations.delete(token);
+    return await publishGuestImageResultClaim(request, env, copy);
+  } catch (error) { retainedDestinations.delete(token); owner.stopped = true; throw error; }
+}
+
+async function publishGuestImageResultClaim(request: Request, env: WorkerEnv, copy: FinalCopy): ReturnType<typeof claimGuestImageResult> {
+  const { owner } = copy; owner.check(); owner.phase = "claiming";
+  const state: FinalClaimState = { copy, budget: new FinalClaimBudget(copy.descriptor.manifest.sourceHead, owner.data.claimSourceProofs.common.length + 3),
+    retention: env.FORMA_RETENTION_DAYS, sourceEnv: env, prepared: new WeakMap(), claimed: false };
+  finalClaims.set(copy.token, state); state.sourceEnv = finalPreparationEnvironment(state);
+  try {
+    guestImageResultClaimPublicationAvailable(owner.data.claimSourceFacts);
+    const auth = await finalAuthority(state), initial = writerParts(copy, auth);
+    const live = await finalBatch(state, "before", finalStatements(initial, false));
+    if (!proofResults(live, initial.length)) return unavailableCopy();
+    const headRow = await finalRead(state, "head", spec("SELECT COALESCE(MAX(sequence),0) AS head FROM events WHERE stream_id=?", [`creative:${copy.row.destination_user_id}`]));
+    const head = own(headRow, "head");
+    if (typeof head !== "number" || !Number.isSafeInteger(head) || head < 0) return unavailableCopy();
+    const draft = await owner.wait(() => draftGuestImageResultClaimCandidate({ source: owner.data.source, descriptor: copy.descriptor, destinationHead: head }));
+    const storageGuard: Proof = { sql: `(${auth.sql}) AND (${leaseProof(owner.lease!).sql}) AND (${exactCopyRow(copy.row).sql})`,
+      bindings: [...auth.bindings, ...leaseProof(owner.lease!).bindings, ...exactCopyRow(copy.row).bindings] };
+    const preparations: Awaited<ReturnType<typeof preparePrivateContent>>[] = [];
+    for (const body of draft.bodies) {
+      const prepared = await owner.wait(() => preparePrivateContent(state.sourceEnv, copy.row.destination_user_id, body.kind, body.content,
+        undefined, undefined, storageGuard, { contentId: body.contentId }));
+      if (prepared.requiredInserts !== 1 || prepared.contentId !== body.contentId || !Array.isArray(prepared.statements) || !prepared.statements.length) return unavailableCopy();
+      preparations.push(prepared);
+    }
+    const exclusion = await owner.wait(() => nativeMemoryAnswerExclusion(state.sourceEnv, { answerAlias: "content" }));
+    const clockRow = await finalRead(state, "clock", spec(`SELECT ${GUEST_DB_NOW} AS now`)), observedClock = own(clockRow, "now");
+    if (typeof observedClock !== "number" || !Number.isSafeInteger(observedClock) || observedClock < copy.row.updated_at_ms || observedClock >= owner.expiresAtMs) return unavailableCopy();
+    const receiptCreatedTimes = preparations.map(value => Date.parse(value.createdAt));
+    if (receiptCreatedTimes.length !== 5 || receiptCreatedTimes.some((createdAt, index) => !Number.isSafeInteger(createdAt)
+      || new Date(createdAt).toISOString() !== preparations[index]!.createdAt || createdAt > observedClock + 1)) return unavailableCopy();
+    // Native receipts stay unchanged; the final atomic DB clock must still reach this common claim time.
+    const clock = Math.max(observedClock, ...receiptCreatedTimes);
+    if (clock >= owner.expiresAtMs) return unavailableCopy();
+    const candidate = await owner.wait(() => finishGuestImageResultClaimCandidate(draft, preparations.map(value => ({ contentId: value.contentId,
+      createdAt: value.createdAt, expiresAt: value.expiresAt })), clock));
+    const publishedAttempt = await changedRow(copy, { state: "published", updated_at_ms: clock, published_at_ms: clock, published_claim_digest: candidate.lineageDigest });
+    const graph: GuestImageResultPublishedGraph = { ...candidate.afterGraph, publishedAttempt };
+    const canonical = await owner.wait(() => guestImageResultWholeGraphProof({ lineage: candidate.lineage, publishedAttempt,
+      prefixBodies: candidate.prefixBodies, saveBody: candidate.saveBody, claimBody: candidate.claimBody,
+      stageBodies: candidate.stageBodies, resultBodies: candidate.resultBodies }));
+    if (canonicalJson(canonical.afterGraph) !== canonicalJson(graph)) return fail("claim_reconstruction_changed");
+    const currentAuthority = await finalAuthority(state);
+    const before = [...writerParts(copy, currentAuthority), claimCollision(state, draft),
+      { sql: "(SELECT COALESCE(MAX(sequence),0) FROM events WHERE stream_id=?)=?", bindings: [`creative:${copy.row.destination_user_id}`, head] },
+      { sql: "NOT EXISTS(SELECT 1 FROM private_content WHERE content_id IN(SELECT value FROM json_each(?)))", bindings: [JSON.stringify(draft.bodies.map(body => body.contentId))] }];
+    const after = [...guestImageResultPublishedGraphProofs(owner.data.claimSourceFacts, graph), currentAuthority,
+      ...canonical.currentParts, ...finalExtraProofs(state, graph, exclusion)];
+    const writes: SqlItem[] = candidate.events.map((event, index) => finalNativeItem(state, insertEventAtHead(state.sourceEnv, event, head + index)));
+    for (const row of graph.eventClientReceipts) writes.push(claimInsert("event_client_receipts", claimColumns.receipt, row));
+    writes.push(claimInsert("output_commands", claimColumns.command, graph.saveCommand));
+    for (const prepared of preparations) writes.push(finalNativeItem(state, prepared.statements[0]!));
+    writes.push(claimInsert("experience_guest_context_adoptions", claimColumns.context, graph.contextMapping));
+    writes.push(claimInsert("experience_guest_image_claims", claimColumns.save, graph.saveMapping));
+    writes.push(claimInsert("experience_guest_image_stage_custodies", claimColumns.stage, graph.stageMapping));
+    for (const row of graph.stageCopies) writes.push(claimInsert("experience_guest_image_stage_copies", claimColumns.stageCopy, row));
+    writes.push(claimInsert("experience_guest_image_result_custodies", claimColumns.result, graph.resultMapping));
+    for (const row of graph.resultCopies) writes.push(claimInsert("experience_guest_image_result_copies", claimColumns.resultCopy, row));
+    writes.push(spec("UPDATE experience_guest_sessions SET revoked_at_ms=? WHERE session_id=? AND revoked_at_ms IS NULL", [clock, copy.row.session_id]));
+    writes.push(updateCopyRow(copy.row, publishedAttempt));
+    if (writes.length !== 2 * copy.descriptor.manifest.sourceHead + 19) return fail("claim_constructor_count");
+    state.budget.reservePublication(before.length, after.length, writes.length);
+    await owner.wait(() => proveGuestImageResultFinalDestination(request, env, copy.token));
+    const batch = [...finalStatements(before, true), ...writes, ...finalStatements(after, true)];
+    // The transport may throw after committing. Capture that uncertainty inside
+    // the original wait without stopping its one bounded winner inspection.
+    state.budget.admit("transaction", batch, true);
+    const preparedBatch = batch.map(item => owner.database.prepare(item.sql).bind(...item.bindings));
+    const observed = await owner.wait(async () => {
+      let result: unknown;
+      try { result = await owner.database.batch(preparedBatch); }
+      catch { return { result: undefined, failed: true }; }
+      state.budget.transactionResult(result);
+      return { result, failed: false };
+    });
+    const ack = observed.result;
+    const dense = Array.isArray(ack) && Object.getPrototypeOf(ack) === Array.prototype && ack.length === batch.length
+      && Reflect.ownKeys(Object.getOwnPropertyDescriptors(ack)).length === batch.length + 1
+      && Array.from({ length: batch.length }, (_, index) => Object.getOwnPropertyDescriptor(ack, String(index)))
+        .every(field => !!field && field.enumerable && Object.hasOwn(field, "value"));
+    const known = dense && proofResults(Array.prototype.slice.call(ack, 0, before.length), before.length)
+      && proofResults(Array.prototype.slice.call(ack, before.length + writes.length), after.length)
+      && Array.prototype.slice.call(ack, before.length, before.length + writes.length).every((value: unknown, index: number) => {
+        const changes = own(own(value, "meta"), "changes");
+        return successful(value) && typeof changes === "number" && Number.isSafeInteger(changes)
+          && (index < candidate.events.length ? changes > 0 : changes === 1);
+      });
+    const winner = await claimWinner(state, exclusion);
+    return freeze({ status: "claimed" as const, completedReview: winner.review, replayed: !known || winner.review.claimEventId !== candidate.completedReview.claimEventId,
+      custodyTransferred: true as const, publicReadAvailable: false as const });
+  } catch (error) { owner.stopped = true; throw error; }
 }
