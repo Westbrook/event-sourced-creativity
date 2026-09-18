@@ -1,6 +1,6 @@
 import { digest, exactKeys, freeze, jsonIssues, record } from "../src/experiences/compiler.ts";
 import { collectRetainedGuestImageHistory, current, type Context, type Proof } from "./experience-guest-image-history.ts";
-import { collectGuestImageResultFacts } from "./experience-guest-image-result-facts.ts";
+import { collectGuestImageResultFacts, type GuestImageResultClaimFacts } from "./experience-guest-image-result-facts.ts";
 import { readGuestImageResultManifest, type GuestImageResultManifest } from "./experience-guest-image-result-contract.ts";
 import type { GuestClaimProof } from "./experience-guest-session.ts";
 import type { WorkerEnv } from "./runtime.ts";
@@ -38,11 +38,16 @@ function readSql(sql: string): boolean {
 
 class ReadLifetime {
   readonly request: Request; readonly env: WorkerEnv; readonly database: WorkerEnv["DB"];
+  readonly media: WorkerEnv["MEDIA"]; readonly cohort: WorkerEnv["FORMA_PILOT_COHORT_ID"];
+  readonly admins: WorkerEnv["FORMA_ADMIN_EMAILS"]; readonly retention: WorkerEnv["FORMA_RETENTION_DAYS"];
+  readonly evidenceRetention: WorkerEnv["FORMA_EVIDENCE_RETENTION_DAYS"];
   readonly deadline: number; readonly signal: AbortSignal; readonly ctx: Context;
   expiresAtMs = Infinity; stopped = false;
   constructor(request: Request, env: WorkerEnv, deadline?: number) {
     if (!(request instanceof Request) || deadline !== undefined && !Number.isFinite(deadline)) fail("input_invalid");
     this.request = request; this.env = env; this.database = env.DB; this.signal = request.signal;
+    this.media = env.MEDIA; this.cohort = env.FORMA_PILOT_COHORT_ID; this.admins = env.FORMA_ADMIN_EMAILS;
+    this.retention = env.FORMA_RETENTION_DAYS; this.evidenceRetention = env.FORMA_EVIDENCE_RETENTION_DAYS;
     this.deadline = Math.min(performance.now() + 30_000, deadline ?? Infinity);
     this.ctx = { request, env, db: env.DB, url: request.url, headers: JSON.stringify(Array.from(request.headers)),
       origin: new URL(request.url).origin, signal: request.signal };
@@ -50,8 +55,14 @@ class ReadLifetime {
     this.check();
   }
   check() {
-    current(this.ctx);
-    if (this.stopped || performance.now() >= this.deadline || Date.now() >= this.expiresAtMs) return fail("lifetime_ended");
+    try {
+      if (this.stopped) return fail("lifetime_ended");
+      current(this.ctx);
+      if (this.env.DB !== this.database || this.env.MEDIA !== this.media || this.env.FORMA_PILOT_COHORT_ID !== this.cohort
+        || this.env.FORMA_ADMIN_EMAILS !== this.admins || this.env.FORMA_RETENTION_DAYS !== this.retention
+        || this.env.FORMA_EVIDENCE_RETENTION_DAYS !== this.evidenceRetention) return fail("environment_changed");
+      if (performance.now() >= this.deadline || Date.now() >= this.expiresAtMs) return fail("lifetime_ended");
+    } catch (error) { this.stopped = true; throw error; }
   }
   async wait<T>(work: () => Promise<T>): Promise<T> {
     this.check(); let timer: ReturnType<typeof setTimeout> | undefined, stop: (() => void) | undefined;
@@ -105,6 +116,10 @@ function readEnvironment(life: ReadLifetime): WorkerEnv {
 
 declare const brand: unique symbol;
 export type GuestImageResultInventory = Readonly<{ [brand]: true }>;
+declare const claimSeedBrand: unique symbol;
+/** One-way local ownership transfer only. A seed confers no lease, attempt or
+ * byte authority; the claim owner must prove its complete current phase. */
+export type GuestImageResultClaimSeed = Readonly<{ [claimSeedBrand]: true }>;
 export type GuestImageResultReview = Readonly<{
   version: 1; kind: "guest-image-result-inventory"; sessionId: string; documentId: string; projectId: string;
   generationId: string; originalPayerUserId: string; manifestDigest: string; sourceHead: number; resultHead: number;
@@ -113,12 +128,64 @@ export type GuestImageResultReview = Readonly<{
 }>;
 type Data = Readonly<{ manifest: GuestImageResultManifest; manifestDigest: string; review: GuestImageResultReview; proof: readonly Proof[] }>;
 type ProducerMetadata = Readonly<{ model: string; provider: string; adapter: string; providerRequestId: string }>;
-type Captured = { life: ReadLifetime; readEnv: WorkerEnv; data: Data; producerMetadata: ProducerMetadata };
+type History = Awaited<ReturnType<typeof collectRetainedGuestImageHistory>>;
+type ResultFacts = Awaited<ReturnType<typeof collectGuestImageResultFacts>>;
+type ClaimSession = History["liveSource"]["session"] & { row: History["liveSource"]["session"]["row"] & { created_at_ms: number } };
+type SourceSnapshot = Readonly<{
+  history: Omit<History, "ctx" | "sponsor"> & { sponsor: { proof: Proof; tables: readonly string[]; snapshot: string } };
+  stage: Omit<ResultFacts["stage"], "ctx" | "history">;
+  result: Omit<ResultFacts, "ctx" | "history" | "stage" | "parts" | "claimSourceFacts" | "claimSourceProofs">;
+}>;
+export type GuestImageResultClaimSeedSnapshot = Readonly<{
+  data: Data; producerMetadata: ProducerMetadata; accountingKey: object; source: SourceSnapshot;
+  claimSourceFacts: GuestImageResultClaimFacts; claimSourceProofs: ResultFacts["claimSourceProofs"];
+  session: ClaimSession; claimProof: GuestClaimProof;
+}>;
+type Captured = {
+  life: ReadLifetime; readEnv: WorkerEnv; data: Data; producerMetadata: ProducerMetadata;
+  seedData: GuestImageResultClaimSeedSnapshot; accountingKey: object;
+  phase: "ordinary" | "claim-seed"; mediaAdmitted: boolean; ordinaryProofs: number;
+};
 const inventories = new WeakMap<GuestImageResultInventory, Captured>();
+const claimSeeds = new WeakMap<GuestImageResultClaimSeed, Captured>();
+
+/** Fixed producer projection. No request, environment, database, bucket,
+ * callback, context or collector cycle can cross this private data seam. */
+function captureClaimSeedData(history: History, facts: ResultFacts, data: Data,
+  producerMetadata: ProducerMetadata, accountingKey: object, claimProof: GuestClaimProof): GuestImageResultClaimSeedSnapshot {
+  const stage = facts.stage;
+  const source: SourceSnapshot = {
+    history: { mode: history.mode, original: history.original, saved: history.saved,
+      sponsor: { proof: history.sponsor.proof, snapshot: history.sponsor.snapshot, tables: [...history.sponsor.tables] },
+      memory: history.memory, liveSource: history.liveSource, currentGuards: history.currentGuards,
+      currentPolicyProof: history.currentPolicyProof, currentSessionProof: history.currentSessionProof },
+    stage: { sessionId: stage.sessionId, documentId: stage.documentId, sourceHead: stage.sourceHead,
+      sourceSaveHead: stage.sourceSaveHead, stageHead: stage.stageHead, stageState: stage.stageState,
+      expiresAt: stage.expiresAt, tails: stage.tails, resources: stage.resources, stageParts: stage.stageParts,
+      blockCustodyProof: stage.blockCustodyProof, eventCountProof: stage.eventCountProof,
+      recordedTimeProof: stage.recordedTimeProof, tailProofs: stage.tailProofs, scope: stage.scope,
+      confirmed: stage.confirmed, quote: stage.quote, transport: stage.transport, rows: stage.rows },
+    result: { immutableSnapshot: facts.immutableSnapshot, identity: facts.identity, rows: facts.rows,
+      events: facts.events, sourceEvents: facts.sourceEvents, completion: facts.completion, usage: facts.usage },
+  };
+  const session: ClaimSession = { ...history.liveSource.session,
+    row: { ...history.liveSource.session.row, created_at_ms: Number(history.original.session.created_at_ms) } };
+  // Provenance and finite-accounting identities must survive by identity. Only
+  // the inert source/session/proof values are cloned before recursive freezing.
+  const copied = freeze(structuredClone({ source, session, claimSourceProofs: facts.claimSourceProofs, claimProof }));
+  return Object.freeze({ data, producerMetadata, accountingKey, ...copied, claimSourceFacts: facts.claimSourceFacts });
+}
 
 function state(request: Request, env: WorkerEnv, inventory: GuestImageResultInventory): Captured {
   const captured = inventory && typeof inventory === "object" ? inventories.get(inventory) : undefined;
-  if (!captured || captured.life.request !== request || captured.life.env !== env || captured.life.database !== env.DB) return fail("capability_unavailable");
+  if (!captured || captured.life.request !== request || captured.life.env !== env) return fail("capability_unavailable");
+  captured.life.check();
+  if (captured.phase !== "ordinary") return fail("capability_unavailable");
+  return captured;
+}
+function seedState(request: Request, env: WorkerEnv, seed: GuestImageResultClaimSeed): Captured {
+  const captured = seed && typeof seed === "object" ? claimSeeds.get(seed) : undefined;
+  if (!captured || captured.life.request !== request || captured.life.env !== env) return fail("capability_unavailable");
   captured.life.check(); return captured;
 }
 async function prove(life: ReadLifetime, env: WorkerEnv, parts: readonly Proof[]) {
@@ -173,8 +240,10 @@ async function inspect(request: Request, env: WorkerEnv, input: { proof: GuestCl
       privateBodyCount: 2, recordedObjectCount: 1, custodyTransferred: false, publicReadAvailable: false, freshBytesVerified: false });
     const data = freeze({ manifest, manifestDigest, review, proof: structuredClone(facts.parts) });
     await prove(life, readEnv, data.proof);
-    const inventory = Object.freeze({}) as GuestImageResultInventory;
-    life.check(); inventories.set(inventory, { life, readEnv, data, producerMetadata }); return inventory;
+    const inventory = Object.freeze({}) as GuestImageResultInventory, accountingKey = Object.freeze({});
+    const seedData = captureClaimSeedData(history, facts, data, producerMetadata, accountingKey, copied.proof);
+    life.check(); inventories.set(inventory, { life, readEnv, data, producerMetadata, seedData, accountingKey,
+      phase: "ordinary", mediaAdmitted: false, ordinaryProofs: 0 }); return inventory;
   } catch (error) { life.stopped = true; throw error; }
 }
 
@@ -204,9 +273,48 @@ export function guestImageResultInventoryBounds(
 export function guestImageResultInventoryProducerMetadata(request: Request, env: WorkerEnv, inventory: GuestImageResultInventory): ProducerMetadata {
   return state(request, env, inventory).producerMetadata;
 }
+/** The same finite accounting identity is retained across an unused inventory's
+ * one-way handoff. Reading it does not admit a media owner. */
+export function guestImageResultInventoryAccountingKey(request: Request, env: WorkerEnv, inventory: GuestImageResultInventory): object {
+  return state(request, env, inventory).accountingKey;
+}
+/** Synchronous admission precedes any ordinary media constructor. It is never
+ * reset after failure and permanently excludes a later claim handoff. */
+export function admitGuestImageResultInventoryMedia(request: Request, env: WorkerEnv,
+  inventory: GuestImageResultInventory): Readonly<{ accountingKey: object }> {
+  const captured = state(request, env, inventory);
+  if (captured.mediaAdmitted) return fail("media_already_admitted");
+  captured.mediaAdmitted = true;
+  return Object.freeze({ accountingKey: captured.accountingKey });
+}
+/** Consume the ordinary owner before any media admission or in-flight ordinary
+ * proof. No await, callback or native mutation can split this state transition. */
+export function handoffGuestImageResultInventory(request: Request, env: WorkerEnv,
+  inventory: GuestImageResultInventory): GuestImageResultClaimSeed {
+  const captured = state(request, env, inventory);
+  if (captured.mediaAdmitted || captured.ordinaryProofs !== 0) return fail("handoff_unavailable");
+  const seed = Object.freeze({}) as GuestImageResultClaimSeed;
+  captured.phase = "claim-seed"; claimSeeds.set(seed, captured); return seed;
+}
+/** Private inert capture only. This local fence does not establish any native
+ * lease/attempt phase or replace the claim owner's full current proof. */
+export function guestImageResultClaimSeedData(request: Request, env: WorkerEnv,
+  seed: GuestImageResultClaimSeed): GuestImageResultClaimSeedSnapshot {
+  return seedState(request, env, seed).seedData;
+}
+export function guestImageResultClaimSeedBounds(request: Request, env: WorkerEnv,
+  seed: GuestImageResultClaimSeed): Readonly<{ monotonicDeadline: number; expiresAtMs: number }> {
+  const { life } = seedState(request, env, seed);
+  return Object.freeze({ monotonicDeadline: life.deadline, expiresAtMs: life.expiresAtMs });
+}
+/** Check the original local lifetime only; never renew it or authorize a phase. */
+export function assertGuestImageResultClaimSeedLocal(request: Request, env: WorkerEnv, seed: GuestImageResultClaimSeed): void {
+  seedState(request, env, seed);
+}
 /** Recheck the original captured graph; this cannot renew the deadline, replace
  * missing private content, accept a changed manifest or grant another purchase. */
 export function assertGuestImageResultInventoryCurrent(request: Request, env: WorkerEnv, inventory: GuestImageResultInventory): Promise<void> {
   const captured = state(request, env, inventory);
-  return prove(captured.life, captured.readEnv, captured.data.proof);
+  captured.ordinaryProofs++;
+  return prove(captured.life, captured.readEnv, captured.data.proof).finally(() => { captured.ordinaryProofs--; });
 }

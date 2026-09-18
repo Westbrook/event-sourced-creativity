@@ -8,6 +8,8 @@ import { SELECTED_OUTPUT_SHARE_SCHEMA } from "./selected-output-share-schema.ts"
 import { GUEST_CUSTODY_SCHEMA } from "./experience-guest-session.ts";
 import { GUEST_SOURCE_SCHEMA } from "./experience-guest-source.ts";
 import { GUEST_IMAGE_STAGE_CUSTODY_SCHEMA } from "./experience-guest-image-stage-custody.ts";
+import { GUEST_IMAGE_RESULT_COPY_SCHEMA } from "./experience-guest-image-result-copy-schema.ts";
+import { GUEST_IMAGE_RESULT_COPY_COLUMNS, type GuestImageResultCopyAttemptRow } from "./experience-guest-image-result-copy-contract.ts";
 import { canonicalJson, digest, exactKeys, freeze, jsonIssues, record } from "../src/experiences/compiler.ts";
 import { OUTPUT_NATIVE_EXECUTION_POLICY } from "../src/model/output-execution-policy.ts";
 import { imageFormatEventFields, type ImageFormat } from "../src/model/image-format.ts";
@@ -65,6 +67,13 @@ type Captured={ctx:History["ctx"];history:History;facts:Facts;compiled:Compiled;
   life:{wait<T>(work:()=>Promise<T>):Promise<T>};optionalTables:Set<string>;blueprint:Blueprint|null};
 type RunRows={job:Row;grant:Row;slot:Row;token:Row;cost:Row;consumption:Row;active:Row|null;calls:Row[];storage:Row[];content:Row[]};
 type RunCapture={admission:Captured;runKey:string;runCommand:Row;runEvent:EventRow;events:EventRow[];rows:RunRows;settings:OutputNativeSettings;phase:string};
+declare const claimFactsBrand: unique symbol;
+/** Producer provenance for inert source facts only. This is not a lease,
+ * inventory, reserved successor or dispatch capability. */
+export type GuestImageResultClaimFacts = Readonly<{ [claimFactsBrand]: true }>;
+type ClaimFactsCapture = Readonly<{ scope: Readonly<Record<string, Value>>; scopeJson: string; resultCopySchemaInstalled: boolean }>;
+const claimFactsCaptures = new WeakMap<GuestImageResultClaimFacts, ClaimFactsCapture>();
+const reservedAttemptColumns = Object.freeze([...GUEST_IMAGE_RESULT_COPY_COLUMNS]);
 const grantColumns = ["grant_id", "campaign_id", "policy_digest", "actor_user_id", "session_digest", "intent_key", "envelope_digest", "issued_at_ms", "expires_at_ms", "enabled"];
 const issuanceColumns = ["grant_id", "campaign_id", "actor_user_id", "intent_key", "policy_digest", "driver_command_json", "command_digest", "envelope_digest", "envelope_json"];
 const consumptionColumns = ["consumption_id", "grant_id", "campaign_id", "actor_user_id", "session_digest", "intent_key", "envelope_digest", "job_id", "maximum_microusd", "admitted_at_ms"];
@@ -180,10 +189,209 @@ async function progressEvents(c:Captured):Promise<EventRow[]>{
     return {eventId:String(entry.event_id),streamId:f.streamId,sequence:Number(entry.sequence),occurredAt:String(entry.occurred_at),recordedAt:String(entry.recorded_at),actor:String(entry.actor),clientId:String(entry.client_id),correlationId:String(entry.correlation_id),causationId:entry.causation_id as string|null,compensatesEventId:null,schemaVersion:1,type:String(entry.type),payload};});
 }
 
-function runClosure(r:RunCapture):Proof {
+/** Fixed negative reference projections for the two closed result contracts.
+ * No exported selector/parser, positive authority or caller SQL is accepted. */
+function resultClaimAssociationSql(kind: "attempt" | "custody"): string {
+  const column = kind === "attempt" ? "d.descriptor_json" : "d.lineage_json";
+  const maximumBytes = kind === "attempt" ? 65536 : 262144, maximumNodes = kind === "attempt" ? 4096 : 8192;
+  const scalar: Array<[string, string, string, number]> = [];
+  const constants: Array<[string, string | number, number]> = [];
+  const arrays: Array<[string, number, number, string]> = [];
+  const publics: Array<[string, string[], number, string[] | null, string]> = [];
+  const required = new Map<string, { type: string; minimumEvents: number }>();
+  const requireNode = (path: string, type: string, minimumEvents = 0) => {
+    const prior = required.get(path);
+    if (prior && prior.type !== type) return fail("result_claim_projection_invalid");
+    required.set(path, { type, minimumEvents: Math.min(prior?.minimumEvents ?? minimumEvents, minimumEvents) });
+    const tokens = path.slice(1).match(/\.[A-Za-z_][A-Za-z_0-9]*|\[\d+\]/gu) ?? [];
+    let parent = "$";
+    for (const token of tokens) {
+      const parentType = token.startsWith("[") ? "array" : "object", existing = required.get(parent);
+      if (existing && existing.type !== parentType) return fail("result_claim_projection_invalid");
+      required.set(parent, { type: parentType, minimumEvents: Math.min(existing?.minimumEvents ?? minimumEvents, minimumEvents) });
+      parent += token;
+    }
+  };
+  const identity = (path: string, target: string, type = "text", minimumEvents = 0) => {
+    scalar.push([path, target, type, minimumEvents]); requireNode(path, type, minimumEvents);
+  };
+  const array = (path: string, minimum: number, maximum: number, type: string) => {
+    arrays.push([path, minimum, maximum, type]); requireNode(path, "array");
+  };
+  const envelope = (path: string, keys: string[], minimumEvents = 0, exactKeys: string[] | null = null, mode = "prefix") => {
+    publics.push([path, keys, minimumEvents, exactKeys, mode]); requireNode(path, "text", minimumEvents);
+  };
+  const constant = (path: string, value: string | number, minimumEvents = 0) => {
+    constants.push([path, value, minimumEvents]); requireNode(path, typeof value === "number" ? "integer" : "text", minimumEvents);
+  };
+  constant("$.version", 1); constant("$.kind", kind === "attempt" ? "guest-image-result-copy" : "original-image-result-custody");
+  const prefix = kind === "attempt" ? "$.manifest" : "$.copy.manifest";
+  constant(`${prefix}.version`, 1); constant(`${prefix}.kind`, "original-image-completed-result");
+  for (const [key, target] of [["sessionId","sessionId"],["guestSubject","guest"],["projectId","project"],["documentId","document"],
+    ["generationId","generated"],["completionEventId","ids"],["usageEventId","ids"]]) identity(`${prefix}.${key}`, target!);
+  array(`${prefix}.sourceEventIds`, 3, 16, "text");
+  for (const [key, target] of [["scopeKey","scope"],["jobId","job"],["slotId","slot"],["executionGrantId","grant"],["issuerGrantId","issuer"],
+    ["consumptionId","consumption"],["planRevisionId","plan"]]) identity(`${prefix}.nativeIdentity.${key}`, target!);
+  // These native IDs are scoped, not standalone cross-owner associations.
+  requireNode(`${prefix}.nativeIdentity.targetId`, "text"); requireNode(`${prefix}.nativeIdentity.preflightId`, "text");
+  identity(`${prefix}.financialReceipt.tokenReservationId`, "token"); identity(`${prefix}.financialReceipt.costReservationId`, "cost");
+  array(`${prefix}.privateContents`, 2, 2, "object");
+  for (let index = 0; index < 2; index++) identity(`${prefix}.privateContents[${index}].contentId`, "bodyIds");
+  identity(`${prefix}.object.storageKey`, "storageKeys"); identity(`${prefix}.object.publicationEventId`, "ids");
+  const copy = kind === "attempt" ? "$" : "$.copy";
+  identity(`${copy}.leaseSnapshot.session_id`, "sessionId");
+  identity(`${copy}.destinationMetadata.generationId`, "generated"); identity(`${copy}.destinationMetadata.outputId`, "generated");
+  const selectedArrays: Array<[string, string]> = [[`${prefix}.sourceEventIds`, "ids"]];
+  if (kind === "custody") {
+    constant("$.copy.version", 1); constant("$.copy.kind", "guest-image-result-copy");
+    constant("$.contextLineage.version", 1);
+    constant("$.saveLineage.version", 1); constant("$.saveLineage.kind", "first-image-save");
+    constant("$.stageLineage.version", 1); constant("$.stageLineage.kind", "original-image-stage-custody");
+    constant("$.stageLineage.source.state", "quoted");
+    for (const root of ["contextLineage", "saveLineage", "stageLineage"]) {
+      for (const [key, target] of [["sessionId","sessionId"],["guestSubject","guest"],["projectId","project"],["documentId","document"]])
+        identity(`$.${root}.${key}`, target!);
+    }
+    identity("$.contextLineage.lease.session_id", "sessionId"); identity("$.saveLineage.draftId", "draft");
+    array("$.contextLineage.sourceEventIds", 3, 16, "text"); selectedArrays.push(["$.contextLineage.sourceEventIds", "ids"]);
+    array("$.saveLineage.source.eventIds", 3, 16, "text"); selectedArrays.push(["$.saveLineage.source.eventIds", "ids"]);
+    identity("$.saveLineage.source.save.id", "ids"); identity("$.saveLineage.target.id", "ids");
+    identity("$.saveLineage.target.requirementId", "blocks"); requireNode("$.saveLineage.target.commandKey", "text");
+    const command = (path: string) => {
+      identity(`${path}.scope_key`, "scope"); identity(`${path}.actor_user_id`, "guest");
+      requireNode(`${path}.command_key`, "text"); identity(`${path}.event_id`, "ids");
+    };
+    const resource = (path: string) => { identity(`${path}.resource_id`, "resources"); identity(`${path}.actor_user_id`, "guest"); };
+    command("$.saveLineage.source.command"); resource("$.saveLineage.source.resource");
+    identity("$.stageLineage.source.saveEventId", "ids"); identity("$.stageLineage.source.confirmation.id", "ids");
+    command("$.stageLineage.source.confirmationCommand"); resource("$.stageLineage.source.confirmationResource");
+    identity("$.stageLineage.source.quote.id", "ids"); requireNode("$.stageLineage.source.quote.preflightId", "text");
+    identity("$.stageLineage.source.quote.planRevisionId", "plan"); command("$.stageLineage.source.quoteCommand");
+    identity("$.stageLineage.source.construction.driverId", "driver"); resource("$.stageLineage.source.construction.resource");
+    identity("$.originalCompletion.eventId", "ids"); identity("$.originalCompletion.objectId", "generated");
+    identity("$.canonical.eventId", "ids"); identity("$.canonical.streamId", "stream");
+    array("$.resultCopies", 2, 2, "object");
+    for (let index = 0; index < 2; index++) {
+      identity(`$.resultCopies[${index}].content_id`, "bodyIds"); identity(`$.resultCopies[${index}].original_content_id`, "bodyIds");
+    }
+    array("$.stageCopies", 3, 3, "object"); array("$.stageLineage.copies", 3, 3, "object");
+    for (let index = 0; index < 3; index++) {
+      identity(`$.stageCopies[${index}].session_id`, "sessionId"); identity(`$.stageCopies[${index}].content_id`, "bodyIds");
+      identity(`$.stageLineage.copies[${index}].contentId`, "bodyIds");
+    }
+    array("$.contextLineage.events", 3, 16, "object");
+    for (let index = 0; index < 16; index++) {
+      const path = `$.contextLineage.events[${index}]`, minimumEvents = index + 1;
+      constant(`${path}.type`, ["ProjectCreated", "DocumentCreated", "EmptyCanvasChosen"][index] ?? "BlockCreated", minimumEvents);
+      requireNode(`${path}.key`, "text", minimumEvents);
+      identity(`${path}.id`, "ids", "text", minimumEvents); identity(`${path}.project`, "project", "text", minimumEvents);
+      identity(`${path}.document`, "document", index === 0 ? "null" : "text", minimumEvents);
+      envelope(`${path}.public`, ["_private_ref", "project_id", "client_event_id", ...(index === 0 ? [] : ["document_id"]), ...(index >= 3 ? ["block_id"] : [])], minimumEvents, null, index === 0 ? "prefix-project" : "prefix");
+    }
+    const saveKeys = ["_private_ref", "block_id", "project_id", "document_id", "actor_user_id"];
+    envelope("$.saveLineage.source.save.public", saveKeys, 0, [...saveKeys, "type", "scope"], "save");
+    envelope("$.saveLineage.target.public", saveKeys, 0, [...saveKeys, "type", "scope"], "save");
+    const confirmationKeys = ["_private_ref", "plan_revision_id", "project_id", "document_id", "actor_user_id"];
+    envelope("$.stageLineage.source.confirmation.public", confirmationKeys, 0, confirmationKeys);
+    const quoteKeys = ["_private_ref", "preflight_id", "plan_revision_id", "project_id", "document_id", "actor_user_id"];
+    envelope("$.stageLineage.source.quote.public", quoteKeys, 0, quoteKeys);
+  }
+  const literal = (value: string) => `'${value.replace(/'/gu, "''")}'`;
+  const tuples = (rows: readonly (readonly (string | number)[])[]) => rows.map(row => `(${row.map(value => typeof value === "number" ? value : literal(value)).join(",")})`).join(",");
+  const listTargets = new Set(["generated", "ids", "bodyIds", "storageKeys", "commands", "resources", "blocks"]);
+  const targets = [...new Set([...scalar.map(([, target]) => target), ...selectedArrays.map(([, target]) => target)])];
+  // Preserve each fixed predicate and its order while bounding expression
+  // depth; a left-associated OR chain exceeds the existing native SQL limit.
+  const balancedOr = (terms: readonly string[]): string => {
+    if (terms.length === 1) return terms[0]!;
+    const middle = Math.floor(terms.length / 2);
+    return `(${balancedOr(terms.slice(0, middle))} OR ${balancedOr(terms.slice(middle))})`;
+  };
+  const matches = (selector: string, atom: string) => balancedOr(targets.map(target => `${selector}=${literal(target)} AND ${atom}${listTargets.has(target) ? ` IN(SELECT value FROM json_each(s.${target}))` : `=s.${target}`}`).map(value => `(${value})`));
+  const publicTargets = [["_private_ref","ids"],["project_id","project"],["document_id","document"],["block_id","blocks"],
+    ["actor_user_id","guest"],["plan_revision_id","plan"]];
+  const publicMatch = balancedOr(publicTargets.map(([key, target]) => `(field.key=${literal(key!)} AND field.value${listTargets.has(target!)
+    ? ` IN(SELECT value FROM json_each(s.${target}))` : `=s.${target}`})`));
+  const publicKeys = [...publicTargets.map(([key]) => key!), "client_event_id", "preflight_id"].map(literal).join(",");
+  const publicClause = kind === "attempt" ? "0" : `EXISTS(SELECT 1 FROM result_identity_public selected
+    JOIN result_identity_nodes body ON body.fullkey=selected.fullkey WHERE selected.minimum_events<=(SELECT count FROM result_identity_context)
+    AND CASE WHEN body.type='text' AND length(CAST(body.atom AS BLOB)) BETWEEN 2 AND 8192 AND instr(body.atom,char(0))=0 THEN CASE WHEN json_valid(body.atom)
+      THEN CASE WHEN json_type(body.atom)='object' THEN
+        (selected.exact_keys<>'null' AND ((SELECT COUNT(*) FROM json_each(body.atom))<>json_array_length(selected.exact_keys)
+          OR (SELECT COUNT(DISTINCT key) FROM json_each(body.atom))<>json_array_length(selected.exact_keys)
+          OR EXISTS(SELECT 1 FROM json_each(body.atom) field WHERE field.type<>'text' OR field.key NOT IN(SELECT value FROM json_each(selected.exact_keys)))))
+        OR (selected.mode='save' AND (json_extract(body.atom,'$.type') IS NOT 'output' OR json_extract(body.atom,'$.scope') IS NOT 'document'))
+        OR (selected.mode='prefix-project' AND EXISTS(SELECT 1 FROM json_each(body.atom) field WHERE field.key='document_id' AND field.type<>'null'))
+        OR EXISTS(SELECT 1 FROM json_each(body.atom) field WHERE field.key IN(${publicKeys}) GROUP BY field.key
+          HAVING COUNT(*)<>1 OR SUM(CASE WHEN field.type='text' OR selected.mode='prefix-project' AND field.key='document_id' AND field.type='null' THEN 1 ELSE 0 END)<>1)
+        OR EXISTS(SELECT 1 FROM json_each(selected.required_keys) expected WHERE
+          (SELECT COUNT(*) FROM json_each(body.atom) field WHERE field.key=expected.value AND field.type='text')<>1)
+        OR EXISTS(SELECT 1 FROM json_each(body.atom) field WHERE field.type='text' AND (${publicMatch}))
+      ELSE 1 END ELSE 1 END ELSE 1 END)`;
+  return `CASE WHEN typeof(${column})='text' AND length(CAST(${column} AS BLOB)) BETWEEN 2 AND ${maximumBytes}
+    THEN CASE WHEN json_valid(${column}) THEN CASE WHEN json_type(${column})='object' THEN EXISTS(
+      WITH result_identity_nodes AS MATERIALIZED(SELECT fullkey,path,type,atom FROM json_tree(${column})),
+      result_identity_context(count) AS(SELECT COUNT(*) FROM result_identity_nodes WHERE path='$.contextLineage.events'),
+      result_identity_required(fullkey,expected_type,minimum_events) AS(VALUES ${tuples([...required].map(([path, value]) => [path,value.type,value.minimumEvents]))}),
+      result_identity_scalars(fullkey,target,expected_type,minimum_events) AS(VALUES ${tuples(scalar)}),
+      result_identity_constants(fullkey,expected_atom,minimum_events) AS(VALUES ${tuples(constants)}),
+      result_identity_arrays(fullkey,minimum_count,maximum_count,element_type) AS(VALUES ${tuples(arrays)}),
+      result_identity_selected_arrays(fullkey,target) AS(VALUES ${tuples(selectedArrays)})${kind === "custody"
+        ? `,result_identity_public(fullkey,required_keys,minimum_events,exact_keys,mode) AS(VALUES ${tuples(publics.map(([path, keys, minimum, exactKeys, mode]) => [path,JSON.stringify(keys),minimum,JSON.stringify(exactKeys),mode]))})` : ""}
+      SELECT 1 WHERE (SELECT COUNT(*) FROM result_identity_nodes)>${maximumNodes}
+        OR EXISTS(SELECT 1 FROM result_identity_constants expected JOIN result_identity_nodes found ON found.fullkey=expected.fullkey WHERE expected.minimum_events<=(SELECT count FROM result_identity_context) AND found.atom IS NOT expected.expected_atom)
+        OR EXISTS(SELECT 1 FROM result_identity_required expected LEFT JOIN result_identity_nodes found ON found.fullkey=expected.fullkey
+          WHERE expected.minimum_events<=(SELECT count FROM result_identity_context) GROUP BY expected.fullkey,expected.expected_type
+          HAVING COUNT(found.fullkey)<>1 OR SUM(CASE WHEN found.type=expected.expected_type THEN 1 ELSE 0 END)<>1)
+        OR EXISTS(SELECT 1 FROM result_identity_arrays expected WHERE
+          (SELECT COUNT(*) FROM result_identity_nodes child WHERE child.path=expected.fullkey) NOT BETWEEN expected.minimum_count AND expected.maximum_count
+          OR EXISTS(SELECT 1 FROM result_identity_nodes child WHERE child.path=expected.fullkey AND child.type<>expected.element_type))
+        OR EXISTS(SELECT 1 FROM result_identity_scalars selected JOIN result_identity_nodes identity ON identity.fullkey=selected.fullkey
+          WHERE identity.type='text' AND selected.minimum_events<=(SELECT count FROM result_identity_context) AND (${matches("selected.target", "identity.atom")}))
+        OR EXISTS(SELECT 1 FROM result_identity_selected_arrays selected JOIN result_identity_nodes identity ON identity.path=selected.fullkey
+          WHERE identity.type='text' AND (${matches("selected.target", "identity.atom")})) OR ${publicClause})
+    ELSE 1 END ELSE 1 END ELSE 1 END`;
+}
+
+/** Fixed inert proof construction only. The genuine claim owner must first
+ * validate and capture the complete row under its original lifetime, bind it to
+ * its own descriptor/lease/manifest/IDs, and include this predicate in the full
+ * source and destination proof. A row or this returned SQL never grants a
+ * reserved successor or permission to dispatch. No database operation occurs. */
+export function guestImageResultReservedAttemptProof(facts: GuestImageResultClaimFacts, row: GuestImageResultCopyAttemptRow): Proof {
+  const captured = facts && typeof facts === "object" ? claimFactsCaptures.get(facts) : undefined;
+  if (!captured || !captured.resultCopySchemaInstalled || !row || typeof row !== "object"
+    || Object.getPrototypeOf(row) !== Object.prototype) return fail("claim_attempt_facts_unavailable");
+  const descriptors = Object.getOwnPropertyDescriptors(row), keys = Reflect.ownKeys(descriptors);
+  if (keys.length !== reservedAttemptColumns.length || keys.some(key => typeof key !== "string"
+    || !reservedAttemptColumns.some(column => column === key))) return fail("claim_attempt_row_invalid");
+  const values: Value[] = [], observed: Record<string, Value> = {};
+  for (const column of reservedAttemptColumns) {
+    const descriptor = descriptors[column];
+    if (!descriptor || !descriptor.enumerable || !Object.hasOwn(descriptor, "value")) return fail("claim_attempt_row_invalid");
+    const value: unknown = descriptor.value;
+    if (value !== null && (typeof value === "string" ? !value.isWellFormed() || bytes(value) > 65536
+      : typeof value !== "number" || !Number.isSafeInteger(value) || Object.is(value, -0) || value < 0)) return fail("claim_attempt_row_invalid");
+    observed[column] = value as Value; values.push(value as Value);
+  }
+  if (observed.session_id !== captured.scope.sessionId || observed.state !== "reserved" || observed.row_version !== 0
+    || observed.put_outcome !== "pending" || observed.updated_at_ms !== observed.created_at_ms
+    || ["put_started_at_ms", "put_settled_at_ms", "verified_at_ms", "published_at_ms", "published_claim_digest"].some(column => observed[column] !== null))
+    return fail("claim_attempt_row_invalid");
+  const scopeCte = `input(value) AS(VALUES(?)),s AS(SELECT ${Object.keys(captured.scope).map(key => `json_extract(value,'$.${key}') AS ${key}`).join(",")} FROM input)`;
+  const exactRow = `json_array(${reservedAttemptColumns.map(column => `d.${column}`).join(",")})=expected.row_json`;
+  const related = `d.session_id=s.sessionId OR (${resultClaimAssociationSql("attempt")})`;
+  return freeze({ sql: `EXISTS(WITH ${scopeCte},expected_result_attempt(row_json) AS(VALUES(?))
+    SELECT 1 FROM s,expected_result_attempt expected WHERE
+      EXISTS(SELECT 1 FROM experience_guest_image_result_copy_attempts d WHERE d.session_id=s.sessionId AND ${exactRow})
+      AND NOT EXISTS(SELECT 1 FROM experience_guest_image_result_copy_attempts d WHERE (${related}) AND (${exactRow}) IS NOT TRUE))`,
+    bindings: [captured.scopeJson, JSON.stringify(values)] });
+}
+
+function runClosure(r:RunCapture): Readonly<{ common: Proof; familyCommon: Proof; leaseAbsent: Proof; attemptAbsent: Proof; resultCopySchemaInstalled: boolean; claimSourceFacts: GuestImageResultClaimFacts }> {
   const c=r.admission,{frame:f,history:h,facts}=c,blueprint=c.blueprint!,admitted=true;
   const ids = [...h.original.eventIds, ...facts.tails.map(t => t.eventId), blueprint.queue.eventId,blueprint.authorization.eventId,...r.events.map(event=>event.eventId)];
-  const scope = { ...facts.scope, ids: JSON.stringify(ids), commands: JSON.stringify([h.saved.commandKey, String(facts.rows.command.command_key), String(facts.rows.preflightCommand!.command_key), f.commandKey,...(r.runCommand?[r.runKey]:[])]),
+  const scope = { ...facts.scope, blocks: JSON.stringify([...h.original.blockIds, h.saved.requirementId]), ids: JSON.stringify(ids), commands: JSON.stringify([h.saved.commandKey, String(facts.rows.command.command_key), String(facts.rows.preflightCommand!.command_key), f.commandKey,...(r.runCommand?[r.runKey]:[])]),
     resources: JSON.stringify([...facts.resources.map(r => r.resource_id), c.issuerResourceId]), issuer: c.issuerGrantId, admitted: admitted ? 1 : 0,
     grant: f.slot.grantId, slot: f.slot.slotId, job: f.slot.jobId, token: f.slot.tokenReservationId, cost: f.slot.costReservationId, consumption: c.compiled.envelope.consumptionId, bodyIds:JSON.stringify(r.rows.content.map(row=>row.content_id)), callKeys:JSON.stringify(r.rows.calls.map(row=>row.call_key)), callIds:JSON.stringify(r.rows.calls.map(row=>row.client_request_id)), storageKeys:JSON.stringify(r.rows.storage.map(row=>row.storage_key)), correlation:String(r.rows.job.correlation_id),
     generated:JSON.stringify([h.original.draftId,f.documentId,f.slot.jobId,...ids,...r.rows.content.map(body=>body.content_id),...r.rows.storage.map(storage=>storage.storage_key),
@@ -257,7 +465,6 @@ function runClosure(r:RunCapture):Proof {
   add("experience_sponsor_intake_read_attempts", "d.actor_user_id=s.guest OR d.resource_key='draft:'||s.draft");
   for (const t of ["experience_guest_context_adoptions", "experience_guest_image_claims"]) add(t, `${unsupportedIdentityJson("d.lineage_json", ["sessionId", "guestSubject", "projectId", "documentId"])} OR d.session_id=s.sessionId OR ${boundedIdentityValue("d.lineage_json", "sessionId")}=s.sessionId OR ${boundedIdentityValue("d.lineage_json", "guestSubject")}=s.guest OR ${boundedIdentityValue("d.lineage_json", "documentId")}=s.document OR ${boundedIdentityValue("d.lineage_json", "projectId")}=s.project`);
   add("experience_guest_plan_custodies", "d.session_id=s.sessionId OR d.draft_id=s.draft OR d.content_id=s.draft");
-  rows.push(["experience_guest_claim_leases", "d.session_id=s.sessionId"]);
   for (const t of h.memory.registries) rows.push([t, "d.user_event_id IN(SELECT value FROM json_each(s.ids)) OR d.answer_event_id IN(SELECT value FROM json_each(s.ids))"]);
   for(const entry of rows){const at=entry[1]!.lastIndexOf(" AND NOT(");
     if(at>=0&&entry[1]!.endsWith(")"))entry[1]=`${entry[1]!.slice(0,at)} AND (${entry[1]!.slice(at+9,-1)}) IS NOT TRUE`;}
@@ -300,9 +507,38 @@ function runClosure(r:RunCapture):Proof {
           OR reference.key IN('event_stream_id','stream_id') AND reference.value=s.stream))
       ELSE 1 END ELSE 1 END`);
   const groups = Array.from({ length: Math.ceil(rows.length / 4) }, (_, i) => rows.slice(i * 4, i * 4 + 4));
-  return { sql: `NOT EXISTS(WITH input(value) AS(VALUES(?)),s AS(SELECT ${Object.keys(scope).map(k => `json_extract(value,'$.${k}') AS ${k}`).join(",")} FROM input),
+  const common: Proof = { sql: `NOT EXISTS(WITH input(value) AS(VALUES(?)),s AS(SELECT ${Object.keys(scope).map(k => `json_extract(value,'$.${k}') AS ${k}`).join(",")} FROM input),
     ${groups.map((g, i) => `bad${i} AS MATERIALIZED(${g.map(([t, p]) => `SELECT 1 FROM ${t} d,s WHERE ${p}`).join(" UNION ALL ")} LIMIT 1)`).join(",")}
     SELECT 1 WHERE ${groups.map((_, i) => `EXISTS(SELECT 1 FROM bad${i})`).join(" OR ")})`, bindings: [JSON.stringify(scope)] };
+  const leaseAbsent: Proof = { sql: "NOT EXISTS(SELECT 1 FROM experience_guest_claim_leases WHERE session_id=?)", bindings: [facts.sessionId] };
+  // The exact family is all-or-none at qualification; this flag is observed
+  // producer data, not a caller-selected phase or permission to install tables.
+  const resultCopySchemaInstalled = c.optionalTables.has("experience_guest_image_result_copy_attempts");
+  const capturedScope = freeze(structuredClone(scope));
+  const claimSourceFacts = Object.freeze({}) as GuestImageResultClaimFacts;
+  claimFactsCaptures.set(claimSourceFacts, Object.freeze({ scope: capturedScope, scopeJson: JSON.stringify(capturedScope), resultCopySchemaInstalled }));
+  if (!resultCopySchemaInstalled) return freeze({ common, leaseAbsent, resultCopySchemaInstalled, claimSourceFacts,
+    familyCommon: { sql: "1", bindings: [] }, attemptAbsent: { sql: "1", bindings: [] } });
+  const scopeCte = `input(value) AS(VALUES(?)),s AS(SELECT ${Object.keys(scope).map(k => `json_extract(value,'$.${k}') AS ${k}`).join(",")} FROM input)`;
+  const attemptRelated = `d.session_id=s.sessionId OR (${resultClaimAssociationSql("attempt")})`;
+  const custodyRelated = `d.session_id=s.sessionId OR d.original_completion_event_id IN(SELECT value FROM json_each(s.ids))
+    OR d.claim_event_id IN(SELECT value FROM json_each(s.ids)) OR d.generation_id IN(SELECT value FROM json_each(s.generated))
+    OR d.output_id IN(SELECT value FROM json_each(s.generated)) OR (${resultClaimAssociationSql("custody")})
+    OR d.copy_attempt_id IN(SELECT attempt_id FROM result_related_attempts)`;
+  // Related attempts are only an identity relation here. Their presence alone
+  // does not fail common currentness; only a custody/copy edge does. This keeps
+  // reserve from invalidating its own common proof.
+  const familyCommon: Proof = { sql: `NOT EXISTS(WITH ${scopeCte},
+    result_related_attempts AS MATERIALIZED(SELECT d.attempt_id,d.custody_id FROM experience_guest_image_result_copy_attempts d,s WHERE ${attemptRelated}),
+    result_related_custodies AS MATERIALIZED(SELECT d.custody_id FROM experience_guest_image_result_custodies d,s WHERE ${custodyRelated})
+    SELECT 1 WHERE EXISTS(SELECT 1 FROM result_related_custodies)
+      OR EXISTS(SELECT 1 FROM experience_guest_image_result_copies d,s WHERE
+        d.original_content_id IN(SELECT value FROM json_each(s.bodyIds)) OR d.content_id IN(SELECT value FROM json_each(s.bodyIds))
+        OR d.custody_id IN(SELECT custody_id FROM result_related_attempts) OR d.custody_id IN(SELECT custody_id FROM result_related_custodies)))`,
+    bindings: [JSON.stringify(scope)] };
+  const attemptAbsent: Proof = { sql: `NOT EXISTS(WITH ${scopeCte}
+    SELECT 1 FROM experience_guest_image_result_copy_attempts d,s WHERE ${attemptRelated})`, bindings: [JSON.stringify(scope)] };
+  return freeze({ common, familyCommon, leaseAbsent, attemptAbsent, resultCopySchemaInstalled, claimSourceFacts });
 }
 
 
@@ -608,6 +844,7 @@ export async function collectGuestImageResultFacts(history:History) {
   const timestamps=[resource.recorded_at_ms,rows.consumption.admitted_at_ms,...allEvents.map(event=>Date.parse(event.recordedAt)),
     ...[rows.job,rows.slot,rows.token,rows.cost,...rows.calls,...rows.storage,...rows.content].flatMap(value=>["created_at","requested_at","started_at","completed_at","updated_at","settled_at","notified_at"].filter(key=>value[key]!==undefined&&value[key]!==null).map(key=>Date.parse(String(value[key]))))];
   if(timestamps.some(value=>!nonnegative(value)||value>clock.now_ms))return fail("historical_time_invalid");
+  const closure = runClosure(r);
   parts.push(...events.map(event=>progressEventProof(event,c)),
     ...observedProofs("output_operation_routes",["scope_key","slot_id","stage_key","provider","model","maximum_calls"],"scope_key=? AND slot_id=?",[s.scopeKey,s.slotId],routes),
     ...observedProofs("experience_sponsor_active_jobs",["actor_user_id","consumption_id","job_id"],"actor_user_id=? OR consumption_id=? OR job_id=?",[actor,e.consumptionId,s.jobId],[]),
@@ -615,8 +852,14 @@ export async function collectGuestImageResultFacts(history:History) {
     ...observedProofs("output_native_storage_writes",storageColumns,"scope_key=? AND slot_id=?",[s.scopeKey,s.slotId],rows.storage),
     ...observedProofs("private_content",contentColumns,"owner_id=? AND content_id<>?",[actor,o.draftId],rows.content),
     {sql:"(SELECT COUNT(*) FROM events WHERE stream_id=?)=? AND (SELECT COALESCE(MAX(sequence),0) FROM events WHERE stream_id=?)=? AND (SELECT COUNT(*) FROM event_client_receipts WHERE stream_id=?)=?",bindings:[c.frame.streamId,allEvents.length,c.frame.streamId,allEvents.length,c.frame.streamId,facts.sourceHead]},
-    {sql:`?>strftime('%Y-%m-%dT%H:%M:%fZ','now') AND NOT EXISTS(SELECT 1 FROM json_each(?) observed WHERE observed.value>${GUEST_DB_NOW})`,bindings:[expiresAt,JSON.stringify(timestamps)]},runClosure(r));
+    {sql:`?>strftime('%Y-%m-%dT%H:%M:%fZ','now') AND NOT EXISTS(SELECT 1 FROM json_each(?) observed WHERE observed.value>${GUEST_DB_NOW})`,bindings:[expiresAt,JSON.stringify(timestamps)]},closure.common,closure.familyCommon);
   for(const body of rows.content){const memory=await memoryProof(ctx,String(body.content_id));current(ctx);equal(memory.registries,history.memory.registries);parts.push(memory.proof);}
+  // Raw fact sections carry no authority. Ordinary inventory always receives
+  // the full common + no-lease + no-attempt conjunction. Later genuine owners
+  // must supply their fixed exact successors, never parse or filter this SQL.
+  const claimSourceProofs = freeze({ common: structuredClone(parts), leaseAbsent: closure.leaseAbsent,
+    attemptAbsent: closure.attemptAbsent, resultCopySchemaInstalled: closure.resultCopySchemaInstalled });
+  parts.push(closure.leaseAbsent, closure.attemptAbsent);
   // Revocation controls are proved exactly above but are not historical result
   // identity. Enabled is the issuer's recorded production permission bit.
   const historicalApproval={...h.approval.row};delete historicalApproval.revoked_at_ms;
@@ -625,7 +868,7 @@ export async function collectGuestImageResultFacts(history:History) {
     approval:historicalApproval,tails:facts.tails.map(t=>t.observed),resources:[...facts.resources,resource],stageRows:facts.rows,
     issuerGrant:historicalIssuer,issuance,authorization:nativeAuthorization,runCommand,events:allEvents,rows,routes};
   current(ctx);
-  return {ctx,history,stage:facts,parts,immutableSnapshot,
+  return {ctx,history,stage:facts,parts,claimSourceProofs,claimSourceFacts:closure.claimSourceFacts,immutableSnapshot,
     identity:{guestSubject:actor,payerUserId:policy.payerUserId,projectId:o.projectId,documentId:o.documentId,scopeKey:h.scopeKey,
       sourceHead:facts.sourceHead,saveHead:facts.sourceHead+1,quoteHead:facts.sourceHead+3,runHead:facts.sourceHead+6,resultHead:allEvents.length,
       expiresAt,generationId:String(completion.payload.generation_id),completionEventId:completion.eventId,usageEventId:usage.eventId,completedAt},
@@ -662,6 +905,7 @@ async function qualifyResultSchema(c:Captured,parts:Proof[]):Promise<Set<string>
     {required:false,definitions:VIDEO_RECONCILIATION_SCHEMA},
     {required:false,definitions:SELECTED_OUTPUT_SHARE_SCHEMA},
     {required:false,definitions:GUEST_IMAGE_STAGE_CUSTODY_SCHEMA},
+    {required:false,definitions:GUEST_IMAGE_RESULT_COPY_SCHEMA},
     {required:false,definitions:[...SCENE_SOURCE_GENERATION_TABLES,...SCENE_SOURCE_GENERATION_TRIGGERS].map(item=>item.sql)},
   ].map(family=>({...family,items:family.definitions.map(schemaItem)}));
   const tableNames=new Set([...families.flatMap(f=>f.items.filter(item=>item.type==="table").map(item=>item.name)),...c.history.sponsor.tables,
