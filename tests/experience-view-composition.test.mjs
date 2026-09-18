@@ -60,6 +60,14 @@ class Element extends EventTarget {
   querySelectorAll(selector) { return this.all().filter(node => selector.split(",").some(part => node.matches(part.trim()))); }
   querySelector(selector) { return this.querySelectorAll(selector)[0] ?? null; }
   focus() { if (this.isConnected) this.ownerDocument.activeElement = this; }
+  scrollIntoView(options) {
+    // Retain the reading context at reveal time, not a simulated browser layout.
+    this.ownerDocument.readingContext = {
+      element: this, options, active: this.ownerDocument.activeElement,
+      labels: this.querySelectorAll("label").map(label => ({ for: label.htmlFor, text: label.textContent })),
+      errors: this.querySelectorAll("small").map(error => ({ id: error.id, text: error.textContent })),
+    };
+  }
   setSelectionRange(start, end, direction = "none") {
     this.selectionStart = start; this.selectionEnd = end; this.selectionDirection = direction;
   }
@@ -167,3 +175,30 @@ test("actual Slides keeps the composed evidence node and blocks reorder until co
   assert.equal(f.document.activeElement, down, "Completed tap reorder intentionally focuses the same move control");
   assert.equal(f.counts().prepared, 0); assert.deepEqual(f.requests, []);
 });
+
+for (const output of ["model3d", "image"]) {
+  test(`actual ${output} invalid Review reveals its associated label and ready error while preserving the editable value and selection`, async t => {
+    const f = await fixture(t, output), subject = field(f.root, "subject");
+    // Whitespace is still a required-field error, but gives selection retention a
+    // nontrivial range. This uses the actual compiler/runtime, never an API stub.
+    input(subject, " \n "); subject.setSelectionRange(1, 2, "backward");
+    const retainedValue = subject.value, retainedSelection = selection(subject), writes = subject.valueWrites;
+    const review = f.root.querySelector(".experience-footer").querySelector("button");
+    review.focus(); click(review); await settle();
+    assert.equal(f.counts().prepared, 1); assert.equal(f.runtime.state.phase, "setup");
+    assert.deepEqual(f.runtime.state.issues[0], { code: "required", path: "subject" });
+    assert.equal(field(f.root, "subject"), subject, "Validation keeps the same native editing control mounted");
+    assert.equal(f.document.activeElement, subject, "The user can correct the invalid field immediately");
+    assert.equal(subject.value, retainedValue); assert.equal(subject.valueWrites, writes);
+    assert.deepEqual(selection(subject), retainedSelection);
+    assert.equal(subject.getAttribute("aria-invalid"), "true");
+    const context = f.document.readingContext;
+    assert.ok(context, "Invalid focus must reveal reading context as well as the editing control");
+    assert.equal(context.active, subject); assert.equal(context.element.contains(subject), true);
+    assert.deepEqual(context.labels, [{ for: subject.id, text: output === "model3d" ? "Object description" : "Subject" }]);
+    assert.deepEqual(context.errors, [{ id: subject.getAttribute("aria-describedby"), text: "Required" }],
+      "The associated error is already published when its reading group is revealed");
+    assert.equal(context.element, subject.parentElement, "Only the field's own label/control/error group is revealed");
+    assert.deepEqual(f.requests, [], "Invalid Review cannot reach draft storage, a provider, or a reference API");
+  });
+}

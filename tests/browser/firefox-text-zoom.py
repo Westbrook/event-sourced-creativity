@@ -1,4 +1,4 @@
-"""Native Firefox text-only zoom for the single Image regression. No import-time browser."""
+"""Native Firefox text-only zoom for finite local regressions. No import-time browser."""
 import base64
 import hashlib
 import json
@@ -86,7 +86,9 @@ def free_port():
 class FirefoxProfile:
     """Exactly one bounded fresh profile; product changes use native key actions only."""
     def __init__(self, output_dir, config):
-        self.case_id = 'image-native-text200'
+        self.case_id = config.get('case', 'image-native-text200')
+        if self.case_id not in {'image-native-text200', 'model3d-invalid-native-text200'}:
+            raise ValueError('Only the declared finite native text200 cases are admitted')
         self.config = config
         self.firefox = Path(config['firefox']).resolve()
         self.out = Path(output_dir).resolve()
@@ -393,10 +395,12 @@ blockingAllUrlsListenerAdded:true}:false;''')
         graph = json.loads(path.read_text())
         if graph.get('errors'):
             raise AssertionError('Static source graph guard reported: '+json.dumps(graph['errors']))
-        if graph.get('baseline') != self.config['baseline'] or graph.get('styleSha256') != self.config['styleSha256']:
+        if (graph.get('baseline') != self.config['baseline'] or graph.get('styleSha256') != self.config['styleSha256']
+                or graph.get('viewSha256') != self.config.get('viewSha256') or graph.get('case') != self.case_id):
             raise AssertionError('Static source graph identity changed')
         self.receipt.setdefault('sourceGraphChecks', []).append({
             'path':str(path),'baseline':graph['baseline'],'styleSha256':graph['styleSha256'],
+            'viewSha256':graph.get('viewSha256'),'case':graph['case'],
             'errors':graph['errors'],'files':len(graph.get('files',[]))})
 
     def guard(self):
@@ -445,8 +449,13 @@ blockingAllUrlsListenerAdded:true}:false;''')
                 return focused
         raise AssertionError('Native Tab did not reach '+label)
 
-    def capture(self, label):
-        self.settle()
+    def capture(self, label, *, settle=True, diagnostic=None):
+        if diagnostic is not None and (diagnostic != 'model3d-invalid-immediate'
+                or self.case_id != 'model3d-invalid-native-text200' or label != 'invalid-focus-immediate'
+                or settle is not False or any(item['label']==label for item in self.receipt['captures'])):
+            raise ValueError('Diagnostic capture is only the single unsettled Model3D invalid-focus observation')
+        if settle:
+            self.settle()
         before = {'native':self.native(),'metrics':self.observe(METRICS),'active':self.active()}
         self._check_metrics(before['metrics'])
         if before['native']['textZoom']!=2 or before['native']['fullZoom']!=1 or before['native']['browserZoomFull'] is not False:
@@ -461,11 +470,30 @@ blockingAllUrlsListenerAdded:true}:false;''')
         after = {'native':self.native(),'metrics':self.observe(METRICS),'active':self.active()}
         capture = {'label':label,'path':str(path),'sha256':hashlib.sha256(path.read_bytes()).hexdigest(),
                    'pixelWidth':width,'pixelHeight':height,'before':before,'after':after,'capturePreservedState':before==after}
+        if diagnostic is not None:
+            capture['diagnosticOnly'] = True
+            capture['diagnostic'] = diagnostic
+            capture['scope'] = 'Immediate raw geometry/scroll observation only; this PNG is never evidence of stable geometry or an invariant capture interval.'
         self.receipt['captures'].append(capture)
         self._pin(path)
         if width!=before['metrics']['innerWidth']*before['metrics']['devicePixelRatio'] or height!=before['metrics']['innerHeight']*before['metrics']['devicePixelRatio']:
             raise AssertionError('Screenshot physical pixels do not match the full native viewport')
-        if before != after:
+        if diagnostic is not None:
+            self._check_metrics(after['metrics'])
+            identity = {'tag':'TEXTAREA','id':'experience-subject','name':'subject','type':'textarea',
+                        'value':'','ariaInvalid':'true','describedBy':'experience-subject-error',
+                        'product':True,'centerOwned':True}
+            if any(sample['active'].get(key)!=value for sample in [before,after] for key,value in identity.items()):
+                raise AssertionError('Diagnostic capture lost the owned blank invalid subject focus')
+            # Only geometry and page scroll may vary in this diagnostic interval.
+            # Compare all other returned fields, including native zoom/context,
+            # document dimensions, text metrics, focus identity and ownership.
+            without = lambda value, keys: {key:item for key,item in value.items() if key not in keys}
+            if (before['native']!=after['native']
+                    or without(before['metrics'], {'scrollX','scrollY'})!=without(after['metrics'], {'scrollX','scrollY'})
+                    or without(before['active'], {'rect','scroll'})!=without(after['active'], {'rect','scroll'})):
+                raise AssertionError('Diagnostic capture changed native state, dimensions or nongeometry focus identity')
+        elif before != after:
             raise AssertionError('Full viewport capture changed native zoom, viewport, focus or scroll')
         return capture
 

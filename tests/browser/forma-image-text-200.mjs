@@ -1,7 +1,9 @@
 // Run: node tests/browser/forma-image-text-200.mjs
 // Optional: FIREFOX_EXECUTABLE_PATH, FORMA_TEXT200_BASELINE (default HEAD),
 // FORMA_TEXT200_STYLE_SHA256, FORMA_TEXT200_OUTPUT_DIR (new directory),
-// FORMA_TEXT200_PORT, PYTHON. Exactly one fresh native text2/full1 Image profile.
+// FORMA_TEXT200_PORT, PYTHON. Defaults to the unchanged Image case.
+// FORMA_TEXT200_CASE=model3d-invalid requires explicit FORMA_TEXT200_VIEW_SHA256.
+// Exactly one fresh native text2/full1 profile; no case retries.
 import assert from 'node:assert/strict';
 import { execFileSync, spawn } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
@@ -18,8 +20,16 @@ const git = (...args) => execFileSync('git', ['-C', root, ...args], { encoding:'
 const sha256 = bytes => createHash('sha256').update(bytes).digest('hex');
 const blobHash = bytes => createHash('sha1').update(`blob ${bytes.length}\0`).update(bytes).digest('hex');
 const within = (path, directory) => { if (!directory) return false; const value = relative(directory, path); return !value.startsWith(`..${sep}`) && value !== '..' && !isAbsolute(value); };
+const selectedCase = process.env.FORMA_TEXT200_CASE ?? 'image';
+assert.ok(['image', 'model3d-invalid'].includes(selectedCase), 'Only image or model3d-invalid is admitted');
+const caseId = selectedCase === 'image' ? 'image-native-text200' : 'model3d-invalid-native-text200';
+const casePath = selectedCase === 'image' ? 'tests/browser/forma-image-text-200.py' : 'tests/browser/forma-model3d-invalid-text-200.py';
+const viewPath = 'src/experiences/view.ts';
+const viewSha256 = process.env.FORMA_TEXT200_VIEW_SHA256 ?? null;
+assert.ok(selectedCase === 'model3d-invalid' ? /^[a-f0-9]{64}$/.test(viewSha256 ?? '') : viewSha256 === null,
+  'model3d-invalid requires an explicit view SHA-256; Image admits no view successor');
 const output = process.env.FORMA_TEXT200_OUTPUT_DIR ? resolve(process.env.FORMA_TEXT200_OUTPUT_DIR)
-  : await mkdtemp(resolve(tmpdir(), 'forma-image-text200-evidence-'));
+  : await mkdtemp(resolve(tmpdir(), `forma-${selectedCase}-text200-evidence-`));
 if (process.env.FORMA_TEXT200_OUTPUT_DIR) await mkdir(output, { recursive:false });
 await mkdir(resolve(output, 'pinned-bytes'));
 let runtime;
@@ -30,7 +40,7 @@ const sourceStatus = git('status', '--short');
 const baselineTree = new Map(git('ls-tree', '-rz', baseline).split('\0').filter(Boolean).map(line => {
   const [metadata, path] = line.split('\t'); return [path, metadata.split(' ')[2]];
 }));
-const tests = ['tests/browser/forma-image-text-200.mjs', 'tests/browser/firefox-text-zoom.py', 'tests/browser/forma-image-text-200.py'];
+const tests = ['tests/browser/forma-image-text-200.mjs', 'tests/browser/firefox-text-zoom.py', casePath];
 const declaredTests = new Map(await Promise.all(tests.map(async path => [path, sha256(await readFile(resolve(root, path)))])));
 const stylePath = 'src/experiences/style.css';
 const styleSha256 = process.env.FORMA_TEXT200_STYLE_SHA256 ?? sha256(await readFile(resolve(root, stylePath)));
@@ -41,9 +51,9 @@ const baseURL = `http://127.0.0.1:${port}`;
 let executable = resolve(process.env.FIREFOX_EXECUTABLE_PATH ?? firefox.executablePath());
 const csp = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data: blob:; media-src blob:; connect-src 'none'; worker-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'";
 const receipt = { status:'running', startedAt:new Date().toISOString(), root, head, baseline,
-  sourceStatus, styleSha256, declaredTests:Object.fromEntries(declaredTests), node:process.version,
+  sourceStatus, styleSha256, viewSha256, case:caseId, selectedCase, declaredTests:Object.fromEntries(declaredTests), node:process.version,
   vite:viteVersion, baseURL, csp, executable, output, runToken,
-  scope:'One English Image synthetic native Firefox text200 profile; settled focus/control/text-line bounds only, no glyph-ink, full focus-outline, OS, physical-device or AT claim',
+  scope:`One English ${selectedCase} synthetic native Firefox text200 profile; settled focus/control/text-line bounds only, no glyph-ink, full focus-outline, OS, physical-device or AT claim`,
   errors:[], requests:[], forbidden:[], files:[], finalizationErrors:[] };
 let server, child, timer, snapshotTimer, childLog, childLogDone, revision = 0, queue = Promise.resolve();
 const records = new Map(), loadedInputs = new Set();
@@ -52,6 +62,7 @@ async function pin(path) {
   const bytes = await readFile(path), hash = sha256(bytes), repoPath = within(path, root) ? relative(root, path).split(sep).join('/') : null;
   let scope;
   if (repoPath === stylePath) { assert.equal(hash, styleSha256, 'Declared Image style bytes changed'); scope = 'declared-style-successor'; }
+  else if (repoPath === viewPath && viewSha256) { assert.equal(hash, viewSha256, 'Declared invalid-focus view bytes changed'); scope = 'declared-view-successor'; }
   else if (declaredTests.has(repoPath)) { assert.equal(hash, declaredTests.get(repoPath), `Test source bytes changed: ${repoPath}`); scope = 'declared-test-source'; }
   else if (repoPath && baselineTree.has(repoPath)) { assert.equal(blobHash(bytes), baselineTree.get(repoPath), `Loaded repository input differs from baseline: ${repoPath}`); scope = 'baseline-identical'; }
   else {
@@ -76,7 +87,7 @@ async function snapshot() {
 async function writeGraph() {
   receipt.files = [...records.values()].sort((a, b) => a.path.localeCompare(b.path));
   receipt.loadedInputs = [...loadedInputs].sort();
-  const graph = { revision:++revision, at:new Date().toISOString(), head, baseline, styleSha256,
+  const graph = { revision:++revision, at:new Date().toISOString(), head, baseline, styleSha256, viewSha256, case:caseId,
     files:receipt.files, loadedInputs:receipt.loadedInputs, errors:receipt.errors, requests:receipt.requests, forbidden:receipt.forbidden };
   const temporary = resolve(output, `graph-${revision}.json.tmp`);
   await writeFile(temporary, `${JSON.stringify(graph, null, 2)}\n`);
@@ -91,14 +102,14 @@ async function guardedPin(path) {
     throw error;
   }
 }
-const guard = { name:'forma-image-text200-source-boundary', enforce:'pre',
+const guard = { name:'forma-text200-source-boundary', enforce:'pre',
   async transform(_code, id) { await guardedPin(id); if (!id.startsWith('\0')) loadedInputs.add(id.split('?')[0]); return null; },
   async transformIndexHtml(_html, context) { await guardedPin(context.filename); },
   configureServer(instance) { instance.middlewares.use((request, response, next) => {
     const path = new URL(request.url, baseURL).pathname;
     const item = { method:request.method, path }; receipt.requests.push(item);
     if (!['GET', 'HEAD'].includes(request.method) || path.startsWith('/api/')) {
-      receipt.forbidden.push(item); response.statusCode = 403; response.end('Static Image fixture refuses backend/mutation request'); return;
+      receipt.forbidden.push(item); response.statusCode = 403; response.end('Static text200 fixture refuses backend/mutation request'); return;
     }
     next();
   }); },
@@ -132,8 +143,8 @@ async function killOwnedBrowser() {
 try {
   assert.ok(existsSync(executable), 'Set FIREFOX_EXECUTABLE_PATH to the installed Firefox executable');
   executable = await realpath(executable); receipt.executable = executable;
-  runtime = await mkdtemp(resolve(tmpdir(), 'forma-image-text200-runtime-')); receipt.runtime = runtime;
-  for (const path of [...tests, stylePath, 'package.json', 'pnpm-lock.yaml',
+  runtime = await mkdtemp(resolve(tmpdir(), `forma-${selectedCase}-text200-runtime-`)); receipt.runtime = runtime;
+  for (const path of [...tests, stylePath, viewPath, 'package.json', 'pnpm-lock.yaml',
     'tests/experience-display-browser/index.html', 'tests/experience-display-browser/fixture.mjs',
     'tests/experience-display-browser/vite.config.mjs', 'tests/model3d-native/vite.config.mjs']) await guardedPin(resolve(root, path));
   // The existing pure static config keeps its Vite version/client-byte guard and excludes application backends.
@@ -144,8 +155,8 @@ try {
   await server.listen(); await snapshot();
   snapshotTimer = setInterval(() => { queue = queue.then(snapshot).catch(error => { receipt.errors.push({ stage:'periodic-snapshot', error:String(error) }); }); }, 300);
   const configPath = resolve(output, 'run-config.json');
-  await writeFile(configPath, JSON.stringify({ firefox:executable, baseURL, baseline, styleSha256, runToken, graph:resolve(output, 'graph.json') }, null, 2)+'\n');
-  const args = ['-B', resolve(root, 'tests/browser/forma-image-text-200.py'), resolve(output, 'profile'), configPath];
+  await writeFile(configPath, JSON.stringify({ firefox:executable, baseURL, baseline, styleSha256, viewSha256, case:caseId, runToken, graph:resolve(output, 'graph.json') }, null, 2)+'\n');
+  const args = ['-B', resolve(root, casePath), resolve(output, 'profile'), configPath];
   receipt.child = { executable:process.env.PYTHON ?? 'python3', args, wallCapSeconds:60 };
   const started = performance.now();
   const logPath = resolve(output, 'python.log');
@@ -185,7 +196,7 @@ try {
     ['server-close', () => server?.close()], ['retain-after-close', snapshot],
     ['loaded-product-graph', () => {
       if (receipt.status !== 'passed-pending-finalization') return;
-      for (const path of [stylePath, 'src/experiences/entry.ts', 'tests/experience-display-browser/fixture.mjs'])
+      for (const path of [stylePath, viewPath, 'src/experiences/entry.ts', 'tests/experience-display-browser/fixture.mjs'])
         assert.ok(loadedInputs.has(resolve(root, path)), `Required product/fixture source was not loaded: ${path}`);
     }],
     ['verify-retained-bytes', async () => { for (const record of records.values()) assert.equal(sha256(await readFile(resolve(output, record.retained))), record.sha256); }],
@@ -193,7 +204,7 @@ try {
     ['private-profile-remove', () => rm(resolve(output, 'profile', 'disposable-profile'), { recursive:true, force:true })],
     ['source-identity', async () => {
       assert.equal(git('rev-parse', 'HEAD'), head); assert.equal(git('status', '--short'), sourceStatus);
-      for (const path of [...tests, stylePath]) await pin(resolve(root, path));
+      for (const path of [...tests, stylePath, viewPath]) await pin(resolve(root, path));
     }],
   ]) try { await action(); } catch (error) { failed(stage, error); }
   try { await writeGraph(); } catch (error) { failed('final-graph', error); }
@@ -202,5 +213,5 @@ try {
   if (receipt.status === 'passed-pending-finalization') receipt.status = 'pass';
   receipt.endedAt = new Date().toISOString();
   await writeFile(resolve(output, 'receipt.json'), JSON.stringify(receipt, null, 2)+'\n');
-  console.log(JSON.stringify({ status:receipt.status, output, baseline, styleSha256, error:receipt.error?.message }));
+  console.log(JSON.stringify({ status:receipt.status, case:caseId, output, baseline, styleSha256, viewSha256, error:receipt.error?.message }));
 }

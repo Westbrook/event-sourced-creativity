@@ -242,7 +242,21 @@ export class ExperienceView {
     }
     return list;
   }
-  #review = async () => { if (this.#composing) return; await this.runtime.prepare(); const first = this.runtime.state.issues[0]; if (first) { if (first.path === "$reference") this.#referencePicker?.focus(); else { const target = this.#fields.get(first.path) ?? this.#choices.get(first.path)?.values().next().value; target?.focus(); } } };
+  #review = async () => {
+    if (this.#composing) return;
+    await this.runtime.prepare();
+    const first = this.runtime.state.issues[0];
+    if (!first) return;
+    if (first.path === "$reference") this.#referencePicker?.focus();
+    else {
+      const field = this.#fields.get(first.path);
+      if (field) {
+        field.focus({ preventScroll: true });
+        // Reveal the associated label and published error with the retained control.
+        field.parentElement?.scrollIntoView({ block: "start", inline: "nearest", behavior: "instant" });
+      } else this.#choices.get(first.path)?.values().next().value?.focus();
+    }
+  };
   #update() {
     if (this.#disposed) return;
     const phase = this.runtime.state.phase, changed = phase !== this.#previousPhase;
