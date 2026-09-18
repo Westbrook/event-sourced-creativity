@@ -1,3 +1,4 @@
+import { handleStillOnboarding } from './still-onboarding.ts';
 import { handleStillExperiment } from './still-experiment.ts';
 import { handleHoldDispositions } from "./budget-hold-api.ts";
 import { handleGenerationAccounting } from "./generation-accounting-api.ts";
@@ -162,6 +163,7 @@ async function routeRequest(request: Request, env: WorkerEnv, context: WorkerExe
       const headers=new Headers(response.headers);headers.set("cache-control","private, no-store");headers.append("vary","Cookie, oai-authenticated-user-id, oai-authenticated-user-email, cf-access-authenticated-user-email");
       return new Response(response.body,{status:response.status,statusText:response.statusText,headers});
     }
+    if(url.pathname==="/api/still/onboarding")return handleStillOnboarding(request,env,context);
     if(url.pathname==="/api/still/experiment")return handleStillExperiment(request,env,context);
     if(url.pathname==="/api/still/decision")return handleStillDecision(request,env,context);
     if(url.pathname==="/api/session")return handleSession(request,env,context);

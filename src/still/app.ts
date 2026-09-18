@@ -1,4 +1,5 @@
-import { actionHelp, readOnboardingFlag } from './onboarding.ts';
+import { actionHelp, readOnboardingFlag, ONBOARDING_VIEWS, type OnboardingResult } from './onboarding.ts';
+import { OnboardingController } from './onboarding-client.ts';
 import './vendor/elements/define/tooltip.js';
 import { DecisionMemo, stableDecisionKey } from './decision-cache.ts';
 import { StillAttentionObserver } from './attention-observer.ts';
@@ -105,8 +106,11 @@ export class StillApp extends LitElement {
   private dockTouched=false;
   private moreOpen=false;
   private onboarding=false;
+  private onboardingDecisionPending=false;
+  private onboardingHelp=new OnboardingController(input=>api<OnboardingResult>('/api/still/onboarding',input,'POST',8000),()=>this.changed());
+  private onboardingScope(){return this.interactionScope()+'/'+this.client.position.view+'/'+this.mode+'/'+this.client.position.blockId+'/'+this.client.position.outputId;}
   private setOnboarding=(e:CustomEvent<{value:boolean}>)=>{this.onboarding=e.detail.value===true;try{localStorage.setItem('still:flag:onboarding',String(this.onboarding));}catch{}const url=new URL(location.href);url.searchParams.delete('onboarding');url.searchParams.delete('onbaording');history.replaceState(history.state,'',url);this.activeAddress=this.address();this.changed();};
-  private help(id:string,label:string){return this.onboarding?html`<en-tooltip for=${id} show-delay="250"><span slot="content">${actionHelp(id.replace('still-help-',''),label)}</span></en-tooltip>`:nothing;}
+  private help(id:string,label:string){return this.onboarding?html`<en-tooltip for=${id} show-delay="250"><span slot="content">${this.onboardingHelp.help(this.onboardingScope(),id.replace('still-help-',''))??actionHelp(id.replace('still-help-',''),label)}</span></en-tooltip>`:nothing;}
   private density=5;
   private get pageActionLimit(){return this.developer?this.density:5;}
   private setDensity=(e:CustomEvent<{value:number}>)=>{this.density=actionLimit(e.detail.value);this.moreOpen=false;this.client.position.actionLimit=this.pageActionLimit;this.changed();};
@@ -183,7 +187,7 @@ export class StillApp extends LitElement {
     document.addEventListener('visibilitychange', this.resumeSync);
     void this.run(() => this.loadWorkspace());
   }
-  disconnectedCallback() { super.disconnectedCallback(); this.attention?.dispose();this.attention=undefined;this.decisionMemory.clear(); this.desktop.removeEventListener('change', this.developerViewportChanged); this.disposed = true; ++this.developerEpoch; this.developerApplied=undefined;this.developerReceived=undefined;this.dockObserver.disconnect(); clearTimeout(this.pollTimer); clearTimeout(this.decisionTimer); window.removeEventListener('keydown', this.paletteShortcut);window.removeEventListener('popstate', this.popstate); window.removeEventListener('beforeunload', this.beforeUnload); window.removeEventListener('focus', this.resumeSync); document.removeEventListener('visibilitychange', this.resumeSync); }
+  disconnectedCallback() { super.disconnectedCallback(); this.onboardingHelp.dispose(); this.attention?.dispose();this.attention=undefined;this.decisionMemory.clear(); this.desktop.removeEventListener('change', this.developerViewportChanged); this.disposed = true; ++this.developerEpoch; this.developerApplied=undefined;this.developerReceived=undefined;this.dockObserver.disconnect(); clearTimeout(this.pollTimer); clearTimeout(this.decisionTimer); window.removeEventListener('keydown', this.paletteShortcut);window.removeEventListener('popstate', this.popstate); window.removeEventListener('beforeunload', this.beforeUnload); window.removeEventListener('focus', this.resumeSync); document.removeEventListener('visibilitychange', this.resumeSync); }
   private draftSignature(){const g=this.generation;return JSON.stringify([this.titleDraft,this.bodyDraft,this.kindDraft,g?.prompt,g?.tone,g?.audience,g?.itemCount]);}
   private preventsRouteChange(){return this.busy&&!this.loading||this.composing||this.client.hasUnconfirmedWrite||!!this.generation?.attempted||!!this.mode&&this.draftSignature()!==this.draftBaseline||!!this.querySelector<StillContextFlow>('still-context-flow')?.preventsRouteChange||!!this.querySelector<StillUseInFlow>('still-use-in-flow')?.preventsRouteChange;}
   private beforeUnload = (e: BeforeUnloadEvent) => { if (this.preventsRouteChange()) { e.preventDefault(); e.returnValue = ''; } };
@@ -191,6 +195,10 @@ export class StillApp extends LitElement {
   protected updated() {
     this.reconcileGeneration();
     this.hydrateVisibleWriting();
+    const actionIds=[...new Set([...this.querySelectorAll<HTMLElement>('.action-dock en-button')].map(button=>button.dataset.actionId||button.id.replace('still-help-','')).filter(id=>ACTIONS.some(a=>a.id===id)))].slice(0,7);
+    const helpView=this.mode==='generate'?'choose-format':ONBOARDING_VIEWS.includes(this.client.position.view)?this.client.position.view:'other';
+    const helpEnabled=this.onboarding&&!this.loading&&!this.busy&&!this.startupFailed&&!this.paletteOpen&&!this.onboardingDecisionPending&&!!this.client.session?.policy.accepted;
+    this.onboardingHelp.update(this.onboardingScope(),helpEnabled?{enabled:true,actions:actionIds,view:helpView,locale:document.documentElement.lang||'en'}:null);
     const attentionPage=location.pathname;
     const attentionEnabled=!this.loading&&!this.startupFailed&&!!this.client.session?.policy.accepted;
     this.attention?.refresh(`${this.client.epoch}/${this.client.scopeKey}`,attentionEnabled?attentionPage:'',attentionEnabled,this.paletteOpen);
@@ -198,7 +206,7 @@ export class StillApp extends LitElement {
     const inspector=this.querySelector<StillDeveloperConsole>('still-developer-console');
     if(inspector){
       if(this.developerScope!==this.diagnosticScope()){this.developerApplied=undefined;this.developerReceived=undefined;this.developerScope=this.diagnosticScope();}
-      inspector.context={onboarding:this.onboarding,historyComplete:this.client.historyComplete,canRefreshDecision:!this.loading&&!this.busy&&(this.paletteOpen||this.mode==='generate'&&!this.generation||!this.mode&&this.client.position.view!=='generation'),attention:this.attention?.summary.snapshot(),view:this.client.position.view,mode:this.mode,head:this.client.head,page:this.page,actionLimit:this.pageActionLimit,more:this.moreOpen,paletteOpen:this.paletteOpen,paletteFeedback:this.paletteFeedback,paletteOrder:this.paletteOrder,selectedFormat:this.generation?.format??'',current:this.localDiagnostics('Current eligibility')};
+      inspector.context={onboarding:this.onboarding,onboardingText:this.onboardingHelp.status,historyComplete:this.client.historyComplete,canRefreshDecision:!this.loading&&!this.busy&&(this.paletteOpen||this.mode==='generate'&&!this.generation||!this.mode&&this.client.position.view!=='generation'),attention:this.attention?.summary.snapshot(),view:this.client.position.view,mode:this.mode,head:this.client.head,page:this.page,actionLimit:this.pageActionLimit,more:this.moreOpen,paletteOpen:this.paletteOpen,paletteFeedback:this.paletteFeedback,paletteOrder:this.paletteOrder,selectedFormat:this.generation?.format??'',current:this.localDiagnostics('Current eligibility')};
       inspector.applied=this.developerApplied;inspector.received=this.developerReceived;inspector.pending=this.developerPending||this.paletteBusy||this.paletteRefreshing;
       inspector.scope=this.diagnosticScope();
     }
@@ -330,6 +338,7 @@ export class StillApp extends LitElement {
   private turnItem(item:number){this.dockTouched=false;this.itemIndex=item;this.writeRoute();this.changed();this.decide();}
   private candidates() { return eligibleActions(this.client.projection, this.client.position, this.client.abilities); }
   private decide(bypass=false) {
+    this.onboardingDecisionPending=false;
     if(this.client.position.view==='generation'&&!this.mode){clearTimeout(this.decisionTimer);++this.decisionTicket;this.developerPending=false;this.developerReceived=undefined;this.developerApplied=this.developer?this.localDiagnostics('Generation progress uses Document, Results and Palette navigation.'):undefined;return;}
     if(this.currentRouteProblem(this.client.projection))return;
     if(this.mode){clearTimeout(this.decisionTimer);if(this.mode==='generate'&&!this.generation){++this.decisionTicket;this.suggestFormats(bypass);}return;}
@@ -337,6 +346,7 @@ export class StillApp extends LitElement {
     const candidates = this.candidates(); if(this.dockTouched)return;this.suggestions = selectActions(candidates, this.client.position);this.rankedActions=evaluateActions(candidates,this.client.position).ranked;this.moreOpen=false;this.emphasis=presentActions(this.suggestions.map(a=>a.id));this.suggestionTargets={}; this.decisionSource = 'fallback'; this.changed();
     if(this.developer){this.developerScope=this.diagnosticScope();this.developerApplied=this.localDiagnostics('Local policy');this.developerReceived=undefined;this.developerPending=false;}
     if (!this.client.session?.policy.accepted || this.mode) return;
+    this.onboardingDecisionPending=true;
     this.decisionTimer = window.setTimeout(async () => {
       const snapshot = JSON.stringify(this.client.position), head = this.client.head, scope=this.interactionScope(), diagnosticScope=this.diagnosticScope();
       this.developerPending=this.developer;this.changed();
@@ -347,12 +357,13 @@ export class StillApp extends LitElement {
         this.recordDecision(result,disposition,diagnosticScope,started);
         if(disposition==='Applied'){const allowed=new Map(this.candidates().map(a=>[a.id,a]));this.suggestions=result.actions!.map(a=>allowed.get(a.id)).filter((a):a is Action=>!!a).slice(0,4);this.rankedActions=(result.rankedActions??result.actions??[]).map(a=>allowed.get(a.id)).filter((a):a is Action=>!!a);this.emphasis=result.presentation??presentActions(this.suggestions.map(a=>a.id));this.suggestionTargets=result.targets??{};this.decisionSource=result.source;this.changed();}
       } catch(error) { this.recordDecision({source:'fallback',reason:error instanceof ApiError?`HTTP ${error.status}`:'Network unavailable',head,policy:POLICY_VERSION},'Kept local controls',diagnosticScope,started); }
-      finally {if(ticket===this.decisionTicket){this.developerPending=false;this.changed();}}
+      finally {if(ticket===this.decisionTicket){this.onboardingDecisionPending=false;this.developerPending=false;this.changed();}}
     }, bypass||this.decisionMemory.peek(this.decisionKey(this.decisionBody()))?0:700);
   }
   private suggestFormats(bypass=false) {
     const ticket = this.decisionTicket, snapshot = JSON.stringify(this.client.position), head = this.client.head, scope = this.interactionScope();
     if(this.developer){this.developerApplied=this.localDiagnostics('No automatic format choice',true);this.developerReceived=undefined;}
+    this.onboardingDecisionPending=true;
     this.decisionTimer = window.setTimeout(async () => {
       const diagnosticScope=this.diagnosticScope(),started=performance.now();
       try {
@@ -366,7 +377,7 @@ export class StillApp extends LitElement {
           this.formatSuggestions = [...new Set(result.rankedFormats ?? result.formats!)].filter(id=>allowed.has(id));this.formatEmphasis=result.presentation??presentActions(this.formatSuggestions); this.changed();
         }
       } catch(error) { this.recordDecision({source:'fallback',reason:error instanceof ApiError?`HTTP ${error.status}`:'Network unavailable',head,policy:POLICY_VERSION},'Kept local format order',diagnosticScope,started); }
-      finally {if(ticket===this.decisionTicket){this.developerPending=false;this.changed();}}
+      finally {if(ticket===this.decisionTicket){this.onboardingDecisionPending=false;this.developerPending=false;this.changed();}}
     }, bypass||this.decisionMemory.peek(this.decisionKey(this.decisionBody({view:'choose-format'})))?0:1300);
   }
   private async sync(force = false) {

@@ -26,3 +26,15 @@ export const ACTION_HELP:Record<string,string>={
 };
 export function actionHelp(id:string,label:string){return ACTION_HELP[id]??({'Back':'Return to the previous step.','More':'See the next suggested actions.','Other outputs':'Choose another available output format.','More results':'Show the next set of items.','Previous results':'Show the previous set of items.','New project':ACTION_HELP['new-project'],'Document':ACTION_HELP.document,'Results':ACTION_HELP.results,'Palette':ACTION_HELP['ui:palette'],'Download':'Download this result to your device.'} as Record<string,string>)[label]??ACTIONS.find(a=>a.id===id)?.description??`Use “${label}” for the next step.`;}
 export function readOnboardingFlag(url:string,storage:Pick<Storage,'getItem'>){const q=new URL(url).searchParams;return q.has('onboarding')||q.has('onbaording')||storage.getItem('still:flag:onboarding')==='true';}
+
+export const ONBOARDING_MODEL='gpt-5.6-luna' as const;
+export const ONBOARDING_VERSION=1;
+export type OnboardingInput={actions:string[];view:string;locale:string};
+export type OnboardingResult={source:'local'|'model';reason?:string;tips:Record<string,string>;model?:string;elapsedMs?:number;requestElapsedMs?:number;cache?:import('./decision-cache.ts').DecisionCacheInfo};
+export const ONBOARDING_VIEWS=['projects','documents','document','block','results','result','generation','choose-format','edit','create','other'];
+export function onboardingInput(raw:unknown):OnboardingInput|null{
+ if(!raw||typeof raw!=='object'||Array.isArray(raw))return null;
+ const r=raw as Record<string,unknown>;
+ if(r.enabled!==true||!Array.isArray(r.actions)||!r.actions.length||r.actions.length>7||r.actions.some(id=>typeof id!=='string'||!ACTIONS.some(a=>a.id===id))||new Set(r.actions).size!==r.actions.length||!ONBOARDING_VIEWS.includes(String(r.view))||typeof r.locale!=='string'||!/^[a-z]{2,3}(?:-[a-z0-9]{2,8}){0,2}$/i.test(r.locale))return null;
+ return {actions:[...r.actions].sort() as string[],view:String(r.view),locale:r.locale};
+}
