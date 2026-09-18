@@ -27,3 +27,14 @@ export function presentActions(ids:string[],answers:Record<string,Answer>={},pre
   }));
   return presentEvidence(ids,evidence);
 }
+
+/** Page hierarchy is separate from model evidence; defaults never invent confidence. */
+export function presentToolbar(ids:string[],evidence:Record<string,EmphasisEvidence>={},options:{view?:string;more?:boolean}={}):Record<string,Emphasis>{
+  const rows=presentEvidence(ids,evidence);
+  const defaultLead=!options.more&&options.view==='projects'&&!!rows['new-project']&&!Object.values(rows).some(row=>row.variant==='primary');
+  return Object.fromEntries(Object.entries(rows).map(([id,row])=>{
+    const lead=!options.more&&(row.variant==='primary'||defaultLead&&id==='new-project');
+    const reason=options.more?'More shows alternatives with equal emphasis':defaultLead&&id==='new-project'?'Page default: New project opens a reversible form':row.variant==='ghost'?'Secondary action; escape controls use ghost':row.reason;
+    return [id,{...row,variant:lead?'primary':'secondary',size:'medium',tier:lead?'lead':'peer',reason} satisfies Emphasis];
+  }));
+}

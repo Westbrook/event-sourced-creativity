@@ -1,3 +1,4 @@
+import { generationResult } from './results.ts';
 import { foldEvents, type CreativeEvent, type EventInput } from '../model/events.ts';
 import { documentArtifactRevision } from '../model/document-artifacts.ts';
 import type { DocumentJob } from '../model/document-jobs.ts';
@@ -46,6 +47,10 @@ export class StillClient {
   content: Record<string, string> = {};
   head = 0;
   jobs: DocumentJob[] = [];
+  private jobsReadKey = '';
+  jobsError = '';
+  private get jobsKey() { return `${this.epoch}:${this.scopeKey}:${this.position.documentId}:${this.position.view==='generation'?this.position.outputId:''}`; }
+  get jobsLoaded() { return this.jobsReadKey===this.jobsKey; }
   epoch = 0;
   position: Position = { projectId: '', documentId: '', blockId: '', outputId: '', view: 'projects', intent: '', recentActions: [] };
   onChange = () => {};
@@ -397,30 +402,48 @@ export class StillClient {
     this.jobs = this.jobs.map(current => current.jobId === job.jobId ? result.job : current); this.onChange();
   }
   async pollJobs() {
-    const document = this.position.documentId, key = `${this.epoch}:${this.scopeKey}:${document}`;
+    const document = this.position.documentId, key = this.jobsKey;
     if (!document) return;
     if (this.polling?.key === key) return this.polling.promise;
     const read = ++this.jobRead;
     const operation = (async () => {
       const check = await this.verifyScope();
       if (read !== this.jobRead || document !== this.position.documentId) return;
+      const known=new Set(this.jobs.map(j=>j.jobId));
+      const selected=this.position.view==='generation'?this.position.outputId:'';
       const result = await this.request<{ jobs: DocumentJob[] }>(`/api/document-jobs?document=${encodeURIComponent(document)}`); check();
       if (read !== this.jobRead || document !== this.position.documentId) return;
       if (!Array.isArray(result.jobs) || result.jobs.some(j => !j || typeof j.documentId !== 'string' || typeof j.jobId !== 'string')) throw new Error('The job history could not be verified.');
       // Forma also returns authorized active/unnotified jobs from other documents.
       const previous = this.jobs.filter(j => j.documentId === document), jobs = result.jobs.filter(j => j.documentId === document);
+      // A generation may be admitted while this older list request is in flight.
+      jobs.push(...previous.filter(j=>!known.has(j.jobId)&&!jobs.some(next=>next.jobId===j.jobId)));
+      if(selected&&!jobs.some(j=>j.jobId===selected)){
+        try {
+          const detail=await this.request<{job:DocumentJob}>(`/api/document-jobs/${encodeURIComponent(selected)}`);check();
+          if(detail.job?.jobId!==selected||detail.job.documentId!==document)throw new Error('Generation unavailable.');
+          jobs.push(detail.job);
+        } catch(error) { if(!(error instanceof ApiError&&error.status===404))throw error; }
+      }
+      if(read!==this.jobRead||document!==this.position.documentId)return;
       const terminal = (job: DocumentJob) => ['completed', 'partial', 'failed', 'canceled'].includes(job.status);
       const changed = this.jobs.some(j => j.documentId !== document) || JSON.stringify(previous) !== JSON.stringify(jobs);
       const needsRefresh = jobs.some(j => terminal(j) && JSON.stringify(j) !== JSON.stringify(previous.find(p => p.jobId === j.jobId)))
+        || jobs.some(j=>j.jobId===selected&&j.status==='completed'&&!generationResult(j,this.projection,this.events,true))
         || previous.some(j => !terminal(j) && !jobs.some(next => next.jobId === j.jobId));
-      if (changed) { this.jobs = jobs; this.onChange(); }
+      const loaded=this.jobsLoaded,hadError=!!this.jobsError;
+      this.jobsReadKey=key;this.jobsError='';
+      if (changed || !loaded || hadError) { this.jobs = jobs; this.onChange(); }
       if (needsRefresh) {
         // A read already in flight may predate this completion. Follow it with a
         // delta that is known to start after the job acknowledgement.
         if (this.refreshing) await this.refreshing;
         await this.refreshSource(check);
       }
-    })().finally(() => { if (this.polling?.promise === operation) this.polling = null; });
+    })().catch(error=>{
+      if(read===this.jobRead&&key===this.jobsKey){this.jobsError=error instanceof Error?error.message:'Could not load generations.';this.onChange();}
+      throw error;
+    }).finally(() => { if (this.polling?.promise === operation) this.polling = null; });
     this.polling = { key, promise: operation }; return operation;
   }
 }

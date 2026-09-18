@@ -57,8 +57,6 @@ still-app .form-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items:
 still-app .select-label { display:block;min-width:0;margin:24px 0; }
 still-app .context-preview { font: 22px/1.65 Georgia, serif; white-space: pre-wrap; }
 still-app .generation-page { max-width: 900px; }
-still-app .format-suggestions { width: fit-content; max-width: 100%; }
-still-app .format-suggestions::part(base) { flex-wrap: wrap; }
 still-app .generation-context { margin: 24px 0 40px; }
 still-app .generation-context p { font: 24px/1.57 Georgia, serif; margin: 28px 0; white-space: pre-wrap; overflow-wrap: anywhere; }
 still-app .generation-context span { display: block; font: 10px/1.5 Arial, sans-serif; letter-spacing: .06em; text-transform: uppercase; color: #999185; margin-bottom: 5px; }
@@ -155,9 +153,9 @@ still-app main h1:focus { outline:none; }
 .context-flow blockquote { border-inline-start: 2px solid #d3cbbd; margin: 2rem 0; padding-inline-start: 1rem; opacity: .75; }
 
 still-app input:focus-visible { outline:2px solid var(--accent); outline-offset:4px; }
-still-app :is(.action-dock,.format-suggestions) en-button[size="small"]::part(control) { min-block-size:44px; padding-inline:12px; font-size:13px; }
-still-app :is(.action-dock,.format-suggestions) en-button[size="medium"]::part(control) { min-block-size:44px; padding-inline:16px; font-size:13px; }
-still-app :is(.action-dock,.format-suggestions) en-button[size="large"]::part(control) { min-block-size:48px; padding-inline:20px; font-size:13px; }
+still-app .action-dock en-button[size="small"]::part(control) { min-block-size:44px; padding-inline:12px; font-size:13px; }
+still-app .action-dock en-button[size="medium"]::part(control) { min-block-size:44px; padding-inline:16px; font-size:13px; }
+still-app .action-dock en-button[size="large"]::part(control) { min-block-size:48px; padding-inline:20px; font-size:13px; }
 still-app en-button[data-tier="alternative"] { margin-inline-start:5px; }
 still-app en-button[data-action-id="ui:more"] { margin-inline-start:7px; }
 
@@ -190,3 +188,17 @@ still-app .palette-hint { color: var(--soft); font-size: 12px; }
 /* Fixed library region: notifications do not participate in content layout. */
 still-app .generation-notifications { --en-toast-region-width: 30rem; --en-toast-region-layer: 40; --en-toast-region-max-size: 55dvh; }
 still-app .generation-notifications en-toast { --en-toast-background: var(--en-color-surface); --en-toast-color: var(--en-color-text); }
+
+still-app .pending-thumbnail { position: relative; aspect-ratio: 4 / 3; display: grid; place-items: center; background: var(--en-color-surface-muted, #eae7df); overflow: hidden; }
+still-app .pending-thumbnail en-skeleton { position: absolute; inset: 0; --en-skeleton-size: 100%; opacity: .6; }
+still-app .pending-thumbnail > span { position: relative; font: 27px Georgia, serif; }
+still-app .result small { display: block; margin-top: 6px; color: var(--ink-muted, #77756b); }
+still-app .generation-stage { max-width: 950px; margin: 2vh auto; }
+still-app .generation-stage h1 { margin-bottom: 16px; }
+still-app .generation-stage > p { margin: 12px 0 24px; }
+still-app .generation-placeholder { width: min(100%, 720px); height: min(42dvh, 460px); }
+still-app .generation-placeholder en-skeleton { height: 100%; --en-skeleton-size: 100%; }
+still-app .generation-placeholder.audio { height: min(20dvh, 160px); }
+still-app .job-status a { color: inherit; text-underline-offset: .2em; }
+
+still-app .generation-placeholder.known-size { width: min(100%, 720px, calc(42dvh * var(--generation-ratio))); height: auto; aspect-ratio: var(--generation-ratio); }

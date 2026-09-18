@@ -22,7 +22,7 @@ function visit(file) {
   fs.mkdirSync(path.dirname(destination(file)), { recursive: true });
   fs.writeFileSync(destination(file), code);
 }
-for (const name of ['button', 'toolbar', 'textarea', 'drawer', 'badge', 'select', 'checkbox', 'search-input', 'number-field', 'text-field', 'tooltip', 'switch', 'menu', 'menu-item', 'toast', 'toast-region']) visit(path.join(source, `packages/elements/dist/define/${name}.js`));
+for (const name of ['button', 'toolbar', 'textarea', 'drawer', 'badge', 'select', 'checkbox', 'search-input', 'number-field', 'text-field', 'tooltip', 'switch', 'menu', 'menu-item', 'toast', 'toast-region', 'skeleton']) visit(path.join(source, `packages/elements/dist/define/${name}.js`));
 fs.mkdirSync(path.join(target, 'tokens'), { recursive: true });
 fs.copyFileSync(path.join(source, 'packages/tokens/dist/default.css'), path.join(target, 'tokens/default.css'));
 fs.copyFileSync(path.join(source, 'LICENSE'), path.join(target, 'LICENSE'));

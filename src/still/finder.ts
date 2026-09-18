@@ -28,5 +28,5 @@ export function paletteActions(query:string,candidates:Action[], ordering?:{rank
 }
 export function nextToolbarActions(ranked:Action[],visibleIds:string[],eligible:Action[],count=3){
   const allowed=new Set(eligible.map(a=>a.id)),seen=new Set(visibleIds);
-  return ranked.filter(a=>{if(!allowed.has(a.id)||seen.has(a.id))return false;seen.add(a.id);return true;}).slice(0,count);
+  return ranked.filter(a=>{if(!allowed.has(a.id)||seen.has(a.id))return false;seen.add(a.id);return true;}).slice(0,Math.max(0,count));
 }

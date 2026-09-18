@@ -2,7 +2,7 @@ import type { ConsoleSnapshot } from './console-window.ts';
 import type { DecisionDiagnostics, DecisionPass } from './diagnostics.ts';
 import { evaluateActions, evaluateFormats, type Answer, type Position, type Question } from './decisions.ts';
 import { presentEvidence, PRIMARY_POLICY } from './presentation.ts';
-export const actionLimit=(value:unknown)=>typeof value==='number'&&Number.isInteger(value)?Math.max(3,Math.min(12,value)):5;
+export const actionLimit=(value:unknown)=>typeof value==='number'&&Number.isInteger(value)?Math.max(1,Math.min(7,value)):5;
 export type Capture={schema:'still-decision-capture';version:1;id:string;at:string;snapshot:ConsoleSnapshot;annotation:{intendedAction:string;missing:string;expectedEvidence:string};experiment?:{request:unknown;result:unknown}};
 export function captureDecision(snapshot:ConsoleSnapshot):Capture{return structuredClone({schema:'still-decision-capture',version:1,id:crypto.randomUUID(),at:new Date().toISOString(),snapshot,annotation:{intendedAction:'',missing:'',expectedEvidence:''}});}
 export const captureTrace=(c:Capture)=>(c.snapshot.context.paletteOpen&&c.snapshot.received?.trace?.channel==='palette'?c.snapshot.received.trace:undefined)??c.snapshot.applied??c.snapshot.received?.trace??c.snapshot.context.current;

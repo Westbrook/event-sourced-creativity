@@ -7,6 +7,8 @@ export const STILL_FORMATS = ['image','short_story','scene','slides','storyboard
 export const STILL_MODES = ['actions','workspaces','new-project','new-document','add-context','edit-block','rename','intent','edit-artifact','use-in','reuse','split-context','research-context','find-references','compose','surprise','clarify'] as const;
 export type StillRoute = Pick<Position,'projectId'|'documentId'|'blockId'|'outputId'|'view'> & { itemIndex:number; page:number; mode:string; format:string; legacy?:boolean; itemExplicit?:boolean };
 const empty = ():StillRoute => ({projectId:'',documentId:'',blockId:'',outputId:'',view:'projects',itemIndex:0,page:0,mode:'',format:''});
+// IDs reject path separators and control characters after decoding.
+// eslint-disable-next-line no-control-regex
 const id = (value:string) => { try {const decoded=decodeURIComponent(value);return decoded&&decoded.length<=180&&!/[\u0000-\u001f\u007f/\\]/u.test(decoded)&&!['.','..'].includes(decoded)?decoded:null;}catch{return null;} };
 const index = (value:string) => /^[1-9]\d{0,5}$/.test(value)?Number(value)-1:null;
 export function isStillNamespace(pathname:string){return pathname==='/still'||pathname==='/still.html'||pathname.startsWith('/still/');}
@@ -36,6 +38,9 @@ export function parseStillRoute(value:string|URL):StillRoute|null {
       if(parts[i]==='block'){
         const block=id(parts[++i]??'');if(!block)return null;route.blockId=block;i++;
       }else if(parts[i]==='results'){route.view='results';i++;}
+      else if(parts[i]==='generation'){
+        const job=id(parts[++i]??'');if(!job)return null;route.outputId=job;route.view='generation';i++;
+      }
       else if(parts[i]==='result'){
         const result=id(parts[++i]??'');if(!result)return null;route.outputId=result;route.view='artifact';i++;
         if(parts[i]==='item'){const item=index(parts[++i]??'');if(item===null||item>1000)return null;route.itemIndex=item;route.itemExplicit=true;i++;}
@@ -67,7 +72,8 @@ export function stillPath(route:StillRoute):string {
     if(route.view==='artifact'){
       path+=`/result/${encode(route.outputId)}`;
       if(route.itemIndex)path+=`/item/${route.itemIndex+1}`;
-    }else if(route.view==='results')path+='/results';
+    }else if(route.view==='generation')path+=`/generation/${encode(route.outputId)}`;
+    else if(route.view==='results')path+='/results';
     else if(route.blockId)path+=`/block/${encode(route.blockId)}`;
   }
   if(route.page)path+=`/page/${route.page+1}`;
@@ -84,14 +90,15 @@ export function stillURL(route:StillRoute,current:string|URL):string {
 
 // foldEvents may infer a document's project. Check the requested ownership chain
 // explicitly so a conflicting path cannot silently select another project.
-export function stillRouteProblem(route:StillRoute,p:CreativeProjection):string {
+export function stillRouteProblem(route:StillRoute,p:CreativeProjection,resultCount?:number):string {
   if(route.projectId&&!p.projects.some(x=>x.id===route.projectId))return 'Project unavailable';
   if(route.documentId&&!p.documents.some(x=>x.id===route.documentId&&x.projectId===route.projectId&&!x.removed))return 'Document unavailable';
   if(route.blockId&&!p.blocks.some(x=>x.id===route.blockId&&x.documentId===route.documentId&&x.projectId===route.projectId&&!x.removed))return 'Idea unavailable';
   const artifact=p.artifacts.find(x=>x.id===route.outputId&&x.documentId===route.documentId);
-  if(route.outputId&&!artifact&&!p.outputs.some(x=>x.id===route.outputId&&x.documentId===route.documentId&&!x.discarded))return 'Result unavailable';
+  // Generation membership is checked against the authorized jobs endpoint by the view.
+  if(route.view!=='generation'&&route.outputId&&!artifact&&!p.outputs.some(x=>x.id===route.outputId&&x.documentId===route.documentId&&!x.discarded))return 'Result unavailable';
   if((route.itemIndex||route.itemExplicit)&&(!artifact||!['slides','storyboard'].includes(artifact.kind)||!artifact.items[route.itemIndex]))return 'Item unavailable';
-  const count=route.view==='projects'?p.projects.length:route.view==='documents'?p.documents.filter(d=>!d.removed).length:p.outputs.filter(o=>!o.discarded).length+p.artifacts.length;
+  const count=route.view==='projects'?p.projects.length:route.view==='documents'?p.documents.filter(d=>!d.removed).length:resultCount??p.outputs.filter(o=>!o.discarded).length+p.artifacts.length;
   if(route.page&&route.page*3>=count)return 'Page unavailable';
   return '';
 }
