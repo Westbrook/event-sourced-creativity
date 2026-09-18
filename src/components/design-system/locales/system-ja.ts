@@ -1,5 +1,8 @@
 /** Audited Forma-owned interface, metadata, and component-documentation copy. */
 const messages: Record<string, string> = {
+  "system.auto.mnnucx.13": "共有された出力",
+  "system.auto.1h1pgn9.12": "出力を共有",
+  "system.auto.g1h7cj.64": "ホストによる追加の制限です。サーバー側の機能許可を上書きすることはできません。",
   "system.auto.1tmhsof.17": "準備を更新",
   "system.auto.156lxlv.8": "3Dモデル",
   "system.auto.15uddgm.56": "静的GLB 1点 · 構造確認済み。外観の確認が必要です",
@@ -6318,5 +6321,7 @@ Object.assign(messages, {
   "system.auto.1n26nr5.46": "保存済みネイティブ3Dモデルのアプリケーションインターフェース。",
   "system.auto.1qkmc2b.138": "Storeに依存しない保存済みネイティブ3Dモデルのインターフェースです。組み込む前に、実際の属性、JavaScriptプロパティ、イベントを確認してください。",
 });
+
+Object.assign(messages, { "system.auto.scxocd.15": "スポンサー提供の画像" });
 
 export default messages;

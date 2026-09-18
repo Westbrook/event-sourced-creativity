@@ -45,7 +45,7 @@ for(const scenario of ['complete','source_changed','canceled','grant_revoked'])t
   assert(plannerMaximum+538020<=f.slot.maximumMicrousd);
   const settings={kind:'render_document',payload:f.settings,calls:[{stage:'planning:0:initial',provider:'openai',model:planner.model,maximumMicrousd:plannerMaximum},{stage:'video:initial',provider:'fal',model:media.model,maximumMicrousd:538020}]};
   const current={available:true,settings},route=await outputDigest(current),future=new Date(Date.now()+45000).toISOString();
-  const cp={artifactId:original.artifactId,artifactPlan:original.artifact,outputExecution:f.settings.outputExecution,providerSubmissionProtocol:1,providerSubmissions:{},reservationId:f.slot.tokenReservationId,costReservationId:f.slot.costReservationId,costReservationPeriod:new Date().toISOString().slice(0,7),costReservationMicrousd:f.slot.maximumMicrousd};
+  const cp={artifactId:original.artifactId,artifactPlan:original.artifact,outputExecution:original.cp.outputExecution,providerSubmissionProtocol:1,providerSubmissions:{},reservationId:f.slot.tokenReservationId,costReservationId:f.slot.costReservationId,costReservationPeriod:new Date().toISOString().slice(0,7),costReservationMicrousd:f.slot.maximumMicrousd};
   f.sqlite.prepare('UPDATE users SET consent_version=?').run(POLICY_VERSION);
   f.sqlite.exec("DELETE FROM output_provider_calls;UPDATE output_operation_slots SET status='running';UPDATE cost_budget_reservations SET status='executing'");
   f.sqlite.prepare("UPDATE document_jobs SET status='running',lease_expires_at=?,result_json=?").run(future,JSON.stringify(cp));
@@ -119,6 +119,7 @@ for(const scenario of ['complete','source_changed','canceled','grant_revoked'])t
   const finalResult=JSON.parse(refreshed.result_json);assert.equal(finalResult.generationReceipt.actual_provider_call_count,2);
   await finishVideoFixtureJob(output.guardedEnvironment,job,'completed',finalResult,null);
   assert.equal(JSON.parse(f.sqlite.prepare('SELECT result_json FROM document_jobs').get().result_json).generationReceipt.actual_provider_call_count,2);
+  assert.deepEqual(JSON.parse(f.sqlite.prepare('SELECT result_json FROM document_jobs').get().result_json).outputExecution,original.cp.outputExecution);
   assert.equal(f.sqlite.prepare('SELECT status FROM document_jobs').get().status,'completed');assert.equal(f.sqlite.prepare('SELECT status FROM output_operation_slots').get().status,'succeeded');
   const read=await readRetainedOutputVideo(f.env,{ownerId:'owner',completionId:completed.eventId,documentId:'doc',projectId:'project',artifactId:original.artifactId,contentId:content.contentId,inputId:inputStored.contentId,rawContent:raw,contentExpiresAt:content.expiresAt,completionRaw:JSON.stringify(payload),currentAssertions:[{sql:"EXISTS(SELECT 1 FROM private_content WHERE content_id=? AND owner_id='owner' AND kind='document-artifact' AND content=? AND expires_at=? AND redacted_at IS NULL AND NOT EXISTS(SELECT 1 FROM project_resource_scopes WHERE resource_kind='content' AND resource_id=private_content.content_id))",bindings:[content.contentId,raw,content.expiresAt],deadlineMs:Date.parse(content.expiresAt)}]});
   assert(f.sqlite.prepare('WITH video_witness AS (SELECT ? AS bindings) SELECT 1 WHERE '+read.witness.sql).get(read.witness.json));

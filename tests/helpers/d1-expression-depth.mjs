@@ -6,6 +6,9 @@ import { createHash } from "node:crypto";
 // statement in a fresh in-memory SQLite connection before the fixture can execute it.
 // The default prepare-time check sends only schema and SQL, never fixture row data.
 // An explicit bindings option is available for exact mocked-statement probes.
+// Optional queryLimits additionally applies real SQLite function/variable limits,
+// workerd's fixed five-term compound SELECT limit, and the raw UTF-8 SQL byte
+// ceiling. Omission preserves depth-only behavior and the existing receipt shape.
 const COMPILE = String.raw`
 import json,re,sqlite3,sys,time
 started=time.monotonic()
@@ -47,7 +50,25 @@ for statement in data["schema"]:
 milestone("schema-created")
 db.setlimit(sqlite3.SQLITE_LIMIT_EXPR_DEPTH,data["limit"])
 assert db.getlimit(sqlite3.SQLITE_LIMIT_EXPR_DEPTH)==data["limit"]
+query_limits=data.get("queryLimits")
+statement_bytes=len(data["sql"].encode("utf-8"))
+parameter_count=len(data.get("bindings",[]))
+if query_limits is not None:
+    db.setlimit(sqlite3.SQLITE_LIMIT_COMPOUND_SELECT,5)
+    assert db.getlimit(sqlite3.SQLITE_LIMIT_COMPOUND_SELECT)==5
+    db.setlimit(sqlite3.SQLITE_LIMIT_FUNCTION_ARG,query_limits["functionArguments"])
+    db.setlimit(sqlite3.SQLITE_LIMIT_VARIABLE_NUMBER,query_limits["parameters"])
+    # EXPLAIN is test-only framing. The raw statement gets its own exact byte
+    # check below; permit that prefix without subtracting from D1's SQL budget.
+    db.setlimit(sqlite3.SQLITE_LIMIT_SQL_LENGTH,query_limits["sqlBytes"]+len("EXPLAIN "))
+    assert db.getlimit(sqlite3.SQLITE_LIMIT_FUNCTION_ARG)==query_limits["functionArguments"]
+    assert db.getlimit(sqlite3.SQLITE_LIMIT_VARIABLE_NUMBER)==query_limits["parameters"]
+    assert db.getlimit(sqlite3.SQLITE_LIMIT_SQL_LENGTH)==query_limits["sqlBytes"]+len("EXPLAIN ")
 try:
+    if query_limits is not None and statement_bytes>query_limits["sqlBytes"]:
+        raise sqlite3.OperationalError("D1 SQL statement byte limit exceeded")
+    if query_limits is not None and parameter_count>query_limits["parameters"]:
+        raise sqlite3.OperationalError("D1 bound parameter limit exceeded")
     try:
         milestone("before-explain",suppliedBindings=len(data.get("bindings",[])))
         compiled=db.execute("EXPLAIN "+data["sql"],data.get("bindings",[]))
@@ -57,7 +78,8 @@ try:
         match=re.fullmatch(r"Incorrect number of bindings supplied\. The current statement uses (\d+), and there are 0 supplied\.",str(error))
         if not match:
             raise
-        milestone("before-explain-placeholder-bindings",placeholderBindings=int(match.group(1)))
+        parameter_count=int(match.group(1))
+        milestone("before-explain-placeholder-bindings",placeholderBindings=parameter_count)
         compiled=db.execute("EXPLAIN "+data["sql"],(None,)*int(match.group(1)))
     compiled.fetchall()
     milestone("after-explain")
@@ -65,7 +87,8 @@ try:
 except sqlite3.Error as error:
     milestone("sqlite-error")
     result={"ok":False,"error":str(error)}
-print(json.dumps({**result,"limit":data["limit"],"sqliteVersion":sqlite3.sqlite_version}))
+print(json.dumps({**result,"limit":data["limit"],"sqliteVersion":sqlite3.sqlite_version,
+    **({"queryLimits":query_limits,"statementBytes":statement_bytes,"parameterCount":parameter_count} if query_limits is not None else {})}))
 milestone("finished")
 `;
 const schemaSql = sqlite => sqlite.prepare("SELECT sql FROM sqlite_master WHERE sql IS NOT NULL AND name NOT LIKE 'sqlite_%' ORDER BY CASE type WHEN 'table' THEN 0 WHEN 'index' THEN 1 WHEN 'view' THEN 2 ELSE 3 END").all().map(row => row.sql);
@@ -74,9 +97,13 @@ const functionSignatures = sqlite => sqlite.prepare("PRAGMA function_list").all(
   .map(({ name, narg, type, flags }) => ({ name, narg, type, flags }))
   .sort((a, b) => a.name.localeCompare(b.name) || a.narg - b.narg || a.type.localeCompare(b.type));
 
-export function compileSqliteExpressionDepth(sqlite, sql, { limit = 100, schema = schemaSql(sqlite), bindings, functions = functionSignatures(sqlite) } = {}) {
+export function compileSqliteExpressionDepth(sqlite, sql, { limit = 100, schema = schemaSql(sqlite), bindings, functions = functionSignatures(sqlite), queryLimits } = {}) {
   const started = performance.now();
-  const input = JSON.stringify({ schema, sql, limit, functions, ...(bindings === undefined ? {} : { bindings }) });
+  if (queryLimits !== undefined) {
+    assert.deepEqual(Object.keys(queryLimits).sort(), ["functionArguments", "parameters", "sqlBytes"]);
+    assert.ok(Object.values(queryLimits).every(value => Number.isSafeInteger(value) && value > 0));
+  }
+  const input = JSON.stringify({ schema, sql, limit, functions, ...(queryLimits === undefined ? {} : { queryLimits }), ...(bindings === undefined ? {} : { bindings }) });
   const compiled = spawnSync(process.env.FORMA_SQLITE_PYTHON ?? "python3", ["-I", "-S", "-B", "-c", COMPILE, String(Buffer.byteLength(input, "utf8"))], {
     input, encoding: "utf8", maxBuffer: 4 * 1024 * 1024, timeout: 30_000,
   });
@@ -98,11 +125,26 @@ export function compileSqliteExpressionDepth(sqlite, sql, { limit = 100, schema 
   }
 }
 
-// Only reuse a completed depth-100 compile for byte-identical SQL, schema and function signatures. The
+// Only reuse a completed compile for identical SQL, schema, function signatures and limits. The
 // Python connection itself disables prepared-statement caching before setting its limit.
 const verifiedCompiles = new Map();
-export function enforceD1ExpressionDepth(state) {
-  const original = state.env.DB.prepare, observed = new Set(), records = [], failures = [];
+export function enforceD1ExpressionDepth(state, { queryLimits } = {}) {
+  queryLimits = queryLimits === undefined ? undefined : structuredClone(queryLimits);
+  const original = state.env.DB.prepare, observed = new Set(), records = [], failures = [], boundCounts = [], wrapped = new WeakSet();
+  const wrap = statement => {
+    if (queryLimits === undefined || wrapped.has(statement)) return statement;
+    wrapped.add(statement);
+    const bind = statement.bind;
+    statement.bind = function (...values) {
+      boundCounts.push(values.length);
+      if (values.length > queryLimits.parameters) {
+        failures.push({ kind: "bound-parameters", count: values.length, limit: queryLimits.parameters });
+        assert.fail("D1 bound parameter limit exceeded");
+      }
+      return wrap(bind.apply(this, values));
+    };
+    return statement;
+  };
   let version = -1, schema = [], schemaHash = "";
   state.env.DB.prepare = function (sql) {
     if (/^\s*(?:SELECT|WITH|INSERT|UPDATE|DELETE)\b/iu.test(sql)) {
@@ -112,11 +154,11 @@ export function enforceD1ExpressionDepth(state) {
         schemaHash = createHash("sha256").update(JSON.stringify(schema)).digest("hex");
       }
       const functions = functionSignatures(state.sqlite);
-      const key = schemaHash + "\n" + JSON.stringify(functions) + "\n100\n" + sql;
+      const key = schemaHash + "\n" + JSON.stringify(functions) + "\n100\n" + JSON.stringify(queryLimits ?? null) + "\n" + sql;
       let result = verifiedCompiles.get(key);
       if (!result) {
         try {
-          result = compileSqliteExpressionDepth(state.sqlite, sql, { schema, functions });
+          result = compileSqliteExpressionDepth(state.sqlite, sql, { schema, functions, queryLimits });
         } catch (error) {
           failures.push({ sql, ok: false, limit: 100, kind: "compiler-exception", error: error instanceof Error ? error.message : String(error) });
           throw error;
@@ -127,15 +169,21 @@ export function enforceD1ExpressionDepth(state) {
       if (!result.ok) failures.push({ sql, ...result });
       assert.ok(result.ok, result.error + "\n" + sql);
     }
-    return original.call(this, sql);
+    return wrap(original.call(this, sql));
   };
   return {
-    records, failures,
+    records, failures, boundCounts,
     assertVerified() {
       // Background workers may deliberately catch a database failure: still fail this test.
       assert.deepEqual(failures, []);
       assert.ok(records.length > 0);
       assert.ok(records.every(record => record.limit === 100 && record.ok));
+      if (queryLimits !== undefined) assert.ok(boundCounts.every(count => count <= queryLimits.parameters));
+      if (queryLimits !== undefined) for (const record of records) {
+        assert.deepEqual(record.queryLimits, queryLimits);
+        assert.ok(record.statementBytes <= queryLimits.sqlBytes);
+        assert.ok(record.parameterCount <= queryLimits.parameters);
+      }
     },
     restore() { state.env.DB.prepare = original; },
   };

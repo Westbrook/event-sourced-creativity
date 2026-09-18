@@ -2,22 +2,23 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import fs from 'node:fs';
 import ts from 'typescript';
+import { parseExperienceHostRoute } from '../src/experiences/host-route.ts';
 import { hasServerExecutionOwner, readOutputDurableObservation } from '../src/model/output-durable-observation.ts';
 const source=fs.readFileSync(new URL('../src/components/forma-experience-host.ts',import.meta.url),'utf8');
 const tree=ts.createSourceFile('host.ts',source,ts.ScriptTarget.Latest,true,ts.ScriptKind.TS);
 const host=tree.statements.find(node=>ts.isClassDeclaration(node)&&node.name.text==='FormaExperienceHost');
-const names=['#attachObservation','#observationMatches','#resumeObservation','#observationPending','#visibility','#suspendObservation','#pagehide','#pageshow','#scheduleResultRead','#statusLabel','#refreshAndRead','#command','#beginOperation','#extendObservationGrace'];
+const names=['#disposeSponsor','#attachObservation','#observationMatches','#resumeObservation','#observationPending','#visibility','#suspendObservation','#pagehide','#pageshow','#scheduleResultRead','#statusLabel','#refreshAndRead','#command','#beginOperation','#extendObservationGrace'];
 const body=host.members.filter(node=>names.includes(node.name?.getText(tree))).map(node=>node.getText(tree).replaceAll('#','')).join('\n');
 assert.equal(host.members.filter(node=>names.includes(node.name?.getText(tree))).length,names.length);
 // Actual host method bodies, deterministic DOM/timer ports. No claim of real
 // BFCache, browser suspension, transport, or paid-provider acceptance evidence.
 function fixture(){
  const timers=[],checks=[],loads=[];
- const Class=new Function('setTimeout','hasServerExecutionOwner','retainedImageSourceMessage','ExperienceHostOperation',ts.transpile(`class Harness{${body}}`,{target:ts.ScriptTarget.ES2022})+';return Harness;')((callback,delay)=>{timers.push({callback,delay});return timers.length;},hasServerExecutionOwner,()=>"changed",class {constructor(expire){this.expire=expire;}wait(p){return p;}cancel(){} });
+ const Class=new Function('setTimeout','hasServerExecutionOwner','retainedImageSourceMessage','ExperienceHostOperation','parseExperienceHostRoute',ts.transpile(`class Harness{${body}}`,{target:ts.ScriptTarget.ES2022})+';return Harness;')((callback,delay)=>{timers.push({callback,delay});return timers.length;},hasServerExecutionOwner,()=>"changed",class {constructor(expire){this.expire=expire;}wait(p){return p;}cancel(){} },parseExperienceHostRoute);
  const h=new Class(),binding={client:{identity:{output:'image'},dispose(){},read:async()=>{},command:async()=>({status:'unavailable'})},store:{attentionPublication:{settled:async()=>{}}},plan:{documentId:'doc'}};
  Object.assign(h,{binding,navigationEpoch:0,isConnected:true,ownerDocument:{visibilityState:'visible'},busy:false,loading:false,retired:false,
   captureCommandFocusVisibility:()=>null,finishOperation:()=>true,readable:()=>!h.retired&&h.ownerDocument.visibilityState!=='hidden',visible:()=>true,check:async()=>checks.push('GET'),load:async()=>loads.push('read-only load'),stopResultRead(){h.resultRead=undefined;},
-  resetDecision(){},clearResult(){h.result=undefined;},requestUpdate(){},retire(){h.retired=true;h.observationAttachment=undefined;},
+  querySelectorAll:()=>[],resetDecision(){},clearResult(){h.result=undefined;},requestUpdate(){},retire(){h.retired=true;h.observationAttachment=undefined;},
   i18n:{system:x=>x,t:(_key,fallback)=>fallback},state:()=>h.currentState,current:()=>true,baseCurrent:()=>true,operationCurrent:()=>true,scheduleDeadline(){},
   store:{refreshEvents:async()=>{},documentGenerationRevision:()=>"revision",experienceDocumentSourceCurrent:()=>true}});
  return{h,binding,timers,checks,loads};

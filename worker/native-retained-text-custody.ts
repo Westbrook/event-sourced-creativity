@@ -324,12 +324,12 @@ export async function readNativeRetainedTextCustody(env: WorkerEnv, identity: Na
     : projectNativeRetainedOutput({ output: capturedSelection.output, selection: nativeSelection }, body, source.expires_at, native.sceneMedium);
   if (!dto) throw unavailable();
   const assertion = {
-    sql: `EXISTS(WITH ${auth.cte},${eventCte},expected_events AS (SELECT value FROM json_each(?))
-      SELECT 1 FROM private_content WHERE ${nativeRetainedSourceFinalGuard()})`,
+    sql: `WITH ${auth.cte},${eventCte},expected_events AS (SELECT value FROM json_each(?))
+      SELECT 1 AS admitted FROM private_content WHERE ${nativeRetainedSourceFinalGuard()}`,
     bindings: [...auth.bindings, `creative:${capturedIdentity.userId}`, snapshot, ...contentBindings,
       source.content, source.expires_at, principal.auth_json],
   };
-  const final = await database.prepare(`SELECT CASE WHEN (${assertion.sql}) THEN 1 ELSE 0 END AS admitted`)
+  const final = await database.prepare(assertion.sql)
     .bind(...assertion.bindings).first<{ admitted: number }>();
   currentEnvironment();
   if (final?.admitted !== 1 || Date.parse(source.expires_at) <= Date.now()) throw unavailable();

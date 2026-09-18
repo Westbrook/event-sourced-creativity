@@ -580,3 +580,42 @@ test('mixed slideshow success and failure label each charged model and current t
   }finally{context.mock.restoreAll();f.sqlite.close();}
  }
 });
+
+test('Sunburst default and explicit model quote the versioned high-quality allowance and dispatch one exact text-only image',async context=>{
+ for(const model of [undefined,'gpt-image-2.5-sunburst']){
+  const transmissions=[];context.mock.method(globalThis,'fetch',async(url,request)=>{
+   const path=String(url),body=JSON.parse(request.body);transmissions.push({path,body});
+   if(path.endsWith('/responses'))return Response.json({id:'sunburst-direction',model:'gpt-5.6-terra',output_text:JSON.stringify({title:'Orchard',rationale:'Evening light',scene:'An orchard at sunset',palette:['green','gold'],next_moves:['Review']}),usage:{input_tokens:120,output_tokens:80,total_tokens:200}});
+   if(path.endsWith('/moderations'))return Response.json({results:[{flagged:false,categories:{}}]});
+   const [width,height]=body.size.split('x').map(Number);
+   return Response.json({created:1,data:[{b64_json:png(width,height).toString('base64')}],usage:{input_tokens:120,output_tokens:80,total_tokens:200,input_tokens_details:{text_tokens:120,image_tokens:0}}});
+  });
+  const f=await fixture([{block_id:'source-sunburst-price',type:'message',properties:{text:'An orchard at sunset.'}}]);
+  try{
+   if(model===undefined)delete f.env.OPENAI_IMAGE_MODEL;else f.env.OPENAI_IMAGE_MODEL=model;
+   const plan=await saveImages(f),targetIds=[plan.targetIds[0]];
+   const preflight=await f.ok(await f.send({action:'preflight',planRevisionId:plan.planId,targetIds}));
+   const target=preflight.command.preflight.targets[0];assert.equal(target.available,true);assert.equal(target.model,'gpt-image-2.5-sunburst');
+   const budget=target.settings.imageBudget;assert.equal(budget.version,'gpt-image-2.5-sunburst-doc-calculator-2026-09-18');assert.equal(budget.maximumReferenceImages,0);assert.equal(budget.quality,'high');
+   assert.equal(target.settings.calls[1].maximumMicrousd,Math.max(900000,budget.maximumMicrousd),'existing admission floor is unchanged');
+   assert.equal(transmissions.length,0);assert.equal(f.sqlite.prepare('SELECT COUNT(*) AS n FROM document_jobs').get().n,0);
+   const auth=await authorize(f,plan.planId,targetIds);assert.equal(transmissions.length,0);
+   await f.ok(await f.startAndDrive({action:'run',grantId:auth.grantId}));
+   assert.deepEqual(transmissions.map(t=>t.path),['https://api.openai.com/v1/responses','https://api.openai.com/v1/moderations','https://api.openai.com/v1/images/generations']);
+   const wire=transmissions[2].body;assert.equal(wire.model,'gpt-image-2.5-sunburst');assert.equal(wire.quality,'high');assert.equal(wire.n,1);assert.equal(wire.size,target.settings.imageRender.size);assert.equal(wire.partial_images,undefined);assert.equal(wire.stream,undefined);assert.equal(wire.image,undefined);
+   assert.deepEqual(transmissions[1].body.input,[{type:'text',text:wire.prompt}]);
+   assert.equal(f.sqlite.prepare('SELECT status FROM document_jobs').get().status,'completed');
+  }finally{f.sqlite.close();context.mock.restoreAll();}
+ }
+});
+
+test('Sunburst reference-pixel preflight remains unavailable without dispatch or job creation',async context=>{
+ const calls=[];context.mock.method(globalThis,'fetch',async(...args)=>{calls.push(args);throw Error('No provider call expected');});
+ const f=await fixture([{block_id:'reference-sunburst',type:'reference',properties:{text:'Keep this subject',pixel_reference_mode:'preserve_subject',reference_id:'required-reference'}}]);context.after(()=>f.sqlite.close());delete f.env.OPENAI_IMAGE_MODEL;
+ await appendAuditEvent(f.env,stream,'user','RightsAsserted',{document_id:f.documentId,reference_id:'required-reference',rights_class:'owned'});
+ const plan=await saveImages(f),preflight=await f.ok(await f.send({action:'preflight',planRevisionId:plan.planId,targetIds:plan.targetIds}));
+ assert.ok(preflight.command.preflight.targets.length>0);
+ assert.equal(preflight.command.preflight.targets.length,plan.targetIds.length);
+ assert.ok(preflight.command.preflight.targets.every(t=>!t.available&&t.reasonCode==='output_native_reference_input_unpriced'));
+ assert.equal(f.sqlite.prepare('SELECT COUNT(*) AS n FROM document_jobs').get().n,0);assert.deepEqual(calls,[]);
+});

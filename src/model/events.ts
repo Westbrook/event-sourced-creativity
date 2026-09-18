@@ -1,5 +1,7 @@
+import { createGuestImageResultOriginIndex, type GuestImageResultClaimEventOrigin } from "./guest-image-result-presentation.ts";
 import {measureRetainedState,RETAINED_STATE_LIMITS} from './retained-state.ts';
-import { projectGeneratedImageEdit, type GeneratedImageOutputEdit } from "./generated-image-revision.ts";
+import { projectGeneratedImageEdit, projectGuestImageResultEdit, type GeneratedImageOutputEdit } from "./generated-image-revision.ts";
+import { parseGuestImageResultCompletedCustodyReview, type GuestImageResultCompletedCustodyReview } from "./generated-image-edit.ts";
 import { audioMetadataAfterSourceEdit } from "./audio.ts";
 import { normalizeImageFocalPoint, type ImageFocalPoint } from "./focal-point.ts";
 import { normalizePromptTechnique, PROMPT_TECHNIQUES, type PromptTechnique } from "./prompt-structures.ts";
@@ -94,6 +96,7 @@ export type CreativeDocument = {
 };
 
 export type CreativeOutput = {
+  claimedOrigin?: GuestImageResultClaimEventOrigin;
   imageRevision?: GeneratedImageOutputEdit;
   id: string;
   documentId: string;
@@ -243,6 +246,13 @@ export function createCreativeEventFold(asOf = Number.POSITIVE_INFINITY, selecte
   const collections = new Map<string, CreativeCollection>();
   const membership: Record<string, { collectionId: string; position: string }> = {};
   const outputs = new Map<string, CreativeOutput>();
+  const claimOrigins = createGuestImageResultOriginIndex();
+  const claimedProjects = new Map<string, string>();
+  // Historical structural continuity only; never exposed as current authority.
+  const claimedEditReviews = new Map<string, GuestImageResultCompletedCustodyReview>();
+  const discardConflictedOutputs = () => {
+    for (const id of claimOrigins.takeInvalidatedOutputs()) { outputs.delete(id); claimedProjects.delete(id); claimedEditReviews.delete(id); }
+  };
   const artifacts = new Map<string, DocumentArtifact>();
   const originalAudio = new Map<string, Pick<DocumentArtifact, "mediaUrl" | "mediaType" | "settings">>();
   const originalVideo = new Map<string, Pick<DocumentArtifact, "mediaUrl" | "mediaType" | "settings" | "items">>();
@@ -282,6 +292,8 @@ export function createCreativeEventFold(asOf = Number.POSITIVE_INFINITY, selecte
     if (finished) throw new Error("creative_fold_already_finished");
     if (ended || event.sequence > asOf) { ended = true; return false; }
     const p = event.payload;
+    const claimed = claimOrigins.observe(event);
+    discardConflictedOutputs();
     switch (event.type) {
       case "ProjectCreated": {
         const id=String(p.project_id??"");const name=String(p.name??"Untitled project");const projectState=String(p.state??"active");
@@ -361,8 +373,30 @@ export function createCreativeEventFold(asOf = Number.POSITIVE_INFINITY, selecte
       case "CollectionItemRemoved": delete membership[itemId(p.item_ref)]; break;
       case "CollectionItemMoved": { const id = itemId(p.item_ref); if (id) membership[id] = { collectionId: String(p.to_collection_id), position: String(p.position ?? "a0") }; break; }
       case "ContextCompiled": {const snapshot=asRecord(p.compiled_snapshot);const snapshotDocument=asRecord(snapshot.document);const documentId=String(p.document_id??snapshotDocument.id??state.documentId??"");if(documentId)documentCompiles.set(documentId,p);if(!documentId||documentId===state.documentId)state.latestCompile=p;const canvas=asRecord(snapshot.canvas);const generationId=String(p.generation_id??"");if(generationId&&canvas.canvas_id)generationCanvas.set(generationId,{canvasId:String(canvas.canvas_id),contextSetId:String(canvas.context_set_id??"")});break;}
+      case "GuestImageResultClaimed": {
+        if (!claimed) break;
+        const p = claimed.payload, document = documents.get(p.document_id);
+        if (!projects.has(p.project_id) || !document || document.removed || document.projectId !== p.project_id
+          || !claimOrigins.isUnambiguous(p.object_id, p.generation_id)) break;
+        claimedProjects.set(p.object_id, p.project_id);
+        outputs.set(p.object_id, {
+          id: p.object_id, documentId: p.document_id, generationId: p.generation_id,
+          title: p.title, ...(p.title ? { titleSource: "generated" as const } : {}), createdAt: p.original_created_at,
+          sourceEventId: claimed.eventId, sequence: claimed.sequence, contentRef: p.output_ref, promptRef: p.prompt_ref,
+          modelId: p.model_id, plannerModelId: p.planner_model_id, provider: p.provider, promptTechnique: p.prompt_technique,
+          latency: p.latency_ms, mediaUrl: p.media_url, mediaType: p.media_type, width: p.image_width, height: p.image_height,
+          quality: p.quality, purpose: p.purpose, sourceSurface: p.source_surface, variant: 0,
+          standalone: true, standaloneSequence: claimed.sequence, canvasId: null, contextSetId: null, promptFanId: null,
+          promotionId: null, promotedFromId: null, promotedFromEventId: null, focalPoint: null,
+          pinned: false, saved: false, discarded: false, library: false, claimedOrigin: p.claimed_origin,
+        });
+        break;
+      }
       case "IdeationPreviewCompleted": {
         const id=String(p.object_id??(Array.isArray(p.object_ids)?p.object_ids[0]:"")??"")||`draft-${String(p.generation_id??event.eventId)}`;
+        claimOrigins.observeNativeOutput(id, String(p.generation_id ?? ""));
+        discardConflictedOutputs();
+        if (!claimOrigins.isUnambiguous(id, String(p.generation_id ?? ""))) break;
         previewOutputByEvent.set(event.eventId,id);
         {const receipt=generationCanvas.get(String(p.generation_id??""));const generatedTitle=String(p.title??asRecord(p.output_brief).title??"").trim();outputs.set(id,{id,documentId:String(p.document_id??state.documentId),...(generatedTitle?{title:generatedTitle,titleSource:"generated" as const}:{}),createdAt:event.occurredAt,canvasId:p.canvas_id?String(p.canvas_id):receipt?.canvasId??null,contextSetId:p.context_set_id?String(p.context_set_id):receipt?.contextSetId??null,generationId:String(p.generation_id??""),modelId:String(p.model_id??"gpt-image-2"),variant:Number(p.variant??outputs.size%4),latency:Number(p.latency_ms??0),sequence:event.sequence,pinned:false,saved:false,discarded:false,library:false,contentRef:p.output_ref?String(p.output_ref):null,promptRef:p.prompt_ref?String(p.prompt_ref):null,promptTechnique:normalizePromptTechnique(p.prompt_technique),promptFanId:p.prompt_fan_id?String(p.prompt_fan_id):null,provider:String(p.provider??"openai"),mediaUrl:p.media_url?String(p.media_url):null,mediaType:p.media_type?String(p.media_type):null,width:p.image_width?Number(p.image_width):null,height:p.image_height?Number(p.image_height):null,plannerModelId:p.planner_model_id?String(p.planner_model_id):null,quality:"low",purpose:"ideate",sourceEventId:event.eventId,sourceSurface:p.source_surface?String(p.source_surface):p.source_chat_turn_id?"chat":null,promotionId:null,promotedFromId:null,promotedFromEventId:null,focalPoint:normalizeImageFocalPoint(p.focal_point),standalone:!p.prompt_fan_id,standaloneSequence:p.prompt_fan_id?null:event.sequence,...(p.production_mode==="managed"?{productionMode:"managed" as const,productionTeam:p.production_team?String(p.production_team):null}:{})});}
         break;
@@ -370,7 +404,7 @@ export function createCreativeEventFold(asOf = Number.POSITIVE_INFINITY, selecte
       case "GenerationCompleted": {
         if (p.report_space === "scout") break;
         const ids = Array.isArray(p.object_ids) ? p.object_ids : [];
-        ids.forEach((value) => { const id = String(value); const promotedFromEventId=p.reference_preview_event_id?String(p.reference_preview_event_id):null;const receipt=generationCanvas.get(String(p.generation_id??""));const generatedTitle=String(p.title??asRecord(p.output_brief).title??"").trim(); outputs.set(id, { id, documentId: String(p.document_id ?? state.documentId),...(generatedTitle?{title:generatedTitle,titleSource:"generated" as const}:{}),createdAt:event.occurredAt, canvasId:p.canvas_id?String(p.canvas_id):receipt?.canvasId??null,contextSetId:p.context_set_id?String(p.context_set_id):receipt?.contextSetId??null,generationId: String(p.generation_id ?? ""), modelId: String(p.model_id ?? "adapter-neutral"), variant: Number(p.variant ?? outputs.size % 4), latency: Number(p.latency_ms ?? 0), sequence: event.sequence, pinned: false, saved: false, discarded: false, library: false, contentRef: p.output_ref ? String(p.output_ref) : null, promptRef:p.prompt_ref?String(p.prompt_ref):null,promptTechnique:normalizePromptTechnique(p.prompt_technique),promptFanId:p.prompt_fan_id?String(p.prompt_fan_id):null, provider: String(p.provider ?? (p.simulation ? "simulation" : "unknown")), mediaUrl: p.media_url ? String(p.media_url) : null, mediaType: p.media_type ? String(p.media_type) : null, width: p.image_width ? Number(p.image_width) : null, height: p.image_height ? Number(p.image_height) : null, plannerModelId: p.planner_model_id ? String(p.planner_model_id) : null, quality:p.quality==="low"?"low":p.quality==="medium"?"medium":"high",purpose:p.purpose==="ideate"?"ideate":"final",sourceEventId:event.eventId,sourceSurface:p.source_surface?String(p.source_surface):null,promotionId:p.promotion_id?String(p.promotion_id):null,promotedFromId:p.promoted_from_object_id?String(p.promoted_from_object_id):promotedFromEventId?previewOutputByEvent.get(promotedFromEventId)??null:null,promotedFromEventId,focalPoint:normalizeImageFocalPoint(p.focal_point),standalone:!p.prompt_fan_id,standaloneSequence:p.prompt_fan_id?null:event.sequence,...(p.production_mode==="managed"?{productionMode:"managed" as const,productionTeam:p.production_team?String(p.production_team):null}:{}) }); });
+        ids.forEach((value) => { const id = String(value); claimOrigins.observeNativeOutput(id, String(p.generation_id ?? "")); discardConflictedOutputs(); if (!claimOrigins.isUnambiguous(id, String(p.generation_id ?? ""))) return; const promotedFromEventId=p.reference_preview_event_id?String(p.reference_preview_event_id):null;const receipt=generationCanvas.get(String(p.generation_id??""));const generatedTitle=String(p.title??asRecord(p.output_brief).title??"").trim(); outputs.set(id, { id, documentId: String(p.document_id ?? state.documentId),...(generatedTitle?{title:generatedTitle,titleSource:"generated" as const}:{}),createdAt:event.occurredAt, canvasId:p.canvas_id?String(p.canvas_id):receipt?.canvasId??null,contextSetId:p.context_set_id?String(p.context_set_id):receipt?.contextSetId??null,generationId: String(p.generation_id ?? ""), modelId: String(p.model_id ?? "adapter-neutral"), variant: Number(p.variant ?? outputs.size % 4), latency: Number(p.latency_ms ?? 0), sequence: event.sequence, pinned: false, saved: false, discarded: false, library: false, contentRef: p.output_ref ? String(p.output_ref) : null, promptRef:p.prompt_ref?String(p.prompt_ref):null,promptTechnique:normalizePromptTechnique(p.prompt_technique),promptFanId:p.prompt_fan_id?String(p.prompt_fan_id):null, provider: String(p.provider ?? (p.simulation ? "simulation" : "unknown")), mediaUrl: p.media_url ? String(p.media_url) : null, mediaType: p.media_type ? String(p.media_type) : null, width: p.image_width ? Number(p.image_width) : null, height: p.image_height ? Number(p.image_height) : null, plannerModelId: p.planner_model_id ? String(p.planner_model_id) : null, quality:p.quality==="low"?"low":p.quality==="medium"?"medium":"high",purpose:p.purpose==="ideate"?"ideate":"final",sourceEventId:event.eventId,sourceSurface:p.source_surface?String(p.source_surface):null,promotionId:p.promotion_id?String(p.promotion_id):null,promotedFromId:p.promoted_from_object_id?String(p.promoted_from_object_id):promotedFromEventId?previewOutputByEvent.get(promotedFromEventId)??null:null,promotedFromEventId,focalPoint:normalizeImageFocalPoint(p.focal_point),standalone:!p.prompt_fan_id,standaloneSequence:p.prompt_fan_id?null:event.sequence,...(p.production_mode==="managed"?{productionMode:"managed" as const,productionTeam:p.production_team?String(p.production_team):null}:{}) }); });
         break;
       }
       case "GeneratedImageEdited": {
@@ -382,7 +416,12 @@ export function createCreativeEventFold(asOf = Number.POSITIVE_INFINITY, selecte
           const output=outputs.get(id);if(!output)continue;
           const ownerId=event.streamId.startsWith("creative:")?event.streamId.slice("creative:".length):"";
           const projectId=documents.get(output.documentId)?.projectId??"";
-          const edited=projectGeneratedImageEdit(output,event,{ownerId,projectId});
+          const eventClaim=output.claimedOrigin?parseGuestImageResultCompletedCustodyReview(p.claim):null;
+          const claim=claimedEditReviews.get(id)??eventClaim;
+          const edited=output.claimedOrigin
+            ?claim?projectGuestImageResultEdit(output,event,{ownerId,projectId,claim}):null
+            :projectGeneratedImageEdit(output,event,{ownerId,projectId});
+          if(edited&&eventClaim&&!claimedEditReviews.has(id))claimedEditReviews.set(id,eventClaim);
           outputs.set(id,edited??{...output,mediaUrl:null,mediaType:null,width:null,height:null,focalPoint:null});
         }
         break;
@@ -573,6 +612,13 @@ export function createCreativeEventFold(asOf = Number.POSITIVE_INFINITY, selecte
   if (finished) throw new Error("creative_fold_already_finished");
   if(selection){selectedDocumentId=selection.documentId;selectedProjectId=selection.projectId??"";}
   finished = true;
+  // Prune before both Library and Project-card calculations. Native histories
+  // keep their legacy missing-Document behavior; claimed custody never does.
+  for (const [id, output] of outputs) {
+    const document = documents.get(output.documentId);
+    if (!claimOrigins.isUnambiguous(id, output.generationId) || output.claimedOrigin
+      && (!document || document.removed || document.projectId !== claimedProjects.get(id) || !projects.has(document.projectId))) { outputs.delete(id); claimedEditReviews.delete(id); }
+  }
   const requestedDocument=selectedDocumentId?documents.get(selectedDocumentId):undefined;
   if(requestedDocument&&!requestedDocument.removed&&requestedDocument.projectId!==state.projectId){const requestedProject=projects.get(requestedDocument.projectId);state.projectId=requestedDocument.projectId;if(requestedProject){state.projectName=requestedProject.name;state.projectState=requestedProject.state;}}
   if(selectedProjectId&&selectedProjectId!==state.projectId){const requestedProject=projects.get(selectedProjectId);if(requestedProject){state.projectId=requestedProject.id;state.projectName=requestedProject.name;state.projectState=requestedProject.state;}}
@@ -618,9 +664,10 @@ export function createCreativeEventFold(asOf = Number.POSITIVE_INFINITY, selecte
   return state;
   };
   const retainedState=()=>[projects,blocks,blockRelations,documents,collections,membership,outputs,artifacts,
+    claimedProjects,claimedEditReviews,claimOrigins.retainedState,
     originalAudio,originalVideo,videoEditCounts,originalModel3d,model3dEditCounts,revisedModel3d,generationCanvas,
     documentCompiles,previewOutputByEvent,annotations,families,preferences,conditions,state];
-  return { accept, finish, measureRetainedState:(limits=RETAINED_STATE_LIMITS)=>measureRetainedState(retainedState(),limits) };
+  return { accept, finish, measureRetainedState:(limits:{bytes:number;nodes:number;depth:number}=RETAINED_STATE_LIMITS)=>measureRetainedState(retainedState(),limits) };
 }
 
 export const shortEventType = (type: string) => type.replace(/([a-z])([A-Z])/g, "$1 $2");

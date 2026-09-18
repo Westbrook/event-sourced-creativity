@@ -38,7 +38,7 @@ test('real native adapter: one exact480p POST, exact source transfer, bounded jo
  assert.equal(f.calls[3].url,base+'/status');assert.equal(f.calls[4].url,base);
  const wire=JSON.parse(f.calls[2].init.body);assert.equal(wire.duration,4);assert.equal(wire.resolution,'480p');assert.equal(wire.generate_audio,false);assert.deepEqual(wire.image_urls,['https://v3.fal.media/file/one']);assert.equal(wire.end_user_id,await sha(new TextEncoder().encode('test-owner')));
  assert.equal(f.attempts.length,1);assert.equal(f.attempts[0].video.mediaMaximumMicrousd,4*VIDEO_ADAPTER_CONTRACT.publishedCostPerSecondMicrousd['480p']);assert.match(f.attempts[0].pricingVersion,/fal-480p-transport/);assert.equal(f.attempts[0].video.requestBody,f.calls[2].init.body);assert.equal(f.attempts[0].requestDigest,await sha(new TextEncoder().encode(f.calls[2].init.body)));
- assert.deepEqual(f.events,['source','fetch:POST','source','fetch:PUT','attempt','prepared','pending','source','dispatch','fetch:POST','accepted','receipt','source','fetch:GET','source','fetch:GET','source','fetch:GET','completed']);
+ assert.deepEqual(f.events,['source','fetch:POST','source','fetch:PUT','attempt','prepared','pending','source','dispatch','fetch:POST','accepted','receipt','source','fetch:GET','source','fetch:GET','completed','source','fetch:GET']);
  assert.equal(result.seconds,4);assert.equal(result.costMicrousd,4*VIDEO_ADAPTER_CONTRACT.publishedCostPerSecondMicrousd['480p']);assert.equal(result.usedReferencePixels,true);assert.equal(result.providerParameters.resolution,'480p');assert.deepEqual(result.bytes,bytes);
  // Synthetic four bytes are intentionally not claimed as measured/playable video.
  assert.equal(Object.hasOwn(result,'requirementFulfilled'),false);assert.equal(Object.hasOwn(result,'measuredSeconds'),false);
@@ -74,9 +74,10 @@ test('unknown paid submission outcome never retries or records zero cost',async(
  const f=fixture();f.responses[2]=Response.json({detail:'invalid'},{status:422});await fakeNetwork(f.fetch,()=>assert.rejects(generateCreativeVideo(env,'A pan',f.options)));assert.equal(f.calls.length,3);assert.ok(f.events.includes('rejected'));
 });
 
-test('accepted job identity and media failures preserve accepted status, never a second paid POST',async()=>{
- for(const mutate of [f=>{f.responses[3]=Response.json({status:'COMPLETED',request_id:'foreign'});},f=>{f.responses[4]=Response.json({video:{url:'https://evil.invalid/movie'}});},f=>{f.responses[5]=new Response(bytes,{headers:{'content-type':'text/html'}});},f=>{f.responses[5]=new Response(bytes,{headers:{'content-type':'video/mp4','content-length':'999'}});}]){
-  const f=fixture();mutate(f);await fakeNetwork(f.fetch,()=>assert.rejects(generateCreativeVideo(env,'A pan',f.options)));assert.equal(f.calls.filter(c=>c.url.startsWith('https://queue.fal.run')&&c.init.method==='POST').length,1);assert.ok(f.events.includes('accepted'));assert.ok(!f.events.includes('completed'));assert.equal(f.receipts[0].providerJobId,'job-1');
+test('accepted job identity and media failures preserve known accounting, never a second paid POST',async()=>{
+ const mutations=[f=>{f.responses[3]=Response.json({status:'COMPLETED',request_id:'foreign'});},f=>{f.responses[4]=Response.json({video:{url:'https://evil.invalid/movie'}});},f=>{f.responses[5]=new Response(bytes,{headers:{'content-type':'text/html'}});},f=>{f.responses[5]=new Response(bytes,{headers:{'content-type':'video/mp4','content-length':'999'}});}];
+ for(const [index,mutate] of mutations.entries()){
+  const f=fixture();mutate(f);await fakeNetwork(f.fetch,()=>assert.rejects(generateCreativeVideo(env,'A pan',f.options)));assert.equal(f.calls.filter(c=>c.url.startsWith('https://queue.fal.run')&&c.init.method==='POST').length,1);assert.ok(f.events.includes('accepted'));assert.equal(f.events.includes('completed'),index>=2);assert.equal(f.receipts[0].providerJobId,'job-1');
  }
 });
 

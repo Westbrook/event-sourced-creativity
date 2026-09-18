@@ -18,7 +18,13 @@ const eventText=eventFields.filter(field=>!['sequence','schema_version','payload
 const revisionFields=['revision_id','owner_id','organization_id','project_access_id','project_id','document_id','artifact_id','revision',
   'content_json','content_sha256','created_by_user_id','created_at','expires_at','redacted_at'];
 const revisionText=revisionFields.filter(field=>!['revision','content_json'].includes(field));
-const json=(fields:string[])=>`json_object(${fields.map(field=>`'${field}',${field}`).join(',')})`;
+const json=(fields:string[])=>{
+  // Keep each call within the 32-argument qualification limit.
+  let value=`json_object(${fields.slice(0,16).map(field=>`'${field}',${field}`).join(',')})`;
+  for(let offset=16;offset<fields.length;offset+=15)
+    value=`json_set(${value},${fields.slice(offset,offset+15).map(field=>`'$.${field}',${field}`).join(',')})`;
+  return value;
+};
 const validText=(fields:string[])=>fields.map(field=>`(${field} IS NULL OR (typeof(${field})='text' AND length(CAST(${field} AS BLOB))<=512))`).join(' AND ');
 const relation=`SELECT e.*,p.owner_id private_owner,p.project_id private_project,p.document_id private_document,p.private_json,p.redacted_at private_redacted
   FROM events e LEFT JOIN event_private_payloads p ON p.private_event_id=e.event_id WHERE e.stream_id=?`;

@@ -1,3 +1,4 @@
+import { createGuestImageResultOriginIndex, type GuestImageResultClaimPresentation } from "./guest-image-result-presentation.ts";
 import { documentArtifactDefinition, isDocumentArtifactKind, type DocumentArtifactKind } from "./document-artifacts.ts";
 import type { CreativeEvent, CreativeOutput } from "./events.ts";
 import type { CreativeNextAction } from "./workspace-intelligence.ts";
@@ -9,6 +10,7 @@ export type OutputNamingCandidate = {
   sequence: number;
   kind?: OutputNamingKind;
   documentId?: string;
+  generationId?: string;
   title?: string | null;
   customTitle?: string | null;
   titleSource?: "generated" | "authored";
@@ -25,7 +27,7 @@ export type OutputNamingCandidate = {
 };
 
 type OutputNamingEvent = Pick<CreativeEvent, "eventId" | "occurredAt"> &
-  Partial<Pick<CreativeEvent, "sequence" | "type" | "payload">>;
+  Partial<Omit<CreativeEvent, "eventId" | "occurredAt">>;
 
 export type OutputNamingOptions = {
   events?: readonly OutputNamingEvent[];
@@ -61,7 +63,7 @@ export type OutputPresentation = {
   displayScope?: { key: string; title: string; documentTitle: string; qualifier: string; context: string; showDocument: boolean };
 };
 
-type Creation = { id: string; documentId: string; kind: OutputNamingKind; sequence: number; index: number };
+type Creation = { id: string; documentId: string; kind: OutputNamingKind; sequence: number; index: number; generationId?: string; claimedProjectId?: string };
 
 const clean = (value: unknown) => typeof value === "string" ? value.normalize("NFC").trim().replace(/\s+/gu, " ") : "";
 const key = (value: unknown) => clean(value).normalize("NFKC").toLocaleLowerCase().replace(/[\p{P}\p{S}\s]+/gu, " ").trim();
@@ -101,7 +103,7 @@ export function imageOutputNamingCandidate(
   documentTitle = "",
 ): OutputNamingCandidate {
   let generatedTitle = "";
-  const retained = output.contentRef ? retainedContent[output.contentRef] : "";
+  const retained = !output.claimedOrigin && output.contentRef ? retainedContent[output.contentRef] : "";
   if (retained) {
     try { generatedTitle = clean(record(JSON.parse(retained)).title); } catch { /* Expired or legacy direction content remains optional. */ }
   }
@@ -114,9 +116,51 @@ export function imageOutputNamingCandidate(
   };
 }
 
-function historicalCreations(events: readonly OutputNamingEvent[]): Creation[] {
+function historicalCreations(events: readonly OutputNamingEvent[]) {
   const creations: Creation[] = [];
+  const origins = createGuestImageResultOriginIndex();
+  const rejectedClaims = new Set<string>();
+  const claimEvents = new Map<string, GuestImageResultClaimPresentation | null>();
+  let currentProjectId = "", currentDocumentId = "";
+  const projects = new Set<string>(), documents = new Map<string, { id: string; projectId: string; removed: boolean; createdSequence: number }>();
   for (const event of events) {
+    const claimed = origins.observe(event);
+    const structural = record(event.payload);
+    if (event.type === "ProjectCreated") {
+      currentProjectId = String(structural.project_id ?? ""); projects.add(currentProjectId);
+    }
+    if (event.type === "ProjectOpened" && projects.has(String(structural.project_id ?? ""))) {
+      currentProjectId = String(structural.project_id);
+      currentDocumentId = [...documents.values()].filter(document => document.projectId === currentProjectId && !document.removed)
+        .sort((left, right) => right.createdSequence - left.createdSequence)[0]?.id ?? "";
+    }
+    if (event.type === "DocumentCreated" || event.type === "DocumentForked") {
+      currentDocumentId = String(structural.document_id ?? (event.type === "DocumentForked" ? currentDocumentId : ""));
+      documents.set(currentDocumentId, { id: currentDocumentId, projectId: String(structural.project_id ?? currentProjectId),
+        removed: false, createdSequence: event.sequence ?? 0 });
+    }
+    if (event.type === "DocumentOpened") {
+      const document = documents.get(String(structural.document_id ?? ""));
+      if (document && !document.removed) currentDocumentId = document.id;
+    }
+    if (event.type === "DocumentRemoved" || event.type === "DocumentRestored") {
+      const document = documents.get(String(structural.document_id ?? ""));
+      if (document) {
+        document.removed = event.type === "DocumentRemoved";
+        if (event.type === "DocumentRestored" && structural.was_current) currentDocumentId = document.id;
+      }
+    }
+    if (event.type === "GuestImageResultClaimed") {
+      claimEvents.set(event.eventId, claimEvents.has(event.eventId) ? null : claimed);
+      if (claimed) {
+        const p = claimed.payload, document = documents.get(p.document_id);
+        if (projects.has(p.project_id) && document && !document.removed && document.projectId === p.project_id) {
+          creations.push({ id: p.object_id, documentId: p.document_id, kind: "image", sequence: claimed.sequence,
+            index: 0, generationId: p.generation_id, claimedProjectId: p.project_id });
+        } else rejectedClaims.add(p.object_id);
+      }
+      continue;
+    }
     if (!event.type || !Number.isSafeInteger(event.sequence)) continue;
     const payload = record(event.payload), documentId = clean(payload.document_id);
     if (!documentId) continue;
@@ -128,9 +172,25 @@ function historicalCreations(events: readonly OutputNamingEvent[]): Creation[] {
     if (event.type !== "GenerationCompleted" && event.type !== "IdeationPreviewCompleted" || payload.report_space === "scout") continue;
     const ids = Array.isArray(payload.object_ids) ? payload.object_ids.map(clean).filter(Boolean) : [];
     if (!ids.length && clean(payload.object_id)) ids.push(clean(payload.object_id));
-    for (const [index, id] of ids.entries()) creations.push({ id, documentId, kind: "image", sequence: event.sequence!, index });
+    for (const [index, id] of ids.entries()) creations.push({ id, documentId, kind: "image", sequence: event.sequence!, index, generationId: String(payload.generation_id ?? "") });
   }
-  return creations;
+  const qualified = creations.filter(creation => {
+    if (creation.kind === "image" && !origins.isUnambiguous(creation.id, creation.generationId ?? "")) return false;
+    if (!creation.claimedProjectId) return true;
+    const document = documents.get(creation.documentId);
+    if (document && !document.removed && document.projectId === creation.claimedProjectId) return true;
+    rejectedClaims.add(creation.id);
+    return false;
+  });
+  return { creations: qualified, eligible: (candidate: OutputNamingCandidate) => {
+    if (kindOf(candidate) !== "image") return true;
+    if (candidate.sourceEventId && claimEvents.has(candidate.sourceEventId)) {
+      const claim = claimEvents.get(candidate.sourceEventId);
+      if (!claim || claim.payload.object_id !== candidate.id || claim.payload.document_id !== candidate.documentId
+        || candidate.generationId !== undefined && candidate.generationId !== claim.payload.generation_id) return false;
+    }
+    return !rejectedClaims.has(candidate.id) && origins.isUnambiguous(candidate.id, candidate.generationId);
+  } };
 }
 
 function boundedIntent(value: unknown, max = 72) {
@@ -284,10 +344,10 @@ export function creativeNextActionDisplayLabels(
   return rows.map(row => labels.get(row.key)!.label);
 }
 
-function scopedOutputPresentations(candidates: readonly OutputNamingCandidate[], presentations: OutputPresentation[], options: OutputNamingOptions): OutputPresentation[] {
+function scopedOutputPresentations(candidates: readonly OutputNamingCandidate[], presentations: OutputPresentation[], options: OutputNamingOptions, eligible: (candidate: OutputNamingCandidate) => boolean): OutputPresentation[] {
   const scope = options.scopedLabels!;
   const documents = new Set(scope.documents.map(document => document.id));
-  const peers = [...new Map([...(options.peers ?? candidates).filter(candidate => documents.has(candidate.documentId ?? "")), ...candidates]
+  const peers = [...new Map([...(options.peers ?? candidates).filter(candidate => eligible(candidate) && documents.has(candidate.documentId ?? "")), ...candidates.filter(eligible)]
     .map(candidate => [scopedOutputKey(candidate), candidate])).values()];
   const described = describeOutputs(peers, { ...options, peers, scopedLabels: undefined });
   const documentLabels = qualifyDisplayCollisions(scope.documents.map(document => ({ key: document.id, label: document.title })), scope.formatDocument);
@@ -305,22 +365,31 @@ function scopedOutputPresentations(candidates: readonly OutputNamingCandidate[],
       context: [row.title, row.documentTitle, qualifier].filter(Boolean).map(isolate).join(" · "),
       showDocument: (titles.get(displayCollisionKey(row.title)) ?? 0) > 1 || Boolean(qualifier) }];
   }));
-  return presentations.map((presentation, index) => ({ ...presentation, displayScope: scoped.get(scopedOutputKey(candidates[index]!))! }));
+  return presentations.map((presentation, index) => {
+    const candidate = candidates[index]!, key = scopedOutputKey(candidate);
+    const title = outputTitle(presentation), documentTitle = documentLabels.get(candidate.documentId ?? "")?.label ?? candidate.documentId ?? "";
+    // Preserve one safe presentation per requested row, without letting a
+    // rejected stale candidate qualify or inflate any other row's labels.
+    const displayScope = scoped.get(key) ?? { key, title, documentTitle, qualifier: "",
+      context: [title, documentTitle].filter(Boolean).map(isolate).join(" · "), showDocument: false };
+    return { ...presentation, displayScope };
+  });
 }
 
 /** Describe immutable generation takes without confusing them with edited-content revisions. */
 export function describeOutputs(candidates: readonly OutputNamingCandidate[], options: OutputNamingOptions = {}): OutputPresentation[] {
-  const locale = options.locale || "en", copy = copyFor(locale), peers = options.peers ?? candidates;
-  const events = options.events ?? [], eventDates = new Map(events.map((event) => [event.eventId, event.occurredAt]));
+  const locale = options.locale || "en", copy = copyFor(locale);
+  const events = options.events ?? [], history = historicalCreations(events), peers = (options.peers ?? candidates).filter(history.eligible);
+  const eventDates = new Map(events.map((event) => [event.eventId, event.occurredAt]));
   const creations = new Map<string, Creation>();
   const add = (creation: Creation, historical = false) => {
     const identifier = `${groupOf(creation.documentId, creation.kind)}\u0000${creation.id}`;
     const previous = creations.get(identifier);
     if (!previous || historical && (creation.sequence < previous.sequence || creation.sequence === previous.sequence && creation.index < previous.index)) creations.set(identifier, creation);
   };
-  for (const creation of historicalCreations(events)) add(creation, true);
+  for (const creation of history.creations) add(creation, true);
   for (const peer of peers) add({ id: peer.id, documentId: peer.documentId ?? "", kind: kindOf(peer), sequence: peer.sequence, index: 0 });
-  for (const candidate of candidates) add({ id: candidate.id, documentId: candidate.documentId ?? "", kind: kindOf(candidate), sequence: candidate.sequence, index: 0 });
+  for (const candidate of candidates.filter(history.eligible)) add({ id: candidate.id, documentId: candidate.documentId ?? "", kind: kindOf(candidate), sequence: candidate.sequence, index: 0 });
 
   const populations = new Map<string, Creation[]>();
   for (const creation of creations.values()) {
@@ -363,7 +432,7 @@ export function describeOutputs(candidates: readonly OutputNamingCandidate[], op
       disambiguator,
     };
   });
-  return options.scopedLabels ? scopedOutputPresentations(candidates, presentations, options) : presentations;
+  return options.scopedLabels ? scopedOutputPresentations(candidates, presentations, options, history.eligible) : presentations;
 }
 
 export function describeOutput(candidate: OutputNamingCandidate, peers: readonly OutputNamingCandidate[], options: OutputNamingOptions = {}): OutputPresentation {

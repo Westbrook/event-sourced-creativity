@@ -1,5 +1,8 @@
 /** Audited Forma-owned interface, metadata, and component-documentation copy. */
 const messages: Record<string, string> = {
+  "system.auto.mnnucx.13": "Résultat partagé",
+  "system.auto.1h1pgn9.12": "Partager le résultat",
+  "system.auto.g1h7cj.64": "Restriction supplémentaire définie par l’hôte. Elle ne peut pas outrepasser la capacité autorisée par le serveur.",
   "system.auto.1tmhsof.17": "Renouveler la préparation",
   "system.auto.156lxlv.8": "Modèle 3D",
   "system.auto.15uddgm.56": "1 GLB statique · Structure vérifiée ; examen visuel requis",
@@ -6318,5 +6321,7 @@ Object.assign(messages, {
   "system.auto.1n26nr5.46": "Interface applicative native de modèle 3D conservé.",
   "system.auto.1qkmc2b.138": "Interface native de modèle 3D conservé, indépendante du store. Examinez ses attributs réels, ses propriétés JavaScript et ses événements avant de l’intégrer.",
 });
+
+Object.assign(messages, { "system.auto.scxocd.15": "Image sponsorisée" });
 
 export default messages;

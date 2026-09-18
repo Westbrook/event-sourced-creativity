@@ -31,13 +31,12 @@ test('real admission and job execution use GPT-image with an Ideogram deployment
   const f=await createSceneCostFixture(1,'visual'), saved=globalThis.fetch;
   f.env.FORMA_IMAGE_PROVIDER='fal-ideogram';
   // Fal is deliberately unavailable: Still preflight must also use OpenAI.
-  const calls=[];
+  const calls=[],imageRequests=[];
   globalThis.fetch=async(url,init)=>{
     const path=String(url);calls.push(path);
     if(path.endsWith('/moderations'))return Response.json({id:'test',results:[{flagged:false,categories:{}}]});
     if(path.endsWith('/responses'))return Response.json({id:'test-direction',model:'gpt-5.6-terra',output_text:JSON.stringify({title:'Harbor',rationale:'A quiet setting',scene:'A keeper watches a harbor',palette:['#ffffff','#333333'],next_moves:['Review']}),usage:{input_tokens:120,output_tokens:80,total_tokens:200}});
-    assert.equal(path,'https://api.openai.com/v1/images/generations');
-    assert.equal(JSON.parse(init.body).model,'gpt-image-2');
+    imageRequests.push({url:path,body:JSON.parse(init.body)});
     return Response.json({error:{message:'Simulated definitive rejection',type:'invalid_request_error'}},{status:400});
   };
   try {
@@ -51,6 +50,12 @@ test('real admission and job execution use GPT-image with an Ideogram deployment
     assert.equal(JSON.parse(row.request_json).stillImageProvider,'openai');
     await f.drainBackground();
     await f.run(job.jobId);
+    assert.equal(imageRequests.length,1);
+    assert.equal(imageRequests[0].url,'https://api.openai.com/v1/images/generations');
+    assert.equal(imageRequests[0].body.model,'gpt-image-2.5-sunburst');
+    const finished=f.sqlite.prepare('SELECT status,result_json FROM document_jobs WHERE job_id=?').get(job.jobId);
+    assert.equal(finished.status,'failed');
+    assert.match(JSON.stringify(JSON.parse(finished.result_json).errorDetail),/Simulated definitive rejection/);
     assert.ok(calls.some(url=>url.endsWith('/images/generations')),JSON.stringify(calls));
     assert.ok(calls.every(url=>url.startsWith('https://api.openai.com/')));
     const before=calls.length;

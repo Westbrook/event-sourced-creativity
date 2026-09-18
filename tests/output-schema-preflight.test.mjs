@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { createSceneCostFixture } from "./helpers/scene-cost-fixture.mjs";
+import { readWorkerFetchWrapper } from "./helpers/worker-fetch-wrapper.mjs";
 import { canReadOutputSchemaPreflight, handleOutputSchemaPreflight, OUTPUT_SCHEMA_PREFLIGHT_PATH, OUTPUT_SCHEMA_PREFLIGHT_QUERIES, readOutputSchemaPreflight } from "../worker/output-schema-preflight.ts";
 
 const access = capabilities => ({ capabilities, grants: [], organizations: [], projects: [], permissionEpoch: "fixture", canvasAccess: false });
@@ -94,6 +95,13 @@ test("integrated release retains the exact hosted-qualified 3D migration and nor
   assert.equal(journal.entries.filter(entry => entry.tag === "0022_output_model3d").length, 1);
   const migration = await readFile(new URL("../drizzle/0022_output_model3d.sql", import.meta.url));
   assert.equal(createHash("sha256").update(migration).digest("hex"), "393bf222f1aa1210d679af3d588ffdf0e989cc6b9bd4db02eeef78cfb9907206");
-  const router = await readFile(new URL("../worker/index.ts", import.meta.url), "utf8");
-  assert.match(router, /pathname!==OUTPUT_SCHEMA_PREFLIGHT_PATH&&pathname!=="\/api\/admin\/budget-hold-dispositions"&&!retainedStoryRead\)schedulePrivateContentRetention/);
+  const { preflightPath, wrapper } = await readWorkerFetchWrapper();
+  assert.equal(preflightPath, OUTPUT_SCHEMA_PREFLIGHT_PATH);
+  for (const [path, retentionCalls] of [[OUTPUT_SCHEMA_PREFLIGHT_PATH, 0], ["/api/events", 1], [OUTPUT_SCHEMA_PREFLIGHT_PATH + "-extra", 1]]) {
+    const current = wrapper(200);
+    const response = await current.fetch(new Request(`https://forma.invalid${path}`), {}, {});
+    assert.equal(response.status, 200);
+    assert.deepEqual(current.counts(), { retentionCalls, routes: 1 }, path);
+    assert.equal(response.headers.get("cache-control"), "private, no-store");
+  }
 });

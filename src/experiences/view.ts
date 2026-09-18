@@ -3,6 +3,7 @@ import { readVideoReferenceIntent } from "./video-reference.ts";
 import { readModel3dReferenceIntent } from "./model3d-reference.ts";
 import { sceneCharacterLabel, sceneKnowledgeLabel } from "./scene-context.ts";
 import { readExperienceImageRatio } from "./image-ratio.ts";
+import { withExperienceReportFlag } from "./host-route.ts";
 import type { DecisionValue, ExperienceValue, Interaction } from "./contracts.ts";
 import type { ExperienceIntakeRuntime } from "./intake-runtime.ts";
 import { experienceOutputSettings, type ExperienceNativeHostAdapter, type ExperienceNativeHostSession } from "./native-host.ts";
@@ -55,7 +56,10 @@ export class ExperienceView {
     const footer = el("footer", undefined, "experience-footer"); footer.append(this.#status, this.#actions);
     this.#root.replaceChildren(header, workspace, footer);
     this.#unsubscribeDisplay = display.subscribe(() => display.refresh(this.#root));
-    this.#unsubscribe = runtime.subscribe(() => this.#update()); this.#update();
+    this.#unsubscribe = runtime.subscribe(() => this.#update());
+    // Entry starts saved-draft resume synchronously after construction. Defer
+    // initial setup so reopening never briefly exposes editable controls.
+    if (runtime.state.phase === "setup") queueMicrotask(() => this.#update()); else this.#update();
   }
   #value(id: string): ExperienceValue { return this.runtime.state.draft.values[id].value; }
   #message<K extends keyof HTMLElementTagNameMap>(tag: K, source: string, className?: string, values?: Record<string, string | number> | (() => Record<string, string | number>)): HTMLElementTagNameMap[K] {
@@ -238,10 +242,28 @@ export class ExperienceView {
     }
     return list;
   }
-  #review = async () => { if (this.#composing) return; await this.runtime.prepare(); const first = this.runtime.state.issues[0]; if (first) { if (first.path === "$reference") this.#referencePicker?.focus(); else { const target = this.#fields.get(first.path) ?? this.#choices.get(first.path)?.values().next().value; target?.focus(); } } };
+  #review = async () => {
+    if (this.#composing) return;
+    await this.runtime.prepare();
+    const first = this.runtime.state.issues[0];
+    if (!first) return;
+    if (first.path === "$reference") this.#referencePicker?.focus();
+    else {
+      const field = this.#fields.get(first.path);
+      if (field) {
+        field.focus({ preventScroll: true });
+        // Reveal the associated label and published error with the retained control.
+        field.parentElement?.scrollIntoView({ block: "start", inline: "nearest", behavior: "instant" });
+      } else this.#choices.get(first.path)?.values().next().value?.focus();
+    }
+  };
   #update() {
     if (this.#disposed) return;
     const phase = this.runtime.state.phase, changed = phase !== this.#previousPhase;
+    if (this.runtime.contextOnly && phase !== "complete") {
+      this.#mounted = false; this.#session?.dispose(); this.#session = undefined;
+      this.#stage.replaceChildren(); this.#stage.hidden = true;
+    }
     this.#display.bindText(this.#status, this.runtime.state.issues.length ? issueText(this.runtime.state.issues[0].code) : phaseText(phase));
     if (changed) {
       if (phase === "setup") {
@@ -275,11 +297,25 @@ export class ExperienceView {
       for (const [path, error] of this.#errors) { const issue = this.runtime.state.issues.find(item => item.path === path); this.#display.bindText(error, issue ? issueText(issue.code) : ""); this.#fields.get(path)?.setAttribute("aria-invalid", String(Boolean(issue))); }
       for (const [id, choices] of this.#choices) for (const [value, control] of choices) { const selected = this.#value(id), ratio = readExperienceImageRatio(selected); control.setAttribute("aria-pressed", String((ratio ? `${ratio.width}:${ratio.height}` : selected) === value)); control.setAttribute("aria-invalid", String(this.runtime.state.issues.some(issue => issue.path === id))); }
     }
-    if (phase !== "complete") this.#preview();
-    else if (!this.#mounted) { this.#mounted = true; void this.#native(); }
+    if (phase !== "complete" && !this.runtime.contextOnly) this.#preview();
+    else if (phase === "complete" && !this.#mounted) { this.#mounted = true; void this.#native(); }
   }
   async #native() {
-    const plan = this.runtime.committedPlan, receipt = this.runtime.receipt;
+    const plan = this.runtime.committedPlan;
+    if (this.runtime.contextOnly) {
+      const custody = this.runtime.contextReceipt;
+      if (!plan || !custody || this.runtime.state.phase !== "complete") return;
+      const heading = this.#controls.querySelector("h2")!, details = el("details", undefined, "experience-saved-details");
+      details.append(this.#message("summary", "Saved settings"), this.#summary());
+      const link = this.#message("a", "Edit in Forma", "experience-button primary");
+      const href = this.#root.ownerDocument.location?.href ?? (typeof location === "undefined" ? undefined : location.href);
+      const source = href ? new URL(href) : undefined;
+      link.href = withExperienceReportFlag(custody.documentRoute, source ? source.pathname + source.search + source.hash : "");
+      this.#controls.replaceChildren(heading, this.#message("p", "Generation unavailable"), details);
+      this.#stage.replaceChildren(); this.#stage.hidden = true; this.#actions.replaceChildren(link);
+      return;
+    }
+    const receipt = this.runtime.receipt;
     if (!plan || !receipt) return;
     const video = this.runtime.release.output.output === "video";
     const link = this.#message("a", video ? "Edit in Forma" : "Open in Forma", video && this.#adapter ? "experience-button" : "experience-button primary"); link.href = receipt.documentRoute;

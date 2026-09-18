@@ -4,7 +4,7 @@
 globalThis.formaTestBrowserZoom = async ({ url, factor }) => {
   const parsed = new URL(url);
   if (parsed.protocol !== "http:" || !["localhost", "127.0.0.1"].includes(parsed.hostname)
-    || ![1, 2].includes(factor)) throw new Error("Unexpected Forma test zoom target.");
+    || ![1, 2, 4].includes(factor)) throw new Error("Unexpected Forma test zoom target.");
   const matches = (await chrome.tabs.query({})).filter(tab => tab.url === url);
   if (matches.length !== 1 || !Number.isInteger(matches[0].id)) throw new Error("Zoom requires one exact owned test tab.");
   const tabId = matches[0].id;

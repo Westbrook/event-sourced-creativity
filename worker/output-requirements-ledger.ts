@@ -1,3 +1,6 @@
+import { requireGuestImageExecution, type GuestImageExecutionAuthority } from "./experience-guest-image-execution.ts";
+import type { ProviderAttemptPreflight } from "./openai-adapter.ts";
+import { priceTextUsageBreakdownMicrousd, priceImageUsageBreakdownMicrousd } from "./replay-cost.ts";
 import type { WorkerEnv } from "./runtime.ts";
 import { OutputConflictError, outputAssertionStatements, outputScopeAuthority, type OutputScope, type OutputSqlAssertion } from "./output-command-core.ts";
 import { markOutputSchemaReady, outputSchemaIsReady } from "./output-schema-state.ts";
@@ -54,13 +57,64 @@ export function outputSlotFromRow(scopeKey: string, row: Record<string, unknown>
     jobId: String(row.job_id), costReservationId: String(row.cost_reservation_id), tokenReservationId: String(row.token_reservation_id), maximumMicrousd: Number(row.maximum_microusd), maximumCalls: Number(row.maximum_calls), maximumTokens: Number(row.maximum_tokens), status: String(row.status), attemptOrdinal: Number(row.attempt_ordinal), previousSlotId: typeof row.previous_slot_id === "string" ? row.previous_slot_id : null };
 }
 
-/** A durable call slot is never refunded by a failed local request, cancellation or settlement. */
-export async function claimOutputProviderCall(env: WorkerEnv, input: {
+type OutputProviderCallInput = {
   scope: OutputScope; slotId: string; jobId: string; callKey: string; clientRequestId: string; requestDigest: string;
   provider: string; model: string; maximumMicrousd: number; expectedHead: number; sourceDigest: string;
   routeDigest: string; stageKey: string; sourceEpoch?: OutputSourceEpoch;
   assertions: OutputSqlAssertion[];
-}) {
+};
+
+/** A durable call slot is never refunded by a failed local request, cancellation or settlement. */
+export async function claimOutputProviderCall(env: WorkerEnv, input: OutputProviderCallInput) {
+  return claimProviderCall(env, input);
+}
+
+/** Guest identities and allowances are read only from the genuine execution seal. */
+export async function claimGuestImageProviderCall(env:WorkerEnv,request:Request,authority:GuestImageExecutionAuthority,attempt:ProviderAttemptPreflight) {
+  let frame=requireGuestImageExecution(request,env,authority);
+  frame.assertCurrent();await frame.refresh();frame=requireGuestImageExecution(request,env,authority);frame.assertCurrent();
+  const {scope,slot,job,proof,settings}=frame;
+  const callKey=attempt.logicalCallKey;
+  const route=settings.calls.find(candidate=>candidate.stage===callKey);
+  if(job.kind!=="generate"||job.source_surface!=="outputs"||settings.kind!=="generate"||scope.kind!=="personal"
+    ||!callKey||!route||route.provider!=="openai"||route.model!==attempt.model
+    ||!attempt.clientRequestId||!attempt.requestDigest||!Number.isSafeInteger(attempt.maximumInputTokens)||attempt.maximumInputTokens<0
+    ||!Number.isSafeInteger(attempt.maximumOutputTokens)||attempt.maximumOutputTokens<0
+    ||["narrative","scene","video","videoPlanning","storyboardPlanning","storyboard","audio","falImage","presentationRoute"].some(key=>key in attempt))
+    throw new OutputConflictError("output_guest_image_only",403);
+  const maximumUsage={inputTokens:attempt.maximumInputTokens,outputTokens:attempt.maximumOutputTokens,totalTokens:attempt.maximumInputTokens+attempt.maximumOutputTokens};
+  const pricedMaximum=callKey.startsWith("planning")?priceTextUsageBreakdownMicrousd(attempt.model,maximumUsage).totalMicrousd
+    :priceImageUsageBreakdownMicrousd(attempt.model,{...maximumUsage,textInputTokens:attempt.maximumInputTokens,imageInputTokens:0},false).totalMicrousd;
+  if(pricedMaximum>route.maximumMicrousd)throw new OutputConflictError("output_call_cost_allowance_exceeded",429);
+  let checkpoint:Record<string,unknown>;
+  try{checkpoint=JSON.parse(job.result_json??"{}");if(!checkpoint||typeof checkpoint!=="object"||Array.isArray(checkpoint))throw new Error("invalid_checkpoint");}catch{throw new OutputConflictError("output_admitted_reservations_missing",409);}
+  const period=checkpoint.costReservationPeriod;
+  if(typeof period!=="string"||!/^\d{4}-\d{2}$/u.test(period)||checkpoint.reservationId!==slot.tokenReservationId
+    ||checkpoint.costReservationId!==slot.costReservationId||checkpoint.costReservationMicrousd!==slot.maximumMicrousd)
+    throw new OutputConflictError("output_admitted_reservations_missing",409);
+  const assertions:OutputSqlAssertion[]=[...proof.assertions,
+    {sql:`EXISTS(SELECT 1 FROM document_jobs live WHERE live.job_id=? AND live.owner_id=? AND live.stream_id=? AND live.correlation_id=? AND live.attempt_count=? AND live.status='running'
+      AND live.lease_expires_at>MAX(?,strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+      AND NOT EXISTS(SELECT 1 FROM json_each(COALESCE(json_extract(live.result_json,'$.providerSubmissions'),'{}')) receipt
+        WHERE json_extract(receipt.value,'$.status')='completed' AND (COALESCE(json_type(receipt.value,'$.totalTokens'),'')<>'integer' OR json_extract(receipt.value,'$.totalTokens')<0))
+      AND (SELECT COALESCE(SUM(CASE WHEN json_extract(receipt.value,'$.status')='completed' THEN json_extract(receipt.value,'$.totalTokens') ELSE 0 END),0)
+        FROM json_each(COALESCE(json_extract(live.result_json,'$.providerSubmissions'),'{}')) receipt)+?<=?)`,
+      bindings:[job.job_id,frame.identity.actorUserId,job.stream_id,job.correlation_id,job.attempt_count,new Date().toISOString(),attempt.maximumInputTokens+attempt.maximumOutputTokens,slot.maximumTokens]},
+    {sql:`EXISTS(SELECT 1 FROM cost_budget_reservations cost JOIN budget_reservations token
+      ON token.owner_id=cost.owner_id AND token.stream_id=cost.stream_id AND token.correlation_id=cost.correlation_id AND token.period=cost.period AND token.operation=cost.operation
+      WHERE cost.reservation_id=? AND token.reservation_id=? AND cost.owner_id=? AND cost.stream_id=? AND cost.correlation_id=? AND cost.operation='image-generation' AND cost.period=?
+        AND cost.reserved_microusd=? AND token.reserved_tokens=? AND cost.status='executing' AND token.status='active')`,
+      bindings:[slot.costReservationId,slot.tokenReservationId,frame.identity.payerUserId,job.stream_id,job.correlation_id,period,slot.maximumMicrousd,slot.maximumTokens]}];
+  frame.assertCurrent();
+  return claimProviderCall(env,{scope,slotId:slot.slotId,jobId:job.job_id,callKey,clientRequestId:attempt.clientRequestId,
+    requestDigest:attempt.requestDigest,provider:route.provider,model:route.model,maximumMicrousd:route.maximumMicrousd,
+    expectedHead:proof.head,sourceDigest:proof.sourceDigest,routeDigest:slot.routeDigest,stageKey:callKey,sourceEpoch:proof.sourceEpoch,assertions},
+    {assertions:frame.assertions,assertCurrent:frame.assertCurrent,refresh:frame.refresh});
+}
+
+// The canonical entry retains its own scope gate. The guest entry can select
+// another gate only after the separately branded registry proves that identity.
+async function claimProviderCall(env:WorkerEnv,input:OutputProviderCallInput,guest?:{assertions:readonly OutputSqlAssertion[];assertCurrent:()=>void;refresh:()=>Promise<void>}) {
   if (!input.callKey || !input.clientRequestId || !input.requestDigest || !Number.isSafeInteger(input.maximumMicrousd) || input.maximumMicrousd <= 0 || !input.assertions.length) throw new OutputConflictError("provider_call_authority_required", 403);
   if (input.sourceEpoch && (input.sourceEpoch.sourceDigest !== input.sourceDigest || input.sourceEpoch.head !== input.expectedHead)) throw new OutputConflictError("output_source_epoch_mismatch", 403);
   const now = new Date().toISOString();
@@ -83,20 +137,34 @@ export async function claimOutputProviderCall(env: WorkerEnv, input: {
           WHERE child.scope_key=grant_row.scope_key AND child.grant_id=grant_row.grant_id)+?<=grant_row.maximum_microusd)`,
     bindings: [input.scope.key, input.slotId, input.jobId, input.routeDigest, input.sourceDigest, input.stageKey, input.provider, input.model, now, input.scope.actorUserId, input.scope.contextId, input.maximumMicrousd, input.maximumMicrousd],
   };
-  const guards = [outputScopeAuthority(input.scope, "request", now), slotAuthority,
+  const guards = [...(guest?guest.assertions:[outputScopeAuthority(input.scope, "request", now)]), slotAuthority,
     input.sourceEpoch ? outputSourceEpochAssertion(input.scope, input.sourceEpoch) : { sql: "(SELECT COALESCE(MAX(sequence),0) FROM events WHERE stream_id=?)=?", bindings: [`creative:${input.scope.ownerUserId}`, input.expectedHead] } as OutputSqlAssertion,
     ...input.assertions];
   try {
-    await env.DB.batch([
+    guest?.assertCurrent();
+    const statements=[
       ...guards.flatMap((guard) => outputAssertionStatements(env, guard)),
       env.DB.prepare(`INSERT INTO output_provider_calls(scope_key,slot_id,call_key,client_request_id,request_digest,stage_key,provider,model,reserved_microusd,status,created_at)
         VALUES(?,?,?,?,?,?,?,?,?,'pending',?)`).bind(input.scope.key, input.slotId, input.callKey, input.clientRequestId, input.requestDigest, input.stageKey, input.provider, input.model, input.maximumMicrousd, now),
       env.DB.prepare("UPDATE output_operation_slots SET status='running',updated_at=? WHERE scope_key=? AND slot_id=?").bind(now, input.scope.key, input.slotId),
       ...outputAssertionStatements(env, { sql: "changes()=1" }),
-    ]);
+    ];
+    const results=await env.DB.batch(statements);
+    guest?.assertCurrent();
+    if(guest){
+      const own=(value:unknown,key:PropertyKey):unknown=>value&&typeof value==="object"?Object.getOwnPropertyDescriptor(value,key)?.value:undefined;
+      const hasError=(value:unknown)=>{if(!value||typeof value!=="object"||!("error" in value))return false;const field=Object.getOwnPropertyDescriptor(value,"error");return !field||!Object.hasOwn(field,"value")||field.value!==undefined;};
+      const expected=statements.length;
+      if(!Array.isArray(results)||own(results,"length")!==expected||Array.from({length:expected},(_,index)=>{
+        const result=own(results,index);return own(result,"success")!==true||hasError(result)||!Array.isArray(own(result,"results"));
+      }).some(Boolean)||[guards.length*2,guards.length*2+1].some(index=>
+        own(own(own(results,index),"meta"),"changes")!==1))throw new OutputConflictError("output_guest_provider_claim_acknowledgement_uncertain",409);
+    }
   } catch (error) {
+    guest?.assertCurrent();if(guest){await guest.refresh();guest.assertCurrent();}
     const replay = await env.DB.prepare("SELECT request_digest,status,client_request_id FROM output_provider_calls WHERE scope_key=? AND slot_id=? AND call_key=?")
       .bind(input.scope.key, input.slotId, input.callKey).first<Record<string, unknown>>();
+    guest?.assertCurrent();if(guest){await guest.refresh();guest.assertCurrent();}
     if (replay) {
       if (replay.request_digest !== input.requestDigest) throw new OutputConflictError("provider_call_key_collision");
       return { claimed: false, status: String(replay.status), clientRequestId: String(replay.client_request_id) };

@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="referrer" content="no-referrer">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data: blob:; media-src blob:; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <link rel="icon" href="data:,">
+  <title>Forma · Selected output synthetic fixture</title>
+  <style>
+    body { margin:0; }
+    .fixture-shell { max-inline-size:90rem; margin-inline:auto; padding:1rem; }
+    .fixture-qa { border:2px dashed #6b7280; border-radius:.5rem; padding:1rem; margin-block-end:1rem; }
+    .fixture-qa h1 { font-size:1.1rem; }
+    .fixture-qa p { max-inline-size:80ch; margin-block:.5rem; }
+    .fixture-controls { display:flex; flex-wrap:wrap; align-items:end; gap:.7rem; }
+    .fixture-controls label { display:grid; gap:.25rem; }
+    .fixture-controls button,.fixture-controls select { min-block-size:44px; }
+    .fixture-panels { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:1rem; align-items:start; }
+    .fixture-panel { min-inline-size:0; border:1px solid var(--line,#ddd); border-radius:.5rem; padding:1rem; }
+    .fixture-panel > h2 { font-size:1rem; margin-block-start:0; }
+    .fixture-receipt { white-space:pre-wrap; overflow-wrap:anywhere; font-size:.75rem; max-block-size:18rem; overflow:auto; }
+    @media(max-width:800px) { .fixture-panels { grid-template-columns:minmax(0,1fr); } .fixture-shell { padding:.5rem; } }
+  </style>
+</head>
+<body>
+  <div class="fixture-shell">
+    <aside class="fixture-qa" aria-label="Synthetic verification controls" translate="no" dir="ltr">
+      <h1>Selected-output sharing · local synthetic fixture</h1>
+      <p>These controls are test instrumentation. Creation starts disabled, matching the server constant. Enabling the mock does not activate production or grant real publication permission.</p>
+      <p>Only synthetic text, Slides, PCM WAV, two black MP4 frames, and a textured triangle GLB are used. The actual format qualifiers run locally; this proves no private custody, publishing authority, live-provider acceptance, or physical-device behavior. Shares exist in this page’s memory; there is no Worker, database, Store, provider, upload, invoice, or cross-tab persistence. External fonts are blocked; app styles use their system-font fallback.</p>
+      <div class="fixture-controls">
+        <forma-ui-language-picker id="fixture-locale" label="Saved language"></forma-ui-language-picker>
+        <label>Output <select id="fixture-kind"><option value="short_story">Short story</option><option value="scene">Scene</option><option value="slides">Slides</option><option value="audio">Audio · WAV</option><option value="video">Video · MP4</option><option value="model3d">3D · GLB</option></select></label>
+        <label>Mock creation <select id="fixture-availability"><option value="false">Disabled · actual capability</option><option value="true">Enabled · synthetic test only</option></select></label>
+        <label>Next response <select id="fixture-response"><option value="normal">Normal</option><option value="prepare">Hold preparation reply</option><option value="commit">Hold publication reply</option><option value="lost-commit">Lose publication acknowledgement</option><option value="list-failure">Fail one metadata read</option><option value="source-file">Hold source file body</option><option value="recipient-file">Hold recipient file body</option><option value="file-hash">Mismatch file bytes</option><option value="file-mime">Mismatch file MIME</option><option value="file-length">Mismatch file length</option><option value="file-filename">Mismatch public filename</option></select></label>
+        <button type="button" id="fixture-source-a">Source A</button>
+        <button type="button" id="fixture-source-b">Source B</button>
+        <button type="button" id="fixture-abort">Abort source</button>
+        <button type="button" id="fixture-release">Release held replies</button>
+        <button type="button" id="fixture-seed">Add synthetic existing link</button>
+        <button type="button" id="fixture-expiry-input">Choose expiry +2 minutes</button>
+        <button type="button" id="fixture-show-recipient">Open latest recipient</button>
+        <button type="button" id="fixture-clear-recipient">Clear recipient token</button>
+        <button type="button" id="fixture-expire">Expire receipts</button>
+        <button type="button" id="fixture-rollback">Expire elapsed time; roll clock back</button>
+        <button type="button" id="fixture-clock-reset">Reset test clock</button>
+      </div>
+      <p id="fixture-status" role="status" aria-live="polite">Loading actual components</p>
+      <details><summary>Fixture receipts</summary><pre class="fixture-receipt" id="fixture-receipt"></pre></details>
+    </aside>
+    <div class="fixture-panels">
+      <section class="fixture-panel" aria-label="Actual publisher component">
+        <h2 translate="no">Publisher component</h2><div id="fixture-publisher"></div>
+      </section>
+      <section class="fixture-panel" aria-label="Actual recipient component">
+        <h2 translate="no">Recipient component</h2><div id="fixture-recipient"></div>
+      </section>
+    </div>
+  </div>
+  <script type="module" src="/tests/selected-output-share-browser/fixture.mjs"></script>
+</body>
+</html>

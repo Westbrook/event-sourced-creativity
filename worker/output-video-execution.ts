@@ -32,6 +32,27 @@ export type OutputVideoRawEnvelope = Readonly<{
   headers: ReadonlyArray<readonly [string, string]>; decodedByteLength: number; decodedBodySha256: string; decodedBodyBase64: string;
 }>;
 export type OutputVideoHookLease = Readonly<{ signal: AbortSignal; deadlineMs: number; assertCurrent: () => void }>;
+declare const completedObservationBrand: unique symbol;
+/** Native observation only. It grants no payer, private-read or publication authority. */
+export type OutputVideoCompletedObservation = Readonly<{ [completedObservationBrand]: true }>;
+type CompletedVideoReceipt = Readonly<{
+  provider: "fal"; operation: "video"; status: "completed"; model: string;
+  clientRequestId: string; providerRequestId: string; requestDigest: string;
+  costMicrousd: number; inputTokens: 0; outputTokens: 0; totalTokens: 0;
+}>;
+const completedObservations = new WeakMap<OutputVideoCompletedObservation, CompletedVideoReceipt>();
+export function readOutputVideoCompletedObservation(observation: OutputVideoCompletedObservation): CompletedVideoReceipt {
+  const receipt = completedObservations.get(observation);
+  requireValue(receipt, "output_video_completed_observation_invalid");
+  return receipt;
+}
+function completedObservation(attempt: Awaited<ReturnType<typeof captureOutputVideoAttempt>>, providerRequestId: string) {
+  const observation = Object.freeze(Object.create(null)) as OutputVideoCompletedObservation;
+  completedObservations.set(observation, Object.freeze({ provider: "fal", operation: "video", status: "completed", model: attempt.model,
+    clientRequestId: attempt.clientRequestId, providerRequestId, requestDigest: attempt.requestDigest,
+    costMicrousd: attempt.video.mediaMaximumMicrousd, inputTokens: 0, outputTokens: 0, totalTokens: 0 }));
+  return observation;
+}
 export type OutputVideoExecutionOptions = Omit<CreativeVideoOptions, "onPrepared" | "onReceipt"> & {
   onPrepared?: (receipt: Parameters<NonNullable<CreativeVideoOptions["onPrepared"]>>[0], lease: OutputVideoHookLease) => void | Promise<void>;
   onReceipt?: (receipt: Parameters<NonNullable<CreativeVideoOptions["onReceipt"]>>[0], lease: OutputVideoHookLease) => void | Promise<void>;
@@ -200,6 +221,26 @@ export async function captureOutputVideoAttempt(contractValue: unknown, body: st
   return freeze({ model: OUTPUT_VIDEO_TRANSPORT.model, pricingVersion: price.pricingVersion, maximumInputTokens: 0, maximumOutputTokens: 0, clientRequestId,
     logicalCallKey: "video:initial", requestDigest: await textHash(body), video: { contract, requestBody: body, mediaMaximumMicrousd: price.maximumMicrousd } });
 }
+/** Classify the original completed result before accounting or media retrieval.
+ * A usable download and measured output conformance remain separate checks. */
+function completedVideoResult(result: Record<string, unknown>, providerRequestId: string, model: string) {
+  requireValue(result.data === undefined || result.data && typeof result.data === "object" && !Array.isArray(result.data), "output_video_result_invalid");
+  const data = result.data as Record<string, unknown> | undefined;
+  requireValue(!(result.video !== undefined && data?.video !== undefined), "output_video_result_ambiguous");
+  const video = (result.video ?? data?.video) as Record<string, unknown> | undefined;
+  requireValue(video && typeof video === "object" && !Array.isArray(video), "output_video_result_invalid");
+  for (const value of [result, ...(data ? [data] : []), video]) {
+    requireValue(value.request_id === undefined || value.request_id === providerRequestId, "output_video_provider_receipt_mismatch");
+    requireValue((value.model === undefined || value.model === model) && (value.model_id === undefined || value.model_id === model)
+      && (value.provider === undefined || value.provider === "fal"), "output_video_provider_receipt_mismatch");
+    requireValue(value.status === undefined || value.status === "COMPLETED", "output_video_result_invalid");
+    requireValue(["error", "errors", "detail"].every(key => value[key] === undefined || value[key] === null), "output_video_result_invalid");
+  }
+  requireValue(video.content_type === undefined || video.content_type === "video/mp4", "output_video_result_invalid");
+  requireValue(video.file_size === undefined || Number.isSafeInteger(video.file_size) && Number(video.file_size) > 0
+    && Number(video.file_size) <= OUTPUT_VIDEO_TRANSPORT.maximumResultBytes, "output_video_result_length_mismatch");
+  return { video, url: mediaUrl(video.url) };
+}
 export async function generateOutputVideo(env: WorkerEnv, prompt: string, options: OutputVideoExecutionOptions) {
   options = { ...options, snapshot: structuredClone(options.snapshot ?? {}), plan: options.plan ? structuredClone(options.plan) : undefined };
   // Never fall through to generic Video on malformed native input or absent hooks.
@@ -302,21 +343,16 @@ export async function generateOutputVideo(env: WorkerEnv, prompt: string, option
     await retainEnvelope(response, "result", receipt.providerResponseUrl);
     requireValue(response.headers.get("x-fal-request-id") === null || response.headers.get("x-fal-request-id") === providerJobId, "output_video_provider_receipt_mismatch");
     requireValue(response.ok, "output_video_result_unavailable"); const result = await envelope(response);
-    requireValue(result.request_id === undefined || result.request_id === providerJobId, "output_video_provider_receipt_mismatch");
-    requireValue(result.data === undefined || result.data && typeof result.data === "object" && !Array.isArray(result.data), "output_video_result_invalid");
-    const data = result.data as Record<string, unknown> | undefined;
-    requireValue(data?.request_id === undefined || data.request_id === providerJobId, "output_video_provider_receipt_mismatch");
-    requireValue(!(result.video !== undefined && data?.video !== undefined), "output_video_result_ambiguous");
-    const video = (result.video ?? data?.video) as Record<string, unknown> | undefined;
-    requireValue(video && typeof video === "object" && !Array.isArray(video), "output_video_result_invalid");
-    requireValue(video.request_id === undefined || video.request_id === providerJobId, "output_video_provider_receipt_mismatch");
-    const media = await requestOutputVideoResponse(mediaUrl(video.url), { method: "GET", signal }, source, OUTPUT_VIDEO_TRANSPORT.maximumResultBytes);
+    const { video, url } = completedVideoResult(result, providerJobId, attempt.model);
+    // The adopted original-call cost is known independently of downloading its
+    // output. Media failure must not erase it or fabricate a provider rejection.
+    const costMicrousd = attempt.video.mediaMaximumMicrousd;
+    await runHook(controller, lease => options.onProviderSubmission!({ ...submission!, status: "completed", costMicrousd, inputTokens: 0, outputTokens: 0, totalTokens: 0 }, lease));
+    const media = await requestOutputVideoResponse(url, { method: "GET", signal }, source, OUTPUT_VIDEO_TRANSPORT.maximumResultBytes);
     requireValue(media.ok && media.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase() === "video/mp4"
       && (video.content_type === undefined || video.content_type === "video/mp4"), "output_video_result_invalid");
     const bytes = new Uint8Array(await media.arrayBuffer()); requireValue(bytes.length > 0, "output_video_result_invalid");
     requireValue(video.file_size === undefined || Number.isSafeInteger(video.file_size) && video.file_size === bytes.length, "output_video_result_length_mismatch");
-    const costMicrousd = attempt.video.mediaMaximumMicrousd;
-    await runHook(controller, lease => options.onProviderSubmission!({ ...submission!, status: "completed", costMicrousd, inputTokens: 0, outputTokens: 0, totalTokens: 0 }, lease));
     // Requested seconds/frame, not measured facts or requirement fulfillment.
     return { ...receipt, bytes, mimeType: "video/mp4", seconds: 4 as const, size: contract.frameSize, latencyMs: Date.now() - start, costMicrousd,
       submittedPrompt, providerParameters, referenceInputs, usedReferencePixels: true, adaptation };
@@ -327,9 +363,13 @@ export async function generateOutputVideo(env: WorkerEnv, prompt: string, option
  * planner, retry or cancellation path. The required callbacks establish live
  * server custody; the supplied identities are only data. */
 export async function readOriginalOutputVideo(env:WorkerEnv,original:{contract:unknown;requestBody:string;clientRequestId:string;requestDigest:string;providerRequestId:string},options:{signal?:AbortSignal;
- onBeforeRead:(lease:OutputVideoHookLease)=>Promise<void>;
- onEnvelope:(envelope:OutputVideoRawEnvelope,lease:OutputVideoHookLease)=>Promise<void>}){
- requireValue(typeof options.onBeforeRead==="function"&&typeof options.onEnvelope==="function","output_video_recovery_hooks_required");
+  onBeforeRead:(lease:OutputVideoHookLease)=>Promise<void>;
+  onEnvelope:(envelope:OutputVideoRawEnvelope,lease:OutputVideoHookLease)=>Promise<void>;
+  /** Optional evidence observer; the caller still needs independent financial authority. */
+  onCompleted?:(observation:OutputVideoCompletedObservation,lease:OutputVideoHookLease)=>void|Promise<void>}){
+  requireValue(typeof options.onBeforeRead==="function"&&typeof options.onEnvelope==="function","output_video_recovery_hooks_required");
+  const onCompleted=options.onCompleted;
+  requireValue(onCompleted===undefined||typeof onCompleted==="function","output_video_recovery_hooks_required");
  const attempt=await captureOutputVideoAttempt(original.contract,original.requestBody,original.clientRequestId);
  requireValue(attempt.requestDigest===original.requestDigest&&/^[A-Za-z0-9][A-Za-z0-9_-]{0,199}$/u.test(original.providerRequestId)
   &&!["pending","submitted","unknown"].includes(original.providerRequestId.toLowerCase()),"output_video_recovery_identity_invalid");
@@ -357,15 +397,9 @@ export async function readOriginalOutputVideo(env:WorkerEnv,original:{contract:u
   const response=await requestOutputVideoResponse(base,{method:"GET",headers,signal},before);await retained(response,"result",base);
   requireValue(response.headers.get("x-fal-request-id")===null||response.headers.get("x-fal-request-id")===providerRequestId,"output_video_provider_receipt_mismatch");
   requireValue(response.ok,"output_video_result_unavailable");const result=await envelope(response);
-  requireValue(result.request_id===undefined||result.request_id===providerRequestId,"output_video_provider_receipt_mismatch");
-  requireValue(result.data===undefined||result.data&&typeof result.data==="object"&&!Array.isArray(result.data),"output_video_result_invalid");
-  const data=result.data as Record<string,unknown>|undefined;
-  requireValue(data?.request_id===undefined||data.request_id===providerRequestId,"output_video_provider_receipt_mismatch");
-  requireValue(!(result.video!==undefined&&data?.video!==undefined),"output_video_result_ambiguous");
-  const video=(result.video??data?.video) as Record<string,unknown>|undefined;
-  requireValue(video&&typeof video==="object"&&!Array.isArray(video),"output_video_result_invalid");
-  requireValue(video.request_id===undefined||video.request_id===providerRequestId,"output_video_provider_receipt_mismatch");
-  const responseMedia=await requestOutputVideoResponse(mediaUrl(video.url),{method:"GET",signal},before,OUTPUT_VIDEO_TRANSPORT.maximumResultBytes);
+   const {video,url}=completedVideoResult(result,providerRequestId,attempt.model);
+   if(onCompleted){const observation=completedObservation(attempt,providerRequestId);await runHook(controller,lease=>onCompleted(observation,lease));}
+   const responseMedia=await requestOutputVideoResponse(url,{method:"GET",signal},before,OUTPUT_VIDEO_TRANSPORT.maximumResultBytes);
   requireValue(responseMedia.ok&&responseMedia.headers.get("content-type")?.split(";",1)[0]?.trim().toLowerCase()==="video/mp4"
    &&(video.content_type===undefined||video.content_type==="video/mp4"),"output_video_result_invalid");
   const bytes=new Uint8Array(await responseMedia.arrayBuffer());requireValue(bytes.length>0&&(video.file_size===undefined||Number.isSafeInteger(video.file_size)&&video.file_size===bytes.length),"output_video_result_length_mismatch");

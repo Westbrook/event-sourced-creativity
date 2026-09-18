@@ -27,6 +27,7 @@
 .experience-navigation a, .experience-button { display: inline-flex; align-items: center; justify-content: center; min-block-size: max(44px, var(--forma-control-min-size, 2.75rem)); min-inline-size: 44px; padding: .5rem 1rem; border: 1px solid var(--ex-border-strong); border-radius: var(--forma-radius-small, .375rem); color: var(--ex-text); background: var(--ex-surface); font: inherit; text-decoration: none; overflow-wrap: anywhere; cursor: pointer; touch-action: manipulation; }
 .experience-navigation a[aria-current=page], .experience-button[aria-pressed=true] { border-color: var(--ex-accent); color: var(--ex-accent); background: var(--ex-accent-soft); box-shadow: inset 0 0 0 1px var(--ex-accent); }
 .experience-button.primary { background: var(--ex-accent); color: var(--ex-on-accent); border-color: var(--ex-accent); }
+.experience-button { scroll-margin-block: 1rem; }
 .experience-button[aria-disabled=true] { color: var(--ex-muted); cursor: default; }
 .experience-heading { padding-block: 2rem 1.5rem; }
 .experience-brand { font-weight: 700; }

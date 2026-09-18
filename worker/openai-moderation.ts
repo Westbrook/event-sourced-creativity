@@ -19,6 +19,7 @@ export type GenerationModerationReceipt = {
   probeCount: number;
   latencyMs: number;
   coverage: "text" | "text-and-images" | "text-and-some-images";
+  // Retained only to read historical receipts; new preflights preserve exact text.
   promptNormalization?: "fictional-software-mystery";
 };
 
@@ -72,20 +73,8 @@ export async function moderateExactImagePrompt(env: WorkerEnv, prompt: string, r
   // including GPT Image 2 reference workflows, can legitimately receive more
   // than one image. Probe the exact text once, then every image independently;
   // never truncate safety coverage or submit an invalid multi-image probe.
-  // Keep the paid provider prompt untouched. For clearly fictional software
-  // mysteries, remove crime-scene metaphor terms from the moderation-only
-  // representation so the preflight does not reject language the image model
-  // can safely render. This is intentionally narrow and auditable.
-  const softwareMystery = /\b(?:software|code|coding|debug|debugging|bug|stack trace|developer|programmer|engineer)\b/i.test(prompt);
-  const moderationPrompt = softwareMystery
-    ? `Fictional, non-graphic software debugging mystery. No real people are harmed and no graphic violence is depicted. ${prompt
-      .replace(/\bmurder(?:ed|er|ous)?\b/gi, "mysterious disappearance")
-      .replace(/\bperpetrator\b/gi, "possible author")
-      .replace(/\bscene of the crime\b/gi, "debugging scene")
-      .replace(/\bcrime scene\b/gi, "debugging scene")}`
-    : prompt;
   const probes: Array<{ reference: ImageReference | null; input: unknown }> = [
-    { reference: null, input: [{ type: OPENAI_IMAGE_MODERATION_CONTRACT.input, text: moderationPrompt }] },
+    { reference: null, input: [{ type: OPENAI_IMAGE_MODERATION_CONTRACT.input, text: prompt }] },
     ...references.map((reference) => ({
       reference,
       input: [{ type: "image_url", image_url: { url: `data:${reference.mimeType};base64,${bytesToBase64(reference.bytes)}` } }],
@@ -107,7 +96,6 @@ export async function moderateExactImagePrompt(env: WorkerEnv, prompt: string, r
     available: true, flagged, categories: [...categories].sort(), scores, blockIds: [], referenceIds: [...referenceIds], model,
     requestId: flaggedRequestId ?? requestIds[0] ?? null, requestIds, probeCount: probes.length, latencyMs,
     coverage: references.length ? "text-and-images" : "text",
-    ...(softwareMystery ? { promptNormalization: "fictional-software-mystery" as const } : {}),
   };
 }
 

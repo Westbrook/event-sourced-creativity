@@ -4,18 +4,66 @@ import { assertOutputAdmissionActor, readOutputAdmissionValue, type OutputAdmiss
 import { uuidV7 } from "./event-write-primitives.ts";
 import type { WorkerEnv } from "./runtime.ts";
 import type { ProjectExecutionScope, BudgetReservationGuard } from "./pilot-policy.ts";
+import { assertSponsorStoryIntakeCleanupRead, readSponsorStoryIntakeCleanupExclusion, type SponsorStoryIntakeCleanupRead } from "./experience-sponsor-story-intake-native.ts";
+import { assertSponsorAudioIntakeCleanupRead, readSponsorAudioIntakeCleanupExclusion, type SponsorAudioIntakeCleanupRead } from "./experience-sponsor-audio-intake-native.ts";
 
 export const DURABLE_WORK_RETENTION_END = "9999-12-31T23:59:59.999Z";
 export const DEFAULT_EVIDENCE_RETENTION_DAYS = 365;
 
-type PrivateContentKind = "prompt" | "provider-output" | "provider-response" | "intent" | "condition" | "critique" | "adaptive-intent" | "adaptive-structure" | "chat-user" | "chat-assistant" | "chat-assistant-memory" | "ideation-prompt" | "document-artifact" | "document-artifact-input" | "activity-issue-note" | "execution-consent" | "context-proposal" | "authoring-preview" | "memory-structured-ledger" | "memory-structured-origin" | "memory-document-job-origin" | "experience-draft";
+type PrivateContentKind = "prompt" | "provider-output" | "provider-response" | "intent" | "condition" | "critique" | "adaptive-intent" | "adaptive-structure" | "chat-user" | "chat-assistant" | "chat-assistant-memory" | "ideation-prompt" | "document-artifact" | "document-artifact-input" | "activity-issue-note" | "execution-consent" | "context-proposal" | "authoring-preview" | "memory-structured-ledger" | "memory-structured-origin" | "memory-document-job-origin" | "experience-draft" | "guest-image-stage-history" | "guest-image-result-history";
 
 export function privateContentRetentionClass(kind: PrivateContentKind): "durable-work" | "governed-evidence" | "transient-private" {
   return kind === "document-artifact" ? "durable-work" : ["document-artifact-input","activity-issue-note","execution-consent","context-proposal","authoring-preview"].includes(kind) ? "governed-evidence" : "transient-private";
 }
 
-export async function preparePrivateContent(env: WorkerEnv, ownerId: string, kind: PrivateContentKind, content: string, projectScope?: ProjectExecutionScope, admissionReads?:OutputAdmissionReads, guard?:BudgetReservationGuard, identity?:{contentId:string}, expiryCeiling?:string) {
+export async function preparePrivateContent(env: WorkerEnv, ownerId: string, kind: PrivateContentKind, content: string, projectScope?: ProjectExecutionScope, admissionReads?:OutputAdmissionReads, guard?:BudgetReservationGuard, identity?:{contentId:string}, expiryCeiling?:string, storyCleanupRead?:SponsorStoryIntakeCleanupRead, audioCleanupRead?:SponsorAudioIntakeCleanupRead) {
+  return preparePrivateContentInternal(env,ownerId,kind,content,projectScope,admissionReads,guard,identity,expiryCeiling,storyCleanupRead,audioCleanupRead);
+}
+
+/** Personal Slides publishes these exact two kinds for one owner. Sharing the
+ * binding call does not share a qualified guard or remove either cleanup query.
+ */
+export async function preparePersonalSlidesPrivateContentPair(env: WorkerEnv, ownerId: string, artifactContent: string, inputContent: string) {
+  if (typeof ownerId !== "string" || !ownerId || typeof artifactContent !== "string" || typeof inputContent !== "string") {
+    throw new Error("personal_slides_private_content_pair_invalid");
+  }
   const preparationDb = env.DB;
+  let cleanupReads: Promise<PromiseSettledResult<BudgetReservationGuard>[]> | undefined;
+  const cleanupFor = (index: 0 | 1) => async () => {
+    if (env.DB !== preparationDb) throw new Error("native_structured_origin_schema_database_changed");
+    cleanupReads ??= import("./memory-native-boundary.ts").then(({ nativePrivateContentMemoryExclusionPair }) => {
+      if (env.DB !== preparationDb) throw new Error("native_structured_origin_schema_database_changed");
+      return nativePrivateContentMemoryExclusionPair(env);
+    });
+    const outcome = (await cleanupReads)[index];
+    if (env.DB !== preparationDb) throw new Error("native_structured_origin_schema_database_changed");
+    if (!outcome) throw new Error("memory_boundary_schema_unavailable");
+    if (outcome.status === "rejected") throw outcome.reason;
+    return outcome.value;
+  };
+  const prepared = await Promise.all([
+    preparePrivateContentInternal(env,ownerId,"document-artifact",artifactContent,undefined,undefined,undefined,undefined,undefined,undefined,undefined,cleanupFor(0)),
+    preparePrivateContentInternal(env,ownerId,"document-artifact-input",inputContent,undefined,undefined,undefined,undefined,undefined,undefined,undefined,cleanupFor(1)),
+  ]);
+  if (env.DB !== preparationDb) throw new Error("native_structured_origin_schema_database_changed");
+  return prepared;
+}
+
+async function preparePrivateContentInternal(env: WorkerEnv, ownerId: string, kind: PrivateContentKind, content: string, projectScope?: ProjectExecutionScope, admissionReads?:OutputAdmissionReads, guard?:BudgetReservationGuard, identity?:{contentId:string}, expiryCeiling?:string, storyCleanupRead?:SponsorStoryIntakeCleanupRead, audioCleanupRead?:SponsorAudioIntakeCleanupRead, privateCleanupRead?:()=>Promise<BudgetReservationGuard>) {
+  const preparationDb = env.DB;
+  if(audioCleanupRead!==undefined){
+    if(storyCleanupRead!==undefined)throw new Error("sponsor_audio_intake_native_unavailable");
+    assertSponsorAudioIntakeCleanupRead(audioCleanupRead,env,ownerId,kind,content,projectScope,admissionReads,guard,identity,expiryCeiling);
+  }
+  if(storyCleanupRead)assertSponsorStoryIntakeCleanupRead(storyCleanupRead,env,ownerId,kind,content,projectScope,admissionReads,guard,identity,expiryCeiling);
+  const boundedStageHistory = kind === "guest-image-stage-history";
+  if (boundedStageHistory && (!guard || !identity || !privateContentIdentityAllowed(kind, identity)
+    || typeof content !== "string" || !content || !content.isWellFormed() || new TextEncoder().encode(content).byteLength > 131_072))
+    throw new Error("private_content_stage_history_bound_invalid");
+  const boundedResultHistory = kind === "guest-image-result-history";
+  if (boundedResultHistory && (!guard || !identity || !privateContentIdentityAllowed(kind, identity) || projectScope !== undefined
+    || typeof content !== "string" || !content || content.length > 65_536 || !content.isWellFormed() || new TextEncoder().encode(content).byteLength > 65_536))
+    throw new Error("private_content_result_history_bound_invalid");
   const boundedExperienceDraft = kind === "experience-draft" && expiryCeiling !== undefined;
   if (boundedExperienceDraft && (!guard || !identity || !privateContentIdentityAllowed(kind, identity)
     || typeof content !== "string" || !content || !content.isWellFormed() || new TextEncoder().encode(content).byteLength > 65_536))
@@ -42,13 +90,13 @@ export async function preparePrivateContent(env: WorkerEnv, ownerId: string, kin
   assertOutputAdmissionActor(admissionReads,env,ownerId,projectScope?.organizationId??null,projectScope?.projectAccessId??null);
   const policy=projectScope?await readOutputAdmissionValue(admissionReads,"private-retention-policy",()=>env.DB.prepare("SELECT transient_days,evidence_days,version FROM organization_retention_policies WHERE organization_id=?")
     .bind(projectScope.organizationId).first<{transient_days:number;evidence_days:number;version:number}>()):null;
-  if ((boundedMemory || boundedExperienceDraft) && env.DB !== preparationDb) throw new Error("private_content_preparation_database_changed");
+  if ((boundedMemory || boundedExperienceDraft || boundedStageHistory || boundedResultHistory) && env.DB !== preparationDb) throw new Error("private_content_preparation_database_changed");
   const contentId = identity?.contentId ?? uuidV7(); const createdAt = new Date(); const category=privateContentRetentionClass(kind);
   const days=category==="governed-evidence"?Number(policy?.evidence_days??Math.max(1,Math.min(3650,intEnv(env.FORMA_EVIDENCE_RETENTION_DAYS,DEFAULT_EVIDENCE_RETENTION_DAYS)))):Number(policy?.transient_days??intEnv(env.FORMA_RETENTION_DAYS,30));
   const expiresAt=category==="durable-work"?new Date(DURABLE_WORK_RETENTION_END):new Date(createdAt.getTime()+days*86_400_000);
   if (ceiling !== null) expiresAt.setTime(Math.min(expiresAt.getTime(), ceiling));
   // Policy reads may outlive the supplied ceiling; never prepare expired bounded memory.
-  if ((boundedMemory || boundedExperienceDraft) && (!Number.isSafeInteger(expiresAt.getTime()) || expiresAt.getTime() <= createdAt.getTime())) throw new Error("private_content_expiry_ceiling_invalid");
+  if ((boundedMemory || boundedExperienceDraft || boundedStageHistory || boundedResultHistory) && (!Number.isSafeInteger(expiresAt.getTime()) || expiresAt.getTime() <= createdAt.getTime())) throw new Error("private_content_expiry_ceiling_invalid");
   const now=createdAt.toISOString();
   const statements=projectScope?[
     env.DB.prepare(`INSERT INTO private_content(content_id,owner_id,kind,content,created_at,expires_at,redacted_at)
@@ -84,7 +132,13 @@ export async function preparePrivateContent(env: WorkerEnv, ownerId: string, kin
     const { nativeMemoryAnswerExclusion } = await import("./memory-native-boundary.ts");
     if (env.DB !== preparationDb) throw new Error("native_structured_origin_schema_database_changed");
     try {
-      const exclusion = await nativeMemoryAnswerExclusion(env, { answerAlias: "private_content" });
+      const exclusion = privateCleanupRead
+        ? await privateCleanupRead()
+        : audioCleanupRead!==undefined
+        ? await readSponsorAudioIntakeCleanupExclusion(audioCleanupRead,env,ownerId,kind,content,projectScope,admissionReads,guard,identity,expiryCeiling)
+        : storyCleanupRead
+        ? await readSponsorStoryIntakeCleanupExclusion(storyCleanupRead,env,ownerId,kind,content,projectScope,admissionReads,guard,identity,expiryCeiling)
+        : await nativeMemoryAnswerExclusion(env, { answerAlias: "private_content" });
       if (env.DB !== preparationDb) throw new Error("native_structured_origin_schema_database_changed");
       cleanupGuard = { condition: exclusion.sql, bindings: [...exclusion.bindings] };
     } catch (error) {
@@ -114,8 +168,8 @@ export async function preparePrivateContent(env: WorkerEnv, ownerId: string, kin
     .bind(now,ownerId,now,...cleanupGuard.bindings));
   // Optional cleanup reads may also cross the original source deadline. The
   // publisher must still enforce these inserts in its own atomic proof batch.
-  if ((boundedMemory || boundedExperienceDraft) && env.DB !== preparationDb) throw new Error("private_content_preparation_database_changed");
-  if ((boundedMemory || boundedExperienceDraft) && expiresAt.getTime() <= Date.now()) throw new Error("private_content_expiry_ceiling_invalid");
+  if ((boundedMemory || boundedExperienceDraft || boundedStageHistory || boundedResultHistory) && env.DB !== preparationDb) throw new Error("private_content_preparation_database_changed");
+  if ((boundedMemory || boundedExperienceDraft || boundedStageHistory || boundedResultHistory) && expiresAt.getTime() <= Date.now()) throw new Error("private_content_expiry_ceiling_invalid");
   return { contentId, createdAt: now, expiresAt: expiresAt.toISOString(), statements, requiredInserts:projectScope?3:1 };
 }
 

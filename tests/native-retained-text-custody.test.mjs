@@ -75,9 +75,9 @@ function snapshot(f) {
 }
 function current(f, proof) {
   const assertion = nativeRetainedTextCustodyAssertion(proof, f.env);
-  assert.match(assertion.sql, /^EXISTS\(WITH /u);
+  assert.match(assertion.sql, /^WITH /u);
   assert(assertion.bindings.length <= 100);
-  return f.sqlite.prepare(`SELECT CASE WHEN (${assertion.sql}) THEN 1 ELSE 0 END AS current`).get(...assertion.bindings).current;
+  return f.sqlite.prepare(assertion.sql).get(...assertion.bindings)?.admitted ?? 0;
 }
 const unavailable = error => error instanceof Error && error.message === "retained_story_unavailable";
 

@@ -11,8 +11,12 @@ import { preflightOutputSceneTarget, outputScenePreflightProof } from "./output-
 import { outputProofReadStatements } from "./output-disclosure-proof.ts";
 import { readOutputScenePayload } from "./output-scene-preflight-contract.ts";
 import { requireSceneMiniAppCostApproval } from "./scene-mini-app-consent.ts";
+import { sponsorSceneAdmissionPreparation, sponsorAudioAdmissionPreparation } from "./experience-sponsor-admission.ts";
+import { requireSceneSponsorAdmissionForTarget, requireSceneSponsorAdmissionCurrent } from "./output-scene-sponsored-handoff.ts";
+import { requireAudioSponsorAdmissionForTarget, requireAudioSponsorAdmissionCurrent } from "./output-audio-sponsored-handoff.ts";
 import { preflightOutputNarrativeTarget } from "./output-narrative-preflight.ts";
-import { createOutputAdmissionReads, outputAdmissionBudgetOwner, outputAdmissionGovernanceAssertions, outputAdmissionSponsor } from "./output-admission-reads.ts";
+import { createOutputAdmissionReads, createGuestImageAdmissionReads, requireGuestImageAdmissionPreparation, outputAdmissionBudgetOwner, outputAdmissionGovernanceAssertions, outputAdmissionSponsor } from "./output-admission-reads.ts";
+import type { GuestImageAdmissionAuthority } from "./experience-guest-image-admission-witness.ts";
 import type { OutputGovernanceWitness } from "./output-governance-witness.ts";
 import { OUTPUT_MODEL3D_EXECUTION_POLICY } from "../src/model/output-execution-policy.ts";
 import { validateModel3dRequest } from "../src/model/model3d.ts";
@@ -21,7 +25,9 @@ import { prepareModel3dRequest } from "./model3d-request.ts";
 import { ProviderRequestError } from "./provider-errors.ts";
 import type { OutputNativeTargetPreflight } from "../src/model/output-delivery-contract.ts";
 import { sendsReferencePixels } from "../src/model/block-types.ts";
-import { prepareOutputDocumentJob, type PreparedOutputDocumentJob } from "./document-jobs-api.ts";
+import { prepareOutputDocumentJob, prepareGuestImageDocumentJob, type PreparedOutputDocumentJob, type PreparedGuestImageDocumentJob } from "./document-jobs-api.ts";
+import type { WorkerEnv } from "./runtime.ts";
+import { outputSchemaIsReady } from "./output-schema-state.ts";
 import { prepareBudgetReservation, prepareCostBudgetReservation, type PilotUser } from "./pilot-policy.ts";
 import { outputDigest, type OutputBridgeTargetInput, type OutputExecutionBridge, type OutputPreparedAdmission } from "./output-requirements-api.ts";
 import { OutputConflictError, type OutputOperationSlot, type OutputScope, type OutputSqlAssertion } from "./output-requirements-ledger.ts";
@@ -82,7 +88,59 @@ export async function preflightOutputModel3dTarget(input:OutputBridgeTargetInput
  return {targetId:target.id,available:true,reasonCode:"output_native_model3d_ready",reason:"One Rodin request creates a GLB using the exact reviewed prompt, ordered reference images, and disclosed settings. Provider content checks apply; acceptance is not guaranteed. Review the mesh and materials before accepting delivery.",reasonValues:{maximumExecutionSeconds:OUTPUT_MODEL3D_EXECUTION_POLICY.maximumMilliseconds/1000},transferCode:"output_transfer_model3d_after_authorization",provider:"fal",model:prepared.model,route:prepared.references.length?"document-model3d-image-manual-v1":"document-model3d-text-manual-v1",maximumMicrousd:prepared.estimatedCostMicrousd,maximumCalls:1,maximumTokens:1,settings,transferDescription:"After authorization and Start, Forma sends the exact displayed prompt, settings, and listed reference images in order to fal.ai / Hyper3D Rodin. The first reference guides materials. Original mesh files are not sent. This preflight sends nothing."};
 }
 
-async function prepareAdmission(input:Parameters<OutputExecutionBridge["prepareAdmission"]>[0]&{governanceWitness?:OutputGovernanceWitness}):Promise<OutputPreparedAdmission&{sourceAssertions:OutputSqlAssertion[]}>{
+/** A genuine guest seal can prepare one original Image admission. The canonical
+ * bridge keeps its existing principal path; this entry never invokes it. */
+export async function prepareGuestImageAdmission(request:Request,env:WorkerEnv,authority:GuestImageAdmissionAuthority):Promise<OutputPreparedAdmission&{sourceAssertions:OutputSqlAssertion[];job:PreparedGuestImageDocumentJob}>{
+ const readScope=createGuestImageAdmissionReads(request,env,authority);
+ const currentFrame=()=>requireGuestImageAdmissionPreparation(readScope,request,env);
+ const frame=currentFrame(),slot=frame.slot;
+ if(!outputSchemaIsReady(env.DB))throw new OutputConflictError("guest_image_native_schema_required",409);
+ const target=frame.target,frozen=frame.preflight.targets.find(target=>target.targetId===slot.targetId);
+ if(target.media_kind!=="image"||!frozen?.available||frame.preflight.targets.length!==1||!frame.assertions.length)throw new OutputConflictError("output_target_not_admissible",409);
+ const current=await preflightOutputImageSlidesTarget({env,target,context:frame.context});currentFrame();
+ if(!current.available||current.provider!=="openai"||current.route!=="document-image-manual-v1")throw new OutputConflictError("output_route_changed",409);
+ const currentDigest=await outputDigest(current);currentFrame();
+ const frozenDigest=await outputDigest(frozen);currentFrame();
+ if(currentDigest!==slot.routeDigest||frozenDigest!==slot.routeDigest||slot.maximumTokens!==current.maximumTokens
+   ||slot.maximumMicrousd!==current.maximumMicrousd||slot.maximumCalls!==current.maximumCalls||slot.maximumTokens!==frame.recipe.maximumTokens
+   ||slot.maximumMicrousd!==frame.recipe.maximumMicrousd||`sha256:${slot.routeDigest}`!==frame.recipe.routeDigest)throw new OutputConflictError("output_route_changed",409);
+ const settings=current.settings as OutputNativeSettings;
+ if(settings.kind!=="generate"||!settings.imageRender)throw new OutputConflictError("output_native_route_unsupported",422);
+ const reference={scopeKey:slot.scopeKey,grantId:slot.grantId,slotId:slot.slotId,planRevisionId:slot.planRevisionId,targetId:slot.targetId,targetContractDigest:slot.targetContractDigest,sourceDigest:slot.sourceDigest};
+ const job=await prepareGuestImageDocumentJob(request,env,readScope,{jobId:slot.jobId,outputExecution:reference,payload:settings.payload,imageRender:settings.imageRender,
+   maximumMicrousd:slot.maximumMicrousd,maximumTokens:slot.maximumTokens,maximumCalls:slot.maximumCalls});currentFrame();
+ if(job.identity.actorKind!=="guest"||job.identity.actorUserId!==frame.actorUserId||job.identity.ownerUserId!==frame.ownerUserId||job.identity.streamId!==frame.streamId
+   ||job.jobId!==slot.jobId||job.sourceHead!==frame.ownerHead||job.createdAt!==frame.createdAt||job.expiresAt!==frame.expiresAt)throw new OutputConflictError("output_job_scope_mismatch",403);
+ const billingOwner=outputAdmissionBudgetOwner(readScope,env,frame.actorUserId,frame.actorUserId);
+ if(job.budgetOwnerId!==billingOwner||billingOwner!==frame.payerUserId)throw new OutputConflictError("output_job_budget_scope_mismatch",403);
+ const reservationAssertions=[...frame.assertions];
+ const budgetContext={streamId:frame.streamId,correlationId:slot.jobId,operation:"image-generation",period:frame.period,
+   batchCounterInitialization:true,reservationAssertions,outputAdmissionReads:readScope};
+ const token=await prepareBudgetReservation(env,billingOwner,slot.maximumTokens,{...budgetContext,reservationId:slot.tokenReservationId,createdAt:frame.createdAt});currentFrame();
+ if(!token.ok)throw new OutputConflictError("output_token_budget_unavailable",429);
+ const cost=await prepareCostBudgetReservation(env,billingOwner,slot.maximumMicrousd,{...budgetContext,reservationId:slot.costReservationId,maximumMicrousd:slot.maximumMicrousd,allowUserOverage:false});currentFrame();
+ if(!cost.ok)throw new OutputConflictError("output_cost_budget_unavailable",429);
+ if(token.period!==frame.period||cost.period!==frame.period||token.reservationId!==slot.tokenReservationId||cost.reservationId!==slot.costReservationId
+   ||token.reservedTokens!==slot.maximumTokens||cost.reservedMicrousd!==slot.maximumMicrousd)throw new OutputConflictError("output_job_budget_scope_mismatch",403);
+ const checkpoint={reservationId:token.reservationId,costReservationId:cost.reservationId,costReservationPeriod:cost.period,costReservationMicrousd:cost.reservedMicrousd,
+   outputExecution:reference,generationReceipt:{...record(job.initialResult.generationReceipt),reservation_status:"active",reservation_microusd:cost.reservedMicrousd,output_slot_id:slot.slotId,output_grant_id:slot.grantId}};
+ const assertions:OutputSqlAssertion[]=[{sql:`EXISTS(SELECT 1 FROM budget_reservations token JOIN cost_budget_reservations cost
+   ON cost.owner_id=token.owner_id AND cost.stream_id=token.stream_id AND cost.correlation_id=token.correlation_id AND cost.operation=token.operation AND cost.period=token.period
+   WHERE token.reservation_id=? AND cost.reservation_id=? AND token.owner_id=? AND token.stream_id=? AND token.correlation_id=? AND token.operation='image-generation' AND token.period=?
+     AND token.reserved_tokens=? AND cost.reserved_microusd=? AND token.status='active' AND cost.status='active')`,
+   bindings:[slot.tokenReservationId,slot.costReservationId,billingOwner,frame.streamId,slot.jobId,frame.period,slot.maximumTokens,slot.maximumMicrousd]},
+   {sql:"EXISTS(SELECT 1 FROM document_jobs WHERE job_id=? AND owner_id=? AND stream_id=? AND document_id=? AND kind='generate' AND status='queued')",bindings:[slot.jobId,frame.ownerUserId,frame.streamId,frame.documentId]}];
+ currentFrame();
+ return {job,sourceAssertions:[...frame.assertions],events:[job.queueEvent],buildStatements(events){
+   currentFrame();
+   const anchors=events.filter(event=>event.type===job.queueEvent.type&&event.payload.job_id===slot.jobId);
+   if(anchors.length!==1)throw new Error("output_job_anchor_missing");
+   const statements=[...token.statements,...cost.statements,...job.buildStatements(anchors[0]!,checkpoint)];
+   currentFrame();return{statements,assertions};
+ }};
+}
+
+export async function prepareAdmission(input:Parameters<OutputExecutionBridge["prepareAdmission"]>[0]&{governanceWitness?:OutputGovernanceWitness}):Promise<OutputPreparedAdmission&{sourceAssertions:OutputSqlAssertion[]}>{
  if(input.sponsorAdmission&&(input.scope.kind!=="personal"||input.scope.contextId||input.scope.actorUserId!==input.scope.ownerUserId||input.principal.fictional||input.principal.projectExecution))throw new OutputConflictError("sponsor_personal_principal_required",403);
  const readScope=createOutputAdmissionReads({request:input.request,env:input.env,documentId:input.scope.documentId,actorUserId:input.scope.actorUserId,billingUserId:input.principal.billingUserId??input.principal.userId,organizationId:input.scope.organizationId,projectAccessId:input.scope.projectAccessId,...(input.sponsorAdmission?{sponsorAdmission:input.sponsorAdmission}:{})},
   input.governanceWitness?{witness:input.governanceWitness,source:{ownerUserId:input.scope.ownerUserId,projectId:input.scope.projectId,contextId:input.scope.contextId??"",sourceDigest:input.sourceDigest,contextSnapshotDigest:await outputDigest(input.context.snapshot)}}:undefined);
@@ -90,13 +148,25 @@ async function prepareAdmission(input:Parameters<OutputExecutionBridge["prepareA
  const governanceAssertions=[...outputAdmissionGovernanceAssertions(readScope),...(sponsor?.assertions??[])];
  const sceneAssertions:OutputSqlAssertion[]=[];
  const sceneJobAdmissions:NonNullable<OutputPreparedAdmission['sceneJobAdmissions']>=[];
+ const scenePreparation=input.sponsorAdmission?sponsorSceneAdmissionPreparation(input.sponsorAdmission,{request:input.request,env:input.env,actorUserId:input.scope.actorUserId,documentId:input.scope.documentId}):null;
+ const audioPreparation=input.sponsorAdmission?sponsorAudioAdmissionPreparation(input.sponsorAdmission,{request:input.request,env:input.env,actorUserId:input.scope.actorUserId,documentId:input.scope.documentId}):null;
+ const sceneCurrentChecks:Array<()=>void>=[];
  const prepared:Array<{slot:OutputOperationSlot;job:PreparedOutputDocumentJob;statements:D1PreparedStatement[];assertions:OutputSqlAssertion[];checkpoint:Record<string,unknown>}> = [];
  for(const slot of input.slots){
   const target=input.confirmedPlan.plan.targets.find(target=>target.id===slot.targetId);
   const frozen=input.preflight.targets.find(target=>target.targetId===slot.targetId);
   if(!target||!frozen?.available)throw new OutputConflictError("output_target_not_admissible");
-  const current=await preflightOutputNativeTarget({...input,target});
-  if(!current.available||await outputDigest(current)!==slot.routeDigest||await outputDigest(frozen)!==slot.routeDigest)throw new OutputConflictError("output_route_changed");
+  if(scenePreparation&&!Object.hasOwn(target,"scene_contract"))throw new OutputConflictError("sponsor_scene_handoff_changed",403);
+  if(audioPreparation&&!Object.hasOwn(target,"audio_contract"))throw new OutputConflictError("sponsor_audio_handoff_changed",403);
+  const assertSceneCurrent=()=>{if(scenePreparation)requireSceneSponsorAdmissionCurrent(scenePreparation,{...input,target},input.preflight,input.sceneCostConsent);if(audioPreparation)requireAudioSponsorAdmissionCurrent(audioPreparation,{...input,target},input.preflight,input.audioCostConsent);};
+  if(scenePreparation||audioPreparation)sceneCurrentChecks.push(assertSceneCurrent);
+  if(audioPreparation)sceneAssertions.push(...requireAudioSponsorAdmissionCurrent(audioPreparation,{...input,target},input.preflight,input.audioCostConsent));
+  const current=scenePreparation?await requireSceneSponsorAdmissionForTarget(scenePreparation,{...input,target},input.preflight,input.sceneCostConsent):audioPreparation?await requireAudioSponsorAdmissionForTarget(audioPreparation,{...input,target},input.preflight,input.audioCostConsent):await preflightOutputNativeTarget({...input,target});
+  assertSceneCurrent();
+  if(!current.available)throw new OutputConflictError("output_route_changed");
+  const currentRoute=await outputDigest(current);assertSceneCurrent();
+  const frozenRoute=await outputDigest(frozen);assertSceneCurrent();
+  if(currentRoute!==slot.routeDigest||frozenRoute!==slot.routeDigest)throw new OutputConflictError("output_route_changed");
   const settings=current.settings as OutputNativeSettings;
   const nativeVideo=Object.hasOwn(target,"video_contract")?requireOutputVideoOriginal({...input,target},current,slot).offer:null;
   const refreshVideo=async()=>{
@@ -129,24 +199,29 @@ async function prepareAdmission(input:Parameters<OutputExecutionBridge["prepareA
   const nativeAudio=Object.hasOwn(target,"audio_contract")?readOutputAudioPayload(settings.payload):null;
   if(Object.hasOwn(target,"audio_contract")&&!nativeAudio)throw new OutputConflictError("output_audio_contract_unsupported");
   const refreshAudio=async()=>{
-   const refreshed=await preflightOutputAudioTarget({...input,target});const proof=outputAudioPreflightAssertions(refreshed),preview=parseAudioMiniAppCostPreview((refreshed.settings as Record<string,unknown>).costPreview);
+   const refreshed=audioPreparation?await requireAudioSponsorAdmissionForTarget(audioPreparation,{...input,target},input.preflight,input.audioCostConsent):await preflightOutputAudioTarget({...input,target});assertSceneCurrent();const proof=outputAudioPreflightAssertions(refreshed),preview=parseAudioMiniAppCostPreview((refreshed.settings as Record<string,unknown>).costPreview);
    if(!nativeAudio||!proof||!preview||!refreshed.available||await outputDigest(refreshed)!==slot.routeDigest||preview.requestId!==slot.jobId||slot.attemptOrdinal!==0||slot.previousSlotId)throw new OutputConflictError("output_audio_source_changed",403);
-   requireAudioMiniAppCostApproval(input.audioCostConsent,(settings as unknown as Record<string,unknown>).costPreview,preview);sceneAssertions.push(...proof);return nativeAudio;
+   assertSceneCurrent();requireAudioMiniAppCostApproval(input.audioCostConsent,(settings as unknown as Record<string,unknown>).costPreview,preview);sceneAssertions.push(...proof);return nativeAudio;
   };
   if(nativeAudio)await refreshAudio();
   const nativeScene=Object.hasOwn(target,"scene_contract")?await readOutputScenePayload(settings.payload):null;
+  assertSceneCurrent();
   if(Object.hasOwn(target,"scene_contract")&&!nativeScene)throw new OutputConflictError("output_scene_contract_unsupported");
   // Custody belongs to this exact server preflight and this admission invocation.
   // Revalidate its original version/predicates, never rebuild or recapture a new
   // source after a mismatch. The final admission and dispatch still check them.
   const originalSceneProof=nativeScene?outputScenePreflightProof(current):null;
+  if(scenePreparation&&!originalSceneProof?.prepared.sourceVersion)throw new OutputConflictError("sponsor_scene_handoff_changed",403);
   const refreshScene=async()=>{
    const reused=Boolean(originalSceneProof?.prepared.sourceVersion);
    const refreshed=reused?current:await preflightOutputSceneTarget({...input,target});
+   assertSceneCurrent();
    const proof=outputScenePreflightProof(refreshed);
    const payload=refreshed.available?await readOutputScenePayload((refreshed.settings as OutputNativeSettings).payload):null;
+   assertSceneCurrent();
    if(!proof||!payload||!nativeScene||await outputDigest(refreshed)!==slot.routeDigest||proof.requestId!==slot.jobId
      ||slot.attemptOrdinal!==0||slot.previousSlotId)throw new OutputConflictError("output_scene_original_attempt_required");
+   assertSceneCurrent();
    requireSceneMiniAppCostApproval(input.sceneCostConsent,nativeScene.outputScene.costPreview,payload.outputScene.costPreview);
    if(reused){
     const assertions=proof.sourceAssertions;
@@ -154,6 +229,7 @@ async function prepareAdmission(input:Parameters<OutputExecutionBridge["prepareA
       ||assertions.some(value=>value.deadlineMs!==undefined&&(!Number.isFinite(value.deadlineMs)||Date.now()>=value.deadlineMs));
     if(!assertions.length||expired())throw new OutputConflictError("output_scene_source_changed",409);
     const checked=await input.env.DB.batch<Record<string,unknown>>(outputProofReadStatements(input.env,assertions));
+    assertSceneCurrent();
     if(!Array.isArray(checked)||checked.length!==assertions.length
       ||Array.from({length:assertions.length},(_,index)=>checked[index]).some(result=>!result||result.success!==true
         ||!Array.isArray(result.results)||result.results.length!==1||result.results[0]?.current!==1)
@@ -163,6 +239,7 @@ async function prepareAdmission(input:Parameters<OutputExecutionBridge["prepareA
    return proof.prepared;
   };
   const scenePrepared=nativeScene?await refreshScene():null;
+  assertSceneCurrent();
   if(scenePrepared?.sourceVersion)sceneJobAdmissions.push({slot,version:scenePrepared.sourceVersion});
   const admissionPayload=nativeModel3d?{...settings.payload,model3dCostConsent:input.model3dCostConsent,sourceSurface:"outputs",paidMediaConfirmed:true,budgetAcknowledged:true,preflightAcknowledged:true}:nativeAudio?{...settings.payload,audioCostConsent:input.audioCostConsent,paidMediaConfirmed:true,budgetAcknowledged:true,preflightAcknowledged:true}:nativeScene?{...settings.payload,sceneCostConsent:input.sceneCostConsent}:settings.payload;
   const reference={scopeKey:slot.scopeKey,grantId:slot.grantId,slotId:slot.slotId,planRevisionId:slot.planRevisionId,targetId:slot.targetId,targetContractDigest:slot.targetContractDigest,sourceDigest:slot.sourceDigest};
@@ -173,7 +250,8 @@ async function prepareAdmission(input:Parameters<OutputExecutionBridge["prepareA
    ...(nativeModel3d?{outputModel3d:{payload:admissionPayload,refresh:refreshModel3d}}:{}),
    ...(nativeStoryboard?{outputStoryboard:{payload:admissionPayload,maximumMicrousd:nativeStoryboard.maximumMicrousd,refresh:refreshStoryboard}}:{}),
    maximumMicrousd:slot.maximumMicrousd,maximumTokens:slot.maximumTokens,maximumCalls:slot.maximumCalls,...(settings.imageRender?{outputImageRender:settings.imageRender}:{}),
-   compile:async trusted=>{if(trusted.documentRevision!==input.context.documentRevision||await outputDigest(trusted.snapshot)!==await outputDigest(input.context.snapshot))throw new OutputConflictError("output_source_changed");return admissionPayload;}});
+   compile:async trusted=>{if(trusted.documentRevision!==input.context.documentRevision||await outputDigest(trusted.snapshot)!==await outputDigest(input.context.snapshot))throw new OutputConflictError("output_source_changed");assertSceneCurrent();return admissionPayload;}});
+  assertSceneCurrent();
   if(job instanceof Response){const issue=record(await job.json());throw new OutputConflictError(String(issue.error??"output_job_preflight_failed"),job.status);}
   if(job.user.userId!==input.scope.actorUserId||job.user.streamId!==`creative:${input.scope.ownerUserId}`)throw new OutputConflictError("output_job_scope_mismatch",403);
   const billingOwner=outputAdmissionBudgetOwner(readScope,input.env,job.user.userId,job.user.billingUserId??job.user.userId);
@@ -182,8 +260,10 @@ async function prepareAdmission(input:Parameters<OutputExecutionBridge["prepareA
   const budgetContext={streamId:job.user.streamId,correlationId:slot.jobId,operation:job.kind==="generate"?"image-generation":`document-render:${String(settings.payload.artifactKind)}`,...(budgetScope?{projectScope:budgetScope}:{})};
   const sponsorBudget=sponsor?{batchCounterInitialization:true,reservationAssertions:sponsor.assertions}:{};
   const token=await prepareBudgetReservation(input.env,billingOwner,slot.maximumTokens,{...budgetContext,...sponsorBudget,reservationId:slot.tokenReservationId,outputAdmissionReads:readScope});
+  assertSceneCurrent();
   if(!token.ok)throw new OutputConflictError("output_token_budget_unavailable",429);
   const cost=await prepareCostBudgetReservation(input.env,billingOwner,slot.maximumMicrousd,{...budgetContext,...sponsorBudget,period:token.period,reservationId:slot.costReservationId,outputAdmissionReads:readScope,maximumMicrousd:slot.maximumMicrousd,allowUserOverage:false});
+  assertSceneCurrent();
   if(!cost.ok)throw new OutputConflictError("output_cost_budget_unavailable",429);
   const assertions:OutputSqlAssertion[]=[{sql:`EXISTS(SELECT 1 FROM budget_reservations token JOIN cost_budget_reservations cost
    ON cost.owner_id=token.owner_id AND cost.stream_id=token.stream_id AND cost.correlation_id=token.correlation_id AND cost.operation=token.operation AND cost.period=token.period
@@ -192,7 +272,8 @@ async function prepareAdmission(input:Parameters<OutputExecutionBridge["prepareA
   if(budgetScope)assertions.push({sql:"EXISTS(SELECT 1 FROM project_resource_scopes resource JOIN events anchor ON anchor.event_id=resource.source_event_id WHERE resource.project_access_id=? AND resource.organization_id=? AND resource.resource_kind='job' AND resource.resource_id=? AND resource.actor_user_id=? AND anchor.type='ProjectDocumentJobQueued' AND json_extract(anchor.payload,'$.job_id')=?)",bindings:[budgetScope.projectAccessId,budgetScope.organizationId,slot.jobId,job.user.userId,slot.jobId]});
   prepared.push({slot,job,statements:[...token.statements,...cost.statements],assertions,checkpoint:{reservationId:token.reservationId,costReservationId:cost.reservationId,costReservationPeriod:cost.period,costReservationMicrousd:cost.reservedMicrousd,outputExecution:reference,generationReceipt:{...record(job.initialResult.generationReceipt),reservation_status:"active",reservation_microusd:cost.reservedMicrousd,output_slot_id:slot.slotId,output_grant_id:slot.grantId}}});
  }
- return {sourceAssertions:[...governanceAssertions,...sceneAssertions],sceneJobAdmissions,events:prepared.map(item=>item.job.queueEvent),buildStatements(events){const statements:D1PreparedStatement[]=[],assertions:OutputSqlAssertion[]=[];for(const item of prepared){const event=events.find(event=>event.type===item.job.queueEvent.type&&event.payload.job_id===item.slot.jobId);if(!event)throw new Error("output_job_anchor_missing");statements.push(...item.statements,...item.job.buildStatements(event,item.checkpoint));assertions.push(...item.assertions);}return{statements,assertions};}};
+ for(const current of sceneCurrentChecks)current();
+ return {sourceAssertions:[...governanceAssertions,...sceneAssertions],sceneJobAdmissions,events:prepared.map(item=>item.job.queueEvent),buildStatements(events){for(const current of sceneCurrentChecks)current();const statements:D1PreparedStatement[]=[],assertions:OutputSqlAssertion[]=[];for(const item of prepared){const event=events.find(event=>event.type===item.job.queueEvent.type&&event.payload.job_id===item.slot.jobId);if(!event)throw new Error("output_job_anchor_missing");statements.push(...item.statements,...item.job.buildStatements(event,item.checkpoint));assertions.push(...item.assertions);}return{statements,assertions};}};
 }
 
 export const outputDocumentExecutionBridge:OutputExecutionBridge={

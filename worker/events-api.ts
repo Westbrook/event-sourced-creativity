@@ -1,3 +1,8 @@
+import { requireGuestImageExecution, type GuestImageExecutionAuthority } from "./experience-guest-image-execution.ts";
+import { requireGuestImageJobControl } from "./document-jobs-api.ts";
+import { sponsorScenePaidDispatchDeadline, sponsorScenePaidClaimIdentity, requireSponsorScenePaidDispatchCurrent, type SponsorScenePaidClaim } from "./experience-sponsor-scene-paid-claim.ts";
+import { sponsorFinancialEventProfile } from "./experience-sponsor-execution.ts";
+import { canonicalJson as sponsorEventJson } from "../src/experiences/compiler.ts";
 import { parseVideoOutputContract } from "../src/model/output-video-contract.ts";
 import { readVideoPlannerExecution } from "./output-video-planner.ts";
 import { generateOutputVideo, withOutputVideoHook, outputVideoMediaPrice, OUTPUT_VIDEO_TRANSPORT, type OutputVideoHookLease } from "./output-video-execution.ts";
@@ -13,10 +18,11 @@ import type { OutputSceneEnvelope } from "./output-scene-adapter.ts";
 import { readOutputNarrativePayload, outputNarrativePlannerCost, verifyOutputNarrativeCompletion } from "./output-narrative-execution.ts";
 import { outputAssertionStatements } from "./output-requirements-ledger.ts";
 import { nativeMemoryAnswerExclusion } from "./memory-native-boundary.ts";
+import { preparePersonalSlidesPrivateContentPair } from "./private-content-storage.ts";
 import { presentationProviderLabels } from "../src/model/generation-execution-evidence.ts";
 import { documentRenderGuidance, documentRenderGuidanceProblem } from "../src/model/document-render-guidance.ts";
 import { handleProjectIntake } from "./project-intake.ts";
-import type { OutputEventExecution } from "./output-execution-control.ts";
+import { requireGuestImageEventExecution, settleGuestImageExecutionBudgets, type OutputEventExecution } from "./output-execution-control.ts";
 import { isOutputContextBlock } from "../src/model/output-source-policy.ts";
 import { MAX_MANUAL_PRESENTATION_SLIDES, PresentationCountPolicyError, resolvePresentationCountRequest, slideCountAccepted, type SlideCountPolicy } from "../src/model/presentation-count-policy.ts";
 import { assessStoredPresentationCandidate, generateCreativeDirection, generateCreativeVideo, generateDocumentArtifact, PRESENTATION_ADAPTER_VERSION, respondToCreativeChat, validateCreativeVideoAudioReferences, validateCreativeVideoReferences, type CreativeChatMutation, type CreativeVideoPreparedReceipt, type ImageReference, type ProviderResponseReceipt, type VideoAudioReference, type VideoReference } from "./openai-adapter";
@@ -48,7 +54,7 @@ import { calculateImageFocalPoint, CURRENT_FOCAL_POINT_METHOD } from "../src/mod
 import { DOCUMENT_VIEWS, documentViewWorkflow } from "../src/model/document-view-signals";
 import { normalizePromptTechnique } from "../src/model/prompt-structures";
 import { promptFactIsActive } from "../src/model/prompt-policy";
-import { documentPlanningTokenReservation, documentRenderTokenReservation, estimatePlannerOperationMicrousd, generationBudgetGate, presentationServerOwnedCheckpointField } from "../src/model/generation-budget";
+import { clearPresentationServerOwnedCheckpointFields, documentPlanningTokenReservation, documentRenderTokenReservation, estimatePlannerOperationMicrousd, generationBudgetGate, presentationServerOwnedCheckpointField } from "../src/model/generation-budget";
 import { documentImageFormat, imageFormatEventFields, normalizeImageFormat, providerRenderFormat } from "../src/model/image-format";
 import { applicationFailureDetail, classifyProviderFailure, ProviderRequestError, providerFailurePrompt, publicFailureDetail, type ProviderFailureDetail } from "./provider-errors";
 import { CANVAS_COMMUTATIVE_EVENT_TYPES, CANVAS_USER_EVENT_TYPES, validateCanvasEvent } from "./realtime/canvas-admission";
@@ -482,26 +488,8 @@ export function creativeChatMutationEvents(input:{mutations:CreativeChatMutation
 
 export type EventExecutionControl = { output?: OutputEventExecution; settlePersonalPresentation?:(input:{reservationId:string;costReservationId:string;usedTokens:number;usedMicrousd:number})=>Promise<void>; signal: AbortSignal; beginCommit: () => Promise<void>; progress: (stage:string,message:string,patch?:Record<string,unknown>,options?:{financialReceiptPersisted?:true}) => Promise<void> };
 
-/** Legacy chat must inspect its selected native references before missing or
- * excluded bodies could silently pull older history into the provider window. */
-export async function legacyChatMemoryProof(env:WorkerEnv,streamId:string,selected:readonly {eventId:string;contentRef:string}[]){
-  if(selected.length>12)throw new Error("assistant_memory_paid_ancestry_unsupported");
-  const exclusion=await nativeMemoryAnswerExclusion(env,{answerAlias:"content"});
-  return{sql:`NOT EXISTS(WITH selected AS(SELECT value FROM json_each(?)), refs AS(
-      SELECT json_extract(value,'$.contentRef') AS content_id FROM selected UNION
-      SELECT json_extract(event.payload,'$.content_ref') FROM selected JOIN events event
-        ON event.event_id=json_extract(selected.value,'$.eventId') AND event.stream_id=?),
-      contents AS(SELECT refs.content_id,COALESCE(private.kind,'') AS kind FROM refs LEFT JOIN private_content private ON private.content_id=refs.content_id)
-    SELECT 1 FROM contents content WHERE NOT (${exclusion.sql}))
-    AND NOT EXISTS(SELECT 1 FROM json_each(?) selected JOIN events event ON event.event_id=json_extract(selected.value,'$.eventId')
-      AND event.stream_id=? WHERE event.type='AssistantReasoned' AND json_type(event.payload,'$.memory_origin_version') IS NOT NULL)`,
-    bindings:[JSON.stringify(selected),streamId,...exclusion.bindings,JSON.stringify(selected),streamId]};
-}
-
-export async function handleEvents(request:Request,env:WorkerEnv,hot=false,userOverride?:PilotUser,execution?:EventExecutionControl):Promise<Response>{
-  try{
-    await ensureSchema(env);if(execution?.output)env=execution.output.guardedEnvironment;
-    const appendOperationEvents=async(environment:WorkerEnv,events:EventRow[],options:Parameters<typeof appendEvents>[2]={})=>{
+function createOperationEventAppender(execution?:EventExecutionControl){
+  return async(environment:WorkerEnv,events:EventRow[],options:Parameters<typeof appendEvents>[2]={})=>{
       if(!execution?.output)return appendEvents(environment,events,options);
       const output=execution.output;
       const appendAndRefresh=async()=>{
@@ -524,7 +512,159 @@ export async function handleEvents(request:Request,env:WorkerEnv,hot=false,userO
       // recovery in one boundary. Heartbeats cannot capture a mixed version.
       return execution.output.withSourceTransition
         ?execution.output.withSourceTransition(appendAndRefresh):appendAndRefresh();
-    };const inspection=request.method==="GET"&&new URL(request.url).searchParams.get("audit")==="1";const hasProjectCookie=hasProjectContextCookie(request);const auth=userOverride?{response:null,user:userOverride}:await requireUser(request,env,inspection?"admin":request.method==="GET"||hasProjectCookie?"viewer":"creator",hasProjectCookie?{account:"principal"}:{});if(auth.response||!auth.user)return auth.response!;
+    };
+}
+
+type NativeImageOperationBody={
+  [key:string]:unknown;
+  action?:string;documentId?:string;snapshot?:Record<string,unknown>;locale?:string;
+  promptTechnique?:string;promptFanId?:string;sourcePreviewId?:string;sourceSurface?:string;
+  productionMode?:ProductionMode;workflowId?:string;workflowStageId?:string;workflowSources?:ProductionWorkflowSource[];
+  canvasId?:string;contextSetId?:string;preflightId?:string;preflightVersion?:string;preflightAcknowledged?:boolean;
+  sourceBlockVersions?:Array<Record<string,unknown>>;
+};
+type ImageProviderClaimRefusal={operation:string;tokenReservationId:string;costReservationId:string;reservedTokens:number;reservedMicrousd:number;causationId?:string};
+type NativeImageOperationInput={
+  env:WorkerEnv;body:NativeImageOperationBody;ownerId:string;storageOwnerId:string;billingOwnerId:string;streamId:string;userActor:string;
+  executionScope?:ProjectExecutionScope;projectBudgetScope?:NonNullable<Parameters<typeof reserveBudget>[3]>["projectScope"];
+  execution?:EventExecutionControl;readEvents:(env:WorkerEnv,streamId:string)=>Promise<EventRow[]>;
+  current:number;client:string;corr:string;appendOperationEvents:ReturnType<typeof createOperationEventAppender>;
+  settleOperationOutputBudgets:(input:Parameters<typeof settleDocumentGenerationBudgets>[2])=>ReturnType<typeof settleDocumentGenerationBudgets>;
+  refuseProviderClaim:(input:ImageProviderClaimRefusal)=>Promise<Response>;
+  isAuthorityStop?:(error:unknown)=>boolean;
+  settleInterruptedImage:(input:{documentId:string;tokenReservationId:string;costReservationId:string})=>Promise<unknown>;
+};
+
+/** One native Image implementation; each caller establishes its own authority
+ * before supplying source, original reservations, and guarded native writes. */
+async function executeNativeImageOperation(input:NativeImageOperationInput):Promise<Response>{
+  const {env,body,ownerId,storageOwnerId,billingOwnerId,streamId,userActor,executionScope,projectBudgetScope,execution,
+    readEvents,current,client,corr,appendOperationEvents,settleOperationOutputBudgets,refuseProviderClaim,settleInterruptedImage}=input;
+  if(!env.OPENAI_API_KEY)return Response.json({error:"provider_not_configured"},{status:503});
+  const promptTechnique=normalizePromptTechnique(body.promptTechnique);const promptFanId=body.promptFanId?String(body.promptFanId):null;
+  const sourceEvents=await readEvents(env,streamId);const projection=foldEvents(sourceEvents,Number.POSITIVE_INFINITY,body.documentId);const constraints=standingConstraints(sourceEvents).map(item=>({preference_id:item.preferenceId,axis:item.axis,value:item.value,polarity:item.polarity,authority:"authored",source_event_refs:item.evidenceRefs,source_claim_ref:item.sourceClaimRef??null}));const uploadedReferences=await uploadedPixelReferences(env,storageOwnerId,projection,sourceEvents,body.snapshot,executionScope);
+  const reserved=execution?.output?.reservations.maximumTokens??32_000;const reservation=execution?.output?{ok:true as const,reservationId:execution.output.reservations.reservationId,reservedTokens:reserved,period:execution.output.reservations.costReservationPeriod}:await reserveBudget(env,billingOwnerId,reserved,{streamId,correlationId:corr,operation:"image-generation",projectScope:projectBudgetScope});if(!reservation.ok){const denied=makeEvent(streamId,current+1,"worker:policy",client,corr,"BudgetExceeded",{reason:"hard_cap_reached",scope:reservation.scope,reserved_tokens:0,operation:"image-generation"});await insertEvent(env,denied).run();const detail=applicationFailureDetail("budget_hard_cap_reached",reservation.scope,429);return Response.json({error:detail.code,errorDetail:publicFailureDetail(detail),scope:reservation.scope},{status:429});}
+  const imageCostReservation=execution?.output?{ok:true as const,reservationId:execution.output.reservations.costReservationId,reservedMicrousd:execution.output.reservations.costReservationMicrousd,period:execution.output.reservations.costReservationPeriod}:await reserveCostBudget(env,billingOwnerId,1_000_000,{maximumMicrousd:1_000_000,allowUserOverage:false,streamId,correlationId:corr,operation:"image-generation",period:reservation.period,projectScope:projectBudgetScope});if(!imageCostReservation.ok){await releaseBudget(env,billingOwnerId,reservation.reservationId,{reason:"image_generation_cost_cap_reached"});const detail=applicationFailureDetail("budget_hard_cap_reached",imageCostReservation.scope,429);return Response.json({error:detail.code,errorDetail:publicFailureDetail(detail),scope:imageCostReservation.scope},{status:429});}
+  const id=uuidV7();const plannerModel=env.OPENAI_MODEL??"gpt-5.6-terra";
+  let sequence=current;const registryEvents:EventRow[]=[];
+  const selectedPreview=body.sourcePreviewId?[...sourceEvents].reverse().find((event)=>event.type==="IdeationPreviewCompleted"&&String(event.payload.document_id??"")===projection.documentId&&previewObjectId(event)===body.sourcePreviewId):undefined;const previewImage=selectedPreview?await readGeneratedImageReference(env,storageOwnerId,selectedPreview.payload.media_url):null;const previewReference:ImageReference|null=previewImage?{...previewImage,label:"Selected ideation preview",source:"ideation-preview"}:null;const imageReferences=[...(previewReference?[previewReference]:[]),...uploadedReferences];const referenceInputs=referenceInputReceipts(imageReferences);const imageSnapshot=body.snapshot??snapshotForProjection(projection);const managedImage=body.productionMode==="managed"?buildManagedProductionPlan("image",{...imageSnapshot,standing_constraints:constraints}):null;const productionFields=managedImageEventFields(managedImage);const compiledSnapshot={...imageSnapshot,document:{id:projection.documentId,title:projection.documentTitle},standing_constraints:constraints,reference_inputs:referenceInputs,...(managedImage?{production_brief:managedImageBrief(managedImage)}:{})};const selectedImageFormat=execution?.output?.imageRender?{format:execution.output.imageRender.format,blockId:null}:documentImageFormat(compiledSnapshot);const fullRender=execution?.output?.imageRender??providerRenderFormat(selectedImageFormat.format,"full");const imageFormatFields={...imageFormatEventFields(selectedImageFormat.format,"full",selectedImageFormat.blockId),...(execution?.output?.imageRender?{provider_render_size:execution.output.imageRender.size,size:execution.output.imageRender.size}:{})};const contextHash=await creativeContextHash(compiledSnapshot);const imageSelection=selectImageAdapter(env,{quality:"high",size:fullRender.size,references:imageReferences,promptTechnique});const imageModel=imageSelection.model;const adapterVersion=`${imageSelection.adapterId}-${imageSelection.adapterVersion}`;if(!sourceEvents.some(event=>event.type==="ModelRegistered"&&event.payload.model_id===imageModel))registryEvents.push(makeEvent(streamId,++sequence,"worker:registry",client,corr,"ModelRegistered",{model_id:imageModel,planner_model_id:plannerModel,provider:imageSelection.providerName,status:"human-gated"}));if(!sourceEvents.some(event=>event.type==="AdapterVersioned"&&event.payload.adapter_id===imageSelection.adapterId&&event.payload.version===imageSelection.adapterVersion))registryEvents.push(makeEvent(streamId,++sequence,"worker:registry",client,corr,"AdapterVersioned",{adapter_id:imageSelection.adapterId,version:imageSelection.adapterVersion,contract_version:7,selection_reason:imageSelection.reason,reference_handoff:imageSelection.capabilities.includes("reference-pixel-input"),multiple_image_input:imageSelection.capabilities.includes("multiple-image-input"),block_level_reference_policy:true,block_level_image_format:true,streaming_previews:imageSelection.capabilities.includes("streaming-previews")}));if(!sourceEvents.some(event=>event.type==="CapabilityDeclared"&&event.payload.model_id===imageModel&&Array.isArray(event.payload.capabilities)&&(event.payload.capabilities as unknown[]).includes("block-level-image-format")))registryEvents.push(makeEvent(streamId,++sequence,"worker:registry",client,corr,"CapabilityDeclared",{model_id:imageModel,capabilities:imageSelection.capabilities}));const priorFanPromotion=promptFanId?[...sourceEvents].reverse().find((event)=>event.type==="IdeationPromoted"&&event.payload.prompt_fan_id===promptFanId):undefined;const promotionId=selectedPreview?(priorFanPromotion?String(priorFanPromotion.payload.promotion_id):uuidV7()):null;const promotionEvents:EventRow[]=[];
+  if(selectedPreview&&!priorFanPromotion){const intervening=sourceEvents.filter((event)=>event.sequence>selectedPreview.sequence);const changes=intervening.filter((event)=>/^(BlockCreated|BlockPropertyEdited|BlockWeightSet|BlockRemoved|BlockRestored|ChipEdited|ExtractionCompleted)$/.test(event.type));promotionEvents.push(makeEvent(streamId,++sequence,userActor,client,corr,"IdeationPromoted",{promotion_id:promotionId,document_id:projection.documentId,draft_event_id:selectedPreview.eventId,draft_sequence:selectedPreview.sequence,draft_generation_id:String(selectedPreview.payload.generation_id??""),draft_object_id:previewObjectId(selectedPreview),full_generation_id:id,source_surface:body.sourceSurface??"studio",prompt_fan_id:promptFanId,elapsed_to_intent_ms:Math.max(0,Date.now()-Date.parse(selectedPreview.occurredAt)),intervening_event_count:Math.max(0,current-selectedPreview.sequence),document_change_count:changes.length,conversation_turn_count:intervening.filter((event)=>event.type==="ChatMessageSent").length,context_changed:changes.length>0,intent_weight:1,system_success_pending:true}));}
+  const workflowLineage=body.workflowId&&body.workflowStageId?{workflow_id:body.workflowId,workflow_stage_id:body.workflowStageId,workflow_sources:body.workflowSources??[]} : {};
+  const requestedAt=makeEvent(streamId,++sequence,userActor,client,corr,"GenerationRequested",{generation_id:id,stream_id:streamId,model_ids:[plannerModel,imageModel],document_id:projection.documentId,...workflowLineage,canvas_id:body.canvasId??null,context_set_id:body.contextSetId??null,document_version:current,requested_output:"image",quality:"high",purpose:"final",...imageFormatFields,...productionFields,source_surface:body.sourceSurface??"studio",promotion_id:promotionId,reference_preview_event_id:selectedPreview?.eventId??null,prompt_technique:promptTechnique,prompt_fan_id:promptFanId,preflight_id:body.preflightId??null,preflight_version:body.preflightVersion??null,preflight_risk_acknowledged:Boolean(body.preflightAcknowledged),reference_input_count:referenceInputs.length,reference_inputs:referenceInputs,used_ideation_preview_pixels:Boolean(previewReference),used_uploaded_reference_pixels:uploadedReferences.length>0},{causationId:promotionEvents[0]?.eventId??priorFanPromotion?.eventId??null});
+  const compiled=makeEvent(streamId,++sequence,"worker:compiler",client,corr,"ContextCompiled",{generation_id:id,document_id:projection.documentId,project_id:projection.projectId,...workflowLineage,canvas_id:body.canvasId??null,context_set_id:body.contextSetId??null,model_id:imageModel,planner_model_id:plannerModel,provider:imageSelection.providerName,adapter_version:adapterVersion,adapter_selection_reason:imageSelection.reason,...imageFormatFields,...productionFields,compiled_snapshot:compiledSnapshot,context_hash:contextHash,source_block_versions:body.sourceBlockVersions??[],quality:"high",purpose:"final",source_surface:body.sourceSurface??"studio",promotion_id:promotionId,reference_preview_event_id:selectedPreview?.eventId??null,prompt_technique:promptTechnique,prompt_fan_id:promptFanId,reference_input_count:referenceInputs.length,reference_inputs:referenceInputs,used_ideation_preview_pixels:Boolean(previewReference),used_uploaded_reference_pixels:uploadedReferences.length>0},{causationId:requestedAt.eventId});
+  const budgeted=makeEvent(streamId,++sequence,"worker:policy",client,corr,"BudgetReserved",{generation_id:id,reservation_id:reservation.reservationId,cost_reservation_id:imageCostReservation.reservationId,reserved_tokens:reserved,reserved_microusd:imageCostReservation.reservedMicrousd,period:imageCostReservation.period,operation:"image-generation"},{causationId:requestedAt.eventId});
+  await appendOperationEvents(env,[...registryEvents,...promotionEvents,requestedAt,compiled,budgeted]);
+  const observePaid=paidProviderObserver(body as Record<string,unknown>,execution?.progress,{reservationId:reservation.reservationId,costReservationId:imageCostReservation.reservationId,costReservationPeriod:imageCostReservation.period,costReservationMicrousd:imageCostReservation.reservedMicrousd},execution?.output?.observeProvider);
+  try{
+    if(selectedPreview&&!previewReference)throw new Error("selected_preview_unavailable");
+    const privateContent=promptFanId?await loadPrivateContent(env,ownerId,"all",executionScope):{};const cachedFanEvent=promptFanId?[...sourceEvents].reverse().find((event)=>event.type==="GenerationCompleted"&&event.payload.prompt_fan_id===promptFanId&&event.payload.output_ref):undefined;const cachedFanRaw=cachedFanEvent?privateContent[String(cachedFanEvent.payload.output_ref??"")]:undefined;let planned:Awaited<ReturnType<typeof generateCreativeDirection>>;let planningSource:"fan-cache"|"provider"="provider";await execution?.progress("planning",cachedFanRaw?"Checking the fan for a reusable visual direction.":"Turning the document context into a concrete visual direction.");if(!await claimCostBudgetReservation(env,billingOwnerId,imageCostReservation.reservationId))return refuseProviderClaim({operation:"image-generation",tokenReservationId:reservation.reservationId,costReservationId:imageCostReservation.reservationId,reservedTokens:reserved,reservedMicrousd:imageCostReservation.reservedMicrousd,causationId:budgeted.eventId});if(cachedFanRaw){try{planned={responseId:String(cachedFanEvent?.payload.planner_response_id??""),model:String(cachedFanEvent?.payload.planner_model_id??plannerModel),output:JSON.parse(cachedFanRaw) as Record<string,unknown>,raw:cachedFanRaw,latencyMs:0,usage:{inputTokens:0,outputTokens:0,totalTokens:0}};planningSource="fan-cache";}catch{planned=await generateCreativeDirection(env,ownerId,compiledSnapshot,execution?.signal,body.locale,observePaid,execution?.output?{onBeforeProviderAttempt:execution.output.beforeProviderAttempt,onBeforeProviderDispatch:execution.output.beforeProviderDispatch,outputTargetInstructions:String(execution.output.settings.outputTargetInstructions??"")}:undefined);}}else planned=await generateCreativeDirection(env,ownerId,compiledSnapshot,execution?.signal,body.locale,observePaid,execution?.output?{onBeforeProviderAttempt:execution.output.beforeProviderAttempt,onBeforeProviderDispatch:execution.output.beforeProviderDispatch,outputTargetInstructions:String(execution.output.settings.outputTargetInstructions??"")}:undefined);const image=await generateCreativeImage(env,ownerId,compiledSnapshot,planned.output,{quality:"high",size:fullRender.size,references:imageReferences,promptTechnique,signal:execution?.signal,onProviderSubmission:observePaid,onStage:execution?.progress,...(execution?.output?{onBeforeProviderAttempt:execution.output.beforeProviderAttempt,onBeforeProviderDispatch:execution.output.beforeProviderDispatch,onBeforeSourceTransmission:execution.output.beforeSourceTransmission,outputImageFormat:execution.output.imageRender?.format,outputFalImage:execution.output.settings.outputFalImage,onOutputFalRequest:(request,details)=>execution.output!.retainFalImageRequest(request,{generationId:id,planned,planningSource,promptTechnique,...details}),outputTargetInstructions:String(execution.output.settings.outputTargetInstructions??"")}:{})});await execution?.beginCommit();const media=await storeGeneratedImage(env,storageOwnerId,id,image.bytes,image.model,image.mimeType,{provider:image.provider,adapter:`${image.adapterId}-${image.adapterVersion}`,providerRequestId:image.providerRequestId??""});
+    const stored=await storePrivateContent(env,ownerId,"provider-output",planned.raw,executionScope);const promptStored=await storePrivateContent(env,ownerId,"prompt",image.prompt,executionScope);const totalTokens=planned.usage.totalTokens+image.usage.totalTokens;if(!execution?.output)await settleBudget(env,billingOwnerId,reservation.reservationId,totalTokens);
+    const next=await streamHead(env,streamId);const generatedObjectId=`object-${id.slice(-8)}`;const complete=makeEvent(streamId,next+1,"worker:generator",client,corr,"GenerationCompleted",{generation_id:id,document_id:projection.documentId,...workflowLineage,canvas_id:body.canvasId??null,context_set_id:body.contextSetId??null,model_id:image.model,planner_model_id:planned.model,provider:image.provider,provider_request_id:image.providerRequestId,provider_submission_id:image.providerSubmissionId,planner_response_id:planned.responseId,provider_created_at:image.createdAt,object_id:generatedObjectId,object_ids:[generatedObjectId],title:String(planned.output.title??projection.documentTitle).trim(),output_ref:stored.contentId,prompt_ref:promptStored.contentId,prompt_technique:promptTechnique,prompt_fan_id:promptFanId,content_expires_at:stored.expiresAt,media_url:media.url,media_type:media.mimeType,source_content_hash:media.contentHash,image_width:image.width,image_height:image.height,quality:"high",purpose:"final",...imageFormatFields,...productionFields,source_surface:body.sourceSurface??"studio",promotion_id:promotionId,reference_preview_event_id:selectedPreview?.eventId??null,promoted_from_generation_id:selectedPreview?String(selectedPreview.payload.generation_id??""):null,promoted_from_object_id:selectedPreview?previewObjectId(selectedPreview):null,promotion_outcome:promotionId?"completed":null,context_hash:contextHash,planning_source:planningSource,planning_cache_hit:planningSource==="fan-cache",reference_input_count:referenceInputs.length,reference_inputs:referenceInputs,used_ideation_preview_pixels:Boolean(previewReference),used_uploaded_reference_pixels:uploadedReferences.length>0,latency_ms:planned.latencyMs+image.latencyMs,planning_latency_ms:planned.latencyMs,image_latency_ms:image.latencyMs,adapter_version:`${image.adapterId}-${image.adapterVersion}`,simulation:false},{causationId:compiled.eventId});
+    const imageCost={...providerCostReceipt([priceTextUsageBreakdownMicrousd(planned.model,planned.usage),image.costBreakdown]),...("pricingVersion" in image?{image_pricing_version:image.pricingVersion}:{})};if(execution?.output)await settleOperationOutputBudgets({reservationId:reservation.reservationId,costReservationId:imageCostReservation.reservationId,usedTokens:totalTokens,usedMicrousd:imageCost.cost_microusd});else await settleCostBudget(env,billingOwnerId,imageCostReservation.reservationId,imageCost.cost_microusd);const usage=makeEvent(streamId,next+2,"worker:policy",client,corr,"GenerationUsageRecorded",{generation_id:id,document_id:projection.documentId,reservation_id:reservation.reservationId,cost_reservation_id:imageCostReservation.reservationId,...productionFields,input_tokens:planned.usage.inputTokens+image.usage.inputTokens,output_tokens:planned.usage.outputTokens+image.usage.outputTokens,total_tokens:totalTokens,planner_tokens:planned.usage.totalTokens,image_tokens:image.usage.totalTokens,planner_input_tokens:planned.usage.inputTokens,planner_output_tokens:planned.usage.outputTokens,image_text_input_tokens:image.usage.textInputTokens??0,image_input_tokens:image.usage.imageInputTokens??image.usage.inputTokens,image_output_tokens:image.usage.outputTokens,reserved_tokens:reserved,reserved_microusd:imageCostReservation.reservedMicrousd,model_ids:[planned.model,image.model],operation:"image-generation",quality:"high",promotion_id:promotionId,image_cost_precision:image.costPrecision,...imageCost},{causationId:complete.eventId});await appendOperationEvents(env,[complete,usage]);if(!execution?.output)await observeProviderSuccess(env);return Response.json({appended:[...registryEvents,...promotionEvents,requestedAt,compiled,budgeted,complete,usage],content:{[stored.contentId]:planned.raw},rejected:[],head:usage.sequence,simulation:false,promoted:Boolean(promotionId)});
+  }catch(error){
+    if(input.isAuthorityStop?.(error))throw error;
+    if(execution?.signal.aborted||error instanceof Error&&error.message==="document_job_canceled")throw error;
+    if(execution?.output?.dispatchStop(error))throw error;
+    await execution?.beginCommit();
+    let detail=classifyProviderFailure(error);
+    if(hasUnresolvedProviderSubmission(body as Record<string,unknown>))detail={...detail,code:"provider_submission_uncertain",category:"network",scope:"network",action:"contact_support",message:"The paid request may already have reached its provider. Its reservation is held; no duplicate request will be submitted automatically.",retryable:false,retryAfterMs:null};
+    await observeProviderFailure(env,detail);
+    const moderationPrompt=await retainFailurePrompt(env,ownerId,error,executionScope);
+    if(execution?.output)await settleOperationOutputBudgets({reservationId:reservation.reservationId,costReservationId:imageCostReservation.reservationId,reason:"generation_failed"});
+    else await settleInterruptedImage({documentId:projection.documentId,tokenReservationId:reservation.reservationId,costReservationId:imageCostReservation.reservationId});
+    const next=await streamHead(env,streamId);
+    const failed=makeEvent(streamId,next+1,"worker:generator",client,corr,"GenerationFailed",{generation_id:id,document_id:projection.documentId,canvas_id:body.canvasId??null,context_set_id:body.contextSetId??null,model_id:imageModel,planner_model_id:plannerModel,quality:"high",purpose:"final",...imageFormatFields,...productionFields,source_surface:body.sourceSurface??"studio",promotion_id:promotionId,promotion_outcome:promotionId?"failed":null,prompt_ref:moderationPrompt?.ref??null,prompt_expires_at:moderationPrompt?.expiresAt??null,prompt_technique:promptTechnique,prompt_fan_id:promptFanId,...failureEventFields(detail)},{causationId:compiled.eventId});
+    await appendOperationEvents(env,[failed]);
+    return Response.json({error:detail.code,errorDetail:publicFailureDetail(detail),moderationPromptRef:moderationPrompt?.ref??null,appended:[...registryEvents,...promotionEvents,requestedAt,compiled,budgeted,failed],content:moderationPrompt?{[moderationPrompt.ref]:moderationPrompt.prompt}:undefined,head:failed.sequence,promoted:Boolean(promotionId)},{status:detail.httpStatus===429?429:502});
+  }
+}
+
+/** Dormant genuine-guest Image adapter. Authority and the actual heartbeat
+ * control come from private registries; request JSON never supplies execution. */
+export async function executeGuestImageEvents(request:Request,env:WorkerEnv,authority:GuestImageExecutionAuthority,control:EventExecutionControl):Promise<Response>{
+  const refused=():never=>{throw new Error("guest_image_events_authority_unavailable");};
+  requireGuestImageJobControl(request,env,authority,control);
+  const output=control.output;
+  if(!output)return refused();
+  const claimRefusal=new Error("guest_image_provider_claim_unavailable");
+  const current=()=>{
+    const frame=requireGuestImageExecution(request,env,authority);
+    requireGuestImageJobControl(request,env,authority,control);
+    requireGuestImageEventExecution(request,env,authority,output);
+    frame.assertCurrent();
+    if(control.output!==output||control.signal.aborted||frame.identity.actorKind!=="guest"
+      ||frame.identity.ownerUserId!==frame.identity.actorUserId||frame.job.kind!=="generate"
+      ||frame.job.owner_id!==frame.identity.ownerUserId||frame.job.stream_id!==frame.identity.streamId
+      ||frame.job.document_id!==frame.scope.documentId||frame.job.source_surface!=="outputs"
+      ||output.financialPayerUserId!==frame.identity.payerUserId||output.sponsorFinancialBinding!==frame.financial
+      ||sponsorFinancialEventProfile(frame.financial,env,frame.identity.actorUserId,output.reference)!=="image"
+      ||frame.settings.kind!=="generate"||frame.settings.payload.productionMode!=="manual"||!frame.settings.imageRender
+      ||frame.settings.calls.length!==2||frame.settings.calls[0]?.stage!=="planning:initial"||frame.settings.calls[1]?.stage!=="image:initial"
+      ||frame.settings.calls.some(call=>call.provider!=="openai")||frame.slot.provider!=="openai"
+      ||(env.FORMA_IMAGE_PROVIDER??"openai").trim().toLowerCase()!=="openai"
+      ||sponsorEventJson(output.settings)!==sponsorEventJson(frame.settings.payload)
+      ||sponsorEventJson(output.imageRender)!==sponsorEventJson(frame.settings.imageRender))return refused();
+    return frame;
+  };
+  const frame=current(),original:unknown=JSON.parse(frame.job.request_json);
+  if(!original||typeof original!=="object"||Array.isArray(original))return refused();
+  const body=original as NativeImageOperationBody;
+  // The original bounded recipe has no reference, chat, preview, fan, workflow,
+  // or private-input recovery path. Do not read or silently omit such inputs.
+  if(["sourcePreviewId","sourceChatTurnId","directionRef","directionModel","promptFanId","workflowId","workflowStageId","workflowSources","jobInputRef","outputFalImage","message","prompt"].some(key=>Object.hasOwn(body,key))
+    ||body.productionMode!=="manual"||body.artifactKind!==undefined&&body.artifactKind!=="")return refused();
+  clearPresentationServerOwnedCheckpointFields(body);delete body.expectedSequence;delete body.jobInputRef;
+  const sourceEvents=[...frame.sourceEvents];
+  const trusted=authoritativeCreativeContext(sourceEvents,{documentId:frame.scope.documentId,projectId:frame.scope.projectId,
+    canvasId:body.canvasId,contextSetId:body.contextSetId,snapshot:body.snapshot,sourceBlockVersions:body.sourceBlockVersions});
+  const facts=Array.isArray(trusted.snapshot.facts)?trusted.snapshot.facts:[];
+  if(facts.some(fact=>fact&&typeof fact==="object"&&["reference","model3d","audio"].includes(String((fact as Record<string,unknown>).type)))
+    ||sponsorEventJson(trusted.snapshot)!==sponsorEventJson(frame.context.snapshot)
+    ||sponsorEventJson(trusted.sourceBlockVersions)!==sponsorEventJson(frame.context.sourceBlockVersions)
+    ||trusted.documentRevision!==frame.context.documentRevision)return refused();
+  current();await output.assertContext(trusted);current();
+  Object.assign(body,frame.settings.payload,output.reservations,{action:"generate",documentId:frame.scope.documentId,
+    snapshot:trusted.snapshot,sourceBlockVersions:trusted.sourceBlockVersions,documentRevision:trusted.documentRevision,
+    sourceSurface:"outputs",clientId:"server:guest-output",correlationId:frame.job.correlation_id,outputExecution:output.reference});
+  const selected=selectImageAdapter(env,{quality:"high",size:frame.settings.imageRender!.size,references:[],promptTechnique:normalizePromptTechnique(body.promptTechnique)});
+  if(selected.providerName!=="openai"||selected.model!==frame.slot.model)return refused();
+  const settleOperationOutputBudgets=async(input:Parameters<typeof settleDocumentGenerationBudgets>[2])=>{
+    current();
+    const settled=await settleGuestImageExecutionBudgets(request,env,authority,output,input);
+    current();return settled;
+  };
+  current();
+  const response=await executeNativeImageOperation({env:output.guardedEnvironment,body,ownerId:frame.identity.ownerUserId,
+    storageOwnerId:frame.identity.ownerUserId,billingOwnerId:frame.identity.payerUserId,streamId:frame.identity.streamId,
+    userActor:frame.identity.actorUserId,execution:control,current:output.sourceHead,client:"server:guest-output",corr:frame.job.correlation_id,
+    readEvents:async()=>{current();return sourceEvents;},appendOperationEvents:createOperationEventAppender(control),settleOperationOutputBudgets,
+    refuseProviderClaim:async()=>{current();throw claimRefusal;},isAuthorityStop:error=>error===claimRefusal,
+    settleInterruptedImage:async()=>refused(),
+  });
+  current();return response;
+}
+
+/** Legacy chat must inspect its selected native references before missing or
+ * excluded bodies could silently pull older history into the provider window. */
+export async function legacyChatMemoryProof(env:WorkerEnv,streamId:string,selected:readonly {eventId:string;contentRef:string}[]){
+  if(selected.length>12)throw new Error("assistant_memory_paid_ancestry_unsupported");
+  const exclusion=await nativeMemoryAnswerExclusion(env,{answerAlias:"content"});
+  return{sql:`NOT EXISTS(WITH selected AS(SELECT value FROM json_each(?)), refs AS(
+      SELECT json_extract(value,'$.contentRef') AS content_id FROM selected UNION
+      SELECT json_extract(event.payload,'$.content_ref') FROM selected JOIN events event
+        ON event.event_id=json_extract(selected.value,'$.eventId') AND event.stream_id=?),
+      contents AS(SELECT refs.content_id,COALESCE(private.kind,'') AS kind FROM refs LEFT JOIN private_content private ON private.content_id=refs.content_id)
+    SELECT 1 FROM contents content WHERE NOT (${exclusion.sql}))
+    AND NOT EXISTS(SELECT 1 FROM json_each(?) selected JOIN events event ON event.event_id=json_extract(selected.value,'$.eventId')
+      AND event.stream_id=? WHERE event.type='AssistantReasoned' AND json_type(event.payload,'$.memory_origin_version') IS NOT NULL)`,
+    bindings:[JSON.stringify(selected),streamId,...exclusion.bindings,JSON.stringify(selected),streamId]};
+}
+
+export async function handleEvents(request:Request,env:WorkerEnv,hot=false,userOverride?:PilotUser,execution?:EventExecutionControl):Promise<Response>{
+  const sponsorEnvironment=env;
+  try{
+    await ensureSchema(env);if(execution?.output)env=execution.output.guardedEnvironment;
+    const appendOperationEvents=createOperationEventAppender(execution);const inspection=request.method==="GET"&&new URL(request.url).searchParams.get("audit")==="1";const hasProjectCookie=hasProjectContextCookie(request);const auth=userOverride?{response:null,user:userOverride}:await requireUser(request,env,inspection?"admin":request.method==="GET"||hasProjectCookie?"viewer":"creator",hasProjectCookie?{account:"principal"}:{});if(auth.response||!auth.user)return auth.response!;
     const selected=hasProjectCookie?await readProjectRequestContext(request,env,auth.user):{context:null,response:null};
     if(selected.response)return selected.response;
     if(selected.context){
@@ -570,7 +710,53 @@ export async function handleEvents(request:Request,env:WorkerEnv,hot=false,userO
     if(request.method!=="POST")return new Response("Method not allowed",{status:405});
     const consent=requireConsent(auth.user);if(consent)return consent;
     const body=await request.json() as {action?:"append"|"batch"|"canvas_sync"|"propose"|"preview"|"generate"|"chat"|"structure_adaptive"|"render_document"|"hot"|"evaluate_extractors"|"rebuild_index"|"extract_reference"|"calculate_focal_point"|"open_session"|"close_session"|"compose_brief"|"declare_intent"|"run_scout"|"refresh_taste_model"|"set_condition"|"check_conditions"|"critique_object";event?:EventInput;events?:EventInput[];expectedSequence?:number;clientId?:string;correlationId?:string;locale?:string;documentId?:string;documentRevision?:string;canvasId?:string;contextSetId?:string;projectScope?:boolean;prompt?:string;message?:string;livePreview?:boolean;sourceSurface?:string;sourcePreviewId?:string;sourceChatTurnId?:string;directionRef?:string;directionModel?:string;promptTechnique?:string;promptFanId?:string;preflightId?:string;preflightVersion?:string;preflightAcknowledged?:boolean;exemplarRefs?:Array<Record<string,unknown>>;snapshot?:Record<string,unknown>;sourceBlockVersions?:Array<Record<string,unknown>>;blockId?:string;referenceId?:string;targetKind?:"generation"|"reference"|"artifact";targetId?:string;mediaUrl?:string;sample?:ImageSample;findingKinds?:ReferenceFindingKind[];statement?:string;deadline?:string|null;maxObservations?:number;condition?:string;triggerKind?:"generation_count"|"on_date";threshold?:number;onDate?:string;objectId?:string;axis?:string;polarity?:"positive"|"negative";value?:string;note?:string;artifactId?:string;artifactKind?:DocumentArtifactKind;itemCount?:number;audience?:string;tone?:string;sceneMedium?:SceneMedium;sceneConfiguration?:SceneConfiguration;videoSeconds?:VideoDurationSeconds;videoSize?:"1280x720"|"720x1280";videoResolution?:"480p"|"720p";videoAudioMode?:VideoAudioMode;soundtrackBlockIds?:string[];sendSoundtrackToVideoProvider?:boolean;audioImageBlockId?:string;audioProfile?:AudioRequestProfile;audioProviderModel?:string;audioVideoArtifactId?:string;sendAudioVideoToProvider?:boolean;audioEstimatedCostMicrousd?:number;model3dPrompt?:string;model3dPromptSource?:"exact"|"document";model3dAdaptation?:Record<string,unknown>;model3dSettings?:unknown;model3dReferenceBlockIds?:string[];model3dInputReceipt?:Record<string,unknown>;model3dProviderSubmission?:string;paidMediaConfirmed?:boolean;productionMode?:ProductionMode;productionPlan?:ManagedProductionPlan;productionSceneReceipts?:Record<string,ProductionSceneReceipt>;productionFrameReceipts?:Record<string,ProductionFrameReceipt>;productionPrepaidSceneIds?:string[];productionPrepaidAnchor?:boolean;productionAnchor?:Record<string,unknown>;costReservationMicrousd?:number;budgetAcknowledged?:boolean;budgetWarningSuppressed?:boolean;providerJobId?:string;providerModel?:string;providerStatusUrl?:string;providerResponseUrl?:string;providerCancelUrl?:string;reservationId?:string;requestKey?:string;workflowId?:string;workflowStageId?:string;workflowSources?:ProductionWorkflowSource[];artifactPlan?:Record<string,unknown>;plannerModel?:string;plannerResponseId?:string;plannerLatencyMs?:number;plannerUsage?:Record<string,unknown>;plannerInput?:Record<string,unknown>;renderedItems?:Array<Record<string,unknown>>;videoInputReceipt?:Record<string,unknown>;audioInputReceipt?:Record<string,unknown>};
-    if(sponsoredOutput&&body.action!=="generate")return Response.json({error:"sponsor_recipe_unsupported"},{status:403});
+    if(sponsoredOutput){
+      const output=execution!.output!,binding=output.sponsorFinancialBinding!;
+      const profile=sponsorFinancialEventProfile(binding,sponsorEnvironment,actorUserId,output.reference);
+      if(profile==="image"){
+        if(body.action!=="generate")return Response.json({error:"sponsor_recipe_unsupported"},{status:403});
+      }else if(profile==="short_story"){
+        const settings=sponsorEventJson(output.settings),reference=sponsorEventJson(output.reference);
+        const narrative=await readOutputNarrativePayload(output.settings);
+        if(!narrative||body.action!=="render_document"||body.artifactKind!=="short_story"||body.productionMode!=="manual"||body.itemCount!==3
+          ||sponsorEventJson(output.settings)!==settings||sponsorEventJson(output.reference)!==reference
+          ||sponsorFinancialEventProfile(binding,sponsorEnvironment,actorUserId,output.reference)!=="short_story")
+          return Response.json({error:"sponsor_recipe_unsupported"},{status:403});
+      }else if(profile==="scene"){
+        const settings=sponsorEventJson(output.settings),reference=sponsorEventJson(output.reference);
+        const scene=await readOutputScenePayload(output.settings);
+        if(!scene||body.action!=="render_document"||body.artifactKind!=="scene"||body.productionMode!=="manual"||body.itemCount!==1||body.sceneMedium!=="visual"
+          ||!output.refreshSponsorSceneDispatch||!output.createSponsorScenePaidClaim||execution!.signal.aborted
+          ||sponsorEventJson(output.settings)!==settings||sponsorEventJson(output.reference)!==reference
+          ||sponsorFinancialEventProfile(binding,sponsorEnvironment,actorUserId,output.reference)!=="scene")
+          return Response.json({error:"sponsor_recipe_unsupported"},{status:403});
+      }else if(profile==="audio"){
+        const settings=sponsorEventJson(output.settings),reference=sponsorEventJson(output.reference);
+        // Native job execution strips this legacy checkpoint field from the
+        // transport. Its price remains in the independently proved settings.
+        const audio=readOutputAudioPayload(output.settings),supplied=readOutputAudioPayload({...body,audioEstimatedCostMicrousd:output.settings.audioEstimatedCostMicrousd});
+        if(!audio||!supplied||sponsorEventJson(audio)!==sponsorEventJson(supplied)||body.action!=="render_document"
+          ||!output.refreshSponsorAudioDispatch||!output.requireSponsorAudioDispatchCurrent||execution!.signal.aborted
+          ||body.paidMediaConfirmed!==true||body.audioProviderModel!==output.settings.audioProviderModel
+          ||body.audioEstimatedCostMicrousd!==undefined&&body.audioEstimatedCostMicrousd!==output.settings.audioEstimatedCostMicrousd
+          ||body.audioProfile&&sponsorEventJson(body.audioProfile)!==sponsorEventJson(output.settings.audioProfile)
+          ||(body as Record<string,unknown>).outputTargetInstructions!==output.settings.outputTargetInstructions)
+          return Response.json({error:"sponsor_recipe_unsupported"},{status:403});
+        await output.refreshSponsorAudioDispatch(execution!);
+        output.requireSponsorAudioDispatchCurrent(execution!);
+        if(sponsorEventJson(output.settings)!==settings||sponsorEventJson(output.reference)!==reference
+          ||sponsorFinancialEventProfile(binding,sponsorEnvironment,actorUserId,output.reference)!=="audio")
+          return Response.json({error:"sponsor_recipe_unsupported"},{status:403});
+      }else if(profile==="slides"){
+        const settings=output.settings,supplied=body as Record<string,unknown>,exactFive=sponsorEventJson({kind:"exact",unit:"slide",value:5});
+        if(body.action!=="render_document"||body.artifactKind!=="slides"||body.productionMode!=="manual"||body.itemCount!==5
+          ||supplied.requestedSlideCount!==5||sponsorEventJson(supplied.slideCountPolicy??null)!==exactFive
+          ||settings.artifactKind!=="slides"||settings.productionMode!=="manual"||settings.itemCount!==5||settings.requestedSlideCount!==5
+          ||sponsorEventJson(settings.slideCountPolicy??null)!==exactFive||typeof settings.outputTargetInstructions!=="string"
+          ||supplied.outputTargetInstructions!==settings.outputTargetInstructions||settings.budgetAcknowledged!==true||settings.preflightAcknowledged!==true)
+          return Response.json({error:"sponsor_recipe_unsupported"},{status:403});
+      }else return Response.json({error:"sponsor_recipe_unsupported"},{status:403});
+    }
     if(body.action==="render_document"&&body.videoResolution!==undefined){
       if(body.artifactKind!=="video"||!VIDEO_ADAPTER_CONTRACT.supportedResolutions.includes(body.videoResolution))return Response.json({error:"video_resolution_unsupported",supported:VIDEO_ADAPTER_CONTRACT.supportedResolutions},{status:400});
       if(body.productionMode==="managed")return Response.json({error:"managed_video_resolution_unsupported"},{status:400});
@@ -966,6 +1152,7 @@ export async function handleEvents(request:Request,env:WorkerEnv,hot=false,userO
       if((Object.hasOwn(body,"outputAudio")||execution?.output&&artifactKind==="audio")&&(!nativeAudio||!execution?.output?.refreshAudio))return Response.json({error:"output_audio_contract_unsupported"},{status:422});
       if(nativeAudio){await execution!.output!.refreshAudio!();if(body.productionMode!=="manual"||body.itemCount!==1||body.providerJobId||body.audioImageBlockId||body.audioVideoArtifactId||body.sendAudioVideoToProvider)throw new Error("output_audio_original_attempt_required");}
       const nativeScene=execution?.output?await readOutputScenePayload(execution.output.settings):null;
+      const sponsoredScene=Boolean(nativeScene&&sponsoredOutput&&sponsorFinancialEventProfile(execution!.output!.sponsorFinancialBinding!,sponsorEnvironment,actorUserId,execution!.output!.reference)==="scene");
       if((Object.hasOwn(body,"outputScene")||execution?.output&&artifactKind==="scene")&&(!nativeScene||!execution?.output?.refreshScene))return Response.json({error:"output_scene_contract_unsupported"},{status:422});
       const nativeNarrative=execution?.output?await readOutputNarrativePayload(execution.output.settings):null;
       if(execution?.output&&(artifactKind==="short_story"||Object.hasOwn(execution.output.settings,"outputNarrative"))&&!nativeNarrative)return Response.json({error:"output_narrative_contract_unsupported"},{status:422});
@@ -1017,12 +1204,13 @@ export async function handleEvents(request:Request,env:WorkerEnv,hot=false,userO
         &&recordedDocumentPlannerUsage(sourceEvents,String(body.plannerResponseId)).tokensRecorded);
       let scenePrepared:PreparedSceneCost|null=null;
       let scenePaidClaim:ClaimedSceneBudget|null=null;
+      let sponsorSceneClaim:SponsorScenePaidClaim|null=null;
       let scenePilotValidUntil:string|null=null;
       let scenePolicyStop:ScenePolicyStopWitness|null=null;
       let scenePendingRequestId:string|null=null;
       const rememberScenePolicyStop=(error:unknown,clientRequestId:string,stage:ScenePolicyStopWitness["stage"])=>{
-        if(!(error instanceof ScenePaidPolicyStopError)||!scenePrepared||!scenePaidClaim||!execution)return;
-        const approval=scenePrepared.preview,claim=scenePaidClaim;
+        if(!(error instanceof ScenePaidPolicyStopError)||!scenePrepared||(!scenePaidClaim&&!sponsorSceneClaim)||!execution)return;
+        const approval=scenePrepared.preview,claim=sponsorSceneClaim?{...sponsorScenePaidClaimIdentity(sponsorSceneClaim),projectScope:null,pilotCohortId:null}:scenePaidClaim!;
         scenePolicyStop={version:"scene-policy-stop-v1",code:"scene_paid_authority_changed",stage,
           job_id:approval.requestId,document_id:documentId,project_id:approval.projectId,actor_user_id:claim.actorUserId,attempt_correlation_id:corr,
           provider:"openai",model:approval.model,client_request_id:clientRequestId,artifact_id:artifactId,
@@ -1034,11 +1222,14 @@ export async function handleEvents(request:Request,env:WorkerEnv,hot=false,userO
       const verifySceneDispatch=async()=>{
         if(artifactKind!=="scene")return;
         if(!scenePrepared)throw new SceneCostConsentError("scene_cost_confirmation_required",428);
-        const latest=nativeScene?await execution!.output!.refreshScene!():await prepareSceneCostConsent(env,auth.user!,documentId,{...sceneBody,snapshot:authoritativeSnapshot??body.snapshot},
+        const sponsored=sponsoredScene?await execution!.output!.refreshSponsorSceneDispatch!(execution!):null;
+        const latest=sponsored?sponsored.prepared:nativeScene?await execution!.output!.refreshScene!():await prepareSceneCostConsent(env,auth.user!,documentId,{...sceneBody,snapshot:authoritativeSnapshot??body.snapshot},
           scenePrepared.preview.contextSessionId,{synchronize:true});
         if(!nativeScene)requireSceneCostApproval(sceneBody.sceneCostConsent,latest);
-        if(!scenePaidClaim)throw new ScenePaidPolicyStopError();
-        const deadline=await scenePaidDispatchDeadline(env,latest,scenePaidClaim);
+        if(sponsored?!sponsorSceneClaim:!scenePaidClaim)throw new ScenePaidPolicyStopError();
+        const deadline=sponsored?await sponsorScenePaidDispatchDeadline({claim:sponsorSceneClaim!,prepared:latest,evidence:sponsored.evidence})
+          :await scenePaidDispatchDeadline(env,latest,scenePaidClaim!);
+        if(sponsorSceneClaim)requireSponsorScenePaidDispatchCurrent(sponsorSceneClaim);
         scenePilotValidUntil=deadline.pilotValidUntil;
         requireScenePaidDeadline(scenePilotValidUntil);
         requireSceneCostDeadline(deadline);
@@ -1047,7 +1238,7 @@ export async function handleEvents(request:Request,env:WorkerEnv,hot=false,userO
       if(artifactKind==="scene"&&!retainedPaidScene){
         try{
           const approval=sceneBody.sceneCostConsent&&typeof sceneBody.sceneCostConsent==="object"?sceneBody.sceneCostConsent as Record<string,unknown>:{};
-          scenePrepared=nativeScene?await execution!.output!.refreshScene!():await prepareSceneCostConsent(env,auth.user!,documentId,{...sceneBody,snapshot:authoritativeSnapshot??body.snapshot},
+          scenePrepared=sponsoredScene?(await execution!.output!.refreshSponsorSceneDispatch!(execution!)).prepared:nativeScene?await execution!.output!.refreshScene!():await prepareSceneCostConsent(env,auth.user!,documentId,{...sceneBody,snapshot:authoritativeSnapshot??body.snapshot},
             typeof approval.contextSessionId==="string"?approval.contextSessionId:null,{synchronize:true});
           if(!nativeScene)requireSceneCostApproval(sceneBody.sceneCostConsent,scenePrepared);
           compiledSnapshot=scenePrepared.effectiveSnapshot;
@@ -1175,7 +1366,13 @@ export async function handleEvents(request:Request,env:WorkerEnv,hot=false,userO
       if(costReservationId){const existing=await costBudgetReservation(env,billingOwnerId,costReservationId);retainedStoryboardCostClaim=Boolean(execution&&artifactKind==="storyboard"&&(((body as Record<string,unknown>).storyboardProviderSubmission==="confirmed"&&body.providerJobId)||storyboardSafeRecovery)&&existing?.status==="executing");if(!existing||existing.status!=="active"&&!retainedStoryboardCostClaim||existing.stream_id!==streamId||existing.correlation_id!==corr||existing.operation!==`document-render:${artifactKind}`||existing.reserved_microusd<estimatedCostMicrousd||(costReservationPeriod&&existing.period!==costReservationPeriod)||(body.costReservationMicrousd&&existing.reserved_microusd!==Math.floor(Number(body.costReservationMicrousd)))){if(reservationCreated)await releaseBudget(env,billingOwnerId,reservationId,{reason:`document_${artifactKind}_cost_reservation_invalid`});return Response.json({error:"cost_reservation_invalid_or_expired"},{status:409});}costReservationMicrousd=existing.reserved_microusd;costReservationPeriod=existing.period;}
       if(!costReservationId){const costReservation=await reserveCostBudget(env,billingOwnerId,estimatedCostMicrousd,{maximumMicrousd:estimatedCostMicrousd,allowUserOverage:false,batchCounterInitialization:batchPresentationBookkeeping,streamId,correlationId:corr,operation:`document-render:${artifactKind}`,...(tokenReservationPeriod?{period:tokenReservationPeriod}:{}),projectScope:projectBudgetScope,...(scenePrepared?{reservationAssertions:scenePrepared.assertions}:{})}).catch(async(error:unknown)=>{if(scenePrepared&&reservationCreated){try{await releaseBudget(env,billingOwnerId,reservationId,{reason:"scene_cost_reservation_failed"});}catch{console.warn("scene_fresh_token_cleanup_failed");}}throw error;});if(!costReservation.ok){if(reservationCreated)await releaseBudget(env,billingOwnerId,reservationId,{reason:`document_${artifactKind}_cost_cap_reached`});const denied=makeEvent(streamId,requestedSequence+1,"worker:policy",client,corr,"BudgetExceeded",{reason:"monthly_cost_cap_reached",scope:costReservation.scope,reserved_tokens:0,estimated_cost_microusd:estimatedCostMicrousd,operation:`document-render:${artifactKind}`,artifact_kind:artifactKind});await insertEvent(env,denied).run();const detail=applicationFailureDetail("budget_hard_cap_reached",costReservation.scope,429);return Response.json({error:detail.code,errorDetail:publicFailureDetail(detail),scope:costReservation.scope},{status:429});}costReservationId=costReservation.reservationId;costReservationMicrousd=costReservation.reservedMicrousd;costReservationPeriod=costReservation.period;}
       if(!retainedStoryboardCostClaim&&!await claimCostBudgetReservation(env,billingOwnerId,costReservationId)){if(reservationCreated)await releaseBudget(env,billingOwnerId,reservationId,{reason:`document_${artifactKind}_cost_reservation_claim_conflict`});return Response.json({error:"cost_reservation_already_in_use"},{status:409});}
-      if(scenePrepared)scenePaidClaim={actorUserId:billingOwnerId,streamId,correlationId:corr,period:costReservationPeriod,
+      if(scenePrepared&&sponsoredScene){
+        const output=execution!.output!;
+        sponsorSceneClaim=output.createSponsorScenePaidClaim!({runtimeControl:execution!,originalClaimIdentity:{
+          jobId:scenePrepared.preview.requestId,scopeKey:output.reference.scopeKey,grantId:output.reference.grantId,slotId:output.reference.slotId,
+          streamId,correlationId:corr,period:costReservationPeriod,tokenReservationId:reservationId,costReservationId,reservedTokens:reserved,reservedMicrousd:costReservationMicrousd}});
+      }
+      if(scenePrepared&&!sponsoredScene)scenePaidClaim={actorUserId:billingOwnerId,streamId,correlationId:corr,period:costReservationPeriod,
         tokenReservationId:reservationId,costReservationId,reservedTokens:reserved,reservedMicrousd:costReservationMicrousd,
         projectScope:scenePrepared.scope?{...scenePrepared.scope}:null,pilotCohortId:pilotAllowance?.pilot?.cohort_id??null};
       const sourceBlockVersions=projection.blocks.filter((block)=>block.properties.active!==false&&Number(block.properties.weight??.5)>0).map((block)=>({block_id:block.id,version:block.sourceEvents.length}));
@@ -1274,7 +1471,7 @@ export async function handleEvents(request:Request,env:WorkerEnv,hot=false,userO
       }:undefined;
       const sceneDispatchDeadline=artifactKind==="scene"?(clientRequestId?:string)=>{
         if(!scenePrepared)throw new SceneCostConsentError("scene_cost_confirmation_required",428);
-        try{requireScenePaidDeadline(scenePilotValidUntil);requireSceneCostDeadline(scenePrepared);if(execution?.output){if(!clientRequestId)throw new Error("output_scene_request_identity_required");execution.output.beforeProviderDispatch(clientRequestId);}}
+        try{if(sponsorSceneClaim)requireSponsorScenePaidDispatchCurrent(sponsorSceneClaim);requireScenePaidDeadline(scenePilotValidUntil);requireSceneCostDeadline(scenePrepared);if(execution?.output){if(!clientRequestId)throw new Error("output_scene_request_identity_required");execution.output.beforeProviderDispatch(clientRequestId);}}
         catch(error){if(scenePendingRequestId)rememberScenePolicyStop(error,scenePendingRequestId,"after-pending");throw error;}
       }:undefined;
       const retainedObserver=paidProviderObserver(body as Record<string,unknown>,execution?.progress,{artifactId,reservationId,costReservationId,costReservationPeriod,costReservationMicrousd},execution?.output?.observeProvider??(execution&&artifactKind==="slides"?(receipt)=>retainLegacyPresentationFinancialReceipt(env,presentationIdentity,receipt):undefined),{presentation:artifactKind==="slides"});
@@ -1509,7 +1706,12 @@ export async function handleEvents(request:Request,env:WorkerEnv,hot=false,userO
         if(videoCompletionReceipt)Object.assign(inputReceipt,{output_video:videoCompletionReceipt});
         let stored:Awaited<ReturnType<typeof storePrivateContent>>,inputStored:Awaited<ReturnType<typeof storePrivateContent>>;
         if(batchPresentationBookkeeping){
-          const prepared=await Promise.all([preparePrivateContent(env,storageOwnerId,"document-artifact",JSON.stringify(plan)),preparePrivateContent(env,ownerId,"document-artifact-input",JSON.stringify(inputReceipt),executionScope)]);
+          const preparationDb=env.DB;
+          const personalSlides=artifactKind==="slides"&&!executionScope&&!projectBudgetScope&&storageOwnerId===ownerId&&!execution?.output;
+          const prepared=personalSlides
+            ?await preparePersonalSlidesPrivateContentPair(env,ownerId,JSON.stringify(plan),JSON.stringify(inputReceipt))
+            :await Promise.all([preparePrivateContent(env,storageOwnerId,"document-artifact",JSON.stringify(plan)),preparePrivateContent(env,ownerId,"document-artifact-input",JSON.stringify(inputReceipt),executionScope)]);
+          if(personalSlides&&env.DB!==preparationDb)throw new Error("native_structured_origin_schema_database_changed");
           // Reuse the same custody/retention predicates, but publish both local
           // artifacts together. Ignored inserts or a canceled job abort this batch.
           const statements=outputAssertionStatements(env,{sql:"EXISTS(SELECT 1 FROM document_jobs WHERE job_id=? AND owner_id=? AND stream_id=? AND correlation_id=? AND status='committing' AND NOT EXISTS(SELECT 1 FROM output_operation_slots WHERE job_id=document_jobs.job_id))",bindings:[presentationIdentity.jobId,ownerId,streamId,corr]});
@@ -1619,44 +1821,12 @@ export async function handleEvents(request:Request,env:WorkerEnv,hot=false,userO
         return Response.json({error:detail.code,errorDetail:publicFailureDetail(detail),moderationPromptRef:moderationPrompt?.ref??null,appended:[...registryEvents,requestedAt,compiled,budgeted,failed],content:moderationPrompt?{[moderationPrompt.ref]:moderationPrompt.prompt}:undefined,head:failed.sequence},{status:detail.httpStatus===429?429:502});
       }
     }
-    if(body.action==="generate"){
-      if(!env.OPENAI_API_KEY)return Response.json({error:"provider_not_configured"},{status:503});
-      const promptTechnique=normalizePromptTechnique(body.promptTechnique);const promptFanId=body.promptFanId?String(body.promptFanId):null;
-      const sourceEvents=await readEvents(env,streamId);const projection=foldEvents(sourceEvents,Number.POSITIVE_INFINITY,body.documentId);const constraints=standingConstraints(sourceEvents).map(item=>({preference_id:item.preferenceId,axis:item.axis,value:item.value,polarity:item.polarity,authority:"authored",source_event_refs:item.evidenceRefs,source_claim_ref:item.sourceClaimRef??null}));const uploadedReferences=await uploadedPixelReferences(env,storageOwnerId,projection,sourceEvents,body.snapshot,executionScope);
-      const reserved=execution?.output?.reservations.maximumTokens??32_000;const reservation=execution?.output?{ok:true as const,reservationId:execution.output.reservations.reservationId,reservedTokens:reserved,period:execution.output.reservations.costReservationPeriod}:await reserveBudget(env,billingOwnerId,reserved,{streamId,correlationId:corr,operation:"image-generation",projectScope:projectBudgetScope});if(!reservation.ok){const denied=makeEvent(streamId,current+1,"worker:policy",client,corr,"BudgetExceeded",{reason:"hard_cap_reached",scope:reservation.scope,reserved_tokens:0,operation:"image-generation"});await insertEvent(env,denied).run();const detail=applicationFailureDetail("budget_hard_cap_reached",reservation.scope,429);return Response.json({error:detail.code,errorDetail:publicFailureDetail(detail),scope:reservation.scope},{status:429});}
-      const imageCostReservation=execution?.output?{ok:true as const,reservationId:execution.output.reservations.costReservationId,reservedMicrousd:execution.output.reservations.costReservationMicrousd,period:execution.output.reservations.costReservationPeriod}:await reserveCostBudget(env,billingOwnerId,1_000_000,{maximumMicrousd:1_000_000,allowUserOverage:false,streamId,correlationId:corr,operation:"image-generation",period:reservation.period,projectScope:projectBudgetScope});if(!imageCostReservation.ok){await releaseBudget(env,billingOwnerId,reservation.reservationId,{reason:"image_generation_cost_cap_reached"});const detail=applicationFailureDetail("budget_hard_cap_reached",imageCostReservation.scope,429);return Response.json({error:detail.code,errorDetail:publicFailureDetail(detail),scope:imageCostReservation.scope},{status:429});}
-      const id=uuidV7();const plannerModel=env.OPENAI_MODEL??"gpt-5.6-terra";
-      let sequence=current;const registryEvents:EventRow[]=[];
-      const selectedPreview=body.sourcePreviewId?[...sourceEvents].reverse().find((event)=>event.type==="IdeationPreviewCompleted"&&String(event.payload.document_id??"")===projection.documentId&&previewObjectId(event)===body.sourcePreviewId):undefined;const previewImage=selectedPreview?await readGeneratedImageReference(env,storageOwnerId,selectedPreview.payload.media_url):null;const previewReference:ImageReference|null=previewImage?{...previewImage,label:"Selected ideation preview",source:"ideation-preview"}:null;const imageReferences=[...(previewReference?[previewReference]:[]),...uploadedReferences];const referenceInputs=referenceInputReceipts(imageReferences);const imageSnapshot=body.snapshot??snapshotForProjection(projection);const managedImage=body.productionMode==="managed"?buildManagedProductionPlan("image",{...imageSnapshot,standing_constraints:constraints}):null;const productionFields=managedImageEventFields(managedImage);const compiledSnapshot={...imageSnapshot,document:{id:projection.documentId,title:projection.documentTitle},standing_constraints:constraints,reference_inputs:referenceInputs,...(managedImage?{production_brief:managedImageBrief(managedImage)}:{})};const selectedImageFormat=execution?.output?.imageRender?{format:execution.output.imageRender.format,blockId:null}:documentImageFormat(compiledSnapshot);const fullRender=execution?.output?.imageRender??providerRenderFormat(selectedImageFormat.format,"full");const imageFormatFields={...imageFormatEventFields(selectedImageFormat.format,"full",selectedImageFormat.blockId),...(execution?.output?.imageRender?{provider_render_size:execution.output.imageRender.size,size:execution.output.imageRender.size}:{})};const contextHash=await creativeContextHash(compiledSnapshot);const imageSelection=selectImageAdapter(env,{quality:"high",size:fullRender.size,references:imageReferences,promptTechnique});const imageModel=imageSelection.model;const adapterVersion=`${imageSelection.adapterId}-${imageSelection.adapterVersion}`;if(!sourceEvents.some(event=>event.type==="ModelRegistered"&&event.payload.model_id===imageModel))registryEvents.push(makeEvent(streamId,++sequence,"worker:registry",client,corr,"ModelRegistered",{model_id:imageModel,planner_model_id:plannerModel,provider:imageSelection.providerName,status:"human-gated"}));if(!sourceEvents.some(event=>event.type==="AdapterVersioned"&&event.payload.adapter_id===imageSelection.adapterId&&event.payload.version===imageSelection.adapterVersion))registryEvents.push(makeEvent(streamId,++sequence,"worker:registry",client,corr,"AdapterVersioned",{adapter_id:imageSelection.adapterId,version:imageSelection.adapterVersion,contract_version:7,selection_reason:imageSelection.reason,reference_handoff:imageSelection.capabilities.includes("reference-pixel-input"),multiple_image_input:imageSelection.capabilities.includes("multiple-image-input"),block_level_reference_policy:true,block_level_image_format:true,streaming_previews:imageSelection.capabilities.includes("streaming-previews")}));if(!sourceEvents.some(event=>event.type==="CapabilityDeclared"&&event.payload.model_id===imageModel&&Array.isArray(event.payload.capabilities)&&(event.payload.capabilities as unknown[]).includes("block-level-image-format")))registryEvents.push(makeEvent(streamId,++sequence,"worker:registry",client,corr,"CapabilityDeclared",{model_id:imageModel,capabilities:imageSelection.capabilities}));const priorFanPromotion=promptFanId?[...sourceEvents].reverse().find((event)=>event.type==="IdeationPromoted"&&event.payload.prompt_fan_id===promptFanId):undefined;const promotionId=selectedPreview?(priorFanPromotion?String(priorFanPromotion.payload.promotion_id):uuidV7()):null;const promotionEvents:EventRow[]=[];
-      if(selectedPreview&&!priorFanPromotion){const intervening=sourceEvents.filter((event)=>event.sequence>selectedPreview.sequence);const changes=intervening.filter((event)=>/^(BlockCreated|BlockPropertyEdited|BlockWeightSet|BlockRemoved|BlockRestored|ChipEdited|ExtractionCompleted)$/.test(event.type));promotionEvents.push(makeEvent(streamId,++sequence,userActor,client,corr,"IdeationPromoted",{promotion_id:promotionId,document_id:projection.documentId,draft_event_id:selectedPreview.eventId,draft_sequence:selectedPreview.sequence,draft_generation_id:String(selectedPreview.payload.generation_id??""),draft_object_id:previewObjectId(selectedPreview),full_generation_id:id,source_surface:body.sourceSurface??"studio",prompt_fan_id:promptFanId,elapsed_to_intent_ms:Math.max(0,Date.now()-Date.parse(selectedPreview.occurredAt)),intervening_event_count:Math.max(0,current-selectedPreview.sequence),document_change_count:changes.length,conversation_turn_count:intervening.filter((event)=>event.type==="ChatMessageSent").length,context_changed:changes.length>0,intent_weight:1,system_success_pending:true}));}
-      const workflowLineage=body.workflowId&&body.workflowStageId?{workflow_id:body.workflowId,workflow_stage_id:body.workflowStageId,workflow_sources:body.workflowSources??[]} : {};
-      const requestedAt=makeEvent(streamId,++sequence,userActor,client,corr,"GenerationRequested",{generation_id:id,stream_id:streamId,model_ids:[plannerModel,imageModel],document_id:projection.documentId,...workflowLineage,canvas_id:body.canvasId??null,context_set_id:body.contextSetId??null,document_version:current,requested_output:"image",quality:"high",purpose:"final",...imageFormatFields,...productionFields,source_surface:body.sourceSurface??"studio",promotion_id:promotionId,reference_preview_event_id:selectedPreview?.eventId??null,prompt_technique:promptTechnique,prompt_fan_id:promptFanId,preflight_id:body.preflightId??null,preflight_version:body.preflightVersion??null,preflight_risk_acknowledged:Boolean(body.preflightAcknowledged),reference_input_count:referenceInputs.length,reference_inputs:referenceInputs,used_ideation_preview_pixels:Boolean(previewReference),used_uploaded_reference_pixels:uploadedReferences.length>0},{causationId:promotionEvents[0]?.eventId??priorFanPromotion?.eventId??null});
-      const compiled=makeEvent(streamId,++sequence,"worker:compiler",client,corr,"ContextCompiled",{generation_id:id,document_id:projection.documentId,project_id:projection.projectId,...workflowLineage,canvas_id:body.canvasId??null,context_set_id:body.contextSetId??null,model_id:imageModel,planner_model_id:plannerModel,provider:imageSelection.providerName,adapter_version:adapterVersion,adapter_selection_reason:imageSelection.reason,...imageFormatFields,...productionFields,compiled_snapshot:compiledSnapshot,context_hash:contextHash,source_block_versions:body.sourceBlockVersions??[],quality:"high",purpose:"final",source_surface:body.sourceSurface??"studio",promotion_id:promotionId,reference_preview_event_id:selectedPreview?.eventId??null,prompt_technique:promptTechnique,prompt_fan_id:promptFanId,reference_input_count:referenceInputs.length,reference_inputs:referenceInputs,used_ideation_preview_pixels:Boolean(previewReference),used_uploaded_reference_pixels:uploadedReferences.length>0},{causationId:requestedAt.eventId});
-      const budgeted=makeEvent(streamId,++sequence,"worker:policy",client,corr,"BudgetReserved",{generation_id:id,reservation_id:reservation.reservationId,cost_reservation_id:imageCostReservation.reservationId,reserved_tokens:reserved,reserved_microusd:imageCostReservation.reservedMicrousd,period:imageCostReservation.period,operation:"image-generation"},{causationId:requestedAt.eventId});
-      await appendOperationEvents(env,[...registryEvents,...promotionEvents,requestedAt,compiled,budgeted]);
-      const observePaid=paidProviderObserver(body as Record<string,unknown>,execution?.progress,{reservationId:reservation.reservationId,costReservationId:imageCostReservation.reservationId,costReservationPeriod:imageCostReservation.period,costReservationMicrousd:imageCostReservation.reservedMicrousd},execution?.output?.observeProvider);
-      try{
-        if(selectedPreview&&!previewReference)throw new Error("selected_preview_unavailable");
-        const privateContent=promptFanId?await loadPrivateContent(env,ownerId,"all",executionScope):{};const cachedFanEvent=promptFanId?[...sourceEvents].reverse().find((event)=>event.type==="GenerationCompleted"&&event.payload.prompt_fan_id===promptFanId&&event.payload.output_ref):undefined;const cachedFanRaw=cachedFanEvent?privateContent[String(cachedFanEvent.payload.output_ref??"")]:undefined;let planned:Awaited<ReturnType<typeof generateCreativeDirection>>;let planningSource:"fan-cache"|"provider"="provider";await execution?.progress("planning",cachedFanRaw?"Checking the fan for a reusable visual direction.":"Turning the document context into a concrete visual direction.");if(!await claimCostBudgetReservation(env,billingOwnerId,imageCostReservation.reservationId))return refuseProviderClaim({operation:"image-generation",tokenReservationId:reservation.reservationId,costReservationId:imageCostReservation.reservationId,reservedTokens:reserved,reservedMicrousd:imageCostReservation.reservedMicrousd,causationId:budgeted.eventId});if(cachedFanRaw){try{planned={responseId:String(cachedFanEvent?.payload.planner_response_id??""),model:String(cachedFanEvent?.payload.planner_model_id??plannerModel),output:JSON.parse(cachedFanRaw) as Record<string,unknown>,raw:cachedFanRaw,latencyMs:0,usage:{inputTokens:0,outputTokens:0,totalTokens:0}};planningSource="fan-cache";}catch{planned=await generateCreativeDirection(env,ownerId,compiledSnapshot,execution?.signal,body.locale,observePaid,execution?.output?{onBeforeProviderAttempt:execution.output.beforeProviderAttempt,onBeforeProviderDispatch:execution.output.beforeProviderDispatch,outputTargetInstructions:String(execution.output.settings.outputTargetInstructions??"")}:undefined);}}else planned=await generateCreativeDirection(env,ownerId,compiledSnapshot,execution?.signal,body.locale,observePaid,execution?.output?{onBeforeProviderAttempt:execution.output.beforeProviderAttempt,onBeforeProviderDispatch:execution.output.beforeProviderDispatch,outputTargetInstructions:String(execution.output.settings.outputTargetInstructions??"")}:undefined);const image=await generateCreativeImage(env,ownerId,compiledSnapshot,planned.output,{quality:"high",size:fullRender.size,references:imageReferences,promptTechnique,signal:execution?.signal,onProviderSubmission:observePaid,onStage:execution?.progress,...(execution?.output?{onBeforeProviderAttempt:execution.output.beforeProviderAttempt,onBeforeProviderDispatch:execution.output.beforeProviderDispatch,onBeforeSourceTransmission:execution.output.beforeSourceTransmission,outputImageFormat:execution.output.imageRender?.format,outputFalImage:execution.output.settings.outputFalImage,onOutputFalRequest:(request,details)=>execution.output!.retainFalImageRequest(request,{generationId:id,planned,planningSource,promptTechnique,...details}),outputTargetInstructions:String(execution.output.settings.outputTargetInstructions??"")}:{})});await execution?.beginCommit();const media=await storeGeneratedImage(env,storageOwnerId,id,image.bytes,image.model,image.mimeType,{provider:image.provider,adapter:`${image.adapterId}-${image.adapterVersion}`,providerRequestId:image.providerRequestId??""});
-        const stored=await storePrivateContent(env,ownerId,"provider-output",planned.raw,executionScope);const promptStored=await storePrivateContent(env,ownerId,"prompt",image.prompt,executionScope);const totalTokens=planned.usage.totalTokens+image.usage.totalTokens;if(!execution?.output)await settleBudget(env,billingOwnerId,reservation.reservationId,totalTokens);
-        const next=await streamHead(env,streamId);const generatedObjectId=`object-${id.slice(-8)}`;const complete=makeEvent(streamId,next+1,"worker:generator",client,corr,"GenerationCompleted",{generation_id:id,document_id:projection.documentId,...workflowLineage,canvas_id:body.canvasId??null,context_set_id:body.contextSetId??null,model_id:image.model,planner_model_id:planned.model,provider:image.provider,provider_request_id:image.providerRequestId,provider_submission_id:image.providerSubmissionId,planner_response_id:planned.responseId,provider_created_at:image.createdAt,object_id:generatedObjectId,object_ids:[generatedObjectId],title:String(planned.output.title??projection.documentTitle).trim(),output_ref:stored.contentId,prompt_ref:promptStored.contentId,prompt_technique:promptTechnique,prompt_fan_id:promptFanId,content_expires_at:stored.expiresAt,media_url:media.url,media_type:media.mimeType,source_content_hash:media.contentHash,image_width:image.width,image_height:image.height,quality:"high",purpose:"final",...imageFormatFields,...productionFields,source_surface:body.sourceSurface??"studio",promotion_id:promotionId,reference_preview_event_id:selectedPreview?.eventId??null,promoted_from_generation_id:selectedPreview?String(selectedPreview.payload.generation_id??""):null,promoted_from_object_id:selectedPreview?previewObjectId(selectedPreview):null,promotion_outcome:promotionId?"completed":null,context_hash:contextHash,planning_source:planningSource,planning_cache_hit:planningSource==="fan-cache",reference_input_count:referenceInputs.length,reference_inputs:referenceInputs,used_ideation_preview_pixels:Boolean(previewReference),used_uploaded_reference_pixels:uploadedReferences.length>0,latency_ms:planned.latencyMs+image.latencyMs,planning_latency_ms:planned.latencyMs,image_latency_ms:image.latencyMs,adapter_version:`${image.adapterId}-${image.adapterVersion}`,simulation:false},{causationId:compiled.eventId});
-        const imageCost={...providerCostReceipt([priceTextUsageBreakdownMicrousd(planned.model,planned.usage),image.costBreakdown]),...("pricingVersion" in image?{image_pricing_version:image.pricingVersion}:{})};if(execution?.output)await settleOperationOutputBudgets({reservationId:reservation.reservationId,costReservationId:imageCostReservation.reservationId,usedTokens:totalTokens,usedMicrousd:imageCost.cost_microusd});else await settleCostBudget(env,billingOwnerId,imageCostReservation.reservationId,imageCost.cost_microusd);const usage=makeEvent(streamId,next+2,"worker:policy",client,corr,"GenerationUsageRecorded",{generation_id:id,document_id:projection.documentId,reservation_id:reservation.reservationId,cost_reservation_id:imageCostReservation.reservationId,...productionFields,input_tokens:planned.usage.inputTokens+image.usage.inputTokens,output_tokens:planned.usage.outputTokens+image.usage.outputTokens,total_tokens:totalTokens,planner_tokens:planned.usage.totalTokens,image_tokens:image.usage.totalTokens,planner_input_tokens:planned.usage.inputTokens,planner_output_tokens:planned.usage.outputTokens,image_text_input_tokens:image.usage.textInputTokens??0,image_input_tokens:image.usage.imageInputTokens??image.usage.inputTokens,image_output_tokens:image.usage.outputTokens,reserved_tokens:reserved,reserved_microusd:imageCostReservation.reservedMicrousd,model_ids:[planned.model,image.model],operation:"image-generation",quality:"high",promotion_id:promotionId,image_cost_precision:image.costPrecision,...imageCost},{causationId:complete.eventId});await appendOperationEvents(env,[complete,usage]);if(!execution?.output)await observeProviderSuccess(env);return Response.json({appended:[...registryEvents,...promotionEvents,requestedAt,compiled,budgeted,complete,usage],content:{[stored.contentId]:planned.raw},rejected:[],head:usage.sequence,simulation:false,promoted:Boolean(promotionId)});
-      }catch(error){
-        if(execution?.signal.aborted||error instanceof Error&&error.message==="document_job_canceled")throw error;
-        if(execution?.output?.dispatchStop(error))throw error;
-        await execution?.beginCommit();
-        let detail=classifyProviderFailure(error);
-        if(hasUnresolvedProviderSubmission(body as Record<string,unknown>))detail={...detail,code:"provider_submission_uncertain",category:"network",scope:"network",action:"contact_support",message:"The paid request may already have reached its provider. Its reservation is held; no duplicate request will be submitted automatically.",retryable:false,retryAfterMs:null};
-        await observeProviderFailure(env,detail);
-        const moderationPrompt=await retainFailurePrompt(env,ownerId,error,executionScope);
-        if(execution?.output)await settleOperationOutputBudgets({reservationId:reservation.reservationId,costReservationId:imageCostReservation.reservationId,reason:"generation_failed"});
-        else await settleInterruptedDocumentJobReservations(env,{...auth.user,streamId,userId:ownerId,billingUserId:billingOwnerId},{job_id:corr.replace(/:attempt:\d+$/u,""),kind:body.action,stream_id:streamId,document_id:projection.documentId,correlation_id:corr,request_json:JSON.stringify(body),result_json:JSON.stringify(body)},{tokenReservationId:reservation.reservationId,costReservationId:imageCostReservation.reservationId,reason:"generation_failed"});
-        const next=await streamHead(env,streamId);
-        const failed=makeEvent(streamId,next+1,"worker:generator",client,corr,"GenerationFailed",{generation_id:id,document_id:projection.documentId,canvas_id:body.canvasId??null,context_set_id:body.contextSetId??null,model_id:imageModel,planner_model_id:plannerModel,quality:"high",purpose:"final",...imageFormatFields,...productionFields,source_surface:body.sourceSurface??"studio",promotion_id:promotionId,promotion_outcome:promotionId?"failed":null,prompt_ref:moderationPrompt?.ref??null,prompt_expires_at:moderationPrompt?.expiresAt??null,prompt_technique:promptTechnique,prompt_fan_id:promptFanId,...failureEventFields(detail)},{causationId:compiled.eventId});
-        await appendOperationEvents(env,[failed]);
-        return Response.json({error:detail.code,errorDetail:publicFailureDetail(detail),moderationPromptRef:moderationPrompt?.ref??null,appended:[...registryEvents,...promotionEvents,requestedAt,compiled,budgeted,failed],content:moderationPrompt?{[moderationPrompt.ref]:moderationPrompt.prompt}:undefined,head:failed.sequence,promoted:Boolean(promotionId)},{status:detail.httpStatus===429?429:502});
-      }
-    }
+    if(body.action==="generate")return await executeNativeImageOperation({env,body,ownerId,storageOwnerId,billingOwnerId,streamId,userActor,
+      executionScope,projectBudgetScope,execution,readEvents,current,client,corr,appendOperationEvents,settleOperationOutputBudgets,refuseProviderClaim,
+      settleInterruptedImage:({documentId,tokenReservationId,costReservationId})=>settleInterruptedDocumentJobReservations(env,{...auth.user,streamId,userId:ownerId,billingUserId:billingOwnerId},
+        {job_id:corr.replace(/:attempt:\d+$/u,""),kind:body.action,stream_id:streamId,document_id:documentId,correlation_id:corr,request_json:JSON.stringify(body),result_json:JSON.stringify(body)},
+        {tokenReservationId,costReservationId,reason:"generation_failed"}),
+    });
     if(body.action==="evaluate_extractors"){
       if(auth.user.role!=="admin")return Response.json({error:"admin_required"},{status:403});
       const report=runExtractorEvaluation();

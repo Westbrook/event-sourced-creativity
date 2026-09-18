@@ -1,5 +1,8 @@
 /** Audited Forma-owned interface, metadata, and component-documentation copy. */
 const messages: Record<string, string> = {
+  "system.auto.mnnucx.13": "النتيجة المشتركة",
+  "system.auto.1h1pgn9.12": "مشاركة النتيجة",
+  "system.auto.g1h7cj.64": "قيد إضافي يفرضه المضيف. لا يمكنه تجاوز الصلاحية التي يتيحها الخادم.",
   "system.auto.1tmhsof.17": "تجديد التحضير",
   "system.auto.156lxlv.8": "نموذج ثلاثي الأبعاد",
   "system.auto.15uddgm.56": "ملف GLB ثابت واحد · تم التحقق من البنية؛ يلزم فحص بصري",
@@ -6318,5 +6321,7 @@ Object.assign(messages, {
   "system.auto.1n26nr5.46": "واجهة تطبيق أصلية للنموذج ثلاثي الأبعاد المحفوظ.",
   "system.auto.1qkmc2b.138": "واجهة أصلية للنموذج ثلاثي الأبعاد المحفوظ، مستقلة عن مخزن الحالة. افحص سماتها الفعلية وخصائص JavaScript وأحداثها قبل دمجها.",
 });
+
+Object.assign(messages, { "system.auto.scxocd.15": "صورة برعاية" });
 
 export default messages;

@@ -22,6 +22,13 @@ const columns = ["user_id", "email", "role", "consent_version", "updated_at", "p
 const lineageCells = ["job.document_id", "job.stream_id", "job.correlation_id", "plan.project_id", "plan.source_digest", "slot.scope_key", "slot.slot_id",
   "slot.route_digest", "slot.model", "execution.grant_id", "execution.payer_user_id", "used.consumption_id", "used.campaign_id", "used.envelope_digest",
   "used.session_digest", "used.intent_key", "issued.grant_id", "issued.policy_digest"];
+// Keep every predicate and binding in order, while avoiding a left-deep AND
+// chain in the retained proof and its native D1 wrappers.
+function balancedConjunction(terms: readonly string[]): string {
+  if (terms.length === 1) return terms[0]!;
+  const middle = Math.ceil(terms.length / 2);
+  return `(${balancedConjunction(terms.slice(0, middle))} AND ${balancedConjunction(terms.slice(middle))})`;
+}
 const databaseNow = "CAST((julianday('now')-2440587.5)*86400000 AS INTEGER)";
 declare const resourceAuthority: unique symbol;
 /** Resource admission only. This opaque value never authorizes creative bytes. */
@@ -40,23 +47,23 @@ const ORIGINAL_FROM = `FROM document_jobs job
  JOIN experience_sponsor_grants issued ON issued.grant_id=used.grant_id AND issued.campaign_id=used.campaign_id
  JOIN experience_sponsor_issuances issuance ON issuance.grant_id=issued.grant_id AND issuance.campaign_id=issued.campaign_id
  JOIN experience_sponsor_approvals approval ON approval.campaign_id=issued.campaign_id AND approval.policy_digest=issued.policy_digest
- WHERE job.job_id=? AND job.owner_id=? AND job.stream_id='creative:'||job.owner_id
- AND job.kind='generate' AND job.source_surface='outputs'
- AND plan.scope_kind='personal' AND plan.owner_user_id=job.owner_id AND plan.document_id=job.document_id
- AND execution.actor_user_id=job.owner_id AND execution.payer_user_id<>job.owner_id AND execution.context_id IS NULL
- AND execution.plan_revision_id=slot.plan_revision_id AND slot.attempt_ordinal=0 AND slot.previous_slot_id IS NULL
- AND slot.source_digest=plan.source_digest
- AND slot.provider='openai' AND slot.maximum_calls=2 AND execution.maximum_calls=2
- AND (SELECT COUNT(*) FROM output_operation_slots sibling WHERE sibling.scope_key=slot.scope_key AND sibling.grant_id=slot.grant_id)=1
- AND issued.actor_user_id=used.actor_user_id AND issued.intent_key=used.intent_key AND issued.session_digest=used.session_digest
- AND issued.envelope_digest=used.envelope_digest AND issuance.actor_user_id=used.actor_user_id AND issuance.intent_key=used.intent_key
- AND issuance.envelope_digest=used.envelope_digest AND issuance.policy_digest=issued.policy_digest
- AND approval.payer_user_id=execution.payer_user_id AND approval.approved_by_user_id=approval.payer_user_id
- AND slot.maximum_microusd=used.maximum_microusd AND execution.maximum_microusd=slot.maximum_microusd
- AND ${lineageCells.map(cell => `(typeof(${cell})='text' AND length(CAST(${cell} AS BLOB))<=4096)`).join(" AND ")}
- AND NOT EXISTS(SELECT 1 FROM organization_projects WHERE project_id=plan.project_id)
- AND NOT EXISTS(SELECT 1 FROM project_resource_scopes WHERE (resource_kind='document' AND resource_id=job.document_id)
-   OR (resource_kind='job' AND resource_id=job.job_id))`;
+ WHERE ${balancedConjunction([
+  "job.job_id=?", "job.owner_id=?", "job.stream_id='creative:'||job.owner_id",
+  "job.kind='generate'", "job.source_surface='outputs'",
+  "plan.scope_kind='personal'", "plan.owner_user_id=job.owner_id", "plan.document_id=job.document_id",
+  "execution.actor_user_id=job.owner_id", "execution.payer_user_id<>job.owner_id", "execution.context_id IS NULL",
+  "execution.plan_revision_id=slot.plan_revision_id", "slot.attempt_ordinal=0", "slot.previous_slot_id IS NULL",
+  "slot.source_digest=plan.source_digest", "slot.provider='openai'", "slot.maximum_calls=2", "execution.maximum_calls=2",
+  "(SELECT COUNT(*) FROM output_operation_slots sibling WHERE sibling.scope_key=slot.scope_key AND sibling.grant_id=slot.grant_id)=1",
+  "issued.actor_user_id=used.actor_user_id", "issued.intent_key=used.intent_key", "issued.session_digest=used.session_digest",
+  "issued.envelope_digest=used.envelope_digest", "issuance.actor_user_id=used.actor_user_id", "issuance.intent_key=used.intent_key",
+  "issuance.envelope_digest=used.envelope_digest", "issuance.policy_digest=issued.policy_digest",
+  "approval.payer_user_id=execution.payer_user_id", "approval.approved_by_user_id=approval.payer_user_id",
+  "slot.maximum_microusd=used.maximum_microusd", "execution.maximum_microusd=slot.maximum_microusd",
+  ...lineageCells.map(cell => `(typeof(${cell})='text' AND length(CAST(${cell} AS BLOB))<=4096)`),
+  "NOT EXISTS(SELECT 1 FROM organization_projects WHERE project_id=plan.project_id)",
+  "NOT EXISTS(SELECT 1 FROM project_resource_scopes WHERE (resource_kind='document' AND resource_id=job.document_id) OR (resource_kind='job' AND resource_id=job.job_id))",
+ ])}`;
 
 async function assertCurrent(env: WorkerEnv, assertions: Assertion[]) {
   const result = await env.DB.batch<Row>(assertions.map(a => imageWitnessStatement(env, a)));
@@ -105,11 +112,13 @@ export async function identifySponsorImageRead(request: Request, env: WorkerEnv,
   const principalJson = JSON.stringify(columns.map(key => principal[key] ?? null));
   const assertions: Assertion[] = [
     { sql: `EXISTS(SELECT 1 FROM (${PRINCIPAL_WITH_ACCESS_SQL}) current WHERE json_array(${columns.map(c => `current.${c}`).join(",")})=?)`, bindings: [actor.userId, principalJson] },
-    { sql: `EXISTS(SELECT 1 ${ORIGINAL_FROM} AND job.document_id=? AND job.stream_id=? AND job.correlation_id=? AND plan.project_id=?
-      AND slot.scope_key=? AND slot.slot_id=? AND execution.grant_id=? AND issued.grant_id=? AND used.consumption_id=? AND used.campaign_id=?
-      AND issued.policy_digest=? AND issuance.envelope_json=? AND approval.policy_json=?
-      AND slot.route_digest=? AND slot.model=? AND slot.maximum_tokens=? AND slot.maximum_microusd=? AND execution.payer_user_id=?
-      AND plan.source_digest=? AND plan.source_head=?)`,
+    { sql: `EXISTS(SELECT 1 ${ORIGINAL_FROM} AND ${balancedConjunction([
+      "job.document_id=?", "job.stream_id=?", "job.correlation_id=?", "plan.project_id=?",
+      "slot.scope_key=?", "slot.slot_id=?", "execution.grant_id=?", "issued.grant_id=?", "used.consumption_id=?", "used.campaign_id=?",
+      "issued.policy_digest=?", "issuance.envelope_json=?", "approval.policy_json=?",
+      "slot.route_digest=?", "slot.model=?", "slot.maximum_tokens=?", "slot.maximum_microusd=?", "execution.payer_user_id=?",
+      "plan.source_digest=?", "plan.source_head=?",
+    ])})`,
     bindings: [raw.jobId, actor.userId, e.documentId, String(original.stream_id), String(original.correlation_id), e.projectId,
       String(original.scope_key), String(original.slot_id), String(original.execution_grant_id), String(original.issued_grant_id), e.consumptionId, e.campaignId,
       compiled.policyDigest, String(original.envelope_json), String(original.policy_json), String(original.route_digest), recipe.model,
@@ -137,8 +146,9 @@ class ReadLifetime {
   usedBytes = 0;
   cutoff: number;
   maximumBytes: number;
-  constructor(monotonicDeadline: number, maximumBytes: number) { this.cutoff = monotonicDeadline; this.maximumBytes = maximumBytes; }
-  check() { if (performance.now() >= this.cutoff) fail("sponsor_read_deadline"); }
+  readonly signal?: AbortSignal;
+  constructor(monotonicDeadline: number, maximumBytes: number, signal?: AbortSignal) { this.cutoff = monotonicDeadline; this.maximumBytes = maximumBytes; this.signal = signal; }
+  check() { if (this.signal?.aborted || performance.now() >= this.cutoff) fail("sponsor_read_deadline"); }
   sql(count: number) { this.check(); this.count += count; if (this.count > 900) fail("sponsor_read_query_capacity"); }
   account(value: unknown) { this.usedBytes += new TextEncoder().encode(JSON.stringify(value)).byteLength; if (this.usedBytes > this.maximumBytes) fail("sponsor_read_byte_capacity"); }
   expect(bytes: number) { this.check(); if (this.usedBytes + bytes > this.maximumBytes) fail("sponsor_read_byte_capacity"); }
@@ -197,7 +207,7 @@ function witnessDatabase(env: WorkerEnv, life: ReadLifetime): Pick<WorkerEnv, "D
 export async function resolveSponsorImageRead(authority: SponsorImageReadAuthority, attempt: SponsorImageReadAttempt, request: Request, env: WorkerEnv) {
   requireSponsorImageReadAuthority(authority, request, env);
   const ticket = await takeSponsorImageReadAttempt(attempt, authority, request, env), state = authorities.get(authority)!;
-  const life = new ReadLifetime(ticket.monotonicDeadline, ticket.maximumBytes);
+  const life = new ReadLifetime(ticket.monotonicDeadline, ticket.maximumBytes, request.signal);
   life.sql(1);
   const job = await life.run(65_536, () => env.DB.prepare(`SELECT job.status,job.updated_at,slot.outcome_event_id,slot.status AS slot_status,execution.status AS grant_status,
     CASE WHEN json_valid(job.result_json) AND json_type(job.result_json,'$.appendedEventIds')='array'
@@ -208,8 +218,9 @@ export async function resolveSponsorImageRead(authority: SponsorImageReadAuthori
     JOIN output_execution_grants execution ON execution.scope_key=slot.scope_key AND execution.grant_id=slot.grant_id
     WHERE job.job_id=? AND job.owner_id=? AND job.stream_id=? AND job.correlation_id=? AND length(CAST(job.updated_at AS BLOB))<=40
       AND typeof(job.status)='text' AND length(CAST(job.status AS BLOB))<=32
+      AND (?<>'image-status' OR typeof(job.expires_at)='text' AND length(CAST(job.expires_at AS BLOB))<=40 AND job.expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now'))
       AND (slot.outcome_event_id IS NULL OR length(CAST(slot.outcome_event_id AS BLOB))<=200)`)
-    .bind(state.jobId, state.actorUserId, state.streamId, state.correlationId).first<Row>());
+    .bind(state.jobId, state.actorUserId, state.streamId, state.correlationId, ticket.operation).first<Row>());
   if (!job || !["queued", "running", "committing", "completed", "partial", "failed", "canceled"].includes(String(job.status))) fail("sponsor_read_original_unavailable");
   let completed: CreativeEvent | null = null, privateJson = "", privateProject: string | null = null;
   if (job.status === "completed") {
@@ -259,12 +270,13 @@ export async function resolveSponsorImageRead(authority: SponsorImageReadAuthori
       JOIN output_execution_grants execution ON execution.scope_key=slot.scope_key AND execution.grant_id=slot.grant_id
       WHERE job.job_id=? AND job.owner_id=? AND job.status=? AND job.updated_at=? AND job.correlation_id=?
       AND slot.outcome_event_id IS ? AND slot.status=? AND execution.status=?
+      AND (?<>'image-status' OR typeof(job.expires_at)='text' AND length(CAST(job.expires_at AS BLOB))<=40 AND job.expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now'))
       AND CASE WHEN json_valid(job.result_json) AND json_type(job.result_json,'$.appendedEventIds')='array'
         AND length(CAST(json_extract(job.result_json,'$.appendedEventIds') AS BLOB))<=16384 THEN json_extract(job.result_json,'$.appendedEventIds') END IS ?
       AND (SELECT COUNT(*) FROM output_provider_calls calls WHERE calls.scope_key=slot.scope_key AND calls.slot_id=slot.slot_id
         AND (calls.status IN('pending','uncertain') OR calls.used_microusd IS NULL))=?)`,
     bindings: [state.jobId, state.actorUserId, String(job.status), String(job.updated_at), state.correlationId,
-      job.outcome_event_id == null ? null : String(job.outcome_event_id), String(job.slot_status), String(job.grant_status),
+      job.outcome_event_id == null ? null : String(job.outcome_event_id), String(job.slot_status), String(job.grant_status), ticket.operation,
       job.completion_ids == null ? null : String(job.completion_ids), Number(job.unresolved_calls)] }];
   let original = null;
   if (completed && imageState) {
@@ -300,5 +312,5 @@ export async function resolveSponsorImageRead(authority: SponsorImageReadAuthori
   life.sql(final.length);
   const verified = await life.run(final.length * 1_024, () => env.DB.batch<Row>(final.map(g => imageWitnessStatement(env, g))));
   if (!imageWitnessAcknowledged(verified, final.length)) fail("sponsor_read_current_custody_changed");
-  return Object.freeze({ ...result, remainingBytes: Math.max(0, ticket.maximumBytes - life.usedBytes) });
+  return Object.freeze({ ...result, monotonicDeadline: ticket.monotonicDeadline, remainingBytes: Math.max(0, ticket.maximumBytes - life.usedBytes) });
 }

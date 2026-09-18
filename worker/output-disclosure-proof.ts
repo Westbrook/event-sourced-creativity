@@ -62,7 +62,18 @@ function outputProofReadStatements(env: WorkerEnv, assertions: readonly OutputSq
   });
 }
 function assertOutputProofRead(results: Array<D1Result<Record<string, unknown>>>, expected: number) {
-  if (results.length !== expected || results.some((result) => result.success === false || Number(result.results[0]?.current) !== 1)) fail("output_source_changed_during_read", 409);
+  if (!Number.isSafeInteger(expected) || expected < 0 || !Array.isArray(results) || results.length !== expected) fail("output_source_changed_during_read", 409);
+  // A proof SELECT returns one numeric truth value. Require each owned data
+  // receipt; sparse arrays, inherited values and accessors certify no proof.
+  const ownValue = (value: object, key: PropertyKey): unknown => Object.getOwnPropertyDescriptor(value, key)?.value;
+  for (let index = 0; index < expected; index++) {
+    const result = ownValue(results, index);
+    if (!result || typeof result !== "object" || Array.isArray(result) || ownValue(result, "success") !== true) fail("output_source_changed_during_read", 409);
+    const rows = ownValue(result, "results");
+    if (!Array.isArray(rows) || rows.length !== 1) fail("output_source_changed_during_read", 409);
+    const row = ownValue(rows, 0);
+    if (!row || typeof row !== "object" || Array.isArray(row) || ownValue(row, "current") !== 1) fail("output_source_changed_during_read", 409);
+  }
 }
 async function verifyOutputSourceRead(env: WorkerEnv, scope: OutputScope, expectedHead: number, assertions: readonly OutputSqlAssertion[]) {
   const [head, ...checked] = await env.DB.batch<Record<string, unknown>>([

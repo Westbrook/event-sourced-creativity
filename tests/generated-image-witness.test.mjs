@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {DatabaseSync} from 'node:sqlite';
 import {readFileSync} from 'node:fs';
+import {compileSqliteExpressionDepth} from './helpers/d1-expression-depth.mjs';
 import {readLocalMigrations,migrateLocalDatabase} from '../scripts/lib/local-migrations.mjs';
 import {captureSceneSourceVersion} from '../worker/scene-source-generation.ts';
 import {readImageWitness,imageWitnessStatement,imageWitnessAcknowledged,imageWitnessPublished,IMAGE_WITNESS_LIMITS} from '../worker/generated-image-witness.ts';
@@ -136,4 +137,59 @@ test('prefetch charges SQL before dispatch and still rejects mutation between gr
   assert.equal(queries,4);assert.equal(consumed,0);
   let changed=false;
   await assert.rejects(readImageWitness(f.env,'creative:a','a','generated-image/key','output',life,{accept(){},checkpoint(){if(!changed){changed=true;f.event(2049);}}}),/image_witness_changed/);
+});
+
+
+test('witness JSON preserves exact scalar fields and nulls within the 32-argument qualification limit',async t=>{
+  const f=fixture(t),raw=JSON.stringify({text:'"quoted"\\line\n雪',nested:{n:null},list:[1,true]});
+  f.event(1);f.event(2,raw);f.event(3);f.secret(2,raw);f.secret(3,'null');f.revision();
+  f.db.exec("UPDATE event_private_payloads SET redacted_at='redacted' WHERE private_event_id='e3'");
+  f.db.prepare("UPDATE artifact_revisions SET content_json=? WHERE revision_id='r1'").run(raw);
+  await f.capture();
+  const observed=[],nativeBatch=f.env.DB.batch;
+  f.env.DB.batch=async statements=>{
+    const results=await nativeBatch(statements);
+    statements.forEach((statement,index)=>observed.push({sql:statement.sql,rows:results[index].results}));
+    return results;
+  };
+  const result=await f.read();
+  const eventFields=['event_id','stream_id','sequence','occurred_at','recorded_at','actor','client_id','correlation_id',
+    'causation_id','compensates_event_id','schema_version','type','payload','private_owner','private_project','private_document','private_json','private_redacted'];
+  const revisionFields=['revision_id','owner_id','organization_id','project_access_id','project_id','document_id','artifact_id','revision',
+    'content_json','content_sha256','created_by_user_id','created_at','expires_at','redacted_at'];
+  // Independent legacy projection is an output oracle, never extracted application code.
+  const legacyEvent=`json_object(${eventFields.map(name=>`'${name}',${name}`).join(',')})`;
+  const legacyRevision=`json_object(${revisionFields.map(name=>`'${name}',${name}`).join(',')})`;
+  const legacyEventSql=`SELECT ${legacyEvent} AS witness FROM (SELECT e.*,p.owner_id private_owner,p.project_id private_project,
+    p.document_id private_document,p.private_json,p.redacted_at private_redacted FROM events e
+    LEFT JOIN event_private_payloads p ON p.private_event_id=e.event_id WHERE e.stream_id='creative:a') ORDER BY sequence`;
+  const expectedEvents=f.db.prepare(legacyEventSql).all().map(row=>row.witness);
+  const expectedRevision=f.db.prepare(`SELECT ${legacyRevision} AS witness FROM artifact_revisions WHERE revision_id='r1'`).get().witness;
+  const actualEvents=observed.flatMap(({rows})=>rows.filter(row=>Object.hasOwn(row,'witness')&&Object.hasOwn(row,'sequence')).map(row=>row.witness));
+  const actualRevisions=observed.flatMap(({rows})=>rows.filter(row=>Object.hasOwn(row,'witness')&&!Object.hasOwn(row,'sequence')).map(row=>row.witness));
+  assert.deepEqual(actualEvents,expectedEvents);assert.deepEqual(actualRevisions,[expectedRevision]);
+  assert.deepEqual(result.eventRows,expectedEvents.map(value=>JSON.parse(value)));
+  assert.deepEqual(result.revisionRows,[JSON.parse(expectedRevision)]);
+  for(const row of result.eventRows){
+    assert.deepEqual(Object.keys(row),eventFields);
+    assert.equal(typeof row.sequence,'number');assert.equal(typeof row.schema_version,'number');
+  }
+  assert.deepEqual(Object.keys(result.revisionRows[0]),revisionFields);assert.equal(typeof result.revisionRows[0].revision,'number');
+  for(const key of ['private_owner','private_project','private_document','private_json','private_redacted']){
+    assert.equal(Object.hasOwn(result.eventRows[0],key),true);assert.equal(result.eventRows[0][key],null);
+  }
+  assert.equal(result.eventRows[1].payload,raw);assert.equal(result.eventRows[1].private_json,raw);
+  assert.equal(result.eventRows[1].private_redacted,null);assert.equal(result.eventRows[2].private_json,'null');
+  assert.equal(result.eventRows[2].private_redacted,'redacted');assert.equal(result.revisionRows[0].content_json,raw);
+  const revisionStatements=observed.filter(({sql})=>sql.includes(legacyRevision));
+  assert.ok(revisionStatements.some(({sql})=>sql.startsWith('SELECT CASE WHEN')&&sql.includes(' AS witness FROM artifact_revisions')));
+  assert.ok(revisionStatements.some(({sql})=>sql.includes('EXISTS(SELECT 1 FROM artifact_revisions')));
+  const queryLimits={functionArguments:32,parameters:100,sqlBytes:100000};
+  for(const sql of new Set(observed.map(row=>row.sql))){
+    const compiled=compileSqliteExpressionDepth(f.db,sql,{limit:100,queryLimits});
+    assert.equal(compiled.ok,true,compiled.error);assert.deepEqual(compiled.queryLimits,queryLimits);
+  }
+  const rejected=compileSqliteExpressionDepth(f.db,legacyEventSql,{limit:100,queryLimits});
+  assert.equal(rejected.ok,false);assert.match(rejected.error,/too many arguments on function json_object/u);
+  assert.equal(await f.verify(result.guards),true);
 });

@@ -6,6 +6,37 @@ import { nativeDocumentJobOriginSchemaRead,qualifyNativeDocumentJobOriginSchema 
 type AnswerAlias = "answer" | "authored" | "private_content" | "content";
 type TurnAlias = "turn" | "prior" | "metadata";
 
+function nativeMemorySchemaReads(db: WorkerEnv["DB"], turn?: TurnAlias) {
+  return [
+    nativeStructuredOriginSchemaRead(db), nativeDocumentJobOriginSchemaRead(db),
+    db.prepare("SELECT EXISTS(SELECT 1 FROM sqlite_schema WHERE type='table' AND name='memory_native_answer_origins') AS origins"
+      + (!turn ? ",EXISTS(SELECT 1 FROM sqlite_schema WHERE type='table' AND name='assistant_turns') AS turns" : "")),
+  ];
+}
+
+/** One binding call, with both original triples and independent qualifications.
+ * Fixed private-content aliases only; observations never come from a caller.
+ * Each outcome preserves the storage boundary's optional-cleanup distinction.
+ */
+export async function nativePrivateContentMemoryExclusionPair(env: WorkerEnv) {
+  const db = env.DB;
+  const observations = structuredClone(await db.batch([
+    ...nativeMemorySchemaReads(db), ...nativeMemorySchemaReads(db),
+  ]));
+  if (env.DB !== db) throw new Error("memory_boundary_database_changed");
+  if (!Array.isArray(observations) || observations.length !== 6
+    || [0, 1, 2, 3, 4, 5].some(index => !Object.hasOwn(observations, index)
+      || observations[index]?.success !== true || (observations[index] as { error?: unknown }).error !== undefined)) {
+    throw new Error("memory_boundary_schema_unavailable");
+  }
+  const qualified = await Promise.allSettled([
+    qualifyNativeMemoryAnswerExclusion(env, db, "private_content", undefined, observations.slice(0, 3)),
+    qualifyNativeMemoryAnswerExclusion(env, db, "private_content", undefined, observations.slice(3, 6)),
+  ]);
+  if (env.DB !== db) throw new Error("memory_boundary_database_changed");
+  return qualified;
+}
+
 /** Exclusion only, never authorization to read an answer. A permanent public
  * marker prevents a missing manifest or retyped private row from downgrading
  * a derived answer into ordinary chat. Presence (even malformed) is enough to
@@ -23,11 +54,12 @@ export async function nativeMemoryAnswerExclusion(env: WorkerEnv,
   // A partial or unknown schema cannot certify an ordinary-content fallback.
   // One request-local snapshot, not a cache. All exact schema/absence witnesses
   // remain in the eventual consequential SQL below.
-  const observations=structuredClone(await db.batch([
-    nativeStructuredOriginSchemaRead(db),nativeDocumentJobOriginSchemaRead(db),
-    db.prepare("SELECT EXISTS(SELECT 1 FROM sqlite_schema WHERE type='table' AND name='memory_native_answer_origins') AS origins"
-      +(!turn?",EXISTS(SELECT 1 FROM sqlite_schema WHERE type='table' AND name='assistant_turns') AS turns":"")),
-  ]));
+  const observations=structuredClone(await db.batch(nativeMemorySchemaReads(db,turn)));
+  return qualifyNativeMemoryAnswerExclusion(env,db,answer,turn,observations);
+}
+
+async function qualifyNativeMemoryAnswerExclusion(env: WorkerEnv, db: WorkerEnv["DB"],
+  answer: AnswerAlias, turn: TurnAlias | undefined, observations: D1Result<unknown>[]): Promise<BudgetReservationGuard> {
   if (env.DB !== db) throw new Error("memory_boundary_database_changed");
   if(!Array.isArray(observations)||observations.length!==3||[0,1,2].some(i=>!Object.hasOwn(observations,i)||observations[i]?.success!==true||(observations[i] as {error?:unknown}).error!==undefined))throw new Error("memory_boundary_schema_unavailable");
   const structured=await qualifyNativeStructuredOriginSchema(env,db,observations[0]);

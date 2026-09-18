@@ -10,11 +10,15 @@ export { serializeEvent };
 import { streamHead, EVENT_PAGE_SIZE, readEventPage, readEvents } from "./event-stream-read.ts";
 export { streamHead, EVENT_PAGE_SIZE, readEventPage, readEvents };
 import { insertEventAtHead, StaleSequenceError, appendEvents } from "./event-append.ts";
+import type { SponsorImageEntryConfiguration } from "./experience-sponsor-image-entry.ts";
 export { StaleSequenceError, appendEvents };
 
 export { PHANTOM_ATTENTION_EVENT_SQL } from "../db/event-predicates.ts";
 
 export interface WorkerEnv {
+  /** Explicit server-owned intake/confirmation selection. Omitted stays inert;
+   * this installs no policy/schema and never enables generation. */
+  FORMA_SPONSOR_IMAGE_ENTRY?: SponsorImageEntryConfiguration;
   /** Default-off native memory read rollout; explicit enrollment and authority are still required. */
   FORMA_MEMORY_ENABLED?: string;
   FORMA_MEMORY_USER_IDS?: string;

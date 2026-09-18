@@ -16,6 +16,7 @@ import type { WorkerEnv } from "./runtime.ts";
 
 type FalAudioQueueState = {
   request_id?: string;
+  model?: string;
   status?: "IN_QUEUE" | "IN_PROGRESS" | "COMPLETED" | "FAILED" | "CANCELLED";
   status_url?: string;
   response_url?: string;
@@ -55,6 +56,21 @@ export type CreativeAudioPreparedReceipt = {
   sourceAudioTreatment: "none" | "authored-description-only";
   audioWaveformSubmitted: false;
 };
+
+/** A completed original provider result priced by the app's published rate.
+ * This is neither a preview nor evidence of an invoiced provider charge. */
+export type AudioCompletedResultObservation = Readonly<{
+  provider: "fal"; model: string; providerRequestId: string; costMicrousd: number;
+  costBasis: "published-audio-rate"; inputTokens: 0; outputTokens: 0; totalTokens: 0;
+}>;
+const completedAudioResults = new WeakMap<AudioCompletedResultObservation, { env: WorkerEnv; database: WorkerEnv["DB"] }>();
+export function readAudioCompletedResultObservation(observation: AudioCompletedResultObservation, env: WorkerEnv,
+  original: { model: string; providerRequestId: string }): AudioCompletedResultObservation {
+  const captured = completedAudioResults.get(observation);
+  if (!captured || captured.env !== env || captured.database !== env.DB || observation.model !== original.model
+    || observation.providerRequestId !== original.providerRequestId) throw new Error("output_audio_result_observation_invalid");
+  return observation;
+}
 
 export type CreativeAudioOptions = {
   outputAudio?: unknown;
@@ -127,6 +143,28 @@ function normalizeAudioFile(result: FalAudioResult, prompt: string, requestId: s
   throw providerError("fal_audio_result_missing", "Fal completed the request without returning a playable audio file. The retained request can be recovered.", prompt, { requestId, retryable: true, status: 502, category: "server" });
 }
 
+/** Both supported result locations must describe the same original result.
+ * Optional echoes may be absent, but an ignored branch cannot contradict it. */
+function assertCompletedAudioResultEnvelope(result: Record<string, unknown>, model: string, requestId: string, prompt: string) {
+  const nested = result.data;
+  if (!nested || typeof nested !== "object" || Array.isArray(nested)) return;
+  const data = nested as Record<string, unknown>;
+  if (data.request_id !== undefined && data.request_id !== requestId || data.model !== undefined && data.model !== model) {
+    throw providerError("fal_audio_receipt_mismatch", "The nested audio result does not identify the original native request.", prompt, { requestId, status: 409 });
+  }
+  if (data.error != null) {
+    throw providerError("fal_audio_result_rejected", "The saved audio result contains a provider error; no replacement was submitted.", prompt, { requestId, status: 422 });
+  }
+  if (result.audio != null && data.audio != null) {
+    const outer = normalizeAudioFile({ audio: result.audio } as FalAudioResult, prompt, requestId);
+    const inner = normalizeAudioFile({ audio: data.audio } as FalAudioResult, prompt, requestId);
+    const fields = ["url", "content_type", "file_name", "file_size", "duration"] as const;
+    if (fields.some(key => (outer[key] ?? null) !== (inner[key] ?? null))) {
+      throw providerError("fal_audio_result_ambiguous", "The provider returned conflicting audio result locations.", prompt, { requestId, status: 409 });
+    }
+  }
+}
+
 async function imageReceipt(reference: AudioImageReference) {
   const bytes = new Uint8Array(reference.bytes);
   const digest = await crypto.subtle.digest("SHA-256", bytes.buffer);
@@ -148,9 +186,13 @@ async function videoReceipt(reference: AudioVideoReference) {
 async function readAcceptedAudio(
   env: WorkerEnv,
   accepted: { model: string; providerJobId: string; urls: ReturnType<typeof queueUrls>; profile: AudioRequestProfile; prepared: CreativeAudioPreparedReceipt; estimatedCostMicrousd: number; started: number },
-  options: Pick<CreativeAudioOptions, "signal" | "onStage" | "onBeforeSourceTransmission"> & { verifyIdentity?: boolean },
+  options: Pick<CreativeAudioOptions, "signal" | "onStage" | "onBeforeSourceTransmission"> & { verifyIdentity?: boolean;
+    onCompletedResult?: (observation: AudioCompletedResultObservation) => void | Promise<void> },
 ) {
   const { model, providerJobId, urls, profile, prepared, estimatedCostMicrousd, started } = accepted;
+  const observationDatabase = env.DB;
+  if (options.onCompletedResult) verifiedAudioRecoveryQueue(model, providerJobId,
+    { providerStatusUrl: urls.statusUrl, providerResponseUrl: urls.responseUrl, providerCancelUrl: urls.cancelUrl });
   const contract = audioAdapterContractForModel(model)!;
   const submittedPrompt = prepared.submittedPrompt;
   const deadline = Date.now() + 15 * 60_000;
@@ -176,8 +218,41 @@ async function readAcceptedAudio(
   const response = await fetchJson(urls.responseUrl, { method: "GET", headers: headers(env), signal: options.signal, ...(options.verifyIdentity ? { redirect: "manual" as const } : {}) }, submittedPrompt, providerJobId, options.verifyIdentity === true);
   if (options.verifyIdentity && response.body.request_id !== undefined && response.body.request_id !== providerJobId) throw providerError("fal_audio_receipt_mismatch", "The provider returned a different audio result identifier.", submittedPrompt, { requestId: providerJobId, status: 409 });
   if (options.verifyIdentity && response.body.error != null) throw providerError("fal_audio_result_rejected", "The saved audio result contains a provider error; no replacement was submitted.", submittedPrompt, { requestId: providerJobId, status: 422 });
+  if (options.onCompletedResult) assertCompletedAudioResultEnvelope(response.body, model, providerJobId, submittedPrompt);
   const result = response.body as FalAudioResult;
   const audio = normalizeAudioFile(result, submittedPrompt, providerJobId);
+  const resultCost = () => {
+    const measuredDuration = Number(audio.duration ?? (result as Record<string, unknown>).duration ?? 0);
+    if (contract.pricing.mode === "per_minute" && measuredDuration > contract.maximumAdvertisedDurationSeconds) {
+      throw providerError("audio_provider_duration_exceeds_contract", "The audio provider reported a duration outside its approved generation contract; inspect the saved provider request before continuing.", submittedPrompt, { requestId: providerJobId, status: 502, category: "server", action: "contact_support" });
+    }
+    const measuredCost = estimateAudioProviderCostMicrousd(contract, profile, {
+      ...(contract.pricing.mode === "per_minute" && measuredDuration > 0 && measuredDuration <= contract.maximumAdvertisedDurationSeconds ? { durationSeconds: Math.ceil(measuredDuration) } : {}),
+      ...(contract.pricing.mode === "per_1000_characters" ? { characterCount: audioCharacterCount(submittedPrompt) } : {}),
+    });
+    if (measuredCost > estimatedCostMicrousd) {
+      throw providerError("audio_provider_cost_exceeds_reservation", "The provider reported usage above the authorized audio reservation; the original provider request remains available for review.", submittedPrompt, { requestId: providerJobId, status: 502, category: "server", action: "contact_support" });
+    }
+    return measuredCost;
+  };
+  let observedCost: number | undefined;
+  if (options.onCompletedResult) {
+    if (!options.verifyIdentity || model !== "fal-ai/stable-audio-3/medium/text-to-audio"
+      || state.model !== undefined && state.model !== model
+      || response.body.model !== undefined && response.body.model !== model || env.DB !== observationDatabase) {
+      throw providerError("fal_audio_receipt_mismatch", "The completed audio result does not identify the original native request.", submittedPrompt, { requestId: providerJobId, status: 409 });
+    }
+    observedCost = resultCost();
+    if (!Number.isSafeInteger(observedCost) || observedCost <= 0 || !Number.isSafeInteger(estimatedCostMicrousd)) {
+      throw providerError("audio_provider_cost_exceeds_reservation", "The original completed audio result has no verified app cost.", submittedPrompt, { requestId: providerJobId, status: 502 });
+    }
+    const observation: AudioCompletedResultObservation = Object.freeze({ provider: "fal", model, providerRequestId: providerJobId,
+      costMicrousd: observedCost, costBasis: "published-audio-rate", inputTokens: 0, outputTokens: 0, totalTokens: 0 });
+    completedAudioResults.set(observation, { env, database: observationDatabase });
+    // Financial evidence survives a later creative-authority or media failure.
+    // The next GET still executes the separate current-source/lease guard.
+    await options.onCompletedResult(observation);
+  }
   let media: URL;
   try { media = new URL(audio.url!); } catch { throw providerError("fal_audio_url_invalid", "Fal returned an invalid audio location.", submittedPrompt, { requestId: providerJobId, retryable: true, status: 502, category: "server" }); }
   if (options.verifyIdentity && (media.username || media.password || media.port)) throw providerError("fal_audio_url_untrusted", "The audio location has an unapproved authority.", submittedPrompt, { requestId: providerJobId, status: 409 });
@@ -209,18 +284,7 @@ async function readAcceptedAudio(
   if (!mimeType && (media.pathname.toLowerCase().endsWith(".mp3") || String(audio.file_name ?? "").toLowerCase().endsWith(".mp3"))) mimeType = "audio/mpeg";
   if (!mimeType && model === AUDIO_ADAPTER_CONTRACT.model) mimeType = "audio/mpeg";
   if (!contract.supportedOutputMimeTypes.includes(mimeType)) throw providerError("fal_audio_type_invalid", `Fal returned ${mimeType || "an unknown format"} instead of a supported ${contract.label} recording.`, submittedPrompt, { requestId: providerJobId, retryable: true, status: 502, category: "server" });
-  const measuredDuration = Number(audio.duration ?? (result as Record<string, unknown>).duration ?? 0);
-  if (contract.pricing.mode === "per_minute" && measuredDuration > contract.maximumAdvertisedDurationSeconds) {
-    throw providerError("audio_provider_duration_exceeds_contract", "The audio provider reported a duration outside its approved generation contract; inspect the saved provider request before continuing.", submittedPrompt, { requestId: providerJobId, status: 502, category: "server", action: "contact_support" });
-  }
-  const measuredCost = estimateAudioProviderCostMicrousd(contract, profile, {
-    ...(contract.pricing.mode === "per_minute" && measuredDuration > 0 && measuredDuration <= contract.maximumAdvertisedDurationSeconds ? { durationSeconds: Math.ceil(measuredDuration) } : {}),
-    ...(contract.pricing.mode === "per_1000_characters" ? { characterCount: audioCharacterCount(submittedPrompt) } : {}),
-  });
-  if (measuredCost > estimatedCostMicrousd) {
-    throw providerError("audio_provider_cost_exceeds_reservation", "The provider reported usage above the authorized audio reservation; the original provider request remains available for review.", submittedPrompt, { requestId: providerJobId, status: 502, category: "server", action: "contact_support" });
-  }
-  const costMicrousd = measuredCost;
+  const costMicrousd = observedCost ?? resultCost();
   return {
     provider: "fal" as const, model, providerJobId, providerStatusUrl: urls.statusUrl, providerResponseUrl: urls.responseUrl, providerCancelUrl: urls.cancelUrl,
     bytes, mimeType, fileName: audio.file_name ?? null, fileSize: typeof audio.file_size === "number" ? audio.file_size : bytes.byteLength,
@@ -242,7 +306,8 @@ export function verifiedAudioRecoveryQueue(model: string, requestId: string, rec
 }
 
 /** Retrieve an accepted recording using GET only. Never submit, upload, or cancel. */
-export async function recoverAcceptedAudio(env: WorkerEnv, options: CreativeAudioOptions & { providerJobId: string; providerModel: string; retainedReceipt: CreativeAudioPreparedReceipt }) {
+export async function recoverAcceptedAudio(env: WorkerEnv, options: CreativeAudioOptions & { providerJobId: string; providerModel: string; retainedReceipt: CreativeAudioPreparedReceipt;
+  onCompletedResult?: (observation: AudioCompletedResultObservation) => void | Promise<void> }) {
   const urls = verifiedAudioRecoveryQueue(options.providerModel, options.providerJobId, options);
   const prepared = options.retainedReceipt;
   if (prepared.provider !== "fal" || prepared.model !== options.providerModel || typeof prepared.submittedPrompt !== "string" || !prepared.submittedPrompt.trim() || prepared.audioWaveformSubmitted !== false) {
@@ -255,7 +320,7 @@ export async function recoverAcceptedAudio(env: WorkerEnv, options: CreativeAudi
   if (!Number.isSafeInteger(estimatedCostMicrousd) || estimatedCostMicrousd <= 0) {
     throw providerError("audio_recovery_receipt_invalid", "The original audio cost evidence is unavailable.", "", { requestId: options.providerJobId, status: 409 });
   }
-  return readAcceptedAudio(env, { model: options.providerModel, providerJobId: options.providerJobId, urls, profile: normalizeAudioRequestProfile(options.profile), prepared, estimatedCostMicrousd, started: Date.now() }, { signal: options.signal, onStage: options.onStage, onBeforeSourceTransmission: options.onBeforeSourceTransmission, verifyIdentity: true });
+  return readAcceptedAudio(env, { model: options.providerModel, providerJobId: options.providerJobId, urls, profile: normalizeAudioRequestProfile(options.profile), prepared, estimatedCostMicrousd, started: Date.now() }, { signal: options.signal, onStage: options.onStage, onBeforeSourceTransmission: options.onBeforeSourceTransmission, verifyIdentity: true, onCompletedResult: options.onCompletedResult });
 }
 
 /** Route an approved specialist schema through one recoverable Fal queue transport. */
@@ -426,8 +491,9 @@ export async function generateCreativeAudio(env: WorkerEnv, prompt: string, opti
       await options.onReceipt?.({ providerJobId, provider: "fal", model, providerStatusUrl: urls.statusUrl, providerResponseUrl: urls.responseUrl, providerCancelUrl: urls.cancelUrl });
     }
 
-    const result=await readAcceptedAudio(env, { model, providerJobId, urls, profile, prepared: options.retainedReceipt ?? prepared, estimatedCostMicrousd, started }, {...options,...(nativeAudio?{verifyIdentity:true}:{})});
-    if(nativeAudio){await options.onProviderSubmission!({...nativeReceipt("completed"),costMicrousd:result.costMicrousd,inputTokens:0,outputTokens:0,totalTokens:0});if(result.lyrics.trim())throw new Error("output_audio_lyrics_returned");}
+    const result=await readAcceptedAudio(env, { model, providerJobId, urls, profile, prepared: options.retainedReceipt ?? prepared, estimatedCostMicrousd, started }, {...options,...(nativeAudio?{verifyIdentity:true,
+      onCompletedResult:async(observed:AudioCompletedResultObservation)=>{await options.onProviderSubmission!({...nativeReceipt("completed"),costMicrousd:observed.costMicrousd,inputTokens:0,outputTokens:0,totalTokens:0});}}:{})});
+    if(nativeAudio&&result.lyrics.trim())throw new Error("output_audio_lyrics_returned");
     return result;
   } catch (error) {
     if(nativeAttempt&&nativeDispatched&&!providerJobId&&error instanceof ProviderRequestError&&definitiveProviderRejection(Number(error.detail.httpStatus)))await options.onProviderSubmission!({...nativeReceipt("rejected"),costMicrousd:0});

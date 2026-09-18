@@ -2,10 +2,13 @@ import { projectIntake, type ProjectIntake } from "../src/model/project-intake.t
 import { intakeGuard, type ProjectIntakeAuthorization, type AtomicIntakeOptions } from "./intake-authority.ts";
 export { projectIntakeAuthority } from "./intake-authority.ts";
 export type { ProjectIntakeAuthorization };
-import { response, failure, readOriginal, reply } from "./project-intake-read.ts";
+import { response, readOriginal, reply } from "./project-intake-read.ts";
 import { appendEvents } from "./event-append.ts";
 import { makeEvent } from "./event-write-primitives.ts";
 import { recordIntakeDiagnostic } from "./project-intake-diagnostic.ts";
+import { prepareSponsorIntakePostRootReceipt } from "./experience-sponsor-intake-reads.ts";
+import { prepareSponsorStoryIntakeNativeRootReceipt, sponsorStoryIntakeNativeAppendOptions } from "./experience-sponsor-story-intake-native.ts";
+import { prepareSponsorAudioIntakeNativeRootReceipt, sponsorAudioIntakeNativeAppendOptions } from "./experience-sponsor-audio-intake-native.ts";
 import type { WorkerEnv } from "./runtime.ts";
 
 /** One bounded all-or-none intake. Generic batch and Canvas receipt semantics do not change. */
@@ -21,6 +24,7 @@ export async function handleProjectIntake(env:WorkerEnv,auth:ProjectIntakeAuthor
 /** Internal only: callers must build and validate their own closed event grammar.
  * No route passes caller-supplied options or unvalidated events to this core. */
 export async function commitAtomicIntake(env:WorkerEnv,auth:ProjectIntakeAuthorization,intake:ProjectIntake,action:"commit"|"check",options?:AtomicIntakeOptions){
+  if(options?.sponsorAudioOutputReceiptCheck!==undefined&&action!=="check")throw new Error("sponsor_audio_output_native_check_required");
   const before=await readOriginal(env,auth,intake,options);
   if(!before.authorized||before.seen||action==="check")return reply(intake,before);
   const stream=auth.user.streamId,owner=auth.user.userId,guard=intakeGuard(env,auth,intake,options);
@@ -28,7 +32,11 @@ export async function commitAtomicIntake(env:WorkerEnv,auth:ProjectIntakeAuthori
     (options?.correlationPrefix??"project-intake:")+intake.projectId,input.type,input.payload));
   const root=events[0]!,rootKey=String(root.payload.client_event_id),now=new Date().toISOString();
   try{
-    await appendEvents(env,events,{retries:1,...(options?.expectedHead === undefined ? {} : {expectedHead:options.expectedHead}),prepareSidecars:assigned=>{
+    await appendEvents(env,events,{...(options?.sponsorAudioIntakeRead!==undefined
+      ?sponsorAudioIntakeNativeAppendOptions(options.sponsorAudioIntakeRead,env,auth,intake,options)
+      :options?.sponsorStoryIntakeRead
+      ?sponsorStoryIntakeNativeAppendOptions(options.sponsorStoryIntakeRead,env,auth,intake,options)
+      :options?.expectedHead === undefined ? {} : {expectedHead:options.expectedHead}),retries:1,prepareSidecars:assigned=>{
       const batch=JSON.stringify(assigned.map(event=>({id:event.eventId,key:event.payload.client_event_id,type:event.type,sequence:event.sequence,payload:JSON.stringify(event.payload)})));
       const resourceIds=JSON.stringify([...new Set(intake.events.flatMap(event=>[event.payload.project_id,event.payload.document_id,event.payload.block_id,event.payload.reference_id].filter((id):id is string=>typeof id==="string")))]);
       const receipts=assigned.slice(1).map(event=>env.DB.prepare(`INSERT INTO event_client_receipts(stream_id,client_event_id,event_id,sequence,created_at)
@@ -37,7 +45,7 @@ export async function commitAtomicIntake(env:WorkerEnv,auth:ProjectIntakeAuthori
       // Existing NOT NULL event_id is the all-or-none assertion. Existing root
       // PK fences a concurrent winner; either failure rolls back this entire
       // appendEvents D1 batch, including all staged events/private envelopes.
-      receipts.push(env.DB.prepare(`INSERT INTO event_client_receipts(stream_id,client_event_id,event_id,sequence,created_at)
+      const rootSql=`INSERT INTO event_client_receipts(stream_id,client_event_id,event_id,sequence,created_at)
         VALUES(?,?,CASE WHEN ${guard.sql}
           AND (SELECT COUNT(*) FROM json_each(?) expected JOIN events saved
             ON saved.event_id=json_extract(expected.value,'$.id') AND saved.stream_id=? AND saved.actor='user'
@@ -48,15 +56,24 @@ export async function commitAtomicIntake(env:WorkerEnv,auth:ProjectIntakeAuthori
             ON receipt.stream_id=? AND receipt.client_event_id=json_extract(expected.value,'$.key')
               AND receipt.event_id=json_extract(expected.value,'$.id') AND receipt.sequence=json_extract(expected.value,'$.sequence')
             WHERE CAST(expected.key AS INTEGER)>0)=?
-          AND NOT EXISTS(SELECT 1 FROM events prior WHERE prior.stream_id=? AND prior.type IN('ProjectCreated','DocumentCreated','BlockCreated','ReferenceIngested')
+          AND NOT EXISTS(SELECT 1 FROM events prior WHERE prior.stream_id=? AND prior.type IN('ProjectCreated','DocumentCreated','DocumentForked','BlockCreated','ReferenceIngested')
             AND (json_extract(prior.payload,'$.project_id') IN(SELECT value FROM json_each(?)) AND prior.type='ProjectCreated'
-              OR json_extract(prior.payload,'$.document_id') IN(SELECT value FROM json_each(?)) AND prior.type='DocumentCreated'
+              OR json_extract(prior.payload,'$.document_id') IN(SELECT value FROM json_each(?)) AND prior.type IN('DocumentCreated','DocumentForked')
               OR json_extract(prior.payload,'$.block_id') IN(SELECT value FROM json_each(?)) AND prior.type='BlockCreated'
               OR json_extract(prior.payload,'$.reference_id') IN(SELECT value FROM json_each(?)) AND prior.type='ReferenceIngested')
             AND prior.event_id NOT IN(SELECT json_extract(value,'$.id') FROM json_each(?)))
-          THEN ? ELSE NULL END,?,?)`)
-        .bind(stream,rootKey,...guard.bindings,batch,stream,owner,assigned.length,batch,stream,assigned.length-1,
-          stream,resourceIds,resourceIds,resourceIds,resourceIds,batch,root.eventId,root.sequence,now));
+          THEN ? ELSE NULL END,?,?)`;
+      const rootBindings=[stream,rootKey,...guard.bindings,batch,stream,owner,assigned.length,batch,stream,assigned.length-1,
+        stream,resourceIds,resourceIds,resourceIds,resourceIds,batch,root.eventId,root.sequence,now];
+      // The optional actual-POST seal preserves this exact native CASE and its
+      // failure row while moving its complete gates to a shallow statement.
+      receipts.push(options?.sponsorAudioIntakeRead!==undefined
+        ?prepareSponsorAudioIntakeNativeRootReceipt(options.sponsorAudioIntakeRead,env,auth,intake,options,rootSql,rootBindings)
+        :options?.sponsorStoryIntakeRead
+        ?prepareSponsorStoryIntakeNativeRootReceipt(options.sponsorStoryIntakeRead,env,auth,intake,options,rootSql,rootBindings)
+        :options?.sponsorIntakeRead
+        ?prepareSponsorIntakePostRootReceipt(options.sponsorIntakeRead,env,auth,intake,options,rootSql,rootBindings)
+        :env.DB.prepare(rootSql).bind(...rootBindings));
       return receipts;
     }});
   }catch(error){
