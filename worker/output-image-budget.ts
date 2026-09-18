@@ -12,7 +12,7 @@ const PROMPT_TOKEN_OVERHEAD = 4_096;
  * Calculator verified 2026-08-27; no GPT Image 1 tile rule is reused for Image 2.
  */
 export function outputImageBudget(model: string, size: string, promptBytes = OUTPUT_IMAGE_MAX_PROMPT_BYTES) {
-  if (model !== "gpt-image-2" || !hasKnownImageModelPricing(model) || !validateProviderImageSize(size).valid) return null;
+  if (!["gpt-image-2", "gpt-image-2.5-sunburst"].includes(model) || !hasKnownImageModelPricing(model) || !validateProviderImageSize(size).valid) return null;
   if (!Number.isSafeInteger(promptBytes) || promptBytes < 0 || promptBytes > OUTPUT_IMAGE_MAX_PROMPT_BYTES) return null;
   const [width, height] = size.split("x").map(Number);
   const long = Math.max(width!, height!), short = Math.min(width!, height!);
