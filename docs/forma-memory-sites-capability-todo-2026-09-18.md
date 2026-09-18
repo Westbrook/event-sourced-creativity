@@ -41,7 +41,7 @@ Forget retirement fix and unverified derivation-parser component. The subsequent
 adds qualified separate consent and privacy controls. [Durable reference delivery](forma-memory-reference-delivery-2026-09-18.md)
 now adds consent-specific queue registration, catch-up and privacy-safe retention;
 [native admission](forma-memory-native-admission-2026-09-18.md) adds exact single-consumer
-reference leases and protected budget primitives. These slices do not complete
+reference leases and protected budget primitives; [full original source capture](forma-memory-native-source-capture-2026-09-18.md) adds exact original evidence, typed observations and bounded privacy-safe replay. These slices do not complete
 the open native pipeline table below.
 
 - Canvas now records a personal artifact view only after the actual viewer opens,

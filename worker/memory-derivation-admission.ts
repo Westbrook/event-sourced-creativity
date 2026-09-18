@@ -5,6 +5,7 @@ import { DERIVATION_GRANT_COLUMNS, derivationAssertion, derivationChanged, deriv
   derivationRowGuard, derivationQualificationGuard, memoryDerivationBinding, memoryDerivationEnabled, memoryDerivationSchema,
   memoryDerivationGrantShape, readDerivationQualification, type MemoryDerivationGrant } from "./memory-derivation-store.ts";
 import { derivationConsentId, derivationExact, derivationHash, derivationId, derivationInteger, derivationTime } from "./memory-derivation-policy.ts";
+import { nativeMemoryGrantDeadline, nativeMemoryPilotDeadline, nativeMemoryPilotQuery } from "./memory-native-deadlines.ts";
 import type { WorkerEnv } from "./runtime.ts";
 
 export const DERIVATION_PARENT_COLUMNS = ["enrollment_id", "actor_user_id", "owner_user_id", "organization_id", "project_access_id", "project_id", "document_id",
@@ -99,13 +100,27 @@ export async function claimNativeDerivationJob(env: WorkerEnv, jobId: string): P
     || qualification.terms.monthlyCapMicroUsd !== grant.monthly_cap_microusd) return null;
   const authority = await liveMemoryAuthority(env, e);
   if (!authority) return null;
+  const authorityAt = Date.now(), grantDeadline = nativeMemoryGrantDeadline(authority.principal, authorityAt);
+  if (grantDeadline === undefined) return null;
+  const nativeDeadlines = grantDeadline === null ? [] : [grantDeadline], nativeGuards: MemorySqlGuard[] = [];
+  const pilot = env.FORMA_PILOT_COHORT_ID?.trim() ?? "";
+  const breakglass = (env.FORMA_ADMIN_EMAILS ?? "").split(",").map(value => value.trim().toLowerCase()).includes(authority.principal.email.toLowerCase());
+  if (pilot && !breakglass) {
+    const query = nativeMemoryPilotQuery(pilot), rows = await read(query.sql, query.bindings);
+    const boundary = nativeMemoryPilotDeadline(rows, pilot, authorityAt);
+    if (boundary === undefined) return null;
+    if (boundary !== null) nativeDeadlines.push(boundary);
+    const columns = ["cohort_id", "organization_id", "status", "starts_at", "ends_at"];
+    nativeGuards.push({ condition: `(SELECT json_group_array(json_array(${columns.join(",")})) FROM (${query.sql}))=?`,
+      bindings: [...query.bindings, JSON.stringify(rows.map(row => columns.map(key => row[key])))] });
+  }
   const references = await read(`SELECT ${DERIVATION_JOB_SOURCE_COLUMNS.join(",")} FROM memory_derivation_job_sources WHERE job_id=? ORDER BY sequence,event_id LIMIT 129`, [jobId]);
   if (!referencesShape(references, job, grant)) return null;
   const leaseExpires = [new Date(started + 300_000).toISOString(), job.expires_at, grant.expires_at, e.expires_at, qualification.row.expires_at].sort()[0]!;
-  const until = [new Date(started + 60_000).toISOString(), leaseExpires].sort()[0]!;
+  const until = [new Date(started + 60_000).toISOString(), leaseExpires, ...nativeDeadlines].sort()[0]!;
   const next: NativeJob = { ...job, state: "leased", lease_token: crypto.randomUUID(), lease_expires_at: leaseExpires, attempts: job.attempts + 1 };
   const common = [schema.guard, { condition: "EXISTS(SELECT 1 FROM pragma_foreign_keys WHERE foreign_keys=1) AND EXISTS(SELECT 1 FROM pragma_ignore_check_constraints WHERE ignore_check_constraints=0)", bindings: [] },
-    authority.guard, liveMemoryEnrollmentGuard(e, "learn"),
+    authority.guard, ...nativeGuards, liveMemoryEnrollmentGuard(e, "learn"),
     derivationRowGuard("memory_live_enrollments", DERIVATION_PARENT_COLUMNS, e),
     derivationRowGuard("memory_derivation_grants", DERIVATION_GRANT_COLUMNS, grant), derivationQualificationGuard(qualification.row),
     referenceGuard(jobId, references), { condition: "?>strftime('%Y-%m-%dT%H:%M:%fZ','now')", bindings: [until] }];

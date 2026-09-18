@@ -17,6 +17,11 @@ export type LiveSourceRow={event_id:string;sequence:number;type:string;recorded_
 
 /** SELECT and INSERT share exactly the same native source/custody predicate. No stored prose or copied authorization. */
 export function liveMemorySourceQuery(e:LiveMemoryEnrollment,a:LiveMemoryAuthority) {
+  const {joins,condition,bindings}=liveMemorySourceQueryParts(e,a);
+  // Native consumption qualifies this exact historical descriptor shape.
+  return {joins,condition,bindings};
+}
+export function liveMemorySourceQueryParts(e:LiveMemoryEnrollment,a:LiveMemoryAuthority) {
   const turn=liveMemoryTurnGuard(a);
   // Ordinary personal /api/events writes use the legacy actor "user". That
   // alias belongs only to this authenticated owner's private stream; it is
@@ -75,10 +80,10 @@ export function liveMemorySourceQuery(e:LiveMemoryEnrollment,a:LiveMemoryAuthori
         AND (pending.status!='completed' OR COALESCE(json_extract(pending.result_json,'$.specialistConsentVersion'),0)!=1))
       AND NOT EXISTS(SELECT 1 FROM events newer WHERE newer.stream_id=event.stream_id AND newer.type='AssistantReasoned'
         AND json_extract(newer.payload,'$.content_ref')=turn.assistant_content_ref AND newer.sequence>event.sequence))`;
-  const bindings=[e.actor_user_id,a.scopeKey,e.project_id,e.document_id,e.organization_id,e.project_access_id,
-    `creative:${e.owner_user_id}`,`user:${e.actor_user_id}`,...(personalActorAlias?[e.actor_user_id,e.actor_user_id]:[]),e.project_id,e.document_id,e.enrolled_at,e.retention_days,
+  const joinBindings=[e.actor_user_id,a.scopeKey,e.project_id,e.document_id,e.organization_id,e.project_access_id];
+  const conditionBindings=[`creative:${e.owner_user_id}`,`user:${e.actor_user_id}`,...(personalActorAlias?[e.actor_user_id,e.actor_user_id]:[]),e.project_id,e.document_id,e.enrolled_at,e.retention_days,
     e.owner_user_id,e.project_id,e.document_id,...(e.organization_id?[e.organization_id,e.project_access_id,e.project_id,e.owner_user_id,e.actor_user_id]:[]),...turn.bindings];
-  return {joins,condition,bindings};
+  return {joins,condition,joinBindings,conditionBindings,bindings:[...joinBindings,...conditionBindings]};
 }
 
 export function liveMemoryView(rows:LiveSourceRow[],e:LiveMemoryEnrollment) {

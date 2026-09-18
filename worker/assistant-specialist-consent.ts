@@ -47,21 +47,64 @@ type Retained={row:ExecutionRow;binding:ConsequentialBinding;preview:Consequenti
 const paidMemoryProofs=new WeakMap<SpecialistRequest,BudgetReservationGuard>();
 const MEMORY_PAID_UNSUPPORTED="assistant_memory_paid_ancestry_unsupported";
 const noMemoryProof=(request:SpecialistRequest):BudgetReservationGuard=>paidMemoryProofs.get(request)??{sql:"0",bindings:[]};
+export type PaidMemoryAncestryEntry={turnId:string;userRef?:string;answerRef?:string};
+function paidMemoryEntries(entries:readonly PaidMemoryAncestryEntry[]):PaidMemoryAncestryEntry[]{
+  const id=(value:unknown)=>typeof value==="string"&&value.length>0&&value.length<=240&&value.isWellFormed();
+  if(!Array.isArray(entries)||!entries.length||entries.length>CONVERSATION_TURNS+1)fail(MEMORY_PAID_UNSUPPORTED);
+  return Array.from(entries,row=>{
+    if(!row||!id(row.turnId)||row.userRef!==undefined&&!id(row.userRef)||row.answerRef!==undefined&&!id(row.answerRef))fail(MEMORY_PAID_UNSUPPORTED);
+    return{turnId:row.turnId,...(row.userRef===undefined?{}:{userRef:row.userRef}),...(row.answerRef===undefined?{}:{answerRef:row.answerRef})};
+  });
+}
 /** Exact saved references AND their current turn pointers. This is only a
  * negative ancestry check; existing custody and receipt proofs still authorize. */
-export async function paidMemoryProof(env:WorkerEnv,actorUserId:string,scopeKey:string,entries:readonly {turnId:string;userRef?:string;answerRef?:string}[]):Promise<BudgetReservationGuard>{
-  if(!entries.length||entries.length>CONVERSATION_TURNS+1||entries.some(row=>!row||typeof row.turnId!=="string"||row.turnId.length>240))fail(MEMORY_PAID_UNSUPPORTED);
+export async function paidMemoryProof(env:WorkerEnv,actorUserId:string,scopeKey:string,entries:readonly PaidMemoryAncestryEntry[]):Promise<BudgetReservationGuard>{
+  return paidMemoryExclusion(env,actorUserId,scopeKey,paidMemoryEntries(entries));
+}
+/** One bounded closure for native Memory hydration, never an approval decoder.
+ * The caller must separately prove every group's exact retained consent/hash.
+ * Validate each original per-turn bound before flattening, preserving saved
+ * references and their current pointers without per-turn witness expansion. */
+export async function paidMemoryBatchProof(env:WorkerEnv,actorUserId:string,scopeKey:string,
+  groups:readonly {turnId:string;entries:readonly PaidMemoryAncestryEntry[]}[]):Promise<BudgetReservationGuard>{
+  if(!Array.isArray(groups)||!groups.length||groups.length>64)fail(MEMORY_PAID_UNSUPPORTED);
+  const captured=Array.from(groups,group=>{
+    if(!group)fail(MEMORY_PAID_UNSUPPORTED);
+    const entries=paidMemoryEntries(group.entries);
+    if(entries.at(-1)!.turnId!==group.turnId)fail(MEMORY_PAID_UNSUPPORTED);
+    return{turnId:group.turnId,entries};
+  });
+  if(new Set(captured.map(group=>group.turnId)).size!==captured.length)fail(MEMORY_PAID_UNSUPPORTED);
+  return paidMemoryExclusion(env,actorUserId,scopeKey,captured.flatMap(group=>group.entries));
+}
+async function paidMemoryExclusion(env:WorkerEnv,actorUserId:string,scopeKey:string,entries:readonly PaidMemoryAncestryEntry[]):Promise<BudgetReservationGuard>{
+  const db=env.DB;
   const [answer,authored,content]=await Promise.all([
     nativeMemoryAnswerExclusion(env,{answerAlias:"answer",turnAlias:"turn"}),
     nativeMemoryAnswerExclusion(env,{answerAlias:"authored",turnAlias:"turn"}),
     nativeMemoryAnswerExclusion(env,{answerAlias:"content",turnAlias:"turn"}),
   ]);
+  if(env.DB!==db)fail(MEMORY_PAID_UNSUPPORTED);
+  // Negative markers survive erasure of the bodies and assistant_turns row.
+  // Substitute only these closed, server-owned aliases: raw saved references
+  // and the authenticated actor/scope/turn tuple must still hit tombstones.
+  // This does not fabricate custody or authorize a missing original source.
+  const saved=(proof:BudgetReservationGuard,alias:"answer"|"authored"|"content",field?:"answerRef"|"userRef")=>{
+    let sql=proof.sql.replaceAll("turn.actor_user_id","principal.actor_user_id").replaceAll("turn.scope_key","principal.scope_key")
+      .replaceAll("turn.turn_id","json_extract(expected.value,'$.turnId')");
+    if(field)sql=sql.replaceAll(alias+".content_id",`COALESCE(json_extract(expected.value,'$.${field}'),turn.${field==="answerRef"?"assistant":"user"}_content_ref)`);
+    else sql=sql.replaceAll("content.content_id","current_ref.value");
+    return sql;
+  };
   return{sql:`NOT EXISTS(SELECT 1 FROM json_each(?) expected
-    LEFT JOIN assistant_turns turn ON turn.actor_user_id=? AND turn.scope_key=? AND turn.turn_id=json_extract(expected.value,'$.turnId')
+    CROSS JOIN (SELECT ? AS actor_user_id,? AS scope_key) principal
+    LEFT JOIN assistant_turns turn ON turn.actor_user_id=principal.actor_user_id AND turn.scope_key=principal.scope_key AND turn.turn_id=json_extract(expected.value,'$.turnId')
     LEFT JOIN private_content answer ON answer.content_id=COALESCE(json_extract(expected.value,'$.answerRef'),turn.assistant_content_ref)
     LEFT JOIN private_content authored ON authored.content_id=COALESCE(json_extract(expected.value,'$.userRef'),turn.user_content_ref)
-    WHERE NOT (${answer.sql}) OR NOT (${authored.sql}) OR EXISTS(SELECT 1 FROM private_content content
-      WHERE content.content_id IN(turn.user_content_ref,turn.assistant_content_ref) AND NOT (${content.sql})))`,
+    WHERE NOT (${saved(answer,"answer","answerRef")}) OR NOT (${saved(authored,"authored","userRef")}) OR EXISTS(
+      SELECT 1 FROM json_each(json_array(turn.user_content_ref,turn.assistant_content_ref)) current_ref
+      LEFT JOIN private_content content ON content.content_id=current_ref.value
+      WHERE current_ref.type='text' AND NOT (${saved(content,"content")})))`,
     bindings:[JSON.stringify(entries),actorUserId,scopeKey,...answer.bindings,...authored.bindings,...content.bindings]};
 }
 async function assertNoPaidMemory(env:WorkerEnv,proof:BudgetReservationGuard){
@@ -233,12 +276,23 @@ function readAuthority(actor:SpecialistActor,retained:Retained):BudgetReservatio
 function consentProof(retained:Retained):BudgetReservationGuard{
   const proof=custody(retained.binding,"content");return{sql:`EXISTS(SELECT 1 FROM private_content content WHERE content.content_id=? AND content.owner_id=? AND content.kind='execution-consent' AND content.content=? AND content.redacted_at IS NULL AND content.expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now') AND ${proof.sql})`,bindings:[retained.row.consent_ref,retained.binding.actorUserId,retained.serialized,...proof.bindings]};
 }
+/** Pure saved-byte decoder shared with native Memory hydration. Matching a hash
+ * is not access, retention, execution or provider authority; each caller keeps
+ * the original native custody and final exact-byte witness. */
+export async function decodeRetainedSpecialistConsent(serialized:string,row:Pick<ExecutionRow,"binding_hash"|"intent_hash">,
+  actorUserId:string,scopeKey:string,turnId:string,id:string){
+  try{
+    const parsed=JSON.parse(serialized) as {binding:ConsequentialBinding;preview:ConsequentialPreview};
+    const{binding,preview}=parsed,request=binding?.request as SpecialistRequest;
+    if(!binding||binding.version!==ASSISTANT_SPECIALIST_CONSENT_VERSION||binding.operation!==OPERATION||binding.actorUserId!==actorUserId||binding.blockId!==""||await consentHash(binding)!==row.binding_hash||binding.intentHash!==row.intent_hash||preview?.executionId!==id||preview.bindingHash!==row.binding_hash||request?.schema!==1||request.turnId!==turnId||request.scopeKey!==scopeKey||request.originalRequest?.turnId!==turnId)return null;
+    return{binding,preview,request};
+  }catch{return null;}
+}
 async function retainedConsent(env:WorkerEnv,actor:SpecialistActor,scopeKey:string,turnId:string,id:string):Promise<Retained|null>{
   const row=await readConsequentialExecution(env,actor.principal.userId,id);if(!row)return null;
   const content=await env.DB.prepare("SELECT content FROM private_content WHERE content_id=? AND owner_id=? AND kind='execution-consent' AND redacted_at IS NULL AND expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now')").bind(row.consent_ref,actor.principal.userId).first<{content:string}>();if(!content)return null;
-  let parsed:{binding:ConsequentialBinding;preview:ConsequentialPreview};try{parsed=JSON.parse(content.content);}catch{return null;}
-  const{binding,preview}=parsed,request=binding?.request as SpecialistRequest;
-  if(!binding||binding.version!==ASSISTANT_SPECIALIST_CONSENT_VERSION||binding.operation!==OPERATION||binding.actorUserId!==actor.principal.userId||binding.blockId!==""||await consentHash(binding)!==row.binding_hash||binding.intentHash!==row.intent_hash||preview?.executionId!==id||preview.bindingHash!==row.binding_hash||request?.schema!==1||request.turnId!==turnId||request.scopeKey!==scopeKey||request.originalRequest?.turnId!==turnId)return null;
+  const decoded=await decodeRetainedSpecialistConsent(content.content,row,actor.principal.userId,scopeKey,turnId,id);if(!decoded)return null;
+  const{binding,preview,request}=decoded;
   assertConsentedTextPricing(request.pricing,binding.steps[0]!.model as AssistantModel);
   await rememberPaidMemoryProof(env,binding,request);
   const retained={row,binding,preview,request,serialized:content.content},proof=join(readAuthority(actor,retained),consentProof(retained),turnProof(binding,request,false,false));
@@ -822,7 +876,9 @@ async function resultResponse(env:WorkerEnv,actor:SpecialistActor,host:Assistant
   await assertNoPaidMemory(env,noMemoryProof(retained.request));
   const shown=task?await displayTask(env,actor,host,task,retained):null;
   const originalRequest={...retained.request.originalRequest,model:retained.binding.steps[0]!.model,taskKind:retained.request.taskKind,sourceHash:retained.binding.sourceHash,conversationTurnIds:retained.request.conversation.map(item=>item.turnId)};
-  const base=join(readAuthority(actor,retained),consentProof(retained),turnProof(retained.binding,retained.request)),resultProof=recovered?.proof??{sql:"1",bindings:[]};
+  // The same final SELECT checks the complete Memory ancestry proof below,
+  // before any result is returned. Do not bind it twice and exceed D1's limit.
+  const base=join(readAuthority(actor,retained),consentProof(retained),turnProof(retained.binding,retained.request,false,false)),resultProof=recovered?.proof??{sql:"1",bindings:[]};
   const unusedProof=!task?unusedExecutionProof(retained):{sql:"0",bindings:[]};
   const memory=noMemoryProof(retained.request);
   const finalRead=await env.DB.prepare(`SELECT CASE WHEN ${base.sql} THEN 1 ELSE 0 END AS retained,CASE WHEN ${resultProof.sql} THEN 1 ELSE 0 END AS result_retained,CASE WHEN ${unusedProof.sql} THEN 1 ELSE 0 END AS unused_execution,CASE WHEN ${memory.sql} THEN 1 ELSE 0 END AS no_memory_ancestry`).bind(...base.bindings,...resultProof.bindings,...unusedProof.bindings,...memory.bindings).first<{retained:number;result_retained:number;unused_execution:number;no_memory_ancestry:number}>();

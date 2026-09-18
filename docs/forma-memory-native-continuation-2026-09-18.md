@@ -53,8 +53,7 @@ a completed semantic cursor or delivery of the separate Chat Studio producer.
 
 [Native job admission and budget primitives](forma-memory-native-admission-2026-09-18.md)
 now add exact single-consumer reference leases, replayable privacy/configuration
-checks, and protected paired-budget helpers. Full original hydration, financial
-admission/recovery and processing consumers remain implementation work.
+checks, and protected paired-budget helpers. [Full original source capture](forma-memory-native-source-capture-2026-09-18.md) now retains exact personal/shared free/paid conversation evidence and separate typed observations, with bounded hydration and durable negative ancestry. Financial admission/recovery, processing windows and semantic consumers remain implementation work.
 
 ## Remaining native implementation — still in scope
 

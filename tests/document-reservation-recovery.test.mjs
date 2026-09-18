@@ -959,7 +959,7 @@ async function assertBundledOutputReconciliationHistory(context,present){
     assert.equal(fixture.sqlite.prepare(historySql).get(stream,actor).present,Number(present));
     const beforeConsent=fixture.sqlite.prepare("SELECT COUNT(*) AS count FROM events WHERE stream_id=? AND type='ConsentAccepted'").get(stream).count;
     const witnesses=[
-      {name:"known-receipt",kind:"first",prefix:"SELECT slot.scope_key,slot.slot_id,slot.token_reservation_id,slot.cost_reservation_id,slot.updated_at, job.job_id,job.kind,job.owner_id,job.stream_id,job.document_id,job.status,job.correlation_id,",count:0},
+      {name:"known-receipt",kind:"first",prefix:"SELECT slot.scope_key,slot.slot_id,slot.grant_id,slot.token_reservation_id,slot.cost_reservation_id,slot.updated_at, job.job_id,job.kind,job.owner_id,job.stream_id,job.document_id,job.status,job.correlation_id,",count:0},
       {name:"expired-grant",kind:"all",prefix:"SELECT grant_row.scope_key,grant_row.grant_id,grant_row.actor_user_id,grant_row.context_id,grant_row.payer_user_id, plan.scope_kind,plan.owner_user_id,plan.project_id,plan.document_id,plan.organization_id,plan.project_access_id FROM output_execution_grants grant_row JOIN output_plan_revisions plan ON plan.scope_key=grant_row.scope_key AND plan.plan_revision_id=grant_row.plan_revision_id WHERE (grant_row.payer_user_id=? OR (plan.scope_kind='personal' AND grant_row.payer_user_id<>grant_row.actor_user_id)) AND grant_row.actor_user_id=? AND grant_row.expires_at<=?",count:0},
       {name:"native-storage",kind:"run",prefix:"WITH retained_fal_grants AS MATERIALIZED (",count:0},
     ];
