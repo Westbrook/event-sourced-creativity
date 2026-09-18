@@ -1,3 +1,4 @@
+import { generationActive, generationPreview, generationFormat, generationResult, generationStatus, stillResults } from './results.ts';
 import { failureNotification, canContinueReview } from './notifications.ts';
 import type { DocumentJob } from '../model/document-jobs.ts';
 import './form-elements.js';
@@ -122,6 +123,7 @@ export class StillApp extends LitElement {
   private lastJobsPoll = 0;
   private syncPending = false;
   private readonly resumeSync = () => { if (!document.hidden) void this.sync(true); };
+  private directGeneration = false;
   private generation: GenerationDraft | null = null;
   private formatSuggestions: string[] = [];
   private formatTouched = false;
@@ -157,6 +159,7 @@ export class StillApp extends LitElement {
   private beforeUnload = (e: BeforeUnloadEvent) => { if (this.preventsRouteChange()) { e.preventDefault(); e.returnValue = ''; } };
   private changed() { this.requestUpdate(); }
   protected updated() {
+    this.reconcileGeneration();
     this.hydrateVisibleWriting();
     const dock = this.querySelector('.action-dock'); this.dockObserver.disconnect(); if (dock) this.dockObserver.observe(dock);
     const inspector=this.querySelector<StillDeveloperConsole>('still-developer-console');
@@ -231,7 +234,8 @@ export class StillApp extends LitElement {
     if(!this.client.session?.policy.accepted){this.activeAddress=this.address();return;}
     const p = this.client.projection;
     if(route.legacy&&route.documentId&&!route.projectId){route.projectId=p.documents.find(d=>d.id===route.documentId)?.projectId??'';this.client.position.projectId=route.projectId;}
-    this.routeError=stillRouteProblem(route,p);
+    this.routeError=stillRouteProblem(route,p,this.resultCount());
+    if(route.documentId&&!this.routeError)void this.client.pollJobs().catch(()=>{});
     if(!this.routeError&&route.mode){
       const allowed=this.candidates().some(a=>a.id===(route.mode==='generate'?'create':route.mode))||['actions','workspaces'].includes(route.mode)||route.mode==='generate'&&!!this.client.pendingGeneration;
       if(!allowed)this.routeError='Action unavailable';
@@ -249,7 +253,16 @@ export class StillApp extends LitElement {
     if(this.routeError)return this.routeError;
     const expected=parseStillRoute(this.activeAddress||location.href), current=this.currentRoute();
     if(expected&&!expected.legacy&&(['projectId','documentId','blockId','outputId','view','itemIndex'] as const).some(key=>expected[key]!==current[key]))return 'Workspace changed. Reopen this link.';
-    return stillRouteProblem(current,p);
+    return stillRouteProblem(current,p,this.resultCount());
+  }
+  private resultCount(){return this.client.jobsLoaded?stillResults(this.client.projection,this.client.jobs,this.client.events).length:Infinity;}
+  private reconcileGeneration(){
+    const c=this.client;
+    if(this.loading||this.mode||c.position.view!=='generation'||this.currentRouteProblem(c.projection))return;
+    const job=c.jobs.find(j=>j.jobId===c.position.outputId&&j.documentId===c.position.documentId);
+    const id=job?generationResult(job,c.projection,c.events):'';
+    if(!id)return;
+    c.position={...c.position,view:'artifact',outputId:id};this.writeRoute(true);this.changed();this.decide();
   }
   private writeRoute(replace=false){
     const url=stillURL(this.currentRoute(),location.href);
@@ -282,6 +295,7 @@ export class StillApp extends LitElement {
   private turnItem(item:number){this.dockTouched=false;this.itemIndex=item;this.writeRoute();this.changed();this.decide();}
   private candidates() { return eligibleActions(this.client.projection, this.client.position, this.client.abilities); }
   private decide() {
+    if(this.client.position.view==='generation'&&!this.mode){clearTimeout(this.decisionTimer);++this.decisionTicket;this.developerPending=false;this.developerReceived=undefined;this.developerApplied=this.developer?this.localDiagnostics('Generation progress uses Document, Results and Palette navigation.'):undefined;return;}
     if(this.currentRouteProblem(this.client.projection))return;
     if(this.mode){clearTimeout(this.decisionTimer);if(this.mode==='generate'&&!this.generation)this.suggestFormats();return;}
     clearTimeout(this.decisionTimer); const ticket = ++this.decisionTicket;
@@ -337,7 +351,7 @@ export class StillApp extends LitElement {
       if (!this.disposed) this.poll();
     }, 2000);
   }
-  private suggestedButton(a:Action,format=false,presentation?:Record<string,Emphasis>){const e=(presentation??(format?this.formatEmphasis:this.emphasis))[a.id]??{variant:'secondary',size:'medium',tier:'peer',reason:'No clear leader'};return html`<en-button data-action-id=${a.id} data-tier=${e.tier} data-emphasis-reason=${e.reason} variant=${e.variant} size=${e.size} .disabled=${this.busy||this.composing} @click=${()=>format?this.chooseFormat(a.id):this.choose(a.id)}>${a.label}</en-button>`;}
+  private suggestedButton(a:Action,format=false,presentation?:Record<string,Emphasis>){const e=(presentation??(format?this.formatEmphasis:this.emphasis))[a.id]??{variant:'secondary',size:'medium',tier:'peer',reason:'No clear leader'};return html`<en-button data-action-id=${a.id} data-tier=${e.tier} data-emphasis-reason=${e.reason} variant=${e.variant} size=${e.size} .disabled=${this.busy||this.composing} @click=${()=>format?void this.startGeneration(a.id):this.choose(a.id)}>${a.label}</en-button>`;}
   private toolbarSuggestions(actions:Action[]){const emphasis=presentEvidence(actions.map(a=>a.id),this.emphasis);return actions.map(a=>this.suggestedButton(a,false,emphasis));}
   private paletteShortcut=(event:KeyboardEvent)=>{
     if(event.isComposing||event.keyCode===229)return;
@@ -452,8 +466,9 @@ export class StillApp extends LitElement {
       this.generation = null; this.generationGate = null; this.formatSuggestions = []; this.formatTouched = false;
       try {
         const format = this.client.pendingGeneration?.format ?? (id === 'create' ? '' : id);
-        if (format) this.generation = this.client.prepareGeneration(format);
+        if (format && (id==='create'||this.client.pendingGeneration)) this.generation = this.client.prepareGeneration(format);
       } catch (error) { this.error = error instanceof Error ? error.message : 'Format unavailable.'; this.changed(); return; }
+      if(id!=='create'&&!this.client.pendingGeneration){this.generation=null;this.begin('generate');void this.startGeneration(id);return;}
       this.begin('generate'); if (!this.generation) this.suggestFormats(); return;
     }
     this.begin(id);
@@ -466,9 +481,20 @@ export class StillApp extends LitElement {
     queueMicrotask(async () => {
       if (event.defaultPrevented) return;
       await menu.updateComplete;
-      if (!menu.open && menu.isConnected && this.mode === 'generate' && !this.generation) this.chooseFormat(format);
+      if (!menu.open && menu.isConnected && this.mode === 'generate' && !this.generation) void this.startGeneration(format);
     });
   };
+  private async startGeneration(format:string) {
+    if(this.busy||this.composing||this.directGeneration||this.generation?.attempted)return;
+    this.directGeneration=true;this.formatTouched=true;
+    try {
+      await this.run(async()=>{
+        this.generation=this.client.prepareGeneration(format);
+        this.generationGate=null;this.draftBaseline=this.draftSignature();
+        await this.generate();
+      });
+    } finally {this.directGeneration=false;this.changed();}
+  }
   private chooseFormat(format: string) {
     if (this.busy || this.composing || this.generation?.attempted) return;
     const enteringReview = !this.generation && !!format;
@@ -505,7 +531,7 @@ export class StillApp extends LitElement {
     if (!draft.attempted && draft.format === 'scene' && !draft.scenePreview) { const quote = await this.client.previewScene(draft); if (quote) draft.scenePreview = quote; this.changed(); return; }
     if (this.generationGate && !this.generationGate.key) return;
     if (this.generationGate?.key) { draft.acknowledgements = { ...draft.acknowledgements, [this.generationGate.key]: true }; this.generationGate = null; }
-    try { const job=await this.client.generate(draft); this.closeMode(); this.notice = ['queued','running','committing'].includes(job.status)?'':job.status==='completed'?'Generation found.':job.status==='partial'?'Partial result found.':job.status==='failed'?'Generation failed. See results.':'Generation canceled.'; }
+    try { const job=await this.client.generate(draft); this.navigate('generation',{outputId:job.jobId}); }
     catch (error) {
       const review = error instanceof ApiError ? generationReview(error.status, error.body) : null;
       if (review) {
@@ -551,6 +577,12 @@ export class StillApp extends LitElement {
     if ((a.kind === 'slides' || a.kind === 'storyboard') && item) return html`<article class="slide" style=${`--slide-bg:${/^#[a-f\d]{3,8}$/i.test(a.presentation?.palette.background ?? '') ? a.presentation?.palette.background : '#ede9e1'}`}><span class="eyebrow">${String(this.itemIndex + 1).padStart(2, '0')} / ${String(a.items.length).padStart(2, '0')}</span>${safeMedia(item.mediaUrl) ? html`<img src=${safeMedia(item.mediaUrl)} alt=${item.title} />` : nothing}<div><h1>${item.title}</h1><div class="prose">${this.prose(item.body)}</div></div></article>`;
     return html`<article class="writing"><span class="eyebrow">${FORMATS[a.kind] ?? 'Creative work'}</span><h1>${a.title}</h1><div class="prose">${this.prose(content?.content_markdown || a.items.map(x => `${x.title}\n\n${x.body}`).join('\n\n') || a.summary || 'Writing unavailable.')}</div></article>`;
   }
+  private renderGeneration() {
+    const c=this.client,p=c.projection,job=c.jobs.find(j=>j.jobId===c.position.outputId&&j.documentId===p.documentId);
+    if(!job||!generationFormat(job))return html`<section class="quiet-state"><h1>${c.jobsError?'Couldn’t load generation':c.jobsLoaded?'Generation unavailable':'Loading generation…'}</h1>${c.jobsError?this.button('Try again',()=>void this.run(()=>c.pollJobs())):nothing}</section>`;
+    const active=generationActive(job),kind=generationFormat(job),preview=generationPreview(job,p,c.events);
+    return html`<section class="generation-stage"><span class="eyebrow">${FORMATS[kind]??kind}</span><h1>${preview.title}</h1>${preview.width&&preview.height?html`<p class="caption">${preview.width} × ${preview.height}</p>`:nothing}<p role="status">${job.progressMessage||generationStatus(job)}</p>${active?html`<div class=${`generation-placeholder ${kind} ${preview.width?'known-size':''}`} style=${preview.width&&preview.height?`--generation-ratio:${preview.width/preview.height}`:nothing} aria-label="Generation in progress"><en-skeleton shape="rectangle"></en-skeleton></div>`:html`<p>${job.status==='completed'?'The result is being loaded.':job.errorDetail?.message||job.error||generationStatus(job)}</p>`}${!active?this.button('Check again',()=>void this.run(async()=>{await c.pollJobs();await c.refresh();})):nothing}</section>`;
+  }
   private renderCanvas() {
     const c = this.client, p = c.projection, pos = c.position;
     if (this.loading) return html`<section class="quiet-state"><div class="still-mark" aria-hidden="true"></div><h1>Loading…</h1></section>`;
@@ -564,9 +596,10 @@ export class StillApp extends LitElement {
       return html`<section class="library-page">${projects ? nothing : html`<span class="eyebrow">${p.projectName}</span>`}<h1>${projects ? 'Projects' : 'Documents'}</h1><div class="work-list">${items.slice(this.page * 3, this.page * 3 + 3).map((x, i) => html`<a class="work-row" href=${projects?this.viewURL('documents',{projectId:x.id,documentId:''}):this.viewURL('document',{documentId:x.id})} @click=${(e:MouseEvent)=>projects?this.follow(e,'documents',{projectId:x.id,documentId:''}):this.follow(e,'document',{documentId:x.id})}><span class="work-number">${String(this.page * 3 + i + 1).padStart(2, '0')}</span><span><strong>${x.title}</strong>${x.detail ? html`<small>${x.detail}</small>` : nothing}</span><span class="row-arrow" aria-hidden="true">↗</span></a>`)}</div>${!items.length ? html`<p class="empty-copy">${projects ? 'No projects yet.' : 'No documents yet.'}</p>` : nothing}</section>`;
     }
     if (pos.view === 'results') {
-      const results = [...p.outputs.filter(o => !o.discarded).map(o => ({ id: o.id, title: o.title ?? 'Image', kind: 'image', url: safeMedia(o.mediaUrl), sequence: o.sequence })), ...p.artifacts.map(a => ({ id: a.id, title: a.title, kind: a.kind, url: '', sequence: a.sequence }))].sort((a, b) => b.sequence - a.sequence);
-      return html`<section class="results-page"><span class="eyebrow">${p.documentTitle}</span><h1>Results</h1><div class="result-grid">${results.slice(this.page * 3, this.page * 3 + 3).map(r => html`<a class="result" href=${this.viewURL('artifact',{outputId:r.id})} @click=${(e:MouseEvent)=>this.follow(e,'artifact',{outputId:r.id})}>${r.url ? html`<img src=${r.url} alt=${r.title} />` : html`<div class="result-word">${FORMATS[r.kind]}</div>`}<span>${r.title}</span></a>`)}</div>${!results.length ? html`<p>No results yet.</p>` : nothing}</section>`;
+      const results = stillResults(p,c.jobs,c.events);
+      return html`<section class="results-page"><span class="eyebrow">${p.documentTitle}</span><h1>Results</h1><div class="result-grid">${results.slice(this.page * 3, this.page * 3 + 3).map(r => html`<a class="result" href=${this.viewURL(r.view,{outputId:r.id})} @click=${(e:MouseEvent)=>this.follow(e,r.view,{outputId:r.id})}>${r.job?html`<div class="pending-thumbnail">${generationActive(r.job)?html`<en-skeleton shape="rectangle"></en-skeleton>`:nothing}<span>${FORMATS[r.kind]??r.kind}</span></div>`:safeMedia(r.url) ? html`<img src=${safeMedia(r.url)} alt=${r.title} />` : html`<div class="result-word">${FORMATS[r.kind]}</div>`}<span>${r.title}${r.job?html`<small>${generationStatus(r.job)}</small>`:nothing}</span></a>`)}</div>${!results.length ? html`<p>${c.jobsError?'Couldn’t load generations.':c.jobsLoaded?'No results yet.':'Loading generations…'}</p>`:nothing}${c.jobsError?this.button('Try again',()=>void this.run(()=>c.pollJobs())):nothing}</section>`;
     }
+    if(pos.view==='generation')return this.renderGeneration();
     if (pos.view === 'artifact') {
       const a = p.artifacts.find(x => x.id === pos.outputId), o = p.outputs.find(x => x.id === pos.outputId);
       return a ? this.renderArtifact(a) : o ? html`<figure class="image-stage"><img src=${safeMedia(o.mediaUrl)} alt=${o.title ?? p.documentTitle} /><figcaption>${o.title ?? p.documentTitle}</figcaption></figure>` : html`<section class="quiet-state"><h1>Result unavailable</h1></section>`;
@@ -579,14 +612,11 @@ export class StillApp extends LitElement {
     if(mode==='use-in')return keyed(`${this.interactionScope()}/${this.client.position.blockId}/use-in`,html`<still-use-in-flow .client=${this.client} .suggestedTarget=${this.useInTarget} @context-back=${()=>this.closeMode()} @use-in-done=${(e:CustomEvent<{projectId:string;documentId:string;blockId:string}>)=>{this.navigate('document',{projectId:e.detail.projectId,documentId:e.detail.documentId,blockId:e.detail.blockId});this.notice='Saved.';}}></still-use-in-flow>`);
     if (['split-context','research-context','find-references','compose'].includes(mode)) return keyed(`${this.client.scopeKey}/${p.projectId}/${p.documentId}/${this.client.position.blockId}/${mode}`,html`<still-context-flow .client=${this.client} .action=${mode} @context-back=${()=>this.closeMode()} @context-done=${()=>{this.notice='Saved.';this.closeMode();}}></still-context-flow>`);
     if (mode === 'generate') {
-      const g = this.generation;
+      const g = this.directGeneration?null:this.generation;
       const source = g?.sourceSnapshot ?? documentSnapshot(p, p.documentId);
       const issues = this.generationGate?.issues ?? [];
       const visibleFacts = source.facts.filter(b => b.active || issues.some(i => issueAffectsBlock(i, b)));
       const formats = this.candidates().filter(a => !!FORMATS[a.id]);
-      const ordered = [...new Set([...this.formatSuggestions, ...rankAllFormats(formats)])].filter(id=>formats.some(a=>a.id===id));
-      const suggested = ordered.slice(0,Math.min(3,this.pageActionLimit-2));
-      const remaining = ordered.filter(id=>!suggested.includes(id));
       return html`<section class="form-page generation-page">
         <span class="eyebrow">${p.projectName}</span><h1>${p.documentTitle}</h1>
         <div class="generation-context">${visibleFacts.map(b => { const warnings = issues.filter(i => issueAffectsBlock(i, b)); return html`<section id=${'generation-context-'+b.block_id} class=${warnings.length ? 'generation-fact needs-review' : 'generation-fact'} tabindex="-1">
@@ -595,14 +625,7 @@ export class StillApp extends LitElement {
           ${warnings.length ? html`<a class="review-context-link" href=${this.viewURL('document',{blockId:b.block_id})} @click=${(e:MouseEvent)=>this.follow(e,'document',{blockId:b.block_id})}>Open idea</a>` : nothing}
         </section>`; })}</div>
         <div class="format-options" @pointerdown=${()=>{this.formatTouched=true;}} @focusin=${()=>{this.formatTouched=true;}}>
-        ${!g ? html`<en-toolbar class="format-suggestions" label="Output formats" keyboard-navigation="tab">
-          ${suggested.map(id=>this.suggestedButton({...ACTIONS.find(a=>a.id===id)!,label:FORMATS[id]},true,presentEvidence(suggested,this.formatEmphasis)))}
-          ${remaining.length ? html`<en-button id="still-format-menu" variant="ghost" size="medium" ?disabled=${this.busy || this.composing}>Menu</en-button>` : nothing}
-          ${this.button('Back', () => this.closeMode())}
-        </en-toolbar>
-        ${remaining.length ? html`<en-menu for="still-format-menu" label="Other formats" @en-action=${this.selectMenuFormat}>
-          ${remaining.map(id=>html`<en-menu-item action=${id}>${FORMATS[id]}</en-menu-item>`)}
-        </en-menu>` : nothing}` : html`<en-select class="select-label" label="Output" .value=${live(g.format)} ?disabled=${this.busy || this.composing || !!g.attempted} @en-change=${(e: CustomEvent<{proposed:string;value:string}>) => this.chooseFormat(e.detail.proposed)}>
+        ${!g ? nothing : html`<en-select class="select-label" label="Output" .value=${live(g.format)} ?disabled=${this.busy || this.composing || !!g.attempted} @en-change=${(e: CustomEvent<{proposed:string;value:string}>) => this.chooseFormat(e.detail.proposed)}>
           <en-select-option value="">Choose a format</en-select-option>${formats.map(a => html`<en-select-option value=${a.id}>${FORMATS[a.id]}</en-select-option>`)}${!formats.some(a => a.id === g.format) ? html`<en-select-option value=${g.format}>${FORMATS[g.format]}</en-select-option>` : nothing}
         </en-select>`}
         </div>
@@ -613,7 +636,7 @@ export class StillApp extends LitElement {
         ${g?.adaptation?.issues.map(i => html`<p class="gate-notice">${i.message}</p>`)}
         ${g?.previousUnconfirmed ? html`<p class="gate-notice">Original status unknown. Starting another may duplicate it.</p>` : nothing}
         ${g ? html`<p class="cost-note">${g.recoveryClosed ? 'Original status unknown. Starting another may duplicate it.' : g.attempted ? `Checking an earlier ${FORMATS[g.format].toLowerCase()} request.` : g.format === 'model3d' ? `Estimated cost: $${(estimateModel3dCostMicrousd() / 1e6).toFixed(2)} · GLB · text to 3D` : g.scenePreview ? `Maximum cost: $${(g.scenePreview.maximumMicrousd / 1e6).toFixed(2)} · ${g.scenePreview.model}` : g.format === 'scene' ? 'Cost approval required.' : 'Forma provider and spending limits apply.'}</p>` : nothing}
-        ${g ? html`<div class="form-actions">${this.button(g.recoveryClosed ? 'Review another' : g.attempted ? 'Check generation' : g.format === 'scene' && !g.scenePreview ? 'Check cost' : this.generationGate ? (this.generationGate.key ? 'Continue' : 'Blocked') : 'Generate', () => void this.run(() => this.generate()), true, !!this.generationGate && !this.generationGate.key)}${this.button('Back', () => this.closeMode())}</div>` : nothing}
+
       </section>`;
     }
     if (mode === 'workspaces') return html`<section class="form-page"><h1>Workspaces</h1><en-select class="select-label" label="Workspace" .value=${this.choice} @en-change=${(e: CustomEvent<{proposed:string;value:string}>) => { this.choice = e.detail.proposed; this.changed(); }}><en-select-option value="">Personal projects</en-select-option>${this.client.session?.projects?.map(p => html`<en-select-option value=${p.projectAccessId}>${p.projectName} · ${p.role}</en-select-option>`)}</en-select><div class="form-actions">${this.button('Open', () => void this.run(async () => { await this.client.switchWorkspace(this.client.session?.projects?.find(p => p.projectAccessId === this.choice)); this.navigate(this.client.position.view, this.client.position); }), true)}${this.button('Back', () => this.closeMode())}</div></section>`;
@@ -622,15 +645,35 @@ export class StillApp extends LitElement {
     const named = ['new-project', 'new-document', 'add-context', 'rename'].includes(mode);
     return html`<section class="form-page">${p.projectName ? html`<span class="eyebrow">${p.projectName}</span>` : nothing}<h1>${titles[mode] ?? 'New idea'}</h1>${named ? this.field('Name', this.titleDraft, v => { this.titleDraft = v; }, 1) : nothing}${mode === 'add-context' ? html`<en-select class="select-label" label="Type" .value=${this.kindDraft} @en-change=${(e: CustomEvent<{proposed:string;value:string}>) => { this.kindDraft = e.detail.proposed; }}>${blockKinds.map(k => html`<en-select-option value=${k}>${k[0].toUpperCase() + k.slice(1)}</en-select-option>`)}</en-select>` : nothing}${mode !== 'rename' ? this.field(mode === 'intent' ? 'Your direction' : mode === 'edit-artifact' ? 'Writing' : 'Idea', this.bodyDraft, v => { this.bodyDraft = v; }, mode === 'edit-artifact' ? 16 : 6, '') : nothing}<div class="form-actions">${this.button(mode === 'intent' ? 'Suggest actions' : this.client.hasUnconfirmedWrite ? 'Check save' : 'Save', () => void this.run(() => this.save()), true)}${this.button('Back', () => this.closeMode())}</div></section>`;
   }
+  private renderGenerationDock() {
+    const g=this.directGeneration?null:this.generation;
+    const formats=this.candidates().filter(a=>!!FORMATS[a.id]);
+    const ordered=[...new Set([...this.formatSuggestions,...rankAllFormats(formats)])].filter(id=>formats.some(a=>a.id===id));
+    const suggested=ordered.slice(0,Math.min(3,this.pageActionLimit-2));
+    const remaining=ordered.filter(id=>!suggested.includes(id));
+    return html`<footer class="action-dock" @pointerdown=${()=>{this.formatTouched=true;}} @focusin=${()=>{this.formatTouched=true;}}>
+      <en-toolbar label="Your next step" keyboard-navigation="tab">
+        ${g?this.button(g.recoveryClosed?'Review another':g.attempted?'Check generation':g.format==='scene'&&!g.scenePreview?'Check cost':this.generationGate?(this.generationGate.key?'Continue':'Blocked'):'Generate',()=>void this.run(()=>this.generate()),true,!!this.generationGate&&!this.generationGate.key):html`
+          ${suggested.map(id=>this.suggestedButton({...ACTIONS.find(a=>a.id===id)!,label:FORMATS[id]},true,presentEvidence(suggested,this.formatEmphasis)))}
+          ${remaining.length?html`<en-button id="still-format-menu" variant="ghost" size="medium" ?disabled=${this.busy||this.composing}>Menu</en-button>`:nothing}
+        `}
+        ${this.button('Back',()=>this.closeMode())}
+      </en-toolbar>
+      ${!g&&remaining.length?html`<en-menu for="still-format-menu" label="Other formats" @en-action=${this.selectMenuFormat}>${remaining.map(id=>html`<en-menu-item action=${id}>${FORMATS[id]}</en-menu-item>`)}</en-menu>`:nothing}
+    </footer>`;
+  }
   private renderDock() {
     const c = this.client, p = c.projection, view = c.position.view;
-    if (this.loading || this.startupFailed || !c.session?.policy.accepted || this.mode || this.currentRouteProblem(p)) return nothing;
+    if (this.loading || this.startupFailed || !c.session?.policy.accepted || this.currentRouteProblem(p)) return nothing;
+    if(this.mode==='generate')return this.renderGenerationDock();
+    if(this.mode)return nothing;
+    if(view==='generation')return html`<footer class="action-dock"><en-toolbar label="Your next step" keyboard-navigation="tab">${this.button('Document',()=>this.navigate('document'))}${this.button('Results',()=>this.navigate('results'))}${this.button('Palette ⌘K',()=>this.openFinder('shortcut'))}</en-toolbar></footer>`;
     const limit=this.pageActionLimit,eligible=this.candidates();
     const pool=[...this.suggestions,...(limit>5?this.rankedActions.filter(a=>!this.suggestions.some(s=>s.id===a.id)):[])].filter(a=>eligible.some(e=>e.id===a.id));
     const a=p.artifacts.find(x=>x.id===c.position.outputId);
     const slides=view==='artifact'&&a&&['slides','storyboard'].includes(a.kind)&&a.items.length>1;
     const browsing=['projects','documents','results'].includes(view);
-    const count=view==='projects'?p.projects.length:view==='documents'?p.documents.filter(d=>!d.removed).length:p.outputs.filter(o=>!o.discarded).length+p.artifacts.length;
+    const count=view==='projects'?p.projects.length:view==='documents'?p.documents.filter(d=>!d.removed).length:stillResults(p,c.jobs,c.events).length;
     const paging=browsing&&count>3;
     const visible=pool.filter(a=>!browsing||a.id!==view).slice(0,limit-1-(slides?2:paging?1:0));
     const visibleIds=visible.map(a=>a.id);
@@ -686,7 +729,7 @@ export class StillApp extends LitElement {
   }
   render() {
     const c = this.client, running = c.jobs.filter(j => activeJobs.has(j.status) && j.documentId === c.position.documentId), failed = c.jobs.find(j => j.status === 'failed' && !j.dismissedAt && j.documentId === c.position.documentId);
-    return html`<div class=${this.developer?'still-layout has-developer':'still-layout'}><div class="still-shell"><header class="masthead"><a class="wordmark" href=${this.viewURL('projects',{projectId:'',documentId:''})} aria-label="Still home" @click=${this.home}>still<span aria-hidden="true">.</span></a><span class="working-status" role="status" aria-live="polite">${this.busy ? 'Working…' : ''}</span><span class="session-status">${c.session?.impersonation ? 'Preview · read only' : c.session && !c.abilities.author ? 'Read only' : ''}</span></header><div class="feedback-strip">${running.length ? html`<aside class="job-status" role="status"><i></i>${running[0].progressMessage || 'Generating…'}${running.length > 1 ? ` · ${running.length} in progress` : ''}</aside>` : nothing}</div><main id="still-content" aria-busy=${this.loading}>${this.renderCanvas()}</main>${this.renderDock()}${this.renderPalette()}</div>${this.developer ? html`<aside class="developer-panel" aria-label="Developer panel"><still-developer-console @developer-density=${this.setDensity} @developer-experiment=${this.experiment} @developer-disable=${()=>this.setDeveloper(false)}></still-developer-console></aside>` : nothing}${new URL(location.href).searchParams.has('progress-report') ? html`<a class="progress-return" href=${REPORT_URL}>Progress Report ↗</a>` : nothing}</div>${this.renderNotifications(failed)}`;
+    return html`<div class=${this.developer?'still-layout has-developer':'still-layout'}><div class="still-shell"><header class="masthead"><a class="wordmark" href=${this.viewURL('projects',{projectId:'',documentId:''})} aria-label="Still home" @click=${this.home}>still<span aria-hidden="true">.</span></a><span class="working-status" role="status" aria-live="polite">${this.busy ? 'Working…' : ''}</span><span class="session-status">${c.session?.impersonation ? 'Preview · read only' : c.session && !c.abilities.author ? 'Read only' : ''}</span></header><div class="feedback-strip">${running.length ? html`<aside class="job-status" role="status"><i></i>${generationFormat(running[0])?html`<a href=${this.viewURL('generation',{outputId:running[0].jobId})} @click=${(e:MouseEvent)=>this.follow(e,'generation',{outputId:running[0].jobId})}>${running[0].progressMessage || 'Generating…'}</a>`:running[0].progressMessage||'Working…'}${running.length > 1 ? ` · ${running.length} in progress` : ''}</aside>` : nothing}</div><main id="still-content" aria-busy=${this.loading}>${this.renderCanvas()}</main>${this.renderDock()}${this.renderPalette()}</div>${this.developer ? html`<aside class="developer-panel" aria-label="Developer panel"><still-developer-console @developer-density=${this.setDensity} @developer-experiment=${this.experiment} @developer-disable=${()=>this.setDeveloper(false)}></still-developer-console></aside>` : nothing}${new URL(location.href).searchParams.has('progress-report') ? html`<a class="progress-return" href=${REPORT_URL}>Progress Report ↗</a>` : nothing}</div>${this.renderNotifications(failed)}`;
   }
 }
 if (!customElements.get('still-app')) customElements.define('still-app', StillApp);

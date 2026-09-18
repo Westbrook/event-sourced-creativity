@@ -8,6 +8,7 @@ export const stillPaths=[
   '/still/project/p/document/d','/still/project/p/document/d/block/b',
   '/still/project/p/document/d/results','/still/project/p/document/d/results/page/2',
   '/still/project/p/document/d/result/r','/still/project/p/document/d/result/r/item/3',
+  '/still/project/p/document/d/generation/job-1',
   '/still/project/p/document/d/create',
   ...STILL_FORMATS.map(format=>`/still/project/p/document/d/create/${format}`),
   ...STILL_MODES.map(mode=>`/still/project/p/document/d/block/b/action/${mode}`),
