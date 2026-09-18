@@ -170,6 +170,13 @@ pnpm replay --file ./creative-loop-50000.json --as-of 32000 --projection context
 The Sites runtime reads logical D1 and R2 bindings from
 `.openai/hosting.json`. Database migrations live in `drizzle/`.
 
+For repeatable local SQLite migrations, preview with
+`pnpm db:migrate:local --database ./local.sqlite`, then add `--apply` to persist
+the changes. The runner verifies existing schema before skipping declarations
+or column additions, and rolls back the entire run on failure. See
+[local migration execution](docs/local-migrations.md) for supported operations,
+history handling, and the separate Sites deployment boundary.
+
 Provider credentials remain server-only. Never commit an API key, run a paid
 actual-data fixture or provider evaluation without explicit human authorization,
 or represent an internal membership receipt as a real collaborator invitation.
