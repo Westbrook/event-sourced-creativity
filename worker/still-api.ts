@@ -1,3 +1,5 @@
+import { generationDecisionContext } from '../src/still/generation-decision.ts';
+import type { DocumentJob } from '../src/model/document-jobs.ts';
 import {decisionHash,readStoredDecision,writeStoredDecision} from './still-decision-store.ts';
 import type { ProjectRequestContext } from './project-request-context.ts';
 import { readStillHistory, sourceVersion } from './still-history.ts';
@@ -47,6 +49,15 @@ export async function handleStillDecision(request: Request, env: WorkerEnv, cont
   const scope=stableDecisionKey({user:auth.user.userId,stream:auth.user.streamId,session});
   // Cross-request reuse precedes history reconstruction, but never authentication,
   // consent, scope checks, provider capabilities or the certified source revision.
+  // Resolve job evidence from the authorized API; never trust a client-supplied receipt.
+  if(position.view==='generation') {
+    if(!position.outputId||!position.documentId)return reply({error:'selection_unavailable'},409);
+    const response=await import('./document-jobs-api.ts').then(m=>m.handleDocumentJobs(new Request(new URL('/api/document-jobs/'+encodeURIComponent(position.outputId),request.url),{headers:request.headers}),env,encodeURIComponent(position.outputId),context));
+    if(!response.ok)return response;
+    const {job}=await response.json() as {job?:DocumentJob};
+    if(!job||job.jobId!==position.outputId||job.documentId!==position.documentId)return reply({error:'selection_unavailable'},409);
+    position.generation=generationDecisionContext(job);
+  }
   const revision=!scoped?await sourceVersion(env,auth.user):null;
   const durableKey=revision?await decisionHash({version:2,policy:POLICY_VERSION,scope,revision,position,developer:input.developer===true,provider:env.JEV_API_KEY??null}):null;
   if(durableKey&&input.cacheBypass!==true){
