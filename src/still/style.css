@@ -7,11 +7,13 @@ still-app button { cursor: pointer; }
 still-app a.work-row, still-app a.result, still-app a.context-block { color: inherit; text-decoration: none; }
 still-app button:focus-visible, still-app a:focus-visible { outline: 2px solid var(--accent); outline-offset: 6px; }
 still-app .still-shell { display: flex; flex-direction: column; min-height: 100dvh; padding: 0 48px max(148px, var(--dock-height, 148px)); }
-still-app .masthead { flex: none; height: 104px; display: flex; align-items: center; gap: 32px; }
-still-app .wordmark { color: inherit; text-decoration: none; font-family: Georgia, 'Times New Roman', serif; font-size: 35px; letter-spacing: -2px; line-height: 1; }
+still-app .masthead { position: sticky; top: 0; z-index: 6; flex: none; height: 104px; display: flex; align-items: center; gap: 20px; pointer-events: none; }
+still-app .header-stamp { background: var(--paper); border: 0; border-radius: 3px; box-shadow: none; pointer-events: auto; }
+still-app[data-header-scrolled] .header-stamp { --still-shadow: rgb(48 47 43 / .0725); box-shadow: 0 0 6px var(--still-shadow); }
+still-app .wordmark { display: flex; align-items: center; justify-content: center; flex: none; width: 100px; height: 64px; color: inherit; text-decoration: none; font-family: Georgia, 'Times New Roman', serif; font-size: 35px; letter-spacing: -2px; line-height: 1; }
 still-app .wordmark > span { color: var(--accent); }
 still-app .location-label, still-app .session-status { color: var(--soft); font-size: 12px; letter-spacing: .01em; }
-still-app .session-status { margin-left: auto; }
+still-app .session-status { margin-left: auto; padding: 12px 15px; text-align: center; }
 still-app main { flex: 1 0 auto; width: 100%; min-width: 0; min-height: 0; }
 still-app h1, still-app h2, still-app p, still-app figure { margin: 0; }
 still-app h1 { font-family: Georgia, 'Times New Roman', serif; font-size: clamp(38px, 5vw, 70px); font-weight: 400; letter-spacing: -.055em; line-height: 1.09; text-wrap: balance; }
@@ -108,7 +110,7 @@ still-app .progress-return { position: fixed; left: 12px; bottom: max(12px, env(
 @media (max-width: 720px) {
   still-app .still-shell { padding: 0 23px max(180px, var(--dock-height, 180px)); }
   still-app .masthead { height: 80px; gap: 20px; }
-  still-app .session-status { display: none; }
+  still-app .wordmark { width: 82px; height: 56px; font-size: 30px; }
   still-app .location-label { margin-left: auto; font-size: 11px; }
   still-app .library-page, still-app .document-page, still-app .form-page { margin-top: 6vh; }
   still-app .library-page h1 { font-size: 45px; }
