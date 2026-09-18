@@ -44,19 +44,19 @@ const FINANCIAL_FROM = `FROM document_jobs job
  JOIN experience_sponsor_grants issued ON issued.grant_id=consumption.grant_id AND issued.campaign_id=consumption.campaign_id
  JOIN budget_reservations tokens ON tokens.reservation_id=slot.token_reservation_id
  JOIN cost_budget_reservations cost ON cost.reservation_id=slot.cost_reservation_id
- WHERE job.job_id=? AND job.owner_id=? AND execution.actor_user_id=job.owner_id
- AND plan.scope_kind='personal' AND plan.owner_user_id=job.owner_id AND plan.document_id=job.document_id
- AND job.stream_id='creative:'||job.owner_id AND job.kind='generate' AND job.source_surface='outputs'
- AND execution.context_id IS NULL AND execution.plan_revision_id=slot.plan_revision_id
- AND execution.payer_user_id<>execution.actor_user_id AND slot.attempt_ordinal=0 AND slot.previous_slot_id IS NULL
- AND execution.maximum_microusd=slot.maximum_microusd AND execution.maximum_calls=2 AND slot.maximum_calls=2
- AND (SELECT COUNT(*) FROM output_operation_slots sibling WHERE sibling.scope_key=slot.scope_key AND sibling.grant_id=slot.grant_id)=1
- AND consumption.maximum_microusd=slot.maximum_microusd AND issued.actor_user_id=consumption.actor_user_id
- AND issued.session_digest=consumption.session_digest AND issued.intent_key=consumption.intent_key AND issued.envelope_digest=consumption.envelope_digest
- AND tokens.owner_id=execution.payer_user_id AND cost.owner_id=execution.payer_user_id
- AND tokens.stream_id=job.stream_id AND cost.stream_id=job.stream_id AND tokens.correlation_id=job.correlation_id AND cost.correlation_id=job.correlation_id
- AND tokens.operation='image-generation' AND cost.operation=tokens.operation AND cost.period=tokens.period
- AND tokens.reserved_tokens=slot.maximum_tokens AND cost.reserved_microusd=slot.maximum_microusd AND cost.allow_user_overage=0`;
+ WHERE ((((job.job_id=? AND job.owner_id=? AND execution.actor_user_id=job.owner_id)
+ AND ((plan.scope_kind='personal' AND plan.owner_user_id=job.owner_id AND plan.document_id=job.document_id)
+ AND (job.stream_id='creative:'||job.owner_id AND job.kind='generate' AND job.source_surface='outputs')))
+ AND ((execution.context_id IS NULL AND execution.plan_revision_id=slot.plan_revision_id)
+ AND ((execution.payer_user_id<>execution.actor_user_id AND slot.attempt_ordinal=0 AND slot.previous_slot_id IS NULL)
+ AND (execution.maximum_microusd=slot.maximum_microusd AND execution.maximum_calls=2 AND slot.maximum_calls=2))))
+ AND ((((SELECT COUNT(*) FROM output_operation_slots sibling WHERE sibling.scope_key=slot.scope_key AND sibling.grant_id=slot.grant_id)=1)
+ AND ((consumption.maximum_microusd=slot.maximum_microusd AND issued.actor_user_id=consumption.actor_user_id)
+ AND (issued.session_digest=consumption.session_digest AND issued.intent_key=consumption.intent_key AND issued.envelope_digest=consumption.envelope_digest)))
+ AND (((tokens.owner_id=execution.payer_user_id AND cost.owner_id=execution.payer_user_id)
+ AND (tokens.stream_id=job.stream_id AND cost.stream_id=job.stream_id AND tokens.correlation_id=job.correlation_id AND cost.correlation_id=job.correlation_id))
+ AND ((tokens.operation='image-generation' AND cost.operation=tokens.operation AND cost.period=tokens.period)
+ AND (tokens.reserved_tokens=slot.maximum_tokens AND cost.reserved_microusd=slot.maximum_microusd AND cost.allow_user_overage=0)))))`;
 
 // Separate original monetary shape; never selected from a current campaign or caller DTO.
 const STORY_FINANCIAL_FROM = `FROM document_jobs job

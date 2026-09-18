@@ -1,3 +1,4 @@
+import { requireGuestImageExecution, type GuestImageExecutionAuthority } from "./experience-guest-image-execution.ts";
 import { createAudioSponsorDispatchOwner, prepareAudioSponsorDispatchEvidence, requireAudioSponsorDispatchEvidence, invalidateAudioSponsorDispatch, type AudioSponsorDispatchEvidence } from "./output-audio-sponsored-handoff.ts";
 import { outputJobIsDurable, assertOutputDurableLease } from "./output-durable-control.ts";
 import { requireSponsorExecution, readSponsorFinancialBinding, sponsorFinancialIdentity, sponsorFinancialEventProfile, sponsorSceneExecutionPaidEvidence, sponsorAudioExecutionPaidEvidence, sponsorTerminalReleaseStatement, type SponsorExecutionAuthority, type SponsorFinancialBinding } from "./experience-sponsor-execution.ts";
@@ -52,7 +53,7 @@ import type { ProviderAttemptPreflight } from "./openai-adapter.ts";
 import { settleBudget, settleCostBudget, settleDocumentGenerationBudgets, type PilotUser } from "./pilot-policy.ts";
 import { outputDigest, resolveOutputExecutionAuthority, prepareOutputExecutionProof } from "./output-requirements-api.ts";
 import { preflightOutputNativeTarget, type OutputNativeSettings } from "./output-document-execution.ts";
-import { claimOutputProviderCall, settleOutputProviderCall, readOutputSlots, outputSlotFromRow, outputScopeAuthority, outputAssertionStatements, OutputConflictError, type OutputOperationSlot, type OutputScope, type OutputSqlAssertion } from "./output-requirements-ledger.ts";
+import { claimGuestImageProviderCall, claimOutputProviderCall, settleOutputProviderCall, readOutputSlots, outputSlotFromRow, outputScopeAuthority, outputAssertionStatements, OutputConflictError, type OutputOperationSlot, type OutputScope, type OutputSqlAssertion } from "./output-requirements-ledger.ts";
 import type { authoritativeCreativeContext } from "./context-authority.ts";
 import { priceTextUsageBreakdownMicrousd, priceImageUsageBreakdownMicrousd } from "./replay-cost.ts";
 import { estimateOpenAITextCallMaximumMicrousd } from "./openai-text-cost.ts";
@@ -115,6 +116,17 @@ export type OutputEventExecution={
  observeProvider:(receipt:PaidProviderSubmission)=>Promise<void>;
 };
 
+const guestImageOwn=(value:unknown,key:PropertyKey):unknown=>value&&typeof value==="object"?Object.getOwnPropertyDescriptor(value,key)?.value:undefined;
+function guestImageBatchAcknowledged(value:unknown,expected:number):value is D1Result[]{
+ if(!Array.isArray(value)||guestImageOwn(value,"length")!==expected)return false;
+ return Array.from({length:expected},(_,index)=>{
+  const result=guestImageOwn(value,index);
+  if(guestImageOwn(result,"success")!==true||!Array.isArray(guestImageOwn(result,"results")))return false;
+  if(result&&typeof result==="object"&&"error" in result){const field=Object.getOwnPropertyDescriptor(result,"error");if(!field||!Object.hasOwn(field,"value")||field.value!==undefined)return false;}
+  return true;
+ }).every(Boolean);
+}
+
 /** The durable slot, not an expiring request JSON property, determines execution. */
 export async function loadOutputJobBinding(env:WorkerEnv,user:PilotUser,job:Pick<DocumentJobRow,"job_id"|"owner_id"|"stream_id"|"document_id"|"request_json"|"output_slot_id">):Promise<OutputJobBinding|null>{
  if(job.output_slot_id===null)return null;
@@ -133,23 +145,118 @@ export async function loadOutputJobBinding(env:WorkerEnv,user:PilotUser,job:Pick
 
 /** Current source/target/route eligibility is checked again before each transfer and paid call. */
 export async function createOutputEventExecution(env:WorkerEnv,user:PilotUser,job:DocumentJobRow,binding:OutputJobBinding,preparedProof?:OutputExecutionProof,sponsorAuthority?:SponsorExecutionAuthority):Promise<OutputEventExecution>{
+ return createNativeEventExecution(env,job,{kind:"canonical",user,binding,preparedProof,sponsorAuthority});
+}
+
+type NativeExecutionInput={kind:"canonical";user:PilotUser;binding:OutputJobBinding;preparedProof?:OutputExecutionProof;sponsorAuthority?:SponsorExecutionAuthority}
+ |{kind:"guest-image";request:Request;authority:GuestImageExecutionAuthority;view:Awaited<ReturnType<typeof requireGuestImageExecution>>};
+
+type GuestImageOutputSeal={request:Request;env:WorkerEnv;database:WorkerEnv["DB"];authority:GuestImageExecutionAuthority;
+ view:Awaited<ReturnType<typeof requireGuestImageExecution>>;fields:ReadonlyMap<PropertyKey,PropertyDescriptor>;prototype:object|null;
+ financial:SponsorFinancialBinding;financialEnvironment:WorkerEnv;actorUserId:string;jobId:string;tokenReservationId:string;costReservationId:string;
+ settlement:{receipt?:NonNullable<OutputEventExecution["accountSettlement"]>}};
+const guestImageOutputs=new WeakMap<OutputEventExecution,GuestImageOutputSeal>();
+
+function guestImageOutputSeal(request:Request,env:WorkerEnv,authority:GuestImageExecutionAuthority,output:OutputEventExecution):GuestImageOutputSeal{
+ const seal=guestImageOutputs.get(output);
+ if(!seal)throw new OutputConflictError("output_guest_image_control_unavailable",403);
+ const keys=Reflect.ownKeys(output);
+ if(seal.request!==request||seal.env!==env||seal.database!==env.DB||seal.authority!==authority
+  ||Object.getPrototypeOf(output)!==seal.prototype||keys.length!==seal.fields.size||keys.some(key=>!seal.fields.has(key)))
+  throw new OutputConflictError("output_guest_image_control_unavailable",403);
+ for(const [key,field] of seal.fields){
+  const current=Object.getOwnPropertyDescriptor(output,key);
+  if(!current||current.value!==field.value||current.get!==field.get||current.set!==field.set||current.writable!==field.writable
+   ||current.enumerable!==field.enumerable||current.configurable!==field.configurable)
+   throw new OutputConflictError("output_guest_image_control_changed",403);
+ }
+ return seal;
+}
+
+/** Checks constructor custody; a structurally similar output object is not execution authority. */
+export function requireGuestImageEventExecution(request:Request,env:WorkerEnv,authority:GuestImageExecutionAuthority,output:OutputEventExecution):void{
+ guestImageOutputSeal(request,env,authority,output).view.assertCurrent();
+}
+
+/** Only the native account settler may populate the guest's read-only cache.
+ * Monetary identity remains usable after creative expiry, erasure or abort. */
+export async function settleGuestImageExecutionBudgets(request:Request,env:WorkerEnv,authority:GuestImageExecutionAuthority,
+ output:OutputEventExecution,input:Parameters<typeof settleDocumentGenerationBudgets>[2]){
+ const seal=guestImageOutputSeal(request,env,authority,output);
+ const currentFinancial=()=>sponsorFinancialIdentity(seal.financial,env,seal.actorUserId,seal.jobId);
+ const financial=currentFinancial();
+ if(input.reservationId!==seal.tokenReservationId||input.costReservationId!==seal.costReservationId)
+  throw new OutputConflictError("output_guest_image_reservations_changed",403);
+ if(seal.settlement.receipt)return {settled:false,status:"known" as const,receipt:seal.settlement.receipt};
+ const settled=await settleDocumentGenerationBudgets(seal.financialEnvironment,financial.payerUserId,
+  {...input,assertions:[...(input.assertions??[]),financial.assertion]});
+ currentFinancial();
+ if(settled.receipt)seal.settlement.receipt=Object.freeze({...settled.receipt});
+ return settled;
+}
+
+/** The dormant guest entry requires the separately sealed, already claimed Image job. */
+export async function createGuestImageEventExecution(request:Request,env:WorkerEnv,authority:GuestImageExecutionAuthority,exactClaimedJob:DocumentJobRow):Promise<OutputEventExecution>{
+ const view=await requireGuestImageExecution(request,env,authority,exactClaimedJob);
+ view.assertCurrent();
+ const output=await createNativeEventExecution(env,view.job,{kind:"guest-image",request,authority,view});
+ view.assertCurrent();
+ Object.freeze(output.guardedEnvironment);Object.freeze(output.reservations);Object.freeze(output.reference);
+ if(output.financialAssertions)Object.freeze(output.financialAssertions);
+ const settlement:GuestImageOutputSeal["settlement"]={};
+ Object.defineProperty(output,"accountSettlement",{enumerable:true,configurable:false,get:()=>settlement.receipt});
+ Object.freeze(output);
+ guestImageOutputs.set(output,{request,env,database:env.DB,authority,view,
+  fields:new Map(Reflect.ownKeys(output).map(key=>[key,Object.getOwnPropertyDescriptor(output,key)!])),prototype:Object.getPrototypeOf(output),
+  financial:view.financial,financialEnvironment:Object.freeze({...env}),actorUserId:view.identity.actorUserId,jobId:view.job.job_id,
+  tokenReservationId:view.slot.tokenReservationId,costReservationId:view.slot.costReservationId,settlement});
+ requireGuestImageEventExecution(request,env,authority,output);
+ return output;
+}
+
+// A shared native engine retains the existing adapter hooks, observer and private
+// storage guard. Only the two entries above select its independently proved identity.
+async function createNativeEventExecution(env:WorkerEnv,job:DocumentJobRow,input:NativeExecutionInput):Promise<OutputEventExecution>{
+ const guest=input.kind==="guest-image"?input:null;
+ const user=input.kind==="canonical"?input.user:null;
+ const binding=input.kind==="canonical"?input.binding:input.view.binding;
+ const preparedProof=input.kind==="canonical"?input.preparedProof:input.view.proof;
+ const sponsorAuthority=input.kind==="canonical"?input.sponsorAuthority:undefined;
  const {scope,slot}=binding;
- if(binding.sponsored&&(user.fictional||user.projectExecution||user.billingUserId&&user.billingUserId!==user.userId))throw new OutputConflictError("sponsor_personal_principal_required",403);
- const sponsor=binding.sponsored?await requireSponsorExecution(sponsorAuthority,env,user.userId,{jobId:job.job_id,grantId:slot.grantId,scopeKey:scope.key}):null;
- const financial=sponsor?sponsorFinancialIdentity(sponsor.financial,env,user.userId,job.job_id):null;
- const sponsoredScene=Boolean(sponsor&&sponsorFinancialEventProfile(sponsor.financial,env,user.userId,slot)==="scene");
- const sponsoredAudio=Boolean(sponsor&&sponsorFinancialEventProfile(sponsor.financial,env,user.userId,slot)==="audio");
+ const actorUserId=guest?guest.view.identity.actorUserId:user!.userId;
+ const canonicalUser=()=>{if(!user)throw new OutputConflictError("output_guest_image_only",403);return user;};
+ const assertGuestCurrent=()=>guest?.view.assertCurrent();
+ const refreshGuest=async()=>{if(guest){guest.view.assertCurrent();await guest.view.refresh();guest.view=requireGuestImageExecution(guest.request,env,guest.authority);guest.view.assertCurrent();}};
+ if(user&&binding.sponsored&&(user.fictional||user.projectExecution||user.billingUserId&&user.billingUserId!==user.userId))throw new OutputConflictError("sponsor_personal_principal_required",403);
+ const sponsor=user&&binding.sponsored?await requireSponsorExecution(sponsorAuthority,env,user.userId,{jobId:job.job_id,grantId:slot.grantId,scopeKey:scope.key}):null;
+ const financialBinding=guest?.view.financial??sponsor?.financial;
+ // Capture monetary authority once, while complete creative proof is current.
+ // Non-pending provider observations below never consult guest creative authority.
+ const financial=financialBinding?sponsorFinancialIdentity(financialBinding,env,actorUserId,job.job_id):null;
+ const financialEnvironment=guest?Object.freeze({...env}):env;
+ if(guest&&financial){if(financial.assertion.bindings)Object.freeze(financial.assertion.bindings);Object.freeze(financial.assertion);}
+ const sponsoredScene=Boolean(sponsor&&sponsorFinancialEventProfile(sponsor.financial,env,actorUserId,slot)==="scene");
+ const sponsoredAudio=Boolean(sponsor&&sponsorFinancialEventProfile(sponsor.financial,env,actorUserId,slot)==="audio");
+ assertGuestCurrent();
  if(!["queued","running"].includes(slot.status))throw new OutputConflictError("output_operation_not_started",409);
  const authority=preparedProof??prepareOutputExecutionProof(scope,await resolveOutputExecutionAuthority(env,scope,slot));
+ const settings=authority.targetPreflight.settings as OutputNativeSettings;
+ if(guest&&(job.kind!=="generate"||job.source_surface!=="outputs"||job.scene_source_version_json!==null||job.scene_source_protocol!==0
+  ||scope.kind!=="personal"||scope.ownerUserId!==actorUserId||scope.actorUserId!==actorUserId||scope.contextId!==null
+  ||["scene_contract","audio_contract","storyboard_contract","video_contract","model3d_contract"].some(key=>Object.hasOwn(authority.target,key))
+  ||settings.kind!=="generate"||settings.calls.length!==2||settings.calls.some(route=>route.provider!=="openai")
+  ||["outputFalImage","outputVideo","outputVideoPlanner","outputStoryboard","outputStoryboardPlanner","outputAudio","outputScene","model3dSettings"].some(key=>Object.hasOwn(settings.payload,key))))throw new OutputConflictError("output_guest_image_only",403);
+ assertGuestCurrent();
  let sceneStored=job.scene_source_version_json!=null?await readSceneJobSourceWitness(env,scope,slot,job.correlation_id):null;
  if(Boolean(job.scene_source_protocol===1)!==Boolean(sceneStored))throw new OutputConflictError('output_scene_source_witness_unavailable',409);
  if(sceneStored&&!Object.hasOwn(authority.target,'scene_contract'))throw new OutputConflictError('output_scene_source_witness_unavailable',409);
  if(sponsoredScene&&!sceneStored)throw new OutputConflictError('sponsor_scene_handoff_changed',403);
  let sceneTransition:ReturnType<typeof prepareSceneJobSourceTransition>|null=null;
- const currentInput={env,request:new Request("https://output-execution.invalid"),scope,principal:user,confirmedPlan:authority.confirmedPlan,target:authority.target,context:authority.context,sourceEvents:authority.events,sourceAssertions:authority.assertions,sourceDigest:authority.sourceDigest,requirementsDigest:authority.requirementsDigest,ownerHead:authority.sourceEpoch.head,...(sceneStored?{sceneSourceVersion:sceneStored.witness.successor}:{})};
- const current=await preflightOutputNativeTarget(currentInput);
+ const currentInput=user?{env,request:new Request("https://output-execution.invalid"),scope,principal:canonicalUser(),confirmedPlan:authority.confirmedPlan,target:authority.target,context:authority.context,sourceEvents:authority.events,sourceAssertions:authority.assertions,sourceDigest:authority.sourceDigest,requirementsDigest:authority.requirementsDigest,ownerHead:authority.sourceEpoch.head,...(sceneStored?{sceneSourceVersion:sceneStored.witness.successor}:{})}:null;
+ const current=guest?guest.view.proof.targetPreflight:await preflightOutputNativeTarget(currentInput!);
  if(!current.available||await outputDigest(current)!==slot.routeDigest)throw new OutputConflictError("output_native_route_changed",409);
- const videoSourceAssertions=Object.hasOwn(authority.target,"video_contract")?outputVideoExecutionSourceAssertions(currentInput,current,slot):[];
+ assertGuestCurrent();
+ const videoSourceAssertions=currentInput&&Object.hasOwn(authority.target,"video_contract")?outputVideoExecutionSourceAssertions(currentInput,current,slot):[];
  const audioProof=Object.hasOwn(authority.target,"audio_contract")?outputAudioPreflightAssertions(current):null;
  if(Object.hasOwn(authority.target,"audio_contract")&&!audioProof)throw new OutputConflictError("output_audio_source_unavailable",403);
  const audioAssertions:OutputSqlAssertion[]=[...(audioProof??[])];
@@ -175,17 +282,16 @@ export async function createOutputEventExecution(env:WorkerEnv,user:PilotUser,jo
  let model3dPrepared:Model3dPreparedReceipt|null=null;
  let model3dQualified:Awaited<ReturnType<typeof qualifyOutputModel3dCompletion>>|null=null;
  let videoCompletionJson:string|undefined;const videoCompletionAssertions:OutputSqlAssertion[]=[];
- const projectJobAuthority=documentJobProjectAuthority(user,job.document_id,job.job_id);
+ const projectJobAuthority=user?documentJobProjectAuthority(user,job.document_id,job.job_id):null;
  const model3dPublication=model3dProof?model3dPublicationHead({jobId:job.job_id,ownerId:job.owner_id,streamId:job.stream_id,correlationId:job.correlation_id}):null;
  let videoHook:OutputVideoHookLease|null=null;
  const videoLifetimeAssertions=():OutputSqlAssertion[]=>{if(!videoHook)return[];videoHook.assertCurrent();return[{sql:"?>strftime('%Y-%m-%dT%H:%M:%fZ','now')",bindings:[new Date(videoHook.deadlineMs).toISOString()],deadlineMs:videoHook.deadlineMs}];};
- const liveAssertions=(recoveredScene?:NonNullable<typeof sceneStored>)=>[...(sponsor?.assertions??[]),...videoLifetimeAssertions(),...authority.assertions,...(recoveredScene?recoveredScene.assertions:[...sceneAssertions,...(sceneStored?.assertions??[])]),...audioAssertions,...(model3dPublication?.assertions(model3dAssertions)??model3dAssertions),...storyboardSourceAssertions,...videoSourceAssertions,...sceneEnvelopeAssertions,...storyboardCompletionAssertions,...videoCompletionAssertions,...(projectJobAuthority?[projectJobAuthority]:[]),outputScopeAuthority(scope,"request"),{sql:"EXISTS(SELECT 1 FROM document_jobs WHERE job_id=? AND owner_id=? AND stream_id=? AND correlation_id=? AND (status IN('running','committing') AND lease_expires_at>MAX(?,strftime('%Y-%m-%dT%H:%M:%fZ','now')) AND lease_expires_at>=? OR status='completed'))",bindings:[job.job_id,user.userId,job.stream_id,job.correlation_id,new Date().toISOString(),job.lease_expires_at]},{sql:"EXISTS(SELECT 1 FROM output_execution_grants WHERE scope_key=? AND grant_id=? AND actor_user_id=? AND context_id IS ? AND status IN('authorized','active') AND expires_at>MAX(?,strftime('%Y-%m-%dT%H:%M:%fZ','now')))",bindings:[scope.key,slot.grantId,scope.actorUserId,scope.contextId,new Date().toISOString()]}];
- const settings=authority.targetPreflight.settings as OutputNativeSettings;
+ const liveAssertions=(recoveredScene?:NonNullable<typeof sceneStored>)=>{assertGuestCurrent();return [...(sponsor?.assertions??[]),...videoLifetimeAssertions(),...authority.assertions,...(recoveredScene?recoveredScene.assertions:[...sceneAssertions,...(sceneStored?.assertions??[])]),...audioAssertions,...(model3dPublication?.assertions(model3dAssertions)??model3dAssertions),...storyboardSourceAssertions,...videoSourceAssertions,...sceneEnvelopeAssertions,...storyboardCompletionAssertions,...videoCompletionAssertions,...(projectJobAuthority?[projectJobAuthority]:[]),...(guest?guest.view.assertions:[outputScopeAuthority(scope,"request")]),{sql:"EXISTS(SELECT 1 FROM document_jobs WHERE job_id=? AND owner_id=? AND stream_id=? AND correlation_id=? AND (status IN('running','committing') AND lease_expires_at>MAX(?,strftime('%Y-%m-%dT%H:%M:%fZ','now')) AND lease_expires_at>=? OR status='completed'))",bindings:[job.job_id,actorUserId,job.stream_id,job.correlation_id,new Date().toISOString(),job.lease_expires_at]},{sql:"EXISTS(SELECT 1 FROM output_execution_grants WHERE scope_key=? AND grant_id=? AND actor_user_id=? AND context_id IS ? AND status IN('authorized','active') AND expires_at>MAX(?,strftime('%Y-%m-%dT%H:%M:%fZ','now')))",bindings:[scope.key,slot.grantId,scope.actorUserId,scope.contextId,new Date().toISOString()]}];};
  if(settings.kind!==job.kind)throw new OutputConflictError("output_job_route_mismatch",403);
  const model3dPayload=model3dProof?await readOutputModel3dPayload(settings.payload):null;
  if(model3dProof&&!model3dPayload)throw new OutputConflictError("output_model3d_contract_unsupported",403);
  const refreshModel3d=model3dProof?async()=>{
-  const refreshed=await preflightOutputNativeTarget({env,request:new Request("https://output-execution.invalid"),scope,principal:user,confirmedPlan:authority.confirmedPlan,target:authority.target,context:authority.context,ownerHead:authority.sourceEpoch.head,sourceEvents:authority.events,sourceAssertions:authority.assertions,sourceDigest:authority.sourceDigest,requirementsDigest:authority.requirementsDigest});
+  const refreshed=await preflightOutputNativeTarget({env,request:new Request("https://output-execution.invalid"),scope,principal:canonicalUser(),confirmedPlan:authority.confirmedPlan,target:authority.target,context:authority.context,ownerHead:authority.sourceEpoch.head,sourceEvents:authority.events,sourceAssertions:authority.assertions,sourceDigest:authority.sourceDigest,requirementsDigest:authority.requirementsDigest});
   const proof=outputModel3dPreflightAssertions(refreshed),payload=refreshed.available?await readOutputModel3dPayload((refreshed.settings as OutputNativeSettings).payload):null;
   if(!proof||!payload||!model3dPayload||scope.kind!=="personal"||scope.contextId||payload.preview.requestId!==job.job_id||slot.jobId!==job.job_id||!model3dMiniAppAttemptMatches(payload.preview,slot)
    ||await outputDigest(refreshed)!==slot.routeDigest)throw new OutputConflictError("output_model3d_original_attempt_required",403);
@@ -195,7 +301,7 @@ export async function createOutputEventExecution(env:WorkerEnv,user:PilotUser,jo
  if(refreshModel3d)await refreshModel3d();
  const audioPayload=audioProof?readOutputAudioPayload(settings.payload):null;
  const refreshAudio=audioProof?async()=>{
-  const refreshed=await preflightOutputNativeTarget({env,request:new Request("https://output-execution.invalid"),scope,principal:user,confirmedPlan:authority.confirmedPlan,target:authority.target,context:authority.context,ownerHead:authority.sourceEpoch.head,sourceEvents:authority.events,sourceAssertions:authority.assertions,sourceDigest:authority.sourceDigest,requirementsDigest:authority.requirementsDigest});
+  const refreshed=await preflightOutputNativeTarget({env,request:new Request("https://output-execution.invalid"),scope,principal:canonicalUser(),confirmedPlan:authority.confirmedPlan,target:authority.target,context:authority.context,ownerHead:authority.sourceEpoch.head,sourceEvents:authority.events,sourceAssertions:authority.assertions,sourceDigest:authority.sourceDigest,requirementsDigest:authority.requirementsDigest});
   const proof=outputAudioPreflightAssertions(refreshed),preview=parseAudioMiniAppCostPreview((refreshed.settings as Record<string,unknown>).costPreview);
   if(!audioPayload||!proof||!preview||preview.requestId!==job.job_id||slot.jobId!==job.job_id||slot.attemptOrdinal!==0||slot.previousSlotId||await outputDigest(refreshed)!==slot.routeDigest)throw new OutputConflictError("output_audio_source_changed",403);
   requireAudioMiniAppCostApproval(parsed(job.request_json).audioCostConsent,(settings as unknown as Record<string,unknown>).costPreview,preview);
@@ -213,7 +319,7 @@ export async function createOutputEventExecution(env:WorkerEnv,user:PilotUser,jo
   const captured=outputScenePreflightProof(scenePreflight);
   const reused=Boolean(sceneStored&&captured?.prepared.sourceVersion
     &&JSON.stringify(captured.prepared.sourceVersion)===JSON.stringify(sceneStored.witness.successor));
-  const refreshed=reused?scenePreflight:await preflightOutputNativeTarget({env,request:new Request("https://output-execution.invalid"),scope,principal:user,confirmedPlan:authority.confirmedPlan,target:authority.target,context:authority.context,ownerHead:authority.sourceEpoch.head,sourceEvents:authority.events,sourceAssertions:authority.assertions,sourceDigest:authority.sourceDigest,requirementsDigest:authority.requirementsDigest,...(sceneStored?{sceneSourceVersion:sceneStored.witness.successor}:{})});
+  const refreshed=reused?scenePreflight:await preflightOutputNativeTarget({env,request:new Request("https://output-execution.invalid"),scope,principal:canonicalUser(),confirmedPlan:authority.confirmedPlan,target:authority.target,context:authority.context,ownerHead:authority.sourceEpoch.head,sourceEvents:authority.events,sourceAssertions:authority.assertions,sourceDigest:authority.sourceDigest,requirementsDigest:authority.requirementsDigest,...(sceneStored?{sceneSourceVersion:sceneStored.witness.successor}:{})});
   const proof=outputScenePreflightProof(refreshed);
   const payload=refreshed.available?await readOutputScenePayload((refreshed.settings as OutputNativeSettings).payload):null;
   if(!proof||!payload||!scenePayload||proof.requestId!==job.job_id||proof.requestId!==slot.jobId||slot.attemptOrdinal!==0||slot.previousSlotId
@@ -236,7 +342,7 @@ export async function createOutputEventExecution(env:WorkerEnv,user:PilotUser,jo
   return proof.prepared;
  }:undefined;
  if(refreshScene)await refreshScene();
- const billingOwner=financial?.payerUserId??user.billingUserId??user.userId;
+ const billingOwner=financial?.payerUserId??canonicalUser().billingUserId??actorUserId;
  const checkpoint=parsed(job.result_json);
  const period=checkpoint.costReservationPeriod;
  const artifactKind=job.kind==="generate"?"image":String(settings.payload.artifactKind);
@@ -245,16 +351,29 @@ export async function createOutputEventExecution(env:WorkerEnv,user:PilotUser,jo
  const periodDeadline=Date.parse(`${period}-01T00:00:00.000Z`);
  const nextPeriod=Number.isFinite(periodDeadline)?new Date(periodDeadline):null;
  nextPeriod?.setUTCMonth(nextPeriod.getUTCMonth()+1);
- const dispatchDeadline=Math.min(nextPeriod?.getTime()??0,...[...(sponsor?.assertions??[]),...authority.assertions,...sceneAssertions,...audioAssertions,...model3dAssertions,...storyboardSourceAssertions,...videoSourceAssertions].flatMap(assertion=>assertion.deadlineMs===undefined?[]:[Number.isFinite(assertion.deadlineMs)?assertion.deadlineMs:0]));
+ const dispatchDeadline=Math.min(nextPeriod?.getTime()??0,...(guest?[guest.view.expiresAtMs]:[]),...[...(sponsor?.assertions??[]),...authority.assertions,...sceneAssertions,...audioAssertions,...model3dAssertions,...storyboardSourceAssertions,...videoSourceAssertions].flatMap(assertion=>assertion.deadlineMs===undefined?[]:[Number.isFinite(assertion.deadlineMs)?assertion.deadlineMs:0]));
  let dispatchStopError:OutputConflictError|null=null;
- const assertDispatchDeadline=()=>{if(dispatchStopError)throw dispatchStopError;const leaseDeadline=Date.parse(String(job.lease_expires_at));if(!Number.isFinite(dispatchDeadline)||!Number.isFinite(leaseDeadline)||Date.now()>=Math.min(dispatchDeadline,leaseDeadline)){
+ const assertDispatchDeadline=()=>{assertGuestCurrent();if(dispatchStopError)throw dispatchStopError;const leaseDeadline=Date.parse(String(job.lease_expires_at));if(!Number.isFinite(dispatchDeadline)||!Number.isFinite(leaseDeadline)||Date.now()>=Math.min(dispatchDeadline,leaseDeadline)){
   dispatchStopError=new OutputConflictError("output_execution_deadline_expired",403);throw dispatchStopError;
  }};
  const localStops=new Set<string>();
  const claimedCalls=new Map<string,{callKey:string;provider:string;model:string;operation:string;pending:boolean;dispatched:boolean;settled?:boolean;requestDigest:string;storyboardBinding?:string;checkpointed:boolean}>();
  const observedReceipts=new Map(providerSubmissions(checkpoint).map(receipt=>[receipt.clientRequestId,receipt]));
  const reference={scopeKey:slot.scopeKey,grantId:slot.grantId,slotId:slot.slotId,planRevisionId:slot.planRevisionId,targetId:slot.targetId,targetContractDigest:slot.targetContractDigest,sourceDigest:slot.sourceDigest};
- const guardedEnvironment=guardOutputPrivateWrites(env,scope,slot,async()=>liveAssertions(),{retentionPolicy:binding.retentionPolicy,storyboardCompletionJson:()=>storyboardCompletionJson,videoCompletionJson:()=>videoCompletionJson,model3dCompletionJson:()=>model3dCompletionJson});
+ const guardedEnvironment=guardOutputPrivateWrites(env,scope,slot,async()=>{if(guest)await refreshGuest();return liveAssertions();},{retentionPolicy:binding.retentionPolicy,storyboardCompletionJson:()=>storyboardCompletionJson,videoCompletionJson:()=>videoCompletionJson,model3dCompletionJson:()=>model3dCompletionJson,...(guest?{onStorageStage:()=>assertDispatchDeadline()}: {})});
+ if(guest){
+  const nativeMedia=guardedEnvironment.MEDIA;
+  guardedEnvironment.MEDIA=new Proxy(nativeMedia,{get(target,key){
+   if(key==="put")return async(...args:Parameters<WorkerEnv["MEDIA"]["put"]>)=>{
+    assertDispatchDeadline();
+    const stored=await target.put(...args);
+    // The native guard has also awaited its final D1 acknowledgement. A stale
+    // local request cannot carry that result on to private publication.
+    assertDispatchDeadline();return stored;
+   };
+   const value=Reflect.get(target,key,target);return typeof value==="function"?value.bind(target):value;
+  }});
+ }
  let publicationScopesComplete=scope.kind==="personal";
  let sponsorRuntimeControl:EventExecutionControl|null=null;
  let sponsorRuntimeSignal:AbortSignal|null=null;
@@ -302,7 +421,7 @@ function audioProofHasError(value: unknown) {
   requireAudioRuntime(control);
   const epoch=++audioVerificationEpoch;audioDispatchEvidence=null;
   const current=()=>{requireAudioRuntime(control);if(epoch!==audioVerificationEpoch)throw new OutputConflictError("sponsor_audio_handoff_changed",403);};
-  await requireSponsorExecution(sponsorAuthority,env,user.userId,{jobId:job.job_id,grantId:slot.grantId,scopeKey:scope.key});current();
+  await requireSponsorExecution(sponsorAuthority,env,actorUserId,{jobId:job.job_id,grantId:slot.grantId,scopeKey:scope.key});current();
   if(!refreshAudio||!sponsorAudioOwner)throw new OutputConflictError("sponsor_audio_handoff_changed",403);
   await refreshAudio();current();
   const evidence=await prepareAudioSponsorDispatchEvidence(sponsorAudioOwner,{nativePreflight:audioPreflight,control,signal:control.signal});current();
@@ -317,7 +436,7 @@ function audioProofHasError(value: unknown) {
   current();requireAudioSponsorDispatchEvidence(evidence,control);audioDispatchEvidence=evidence;requireAudioDispatchCurrent();
  };
  const refreshCurrentAudioDispatch=async()=>{if(sponsoredAudio){if(!audioRuntimeControl)throw new OutputConflictError("sponsor_audio_handoff_changed",403);await refreshAudioDispatch(audioRuntimeControl);requireAudioDispatchCurrent();}};
- const output:OutputEventExecution={guardedEnvironment,financialPayerUserId:billingOwner,...(financial?{financialAssertions:[financial.assertion],sponsorFinancialBinding:sponsor!.financial}:{}),...(sceneProof?{withSourceTransition:outputSourceTransition()}:{}),...(sponsoredAudio?{
+ const output:OutputEventExecution={guardedEnvironment,financialPayerUserId:billingOwner,...(financial?{financialAssertions:[financial.assertion],sponsorFinancialBinding:financialBinding!}:{}),...(sceneProof?{withSourceTransition:outputSourceTransition()}:{}),...(sponsoredAudio?{
   async refreshSponsorAudioDispatch(control:EventExecutionControl){await refreshAudioDispatch(control);requireAudioDispatchCurrent();},
   requireSponsorAudioDispatchCurrent(control:EventExecutionControl){requireAudioRuntime(control);requireAudioDispatchCurrent();},
  }:{}),...(sponsoredScene?{
@@ -404,6 +523,7 @@ function audioProofHasError(value: unknown) {
    message:"The current source or execution authorization expired before this provider call could be sent. Earlier usage and unresolved allowances are retained; check current access before starting other work.",retryable:false,retryAfterMs:null,requestId:null,httpStatus:403}:null,
   sourceEvents:authority.events,sourceHead:authority.head,
   async eventAppendCommitted(events){
+   if(guest)await refreshGuest();
    if(!events.length||events.length>8||events.some(event=>event.streamId!==job.stream_id||event.correlationId!==job.correlation_id))return false;
    let recoveredScene:NonNullable<typeof sceneStored>|undefined;
    if(sceneStored){
@@ -423,12 +543,18 @@ function audioProofHasError(value: unknown) {
      .bind(...values.slice(0,13),values[16],values[16],values[13],values[14],values[15],values[16]);
    });
    try{const statements=[...liveAssertions(recoveredScene).flatMap(assertion=>outputAssertionStatements(env,assertion)),...checks],results=await env.DB.batch(statements);
-    if(!Array.isArray(results)||results.length!==statements.length||Array.from({length:statements.length},(_,i)=>i).some(i=>results[i]?.success!==true)
+    if(guest){
+     if(!guestImageBatchAcknowledged(results,statements.length)||Array.from({length:checks.length},(_,index)=>{
+      const rows=guestImageOwn(guestImageOwn(results,statements.length-checks.length+index),"results");
+      return guestImageOwn(rows,"length")!==1||guestImageOwn(guestImageOwn(rows,0),"present")!==1;
+     }).some(Boolean))return false;
+    }else if(!Array.isArray(results)||results.length!==statements.length||Array.from({length:statements.length},(_,i)=>i).some(i=>results[i]?.success!==true)
       ||results.slice(-checks.length).some(result=>!Array.isArray(result.results)||result.results.length!==1||(result.results[0] as {present?:unknown}|undefined)?.present!==1))return false;
-    if(recoveredScene){if(sponsorSceneOwner)invalidateSceneSponsorDispatch(sponsorSceneOwner);sceneStored=recoveredScene;sceneTransition=null;await refreshScene?.();}return true;}
+    assertGuestCurrent();if(recoveredScene){if(sponsorSceneOwner)invalidateSceneSponsorDispatch(sponsorSceneOwner);sceneStored=recoveredScene;sceneTransition=null;await refreshScene?.();}return true;}
    catch{return false;}
   },
   eventWriteSidecars:events=>{
+   assertGuestCurrent();
    model3dPublication?.capture(events,model3dCompletionJson);
    sceneTransition=sceneStored?prepareSceneJobSourceTransition(env,{scope,slot,correlationId:job.correlation_id,
      predecessor:sceneStored.witness.successor,previousRaw:sceneStored.raw,phase:'execution',events}):null;
@@ -441,21 +567,22 @@ function audioProofHasError(value: unknown) {
     bindings:[JSON.stringify(events.map(event=>event.eventId)),events.length,JSON.stringify(events.map(event=>event.eventId)),job.stream_id,events[0]!.sequence-1]}):[]),
    ...prepareOutputImageProviderHealth(env,{job,slot,events,routes:settings.calls,claimedCalls,observedReceipts}),...prepareOutputNativeProjectPublicationStatements(env,{scope,slot,job},events),...(sceneTransition?.after??[])];
   },
-  eventWriteCommitted:results=>{if(scope.kind==="project")publicationScopesComplete=Number(results.at(-1)?.meta.changes??0)===1;
+  eventWriteCommitted:results=>{assertGuestCurrent();if(scope.kind==="project")publicationScopesComplete=Number(results.at(-1)?.meta.changes??0)===1;
     if(sceneTransition){const receipt=sceneTransition.acknowledge(results.slice(-sceneTransition.after.length));
       if(sponsorSceneOwner)invalidateSceneSponsorDispatch(sponsorSceneOwner);sceneStored=sceneJobSourceWitnessAssertions(scope,slot,job.correlation_id,receipt.raw);sceneTransition=null;}},
   publicationScopesComplete:()=>publicationScopesComplete,reference,settings:settings.payload,...(settings.imageRender?{imageRender:settings.imageRender}:{}),reservations:{reservationId:slot.tokenReservationId,costReservationId:slot.costReservationId,costReservationPeriod:period,costReservationMicrousd:slot.maximumMicrousd,maximumTokens:slot.maximumTokens},
-  async assertContext(context){if(context.documentRevision!==authority.context.documentRevision||await outputDigest(context.snapshot)!==await outputDigest(authority.context.snapshot))throw new OutputConflictError("output_source_changed",409);},
+  async assertContext(context){if(guest)await refreshGuest();if(context.documentRevision!==authority.context.documentRevision||await outputDigest(context.snapshot)!==await outputDigest(authority.context.snapshot))throw new OutputConflictError("output_source_changed",409);assertGuestCurrent();},
   async retainFalImageRequest(request,planning){
+   if(guest)throw new OutputConflictError("output_guest_image_only",403);
    const call=claimedCalls.get(request.attempt.clientRequestId);
    if(!call||call.callKey!=="image:initial"||call.provider!=="fal"||call.model!==request.contract.model||call.pending||call.dispatched)throw new OutputConflictError("output_fal_checkpoint_call_mismatch",403);
-   await retainOutputFalImageCheckpoint(guardedEnvironment,user,job,scope,slot,request,planning);
+   await retainOutputFalImageCheckpoint(guardedEnvironment,canonicalUser(),job,scope,slot,request,planning);
   },
   async retainStoryboardFrameRequest(request,plan,frameIndex){
    const mapped=await storyboardFrameRequest(plan,frameIndex,request),call=claimedCalls.get(request.attempt.clientRequestId);
    if(!call||artifactKind!=="storyboard"||call.callKey!==mapped.attempt.logicalCallKey||call.requestDigest!==mapped.attempt.requestDigest
      ||call.storyboardBinding!==plan.bindingSha256||call.provider!=="fal"||call.model!==request.contract.model||call.pending||call.dispatched||call.checkpointed)throw new OutputConflictError("output_storyboard_checkpoint_call_mismatch",403);
-   await retainStoryboardFrameCheckpoint(guardedEnvironment,user,job,scope,slot,request,plan,frameIndex);
+   await retainStoryboardFrameCheckpoint(guardedEnvironment,canonicalUser(),job,scope,slot,request,plan,frameIndex);
    call.checkpointed=true;
   },
   async retainStoryboardEnvelope(envelope){
@@ -495,7 +622,7 @@ function audioProofHasError(value: unknown) {
    try{const value=await work();lease.assertCurrent();return value;}finally{videoHook=null;}
   },
   async readVideoReference(lease){
-   if(artifactKind!=="video"||videoHook!==lease)throw new OutputConflictError("output_video_hook_invalid",403);
+   if(!currentInput||artifactKind!=="video"||videoHook!==lease)throw new OutputConflictError("output_video_hook_invalid",403);
    return readOutputVideoReference(currentInput,lease,async()=>{await env.DB.batch(liveAssertions().flatMap(assertion=>outputAssertionStatements(env,assertion)));});
   },
   async retainVideoPlannerEnvelope(envelope,lease){
@@ -508,8 +635,17 @@ function audioProofHasError(value: unknown) {
    if(artifactKind!=="video"||videoHook!==lease||!call||call.callKey!=="video:initial"||!call.pending||!call.dispatched||!call.checkpointed||call.requestDigest!==envelope.requestDigest)throw new OutputConflictError("output_video_envelope_call_mismatch",403);
    await retainOutputVideoMediaEnvelope(guardedEnvironment,scope,slot,job,envelope,lease);
   },
-  async beforeSourceTransmission(){if(sponsoredAudio)await refreshCurrentAudioDispatch();else if(refreshAudio)await refreshAudio();if(refreshModel3d){await refreshModel3d();assertDispatchDeadline();}await env.DB.batch(liveAssertions().flatMap(assertion=>outputAssertionStatements(env,assertion)));requireAudioDispatchCurrent();},
+  async beforeSourceTransmission(){
+   if(guest)await refreshGuest();
+   if(sponsoredAudio)await refreshCurrentAudioDispatch();else if(refreshAudio)await refreshAudio();
+   if(refreshModel3d){await refreshModel3d();assertDispatchDeadline();}
+   const statements=liveAssertions().flatMap(assertion=>outputAssertionStatements(env,assertion)),results=await env.DB.batch(statements);
+   requireAudioDispatchCurrent();assertGuestCurrent();
+   if(guest&&!guestImageBatchAcknowledged(results,statements.length))throw new OutputConflictError("output_guest_source_acknowledgement_uncertain",403);
+  },
   async beforeProviderAttempt(attempt,lease){
+   if(guest)await refreshGuest();
+   if(guest&&(lease||["narrative","scene","video","videoPlanning","storyboardPlanning","storyboard","audio","falImage","presentationRoute"].some(key=>key in attempt)))throw new OutputConflictError("output_guest_image_only",403);
    if(artifactKind==="video"&&(!lease||videoHook!==lease))throw new OutputConflictError("output_video_hook_invalid",403);
    lease?.assertCurrent();
    if(sponsoredAudio)await refreshCurrentAudioDispatch();else if(refreshAudio)await refreshAudio();if(refreshModel3d)await refreshModel3d();assertDispatchDeadline();
@@ -551,14 +687,14 @@ function audioProofHasError(value: unknown) {
       AND NOT EXISTS(SELECT 1 FROM json_each(COALESCE(json_extract(live.result_json,'$.providerSubmissions'),'{}')) receipt
         WHERE json_extract(receipt.value,'$.status')='completed' AND (COALESCE(json_type(receipt.value,'$.totalTokens'),'')<>'integer' OR json_extract(receipt.value,'$.totalTokens')<0))
       AND (SELECT COALESCE(SUM(CASE WHEN json_extract(receipt.value,'$.status')='completed' THEN json_extract(receipt.value,'$.totalTokens') ELSE 0 END),0)
-        FROM json_each(COALESCE(json_extract(live.result_json,'$.providerSubmissions'),'{}')) receipt)+?<=?)`,bindings:[job.job_id,user.userId,job.stream_id,job.correlation_id,job.attempt_count,new Date().toISOString(),attempt.maximumInputTokens+attempt.maximumOutputTokens,slot.maximumTokens]},
+        FROM json_each(COALESCE(json_extract(live.result_json,'$.providerSubmissions'),'{}')) receipt)+?<=?)`,bindings:[job.job_id,actorUserId,job.stream_id,job.correlation_id,job.attempt_count,new Date().toISOString(),attempt.maximumInputTokens+attempt.maximumOutputTokens,slot.maximumTokens]},
     {sql:`EXISTS(SELECT 1 FROM cost_budget_reservations cost JOIN budget_reservations token
       ON token.owner_id=cost.owner_id AND token.stream_id=cost.stream_id AND token.correlation_id=cost.correlation_id AND token.period=cost.period AND token.operation=cost.operation
       WHERE cost.reservation_id=? AND token.reservation_id=? AND cost.owner_id=? AND cost.stream_id=? AND cost.correlation_id=? AND cost.operation=? AND cost.period=?
        AND cost.reserved_microusd=? AND token.reserved_tokens=? AND cost.status='executing' AND token.status='active')`,bindings:[slot.costReservationId,slot.tokenReservationId,billingOwner,job.stream_id,job.correlation_id,operation,period,slot.maximumMicrousd,slot.maximumTokens]}];
    if(sponsoredAudio)requireAudioDispatchCurrent();
-   const claim=await claimOutputProviderCall(env,{scope,slotId:slot.slotId,jobId:slot.jobId,callKey,clientRequestId:attempt.clientRequestId,requestDigest:attempt.requestDigest,routeDigest:slot.routeDigest,stageKey:callKey,provider:route.provider,model:route.model,maximumMicrousd:route.maximumMicrousd,expectedHead:authority.head,sourceEpoch:authority.sourceEpoch,sourceDigest:authority.sourceDigest,assertions});
-   if(sponsoredAudio)requireAudioDispatchCurrent();
+   const claim=guest?await claimGuestImageProviderCall(env,guest.request,guest.authority,attempt):await claimOutputProviderCall(env,{scope,slotId:slot.slotId,jobId:slot.jobId,callKey,clientRequestId:attempt.clientRequestId,requestDigest:attempt.requestDigest,routeDigest:slot.routeDigest,stageKey:callKey,provider:route.provider,model:route.model,maximumMicrousd:route.maximumMicrousd,expectedHead:authority.head,sourceEpoch:authority.sourceEpoch,sourceDigest:authority.sourceDigest,assertions});
+   if(sponsoredAudio)requireAudioDispatchCurrent();assertGuestCurrent();
    if(!claim.claimed)throw new OutputConflictError("output_provider_call_already_consumed",409);
    claimedCalls.set(attempt.clientRequestId,{callKey,provider:route.provider,model:route.model,operation:callKey.startsWith("planning:")?"planning":callKey==="audio:initial"?"audio":callKey==="model3d:initial"?"model3d":callKey==="video:initial"?"video":"image",pending:false,dispatched:false,requestDigest:attempt.requestDigest,checkpointed:false,...(storyboard?{storyboardBinding:storyboard.plan.bindingSha256}:{})});
    if(artifactKind==="video"){lease!.assertCurrent();await retainOutputVideoRequestCheckpoint(guardedEnvironment,scope,slot,job,attempt,lease!);claimedCalls.get(attempt.clientRequestId)!.checkpointed=true;}
@@ -578,7 +714,7 @@ function audioProofHasError(value: unknown) {
    if(!call||receipt.provider!==call.provider||receipt.model!==call.model||receipt.operation!==call.operation)throw new OutputConflictError("output_provider_call_missing",403);
    // The immutable pending call already exists before the adapter's legacy
    // checkpoint. A failed checkpoint keeps that durable exposure reserved.
-   if(receipt.status==="pending"){call.pending=true;await refreshCurrentAudioDispatch();requireAudioDispatchCurrent();return;}
+   if(receipt.status==="pending"){if(guest)await refreshGuest();call.pending=true;await refreshCurrentAudioDispatch();requireAudioDispatchCurrent();assertGuestCurrent();return;}
    // The independent operational checkpoint contains payment identities/counts only.
    // It remains writable after erasure and never copies an in-memory source/result body.
    const safe:PaidProviderSubmission={clientRequestId:receipt.clientRequestId,provider:receipt.provider,operation:receipt.operation,model:receipt.model,status:receipt.status};
@@ -592,12 +728,15 @@ function audioProofHasError(value: unknown) {
     ...(artifactKind==="slides"?{presentationProviderSubmission:"confirmed"}:{}),
     generationReceipt:{provider:receipt.provider,model:receipt.model,artifact_kind:artifactKind,provider_request_status:"submitted",source_transmission_status:"transmitted",reservation_status:"executing"}};
    if(artifactKind==="video"&&!videoHook)throw new OutputConflictError("output_video_hook_invalid",403);
-   const financialCheckpoint=prepareOutputProviderFinancialCheckpoint(env,{scopeKey:scope.key,slotId:slot.slotId,callKey:call.callKey,
-    jobId:job.job_id,ownerId:user.userId,streamId:job.stream_id,correlationId:job.correlation_id,receipt:safe,patch:financialPatch});
+   const financialCheckpoint=prepareOutputProviderFinancialCheckpoint(financialEnvironment,{scopeKey:scope.key,slotId:slot.slotId,callKey:call.callKey,
+    jobId:job.job_id,ownerId:actorUserId,streamId:job.stream_id,correlationId:job.correlation_id,receipt:safe,patch:financialPatch});
+   const requireFinancialIdentity=()=>{if(guest)sponsorFinancialIdentity(financialBinding!,env,actorUserId,job.job_id);};
+   requireFinancialIdentity();
    const observationAssertions=[...(financial?[financial.assertion]:[]),...(artifactKind==="video"?videoLifetimeAssertions():[])];
    const known=Number.isSafeInteger(receipt.costMicrousd)&&Number(receipt.costMicrousd)>=0;
    try{
-    await settleOutputProviderCall(env,{assertions:observationAssertions,financialCheckpoint,scopeKey:scope.key,slotId:slot.slotId,callKey:call.callKey,clientRequestId:receipt.clientRequestId,status:receipt.status==="rejected"?"rejected":receipt.status==="completed"&&known?"settled":"uncertain",usedMicrousd:receipt.status==="rejected"?0:receipt.status==="completed"&&known?Number(receipt.costMicrousd):null,...(receipt.providerRequestId?{providerResponseId:receipt.providerRequestId}:{})});
+    await settleOutputProviderCall(financialEnvironment,{assertions:observationAssertions,financialCheckpoint,scopeKey:scope.key,slotId:slot.slotId,callKey:call.callKey,clientRequestId:receipt.clientRequestId,status:receipt.status==="rejected"?"rejected":receipt.status==="completed"&&known?"settled":"uncertain",usedMicrousd:receipt.status==="rejected"?0:receipt.status==="completed"&&known?Number(receipt.costMicrousd):null,...(receipt.providerRequestId?{providerResponseId:receipt.providerRequestId}:{})});
+    requireFinancialIdentity();
    }catch(error){
     // Preserve the existing source-free reconciliation witness if a transient
     // ledger/storage fault prevents the combined commit. This is not successful
@@ -605,7 +744,9 @@ function audioProofHasError(value: unknown) {
     // the fallback refuse conflicting IDs, terminal regressions and stale Video
     // authority; maintenance can settle an exact retained receipt later.
     if(!(error instanceof OutputConflictError))try{
-     await retainUnsettledOutputProviderObservation(env,financialCheckpoint,observationAssertions);
+     requireFinancialIdentity();
+     await retainUnsettledOutputProviderObservation(financialEnvironment,financialCheckpoint,observationAssertions);
+     requireFinancialIdentity();
     }catch{/* The original failure and pending provider call retain uncertainty. */}
     throw error;
    }
@@ -615,6 +756,14 @@ function audioProofHasError(value: unknown) {
    // retaining this monetary witness does not itself authorize any private write.
   },
  };
+ if(guest){
+  // Required cross-family hooks remain fail-closed; optional hooks are absent.
+  delete output.retainStoryboardFrameRequest;
+  delete output.retainStoryboardEnvelope;
+  delete output.verifyStoryboardCompletion;
+  delete output.storyboardMediaDeadlineMs;
+ }
+ assertGuestCurrent();
  return output;
 }
 

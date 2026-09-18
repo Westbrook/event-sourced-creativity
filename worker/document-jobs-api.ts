@@ -1,3 +1,4 @@
+import { requireGuestImageExecution, prepareGuestImageJobClaim, type GuestImageExecutionAuthority } from "./experience-guest-image-execution.ts";
 import { readSponsorJobStatus, sponsorJobReadPredicate } from "./experience-sponsor-job-read.ts";
 import { stillImageEnvironment } from "./still-image-policy.ts";
 import { outputJobIsDurable, requireOutputDurableBinding } from "./output-durable-control.ts";
@@ -22,14 +23,14 @@ import { assertOutputAdmissionRequest, assertOutputAdmissionActor, assertOutputA
 import { readExistingPrincipalRequest } from "./principal-request-core.ts";
 import { OUTPUT_NATIVE_EXECUTION_POLICY, readOutputNativeExecutionPolicy, type OutputNativeExecutionPolicy } from "../src/model/output-execution-policy.ts";
 import { outputSchemaIsReady } from "./output-schema-state.ts";
-import { loadOutputJobBinding, createOutputEventExecution, synchronizeOutputJobOutcome, prepareOutputJobOutcomeStatements, reconcileKnownOutputProviderReceipts, type OutputExecutionProof, type OutputEventExecution } from "./output-execution-control.ts";
+import { loadOutputJobBinding, createOutputEventExecution, createGuestImageEventExecution, synchronizeOutputJobOutcome, prepareOutputJobOutcomeStatements, reconcileKnownOutputProviderReceipts, type OutputExecutionProof, type OutputEventExecution } from "./output-execution-control.ts";
 import { prepareSceneJobSourceClaim } from './scene-job-source-witness.ts';
 import { expiredOriginalSceneJobFailure, expiredOriginalAudioJobFailure, expiredOriginalVideoJobFailure, expiredOriginalModel3dJobFailure, type SceneTerminalWitness } from './output-expired-scene-job.ts';
 import { outputProofReadStatements } from "./output-disclosure-proof.ts";
 import { retainedOutputBodyAssertions, rememberOutputPrivateBody, type OutputScope, ensureOutputRequirementsSchema, outputAssertionStatements, outputScopeAuthority, OutputConflictError, type OutputSqlAssertion } from "./output-requirements-ledger.ts";
 import { resolveOutputExecutionAuthority, prepareOutputExecutionProof } from "./output-requirements-api.ts";
 import { MAX_MANUAL_PRESENTATION_SLIDES, PresentationCountPolicyError, readSlideCountPolicy, resolvePresentationCountRequest, sameSlideCountPolicy, slideCountAccepted, type SlideCountPolicy } from "../src/model/presentation-count-policy.ts";
-import { approvedAudioVideoReference, handleEvents } from "./events-api";
+import { approvedAudioVideoReference, handleEvents, executeGuestImageEvents, type EventExecutionControl } from "./events-api";
 import { DEFAULT_EVIDENCE_RETENTION_DAYS, POLICY_VERSION, adoptLegacyCostReservation, costBudgetReservation, hasCapability, loadPrivateContent, loadPrivateProviderResponse, pilotExecutionAllowance, readAccountBudgets, readCostBudgets, reconcileFailedBudgetReservations, releaseBudgetReservationsForCorrelation, releaseCostReservationsForCorrelation, requireConsent, requireUser, settleInterruptedDocumentJobReservations, settleDocumentGenerationBudgets, storePrivateContent, preparePrivateContent, type PilotUser, type ProjectExecutionScope } from "./pilot-policy";
 import { prepareProjectResourceScopeStatement, projectSourceProjectionCurrentAssertion, hasProjectContextCookie, ownerDocumentBudgetScopes, readProjectRequestContext, readProjectSourceEvents, synchronizeProjectScope } from "./project-access";
 import { appendAuditEvent, appendEvents, ensureSchema, EVENT_WRITE_COLUMNS, EVENT_WRITE_STAGE_TRIGGER_SQL, eventWriteBindings, makeEvent, readCorrelatedEvents, readWorkspaceEvents, StaleSequenceError, streamHead, uuidV7, type EventRow, type WorkerEnv, type WorkerExecutionContext } from "./runtime";
@@ -149,6 +150,15 @@ const documentJobProjectSql=(alias:"target"|"candidate"|"active"|"document_jobs"
 ),'')`;
 const TOKEN_RESERVATION_HANDOFF_SQL = "UPDATE budget_reservations SET correlation_id=?,updated_at=? WHERE reservation_id=? AND owner_id=? AND stream_id=? AND correlation_id=? AND operation=? AND status='active' AND EXISTS (SELECT 1 FROM cost_budget_reservations paired WHERE paired.reservation_id=? AND paired.owner_id=budget_reservations.owner_id AND paired.stream_id=budget_reservations.stream_id AND paired.correlation_id=budget_reservations.correlation_id AND paired.operation=budget_reservations.operation AND paired.period=budget_reservations.period AND paired.status IN ('active','executing')) AND EXISTS (SELECT 1 FROM document_jobs job WHERE job.job_id=? AND job.owner_id=? AND job.stream_id=budget_reservations.stream_id AND job.correlation_id=? AND job.attempt_count=? AND job.status='running')";
 const COST_RESERVATION_HANDOFF_SQL = "UPDATE cost_budget_reservations SET correlation_id=?,status=CASE WHEN operation='document-render:storyboard' AND status='executing' THEN 'executing' ELSE 'active' END,updated_at=? WHERE reservation_id=? AND owner_id=? AND stream_id=? AND correlation_id=? AND operation=? AND status IN ('active','executing') AND EXISTS (SELECT 1 FROM budget_reservations paired WHERE paired.reservation_id=? AND paired.owner_id=cost_budget_reservations.owner_id AND paired.stream_id=cost_budget_reservations.stream_id AND paired.correlation_id=? AND paired.operation=cost_budget_reservations.operation AND paired.period=cost_budget_reservations.period AND paired.status='active') AND EXISTS (SELECT 1 FROM document_jobs job WHERE job.job_id=? AND job.owner_id=? AND job.stream_id=cost_budget_reservations.stream_id AND job.correlation_id=? AND job.attempt_count=? AND job.status='running')";
+type NativeJobReservationHandoff={jobId:string;ownerUserId:string;payerUserId:string;streamId:string;previousCorrelationId:string;correlationId:string;attempt:number;updatedAt:string;tokenReservationId:string;costReservationId:string;operation:string};
+/** The exact existing paired-reservation SQL, with distinct storage and payer identities. */
+function nativeJobReservationHandoff(env:WorkerEnv,input:NativeJobReservationHandoff){
+  const i=input;
+  return {
+    token:env.DB.prepare(TOKEN_RESERVATION_HANDOFF_SQL).bind(i.correlationId,i.updatedAt,i.tokenReservationId,i.payerUserId,i.streamId,i.previousCorrelationId,i.operation,i.costReservationId,i.jobId,i.ownerUserId,i.correlationId,i.attempt),
+    cost:env.DB.prepare(COST_RESERVATION_HANDOFF_SQL).bind(i.correlationId,i.updatedAt,i.costReservationId,i.payerUserId,i.streamId,i.previousCorrelationId,i.operation,i.tokenReservationId,i.correlationId,i.jobId,i.ownerUserId,i.correlationId,i.attempt),
+  };
+}
 const UNCERTAIN_PRESENTATION_SUBMISSION_SQL="kind='render_document' AND COALESCE(json_extract(COALESCE(result_json,'{}'),'$.presentationProviderSubmission'),'')='pending'";
 const UNCERTAIN_AUDIO_SUBMISSION_SQL="kind='render_document' AND COALESCE(json_extract(request_json,'$.artifactKind'),'')='audio' AND COALESCE(json_extract(COALESCE(result_json,'{}'),'$.audioProviderSubmission'),'')='pending' AND COALESCE(json_extract(COALESCE(result_json,'{}'),'$.providerJobId'),'')=''";
 const UNCERTAIN_STORYBOARD_SUBMISSION_SQL="kind='render_document' AND COALESCE(json_extract(request_json,'$.artifactKind'),'')='storyboard' AND COALESCE(json_extract(COALESCE(result_json,'{}'),'$.storyboardProviderSubmission'),'') IN ('pending','confirmed')";
@@ -1722,27 +1732,34 @@ async function readJob(env: WorkerEnv, ownerId: string, jobId: string) {
 }
 
 async function refreshGenerationReceipt(env:WorkerEnv,user:PilotUser,row:DocumentJobRow,body:Record<string,unknown>={},failure:ProviderFailureDetail|null=null,interruptedStage="",retainedRow?:DocumentJobRow,persist=true,committedSettlement?:OutputEventExecution["accountSettlement"]){
+  return refreshOwnedGenerationReceipt(env,{ownerUserId:user.userId,streamId:user.streamId,payerUserId:user.billingUserId??user.userId,canonical:user},row,body,failure,interruptedStage,retainedRow,persist,committedSettlement);
+}
+
+type GenerationReceiptIdentity={ownerUserId:string;streamId:string;payerUserId:string;canonical?:PilotUser};
+/** Private storage/financial identity; it carries no account or source authority. */
+async function refreshOwnedGenerationReceipt(env:WorkerEnv,identity:GenerationReceiptIdentity,row:DocumentJobRow,body:Record<string,unknown>={},failure:ProviderFailureDetail|null=null,interruptedStage="",retainedRow?:DocumentJobRow,persist=true,committedSettlement?:OutputEventExecution["accountSettlement"]){
   if(!requiresForegroundDocumentExecution(row))return row;
-  const latest=retainedRow??await readJob(env,user.userId,row.job_id);if(!latest)return row;
+  const latest=retainedRow??await readJob(env,identity.ownerUserId,row.job_id);if(!latest)return row;
   const checkpoint=parseResult(latest);
   const previous=checkpoint.generationReceipt&&typeof checkpoint.generationReceipt==="object"&&!Array.isArray(checkpoint.generationReceipt)?checkpoint.generationReceipt as GenerationReceipt:null;
   if(!previous)return latest;
+  if(previous.artifact_kind==="scene"&&!identity.canonical)throw new Error("document_job_scene_principal_required");
   const appended=Array.isArray(body.appended)?body.appended.filter((event):event is Record<string,unknown>=>Boolean(event&&typeof event==="object"&&!Array.isArray(event))):[];
-  const correlated=appended.length?appended:await readCorrelatedEvents(env,user.streamId,[latest.correlation_id]);
+  const correlated=appended.length?appended:await readCorrelatedEvents(env,identity.streamId,[latest.correlation_id]);
   const payloads=correlated.map((event)=>({type:String(event.type??""),payload:event.payload&&typeof event.payload==="object"&&!Array.isArray(event.payload)?event.payload as Record<string,unknown>:{}}));
   const completed=payloads.find((event)=>["DocumentRenderCompleted","GenerationCompleted","IdeationPreviewCompleted"].includes(event.type))?.payload;
   const budget=payloads.find((event)=>event.type==="BudgetReserved")?.payload;
   const usage=payloads.filter((event)=>event.type==="GenerationUsageRecorded").map((event)=>event.payload);
   const reservationId=String(checkpoint.costReservationId??budget?.cost_reservation_id??usage[0]?.cost_reservation_id??"");
-  const reservation=reservationId?(committedSettlement?.reservation_id===reservationId?committedSettlement:await costBudgetReservation(env,user.billingUserId??user.userId,reservationId)):null;
+  const reservation=reservationId?(committedSettlement?.reservation_id===reservationId?committedSettlement:await costBudgetReservation(env,identity.payerUserId,reservationId)):null;
   const plannerResponses=Array.isArray(checkpoint.plannerResponseIds)?checkpoint.plannerResponseIds.filter(Boolean):[];
   const plannerUsage=checkpoint.plannerUsage&&typeof checkpoint.plannerUsage==="object"?checkpoint.plannerUsage as Record<string,unknown>:{};
   const plannerInput=checkpoint.plannerInput&&typeof checkpoint.plannerInput==="object"?checkpoint.plannerInput as Record<string,unknown>:{};
   const plannerValidation=plannerInput.validation&&typeof plannerInput.validation==="object"?plannerInput.validation as Record<string,unknown>:{};
   const recordedPlannerCalls=Math.max(plannerResponses.length,Math.max(0,Number(plannerInput.provider_request_count??plannerValidation.provider_call_count??0)));
   const stopEvidence=previous.artifact_kind==="scene"&&failure?.code==="scene_paid_authority_changed"
-    ?await readScenePolicyStopEvidence(env,user,latest as unknown as Record<string,unknown>,checkpoint,user.projectExecution):null;
-  const localStop=previous.artifact_kind==="scene"?await readOutputSceneLocalStop(env,latest,user.userId,user.billingUserId??user.userId):null;
+    ?await readScenePolicyStopEvidence(env,identity.canonical!,latest as unknown as Record<string,unknown>,checkpoint,identity.canonical!.projectExecution):null;
+  const localStop=previous.artifact_kind==="scene"?await readOutputSceneLocalStop(env,latest,identity.ownerUserId,identity.payerUserId):null;
   const stoppedRequestId=stopEvidence?.stoppedRequestId??localStop?.stoppedRequestId;
   const submissions=providerSubmissions(checkpoint).filter(entry=>entry.clientRequestId!==stoppedRequestId);
   const provenSceneUnused=(stopEvidence?.unused===true||Boolean(localStop))&&!completed&&plannerResponses.length===0&&!checkpoint.plannerResponseId
@@ -1794,8 +1811,8 @@ async function refreshGenerationReceipt(env:WorkerEnv,user:PilotUser,row:Documen
   if(!persist)return {...latest,result_json:JSON.stringify(result),updated_at:updatedAt};
   const stopGuard=stopEvidence?.guard??localStop?.guard;
   const updated=await env.DB.prepare("UPDATE document_jobs SET result_json=?,updated_at=? WHERE job_id=? AND owner_id=? AND stream_id=? AND correlation_id=? AND status=? AND result_json IS ?"+(stopGuard?" AND ("+stopGuard.sql+")":""))
-    .bind(JSON.stringify(result),updatedAt,latest.job_id,user.userId,user.streamId,latest.correlation_id,latest.status,latest.result_json,...(stopGuard?stopGuard.bindings:[])).run();
-  return Number(updated.meta.changes??0)===1?{...latest,result_json:JSON.stringify(result),updated_at:updatedAt}:await readJob(env,user.userId,row.job_id)??latest;
+    .bind(JSON.stringify(result),updatedAt,latest.job_id,identity.ownerUserId,identity.streamId,latest.correlation_id,latest.status,latest.result_json,...(stopGuard?stopGuard.bindings:[])).run();
+  return Number(updated.meta.changes??0)===1?{...latest,result_json:JSON.stringify(result),updated_at:updatedAt}:await readJob(env,identity.ownerUserId,row.job_id)??latest;
 }
 
 function rowIsStale(row: DocumentJobRow, now = Date.now()) {
@@ -1861,12 +1878,21 @@ async function beginJobCommit(env: WorkerEnv, row: DocumentJobRow, progressMessa
 }
 
 async function runWithHeartbeat<T>(env: WorkerEnv, row: DocumentJobRow,user:PilotUser, operation: (control: { signal: AbortSignal; beginCommit: () => Promise<void>; progress: (stage:string,message:string,patch?:Record<string,unknown>,options?:{financialReceiptPersisted?:true}) => Promise<void> }) => Promise<T>,nativePolicy:OutputNativeExecutionPolicy=OUTPUT_NATIVE_EXECUTION_POLICY,withSourceTransition:NonNullable<OutputEventExecution['withSourceTransition']>=async work=>work()) {
+  const verify=async()=>{if(!row.output_slot_id&&!await activeProjectExecution(env,user,row.document_id,row.job_id))throw new Error("document_job_canceled");};
+  return runOwnedJobHeartbeat(env,row,verify,operation,nativePolicy,withSourceTransition);
+}
+
+type DocumentJobOperationControl={signal:AbortSignal;beginCommit:()=>Promise<void>;progress:(stage:string,message:string,patch?:Record<string,unknown>,options?:{financialReceiptPersisted?:true})=>Promise<void>};
+/** The enclosing canonical or guest wrapper supplies its actual authority check. */
+async function runOwnedJobHeartbeat<T>(env:WorkerEnv,row:DocumentJobRow,verify:()=>Promise<void>,operation:(control:DocumentJobOperationControl)=>Promise<T>,nativePolicy:OutputNativeExecutionPolicy,withSourceTransition:NonNullable<OutputEventExecution["withSourceTransition"]>,ownerSignal?:AbortSignal){
   let settled = false; let value: T | undefined; let failure: unknown;
   const native=Boolean(row.output_slot_id),startedMonotonic=performance.now();let renewals=0;
   const controller = new AbortController(); let commitStarted = false;
+  const ownerCancelled=()=>controller.abort(ownerSignal?.reason??"document_job_canceled");
+  ownerSignal?.addEventListener("abort",ownerCancelled,{once:true});if(ownerSignal?.aborted)ownerCancelled();
+  try {
   // Output's guarded binding includes this exact job/actor/immutable-anchor
   // predicate in every progress, commit, lease-renewal and provider transaction.
-  const verify=async()=>{if(!row.output_slot_id&&!await activeProjectExecution(env,user,row.document_id,row.job_id))throw new Error("document_job_canceled");};
   await verify();
   let progressQueue=Promise.resolve();
   const serializedProgress=(stage:string,message:string,patch?:Record<string,unknown>,options?:{financialReceiptPersisted?:true})=>{
@@ -1899,6 +1925,7 @@ async function runWithHeartbeat<T>(env: WorkerEnv, row: DocumentJobRow,user:Pilo
   }
   if (failure !== undefined) throw failure;
   return value as T;
+  } finally {ownerSignal?.removeEventListener("abort",ownerCancelled);}
 }
 
 async function restoreLegacyCostReservation(env: WorkerEnv, user: PilotUser, row: DocumentJobRow, events: Awaited<ReturnType<typeof readCorrelatedEvents>>) {
@@ -2329,8 +2356,8 @@ export async function runDocumentJob(env: WorkerEnv, user: PilotUser, jobId: str
     const operation=row.kind==="generate"?"image-generation":`document-render:${String(parseRequest(previousRow).artifactKind??"unknown")}`;
     const claimAttempt=env.DB.prepare(`${claimSql} AND EXISTS (SELECT 1 FROM budget_reservations token JOIN cost_budget_reservations cost ON cost.owner_id=token.owner_id AND cost.stream_id=token.stream_id AND cost.correlation_id=token.correlation_id AND cost.operation=token.operation AND cost.period=token.period WHERE token.reservation_id=? AND cost.reservation_id=? AND token.owner_id=? AND token.stream_id=? AND token.correlation_id=? AND token.operation=? AND token.status='active' AND cost.status IN ('active','executing'))`)
       .bind(...claimBindings,tokenReservationId,costReservationId,billingOwnerId,user.streamId,previousRow.correlation_id,operation);
-    const tokenReservationHandoff=env.DB.prepare(TOKEN_RESERVATION_HANDOFF_SQL).bind(attemptCorrelationId,nowIso,tokenReservationId,billingOwnerId,user.streamId,previousRow.correlation_id,operation,costReservationId,jobId,user.userId,attemptCorrelationId,attempt);
-    const costReservationHandoff=env.DB.prepare(COST_RESERVATION_HANDOFF_SQL).bind(attemptCorrelationId,nowIso,costReservationId,billingOwnerId,user.streamId,previousRow.correlation_id,operation,tokenReservationId,attemptCorrelationId,jobId,user.userId,attemptCorrelationId,attempt);
+    const {token:tokenReservationHandoff,cost:costReservationHandoff}=nativeJobReservationHandoff(env,{jobId,ownerUserId:user.userId,payerUserId:billingOwnerId,streamId:user.streamId,
+      previousCorrelationId:previousRow.correlation_id,correlationId:attemptCorrelationId,attempt,updatedAt:nowIso,tokenReservationId,costReservationId,operation});
     const claimStatements=outputBinding
       ? [...sceneClaimPrefix,claimAttempt,...outputAssertionStatements(env,{sql:"changes()=1"}),tokenReservationHandoff,...outputAssertionStatements(env,{sql:"changes()=1"}),costReservationHandoff,...outputAssertionStatements(env,{sql:"changes()=1"}),...outputAdmissionAssertions.flatMap(assertion=>outputAssertionStatements(env,assertion)),...(freshOutput?outputAssertionStatements(env,{sql:"NOT EXISTS(SELECT 1 FROM output_provider_calls WHERE scope_key=? AND slot_id=?)",bindings:[outputBinding.scope.key,outputBinding.slot.slotId]}):[]),...(sceneClaim?.after??[])]
       : [claimAttempt, tokenReservationHandoff, costReservationHandoff];
@@ -2527,6 +2554,180 @@ export async function runDocumentJob(env: WorkerEnv, user: PilotUser, jobId: str
     if(user.projectExecution&&!outputBinding)await synchronizeProjectScope(env,user.projectExecution);
   }
   return finishedRow;
+}
+
+type GuestImageJobControl = {
+  request:Request;env:WorkerEnv;database:WorkerEnv["DB"];authority:GuestImageExecutionAuthority;
+  row:DocumentJobRow;output:OutputEventExecution;signal:AbortSignal;
+  beginCommit:EventExecutionControl["beginCommit"];progress:EventExecutionControl["progress"];active:boolean;
+};
+const guestImageJobControls=new WeakMap<EventExecutionControl,GuestImageJobControl>();
+const guestImageAckValue=(value:unknown,key:PropertyKey):unknown=>{
+  if(!value||typeof value!=="object")return undefined;
+  const descriptor=Object.getOwnPropertyDescriptor(value,key);
+  return descriptor&&Object.hasOwn(descriptor,"value")?descriptor.value:undefined;
+};
+function guestImageAcknowledged(value:unknown):boolean{
+  if(!value||typeof value!=="object"||guestImageAckValue(value,"success")!==true)return false;
+  if("error" in value){const error=Object.getOwnPropertyDescriptor(value,"error");if(!error||!Object.hasOwn(error,"value")||error.value!==undefined)return false;}
+  return true;
+}
+function guestImageClaimAcknowledged(value:unknown,length:number,prefixLength:number):value is D1Result[]{
+  if(!Array.isArray(value)||guestImageAckValue(value,"length")!==length)return false;
+  for(let index=0;index<length;index++)if(!guestImageAcknowledged(guestImageAckValue(value,String(index))))return false;
+  return [0,3,6].every(offset=>guestImageAckValue(guestImageAckValue(guestImageAckValue(value,String(prefixLength+offset)),"meta"),"changes")===1);
+}
+/** Only the actual claimed job's heartbeat callback can register this control. */
+export function requireGuestImageJobControl(request:Request,env:WorkerEnv,authority:GuestImageExecutionAuthority,control:EventExecutionControl):void{
+  const state=guestImageJobControls.get(control);
+  if(!state||!state.active||state.request!==request||state.env!==env||state.database!==env.DB||state.authority!==authority
+    ||control.output!==state.output||control.signal!==state.signal||control.signal.aborted||request.signal.aborted
+    ||control.beginCommit!==state.beginCommit||control.progress!==state.progress||control.settlePersonalPresentation)
+    throw new OutputConflictError("guest_image_job_control_unavailable",403);
+  requireGuestImageExecution(request,env,authority,state.row).assertCurrent();
+}
+
+/** Explicit foreground continuation of the original guest Image job. No queue
+ * principal, retry, renewed consent, or new reservation is synthesized here. */
+export async function runGuestImageDocumentJob(env:WorkerEnv,request:Request,authority:GuestImageExecutionAuthority):Promise<DocumentJobRow|null>{
+  let view=requireGuestImageExecution(request,env,authority);
+  await view.refresh();view=requireGuestImageExecution(request,env,authority);view.assertCurrent();
+  const identity=view.identity,row:DocumentJobRow={...view.job},slot=view.slot;
+  if(identity.actorKind!=="guest"||identity.actorUserId!==identity.ownerUserId||row.owner_id!==identity.ownerUserId
+    ||row.stream_id!==identity.streamId||row.document_id!==view.scope.documentId||row.kind!=="generate"
+    ||row.source_surface!=="outputs"||row.output_slot_id!==slot.slotId||slot.jobId!==row.job_id
+    ||view.settings.kind!=="generate"||view.settings.payload.productionMode!=="manual"
+    ||view.settings.calls.length!==2||view.settings.calls.some(call=>call.provider!=="openai")
+    ||slot.provider!=="openai"||!view.settings.imageRender)
+    throw new OutputConflictError("guest_image_job_identity_unavailable",403);
+  // A second Run observes its original job; it never takes over an existing or
+  // uncertain claim, including an expired lease whose paid outcome is unknown.
+  if(documentJobTerminal(row)||row.status==="running"||row.status==="committing")return row;
+  if(row.status!=="queued"||slot.status!=="queued"||row.attempt_count!==0||row.started_at!==null
+    ||row.lease_expires_at!==null||row.completed_at!==null||row.correlation_id!==row.job_id)
+    throw new OutputConflictError("guest_image_original_claim_unavailable",409);
+  const originalDatabase=env.DB,financialBinding=view.financial,financialEnvironment:WorkerEnv=Object.freeze({...env});
+  const financial=sponsorFinancialIdentity(financialBinding,env,identity.actorUserId,row.job_id);
+  if(financial.payerUserId!==identity.payerUserId)throw new OutputConflictError("guest_image_payer_changed",403);
+  const previous={...row},checkpoint=parseResult(previous),attempt=1,correlationId=`${row.job_id}:attempt:1`;
+  if(String(checkpoint.reservationId??"")!==slot.tokenReservationId||String(checkpoint.costReservationId??"")!==slot.costReservationId)
+    throw new OutputConflictError("guest_image_original_reservations_unavailable",409);
+  const startedAt=new Date().toISOString(),leaseExpiresAt=new Date(Math.min(Date.parse(startedAt)+view.policy.maximumMilliseconds,view.expiresAtMs)).toISOString();
+  const initialResult={...checkpoint,providerSubmissionProtocol:1,stage:"preparing",progressMessage:"Preparing the document context."};
+  const claim=await prepareGuestImageJobClaim(request,env,authority,{correlationId,attempt,startedAt,leaseExpiresAt,initialResult});
+  requireGuestImageExecution(request,env,authority).assertCurrent();
+  if(env.DB!==originalDatabase||!claim.before.length||!claim.after.length)throw new OutputConflictError("guest_image_claim_proof_unavailable",409);
+  const claimJob=env.DB.prepare(`UPDATE document_jobs SET status='running',attempt_count=1,correlation_id=?,started_at=?,lease_expires_at=?,result_json=?,updated_at=?
+    WHERE job_id=? AND owner_id=? AND stream_id=? AND document_id=? AND kind='generate' AND source_surface='outputs'
+    AND status='queued' AND attempt_count=0 AND started_at IS NULL AND lease_expires_at IS NULL AND completed_at IS NULL
+    AND correlation_id=? AND request_json=? AND result_json IS ? AND updated_at=? AND expires_at=?
+    AND NOT EXISTS(SELECT 1 FROM document_jobs active WHERE active.stream_id=document_jobs.stream_id AND active.job_id<>document_jobs.job_id
+      AND active.kind!='prompt_fan' AND active.status IN('running','committing'))
+    AND NOT EXISTS(SELECT 1 FROM document_jobs earlier WHERE earlier.stream_id=document_jobs.stream_id AND earlier.job_id<>document_jobs.job_id
+      AND earlier.kind!='prompt_fan' AND earlier.status='queued'
+      AND NOT (earlier.kind='render_document' AND COALESCE(json_extract(earlier.request_json,'$.artifactKind'),'')='slides')
+      AND NOT EXISTS(SELECT 1 FROM output_operation_slots inactive WHERE inactive.job_id=earlier.job_id AND inactive.status NOT IN('queued','running'))
+      AND (earlier.requested_at<document_jobs.requested_at OR earlier.requested_at=document_jobs.requested_at AND earlier.job_id<document_jobs.job_id))
+    AND EXISTS(SELECT 1 FROM budget_reservations token JOIN cost_budget_reservations cost
+      ON cost.owner_id=token.owner_id AND cost.stream_id=token.stream_id AND cost.correlation_id=token.correlation_id AND cost.operation=token.operation AND cost.period=token.period
+      WHERE token.reservation_id=? AND cost.reservation_id=? AND token.owner_id=? AND token.stream_id=? AND token.correlation_id=?
+      AND token.operation='image-generation' AND token.status='active' AND cost.status='active')`)
+    .bind(correlationId,startedAt,leaseExpiresAt,JSON.stringify(initialResult),startedAt,row.job_id,identity.ownerUserId,identity.streamId,row.document_id,
+      previous.correlation_id,previous.request_json,previous.result_json,previous.updated_at,previous.expires_at,
+      slot.tokenReservationId,slot.costReservationId,financial.payerUserId,identity.streamId,previous.correlation_id);
+  const handoff=nativeJobReservationHandoff(env,{jobId:row.job_id,ownerUserId:identity.ownerUserId,payerUserId:financial.payerUserId,
+    streamId:identity.streamId,previousCorrelationId:previous.correlation_id,correlationId,attempt,updatedAt:startedAt,
+    tokenReservationId:slot.tokenReservationId,costReservationId:slot.costReservationId,operation:"image-generation"});
+  const prefix=claim.before.flatMap(assertion=>outputAssertionStatements(env,assertion));
+  const statements=[...prefix,claimJob,...outputAssertionStatements(env,{sql:"changes()=1"}),handoff.token,
+    ...outputAssertionStatements(env,{sql:"changes()=1"}),handoff.cost,...outputAssertionStatements(env,{sql:"changes()=1"}),
+    ...claim.after.flatMap(assertion=>outputAssertionStatements(env,assertion))];
+  // A thrown, sparse, or malformed acknowledgement proves no ownership. Do not
+  // retry, dispatch, terminalize, or release anything in that uncertain case.
+  const claims=await env.DB.batch(statements);
+  if(!guestImageClaimAcknowledged(claims,statements.length,prefix.length))throw new OutputConflictError("output_write_acknowledgment_invalid",409);
+  Object.assign(row,{status:"running",attempt_count:attempt,correlation_id:correlationId,started_at:startedAt,
+    lease_expires_at:leaseExpiresAt,result_json:JSON.stringify(initialResult),updated_at:startedAt});
+  let output:OutputEventExecution|undefined,registeredControl:EventExecutionControl|undefined;
+  const retireControl=()=>{if(registeredControl){const state=guestImageJobControls.get(registeredControl);if(state)state.active=false;guestImageJobControls.delete(registeredControl);}};
+  const releaseStatement=()=>sponsorTerminalReleaseStatement(financialBinding,env,identity.actorUserId,row.job_id);
+  const ownedClaim:OutputSqlAssertion={sql:`EXISTS(SELECT 1 FROM document_jobs WHERE job_id=? AND owner_id=? AND stream_id=? AND document_id=?
+    AND kind='generate' AND source_surface='outputs' AND correlation_id=? AND attempt_count=1 AND started_at=? AND request_json=?)`,
+    bindings:[row.job_id,identity.ownerUserId,identity.streamId,row.document_id,correlationId,startedAt,previous.request_json]};
+  try{
+    // The dense write acknowledgement owns this exact claim. A later creative
+    // proof refusal stops dispatch while allowing original monetary cleanup.
+    await claim.acknowledge(claims);
+    view=requireGuestImageExecution(request,env,authority,row);view.assertCurrent();
+    output=await createGuestImageEventExecution(request,env,authority,row);
+    requireGuestImageExecution(request,env,authority,row).assertCurrent();
+    const operationEnvironment=output.guardedEnvironment;
+    await updateJobProgress(operationEnvironment,row,"compiling","Compiling the checked document state for generation.");
+    const response=await runOwnedJobHeartbeat(operationEnvironment,row,async()=>{requireGuestImageExecution(request,env,authority,row).assertCurrent();},async control=>{
+      const genuine=Object.freeze({...control,output:output!});registeredControl=genuine;
+      guestImageJobControls.set(genuine,{request,env,database:originalDatabase,authority,row,output:output!,signal:control.signal,
+        beginCommit:control.beginCommit,progress:control.progress,active:true});
+      try{return await executeGuestImageEvents(request,env,authority,genuine);}finally{retireControl();}
+    },view.policy,output.withSourceTransition??(async work=>work()),request.signal);
+    retireControl();
+    const body=await response.json() as Record<string,unknown>;
+    requireGuestImageExecution(request,env,authority,row).assertCurrent();
+    const completedAt=new Date().toISOString();
+    const suppliedFailure=!response.ok?(body.errorDetail&&typeof body.errorDetail==="object"?body.errorDetail as ProviderFailureDetail:applicationFailureDetail(String(body.error??"document_job_failed"),body.scope,response.status)):null;
+    const detail=!response.ok?classifyDocumentJobFailure(String(body.error??suppliedFailure?.message??"document_job_failed"),suppliedFailure,response.status):null;
+    const liveCheckpoint=parseResult(row),rawReceipt=liveCheckpoint.generationReceipt;
+    const plannerInput=liveCheckpoint.plannerInput&&typeof liveCheckpoint.plannerInput==="object"?liveCheckpoint.plannerInput as Record<string,unknown>:{};
+    const validation=plannerInput.validation&&typeof plannerInput.validation==="object"?plannerInput.validation as Record<string,unknown>:{};
+    const plannerCalls=Math.max(Array.isArray(liveCheckpoint.plannerResponseIds)?new Set(liveCheckpoint.plannerResponseIds.map(String).filter(Boolean)).size:0,
+      Math.max(0,Number(plannerInput.provider_request_count??validation.provider_call_count??0)));
+    const acceptedReceipt=rawReceipt&&typeof rawReceipt==="object"?{...rawReceipt as Record<string,unknown>,...(plannerCalls?{actual_provider_call_count:plannerCalls}:{})}:null;
+    // Retain the original reservation and output identities for exact same-job
+    // continuation; completion cannot turn the checkpoint into a new request.
+    let result:Record<string,unknown>={...liveCheckpoint,...(acceptedReceipt?{generationReceipt:acceptedReceipt}:{}),
+      ...safeResult(body),...(detail?{errorDetail:publicFailureDetail(detail)}:{}),stage:response.ok?"completed":"failed",
+      progressMessage:response.ok?"The operation finished.":failureProgressMessage(detail)};
+    const recordedFailure=Array.isArray(body.appended)&&body.appended.some(event=>event&&typeof event==="object"&&(event as Record<string,unknown>).type==="GenerationFailed");
+    if(!response.ok&&!recordedFailure){
+      sponsorFinancialIdentity(financialBinding,env,identity.actorUserId,row.job_id);
+      await settleDocumentGenerationBudgets(financialEnvironment,financial.payerUserId,{reservationId:slot.tokenReservationId,
+        costReservationId:slot.costReservationId,reason:"output_rejected_before_generation",assertions:[financial.assertion,ownedClaim]});
+      sponsorFinancialIdentity(financialBinding,env,identity.actorUserId,row.job_id);
+    }
+    const retained=await refreshOwnedGenerationReceipt(operationEnvironment,identity,row,body,detail,"",{...row,status:response.ok?"completed":"failed",
+      result_json:JSON.stringify(result),error_message:response.ok?null:detail?.message??String(body.error??"document_job_failed"),completed_at:completedAt,
+      lease_expires_at:null,updated_at:completedAt},false,output.accountSettlement);
+    result=parseResult(retained);
+    const finished=await finishDocumentJob(operationEnvironment,row,response.ok?"completed":"failed",result,
+      response.ok?null:detail?.message??String(body.error??"document_job_failed"),completedAt,true,[releaseStatement()]);
+    if(!guestImageAcknowledged(finished)||guestImageAckValue(guestImageAckValue(finished,"meta"),"changes")!==1)throw new OutputConflictError("output_write_acknowledgment_invalid",409);
+    await view.refresh();
+    return {...requireGuestImageExecution(request,env,authority).job};
+  }catch(error){
+    retireControl();
+    // Original incurred money may converge after creative authority expires.
+    // The captured opaque financial binding is the only authority used below;
+    // neither private source nor a renewed guest execution is read or fabricated.
+    const originalFinancial=sponsorFinancialIdentity(financialBinding,env,identity.actorUserId,row.job_id);
+    const localStop=output?.dispatchStop(error)??null,detail=localStop??classifyDocumentJobFailure(error),completedAt=new Date().toISOString();
+    if(!output?.accountSettlement)try{
+      await settleDocumentGenerationBudgets(financialEnvironment,originalFinancial.payerUserId,{reservationId:slot.tokenReservationId,
+        costReservationId:slot.costReservationId,reason:"output_execution_stopped",assertions:[originalFinancial.assertion,ownedClaim]});
+      sponsorFinancialIdentity(financialBinding,env,identity.actorUserId,row.job_id);
+    }catch{/* Uncertain calls retain their original holds. */}
+    sponsorFinancialIdentity(financialBinding,env,identity.actorUserId,row.job_id);
+    const failure={errorDetail:localStop??{code:detail.code,category:detail.category,scope:"request",action:"none",
+      message:"The Output operation could not finish under its current authorization.",retryable:false},stage:"failed",
+      progressMessage:"The Output operation stopped; inspect its retained receipt before authorizing another attempt."};
+    const terminal=financialEnvironment.DB.prepare(`UPDATE document_jobs SET status='failed',result_json=json_patch(COALESCE(result_json,'{}'),?),error_message=?,completed_at=?,lease_expires_at=NULL,updated_at=?
+      WHERE job_id=? AND owner_id=? AND stream_id=? AND document_id=? AND kind='generate' AND source_surface='outputs'
+      AND correlation_id=? AND attempt_count=1 AND started_at=? AND request_json=? AND status IN('running','committing')`)
+      .bind(JSON.stringify(failure),detail.code,completedAt,completedAt,row.job_id,identity.ownerUserId,identity.streamId,row.document_id,
+        correlationId,startedAt,previous.request_json);
+    await financialEnvironment.DB.batch([...outputAssertionStatements(financialEnvironment,originalFinancial.assertion),...outputAssertionStatements(financialEnvironment,ownedClaim),terminal,
+      ...prepareOutputJobOutcomeStatements(financialEnvironment,row),releaseStatement()]);
+    sponsorFinancialIdentity(financialBinding,env,identity.actorUserId,row.job_id);
+    throw error;
+  }finally{retireControl();}
 }
 
 export async function documentJobPrincipal(env:WorkerEnv,row:DocumentJobRow,current?:PilotUser):Promise<PilotUser|null>{
