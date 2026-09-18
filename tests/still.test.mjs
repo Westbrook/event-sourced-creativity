@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { foldEvents } from '../src/model/events.ts';
-import { eligibleActions, buildDecisionState, questionsFor, selectActions, rankFormats, CREATIVE_QUESTIONS } from '../src/still/decisions.ts';
+import { evaluateEligibility, eligibleActions, buildDecisionState, questionsFor, selectActions, rankFormats, CREATIVE_QUESTIONS } from '../src/still/decisions.ts';
+import { nextToolbarActions } from '../src/still/finder.ts';
 import { operationJournal } from '../src/still/operation-journal.ts';
 import { StillClient } from '../src/still/client.ts';
 import { isBlockKind } from '../src/model/block-types.ts';
@@ -45,7 +46,7 @@ test('canonical context creation and 3D adaptation retain exclusions',()=>{
 });
 test('an interrupted generation admission is reconciled without a second purchase',async()=>{
   const c=client(), original=globalThis.fetch;let admissions=0;
-  globalThis.fetch=async (url,init)=>{if(url==='/api/session')return json(session);if(url==='/api/document-jobs'){admissions++;throw new Error('connection lost');}if(url==='/api/document-jobs/still-reconcile')throw new Error('Generation check unconfirmed');throw new Error(`Unexpected ${url}`);};
+  globalThis.fetch=async url=>{if(url==='/api/session')return json(session);if(url==='/api/document-jobs'){admissions++;throw new Error('connection lost');}if(url==='/api/document-jobs/still-reconcile')throw new Error('Generation check unconfirmed');throw new Error(`Unexpected ${url}`);};
   const draft={format:'model3d',prompt:'A bronze bowl',itemCount:1,tone:'',audience:'',requestId:'request',sourceHead:4,documentId:'d',scopeKey:c.scopeKey};
   try {await assert.rejects(c.generate(draft),/connection lost/);assert.equal(draft.attempted,true);await assert.rejects(c.generate(draft),/[Gg]eneration check unconfirmed/);assert.equal(admissions,1);}finally{globalThis.fetch=original;}
 });
@@ -58,7 +59,7 @@ test('a definitive budget gate does not count as a purchased generation',async()
 test('recovering an accepted queued image resumes its original job without another admission',async()=>{
   const c=client(),saved=globalThis.fetch,key='still:d:4:original';let admissions=0,runs=[];
   operationJournal.saveGeneration('test:personal',{documentId:'d',format:'image',requestKey:key});
-  globalThis.fetch=async(url,init)=>{
+  globalThis.fetch=async url=>{
     if(url==='/api/session')return json(session);
     if(url==='/api/document-jobs/still-reconcile')return json({documentId:'d',requestKey:key,status:'found',job:{jobId:'accepted',documentId:'d',requestKey:key,kind:'generate',status:'queued'}});
     if(url==='/api/document-jobs'){admissions++;throw new Error('Unexpected new purchase');}
@@ -80,7 +81,7 @@ test('a changed account scope retires all previously rendered private content',a
 });
 test('artifact edits retain the original edit revision rather than overwriting new collaborator work',async()=>{
   const c=client(), original=globalThis.fetch;c.events.push(input('DocumentArtifactEdited',{artifact_id:'a'},5));let patches=0;
-  globalThis.fetch=async(url,init)=>{if(init?.method==='PATCH')patches++;return json(session);};
+  globalThis.fetch=async(_url,init)=>{if(init?.method==='PATCH')patches++;return json(session);};
   try{await assert.rejects(c.editArtifact('a','Old draft',0),/changed while you were writing/);assert.equal(patches,0);}finally{globalThis.fetch=original;}
 });
 test('partial or unrelated event acknowledgments never claim a successful save',async()=>{
@@ -187,4 +188,22 @@ test('format suitability is ranked separately from intent and capped at three av
   assert.equal(Object.keys(questions).length,6);
   for (const bad of [score(NaN),score(Infinity),score(-1),score(4),score(2,.49),score(3,2),score('3'),{type:'noul',noul:1}]) assert.deepEqual(rankFormats(candidates,{fit_image:bad}),[]);
   assert.deepEqual(rankFormats(candidates),[]);
+});
+
+
+test('current-page navigation is excluded from Jev and all toolbar pages',()=>{
+  const p={...foldEvents(events,Infinity,'d','p'),outputs:[{id:'o'}]};
+  for(const [view,id] of [['projects','projects'],['documents','documents'],['results','results'],['document','context']]){
+    const pos={...position,view,blockId:''};
+    const rows=evaluateEligibility(p,pos,abilities),row=rows.find(r=>r.action.id===id);
+    assert.equal(row.eligible,false);assert.match(row.reason,/Already viewing/);
+    const candidates=eligibleActions(p,pos,abilities);
+    assert.ok(!Object.hasOwn(questionsFor(candidates,pos),`use_${id}`));
+    const staleRank=[row.action,...candidates];
+    assert.ok(!nextToolbarActions(staleRank,[],candidates,7).some(a=>a.id===id));
+    assert.ok(!selectActions(candidates,pos).some(a=>a.id===id));
+  }
+  const fromBlock=eligibleActions(p,position,abilities);
+  for(const id of ['context','projects','documents','results'])assert.ok(fromBlock.some(a=>a.id===id),id);
+  assert.ok(eligibleActions(p,{...position,view:'artifact',blockId:'',outputId:'o'},abilities).some(a=>a.id==='results'));
 });
