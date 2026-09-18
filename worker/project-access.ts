@@ -1,3 +1,4 @@
+import { stillDocumentPredicate } from './still-route-read.ts';
 import { parseModel3dMediaRevision, parseModel3dCurrentProjection, type Model3dCurrentProjection } from "../src/model/model3d-media-revision.ts";
 import { validWorkspaceQuickEditEvents } from "../src/model/workspace-local-proposal.ts";
 import { foldEvents, type CreativeEvent, type CreativeProjection } from "../src/model/events.ts";
@@ -768,7 +769,7 @@ const assistantContextEventProvenance=`,json_array(scope.event_id,scope.project_
     secret.created_at,secret.redacted_at) END AS source_private_record`;
 
 /** Shared reads use dense project cursors and an explicit output-only private-content allowlist. */
-export async function readProjectEventPage(env:WorkerEnv,context:ProjectRequestContext,after:number,limit:number,includeContent:boolean,sourceObserver?:AssistantContextReadObserver){
+export async function readProjectEventPage(env:WorkerEnv,context:ProjectRequestContext,after:number,limit:number,includeContent:boolean,sourceObserver?:AssistantContextReadObserver,documentId?:string,contentIds?:string[],snapshotWitness=false){
   await synchronizeProjectScope(env,context);
   const size=Math.max(1,Math.min(5000,Math.floor(limit)||5000));
   const eventSql=`SELECT event.*,secret.private_json,scope.project_sequence,scope.actor_user_id${!sourceObserver?`,
@@ -781,8 +782,8 @@ export async function readProjectEventPage(env:WorkerEnv,context:ProjectRequestC
           AND json_extract(current_event.payload,'$.artifact_id')=json_extract(event.payload,'$.artifact_id')
         ORDER BY current_scope.project_sequence DESC LIMIT 1) ELSE NULL END AS model3d_current_edit_id`:""}${sourceObserver?assistantContextEventProvenance:""} FROM project_event_scopes scope JOIN events event ON event.event_id=scope.event_id
       LEFT JOIN event_private_payloads secret ON secret.private_event_id=event.event_id AND secret.redacted_at IS NULL
-      WHERE scope.project_access_id=? AND scope.organization_id=? AND scope.owner_user_id=? AND scope.project_sequence>? ORDER BY scope.project_sequence LIMIT ?`;
-  const eventBindings=[context.projectAccessId,context.organizationId,context.ownerUserId,Math.max(0,Math.floor(after)||0),size];
+      WHERE scope.project_access_id=? AND scope.organization_id=? AND scope.owner_user_id=? AND scope.project_sequence>? ${documentId!==undefined?`AND ${documentId?stillDocumentPredicate("event"):"event.type IN('ProjectCreated','ProjectOpened','ProjectRenamed','ProjectStateChanged','DocumentCreated','DocumentForked','DocumentOpened','DocumentRenamed','DocumentRemoved','DocumentRestored')"}`:""} ORDER BY scope.project_sequence LIMIT ?`;
+  const eventBindings=[context.projectAccessId,context.organizationId,context.ownerUserId,Math.max(0,Math.floor(after)||0),...(documentId?[documentId]:[]),size];
   const headSql="SELECT COALESCE(MAX(project_sequence),0) AS head FROM project_event_scopes WHERE project_access_id=? AND organization_id=?",headBindings=[context.projectAccessId,context.organizationId];
   const descriptors:AssistantContextReadDescriptor[]=[{sql:eventSql,bindings:eventBindings,role:"ascending-events"},
     {sql:headSql,bindings:headBindings,role:"project-head",projectAccessId:context.projectAccessId,organizationId:context.organizationId}];
@@ -816,9 +817,10 @@ export async function readProjectEventPage(env:WorkerEnv,context:ProjectRequestC
           AND EXISTS(SELECT 1 FROM private_content_retention_scopes retention WHERE retention.content_id=content.content_id
             AND retention.organization_id=scope.organization_id AND retention.project_access_id=scope.project_access_id
             AND retention.project_id=scope.project_id AND retention.actor_user_id=scope.actor_user_id)))
-      AND content.redacted_at IS NULL AND content.expires_at>${sourceObserver?"strftime('%Y-%m-%dT%H:%M:%fZ','now')":"?"} AND ${ordinaryContent.sql}`;
-  const contentBindings=[context.projectAccessId,context.organizationId,context.ownerUserId,context.principalUserId,context.principalUserId,...(sourceObserver?[]:[new Date().toISOString()]),...ordinaryContent.bindings];
+      AND content.redacted_at IS NULL ${includeContent&&contentIds?.length?"AND content.content_id IN(SELECT value FROM json_each(?))":""} AND content.expires_at>${sourceObserver?"strftime('%Y-%m-%dT%H:%M:%fZ','now')":"?"} AND ${ordinaryContent.sql}`;
+  const contentBindings=[context.projectAccessId,context.organizationId,context.ownerUserId,context.principalUserId,context.principalUserId,...(includeContent&&contentIds?.length?[JSON.stringify(contentIds)]:[]),...(sourceObserver?[]:[new Date().toISOString()]),...ordinaryContent.bindings];
   statements.push(env.DB.prepare(contentSql).bind(...contentBindings));descriptors.push({sql:contentSql,bindings:contentBindings,role:"content-allowlist"});
+  if(snapshotWitness)statements.push(env.DB.prepare(`SELECT scope.event_id,scope.project_sequence,secret.private_event_id,secret.redacted_at FROM project_event_scopes scope LEFT JOIN event_private_payloads secret ON secret.private_event_id=scope.event_id WHERE scope.project_access_id=? AND scope.organization_id=? AND scope.owner_user_id=? ORDER BY scope.project_sequence`).bind(context.projectAccessId,context.organizationId,context.ownerUserId));
   const reads=await env.DB.batch<Record<string,unknown>>(statements);
   sourceObserver?.(statements,reads,descriptors);
   const [rows,headRow,resourceRows,contentRow]=reads;
@@ -828,8 +830,8 @@ export async function readProjectEventPage(env:WorkerEnv,context:ProjectRequestC
   const head=Number(headRow?.results[0]?.head??0);
   const model3dCurrent=!sourceObserver?await projectModel3dCurrentProjections(rows?.results??[],context,activeResources,resourceRows?.results??[],contentRow?.results??[]):new Map<string,Model3dCurrentProjection>();
   const events=(rows?.results??[]).map((row)=>presentProjectEvent(row,context,activeResources,allowedContent,model3dCurrent.get(String(row.event_id))));
-  const nextAfter=Number(events.at(-1)?.sequence??after);
-  return{events,head,nextAfter,hasMore:nextAfter<head,...(includeContent?{content}:{}),permissionSchemaVersion:1};
+  const nextAfter=documentId!==undefined&&events.length<size?head:Number(events.at(-1)?.sequence??after);
+  return{events,head,nextAfter,hasMore:nextAfter<head,...(includeContent?{content}:{}),permissionSchemaVersion:1,...(snapshotWitness?{snapshotWitness:JSON.stringify([resourceRows?.results,contentRow?.results,reads[4]?.results])}: {})};
 }
 
 /** Reconstruct semantic resource state without replaying unrelated activity or bypassing actor redaction. */

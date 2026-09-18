@@ -1,3 +1,4 @@
+import { readStillRoutePage } from './still-route-read.ts';
 import { requireGuestImageExecution, type GuestImageExecutionAuthority } from "./experience-guest-image-execution.ts";
 import { requireGuestImageJobControl } from "./document-jobs-api.ts";
 import { sponsorScenePaidDispatchDeadline, sponsorScenePaidClaimIdentity, requireSponsorScenePaidDispatchCurrent, type SponsorScenePaidClaim } from "./experience-sponsor-scene-paid-claim.ts";
@@ -672,7 +673,7 @@ export async function handleEvents(request:Request,env:WorkerEnv,hot=false,userO
       if(inspection||hot)return Response.json({error:"project_operation_unavailable"},{status:403});
       if(request.method==="GET"){
         const url=new URL(request.url);
-        return Response.json(await readProjectEventPage(env,selected.context,Number(url.searchParams.get("after")??0),Number(url.searchParams.get("limit")??5000),url.searchParams.get("content")!=="0"));
+        return Response.json(await readProjectEventPage(env,selected.context,Number(url.searchParams.get("after")??0),Number(url.searchParams.get("limit")??5000),url.searchParams.get("content")!=="0",undefined,url.searchParams.get("stillDocument")??undefined,url.searchParams.getAll("contentId").slice(0,20)));
       }
       if(request.method!=="POST")return new Response("Method not allowed",{status:405});
       const consent=requireConsent(auth.user);if(consent)return consent;
@@ -697,6 +698,8 @@ export async function handleEvents(request:Request,env:WorkerEnv,hot=false,userO
     if(request.method==="GET"){
       const url=new URL(request.url);const after=Math.max(0,Math.floor(Number(url.searchParams.get("after")??0))||0);
       if(inspection){const page=await readAuditEventPage(env,streamId,{before:Number(url.searchParams.get("before")??0),asOf:Number(url.searchParams.get("asOf")??0),limit:Number(url.searchParams.get("limit")??150),actor:url.searchParams.get("actor")??"",type:url.searchParams.get("type")??"",correlation:url.searchParams.get("correlation")??""});return Response.json({...page,permissionSchemaVersion:PERMISSION_SCHEMA_VERSION});}
+      const routeDocument=url.searchParams.get("stillDocument");
+      if(routeDocument!==null)return Response.json(await readStillRoutePage(env,streamId,routeDocument.slice(0,180),after,5000));
       const profile=url.searchParams.get("profile");
       if(isScopedEventProfile(profile)){
         const limit=Math.max(1,Math.min(SCOPED_EVENT_PAGE_SIZE,Math.floor(Number(url.searchParams.get("limit")??SCOPED_EVENT_PAGE_SIZE))||SCOPED_EVENT_PAGE_SIZE));
@@ -705,7 +708,7 @@ export async function handleEvents(request:Request,env:WorkerEnv,hot=false,userO
       }
       const contentScope=url.searchParams.get("contentScope");if(contentScope!==null&&contentScope!=="chat"&&contentScope!=="memory")return Response.json({error:"invalid_content_scope"},{status:400});
       const limit=Math.max(1,Math.min(5000,Math.floor(Number(url.searchParams.get("limit")??5000))||5000));
-      const [page,content]=await Promise.all([readEventPageWithHead(env,streamId,after,limit),url.searchParams.get("content")==="0"?Promise.resolve(undefined):loadPrivateContent(env,ownerId,contentScope==="chat"?"chat":contentScope==="memory"?"memory":"all",executionScope)]);
+      const [page,content]=await Promise.all([readEventPageWithHead(env,streamId,after,limit),url.searchParams.get("content")==="0"?Promise.resolve(undefined):loadPrivateContent(env,ownerId,contentScope==="chat"?"chat":contentScope==="memory"?"memory":"all",executionScope,url.searchParams.has("contentId")?url.searchParams.getAll("contentId").slice(0,20):undefined)]);
       return Response.json({...page,...(content?{content}:{}),permissionSchemaVersion:PERMISSION_SCHEMA_VERSION});
     }
     if(request.method!=="POST")return new Response("Method not allowed",{status:405});

@@ -46,6 +46,7 @@ export class StillClient {
   events: CreativeEvent[] = [];
   content: Record<string, string> = {};
   head = 0;
+  historyComplete = true;
   jobs: DocumentJob[] = [];
   private jobsReadKey = '';
   jobsError = '';
@@ -85,7 +86,7 @@ export class StillClient {
     try { const result = await api<T>(path, body, method); check(); return result; }
     catch (error) {
       check();
-      if (error instanceof ApiError && ([401, 403].includes(error.status) || error.status === 404 && (path === '/api/session' || path.startsWith('/api/events?')))) { this.clearSource(); this.session = null; this.onChange(); }
+      if (error instanceof ApiError && ([401, 403].includes(error.status) || error.status === 404 && (path.startsWith('/api/session') || path.startsWith('/api/events?')))) { this.clearSource(); this.session = null; this.onChange(); }
       throw error;
     }
   }
@@ -115,20 +116,32 @@ export class StillClient {
     return { author, generate: !!s && !s.impersonation && (shared ? shared.permissions.includes('project.output.request') : author), projectCreate: author && !shared, formats: [...(p?.plannerConfigured ? ['image', 'storyboard'] : []), ...(p?.plannerConfigured ? ['short_story', 'scene', 'slides'] : []), ...(p?.videoConfigured ? ['video'] : []), ...(p?.audioConfigured ? ['audio'] : []), ...(p?.model3dConfigured ? ['model3d'] : [])] };
   }
   fence() { const epoch = this.epoch, key = scope(this.session); return () => { if (epoch !== this.epoch || key !== scope(this.session)) throw new Error('Workspace changed. Check the original workspace.'); }; }
-  async load(options: { hydrateContent?: boolean } = {}) {
+  async load(options: { hydrateContent?: boolean; route?: {documentId:string} } = {}) {
     const epoch = ++this.epoch;
     this.events = []; this.content = {}; this.head = 0; this.jobs = []; this.session = null; this.projected = null; this.contentWrites.clear();
-    const session = await api<Session>('/api/session');
+    const session = await api<Session>('/api/session?profile=still');
     if (epoch !== this.epoch) return;
     this.session = session; this.pendingWrite = operationJournal.write(this.journalScope);
-    if (session.policy.accepted) { await this.refreshSource(this.fence(), options.hydrateContent !== false); await this.recoverPendingWrite(); }
+    if (session.policy.accepted) { if(options.route){await this.loadRoute(options.route.documentId);this.historyComplete=false;}else{this.historyComplete=true;await this.refreshSource(this.fence(), options.hydrateContent !== false);await this.recoverPendingWrite();} }
     this.onChange();
   }
+  private async loadRoute(documentId:string){
+    const check=this.fence();let after=0,target:number|undefined;const events:CreativeEvent[]=[];
+    for(let pages=0;;pages++){
+      if(pages>=500)throw new Error('The page could not be verified.');
+      const query='stillDocument='+encodeURIComponent(documentId);
+      const page=await this.request<{events:CreativeEvent[];head:number;hasMore:boolean;nextAfter:number}>('/api/events?content=0&limit=5000&after='+after+'&'+query);check();
+      target??=page.head;events.push(...page.events.filter(e=>e.sequence<=target!));
+      if(!page.hasMore||page.nextAfter>=target)break;if(page.nextAfter<=after)throw new Error('The page could not be verified.');after=page.nextAfter;
+    }
+    this.events=events;this.head=target??0;
+  }
+  async completeHistory(){await this.refreshSource(this.fence(),false);await this.recoverPendingWrite();}
   async verifyScope() {
     if (this.verifying?.epoch === this.epoch) return this.verifying.promise;
     const epoch = this.epoch, check = this.fence();
     const promise = (async () => {
-      const fresh = await this.request<Session>('/api/session');
+      const fresh = await this.request<Session>('/api/session?profile=still');
       check();
       if (scope(fresh) !== scope(this.session)) {
         this.clearSource(); this.session = fresh; this.pendingWrite = operationJournal.write(this.journalScope);
@@ -146,18 +159,19 @@ export class StillClient {
     if (this.refreshing && this.refreshingEpoch === this.epoch) return this.refreshing;
     return this.refreshSource(await this.verifyScope());
   }
-  async ensureContent(reference: string) {
+  async ensureContent(reference: string):Promise<void> {
     if (!reference || reference in this.content) return;
     const check = this.fence();
-    if (this.hydrating?.epoch === this.epoch) await this.hydrating.promise;
+    if (this.hydrating?.epoch === this.epoch) { await this.hydrating.promise;check();if(!(reference in this.content))return this.ensureContent(reference); }
     else {
       const revision = this.contentRevision, read = ++this.contentRead;
       const promise = (async () => {
-        const result = await this.request<{content?: Record<string,string>}>(`/api/events?after=${this.head}&limit=1&content=1`); check();
+        const result = await this.request<{content?: Record<string,string>}>(`/api/events?after=${this.head}&limit=1&content=1&contentId=${encodeURIComponent(reference)}`); check();
         const newer = Object.fromEntries(Object.entries(this.content).filter(([key]) => (this.contentWrites.get(key) ?? 0) > revision));
         if (read > this.contentApplied) {
           this.contentApplied = read;
-          this.content = { ...result.content, ...newer }; this.onChange();
+          const retained={...this.content};delete retained[reference];
+          this.content = { ...retained,...result.content, ...newer }; this.onChange();
         }
       })();
       this.hydrating = {epoch:this.epoch,promise};
@@ -171,7 +185,8 @@ export class StillClient {
     if (this.refreshing && this.refreshingEpoch === this.epoch) return this.refreshing;
     this.refreshingEpoch = this.epoch;
     const operation = (async () => {
-      const start = this.head, contentRevision = this.contentRevision;
+      const partial=!this.historyComplete;
+      const start = partial?0:this.head, contentRevision = this.contentRevision;
       let contentRead = ++this.contentRead;
       let after = start, target: number | undefined;
       const incoming: CreativeEvent[] = []; let hydrated: Record<string, string> | undefined;
@@ -194,7 +209,8 @@ export class StillClient {
         hydrated = page.content;
       }
       check();
-      const changed = this.mergeEvents(incoming), advanced = target! > this.head;
+      if(partial){this.events=[...incoming,...this.events.filter(e=>e.sequence>target!)].sort((a,b)=>a.sequence-b.sequence);this.projected=null;this.historyComplete=true;}
+      const changed = partial||this.mergeEvents(incoming), advanced = target! > this.head;
       if (hydrated && contentRead > this.contentApplied) {
         this.contentApplied = contentRead;
         // An artifact save may finish while this read is in flight. Its acknowledged

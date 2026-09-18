@@ -70,7 +70,7 @@ Use the supplied `/design-system` En Reve elements before native or locally recr
 
 Forms use `en-select` with `en-select-option`, `en-checkbox`, `en-search-input`, `en-number-field`, `en-text-field` and `en-textarea`. The parent select owns its value; descriptors have no selected state. Read `en-change.detail.proposed` for accepted selections/toggles and `en-input.detail.value` for editable drafts. Preserve disabled state, review boundaries, IME handling and current permission checks. Developer diagnostics inspect the public hosts and authored option descriptors.
 
-Use `en-switch` for the proposed client-side Flags controls and `en-tooltip` for future onboarding explanations; these primitives are included in the vendor closure. This migration does not enable onboarding or make new model calls.
+Client-side Flags use `en-switch`; onboarding explanations use `en-tooltip`. Both primitives are included in the vendor closure. Onboarding is opt-in and uses local wording without additional model calls.
 
 The current palette uses `en-dialog`, with same-root native combobox/listbox semantics for the application-owned asynchronous Jev search. The supplied `en-command-palette` currently exposes a finite local catalog and no public query-change contract; do not reach into its private shadow state to implement Jev lookup. Adopt it when its public contract supports the existing interaction. Native links, media controls and lazy disclosure trees retain their semantic behavior.
 
@@ -85,3 +85,13 @@ The unselected `/create` page offers the top three available formats, an En Reve
 ## Actionable notifications
 
 Still uses persistent En Reve toasts in a fixed top-right region for errors, notices, admission reviews and failed jobs. Each toast can be dismissed; failures offer context or generation review, and uncertain submissions reconcile the original request. Failed-job dismissal uses Forma's existing dismissal metadata and survives polling/reload. Admission warnings offer Continue only for the server's budget/preflight acknowledgment contract; dismissal never grants approval, and hard safety blocks require context changes. Provider execution and paid-retry policies are unchanged. Running-job progress remains in its above-the-fold status strip.
+
+## Fast reads and onboarding
+
+Still uses `/api/session?profile=still` for its lean, freshly authorized session. It omits account budgets and Canvas governance, which are not needed to display Still or prepare Jev. Paid actions continue to use their existing server admission checks.
+
+Startup reads structural project/document metadata or the requested document first (`stillDocument` on the authorized events endpoint). The wider workspace loads independently. Partial route heads are never used as a completed workspace cursor: background hydration starts from zero and preserves newer acknowledged events. Retained writing loads only its selected content ID with the existing owner, scope, and retention guards.
+
+Prepared Jev history is a bounded, five-minute Worker-memory snapshot, partitioned by user, session permissions, and project scope. Personal history consumes new events and reuses projections and aggregates; an exact metadata witness detects private-payload withdrawal or deletion without rereading creative bodies. Shared snapshots verify the canonical resource/content allowlists and event witness on each read and rebuild when the project head changes. Snapshots are expendable and are not shared between Worker instances. Metadata checks still scale with history; this is not a durable materialized-view migration. The Developer Panel exposes preparation source, event-read count, session/history/content durations and total preparation time. No history samples were removed to gain speed.
+
+Developer Panel → Flags → Onboarding enables immediate En Reve tooltips on keyboard focus and hover. The preference is local to the browser and can also be enabled with `?onboarding` (legacy typo `?onbaording` accepted). Help never gates content or toolbar rendering. Model-generated wording requires the outstanding credential choice; current wording is local and makes no additional model calls. Attention summaries remain local and do not influence Jev.

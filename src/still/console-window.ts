@@ -3,7 +3,7 @@ import type { PaletteFeedback } from './palette-feedback.ts';
 import type { DecisionDiagnostics, ReceivedDecision } from './diagnostics.ts';
 
 export type ConsoleControl = { label:string; id:string; region:string; variant:string; size:string; emphasis:string; disabled:boolean; options:string[] };
-export type ConsoleContext = { canRefreshDecision?:boolean; attention?:AttentionSnapshot; view:string; mode:string; head:number; selectedFormat:string; page:number; actionLimit?:number; more?:boolean; paletteOpen?:boolean; paletteFeedback?:PaletteFeedback; paletteOrder?:{rankedIds:string[];passedOverIds:string[]}; current:DecisionDiagnostics };
+export type ConsoleContext = { onboarding?:boolean; historyComplete?:boolean; canRefreshDecision?:boolean; attention?:AttentionSnapshot; view:string; mode:string; head:number; selectedFormat:string; page:number; actionLimit?:number; more?:boolean; paletteOpen?:boolean; paletteFeedback?:PaletteFeedback; paletteOrder?:{rankedIds:string[];passedOverIds:string[]}; current:DecisionDiagnostics };
 export type ConsoleSnapshot = { scope:string; context:ConsoleContext; applied?:DecisionDiagnostics; received?:ReceivedDecision; pending:boolean; controls:ConsoleControl[] };
 const protocol='still-developer-console-v1';
 export const validConsoleSession=(value:string|null):value is string=>!!value&&/^[a-f0-9-]{36}$/.test(value);
@@ -19,7 +19,7 @@ export class ConsoleWindowHost {
   private ready=false;
   private previous='';
   private timer=0;
-  constructor(private owner:Window,private snapshot:()=>ConsoleSnapshot,private changed:(open:boolean,connected:boolean)=>void,private returned:()=>void,private command?:(data:{type:string;value?:number;request?:unknown;id?:string;scope?:string})=>void){}
+  constructor(private owner:Window,private snapshot:()=>ConsoleSnapshot,private changed:(open:boolean,connected:boolean)=>void,private returned:()=>void,private command?:(data:{type:string;value?:number|boolean;request?:unknown;id?:string;scope?:string})=>void){}
   get isOpen(){return !!this.popup&&!this.popup.closed;}
   open(){
     if(this.isOpen){this.popup?.focus();return true;}
@@ -39,7 +39,7 @@ export class ConsoleWindowHost {
     if(event.data.type==='ready'){this.ready=true;this.publish(true);}
     if(event.data.type==='rendered'&&this.ready)this.changed(true,true);
     if(event.data.type==='disconnected'){this.ready=false;this.changed(true,false);}
-    if(this.ready&&['density','experiment','refresh'].includes(event.data.type))this.command?.(event.data);
+    if(this.ready&&['density','experiment','refresh','flags'].includes(event.data.type))this.command?.(event.data);
     if(event.data.type==='return'){this.dispose();this.returned();}
   };
   private send(type:string,snapshot?:ConsoleSnapshot){

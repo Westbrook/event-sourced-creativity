@@ -1,5 +1,5 @@
 import type { PaletteFeedback } from './palette-feedback.ts';
-import { compactHistoryEvent, retainedHistoryEvents, isCreativeHistoryEvent } from './history.ts';
+import { preparedHistory, compactHistoryEvent } from './history.ts';
 import { editableIdea } from './composition.ts';
 import { isContextCompositionRelation } from '../model/combined-context.ts';
 import { parseDocumentArtifactContent } from '../model/document-artifacts.ts';
@@ -350,12 +350,9 @@ export function selectActions(candidates: Action[], pos: Position, answers: Reco
 }
 
 const safeText = (v: unknown, max = 1000) => typeof v === 'string' ? v.replace(/https?:\/\/\S+/g, '[linked resource]').slice(0, max) : '';
-export function buildDecisionState(events: CreativeEvent[], position: Position, abilities: Abilities, head: number, content: Record<string,string> = {}) {
-  const p = foldEvents(events, Infinity, position.documentId, position.projectId);
-  const useful = retainedHistoryEvents(events);
-  const creative = useful.filter(isCreativeHistoryEvent);
-  const counts: Record<string, number> = {};
-  for (const event of useful) counts[event.type] = (counts[event.type] ?? 0) + 1;
+export function buildDecisionState(events: CreativeEvent[], position: Position, abilities: Abilities, head: number, content: Record<string,string> = {}, prepared?:CreativeProjection) {
+  const p = prepared ?? foldEvents(events, Infinity, position.documentId, position.projectId);
+  const {useful,creative,counts}=preparedHistory(events);
   const compact = compactHistoryEvent;
   const candidates = eligibleActions(p, position, abilities);
   const selectedArtifact = p.artifacts.find(a => a.id === position.outputId);
