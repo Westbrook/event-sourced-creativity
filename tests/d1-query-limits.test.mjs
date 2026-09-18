@@ -51,3 +51,61 @@ test('grouped event witness preserves exact field order and explicit null/string
   assert.equal(compileSqliteExpressionDepth(db,`SELECT ${grouped}`,{queryLimits}).ok,true);
   assert.match(compileSqliteExpressionDepth(db,`SELECT ${original}`,{queryLimits}).error,/too many arguments/u);
 });
+
+test('compound limit: strict SQLite parser accepts five terms and refuses six without changing depth-only behavior or receipt shape',t=>{
+  const db=sqlite(t),limits=Object.freeze({...queryLimits}),options=Object.freeze({queryLimits:limits});
+  for(const operator of ['UNION ALL','UNION','INTERSECT','EXCEPT']){
+    const compound=n=>Array.from({length:n},(_,i)=>`SELECT ${i+1}`).join(` ${operator} `);
+    const five=compound(5),six=compound(6),accepted=compileSqliteExpressionDepth(db,five,options);
+    assert.equal(accepted.ok,true,operator);
+    assert.deepEqual(Object.keys(accepted).sort(),['ok','limit','queryLimits','statementBytes','parameterCount','sqliteVersion'].sort());
+    assert.deepEqual(accepted.queryLimits,queryLimits);assert.equal(accepted.limit,100);
+    assert.equal(accepted.statementBytes,Buffer.byteLength(five));assert.equal(accepted.parameterCount,0);
+    const rejected=compileSqliteExpressionDepth(db,six,options);
+    assert.equal(rejected.ok,false,`${operator}: six terms must fail strict qualification`);
+    assert.match(rejected.error,/too many terms in compound SELECT/iu);
+    const ordinary=compileSqliteExpressionDepth(db,six);
+    assert.equal(ordinary.ok,true);assert.equal(Object.hasOwn(ordinary,'queryLimits'),false);
+  }
+  assert.deepEqual(options,{queryLimits});assert.deepEqual(Object.keys(limits).sort(),['functionArguments','parameters','sqlBytes']);
+});
+
+test('compound limit: grouped CTEs preserve eleven immutable bound values while flat and nested oversized compounds fail',t=>{
+  const db=sqlite(t),bindings=Object.freeze([null,0,'quote \' " \\','日本語 · العربية',-7,'',42,'line\nbreak',null,'UNION ALL, literal',3.5]);
+  const terms=Object.freeze(bindings.map((_,i)=>`SELECT ${i+1} AS ordinal,?${i+1} AS value`));
+  const queries=Object.freeze({
+    flat:terms.join(' UNION ALL ')+' ORDER BY ordinal',
+    grouped:`WITH a AS (${terms.slice(0,4).join(' UNION ALL ')}),b AS (${terms.slice(4,8).join(' UNION ALL ')}),c AS (${terms.slice(8).join(' UNION ALL ')}) SELECT * FROM a UNION ALL SELECT * FROM b UNION ALL SELECT * FROM c ORDER BY ordinal`,
+    nested:`WITH oversized AS (${terms.slice(0,6).join(' UNION ALL ')}) SELECT * FROM oversized`,
+  });
+  const originalBindings=[...bindings],originalQueries={...queries},options=Object.freeze({queryLimits:Object.freeze({...queryLimits}),bindings});
+  const rejected=compileSqliteExpressionDepth(db,queries.flat,options);
+  assert.equal(rejected.ok,false,'eleven flat terms must fail strict qualification');
+  assert.match(rejected.error,/too many terms in compound SELECT/iu);
+  const nested=compileSqliteExpressionDepth(db,queries.nested,{queryLimits,bindings:bindings.slice(0,6)});
+  assert.equal(nested.ok,false);assert.match(nested.error,/too many terms in compound SELECT/iu);
+  const grouped=compileSqliteExpressionDepth(db,queries.grouped,options);
+  assert.equal(grouped.ok,true);assert.equal(grouped.parameterCount,11);
+  assert.equal(grouped.statementBytes,Buffer.byteLength(queries.grouped));assert.deepEqual(grouped.queryLimits,queryLimits);
+  assert.equal(compileSqliteExpressionDepth(db,queries.flat,{bindings}).ok,true);
+  const flatRows=db.prepare(queries.flat).all(...bindings),groupedRows=db.prepare(queries.grouped).all(...bindings);
+  assert.deepEqual(groupedRows,flatRows);
+  assert.deepEqual(groupedRows.map(row=>[row.ordinal,row.value]),bindings.map((value,i)=>[i+1,value]));
+  assert.deepEqual(bindings,originalBindings);assert.deepEqual(queries,originalQueries);
+  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM sqlite_master").get().n,0,'constant SELECT probes create no schema or fixture rows');
+});
+
+test('compound limit: strict enforcement rejects a depth-only cached compound before fixture prepare and retains the failure',t=>{
+  const db=sqlite(t),sql=Array.from({length:6},(_,i)=>`SELECT ${7101+i} AS compound_cache_probe`).join(' UNION ALL ');
+  let prepared=0;
+  const state={sqlite:db,env:{DB:{prepare(){prepared++;return {};}}}},ordinary=enforceD1ExpressionDepth(state);
+  try{state.env.DB.prepare(sql);ordinary.assertVerified();assert.equal(prepared,1);}finally{ordinary.restore();}
+  const strict=enforceD1ExpressionDepth(state,{queryLimits});
+  try{
+    assert.throws(()=>state.env.DB.prepare(sql),/too many terms in compound SELECT/iu);
+    assert.equal(prepared,1,'strict rejection must precede the underlying prepare');
+    assert.equal(strict.records.length,1);assert.equal(strict.records[0].ok,false);
+    assert.equal(strict.failures.length,1);assert.match(strict.failures[0].error,/too many terms in compound SELECT/iu);
+    assert.throws(()=>strict.assertVerified());
+  }finally{strict.restore();}
+});

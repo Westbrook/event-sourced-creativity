@@ -6,8 +6,9 @@ import { createHash } from "node:crypto";
 // statement in a fresh in-memory SQLite connection before the fixture can execute it.
 // The default prepare-time check sends only schema and SQL, never fixture row data.
 // An explicit bindings option is available for exact mocked-statement probes.
-// Optional queryLimits additionally applies real SQLite function/variable limits
-// and the raw UTF-8 SQL byte ceiling. Omission preserves depth-only behavior.
+// Optional queryLimits additionally applies real SQLite function/variable limits,
+// workerd's fixed five-term compound SELECT limit, and the raw UTF-8 SQL byte
+// ceiling. Omission preserves depth-only behavior and the existing receipt shape.
 const COMPILE = String.raw`
 import json,re,sqlite3,sys,time
 started=time.monotonic()
@@ -53,6 +54,8 @@ query_limits=data.get("queryLimits")
 statement_bytes=len(data["sql"].encode("utf-8"))
 parameter_count=len(data.get("bindings",[]))
 if query_limits is not None:
+    db.setlimit(sqlite3.SQLITE_LIMIT_COMPOUND_SELECT,5)
+    assert db.getlimit(sqlite3.SQLITE_LIMIT_COMPOUND_SELECT)==5
     db.setlimit(sqlite3.SQLITE_LIMIT_FUNCTION_ARG,query_limits["functionArguments"])
     db.setlimit(sqlite3.SQLITE_LIMIT_VARIABLE_NUMBER,query_limits["parameters"])
     # EXPLAIN is test-only framing. The raw statement gets its own exact byte
