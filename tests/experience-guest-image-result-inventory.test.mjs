@@ -727,3 +727,35 @@ test('Memory processing checkpoint exact schema preserves guest inventory and pa
   assert.deepEqual(await currentManifest(f,t),before);
   f.sqlite.exec('DROP TRIGGER memory_live_checkpoint_source_deleted');await denied(f,t);
 });
+
+function installDerivationPurposeSchema(f){
+  for(const migration of ['0025_memory_live_base.sql','0026_memory_live_conversation.sql','0043_memory_derivation_purpose_grants.sql'])installQualifiedMigration(f,migration);
+}
+function seedDerivationMetadata(f,link=null){
+  const created='2026-01-01T00:00:00.000Z',expires='2027-01-01T00:00:00.000Z',actor=link==='actor'?f.session.guestSubject:'foreign-derivation-actor';
+  insert(f,'memory_live_enrollments',{enrollment_id:'foreign-derivation-parent',actor_user_id:'foreign-derivation-actor',owner_user_id:'foreign-derivation-actor',organization_id:null,project_access_id:null,
+    project_id:'foreign-project',document_id:'foreign-document',permission_epoch:'foreign-epoch',policy_version:'personal-memory-v2',revision:1,learn_enabled:1,recall_enabled:1,background_enabled:0,
+    retention_days:1,time_zone:'UTC',enrolled_at:created,expires_at:expires,cursor_sequence:1,cutoff_sequence:null,last_local_day:null,last_admitted_at:null,next_due_at:expires,lease_token:null,lease_expires_at:null,attempts:0,failure_code:null});
+  insert(f,'memory_derivation_qualifications',{qualification_id:'foreign-qualification',source_sha256:'a'.repeat(64),origin:'https://fixture.invalid',deployment_id:'foreign-deployment',terms_json:'{}',terms_sha256:sha('{}'),status:'qualified',qualified_at:created,expires_at:expires});
+  insert(f,'memory_derivation_grants',{consent_id:randomUUID(),grant_id:'b'.repeat(64),revision:1,actor_user_id:actor,payer_user_id:actor,
+    owner_user_id:link==='owner'?f.session.guestSubject:'foreign-derivation-owner',organization_id:'foreign-organization',project_access_id:'foreign-access',
+    project_id:link==='project'?f.session.projectId:'foreign-project',document_id:link==='document'?f.session.documentId:'foreign-document',enrollment_id:'foreign-derivation-parent',enrollment_revision:1,
+    permission_epoch:'foreign-epoch',policy_version:'personal-memory-derivation-v1',purpose:'rolling-summary',qualification_id:'foreign-qualification',terms_sha256:sha('{}'),monthly_cap_microusd:1000,
+    source_after_sequence:1,retention_days:1,background_enabled:0,consented_at:created,expires_at:expires,revoked_at:null});
+  assert.deepEqual(f.sqlite.prepare('PRAGMA foreign_key_check').all(),[]);
+}
+test('Memory derivation exact schema and unrelated metadata preserve guest inventory byte-for-byte',async t=>{
+  const f=await completedResultFixture(t,{memory:true}),before=await currentManifest(f,t);installDerivationPurposeSchema(f);configurationTripwire(f,t);
+  assert.deepEqual(await currentManifest(f,t),before);seedDerivationMetadata(f);assert.deepEqual(await currentManifest(f,t),before);
+});
+for(const link of ['actor','owner','project','document'])test('guest inventory refuses derivation grant '+link+' link even when its parent is unrelated',async t=>{
+  const f=await completedResultFixture(t,{memory:true});installDerivationPurposeSchema(f);seedDerivationMetadata(f,link);configurationTripwire(f,t);await denied(f,t);
+});
+for(const fault of ['missing-trigger','unknown-object','external-inbound-fk','external-view'])test('guest inventory closes derivation schema: '+fault,async t=>{
+  const f=await completedResultFixture(t,{memory:true});installDerivationPurposeSchema(f);
+  if(fault==='missing-trigger')f.sqlite.exec('DROP TRIGGER memory_derivation_grant_no_replace');
+  if(fault==='unknown-object')f.sqlite.exec('CREATE TABLE memory_derivation_unknown(value TEXT)');
+  if(fault==='external-inbound-fk')f.sqlite.exec('CREATE TABLE unrelated_copy(id TEXT REFERENCES memory_derivation_qualifications(qualification_id))');
+  if(fault==='external-view')f.sqlite.exec('CREATE VIEW unrelated_view AS SELECT * FROM memory_derivation_grants');
+  await denied(f,t);
+});

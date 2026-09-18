@@ -1,0 +1,224 @@
+import { requireUser, requireConsent, type PilotUser } from "./pilot-policy.ts";
+import { prepareDocumentAuthority } from "./context-authoring-authority.ts";
+import { executionAdmissionGuard } from "./consequential-consent.ts";
+import { parseMemoryCustody, memoryCustodyMatches } from "../src/model/memory-custody.ts";
+import { liveMemoryAuthority, liveMemoryEnrollmentGuard, type LiveMemoryEnrollment } from "./memory-live-authority.ts";
+import { memoryCanonical, type MemorySqlGuard } from "./memory-sql.ts";
+import { MEMORY_DERIVATION_CONTROL, MEMORY_DERIVATION_POLICY, MEMORY_DERIVATION_PURPOSES, DERIVATION_QUALIFICATION_COLUMNS,
+  derivationExact, derivationConsentId, derivationHash, derivationId, derivationInteger, derivationTime, parseMemoryDerivationQualification,
+  type MemoryDerivationTerms } from "./memory-derivation-policy.ts";
+import { memoryDerivationSchema, memoryDerivationBinding, memoryDerivationEnabled, memoryDerivationGrantShape,
+  memoryDerivationGrantId, derivationResults, derivationVerified, derivationChanged, derivationAssertion, derivationRowGuard,
+  derivationQualificationGuard, readDerivationQualification, prepareDerivationWithdrawal, DERIVATION_GRANT_COLUMNS,
+  type MemoryDerivationGrant } from "./memory-derivation-store.ts";
+import type { MemoryDerivationPurpose } from "./memory-derivation-result.ts";
+import type { WorkerEnv } from "./runtime.ts";
+
+type Row = Record<string, unknown>;
+const headers = { "cache-control": "private, no-store", vary: "Cookie, oai-authenticated-user-id, oai-authenticated-user-email" };
+const reply = (value: Row, status = 200) => {
+  const body = JSON.stringify({ version: MEMORY_DERIVATION_CONTROL, ...value });
+  return new TextEncoder().encode(body).byteLength <= 524288 ? new Response(body, { status, headers: { ...headers, "content-type": "application/json" } })
+    : Response.json({ version: MEMORY_DERIVATION_CONTROL, error: "memory_derivation_response_too_large" }, { status: 503, headers });
+};
+const deny = (error: string, status = 400) => reply({ error }, status);
+const privateResponse = (response: Response) => new Response(response.body, { status: response.status, headers: { ...Object.fromEntries(response.headers), ...headers } });
+const failure = () => deny("memory_derivation_commit_delivery_unconfirmed", 503);
+const parentColumns = ["enrollment_id", "actor_user_id", "owner_user_id", "organization_id", "project_access_id", "project_id", "document_id",
+  "permission_epoch", "policy_version", "revision", "learn_enabled", "recall_enabled", "background_enabled", "retention_days", "time_zone",
+  "enrolled_at", "expires_at", "cursor_sequence", "cutoff_sequence", "last_local_day", "last_admitted_at", "next_due_at", "lease_token", "lease_expires_at", "attempts", "failure_code"] as const;
+const clock = (before: string): MemorySqlGuard => ({ condition: "?>strftime('%Y-%m-%dT%H:%M:%fZ','now')", bindings: [before] });
+const settingsKey = (env: WorkerEnv) => memoryCanonical([env.FORMA_MEMORY_ENABLED, env.FORMA_MEMORY_USER_IDS,
+  env.FORMA_MEMORY_DERIVATION_ENABLED, env.FORMA_MEMORY_DERIVATION_USER_IDS, memoryDerivationBinding(env)]);
+function grantView(grant: MemoryDerivationGrant) {
+  return { scope: { projectId: grant.project_id, documentId: grant.document_id,
+    custody: grant.organization_id === null ? { kind: "personal" } : { kind: "organization", organizationId: grant.organization_id,
+      projectAccessId: grant.project_access_id, ownerUserId: grant.owner_user_id } }, consentId: grant.consent_id, grantId: grant.grant_id, revision: grant.revision, purpose: grant.purpose, enrollmentId: grant.enrollment_id,
+    enrollmentRevision: grant.enrollment_revision, qualificationId: grant.qualification_id, termsSha256: grant.terms_sha256,
+    monthlyCapMicroUsd: grant.monthly_cap_microusd, sourceAfterSequence: grant.source_after_sequence,
+    background: grant.background_enabled === 1, retentionDays: grant.retention_days, consentedAt: grant.consented_at,
+    expiresAt: grant.expires_at, revokedAt: grant.revoked_at };
+}
+async function rows(env: WorkerEnv, sql: string, bindings: (string | number | null)[]): Promise<Row[]> {
+  const db = env.DB, result = structuredClone(await db.prepare(sql).bind(...bindings).all<Row>());
+  if (env.DB !== db || !derivationResults([result], 1)) throw new Error("memory-derivation-read-unavailable");
+  return result.results;
+}
+function inventoryGuard(table: "memory_derivation_grants" | "memory_derivation_qualifications", columns: readonly string[],
+  where: string, bindings: (string | number | null)[], order: string, selected: Row[]): MemorySqlGuard {
+  const value = JSON.stringify(selected.map(row => columns.map(key => row[key])));
+  return { condition: `(SELECT json_group_array(json_array(${columns.join(",")})) FROM
+    (SELECT ${columns.join(",")} FROM ${table} WHERE ${where} ORDER BY ${order}))=?`, bindings: [...bindings, value] };
+}
+async function bodyOf(request: Request): Promise<Row | null> {
+  if (!request.body || request.headers.get("content-type")?.split(";")[0]?.trim() !== "application/json") return null;
+  const reader = request.body.getReader(), decoder = new TextDecoder("utf-8", { fatal: true });
+  let text = "", length = 0;
+  try {
+    for (;;) { const next = await reader.read(); if (next.done) break; length += next.value.byteLength;
+      if (length > 4096) { await reader.cancel(); return null; } text += decoder.decode(next.value, { stream: true }); }
+    text += decoder.decode(); const value: unknown = JSON.parse(text);
+    // Grammar is parsed above; reject duplicate keys, including escaped keys.
+    const stack: { keys: Set<string> | null; key: boolean }[] = [];
+    for (const [token] of text.matchAll(/"(?:\\.|[^"\\])*"|[{}:,]|\[|\]/gsu)) {
+      if (token === "{" || token === "[") { if (stack.length >= 5) return null; stack.push({ keys: token === "{" ? new Set() : null, key: token === "{" }); }
+      else if (token === "}" || token === "]") stack.pop();
+      else { const current = stack.at(-1); if (token === "," && current?.keys) current.key = true;
+        else if (token.startsWith('"') && current?.keys && current.key) { const key: string = JSON.parse(token);
+          if (current.keys.has(key)) return null; current.keys.add(key); current.key = false; } }
+    }
+    return value && typeof value === "object" && !Array.isArray(value) ? value as Row : null;
+  } catch { return null; } finally { reader.releaseLock(); }
+}
+async function scope(request: Request, env: WorkerEnv, actor: PilotUser, projectId: string, documentId: string) {
+  const prepared = await prepareDocumentAuthority(request, env, { projectId, documentId }, "read");
+  if (prepared instanceof Response) return privateResponse(prepared);
+  if (prepared.principal.fictional || prepared.principal.userId !== actor.userId || prepared.principal.projectExecution
+    || prepared.principal.billingUserId && prepared.principal.billingUserId !== actor.userId) return deny("memory_derivation_self_payer_required", 403);
+  const binding = prepared.binding, shared = binding.scope;
+  const parents = await rows(env, `SELECT ${parentColumns.join(",")} FROM memory_live_enrollments WHERE
+    (actor_user_id,owner_user_id,organization_id,project_access_id,project_id,document_id) IS (?,?,?,?,?,?) LIMIT 2`,
+    [actor.userId, shared?.ownerUserId ?? actor.userId, shared?.organizationId ?? null, shared?.projectAccessId ?? null, projectId, documentId]);
+  if (parents.length !== 1 || !derivationExact(parents[0], parentColumns)) return deny("memory_derivation_parent_required", 409);
+  const parent = parents[0] as unknown as LiveMemoryEnrollment, now = new Date().toISOString();
+  if (parent.policy_version !== "personal-memory-v2" || parent.permission_epoch !== actor.access.permissionEpoch
+    || parent.learn_enabled !== 1 || !derivationTime(parent.expires_at) || parent.expires_at <= now
+    || ["forgotten", "erased", "access-changed", "revoked"].includes(parent.failure_code ?? "")) return deny("memory_derivation_parent_unavailable", 409);
+  const background = await liveMemoryAuthority(env, parent);
+  if (!background) return deny("memory_derivation_authority_unavailable", 403);
+  const admission = executionAdmissionGuard(prepared.principal, binding, prepared.sourceHead);
+  return { prepared, parent, guards: [{ condition: admission.sql, bindings: admission.bindings }, background.guard,
+    liveMemoryEnrollmentGuard(parent, "learn"), derivationRowGuard("memory_live_enrollments", parentColumns, parent)] };
+}
+
+/** Original actors may inspect their own consent metadata to withdraw it even
+ * after learning/access/qualification expires. This never reads source bodies,
+ * offers new consent or grants document access. Mutations still use native scope. */
+async function ownedScope(env: WorkerEnv, actor: PilotUser, projectId: string, documentId: string) {
+  const identity = actor.authorizationSnapshot;
+  if (!identity) return deny("memory_derivation_identity_unavailable", 403);
+  const found = await rows(env, `SELECT ${parentColumns.join(",")} FROM memory_live_enrollments WHERE actor_user_id=? AND project_id=? AND document_id=? LIMIT 2`, [actor.userId, projectId, documentId]);
+  if (found.length !== 1 || !derivationExact(found[0], parentColumns)) return deny("memory_derivation_parent_required", 409);
+  const parent = found[0] as unknown as LiveMemoryEnrollment;
+  return { prepared: null, parent, guards: [derivationRowGuard("memory_live_enrollments", parentColumns, parent),
+    { condition: "EXISTS(SELECT 1 FROM users WHERE user_id=? AND role=? AND COALESCE(updated_at,'')=?)", bindings: [actor.userId, actor.role, identity.updatedAt] }] };
+}
+
+/** Controls only. No route provisions credentials, creates qualification/cap
+ * evidence, dispatches a model, reserves allowance, or schedules background work. */
+export async function handleMemoryDerivationSettings(request: Request, env: WorkerEnv): Promise<Response> {
+  const db = env.DB, configuration = settingsKey(env), started = Date.now(), deadline = new Date(started + 60000).toISOString();
+  const auth = await requireUser(request, env, "viewer", { account: "principal" });
+  if (auth.response || !auth.user) return privateResponse(auth.response ?? deny("authentication_required", 401));
+  const actor = auth.user;
+  if (actor.fictional) return deny("principal_account_required", 403);
+  const current = () => env.DB === db && settingsKey(env) === configuration && Date.now() < started + 60000;
+  const url = new URL(request.url);
+  if (!["GET", "PUT", "DELETE"].includes(request.method)) return deny("method_not_allowed", 405);
+  if (request.method !== "GET" && (request.headers.get("origin") !== url.origin || request.headers.get("sec-fetch-site") === "cross-site")) return deny("same_origin_required", 403);
+  try {
+    const schema = await memoryDerivationSchema(env);
+    if (!current()) return deny("memory_derivation_unavailable", 503);
+    if (!schema.present) return request.method === "GET" ? reply({ enabled: false, available: false, reason: "schema-unavailable", grants: [], qualifications: [] }) : deny("memory_derivation_schema_unavailable", 503);
+    if (request.method === "DELETE") {
+      const body = await bodyOf(request), grantId = url.searchParams.get("grantId");
+      if (!derivationHash(grantId) || [...url.searchParams.keys()].some(key => key !== "grantId") || url.searchParams.getAll("grantId").length !== 1
+        || !body || !derivationExact(body, ["version", "revision", "consentId", "confirmation"]) || body.version !== MEMORY_DERIVATION_CONTROL
+        || body.confirmation !== "REVOKE_DERIVED_MEMORY" || !derivationInteger(body.revision, 1) || !derivationConsentId(body.consentId)) return deny("explicit_memory_derivation_revocation_required");
+      const found = await rows(env, `SELECT ${DERIVATION_GRANT_COLUMNS.join(",")} FROM memory_derivation_grants WHERE grant_id=? AND actor_user_id=? ORDER BY revision DESC LIMIT 1`, [grantId, actor.userId]);
+      if (found.length !== 1 || !memoryDerivationGrantShape(found[0])) return deny("memory_derivation_not_found", 404);
+      const grant = found[0], identity = actor.authorizationSnapshot;
+      if (grant.revision !== body.revision || grant.consent_id !== body.consentId) return deny("memory_derivation_revision_changed", 409);
+      if (!identity) return deny("memory_derivation_identity_unavailable", 403);
+      const guards = [schema.guard, clock(deadline), { condition: "EXISTS(SELECT 1 FROM users WHERE user_id=? AND role=? AND COALESCE(updated_at,'')=?)", bindings: [actor.userId, actor.role, identity.updatedAt] },
+        derivationRowGuard("memory_derivation_grants", DERIVATION_GRANT_COLUMNS, grant),
+        { condition: "NOT EXISTS(SELECT 1 FROM memory_derivation_grants WHERE grant_id=? AND revision>?)", bindings: [grantId, grant.revision] }];
+      const withdrawal = await prepareDerivationWithdrawal(env, { grantId, currentRevision: grant.revision }, new Date().toISOString());
+      const statements = [...guards.map(guard => derivationAssertion(env, guard)), ...withdrawal.statements,
+        derivationAssertion(env, guards[0]!), derivationAssertion(env, guards[1]!), derivationAssertion(env, guards[2]!), derivationAssertion(env, guards[4]!)];
+      if (!current()) return failure();
+      const result = structuredClone(await db.batch(statements));
+      if (!current() || !derivationResults(result, statements.length) || !result.slice(0, guards.length).every(derivationVerified)
+        || !result.slice(-4).every(derivationVerified) || !withdrawal.acknowledge(result.slice(guards.length, guards.length + withdrawal.statements.length))) return failure();
+      return reply({ revoked: true, grantId, revision: grant.revision, consentId: grant.consent_id, reEnrollmentRequired: true });
+    }
+    const body = request.method === "PUT" ? await bodyOf(request) : null;
+    const projectId = body?.projectId ?? url.searchParams.get("projectId"), documentId = body?.documentId ?? url.searchParams.get("documentId");
+    if (!derivationId(projectId) || !derivationId(documentId) || projectId.length > 120 || documentId.length > 120
+      || request.method === "GET" && ([...url.searchParams.keys()].some(key => !["projectId", "documentId"].includes(key))
+        || url.searchParams.getAll("projectId").length !== 1 || url.searchParams.getAll("documentId").length !== 1)
+      || request.method === "PUT" && url.search) return deny("memory_derivation_scope_required");
+    let selected: Awaited<ReturnType<typeof scope>> | Awaited<ReturnType<typeof ownedScope>> = await scope(request, env, actor, projectId, documentId);
+    if (selected instanceof Response && request.method === "GET" && [403, 409].includes(selected.status)) selected = await ownedScope(env, actor, projectId, documentId);
+    if (selected instanceof Response) return selected;
+    const { parent, prepared } = selected, binding = memoryDerivationBinding(env), enabled = prepared !== null && memoryDerivationEnabled(env, actor.userId)
+      && url.origin === binding?.origin;
+    const grantWhere = "enrollment_id=? AND actor_user_id=?", grantBindings = [parent.enrollment_id, actor.userId];
+    const stored = await rows(env, `SELECT ${DERIVATION_GRANT_COLUMNS.join(",")} FROM memory_derivation_grants WHERE ${grantWhere} ORDER BY grant_id,revision LIMIT 193`, grantBindings);
+    if (stored.length > 192 || !stored.every(memoryDerivationGrantShape)) return deny("memory_derivation_inventory_unavailable", 503);
+    const baseGuards = [schema.guard, clock(deadline), ...selected.guards,
+      inventoryGuard("memory_derivation_grants", DERIVATION_GRANT_COLUMNS, grantWhere, grantBindings, "grant_id,revision", stored)];
+    if (request.method === "GET") {
+      const qualifications: { qualificationId: string; termsSha256: string; expiresAt: string; terms: MemoryDerivationTerms }[] = [];
+      if (enabled && binding) {
+        const where = "source_sha256=? AND origin=? AND deployment_id=? AND status='qualified' AND expires_at>?",
+          values = [binding.sourceSha256, binding.origin, binding.deploymentId, new Date(started).toISOString()];
+        const candidates = await rows(env, `SELECT ${DERIVATION_QUALIFICATION_COLUMNS.join(",")} FROM memory_derivation_qualifications WHERE ${where} ORDER BY qualification_id LIMIT 17`, values);
+        if (candidates.length > 16) return deny("memory_derivation_inventory_unavailable", 503);
+        baseGuards.push(inventoryGuard("memory_derivation_qualifications", DERIVATION_QUALIFICATION_COLUMNS, where, values, "qualification_id", candidates));
+        for (const candidate of candidates) { const accepted = await parseMemoryDerivationQualification(candidate, binding);
+          if (accepted) { baseGuards.push(derivationQualificationGuard(accepted.row));
+            qualifications.push({ qualificationId: accepted.row.qualification_id, termsSha256: accepted.row.terms_sha256, expiresAt: accepted.row.expires_at, terms: accepted.terms }); } }
+      }
+      const checked = structuredClone(await db.batch(baseGuards.map(guard => derivationAssertion(env, guard))));
+      if (!current() || !derivationResults(checked, baseGuards.length) || !checked.every(derivationVerified)) return deny("memory_derivation_unavailable", 503);
+      return reply({ enabled, available: qualifications.length > 0, reason: !enabled ? "disabled" : qualifications.length ? null : "qualification-required",
+        scope: { projectId, documentId, custody: parent.organization_id !== null ? { kind: "organization", organizationId: parent.organization_id, projectAccessId: parent.project_access_id, ownerUserId: parent.owner_user_id } : { kind: "personal" } },
+        policyVersion: MEMORY_DERIVATION_POLICY, enrollmentId: parent.enrollment_id, enrollmentRevision: parent.revision,
+        grants: stored.map(grant => grantView(grant as MemoryDerivationGrant)), qualifications,
+        capScope: "payer-utc-calendar-month-all-memory-purposes", sourceWindow: "future-originals", processingImplemented: false });
+    }
+    if (!prepared) return deny("memory_derivation_authority_unavailable", 403);
+    if (!body || !derivationExact(body, ["version", "policyVersion", "purpose", "qualificationId", "termsSha256", "projectId", "documentId", "enrollmentId", "enrollmentRevision", "revision", "expectedConsentId", "expectedCustody", "monthlyCapMicroUsd", "background", "retentionDays", "expiresAt", "sourceWindow", "chargeMyAiAllowance", "confirmation"])
+      || body.version !== MEMORY_DERIVATION_CONTROL || body.policyVersion !== MEMORY_DERIVATION_POLICY || body.confirmation !== "ENABLE_DERIVED_MEMORY"
+      || body.chargeMyAiAllowance !== true || body.sourceWindow !== "future-originals" || !MEMORY_DERIVATION_PURPOSES.some(purpose => purpose === body.purpose)
+      || !derivationId(body.qualificationId) || !derivationHash(body.termsSha256) || !derivationInteger(body.revision, 0, Number.MAX_SAFE_INTEGER - 1) || !(body.expectedConsentId === null || derivationConsentId(body.expectedConsentId))
+      || !derivationInteger(body.retentionDays, 1, 365) || !derivationTime(body.expiresAt) || typeof body.background !== "boolean"
+      || !derivationInteger(body.monthlyCapMicroUsd, 1, 1_000_000_000)) return deny("explicit_memory_derivation_consent_required");
+    const consent = requireConsent(actor); if (consent) return privateResponse(consent);
+    if (!enabled) return deny("memory_derivation_disabled", 503);
+    const expectedCustody = parseMemoryCustody(body.expectedCustody);
+    if (!expectedCustody || !memoryCustodyMatches(expectedCustody, prepared.binding.scope)) return deny("memory_derivation_custody_changed", 409);
+    const qualified = await readDerivationQualification(env, body.qualificationId), now = new Date().toISOString();
+    if (!qualified || qualified.terms.purpose !== body.purpose || qualified.row.terms_sha256 !== body.termsSha256
+      || qualified.terms.monthlyCapMicroUsd !== body.monthlyCapMicroUsd) return deny("memory_derivation_qualification_required", 503);
+    if (body.enrollmentId !== parent.enrollment_id || body.enrollmentRevision !== parent.revision || body.retentionDays > parent.retention_days
+      || body.expiresAt <= now || body.expiresAt > parent.expires_at || body.expiresAt > qualified.row.expires_at
+      || Date.parse(body.expiresAt) > Date.now() + 365 * 86400000 || body.background && parent.background_enabled !== 1) return deny("memory_derivation_parent_changed", 409);
+    const purpose = body.purpose as MemoryDerivationPurpose, grantId = await memoryDerivationGrantId(parent, purpose), prior = stored.filter(row => row.grant_id === grantId),
+      latest = prior.at(-1) as MemoryDerivationGrant | undefined;
+    if ((latest?.revision ?? 0) !== body.revision || (latest?.consent_id ?? null) !== body.expectedConsentId || prior.length >= 64) return deny("memory_derivation_revision_changed", 409);
+    const grant: MemoryDerivationGrant = { consent_id: crypto.randomUUID(), grant_id: grantId, revision: body.revision + 1, actor_user_id: actor.userId, owner_user_id: parent.owner_user_id,
+      organization_id: parent.organization_id, project_access_id: parent.project_access_id, project_id: projectId, document_id: documentId,
+      enrollment_id: parent.enrollment_id, enrollment_revision: parent.revision, permission_epoch: parent.permission_epoch, policy_version: MEMORY_DERIVATION_POLICY,
+      purpose, qualification_id: qualified.row.qualification_id, terms_sha256: qualified.row.terms_sha256, payer_user_id: actor.userId,
+      monthly_cap_microusd: qualified.terms.monthlyCapMicroUsd, source_after_sequence: prepared.sourceHead, retention_days: body.retentionDays,
+      background_enabled: Number(body.background), consented_at: now, expires_at: body.expiresAt, revoked_at: null };
+    if (!memoryDerivationGrantShape(grant)) return deny("memory_derivation_grant_invalid", 409);
+    const withdrawal = latest ? await prepareDerivationWithdrawal(env, { grantId, currentRevision: latest.revision }, now) : null;
+    const qualifiedGuard = derivationQualificationGuard(qualified.row), grantClock = clock(grant.expires_at), before = [...baseGuards, qualifiedGuard, grantClock], after = [schema.guard, clock(deadline), ...selected.guards, qualifiedGuard, grantClock,
+      derivationRowGuard("memory_derivation_grants", DERIVATION_GRANT_COLUMNS, grant)];
+    const writes = [...(withdrawal?.statements ?? []), db.prepare(`INSERT INTO memory_derivation_grants(${DERIVATION_GRANT_COLUMNS.join(",")}) VALUES(${DERIVATION_GRANT_COLUMNS.map(() => "?").join(",")})`).bind(...DERIVATION_GRANT_COLUMNS.map(key => grant[key])),
+      derivationAssertion(env, { condition: "changes()=1", bindings: [] })];
+    const statements = [...before.map(guard => derivationAssertion(env, guard)), ...writes, ...after.map(guard => derivationAssertion(env, guard))];
+    if (!current() || !memoryDerivationEnabled(env, actor.userId)) return failure();
+    try {
+      const result = structuredClone(await db.batch(statements));
+      if (!current() || new Date().toISOString() >= grant.expires_at || !derivationResults(result, statements.length) || !result.slice(0, before.length).every(derivationVerified)
+        || !result.slice(-after.length).every(derivationVerified) || !derivationVerified(result[before.length + writes.length - 1]!)
+        || !derivationChanged(result[before.length + writes.length - 2]!, 1)
+        || withdrawal && !withdrawal.acknowledge(result.slice(before.length, before.length + withdrawal.statements.length))) return failure();
+    } catch { return failure(); }
+    return reply({ grant: grantView(grant), capScope: "payer-utc-calendar-month-all-memory-purposes", processingImplemented: false });
+  } catch { return request.method === "GET" ? deny("memory_derivation_unavailable", 503) : failure(); }
+}

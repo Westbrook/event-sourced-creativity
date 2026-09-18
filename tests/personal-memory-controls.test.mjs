@@ -12,6 +12,7 @@ import { keyed } from "lit/directives/keyed.js";
 import ts from "typescript";
 import { createLiveMemoryClient, MemoryClientError, MEMORY_POLICY, MEMORY_TIMING, MEMORY_WRITE_CONTRACT } from "../src/state/live-memory-client.ts";
 import { createDocumentProfileClient, DocumentProfileClientError, DOCUMENT_PROFILE_CONTROL_VERSION, DOCUMENT_PROFILE_POLICY, NATIVE_DOCUMENT_PALETTE_CHOICE_RECIPE } from "../src/state/document-profile-client.ts";
+import { createMemoryDerivationClient, MemoryDerivationClientError, MEMORY_DERIVATION_CONTROL, MEMORY_DERIVATION_POLICY } from "../src/state/memory-derivation-client.ts";
 import { parseMemoryAnswerPresentation } from "../src/model/memory-answer.ts";
 import { createMemoryElapsed } from "../src/model/memory-lifetime.ts";
 import { ASSISTANT_CONTEXT_LIMITS } from "../src/model/conversation-context.ts";
@@ -299,7 +300,7 @@ function fixture(t, { initial = settings(), route = "/memory", session: initialS
     if (response instanceof Error) throw response;
     return response instanceof Response ? response : Response.json(response);
   }
-  const ports = { FormaElement, html, nothing, createMemoryElapsed, DocumentProfileClientError, DOCUMENT_PROFILE_CONTROL_VERSION, DOCUMENT_PROFILE_POLICY, NATIVE_DOCUMENT_PALETTE_CHOICE_RECIPE, MemoryClientError, MEMORY_POLICY, MEMORY_TIMING, MEMORY_WRITE_CONTRACT, parseMemoryCustody, liveConversationDigest,
+  const ports = { FormaElement, html, nothing, createMemoryDerivationClient, MemoryDerivationClientError, MEMORY_DERIVATION_CONTROL, MEMORY_DERIVATION_POLICY, createMemoryElapsed, DocumentProfileClientError, DOCUMENT_PROFILE_CONTROL_VERSION, DOCUMENT_PROFILE_POLICY, NATIVE_DOCUMENT_PALETTE_CHOICE_RECIPE, MemoryClientError, MEMORY_POLICY, MEMORY_TIMING, MEMORY_WRITE_CONTRACT, parseMemoryCustody, liveConversationDigest,
     personalMemoryMessage: localized ? personalMemoryMessage
       : (_locale, key, values = {}) => key + Object.values(values).map(value => ` [${value}]`).join(""),
     window: windowPort, document: documentPort, Date: FixtureDate, performance: { now: () => clock.monotonic },
@@ -3341,4 +3342,68 @@ for (const conflict of ["scope identity", "cleanup state"]) test("structured cle
   assert.equal(h.text().includes("different-scope-document"), false);
   assert.equal(h.action("more").disabled, true); assert.equal(h.action("reload").disabled, false);
   assert.equal(h.mutations().length, 0); assert.equal(h.calls.length, 2);
+});
+
+function purposeSettings(item,{grant=null,ready=false,enabled=true}={}){
+  const terms={version:'memory-derivation-terms-v1',purpose:'rolling-summary',recipeVersion:'memory-derivation-candidates-v1',provider:'openai',model:'isolated-test-model',pricing:{inputMicroUsdPerMillion:1000000,cachedInputMicroUsdPerMillion:0,outputMicroUsdPerMillion:2000000},maximumInputTokens:1000,maximumOutputTokens:100,monthlyCapMicroUsd:100000,payer:'self-ai-allowance',providerStore:false,providerRetentionDisclosure:'Isolated synthetic qualification only; no real provider retention claim.',retentionPolicyId:'isolated-retention',evidence:Object.fromEntries(['modelAccess','pricing','retention','tokenBounds','nativeAccounting','failureRecovery','privacy','benchmark','capApproval'].map(key=>[key,'a'.repeat(64)]))};
+  const canonical=value=>JSON.stringify(value,(_key,item)=>item&&typeof item==='object'&&!Array.isArray(item)?Object.fromEntries(Object.entries(item).sort(([a],[b])=>a<b?-1:a>b?1:0)):item);
+  const offer={qualificationId:'isolated-qualification',termsSha256:createHash('sha256').update(canonical(terms)).digest('hex'),expiresAt:item.expiresAt,terms};
+  return {version:MEMORY_DERIVATION_CONTROL,enabled,available:enabled,reason:enabled?null:'disabled',policyVersion:MEMORY_DERIVATION_POLICY,
+    scope:{projectId:item.projectId,documentId:item.documentId,custody:{kind:'personal'}},enrollmentId:item.id,enrollmentRevision:item.revision,
+    grants:grant?[grant]:[],qualifications:enabled?[offer]:[],capScope:'payer-utc-calendar-month-all-memory-purposes',sourceWindow:'future-originals',processingImplemented:ready};
+}
+function purposeGrant(item,control=purposeSettings(item)){
+  const offer=control.qualifications[0];return {scope:control.scope,grantId:'a'.repeat(64),revision:1,consentId:crypto.randomUUID(),purpose:'rolling-summary',enrollmentId:item.id,enrollmentRevision:item.revision,
+    qualificationId:offer.qualificationId,termsSha256:offer.termsSha256,monthlyCapMicroUsd:offer.terms.monthlyCapMicroUsd,sourceAfterSequence:9,background:false,retentionDays:item.retentionDays,
+    consentedAt:new Date(Date.now()-1000).toISOString(),expiresAt:item.expiresAt,revokedAt:null};
+}
+function purposeToggle(h,open){const details=h.all().find(control=>control.attributes.has('data-memory-purposes'));assert.ok(details);return h.invoke(details,'@toggle',{currentTarget:{...h.target(details),open}}).result;}
+function purposeSubmit(h){const form=h.all().find(control=>control.attributes.has('data-memory-purpose-form'));assert.ok(form);return h.invoke(form,'@submit').result;}
+const purposeActions=h=>h.calls.filter(call=>String(call.url).startsWith('/api/memory/derivation/'));
+function purposeConsent(h){h.change('memory-purpose-qualification','isolated-qualification');h.change('memory-purpose-charge',true);h.change('memory-purpose-consent',true);}
+async function purposeFixture(t,{ready=true,grant=false,enabled=true,locale='en',localized=false}={}){
+  const item=enrollment(),h=fixture(t,{initial:settings([item]),locale,localized});await flush();await h.select(item.documentId);purposeToggle(h,true);
+  const control=purposeSettings(item,{ready,enabled}),known=grant?purposeGrant(item):null;control.grants=known?[known]:[];
+  h.enqueue(control);await profileClick(h,'purposeLoad');return{h,item,control,grant:known};
+}
+test('derived purpose controls never load on mount, selection or disclosure; inactive processing cannot enroll',async t=>{
+  const item=enrollment(),h=fixture(t,{initial:settings([item])});await flush();await h.select(item.documentId);purposeToggle(h,true);
+  assert.equal(purposeActions(h).length,0);assert.match(h.text(),/memory.live.purposeNotLoaded/u);
+  h.enqueue(purposeSettings(item));await profileClick(h,'purposeLoad');assert.equal(purposeActions(h).length,1);
+  purposeConsent(h);await purposeSubmit(h);assert.equal(h.mutations().length,0);assert.equal(profileAction(h,'purposeEnable').disabled,true);
+});
+test('derived purpose consent is explicit, allowance-specific and independent of profile/reference drafts',async t=>{
+  const {h,item,control}=await purposeFixture(t);await purposeSubmit(h);assert.equal(h.mutations().length,0);
+  h.change('memory-purpose-qualification','isolated-qualification');h.change('memory-purpose-consent',true);await purposeSubmit(h);assert.equal(h.mutations().length,0);
+  h.change('memory-purpose-charge',true);assert.equal(h.field('memory-purpose-consent').attributes.get('.checked'),false);h.change('memory-purpose-consent',true);
+  const grant=purposeGrant(item,control);h.enqueue({version:MEMORY_DERIVATION_CONTROL,grant,capScope:control.capScope,processingImplemented:true});await purposeSubmit(h);
+  assert.equal(purposeActions(h).length,2);const body=purposeActions(h)[1].body;assert.equal(body.chargeMyAiAllowance,true);assert.equal(body.background,false);
+  assert.equal(body.sourceWindow,'future-originals');assert.equal(body.expectedConsentId,null);assert.equal(body.monthlyCapMicroUsd,control.qualifications[0].terms.monthlyCapMicroUsd);
+  assert.equal(h.field('memory-consent').attributes.get('.checked'),false);assert.equal(h.field('memory-purpose-charge').attributes.get('.checked'),false);
+  assert.match(h.text(),/memory.live.purposeSaved/u);assert.equal(profileActions(h).length,0);
+});
+test('derived purpose uncertain enable requires explicit reload and never retries',async t=>{
+  const {h}=await purposeFixture(t);purposeConsent(h);h.enqueue(new Error('fixture lost acknowledgement'));await purposeSubmit(h);
+  assert.match(h.text(),/memory.live.purposeUnknown/u);const count=purposeActions(h).length;await purposeSubmit(h);assert.equal(purposeActions(h).length,count);
+  assert.equal(profileAction(h,'purposeEnable').disabled,true);
+});
+test('derived purpose known revoke works when processing and qualification are disabled',async t=>{
+  const {h,grant}=await purposeFixture(t,{grant:true,enabled:false,ready:false});
+  h.enqueue({version:MEMORY_DERIVATION_CONTROL,revoked:true,grantId:grant.grantId,revision:grant.revision,consentId:grant.consentId,reEnrollmentRequired:true});
+  await profileClick(h,'purposeRevoke');const sent=purposeActions(h).at(-1);assert.equal(sent.init.method,'DELETE');assert.equal(sent.body.consentId,grant.consentId);
+  assert.match(h.text(),/memory.live.purposeRevoked/u);assert.equal(profileAction(h,'purposeRevoke').disabled,true);
+});
+test('derived purpose closing and reopening retires old callbacks and requires an explicit new load',async t=>{
+  const {h}=await purposeFixture(t);purposeConsent(h);const stale=h.all().find(control=>control.attributes.has('data-memory-purpose-form'));
+  purposeToggle(h,false);purposeToggle(h,true);await h.invoke(stale,'@submit').result;assert.equal(h.mutations().length,0);
+  assert.match(h.text(),/memory.live.purposeNotLoaded/u);assert.equal(purposeActions(h).length,1);
+});
+test('derived purpose response cannot survive scope navigation',async t=>{
+  const {h,item}=await purposeFixture(t);purposeConsent(h);const delayed=delayedJson({version:MEMORY_DERIVATION_CONTROL,grant:purposeGrant(item),capScope:'payer-utc-calendar-month-all-memory-purposes',processingImplemented:true});
+  h.enqueue(delayed.response);const pending=purposeSubmit(h);h.enqueue(settings([item]));h.move({route:'/library'});await flush();delayed.release();await pending;
+  assert.doesNotMatch(h.text(),/memory.live.purposeSaved/u);assert.equal(h.mutations().length,1);
+});
+for(const locale of ['en','fr','ar','ja'])test('derived purpose controls have localized inactive and consent disclosures: '+locale,async t=>{
+  const {h}=await purposeFixture(t,{locale,localized:true,ready:false});assert.doesNotMatch(h.text(),/memory\.live\.purpose/u);
+  assert.ok(h.text().includes(personalMemoryMessage(locale,'memory.live.purposeInactive')));
 });

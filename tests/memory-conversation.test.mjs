@@ -262,3 +262,46 @@ test('model parser accepts bounded compound native keys and rejects blank human 
   for(const source of f.context.sources)source.scopeKey=identity.documentKey;
   assert.ok(await f.parse());f.item.supports=[f.quote(0,4,5)];assert.equal(await f.parse(),null);
 });
+
+const {parseMemoryDerivationQualification,derivationCanonical,memoryDerivationMaximumMicroUsd,DERIVATION_EVIDENCE}=await import('../worker/memory-derivation-policy.ts');
+function derivationQualificationFixture(){
+  const binding={sourceSha256:'a'.repeat(64),origin:'https://qualification.fixture.invalid',deploymentId:'isolated-local-qualification'};
+  const terms={version:'memory-derivation-terms-v1',purpose:'rolling-summary',recipeVersion:'memory-derivation-candidates-v1',provider:'openai',model:'isolated-test-model',
+    pricing:{inputMicroUsdPerMillion:1000000,cachedInputMicroUsdPerMillion:250000,outputMicroUsdPerMillion:2000000},maximumInputTokens:1000,maximumOutputTokens:100,
+    monthlyCapMicroUsd:100000,payer:'self-ai-allowance',providerStore:false,providerRetentionDisclosure:'Isolated synthetic qualification only; no real provider retention claim.',retentionPolicyId:'isolated-test-retention',evidence:Object.fromEntries(DERIVATION_EVIDENCE.map(key=>[key,hashMemoryText('synthetic-only:'+key)]))};
+  const row={qualification_id:'isolated-local-receipt',source_sha256:binding.sourceSha256,origin:binding.origin,deployment_id:binding.deploymentId,
+    terms_json:derivationCanonical(terms),terms_sha256:'',status:'qualified',qualified_at:new Date(Date.now()-1000).toISOString(),expires_at:new Date(Date.now()+60000).toISOString()};
+  const resign=()=>{row.terms_json=derivationCanonical(terms);row.terms_sha256=hashMemoryText(row.terms_json);};resign();
+  return {binding,terms,row,resign,parse:()=>parseMemoryDerivationQualification(row,binding)};
+}
+test('purpose qualification is exact, deployment-bound and has no default price or monthly cap',async()=>{
+  const f=derivationQualificationFixture(),accepted=await f.parse();assert.ok(accepted);
+  assert.equal(memoryDerivationMaximumMicroUsd(accepted.terms),1200);assert.ok(Object.isFrozen(accepted.terms.evidence));
+  assert.equal(await parseMemoryDerivationQualification(null,f.binding),null);
+  f.terms.pricing.inputMicroUsdPerMillion=999999;f.resign();assert.equal(memoryDerivationMaximumMicroUsd((await f.parse()).terms),1200,'Ceil the total charge; never use cached pricing for a maximum');
+});
+for(const fault of ['missing-evidence','missing-cap','changed-hash','duplicate-key','extra-field','different-source','different-origin','different-deployment','http-origin','withdrawn','expired','future-qualified','fractional-price','negative-cache-price','cache-premium','call-over-cap','provider-store','another-payer'])
+test('purpose qualification rejects '+fault,async()=>{
+  const f=derivationQualificationFixture();
+  if(fault==='missing-evidence')delete f.terms.evidence.capApproval;
+  if(fault==='missing-cap')delete f.terms.monthlyCapMicroUsd;
+  if(fault==='extra-field')f.terms.allowedToSpend=true;
+  if(fault==='fractional-price')f.terms.pricing.inputMicroUsdPerMillion=1.5;
+  if(fault==='negative-cache-price')f.terms.pricing.cachedInputMicroUsdPerMillion=-1;
+  if(fault==='cache-premium')f.terms.pricing.cachedInputMicroUsdPerMillion=1000001;
+  if(fault==='call-over-cap')f.terms.monthlyCapMicroUsd=1;
+  if(fault==='provider-store')f.terms.providerStore=true;
+  if(fault==='another-payer')f.terms.payer='organization';
+  f.resign();
+  if(fault==='changed-hash')f.row.terms_sha256='0'.repeat(64);
+  if(fault==='duplicate-key'){f.row.terms_json=f.row.terms_json.replace('"monthlyCapMicroUsd":','"monthlyCapMicroUsd":1,"monthlyCapMicroUsd":');f.row.terms_sha256=hashMemoryText(f.row.terms_json);}
+  if(fault==='different-source')f.binding.sourceSha256='b'.repeat(64);
+  if(fault==='different-origin')f.binding.origin='https://other.fixture.invalid';
+  if(fault==='different-deployment')f.binding.deploymentId='other-deployment';
+  if(fault==='http-origin')f.binding.origin=f.row.origin='http://qualification.fixture.invalid';
+  if(fault==='withdrawn')f.row.status='withdrawn';
+  if(fault==='expired')f.row.expires_at=new Date(Date.now()-1).toISOString();
+  if(fault==='future-qualified')f.row.qualified_at=new Date(Date.now()+10000).toISOString();
+  assert.equal(await f.parse(),null);
+  if(fault==='future-qualified')assert.equal(await parseMemoryDerivationQualification(f.row,f.binding,new Date(Date.now()+20000).toISOString()),null);
+});

@@ -6,6 +6,7 @@ import { liveMemoryAuthority, liveMemoryEnrollmentGuard, liveMemoryMaintenanceAt
 import { liveMemorySourceQuery, liveMemoryView, type LiveSourceRow } from "./memory-live-sources.ts";
 import { uuidV7, type WorkerEnv } from "./runtime.ts";
 import { documentProfileWithdrawalStatements } from "./memory-document-profile-store.ts";
+import { prepareDerivationWithdrawal } from "./memory-derivation-store.ts";
 import { nativeMemoryOriginWithdrawal, prepareNativeMemoryOriginWithdrawal, prepareNativeMemoryOriginDependencyWithdrawal, nativeMemoryOriginSourceExclusion,
   nativeStructuredOriginSchema, nativeStructuredOriginMinimizedIntegrity, prepareNativeStructuredOriginWithdrawal, prepareNativeDocumentJobOriginWithdrawal,
   readNativeDocumentJobOriginCleanupCoverage, prepareNativeDocumentJobOriginErasureBarrier, type NativeDocumentJobOriginCleanupCoverage,
@@ -193,6 +194,8 @@ export async function prepareLiveMemoryErasureBarrier(env:WorkerEnv,scope:LiveMe
     ?{actorUserId:selected.actorUserId,personalOnly:true as const}:{actorUserId:selected.actorUserId};
   const job=await prepareNativeDocumentJobOriginErasureBarrier(env,selector,now);
   if(!job||!current())throw new Error("memory-erasure-barrier-unavailable");
+  const derivation=await prepareDerivationWithdrawal(env,selector,now);
+  if(!current())throw new Error("memory-erasure-barrier-unavailable");
   const schemaQuery="SELECT type,name,sql FROM sqlite_schema WHERE name='memory_live_enrollments'";
   const schema=structuredClone(await db.prepare(schemaQuery).all<{type:string;name:string;sql:string}>());
   if(!current()||!structuredResults([schema],1)||schema.results.length>1||schema.results.some(row=>!structuredKeys(row,["type","name","sql"])
@@ -229,6 +232,8 @@ export async function prepareLiveMemoryErasureBarrier(env:WorkerEnv,scope:LiveMe
   const jobOffset=statements.length;statements.push(...job.statements.map(query=>db.prepare(query.sql).bind(...query.bindings)));
   assertionIndexes.push(...job.assertionIndexes.map(index=>jobOffset+index));
   const jobEnd=statements.length,changed=rows.filter(needsDisable).length;let updateIndex:number|null=null;
+  const derivationOffset=statements.length;
+  assertionIndexes.push(...derivation.assertionIndexes.map(index=>derivationOffset+index));statements.push(...derivation.statements);
   if(schema.results.length){
     updateIndex=statements.length;
     statements.push(db.prepare(`UPDATE memory_live_enrollments SET learn_enabled=0,recall_enabled=0,background_enabled=0,revision=revision+1,
@@ -240,16 +245,18 @@ export async function prepareLiveMemoryErasureBarrier(env:WorkerEnv,scope:LiveMe
     assertionIndexes.push(statements.length);statements.push(exact(terminal));
   }
   for(const query of job.terminalAssertions){assertionIndexes.push(statements.length);statements.push(db.prepare(query.sql).bind(...query.bindings));}
+  for(const statement of derivation.terminalAssertions){assertionIndexes.push(statements.length);statements.push(statement);}
   assertionIndexes.push(statements.length);statements.push(schemaGuard());
   if(!current())throw new Error("memory-erasure-barrier-changed");
   Object.freeze(statements);Object.freeze(assertionIndexes);let used=false;
   return Object.freeze({statements,assertionIndexes,pendingOrigins:job.pendingOrigins,initializedOrigins:job.initializedOrigins,
-    bookkeepingWrites:job.bookkeepingWrites+(updateIndex===null?0:1),acknowledge(results:readonly unknown[]){
+    bookkeepingWrites:job.bookkeepingWrites+(updateIndex===null?0:1)+derivation.bookkeepingWrites,acknowledge(results:readonly unknown[]){
       if(used)return false;used=true;if(!current())return false;
       const safe=memoryErasureReceiptData(results,statements.length);
       return safe!==null&&structuredAsserted(safe,assertionIndexes,"verified")
         &&(updateIndex===null||safe[updateIndex].results.length===0&&safe[updateIndex].meta?.changes===changed)
-        &&job.acknowledge(safe.slice(jobOffset,jobEnd))&&current();
+        &&job.acknowledge(safe.slice(jobOffset,jobEnd))
+        &&derivation.acknowledge(safe.slice(derivationOffset,derivationOffset+derivation.statements.length))&&current();
     }});
 }
 /** Final source-erasure owner. These terminal assertions MUST follow the caller's
@@ -291,17 +298,20 @@ export async function prepareLiveMemoryErasureStatements(env:WorkerEnv,scope:Liv
   if(!current())throw new Error("memory-erasure-preparation-changed");
   const profileWrites=await documentProfileWithdrawalStatements(env,selected,now);
   if(!current())throw new Error("memory-erasure-preparation-changed");
+  const derivationWrites=await prepareDerivationWithdrawal(env,selected,now,true);
+  if(!current())throw new Error("memory-erasure-preparation-changed");
   const structuredWrites=await prepareStructuredConversationWithdrawal(env,selected,now);
   if(!current()||structuredWrites.pendingJobOrigins!==0)throw new Error("memory-erasure-job-cleanup-pending");
-  const initial=[schemaGuard(),...(present?[identities()]:[])],structuredOffset=initial.length+originWrites.length+profileWrites.length;
-  const statements=[...initial,...originWrites,...profileWrites,...structuredWrites.statements];
+  const initial=[schemaGuard(),...(present?[identities()]:[])],derivationOffset=initial.length+originWrites.length+profileWrites.length,
+    structuredOffset=derivationOffset+derivationWrites.statements.length;
+  const statements=[...initial,...originWrites,...profileWrites,...derivationWrites.statements,...structuredWrites.statements];
   if(present){
     statements.push(db.prepare(`DELETE FROM memory_live_sources WHERE enrollment_id IN(SELECT enrollment_id FROM memory_live_enrollments WHERE ${clause})`).bind(scopeValue),
       ...(conversation?[db.prepare(`DELETE FROM memory_live_conversation_segments WHERE enrollment_id IN(SELECT enrollment_id FROM memory_live_enrollments WHERE ${clause})`).bind(scopeValue)]:[]),
       db.prepare(`UPDATE memory_live_enrollments SET learn_enabled=0,recall_enabled=0,background_enabled=0,revision=revision+1,
         lease_token=NULL,lease_expires_at=NULL,cutoff_sequence=NULL,expires_at=?,next_due_at=?,failure_code='erased' WHERE ${clause}`).bind(now,now,scopeValue));
   }
-  const terminalAssertions=[...structuredWrites.terminalAssertions,schemaGuard(),...(present?[identities(),memorySqlAssertion(env,{
+  const terminalAssertions=[...structuredWrites.terminalAssertions,...derivationWrites.terminalAssertions,schemaGuard(),...(present?[identities(),memorySqlAssertion(env,{
     condition:`NOT EXISTS(SELECT 1 FROM memory_live_enrollments WHERE ${clause} AND (learn_enabled IS NOT 0 OR recall_enabled IS NOT 0
       OR background_enabled IS NOT 0 OR lease_token IS NOT NULL OR lease_expires_at IS NOT NULL OR cutoff_sequence IS NOT NULL
       OR failure_code IS NOT 'erased' OR expires_at IS NOT ?))
@@ -315,6 +325,7 @@ export async function prepareLiveMemoryErasureStatements(env:WorkerEnv,scope:Liv
     const safe=memoryErasureReceiptData(results,statements.length+terminalAssertions.length);
     return safe!==null&&structuredAsserted(safe,[...initial.map((_,index)=>index),
       ...terminalAssertions.map((_,index)=>statements.length+index)],"verified")
+      &&derivationWrites.acknowledge(safe.slice(derivationOffset,derivationOffset+derivationWrites.statements.length))
       &&structuredWrites.acknowledge(safe.slice(structuredOffset,structuredOffset+structuredWrites.statements.length))&&current();
   }});
 }
@@ -335,6 +346,9 @@ export async function revokeLiveMemoryCounted(env:WorkerEnv,e:LiveMemoryEnrollme
   const originWrites=await liveMemoryOriginWithdrawalStatements(env,{enrollmentId:snapshot.enrollment_id,currentRevision:snapshot.revision},
     code==="forgotten"||code==="erased"?"erased":code==="access-changed"?"access-withdrawn":"enrollment-changed",now);
   const profileWrites=await documentProfileWithdrawalStatements(env,{enrollmentId:snapshot.enrollment_id,currentEnrollmentRevision:snapshot.revision},now);
+  const eraseDerivation=code==="forgotten"||code==="erased";
+  const derivationWrites=await prepareDerivationWithdrawal(env,eraseDerivation?{enrollmentId:snapshot.enrollment_id}
+    :{enrollmentId:snapshot.enrollment_id,currentEnrollmentRevision:snapshot.revision},now,eraseDerivation);
   const structuredWrites=await prepareStructuredConversationWithdrawal(env,{enrollment:snapshot},now);
   const conversationReady=await liveConversationSchemaReady(env);
   // Stable ledger scope survives replacement, but a stale revocation must not gain
@@ -349,22 +363,25 @@ export async function revokeLiveMemoryCounted(env:WorkerEnv,e:LiveMemoryEnrollme
     ${structuredEnrollmentColumns.map(column=>`${column} IS ?`).join(" AND ")})`,bindings:structuredEnrollmentColumns.map(column=>row[column as keyof LiveMemoryEnrollment])});
   const terminal:LiveMemoryEnrollment={...snapshot,learn_enabled:0,recall_enabled:0,background_enabled:0,revision:snapshot.revision+1,
     lease_token:null,lease_expires_at:null,cutoff_sequence:null,failure_code:code,next_due_at:"9999-12-31T00:00:00.000Z"};
-  const withdrawalWrites=[...originWrites,...profileWrites,...structuredWrites.statements];
+  const withdrawalWrites=[...originWrites,...profileWrites,...derivationWrites.statements,...structuredWrites.statements];
   const statements=[exact(snapshot),...withdrawalWrites,
     db.prepare("DELETE FROM memory_live_sources WHERE enrollment_id=? AND EXISTS(SELECT 1 FROM memory_live_enrollments WHERE enrollment_id=? AND revision=?)").bind(snapshot.enrollment_id,snapshot.enrollment_id,snapshot.revision),
     ...(conversationReady?[db.prepare("DELETE FROM memory_live_conversation_segments WHERE enrollment_id=? AND EXISTS(SELECT 1 FROM memory_live_enrollments WHERE enrollment_id=? AND revision=?)").bind(snapshot.enrollment_id,snapshot.enrollment_id,snapshot.revision)]:[]),
     db.prepare(`UPDATE memory_live_enrollments SET learn_enabled=0,recall_enabled=0,background_enabled=0,revision=revision+1,
       lease_token=NULL,lease_expires_at=NULL,cutoff_sequence=NULL,failure_code=?,next_due_at='9999-12-31T00:00:00.000Z' WHERE enrollment_id=? AND revision=?`).bind(code,snapshot.enrollment_id,snapshot.revision)];
   const updateIndex=statements.length-1;
-  statements.push(...structuredWrites.terminalAssertions,exact(terminal));
+  statements.push(...structuredWrites.terminalAssertions,...derivationWrites.terminalAssertions,exact(terminal));
   try {
     const results=structuredClone(await db.batch<StructuredLedgerRow>(statements));
-    const structuredOffset=1+originWrites.length+profileWrites.length;
+    const derivationOffset=1+originWrites.length+profileWrites.length,structuredOffset=derivationOffset+derivationWrites.statements.length;
     const assertions=[0,...structuredWrites.assertionIndexes.map(index=>structuredOffset+index),
       ...structuredWrites.terminalAssertions.map((_,index)=>updateIndex+1+index),statements.length-1];
+    assertions.push(...derivationWrites.assertionIndexes.map(index=>derivationOffset+index),
+      ...derivationWrites.terminalAssertions.map((_,index)=>updateIndex+1+structuredWrites.terminalAssertions.length+index));
     const erased=results[withdrawalWrites.length+1]?.meta?.changes;
     if (env.DB!==db||canonicalConsent(e)!==key||!structuredResults(results,statements.length)||!structuredAsserted(results,assertions,"verified")
       || results[updateIndex]?.meta?.changes!==1||typeof erased!=="number"||!Number.isSafeInteger(erased)||erased<0
+      || !derivationWrites.acknowledge(results.slice(derivationOffset,derivationOffset+derivationWrites.statements.length))
       || !structuredWrites.acknowledge(results.slice(structuredOffset,structuredOffset+structuredWrites.statements.length)))
       throw new Error("memory-structured-withdrawal-unconfirmed");
     return {revoked:true,erased,structuredPendingRevisions:structuredWrites.pendingRevisions,structuredPendingOrigins:structuredWrites.pendingOrigins};
@@ -445,6 +462,7 @@ export async function retireDeniedLiveMemoryCounted(env:WorkerEnv,e:LiveMemoryEn
       expires_at:String(row.expires_at)<now?row.expires_at:now})));
   }
   const profileWrites=await documentProfileWithdrawalStatements(env,{enrollmentId:snapshot.enrollment_id},now);
+  const derivationWrites=await prepareDerivationWithdrawal(env,{enrollmentId:snapshot.enrollment_id},now);
   const checkpoint=await prepareLiveMemoryCheckpointWithdrawal(env,{enrollmentId:snapshot.enrollment_id});
   const structuredWrites=await prepareStructuredConversationWithdrawal(env,{enrollment:snapshot},now);
   // Fixed enrollment-wide contract of the unchanged profile helper: exact
@@ -472,6 +490,8 @@ export async function retireDeniedLiveMemoryCounted(env:WorkerEnv,e:LiveMemoryEn
   writes.push(...profileWrites);
   assertions.push(...profileContract.assertions.map(index=>profileOffset+index));
   if(terminalProfiles)asserted(terminalProfiles);
+  const derivationOffset=writes.length;
+  assertions.push(...derivationWrites.assertionIndexes.map(index=>derivationOffset+index));writes.push(...derivationWrites.statements);
   const structuredOffset=writes.length;
   writes.push(...structuredWrites.statements);
   assertions.push(...structuredWrites.assertionIndexes.map(index=>structuredOffset+index));
@@ -503,6 +523,7 @@ export async function retireDeniedLiveMemoryCounted(env:WorkerEnv,e:LiveMemoryEn
     asserted(memorySqlAssertion(env,{condition:"NOT EXISTS(SELECT 1 FROM memory_document_profile_suppressions)",bindings:[]}));
   }
   structuredWrites.terminalAssertions.forEach(asserted);
+  derivationWrites.terminalAssertions.forEach(asserted);
   asserted(checkpoint.terminal);
   // Exact terminal enrollment first, then the same native-only denial witness
   // and its deadline last. Never replay the original enrollment after mutation.
@@ -516,6 +537,7 @@ export async function retireDeniedLiveMemoryCounted(env:WorkerEnv,e:LiveMemoryEn
     &&Object.entries(results[index]!.results[0]??{}).every(([name,value])=>["verified","context_source_asserted","memory_retirement_asserted"].includes(name)&&value===1)),
   "memory-retirement-unconfirmed");
   memoryAssert(env.DB===db&&JSON.stringify(e)===key
+    &&derivationWrites.acknowledge(results.slice(derivationOffset,derivationOffset+derivationWrites.statements.length))
     &&structuredWrites.acknowledge(results.slice(structuredOffset,structuredOffset+structuredWrites.statements.length)),"memory-retirement-unconfirmed");
   const count=results[countIndex]?.results;
   memoryAssert(count?.length===1&&Object.keys(count[0]??{}).length===1&&typeof count[0]?.erased==="number"

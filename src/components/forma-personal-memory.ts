@@ -11,6 +11,8 @@ import { createLiveMemoryClient, MemoryClientError, MEMORY_POLICY, MEMORY_TIMING
   type MemoryEnrollment, type MemorySettings, type MemoryRecall, type MemoryRecallLease, type MemoryPreferences } from "../state/live-memory-client.ts";
 import { createDocumentProfileClient, DocumentProfileClientError, DOCUMENT_PROFILE_CONTROL_VERSION,
   DOCUMENT_PROFILE_POLICY, NATIVE_DOCUMENT_PALETTE_CHOICE_RECIPE } from "../state/document-profile-client.ts";
+import { createMemoryDerivationClient, MemoryDerivationClientError, MEMORY_DERIVATION_CONTROL, MEMORY_DERIVATION_POLICY,
+  type DerivationSettings, type DerivationGrant, type DerivationOffer, type DerivationEnable } from "../state/memory-derivation-client.ts";
 import "./forma-personal-memory.css";
 
 type MemoryOwner = {
@@ -41,6 +43,21 @@ export class FormaPersonalMemory extends FormaElement {
     return this.store.guardedFetch(input, init, this.#t("profileHeading"), { current: request.current,
       onDispatch: () => { request.dispatched = true; } });
   });
+  #purposeClient = createMemoryDerivationClient((input, init) => {
+    const request = this.#purposeRequest;
+    if (!request?.current()) throw new Error("memory_purpose_request_cancelled");
+    return this.store.guardedFetch(input, init, this.#t("purposeHeading"), { current: request.current,
+      onDispatch: () => { request.dispatched = true; } });
+  });
+  #purposeOpen = false;
+  #purposeEpoch = 0;
+  #purposeScope: { row: MemoryEnrollment; current: () => boolean } | null = null;
+  #purposeSettings: DerivationSettings | null = null;
+  #purposeRequest: { kind: "settings" | "enable" | "revoke"; dispatched: boolean; controller: AbortController; detach: () => void; current: () => boolean } | null = null;
+  #purposeDraft = { qualificationId: "", charge: false, background: false, consent: false };
+  #purposeNeedsReload = false;
+  #purposeError = "";
+  #purposeNotice = "";
   #profileOpen = false;
   #profileEpoch = 0;
   #profileFocusRevision = 0;
@@ -121,7 +138,7 @@ export class FormaPersonalMemory extends FormaElement {
   }
 
   #reset() {
-    this.#closeProfile();
+    this.#closeProfile(); this.#closePurposes();
     for (const focus of this.#focusLeases) focus.dispose();
     this.#focusLeases.clear(); this.#invalid = {};
     window.clearTimeout(this.#deadlineTimer); this.#deadlineTimer = 0;
@@ -242,7 +259,7 @@ export class FormaPersonalMemory extends FormaElement {
     request.focus?.dispose(); if (request.focus) this.#focusLeases.delete(request.focus);
   }
   #retireRecall() {
-    this.#retireProfile();
+    this.#retireProfile(); this.#retirePurposes();
     if (this.#inspectRequest?.optionalCurrent && !this.#inspectRequest.optionalCurrent()) this.#retireInspect();
     if (this.#exportRequest && !this.#exportRequest.current()) this.#retireExport();
     if (document.visibilityState !== "visible") {
@@ -285,7 +302,8 @@ export class FormaPersonalMemory extends FormaElement {
     if (!owner?.current()) return;
     const access = this.store.session.get()?.projectContext?.expiresAt;
     const now = Date.now();
-    const delays = [access, this.#selected()?.expiresAt, this.#profileSettings?.grant?.expiresAt].filter((value): value is string => Boolean(value))
+    const delays = [access, this.#selected()?.expiresAt, this.#profileSettings?.grant?.expiresAt,
+      ...(this.#purposeSettings?.qualifications.map(item => item.expiresAt) ?? []), ...(this.#purposeSettings?.grants.map(item => item.expiresAt) ?? [])].filter((value): value is string => Boolean(value))
       .map(value => Date.parse(value) - now).filter(value => Number.isFinite(value) && value > 0);
     const remaining = this.#revealed?.lease.remaining();
     if (remaining !== undefined) {
@@ -879,6 +897,132 @@ export class FormaPersonalMemory extends FormaElement {
     </details>`;
   }
 
+  #closePurposes() {
+    this.#purposeEpoch++; this.#purposeOpen = false;
+    const request = this.#purposeRequest; this.#purposeRequest = null; request?.controller.abort(); request?.detach();
+    this.#purposeScope = null; this.#purposeSettings = null; this.#purposeNeedsReload = false;
+    this.#purposeDraft = { qualificationId: "", charge: false, background: false, consent: false }; this.#purposeError = ""; this.#purposeNotice = "";
+  }
+  #retirePurposes() {
+    if (this.#purposeOpen && !this.#purposeScope?.current()) { this.#closePurposes(); return; }
+    const request = this.#purposeRequest;
+    if (request && !request.current()) {
+      if (request.dispatched && request.kind !== "settings") { this.#purposeNeedsReload = true; this.#purposeError = "purposeUnknown"; this.#purposeNotice = ""; }
+      this.#purposeRequest = null; request.controller.abort(); request.detach();
+    }
+    if (!this.#purposeOffer() || this.#purposeScope && Date.parse(this.#purposeScope.row.expiresAt) <= Date.now()) {
+      this.#purposeDraft.charge = false; this.#purposeDraft.consent = false;
+    }
+  }
+  #purposeEvent(event: Event) {
+    return this.#eventCurrent(event) && !(event.currentTarget as HTMLElement).matches(":disabled") && Boolean(this.#purposeScope?.current());
+  }
+  #purposeOffer(): DerivationOffer | null {
+    return this.#purposeSettings?.qualifications.find(item => item.qualificationId === this.#purposeDraft.qualificationId && Date.parse(item.expiresAt) > Date.now()) ?? null;
+  }
+  #purposeEligible(offer = this.#purposeOffer()) {
+    const scope = this.#purposeScope;
+    return Boolean(scope?.current() && offer && this.#purposeSettings?.enabled && this.#purposeSettings.processingImplemented
+      && this.#purposeSettings.qualifications.includes(offer) && Date.parse(offer.expiresAt) > Date.now()
+      && this.store.session.get()?.policy.accepted && this.#profileParentEligible(scope.row) && !this.#purposeNeedsReload
+      && !this.#busy && !this.#dirty && !this.#confirmation);
+  }
+  #purposeLatest(): DerivationGrant[] {
+    const result = new Map<string, DerivationGrant>();
+    for (const grant of this.#purposeSettings?.grants ?? []) if ((result.get(grant.purpose)?.revision ?? 0) < grant.revision) result.set(grant.purpose, grant);
+    return [...result.values()];
+  }
+  async #runPurpose<T>(event: Event, kind: "settings" | "enable" | "revoke", operation: (signal: AbortSignal) => Promise<T>, accept: (result: T) => void, valid = () => true) {
+    const scope = this.#purposeScope, owner = this.#owner;
+    if (!scope || !owner || !this.#purposeEvent(event) || this.#purposeRequest || this.#busy || this.#confirmation || !valid()) return;
+    const controller = new AbortController(), abort = () => controller.abort(); owner.controller.signal.addEventListener("abort", abort, { once: true });
+    const request = { kind, dispatched: false, controller, detach: () => owner.controller.signal.removeEventListener("abort", abort),
+      current: (): boolean => this.#purposeRequest === request && this.#purposeScope === scope && scope.current() && !controller.signal.aborted && valid() };
+    this.#purposeRequest = request; this.#purposeError = ""; this.#purposeNotice = ""; this.#scheduleDeadline(); this.requestUpdate();
+    try { const result = await operation(controller.signal); if (this.#purposeRequest === request) this.#retirePurposes(); if (request.current()) accept(result); }
+    catch (error) { if (this.#purposeRequest === request) this.#retirePurposes(); if (request.current()) {
+      this.#purposeNeedsReload = true; this.#purposeError = error instanceof MemoryDerivationClientError && error.mutationUnknown ? "purposeUnknown" : "purposeError";
+    } } finally { request.detach(); if (this.#purposeRequest === request) this.#purposeRequest = null;
+      if (scope.current()) { this.#scheduleDeadline(); this.requestUpdate(); } }
+  }
+  #loadPurposes(event: Event) {
+    const row = this.#purposeScope?.row, custody = this.#owner?.expectedCustody;
+    if (!row || !custody || !this.#purposeEvent(event) || this.#purposeRequest) return;
+    this.#purposeDraft = { qualificationId: "", charge: false, background: false, consent: false };
+    return this.#runPurpose(event, "settings", signal => this.#purposeClient.settings({ projectId: row.projectId, documentId: row.documentId,
+      expectedCustody: custody, enrollmentId: row.id, enrollmentRevision: row.revision }, signal), result => {
+      this.#purposeSettings = result; this.#purposeNeedsReload = false;
+    });
+  }
+  #editPurpose(event: Event, field: "qualificationId" | "charge" | "background" | "consent") {
+    if (!this.#purposeEvent(event) || this.#purposeRequest || this.#busy || this.#dirty || this.#confirmation || this.#purposeNeedsReload) return;
+    const target = event.currentTarget as HTMLInputElement;
+    this.#purposeDraft = { ...this.#purposeDraft, [field]: field === "qualificationId" ? target.value : target.checked,
+      ...(field !== "consent" ? { consent: false } : {}), ...(field === "qualificationId" ? { charge: false, background: false } : {}) };
+    this.requestUpdate();
+  }
+  #enablePurpose(event: SubmitEvent) {
+    event.preventDefault(); const offer = this.#purposeOffer(), settings = this.#purposeSettings, row = this.#purposeScope?.row, custody = this.#owner?.expectedCustody;
+    if (!offer || !settings || !row || !custody || !this.#purposeEvent(event) || !this.#purposeEligible(offer) || this.#purposeRequest
+      || !this.#purposeDraft.charge || !this.#purposeDraft.consent || this.#purposeDraft.background && !row.background) return;
+    const prior = this.#purposeLatest().find(item => item.purpose === offer.terms.purpose), expiresAt = row.expiresAt < offer.expiresAt ? row.expiresAt : offer.expiresAt;
+    const draft: DerivationEnable = { version: MEMORY_DERIVATION_CONTROL, policyVersion: MEMORY_DERIVATION_POLICY, purpose: offer.terms.purpose,
+      qualificationId: offer.qualificationId, termsSha256: offer.termsSha256, projectId: row.projectId, documentId: row.documentId,
+      enrollmentId: row.id, enrollmentRevision: row.revision, revision: prior?.revision ?? 0, expectedConsentId: prior?.consentId ?? null,
+      expectedCustody: custody, monthlyCapMicroUsd: offer.terms.monthlyCapMicroUsd, background: this.#purposeDraft.background,
+      retentionDays: row.retentionDays, expiresAt, sourceWindow: "future-originals" as const, chargeMyAiAllowance: true as const, confirmation: "ENABLE_DERIVED_MEMORY" as const };
+    this.#purposeDraft = { ...this.#purposeDraft, charge: false, consent: false };
+    return this.#runPurpose(event, "enable", signal => this.#purposeClient.enable(draft, signal), result => {
+      this.#purposeSettings = { ...settings, grants: [...settings.grants.filter(item => item.purpose !== result.purpose), result] }; this.#purposeNotice = "purposeSaved";
+    }, () => this.#purposeSettings === settings && this.#purposeEligible(offer));
+  }
+  #revokePurpose(event: Event, grant: DerivationGrant) {
+    const settings = this.#purposeSettings;
+    if (!settings || !this.#purposeLatest().includes(grant) || this.#purposeNeedsReload) return;
+    return this.#runPurpose(event, "revoke", signal => this.#purposeClient.revoke(grant, signal), () => {
+      this.#purposeNeedsReload = true; this.#purposeNotice = "purposeRevoked";
+    }, () => this.#purposeSettings === settings && this.#purposeLatest().includes(grant));
+  }
+  #togglePurposes(event: Event, row: MemoryEnrollment, renderedScope: { row: MemoryEnrollment; current: () => boolean } | null) {
+    const owner = this.#owner, target = event.currentTarget as HTMLDetailsElement;
+    if (!this.#eventCurrent(event, owner) || !owner?.sourceCurrent() || row !== this.#selected() || document.visibilityState !== "visible" || this.#purposeScope !== renderedScope) return;
+    if (!target.open) { this.#closePurposes(); this.#scheduleDeadline(); this.requestUpdate(); return; }
+    if (this.#purposeOpen || this.#busy || this.#confirmation) return;
+    const epoch = ++this.#purposeEpoch, events = this.store.events.get(), content = this.store.content.get(), revision = row.revision,
+      expiry = row.expiresAt, retention = row.retentionDays, background = row.background;
+    const scope = { row, current: (): boolean => this.#purposeScope === scope && this.#purposeOpen && this.#purposeEpoch === epoch && owner.sourceCurrent()
+      && document.visibilityState === "visible" && row === this.#selected() && this.#rows.includes(row) && row.revision === revision
+      && row.expiresAt === expiry && row.retentionDays === retention && row.background === background && this.store.events.get() === events && this.store.content.get() === content };
+    this.#purposeScope = scope; this.#purposeOpen = true; this.requestUpdate();
+  }
+  #renderPurposes(row: MemoryEnrollment) {
+    const scope = this.#purposeScope, settings = this.#purposeSettings, open = this.#purposeOpen && scope?.row === row && scope.current(), offer = this.#purposeOffer();
+    const disabled = Boolean(this.#purposeRequest || this.#busy || this.#dirty || this.#confirmation || this.#purposeNeedsReload);
+    const captured = (event: Event, run: () => unknown) => { if (scope === this.#purposeScope && this.#purposeEvent(event)) return run(); };
+    return html`<details class="personal-memory-activity" data-memory-purposes ?open=${open} @toggle=${(event: Event) => this.#togglePurposes(event, row, scope)}>
+      <summary>${this.#t("purposeHeading")}</summary>${open ? html`<div aria-busy=${this.#purposeRequest ? "true" : "false"}>
+      <p>${this.#t("purposeIntro")}</p><p>${this.#t("purposeManual")}</p>
+      <button type="button" class="button secondary" ?disabled=${Boolean(this.#purposeRequest || this.#busy || this.#confirmation)} @click=${(event: Event) => captured(event, () => this.#loadPurposes(event))}>${this.#t("purposeLoad")}</button>
+      ${this.#purposeError ? html`<p role="alert">${this.#t(this.#purposeError)}</p>` : nothing}${this.#purposeNotice ? html`<p role="status">${this.#t(this.#purposeNotice)}</p>` : nothing}
+      ${settings ? html`${!settings.processingImplemented || !settings.available ? html`<p>${this.#t("purposeInactive")}</p>` : nothing}
+        <ul>${this.#purposeLatest().map(grant => html`<li>${this.#t("purpose." + grant.purpose)} · ${this.#t(grant.revokedAt ? "purposeGrantRevoked" : Date.parse(grant.expiresAt) <= Date.now() ? "purposeGrantExpired" : "purposeGrantSaved")} · <time datetime=${grant.expiresAt}>${this.i18n.date(new Date(grant.expiresAt), { dateStyle: "medium", timeStyle: "short" })}</time>
+          <button type="button" class="button ghost danger-quiet" ?disabled=${Boolean(this.#purposeRequest || this.#busy || this.#confirmation || this.#purposeNeedsReload)} @click=${(event: Event) => captured(event, () => this.#revokePurpose(event, grant))}>${this.#t("purposeRevoke")}</button></li>`)}</ul>
+        <form data-memory-purpose-form @submit=${(event: SubmitEvent) => { event.preventDefault(); return captured(event, () => this.#enablePurpose(event)); }}>
+          <fieldset ?disabled=${disabled || !settings.enabled || !settings.processingImplemented}><legend>${this.#t("purposePermission")}</legend>
+            <label>${this.#t("purposeSelect")}<select name="memory-purpose-qualification" .value=${this.#purposeDraft.qualificationId} @change=${(event: Event) => captured(event, () => this.#editPurpose(event, "qualificationId"))}>
+              <option value="">${this.#t("purposeSelect")}</option>${settings.qualifications.map(item => html`<option value=${item.qualificationId}>${this.#t("purpose." + item.terms.purpose)} · ${item.terms.model}</option>`)}</select></label>
+            ${offer ? html`<p>${this.#t("purposeTerms", { model: offer.terms.model, cap: this.i18n.number(offer.terms.monthlyCapMicroUsd / 1000000, { maximumFractionDigits: 6 }) })}</p>
+              <p dir="auto">${offer.terms.providerRetentionDisclosure}</p>
+              <p>${this.#t("purposePricing", { input: this.i18n.number(offer.terms.pricing.inputMicroUsdPerMillion / 1000000, { maximumFractionDigits: 6 }), cached: this.i18n.number(offer.terms.pricing.cachedInputMicroUsdPerMillion / 1000000, { maximumFractionDigits: 6 }), output: this.i18n.number(offer.terms.pricing.outputMicroUsdPerMillion / 1000000, { maximumFractionDigits: 6 }), maxInput: this.i18n.number(offer.terms.maximumInputTokens), maxOutput: this.i18n.number(offer.terms.maximumOutputTokens) })}</p>
+              <p>${this.#t("purposeBounds", { days: this.i18n.number(row.retentionDays), at: this.i18n.date(new Date(row.expiresAt < offer.expiresAt ? row.expiresAt : offer.expiresAt), { dateStyle: "medium", timeStyle: "short" }) })}</p>` : nothing}
+            <label class="toggle-row"><input type="checkbox" name="memory-purpose-charge" .checked=${this.#purposeDraft.charge} @change=${(event: Event) => captured(event, () => this.#editPurpose(event, "charge"))}>${this.#t("purposeCharge")}</label>
+            <label class="toggle-row"><input type="checkbox" name="memory-purpose-background" .checked=${this.#purposeDraft.background} ?disabled=${!row.background} @change=${(event: Event) => captured(event, () => this.#editPurpose(event, "background"))}>${this.#t("purposeBackground")}</label>
+            <label class="toggle-row"><input type="checkbox" name="memory-purpose-consent" .checked=${this.#purposeDraft.consent} @change=${(event: Event) => captured(event, () => this.#editPurpose(event, "consent"))}>${this.#t("purposeConsent")}</label>
+            <button type="submit" class="button primary" ?disabled=${disabled || !this.#purposeEligible() || !this.#purposeDraft.charge || !this.#purposeDraft.consent}>${this.#t("purposeEnable")}</button>
+          </fieldset>
+        </form>` : html`<p>${this.#t("purposeNotLoaded")}</p>`}</div>` : nothing}</details>`;
+  }
+
   #rowState(row: MemoryEnrollment): string {
     if (["forgotten", "erased", "revoked"].includes(row.status)) return "forgotten";
     if (Date.parse(row.expiresAt) <= Date.now()) return "expired";
@@ -1163,7 +1307,7 @@ export class FormaPersonalMemory extends FormaElement {
           ${row === selected && row.recall ? html`<p>${this.#t("inspectHelp")}</p>` : nothing}
           ${row === selected && row.recall ? html`<p>${this.#t("exportHelp")}</p>` : nothing}
           ${this.#revealed?.id === row.id && this.#revealed.current() ? this.#recallView(this.#revealed.lease.value, row) : nothing}
-          ${row === selected && owner.sourceCurrent() ? this.#renderProfile(row) : nothing}
+          ${row === selected && owner.sourceCurrent() ? html`${this.#renderProfile(row)}${this.#renderPurposes(row)}` : nothing}
         </article>`)}</div>
       ` : nothing}
     </section>`;

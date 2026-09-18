@@ -37,8 +37,9 @@ The branch is based on local main `7d74584bb72a1ed3cbab25ee64071994f8976d2f`.
 This continuation does not change production configuration or enroll anyone.
 The [native continuation record](forma-memory-native-continuation-2026-09-18.md)
 tracks the subsequent 64-pair bounded capture, saved-answer compatibility, shared
-Forget retirement fix and unverified derivation-parser component. None completes
-the open native pipeline table below.
+Forget retirement fix and unverified derivation-parser component. The subsequent [purpose-control slice](forma-memory-purpose-controls-2026-09-18.md)
+adds qualified separate consent and privacy controls, but none completes the open
+native pipeline table below.
 
 - Canvas now records a personal artifact view only after the actual viewer opens,
   hashing the exact retained bytes and rechecking route, revision, custody and visibility.
@@ -66,7 +67,7 @@ These are not external-service blockers and must not be moved into a rollout-onl
 
 | Work | Concrete next step | Completion evidence |
 | --- | --- | --- |
-| Purpose-specific derivation grants | Bind purpose, provider/model, scoped source window, allowance ceiling, retention, revision and revoke state to native callers | Real admission/accounting/recovery and privacy tests, no automatic enrollment |
+| Purpose grants / native accounting integration | Consent API, immutable identity, privacy inverses and manual UI now implemented; bind these to real native processing, shared payer-month exposure, holds and recovery | Real admission/accounting/recovery and privacy tests, no automatic enrollment |
 | Reliable changed-scope delivery | Build immutable acknowledged manifests and leased derivation jobs, distinct from disposable checkpoints | Cursor/publication atomicity, replay, backpressure, source invalidation and deletion acknowledgements |
 | Wider scope identities | Implement canonical nested-project and page/block/artifact identities, bounded ancestry and reparent invalidation | Cycle, move, isolation and independent access-versus-relevance tests |
 | Broader source and consumption coverage | Extend original assistant capture, longer-history rebase and genuine inspection/reuse evidence | Exact source/body/lifetime/custody proofs; do not infer preference or comprehension from a click |

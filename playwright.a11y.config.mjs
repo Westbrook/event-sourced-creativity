@@ -20,6 +20,9 @@ export default defineConfig({
   ],
   use: { baseURL },
   projects: [
+    ...(process.env.FORMA_A11Y_MEMORY_PURPOSES === "1" ? [
+      { name: "memory-purposes", testMatch: "**/forma-memory-purposes.spec.mjs", use: { baseURL: localTestOrigin("http://127.0.0.1:4186") } },
+    ] : []),
     { name: "calibration", testMatch: "**/harness-calibration.spec.mjs" },
     { name: "wide", testMatch: ["**/forma-keyboard.spec.mjs", "**/forma-project-contents.spec.mjs", "**/forma-library-import.spec.mjs", "**/forma-workspace-settings.spec.mjs", "**/forma-view-menu.spec.mjs", "**/forma-ordinary-copy.spec.mjs"], use: { geometry: { viewport: { width: 1280, height: 900 }, zoom: 1 } } },
     { name: "narrow-320", testMatch: ["**/forma-keyboard.spec.mjs", "**/forma-project-contents.spec.mjs", "**/forma-library-import.spec.mjs", "**/forma-workspace-settings.spec.mjs", "**/forma-view-menu.spec.mjs", "**/forma-ordinary-copy.spec.mjs"], use: { geometry: { viewport: { width: 320, height: 800 }, zoom: 1 } } },

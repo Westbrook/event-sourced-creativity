@@ -1733,6 +1733,62 @@ export const memoryLiveChangeCheckpoints = sqliteTable(
   ],
 );
 
+// Operator-reviewed qualification and purpose-specific consent are independent
+// from enrollment. These tables contain no source text, inference or vectors.
+export const memoryDerivationQualifications = sqliteTable("memory_derivation_qualifications", {
+  qualificationId: text("qualification_id").primaryKey().notNull(),
+  sourceSha256: text("source_sha256").notNull(),
+  origin: text("origin").notNull(),
+  deploymentId: text("deployment_id").notNull(),
+  termsJson: text("terms_json").notNull(),
+  termsSha256: text("terms_sha256").notNull(),
+  status: text("status").notNull(),
+  qualifiedAt: text("qualified_at").notNull(),
+  expiresAt: text("expires_at").notNull(),
+}, table => [
+  index("idx_memory_derivation_qualification_current").on(table.sourceSha256, table.status, table.expiresAt),
+  check("memory_derivation_qualification_hash", sql.raw("length(source_sha256)=64 AND source_sha256 NOT GLOB '*[^0-9a-f]*' AND length(terms_sha256)=64 AND terms_sha256 NOT GLOB '*[^0-9a-f]*'")),
+  check("memory_derivation_qualification_terms", sql.raw("json_valid(terms_json) AND json_type(terms_json)='object' AND length(CAST(terms_json AS BLOB)) BETWEEN 1 AND 8192")),
+  check("memory_derivation_qualification_state", sql.raw("status IN('qualified','withdrawn') AND length(qualified_at)=24 AND length(expires_at)=24 AND qualified_at<expires_at")),
+]);
+
+export const memoryDerivationGrants = sqliteTable("memory_derivation_grants", {
+  consentId: text("consent_id").notNull(),
+  grantId: text("grant_id").notNull(),
+  revision: integer("revision").notNull(),
+  actorUserId: text("actor_user_id").notNull(),
+  ownerUserId: text("owner_user_id").notNull(),
+  organizationId: text("organization_id"),
+  projectAccessId: text("project_access_id"),
+  projectId: text("project_id").notNull(),
+  documentId: text("document_id").notNull(),
+  enrollmentId: text("enrollment_id").notNull().references(() => memoryLiveEnrollments.enrollmentId, { onDelete: "cascade" }),
+  enrollmentRevision: integer("enrollment_revision").notNull(),
+  permissionEpoch: text("permission_epoch").notNull(),
+  policyVersion: text("policy_version").notNull(),
+  purpose: text("purpose").notNull(),
+  qualificationId: text("qualification_id").notNull().references(() => memoryDerivationQualifications.qualificationId),
+  termsSha256: text("terms_sha256").notNull(),
+  payerUserId: text("payer_user_id").notNull(),
+  monthlyCapMicroUsd: integer("monthly_cap_microusd").notNull(),
+  sourceAfterSequence: integer("source_after_sequence").notNull(),
+  retentionDays: integer("retention_days").notNull(),
+  backgroundEnabled: integer("background_enabled").notNull(),
+  consentedAt: text("consented_at").notNull(),
+  expiresAt: text("expires_at").notNull(),
+  revokedAt: text("revoked_at"),
+}, table => [
+  primaryKey({ columns: [table.grantId, table.revision] }),
+  uniqueIndex("idx_memory_derivation_grant_active").on(table.grantId).where(sql.raw("revoked_at IS NULL")),
+  index("idx_memory_derivation_grant_actor").on(table.actorUserId, table.expiresAt),
+  index("idx_memory_derivation_grant_parent").on(table.enrollmentId, table.enrollmentRevision),
+  index("idx_memory_derivation_grant_organization").on(table.organizationId, table.actorUserId),
+  check("memory_derivation_grant_scope", sql.raw("length(actor_user_id)>0 AND length(owner_user_id)>0 AND length(project_id)>0 AND length(document_id)>0 AND payer_user_id=actor_user_id AND ((organization_id IS NULL AND project_access_id IS NULL AND actor_user_id=owner_user_id) OR (organization_id IS NOT NULL AND project_access_id IS NOT NULL AND length(organization_id)>0 AND length(project_access_id)>0))")),
+  check("memory_derivation_grant_identity", sql.raw("length(consent_id)=36 AND length(grant_id)=64 AND grant_id NOT GLOB '*[^0-9a-f]*' AND length(terms_sha256)=64 AND terms_sha256 NOT GLOB '*[^0-9a-f]*' AND policy_version='personal-memory-derivation-v1' AND purpose IN('rolling-summary','profile','suggestion')")),
+  check("memory_derivation_grant_bounds", sql.raw("typeof(revision)='integer' AND revision BETWEEN 1 AND 9007199254740991 AND typeof(enrollment_revision)='integer' AND enrollment_revision BETWEEN 1 AND 9007199254740991 AND typeof(source_after_sequence)='integer' AND source_after_sequence BETWEEN 0 AND 9007199254740990 AND typeof(monthly_cap_microusd)='integer' AND monthly_cap_microusd BETWEEN 1 AND 1000000000 AND typeof(retention_days)='integer' AND retention_days BETWEEN 1 AND 365 AND background_enabled IN(0,1)")),
+  check("memory_derivation_grant_time", sql.raw("length(consented_at)=24 AND length(expires_at)=24 AND consented_at<expires_at AND (revoked_at IS NULL OR length(revoked_at)=24 AND revoked_at>=consented_at)")),
+]);
+
 export const memoryLiveConversationSegments = sqliteTable(
   "memory_live_conversation_segments",
   {

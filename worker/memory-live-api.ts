@@ -13,6 +13,7 @@ import { liveMemoryEnabled, liveMemorySchemaReady, memorySqlAssertion, revokeLiv
 import { recallLiveMemoryResponse } from "./memory-live-recall.ts";
 import { exportLiveMemory } from "./memory-live-export.ts";
 import { documentProfileWithdrawalStatements } from "./memory-document-profile-store.ts";
+import { prepareDerivationWithdrawal } from "./memory-derivation-store.ts";
 import { liveConversationPrune, liveConversationPreserve } from "./memory-live-conversation.ts";
 import type { WorkerEnv } from "./runtime.ts";
 
@@ -154,13 +155,14 @@ export async function handleLiveMemory(request:Request,env:WorkerEnv,operation:"
   // derived answers retain their old tuple and must never be retagged/revived.
   const originWrites=await liveMemoryOriginWithdrawalStatements(env,old?{enrollmentId,currentRevision:old.revision}:{enrollmentId},"enrollment-changed",now);
   const profileWrites=await documentProfileWithdrawalStatements(env,old?{enrollmentId,currentEnrollmentRevision:old.revision}:{enrollmentId},now);
+  const derivationWrites=await prepareDerivationWithdrawal(env,old?{enrollmentId,currentEnrollmentRevision:old.revision}:{enrollmentId},now);
   // Every replacement, including preserve=true and a new enrollment identity,
   // retires the old stable-scope structured ledger instead of retagging history.
   const structuredWrites=await prepareStructuredConversationWithdrawal(env,old?{enrollment:old}:{enrollment:e,expectedEnrollmentAbsent:true},now);
   const beforeGuards=[authority.guard,enrollmentAdmission,revisionGuard],afterGuards=[authority.guard,enrollmentAdmission];
   try{
   const writes=[
-    ...originWrites,...profileWrites,...structuredWrites.statements,
+    ...originWrites,...profileWrites,...derivationWrites.statements,...structuredWrites.statements,
     ...(preserve?[]:[env.DB.prepare("DELETE FROM memory_live_sources WHERE enrollment_id=?").bind(enrollmentId),
       env.DB.prepare("DELETE FROM memory_live_conversation_segments WHERE enrollment_id=?").bind(enrollmentId)]),
     ...(preserve?[
@@ -174,16 +176,20 @@ export async function handleLiveMemory(request:Request,env:WorkerEnv,operation:"
       ON CONFLICT(enrollment_id) DO UPDATE SET ${columns.filter(key=>key!=="enrollment_id").map(key=>`${key}=excluded.${key}`).join(",")}`).bind(...values),
     memorySqlAssertion(env,{condition:`changes()=1 AND EXISTS(SELECT 1 FROM memory_live_enrollments WHERE ${columns.map(key=>`${key} IS ?`).join(" AND ")})`,bindings:values}),
     ...structuredWrites.terminalAssertions,
+    ...derivationWrites.terminalAssertions,
   ];
   // Keep the identical guarded transaction order, but validate the complete raw
   // acknowledgement here: the shared helper returns only the inner write slice.
   const statements=[...beforeGuards.map(guard=>memorySqlAssertion(env,guard)),...writes,...afterGuards.map(guard=>memorySqlAssertion(env,guard))];
-  const enrollmentIndex=writes.length-structuredWrites.terminalAssertions.length-2;
-  const structuredOffset=originWrites.length+profileWrites.length;
+  const enrollmentIndex=writes.length-structuredWrites.terminalAssertions.length-derivationWrites.terminalAssertions.length-2;
+  const derivationOffset=originWrites.length+profileWrites.length;
+  const structuredOffset=derivationOffset+derivationWrites.statements.length;
   const verifiedIndexes=[...beforeGuards.map((_,index)=>index),
     ...structuredWrites.assertionIndexes.map(index=>beforeGuards.length+structuredOffset+index),
+    ...derivationWrites.assertionIndexes.map(index=>beforeGuards.length+derivationOffset+index),
     beforeGuards.length+enrollmentIndex+1,
     ...structuredWrites.terminalAssertions.map((_,index)=>beforeGuards.length+enrollmentIndex+2+index),
+    ...derivationWrites.terminalAssertions.map((_,index)=>beforeGuards.length+enrollmentIndex+2+structuredWrites.terminalAssertions.length+index),
     ...afterGuards.map((_,index)=>beforeGuards.length+writes.length+index)];
     const results=structuredClone(await env.DB.batch(statements));
     if(!Array.isArray(results)||results.length!==statements.length||!Array.from(results).every(result=>result&&typeof result==="object"&&!Array.isArray(result)
@@ -192,6 +198,7 @@ export async function handleLiveMemory(request:Request,env:WorkerEnv,operation:"
         &&!Array.isArray(results[index].results[0])&&Object.keys(results[index].results[0]).length===1
         &&Object.hasOwn(results[index].results[0],"verified")&&(results[index].results[0] as {verified:unknown}).verified===1)
       ||results[beforeGuards.length+enrollmentIndex].meta?.changes!==1
+      ||!derivationWrites.acknowledge(results.slice(beforeGuards.length+derivationOffset,beforeGuards.length+derivationOffset+derivationWrites.statements.length))
       ||!structuredWrites.acknowledge(results.slice(beforeGuards.length+structuredOffset,
         beforeGuards.length+structuredOffset+structuredWrites.statements.length)))throw new Error("memory-write-unconfirmed");
   }catch{return reply({error:"memory_write_unconfirmed"},409);}

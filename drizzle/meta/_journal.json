@@ -274,6 +274,13 @@
       "when": 1789749785642,
       "tag": "0042_memory_live_change_checkpoints",
       "breakpoints": true
+    },
+    {
+      "idx": 39,
+      "version": "6",
+      "when": 1789756133235,
+      "tag": "0043_memory_derivation_purpose_grants",
+      "breakpoints": true
     }
   ]
 }

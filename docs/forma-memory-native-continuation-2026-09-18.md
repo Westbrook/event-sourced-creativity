@@ -36,9 +36,17 @@ conversation/parser/manifest/record tests passed; typecheck, changed-worker lint
 and production build passed. The build retains existing large-chunk warnings.
 These are isolated local fixtures, not hosted browser/provider/scheduling qualification.
 
+## Subsequent purpose-control slice
+
+[Separate derivation controls](forma-memory-purpose-controls-2026-09-18.md) now
+implement exact qualified purpose/allowance consent, native privacy inverses,
+metadata-only revocation recovery, additive migration0043 and localized manual
+UI controls. This does **not** implement the paid processing or financial ledger;
+`processingImplemented:false` keeps UI enrollment inactive.
+
 ## Remaining native implementation — still in scope
 
-1. Purpose-specific grants and approved-cap/native accounting integration.
+1. Bind the implemented purpose-specific grants to real native callers and approved-cap/native accounting.
 2. Durable changed-scope manifests, acknowledged delivery, leased derivation jobs,
    uncertain dispatch recovery and source invalidation/deletion acknowledgements.
 3. Nested project containment/reparenting and broader page/block/artifact identities.
@@ -49,8 +57,8 @@ These are isolated local fixtures, not hosted browser/provider/scheduling qualif
 6. Pipeline-specific minimized observability and remaining migration integration.
 
 The 64-pair cumulative ledger is **not** a rolling summary or rebase. The existing
-disposable checkpoint is **not** reliable job delivery. No new paid pipeline or
-purpose grant has been wired by these changes.
+disposable checkpoint is **not** reliable job delivery. No new paid pipeline has been wired. Purpose grants now exist, but cannot
+authorize a model call without the remaining native admission/accounting work.
 
 ## External and operational gates
 

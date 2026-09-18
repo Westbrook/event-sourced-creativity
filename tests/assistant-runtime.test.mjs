@@ -12832,3 +12832,195 @@ test('completed conversation retirement: shared Forget preserves negative ledger
   assert.equal(state.sqlite.prepare('SELECT status FROM memory_document_job_answer_origins WHERE origin_id=?').get(origin.origin_id).status,'withdrawn');
   assert.deepEqual(adaptiveReentryFinancialState(state),financial);
 });
+
+async function nativeDerivationFixture(t,{shared=false,qualified=true}={}){
+  const {readFile}=await import('node:fs/promises');
+  const state=await nativeMemoryJobFixture(t,{shared,beforeEnrollment:async state=>state.sqlite.exec(await readFile(new URL('../drizzle/0043_memory_derivation_purpose_grants.sql',import.meta.url),'utf8'))});
+  const policy=await import('../worker/memory-derivation-policy.ts'),store=await import('../worker/memory-derivation-store.ts'),
+    {handleMemoryDerivationSettings}=await import('../worker/memory-derivation-api.ts'),{createHash}=await import('node:crypto');
+  const hash=value=>createHash('sha256').update(value).digest('hex'),origin='https://memory-purpose.fixture.invalid';
+  Object.assign(state.env,{FORMA_MEMORY_DERIVATION_ENABLED:'true',FORMA_MEMORY_DERIVATION_USER_IDS:state.current().actor_user_id,
+    FORMA_MEMORY_DERIVATION_SOURCE_SHA256:'a'.repeat(64),FORMA_MEMORY_DERIVATION_ORIGIN:origin,FORMA_MEMORY_DERIVATION_DEPLOYMENT_ID:'isolated-native-fixture'});
+  const terms={version:'memory-derivation-terms-v1',purpose:'rolling-summary',recipeVersion:'memory-derivation-candidates-v1',provider:'openai',model:'isolated-test-model',
+    pricing:{inputMicroUsdPerMillion:1000000,cachedInputMicroUsdPerMillion:250000,outputMicroUsdPerMillion:2000000},maximumInputTokens:1000,maximumOutputTokens:100,
+    monthlyCapMicroUsd:100000,payer:'self-ai-allowance',providerStore:false,providerRetentionDisclosure:'Isolated synthetic qualification only; no real provider retention claim.',retentionPolicyId:'isolated-test-retention',evidence:Object.fromEntries(policy.DERIVATION_EVIDENCE.map(key=>[key,hash('synthetic-only:'+key)]))};
+  const expiresAt=new Date(Date.now()+86400000).toISOString(),termsJson=policy.derivationCanonical(terms),termsHash=hash(termsJson);
+  if(qualified)state.sqlite.prepare('INSERT INTO memory_derivation_qualifications VALUES(?,?,?,?,?,?,?,?,?)')
+    .run('isolated-qualification','a'.repeat(64),origin,'isolated-native-fixture',termsJson,termsHash,'qualified',new Date(Date.now()-1000).toISOString(),expiresAt);
+  const input={version:policy.MEMORY_DERIVATION_CONTROL,policyVersion:policy.MEMORY_DERIVATION_POLICY,purpose:terms.purpose,
+    qualificationId:'isolated-qualification',termsSha256:termsHash,projectId:state.preferences.projectId,documentId:state.preferences.documentId,
+    enrollmentId:state.current().enrollment_id,enrollmentRevision:state.current().revision,revision:0,expectedConsentId:null,expectedCustody:state.preferences.expectedCustody,
+    monthlyCapMicroUsd:terms.monthlyCapMicroUsd,background:true,retentionDays:1,expiresAt,sourceWindow:'future-originals',chargeMyAiAllowance:true,confirmation:'ENABLE_DERIVED_MEMORY'};
+  const request=(method='GET',body=input,query=method==='GET'?'?projectId=project-atmosphere&documentId=doc-atmosphere':'')=>
+    handleMemoryDerivationSettings(new Request(origin+'/api/memory/derivation/settings'+query,method==='GET'?{headers:state.owner}:
+      {...json(body,{...state.owner,origin}),method}),state.env);
+  return Object.assign(state,{derivationPolicy:policy,derivationStore:store,derivationInput:input,derivationRequest:request,derivationOrigin:origin,
+    derivationRows:()=>state.sqlite.prepare('SELECT * FROM memory_derivation_grants ORDER BY grant_id,revision').all()});
+}
+for(const shared of [false,true])test('native derivation consent: '+(shared?'shared':'personal')+' exact qualified purpose is separate from enrollment and never spends',{timeout:60000},async t=>{
+  const state=await nativeDerivationFixture(t,{shared}),financial=adaptiveReentryFinancialState(state);
+  const read=await state.derivationRequest(),view=await read.json();assert.equal(read.status,200,JSON.stringify(view)+' '+state.controls.lastDatabaseError);
+  assert.equal(view.available,true);assert.equal(view.processingImplemented,false);assert.equal(view.grants.length,0);assert.equal(view.qualifications.length,1);
+  assert.equal(view.capScope,'payer-utc-calendar-month-all-memory-purposes');
+  const response=await state.derivationRequest('PUT'),body=await response.json();assert.equal(response.status,200,JSON.stringify(body)+' '+state.controls.lastDatabaseError);
+  assert.equal(body.grant.purpose,'rolling-summary');assert.equal(body.grant.enrollmentRevision,state.current().revision);
+  assert.equal(body.grant.sourceAfterSequence,state.nativePrepared.sourceHead);assert.equal(state.derivationRows().length,1);
+  assert.equal(state.derivationRows()[0].payer_user_id,state.current().actor_user_id);
+  const duplicate=await state.derivationRequest('PUT');assert.equal(duplicate.status,409);assert.equal(state.derivationRows().length,1);
+  const renewed=await state.derivationRequest('PUT',{...state.derivationInput,revision:1,expectedConsentId:body.grant.consentId});assert.equal(renewed.status,200,await renewed.text());
+  assert.equal(state.derivationRows().length,2);assert.ok(state.derivationRows()[0].revoked_at);assert.equal(state.derivationRows()[1].revoked_at,null);
+  state.env.FORMA_MEMORY_ENABLED='false';state.env.FORMA_MEMORY_DERIVATION_ENABLED='false';
+  const revoke=await state.derivationRequest('DELETE',{version:state.derivationPolicy.MEMORY_DERIVATION_CONTROL,revision:2,consentId:state.derivationRows()[1].consent_id,confirmation:'REVOKE_DERIVED_MEMORY'},'?grantId='+body.grant.grantId);
+  assert.equal(revoke.status,200,await revoke.text());assert.ok(state.derivationRows().every(row=>row.revoked_at));
+  assert.deepEqual(adaptiveReentryFinancialState(state),financial);assert.equal(state.calls.length,0);assert.equal(state.env.OPENAI_API_KEY,undefined);
+});
+for(const fault of ['no-qualification','wrong-purpose','wrong-cap','wrong-hash','old-parent','wrong-custody','expired','unconfirmed-allowance','retrospective','extra-field','disabled','different-deployment'])
+test('native derivation consent rejects '+fault,{timeout:60000},async t=>{
+  const state=await nativeDerivationFixture(t,{qualified:fault!=='no-qualification'}),input={...state.derivationInput},financial=adaptiveReentryFinancialState(state);
+  if(fault==='wrong-purpose')input.purpose='profile';
+  if(fault==='wrong-cap')input.monthlyCapMicroUsd++;
+  if(fault==='wrong-hash')input.termsSha256='b'.repeat(64);
+  if(fault==='old-parent')input.enrollmentRevision++;
+  if(fault==='wrong-custody')input.expectedCustody={kind:'organization',organizationId:'other',projectAccessId:'other',ownerUserId:'other'};
+  if(fault==='expired')input.expiresAt=new Date(Date.now()-1).toISOString();
+  if(fault==='unconfirmed-allowance')input.chargeMyAiAllowance=false;
+  if(fault==='retrospective')input.sourceWindow='all-history';
+  if(fault==='extra-field')input.providerStore=true;
+  if(fault==='disabled')state.env.FORMA_MEMORY_DERIVATION_ENABLED='false';
+  if(fault==='different-deployment')state.env.FORMA_MEMORY_DERIVATION_DEPLOYMENT_ID='another-site';
+  const response=await state.derivationRequest('PUT',input);assert.notEqual(response.status,200,await response.text());
+  assert.deepEqual(state.derivationRows(),[]);assert.deepEqual(adaptiveReentryFinancialState(state),financial);assert.equal(state.calls.length,0);
+});
+for(const action of ['replace-enrollment','forget-all-revisions','withdraw-qualification'])test('native derivation privacy: '+action,{timeout:60000},async t=>{
+  const state=await nativeDerivationFixture(t),financial=adaptiveReentryFinancialState(state);
+  const response=await state.derivationRequest('PUT'),body=await response.json();assert.equal(response.status,200,JSON.stringify(body)+' '+state.controls.lastDatabaseError);
+  if(action==='withdraw-qualification')state.sqlite.prepare("UPDATE memory_derivation_qualifications SET status='withdrawn' WHERE qualification_id='isolated-qualification'").run();
+  else{
+    const changed=await state.handleLiveMemory(state.settingsRequest({...state.preferences,revision:state.current().revision}),state.env,'settings');
+    assert.equal(changed.status,200,await changed.text());assert.ok(state.derivationRows().every(row=>row.revoked_at));
+    if(action==='forget-all-revisions'){
+      const e=state.current(),forgot=await state.handleLiveMemory(new Request('http://localhost/api/memory/settings?id='+e.enrollment_id,
+        {...json({confirmation:'FORGET_MY_MEMORY',revision:e.revision},state.owner),method:'DELETE'}),state.env,'settings');
+      assert.equal(forgot.status,200,await forgot.text());assert.deepEqual(state.derivationRows(),[]);
+    }
+  }
+  assert.ok(state.derivationRows().every(row=>row.revoked_at));assert.deepEqual(adaptiveReentryFinancialState(state),financial);
+});
+
+test('native derivation consent: stale revisions and expired/recreated consent cannot revoke or renew a new grant',{timeout:60000},async t=>{
+  const state=await nativeDerivationFixture(t),created=await (await state.derivationRequest('PUT')).json(),first=created.grant;
+  const renewal={...state.derivationInput,revision:first.revision,expectedConsentId:first.consentId};
+  const second=await (await state.derivationRequest('PUT',renewal)).json();assert.equal(second.grant.revision,2);
+  const deletion={version:state.derivationPolicy.MEMORY_DERIVATION_CONTROL,revision:1,consentId:first.consentId,confirmation:'REVOKE_DERIVED_MEMORY'};
+  assert.equal((await state.derivationRequest('DELETE',deletion,'?grantId='+first.grantId)).status,409);
+  assert.equal(state.derivationRows()[1].revoked_at,null);
+  // Privacy cleanup removes exact old private identities. A subsequent consent
+  // may restart its numeric revision, never its opaque immutable consent ID.
+  const plan=await state.derivationStore.prepareDerivationWithdrawal(state.env,{enrollmentId:state.current().enrollment_id},new Date().toISOString(),true);
+  assert.equal(plan.acknowledge(structuredClone(await state.env.DB.batch(plan.statements))),true);
+  const recreated=await (await state.derivationRequest('PUT')).json();assert.equal(recreated.grant.revision,1);
+  assert.notEqual(recreated.grant.consentId,first.consentId);
+  assert.equal((await state.derivationRequest('DELETE',deletion,'?grantId='+first.grantId)).status,409);
+  assert.equal((await state.derivationRequest('PUT',renewal)).status,409);
+  assert.equal(state.derivationRows()[0].revoked_at,null);
+  assert.equal((await state.derivationRequest('DELETE',{...deletion,consentId:recreated.grant.consentId},'?grantId='+first.grantId)).status,200);
+});
+
+test('native derivation schema: replacement collision and temp authority shadowing fail closed',{timeout:60000},async t=>{
+  const state=await nativeDerivationFixture(t);assert.equal((await state.derivationRequest('PUT')).status,200);
+  const qualification={...state.sqlite.prepare('SELECT * FROM memory_derivation_qualifications').get()},grant={...state.derivationRows()[0]};
+  for(const [table,row] of [['memory_derivation_qualifications',qualification],['memory_derivation_grants',grant]]){
+    assert.throws(()=>state.sqlite.prepare('INSERT OR REPLACE INTO '+table+'('+Object.keys(row).join(',')+') VALUES('+Object.keys(row).map(()=>'?').join(',')+')').run(...Object.values(row)),/no_replace/u);
+    assert.deepEqual({...state.sqlite.prepare('SELECT * FROM '+table).get()},row);
+  }
+  state.sqlite.exec('CREATE TEMP TABLE memory_live_enrollments AS SELECT * FROM main.memory_live_enrollments');
+  assert.notEqual((await state.derivationRequest('PUT',{...state.derivationInput,revision:1,expectedConsentId:grant.consent_id})).status,200);
+  assert.deepEqual({...state.derivationRows()[0]},grant);
+});
+
+for(const shared of [false,true])test('native derivation privacy: constant-size '+(shared?'organization':'actor')+' inverse handles more than 4096 metadata rows',{timeout:60000},async t=>{
+  const state=await nativeDerivationFixture(t,{shared});assert.equal((await state.derivationRequest('PUT')).status,200);
+  const source=state.derivationRows()[0],columns=state.derivationStore.DERIVATION_GRANT_COLUMNS;
+  const insert=state.sqlite.prepare('INSERT INTO memory_derivation_grants('+columns.join(',')+') VALUES('+columns.map(()=>'?').join(',')+')');
+  state.sqlite.exec('BEGIN');
+  try{for(let i=1;i<=4100;i++){const row={...source,grant_id:i.toString(16).padStart(64,'0'),consent_id:crypto.randomUUID(),document_id:'erasure-metadata-'+i};insert.run(...columns.map(key=>row[key]));}state.sqlite.exec('COMMIT');}
+  catch(error){state.sqlite.exec('ROLLBACK');throw error;}
+  const selector=shared?{organizationId:source.organization_id}:{actorUserId:source.actor_user_id,personalOnly:true};
+  const financial=adaptiveReentryFinancialState(state),now=new Date().toISOString();
+  const barrier=await state.derivationStore.prepareDerivationWithdrawal(state.env,selector,now);
+  assert.equal(barrier.statements.length,5);assert.equal(barrier.acknowledge(structuredClone(await state.env.DB.batch(barrier.statements))),true);
+  assert.ok(state.derivationRows().every(row=>row.revoked_at));
+  const erase=await state.derivationStore.prepareDerivationWithdrawal(state.env,selector,now,true);
+  assert.equal(erase.statements.length,5);const receipt=structuredClone(await state.env.DB.batch(erase.statements));
+  assert.equal(erase.acknowledge(receipt),true);assert.equal(erase.acknowledge(receipt),false);assert.deepEqual(state.derivationRows(),[]);
+  assert.deepEqual(adaptiveReentryFinancialState(state),financial);
+});
+
+for(const fault of ['lost-ack','short-ack','array-meta','write-rows','wrong-changes','late-parent-change','expiry-at-commit'])test('native derivation consent rejects '+fault,{timeout:60000},async t=>{
+  const state=await nativeDerivationFixture(t),batch=state.env.DB.batch,financial=adaptiveReentryFinancialState(state);let fired=0;
+  const input={...state.derivationInput,...(fault==='expiry-at-commit'?{expiresAt:new Date(Date.now()+3000).toISOString()}:{})};
+  state.env.DB.batch=async statements=>{
+    const matches=statements.some(statement=>/^INSERT INTO memory_derivation_grants\(/u.test(statement.sql));
+    if(matches){fired++;if(fault==='late-parent-change')state.sqlite.exec('UPDATE memory_live_enrollments SET revision=revision+1');
+      if(fault==='expiry-at-commit')await new Promise(resolve=>setTimeout(resolve,Math.max(0,Date.parse(input.expiresAt)-Date.now()+30)));}
+    const result=await batch.call(state.env.DB,statements);
+    if(matches&&['array-meta','write-rows','wrong-changes'].includes(fault)){
+      const index=statements.findIndex(statement=>/^INSERT INTO memory_derivation_grants\(/u.test(statement.sql));
+      if(fault==='array-meta')result[index].meta=Object.assign([],{changes:1});
+      if(fault==='write-rows')result[index].results=[{unexpected:1}];
+      if(fault==='wrong-changes')result[index].meta.changes=2;
+    }
+    if(matches&&fault==='lost-ack')throw new Error('fixture committed acknowledgement lost');
+    return matches&&fault==='short-ack'?result.slice(1):result;
+  };
+  const response=await state.derivationRequest('PUT',input);assert.equal(response.status,503,await response.text());assert.equal(fired,1);
+  assert.equal(state.derivationRows().length,['lost-ack','short-ack','array-meta','write-rows','wrong-changes'].includes(fault)?1:0);
+  state.env.DB.batch=batch;
+  if(['lost-ack','short-ack','array-meta','write-rows','wrong-changes'].includes(fault))assert.equal((await (await state.derivationRequest()).json()).grants.length,1,'Explicit reread recovers a committed receipt without retrying consent');
+  assert.deepEqual(adaptiveReentryFinancialState(state),financial);assert.equal(state.calls.length,0);
+});
+for(const mode of ['paused-parent','disabled','expired-parent'])test('native derivation owned metadata remains recoverable for revocation: '+mode,{timeout:60000},async t=>{
+  const state=await nativeDerivationFixture(t),saved=await (await state.derivationRequest('PUT')).json();
+  if(mode==='paused-parent')state.sqlite.exec('UPDATE memory_live_enrollments SET learn_enabled=0');
+  if(mode==='disabled'){state.env.FORMA_MEMORY_ENABLED='false';state.env.FORMA_MEMORY_DERIVATION_ENABLED='false';}
+  if(mode==='expired-parent')state.sqlite.exec("UPDATE memory_live_enrollments SET expires_at='2020-01-01T00:00:00.000Z'");
+  const response=await state.derivationRequest(),view=await response.json();assert.equal(response.status,200,JSON.stringify(view)+' '+state.controls.lastDatabaseError);
+  assert.equal(view.enabled,false);assert.deepEqual(view.qualifications,[]);assert.equal(view.grants.length,1);assert.equal(view.grants[0].consentId,saved.grant.consentId);
+  assert.equal(view.scope.documentId,state.preferences.documentId);
+  const revoked=await state.derivationRequest('DELETE',{version:state.derivationPolicy.MEMORY_DERIVATION_CONTROL,revision:1,consentId:saved.grant.consentId,confirmation:'REVOKE_DERIVED_MEMORY'},'?grantId='+saved.grant.grantId);
+  assert.equal(revoked.status,200,await revoked.text());assert.ok(state.derivationRows()[0].revoked_at);
+});
+test('native derivation consent and withdrawal compile within D1 expression, function, parameter and SQL limits',{timeout:180000},async t=>{
+  const state=await nativeDerivationFixture(t),depth=enforceD1ExpressionDepth(state,{queryLimits:{functionArguments:32,parameters:100,sqlBytes:100000}});
+  try{
+    const read=await state.derivationRequest();assert.equal(read.status,200,await read.text());
+    const first=await state.derivationRequest('PUT'),body=await first.json();assert.equal(first.status,200,JSON.stringify(body)+' '+state.controls.lastDatabaseError);
+    const renewed=await state.derivationRequest('PUT',{...state.derivationInput,revision:1,expectedConsentId:body.grant.consentId}),second=await renewed.json();
+    assert.equal(renewed.status,200,JSON.stringify(second)+' '+state.controls.lastDatabaseError);
+    const withdrawn=await state.derivationRequest('DELETE',{version:state.derivationPolicy.MEMORY_DERIVATION_CONTROL,revision:2,consentId:second.grant.consentId,confirmation:'REVOKE_DERIVED_MEMORY'},'?grantId='+second.grant.grantId);
+    assert.equal(withdrawn.status,200,await withdrawn.text());
+    const erase=await state.derivationStore.prepareDerivationWithdrawal(state.env,{actorUserId:state.current().actor_user_id,personalOnly:true},new Date().toISOString(),true);
+    assert.equal(erase.acknowledge(structuredClone(await state.env.DB.batch(erase.statements))),true);
+  }finally{depth.restore();}
+});
+test('native derivation renewal limits retained inventory, not lifetime revision count',{timeout:60000},async t=>{
+  const state=await nativeDerivationFixture(t),first=await(await state.derivationRequest('PUT')).json(),row=state.derivationRows()[0],columns=state.derivationStore.DERIVATION_GRANT_COLUMNS;
+  state.sqlite.prepare('DELETE FROM memory_derivation_grants WHERE grant_id=?').run(row.grant_id);
+  row.revision=64;row.consent_id=crypto.randomUUID();state.sqlite.prepare('INSERT INTO memory_derivation_grants('+columns.join(',')+') VALUES('+columns.map(()=>'?').join(',')+')').run(...columns.map(k=>row[k]));
+  const response=await state.derivationRequest('PUT',{...state.derivationInput,revision:64,expectedConsentId:row.consent_id}),body=await response.json();
+  assert.equal(response.status,200,JSON.stringify(body)+' '+state.controls.lastDatabaseError);assert.equal(body.grant.revision,65);assert.notEqual(body.grant.consentId,first.grant.consentId);
+});
+
+test('native derivation controls commit and revoke on real isolated workerd D1 without outbound requests',{timeout:180000},async t=>{
+  const {createRequire}=await import('node:module'),{Miniflare,Log,LogLevel}=createRequire(import.meta.resolve('wrangler'))('miniflare');
+  const {exportSynthetic,install}=await import('./helpers/model3d-workerd-snapshot.mjs');let outbound=0;
+  const mf=new Miniflare({modules:true,compatibilityDate:'2026-05-15',host:'127.0.0.1',port:0,log:new Log(LogLevel.NONE),d1Databases:['MemoryPurpose'],
+    script:"export default {fetch(){return new Response('Isolated Memory control fixture.',{status:404});}};",outboundService(){outbound++;throw new Error('External fetch forbidden');}});
+  t.after(async()=>{await mf.dispose();assert.equal(outbound,0);});
+  const db=await mf.getD1Database('MemoryPurpose'),state=await nativeDerivationFixture(t),exported=exportSynthetic(state.sqlite);await install(db,exported);state.env.DB=db;
+  const first=await state.derivationRequest('PUT'),body=await first.json();assert.equal(first.status,200,JSON.stringify(body));
+  const read=await state.derivationRequest(),view=await read.json();assert.equal(read.status,200,JSON.stringify(view));assert.equal(view.grants[0].consentId,body.grant.consentId);
+  const revoked=await state.derivationRequest('DELETE',{version:state.derivationPolicy.MEMORY_DERIVATION_CONTROL,revision:1,consentId:body.grant.consentId,confirmation:'REVOKE_DERIVED_MEMORY'},'?grantId='+body.grant.grantId);
+  assert.equal(revoked.status,200,await revoked.text());assert.ok((await db.prepare('SELECT revoked_at FROM memory_derivation_grants').first()).revoked_at);
+  assert.deepEqual((await db.prepare('PRAGMA foreign_key_check').all()).results,[]);assert.equal(state.calls.length,0);
+});
