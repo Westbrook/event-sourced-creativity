@@ -1,10 +1,11 @@
 # Forma Memory: remaining non-implementation work
 
-Updated **2026-09-17**. Backlog entry: [MEM-001](backlog.md#memory).
+Updated **2026-09-18**. Backlog entry: [MEM-001](backlog.md#memory).
 
 September 18 release continuation: see [completion and release status](forma-memory-release-2026-09-18.md).
-The Memory task is handling current source integration/publication and coordinating
-with **Build minimalist Jev creative app**, the latest active Forma publisher.
+The Memory task pushed the integrated implementation to remote `main` and published
+production **426**, then notified **Build minimalist Jev creative app**, the latest
+active Forma publisher. The linked release status contains the exact receipt.
 This is not a claim of accepted release ownership for future operations, production
 qualification or complete implementation.
 
@@ -29,7 +30,7 @@ credential's presence is not model access, price verification or spend approval.
 
 | Gate | Next action | Evidence needed to close | Owner |
 | --- | --- | --- | --- |
-| Release review and integration | Record the exact main/source/deployment result in the September 18 release status; coordinate future publication with the active Forma publisher. The older specialist production task remains archived. | Accepted source commit, reviewed migrations if any, release identity, environment flags, audience and rollback receipt. A local merge into this branch is not integration into `main` or deployment. | Memory task for this release; ongoing operations unassigned |
+| Release review and integration | The default-disabled source release is shipped as production 426; see the exact receipt. Remaining: owner/human acceptance, future migration review, qualified rollback and later pipeline releases. The older specialist production task remains archived. | Publication/source receipt is recorded; it does not close future schema, qualification, acceptance or operations gates. | Memory task delivered this release; ongoing operations unassigned |
 | Hosted scheduling qualification | Qualify the supported independent scheduler/runtime using isolated accounts/data before registering production delivery. | No-visitor invocation, timezone/activity gating, concurrency/capacity limits, duplicate and missed delivery, lease expiry, loss of ACK, restart and backpressure evidence. Privacy/expiry maintenance must run even without human activity. | Unassigned; user is arranging scheduling |
 | Hosted storage/privacy qualification | Rehearse the exact schema and bounded SQL on the selected host, with isolated data and real access transitions. | Atomicity and statement/binding limits; revoke/remove/expire/erase, concurrent publication, retained-content withdrawal, recovery and backup/restore checks; no false erasure success. Qualify larger retention limits separately rather than assuming the earlier 257-item boundary passed. | Unassigned |
 | Provider qualification | Verify the selected models, current pricing, account access, residency/retention and bounded usage reporting for the exact candidate source. | Reviewable dated evidence bound to model/pricing versions, exact plan and source digest, origin and validity period. Do not fabricate qualification records merely to enable a route. | Unassigned |

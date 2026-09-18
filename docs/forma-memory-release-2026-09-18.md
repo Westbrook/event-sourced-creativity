@@ -9,11 +9,30 @@ must not be described as completing the semantic/profile/nested-scope system.
 
 ## Current release
 
-The candidate includes current `main` at `e26f608` (Still attention, decision
-caching and generation-risk acknowledgment retained), the [native producers](forma-memory-native-producers-2026-09-18.md)
-and the prior explicit-recall/benchmark-accounting integration. Production status
-will be recorded after the actual deployment succeeds, not inferred from a merge.
-The existing authorized audience is preserved; no external visitor is added.
+**Published to production as version 426 on 2026-09-18 at 12:50:59 UTC.**
+The verified implementation was fast-forwarded to the Sites source repository's
+`main` at `d8acb72eed4cfaf4028b749ae6ca29ba264f73c2` before publication.
+It includes main's `e26f608` (Still attention, decision caching and generation-risk
+acknowledgment retained), the [native producers](forma-memory-native-producers-2026-09-18.md)
+and prior explicit-recall/benchmark-accounting integration. This receipt is a
+post-publication documentation-only follow-up; it does not change the deployed
+runtime. The production owner's unrelated dirty local checkout was left untouched.
+
+| Receipt | Verified value |
+| --- | --- |
+| Site | [Forma Creative Studio](https://forma-creative-studio.reve-ai-0869.chatgpt.site) |
+| Saved version | `appgprj_6a7a020e334881919ed8aea0363cb98f~appgver_d417441d1c6c8191a3b84d4faf232040` (426) |
+| Deployment | `appgdep_6aad33a44d248191bcb4da8572a0c46e` — `succeeded` |
+| Environment | Revision 13, unchanged; Memory flags remain unconfigured/default-off |
+| Audience | `workspace_all`, access revision 7, zero external visitors; unchanged |
+| Archive | 619 files; server-recorded SHA-256 `caad2b8e83e259ffd7baa51e671cb8218bef1d6a3dee4c036552894270c04217` |
+| Migrations | Existing 74 historical SQL/metadata files only; no pending Memory SQL packaged or applied |
+| Prior production | Version 425 at `e26f608f058b892027b29e9bc4c3ee82343c4895`; no rollback drill is claimed |
+
+The active publisher was notified before and after publication. Message delivery
+is not a claim of accepted future operations ownership or human review.
+No external visitor, enrollment, schedule, paid provider call or activation was
+added by this release.
 
 An additional release review found and fixed two implementation gaps:
 

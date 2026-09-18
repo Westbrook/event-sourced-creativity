@@ -9,7 +9,7 @@ It did not modify the main checkout or its unrelated proposal documents.
 ## September 18 follow-up
 
 [Completion and release status](forma-memory-release-2026-09-18.md) records the
-current production boundary, exact-schema benchmark fixes and dependency-ordered
+production 426 / remote-main receipt, exact-schema benchmark fixes and dependency-ordered
 implementation To Do list. Publishing the default-disabled source does not close
 the remaining source table below.
 
