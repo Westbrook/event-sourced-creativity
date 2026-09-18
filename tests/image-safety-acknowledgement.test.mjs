@@ -99,7 +99,7 @@ test('Still builds recovery controls without submitting; only clicking the ackno
   const code=ts.transpileModule(`function controls() ${method.body.getText(source)}`,{compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText;
   const controls=new Function('generationFormat','FORMATS',`${code};return controls;`)(()=> 'image',{image:'Image'});
   const job={jobId:'reviewed'},calls=[];
-  const actions=controls.call({selectedGeneration:()=>job,canAcknowledgeSafety:()=>true,acknowledgeSafety:actual=>calls.push(actual),canGenerateAgain:()=>true});
+  const actions=controls.call({isInlineGeneration:()=>false,selectedGeneration:()=>job,canAcknowledgeSafety:()=>true,acknowledgeSafety:actual=>calls.push(actual),canGenerateAgain:()=>true});
   assert.deepEqual(calls,[]);assert.equal(actions[0].label,'I understand the risks');
   actions[0].run();assert.deepEqual(calls,[job]);
 });
