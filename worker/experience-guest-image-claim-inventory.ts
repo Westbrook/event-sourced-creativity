@@ -131,34 +131,34 @@ export const GUEST_IMAGE_SAVE_CLAIM_SCHEMA = [
 ] as const;
 
 type SponsorSchemaFamily = { required: boolean; sql: readonly string[]; alternatives?: readonly (readonly string[])[] };
-const sponsorFamilies: readonly SponsorSchemaFamily[] = [
-  { required: true, sql: GUEST_CONTEXT_ADOPTION_SCHEMA }, { required: false, sql: GUEST_PLAN_CUSTODY_SCHEMA },
-  { required: true, sql: GUEST_IMAGE_SAVE_CLAIM_SCHEMA },
-  { required: true, sql: SPONSOR_ENTITLEMENT_SCHEMA }, { required: true, sql: SPONSOR_RESOURCE_SCHEMA }, { required: true, sql: SPONSOR_APPROVAL_SCHEMA },
-  { required: false, sql: SPONSOR_ISSUER_SCHEMA }, { required: false, sql: SPONSOR_DRIVER_SCHEMA }, { required: false, sql: SPONSOR_INTAKE_SCHEMA },
-  { required: false, sql: SPONSOR_READ_POLICY_SCHEMA }, { required: false, sql: SPONSOR_READ_APPROVAL_SCHEMA }, { required: false, sql: SPONSOR_READ_ATTEMPT_SCHEMA },
-  { required: false, sql: SPONSOR_INTAKE_READ_POLICY_SCHEMA }, { required: false, sql: SPONSOR_INTAKE_READ_APPROVAL_SCHEMA },
-  { required: false, sql: SPONSOR_INTAKE_READ_ATTEMPT_SCHEMA, alternatives: [SPONSOR_INTAKE_READ_ATTEMPT_V2_SCHEMA] },
-  // The native sponsored reader separately provisions this exact index on an
-  // entitlement table. Its other indexes concern events/artifact rows and are
-  // outside this sponsor-family schema witness; none grants guest authority.
-  { required: false, sql: SPONSOR_NATIVE_IMAGE_READ_INDEXES.filter(index => index.name === "idx_sponsor_image_actor_history").map(index => index.sql) },
-];
-const normalizedDdl = (value: string) => value.replace(/\s+/gu, " ").trim().replace(/;$/u, "").replace(/CREATE TABLE IF NOT EXISTS /iu, "CREATE TABLE ");
-const schemaItem = (sql: string) => {
-  const match = /^CREATE (TABLE|INDEX|TRIGGER)(?: IF NOT EXISTS)? ([a-zA-Z0-9_]+)/u.exec(sql.trim());
-  if (!match) return fail("schema_unavailable");
-  return { type: match[1].toLowerCase(), name: match[2], sql: normalizedDdl(sql) };
-};
-const sponsorVariants = sponsorFamilies.map(family => ({ required: family.required,
-  variants: [family.sql, ...(family.alternatives ?? [])].map(variant => variant.map(schemaItem)) }));
-const sponsorNames = [...new Set(sponsorVariants.flatMap(family => family.variants.flatMap(variant => variant.map(item => item.name))))];
-const sponsorTables = [...new Set(sponsorVariants.flatMap(family => family.variants.flatMap(variant =>
-  variant.filter(item => item.type === "table").map(item => item.name))))];
-const sponsorSchemaSql = `(SELECT json_group_array(json_object('type',type,'name',name,'table',tbl_name,'sql',sql)) FROM
+async function sponsorSchema(ctx: Context) {
+  const sponsorFamilies: readonly SponsorSchemaFamily[] = [
+    { required: true, sql: GUEST_CONTEXT_ADOPTION_SCHEMA }, { required: false, sql: GUEST_PLAN_CUSTODY_SCHEMA },
+    { required: true, sql: GUEST_IMAGE_SAVE_CLAIM_SCHEMA },
+    { required: true, sql: SPONSOR_ENTITLEMENT_SCHEMA }, { required: true, sql: SPONSOR_RESOURCE_SCHEMA }, { required: true, sql: SPONSOR_APPROVAL_SCHEMA },
+    { required: false, sql: SPONSOR_ISSUER_SCHEMA }, { required: false, sql: SPONSOR_DRIVER_SCHEMA }, { required: false, sql: SPONSOR_INTAKE_SCHEMA },
+    { required: false, sql: SPONSOR_READ_POLICY_SCHEMA }, { required: false, sql: SPONSOR_READ_APPROVAL_SCHEMA }, { required: false, sql: SPONSOR_READ_ATTEMPT_SCHEMA },
+    { required: false, sql: SPONSOR_INTAKE_READ_POLICY_SCHEMA }, { required: false, sql: SPONSOR_INTAKE_READ_APPROVAL_SCHEMA },
+    { required: false, sql: SPONSOR_INTAKE_READ_ATTEMPT_SCHEMA, alternatives: [SPONSOR_INTAKE_READ_ATTEMPT_V2_SCHEMA] },
+    // The native sponsored reader separately provisions this exact index on an
+    // entitlement table. Its other indexes concern events/artifact rows and are
+    // outside this sponsor-family schema witness; none grants guest authority.
+    { required: false, sql: SPONSOR_NATIVE_IMAGE_READ_INDEXES.filter(index => index.name === "idx_sponsor_image_actor_history").map(index => index.sql) },
+  ];
+  const normalizedDdl = (value: string) => value.replace(/\s+/gu, " ").trim().replace(/;$/u, "").replace(/CREATE TABLE IF NOT EXISTS /iu, "CREATE TABLE ");
+  const schemaItem = (sql: string) => {
+    const match = /^CREATE (TABLE|INDEX|TRIGGER)(?: IF NOT EXISTS)? ([a-zA-Z0-9_]+)/u.exec(sql.trim());
+    if (!match) return fail("schema_unavailable");
+    return { type: match[1].toLowerCase(), name: match[2], sql: normalizedDdl(sql) };
+  };
+  const sponsorVariants = sponsorFamilies.map(family => ({ required: family.required,
+    variants: [family.sql, ...(family.alternatives ?? [])].map(variant => variant.map(schemaItem)) }));
+  const sponsorNames = [...new Set(sponsorVariants.flatMap(family => family.variants.flatMap(variant => variant.map(item => item.name))))];
+  const sponsorTables = [...new Set(sponsorVariants.flatMap(family => family.variants.flatMap(variant =>
+    variant.filter(item => item.type === "table").map(item => item.name))))];
+  const sponsorSchemaSql = `(SELECT json_group_array(json_object('type',type,'name',name,'table',tbl_name,'sql',sql)) FROM
   (SELECT type,name,tbl_name,CASE WHEN typeof(sql)='text' AND length(CAST(sql AS BLOB))<=32768 THEN sql ELSE NULL END AS sql FROM sqlite_schema
     WHERE name IN(${sponsorNames.map(name => `'${name}'`).join(",")}) OR tbl_name IN(${sponsorTables.map(name => `'${name}'`).join(",")}) ORDER BY name,type))`;
-async function sponsorSchema(ctx: Context) {
   const row = await ctx.db.prepare(`SELECT ${sponsorSchemaSql} AS snapshot`).first<{ snapshot: string }>(); current(ctx);
   if (!row || typeof row.snapshot !== "string" || bytes(row.snapshot) > 262144) return fail("schema_unavailable");
   let observed: unknown; try { observed = JSON.parse(row.snapshot); } catch { return fail("schema_unavailable"); }
