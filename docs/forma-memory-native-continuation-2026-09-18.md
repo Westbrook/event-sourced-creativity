@@ -63,6 +63,11 @@ source-bound paired admission, one-shot mocked-qualified transport, verified
 settlement/no-dispatch recovery, organization erasure and localized cap/retention
 controls. Durable semantic publication and its worker integration remain open.
 
+[Interrupted-work recovery](forma-memory-native-recovery-2026-09-18.md) now adds
+bounded source-free financial maintenance, a durable fair scan cursor, safe
+unfunded-lease backoff/exhaustion and an existing scheduled-event code hook.
+No hosted schedule, paid derivation consumer or user activation was added.
+
 ## Remaining native implementation — still in scope
 
 1. Complete the durable worker consumer around the implemented purpose/source-bound

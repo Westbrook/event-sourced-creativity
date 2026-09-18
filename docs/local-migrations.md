@@ -171,3 +171,18 @@ Local migration tests cover unchanged private rows at installation, dry-run
 rollback, existing partial installations, and floor preservation when historical
 grants are retired. Arbitrary data-changing migration SQL remains unsupported.
 This is local migration qualification only, not a hosted execution certificate.
+
+### Memory recovery cursor (0046)
+
+`0046_memory_derivation_recovery_cursor.sql` is a four-statement schema-only
+addition: one minimized financial scan cursor and three transition guards.
+The ORM-generated snapshot is `0042_snapshot.json`; journal index 42 preserves
+all earlier entries. It contains no top-level data seed or provider operation.
+Runtime initialization and compare-and-swap updates are atomic and bounded.
+Existing financial records/caps are unchanged, dry-run rolls back the schema and
+receipt, and repeated local migration preserves the scan generation.
+
+The cursor prevents failed financial rows from starving subsequent recovery.
+It is not a completed-memory watermark or evidence that a hosted schedule ran.
+Use the [recovery record](forma-memory-native-recovery-2026-09-18.md) for remaining
+qualification requirements; this candidate has not been applied in production.

@@ -46,7 +46,7 @@ function memoryCapUpgradeFixture(t) {
 test('Memory finance migration is schema-only; grant retirement preserves original cross-purpose month floors', { skip: !memoryFinanceMigration }, t => {
   const sqlite = memoryCapUpgradeFixture(t), before = rows(sqlite, 'memory_derivation_grants');
   const result = migrateLocalDatabase(sqlite, { migrations: actualMigrations });
-  assert.equal(result.migrations.at(-1).executedStatements, 49);
+  assert.equal(result.migrations.find(migration => migration.tag === memoryFinanceMigration.tag).executedStatements, 49);
   assert.deepEqual(rows(sqlite, 'memory_derivation_month_caps'), []);
   assert.deepEqual(rows(sqlite, 'memory_derivation_grants'), before);
   sqlite.exec('DELETE FROM memory_live_enrollments');
@@ -68,7 +68,7 @@ for (const floor of [null, 901]) test('Memory finance retirement captures earlie
   const sqlite = memoryCapUpgradeFixture(t);
   sqlite.exec(memoryFinanceMigration.sql);
   if (floor !== null) sqlite.prepare('INSERT INTO memory_derivation_month_caps VALUES(?,?,?)').run('cap-payer', '2026-08', floor);
-  assert.equal(migrateLocalDatabase(sqlite, { migrations: actualMigrations }).migrations.at(-1).status,'verified-existing');
+  assert.equal(migrateLocalDatabase(sqlite, { migrations: actualMigrations }).migrations.find(migration => migration.tag === memoryFinanceMigration.tag).status,'verified-existing');
   // Deleting the higher cap first must still capture the older lower cap.
   sqlite.prepare('DELETE FROM memory_derivation_grants WHERE grant_id=?').run('2'.repeat(64));
   assert.equal(sqlite.prepare("SELECT cap_microusd FROM memory_derivation_month_caps WHERE period='2026-08'").get().cap_microusd,900);
@@ -815,4 +815,21 @@ test('pending Memory qualification CLI has no target or apply capability', () =>
   }
   const result = spawnSync(process.execPath, [command], {cwd:root,encoding:'utf8'});
   assert.equal(result.status, 0, result.stderr);assert.equal(JSON.parse(result.stdout).productionApplied, false);
+});
+test('Memory recovery migration is additive, schema-only and preserves the retained accounting floor and scan generation', t => {
+  const target=actualMigrations.find(migration=>migration.tag==='0046_memory_derivation_recovery_cursor');
+  if(!target){t.skip('Recovery migration not present in this migration fixture');return;}
+  const sqlite=database(t),before=actualMigrations.slice(0,actualMigrations.indexOf(target));
+  migrateLocalDatabase(sqlite,{migrations:before});
+  sqlite.prepare('INSERT INTO memory_derivation_month_caps VALUES(?,?,?)').run('recovery-fixture-payer','2026-09',450);
+  const floors=rows(sqlite,'memory_derivation_month_caps'),oldSchema=schema(sqlite),oldReceipts=rows(sqlite,receiptTable);
+  migrateLocalDatabase(sqlite,{migrations:actualMigrations,dryRun:true});
+  assert.deepEqual(schema(sqlite),oldSchema);assert.deepEqual(rows(sqlite,receiptTable),oldReceipts);assert.deepEqual(rows(sqlite,'memory_derivation_month_caps'),floors);
+  const applied=migrateLocalDatabase(sqlite,{migrations:actualMigrations}).migrations.find(migration=>migration.tag===target.tag);
+  assert.equal(applied.status,'applied');assert.equal(applied.executedStatements,4);assert.deepEqual(rows(sqlite,'memory_derivation_recovery_cursor'),[]);
+  sqlite.prepare('INSERT INTO memory_derivation_recovery_cursor VALUES(1,NULL,0,?)').run('2026-09-18T00:00:00.000Z');
+  sqlite.exec('UPDATE memory_derivation_recovery_cursor SET generation=1');const scan=rows(sqlite,'memory_derivation_recovery_cursor');
+  assert.equal(migrateLocalDatabase(sqlite,{migrations:actualMigrations}).migrations.find(migration=>migration.tag===target.tag).status,'already-applied');
+  assert.deepEqual(rows(sqlite,'memory_derivation_month_caps'),floors);assert.deepEqual(rows(sqlite,'memory_derivation_recovery_cursor'),scan);
+  assert.deepEqual(sqlite.prepare('PRAGMA foreign_key_check').all(),[]);
 });

@@ -806,3 +806,10 @@ for(const target of ['token','cost'])for(const field of ['token_id','cost_id'])t
     [field]:(target==='token'?token:cost).reservation_id});
   f.sqlite.exec(original);configurationTripwire(f,t);await denied(f,t);
 });
+for(const fault of ['none','missing-protection','inbound-view'])test('guest inventory verifies Memory recovery scan schema '+fault,async t=>{
+  const f=await completedResultFixture(t,{memory:true}),before=await currentManifest(f,t);installDerivationFinanceSchema(f);installQualifiedMigration(f,'0046_memory_derivation_recovery_cursor.sql');
+  insert(f,'memory_derivation_recovery_cursor',{singleton:1,after_finance_id:null,generation:0,updated_at:new Date().toISOString()});
+  if(fault==='missing-protection')f.sqlite.exec('DROP TRIGGER memory_derivation_recovery_update');
+  if(fault==='inbound-view')f.sqlite.exec('CREATE VIEW unexpected_memory_recovery AS SELECT * FROM memory_derivation_recovery_cursor');
+  configurationTripwire(f,t);if(fault==='none')assert.deepEqual(await currentManifest(f,t),before);else await denied(f,t);
+});

@@ -1,3 +1,4 @@
+import { memoryDerivationRecoverySchemaProfile } from "./memory-derivation-recovery-schema.ts";
 import { memoryDerivationFinanceSchemaProfile } from "./memory-derivation-finance-schema.ts";
 import { memoryDerivationJobSchemaProfile } from "./memory-derivation-job-schema.ts";
 import { memoryDigest } from "../src/model/scoped-memory.ts";
@@ -30,7 +31,7 @@ export const memoryDerivationSchemaProfile = {
 } as const;
 type Row = Record<string, unknown>;
 type Query = { sql: string; bindings: (string | number | null)[] };
-const profiles = [memoryDerivationSchemaProfile, memoryDerivationJobSchemaProfile, memoryDerivationFinanceSchemaProfile] as const;
+const profiles = [memoryDerivationSchemaProfile, memoryDerivationJobSchemaProfile, memoryDerivationFinanceSchemaProfile, memoryDerivationRecoverySchemaProfile] as const;
 const schemaTables = profiles.flatMap(profile => [...profile.tables]);
 const family = "name LIKE 'memory_derivation_%' OR name LIKE 'idx_memory_derivation_%' OR "
   + schemaTables.map(table => `tbl_name='${table}' OR instr(lower(COALESCE(sql,'')),'${table}')>0`).join(" OR ");
@@ -54,7 +55,7 @@ export function derivationChanged(result: D1Result<Row>, expected: number, casca
 export function derivationVerified(result: D1Result<Row>): boolean {
   return result.results.length === 1 && derivationExact(result.results[0], ["verified"]) && result.results[0].verified === 1;
 }
-export async function memoryDerivationSchema(env: WorkerEnv): Promise<{ present: boolean; jobsPresent: boolean; financePresent: boolean; guard: MemorySqlGuard }> {
+export async function memoryDerivationSchema(env: WorkerEnv): Promise<{ present: boolean; jobsPresent: boolean; financePresent: boolean; recoveryPresent: boolean; guard: MemorySqlGuard }> {
   const db = env.DB, result = structuredClone(await db.prepare(`SELECT name,sql,tbl_name AS 'table',type FROM sqlite_schema WHERE ${family} ORDER BY name,type LIMIT ${maximumSchemaRows + 1}`).all<Row>());
   if (env.DB !== db || !derivationResults([result], 1) || result.results.length > maximumSchemaRows) fail();
   const rows = result.results;
@@ -70,8 +71,8 @@ export async function memoryDerivationSchema(env: WorkerEnv): Promise<{ present:
     if (selected.length && (selected.length !== profile.count || "sha256:" + await memoryDigest(memoryCanonical(selected.map(row => ({ ...row,
       sql: (row.sql as string).trim().replace(/;$/u, "").replace(/\bIF\s+NOT\s+EXISTS\s+/giu, "") })))) !== profile.digest)) fail();
   }
-  if (installed[1] && !installed[0] || installed[2] && !installed[1] || env.DB !== db) fail();
-  return { present: installed[0]!, jobsPresent: installed[1]!, financePresent: installed[2]!, guard: { condition: `${snapshot}=? AND NOT EXISTS(SELECT 1 FROM sqlite_temp_schema)`,
+  if (installed[1] && !installed[0] || installed[2] && !installed[1] || installed[3] && !installed[2] || env.DB !== db) fail();
+  return { present: installed[0]!, jobsPresent: installed[1]!, financePresent: installed[2]!, recoveryPresent: installed[3]!, guard: { condition: `${snapshot}=? AND NOT EXISTS(SELECT 1 FROM sqlite_temp_schema)`,
     bindings: [JSON.stringify(rows.map(row => ({ name: row.name, sql: row.sql, table: row.table, type: row.type })))] } };
 }
 export function memoryDerivationBinding(env: WorkerEnv) {

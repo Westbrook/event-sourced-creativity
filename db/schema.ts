@@ -2508,3 +2508,16 @@ export const memoryDerivationJobFinance = sqliteTable("memory_derivation_job_fin
   financeId: text("finance_id").notNull().unique().references(() => memoryDerivationFinance.financeId),
 }, () => [
 ]);
+
+/** A scan position for bounded financial maintenance, never semantic coverage,
+ * source custody, enrollment, or permission to submit another provider call. */
+export const memoryDerivationRecoveryCursor = sqliteTable("memory_derivation_recovery_cursor", {
+  singleton: integer("singleton").notNull().primaryKey(),
+  afterFinanceId: text("after_finance_id").references(() => memoryDerivationFinance.financeId),
+  generation: integer("generation").notNull(),
+  updatedAt: text("updated_at").notNull(),
+}, table => [
+  check("memory_derivation_recovery_singleton", sql`${table.singleton}=1`),
+  check("memory_derivation_recovery_generation", sql.raw("typeof(generation)='integer' AND generation BETWEEN 0 AND 9007199254740991")),
+  check("memory_derivation_recovery_time", sql.raw("length(updated_at)=24 AND strftime('%Y-%m-%dT%H:%M:%fZ',updated_at) IS updated_at")),
+]);
