@@ -45,5 +45,14 @@ export const VIDEO_ADAPTER_CONTRACT={
   adoptedAt:"2026-08-21",
 } satisfies ContextAdapterContract & Record<string, unknown>;
 
-export const DEFAULT_VIDEO_MODEL=VIDEO_ADAPTER_CONTRACT.model;
+export const DEFAULT_VIDEO_MODEL="bytedance/seedance-2.0/text-to-video";
 export const DEFAULT_REFERENCE_VIDEO_MODEL=VIDEO_ADAPTER_CONTRACT.model;
+
+/** Older installations configured both slots with the reference endpoint. Match
+ * new requests to actual media; explicit models (including recovery) stay pinned. */
+export function selectVideoModel(env:{FAL_VIDEO_MODEL?:string;FAL_REFERENCE_VIDEO_MODEL?:string},referenceCount:number,providerModel?:string):string {
+  if(providerModel)return providerModel;
+  if(referenceCount)return env.FAL_REFERENCE_VIDEO_MODEL??DEFAULT_REFERENCE_VIDEO_MODEL;
+  const model=env.FAL_VIDEO_MODEL??DEFAULT_VIDEO_MODEL;
+  return model===DEFAULT_REFERENCE_VIDEO_MODEL?DEFAULT_VIDEO_MODEL:model;
+}
