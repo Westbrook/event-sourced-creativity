@@ -217,6 +217,37 @@ export type GuestImageResultEditRead = Readonly<{
   events: readonly CreativeEvent[]; head: number;
   planner: Readonly<{ contentRef: string; rawJson: string; expiresAt: string; claim: GuestImageResultCompletedCustodyReview }>;
 }>;
+/** Body-free association facts from an owning completed-custody reader.
+ * contentDigest is the proved qualified canonical planner-copy digest. It is
+ * not the raw planner-text hash used by the strict editor. This type grants
+ * no storage or edit access. */
+export type GuestImageResultMetadataRead = Readonly<{
+  ownerId: string; projectId: string; documentId: string; outputId: string;
+  events: readonly CreativeEvent[]; head: number;
+  planner: Readonly<{ contentRef: string; contentDigest: string; expiresAt: string; claim: GuestImageResultCompletedCustodyReview }>;
+}>;
+/** Inert equality material, not a strict edit snapshot. Original revision zero
+ * has no observed raw planner hash. A later projected hash must still be joined
+ * to the genuine retained origin/revision chain by the owning native reader. */
+export type GuestImageResultMetadataSnapshot = Readonly<Omit<GuestImageResultEditSnapshot, "rawJson" | "contentSha256"> & {
+  contentSha256: string | null;
+}>;
+export type GuestImageResultLocalPair = Readonly<{
+  sourceId: string; blockId: string; referenceId: string; receiptEventId: string; creationEventId: string;
+  sourceExpiresAt: string; locked: boolean; sourceEvents: readonly string[];
+  source: Readonly<ReferenceCompositionSource>;
+  /** Exact receipt/creation/current-properties/lock/sourceEvents equality data,
+   * not a signature, private read receipt, or mutation capability. */
+  proof: string;
+}>;
+export type GuestImageResultMetadataFacts = Readonly<{
+  status: "current"; snapshot: GuestImageResultMetadataSnapshot;
+  title: string; plannerExpiresAt: string; contentExpiresAt: string;
+  localPair: GuestImageResultLocalPair | null;
+}>;
+type GuestImageResultMetadataSelectionRead = Omit<GuestImageResultMetadataRead, "planner"> & Readonly<{
+  planner: Omit<GuestImageResultMetadataRead["planner"], "contentDigest">;
+}>;
 export type CurrentGuestImageResultEdit = Readonly<{
   status: "captured"; sourceId: string; editEventId: string | null; basis: GuestImageResultEditBasis;
   sources: readonly ReferenceCompositionSource[];
@@ -350,23 +381,25 @@ function claimedLocalSource(block: CreativeBlock, events: readonly CreativeEvent
     || typeof current.label !== "string" || current.label.length > 160 || creativeContextRightsIssue(current, now)) return null;
   const source: ReferenceCompositionSource = { id: `${block.id}:image`, blockId: block.id, label: current.label.trim() || block.handle,
     mediaUrl: context.mediaUrl, contentHash: context.mediaSha256, kind: "image", ...(block.locked ? { requiresUnlock: true } : {}) };
-  return { source, proof: JSON.stringify({ receipt, creation, current, locked: block.locked, sourceEvents: block.sourceEvents }) };
+  return { source, proof: JSON.stringify({ receipt, creation, current, locked: block.locked, sourceEvents: block.sourceEvents }),
+    referenceId: ref, receiptEventId: receipt.eventId, creationEventId: creation.eventId,
+    sourceExpiresAt: r.source_expires_at, locked: block.locked, sourceEvents: block.sourceEvents };
 }
 
-function selectGuestImageResultEdit(input: GuestImageResultEditRead | null, sourceId: string | null, now: number) {
+/** Shared full-history selection only. The edit wrapper separately requires
+ * and hashes its real planner body; metadata inspection never supplies one. */
+function selectGuestImageResultMetadataCore(input: GuestImageResultMetadataSelectionRead | null, sourceId: string | null, now: number) {
   if (!claimedData(input, ["ownerId", "projectId", "documentId", "outputId", "events", "head", "planner"])
     || typeof input.ownerId !== "string" || ![input.projectId, input.documentId, input.outputId].every(token) || sourceId !== null && !token(sourceId)
     || !Array.isArray(input.events) || input.events.length > 50_000 || !Number.isFinite(now) || !integer(input.head)
-    || !claimedData(input.planner, ["contentRef", "rawJson", "expiresAt", "claim"])) return null;
+    || !claimedData(input.planner, ["contentRef", "expiresAt", "claim"])) return null;
   const planner = input.planner, claim = parseGuestImageResultCompletedCustodyReview(planner.claim), events = [...input.events];
-  if (!claim || !claimedIso(planner.expiresAt) || Date.parse(planner.expiresAt) <= now || typeof planner.rawJson !== "string" || !planner.rawJson.length
-    || new TextEncoder().encode(planner.rawJson).byteLength > GENERATED_IMAGE_EDIT_LIMITS.rawBytes || !planner.rawJson.isWellFormed()
+  if (!claim || !claimedIso(planner.expiresAt) || Date.parse(planner.expiresAt) <= now
     || events.some(event => !claimedData(event) || !claimedData(event.payload) || event.streamId !== "creative:" + input.ownerId
       || !token(event.eventId) || !integer(event.sequence, 1))
     || new Set(events.map(event => event.eventId)).size !== events.length
     || events.some((event, index) => index > 0 && events[index - 1]!.sequence >= event.sequence)
     || input.head < (events.at(-1)?.sequence ?? 0)) return null;
-  try { if (!claimedData(JSON.parse(planner.rawJson))) return null; } catch { return null; }
   const selected = events.filter(event => event.eventId === claim.claimEventId);
   if (selected.length !== 1) return null;
   const origin = parseGuestImageResultClaimEvent(selected[0]);
@@ -434,10 +467,63 @@ function selectGuestImageResultEdit(input: GuestImageResultEditRead | null, sour
   if (sourceId !== null && !sourceIds.includes(sourceId)) return null;
   return { ownerId: input.ownerId, projectId: input.projectId, documentId: input.documentId, outputId: input.outputId,
     generationId: p.generation_id, sourceEventId: origin.eventId, sequence: origin.sequence, contentRef: p.output_ref,
-    rawJson: planner.rawJson, plannerExpiresAt: planner.expiresAt, contentExpiresAt: p.content_expires_at, claim,
+    plannerExpiresAt: planner.expiresAt, contentExpiresAt: p.content_expires_at, claim,
     mediaUrl, mediaSha256, width: output.width!, height: output.height!, revision, editEventId,
     expectedRawSha256: output.imageRevision?.contentSha256 ?? null, byteLength: output.imageRevision?.byteLength ?? p.image_byte_length,
-    head: input.head, sources, sourceIds, sourceProof: JSON.stringify({ ordinary: referenceCompositionSourcesFingerprint(ordinary), local: local.map(value => value.proof) }) };
+    head: input.head, sources, sourceIds, sourceProof: JSON.stringify({ ordinary: referenceCompositionSourcesFingerprint(ordinary), local: local.map(value => value.proof) }),
+    title: projected.title ?? "", localPair: local[0] ?? null };
+}
+function selectGuestImageResultEdit(input: GuestImageResultEditRead | null, sourceId: string | null, now: number) {
+  if (!claimedData(input, ["ownerId", "projectId", "documentId", "outputId", "events", "head", "planner"])
+    || !claimedData(input.planner, ["contentRef", "rawJson", "expiresAt", "claim"])) return null;
+  const planner = input.planner;
+  if (typeof planner.rawJson !== "string" || !planner.rawJson.length
+    || new TextEncoder().encode(planner.rawJson).byteLength > GENERATED_IMAGE_EDIT_LIMITS.rawBytes || !planner.rawJson.isWellFormed()) return null;
+  try { if (!claimedData(JSON.parse(planner.rawJson))) return null; } catch { return null; }
+  const selected = selectGuestImageResultMetadataCore({ ownerId: input.ownerId, projectId: input.projectId, documentId: input.documentId,
+    outputId: input.outputId, events: input.events, head: input.head,
+    planner: { contentRef: planner.contentRef, expiresAt: planner.expiresAt, claim: planner.claim } }, sourceId, now);
+  if (!selected) return null;
+  // Keep metadata-only display/reuse facts outside the existing edit snapshot
+  // and edit equality material. Existing real-body hash/rejoin checks follow.
+  const { title, localPair, ...edit } = selected; void title; void localPair;
+  return { ...edit, rawJson: planner.rawJson };
+}
+
+/** Explicit body-free inspection over complete immutable history. Its caller
+ * owns the original Request, canonical association/hash proof, required native
+ * revision retention and media qualification. No edit snapshot is invented. */
+export function inspectCurrentGuestImageResultMetadata(
+  read: () => GuestImageResultMetadataRead | null, now: () => number = Date.now,
+): GuestImageResultMetadataFacts | typeof refused {
+  try {
+    const input = read();
+    if (!claimedData(input, ["ownerId", "projectId", "documentId", "outputId", "events", "head", "planner"])
+      || !claimedData(input.planner, ["contentRef", "contentDigest", "expiresAt", "claim"])
+      || typeof input.planner.contentDigest !== "string" || !/^sha256:[a-f0-9]{64}$/u.test(input.planner.contentDigest)) return refused;
+    const planner = input.planner;
+    const selected = selectGuestImageResultMetadataCore({ ownerId: input.ownerId, projectId: input.projectId, documentId: input.documentId,
+      outputId: input.outputId, events: input.events, head: input.head,
+      planner: { contentRef: planner.contentRef, expiresAt: planner.expiresAt, claim: planner.claim } }, null, now());
+    if (!selected) return refused;
+    const snapshot: GuestImageResultMetadataSnapshot = {
+      status: "current", ownerId: selected.ownerId, projectId: selected.projectId, documentId: selected.documentId, outputId: selected.outputId,
+      generationId: selected.generationId, sourceEventId: selected.sourceEventId, contentRef: selected.contentRef, contentSha256: selected.expectedRawSha256,
+      revision: selected.revision, editEventId: selected.editEventId,
+      media: Object.freeze({ url: selected.mediaUrl, mediaType: "image/png", sha256: selected.mediaSha256,
+        width: selected.width, height: selected.height, byteLength: selected.byteLength }),
+      sources: selected.sources.map(source => Object.freeze({ ...source })), sourceIds: [...selected.sourceIds],
+      head: selected.head, claim: selected.claim,
+    };
+    Object.freeze(snapshot.sources); Object.freeze(snapshot.sourceIds);
+    const pair = selected.localPair;
+    const localPair: GuestImageResultLocalPair | null = pair ? Object.freeze({ sourceId: pair.source.id, blockId: pair.source.blockId,
+      referenceId: pair.referenceId, receiptEventId: pair.receiptEventId, creationEventId: pair.creationEventId,
+      sourceExpiresAt: pair.sourceExpiresAt, locked: pair.locked, sourceEvents: Object.freeze([...pair.sourceEvents]),
+      source: Object.freeze({ ...pair.source }), proof: pair.proof }) : null;
+    return Object.freeze({ status: "current", snapshot: Object.freeze(snapshot), title: selected.title,
+      plannerExpiresAt: selected.plannerExpiresAt, contentExpiresAt: selected.contentExpiresAt, localPair });
+  } catch { return refused; }
 }
 function guestImageResultSnapshot(selected: NonNullable<ReturnType<typeof selectGuestImageResultEdit>>, contentSha256: string): GuestImageResultEditSnapshot {
   return { status: "current", ownerId: selected.ownerId, projectId: selected.projectId, documentId: selected.documentId, outputId: selected.outputId,

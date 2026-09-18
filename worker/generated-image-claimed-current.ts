@@ -1,6 +1,7 @@
-import { createCreativeEventFold, type CreativeEvent } from "../src/model/events.ts";
+import { createCreativeEventFold, type CreativeEvent, type CreativeProjection } from "../src/model/events.ts";
 import { measureRetainedState } from "../src/model/retained-state.ts";
-import { inspectCurrentGuestImageResultEdit, type GuestImageResultEditRead } from "../src/model/generated-image-edit-current.ts";
+import { inspectCurrentGuestImageResultEdit, inspectCurrentGuestImageResultMetadata,
+  type GuestImageResultEditRead, type GuestImageResultMetadataRead, type GuestImageResultMetadataFacts, type GuestImageResultMetadataSnapshot } from "../src/model/generated-image-edit-current.ts";
 import { parseGuestImageResultCompletedCustodyReview, type GuestImageResultCompletedCustodyReview } from "../src/model/generated-image-edit.ts";
 import { guestImageResultEditOperationSha256, parseGuestImageResultEditRequest, parseGuestImageResultRevision,
   type GuestImageResultEditRequest, type GuestImageResultEditSnapshot, type GuestImageResultRevision } from "../src/model/generated-image-revision.ts";
@@ -21,6 +22,18 @@ export type ClaimedImageCurrentEvidence = Readonly<{
    * This adds to the fixed accounting ceiling; it cannot raise that ceiling. */
   outsideRetainedBytes: number;
 }>;
+/** Association-only evidence for the fixed local adoption consumer. It does
+ * not contain planner bytes and cannot be used by the strict edit inspector. */
+export type ClaimedImageLocalAdoptionEvidence = Readonly<{
+  read: GuestImageResultMetadataRead;
+  eventRows: readonly Row[];
+  revisionRows: readonly Row[];
+  monotonicDeadline: number;
+  wallDeadline: number;
+  outsideRetainedBytes: number;
+}>;
+type ClaimedImageProofEvidence = ClaimedImageCurrentEvidence | ClaimedImageLocalAdoptionEvidence;
+type ClaimedImageMetadataSnapshot = GuestImageResultMetadataSnapshot;
 export type ClaimedImageOrigin = Readonly<{
   outputId: string; documentId: string; generationId: string; sourceEventId: string;
   contentRef: string; contentSha256: string; claim: GuestImageResultCompletedCustodyReview;
@@ -46,6 +59,16 @@ export type ClaimedImageCurrentFacts = Readonly<{
   derivativeMetadata: ClaimedImageRevisionMetadata | null;
   localContext: Readonly<{ eventIds: readonly string[]; resourceIds: readonly string[] }>;
 }>;
+type ClaimedImageMetadataOrigin = Readonly<Omit<ClaimedImageOrigin, "contentSha256"> & { contentSha256: string | null }>;
+type ClaimedImageQualifiedFacts<S extends Readonly<ClaimedImageMetadataSnapshot>> = Readonly<
+  Omit<ClaimedImageCurrentFacts, "snapshot" | "origin"> & { snapshot: S;
+    origin: Readonly<Omit<ClaimedImageOrigin, "contentSha256"> & { contentSha256: S["contentSha256"] }> }>;
+export type ClaimedImageLocalAdoptionFacts = Readonly<ClaimedImageQualifiedFacts<ClaimedImageMetadataSnapshot> & {
+  title: string;
+  plannerExpiresAt: string;
+  contentExpiresAt: string;
+  localPair: GuestImageResultMetadataFacts["localPair"];
+}>;
 const fail = (): never => { throw new Error("claimed_image_current_unavailable"); };
 const encoder = new TextEncoder();
 const row = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === "object"
@@ -68,15 +91,18 @@ const equalReview = (left: unknown, right: GuestImageResultCompletedCustodyRevie
   return parsed !== null && parsed.version === right.version && parsed.kind === right.kind && parsed.custodyId === right.custodyId
     && parsed.claimEventId === right.claimEventId && parsed.lineageDigest === right.lineageDigest;
 };
-function sameOrigin(value: unknown, origin: ClaimedImageOrigin): boolean {
+function sameOrigin(value: unknown, origin: ClaimedImageMetadataOrigin): boolean {
   return row(value) && keys(value, originKeys) && originKeys.every(key => key === "claim"
     ? equalReview(value.claim, origin.claim) : value[key] === origin[key]);
+}
+function rawPlannerOrigin(value: ClaimedImageMetadataOrigin): value is ClaimedImageOrigin {
+  return digest(value.contentSha256);
 }
 function sameMedia(value: unknown, media: ClaimedImageMedia): boolean {
   return row(value) && keys(value, mediaKeys) && mediaKeys.every(key => value[key] === media[key]);
 }
 function privateEvent(rows: readonly Row[], event: CreativeEvent, scope: { ownerId: string; projectId: string; documentId: string },
-  budget: { evidence: ClaimedImageCurrentEvidence; roots: unknown; current: () => number }): Row {
+  budget: { evidence: ClaimedImageProofEvidence; roots: unknown; current: () => number }): Row {
   let value: Row | undefined;
   for (const candidate of rows) {
     budget.current();
@@ -119,7 +145,7 @@ const currentMeasureLimits = Object.freeze({ bytes: CLAIMED_CURRENT_AGGREGATE,
   // Every traversal edge costs at least 16 bytes; 8 also allows null roots.
   nodes: Math.floor(CLAIMED_CURRENT_AGGREGATE / 8), depth: 96 });
 const currentMeasure = (value: unknown) => measureRetainedState(value, currentMeasureLimits);
-function currentAdmit(evidence: ClaimedImageCurrentEvidence, extra: unknown = null, work = 0): void {
+function currentAdmit(evidence: ClaimedImageProofEvidence, extra: unknown = null, work = 0): void {
   if (!Number.isSafeInteger(evidence.outsideRetainedBytes) || evidence.outsideRetainedBytes < 0
     || !Number.isSafeInteger(work) || work < 0) return fail();
   const retained = currentMeasure([evidence.read, evidence.eventRows, evidence.revisionRows, extra]).bytes;
@@ -534,15 +560,21 @@ function currentNativeRecipeWork(value: unknown): number {
     + layerContainers + layerRecords + layerCheck + sizeRecord + normalizedRecipe + comparisonKeys;
 }
 
-function claimedCurrentModelWork(evidence: ClaimedImageCurrentEvidence, current: () => number): number {
+function claimedCurrentModelWork(evidence: ClaimedImageProofEvidence, current: () => number): number {
   currentAdmit(evidence);
   const input = evidence.read, E = input.events.length;
-  if (E > 50_000 || typeof input.planner.rawJson !== "string") return fail();
-  currentAdmit(evidence, null, jsonParseWork(input.planner.rawJson));
-  let parsedPlanner: unknown;
-  try { parsedPlanner = JSON.parse(input.planner.rawJson); } catch { return fail(); }
-  const plannerParsedBytes = currentMeasure(parsedPlanner).bytes;
-  parsedPlanner = null;
+  if (E > 50_000) return fail();
+  const rawJson = "rawJson" in input.planner ? input.planner.rawJson : null;
+  let plannerParsedBytes = 0, plannerEncodedBytes = 0;
+  if (rawJson !== null) {
+    if (typeof rawJson !== "string") return fail();
+    currentAdmit(evidence, null, jsonParseWork(rawJson));
+    let parsedPlanner: unknown;
+    try { parsedPlanner = JSON.parse(rawJson); } catch { return fail(); }
+    plannerParsedBytes = currentMeasure(parsedPlanner).bytes;
+    plannerEncodedBytes = utf8Length(rawJson);
+    parsedPlanner = null;
+  }
   let eventIdBytes = 0, rightsIdBytes = 0, maxEventBytes = 0, maxEventJson = 0;
   let aliasNodes = 1, aliasUnits = 9;
   const accountAlias = (value: unknown) => {
@@ -570,7 +602,7 @@ function claimedCurrentModelWork(evidence: ClaimedImageCurrentEvidence, current:
     + evidenceSize.bytes;
   const eventSelection =
     6 * logicalArray(E) + logicalSet(E) + 2 * eventIdBytes + // copied input, ID map, claim/edit/no-edit/visible filters
-    plannerParsedBytes + utf8Length(input.planner.rawJson) +
+    plannerParsedBytes + plannerEncodedBytes +
     maxEventBytes + 2 * logicalString(maxEventJson) + 3 * maxEventJson + // active detached claim, stringify + encoder
     descriptors;
   currentAdmit(evidence, null, eventSelection);
@@ -655,7 +687,7 @@ function claimedCurrentModelWork(evidence: ClaimedImageCurrentEvidence, current:
   const p = origin.payload, revision = output.imageRevision;
   const scalarSelection = { ownerId: input.ownerId, projectId: input.projectId, documentId: input.documentId, outputId: input.outputId,
     generationId: p.generation_id, sourceEventId: origin.eventId, sequence: origin.sequence, contentRef: p.output_ref,
-    rawJson: input.planner.rawJson, plannerExpiresAt: input.planner.expiresAt, contentExpiresAt: p.content_expires_at, claim: input.planner.claim,
+    ...(rawJson === null ? {} : { rawJson }), plannerExpiresAt: input.planner.expiresAt, contentExpiresAt: p.content_expires_at, claim: input.planner.claim,
     mediaUrl: output.mediaUrl, mediaSha256: revision?.mediaSha256 ?? p.source_content_hash, width: output.width, height: output.height,
     revision: revision?.revision ?? 0, editEventId: revision?.editEventId ?? null, expectedRawSha256: revision?.contentSha256 ?? null,
     byteLength: revision?.byteLength ?? p.image_byte_length, head: input.head };
@@ -701,13 +733,29 @@ function claimedCurrentModelWork(evidence: ClaimedImageCurrentEvidence, current:
   const snapshotShape = logicalRecord(["status", "media", "contentSha256"])
     + logicalRecord(["url", "mediaType", "sha256", "width", "height", "byteLength"])
     + logicalString(7) + logicalString(9) + logicalString(64);
+  // The shared model selector now has a fixed metadata-only sibling. Its
+  // normalized read/planner records do not copy the event array, but their
+  // scalar fields and the strict wrapper's rest/spread selections coexist.
+  // A metadata result additionally copies one exact local pair's source and
+  // sourceEvents array; maxBlockBytes bounds the latter's retained values.
+  // These are logical allocation reservations, not measured peak heap.
+  const normalizedReadWork = logicalRecord(["ownerId", "projectId", "documentId", "outputId", "events", "head", "planner"])
+    + logicalRecord(["contentRef", "expiresAt", "claim"])
+    + currentMeasure([input.ownerId, input.projectId, input.documentId, input.outputId, input.head,
+      input.planner.contentRef, input.planner.expiresAt, input.planner.claim]).bytes;
+  const metadataPairWork = logicalRecord(["sourceId", "blockId", "referenceId", "receiptEventId", "creationEventId",
+    "sourceExpiresAt", "locked", "sourceEvents", "source", "proof"])
+    + sourceBytes + maxBlockBytes + logicalString(largestLocal.n) + 6 * logicalString(42) + logicalString(24)
+    + logicalRecord(["status", "snapshot", "title", "plannerExpiresAt", "contentExpiresAt", "localPair"])
+    + currentMeasure(output.title ?? "").bytes + 2 * logicalString(24) + logicalString(7);
+  const modelCompanionWork = 2 * normalizedReadWork + 2 * selectionBytes + metadataPairWork;
   const hiddenPeak = foldPeak + eventSelection + sourceSelection + comparisonWork + aliasWork + editReplayWork
-    + rawNormalizationWork + localComparisonWork
-    + 3 * selectionBytes + snapshotShape + 2 * logicalString(selectionJson.n) + utf8Length(input.planner.rawJson) + hashDigestWork;
+    + rawNormalizationWork + localComparisonWork + modelCompanionWork
+    + 3 * selectionBytes + snapshotShape + 2 * logicalString(selectionJson.n) + plannerEncodedBytes + hashDigestWork;
   // Preflight graphs still exist HERE. Charge them separately; only scalar
   // hiddenPeak leaves this scope before the unchanged pure helper is called.
   currentAdmit(evidence, [complete.projection, original.projection, scalarSelection],
-    eventSelection + sourceSelection + comparisonWork + aliasWork + editReplayWork + rawNormalizationWork + localComparisonWork
+    eventSelection + sourceSelection + comparisonWork + aliasWork + editReplayWork + rawNormalizationWork + localComparisonWork + modelCompanionWork
       + 3 * selectionBytes + snapshotShape + 2 * logicalString(selectionJson.n));
   currentAdmit(evidence, null, hiddenPeak);
   return hiddenPeak;
@@ -730,9 +778,21 @@ export async function qualifyClaimedImageCurrent(evidence: ClaimedImageCurrentEv
   currentAdmit(evidence, null, work);
   const snapshot = await inspectCurrentGuestImageResultEdit(() => read, current); current();
   currentAdmit(evidence, snapshot);
-  if (snapshot.status !== "current" || !Array.isArray(evidence.eventRows) || !Array.isArray(evidence.revisionRows)
+  if (snapshot.status !== "current") return fail();
+  return qualifyClaimedImageRevisionChain(evidence, snapshot, current);
+}
+
+/** Both named consumers qualify the same actual private revision chain. The
+ * generic shape preserves the strict reader's real rawJson and the separate
+ * metadata consumer's absence of planner bytes without manufacturing either. */
+async function qualifyClaimedImageRevisionChain<S extends Readonly<ClaimedImageMetadataSnapshot>>(
+  evidence: ClaimedImageProofEvidence, snapshot: S, current: () => number,
+  additionalRoots: unknown = null,
+): Promise<ClaimedImageQualifiedFacts<S>> {
+  const read = evidence.read;
+  if (!Array.isArray(evidence.eventRows) || !Array.isArray(evidence.revisionRows)
     || evidence.eventRows.length !== read.events.length || evidence.revisionRows.length > 128) return fail();
-  const retainedRoots: unknown[] = [snapshot];
+  const retainedRoots: unknown[] = [snapshot, additionalRoots];
   const admit = (extra: unknown = null, scratch = 0) => { current(); currentAdmit(evidence, [retainedRoots, extra], scratch); };
   admit(null, logicalArray(read.events.length));
   const origins = read.events.filter(event => event.eventId === snapshot.claim.claimEventId);
@@ -745,7 +805,7 @@ export async function qualifyClaimedImageCurrent(evidence: ClaimedImageCurrentEv
   privateEvent(evidence.eventRows, canonical, snapshot, { evidence, roots: retainedRoots, current });
   admit(null, utf8Length(snapshot.outputId) + logicalArray(utf8Length(snapshot.outputId)) + utf8Length(snapshot.outputId) * logicalString(2));
   const p = canonical.payload, key = artifactKey(snapshot.outputId);
-  const origin: ClaimedImageOrigin = Object.freeze({ outputId: snapshot.outputId, documentId: snapshot.documentId,
+  const origin: ClaimedImageQualifiedFacts<S>["origin"] = Object.freeze({ outputId: snapshot.outputId, documentId: snapshot.documentId,
     generationId: snapshot.generationId, sourceEventId: snapshot.sourceEventId, contentRef: snapshot.contentRef,
     contentSha256: snapshot.contentSha256, claim: snapshot.claim });
   const initialMedia: ClaimedImageMedia = Object.freeze({ url: p.media_url, mediaType: "image/png", sha256: p.source_content_hash,
@@ -763,6 +823,9 @@ export async function qualifyClaimedImageCurrent(evidence: ClaimedImageCurrentEv
     current(); admit([extra, value, hash]); return hash;
   };
   for (let index = 0; index < evidence.revisionRows.length; index++) {
+    // A body-free original has no raw planner hash. Edited state must bind a
+    // genuine raw hash to every actual retained origin and revision below.
+    if (!rawPlannerOrigin(origin)) return fail();
     current(); const value = evidence.revisionRows[index];
     if (!row(value) || !keys(value, revisionRowKeys) || value.owner_id !== snapshot.ownerId || value.organization_id !== null
       || value.project_access_id !== null || value.project_id !== snapshot.projectId || value.document_id !== snapshot.documentId
@@ -870,6 +933,102 @@ export async function qualifyClaimedImageCurrent(evidence: ClaimedImageCurrentEv
     localContext: Object.freeze({ eventIds: Object.freeze(localEvents), resourceIds: Object.freeze(localResources) }) });
   admit(facts); return facts;
 }
+
+/** Body-free local-source adoption qualification. The immutable planner-copy
+ * association retains its canonical JSON-string digest as contentDigest.
+ * Original revision zero has no raw planner hash here; an edited projection's
+ * raw hash is bound to every genuine private revision by the full chain above.
+ * Only the fresh completed owner proves that association and role retention.
+ * This helper performs no IO, grants no provider rights, and supplies no body. */
+export async function qualifyClaimedImageLocalAdoption(
+  evidence: ClaimedImageLocalAdoptionEvidence,
+): Promise<ClaimedImageLocalAdoptionFacts> {
+  const current = () => {
+    if (!Number.isFinite(evidence.monotonicDeadline) || !Number.isFinite(evidence.wallDeadline)
+      || performance.now() >= evidence.monotonicDeadline || Date.now() >= evidence.wallDeadline) return fail();
+    return Date.now();
+  };
+  current();
+  if (!Number.isSafeInteger(evidence.outsideRetainedBytes) || evidence.outsideRetainedBytes < 0) return fail();
+  const work = claimedCurrentModelWork(evidence, current); current();
+  currentAdmit(evidence, null, work);
+  const metadata = inspectCurrentGuestImageResultMetadata(() => evidence.read, current); current();
+  currentAdmit(evidence, metadata);
+  if (metadata.status !== "current") return fail();
+  const facts = await qualifyClaimedImageRevisionChain(evidence, metadata.snapshot, current, metadata);
+  current(); currentAdmit(evidence, [metadata, facts]);
+  const pair = metadata.localPair;
+  if (pair && (pair.sourceExpiresAt !== facts.retainedExpiresAt
+    || facts.localContext.eventIds.length !== 2 || facts.localContext.resourceIds.length !== 2
+    || facts.localContext.eventIds[0] !== pair.receiptEventId || facts.localContext.eventIds[1] !== pair.creationEventId
+    || facts.localContext.resourceIds[0] !== pair.blockId || facts.localContext.resourceIds[1] !== pair.referenceId)) return fail();
+  if (!pair && (facts.localContext.eventIds.length || facts.localContext.resourceIds.length)) return fail();
+  const result = Object.freeze({ ...facts, title: metadata.title, plannerExpiresAt: metadata.plannerExpiresAt,
+    contentExpiresAt: metadata.contentExpiresAt, localPair: pair });
+  currentAdmit(evidence, [metadata, facts, result]); return result;
+}
+
+/** Additional inert writer preparation. Its caller already owns the original
+ * immutable evidence and fresh facts; this does not read storage or establish
+ * authority. The complete projection must leave the writer's preparation
+ * scope after selecting its bounded current ordinary-source facts. */
+export type ClaimedImageEditProjectionEvidence = Readonly<{
+  read: GuestImageResultEditRead;
+  eventRows: readonly Row[];
+  facts: ClaimedImageCurrentFacts;
+  monotonicDeadline: number;
+  wallDeadline: number;
+  outsideRetainedBytes: number;
+}>;
+export function qualifyClaimedImageEditProjection(evidence: ClaimedImageEditProjectionEvidence): Readonly<CreativeProjection> {
+  const expiry = Date.parse(evidence.facts.retainedExpiresAt);
+  const current = () => {
+    const now = Date.now();
+    if (!Number.isFinite(expiry) || !Number.isFinite(evidence.monotonicDeadline) || !Number.isFinite(evidence.wallDeadline)
+      || performance.now() >= evidence.monotonicDeadline || now >= evidence.wallDeadline || now >= expiry) return fail();
+    return now;
+  };
+  current();
+  if (!Number.isSafeInteger(evidence.outsideRetainedBytes) || evidence.outsideRetainedBytes < 0) return fail();
+  const read = evidence.read, snapshot = evidence.facts.snapshot;
+  if (snapshot.ownerId !== read.ownerId || snapshot.projectId !== read.projectId || snapshot.documentId !== read.documentId
+    || snapshot.outputId !== read.outputId || snapshot.head !== read.head || evidence.eventRows.length !== read.events.length) return fail();
+  // Facts stay live through this extra fold. Charging them outside the normal
+  // evidence roots can only consume the fixed ceiling, never increase it.
+  const measured: ClaimedImageCurrentEvidence = { read, eventRows: evidence.eventRows,
+    revisionRows: evidence.facts.retained.map(value => value.row), monotonicDeadline: evidence.monotonicDeadline,
+    wallDeadline: evidence.wallDeadline, outsideRetainedBytes: evidence.outsideRetainedBytes + currentMeasure(evidence.facts).bytes };
+  // Reuse the exact source-derived complete/no-edit fold preflight. It returns
+  // only a scalar; its graphs retire before the actual projection is built.
+  // This is additional bounded CPU work, not reuse of a caller's projection.
+  const work = claimedCurrentModelWork(measured, current); current();
+  currentAdmit(measured, null, work);
+  const fold = createCreativeEventFold(Infinity, read.documentId, read.projectId);
+  for (const event of read.events) {
+    current(); if (!fold.accept(event)) break;
+    if (fold.measureRetainedState(currentMeasureLimits).bytes > work) return fail();
+    currentAdmit(measured, null, work);
+  }
+  const before = fold.measureRetainedState(currentMeasureLimits);
+  if (before.bytes + currentFinishWork(before.bytes, before.nodes) > work) return fail();
+  currentAdmit(measured, null, work);
+  const projection = fold.finish(); current();
+  const retained = fold.measureRetainedState(currentMeasureLimits).bytes;
+  if (retained > work) return fail(); currentAdmit(measured, null, retained);
+  return projection;
+}
+
+// Arithmetic only: callers still measure their own live roots and admit the
+// resulting work under the fixed operation ceiling. No authority or admission
+// follows from these numbers, and no IO or application parser runs here.
+export {
+  currentClaimEventParserWork as claimedImageLocalAdoptionCanonicalWork,
+  currentClaimRequestParserWork as claimedImageEditRequestWork,
+  currentClaimRevisionParserWork as claimedImageEditRevisionWork,
+  currentClaimOperationParserWork as claimedImageEditOperationWork,
+  currentNativeRecipeWork as claimedImageEditRecipeWork,
+  currentClaimedMediaParserWork as claimedImageEditMediaWork,
+};
 
 
 /** Closed authored derivative metadata, shared by the specific current reader
