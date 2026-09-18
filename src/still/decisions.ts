@@ -5,7 +5,7 @@ import { isContextCompositionRelation } from '../model/combined-context.ts';
 import { parseDocumentArtifactContent } from '../model/document-artifacts.ts';
 import { foldEvents, type CreativeEvent, type CreativeProjection } from '../model/events.ts';
 
-export const POLICY_VERSION = 'still-8';
+export const POLICY_VERSION = 'still-9';
 export type Position = { projectId: string; documentId: string; blockId: string; outputId: string; view: string; intent: string; recentActions: string[]; itemIndex?: number; actionLimit?:number; palette?:PaletteFeedback };
 export type Abilities = { author: boolean; generate: boolean; projectCreate: boolean; formats: string[] };
 export type Action = { id: string; label: string; group: 'navigate' | 'write' | 'context' | 'make' | 'reflect'; description: string };
@@ -50,16 +50,17 @@ export function evaluateEligibility(p: CreativeProjection, pos: Position, abilit
   const block = p.blocks.find(b => b.id === pos.blockId && !b.removed);
   const artifact = p.artifacts.find(a => a.id === pos.outputId);
   const exclusion = (a: Action): string => {
-    if (a.id === 'projects' || a.id === 'intent') return '';
+    if (a.id === 'projects') return pos.view === 'projects' ? 'Already viewing projects' : '';
+    if (a.id === 'intent') return '';
     if (a.id === 'new-project') return abilities.projectCreate ? '' : 'Project creation unavailable';
-    if (a.id === 'documents') return pos.projectId ? '' : 'Select a project';
+    if (a.id === 'documents') return pos.view === 'documents' ? 'Already viewing documents' : pos.projectId ? '' : 'Select a project';
     if (a.id === 'new-document') return !pos.projectId ? 'Select a project' : abilities.author ? '' : 'Author permission required';
     if (!document) return 'Select a document';
     if (a.group === 'make') return !abilities.generate ? 'Generation permission required' : !(a.id === 'create' ? abilities.formats.length > 0 : abilities.formats.includes(a.id)) ? 'Provider unavailable' : p.blocks.some(b => !b.removed && Number(b.properties.weight ?? 1) > 0) ? '' : 'Active context required';
-    if (a.id === 'results') return p.outputs.length + p.artifacts.length > 0 ? '' : 'No results';
+    if (a.id === 'results') return pos.view === 'results' ? 'Already viewing results' : p.outputs.length + p.artifacts.length > 0 ? '' : 'No results';
     if (a.id === 'export') return artifact || p.outputs.some(o => o.id === pos.outputId) ? '' : 'Select a result';
     if (a.id === 'edit-artifact') return !abilities.author ? 'Author permission required' : artifact && ['short_story', 'scene', 'slides', 'storyboard'].includes(artifact.kind) ? '' : 'Select editable writing';
-    if (a.id === 'context') return pos.view !== 'document' ? '' : 'Already viewing document';
+    if (a.id === 'context') return pos.view !== 'document' || !!pos.blockId ? '' : 'Already viewing document';
     if (!abilities.author) return 'Author permission required';
     if (['split-context','research-context','find-references'].includes(a.id)) return !abilities.generate ? 'Generation permission required' : !editableIdea(block) ? 'Select an editable idea' : !(Number(block.properties.weight ?? 1)>0) ? 'Include this idea first' : !String(block.properties.text ?? '').trim() ? 'Idea text required' : String(block.properties.text ?? '').length > (a.id==='split-context'?6000:2400) ? 'Source exceeds action text limit' : '';
     if (a.id === 'use-in') return block ? editableIdea(block) ? '' : 'Select an editable idea' : p.blocks.some(editableIdea) ? '' : 'An editable idea is required';
