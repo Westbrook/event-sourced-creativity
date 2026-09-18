@@ -99,7 +99,7 @@ function snapshot(input: unknown): unknown {
 
 /** JSON grammar is validated by JSON.parse; this additionally rejects even
  * escaped duplicate keys, which JSON.parse would silently overwrite. */
-function uniqueKeys(text: string): boolean {
+export function memoryDerivationJsonUniqueKeys(text: string): boolean {
   const stack: { keys: Set<string> | null; expectsKey: boolean }[] = [];
   for (const [token] of text.matchAll(/"(?:\\.|[^"\\])*"|[{}:,[\]]/gsu)) {
     if (token === "{" || token === "[") {
@@ -132,7 +132,7 @@ export async function parseMemoryDerivationResult(rawJson: string, originalConte
   try {
     if (typeof rawJson !== "string" || rawJson.length > 65536 || new TextEncoder().encode(rawJson).byteLength > 65536) return null;
     const raw = snapshot(JSON.parse(rawJson)), context = snapshot(originalContext);
-    if (!uniqueKeys(rawJson) || !exact(raw, ["version", "items"]) || raw.version !== MEMORY_DERIVATION_RESULT_VERSION
+    if (!memoryDerivationJsonUniqueKeys(rawJson) || !exact(raw, ["version", "items"]) || raw.version !== MEMORY_DERIVATION_RESULT_VERSION
       || !Array.isArray(raw.items) || raw.items.length > 16
       || !exact(context, ["purpose", "scopeKey", "manifestId", "manifestRevision", "checkedAt", "validUntil", "sources", "priorItems", "suppressedLineages"])
       || !purposes.includes(String(context.purpose)) || !scopeKey(context.scopeKey) || !id(context.manifestId) || !integer(context.manifestRevision, 1)

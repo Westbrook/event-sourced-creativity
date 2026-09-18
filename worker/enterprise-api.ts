@@ -1,6 +1,7 @@
 import { reconcileOutputAssetStorage } from "./output-asset-storage-control.ts";
 import { reconcileOutputNativeStorage } from "./output-private-execution.ts";
 import { organizationOutputAssetInventory, organizationOutputDeletionStatements, organizationOutputSubmissionBlockers, outputAssetCustodyMatches, outputOrganizationDeletionGuard, outputRecoveryRecordIsInert, outputRequirementRecoveryRecords } from "./output-requirement-retention.ts";
+import { memoryDerivationSchema, prepareDerivationWithdrawal, derivationAssertion, derivationVerified } from "./memory-derivation-store.ts";
 import { liveMemoryErasureStatements } from "./memory-live-store.ts";
 import { cancelProjectActorJobs, projectProviderSubmissionBlockers } from "./document-jobs-api.ts";
 import { failConsequentialExecution, reconcileConsequentialUsage } from "./consequential-consent.ts";
@@ -841,13 +842,14 @@ async function deletionInventory(env: WorkerEnv, organizationId: string) {
 }
 
 async function initializedAssistantTables(env:WorkerEnv){
-  const tables=await env.DB.prepare("SELECT name FROM sqlite_schema WHERE type='table' AND name IN('assistant_turns','assistant_action_proposals','assistant_specialist_tasks')")
+  const tables=await env.DB.prepare("SELECT name FROM sqlite_schema WHERE type='table' AND name IN('assistant_turns','assistant_action_proposals','assistant_specialist_tasks','memory_derivation_finance')")
     .all<{name:string}>();
   const present=new Set(tables.results.map(row=>String(row.name)));
   if(present.has("assistant_specialist_tasks")){
     const columns=await env.DB.prepare("PRAGMA table_info(assistant_specialist_tasks)").all<{name:string}>();
     if(columns.results.some(column=>column.name==="result_json"))present.add("assistant_specialist_consent");
   }
+  if(present.has("memory_derivation_finance")&&!(await memoryDerivationSchema(env)).financePresent)throw Error("memory-finance-schema-unavailable");
   return present;
 }
 
@@ -917,10 +919,36 @@ async function organizationAssistantTokenReservationBlockers(env:WorkerEnv,organ
     .bind(organizationId).all<{reservation_id:string;operation:string}>();
   return rows.results.map(row=>({reservationId:String(row.reservation_id),operation:String(row.operation)}));
 }
+/** Only closed, independently retained financial identity permits private erasure
+ * during uncertain Memory billing. Prefixes or task labels confer no exception. */
+function retainedMemoryExecutingSql(tables:Set<string>){
+  if(!tables.has("memory_derivation_finance"))return "";
+  return ` AND NOT EXISTS(SELECT 1 FROM memory_derivation_finance f JOIN budget_reservations token ON token.reservation_id=f.token_id
+    WHERE f.cost_id=cost.reservation_id AND f.payer_id=cost.owner_id AND f.workspace_id=scoped.organization_id
+    AND f.project_access_id=scoped.project_access_id AND scoped.workspace_scope_id=f.workspace_id AND scoped.actor_user_id=f.payer_id
+    AND f.admission_closed_at IS NOT NULL AND NOT EXISTS(SELECT 1 FROM memory_derivation_job_finance link WHERE link.finance_id=f.finance_id)
+    AND cost.period=f.period AND cost.operation=f.operation AND cost.stream_id='memory-derivation:'||f.finance_id AND cost.correlation_id=f.finance_id
+    AND cost.workspace_id=f.workspace_id AND cost.reserved_microusd=f.maximum_microusd AND cost.allow_user_overage=0
+    AND token.owner_id=f.payer_id AND token.period=f.period AND token.operation=f.operation AND token.stream_id='memory-derivation:'||f.finance_id
+    AND token.correlation_id=f.finance_id AND token.reserved_tokens=f.maximum_tokens
+    AND EXISTS(SELECT 1 FROM project_budget_reservation_scopes original WHERE original.reservation_kind='tokens' AND original.reservation_id=f.token_id
+      AND original.organization_id=f.workspace_id AND original.workspace_scope_id=f.workspace_id AND original.project_access_id=f.project_access_id AND original.actor_user_id=f.payer_id))`;
+}
+async function closeOrganizationMemoryAdmissions(env:WorkerEnv,actor:PilotUser,organizationId:string,tables:Set<string>){
+  if(!tables.has("memory_derivation_finance"))return;
+  const db=env.DB,plan=await prepareDerivationWithdrawal(env,{organizationId},new Date().toISOString(),true);
+  const guard=derivationAssertion(env,{condition:`EXISTS(SELECT 1 FROM organizations organization JOIN organization_memberships member ON member.organization_id=organization.organization_id
+    WHERE organization.organization_id=? AND organization.owner_user_id=? AND member.user_id=? AND member.role='owner' AND member.status='active' AND member.revoked_at IS NULL)
+    AND NOT EXISTS(SELECT 1 FROM organization_legal_holds WHERE organization_id=? AND status='active')
+    AND NOT EXISTS(SELECT 1 FROM organization_retention_policies WHERE organization_id=? AND legal_hold=1)`,bindings:[organizationId,actor.userId,actor.userId,organizationId,organizationId]});
+  if(env.DB!==db)throw Error("memory-finance-privacy-unavailable");
+  const results=await db.batch<Record<string,unknown>>([guard,...plan.statements]);
+  if(env.DB!==db||!derivationVerified(results[0]!)||!plan.acknowledge(results.slice(1)))throw Error("memory-finance-privacy-unconfirmed");
+}
 function unprotectedExecutingReservationSql(tables:Set<string>){
   return `NOT EXISTS(SELECT 1 FROM consequential_executions execution JOIN consequential_execution_steps step ON step.execution_id=execution.execution_id
     WHERE execution.operation='assistant-specialist' AND execution.organization_id=scoped.organization_id AND execution.actor_user_id=cost.owner_id
-      AND step.cost_reservation_id=cost.reservation_id AND ${unusedAssistantExecutionSql("execution",tables)})`;
+      AND step.cost_reservation_id=cost.reservation_id AND ${unusedAssistantExecutionSql("execution",tables)})${retainedMemoryExecutingSql(tables)}`;
 }
 function noExecutingReservationGuard(organizationId:string,tables:Set<string>){
   return{sql:`NOT EXISTS(SELECT 1 FROM project_budget_reservation_scopes scoped JOIN cost_budget_reservations cost ON cost.reservation_id=scoped.reservation_id AND cost.owner_id=scoped.actor_user_id
@@ -1068,8 +1096,10 @@ async function finalizeDeletion(env: WorkerEnv, actor: PilotUser, organizationId
     otherDevicesPurged: false,
   };
   const assistantSafe=noAssistantSubmissionGuard(organizationId,assistantTables),costSafe=noExecutingReservationGuard(organizationId,assistantTables);
+  const memorySchema=assistantTables.has("memory_derivation_finance")?await memoryDerivationSchema(env):null;
   const statements: D1PreparedStatement[] = [
-    env.DB.prepare(`SELECT CASE WHEN ${assistantSafe.sql} AND ${costSafe.sql} THEN 1 ELSE json(\'provider_submission_in_flight\') END AS provider_guard`)
+    ...(memorySchema?[derivationAssertion(env,memorySchema.guard)]:[]),
+    env.DB.prepare(`SELECT CASE WHEN ${assistantSafe.sql} AND ${costSafe.sql} THEN 1 ELSE json('provider_submission_in_flight') END AS provider_guard`)
       .bind(...assistantSafe.bindings,...costSafe.bindings),
     env.DB.prepare(`SELECT CASE WHEN EXISTS(SELECT 1 FROM organization_legal_holds hold WHERE hold.organization_id=? AND hold.status='active')
       OR EXISTS(SELECT 1 FROM organization_retention_policies policy WHERE policy.organization_id=? AND policy.legal_hold=1)
@@ -1120,17 +1150,17 @@ async function finalizeDeletion(env: WorkerEnv, actor: PilotUser, organizationId
     env.DB.prepare("DELETE FROM organization_legal_holds WHERE organization_id=?").bind(organizationId),
     env.DB.prepare("DELETE FROM private_content_retention_scopes WHERE organization_id=?").bind(organizationId),
     env.DB.prepare("DELETE FROM organization_retention_policies WHERE organization_id=?").bind(organizationId),
-    env.DB.prepare("DELETE FROM project_budget_reservation_scopes WHERE organization_id=?").bind(organizationId),
+    env.DB.prepare(`DELETE FROM project_budget_reservation_scopes WHERE organization_id=? ${assistantTables.has("memory_derivation_finance")?"AND NOT EXISTS(SELECT 1 FROM memory_derivation_finance f WHERE project_budget_reservation_scopes.reservation_id IN(f.token_id,f.cost_id))":""}`).bind(organizationId),
     env.DB.prepare("DELETE FROM budget_scope_policies WHERE organization_id=?").bind(organizationId),
-    env.DB.prepare("DELETE FROM budget_counters WHERE scope='workspace' AND scope_id=?").bind(organizationId),
-    env.DB.prepare("DELETE FROM cost_budget_counters WHERE scope='workspace' AND scope_id=?").bind(organizationId),
+    env.DB.prepare(`DELETE FROM budget_counters WHERE scope='workspace' AND scope_id=? ${assistantTables.has("memory_derivation_finance")?"AND NOT EXISTS(SELECT 1 FROM memory_derivation_finance f WHERE f.workspace_id=budget_counters.scope_id AND f.period=budget_counters.period)":""}`).bind(organizationId),
+    env.DB.prepare(`DELETE FROM cost_budget_counters WHERE scope='workspace' AND scope_id=? ${assistantTables.has("memory_derivation_finance")?"AND NOT EXISTS(SELECT 1 FROM memory_derivation_finance f WHERE f.workspace_id=cost_budget_counters.scope_id AND f.period=cost_budget_counters.period)":""}`).bind(organizationId),
     env.DB.prepare("DELETE FROM capability_grants WHERE organization_id=?").bind(organizationId),
     env.DB.prepare("DELETE FROM organization_invitations WHERE organization_id=?").bind(organizationId),
     env.DB.prepare("DELETE FROM project_context_sessions WHERE organization_id=?").bind(organizationId),
     env.DB.prepare("DELETE FROM project_memberships WHERE organization_id=?").bind(organizationId),
     env.DB.prepare(`DELETE FROM share_scopes WHERE share_id IN(SELECT share.share_id FROM shares share JOIN share_scopes scope ON scope.share_id=share.share_id
       JOIN organization_projects project ON project.organization_id=? AND project.owner_user_id=scope.owner_id AND project.project_id=scope.project_id)`).bind(organizationId),
-    env.DB.prepare("DELETE FROM pilot_cost_reservation_scopes WHERE organization_id=?").bind(organizationId),
+    env.DB.prepare(`DELETE FROM pilot_cost_reservation_scopes WHERE organization_id=? ${assistantTables.has("memory_derivation_finance")?"AND NOT EXISTS(SELECT 1 FROM memory_derivation_finance f WHERE f.cost_id=pilot_cost_reservation_scopes.reservation_id)":""}`).bind(organizationId),
     env.DB.prepare("DELETE FROM pilot_participants WHERE organization_id=?").bind(organizationId),
     env.DB.prepare("DELETE FROM pilot_cohorts WHERE organization_id=?").bind(organizationId),
     env.DB.prepare("DELETE FROM project_resource_scopes WHERE organization_id=?").bind(organizationId),
@@ -1247,6 +1277,8 @@ async function handleDeletion(request: Request, env: WorkerEnv, actor: PilotUser
     UNION SELECT 1 AS held FROM organization_retention_policies WHERE organization_id=? AND legal_hold=1 LIMIT 1`).bind(organizationId, organizationId).first();
   if (held) return Response.json({ error: "organization_legal_hold_active" }, { status: 409 });
   const assistantTables=await initializedAssistantTables(env),work:AssistantDeletionWork={remaining:ASSISTANT_DELETION_REQUEST_LIMIT};
+  try{await closeOrganizationMemoryAdmissions(env,actor,organizationId,assistantTables);}
+  catch{return Response.json({error:"organization_memory_withdrawal_incomplete",retryable:true},{status:503});}
   if(await reconcileOrganizationAssistantUsage(env,organizationId,work))
     return assistantDeletionPending(env,organizationId,work,"organization_assistant_reconciliation_incomplete",existing?String(existing.job_id):undefined);
   const assistantBlockers=await organizationAssistantSubmissionBlockers(env,organizationId,assistantTables);

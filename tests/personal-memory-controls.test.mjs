@@ -3344,13 +3344,13 @@ for (const conflict of ["scope identity", "cleanup state"]) test("structured cle
   assert.equal(h.mutations().length, 0); assert.equal(h.calls.length, 2);
 });
 
-function purposeSettings(item,{grant=null,ready=false,enabled=true}={}){
+function purposeSettings(item,{grant=null,ready=false,enabled=true,financial}={}){
   const terms={version:'memory-derivation-terms-v1',purpose:'rolling-summary',recipeVersion:'memory-derivation-candidates-v1',provider:'openai',model:'isolated-test-model',pricing:{inputMicroUsdPerMillion:1000000,cachedInputMicroUsdPerMillion:0,outputMicroUsdPerMillion:2000000},maximumInputTokens:1000,maximumOutputTokens:100,monthlyCapMicroUsd:100000,payer:'self-ai-allowance',providerStore:false,providerRetentionDisclosure:'Isolated synthetic qualification only; no real provider retention claim.',retentionPolicyId:'isolated-retention',evidence:Object.fromEntries(['modelAccess','pricing','retention','tokenBounds','nativeAccounting','failureRecovery','privacy','benchmark','capApproval'].map(key=>[key,'a'.repeat(64)]))};
   const canonical=value=>JSON.stringify(value,(_key,item)=>item&&typeof item==='object'&&!Array.isArray(item)?Object.fromEntries(Object.entries(item).sort(([a],[b])=>a<b?-1:a>b?1:0)):item);
   const offer={qualificationId:'isolated-qualification',termsSha256:createHash('sha256').update(canonical(terms)).digest('hex'),expiresAt:item.expiresAt,terms};
   return {version:MEMORY_DERIVATION_CONTROL,enabled,available:enabled,reason:enabled?null:'disabled',policyVersion:MEMORY_DERIVATION_POLICY,
     scope:{projectId:item.projectId,documentId:item.documentId,custody:{kind:'personal'}},enrollmentId:item.id,enrollmentRevision:item.revision,
-    grants:grant?[grant]:[],qualifications:enabled?[offer]:[],capScope:'payer-utc-calendar-month-all-memory-purposes',sourceWindow:'future-originals',processingImplemented:ready};
+    grants:grant?[grant]:[],qualifications:enabled?[offer]:[],capScope:'payer-utc-calendar-month-all-memory-purposes',sourceWindow:'future-originals',processingImplemented:ready,...(financial?{financial}:{})};
 }
 function purposeGrant(item,control=purposeSettings(item)){
   const offer=control.qualifications[0];return {scope:control.scope,grantId:'a'.repeat(64),revision:1,consentId:crypto.randomUUID(),purpose:'rolling-summary',enrollmentId:item.id,enrollmentRevision:item.revision,
@@ -3361,9 +3361,9 @@ function purposeToggle(h,open){const details=h.all().find(control=>control.attri
 function purposeSubmit(h){const form=h.all().find(control=>control.attributes.has('data-memory-purpose-form'));assert.ok(form);return h.invoke(form,'@submit').result;}
 const purposeActions=h=>h.calls.filter(call=>String(call.url).startsWith('/api/memory/derivation/'));
 function purposeConsent(h){h.change('memory-purpose-qualification','isolated-qualification');h.change('memory-purpose-charge',true);h.change('memory-purpose-consent',true);}
-async function purposeFixture(t,{ready=true,grant=false,enabled=true,locale='en',localized=false}={}){
+async function purposeFixture(t,{ready=true,grant=false,enabled=true,locale='en',localized=false,financial}={}){
   const item=enrollment(),h=fixture(t,{initial:settings([item]),locale,localized});await flush();await h.select(item.documentId);purposeToggle(h,true);
-  const control=purposeSettings(item,{ready,enabled}),known=grant?purposeGrant(item):null;control.grants=known?[known]:[];
+  const control=purposeSettings(item,{ready,enabled,financial}),known=grant?purposeGrant(item):null;control.grants=known?[known]:[];
   h.enqueue(control);await profileClick(h,'purposeLoad');return{h,item,control,grant:known};
 }
 test('derived purpose controls never load on mount, selection or disclosure; inactive processing cannot enroll',async t=>{
@@ -3406,4 +3406,11 @@ test('derived purpose response cannot survive scope navigation',async t=>{
 for(const locale of ['en','fr','ar','ja'])test('derived purpose controls have localized inactive and consent disclosures: '+locale,async t=>{
   const {h}=await purposeFixture(t,{locale,localized:true,ready:false});assert.doesNotMatch(h.text(),/memory\.live\.purpose/u);
   assert.ok(h.text().includes(personalMemoryMessage(locale,'memory.live.purposeInactive')));
+});
+for(const locale of ['en','fr','ar','ja'])test('derived purpose controls disclose retained finance without enrolling: '+locale,async t=>{
+  const at=new Date().toISOString(),financial={period:at.slice(0,7),checkedAt:at,capMicroUsd:100000,usedMicroUsd:580,reservedMicroUsd:1200,remainingMicroUsd:98220,retention:'independent-of-memory-erasure'};
+  const {h}=await purposeFixture(t,{locale,localized:true,ready:false,financial});
+  assert.ok([...templates(h.render())].some(value=>value.strings.some(part=>part.includes('data-memory-financial'))));
+  assert.ok(h.text().includes(personalMemoryMessage(locale,'memory.live.purposeFinanceRetention')));assert.doesNotMatch(h.text(),/memory\.live\.purpose/u);
+  assert.equal(h.mutations().length,0);assert.equal(purposeActions(h).length,1);assert.equal(profileAction(h,'purposeEnable').disabled,true);
 });

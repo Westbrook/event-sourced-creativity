@@ -1,5 +1,8 @@
 export const FORMA_PERSONAL_MEMORY_MESSAGES = {
   en: {
+    "memory.live.purposeCapUnset": "No shared Memory cap has been accepted for this UTC month.",
+    "memory.live.purposeEffectiveCap": "UTC month {period}: effective shared cap USD {cap}; verified usage USD {used}; reserved or uncertain USD {reserved}; remaining USD {remaining}. A lower accepted cap stays in effect for the month, even after revocation or erasure.",
+    "memory.live.purposeFinanceRetention": "Erasing memory removes private sources and derived content, not the minimal accounting records needed to settle original charges and enforce your cap. An uncertain request stays reserved until verified usage or proof of no dispatch is available.",
     "memory.live.purposeGrantRevoked": "Revoked",
     "memory.live.purposeGrantExpired": "Expired",
     "memory.live.purposeGrantSaved": "Permission saved; processing status is separate",
@@ -250,6 +253,9 @@ export const FORMA_PERSONAL_MEMORY_MESSAGES = {
     "memory.live.reminder": "Saved permission, rollout availability, and a completed review are different states. Scheduling delivery is not yet verified."
   },
   fr: {
+    "memory.live.purposeCapUnset": "Aucun plafond partagé de mémoire n’a été accepté pour ce mois UTC.",
+    "memory.live.purposeEffectiveCap": "Mois UTC {period} : plafond partagé effectif {cap} USD ; utilisation vérifiée {used} USD ; montant réservé ou incertain {reserved} USD ; solde {remaining} USD. Un plafond accepté plus bas reste applicable pendant le mois, même après révocation ou effacement.",
+    "memory.live.purposeFinanceRetention": "L’effacement de la mémoire supprime les sources privées et le contenu dérivé, mais conserve les données comptables minimales nécessaires au règlement des frais initiaux et au respect du plafond. Une requête incertaine reste réservée jusqu’à vérification de l’utilisation ou preuve de non-envoi.",
     "memory.live.purposeGrantRevoked": "Révoquée",
     "memory.live.purposeGrantExpired": "Expirée",
     "memory.live.purposeGrantSaved": "Autorisation enregistrée ; état du traitement distinct",
@@ -500,6 +506,9 @@ export const FORMA_PERSONAL_MEMORY_MESSAGES = {
     "memory.live.reminder": "Une autorisation enregistrée, la disponibilité du déploiement et un examen terminé sont des états différents. L’exécution de la planification n’est pas encore vérifiée."
   },
   ar: {
+    "memory.live.purposeCapUnset": "لم يتم قبول حد مشترك للذاكرة لهذا الشهر بتوقيت UTC.",
+    "memory.live.purposeEffectiveCap": "شهر UTC ‏{period}: الحد المشترك الفعلي {cap} دولار؛ الاستخدام المتحقق منه {used} دولار؛ المبلغ المحجوز أو غير المؤكد {reserved} دولار؛ المتبقي {remaining} دولار. يبقى الحد الأقل المقبول سارياً طوال الشهر، حتى بعد الإلغاء أو المحو.",
+    "memory.live.purposeFinanceRetention": "يمحو حذف الذاكرة المصادر الخاصة والمحتوى المشتق، لكنه يحتفظ بالحد الأدنى من السجلات المحاسبية اللازمة لتسوية الرسوم الأصلية وتطبيق الحد. يبقى الطلب غير المؤكد محجوزاً حتى التحقق من الاستخدام أو إثبات عدم الإرسال.",
     "memory.live.purposeGrantRevoked": "ملغى",
     "memory.live.purposeGrantExpired": "منتهي الصلاحية",
     "memory.live.purposeGrantSaved": "الإذن محفوظ؛ حالة المعالجة منفصلة",
@@ -750,6 +759,9 @@ export const FORMA_PERSONAL_MEMORY_MESSAGES = {
     "memory.live.reminder": "الإذن المحفوظ، وتوافر الميزة ضمن النشر، واكتمال المراجعة حالات مختلفة. لم يُتحقق بعد من تنفيذ الجدولة."
   },
   ja: {
+    "memory.live.purposeCapUnset": "このUTC月の共通メモリ上限はまだ承認されていません。",
+    "memory.live.purposeEffectiveCap": "UTC月 {period}：有効な共通上限 {cap}米ドル、確認済み使用額 {used}米ドル、予約中または未確定 {reserved}米ドル、残額 {remaining}米ドル。承認された低い上限は、権限の取り消しや消去後も、その月内は維持されます。",
+    "memory.live.purposeFinanceRetention": "メモリを消去すると非公開の原文と派生内容は削除されますが、元の料金の精算と上限の適用に必要な最小限の会計記録は保持されます。未確定のリクエストは、使用量の確認または未送信の証明が得られるまで予約額を保持します。",
     "memory.live.purposeGrantRevoked": "取り消し済み",
     "memory.live.purposeGrantExpired": "期限切れ",
     "memory.live.purposeGrantSaved": "権限を保存済み。処理状況とは別です",

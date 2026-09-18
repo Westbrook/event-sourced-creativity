@@ -53,16 +53,21 @@ a completed semantic cursor or delivery of the separate Chat Studio producer.
 
 [Native job admission and budget primitives](forma-memory-native-admission-2026-09-18.md)
 now add exact single-consumer reference leases, replayable privacy/configuration
-checks, and protected paired-budget helpers. [Full original source capture](forma-memory-native-source-capture-2026-09-18.md) now retains exact personal/shared free/paid conversation evidence and separate typed observations, with bounded hydration and durable negative ancestry. Financial admission/recovery, processing windows and semantic consumers remain implementation work.
+checks, and protected paired-budget helpers. [Full original source capture](forma-memory-native-source-capture-2026-09-18.md) now retains exact personal/shared free/paid conversation evidence and separate typed observations, with bounded hydration and durable negative ancestry. Financial execution now has its own verified branch slice below; processing windows and semantic consumers remain implementation work.
 
 The [independent finance foundation](forma-memory-finance-foundation-2026-09-18.md)
 now adds retained payer-month cap floors, protected paired holds, usage/no-dispatch
-records, privacy cascade receipts and exact migration handling. Native financial
-dispatch/recovery and organization-deletion integration remain incomplete.
+records, privacy cascade receipts and schema-only migration handling. The subsequent
+[financial execution slice](forma-memory-financial-execution-2026-09-18.md) adds
+source-bound paired admission, one-shot mocked-qualified transport, verified
+settlement/no-dispatch recovery, organization erasure and localized cap/retention
+controls. Durable semantic publication and its worker integration remain open.
 
 ## Remaining native implementation — still in scope
 
-1. Bind the implemented purpose-specific grants to real native callers and approved-cap/native accounting.
+1. Complete the durable worker consumer around the implemented purpose/source-bound
+   financial and provider functions; keep ordinary UI activation disabled until the
+   result lifecycle and native qualification pass.
 2. Expand implemented durable reference delivery into source-proven manifests and leased derivation jobs,
    uncertain dispatch recovery and source invalidation/deletion acknowledgements.
 3. Nested project containment/reparenting and broader page/block/artifact identities.
@@ -73,8 +78,9 @@ dispatch/recovery and organization-deletion integration remain incomplete.
 6. Pipeline-specific minimized observability and remaining migration integration.
 
 The 64-pair cumulative ledger is **not** a rolling summary or rebase. The existing
-disposable checkpoint is **not** reliable job delivery. No new paid pipeline has been wired. Purpose grants now exist, but cannot
-authorize a model call without the remaining native admission/accounting work.
+disposable checkpoint is **not** reliable job delivery. The source-bound provider function is implemented and tested with mocked transport,
+not connected to automatic production jobs. Purpose grants and financial primitives
+are not, by themselves, a completed rolling-memory pipeline.
 
 ## External and operational gates
 

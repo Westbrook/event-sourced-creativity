@@ -1005,6 +1005,10 @@ export class FormaPersonalMemory extends FormaElement {
       <button type="button" class="button secondary" ?disabled=${Boolean(this.#purposeRequest || this.#busy || this.#confirmation)} @click=${(event: Event) => captured(event, () => this.#loadPurposes(event))}>${this.#t("purposeLoad")}</button>
       ${this.#purposeError ? html`<p role="alert">${this.#t(this.#purposeError)}</p>` : nothing}${this.#purposeNotice ? html`<p role="status">${this.#t(this.#purposeNotice)}</p>` : nothing}
       ${settings ? html`${!settings.processingImplemented || !settings.available ? html`<p>${this.#t("purposeInactive")}</p>` : nothing}
+        ${settings.financial ? html`<section data-memory-financial><p>${settings.financial.capMicroUsd===null ? this.#t("purposeCapUnset") : this.#t("purposeEffectiveCap", {
+          period:settings.financial.period,cap:this.i18n.number(settings.financial.capMicroUsd/1000000,{maximumFractionDigits:6}),
+          used:this.i18n.number(settings.financial.usedMicroUsd/1000000,{maximumFractionDigits:6}),reserved:this.i18n.number(settings.financial.reservedMicroUsd/1000000,{maximumFractionDigits:6}),
+          remaining:this.i18n.number(settings.financial.remainingMicroUsd!/1000000,{maximumFractionDigits:6})})}</p><p>${this.#t("purposeFinanceRetention")}</p></section>` : nothing}
         <ul>${this.#purposeLatest().map(grant => html`<li>${this.#t("purpose." + grant.purpose)} · ${this.#t(grant.revokedAt ? "purposeGrantRevoked" : Date.parse(grant.expiresAt) <= Date.now() ? "purposeGrantExpired" : "purposeGrantSaved")} · <time datetime=${grant.expiresAt}>${this.i18n.date(new Date(grant.expiresAt), { dateStyle: "medium", timeStyle: "short" })}</time>
           <button type="button" class="button ghost danger-quiet" ?disabled=${Boolean(this.#purposeRequest || this.#busy || this.#confirmation || this.#purposeNeedsReload)} @click=${(event: Event) => captured(event, () => this.#revokePurpose(event, grant))}>${this.#t("purposeRevoke")}</button></li>`)}</ul>
         <form data-memory-purpose-form @submit=${(event: SubmitEvent) => { event.preventDefault(); return captured(event, () => this.#enablePurpose(event)); }}>

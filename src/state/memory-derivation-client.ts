@@ -3,7 +3,7 @@ import { parseMemoryCustody, type MemoryCustody } from "../model/memory-custody.
 import { memoryDigest } from "../model/scoped-memory.ts";
 import { MEMORY_DERIVATION_CONTROL, MEMORY_DERIVATION_POLICY, MEMORY_DERIVATION_PURPOSES, derivationExact,
   derivationHash, derivationConsentId, derivationId, derivationInteger, derivationTime, derivationCanonical,
-  parseMemoryDerivationTerms, type MemoryDerivationTerms, type MemoryDerivationPurpose } from "../model/memory-derivation-policy.ts";
+  parseMemoryDerivationTerms, type MemoryDerivationTerms, type MemoryDerivationFinanceView, type MemoryDerivationPurpose } from "../model/memory-derivation-policy.ts";
 export { MEMORY_DERIVATION_CONTROL, MEMORY_DERIVATION_POLICY } from "../model/memory-derivation-policy.ts";
 export type DerivationScope = { projectId: string; documentId: string; custody: MemoryCustody };
 export type DerivationScopeRequest = { projectId: string; documentId: string; expectedCustody: MemoryCustody; enrollmentId: string; enrollmentRevision: number };
@@ -11,7 +11,7 @@ export type DerivationGrant = { scope: DerivationScope; grantId: string; revisio
   enrollmentId: string; enrollmentRevision: number; qualificationId: string; termsSha256: string; monthlyCapMicroUsd: number;
   sourceAfterSequence: number; background: boolean; retentionDays: number; consentedAt: string; expiresAt: string; revokedAt: string | null };
 export type DerivationOffer = { qualificationId: string; termsSha256: string; expiresAt: string; terms: MemoryDerivationTerms };
-export type DerivationSettings = { enabled: boolean; available: boolean; processingImplemented: boolean; grants: readonly DerivationGrant[]; qualifications: readonly DerivationOffer[] };
+export type DerivationSettings = { financial?: MemoryDerivationFinanceView; enabled: boolean; available: boolean; processingImplemented: boolean; grants: readonly DerivationGrant[]; qualifications: readonly DerivationOffer[] };
 export type DerivationEnable = { version: typeof MEMORY_DERIVATION_CONTROL; policyVersion: typeof MEMORY_DERIVATION_POLICY;
   purpose: MemoryDerivationPurpose; qualificationId: string; termsSha256: string; projectId: string; documentId: string;
   enrollmentId: string; enrollmentRevision: number; revision: number; expectedConsentId: string | null; expectedCustody: MemoryCustody;
@@ -56,7 +56,17 @@ async function settings(raw: unknown, expected: DerivationScopeRequest): Promise
       && Array.isArray(raw.grants) && raw.grants.length === 0 && Array.isArray(raw.qualifications) && raw.qualifications.length === 0);
     return frozen({ enabled: false, available: false, processingImplemented: false, grants: [], qualifications: [] });
   }
-  const row = own(raw, ["version", "enabled", "available", "reason", "policyVersion", "scope", "enrollmentId", "enrollmentRevision", "grants", "qualifications", "capScope", "sourceWindow", "processingImplemented"]);
+  const hasFinancial=!!raw&&typeof raw==='object'&&Object.hasOwn(raw,'financial');
+  const row = own(raw, ["version", "enabled", "available", "reason", "policyVersion", "scope", "enrollmentId", "enrollmentRevision", "grants", "qualifications", "capScope", "sourceWindow", "processingImplemented",...(hasFinancial?['financial']:[])]);
+  let financial:MemoryDerivationFinanceView|undefined;
+  if(hasFinancial){
+    const f=own(row.financial,['period','checkedAt','capMicroUsd','usedMicroUsd','reservedMicroUsd','remainingMicroUsd','retention']);
+    check(derivationTime(f.checkedAt)&&f.period===f.checkedAt.slice(0,7)&&Date.parse(f.checkedAt)<=Date.now()+5000
+      &&Date.now()-Date.parse(f.checkedAt)<60000&&(f.capMicroUsd===null||derivationInteger(f.capMicroUsd,1,1000000000))
+      &&derivationInteger(f.usedMicroUsd)&&derivationInteger(f.reservedMicroUsd)&&Number.isSafeInteger(f.usedMicroUsd+f.reservedMicroUsd)
+      &&f.remainingMicroUsd===(f.capMicroUsd===null?null:Math.max(0,f.capMicroUsd-f.usedMicroUsd-f.reservedMicroUsd))&&f.retention==='independent-of-memory-erasure');
+    financial=structuredClone(f) as MemoryDerivationFinanceView;
+  }
   check(row.version === MEMORY_DERIVATION_CONTROL && row.policyVersion === MEMORY_DERIVATION_POLICY && typeof row.enabled === "boolean"
     && typeof row.available === "boolean" && typeof row.processingImplemented === "boolean" && row.capScope === CAP_SCOPE && row.sourceWindow === "future-originals"
     && row.enrollmentId === expected.enrollmentId && row.enrollmentRevision === expected.enrollmentRevision
@@ -79,7 +89,7 @@ async function settings(raw: unknown, expected: DerivationScopeRequest): Promise
   }
   check(qualifications.every(item => Date.parse(item.expiresAt) > Date.now()));
   check(row.available === (qualifications.length > 0) && (row.enabled || !row.available));
-  return frozen({ enabled: row.enabled, available: row.available, processingImplemented: row.processingImplemented, grants, qualifications });
+  return frozen({ enabled: row.enabled, available: row.available, processingImplemented: row.processingImplemented, grants, qualifications,...(financial?{financial}:{}) });
 }
 function enable(value: unknown): DerivationEnable {
   const row = own(value, ["version", "policyVersion", "purpose", "qualificationId", "termsSha256", "projectId", "documentId", "enrollmentId", "enrollmentRevision", "revision", "expectedConsentId", "expectedCustody", "monthlyCapMicroUsd", "background", "retentionDays", "expiresAt", "sourceWindow", "chargeMyAiAllowance", "confirmation"]);

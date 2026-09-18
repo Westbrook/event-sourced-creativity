@@ -157,36 +157,17 @@ manufactures successful receipts after a failed run.
 
 ## Sites deployment
 
-### Memory cap seed exception
+### Memory finance is schema-only
 
-Migration0045 has one exact hash- and timestamp-pinned data statement: it seeds
-the minimum accepted Memory cap for each original payer/consent month, including
-revoked grants. This runs in the same transaction as schema and receipt creation.
-Existing cap installations are verified, never reseeded: missing or weakened
-floors fail with `migration_finance_backfill_unverified`. Smaller retained caps
-and caps whose private grants have been erased remain untouched. Dry runs roll
-back the cap seed too. Other data-changing SQL is still unsupported.
+The unapplied branch migration0045 now contains schema definitions only. It does
+not seed or backfill financial data, and the local runner has no finance-specific
+DML exception. Existing accepted cap floors are retained by exact native consent
+and erasure triggers, including the minimum across older revoked grants. Before
+any financial admission, a separate guarded runtime transaction synchronizes the
+most restrictive accepted floor for the current UTC month. That floor persists
+if the later reservation fails; erasure cannot reset it.
 
+Local migration tests cover unchanged private rows at installation, dry-run
+rollback, existing partial installations, and floor preservation when historical
+grants are retired. Arbitrary data-changing migration SQL remains unsupported.
 This is local migration qualification only, not a hosted execution certificate.
-
-### Hosted execution
-
-This command operates on a local SQLite file. It neither connects to production
-nor changes how Sites deploys migrations. The Sites build still packages the
-original migration SQL. Replaying the raw `0021` SQL through a different runner
-can still raise a duplicate-column error.
-
-Sites would need equivalent schema checks or reliable applied-migration tracking
-to provide the same replay behavior. Local tests do not establish Sites'
-transaction boundaries, migration ordering, or production schema state.
-
-## Verification
-
-```sh
-node --test tests/local-migrations.test.mjs
-```
-
-Coverage includes the actual migration journal, repeated runs, legacy and
-partially upgraded assistant tables, existing values and rowids, append-only
-triggers, incompatible definitions, duplicate-data failures, rollback, history
-gaps, hash changes, and the CLI's preview and apply modes.

@@ -43,39 +43,43 @@ function memoryCapUpgradeFixture(t) {
   return sqlite;
 }
 
-test('Memory finance migration seeds exact cross-purpose month floors including revoked consent, without resetting retained caps', { skip: !memoryFinanceMigration }, t => {
+test('Memory finance migration is schema-only; grant retirement preserves original cross-purpose month floors', { skip: !memoryFinanceMigration }, t => {
   const sqlite = memoryCapUpgradeFixture(t), before = rows(sqlite, 'memory_derivation_grants');
   const result = migrateLocalDatabase(sqlite, { migrations: actualMigrations });
   assert.equal(result.migrations.at(-1).executedStatements, 49);
+  assert.deepEqual(rows(sqlite, 'memory_derivation_month_caps'), []);
+  assert.deepEqual(rows(sqlite, 'memory_derivation_grants'), before);
+  sqlite.exec('DELETE FROM memory_live_enrollments');
   assert.deepEqual(sqlite.prepare('SELECT period,cap_microusd FROM memory_derivation_month_caps ORDER BY period').all().map(row => ({ ...row })),
     [{ period: '2026-08', cap_microusd: 900 }, { period: '2026-09', cap_microusd: 3000 }]);
-  assert.deepEqual(rows(sqlite, 'memory_derivation_grants'), before);
   sqlite.exec("UPDATE memory_derivation_month_caps SET cap_microusd=700 WHERE period='2026-08'");
-  sqlite.exec('DELETE FROM memory_live_enrollments');
   const retained = rows(sqlite, 'memory_derivation_month_caps');
   assert.equal(migrateLocalDatabase(sqlite, { migrations: actualMigrations }).migrations.at(-1).status, 'already-applied');
   assert.deepEqual(rows(sqlite, 'memory_derivation_month_caps'), retained);
 });
 
-test('Memory finance migration dry run rolls back both backfilled caps and its receipt', { skip: !memoryFinanceMigration }, t => {
+test('Memory finance migration dry run rolls back schema and its receipt without touching accepted consent', { skip: !memoryFinanceMigration }, t => {
   const sqlite = memoryCapUpgradeFixture(t), before = schema(sqlite), receipts = rows(sqlite, receiptTable), grants = rows(sqlite, 'memory_derivation_grants');
   migrateLocalDatabase(sqlite, { migrations: actualMigrations, dryRun: true });
   assert.deepEqual(schema(sqlite), before); assert.deepEqual(rows(sqlite, receiptTable), receipts); assert.deepEqual(rows(sqlite, 'memory_derivation_grants'), grants);
 });
 
-for (const floor of [null, 901]) test('Memory finance reconciliation rejects a missing or weakened existing cap: ' + floor, { skip: !memoryFinanceMigration }, t => {
+for (const floor of [null, 901]) test('Memory finance retirement captures earlier lower consent before erasure: ' + floor, { skip: !memoryFinanceMigration }, t => {
   const sqlite = memoryCapUpgradeFixture(t);
-  for (const sql of memoryFinanceMigration.sql.split('--> statement-breakpoint')) if (!sql.trim().startsWith('INSERT INTO memory_derivation_month_caps')) sqlite.exec(sql);
+  sqlite.exec(memoryFinanceMigration.sql);
   if (floor !== null) sqlite.prepare('INSERT INTO memory_derivation_month_caps VALUES(?,?,?)').run('cap-payer', '2026-08', floor);
-  const before = schema(sqlite), receipts = rows(sqlite, receiptTable), caps = rows(sqlite, 'memory_derivation_month_caps');
-  assert.throws(() => migrateLocalDatabase(sqlite, { migrations: actualMigrations }), /migration_finance_backfill_unverified/);
-  assert.deepEqual(schema(sqlite), before); assert.deepEqual(rows(sqlite, receiptTable), receipts); assert.deepEqual(rows(sqlite, 'memory_derivation_month_caps'), caps);
+  assert.equal(migrateLocalDatabase(sqlite, { migrations: actualMigrations }).migrations.at(-1).status,'verified-existing');
+  // Deleting the higher cap first must still capture the older lower cap.
+  sqlite.prepare('DELETE FROM memory_derivation_grants WHERE grant_id=?').run('2'.repeat(64));
+  assert.equal(sqlite.prepare("SELECT cap_microusd FROM memory_derivation_month_caps WHERE period='2026-08'").get().cap_microusd,900);
+  sqlite.exec('DELETE FROM memory_live_enrollments');
+  assert.equal(sqlite.prepare("SELECT cap_microusd FROM memory_derivation_month_caps WHERE period='2026-08'").get().cap_microusd,900);
 });
 
-test('Memory finance data exception is bound to the exact migration hash and timestamp', { skip: !memoryFinanceMigration }, t => {
-  for (const mutation of [{ sql: memoryFinanceMigration.sql + '\n' }, { when: memoryFinanceMigration.when + 1 }, { tag: 'unreviewed_memory_finance' }]) {
-    const sqlite = database(t), candidate = { ...memoryFinanceMigration, ...mutation }; delete candidate.hash;
-    assert.throws(() => migrateLocalDatabase(sqlite, { migrations: [...beforeMemoryFinance, candidate] }), /migration_hash_mismatch|migration_sql_unsupported/);
+test('Memory finance migration has no exception for unreviewed data changes', { skip: !memoryFinanceMigration }, t => {
+  for (const sql of ["DELETE FROM memory_derivation_month_caps", "INSERT INTO memory_derivation_month_caps VALUES('payer','2026-09',1000)"]) {
+    const sqlite = database(t), candidate = { ...memoryFinanceMigration, sql:memoryFinanceMigration.sql+'\n--> statement-breakpoint\n'+sql }; delete candidate.hash;
+    assert.throws(() => migrateLocalDatabase(sqlite, { migrations: [...beforeMemoryFinance, candidate] }), /migration_sql_unsupported/);
     assert.deepEqual(schema(sqlite), []);
   }
 });

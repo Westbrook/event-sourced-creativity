@@ -74,6 +74,7 @@ export const memoryDerivationFinanceSchemaProfile = {
     "memory_derivation_finance_no_delete",
     "memory_derivation_finance_no_replace",
     "memory_derivation_grant_cap_floor",
+    "memory_derivation_grant_cap_retire",
     "memory_derivation_job_finance",
     "memory_derivation_job_finance_fence",
     "memory_derivation_job_finance_no_replace",
@@ -126,6 +127,6 @@ export const memoryDerivationFinanceSchemaProfile = {
     "sqlite_autoindex_memory_derivation_usage_1",
     "sqlite_autoindex_memory_derivation_usage_2"
   ],
-  "count": 48,
-  "digest": "sha256:6142879d42d4fe4f2b23da95346b210fab5efae2681ed9d7405fc1b35701d32c"
+  "count": 49,
+  "digest": "sha256:d76af5b35232c73aa5401090c6882fae2e8c99aa445b325c37d8d72d9faf7907"
 } as const;

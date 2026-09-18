@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { stripTypeScriptTypes } from "node:module";
+import { recordSceneReadFailure, sceneReadFailureDiagnostic } from "../worker/scene-read-diagnostic.ts";
 
 // Exact Scene-local verifier only. No DB, auth, provider, route or time claim.
 const source = await readFile(new URL("../worker/scene-history-proof-read.ts", import.meta.url), "utf8");
@@ -11,7 +12,7 @@ assert.ok(start >= 0 && end > start);
 class OutputConflictError extends Error {
   constructor(code, status) { super(code); this.code = code; this.status = status; }
 }
-const verify = new Function("OutputConflictError", `${stripTypeScriptTypes(source.slice(start, end)).replace(/^export /u, "")}\nreturn assertSceneHistoryRead;`)(OutputConflictError);
+const verify = new Function("OutputConflictError", "recordSceneReadFailure", `${stripTypeScriptTypes(source.slice(start, end)).replace(/^export /u, "")}\nreturn assertSceneHistoryRead;`)(OutputConflictError,recordSceneReadFailure);
 const row = () => ({ success: true, results: [{ current: 1 }] });
 
 test("Scene source proof accepts exactly one numeric successful row for every expected predicate", () => {
@@ -31,5 +32,5 @@ test("Scene source proof rejects holes and every incomplete/coercible returned s
     [[row()], 0], [[row()], -1], [[row()], 1.5],
   ];
   for (const [values, expected] of cases) assert.throws(() => verify(values, expected), error =>
-    error instanceof OutputConflictError && error.code === "output_source_changed_during_read" && error.status === 409);
+    error instanceof OutputConflictError && error.code === "output_source_changed_during_read" && error.status === 409 && sceneReadFailureDiagnostic(error) === "proof_shape");
 });

@@ -1,3 +1,4 @@
+import { memoryDerivationFinanceView, memoryDerivationFinanceViewStatement } from "./memory-derivation-finance-view.ts";
 import { requireUser, requireConsent, type PilotUser } from "./pilot-policy.ts";
 import { prepareDocumentAuthority } from "./context-authoring-authority.ts";
 import { executionAdmissionGuard } from "./consequential-consent.ts";
@@ -170,12 +171,15 @@ export async function handleMemoryDerivationSettings(request: Request, env: Work
           if (accepted) { baseGuards.push(derivationQualificationGuard(accepted.row));
             qualifications.push({ qualificationId: accepted.row.qualification_id, termsSha256: accepted.row.terms_sha256, expiresAt: accepted.row.expires_at, terms: accepted.terms }); } }
       }
-      const checked = structuredClone(await db.batch(baseGuards.map(guard => derivationAssertion(env, guard))));
-      if (!current() || !derivationResults(checked, baseGuards.length) || !checked.every(derivationVerified)) return deny("memory_derivation_unavailable", 503);
+      const reads=[...baseGuards.map(guard => derivationAssertion(env, guard)),...(schema.financePresent?[memoryDerivationFinanceViewStatement(env,actor.userId)]:[])];
+      const checked = structuredClone(await db.batch(reads));
+      if (!current() || !derivationResults(checked, reads.length) || !checked.slice(0,baseGuards.length).every(derivationVerified)
+        || schema.financePresent&&checked.at(-1)!.results.length!==1) return deny("memory_derivation_unavailable", 503);
+      const financial=schema.financePresent?memoryDerivationFinanceView(checked.at(-1)!.results[0]):undefined;
       return reply({ enabled, available: qualifications.length > 0, reason: !enabled ? "disabled" : qualifications.length ? null : "qualification-required",
         scope: { projectId, documentId, custody: parent.organization_id !== null ? { kind: "organization", organizationId: parent.organization_id, projectAccessId: parent.project_access_id, ownerUserId: parent.owner_user_id } : { kind: "personal" } },
         policyVersion: MEMORY_DERIVATION_POLICY, enrollmentId: parent.enrollment_id, enrollmentRevision: parent.revision,
-        grants: stored.map(grant => grantView(grant as MemoryDerivationGrant)), qualifications,
+        grants: stored.map(grant => grantView(grant as MemoryDerivationGrant)), qualifications,...(financial?{financial}:{}),
         capScope: "payer-utc-calendar-month-all-memory-purposes", sourceWindow: "future-originals", processingImplemented: false });
     }
     if (!prepared) return deny("memory_derivation_authority_unavailable", 403);

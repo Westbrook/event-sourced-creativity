@@ -12833,7 +12833,7 @@ test('completed conversation retirement: shared Forget preserves negative ledger
   assert.deepEqual(adaptiveReentryFinancialState(state),financial);
 });
 
-async function nativeDerivationFixture(t,{shared=false,qualified=true,delivery=false,beforeEnrollment}={}){
+async function nativeDerivationFixture(t,{shared=false,qualified=true,delivery=false,beforeEnrollment,termOverrides={}}={}){
   const {readFile}=await import('node:fs/promises');
   const state=await nativeMemoryJobFixture(t,{shared,beforeEnrollment:async state=>{state.sqlite.exec(await readFile(new URL('../drizzle/0043_memory_derivation_purpose_grants.sql',import.meta.url),'utf8'));if(delivery)state.sqlite.exec(await readFile(new URL('../drizzle/0044_memory_derivation_reference_jobs.sql',import.meta.url),'utf8'));if(beforeEnrollment)await beforeEnrollment(state);}});
   const policy=await import('../worker/memory-derivation-policy.ts'),store=await import('../worker/memory-derivation-store.ts'),
@@ -12844,6 +12844,7 @@ async function nativeDerivationFixture(t,{shared=false,qualified=true,delivery=f
   const terms={version:'memory-derivation-terms-v1',purpose:'rolling-summary',recipeVersion:'memory-derivation-candidates-v1',provider:'openai',model:'isolated-test-model',
     pricing:{inputMicroUsdPerMillion:1000000,cachedInputMicroUsdPerMillion:250000,outputMicroUsdPerMillion:2000000},maximumInputTokens:1000,maximumOutputTokens:100,
     monthlyCapMicroUsd:100000,payer:'self-ai-allowance',providerStore:false,providerRetentionDisclosure:'Isolated synthetic qualification only; no real provider retention claim.',retentionPolicyId:'isolated-test-retention',evidence:Object.fromEntries(policy.DERIVATION_EVIDENCE.map(key=>[key,hash('synthetic-only:'+key)]))};
+  Object.assign(terms,termOverrides);
   const expiresAt=new Date(Date.now()+86400000).toISOString(),termsJson=policy.derivationCanonical(terms),termsHash=hash(termsJson);
   if(qualified)state.sqlite.prepare('INSERT INTO memory_derivation_qualifications VALUES(?,?,?,?,?,?,?,?,?)')
     .run('isolated-qualification','a'.repeat(64),origin,'isolated-native-fixture',termsJson,termsHash,'qualified',new Date(Date.now()-1000).toISOString(),expiresAt);
@@ -13326,6 +13327,7 @@ async function nativeDerivationFinanceFixture(t,options={}){
   const state=await nativeDerivationDeliveryFixture(t,options);await state.send('finance-original');state.due();await state.run();
   const job=state.queue().jobs[0],lease=await(await import('../worker/memory-derivation-admission.ts')).claimNativeDerivationJob(state.env,job.job_id);assert.ok(lease);
   const {readFile}=await import('node:fs/promises');state.sqlite.exec(await readFile(new URL('../drizzle/0045_memory_derivation_finance.sql',import.meta.url),'utf8'));
+  await state.derivationStore.synchronizeDerivationMonthCap(state.env,state.current().actor_user_id,new Date().toISOString().slice(0,7));
   const g=state.derivationRows()[0];
   const finance=(overrides={})=>{const e=state.current(),id=crypto.randomUUID(),now=new Date().toISOString();
     return{finance_id:id,payer_id:e.actor_user_id,period:now.slice(0,7),token_id:id+':tokens',cost_id:id+':usd',operation:'memory-derivation:'+g.purpose,
@@ -13610,4 +13612,211 @@ test('native derivation delivery: isolated workerd D1 registration, admission an
 test('native derivation delivery: conversation bookkeeping keeps exact reference jobs',{timeout:60000},async t=>{
   const state=await nativeDerivationDeliveryFixture(t),sequence=state.derivationRows()[0].source_after_sequence+1;state.pointer(sequence);await state.register(sequence);const before=state.queue();
   state.sqlite.exec('UPDATE memory_live_sources SET conversation_segmented=1');assert.deepEqual(state.queue(),before);
+});
+
+async function nativeDerivationExecutionFixture(t,{shared=false,hosted=false,termOverrides={}}={}){
+  const state=await nativeDerivationDeliveryFixture(t,{shared,termOverrides,beforeEnrollment:async state=>{
+    state.sqlite.exec(await(await import('node:fs/promises')).readFile(new URL('../drizzle/0045_memory_derivation_finance.sql',import.meta.url),'utf8'));
+  }});
+  await state.send('financial-execution-original');state.due();await state.run();
+  const admission=await import('../worker/memory-derivation-admission.ts'),sources=await import('../worker/memory-derivation-sources.ts'),finance=await import('../worker/memory-derivation-finance.ts');
+  const job=state.queue().jobs[0];
+  if(hosted){
+    const {createRequire}=await import('node:module'),{Miniflare,Log,LogLevel}=createRequire(import.meta.resolve('wrangler'))('miniflare');
+    const {exportSynthetic,install}=await import('./helpers/model3d-workerd-snapshot.mjs');let outbound=0;
+    const mf=new Miniflare({modules:true,compatibilityDate:'2026-05-15',host:'127.0.0.1',port:0,log:new Log(LogLevel.NONE),d1Databases:['MemoryExecution'],
+      script:"export default {fetch(){return new Response('Isolated financial execution fixture',{status:404});}};",outboundService(){outbound++;throw Error('External fetch forbidden');}});
+    t.after(async()=>{await mf.dispose();assert.equal(outbound,0)});const db=await mf.getD1Database('MemoryExecution');await install(db,exportSynthetic(state.sqlite));state.env.DB=db;
+  }
+  const lease=await admission.claimNativeDerivationJob(state.env,job.job_id);assert.ok(lease,state.controls.lastDatabaseError);
+  const captured=await sources.captureNativeDerivationSources(state.env,lease);assert.equal(captured.status,'captured',state.controls.lastDatabaseError);
+  return Object.assign(state,{admission,sources,finance,executionJob:job,executionLease:lease,executionCapture:captured.capture});
+}
+for(const shared of [false,true])test('native derivation execution: original '+(shared?'shared':'personal')+' source proof reserves and claims once',{timeout:60000},async t=>{
+  const state=await nativeDerivationExecutionFixture(t,{shared});
+  const handle=await state.finance.reserveNativeDerivationFinance(state.env,state.executionLease,state.executionCapture,'a'.repeat(64));assert.ok(handle,state.controls.lastDatabaseError);
+  const row=state.sqlite.prepare('SELECT * FROM memory_derivation_finance').get();assert.equal(row.payer_id,state.current().actor_user_id);assert.equal(row.maximum_tokens,1100);
+  const dispatch=await state.finance.claimNativeDerivationDispatch(state.env,handle);assert.ok(dispatch,state.controls.lastDatabaseError);
+  assert.equal(await state.finance.claimNativeDerivationDispatch(state.env,handle),null);
+  assert.equal(await state.finance.claimNativeDerivationDispatch(state.env,{}),null);
+  assert.throws(()=>state.finance.nativeDerivationDispatchData({...state.env},dispatch),/unavailable/);
+  const record=state.finance.nativeDerivationDispatchData(state.env,dispatch);assert.ok(record.dispatch_token);
+  assert.equal(record.workspace_id,shared?state.current().organization_id:'forma');
+  assert.equal(await state.finance.reconcileNativeDerivationFinance(state.env,record.finance_id),false,'No usage or refund may be invented');
+  assert.equal(state.calls.length,0);
+});
+for(const shared of [false,true])for(const kind of ['actual','zero','overrun'])test('native derivation execution: '+kind+' '+(shared?'shared':'personal')+' receipt settles after privacy erasure',{timeout:60000},async t=>{
+  const state=await nativeDerivationExecutionFixture(t,{shared}),finance=state.finance;
+  const handle=await finance.reserveNativeDerivationFinance(state.env,state.executionLease,state.executionCapture,'b'.repeat(64)),dispatch=await finance.claimNativeDerivationDispatch(state.env,handle);
+  const f=finance.nativeDerivationDispatchData(state.env,dispatch),inverse=await state.derivationStore.prepareDerivationWithdrawal(state.env,{actorUserId:f.payer_id},new Date().toISOString(),true);
+  assert.equal(inverse.acknowledge(await state.env.DB.batch(inverse.statements)),true);
+  assert.equal(state.sqlite.prepare('SELECT COUNT(*) AS n FROM memory_derivation_jobs').get().n,0);
+  await assert.rejects(()=>finance.nativeDerivationDispatchSource(state.env,dispatch),/unavailable/);
+  const usage={providerRequestId:'isolated-'+kind,inputTokens:kind==='zero'?0:kind==='overrun'?2000:800,cachedInputTokens:kind==='actual'?400:0,outputTokens:kind==='zero'?0:kind==='overrun'?200:40};
+  assert.equal(await finance.recordNativeDerivationUsage(state.env,dispatch,usage),true);
+  assert.equal(await finance.recordNativeDerivationUsage(state.env,dispatch,usage),true,'Identical receipt replay is idempotent');
+  assert.equal(await finance.recordNativeDerivationUsage(state.env,dispatch,{...usage,outputTokens:usage.outputTokens+1}),false);
+  assert.equal(await finance.reconcileNativeDerivationFinance(state.env,f.finance_id),true,state.controls.lastDatabaseError);
+  const settled=adaptiveReentryFinancialState(state);assert.equal(await finance.reconcileNativeDerivationFinance(state.env,f.finance_id),true);assert.deepEqual(adaptiveReentryFinancialState(state),settled);
+  const cost=state.sqlite.prepare('SELECT used_microusd,status FROM cost_budget_reservations WHERE reservation_id=?').get(f.cost_id);
+  assert.equal(cost.used_microusd,kind==='zero'?0:kind==='overrun'?2400:580);assert.equal(cost.status,kind==='zero'?'released':'settled');
+  assert.equal(await finance.recoverNativeDerivationNoDispatch(state.env,f.finance_id),false);assert.equal(state.calls.length,0);
+});
+for(const afterClaim of [false,true])test('native derivation execution: no-dispatch recovery '+(afterClaim?'never refunds ambiguous dispatch':'releases only after permanent fencing'),{timeout:60000},async t=>{
+  const state=await nativeDerivationExecutionFixture(t),finance=state.finance,handle=await finance.reserveNativeDerivationFinance(state.env,state.executionLease,state.executionCapture,'d'.repeat(64));
+  const f=state.sqlite.prepare('SELECT * FROM memory_derivation_finance').get();
+  assert.equal(await finance.recoverNativeDerivationNoDispatch(state.env,f.finance_id),false,'A live lease cannot be preempted');
+  if(afterClaim)assert.ok(await finance.claimNativeDerivationDispatch(state.env,handle));
+  state.sqlite.prepare('DELETE FROM memory_derivation_jobs WHERE job_id=?').run(state.executionJob.job_id);
+  assert.equal(await finance.recoverNativeDerivationNoDispatch(state.env,f.finance_id),!afterClaim,state.controls.lastDatabaseError);
+  assert.equal(await finance.recoverNativeDerivationNoDispatch(state.env,f.finance_id),!afterClaim,'Repeat recovery does not double release');
+  assert.equal(state.sqlite.prepare('SELECT status FROM cost_budget_reservations WHERE reservation_id=?').get(f.cost_id).status,afterClaim?'executing':'released');
+});
+for(const point of ['reserve','claim'])test('native derivation execution: lost '+point+' acknowledgement retains original financial identity',{timeout:60000},async t=>{
+  const state=await nativeDerivationExecutionFixture(t),finance=state.finance,db=state.env.DB,batch=db.batch;
+  let handle;if(point==='claim')handle=await finance.reserveNativeDerivationFinance(state.env,state.executionLease,state.executionCapture,'e'.repeat(64));
+  let lost=false;db.batch=async statements=>{const results=await batch.call(db,statements);
+    if(!lost&&statements.some(s=>point==='reserve'?s.sql.startsWith('INSERT INTO memory_derivation_job_finance'):s.sql.startsWith('UPDATE memory_derivation_finance SET dispatch_token'))){lost=true;throw Error('isolated-lost-ack');}return results;};t.after(()=>{db.batch=batch;});
+  await assert.rejects(()=>point==='reserve'?finance.reserveNativeDerivationFinance(state.env,state.executionLease,state.executionCapture,'e'.repeat(64)):finance.claimNativeDerivationDispatch(state.env,handle),/lost-ack/);
+  assert.equal(lost,true);db.batch=batch;const f=state.sqlite.prepare('SELECT * FROM memory_derivation_finance').get();assert.ok(f);
+  if(point==='claim')assert.equal(await finance.claimNativeDerivationDispatch(state.env,handle),null);
+  state.sqlite.prepare('DELETE FROM memory_derivation_jobs WHERE job_id=?').run(state.executionJob.job_id);
+  assert.equal(await finance.recoverNativeDerivationNoDispatch(state.env,f.finance_id),point==='reserve');assert.equal(state.calls.length,0);
+});
+for(const point of ['reserve','claim','settle'])test('native derivation execution: '+point+' final-batch race is atomic',{timeout:60000},async t=>{
+  const state=await nativeDerivationExecutionFixture(t),finance=state.finance,db=state.env.DB,batch=db.batch;
+  let handle,f;if(point!=='reserve'){handle=await finance.reserveNativeDerivationFinance(state.env,state.executionLease,state.executionCapture,'f'.repeat(64));f=state.sqlite.prepare('SELECT * FROM memory_derivation_finance').get();}
+  if(point==='settle'){
+    const dispatch=await finance.claimNativeDerivationDispatch(state.env,handle);
+    assert.equal(await finance.recordNativeDerivationUsage(state.env,dispatch,{providerRequestId:'race-receipt',inputTokens:800,cachedInputTokens:400,outputTokens:40}),true);
+  }
+  let raced=false;db.batch=async statements=>{
+    const selected=statements.some(s=>point==='reserve'?s.sql.startsWith('INSERT INTO memory_derivation_job_finance'):point==='claim'?s.sql.startsWith('UPDATE memory_derivation_finance SET dispatch_token'):s.sql.startsWith('UPDATE budget_counters SET reserved_tokens=reserved_tokens-'));
+    if(!raced&&selected){raced=true;if(point==='settle')state.sqlite.prepare("UPDATE cost_budget_counters SET reserved_microusd=0 WHERE scope='user' AND scope_id=?").run(f.payer_id);
+      else state.sqlite.prepare('DELETE FROM memory_derivation_jobs WHERE job_id=?').run(state.executionJob.job_id);}
+    return batch.call(db,statements);
+  };t.after(()=>{db.batch=batch;});
+  await assert.rejects(()=>point==='reserve'?finance.reserveNativeDerivationFinance(state.env,state.executionLease,state.executionCapture,'f'.repeat(64)):point==='claim'?finance.claimNativeDerivationDispatch(state.env,handle):finance.reconcileNativeDerivationFinance(state.env,f.finance_id));
+  assert.equal(raced,true);
+  if(point==='reserve')assert.equal(state.sqlite.prepare('SELECT COUNT(*) AS n FROM memory_derivation_finance').get().n,0);
+  else if(point==='claim')assert.equal(state.sqlite.prepare('SELECT dispatch_token FROM memory_derivation_finance').get().dispatch_token,null);
+  else assert.equal(state.sqlite.prepare('SELECT used_tokens,status FROM budget_reservations WHERE reservation_id=?').get(f.token_id).status,'active','Token settlement rolls back when cost counter is unavailable');
+  assert.equal(state.calls.length,0);
+});
+for(const shared of [false,true])test('native derivation execution: isolated D1 '+(shared?'shared':'personal')+' reserve dispatch erased-source settlement',{timeout:180000},async t=>{
+  const state=await nativeDerivationExecutionFixture(t,{shared,hosted:true}),db=state.env.DB,finance=state.finance;
+  const handle=await finance.reserveNativeDerivationFinance(state.env,state.executionLease,state.executionCapture,'1'.repeat(64));assert.ok(handle);
+  const dispatch=await finance.claimNativeDerivationDispatch(state.env,handle);assert.ok(dispatch);const f=finance.nativeDerivationDispatchData(state.env,dispatch);
+  const withdrawal=await state.derivationStore.prepareDerivationWithdrawal(state.env,{actorUserId:f.payer_id},new Date().toISOString(),true);
+  assert.equal(withdrawal.acknowledge(await db.batch(withdrawal.statements)),true);
+  assert.equal(await finance.recordNativeDerivationUsage(state.env,dispatch,{providerRequestId:'isolated-d1-receipt',inputTokens:800,cachedInputTokens:400,outputTokens:40}),true);
+  assert.equal(await finance.reconcileNativeDerivationFinance(state.env,f.finance_id),true);
+  assert.equal(await finance.reconcileNativeDerivationFinance(state.env,f.finance_id),true);
+  assert.equal((await db.prepare('SELECT used_microusd FROM cost_budget_reservations WHERE reservation_id=?').bind(f.cost_id).first()).used_microusd,580);
+  assert.deepEqual((await db.prepare('PRAGMA foreign_key_check').all()).results,[]);
+});
+for(const mode of ['valid','invalid-output','withdrawal','overrun','zero','invalid-usage','duplicate-key','transport'])test('native derivation provider: isolated '+mode+' keeps usage independent of output',{timeout:60000},async t=>{
+  const state=await nativeDerivationExecutionFixture(t,{termOverrides:{maximumInputTokens:16384}}),provider=await import('../worker/memory-derivation-provider.ts');
+  const originalFetch=globalThis.fetch;let calls=0;state.env.OPENAI_API_KEY='isolated-not-a-credential';
+  const usage={input_tokens:mode==='zero'?0:mode==='overrun'?20000:800,input_tokens_details:{cached_tokens:mode==='zero'||mode==='overrun'?0:400},output_tokens:mode==='zero'?0:40};
+  usage.total_tokens=usage.input_tokens+usage.output_tokens;
+  const envelope={id:'isolated-native-response',object:'response',model:'isolated-test-model',service_tier:'default',status:'completed',error:null,incomplete_details:null,usage,
+    output:[{type:'message',role:'assistant',status:'completed',content:[{type:'output_text',text:JSON.stringify({version:'memory-derivation-candidates-v1',items:[]})}]}]};
+  globalThis.fetch=async(url,init)=>{calls++;assert.equal(url,'https://api.openai.com/v1/responses');assert.equal(init.redirect,'error');
+    const body=JSON.parse(init.body);assert.equal(body.store,false);assert.equal(body.background,false);assert.equal(body.truncation,'disabled');assert.deepEqual(body.tools,[]);
+    assert.equal(body.model,'isolated-test-model');assert.equal(body.max_output_tokens,100);assert.equal(JSON.parse(body.input).originals.length,2);
+    if(mode==='transport')throw Error('Provider text and secret must never be echoed');
+    if(mode==='invalid-output')envelope.output[0].content[0].text='not json';
+    if(mode==='invalid-usage')envelope.usage.total_tokens++;
+    if(mode==='withdrawal'){
+      const inverse=await state.derivationStore.prepareDerivationWithdrawal(state.env,{actorUserId:state.current().actor_user_id},new Date().toISOString(),true);
+      assert.equal(inverse.acknowledge(await state.env.DB.batch(inverse.statements)),true);
+    }
+    let text=JSON.stringify(envelope);if(mode==='duplicate-key')text=text.replace('"input_tokens":800','"input_tokens":0,"input_tokens":800');
+    return new Response(text,{headers:{'content-type':'application/json'}});
+  };t.after(()=>{globalThis.fetch=originalFetch;});
+  const result=await provider.executeNativeDerivationProvider(state.env,state.executionLease,state.executionCapture);
+  assert.equal(calls,1,JSON.stringify(result)+' '+state.controls.lastDatabaseError);
+  assert.equal(result.status,mode==='valid'||mode==='zero'?'candidate':mode==='invalid-output'||mode==='overrun'||mode==='withdrawal'?'charged-invalid':'uncertain');
+  const f=state.sqlite.prepare('SELECT * FROM memory_derivation_finance').get(),cost=state.sqlite.prepare('SELECT used_microusd,status FROM cost_budget_reservations WHERE reservation_id=?').get(f.cost_id);
+  if(['transport','duplicate-key','invalid-usage'].includes(mode)){assert.equal(cost.status,'executing');assert.equal(state.sqlite.prepare('SELECT COUNT(*) AS n FROM memory_derivation_usage').get().n,0);}
+  else {assert.equal(cost.used_microusd,mode==='zero'?0:mode==='overrun'?20080:580);assert.equal(cost.status,mode==='zero'?'released':'settled');}
+  const again=await provider.executeNativeDerivationProvider(state.env,state.executionLease,state.executionCapture);assert.notEqual(again.status,'candidate');assert.equal(calls,1,'No duplicate POST');
+  assert.equal(JSON.stringify(result).includes('Provider text'),false);
+});
+test('native derivation provider: missing key or insufficient approved request bound does not reserve',{timeout:60000},async t=>{
+  const state=await nativeDerivationExecutionFixture(t),provider=await import('../worker/memory-derivation-provider.ts'),before=adaptiveReentryFinancialState(state);
+  assert.equal((await provider.executeNativeDerivationProvider(state.env,state.executionLease,state.executionCapture)).status,'unavailable');
+  state.env.OPENAI_API_KEY='isolated-not-a-credential';assert.equal((await provider.executeNativeDerivationProvider(state.env,state.executionLease,state.executionCapture)).status,'capacity');
+  assert.deepEqual(adaptiveReentryFinancialState(state),before);assert.equal(state.sqlite.prepare('SELECT COUNT(*) AS n FROM memory_derivation_finance').get().n,0);
+});
+for(const dispatchFirst of [false,true])test('native derivation execution: organization deletion retains original financial targets '+dispatchFirst,{timeout:60000},async t=>{
+  const state=await nativeDerivationExecutionFixture(t,{shared:true}),finance=state.finance;
+  const handle=await finance.reserveNativeDerivationFinance(state.env,state.executionLease,state.executionCapture,'3'.repeat(64));assert.ok(handle);
+  const dispatch=dispatchFirst?await finance.claimNativeDerivationDispatch(state.env,handle):null;
+  const f=state.sqlite.prepare('SELECT * FROM memory_derivation_finance').get(),org=state.current().organization_id;
+  const removed=await state.request('/api/workspaces/'+org+'/deletion',json({confirmation:'DELETE_ORGANIZATION_AND_SCOPED_DATA',organizationId:org},state.owner));
+  const body=await removed.json();assert.equal(removed.status,200,JSON.stringify(body)+' '+state.controls.lastDatabaseError);assert.equal(body.status,'completed');
+  assert.equal(state.sqlite.prepare('SELECT COUNT(*) AS n FROM memory_derivation_grants').get().n,0);
+  assert.equal(state.sqlite.prepare('SELECT COUNT(*) AS n FROM memory_derivation_jobs').get().n,0);
+  assert.equal(state.sqlite.prepare('SELECT COUNT(*) AS n FROM assistant_turns WHERE organization_id=?').get(org).n,0);
+  assert.equal(state.sqlite.prepare('SELECT COUNT(*) AS n FROM project_budget_reservation_scopes WHERE reservation_id IN(?,?)').get(f.token_id,f.cost_id).n,2);
+  assert.ok(state.sqlite.prepare('SELECT admission_closed_at FROM memory_derivation_finance').get().admission_closed_at);
+  if(dispatch){assert.equal(await finance.recordNativeDerivationUsage(state.env,dispatch,{providerRequestId:'erased-organization-receipt',inputTokens:800,cachedInputTokens:400,outputTokens:40}),true);assert.equal(await finance.reconcileNativeDerivationFinance(state.env,f.finance_id),true);}
+  else assert.equal(await finance.recoverNativeDerivationNoDispatch(state.env,f.finance_id),true);
+  assert.equal(state.sqlite.prepare("SELECT used_microusd FROM cost_budget_counters WHERE scope='workspace' AND scope_id=? AND period=?").get(org,f.period).used_microusd,dispatchFirst?580:0);
+  assert.equal(state.calls.length,0);
+});
+for(const late of [false,true])test('native derivation execution: '+(late?'racing':'existing')+' legal hold prevents organization admission erasure',{timeout:60000},async t=>{
+  const state=await nativeDerivationExecutionFixture(t,{shared:true}),finance=state.finance;
+  await finance.reserveNativeDerivationFinance(state.env,state.executionLease,state.executionCapture,'4'.repeat(64));
+  const org=state.current().organization_id,db=state.env.DB,batch=db.batch;
+  const hold=()=>state.sqlite.prepare('INSERT INTO organization_legal_holds(hold_id,organization_id,scope_kind,resource_id,status,reason,created_by_user_id,created_at,released_at) VALUES(?,?,?,?,?,?,?,?,?)').run('memory-hold',org,'organization',org,'active','Isolated fixture',state.current().actor_user_id,new Date().toISOString(),null);
+  if(late){let raced=false;db.batch=async statements=>{if(!raced&&statements.some(s=>s.sql.startsWith('DELETE FROM memory_derivation_grants'))){raced=true;hold();}return batch.call(db,statements);};t.after(()=>{db.batch=batch;});}else hold();
+  const before=state.queue(),response=await state.request('/api/workspaces/'+org+'/deletion',json({confirmation:'DELETE_ORGANIZATION_AND_SCOPED_DATA',organizationId:org},state.owner));
+  assert.equal(response.status,late?503:409,await response.text());assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM organization_legal_holds WHERE hold_id='memory-hold'").get().n,1);assert.deepEqual(state.queue(),before);
+  assert.equal(state.sqlite.prepare('SELECT admission_closed_at FROM memory_derivation_finance').get().admission_closed_at,null);
+});
+test('native derivation execution: own financial controls disclose original usage and retained cap without mutating',{timeout:60000},async t=>{
+  const state=await nativeDerivationExecutionFixture(t),finance=state.finance;
+  const handle=await finance.reserveNativeDerivationFinance(state.env,state.executionLease,state.executionCapture,'5'.repeat(64));
+  const read=async()=>{const response=await state.derivationRequest();assert.equal(response.status,200,await response.clone().text());return (await response.json()).financial;};
+  const before=adaptiveReentryFinancialState(state),pending=await read();assert.equal(pending.capMicroUsd,100000);assert.equal(pending.reservedMicroUsd,1200);assert.equal(pending.usedMicroUsd,0);assert.equal(pending.remainingMicroUsd,98800);assert.deepEqual(adaptiveReentryFinancialState(state),before);
+  const dispatch=await finance.claimNativeDerivationDispatch(state.env,handle);assert.equal(await finance.recordNativeDerivationUsage(state.env,dispatch,{providerRequestId:'view-receipt',inputTokens:800,cachedInputTokens:400,outputTokens:40}),true);
+  const settled=await read();assert.equal(settled.usedMicroUsd,580);assert.equal(settled.reservedMicroUsd,0);assert.equal(settled.remainingMicroUsd,99420);
+  const original=state.derivationRows()[0],revoked=await state.derivationRequest('DELETE',{version:state.derivationPolicy.MEMORY_DERIVATION_CONTROL,revision:original.revision,consentId:original.consent_id,confirmation:'REVOKE_DERIVED_MEMORY'},'?grantId='+original.grant_id);assert.equal(revoked.status,200);
+  const retained=await read();assert.equal(retained.capMicroUsd,100000);assert.equal(retained.usedMicroUsd,580);assert.equal(retained.retention,'independent-of-memory-erasure');
+  assert.deepEqual(Object.keys(retained).sort(),['period','checkedAt','capMicroUsd','usedMicroUsd','reservedMicroUsd','remainingMicroUsd','retention'].sort());
+});
+for(const hosted of [false,true])test('native derivation finance: schema-only legacy cap retirement receipt '+(hosted?'isolated D1':'SQLite'),{timeout:180000},async t=>{
+  const state=await nativeDerivationDeliveryFixture(t,{shared:true});
+  state.sqlite.exec(await(await import('node:fs/promises')).readFile(new URL('../drizzle/0045_memory_derivation_finance.sql',import.meta.url),'utf8'));
+  assert.equal(state.sqlite.prepare('SELECT COUNT(*) AS n FROM memory_derivation_month_caps').get().n,0,'Schema migration does not backfill data');
+  if(hosted){const {createRequire}=await import('node:module'),{Miniflare,Log,LogLevel}=createRequire(import.meta.resolve('wrangler'))('miniflare'),{exportSynthetic,install}=await import('./helpers/model3d-workerd-snapshot.mjs');
+    const mf=new Miniflare({modules:true,compatibilityDate:'2026-05-15',host:'127.0.0.1',port:0,log:new Log(LogLevel.NONE),d1Databases:['CapRetirement'],script:"export default {fetch(){return new Response('Isolated cap fixture');}};",outboundService(){throw Error('External fetch forbidden');}});t.after(()=>mf.dispose());const db=await mf.getD1Database('CapRetirement');await install(db,exportSynthetic(state.sqlite));state.env.DB=db;}
+  const inverse=await state.derivationStore.prepareDerivationWithdrawal(state.env,{organizationId:state.current().organization_id},new Date().toISOString(),true);
+  assert.equal(inverse.acknowledge(await state.env.DB.batch(inverse.statements)),true);
+  assert.equal((await state.env.DB.prepare('SELECT cap_microusd FROM memory_derivation_month_caps').first()).cap_microusd,100000);
+  assert.equal((await state.env.DB.prepare('SELECT COUNT(*) AS n FROM memory_derivation_grants').first()).n,0);
+});
+test('native derivation execution: malformed native budget acknowledgment cannot authorize dispatch',{timeout:60000},async t=>{
+  const state=await nativeDerivationExecutionFixture(t),db=state.env.DB,batch=db.batch;let altered=false;
+  db.batch=async statements=>{const results=await batch.call(db,statements);const index=statements.findIndex(s=>s.sql.startsWith('UPDATE budget_reservations SET status=\'active\''));if(index>=0){altered=true;results[index].meta.changes='1';}return results;};t.after(()=>{db.batch=batch;});
+  await assert.rejects(()=>state.finance.reserveNativeDerivationFinance(state.env,state.executionLease,state.executionCapture,'6'.repeat(64)),/unconfirmed/);
+  assert.equal(altered,true);assert.equal(state.sqlite.prepare('SELECT dispatch_token FROM memory_derivation_finance').get().dispatch_token,null);
+  assert.equal(state.calls.length,0);
+});
+test('native derivation finance: active historical consent carries its cap into a new month without resetting on erasure',{timeout:60000},async t=>{
+  const state=await nativeDerivationDeliveryFixture(t),g={...state.derivationRows()[0]},previous=new Date();previous.setUTCMonth(previous.getUTCMonth()-1);previous.setUTCDate(1);
+  // Isolated pre-upgrade historical row. This seeds bookkeeping evidence only;
+  // it is not a fresh native source proof or permission for a provider request.
+  state.sqlite.exec('DELETE FROM memory_derivation_grants');g.consented_at=previous.toISOString();
+  state.sqlite.prepare('INSERT INTO memory_derivation_grants('+Object.keys(g).join(',')+') VALUES('+Object.keys(g).map(()=>'?').join(',')+')').run(...Object.values(g));
+  state.sqlite.exec(await(await import('node:fs/promises')).readFile(new URL('../drizzle/0045_memory_derivation_finance.sql',import.meta.url),'utf8'));
+  const period=new Date().toISOString().slice(0,7);assert.notEqual(g.consented_at.slice(0,7),period);
+  assert.equal(await state.derivationStore.synchronizeDerivationMonthCap(state.env,g.payer_user_id,period),100000);
+  const inverse=await state.derivationStore.prepareDerivationWithdrawal(state.env,{actorUserId:g.payer_user_id},new Date().toISOString(),true);
+  assert.equal(inverse.acknowledge(await state.env.DB.batch(inverse.statements)),true);
+  assert.equal(await state.derivationStore.synchronizeDerivationMonthCap(state.env,g.payer_user_id,period),100000);
+  assert.equal(state.sqlite.prepare('SELECT COUNT(*) AS n FROM memory_derivation_month_caps').get().n,2);
 });

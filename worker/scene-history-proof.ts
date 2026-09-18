@@ -88,12 +88,21 @@ function sourceRelation(scope: SceneHistoryScope) {
   };
 }
 
+// Keep the exact conjunction, but avoid a left-deep tree after SQLite expands
+// the NOT MATERIALIZED metadata aliases. Do not materialize the full history or
+// weaken metadata/source comparisons to meet D1's expression-depth limit.
+function metadataConjunction(terms: readonly string[]): string {
+  if(terms.length===1)return terms[0]!;
+  const middle=Math.floor(terms.length/2);
+  return `(${metadataConjunction(terms.slice(0,middle))} AND ${metadataConjunction(terms.slice(middle))})`;
+}
+
 // No aggregate ever materializes a raw body. Text metadata is bounded before it
 // can be returned, and an invalid sentinel is rejected rather than accepted as NULL.
 const metadataSelect = `SELECT ${textFields.map(field => `CASE WHEN ${field} IS NULL OR (typeof(${field})='text' AND length(CAST(${field} AS BLOB))<=512) THEN ${field} ELSE NULL END AS ${field}`).join(",")},
   event_present,sequence,order_sequence,schema_version,member_source_sequence,typeof(public_body) AS public_type,COALESCE(length(CAST(public_body AS BLOB)),0) AS public_bytes,
   typeof(private_body) AS private_type,COALESCE(length(CAST(private_body AS BLOB)),0) AS private_bytes,
-  CASE WHEN ${textFields.map(field => `(${field} IS NULL OR (typeof(${field})='text' AND length(CAST(${field} AS BLOB))<=512))`).join(" AND ")} THEN 1 ELSE 0 END AS metadata_valid FROM source`;
+  CASE WHEN ${metadataConjunction(textFields.map(field => `(${field} IS NULL OR (typeof(${field})='text' AND length(CAST(${field} AS BLOB))<=512))`))} THEN 1 ELSE 0 END AS metadata_valid FROM source`;
 
 // Shared exact source relation and bounded metadata for the versioned reader.
 // Exporting these does not activate that reader or alter literal-proof limits.
@@ -182,7 +191,7 @@ export async function captureSceneHistoryProof(port: SceneHistoryProofPort, inpu
   const metadata = proofPacker(expected => `${cte}, metadata AS NOT MATERIALIZED (${metadataSelect}), expected AS (${expected}) SELECT NOT EXISTS(
     SELECT 1 FROM expected WHERE NOT EXISTS(SELECT 1 FROM metadata actual
       WHERE actual.event_id=json_extract(expected.value,'${fieldPath("event_id")}') AND actual.order_sequence=json_extract(expected.value,'${fieldPath("order_sequence")}')
-      AND actual.metadata_valid=1 AND ${rowFields.map(field => `actual.${field} IS json_extract(expected.value,'${fieldPath(field)}')`).join(" AND ")}))`);
+      AND actual.metadata_valid=1 AND ${metadataConjunction(rowFields.map(field => `actual.${field} IS json_extract(expected.value,'${fieldPath(field)}')`))}))`);
   const exact = proofPacker(expected => `${cte}, expected AS (${expected}) SELECT NOT EXISTS(SELECT 1 FROM expected WHERE NOT EXISTS(SELECT 1 FROM source actual
     WHERE actual.event_id=json_extract(expected.value,'$[0]') AND actual.order_sequence=json_extract(expected.value,'$[1]')
       AND typeof(CASE json_extract(expected.value,'$[2]') WHEN 'public_body' THEN actual.public_body ELSE actual.private_body END) IS json_extract(expected.value,'$[6]')

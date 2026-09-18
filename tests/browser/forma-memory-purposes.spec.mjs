@@ -16,7 +16,7 @@ for(const locale of ['en','ar'])test.describe('Memory purpose locale '+locale,()
     preferredLocalWindow:{startHour:1,endHour:5},freshDaytimeCatchUpAllowed:true,savedPagesMayContinueOutsideWindow:true,strictlyOvernight:false,deliverySlaVerified:false},enrollments:[item],nextAfter:null};
   const purposes={version:'memory-derivation-control-v1',enabled:false,available:false,reason:'disabled',policyVersion:'personal-memory-derivation-v1',
     scope:{projectId:item.projectId,documentId:item.documentId,custody:{kind:'personal'}},enrollmentId:item.id,enrollmentRevision:1,grants:[],qualifications:[],
-    capScope:'payer-utc-calendar-month-all-memory-purposes',sourceWindow:'future-originals',processingImplemented:false};
+    capScope:'payer-utc-calendar-month-all-memory-purposes',sourceWindow:'future-originals',processingImplemented:false,financial:{period:new Date().toISOString().slice(0,7),checkedAt:new Date().toISOString(),capMicroUsd:100000,usedMicroUsd:580,reservedMicroUsd:1200,remainingMicroUsd:98220,retention:'independent-of-memory-erasure'}};
   const calls=[],errors=[];page.on('pageerror',error=>errors.push(error.message));
   await context.route('**/api/memory/**',async route=>{const request=route.request(),url=new URL(request.url());calls.push({method:request.method(),path:url.pathname,query:url.search});
     expect(url.origin).toBe(origin);expect(request.method()).toBe('GET');
@@ -34,11 +34,24 @@ for(const locale of ['en','ar'])test.describe('Memory purpose locale '+locale,()
   await expect(section.getByText(message(locale,'purposeNotLoaded'),{exact:true})).toBeVisible();expect(calls.filter(c=>c.path.includes('/derivation/'))).toHaveLength(0);
   await section.getByRole('button',{name:message(locale,'purposeLoad'),exact:true}).click();
   await expect(section.getByText(message(locale,'purposeInactive'),{exact:true})).toBeVisible();
+  await expect(section.locator('[data-memory-financial]')).toBeVisible();
+  await expect(section.getByText(message(locale,'purposeFinanceRetention'),{exact:true})).toBeVisible();
   await expect(section.getByRole('button',{name:message(locale,'purposeEnable'),exact:true})).toBeDisabled();
   for(const field of ['charge','background','consent'])await expect(section.locator('[name="memory-purpose-'+field+'"]')).not.toBeChecked();
   expect(calls.filter(c=>c.path.includes('/derivation/'))).toHaveLength(1);expect(errors).toEqual([]);
   await captureViewport(page,info,'memory-purposes-'+locale,{assertStable:false});
-  await section.getByRole('button',{name:message(locale,'purposeLoad'),exact:true}).hover();await page.mouse.wheel(0,680);
+  // Ordinary wheel scrolling targets the action, not a fixed distance that
+  // overshoots it into the conversation following these variable-length terms.
+  const transcript=owner.locator('.forma-assistant-transcript'),box=await transcript.boundingBox();expect(box).not.toBeNull();
+  await page.mouse.move(box.x+4,box.y+box.height/2);
+  const scrollEvidence=[],enable=section.getByRole('button',{name:message(locale,'purposeEnable'),exact:true});
+  for(let step=0;step<8;step++){
+    const target=await enable.boundingBox();expect(target).not.toBeNull();
+    if(target.y>=box.y+4&&target.y+target.height<=box.y+box.height-4)break;
+    const delta=target.y<box.y+4?target.y-box.y-8:target.y+target.height-box.y-box.height+8;
+    await page.mouse.wheel(0,Math.max(-600,Math.min(600,delta)));await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
+    scrollEvidence.push(await transcript.evaluate(el=>({top:el.scrollTop,height:el.clientHeight,extent:el.scrollHeight})));}
+  await info.attach('financial-disclosure-scroll',{body:JSON.stringify(scrollEvidence),contentType:'application/json'});
   await expect(section.getByRole('button',{name:message(locale,'purposeEnable'),exact:true})).toBeInViewport();
   await captureViewport(page,info,'memory-purposes-bounds-'+locale,{assertStable:false});
   await info.attach('declared-memory-transport',{body:JSON.stringify({syntheticOnly:true,production:false,providerCalls:0,mutations:0,calls,session:JSON.parse(syntheticReadBody('/api/session')).user.userId},null,2),contentType:'application/json'});

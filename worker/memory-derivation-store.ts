@@ -125,29 +125,73 @@ export function derivationQualificationGuard(row: MemoryDerivationQualification)
  * a failed monetary admission must never roll an accepted lower cap back. */
 export async function prepareDerivationCapFloor(env: WorkerEnv, grant: MemoryDerivationGrant, installed: boolean) {
   if (!installed) return { changes: 0, before: [] as MemorySqlGuard[], after: [] as MemorySqlGuard[] };
-  const db = env.DB, period = grant.consented_at.slice(0, 7), query = "SELECT cap_microusd FROM memory_derivation_month_caps WHERE payer_id=? AND period=?";
-  const result = structuredClone(await db.prepare(query).bind(grant.payer_user_id, period).all<Row>());
-  if (env.DB !== db || !memoryDerivationGrantShape(grant) || !derivationResults([result], 1) || result.results.length > 1
-    || result.results.some(row => !derivationExact(row, ["cap_microusd"]) || !derivationInteger(row.cap_microusd, 1, 1_000_000_000))) fail();
-  const prior = result.results[0]?.cap_microusd as number | undefined, cap = Math.min(prior ?? grant.monthly_cap_microusd, grant.monthly_cap_microusd);
+  const db = env.DB, period = grant.consented_at.slice(0, 7), query = `SELECT
+    (SELECT cap_microusd FROM memory_derivation_month_caps WHERE payer_id=? AND period=?) AS cap_microusd,
+    (SELECT MIN(monthly_cap_microusd) FROM memory_derivation_grants WHERE actor_user_id=? AND substr(consented_at,1,7)=?) AS accepted_cap`;
+  const result = structuredClone(await db.prepare(query).bind(grant.payer_user_id, period, grant.payer_user_id, period).all<Row>());
+  if (env.DB !== db || !memoryDerivationGrantShape(grant) || !derivationResults([result], 1) || result.results.length !== 1
+    || result.results.some(row => !derivationExact(row, ["cap_microusd", "accepted_cap"])
+      || [row.cap_microusd,row.accepted_cap].some(value => value !== null && !derivationInteger(value, 1, 1_000_000_000)))) fail();
+  const prior = result.results[0]!.cap_microusd as number | null, accepted = result.results[0]!.accepted_cap as number | null;
+  const cap = Math.min(prior ?? grant.monthly_cap_microusd, accepted ?? grant.monthly_cap_microusd, grant.monthly_cap_microusd);
   const guard = (values: number[]): MemorySqlGuard => ({ condition: `(SELECT json_group_array(cap_microusd) FROM memory_derivation_month_caps WHERE payer_id=? AND period=?)=?`,
     bindings: [grant.payer_user_id, period, JSON.stringify(values)] });
-  return { changes: prior === cap ? 0 : 1, before: [guard(prior === undefined ? [] : [prior])], after: [guard([cap])] };
+  return { changes: prior === cap ? 0 : 1, before: [guard(prior === null ? [] : [prior])], after: [guard([cap])] };
+}
+
+/** Persist the most restrictive accepted cap BEFORE a reservation attempt.
+ * This is monotonic bookkeeping, not authority to read sources or spend money.
+ * No source/grant backfill is performed by a schema migration. */
+export async function synchronizeDerivationMonthCap(env: WorkerEnv, payerId: string, period: string): Promise<number | null> {
+  if (!derivationId(payerId) || period !== new Date().toISOString().slice(0, 7)) throw Error("memory-finance-cap-period-invalid");
+  const db = env.DB, schema = await memoryDerivationSchema(env);
+  if (!schema.financePresent || env.DB !== db) throw Error("memory-finance-schema-unavailable");
+  const accepted = `SELECT MIN(cap) FROM (
+    SELECT monthly_cap_microusd AS cap FROM memory_derivation_grants WHERE actor_user_id=?
+      AND (substr(consented_at,1,7)=? OR revoked_at IS NULL AND background_enabled=1 AND expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+    UNION ALL SELECT authorized_cap_microusd AS cap FROM memory_derivation_finance WHERE payer_id=? AND period=?)`;
+  const values = [payerId,period,payerId,period];
+  const query = `SELECT (SELECT cap_microusd FROM memory_derivation_month_caps WHERE payer_id=? AND period=?) AS retained,
+    (${accepted}) AS accepted`;
+  const result = structuredClone(await db.prepare(query).bind(payerId,period,...values).all<Row>());
+  if (env.DB !== db || !derivationResults([result],1) || result.results.length !== 1 || !derivationExact(result.results[0],["retained","accepted"])
+    || Object.values(result.results[0]).some(value => value !== null && !derivationInteger(value,1,1_000_000_000))) throw Error("memory-finance-cap-unavailable");
+  const row=result.results[0]!, retained=row.retained as number|null, acceptedCap=row.accepted as number|null;
+  if (retained===null && acceptedCap===null) return null;
+  const cap=Math.min(retained??acceptedCap!,acceptedCap??retained!);
+  const assertion=(guard:MemorySqlGuard)=>derivationAssertion({...env,DB:db},guard);
+  const statements=[assertion(schema.guard),assertion({condition:"?=strftime('%Y-%m','now')",bindings:[period]}),
+    assertion({condition:`EXISTS(SELECT 1 FROM (${query}) WHERE retained IS ? AND accepted IS ?)`,bindings:[payerId,period,...values,retained,acceptedCap]}),
+    db.prepare(`INSERT INTO memory_derivation_month_caps(payer_id,period,cap_microusd) SELECT ?,?,?
+      WHERE NOT EXISTS(SELECT 1 FROM memory_derivation_month_caps WHERE payer_id=? AND period=?)`).bind(payerId,period,cap,payerId,period),
+    assertion({condition:"changes()=?",bindings:[Number(retained===null)]}),
+    db.prepare("UPDATE memory_derivation_month_caps SET cap_microusd=? WHERE payer_id=? AND period=? AND cap_microusd>?").bind(cap,payerId,period,cap),
+    assertion({condition:"changes()=?",bindings:[Number(retained!==null && retained>cap)]}),
+    assertion({condition:"EXISTS(SELECT 1 FROM memory_derivation_month_caps WHERE payer_id=? AND period=? AND cap_microusd=?)",bindings:[payerId,period,cap]})];
+  const receipt=structuredClone(await db.batch<Row>(statements));
+  if(env.DB!==db || !derivationResults(receipt,statements.length)
+    || ![0,1,2,4,6,7].every(index=>derivationVerified(receipt[index]!))
+    || !derivationChanged(receipt[3]!,Number(retained===null)) || !derivationChanged(receipt[5]!,Number(retained!==null&&retained>cap)))
+    throw Error("memory-finance-cap-commit-unconfirmed");
+  return cap;
 }
 
 /** D1 reports total trigger/FK changes, while SQLite adapters may report direct
  * changes. Pin the exact private descendant count, then accept only those two
  * known receipts. The separate SQL changes() assertion proves direct mutation. */
-async function derivationCascadeChanges(env: WorkerEnv, jobsPresent: boolean, financePresent: boolean, where: Query) {
+async function derivationCascadeChanges(env: WorkerEnv, jobsPresent: boolean, financePresent: boolean, where: Query, erase = false) {
   if (!jobsPresent) return { count: 0, guard: { condition: "1", bindings: [] } as MemorySqlGuard };
-  const query = `WITH selected AS (SELECT consent_id FROM memory_derivation_grants WHERE ${where.sql}),
+  const query = `WITH selected AS (SELECT consent_id,payer_user_id,consented_at FROM memory_derivation_grants WHERE ${where.sql}),
     cursors AS (SELECT consent_id FROM memory_derivation_cursors WHERE consent_id IN(SELECT consent_id FROM selected)),
     jobs AS (SELECT job_id FROM memory_derivation_jobs WHERE consent_id IN(SELECT consent_id FROM cursors))
     SELECT (SELECT COUNT(*) FROM cursors)+(SELECT COUNT(*) FROM jobs)+
       (SELECT COUNT(*) FROM memory_derivation_job_sources WHERE job_id IN(SELECT job_id FROM jobs))${financePresent ? `+
       (SELECT COUNT(*) FROM memory_derivation_job_finance WHERE job_id IN(SELECT job_id FROM jobs))+
       (SELECT COUNT(*) FROM memory_derivation_finance f JOIN memory_derivation_job_finance link ON link.finance_id=f.finance_id
-        WHERE link.job_id IN(SELECT job_id FROM jobs) AND f.admission_closed_at IS NULL)` : ""} AS count`;
+        WHERE link.job_id IN(SELECT job_id FROM jobs) AND f.admission_closed_at IS NULL)${erase ? `+
+      (SELECT COUNT(*) FROM (SELECT DISTINCT payer_user_id,substr(consented_at,1,7) AS period FROM selected) retiring
+        WHERE COALESCE((SELECT cap_microusd FROM memory_derivation_month_caps WHERE payer_id=retiring.payer_user_id AND period=retiring.period),1000000001)
+          >(SELECT MIN(monthly_cap_microusd) FROM memory_derivation_grants WHERE actor_user_id=retiring.payer_user_id AND substr(consented_at,1,7)=retiring.period))` : ""}` : ""} AS count`;
   const result = structuredClone(await env.DB.prepare(query).bind(...where.bindings).all<Row>());
   if (!derivationResults([result], 1) || result.results.length !== 1 || !derivationExact(result.results[0], ["count"])
     || !derivationInteger(result.results[0]!.count)) fail();
@@ -189,7 +233,7 @@ export async function prepareDerivationWithdrawal(env: WorkerEnv, selector: Deri
     const result = structuredClone(await db.prepare(`SELECT COUNT(*) AS count FROM memory_derivation_grants WHERE ${affected}`).bind(...where.bindings).all<Row>());
     if (env.DB !== db || !derivationResults([result], 1) || result.results.length !== 1
       || !derivationExact(result.results[0], ["count"]) || !derivationInteger(result.results[0].count)) throw new Error("memory-derivation-withdrawal-unavailable");
-    const cascade = await derivationCascadeChanges({ ...env, DB: db }, schema.jobsPresent, schema.financePresent, { sql: affected, bindings: where.bindings });
+    const cascade = await derivationCascadeChanges({ ...env, DB: db }, schema.jobsPresent, schema.financePresent, { sql: affected, bindings: where.bindings }, erase);
     const count = result.results[0].count, terminal = { condition: `(${schema.guard.condition}) AND NOT EXISTS(SELECT 1 FROM memory_derivation_grants WHERE ${affected})`,
       bindings: [...schema.guard.bindings, ...where.bindings] };
     const statements = [assertion(cascade.guard), assertion(schema.guard), assertion({ condition: `(SELECT COUNT(*) FROM memory_derivation_grants WHERE ${affected})=?`, bindings: [...where.bindings, count] }),
@@ -217,7 +261,7 @@ export async function prepareDerivationWithdrawal(env: WorkerEnv, selector: Deri
   const expected = erase ? [] : captured.map(row => ({ ...row, revoked_at: row.revoked_at ?? (row.consented_at > now ? row.consented_at : now) }));
   const terminal = schema.present ? inventory(expected) : schema.guard, changed = erase ? captured.length : captured.filter(row => row.revoked_at === null).length;
   const cascade = await derivationCascadeChanges({ ...env, DB: db }, schema.jobsPresent, schema.financePresent,
-    { sql: `(${where.sql})${erase ? "" : " AND revoked_at IS NULL"}`, bindings: where.bindings });
+    { sql: `(${where.sql})${erase ? "" : " AND revoked_at IS NULL"}`, bindings: where.bindings }, erase);
   const statements = [assertion(schema.guard), assertion(cascade.guard)], assertionIndexes = [0, 1]; let writeIndex: number | null = null;
   if (schema.present) {
     assertionIndexes.push(statements.length); statements.push(assertion(inventory(captured))); writeIndex = statements.length;
@@ -237,7 +281,7 @@ export async function sweepExpiredDerivationGrants(env: WorkerEnv, limit = 128):
   if (!derivationInteger(limit, 1, 128)) throw new Error("memory-derivation-cleanup-invalid");
   const db = env.DB, schema = await memoryDerivationSchema(env), where = { sql: `(grant_id,revision) IN(
     SELECT grant_id,revision FROM memory_derivation_grants WHERE expires_at<=strftime('%Y-%m-%dT%H:%M:%fZ','now') ORDER BY expires_at,grant_id,revision LIMIT ?)`, bindings: [limit] };
-  const cascade = await derivationCascadeChanges({ ...env, DB: db }, schema.jobsPresent, schema.financePresent, where);
+  const cascade = await derivationCascadeChanges({ ...env, DB: db }, schema.jobsPresent, schema.financePresent, where, true);
   const statements = [derivationAssertion(env, schema.guard), derivationAssertion(env, cascade.guard),
     ...(schema.present ? [db.prepare(`DELETE FROM memory_derivation_grants WHERE ${where.sql}`).bind(limit),
       db.prepare("SELECT changes() AS direct_changes")] : []), derivationAssertion(env, schema.guard)];

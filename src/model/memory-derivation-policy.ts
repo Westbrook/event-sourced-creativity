@@ -107,3 +107,6 @@ export function memoryDerivationMaximumMicroUsd(terms: MemoryDerivationTerms): n
   return maximum > 0n && maximum <= BigInt(terms.monthlyCapMicroUsd) && maximum <= BigInt(Number.MAX_SAFE_INTEGER) ? Number(maximum) : null;
   } catch { return null; }
 }
+
+export type MemoryDerivationFinanceView = Readonly<{period:string;checkedAt:string;capMicroUsd:number|null;usedMicroUsd:number;reservedMicroUsd:number;
+  remainingMicroUsd:number|null;retention:'independent-of-memory-erasure'}>;

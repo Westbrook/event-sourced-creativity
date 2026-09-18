@@ -108,15 +108,20 @@ CREATE TRIGGER memory_derivation_month_cap_no_increase BEFORE UPDATE ON memory_d
 BEGIN SELECT RAISE(ABORT,'memory_finance_cap_cannot_increase'); END;
 --> statement-breakpoint
 CREATE TRIGGER memory_derivation_grant_cap_floor AFTER INSERT ON memory_derivation_grants
-BEGIN 
+BEGIN
  INSERT INTO memory_derivation_month_caps(payer_id,period,cap_microusd)
- SELECT NEW.payer_user_id,substr(NEW.consented_at,1,7),NEW.monthly_cap_microusd
+ SELECT NEW.payer_user_id,substr(NEW.consented_at,1,7),(SELECT MIN(monthly_cap_microusd) FROM memory_derivation_grants WHERE actor_user_id=NEW.payer_user_id AND substr(consented_at,1,7)=substr(NEW.consented_at,1,7))
  WHERE NOT EXISTS(SELECT 1 FROM memory_derivation_month_caps WHERE payer_id=NEW.payer_user_id AND period=substr(NEW.consented_at,1,7));
- UPDATE memory_derivation_month_caps SET cap_microusd=MIN(cap_microusd,NEW.monthly_cap_microusd)
- WHERE payer_id=NEW.payer_user_id AND period=substr(NEW.consented_at,1,7) AND cap_microusd>NEW.monthly_cap_microusd; END;
+ UPDATE memory_derivation_month_caps SET cap_microusd=(SELECT MIN(monthly_cap_microusd) FROM memory_derivation_grants WHERE actor_user_id=NEW.payer_user_id AND substr(consented_at,1,7)=substr(NEW.consented_at,1,7))
+ WHERE payer_id=NEW.payer_user_id AND period=substr(NEW.consented_at,1,7) AND cap_microusd>(SELECT MIN(monthly_cap_microusd) FROM memory_derivation_grants WHERE actor_user_id=NEW.payer_user_id AND substr(consented_at,1,7)=substr(NEW.consented_at,1,7)); END;
 --> statement-breakpoint
-INSERT INTO memory_derivation_month_caps(payer_id,period,cap_microusd)
- SELECT payer_user_id,substr(consented_at,1,7),MIN(monthly_cap_microusd) FROM memory_derivation_grants GROUP BY payer_user_id,substr(consented_at,1,7);
+CREATE TRIGGER memory_derivation_grant_cap_retire BEFORE DELETE ON memory_derivation_grants
+BEGIN
+ INSERT INTO memory_derivation_month_caps(payer_id,period,cap_microusd)
+ SELECT OLD.payer_user_id,substr(OLD.consented_at,1,7),(SELECT MIN(monthly_cap_microusd) FROM memory_derivation_grants WHERE actor_user_id=OLD.payer_user_id AND substr(consented_at,1,7)=substr(OLD.consented_at,1,7))
+ WHERE NOT EXISTS(SELECT 1 FROM memory_derivation_month_caps WHERE payer_id=OLD.payer_user_id AND period=substr(OLD.consented_at,1,7));
+ UPDATE memory_derivation_month_caps SET cap_microusd=(SELECT MIN(monthly_cap_microusd) FROM memory_derivation_grants WHERE actor_user_id=OLD.payer_user_id AND substr(consented_at,1,7)=substr(OLD.consented_at,1,7))
+ WHERE payer_id=OLD.payer_user_id AND period=substr(OLD.consented_at,1,7) AND cap_microusd>(SELECT MIN(monthly_cap_microusd) FROM memory_derivation_grants WHERE actor_user_id=OLD.payer_user_id AND substr(consented_at,1,7)=substr(OLD.consented_at,1,7)); END;
 --> statement-breakpoint
 CREATE TRIGGER memory_derivation_finance_no_replace BEFORE INSERT ON memory_derivation_finance WHEN EXISTS(SELECT 1 FROM memory_derivation_finance WHERE finance_id=NEW.finance_id OR token_id IN(NEW.token_id,NEW.cost_id) OR cost_id IN(NEW.token_id,NEW.cost_id) OR dispatch_token=NEW.dispatch_token)
 BEGIN SELECT RAISE(ABORT,'memory_finance_cannot_replace'); END;
@@ -136,7 +141,9 @@ BEGIN
  AND NOT EXISTS(SELECT 1 FROM project_budget_reservation_scopes WHERE reservation_id IN(NEW.token_id,NEW.cost_id))
  AND NOT EXISTS(SELECT 1 FROM pilot_cost_reservation_scopes WHERE reservation_id IN(NEW.token_id,NEW.cost_id))
  AND EXISTS(SELECT 1 FROM memory_derivation_month_caps cap WHERE cap.payer_id=NEW.payer_id AND cap.period=NEW.period
-   AND cap.cap_microusd<=NEW.authorized_cap_microusd AND NEW.maximum_microusd+COALESCE((SELECT SUM(CASE WHEN unused.finance_id IS NOT NULL THEN 0 WHEN usage.finance_id IS NOT NULL THEN usage.used_microusd ELSE existing.maximum_microusd END)
+   AND cap.cap_microusd<=NEW.authorized_cap_microusd
+   AND NOT EXISTS(SELECT 1 FROM memory_derivation_grants prior WHERE prior.actor_user_id=NEW.payer_id AND substr(prior.consented_at,1,7)=NEW.period AND prior.monthly_cap_microusd<cap.cap_microusd)
+   AND NEW.maximum_microusd+COALESCE((SELECT SUM(CASE WHEN unused.finance_id IS NOT NULL THEN 0 WHEN usage.finance_id IS NOT NULL THEN usage.used_microusd ELSE existing.maximum_microusd END)
  FROM memory_derivation_finance existing LEFT JOIN memory_derivation_usage usage ON usage.finance_id=existing.finance_id
  LEFT JOIN memory_derivation_no_dispatch unused ON unused.finance_id=existing.finance_id WHERE existing.payer_id=NEW.payer_id AND existing.period=NEW.period),0)<=cap.cap_microusd)
  THEN 1 ELSE RAISE(ABORT,'memory_finance_admission_unavailable') END; END;

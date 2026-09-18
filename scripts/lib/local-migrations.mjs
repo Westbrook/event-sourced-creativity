@@ -42,23 +42,6 @@ const MODEL3D_REBUILD = {
   ],
 };
 
-// The sole data statement admitted here seeds a non-increasing financial cap
-// from previously accepted consent. This is not a general DML migration path.
-const MEMORY_FINANCE = {
-  tag: "0045_memory_derivation_finance", when: 1789763145007,
-  hash: "7bea4d8402e3ab399b13f92448400af5aaf67c85807e9801baa1ac59b3df74a3",
-  statementCount: 49,
-  seed: "INSERT INTO memory_derivation_month_caps(payer_id,period,cap_microusd)\n SELECT payer_user_id,substr(consented_at,1,7),MIN(monthly_cap_microusd) FROM memory_derivation_grants GROUP BY payer_user_id,substr(consented_at,1,7);",
-};
-function verifyMemoryCapFloor(database) {
-  const missing = database.prepare(`SELECT 1 FROM
-    (SELECT payer_user_id,substr(consented_at,1,7) AS period,MIN(monthly_cap_microusd) AS cap FROM memory_derivation_grants
-      GROUP BY payer_user_id,substr(consented_at,1,7)) accepted
-    LEFT JOIN memory_derivation_month_caps retained ON retained.payer_id=accepted.payer_user_id AND retained.period=accepted.period
-    WHERE retained.cap_microusd IS NULL OR retained.cap_microusd>accepted.cap LIMIT 1`).get();
-  if (missing) fail("migration_finance_backfill_unverified", "existing payer-month floors do not preserve accepted consent");
-}
-
 /** Read source metadata only; the Drizzle journal is not an applied-history ledger. */
 export function readLocalMigrations(directory) {
   const path = asPath(directory);
@@ -430,18 +413,12 @@ function prepareMigrations(migrations) {
     const hash = hashSql(sql);
     if (migration.hash !== undefined && migration.hash !== hash) fail("migration_hash_mismatch", tag);
     const model3d = tag === MODEL3D_REBUILD.tag;
-    const memoryFinance = tag === MEMORY_FINANCE.tag;
     if (model3d && hash !== MODEL3D_REBUILD.hash) fail("migration_hash_mismatch", tag);
     if (model3d && when !== MODEL3D_REBUILD.when) fail("migration_sql_unsupported", "unreviewed 3D migration timestamp");
-    if (memoryFinance && hash !== MEMORY_FINANCE.hash) fail("migration_hash_mismatch", tag);
-    if (memoryFinance && when !== MEMORY_FINANCE.when) fail("migration_sql_unsupported", "unreviewed Memory finance timestamp");
     const statements = model3d ? sql.split("--> statement-breakpoint").filter((part) => part.trim()).map((part) => ({ kind: "model3d", sql: part }))
-      : sql.split("--> statement-breakpoint").map(part => memoryFinance && part.trim() === MEMORY_FINANCE.seed
-        ? { kind: "memory-cap-seed", sql: part } : classify(part)).filter(Boolean);
+      : sql.split("--> statement-breakpoint").map(classify).filter(Boolean);
     if (model3d && statements.length !== MODEL3D_REBUILD.statementCount) fail("migration_sql_unsupported", "unreviewed 3D statement count");
-    if (memoryFinance && (statements.length !== MEMORY_FINANCE.statementCount || statements.filter(s => s.kind === "memory-cap-seed").length !== 1))
-      fail("migration_sql_unsupported", "unreviewed Memory finance statement count");
-    return { ...migration, hash, model3d, memoryFinance, statements };
+    return { ...migration, hash, model3d, statements };
   });
 }
 
@@ -517,7 +494,6 @@ export function migrateLocalDatabase(database, { migrations, dryRun = false }) {
     const report = [];
     for (const migration of plan) {
       const receipt = receipts.get(migration.tag);
-      const financeAlreadyPresent = migration.memoryFinance && Boolean(schemaObject(database, "memory_derivation_month_caps"));
       let executedStatements = 0, skippedStatements = 0;
       if (migration.model3d) {
         ({ executedStatements, skippedStatements } = executeModel3dRebuild(database, rebuild, Boolean(receipt)));
@@ -527,10 +503,6 @@ export function migrateLocalDatabase(database, { migrations, dryRun = false }) {
         if (statement.kind === "table") {
           exists = Boolean(schemaObject(database, statement.name));
           if (exists) validateTable(database, statement.name, currentTables.get(statement.name), statement.requiredColumns);
-        } else if (statement.kind === "memory-cap-seed") {
-          // Existing installs are verified, never overwritten or backfilled on
-          // guesswork. A partial installation with missing floors fails closed.
-          if (financeAlreadyPresent) { verifyMemoryCapFloor(database); exists = true; }
         } else if (statement.kind === "column") {
           validateTable(database, statement.table, currentTables.get(statement.table), statement.beforeColumns);
           exists = tableShape(database, statement.table).columns.some((column) => column.name === statement.name);
@@ -544,7 +516,6 @@ export function migrateLocalDatabase(database, { migrations, dryRun = false }) {
         if (exists) { skippedStatements++; continue; }
         if (receipt) fail("migration_schema_mismatch", `${migration.tag} is recorded but ${statement.name ?? statement.kind} is missing`);
         database.exec(statement.sql); executedStatements++;
-        if (statement.kind === "memory-cap-seed") verifyMemoryCapFloor(database);
         if (statement.kind === "column") validateTable(database, statement.table, currentTables.get(statement.table), statement.requiredColumns);
       }
       const legacyModel3d = migration.model3d && receipt?.hash === MODEL3D_REBUILD.legacyHash;

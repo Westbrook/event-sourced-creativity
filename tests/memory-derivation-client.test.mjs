@@ -78,3 +78,13 @@ test('purpose client late response after ignored abort is cancelled and stale mu
   const waits=[],overlapping=createMemoryDerivationClient(()=>new Promise(done=>waits.push(done))),old=overlapping.enable(f.input),newer=overlapping.settings(f.expected);
   waits[1](Response.json(f.settings));await newer;waits[0](Response.json({version,grant:f.grant,capScope,processingImplemented:false}));await assert.rejects(old,error=>error.mutationUnknown);
 });
+for(const fault of ['none','negative','remaining','expired','extra','retention'])test('purpose client financial view validates '+fault,async()=>{
+  const f=fixture(),at=new Date().toISOString();f.settings.financial={period:at.slice(0,7),checkedAt:at,capMicroUsd:10000,usedMicroUsd:500,reservedMicroUsd:1200,remainingMicroUsd:8300,retention:'independent-of-memory-erasure'};
+  if(fault==='negative')f.settings.financial.reservedMicroUsd=-1;
+  if(fault==='remaining')f.settings.financial.remainingMicroUsd++;
+  if(fault==='expired')f.settings.financial.checkedAt=new Date(Date.now()-61000).toISOString();
+  if(fault==='extra')f.settings.financial.payer='other';if(fault==='retention')f.settings.financial.retention='deleted-with-memory';
+  const result=createMemoryDerivationClient(async()=>Response.json(f.settings)).settings(f.expected);
+  if(fault==='none'){assert.deepEqual((await result).financial,f.settings.financial);assert.ok(Object.isFrozen((await result).financial));}
+  else await assert.rejects(result,MemoryDerivationClientError);
+});
