@@ -395,6 +395,86 @@ export function guestImageResultReservedAttemptProof(facts: GuestImageResultClai
     bindings: [captured.scopeJson, JSON.stringify(values)] });
 }
 
+type SuccessorAttemptCapture = Readonly<{
+  facts: ClaimFactsCapture; values: readonly Value[]; observed: Readonly<Record<string, Value>>;
+}>;
+
+/** Capture the closed tuple without reading accessors. This is deliberately
+ * separate from reserved-v0 qualification and grants no transition authority. */
+function captureSuccessorAttempt(facts: GuestImageResultClaimFacts, row: GuestImageResultCopyAttemptRow): SuccessorAttemptCapture {
+  const captured = facts && typeof facts === "object" ? claimFactsCaptures.get(facts) : undefined;
+  if (!captured || !captured.resultCopySchemaInstalled || !row || typeof row !== "object"
+    || Object.getPrototypeOf(row) !== Object.prototype) return fail("claim_attempt_facts_unavailable");
+  const descriptors = Object.getOwnPropertyDescriptors(row), keys = Reflect.ownKeys(descriptors);
+  if (keys.length !== reservedAttemptColumns.length || keys.some(key => typeof key !== "string"
+    || !reservedAttemptColumns.some(column => column === key))) return fail("claim_attempt_row_invalid");
+  const values: Value[] = [], observed: Record<string, Value> = {};
+  for (const column of reservedAttemptColumns) {
+    const descriptor = descriptors[column];
+    if (!descriptor || !descriptor.enumerable || !Object.hasOwn(descriptor, "value")) return fail("claim_attempt_row_invalid");
+    const value: unknown = descriptor.value;
+    if (value !== null && (typeof value === "string" ? !value.isWellFormed() || bytes(value) > 65536
+      : typeof value !== "number" || !Number.isSafeInteger(value) || Object.is(value, -0) || value < 0)) return fail("claim_attempt_row_invalid");
+    observed[column] = value as Value; values.push(value as Value);
+  }
+  const created = observed.created_at_ms, updated = observed.updated_at_ms, expires = observed.source_expires_at_ms;
+  const started = observed.put_started_at_ms, settled = observed.put_settled_at_ms, verified = observed.verified_at_ms;
+  const outcome = observed.put_outcome, settledOutcome = outcome === "success" || outcome === "conditional-null";
+  if (observed.session_id !== captured.scope.sessionId || typeof observed.row_version !== "number" || observed.row_version < 1
+    || typeof created !== "number" || created < 1 || typeof updated !== "number" || updated < created
+    || typeof expires !== "number" || expires <= created
+    || !["pending", "unknown", "success", "conditional-null"].includes(String(outcome))
+    || observed.published_at_ms !== null || observed.published_claim_digest !== null) return fail("claim_attempt_row_invalid");
+  if (started === null ? outcome !== "pending" || settled !== null || verified !== null
+    : typeof started !== "number" || started < created || started > updated || started >= expires) return fail("claim_attempt_row_invalid");
+  if (settledOutcome !== (settled !== null)
+    || settled !== null && (typeof settled !== "number" || typeof started !== "number" || settled < started || settled > updated)
+    || verified !== null && (typeof verified !== "number" || outcome !== "success" || typeof settled !== "number"
+      || verified < settled || verified > updated || verified >= expires)) return fail("claim_attempt_row_invalid");
+  return { facts: captured, values, observed };
+}
+
+function successorAttemptProof(captured: SuccessorAttemptCapture): Proof {
+  const { facts, values } = captured;
+  const scopeCte = `input(value) AS(VALUES(?)),s AS(SELECT ${Object.keys(facts.scope).map(key => `json_extract(value,'$.${key}') AS ${key}`).join(",")} FROM input)`;
+  const exactRow = `json_array(${reservedAttemptColumns.map(column => `d.${column}`).join(",")})=expected.row_json`;
+  const related = `d.session_id=s.sessionId OR (${resultClaimAssociationSql("attempt")})`;
+  return freeze({ sql: `EXISTS(WITH ${scopeCte},expected_result_attempt(row_json) AS(VALUES(?))
+    SELECT 1 FROM s,expected_result_attempt expected WHERE
+      EXISTS(SELECT 1 FROM experience_guest_image_result_copy_attempts d WHERE d.session_id=s.sessionId AND ${exactRow})
+      AND NOT EXISTS(SELECT 1 FROM experience_guest_image_result_copy_attempts d WHERE (${related}) AND (${exactRow}) IS NOT TRUE))`,
+    bindings: [facts.scopeJson, JSON.stringify(values)] });
+}
+
+/** Inert exact writing-row fact. The claim owner still supplies complete
+ * descriptor validation, original lease/currentness and actual PUT knowledge. */
+export function guestImageResultWritingAttemptProof(facts: GuestImageResultClaimFacts, row: GuestImageResultCopyAttemptRow): Proof {
+  const captured = captureSuccessorAttempt(facts, row), { observed } = captured;
+  if (observed.state !== "writing" || observed.put_started_at_ms === null || observed.verified_at_ms !== null)
+    return fail("claim_attempt_row_invalid");
+  return successorAttemptProof(captured);
+}
+
+/** A ready tuple describes recorded success and separate verification, never
+ * a fresh byte observation, completed custody or permission to publish. */
+export function guestImageResultReadyAttemptProof(facts: GuestImageResultClaimFacts, row: GuestImageResultCopyAttemptRow): Proof {
+  const captured = captureSuccessorAttempt(facts, row), { observed } = captured;
+  if (observed.state !== "ready" || observed.put_outcome !== "success" || observed.verified_at_ms === null)
+    return fail("claim_attempt_row_invalid");
+  return successorAttemptProof(captured);
+}
+
+/** Closed cleanup-only facts. Neither matching metadata nor this tuple may
+ * settle an unknown PUT, authorize DELETE or reverse the publication fence. */
+export function guestImageResultCleanupAttemptProof(facts: GuestImageResultClaimFacts, row: GuestImageResultCopyAttemptRow): Proof {
+  const captured = captureSuccessorAttempt(facts, row), { observed } = captured;
+  if (observed.state !== "cleanup_pending" && observed.state !== "deleted"
+    || observed.state === "deleted" && (observed.put_outcome === "unknown"
+      || observed.put_started_at_ms !== null && observed.put_outcome !== "success" && observed.put_outcome !== "conditional-null"))
+    return fail("claim_attempt_row_invalid");
+  return successorAttemptProof(captured);
+}
+
 function runClosure(r:RunCapture): Readonly<{ common: Proof; familyCommon: Proof; leaseAbsent: Proof; attemptAbsent: Proof; resultCopySchemaInstalled: boolean; claimSourceFacts: GuestImageResultClaimFacts }> {
   const c=r.admission,{frame:f,history:h,facts}=c,blueprint=c.blueprint!,admitted=true;
   const ids = [...h.original.eventIds, ...facts.tails.map(t => t.eventId), blueprint.queue.eventId,blueprint.authorization.eventId,...r.events.map(event=>event.eventId)];
