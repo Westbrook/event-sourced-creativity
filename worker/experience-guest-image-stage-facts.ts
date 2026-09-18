@@ -1,4 +1,4 @@
-import { canonicalJson, digest, exactKeys, record } from "../src/experiences/compiler.ts";
+import { canonicalJson, digest, exactKeys, jsonIssues, record } from "../src/experiences/compiler.ts";
 import { foldEvents } from "../src/model/events.ts";
 import { compileOutputPlan } from "../src/model/output-plan.ts";
 import { outputRequirementInterpretationNeedsReview } from "../src/model/output-requirements.ts";
@@ -14,7 +14,7 @@ import { experienceOutputEnvelope, type ExperienceOutputBinding } from "./experi
 import { matchExperienceOutputRecipeTarget } from "./experience-output-recipe.ts";
 import { guestImageStageConfirmedPlan, guestImageStageNativePayload, guestImageStagePlanRows, guestImageStageIntentRow,
   guestImageStageQuoteRow, guestImageStageQuoteShape, guestImageStageQuoteRecipe } from "./experience-guest-image-stage-contract.ts";
-import { sponsorImageTextSource } from "./experience-sponsor-image-format.ts";
+import { sponsorImageTextSource, sponsorImageTextSourceForRetainedFormat, requireRetainedSponsorImageFormat, type RetainedSponsorImageFormat } from "./experience-sponsor-image-format.ts";
 import { outputDigest } from "./output-disclosure-proof.ts";
 import { outputTargetContractDigest } from "./output-requirements-api.ts";
 import { outputRequirements, outputSourceDigests } from "./output-trusted-context.ts";
@@ -154,6 +154,24 @@ export function guestImageStageUnclaimedClosure(facts: { history: History; scope
  * must construct and execute a named full graph proof before disclosure or
  * mutation; this function creates no inventory or custody capability. */
 export async function collectGuestImageStageFacts(history: History) {
+  return collectImageStageFacts(history);
+}
+export async function collectRetainedGuestImageStageFacts(history: History, format: RetainedSponsorImageFormat) {
+  const retained = requireRetainedSponsorImageFormat(format);
+  const check = () => {
+    const plan = history.original.plan;
+    if (history.mode !== "retained" || !plan || jsonIssues(plan.release).length
+      || retained.release.releaseHash !== history.original.policy.releaseHash
+      || plan.request.releaseHash !== retained.release.releaseHash
+      || canonicalJson(plan.release) !== retained.canonicalRelease) return fail("retained_format_changed");
+    current(history.ctx);
+  };
+  check();
+  const facts = await collectImageStageFacts(history, format);
+  check();
+  return facts;
+}
+async function collectImageStageFacts(history: History, format?: RetainedSponsorImageFormat) {
   const { ctx, original, saved } = history, { source, session, draftId, projectId, documentId, eventIds } = original;
   const parts: Proof[] = [];
   const actorUserId = String(session.guest_subject), scopeKey = saved.scopeKey, sourceHead = eventIds.length, sessionId = String(session.session_id);
@@ -202,7 +220,7 @@ export async function collectGuestImageStageFacts(history: History) {
     const projection = foldEvents(events), nativeContext = authoritativeCreativeContext(events, { documentId, projectId });
     const requirements = outputRequirements(projection);
     if (requirements.length !== 1 || requirements[0].status !== "valid" || !requirements[0].spec
-      || outputRequirementInterpretationNeedsReview(requirements[0].spec) || !await sponsorImageTextSource(nativeContext.snapshot.facts)) return fail();
+      || outputRequirementInterpretationNeedsReview(requirements[0].spec) || !await (format ? sponsorImageTextSourceForRetainedFormat(nativeContext.snapshot.facts, format) : sponsorImageTextSource(nativeContext.snapshot.facts))) return fail();
     current(ctx);
     const actual = await outputSourceDigests(projection, requirements, documentId, projectId, nativeContext); current(ctx);
     if (actual.sourceDigest !== sourceDigest || actual.requirementsDigest !== requirementsDigest || bytes(canonicalJson(nativeContext.snapshot)) !== intent.source_text_bytes) return fail();

@@ -1,7 +1,7 @@
 import { canonicalJson, digest, exactKeys, freeze, jsonIssues, record } from "../src/experiences/compiler.ts";
 import { experienceDraftId, experienceResourceId } from "../src/experiences/intake.ts";
 import { matchSponsorImageTemplate, readSponsorCampaignTemplate, recipeMatchesSponsorTemplate, type SponsorImageCampaignTemplate, type SponsorImageTransport } from "./experience-sponsor-campaign.ts";
-import { sponsorImageTextSource } from "./experience-sponsor-image-format.ts";
+import { sponsorImageTextSource, sponsorImageTextSourceForRetainedFormat, requireRetainedSponsorImageFormat, type RetainedSponsorImageFormat } from "./experience-sponsor-image-format.ts";
 import { readSponsorResourceLimits, type SponsorResourceLimits } from "./experience-sponsor-resources.ts";
 import type { SponsorRecipe } from "./experience-sponsor-policy.ts";
 import type { OutputPreflight } from "../src/model/output-delivery-contract.ts";
@@ -212,9 +212,18 @@ function closedImageSnapshot(snapshot: Record<string, unknown>, documentId: stri
  * from storage. The future issuer must independently prove original source,
  * native plan/preflight, current guest possession and payer approval. */
 export async function compileGuestSponsorEnvelope(rawPolicy: unknown, rawEnvelope: unknown, rawEvidence: unknown) {
+  return compileGuestEnvelope(rawPolicy, rawEnvelope, rawEvidence);
+}
+export async function compileRetainedGuestSponsorEnvelope(rawPolicy: unknown, rawEnvelope: unknown, rawEvidence: unknown, format: RetainedSponsorImageFormat) {
+  requireRetainedSponsorImageFormat(format);
+  return compileGuestEnvelope(rawPolicy, rawEnvelope, rawEvidence, format);
+}
+async function compileGuestEnvelope(rawPolicy: unknown, rawEnvelope: unknown, rawEvidence: unknown, format?: RetainedSponsorImageFormat) {
   // Capture ALL caller-owned data before the first await, including nested
   // transport/settings. Hash completion cannot incorporate later mutation.
   const policy = readGuestSponsorPolicy(rawPolicy), value = capture(rawEnvelope, "envelope"), evidence = capture(rawEvidence, "evidence");
+  const retained = format ? requireRetainedSponsorImageFormat(format) : null;
+  if (retained && retained.release.releaseHash !== policy.guestAdmission.releaseHash) return fail("binding_mismatch");
   if (!keys(value, envelopeKeys) || value.version !== 3 || value.actorKind !== "guest"
     || ![value.campaignId, value.policyVersion, value.consumptionId, value.intentKey, value.payerUserId].every(id)
     || !guest(value.actorUserId) || value.ownerUserId !== value.actorUserId || value.payerUserId === value.actorUserId
@@ -241,6 +250,7 @@ export async function compileGuestSponsorEnvelope(rawPolicy: unknown, rawEnvelop
   if (preflightExpiry === null || preflightCreated === null || preflightExpiry <= preflightCreated || preflightCreated > envelope.issuedAtMs) return fail("evidence_invalid");
   const session = await compileGuestSponsorSessionBinding(evidence.sessionBinding), source = await compileGuestSponsorSourceBinding(envelope.guestSource);
   const admission = policy.guestAdmission, s = session.binding, g = source.binding;
+  if (retained && retained.release.releaseHash !== g.releaseHash) return fail("binding_mismatch");
   if (envelope.campaignId !== policy.campaignId || envelope.policyVersion !== policy.policyVersion || envelope.payerUserId !== policy.payerUserId
     || envelope.actorUserId !== s.guestSubject || envelope.projectId !== s.projectId || envelope.documentId !== s.documentId
     || envelope.sessionDigest !== session.sessionDigest || g.sessionDigest !== session.sessionDigest
@@ -253,7 +263,7 @@ export async function compileGuestSponsorEnvelope(rawPolicy: unknown, rawEnvelop
   const offered = preflight.targets[0];
   if (!recipeMatchesSponsorTemplate(policy.templates[0], envelope.recipe)
     || !matchSponsorImageTemplate(policy.templates[0], { recipe: envelope.recipe, offered, transport: native.transport })
-    || !await sponsorImageTextSource(native.contextSnapshot.facts)
+    || !await (format ? sponsorImageTextSourceForRetainedFormat(native.contextSnapshot.facts, format) : sponsorImageTextSource(native.contextSnapshot.facts))
     || !native.contextSnapshot.facts.some(fact => record(fact) && fact.active !== false && String(fact.type).toLowerCase() !== "output" && fact.intent !== "prohibit" && fact.effect !== "must_not_include")) return fail("recipe_mismatch");
   const { termsDigest: ignoredTerms, ...quoted } = preflight; void ignoredTerms;
   const [policyDigest, templateDigest, termsDigest, routeDigest, settingsDigest, rightsDigest, compiledInputDigest, transferEnvelopeDigest, authorizationDigest] = await Promise.all([
