@@ -753,7 +753,7 @@ export class StillApp extends LitElement {
       ${!this.mode&&failed&&failure?this.notification(`job:${failure.key}`,failure.message,failed.errorDetail?.category==='safety'?'warning':'danger',[
         {label:failure.label,run:()=>{
           if(failure.action==='context')this.reviewContext(failed);
-          else if(failure.action==='generation'&&this.client.abilities.formats.includes(failure.format))this.choose(failure.format);
+          else if(failure.action==='generation'&&generationFormat(failed))this.navigate('generation',{outputId:failed.jobId});
           else this.navigate('results');
         }},
       ],()=>{void this.client.dismissJob(failed).catch(()=>{this.error='Message hidden here. Dismissal could not be saved.';this.changed();});}):nothing}

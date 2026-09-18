@@ -1,4 +1,5 @@
 import type { WorkerEnv } from "./runtime";
+import { OPENAI_IMAGE_GENERATION_CONTRACT } from "./openai-image-route-contract.ts";
 import { buildReplayDevelopmentStages, replayDevelopmentSummary, type CreativeStudyKind, type ReplayDevelopmentStage } from "../src/model/replay-development.ts";
 
 export const MICRO_USD_PER_USD = 1_000_000;
@@ -160,7 +161,7 @@ function line(key: ReplayCostLine["key"], label: string, operations: number, est
 
 export function estimateLiveReplayCost(env: Pick<WorkerEnv, "OPENAI_MODEL" | "OPENAI_IMAGE_MODEL">, seed = "", options: { eventCount?: unknown; providerCoverage?: unknown; studyTypes?: unknown } = {}): ReplayCostEstimate {
   const plannerModel = env.OPENAI_MODEL ?? "gpt-5.6-terra";
-  const imageModel = env.OPENAI_IMAGE_MODEL ?? "gpt-image-2";
+  const imageModel = env.OPENAI_IMAGE_MODEL ?? OPENAI_IMAGE_GENERATION_CONTRACT.defaults.model;
   const planner = textRates(plannerModel);
   const image = imageRates(imageModel);
   const profile = replayGenerationProfile(options.eventCount, options.providerCoverage, options.studyTypes);
