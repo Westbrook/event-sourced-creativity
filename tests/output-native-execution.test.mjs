@@ -614,6 +614,8 @@ test('Sunburst reference-pixel preflight remains unavailable without dispatch or
  const f=await fixture([{block_id:'reference-sunburst',type:'reference',properties:{text:'Keep this subject',pixel_reference_mode:'preserve_subject',reference_id:'required-reference'}}]);context.after(()=>f.sqlite.close());delete f.env.OPENAI_IMAGE_MODEL;
  await appendAuditEvent(f.env,stream,'user','RightsAsserted',{document_id:f.documentId,reference_id:'required-reference',rights_class:'owned'});
  const plan=await saveImages(f),preflight=await f.ok(await f.send({action:'preflight',planRevisionId:plan.planId,targetIds:plan.targetIds}));
+ assert.ok(preflight.command.preflight.targets.length>0);
+ assert.equal(preflight.command.preflight.targets.length,plan.targetIds.length);
  assert.ok(preflight.command.preflight.targets.every(t=>!t.available&&t.reasonCode==='output_native_reference_input_unpriced'));
  assert.equal(f.sqlite.prepare('SELECT COUNT(*) AS n FROM document_jobs').get().n,0);assert.deepEqual(calls,[]);
 });
