@@ -12104,3 +12104,404 @@ test('job origin personal erasure Output: actual final batch abort rolls back so
     jobPersonalErasureCanariesGone(state); jobPersonalOutputRevoked(state, output); assert.equal(complete.otherDevicesAndBackupsPurged, false);
   } finally { hook?.restore(); await state.retirementStop(); }
 });
+
+async function explicitChatMemoryFixture(t,{shared=false,structured=false}={}){
+  const state=await nativeMemoryJobFixture(t,{shared,beforeEnrollment:async current=>{
+    const {readFile}=await import('node:fs/promises');
+    current.sqlite.exec(await readFile(new URL('../drizzle/0032_memory_structured_conversation_ledger.sql',import.meta.url),'utf8'));
+  }});
+  await queuedJobMemorySeed(state,{history:true,structured});
+  const {readFile}=await import('node:fs/promises');
+  state.sqlite.exec(await readFile(new URL('../drizzle/0034_memory_document_job_origins.sql',import.meta.url),'utf8'));
+  const requestId=crypto.randomUUID();
+  const input={kind:'chat',sourceSurface:'chat',documentId:'doc-atmosphere',payload:{memoryMode:'recall',requestId,message:'Recall the remembered document history.',locale:'en'}};
+  const post=()=>state.request('/api/document-jobs',json(input,state.owner));
+  const read=()=>state.request('/api/document-jobs/'+requestId+'?memoryMode=recall',{headers:state.owner});
+  return Object.assign(state,{explicitMemoryInput:input,explicitMemoryPost:post,explicitMemoryRead:read,explicitMemoryId:requestId});
+}
+for(const shared of [false,true])for(const structured of [false,true])test('explicit Chat Studio memory: '+(shared?'shared':'personal')+' '+(structured?'structured':'extractive')+' foreground publication and manually owned recovery stay provider-free',{timeout:90000},async t=>{
+  const state=await explicitChatMemoryFixture(t,{shared,structured});
+  const financial=adaptiveReentryFinancialState(state),calls=state.calls.length;
+  assert.equal(state.env.OPENAI_API_KEY,undefined);
+  const response=await state.explicitMemoryPost(),body=await response.json();
+  assert.equal(response.status,200,JSON.stringify(body)+' SQL:'+state.controls.lastDatabaseError);
+  assert.equal(body.noAutomaticRetry,true);assert.equal(body.job.memoryMode,'recall');assert.equal(body.job.status,'completed');
+  assert.equal(body.memory.version,'native-document-job-memory-v1');assert.equal(body.memory.jobId,state.explicitMemoryId);
+  assert.ok(body.memory.text.length>0);assert.ok(Date.parse(body.memory.validUntil)>Date.parse(body.memory.checkedAt));
+  assert.ok(Date.parse(body.memory.validUntil)-Date.parse(body.memory.checkedAt)<=60000);
+  assert.equal(body.job.result.memoryDocumentJobOrigin,undefined);assert.equal(body.job.result.text,undefined);
+  const count=()=>state.sqlite.prepare('SELECT COUNT(*) AS count FROM memory_document_job_answer_origins').get().count;
+  assert.equal(count(),1);
+  const again=await state.explicitMemoryPost(),same=await again.json();
+  assert.equal(again.status,200,JSON.stringify(same));assert.equal(same.memory.turnId,body.memory.turnId);assert.equal(same.memory.text,body.memory.text);assert.equal(count(),1);
+  const read=await state.explicitMemoryRead(),readBody=await read.json();
+  assert.equal(read.status,200,JSON.stringify(readBody));assert.equal(readBody.memory.text,body.memory.text);assert.equal(count(),1);
+  const ordinary=await state.request('/api/document-jobs/'+state.explicitMemoryId,{headers:state.owner}),metadata=await ordinary.json();
+  assert.equal(ordinary.status,200);assert.equal(metadata.memory,undefined);assert.equal(JSON.stringify(metadata).includes(body.memory.text),false);
+  const retry=await state.request('/api/document-jobs/'+state.explicitMemoryId+'/retry',json({},state.owner));
+  assert.equal(retry.status,409);assert.equal((await retry.json()).noAutomaticRetry,true);
+  state.explicitMemoryInput.payload.message='A conflicting request under the same ID';
+  const conflict=await state.explicitMemoryPost();assert.equal(conflict.status,409);assert.equal((await conflict.json()).error,'memory_request_conflict');
+  assert.equal(count(),1);assert.deepEqual(adaptiveReentryFinancialState(state),financial);assert.equal(state.calls.length,calls);
+  assert.equal(state.sqlite.prepare('SELECT attempt_count FROM document_jobs WHERE job_id=?').get(state.explicitMemoryId).attempt_count,1);
+  state.sqlite.prepare('UPDATE memory_live_enrollments SET recall_enabled=0').run();
+  const withdrawn=await state.explicitMemoryRead();assert.equal(withdrawn.status,409);assert.equal((await withdrawn.json()).noAutomaticRetry,true);
+});
+
+test('explicit Chat Studio memory: rejected request shapes and disabled recall never become ordinary paid admission', {timeout:60000},async t=>{
+  const state=await explicitChatMemoryFixture(t),before=state.sqlite.prepare('SELECT COUNT(*) AS n FROM document_jobs').get().n;
+  for(const change of [{memoryMode:'automatic'},{livePreview:true},{locale:'zz'}]){
+    const input=structuredClone(state.explicitMemoryInput);Object.assign(input.payload,change);
+    const response=await state.request('/api/document-jobs',json(input,state.owner));
+    assert.equal(response.status,400);assert.equal((await response.json()).noAutomaticRetry,true);
+  }
+  state.env.FORMA_MEMORY_ENABLED='false';
+  const denied=await state.explicitMemoryPost();assert.equal(denied.status,409);assert.equal((await denied.json()).noAutomaticRetry,true);
+  assert.equal(state.sqlite.prepare('SELECT COUNT(*) AS n FROM document_jobs').get().n,before);
+  const ordinary=await state.request('/api/document-jobs',json({kind:'chat',documentId:'doc-atmosphere',sourceSurface:'chat',payload:{message:'ordinary conversation',livePreview:false}},state.owner));
+  assert.equal(ordinary.status,503);assert.equal((await ordinary.json()).error,'provider_not_configured');assert.equal(state.calls.length,0);
+});
+
+test('explicit Chat Studio memory: a lost claim acknowledgement is recovery-only and no route or list poll retries it',{timeout:60000},async t=>{
+  const state=await explicitChatMemoryFixture(t),db=state.env.DB,prepare=db.prepare;let claims=0;
+  const wrap=statement=>{const bind=statement.bind,run=statement.run;statement.bind=(...values)=>wrap(bind.call(statement,...values));statement.run=async()=>{
+    const result=await run.call(statement);if(/^UPDATE document_jobs SET status='running',attempt_count=attempt_count\+1,/u.test(statement.sql)){claims++;result.success=false;}return result;
+  };return statement;};
+  db.prepare=sql=>wrap(prepare.call(db,sql));
+  try{
+    const response=await state.explicitMemoryPost(),body=await response.json();assert.equal(response.status,202,JSON.stringify(body));assert.equal(body.memory,undefined);assert.equal(body.noAutomaticRetry,true);
+    assert.equal(claims,1);
+    for(const invoke of [state.explicitMemoryPost,state.explicitMemoryRead,()=>state.request('/api/document-jobs',{headers:state.owner})]){
+      const repeated=await invoke();assert.ok([200,202].includes(repeated.status),await repeated.clone().text());assert.equal((await repeated.json()).memory,undefined);
+    }
+    const passiveRun=await state.request('/api/document-jobs/'+state.explicitMemoryId+'/run',json({},state.owner));
+    assert.equal(passiveRun.status,409);assert.equal((await passiveRun.json()).error,'memory_job_recovery_only');
+    await state.drainBackground();assert.equal(claims,1);assert.equal(state.calls.length,0);
+    assert.equal(state.sqlite.prepare('SELECT COUNT(*) AS n FROM memory_document_job_answer_origins').get().n,0);
+  }finally{db.prepare=prepare;}
+});
+
+test('explicit Chat Studio memory: lost publication acknowledgement is recovered through the exact native reader without republishing',{timeout:60000},async t=>{
+  const state=await explicitChatMemoryFixture(t),db=state.env.DB,batch=db.batch;let publications=0;
+  db.batch=async statements=>{const result=await batch.call(db,statements);if(statements.some(statement=>/^INSERT INTO memory_document_job_answer_origins\(/u.test(statement.sql))){publications++;throw new Error('fixture-lost-memory-publication-ack');}return result;};
+  try{
+    const response=await state.explicitMemoryPost(),body=await response.json();assert.equal(response.status,200,JSON.stringify(body)+' SQL:'+state.controls.lastDatabaseError);assert.ok(body.memory.text);
+    const read=await state.explicitMemoryRead(),recovered=await read.json();assert.equal(read.status,200,JSON.stringify(recovered));assert.equal(recovered.memory.turnId,body.memory.turnId);
+    const duplicate=await state.explicitMemoryPost();assert.equal(duplicate.status,200);assert.equal(publications,1);assert.equal(state.calls.length,0);
+  }finally{db.batch=batch;}
+});
+
+for(const boundary of ['admission','anchor'])test('explicit Chat Studio memory: shared lost '+boundary+' acknowledgement resumes only the exact never-claimed original',{timeout:60000},async t=>{
+  const state=await explicitChatMemoryFixture(t,{shared:true}),db=state.env.DB,batch=db.batch;let lost=0;
+  db.batch=async statements=>{const result=await batch.call(db,statements);const selected=boundary==='admission'
+    ?statements.some(statement=>/^INSERT INTO document_jobs /u.test(statement.sql))
+    :statements.some(statement=>/project_job_anchor_verified/u.test(statement.sql));
+    if(selected&&!lost++){throw new Error('fixture-lost-'+boundary+'-ack');}return result;};
+  try{
+    const first=await state.explicitMemoryPost(),pending=await first.json();assert.equal(first.status,202,JSON.stringify(pending));assert.equal(pending.error,'memory_job_submission_unconfirmed');
+    const original=state.sqlite.prepare('SELECT status,attempt_count FROM document_jobs WHERE job_id=?').get(state.explicitMemoryId);
+    assert.equal(original.status,'queued');assert.equal(original.attempt_count,0);
+    const again=await state.explicitMemoryPost(),body=await again.json();assert.equal(again.status,200,JSON.stringify(body)+' SQL:'+state.controls.lastDatabaseError);assert.ok(body.memory.text);
+    assert.equal(state.sqlite.prepare('SELECT COUNT(*) AS n FROM memory_document_job_answer_origins').get().n,1);
+    assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM events WHERE type='ProjectDocumentJobQueued' AND json_extract(payload,'$.job_id')=?").get(state.explicitMemoryId).n,1);
+    assert.equal(state.calls.length,0);
+  }finally{db.batch=batch;}
+});
+
+test('explicit Chat Studio memory: redaction keeps uncertain and result-only origins fenced from ordinary queue claims',{timeout:60000},async t=>{
+  const state=await explicitChatMemoryFixture(t),response=await state.explicitMemoryPost();assert.equal(response.status,200,await response.clone().text());
+  const before=adaptiveReentryFinancialState(state),{EXPIRED_DOCUMENT_JOB_REDACTION_SQL}=queuedJobMemoryApi;
+  state.sqlite.prepare("UPDATE document_jobs SET request_json='{}',status='running',lease_expires_at='2000-01-01T00:00:00.000Z',expires_at='2000-01-01T00:00:00.000Z' WHERE job_id=?").run(state.explicitMemoryId);
+  state.sqlite.prepare('UPDATE document_jobs SET '+EXPIRED_DOCUMENT_JOB_REDACTION_SQL+' WHERE job_id=?').run(state.explicitMemoryId);
+  const redacted=state.sqlite.prepare('SELECT * FROM document_jobs WHERE job_id=?').get(state.explicitMemoryId);
+  assert.deepEqual(JSON.parse(redacted.request_json),{memoryMode:'recall'});
+  const native=await nativeMemoryPrepare(state);const user=native.binding.scope?{...native.principal,streamId:native.binding.streamId,projectExecution:native.binding.scope}:native.principal;
+  await runDocumentJob(state.env,user,state.explicitMemoryId);
+  const retry=await state.request('/api/document-jobs/'+state.explicitMemoryId+'/retry',json({},state.owner));assert.equal(retry.status,409);
+  assert.equal(state.sqlite.prepare('SELECT attempt_count FROM document_jobs WHERE job_id=?').get(state.explicitMemoryId).attempt_count,1);
+  assert.deepEqual(adaptiveReentryFinancialState(state),before);assert.equal(state.calls.length,0);
+});
+
+test('explicit Chat Studio memory: a revoked selected-project session cannot reveal a retained original',{timeout:60000},async t=>{
+  const state=await explicitChatMemoryFixture(t,{shared:true}),response=await state.explicitMemoryPost();assert.equal(response.status,200,await response.clone().text());
+  const db=state.env.DB,batch=db.batch;let revoked=0;
+  db.batch=async statements=>{
+    if(!revoked&&statements.some(statement=>/memory_document_job_answer_origins/u.test(statement.sql)&&/^SELECT /u.test(statement.sql))){
+      revoked++;state.sqlite.prepare("UPDATE project_context_sessions SET revoked_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE principal_user_id=?").run(state.current().actor_user_id);
+    }
+    return batch.call(db,statements);
+  };
+  try{const read=await state.explicitMemoryRead(),body=await read.json();assert.equal(read.status,409,JSON.stringify(body));assert.equal(body.memory,undefined);assert.equal(revoked,1);assert.equal(state.calls.length,0);}
+  finally{db.batch=batch;}
+});
+
+test('explicit Chat Studio memory: an unresolved recall does not reuse or block the ordinary creative-chat claim',{timeout:60000},async t=>{
+  const state=await explicitChatMemoryFixture(t),db=state.env.DB,prepare=db.prepare;
+  const wrap=statement=>{const bind=statement.bind,run=statement.run;statement.bind=(...values)=>wrap(bind.call(statement,...values));statement.run=async()=>{
+    const result=await run.call(statement);if(/^UPDATE document_jobs SET status='running',attempt_count=attempt_count\+1,/u.test(statement.sql))result.success=false;return result;
+  };return statement;};
+  db.prepare=sql=>wrap(prepare.call(db,sql));
+  try{const response=await state.explicitMemoryPost();assert.equal(response.status,202,await response.clone().text());}
+  finally{db.prepare=prepare;}
+  const ordinary=await queuedJobMemoryFixture(t,{existingState:state});
+  try{
+    assert.notEqual(ordinary.jobMemoryJobId,state.explicitMemoryId);
+    assert.equal(ordinary.jobMemoryCaptured.claimCount,1);
+    assert.equal(JSON.parse(ordinary.jobMemoryCaptured.running.request_json).memoryMode,undefined);
+    assert.equal(state.sqlite.prepare('SELECT status FROM document_jobs WHERE job_id=?').get(state.explicitMemoryId).status,'running');
+    assert.equal(state.calls.length,0);
+  }finally{await ordinary.jobMemoryStop();}
+});
+
+
+test("native synthetic benchmark router stays disabled without touching account, retention, or provider state", async () => {
+  const env = { DB: { prepare() { assert.fail("default-off benchmark must not access the database"); } },
+    ASSETS: { fetch() { assert.fail("benchmark route must not fall through to assets"); } } };
+  const context = { waitUntil() { assert.fail("benchmark request must not schedule incidental maintenance"); } };
+  for (const [path, method, status] of [["", "GET", 404], ["", "POST", 404], ["/approval", "POST", 404], ["/reconcile", "POST", 403], ["/release-undispatched", "POST", 403]]) {
+    const request = new Request("https://benchmark.example.test/api/internal/memory-benchmark" + path,
+      { method, headers: { origin: "https://benchmark.example.test" } });
+    const response = await worker.fetch(request, env, context);
+    assert.equal(response.status, status);
+    assert.match(response.headers.get("cache-control"), /no-store/u);
+    assert.match((await response.json()).error, /^benchmark_(disabled|not_authorized)$/u);
+  }
+});
+
+
+test("actual scheduled Memory runner requires exact scheduling admission and preserves activity gating", async t => {
+  const state = await nativeMemoryJobFixture(t);
+  const readRuns = () => state.table("memory_live_runs");
+  const readSources = () => state.table("memory_live_sources");
+  const calls = state.calls.length, financial = adaptiveReentryFinancialState(state);
+  for (const flag of [undefined, "false", "1", "TRUE"]) {
+    if (flag === undefined) delete state.env.FORMA_MEMORY_SCHEDULING_ENABLED;
+    else state.env.FORMA_MEMORY_SCHEDULING_ENABLED = flag;
+    await worker.scheduled({}, state.env);
+    assert.equal(readRuns().length, 0, "ordinary maintenance cannot opt into Memory learning");
+    assert.equal(readSources().length, 0);
+  }
+  await state.send("scheduled-native-source");
+  state.due();
+  state.env.FORMA_MEMORY_SCHEDULING_ENABLED = "true";
+  await worker.scheduled({}, state.env);
+  assert.equal(readRuns().length, 1);
+  assert.equal(readRuns()[0].status, "completed");
+  assert.ok(readSources().length > 0, "actual scheduled entry invokes the admitted native source runner");
+  const sources = readSources(), cursor = state.current().cursor_sequence;
+  state.due();
+  await worker.scheduled({}, state.env);
+  assert.equal(readRuns().length, 2);
+  assert.equal(readRuns()[1].processed, 0, "no new eligible activity cannot manufacture another learning pass");
+  assert.deepEqual(readSources(), sources);
+  assert.equal(state.current().cursor_sequence, cursor);
+  assert.equal(state.calls.length, calls);
+  assert.deepEqual(adaptiveReentryFinancialState(state), financial);
+});
+
+// Production reference-only completed-turn capture. Provider traffic exists only
+// in finite, in-process fake setup of the actual native queued Chat Studio route.
+async function completedConversationCaptureFixture(t,{shared=false,candidate=true,beforeEnrollment}={}){
+  const state=await nativeMemoryJobFixture(t,{shared,beforeEnrollment:async current=>{
+    const {readFile}=await import('node:fs/promises');
+    current.sqlite.exec(await readFile(new URL('../drizzle/0032_memory_structured_conversation_ledger.sql',import.meta.url),'utf8'));
+    if(beforeEnrollment)await beforeEnrollment(current);
+  }});
+  await queuedJobMemorySeed(state,{history:false});
+  if(candidate){
+    const {readFile}=await import('node:fs/promises');
+    state.sqlite.exec('BEGIN');
+    try{state.sqlite.exec(await readFile(new URL('../db/memory-conversation-capture.pending.sql',import.meta.url),'utf8'));state.sqlite.exec('COMMIT');}
+    catch(error){state.sqlite.exec('ROLLBACK');throw error;}
+  }
+  const {publishCompletedConversationReferences}=await import('../worker/memory-completed-turns.ts');
+  const ledger=()=>Object.fromEntries(['memory_structured_conversation_heads','memory_structured_conversation_revisions']
+    .map(table=>[table,state.sqlite.prepare('SELECT * FROM '+table+' ORDER BY rowid').all().map(row=>({...row}))]));
+  const body=()=>{const row=state.sqlite.prepare("SELECT content FROM private_content WHERE content_id=(SELECT current_body_ref FROM memory_structured_conversation_heads WHERE state='active')").get();return row?JSON.parse(row.content):null;};
+  const seed=async(message='A genuine completed source without invented labels.',headers=state.owner)=>{
+    const before=Number(state.sqlite.prepare('SELECT COALESCE(MAX(sequence),0) AS head FROM events WHERE stream_id=?').get('creative:'+state.current().owner_user_id).head);
+    const originalFetch=globalThis.fetch,originalKey=state.env.OPENAI_API_KEY,originalUsers=state.env.FORMA_ASSISTANT_PROVIDER_USER_IDS;
+    let calls=0;state.env.OPENAI_API_KEY='fixture-completed-conversation-only';state.env.FORMA_ASSISTANT_PROVIDER_USER_IDS=headers['oai-authenticated-user-id'];
+    globalThis.fetch=async(url,init)=>{
+      assert.equal(String(url),'https://api.openai.com/v1/responses');assert.equal(init.method,'POST');assert.equal(++calls,1);
+      const request=JSON.parse(init.body);assert.ok(JSON.stringify(request).includes(message));
+      return Response.json({id:'completed-conversation-'+crypto.randomUUID(),model:request.model,
+        output_text:JSON.stringify({reply:'An ordinary final assistant response.',mutations:[],preview_worthy:false,preview_direction:''}),
+        usage:{input_tokens:80,output_tokens:20,total_tokens:100}});
+    };
+    try{
+      const response=await state.request('/api/document-jobs',json({kind:'chat',documentId:'doc-atmosphere',sourceSurface:'chat',payload:{message,livePreview:false}},headers));
+      const result=await response.json();assert.equal(response.status,202,JSON.stringify(result));await state.drainBackground();
+      const job=state.sqlite.prepare('SELECT status FROM document_jobs WHERE job_id=?').get(result.job.jobId);
+      assert.equal(job.status,'completed',state.controls.lastDatabaseError);assert.equal(calls,1);
+    }finally{
+      await state.drainBackground();globalThis.fetch=originalFetch;
+      if(originalKey===undefined)delete state.env.OPENAI_API_KEY;else state.env.OPENAI_API_KEY=originalKey;
+      if(originalUsers===undefined)delete state.env.FORMA_ASSISTANT_PROVIDER_USER_IDS;else state.env.FORMA_ASSISTANT_PROVIDER_USER_IDS=originalUsers;
+    }
+    return state.sqlite.prepare("SELECT event_id,sequence,type,json_extract(payload,'$.content_ref') AS content_ref FROM events WHERE stream_id=? AND sequence>? AND type IN('ChatMessageSent','AssistantReasoned') ORDER BY sequence")
+      .all('creative:'+state.current().owner_user_id,before).map(row=>({...row}));
+  };
+  return Object.assign(state,{capture:()=>publishCompletedConversationReferences(state.env,state.current()),captureLedger:ledger,captureBody:body,seedCapturedTurn:seed});
+}
+for(const shared of [false,true])test('completed conversation capture: '+(shared?'shared':'personal')+' genuine native pairs publish unannotated references and recover idempotently',{timeout:90000},async t=>{
+  const state=await completedConversationCaptureFixture(t,{shared});const first=await state.seedCapturedTurn();
+  const finances=adaptiveReentryFinancialState(state),calls=state.calls.length;
+  assert.deepEqual(await state.capture(),{status:'published',originalCount:2,revision:1},state.controls.lastDatabaseError);
+  const initial=state.captureLedger(),firstExpiry=initial.memory_structured_conversation_heads[0].expires_at;
+  assert.deepEqual(state.captureBody().annotations,[]);assert.equal(state.captureBody().semanticCompleteness,false);
+  assert.deepEqual(state.captureBody().originals.map(row=>row.eventId),first.map(row=>row.event_id));
+  assert.deepEqual(await state.capture(),{status:'unchanged',originalCount:2,revision:1});assert.deepEqual(state.captureLedger(),initial);
+  assert.deepEqual(adaptiveReentryFinancialState(state),finances);assert.equal(state.calls.length,calls);
+  const second=await state.seedCapturedTurn('Second completed source: do not infer a preference.');
+  assert.deepEqual(await state.capture(),{status:'published',originalCount:4,revision:2},state.controls.lastDatabaseError);
+  assert.deepEqual(state.captureBody().originals.map(row=>row.eventId),[...first,...second].map(row=>row.event_id));
+  assert.equal(state.captureLedger().memory_structured_conversation_heads[0].expires_at,firstExpiry);
+  const {prepareNativeMemorySelection,discoverNativeStructuredConversationOriginals}=await import('../worker/memory-live-store.ts');
+  const prepared=await nativeMemoryPrepare(state),selection=await prepareNativeMemorySelection(state.env,prepared);assert.equal(selection?.mode,'structured');
+  const discovered=await discoverNativeStructuredConversationOriginals(state.env,prepared,selection);assert.ok(discovered,state.controls.lastDatabaseError);
+  const {prepareNativeStructuredConversationContext}=await import('../worker/memory-live-context.ts');
+  const context=await prepareNativeStructuredConversationContext(state.env,discovered.enrollment,prepared,discovered.captures);
+  assert.ok(context);assert.equal(context.context.coverage.notSummarized,true);assert.equal(context.context.semanticCompleteness,false);
+  assert.deepEqual(context.context.ledger.annotations,[]);assert.equal(context.context.recentOriginals.length,4);
+  const {nativeStructuredMemoryAssistantReply}=await import('../worker/memory-assistant-reply.ts');
+  for(const locale of ['en','fr','ar','ja']){
+    const reply=nativeStructuredMemoryAssistantReply(context.context,locale);assert.equal(typeof reply,'string',locale);
+    assert.ok(reply.includes('A genuine completed source without invented labels.'));
+    assert.ok(reply.includes('Second completed source: do not infer a preference.'));
+  }
+  const empty=structuredClone(context.context);empty.dependencies.retainedOriginals=[];empty.coverage.retainedOriginalCount=0;
+  assert.equal(nativeStructuredMemoryAssistantReply(empty,'en'),null,'An empty reference ledger cannot masquerade as captured conversation');
+});
+test('completed conversation capture: old schema and every scheduling/consent gate leave storage unchanged',{timeout:90000},async t=>{
+  const state=await completedConversationCaptureFixture(t,{candidate:false});await state.seedCapturedTurn();const before=state.captureLedger();
+  assert.deepEqual(await state.capture(),{status:'schema-unavailable'});assert.deepEqual(state.captureLedger(),before);
+  for(const field of ['learn_enabled','recall_enabled','background_enabled']){
+    state.sqlite.prepare('UPDATE memory_live_enrollments SET '+field+'=0').run();assert.deepEqual(await state.capture(),{status:'disabled'});
+    state.sqlite.prepare('UPDATE memory_live_enrollments SET '+field+'=1').run();
+  }
+  for(const name of ['FORMA_MEMORY_ENABLED','FORMA_MEMORY_SCHEDULING_ENABLED']){
+    const old=state.env[name];state.env[name]='1';assert.deepEqual(await state.capture(),{status:'disabled'});state.env[name]=old;
+  }
+  const old=state.env.FORMA_MEMORY_USER_IDS;state.env.FORMA_MEMORY_USER_IDS='different-user';assert.deepEqual(await state.capture(),{status:'disabled'});state.env.FORMA_MEMORY_USER_IDS=old;
+  assert.deepEqual(state.captureLedger(),before);
+});
+test('completed conversation capture: a lost append acknowledgement is recovered by native read without another revision',{timeout:90000},async t=>{
+  const state=await completedConversationCaptureFixture(t);await state.seedCapturedTurn();const batch=state.env.DB.batch;let lost=0;
+  state.env.DB.batch=async statements=>{
+    const results=await batch.call(state.env.DB,statements);
+    if(!lost&&statements.some(statement=>/^INSERT INTO memory_structured_conversation_heads\(/u.test(statement.sql))){lost++;throw new Error('fixture committed ACK lost');}
+    return results;
+  };
+  assert.deepEqual(await state.capture(),{status:'unavailable'});assert.equal(lost,1,state.controls.lastDatabaseError);
+  state.env.DB.batch=batch;const committed=state.captureLedger();assert.equal(committed.memory_structured_conversation_revisions.length,1);
+  assert.deepEqual(await state.capture(),{status:'unchanged',originalCount:2,revision:1});assert.deepEqual(state.captureLedger(),committed);
+});
+test('completed conversation capture: revoked source or enrollment never falls back, drops dependencies or renews a ledger',{timeout:90000},async t=>{
+  const state=await completedConversationCaptureFixture(t);const source=await state.seedCapturedTurn();assert.equal((await state.capture()).status,'published');
+  const before=state.captureLedger();state.sqlite.prepare('UPDATE private_content SET redacted_at=? WHERE content_id=?').run(new Date().toISOString(),source[0].content_ref);
+  assert.deepEqual(await state.capture(),{status:'unavailable'});assert.deepEqual(state.captureLedger(),before);
+  state.sqlite.prepare('DELETE FROM memory_live_enrollments').run();
+  const {publishCompletedConversationReferences}=await import('../worker/memory-completed-turns.ts');
+  assert.deepEqual(await publishCompletedConversationReferences(state.env,state.nativeEnrollment),{status:'unavailable'});assert.deepEqual(state.captureLedger(),before);
+});
+test('completed conversation capture: unrelated native assistant turns are excluded without being reclassified as queued originals',{timeout:90000},async t=>{
+  const state=await completedConversationCaptureFixture(t);const first=await state.seedCapturedTurn();await state.send('capture-unrelated-assistant');const second=await state.seedCapturedTurn('A second original after a distinct source contract.');
+  assert.deepEqual(await state.capture(),{status:'published',originalCount:4,revision:1},state.controls.lastDatabaseError);
+  assert.deepEqual(state.captureBody().originals.map(row=>row.eventId),[...first,...second].map(row=>row.event_id));
+});
+test('completed conversation capture: frame capacity is explicit and does not publish a truncated prefix',{timeout:90000},async t=>{
+  const state=await completedConversationCaptureFixture(t);
+  for(let index=0;index<3;index++){await state.seedCapturedTurn('Capacity source '+index);if(index<2)await state.send('capture-gap-'+index);}
+  const before=state.captureLedger();assert.deepEqual(await state.capture(),{status:'capacity'});assert.deepEqual(state.captureLedger(),before);
+});
+test('completed conversation capture: scheduled catch-up is not hidden behind an already advanced extractive cursor',{timeout:90000},async t=>{
+  const state=await completedConversationCaptureFixture(t);await state.seedCapturedTurn();
+  const head=state.sqlite.prepare('SELECT MAX(sequence) AS head FROM events WHERE stream_id=?').get('creative:'+state.current().owner_user_id).head;
+  state.sqlite.prepare('UPDATE memory_live_enrollments SET cursor_sequence=?,last_local_day=NULL,last_admitted_at=NULL').run(head);state.due();
+  const result=await state.run();assert.equal(result.status,'completed',JSON.stringify(result)+' '+state.controls.lastDatabaseError);
+  assert.deepEqual(result.conversationCaptures,[{status:'published',originalCount:2,revision:1}]);assert.equal(result.processed,0);
+  const before=state.captureLedger();state.due();const again=await state.run();assert.equal(again.processed,0);assert.deepEqual(state.captureLedger(),before);
+});
+test('completed conversation capture: empty and unsupported-only scopes retain no invented ledger',{timeout:90000},async t=>{
+  const state=await completedConversationCaptureFixture(t);assert.deepEqual(await state.capture(),{status:'no-source'});
+  await state.send('capture-unsupported-only');assert.deepEqual(await state.capture(),{status:'no-source'});
+  assert.deepEqual(state.captureLedger().memory_structured_conversation_heads,[]);
+  state.due();const run=await state.run();assert.equal(run.status,'completed',JSON.stringify(run)+' '+state.controls.lastDatabaseError);
+  assert.equal(run.processed,1);assert.deepEqual(run.conversationCaptures,[{status:'no-source'}]);
+});
+test('completed conversation capture: another actor candidate in the shared document cannot contaminate discovery',{timeout:90000},async t=>{
+  const state=await completedConversationCaptureFixture(t,{shared:true,beforeEnrollment:async state=>{
+  let peer={'oai-authenticated-user-id':'capture-peer','oai-authenticated-user-email':'capture-peer@example.test'};
+  assert.equal((await state.request('/api/session',{headers:peer})).status,200);
+  state.sqlite.prepare('UPDATE users SET consent_version=? WHERE user_id=?').run('pilot-2026-08-10','capture-peer');
+  const invited=await state.request(`/api/workspaces/${state.organizationId}/members`,json({email:'capture-peer@example.test',role:'member'},state.owner));
+  assert.equal(invited.status,201);const invitation=await invited.json();
+  const accepted=await state.request(`/api/workspaces/${state.organizationId}/invitations/${invitation.invitationId}/accept`,json({token:new URL(invitation.invitationUrl).searchParams.get('token')},peer));assert.equal(accepted.status,200);
+  assert.equal((await state.request(`/api/workspaces/${state.organizationId}/projects/${state.projectAccessId}/members`,json({userId:'capture-peer',role:'editor'},state.owner))).status,201);
+  const opened=await state.request(`/api/workspaces/${state.organizationId}/projects/${state.projectAccessId}/context`,{method:'POST',headers:peer});assert.equal(opened.status,200);
+  state.capturePeer={...peer,cookie:opened.headers.get('set-cookie')?.split(';')[0]??''};
+  }});
+  await state.seedCapturedTurn('A different authorized actor private conversation.',state.capturePeer);
+  const own=await state.seedCapturedTurn('The enrolled actor genuine original.');
+  assert.equal((await nativeMemoryPrepare(state)).principal.access.permissionEpoch,state.current().permission_epoch,'Adding a member must not silently invalidate this test enrollment');
+  assert.deepEqual(await state.capture(),{status:'published',originalCount:2,revision:1},state.controls.lastDatabaseError);
+  assert.deepEqual(state.captureBody().originals.map(row=>row.eventId),own.map(row=>row.event_id));
+});
+test('completed conversation capture: capacity is partial evidence, not a stall of existing extractive learning',{timeout:90000},async t=>{
+  const state=await completedConversationCaptureFixture(t);
+  for(let index=0;index<3;index++){await state.seedCapturedTurn('Separated source '+index);if(index<2)await state.send('capture-independent-gap-'+index);}
+  state.due();const result=await state.run();assert.equal(result.status,'partial',JSON.stringify(result)+' '+state.controls.lastDatabaseError);
+  assert.equal(result.processed,2);assert.equal(result.failed,1);assert.deepEqual(result.conversationCaptures,[{status:'capacity'}]);
+  assert.equal(state.current().failure_code,'conversation-capacity');assert.ok(state.current().cursor_sequence>0);
+  assert.deepEqual(state.captureLedger().memory_structured_conversation_heads,[]);
+  assert.equal(state.table('memory_live_sources').length,2);
+});
+test('completed conversation capture: background consent revoked at append rolls back publication',{timeout:90000},async t=>{
+  const state=await completedConversationCaptureFixture(t);await state.seedCapturedTurn();const batch=state.env.DB.batch;let revoked=0;
+  state.env.DB.batch=async statements=>{
+    if(!revoked&&statements.some(statement=>/^INSERT INTO memory_structured_conversation_heads\(/u.test(statement.sql))){revoked++;
+      state.sqlite.prepare('UPDATE memory_live_enrollments SET background_enabled=0').run();}
+    return batch.call(state.env.DB,statements);
+  };
+  assert.deepEqual(await state.capture(),{status:'unavailable'});state.env.DB.batch=batch;
+  assert.equal(revoked,1);assert.deepEqual(state.captureLedger().memory_structured_conversation_heads,[]);
+  assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS count FROM private_content WHERE kind='memory-structured-ledger'").get().count,0);
+});
+test('completed conversation capture: exact twelve-pair bound succeeds and thirteen never discards the existing prefix',{timeout:90000},async t=>{
+  const state=await completedConversationCaptureFixture(t);
+  for(let index=0;index<12;index++)await state.seedCapturedTurn('Exact boundary source '+index);
+  assert.deepEqual(await state.capture(),{status:'published',originalCount:24,revision:1},state.controls.lastDatabaseError);
+  const before=state.captureLedger();await state.seedCapturedTurn('Beyond the original-reference bound.');
+  assert.deepEqual(await state.capture(),{status:'capacity'});assert.deepEqual(state.captureLedger(),before);
+});
+test('completed conversation capture: optional candidate schema faults do not block independent extractive work',{timeout:90000},async t=>{
+  const state=await completedConversationCaptureFixture(t);await state.send('capture-schema-independent');
+  state.sqlite.exec('CREATE INDEX fixture_unqualified_capture_index ON memory_structured_conversation_heads(document_id)');state.due();
+  const result=await state.run();assert.equal(result.status,'partial',JSON.stringify(result)+' '+state.controls.lastDatabaseError);
+  assert.equal(result.processed,1);assert.equal(result.failed,1);assert.deepEqual(result.conversationCaptures,[{status:'unavailable'}]);
+  assert.equal(state.current().failure_code,'conversation-schema-unavailable');assert.equal(state.table('memory_live_sources').length,1);
+  assert.deepEqual(state.captureLedger().memory_structured_conversation_heads,[]);
+});
+for(const shared of [false,true])test('completed conversation capture: '+(shared?'shared':'personal')+' native forget retires reference-only private storage',{timeout:90000},async t=>{
+  const state=await completedConversationCaptureFixture(t,{shared});await state.seedCapturedTurn();assert.equal((await state.capture()).status,'published');
+  const before=state.current(),financial=adaptiveReentryFinancialState(state);
+  const response=await state.handleLiveMemory(new Request('http://localhost/api/memory/settings?id='+encodeURIComponent(before.enrollment_id),
+    {...json({confirmation:'FORGET_MY_MEMORY',revision:before.revision},state.owner),method:'DELETE'}),state.env,'settings');
+  const result=await response.json();assert.equal(response.status,200,JSON.stringify(result)+' '+state.controls.lastDatabaseError);
+  assert.ok(result.erased===true||result.memoryWithdrawn===true);assert.equal(state.current().learn_enabled,0);assert.equal(state.current().recall_enabled,0);
+  assert.deepEqual(await state.capture(),{status:'disabled'});assert.deepEqual(adaptiveReentryFinancialState(state),financial);
+  const retained=state.sqlite.prepare("SELECT count(*) AS count FROM private_content WHERE kind='memory-structured-ledger' AND redacted_at IS NULL AND content!=''").get().count;
+  assert.equal(retained,0);assert.equal(state.captureLedger().memory_structured_conversation_heads[0].state,'retired');
+});
+for(const shared of [false,true])test('completed conversation capture: '+(shared?'shared':'personal')+' actual explicit Chat Studio recall consumes the zero-annotation ledger',{timeout:90000},async t=>{
+  const state=await completedConversationCaptureFixture(t,{shared});await state.seedCapturedTurn();assert.equal((await state.capture()).status,'published');
+  const {readFile}=await import('node:fs/promises');state.sqlite.exec(await readFile(new URL('../drizzle/0034_memory_document_job_origins.sql',import.meta.url),'utf8'));
+  const financial=adaptiveReentryFinancialState(state),calls=state.calls.length,requestId=crypto.randomUUID();
+  const response=await state.request('/api/document-jobs',json({kind:'chat',sourceSurface:'chat',documentId:'doc-atmosphere',payload:{memoryMode:'recall',requestId,message:'Recall the captured original conversation.',locale:'en'}},state.owner));
+  const body=await response.json();assert.equal(response.status,200,JSON.stringify(body)+' '+state.controls.lastDatabaseError);
+  assert.equal(body.memory.version,'native-document-job-memory-v1');assert.match(body.memory.text,/no summary or inferred declarations/u);
+  assert.match(body.memory.text,/A genuine completed source without invented labels\./u);assert.equal(body.noAutomaticRetry,true);
+  assert.deepEqual(adaptiveReentryFinancialState(state),financial);assert.equal(state.calls.length,calls);
+  const again=await state.capture();assert.deepEqual(again,{status:'unchanged',originalCount:2,revision:1},'Memory-derived recall must not become an original turn');
+});

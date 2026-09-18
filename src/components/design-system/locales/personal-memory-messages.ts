@@ -1,5 +1,8 @@
 export const FORMA_PERSONAL_MEMORY_MESSAGES = {
   en: {
+    "memory.live.jobRecallCheck": "Check this recall request",
+    "memory.live.jobRecallRetry": "Retry this same recall request",
+    "memory.live.jobRecallDismiss": "Dismiss recalled view",
     "memory.live.profileHeading": "Document palette choices",
     "memory.live.profileIntro": "Organize explicitly authored hex-color choices marked prefer, avoid or prohibit in this document. This does not infer your personality, taste or preferences beyond those statements, or create a global or cross-document profile.",
     "memory.live.profileManual": "Separate permission is required. Inspection is manual; background processing is off. Opening this section does not load settings or enable anything.",
@@ -219,6 +222,9 @@ export const FORMA_PERSONAL_MEMORY_MESSAGES = {
     "memory.live.reminder": "Saved permission, rollout availability, and a completed review are different states. Scheduling delivery is not yet verified."
   },
   fr: {
+    "memory.live.jobRecallCheck": "Vérifier cette demande de rappel",
+    "memory.live.jobRecallRetry": "Réessayer cette même demande de rappel",
+    "memory.live.jobRecallDismiss": "Fermer la vue du rappel",
     "memory.live.profileHeading": "Choix de palette du document",
     "memory.live.profileIntro": "Organisez les choix explicites de couleurs hexadécimales indiqués comme à privilégier, à éviter ou à proscrire dans ce document. Cela ne déduit ni votre personnalité, ni vos goûts, ni vos préférences au-delà de ces déclarations, et ne crée aucun profil global ou commun à plusieurs documents.",
     "memory.live.profileManual": "Une autorisation distincte est requise. La consultation est manuelle ; le traitement en arrière-plan est désactivé. Ouvrir cette section ne charge aucun réglage et n’active rien.",
@@ -438,6 +444,9 @@ export const FORMA_PERSONAL_MEMORY_MESSAGES = {
     "memory.live.reminder": "Une autorisation enregistrée, la disponibilité du déploiement et un examen terminé sont des états différents. L’exécution de la planification n’est pas encore vérifiée."
   },
   ar: {
+    "memory.live.jobRecallCheck": "تحقّق من طلب الاسترجاع هذا",
+    "memory.live.jobRecallRetry": "أعِد محاولة طلب الاسترجاع نفسه",
+    "memory.live.jobRecallDismiss": "إغلاق عرض الذاكرة المسترجَعة",
     "memory.live.profileHeading": "اختيارات لوحة ألوان المستند",
     "memory.live.profileIntro": "نظّم اختيارات الألوان السداسية المكتوبة صراحةً في هذا المستند والمحددة للتفضيل أو التجنب أو المنع. لا يستنتج ذلك شخصيتك أو ذوقك أو تفضيلات تتجاوز هذه العبارات، ولا ينشئ ملفًا عامًا أو مشتركًا بين المستندات.",
     "memory.live.profileManual": "يلزم إذن منفصل. الفحص يدوي والمعالجة في الخلفية معطلة. فتح هذا القسم لا يحمّل الإعدادات ولا يفعّل أي شيء.",
@@ -657,6 +666,9 @@ export const FORMA_PERSONAL_MEMORY_MESSAGES = {
     "memory.live.reminder": "الإذن المحفوظ، وتوافر الميزة ضمن النشر، واكتمال المراجعة حالات مختلفة. لم يُتحقق بعد من تنفيذ الجدولة."
   },
   ja: {
+    "memory.live.jobRecallCheck": "この呼び出しリクエストを確認",
+    "memory.live.jobRecallRetry": "同じ呼び出しリクエストを再試行",
+    "memory.live.jobRecallDismiss": "呼び出した表示を閉じる",
     "memory.live.profileHeading": "ドキュメントのパレット指定",
     "memory.live.profileIntro": "このドキュメントに明記された、優先・回避・禁止の16進カラー指定を整理します。記述の範囲を超えて性格、センス、好みを推測したり、全体またはドキュメント横断のプロフィールを作成したりすることはありません。",
     "memory.live.profileManual": "別途許可が必要です。確認は手動で行い、バックグラウンド処理は無効です。このセクションを開いても、設定の読み込みや有効化は行われません。",

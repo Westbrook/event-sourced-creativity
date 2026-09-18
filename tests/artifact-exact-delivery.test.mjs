@@ -1,16 +1,17 @@
+import "./helpers/register-output-source-imports.mjs";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { DatabaseSync } from "node:sqlite";
 import { readFileSync } from "node:fs";
 import { stripTypeScriptTypes } from "node:module";
 import ts from "typescript";
-import { artifactApprovalMatches, artifactDeliveryState } from "../src/model/artifact-delivery.ts";
-import { artifactFocusRoute, artifactFocusOptionsFromRoute } from "../src/model/routes.ts";
-import { artifactExactContentGuard } from "../worker/artifact-review.ts";
-import { sourceRightsDispatchGuard } from "../worker/context-package-rights.ts";
-import { documentArtifactRevision } from "../src/model/document-artifacts.ts";
-import { creativeActionSourceRevision } from "../src/model/workspace-intelligence.ts";
-import { ARTIFACT_DELIVERY_MESSAGES } from "../src/components/design-system/locales/artifact-delivery-messages.ts";
+const { artifactApprovalMatches, artifactDeliveryState } = await import("../src/model/artifact-delivery.ts");
+const { artifactFocusRoute, artifactFocusOptionsFromRoute } = await import("../src/model/routes.ts");
+const { artifactExactContentGuard } = await import("../worker/artifact-review.ts");
+const { sourceRightsDispatchGuard } = await import("../worker/context-package-rights.ts");
+const { documentArtifactRevision, parseDocumentArtifactContent } = await import("../src/model/document-artifacts.ts");
+const { creativeActionSourceRevision } = await import("../src/model/workspace-intelligence.ts");
+const { ARTIFACT_DELIVERY_MESSAGES } = await import("../src/components/design-system/locales/artifact-delivery-messages.ts");
 import { createSceneStoreHost, readWorkspaceEvents, financial } from "./helpers/event-source-retirement-fixture.mjs";
 import { actualClassDependencies } from "./helpers/actual-class-dependencies.mjs";
 
@@ -234,29 +235,31 @@ const openingMethods=actualClassMembers(componentSource,"DocumentArtifacts",open
 // Production methods remain verbatim; only their former lexical eval inputs
 // become explicit dependencies visible to both the harness and static analysis.
 const fixtureClass=(source,bindings)=>new Function(...Object.keys(bindings),'"use strict"; return '+stripTypeScriptTypes(source)+";")(...Object.values(bindings));
-function viewerFixture(){
-  const trace=[],state={bytes,events:[...base],active:true,documentId:"document",beforeUpdate:()=>{}};
+function viewerFixture({personal=false}={}){
+  const trace=[],state={bytes,events:[...base],active:true,documentId:"document",projectId:"project",beforeUpdate:()=>{},afterModal:()=>{},observations:[]};
   class HTMLElement{isConnected=true;focus(){trace.push("focus");}}
   const document={activeElement:new HTMLElement()};
   const dialog={open:false,close(){this.open=false;},setAttribute(){},addEventListener(){}};
-  const ensureModalDialog=target=>{target.open=true;trace.push("modal");};
+  const ensureModalDialog=target=>{target.open=true;trace.push("modal");state.afterModal(target);};
   // Retained exact bytes are the fixture input; transport must stay unused.
   const rejectIO=operation=>{trace.push("unexpected:"+operation);throw new Error("Unexpected viewer fixture I/O: "+operation);};
   const store=Object.assign(new SourceOwnership(),{captureAuthorizationScope:()=>({key:"authority",shared:true}),authorizationScopeActive:()=>state.active,
-    projection:{get:()=>({documentId:"document",libraryArtifacts:[artifact]})},events:{get:()=>state.events},content:{get:()=>({content:state.bytes})},
-    session:{get:()=>({projectContext:{permissions:["project.read","project.review.approve"]}})},ui:{instrumentation:false},ensurePrivateContent:async contentRef=>rejectIO("content:"+contentRef)});
+    projection:{get:()=>({documentId:"document",projectId:state.projectId,documents:[{id:"document",projectId:state.projectId}],libraryArtifacts:[artifact]})},events:{get:()=>state.events},content:{get:()=>({content:state.bytes})},
+    route:{get:()=>"/document"},subscribe:()=>()=>{},session:{get:()=>personal?{user:{userId:"author"}}:({user:{userId:"author"},projectContext:{permissions:["project.read","project.review.approve"]}})},ui:{instrumentation:personal},
+    hot:async receipt=>state.observations.push(receipt),ensurePrivateContent:async contentRef=>rejectIO("content:"+contentRef)});
   const tree=ts.createSourceFile("document-artifacts.ts",componentSource,ts.ScriptTarget.Latest,true,ts.ScriptKind.TS);
   const parsed={tree,host:tree.statements.find(node=>ts.isClassDeclaration(node)&&node.name?.text==="DocumentArtifacts")};
   const dependencies=actualClassDependencies(parsed,openingMethods,[...openingNames,"#revealWorkbenchPane","#viewDialog","#createDialog","#showArtifactIntent"]);
   const Probe=fixtureClass(`(class {
     ${dependencies}
     store=store;ownerDocument=document;documentId="document";isConnected=true;
-    get updateComplete(){return Promise.resolve().then(()=>state.beforeUpdate());}requestUpdate(){}
+    get updateComplete(){return Promise.resolve().then(()=>state.beforeUpdate());}requestUpdate(){}closest(){return null;}
     async #revealWorkbenchPane(){}
     #viewDialog(){return dialog;}#createDialog(){return null;}async #showArtifactIntent(_artifact,intent){trace.push("intent:"+intent);}
     current(){return this.#viewerCurrent?.();}
+    replaceViewer(){this.#viewerCurrent=()=>true;}
     ${openingMethods}
-  })`,{state,trace,dialog,store,document,HTMLElement,ensureModalDialog,documentArtifactRevision,fetch:async input=>rejectIO(String(input))});
+  })`,{state,trace,dialog,store,document,HTMLElement,ensureModalDialog,documentArtifactRevision,parseDocumentArtifactContent,fetch:async input=>rejectIO(String(input))});
   return{host:new Probe(),state,trace,dialog};
 }
 
@@ -267,6 +270,30 @@ test("the real viewer opening transaction refuses another revision or hash witho
   const f=viewerFixture();
   assert.equal(await f.host.openArtifactById("artifact",{expectedRevision:0,expectedContentSha256:hash,intent:"review"}),true);
   assert.deepEqual(f.trace,["modal","intent:review"]);
+});
+
+test("personal viewer observations capture the verified revision and bytes only after opening",async()=>{
+  const f=viewerFixture({personal:true});
+  assert.equal(await f.host.openArtifactById("artifact",{expectedRevision:0,expectedContentSha256:hash,intent:"review"}),true);
+  assert.equal(f.state.observations.length,1);
+  assert.equal(f.state.observations[0].type,"DocumentArtifactViewed");
+  assert.deepEqual({project_id:f.state.observations[0].payload.project_id,artifact_id:f.state.observations[0].payload.artifact_id,document_id:f.state.observations[0].payload.document_id,
+    artifact_revision:f.state.observations[0].payload.artifact_revision,content_sha256:f.state.observations[0].payload.content_sha256},
+    {project_id:"project",artifact_id:"artifact",document_id:"document",artifact_revision:0,content_sha256:hash});
+  const moved=viewerFixture({personal:true});
+  moved.state.beforeUpdate=()=>{moved.state.bytes=bytes+" changed";};
+  await assert.rejects(moved.host.openArtifactById("artifact",{intent:"review"}),/requested output changed before it opened/u);
+  assert.equal(moved.state.observations.length,0,"a content change while opening has no observation");
+  for(const change of [f=>{f.dialog.open=false;},f=>{f.state.bytes=bytes+" changed after modal";},
+    f=>{f.state.events.push(event(3,"DocumentArtifactEdited",{artifact_id:"artifact"},"user:author"));},
+    f=>{f.state.active=false;},f=>{f.state.projectId="another-project";},f=>{f.host.replaceViewer();}]){
+    const retired=viewerFixture({personal:true});retired.state.afterModal=()=>change(retired);
+    await retired.host.openArtifactById("artifact",{intent:"review"});
+    assert.equal(retired.state.observations.length,0,"closed, replaced or changed viewers have no observation");
+  }
+  const missing=viewerFixture({personal:true});missing.state.bytes=undefined;
+  await assert.rejects(missing.host.openArtifactById("artifact",{intent:"review"}),/Unexpected viewer fixture I\/O/u);
+  assert.equal(missing.state.observations.length,0,"unavailable exact content has no observation");
 });
 
 test("a successful exact opening keeps authorized Save/Restore editable but loses authority immediately",async()=>{

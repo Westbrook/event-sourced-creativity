@@ -114,9 +114,11 @@ import { nativeMemoryCanonical, nativeMemoryFingerprint, nativeMemoryAnswerFinge
 import { DOCUMENT_JOB_ORIGIN_MANIFEST_RECIPE, encodeDocumentJobOriginManifest,
   type DocumentJobOriginManifest, type DocumentJobOriginManifestMaterial } from "./memory-document-job-origin-manifest.ts";
 import { nativeDocumentJobOriginSchema } from "./memory-document-job-origin-schema.ts";
+import { readDocumentJobMemoryOrigin } from "./memory-document-job-origin-reader.ts";
 
 export type DocumentJobRow = {
   output_durable_owner?: number;
+  memory_recall_mode?: number;
   output_slot_id?:string|null;
   /** Private same-transaction Scene continuity receipt; never wire authority. */
   scene_source_version_json?:string|null;
@@ -195,7 +197,7 @@ const PAID_SUBMISSION_TOMBSTONE_SQL=`json_patch(json_object('providerSubmissionP
     'generationReceipt',json_patch(${UNCERTAIN_PRESENTATION_RECEIPT_SQL},json_object('artifact_kind',json_extract(request_json,'$.artifactKind'),'provider',json_extract(result_json,'$.generationReceipt.provider'),'model',json_extract(result_json,'$.generationReceipt.model'),
       'provider_request_status',CASE WHEN ${unresolvedProviderSubmissionSql()} THEN 'submission_unknown' ELSE 'submitted' END,
       'source_transmission_status',CASE WHEN ${unresolvedProviderSubmissionSql()} AND COALESCE(json_extract(result_json,'$.generationReceipt.source_transmission_status'),'')!='transmitted' THEN 'unknown' ELSE 'transmitted' END))))`;
-const REDACTED_DOCUMENT_JOB_REQUEST_SQL=`CASE WHEN json_type(request_json,'$.outputDurable') IS NOT NULL THEN json_set(CASE WHEN ${PAID_SUBMISSION_HOLD_SQL} THEN json_object('artifactKind',json_extract(request_json,'$.artifactKind')) WHEN ${UNCERTAIN_PRESENTATION_SUBMISSION_SQL} THEN json_object('artifactKind','slides') WHEN ${UNCERTAIN_AUDIO_SUBMISSION_SQL} THEN json_object('artifactKind','audio') WHEN ${UNCERTAIN_STORYBOARD_SUBMISSION_SQL} THEN json_object('artifactKind','storyboard') ELSE '{}' END, '$.outputDurable',1) ELSE CASE WHEN ${PAID_SUBMISSION_HOLD_SQL} THEN json_object('artifactKind',json_extract(request_json,'$.artifactKind')) WHEN ${UNCERTAIN_PRESENTATION_SUBMISSION_SQL} THEN json_object('artifactKind','slides') WHEN ${UNCERTAIN_AUDIO_SUBMISSION_SQL} THEN json_object('artifactKind','audio') WHEN ${UNCERTAIN_STORYBOARD_SUBMISSION_SQL} THEN json_object('artifactKind','storyboard') ELSE '{}' END END`;
+const REDACTED_DOCUMENT_JOB_REQUEST_SQL=`CASE WHEN json_type(request_json,'$.memoryMode') IS NOT NULL OR json_type(result_json,'$.memoryDocumentJobOrigin') IS NOT NULL THEN json_object('memoryMode','recall') WHEN json_type(request_json,'$.outputDurable') IS NOT NULL THEN json_set(CASE WHEN ${PAID_SUBMISSION_HOLD_SQL} THEN json_object('artifactKind',json_extract(request_json,'$.artifactKind')) WHEN ${UNCERTAIN_PRESENTATION_SUBMISSION_SQL} THEN json_object('artifactKind','slides') WHEN ${UNCERTAIN_AUDIO_SUBMISSION_SQL} THEN json_object('artifactKind','audio') WHEN ${UNCERTAIN_STORYBOARD_SUBMISSION_SQL} THEN json_object('artifactKind','storyboard') ELSE '{}' END, '$.outputDurable',1) ELSE CASE WHEN ${PAID_SUBMISSION_HOLD_SQL} THEN json_object('artifactKind',json_extract(request_json,'$.artifactKind')) WHEN ${UNCERTAIN_PRESENTATION_SUBMISSION_SQL} THEN json_object('artifactKind','slides') WHEN ${UNCERTAIN_AUDIO_SUBMISSION_SQL} THEN json_object('artifactKind','audio') WHEN ${UNCERTAIN_STORYBOARD_SUBMISSION_SQL} THEN json_object('artifactKind','storyboard') ELSE '{}' END END`;
 const REDACTED_DOCUMENT_JOB_RESULT_SQL=`CASE WHEN ${PAID_SUBMISSION_HOLD_SQL} THEN ${PAID_SUBMISSION_TOMBSTONE_SQL} WHEN ${UNCERTAIN_PRESENTATION_SUBMISSION_SQL} THEN ${UNCERTAIN_PRESENTATION_TOMBSTONE_SQL} WHEN ${UNCERTAIN_AUDIO_SUBMISSION_SQL} THEN ${UNCERTAIN_AUDIO_TOMBSTONE_SQL} WHEN ${UNCERTAIN_STORYBOARD_SUBMISSION_SQL} THEN ${UNCERTAIN_STORYBOARD_TOMBSTONE_SQL} ELSE NULL END`;
 export const EXPIRED_DOCUMENT_JOB_REDACTION_SQL=`request_json=${REDACTED_DOCUMENT_JOB_REQUEST_SQL},result_json=${REDACTED_DOCUMENT_JOB_RESULT_SQL},scene_source_version_json=NULL`;
 const DOCUMENT_JOB_REDACTION_REQUIRED_SQL=`(scene_source_version_json IS NOT NULL OR request_json IS NOT (${REDACTED_DOCUMENT_JOB_REQUEST_SQL}) OR result_json IS NOT (${REDACTED_DOCUMENT_JOB_RESULT_SQL}))`;
@@ -348,6 +350,9 @@ async function anchorProjectJobs(env:WorkerEnv,user:PilotUser,jobs:Array<{jobId:
     for(const job of jobs){
       sameFrame();
       const row=await readJob(env,user.userId,job.jobId);if(!row||row.status!=="queued"&&row.status!=="running")continue;
+      // Recall admission may have committed its exact anchor before an ACK was lost.
+      // Preserve the original for explicit same-ID proof/recovery, never cancel it here.
+      if(documentJobMemoryMarked(row))continue;
       sameFrame();
       const now=new Date().toISOString();
       const changed=await env.DB.prepare(`UPDATE document_jobs SET status='canceled',error_message='project_job_authorization_failed',completed_at=?,lease_expires_at=NULL,notified_at=?,updated_at=? WHERE job_id=? AND owner_id=? AND stream_id=? AND correlation_id=? AND status IN('queued','running') AND NOT (${unsettledProviderSubmissionSql()}) AND NOT EXISTS(SELECT 1 FROM output_operation_slots output_slot JOIN output_provider_calls output_call ON output_call.scope_key=output_slot.scope_key AND output_call.slot_id=output_slot.slot_id WHERE output_slot.job_id=document_jobs.job_id AND output_call.status IN('pending','uncertain'))`)
@@ -1670,7 +1675,7 @@ function serializeJob(row: DocumentJobRow, recoveryBlocker: DocumentJobRow | nul
   const members = Array.isArray(parsed.members) ? parsed.members : [];
   const recovery = queueRecoveryPresentation(row, recoveryBlocker);
   const errorDetail=errorDetailFromResult(parsed);
-  const privateCheckpointKeys=new Set(["scenePolicyStopSummary","providerSubmissions","providerSubmissionProtocol","providerSubmissionLegacyUncertain","presentationCandidates","presentationRecoveryOnly","providerResponseRef","candidateRaw","storyboardSafeRecovery","storyboardRejectedProviderReceipt","adaptiveProviderReceipt","model3dProviderFiles","quote"]);
+  const privateCheckpointKeys=new Set(["scenePolicyStopSummary","providerSubmissions","providerSubmissionProtocol","providerSubmissionLegacyUncertain","presentationCandidates","presentationRecoveryOnly","providerResponseRef","candidateRaw","storyboardSafeRecovery","storyboardRejectedProviderReceipt","adaptiveProviderReceipt","model3dProviderFiles","quote","memoryDocumentJobOrigin"]);
   if(row.kind==="render_document"&&request.artifactKind==="storyboard")for(const key of OUTPUT_STORYBOARD_RETAINED_CHECKPOINT_KEYS)privateCheckpointKeys.add(key);
   if(row.output_slot_id&&row.kind==="render_document"&&request.artifactKind==="video")for(const key of OUTPUT_VIDEO_RETAINED_CHECKPOINT_KEYS)privateCheckpointKeys.add(key);
   if(model3dNativeCheckpoint(request))for(const key of MODEL3D_PRIVATE_CHECKPOINT_KEYS)privateCheckpointKeys.add(key);
@@ -1687,6 +1692,7 @@ function serializeJob(row: DocumentJobRow, recoveryBlocker: DocumentJobRow | nul
   const summarizedResult = detail || !visibleResult ? visibleResult
     : Object.fromEntries(Object.entries(visibleResult).filter(([key]) => !["plannerInput", "videoInputReceipt", "audioInputReceipt", "model3dInputReceipt", "artifactPlan"].includes(key)));
   return {
+    ...(documentJobMemoryMarked(row)?{memoryMode:"recall" as const,noAutomaticRetry:true as const}:{}),
     ...(outputJobIsDurable(row) ? { executionOwner: "durable" as const } : {}),
     jobId: row.job_id, documentId: row.document_id, kind: row.kind, status: row.status, sourceSurface: row.source_surface,
     ...(row.kind==="structure_adaptive"&&typeof request.canvasId==="string"&&request.canvasId?{canvasId:request.canvasId}:{}),
@@ -2168,8 +2174,10 @@ async function queueFollowupPreview(env:WorkerEnv,user:PilotUser,parent:Document
 
 export async function runDocumentJob(env: WorkerEnv, user: PilotUser, jobId: string, verifiedRow?:DocumentJobRow, sponsorAuthority?:SponsorExecutionAuthority) {
   await ensureSchema(env);
-  await ensureOutputRequirementsSchema(env);
   let row=verifiedRow&&verifiedRow.job_id===jobId&&verifiedRow.owner_id===user.userId&&verifiedRow.stream_id===user.streamId?verifiedRow:await readJob(env,user.userId,jobId);if(!row)return row;
+  // Generic/background delivery cannot start an explicit recall request.
+  if(documentJobMemoryMarked(row))return row;
+  await ensureOutputRequirementsSchema(env);
   env = stillImageEnvironment(env, row.source_surface, parseRequest(row));
   if(outputJobIsDurable(row)) await requireOutputDurableBinding(env, row.job_id);
   if(!row.output_slot_id&&!await activeProjectExecution(env,user,row.document_id,jobId)){
@@ -2303,7 +2311,7 @@ export async function runDocumentJob(env: WorkerEnv, user: PilotUser, jobId: str
   // every other workload retain the original account-wide serialization.
   const blocker = await env.DB.prepare(`SELECT candidate.job_id FROM document_jobs candidate
     JOIN document_jobs target ON target.job_id=? AND target.owner_id=? AND target.stream_id=?
-    WHERE candidate.stream_id=target.stream_id AND candidate.kind!='prompt_fan' AND candidate.status IN ('queued','running','committing')
+    WHERE candidate.stream_id=target.stream_id AND json_type(candidate.request_json,'$.memoryMode') IS NULL AND candidate.kind!='prompt_fan' AND candidate.status IN ('queued','running','committing')
       AND NOT (candidate.status='queued' AND candidate.kind='render_document' AND COALESCE(json_extract(candidate.request_json,'$.artifactKind'),'')='slides')
       AND NOT EXISTS(SELECT 1 FROM output_operation_slots output_slot WHERE output_slot.job_id=candidate.job_id AND output_slot.status NOT IN('queued','running'))
       AND (candidate.requested_at<? OR (candidate.requested_at=? AND candidate.job_id<?))
@@ -2338,7 +2346,7 @@ export async function runDocumentJob(env: WorkerEnv, user: PilotUser, jobId: str
     && Boolean(previousCheckpoint.reservationId && previousCheckpoint.costReservationId));
   const now = new Date(); const nowIso = now.toISOString(); const staleBefore = new Date(now.getTime() - DOCUMENT_JOB_STALE_AFTER_MS).toISOString(); const leaseExpiresAt = new Date(now.getTime() + (outputBinding?nativeExecutionPolicy.maximumMilliseconds:DOCUMENT_JOB_LEASE_MS)).toISOString();
   const attemptCorrelationId=settledModel3dRecovery?row.correlation_id:consentedAdaptiveJob(row)?jobId:`${jobId}:attempt:${attempt}`;const foregroundPresentation=isPresentationJob(row);const initialResult={...previousCheckpoint,...(requiresForegroundDocumentExecution(row)?{providerSubmissionProtocol:1}:{}),stage:foregroundPresentation?"compiling":"preparing",progressMessage:foregroundPresentation?attempt>1?"Recovering the interrupted presentation and compiling its authorized document context.":"Compiling the document into the requested presentation.":attempt>1?"Recovering the interrupted operation.":"Preparing the document context."};
-  const claimSql=`UPDATE document_jobs SET status='running',attempt_count=attempt_count+1,correlation_id=?,started_at=COALESCE(started_at,?),lease_expires_at=?,result_json=?,updated_at=? WHERE job_id=? AND owner_id=? AND stream_id=? AND (status='queued' OR (status='running' AND (lease_expires_at<?${outputBinding?'':' OR updated_at<?'}))) AND correlation_id=? AND result_json IS ? AND NOT EXISTS(SELECT 1 FROM document_jobs active WHERE active.stream_id=document_jobs.stream_id AND active.job_id<>document_jobs.job_id AND active.kind!='prompt_fan' AND active.status IN('running','committing')
+  const claimSql=`UPDATE document_jobs SET status='running',attempt_count=attempt_count+1,correlation_id=?,started_at=COALESCE(started_at,?),lease_expires_at=?,result_json=?,updated_at=? WHERE job_id=? AND owner_id=? AND stream_id=? AND (status='queued' OR (status='running' AND (lease_expires_at<?${outputBinding?'':' OR updated_at<?'}))) AND correlation_id=? AND result_json IS ? AND NOT EXISTS(SELECT 1 FROM document_jobs active WHERE active.stream_id=document_jobs.stream_id AND active.job_id<>document_jobs.job_id AND json_type(active.request_json,'$.memoryMode') IS NULL AND active.kind!='prompt_fan' AND active.status IN('running','committing')
     AND NOT (?=1 AND active.kind='render_document' AND COALESCE(json_extract(active.request_json,'$.artifactKind'),'')='video'
       AND ${documentJobProjectSql("document_jobs")}<>''
       AND ${documentJobProjectSql("active")} NOT IN ('',${documentJobProjectSql("document_jobs")})))`;
@@ -2748,7 +2756,7 @@ export async function documentJobPrincipal(env:WorkerEnv,row:DocumentJobRow,curr
 
 async function driveDocumentQueue(env: WorkerEnv, user: PilotUser) {
   for (let count = 0; count < 50; count += 1) {
-    const running = await env.DB.prepare("SELECT * FROM document_jobs WHERE stream_id=? AND json_type(request_json,'$.outputDurable') IS NULL AND kind!='prompt_fan' AND status IN ('running','committing') ORDER BY requested_at ASC,job_id ASC LIMIT 1").bind(user.streamId).first<DocumentJobRow>();
+    const running = await env.DB.prepare("SELECT * FROM document_jobs WHERE stream_id=? AND json_type(request_json,'$.outputDurable') IS NULL AND json_type(request_json,'$.memoryMode') IS NULL AND kind!='prompt_fan' AND status IN ('running','committing') ORDER BY requested_at ASC,job_id ASC LIMIT 1").bind(user.streamId).first<DocumentJobRow>();
     if (running) {
       if (!rowIsStale(running)) return;
       const owner=await documentJobPrincipal(env,running,user);
@@ -2762,7 +2770,7 @@ async function driveDocumentQueue(env: WorkerEnv, user: PilotUser) {
       if (!recovered || recovered.status === "queued" || recovered.status === "running" || recovered.status === "committing") return;
       continue;
     }
-    const next = await env.DB.prepare("SELECT * FROM document_jobs WHERE stream_id=? AND json_type(request_json,'$.outputDurable') IS NULL AND kind!='prompt_fan' AND status='queued' AND NOT EXISTS(SELECT 1 FROM output_operation_slots output_slot WHERE output_slot.job_id=document_jobs.job_id AND output_slot.status NOT IN('queued','running')) AND NOT (kind='render_document' AND COALESCE(json_extract(request_json,'$.artifactKind'),'')='slides') ORDER BY requested_at ASC,job_id ASC LIMIT 1").bind(user.streamId).first<DocumentJobRow>();
+    const next = await env.DB.prepare("SELECT * FROM document_jobs WHERE stream_id=? AND json_type(request_json,'$.outputDurable') IS NULL AND json_type(request_json,'$.memoryMode') IS NULL AND kind!='prompt_fan' AND status='queued' AND NOT EXISTS(SELECT 1 FROM output_operation_slots output_slot WHERE output_slot.job_id=document_jobs.job_id AND output_slot.status NOT IN('queued','running')) AND NOT (kind='render_document' AND COALESCE(json_extract(request_json,'$.artifactKind'),'')='slides') ORDER BY requested_at ASC,job_id ASC LIMIT 1").bind(user.streamId).first<DocumentJobRow>();
     if (!next) return;
     if(requiresForegroundDocumentExecution(next))return;
     const owner=await documentJobPrincipal(env,next,user);
@@ -3094,9 +3102,14 @@ export async function prepareOutputDocumentJob(request: Request, env: WorkerEnv,
 export async function handleDocumentJobs(request: Request, env: WorkerEnv, path = "", context?: WorkerExecutionContext, outputPreparation?: OutputDocumentJobPreparation): Promise<Response> {
   await ensureSchema(env);
   if(path==="adaptive")return handleAdaptiveDocumentJobs(request,env,context);
+  let memoryInput:unknown;
+  if(request.method==="POST"&&!path){try{const input=await request.clone().json() as Record<string,unknown>;
+    if(input?.payload&&typeof input.payload==="object"&&Object.hasOwn(input.payload,"memoryMode"))memoryInput=input;
+  }catch{/* Ordinary malformed-request handling remains below. */}}
+  const memoryHttp=memoryInput!==undefined||new URL(request.url).searchParams.has("memoryMode");
   let sceneInspection=false;
   if(request.method==="POST"&&!path){try{const inspected=await request.clone().json() as {kind?:unknown;payload?:Record<string,unknown>};sceneInspection=inspected.kind==="render_document"&&inspected.payload?.artifactKind==="scene"&&inspected.payload.sceneCostPreview===true;}catch{/* The normal admission parser still rejects malformed input. */}}
-  if(request.method!=="GET"&&!sceneInspection)await ensureOutputRequirementsSchema(env);
+  if(request.method!=="GET"&&!sceneInspection&&memoryInput===undefined&&!path)await ensureOutputRequirementsSchema(env);
   const scoped=hasProjectContextCookie(request);
   const sponsor=outputAdmissionSponsor(outputPreparation?.readScope);
   if(sponsor&&scoped)return Response.json({error:"sponsor_personal_principal_required"},{status:403});
@@ -3105,9 +3118,9 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
     const existing=await readExistingPrincipalRequest(request,env,"creator",{account:"principal"});
     return "kind" in existing?{response:Response.json({error:"sponsor_principal_changed"},{status:403}),user:null}:existing;
   });
-  if(auth.response||!auth.user)return auth.response!;
+  if(auth.response||!auth.user)return memoryHttp?documentJobMemoryDenied("memory_job_unavailable",auth.response?.status??401):auth.response!;
   const principal=auth.user,selected=scoped?await readOutputAdmissionValue(outputPreparation?.readScope,"project-selection",()=>readProjectRequestContext(request,env,principal)):{context:null,response:null};
-  if(selected.response)return selected.response;
+  if(selected.response)return memoryHttp?documentJobMemoryDenied("memory_job_unavailable",selected.response.status):selected.response;
   const project=selected.context;
   assertOutputAdmissionActor(outputPreparation?.readScope,env,principal.userId,project?.organizationId??null,project?.projectAccessId??null);
   const canRequestOutputs=!project||hasCapability(principal,"project.output.request",{organizationId:project.organizationId,projectAccessId:project.projectAccessId});
@@ -3115,8 +3128,22 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
   // neither queue execution nor other output/recovery mutations.
   const readOnlyPlanning=Boolean(project&&!canRequestOutputs&&request.method==="GET"&&(!path||!path.includes("/"))&&hasCapability(principal,"project.read",{organizationId:project.organizationId,projectAccessId:project.projectAccessId}));
   const readOnlyScene=Boolean(sceneInspection&&project&&hasCapability(principal,"project.read",{organizationId:project.organizationId,projectAccessId:project.projectAccessId}));
-  if(!canRequestOutputs&&!readOnlyPlanning&&!readOnlyScene)return Response.json({error:"project_read_only"},{status:403});
+  if(!canRequestOutputs&&!readOnlyPlanning&&!readOnlyScene)return memoryHttp?documentJobMemoryDenied("memory_job_unavailable",403):Response.json({error:"project_read_only"},{status:403});
   const user:PilotUser=project?{...principal,streamId:`creative:${project.ownerUserId}`,projectExecution:{organizationId:project.organizationId,projectAccessId:project.projectAccessId,projectId:project.projectId,ownerUserId:project.ownerUserId,actorUserId:principal.userId}}:principal;
+  if(memoryInput!==undefined)return admitDocumentJobMemory(request,env,user,memoryInput,project?.contextId??null);
+  if(path){
+    const memoryId=decodeURIComponent(path.split("/")[0]);
+    const target=await readJob(env,user.userId,memoryId);
+    if(target&&documentJobMemoryMarked(target)){
+      if(target.stream_id!==user.streamId||!await activeProjectExecution(env,user,target.document_id,target.job_id))return documentJobMemoryDenied("memory_job_unavailable");
+      if(request.method!=="GET"||path.includes("/"))return documentJobMemoryDenied("memory_job_recovery_only");
+      const mode=new URL(request.url).searchParams.get("memoryMode");
+      if(mode!==null&&mode!=="recall")return documentJobMemoryDenied("memory_mode_invalid",400);
+      return documentJobMemoryResponse(env,user,target,mode==="recall",project?.contextId??null);
+    }
+    if(new URL(request.url).searchParams.has("memoryMode"))return documentJobMemoryDenied("memory_job_unavailable",404);
+  }
+  if(request.method!=="GET"&&!sceneInspection&&path)await ensureOutputRequirementsSchema(env);
   if(path==='still-reconcile'){
     const headers={'cache-control':'private, no-store'};
     if(request.method!=='POST')return Response.json({error:'method_not_allowed'},{status:405,headers});
@@ -3390,6 +3417,7 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
     const readGuard=executionAdmissionGuard(principal,readBinding,null);
     const canvasReadable=hasCapability(principal,"project.canvas.use",{organizationId:project.organizationId,projectAccessId:project.projectAccessId});
     const rows=await env.DB.prepare(`SELECT job.job_id,job.owner_id,job.stream_id,job.document_id,job.kind,job.status,job.source_surface,job.correlation_id,job.requested_sequence,
+      json_type(job.request_json,'$.memoryMode') IS NOT NULL AS memory_recall_mode,
       json_object('documentRevision',json_extract(job.request_json,'$.documentRevision'),'requestKey',json_extract(job.request_json,'$.requestKey'),
         'sourcePreviewId',json_extract(job.request_json,'$.sourcePreviewId'),'promptTechnique',json_extract(job.request_json,'$.promptTechnique'),
         'promptFanId',json_extract(job.request_json,'$.promptFanId'),'parentJobId',json_extract(job.request_json,'$.parentJobId'),
@@ -3418,7 +3446,7 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
       ORDER BY CASE WHEN job.status IN('queued','running','committing') THEN 0 ELSE 1 END,job.requested_at DESC LIMIT 120`)
       .bind(project.ownerUserId,principal.userId,user.streamId,project.projectAccessId,project.organizationId,project.projectId,Number(readOnlyPlanning),Number(canvasReadable),requestedId,requestedId,Number(activeOnly),document,document,now,...readGuard.bindings,requestedId).all<DocumentJobRow>();
     if(path&&!rows.results.length)return Response.json({error:"job_not_found"},{status:404});
-    const activeBlocker=[...rows.results].filter((row)=>row.kind!=="prompt_fan"&&["running","committing"].includes(row.status)).sort((left,right)=>left.requested_at.localeCompare(right.requested_at)||left.job_id.localeCompare(right.job_id))[0]??null;
+    const activeBlocker=[...rows.results].filter((row)=>!documentJobMemoryMarked(row)&&row.kind!=="prompt_fan"&&["running","committing"].includes(row.status)).sort((left,right)=>left.requested_at.localeCompare(right.requested_at)||left.job_id.localeCompare(right.job_id))[0]??null;
     const recoveryBlocker=activeBlocker&&rowIsStale(activeBlocker)?activeBlocker:null;
     const adaptiveCertified=await Promise.all(rows.results.map(async(row)=>row.kind==="structure_adaptive"?certifiedAdaptiveJob(env,user,await readJob(env,user.userId,row.job_id)??row,false,query.get("inspection")==="1"):row));
     const certified=readOnlyPlanning?adaptiveCertified:await freshlyRecoverablePresentationRows(env,user,adaptiveCertified,project.contextId);
@@ -3931,7 +3959,7 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
       ORDER BY CASE WHEN status IN ('queued','running','committing') THEN 0 ELSE 1 END,requested_at DESC LIMIT 120`).bind(user.userId,user.streamId,now,now,Number(activeOnly),documentScope,documentScope).all<DocumentJobRow>();
     let rows = path ? requestedJob ? [requestedJob] : [] : (await readVisibleJobs()).results;
     let reconciled = false;
-    const repairCandidates = rows.filter((row) => !outputJobIsDurable(row) && row.status === "failed" && /Wrong number of parameter bindings/i.test(row.error_message ?? ""));
+    const repairCandidates = rows.filter((row) => !documentJobMemoryMarked(row) && !outputJobIsDurable(row) && row.status === "failed" && /Wrong number of parameter bindings/i.test(row.error_message ?? ""));
     if (repairCandidates.length) {
       const events = await readCorrelatedEvents(env,user.streamId,repairCandidates.map((row)=>row.correlation_id));
       for (const row of repairCandidates) {
@@ -3942,7 +3970,7 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
     }
     const parents = rows.filter((row) => !outputJobIsDurable(row) && row.kind === "prompt_fan" && ["queued","running","committing"].includes(row.status));
     for(const parent of parents){const updated=await reconcilePromptFanParent(env,user.userId,parent.job_id);if(!updated||updated.status!==parent.status||updated.result_json!==parent.result_json||updated.error_message!==parent.error_message||updated.completed_at!==parent.completed_at)reconciled=true;}
-    for (const row of rows) if (!outputJobIsDurable(row) && rowIsStale(row) && row.attempt_count >= documentJobMaxAttempts(row.kind)) {
+    for (const row of rows) if (!documentJobMemoryMarked(row) && !outputJobIsDurable(row) && rowIsStale(row) && row.attempt_count >= documentJobMaxAttempts(row.kind)) {
       // A compact list row must never replace the retained recovery checkpoint.
       const retained = path ? row : await readJob(env, user.userId, row.job_id);
       if (retained && rowIsStale(retained) && retained.attempt_count >= documentJobMaxAttempts(retained.kind)) {
@@ -3954,9 +3982,9 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
       const refreshed = path ? await readOrdinaryDetail(decodeURIComponent(path)) : null;
       rows = path ? refreshed ? [refreshed] : [] : (await readVisibleJobs()).results;
     }
-    const visibleBlocker = [...rows].filter((row)=>!outputJobIsDurable(row)&&row.kind!=="prompt_fan"&&["running","committing"].includes(row.status)).sort((left,right)=>left.requested_at.localeCompare(right.requested_at)||left.job_id.localeCompare(right.job_id))[0]??null;
+    const visibleBlocker = [...rows].filter((row)=>!documentJobMemoryMarked(row)&&!outputJobIsDurable(row)&&row.kind!=="prompt_fan"&&["running","committing"].includes(row.status)).sort((left,right)=>left.requested_at.localeCompare(right.requested_at)||left.job_id.localeCompare(right.job_id))[0]??null;
     const activeBlocker = path
-      ? await env.DB.prepare(`SELECT * FROM document_jobs WHERE owner_id=? AND stream_id=? AND NOT (${sponsorExcluded}) AND json_type(request_json,'$.outputDurable') IS NULL AND kind!='prompt_fan' AND status IN ('running','committing') ORDER BY requested_at ASC,job_id ASC LIMIT 1`).bind(user.userId, user.streamId).first<DocumentJobRow>()
+      ? await env.DB.prepare(`SELECT * FROM document_jobs WHERE owner_id=? AND stream_id=? AND NOT (${sponsorExcluded}) AND json_type(request_json,'$.outputDurable') IS NULL AND json_type(request_json,'$.memoryMode') IS NULL AND kind!='prompt_fan' AND status IN ('running','committing') ORDER BY requested_at ASC,job_id ASC LIMIT 1`).bind(user.userId, user.streamId).first<DocumentJobRow>()
       : visibleBlocker;
     const recoveryBlocker = activeBlocker && rowIsStale(activeBlocker) ? activeBlocker : null;
     if (recoveryBlocker&&!requiresForegroundDocumentExecution(recoveryBlocker)) context?.waitUntil(driveDocumentQueue(env, user));
@@ -4358,7 +4386,7 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
   let active:DocumentJobRow|null=null;
   if(kind!=="extract_reference"&&!outputPreparation){
     const candidates=(await env.DB.prepare(`SELECT job.* FROM document_jobs job${project?" JOIN project_resource_scopes resource ON resource.resource_kind='job' AND resource.resource_id=job.job_id AND resource.project_access_id=? AND resource.organization_id=? AND resource.actor_user_id=job.owner_id":""}
-      WHERE job.owner_id=? AND job.stream_id=? AND job.document_id=? AND job.kind=? AND job.status IN('queued','running','committing') ORDER BY job.requested_at DESC LIMIT 50`)
+      WHERE job.owner_id=? AND job.stream_id=? AND job.document_id=? AND job.kind=? AND json_type(job.request_json,'$.memoryMode') IS NULL AND job.status IN('queued','running','committing') ORDER BY job.requested_at DESC LIMIT 50`)
       .bind(...(project?[project.projectAccessId,project.organizationId]:[]),user.userId,user.streamId,documentId,kind).all<DocumentJobRow>()).results;
     if(kind==="preview"||kind==="generate"){
       const identity=generationRequestIdentity(kind,payload,documentId);payload.documentRevision=identity.documentRevision;payload.requestKey=identity.requestKey;
@@ -4477,9 +4505,153 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
   return Response.json({job:admissionUser.projectExecution?safeScopedJob(job!):serializeJob(job!),accepted:true},{status:202});
 }
 
-// Nonexposing foundation only. This capability does NOT supply memory text,
-// authorize a provider call, permit a job answer write or certify saved output.
-// Queued chat's real event/provenance shape still needs its own later protocol.
+// Explicit Chat Studio recall owns a separate provider-free request. A retained
+// marker fences every later path, including malformed/uncertain original work.
+function documentJobMemoryMarked(row:Pick<DocumentJobRow,"request_json"|"result_json"|"memory_recall_mode">):boolean {
+  return row.memory_recall_mode===1||Object.hasOwn(parseRequest(row),"memoryMode")||Object.hasOwn(parseResult(row),"memoryDocumentJobOrigin");
+}
+const DOCUMENT_JOB_MEMORY_HEADERS={"cache-control":"private, no-store",vary:"Cookie, oai-authenticated-user-id, oai-authenticated-user-email"};
+function documentJobMemoryDenied(error:string,status=409){
+  return Response.json({error,noAutomaticRetry:true},{status,headers:DOCUMENT_JOB_MEMORY_HEADERS});
+}
+function documentJobMemoryAssertion(env:WorkerEnv,guard:{sql:string;bindings?:readonly(string|number|null)[]}){
+  return env.DB.prepare(`SELECT CASE WHEN (${guard.sql}) THEN 1 ELSE json('memory_job_authority_changed') END AS context_source_asserted`).bind(...(guard.bindings??[]));
+}
+async function documentJobMemorySelection(env:WorkerEnv,user:PilotUser,documentId:string,contextSessionId:string|null=null){
+  if(!liveMemoryEnabled(env,user.userId)||user.fictional||requireConsent(user))return null;
+  const scope=user.projectExecution;
+  const rows=await env.DB.prepare(`SELECT * FROM memory_live_enrollments WHERE actor_user_id=? AND owner_user_id=?
+    AND organization_id IS ? AND project_access_id IS ? AND document_id=? ORDER BY enrollment_id LIMIT 2`)
+    .bind(user.userId,scope?.ownerUserId??user.userId,scope?.organizationId??null,scope?.projectAccessId??null,documentId).all<LiveMemoryEnrollment>();
+  if(!rows.success||rows.results.length!==1)return null;
+  const authority=await liveMemoryAuthority(env,rows.results[0]);
+  if(!authority||documentJobMemoryIdentityKey(authority.principal)!==documentJobMemoryIdentityKey(user)
+    ||nativeMemoryCanonical(authority.binding.scope)!==nativeMemoryCanonical(scope??null))return null;
+  const binding={...authority.binding,contextSessionId};
+  const selection=await prepareNativeMemorySelection(env,{principal:user,binding});
+  if(!selection)return null;
+  return {authority,selection,prepared:{principal:user,binding}};
+}
+async function documentJobMemoryResponse(env:WorkerEnv,user:PilotUser,row:DocumentJobRow,reveal:boolean,contextSessionId:string|null=null):Promise<Response>{
+  try{
+    if(row.owner_id!==user.userId||row.stream_id!==user.streamId||row.kind!=="chat"||row.source_surface!=="chat"
+      ||parseRequest(row).memoryMode!=="recall"||!(Date.parse(row.expires_at)>Date.now()))return documentJobMemoryDenied("memory_job_unavailable");
+    const selected=await documentJobMemorySelection(env,user,row.document_id,contextSessionId);
+    if(!selected||!await activeProjectExecution(env,user,row.document_id,row.job_id))return documentJobMemoryDenied("memory_job_unavailable");
+    const job=serializeJob(row),base={job,noAutomaticRetry:true as const};
+    if(!reveal)return Response.json(base,{headers:DOCUMENT_JOB_MEMORY_HEADERS});
+    if(row.status!=="completed")return row.status==="queued"&&row.attempt_count===0||row.status==="running"&&Date.parse(row.lease_expires_at??"")>Date.now()
+      ?Response.json({...base,pending:true},{status:202,headers:DOCUMENT_JOB_MEMORY_HEADERS}):documentJobMemoryDenied("memory_job_unavailable");
+    const target=parseResult(row).memoryDocumentJobOrigin as {version?:unknown;originId?:unknown}|undefined;
+    if(target?.version!==1||typeof target.originId!=="string")return documentJobMemoryDenied("memory_job_unavailable");
+    const retained=await readDocumentJobMemoryOrigin(env,selected.prepared,{jobId:row.job_id,originId:target.originId});
+    const checkedAt=new Date().toISOString();
+    if(retained.status!=="current"||Date.parse(checkedAt)>=Date.parse(retained.validUntil))return documentJobMemoryDenied("memory_job_unavailable");
+    // This timestamp follows the final native batch. A manual authenticated read
+    // owns this new lease; clients must retire a previous view before requesting it.
+    return Response.json({...base,memory:{version:"native-document-job-memory-v1",jobId:retained.jobId,turnId:retained.turnId,
+      text:retained.text,locale:retained.locale,checkedAt,validUntil:retained.validUntil}},{headers:DOCUMENT_JOB_MEMORY_HEADERS});
+  }catch{return documentJobMemoryDenied("memory_job_unavailable");}
+}
+async function admitDocumentJobMemory(_request:Request,env:WorkerEnv,user:PilotUser,value:unknown,contextSessionId:string|null):Promise<Response>{
+  let requestId:string|null=null,documentId:string|null=null,attempted=false;
+  try{
+    if(!value||typeof value!=="object"||Array.isArray(value))return documentJobMemoryDenied("memory_request_invalid",400);
+    const input=value as Record<string,unknown>,payload=input.payload as Record<string,unknown>;
+    if(Object.keys(input).some(key=>!["kind","documentId","sourceSurface","payload"].includes(key))||input.kind!=="chat"||input.sourceSurface!=="chat"
+      ||typeof input.documentId!=="string"||!input.documentId||input.documentId.length>120||!payload||typeof payload!=="object"||Array.isArray(payload)
+      ||Object.keys(payload).some(key=>!["memoryMode","requestId","message","locale"].includes(key))||payload.memoryMode!=="recall"
+      ||typeof payload.requestId!=="string"||!/^[0-9a-f]{8}-[0-9a-f]{4}-[47][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(payload.requestId)
+      ||typeof payload.message!=="string"||!payload.message.trim()||payload.message.length>4000||!payload.message.isWellFormed()
+      ||!["en","fr","ar","ja"].includes(String(payload.locale)))return documentJobMemoryDenied("memory_request_invalid",400);
+    requestId=payload.requestId;documentId=input.documentId;
+    const selected=await documentJobMemorySelection(env,user,documentId,contextSessionId);
+    if(!selected)return documentJobMemoryDenied("memory_job_unavailable");
+    const schema=await nativeDocumentJobOriginSchema(env);
+    if(!schema.present)return documentJobMemoryDenied("memory_job_unavailable");
+    const hash=await consentHash({actor:user.userId,stream:user.streamId,documentId,requestId,message:payload.message,locale:payload.locale});
+    const existing=await readJob(env,user.userId,requestId);
+    if(existing){
+      const saved=parseRequest(existing);
+      if(existing.stream_id!==user.streamId||existing.document_id!==documentId||existing.kind!=="chat"||existing.source_surface!=="chat"
+        ||saved.memoryMode!=="recall"||saved.requestId!==requestId||saved.memoryRequestHash!==hash)return documentJobMemoryDenied("memory_request_conflict");
+      if(user.projectExecution&&existing.status==="queued"&&existing.attempt_count===0&&existing.started_at===null
+        &&!await activeProjectExecution(env,user,documentId,requestId)&&await activeProjectExecution(env,user,documentId,requestId,false)){
+        // Resume only this exact never-claimed admission. The native anchor uses
+        // its existing atomic event/custody protocol and does not publish recall.
+        attempted=true;await anchorProjectJobs(env,user,[{jobId:requestId,kind:"chat",documentId}]);
+      }
+      if(!await activeProjectExecution(env,user,documentId,requestId))return documentJobMemoryDenied("memory_job_unavailable");
+      return documentJobMemoryResponse(env,user,await runExplicitDocumentJobMemory(env,user,existing)??existing,true,contextSessionId);
+    }
+    const body=await preparePrivateContent(env,user.userId,"chat-user",payload.message,user.projectExecution,undefined,undefined,undefined,selected.selection.enrollment.expires_at);
+    const now=body.createdAt,expiresAt=body.expiresAt,head=await streamHead(env,user.streamId);
+    const saved={memoryMode:"recall",requestId,memoryRequestHash:hash,locale:payload.locale,livePreview:false,jobInputRef:body.contentId};
+    const insertion=documentJobInsert(env,user,documentId,"?,?,?,?,?,'queued',?,?,?,?,?,NULL,0,?,NULL,NULL,NULL,NULL,?,?",
+      [requestId,user.userId,user.streamId,documentId,"chat","chat",requestId,head,JSON.stringify(saved),JSON.stringify({stage:"queued",noAutomaticRetry:true}),now,expiresAt,now]);
+    const resource=projectJobResource(env,user,requestId,documentId,now);
+    const proofs=nativeMemorySelectionStatements(env,selected.selection);
+    if(!proofs?.length)return documentJobMemoryDenied("memory_job_unavailable");
+    const guard=documentJobMemoryAssertion(env,{sql:selected.authority.guard.condition,bindings:selected.authority.guard.bindings});
+    const installed=documentJobMemoryAssertion(env,{sql:schema.guard.condition,bindings:schema.guard.bindings});
+    const required=body.statements.slice(0,body.requiredInserts);
+    const exists=documentJobMemoryAssertion(env,{sql:`EXISTS(SELECT 1 FROM document_jobs WHERE job_id=? AND owner_id=? AND request_json=? AND status='queued' AND attempt_count=0)
+      AND EXISTS(SELECT 1 FROM private_content WHERE content_id=? AND owner_id=? AND kind='chat-user' AND content=? AND redacted_at IS NULL AND expires_at=?)`,
+      bindings:[requestId,user.userId,JSON.stringify(saved),body.contentId,user.userId,payload.message,expiresAt]});
+    const statements=[...proofs,guard,installed,...required,insertion,...(resource?[resource]:[]),exists,...proofs,guard,installed];
+    attempted=true;
+    const result=await env.DB.batch<DocumentJobMemoryRows>(statements);
+    const writes=result.slice(proofs.length+2,proofs.length+2+required.length+1+Number(Boolean(resource)));
+    if(!documentJobMemoryResults(result,statements.length)||writes.some(receipt=>receipt.meta?.changes!==1||receipt.results.length!==0))
+      return Response.json({error:"memory_job_submission_unconfirmed",jobId:requestId,noAutomaticRetry:true},{status:202,headers:DOCUMENT_JOB_MEMORY_HEADERS});
+    if(resource)await anchorProjectJobs(env,user,[{jobId:requestId,kind:"chat",documentId}]);
+    const row=await readJob(env,user.userId,requestId);
+    if(!row)return documentJobMemoryDenied("memory_job_unavailable");
+    return documentJobMemoryResponse(env,user,await runExplicitDocumentJobMemory(env,user,row)??row,true,contextSessionId);
+  }catch{
+    return attempted?Response.json({error:"memory_job_submission_unconfirmed",jobId:requestId,noAutomaticRetry:true},{status:202,headers:DOCUMENT_JOB_MEMORY_HEADERS})
+      :documentJobMemoryDenied("memory_job_unavailable");
+  }
+}
+/** Exactly one acknowledged original claim. After any claim/publication attempt,
+ * subsequent POST/run calls are recovery only; no queue, provider or paid fallback. */
+async function runExplicitDocumentJobMemory(env:WorkerEnv,user:PilotUser,initial:DocumentJobRow):Promise<DocumentJobRow|null>{
+  let row=initial;
+  if(row.kind!=="chat"||row.source_surface!=="chat"||parseRequest(row).memoryMode!=="recall"||row.owner_id!==user.userId
+    ||row.stream_id!==user.streamId||row.status!=="queued"||row.attempt_count!==0||row.started_at!==null)return row;
+  try{
+    if(!liveMemoryEnabled(env,user.userId)||requireConsent(user)||!await activeProjectExecution(env,user,row.document_id,row.job_id))return row;
+    const principal=await documentJobPrincipal(env,row);
+    if(!principal||documentJobMemoryPrincipalKey(principal)!==documentJobMemoryPrincipalKey(user))return row;
+    const previous={...row},db=env.DB,principalKey=documentJobMemoryPrincipalKey(user),now=new Date().toISOString();
+    const lease=new Date(Date.now()+DOCUMENT_JOB_LEASE_MS).toISOString(),correlation=`${row.job_id}:attempt:1`;
+    const guard=documentJobProjectAuthority(user,row.document_id,row.job_id);
+    const claimed=await db.prepare(`UPDATE document_jobs SET status='running',attempt_count=attempt_count+1,correlation_id=?,started_at=?,lease_expires_at=?,result_json=?,updated_at=?
+      WHERE job_id=? AND owner_id=? AND stream_id=? AND status='queued' AND attempt_count=0 AND started_at IS NULL AND request_json=? AND result_json IS ?
+        AND expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now') AND (${guard?.sql??"1"})`)
+      .bind(correlation,now,lease,JSON.stringify({stage:"preparing",noAutomaticRetry:true}),now,row.job_id,user.userId,user.streamId,row.request_json,row.result_json,...(guard?.bindings??[])).run();
+    row=await readJob(env,user.userId,row.job_id)??row;
+    if(claimed.success!==true||("error" in claimed&&claimed.error!==undefined)||claimed.meta?.changes!==1||!Array.isArray(claimed.results)||claimed.results.length)return row;
+    const payload=parseRequest(row),inputRef=String(payload.jobInputRef??"");
+    const input=(await loadPrivateContent(env,user.userId,"chat",user.projectExecution))[inputRef];
+    registerDocumentJobMemoryClaim(env,row,user,claimed,previous,1,correlation,now,lease,inputRef,input,db,principalKey);
+    const authority=await prepareDocumentJobMemoryAuthority(env,row);
+    const candidate=authority?await prepareDocumentJobMemoryCandidate(env,authority,payload.locale):null;
+    if(!candidate){
+      documentJobMemoryClaims.delete(row);
+      await env.DB.prepare("UPDATE document_jobs SET status='failed',error_message='memory_job_unavailable',completed_at=?,lease_expires_at=NULL,result_json=?,updated_at=? WHERE job_id=? AND owner_id=? AND status='running' AND correlation_id=? AND attempt_count=1 AND request_json=?")
+        .bind(now,JSON.stringify({stage:"failed",noAutomaticRetry:true}),now,row.job_id,user.userId,correlation,row.request_json).run();
+      return readJob(env,user.userId,row.job_id);
+    }
+    await publishDocumentJobMemoryCandidate(env,candidate);
+    // Even an indeterminate ACK can hide a committed publication. Only the
+    // dedicated original reader may expose its response on this or a later GET.
+    return readJob(env,user.userId,row.job_id);
+  }catch{return readJob(env,user.userId,row.job_id).catch(()=>row);}
+}
+
+// Worker-only native authority. This capability supplies no memory text and
+// permits neither provider dispatch nor answer publication by itself.
 const documentJobMemoryAuthorityType: unique symbol = Symbol("document-job-memory-authority");
 export type DocumentJobMemoryAuthority = Readonly<{[documentJobMemoryAuthorityType]:true}>;
 type DocumentJobMemoryRows = Record<string, unknown>;
@@ -4577,8 +4749,8 @@ function documentJobMemoryFrame(env:WorkerEnv,value:DocumentJobMemoryAuthority):
 
 /** Only the exact row object returned to this worker's acknowledged claim and
  * registered after its private-input reload is eligible. Reading a valid job ID
- * (or cloning that row) is not evidence of claim ownership. No public route calls
- * this issuer yet, and absence never changes an ordinary queued chat operation. */
+ * (or cloning that row) is not evidence of claim ownership. Only the explicit
+ * recall consumer uses this issuer; ordinary queued chat remains unchanged. */
 export async function prepareDocumentJobMemoryAuthority(env:WorkerEnv,claimedJob:unknown):Promise<DocumentJobMemoryAuthority|null> {
   try {
     if(!claimedJob||typeof claimedJob!=="object")return null;
@@ -4761,8 +4933,8 @@ function documentJobMemoryCandidateSourceStatements(env:WorkerEnv,frame:Document
 /** Load native history for a genuine queued attempt and render an evidence-only
  * answer in private server memory. The token exposes neither text nor scope. It
  * is not a permission to publish, persist, invoke a model or alter the document.
- * No route or job runner uses this opt-in bridge until job-native publication is
- * implemented. Unavailable optional memory leaves the ordinary runner unchanged. */
+ * The explicit recall consumer must use the native publisher below. Missing
+ * authority never enables an ordinary/provider fallback for that request. */
 export async function prepareDocumentJobMemoryCandidate(env:WorkerEnv,authority:DocumentJobMemoryAuthority,
   locale:unknown="en"):Promise<DocumentJobMemoryCandidate|null> {
   try {
@@ -4972,7 +5144,7 @@ export type DocumentJobMemoryPublicationOutcome = Readonly<{
 const documentJobMemoryPublicationAttempts = new WeakMap<DocumentJobMemoryCandidate,DocumentJobMemoryPublicationOutcome>();
 
 /** Fixed job-native transaction, not a caller-extensible own-write exemption.
- * Internal worker API, intentionally unrouted until GET/recovery and lifecycle are ready.
+ * Internal worker API for the explicit recall lane; HTTP delivery still needs the native reader.
  * A committed classification contains no text and grants no later read authority;
  * any ambiguous attempt is recover-only, never an ordinary/provider fallback. */
 export async function publishDocumentJobMemoryCandidate(env:WorkerEnv,value:DocumentJobMemoryCandidate):Promise<DocumentJobMemoryPublicationOutcome> {

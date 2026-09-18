@@ -60,6 +60,18 @@ define these gates. The [safe-pause contract](durable-generation-activation-2026
 continues to apply during rollout. Route-specific readiness must be recorded even
 if a different route has already passed its canary.
 
+## Memory
+
+The Memory branch was reconciled with local `main` on 2026-09-17. Source delivery,
+production qualification and the full scope-aware expansion remain distinct.
+See the [current implementation reconciliation](forma-memory-implementation-2026-09-17.md)
+and the **[remaining non-implementation checklist](forma-memory-nonimplementation-work-2026-09-17.md)**.
+
+| ID | Status | Owner | Remaining work / next action | Done when |
+| --- | --- | --- | --- | --- |
+| MEM-001 | Open — depends on qualified implementation | Unassigned | Complete the linked non-implementation checklist: release review, hosted scheduling/privacy qualification, bounded synthetic benchmark and cap decision, acceptance and explicit consent. | Evidence closes every applicable gate for the exact deployed source/runtime/audience. No real-user enrollment before qualification and affirmative consent. |
+| MEM-002 | Open — native producer prerequisites added September 18 | Unassigned | Follow the [completion/release To Do](forma-memory-release-2026-09-18.md) and [native producer follow-up](forma-memory-native-producers-2026-09-18.md) with genuine semantic summary/profile derivation, native index lifecycle, nested scope identity, consumption v2 and learned suggestions. Bounded Chat Studio capture and exact personal artifact receipts do not complete these pipelines. Reconcile active owners before splitting work. | Native producers, storage, guarded consumers, recovery and privacy tests exist for every claimed part of the original plan. Synthetic foundations and detached adapters alone are not completion. |
+
 ## Other recorded follow-ups
 
 The mini-app rows below separate completed published subscopes from unfinished

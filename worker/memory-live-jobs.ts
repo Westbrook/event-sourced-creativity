@@ -1,9 +1,10 @@
 import { createLiveMemoryMaintenanceAttempt, liveMemoryAuthority, liveMemoryEnrollmentGuard, type LiveMemoryEnrollment } from "./memory-live-authority.ts";
 import { liveMemorySourceQuery } from "./memory-live-sources.ts";
-import { liveMemoryEnabled, liveMemorySchemaReady, memoryAtomic, memorySqlAssertion, revokeLiveMemoryCounted, retireDeniedLiveMemoryCounted, liveMemoryOriginDependencyWithdrawalStatements } from "./memory-live-store.ts";
+import { liveMemoryEnabled, liveMemorySchemaReady, memoryAtomic, memorySqlAssertion, revokeLiveMemoryCounted, retireDeniedLiveMemoryCounted, liveMemoryOriginDependencyWithdrawalStatements, structuredConversationLedgerSchema } from "./memory-live-store.ts";
 import { memoryGuardsCurrent, type MemorySqlGuard } from "./memory-sql.ts";
 import type { WorkerEnv } from "./runtime.ts";
 import { liveConversationPublication, liveConversationMarkPublished, liveConversationPrune, liveConversationTrim } from "./memory-live-conversation.ts";
+import { publishCompletedConversationReferences, type CompletedConversationCaptureResult } from "./memory-completed-turns.ts";
 
 export const LIVE_MEMORY_PAGE_SIZE=128;
 export const LIVE_MEMORY_RUNNING_LIMIT=8;
@@ -27,7 +28,8 @@ const leaseGuard=(e:LiveMemoryEnrollment):MemorySqlGuard=>({condition:`EXISTS(SE
   AND lease_token=? AND lease_expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now') AND cursor_sequence=? AND cutoff_sequence IS ?)`,
   bindings:[e.enrollment_id,e.revision,e.lease_token,e.cursor_sequence,e.cutoff_sequence]});
 
-async function processScope(env:WorkerEnv,e:LiveMemoryEnrollment,now:string,erased:(count:number)=>void) {
+async function processScope(env:WorkerEnv,e:LiveMemoryEnrollment,now:string,erased:(count:number)=>void,
+  captureResult:(result:CompletedConversationCaptureResult)=>void) {
   if(Date.parse(e.expires_at)<=Date.parse(now) || !e.learn_enabled&&!e.recall_enabled){
     const result=await revokeLiveMemoryCounted(env,e,"expired-or-disabled");if(!result.revoked)throw new Error("memory-revocation-raced");
     erased(result.erased);return 0;
@@ -77,7 +79,16 @@ async function processScope(env:WorkerEnv,e:LiveMemoryEnrollment,now:string,eras
     throw new Error(Number(parked.meta.changes??0)===1?"memory-attempt-limit":"memory-attempt-limit-raced");
   }
   const head=continueJob?e.cutoff_sequence!:(await env.DB.prepare("SELECT COALESCE(MAX(sequence),0) AS head FROM events WHERE stream_id=?").bind(`creative:${e.owner_user_id}`).first<{head:number}>())!.head;
-  if(head<=e.cursor_sequence){await env.DB.prepare("UPDATE memory_live_enrollments SET next_due_at=? WHERE enrollment_id=? AND revision=? AND lease_token IS NULL").bind(at(now,3_600_000),e.enrollment_id,e.revision).run();return 0;}
+  let referenceCapture=false,captureSchemaUnavailable=false;
+  if(e.recall_enabled===1)try{referenceCapture=(await structuredConversationLedgerSchema(env)).referenceCapture;}
+  catch{captureSchemaUnavailable=true;captureResult({status:"unavailable"});}
+  // Installing the explicit candidate can make already-reviewed native turns
+  // eligible for first capture. The extractive cursor is not a ledger cursor.
+  if(head<=e.cursor_sequence&&!referenceCapture){
+    await env.DB.prepare(`UPDATE memory_live_enrollments SET next_due_at=?${captureSchemaUnavailable?",failure_code='conversation-schema-unavailable'":""}
+      WHERE enrollment_id=? AND revision=? AND lease_token IS NULL`).bind(at(now,3_600_000),e.enrollment_id,e.revision).run();return 0;
+  }
+  if(head<e.cursor_sequence)throw new Error("memory-source-head-regressed");
   const token=crypto.randomUUID(),expires=at(now,60_000),clock:MemorySqlGuard={condition:"julianday('now')>=julianday(?) AND julianday('now')<julianday(?)",bindings:[now,expires]};
   const acquired=await memoryAtomic(env,[authority.guard,liveMemoryEnrollmentGuard(e,"learn"),clock],[env.DB.prepare(`UPDATE memory_live_enrollments SET lease_token=?,lease_expires_at=?,attempts=attempts+1,
     cutoff_sequence=?,last_local_day=?,last_admitted_at=?,next_due_at=? WHERE enrollment_id=? AND revision=? AND cursor_sequence=?
@@ -86,6 +97,19 @@ async function processScope(env:WorkerEnv,e:LiveMemoryEnrollment,now:string,eras
   if(Number(acquired[0]?.meta.changes??0)!==1)return 0;
   const leased={...e,lease_token:token,lease_expires_at:expires,cutoff_sequence:head},lease=leaseGuard(leased);
   try {
+    let conversationFailure:string|null=captureSchemaUnavailable?"conversation-schema-unavailable":null;
+    if(referenceCapture){
+      // Capture the actual full post-lease enrollment, not a guessed derivative
+      // with stale last-admitted/attempt fields. Append reasserts every field.
+      const current=await env.DB.prepare("SELECT * FROM memory_live_enrollments WHERE enrollment_id=? AND revision=? AND lease_token=?")
+        .bind(e.enrollment_id,e.revision,token).first<LiveMemoryEnrollment>();
+      if(!current)throw new Error("memory-conversation-enrollment-unavailable");
+      const captured=await publishCompletedConversationReferences(env,current,head);captureResult(captured);
+      // A separate bounded producer must not stall existing extractive learning.
+      // Its ledger has no cursor exemption: the next eligible review retries from
+      // original native sources even if this legacy source cursor has advanced.
+      if(captured.status==="unavailable"||captured.status==="capacity")conversationFailure="conversation-"+captured.status;
+    }
     const page=await env.DB.prepare("SELECT sequence FROM events WHERE stream_id=? AND sequence>? AND sequence<=? ORDER BY sequence LIMIT ?")
       .bind(`creative:${e.owner_user_id}`,e.cursor_sequence,head,LIVE_MEMORY_PAGE_SIZE).all<{sequence:number}>();
     const through=page.results.at(-1)?.sequence??head,done=through>=head;
@@ -109,8 +133,8 @@ async function processScope(env:WorkerEnv,e:LiveMemoryEnrollment,now:string,eras
       // membership, even though some individual references remain remembered.
       ...originPublication.afterMutation,
       env.DB.prepare(`UPDATE memory_live_enrollments SET cursor_sequence=?,cutoff_sequence=?,lease_token=NULL,lease_expires_at=NULL,
-        attempts=0,failure_code=NULL,next_due_at=? WHERE enrollment_id=? AND revision=? AND lease_token=?`)
-        .bind(through,done?null:head,at(now,done?3_600_000:60_000),e.enrollment_id,e.revision,token),
+        attempts=0,failure_code=?,next_due_at=? WHERE enrollment_id=? AND revision=? AND lease_token=?`)
+        .bind(through,done?null:head,conversationFailure,at(now,done?3_600_000:60_000),e.enrollment_id,e.revision,token),
       memorySqlAssertion(env,{condition:"changes()=1",bindings:[]}),
     ],[authority.guard,liveMemoryEnrollmentGuard(e,"learn"),clock]);
     return Number(writes[originPublication.beforeMutation.length]?.meta.changes??0);
@@ -137,12 +161,17 @@ export async function runLiveMemoryScheduled(env:WorkerEnv) {
   ]);
   if(Number(admitted[2]?.meta.changes??0)!==1)return {status:"deferred",reason:"running-receipt-capacity"};
   let processed=0,erased=0,failed=0,scopes=0;
+  const conversationCaptures:CompletedConversationCaptureResult[]=[];
   // One due scope bounds this subsystem's work; the host must also budget other scheduled subsystems.
   // Late nights are caught up, not dropped. Host cadence/capacity must be qualified for timely delivery.
   try{
     const due=await env.DB.prepare("SELECT * FROM memory_live_enrollments WHERE next_due_at<=? ORDER BY next_due_at,enrollment_id LIMIT 1").bind(now).all<LiveMemoryEnrollment>();
     scopes=due.results.length;
-    for(const scope of due.results){try{processed+=await processScope(env,scope,now,count=>{erased+=count;});}catch{
+    for(const scope of due.results){try{
+      const captureStart=conversationCaptures.length;
+      processed+=await processScope(env,scope,now,count=>{erased+=count;},result=>conversationCaptures.push(result));
+      if(conversationCaptures.slice(captureStart).some(result=>result.status==="unavailable"||result.status==="capacity"))failed++;
+    }catch{
       failed++;
       // Even failed bookkeeping must not bypass the run receipt finalization attempt.
       try{await env.DB.prepare("UPDATE memory_live_enrollments SET next_due_at=? WHERE enrollment_id=? AND revision=? AND next_due_at<=?")
@@ -155,5 +184,5 @@ export async function runLiveMemoryScheduled(env:WorkerEnv) {
     pruneRuns(env),
   ]);
   if(Number(finished[0]?.meta.changes??0)!==1)throw new Error("memory-run-finalization-unconfirmed");
-  return {status:failed?"partial":"completed",runId,scopes,processed,erased,failed};
+  return {status:failed?"partial":"completed",runId,scopes,processed,erased,failed,...(conversationCaptures.length?{conversationCaptures}:{})};
 }

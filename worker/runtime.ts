@@ -27,6 +27,11 @@ export interface WorkerEnv {
   FORMA_MEMORY_PROFILE_USER_IDS?: string;
   /** Separate exact-true admission for the existing scheduled memory job; unset stays disabled. */
   FORMA_MEMORY_SCHEDULING_ENABLED?: string;
+  /** Isolated synthetic benchmark only; no real-user Memory enrollment is implied. */
+  FORMA_MEMORY_BENCHMARK_ENABLED?: string;
+  FORMA_MEMORY_BENCHMARK_ORIGIN?: string;
+  FORMA_MEMORY_BENCHMARK_ACTOR_IDS?: string;
+  FORMA_MEMORY_BENCHMARK_SOURCE_SHA256?: string;
   ASSETS: Fetcher;
   JEV_API_KEY?: string;
   DB: D1Database;

@@ -6,6 +6,9 @@ import { blockTypeDefinition, type BlockKind } from "../model/block-types";
 import { generationHistoryItemIsDraft, generationHistoryItems, outputQualityLabel } from "../model/events";
 import { documentFocusFromRoute, withDocumentFocusInRoute, withDocumentInRoute } from "../model/routes";
 import { captureOutputNavigationFocus } from "./output-navigation-focus";
+import { personalMemoryMessage } from "./design-system/locales/personal-memory-messages.ts";
+import { createDocumentJobMemoryClient, DocumentJobMemoryError, type DocumentJobMemoryRequest,
+  type DocumentJobMemoryLease } from "../state/document-job-memory-client.ts";
 import "./project-rail";
 import "./studio-navigation";
 import "./output-visual";
@@ -17,6 +20,9 @@ import "./design-system/choice-card";
 import "./design-system/conversation-composer";
 
 type ChatLine={id:string;role:"user"|"assistant";text:string;sequence:number};
+type ChatMemoryRequest = { request: DocumentJobMemoryRequest; current(): boolean; jobId: string | null;
+  controller: AbortController | null; lease: DocumentJobMemoryLease | null;
+  status: "working" | "pending" | "uncertain" | "unavailable" | "current" | "expired" };
 const CHAT_CONTEXT_STARTERS: readonly BlockKind[] = ["direction", "subject", "style", "exclusion"];
 
 export class FormaChatStudio extends FormaElement {
@@ -24,6 +30,68 @@ export class FormaChatStudio extends FormaElement {
   #livePreview=true;
   #sending=false;
   #showResult=false;
+  #memory:ChatMemoryRequest|null=null;
+  #memoryTimer:ReturnType<typeof setTimeout>|null=null;
+  #suspendMemory=()=>{this.#retireMemory();this.requestUpdate();};
+  #memoryVisibility=()=>{if(this.ownerDocument.visibilityState!=="visible")this.#suspendMemory();};
+
+  override connectedCallback(){super.connectedCallback();this.ownerDocument.addEventListener("visibilitychange",this.#memoryVisibility);this.ownerDocument.defaultView?.addEventListener("pagehide",this.#suspendMemory);}
+  override disconnectedCallback(){this.ownerDocument.removeEventListener("visibilitychange",this.#memoryVisibility);this.ownerDocument.defaultView?.removeEventListener("pagehide",this.#suspendMemory);this.#retireMemory();super.disconnectedCallback();}
+  #memoryText(key:string,values?:Record<string,string|number>){return personalMemoryMessage(this.i18n.locale,"memory.live."+key,values);}
+  #retireMemory(){this.#memory?.controller?.abort();this.#memory?.lease?.retire();this.#memory=null;if(this.#memoryTimer!==null)clearTimeout(this.#memoryTimer);this.#memoryTimer=null;}
+  #currentMemory(){
+    const memory=this.#memory;
+    if(memory&&!memory.current()){this.#retireMemory();return null;}
+    if(memory?.lease&&!memory.lease.read()){memory.lease.retire();memory.lease=null;memory.status="expired";}
+    return memory;
+  }
+  async #recallMemory(action:"new"|"check"|"retry"="new"){
+    let memory=this.#currentMemory();if(memory?.status==="working")return;
+    if(action==="new"){
+      this.#retireMemory();
+      const store=this.store,session=store.session.get(),source=store.captureSourceOwnership(),authorization=store.captureAuthorizationScope();
+      const projection=store.projection.get(),documentId=projection.documentId,projectId=projection.projectId,route=store.route.get(),locale=this.i18n.locale;
+      if(!this.isConnected||!session||session.impersonation||!authorization||!documentId||!projectId||!store.sourceOwnershipActive(source)
+        ||session.projectContext&&!session.projectContext.permissions.includes("project.output.request"))return;
+      const actor=session.user.userId;
+      memory={request:Object.freeze({documentId,requestId:crypto.randomUUID(),message:this.#memoryText("assistantRecallPrompt"),locale}),
+        jobId:null,controller:null,lease:null,status:"working",current:()=>this.#memory===memory&&this.isConnected&&this.store===store
+          &&this.ownerDocument.visibilityState==="visible"&&store.session.get()?.user.userId===actor&&!store.session.get()?.impersonation
+          &&store.authorizationScopeActive(authorization)&&store.sourceOwnershipActive(source)&&store.route.get()===route&&this.i18n.locale===locale
+          &&store.projection.get().projectId===projectId&&store.projection.get().documentId===documentId};
+      this.#memory=memory;
+    }
+    if(!memory||!memory.current()||action==="check"&&!memory.jobId)return;
+    const owner=memory,controller=new AbortController();owner.controller=controller;owner.lease?.retire();owner.lease=null;owner.status="working";this.requestUpdate();
+    const client=createDocumentJobMemoryClient((url,init)=>this.store.guardedFetch(url,init,this.#memoryText("assistantRecall"),{current:owner.current}));
+    try{
+      const result=action==="check"?await client.read(owner.request.documentId,owner.jobId!,controller.signal):await client.start(owner.request,controller.signal);
+      if(!owner.current()||controller.signal.aborted){result.lease?.retire();return;}
+      owner.jobId=result.jobId;owner.lease=result.lease;owner.status=result.status;
+      if(result.lease){
+        const lease=result.lease;if(this.#memoryTimer!==null)clearTimeout(this.#memoryTimer);
+        this.#memoryTimer=setTimeout(()=>{lease.retire();if(this.#memory===owner){owner.lease=null;owner.status="expired";this.requestUpdate();}},Math.max(1,lease.remainingMs()));
+      }
+    }catch(error){if(owner.current()&&!controller.signal.aborted)owner.status=error instanceof DocumentJobMemoryError&&error.uncertain?"uncertain":"unavailable";}
+    finally{if(this.#memory===owner){owner.controller=null;this.requestUpdate();}}
+  }
+  #renderMemory(){
+    const memory=this.#currentMemory(),view=memory?.lease?.read(),working=memory?.status==="working";
+    const actor=this.store.session.get(),available=Boolean(actor&&!actor.impersonation&&this.store.projection.get().documentId
+      &&(!actor.projectContext||actor.projectContext.permissions.includes("project.output.request")));
+    return html`<section class="chat-memory" aria-label=${this.#memoryText("assistantRecallHistorical")} aria-busy=${working?"true":"false"}>
+      <button type="button" class="button secondary compact" aria-describedby="chat-memory-help" ?disabled=${!available||working} @click=${()=>this.#recallMemory()}>${this.#memoryText("assistantRecall")}</button>
+      <p id="chat-memory-help">${this.#memoryText("assistantRecallHelp")}</p>
+      ${working?html`<p role="status">${this.#memoryText("assistantRecallWorking")}</p>`:nothing}
+      ${view?html`<p role="status">${this.#memoryText("assistantRecallReady",{until:this.i18n.date(Date.parse(view.validUntil),{timeStyle:"medium"})})}</p><blockquote lang=${view.locale} dir="auto">${view.text}</blockquote>`:nothing}
+      ${memory&&["pending","uncertain"].includes(memory.status)?html`<p role="status">${this.#memoryText("assistantRecallUncertain")}</p>
+        ${memory.jobId?html`<button type="button" class="button secondary compact" @click=${()=>this.#recallMemory("check")}>${this.#memoryText("jobRecallCheck")}</button>`:nothing}
+        <button type="button" class="button secondary compact" @click=${()=>this.#recallMemory("retry")}>${this.#memoryText("jobRecallRetry")}</button>`:nothing}
+      ${memory?.status==="unavailable"?html`<p role="status">${this.#memoryText("assistantRecallUnavailable")}</p>`:nothing}
+      ${memory?.status==="expired"?html`<p role="status">${this.#memoryText("assistantRecallExpired")}</p>`:nothing}
+      ${memory?html`<button type="button" class="button secondary compact" @click=${this.#suspendMemory}>${this.#memoryText("jobRecallDismiss")}</button>`:nothing}
+    </section>`;
+  }
 
   captureCommandDeparture():CommandDeparture {
     const store=this.store,projection=store.projection.get(),projectId=projection.projectId,documentId=projection.documentId;
@@ -36,7 +104,7 @@ export class FormaChatStudio extends FormaElement {
     const content=this.store.content.get();const actorUserId=this.store.session.get()?.user.userId;const lines=new Map<string,ChatLine>();
     for(const event of this.store.events.get()){
       if(String(event.payload.document_id??"")!==documentId)continue;
-      const isUser=event.type==="ChatMessageSent";const isAssistant=event.type==="AssistantReasoned"&&event.payload.operation==="creative-chat";if(!isUser&&!isAssistant)continue;
+      const isUser=event.type==="ChatMessageSent"&&event.payload.operation!=="document-job-memory";const isAssistant=event.type==="AssistantReasoned"&&event.payload.operation==="creative-chat";if(!isUser&&!isAssistant)continue;
       const eventActor=String(event.payload.actor_user_id??"");if(eventActor&&actorUserId&&eventActor!==actorUserId)continue;
       const text=String(content[String(event.payload.content_ref??"")]??"").trim();if(!text)continue;
       const role=isUser?"user":"assistant";const turnId=String(event.payload.turn_id??event.eventId);const key=`${turnId}:${role}`;const previous=lines.get(key);lines.set(key,{id:event.eventId,role,text,sequence:previous?.sequence??event.sequence});
@@ -105,6 +173,7 @@ export class FormaChatStudio extends FormaElement {
         ${chatActive?html`<article class="chat-line assistant thinking"><span>Forma</span><p>Working through that idea on the server… You can refresh or leave this view safely.</p></article>`:previewActive?html`<article class="chat-line assistant thinking previewing"><span>Forma</span><p>The plan is updated. I’m drawing its working preview separately, so the conversation is available before the image finishes.</p></article>`:nothing}
         <span class="chat-thread-end" aria-hidden="true"></span>
       </div>
+      ${this.#renderMemory()}
       ${canChat?html`<form class="chat-composer" @submit=${this.#send}>
         <forma-ui-conversation-composer .label=${this.i18n.t("assistant.messageLabel")} .fieldId=${"creative-chat-message"}
           .placeholder=${this.i18n.t("assistant.mode.creativeChatPlaceholder")} .submitLabel=${this.i18n.t("assistant.send")}

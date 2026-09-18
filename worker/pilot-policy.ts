@@ -692,6 +692,9 @@ export async function reconcileFailedBudgetReservations(env: WorkerEnv, user: Pi
       -- Both historical assistant formats can outlive their task row; neither is proof of non-submission.
       AND reservation.operation NOT LIKE 'assistant:%' AND reservation.operation NOT LIKE 'assistant-specialist:%'
       AND reservation.correlation_id NOT LIKE 'assistant:%' AND reservation.correlation_id NOT LIKE 'assistant-specialist:%'
+      -- Synthetic benchmark calls retain uncertain exposure even when optional benchmark schema is absent.
+      -- Only exact verified usage or a proven-undispatched disposition may settle these operation-bound holds.
+      AND reservation.operation NOT LIKE 'memory-benchmark:%'
       AND NOT EXISTS (SELECT 1 FROM consequential_execution_steps step WHERE step.token_reservation_id=reservation.reservation_id
         AND(step.status IN('reserved','submitting','uncertain','usage-recorded','settled') OR step.verified_tokens IS NOT NULL
           OR step.verified_microusd IS NOT NULL OR step.provider_request_id IS NOT NULL))

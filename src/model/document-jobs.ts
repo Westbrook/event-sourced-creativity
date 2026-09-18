@@ -65,6 +65,9 @@ export type GenerationFailureGuidance = {
 };
 
 export type DocumentJob = {
+  /** Separate explicit recall lane; never a generic queued/paid chat job. */
+  memoryMode?: "recall";
+  noAutomaticRetry?: true;
   executionOwner?: "durable";
   observation?: import("./output-durable-observation.ts").OutputDurableObservation;
   jobId: string;
@@ -102,6 +105,9 @@ export type DocumentJob = {
   stage: string;
   progressMessage: string;
 };
+
+/** Unknown or malformed future Memory markers also stay out of generic execution. */
+export function documentJobIsMemory(job: DocumentJob): boolean { return Object.hasOwn(job, "memoryMode"); }
 
 export type DocumentJobProgressStep = {
   id: string;
