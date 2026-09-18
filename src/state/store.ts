@@ -1,3 +1,4 @@
+import { documentJobCanAcknowledgeSafety } from "../model/document-jobs.ts";
 import { hasServerExecutionOwner } from "../model/output-durable-observation.ts";
 import { isStandaloneExperienceRoute } from "../experiences/host-route.ts";
 import { AttentionPublicationGate } from "./attention-publication.ts";
@@ -1374,6 +1375,23 @@ export class FormaStore {
       this.notify();
       return true;
     }catch(error){if(this.#scopeStillActive(authorization)&&this.sourceOwnershipActive(sourceOwner))this.toast(error instanceof Error?error.message:"The saved provider render could not be recovered");return false;}
+  }
+  readonly safetyDeliveryPending=new Set<string>();
+  async acknowledgeGenerationSafety(job:DocumentJob){
+    if(!documentJobCanAcknowledgeSafety(job)||this.safetyDeliveryPending.has(job.jobId)||this.#serverOwnedJob(job.jobId))return false;
+    const sourceOwner=this.captureSourceOwnership(),authorization=this.#activeAuthorizationScope();
+    this.safetyDeliveryPending.add(job.jobId);this.notify();
+    try{
+      const response=await this.guardedFetch(`/api/document-jobs/${encodeURIComponent(job.jobId)}/acknowledge-safety`,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({acknowledged:true,attemptCount:job.attemptCount})},"deliver this reviewed generation request to the model");
+      this.#assertAuthorizationScope(authorization);
+      const body=await response.json() as {job?:DocumentJob;error?:string;message?:string};this.#assertAuthorizationScope(authorization);
+      if(!response.ok||!body.job)throw new Error(body.message??body.error??"Generation delivery could not be confirmed. Refresh status before trying again.");
+      const updated=this.#sourceOwnedJobResponse(sourceOwner,job.jobId,body.job,job);
+      if(updated){this.documentJobs.set([updated,...this.documentJobs.get().filter(current=>current.jobId!==job.jobId)]);this.notify();}
+      if(this.sourceOwnershipActive(sourceOwner)){this.#driveDocumentJobs(this.documentJobs.get());this.#scheduleJobPoll(800);}
+      return true;
+    }catch(error){if(this.#scopeStillActive(authorization)&&this.sourceOwnershipActive(sourceOwner))this.toast(error instanceof Error?error.message:this.#systemNotice("Generation delivery could not be confirmed."));return false;}
+    finally{this.safetyDeliveryPending.delete(job.jobId);this.notify();}
   }
   async recoverDocumentRender(jobId:string){
     if(this.#serverOwnedJob(jobId))return false;

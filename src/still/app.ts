@@ -1,3 +1,4 @@
+import { documentJobCanAcknowledgeSafety } from "../model/document-jobs.ts";
 import { fetchDecision } from './decision-transport.ts';
 import { actionHelp, readOnboardingFlag, ONBOARDING_VIEWS, type OnboardingResult } from './onboarding.ts';
 import { OnboardingController } from './onboarding-client.ts';
@@ -675,10 +676,17 @@ export class StillApp extends LitElement {
     this.generationCheck=null;this.generation=null;this.begin('generate');
     void this.startGeneration(format);
   }
+  private canAcknowledgeSafety(job:DocumentJob|undefined) {
+    return !!job&&documentJobCanAcknowledgeSafety(job)&&this.client.abilities.generate&&!this.client.pendingGeneration&&!this.client.hasUnconfirmedWrite;
+  }
+  private acknowledgeSafety(job:DocumentJob) {
+    if(this.busy||this.composing||!this.canAcknowledgeSafety(job))return;
+    void this.run(async()=>{await this.client.acknowledgeGenerationSafety(job);this.generationCheck=null;this.navigate('generation',{outputId:job.jobId});});
+  }
   private generationRecoveryActions() {
     const job=this.selectedGeneration(),format=job&&generationFormat(job);
     return [
-      ...(this.canGenerateAgain(job)?[{id:'ui:generate-new',label:`Generate new ${(FORMATS[format!]??format).toLowerCase()}`,variant:'primary' as const,run:()=>this.generateAgain(job!.jobId)}]:[]),
+      ...(this.canAcknowledgeSafety(job)?[{id:'ui:acknowledge-safety',label:'I understand the risks',variant:'primary' as const,run:()=>this.acknowledgeSafety(job!)}]:this.canGenerateAgain(job)?[{id:'ui:generate-new',label:`Generate new ${(FORMATS[format!]??format).toLowerCase()}`,variant:'primary' as const,run:()=>this.generateAgain(job!.jobId)}]:[]),
       {id:'ui:refresh-generation',label:'Refresh status',variant:'secondary' as const,run:()=>void this.refreshGenerationStatus()},
       {id:'document',label:'Document',variant:'secondary' as const,run:()=>this.navigate('document')},
       {id:'results',label:'Results',variant:'secondary' as const,run:()=>this.navigate('results')},
@@ -694,7 +702,7 @@ export class StillApp extends LitElement {
     const c=this.client,p=c.projection,job=c.jobs.find(j=>j.jobId===c.position.outputId&&j.documentId===p.documentId);
     if(!job||!generationFormat(job))return html`<section class="quiet-state"><h1>${c.jobsError?'Couldn’t load generation':c.jobsLoaded?'Generation unavailable':'Loading generation…'}</h1>${c.jobsError?this.button('Try again',()=>void this.run(()=>c.pollJobs())):nothing}</section>`;
     const active=generationActive(job),kind=generationFormat(job),preview=generationPreview(job,p,c.events);
-    return html`<section class="generation-stage"><span class="eyebrow">${FORMATS[kind]??kind}</span><h1>${preview.title}</h1>${preview.width&&preview.height?html`<p class="caption">${preview.width} × ${preview.height}</p>`:nothing}${job.status==='failed'?html`<p class="caption">This attempt failed.</p>`:nothing}<p role="status">${active?(job.progressMessage||generationStatus(job)):job.status==='completed'?'The result is being loaded.':job.errorDetail?.message||job.error||generationStatus(job)}</p>${active?html`<div class=${`generation-placeholder ${kind} ${preview.width?'known-size':''}`} style=${preview.width&&preview.height?`--generation-ratio:${preview.width/preview.height}`:nothing} aria-label="Generation in progress"><en-skeleton shape="rectangle"></en-skeleton></div>`:nothing}${this.canGenerateAgain(job)?html`<p class="caption">A new generation uses your current document and allowance.</p>`:nothing}${this.generationCheck?.key===this.generationCheckKey()?html`<p class="caption" role="status" aria-live="polite">${this.generationCheck.message}</p>`:nothing}</section>`;
+    return html`<section class="generation-stage"><span class="eyebrow">${FORMATS[kind]??kind}</span><h1>${preview.title}</h1>${preview.width&&preview.height?html`<p class="caption">${preview.width} × ${preview.height}</p>`:nothing}${job.status==='failed'?html`<p class="caption">This attempt failed.</p>`:nothing}<p role="status">${active?(job.progressMessage||generationStatus(job)):job.status==='completed'?'The result is being loaded.':job.errorDetail?.message||job.error||generationStatus(job)}</p>${active?html`<div class=${`generation-placeholder ${kind} ${preview.width?'known-size':''}`} style=${preview.width&&preview.height?`--generation-ratio:${preview.width/preview.height}`:nothing} aria-label="Generation in progress"><en-skeleton shape="rectangle"></en-skeleton></div>`:nothing}${this.canAcknowledgeSafety(job)?html`<p class="caption">Nothing is sent automatically. “I understand the risks” sends the reviewed request to the model and may incur usage. The provider can still decline it.</p>`:this.canGenerateAgain(job)?html`<p class="caption">A new generation uses your current document and allowance.</p>`:nothing}${this.generationCheck?.key===this.generationCheckKey()?html`<p class="caption" role="status" aria-live="polite">${this.generationCheck.message}</p>`:nothing}</section>`;
   }
   private renderCanvas() {
     const c = this.client, p = c.projection, pos = c.position;
@@ -859,6 +867,7 @@ export class StillApp extends LitElement {
         ...(canContinueReview(review)?[{label:'I understand the risks',run:()=>void this.run(()=>this.generate())}]:[]),
       ]):nothing}
       ${!this.mode&&failed&&failure?this.notification(`job:${failure.key}`,failure.message,failed.errorDetail?.category==='safety'?'warning':'danger',[
+        ...(this.canAcknowledgeSafety(failed)?[{label:'I understand the risks',run:()=>this.acknowledgeSafety(failed)}]:[]),
         {label:failure.label,run:()=>{
           if(failure.action==='context')this.reviewContext(failed);
           else if(failure.action==='generation'&&generationFormat(failed))this.navigate('generation',{outputId:failed.jobId});

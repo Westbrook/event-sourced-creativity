@@ -1,3 +1,4 @@
+import { authorizeImageSafetyDelivery } from "./image-safety-acknowledgement.ts";
 import { requireGuestImageExecution, prepareGuestImageJobClaim, type GuestImageExecutionAuthority } from "./experience-guest-image-execution.ts";
 import { readSponsorJobStatus, sponsorJobReadPredicate } from "./experience-sponsor-job-read.ts";
 import { stillImageEnvironment } from "./still-image-policy.ts";
@@ -1564,6 +1565,7 @@ function errorDetailFromResult(result: Record<string, unknown>): DocumentJobErro
   if (!value || typeof value !== "object") return null;
   const detail = value as Record<string, unknown>;
   const parsed={
+    ...(typeof detail.safetyInputDigest==="string"?{safetyInputDigest:detail.safetyInputDigest}:{}),
     code: String(detail.code ?? "operation_failed"), category: String(detail.category ?? "unknown") as DocumentJobError["category"],
     scope: String(detail.scope ?? "unknown") as DocumentJobError["scope"], action: String(detail.action ?? "none") as DocumentJobError["action"],
     message: String(detail.message ?? "The operation failed."), retryable: Boolean(detail.retryable), retryAfterMs: detail.retryAfterMs === null || detail.retryAfterMs === undefined || !Number.isFinite(Number(detail.retryAfterMs)) ? null : Number(detail.retryAfterMs),
@@ -1669,13 +1671,37 @@ async function inspectPlannerResponseShapes(env:WorkerEnv,user:PilotUser,row:Doc
   return diagnostics;
 }
 
+function safetyDeliveryAvailable(row: DocumentJobRow) {
+  const result=parseResult(row),detail=errorDetailFromResult(result);
+  return row.status==="failed"&&(row.kind==="preview"||row.kind==="generate")&&!row.output_slot_id
+    &&row.source_surface!=="outputs"&&!outputJobIsDurable(row)&&row.expires_at>new Date().toISOString()
+    &&detail?.code==="safety_preflight_flagged"&&detail.probe==="exact-prompt-and-reference-moderation"
+    &&/^[a-f0-9]{64}$/.test(detail.safetyInputDigest??"")&&typeof result.moderationPromptRef==="string";
+}
+
+async function retainedSafetyPrompt(env:WorkerEnv,user:PilotUser,row:DocumentJobRow,promptRef:string){
+  if(!promptRef||!await activeProjectExecution(env,user,row.document_id,row.job_id))return null;
+  const scope=user.projectExecution;
+  // A failed owner's prompt is not a collaborative output and may no longer be
+  // in the project publication index. Its immutable retention scope plus this
+  // currently authorized actor-owned job still bind the private evidence.
+  const containment=scope?`EXISTS(SELECT 1 FROM private_content_retention_scopes retention
+    WHERE retention.content_id=private_content.content_id AND retention.organization_id=? AND retention.project_access_id=?
+      AND retention.project_id=? AND retention.actor_user_id=?)`:
+    "NOT EXISTS(SELECT 1 FROM private_content_retention_scopes retention WHERE retention.content_id=private_content.content_id)";
+  const saved=await env.DB.prepare(`SELECT content FROM private_content WHERE content_id=? AND owner_id=? AND kind='prompt'
+    AND redacted_at IS NULL AND expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now') AND ${containment}`)
+    .bind(promptRef,user.userId,...(scope?[scope.organizationId,scope.projectAccessId,scope.projectId,scope.actorUserId]:[])).first<{content:string}>();
+  return saved?.content??null;
+}
+
 function serializeJob(row: DocumentJobRow, recoveryBlocker: DocumentJobRow | null = null, detail = true) {
   const parsed = parseResult(row); const result = row.result_json ? parsed : null; const request = parseRequest(row); const identity = generationRequestIdentity(row.kind, request, row.document_id);
   const sceneConfiguration=row.kind==="render_document"?sceneConfigurationFromRequest(request):null;
   const members = Array.isArray(parsed.members) ? parsed.members : [];
   const recovery = queueRecoveryPresentation(row, recoveryBlocker);
   const errorDetail=errorDetailFromResult(parsed);
-  const privateCheckpointKeys=new Set(["scenePolicyStopSummary","providerSubmissions","providerSubmissionProtocol","providerSubmissionLegacyUncertain","presentationCandidates","presentationRecoveryOnly","providerResponseRef","candidateRaw","storyboardSafeRecovery","storyboardRejectedProviderReceipt","adaptiveProviderReceipt","model3dProviderFiles","quote","memoryDocumentJobOrigin"]);
+  const privateCheckpointKeys=new Set(["safetyAcknowledgement","scenePolicyStopSummary","providerSubmissions","providerSubmissionProtocol","providerSubmissionLegacyUncertain","presentationCandidates","presentationRecoveryOnly","providerResponseRef","candidateRaw","storyboardSafeRecovery","storyboardRejectedProviderReceipt","adaptiveProviderReceipt","model3dProviderFiles","quote","memoryDocumentJobOrigin"]);
   if(row.kind==="render_document"&&request.artifactKind==="storyboard")for(const key of OUTPUT_STORYBOARD_RETAINED_CHECKPOINT_KEYS)privateCheckpointKeys.add(key);
   if(row.output_slot_id&&row.kind==="render_document"&&request.artifactKind==="video")for(const key of OUTPUT_VIDEO_RETAINED_CHECKPOINT_KEYS)privateCheckpointKeys.add(key);
   if(model3dNativeCheckpoint(request))for(const key of MODEL3D_PRIVATE_CHECKPOINT_KEYS)privateCheckpointKeys.add(key);
@@ -1699,7 +1725,7 @@ function serializeJob(row: DocumentJobRow, recoveryBlocker: DocumentJobRow | nul
     ...(consentedAdaptiveJob(row)?{planningExecutionId:row.job_id,planningProjectScope:request.projectScope===true,planningLocale:typeof request.locale==="string"?request.locale:"en"}:{}),
     ...(sceneConfiguration?{sceneMedium:sceneConfiguration.medium,sceneConfiguration}:{}),
     requestedSequence: Number(row.requested_sequence), documentRevision: identity.documentRevision, requestKey: identity.requestKey, sourcePreviewId: identity.sourcePreviewId, productionMode:request.productionMode==="managed"?"managed" as const:"manual" as const, promptTechnique: identity.promptTechnique, promptFanId: identity.promptFanId,
-    parentJobId: parentJobIdFromRequest(request), fanKind: fanKindFromRequest(request), members, result: summarizedResult, error: row.error_message, errorDetail, moderationPromptRef: parsed.moderationPromptRef ? String(parsed.moderationPromptRef) : null, dismissedAt: parsed.dismissedAt ? String(parsed.dismissedAt) : null, attemptCount: Number(row.attempt_count),
+    safetyDeliveryAvailable:safetyDeliveryAvailable(row), parentJobId: parentJobIdFromRequest(request), fanKind: fanKindFromRequest(request), members, result: summarizedResult, error: row.error_message, errorDetail, moderationPromptRef: parsed.moderationPromptRef ? String(parsed.moderationPromptRef) : null, dismissedAt: parsed.dismissedAt ? String(parsed.dismissedAt) : null, attemptCount: Number(row.attempt_count),
     requestedAt: row.requested_at, startedAt: row.started_at, completedAt: row.completed_at, notifiedAt: row.notified_at,
     leaseExpiresAt: row.lease_expires_at, updatedAt: row.updated_at,
     stage: recovery?.stage ?? String(parsed.stage ?? row.status), progressMessage: recovery?.progressMessage ?? (errorDetail&&["model3d_publication_unconfirmed","model3d_local_persistence_failed","local_persistence_failed","source_fidelity_validation_failed","execution_interrupted","provider_submission_uncertain","presentation_recovery_unavailable"].includes(errorDetail.code)?failureProgressMessage(errorDetail):String(parsed.progressMessage ?? "")),
@@ -2027,6 +2053,7 @@ function correlatedFailureDetail(events: Awaited<ReturnType<typeof readWorkspace
   if (!failureEvent) return null;
   const payload = failureEvent.payload;
   const detail={
+    ...(typeof payload.safety_input_digest==="string"?{safetyInputDigest:payload.safety_input_digest}:{}),
     code: String(payload.error_code ?? payload.error_class ?? "operation_failed"), category: String(payload.error_category ?? "unknown") as DocumentJobError["category"],
     scope: String(payload.error_scope ?? "unknown") as DocumentJobError["scope"], action: String(payload.error_action ?? "none") as DocumentJobError["action"],
     message: String(payload.error_message ?? "The operation failed."), retryable: Boolean(payload.retryable),
@@ -2253,7 +2280,8 @@ export async function runDocumentJob(env: WorkerEnv, user: PilotUser, jobId: str
   const resumeConfirmedStoryboardFailure=Boolean(finished?.failed&&row.status==="queued"&&row.attempt_count>0&&row.kind==="render_document"&&queuedRequest.artifactKind==="storyboard"&&queuedRequest.productionMode==="manual"&&queuedCheckpoint.storyboardProviderSubmission==="confirmed"&&typeof queuedCheckpoint.providerJobId==="string"&&/^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$/u.test(queuedCheckpoint.providerJobId)&&!["pending","submitted","unknown"].includes(queuedCheckpoint.providerJobId.toLowerCase())&&queuedCheckpoint.artifactPlan&&queuedCheckpoint.reservationId&&queuedCheckpoint.costReservationId);
   const resumeSaferStoryboardFailure=Boolean(finished?.failed&&row.status==="queued"&&row.attempt_count>0&&row.kind==="render_document"&&queuedRequest.artifactKind==="storyboard"&&queuedRequest.productionMode==="manual"&&trustedStoryboardSafeRecovery(queuedCheckpoint));
   const resumeConfirmedModel3dFailure=Boolean(finished?.failed&&row.status==="queued"&&row.attempt_count>0&&row.kind==="render_document"&&queuedRequest.artifactKind==="model3d"&&model3dRecoveryProviderReceipt(queuedCheckpoint)&&queuedCheckpoint.model3dInputReceipt&&queuedCheckpoint.reservationId&&queuedCheckpoint.costReservationId);
-  if (finished&&!resumeConfirmedStoryboardFailure&&!resumeSaferStoryboardFailure&&!resumeConfirmedModel3dFailure) {
+  const resumeSafetyFailure=row.status==="queued"&&(row.kind==="preview"||row.kind==="generate")&&!outputBinding&&(queuedCheckpoint.safetyAcknowledgement as Record<string,unknown>|undefined)?.attempt===row.attempt_count+1;
+  if (finished&&!resumeSafetyFailure&&!resumeConfirmedStoryboardFailure&&!resumeSaferStoryboardFailure&&!resumeConfirmedModel3dFailure) {
     const now = new Date().toISOString(); const status: DocumentJobStatus = finished.failed ? "failed" : "completed";let followup:DocumentJobRow|null=null;
     if(!finished.failed&&row.kind==="chat"){const reasoned=finished.correlated.find((event)=>event.type==="AssistantReasoned"&&event.payload.preview_queued&&event.payload.preview_direction_ref);if(reasoned)followup=await queueFollowupPreview(env,user,row,{kind:"preview",documentId:row.document_id,sourceSurface:"chat",payload:{directionRef:reasoned.payload.preview_direction_ref,directionModel:reasoned.payload.model_id,sourceChatTurnId:reasoned.payload.turn_id,locale:parseRequest(row).locale??"en"}});}
     const failureDetail = finished.failed ? correlatedFailureDetail(finished.correlated) : null;const moderationPromptRef=finished.failed?correlatedModerationPromptRef(finished.correlated):null;
@@ -2324,7 +2352,7 @@ export async function runDocumentJob(env: WorkerEnv, user: PilotUser, jobId: str
     .first<{job_id:string}>();
   if (blocker) return row;
   if (row.status === "running" && !rowIsStale(row)) return row;
-  if((row.status==="running"||row.status==="queued"&&row.attempt_count>0)&&requiresForegroundDocumentExecution(row)){const unsafe=unsafePaidRecovery(row);if(unsafe){await failStaleJob(env,user,row,unsafe);return readJob(env,user.userId,jobId);}}
+  if((row.status==="running"||row.status==="queued"&&row.attempt_count>0)&&requiresForegroundDocumentExecution(row)&&!resumeSafetyFailure){const unsafe=unsafePaidRecovery(row);if(unsafe){await failStaleJob(env,user,row,unsafe);return readJob(env,user.userId,jobId);}}
   if(row.status==="running"&&unresolvedAudioSubmission(row)){await failStaleJob(env,user,row,{code:"provider_submission_uncertain",category:"network",scope:"network",action:"contact_support",message:"The paid music request may already have reached Lyria. Automatic resubmission was stopped to prevent a duplicate charge.",retryable:false,retryAfterMs:null,requestId:null,httpStatus:null});return readJob(env,user.userId,jobId);}
   if(row.status==="running"&&unresolvedStoryboardSubmission(row)){
     const checkpoint=parseResult(row);const confirmed=checkpoint.storyboardProviderSubmission==="confirmed"&&Boolean(checkpoint.providerJobId);
@@ -2388,6 +2416,7 @@ export async function runDocumentJob(env: WorkerEnv, user: PilotUser, jobId: str
   else{row=await readJob(env,user.userId,jobId);if(!row)return null;}
   if(previousAttempt>0&&!handoffPaidProviderReservations&&!hasPaidProviderCheckpoint){
     const checkpoint=parseResult(row);
+    if(resumeSafetyFailure)delete checkpoint.providerSubmissions;
     for(const key of ["reservationId","costReservationId","costReservationMicrousd","costReservationPeriod"] as const)delete checkpoint[key];
     const updatedAt=new Date().toISOString();
     const cleared=await env.DB.prepare("UPDATE document_jobs SET result_json=?,updated_at=? WHERE job_id=? AND owner_id=? AND stream_id=? AND correlation_id=? AND status='running'")
@@ -2434,6 +2463,14 @@ export async function runDocumentJob(env: WorkerEnv, user: PilotUser, jobId: str
       const settings=receipt?.settings as Record<string,unknown>|undefined;
       if(settings?.presentation_model_routes)payload.presentationModelRoutes=readFrozenPresentationModelRoutes(settings.presentation_model_routes);
     }
+    const safetyReceipt=previousCheckpoint.safetyAcknowledgement as Record<string,unknown>|undefined;
+    let safetyAcknowledgement:import("./image-safety-acknowledgement.ts").ImageSafetyAcknowledgement|undefined;
+    if(!outputBinding&&(row.kind==="preview"||row.kind==="generate")&&previousRow.status==="queued"&&safetyReceipt?.attempt===attempt&&safetyReceipt.actorUserId===user.userId){
+      const promptRef=String(safetyReceipt.promptRef??"");
+      const retained=await retainedSafetyPrompt(env,user,row,promptRef);
+      if(!retained)throw new Error("safety_acknowledgement_expired");
+      safetyAcknowledgement=authorizeImageSafetyDelivery(retained,String(safetyReceipt.digest??""));
+    }
     payload.action = row.kind; payload.documentId = row.document_id; payload.sourceSurface = row.source_surface;
     payload.correlationId = row.correlation_id; payload.clientId = `server:document-job:${row.kind}`;
     const outputExecution=outputBinding?await createOutputEventExecution(env,user,row,outputBinding,outputProof,sponsorAuthority):undefined;
@@ -2442,7 +2479,7 @@ export async function runDocumentJob(env: WorkerEnv, user: PilotUser, jobId: str
     const response = await runWithHeartbeat(operationEnvironment, row,user, (control) => handleEvents(new Request("http://document-job.local/api/events", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(payload), signal: control.signal }), env, false, user, outputExecution?{...control,output:outputExecution}:foregroundPresentation&&!user.projectExecution?{...control,settlePersonalPresentation:async input=>{
       const {settlePersonalPresentationBudgets}=await import("./pilot-policy.ts");
       foregroundAccountSettlement=await settlePersonalPresentationBudgets(operationEnvironment,nativeFinancialOwner,{...input,jobId:row.job_id,streamId:row.stream_id,correlationId:row.correlation_id});
-    }}:control),nativeExecutionPolicy,outputExecution?.withSourceTransition);
+    }}:{...control,safetyAcknowledgement}),nativeExecutionPolicy,outputExecution?.withSourceTransition);
     documentJobMemoryClaims.delete(row);
     const body = await response.json() as Record<string, unknown>;let followup:DocumentJobRow|null=null;if(response.ok&&body.followupJob&&typeof body.followupJob==="object")followup=await queueFollowupPreview(env,user,row,body.followupJob as Record<string,unknown>);const completedAt = new Date().toISOString();
     const suppliedFailure=!response.ok?(body.errorDetail&&typeof body.errorDetail==="object"?body.errorDetail as ProviderFailureDetail:applicationFailureDetail(String(body.error??"document_job_failed"),body.scope,response.status)):null;
@@ -3362,7 +3399,7 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
   }
   const executionRequest=request.method==="POST"&&path.endsWith("/run");let verifiedPathJob:DocumentJobRow|null=null;
   if(!project&&path){
-    const targetId=decodeURIComponent(path.replace(/\/(?:cancel|force-fail|ack|dismiss|retry|run|recover|reconcile-provider|reconcile-output|continue-safer-frames)$/,""));
+    const targetId=decodeURIComponent(path.replace(/\/(?:cancel|force-fail|ack|dismiss|retry|run|recover|reconcile-provider|reconcile-output|continue-safer-frames|acknowledge-safety)$/,""));
     const personal=await env.DB.prepare(`SELECT ${executionRequest?"job.*,(SELECT slot.slot_id FROM output_operation_slots slot WHERE slot.job_id=job.job_id) AS output_slot_id":"1 AS present"} FROM document_jobs job WHERE job.job_id=? AND job.owner_id=? AND job.stream_id=?
       AND NOT EXISTS(SELECT 1 FROM project_resource_scopes resource WHERE resource.resource_kind='job' AND resource.resource_id=job.job_id)`)
       .bind(targetId,user.userId,user.streamId).first<DocumentJobRow|{present:number}>();
@@ -3454,7 +3491,7 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
     return Response.json(path?{job:safeScopedJob(certified[0]!,recoveryBlocker)}:{jobs:certified.map((row)=>safeScopedJob(row,recoveryBlocker))},{headers:{"cache-control":"private, no-store"}});
   }
   if(project&&path){
-    const targetId=decodeURIComponent(path.replace(/\/(?:cancel|force-fail|ack|dismiss|retry|run|recover|reconcile-provider|reconcile-output|continue-safer-frames)$/,""));
+    const targetId=decodeURIComponent(path.replace(/\/(?:cancel|force-fail|ack|dismiss|retry|run|recover|reconcile-provider|reconcile-output|continue-safer-frames|acknowledge-safety)$/,""));
     const target=await readJob(env,user.userId,targetId);
     if(!target||!await activeProjectExecution(env,user,target.document_id,targetId))return Response.json({error:"job_not_found"},{status:404});
     if(executionRequest)verifiedPathJob=target;
@@ -3471,6 +3508,45 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
       AND NOT EXISTS(SELECT 1 FROM project_resource_scopes resource JOIN organization_retention_policies policy ON policy.organization_id=resource.organization_id AND policy.legal_hold=1
         WHERE (resource.resource_kind='job' AND resource.resource_id=document_jobs.job_id)
           OR (resource.resource_kind='document' AND resource.resource_id=document_jobs.document_id AND resource.owner_user_id=document_jobs.owner_id))`).bind(now,user.userId,user.streamId,now).run();
+  }
+
+  if(path.endsWith("/acknowledge-safety")&&request.method==="POST"){
+    const consent=requireConsent(principal);if(consent)return consent;
+    const headers={"cache-control":"private, no-store"};
+    if(request.headers.get("origin")&&request.headers.get("origin")!==new URL(request.url).origin)return Response.json({error:"same_origin_required"},{status:403,headers});
+    const jobId=decodeURIComponent(path.slice(0,-"/acknowledge-safety".length));
+    const target=await readJob(env,user.userId,jobId);
+    if(!target||target.stream_id!==user.streamId)return Response.json({error:"job_not_found"},{status:404,headers});
+    let input:Record<string,unknown>;try{input=await request.json();}catch{return Response.json({error:"explicit_safety_acknowledgement_required"},{status:400,headers});}
+    if(!input||input.acknowledged!==true||input.attemptCount!==target.attempt_count)return Response.json({error:"explicit_safety_acknowledgement_required"},{status:409,headers});
+    if(!safetyDeliveryAvailable(target)||hasUnsettledProviderSubmission(parseResult(target))
+      ||await env.DB.prepare("SELECT 1 FROM output_operation_slots WHERE job_id=?").bind(jobId).first())return Response.json({error:"safety_acknowledgement_unavailable"},{status:409,headers});
+    const previous=parseResult(target),payload=parseRequest(target),detail=errorDetailFromResult(previous)!;
+    const promptRef=String(previous.moderationPromptRef);
+    const prompt=await retainedSafetyPrompt(env,user,target,promptRef);
+    if(!prompt)return Response.json({error:"safety_acknowledgement_expired",message:"The reviewed prompt has expired. Start and review a new request."},{status:409,headers});
+    // Refresh non-safety readiness. This click acknowledges warnings, never account,
+    // provider, permission, or budget blocks. Execution still reserves fresh budgets.
+    const readiness=await preflightGeneration(stillImageEnvironment(env,target.source_surface,payload),user,{kind:target.kind as "preview"|"generate",documentId:target.document_id,
+      documentRevision:String(payload.documentRevision??""),requestKey:String(payload.requestKey??""),snapshot:payload.snapshot as Record<string,unknown>,
+      sourcePreviewId:typeof payload.sourcePreviewId==="string"?payload.sourcePreviewId:null,promptTechnique:normalizePromptTechnique(payload.promptTechnique),
+      productionMode:payload.productionMode==="managed"?"managed":"manual",force:true,sourceSurface:target.source_surface},{allowCache:false});
+    if(readiness.status!=="ready"&&readiness.status!=="review")return Response.json({error:"generation_preflight_blocked",message:readiness.summary,readiness},{status:409,headers});
+    const authority=documentJobProjectAuthority(user,target.document_id,jobId);
+    const guard=authority??{sql:"NOT EXISTS(SELECT 1 FROM project_resource_scopes resource WHERE resource.resource_kind='job' AND resource.resource_id=document_jobs.job_id)",bindings:[]};
+    const result={...previous,safetyAcknowledgement:{attempt:target.attempt_count+1,promptRef,digest:detail.safetyInputDigest,actorUserId:user.userId,acknowledgedAt:now,previousProviderSubmissions:previous.providerSubmissions},
+      stage:"queued",progressMessage:"Risks acknowledged. The reviewed request is queued for delivery to the model."};
+    // Exact-attempt CAS: double clicks, stale pages and concurrent changes cannot
+    // grant another attempt. The approval is never stored in client request JSON.
+    const changed=await env.DB.prepare(`UPDATE document_jobs SET status='queued',result_json=?,error_message=NULL,completed_at=NULL,notified_at=NULL,lease_expires_at=NULL,updated_at=?
+      WHERE job_id=? AND owner_id=? AND stream_id=? AND status='failed' AND attempt_count=? AND correlation_id=? AND request_json=? AND result_json IS ? AND expires_at>?
+        AND NOT EXISTS(SELECT 1 FROM output_operation_slots WHERE job_id=document_jobs.job_id) AND (${guard.sql})`)
+      .bind(JSON.stringify(result),now,jobId,user.userId,user.streamId,target.attempt_count,target.correlation_id,target.request_json,target.result_json,now,...(guard.bindings??[])).run();
+    if(Number(changed.meta.changes??0)!==1)return Response.json({error:"safety_acknowledgement_stale"},{status:409,headers});
+    await appendAuditEvent(env,user.streamId,`user:${user.userId}`,"GenerationRiskAcknowledged",{job_id:jobId,document_id:target.document_id,attempt:target.attempt_count+1,failed_attempt:target.attempt_count,preflight_probe:detail.probe,forced_model_delivery:true},target.correlation_id);
+    const queued=await readJob(env,user.userId,jobId);
+    context?.waitUntil(driveDocumentQueue(env,user));
+    return Response.json({job:project?safeScopedJob(queued!):serializeJob(queued!)},{status:202,headers});
   }
 
   if(path.endsWith("/reconcile-output")&&request.method==="POST"){
@@ -4005,6 +4081,7 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
     payload.stillImageProvider = "openai";
     env = stillImageEnvironment(env, "still", payload);
   }
+  if(Object.hasOwn(payload,"safetyAcknowledgement"))return Response.json({error:"safety_acknowledgement_server_owned"},{status:400});
   if(Object.hasOwn(payload,"outputDurable"))return Response.json({error:"output_durable_marker_server_owned"},{status:400});
   if(kind==="render_document"&&payload.videoResolution!==undefined){
     if(payload.artifactKind!=="video"||payload.videoResolution!=="480p"&&payload.videoResolution!=="720p")return Response.json({error:"video_resolution_unsupported",supported:VIDEO_ADAPTER_CONTRACT.supportedResolutions},{status:400});

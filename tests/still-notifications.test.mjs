@@ -17,7 +17,7 @@ test('generation status renders terminal errors only once and replaces stale pro
  const message='At least one reference image or video is required.';
  for(const progressMessage of [message,'Submitting…']){
   const job={jobId:'failed',documentId:'doc',kind:'render_document',status:'failed',progressMessage,result:{artifactKind:'video'},error:message,errorDetail:{message}};
-  const output=render.call({client:{projection:{documentId:'doc',documentTitle:'Scene',blocks:[]},position:{outputId:'failed'},jobs:[job],events:[]},canGenerateAgain:()=>true,generationCheckKey:()=>'',button:()=>assert.fail('Recovery controls belong in the toolbar')});
+  const output=render.call({client:{projection:{documentId:'doc',documentTitle:'Scene',blocks:[]},position:{outputId:'failed'},jobs:[job],events:[]},canAcknowledgeSafety:()=>false,canGenerateAgain:()=>true,generationCheckKey:()=>'',button:()=>assert.fail('Recovery controls belong in the toolbar')});
   assert.equal(output.split(message).length-1,1);assert.equal(output.includes('Submitting…'),false);assert.equal(output.split('role="status"').length-1,1);
  }
 });
@@ -62,7 +62,7 @@ test('Review generation opens the original job even without generation permissio
  for(const formats of [[],['image','video']])for(const job of [{kind:'generate'},{kind:'render_document',result:{artifactKind:'video'}}]){
   const failed={...job,jobId:'original-failed-job',documentId:'original-document',status:'failed',attemptCount:1,errorDetail:{category:'network',action:'retry',code:'provider_network_error',message:'Unavailable.'}};
   let review;const navigations=[];
-  const app={client:{abilities:{formats}},notification:(_key,_message,_tone,actions)=>{review=actions[0];},navigate:(view,ids)=>navigations.push({view,ids}),choose:()=>assert.fail('Review must not choose a new format'),startGeneration:()=>assert.fail('Review must not start generation')};
+  const app={canAcknowledgeSafety:()=>false,client:{abilities:{formats}},notification:(_key,_message,_tone,actions)=>{review=actions[0];},navigate:(view,ids)=>navigations.push({view,ids}),choose:()=>assert.fail('Review must not choose a new format'),startGeneration:()=>assert.fail('Review must not start generation')};
   render.call(app,failed);assert.equal(review.label,'Review generation');review.run();
   assert.deepEqual(navigations,[{view:'generation',ids:{outputId:failed.jobId}}]);
  }

@@ -16,6 +16,7 @@ export type ProviderFailureDetail = {
   contributingBlockIds?: string[];
   contributingReferenceIds?: string[];
   probe?: string;
+  safetyInputDigest?: string;
   moderationReceipt?: {
     available: boolean; flagged: boolean; categories: string[]; scores: Record<string, number>;
     model: string; requestId: string | null; requestIds: string[]; probeCount: number;
@@ -182,6 +183,6 @@ export function providerErrorFromResponse(response: Response, body: unknown, fal
 }
 
 export function publicFailureDetail(detail: ProviderFailureDetail) {
-  return { code: detail.code, category: detail.category, scope: detail.scope, action: detail.action, message: detail.message, retryable: detail.retryable, retryAfterMs: detail.retryAfterMs, requestId: detail.requestId, httpStatus: detail.httpStatus, riskCategories: detail.riskCategories ?? [], contributingBlockIds: detail.contributingBlockIds ?? [], contributingReferenceIds: detail.contributingReferenceIds ?? [], probe: detail.probe ?? null,...(detail.validationIssues?.length?{validationIssues:detail.validationIssues}:{}) };
+  return { ...(detail.safetyInputDigest?{safetyInputDigest:detail.safetyInputDigest}:{}), code: detail.code, category: detail.category, scope: detail.scope, action: detail.action, message: detail.message, retryable: detail.retryable, retryAfterMs: detail.retryAfterMs, requestId: detail.requestId, httpStatus: detail.httpStatus, riskCategories: detail.riskCategories ?? [], contributingBlockIds: detail.contributingBlockIds ?? [], contributingReferenceIds: detail.contributingReferenceIds ?? [], probe: detail.probe ?? null,...(detail.validationIssues?.length?{validationIssues:detail.validationIssues}:{}) };
 }
 import type { PresentationCandidateValidationIssue } from "../src/model/presentation-candidates.ts";

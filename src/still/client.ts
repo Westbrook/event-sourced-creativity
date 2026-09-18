@@ -1,3 +1,4 @@
+import { documentJobCanAcknowledgeSafety } from "../model/document-jobs.ts";
 import { generationResult } from './results.ts';
 import { foldEvents, type CreativeEvent, type EventInput } from '../model/events.ts';
 import { documentArtifactRevision } from '../model/document-artifacts.ts';
@@ -409,6 +410,15 @@ export class StillClient {
     operationJournal.clearGeneration(this.journalScope,draft.documentId);
     this.jobs = [result.job, ...this.jobs.filter(j => j.jobId !== result.job.jobId)]; this.onChange();
     void this.request(`/api/document-jobs/${encodeURIComponent(result.job.jobId)}/run`, {}).catch(() => {});
+    return result.job;
+  }
+  async acknowledgeGenerationSafety(job: DocumentJob) {
+    const check=await this.verifyScope();
+    if(!this.abilities.generate||!documentJobCanAcknowledgeSafety(job)||job.documentId!==this.position.documentId)throw new Error('This request cannot be submitted. Refresh its status.');
+    const result=await this.request<{job:DocumentJob}>(`/api/document-jobs/${encodeURIComponent(job.jobId)}/acknowledge-safety`,{acknowledged:true,attemptCount:job.attemptCount});check();
+    if(result.job?.jobId!==job.jobId||result.job.documentId!==job.documentId)throw new Error('Generation delivery unconfirmed. Refresh status before trying again.');
+    this.jobs=this.jobs.map(current=>current.jobId===job.jobId?result.job:current);this.onChange();
+    void this.request(`/api/document-jobs/${encodeURIComponent(job.jobId)}/run`,{}).catch(()=>{});
     return result.job;
   }
   async dismissJob(job: DocumentJob) {
