@@ -1,8 +1,9 @@
+import type { AttentionSnapshot } from './attention.ts';
 import type { PaletteFeedback } from './palette-feedback.ts';
 import type { DecisionDiagnostics, ReceivedDecision } from './diagnostics.ts';
 
 export type ConsoleControl = { label:string; id:string; region:string; variant:string; size:string; emphasis:string; disabled:boolean; options:string[] };
-export type ConsoleContext = { view:string; mode:string; head:number; selectedFormat:string; page:number; actionLimit?:number; more?:boolean; paletteOpen?:boolean; paletteFeedback?:PaletteFeedback; paletteOrder?:{rankedIds:string[];passedOverIds:string[]}; current:DecisionDiagnostics };
+export type ConsoleContext = { attention?:AttentionSnapshot; view:string; mode:string; head:number; selectedFormat:string; page:number; actionLimit?:number; more?:boolean; paletteOpen?:boolean; paletteFeedback?:PaletteFeedback; paletteOrder?:{rankedIds:string[];passedOverIds:string[]}; current:DecisionDiagnostics };
 export type ConsoleSnapshot = { scope:string; context:ConsoleContext; applied?:DecisionDiagnostics; received?:ReceivedDecision; pending:boolean; controls:ConsoleControl[] };
 const protocol='still-developer-console-v1';
 export const validConsoleSession=(value:string|null):value is string=>!!value&&/^[a-f0-9-]{36}$/.test(value);
