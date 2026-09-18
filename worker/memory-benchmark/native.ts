@@ -7,6 +7,7 @@ import { BenchmarkLedger } from "./ledger.ts";
 import { benchmarkPlan, EXPERIMENT_ID, handleMemoryBenchmark, MAXIMUM_MICRO_USD, sha256,
   type BenchmarkDependencies, type BenchmarkEnvironment, type BenchmarkGrant } from "./runner.ts";
 import { priceOperation } from "./provider.ts";
+import { nativeBenchmarkSchemaGuard } from "./schema.ts";
 
 /** Default-off native caller. Optional schema is installed explicitly, never from a request. */
 export type NativeBenchmarkEnvironment = WorkerEnv & BenchmarkEnvironment & {
@@ -44,6 +45,8 @@ async function capture(request: Request, env: NativeBenchmarkEnvironment, recove
   if (!user || !allowed.has(user.userId) || user.fictional || user.role !== "admin" || !user.authorizationSnapshot
     || user.billingUserId && user.billingUserId !== user.userId || user.projectExecution
     || user.consentVersion !== POLICY_VERSION) return null;
+  const schema = await nativeBenchmarkSchemaGuard(env);
+  if (!schema) return null;
   // This first candidate has one explicitly personal/self payer; it cannot choose another user,
   // an organization, a managed pilot, or effective impersonation billing from request data.
   const allowance = await pilotExecutionAllowance(env, user.userId);
@@ -56,13 +59,13 @@ async function capture(request: Request, env: NativeBenchmarkEnvironment, recove
     || captured.organizations !== original.organizations || captured.projects !== original.projects
     || captured.policies !== original.identityPolicies || captured.canvas !== original.canvasRequirements) return null;
   const admission = configuredPilotAdmissionGuard(env, user);
-  const guard = { sql: `EXISTS(SELECT 1 FROM (${snapshotSql}) WHERE value=?) AND (${admission.sql})
+  const guard = { sql: `EXISTS(SELECT 1 FROM (${snapshotSql}) WHERE value=?) AND (${admission.sql}) AND (${schema.sql})
     AND EXISTS(SELECT 1 FROM users WHERE user_id=? AND email=? AND role='admin' AND consent_version=?)
     AND NOT EXISTS(SELECT 1 FROM pilot_participants participant JOIN pilot_cohorts cohort
       ON cohort.cohort_id=participant.cohort_id AND cohort.organization_id=participant.organization_id
       WHERE participant.user_id=? AND participant.status='active' AND participant.revoked_at IS NULL
         AND cohort.status IN ('active','paused','closed'))`,
-    bindings: [user.userId, snapshot.value, ...admission.bindings, user.userId, user.email, POLICY_VERSION, user.userId] };
+    bindings: [user.userId, snapshot.value, ...admission.bindings, ...schema.bindings, user.userId, user.email, POLICY_VERSION, user.userId] };
   if (!await env.DB.prepare("SELECT 1 AS current WHERE " + guard.sql).bind(...guard.bindings).first()) return null;
   return { user, snapshot: snapshot.value, guard };
 }

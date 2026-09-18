@@ -4,7 +4,9 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import test from 'node:test';
-import { handleNativeMemoryBenchmark, purgeExpiredNativeMemoryBenchmark } from '../worker/memory-benchmark/native.ts';
+import { registerOutputSourceImports } from './output-execution-test-helpers.mjs';
+registerOutputSourceImports();
+const { handleNativeMemoryBenchmark, purgeExpiredNativeMemoryBenchmark } = await import('../worker/memory-benchmark/native.ts');
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const retained = root;
@@ -73,6 +75,36 @@ async function fixture(t, { qualified = true } = {}) {
 test('disabled handler touches neither native authority nor database', async () => {
   const env = { DB: { prepare() { throw new Error('unexpected DB'); } } };
   assert.equal((await handleNativeMemoryBenchmark(new Request(origin), env)).status, 404);
+});
+
+for (const drift of ['missing-trigger', 'changed-trigger', 'unknown-table', 'temporary-object', 'external-dependent'])
+  test(`native benchmark refuses incomplete or drifted financial schema: ${drift}`, async t => {
+    const f = await fixture(t);
+    if (drift === 'missing-trigger' || drift === 'changed-trigger') f.sqlite.exec('DROP TRIGGER memory_benchmark_native_token_no_delete');
+    if (drift === 'changed-trigger') f.sqlite.exec('CREATE TRIGGER memory_benchmark_native_token_no_delete BEFORE DELETE ON budget_reservations BEGIN SELECT 1; END;');
+    if (drift === 'unknown-table') f.sqlite.exec('CREATE TABLE memory_benchmark_unreviewed(id TEXT)');
+    if (drift === 'temporary-object') f.sqlite.exec('CREATE TEMP TABLE memory_benchmark_experiments(id TEXT)');
+    if (drift === 'external-dependent') f.sqlite.exec('CREATE TRIGGER unknown_budget_guard AFTER UPDATE ON budget_reservations BEGIN DELETE FROM memory_benchmark_assertions; END;');
+    assert.notEqual((await f.invoke('approve')).status, 200);
+    assert.equal(f.sqlite.prepare('SELECT COUNT(*) AS n FROM main.memory_benchmark_native_grants').get().n, 0);
+    assert.equal(f.hooks.fetches, 0);
+  });
+
+test('financial schema changing before native reservation cannot authorize provider dispatch', async t => {
+  const f = await fixture(t); assert.equal((await f.invoke('approve')).status, 200);
+  f.hooks.beforeBatch = () => f.sqlite.exec('DROP TRIGGER memory_benchmark_native_token_no_delete');
+  assert.notEqual((await f.invoke('step')).status, 200);
+  assert.equal(f.sqlite.prepare('SELECT COUNT(*) AS n FROM budget_reservations').get().n, 0);
+  assert.equal(f.sqlite.prepare('SELECT COUNT(*) AS n FROM cost_budget_reservations').get().n, 0);
+  assert.equal(f.hooks.fetches, 0);
+});
+
+test('external financial dependency added after capture invalidates native reservation proof', async t => {
+  const f = await fixture(t); assert.equal((await f.invoke('approve')).status, 200);
+  f.hooks.beforeBatch = () => f.sqlite.exec('CREATE TRIGGER unknown_budget_guard AFTER UPDATE ON budget_reservations BEGIN DELETE FROM memory_benchmark_assertions; END;');
+  assert.notEqual((await f.invoke('step')).status, 200);
+  assert.equal(f.sqlite.prepare('SELECT COUNT(*) AS n FROM budget_reservations').get().n, 0);
+  assert.equal(f.hooks.fetches, 0);
 });
 
 test('external qualification is required; approval cannot create qualification or spend', async t => {

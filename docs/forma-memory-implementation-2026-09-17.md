@@ -8,6 +8,11 @@ It did not modify the main checkout or its unrelated proposal documents.
 
 ## September 18 follow-up
 
+[Completion and release status](forma-memory-release-2026-09-18.md) records the
+current production boundary, exact-schema benchmark fixes and dependency-ordered
+implementation To Do list. Publishing the default-disabled source does not close
+the remaining source table below.
+
 [Native producer continuation](forma-memory-native-producers-2026-09-18.md) adds
 bounded genuine Chat Studio completed-turn capture, personal exact artifact-view
 receipts and exact schema/custody compatibility. Those are implementation

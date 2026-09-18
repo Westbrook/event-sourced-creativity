@@ -2,6 +2,12 @@
 
 Updated **2026-09-17**. Backlog entry: [MEM-001](backlog.md#memory).
 
+September 18 release continuation: see [completion and release status](forma-memory-release-2026-09-18.md).
+The Memory task is handling current source integration/publication and coordinating
+with **Build minimalist Jev creative app**, the latest active Forma publisher.
+This is not a claim of accepted release ownership for future operations, production
+qualification or complete implementation.
+
 This is the operational, policy, evaluation and acceptance checklist, **not a
 claim that the entire Memory expansion is implemented**. Unfinished source work
 is tracked separately in [the implementation reconciliation](forma-memory-implementation-2026-09-17.md#remaining-source-work).
@@ -23,7 +29,7 @@ credential's presence is not model access, price verification or spend approval.
 
 | Gate | Next action | Evidence needed to close | Owner |
 | --- | --- | --- | --- |
-| Release review and integration | Review the final branch diff and test evidence against the current `main`; nominate the current production owner. The previous production-owner task is archived. | Accepted source commit, reviewed migrations if any, release identity, environment flags, audience and rollback receipt. A local merge into this branch is not integration into `main` or deployment. | Unassigned |
+| Release review and integration | Record the exact main/source/deployment result in the September 18 release status; coordinate future publication with the active Forma publisher. The older specialist production task remains archived. | Accepted source commit, reviewed migrations if any, release identity, environment flags, audience and rollback receipt. A local merge into this branch is not integration into `main` or deployment. | Memory task for this release; ongoing operations unassigned |
 | Hosted scheduling qualification | Qualify the supported independent scheduler/runtime using isolated accounts/data before registering production delivery. | No-visitor invocation, timezone/activity gating, concurrency/capacity limits, duplicate and missed delivery, lease expiry, loss of ACK, restart and backpressure evidence. Privacy/expiry maintenance must run even without human activity. | Unassigned; user is arranging scheduling |
 | Hosted storage/privacy qualification | Rehearse the exact schema and bounded SQL on the selected host, with isolated data and real access transitions. | Atomicity and statement/binding limits; revoke/remove/expire/erase, concurrent publication, retained-content withdrawal, recovery and backup/restore checks; no false erasure success. Qualify larger retention limits separately rather than assuming the earlier 257-item boundary passed. | Unassigned |
 | Provider qualification | Verify the selected models, current pricing, account access, residency/retention and bounded usage reporting for the exact candidate source. | Reviewable dated evidence bound to model/pricing versions, exact plan and source digest, origin and validity period. Do not fabricate qualification records merely to enable a route. | Unassigned |

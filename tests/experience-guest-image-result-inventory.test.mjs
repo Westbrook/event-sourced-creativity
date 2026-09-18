@@ -668,3 +668,55 @@ test('guest inventory refuses a partial reference-only Memory schema even with n
   for (const statement of partial.split('--> statement-breakpoint').map(value => value.trim()).filter(Boolean)) f.sqlite.exec(statement);
   await denied(f, t);
 });
+
+function installNativeBenchmarkSchema(f, baseOnly = false) {
+  f.sqlite.exec(readFileSync(new URL('../db/memory-benchmark.pending.sql', import.meta.url), 'utf8'));
+  if (!baseOnly) f.sqlite.exec(readFileSync(new URL('../db/memory-benchmark-native.pending.sql', import.meta.url), 'utf8'));
+}
+
+function seedUnrelatedBenchmark(f, principal = 'benchmark-actor', payerId = principal) {
+  f.sqlite.prepare(`INSERT INTO memory_benchmark_experiments
+    (experiment_id,plan_hash,principal_id,payer_id,period,expires_at,created_at,updated_at)
+    VALUES('benchmark','plan',?,?,'2026-09',2000,1000,1000)`).run(principal, payerId);
+}
+
+test('complete exact benchmark schema preserves original guest inventory with unrelated receipts', async t => {
+  const f = await completedResultFixture(t, { memory: true });
+  const before = await currentManifest(f, t);
+  installNativeBenchmarkSchema(f); seedUnrelatedBenchmark(f, payer, payer);
+  assert.deepEqual(await currentManifest(f, t), before);
+});
+
+for (const drift of ['base-only', 'missing-native-trigger', 'changed-budget-trigger', 'unknown-object'])
+  test(`guest inventory refuses benchmark schema drift: ${drift}`, async t => {
+    const f = await completedResultFixture(t, { memory: true });
+    installNativeBenchmarkSchema(f, drift === 'base-only');
+    if (drift === 'missing-native-trigger') f.sqlite.exec('DROP TRIGGER memory_benchmark_native_operation_no_delete');
+    if (drift === 'changed-budget-trigger') {
+      f.sqlite.exec('DROP TRIGGER memory_benchmark_native_token_no_delete');
+      f.sqlite.exec('CREATE TRIGGER memory_benchmark_native_token_no_delete BEFORE DELETE ON budget_reservations BEGIN SELECT 1; END;');
+    }
+    if (drift === 'unknown-object') f.sqlite.exec('CREATE TABLE memory_benchmark_unreviewed(id TEXT)');
+    await denied(f, t);
+  });
+
+for (const identity of ['principal', 'payer'])
+  test(`guest inventory refuses benchmark ${identity} identity linked to its guest`, async t => {
+    const f = await completedResultFixture(t, { memory: true }); installNativeBenchmarkSchema(f);
+    seedUnrelatedBenchmark(f, identity === 'principal' ? f.session.guestSubject : 'benchmark-actor', identity === 'payer' ? f.session.guestSubject : 'benchmark-payer');
+    await denied(f, t);
+  });
+
+for (const reservation of ['token', 'cost'])
+  test(`guest inventory refuses another benchmark actor's linked ${reservation} reservation`, async t => {
+    const f = await completedResultFixture(t, { memory: true }); installNativeBenchmarkSchema(f); seedUnrelatedBenchmark(f);
+    f.sqlite.exec(`INSERT INTO memory_benchmark_native_qualifications VALUES
+      ('q','plan','source','${'e'.repeat(64)}','https://fixture.invalid','qualified',1000,2000,1,1,1,1,1,1,1);
+      INSERT INTO memory_benchmark_native_grants VALUES('benchmark',1,'benchmark-actor','benchmark-actor','plan','q','2026-09',10000000,1000,2000,NULL);
+      INSERT INTO memory_benchmark_operations(experiment_id,operation_id,request_hash,ordinal,reservation_token,maximum_micro_usd,created_at,updated_at)
+        VALUES('benchmark','operation','request',0,'unrelated-reservation',100,1000,1000);`);
+    f.sqlite.prepare(`INSERT INTO memory_benchmark_native_operations(binding_id,experiment_id,operation_id,request_hash,principal_id,payer_id,period,model,maximum_tokens,maximum_micro_usd,token_id,cost_id)
+      VALUES('binding','benchmark','operation','request','benchmark-actor','benchmark-actor','2026-09','text-embedding-3-small',100,100,?,?)`)
+      .run(reservation === 'token' ? f.completed.token.reservation_id : 'unrelated-token', reservation === 'cost' ? f.completed.cost.reservation_id : 'unrelated-cost');
+    await denied(f, t);
+  });
