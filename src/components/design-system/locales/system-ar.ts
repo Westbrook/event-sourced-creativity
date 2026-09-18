@@ -1,5 +1,6 @@
 /** Audited Forma-owned interface, metadata, and component-documentation copy. */
 const messages: Record<string, string> = {
+  "generation.acknowledgeRisks": "أفهم المخاطر",
   "system.auto.mnnucx.13": "النتيجة المشتركة",
   "system.auto.1h1pgn9.12": "مشاركة النتيجة",
   "system.auto.g1h7cj.64": "قيد إضافي يفرضه المضيف. لا يمكنه تجاوز الصلاحية التي يتيحها الخادم.",

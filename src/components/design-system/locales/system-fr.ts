@@ -1,5 +1,6 @@
 /** Audited Forma-owned interface, metadata, and component-documentation copy. */
 const messages: Record<string, string> = {
+  "generation.acknowledgeRisks": "Je comprends les risques",
   "system.auto.mnnucx.13": "Résultat partagé",
   "system.auto.1h1pgn9.12": "Partager le résultat",
   "system.auto.g1h7cj.64": "Restriction supplémentaire définie par l’hôte. Elle ne peut pas outrepasser la capacité autorisée par le serveur.",

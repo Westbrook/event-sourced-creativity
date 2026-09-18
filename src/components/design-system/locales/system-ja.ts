@@ -1,5 +1,6 @@
 /** Audited Forma-owned interface, metadata, and component-documentation copy. */
 const messages: Record<string, string> = {
+  "generation.acknowledgeRisks": "リスクを理解しました",
   "system.auto.mnnucx.13": "共有された出力",
   "system.auto.1h1pgn9.12": "出力を共有",
   "system.auto.g1h7cj.64": "ホストによる追加の制限です。サーバー側の機能許可を上書きすることはできません。",
