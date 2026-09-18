@@ -6,7 +6,7 @@ import { readPanelLink, RemotePanelViewer } from './remote-panel.ts';
 /** This entry point never constructs Forma's data client or performs Jev/generation calls. */
 export function startSharedPanel(){
   document.title='Still · Shared panel';
-  document.body.style.cssText='margin:0;background:#f7f6f2;color:#33332e;font:14px/1.5 system-ui,sans-serif';
+  document.body.style.cssText='margin:0;background:var(--en-color-canvas);color:var(--en-color-text);font:14px/1.5 system-ui,sans-serif';
   const status=document.createElement('p');status.style.cssText='margin:16px 24px';status.setAttribute('role','status');status.textContent='Connecting…';document.body.append(status);
   const link=readPanelLink(location.href);if(!link){status.textContent='This panel link is invalid. Ask the host for a new link.';return;}
   const panel=new StillDeveloperConsole();panel.detached=true;panel.remote=true;

@@ -8,7 +8,7 @@ import { ConsoleWindowReceiver, validConsoleSession } from './console-window.ts'
 
 export function startConsoleWindow(){
   document.title='Still · Decisions';
-  document.body.style.cssText='margin:0;background:#f7f6f2;color:#33332e;font:14px/1.5 system-ui,sans-serif';
+  document.body.style.cssText='margin:0;background:var(--en-color-canvas);color:var(--en-color-text);font:14px/1.5 system-ui,sans-serif';
   const session=new URL(location.href).searchParams.get('developer-console'),source=window.opener as Window|null;
   const status=document.createElement('p');status.style.cssText='margin:24px';status.setAttribute('role','status');document.body.append(status);
   if(!validConsoleSession(session)||!source){status.textContent='Open Decisions from Still.';return;}

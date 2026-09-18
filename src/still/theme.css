@@ -1,21 +1,28 @@
-/* Still owns its semantic palette. Inheritance reaches component shadow roots,
-   including the standalone developer window; vendor defaults stay untouched. */
-still-app,
-still-developer-console {
-  color-scheme: light;
-  --en-color-canvas: #f7f6f2;
-  --en-color-surface: #fbfaf7;
-  --en-color-surface-raised: #fbfaf7;
-  --en-color-surface-subtle: #efeee8;
-  --en-color-text: #302f2b;
-  --en-color-line: #dedbd2;
-  --en-color-boundary: #c5c3b8;
-  --en-color-selected: #e7e6df;
-  --en-color-action: #393d32;
-  --en-color-action-hover: #2e3228;
-  --en-color-action-pressed: #25291f;
-  --en-color-action-text: #4f5148;
-  --en-color-on-action: #ffffff;
-  --en-color-focus: #8e6246;
-  --en-color-focus-halo: #8e6246;
+/* Still customizes En Reve's palette; components retain the library's semantic
+   mappings, status colors and interaction tokens. The browser follows the OS. */
+html {
+  color-scheme: light dark;
+  --en-palette-canvas: light-dark(#f7f6f2, #20211d);
+  --en-palette-surface: light-dark(#fbfaf7, #282a23);
+  --en-palette-surface-raised: light-dark(#fbfaf7, #303229);
+  --en-palette-surface-subtle: light-dark(#efeee8, #33352d);
+  --en-palette-text: light-dark(#302f2b, #eeeae0);
+  --en-palette-text-muted: light-dark(#77746d, #b2aea3);
+  --en-palette-line: light-dark(#dedbd2, #45463e);
+  --en-palette-boundary: light-dark(#c5c3b8, #737568);
+  --en-palette-selected: light-dark(#e7e6df, #414538);
+  --en-palette-accent: light-dark(#a54c32, #dd9876);
+  --en-palette-action: light-dark(#393d32, #d1d7be);
+  --en-palette-on-action: light-dark(#ffffff, #24271e);
+  --en-palette-focus: light-dark(#8e6246, #e2aa87);
+  --en-color-action-hover: light-dark(#2e3228, #e0e5d1);
+  --en-color-action-pressed: light-dark(#25291f, #bec8a7);
+  --en-color-action-text: light-dark(#4f5148, #d3d5c9);
+  --en-color-on-action: var(--en-palette-on-action);
+  --en-color-accent-border: var(--en-color-boundary);
+  --en-color-accent-subtle: var(--en-color-selected);
+  --still-shadow: light-dark(rgb(48 47 43 / .0725), rgb(0 0 0 / .21));
+  --still-dock-shadow: light-dark(#3c342708, #00000035);
+  background: var(--en-color-canvas);
+  color: var(--en-color-text);
 }
