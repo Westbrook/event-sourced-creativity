@@ -1,3 +1,4 @@
+import { fitToolbarLimit } from './toolbar-fit.ts';
 import { generationDecisionContext } from './generation-decision.ts';
 import { documentJobCanAcknowledgeSafety } from "../model/document-jobs.ts";
 import { fetchDecision } from './decision-transport.ts';
@@ -112,7 +113,48 @@ export class StillApp extends LitElement {
   private pendingBlock: ReturnType<StillClient['blockEvent']> | null = null;
   private editBase: { text?: string; revision?: number; title?: string; item?: number } = {};
   private composing = false;
-  private dockObserver = new ResizeObserver(entries => { const h = entries[0]?.contentRect.height ?? 140; this.style.setProperty('--dock-height', `${h + 70}px`); });
+  private dockObserver = new ResizeObserver(() => this.scheduleDockFit());
+  private dockFitFrame=0;
+  private measuredDockLimit=7;
+  private firstDockLimit=5;
+  private measuringDock=0;
+  private dockFitScope='';
+  private dockFit={maximum:5,fits:5,hidden:[] as string[],deferred:false};
+  private get toolbarLimit(){return this.measuringDock||Math.min(this.pageActionLimit,this.measuredDockLimit);}
+  private get dockClass(){return this.measuringDock?'dock-measure':'action-dock';}
+  private dockId(id:string){return this.measuringDock?'measure-'+this.measuringDock+'-'+id:id;}
+  private scheduleDockFit(){cancelAnimationFrame(this.dockFitFrame);this.dockFitFrame=requestAnimationFrame(()=>this.measureDock());}
+  private measureDock(){
+    const dock=this.querySelector<HTMLElement>('.action-dock');
+    if(!dock)return;
+    this.style.setProperty('--dock-height', `${dock.getBoundingClientRect().height+70}px`);
+    const padding=getComputedStyle(dock);
+    const available=dock.clientWidth-parseFloat(padding.paddingLeft)-parseFloat(padding.paddingRight);
+    const probes=[...this.querySelectorAll<HTMLElement>('.toolbar-probes [data-fit-limit]')];
+    const widths=probes.map(probe=>({limit:Number(probe.dataset.fitLimit),width:(probe.querySelector('en-toolbar')?.shadowRoot?.querySelector('[part=base]')?.getBoundingClientRect().width??Infinity)+8}));
+    const scope=[this.activeAddress,this.mode,this.moreOpen,this.pageActionLimit].join('/');
+    const previous=scope===this.dockFitScope?this.measuredDockLimit:undefined;
+    const fits=fitToolbarLimit(widths,available,this.pageActionLimit,previous);
+    // Keep a keyboard user's target stable. CSS supplies temporary scrolling until focus leaves.
+    const deferred=previous!==undefined&&dock.matches(':focus-within')&&fits!==this.measuredDockLimit;
+    const next=deferred?this.measuredDockLimit:fits;
+    const current=probes.find(p=>Number(p.dataset.fitLimit)===next);
+    const maximum=probes.find(p=>Number(p.dataset.fitLimit)===this.pageActionLimit);
+    const labels=(node:Element|undefined)=>[...node?.querySelectorAll('en-toolbar > en-button')??[]].map(b=>b.textContent?.trim()??'');
+    const shown=labels(current),hidden=labels(maximum).filter(label=>!shown.includes(label));
+    const info={maximum:this.pageActionLimit,fits:next,hidden,deferred};
+    const changed=JSON.stringify(info)!==JSON.stringify(this.dockFit)||next!==this.measuredDockLimit;
+    this.dockFitScope=scope;this.dockFit=info;this.measuredDockLimit=next;
+    if(!this.moreOpen)this.firstDockLimit=next;
+    if(changed)this.changed();
+  }
+  // At most seven inert alternatives: real En Reve sizing without duplicate IDs, help requests or telemetry.
+  private renderDockProbes(){
+    const probes=[];
+    try{for(let limit=1;limit<=this.pageActionLimit;limit++){this.measuringDock=limit;probes.push(html`<div data-fit-limit=${limit}>${this.renderDock()}</div>`);}}
+    finally{this.measuringDock=0;}
+    return html`<div class="toolbar-probes" inert aria-hidden="true">${probes}</div>`;
+  }
   private choice = '';
   private page = 0;
   private get itemIndex() { return this.client.position.itemIndex ?? 0; }
@@ -129,7 +171,7 @@ export class StillApp extends LitElement {
   private onboardingHelp=new OnboardingController(input=>api<OnboardingResult>('/api/still/onboarding',input,'POST',8000),()=>this.changed());
   private onboardingScope(){return this.interactionScope()+'/'+this.client.position.view+'/'+this.mode+'/'+this.client.position.blockId+'/'+this.client.position.outputId;}
   private setOnboarding=(e:CustomEvent<{value:boolean}>)=>{this.onboarding=e.detail.value===true;try{localStorage.setItem('still:flag:onboarding',String(this.onboarding));}catch{}const url=new URL(location.href);url.searchParams.delete('onboarding');url.searchParams.delete('onbaording');history.replaceState(history.state,'',url);this.activeAddress=this.address();this.changed();};
-  private help(id:string,label:string){return this.onboarding?html`<en-tooltip for=${id} show-delay="250"><span slot="content">${this.onboardingHelp.help(this.onboardingScope(),id.replace('still-help-',''))??actionHelp(id.replace('still-help-',''),label)}</span></en-tooltip>`:nothing;}
+  private help(id:string,label:string){return this.onboarding&&!this.measuringDock?html`<en-tooltip for=${id} show-delay="250"><span slot="content">${this.onboardingHelp.help(this.onboardingScope(),id.replace('still-help-',''))??actionHelp(id.replace('still-help-',''),label)}</span></en-tooltip>`:nothing;}
   private density=5;
   private get pageActionLimit(){return this.developer?this.density:5;}
   private setDensity=(e:CustomEvent<{value:number}>)=>{this.density=actionLimit(e.detail.value);this.moreOpen=false;this.client.position.actionLimit=this.pageActionLimit;this.changed();};
@@ -206,7 +248,7 @@ export class StillApp extends LitElement {
     document.addEventListener('visibilitychange', this.resumeSync);
     void this.run(() => this.loadWorkspace());
   }
-  disconnectedCallback() { super.disconnectedCallback(); this.onboardingHelp.dispose(); this.attention?.dispose();this.attention=undefined;this.decisionMemory.clear(); this.desktop.removeEventListener('change', this.developerViewportChanged); this.disposed = true; ++this.developerEpoch; this.developerApplied=undefined;this.developerReceived=undefined;this.dockObserver.disconnect(); clearTimeout(this.pollTimer); clearTimeout(this.decisionTimer); window.removeEventListener('keydown', this.paletteShortcut);window.removeEventListener('popstate', this.popstate); window.removeEventListener('beforeunload', this.beforeUnload); window.removeEventListener('focus', this.resumeSync); document.removeEventListener('visibilitychange', this.resumeSync); }
+  disconnectedCallback() { super.disconnectedCallback(); this.onboardingHelp.dispose(); this.attention?.dispose();this.attention=undefined;this.decisionMemory.clear(); this.desktop.removeEventListener('change', this.developerViewportChanged); this.disposed = true; ++this.developerEpoch; this.developerApplied=undefined;this.developerReceived=undefined;this.dockObserver.disconnect();cancelAnimationFrame(this.dockFitFrame); clearTimeout(this.pollTimer); clearTimeout(this.decisionTimer); window.removeEventListener('keydown', this.paletteShortcut);window.removeEventListener('popstate', this.popstate); window.removeEventListener('beforeunload', this.beforeUnload); window.removeEventListener('focus', this.resumeSync); document.removeEventListener('visibilitychange', this.resumeSync); }
   private draftSignature(){const g=this.generation;return JSON.stringify([this.titleDraft,this.bodyDraft,this.kindDraft,g?.prompt,g?.tone,g?.audience,g?.itemCount]);}
   private preventsRouteChange(){return this.busy&&!this.loading||this.composing||this.client.hasUnconfirmedWrite||!!this.generation?.attempted||!!this.mode&&this.draftSignature()!==this.draftBaseline||!!this.querySelector<StillContextFlow>('still-context-flow')?.preventsRouteChange||!!this.querySelector<StillUseInFlow>('still-use-in-flow')?.preventsRouteChange;}
   private beforeUnload = (e: BeforeUnloadEvent) => { if (this.preventsRouteChange()) { e.preventDefault(); e.returnValue = ''; } };
@@ -222,11 +264,12 @@ export class StillApp extends LitElement {
     const attentionPage=location.pathname;
     const attentionEnabled=!this.loading&&!this.startupFailed&&!!this.client.session?.policy.accepted;
     this.attention?.refresh(`${this.client.epoch}/${this.client.scopeKey}`,attentionEnabled?attentionPage:'',attentionEnabled,this.paletteOpen);
-    const dock = this.querySelector('.action-dock'); this.dockObserver.disconnect(); if (dock) this.dockObserver.observe(dock);
+    const dock = this.querySelector('.action-dock'); this.dockObserver.disconnect();
+    if(dock){this.dockObserver.observe(dock);for(const probe of this.querySelectorAll('.toolbar-probes en-toolbar'))this.dockObserver.observe(probe);this.scheduleDockFit();}
     const inspector=this.querySelector<StillDeveloperConsole>('still-developer-console');
     if(inspector){
       if(this.developerScope!==this.diagnosticScope()){this.developerApplied=undefined;this.developerReceived=undefined;this.developerScope=this.diagnosticScope();}
-      inspector.context={generation:this.decisionPosition().generation,onboarding:this.onboarding,onboardingText:this.onboardingHelp.status,historyComplete:this.client.historyComplete,canRefreshDecision:!this.loading&&!this.busy&&(this.paletteOpen||this.mode==='generate'&&!this.generation||!this.mode&&!this.isInlineGeneration()&&!this.canAcknowledgeSafety(this.selectedGeneration())),attention:this.attention?.summary.snapshot(),view:this.client.position.view,mode:this.mode,head:this.client.head,page:this.page,actionLimit:this.pageActionLimit,more:this.moreOpen,paletteOpen:this.paletteOpen,paletteFeedback:this.paletteFeedback,paletteOrder:this.paletteOrder,selectedFormat:this.generation?.format??'',current:this.localDiagnostics('Current eligibility')};
+      inspector.context={toolbarFit:this.dockFit,generation:this.decisionPosition().generation,onboarding:this.onboarding,onboardingText:this.onboardingHelp.status,historyComplete:this.client.historyComplete,canRefreshDecision:!this.loading&&!this.busy&&(this.paletteOpen||this.mode==='generate'&&!this.generation||!this.mode&&!this.isInlineGeneration()&&!this.canAcknowledgeSafety(this.selectedGeneration())),attention:this.attention?.summary.snapshot(),view:this.client.position.view,mode:this.mode,head:this.client.head,page:this.page,actionLimit:this.pageActionLimit,more:this.moreOpen,paletteOpen:this.paletteOpen,paletteFeedback:this.paletteFeedback,paletteOrder:this.paletteOrder,selectedFormat:this.generation?.format??'',current:this.localDiagnostics('Current eligibility')};
       inspector.applied=this.developerApplied;inspector.received=this.developerReceived;inspector.pending=this.developerPending||this.paletteBusy||this.paletteRefreshing;
       inspector.scope=this.diagnosticScope();
     }
@@ -427,7 +470,7 @@ export class StillApp extends LitElement {
       if (!this.disposed) this.poll();
     }, 2000);
   }
-  private suggestedButton(a:Action,format=false,presentation?:Record<string,Emphasis>){const e=(presentation??(format?this.formatEmphasis:this.emphasis))[a.id]??{variant:'secondary',size:'medium',tier:'peer',reason:'No clear leader'};return html`<en-button id=${"still-help-"+a.id} data-action-id=${a.id} data-tier=${e.tier} data-action-source=${this.decisionSource==='jev'&&e.score!==undefined?'Jev ranking':'Local fallback'} data-emphasis-reason=${e.reason} variant=${e.variant} size=${e.size} .disabled=${this.busy||this.composing} @click=${()=>format?void this.startGeneration(a.id):this.choose(a.id)}>${a.label}</en-button>${this.help("still-help-"+a.id,a.label)}`;}
+  private suggestedButton(a:Action,format=false,presentation?:Record<string,Emphasis>){const e=(presentation??(format?this.formatEmphasis:this.emphasis))[a.id]??{variant:'secondary',size:'medium',tier:'peer',reason:'No clear leader'};return html`<en-button id=${this.dockId("still-help-"+a.id)} data-action-id=${a.id} data-tier=${e.tier} data-action-source=${this.decisionSource==='jev'&&e.score!==undefined?'Jev ranking':'Local fallback'} data-emphasis-reason=${e.reason} variant=${e.variant} size=${e.size} .disabled=${this.busy||this.composing} @click=${()=>format?void this.startGeneration(a.id):this.choose(a.id)}>${a.label}</en-button>${this.help("still-help-"+a.id,a.label)}`;}
   private toolbarPolicy(){return {view:this.client.position.view,more:this.moreOpen,secondaryOnly:['refresh-generation',...(this.decisionPosition().generation?.mayDuplicateCharge?['generate-again','create',...Object.keys(FORMATS)]:[])]};}
   private toolbarSuggestions(actions:Action[]){const emphasis=presentToolbar(actions.map(a=>a.id),this.emphasis,this.toolbarPolicy());return actions.map(a=>this.suggestedButton(a,false,emphasis));}
   private paletteShortcut=(event:KeyboardEvent)=>{
@@ -511,7 +554,7 @@ export class StillApp extends LitElement {
       <span slot="footer" class="palette-hint">↑ ↓ Select · Enter Open · Esc Close</span>
     </en-dialog>`;
   }
-  private button(label: string, action: () => void, primary = false, disabled = false, actionId='', variant:Emphasis['variant']=primary?'primary':'ghost',source='') { const helpId="still-help-"+(actionId||label.toLowerCase().replaceAll(" ","-"));return html`<en-button id=${helpId} data-action-id=${actionId} data-action-source=${source} size="medium" variant=${variant} .disabled=${this.busy || this.composing || disabled} @click=${action}>${label}</en-button>${this.help(helpId,label)}`; }
+  private button(label: string, action: () => void, primary = false, disabled = false, actionId='', variant:Emphasis['variant']=primary?'primary':'ghost',source='') { const helpId="still-help-"+(actionId||label.toLowerCase().replaceAll(" ","-"));return html`<en-button id=${this.dockId(helpId)} data-action-id=${actionId} data-action-source=${source} size="medium" variant=${variant} .disabled=${this.busy || this.composing || disabled} @click=${action}>${label}</en-button>${this.help(helpId,label)}`; }
   private field(label: string, value: string, change: (v: string) => void, rows = 3, placeholder = '') { if(rows===1)return html`<en-text-field label=${label} .value=${live(value)} placeholder=${placeholder} .disabled=${this.busy || this.client.hasUnconfirmedWrite || !!this.generation?.attempted} @en-input=${(e: CustomEvent<{value:string;isComposing:boolean}>)=>{change(e.detail.value);this.composing=e.detail.isComposing;if(!this.composing)this.changed();}}></en-text-field>`; return html`<en-textarea label=${label} .value=${live(value)} rows=${rows} placeholder=${placeholder} .disabled=${this.busy || this.client.hasUnconfirmedWrite || !!this.generation?.attempted} @en-input=${(e: CustomEvent<{ value: string; isComposing: boolean }>) => { change(e.detail.value); this.composing = e.detail.isComposing; if (!this.composing) this.changed(); }}></en-textarea>`; }
   private closeMode() { if (this.mode === 'generate') this.client.position.intent = ''; this.resetStep();this.error='';this.writeRoute();this.decide();this.focusContent(); }
   private begin(mode: string, updateURL=true) {
@@ -722,17 +765,17 @@ export class StillApp extends LitElement {
     const actions=this.generationRecoveryActions();
     const job=this.selectedGeneration(),format=job&&generationFormat(job);
     const status=job&&generationActive(job)?`${job.status==='queued'?'Queued':job.status==='committing'?'Saving':'Generating'} ${(FORMATS[format!]??format).toLowerCase()}…`:'';
-    if(this.pageActionLimit<3)return this.compactDock(actions,'More',status);
-    const choices=actions.filter(a=>a.id!=='ui:palette'),visible=choices.slice(0,this.pageActionLimit-1),remaining=choices.slice(visible.length,this.pageActionLimit-2+visible.length);
+    if(this.toolbarLimit<3)return this.compactDock(this.moreOpen?[...actions.filter(a=>a.id!=='ui:palette').slice(Math.max(0,this.firstDockLimit-1)).map(a=>({...a,variant:'secondary' as const})),{id:'ui:back',label:'Back',variant:'ghost',run:()=>{this.moreOpen=false;this.changed();}},actions[actions.length-1]]:actions,'More',status);
+    const choices=actions.filter(a=>a.id!=='ui:palette'),visible=choices.slice(0,(this.moreOpen?this.firstDockLimit:this.toolbarLimit)-1),remaining=choices.slice(visible.length,this.toolbarLimit-2+visible.length);
     const controls=this.moreOpen
       ? [...remaining.map(a=>this.button(a.label,a.run,false,'disabled' in a&&a.disabled,a.id,'secondary')),this.button('Back',()=>{this.moreOpen=false;this.changed();}),this.paletteButton('more')]
       : [...visible.map(a=>this.button(a.label,a.run,false,'disabled' in a&&a.disabled,a.id,a.variant)),this.button('More',()=>this.openMore(),false,false,'ui:more')];
-    return html`<footer class="action-dock"><en-toolbar label="Your next step" keyboard-navigation="tab">${this.toolbarStatus(status)}${controls}</en-toolbar></footer>`;
+    return html`<footer class=${this.dockClass} @focusout=${()=>this.scheduleDockFit()}>${this.toolbarStatus(status)}<en-toolbar label="Your next step" keyboard-navigation="tab">${controls}</en-toolbar></footer>`;
   }
   private toolbarStatus(message:string) { return message?html`<span class="toolbar-status" role="status" aria-live="polite">${message}</span>`:nothing; }
   private renderBusyDock() {
     const message=this.generationCheck?.message==='Checking status…'?'Checking status…':this.directGeneration||this.isInlineGeneration()&&this.generation ? `Preparing ${(FORMATS[this.generation?.format??'video']??'generation').toLowerCase()}…` : this.client.position.view==='generation'?'Submitting request…':'Working…';
-    return html`<footer class="action-dock"><en-toolbar label="Progress">${this.toolbarStatus(message)}</en-toolbar></footer>`;
+    return html`<footer class=${this.dockClass} @focusout=${()=>this.scheduleDockFit()}>${this.toolbarStatus(message)}</footer>`;
   }
   private renderGeneration() {
     const c=this.client,p=c.projection,job=c.jobs.find(j=>j.jobId===c.position.outputId&&j.documentId===p.documentId);
@@ -802,13 +845,13 @@ export class StillApp extends LitElement {
     const named = ['new-project', 'new-document', 'add-context', 'rename'].includes(mode);
     return html`<section class="form-page">${p.projectName ? html`<span class="eyebrow">${p.projectName}</span>` : nothing}<h1>${titles[mode] ?? 'New idea'}</h1>${named ? this.field('Name', this.titleDraft, v => { this.titleDraft = v; }, 1) : nothing}${mode === 'add-context' ? html`<en-select class="select-label" label="Type" .value=${this.kindDraft} @en-change=${(e: CustomEvent<{proposed:string;value:string}>) => { this.kindDraft = e.detail.proposed; }}>${blockKinds.map(k => html`<en-select-option value=${k}>${k[0].toUpperCase() + k.slice(1)}</en-select-option>`)}</en-select>` : nothing}${mode !== 'rename' ? this.field(mode === 'intent' ? 'Your direction' : mode === 'edit-artifact' ? 'Writing' : 'Idea', this.bodyDraft, v => { this.bodyDraft = v; }, mode === 'edit-artifact' ? 16 : 6, '') : nothing}<div class="form-actions">${this.button(mode === 'intent' ? 'Suggest actions' : this.client.hasUnconfirmedWrite ? 'Check save' : 'Save', () => void this.run(() => this.save()), true)}${this.button('Back', () => this.closeMode())}</div></section>`;
   }
-  private paletteButton(entry:PaletteFeedback['entry']) { return html`<en-button id="still-help-ui:palette" data-action-id="ui:palette" variant="ghost" size="medium" aria-keyshortcuts="Meta+K Control+K" .disabled=${this.busy||this.composing} @click=${()=>this.openFinder(entry)}>Palette<en-badge slot="suffix" variant="neutral">⌘+K</en-badge></en-button>${this.help("still-help-ui:palette","Palette")}`; }
+  private paletteButton(entry:PaletteFeedback['entry']) { return html`<en-button id=${this.dockId("still-help-ui:palette")} data-action-id="ui:palette" variant="ghost" size="medium" aria-keyshortcuts="Meta+K Control+K" .disabled=${this.busy||this.composing} @click=${()=>this.openFinder(entry)}>Palette<en-badge slot="suffix" variant="neutral">⌘+K</en-badge></en-button>${this.help("still-help-ui:palette","Palette")}`; }
   private compactDock(options:{id:string;label:string;run:()=>void;variant?:Emphasis['variant'];disabled?:boolean;source?:string}[],menuLabel='Menu',status='') {
-    const shown=options.slice(0,this.pageActionLimit-1),rest=options.slice(shown.length);
-    return html`<footer class="action-dock" @pointerdown=${()=>{this.dockTouched=true;if(this.mode==='generate')this.formatTouched=true;}} @focusin=${()=>{this.dockTouched=true;if(this.mode==='generate')this.formatTouched=true;}}><en-toolbar label="Your next step" keyboard-navigation="tab">
-      ${this.toolbarStatus(status)}${shown.map(option=>this.button(option.label,option.run,false,!!option.disabled,option.id,option.variant??'secondary',option.source))}
-      ${rest.length?html`<en-button id="still-compact-menu" variant="ghost" size="medium" .disabled=${this.busy||this.composing}>${menuLabel}</en-button>`:nothing}
-    </en-toolbar>${rest.length?html`<en-menu for="still-compact-menu" label="More actions" @en-action=${(event:CustomEvent<{action:string}>)=>{const option=rest.find(x=>x.id===event.detail.action);if(option&&!option.disabled&&!this.busy&&!this.composing)option.run();}}>
+    const shown=options.slice(0,this.toolbarLimit-1),rest=options.slice(shown.length);
+    return html`<footer class=${this.dockClass} @focusout=${()=>this.scheduleDockFit()} @pointerdown=${()=>{this.dockTouched=true;if(this.mode==='generate')this.formatTouched=true;}} @focusin=${()=>{this.dockTouched=true;if(this.mode==='generate')this.formatTouched=true;}}>${this.toolbarStatus(status)}<en-toolbar label="Your next step" keyboard-navigation="tab">
+      ${shown.map(option=>this.button(option.label,option.run,false,!!option.disabled,option.id,option.variant??'secondary',option.source))}
+      ${rest.length?html`<en-button id=${this.dockId("still-compact-menu")} variant="ghost" size="medium" .disabled=${this.busy||this.composing}>${menuLabel}</en-button>`:nothing}
+    </en-toolbar>${rest.length?html`<en-menu for=${this.dockId("still-compact-menu")} label="More actions" @en-action=${(event:CustomEvent<{action:string}>)=>{const option=rest.find(x=>x.id===event.detail.action);if(option&&!option.disabled&&!this.busy&&!this.composing)option.run();}}>
       ${rest.map(option=>html`<en-menu-item action=${option.id} ?disabled=${option.disabled}>${option.label}${option.id==='ui:palette'?html`<en-badge slot="suffix" variant="neutral">⌘+K</en-badge>`:nothing}</en-menu-item>`)}
     </en-menu>`:nothing}</footer>`;
   }
@@ -816,22 +859,22 @@ export class StillApp extends LitElement {
     const g=this.directGeneration?null:this.generation;
     const formats=this.candidates().filter(a=>!!FORMATS[a.id]);
     const ordered=[...new Set([...this.formatSuggestions,...rankAllFormats(formats)])].filter(id=>formats.some(a=>a.id===id));
-    if(this.pageActionLimit<3){
+    if(this.toolbarLimit<3){
       const emphasis=presentToolbar(ordered.slice(0,3),this.formatEmphasis);
     const choices=g?[{id:'ui:generate',label:g.recoveryClosed?'Review another':g.attempted?'Check generation':g.format==='scene'&&!g.scenePreview?'Check cost':this.generationGate?(this.generationGate.key?'I understand the risks':'Blocked'):'Generate',run:()=>void this.run(()=>this.generate()),variant:'primary' as const,disabled:!!this.generationGate&&!this.generationGate.key}]:ordered.map(id=>({id,label:FORMATS[id],run:()=>{this.formatTouched=true;void this.startGeneration(id);},variant:emphasis[id]?.variant??'secondary' as const}));
       return this.compactDock([...choices,{id:'ui:back',label:'Back',run:()=>this.closeMode(),variant:'ghost'}],g?'Menu':'Other outputs');
     }
-    const suggested=ordered.slice(0,Math.min(3,this.pageActionLimit-2));
+    const suggested=ordered.slice(0,Math.min(3,this.toolbarLimit-2));
     const remaining=ordered.filter(id=>!suggested.includes(id));
-    return html`<footer class="action-dock" @pointerdown=${()=>{this.formatTouched=true;}} @focusin=${()=>{this.formatTouched=true;}}>
+    return html`<footer class=${this.dockClass} @focusout=${()=>this.scheduleDockFit()} @pointerdown=${()=>{this.formatTouched=true;}} @focusin=${()=>{this.formatTouched=true;}}>
       <en-toolbar label="Your next step" keyboard-navigation="tab">
         ${g?this.button(g.recoveryClosed?'Review another':g.attempted?'Check generation':g.format==='scene'&&!g.scenePreview?'Check cost':this.generationGate?(this.generationGate.key?'I understand the risks':'Blocked'):'Generate',()=>void this.run(()=>this.generate()),true,!!this.generationGate&&!this.generationGate.key):html`
           ${suggested.map(id=>this.suggestedButton({...ACTIONS.find(a=>a.id===id)!,label:FORMATS[id]},true,presentToolbar(suggested,this.formatEmphasis)))}
-          ${remaining.length?html`<en-button id="still-format-menu" variant="ghost" size="medium" ?disabled=${this.busy||this.composing}>Other outputs</en-button>${this.help("still-format-menu","Other outputs")}`:nothing}
+          ${remaining.length?html`<en-button id=${this.dockId("still-format-menu")} variant="ghost" size="medium" ?disabled=${this.busy||this.composing}>Other outputs</en-button>${this.help("still-format-menu","Other outputs")}`:nothing}
         `}
         ${this.button('Back',()=>this.closeMode())}
       </en-toolbar>
-      ${!g&&remaining.length?html`<en-menu for="still-format-menu" label="Other outputs" @en-action=${this.selectMenuFormat}>${remaining.map(id=>html`<en-menu-item action=${id}>${FORMATS[id]}</en-menu-item>`)}</en-menu>`:nothing}
+      ${!g&&remaining.length?html`<en-menu for=${this.dockId("still-format-menu")} label="Other outputs" @en-action=${this.selectMenuFormat}>${remaining.map(id=>html`<en-menu-item action=${id}>${FORMATS[id]}</en-menu-item>`)}</en-menu>`:nothing}
     </footer>`;
   }
   private renderDock() {
@@ -841,9 +884,9 @@ export class StillApp extends LitElement {
     if(this.mode==='generate')return this.renderGenerationDock();
     if(this.mode)return nothing;
     if(view==='generation'&&(this.isInlineGeneration()||this.canAcknowledgeSafety(this.selectedGeneration())))return this.renderGenerationStatusDock();
-    const limit=this.pageActionLimit,eligible=this.candidates(),job=view==='generation'?this.selectedGeneration():undefined;
+    const limit=this.toolbarLimit,firstLimit=this.moreOpen?this.firstDockLimit:limit,eligible=this.candidates(),job=view==='generation'?this.selectedGeneration():undefined;
     const generationProgress=job&&generationActive(job)?generationStatus(job):'';
-    const pool=[...this.suggestions,...(limit>5?this.rankedActions.filter(a=>!this.suggestions.some(s=>s.id===a.id)):[])].filter(a=>eligible.some(e=>e.id===a.id));
+    const pool=[...this.suggestions,...(firstLimit>5?this.rankedActions.filter(a=>!this.suggestions.some(s=>s.id===a.id)):[])].filter(a=>eligible.some(e=>e.id===a.id));
     const a=p.artifacts.find(x=>x.id===c.position.outputId);
     const slides=view==='artifact'&&a&&['slides','storyboard'].includes(a.kind)&&a.items.length>1;
     const browsing=['projects','documents','results'].includes(view);
@@ -853,8 +896,14 @@ export class StillApp extends LitElement {
       ...(previousPage?[{id:'ui:previous-page',label:'Previous results',run:()=>this.turnPage(this.page-1)}]:[]),
       ...(nextPage?[{id:'ui:next-page',label:'More results',run:()=>this.turnPage(this.page+1)}]:[]),
     ];
+    const visible=pool.filter(a=>!browsing||a.id!==view).slice(0,Math.max(0,firstLimit-1-(slides?2:pageControls.length)));
+    const visibleIds=visible.map(a=>a.id);
+    if(this.moreOpen&&limit<3){
+      const alternatives=nextToolbarActions(this.rankedActions,visibleIds,eligible,this.rankedActions.length);
+      return this.compactDock([...alternatives.map(a=>({id:a.id,label:a.label,run:()=>this.choose(a.id),variant:'secondary' as const})),{id:'ui:back',label:'Back',variant:'ghost',run:()=>{this.moreOpen=false;this.changed();}},{id:'ui:palette',label:'Palette',variant:'ghost',run:()=>this.openFinder('more')}],'More',generationProgress);
+    }
     if(limit<3){
-      const choices=pool.filter(a=>!browsing||a.id!==view),emphasis=presentToolbar(choices.map(a=>a.id),this.emphasis,this.toolbarPolicy());
+      const choices=[...pool,...this.rankedActions.filter(a=>!pool.some(p=>p.id===a.id))].filter(a=>eligible.some(e=>e.id===a.id)&&(!browsing||a.id!==view)),emphasis=presentToolbar(choices.map(a=>a.id),this.emphasis,this.toolbarPolicy());
       return this.compactDock([
         ...choices.map(a=>({id:a.id,label:a.label,run:()=>this.choose(a.id),variant:emphasis[a.id]?.variant,source:this.decisionSource==='jev'&&emphasis[a.id]?.score!==undefined?'Jev ranking':'Local fallback'})),
         ...(slides?[{id:'ui:previous',label:'Previous',run:()=>this.turnItem(this.itemIndex-1),disabled:this.itemIndex===0},{id:'ui:next',label:'Next',run:()=>this.turnItem(this.itemIndex+1),disabled:this.itemIndex>=a!.items.length-1}]:[]),
@@ -862,14 +911,12 @@ export class StillApp extends LitElement {
         {id:'ui:palette',label:'Palette',run:()=>this.openFinder('more'),variant:'ghost',source:'Navigation utility'},
       ],'More',generationProgress);
     }
-    const visible=pool.filter(a=>!browsing||a.id!==view).slice(0,Math.max(0,limit-1-(slides?2:pageControls.length)));
-    const visibleIds=visible.map(a=>a.id);
     let actions:TemplateResult[]=[...this.toolbarSuggestions(visible)];
     if(slides)actions.unshift(this.button('Previous',()=>this.turnItem(this.itemIndex-1),false,this.itemIndex===0,'','secondary'),this.button('Next',()=>this.turnItem(this.itemIndex+1),false,this.itemIndex>=a!.items.length-1,'','secondary'));
     actions.push(...pageControls.map(control=>this.button(control.label,control.run,false,false,control.id,'secondary')));
     actions.push(this.button('More',()=>this.openMore(),false,false,'ui:more'));
     if(this.moreOpen)actions=[...this.toolbarSuggestions(nextToolbarActions(this.rankedActions,visibleIds,eligible,limit-2)),this.button('Back',()=>{this.moreOpen=false;this.changed();void this.updateComplete.then(()=>this.querySelector<HTMLElement>('[data-action-id="ui:more"]')?.focus());}),this.paletteButton('more')];
-    return html`<footer class="action-dock" @pointerenter=${()=>{this.dockTouched=true;}} @pointerdown=${()=>{this.dockTouched=true;}} @focusin=${()=>{this.dockTouched=true;}}><en-toolbar label="Your next step" keyboard-navigation="tab">${this.toolbarStatus(generationProgress)}${actions}</en-toolbar></footer>`;
+    return html`<footer class=${this.dockClass} @focusout=${()=>this.scheduleDockFit()} @pointerenter=${()=>{this.dockTouched=true;}} @pointerdown=${()=>{this.dockTouched=true;}} @focusin=${()=>{this.dockTouched=true;}}>${this.toolbarStatus(generationProgress)}<en-toolbar label="Your next step" keyboard-navigation="tab">${actions}</en-toolbar></footer>`;
   }
   private reviewContext(job?:DocumentJob) {
     const ids=job?.errorDetail?.contributingBlockIds ?? this.generationGate?.issues.flatMap(i=>i.blockIds??[]) ?? [];
@@ -944,7 +991,7 @@ export class StillApp extends LitElement {
   render() {
     const c = this.client, displayedGeneration = !this.loading && !this.mode && c.position.view === 'generation' ? c.position.outputId : '';
     const failed = c.jobs.find(j => j.status === 'failed' && !j.dismissedAt && j.documentId === c.position.documentId && j.jobId !== displayedGeneration);
-    return html`<div class=${this.developer?'still-layout has-developer':'still-layout'}><div class="still-shell"><header class="masthead"><a class="wordmark" href=${this.viewURL('projects',{projectId:'',documentId:''})} aria-label="Still home" @click=${this.home}>still<span aria-hidden="true">.</span></a><span class="session-status">${c.session?.impersonation ? 'Preview · read only' : c.session && !c.abilities.author ? 'Read only' : ''}</span></header><main id="still-content" aria-busy=${this.loading}>${this.renderCanvas()}</main>${this.renderDock()}${this.renderPalette()}</div>${this.developer ? html`<aside class="developer-panel" aria-label="Developer panel"><still-developer-console @developer-flags=${this.setOnboarding} @developer-refresh=${this.refreshDecision} @developer-density=${this.setDensity} @developer-experiment=${this.experiment} @developer-disable=${()=>this.setDeveloper(false)}></still-developer-console></aside>` : nothing}${new URL(location.href).searchParams.has('progress-report') ? html`<a class="progress-return" href=${REPORT_URL}>Progress Report ↗</a>` : nothing}</div>${this.renderNotifications(failed)}`;
+    return html`<div class=${this.developer?'still-layout has-developer':'still-layout'}><div class="still-shell"><header class="masthead"><a class="wordmark" href=${this.viewURL('projects',{projectId:'',documentId:''})} aria-label="Still home" @click=${this.home}>still<span aria-hidden="true">.</span></a><span class="session-status">${c.session?.impersonation ? 'Preview · read only' : c.session && !c.abilities.author ? 'Read only' : ''}</span></header><main id="still-content" aria-busy=${this.loading}>${this.renderCanvas()}</main>${this.renderDock()}${this.renderDockProbes()}${this.renderPalette()}</div>${this.developer ? html`<aside class="developer-panel" aria-label="Developer panel"><still-developer-console @developer-flags=${this.setOnboarding} @developer-refresh=${this.refreshDecision} @developer-density=${this.setDensity} @developer-experiment=${this.experiment} @developer-disable=${()=>this.setDeveloper(false)}></still-developer-console></aside>` : nothing}${new URL(location.href).searchParams.has('progress-report') ? html`<a class="progress-return" href=${REPORT_URL}>Progress Report ↗</a>` : nothing}</div>${this.renderNotifications(failed)}`;
   }
 }
 if (!customElements.get('still-app')) customElements.define('still-app', StillApp);

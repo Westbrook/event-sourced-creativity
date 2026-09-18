@@ -38,7 +38,7 @@ test('only explicit inline reviews use a deterministic primary generation contro
  assert.equal(actions[0].label,'Refresh status');assert.equal(actions[0].variant,'secondary');
  view.generation={attempted:true,providerModel:'old-model'};view.generateAgain('job');
  assert.deepEqual(calls,[['generate','video']]);assert.equal(view.isInlineGeneration(),true);
- view.pageActionLimit=2;view.compactDock=options=>options;assert.equal(view.renderGenerationStatusDock()[0].id,'ui:continue-generation');
+ view.pageActionLimit=2;view.toolbarLimit=2;view.compactDock=options=>options;assert.equal(view.renderGenerationStatusDock()[0].id,'ui:continue-generation');
 });
 
 function executionFixture() {

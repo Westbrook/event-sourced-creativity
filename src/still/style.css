@@ -116,7 +116,7 @@ still-app .progress-return { position: fixed; left: 12px; bottom: max(12px, env(
   still-app .work-row { gap: 16px; }
   still-app .work-row strong { font-size: 19px; }
   still-app .action-dock { padding-inline: 12px; padding-bottom: max(20px, env(safe-area-inset-bottom)); }
-  still-app en-toolbar::part(base) { justify-content: center; flex-wrap: wrap; }
+  still-app en-toolbar::part(base) { justify-content: center; }
   still-app en-button::part(control) { padding-inline: 12px; min-block-size: 44px; font-size: 12px; }
   still-app .context-block { grid-template-columns: 20px 1fr; gap: 8px; margin-left: -8px; padding: 20px 12px 20px 8px; }
   still-app .context-block p { font-size: 21px; }
@@ -160,7 +160,7 @@ still-app .still-layout.has-developer { --developer-width: clamp(360px, 38vw, 56
 still-app .has-developer .still-shell { min-width: 0; padding-inline: 32px; }
 still-app .developer-panel { position: sticky; top: 0; height: 100dvh; min-width: 0; overflow: auto; overscroll-behavior: contain; border-left: 1px solid var(--line); background: var(--paper); }
 still-app .has-developer .action-dock { right: var(--developer-width); padding-inline: 16px; }
-still-app .has-developer en-toolbar::part(base) { flex-wrap: wrap; justify-content: center; }
+still-app .has-developer en-toolbar::part(base) { justify-content: center; }
 still-app .has-developer h1 { font-size: clamp(38px, 4vw, 64px); }
 still-app .has-developer .slide h1 { font-size: clamp(28px, 3vw, 48px); }
 still-app .has-developer .slide { padding: clamp(24px, 3vw, 48px); }
@@ -199,3 +199,23 @@ still-app .generation-placeholder en-skeleton { height: 100%; --en-skeleton-size
 still-app .generation-placeholder.audio { height: min(20dvh, 160px); }
 
 still-app .generation-placeholder.known-size { width: min(100%, 720px, calc(42dvh * var(--generation-ratio))); height: auto; aspect-ratio: var(--generation-ratio); }
+
+/* Toolbars remain one row. ResizeObserver reduces the local action budget first. */
+still-app en-toolbar::part(base),
+still-app .has-developer en-toolbar::part(base) { flex-wrap: nowrap; justify-content: flex-start; }
+still-app .action-dock en-toolbar { width: max-content; min-width: 0; overflow-x: auto; overflow-y: visible; padding: 4px; }
+still-app .action-dock en-toolbar > en-button { flex: 0 0 auto; white-space: nowrap; }
+/* Overlay hosts and status never become flex items or contribute to measured width. */
+still-app en-toolbar :is(en-tooltip, en-menu, [popover], [data-layout-overlay]) { position: absolute; width: 0; height: 0; }
+still-app .toolbar-status { flex: none; justify-content: center; }
+still-app .toolbar-probes { position: fixed; left: -100000px; top: 0; visibility: hidden; pointer-events: none; contain: layout style; }
+still-app .dock-measure { position: relative; width: max-content; }
+still-app .dock-measure en-toolbar { width: max-content; max-width: none; padding: 4px; }
+still-app .dock-measure en-button { flex: 0 0 auto; white-space: nowrap; }
+still-app .dock-measure en-button[size="small"]::part(control) { min-block-size:44px; padding-inline:12px; font-size:13px; }
+still-app .dock-measure en-button[size="medium"]::part(control) { min-block-size:44px; padding-inline:16px; font-size:13px; }
+still-app .dock-measure en-button[size="large"]::part(control) { min-block-size:48px; padding-inline:20px; font-size:13px; }
+@media (max-width: 600px) {
+  still-app :is(.action-dock,.dock-measure) en-toolbar::part(base) { gap: 3px; padding: 4px; }
+  still-app :is(.action-dock,.dock-measure) en-button[size]::part(control) { padding-inline: 12px; }
+}
