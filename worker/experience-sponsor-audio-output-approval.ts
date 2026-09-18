@@ -254,7 +254,8 @@ function principalSnapshot(value: string, payerUserId: string): readonly unknown
  * Rechecks examine only the captured graph; getters or replacement graphs never run. */
 function nativePrincipalCurrent(principal: object): () => void {
   const seen = new WeakSet<object>();
-  const nodes: { value: object; prototype: object | null; fields: { key: string; value: unknown; enumerable: boolean }[] }[] = [];
+  type Field = { key: string; value: unknown; enumerable: boolean; writable: boolean; configurable: boolean };
+  const nodes: { value: object; prototype: object | null; fields: Field[] }[] = [];
   const visit = (value: unknown) => {
     if (value === null) return;
     if (typeof value !== "object") {
@@ -266,11 +267,12 @@ function nativePrincipalCurrent(principal: object): () => void {
     seen.add(value);
     const prototype = Object.getPrototypeOf(value);
     if (![Object.prototype, Array.prototype, null].includes(prototype)) return fail("sponsor_audio_output_read_principal_invalid");
-    const fields: { key: string; value: unknown; enumerable: boolean }[] = [];
+    const fields: Field[] = [];
     for (const key of Reflect.ownKeys(value)) {
       const descriptor = Object.getOwnPropertyDescriptor(value, key);
       if (typeof key !== "string" || !descriptor || !Object.hasOwn(descriptor, "value")) return fail("sponsor_audio_output_read_principal_invalid");
-      fields.push({ key, value: descriptor.value, enumerable: descriptor.enumerable === true });
+      fields.push({ key, value: descriptor.value, enumerable: descriptor.enumerable === true,
+        writable: descriptor.writable === true, configurable: descriptor.configurable === true });
       visit(descriptor.value);
     }
     nodes.push({ value, prototype, fields });
@@ -284,6 +286,7 @@ function nativePrincipalCurrent(principal: object): () => void {
       for (let index = 0; index < keys.length; index++) {
         const expected = node.fields[index]!, actual = Object.getOwnPropertyDescriptor(node.value, expected.key);
         if (keys[index] !== expected.key || !actual || !Object.hasOwn(actual, "value") || actual.enumerable !== expected.enumerable
+          || actual.writable !== expected.writable || actual.configurable !== expected.configurable
           || !Object.is(actual.value, expected.value)) return fail("sponsor_audio_output_read_principal_changed");
       }
     }
@@ -291,7 +294,7 @@ function nativePrincipalCurrent(principal: object): () => void {
 }
 
 /** Real native authentication through one exact, bounded query descriptor.
- * This returns a principal and current proof, never a future private-read grant.
+ * This retains the actual authenticated result and current proof, never a future private-read grant.
  * The 13-column native snapshot, including private project labels, stays internal.
  * No lifecycle/schema operation, alternate principal completion or SQL fallback is allowed. */
 async function readPrincipal(request: Request, env: WorkerEnv, bound: Boundary) {
@@ -340,7 +343,7 @@ async function readPrincipal(request: Request, env: WorkerEnv, bound: Boundary) 
     consentedAt: captured[12], authorizationSnapshot: { updatedAt: captured[3], rawEpoch: captured[4], grants: captured[5], organizations: captured[6],
       projects: captured[7], identityPolicies: captured[8], canvasRequirements: captured[9] } });
   if (currentIdentity() !== expected) return fail("sponsor_audio_output_read_principal_changed");
-  const completePrincipalCurrent = nativePrincipalCurrent(principal);
+  const completePrincipalCurrent = nativePrincipalCurrent(auth);
   const assertCurrent = () => { bound.check(); completePrincipalCurrent();
     if (currentIdentity() !== expected)
       return fail("sponsor_audio_output_read_principal_changed");
@@ -350,7 +353,7 @@ async function readPrincipal(request: Request, env: WorkerEnv, bound: Boundary) 
     bindings: [identity.userId, principalSnapshotJson] };
   const proof = await bound.query<{ current: number }>(`SELECT CASE WHEN (${assertion.sql}) THEN 1 ELSE 0 END AS current`, assertion.bindings!, ["current"]);
   assertCurrent(); if (proof.length !== 1 || proof[0]!.current !== 1) return fail("sponsor_audio_output_read_principal_changed");
-  return { principal, principalSnapshotJson, assertions: [assertion], controlBytes: bound.controlBytes,
+  return { authenticated: auth, principal, principalSnapshotJson, assertions: [assertion], controlBytes: bound.controlBytes,
     controlQueries: bound.controlQueries, controlRows: bound.controlRows, assertCurrent };
 }
 

@@ -24,6 +24,7 @@ export async function handleProjectIntake(env:WorkerEnv,auth:ProjectIntakeAuthor
 /** Internal only: callers must build and validate their own closed event grammar.
  * No route passes caller-supplied options or unvalidated events to this core. */
 export async function commitAtomicIntake(env:WorkerEnv,auth:ProjectIntakeAuthorization,intake:ProjectIntake,action:"commit"|"check",options?:AtomicIntakeOptions){
+  if(options?.sponsorAudioOutputReceiptCheck!==undefined&&action!=="check")throw new Error("sponsor_audio_output_native_check_required");
   const before=await readOriginal(env,auth,intake,options);
   if(!before.authorized||before.seen||action==="check")return reply(intake,before);
   const stream=auth.user.streamId,owner=auth.user.userId,guard=intakeGuard(env,auth,intake,options);

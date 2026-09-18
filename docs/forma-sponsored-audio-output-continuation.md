@@ -1,6 +1,6 @@
-# Dormant Audio output continuation contracts
+# Dormant Audio output continuation
 
-This increment adds explicit read-resource terms, original-payer approval and finite attempt accounting for Audio's native output continuation. It does not connect native preparation, review, admission, Run or a public route. The existing four initial Audio intake operations and V8 generation/financial authority remain separate.
+The contracts add explicit read-resource terms, original-payer approval and finite attempt accounting for Audio's native output continuation. The subsequent initial continuation connects the real native initial state and original preparation behind a dormant internal controller. Review, admission, Run and public registration remain separate. The existing four initial Audio intake operations and V8 generation/financial authority retain their own boundaries.
 
 ## Closed terms
 
@@ -15,7 +15,7 @@ The policy family is `canonical-audio-output-read@1`, purpose `native-output-con
 
 The terms cover actual repeated reads, control responses, native acknowledgements and final response bytes. Query units count each actual statement; control-row units count returned rows, with a minimum of one for an empty result or mutation acknowledgement. Memoized native data is not a substitute for sponsor read authority. The terms confer no storage, generation, financial reservation, provider, media, polling, recovery or append permission.
 
-The later native context consumer reads the actor's full personal creative stream, including private events from other Documents, before selecting the current Document. That eventual transport must be qualified honestly. This contract slice performs no such creative-source read.
+The native context consumer reads the actor's full personal creative stream, including private events from other Documents, before selecting the current Document. The initial continuation meters that actual transport; it does not describe it as a selected-Document-only read. The original contract slice alone performed no such creative-source read.
 
 ## Genuine approval and private control metadata
 
@@ -37,11 +37,25 @@ The attempt journal tracks non-provider resource entitlement, never money. Nativ
 
 The ticket alone exposes no draft/context/quote/native receipt reader, storage capability or provider operation. Future continuation code must prove current native custody itself and adopt the same counters, original deadline and immutable attempt proof. It cannot treat a receipt DTO or successful quota debit as private-read authority. Audio B's initial-intake capability closes with its original request and cannot be reused here.
 
-## Deferred integration
+## Initial native continuation
 
-The later read/custody owner, closed native adapter and internal controller remain unimplemented by this slice. Shared propagation must wait for accepted Audio B and Video V7 source freezes. The exact native check-only receipt token will need independently reviewed `intake-authority.ts` and `project-intake-read.ts` seams. A check token presented to `commitAtomicIntake(...,'commit')`, including absent or lost original receipt, must refuse before append; `readOriginal` has no action parameter and cannot itself grant that boundary.
+The internal controller reserves and takes a fresh operation attempt for the actual Request before reading its body. It continues the exact genuine authenticated principal through the existing native authorization. An environment-bound owner carries the same counters and original deadline through draft recovery, check-only original intake receipts, native context loading, command reconstruction, all preparation stages and final disclosure. Initial intake capabilities are never revived.
 
-Native source, actor evidence, handoff, Output Requirements, quote evidence and the actual authorizer's post-admission context reload still need finite propagation. The request classifier uses the existing native state, prepare and authorize paths, plus the separately specified dormant passive-review path; it installs none of them. The existing provider/generation architecture, public activation, actual payer terms, schema provisioning, audience, Run, result/media reads and other held patches are outside this contract slice. No broader server-owned generation architecture is made a prerequisite.
+The closed native adapter admits only the actual producers' original Audio descriptors and proof objects. It bounds row types and serialized bytes inside SQLite before returning private data, accounts each actual statement and returned row, and bounds native acknowledgement transport before writes. It preserves the native whole-personal-stream load and refreshes its current head after each successful stage while retaining the immutable original intake proof. A check-only receipt token rejects append actions before a native read.
+
+Fresh preparation performs five full API loads plus the native Audio preflight source's own draft and original-receipt read. Every read uses the same operation allowance. The draft adapter validates the complete original native SQL and binding vector, then keeps the exact original empty-scope authority as a mandatory retained proof beside the distinct plan-scoped proof and the actual database-row witness. Factoring repeated authority text out of the bounded row projection does not omit a read or weaken a predicate. False and NULL authority results refuse private transport.
+
+The transport balances its generated mandatory checks to fit D1's expression-depth limit. Its closed schema proof retains all seven table checks and four index, trigger and foreign-key checks for each supported native schema mode. Fixed groups of four, four and three truth rows preserve every obligation while fitting the runtime's five-term compound-query limit. A mode succeeds only when all eleven checks succeed. These arrangements change neither the schema manifest nor the captured authority bindings, and install no schema.
+
+Preparation invokes the existing SAVE, CONFIRM and PREFLIGHT implementations. The adapter binds every complete command, native event, private payload and sidecar to the actual trusted context and recipe. It retains the exact preflight object and original expiry; it does not reconstruct a quote, renew a deadline or refresh provider configuration during replay. An unknown native transaction acknowledgement permits only the corresponding original command lookup, with no second write or refund. Final private delivery requires the actual native response, the complete ordered current proof batch and a recheck after response-body reading.
+
+The entry refuses renewal and admitted-job branches before their downstream private reads. There is no provider call, financial reservation, Run, generated-result claim, recovery, media dispatch or background work. Importing the controller registers no public route and provisions no schema or policy.
+
+The original static transport review found missing descriptor provenance, incomplete payload checks, acknowledgement prebudgeting, final response binding and schema closure. These were source-review findings, not observed live failures. Their preserved packet remains distinct from the subsequent repaired-source qualification.
+
+## Remaining integration
+
+Actor evidence, handoff, Output Requirements, quote evidence and the actual authorizer's post-admission context reload still need finite propagation for review and authorize. Their original and cloned body reads must share the same accounting owner. The policy's review and authorize terms do not themselves connect those consumers. The existing provider/generation architecture, public activation, actual payer terms, schema provisioning, audience, Run, result/media reads and other held patches remain outside this increment. No broader server-owned generation architecture is made a prerequisite.
 
 ## Qualification
 

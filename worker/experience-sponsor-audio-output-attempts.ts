@@ -390,7 +390,7 @@ export async function takeSponsorAudioOutputReadAttempt(attempt: SponsorAudioOut
   } catch (error) { life.retire(); throw error; }
 }
 
-/** Internal only: this genuine principal may contain private Project labels.
+/** Internal only: this genuine authentication graph may contain private Project labels.
  * Never serialize this view or send it to a provider. A future native reader
  * must adopt this exact budget and add its own current custody predicates. */
 export function requireSponsorAudioOutputReadBudget(budget: SponsorAudioOutputReadBudget, request: Request, env: WorkerEnv) {
@@ -399,7 +399,7 @@ export function requireSponsorAudioOutputReadBudget(budget: SponsorAudioOutputRe
   const current = ownerCurrent(state.life, state.principal);
   current();
   return Object.freeze({ operation: state.selected.operation, draftId: state.selected.draftId, principal: state.principal.principal,
-    original: state.original, policy: state.approved.policy, receipt: state.receipt, assertions: state.assertions,
+    authenticated: state.principal.authenticated, original: state.original, policy: state.approved.policy, receipt: state.receipt, assertions: state.assertions,
     current, remaining() { current(); return state.life.remaining(); }, account(usage: Usage) { current(); state.life.account(usage); current(); },
     async wait<T>(work: () => Promise<T>) { current(); const result = await state.life.wait(work); current(); return result; },
     get usage() { current(); return state.life.used; }, get monotonicDeadline() { current(); return state.life.deadline; },

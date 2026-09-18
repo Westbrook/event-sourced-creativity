@@ -1,5 +1,11 @@
 import { outputJobIsDurable, readOutputDurableOwnership } from "./output-durable-control.ts";
 import { classifySponsorIntakeDraft } from "./experience-sponsor-intake-classification.ts";
+import { requireSponsorAudioOutputReads, readSponsorAudioOutputBody, readSponsorAudioOutputResponse, runSponsorAudioOutputStage, retainSponsorAudioOutputPreflight,
+  retainSponsorAudioOutputTrustedContext, runSponsorAudioOutputDisclosure, beginSponsorAudioOutputPreflight,
+  type SponsorAudioOutputReadOwner } from "./experience-sponsor-audio-output-reads.ts";
+import { readSponsorAudioOutputNativeDraft, sponsorAudioOutputNativeProofs, sealSponsorAudioOutputNativeReceiptCheck } from "./experience-sponsor-audio-output-native.ts";
+import { continueOutputTrustedContext } from "./output-trusted-context.ts";
+import { outputDocumentExecutionBridge } from "./output-document-execution.ts";
 import { readVideoExecutionOffer } from "../src/model/output-video-offer.ts";
 import { model3dMiniAppCostApprovalMatches, model3dMiniAppAttemptMatches, type Model3dMiniAppCostPreview } from "../src/model/model3d-mini-app-consent.ts";
 import { model3dReplacementSuccessor } from "./experience-model3d-replacement.ts";
@@ -198,8 +204,8 @@ const unavailable = (code: string, status = 409, diagnostic?: { stage: Diagnosti
   originalIntent: "unknown_or_retained", permitted: { prepare: false, authorize: false, run: false, resumeRun: false, recoverResult: false } } satisfies ExperienceNativeUnavailable,
 { status, headers: { "cache-control": "private, no-store", "x-content-type-options": "nosniff" } });
 };
-async function refused(response: Response): Promise<Response> {
-  const value: unknown = await response.json().catch(() => null);
+async function refused(response: Response, audioOutputOwner?: SponsorAudioOutputReadOwner): Promise<Response> {
+  const value: unknown = audioOutputOwner ? await readSponsorAudioOutputResponse(audioOutputOwner, response) : await response.json().catch(() => null);
   const code = record(value) && typeof value.error === "string" && /^[a-z][a-z0-9_]+$/u.test(value.error)
     ? value.error : "experience_output_unavailable";
   const result = unavailable(code, response.status >= 400 && response.status < 600 ? response.status : 409);
@@ -209,11 +215,24 @@ async function refused(response: Response): Promise<Response> {
   return result;
 }
 type Loaded = { trusted: OutputTrustedContext; binding: ExperienceOutputBinding; recipe: ExperienceOutputRecipe;
+  /** Genuine dormant initial continuation only; never propagated as wire data. */
+  audioOutputOwner?: SponsorAudioOutputReadOwner;
   /** Passive completed Image inspection only; never permission to rebase a command. */
   retainedImageSourceChanged?: boolean;
   retained: NonNullable<Awaited<ReturnType<typeof readExperienceDraft>>>; receipt: ExperienceIntakeReceipt;
   rootBinding: ExperienceOutputBinding; lineage: ExperienceOutputLineage;
   originals: Partial<Record<ExperienceOutputStage, Original>> };
+
+const sponsorAudioTrustedContexts = new WeakMap<OutputTrustedContext, SponsorAudioOutputReadOwner>();
+const sponsorAudioFinalResponses = new WeakMap<Response, SponsorAudioOutputReadOwner>();
+/** Only the fully validated native load below can establish this identity. */
+export function isSponsorAudioOutputTrustedContext(owner: SponsorAudioOutputReadOwner, trusted: OutputTrustedContext): boolean {
+  return sponsorAudioTrustedContexts.get(trusted) === owner;
+}
+/** Only the actual native final disclosure below can establish this identity. */
+export function isSponsorAudioOutputFinalResponse(owner: SponsorAudioOutputReadOwner, response: Response): boolean {
+  return sponsorAudioFinalResponses.get(response) === owner;
+}
 
 function validateManagedRequirement(loaded: Loaded) {
   const { trusted, recipe } = loaded, saved = loaded.originals.save;
@@ -234,20 +253,25 @@ function validateManagedRequirement(loaded: Loaded) {
     || canonicalJson(events[0]!.payload) !== canonicalJson(payload)) error("experience_output_requirement_evidence_unavailable", 410);
 }
 
-async function load(request: Request, env: WorkerEnv, draftId: string, permission: "read" | "author" | "request"): Promise<Loaded | Response> {
-  const auth = await authorizeExperienceIntake(request, env); if (auth instanceof Response) return refused(auth);
-  const database = env.DB, classification = await classifySponsorIntakeDraft(env, draftId);
-  if (env.DB !== database || classification.kind === "unavailable") return unavailable("experience_draft_unavailable", 410);
-  if (classification.kind === "sponsored") return unavailable("sponsor_intake_internal_only", 403);
+async function load(request: Request, env: WorkerEnv, draftId: string, permission: "read" | "author" | "request", audioOutputOwner?: SponsorAudioOutputReadOwner): Promise<Loaded | Response> {
+  const owned = audioOutputOwner ? requireSponsorAudioOutputReads(audioOutputOwner, request, env) : null;
+  if (owned && (owned.env !== env || owned.draftId !== draftId || permission === "request"
+    || !["audio-output-state", "audio-output-prepare"].includes(owned.operation))) error("experience_output_unavailable", 403);
+  const auth = owned ? owned.auth : await authorizeExperienceIntake(request, env); if (auth instanceof Response) return refused(auth);
+  const database = env.DB, classification = owned ? null : await classifySponsorIntakeDraft(env, draftId);
+  if (env.DB !== database || classification?.kind === "unavailable") return unavailable("experience_draft_unavailable", 410);
+  if (classification?.kind === "sponsored") return unavailable("sponsor_intake_internal_only", 403);
   const originalEnv = env;
   // Keep every downstream native read on the classified database. This is a
   // captured environment, not a substitute DB implementation or permission.
-  env = { ...env, DB: database };
-  const retained = await readExperienceDraft(env, auth, draftId, classification.guard);
+  if (!owned) env = { ...env, DB: database };
+  const retained = audioOutputOwner ? await readSponsorAudioOutputNativeDraft(audioOutputOwner, request, env)
+    : await readExperienceDraft(env, auth, draftId, classification!.guard);
   if (!retained || env.DB !== database) error("experience_draft_unavailable", 410);
   const nativeDraftGuard = experienceDraftGuard(auth, retained.plan, retained.content);
-  const ordinaryDraftGuard = { sql: `(${nativeDraftGuard.sql}) AND (${classification.guard.sql})`, bindings: [...nativeDraftGuard.bindings, ...classification.guard.bindings] };
+  const ordinaryDraftGuard = classification ? { sql: `(${nativeDraftGuard.sql}) AND (${classification.guard.sql})`, bindings: [...nativeDraftGuard.bindings, ...classification.guard.bindings] } : nativeDraftGuard;
   const plan = retained.plan, binding = await experienceOutputBinding(plan);
+  if (owned && (binding.output !== "audio" || binding.draftId !== owned.draftId || binding.preparationCycle || binding.replacementCycle)) error("experience_output_unavailable", 403);
   const ratio = plan.request.values.ratio;
   if (binding.output === "image" && (!ratio || ratio.provenance !== "authored" || !record(ratio.value))) error("experience_image_ratio_required");
   const identities = { requirementId: await experienceResourceId(draftId, "native-output-requirement"), deliverableId: await experienceResourceId(draftId, "native-output-deliverable") };
@@ -265,16 +289,22 @@ async function load(request: Request, env: WorkerEnv, draftId: string, permissio
   const videoSource = binding.output === "video" ? await prepareExperienceVideoOutputSource(request, env, auth, retained) : null;
   const recipe = createExperienceOutputRecipe(binding.output === "video" ? { output: "video", ...identities, contract: videoSource!.contract } : binding.output === "model3d" ? { output: "model3d", ...identities, contract: model3dContract! } : binding.output === "storyboard" ? { output: "storyboard", ...identities, contract: storyboardContract! } : binding.output === "audio" ? { output: "audio", ...identities, contract: audioContract! } : binding.output === "scene" ? { output: "scene", ...identities, contract: sceneContract! } : binding.output === "short_story" ? { output: "short_story", ...identities, contract: SHORT_STORY_NARRATIVE_CONTRACT } : binding.output === "slides" ? { output: "slides", ...identities }
     : { output: "image", ...identities, variantId: await experienceResourceId(draftId, "native-output-variant"), aspectRatio: ratio!.value as { width: number; height: number } });
-  const intakeResponse = await commitAtomicIntake(env, auth, { projectId: plan.projectId, documentId: plan.documentId, events: structuredClone(plan.events) as typeof plan.events[number][] }, "check", {
-    receiptPrefix: receiptPrefix(draftId), clientId: "web:experience-intake", correlationPrefix: "experience-intake:", guard: ordinaryDraftGuard });
-  const receipt = { ...await intakeResponse.json() as Record<string, unknown>, draftId, draftHash: plan.draftHash } as unknown as ExperienceIntakeReceipt;
+  const intake = { projectId: plan.projectId, documentId: plan.documentId, events: structuredClone(plan.events) as typeof plan.events[number][] };
+  const intakeOptions = { receiptPrefix: receiptPrefix(draftId), clientId: "web:experience-intake", correlationPrefix: "experience-intake:", guard: ordinaryDraftGuard };
+  const intakeResponse = await commitAtomicIntake(env, auth, intake, "check", audioOutputOwner
+    ? sealSponsorAudioOutputNativeReceiptCheck(audioOutputOwner, request, env, auth, intake, intakeOptions) : intakeOptions);
+  const intakeValue = audioOutputOwner ? await readSponsorAudioOutputResponse(audioOutputOwner, intakeResponse) : await intakeResponse.json();
+  if (!record(intakeValue)) error("experience_intake_original_unavailable", 410);
+  const receipt = { ...intakeValue, draftId, draftHash: plan.draftHash } as unknown as ExperienceIntakeReceipt;
   if (!intakeResponse.ok || receipt.status !== "complete") error("experience_intake_original_unavailable", 410);
-  const trusted = await loadOutputTrustedContext(request, env, plan.documentId, permission); if (trusted instanceof Response) return refused(trusted);
+  const trusted = owned ? await continueOutputTrustedContext(request, env, plan.documentId, permission, auth)
+    : await loadOutputTrustedContext(request, env, plan.documentId, permission); if (trusted instanceof Response) return refused(trusted, audioOutputOwner);
   if (trusted.scope.kind !== "personal" || trusted.scope.actorUserId !== auth.user.userId || trusted.scope.ownerUserId !== auth.user.userId
     || trusted.scope.documentId !== plan.documentId || trusted.scope.projectId !== plan.projectId) error("experience_output_scope_changed", 403);
   // The same retained draft/custody assertion participates in every native write
   // and final private disclosure, not only this earlier in-memory source check.
   trusted.sourceAssertions.push(ordinaryDraftGuard);
+  if (audioOutputOwner) trusted.sourceAssertions.push(...sponsorAudioOutputNativeProofs(audioOutputOwner));
   if (videoSource) {
     if (videoSource.head !== trusted.ownerHead) error("output_video_source_changed", 409);
     trusted.sourceAssertions.push(videoSource.guard, { sql: "COALESCE((SELECT MAX(sequence) FROM events WHERE stream_id=?),0)=?",
@@ -292,7 +322,9 @@ async function load(request: Request, env: WorkerEnv, draftId: string, permissio
   // Schema readiness belongs to deployment. Exact reads below fail closed; this
   // creator adapter never initializes DDL or infers readiness from a warm cache.
   const lineage = await readExperienceOutputLineage(trusted, binding);
-  const loaded: Loaded = { trusted, binding: lineage.binding, rootBinding: binding, lineage, recipe, retained, receipt, originals: lineage.originals };
+  if (owned && (lineage.binding.preparationCycle || lineage.binding.replacementCycle || lineage.originals.authorize || lineage.originals.run)) error("experience_output_unavailable", 403);
+  const loaded: Loaded = { trusted, binding: lineage.binding, rootBinding: binding, lineage, recipe, retained, receipt, originals: lineage.originals,
+    ...(audioOutputOwner ? { audioOutputOwner } : {}) };
   // Earlier stages are an atomic prerequisite, not merely UI provenance. Their
   // immutable index/event associations survive through each later native batch.
   trusted.sourceAssertions.push(...lineage.witnesses.map(value => outputCommandReceiptAssertion(trusted.scope, value.receipt)));
@@ -310,6 +342,11 @@ async function load(request: Request, env: WorkerEnv, draftId: string, permissio
   }
   if (trusted.sourceProblems.length) error("experience_output_source_unavailable", 410);
   if (originalEnv.DB !== database) return unavailable("experience_draft_unavailable", 410);
+  owned?.current();
+  if (audioOutputOwner) {
+    sponsorAudioTrustedContexts.set(trusted, audioOutputOwner);
+    retainSponsorAudioOutputTrustedContext(audioOutputOwner, trusted);
+  }
   return loaded;
 }
 
@@ -443,6 +480,9 @@ async function replacementOffer(loaded: Loaded) {
 /** Audio preparation wire shape is server-only while the native client selector stays closed. */
 type ExperiencePreparedState = (ExperienceNativeState | (Omit<ExperienceNativeState, "output"> & { output: "audio" | "storyboard" | "model3d" | "video" })) & { audioCostPreview?: AudioMiniAppCostPreview | null; model3dCostPreview?: Model3dMiniAppCostPreview | null };
 async function state(loaded: Loaded): Promise<ExperiencePreparedState> {
+  const owned = loaded.audioOutputOwner ? requireSponsorAudioOutputReads(loaded.audioOutputOwner, loaded.trusted.request, loaded.trusted.env) : null;
+  if (owned && (loaded.binding.output !== "audio" || loaded.binding.preparationCycle || loaded.binding.replacementCycle
+    || loaded.originals.authorize || loaded.originals.run)) error("experience_output_unavailable", 403);
   const { trusted, binding, originals } = loaded, plan = await confirmed(loaded);
   const preflightValue = originals.preflight?.receipt.payload.preflight;
   const preflight = preflightValue as ExperienceNativeState["preflight"];
@@ -498,7 +538,7 @@ async function state(loaded: Loaded): Promise<ExperiencePreparedState> {
     if (plan && await trusted.env.DB.prepare("SELECT 1 AS present FROM output_operation_slots WHERE scope_key=? AND plan_revision_id=? LIMIT 1").bind(trusted.scope.key, plan.revisionId).first()) error("experience_output_unbound_operation", 410);
     if (preflight && (((binding.output === "storyboard" || binding.output === "video") ? !preflight.targets.every(target => target.available) : !result.permitted.authorize)
       || Date.parse(preflight.expiresAt) <= Date.now())) result.status = "unavailable";
-    if ((binding.output === "scene" || binding.output === "video" || binding.output === "audio" || binding.output === "storyboard" || binding.output === "slides" || binding.output === "model3d" && binding.replacementCycle) && result.status === "unavailable") {
+    if (!owned && (binding.output === "scene" || binding.output === "video" || binding.output === "audio" || binding.output === "storyboard" || binding.output === "slides" || binding.output === "model3d" && binding.replacementCycle) && result.status === "unavailable") {
       const renewal = await renewalOffer(loaded);
       if (renewal) {
         if (binding.output === "slides") result.slidesRenewal = renewal.disclosure;
@@ -510,8 +550,10 @@ async function state(loaded: Loaded): Promise<ExperiencePreparedState> {
         result.permitted.renewPreparation = true;
       }
     }
+    owned?.current();
     return result;
   }
+  if (owned) error("experience_output_unavailable", 403);
   const authorization = originals.authorize, grantId = authorization.receipt.payload.grant_id;
   if (typeof grantId !== "string" || !plan || !preflight || authorization.envelope.preflightId !== preflight.id
     || authorization.envelope.termsDigest !== preflight.termsDigest || authorization.envelope.explicitAuthorization !== true
@@ -664,13 +706,100 @@ async function state(loaded: Loaded): Promise<ExperiencePreparedState> {
 async function execute(loaded: Loaded, phase: ExperienceOutputStage, fields: Record<string, unknown>, bridge: OutputExecutionBridge, executionContext: WorkerExecutionContext) {
   const prior = loaded.originals[phase];
   const envelope = prior?.envelope ?? await experienceOutputEnvelope(loaded.binding, phase, loaded.trusted.ownerHead, fields);
-  const result = await outputExperienceCommands.execute(loaded.trusted, envelope, bridge, executionContext);
+  const work = () => outputExperienceCommands.execute(loaded.trusted, envelope, bridge, executionContext);
+  const result = loaded.audioOutputOwner ? await runSponsorAudioOutputStage(loaded.audioOutputOwner, loaded.trusted, envelope, work) : await work();
   if (result instanceof Response) {
-    const issue = await result.json() as Record<string, unknown>;
-    error(typeof issue.error === "string" ? issue.error : "experience_output_native_refused", result.status);
+    const issue: unknown = loaded.audioOutputOwner ? await readSponsorAudioOutputResponse(loaded.audioOutputOwner, result) : await result.json();
+    error(record(issue) && typeof issue.error === "string" ? issue.error : "experience_output_native_refused", result.status);
   }
   // Commit acknowledgement is not admission replacement authority. The following
   // request state is always reconstructed from the original indexed command.
+}
+
+/** Original free stages, shared verbatim by ordinary and owned initial entry.
+ * The supplied environment is the same one used for every own-stage reload. */
+async function prepareInitialStages(request: Request, env: WorkerEnv, draftId: string, loaded: Loaded, body: Record<string, unknown>,
+  bridge: OutputExecutionBridge, executionContext: WorkerExecutionContext, onStage: (stage: DiagnosticStage) => void): Promise<Loaded | Response> {
+  for (const phase of ["save", "confirm", "preflight"] as const) {
+    if (!loaded.originals[phase]) {
+      onStage(`prepare_${phase}_state`);
+      const current = await state(loaded);
+      if (!current.permitted.prepare) break;
+      if (phase === "confirm" && await outputExperienceCommands.readConfirmedPlan(loaded.trusted)) error("experience_output_unbound_plan", 410);
+      const plan = phase === "preflight" ? await confirmed(loaded) : null;
+      if (phase === "preflight" && (!plan || await env.DB.prepare("SELECT 1 AS present FROM output_preflights WHERE scope_key=? AND plan_revision_id=? AND actor_user_id=? LIMIT 1").bind(loaded.trusted.scope.key, plan.revisionId, loaded.trusted.scope.actorUserId).first())) error("experience_output_unbound_preflight", 410);
+      onStage(`prepare_${phase}_execute`);
+      await execute(loaded, phase, phase === "save" ? { blockId: loaded.recipe.spec.id, spec: loaded.recipe.spec, explicitRequirementsConfirmation: body.explicitRequirementsConfirmation }
+        : phase === "confirm" ? { explicitRequirementsConfirmation: body.explicitRequirementsConfirmation }
+        : { planRevisionId: plan!.revisionId, targetIds: [loaded.recipe.targetId],
+          ...(loaded.binding.replacementCycle ? { alternativeOfSlotId: loaded.binding.replacementCycle.predecessor.slotId } : {}) }, bridge, executionContext);
+      onStage(`prepare_${phase}_reload`);
+      const refreshed = await load(request, env, draftId, "author", loaded.audioOutputOwner); if (refreshed instanceof Response) return refreshed; loaded = refreshed;
+    }
+  }
+  return loaded;
+}
+
+/** Dormant initial Audio continuation. The genuine owner reads the actual body;
+ * this entry accepts no command, principal, context or preflight replacement. */
+export async function continueSponsorAudioOutputInitial(owner: SponsorAudioOutputReadOwner, executionContext: WorkerExecutionContext): Promise<Response> {
+  const owned = requireSponsorAudioOutputReads(owner), { request, env, draftId } = owned;
+  let diagnosticStage: DiagnosticStage = "initial_load";
+  try {
+    if (owned.operation !== "audio-output-state" && owned.operation !== "audio-output-prepare") error("experience_output_unavailable", 403);
+    const prepare = owned.operation === "audio-output-prepare";
+    let body: Record<string, unknown> = {};
+    if (prepare) {
+      const value = await readSponsorAudioOutputBody(owner);
+      if (!record(value) || Object.keys(value).length !== 2 || !Object.hasOwn(value, "draftHash")
+        || typeof value.draftHash !== "string" || !Object.hasOwn(value, "explicitRequirementsConfirmation")
+        || value.explicitRequirementsConfirmation !== true) error("experience_output_request_invalid", 400);
+      body = value;
+    }
+    let loaded = await owned.wait(() => load(request, env, draftId, prepare ? "author" : "read", owner));
+    if (loaded instanceof Response) return loaded;
+    if (prepare) {
+      if (body.draftHash !== loaded.binding.draftHash) error("experience_review_stale");
+      const experienceId = loaded.retained.plan.request.experienceId;
+      if ((await owned.wait(() => registeredExperience(experienceId)))?.releaseHash !== loaded.binding.releaseHash) error("experience_release_changed");
+      const initial = loaded;
+      const bridge: OutputExecutionBridge = {
+        ...outputDocumentExecutionBridge,
+        async preflight(input) {
+          beginSponsorAudioOutputPreflight(owner, input);
+          const result = await owned.wait(() => outputDocumentExecutionBridge.preflight(input));
+          // Retain the actual native object and its private proof identity;
+          // neither quote reconstruction nor another preflight occurs here.
+          retainSponsorAudioOutputPreflight(owner, input, result);
+          return result;
+        },
+      };
+      const prepared = await owned.wait(() => prepareInitialStages(request, env, draftId, initial, body,
+        bridge, executionContext, stage => { diagnosticStage = stage; }));
+      if (prepared instanceof Response) return prepared;
+      loaded = prepared;
+    }
+    diagnosticStage = "final_load";
+    const latest = prepare ? await owned.wait(() => load(request, env, draftId, "read", owner)) : loaded;
+    if (latest instanceof Response) return latest;
+    diagnosticStage = "final_state";
+    const value = await owned.wait(() => state(latest));
+    const assertions = latest.lineage.witnesses.map(value => outputCommandReceiptAssertion(latest.trusted.scope, value.receipt));
+    diagnosticStage = "final_disclose";
+    return await owned.wait(() => runSponsorAudioOutputDisclosure(owner, latest.trusted, assertions,
+      async () => {
+        const response = await outputExperienceCommands.disclose(latest.trusted, value, 200, assertions);
+        owned.current();
+        sponsorAudioFinalResponses.set(response, owner);
+        return response;
+      }));
+  } catch (cause) {
+    owned.current();
+    const item = record(cause) ? cause : {};
+    const code = typeof item.code === "string" ? item.code : typeof item.message === "string" && /^[a-z][a-z0-9_]+$/u.test(item.message) ? item.message : "experience_output_unavailable";
+    return unavailable(code, typeof item.status === "number" && item.status >= 400 && item.status < 600 ? item.status : 409,
+      { stage: diagnosticStage, kind: diagnosticCodes.has(code) ? "coded" : diagnosticKind(cause) });
+  }
 }
 
 /** Existing native transaction adapter for registered personal mini-apps. No generic job POST. */
@@ -742,23 +871,9 @@ export async function handleExperienceOutput(request: Request, env: WorkerEnv, e
         // A lost-response retry can continue ONLY the same already-indexed
         // child. It cannot renew again or repeat a financial/run stage.
       }
-      for (const phase of ["save", "confirm", "preflight"] as const) {
-        if (!loaded.originals[phase]) {
-          diagnosticStage = `prepare_${phase}_state`;
-          const current = await state(loaded);
-          if (!current.permitted.prepare) break;
-          if (phase === "confirm" && await outputExperienceCommands.readConfirmedPlan(loaded.trusted)) error("experience_output_unbound_plan", 410);
-          const plan = phase === "preflight" ? await confirmed(loaded) : null;
-          if (phase === "preflight" && (!plan || await env.DB.prepare("SELECT 1 AS present FROM output_preflights WHERE scope_key=? AND plan_revision_id=? AND actor_user_id=? LIMIT 1").bind(loaded.trusted.scope.key, plan.revisionId, loaded.trusted.scope.actorUserId).first())) error("experience_output_unbound_preflight", 410);
-          diagnosticStage = `prepare_${phase}_execute`;
-          await execute(loaded, phase, phase === "save" ? { blockId: loaded.recipe.spec.id, spec: loaded.recipe.spec, explicitRequirementsConfirmation: body.explicitRequirementsConfirmation }
-            : phase === "confirm" ? { explicitRequirementsConfirmation: body.explicitRequirementsConfirmation }
-            : { planRevisionId: plan!.revisionId, targetIds: [loaded.recipe.targetId],
-              ...(loaded.binding.replacementCycle ? { alternativeOfSlotId: loaded.binding.replacementCycle.predecessor.slotId } : {}) }, bridge, executionContext);
-          diagnosticStage = `prepare_${phase}_reload`;
-          const refreshed = await load(request, env, draftId, "author"); if (refreshed instanceof Response) return refreshed; loaded = refreshed;
-        }
-      }
+      const prepared = await prepareInitialStages(request, env, draftId, loaded, body, bridge, executionContext, stage => { diagnosticStage = stage; });
+      if (prepared instanceof Response) return prepared;
+      loaded = prepared;
     } else if (action === "authorize") {
       diagnosticStage = "authorize";
       const current = await state(loaded);
