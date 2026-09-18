@@ -1,5 +1,7 @@
 /** Audited Forma-owned interface, metadata, and component-documentation copy. */
 const messages: Record<string, string> = {
+  "generation.deliveryUnconfirmed": "生成リクエストの送信を確認できませんでした。",
+  "generation.riskDeliveryHint": "確認したリクエストをモデルに送信します。利用料金が発生する場合があり、プロバイダーが拒否することもあります。",
   "generation.acknowledgeRisks": "リスクを理解しました",
   "system.auto.mnnucx.13": "共有された出力",
   "system.auto.1h1pgn9.12": "出力を共有",

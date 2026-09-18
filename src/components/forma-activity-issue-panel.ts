@@ -1,3 +1,4 @@
+import { documentJobCanAcknowledgeSafety } from "../model/document-jobs.ts";
 import { html, nothing } from "lit";
 import { activityJobDisposition, activityJobEvidence, activityJobIssueReport } from "../model/activity-issues";
 import { artifactReviewState, artifactSourceVersions } from "../model/context-health";
@@ -587,6 +588,7 @@ export class FormaActivityIssuePanel extends FormaElement {
           ? html`<button type="button" class="button secondary compact" ?disabled=${Boolean(this.#busy)} @click=${() => void this.#loadCandidates(job)}>${this.i18n.t("presentation.draft.review", "Review generated drafts")}</button>`
           : nothing}
         <button type="button" class="button ghost compact" @click=${() => void this.#copyReport(job)}>${this.i18n.t("activity.issue.copyReport", "Copy issue report")}</button>
+        ${documentJobCanAcknowledgeSafety(job)?html`<button type="button" class="button secondary compact" ?disabled=${this.store.safetyDeliveryPending.has(job.jobId)} title=${this.i18n.t("generation.riskDeliveryHint","This sends the reviewed request to the model and may incur usage. The provider can still decline it.")} @click=${()=>void this.store.acknowledgeGenerationSafety(job)}>${this.i18n.t("generation.acknowledgeRisks","I understand the risks")}</button>`:nothing}
         ${retryableImage ? html`<button type="button" class="button secondary compact" title=${this.i18n.t("activity.issue.tryAgainHint", "A new generation may incur provider usage.")}
           @click=${() => void this.store.retryDocumentGeneration(job)}>${this.i18n.t("activity.issue.tryAgain", "Explicitly try again")}</button>` : nothing}
       </div>

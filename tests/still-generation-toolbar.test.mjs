@@ -6,13 +6,14 @@ import {generationFormat} from '../src/still/results.ts';
 import {ApiError} from '../src/still/client.ts';
 import {generationReview} from '../src/still/generation-review.ts';
 import {canContinueReview} from '../src/still/notifications.ts';
+import {documentJobCanAcknowledgeSafety} from '../src/model/document-jobs.ts';
 
 const source=ts.createSourceFile('app.ts',readFileSync(new URL('../src/still/app.ts',import.meta.url),'utf8'),ts.ScriptTarget.Latest,true);
 const app=source.statements.find(n=>ts.isClassDeclaration(n)&&n.name?.text==='StillApp');
-const methods=['generationCheckKey','isInlineGeneration','selectedGeneration','canGenerateAgain','refreshGenerationStatus','generateAgain','generationRecoveryActions','renderGenerationStatusDock','renderInlineGeneration','startGeneration','generate','run'];
+const methods=['canAcknowledgeSafety','acknowledgeSafety','generationCheckKey','isInlineGeneration','selectedGeneration','canGenerateAgain','refreshGenerationStatus','generateAgain','generationRecoveryActions','renderGenerationStatusDock','renderInlineGeneration','startGeneration','generate','run'];
 const code=ts.transpileModule(`class Recovery {${app.members.filter(n=>methods.includes(n.name?.getText(source))).map(n=>n.getText(source)).join('\n')}}`,{compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText;
 const html=(parts,...values)=>parts.reduce((s,p,i)=>s+p+(Array.isArray(values[i])?values[i].join(''):values[i]??''),'');
-const Recovery=new Function('generationFormat','FORMATS','ApiError','generationReview','canContinueReview','html','nothing',`${code};return Recovery;`)(generationFormat,{video:'Video',image:'Image'},ApiError,generationReview,canContinueReview,html,'');
+const Recovery=new Function('documentJobCanAcknowledgeSafety','generationFormat','FORMATS','ApiError','generationReview','canContinueReview','html','nothing',`${code};return Recovery;`)(documentJobCanAcknowledgeSafety,generationFormat,{video:'Video',image:'Image'},ApiError,generationReview,canContinueReview,html,'');
 function fixture(status='failed') {
  const view=new Recovery();
  const calls=[];
