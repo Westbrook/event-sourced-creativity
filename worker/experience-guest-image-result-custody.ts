@@ -14,7 +14,7 @@ import { GUEST_IMAGE_CLAIM_SCHEMA } from "./experience-guest-image-claim.ts";
 import { GUEST_IMAGE_STAGE_CUSTODY_SCHEMA, guestImageStageHistoryStorageValue } from "./experience-guest-image-stage-custody.ts";
 import type { GuestImageCopyProof } from "./experience-guest-image-copy-contract.ts";
 import type { GuestImageResultPublishedGraph } from "./experience-guest-image-result-facts.ts";
-import { readExistingPrincipalRequest, requireConsent } from "./principal-request-core.ts";
+import { identityFromRequest, readExistingPrincipalRequest, requireConsent } from "./principal-request-core.ts";
 import { projectIntakeAuthority } from "./intake-authority.ts";
 import { nativeMemoryAnswerExclusion } from "./memory-native-boundary.ts";
 import { nativeStructuredOriginSchema } from "./memory-native-origin-schema.ts";
@@ -22,7 +22,7 @@ import { nativeDocumentJobOriginSchema } from "./memory-document-job-origin-sche
 import { OUTPUT_REQUIREMENTS_SCHEMA } from "./output-requirements-schema.ts";
 import type { WorkerEnv } from "./runtime.ts";
 import { serializeEvent } from "./event-read-primitives.ts";
-import { readImageWitness, imageWitnessAcknowledged } from "./generated-image-witness.ts";
+import { readImageWitness, imageWitnessAcknowledged, type ImageWitnessGuard } from "./generated-image-witness.ts";
 import { qualifyClaimedImageCurrent, qualifyClaimedImageLocalAdoption, claimedImageEditMediaWork, claimedImageLocalAdoptionCanonicalWork, type ClaimedImageCurrentFacts, type ClaimedImageLocalAdoptionFacts } from "./generated-image-claimed-current.ts";
 import { inspectOutputAsset, outputAssetSha256, MAX_OUTPUT_ASSET_BYTES } from "../src/model/output-asset-inspection.ts";
 import { measureRetainedState } from "../src/model/retained-state.ts";
@@ -33,6 +33,27 @@ import { prepareClaimedImageEditContext, qualifyClaimedImageEditRequest, buildCl
   type ClaimedImageEditContext, type ClaimedImageEditPrepared, type ClaimedImageEditCandidate, type ClaimedImageEditOperation } from "./generated-image-claimed-edit.ts";
 import { parseGuestImageResultLocalAdoptionCommand, createGuestImageResultLocalAdoptionPair, matchGuestImageResultLocalAdoptionPair, guestImageResultLocalAdoptionIdentitiesUnused,
   type GuestImageResultLocalAdoptionCommand, type GuestImageResultLocalAdoptionPair } from "./generated-image-claimed-local-adoption.ts";
+
+import { guestImagePersonalRefusal, guestImagePersonalJson, markGuestImagePersonalResponse, type GuestImageResultDraftView, type GuestImageResultInputView } from "./generated-image-claimed-personal-wire.ts";
+
+import { parseGuestImageResultMediaUrl } from "../src/model/generated-image-edit.ts";
+import { PRINCIPAL_WITH_ACCESS_SQL } from "./access-policy.ts";
+import { configuredPilotAdmissionGuard, POLICY_VERSION, type PilotUser } from "./pilot-policy.ts";
+
+/** Cancellation only: no proof, body, owner, deadline refresh or IO escapes. */
+export type GuestImageResultOperation<T> = Readonly<{ result: Promise<T>; retire(): void }>;
+
+/** Inert negative response bound, never a capability for later IO. */
+export type GuestImageResultCurrentSnapshotCompletion = Readonly<{
+  snapshot: Readonly<GuestImageResultEditSnapshot>; expiresAt: string;
+}>;
+
+export type GuestImageResultNativeSelection = Readonly<{ kind: "native"; exclusion: ImageWitnessGuard;
+  subjectId: string | null; statementCount: number }>;
+export type GuestImageResultRefusedSelection = Readonly<{ kind: "refused"; response: Response; statementCount: number }>;
+export type GuestImageResultOriginSelection = GuestImageResultNativeSelection
+  | Readonly<{ kind: "claimed"; statementCount: number }> | GuestImageResultRefusedSelection;
+
 
 type Value = string | number | null;
 type Row = Readonly<Record<string, Value>>;
@@ -713,9 +734,12 @@ function adoptionPairWork(mediaUrl: string): number {
   // constructed pair and one parsed pair; the same two-graph bound covers it.
   return 2 * (adoptionLeafPairWork + claimedImageEditMediaWork(mediaUrl));
 }
-type CompletedImageAction = "current" | "edit" | "check" | "adopt";
+const CLAIMED_PERSONAL_MEDIA_PROFILE = Object.freeze({ ...CURRENT_SNAPSHOT_PROFILE, statements: 2179, boundaryStatements: 207, responseChunkBytes: 65_536 });
+const CLAIMED_PERSONAL_DRAFT_PROFILE = Object.freeze({ ...CURRENT_SNAPSHOT_PROFILE, statements: 2190, boundaryStatements: 210, selectorRows: 128, selectorBytes: 65_536 });
+const CLAIMED_PERSONAL_INPUTS_PROFILE = Object.freeze({ ...CURRENT_SNAPSHOT_PROFILE, statements: 2184, boundaryStatements: 209, promptBytes: 65_536, replyBytes: 524_288 });
+type CompletedImageAction = "current" | "edit" | "check" | "adopt" | "media" | "draft" | "inputs";
 type CurrentPhase = "canonical" | "witness" | "qualify" | "before" | "get" | "inspect" | "head" | "final" | "returned"
-  | "request" | "edit-qualify" | "edited-inspect" | "ordinary" | "edit-proof" | "put" | "destination" | "publish" | "adopt-command";
+  | "request" | "edit-qualify" | "edited-inspect" | "ordinary" | "edit-proof" | "put" | "destination" | "publish" | "adopt-command" | "response";
 const currentTyped = Object.getPrototypeOf(Uint8Array.prototype);
 const currentByteLength = Object.getOwnPropertyDescriptor(currentTyped, "byteLength")!.get!;
 const currentBuffer = Object.getOwnPropertyDescriptor(currentTyped, "buffer")!.get!;
@@ -734,16 +758,21 @@ function measureCurrentRetained(value: unknown, maximum: number = CURRENT_SNAPSH
 }
 function completedImageOwner(request: Request, env: WorkerEnv, outputId: string, action: CompletedImageAction) {
   if (!(request instanceof Request)) return fail();
-  const profile = action === "edit" ? CLAIMED_EDIT_PROFILE : action === "adopt" ? CLAIMED_LOCAL_ADOPTION_PROFILE : CURRENT_SNAPSHOT_PROFILE;
+  const profile = action === "edit" ? CLAIMED_EDIT_PROFILE : action === "adopt" ? CLAIMED_LOCAL_ADOPTION_PROFILE
+    : action === "media" ? CLAIMED_PERSONAL_MEDIA_PROFILE : action === "draft" ? CLAIMED_PERSONAL_DRAFT_PROFILE
+      : action === "inputs" ? CLAIMED_PERSONAL_INPUTS_PROFILE : CURRENT_SNAPSHOT_PROFILE;
   const db = env.DB, bucket = env.MEDIA, signal = request.signal, url = request.url, method = request.method, requestBody = request.body;
   const headers = JSON.stringify(Array.from(request.headers)), origin = new URL(url), site = request.headers.get("sec-fetch-site");
   const suppliedOrigin = request.headers.get("origin"), cohort = env.FORMA_PILOT_COHORT_ID, admins = env.FORMA_ADMIN_EMAILS;
   const checkOperation = origin.searchParams.get("operationSha256");
+  const expectedPath = action === "media" ? `/api/media/${encodeURIComponent(outputId)}`
+    : action === "draft" ? `/api/experiences/image/claimed-result/${outputId}`
+      : action === "inputs" ? `/api/claimed-image-inputs/${outputId}` : `/api/generated-images/${outputId}`;
   if ((action === "edit" || action === "adopt" ? method !== (action === "edit" ? "PATCH" : "POST") || !requestBody || request.bodyUsed || requestBody.locked || !!origin.search
       : method !== "GET" || requestBody !== null || (action === "check"
         ? !checkOperation || !/^[a-f0-9]{64}$/u.test(checkOperation) || Array.from(origin.searchParams).length !== 1
         : !!origin.search)) || origin.protocol !== "https:" || origin.username || origin.password || origin.hash
-    || origin.pathname !== `/api/generated-images/${outputId}` || (action === "edit" || action === "adopt" ? suppliedOrigin !== origin.origin : suppliedOrigin !== null && suppliedOrigin !== origin.origin)
+    || origin.pathname !== expectedPath || (action === "edit" || action === "adopt" ? suppliedOrigin !== origin.origin : suppliedOrigin !== null && suppliedOrigin !== origin.origin)
     || site !== null && site !== "same-origin" && site !== "none" || bytes(headers) > 32_768
     || /(?:^|;\s*)(?:forma_project_context|forma_impersonation)=/u.test(request.headers.get("cookie") ?? "")) return fail();
   const monotonicDeadline = performance.now() + profile.deadlineMs;
@@ -783,7 +812,8 @@ function completedImageOwner(request: Request, env: WorkerEnv, outputId: string,
   const accounting = (roots: unknown, reserve = 0) => {
     current(); if (!Number.isSafeInteger(reserve) || reserve < 0) return fail();
     const measured = measureCurrentRetained([ownerData(), roots], profile.aggregateBytes);
-    if (measured + reserve + (edited?.byteLength ?? 0) + (temporary?.byteLength ?? 0) > profile.aggregateBytes) return fail(); return measured;
+    if (measured + reserve + (edited?.byteLength ?? 0) + (temporary?.byteLength ?? 0)
+      + (action === "media" ? owned?.byteLength ?? 0 : 0) > profile.aggregateBytes) return fail(); return measured;
   };
   current(); signal.addEventListener("abort", stop, { once: true });
   let idleTimer = setTimeout(stop, Math.max(0, Math.min(monotonicDeadline - performance.now(), wallDeadline - Date.now())));
@@ -911,7 +941,7 @@ function completedImageOwner(request: Request, env: WorkerEnv, outputId: string,
   };
   const charge = (queries: readonly Statement[]) => {
     current(); totalReads += queries.length; if (totalReads > profile.statements) return fail();
-    if (phase === "canonical") { canonicalReads += queries.length; if (canonicalReads > prefixLength + (action === "adopt" ? 16 : 17)) return fail(); }
+    if (phase === "canonical") { canonicalReads += queries.length; if (canonicalReads > prefixLength + (action === "draft" ? 27 : action === "adopt" || action === "media" ? 16 : 17)) return fail(); }
     else if (phase === "witness") { if (queries.length !== witnessReservation) return fail(); witnessReservation = 0;
       witnessReads += queries.length; if (witnessReads > profile.witnessStatements) return fail(); }
     else if (phase !== "before" && phase !== "final" && phase !== "edit-proof" && phase !== "publish") return fail();
@@ -976,19 +1006,22 @@ function completedImageOwner(request: Request, env: WorkerEnv, outputId: string,
     phase = boundary;
     const results = await boundedDb.batch(parts.map(proof => boundedDb.prepare(`SELECT 1 AS current WHERE ${proof.sql}`).bind(...proof.bindings)));
     current(); if (!imageWitnessAcknowledged(results, parts.length)) return fail();
-    phase = boundary === "before" ? "get" : "returned";
+    phase = boundary === "before" ? action === "draft" || action === "inputs" ? "head" : "get" : "returned";
   };
   let nativeGet: unknown, nativeHead: unknown, nativePut: unknown;
   try {
-    nativeGet = Reflect.get(bucket, "get", bucket); nativeHead = Reflect.get(bucket, "head", bucket);
-    if (action === "edit") nativePut = Reflect.get(bucket, "put", bucket);
-    if (typeof nativeGet !== "function" || typeof nativeHead !== "function" || action === "edit" && typeof nativePut !== "function") return fail(); current();
+    if (action !== "draft" && action !== "inputs") {
+      nativeGet = Reflect.get(bucket, "get", bucket); nativeHead = Reflect.get(bucket, "head", bucket);
+      if (action === "edit") nativePut = Reflect.get(bucket, "put", bucket);
+      if (typeof nativeGet !== "function" || typeof nativeHead !== "function" || action === "edit" && typeof nativePut !== "function") return fail();
+    }
+    current();
   } catch (error) { stop(); clearTimeout(idleTimer); signal.removeEventListener("abort", stop); throw error; }
   return {
     db: boundedDb, env: readEnv, origin: origin.origin, current, wait, text: body, monotonicDeadline, wallDeadline,
     action, checkOperation,
     prefix(n: number) { current(); if (phase !== "canonical" || !Number.isSafeInteger(n) || n < 3 || n > 16) return fail(); prefixLength = n;
-      if (canonicalReads > prefixLength + (action === "adopt" ? 16 : 17)) return fail(); },
+      if (canonicalReads > prefixLength + (action === "draft" ? 27 : action === "adopt" || action === "media" ? 16 : 17)) return fail(); },
     beginWitness(roots: unknown) { current(); if (phase !== "canonical" || !memoryBatchUsed) return fail();
       canonicalRetainedBytes = accounting(roots); phase = "witness";
       // Version assertion/COUNT guards and their <=3 compact records are a
@@ -998,7 +1031,7 @@ function completedImageOwner(request: Request, env: WorkerEnv, outputId: string,
     reserveWitness(n: number) { current(); if (phase !== "witness" || witnessReservation || !Number.isSafeInteger(n) || n < 1
       || n > profile.witnessGuardStatements || witnessReads + n > profile.witnessStatements) return fail(); witnessReservation = n; },
     endWitness(actual: number) { current(); if (phase !== "witness" || witnessReservation || actual !== witnessReads) return fail(); phase = "qualify"; },
-    accounting,
+    accounting, account: accounting,
     retain(value: CurrentDisclosure) { current(); if (phase !== "qualify" || action === "current" && requiredExpiresAt !== null) return fail();
       const expiry = Date.parse(value.expiresAt);
       if (!Number.isSafeInteger(expiry) || new Date(expiry).toISOString() !== value.expiresAt || expiry <= Date.now()) return fail();
@@ -1031,7 +1064,38 @@ function completedImageOwner(request: Request, env: WorkerEnv, outputId: string,
     head(key: string) { current(); if (phase !== "inspect" || !owned || users) return fail(); phase = "head";
       if (action !== "current" && ++nativeCalls > (action === "adopt" ? 2 : CLAIMED_EDIT_PROFILE.nativeCalls)) return fail();
       return wait(() => Promise.resolve(Reflect.apply(nativeHead as (...args: unknown[]) => unknown, bucket, [key]))); },
-    release() { current(); if (phase !== "head" || users) return fail(); retire(); },
+    release() { current(); if (phase !== "head" || users) return fail(); if (action !== "media") retire(); },
+    absentReturned() { current(); if (action !== "draft" || phase !== "canonical" || owned || edited || temporary) return fail(); phase = "returned"; finalUsed = true; },
+    imageResponse() {
+      current(); if (action !== "media" || phase !== "returned" || !finalUsed || !owned || users || edited || temporary) return fail();
+      phase = "response"; const length = owned.length; let offset = 0, controller: ReadableStreamDefaultController<Uint8Array> | null = null;
+      accounting(null, retainedBytes + CLAIMED_PERSONAL_MEDIA_PROFILE.responseChunkBytes);
+      const cancel = () => { try { controller?.error(new Error("claimed_image_media_unavailable")); } catch { /* Already closed. */ }
+        clearTimeout(idleTimer); signal.removeEventListener("abort", stop); };
+      if (cancellations.size >= 4) return fail(); cancellations.add(cancel);
+      const stream = new ReadableStream<Uint8Array>({
+        start(value) { controller = value; },
+        pull(value) {
+          try {
+            current(); if (phase !== "response" || !owned || users || offset >= length) return fail();
+            const size = Math.min(CLAIMED_PERSONAL_MEDIA_PROFILE.responseChunkBytes, length - offset);
+            accounting(null, retainedBytes + size);
+            const chunk = new Uint8Array(size);
+            for (let index = 0; index < size; index++) chunk[index] = owned[offset + index]!;
+            current(); value.enqueue(chunk); offset += size;
+            if (offset === length) { value.close(); cancellations.delete(cancel); stop(); clearTimeout(idleTimer); signal.removeEventListener("abort", stop); }
+          } catch (error) { try { value.error(error); } catch { /* Already terminated. */ } stop(); }
+        },
+        cancel() { cancellations.delete(cancel); stop(); clearTimeout(idleTimer); signal.removeEventListener("abort", stop); },
+      }, { highWaterMark: 0 });
+      current();
+      const response = markGuestImagePersonalResponse(new Response(stream, { status: 200, headers: {
+        "content-type": "image/png", "content-length": String(length), "content-security-policy": "default-src 'none'; sandbox",
+        "cache-control": "private, no-store", "x-content-type-options": "nosniff",
+        vary: "Cookie, oai-authenticated-user-id, oai-authenticated-user-email",
+      } }));
+      current(); return response;
+    },
     onCancel(cancel: () => void) { current(); if (cancellations.size >= 4) return fail(); cancellations.add(cancel); return () => cancellations.delete(cancel); },
     beginAdoptionCommand() { current(); if (action !== "adopt" || phase !== "adopt-command" || bodyStarted) return fail();
       bodyStarted = true; return requestBody ?? fail(); },
@@ -1268,6 +1332,9 @@ type CurrentDisclosure = Readonly<{
     version: SceneSourceVersion; totals: Readonly<{ count: number; head: number; raw_bytes: number }>;
     artifactKey: string; revisionCount: number; sourceId: string; blockId: string; referenceId: string; head: number;
     selectionProof: Proof; successorRawBytes: number }>;
+  personal?: Readonly<{ draftId: string; title: string; canonical: ClaimedImageLocalAdoptionFacts["canonical"];
+    initialMedia: ClaimedImageLocalAdoptionFacts["initialMedia"]; originalKey: string; originalMetadata: Readonly<Record<string, string>>;
+    prompt: string | null }>;
 }>;
 const claimedRevisionColumns = ["revision_id", "owner_id", "organization_id", "project_access_id", "project_id", "document_id", "artifact_id", "revision",
   "content_json", "content_sha256", "created_by_user_id", "created_at", "expires_at", "redacted_at"] as const;
@@ -1554,6 +1621,103 @@ async function collectLocalAdoptionDisclosure(scope: CurrentSnapshotOwner, reque
   measureCurrentRetained(compact); return compact;
 }
 
+type ClaimedDraftLookup = Readonly<{ ownerId: string; outputId: string; custodyId: string; draftId: string;
+  familyGuard: Proof; selectorGuard: Proof }>;
+
+async function collectPersonalDisclosure(scope: CurrentSnapshotOwner, request: Request, outputId: string, lookup?: ClaimedDraftLookup): Promise<CurrentDisclosure> {
+  const auth = await scope.wait(() => readExistingPrincipalRequest(request, scope.env, "creator", { account: "principal" }));
+  if ("kind" in auth || auth.response || !auth.user || requireConsent(auth.user) || auth.user.fictional || auth.user.projectExecution
+    || auth.user.userId.startsWith("guest:") || auth.user.streamId !== `creative:${auth.user.userId}`
+    || !auth.user.access.capabilities.includes("project.author")) return fail();
+  const actor = auth.user, schema = await schemas(scope), nativeSchema = await nativeTables(scope, true);
+  const custody = await scope.db.prepare(`SELECT ${custodyColumns.join(",")} FROM experience_guest_image_result_custodies
+    WHERE destination_user_id=? AND output_id=? AND length(CAST(lineage_json AS BLOB))<=262144
+      AND (SELECT COUNT(*) FROM experience_guest_image_result_custodies WHERE destination_user_id=? AND output_id=?)=1`)
+    .bind(actor.userId, outputId, actor.userId, outputId).first<Record<string, Value>>(); scope.current();
+  if (!custody) return fail();
+  const raw = scope.text(custody.lineage_json, 262_144), lineage = await scope.wait(() => readGuestImageResultClaimLineage(JSON.parse(raw)));
+  scope.prefix(lineage.copy.manifest.sourceHead);
+  const rows = await scope.wait(() => guestImageResultClaimRows(lineage));
+  if (!same(custody, rows.custody) || rows.custody.output_id !== outputId || lineage.copy.destinationUserId !== actor.userId
+    || lookup && (lookup.ownerId !== actor.userId || lookup.outputId !== outputId || lookup.custodyId !== lineage.copy.custodyId || lookup.draftId !== lineage.saveLineage.draftId)
+    || scope.origin !== lineage.contextLineage.origin) return fail();
+  const authority = projectIntakeAuthority(scope.env, { user: actor, principal: actor, impersonation: null },
+    { projectId: lineage.copy.manifest.projectId, documentId: lineage.copy.manifest.documentId });
+  if (!isCurrent(await scope.db.prepare(`SELECT 1 AS current WHERE ${authority.sql}`).bind(...authority.bindings).first())) return fail();
+  const attempt = await scope.db.prepare(`SELECT ${GUEST_IMAGE_RESULT_COPY_COLUMNS.join(",")} FROM experience_guest_image_result_copy_attempts
+    WHERE attempt_id=? AND state='published' AND length(CAST(descriptor_json AS BLOB))<=65536 AND length(CAST(lease_snapshot_json AS BLOB))<=65536
+      AND length(CAST(destination_metadata_json AS BLOB))<=8192`).bind(lineage.copy.attemptId).first<GuestImageResultCopyAttemptRow>(); scope.current();
+  if (!attempt) return fail();
+  const privateEvent = async (id: string) => {
+    const row = await scope.db.prepare(`SELECT private_json FROM event_private_payloads WHERE private_event_id=? AND owner_id=?
+      AND redacted_at IS NULL AND length(CAST(private_json AS BLOB)) BETWEEN 1 AND 65536`).bind(id, actor.userId).first<{ private_json: string }>();
+    scope.current(); return scope.text(row?.private_json, 65_536);
+  };
+  const prefixBodies: string[] = [];
+  for (const target of lineage.contextLineage.events) prefixBodies.push(await privateEvent(target.id));
+  const saveBody = await privateEvent(lineage.saveLineage.target.id), claimBody = await privateEvent(lineage.canonical.eventId);
+  const plannerCopy = lineage.resultCopies[0];
+  if (!/^sha256:[a-f0-9]{64}$/u.test(plannerCopy.original_digest)) return fail();
+  const graph = await scope.wait(() => construct({ lineage, publishedAttempt: attempt, prefixBodies, saveBody, claimBody, resultBodies: [] }, false, "association"));
+  const exclusions = await memory(scope, graph.afterGraph), canonicalParts = [schema, nativeSchema, authority, ...graph.parts, ...exclusions];
+  let promptRow: Row | null = null, promptText: string | null = null;
+  const promptProofs: Proof[] = [], copiedPrompt = lineage.resultCopies[1];
+  const promptQuery = `SELECT content_id,owner_id,kind,content,created_at,expires_at,redacted_at FROM private_content
+    WHERE content_id=? AND owner_id=? AND kind='guest-image-result-history' AND created_at=? AND expires_at=?
+      AND redacted_at IS NULL AND created_at<=${nowSql} AND expires_at>${nowSql}
+      AND typeof(content)='text' AND length(CAST(content AS BLOB)) BETWEEN 1 AND 65536`;
+  const promptBindings = [copiedPrompt.content_id, actor.userId, copiedPrompt.created_at, copiedPrompt.expires_at];
+  if (scope.action === "inputs") {
+    if (copiedPrompt.role !== "prompt") return fail();
+    promptRow = await scope.db.prepare(promptQuery).bind(...promptBindings).first<Row>(); scope.current();
+    if (promptRow) {
+      promptText = scope.text(promptRow.content, 65_536);
+      if (bytes(promptText) !== copiedPrompt.byte_length || await scope.wait(() => digest(promptText!)) !== copiedPrompt.original_digest) return fail();
+      promptProofs.push(exact("private_content", promptRow), { sql: `?<=${nowSql} AND ?>${nowSql}`, bindings: [copiedPrompt.created_at, copiedPrompt.expires_at] });
+    } else promptProofs.push({ sql: `NOT EXISTS(${promptQuery})`, bindings: promptBindings });
+  }
+  // These bindings remain in this function's frame throughout qualification;
+  // do not pretend a const local has retired merely because it was last read.
+  const canonicalRoots = [auth, actor, schema, nativeSchema, custody, raw, lineage, rows, authority, attempt,
+    prefixBodies, saveBody, claimBody, plannerCopy, graph, exclusions, canonicalParts, lookup, promptRow, promptText, promptProofs, promptQuery, promptBindings];
+  scope.beginWitness(canonicalRoots);
+  const witness = await readImageWitness(scope.env, actor.streamId, actor.userId, currentArtifactKey(outputId), outputId,
+    { check: scope.current, sql: scope.reserveWitness, wait: pending => scope.wait(() => pending) });
+  scope.endWitness(witness.queryCount);
+  const eventRows = freeze(witness.eventRows), revisionRows = freeze(witness.revisionRows);
+  const events: EventRow[] = [];
+  const witnessAccounting = { eventCount: witness.eventCount, head: witness.head, guards: witness.guards,
+    eventBytes: witness.eventBytes, reads: witness.reads, queryCount: witness.queryCount };
+  const capturedBytes = scope.accounting([canonicalRoots, witnessAccounting, eventRows, revisionRows]);
+  let serializedBytes = 64;
+  for (const value of eventRows) {
+    if (!record(value) || value.stream_id !== actor.streamId || typeof value.event_id !== "string"
+      || value.private_json !== null && (value.private_owner !== actor.userId || typeof value.private_json !== "string")) return fail();
+    const event = freeze(serializeEvent({ ...value, private_json: value.private_redacted === null ? value.private_json : null }));
+    serializedBytes += 16 + measureCurrentRetained(event, CURRENT_SNAPSHOT_PROFILE.aggregateBytes);
+    scope.accounting(null, capturedBytes + serializedBytes); events.push(event);
+  }
+  freeze(events);
+  const outsideRetainedBytes = scope.accounting([canonicalRoots, witnessAccounting]);
+  const read = freeze({ ownerId: actor.userId, projectId: lineage.copy.manifest.projectId, documentId: lineage.copy.manifest.documentId,
+    outputId, events, head: witness.head, planner: { contentRef: plannerCopy.content_id, contentDigest: plannerCopy.original_digest, expiresAt: plannerCopy.expires_at, claim: graph.completedReview } });
+  const facts = await scope.wait(() => qualifyClaimedImageLocalAdoption({ read, eventRows, revisionRows,
+    monotonicDeadline: scope.monotonicDeadline, wallDeadline: scope.wallDeadline, outsideRetainedBytes })); scope.current();
+  const claimPairs = graph.afterGraph.eventEnvelopes.filter(pair => pair.event.event_id === graph.completedReview.claimEventId);
+  if (claimPairs.length !== 1) return fail();
+  const provedClaim = freeze(serializeEvent({ ...claimPairs[0]!.event, private_json: claimPairs[0]!.envelope.private_json }));
+  if (!same(facts.canonical, provedClaim)) return fail();
+  const metadata: Readonly<Record<string, string>> = facts.snapshot.revision === 0 ? lineage.copy.destinationMetadata : facts.derivativeMetadata ?? fail();
+  const scopeProof = currentScopeProof(actor.userId, lineage.copy.custodyId, facts);
+  const personal = freeze({ draftId: lineage.saveLineage.draftId, title: facts.title, canonical: facts.canonical,
+    initialMedia: facts.initialMedia, originalKey: lineage.copy.destinationKey, originalMetadata: lineage.copy.destinationMetadata, prompt: promptText });
+  const compact: CurrentDisclosure = freeze({ snapshot: facts.snapshot,
+    parts: [...canonicalParts, ...witness.guards, scopeProof, ...promptProofs, ...(lookup ? [lookup.familyGuard, lookup.selectorGuard] : [])],
+    mediaKey: decodeURIComponent(facts.snapshot.media.url.slice("/api/media/".length)), metadata, expiresAt: facts.retainedExpiresAt, personal });
+  scope.accounting([canonicalRoots, witnessAccounting, eventRows, revisionRows, events, read, facts, claimPairs, provedClaim, metadata, scopeProof, personal, compact]);
+  measureCurrentRetained(compact); return compact;
+}
+
 type CurrentObjectMetadata = Readonly<{ size: number; httpEtag: string; key: string; version: string; etag: string;
   custom: Readonly<Record<string, string>>; http: readonly (readonly [string, string])[] }>;
 type ClaimedImageMediaEvidence = Readonly<{ media: GuestImageResultEditSnapshot["media"]; revision: number;
@@ -1647,9 +1811,10 @@ async function inspectCurrentMedia(scope: CurrentSnapshotOwner, disclosure: Curr
 
 /** Fresh, read-only current snapshot. The scalar selector grants no authority.
  * No native/default route calls this dormant explicit entrypoint yet. */
-export async function readGuestImageResultCurrentSnapshot(request: Request, env: WorkerEnv,
-  input: Readonly<{ outputId: string }>): Promise<Readonly<GuestImageResultEditSnapshot> | null> {
+export function beginGuestImageResultCurrentSnapshot(request: Request, env: WorkerEnv,
+  input: Readonly<{ outputId: string }>): GuestImageResultOperation<GuestImageResultCurrentSnapshotCompletion | null> {
   let owner: CurrentSnapshotOwner | undefined;
+  const result = (async (): Promise<GuestImageResultCurrentSnapshotCompletion | null> => {
   try {
     const selector = capture(input);
     if (!record(selector) || !exactKeys(selector, ["outputId"]) || typeof selector.outputId !== "string"
@@ -1660,9 +1825,20 @@ export async function readGuestImageResultCurrentSnapshot(request: Request, env:
     await owner.prove(disclosure.parts, "before");
     await inspectCurrentMedia(owner, disclosure);
     await owner.prove(disclosure.parts, "final");
-    owner.finish(); if (!completeCurrentSnapshot(disclosure.snapshot)) return fail(); return disclosure.snapshot;
+    owner.finish(); if (!completeCurrentSnapshot(disclosure.snapshot)) return fail();
+    // The original API lifetime must also deny expiry during its later JSON
+    // construction. Copy the already-proved minimum; do not refresh any clock.
+    const completion = Object.freeze({ snapshot: disclosure.snapshot, expiresAt: disclosure.expiresAt });
+    owner.current(); return completion;
   } catch { return null; }
   finally { owner?.dispose(); }
+  })();
+  return Object.freeze({ result, retire() { owner?.dispose(); } });
+}
+export async function readGuestImageResultCurrentSnapshot(request: Request, env: WorkerEnv,
+  input: Readonly<{ outputId: string }>): Promise<Readonly<GuestImageResultEditSnapshot> | null> {
+  const completion = await beginGuestImageResultCurrentSnapshot(request, env, input).result;
+  return completion?.snapshot ?? null;
 }
 
 // Fixed writer-only body readers. Native streams are observed with captured
@@ -1977,9 +2153,10 @@ async function saveClaimedEdit(scope: CurrentSnapshotOwner, request: Request, ou
 /** Explicit, dormant claimed Save/Check. No default route, editor, Store or
  * host calls it. The original Request and its private owner span the complete
  * action; informational receipts and selectors cannot construct that owner. */
-export async function handleGuestImageResultEdit(request: Request, env: WorkerEnv,
-  input: Readonly<{ outputId: string }>): Promise<Response> {
+export function beginGuestImageResultEdit(request: Request, env: WorkerEnv,
+  input: Readonly<{ outputId: string }>): GuestImageResultOperation<Response> {
   let owner: CurrentSnapshotOwner | undefined;
+  const result = (async (): Promise<Response> => {
   try {
     const selector = capture(input);
     if (!record(selector) || !exactKeys(selector, ["outputId"]) || typeof selector.outputId !== "string"
@@ -1995,6 +2172,12 @@ export async function handleGuestImageResultEdit(request: Request, env: WorkerEn
     const code = error instanceof ClaimedImageEditError ? error.code : "unavailable";
     return claimedEditReply({ status: "refused", code }, code === "invalid" ? 400 : code === "source_changed" ? 409 : 503);
   } finally { owner?.dispose(); }
+  })();
+  return Object.freeze({ result, retire() { owner?.dispose(); } });
+}
+export async function handleGuestImageResultEdit(request: Request, env: WorkerEnv,
+  input: Readonly<{ outputId: string }>): Promise<Response> {
+  return await beginGuestImageResultEdit(request, env, input).result;
 }
 
 /** Original POST body only. The parser frame and fixed wire buffer retire
@@ -2070,9 +2253,10 @@ async function prepareClaimedLocalAdoption(scope: CurrentSnapshotOwner, request:
 }
 /** Dormant, fixed body-free personal local-source producer. No route, host,
  * Store, reference-right grant or provider operation is activated here. */
-export async function adoptGuestImageResultLocalSource(request: Request, env: WorkerEnv,
-  input: Readonly<{ outputId: string }>): Promise<Response> {
+export function beginGuestImageResultLocalSourceAdoption(request: Request, env: WorkerEnv,
+  input: Readonly<{ outputId: string }>): GuestImageResultOperation<Response> {
   let owner: CurrentSnapshotOwner | undefined;
+  const result = (async (): Promise<Response> => {
   try {
     const selector = capture(input);
     if (!record(selector) || !exactKeys(selector, ["outputId"]) || typeof selector.outputId !== "string"
@@ -2094,4 +2278,353 @@ export async function adoptGuestImageResultLocalSource(request: Request, env: Wo
     const invalid = error instanceof ClaimedImageEditError && error.code === "invalid";
     return claimedEditReply({ status: "refused", code: invalid ? "invalid_request" : "unavailable" }, invalid ? 400 : 503);
   } finally { owner?.dispose(); }
+  })();
+  return Object.freeze({ result, retire() { owner?.dispose(); } });
+}
+export async function adoptGuestImageResultLocalSource(request: Request, env: WorkerEnv,
+  input: Readonly<{ outputId: string }>): Promise<Response> {
+  return await beginGuestImageResultLocalSourceAdoption(request, env, input).result;
+}
+
+// A separate fixed negative-only operation. It never borrows a receipt/current
+// owner, reads a lineage/body, repairs schema or invokes account lifecycle.
+const CLAIMED_ORIGIN_PROFILE = Object.freeze({ statements: 8, deadlineMs: 30_000, headerBytes: 32_768,
+  envelopeBytes: 1_048_576, schemaBytes: 262_144, schemaRows: 64, sqlBytes: 100_000, bindings: 100 });
+function claimedOriginOwner(request: Request, env: WorkerEnv) {
+  if (!(request instanceof Request)) return fail();
+  const db = env.DB, media = env.MEDIA, signal = request.signal, url = request.url, method = request.method, requestBody = request.body;
+  const headers = JSON.stringify(Array.from(request.headers)), cohort = env.FORMA_PILOT_COHORT_ID, admins = env.FORMA_ADMIN_EMAILS;
+  if (bytes(headers) > CLAIMED_ORIGIN_PROFILE.headerBytes) return fail();
+  const monotonicDeadline = performance.now() + CLAIMED_ORIGIN_PROFILE.deadlineMs, wallDeadline = Date.now() + CLAIMED_ORIGIN_PROFILE.deadlineMs;
+  let stopped = false, statementCount = 0, retained: unknown = null;
+  const waiters = new Set<() => void>();
+  const stop = () => { if (stopped) return; stopped = true; for (const reject of waiters) reject(); waiters.clear(); };
+  const current = () => {
+    if (stopped || signal.aborted || request.signal !== signal || env.DB !== db || env.MEDIA !== media || request.url !== url
+      || request.method !== method || request.body !== requestBody || JSON.stringify(Array.from(request.headers)) !== headers
+      || env.FORMA_PILOT_COHORT_ID !== cohort || env.FORMA_ADMIN_EMAILS !== admins
+      || performance.now() >= monotonicDeadline || Date.now() >= wallDeadline) { stop(); return fail(); }
+  };
+  current(); signal.addEventListener("abort", stop, { once: true });
+  const timer = setTimeout(stop, Math.max(0, Math.min(monotonicDeadline - performance.now(), wallDeadline - Date.now())));
+  const wait = async <T>(work: () => Promise<T>): Promise<T> => {
+    current(); let rejectStop: () => void = () => undefined;
+    const ended = new Promise<never>((_, reject) => { rejectStop = () => reject(new Error("claimed_origin_unavailable")); waiters.add(rejectStop); });
+    const pending = Promise.resolve().then(() => { current(); return work(); });
+    try { const value = await Promise.race([pending, ended]); current(); return value; }
+    catch (error) { stop(); throw error; }
+    finally { waiters.delete(rejectStop); void pending.catch(() => undefined); }
+  };
+  const detached = (value: unknown): unknown => {
+    const seen = new Set<object>(); let nodes = 0, units = 0;
+    const visit = (item: unknown, depth: number): void => {
+      if (++nodes > 32_768 || depth > 32) return fail();
+      if (item === null || item === undefined || typeof item === "boolean") return;
+      if (typeof item === "number") { if (!Number.isFinite(item)) return fail(); return; }
+      if (typeof item === "string") { if (!item.isWellFormed() || (units += item.length) > CLAIMED_ORIGIN_PROFILE.envelopeBytes) return fail(); return; }
+      if (typeof item !== "object" || seen.has(item) || (Array.isArray(item) ? Object.getPrototypeOf(item) !== Array.prototype : !record(item))) return fail();
+      seen.add(item); const descriptors = Object.getOwnPropertyDescriptors(item);
+      if (Reflect.ownKeys(descriptors).some(key => typeof key !== "string")) return fail();
+      for (const [key, field] of Object.entries(descriptors)) {
+        if (Array.isArray(item) && key === "length") continue;
+        units += key.length;
+        if (units > CLAIMED_ORIGIN_PROFILE.envelopeBytes || ["__proto__", "prototype", "constructor"].includes(key)
+          || !field.enumerable || !Object.hasOwn(field, "value") || Array.isArray(item) && !/^(0|[1-9]\d*)$/u.test(key)) return fail();
+        visit(field.value, depth + 1);
+      }
+      if (Array.isArray(item) && (item.length > 128 || Object.keys(item).length !== item.length)) return fail();
+    };
+    visit(value, 0); const size = nativeEnvelopeSize(value);
+    if (size > CLAIMED_ORIGIN_PROFILE.envelopeBytes) return fail();
+    const reflectionSlot = (64 + 4 * 16 + 2 * (5 + 8 + 10 + 12) + 3 * 16 + 8) + (64 + 2 * 16) + 2 * 16 + 32;
+    const roots = measureCurrentRetained([headers, url, method, cohort, admins, retained, value], CURRENT_SNAPSHOT_PROFILE.aggregateBytes);
+    if (2 * roots + nodes * reflectionSlot + 4 * size > CURRENT_SNAPSHOT_PROFILE.aggregateBytes) return fail();
+    return structuredClone(value);
+  };
+  const prepare = (sql: string, values: Value[] = []): D1PreparedStatement => {
+    current(); if (typeof sql !== "string" || bytes(sql) > CLAIMED_ORIGIN_PROFILE.sqlBytes || !readOnlySql(sql)
+      || values.length > CLAIMED_ORIGIN_PROFILE.bindings || values.some(value => value !== null && typeof value !== "string" && typeof value !== "number"
+        || typeof value === "number" && !Number.isFinite(value) || typeof value === "string" && bytes(value) > CLAIMED_ORIGIN_PROFILE.envelopeBytes)) return fail();
+    const all = async () => {
+      current();
+      const statement = db.prepare(sql).bind(...values);
+      const raw = await wait(() => { current(); if (statementCount >= CLAIMED_ORIGIN_PROFILE.statements) return fail();
+        statementCount++; return statement.all(); });
+      const result = detached(raw);
+      if (!record(result) || result.success !== true || result.error !== undefined || !Array.isArray(result.results) || result.results.length > 2) return fail();
+      current(); return { ...result, results: result.results };
+    };
+    return { bind: (...input: unknown[]) => prepare(sql, input as Value[]), all,
+      first: async (...input: unknown[]) => { if (input.length) return fail(); const result = await all(); return result.results[0] ?? null; },
+      raw: fail, run: fail } as unknown as D1PreparedStatement;
+  };
+  const boundedDb = { prepare, batch: fail, exec: fail, dump: fail, withSession: fail } as unknown as WorkerEnv["DB"];
+  const readEnv = new Proxy(env, { get(target, key, receiver) { current(); return key === "DB" ? boundedDb : Reflect.get(target, key, receiver); },
+    set: fail, defineProperty: fail, deleteProperty: fail });
+  return { db: boundedDb, env: readEnv, current, wait, count: () => statementCount,
+    account(roots: unknown, reserve = 0) { current();
+      if (!Number.isSafeInteger(reserve) || reserve < 0 || measureCurrentRetained([headers, url, method, cohort, admins, retained, roots], CURRENT_SNAPSHOT_PROFILE.aggregateBytes)
+        + reserve > CURRENT_SNAPSHOT_PROFILE.aggregateBytes) return fail(); },
+    retain(roots: unknown) { current(); measureCurrentRetained([headers, url, method, cohort, admins, roots]); retained = roots; },
+    dispose() { stop(); clearTimeout(timer); signal.removeEventListener("abort", stop); } };
+}
+type ClaimedOriginOwner = ReturnType<typeof claimedOriginOwner>;
+async function claimedOriginFamily(scope: Pick<ClaimedOriginOwner, "db" | "current"> & { account(roots: unknown, reserve?: number): void }): Promise<Readonly<{ absent: boolean; guard: ImageWitnessGuard }>> {
+  const expected = GUEST_IMAGE_RESULT_COPY_SCHEMA.map(sql => {
+    const match = /^CREATE (TABLE|INDEX|TRIGGER)(?: IF NOT EXISTS)? ([a-z_]+)/u.exec(sql);
+    if (!match) return fail(); const table = match[1] === "TABLE" ? match[2] : /\bON ([a-z_]+)/u.exec(sql)?.[1];
+    if (!table) return fail(); return { type: match[1].toLowerCase(), name: match[2], table, sql: normalizedDdl(sql) };
+  });
+  const tables = expected.filter(value => value.type === "table").map(value => value.name), names = expected.map(value => value.name);
+  const catalog = `(SELECT json_group_array(json_object('type',type,'name',name,'table',tbl_name,'sql',definition)) FROM
+    (SELECT type,name,tbl_name,CASE WHEN typeof(sql)='text' AND length(CAST(sql AS BLOB))<=32768 THEN sql ELSE NULL END AS definition
+      FROM sqlite_schema WHERE lower(name) IN(SELECT value FROM json_each(?)) OR lower(tbl_name) IN(SELECT value FROM json_each(?))
+        OR lower(name) GLOB 'experience_guest_image_result_*' ORDER BY name,type LIMIT 64))`;
+  const values = [JSON.stringify(names), JSON.stringify(tables)];
+  const row = await scope.db.prepare(`SELECT ${catalog} AS snapshot`).bind(...values).first<{ snapshot: unknown }>(); scope.current();
+  const snapshot = body(row?.snapshot, CLAIMED_ORIGIN_PROFILE.schemaBytes);
+  // One bounded catalog text parse; preserve original spelling for final proof.
+  scope.account([expected, tables, names, values, row, snapshot], 64 + 82 * snapshot.length);
+  const found: unknown = JSON.parse(snapshot);
+  if (!Array.isArray(found) || found.length >= CLAIMED_ORIGIN_PROFILE.schemaRows || found.some(value => !record(value)
+    || !exactKeys(value, ["type", "name", "table", "sql"]))) return fail();
+  const guard: ImageWitnessGuard = { sql: `${catalog}=? AND NOT EXISTS(SELECT 1 FROM temp.sqlite_schema)`, bindings: [...values, snapshot] };
+  if (!found.length) return freeze({ absent: true, guard });
+  const explicit = found.filter(value => !(value.type === "index" && value.sql === null && tables.includes(value.table)
+    && new RegExp(`^sqlite_autoindex_${value.table}_[1-9][0-9]*$`, "u").test(value.name)));
+  if (explicit.length !== expected.length || new Set(explicit.map(value => value.name)).size !== expected.length
+    || expected.some(wanted => !explicit.some(value => value.name === wanted.name && value.type === wanted.type && value.table === wanted.table
+      && typeof value.sql === "string" && normalizedDdl(value.sql) === wanted.sql))) return fail();
+  return freeze({ absent: false, guard });
+}
+async function claimedOriginSelection(scope: ClaimedOriginOwner, request: Request, outputId: string, mediaOwnerId?: string): Promise<GuestImageResultOriginSelection> {
+  const family = await claimedOriginFamily(scope); scope.retain([family, outputId, mediaOwnerId]);
+  const final = async (guard: ImageWitnessGuard) => {
+    const row = await scope.db.prepare(`SELECT 1 AS current WHERE ${guard.sql}`).bind(...guard.bindings).first();
+    scope.current(); if (!isCurrent(row)) return fail();
+  };
+  if (family.absent) {
+    await final(family.guard); return freeze({ kind: "native", exclusion: family.guard, subjectId: null, statementCount: scope.count() });
+  }
+  const identity = mediaOwnerId === undefined ? identityFromRequest(request) : null;
+  const subjectId = mediaOwnerId ?? identity?.userId;
+  if (typeof subjectId !== "string" || !subjectId || bytes(subjectId) > 32_768) return fail();
+  const marker = await scope.db.prepare(`SELECT custody_id FROM experience_guest_image_result_custodies
+    WHERE destination_user_id=? AND output_id=? LIMIT 2`).bind(subjectId, outputId).all<{ custody_id: unknown }>(); scope.current();
+  if (!Array.isArray(marker.results) || marker.results.length > 1 || marker.results.some(value => !record(value)
+    || !exactKeys(value, ["custody_id"]) || typeof value.custody_id !== "string" || !/^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/u.test(value.custody_id))) return fail();
+  const exclusion: ImageWitnessGuard = { sql: `(${family.guard.sql}) AND NOT EXISTS(SELECT 1 FROM experience_guest_image_result_custodies WHERE destination_user_id=? AND output_id=?)`,
+    bindings: [...family.guard.bindings, subjectId, outputId] };
+  scope.retain([family, outputId, mediaOwnerId, identity, subjectId, marker, exclusion]);
+  if (!marker.results.length) {
+    await final(exclusion); return freeze({ kind: "native", exclusion, subjectId, statementCount: scope.count() });
+  }
+  if (mediaOwnerId !== undefined) return freeze({ kind: "refused", response: guestImagePersonalRefusal(), statementCount: scope.count() });
+  const url = new URL(request.url), origin = request.headers.get("origin"), site = request.headers.get("sec-fetch-site");
+  const operation = url.searchParams.get("operationSha256");
+  if (!/^object-[a-f0-9]{8}$/u.test(outputId) || url.protocol !== "https:" || url.username || url.password || url.hash
+    || url.pathname !== `/api/generated-images/${outputId}` || !["GET", "PATCH", "POST"].includes(request.method)) return fail();
+  if (request.method === "GET" ? request.body !== null || !!url.search && (!operation || !/^[a-f0-9]{64}$/u.test(operation) || Array.from(url.searchParams).length !== 1)
+    || origin !== null && origin !== url.origin : !!url.search || !request.body || request.bodyUsed || request.body.locked || origin !== url.origin) return fail();
+  if (site !== null && site !== "same-origin" && site !== "none"
+    || /(?:^|;\s*)(?:forma_project_context|forma_impersonation)=/u.test(request.headers.get("cookie") ?? "")) return fail();
+  const auth = await scope.wait(() => readExistingPrincipalRequest(request, scope.env, "creator", { account: "principal" }));
+  if ("kind" in auth || auth.response || !auth.user || requireConsent(auth.user) || auth.user.fictional || auth.user.projectExecution
+    || auth.user.userId !== subjectId || auth.user.userId.startsWith("guest:") || auth.user.streamId !== `creative:${subjectId}`
+    || !auth.user.access.capabilities.includes("project.author")) return fail();
+  const custodyId = marker.results[0]?.custody_id; if (typeof custodyId !== "string") return fail();
+  await final({ sql: `(${family.guard.sql}) AND (SELECT COUNT(*) FROM experience_guest_image_result_custodies WHERE destination_user_id=? AND output_id=?)=1
+      AND EXISTS(SELECT 1 FROM experience_guest_image_result_custodies WHERE destination_user_id=? AND output_id=? AND custody_id=?)`,
+    bindings: [...family.guard.bindings, subjectId, outputId, subjectId, outputId, custodyId] });
+  return freeze({ kind: "claimed", statementCount: scope.count() });
+}
+export function beginGuestImageResultOriginRead(request: Request, env: WorkerEnv,
+  input: Readonly<{ outputId: string }>): GuestImageResultOperation<GuestImageResultOriginSelection> {
+  let owner: ClaimedOriginOwner | undefined;
+  const result = (async (): Promise<GuestImageResultOriginSelection> => {
+    try {
+      // Native grammar is intentionally not replaced by claimed object8hex.
+      const selector = capture(input);
+      if (!record(selector) || !exactKeys(selector, ["outputId"]) || typeof selector.outputId !== "string" || bytes(selector.outputId) > 32_768) return fail();
+      const outputId = selector.outputId; owner = claimedOriginOwner(request, env);
+      return await claimedOriginSelection(owner, request, outputId);
+    } catch { return freeze({ kind: "refused", response: guestImagePersonalRefusal(), statementCount: owner?.count() ?? 0 }); }
+    finally { owner?.dispose(); }
+  })();
+  return Object.freeze({ result, retire() { owner?.dispose(); } });
+}
+export function beginGuestImageResultNativeMediaExclusion(request: Request, env: WorkerEnv,
+  input: Readonly<{ outputId: string; ownerId: string }>): GuestImageResultOperation<GuestImageResultNativeSelection | GuestImageResultRefusedSelection> {
+  let owner: ClaimedOriginOwner | undefined;
+  const result = (async (): Promise<GuestImageResultNativeSelection | GuestImageResultRefusedSelection> => {
+    try {
+      const selector = capture(input);
+      if (!record(selector) || !exactKeys(selector, ["outputId", "ownerId"]) || typeof selector.outputId !== "string" || typeof selector.ownerId !== "string"
+        || !selector.ownerId || bytes(selector.outputId) > 32_768 || bytes(selector.ownerId) > 32_768
+        || request.method !== "GET" || !new URL(request.url).pathname.startsWith("/api/media/")) return fail();
+      const outputId = selector.outputId, ownerId = selector.ownerId; owner = claimedOriginOwner(request, env);
+      const selected = await claimedOriginSelection(owner, request, outputId, ownerId);
+      if (selected.kind === "claimed") return fail(); return selected;
+    } catch { return freeze({ kind: "refused", response: guestImagePersonalRefusal(), statementCount: owner?.count() ?? 0 }); }
+    finally { owner?.dispose(); }
+  })();
+  return Object.freeze({ result, retire() { owner?.dispose(); } });
+}
+
+
+/** Exact current principal tuple for an absence disclosure. This does not
+ * initialize an account, borrow a project or grant creative authority. */
+function claimedDraftPrincipal(env: WorkerEnv, actor: PilotUser): Proof {
+  const snapshot = actor.authorizationSnapshot, pilot = configuredPilotAdmissionGuard(env, actor);
+  if (!snapshot) return fail();
+  return { sql: `EXISTS(SELECT 1 FROM(${PRINCIPAL_WITH_ACCESS_SQL}) principal
+    WHERE (principal.user_id,principal.email,principal.role,principal.updated_at,principal.consent_version,
+      COALESCE(principal.permission_epoch,''),COALESCE(principal.grants_json,'[]'),COALESCE(principal.organizations_json,'[]'),
+      COALESCE(principal.projects_json,'[]'),COALESCE(principal.identity_policies_json,'[]'),COALESCE(principal.approved_canvas_requirements,0))=(?,?,?,?,?,?,?,?,?,?,?))
+    AND (${pilot.sql})`, bindings: [actor.userId, actor.userId, actor.email, actor.role, snapshot.updatedAt, POLICY_VERSION,
+      snapshot.rawEpoch, snapshot.grants, snapshot.organizations, snapshot.projects, snapshot.identityPolicies, snapshot.canvasRequirements, ...pilot.bindings] };
+}
+/** One owner-indexed prefix, at most129 rows, before any lineage JSON work.
+ * MATERIALIZED prevents repeated extraction. The lazy CASE admits at most128
+ * bounded text cells before json_extract executes exactly once per cell. A
+ * malformed admitted JSON cell fails the SELECT; a 129th row never means
+ * absent. Each evaluation parses at most128*262144 native text bytes; the
+ * initial observation and two proofs total at most384 extractions. Native
+ * SQLite allocation is opaque, separately from the JS retained ledger. */
+const claimedDraftSelectorSql = `(WITH prefix AS MATERIALIZED (
+    SELECT output_id,custody_id,lineage_json FROM experience_guest_image_result_custodies
+      WHERE destination_user_id=? ORDER BY output_id LIMIT 129),
+  safe AS MATERIALIZED (SELECT COUNT(*) AS count,COALESCE(MIN(CASE WHEN typeof(output_id)='text' AND length(output_id)=15
+      AND typeof(custody_id)='text' AND length(custody_id)=36 AND typeof(lineage_json)='text'
+      AND length(CAST(lineage_json AS BLOB)) BETWEEN 1 AND 262144 THEN 1 ELSE 0 END),1) AS valid FROM prefix),
+  extracted AS MATERIALIZED (SELECT output_id,custody_id,
+    CASE WHEN safe.count<=128 AND safe.valid=1 THEN json_extract(lineage_json,'$.saveLineage.draftId') ELSE NULL END AS draft_id
+      FROM prefix CROSS JOIN safe),
+  bounded AS MATERIALIZED (SELECT CASE WHEN typeof(output_id)='text' AND length(output_id)=15 THEN output_id ELSE NULL END AS output_id,
+    CASE WHEN typeof(custody_id)='text' AND length(custody_id)=36 THEN custody_id ELSE NULL END AS custody_id,
+    CASE WHEN typeof(draft_id)='text' AND length(draft_id)=81 THEN draft_id ELSE NULL END AS draft_id FROM extracted)
+  SELECT json_object('count',safe.count,'valid',safe.valid,'cells',json(COALESCE((SELECT json_group_array(json_array(output_id,custody_id,draft_id)) FROM bounded),'[]'))) FROM safe)`;
+async function selectClaimedDraft(scope: CurrentSnapshotOwner, request: Request, draftId: string): Promise<ClaimedDraftLookup | null> {
+  const auth = await scope.wait(() => readExistingPrincipalRequest(request, scope.env, "creator", { account: "principal" }));
+  if ("kind" in auth || auth.response || !auth.user || requireConsent(auth.user) || auth.user.fictional || auth.user.projectExecution
+    || auth.user.userId.startsWith("guest:") || auth.user.streamId !== `creative:${auth.user.userId}`
+    || !auth.user.access.capabilities.includes("project.author")) return fail();
+  const actor = auth.user, principal = claimedDraftPrincipal(scope.env, actor), family = await claimedOriginFamily(scope);
+  const absent = async (selector?: Proof) => {
+    const parts = [principal, family.guard, ...(selector ? [selector] : [])], proof = claimedEditProof(parts);
+    scope.accounting([auth, actor, principal, family, selector, parts, proof]);
+    const row = await scope.db.prepare(`SELECT 1 AS current WHERE ${proof.sql}`).bind(...proof.bindings).first();
+    scope.current(); if (!isCurrent(row)) return fail(); scope.absentReturned(); return null;
+  };
+  if (family.absent) return await absent();
+  const row = await scope.db.prepare(`SELECT ${claimedDraftSelectorSql} AS snapshot`).bind(actor.userId).first<{ snapshot: unknown }>();
+  scope.current(); const raw = body(row?.snapshot, CLAIMED_PERSONAL_DRAFT_PROFILE.selectorBytes);
+  scope.accounting([auth, actor, principal, family, row, raw], 64 + 82 * raw.length);
+  const found: unknown = JSON.parse(raw);
+  if (!record(found) || !exactKeys(found, ["count", "valid", "cells"]) || typeof found.count !== "number"
+    || !Number.isSafeInteger(found.count) || found.count < 0 || found.count > 128 || found.valid !== 1
+    || !Array.isArray(found.cells) || found.cells.length !== found.count) return fail();
+  const outputIds = new Set<string>(), custodyIds = new Set<string>();
+  let chosen: Readonly<{ outputId: string; custodyId: string }> | null = null;
+  for (const cell of found.cells) {
+    if (!Array.isArray(cell) || cell.length !== 3 || typeof cell[0] !== "string" || !/^object-[a-f0-9]{8}$/u.test(cell[0])
+      || typeof cell[1] !== "string" || !/^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/u.test(cell[1])
+      || typeof cell[2] !== "string" || !/^experience-draft-[a-f0-9]{64}$/u.test(cell[2])
+      || outputIds.has(cell[0]) || custodyIds.has(cell[1])) return fail();
+    outputIds.add(cell[0]); custodyIds.add(cell[1]);
+    if (cell[2] === draftId) { if (chosen) return fail(); chosen = { outputId: cell[0], custodyId: cell[1] }; }
+  }
+  const selectorGuard: Proof = { sql: `${claimedDraftSelectorSql}=?`, bindings: [actor.userId, raw] };
+  scope.accounting([auth, actor, principal, family, row, raw, found, outputIds, custodyIds, chosen, selectorGuard]);
+  if (!chosen) return await absent(selectorGuard);
+  return freeze({ ownerId: actor.userId, ...chosen, draftId, familyGuard: family.guard, selectorGuard });
+}
+
+/** The pinned wire leaf performs up to three captures (outer, draft probe,
+ * inputs), each bounded by256 nodes/depth8. Four admitted shaped graphs cover
+ * input/captures/validated result. Its three serialization checks reserve
+ * escaped JSON strings and UTF8 scratch; the final Response owns one encoded
+ * representation. These are finite logical reservations, not a heap claim. */
+function claimedPersonalJson(scope: CurrentSnapshotOwner, value: GuestImageResultDraftView | GuestImageResultInputView | Readonly<{ status: "absent" }>, roots: unknown): Response {
+  const units = scope.action === "inputs" ? CLAIMED_PERSONAL_INPUTS_PROFILE.replyBytes : CLAIMED_PERSONAL_DRAFT_PROFILE.selectorBytes;
+  const jsonUnits = 6 * units + 32 * 256 + 2;
+  const graph = 256 * (64 + 16 + 24) + 2 * units;
+  const reflection = 9 * (64 + 256 * (64 + 4 * 16 + 2 * (5 + 8 + 10 + 12) + 3 * 16 + 8 + 64 + 2 * 16 + 2 * 16 + 32));
+  const url = "media" in value ? value.media.url : "";
+  scope.accounting([roots, value], 4 * graph + reflection + 3 * (24 + 3 * jsonUnits) + jsonUnits
+    + 3 * (64 + 82 * 1024) + (url ? claimedImageEditMediaWork(url) : 0));
+  scope.current(); const response = guestImagePersonalJson(value); scope.current(); return response;
+}
+
+/** Only an exact original key or the currently proved derivative can disclose
+ * PNG bytes. The private owner survives the Response handoff until its own
+ * original deadline, abort, cancel or final emitted chunk. */
+export async function readGuestImageResultMediaResponse(request: Request, env: WorkerEnv,
+  input: Readonly<{ mediaKey: string }>): Promise<Response> {
+  let owner: CurrentSnapshotOwner | undefined, handed = false;
+  try {
+    const selector = capture(input);
+    if (!record(selector) || !exactKeys(selector, ["mediaKey"]) || typeof selector.mediaKey !== "string" || bytes(selector.mediaKey) > 2048) return fail();
+    const mediaKey = selector.mediaKey, parsed = parseGuestImageResultMediaUrl(`/api/media/${encodeURIComponent(mediaKey)}`);
+    if (!parsed) return fail(); owner = completedImageOwner(request, env, mediaKey, "media");
+    const disclosure = await collectPersonalDisclosure(owner, request, parsed.outputId), personal = disclosure.personal ?? fail();
+    if (parsed.ownerId !== disclosure.snapshot.ownerId || parsed.custodyId !== disclosure.snapshot.claim.custodyId) return fail();
+    const selected: ClaimedImageMediaEvidence = mediaKey === personal.originalKey
+      ? { media: personal.initialMedia, revision: 0, mediaKey, metadata: personal.originalMetadata }
+      : mediaKey === disclosure.mediaKey ? { media: disclosure.snapshot.media, revision: disclosure.snapshot.revision, mediaKey, metadata: disclosure.metadata } : fail();
+    owner.retain(disclosure); await owner.prove(disclosure.parts, "before");
+    await inspectCurrentMedia(owner, disclosure, selected); await owner.prove(disclosure.parts, "final");
+    const response = owner.imageResponse(); owner.current(); handed = true; return response;
+  } catch { return guestImagePersonalRefusal(); }
+  finally { if (!handed) owner?.dispose(); }
+}
+
+/** Metadata-only restore; the original planner/prompt/stage bodies and PNG
+ * are not loaded. Absence is a fresh exact owner-prefix observation, never a
+ * partial-row, overflow, malformed-schema or failed-qualification fallback. */
+export async function readGuestImageResultDraftResponse(request: Request, env: WorkerEnv,
+  input: Readonly<{ draftId: string }>): Promise<Response> {
+  let owner: CurrentSnapshotOwner | undefined;
+  try {
+    const selector = capture(input);
+    if (!record(selector) || !exactKeys(selector, ["draftId"]) || typeof selector.draftId !== "string"
+      || !/^experience-draft-[a-f0-9]{64}$/u.test(selector.draftId)) return fail();
+    owner = completedImageOwner(request, env, selector.draftId, "draft");
+    const lookup = await selectClaimedDraft(owner, request, selector.draftId);
+    if (!lookup) { owner.finish(); return claimedPersonalJson(owner, { status: "absent" }, null); }
+    const disclosure = await collectPersonalDisclosure(owner, request, lookup.outputId, lookup), personal = disclosure.personal ?? fail();
+    owner.retain(disclosure); await owner.prove(disclosure.parts, "before"); await owner.prove(disclosure.parts, "final"); owner.finish();
+    const snapshot = disclosure.snapshot;
+    if (typeof snapshot.media.byteLength !== "number") return fail();
+    const media = { ...snapshot.media, byteLength: snapshot.media.byteLength };
+    const view: GuestImageResultDraftView = { version: 1, status: "claimed-result", draftId: personal.draftId,
+      ownerId: snapshot.ownerId, projectId: snapshot.projectId, documentId: snapshot.documentId, outputId: snapshot.outputId,
+      generationId: snapshot.generationId, sourceEventId: snapshot.sourceEventId, claim: snapshot.claim, title: personal.title,
+      revision: snapshot.revision, editEventId: snapshot.editEventId, media, head: snapshot.head, expiresAt: disclosure.expiresAt };
+    return claimedPersonalJson(owner, view, [lookup, disclosure]);
+  } catch { return guestImagePersonalRefusal(); }
+  finally { owner?.dispose(); }
+}
+
+/** Inspect exposes only original claimed input metadata and an optional
+ * separately proved prompt-copy role. It does not hydrate a generic Store. */
+export async function readGuestImageResultInputsResponse(request: Request, env: WorkerEnv,
+  input: Readonly<{ outputId: string }>): Promise<Response> {
+  let owner: CurrentSnapshotOwner | undefined;
+  try {
+    const selector = capture(input);
+    if (!record(selector) || !exactKeys(selector, ["outputId"]) || typeof selector.outputId !== "string" || !/^object-[a-f0-9]{8}$/u.test(selector.outputId)) return fail();
+    owner = completedImageOwner(request, env, selector.outputId, "inputs");
+    const disclosure = await collectPersonalDisclosure(owner, request, selector.outputId), personal = disclosure.personal ?? fail();
+    owner.retain(disclosure); await owner.prove(disclosure.parts, "before"); await owner.prove(disclosure.parts, "final"); owner.finish();
+    const p = personal.canonical.payload;
+    const view: GuestImageResultInputView = { schema_version: 2, origin: "guest-image-result-claim", claim: disclosure.snapshot.claim,
+      output: { object_id: p.object_id, generation_id: p.generation_id, document_id: p.document_id, quality: "high", purpose: "final",
+        prompt_technique: p.prompt_technique, provider: "openai", model: "gpt-image-2", planner_model: "gpt-5.6-terra", source_surface: "outputs" },
+      submitted_prompt: personal.prompt, retained_input_status: personal.prompt === null ? "unavailable" : "available",
+      source_block_versions: p.source_block_versions, compile_event_id: null, document_snapshot: null, context_hash: null,
+      reference_inputs: [], used_reference_pixels: false };
+    return claimedPersonalJson(owner, view, disclosure);
+  } catch { return guestImagePersonalRefusal(); }
+  finally { owner?.dispose(); }
 }
