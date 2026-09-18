@@ -2,6 +2,7 @@ import type { WorkerEnv } from "./runtime.ts";
 import { readOutputGovernanceWitness, type OutputGovernanceWitness, type OutputGovernanceWitnessIdentity } from "./output-governance-witness.ts";
 import type { OutputSqlAssertion } from "./output-requirements-ledger.ts";
 import { sponsorAdmissionPayer, type SponsorAdmissionAuthority } from "./experience-sponsor-admission.ts";
+import { requireGuestImageAdmissionFrame, type GuestImageAdmissionAuthority, type GuestImageAdmissionFrame } from "./experience-guest-image-admission-witness.ts";
 
 declare const outputAdmissionReads: unique symbol;
 /** Server-only preparation data, valid for one incoming authorization request. */
@@ -28,18 +29,19 @@ export type OutputAdmissionGovernance = {
   witness: OutputGovernanceWitness;
   source: Pick<OutputGovernanceWitnessIdentity, "ownerUserId" | "projectId" | "contextId" | "sourceDigest" | "contextSnapshotDigest">;
 };
-type AdmissionState = AdmissionIdentity & { database: WorkerEnv["DB"]; period: string; reads: Map<OutputAdmissionReadKey, Promise<unknown>>; governanceAssertions: OutputSqlAssertion[] };
+type AdmissionState = AdmissionIdentity & { kind: "canonical" | "guest-image"; guestAdmission?: GuestImageAdmissionAuthority; database: WorkerEnv["DB"]; period: string; reads: Map<OutputAdmissionReadKey, Promise<unknown>>; governanceAssertions: OutputSqlAssertion[] };
 const states = new WeakMap<OutputAdmissionReads, AdmissionState>();
 
 export function createOutputAdmissionReads(identity: AdmissionIdentity, governance?: OutputAdmissionGovernance): OutputAdmissionReads {
   if (!identity.documentId || !identity.actorUserId || !identity.billingUserId
+    || identity.actorUserId.startsWith("guest:") || identity.billingUserId.startsWith("guest:")
     || Boolean(identity.organizationId) !== Boolean(identity.projectAccessId)) throw new Error("output_admission_read_scope_required");
   const sponsor = identity.sponsorAdmission ? sponsorAdmissionPayer(identity.sponsorAdmission, identity) : null;
   if (sponsor && (identity.organizationId || identity.projectAccessId || identity.billingUserId !== identity.actorUserId))
     throw new Error("sponsor_personal_principal_required");
   if (sponsor && !sponsor.assertions.length) throw new Error("sponsor_authority_assertions_required");
   const scope = Object.freeze({}) as OutputAdmissionReads;
-  const state: AdmissionState = { ...identity, billingUserId: sponsor?.payerUserId ?? identity.billingUserId, database: identity.env.DB, period: new Date().toISOString().slice(0, 7), reads: new Map(), governanceAssertions: [] };
+  const state: AdmissionState = { ...identity, kind: "canonical", billingUserId: sponsor?.payerUserId ?? identity.billingUserId, database: identity.env.DB, period: new Date().toISOString().slice(0, 7), reads: new Map(), governanceAssertions: [] };
   if (governance) {
     state.governanceAssertions = readOutputGovernanceWitness(governance.witness, {
       request: identity.request, env: identity.env, actorUserId: identity.actorUserId, documentId: identity.documentId,
@@ -55,10 +57,43 @@ export function createOutputAdmissionReads(identity: AdmissionIdentity, governan
   return scope;
 }
 
+/** Guest identity is minted only by the independently current native witness. */
+export function createGuestImageAdmissionReads(request: Request, env: WorkerEnv, authority: GuestImageAdmissionAuthority): OutputAdmissionReads {
+  const frame = requireGuestImageAdmissionFrame(request, env, authority);
+  if (frame.state !== "issued" || frame.actorKind !== "guest" || frame.ownerUserId !== frame.actorUserId
+    || !frame.actorUserId.startsWith("guest:") || frame.payerUserId.startsWith("guest:")
+    || !frame.assertions.length || frame.period !== new Date().toISOString().slice(0, 7))
+    throw new Error("guest_image_admission_preparation_required");
+  const scope = Object.freeze({}) as OutputAdmissionReads;
+  states.set(scope, { kind: "guest-image", guestAdmission: authority, request, env, database: env.DB,
+    documentId: frame.documentId, actorUserId: frame.actorUserId, billingUserId: frame.payerUserId,
+    organizationId: null, projectAccessId: null, period: frame.period, reads: new Map(),
+    governanceAssertions: structuredClone([...frame.assertions]) });
+  return scope;
+}
+
+function guestFrame(state: AdmissionState): GuestImageAdmissionFrame {
+  if (state.kind !== "guest-image" || !state.guestAdmission) throw new Error("guest_image_admission_read_scope_required");
+  const frame = requireGuestImageAdmissionFrame(state.request, state.env, state.guestAdmission);
+  if (frame.state !== "issued" || frame.actorKind !== "guest" || frame.documentId !== state.documentId
+    || frame.actorUserId !== state.actorUserId || frame.ownerUserId !== state.actorUserId
+    || frame.payerUserId !== state.billingUserId || frame.period !== state.period
+    || state.period !== new Date().toISOString().slice(0, 7) || !frame.assertions.length)
+    throw new Error("output_admission_read_scope_mismatch");
+  return frame;
+}
+
+export function requireGuestImageAdmissionPreparation(scope: OutputAdmissionReads, request: Request, env: WorkerEnv): GuestImageAdmissionFrame {
+  const state = stateFor(scope);
+  if (state.request !== request || state.env !== env) throw new Error("output_admission_read_scope_mismatch");
+  return guestFrame(state);
+}
+
 function stateFor(scope: OutputAdmissionReads): AdmissionState {
   const state = states.get(scope);
   if (!state) throw new Error("output_admission_read_scope_invalid");
   if (state.database !== state.env.DB) throw new Error("output_admission_read_scope_mismatch");
+  if (state.kind === "guest-image") guestFrame(state);
   if (state.sponsorAdmission && sponsorAdmissionPayer(state.sponsorAdmission, state).payerUserId !== state.billingUserId)
     throw new Error("output_admission_read_scope_mismatch");
   return state;
@@ -70,7 +105,7 @@ export function outputAdmissionBudgetOwner(scope: OutputAdmissionReads | undefin
   if (!scope) return ordinaryPayerUserId;
   const state = stateFor(scope);
   if (state.env !== env || state.actorUserId !== actorUserId
-    || (state.sponsorAdmission ? ordinaryPayerUserId !== actorUserId : state.billingUserId !== ordinaryPayerUserId))
+    || (state.sponsorAdmission || state.kind === "guest-image" ? ordinaryPayerUserId !== actorUserId : state.billingUserId !== ordinaryPayerUserId))
     throw new Error("output_admission_read_scope_mismatch");
   return state.billingUserId;
 }
@@ -78,6 +113,7 @@ export function outputAdmissionBudgetOwner(scope: OutputAdmissionReads | undefin
 export function outputAdmissionSponsor(scope: OutputAdmissionReads | undefined) {
   if (!scope) return null;
   const state = stateFor(scope);
+  if (state.kind === "guest-image") throw new Error("guest_image_admission_canonical_sponsor_forbidden");
   return state.sponsorAdmission ? sponsorAdmissionPayer(state.sponsorAdmission, state) : null;
 }
 
@@ -111,9 +147,13 @@ export function assertOutputAdmissionBudget(scope: OutputAdmissionReads | undefi
 export function readOutputAdmissionValue<T>(scope: OutputAdmissionReads | undefined, key: OutputAdmissionReadKey, read: () => Promise<T>): Promise<T> {
   if (!scope) return read();
   const state = stateFor(scope);
+  if (state.kind === "guest-image" && (key === "principal" || key === "project-selection" || key === "project-execution"))
+    throw new Error("guest_image_admission_canonical_read_forbidden");
+  const currentResult = (pending: Promise<T>) => state.kind === "guest-image"
+    ? pending.then(value => { stateFor(scope); return value; }) : pending;
   const previous = state.reads.get(key);
-  if (previous) return previous as Promise<T>;
+  if (previous) return currentResult(previous as Promise<T>);
   const pending = read();
   state.reads.set(key, pending);
-  return pending;
+  return currentResult(pending);
 }

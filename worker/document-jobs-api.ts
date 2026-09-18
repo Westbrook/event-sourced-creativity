@@ -18,7 +18,7 @@ import { readOutputNarrativePayload } from "./output-narrative-execution.ts";
 import { captureDocumentRenderSettings } from "../src/model/document-render-request.ts";
 import { documentRenderGuidance, documentRenderGuidanceProblem } from "../src/model/document-render-guidance.ts";
 import { PresentationModelConfigurationError, readFrozenPresentationModelRoutes, resolvePresentationModelRoutes } from "./presentation-model-routing.ts";
-import { assertOutputAdmissionRequest, assertOutputAdmissionActor, assertOutputAdmissionBudget, outputAdmissionBudgetOwner, outputAdmissionSponsor, readOutputAdmissionValue, type OutputAdmissionReads } from "./output-admission-reads.ts";
+import { assertOutputAdmissionRequest, assertOutputAdmissionActor, assertOutputAdmissionBudget, outputAdmissionBudgetOwner, outputAdmissionSponsor, readOutputAdmissionValue, requireGuestImageAdmissionPreparation, type OutputAdmissionReads } from "./output-admission-reads.ts";
 import { readExistingPrincipalRequest } from "./principal-request-core.ts";
 import { OUTPUT_NATIVE_EXECUTION_POLICY, readOutputNativeExecutionPolicy, type OutputNativeExecutionPolicy } from "../src/model/output-execution-policy.ts";
 import { outputSchemaIsReady } from "./output-schema-state.ts";
@@ -55,7 +55,9 @@ import {
 import { normalizePromptTechnique, PROMPT_TECHNIQUES, type PromptTechnique } from "../src/model/prompt-structures";
 import { applicationFailureDetail, classifyProviderFailure, ProviderRequestError, publicFailureDetail, type ProviderFailureDetail } from "./provider-errors";
 import { documentJobCompletionBindings } from "./document-job-sql";
-import { preflightGeneration } from "./generation-readiness";
+import { preflightGeneration, preflightGuestImageAdmission } from "./generation-readiness";
+import type { GenerationReadiness } from "../src/model/generation-readiness.ts";
+import type { OutputNativeSettings } from "./output-image-slides-preflight.ts";
 import { DEFAULT_REFERENCE_VIDEO_MODEL, normalizeVideoDurationSeconds, VIDEO_ADAPTER_CONTRACT } from "../src/model/video-adapter";
 import { AUDIO_ADAPTER_CONTRACT, AudioAdapterSelectionError, audioAuthoringConflict, normalizeAudioRequestProfile } from "../src/model/audio";
 import { selectAudioAdapter } from "./audio-selection";
@@ -209,14 +211,19 @@ function projectExecutionBindings(scope:ProjectExecutionScope,documentId:string)
 
 const DOCUMENT_JOB_COLUMNS="job_id,owner_id,stream_id,document_id,kind,status,source_surface,correlation_id,requested_sequence,request_json,result_json,error_message,attempt_count,requested_at,started_at,completed_at,lease_expires_at,notified_at,expires_at,updated_at";
 function documentJobInsert(env:WorkerEnv,user:PilotUser,documentId:string,values:string,bindings:Array<string|number|null>,idempotency?:{kind:DocumentJobKind;key:string;canvasId?:string;sourceSurface?:string;projectId?:string},guard?:BudgetReservationGuard){
-  const scope=user.projectExecution;
+  return ownedDocumentJobInsert(env,{ownerUserId:user.userId,streamId:user.streamId,projectExecution:user.projectExecution},documentId,values,bindings,idempotency,guard);
+}
+type DocumentJobOwnership = { ownerUserId:string; streamId:string; projectExecution?:ProjectExecutionScope };
+/** Storage ownership only. Authentication belongs to the enclosing native admission. */
+function ownedDocumentJobInsert(env:WorkerEnv,ownership:DocumentJobOwnership,documentId:string,values:string,bindings:Array<string|number|null>,idempotency?:{kind:DocumentJobKind;key:string;canvasId?:string;sourceSurface?:string;projectId?:string},guard?:BudgetReservationGuard){
+  const scope=ownership.projectExecution;
   const adaptive=idempotency?.kind==="structure_adaptive";
-  const board=adaptive&&idempotency.canvasId?livePlanningBoardGuard(user.streamId,idempotency.projectId??"",idempotency.canvasId):null;
+  const board=adaptive&&idempotency.canvasId?livePlanningBoardGuard(ownership.streamId,idempotency.projectId??"",idempotency.canvasId):null;
   const conditions=[...(scope?[activeProjectExecutionSql]:[]),...(idempotency?[`NOT EXISTS(SELECT 1 FROM document_jobs existing WHERE existing.owner_id=? AND existing.stream_id=? AND existing.document_id=? AND existing.kind=? AND existing.status IN('queued','running','committing') AND ${adaptive?"existing.source_surface=? AND COALESCE(json_extract(existing.request_json,'$.canvasId'),'')=?":"COALESCE(json_extract(existing.request_json,'$.idempotencyKey'),'')=?"})`]:[])];
   if(board)conditions.push(`(${board.sql})`);
   if(guard)conditions.push(`(${guard.sql})`);
   return env.DB.prepare(`INSERT ${guard?"OR IGNORE ":""}INTO document_jobs (${DOCUMENT_JOB_COLUMNS}) ${conditions.length?`SELECT ${values} WHERE ${conditions.join(" AND ")}`:`VALUES (${values})`}`)
-    .bind(...bindings,...(scope?projectExecutionBindings(scope,documentId):[]),...(idempotency?[user.userId,user.streamId,documentId,idempotency.kind,...(adaptive?[idempotency.sourceSurface??"studio",idempotency.canvasId??""]:[idempotency.key])]:[]),...(board?.bindings??[]),...(guard?.bindings??[]));
+    .bind(...bindings,...(scope?projectExecutionBindings(scope,documentId):[]),...(idempotency?[ownership.ownerUserId,ownership.streamId,documentId,idempotency.kind,...(adaptive?[idempotency.sourceSurface??"studio",idempotency.canvasId??""]:[idempotency.key])]:[]),...(board?.bindings??[]),...(guard?.bindings??[]));
 }
 
 export function documentJobProjectAuthority(user:PilotUser,documentId:string,jobId="",requireAnchor=true):OutputSqlAssertion|null{
@@ -2749,6 +2756,111 @@ export type PreparedOutputDocumentJob = {
   buildStatements: (event: EventRow, checkpoint: Record<string, unknown>) => ReturnType<WorkerEnv["DB"]["prepare"]>[];
 };
 
+/** Reconstruct native source data before an internal recipe is attached. */
+function nativeDocumentJobContext(events:Parameters<typeof authoritativeCreativeContext>[0],documentId:string,projectId:string,payload:Record<string,unknown>){
+  const trusted=authoritativeCreativeContext(events,{documentId,projectId,
+    canvasId:typeof payload.canvasId==="string"?payload.canvasId:undefined,
+    contextSetId:typeof payload.contextSetId==="string"?payload.contextSetId:undefined,
+    contextRootBlockId:typeof payload.contextRootBlockId==="string"?payload.contextRootBlockId:undefined,
+    characterOutputKind:payload.characterOutputKind==="headshot"||payload.characterOutputKind==="character_sheet"?payload.characterOutputKind:undefined,
+    snapshot:payload.snapshot&&typeof payload.snapshot==="object"&&!Array.isArray(payload.snapshot)?payload.snapshot as Record<string,unknown>:undefined,
+    sourceBlockVersions:Array.isArray(payload.sourceBlockVersions)?payload.sourceBlockVersions as Array<Record<string,unknown>>:undefined});
+  if(payload.expectedDocumentRevision!==undefined&&payload.expectedDocumentRevision!==trusted.documentRevision)
+    throw new ContextIntegrityError("context_source_version_mismatch","The document changed after you reviewed it. Reopen generation to review the current context.");
+  payload.snapshot=trusted.snapshot;payload.sourceBlockVersions=trusted.sourceBlockVersions;payload.documentRevision=trusted.documentRevision;
+  return trusted;
+}
+function nativeImageJobEstimate(){return 1_000_000;}
+function nativeDocumentJobBudgetGate(budgets:Parameters<typeof generationBudgetGate>[0],estimatedMicrousd:number,payload:Record<string,unknown>){
+  return generationBudgetGate(budgets,{projectedMicrousd:estimatedMicrousd,suppressedUntilCritical:payload.budgetWarningSuppressed===true,noticeAcknowledged:payload.budgetAcknowledged===true});
+}
+function recordImageJobReadiness(payload:Record<string,unknown>,readiness:GenerationReadiness){
+  payload.preflightId=readiness.preflightId;payload.preflightVersion=readiness.version;payload.preflightAcknowledged=readiness.status==="review";
+}
+function nativeImageJobReceipt(env:WorkerEnv,estimatedMicrousd:number){
+  return {artifact_kind:"image",provider:"openai",model:env.OPENAI_MODEL??"gpt-5.6-terra",reservation_microusd:estimatedMicrousd,settled_cost_microusd:0,reservation_status:"not_reserved",source_transmission_status:"not_transmitted",provider_request_status:"not_submitted"};
+}
+type NativePersonalImageJob = Omit<PreparedOutputDocumentJob,"user"|"kind"> & {kind:"generate"};
+/** The same queue, receipt and insertion grammar serves canonical personal Image
+ * and the separately sealed guest entry. This helper does not grant authority. */
+function prepareNativePersonalImageJob(env:WorkerEnv,ownership:Pick<DocumentJobOwnership,"ownerUserId"|"streamId">,
+  input:{documentId:string;jobId:string;payload:Record<string,unknown>;budgetOwnerId:string;estimatedMicrousd:number;maximumTokens:number;maximumCalls:number;
+    sourceHead:number;createdAt:string;expiresAt:string;sourceSurface:string;outputExecution:Record<string,string>;initialResult:Record<string,unknown>}):NativePersonalImageJob{
+  const {documentId,jobId,payload,createdAt,expiresAt,initialResult}=input;
+  const queueEvent={type:"OutputOperationJobQueued",payload:{job_id:jobId,document_id:documentId,kind:"generate",output_slot_id:input.outputExecution.slotId,output_grant_id:input.outputExecution.grantId}};
+  return {documentId,kind:"generate",jobId,payload,budgetOwnerId:input.budgetOwnerId,estimatedMicrousd:input.estimatedMicrousd,maximumTokens:input.maximumTokens,maximumCalls:input.maximumCalls,
+    initialResult:{...initialResult,providerSubmissionProtocol:1},sourceHead:input.sourceHead,expiresAt,createdAt,queueEvent,
+    buildStatements(event,checkpoint){
+      if(event.type!==queueEvent.type||event.streamId!==ownership.streamId||event.payload.job_id!==jobId)throw new Error("output_job_anchor_mismatch");
+      return [ownedDocumentJobInsert(env,ownership,documentId,"?,?,?,?,?,'queued',?,?,?,?,?,NULL,0,?,NULL,NULL,NULL,NULL,?,?",
+        [jobId,ownership.ownerUserId,ownership.streamId,documentId,"generate",input.sourceSurface,jobId,event.sequence,JSON.stringify(payload),JSON.stringify({...initialResult,...checkpoint,providerSubmissionProtocol:1}),createdAt,expiresAt,createdAt])];
+    }};
+}
+
+export type PreparedGuestImageDocumentJob = NativePersonalImageJob & {
+  identity:Readonly<{actorKind:"guest";actorUserId:string;ownerUserId:string;streamId:string}>;
+};
+export type GuestImageNativeJobInput = {
+  jobId:string;outputExecution:Record<string,string>;maximumMicrousd:number;maximumTokens:number;maximumCalls:number;
+  payload:Record<string,unknown>;imageRender:NonNullable<OutputNativeSettings["imageRender"]>;
+};
+/** Dormant native preparation. It neither creates a principal nor enters the
+ * canonical HTTP/schema/maintenance wrapper, and performs no financial write. */
+export async function prepareGuestImageDocumentJob(request:Request,env:WorkerEnv,reads:OutputAdmissionReads,native:GuestImageNativeJobInput):Promise<PreparedGuestImageDocumentJob>{
+  const current=()=>requireGuestImageAdmissionPreparation(reads,request,env);
+  const frame=current(),slot=frame.slot;
+  if(!outputSchemaIsReady(env.DB))throw new OutputConflictError("guest_image_native_schema_required",409);
+  const offered=frame.preflight.targets.find(target=>target.targetId===slot.targetId),settings=offered?.settings as OutputNativeSettings|undefined;
+  const reference={scopeKey:slot.scopeKey,grantId:slot.grantId,slotId:slot.slotId,planRevisionId:slot.planRevisionId,targetId:slot.targetId,targetContractDigest:slot.targetContractDigest,sourceDigest:slot.sourceDigest};
+  if(!offered?.available||settings?.kind!=="generate"||settings.payload.productionMode!=="manual"||!settings.imageRender
+    ||offered.provider!=="openai"||slot.provider!=="openai"||offered.route!=="document-image-manual-v1"
+    ||model3dCanonicalJson(native)!==model3dCanonicalJson({jobId:slot.jobId,outputExecution:reference,maximumMicrousd:slot.maximumMicrousd,maximumTokens:slot.maximumTokens,maximumCalls:slot.maximumCalls,payload:settings.payload,imageRender:frame.render})
+    ||model3dCanonicalJson(settings.imageRender)!==model3dCanonicalJson(frame.render))throw new OutputConflictError("guest_image_native_recipe_changed",409);
+  if(!env.OPENAI_API_KEY)throw new OutputConflictError("provider_not_configured",503);
+  const payload=structuredClone(settings.payload);
+  if(JSON.stringify(payload).length>MAX_PAYLOAD_BYTES||presentationServerOwnedCheckpointField(payload)||Object.hasOwn(payload,"outputDurable"))throw new OutputConflictError("guest_image_native_recipe_changed",409);
+  const trusted=nativeDocumentJobContext([...frame.sourceEvents],frame.documentId,frame.projectId,payload);
+  if(trusted.documentRevision!==frame.context.documentRevision||model3dCanonicalJson(trusted.snapshot)!==model3dCanonicalJson(frame.context.snapshot)
+    ||model3dCanonicalJson(trusted.sourceBlockVersions)!==model3dCanonicalJson(frame.context.sourceBlockVersions))throw new OutputConflictError("output_source_changed",409);
+  payload.outputExecution=reference;
+  const billingOwner=outputAdmissionBudgetOwner(reads,env,frame.actorUserId,frame.actorUserId);
+  const scopes=await readOutputAdmissionValue(reads,"budget-scopes",()=>ownerDocumentBudgetScopes(env,frame.actorUserId,frame.documentId,frame.projectId));current();
+  if(scopes.length)throw new OutputConflictError("sponsor_organization_budget_unsupported",403);
+  assertOutputAdmissionBudget(reads,env,billingOwner,frame.period);
+  const allowance=await pilotExecutionAllowance(env,billingOwner,undefined,reads);current();
+  if(allowance.pilot)throw new OutputConflictError("sponsor_managed_pilot_unsupported",403);
+  if(!allowance.allowed)throw new OutputConflictError("active_pilot_participation_required",403);
+  const estimatedMicrousd=nativeImageJobEstimate();
+  const budgets=await readOutputAdmissionValue(reads,"cost-budgets",()=>readCostBudgets(env,billingOwner,{initialize:false}));current();
+  const gate=nativeDocumentJobBudgetGate(budgets,estimatedMicrousd,payload);
+  if(gate.level==="blocked")throw new OutputConflictError("sponsor_budget_unavailable",429);
+  if(gate.requiresAcknowledgement&&payload.budgetAcknowledged!==true)throw new OutputConflictError("sponsor_budget_confirmation_required",428);
+  const readiness=await preflightGuestImageAdmission(request,env,reads);current();
+  if(readiness.status==="blocked"||readiness.status==="checking"||readiness.status==="unknown")throw new OutputConflictError("generation_preflight_blocked",409);
+  if(readiness.status==="review"&&payload.preflightAcknowledged!==true)throw new OutputConflictError("generation_preflight_review_required",428);
+  recordImageJobReadiness(payload,readiness);
+  if(!Number.isSafeInteger(slot.maximumMicrousd)||slot.maximumMicrousd<estimatedMicrousd||!Number.isSafeInteger(slot.maximumTokens)||slot.maximumTokens<32_000||slot.maximumCalls!==2
+    ||slot.maximumTokens!==frame.recipe.maximumTokens||slot.maximumMicrousd!==frame.recipe.maximumMicrousd)throw new OutputConflictError("output_admission_allowance_mismatch",409);
+  const initialResult={artifactKind:String(payload.artifactKind??""),generationReceipt:nativeImageJobReceipt(env,estimatedMicrousd),stage:"queued",progressMessage:"The accepted generation and its private source receipt are safely recorded."};
+  const identity=Object.freeze({actorKind:"guest" as const,actorUserId:frame.actorUserId,ownerUserId:frame.ownerUserId,streamId:frame.streamId});
+  const prepared=prepareNativePersonalImageJob(env,identity,{documentId:frame.documentId,jobId:slot.jobId,payload,budgetOwnerId:billingOwner,estimatedMicrousd,maximumTokens:slot.maximumTokens,maximumCalls:slot.maximumCalls,
+    sourceHead:frame.ownerHead,createdAt:frame.createdAt,expiresAt:frame.expiresAt,sourceSurface:"outputs",outputExecution:reference,initialResult});
+  const payloadJson=model3dCanonicalJson(payload),initialJson=model3dCanonicalJson(prepared.initialResult);
+  const queueJson=model3dCanonicalJson({...prepared.queueEvent.payload,project_id:frame.projectId,actor_user_id:frame.actorUserId});
+  const checkpointJson=model3dCanonicalJson({reservationId:slot.tokenReservationId,costReservationId:slot.costReservationId,costReservationPeriod:frame.period,costReservationMicrousd:slot.maximumMicrousd,
+    outputExecution:reference,generationReceipt:{...initialResult.generationReceipt,reservation_status:"active",reservation_microusd:slot.maximumMicrousd,output_slot_id:slot.slotId,output_grant_id:slot.grantId}});
+  current();
+  return {...prepared,identity,buildStatements(event,checkpoint){
+    current();
+    if(!event.eventId||event.schemaVersion!==1||event.actor!==frame.actorUserId||event.clientId!=="server:guest-output"||event.correlationId!==frame.commandKey
+      ||event.sequence!==frame.ownerHead+1||event.occurredAt!==frame.createdAt||event.recordedAt!==frame.createdAt||event.causationId!==null||event.compensatesEventId!==null
+      ||model3dCanonicalJson(event.payload)!==queueJson||model3dCanonicalJson(checkpoint)!==checkpointJson
+      ||model3dCanonicalJson(payload)!==payloadJson||model3dCanonicalJson(prepared.initialResult)!==initialJson)
+      throw new OutputConflictError("output_job_anchor_mismatch",409);
+    return prepared.buildStatements(event,checkpoint);
+  }};
+}
+
 type OutputDocumentJobPreparation = {
   readScope?: OutputAdmissionReads;
   jobId: string; outputExecution: Record<string, string>;
@@ -3797,20 +3909,7 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
   let workflowPlanningSnapshot:Record<string,unknown>|undefined;
   if(kind==="preview"||kind==="generate"||kind==="prompt_fan"||kind==="render_document"){
     try{
-      const trusted=authoritativeCreativeContext(events,{
-        documentId,
-        projectId:project?.projectId??documentRecord.projectId,
-        canvasId:typeof payload.canvasId==="string"?payload.canvasId:undefined,
-        contextSetId:typeof payload.contextSetId==="string"?payload.contextSetId:undefined,
-        contextRootBlockId:typeof payload.contextRootBlockId==="string"?payload.contextRootBlockId:undefined,
-        characterOutputKind:payload.characterOutputKind==="headshot"||payload.characterOutputKind==="character_sheet"?payload.characterOutputKind:undefined,
-        snapshot:payload.snapshot&&typeof payload.snapshot==="object"&&!Array.isArray(payload.snapshot)?payload.snapshot as Record<string,unknown>:undefined,
-        sourceBlockVersions:Array.isArray(payload.sourceBlockVersions)?payload.sourceBlockVersions as Array<Record<string,unknown>>:undefined,
-      });
-      if (payload.expectedDocumentRevision !== undefined && payload.expectedDocumentRevision !== trusted.documentRevision) return Response.json({error:"context_source_version_mismatch",message:"The document changed after you reviewed it. Reopen generation to review the current context."},{status:409});
-      payload.snapshot=trusted.snapshot;
-      payload.sourceBlockVersions=trusted.sourceBlockVersions;
-      payload.documentRevision=trusted.documentRevision;
+      const trusted=nativeDocumentJobContext(events,documentId,project?.projectId??documentRecord.projectId,payload);
       if(outputPreparation){
         Object.assign(payload,await outputPreparation.compile(trusted));
         payload.outputExecution=outputPreparation.outputExecution;
@@ -3973,7 +4072,7 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
       }
     }
     const audioProviderCost=selectedAudio?.estimatedCostMicrousd??AUDIO_ADAPTER_CONTRACT.publishedCostMicrousd;
-    const estimatedCostMicrousd=nativeVideo?nativeVideo.maximumMicrousd:nativeStoryboard?nativeStoryboard.maximumMicrousd:selectedModel3d?selectedModel3d.estimatedCostMicrousd:scenePrepared?scenePrepared.preview.maximumMicrousd:production?production.estimatedTotalCostMicrousd+(artifactKind==="storyboard"?production.scenes.length*1_000_000:artifactKind==="audio"?audioProviderCost:0):kind==="chat"||kind==="structure_adaptive"?estimatePlannerOperationMicrousd(env.OPENAI_MODEL??"gpt-5.6-terra",kind):kind==="prompt_fan"?4_000_000:kind==="render_document"&&artifactKind==="video"?normalizeVideoDurationSeconds(payload.videoSeconds)*VIDEO_ADAPTER_CONTRACT.publishedCostPerSecondMicrousd[VIDEO_ADAPTER_CONTRACT.defaultResolution]+1_000_000:kind==="render_document"&&artifactKind==="audio"?audioProviderCost+1_000_000:kind==="render_document"&&artifactKind==="storyboard"?Math.max(1,Math.floor(Number(payload.itemCount??6)))*1_000_000+1_000_000:1_000_000;
+    const estimatedCostMicrousd=nativeVideo?nativeVideo.maximumMicrousd:nativeStoryboard?nativeStoryboard.maximumMicrousd:selectedModel3d?selectedModel3d.estimatedCostMicrousd:scenePrepared?scenePrepared.preview.maximumMicrousd:production?production.estimatedTotalCostMicrousd+(artifactKind==="storyboard"?production.scenes.length*1_000_000:artifactKind==="audio"?audioProviderCost:0):kind==="chat"||kind==="structure_adaptive"?estimatePlannerOperationMicrousd(env.OPENAI_MODEL??"gpt-5.6-terra",kind):kind==="prompt_fan"?4_000_000:kind==="render_document"&&artifactKind==="video"?normalizeVideoDurationSeconds(payload.videoSeconds)*VIDEO_ADAPTER_CONTRACT.publishedCostPerSecondMicrousd[VIDEO_ADAPTER_CONTRACT.defaultResolution]+1_000_000:kind==="render_document"&&artifactKind==="audio"?audioProviderCost+1_000_000:kind==="render_document"&&artifactKind==="storyboard"?Math.max(1,Math.floor(Number(payload.itemCount??6)))*1_000_000+1_000_000:kind==="generate"?nativeImageJobEstimate():1_000_000;
     productionPlan=production;estimatedGenerationCostMicrousd=estimatedCostMicrousd;
     if(pilotAllowance.pilot){
       const fixed=await readOutputAdmissionValue(outputPreparation?.readScope,"pilot-budget-counters",()=>env.DB.prepare(`SELECT scope,used_microusd,reserved_microusd,hard_limit_microusd FROM cost_budget_counters
@@ -3984,7 +4083,7 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
       const exhausted=fixed.results.find((counter)=>Number(counter.used_microusd)+Number(counter.reserved_microusd)+estimatedCostMicrousd>Number(counter.hard_limit_microusd));
       if(exhausted)return Response.json({error:"pilot_budget_hard_cap_reached",scope:exhausted.scope==="pilot_user"?"user":"workspace"},{status:429});
     }
-    const gate=generationBudgetGate(account?.costBudgets??await readOutputAdmissionValue(outputPreparation?.readScope,"cost-budgets",()=>readCostBudgets(env,billingUserId,sponsor?{initialize:false}:{})),{projectedMicrousd:estimatedCostMicrousd,suppressedUntilCritical:payload.budgetWarningSuppressed===true,noticeAcknowledged:payload.budgetAcknowledged===true});
+    const gate=nativeDocumentJobBudgetGate(account?.costBudgets??await readOutputAdmissionValue(outputPreparation?.readScope,"cost-budgets",()=>readCostBudgets(env,billingUserId,sponsor?{initialize:false}:{})),estimatedCostMicrousd,payload);
     // The creative actor receives availability, never the sponsor's balances
     // or utilization. Sponsorship does not grant account-usage read access.
     if(sponsor&&gate.level==="blocked")return Response.json({error:"sponsor_budget_unavailable"},{status:429});
@@ -4015,7 +4114,7 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
     if(readiness.status==="blocked"){if(!outputPreparation)await appendAuditEvent(env,user.streamId,"worker:policy","GenerationBlockedBeforeProvider",{preflight_id:readiness.preflightId,document_id:documentId,document_revision:readiness.documentRevision,request_key:readiness.requestKey,kind:readiness.kind,status:readiness.status,blocking_probes:readiness.probes.filter((probe)=>probe.status==="fail").map((probe)=>probe.id),estimated_cost_avoided_microusd:readiness.estimatedCostMicrousd},uuidV7());return Response.json({error:"generation_preflight_blocked",message:readiness.summary,readiness},{status:409});}
     if(readiness.status==="review"&&payload.preflightAcknowledged!==true)return Response.json({error:"generation_preflight_review_required",message:readiness.summary,readiness},{status:428});
     if(readiness.status==="review"&&!outputPreparation)await appendAuditEvent(env,user.streamId,"worker:policy","GenerationRiskAcknowledged",{preflight_id:readiness.preflightId,document_id:documentId,document_revision:readiness.documentRevision,request_key:readiness.requestKey,kind:readiness.kind,warning_probes:readiness.probes.filter((probe)=>probe.status==="warning"||probe.status==="unknown").map((probe)=>probe.id),source_surface:String(input.sourceSurface??"generation-controls")});
-    payload.preflightId=readiness.preflightId;payload.preflightVersion=readiness.version;payload.preflightAcknowledged=readiness.status==="review";
+    recordImageJobReadiness(payload,readiness);
   }
 
   if (kind === "prompt_fan") {
@@ -4100,7 +4199,7 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
   // Cookie-free tenant owners retain the same resolved custody as the exact Scene approval.
   const admissionUser=scenePrepared?.scope?{...user,projectExecution:scenePrepared.scope}:user;
   const deferredPrivate=outputPreparation?[] as D1PreparedStatement[]:undefined;
-  const receipt=kind==="render_document"?await acceptedGenerationReceipt(env,admissionUser,payload,documentId,jobId,estimatedGenerationCostMicrousd,productionPlan,scenePrepared?.scope??projectContentScope,scenePrepared?.effectiveSnapshot??workflowPlanningSnapshot,deferredPrivate,outputPreparation?.readScope,nativeScene?.payload,Boolean(nativeStoryboard),Boolean(nativeVideo)):kind==="preview"||kind==="generate"?{artifact_kind:"image",provider:"openai",model:env.OPENAI_MODEL??"gpt-5.6-terra",reservation_microusd:estimatedGenerationCostMicrousd,settled_cost_microusd:0,reservation_status:"not_reserved",source_transmission_status:"not_transmitted",provider_request_status:"not_submitted"}:null;
+  const receipt=kind==="render_document"?await acceptedGenerationReceipt(env,admissionUser,payload,documentId,jobId,estimatedGenerationCostMicrousd,productionPlan,scenePrepared?.scope??projectContentScope,scenePrepared?.effectiveSnapshot??workflowPlanningSnapshot,deferredPrivate,outputPreparation?.readScope,nativeScene?.payload,Boolean(nativeStoryboard),Boolean(nativeVideo)):kind==="preview"||kind==="generate"?nativeImageJobReceipt(env,estimatedGenerationCostMicrousd):null;
   const sceneConfiguration=kind==="render_document"?sceneConfigurationFromRequest(payload):null;
   const initialResult=receipt?{...(scenePrepared||nativeVideo||payload.artifactKind==="model3d"?{providerSubmissionProtocol:1,providerSubmissions:{}}:{}),artifactKind:String(payload.artifactKind??""),...(sceneConfiguration?{sceneMedium:sceneConfiguration.medium,sceneConfiguration}:{}),generationReceipt:receipt,stage:"queued",progressMessage:"The accepted generation and its private source receipt are safely recorded."}:null;
   if(outputPreparation){
@@ -4110,6 +4209,13 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
       ||!Number.isSafeInteger(outputPreparation.maximumTokens)||outputPreparation.maximumTokens<requiredTokens
       ||outputPreparation.maximumCalls!==(nativeStoryboard?5:nativeAudio?3:nativeNarrative||nativeScene||payload.artifactKind==="model3d"?1:2))return Response.json({error:"output_admission_allowance_mismatch"},{status:409});
     const scope=user.projectExecution;
+    if(kind==="generate"&&!scope){
+      outputPreparation.prepared={user,...prepareNativePersonalImageJob(env,{ownerUserId:user.userId,streamId:user.streamId},{documentId,jobId,payload,
+        budgetOwnerId:outputAdmissionBudgetOwner(outputPreparation.readScope,env,user.userId,user.billingUserId??user.userId),estimatedMicrousd:estimatedGenerationCostMicrousd,
+        maximumTokens:outputPreparation.maximumTokens,maximumCalls:outputPreparation.maximumCalls,sourceHead:requestedSequence,expiresAt,createdAt,sourceSurface,
+        outputExecution:outputPreparation.outputExecution,initialResult:initialResult??{}})};
+      return Response.json({prepared:true},{status:200});
+    }
     const queueEvent={type:scope?"ProjectDocumentJobQueued":"OutputOperationJobQueued",payload:{job_id:jobId,document_id:documentId,kind,
       ...(scope?{organization_id:scope.organizationId,project_access_id:scope.projectAccessId,project_id:scope.projectId,history_owner_user_id:scope.ownerUserId,actor_user_id:scope.actorUserId}:{}),
       output_slot_id:outputPreparation.outputExecution.slotId,output_grant_id:outputPreparation.outputExecution.grantId}};
