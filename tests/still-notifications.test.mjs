@@ -5,6 +5,23 @@ import { generationReview } from '../src/still/generation-review.ts';
 import { createSceneCostFixture } from './helpers/scene-cost-fixture.mjs';
 import { StillClient } from '../src/still/client.ts';
 
+test('generation status renders terminal errors only once and replaces stale progress',async()=>{
+ const {readFileSync}=await import('node:fs'),{default:ts}=await import('typescript');
+ const {generationFormat,generationActive,generationStatus,generationPreview}=await import('../src/still/results.ts');
+ const source=ts.createSourceFile('app.ts',readFileSync(new URL('../src/still/app.ts',import.meta.url),'utf8'),ts.ScriptTarget.Latest,true);
+ const app=source.statements.find(n=>ts.isClassDeclaration(n)&&n.name?.text==='StillApp');
+ const method=app.members.find(n=>n.name?.getText(source)==='renderGeneration');
+ const code=ts.transpileModule(`function renderGeneration() ${method.body.getText(source)}`,{compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText;
+ const html=(parts,...values)=>parts.reduce((out,part,i)=>out+part+(values[i]??''),'');
+ const render=new Function('html','nothing','generationFormat','generationActive','generationStatus','generationPreview','FORMATS',`${code};return renderGeneration;`)(html,'',generationFormat,generationActive,generationStatus,generationPreview,{video:'Video'});
+ const message='At least one reference image or video is required.';
+ for(const progressMessage of [message,'Submitting…']){
+  const job={jobId:'failed',documentId:'doc',kind:'render_document',status:'failed',progressMessage,result:{artifactKind:'video'},error:message,errorDetail:{message}};
+  const output=render.call({client:{projection:{documentId:'doc',documentTitle:'Scene',blocks:[]},position:{outputId:'failed'},jobs:[job],events:[]},button:()=>'<button>Check again</button>'});
+  assert.equal(output.split(message).length-1,1);assert.equal(output.includes('Submitting…'),false);assert.equal(output.split('role="status"').length-1,1);
+ }
+});
+
 test('safety failures lead to context review; only acknowledgeable admission warnings offer Continue',()=>{
  const job={jobId:'failure',attemptCount:1,kind:'generate',errorDetail:{category:'safety',action:'edit_request',code:'safety_preflight_flagged',message:'Review the prompt.'}};
  assert.equal(failureNotification(job).action,'context');
