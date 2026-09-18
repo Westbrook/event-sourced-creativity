@@ -9,8 +9,8 @@ must not be described as completing the semantic/profile/nested-scope system.
 
 ## Current release
 
-The candidate includes current `main` at `4e40cae` (Still attention and decision
-caching retained), the [native producers](forma-memory-native-producers-2026-09-18.md)
+The candidate includes current `main` at `e26f608` (Still attention, decision
+caching and generation-risk acknowledgment retained), the [native producers](forma-memory-native-producers-2026-09-18.md)
 and the prior explicit-recall/benchmark-accounting integration. Production status
 will be recorded after the actual deployment succeeds, not inferred from a merge.
 The existing authorized audience is preserved; no external visitor is added.
@@ -23,12 +23,15 @@ An additional release review found and fixed two implementation gaps:
   reservation links still block unrelated-custody claims; sharing a real payer
   alone does not.
 - The benchmark itself verifies that exact financial schema before admission and
-  binds its snapshot into subsequent financial writes. Unknown external
+  binds its snapshot into reservation, dispatch-claim and settlement transactions. Unknown external
   dependencies and schema changes invalidate the proof. This does not create
   qualification, authorize spending, or change uncertain-charge recovery.
 
-The disabled handler still performs no authority/database reads. The existing
-OpenAI secret configuration is retained, not copied, revealed or exercised.
+Disabled spending/approval routes still perform no authority/database reads.
+Explicitly authorized recovery remains available with spending off; verified
+provider-usage receipts are retained even after authority expires or is revoked.
+The existing OpenAI secret configuration is retained, not copied, revealed or
+exercised.
 
 ## Verification
 
@@ -36,7 +39,10 @@ The September 18 release delta passed 571 focused tests: benchmark (410),
 guest inventory (99), native Memory routes (37), and current-main Still/share
 routes (25). TypeScript, changed-file ESLint, element/localization generation and
 the production Vite build also passed. Independent schema/privacy review found no
-remaining blocker in this delta. Provider transports in these checks were fake;
+remaining blocker in this delta. After merging the intervening main updates, the
+complete npm production build and TypeScript passed again, alongside 73 direct
+Memory/Still checks and all 62 native Memory/Still/share built-route checks.
+Provider transports in these checks were fake;
 these results do not qualify hosted execution or real-provider privacy/cost.
 
 This is not a claim that the entire repository suite is green: the earlier broad
