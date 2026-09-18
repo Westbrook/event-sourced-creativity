@@ -1,5 +1,6 @@
+import {decisionHash,readStoredDecision,writeStoredDecision} from './still-decision-store.ts';
 import type { ProjectRequestContext } from './project-request-context.ts';
-import { readStillHistory } from './still-history.ts';
+import { readStillHistory, sourceVersion } from './still-history.ts';
 import { DecisionMemo, stableDecisionKey } from '../src/still/decision-cache.ts';
 import { cleanPaletteFeedback } from '../src/still/palette-feedback.ts';
 import { actionLimit } from '../src/still/decision-lab.ts';
@@ -9,7 +10,7 @@ import type { WorkerEnv, WorkerExecutionContext } from './runtime.ts';
 import { ACTIONS, buildDecisionState, evaluateActions, POLICY_VERSION, questionsFor, rankAllFormats, selectActions, type Abilities, type Answer, type Position } from '../src/still/decisions.ts';
 import { compositionIndex, connectionEvidence, shouldEnrich, enrichmentQuestions, refineMenu, type MenuAdjustment } from '../src/still/assessments.ts';
 import { presentActions, type Emphasis } from '../src/still/presentation.ts';
-import { decisionDiagnostics, inspectAnswer, type DecisionPass, type DecisionExchange } from '../src/still/diagnostics.ts';
+import { decisionDiagnostics, inspectAnswer, type DecisionPass, type DecisionExchange, type DecisionResponse } from '../src/still/diagnostics.ts';
 
 const reply = (body: unknown, status = 200) => Response.json(body, { status, headers: { 'cache-control': 'private, no-store', vary: 'Cookie, oai-authenticated-user-id' } });
 const recentCalls = new Map<string, number[]>();
@@ -44,7 +45,21 @@ export async function handleStillDecision(request: Request, env: WorkerEnv, cont
   const scoped = session.projectContext;
   const abilities: Abilities = { author: scoped ? scoped.permissions.includes('project.author') : ['creator', 'agent', 'admin'].includes(session.user.role), generate: scoped ? scoped.permissions.includes('project.output.request') : ['creator', 'agent', 'admin'].includes(session.user.role), projectCreate: !scoped && ['creator', 'admin', 'agent'].includes(session.user.role), formats: [...(session.provider.plannerConfigured ? ['image', 'storyboard'] : []), ...(session.provider.plannerConfigured ? ['short_story', 'scene', 'slides'] : []), ...(session.provider.videoConfigured ? ['video'] : []), ...(session.provider.audioConfigured ? ['audio'] : []), ...(session.provider.model3dConfigured ? ['model3d'] : [])] };
   const scope=stableDecisionKey({user:auth.user.userId,stream:auth.user.streamId,session});
-  let history;try{history=await readStillHistory(request,env,auth.user,scope,scoped);}catch(error){return error instanceof Response?error:reply({error:'history_unavailable'},503);}
+  // Cross-request reuse precedes history reconstruction, but never authentication,
+  // consent, scope checks, provider capabilities or the certified source revision.
+  const revision=!scoped?await sourceVersion(env,auth.user):null;
+  const durableKey=revision?await decisionHash({version:2,policy:POLICY_VERSION,scope,revision,position,developer:input.developer===true,provider:env.JEV_API_KEY??null}):null;
+  if(durableKey&&input.cacheBypass!==true){
+    const stored=await readStoredDecision(env,durableKey,auth.user.userId);
+    if(stored){
+      const retained=stored.contentRef?await loadPrivateContent(env,auth.user.userId,'all',undefined,[stored.contentRef]):{};
+      if(await decisionHash(retained)===stored.contentHash&&await sourceVersion(env,auth.user,false)===revision){
+        const ageMs=Math.max(0,Date.now()-stored.createdAt),totalMs=Date.now()-preparationStarted;
+        return reply({...stored.response,preparation:{source:'decision-cache',eventsRead:0,head:stored.response.head,elapsedMs:0,sessionMs,selectedContentMs:0,totalMs},cache:{layer:'server',status:'hit',ageMs,remainingMs:Math.max(0,stored.expiresAt-Date.now()),originalLatencyMs:stored.response.delivery?.serverMs??0,stored:true}});
+      }
+    }
+  }
+  let history;try{history=await readStillHistory(request,env,auth.user,scope,scoped,position);}catch(error){return error instanceof Response?error:reply({error:'history_unavailable'},503);}
   const {events,head}=history,projection=history.projection(position.documentId,position.projectId);
   const contentStarted=Date.now();
   const selectedRef=projection.artifacts.find(a=>a.id===position.outputId)?.contentRef;
@@ -150,6 +165,10 @@ export async function handleStillDecision(request: Request, env: WorkerEnv, cont
     const trace=body.diagnostics as {passes?:DecisionPass[]}|undefined;
     return {status:response.status,body:{...body,delivery:delivery('complete')},reusable:!failedPass&&body.source==='jev'&&!body.reason&&typeof body.model==='string'&&!(trace?.passes?.some(p=>p.status==='failed'))};
   },input.cacheBypass===true);
+  if(durableKey&&cached.value.reusable&&cached.cache.status!=='hit'&&await sourceVersion(env,auth.user,false)===revision){
+    // Commit before answering: an immediate reload must be able to reuse it.
+    await writeStoredDecision(env,durableKey,auth.user.userId,{response:cached.value.body as DecisionResponse,contentRef:selectedRef??undefined,contentHash:await decisionHash(content)});
+  }
   return reply({...cached.value.body,preparation,cache:{...cached.cache,layer:'server'}},cached.value.status);
   };
   if(!request.headers.get('accept')?.includes('application/x-ndjson'))return complete();

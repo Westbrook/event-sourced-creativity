@@ -260,6 +260,20 @@
       "when": 1789659788167,
       "tag": "0040_selected_output_shares",
       "breakpoints": true
+    },
+    {
+      "idx": 37,
+      "version": "6",
+      "when": 1789749347208,
+      "tag": "0041_still_decision_cache",
+      "breakpoints": true
+    },
+    {
+      "idx": 38,
+      "version": "6",
+      "when": 1789749785642,
+      "tag": "0042_memory_live_change_checkpoints",
+      "breakpoints": true
     }
   ]
 }

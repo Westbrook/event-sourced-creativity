@@ -5,6 +5,7 @@ import { memoryGuardsCurrent, type MemorySqlGuard } from "./memory-sql.ts";
 import type { WorkerEnv } from "./runtime.ts";
 import { liveConversationPublication, liveConversationMarkPublished, liveConversationPrune, liveConversationTrim } from "./memory-live-conversation.ts";
 import { publishCompletedConversationReferences, type CompletedConversationCaptureResult } from "./memory-completed-turns.ts";
+import { prepareLiveMemoryCheckpoint } from "./memory-live-checkpoints.ts";
 
 export const LIVE_MEMORY_PAGE_SIZE=128;
 export const LIVE_MEMORY_RUNNING_LIMIT=8;
@@ -119,8 +120,9 @@ async function processScope(env:WorkerEnv,e:LiveMemoryEnrollment,now:string,eras
     // snapshot, never the inverse prepared for that earlier transaction.
     const originPublication=await liveMemoryOriginDependencyWithdrawalStatements(env,
       {enrollmentId:e.enrollment_id,currentRevision:e.revision},"source-unavailable",now);
+    const checkpoint=await prepareLiveMemoryCheckpoint(env,e,through,now);
     // Selection and publication occur in the SAME database transaction. Only references cross the boundary.
-    const writes=await memoryAtomic(env,[authority.guard,liveMemoryEnrollmentGuard(e,"learn"),lease],[
+    const writes=await memoryAtomic(env,[authority.guard,liveMemoryEnrollmentGuard(e,"learn"),lease,checkpoint.guard],[
       ...originPublication.beforeMutation,
       env.DB.prepare(`INSERT OR IGNORE INTO memory_live_sources(enrollment_id,event_id,sequence,expires_at)
         SELECT ?,event.event_id,event.sequence,MIN(?,strftime('%Y-%m-%dT%H:%M:%fZ',event.recorded_at,'+'||?||' days'))
@@ -132,11 +134,12 @@ async function processScope(env:WorkerEnv,e:LiveMemoryEnrollment,now:string,eras
       // A cap-evicted segment invalidates every origin that required its exact
       // membership, even though some individual references remain remembered.
       ...originPublication.afterMutation,
+      ...checkpoint.writes,
       env.DB.prepare(`UPDATE memory_live_enrollments SET cursor_sequence=?,cutoff_sequence=?,lease_token=NULL,lease_expires_at=NULL,
         attempts=0,failure_code=?,next_due_at=? WHERE enrollment_id=? AND revision=? AND lease_token=?`)
         .bind(through,done?null:head,conversationFailure,at(now,done?3_600_000:60_000),e.enrollment_id,e.revision,token),
       memorySqlAssertion(env,{condition:"changes()=1",bindings:[]}),
-    ],[authority.guard,liveMemoryEnrollmentGuard(e,"learn"),clock]);
+    ],[authority.guard,liveMemoryEnrollmentGuard(e,"learn"),clock,checkpoint.guard]);
     return Number(writes[originPublication.beforeMutation.length]?.meta.changes??0);
   } catch {
     await env.DB.prepare("UPDATE memory_live_enrollments SET lease_token=NULL,lease_expires_at=NULL,next_due_at=?,failure_code='review-failed' WHERE enrollment_id=? AND revision=? AND lease_token=?")

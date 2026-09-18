@@ -14,6 +14,10 @@ claim that the entire Memory expansion is implemented**. Unfinished source work
 is tracked separately in [the implementation reconciliation](forma-memory-implementation-2026-09-17.md#remaining-source-work).
 A gate only closes for the specific implementation, audience and runtime tested.
 
+See the [Sites capability and implementation To Do](forma-memory-sites-capability-todo-2026-09-18.md)
+for the current checkpoint/status/tooling continuation and separately tracked
+external services. This does not close the semantic system or rollout gates.
+
 ## Decisions already made
 
 The user approved storing Memory with their other Forma data, charging its

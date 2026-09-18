@@ -3,6 +3,14 @@ import type { ReceivedDecision } from './diagnostics.ts';
 const duration=(value:unknown):value is number=>typeof value==='number'&&Number.isFinite(value)&&value>=0;
 const format=(ms:number)=>ms<1000?`${Math.round(ms)} ms`:`${(ms/1000).toFixed(2)} s`;
 
+/** A transport failure is not evidence of a Jev response. */
+export function jevRequestState(received:ReceivedDecision|undefined,pending=false){
+ if(pending)return 'Pending';
+ if(!received||received.reason==='not_configured')return 'Not Requested';
+ if(received.source==='jev'||received.trace?.passes?.some(p=>p.status==='answered'))return 'Received';
+ return 'Failed';
+}
+
 /** Timing belongs to the received response, even when an older decision is displayed. */
 export function decisionTiming(received:ReceivedDecision|undefined,pending=false) {
   if(pending||!duration(received?.requestElapsedMs))return null;
@@ -24,7 +32,7 @@ export function decisionTiming(received:ReceivedDecision|undefined,pending=false
     for(const pass of calls)steps.push({label:pass.id==='assessment'?'Jev assessment':'Enrichment',value:format(pass.elapsedMs)});
     if(duration(received.delivery?.serverMs))steps.push({label:'Transport / client',value:format(Math.max(0,received.requestElapsedMs-received.delivery!.serverMs))});
     if(duration(received.firstResponseMs))steps.push({label:'First usable',value:format(received.firstResponseMs)});
-    steps.push({label:received.delivery?.stage==='initial'?'Elapsed':'Complete',value:format(received.requestElapsedMs)});
+    steps.push({label:jevRequestState(received)==='Failed'?'Failed':received.delivery?.stage==='initial'?'Elapsed':'Complete',value:format(received.requestElapsedMs)});
   }
   return {label,description:detail.join(' '),steps};
 }

@@ -41,9 +41,11 @@ function database(t) {
 function snapshot(sqlite) {
   return { schema: sqlite.prepare("SELECT type,name,tbl_name,sql FROM sqlite_schema ORDER BY name").all(), rows: Object.fromEntries(tables.map(table => {
     const columns = sqlite.prepare(`PRAGMA table_info(${quote(table)})`).all();
-    return [table, sqlite.prepare(`SELECT CAST(rowid AS TEXT) AS original_rowid,${columns.flatMap(({ name }) => [
-      `typeof(${quote(name)}) AS ${quote(name + '_type')}`, `quote(${quote(name)}) AS ${quote(name + '_value')}`,
-    ]).join(',')} FROM ${quote(table)} ORDER BY rowid`).all()];
+    const statement=sqlite.prepare(`SELECT rowid AS original_rowid,${columns.flatMap(({ name }) => [
+      `typeof(${quote(name)}) AS ${quote(name + '_type')}`, `${quote(name)} AS ${quote(name + '_value')}`,
+    ]).join(',')} FROM ${quote(table)} ORDER BY rowid`);
+    statement.setReadBigInts(true);
+    return [table, statement.all()];
   })) };
 }
 function migrate(sqlite, suffix = []) {
@@ -53,7 +55,9 @@ function migrate(sqlite, suffix = []) {
 }
 
 test('pending reference-only schema preserves every original row, type, rowid, identity, index and FK', t => {
-  const sqlite = database(t), before = snapshot(sqlite);
+  const sqlite = database(t);
+  sqlite.prepare('UPDATE memory_structured_conversation_heads SET policy_version=? WHERE ledger_id=?').run('binary\0text','c'.repeat(64));
+  const before = snapshot(sqlite);
   assert.equal(hash(sqlite.prepare(schemaQuery).all()), oldHash);
   migrate(sqlite);
   assert.deepEqual(snapshot(sqlite).rows, before.rows);
@@ -153,4 +157,34 @@ test('actual local D1 atomically rebuilds the candidate and rolls back a late fa
   assert.deepEqual(await capture(dependency), dependencyBefore);
   assert.equal((await dependency.prepare('SELECT COUNT(*) AS n FROM child').first()).n, 1);
   assert.deepEqual(egress, []);
+});
+
+for(let after=1;after<=30;after++)test('candidate rollback restores exact source after statement '+after,t=>{
+  const sqlite=database(t),before=snapshot(sqlite);
+  sqlite.exec('BEGIN IMMEDIATE');
+  try{
+    migration.slice(0,after).forEach(sql=>sqlite.exec(sql));
+    assert.throws(()=>sqlite.exec("SELECT json('intentional injected failure')"),/malformed JSON/);
+  }finally{sqlite.exec('ROLLBACK');}
+  assert.equal(sqlite.isTransaction,false);assert.deepEqual(snapshot(sqlite),before);
+  assert.deepEqual(sqlite.prepare('PRAGMA foreign_key_check').all(),[]);assert.deepEqual(sqlite.prepare('SELECT * FROM temp.sqlite_schema').all(),[]);
+});
+
+test('processing checkpoint migration and invalidation run atomically on local D1', {timeout:90000}, async t=>{
+  const directory=await mkdtemp(join(tmpdir(),'forma-memory-checkpoint-d1-')),egress=[];
+  const mf=new Miniflare({modules:true,compatibilityDate:'2026-05-15',host:'127.0.0.1',port:0,script:"export default {fetch(){return new Response('local-only',{status:404})}}",d1Databases:['Checkpoint'],d1Persist:directory,log:new Log(LogLevel.NONE),outboundService:request=>{egress.push(request.url);throw Error('External fetch forbidden');}});
+  t.after(async()=>{await mf.dispose();await rm(directory,{recursive:true,force:true});assert.deepEqual(egress,[]);});
+  const db=await mf.getD1Database('Checkpoint');
+  for(const file of ['0025_memory_live_base.sql','0026_memory_live_conversation.sql','0042_memory_live_change_checkpoints.sql'])await db.batch(statements(readFileSync(new URL('../drizzle/'+file,import.meta.url),'utf8')).map(sql=>db.prepare(sql)));
+  await db.prepare(`INSERT INTO memory_live_enrollments(enrollment_id,actor_user_id,owner_user_id,project_id,document_id,permission_epoch,policy_version,revision,learn_enabled,recall_enabled,background_enabled,retention_days,time_zone,enrolled_at,expires_at,cursor_sequence,next_due_at,attempts)
+    VALUES('e','actor','actor','project','document','epoch','personal-memory-v2',1,1,1,1,1,'UTC','2026-01-01T00:00:00.000Z','2027-01-01T00:00:00.000Z',0,'2026-01-01T00:00:00.000Z',0)`).run();
+  await db.prepare("INSERT INTO memory_live_sources(enrollment_id,event_id,sequence,expires_at) VALUES('e','event',1,'2027-01-01T00:00:00.000Z')").run();
+  const checkpoint=db.prepare(`INSERT INTO memory_live_change_checkpoints VALUES('e',1,'${'a'.repeat(32)}',0,1,1,'2026-01-01T00:00:00.000Z','2026-01-01T00:00:00.000Z','2027-01-01T00:00:00.000Z')`);
+  await assert.rejects(()=>db.batch([checkpoint,db.prepare("SELECT json('late-checkpoint-failure')")]));
+  assert.equal(await db.prepare('SELECT count(*) AS n FROM memory_live_change_checkpoints').first('n'),0);
+  await checkpoint.run();await db.prepare('UPDATE memory_live_sources SET conversation_segmented=1').run();
+  assert.equal(await db.prepare('SELECT count(*) AS n FROM memory_live_change_checkpoints').first('n'),1);
+  await db.prepare('UPDATE memory_live_enrollments SET revision=2').run();
+  assert.equal(await db.prepare('SELECT count(*) AS n FROM memory_live_change_checkpoints').first('n'),0);
+  assert.deepEqual((await db.prepare('PRAGMA foreign_key_check').all()).results,[]);
 });
