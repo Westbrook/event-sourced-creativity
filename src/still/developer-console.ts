@@ -7,6 +7,7 @@ import { PRIMARY_POLICY } from './presentation.ts';
 import './vendor/elements/define/badge.js';
 import { LitElement, css, html, nothing } from 'lit';
 import { keyed } from 'lit/directives/keyed.js';
+import { repeat } from 'lit/directives/repeat.js';
 import './exchange-inspector.ts';
 import './json-tree.ts';
 import type { DecisionDiagnostics, ReceivedDecision } from './diagnostics.ts';
@@ -16,7 +17,7 @@ const numeric=(n:number|undefined)=>n===undefined?'—':Number(n.toFixed(3)).toS
 const percent=(n:number)=>`${(n*100).toFixed(1)}%`;
 
 export class StillDeveloperConsole extends LitElement {
-  static properties = { context:{attribute:false}, applied:{attribute:false}, received:{attribute:false}, pending:{type:Boolean}, controls:{attribute:false}, scope:{attribute:false}, detached:{type:Boolean,reflect:true}, windowOpen:{state:true}, windowConnected:{state:true}, windowError:{state:true}, showReceived:{state:true}, filter:{state:true} };
+  static properties = { context:{attribute:false}, applied:{attribute:false}, received:{attribute:false}, pending:{type:Boolean}, controls:{attribute:false}, scope:{attribute:false}, detached:{type:Boolean,reflect:true}, windowOpen:{state:true}, windowConnected:{state:true}, windowError:{state:true}, showReceived:{state:true}, filter:{state:true}, actionSort:{state:true} };
   declare context:ConsoleContext;
   declare applied:DecisionDiagnostics|undefined;
   declare received:ReceivedDecision|undefined;
@@ -30,6 +31,7 @@ export class StillDeveloperConsole extends LitElement {
   private windowHost?:ConsoleWindowHost;
   private showReceived=false;
   private filter='';
+  private actionSort:'rank'|'name'='rank';
   private observer=new MutationObserver(()=>this.readControls());
   private root:Element|null=null;
   connectedCallback() {
@@ -81,7 +83,10 @@ export class StillDeveloperConsole extends LitElement {
   render(){
     if(!this.context)return nothing;
     const c=this.context,viewingReceived=(this.showReceived||c.paletteOpen&&this.received?.trace?.channel==='palette')&&!!this.received,trace=viewingReceived?this.received?.trace:this.applied;
-    const rows=trace?.actions??c.current.actions;
+    const rows=[...(trace?.actions??c.current.actions)].sort((a,b)=>{
+      const byName=()=>a.action.label.localeCompare(b.action.label,undefined,{sensitivity:'base'})||a.action.id.localeCompare(b.action.id);
+      return this.actionSort==='name'?byName():(a.rank??Infinity)-(b.rank??Infinity)||byName();
+    });
     const matched=trace?.head===c.head&&trace.position.view===(c.mode==='generate'&&!c.selectedFormat?'choose-format':c.view)&&(['projectId','documentId','blockId','outputId','itemIndex','hasIntent'] as const).every(key=>trace.position[key]===c.current.position[key]);
     const questions=trace?.questions??[];
     const jevState=this.pending?'Pending':this.received?'Received':'Not Requested',timing=decisionTiming(this.received,this.pending);
@@ -121,9 +126,9 @@ export class StillDeveloperConsole extends LitElement {
           ${trace?keyed(trace,html`<still-exchange-inspector .trace=${trace}></still-exchange-inspector>`):nothing}
           <p class="muted">Score distributions describe rubric ratings. Confidence describes concentration. Neither is the probability of a click. Rank includes policy adjustments.</p>
           <en-search-input label="Find action or question" .value=${this.filter} @en-input=${(e: CustomEvent<{proposed:string;value:string}>)=>{this.filter=e.detail.value.toLowerCase();}}></en-search-input>
-          <h3>All actions · ${rows.length}</h3>
+          <div class="actions-heading"><h3>All actions · ${rows.length}</h3><en-button variant="ghost" size="small" aria-label=${this.actionSort==='rank'?'Sort by name':'Sort by rank'} @click=${()=>{this.actionSort=this.actionSort==='rank'?'name':'rank';}}>${this.actionSort==='rank'?'Sort by name':'Sort by rank'}</en-button></div>
           <p class="muted">Action · selection · Jev score / final rank value. Expand for probabilities and rules.</p>
-          <div class="actions">${rows.filter(row=>`${row.action.id} ${row.action.label}`.toLowerCase().includes(this.filter)).map(row=>{
+          <div class="actions">${repeat(rows.filter(row=>`${row.action.id} ${row.action.label}`.toLowerCase().includes(this.filter)),row=>row.action.id,row=>{
             const answer=questions.find(q=>q.id===row.questionId),current=c.current.actions.find(x=>x.action.id===row.action.id);
             return html`<details class=${row.selected?'selected':''}><summary><span>${row.action.label}</span><span>${row.selected?`#${row.selected}`:row.eligible?'available':'excluded'}</span><code>${numeric(answer?.score)} / ${numeric(row.value)}</code></summary>
               <p><code>${row.action.id}</code> · ${row.action.group}</p><p>Now: ${current?.eligible?'available':current?.eligibilityReason??'unavailable'}. Decision: ${!row.eligible?row.eligibilityReason:row.reason||`selected #${row.selected}`}.</p>
@@ -146,6 +151,7 @@ export class StillDeveloperConsole extends LitElement {
     .window-tools{display:flex;flex-wrap:wrap;align-items:center;gap:6px} .console{overflow-wrap:anywhere}
     .window-tools en-button::part(control){padding-inline:10px}
     h3{font-size:14px;margin:22px 0 8px}p{margin:9px 0}code,pre{font:11px/1.5 ui-monospace,monospace}pre{white-space:pre-wrap}
+    .actions-heading{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:22px 0 8px}.actions-heading h3{margin:0}.actions-heading en-button{margin-left:auto;flex-shrink:0}
     .cache-status{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-top:12px}.cache-status span{color:#706e65;font-size:12px}
     .status{display:flex;justify-content:space-between;gap:12px;margin:10px 0 18px}.muted,small{color:#706e65}.warning{background:#f1e7ce;padding:10px;border-radius:6px}
     details{border-top:1px solid #d9d7ce;padding:10px 0}summary{cursor:pointer;font-weight:550}.actions summary{display:grid;grid-template-columns:1fr 90px 90px;gap:8px}.actions summary code{text-align:right}.actions summary span:first-child::before{content:'›';display:inline-block;width:14px}.actions details[open]>summary span:first-child::before{content:'⌄'}.selected{border-left:3px solid #596345;padding-left:9px}
