@@ -38,8 +38,9 @@ This continuation does not change production configuration or enroll anyone.
 The [native continuation record](forma-memory-native-continuation-2026-09-18.md)
 tracks the subsequent 64-pair bounded capture, saved-answer compatibility, shared
 Forget retirement fix and unverified derivation-parser component. The subsequent [purpose-control slice](forma-memory-purpose-controls-2026-09-18.md)
-adds qualified separate consent and privacy controls, but none completes the open
-native pipeline table below.
+adds qualified separate consent and privacy controls. [Durable reference delivery](forma-memory-reference-delivery-2026-09-18.md)
+now adds consent-specific queue registration, catch-up and privacy-safe retention;
+these slices do not complete the open native pipeline table below.
 
 - Canvas now records a personal artifact view only after the actual viewer opens,
   hashing the exact retained bytes and rechecking route, revision, custody and visibility.

@@ -1,3 +1,4 @@
+import { prepareNativeDerivationDelivery, registerNativeDerivationBacklog } from "./memory-derivation-jobs.ts";
 import { createLiveMemoryMaintenanceAttempt, liveMemoryAuthority, liveMemoryEnrollmentGuard, type LiveMemoryEnrollment } from "./memory-live-authority.ts";
 import { liveMemorySourceQuery } from "./memory-live-sources.ts";
 import { liveMemoryEnabled, liveMemorySchemaReady, memoryAtomic, memorySqlAssertion, revokeLiveMemoryCounted, retireDeniedLiveMemoryCounted, liveMemoryOriginDependencyWithdrawalStatements, structuredConversationLedgerSchema } from "./memory-live-store.ts";
@@ -67,6 +68,9 @@ async function processScope(env:WorkerEnv,e:LiveMemoryEnrollment,now:string,eras
     env.DB.prepare(cleanup.sql).bind(...cleanup.bindings),env.DB.prepare(trim.sql).bind(...trim.bindings),...originMaintenance.afterMutation]);
   // Cleanup is already committed, even if later capture or bookkeeping fails.
   erased(Number((maintenance[originMaintenance.beforeMutation.length+1]?.results[0] as {erased:number}|undefined)?.erased??0));
+  // Queue delivery has its own durable consent cursor. Catch up even when the
+  // extractive night/page was already acknowledged or its checkpoint expired.
+  await registerNativeDerivationBacklog(env,e,now);
   const night=liveMemoryReviewDay(now,e.time_zone,e.enrolled_at);
   const continueJob=e.cutoff_sequence!==null;
   if(!liveMemoryEnabled(env,e.actor_user_id)||!e.learn_enabled||!e.background_enabled||!continueJob&&(!night.due||e.last_local_day===night.day
@@ -127,8 +131,9 @@ async function processScope(env:WorkerEnv,e:LiveMemoryEnrollment,now:string,eras
     const originPublication=await liveMemoryOriginDependencyWithdrawalStatements(env,
       {enrollmentId:e.enrollment_id,currentRevision:e.revision},"source-unavailable",now);
     const checkpoint=await prepareLiveMemoryCheckpoint(env,e,through,now);
+    const delivery=await prepareNativeDerivationDelivery(env,e,through,now);
     // Selection and publication occur in the SAME database transaction. Only references cross the boundary.
-    const writes=await memoryAtomic(env,[authority.guard,liveMemoryEnrollmentGuard(e,"learn"),lease,checkpoint.guard,...artifactViews.guards],[
+    const publication:D1PreparedStatement[]=[
       ...originPublication.beforeMutation,
       env.DB.prepare(`INSERT OR IGNORE INTO memory_live_sources(enrollment_id,event_id,sequence,expires_at)
         SELECT ?,event.event_id,event.sequence,MIN(?,strftime('%Y-%m-%dT%H:%M:%fZ',event.recorded_at,'+'||?||' days'))
@@ -149,11 +154,17 @@ async function processScope(env:WorkerEnv,e:LiveMemoryEnrollment,now:string,eras
       // membership, even though some individual references remain remembered.
       ...originPublication.afterMutation,
       ...checkpoint.writes,
+    ];
+    const deliveryOffset=publication.length;
+    publication.push(...delivery.statements,
       env.DB.prepare(`UPDATE memory_live_enrollments SET cursor_sequence=?,cutoff_sequence=?,lease_token=NULL,lease_expires_at=NULL,
         attempts=0,failure_code=?,next_due_at=? WHERE enrollment_id=? AND revision=? AND lease_token=?`)
         .bind(through,done?null:head,conversationFailure,at(now,done?3_600_000:60_000),e.enrollment_id,e.revision,token),
       memorySqlAssertion(env,{condition:"changes()=1",bindings:[]}),
-    ],[authority.guard,liveMemoryEnrollmentGuard(e,"learn"),clock,checkpoint.guard,...artifactViews.guards]);
+    );
+    const writes=await memoryAtomic(env,[authority.guard,liveMemoryEnrollmentGuard(e,"learn"),lease,checkpoint.guard,...artifactViews.guards],publication,
+      [authority.guard,liveMemoryEnrollmentGuard(e,"learn"),clock,checkpoint.guard,...artifactViews.guards]);
+    if(!delivery.acknowledge(writes.slice(deliveryOffset,deliveryOffset+delivery.statements.length)))throw new Error("memory-derivation-delivery-unconfirmed");
     return Number(writes[originPublication.beforeMutation.length]?.meta.changes??0)+artifactViews.sources.length;
   } catch {
     await env.DB.prepare("UPDATE memory_live_enrollments SET lease_token=NULL,lease_expires_at=NULL,next_due_at=?,failure_code='review-failed' WHERE enrollment_id=? AND revision=? AND lease_token=?")

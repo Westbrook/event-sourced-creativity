@@ -731,7 +731,7 @@ test('Memory processing checkpoint exact schema preserves guest inventory and pa
 function installDerivationPurposeSchema(f){
   for(const migration of ['0025_memory_live_base.sql','0026_memory_live_conversation.sql','0043_memory_derivation_purpose_grants.sql'])installQualifiedMigration(f,migration);
 }
-function seedDerivationMetadata(f,link=null){
+function seedDerivationMetadata(f,link=null,{delivery=false}={}){
   const created='2026-01-01T00:00:00.000Z',expires='2027-01-01T00:00:00.000Z',actor=link==='actor'?f.session.guestSubject:'foreign-derivation-actor';
   insert(f,'memory_live_enrollments',{enrollment_id:'foreign-derivation-parent',actor_user_id:'foreign-derivation-actor',owner_user_id:'foreign-derivation-actor',organization_id:null,project_access_id:null,
     project_id:'foreign-project',document_id:'foreign-document',permission_epoch:'foreign-epoch',policy_version:'personal-memory-v2',revision:1,learn_enabled:1,recall_enabled:1,background_enabled:0,
@@ -741,7 +741,7 @@ function seedDerivationMetadata(f,link=null){
     owner_user_id:link==='owner'?f.session.guestSubject:'foreign-derivation-owner',organization_id:'foreign-organization',project_access_id:'foreign-access',
     project_id:link==='project'?f.session.projectId:'foreign-project',document_id:link==='document'?f.session.documentId:'foreign-document',enrollment_id:'foreign-derivation-parent',enrollment_revision:1,
     permission_epoch:'foreign-epoch',policy_version:'personal-memory-derivation-v1',purpose:'rolling-summary',qualification_id:'foreign-qualification',terms_sha256:sha('{}'),monthly_cap_microusd:1000,
-    source_after_sequence:1,retention_days:1,background_enabled:0,consented_at:created,expires_at:expires,revoked_at:null});
+    source_after_sequence:1,retention_days:1,background_enabled:Number(delivery),consented_at:created,expires_at:expires,revoked_at:null});
   assert.deepEqual(f.sqlite.prepare('PRAGMA foreign_key_check').all(),[]);
 }
 test('Memory derivation exact schema and unrelated metadata preserve guest inventory byte-for-byte',async t=>{
@@ -758,4 +758,18 @@ for(const fault of ['missing-trigger','unknown-object','external-inbound-fk','ex
   if(fault==='external-inbound-fk')f.sqlite.exec('CREATE TABLE unrelated_copy(id TEXT REFERENCES memory_derivation_qualifications(qualification_id))');
   if(fault==='external-view')f.sqlite.exec('CREATE VIEW unrelated_view AS SELECT * FROM memory_derivation_grants');
   await denied(f,t);
+});
+
+for(const linked of [false,true])test('Memory reference delivery exact schema closes guest source references '+linked,async t=>{
+  const f=await completedResultFixture(t,{memory:true}),before=await currentManifest(f,t);installDerivationPurposeSchema(f);installQualifiedMigration(f,'0044_memory_derivation_reference_jobs.sql');
+  seedDerivationMetadata(f,null,{delivery:true});const g=rows(f,'memory_derivation_grants')[0],job='c'.repeat(64),event=linked?f.completed.event.eventId:'foreign-memory-source';
+  insert(f,'memory_live_sources',{enrollment_id:g.enrollment_id,event_id:event,sequence:2,expires_at:g.expires_at});
+  insert(f,'memory_derivation_cursors',{consent_id:g.consent_id,grant_id:g.grant_id,grant_revision:g.revision,purpose:g.purpose,registered_through_sequence:1,generation:0,created_at:g.consented_at,updated_at:g.consented_at,expires_at:g.expires_at});
+  insert(f,'memory_derivation_jobs',{job_id:job,consent_id:g.consent_id,purpose:g.purpose,after_sequence:1,through_sequence:2,source_count:1,created_at:g.consented_at,expires_at:g.expires_at,state:'waiting',lease_token:null,lease_expires_at:null,attempts:0,not_before:g.consented_at,failure_code:null});
+  insert(f,'memory_derivation_job_sources',{job_id:job,enrollment_id:g.enrollment_id,event_id:event,sequence:2,expires_at:g.expires_at});
+  configurationTripwire(f,t);if(linked)await denied(f,t);else assert.deepEqual(await currentManifest(f,t),before);
+});
+for(const fault of ['missing-inverse','inbound-view'])test('guest inventory closes Memory reference delivery schema '+fault,async t=>{
+  const f=await completedResultFixture(t,{memory:true});installDerivationPurposeSchema(f);installQualifiedMigration(f,'0044_memory_derivation_reference_jobs.sql');
+  if(fault==='missing-inverse')f.sqlite.exec('DROP TRIGGER memory_derivation_dependency_deleted');else f.sqlite.exec('CREATE VIEW foreign_memory_jobs AS SELECT * FROM memory_derivation_jobs');await denied(f,t);
 });

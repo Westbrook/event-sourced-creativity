@@ -12833,9 +12833,9 @@ test('completed conversation retirement: shared Forget preserves negative ledger
   assert.deepEqual(adaptiveReentryFinancialState(state),financial);
 });
 
-async function nativeDerivationFixture(t,{shared=false,qualified=true}={}){
+async function nativeDerivationFixture(t,{shared=false,qualified=true,delivery=false}={}){
   const {readFile}=await import('node:fs/promises');
-  const state=await nativeMemoryJobFixture(t,{shared,beforeEnrollment:async state=>state.sqlite.exec(await readFile(new URL('../drizzle/0043_memory_derivation_purpose_grants.sql',import.meta.url),'utf8'))});
+  const state=await nativeMemoryJobFixture(t,{shared,beforeEnrollment:async state=>{state.sqlite.exec(await readFile(new URL('../drizzle/0043_memory_derivation_purpose_grants.sql',import.meta.url),'utf8'));if(delivery)state.sqlite.exec(await readFile(new URL('../drizzle/0044_memory_derivation_reference_jobs.sql',import.meta.url),'utf8'));}});
   const policy=await import('../worker/memory-derivation-policy.ts'),store=await import('../worker/memory-derivation-store.ts'),
     {handleMemoryDerivationSettings}=await import('../worker/memory-derivation-api.ts'),{createHash}=await import('node:crypto');
   const hash=value=>createHash('sha256').update(value).digest('hex'),origin='https://memory-purpose.fixture.invalid';
@@ -12948,10 +12948,10 @@ for(const shared of [false,true])test('native derivation privacy: constant-size 
   const selector=shared?{organizationId:source.organization_id}:{actorUserId:source.actor_user_id,personalOnly:true};
   const financial=adaptiveReentryFinancialState(state),now=new Date().toISOString();
   const barrier=await state.derivationStore.prepareDerivationWithdrawal(state.env,selector,now);
-  assert.equal(barrier.statements.length,5);assert.equal(barrier.acknowledge(structuredClone(await state.env.DB.batch(barrier.statements))),true);
+  assert.equal(barrier.statements.length,6);assert.equal(barrier.acknowledge(structuredClone(await state.env.DB.batch(barrier.statements))),true);
   assert.ok(state.derivationRows().every(row=>row.revoked_at));
   const erase=await state.derivationStore.prepareDerivationWithdrawal(state.env,selector,now,true);
-  assert.equal(erase.statements.length,5);const receipt=structuredClone(await state.env.DB.batch(erase.statements));
+  assert.equal(erase.statements.length,6);const receipt=structuredClone(await state.env.DB.batch(erase.statements));
   assert.equal(erase.acknowledge(receipt),true);assert.equal(erase.acknowledge(receipt),false);assert.deepEqual(state.derivationRows(),[]);
   assert.deepEqual(adaptiveReentryFinancialState(state),financial);
 });
@@ -13023,4 +13023,159 @@ test('native derivation controls commit and revoke on real isolated workerd D1 w
   const revoked=await state.derivationRequest('DELETE',{version:state.derivationPolicy.MEMORY_DERIVATION_CONTROL,revision:1,consentId:body.grant.consentId,confirmation:'REVOKE_DERIVED_MEMORY'},'?grantId='+body.grant.grantId);
   assert.equal(revoked.status,200,await revoked.text());assert.ok((await db.prepare('SELECT revoked_at FROM memory_derivation_grants').first()).revoked_at);
   assert.deepEqual((await db.prepare('PRAGMA foreign_key_check').all()).results,[]);assert.equal(state.calls.length,0);
+});
+
+
+async function nativeDerivationDeliveryFixture(t,options={}) {
+  const state=await nativeDerivationFixture(t,{...options,delivery:true});
+  const response=await state.derivationRequest('PUT');assert.equal(response.status,200,await response.text());
+  const delivery=await import('../worker/memory-derivation-jobs.ts');
+  const queue=()=>Object.fromEntries(['cursors','jobs','job_sources'].map(key=>[key,state.sqlite.prepare('SELECT * FROM memory_derivation_'+key+' ORDER BY rowid').all()]));
+  const register=async(through=state.current().cursor_sequence)=>{
+    const plan=await delivery.prepareNativeDerivationDelivery(state.env,state.current(),through,new Date().toISOString());
+    const receipts=await state.env.DB.batch(plan.statements);assert.equal(plan.acknowledge(receipts),true);assert.equal(plan.acknowledge(receipts),false);return plan;
+  };
+  // Control-plane fixtures only. These pointers are deliberately NOT sufficient
+  // source proofs and may never authorize a provider request or retained result.
+  const {makeEvent,eventWriteBindings,EVENT_WRITE_COLUMNS}=await import('../worker/runtime.ts');
+  const pointer=(sequence,id='isolated-queue-pointer-'+sequence,expiry=state.derivationRows()[0].expires_at,recordedAt=new Date().toISOString())=>{
+    const e=state.current(),event=makeEvent('creative:'+e.owner_user_id,sequence,'user:'+e.actor_user_id,'isolated-pointer',crypto.randomUUID(),'DocumentOpened',{project_id:e.project_id,document_id:e.document_id});
+    event.eventId=id;event.recordedAt=recordedAt;event.occurredAt=recordedAt;const values=eventWriteBindings(event);
+    state.sqlite.prepare('INSERT INTO event_write_stage('+EVENT_WRITE_COLUMNS+') VALUES('+values.map(()=>'?').join(',')+')').run(...values);
+    return state.sqlite.prepare('INSERT INTO memory_live_sources(enrollment_id,event_id,sequence,expires_at) VALUES(?,?,?,?)').run(e.enrollment_id,id,sequence,expiry);
+  };
+  return Object.assign(state,{delivery,queue,register,pointer});
+}
+for(const shared of [false,true])test('native derivation delivery: genuine '+(shared?'shared':'personal')+' source publication registers work atomically',{timeout:60000},async t=>{
+  const state=await nativeDerivationDeliveryFixture(t,{shared});await state.send('delivery-original');const before=nativeStructuredCallerNoSpend(state);
+  state.due();const run=await state.run();assert.equal(run.status,'completed',JSON.stringify(run)+' '+state.controls.lastDatabaseError);
+  const queue=state.queue();assert.equal(queue.jobs.length,1);assert.equal(queue.cursors.length,1);assert.equal(queue.jobs[0].state,'waiting');
+  assert.equal(queue.jobs[0].source_count,queue.job_sources.length);assert.ok(queue.job_sources.length>0);assert.equal(queue.cursors[0].registered_through_sequence,state.current().cursor_sequence);
+  assert.equal(queue.jobs[0].consent_id,state.derivationRows()[0].consent_id);assert.deepEqual(nativeStructuredCallerNoSpend(state),before);
+  state.due();await state.run();assert.deepEqual(state.queue(),queue,'An already registered interval is not recreated');
+});
+for(const count of [0,1,128,129,257])test('native derivation delivery: bounded '+count+' reference cursor registration',{timeout:60000},async t=>{
+  const state=await nativeDerivationDeliveryFixture(t),g=state.derivationRows()[0],start=g.source_after_sequence;
+  for(let i=1;i<=count;i++)state.pointer(start+i);
+  await state.register(start+count+2);let queue=state.queue();assert.equal(queue.jobs.length,count?1:0);assert.equal(queue.job_sources.length,Math.min(count,128));
+  assert.equal(queue.cursors[0].registered_through_sequence,count>128?start+128:start+count+2);
+  while(state.queue().cursors[0].registered_through_sequence<start+count+2)await state.register(start+count+2);
+  queue=state.queue();assert.equal(queue.job_sources.length,count);assert.equal(queue.jobs.length,Math.ceil(count/128));
+  assert.equal(new Set(queue.job_sources.map(s=>s.sequence)).size,count);assert.equal(queue.cursors[0].expires_at,g.expires_at);
+});
+test('native derivation delivery: capacity retains pending work without advancing registration',{timeout:60000},async t=>{
+  const state=await nativeDerivationDeliveryFixture(t),start=state.derivationRows()[0].source_after_sequence;
+  for(let i=1;i<=33;i++){state.pointer(start+i);await state.register(start+i);}
+  let queue=state.queue();assert.equal(queue.jobs.length,32);assert.equal(queue.cursors[0].registered_through_sequence,start+32);
+  state.sqlite.prepare('DELETE FROM memory_derivation_jobs WHERE job_id=?').run(queue.jobs[0].job_id);
+  await state.register(start+33);queue=state.queue();assert.equal(queue.jobs.length,32);assert.equal(queue.cursors[0].registered_through_sequence,start+33);
+});
+for(const mode of ['source-delete','source-expiry-shortened','consent-revoke','consent-delete','qualification-withdraw'])test('native derivation delivery: privacy inverse '+mode,{timeout:60000},async t=>{
+  const state=await nativeDerivationDeliveryFixture(t),g=state.derivationRows()[0],sequence=g.source_after_sequence+1;state.pointer(sequence);await state.register(sequence);const cursor=state.queue().cursors[0];
+  if(mode==='source-delete')state.sqlite.exec('DELETE FROM memory_live_sources');
+  if(mode==='source-expiry-shortened')state.sqlite.prepare('UPDATE memory_live_sources SET expires_at=?').run(new Date(Date.now()+1000).toISOString());
+  if(mode==='consent-revoke')state.sqlite.prepare('UPDATE memory_derivation_grants SET revoked_at=?').run(new Date().toISOString());
+  if(mode==='consent-delete')state.sqlite.exec('DELETE FROM memory_derivation_grants');
+  if(mode==='qualification-withdraw')state.sqlite.exec("UPDATE memory_derivation_qualifications SET status='withdrawn'");
+  assert.deepEqual(state.queue().jobs,[]);assert.deepEqual(state.queue().job_sources,[]);
+  if(mode.startsWith('source-')){assert.deepEqual(state.queue().cursors,[cursor]);await state.register(sequence);assert.deepEqual(state.queue().jobs,[]);}
+  else assert.deepEqual(state.queue().cursors,[]);
+  assert.deepEqual(state.sqlite.prepare('PRAGMA foreign_key_check').all(),[]);
+});
+for(const fault of ['cursor-reset','cursor-replace','job-replace','source-replace','late-schema','late-grant','lost-ack','bad-ack'])test('native derivation delivery: refuses '+fault,{timeout:60000},async t=>{
+  const state=await nativeDerivationDeliveryFixture(t),g=state.derivationRows()[0],sequence=g.source_after_sequence+1;state.pointer(sequence);
+  if(['cursor-reset','cursor-replace','job-replace','source-replace'].includes(fault)){
+    await state.register(sequence);const before=state.queue();
+    if(fault==='cursor-reset')assert.throws(()=>state.sqlite.exec('DELETE FROM memory_derivation_cursors'),/cursor_delete/);
+    else{const table=fault==='cursor-replace'?'cursors':fault==='job-replace'?'jobs':'job_sources';const row=before[table][0],columns=Object.keys(row);
+      assert.throws(()=>state.sqlite.prepare('INSERT OR REPLACE INTO memory_derivation_'+table+'('+columns.join(',')+') VALUES('+columns.map(()=>'?').join(',')+')').run(...Object.values(row)),/derivation/);}
+    assert.deepEqual(state.queue(),before);return;
+  }
+  const plan=await state.delivery.prepareNativeDerivationDelivery(state.env,state.current(),sequence,new Date().toISOString());
+  if(fault==='late-schema')state.sqlite.exec('DROP TRIGGER memory_derivation_source_delete');
+  if(fault==='late-grant')state.sqlite.prepare('UPDATE memory_derivation_grants SET revoked_at=?').run(new Date().toISOString());
+  if(fault.startsWith('late-')){await assert.rejects(()=>state.env.DB.batch(plan.statements));assert.deepEqual(state.queue().jobs,[]);assert.deepEqual(state.queue().cursors,[]);}
+  else{const receipts=await state.env.DB.batch(plan.statements);if(fault==='lost-ack')assert.equal(plan.acknowledge([]),false);
+    else{receipts.at(-1).results=[{verified:1},{verified:1}];assert.equal(plan.acknowledge(receipts),false);}
+    const before=state.queue();await state.register(sequence);assert.deepEqual(state.queue(),before);}
+});
+test('native derivation delivery: late installation catches up without a new page or checkpoint',{timeout:60000},async t=>{
+  const state=await nativeDerivationDeliveryFixture(t);state.env.FORMA_MEMORY_DERIVATION_ENABLED='false';await state.send('delivery-before-enabled');state.due();await state.run();
+  assert.deepEqual(state.queue().jobs,[]);assert.ok(state.table('memory_live_sources').length);const cursor=state.current().cursor_sequence;
+  state.env.FORMA_MEMORY_DERIVATION_ENABLED='true';state.due();await state.run();assert.equal(state.queue().jobs.length,1);assert.equal(state.current().cursor_sequence,cursor);
+});
+test('native derivation delivery: disabled lane reads no consent or private queue rows',{timeout:60000},async t=>{
+  const state=await nativeDerivationDeliveryFixture(t);state.env.FORMA_MEMORY_DERIVATION_ENABLED='false';const db=state.env.DB,prepare=db.prepare;
+  db.prepare=function(sql){assert.equal(/FROM memory_derivation_(?:grants|cursors|jobs|job_sources)/u.test(sql),false,sql);return prepare.call(this,sql);};
+  try{await state.register(state.derivationRows()[0].source_after_sequence+1);assert.deepEqual(state.queue().jobs,[]);}finally{db.prepare=prepare;}
+});
+for(const recursive of [false,true])test('native derivation delivery: source REPLACE invalidates whole job with recursive triggers '+recursive,{timeout:60000},async t=>{
+  const state=await nativeDerivationDeliveryFixture(t),start=state.derivationRows()[0].source_after_sequence;state.pointer(start+1);state.pointer(start+2);await state.register(start+2);
+  const cursor=state.queue().cursors[0],source=state.table('memory_live_sources')[0],keys=Object.keys(source);state.sqlite.exec('PRAGMA recursive_triggers='+Number(recursive));
+  state.sqlite.prepare('INSERT OR REPLACE INTO memory_live_sources('+keys.join(',')+') VALUES('+keys.map(()=>'?').join(',')+')').run(...Object.values(source));
+  assert.deepEqual(state.queue(),{cursors:[cursor],jobs:[],job_sources:[]});assert.deepEqual(state.sqlite.prepare('PRAGMA foreign_key_check').all(),[]);
+  await state.register(start+2);assert.deepEqual(state.queue().jobs,[]);
+});
+test('native derivation delivery: delayed catch-up does not renew narrower purpose retention',{timeout:60000},async t=>{
+  const state=await nativeDerivationDeliveryFixture(t),g={...state.derivationRows()[0]},old=new Date(Date.now()-3*86400000).toISOString();
+  state.sqlite.prepare('UPDATE memory_live_enrollments SET enrolled_at=?').run(old);state.sqlite.exec('DELETE FROM memory_derivation_grants');g.consented_at=old;g.revoked_at=null;
+  const keys=Object.keys(g);state.sqlite.prepare('INSERT INTO memory_derivation_grants('+keys.join(',')+') VALUES('+keys.map(()=>'?').join(',')+')').run(...Object.values(g));
+  const expired=new Date(Date.now()-2*86400000).toISOString(),retained=new Date(Date.now()-3600000).toISOString(),referenceExpiry=state.current().expires_at;
+  state.pointer(g.source_after_sequence+1,'expired-purpose-reference',referenceExpiry,expired);state.pointer(g.source_after_sequence+2,'within-purpose-reference',referenceExpiry,retained);
+  await state.register(g.source_after_sequence+2);const queue=state.queue();assert.equal(queue.jobs.length,1);assert.equal(queue.jobs[0].source_count,1);
+  assert.equal(queue.job_sources[0].event_id,'within-purpose-reference');assert.equal(queue.job_sources[0].expires_at,referenceExpiry);
+  assert.equal(queue.jobs[0].expires_at,new Date(Date.parse(retained)+86400000).toISOString());assert.equal(queue.cursors[0].expires_at,g.expires_at);
+});
+test('native derivation delivery: lease state requires complete non-null ownership',{timeout:60000},async t=>{
+  const state=await nativeDerivationDeliveryFixture(t),sequence=state.derivationRows()[0].source_after_sequence+1;state.pointer(sequence);await state.register(sequence);
+  for(const [token,expires] of [[null,null],[crypto.randomUUID(),null],[null,new Date(Date.now()+1000).toISOString()]])
+    assert.throws(()=>state.sqlite.prepare("UPDATE memory_derivation_jobs SET state='leased',attempts=1,lease_token=?,lease_expires_at=?").run(token,expires),/constraint/iu);
+  assert.equal(state.queue().jobs[0].state,'waiting');assert.equal(state.queue().jobs[0].attempts,0);
+});
+test('native derivation delivery: independent purposes cannot consume each others cursor',{timeout:60000},async t=>{
+  const state=await nativeDerivationDeliveryFixture(t),{createHash}=await import('node:crypto'),qualified=state.sqlite.prepare('SELECT * FROM memory_derivation_qualifications').get();
+  for(const purpose of ['profile','suggestion']){
+    const terms=JSON.parse(qualified.terms_json);terms.purpose=purpose;const text=state.derivationPolicy.derivationCanonical(terms),hash=createHash('sha256').update(text).digest('hex');
+    state.sqlite.prepare('INSERT INTO memory_derivation_qualifications VALUES(?,?,?,?,?,?,?,?,?)').run(purpose,qualified.source_sha256,qualified.origin,qualified.deployment_id,text,hash,qualified.status,qualified.qualified_at,qualified.expires_at);
+    const response=await state.derivationRequest('PUT',{...state.derivationInput,purpose,qualificationId:purpose,termsSha256:hash});assert.equal(response.status,200,await response.text());
+  }
+  const sequence=state.derivationRows()[0].source_after_sequence+1;state.pointer(sequence);await state.register(sequence);const queue=state.queue();
+  assert.equal(queue.cursors.length,3);assert.equal(queue.jobs.length,3);assert.equal(queue.job_sources.length,3);assert.equal(new Set(queue.jobs.map(j=>j.job_id)).size,3);
+  assert.deepEqual(queue.jobs.map(j=>j.purpose).sort(),['profile','rolling-summary','suggestion']);
+});
+test('native derivation delivery: expired jobs are erased without cursor resurrection',{timeout:60000},async t=>{
+  const state=await nativeDerivationDeliveryFixture(t),sequence=state.derivationRows()[0].source_after_sequence+1;state.pointer(sequence,undefined,new Date(Date.now()+400).toISOString());await state.register(sequence);
+  const cursor=state.queue().cursors[0];await new Promise(resolve=>setTimeout(resolve,450));state.env.FORMA_MEMORY_ENABLED='false';state.env.FORMA_MEMORY_DERIVATION_ENABLED='false';
+  await state.delivery.sweepNativeDerivationJobs(state.env);assert.deepEqual(state.queue(),{cursors:[cursor],jobs:[],job_sources:[]});
+  state.env.FORMA_MEMORY_ENABLED='true';state.env.FORMA_MEMORY_DERIVATION_ENABLED='true';await state.register(sequence);assert.deepEqual(state.queue().jobs,[]);
+});
+test('native derivation delivery: native statements compile within D1 limits',{timeout:180000},async t=>{
+  const state=await nativeDerivationDeliveryFixture(t),depth=enforceD1ExpressionDepth(state,{queryLimits:{functionArguments:32,parameters:100,sqlBytes:100000}});
+  try{await state.send('delivery-query-limits');state.due();const result=await state.run();assert.equal(result.status,'completed',JSON.stringify(result)+' '+state.controls.lastDatabaseError);assert.equal(state.queue().jobs.length,1);
+    await state.delivery.sweepNativeDerivationJobs(state.env);const inverse=await state.derivationStore.prepareDerivationWithdrawal(state.env,{actorUserId:state.current().actor_user_id},new Date().toISOString(),true);
+    assert.equal(inverse.acknowledge(await state.env.DB.batch(inverse.statements)),true);assert.deepEqual(state.queue(),{cursors:[],jobs:[],job_sources:[]});
+  }finally{depth.restore();}
+});
+test('native derivation delivery: isolated workerd D1 registration and privacy use no outbound service',{timeout:180000},async t=>{
+  const {createRequire}=await import('node:module'),{Miniflare,Log,LogLevel}=createRequire(import.meta.resolve('wrangler'))('miniflare');
+  const {exportSynthetic,install}=await import('./helpers/model3d-workerd-snapshot.mjs');let outbound=0;
+  const mf=new Miniflare({modules:true,compatibilityDate:'2026-05-15',host:'127.0.0.1',port:0,log:new Log(LogLevel.NONE),d1Databases:['MemoryDelivery'],
+    script:"export default {fetch(){return new Response('Isolated Memory delivery fixture.',{status:404});}};",outboundService(){outbound++;throw new Error('External fetch forbidden');}});
+  t.after(async()=>{await mf.dispose();assert.equal(outbound,0);});
+  const state=await nativeDerivationDeliveryFixture(t),g=state.derivationRows()[0],shortExpiry=new Date(Date.now()+5000).toISOString();
+  for(let n=1;n<=129;n++)state.pointer(g.source_after_sequence+n,undefined,n===1?shortExpiry:g.expires_at);
+  const db=await mf.getD1Database('MemoryDelivery');await install(db,exportSynthetic(state.sqlite));state.env.DB=db;
+  await state.register(g.source_after_sequence+129);assert.equal((await db.prepare('SELECT COUNT(*) AS count FROM memory_derivation_job_sources').first()).count,128);
+  await state.register(g.source_after_sequence+129);assert.equal((await db.prepare('SELECT COUNT(*) AS count FROM memory_derivation_job_sources').first()).count,129);
+  await new Promise(resolve=>setTimeout(resolve,Math.max(0,Date.parse(shortExpiry)-Date.now()+10)));await state.delivery.sweepNativeDerivationJobs(state.env);
+  assert.equal((await db.prepare('SELECT COUNT(*) AS count FROM memory_derivation_jobs').first()).count,1);
+  assert.equal((await db.prepare('SELECT registered_through_sequence FROM memory_derivation_cursors').first()).registered_through_sequence,g.source_after_sequence+129);
+  const inverse=await state.derivationStore.prepareDerivationWithdrawal(state.env,{actorUserId:g.actor_user_id},new Date().toISOString(),true);
+  assert.equal(inverse.acknowledge(await db.batch(inverse.statements)),true);assert.equal((await db.prepare('SELECT COUNT(*) AS count FROM memory_derivation_jobs').first()).count,0);
+  assert.deepEqual((await db.prepare('PRAGMA foreign_key_check').all()).results,[]);assert.equal(state.calls.length,0);
+});
+
+test('native derivation delivery: conversation bookkeeping keeps exact reference jobs',{timeout:60000},async t=>{
+  const state=await nativeDerivationDeliveryFixture(t),sequence=state.derivationRows()[0].source_after_sequence+1;state.pointer(sequence);await state.register(sequence);const before=state.queue();
+  state.sqlite.exec('UPDATE memory_live_sources SET conversation_segmented=1');assert.deepEqual(state.queue(),before);
 });

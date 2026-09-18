@@ -1789,6 +1789,63 @@ export const memoryDerivationGrants = sqliteTable("memory_derivation_grants", {
   check("memory_derivation_grant_time", sql.raw("length(consented_at)=24 AND length(expires_at)=24 AND consented_at<expires_at AND (revoked_at IS NULL OR length(revoked_at)=24 AND revoked_at>=consented_at)")),
 ]);
 
+// Durable private delivery references, not a source proof, provider request or
+// completed-summary cursor. No financial identity cascades from these rows.
+export const memoryDerivationCursors = sqliteTable("memory_derivation_cursors", {
+  consentId: text("consent_id").primaryKey().notNull(),
+  grantId: text("grant_id").notNull(),
+  grantRevision: integer("grant_revision").notNull(),
+  purpose: text("purpose").notNull(),
+  registeredThroughSequence: integer("registered_through_sequence").notNull(),
+  generation: integer("generation").notNull(),
+  createdAt: text("created_at").notNull(),
+  updatedAt: text("updated_at").notNull(),
+  expiresAt: text("expires_at").notNull(),
+}, table => [
+  foreignKey({ columns: [table.grantId, table.grantRevision], foreignColumns: [memoryDerivationGrants.grantId, memoryDerivationGrants.revision] }).onDelete("cascade"),
+  index("idx_memory_derivation_cursor_expiry").on(table.expiresAt),
+  check("memory_derivation_cursor_bounds", sql.raw("length(consent_id)=36 AND purpose IN('rolling-summary','profile','suggestion') AND typeof(grant_revision)='integer' AND grant_revision>0 AND typeof(registered_through_sequence)='integer' AND registered_through_sequence BETWEEN 0 AND 9007199254740991 AND typeof(generation)='integer' AND generation BETWEEN 0 AND 9007199254740991")),
+  check("memory_derivation_cursor_time", sql.raw("length(created_at)=24 AND length(updated_at)=24 AND length(expires_at)=24 AND created_at<=updated_at AND updated_at<expires_at")),
+]);
+
+export const memoryDerivationJobs = sqliteTable("memory_derivation_jobs", {
+  jobId: text("job_id").primaryKey().notNull(),
+  consentId: text("consent_id").notNull().references(() => memoryDerivationCursors.consentId, { onDelete: "cascade" }),
+  purpose: text("purpose").notNull(),
+  afterSequence: integer("after_sequence").notNull(),
+  throughSequence: integer("through_sequence").notNull(),
+  sourceCount: integer("source_count").notNull(),
+  createdAt: text("created_at").notNull(),
+  expiresAt: text("expires_at").notNull(),
+  state: text("state").notNull(),
+  leaseToken: text("lease_token"),
+  leaseExpiresAt: text("lease_expires_at"),
+  attempts: integer("attempts").notNull(),
+  notBefore: text("not_before").notNull(),
+  failureCode: text("failure_code"),
+}, table => [
+  index("idx_memory_derivation_job_due").on(table.notBefore, table.createdAt, table.jobId),
+  index("idx_memory_derivation_job_consent").on(table.consentId, table.afterSequence),
+  uniqueIndex("idx_memory_derivation_job_interval").on(table.consentId, table.afterSequence),
+  check("memory_derivation_job_bounds", sql.raw("length(job_id)=64 AND job_id NOT GLOB '*[^0-9a-f]*' AND length(consent_id)=36 AND purpose IN('rolling-summary','profile','suggestion') AND typeof(after_sequence)='integer' AND after_sequence>=0 AND typeof(through_sequence)='integer' AND through_sequence>after_sequence AND through_sequence<=9007199254740991 AND typeof(source_count)='integer' AND source_count BETWEEN 1 AND 128 AND typeof(attempts)='integer' AND attempts BETWEEN 0 AND 9007199254740991")),
+  check("memory_derivation_job_lease", sql.raw("(state='waiting' AND lease_token IS NULL AND lease_expires_at IS NULL) OR (state='leased' AND lease_token IS NOT NULL AND lease_expires_at IS NOT NULL AND length(lease_token)=36 AND length(lease_expires_at)=24 AND lease_expires_at<=expires_at)")),
+  check("memory_derivation_job_time", sql.raw("length(created_at)=24 AND length(expires_at)=24 AND length(not_before)=24 AND created_at<expires_at AND not_before>=created_at AND (failure_code IS NULL OR failure_code IN('native-proof-unavailable','provider-unavailable','interrupted','budget-unavailable'))")),
+]);
+
+export const memoryDerivationJobSources = sqliteTable("memory_derivation_job_sources", {
+  jobId: text("job_id").notNull().references(() => memoryDerivationJobs.jobId, { onDelete: "cascade" }),
+  enrollmentId: text("enrollment_id").notNull(),
+  eventId: text("event_id").notNull(),
+  sequence: integer("sequence").notNull(),
+  expiresAt: text("expires_at").notNull(),
+}, table => [
+  primaryKey({ columns: [table.jobId, table.eventId] }),
+  uniqueIndex("idx_memory_derivation_source_sequence").on(table.jobId, table.sequence),
+  index("idx_memory_derivation_source_inverse").on(table.enrollmentId, table.eventId),
+  foreignKey({ columns: [table.enrollmentId, table.eventId], foreignColumns: [memoryLiveSources.enrollmentId, memoryLiveSources.eventId] }).onDelete("cascade"),
+  check("memory_derivation_source_bounds", sql.raw("typeof(sequence)='integer' AND sequence BETWEEN 1 AND 9007199254740991 AND length(expires_at)=24")),
+]);
+
 export const memoryLiveConversationSegments = sqliteTable(
   "memory_live_conversation_segments",
   {

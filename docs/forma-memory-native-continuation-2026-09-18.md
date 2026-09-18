@@ -44,10 +44,17 @@ metadata-only revocation recovery, additive migration0043 and localized manual
 UI controls. This does **not** implement the paid processing or financial ledger;
 `processingImplemented:false` keeps UI enrollment inactive.
 
+## Subsequent durable reference-delivery slice
+
+[Native reference delivery](forma-memory-reference-delivery-2026-09-18.md) adds
+an exact-consent queue, source/qualification/privacy inverses, bounded catch-up
+and original-time retention. It is not provider-ready admission, paid processing,
+a completed semantic cursor or delivery of the separate Chat Studio producer.
+
 ## Remaining native implementation — still in scope
 
 1. Bind the implemented purpose-specific grants to real native callers and approved-cap/native accounting.
-2. Durable changed-scope manifests, acknowledged delivery, leased derivation jobs,
+2. Expand implemented durable reference delivery into source-proven manifests and leased derivation jobs,
    uncertain dispatch recovery and source invalidation/deletion acknowledgements.
 3. Nested project containment/reparenting and broader page/block/artifact identities.
 4. Broader original assistant sources, actual rolling-history rebase, genuine

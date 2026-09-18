@@ -40,6 +40,7 @@ import { handleAssistant, handleAssistantBillingReconciliation, handleAssistantP
 import { handlePlatformAssistant } from "./platform-assistant-api";
 import { handleLiveMemory } from "./memory-live-api.ts";
 import { handleMemoryDerivationSettings } from "./memory-derivation-api.ts";
+import { sweepNativeDerivationJobs } from "./memory-derivation-jobs.ts";
 import { sweepExpiredDerivationGrants } from "./memory-derivation-store.ts";
 import { runLiveMemoryScheduled } from "./memory-live-jobs.ts";
 import { sweepExpiredMemoryCheckpoints } from "./memory-live-checkpoints.ts";
@@ -367,7 +368,7 @@ export default {
       // Privacy cleanup is independent of profile rollout and never performs inference or enrollment.
       try { await sweepExpiredMemoryCheckpoints(env,128); }
       finally { try { await sweepExpiredDocumentProfileSuppressions(env,128); }
-        finally { await sweepExpiredDerivationGrants(env,128); } }
+        finally { try { await sweepExpiredDerivationGrants(env,128); } finally { await sweepNativeDerivationJobs(env); } } }
       // Native worker event only: the runner separately requires literal scheduling
       // admission, actor rollout and each existing background-purpose enrollment.
       await runLiveMemoryScheduled(env);
