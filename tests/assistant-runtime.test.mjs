@@ -12626,3 +12626,10 @@ test('native processing checkpoint: schema installed after absence preflight rol
   db.batch=async statements=>{if(!installed&&statements.some(s=>/^INSERT(?: OR IGNORE)? INTO memory_live_sources/u.test(s.sql))){installed++;state.sqlite.exec(migration);}return batch.call(db,statements);};t.after(()=>{db.batch=batch;});
   state.due();assert.equal((await state.run()).status,'partial');assert.equal(installed,1);assert.equal(state.current().cursor_sequence,cursor);assert.equal(state.table('memory_live_sources').length,0);
 });
+
+test('native processing checkpoint: checkpoint failure does not skip independent profile privacy maintenance',{timeout:60000},async t=>{
+  const state=await nativeCheckpointFixture(t);state.env.FORMA_MEMORY_ENABLED='false';state.env.FORMA_MEMORY_SCHEDULING_ENABLED='false';
+  state.sqlite.exec('DROP TRIGGER memory_live_checkpoint_source_deleted');const db=state.env.DB,batch=db.batch;let profileSweeps=0;
+  db.batch=async statements=>{if(statements.some(s=>s.sql.includes("json('document_profile_schema_unavailable')")))profileSweeps++;return batch.call(db,statements);};t.after(()=>{db.batch=batch;});
+  await assert.rejects(()=>worker.scheduled({},state.env),/checkpoint-schema-unavailable/);assert.ok(profileSweeps>0);
+});
