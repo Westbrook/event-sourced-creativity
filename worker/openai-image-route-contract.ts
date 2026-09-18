@@ -25,7 +25,7 @@ export const OPENAI_IMAGE_DIRECTION_CONTRACT = freeze({
 } as const);
 export const OPENAI_IMAGE_GENERATION_CONTRACT = freeze({
   api: "https://api.openai.com/v1/images/generations",
-  defaults: { model: "gpt-image-2", quality: "high", size: "1536x1024", outputFormat: "png", outputCompression: 100, partialImages: 0 },
+  defaults: { model: "gpt-image-2.5-sunburst", quality: "high", size: "1536x1024", outputFormat: "png", outputCompression: 100, partialImages: 0 },
   outputCount: 1,
 } as const);
 export const OPENAI_IMAGE_MODERATION_CONTRACT = freeze({

@@ -16,6 +16,11 @@ export type ProviderFailureDetail = {
   contributingBlockIds?: string[];
   contributingReferenceIds?: string[];
   probe?: string;
+  moderationReceipt?: {
+    available: boolean; flagged: boolean; categories: string[]; scores: Record<string, number>;
+    model: string; requestId: string | null; requestIds: string[]; probeCount: number;
+    latencyMs: number; coverage: string; referenceIds: string[]; promptNormalization?: string;
+  };
   validationIssues?: PresentationCandidateValidationIssue[];
 };
 

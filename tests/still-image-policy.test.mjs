@@ -10,7 +10,7 @@ test('Still pins GPT-image for plain images and reference edits without changing
   const pinned = stillImageEnvironment(env,'still',{stillImageProvider:'openai'});
   for (const references of [[], [{}], [{}, {}]]) {
     assert.equal(selectImageAdapter(pinned,{references}).provider,'openai');
-    assert.equal(selectImageAdapter(pinned,{references}).model,'gpt-image-2');
+    assert.equal(selectImageAdapter(pinned,{references}).model,'gpt-image-2.5-sunburst');
   }
   assert.equal(pinned.FAL_AUDIO_MODEL,env.FAL_AUDIO_MODEL);
   assert.equal(pinned.FAL_VIDEO_MODEL,env.FAL_VIDEO_MODEL);

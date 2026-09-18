@@ -650,11 +650,11 @@ export class StillApp extends LitElement {
     return html`<section class="form-page">${p.projectName ? html`<span class="eyebrow">${p.projectName}</span>` : nothing}<h1>${titles[mode] ?? 'New idea'}</h1>${named ? this.field('Name', this.titleDraft, v => { this.titleDraft = v; }, 1) : nothing}${mode === 'add-context' ? html`<en-select class="select-label" label="Type" .value=${this.kindDraft} @en-change=${(e: CustomEvent<{proposed:string;value:string}>) => { this.kindDraft = e.detail.proposed; }}>${blockKinds.map(k => html`<en-select-option value=${k}>${k[0].toUpperCase() + k.slice(1)}</en-select-option>`)}</en-select>` : nothing}${mode !== 'rename' ? this.field(mode === 'intent' ? 'Your direction' : mode === 'edit-artifact' ? 'Writing' : 'Idea', this.bodyDraft, v => { this.bodyDraft = v; }, mode === 'edit-artifact' ? 16 : 6, '') : nothing}<div class="form-actions">${this.button(mode === 'intent' ? 'Suggest actions' : this.client.hasUnconfirmedWrite ? 'Check save' : 'Save', () => void this.run(() => this.save()), true)}${this.button('Back', () => this.closeMode())}</div></section>`;
   }
   private paletteButton(entry:PaletteFeedback['entry']) { return html`<en-button data-action-id="ui:palette" variant="ghost" size="medium" aria-keyshortcuts="Meta+K Control+K" .disabled=${this.busy||this.composing} @click=${()=>this.openFinder(entry)}>Palette<en-badge slot="suffix" variant="neutral">⌘+K</en-badge></en-button>`; }
-  private compactDock(options:{id:string;label:string;run:()=>void;variant?:Emphasis['variant'];disabled?:boolean}[]) {
+  private compactDock(options:{id:string;label:string;run:()=>void;variant?:Emphasis['variant'];disabled?:boolean}[],menuLabel='Menu') {
     const shown=options.slice(0,this.pageActionLimit-1),rest=options.slice(shown.length);
     return html`<footer class="action-dock" @pointerdown=${()=>{this.dockTouched=true;if(this.mode==='generate')this.formatTouched=true;}} @focusin=${()=>{this.dockTouched=true;if(this.mode==='generate')this.formatTouched=true;}}><en-toolbar label="Your next step" keyboard-navigation="tab">
       ${shown.map(option=>this.button(option.label,option.run,false,!!option.disabled,option.id,option.variant??'secondary'))}
-      ${rest.length?html`<en-button id="still-compact-menu" variant="ghost" size="medium" .disabled=${this.busy||this.composing}>Menu</en-button>`:nothing}
+      ${rest.length?html`<en-button id="still-compact-menu" variant="ghost" size="medium" .disabled=${this.busy||this.composing}>${menuLabel}</en-button>`:nothing}
     </en-toolbar>${rest.length?html`<en-menu for="still-compact-menu" label="More actions" @en-action=${(event:CustomEvent<{action:string}>)=>{const option=rest.find(x=>x.id===event.detail.action);if(option&&!option.disabled&&!this.busy&&!this.composing)option.run();}}>
       ${rest.map(option=>html`<en-menu-item action=${option.id} ?disabled=${option.disabled}>${option.label}${option.id==='ui:palette'?html`<en-badge slot="suffix" variant="neutral">⌘+K</en-badge>`:nothing}</en-menu-item>`)}
     </en-menu>`:nothing}</footer>`;
@@ -666,7 +666,7 @@ export class StillApp extends LitElement {
     if(this.pageActionLimit<3){
       const emphasis=presentToolbar(ordered.slice(0,3),this.formatEmphasis);
       const choices=g?[{id:'ui:generate',label:g.recoveryClosed?'Review another':g.attempted?'Check generation':g.format==='scene'&&!g.scenePreview?'Check cost':this.generationGate?(this.generationGate.key?'Continue':'Blocked'):'Generate',run:()=>void this.run(()=>this.generate()),variant:'primary' as const,disabled:!!this.generationGate&&!this.generationGate.key}]:ordered.map(id=>({id,label:FORMATS[id],run:()=>{this.formatTouched=true;void this.startGeneration(id);},variant:emphasis[id]?.variant??'secondary' as const}));
-      return this.compactDock([...choices,{id:'ui:back',label:'Back',run:()=>this.closeMode(),variant:'ghost'}]);
+      return this.compactDock([...choices,{id:'ui:back',label:'Back',run:()=>this.closeMode(),variant:'ghost'}],g?'Menu':'Other outputs');
     }
     const suggested=ordered.slice(0,Math.min(3,this.pageActionLimit-2));
     const remaining=ordered.filter(id=>!suggested.includes(id));
@@ -674,11 +674,11 @@ export class StillApp extends LitElement {
       <en-toolbar label="Your next step" keyboard-navigation="tab">
         ${g?this.button(g.recoveryClosed?'Review another':g.attempted?'Check generation':g.format==='scene'&&!g.scenePreview?'Check cost':this.generationGate?(this.generationGate.key?'Continue':'Blocked'):'Generate',()=>void this.run(()=>this.generate()),true,!!this.generationGate&&!this.generationGate.key):html`
           ${suggested.map(id=>this.suggestedButton({...ACTIONS.find(a=>a.id===id)!,label:FORMATS[id]},true,presentToolbar(suggested,this.formatEmphasis)))}
-          ${remaining.length?html`<en-button id="still-format-menu" variant="ghost" size="medium" ?disabled=${this.busy||this.composing}>Menu</en-button>`:nothing}
+          ${remaining.length?html`<en-button id="still-format-menu" variant="ghost" size="medium" ?disabled=${this.busy||this.composing}>Other outputs</en-button>`:nothing}
         `}
         ${this.button('Back',()=>this.closeMode())}
       </en-toolbar>
-      ${!g&&remaining.length?html`<en-menu for="still-format-menu" label="Other formats" @en-action=${this.selectMenuFormat}>${remaining.map(id=>html`<en-menu-item action=${id}>${FORMATS[id]}</en-menu-item>`)}</en-menu>`:nothing}
+      ${!g&&remaining.length?html`<en-menu for="still-format-menu" label="Other outputs" @en-action=${this.selectMenuFormat}>${remaining.map(id=>html`<en-menu-item action=${id}>${FORMATS[id]}</en-menu-item>`)}</en-menu>`:nothing}
     </footer>`;
   }
   private renderDock() {
@@ -761,7 +761,8 @@ export class StillApp extends LitElement {
     </en-toast-region>`;
   }
   render() {
-    const c = this.client, running = c.jobs.filter(j => activeJobs.has(j.status) && j.documentId === c.position.documentId), failed = c.jobs.find(j => j.status === 'failed' && !j.dismissedAt && j.documentId === c.position.documentId);
+    const c = this.client, displayedGeneration = !this.loading && !this.mode && c.position.view === 'generation' ? c.position.outputId : '';
+    const running = c.jobs.filter(j => activeJobs.has(j.status) && j.documentId === c.position.documentId && !(j.jobId === displayedGeneration && generationFormat(j))), failed = c.jobs.find(j => j.status === 'failed' && !j.dismissedAt && j.documentId === c.position.documentId);
     return html`<div class=${this.developer?'still-layout has-developer':'still-layout'}><div class="still-shell"><header class="masthead"><a class="wordmark" href=${this.viewURL('projects',{projectId:'',documentId:''})} aria-label="Still home" @click=${this.home}>still<span aria-hidden="true">.</span></a><span class="working-status" role="status" aria-live="polite">${this.busy ? 'Working…' : ''}</span><span class="session-status">${c.session?.impersonation ? 'Preview · read only' : c.session && !c.abilities.author ? 'Read only' : ''}</span></header><div class="feedback-strip">${running.length ? html`<aside class="job-status" role="status"><i></i>${generationFormat(running[0])?html`<a href=${this.viewURL('generation',{outputId:running[0].jobId})} @click=${(e:MouseEvent)=>this.follow(e,'generation',{outputId:running[0].jobId})}>${running[0].progressMessage || 'Generating…'}</a>`:running[0].progressMessage||'Working…'}${running.length > 1 ? ` · ${running.length} in progress` : ''}</aside>` : nothing}</div><main id="still-content" aria-busy=${this.loading}>${this.renderCanvas()}</main>${this.renderDock()}${this.renderPalette()}</div>${this.developer ? html`<aside class="developer-panel" aria-label="Developer panel"><still-developer-console @developer-density=${this.setDensity} @developer-experiment=${this.experiment} @developer-disable=${()=>this.setDeveloper(false)}></still-developer-console></aside>` : nothing}${new URL(location.href).searchParams.has('progress-report') ? html`<a class="progress-return" href=${REPORT_URL}>Progress Report ↗</a>` : nothing}</div>${this.renderNotifications(failed)}`;
   }
 }
