@@ -1,8 +1,13 @@
 import { MAX_OUTPUT_ASSET_BYTES } from "../src/model/output-asset-inspection.ts";
 import {
-  assertGuestImageResultInventoryCurrent, guestImageResultInventoryBounds, guestImageResultInventoryData,
-  guestImageResultInventoryProducerMetadata, type GuestImageResultInventory,
+  admitGuestImageResultInventoryMedia, assertGuestImageResultInventoryCurrent, guestImageResultInventoryAccountingKey,
+  guestImageResultInventoryBounds, guestImageResultInventoryData, guestImageResultInventoryProducerMetadata,
+  type GuestImageResultInventory,
 } from "./experience-guest-image-result-inventory.ts";
+import {
+  assertGuestImageResultClaimResourceLocal, assertGuestImageResultClaimSourceCurrent,
+  guestImageResultClaimSourceResource, type GuestImageResultClaimSource,
+} from "./experience-guest-image-result-claim-source.ts";
 import type { WorkerEnv } from "./runtime.ts";
 
 /** Cumulative admission limits for one original inventory, never replenished by
@@ -16,6 +21,9 @@ export const GUEST_IMAGE_RESULT_MEDIA_LIMITS = Object.freeze({
 });
 type Charge = keyof typeof GUEST_IMAGE_RESULT_MEDIA_LIMITS;
 type BufferState = { users: number };
+type MediaSource = Readonly<{ kind: "inventory"; inventory: GuestImageResultInventory }>
+  | Readonly<{ kind: "leased"; source: GuestImageResultClaimSource;
+    capture: ReturnType<typeof guestImageResultClaimSourceResource> }>;
 const unavailable = () => new Error("guest_image_result_media_operation_unavailable");
 const ownerToken = Symbol("guest-image-result-media-owner");
 const fillBytes = Uint8Array.prototype.fill;
@@ -27,7 +35,7 @@ class MediaOperation {
   readonly #request: Request;
   readonly #env: WorkerEnv;
   readonly #database: WorkerEnv["DB"];
-  readonly #inventory: GuestImageResultInventory;
+  readonly #source: MediaSource;
   readonly #signal: AbortSignal;
   readonly #deadline: number;
   readonly #expiresAtMs: number;
@@ -40,14 +48,15 @@ class MediaOperation {
   #timer: ReturnType<typeof setTimeout> | undefined;
   #stopped = false;
 
-  constructor(token: typeof ownerToken, request: Request, env: WorkerEnv, inventory: GuestImageResultInventory) {
+  constructor(token: typeof ownerToken, request: Request, env: WorkerEnv, source: MediaSource) {
     if (token !== ownerToken) throw unavailable();
-    const bounds = guestImageResultInventoryBounds(request, env, inventory);
-    const data = guestImageResultInventoryData(request, env, inventory);
-    this.#request = request; this.#env = env; this.#database = env.DB; this.#inventory = inventory;
+    const bounds = source.kind === "inventory" ? guestImageResultInventoryBounds(request, env, source.inventory) : source.capture.bounds;
+    const manifest = source.kind === "inventory" ? guestImageResultInventoryData(request, env, source.inventory).manifest : source.capture.manifest;
+    const producer = source.kind === "inventory" ? guestImageResultInventoryProducerMetadata(request, env, source.inventory) : source.capture.producerMetadata;
+    this.#request = request; this.#env = env; this.#database = env.DB; this.#source = source;
     this.#signal = request.signal; this.bucket = env.MEDIA;
-    this.manifest = data.manifest;
-    this.producer = guestImageResultInventoryProducerMetadata(request, env, inventory);
+    this.manifest = manifest;
+    this.producer = producer;
     this.#expiresAtMs = bounds.expiresAtMs;
     this.#deadline = Math.min(bounds.monotonicDeadline, performance.now() + bounds.expiresAtMs - Date.now());
     this.#abort = () => this.stop();
@@ -70,7 +79,8 @@ class MediaOperation {
         || performance.now() >= this.#deadline || Date.now() >= this.#expiresAtMs) throw unavailable();
       // This is only the original brand/request/context/lifetime fence. Database
       // currentness is separately proved by fullProof at every disclosure gate.
-      guestImageResultInventoryData(this.#request, this.#env, this.#inventory);
+      if (this.#source.kind === "inventory") guestImageResultInventoryData(this.#request, this.#env, this.#source.inventory);
+      else assertGuestImageResultClaimResourceLocal(this.#request, this.#env, this.#source.capture.resource);
     } catch (error) { this.stop(); throw error; }
   }
 
@@ -116,7 +126,9 @@ class MediaOperation {
 
   fullProof(): Promise<void> {
     this.charge("proofs");
-    return this.wait(() => assertGuestImageResultInventoryCurrent(this.#request, this.#env, this.#inventory));
+    return this.wait(() => this.#source.kind === "inventory"
+      ? assertGuestImageResultInventoryCurrent(this.#request, this.#env, this.#source.inventory)
+      : assertGuestImageResultClaimSourceCurrent(this.#request, this.#env, this.#source.source));
   }
 
   own(bytes: Uint8Array<ArrayBuffer>): Uint8Array<ArrayBuffer> {
@@ -163,20 +175,51 @@ class MediaOperation {
 }
 
 export type GuestImageResultMediaOperation = MediaOperation;
-const operations = new WeakMap<GuestImageResultInventory, { request: Request; env: WorkerEnv; operation: MediaOperation }>();
+type CapturedOperation = { request: Request; env: WorkerEnv;
+  source: GuestImageResultInventory | GuestImageResultClaimSource; operation: MediaOperation };
+const operations = new WeakMap<object, CapturedOperation>();
+const sourceOperations = new WeakMap<GuestImageResultInventory | GuestImageResultClaimSource, CapturedOperation>();
 
 /** There is exactly one terminal accounting owner per genuine inventory. A
  * repeated request cannot replace its lifetime, bucket, resources or budget. */
 export function guestImageResultMediaOperation(request: Request, env: WorkerEnv, inventory: GuestImageResultInventory): GuestImageResultMediaOperation {
-  const captured = operations.get(inventory);
+  const captured = sourceOperations.get(inventory);
   if (captured) {
     // A foreign caller cannot retire another request's owner. For the original
     // caller, any observed identity/expiry failure is terminal even if the
     // mutable environment or clock is subsequently restored.
-    if (captured.request !== request || captured.env !== env) throw unavailable();
+    if (captured.request !== request || captured.env !== env || captured.source !== inventory) throw unavailable();
     captured.operation.check(); return captured.operation;
   }
-  const operation = new MediaOperation(ownerToken, request, env, inventory);
-  operations.set(inventory, { request, env, operation });
+  const accountingKey = guestImageResultInventoryAccountingKey(request, env, inventory);
+  if (operations.has(accountingKey)) throw unavailable();
+  const admission = admitGuestImageResultInventoryMedia(request, env, inventory);
+  if (admission.accountingKey !== accountingKey) throw unavailable();
+  const operation = new MediaOperation(ownerToken, request, env, { kind: "inventory", inventory });
+  const entry = { request, env, source: inventory, operation };
+  operations.set(accountingKey, entry); sourceOperations.set(inventory, entry);
+  operation.check(); return operation;
+}
+
+/** A leased source shares the inventory's original accounting identity. Its
+ * local resource fence outlives phase retirement only for already owned bytes;
+ * fullProof always checks the closed leased source itself. */
+export function guestImageResultLeasedMediaOperation(request: Request, env: WorkerEnv,
+  source: GuestImageResultClaimSource): GuestImageResultMediaOperation {
+  const captured = sourceOperations.get(source);
+  if (captured) {
+    if (captured.request !== request || captured.env !== env || captured.source !== source) throw unavailable();
+    // A retired phase may not acquire its retained resource again. Checking the
+    // resource before that refusal still makes lifetime/context failures stop
+    // bytes immediately, without treating phase-only refusal as resource loss.
+    captured.operation.check();
+    guestImageResultClaimSourceResource(request, env, source);
+    return captured.operation;
+  }
+  const capture = guestImageResultClaimSourceResource(request, env, source);
+  if (operations.has(capture.accountingKey)) throw unavailable();
+  const operation = new MediaOperation(ownerToken, request, env, { kind: "leased", source, capture });
+  const entry = { request, env, source, operation };
+  operations.set(capture.accountingKey, entry); sourceOperations.set(source, entry);
   operation.check(); return operation;
 }
