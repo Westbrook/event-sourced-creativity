@@ -73,6 +73,12 @@ fresh source access from execution authority. A retained job can be inspected
 after execution expiry without renewing its lease or granting another provider
 call. Durable semantic storage and public consumers are still not implemented.
 
+[Canonical manifests and publication receipts](forma-memory-native-manifests-2026-09-18.md)
+now capture complete provider-input provenance, preserve original retention across
+fresh reads, and bind publication preparation to verified provider usage. This
+format and its native proof are implemented; durable result rows, dependency
+indexes and erasure transactions are **still to implement**.
+
 ## Remaining native implementation — still in scope
 
 1. Complete the durable worker consumer around the implemented purpose/source-bound

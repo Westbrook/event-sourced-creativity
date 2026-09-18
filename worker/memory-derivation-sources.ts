@@ -18,8 +18,19 @@ type Query = { sql: string; bindings: (string | number | null)[] };
 export type NativeDerivationObservation = Readonly<{ eventId: string; sequence: number; eventType: string; action: MemoryAction;
   recordedAt: string; scopeKey: string; blockPointer: string | null; expiresAt: string; independentEvidence: false }>;
 type Backing = { streamId: string; eventId: string; sequence: number; contentRef: string; contentHash: string; turnId: string };
+export type NativeDerivationProvenance = {
+  /** Hashes and private inverse keys, never a persisted access grant. */
+  events: { streamId: string; eventId: string; sequence: number; sha256: string }[];
+  turns: { actorUserId: string; scopeKey: string; turnId: string; sha256: string }[];
+  paid: { taskId: string; turnId: string; consentRef: string; consentSha256: string; resultRef: string;
+    bindingHash: string; intentHash: string; ancestry: PaidMemoryAncestryEntry[] }[];
+  sourceRowsSha256: string;
+};
 type CaptureData = { jobId: string; purpose: MemoryDerivationSourcePurpose; scopeKey: string; checkedAt: string; validUntil: string;
+  binding: { actorUserId: string; consentId: string; grantId: string; grantRevision: number; enrollmentId: string;
+    enrollmentRevision: number; termsSha256: string; afterSequence: number; throughSequence: number };
   retentionCeiling: string; originals: MemoryDerivationSource[]; originalBacking: Backing[]; observations: NativeDerivationObservation[];
+  provenance: NativeDerivationProvenance;
   coverage: { queuedReferences: number; originalPairs: number; typedObservations: number; allReferencesCaptured: true; semanticComplete: false } };
 type MemoryDerivationSourcePurpose = ReturnType<typeof nativeDerivationEvidenceInputs>["grant"]["purpose"];
 declare const issuedCapture: unique symbol;
@@ -124,13 +135,13 @@ export async function captureNativeDerivationSources(env: WorkerEnv, lease: Nati
     const paidSizes = expected.length ? await read({ sql: `SELECT task.task_id,length(CAST(approved.content AS BLOB)) AS bytes ${paidFrom} ORDER BY task.task_id LIMIT 65`, bindings: paidBindings }) : [];
     if (paidSizes.length > expected.length || paidSizes.some(row => !derivationInteger(row.bytes))) return unavailable();
     if (paidSizes.reduce((sum, row) => sum + Number(row.bytes), 0) > 524288) return capacity();
-    const paid = paidSizes.length ? await read({ sql: `SELECT task.task_id,task.turn_id,execution.binding_hash,execution.intent_hash,approved.content_id,approved.content,
+    const paid = paidSizes.length ? await read({ sql: `SELECT task.task_id,task.turn_id,execution.binding_hash,execution.intent_hash,execution.result_ref,approved.content_id,approved.content,
       approved.expires_at,approved.redacted_at,approved.kind ${paidFrom}
       WHERE EXISTS(SELECT 1 FROM json_each(?) measured WHERE json_extract(measured.value,'$.task_id')=task.task_id
         AND json_extract(measured.value,'$.bytes')=length(CAST(approved.content AS BLOB)))
       ORDER BY task.task_id LIMIT 65`, bindings: [...paidBindings, JSON.stringify(paidSizes)] }) : [];
     if (paid.length !== paidSizes.length || paid.some((row, index) => row.task_id !== paidSizes[index]!.task_id || typeof row.content !== "string"
-      || bytes(row.content) !== paidSizes[index]!.bytes || row.kind !== "execution-consent" || row.redacted_at !== null)) return unavailable();
+      || bytes(row.content) !== paidSizes[index]!.bytes || row.kind !== "execution-consent" || row.redacted_at !== null || !derivationId(row.result_ref))) return unavailable();
     const groups: { turnId: string; entries: PaidMemoryAncestryEntry[] }[] = [];
     for (const row of paid) {
       const decoded = await decodeRetainedSpecialistConsent(String(row.content), { binding_hash: String(row.binding_hash), intent_hash: String(row.intent_hash) },
@@ -190,7 +201,23 @@ export async function captureNativeDerivationSources(env: WorkerEnv, lease: Nati
     if (bytes(JSON.stringify(originals)) > 460000 || new Set(originals.map(source => source.sourceId)).size !== originals.length) return capacity();
     const retentionCeiling = [...ceilings, ...originals.map(row => row.expiresAt), ...observations.map(row => row.expiresAt)].sort()[0]!;
     const validUntil = [input.validUntil, retentionCeiling].sort()[0]!;
-    const data: CaptureData = { jobId: job.job_id, purpose: g.purpose, scopeKey, checkedAt, validUntil, retentionCeiling, originals, originalBacking, observations,
+    // Keep every input, including uncited originals and observations. These
+    // descriptors enable later exact manifest comparison and targeted erasure;
+    // they do not replace fresh native custody, access or negative-ancestry proofs.
+    const provenance: NativeDerivationProvenance = {
+      events: await Promise.all([...rows, ...messages].map(async row => ({ streamId: a.binding.streamId,
+        eventId: String(row.event_id), sequence: Number(row.sequence), sha256: await memoryDigest(String(row.event_json)) }))),
+      turns: await Promise.all(conversations.map(async row => ({ actorUserId: e.actor_user_id, scopeKey: a.scopeKey,
+        turnId: String(row.turn_id), sha256: await memoryDigest(String(row.turn_json)) }))),
+      paid: await Promise.all(paid.map(async row => ({ taskId: String(row.task_id), turnId: String(row.turn_id),
+        consentRef: String(row.content_id), consentSha256: await memoryDigest(String(row.content)), resultRef: String(row.result_ref),
+        bindingHash: String(row.binding_hash), intentHash: String(row.intent_hash), ancestry: groups.find(group => group.turnId === row.turn_id)!.entries }))),
+      sourceRowsSha256: await memoryDigest(memoryCanonical({ rows, messages, paid })),
+    };
+    const data: CaptureData = { jobId: job.job_id, purpose: g.purpose, scopeKey, checkedAt, validUntil, retentionCeiling, originals, originalBacking, observations, provenance,
+      binding: { actorUserId: e.actor_user_id, consentId: g.consent_id, grantId: g.grant_id, grantRevision: g.revision,
+        enrollmentId: e.enrollment_id, enrollmentRevision: g.enrollment_revision, termsSha256: g.terms_sha256,
+        afterSequence: job.after_sequence, throughSequence: job.through_sequence },
       coverage: { queuedReferences: rows.length, originalPairs: originals.length / 2, typedObservations: observations.length, allReferencesCaptured: true, semanticComplete: false } };
     witness.before(validUntil); witness.seal(data);
     const captured: Captured = { env, db, lease, validUntil, witness }, handle = Object.freeze({}) as NativeDerivationSourceCapture;

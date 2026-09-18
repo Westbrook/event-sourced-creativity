@@ -13182,6 +13182,14 @@ for(const shared of [false,true])for(const paid of [false,true])test('native der
   assert.equal(value.originalBacking[0].contentRef,state.sqlite.prepare('SELECT user_content_ref FROM assistant_turns WHERE turn_id=?').get(turn.id).user_content_ref);
   assert.equal(value.coverage.semanticComplete,false);assert.equal(value.coverage.originalPairs,1);assert.equal(value.coverage.allReferencesCaptured,true);
   assert.ok(value.scopeKey.includes(state.current().actor_user_id));assert.equal(await sources.replayNativeDerivationSources(state.env,captured.capture),true);
+  const manifests=await import('../worker/memory-derivation-manifest.ts'),manifest=await manifests.captureNativeDerivationManifest(state.env,captured.capture);assert.ok(manifest);
+  const persisted=manifests.nativeDerivationManifestInputs(state.env,manifest);assert.equal(persisted.manifest.originals.length,2);
+  assert.equal(persisted.manifest.provenance.events.length,2);assert.equal(persisted.manifest.provenance.turns.length,1);
+  assert.equal(persisted.manifest.provenance.paid.length,Number(paid));assert.equal(persisted.serialized.includes(message),false);
+  assert.equal(persisted.manifest.expiresAt,value.retentionCeiling);assert.ok(persisted.manifest.expiresAt>value.validUntil);
+  if(paid){const provenance=persisted.manifest.provenance.paid[0],execution=state.sqlite.prepare('SELECT * FROM consequential_executions WHERE execution_id=?').get(provenance.taskId);
+    assert.equal(provenance.consentRef,execution.consent_ref);assert.equal(provenance.resultRef,execution.result_ref);const consent=JSON.parse(state.sqlite.prepare('SELECT content FROM private_content WHERE content_id=?').get(execution.consent_ref).content);
+    assert.deepEqual(provenance.ancestry,[...consent.binding.request.conversation.map(({turnId,userRef,answerRef})=>({turnId,userRef,answerRef})),{turnId:turn.id,userRef:consent.binding.request.turn.user_content_ref,answerRef:consent.binding.request.turn.assistant_content_ref}]);}
   const statements=sources.nativeDerivationSourceStatements(state.env,captured.capture);assert.ok(statements.length<=32);await state.env.DB.batch(statements);
   value.originals[0].text='forged';assert.equal(sources.nativeDerivationSourceInputs(state.env,captured.capture).originals[0].text,message);
   assert.throws(()=>sources.nativeDerivationSourceInputs(state.env,{}),/source-unavailable/);
@@ -13271,6 +13279,10 @@ test('native derivation sources: typed observations remain separate from human q
   const value=sources.nativeDerivationSourceInputs(state.env,captured.capture);assert.equal(value.originals.length,2);assert.equal(value.observations.length,1);
   assert.equal(value.observations[0].action,'encounter');assert.equal(value.observations[0].independentEvidence,false);assert.equal(Object.hasOwn(value.observations[0],'text'),false);
   assert.equal(value.coverage.queuedReferences,2);assert.equal(value.coverage.semanticComplete,false);assert.equal(state.queue().jobs.length,1,'capture is not completion');
+  const manifests=await import('../worker/memory-derivation-manifest.ts'),handle=await manifests.captureNativeDerivationManifest(state.env,captured.capture);assert.ok(handle);
+  const manifest=manifests.nativeDerivationManifestInputs(state.env,handle).manifest;
+  assert.deepEqual(manifest.observations,value.observations);assert.equal(manifest.provenance.events.length,3);
+  assert.ok(manifest.provenance.events.some(event=>event.eventId===value.observations[0].eventId));
 });
 for(const count of [64,65])test('native derivation sources: whole-job '+count+' pair capacity never silently truncates',{timeout:180000},async t=>{
   const state=await nativeDerivationDeliveryFixture(t),admission=await import('../worker/memory-derivation-admission.ts'),sources=await import('../worker/memory-derivation-sources.ts');
@@ -13283,6 +13295,8 @@ for(const count of [64,65])test('native derivation sources: whole-job '+count+' 
   const captured=await sources.captureNativeDerivationSources(state.env,lease);assert.equal(captured.status,count===64?'captured':'capacity',state.controls.lastDatabaseError);
   if(count===64){const data=sources.nativeDerivationSourceInputs(state.env,captured.capture);assert.equal(data.originals.length,128);assert.equal(data.coverage.originalPairs,64);assert.equal(data.coverage.queuedReferences,64);
     assert.ok(sources.nativeDerivationSourceStatements(state.env,captured.capture).length<=32);
+    const manifests=await import('../worker/memory-derivation-manifest.ts'),manifest=await manifests.captureNativeDerivationManifest(state.env,captured.capture);assert.ok(manifest);
+    assert.equal(manifests.nativeDerivationManifestInputs(state.env,manifest).manifest.originals.length,128);
   }
   assert.equal(state.queue().jobs.length,1);assert.equal(state.queue().job_sources.length,count,'all original pointers remain, including the 65th pair');
 });
@@ -13583,8 +13597,12 @@ test('native derivation sources: isolated workerd D1 proves paid shared original
   const captured=await sources.captureNativeDerivationSources(env,lease);assert.equal(captured.status,'captured');
   assert.equal(sources.nativeDerivationSourceInputs(env,captured.capture).originals.length,2);await db.batch(sources.nativeDerivationSourceStatements(env,captured.capture));
   assert.equal(await sources.replayNativeDerivationSources(env,captured.capture),true);
+  const manifests=await import('../worker/memory-derivation-manifest.ts'),handle=await manifests.captureNativeDerivationManifest(env,captured.capture);assert.ok(handle);
+  const persisted=manifests.nativeDerivationManifestInputs(env,handle);assert.equal(persisted.manifest.provenance.paid.length,1);
+  await db.batch(manifests.nativeDerivationManifestStatements(env,handle));
   await db.prepare('UPDATE organization_memberships SET revoked_at=? WHERE user_id=?').bind(new Date().toISOString(),state.current().actor_user_id).run();
   assert.equal(await sources.replayNativeDerivationSources(env,captured.capture),false);assert.equal(state.calls.length,0);
+  assert.equal(await manifests.revalidateNativeDerivationManifest(env,captured.capture,persisted.serialized),null);
 });
 test('native derivation delivery: isolated workerd D1 registration, admission and privacy use no outbound service',{timeout:180000},async t=>{
   const {createRequire}=await import('node:module'),{Miniflare,Log,LogLevel}=createRequire(import.meta.resolve('wrangler'))('miniflare');
@@ -14036,4 +14054,79 @@ test('native derivation evidence: isolated D1 read proof is non-mutating and act
   assert.equal(await state.admission.replayNativeDerivationLease(state.env,observed),false);
   assert.deepEqual((await db.prepare('SELECT * FROM memory_derivation_jobs').all()).results,before.results);
   assert.equal((await db.prepare('SELECT COUNT(*) AS n FROM memory_derivation_finance').first()).n,0);assert.equal(state.calls.length,0);
+});
+
+for(const shared of [false,true])test('native derivation manifest: stable full-input data survives proof expiry without renewing original retention '+shared,{timeout:60000},async t=>{
+  const state=await nativeDerivationExecutionFixture(t,{shared}),manifests=await import('../worker/memory-derivation-manifest.ts');
+  const handle=await manifests.captureNativeDerivationManifest(state.env,state.executionCapture);assert.ok(handle);
+  const saved=manifests.nativeDerivationManifestInputs(state.env,handle),before=state.queue(),money=adaptiveReentryFinancialState(state);
+  assert.ok(saved.manifest.expiresAt>state.sources.nativeDerivationSourceInputs(state.env,state.executionCapture).validUntil);
+  assert.equal(saved.manifest.originals.length,2);assert.equal(saved.manifest.coverage.semanticComplete,false);
+  assert.equal(saved.manifest.binding.actorUserId,state.current().actor_user_id);
+  saved.manifest.originals.pop();assert.equal(manifests.nativeDerivationManifestInputs(state.env,handle).manifest.originals.length,2);
+  t.mock.timers.enable({apis:['Date'],now:Date.now()+360000});
+  assert.throws(()=>manifests.nativeDerivationManifestInputs(state.env,handle),/unavailable/);
+  const read=await state.admission.observeNativeDerivationJob(state.env,state.current().actor_user_id,state.executionJob.job_id);assert.ok(read);
+  const capture=await state.sources.captureNativeDerivationSources(state.env,read);assert.equal(capture.status,'captured');
+  const revalidated=await manifests.revalidateNativeDerivationManifest(state.env,capture.capture,saved.serialized);assert.ok(revalidated,state.controls.lastDatabaseError);
+  assert.equal(manifests.nativeDerivationManifestInputs(state.env,revalidated).serialized,saved.serialized);
+  assert.equal(await state.admission.replayNativeDerivationLease(state.env,read),false);
+  assert.deepEqual(state.queue(),before);assert.deepEqual(adaptiveReentryFinancialState(state),money);assert.equal(state.calls.length,0);
+});
+
+for(const mutation of ['uncited-source','retention','extra-field','duplicate-key','observation','ancestry','corrupt','oversize'])
+test('native derivation manifest: saved '+mutation+' cannot mint fresh authority',{timeout:60000},async t=>{
+  const state=await nativeDerivationExecutionFixture(t),manifests=await import('../worker/memory-derivation-manifest.ts');
+  const handle=await manifests.captureNativeDerivationManifest(state.env,state.executionCapture);assert.ok(handle);
+  const saved=manifests.nativeDerivationManifestInputs(state.env,handle),value=JSON.parse(saved.serialized);
+  if(mutation==='uncited-source')value.originals.pop();
+  if(mutation==='retention')value.expiresAt=new Date(Date.parse(value.expiresAt)+86400000).toISOString();
+  if(mutation==='extra-field')value.authorized=true;
+  if(mutation==='observation')value.observations.push({action:'consume',independentEvidence:true});
+  if(mutation==='ancestry')value.provenance.paid.push({consentRef:'forged-consent'});
+  const {memoryCanonical}=await import('../worker/memory-sql.ts');let serialized=memoryCanonical(value);
+  if(mutation==='duplicate-key')serialized=serialized.replace('"jobId":','"jobId":"forged","jobId":');
+  if(mutation==='corrupt')serialized='not json';if(mutation==='oversize')serialized='x'.repeat(256*1024+1);
+  assert.equal(await manifests.revalidateNativeDerivationManifest(state.env,state.executionCapture,serialized),null);
+  assert.ok(await manifests.revalidateNativeDerivationManifest(state.env,state.executionCapture,saved.serialized));
+});
+
+test('native derivation manifest: handles bind environment, DB and exact capture; final write replay rejects stale input',{timeout:60000},async t=>{
+  const state=await nativeDerivationExecutionFixture(t),manifests=await import('../worker/memory-derivation-manifest.ts');
+  const handle=await manifests.captureNativeDerivationManifest(state.env,state.executionCapture);assert.ok(handle);
+  assert.throws(()=>manifests.nativeDerivationManifestInputs(state.env,{...handle}),/unavailable/);
+  assert.throws(()=>manifests.nativeDerivationManifestInputs({...state.env},handle),/unavailable/);
+  const read=await state.admission.observeNativeDerivationJob(state.env,state.current().actor_user_id,state.executionJob.job_id);
+  const other=await state.sources.captureNativeDerivationSources(state.env,read);assert.equal(other.status,'captured');
+  assert.throws(()=>manifests.nativeDerivationManifestForCapture(state.env,handle,other.capture),/mismatch/);
+  const db=state.env.DB;state.env.DB={...db};assert.throws(()=>manifests.nativeDerivationManifestInputs(state.env,handle),/unavailable/);state.env.DB=db;
+  const saved=manifests.nativeDerivationManifestInputs(state.env,handle),proof=manifests.nativeDerivationManifestStatements(state.env,handle);
+  const source=state.sources.nativeDerivationSourceInputs(state.env,state.executionCapture);
+  state.sqlite.prepare("UPDATE private_content SET content=content||' changed uncited answer' WHERE content_id=?").run(source.originalBacking[1].contentRef);
+  await assert.rejects(()=>db.batch(proof));assert.equal(await manifests.captureNativeDerivationManifest(state.env,state.executionCapture),null);
+  const fresh=await state.sources.captureNativeDerivationSources(state.env,read);
+  if(fresh.status==='captured')assert.equal(await manifests.revalidateNativeDerivationManifest(state.env,fresh.capture,saved.serialized),null);
+});
+
+for(const fault of ['none','source','withdrawal','expired','finance','d1'])test('native derivation provider: opaque publication receipt '+fault+' cannot bypass final source and accounting proofs',{timeout:180000},async t=>{
+  const state=await nativeDerivationExecutionFixture(t,{shared:fault==='d1',hosted:fault==='d1',termOverrides:{maximumInputTokens:16384}}),provider=await import('../worker/memory-derivation-provider.ts');
+  const fetch=globalThis.fetch;let calls=0;state.env.OPENAI_API_KEY='isolated-not-a-credential';
+  globalThis.fetch=async()=>{calls++;return Response.json({id:'isolated-manifest-response',object:'response',model:'isolated-test-model',service_tier:'default',status:'completed',error:null,incomplete_details:null,
+    usage:{input_tokens:800,output_tokens:40,total_tokens:840,input_tokens_details:{cached_tokens:400}},
+    output:[{type:'message',role:'assistant',status:'completed',content:[{type:'output_text',text:JSON.stringify({version:'memory-derivation-candidates-v1',items:[]})}]}]});};
+  t.after(()=>{globalThis.fetch=fetch;});
+  const result=await provider.executeNativeDerivationProvider(state.env,state.executionLease,state.executionCapture);assert.equal(result.status,'candidate',JSON.stringify(result)+' '+state.controls.lastDatabaseError);
+  assert.throws(()=>provider.nativeDerivationCandidateInputs(state.env,result.candidate),/unavailable/);
+  assert.throws(()=>provider.nativeDerivationCandidateInputs(state.env,{...result.receipt}),/unavailable/);
+  assert.throws(()=>provider.nativeDerivationCandidateInputs({...state.env},result.receipt),/unavailable/);
+  const prepared=provider.nativeDerivationCandidateInputs(state.env,result.receipt),proof=provider.nativeDerivationCandidateStatements(state.env,result.receipt);
+  assert.ok(prepared.expiresAt>prepared.candidate.validUntil);assert.equal(JSON.parse(prepared.manifest).originals.length,2);
+  const {memoryDigest}=await import('../src/model/scoped-memory.ts');assert.equal(prepared.outputSha256,await memoryDigest(prepared.raw));
+  prepared.candidate.items.push({text:'injected'});assert.equal(provider.nativeDerivationCandidateInputs(state.env,result.receipt).candidate.items.length,0);
+  if(fault==='source')state.sqlite.exec("UPDATE private_content SET content=content||' changed' WHERE content_id IN(SELECT user_content_ref FROM assistant_turns)");
+  if(fault==='withdrawal'){const inverse=await state.derivationStore.prepareDerivationWithdrawal(state.env,{actorUserId:state.current().actor_user_id},new Date().toISOString(),true);assert.equal(inverse.acknowledge(await state.env.DB.batch(inverse.statements)),true);}
+  if(fault==='finance')state.sqlite.exec("UPDATE memory_derivation_finance SET admission_closed_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')");
+  if(fault==='expired'){t.mock.timers.enable({apis:['Date'],now:Date.now()+360000});assert.throws(()=>provider.nativeDerivationCandidateInputs(state.env,result.receipt),/expired|unavailable/);}
+  else if(fault==='none'||fault==='d1')await state.env.DB.batch(proof);else await assert.rejects(()=>state.env.DB.batch(proof));
+  assert.equal(calls,1);assert.equal((await state.env.DB.prepare('SELECT used_microusd FROM cost_budget_reservations').first()).used_microusd,580);
 });
