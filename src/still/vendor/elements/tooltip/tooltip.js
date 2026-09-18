@@ -528,16 +528,24 @@ export class EnTooltip extends FloatingSurface {
         transit.bestDistance = Math.min(transit.bestDistance, distance);
     };
     #endTransit = () => { this.clearTransit(); this.#scheduleHide(); };
-    #trackTrigger = (event) => { this.#lastTriggerPoint = { x: event.clientX, y: event.clientY }; };
+    #trackTrigger = (event) => {
+        if (event.pointerType === 'touch' || !this.eligibleTrigger())
+            return;
+        this.#lastTriggerPoint = { x: event.clientX, y: event.clientY };
+        if (this.#triggerHovered)
+            return;
+        this.clearTransit();
+        this.#triggerHovered = true;
+        clearTimeout(this.#hideTimer);
+        this.scheduleShow();
+    };
     #trackSurface = (event) => { this.#lastSurfacePoint = { x: event.clientX, y: event.clientY }; };
     #triggerEnter = (event) => {
         if (event.pointerType === 'touch' || !this.eligibleTrigger())
             return;
-        this.clearTransit();
-        this.#trackTrigger(event);
-        this.#triggerHovered = true;
-        clearTimeout(this.#hideTimer);
-        this.scheduleShow();
+        // Layout, insertion and reveal can dispatch entry beneath a stationary pointer.
+        // Only a subsequent pointermove establishes interest and starts the show delay.
+        this.#lastTriggerPoint = { x: event.clientX, y: event.clientY };
     };
     #triggerLeave = (event) => {
         this.#triggerHovered = false;
