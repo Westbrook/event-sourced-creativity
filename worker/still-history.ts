@@ -19,7 +19,7 @@ export type HistoryReceipt={source:'snapshot'|'incremental'|'fresh'|'shared'|'sh
 async function witness(env:WorkerEnv,user:PilotUser,head:number){
   // Events are append-only. Private payloads may be withdrawn without an append:
   // compare their exact identities/redaction markers, not merely the event head.
-  const rows=await env.DB.prepare(`SELECT event.event_id,event.sequence,secret.private_event_id,secret.redacted_at,secret.private_json
+  const rows=await env.DB.prepare(`SELECT event.event_id,event.sequence,event.type,event.payload,secret.private_event_id,secret.redacted_at,secret.private_json
     FROM events event LEFT JOIN event_private_payloads secret ON secret.private_event_id=event.event_id
     WHERE event.stream_id=? AND event.sequence<=? ORDER BY event.sequence`).bind(user.streamId,head).all();
   return rows.results as Array<{event_id:string;sequence:number;private_event_id:string|null;redacted_at:string|null}>;
@@ -60,7 +60,9 @@ export async function readStillHistory(request:Request,env:WorkerEnv,user:PilotU
   if(version&&old&&old.expires>Date.now()&&versions.get(old)===version)
     return result(old,{source:'snapshot',eventsRead:0,head:old.head,elapsedMs:Date.now()-started});
   const before=await witness(env,user,Number.MAX_SAFE_INTEGER);
-  const valid=old&&old.expires>Date.now()&&JSON.stringify(before.filter(r=>r.sequence<=old.head))===witnesses.get(old);
+  const previousVersion=old?versions.get(old):undefined;
+  const sameEpoch=!previousVersion||!!version&&JSON.stringify(JSON.parse(version).slice(0,2))===JSON.stringify(JSON.parse(previousVersion).slice(0,2));
+  const valid=old&&sameEpoch&&old.expires>Date.now()&&JSON.stringify(before.filter(r=>r.sequence<=old.head))===witnesses.get(old);
   let events=valid?old.events.slice():[],after=valid?old.head:0,target:number|undefined=before.at(-1)?.sequence??0,eventsRead=0;
   for(;;){
     const response=await handleEvents(new Request(new URL(`/api/events?after=${after}&limit=5000&content=0`,request.url),{headers:request.headers}),env,false,user);

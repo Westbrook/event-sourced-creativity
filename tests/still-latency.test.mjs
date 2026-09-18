@@ -68,7 +68,7 @@ test('warm personal history uses constant-size revision proof; private edits and
   await request();let queries=[];f.controls.beforeRead=s=>queries.push(s.sql);f.controls.beforeBatch=ss=>queries.push(...ss.map(s=>s.sql));
   const warm=await request();assert.equal(warm.preparation.source,'snapshot');assert.equal(warm.cache.status,'hit');
   assert.ok(queries.some(sql=>sql.includes('AS generation')&&sql.includes('scene_source_generations')));
-  assert.ok(!queries.some(sql=>sql.includes('event.event_id,event.sequence,secret.private_event_id')),'No full witness');
+  assert.ok(!queries.some(sql=>sql.includes('ORDER BY event.sequence')&&sql.includes('secret.private_json')),'No full witness');
   assert.ok(!queries.some(sql=>sql.includes('SELECT * FROM events LEFT JOIN')),'No event page for unchanged history');
   const row=f.sqlite.prepare("SELECT secret.private_event_id,secret.private_json FROM event_private_payloads secret JOIN events event ON event.event_id=secret.private_event_id WHERE secret.document_id=? AND event.type='BlockCreated' LIMIT 1").get(f.documentId);
   assert.ok(row);const payload=JSON.parse(row.private_json);payload.properties={...payload.properties,text:'PRIVATE ALTERED DIRECTION'};
@@ -78,5 +78,19 @@ test('warm personal history uses constant-size revision proof; private edits and
   const withdrawn=await request();assert.equal(withdrawn.cache.status,'miss');assert.doesNotMatch(JSON.stringify(withdrawn.diagnostics.exchange.request.state),/PRIVATE ALTERED DIRECTION/);
   await appendAuditEvent(f.env,f.streamId,'user','ProjectCreated',{project_id:'other',name:'New'});
   assert.equal((await request()).cache.status,'miss');assert.ok(calls>=4);
+  f.sqlite.exec('DROP TRIGGER scene_source_event_private_payloads_update');
+  const unqualified=await request();assert.notEqual(unqualified.preparation.source,'snapshot','Missing revision trigger falls back to fresh history');
  }finally{globalThis.fetch=saved;await f.drainBackground();f.close();}
+});
+
+test('rapid distinct navigation requests are allowed, while a bounded burst is still throttled',async()=>{
+ const f=await createSceneCostFixture(1,'visual'),saved=globalThis.fetch,now=Date.now;const clock=now()+2_000_000;
+ f.env.JEV_API_KEY='simulated';Date.now=()=>clock;
+ globalThis.fetch=async()=>Response.json({model:'fixture',answers:{fit_image:{type:'score',score:3,confidence:.9}}});
+ try{
+  for(let i=0;i<9;i++){
+   const r=await f.request('/api/still/decision',f.json({...pos,view:'choose-format',projectId:f.projectId,documentId:f.documentId,intent:'navigation '+i}));
+   assert.equal(r.status,i===8?429:200);
+  }
+ }finally{globalThis.fetch=saved;Date.now=now;await f.drainBackground();f.close();}
 });
