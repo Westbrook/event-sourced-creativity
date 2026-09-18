@@ -1,6 +1,7 @@
 import { createGuestImageResultOriginIndex, type GuestImageResultClaimEventOrigin } from "./guest-image-result-presentation.ts";
 import {measureRetainedState,RETAINED_STATE_LIMITS} from './retained-state.ts';
-import { projectGeneratedImageEdit, type GeneratedImageOutputEdit } from "./generated-image-revision.ts";
+import { projectGeneratedImageEdit, projectGuestImageResultEdit, type GeneratedImageOutputEdit } from "./generated-image-revision.ts";
+import { parseGuestImageResultCompletedCustodyReview, type GuestImageResultCompletedCustodyReview } from "./generated-image-edit.ts";
 import { audioMetadataAfterSourceEdit } from "./audio.ts";
 import { normalizeImageFocalPoint, type ImageFocalPoint } from "./focal-point.ts";
 import { normalizePromptTechnique, PROMPT_TECHNIQUES, type PromptTechnique } from "./prompt-structures.ts";
@@ -247,8 +248,10 @@ export function createCreativeEventFold(asOf = Number.POSITIVE_INFINITY, selecte
   const outputs = new Map<string, CreativeOutput>();
   const claimOrigins = createGuestImageResultOriginIndex();
   const claimedProjects = new Map<string, string>();
+  // Historical structural continuity only; never exposed as current authority.
+  const claimedEditReviews = new Map<string, GuestImageResultCompletedCustodyReview>();
   const discardConflictedOutputs = () => {
-    for (const id of claimOrigins.takeInvalidatedOutputs()) { outputs.delete(id); claimedProjects.delete(id); }
+    for (const id of claimOrigins.takeInvalidatedOutputs()) { outputs.delete(id); claimedProjects.delete(id); claimedEditReviews.delete(id); }
   };
   const artifacts = new Map<string, DocumentArtifact>();
   const originalAudio = new Map<string, Pick<DocumentArtifact, "mediaUrl" | "mediaType" | "settings">>();
@@ -413,7 +416,12 @@ export function createCreativeEventFold(asOf = Number.POSITIVE_INFINITY, selecte
           const output=outputs.get(id);if(!output)continue;
           const ownerId=event.streamId.startsWith("creative:")?event.streamId.slice("creative:".length):"";
           const projectId=documents.get(output.documentId)?.projectId??"";
-          const edited=projectGeneratedImageEdit(output,event,{ownerId,projectId});
+          const eventClaim=output.claimedOrigin?parseGuestImageResultCompletedCustodyReview(p.claim):null;
+          const claim=claimedEditReviews.get(id)??eventClaim;
+          const edited=output.claimedOrigin
+            ?claim?projectGuestImageResultEdit(output,event,{ownerId,projectId,claim}):null
+            :projectGeneratedImageEdit(output,event,{ownerId,projectId});
+          if(edited&&eventClaim&&!claimedEditReviews.has(id))claimedEditReviews.set(id,eventClaim);
           outputs.set(id,edited??{...output,mediaUrl:null,mediaType:null,width:null,height:null,focalPoint:null});
         }
         break;
@@ -609,7 +617,7 @@ export function createCreativeEventFold(asOf = Number.POSITIVE_INFINITY, selecte
   for (const [id, output] of outputs) {
     const document = documents.get(output.documentId);
     if (!claimOrigins.isUnambiguous(id, output.generationId) || output.claimedOrigin
-      && (!document || document.removed || document.projectId !== claimedProjects.get(id) || !projects.has(document.projectId))) outputs.delete(id);
+      && (!document || document.removed || document.projectId !== claimedProjects.get(id) || !projects.has(document.projectId))) { outputs.delete(id); claimedEditReviews.delete(id); }
   }
   const requestedDocument=selectedDocumentId?documents.get(selectedDocumentId):undefined;
   if(requestedDocument&&!requestedDocument.removed&&requestedDocument.projectId!==state.projectId){const requestedProject=projects.get(requestedDocument.projectId);state.projectId=requestedDocument.projectId;if(requestedProject){state.projectName=requestedProject.name;state.projectState=requestedProject.state;}}
@@ -656,7 +664,7 @@ export function createCreativeEventFold(asOf = Number.POSITIVE_INFINITY, selecte
   return state;
   };
   const retainedState=()=>[projects,blocks,blockRelations,documents,collections,membership,outputs,artifacts,
-    claimedProjects,claimOrigins.retainedState,
+    claimedProjects,claimedEditReviews,claimOrigins.retainedState,
     originalAudio,originalVideo,videoEditCounts,originalModel3d,model3dEditCounts,revisedModel3d,generationCanvas,
     documentCompiles,previewOutputByEvent,annotations,families,preferences,conditions,state];
   return { accept, finish, measureRetainedState:(limits=RETAINED_STATE_LIMITS)=>measureRetainedState(retainedState(),limits) };
