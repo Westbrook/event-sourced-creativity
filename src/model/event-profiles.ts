@@ -13,7 +13,7 @@ export const PROJECT_BOOTSTRAP_EVENT_TYPES = [
   "DocumentCreated", "DocumentForked", "DocumentOpened", "DocumentRenamed",
   "DocumentRemoved", "DocumentRestored", "BlockCreated", "BlockRemoved",
   "BlockRestored", "BlockRehomed", "CollectionCreated", "CollectionRemoved",
-  "CollectionRestored", "IdeationPreviewCompleted", "GenerationCompleted",
+  "CollectionRestored", "IdeationPreviewCompleted", "GenerationCompleted", "GuestImageResultClaimed",
   "DocumentRenderCompleted", "DocumentArtifactEdited", "GeneratedImageEdited", "OutputRenamed", "ArtifactReviewRequested", "ArtifactApproved", "ArtifactChangesRequested", "ObjectDiscarded", "ObjectPinned", "ObjectUnpinned",
   "ObjectSaved", "AddedToLibrary", "RemovedFromLibrary", "PromptFanOutputPromoted",
   "ImageFocalPointCalculated",
