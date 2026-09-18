@@ -167,12 +167,13 @@ export class StillApp extends LitElement {
   private useInTarget='';
   private dockTouched=false;
   private moreOpen=false;
+  private toolbarHelpEpoch=0;
   private onboarding=false;
   private onboardingDecisionPending=false;
   private onboardingHelp=new OnboardingController(input=>api<OnboardingResult>('/api/still/onboarding',input,'POST',8000),()=>this.changed());
   private onboardingScope(){return this.interactionScope()+'/'+this.client.position.view+'/'+this.mode+'/'+this.client.position.blockId+'/'+this.client.position.outputId;}
   private setOnboarding=(e:CustomEvent<{value:boolean}>)=>{this.onboarding=e.detail.value===true;try{localStorage.setItem('still:flag:onboarding',String(this.onboarding));}catch{}const url=new URL(location.href);url.searchParams.delete('onboarding');url.searchParams.delete('onbaording');history.replaceState(history.state,'',url);this.activeAddress=this.address();this.changed();};
-  private help(id:string,label:string){return this.onboarding&&!this.measuringDock?html`<en-tooltip for=${id} inline="center" block="start" warmup-group="still-onboarding" show-delay="250"><span slot="content">${this.onboardingHelp.help(this.onboardingScope(),id.replace('still-help-',''))??actionHelp(id.replace('still-help-',''),label)}</span></en-tooltip>`:nothing;}
+  private help(id:string,label:string){return this.onboarding&&!this.measuringDock?keyed(this.toolbarHelpEpoch,html`<en-tooltip for=${id} inline="center" block="start" warmup-group="still-onboarding" show-delay="250"><span slot="content">${this.onboardingHelp.help(this.onboardingScope(),id.replace('still-help-',''))??actionHelp(id.replace('still-help-',''),label)}</span></en-tooltip>`):nothing;}
   private density=5;
   private get pageActionLimit(){return this.developer?this.density:5;}
   private setDensity=(e:CustomEvent<{value:number}>)=>{this.density=actionLimit(e.detail.value);this.moreOpen=false;this.client.position.actionLimit=this.pageActionLimit;this.changed();};
@@ -491,7 +492,32 @@ export class StillApp extends LitElement {
       event.preventDefault();if(event.repeat)return;if(this.paletteOpen)this.closeFinder();else this.openFinder('shortcut');
     }
   };
-  private openMore(){this.attention?.summary.explore('more');this.toolbarSeen=this.visibleToolbarActions();this.moreOpen=true;this.dockTouched=true;this.client.position.recentActions=[...this.client.position.recentActions,'ui:more'].slice(-12);this.changed();void this.updateComplete.then(()=>this.querySelector<HTMLElement>('.action-dock en-button')?.focus());}
+  private openMore(event:MouseEvent){
+    this.attention?.summary.explore('more');this.toolbarSeen=this.visibleToolbarActions();this.dockTouched=true;
+    this.client.position.recentActions=[...this.client.position.recentActions,'ui:more'].slice(-12);
+    void this.replaceToolbar(true,event);
+  }
+  private async replaceToolbar(more:boolean,event?:MouseEvent){
+    const keyboard=event?.detail===0;
+    const scope=this.interactionScope();
+    const parkFocus=()=>{
+      const dock=this.querySelector<HTMLElement>('.action-dock');
+      // A non-tab-stop before the controls preserves the next Tab destination without opening help.
+      if(dock){dock.tabIndex=-1;dock.focus({preventScroll:true});}
+    };
+    parkFocus();
+    for(const tip of this.querySelectorAll<HTMLElement & {open:boolean}>('.action-dock en-tooltip'))tip.open=false;
+    // Replace the outgoing help instances too, releasing their pending timers and group membership.
+    ++this.toolbarHelpEpoch;
+    this.moreOpen=more;this.changed();
+    await this.updateComplete;
+    if(this.disposed||scope!==this.interactionScope()||this.moreOpen!==more)return;
+    if(keyboard){
+      const target=this.querySelector<HTMLElement>(more?'.action-dock en-button':'.action-dock [data-action-id="ui:more"]')
+        ??this.querySelector<HTMLElement>('.action-dock en-button');
+      target?.focus({preventScroll:true});
+    }else parkFocus();
+  }
   private visibleToolbarActions(){return [...this.querySelectorAll<HTMLElement>('.action-dock [data-action-id]')].map(e=>e.dataset.actionId!).filter(id=>this.candidates().some(a=>a.id===id));}
   private paletteOptions(){return paletteActions(this.paletteQuery,this.candidates(),this.paletteOrder).filter(a=>this.desktop.matches||a.id!=='ui:developer');}
   private openFinder(entry:PaletteFeedback['entry']='direct'){
@@ -566,7 +592,7 @@ export class StillApp extends LitElement {
       <span slot="footer" class="palette-hint">↑ ↓ Select · Enter Open · Esc Close</span>
     </en-dialog>`;
   }
-  private button(label: string, action: () => void, primary = false, disabled = false, actionId='', variant:Emphasis['variant']=primary?'primary':'ghost',source='') { const helpId="still-help-"+(actionId||label.toLowerCase().replaceAll(" ","-"));return html`<en-button id=${this.dockId(helpId)} data-action-id=${actionId} data-action-source=${source} size="medium" variant=${variant} .disabled=${this.busy || this.composing || disabled} @click=${action}>${label}</en-button>${this.help(helpId,label)}`; }
+  private button(label: string, action: (event:MouseEvent) => void, primary = false, disabled = false, actionId='', variant:Emphasis['variant']=primary?'primary':'ghost',source='') { const helpId="still-help-"+(actionId||label.toLowerCase().replaceAll(" ","-"));return html`<en-button id=${this.dockId(helpId)} data-action-id=${actionId} data-action-source=${source} size="medium" variant=${variant} .disabled=${this.busy || this.composing || disabled} @click=${action}>${label}</en-button>${this.help(helpId,label)}`; }
   private field(label: string, value: string, change: (v: string) => void, rows = 3, placeholder = '') { if(rows===1)return html`<en-text-field label=${label} .value=${live(value)} placeholder=${placeholder} .disabled=${this.busy || this.client.hasUnconfirmedWrite || !!this.generation?.attempted} @en-input=${(e: CustomEvent<{value:string;isComposing:boolean}>)=>{change(e.detail.value);this.composing=e.detail.isComposing;if(!this.composing)this.changed();}}></en-text-field>`; return html`<en-textarea label=${label} .value=${live(value)} rows=${rows} placeholder=${placeholder} .disabled=${this.busy || this.client.hasUnconfirmedWrite || !!this.generation?.attempted} @en-input=${(e: CustomEvent<{ value: string; isComposing: boolean }>) => { change(e.detail.value); this.composing = e.detail.isComposing; if (!this.composing) this.changed(); }}></en-textarea>`; }
   private closeMode() { if (this.mode === 'generate') this.client.position.intent = ''; this.resetStep();this.error='';this.writeRoute();this.decide();this.focusContent(); }
   private begin(mode: string, updateURL=true) {
@@ -779,11 +805,11 @@ export class StillApp extends LitElement {
     const actions=this.generationRecoveryActions();
     const job=this.selectedGeneration(),format=job&&generationFormat(job);
     const status=job&&generationActive(job)?`${job.status==='queued'?'Queued':job.status==='committing'?'Saving':'Generating'} ${(FORMATS[format!]??format).toLowerCase()}…`:'';
-    if(this.toolbarLimit<3)return this.compactDock(this.moreOpen?[...actions.filter(a=>a.id!=='ui:palette').slice(Math.max(0,this.firstDockLimit-1)).map(a=>({...a,variant:'secondary' as const})),{id:'ui:back',label:'Back',variant:'ghost',run:()=>{this.moreOpen=false;this.changed();}},actions[actions.length-1]]:actions,'More',status);
+    if(this.toolbarLimit<3)return this.compactDock(this.moreOpen?[...actions.filter(a=>a.id!=='ui:palette').slice(Math.max(0,this.firstDockLimit-1)).map(a=>({...a,variant:'secondary' as const})),{id:'ui:back',label:'Back',variant:'ghost',run:()=>void this.replaceToolbar(false)},actions[actions.length-1]]:actions,'More',status);
     const choices=actions.filter(a=>a.id!=='ui:palette'),visible=choices.slice(0,(this.moreOpen?this.firstDockLimit:this.toolbarLimit)-1),remaining=choices.slice(visible.length,this.toolbarLimit-2+visible.length);
     const controls=this.moreOpen
-      ? [...remaining.map(a=>this.button(a.label,a.run,false,'disabled' in a&&a.disabled,a.id,'secondary')),this.button('Back',()=>{this.moreOpen=false;this.changed();}),this.paletteButton('more')]
-      : [...visible.map(a=>this.button(a.label,a.run,false,'disabled' in a&&a.disabled,a.id,a.variant)),this.button('More',()=>this.openMore(),false,false,'ui:more')];
+      ? [...remaining.map(a=>this.button(a.label,a.run,false,'disabled' in a&&a.disabled,a.id,'secondary')),this.button('Back',event=>void this.replaceToolbar(false,event)),this.paletteButton('more')]
+      : [...visible.map(a=>this.button(a.label,a.run,false,'disabled' in a&&a.disabled,a.id,a.variant)),this.button('More',event=>this.openMore(event),false,false,'ui:more')];
     return html`<footer class=${this.dockClass} @focusout=${()=>this.scheduleDockFit()}>${this.toolbarStatus(status)}<en-toolbar label="Your next step" keyboard-navigation="tab">${controls}</en-toolbar></footer>`;
   }
   private toolbarStatus(message:string) { return message?html`<span class="toolbar-status" role="status" aria-live="polite">${message}</span>`:nothing; }
@@ -914,7 +940,7 @@ export class StillApp extends LitElement {
     const visibleIds=visible.map(a=>a.id);
     if(this.moreOpen&&limit<3){
       const alternatives=nextToolbarActions(this.rankedActions,visibleIds,eligible,this.rankedActions.length);
-      return this.compactDock([...alternatives.map(a=>({id:a.id,label:a.label,run:()=>this.choose(a.id),variant:'secondary' as const})),{id:'ui:back',label:'Back',variant:'ghost',run:()=>{this.moreOpen=false;this.changed();}},{id:'ui:palette',label:'Palette',variant:'ghost',run:()=>this.openFinder('more')}],'More',generationProgress);
+      return this.compactDock([...alternatives.map(a=>({id:a.id,label:a.label,run:()=>this.choose(a.id),variant:'secondary' as const})),{id:'ui:back',label:'Back',variant:'ghost',run:()=>void this.replaceToolbar(false)},{id:'ui:palette',label:'Palette',variant:'ghost',run:()=>this.openFinder('more')}],'More',generationProgress);
     }
     if(limit<3){
       const choices=[...pool,...this.rankedActions.filter(a=>!pool.some(p=>p.id===a.id))].filter(a=>eligible.some(e=>e.id===a.id)&&(!browsing||a.id!==view)),emphasis=presentToolbar(choices.map(a=>a.id),this.emphasis,this.toolbarPolicy());
@@ -928,8 +954,8 @@ export class StillApp extends LitElement {
     let actions:TemplateResult[]=[...this.toolbarSuggestions(visible)];
     if(slides)actions.unshift(this.button('Previous',()=>this.turnItem(this.itemIndex-1),false,this.itemIndex===0,'','secondary'),this.button('Next',()=>this.turnItem(this.itemIndex+1),false,this.itemIndex>=a!.items.length-1,'','secondary'));
     actions.push(...pageControls.map(control=>this.button(control.label,control.run,false,false,control.id,'secondary')));
-    actions.push(this.button('More',()=>this.openMore(),false,false,'ui:more'));
-    if(this.moreOpen)actions=[...this.toolbarSuggestions(nextToolbarActions(this.rankedActions,visibleIds,eligible,limit-2)),this.button('Back',()=>{this.moreOpen=false;this.changed();void this.updateComplete.then(()=>this.querySelector<HTMLElement>('[data-action-id="ui:more"]')?.focus());}),this.paletteButton('more')];
+    actions.push(this.button('More',event=>this.openMore(event),false,false,'ui:more'));
+    if(this.moreOpen)actions=[...this.toolbarSuggestions(nextToolbarActions(this.rankedActions,visibleIds,eligible,limit-2)),this.button('Back',event=>void this.replaceToolbar(false,event)),this.paletteButton('more')];
     return html`<footer class=${this.dockClass} @focusout=${()=>this.scheduleDockFit()} @pointerdown=${()=>{this.dockTouched=true;}} @focusin=${()=>{this.dockTouched=true;}}>${this.toolbarStatus(generationProgress)}<en-toolbar label="Your next step" keyboard-navigation="tab">${actions}</en-toolbar></footer>`;
   }
   private reviewContext(job?:DocumentJob) {
