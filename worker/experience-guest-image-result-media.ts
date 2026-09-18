@@ -1,6 +1,13 @@
 import { ownerMediaNamespace } from "../src/model/media-ownership.ts";
 import { inspectOutputAsset, MAX_OUTPUT_ASSET_BYTES } from "../src/model/output-asset-inspection.ts";
-import { guestImageResultMediaOperation, GUEST_IMAGE_RESULT_MEDIA_LIMITS, type GuestImageResultMediaOperation } from "./experience-guest-image-result-media-operation.ts";
+import {
+  guestImageResultMediaOperation, guestImageResultLeasedMediaOperation, GUEST_IMAGE_RESULT_MEDIA_LIMITS,
+  type GuestImageResultMediaOperation,
+} from "./experience-guest-image-result-media-operation.ts";
+import {
+  guestImageResultClaimSourceData, reserveGuestImageResultClaimAdmission,
+  type GuestImageResultClaimSource, type GuestImageResultReservedSource,
+} from "./experience-guest-image-result-claim-source.ts";
 import type { GuestImageResultInventory } from "./experience-guest-image-result-inventory.ts";
 import type { WorkerEnv } from "./runtime.ts";
 
@@ -152,36 +159,43 @@ function observation(request: Request, env: WorkerEnv, token: GuestImageResultMe
   value.operation.check(); return value;
 }
 
+/** Both owners use this exact original-body, metadata, hash and PNG inspector.
+ * No claim-specific metadata or byte-reading fallback is admitted. */
+async function inspectOriginal(operation: GuestImageResultMediaOperation) {
+  operation.charge("readAttempts");
+  operation.charge("inspectionScratchBytes", GUEST_IMAGE_RESULT_MEDIA_LIMITS.inspectionScratchBytes);
+  const { manifest } = operation, expected = manifest.object;
+  const key = `${ownerMediaNamespace(manifest.guestSubject)}/generated/${manifest.generationId}.png`;
+  if (expected.storageKey !== key || expected.mimeType !== "image/png") return unavailable();
+  await operation.fullProof(); operation.check();
+  const { bytes, metadata } = await readOriginal(operation, key); operation.check();
+  // A filename does not select the inspector's parser. Refuse other signatures
+  // before admitting PNG scratch or dispatching any other format inspector.
+  if (bytes.length < 8 || [137, 80, 78, 71, 13, 10, 26, 10].some((byte, index) => bytes[index] !== byte)) return unavailable();
+  // The unchanged inspector hashes these same immutable bytes once.
+  operation.charge("hash");
+  operation.charge("inspection");
+  const inspected = await operation.use(bytes, () => inspectOutputAsset(bytes, "image.png", { snapshot: false })); operation.check();
+  if (inspected.status !== "inspected" || inspected.kind !== "image" || inspected.extension !== "png" || inspected.mimeType !== "image/png"
+    || inspected.sha256 !== expected.contentSha256 || inspected.byteLength !== metadata.size
+    || inspected.facts.width !== expected.width || inspected.facts.height !== expected.height) return unavailable();
+  operation.charge("head");
+  const head = await operation.wait(() => operation.bucket.head(key)); operation.check();
+  const final = captureMetadata(operation, head, key);
+  if (!sameMetadata(metadata, final)) return unavailable();
+  await operation.fullProof(); operation.check();
+  const review: GuestImageResultMediaReview = Object.freeze({ version: 1, kind: "guest-image-result-media", mimeType: "image/png",
+    sha256: expected.contentSha256, byteLength: metadata.size, width: expected.width, height: expected.height,
+    freshBytesVerified: true, custodyTransferred: false, publicReadAvailable: false });
+  return { bytes, review };
+}
+
 /** One private observation of the exact original object. This performs no copy,
  * destination selection, provider action, publication or custody transfer. */
 export async function readGuestImageResultMedia(request: Request, env: WorkerEnv, inventory: GuestImageResultInventory): Promise<GuestImageResultMedia> {
   const operation = guestImageResultMediaOperation(request, env, inventory);
   try {
-    operation.charge("readAttempts");
-    operation.charge("inspectionScratchBytes", GUEST_IMAGE_RESULT_MEDIA_LIMITS.inspectionScratchBytes);
-    const { manifest } = operation, expected = manifest.object;
-    const key = `${ownerMediaNamespace(manifest.guestSubject)}/generated/${manifest.generationId}.png`;
-    if (expected.storageKey !== key || expected.mimeType !== "image/png") return unavailable();
-    await operation.fullProof(); operation.check();
-    const { bytes, metadata } = await readOriginal(operation, key); operation.check();
-    // A filename does not select the inspector's parser. Refuse other signatures
-    // before admitting PNG scratch or dispatching any other format inspector.
-    if (bytes.length < 8 || [137, 80, 78, 71, 13, 10, 26, 10].some((byte, index) => bytes[index] !== byte)) return unavailable();
-    // The unchanged inspector hashes these same immutable bytes once.
-    operation.charge("hash");
-    operation.charge("inspection");
-    const inspected = await operation.use(bytes, () => inspectOutputAsset(bytes, "image.png", { snapshot: false })); operation.check();
-    if (inspected.status !== "inspected" || inspected.kind !== "image" || inspected.extension !== "png" || inspected.mimeType !== "image/png"
-      || inspected.sha256 !== expected.contentSha256 || inspected.byteLength !== metadata.size
-      || inspected.facts.width !== expected.width || inspected.facts.height !== expected.height) return unavailable();
-    operation.charge("head");
-    const head = await operation.wait(() => operation.bucket.head(key)); operation.check();
-    const final = captureMetadata(operation, head, key);
-    if (!sameMetadata(metadata, final)) return unavailable();
-    await operation.fullProof(); operation.check();
-    const review: GuestImageResultMediaReview = Object.freeze({ version: 1, kind: "guest-image-result-media", mimeType: "image/png",
-      sha256: expected.contentSha256, byteLength: metadata.size, width: expected.width, height: expected.height,
-      freshBytesVerified: true, custodyTransferred: false, publicReadAvailable: false });
+    const { bytes, review } = await inspectOriginal(operation); operation.check();
     const token = Object.freeze({}) as GuestImageResultMedia;
     const captured: Observation = { request, env, operation, bytes, review };
     operation.onStop(() => { captured.bytes = null; observations.delete(token); });
@@ -215,4 +229,107 @@ export async function consumeGuestImageResultMedia<T>(request: Request, env: Wor
     const result = await operation.use(copy, () => consumer(copy, value.review));
     operation.check(); return result;
   } finally { operation.stop(); }
+}
+
+declare const leasedObservationBrand: unique symbol;
+export type GuestImageResultLeasedMedia = Readonly<{ [leasedObservationBrand]: true }>;
+type LeasedObservation = Observation & { source: GuestImageResultClaimSource };
+const leasedObservations = new WeakMap<GuestImageResultLeasedMedia, LeasedObservation>();
+function leasedObservation(request: Request, env: WorkerEnv, token: GuestImageResultLeasedMedia): LeasedObservation {
+  const value = token && typeof token === "object" ? leasedObservations.get(token) : undefined;
+  if (!value || value.request !== request || value.env !== env) return unavailable();
+  value.operation.check();
+  guestImageResultClaimSourceData(request, env, value.source);
+  return value;
+}
+
+/** Fresh leased-phase observation. Ordinary inventory tokens and scalar review
+ * values cannot enter this path or select a different accounting owner. */
+export async function readLeasedGuestImageResultMedia(request: Request, env: WorkerEnv,
+  source: GuestImageResultClaimSource): Promise<GuestImageResultLeasedMedia> {
+  const operation = guestImageResultLeasedMediaOperation(request, env, source);
+  try {
+    const { bytes, review } = await inspectOriginal(operation); operation.check();
+    guestImageResultClaimSourceData(request, env, source);
+    const token = Object.freeze({}) as GuestImageResultLeasedMedia;
+    const captured: LeasedObservation = { request, env, operation, source, bytes, review };
+    operation.onStop(() => { captured.bytes = null; leasedObservations.delete(token); });
+    operation.check(); leasedObservations.set(token, captured); return token;
+  } catch (error) { operation.stop(); throw error; }
+}
+
+/** Safe scalar review only; neither a database proof nor copy authority. */
+export function guestImageResultLeasedMediaReview(request: Request, env: WorkerEnv,
+  token: GuestImageResultLeasedMedia): GuestImageResultMediaReview {
+  return leasedObservation(request, env, token).review;
+}
+
+declare const claimAdmissionBrand: unique symbol;
+export type GuestImageResultClaimMediaAdmission = Readonly<{ [claimAdmissionBrand]: true }>;
+type ClaimAdmission = { request: Request; env: WorkerEnv; operation: GuestImageResultMediaOperation;
+  source: GuestImageResultClaimSource; review: GuestImageResultMediaReview; bytes: Uint8Array<ArrayBuffer> | null;
+  taken: boolean; reservation: GuestImageResultReservedSource | null };
+const claimAdmissions = new WeakMap<GuestImageResultClaimMediaAdmission, ClaimAdmission>();
+// This private association retains the actual owned copy for the reserved owner.
+// No accessor, dispatch operation or second copy is part of this allocation.
+const reservedMedia = new WeakMap<GuestImageResultReservedSource, ClaimAdmission>();
+
+/** Fixed claim-owner handoff only. A genuine admission can be taken once; it
+ * discloses scalar observation and source provenance, never owned media bytes. */
+export function takeGuestImageResultClaimMediaAdmission(request: Request, env: WorkerEnv,
+  token: GuestImageResultClaimMediaAdmission): Readonly<{ source: GuestImageResultClaimSource; review: GuestImageResultMediaReview }> {
+  const value = token && typeof token === "object" ? claimAdmissions.get(token) : undefined;
+  if (!value || value.request !== request || value.env !== env || value.taken || !value.bytes) return unavailable();
+  value.operation.check();
+  guestImageResultClaimSourceData(request, env, value.source);
+  value.taken = true;
+  return Object.freeze({ source: value.source, review: value.review });
+}
+
+/** A fixed terminal notification from the claim owner. Foreign or fabricated
+ * admissions cannot retire another owner's resources, and active buffer users
+ * still control actual zeroing through their pending promise settlement. */
+export function retireGuestImageResultClaimMediaAdmission(request: Request, env: WorkerEnv,
+  token: GuestImageResultClaimMediaAdmission): void {
+  const value = token && typeof token === "object" ? claimAdmissions.get(token) : undefined;
+  if (!value || value.request !== request || value.env !== env) return;
+  value.operation.stop();
+}
+
+/** One fixed reserve consumer. Retirement precedes dispatch, and its actual
+ * promise owns the single admitted copy until settlement even after timeout. */
+export async function reserveGuestImageResultMedia(request: Request, env: WorkerEnv,
+  token: GuestImageResultLeasedMedia): Promise<Awaited<ReturnType<typeof reserveGuestImageResultClaimAdmission>>> {
+  const value = leasedObservation(request, env, token), { operation } = value;
+  try {
+    operation.charge("consumeAttempts");
+    await operation.fullProof(); operation.check();
+    let copy: Uint8Array<ArrayBuffer>;
+    {
+      const source = value.bytes;
+      if (!source) return unavailable();
+      copy = ownBuffer(operation, source.byteLength);
+      setBytes.call(copy, source);
+    }
+    operation.check();
+    const admission = Object.freeze({}) as GuestImageResultClaimMediaAdmission;
+    const captured: ClaimAdmission = { request, env, operation, source: value.source, review: value.review,
+      bytes: copy, taken: false, reservation: null };
+    operation.onStop(() => {
+      captured.bytes = null; claimAdmissions.delete(admission);
+      if (captured.reservation) reservedMedia.delete(captured.reservation);
+      captured.reservation = null;
+    });
+    claimAdmissions.set(admission, captured);
+    // The observation can never be replayed, including while reserve is pending.
+    value.bytes = null; leasedObservations.delete(token);
+    const result = await operation.use(copy, () => reserveGuestImageResultClaimAdmission(request, env, admission));
+    operation.check();
+    if (result.status === "reserved") {
+      if (!captured.taken) return unavailable();
+      captured.reservation = result.reservation;
+      reservedMedia.set(result.reservation, captured);
+    } else operation.stop();
+    return result;
+  } catch (error) { operation.stop(); throw error; }
 }
