@@ -2521,3 +2521,30 @@ export const memoryDerivationRecoveryCursor = sqliteTable("memory_derivation_rec
   check("memory_derivation_recovery_generation", sql.raw("typeof(generation)='integer' AND generation BETWEEN 0 AND 9007199254740991")),
   check("memory_derivation_recovery_time", sql.raw("length(updated_at)=24 AND strftime('%Y-%m-%dT%H:%M:%fZ',updated_at) IS updated_at")),
 ]);
+
+/** Private proposals, not declarations or permission to perform an action. */
+export const memoryDerivationResults = sqliteTable("memory_derivation_results", {
+  jobId: text("job_id").notNull().primaryKey().references(() => memoryDerivationJobs.jobId, { onDelete: "cascade" }),
+  financeId: text("finance_id").notNull().unique().references(() => memoryDerivationFinance.financeId),
+  state: text("state").notNull(),
+  rawJson: text("raw_json"), manifestJson: text("manifest_json"),
+  outputSha256: text("output_sha256"), manifestSha256: text("manifest_sha256"),
+  dependencyCount: integer("dependency_count").notNull(),
+  publishedAt: text("published_at").notNull(), expiresAt: text("expires_at").notNull(), retiredAt: text("retired_at"),
+}, table => [
+  index("idx_memory_derivation_result_expiry").on(table.state, table.expiresAt, table.jobId),
+  check("memory_derivation_result_state", sql.raw("state IN('staging','active','withdrawn') AND typeof(dependency_count)='integer' AND dependency_count BETWEEN 1 AND 2048")),
+  check("memory_derivation_result_body", sql.raw("(state IN('staging','active') AND raw_json IS NOT NULL AND manifest_json IS NOT NULL AND output_sha256 IS NOT NULL AND manifest_sha256 IS NOT NULL AND json_valid(raw_json) AND json_valid(manifest_json) AND length(CAST(raw_json AS BLOB))<=65536 AND length(CAST(manifest_json AS BLOB))<=262144 AND length(output_sha256)=64 AND output_sha256 NOT GLOB '*[^0-9a-f]*' AND length(manifest_sha256)=64 AND manifest_sha256 NOT GLOB '*[^0-9a-f]*' AND retired_at IS NULL) OR (state='withdrawn' AND raw_json IS NULL AND manifest_json IS NULL AND output_sha256 IS NULL AND manifest_sha256 IS NULL AND retired_at IS NOT NULL)")),
+  check("memory_derivation_result_time", sql.raw("length(published_at)=24 AND strftime('%Y-%m-%dT%H:%M:%fZ',published_at) IS published_at AND length(expires_at)=24 AND strftime('%Y-%m-%dT%H:%M:%fZ',expires_at) IS expires_at AND published_at<expires_at AND (retired_at IS NULL OR length(retired_at)=24 AND strftime('%Y-%m-%dT%H:%M:%fZ',retired_at) IS retired_at AND retired_at>=published_at)")),
+]);
+
+/** Inverse keys cover all model inputs, not only cited quotations. */
+export const memoryDerivationResultDependencies = sqliteTable("memory_derivation_result_dependencies", {
+  jobId: text("job_id").notNull().references(() => memoryDerivationResults.jobId, { onDelete: "cascade" }),
+  kind: text("kind").notNull(), resourceId: text("resource_id").notNull(),
+  actorUserId: text("actor_user_id").notNull(), scopeKey: text("scope_key").notNull(),
+}, table => [
+  primaryKey({ columns: [table.jobId, table.kind, table.resourceId, table.actorUserId, table.scopeKey] }),
+  index("idx_memory_derivation_result_inverse").on(table.kind, table.resourceId, table.actorUserId, table.scopeKey, table.jobId),
+  check("memory_derivation_result_dependency", sql.raw("kind IN('event','content','turn','task') AND length(resource_id) BETWEEN 1 AND 240 AND ((kind='turn' AND length(actor_user_id) BETWEEN 1 AND 240 AND length(scope_key) BETWEEN 1 AND 8192) OR (kind!='turn' AND actor_user_id='' AND scope_key=''))")),
+]);

@@ -186,3 +186,20 @@ The cursor prevents failed financial rows from starving subsequent recovery.
 It is not a completed-memory watermark or evidence that a hosted schedule ran.
 Use the [recovery record](forma-memory-native-recovery-2026-09-18.md) for remaining
 qualification requirements; this candidate has not been applied in production.
+
+### Memory private results (0047)
+
+`0047_memory_derivation_results.sql` is a 39-statement schema-only addition:
+two private result/dependency tables, three indexes and 34 transition/source
+inverse triggers. The ORM-generated snapshot is `0043_snapshot.json`, journal
+index 43. No top-level seed/backfill or external service operation is included.
+
+Local migration qualification covers dry-run rollback, repeated migration, exact
+schema and foreign-key validity. The native source tables must already exist; a
+Drizzle timestamp that skipped accepted predecessors cannot qualify this migration.
+Installation against that incomplete schema now fails and rolls back. Do not
+ignore the error or run the remaining statements independently.
+
+The [result lifecycle record](forma-memory-native-results-2026-09-18.md) describes
+private body/index retirement, exact cascade receipts and retained accounting.
+This migration has not been applied in production and does not activate Memory.

@@ -71,26 +71,32 @@ No hosted schedule, paid derivation consumer or user activation was added.
 [Read-only evidence](forma-memory-native-read-evidence-2026-09-18.md) now separates
 fresh source access from execution authority. A retained job can be inspected
 after execution expiry without renewing its lease or granting another provider
-call. Durable semantic storage and public consumers are still not implemented.
+call. Result storage is implemented in the subsequent slice below; public consumers remain open.
 
 [Canonical manifests and publication receipts](forma-memory-native-manifests-2026-09-18.md)
 now capture complete provider-input provenance, preserve original retention across
 fresh reads, and bind publication preparation to verified provider usage. This
-format and its native proof are implemented; durable result rows, dependency
-indexes and erasure transactions are **still to implement**.
+format and its native proof are implemented.
+
+[Durable private results](forma-memory-native-results-2026-09-18.md) now add atomic
+body/manifest/dependency publication, fresh authenticated reads, source-change
+inverses, single-result withdrawal, expiry and exact personal/organization privacy
+cascades. Migration0047 remains unapplied in production. Cross-job suppression,
+completed semantic cursors and worker/consumer integration are still open.
 
 ## Remaining native implementation — still in scope
 
 1. Complete the durable worker consumer around the implemented purpose/source-bound
    financial and provider functions; keep ordinary UI activation disabled until the
    result lifecycle and native qualification pass.
-2. Expand implemented durable reference delivery into source-proven manifests and leased derivation jobs,
-   uncertain dispatch recovery and source invalidation/deletion acknowledgements.
+2. Add bounded processing windows and completed semantic cursors around the
+   implemented queue, leases, source manifests, result storage and financial recovery;
+   finish index outbox/source invalidation/deletion acknowledgements.
 3. Nested project containment/reparenting and broader page/block/artifact identities.
 4. Broader original assistant sources, actual rolling-history rebase, genuine
    block/reuse inspection, and governed/historical artifact evidence.
-5. Native semantic summary/profile/suggestion callers, stored dependencies,
-   corrections/suppression and guarded consumers. The parser alone is insufficient.
+5. Native semantic summary/profile/suggestion callers, cross-job corrections/
+   suppression and guarded consumers. Stored private results alone are insufficient.
 6. Pipeline-specific minimized observability and remaining migration integration.
 
 The 64-pair cumulative ledger is **not** a rolling summary or rebase. The existing

@@ -64,7 +64,7 @@ full integration remain implementation work, not external-service gates.
   that a viewer opened; they do not measure attention, reading or preference.
 - Artifact observations remain excluded from assistant answer origins and exports.
   Historical and governed artifact evidence, genuine block inspection, longer rolling
-  conversation capture, and durable inferred-output inverses remain implementation work.
+  conversation capture, and broader inferred-output consumer/index inverses remain implementation work.
 
 Verification: 625 focused artifact/client/UI checks and 51 focused native runtime
 checks passed; typecheck and production build passed. These are local tests, not
@@ -77,10 +77,10 @@ These are not external-service blockers and must not be moved into a rollout-onl
 | Work | Concrete next step | Completion evidence |
 | --- | --- | --- |
 | Purpose grants / native accounting integration | Consent, source-bound native holds, payer-month caps, one-shot transport, settlement/recovery and manual UI are implemented; connect them to durable semantic processing | Real admission/accounting/recovery and privacy tests, no automatic enrollment |
-| Reliable changed-scope delivery | Reference jobs, leases and [bounded recovery](forma-memory-native-recovery-2026-09-18.md) are implemented. Complete processing windows, durable semantic results, completed cursors and index outbox acknowledgements | Cursor/publication atomicity, replay, backpressure, source invalidation and deletion acknowledgements |
+| Reliable changed-scope delivery | Reference jobs, leases and [bounded recovery](forma-memory-native-recovery-2026-09-18.md) are implemented. [Private result storage and source inverses](forma-memory-native-results-2026-09-18.md) are implemented. Complete processing windows, completed cursors and index outbox acknowledgements | Cursor/publication atomicity, replay, backpressure, source invalidation and deletion acknowledgements |
 | Wider scope identities | Implement canonical nested-project and page/block/artifact identities, bounded ancestry and reparent invalidation | Cycle, move, isolation and independent access-versus-relevance tests |
 | Broader source and consumption coverage | Extend original assistant capture, longer-history rebase and genuine inspection/reuse evidence | Exact source/body/lifetime/custody proofs; do not infer preference or comprehension from a click |
-| Semantic/profile and suggestion callers | Citation parsing, provider adapter, [fresh read-only evidence](forma-memory-native-read-evidence-2026-09-18.md) and [complete-input manifests/publication receipts](forma-memory-native-manifests-2026-09-18.md) are implemented; persist complete dependencies, corrections/suppression and publish guarded scoped suggestions | Local adapter tests can proceed before external qualification; actual provider/index integration stays gated |
+| Semantic/profile and suggestion callers | Citation parsing, provider adapter, [fresh read-only evidence](forma-memory-native-read-evidence-2026-09-18.md) and [complete-input manifests/publication receipts](forma-memory-native-manifests-2026-09-18.md) are implemented. [Result storage](forma-memory-native-results-2026-09-18.md) retains complete dependencies and privacy inverses; implement cross-job corrections/suppression and publish guarded scoped suggestions | Local adapter tests can proceed before external qualification; actual provider/index integration stays gated |
 | Runtime observability | Add purpose-minimized derivation/index freshness, accounting and deletion status as those pipelines become real | Native measurements and failure drills; no text/vector payloads in general analytics |
 | Pending migration integration | Assign candidates only after review, matching ORM/snapshot generation and qualified execution path | Append-only history, full rollback/row preservation and exact reader compatibility |
 

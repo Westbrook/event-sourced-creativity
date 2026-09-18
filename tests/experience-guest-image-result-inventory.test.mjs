@@ -813,3 +813,28 @@ for(const fault of ['none','missing-protection','inbound-view'])test('guest inve
   if(fault==='inbound-view')f.sqlite.exec('CREATE VIEW unexpected_memory_recovery AS SELECT * FROM memory_derivation_recovery_cursor');
   configurationTripwire(f,t);if(fault==='none')assert.deepEqual(await currentManifest(f,t),before);else await denied(f,t);
 });
+for(const fault of ['none','missing-inverse','inbound-view'])test('guest inventory verifies native semantic result schema '+fault,async t=>{
+  const f=await completedResultFixture(t,{memory:true}),before=await currentManifest(f,t);installDerivationFinanceSchema(f);
+  installQualifiedMigration(f,'0020_assistant_runtime_tables.sql');
+  installQualifiedMigration(f,'0047_memory_derivation_results.sql');
+  if(fault==='missing-inverse')f.sqlite.exec('DROP TRIGGER memory_derivation_result_private_content_delete');
+  if(fault==='inbound-view')f.sqlite.exec('CREATE VIEW unexpected_memory_results AS SELECT * FROM memory_derivation_results');
+  configurationTripwire(f,t);if(fault==='none')assert.deepEqual(await currentManifest(f,t),before);else await denied(f,t);
+});
+
+for(const link of ['unrelated','manifest-guest','manifest-document','manifest-duplicate-key','inverse-document'])test('Memory retained semantic result inventory checks '+link,async t=>{
+  const f=await completedResultFixture(t,{memory:true}),before=await currentManifest(f,t);installDerivationFinanceSchema(f);
+  installQualifiedMigration(f,'0020_assistant_runtime_tables.sql');installQualifiedMigration(f,'0047_memory_derivation_results.sql');
+  // Restore exact schema after simulating a retained/restored private row. An
+  // intact schema alone must never hide a guest alias in a private manifest.
+  const definitions=['memory_derivation_result_insert','memory_derivation_result_dependency_insert'].map(name=>f.sqlite.prepare('SELECT name,sql FROM sqlite_schema WHERE name=?').get(name));
+  const wasForeignKeys=f.sqlite.prepare('PRAGMA foreign_keys').get().foreign_keys;f.sqlite.exec('PRAGMA foreign_keys=OFF');
+  for(const row of definitions)f.sqlite.exec('DROP TRIGGER '+row.name);
+  const manifest=link==='manifest-duplicate-key'?'"identity":"unrelated","identity":'+JSON.stringify(f.session.documentId)
+    :'"identity":'+JSON.stringify(link==='manifest-guest'?f.session.guestSubject:link==='manifest-document'?f.session.documentId:'unrelated');
+  insert(f,'memory_derivation_results',{job_id:'e'.repeat(64),finance_id:'unrelated-finance',state:'active',raw_json:'{}',manifest_json:'{'+manifest+'}',
+    output_sha256:'a'.repeat(64),manifest_sha256:'b'.repeat(64),dependency_count:1,published_at:'2026-01-01T00:00:00.000Z',expires_at:'2027-01-01T00:00:00.000Z',retired_at:null});
+  insert(f,'memory_derivation_result_dependencies',{job_id:'e'.repeat(64),kind:'content',resource_id:link==='inverse-document'?f.session.documentId:'unrelated',actor_user_id:'',scope_key:''});
+  for(const row of definitions)f.sqlite.exec(row.sql);f.sqlite.exec('PRAGMA foreign_keys='+Number(wasForeignKeys));
+  configurationTripwire(f,t);if(link==='unrelated')assert.deepEqual(await currentManifest(f,t),before);else await denied(f,t);
+});

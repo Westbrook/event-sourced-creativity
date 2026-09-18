@@ -833,3 +833,14 @@ test('Memory recovery migration is additive, schema-only and preserves the retai
   assert.deepEqual(rows(sqlite,'memory_derivation_month_caps'),floors);assert.deepEqual(rows(sqlite,'memory_derivation_recovery_cursor'),scan);
   assert.deepEqual(sqlite.prepare('PRAGMA foreign_key_check').all(),[]);
 });
+test('Memory semantic results migration is additive, schema-only and exact on rerun', t => {
+  const target=actualMigrations.find(migration=>migration.tag==='0047_memory_derivation_results');assert.ok(target);
+  const sqlite=database(t),before=actualMigrations.slice(0,actualMigrations.indexOf(target));migrateLocalDatabase(sqlite,{migrations:before});
+  const oldSchema=schema(sqlite),receipts=rows(sqlite,receiptTable);
+  migrateLocalDatabase(sqlite,{migrations:actualMigrations,dryRun:true});assert.deepEqual(schema(sqlite),oldSchema);assert.deepEqual(rows(sqlite,receiptTable),receipts);
+  const applied=migrateLocalDatabase(sqlite,{migrations:actualMigrations}).migrations.find(m=>m.tag===target.tag);
+  assert.equal(applied.executedStatements,39);assert.equal(applied.status,'applied');
+  assert.deepEqual(rows(sqlite,'memory_derivation_results'),[]);assert.deepEqual(rows(sqlite,'memory_derivation_result_dependencies'),[]);
+  assert.equal(migrateLocalDatabase(sqlite,{migrations:actualMigrations}).migrations.find(m=>m.tag===target.tag).status,'already-applied');
+  assert.deepEqual(sqlite.prepare('PRAGMA foreign_key_check').all(),[]);
+});

@@ -41,7 +41,12 @@ expired execution and isolated D1. Typecheck and the production build pass; the
 existing build chunk-size warnings remain. Exact final counts and logs are in the
 Memory task handoff. This is not hosted qualification or a clean full-suite claim.
 
-## Next implementation
+## Subsequent implementation
+
+The [result-storage slice](forma-memory-native-results-2026-09-18.md) now completes
+item 1 below, including single-result withdrawal. The other items remain in scope.
+
+## Original next steps
 
 1. Add durable private result rows and normalized dependency indexes, with
    immediate targeted body erasure, grant/job cascades, expiry, idempotent lost-ACK

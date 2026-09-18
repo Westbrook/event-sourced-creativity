@@ -645,9 +645,18 @@ test("main170 source metadata is NOT deployment certification: recorded upstream
     for (const statement of LEGACY_ASSISTANT_DDL) sqlite.exec(statement);
     seedLegacyRows(sqlite);
     const before = main170MetadataExistingRows(sqlite), receipts = main170MetadataReceipts(sqlite);
-    main170MetadataMigrate(sqlite, history);
-    const later = history.filter(entry => entry.folderMillis > receipts.at(-1).created_at);
+    const inverseIndex = history.findIndex(entry => entry.sql.some(sql => sql.includes('CREATE TRIGGER memory_derivation_result_consequential_executions_insert')));
+    assert.ok(inverseIndex > 22);
+    const beforeInverses = history.slice(0, inverseIndex);
+    main170MetadataMigrate(sqlite, beforeInverses);
+    const later = beforeInverses.filter(entry => entry.folderMillis > receipts.at(-1).created_at);
     assert.deepEqual(main170MetadataReceipts(sqlite), [...receipts, ...main170MetadataExpectedReceipts(later)], "Only later migrations apply; absent accepted predecessors remain absent");
+    const partialReceipts = main170MetadataReceipts(sqlite);
+    // New source-inverse triggers require the genuine predecessor table. A
+    // timestamp-skipped prerequisite must abort, not be fabricated or ignored.
+    assert.throws(() => main170MetadataMigrate(sqlite, history), /no such table: main\.consequential_executions/iu);
+    assert.deepEqual(main170MetadataReceipts(sqlite), partialReceipts);
+    assert.equal(main170MetadataExists(sqlite, 'memory_derivation_results'), false);
     assert.deepEqual(main170MetadataExistingRows(sqlite), before);
     for (const table of ["consequential_executions", "consequential_execution_steps", "authoring_commits"]) assert.equal(main170MetadataExists(sqlite, table), false, table + " is still missing");
     assert.equal(tableColumns(sqlite, "assistant_turns").some(column => column.name === "request_json"), false);

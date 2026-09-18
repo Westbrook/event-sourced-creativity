@@ -42,6 +42,7 @@ import { handleLiveMemory } from "./memory-live-api.ts";
 import { handleMemoryDerivationSettings } from "./memory-derivation-api.ts";
 import { maintainNativeDerivationRecovery } from "./memory-derivation-recovery.ts";
 import { sweepNativeDerivationJobs } from "./memory-derivation-jobs.ts";
+import { sweepNativeDerivationResults } from "./memory-derivation-results.ts";
 import { sweepExpiredDerivationGrants } from "./memory-derivation-store.ts";
 import { runLiveMemoryScheduled } from "./memory-live-jobs.ts";
 import { sweepExpiredMemoryCheckpoints } from "./memory-live-checkpoints.ts";
@@ -366,17 +367,25 @@ export default {
   async scheduled(_controller: unknown, env: WorkerEnv): Promise<void> {
     await observeScheduledRetention(env,1_000);
     try {
-      // Privacy cleanup is independent of profile rollout and never performs inference or enrollment.
-      try { await sweepExpiredMemoryCheckpoints(env,128); }
-      finally { try { await sweepExpiredDocumentProfileSuppressions(env,128); }
-        finally { try { await sweepExpiredDerivationGrants(env,128); }
-          finally { try { await sweepNativeDerivationJobs(env); }
-            finally {
-              // Source-free recovery never enrolls, infers, sends or retries a provider request.
-              // Keep accounting recovery available after rollout/consent withdrawal.
-              const recovery=await maintainNativeDerivationRecovery(env);
-              if(recovery.failed)throw Error("memory-derivation-recovery-partial");
-            } } } }
+      // Run every bounded, source-free cleanup step even if an earlier one fails.
+      // These steps never enroll, infer, dispatch or retry a provider request.
+      let cleanupFailed = false, cleanupError: unknown;
+      const cleanupSteps = [
+        () => sweepExpiredMemoryCheckpoints(env,128),
+        () => sweepExpiredDocumentProfileSuppressions(env,128),
+        () => sweepExpiredDerivationGrants(env,128),
+        () => sweepNativeDerivationJobs(env),
+        () => sweepNativeDerivationResults(env),
+        async () => {
+          const recovery=await maintainNativeDerivationRecovery(env);
+          if(recovery.failed)throw Error("memory-derivation-recovery-partial");
+        },
+      ];
+      for (const step of cleanupSteps) {
+        try { await step(); } catch (error) { if (!cleanupFailed) cleanupError = error; cleanupFailed = true; }
+      }
+      // Do not hide a failed privacy/accounting pass or start learning after it.
+      if(cleanupFailed)throw cleanupError;
       // Native worker event only: the runner separately requires literal scheduling
       // admission, actor rollout and each existing background-purpose enrollment.
       await runLiveMemoryScheduled(env);
