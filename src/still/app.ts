@@ -700,14 +700,14 @@ export class StillApp extends LitElement {
     const ordered=[...new Set([...this.formatSuggestions,...rankAllFormats(formats)])].filter(id=>formats.some(a=>a.id===id));
     if(this.pageActionLimit<3){
       const emphasis=presentToolbar(ordered.slice(0,3),this.formatEmphasis);
-      const choices=g?[{id:'ui:generate',label:g.recoveryClosed?'Review another':g.attempted?'Check generation':g.format==='scene'&&!g.scenePreview?'Check cost':this.generationGate?(this.generationGate.key?'Continue':'Blocked'):'Generate',run:()=>void this.run(()=>this.generate()),variant:'primary' as const,disabled:!!this.generationGate&&!this.generationGate.key}]:ordered.map(id=>({id,label:FORMATS[id],run:()=>{this.formatTouched=true;void this.startGeneration(id);},variant:emphasis[id]?.variant??'secondary' as const}));
+    const choices=g?[{id:'ui:generate',label:g.recoveryClosed?'Review another':g.attempted?'Check generation':g.format==='scene'&&!g.scenePreview?'Check cost':this.generationGate?(this.generationGate.key?'I understand the risks':'Blocked'):'Generate',run:()=>void this.run(()=>this.generate()),variant:'primary' as const,disabled:!!this.generationGate&&!this.generationGate.key}]:ordered.map(id=>({id,label:FORMATS[id],run:()=>{this.formatTouched=true;void this.startGeneration(id);},variant:emphasis[id]?.variant??'secondary' as const}));
       return this.compactDock([...choices,{id:'ui:back',label:'Back',run:()=>this.closeMode(),variant:'ghost'}],g?'Menu':'Other outputs');
     }
     const suggested=ordered.slice(0,Math.min(3,this.pageActionLimit-2));
     const remaining=ordered.filter(id=>!suggested.includes(id));
     return html`<footer class="action-dock" @pointerdown=${()=>{this.formatTouched=true;}} @focusin=${()=>{this.formatTouched=true;}}>
       <en-toolbar label="Your next step" keyboard-navigation="tab">
-        ${g?this.button(g.recoveryClosed?'Review another':g.attempted?'Check generation':g.format==='scene'&&!g.scenePreview?'Check cost':this.generationGate?(this.generationGate.key?'Continue':'Blocked'):'Generate',()=>void this.run(()=>this.generate()),true,!!this.generationGate&&!this.generationGate.key):html`
+        ${g?this.button(g.recoveryClosed?'Review another':g.attempted?'Check generation':g.format==='scene'&&!g.scenePreview?'Check cost':this.generationGate?(this.generationGate.key?'I understand the risks':'Blocked'):'Generate',()=>void this.run(()=>this.generate()),true,!!this.generationGate&&!this.generationGate.key):html`
           ${suggested.map(id=>this.suggestedButton({...ACTIONS.find(a=>a.id===id)!,label:FORMATS[id]},true,presentToolbar(suggested,this.formatEmphasis)))}
           ${remaining.length?html`<en-button id="still-format-menu" variant="ghost" size="medium" ?disabled=${this.busy||this.composing}>Other outputs</en-button>${this.help("still-format-menu","Other outputs")}`:nothing}
         `}
@@ -783,7 +783,7 @@ export class StillApp extends LitElement {
       ],()=>{this.error='';}):nothing}
       ${review?this.notification(`review:${this.reviewVersion}`, [review.message,...review.issues.map(i=>i.summary)].join('. '),canContinueReview(review)?'warning':'danger',[
         {label:'Review context',run:()=>this.reviewContext()},
-        ...(canContinueReview(review)?[{label:'Continue',run:()=>void this.run(()=>this.generate())}]:[]),
+        ...(canContinueReview(review)?[{label:'I understand the risks',run:()=>void this.run(()=>this.generate())}]:[]),
       ]):nothing}
       ${!this.mode&&failed&&failure?this.notification(`job:${failure.key}`,failure.message,failed.errorDetail?.category==='safety'?'warning':'danger',[
         {label:failure.label,run:()=>{
