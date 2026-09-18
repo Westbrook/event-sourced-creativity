@@ -67,6 +67,13 @@ token assumptions for Sunburst. Replay estimation and authorization require a
 separate model-specific budgeting review before claiming a verified Sunburst
 ceiling. No replay session was started or authorized during this repair.
 
+The Still image-policy integration test now captures the outgoing image request
+and asserts its Sunburst model outside the intercepted fetch callback, then checks
+the persisted definitive provider rejection. Previously a stale Image 2 assertion
+inside that callback could be swallowed by production error handling. Historical
+closure-pinned mini-app tests are not treated as qualification for this migration;
+Sponsor/Guest templates and their explicit Image 2 contracts remain untouched.
+
 ## Remaining activation requirement
 
 A separately reviewed Sunburst-specific output-token estimator must establish
