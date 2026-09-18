@@ -2315,7 +2315,7 @@ async function jobRetirementRetiredLedgerCustody(env:StructuredOriginLifecycleEn
   if(!current())throw new Error("memory-document-job-retirement-changed");
   const schema=await structuredConversationLedgerSchema(env);
   if(!schema.present||!current())throw new Error("memory-document-job-retirement-custody-unavailable");
-  const assertions=[structuredOriginAssertion(schema.guard.condition,schema.guard.bindings)];
+  const assertions=[structuredOriginAssertion(schema.guard.condition,[...schema.guard.bindings])];
   for(const ref of refs){
     const revision=manifest.ledgerRevisions.find(row=>row.body_ref===ref);
     if(!revision)throw new Error("memory-document-job-retirement-custody-unavailable");
