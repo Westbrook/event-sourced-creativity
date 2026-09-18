@@ -192,15 +192,20 @@ test("actual-data mocks checkpoint progress and reconcile abandoned requests",as
 });
 
 test("keeps actual-data mocks in fictional accounts with guarded impersonated writes",async()=>{
-  const [api,policy,shell,store,runtime]=await Promise.all([
+  const [api,policy,core,shell,store,runtime]=await Promise.all([
     readFile(new URL("../worker/replay-sessions-api.ts",import.meta.url),"utf8"),
     readFile(new URL("../worker/pilot-policy.ts",import.meta.url),"utf8"),
+    readFile(new URL("../worker/principal-request-core.ts",import.meta.url),"utf8"),
     readFile(new URL("../src/components/forma-shell.ts",import.meta.url),"utf8"),
     readFile(new URL("../src/state/store.ts",import.meta.url),"utf8"),
     readFile(new URL("../worker/runtime.ts",import.meta.url),"utf8"),
   ]);
   assert.match(api,/replay_session_milestones/);assert.match(api,/fictional_user_id/);assert.match(api,/ReplayPersonaProjectMaterialized/);assert.match(api,/ReplayPersonaPrepared/);assert.doesNotMatch(api,/action==="adopt"|target_user_acceptance_required/);
-  assert.match(policy,/forma_impersonation/);assert.match(policy,/x-forma-impersonation-confirmation/);assert.match(policy,/I understand, continue/);assert.match(policy,/status:428/);assert.match(policy,/ReplayPersonaImpersonationStarted/);assert.match(policy,/ReplayPersonaImpersonationEnded/);
+  assert.match(policy,/forma_impersonation/);assert.match(policy,/ReplayPersonaImpersonationStarted/);assert.match(policy,/ReplayPersonaImpersonationEnded/);
+  assert.match(core,/x-forma-impersonation-confirmation/);assert.match(core,/I understand, continue/);assert.match(core,/status:428/);
+  const requireUser=policy.slice(policy.indexOf('export async function requireUser('),policy.indexOf('/** Existing-account administrative reads'));
+  assert.match(requireUser,/await readExistingPrincipalRequest\(request, env, minimum, options\)/);
+  assert.match(requireUser,/return completePrincipalRequest\(request, env, identity, row, minimum, options\)/);
   assert.match(shell,/Fictional account safeguard/);assert.match(shell,/Return to my account/);assert.match(shell,/Canceling, pressing Escape, closing the dialog, or clicking its backdrop prevents the interaction entirely/);
   assert.match(store,/guardedFetch/);assert.match(store,/confirmImpersonatedInteraction/);assert.match(store,/No changes were made to the fictional account/);assert.match(store,/x-forma-impersonation-confirmation/);
   assert.match(runtime,/session_id TEXT NOT NULL UNIQUE/);assert.match(runtime,/fictional_stream_id TEXT NOT NULL UNIQUE/);

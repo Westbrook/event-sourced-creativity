@@ -580,3 +580,27 @@ test('mixed slideshow success and failure label each charged model and current t
   }finally{context.mock.restoreAll();f.sqlite.close();}
  }
 });
+
+test('Sunburst default and explicit model fail bounded admission without Image 2 estimates or provider calls',async context=>{
+ let calls=0;context.mock.method(globalThis,'fetch',async()=>{calls++;throw new Error('Unqualified budget must not transmit');});
+ const f=await fixture([{block_id:'source-sunburst-price',type:'message',properties:{text:'An orchard at sunset.'}}]);context.after(()=>f.sqlite.close());const plan=await saveImages(f);
+ const tables=['document_jobs','budget_reservations','cost_budget_reservations','output_execution_grants','output_provider_calls'];
+ const counts=()=>Object.fromEntries(tables.map(table=>[table,f.sqlite.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get().n]));
+ const before=counts();
+ for(const model of [undefined,'gpt-image-2.5-sunburst']){
+  if(model===undefined)delete f.env.OPENAI_IMAGE_MODEL;else f.env.OPENAI_IMAGE_MODEL=model;
+  const offered=await f.ok(await f.send({action:'preflight',planRevisionId:plan.planId,targetIds:plan.targetIds}));
+  const terms=offered.command.preflight;
+  assert.ok(terms.targets.length>0);
+  for(const target of terms.targets){assert.equal(target.available,false);assert.equal(target.reasonCode,'output_native_image_price_unknown');assert.equal(target.maximumMicrousd,0);assert.equal(target.maximumCalls,0);assert.equal(target.settings.imageBudget,undefined);}
+  const authorization=await f.request(BASE,{documentId:f.documentId,action:'authorize',expectedRevision:offered.snapshot.revision,clientMutationId:`unqualified-${model??'default'}`,preflightId:terms.id,termsDigest:terms.termsDigest,maximumMicrousd:900000,explicitAuthorization:true});
+  assert.equal(authorization.ok,false);assert.deepEqual(counts(),before);assert.equal(calls,0);
+ }
+ for(const size of ['1024x1024','1536x1024','3056x1600'])assert.equal(outputImageBudget('gpt-image-2.5-sunburst',size),null);
+ const {selectImageAdapter}=await import('../worker/image-adapter-selection.ts');
+ const {OPENAI_IMAGE_GENERATION_CONTRACT}=await import('../worker/openai-image-route-contract.ts');
+ const {hasKnownImageModelPricing,priceImageUsageBreakdownMicrousd}=await import('../worker/replay-cost.ts');
+ assert.equal(selectImageAdapter({}).model,'gpt-image-2.5-sunburst');assert.equal(OPENAI_IMAGE_GENERATION_CONTRACT.defaults.model,'gpt-image-2.5-sunburst');
+ assert.equal(hasKnownImageModelPricing('gpt-image-2.5-sunburst'),true);
+ assert.equal(priceImageUsageBreakdownMicrousd('gpt-image-2.5-sunburst',{inputTokens:2e6,textInputTokens:1e6,imageInputTokens:1e6,outputTokens:1e6,totalTokens:3e6},true).totalMicrousd,43e6);
+});

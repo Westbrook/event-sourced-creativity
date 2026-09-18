@@ -8,7 +8,7 @@ import { readGeneratedImageReference, storeGeneratedImage } from "./media-api.ts
 import { deleteGeneratedImagesByGenerationPrefix } from "./replay-media-cleanup.ts";
 import { appendAuditEvent, appendEvents, ensureSchema, makeEvent, uuidV7, type WorkerEnv } from "./runtime.ts";
 import { POLICY_VERSION, costBudgetReservation, readCostBudgets, requireConsent, requireUser, reserveCostBudget, type PilotUser } from "./pilot-policy.ts";
-import { estimateLiveReplayCost, formatMicrousd, normalizeReplayProviderCoverage, normalizeReplayStreamSize, priceTextUsageMicrousd, replayGenerationProfile, type ReplayProviderCoverage, type ReplayStreamSize } from "./replay-cost.ts";
+import { estimateLiveReplayCost, hasQualifiedReplayImageEstimate, formatMicrousd, normalizeReplayProviderCoverage, normalizeReplayStreamSize, priceTextUsageMicrousd, replayGenerationProfile, type ReplayProviderCoverage, type ReplayStreamSize } from "./replay-cost.ts";
 import { classifyProviderFailure, publicFailureDetail } from "./provider-errors.ts";
 import { buildReplayAdoptionDescriptors, normalizeReplayAdoptionPlan, normalizeReplayAdoptionReferenceSource, replayAdoptionMediaFromCopied, replayAdoptionSlug, replayAdoptionSourceAssets, type ReplayAdoptionIds } from "./replay-adoption.ts";
 import { findLicensedReplayReference, replayReferenceContentHash, replayReferenceGenerationPrompt } from "./replay-reference.ts";
@@ -33,10 +33,10 @@ type ReplayProfileRequest={eventCount:ReplayStreamSize;providerCoverage:ReplayPr
 const replayProfileRequest=(eventCount:unknown,providerCoverage:unknown,studyTypes:unknown=[],experienceProfile:unknown=DEFAULT_REPLAY_EXPERIENCE):ReplayProfileRequest=>({eventCount:normalizeReplayStreamSize(eventCount),providerCoverage:normalizeReplayProviderCoverage(providerCoverage),studyTypes:normalizeCreativeStudyTypes(studyTypes),experienceProfile:normalizeReplayExperienceId(experienceProfile)});
 
 async function costPreflight(env:WorkerEnv,userId:string,seed="",profile:ReplayProfileRequest=replayProfileRequest(1_000,"automatic")){
-  const estimate=estimateLiveReplayCost(env,seed,profile);const budget=await readCostBudgets(env,userId);
+  const estimate=estimateLiveReplayCost(env,seed,profile);const qualifiedImageEstimate=hasQualifiedReplayImageEstimate(env);const budget=await readCostBudgets(env,userId,{initialize:false});
   const fitsUser=estimate.authorizationMicrousd<=budget.user.remainingMicrousd;const fitsWorkspace=estimate.authorizationMicrousd<=budget.workspace.remainingMicrousd;
   const minimumSemanticEventCount=minimumLiveReplayEventCount(estimate.profile.milestoneCount);const fitsReplayStructure=estimate.profile.targetEventCount>=minimumSemanticEventCount;
-  return{estimate,budget,fitsUser,fitsWorkspace,fitsReplayStructure,minimumSemanticEventCount,requiresUserOverride:!fitsUser,canRun:fitsReplayStructure&&fitsWorkspace&&fitsUser,canRunWithUserOverride:fitsReplayStructure&&fitsWorkspace};
+  return{estimate,budget,qualifiedImageEstimate,reasonCode:qualifiedImageEstimate?null:"replay_image_estimate_unqualified",fitsUser,fitsWorkspace,fitsReplayStructure,minimumSemanticEventCount,requiresUserOverride:!fitsUser,canRun:qualifiedImageEstimate&&fitsReplayStructure&&fitsWorkspace&&fitsUser,canRunWithUserOverride:qualifiedImageEstimate&&fitsReplayStructure&&fitsWorkspace};
 }
 
 const liveConfiguration=async(env:WorkerEnv,userId:string,seed="",profile:ReplayProfileRequest=replayProfileRequest(1_000,"automatic"))=>({enabled:enabled(env),configured:Boolean(env.OPENAI_API_KEY),approvalPhrase:APPROVAL_PHRASE,confirmationVersion:CONFIRMATION_VERSION,coverageContractVersion:REPLAY_COVERAGE_CONTRACT_VERSION,operations:["one experience-specific structured plan per selected study or composition stage","one validated reference image acquired from Wikimedia Commons or generated as a low-quality fallback before mock ingestion","one 816px JPEG draft guided by the stored reference per stage","four high-quality GPT Image edits per stage—prose, bullets, JSON, and XML","reusable Library context and a project Canvas synthesis that prepare a durable document","purpose-built image, short story, scene, visual slides, storyboard, and bounded video-treatment receipts","preferred study outputs locked as structured context and pixel references for composed-image stages","an exact 1K, 10K, or 50K event fixture stored in replayable chunks"],savedForReuse:true,cost:await costPreflight(env,userId,seed,profile)});
@@ -186,6 +186,7 @@ async function grantApproval(request:Request,env:WorkerEnv){
   const seed=String(body.seed??"").trim().slice(0,1200);const profileRequest=replayProfileRequest(body.eventCount,body.providerCoverage,body.studyTypes,body.experienceProfile);const profile=replayGenerationProfile(profileRequest.eventCount,profileRequest.providerCoverage,profileRequest.studyTypes);
   if(body.phrase!==APPROVAL_PHRASE||!bool(body.costAcknowledged)||!bool(body.directUserApproval)||body.confirmationVersion!==CONFIRMATION_VERSION||body.initiator!=="direct-user")return Response.json({error:"explicit_live_replay_approval_required"},{status:428});
   const preflight=await costPreflight(env,auth.user.userId,seed,profileRequest);const approvedMaximum=Math.floor(Number(body.approvedMaximumMicrousd??0));
+  if(!preflight.qualifiedImageEstimate)return Response.json({error:"replay_image_estimate_unqualified",cost:preflight},{status:409});
   if(!preflight.fitsReplayStructure)return Response.json({error:"replay_stream_too_short_for_milestones",cost:preflight},{status:409});
   if(approvedMaximum!==preflight.estimate.authorizationMicrousd)return Response.json({error:"cost_estimate_changed",cost:preflight},{status:409});
   if(!preflight.fitsWorkspace)return Response.json({error:"cost_budget_hard_cap_reached",scope:"workspace",cost:preflight},{status:429});
@@ -226,6 +227,8 @@ async function createSession(request:Request,env:WorkerEnv){
   if(!enabled(env))return Response.json({error:"live_replay_disabled"},{status:403});if(!env.OPENAI_API_KEY)return Response.json({error:"provider_not_configured"},{status:503});if(automationDeclared(request))return Response.json({error:"direct_user_approval_required"},{status:403});
   const body=await request.json() as {approvalId?:string;directUserApproval?:boolean;confirmationVersion?:string;initiator?:string};
   if(!body.approvalId||!bool(body.directUserApproval)||body.confirmationVersion!==CONFIRMATION_VERSION||body.initiator!=="direct-user")return Response.json({error:"one_time_approval_required"},{status:428});
+  // Check before consuming even a retained approval issued under an older default.
+  if(!hasQualifiedReplayImageEstimate(env))return Response.json({error:"replay_image_estimate_unqualified",imageModel:estimateLiveReplayCost(env).imageModel},{status:409});
   const now=new Date().toISOString();const consumed=await env.DB.prepare("UPDATE replay_approvals SET consumed_at=? WHERE approval_id=? AND owner_id=? AND confirmation_version=? AND consumed_at IS NULL AND expires_at>?").bind(now,body.approvalId,auth.user.userId,CONFIRMATION_VERSION,now).run();
   if(Number(consumed.meta.changes??0)!==1)return Response.json({error:"approval_missing_expired_or_consumed"},{status:428});
   const approval=await env.DB.prepare("SELECT seed FROM replay_approvals WHERE approval_id=? AND owner_id=?").bind(body.approvalId,auth.user.userId).first<{seed:string}>();const seed=approval?.seed??"";

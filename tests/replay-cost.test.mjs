@@ -1,7 +1,19 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { OPENAI_IMAGE_GENERATION_CONTRACT } from "../worker/openai-image-route-contract.ts";
+import { selectImageAdapter } from "../worker/image-adapter-selection.ts";
 import { estimateOpenAITextCallMaximumMicrousd, priceCurrentOpenAITextUsage, readOpenAITextUsage } from "../worker/openai-text-cost.ts";
 import { LIVE_REPLAY_COST_CONTINGENCY, estimateLiveReplayCost, priceImageUsageBreakdownMicrousd, priceImageUsageMicrousd, priceTextUsageBreakdownMicrousd, priceTextUsageMicrousd, replayGenerationProfile } from "../worker/replay-cost.ts";
+
+test("replay estimate model agrees with generation default and respects explicit overrides",()=>{
+  assert.equal(estimateLiveReplayCost({}).imageModel,OPENAI_IMAGE_GENERATION_CONTRACT.defaults.model);
+  assert.equal(estimateLiveReplayCost({}).imageModel,selectImageAdapter({}).model);
+  for(const imageModel of ["gpt-image-2","gpt-image-2.5-sunburst"]){
+    const env={OPENAI_IMAGE_MODEL:imageModel};
+    assert.equal(estimateLiveReplayCost(env).imageModel,imageModel);
+    assert.equal(estimateLiveReplayCost(env).imageModel,selectImageAdapter(env).model);
+  }
+});
 
 test("estimates the exact seven-operation replay workflow in USD",()=>{
   const estimate=estimateLiveReplayCost({OPENAI_MODEL:"gpt-5.6-terra",OPENAI_IMAGE_MODEL:"gpt-image-2"});

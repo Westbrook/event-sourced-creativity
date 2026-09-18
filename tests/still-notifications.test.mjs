@@ -33,3 +33,20 @@ test('dismissing a failed generation persists existing dismissal metadata withou
   assert.deepEqual(f.counts(),before);
  } finally {globalThis.fetch=saved;await f.drainBackground();f.close();}
 });
+
+test('Review generation opens the original job even without generation permission and never starts a fresh request',async()=>{
+ const {readFileSync}=await import('node:fs'),{default:ts}=await import('typescript');
+ const {generationFormat}=await import('../src/still/results.ts');
+ const source=ts.createSourceFile('app.ts',readFileSync(new URL('../src/still/app.ts',import.meta.url),'utf8'),ts.ScriptTarget.Latest,true);
+ const app=source.statements.find(n=>ts.isClassDeclaration(n)&&n.name?.text==='StillApp');
+ const method=app.members.find(n=>n.name?.getText(source)==='renderNotifications');
+ const code=ts.transpileModule(`function renderNotifications(failed) ${method.body.getText(source)}`,{compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText;
+ const render=new Function('html','nothing','failureNotification','canContinueReview','generationFormat',`${code};return renderNotifications;`)(()=>null,null,failureNotification,canContinueReview,generationFormat);
+ for(const formats of [[],['image','video']])for(const job of [{kind:'generate'},{kind:'render_document',result:{artifactKind:'video'}}]){
+  const failed={...job,jobId:'original-failed-job',documentId:'original-document',status:'failed',attemptCount:1,errorDetail:{category:'network',action:'retry',code:'provider_network_error',message:'Unavailable.'}};
+  let review;const navigations=[];
+  const app={client:{abilities:{formats}},notification:(_key,_message,_tone,actions)=>{review=actions[0];},navigate:(view,ids)=>navigations.push({view,ids}),choose:()=>assert.fail('Review must not choose a new format'),startGeneration:()=>assert.fail('Review must not start generation')};
+  render.call(app,failed);assert.equal(review.label,'Review generation');review.run();
+  assert.deepEqual(navigations,[{view:'generation',ids:{outputId:failed.jobId}}]);
+ }
+});
