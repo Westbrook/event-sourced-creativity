@@ -8,7 +8,7 @@ import { MEMORY_DERIVATION_CONTROL, MEMORY_DERIVATION_POLICY, MEMORY_DERIVATION_
   derivationExact, derivationConsentId, derivationHash, derivationId, derivationInteger, derivationTime, parseMemoryDerivationQualification,
   type MemoryDerivationTerms } from "./memory-derivation-policy.ts";
 import { memoryDerivationSchema, memoryDerivationBinding, memoryDerivationEnabled, memoryDerivationGrantShape,
-  memoryDerivationGrantId, derivationResults, derivationVerified, derivationChanged, derivationAssertion, derivationRowGuard,
+  memoryDerivationGrantId, prepareDerivationCapFloor, derivationResults, derivationVerified, derivationChanged, derivationAssertion, derivationRowGuard,
   derivationQualificationGuard, readDerivationQualification, prepareDerivationWithdrawal, DERIVATION_GRANT_COLUMNS,
   type MemoryDerivationGrant } from "./memory-derivation-store.ts";
 import type { MemoryDerivationPurpose } from "./memory-derivation-result.ts";
@@ -206,7 +206,8 @@ export async function handleMemoryDerivationSettings(request: Request, env: Work
       background_enabled: Number(body.background), consented_at: now, expires_at: body.expiresAt, revoked_at: null };
     if (!memoryDerivationGrantShape(grant)) return deny("memory_derivation_grant_invalid", 409);
     const withdrawal = latest ? await prepareDerivationWithdrawal(env, { grantId, currentRevision: latest.revision }, now) : null;
-    const qualifiedGuard = derivationQualificationGuard(qualified.row), grantClock = clock(grant.expires_at), before = [...baseGuards, qualifiedGuard, grantClock], after = [schema.guard, clock(deadline), ...selected.guards, qualifiedGuard, grantClock,
+    const capFloor = await prepareDerivationCapFloor(env, grant, schema.financePresent);
+    const qualifiedGuard = derivationQualificationGuard(qualified.row), grantClock = clock(grant.expires_at), before = [...baseGuards, qualifiedGuard, grantClock, ...capFloor.before], after = [...capFloor.after, schema.guard, clock(deadline), ...selected.guards, qualifiedGuard, grantClock,
       derivationRowGuard("memory_derivation_grants", DERIVATION_GRANT_COLUMNS, grant)];
     const writes = [...(withdrawal?.statements ?? []), db.prepare(`INSERT INTO memory_derivation_grants(${DERIVATION_GRANT_COLUMNS.join(",")}) VALUES(${DERIVATION_GRANT_COLUMNS.map(() => "?").join(",")})`).bind(...DERIVATION_GRANT_COLUMNS.map(key => grant[key])),
       derivationAssertion(env, { condition: "changes()=1", bindings: [] })];
@@ -216,7 +217,7 @@ export async function handleMemoryDerivationSettings(request: Request, env: Work
       const result = structuredClone(await db.batch(statements));
       if (!current() || new Date().toISOString() >= grant.expires_at || !derivationResults(result, statements.length) || !result.slice(0, before.length).every(derivationVerified)
         || !result.slice(-after.length).every(derivationVerified) || !derivationVerified(result[before.length + writes.length - 1]!)
-        || !derivationChanged(result[before.length + writes.length - 2]!, 1)
+        || !derivationChanged(result[before.length + writes.length - 2]!, 1, capFloor.changes)
         || withdrawal && !withdrawal.acknowledge(result.slice(before.length, before.length + withdrawal.statements.length))) return failure();
     } catch { return failure(); }
     return reply({ grant: grantView(grant), capScope: "payer-utc-calendar-month-all-memory-purposes", processingImplemented: false });

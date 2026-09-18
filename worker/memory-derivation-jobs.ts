@@ -140,11 +140,14 @@ export async function sweepNativeDerivationJobs(env: WorkerEnv) {
   const db = env.DB, schema = await memoryDerivationSchema(env), selected = `SELECT job_id FROM memory_derivation_jobs
     WHERE expires_at<=strftime('%Y-%m-%dT%H:%M:%fZ','now') ORDER BY expires_at,job_id LIMIT 128`;
   let cascades = 0;
-  const counter = `SELECT COUNT(*) AS count FROM memory_derivation_job_sources WHERE job_id IN(${selected})`;
+  const counter = `SELECT (SELECT COUNT(*) FROM memory_derivation_job_sources WHERE job_id IN(${selected}))${schema.financePresent ? `+
+    (SELECT COUNT(*) FROM memory_derivation_job_finance WHERE job_id IN(${selected}))+
+    (SELECT COUNT(*) FROM memory_derivation_finance f JOIN memory_derivation_job_finance link ON link.finance_id=f.finance_id
+      WHERE link.job_id IN(${selected}) AND f.admission_closed_at IS NULL)` : ""} AS count`;
   if (schema.jobsPresent) {
     const observed = structuredClone(await db.prepare(counter).all<Row>());
     if (!derivationResults([observed], 1) || observed.results.length !== 1 || !derivationExact(observed.results[0], ["count"])
-      || !derivationInteger(observed.results[0]!.count, 0, 128 * 128)) fail();
+      || !derivationInteger(observed.results[0]!.count, 0, 128 * 130)) fail();
     cascades = observed.results[0]!.count as number;
   }
   const statements = [derivationAssertion(env, schema.guard), ...(schema.jobsPresent ? [

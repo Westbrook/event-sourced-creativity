@@ -2401,3 +2401,110 @@ export const stillDecisionCache = sqliteTable('still_decision_cache', {
   expiresAt: integer('expires_at').notNull(),
   body: text('body').notNull(),
 }, table => [index('idx_still_decision_cache_expiry').on(table.expiresAt), index('idx_still_decision_cache_owner').on(table.ownerId, table.createdAt)]);
+
+// Independent minimized finance. Only the private job bridge follows erasure.
+export const memoryDerivationMonthCaps = sqliteTable("memory_derivation_month_caps", {
+  payerId: text("payer_id").notNull(),
+  period: text("period").notNull(),
+  capMicrousd: integer("cap_microusd").notNull(),
+}, table => [
+  primaryKey({ columns: [table.payerId, table.period] }),
+  check("memory_derivation_month_caps_check_1", sql.raw("length(payer_id) BETWEEN 1 AND 240")),
+  check("memory_derivation_month_caps_check_2", sql.raw("length(period)=7 AND period GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]' AND substr(period,6,2) BETWEEN '01' AND '12'")),
+  check("memory_derivation_month_caps_check_3", sql.raw("typeof(cap_microusd)='integer' AND cap_microusd BETWEEN 1 AND 1000000000")),
+]);
+
+export const memoryDerivationFinance = sqliteTable("memory_derivation_finance", {
+  financeId: text("finance_id").notNull().primaryKey(),
+  payerId: text("payer_id").notNull(),
+  period: text("period").notNull(),
+  tokenId: text("token_id").notNull().unique(),
+  costId: text("cost_id").notNull().unique(),
+  operation: text("operation").notNull(),
+  provider: text("provider").notNull(),
+  model: text("model").notNull(),
+  termsSha256: text("terms_sha256").notNull(),
+  requestSha256: text("request_sha256").notNull(),
+  inputPrice: integer("input_price").notNull(),
+  cachedInputPrice: integer("cached_input_price").notNull(),
+  outputPrice: integer("output_price").notNull(),
+  maximumInput: integer("maximum_input").notNull(),
+  maximumOutput: integer("maximum_output").notNull(),
+  maximumTokens: integer("maximum_tokens").notNull(),
+  maximumMicrousd: integer("maximum_microusd").notNull(),
+  authorizedCapMicrousd: integer("authorized_cap_microusd").notNull(),
+  workspaceId: text("workspace_id").notNull(),
+  projectAccessId: text("project_access_id"),
+  pilotCohortId: text("pilot_cohort_id"),
+  createdAt: text("created_at").notNull(),
+  dispatchToken: text("dispatch_token").unique(),
+  dispatchedAt: text("dispatched_at"),
+  admissionClosedAt: text("admission_closed_at"),
+}, table => [
+  index("idx_memory_derivation_finance_payer_month").on(table.payerId,table.period),
+  index("idx_memory_derivation_finance_workspace").on(table.workspaceId,table.projectAccessId,table.pilotCohortId),
+  check("memory_derivation_finance_check_1", sql.raw("length(finance_id) BETWEEN 1 AND 240")),
+  check("memory_derivation_finance_check_2", sql.raw("length(payer_id) BETWEEN 1 AND 240")),
+  check("memory_derivation_finance_check_3", sql.raw("period=substr(created_at,1,7)")),
+  check("memory_derivation_finance_check_4", sql.raw("length(token_id) BETWEEN 1 AND 240")),
+  check("memory_derivation_finance_check_5", sql.raw("length(cost_id) BETWEEN 1 AND 240 AND cost_id<>token_id")),
+  check("memory_derivation_finance_check_6", sql.raw("operation IN('memory-derivation:rolling-summary','memory-derivation:profile','memory-derivation:suggestion')")),
+  check("memory_derivation_finance_check_7", sql.raw("provider='openai'")),
+  check("memory_derivation_finance_check_8", sql.raw("length(model) BETWEEN 1 AND 240")),
+  check("memory_derivation_finance_check_9", sql.raw("length(terms_sha256)=64 AND terms_sha256 NOT GLOB '*[^0-9a-f]*'")),
+  check("memory_derivation_finance_check_10", sql.raw("length(request_sha256)=64 AND request_sha256 NOT GLOB '*[^0-9a-f]*'")),
+  check("memory_derivation_finance_check_11", sql.raw("typeof(input_price)='integer' AND input_price BETWEEN 0 AND 1000000000")),
+  check("memory_derivation_finance_check_12", sql.raw("typeof(cached_input_price)='integer' AND cached_input_price BETWEEN 0 AND input_price")),
+  check("memory_derivation_finance_check_13", sql.raw("typeof(output_price)='integer' AND output_price BETWEEN 0 AND 1000000000")),
+  check("memory_derivation_finance_check_14", sql.raw("typeof(maximum_input)='integer' AND maximum_input BETWEEN 1 AND 131072")),
+  check("memory_derivation_finance_check_15", sql.raw("typeof(maximum_output)='integer' AND maximum_output BETWEEN 1 AND 8192")),
+  check("memory_derivation_finance_check_16", sql.raw("typeof(maximum_tokens)='integer' AND maximum_tokens=maximum_input+maximum_output")),
+  check("memory_derivation_finance_check_17", sql.raw("typeof(maximum_microusd)='integer' AND maximum_microusd BETWEEN 1 AND 1000000000\n   AND maximum_microusd=(maximum_input*input_price+maximum_output*output_price+999999)/1000000")),
+  check("memory_derivation_finance_check_18", sql.raw("typeof(authorized_cap_microusd)='integer' AND authorized_cap_microusd BETWEEN 1 AND 1000000000")),
+  check("memory_derivation_finance_check_19", sql.raw("length(workspace_id) BETWEEN 1 AND 240")),
+  check("memory_derivation_finance_check_20", sql.raw("length(created_at)=24 AND strftime('%Y-%m-%dT%H:%M:%fZ',created_at) IS created_at")),
+  check("memory_derivation_finance_check_21", sql.raw("(workspace_id='forma' AND project_access_id IS NULL AND pilot_cohort_id IS NULL) OR (workspace_id<>'forma' AND project_access_id IS NOT NULL AND length(project_access_id) BETWEEN 1 AND 240)")),
+  check("memory_derivation_finance_check_22", sql.raw("pilot_cohort_id IS NULL OR length(pilot_cohort_id) BETWEEN 1 AND 240")),
+  check("memory_derivation_finance_check_23", sql.raw("(dispatch_token IS NULL AND dispatched_at IS NULL) OR (dispatch_token IS NOT NULL AND length(dispatch_token) BETWEEN 1 AND 240 AND dispatched_at IS NOT NULL AND length(dispatched_at)=24 AND strftime('%Y-%m-%dT%H:%M:%fZ',dispatched_at) IS dispatched_at AND dispatched_at>=created_at)")),
+  check("memory_derivation_finance_check_24", sql.raw("admission_closed_at IS NULL OR length(admission_closed_at)=24 AND strftime('%Y-%m-%dT%H:%M:%fZ',admission_closed_at) IS admission_closed_at AND admission_closed_at>=created_at")),
+]);
+
+export const memoryDerivationUsage = sqliteTable("memory_derivation_usage", {
+  financeId: text("finance_id").notNull().primaryKey().references(() => memoryDerivationFinance.financeId),
+  providerRequestId: text("provider_request_id").notNull().unique(),
+  receiptSha256: text("receipt_sha256").notNull(),
+  inputTokens: integer("input_tokens").notNull(),
+  cachedInputTokens: integer("cached_input_tokens").notNull(),
+  outputTokens: integer("output_tokens").notNull(),
+  usedTokens: integer("used_tokens").notNull(),
+  usedMicrousd: integer("used_microusd").notNull(),
+  recordedAt: text("recorded_at").notNull(),
+}, () => [
+  check("memory_derivation_usage_check_1", sql.raw("length(provider_request_id) BETWEEN 1 AND 240")),
+  check("memory_derivation_usage_check_2", sql.raw("length(receipt_sha256)=64 AND receipt_sha256 NOT GLOB '*[^0-9a-f]*'")),
+  check("memory_derivation_usage_check_3", sql.raw("typeof(input_tokens)='integer' AND input_tokens BETWEEN 0 AND 1000000")),
+  check("memory_derivation_usage_check_4", sql.raw("typeof(cached_input_tokens)='integer' AND cached_input_tokens BETWEEN 0 AND input_tokens")),
+  check("memory_derivation_usage_check_5", sql.raw("typeof(output_tokens)='integer' AND output_tokens BETWEEN 0 AND 1000000")),
+  check("memory_derivation_usage_check_6", sql.raw("typeof(used_tokens)='integer' AND used_tokens=input_tokens+output_tokens")),
+  check("memory_derivation_usage_check_7", sql.raw("typeof(used_microusd)='integer' AND used_microusd BETWEEN 0 AND 2000000000")),
+  check("memory_derivation_usage_check_8", sql.raw("length(recorded_at)=24 AND strftime('%Y-%m-%dT%H:%M:%fZ',recorded_at) IS recorded_at")),
+]);
+
+export const memoryDerivationNoDispatch = sqliteTable("memory_derivation_no_dispatch", {
+  financeId: text("finance_id").notNull().primaryKey().references(() => memoryDerivationFinance.financeId),
+  evidenceSha256: text("evidence_sha256").notNull(),
+  tokenWasPresent: integer("token_was_present").notNull(),
+  costWasPresent: integer("cost_was_present").notNull(),
+  recordedAt: text("recorded_at").notNull(),
+}, () => [
+  check("memory_derivation_no_dispatch_check_1", sql.raw("length(evidence_sha256)=64 AND evidence_sha256 NOT GLOB '*[^0-9a-f]*'")),
+  check("memory_derivation_no_dispatch_check_2", sql.raw("typeof(token_was_present)='integer' AND token_was_present IN(0,1)")),
+  check("memory_derivation_no_dispatch_check_3", sql.raw("typeof(cost_was_present)='integer' AND cost_was_present IN(0,1)")),
+  check("memory_derivation_no_dispatch_check_4", sql.raw("length(recorded_at)=24 AND strftime('%Y-%m-%dT%H:%M:%fZ',recorded_at) IS recorded_at")),
+]);
+
+export const memoryDerivationJobFinance = sqliteTable("memory_derivation_job_finance", {
+  jobId: text("job_id").notNull().primaryKey().references(() => memoryDerivationJobs.jobId, { onDelete: "cascade" }),
+  financeId: text("finance_id").notNull().unique().references(() => memoryDerivationFinance.financeId),
+}, () => [
+]);

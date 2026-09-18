@@ -73,9 +73,8 @@ export async function requireUser(request: Request, env: WorkerEnv, minimum: Pil
         env.DB.prepare(`INSERT OR IGNORE INTO users(user_id,email,display_name,role,consent_version,consented_at,created_at,updated_at)
           SELECT ?,?,?,?,NULL,NULL,?,? WHERE EXISTS(SELECT 1 FROM pilot_participants WHERE participant_id=? AND user_id=? AND status='active' AND revoked_at IS NULL)`)
           .bind(identity.userId,identity.email,identity.displayName,initialRole,now,now,admittedParticipant.participant_id,identity.userId),
-        env.DB.prepare(`INSERT OR IGNORE INTO cost_budget_counters(scope,scope_id,period,used_microusd,reserved_microusd,hard_limit_microusd,updated_at)
-          SELECT 'pilot_user',?,?,0,0,?,? WHERE EXISTS(SELECT 1 FROM pilot_participants WHERE participant_id=? AND user_id=? AND status='active')`)
-          .bind(identity.userId,pilotPeriod,admittedParticipant.participant_cap_microusd,now,admittedParticipant.participant_id,identity.userId),
+        pilotCostCounterStatement(env,"pilot_user",identity.userId,pilotPeriod,admittedParticipant.participant_cap_microusd,now,
+          {sql:"EXISTS(SELECT 1 FROM pilot_participants WHERE participant_id=? AND user_id=? AND status='active')",bindings:[admittedParticipant.participant_id,identity.userId]}),
       ]);
       if(Number(results[1]?.meta.changes??0)!==1)return{response:Response.json({error:"pilot_participant_required"},{status:403}),user:null};
     }else{
@@ -93,8 +92,7 @@ export async function requireUser(request: Request, env: WorkerEnv, minimum: Pil
     await env.DB.batch([
       env.DB.prepare("UPDATE pilot_participants SET user_id=? WHERE participant_id=? AND cohort_id=? AND status='active' AND revoked_at IS NULL AND (user_id IS NULL OR user_id=?)")
         .bind(identity.userId,admittedParticipant.participant_id,admittedParticipant.cohort_id,identity.userId),
-      env.DB.prepare("INSERT OR IGNORE INTO cost_budget_counters(scope,scope_id,period,used_microusd,reserved_microusd,hard_limit_microusd,updated_at) VALUES('pilot_user',?,?,0,0,?,?)")
-        .bind(identity.userId,`pilot:${admittedParticipant.cohort_id}`,admittedParticipant.participant_cap_microusd,now),
+      pilotCostCounterStatement(env,"pilot_user",identity.userId,`pilot:${admittedParticipant.cohort_id}`,admittedParticipant.participant_cap_microusd,now),
     ]);
   }
   return completePrincipalRequest(request, env, identity, row, minimum, options);
@@ -225,17 +223,29 @@ async function projectBudgetPolicy(env:WorkerEnv,userId:string,scope:ProjectBudg
     .first<{token_limit:number;microusd_limit:number}>();
 }
 
-function budgetRowStatement(env: WorkerEnv, scope: "user" | "workspace", scopeId: string, limit: number,reservationPeriod=period()) {
-  const now = new Date().toISOString();
-  return env.DB.prepare(`INSERT INTO budget_counters (scope,scope_id,period,used_tokens,reserved_tokens,hard_limit_tokens,updated_at)
-    VALUES (?,?,?,0,0,?,?) ON CONFLICT(scope,scope_id,period) DO UPDATE
-    SET hard_limit_tokens=excluded.hard_limit_tokens,updated_at=excluded.updated_at
-    WHERE budget_counters.hard_limit_tokens IS NOT excluded.hard_limit_tokens`)
-    .bind(scope, scopeId, reservationPeriod, limit, now);
+/** Avoid conflict INSERTs against retained financial targets. A real missing
+ * row is inserted once; limit-only updates never replace balances or identity.
+ * Callers commit both statements in their existing transaction. */
+export function pilotCostCounterStatement(env: WorkerEnv, scope: "pilot_org" | "pilot_user", scopeId: string,
+  pilotPeriod: string, limit: number, now: string, admission?: BudgetReservationGuard) {
+  return env.DB.prepare(`INSERT INTO cost_budget_counters(scope,scope_id,period,used_microusd,reserved_microusd,hard_limit_microusd,updated_at)
+    SELECT ?,?,?,0,0,?,? WHERE NOT EXISTS(SELECT 1 FROM cost_budget_counters WHERE scope=? AND scope_id=? AND period=?)${admission?` AND (${admission.sql})`:""}`)
+    .bind(scope,scopeId,pilotPeriod,limit,now,scope,scopeId,pilotPeriod,...(admission?.bindings??[]));
+}
+function budgetCounterRowStatements(env: WorkerEnv, currency: "tokens" | "microusd", scope: "user" | "workspace", scopeId: string, limit: number, reservationPeriod: string) {
+  const table=currency==="tokens"?"budget_counters":"cost_budget_counters",now=new Date().toISOString();
+  return [env.DB.prepare(`INSERT INTO ${table}(scope,scope_id,period,used_${currency},reserved_${currency},hard_limit_${currency},updated_at)
+    SELECT ?,?,?,0,0,?,? WHERE NOT EXISTS(SELECT 1 FROM ${table} WHERE scope=? AND scope_id=? AND period=?)`)
+    .bind(scope,scopeId,reservationPeriod,limit,now,scope,scopeId,reservationPeriod),
+  env.DB.prepare(`UPDATE ${table} SET hard_limit_${currency}=?,updated_at=? WHERE scope=? AND scope_id=? AND period=? AND hard_limit_${currency} IS NOT ?`)
+    .bind(limit,now,scope,scopeId,reservationPeriod,limit)];
+}
+function budgetRowStatements(env: WorkerEnv, scope: "user" | "workspace", scopeId: string, limit: number,reservationPeriod=period()) {
+  return budgetCounterRowStatements(env,"tokens",scope,scopeId,limit,reservationPeriod);
 }
 
 async function ensureBudgetRow(env: WorkerEnv, scope: "user" | "workspace", scopeId: string, limit: number,reservationPeriod=period()) {
-  await budgetRowStatement(env,scope,scopeId,limit,reservationPeriod).run();
+  await env.DB.batch(budgetRowStatements(env,scope,scopeId,limit,reservationPeriod));
 }
 
 export async function readBudgets(env: WorkerEnv, userId: string, options: { initialize?: boolean } = {}) {
@@ -247,14 +257,10 @@ export async function readBudgets(env: WorkerEnv, userId: string, options: { ini
   const userRow = rows.find((row) => row.scope === "user");
   const workspaceRow = rows.find((row) => row.scope === "workspace");
   if (initialize && (!userRow || !workspaceRow || Number(userRow.hard_limit_tokens) !== limits.user || Number(workspaceRow.hard_limit_tokens) !== limits.workspace)) {
-    const now = new Date().toISOString();
-    const upsert = (scope: "user" | "workspace", scopeId: string, limit: number) => env.DB.prepare(`INSERT INTO budget_counters (scope,scope_id,period,used_tokens,reserved_tokens,hard_limit_tokens,updated_at)
-      VALUES (?,?,?,0,0,?,?) ON CONFLICT(scope,scope_id,period) DO UPDATE
-      SET hard_limit_tokens=excluded.hard_limit_tokens,updated_at=excluded.updated_at
-      WHERE budget_counters.hard_limit_tokens IS NOT excluded.hard_limit_tokens`).bind(scope, scopeId, currentPeriod, limit, now);
+    const upsert = (scope: "user" | "workspace", scopeId: string, limit: number) => budgetRowStatements(env,scope,scopeId,limit,currentPeriod);
     const result = await env.DB.batch<Record<string, unknown>>([
-      upsert("user", userId, limits.user),
-      upsert("workspace", "forma", limits.workspace),
+      ...upsert("user", userId, limits.user),
+      ...upsert("workspace", "forma", limits.workspace),
       select(),
     ]);
     rows = result.at(-1)?.results ?? [];
@@ -280,8 +286,8 @@ export async function prepareBudgetReservation(env: WorkerEnv, userId: string, t
   if(context.outputAdmissionReads&&!reservationChecks.length)await initializeOutputAdmissionCounters(env,userId,reservationPeriod,scope,policy,context.outputAdmissionReads);
   else if(context.batchCounterInitialization||reservationChecks.length){
     // Same metadata writes and live reservation guards, committed together.
-    counterInitialization.push(budgetRowStatement(env,"user",userId,limits.user,reservationPeriod),budgetRowStatement(env,"workspace","forma",limits.workspace,reservationPeriod));
-    if(scope&&policy)counterInitialization.push(budgetRowStatement(env,"workspace",scope.organizationId,Number(policy.token_limit),reservationPeriod));
+    counterInitialization.push(...budgetRowStatements(env,"user",userId,limits.user,reservationPeriod),...budgetRowStatements(env,"workspace","forma",limits.workspace,reservationPeriod));
+    if(scope&&policy)counterInitialization.push(...budgetRowStatements(env,"workspace",scope.organizationId,Number(policy.token_limit),reservationPeriod));
   }else {
     await ensureBudgetRow(env,"user",userId,limits.user,reservationPeriod);await ensureBudgetRow(env,"workspace","forma",limits.workspace,reservationPeriod);
     if(scope&&policy)await ensureBudgetRow(env,"workspace",scope.organizationId,Number(policy.token_limit),reservationPeriod);
@@ -742,17 +748,12 @@ const costBudgetLimits = (env: WorkerEnv) => {
   return { user, workspace: Math.max(user * 10, moneyEnv(env.FORMA_WORKSPACE_COST_LIMIT_USD, 1_000)) };
 };
 
-function costBudgetRowStatement(env: WorkerEnv, scope: "user" | "workspace", scopeId: string, limitMicrousd: number, reservationPeriod = period()) {
-  const now = new Date().toISOString();
-  return env.DB.prepare(`INSERT INTO cost_budget_counters (scope,scope_id,period,used_microusd,reserved_microusd,hard_limit_microusd,updated_at)
-    VALUES (?,?,?,0,0,?,?) ON CONFLICT(scope,scope_id,period) DO UPDATE
-    SET hard_limit_microusd=excluded.hard_limit_microusd,updated_at=excluded.updated_at
-    WHERE cost_budget_counters.hard_limit_microusd IS NOT excluded.hard_limit_microusd`)
-    .bind(scope, scopeId, reservationPeriod, limitMicrousd, now);
+function costBudgetRowStatements(env: WorkerEnv, scope: "user" | "workspace", scopeId: string, limitMicrousd: number, reservationPeriod = period()) {
+  return budgetCounterRowStatements(env,"microusd",scope,scopeId,limitMicrousd,reservationPeriod);
 }
 
 async function ensureCostBudgetRow(env: WorkerEnv, scope: "user" | "workspace", scopeId: string, limitMicrousd: number, reservationPeriod = period()) {
-  await costBudgetRowStatement(env,scope,scopeId,limitMicrousd,reservationPeriod).run();
+  await env.DB.batch(costBudgetRowStatements(env,scope,scopeId,limitMicrousd,reservationPeriod));
 }
 
 /** Initialize existing counter metadata once for this authorization request. No
@@ -764,14 +765,14 @@ function initializeOutputAdmissionCounters(env:WorkerEnv,userId:string,reservati
   return readOutputAdmissionValue(reads,"budget-counter-initialization",async()=>{
     const tokens=budgetLimits(env),costs=costBudgetLimits(env);
     const statements=[
-      budgetRowStatement(env,"user",userId,tokens.user,reservationPeriod),
-      budgetRowStatement(env,"workspace","forma",tokens.workspace,reservationPeriod),
-      costBudgetRowStatement(env,"user",userId,costs.user,reservationPeriod),
-      costBudgetRowStatement(env,"workspace","forma",costs.workspace,reservationPeriod),
+      ...budgetRowStatements(env,"user",userId,tokens.user,reservationPeriod),
+      ...budgetRowStatements(env,"workspace","forma",tokens.workspace,reservationPeriod),
+      ...costBudgetRowStatements(env,"user",userId,costs.user,reservationPeriod),
+      ...costBudgetRowStatements(env,"workspace","forma",costs.workspace,reservationPeriod),
     ];
     if(scope&&policy)statements.push(
-      budgetRowStatement(env,"workspace",scope.organizationId,Number(policy.token_limit),reservationPeriod),
-      costBudgetRowStatement(env,"workspace",scope.organizationId,Number(policy.microusd_limit),reservationPeriod),
+      ...budgetRowStatements(env,"workspace",scope.organizationId,Number(policy.token_limit),reservationPeriod),
+      ...costBudgetRowStatements(env,"workspace",scope.organizationId,Number(policy.microusd_limit),reservationPeriod),
     );
     statements.push(env.DB.prepare("SELECT used_microusd,reserved_microusd,hard_limit_microusd FROM cost_budget_counters WHERE scope='user' AND scope_id=? AND period=?").bind(userId,reservationPeriod));
     const results=await env.DB.batch<Record<string,unknown>>(statements);
@@ -787,12 +788,8 @@ export async function readCostBudgets(env: WorkerEnv, userId: string, options: {
   let rows=(await select().all<Record<string,unknown>>()).results;
   const userRow=rows.find((row)=>row.scope==="user"),workspaceRow=rows.find((row)=>row.scope==="workspace");
   if(initialize&&(!userRow||!workspaceRow||Number(userRow.hard_limit_microusd)!==limits.user||Number(workspaceRow.hard_limit_microusd)!==limits.workspace)){
-    const now=new Date().toISOString();
-    const upsert=(scope:"user"|"workspace",scopeId:string,limit:number)=>env.DB.prepare(`INSERT INTO cost_budget_counters (scope,scope_id,period,used_microusd,reserved_microusd,hard_limit_microusd,updated_at)
-      VALUES (?,?,?,0,0,?,?) ON CONFLICT(scope,scope_id,period) DO UPDATE
-      SET hard_limit_microusd=excluded.hard_limit_microusd,updated_at=excluded.updated_at
-      WHERE cost_budget_counters.hard_limit_microusd IS NOT excluded.hard_limit_microusd`).bind(scope,scopeId,currentPeriod,limit,now);
-    const result=await env.DB.batch<Record<string,unknown>>([upsert("user",userId,limits.user),upsert("workspace","forma",limits.workspace),select()]);
+    const upsert=(scope:"user"|"workspace",scopeId:string,limit:number)=>costBudgetRowStatements(env,scope,scopeId,limit,currentPeriod);
+    const result=await env.DB.batch<Record<string,unknown>>([...upsert("user",userId,limits.user),...upsert("workspace","forma",limits.workspace),select()]);
     rows=result.at(-1)?.results??[];
   }
   const map = Object.fromEntries(rows.map((row) => {
@@ -830,24 +827,13 @@ export async function readAccountBudgets(env: WorkerEnv, userId: string,organiza
     ...(organizationId?[["tokens:workspace:forma",tokens.workspace],["USD:workspace:forma",costs.workspace]] as Array<[string,number]>:[]),
   ]);
   if (rows.length !== expected.size || rows.some((row) => Number(row.hard_limit) !== expected.get(`${String(row.currency)}:${String(row.scope)}:${String(row.scope_id)}`))) {
-    const now = new Date().toISOString();
-    const tokenUpsert = (scope: "user" | "workspace", scopeId: string, limit: number) => env.DB.prepare(`
-      INSERT INTO budget_counters (scope,scope_id,period,used_tokens,reserved_tokens,hard_limit_tokens,updated_at)
-      VALUES (?,?,?,0,0,?,?) ON CONFLICT(scope,scope_id,period) DO UPDATE
-      SET hard_limit_tokens=excluded.hard_limit_tokens,updated_at=excluded.updated_at
-      WHERE budget_counters.hard_limit_tokens IS NOT excluded.hard_limit_tokens
-    `).bind(scope, scopeId, currentPeriod, limit, now);
-    const costUpsert = (scope: "user" | "workspace", scopeId: string, limit: number) => env.DB.prepare(`
-      INSERT INTO cost_budget_counters (scope,scope_id,period,used_microusd,reserved_microusd,hard_limit_microusd,updated_at)
-      VALUES (?,?,?,0,0,?,?) ON CONFLICT(scope,scope_id,period) DO UPDATE
-      SET hard_limit_microusd=excluded.hard_limit_microusd,updated_at=excluded.updated_at
-      WHERE cost_budget_counters.hard_limit_microusd IS NOT excluded.hard_limit_microusd
-    `).bind(scope, scopeId, currentPeriod, limit, now);
+    const tokenUpsert=(scope:"user"|"workspace",scopeId:string,limit:number)=>budgetRowStatements(env,scope,scopeId,limit,currentPeriod);
+    const costUpsert=(scope:"user"|"workspace",scopeId:string,limit:number)=>costBudgetRowStatements(env,scope,scopeId,limit,currentPeriod);
     const results = await env.DB.batch<Record<string, unknown>>([
-      tokenUpsert("user",userId,tokens.user),tokenUpsert("workspace",workspaceId,workspaceTokenLimit),
-      ...(organizationId?[tokenUpsert("workspace","forma",tokens.workspace)]:[]),
-      costUpsert("user",userId,costs.user),costUpsert("workspace",workspaceId,workspaceCostLimit),
-      ...(organizationId?[costUpsert("workspace","forma",costs.workspace)]:[]),
+      ...tokenUpsert("user",userId,tokens.user),...tokenUpsert("workspace",workspaceId,workspaceTokenLimit),
+      ...(organizationId?[...tokenUpsert("workspace","forma",tokens.workspace)]:[]),
+      ...costUpsert("user",userId,costs.user),...costUpsert("workspace",workspaceId,workspaceCostLimit),
+      ...(organizationId?[...costUpsert("workspace","forma",costs.workspace)]:[]),
       query(),
     ]);
     rows = results.at(-1)?.results ?? [];
@@ -975,8 +961,8 @@ export async function prepareCostBudgetReservation(env: WorkerEnv, userId: strin
   let userBeforeStatementIndex:number|undefined;
   if(options.outputAdmissionReads&&!reservationChecks.length)userBefore=await initializeOutputAdmissionCounters(env,userId,reservationPeriod,scope,policy,options.outputAdmissionReads);
   else if(options.batchCounterInitialization||reservationChecks.length){
-    counterInitialization.push(costBudgetRowStatement(env,"user",userId,limits.user,reservationPeriod),costBudgetRowStatement(env,"workspace","forma",limits.workspace,reservationPeriod));
-    if(scope&&policy)counterInitialization.push(costBudgetRowStatement(env,"workspace",scope.organizationId,Number(policy.microusd_limit),reservationPeriod));
+    counterInitialization.push(...costBudgetRowStatements(env,"user",userId,limits.user,reservationPeriod),...costBudgetRowStatements(env,"workspace","forma",limits.workspace,reservationPeriod));
+    if(scope&&policy)counterInitialization.push(...costBudgetRowStatements(env,"workspace",scope.organizationId,Number(policy.microusd_limit),reservationPeriod));
     userBeforeStatementIndex=reservationChecks.length+counterInitialization.length;
     counterInitialization.push(env.DB.prepare("SELECT used_microusd,reserved_microusd,hard_limit_microusd FROM cost_budget_counters WHERE scope='user' AND scope_id=? AND period=?").bind(userId,reservationPeriod));
   }else {

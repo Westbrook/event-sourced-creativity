@@ -1,3 +1,4 @@
+import { pilotCostCounterStatement } from "./pilot-policy.ts";
 import { POLICY_VERSION, hasCapability, requireConsent, requireUser, type PilotUser } from "./pilot-policy.ts";
 import { uuidV7, type WorkerEnv } from "./runtime.ts";
 import { appendProjectEvents, hasProjectContextCookie, projectContextCookie, readProjectEventPage, readProjectRequestContext, recordOrganizationAudit, synchronizeProjectScope, type ProjectRequestContext } from "./project-access.ts";
@@ -154,8 +155,7 @@ export async function handleWorkspaces(request: Request, env: WorkerEnv, path: s
       await env.DB.batch([
         env.DB.prepare("UPDATE pilot_participants SET user_id=? WHERE participant_id=? AND cohort_id=? AND status='active' AND revoked_at IS NULL AND (user_id IS NULL OR user_id=?)")
           .bind(actor.userId,admitted.participant_id,admitted.cohort_id,actor.userId),
-        env.DB.prepare("INSERT OR IGNORE INTO cost_budget_counters(scope,scope_id,period,used_microusd,reserved_microusd,hard_limit_microusd,updated_at) VALUES('pilot_user',?,?,0,0,?,?)")
-          .bind(actor.userId,`pilot:${admitted.cohort_id}`,admitted.participant_cap_microusd,now),
+        pilotCostCounterStatement(env,"pilot_user",actor.userId,`pilot:${admitted.cohort_id}`,admitted.participant_cap_microusd,now),
       ]);
     }
     await recordOrganizationAudit(env,organizationId,actor,"OrganizationMembershipAccepted","membership",path[2]!);
@@ -231,10 +231,10 @@ export async function handleWorkspaces(request: Request, env: WorkerEnv, path: s
           .bind(cohortId,organizationId,start.toISOString(),end.toISOString(),maximum,participantCap,organizationCap,actor.userId,now,now,organizationId,organizationId),
         env.DB.prepare("INSERT INTO pilot_participants(participant_id,cohort_id,organization_id,email_normalized,user_id,role,status,invited_by_user_id,created_at,revoked_at) SELECT ?,?,?,?,?,'owner','active',?,?,NULL WHERE EXISTS(SELECT 1 FROM pilot_cohorts WHERE cohort_id=? AND organization_id=?)")
           .bind(participantId,cohortId,organizationId,actor.email.toLowerCase(),actor.userId,actor.userId,now,cohortId,organizationId),
-        env.DB.prepare("INSERT INTO cost_budget_counters(scope,scope_id,period,used_microusd,reserved_microusd,hard_limit_microusd,updated_at) SELECT 'pilot_org',?,?,0,0,?,? WHERE EXISTS(SELECT 1 FROM pilot_cohorts WHERE cohort_id=? AND organization_id=?)")
-          .bind(cohortId,pilotPeriod,organizationCap,now,cohortId,organizationId),
-        env.DB.prepare("INSERT INTO cost_budget_counters(scope,scope_id,period,used_microusd,reserved_microusd,hard_limit_microusd,updated_at) SELECT 'pilot_user',?,?,0,0,?,? WHERE EXISTS(SELECT 1 FROM pilot_participants WHERE participant_id=? AND cohort_id=?)")
-          .bind(actor.userId,pilotPeriod,participantCap,now,participantId,cohortId),
+        pilotCostCounterStatement(env,"pilot_org",cohortId,pilotPeriod,organizationCap,now,
+          {sql:"EXISTS(SELECT 1 FROM pilot_cohorts WHERE cohort_id=? AND organization_id=?)",bindings:[cohortId,organizationId]}),
+        pilotCostCounterStatement(env,"pilot_user",actor.userId,pilotPeriod,participantCap,now,
+          {sql:"EXISTS(SELECT 1 FROM pilot_participants WHERE participant_id=? AND cohort_id=?)",bindings:[participantId,cohortId]}),
         env.DB.prepare(`INSERT INTO organization_retention_policies(organization_id,transient_days,evidence_days,revision_days,legal_hold,version,updated_by_user_id,updated_at)
           SELECT ?,30,?,365,0,1,?,? WHERE EXISTS(SELECT 1 FROM pilot_cohorts WHERE cohort_id=? AND organization_id=?)
           ON CONFLICT(organization_id) DO UPDATE SET evidence_days=excluded.evidence_days,
@@ -298,8 +298,8 @@ export async function handleWorkspaces(request: Request, env: WorkerEnv, path: s
                 WHERE privileged.organization_id=? AND privileged.user_id=? AND privileged.role IN('owner','administrator')
                   AND privileged.status='active' AND privileged.revoked_at IS NULL))`)
             .bind(id,existing.cohort_id,organizationId,email,participantUserId,role,actor.userId,now,existing.cohort_id,organizationId,role,organizationId,participantUserId)];
-        if(participantUserId)statements.push(env.DB.prepare("INSERT OR IGNORE INTO cost_budget_counters(scope,scope_id,period,used_microusd,reserved_microusd,hard_limit_microusd,updated_at) SELECT 'pilot_user',?,?,0,0,?,? WHERE EXISTS(SELECT 1 FROM pilot_participants WHERE participant_id=? AND user_id=? AND status='active' AND revoked_at IS NULL)")
-          .bind(participantUserId,pilotPeriod,Number(existing.participant_cap_microusd),now,id,participantUserId));
+        if(participantUserId)statements.push(pilotCostCounterStatement(env,"pilot_user",participantUserId,pilotPeriod,Number(existing.participant_cap_microusd),now,
+          {sql:"EXISTS(SELECT 1 FROM pilot_participants WHERE participant_id=? AND user_id=? AND status='active' AND revoked_at IS NULL)",bindings:[id,participantUserId]}));
         const result=await env.DB.batch(statements);
         if(Number(result[0]?.meta.changes??0)!==1)return Response.json({error:"pilot_participant_limit_reached"},{status:409});
       }catch(error){

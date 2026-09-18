@@ -22,9 +22,9 @@ assert.ok(admitted);
 let selected = [
   admitted,
   between(pilot, "async function budgetReservationAssertionStatements(", "\ntype BudgetReservationContext"),
-  between(pilot, "function budgetRowStatement(", "\nexport async function readBudgets("),
+  between(pilot, "function budgetCounterRowStatements(", "\nexport async function readBudgets("),
   between(pilot, "export async function prepareBudgetReservation(", "\nasync function budgetReservation("),
-  between(pilot, "function costBudgetRowStatement(", "\n/** Initialize existing counter metadata"),
+  between(pilot, "function costBudgetRowStatements(", "\n/** Initialize existing counter metadata"),
   between(pilot, "export async function prepareCostBudgetReservation(", "\nasync function resolveCostReservation("),
   between(core, "export function outputAssertionStatements(", "\n/** Repeat live authority"),
 ].join("\n");
@@ -122,8 +122,8 @@ test("all original proofs, counters, reservations and project scopes share the r
       const assertions = [proof(), { sql: "EXISTS(SELECT 1 FROM source_evidence WHERE id=? AND body=?)", bindings: ["second", "original"] }];
       const prepared = await f.prepare(kind, { projectScope, outputAdmissionReads: {}, reservationAssertions: assertions });
       assert.equal(prepared.ok, true); assert.equal(f.outsideWrites, 0); assert.equal(f.batches, 0); assert.equal(f.initializationCalls, 0);
-      assert.equal(prepared.reservationStatementIndex, kind === "tokens" ? 7 : 8);
-      if (kind === "cost") assert.equal(prepared.userBeforeStatementIndex, 7);
+      assert.equal(prepared.reservationStatementIndex, kind === "tokens" ? 10 : 11);
+      if (kind === "cost") assert.equal(prepared.userBeforeStatementIndex, 10);
       assert.equal(prepared.statements.filter(statement => statement.sql.startsWith("INSERT INTO output_atomic_assertions")).length, 2);
       // Each refusal changes the corresponding database row after capture;
       // neither case modifies retained assertion SQL or bindings.
@@ -177,13 +177,13 @@ test("a missing physical assertion table aborts without committing counters or r
   }
 });
 
-test("omitted and empty proof arrays preserve the legacy batched path and indexes", async () => {
+test("omitted and empty proof arrays preserve ordinary reservation behavior with split counter indexes", async () => {
   for (const kind of ["tokens", "cost"]) for (const extra of [{}, { reservationAssertions: [] }]) {
     const f = fixture({ ready: false });
     try {
       const prepared = await f.prepare(kind, { batchCounterInitialization: true, ...extra });
-      assert.equal(prepared.ok, true); assert.equal(prepared.reservationStatementIndex, kind === "tokens" ? 2 : 3);
-      if (kind === "cost") assert.equal(prepared.userBeforeStatementIndex, 2);
+      assert.equal(prepared.ok, true); assert.equal(prepared.reservationStatementIndex, kind === "tokens" ? 4 : 5);
+      if (kind === "cost") assert.equal(prepared.userBeforeStatementIndex, 4);
       assert.equal(prepared.statements.some(statement => statement.sql.includes("output_atomic_assertions")), false);
       await f.env.DB.batch(prepared.statements);
       assert.equal(f.count(kind === "tokens" ? "budget_reservations" : "cost_budget_reservations"), 1);

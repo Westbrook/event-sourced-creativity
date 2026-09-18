@@ -157,6 +157,20 @@ manufactures successful receipts after a failed run.
 
 ## Sites deployment
 
+### Memory cap seed exception
+
+Migration0045 has one exact hash- and timestamp-pinned data statement: it seeds
+the minimum accepted Memory cap for each original payer/consent month, including
+revoked grants. This runs in the same transaction as schema and receipt creation.
+Existing cap installations are verified, never reseeded: missing or weakened
+floors fail with `migration_finance_backfill_unverified`. Smaller retained caps
+and caps whose private grants have been erased remain untouched. Dry runs roll
+back the cap seed too. Other data-changing SQL is still unsupported.
+
+This is local migration qualification only, not a hosted execution certificate.
+
+### Hosted execution
+
 This command operates on a local SQLite file. It neither connects to production
 nor changes how Sites deploys migrations. The Sites build still packages the
 original migration SQL. Replaying the raw `0021` SQL through a different runner

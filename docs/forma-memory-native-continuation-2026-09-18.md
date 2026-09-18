@@ -55,6 +55,11 @@ a completed semantic cursor or delivery of the separate Chat Studio producer.
 now add exact single-consumer reference leases, replayable privacy/configuration
 checks, and protected paired-budget helpers. [Full original source capture](forma-memory-native-source-capture-2026-09-18.md) now retains exact personal/shared free/paid conversation evidence and separate typed observations, with bounded hydration and durable negative ancestry. Financial admission/recovery, processing windows and semantic consumers remain implementation work.
 
+The [independent finance foundation](forma-memory-finance-foundation-2026-09-18.md)
+now adds retained payer-month cap floors, protected paired holds, usage/no-dispatch
+records, privacy cascade receipts and exact migration handling. Native financial
+dispatch/recovery and organization-deletion integration remain incomplete.
+
 ## Remaining native implementation — still in scope
 
 1. Bind the implemented purpose-specific grants to real native callers and approved-cap/native accounting.

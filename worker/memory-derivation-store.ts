@@ -1,3 +1,4 @@
+import { memoryDerivationFinanceSchemaProfile } from "./memory-derivation-finance-schema.ts";
 import { memoryDerivationJobSchemaProfile } from "./memory-derivation-job-schema.ts";
 import { memoryDigest } from "../src/model/scoped-memory.ts";
 import { memoryCanonical, type MemorySqlGuard } from "./memory-sql.ts";
@@ -29,11 +30,12 @@ export const memoryDerivationSchemaProfile = {
 } as const;
 type Row = Record<string, unknown>;
 type Query = { sql: string; bindings: (string | number | null)[] };
-const profiles = [memoryDerivationSchemaProfile, memoryDerivationJobSchemaProfile] as const;
+const profiles = [memoryDerivationSchemaProfile, memoryDerivationJobSchemaProfile, memoryDerivationFinanceSchemaProfile] as const;
 const schemaTables = profiles.flatMap(profile => [...profile.tables]);
 const family = "name LIKE 'memory_derivation_%' OR name LIKE 'idx_memory_derivation_%' OR "
   + schemaTables.map(table => `tbl_name='${table}' OR instr(lower(COALESCE(sql,'')),'${table}')>0`).join(" OR ");
-const maximumSchemaRows = profiles.reduce((sum, profile) => sum + profile.count + profile.tables.length, 0);
+const automaticIndexes: readonly string[] = profiles.flatMap(profile => "automaticIndexes" in profile ? [...profile.automaticIndexes] : profile.tables.map(table => `sqlite_autoindex_${table}_1`));
+const maximumSchemaRows = profiles.reduce((sum, profile) => sum + profile.count, automaticIndexes.length);
 const snapshot = `(SELECT json_group_array(json_object('name',name,'sql',sql,'table',tbl_name,'type',type)) FROM (SELECT name,sql,tbl_name,type FROM sqlite_schema WHERE ${family} ORDER BY name,type))`;
 const fail = (): never => { throw new Error("memory-derivation-schema-unavailable"); };
 export const derivationAssertion = (env: WorkerEnv, guard: MemorySqlGuard) => env.DB.prepare(`SELECT CASE WHEN (${guard.condition}) THEN 1 ELSE json('memory_derivation_changed') END AS verified`).bind(...guard.bindings);
@@ -52,7 +54,7 @@ export function derivationChanged(result: D1Result<Row>, expected: number, casca
 export function derivationVerified(result: D1Result<Row>): boolean {
   return result.results.length === 1 && derivationExact(result.results[0], ["verified"]) && result.results[0].verified === 1;
 }
-export async function memoryDerivationSchema(env: WorkerEnv): Promise<{ present: boolean; jobsPresent: boolean; guard: MemorySqlGuard }> {
+export async function memoryDerivationSchema(env: WorkerEnv): Promise<{ present: boolean; jobsPresent: boolean; financePresent: boolean; guard: MemorySqlGuard }> {
   const db = env.DB, result = structuredClone(await db.prepare(`SELECT name,sql,tbl_name AS 'table',type FROM sqlite_schema WHERE ${family} ORDER BY name,type LIMIT ${maximumSchemaRows + 1}`).all<Row>());
   if (env.DB !== db || !derivationResults([result], 1) || result.results.length > maximumSchemaRows) fail();
   const rows = result.results;
@@ -60,7 +62,7 @@ export async function memoryDerivationSchema(env: WorkerEnv): Promise<{ present:
     || !["table", "index", "trigger"].includes(String(row.type)) || row.sql !== null && typeof row.sql !== "string")) fail();
   const explicit = rows.filter(row => row.sql !== null), names: readonly string[] = profiles.flatMap(profile => [...profile.names]);
   if (explicit.some(row => !names.includes(String(row.name))) || rows.some(row => row.sql === null && !(row.type === "index"
-    && schemaTables.some(table => row.table === table && row.name === `sqlite_autoindex_${table}_1`)))) fail();
+    && schemaTables.includes(String(row.table) as typeof schemaTables[number]) && automaticIndexes.includes(String(row.name)) && String(row.name).startsWith(`sqlite_autoindex_${row.table}_`)))) fail();
   const installed: boolean[] = [];
   for (const profile of profiles) {
     const selected = explicit.filter(row => (profile.names as readonly string[]).includes(String(row.name)));
@@ -68,8 +70,8 @@ export async function memoryDerivationSchema(env: WorkerEnv): Promise<{ present:
     if (selected.length && (selected.length !== profile.count || "sha256:" + await memoryDigest(memoryCanonical(selected.map(row => ({ ...row,
       sql: (row.sql as string).trim().replace(/;$/u, "").replace(/\bIF\s+NOT\s+EXISTS\s+/giu, "") })))) !== profile.digest)) fail();
   }
-  if (installed[1] && !installed[0] || env.DB !== db) fail();
-  return { present: installed[0]!, jobsPresent: installed[1]!, guard: { condition: `${snapshot}=? AND NOT EXISTS(SELECT 1 FROM sqlite_temp_schema)`,
+  if (installed[1] && !installed[0] || installed[2] && !installed[1] || env.DB !== db) fail();
+  return { present: installed[0]!, jobsPresent: installed[1]!, financePresent: installed[2]!, guard: { condition: `${snapshot}=? AND NOT EXISTS(SELECT 1 FROM sqlite_temp_schema)`,
     bindings: [JSON.stringify(rows.map(row => ({ name: row.name, sql: row.sql, table: row.table, type: row.type })))] } };
 }
 export function memoryDerivationBinding(env: WorkerEnv) {
@@ -118,16 +120,34 @@ export function derivationQualificationGuard(row: MemoryDerivationQualification)
     bindings: [...exact.bindings, row.status, row.qualified_at, row.expires_at] };
 }
 
+/** The consent trigger durably lowers a payer-month floor independently of a
+ * later reservation attempt. Pin its exact extra D1 change and resulting cap;
+ * a failed monetary admission must never roll an accepted lower cap back. */
+export async function prepareDerivationCapFloor(env: WorkerEnv, grant: MemoryDerivationGrant, installed: boolean) {
+  if (!installed) return { changes: 0, before: [] as MemorySqlGuard[], after: [] as MemorySqlGuard[] };
+  const db = env.DB, period = grant.consented_at.slice(0, 7), query = "SELECT cap_microusd FROM memory_derivation_month_caps WHERE payer_id=? AND period=?";
+  const result = structuredClone(await db.prepare(query).bind(grant.payer_user_id, period).all<Row>());
+  if (env.DB !== db || !memoryDerivationGrantShape(grant) || !derivationResults([result], 1) || result.results.length > 1
+    || result.results.some(row => !derivationExact(row, ["cap_microusd"]) || !derivationInteger(row.cap_microusd, 1, 1_000_000_000))) fail();
+  const prior = result.results[0]?.cap_microusd as number | undefined, cap = Math.min(prior ?? grant.monthly_cap_microusd, grant.monthly_cap_microusd);
+  const guard = (values: number[]): MemorySqlGuard => ({ condition: `(SELECT json_group_array(cap_microusd) FROM memory_derivation_month_caps WHERE payer_id=? AND period=?)=?`,
+    bindings: [grant.payer_user_id, period, JSON.stringify(values)] });
+  return { changes: prior === cap ? 0 : 1, before: [guard(prior === undefined ? [] : [prior])], after: [guard([cap])] };
+}
+
 /** D1 reports total trigger/FK changes, while SQLite adapters may report direct
  * changes. Pin the exact private descendant count, then accept only those two
  * known receipts. The separate SQL changes() assertion proves direct mutation. */
-async function derivationCascadeChanges(env: WorkerEnv, jobsPresent: boolean, where: Query) {
+async function derivationCascadeChanges(env: WorkerEnv, jobsPresent: boolean, financePresent: boolean, where: Query) {
   if (!jobsPresent) return { count: 0, guard: { condition: "1", bindings: [] } as MemorySqlGuard };
   const query = `WITH selected AS (SELECT consent_id FROM memory_derivation_grants WHERE ${where.sql}),
     cursors AS (SELECT consent_id FROM memory_derivation_cursors WHERE consent_id IN(SELECT consent_id FROM selected)),
     jobs AS (SELECT job_id FROM memory_derivation_jobs WHERE consent_id IN(SELECT consent_id FROM cursors))
     SELECT (SELECT COUNT(*) FROM cursors)+(SELECT COUNT(*) FROM jobs)+
-      (SELECT COUNT(*) FROM memory_derivation_job_sources WHERE job_id IN(SELECT job_id FROM jobs)) AS count`;
+      (SELECT COUNT(*) FROM memory_derivation_job_sources WHERE job_id IN(SELECT job_id FROM jobs))${financePresent ? `+
+      (SELECT COUNT(*) FROM memory_derivation_job_finance WHERE job_id IN(SELECT job_id FROM jobs))+
+      (SELECT COUNT(*) FROM memory_derivation_finance f JOIN memory_derivation_job_finance link ON link.finance_id=f.finance_id
+        WHERE link.job_id IN(SELECT job_id FROM jobs) AND f.admission_closed_at IS NULL)` : ""} AS count`;
   const result = structuredClone(await env.DB.prepare(query).bind(...where.bindings).all<Row>());
   if (!derivationResults([result], 1) || result.results.length !== 1 || !derivationExact(result.results[0], ["count"])
     || !derivationInteger(result.results[0]!.count)) fail();
@@ -169,7 +189,7 @@ export async function prepareDerivationWithdrawal(env: WorkerEnv, selector: Deri
     const result = structuredClone(await db.prepare(`SELECT COUNT(*) AS count FROM memory_derivation_grants WHERE ${affected}`).bind(...where.bindings).all<Row>());
     if (env.DB !== db || !derivationResults([result], 1) || result.results.length !== 1
       || !derivationExact(result.results[0], ["count"]) || !derivationInteger(result.results[0].count)) throw new Error("memory-derivation-withdrawal-unavailable");
-    const cascade = await derivationCascadeChanges({ ...env, DB: db }, schema.jobsPresent, { sql: affected, bindings: where.bindings });
+    const cascade = await derivationCascadeChanges({ ...env, DB: db }, schema.jobsPresent, schema.financePresent, { sql: affected, bindings: where.bindings });
     const count = result.results[0].count, terminal = { condition: `(${schema.guard.condition}) AND NOT EXISTS(SELECT 1 FROM memory_derivation_grants WHERE ${affected})`,
       bindings: [...schema.guard.bindings, ...where.bindings] };
     const statements = [assertion(cascade.guard), assertion(schema.guard), assertion({ condition: `(SELECT COUNT(*) FROM memory_derivation_grants WHERE ${affected})=?`, bindings: [...where.bindings, count] }),
@@ -196,7 +216,7 @@ export async function prepareDerivationWithdrawal(env: WorkerEnv, selector: Deri
   });
   const expected = erase ? [] : captured.map(row => ({ ...row, revoked_at: row.revoked_at ?? (row.consented_at > now ? row.consented_at : now) }));
   const terminal = schema.present ? inventory(expected) : schema.guard, changed = erase ? captured.length : captured.filter(row => row.revoked_at === null).length;
-  const cascade = await derivationCascadeChanges({ ...env, DB: db }, schema.jobsPresent,
+  const cascade = await derivationCascadeChanges({ ...env, DB: db }, schema.jobsPresent, schema.financePresent,
     { sql: `(${where.sql})${erase ? "" : " AND revoked_at IS NULL"}`, bindings: where.bindings });
   const statements = [assertion(schema.guard), assertion(cascade.guard)], assertionIndexes = [0, 1]; let writeIndex: number | null = null;
   if (schema.present) {
@@ -217,7 +237,7 @@ export async function sweepExpiredDerivationGrants(env: WorkerEnv, limit = 128):
   if (!derivationInteger(limit, 1, 128)) throw new Error("memory-derivation-cleanup-invalid");
   const db = env.DB, schema = await memoryDerivationSchema(env), where = { sql: `(grant_id,revision) IN(
     SELECT grant_id,revision FROM memory_derivation_grants WHERE expires_at<=strftime('%Y-%m-%dT%H:%M:%fZ','now') ORDER BY expires_at,grant_id,revision LIMIT ?)`, bindings: [limit] };
-  const cascade = await derivationCascadeChanges({ ...env, DB: db }, schema.jobsPresent, where);
+  const cascade = await derivationCascadeChanges({ ...env, DB: db }, schema.jobsPresent, schema.financePresent, where);
   const statements = [derivationAssertion(env, schema.guard), derivationAssertion(env, cascade.guard),
     ...(schema.present ? [db.prepare(`DELETE FROM memory_derivation_grants WHERE ${where.sql}`).bind(limit),
       db.prepare("SELECT changes() AS direct_changes")] : []), derivationAssertion(env, schema.guard)];

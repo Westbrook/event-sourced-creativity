@@ -42,7 +42,10 @@ adds qualified separate consent and privacy controls. [Durable reference deliver
 now adds consent-specific queue registration, catch-up and privacy-safe retention;
 [native admission](forma-memory-native-admission-2026-09-18.md) adds exact single-consumer
 reference leases and protected budget primitives; [full original source capture](forma-memory-native-source-capture-2026-09-18.md) adds exact original evidence, typed observations and bounded privacy-safe replay. These slices do not complete
-the open native pipeline table below.
+the open native pipeline table below. The [finance foundation](forma-memory-finance-foundation-2026-09-18.md)
+adds retained cap floors and protected original accounting with local/D1 privacy
+tests; its native dispatch/recovery caller and organization-deletion integration
+remain implementation work, not external-service gates.
 
 - Canvas now records a personal artifact view only after the actual viewer opens,
   hashing the exact retained bytes and rechecking route, revision, custody and visibility.

@@ -773,3 +773,36 @@ for(const fault of ['missing-inverse','inbound-view'])test('guest inventory clos
   const f=await completedResultFixture(t,{memory:true});installDerivationPurposeSchema(f);installQualifiedMigration(f,'0044_memory_derivation_reference_jobs.sql');
   if(fault==='missing-inverse')f.sqlite.exec('DROP TRIGGER memory_derivation_dependency_deleted');else f.sqlite.exec('CREATE VIEW foreign_memory_jobs AS SELECT * FROM memory_derivation_jobs');await denied(f,t);
 });
+
+function installDerivationFinanceSchema(f){
+  installDerivationPurposeSchema(f);
+  installQualifiedMigration(f,'0044_memory_derivation_reference_jobs.sql');
+  installQualifiedMigration(f,'0045_memory_derivation_finance.sql');
+}
+for(const linked of [false,true])test('Memory finance cap identity remains separate from guest result custody '+linked,async t=>{
+  const f=await completedResultFixture(t,{memory:true}),before=await currentManifest(f,t);installDerivationFinanceSchema(f);
+  insert(f,'memory_derivation_month_caps',{payer_id:linked?f.session.guestSubject:'unrelated-finance-payer',period:'2026-09',cap_microusd:1000});
+  configurationTripwire(f,t);if(linked)await denied(f,t);else assert.deepEqual(await currentManifest(f,t),before);
+});
+for(const fault of ['missing-protection','inbound-view'])test('guest inventory closes Memory finance schema '+fault,async t=>{
+  const f=await completedResultFixture(t,{memory:true});installDerivationFinanceSchema(f);
+  if(fault==='missing-protection')f.sqlite.exec('DROP TRIGGER memory_derivation_token_counter_no_replace');
+  else f.sqlite.exec('CREATE VIEW unrelated_finance_view AS SELECT * FROM memory_derivation_finance');
+  await denied(f,t);
+});
+for(const target of ['token','cost'])for(const field of ['token_id','cost_id'])test('guest inventory refuses cross-kind Memory finance reservation alias '+field+'='+target,async t=>{
+  const f=await completedResultFixture(t,{memory:true});installDerivationFinanceSchema(f);
+  const now=new Date().toISOString(),payerId='unrelated-finance-payer';
+  insert(f,'memory_derivation_month_caps',{payer_id:payerId,period:now.slice(0,7),cap_microusd:1000});
+  const token=rows(f,'budget_reservations')[0],cost=rows(f,'cost_budget_reservations')[0];
+  // Inject a corrupt retained row, then restore the exact schema before any
+  // inventory read. Even a full schema digest cannot authorize this alias.
+  const original=f.sqlite.prepare("SELECT sql FROM sqlite_schema WHERE name='memory_derivation_finance_admit'").get().sql;
+  f.sqlite.exec('DROP TRIGGER memory_derivation_finance_admit');
+  insert(f,'memory_derivation_finance',{finance_id:'unrelated-finance',payer_id:payerId,period:now.slice(0,7),token_id:'unrelated-tokens',cost_id:'unrelated-cost',
+    operation:'memory-derivation:profile',provider:'openai',model:'synthetic-model',terms_sha256:'a'.repeat(64),request_sha256:'b'.repeat(64),
+    input_price:1000000,cached_input_price:0,output_price:1000000,maximum_input:1,maximum_output:1,maximum_tokens:2,maximum_microusd:2,
+    authorized_cap_microusd:1000,workspace_id:'forma',project_access_id:null,pilot_cohort_id:null,created_at:now,dispatch_token:null,dispatched_at:null,admission_closed_at:null,
+    [field]:(target==='token'?token:cost).reservation_id});
+  f.sqlite.exec(original);configurationTripwire(f,t);await denied(f,t);
+});

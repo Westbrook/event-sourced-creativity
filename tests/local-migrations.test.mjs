@@ -17,6 +17,68 @@ const assistantMigrations = actualMigrations.some(migration => migration.tag ===
   ? assistantTags.map(tag => actualMigrations.find(migration => migration.tag === tag))
   : readLocalMigrations(new URL("./fixtures/local-migrations/", import.meta.url));
 const receiptTable = "__forma_local_migrations";
+const memoryFinanceMigration = actualMigrations.find(migration => migration.tag === "0045_memory_derivation_finance");
+const beforeMemoryFinance = memoryFinanceMigration ? actualMigrations.slice(0, actualMigrations.indexOf(memoryFinanceMigration)) : [];
+
+function memoryCapUpgradeFixture(t) {
+  const sqlite = database(t);
+  migrateLocalDatabase(sqlite, { migrations: beforeMemoryFinance });
+  const insert = (table, row) => sqlite.prepare(`INSERT INTO ${table}(${Object.keys(row).join(',')}) VALUES(${Object.keys(row).map(() => '?').join(',')})`).run(...Object.values(row));
+  const created = '2026-08-01T00:00:00.000Z', expires = '2027-01-01T00:00:00.000Z';
+  insert('memory_live_enrollments', { enrollment_id: 'cap-parent', actor_user_id: 'cap-payer', owner_user_id: 'cap-payer',
+    project_id: 'cap-project', document_id: 'cap-document', permission_epoch: 'fixture', policy_version: 'personal-memory-v2',
+    revision: 1, learn_enabled: 1, recall_enabled: 1, background_enabled: 1, retention_days: 30, time_zone: 'UTC',
+    enrolled_at: created, expires_at: expires, cursor_sequence: 0, next_due_at: created });
+  // SQL upgrade evidence only, not a runtime-qualified provider or consent.
+  insert('memory_derivation_qualifications', { qualification_id: 'cap-qualification', source_sha256: 'a'.repeat(64), origin: 'https://fixture.invalid',
+    deployment_id: 'fixture', terms_json: '{}', terms_sha256: 'b'.repeat(64), status: 'qualified', qualified_at: created, expires_at: expires });
+  for (const [index, cap, consented, revoked] of [[1, 900, created, expires], [2, 2000, created, null], [3, 3000, '2026-09-01T00:00:00.000Z', null]]) {
+    insert('memory_derivation_grants', { consent_id: String(index).repeat(36), grant_id: String(index).repeat(64), revision: 1,
+      actor_user_id: 'cap-payer', owner_user_id: 'cap-payer', project_id: 'cap-project', document_id: 'cap-document',
+      enrollment_id: 'cap-parent', enrollment_revision: 1, permission_epoch: 'fixture', policy_version: 'personal-memory-derivation-v1',
+      purpose: ['rolling-summary', 'profile', 'suggestion'][index - 1], qualification_id: 'cap-qualification', terms_sha256: 'b'.repeat(64),
+      payer_user_id: 'cap-payer', monthly_cap_microusd: cap, source_after_sequence: 0, retention_days: 30, background_enabled: 1,
+      consented_at: consented, expires_at: expires, revoked_at: revoked });
+  }
+  return sqlite;
+}
+
+test('Memory finance migration seeds exact cross-purpose month floors including revoked consent, without resetting retained caps', { skip: !memoryFinanceMigration }, t => {
+  const sqlite = memoryCapUpgradeFixture(t), before = rows(sqlite, 'memory_derivation_grants');
+  const result = migrateLocalDatabase(sqlite, { migrations: actualMigrations });
+  assert.equal(result.migrations.at(-1).executedStatements, 49);
+  assert.deepEqual(sqlite.prepare('SELECT period,cap_microusd FROM memory_derivation_month_caps ORDER BY period').all().map(row => ({ ...row })),
+    [{ period: '2026-08', cap_microusd: 900 }, { period: '2026-09', cap_microusd: 3000 }]);
+  assert.deepEqual(rows(sqlite, 'memory_derivation_grants'), before);
+  sqlite.exec("UPDATE memory_derivation_month_caps SET cap_microusd=700 WHERE period='2026-08'");
+  sqlite.exec('DELETE FROM memory_live_enrollments');
+  const retained = rows(sqlite, 'memory_derivation_month_caps');
+  assert.equal(migrateLocalDatabase(sqlite, { migrations: actualMigrations }).migrations.at(-1).status, 'already-applied');
+  assert.deepEqual(rows(sqlite, 'memory_derivation_month_caps'), retained);
+});
+
+test('Memory finance migration dry run rolls back both backfilled caps and its receipt', { skip: !memoryFinanceMigration }, t => {
+  const sqlite = memoryCapUpgradeFixture(t), before = schema(sqlite), receipts = rows(sqlite, receiptTable), grants = rows(sqlite, 'memory_derivation_grants');
+  migrateLocalDatabase(sqlite, { migrations: actualMigrations, dryRun: true });
+  assert.deepEqual(schema(sqlite), before); assert.deepEqual(rows(sqlite, receiptTable), receipts); assert.deepEqual(rows(sqlite, 'memory_derivation_grants'), grants);
+});
+
+for (const floor of [null, 901]) test('Memory finance reconciliation rejects a missing or weakened existing cap: ' + floor, { skip: !memoryFinanceMigration }, t => {
+  const sqlite = memoryCapUpgradeFixture(t);
+  for (const sql of memoryFinanceMigration.sql.split('--> statement-breakpoint')) if (!sql.trim().startsWith('INSERT INTO memory_derivation_month_caps')) sqlite.exec(sql);
+  if (floor !== null) sqlite.prepare('INSERT INTO memory_derivation_month_caps VALUES(?,?,?)').run('cap-payer', '2026-08', floor);
+  const before = schema(sqlite), receipts = rows(sqlite, receiptTable), caps = rows(sqlite, 'memory_derivation_month_caps');
+  assert.throws(() => migrateLocalDatabase(sqlite, { migrations: actualMigrations }), /migration_finance_backfill_unverified/);
+  assert.deepEqual(schema(sqlite), before); assert.deepEqual(rows(sqlite, receiptTable), receipts); assert.deepEqual(rows(sqlite, 'memory_derivation_month_caps'), caps);
+});
+
+test('Memory finance data exception is bound to the exact migration hash and timestamp', { skip: !memoryFinanceMigration }, t => {
+  for (const mutation of [{ sql: memoryFinanceMigration.sql + '\n' }, { when: memoryFinanceMigration.when + 1 }, { tag: 'unreviewed_memory_finance' }]) {
+    const sqlite = database(t), candidate = { ...memoryFinanceMigration, ...mutation }; delete candidate.hash;
+    assert.throws(() => migrateLocalDatabase(sqlite, { migrations: [...beforeMemoryFinance, candidate] }), /migration_hash_mismatch|migration_sql_unsupported/);
+    assert.deepEqual(schema(sqlite), []);
+  }
+});
 const model3dTag = "0022_output_model3d";
 const model3dStatementCount = 33;
 const model3dSourceHash = "393bf222f1aa1210d679af3d588ffdf0e989cc6b9bd4db02eeef78cfb9907206";
