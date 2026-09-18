@@ -74,12 +74,12 @@ still-app .quiet-state p { color: var(--soft); }
 still-app .still-mark { width: 30px; height: 30px; border: 1px solid #a9a391; border-radius: 50%; box-shadow: 8px 0 0 -1px var(--paper), 9px 0 0 0 #c1bbaa; }
 still-app .check { display:block;margin:16px 0; }
 still-app .image-stage { display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: calc(100dvh - 265px); }
-still-app .image-stage img { max-width: 100%; max-height: calc(100dvh - 300px); object-fit: contain; }
+still-app .image-stage img { height: auto; max-width: 100%; max-height: calc(100dvh - 300px); object-fit: contain; }
 still-app figcaption, still-app .caption { font-size: 12px; color: var(--soft); margin-top: 16px; text-align: center; }
 still-app .results-page { max-width: 1050px; margin: 5vh auto; }
 still-app .result-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 28px; margin-top: 42px; }
 still-app .result { padding: 0; background: none; border: 0; text-align: left; }
-still-app .result img { width: 100%; aspect-ratio: 4 / 3; object-fit: cover; }
+still-app .result img { width: 100%; height: auto; aspect-ratio: 4 / 3; object-fit: cover; }
 still-app .result > span { display: block; padding-top: 12px; font-size: 14px; }
 still-app .result-word { width: 100%; aspect-ratio: 4 / 3; display: grid; place-items: center; background: #eae7df; font: 27px Georgia, serif; color: #857e6e; }
 still-app .writing { max-width: 720px; margin: 5vh auto 6vh; }
@@ -94,7 +94,7 @@ still-app .slide > div { position: relative; z-index: 1; }
 still-app .slide h1 { font-size: clamp(28px, 4.5vw, 60px); margin-bottom: 25px; }
 still-app .slide .prose { font-size: clamp(15px, 1.6vw, 22px); line-height: 1.55; }
 still-app .media-stage { max-width: 1200px; margin: 20px auto; text-align: center; }
-still-app .media-stage video { width: 100%; max-height: 65vh; background: #23231e; }
+still-app .media-stage video { width: 100%; height: auto; object-fit: contain; max-height: 65vh; background: #23231e; }
 still-app .media-stage h1 { font-size: 35px; margin: 24px 0; }
 still-app .media-stage p { color: var(--soft); font-size: 14px; }
 still-app .media-stage.audio { padding: 7vh 0; }
@@ -138,8 +138,8 @@ still-app main h1:focus { outline:none; }
 
 .context-flow .analysis-input { margin: 2rem 0; border-block: 1px solid var(--line, #d9d5cd); padding: 1.5rem 0; }
 .context-flow pre { white-space: pre-wrap; overflow-wrap: anywhere; font: .8rem/1.65 ui-monospace, monospace; max-height: 28rem; overflow: auto; }
-.reference-study { display: block; max-width: 100%; max-height: 52vh; object-fit: contain; margin: 2rem auto; }
-.context-reference { max-width: 100%; max-height: 20rem; object-fit: contain; margin: 1rem 0; }
+.reference-study { display: block; height: auto; max-width: 100%; max-height: 52vh; object-fit: contain; margin: 2rem auto; }
+.context-reference { height: auto; max-width: 100%; max-height: 20rem; object-fit: contain; margin: 1rem 0; }
 .context-error { color: #8d402d; padding: 1rem 0; }
 .change-review { border-top: 1px solid #d9d5cd; padding: 1.4rem 0; }
 .source-link { display: inline-flex; align-items: center; padding: .75rem; color: inherit; font-size: .875rem; }
