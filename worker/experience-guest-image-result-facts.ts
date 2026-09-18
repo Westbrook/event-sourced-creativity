@@ -297,7 +297,13 @@ function resultClaimAssociationSql(kind: "attempt" | "custody"): string {
     envelope("$.stageLineage.source.quote.public", quoteKeys, 0, quoteKeys);
   }
   const literal = (value: string) => `'${value.replace(/'/gu, "''")}'`;
-  const tuples = (rows: readonly (readonly (string | number)[])[]) => rows.map(row => `(${row.map(value => typeof value === "number" ? value : literal(value)).join(",")})`).join(",");
+  // Native json_tree quotes underscore-bearing property names in fullkey/path.
+  // Project only the first, compiler-owned path cell of these fixed rows; no
+  // retained JSON, proof binding, identity value or caller selector is changed.
+  const nativePath = (path: string) => path.replace(/\.([A-Za-z_][A-Za-z_0-9]*)/gu,
+    (_segment, key: string) => key.includes("_") ? `."${key}"` : `.${key}`);
+  const tuples = (rows: readonly (readonly (string | number)[])[]) => rows.map(row => `(${row.map((value, index) =>
+    typeof value === "number" ? value : literal(index === 0 ? nativePath(value) : value)).join(",")})`).join(",");
   const listTargets = new Set(["generated", "ids", "bodyIds", "storageKeys", "commands", "resources", "blocks"]);
   const targets = [...new Set([...scalar.map(([, target]) => target), ...selectedArrays.map(([, target]) => target)])];
   // Preserve each fixed predicate and its order while bounding expression
@@ -330,7 +336,7 @@ function resultClaimAssociationSql(kind: "attempt" | "custody"): string {
       ELSE 1 END ELSE 1 END ELSE 1 END)`;
   return `CASE WHEN typeof(${column})='text' AND length(CAST(${column} AS BLOB)) BETWEEN 2 AND ${maximumBytes}
     THEN CASE WHEN json_valid(${column}) THEN CASE WHEN json_type(${column})='object' THEN EXISTS(
-      WITH result_identity_nodes AS MATERIALIZED(SELECT fullkey,path,type,atom FROM json_tree(${column})),
+      WITH result_identity_nodes AS MATERIALIZED(SELECT parent,key,fullkey,path,type,atom FROM json_tree(${column})),
       result_identity_context(count) AS(SELECT COUNT(*) FROM result_identity_nodes WHERE path='$.contextLineage.events'),
       result_identity_required(fullkey,expected_type,minimum_events) AS(VALUES ${tuples([...required].map(([path, value]) => [path,value.type,value.minimumEvents]))}),
       result_identity_scalars(fullkey,target,expected_type,minimum_events) AS(VALUES ${tuples(scalar)}),
@@ -339,6 +345,7 @@ function resultClaimAssociationSql(kind: "attempt" | "custody"): string {
       result_identity_selected_arrays(fullkey,target) AS(VALUES ${tuples(selectedArrays)})${kind === "custody"
         ? `,result_identity_public(fullkey,required_keys,minimum_events,exact_keys,mode) AS(VALUES ${tuples(publics.map(([path, keys, minimum, exactKeys, mode]) => [path,JSON.stringify(keys),minimum,JSON.stringify(exactKeys),mode]))})` : ""}
       SELECT 1 WHERE (SELECT COUNT(*) FROM result_identity_nodes)>${maximumNodes}
+        OR EXISTS(SELECT 1 FROM result_identity_nodes WHERE typeof(key)='text' GROUP BY parent,key HAVING COUNT(*)<>1)
         OR EXISTS(SELECT 1 FROM result_identity_constants expected JOIN result_identity_nodes found ON found.fullkey=expected.fullkey WHERE expected.minimum_events<=(SELECT count FROM result_identity_context) AND found.atom IS NOT expected.expected_atom)
         OR EXISTS(SELECT 1 FROM result_identity_required expected LEFT JOIN result_identity_nodes found ON found.fullkey=expected.fullkey
           WHERE expected.minimum_events<=(SELECT count FROM result_identity_context) GROUP BY expected.fullkey,expected.expected_type
@@ -386,6 +393,86 @@ export function guestImageResultReservedAttemptProof(facts: GuestImageResultClai
       EXISTS(SELECT 1 FROM experience_guest_image_result_copy_attempts d WHERE d.session_id=s.sessionId AND ${exactRow})
       AND NOT EXISTS(SELECT 1 FROM experience_guest_image_result_copy_attempts d WHERE (${related}) AND (${exactRow}) IS NOT TRUE))`,
     bindings: [captured.scopeJson, JSON.stringify(values)] });
+}
+
+type SuccessorAttemptCapture = Readonly<{
+  facts: ClaimFactsCapture; values: readonly Value[]; observed: Readonly<Record<string, Value>>;
+}>;
+
+/** Capture the closed tuple without reading accessors. This is deliberately
+ * separate from reserved-v0 qualification and grants no transition authority. */
+function captureSuccessorAttempt(facts: GuestImageResultClaimFacts, row: GuestImageResultCopyAttemptRow): SuccessorAttemptCapture {
+  const captured = facts && typeof facts === "object" ? claimFactsCaptures.get(facts) : undefined;
+  if (!captured || !captured.resultCopySchemaInstalled || !row || typeof row !== "object"
+    || Object.getPrototypeOf(row) !== Object.prototype) return fail("claim_attempt_facts_unavailable");
+  const descriptors = Object.getOwnPropertyDescriptors(row), keys = Reflect.ownKeys(descriptors);
+  if (keys.length !== reservedAttemptColumns.length || keys.some(key => typeof key !== "string"
+    || !reservedAttemptColumns.some(column => column === key))) return fail("claim_attempt_row_invalid");
+  const values: Value[] = [], observed: Record<string, Value> = {};
+  for (const column of reservedAttemptColumns) {
+    const descriptor = descriptors[column];
+    if (!descriptor || !descriptor.enumerable || !Object.hasOwn(descriptor, "value")) return fail("claim_attempt_row_invalid");
+    const value: unknown = descriptor.value;
+    if (value !== null && (typeof value === "string" ? !value.isWellFormed() || bytes(value) > 65536
+      : typeof value !== "number" || !Number.isSafeInteger(value) || Object.is(value, -0) || value < 0)) return fail("claim_attempt_row_invalid");
+    observed[column] = value as Value; values.push(value as Value);
+  }
+  const created = observed.created_at_ms, updated = observed.updated_at_ms, expires = observed.source_expires_at_ms;
+  const started = observed.put_started_at_ms, settled = observed.put_settled_at_ms, verified = observed.verified_at_ms;
+  const outcome = observed.put_outcome, settledOutcome = outcome === "success" || outcome === "conditional-null";
+  if (observed.session_id !== captured.scope.sessionId || typeof observed.row_version !== "number" || observed.row_version < 1
+    || typeof created !== "number" || created < 1 || typeof updated !== "number" || updated < created
+    || typeof expires !== "number" || expires <= created
+    || !["pending", "unknown", "success", "conditional-null"].includes(String(outcome))
+    || observed.published_at_ms !== null || observed.published_claim_digest !== null) return fail("claim_attempt_row_invalid");
+  if (started === null ? outcome !== "pending" || settled !== null || verified !== null
+    : typeof started !== "number" || started < created || started > updated || started >= expires) return fail("claim_attempt_row_invalid");
+  if (settledOutcome !== (settled !== null)
+    || settled !== null && (typeof settled !== "number" || typeof started !== "number" || settled < started || settled > updated)
+    || verified !== null && (typeof verified !== "number" || outcome !== "success" || typeof settled !== "number"
+      || verified < settled || verified > updated || verified >= expires)) return fail("claim_attempt_row_invalid");
+  return { facts: captured, values, observed };
+}
+
+function successorAttemptProof(captured: SuccessorAttemptCapture): Proof {
+  const { facts, values } = captured;
+  const scopeCte = `input(value) AS(VALUES(?)),s AS(SELECT ${Object.keys(facts.scope).map(key => `json_extract(value,'$.${key}') AS ${key}`).join(",")} FROM input)`;
+  const exactRow = `json_array(${reservedAttemptColumns.map(column => `d.${column}`).join(",")})=expected.row_json`;
+  const related = `d.session_id=s.sessionId OR (${resultClaimAssociationSql("attempt")})`;
+  return freeze({ sql: `EXISTS(WITH ${scopeCte},expected_result_attempt(row_json) AS(VALUES(?))
+    SELECT 1 FROM s,expected_result_attempt expected WHERE
+      EXISTS(SELECT 1 FROM experience_guest_image_result_copy_attempts d WHERE d.session_id=s.sessionId AND ${exactRow})
+      AND NOT EXISTS(SELECT 1 FROM experience_guest_image_result_copy_attempts d WHERE (${related}) AND (${exactRow}) IS NOT TRUE))`,
+    bindings: [facts.scopeJson, JSON.stringify(values)] });
+}
+
+/** Inert exact writing-row fact. The claim owner still supplies complete
+ * descriptor validation, original lease/currentness and actual PUT knowledge. */
+export function guestImageResultWritingAttemptProof(facts: GuestImageResultClaimFacts, row: GuestImageResultCopyAttemptRow): Proof {
+  const captured = captureSuccessorAttempt(facts, row), { observed } = captured;
+  if (observed.state !== "writing" || observed.put_started_at_ms === null || observed.verified_at_ms !== null)
+    return fail("claim_attempt_row_invalid");
+  return successorAttemptProof(captured);
+}
+
+/** A ready tuple describes recorded success and separate verification, never
+ * a fresh byte observation, completed custody or permission to publish. */
+export function guestImageResultReadyAttemptProof(facts: GuestImageResultClaimFacts, row: GuestImageResultCopyAttemptRow): Proof {
+  const captured = captureSuccessorAttempt(facts, row), { observed } = captured;
+  if (observed.state !== "ready" || observed.put_outcome !== "success" || observed.verified_at_ms === null)
+    return fail("claim_attempt_row_invalid");
+  return successorAttemptProof(captured);
+}
+
+/** Closed cleanup-only facts. Neither matching metadata nor this tuple may
+ * settle an unknown PUT, authorize DELETE or reverse the publication fence. */
+export function guestImageResultCleanupAttemptProof(facts: GuestImageResultClaimFacts, row: GuestImageResultCopyAttemptRow): Proof {
+  const captured = captureSuccessorAttempt(facts, row), { observed } = captured;
+  if (observed.state !== "cleanup_pending" && observed.state !== "deleted"
+    || observed.state === "deleted" && (observed.put_outcome === "unknown"
+      || observed.put_started_at_ms !== null && observed.put_outcome !== "success" && observed.put_outcome !== "conditional-null"))
+    return fail("claim_attempt_row_invalid");
+  return successorAttemptProof(captured);
 }
 
 function runClosure(r:RunCapture): Readonly<{ common: Proof; familyCommon: Proof; leaseAbsent: Proof; attemptAbsent: Proof; resultCopySchemaInstalled: boolean; claimSourceFacts: GuestImageResultClaimFacts }> {

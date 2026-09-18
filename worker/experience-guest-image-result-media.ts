@@ -1,3 +1,4 @@
+import { writeGuestImageResultCopy } from "./experience-guest-image-result-copy-writer.ts";
 import { ownerMediaNamespace } from "../src/model/media-ownership.ts";
 import { inspectOutputAsset, MAX_OUTPUT_ASSET_BYTES } from "../src/model/output-asset-inspection.ts";
 import {
@@ -332,4 +333,45 @@ export async function reserveGuestImageResultMedia(request: Request, env: Worker
     } else operation.stop();
     return result;
   } catch (error) { operation.stop(); throw error; }
+}
+
+
+declare const copyUseBrand: unique symbol;
+export type GuestImageResultCopyUse = Readonly<{ [copyUseBrand]: true }>;
+type CopyUse = { request: Request; env: WorkerEnv; reservation: GuestImageResultReservedSource;
+  operation: GuestImageResultMediaOperation; bytes: Uint8Array<ArrayBuffer> | null; review: GuestImageResultMediaReview; taken: boolean };
+const copyUses = new WeakMap<GuestImageResultCopyUse, CopyUse>();
+
+/** Fixed writer assertion: authenticates the actual producer-owned buffer by
+ * identity and returns only reservation/review, never a raw byte accessor. */
+export function takeGuestImageResultCopyUse(request: Request, env: WorkerEnv, token: GuestImageResultCopyUse,
+  bytes: Uint8Array<ArrayBuffer>): Readonly<{ reservation: GuestImageResultReservedSource; review: GuestImageResultMediaReview }> {
+  const value = token && typeof token === "object" ? copyUses.get(token) : undefined;
+  if (!value || value.request !== request || value.env !== env || value.taken || !value.bytes || value.bytes !== bytes) return unavailable();
+  value.operation.check(); value.taken = true;
+  return Object.freeze({ reservation: value.reservation, review: value.review });
+}
+
+/** One fixed writer consumer of the already admitted copy. The inner writer
+ * awaits the actual PUT promise; this outer operation owns foreground refusal.
+ * A timer cannot retire bytes while the actual PUT still has an active use.
+ * After PUT settlement, only synchronous currentness-guarded comparisons may
+ * read them; a stalled outcome journal must not prolong their retention. */
+export async function copyGuestImageResultMedia(request: Request, env: WorkerEnv, reservation: GuestImageResultReservedSource) {
+  const value = reservation && typeof reservation === "object" ? reservedMedia.get(reservation) : undefined;
+  if (!value || value.request !== request || value.env !== env || value.reservation !== reservation || !value.bytes) return unavailable();
+  const { operation } = value;
+  operation.check();
+  const bytes = value.bytes, token = Object.freeze({}) as GuestImageResultCopyUse;
+  const captured: CopyUse = { request, env, reservation, operation, bytes, review: value.review, taken: false };
+  operation.onStop(() => { captured.bytes = null; copyUses.delete(token); });
+  copyUses.set(token, captured);
+  // The reserved association is consumed before an await. A duplicate or foreign
+  // call cannot stop the first writer or obtain its token/buffer.
+  reservedMedia.delete(reservation); value.reservation = null;
+  try {
+    const next = await operation.use(bytes, () => writeGuestImageResultCopy(request, env, token, bytes));
+    return await operation.wait(() => next.result);
+  }
+  finally { operation.stop(); }
 }
