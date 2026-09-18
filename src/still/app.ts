@@ -72,6 +72,7 @@ export class StillApp extends LitElement {
   private contentRead: {key:string; error:string} | null = null;
   private busy = false;
   private generationCheck: {key:string;message:string} | null = null;
+  private inlineGenerationKey = '';
   private errorMessage = '';
   private errorVersion = 0;
   private get error() { return this.errorMessage; }
@@ -316,7 +317,7 @@ export class StillApp extends LitElement {
     }
     this.activeAddress=url;
   }
-  private resetStep(){this.toolbarSeen=[];this.paletteFeedback=undefined;this.paletteRefreshing=false;this.moreOpen=false;this.paletteOpen=false;++this.paletteTicket;this.dockTouched=false;this.useInTarget='';this.emphasis={};this.formatEmphasis={};++this.decisionTicket;clearTimeout(this.decisionTimer);this.mode='';this.routeMode='';this.bodyDraft='';this.titleDraft='';this.pendingBlock=null;this.generation=null;this.generationGate=null;this.formatSuggestions=[];this.formatTouched=false;this.developerPending=false;}
+  private resetStep(){this.inlineGenerationKey='';this.toolbarSeen=[];this.paletteFeedback=undefined;this.paletteRefreshing=false;this.moreOpen=false;this.paletteOpen=false;++this.paletteTicket;this.dockTouched=false;this.useInTarget='';this.emphasis={};this.formatEmphasis={};++this.decisionTicket;clearTimeout(this.decisionTimer);this.mode='';this.routeMode='';this.bodyDraft='';this.titleDraft='';this.pendingBlock=null;this.generation=null;this.generationGate=null;this.formatSuggestions=[];this.formatTouched=false;this.developerPending=false;}
   private navigate(view: string, ids: Partial<StillClient['position']> = {}) {
     this.resetStep();this.page = 0; this.itemIndex = 0; this.error = '';this.routeError='';this.notice='';
     const changedDocument = ids.documentId !== undefined && ids.documentId !== this.client.position.documentId || ids.projectId !== undefined && ids.projectId !== this.client.position.projectId;
@@ -578,18 +579,20 @@ export class StillApp extends LitElement {
   }
   private async generate() {
     const draft = this.generation; if (!draft) return;
+    const inlineKey=this.inlineGenerationKey;
     if(draft.recoveryClosed){this.generation=this.client.reviewNewGeneration(draft);this.generationGate=null;this.notice='Review this new request before generating.';this.changed();return;}
     if (!draft.attempted && draft.format === 'scene' && !draft.scenePreview) { const quote = await this.client.previewScene(draft); if (quote) draft.scenePreview = quote; this.changed(); return; }
     if (this.generationGate && !this.generationGate.key) return;
     if (this.generationGate?.key) { draft.acknowledgements = { ...draft.acknowledgements, [this.generationGate.key]: true }; this.generationGate = null; }
-    try { const job=await this.client.generate(draft); this.navigate('generation',{outputId:job.jobId}); }
+    try { const job=await this.client.generate(draft); if(inlineKey&&(!this.isInlineGeneration()||inlineKey!==this.inlineGenerationKey))return;this.navigate('generation',{outputId:job.jobId}); }
     catch (error) {
+      if(inlineKey&&(!this.isInlineGeneration()||inlineKey!==this.inlineGenerationKey))return;
       const review = error instanceof ApiError ? generationReview(error.status, error.body) : null;
       if (review) {
         this.generationGate = review; ++this.reviewVersion;
         this.changed();
         await this.updateComplete;
-        this.querySelector<HTMLElement>('.generation-notifications')?.focus();
+        this.querySelector<HTMLElement>(inlineKey?'.generation-inline-review':'.generation-notifications')?.focus();
         return;
       }
       throw error;
@@ -629,6 +632,7 @@ export class StillApp extends LitElement {
     return html`<article data-attention-id=${`result:${a.id}`} class="writing"><span class="eyebrow">${FORMATS[a.kind] ?? 'Creative work'}</span><h1>${a.title}</h1><div class="prose">${this.prose(content?.content_markdown || a.items.map(x => `${x.title}\n\n${x.body}`).join('\n\n') || a.summary || 'Writing unavailable.')}</div></article>`;
   }
   private generationCheckKey() { const c=this.client;return `${c.scopeKey}/${c.epoch}/${c.position.documentId}/${c.position.outputId}`; }
+  private isInlineGeneration() { return !!this.inlineGenerationKey&&this.client.position.view==='generation'&&this.inlineGenerationKey===this.generationCheckKey(); }
   private selectedGeneration() { const c=this.client;return c.jobs.find(j=>j.jobId===c.position.outputId&&j.documentId===c.position.documentId); }
   private canGenerateAgain(job:DocumentJob|undefined) {
     const c=this.client,format=job&&generationFormat(job);
@@ -653,13 +657,23 @@ export class StillApp extends LitElement {
     const job=this.selectedGeneration();
     if(this.busy||this.composing||this.directGeneration||job?.jobId!==jobId||!this.canGenerateAgain(job))return;
     const format=generationFormat(job)!;
-    this.generationCheck=null;this.generation=null;this.begin('generate');
-    void this.startGeneration(format);
+    this.generationCheck=null;this.generation=null;
+    if(format==='video'){this.inlineGenerationKey=this.generationCheckKey();this.generationGate=null;this.error='';}
+    else this.begin('generate');
+    return this.startGeneration(format);
+  }
+  private renderInlineGeneration() {
+    if(!this.isInlineGeneration())return nothing;
+    const draft=this.generation,review=this.generationGate;
+    const message=this.busy||this.directGeneration?'Preparing new video…':review?.message||this.error||(draft?.recoveryClosed?'Review a new request before starting another.':draft?.attempted?'Check the new request before starting another.':draft?.previousUnconfirmed?'A new request may duplicate the earlier attempt. Review before generating.':'Ready to generate a new video.');
+    return html`<section class="generation-inline-review" tabindex="-1" aria-label="New video request"><p role="status" aria-live="polite">${message}</p>${review?.issues.map(issue=>html`<p>${issue.summary}</p>`)}</section>`;
   }
   private generationRecoveryActions() {
     const job=this.selectedGeneration(),format=job&&generationFormat(job);
+    const inline=this.isInlineGeneration(),draft=inline?this.generation:null,review=inline?this.generationGate:null;
     return [
-      ...(this.canGenerateAgain(job)?[{id:'ui:generate-new',label:`Generate new ${(FORMATS[format!]??format).toLowerCase()}`,variant:'primary' as const,run:()=>this.generateAgain(job!.jobId)}]:[]),
+      ...(inline?[{id:'ui:continue-generation',label:this.busy?'Preparing…':draft?.recoveryClosed?'Review another':draft?.attempted?'Check generation':review?(canContinueReview(review)?'I understand the risks':'Blocked'):'Generate new video',variant:'primary' as const,disabled:!draft||!!review&&!canContinueReview(review),run:()=>void this.run(()=>this.generate())}]:this.canGenerateAgain(job)?[{id:'ui:generate-new',label:`Generate new ${(FORMATS[format!]??format).toLowerCase()}`,variant:'primary' as const,disabled:false,run:()=>this.generateAgain(job!.jobId)}]:[]),
+      ...(review?[{id:'ui:review-context',label:'Review context',variant:'secondary' as const,run:()=>this.reviewContext()}]:[]),
       {id:'ui:refresh-generation',label:'Refresh status',variant:'secondary' as const,run:()=>void this.refreshGenerationStatus()},
       {id:'document',label:'Document',variant:'secondary' as const,run:()=>this.navigate('document')},
       {id:'results',label:'Results',variant:'secondary' as const,run:()=>this.navigate('results')},
@@ -669,13 +683,13 @@ export class StillApp extends LitElement {
   private renderGenerationStatusDock() {
     const actions=this.generationRecoveryActions();
     if(this.pageActionLimit<actions.length)return this.compactDock(actions);
-    return html`<footer class="action-dock"><en-toolbar label="Your next step" keyboard-navigation="tab">${actions.map(a=>a.id==='ui:palette'?this.paletteButton('shortcut'):this.button(a.label,a.run,false,false,a.id,a.variant))}</en-toolbar></footer>`;
+    return html`<footer class="action-dock"><en-toolbar label="Your next step" keyboard-navigation="tab">${actions.map(a=>a.id==='ui:palette'?this.paletteButton('shortcut'):this.button(a.label,a.run,false,'disabled' in a&&a.disabled,a.id,a.variant))}</en-toolbar></footer>`;
   }
   private renderGeneration() {
     const c=this.client,p=c.projection,job=c.jobs.find(j=>j.jobId===c.position.outputId&&j.documentId===p.documentId);
     if(!job||!generationFormat(job))return html`<section class="quiet-state"><h1>${c.jobsError?'Couldn’t load generation':c.jobsLoaded?'Generation unavailable':'Loading generation…'}</h1>${c.jobsError?this.button('Try again',()=>void this.run(()=>c.pollJobs())):nothing}</section>`;
     const active=generationActive(job),kind=generationFormat(job),preview=generationPreview(job,p,c.events);
-    return html`<section class="generation-stage"><span class="eyebrow">${FORMATS[kind]??kind}</span><h1>${preview.title}</h1>${preview.width&&preview.height?html`<p class="caption">${preview.width} × ${preview.height}</p>`:nothing}${job.status==='failed'?html`<p class="caption">This attempt failed.</p>`:nothing}<p role="status">${active?(job.progressMessage||generationStatus(job)):job.status==='completed'?'The result is being loaded.':job.errorDetail?.message||job.error||generationStatus(job)}</p>${active?html`<div class=${`generation-placeholder ${kind} ${preview.width?'known-size':''}`} style=${preview.width&&preview.height?`--generation-ratio:${preview.width/preview.height}`:nothing} aria-label="Generation in progress"><en-skeleton shape="rectangle"></en-skeleton></div>`:nothing}${this.canGenerateAgain(job)?html`<p class="caption">A new generation uses your current document and allowance.</p>`:nothing}${this.generationCheck?.key===this.generationCheckKey()?html`<p class="caption" role="status" aria-live="polite">${this.generationCheck.message}</p>`:nothing}</section>`;
+    return html`<section class="generation-stage"><span class="eyebrow">${FORMATS[kind]??kind}</span><h1>${preview.title}</h1>${preview.width&&preview.height?html`<p class="caption">${preview.width} × ${preview.height}</p>`:nothing}${job.status==='failed'?html`<p class="caption">This attempt failed.</p>`:nothing}<p role="status">${active?(job.progressMessage||generationStatus(job)):job.status==='completed'?'The result is being loaded.':job.errorDetail?.message||job.error||generationStatus(job)}</p>${active?html`<div class=${`generation-placeholder ${kind} ${preview.width?'known-size':''}`} style=${preview.width&&preview.height?`--generation-ratio:${preview.width/preview.height}`:nothing} aria-label="Generation in progress"><en-skeleton shape="rectangle"></en-skeleton></div>`:nothing}${this.canGenerateAgain(job)?html`<p class="caption">A new generation uses your current document and allowance.</p>`:nothing}${this.generationCheck?.key===this.generationCheckKey()?html`<p class="caption" role="status" aria-live="polite">${this.generationCheck.message}</p>`:nothing}${this.renderInlineGeneration()}</section>`;
   }
   private renderCanvas() {
     const c = this.client, p = c.projection, pos = c.position;
@@ -828,9 +842,9 @@ export class StillApp extends LitElement {
     }}>${message}${actions.map(action=>html`<en-button slot="actions" variant="secondary" size="small" ?disabled=${this.busy||this.composing} @click=${()=>{this.dismissedNotifications.add(identity);action.run();this.changed();}}>${action.label}</en-button>`)}</en-toast>`);
   }
   private renderNotifications(failed?:DocumentJob) {
-    const review=this.generationGate, failure=failed?failureNotification(failed):null;
+    const inline=this.isInlineGeneration(),review=inline?null:this.generationGate, failure=failed?failureNotification(failed):null;
     return html`<en-toast-region class="generation-notifications" placement="block-start-end" label="Notifications" max="2">
-      ${this.error?this.notification(`error:${this.errorVersion}`,this.error,'danger',[
+      ${this.error&&!inline?this.notification(`error:${this.errorVersion}`,this.error,'danger',[
         this.generation?.attempted?{label:'Check generation',run:()=>void this.run(()=>this.generate())}:
         this.mode==='generate'?{label:'Review context',run:()=>this.reviewContext()}:
         {label:this.startupFailed?'Reload':'Review step',run:()=>this.startupFailed?void this.run(()=>this.loadWorkspace()):this.focusContent()},

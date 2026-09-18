@@ -3,12 +3,16 @@ import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import ts from 'typescript';
 import {generationFormat} from '../src/still/results.ts';
+import {ApiError} from '../src/still/client.ts';
+import {generationReview} from '../src/still/generation-review.ts';
+import {canContinueReview} from '../src/still/notifications.ts';
 
 const source=ts.createSourceFile('app.ts',readFileSync(new URL('../src/still/app.ts',import.meta.url),'utf8'),ts.ScriptTarget.Latest,true);
 const app=source.statements.find(n=>ts.isClassDeclaration(n)&&n.name?.text==='StillApp');
-const methods=['generationCheckKey','selectedGeneration','canGenerateAgain','refreshGenerationStatus','generateAgain','generationRecoveryActions','renderGenerationStatusDock','run'];
+const methods=['generationCheckKey','isInlineGeneration','selectedGeneration','canGenerateAgain','refreshGenerationStatus','generateAgain','generationRecoveryActions','renderGenerationStatusDock','renderInlineGeneration','startGeneration','generate','run'];
 const code=ts.transpileModule(`class Recovery {${app.members.filter(n=>methods.includes(n.name?.getText(source))).map(n=>n.getText(source)).join('\n')}}`,{compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText;
-const Recovery=new Function('generationFormat','FORMATS',`${code};return Recovery;`)(generationFormat,{video:'Video',image:'Image'});
+const html=(parts,...values)=>parts.reduce((s,p,i)=>s+p+(Array.isArray(values[i])?values[i].join(''):values[i]??''),'');
+const Recovery=new Function('generationFormat','FORMATS','ApiError','generationReview','canContinueReview','html','nothing',`${code};return Recovery;`)(generationFormat,{video:'Video',image:'Image'},ApiError,generationReview,canContinueReview,html,'');
 function fixture(status='failed') {
  const view=new Recovery();
  const calls=[];
@@ -32,8 +36,44 @@ test('toolbar separates primary fresh generation from secondary read-only refres
  assert.equal(actions[0].label,'Generate new video');assert.equal(actions[0].variant,'primary');
  assert.equal(actions[1].label,'Refresh status');assert.equal(actions[1].variant,'secondary');
  view.generation={attempted:true,providerModel:'old-model'};actions[0].run();
- assert.deepEqual(calls,[['begin','generate'],['generate','video']]);
- view.pageActionLimit=2;view.compactDock=options=>options;assert.deepEqual(view.renderGenerationStatusDock().map(a=>a.id),actions.map(a=>a.id));
+ assert.deepEqual(calls,[['generate','video']]);assert.equal(view.isInlineGeneration(),true);
+ view.pageActionLimit=2;view.compactDock=options=>options;assert.equal(view.renderGenerationStatusDock()[0].id,'ui:continue-generation');
+});
+
+function executionFixture() {
+ const {view,calls}=fixture();delete view.startGeneration;
+ Object.assign(view,{draftSignature:()=>'',querySelector:()=>null,updateComplete:Promise.resolve(),navigate:(page,ids)=>{calls.push(['navigate',page,ids.outputId]);view.inlineGenerationKey='';}});
+ view.client.prepareGeneration=format=>({format,documentId:'doc',requestId:'new-request'});
+ return {view,calls};
+}
+test('preparation stays inline and acceptance navigates once directly to the new job',async()=>{
+ const {view,calls}=executionFixture();let accept,count=0;
+ view.client.generate=()=>{count++;return new Promise(resolve=>{accept=resolve;});};
+ const pending=view.generateAgain('job');
+ assert.equal(view.client.position.outputId,'job');assert.equal(view.mode,undefined);assert.match(view.renderInlineGeneration(),/Preparing new video/);assert.deepEqual(calls,[]);
+ await view.generateAgain('job');assert.equal(count,1);
+ accept({jobId:'new-job'});await pending;
+ assert.deepEqual(calls,[['navigate','generation','new-job']]);
+});
+test('budget review stays inline, requires explicit consent, and retains the same request',async()=>{
+ const {view,calls}=executionFixture();let count=0;let request;
+ view.client.generate=async draft=>{count++;request??=draft;assert.equal(draft,request);if(count===1)throw new ApiError(428,{error:'generation_budget_acknowledgement_required',message:'Review budget usage.'});assert.equal(draft.acknowledgements.budgetAcknowledged,true);return{jobId:'approved-job'};};
+ await view.generateAgain('job');assert.deepEqual(calls,[]);assert.match(view.renderInlineGeneration(),/Review budget usage/);
+ const action=view.generationRecoveryActions()[0];assert.equal(action.label,'I understand the risks');assert.equal(count,1);
+ await view.run(()=>view.generate());assert.deepEqual(calls,[['navigate','generation','approved-job']]);
+});
+test('blocked and uncertain requests remain on the old page without buying another attempt',async()=>{
+ const {view,calls}=executionFixture();let count=0;
+ view.client.generate=async()=>{count++;throw new ApiError(409,{error:'generation_preflight_blocked'});};
+ await view.generateAgain('job');assert.equal(view.generationRecoveryActions()[0].disabled,true);assert.match(view.renderInlineGeneration(),/Generation blocked/);
+ await view.run(()=>view.generate());assert.equal(count,1);assert.deepEqual(calls,[]);
+ view.generationGate=null;view.client.generate=async draft=>{draft.attempted=true;throw new Error('Generation check unconfirmed.');};
+ await view.run(()=>view.generate());assert.equal(view.generationRecoveryActions()[0].label,'Check generation');assert.match(view.renderInlineGeneration(),/Generation check unconfirmed/);assert.deepEqual(calls,[]);
+});
+test('a late accepted request does not redirect after the user leaves the original page',async()=>{
+ const {view,calls}=executionFixture();let accept;
+ view.client.generate=()=>new Promise(resolve=>{accept=resolve;});const pending=view.generateAgain('job');
+ view.client.position.outputId='other';accept({jobId:'new-job'});await pending;assert.deepEqual(calls,[]);assert.equal(view.renderInlineGeneration(),'');
 });
 test('fresh action rechecks selected job, capability, uncertain requests and busy state',()=>{
  for(const change of [v=>v.client.position.outputId='other',v=>v.client.abilities.generate=false,v=>v.client.abilities.formats=[],v=>v.client.pendingGeneration={},v=>v.client.hasUnconfirmedWrite=true,v=>v.busy=true,v=>v.directGeneration=true,v=>v.client.jobs[0].status='running']){
