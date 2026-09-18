@@ -140,7 +140,7 @@ export async function prepareGuestImageAdmission(request:Request,env:WorkerEnv,a
  }};
 }
 
-async function prepareAdmission(input:Parameters<OutputExecutionBridge["prepareAdmission"]>[0]&{governanceWitness?:OutputGovernanceWitness}):Promise<OutputPreparedAdmission&{sourceAssertions:OutputSqlAssertion[]}>{
+export async function prepareAdmission(input:Parameters<OutputExecutionBridge["prepareAdmission"]>[0]&{governanceWitness?:OutputGovernanceWitness}):Promise<OutputPreparedAdmission&{sourceAssertions:OutputSqlAssertion[]}>{
  if(input.sponsorAdmission&&(input.scope.kind!=="personal"||input.scope.contextId||input.scope.actorUserId!==input.scope.ownerUserId||input.principal.fictional||input.principal.projectExecution))throw new OutputConflictError("sponsor_personal_principal_required",403);
  const readScope=createOutputAdmissionReads({request:input.request,env:input.env,documentId:input.scope.documentId,actorUserId:input.scope.actorUserId,billingUserId:input.principal.billingUserId??input.principal.userId,organizationId:input.scope.organizationId,projectAccessId:input.scope.projectAccessId,...(input.sponsorAdmission?{sponsorAdmission:input.sponsorAdmission}:{})},
   input.governanceWitness?{witness:input.governanceWitness,source:{ownerUserId:input.scope.ownerUserId,projectId:input.scope.projectId,contextId:input.scope.contextId??"",sourceDigest:input.sourceDigest,contextSnapshotDigest:await outputDigest(input.context.snapshot)}}:undefined);

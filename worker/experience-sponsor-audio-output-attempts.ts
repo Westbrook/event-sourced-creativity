@@ -189,7 +189,7 @@ const ownerCurrent = (life: Life, principal: Principal) => () => {
   try { life.check(); principal.assertCurrent(); } catch (error) { life.retire(); throw error; }
 };
 type Attempt = { request: Request; env: WorkerEnv; life: Life; selected: Readonly<Selector>; principal: Principal;
-  original: SponsorAudioIntakeReceipt; approved: Approved; receipt: Readonly<Receipt>; assertions: readonly Assertion[]; taken: boolean };
+  original: SponsorAudioIntakeReceipt; approved: Approved; receipt: Readonly<Receipt>; assertions: readonly Assertion[]; originalMetadataAssertions: readonly Assertion[]; taken: boolean };
 const limitsFor = (life: Life, current: () => void): SponsorAudioOutputReadLimits => ({ current,
   monotonicDeadline: life.deadline, signal: life.signal, sharedControl: { remaining: life.remaining, account: life.account } });
 
@@ -326,8 +326,15 @@ export async function reserveSponsorAudioOutputReadAttempt(request: Request, env
     if (schema.length !== 1 || schema[0]!.snapshot !== snapshot) return failure("sponsor_audio_output_read_attempt_schema_unavailable");
     const sink = await life.wait(() => qualifySponsorAudioOutputReadAssertionSink(request, env, limits)); current();
     const validity: Assertion = { sql: `${clock}>=? AND ${clock}<?`, bindings: [approved.policy.startsAtMs, approved.policy.expiresAtMs] };
-    const assertions = freeze([...principal.assertions.map(proof), ...stored.assertions.map(proof), ...intake.assertions.map(proof),
-      ...approved.assertions.map(proof), schemaProof(), proof(sink.assertion), validity]);
+    const principalAssertions = principal.assertions.map(proof);
+    // Origin metadata only, not a truth cache or a read capability. These exact
+    // native producers return catalog snapshots and immutable original rows;
+    // they contain no current actor, grant-expiry, custody or clock predicate.
+    const storedAssertions = stored.assertions.map(proof), intakeAssertions = intake.assertions.map(proof), approvedAssertions = approved.assertions.map(proof);
+    const originalMetadataAssertions = freeze([...storedAssertions, ...intakeAssertions, ...approvedAssertions, schemaProof(), proof(sink.assertion)]);
+    if ((selected.operation === "audio-output-review" || selected.operation === "audio-output-authorize")
+      && (storedAssertions.length !== 2 || intakeAssertions.length !== 2 || approvedAssertions.length !== 2 || originalMetadataAssertions.length !== 8)) return failure();
+    const assertions = freeze([...principalAssertions, ...originalMetadataAssertions, validity]);
     const attemptId = crypto.randomUUID(), before = guardStatements(life.database, assertions), after = guardStatements(life.database, assertions);
     const quotaSql: string[] = [], quotaBindings: Binding[] = [];
     for (const scope of ["campaign", "actor"] as const) {
@@ -363,7 +370,7 @@ export async function reserveSponsorAudioOutputReadAttempt(request: Request, env
       || receipt.deadline_at_ms <= receipt.admitted_at_ms || receipt.charged_through_ms !== receipt.deadline_at_ms + approved.policy.windowMs) return failure();
     life.narrowDeadline(started + receipt.deadline_at_ms - receipt.admitted_at_ms); current();
     const attempt = Object.freeze({}) as SponsorAudioOutputReadAttempt;
-    attempts.set(attempt, { request, env, life, selected, principal, original, approved, receipt: freeze(receipt), assertions, taken: false });
+    attempts.set(attempt, { request, env, life, selected, principal, original, approved, receipt: freeze(receipt), assertions, originalMetadataAssertions, taken: false });
     current(); return attempt;
   } catch (error) { life.retire(); throw error; }
 }
@@ -399,7 +406,7 @@ export function requireSponsorAudioOutputReadBudget(budget: SponsorAudioOutputRe
   const current = ownerCurrent(state.life, state.principal);
   current();
   return Object.freeze({ operation: state.selected.operation, draftId: state.selected.draftId, principal: state.principal.principal,
-    authenticated: state.principal.authenticated, original: state.original, policy: state.approved.policy, receipt: state.receipt, assertions: state.assertions,
+    authenticated: state.principal.authenticated, original: state.original, policy: state.approved.policy, receipt: state.receipt, assertions: state.assertions, originalMetadataAssertions: state.originalMetadataAssertions,
     current, remaining() { current(); return state.life.remaining(); }, account(usage: Usage) { current(); state.life.account(usage); current(); },
     async wait<T>(work: () => Promise<T>) { current(); const result = await state.life.wait(work); current(); return result; },
     get usage() { current(); return state.life.used; }, get monotonicDeadline() { current(); return state.life.deadline; },

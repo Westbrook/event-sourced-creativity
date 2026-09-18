@@ -13,7 +13,7 @@ import { createExperienceOutputRecipe, matchExperienceOutputRecipeTarget } from 
 import { OutputConflictError, type OutputSqlAssertion } from "./output-command-core.ts";
 import type { OutputBridgeTargetInput } from "./output-requirements-api.ts";
 import { findSponsorAudioOutputReads, requireSponsorAudioOutputReads, readSponsorAudioOutputResponse, retainSponsorAudioOutputProofs,
-  isSponsorAudioOutputPreflightInput, type SponsorAudioOutputReadOwner } from "./experience-sponsor-audio-output-reads.ts";
+  isSponsorAudioOutputPreflightInput, isSponsorAudioOutputLaterSourceInput, type SponsorAudioOutputReadOwner } from "./experience-sponsor-audio-output-reads.ts";
 import { readSponsorAudioOutputNativeDraft, sponsorAudioOutputNativeProofs, sealSponsorAudioOutputNativeReceiptCheck } from "./experience-sponsor-audio-output-native.ts";
 
 function fail(code = "output_audio_original_unavailable"): never { throw new OutputConflictError(code, 409); }
@@ -73,13 +73,15 @@ export async function resolveOutputAudioSource(input: OutputBridgeTargetInput) {
     || !input.sourceEvents || !input.sourceAssertions?.length) fail("output_audio_personal_source_required");
   const owner = findSponsorAudioOutputReads(input.request, input.env);
   const owned = owner ? requireSponsorAudioOutputReads(owner, input.request, input.env) : null;
-  if (owner && !isSponsorAudioOutputPreflightInput(owner, input)) fail();
-  if (owned && (owned.env !== input.env || owned.draftId !== contract.source.draftId || owned.auth.user !== principal
-    || owned.operation !== "audio-output-prepare")) fail();
+  const later = owned?.operation === "audio-output-review" || owned?.operation === "audio-output-authorize";
+  if (owner && (later ? !isSponsorAudioOutputLaterSourceInput(owner, input) : !isSponsorAudioOutputPreflightInput(owner, input))) fail();
+  if (owned && (owned.draftId !== contract.source.draftId || !later && (owned.env !== input.env || owned.auth.user !== principal
+    || owned.operation !== "audio-output-prepare"))) fail();
   // Ordinary reconstruction keeps its existing same-principal behavior. A
   // sponsored original uses only the owner's genuine native authorization.
   const auth: ProjectIntakeAuthorization = owned ? owned.auth : { user: principal, principal, impersonation: null };
-  const retained = owner ? await readSponsorAudioOutputNativeDraft(owner, input.request, input.env)
+  const nativeEnv = owned?.nativeEnv ?? input.env;
+  const retained = owner ? await readSponsorAudioOutputNativeDraft(owner, input.request, nativeEnv)
     : await readExperienceDraft(input.env, auth, contract.source.draftId);
   if (!retained) fail();
   const { plan } = retained;
@@ -102,8 +104,8 @@ export async function resolveOutputAudioSource(input: OutputBridgeTargetInput) {
   const intake = { projectId: plan.projectId, documentId: plan.documentId, events: structuredClone([...plan.events]) };
   const options = { receiptPrefix: receiptPrefix(plan.draftId), clientId: "web:experience-intake", correlationPrefix: "experience-intake:",
     guard: experienceDraftGuard(auth, plan, retained.content) };
-  const response = await commitAtomicIntake(input.env, auth, intake, "check", owner
-    ? sealSponsorAudioOutputNativeReceiptCheck(owner, input.request, input.env, auth, intake, options) : options);
+  const response = await commitAtomicIntake(nativeEnv, auth, intake, "check", owner
+    ? sealSponsorAudioOutputNativeReceiptCheck(owner, input.request, nativeEnv, auth, intake, options) : options);
   const value: unknown = owner ? await readSponsorAudioOutputResponse(owner, response) : response.ok ? await response.json() : null;
   if (!response.ok || !record(value)) fail();
   const receipt = { ...value, draftId: plan.draftId, draftHash: plan.draftHash } as ExperienceIntakeReceipt;
@@ -127,7 +129,7 @@ export async function resolveOutputAudioSource(input: OutputBridgeTargetInput) {
     || !same(created.payload.properties, block.properties)) fail("output_audio_requirement_changed");
   const identity = await outputAudioPreparationIdentity(contract, confirmedPlan, target.id);
   if (!identity || !exactIso(retained.expiresAt) || Date.parse(identity.expiresAt) > Date.parse(retained.expiresAt)) fail("output_audio_original_expired");
-  const draft = join(projectIntakeAuthority(input.env, auth, plan), experienceDraftGuard(auth, plan, retained.content));
+  const draft = join(projectIntakeAuthority(nativeEnv, auth, plan), experienceDraftGuard(auth, plan, retained.content));
   const sourceAssertions = [...input.sourceAssertions, draft, receiptAssertion(input, receipt), ...(owner ? sponsorAudioOutputNativeProofs(owner) : [])].map(assertion => ({
     ...assertion, bindings: [...(assertion.bindings ?? [])],
   }));

@@ -86,19 +86,48 @@ async function authoritySnapshot(env: WorkerEnv, userId: string, capturedColumns
 export async function readSponsorInternalCommand(request: Request, maximumBytes = 131072): Promise<unknown> {
   if (request.method !== "POST" || request.headers.get("content-type")?.split(";",1)[0] !== "application/json") return fail("sponsor_explicit_command_required");
   if (!Number.isSafeInteger(maximumBytes) || maximumBytes < 1 || maximumBytes > 131072) return fail("sponsor_command_invalid");
-  const reader = request.clone().body?.getReader();
-  if (!reader) return fail("sponsor_command_invalid");
-  const chunks: Uint8Array[] = []; let length = 0;
-  for (;;) {
-    const result = await reader.read(); if (result.done) break;
-    length += result.value.byteLength;
-    if (length > maximumBytes) { void reader.cancel().catch(() => {}); return fail("sponsor_command_too_large"); }
-    chunks.push(result.value);
+  // Only a producer-registered actual Audio request/preview clone can find an
+  // owner. Ordinary approval callers keep their existing parser and byte cap.
+  // Defer the owner module until parsing: approval schema constants must finish
+  // initializing before its native custody dependency graph can read them.
+  const { beginSponsorAudioOutputParserUse } = await import("./experience-sponsor-audio-output-reads.ts");
+  const owned = beginSponsorAudioOutputParserUse(request);
+  let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+  try {
+    owned?.current();
+    const clone = owned ? Request.prototype.clone.call(request) as Request : request.clone();
+    const body = owned ? Reflect.get(Request.prototype, "body", clone) as ReadableStream<Uint8Array> | null : clone.body;
+    reader = body?.getReader();
+    if (!reader) return fail("sponsor_command_invalid");
+    const chunks: Uint8Array[] = []; let length = 0;
+    for (;;) {
+      const active = reader;
+      const result = owned ? await owned.wait(() => active.read()) : await active.read();
+      if (result.done) break;
+      // Meter every delivered raw chunk before retention, including whitespace
+      // and bytes later rejected by fatal UTF-8/JSON or the per-call cap.
+      owned?.accountChunk(result.value);
+      length += result.value.byteLength;
+      if (length > maximumBytes) { void reader.cancel().catch(() => {}); return fail("sponsor_command_too_large"); }
+      chunks.push(result.value);
+    }
+    const bytes = new Uint8Array(length); let offset = 0;
+    for (const chunk of chunks) { bytes.set(chunk,offset); offset += chunk.byteLength; }
+    let parsed: unknown;
+    try { parsed = JSON.parse(new TextDecoder("utf-8",{fatal:true}).decode(bytes)); } catch { return fail("sponsor_command_invalid"); }
+    owned?.finish();
+    return parsed;
+  } catch (error) {
+    owned?.cancel(error);
+    // A tee branch's cancel promise can wait for an unread sibling. Retire the
+    // capability immediately; cleanup cannot extend its original lifetime.
+    if (owned && reader) { try { void reader.cancel().catch(() => {}); } catch { /* preserve the original refusal */ } }
+    throw error;
+  } finally {
+    if (owned && reader) { try { reader.releaseLock(); } catch { /* pending read cleanup remains observed */ } }
   }
-  const bytes = new Uint8Array(length); let offset = 0;
-  for (const chunk of chunks) { bytes.set(chunk,offset); offset += chunk.byteLength; }
-  try { return JSON.parse(new TextDecoder("utf-8",{fatal:true}).decode(bytes)); } catch { return fail("sponsor_command_invalid"); }
 }
+
 export async function approveSponsorCampaign(request: Request, env: WorkerEnv) {
   // Capture before the inherited body-parser await. Older versions keep their
   // original path; only the explicit V8 branch consumes this lifetime guard.

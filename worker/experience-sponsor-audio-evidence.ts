@@ -8,10 +8,13 @@ import { preflightOutputAudioTarget, outputAudioPreflightAssertions } from "./ou
 import { sponsorCurrentSourceAssertions } from "./experience-sponsor-image-evidence.ts";
 import { SponsorEntitlementError, type SponsorRecipe } from "./experience-sponsor-policy.ts";
 import { outputProofReadStatements, outputDigest } from "./output-disclosure-proof.ts";
-import type { OutputTrustedContext } from "./output-requirements-api.ts";
+import type { OutputBridgeTargetInput, OutputTrustedContext } from "./output-requirements-api.ts";
 import type { OutputSqlAssertion } from "./output-command-core.ts";
 import { parseAudioMiniAppCostPreview, audioMiniAppCostApprovalMatches } from "../src/model/audio-mini-app-consent.ts";
 import { parseAudioOutputContract } from "../src/model/output-audio-contract.ts";
+import { findSponsorAudioOutputReads, requireSponsorAudioOutputReads, requireSponsorAudioOutputContext,
+  registerSponsorAudioOutputEvidenceContext, beginSponsorAudioOutputLaterSource, retainSponsorAudioOutputLaterSource,
+  type SponsorAudioOutputReadOwner } from "./experience-sponsor-audio-output-reads.ts";
 
 // A closed text-source lane. Reference/media/sketch/unknown blocks are refused,
 // including describe-only references; no required material is silently omitted.
@@ -32,6 +35,19 @@ const quoteSql = `SELECT preflight.terms_digest,preflight.expires_at,body.privat
     AND plan.owner_user_id=? AND plan.project_id=? AND plan.document_id=? AND plan.source_digest=? AND plan.requirements_digest=?
     AND NOT EXISTS(SELECT 1 FROM output_plan_revisions newer WHERE newer.scope_key=plan.scope_key AND newer.revision>plan.revision)`;
 type Quote = { terms_digest: string; expires_at: string; private_json: string; source_head: number; plan_revision_id: string; plan_json: string };
+type EvidenceContext = Readonly<{ parent: OutputTrustedContext; authenticated: OutputTrustedContext["principal"] }>;
+type EvidenceInput = Readonly<{ native: OutputTrustedContext; authenticated: OutputTrustedContext["principal"] }>;
+const ownedContexts = new WeakMap<OutputTrustedContext, { owner: SponsorAudioOutputReadOwner; value: EvidenceContext }>();
+const ownedInputs = new WeakMap<OutputBridgeTargetInput, { owner: SponsorAudioOutputReadOwner; value: EvidenceInput }>();
+/** Exact native copies and genuine reauthentication results; equal DTOs are inert. */
+export function sponsorAudioOutputEvidenceContext(owner: SponsorAudioOutputReadOwner, native: OutputTrustedContext) {
+  const retained = ownedContexts.get(native);
+  return retained?.owner === owner ? retained.value : null;
+}
+export function sponsorAudioOutputEvidenceInput(owner: SponsorAudioOutputReadOwner, input: OutputBridgeTargetInput) {
+  const retained = ownedInputs.get(input);
+  return retained?.owner === owner ? retained.value : null;
+}
 
 /** Read-only native evidence, never sponsor authority. The registered ordinary
  * Audio preflight is recomputed from current authorized context without egress.
@@ -50,6 +66,11 @@ async function readNative(trusted: OutputTrustedContext, rawCommand: Record<stri
   if (trusted.env.FORMA_AUDIO_PROVIDER && trusted.env.FORMA_AUDIO_PROVIDER !== "fal") return fail("sponsor_audio_provider_unavailable");
   if (!Array.isArray(trusted.context.snapshot.facts) || !textSource(trusted.context.snapshot.facts)) return fail("sponsor_audio_text_source_required");
   const request = trusted.request, env = trusted.env, database = env.DB;
+  const owner = findSponsorAudioOutputReads(request, env), owned = owner ? requireSponsorAudioOutputReads(owner, request, env) : null;
+  if (owner) {
+    if (owned?.operation !== "audio-output-authorize") return fail("sponsor_scope_unsupported");
+    requireSponsorAudioOutputContext(owner, trusted);
+  }
   const identities = { scope: trusted.scope, principal: trusted.principal, context: trusted.context, events: trusted.events };
   const source = () => canonicalJson({ scope: trusted.scope, principal: { userId: trusted.principal.userId, consentVersion: trusted.principal.consentVersion,
     fictional: trusted.principal.fictional ?? false, projectExecution: trusted.principal.projectExecution ?? null, billingUserId: trusted.principal.billingUserId ?? null,
@@ -63,13 +84,16 @@ async function readNative(trusted: OutputTrustedContext, rawCommand: Record<stri
   const credentials = [env.OPENAI_API_KEY, env.FAL_KEY];
   const requestIdentity = () => canonicalJson({ url: request.url, method: request.method, headers: [...request.headers] });
   const requestCaptured = requestIdentity(), captured = source();
-  const current = () => !request.signal.aborted && trusted.request === request && trusted.env === env && env.DB === database && source() === captured
-    && trusted.scope === identities.scope && trusted.principal === identities.principal && trusted.context === identities.context && trusted.events === identities.events
-    && requestIdentity() === requestCaptured && env.OPENAI_API_KEY === credentials[0] && env.FAL_KEY === credentials[1];
+  const current = () => {
+    owned?.current();
+    return !request.signal.aborted && trusted.request === request && trusted.env === env && env.DB === database && source() === captured
+      && trusted.scope === identities.scope && trusted.principal === identities.principal && trusted.context === identities.context && trusted.events === identities.events
+      && requestIdentity() === requestCaptured && env.OPENAI_API_KEY === credentials[0] && env.FAL_KEY === credentials[1];
+  };
   if (!current()) return fail("sponsor_authority_changed");
   const checked = async <T>(operation: () => Promise<T>): Promise<T> => {
     if (!current()) return fail("sponsor_authority_changed");
-    const value = await operation();
+    const value = await (owned ? owned.wait(operation) : operation());
     if (!current()) return fail("sponsor_authority_changed");
     return value;
   };
@@ -89,6 +113,10 @@ async function readNative(trusted: OutputTrustedContext, rawCommand: Record<stri
     || auth.user.consentVersion !== POLICY_VERSION || auth.user.fictional || auth.user.projectExecution
     || canonicalJson(auth.user.authorizationSnapshot) !== canonicalJson(trusted.principal.authorizationSnapshot)) return fail("sponsor_principal_changed");
   const principal = auth.user;
+  if (owner) {
+    ownedContexts.set(native, { owner, value: Object.freeze({ parent: trusted, authenticated: principal }) });
+    registerSponsorAudioOutputEvidenceContext(owner, trusted, native, principal);
+  }
   const bindings = [trusted.scope.key, String(command.preflightId), principal.userId, principal.userId, trusted.scope.projectId,
     trusted.scope.documentId, trusted.sourceDigest, trusted.requirementsDigest];
   const row = await checked(() => database.prepare(quoteSql).bind(...bindings).first<Quote>());
@@ -113,9 +141,15 @@ async function readNative(trusted: OutputTrustedContext, rawCommand: Record<stri
   if (!record(attempt) || !exactKeys(attempt, ["ordinal", "previousSlotId"]) || attempt.ordinal !== 0 || attempt.previousSlotId !== null
     || Object.keys(quote.operationAttempts).length !== 1 || offered.targetId !== target.id || quote.maximumCalls !== 3
     || quote.maximumMicrousd !== command.maximumMicrousd || offered.maximumMicrousd !== command.maximumMicrousd) return fail("sponsor_recipe_unsupported");
-  const expected = await checked(() => preflightOutputAudioTarget({ request, env: native.env, scope: native.scope, principal, confirmedPlan: plan, target,
+  const nativeInput: OutputBridgeTargetInput = { request, env: native.env, scope: native.scope, principal, confirmedPlan: plan, target,
     context: native.context, ownerHead: native.ownerHead, sourceEvents: native.events, sourceAssertions: native.sourceAssertions,
-    sourceDigest: native.sourceDigest, requirementsDigest: native.requirementsDigest }));
+    sourceDigest: native.sourceDigest, requirementsDigest: native.requirementsDigest };
+  if (owner) {
+    ownedInputs.set(nativeInput, { owner, value: Object.freeze({ native, authenticated: principal }) });
+    beginSponsorAudioOutputLaterSource(owner, nativeInput);
+  }
+  const expected = await checked(() => preflightOutputAudioTarget(nativeInput));
+  if (owner) retainSponsorAudioOutputLaterSource(owner, nativeInput, expected);
   if (!expected.available || canonicalJson(expected) !== canonicalJson(offered)) return fail("sponsor_recipe_unsupported");
   const nativeProof = outputAudioPreflightAssertions(expected);
   const settings = record(offered.settings) ? offered.settings : null;

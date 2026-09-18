@@ -2,6 +2,7 @@ import { outputJobIsDurable, readOutputDurableOwnership } from "./output-durable
 import { classifySponsorIntakeDraft } from "./experience-sponsor-intake-classification.ts";
 import { requireSponsorAudioOutputReads, readSponsorAudioOutputBody, readSponsorAudioOutputResponse, runSponsorAudioOutputStage, retainSponsorAudioOutputPreflight,
   retainSponsorAudioOutputTrustedContext, runSponsorAudioOutputDisclosure, beginSponsorAudioOutputPreflight,
+  runSponsorAudioOutputReview, runSponsorAudioOutputAuthorize, beginSponsorAudioOutputAuthorizationReload,
   type SponsorAudioOutputReadOwner } from "./experience-sponsor-audio-output-reads.ts";
 import { readSponsorAudioOutputNativeDraft, sponsorAudioOutputNativeProofs, sealSponsorAudioOutputNativeReceiptCheck } from "./experience-sponsor-audio-output-native.ts";
 import { continueOutputTrustedContext } from "./output-trusted-context.ts";
@@ -40,7 +41,10 @@ import { outputModel3dRecoveryAvailable } from "./output-model3d-recovery-availa
 import { retainedPersonalFalRecoverySql, falRecoveryJobStateAllowed, type FalRecoveryStage } from "./output-fal-recovery-policy.ts";
 import { outputSourceEpochAssertion } from "./output-requirements-ledger.ts";
 import type { DocumentJobRow } from "./document-jobs-api.ts";
-import { canonicalJson } from "../src/experiences/compiler.ts";
+import { canonicalJson, digest } from "../src/experiences/compiler.ts";
+import { loadApprovedSponsorAudioCampaign } from "./experience-sponsor-approval.ts";
+import { sponsorAudioCurrentReviewNative, type SponsorAudioServerConfiguration } from "./experience-sponsor-audio-review.ts";
+import { sponsorAudioAuthorizationNative } from "./experience-sponsor-audio-authorize.ts";
 import { experienceResourceId, receiptPrefix, registeredExperience } from "../src/experiences/intake.ts";
 import { experienceSourceMismatch } from "../src/experiences/host-source.ts";
 import type { ExperienceIntakeReceipt } from "../src/experiences/native-host.ts";
@@ -48,7 +52,7 @@ import type { ExperienceNativeState, ExperienceNativeUnavailable } from "../src/
 import { authorizeExperienceIntake, readExperienceDraft, experienceDraftGuard, readExperienceBody } from "./experience-intake-api.ts";
 import { commitAtomicIntake } from "./project-intake.ts";
 import { loadOutputTrustedContext, outputExperienceCommands, type OutputExecutionBridge, type OutputTrustedContext } from "./output-requirements-api.ts";
-import { outputCommandReceiptAssertion } from "./output-command-core.ts";
+import { outputCommandReceiptAssertion, inheritRetainedOutputPrivateBodies, type OutputSqlAssertion } from "./output-command-core.ts";
 import { outputProofCapacityDiagnostic, type OutputProofCapacityReason } from "./output-proof-capacity-diagnostic.ts";
 import { sceneReadFailureDiagnostic, type SceneReadFailureReason } from "./scene-read-diagnostic.ts";
 import { outputDatabaseMessageKind } from "./output-database-diagnostic.ts";
@@ -225,6 +229,14 @@ type Loaded = { trusted: OutputTrustedContext; binding: ExperienceOutputBinding;
 
 const sponsorAudioTrustedContexts = new WeakMap<OutputTrustedContext, SponsorAudioOutputReadOwner>();
 const sponsorAudioFinalResponses = new WeakMap<Response, SponsorAudioOutputReadOwner>();
+const sponsorAudioSelections = new WeakMap<SponsorAudioServerConfiguration, { owner: SponsorAudioOutputReadOwner; trusted: OutputTrustedContext; json: string }>();
+/** Only the genuine current load and actual approved campaign below select a
+ * later native offer. Equal wire metadata cannot open an owned phase. */
+export function isSponsorAudioOutputSelection(owner: SponsorAudioOutputReadOwner, trusted: OutputTrustedContext, selection: SponsorAudioServerConfiguration): boolean {
+  const retained = sponsorAudioSelections.get(selection);
+  return retained?.owner === owner && retained.trusted === trusted && retained.json === canonicalJson(selection);
+}
+
 /** Only the fully validated native load below can establish this identity. */
 export function isSponsorAudioOutputTrustedContext(owner: SponsorAudioOutputReadOwner, trusted: OutputTrustedContext): boolean {
   return sponsorAudioTrustedContexts.get(trusted) === owner;
@@ -255,8 +267,9 @@ function validateManagedRequirement(loaded: Loaded) {
 
 async function load(request: Request, env: WorkerEnv, draftId: string, permission: "read" | "author" | "request", audioOutputOwner?: SponsorAudioOutputReadOwner): Promise<Loaded | Response> {
   const owned = audioOutputOwner ? requireSponsorAudioOutputReads(audioOutputOwner, request, env) : null;
-  if (owned && (owned.env !== env || owned.draftId !== draftId || permission === "request"
-    || !["audio-output-state", "audio-output-prepare"].includes(owned.operation))) error("experience_output_unavailable", 403);
+  const laterAudio = owned && (owned.operation === "audio-output-review" || owned.operation === "audio-output-authorize");
+  if (owned && (owned.env !== env || owned.draftId !== draftId || (laterAudio ? permission !== "request" : permission === "request")
+    || !["audio-output-state", "audio-output-prepare", "audio-output-review", "audio-output-authorize"].includes(owned.operation))) error("experience_output_unavailable", 403);
   const auth = owned ? owned.auth : await authorizeExperienceIntake(request, env); if (auth instanceof Response) return refused(auth);
   const database = env.DB, classification = owned ? null : await classifySponsorIntakeDraft(env, draftId);
   if (env.DB !== database || classification?.kind === "unavailable") return unavailable("experience_draft_unavailable", 410);
@@ -800,6 +813,68 @@ export async function continueSponsorAudioOutputInitial(owner: SponsorAudioOutpu
     return unavailable(code, typeof item.status === "number" && item.status >= 400 && item.status < 600 ? item.status : 409,
       { stage: diagnosticStage, kind: diagnosticCodes.has(code) ? "coded" : diagnosticKind(cause) });
   }
+}
+
+/** Reload only after the native authorizer has earned its exact admission or
+ * original-replay transition. The owner preserves immutable custody and renews
+ * neither the read allowance nor the original quote. */
+export async function reloadSponsorAudioOutputAuthorization(owner: SponsorAudioOutputReadOwner, priorTrusted: OutputTrustedContext): Promise<OutputTrustedContext> {
+  const owned = requireSponsorAudioOutputReads(owner, priorTrusted.request, priorTrusted.env);
+  if (owned.operation !== "audio-output-authorize" || !isSponsorAudioOutputTrustedContext(owner, priorTrusted)) error("experience_output_unavailable", 403);
+  beginSponsorAudioOutputAuthorizationReload(owner, priorTrusted);
+  const loaded = await owned.wait(() => load(owned.request, owned.env, owned.draftId, "request", owner));
+  if (loaded instanceof Response) error("experience_output_unavailable", 410);
+  const fresh = loaded.trusted;
+  if (fresh.scope.key !== priorTrusted.scope.key || fresh.scope.documentId !== priorTrusted.scope.documentId
+    || fresh.sourceDigest !== priorTrusted.sourceDigest || fresh.requirementsDigest !== priorTrusted.requirementsDigest
+    || fresh.principal !== owned.auth.user) error("experience_output_source_changed", 409);
+  // These remain the original private-body observations even when native
+  // authorization has appended a new event and advanced the current head.
+  inheritRetainedOutputPrivateBodies(priorTrusted.scope, fresh.scope);
+  owned.current(); return fresh;
+}
+
+/** Dormant later Audio entry. Selection and disclosure are genuine server
+ * observations; no caller supplies a principal, command DTO or proof list. */
+export async function continueSponsorAudioOutputReviewAuthorize(owner: SponsorAudioOutputReadOwner, executionContext: WorkerExecutionContext): Promise<Response> {
+  void executionContext; // The actual authorizer refuses detached work itself.
+  const owned = requireSponsorAudioOutputReads(owner), { request, env, draftId } = owned;
+  if (owned.operation !== "audio-output-review" && owned.operation !== "audio-output-authorize") error("experience_output_unavailable", 403);
+  const loaded = await owned.wait(() => load(request, env, draftId, "request", owner));
+  if (loaded instanceof Response) error("experience_output_unavailable", 410);
+  if (!loaded.originals.save || !loaded.originals.confirm || !loaded.originals.preflight
+    || loaded.originals.authorize || loaded.originals.run || loaded.binding.output !== "audio") error("experience_output_preflight_required", 409);
+  const plan = await owned.wait(() => confirmed(loaded));
+  const quote = loaded.originals.preflight.receipt.payload.preflight;
+  if (!plan || !record(quote) || typeof quote.id !== "string" || !quote.id || quote.planRevisionId !== plan.revisionId
+    || quote.sourceDigest !== loaded.trusted.sourceDigest || quote.requirementsDigest !== loaded.trusted.requirementsDigest
+    || !Array.isArray(quote.targets) || quote.targets.length !== 1 || !record(quote.targets[0])
+    || quote.targets[0].targetId !== loaded.recipe.targetId || loaded.originals.preflight.envelope.planRevisionId !== plan.revisionId)
+    error("experience_output_preflight_changed", 409);
+  const approved = await owned.wait(() => loadApprovedSponsorAudioCampaign(request, env, owned.original.campaignId));
+  if (approved.policyDigest !== owned.original.sponsorPolicyDigest || approved.actor.userId !== loaded.trusted.scope.actorUserId)
+    error("experience_output_authorization_unavailable", 403);
+  const templateDigest = await owned.wait(() => digest(approved.policy.templates[0]!));
+  const selection: SponsorAudioServerConfiguration = Object.freeze({ campaignId: owned.original.campaignId, templateDigest, preflightId: quote.id });
+  sponsorAudioSelections.set(selection, { owner, trusted: loaded.trusted, json: canonicalJson(selection) });
+  let trusted = loaded.trusted, assertions: OutputSqlAssertion[], value: unknown, assertCurrent: () => void;
+  if (owned.operation === "audio-output-review") {
+    const shown = await owned.wait(() => runSponsorAudioOutputReview(owner, trusted, selection));
+    const native = await owned.wait(() => sponsorAudioCurrentReviewNative(shown, trusted));
+    value = shown; assertions = native.assertions; assertCurrent = native.assertCurrent;
+  } else {
+    const authorized = await owned.wait(() => runSponsorAudioOutputAuthorize(owner, trusted, selection));
+    const native = await owned.wait(() => sponsorAudioAuthorizationNative(authorized, owner, request));
+    trusted = native.fresh; value = authorized; assertions = native.assertions; assertCurrent = native.assertCurrent;
+  }
+  assertCurrent(); owned.current();
+  return await owned.wait(() => runSponsorAudioOutputDisclosure(owner, trusted, assertions, async () => {
+    assertCurrent();
+    const response = await outputExperienceCommands.disclose(trusted, value, 200, assertions);
+    assertCurrent(); owned.current();
+    sponsorAudioFinalResponses.set(response, owner);
+    return response;
+  }));
 }
 
 /** Existing native transaction adapter for registered personal mini-apps. No generic job POST. */

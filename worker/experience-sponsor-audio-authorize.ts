@@ -12,6 +12,11 @@ import { outputDocumentExecutionBridge } from "./output-document-execution.ts";
 import { outputAssertionStatements, outputCommandReceiptAssertion, readOutputCommand, type OutputCommandReceipt, type OutputSqlAssertion } from "./output-command-core.ts";
 import { outputActiveSourceDeadlineAssertions, outputProofReadStatements } from "./output-disclosure-proof.ts";
 import type { WorkerEnv, WorkerExecutionContext } from "./runtime.ts";
+import { findSponsorAudioOutputReads, requireSponsorAudioOutputReads, requireSponsorAudioOutputContext,
+  registerSponsorAudioOutputAuthorizeClone, runSponsorAudioOutputDriver, completeSponsorAudioOutputDriverRecovery, issueSponsorAudioOutputGrant,
+  runSponsorAudioOutputAdmission, beginSponsorAudioOutputAuthorizationDisclosure,
+  type SponsorAudioOutputReadOwner } from "./experience-sponsor-audio-output-reads.ts";
+import { reloadSponsorAudioOutputAuthorization } from "./experience-output-api.ts";
 
 const fail = (code = "sponsor_audio_authorize_changed"): never => { throw new SponsorEntitlementError(code); };
 const id = (value: unknown): value is string => typeof value === "string" && /^[A-Za-z0-9][A-Za-z0-9_.:@/-]{0,199}$/u.test(value);
@@ -25,8 +30,52 @@ type Stage = { command_json: string; command_digest: string };
 type Current = () => void;
 export type SponsorAudioAuthorizeSelection = Readonly<{ campaignId: string; templateDigest: string; preflightId: string }>;
 const noDetachedWork: WorkerExecutionContext = { waitUntil() { fail("sponsor_audio_authorize_detached_work_unsupported"); } };
+const previewRequests = new WeakMap<Request, { owner: SponsorAudioOutputReadOwner; original: Request }>();
+type DriverFrame = Readonly<{ trusted: OutputTrustedContext; intent: Intent; stage: Stage; assertions: OutputSqlAssertion[] }>;
+const driverFrames = new WeakMap<object, { owner: SponsorAudioOutputReadOwner; value: DriverFrame }>();
+const recoveredDriverFrames = new WeakMap<object, SponsorAudioOutputReadOwner>();
+type AuthorizationNative = Readonly<{ fresh: OutputTrustedContext; assertions: OutputSqlAssertion[]; assertCurrent: Current; prove: () => Promise<void> }>;
+const authorizationResponses = new WeakMap<SponsorAudioAuthorizationResponse, { owner: SponsorAudioOutputReadOwner; request: Request; value: AuthorizationNative }>();
+type AuthorizationReload = Readonly<{ command: Record<string, unknown>; stage: Stage; receipt: OutputCommandReceipt }>;
+const authorizationReloads = new WeakMap<OutputTrustedContext, { owner: SponsorAudioOutputReadOwner; value: AuthorizationReload }>();
+type AuthorizationDisclosure = Readonly<{ fresh: OutputTrustedContext; response: SponsorAudioAuthorizationResponse;
+  assertions: OutputSqlAssertion[]; assertCurrent: Current }>;
+const authorizationDisclosures = new WeakMap<object, { owner: SponsorAudioOutputReadOwner; value: AuthorizationDisclosure }>();
+/** These identities are issued only at the actual native producer sites below. */
+export function isSponsorAudioOutputAuthorizeClone(owner: SponsorAudioOutputReadOwner, original: Request, clone: Request): boolean {
+  const retained = previewRequests.get(clone);
+  return retained?.owner === owner && retained.original === original;
+}
+export function sponsorAudioOutputDriverFrame(owner: SponsorAudioOutputReadOwner, token: object) {
+  const retained = driverFrames.get(token);
+  return retained?.owner === owner ? retained.value : null;
+}
+/** Recovery is earned only after the native original and its full proof pass. */
+export function isSponsorAudioOutputDriverRecovered(owner: SponsorAudioOutputReadOwner, token: object): boolean {
+  return recoveredDriverFrames.get(token) === owner;
+}
+/** Exists only while the actual authorizer is reloading its checked admission. */
+export function sponsorAudioOutputAuthorizationReload(owner: SponsorAudioOutputReadOwner, prior: OutputTrustedContext) {
+  const retained = authorizationReloads.get(prior);
+  return retained?.owner === owner ? retained.value : null;
+}
+/** Only the actual final native proof can arm this exact disclosure frame. */
+export function sponsorAudioOutputAuthorizationDisclosure(owner: SponsorAudioOutputReadOwner, token: object) {
+  const retained = authorizationDisclosures.get(token);
+  return retained?.owner === owner ? retained.value : null;
+}
+/** A wire copy cannot recover the current native context or its final proof. */
+export async function sponsorAudioAuthorizationNative(response: SponsorAudioAuthorizationResponse, owner: SponsorAudioOutputReadOwner, request: Request): Promise<AuthorizationNative> {
+  const retained = authorizationResponses.get(response);
+  if (!retained || retained.owner !== owner || retained.request !== request) return fail();
+  const owned = requireSponsorAudioOutputReads(owner, request);
+  retained.value.assertCurrent();
+  await owned.wait(retained.value.prove);
+  retained.value.assertCurrent();
+  return retained.value;
+}
 
-async function guarded<T>(current: Current, work: () => Promise<T>): Promise<T> {
+async function nativeGuarded<T>(current: Current, work: () => Promise<T>): Promise<T> {
   current(); const result = await work(); current(); return result;
 }
 function dataRecord(value: unknown): value is Record<string, unknown> {
@@ -73,6 +122,13 @@ export async function authorizeSponsoredAudio(trusted: OutputTrustedContext, raw
     || !id(selection.campaignId) || !hash(selection.templateDigest) || !id(selection.preflightId)) return fail("sponsor_audio_authorize_selection_invalid");
   const options = freeze(selection as SponsorAudioAuthorizeSelection), selectionJson = canonicalJson(options);
   const request = trusted.request, env = trusted.env, database = env.DB, signal = request.signal;
+  const owner = findSponsorAudioOutputReads(request, env), owned = owner ? requireSponsorAudioOutputReads(owner, request, env) : null;
+  if (owner) {
+    if (owned?.operation !== "audio-output-authorize") return fail("sponsor_audio_authorize_context_invalid");
+    requireSponsorAudioOutputContext(owner, trusted);
+  }
+  const guarded = <T>(check: Current, work: () => Promise<T>): Promise<T> => owned
+    ? owned.wait(() => nativeGuarded(check, work)) : nativeGuarded(check, work);
   const identities = { scope: trusted.scope, principal: trusted.principal, context: trusted.context, events: trusted.events };
   if (request.method !== "POST" || request.bodyUsed || request.headers.get("content-type")?.split(";", 1)[0] !== "application/json"
     || trusted.scope.kind !== "personal" || trusted.scope.ownerUserId !== trusted.scope.actorUserId || trusted.scope.actorUserId !== trusted.principal.userId
@@ -87,6 +143,7 @@ export async function authorizeSponsoredAudio(trusted: OutputTrustedContext, raw
   const captured = lifetime(trusted, originalAssertions), proofEnv = { DB: database } as WorkerEnv;
   let deadline = Math.min(Infinity, ...[...originalAssertions, ...nativeDeadlines].flatMap(assertion => assertion.deadlineMs === undefined ? [] : [assertion.deadlineMs]));
   const current = () => {
+    owned?.current();
     const actualSignal = Object.getOwnPropertyDescriptor(Request.prototype, "signal")!.get!.call(request);
     const aborted = Object.getOwnPropertyDescriptor(AbortSignal.prototype, "aborted")!.get!.call(signal);
     if (trusted.request !== request || trusted.env !== env || env.DB !== database || actualSignal !== signal || request.signal !== signal || aborted !== false
@@ -100,7 +157,12 @@ export async function authorizeSponsoredAudio(trusted: OutputTrustedContext, raw
     checkBatch(await guarded(check, () => database.batch(statements)), statements.length, true); check();
   };
   current();
-  const supplied = readSponsoredAudioActorRequest(await guarded(current, () => readSponsorInternalCommand(Request.prototype.clone.call(request), 4096)));
+  const previewRequest = Request.prototype.clone.call(request);
+  if (owner) {
+    previewRequests.set(previewRequest, { owner, original: request });
+    registerSponsorAudioOutputAuthorizeClone(owner, request, previewRequest);
+  }
+  const supplied = readSponsoredAudioActorRequest(await guarded(current, () => readSponsorInternalCommand(previewRequest, 4096)));
   if (request.bodyUsed) return fail("sponsor_audio_authorize_original_consumed");
   const preview = supplied.audioCostConsent, url = new URL(request.url);
   if (url.search || url.hash || url.pathname !== `/api/experiences/drafts/${preview.draftId}/output/authorize`
@@ -141,7 +203,14 @@ export async function authorizeSponsoredAudio(trusted: OutputTrustedContext, raw
     deadline = Math.min(deadline, Date.parse(review.expiresAt), Date.parse(review.preview.expiresAt)); current();
     // Source is reloaded only for disclosure after the native command's own head
     // advance. The immutable original command is never reconstructed from it.
-    const fresh = await guarded(current, () => loadOutputTrustedContext(request, env, intent.document_id, "request"));
+    let fresh: OutputTrustedContext | Response;
+    if (owner) authorizationReloads.set(trusted, { owner, value: Object.freeze({ command: freeze(command), stage: freeze(stage), receipt: freeze(receipt) }) });
+    try {
+      fresh = await guarded(current, () => owner ? reloadSponsorAudioOutputAuthorization(owner, trusted)
+        : loadOutputTrustedContext(request, env, intent.document_id, "request"));
+    } finally {
+      if (owner) authorizationReloads.delete(trusted);
+    }
     if (fresh instanceof Response || fresh.sourceDigest !== intent.source_digest || fresh.requirementsDigest !== intent.requirements_digest
       || fresh.scope.key !== trusted.scope.key || canonicalJson(fresh.principal) !== canonicalJson(trusted.principal)
       || await guarded(current, () => sponsorPrincipalDigest(fresh.principal)) !== intent.session_digest) return fail();
@@ -166,7 +235,21 @@ export async function authorizeSponsoredAudio(trusted: OutputTrustedContext, raw
       sourceDigest: intent.source_digest, requirementsDigest: intent.requirements_digest });
     const response: SponsorAudioAuthorizationResponse = freeze({ version: 1, kind: "sponsor-audio-authorization", binding, reviewDigest, actorRequestDigest, grantId, jobId,
       receipt: { key: receipt.key, eventId: receipt.eventId, requestDigest: receipt.requestDigest }, replayed });
-    await prove(assertions, disclosureCurrent); disclosureCurrent(); return response;
+    const retainedAssertions = owner ? freeze(structuredClone(assertions)) : null;
+    if (owner && retainedAssertions) {
+      const disclosure = Object.freeze({});
+      authorizationDisclosures.set(disclosure, { owner, value: Object.freeze({ fresh, response, assertions: retainedAssertions,
+        assertCurrent: disclosureCurrent }) });
+      beginSponsorAudioOutputAuthorizationDisclosure(owner, disclosure);
+    }
+    await prove(assertions, disclosureCurrent); disclosureCurrent();
+    if (owner && retainedAssertions) {
+      const responseJson = canonicalJson(response);
+      const assertCurrent = () => { disclosureCurrent(); if (canonicalJson(response) !== responseJson) fail(); };
+      authorizationResponses.set(response, { owner, request, value: Object.freeze({ fresh, assertions: retainedAssertions, assertCurrent,
+        prove: () => prove(retainedAssertions, assertCurrent) }) });
+    }
+    return response;
   };
   let original = await readOriginal(); current();
   if (original) {
@@ -199,16 +282,26 @@ export async function authorizeSponsoredAudio(trusted: OutputTrustedContext, raw
         .bind(intent.driver_id, stage.command_json, stage.command_digest),
       ...[...assertions, intentProof(intent), stageProof(intent.driver_id, stage)].flatMap(assertion => outputAssertionStatements(proofEnv, assertion))];
     freshCurrent();
-    try { checkBatch(await guarded(freshCurrent, () => database.batch(statements)), statements.length, false); }
+    const driverFrame = Object.freeze({});
+    if (owner) driverFrames.set(driverFrame, { owner, value: Object.freeze({ trusted, intent: freeze({ ...intent }), stage: freeze({ ...stage }),
+      assertions: freeze(structuredClone(assertions)) }) });
+    try { checkBatch(await guarded(freshCurrent, () => owner
+      ? runSponsorAudioOutputDriver(owner, driverFrame, () => database.batch(statements)) : database.batch(statements)), statements.length, false); }
     catch (error) {
       freshCurrent(); original = await readOriginal(); freshCurrent();
       if (!original || canonicalJson(original.command) !== canonicalJson(command)) throw error;
       await prove([...assertions, intentProof(intent), stageProof(intent.driver_id, stage)], freshCurrent);
+      if (owner) {
+        recoveredDriverFrames.set(driverFrame, owner);
+        completeSponsorAudioOutputDriverRecovery(owner, driverFrame);
+      }
     }
   } else await prove([...assertions, intentProof(intent), stageProof(intent.driver_id, stage)], freshCurrent);
   const preparation = await guarded(freshCurrent, () => outputExperienceCommands.prepareSponsoredAudioAdmission(trusted, command, shown.review));
-  const issued = await guarded(freshCurrent, () => issueSponsorAudioGrant({ trusted, command, preparation, campaignId: options.campaignId, templateDigest: options.templateDigest }));
-  const saved = await guarded(freshCurrent, () => outputExperienceCommands.executeSponsored(trusted, command, issued.admissionAuthority, outputDocumentExecutionBridge, noDetachedWork));
+  const issuance = { trusted, command, preparation, campaignId: options.campaignId, templateDigest: options.templateDigest };
+  const issued = await guarded(freshCurrent, () => owner ? issueSponsorAudioOutputGrant(owner, issuance) : issueSponsorAudioGrant(issuance));
+  const saved = await guarded(freshCurrent, () => owner ? runSponsorAudioOutputAdmission(owner, trusted, command, issued)
+    : outputExperienceCommands.executeSponsored(trusted, command, issued.admissionAuthority, outputDocumentExecutionBridge, noDetachedWork));
   if (saved instanceof Response) return fail("sponsor_audio_authorize_unavailable");
   const response = await guarded(current, () => disclose(command, stage, saved.receipt, shown.review as SponsoredAudioReview, saved.replayed));
   current(); return response;

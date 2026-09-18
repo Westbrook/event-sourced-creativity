@@ -9,9 +9,18 @@ import { sponsorCurrentSourceAssertions } from "./experience-sponsor-image-evide
 import { classifySponsorIntakeDraft } from "./experience-sponsor-intake-classification.ts";
 import { SponsorEntitlementError } from "./experience-sponsor-policy.ts";
 import type { OutputTrustedContext } from "./output-requirements-api.ts";
+import { findSponsorAudioOutputReads, requireSponsorAudioOutputReads, requireSponsorAudioOutputContext,
+  registerSponsorAudioOutputActorContext, type SponsorAudioOutputReadOwner } from "./experience-sponsor-audio-output-reads.ts";
+import { sponsorAudioOutputNativeProofs } from "./experience-sponsor-audio-output-native.ts";
 
 const fail = (code = "sponsor_audio_actor_evidence_invalid"): never => { throw new SponsorEntitlementError(code); };
 const commandKeys = ["documentId", "action", "expectedRevision", "clientMutationId", "preflightId", "termsDigest", "maximumMicrousd", "explicitAuthorization", "audioCostConsent"];
+const ownedContexts = new WeakMap<OutputTrustedContext, { owner: SponsorAudioOutputReadOwner; value: Readonly<{ parent: OutputTrustedContext }> }>();
+/** Only the exact derivative produced below carries the parent's native custody. */
+export function sponsorAudioOutputActorContext(owner: SponsorAudioOutputReadOwner, child: OutputTrustedContext) {
+  const retained = ownedContexts.get(child);
+  return retained?.owner === owner ? retained.value : null;
+}
 
 /** Dormant request evidence for an already-authorized ordinary native context.
  * No route, actor gesture attestation, payer approval, sponsor allowance, receipt
@@ -28,6 +37,11 @@ export async function readSponsorAudioActorEvidence(trusted: OutputTrustedContex
     || trusted.principal.billingUserId && trusted.principal.billingUserId !== trusted.principal.userId
     || !trusted.context || !trusted.sourcePrivateCaptured || trusted.sourceProblems.length) return fail();
   const request = trusted.request, signal = request.signal, env = trusted.env, database = env.DB;
+  const owner = findSponsorAudioOutputReads(request, env), owned = owner ? requireSponsorAudioOutputReads(owner, request, env) : null;
+  if (owner) {
+    if (owned?.operation !== "audio-output-authorize") return fail();
+    requireSponsorAudioOutputContext(owner, trusted);
+  }
   const url = new URL(request.url);
   // This unregistered helper inspects the actual ordinary native request. A
   // future sponsored route needs a reviewed typed seam, never a rewritten URL.
@@ -50,13 +64,14 @@ export async function readSponsorAudioActorEvidence(trusted: OutputTrustedContex
   const deadlines = sponsorCurrentSourceAssertions(trusted).flatMap(assertion => assertion.deadlineMs === undefined ? [] : [assertion.deadlineMs]);
   const deadline = Math.min(Date.parse(review.expiresAt), Date.parse(review.preview.expiresAt), ...deadlines);
   const current = () => {
+    owned?.current();
     if (signal.aborted || request.signal !== signal || trusted.request !== request || trusted.env !== env || env.DB !== database
       || trusted.scope !== identities.scope || trusted.principal !== identities.principal || trusted.context !== identities.context || trusted.events !== identities.events
       || source() !== capturedSource || requestIdentity() !== capturedRequest || env.OPENAI_API_KEY !== credentials[0] || env.FAL_KEY !== credentials[1]
       || !Number.isFinite(deadline) || !Number.isFinite(Date.now()) || Date.now() >= deadline) return fail("sponsor_audio_actor_lifetime_changed");
   };
   const checked = async <T>(work: () => Promise<T>): Promise<T> => {
-    current(); const result = await work(); current(); return result;
+    current(); const result = await (owned ? owned.wait(work) : work()); current(); return result;
   };
   current();
   // The inherited parser bounds decoded request bytes. It cannot preempt an
@@ -73,11 +88,15 @@ export async function readSponsorAudioActorEvidence(trusted: OutputTrustedContex
   // hashing or caller callback between the final native proof and this return.
   const requestDigest = await checked(() => digest(supplied));
   const commandDigest = await checked(() => digest(command));
-  const classification = await checked(() => classifySponsorIntakeDraft(env, review.preview.draftId));
-  if (classification.kind !== "ordinary") return fail("sponsor_audio_actor_ordinary_context_required");
+  const classification = owner ? null : await checked(() => classifySponsorIntakeDraft(env, review.preview.draftId));
+  if (classification && classification.kind !== "ordinary") return fail("sponsor_audio_actor_ordinary_context_required");
   // Negative classification grants no sponsored access. Retain it in the native
   // final proof as well; never reclassify a changed original as a new intent.
-  const nativeTrusted = { ...trusted, sourceAssertions: [...trusted.sourceAssertions, classification.guard] };
+  const nativeTrusted = { ...trusted, sourceAssertions: [...trusted.sourceAssertions, ...(owner ? sponsorAudioOutputNativeProofs(owner) : [classification!.guard])] };
+  if (owner) {
+    ownedContexts.set(nativeTrusted, { owner, value: Object.freeze({ parent: trusted }) });
+    registerSponsorAudioOutputActorContext(owner, trusted, nativeTrusted);
+  }
   const description = await checked(() => describeSponsorAudioAdmission(nativeTrusted, command));
   const native = await checked(() => readSponsorAudioTemplateEvidence(nativeTrusted, command, description.recipe));
   current();

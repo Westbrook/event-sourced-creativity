@@ -8,10 +8,13 @@ import { SPONSOR_INTAKE_SCHEMA } from "./experience-sponsor-intake.ts";
 import { SPONSOR_STORY_INTAKE_STORAGE_SCHEMA } from "./experience-sponsor-story-intake-resources.ts";
 import { closeSponsorAudioOutputReads, requireSponsorAudioOutputReads, retainSponsorAudioOutputProofs, setSponsorAudioOutputNativePlan,
   type SponsorAudioOutputReadOwner, type SponsorAudioOutputRows } from "./experience-sponsor-audio-output-reads.ts";
-import { SponsorEntitlementError } from "./experience-sponsor-policy.ts";
+import { SponsorEntitlementError, readSponsorAudioPolicy, type SponsorPolicyV8 } from "./experience-sponsor-policy.ts";
 import type { BudgetReservationGuard } from "./pilot-policy.ts";
-import type { OutputSqlAssertion } from "./output-command-core.ts";
+import { outputCommandReceiptAssertion, type OutputSqlAssertion } from "./output-command-core.ts";
 import type { WorkerEnv } from "./runtime.ts";
+import { PRINCIPAL_WITH_ACCESS_SQL } from "./access-policy.ts";
+import { sponsorApprovalAssertion } from "./experience-sponsor-approval.ts";
+import { POLICY_VERSION } from "./policy-version.ts";
 
 type Binding = string | number | null;
 type Proof = Readonly<{ sql: string; bindings?: readonly Binding[]; deadlineMs?: number }>;
@@ -19,12 +22,13 @@ type Row = Record<string, unknown>;
 type Saved = NonNullable<Awaited<ReturnType<typeof readDraft>>>;
 type View = ReturnType<typeof requireSponsorAudioOutputReads>;
 type State = { saved?: Saved; proofs: OutputSqlAssertion[]; reading: boolean; receiptReading: boolean;
-  receiptComplete: boolean; receiptJson?: string; negatives?: OutputSqlAssertion[] };
+  receiptComplete: boolean; receiptJson?: string; negatives?: OutputSqlAssertion[]; later?: LaterState };
 const states = new WeakMap<SponsorAudioOutputReadOwner, State>();
 declare const nativeReadBrand: unique symbol;
 export type SponsorAudioOutputNativeRead = Readonly<{ [nativeReadBrand]: true }>;
 const nativeReads = new WeakMap<SponsorAudioOutputNativeRead, { owner: SponsorAudioOutputReadOwner; descriptor: SponsorAudioOutputRows; used: boolean }>();
 const nativeProofs = new WeakMap<object, SponsorAudioOutputReadOwner>();
+const privateCatalogProofs = new WeakMap<SponsorAudioOutputReadOwner, Proof>();
 const fail = (code = "sponsor_audio_output_native_unavailable"): never => { throw new SponsorEntitlementError(code); };
 const same = (a: readonly unknown[], b: readonly unknown[]) => a.length === b.length && a.every((value, index) => Object.is(value, b[index]));
 const bytes = (value: string) => new TextEncoder().encode(value).byteLength;
@@ -61,7 +65,7 @@ function ownData(value: unknown, active = new Set<object>()): void {
 }
 function state(owner: SponsorAudioOutputReadOwner, request?: Request, env?: WorkerEnv) {
   const view = requireSponsorAudioOutputReads(owner, request, env);
-  if (!["audio-output-state", "audio-output-prepare"].includes(view.operation)) return fail();
+  if (!["audio-output-state", "audio-output-prepare", "audio-output-review", "audio-output-authorize"].includes(view.operation)) return fail();
   let native = states.get(owner);
   if (!native) { native = { proofs: [], reading: false, receiptReading: false, receiptComplete: false }; states.set(owner, native); }
   view.current(); return { view, native };
@@ -93,6 +97,11 @@ export function isSponsorAudioOutputNativeProof(owner: SponsorAudioOutputReadOwn
  * general descriptor identity. A canonical-equal caller clone has no custody. */
 export function isSponsorAudioOutputNativePlan(owner: SponsorAudioOutputReadOwner, plan: unknown): plan is ExperiencePlan {
   return plan !== null && typeof plan === "object" && states.get(owner)?.saved?.plan === plan;
+}
+/** Only the actual private-content catalog producer registers this proof after
+ * its native current recheck. It confers no body, custody or append authority. */
+export function sponsorAudioOutputPrivateCatalogProof(owner: SponsorAudioOutputReadOwner): Proof | undefined {
+  state(owner).view.current(); return privateCatalogProofs.get(owner);
 }
 function retain(owner: SponsorAudioOutputReadOwner, native: State, proofs: readonly Proof[]) {
   const captured = proofs.map(copy);
@@ -183,6 +192,7 @@ async function negativeAssociations(owner: SponsorAudioOutputReadOwner, view: Vi
   const current = await nativeRead<{ current: number }>(owner, view, { sql: "SELECT 1 AS current", bindings: [], columns: ["current"], maximumRows: 1, assertions: proofs,
     invalidRow: "typeof(row.current)<>'integer' OR row.current<>1" });
   view.current(); if (current.result.results[0]?.current !== 1) return fail();
+  if (view.operation === "audio-output-review" || view.operation === "audio-output-authorize") privateCatalogProofs.set(owner, proofs[2]!);
   return proofs;
 }
 
@@ -265,6 +275,13 @@ export async function readSponsorAudioOutputNativeDraft(owner: SponsorAudioOutpu
       || original.eventBytes !== payloads.reduce((total, payload) => total + bytes(payload), 0) || original.totalBytes !== original.draftBytes + original.eventBytes) return fail();
     freeze(saved);
     if (!native.saved) { native.saved = saved; setSponsorAudioOutputNativePlan(owner, native.saved.plan); }
+    if (!native.later && ["audio-output-review", "audio-output-authorize"].includes(view.operation)) {
+      const stable = (await view.wait(() => digest({ family: "canonical-instrumental-cue@1", actorUserId: auth.user.userId, draftId: plan.draftId }))).slice(7);
+      const commandKey = `sponsor-audio-authorize-${stable}`;
+      const issued = (await view.wait(() => digest({ campaignId: original.campaignId, actorUserId: auth.user.userId, intentKey: commandKey }))).slice(7);
+      native.later = { ids: freeze({ driverId: `sponsor-audio-driver-${stable}`, intentKey: `audio-authorize-${stable}`, commandKey,
+        grantId: `sponsor-audio-issued-${issued}`, resourceId: `sponsor-audio-resource-issue-${issued}` }), proofs: [] };
+    }
     retain(owner, native, [base, currentProof, expiry, witness]);
     view.current(); return saved;
   } catch (error) { closeSponsorAudioOutputReads(owner); throw error; }
@@ -381,4 +398,288 @@ export function sponsorAudioOutputNativeProofs(owner: SponsorAudioOutputReadOwne
   // same private copy-and-brand path; never cast readonly bindings to mutable.
   view.current(); retain(owner, native, view.assertions);
   return freeze(distinct(native.proofs));
+}
+
+// Review/authorization add a finite set of native reads to the initial grammar.
+// Neither SQL supplied by a caller nor equal-looking source/selection data can
+// create one of these descriptors: every binding is selected from the owner,
+// its original receipt, or a row already returned through its bounded transport.
+type LaterDescriptor = Readonly<{ kind: string; columns: readonly string[]; maximumRows: number; invalidRow: string; assertions?: readonly OutputSqlAssertion[] }>;
+type LaterIds = Readonly<{ driverId: string; intentKey: string; commandKey: string; grantId: string; resourceId: string }>;
+type LaterState = { ids: LaterIds; proofs: OutputSqlAssertion[]; witnesses?: OutputSqlAssertion[]; principal?: Row; payerPrincipal?: Row; policy?: SponsorPolicyV8; policyDigest?: string; policyJson?: string;
+  limitsDigest?: string; approvedAssertions?: OutputSqlAssertion[]; dbClock?: number; intent?: Row; stage?: Row; issuance?: Row; quote?: Row; reviewQuote?: Row; command?: Row; memoryRows?: Record<string, readonly Row[]> };
+const instant = "CAST((julianday('now')-2440587.5)*86400000 AS INTEGER)";
+const laterPrincipalColumns = ["user_id", "role", "consent_version", "updated_at", "permission_epoch", "grants_json", "organizations_json", "projects_json", "identity_policies_json", "approved_canvas_requirements", "email", "display_name", "consented_at"] as const;
+const evidencePrincipalColumns = ["user_id", "email", "display_name", "role", "consent_version", "updated_at", "permission_epoch", "grants_json", "organizations_json", "projects_json", "identity_policies_json", "approved_canvas_requirements"] as const;
+const intentColumns = ["driver_id", "campaign_id", "actor_user_id", "session_digest", "intent_key", "document_id", "command_json", "command_digest", "source_digest", "requirements_digest", "source_text_bytes"] as const;
+const issuanceColumns = ["grant_id", "campaign_id", "actor_user_id", "intent_key", "policy_digest", "driver_command_json", "command_digest", "envelope_digest", "envelope_json"] as const;
+const preflightColumns = ["scope_key", "preflight_id", "plan_revision_id", "actor_user_id", "terms_digest", "event_id", "expires_at", "created_at"] as const;
+const campaignSql = "SELECT policy_json,policy_digest FROM experience_sponsor_campaigns WHERE campaign_id=? AND enabled=1 AND length(CAST(policy_json AS BLOB))<=131072";
+const intentSql = `SELECT ${intentColumns.join(",")} FROM experience_sponsor_driver_intents WHERE driver_id=?`;
+const stageSql = "SELECT command_json,command_digest FROM experience_sponsor_driver_stages WHERE driver_id=? AND stage='authorize'";
+const issuanceSql = "SELECT * FROM experience_sponsor_issuances WHERE campaign_id=? AND actor_user_id=? AND intent_key=?";
+const quoteSql = `SELECT preflight.terms_digest,preflight.expires_at,body.private_json,plan.source_head,plan.plan_revision_id,plan_body.private_json AS plan_json
+  FROM output_preflights preflight JOIN output_plan_revisions plan ON plan.scope_key=preflight.scope_key AND plan.plan_revision_id=preflight.plan_revision_id
+  JOIN event_private_payloads body ON body.private_event_id=preflight.event_id AND body.owner_id=plan.owner_user_id AND body.project_id=plan.project_id AND body.document_id=plan.document_id AND body.redacted_at IS NULL
+  JOIN event_private_payloads plan_body ON plan_body.private_event_id=plan.confirmed_event_id AND plan_body.owner_id=plan.owner_user_id AND plan_body.project_id=plan.project_id AND plan_body.document_id=plan.document_id AND plan_body.redacted_at IS NULL
+  WHERE preflight.scope_key=? AND preflight.preflight_id=? AND preflight.actor_user_id=? AND plan.scope_kind='personal'
+    AND plan.owner_user_id=? AND plan.project_id=? AND plan.document_id=? AND plan.source_digest=? AND plan.requirements_digest=?
+    AND NOT EXISTS(SELECT 1 FROM output_plan_revisions newer WHERE newer.scope_key=plan.scope_key AND newer.revision>plan.revision)`;
+const reviewQuoteSql = `SELECT preflight.event_id,preflight.expires_at,preflight.terms_digest,
+      plan.plan_revision_id,plan.revision,plan.confirmed_event_id,plan.source_digest,plan.requirements_digest
+      FROM output_preflights preflight JOIN output_plan_revisions plan ON plan.scope_key=preflight.scope_key AND plan.plan_revision_id=preflight.plan_revision_id
+      WHERE preflight.scope_key=? AND preflight.preflight_id=? AND preflight.actor_user_id=? AND plan.scope_kind='personal'
+        AND plan.document_id=? AND plan.owner_user_id=? AND plan.project_id=?`;
+const replaySql = `SELECT command.request_digest,command.event_id,private.private_json FROM output_commands command
+      LEFT JOIN event_private_payloads private ON private.private_event_id=command.event_id AND private.owner_id=? AND private.project_id=? AND private.document_id=? AND private.redacted_at IS NULL
+      WHERE command.scope_key=? AND command.actor_user_id=? AND command.command_key=?`;
+const budgetScopesSql = `SELECT project.organization_id,project.project_access_id
+    FROM organization_projects project
+    JOIN project_migration_states migration ON migration.project_access_id=project.project_access_id AND migration.organization_id=project.organization_id AND migration.owner_user_id=project.owner_user_id AND migration.status='active'
+    JOIN organizations organization ON organization.organization_id=project.organization_id AND organization.status='active'
+    JOIN organization_memberships membership ON membership.organization_id=project.organization_id AND membership.user_id=?
+      AND membership.status='active' AND membership.accepted_at IS NOT NULL AND membership.revoked_at IS NULL
+    JOIN budget_scope_policies policy ON policy.scope='workspace' AND policy.scope_id=project.organization_id AND policy.organization_id=project.organization_id
+    WHERE project.owner_user_id=? AND project.status='active' AND
+      ((?<>'' AND project.project_id=?) OR (?='' AND EXISTS(
+        SELECT 1 FROM project_resource_scopes resource WHERE resource.project_access_id=project.project_access_id
+          AND resource.organization_id=project.organization_id AND resource.project_id=project.project_id
+          AND resource.owner_user_id=project.owner_user_id AND resource.resource_kind='document' AND resource.resource_id=?
+      )))
+    LIMIT 2`;
+const pilotSql = `SELECT cohort.cohort_id,cohort.organization_id,cohort.status,cohort.starts_at,cohort.ends_at,
+      cohort.participant_cap_microusd,cohort.organization_cap_microusd,participant.user_id AS participant_user_id,
+      participant.status AS participant_status,participant.revoked_at AS participant_revoked_at,participant.role AS participant_role
+    FROM pilot_cohorts cohort JOIN pilot_participants participant ON participant.cohort_id=cohort.cohort_id
+      AND participant.organization_id=cohort.organization_id AND participant.user_id=? AND participant.status='active' AND participant.revoked_at IS NULL
+    WHERE cohort.status IN ('active','paused','closed') ORDER BY CASE WHEN cohort.status='closed' THEN 1 ELSE 0 END,cohort.created_at DESC LIMIT 1`;
+const costBudgetsSql = "SELECT scope,used_microusd,reserved_microusd,hard_limit_microusd FROM cost_budget_counters WHERE period=? AND ((scope='user' AND scope_id=?) OR (scope='workspace' AND scope_id='forma'))";
+const memorySchemaSql = (names: string) => `SELECT (SELECT json_group_array(json_object('type',type,'name',name,'tbl_name',tbl_name,'sql',sql))
+  FROM(SELECT type,name,tbl_name,CASE WHEN length(CAST(sql AS BLOB))<=16384 THEN sql ELSE NULL END AS sql
+    FROM sqlite_schema WHERE tbl_name IN(${names}) ORDER BY name LIMIT 64)) AS schema_json`;
+const structuredMemorySql = memorySchemaSql("'memory_structured_answer_origins','memory_structured_answer_originals','memory_structured_answer_ledger_revisions'");
+const jobMemorySql = memorySchemaSql("'memory_document_job_answer_origins','memory_document_job_origin_dependencies'");
+const auxiliaryMemorySql = "SELECT EXISTS(SELECT 1 FROM sqlite_schema WHERE type='table' AND name='memory_native_answer_origins') AS origins,EXISTS(SELECT 1 FROM sqlite_schema WHERE type='table' AND name='assistant_turns') AS turns";
+const laterCommandSql = `SELECT command.action,command.event_id,command.request_digest,command.created_at,body.private_json,
+      event.stream_id,event.actor,event.client_id,event.correlation_id,
+      json_extract(event.payload,'$.project_id') AS project_id,json_extract(event.payload,'$.document_id') AS document_id
+    FROM output_commands command JOIN events event ON event.event_id=command.event_id
+    LEFT JOIN event_private_payloads body ON body.private_event_id=command.event_id
+      AND body.owner_id=? AND body.project_id=? AND body.document_id=? AND body.redacted_at IS NULL
+    WHERE command.scope_key=? AND command.actor_user_id=? AND command.command_key=?`;
+const numericLaterColumns = new Set(["source_text_bytes", "source_head", "revision", "now_ms", "approved_canvas_requirements", "present", "used_microusd", "reserved_microusd", "hard_limit_microusd"]);
+const jsonLaterColumns = new Set(["policy_json", "private_json", "plan_json", "command_json", "driver_command_json", "envelope_json", "grants_json", "organizations_json", "projects_json", "identity_policies_json"]);
+function laterDescriptor(kind: string, columns: readonly string[], maximumRows = 1): LaterDescriptor {
+  const invalidRow = columns.map(column => {
+    const field = `row."${column}"`;
+    if (numericLaterColumns.has(column)) return `NOT(typeof(${field})='integer' AND ${field} BETWEEN 0 AND 9007199254740991)`;
+    const bound = ["private_json", "plan_json"].includes(column) ? 2_000_000
+      : ["command_json", "driver_command_json", "envelope_json"].includes(column) ? 524288
+      : column === "policy_json" || column.endsWith("_json") ? 131072 : column === "display_name" ? 4096 : 1024;
+    const valid = `typeof(${field})='text' AND length(CAST(${field} AS BLOB))<=${bound}${jsonLaterColumns.has(column) ? ` AND CASE WHEN json_valid(${field}) THEN 1 ELSE 0 END=1` : ` AND instr(${field},char(0))=0`}`;
+    return `NOT(${["consent_version", "consented_at"].includes(column) ? `${field} IS NULL OR (` : ""}${valid}${["consent_version", "consented_at"].includes(column) ? ")" : ""})`;
+  }).join(" OR ");
+  return Object.freeze({ kind: `later-${kind}`, columns, maximumRows, invalidRow: invalidRow || "0" });
+}
+function later(owner: SponsorAudioOutputReadOwner) {
+  const result = state(owner);
+  if (!["audio-output-review", "audio-output-authorize"].includes(result.view.operation) || !result.native.later || !result.native.saved
+    || !result.native.receiptComplete || result.native.reading || result.native.receiptReading) return null;
+  return { ...result, later: result.native.later, plan: result.native.saved.plan };
+}
+function laterQuote(view: View): Row | null {
+  const wanted = view.retainedSelection?.preflightId;
+  for (const [, body] of view.observedBodies) {
+    if (body.projectId !== view.original.projectId || body.documentId !== view.original.documentId) continue;
+    let value: unknown; try { value = JSON.parse(body.raw); } catch { continue; }
+    if (record(value) && record(value.preflight) && (!wanted || value.preflight.id === wanted)) return value.preflight;
+  }
+  return null;
+}
+function addLaterProofs(value: LaterState, proofs: readonly Proof[]) {
+  value.proofs = distinct([...value.proofs, ...proofs.map(copy)]);
+}
+function laterProofMatch(view: View, value: LaterState, sql: string, bindings: readonly unknown[]) {
+  return [...view.assertions, ...value.proofs].some(proof => sql === `SELECT CASE WHEN (${proof.sql}) THEN 1 ELSE 0 END AS current`
+    && same(bindings, proof.bindings ?? []));
+}
+/** Read-only facts are actual observations. This accessor grants no new query,
+ * transaction, payer, or source capability and never accepts expected facts. */
+export function sponsorAudioOutputLaterNativeFacts(owner: SponsorAudioOutputReadOwner) {
+  const selected = later(owner); if (!selected) return fail();
+  const value = selected.later;
+  return Object.freeze({ ids: value.ids, principal: value.principal, payerPrincipal: value.payerPrincipal, policy: value.policy, policyDigest: value.policyDigest, policyJson: value.policyJson,
+    limitsDigest: value.limitsDigest, approvedAssertions: value.approvedAssertions, dbClock: value.dbClock, intent: value.intent, stage: value.stage, issuance: value.issuance,
+    quote: value.quote, reviewQuote: value.reviewQuote, command: value.command, memoryRows: value.memoryRows ? Object.freeze({ ...value.memoryRows }) : undefined });
+}
+/** The exact native SQL and vector choose a bounded read, never a write. */
+export function describeSponsorAudioOutputLaterRead(owner: SponsorAudioOutputReadOwner, sql: string, bindings: readonly unknown[]): LaterDescriptor | null {
+  const descriptor = describeLater(owner, sql, bindings), selected = later(owner);
+  return descriptor && selected ? Object.freeze({ ...descriptor, assertions: [...selected.later.witnesses ?? []] }) : null;
+}
+function describeLater(owner: SponsorAudioOutputReadOwner, sql: string, bindings: readonly unknown[]): LaterDescriptor | null {
+  const selected = later(owner); if (!selected) return null;
+  const { view, later: value, plan } = selected, actor = view.auth.user.userId;
+  const scope = `personal:${actor}:${plan.projectId}`, trusted = view.currentContext;
+  const quote = laterQuote(view), preflight = quote?.id;
+  if (laterProofMatch(view, value, sql, bindings)) return Object.freeze({ kind: "later-proof", columns: ["current"], maximumRows: 1,
+    invalidRow: "typeof(row.current)<>'integer' OR row.current<>1" });
+  if (sql === PRINCIPAL_WITH_ACCESS_SQL && same(bindings, [actor])) return laterDescriptor("principal", laterPrincipalColumns);
+  if (sql === PRINCIPAL_WITH_ACCESS_SQL && view.operation === "audio-output-authorize" && view.retainedCommand && value.policy
+    && same(bindings, [value.policy.payerUserId])) return laterDescriptor("payer-principal", laterPrincipalColumns);
+  if (sql === campaignSql && same(bindings, [view.original.campaignId])) return laterDescriptor("campaign", ["policy_json", "policy_digest"]);
+  if (sql === reviewQuoteSql && preflight && same(bindings, [scope, preflight, actor, plan.documentId, actor, plan.projectId]))
+    return laterDescriptor("review-quote", ["event_id", "expires_at", "terms_digest", "plan_revision_id", "revision", "confirmed_event_id", "source_digest", "requirements_digest"]);
+  if (view.operation !== "audio-output-authorize") return null;
+  if (sql === quoteSql && preflight && trusted && same(bindings, [scope, preflight, actor, actor, plan.projectId, plan.documentId, trusted.sourceDigest, trusted.requirementsDigest]))
+    return laterDescriptor("quote", ["terms_digest", "expires_at", "private_json", "source_head", "plan_revision_id", "plan_json"]);
+  if (sql === intentSql && same(bindings, [value.ids.driverId])) return laterDescriptor("intent", intentColumns);
+  if (sql === stageSql && same(bindings, [value.ids.driverId])) return laterDescriptor("stage", ["command_json", "command_digest"]);
+  if (sql === issuanceSql && value.policy && same(bindings, [view.original.campaignId, actor, value.ids.commandKey])) return laterDescriptor("issuance", issuanceColumns);
+  if (sql === `SELECT ${instant} AS now_ms` && bindings.length === 0 && value.policy) return laterDescriptor("clock", ["now_ms"]);
+  const actualCommand = view.retainedCommand ?? (value.stage ? JSON.parse(String(value.stage.command_json)) as Row : null);
+  const commandVector = [actor, plan.projectId, plan.documentId, scope, actor, value.ids.commandKey];
+  if (sql === replaySql && actualCommand && same(bindings, commandVector)) return laterDescriptor("replay", ["request_digest", "event_id", "private_json"]);
+  if (sql === laterCommandSql && actualCommand && same(bindings, commandVector)) return laterDescriptor("command", ["action", "event_id", "request_digest", "created_at", "private_json", "stream_id", "actor", "client_id", "correlation_id", "project_id", "document_id"]);
+  if (sql === "SELECT 1 AS present FROM output_commands WHERE scope_key=? AND actor_user_id=? AND command_key=?"
+    && actualCommand && same(bindings, [scope, actor, value.ids.commandKey])) return laterDescriptor("original-present", ["present"]);
+  if (preflight && same(bindings, [scope, preflight, actor])) {
+    if (sql === "SELECT event_id,expires_at,terms_digest FROM output_preflights WHERE scope_key=? AND preflight_id=? AND actor_user_id=?")
+      return laterDescriptor("preflight", ["event_id", "expires_at", "terms_digest"]);
+    if (sql === "SELECT * FROM output_preflights WHERE scope_key=? AND preflight_id=? AND actor_user_id=?") return laterDescriptor("preflight", preflightColumns);
+  }
+  if (actualCommand && value.policy) {
+    if (sql === budgetScopesSql && same(bindings, [actor, actor, plan.projectId, plan.projectId, plan.projectId, plan.documentId]))
+      return laterDescriptor("budget-scopes", ["organization_id", "project_access_id"], 0);
+    if (sql === pilotSql && bindings.length === 1 && typeof bindings[0] === "string" && [actor, value.policy.payerUserId].includes(bindings[0]))
+      return laterDescriptor("pilot", ["cohort_id", "organization_id", "status", "starts_at", "ends_at", "participant_cap_microusd", "organization_cap_microusd", "participant_user_id", "participant_status", "participant_revoked_at", "participant_role"], 0);
+    if (sql === costBudgetsSql && same(bindings, [new Date().toISOString().slice(0, 7), value.policy.payerUserId])) {
+      const descriptor = laterDescriptor("cost-budgets", ["scope", "used_microusd", "reserved_microusd", "hard_limit_microusd"], 2);
+      return { ...descriptor, invalidRow: `(${descriptor.invalidRow}) OR row.scope NOT IN('user','workspace')` };
+    }
+    if (bindings.length === 0 && [structuredMemorySql, jobMemorySql].includes(sql)) return { kind: sql === structuredMemorySql ? "later-structured-memory" : "later-job-memory", columns: ["schema_json"], maximumRows: 1,
+      invalidRow: "typeof(row.schema_json)<>'text' OR length(CAST(row.schema_json AS BLOB))>65536 OR CASE WHEN json_valid(row.schema_json) THEN json_type(row.schema_json)<>'array' ELSE 1 END" };
+    if (sql === auxiliaryMemorySql && bindings.length === 0) return { kind: "later-auxiliary-memory", columns: ["origins", "turns"], maximumRows: 1,
+      invalidRow: "typeof(row.origins)<>'integer' OR row.origins NOT IN(0,1) OR typeof(row.turns)<>'integer' OR row.turns NOT IN(0,1)" };
+  }
+  return null;
+}
+
+/** Called only after the owner's real bounded transport has returned. Stable
+ * row witnesses survive phase changes; empty lookups and clocks do not. */
+export async function observeSponsorAudioOutputLaterRead(owner: SponsorAudioOutputReadOwner, sql: string, bindings: readonly unknown[], rows: readonly Row[], witness: OutputSqlAssertion): Promise<void> {
+  const selected = later(owner); if (!selected) return fail();
+  const { view, later: value, plan } = selected, descriptor = describeSponsorAudioOutputLaterRead(owner, sql, bindings);
+  if (!descriptor || rows.length > descriptor.maximumRows || !view.isReadObservation(sql, bindings, rows, witness)) return fail();
+  if (!rows.length) return;
+  const row = rows[0]!; ownData(row);
+  if (!exactKeys(row, descriptor.columns)) return fail();
+  const actor = view.auth.user, scope = `personal:${actor.userId}:${plan.projectId}`, quote = laterQuote(view);
+  const capture = (key: "principal" | "payerPrincipal" | "intent" | "stage" | "issuance" | "quote" | "reviewQuote" | "command") => {
+    if (value[key] && canonicalJson(value[key]) !== canonicalJson(row)) return fail("sponsor_audio_output_later_original_changed");
+    value[key] = row;
+  };
+  if (descriptor.kind === "later-payer-principal") {
+    if (!value.policy || row.user_id !== value.policy.payerUserId || row.consent_version !== POLICY_VERSION || !["creator", "admin"].includes(String(row.role))) return fail();
+    capture("payerPrincipal");
+    addLaterProofs(value, [{ sql: `EXISTS(SELECT 1 FROM (${PRINCIPAL_WITH_ACCESS_SQL}) captured WHERE json_array(${laterPrincipalColumns.map(column => `captured.${column}`).join(",")})=?)`,
+      bindings: [value.policy.payerUserId, JSON.stringify(laterPrincipalColumns.map(column => row[column] ?? null))] }]);
+  } else if (descriptor.kind === "later-principal") {
+    const snapshot = actor.authorizationSnapshot;
+    if (row.user_id !== actor.userId || row.email !== actor.email || row.display_name !== actor.displayName || row.role !== actor.role
+      || row.consent_version !== POLICY_VERSION || row.consent_version !== actor.consentVersion || row.consented_at !== actor.consentedAt
+      || !snapshot || !same([row.updated_at, row.permission_epoch, row.grants_json, row.organizations_json, row.projects_json, row.identity_policies_json, row.approved_canvas_requirements],
+        [snapshot.updatedAt, snapshot.rawEpoch, snapshot.grants, snapshot.organizations, snapshot.projects, snapshot.identityPolicies, snapshot.canvasRequirements])) return fail();
+    capture("principal");
+    for (const columns of [laterPrincipalColumns, evidencePrincipalColumns]) addLaterProofs(value, [{ sql: `EXISTS(SELECT 1 FROM (${PRINCIPAL_WITH_ACCESS_SQL}) captured WHERE json_array(${columns.map(column => `captured.${column}`).join(",")})=?)`,
+      bindings: [actor.userId, JSON.stringify(columns.map(column => row[column] ?? null))] }]);
+  } else if (descriptor.kind === "later-campaign") {
+    if (typeof row.policy_json !== "string" || row.policy_digest !== view.original.sponsorPolicyDigest) return fail();
+    const policy = readSponsorAudioPolicy(JSON.parse(row.policy_json));
+    const policyDigest = await view.wait(() => digest(policy)); view.current();
+    if (policy.campaignId !== view.original.campaignId || policyDigest !== row.policy_digest || policy.payerUserId === actor.userId
+      || value.policy && canonicalJson(value.policy) !== canonicalJson(policy)) return fail();
+    value.policy = policy; value.policyDigest = policyDigest; value.policyJson = row.policy_json; value.limitsDigest = await view.wait(() => digest(policy.resources)); view.current();
+    if (!value.principal) return fail();
+    const approved: OutputSqlAssertion[] = [{ sql: `EXISTS(SELECT 1 FROM (${PRINCIPAL_WITH_ACCESS_SQL}) captured WHERE json_array(${laterPrincipalColumns.map(column => `captured.${column}`).join(",")})=?)`,
+      bindings: [actor.userId, JSON.stringify(laterPrincipalColumns.map(column => value.principal![column] ?? null))] }, sponsorApprovalAssertion(policy, actor.userId, true), {
+      sql: `NOT EXISTS(SELECT 1 FROM pilot_participants participant JOIN pilot_cohorts cohort ON cohort.cohort_id=participant.cohort_id
+      WHERE participant.user_id IN(?,?) AND participant.status='active' AND participant.revoked_at IS NULL AND cohort.status IN('active','paused','closed'))`, bindings: [actor.userId, policy.payerUserId],
+    }, { sql: `EXISTS(SELECT 1 FROM experience_sponsor_campaigns WHERE campaign_id=? AND enabled=1 AND policy_digest=? AND policy_json=?) AND ${instant}>=? AND ${instant}<?`,
+      bindings: [policy.campaignId, policyDigest, row.policy_json, policy.startsAtMs, policy.expiresAtMs], deadlineMs: policy.expiresAtMs }];
+    value.approvedAssertions = approved.map(copy); ownData(value.approvedAssertions);
+    addLaterProofs(value, [...approved, sponsorApprovalAssertion(policy, actor.userId), {
+      sql: `EXISTS(SELECT 1 FROM experience_sponsor_resource_policies WHERE campaign_id=? AND enabled=1 AND limits_digest=? AND limits_json=?
+      AND ?<=CAST((julianday('now')-2440587.5)*86400000 AS INTEGER) AND ?>CAST((julianday('now')-2440587.5)*86400000 AS INTEGER))`,
+      bindings: [policy.campaignId, value.limitsDigest, canonicalJson(policy.resources), policy.resources.startsAtMs, policy.resources.expiresAtMs], deadlineMs: policy.resources.expiresAtMs }, {
+      sql: `EXISTS(SELECT 1 FROM experience_sponsor_resource_policies resources
+    WHERE resources.campaign_id=? AND resources.enabled=1 AND resources.limits_digest=? AND resources.limits_json=?
+      AND ?<=${instant} AND ?>${instant})`,
+      bindings: [policy.campaignId, value.limitsDigest, canonicalJson(policy.resources), policy.resources.startsAtMs, policy.resources.expiresAtMs], deadlineMs: policy.resources.expiresAtMs }]);
+  } else if (descriptor.kind === "later-intent") {
+    if (row.driver_id !== value.ids.driverId || row.campaign_id !== view.original.campaignId || row.actor_user_id !== actor.userId
+      || row.intent_key !== value.ids.intentKey || row.document_id !== plan.documentId) return fail();
+    capture("intent"); addLaterProofs(value, [{ sql: `EXISTS(SELECT 1 FROM experience_sponsor_driver_intents WHERE ${intentColumns.map(column => `${column}=?`).join(" AND ")})`, bindings: intentColumns.map(column => row[column] as Binding) }]);
+  } else if (descriptor.kind === "later-stage") {
+    if (!value.intent || typeof row.command_json !== "string" || row.command_json.length > 16384) return fail();
+    const command: unknown = JSON.parse(row.command_json);
+    if (!record(command) || command.action !== "authorize" || command.clientMutationId !== value.ids.commandKey || command.documentId !== plan.documentId
+      || !quote || command.preflightId !== quote.id || command.termsDigest !== quote.termsDigest) return fail();
+    capture("stage"); addLaterProofs(value, [{ sql: "EXISTS(SELECT 1 FROM experience_sponsor_driver_stages WHERE driver_id=? AND stage='authorize' AND command_json=? AND command_digest=?)",
+      bindings: [value.ids.driverId, row.command_json, row.command_digest as Binding] }]);
+  } else if (descriptor.kind === "later-issuance") {
+    if (row.grant_id !== value.ids.grantId || row.campaign_id !== view.original.campaignId || row.actor_user_id !== actor.userId
+      || row.intent_key !== value.ids.commandKey || row.policy_digest !== value.policyDigest) return fail();
+    capture("issuance");
+  } else if (descriptor.kind === "later-review-quote") {
+    if (!quote || row.terms_digest !== quote.termsDigest || row.expires_at !== quote.expiresAt || row.plan_revision_id !== quote.planRevisionId
+      || !view.observedPlans.includes(String(row.plan_revision_id)) || row.source_digest !== view.currentContext?.sourceDigest
+      || row.requirements_digest !== view.currentContext?.requirementsDigest) return fail();
+    capture("reviewQuote");
+    addLaterProofs(value, [{ sql: "EXISTS(SELECT 1 FROM output_preflights WHERE scope_key=? AND preflight_id=? AND actor_user_id=? AND event_id=? AND terms_digest=? AND expires_at=? AND plan_revision_id=?)",
+      bindings: [scope, quote.id as Binding, actor.userId, row.event_id as Binding, row.terms_digest as Binding, row.expires_at as Binding, row.plan_revision_id as Binding], deadlineMs: Date.parse(String(row.expires_at)) }, {
+      sql: `EXISTS(SELECT 1 FROM output_plan_revisions plan WHERE plan.scope_key=? AND plan.document_id=? AND plan.plan_revision_id=? AND plan.revision=? AND plan.source_digest=? AND plan.requirements_digest=?
+        AND plan.confirmed_event_id=? AND plan.scope_kind='personal' AND plan.owner_user_id=? AND plan.project_id=?
+        AND NOT EXISTS(SELECT 1 FROM output_plan_revisions newer WHERE newer.scope_key=plan.scope_key AND newer.revision>plan.revision))`,
+      bindings: [scope, plan.documentId, row.plan_revision_id as Binding, row.revision as Binding, row.source_digest as Binding, row.requirements_digest as Binding, row.confirmed_event_id as Binding, actor.userId, plan.projectId] }]);
+  } else if (descriptor.kind === "later-quote") {
+    if (!quote || row.terms_digest !== quote.termsDigest || row.expires_at !== quote.expiresAt || row.plan_revision_id !== quote.planRevisionId) return fail();
+    capture("quote");
+    addLaterProofs(value, [{ sql: `EXISTS(SELECT 1 FROM (${quoteSql}) captured WHERE terms_digest=? AND expires_at=? AND private_json=? AND source_head=? AND plan_revision_id=? AND plan_json=?)`,
+      bindings: [...bindings as Binding[], ...["terms_digest", "expires_at", "private_json", "source_head", "plan_revision_id", "plan_json"].map(column => row[column] as Binding)] }]);
+  } else if (descriptor.kind === "later-command" || descriptor.kind === "later-replay") {
+    if (typeof row.private_json !== "string" || bytes(row.private_json) > 524288) return fail();
+    const body: unknown = JSON.parse(row.private_json), expected: unknown = view.retainedCommand ?? (value.stage ? JSON.parse(String(value.stage.command_json)) : null);
+    if (!record(body) || !record(body.output_command_envelope) || !record(expected)) return fail();
+    const envelope = body.output_command_envelope, marker = envelope.sponsor_entitlement;
+    const command = { ...envelope }; delete command.sponsor_entitlement;
+    if (canonicalJson(command) !== canonicalJson(expected) || !record(marker) || marker.campaign_id !== view.original.campaignId
+      || marker.policy_digest !== view.original.sponsorPolicyDigest || marker.payer_user_id === actor.userId) return fail();
+    addLaterProofs(value, [{ sql: "EXISTS(SELECT 1 FROM event_private_payloads WHERE private_event_id=? AND owner_id=? AND project_id=? AND document_id=? AND private_json=? AND redacted_at IS NULL)",
+      bindings: [row.event_id as Binding, actor.userId, plan.projectId, plan.documentId, row.private_json] }]);
+    if (descriptor.kind === "later-command") {
+      if (!same([row.action, row.stream_id, row.actor, row.client_id, row.correlation_id, row.project_id, row.document_id],
+        ["authorize", plan.streamId, `user:${actor.userId}`, "server:output-requirements", value.ids.commandKey, plan.projectId, plan.documentId])) return fail();
+      capture("command");
+      addLaterProofs(value, [outputCommandReceiptAssertion({ kind: "personal", key: scope, ownerUserId: actor.userId, actorUserId: actor.userId,
+        projectId: plan.projectId, documentId: plan.documentId, organizationId: null, projectAccessId: null, contextId: null }, {
+        action: "authorize", eventId: String(row.event_id), createdAt: String(row.created_at), key: value.ids.commandKey,
+        requestDigest: String(row.request_digest), payload: body,
+      })]);
+    }
+  } else if (descriptor.kind === "later-clock") {
+    if (!Number.isSafeInteger(row.now_ms) || value.dbClock !== undefined && value.dbClock !== row.now_ms) return fail();
+    value.dbClock = Number(row.now_ms); return;
+  } else if (["later-structured-memory", "later-job-memory", "later-auxiliary-memory"].includes(descriptor.kind)) {
+    const prior = value.memoryRows?.[descriptor.kind];
+    if (prior && canonicalJson(prior) !== canonicalJson(rows)) return fail();
+    value.memoryRows ??= {}; value.memoryRows[descriptor.kind] = Object.freeze([...rows]); return;
+  } else if (descriptor.kind === "later-cost-budgets") {
+    if (new Set(rows.map(result => result.scope)).size !== rows.length) return fail();
+    return;
+  } else if (["later-proof", "later-original-present"].includes(descriptor.kind)) return;
+  else if (descriptor.kind !== "later-preflight") return fail();
+  // The actual bounded row witness is generated inside reads.ts. Never retain
+  // a missing-row predicate: a successful later write may fill that same row.
+  value.witnesses = distinct([...value.witnesses ?? [], copy(witness)]); view.current();
 }

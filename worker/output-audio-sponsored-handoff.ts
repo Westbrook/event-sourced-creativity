@@ -14,6 +14,9 @@ import { sponsorCurrentSourceAssertions } from "./experience-sponsor-image-evide
 import { classifySponsorIntakeDraft } from "./experience-sponsor-intake-classification.ts";
 import { readSponsorInternalCommand } from "./experience-sponsor-approval.ts";
 import { readSponsorAudioActorEvidence } from "./experience-sponsor-audio-actor-evidence.ts";
+import { findSponsorAudioOutputReads, requireSponsorAudioOutputReads, beginSponsorAudioOutputLaterSource,
+  retainSponsorAudioOutputLaterSource, type SponsorAudioOutputReadOwner } from "./experience-sponsor-audio-output-reads.ts";
+import { sponsorAudioOutputNativeProofs } from "./experience-sponsor-audio-output-native.ts";
 
 declare const admissionBrand: unique symbol;
 declare const reviewBrand: unique symbol;
@@ -26,6 +29,13 @@ export type AudioSponsorRunPreparation = Readonly<{ [runBrand]: true }>;
 export type AudioSponsorDispatchEvidence = Readonly<{ [dispatchBrand]: true }>;
 export type AudioSponsorDispatchOwner = Readonly<{ [dispatchOwnerBrand]: true }>;
 type AudioNativeSource = Omit<OutputBridgeTargetInput, "sceneSourceVersion" | "sceneUseVersionedHistory">;
+type OwnedHandoffSource = Readonly<{ phase: "review" | "admission"; quote: OutputPreflight; command?: Record<string, unknown> }>;
+const ownedSources = new WeakMap<OutputBridgeTargetInput, { owner: SponsorAudioOutputReadOwner; value: OwnedHandoffSource }>();
+/** Only native review/admission preparation registers these exact source inputs. */
+export function sponsorAudioOutputHandoffSource(owner: SponsorAudioOutputReadOwner, input: OutputBridgeTargetInput) {
+  const retained = ownedSources.get(input);
+  return retained?.owner === owner ? retained.value : null;
+}
 type ActorEvidence = Awaited<ReturnType<typeof readSponsorAudioActorEvidence>>;
 export type AudioSponsorActorIntent = Pick<ActorEvidence, "request" | "review" | "requestDigest" | "reviewDigest" | "commandDigest">;
 type NativeProof = NonNullable<ReturnType<typeof outputAudioPreflightAssertions>>;
@@ -96,6 +106,13 @@ type Base = { source: AudioNativeSource; request: Request; signal: AbortSignal; 
   quote: OutputPreflight; quoteJson: string; assertions: OutputSqlAssertion[]; deadlineMs: number;
   identities: {scope: AudioNativeSource["scope"]; principal: AudioNativeSource["principal"]; context: AudioNativeSource["context"]; events: AudioNativeSource["sourceEvents"]; plan: AudioNativeSource["confirmedPlan"]; target: AudioNativeSource["target"]} };
 const admissions = new WeakMap<AudioSponsorAdmissionPreparation, Base & { actor: ActorEvidence; actorIntent: AudioSponsorActorIntent }>();
+const admissionEvidence = new WeakMap<AudioSponsorAdmissionPreparation, { owner: SponsorAudioOutputReadOwner;
+  value: Awaited<ReturnType<typeof requireAudioSponsorAdmissionForEvidence>> }>();
+/** The finite issuer can observe only this actual native evidence return. */
+export function sponsorAudioOutputAdmissionNative(owner: SponsorAudioOutputReadOwner, handle: AudioSponsorAdmissionPreparation) {
+  const retained = admissionEvidence.get(handle);
+  return retained?.owner === owner ? retained.value : null;
+}
 const reviews = new WeakMap<AudioSponsorReviewPreparation, Base>();
 const runs = new WeakMap<AudioSponsorRunPreparation, Base & { slot: OutputOperationSlot; slotJson: string; correlationId: string }>();
 function allowedAssertions(state: Base, assertions: readonly OutputSqlAssertion[] | undefined) {
@@ -106,6 +123,8 @@ function allowedAssertions(state: Base, assertions: readonly OutputSqlAssertion[
   return options.some(option => candidate === json(option));
 }
 function currentBase(state: Base, source = state.source) {
+  const owner = findSponsorAudioOutputReads(state.request, state.env);
+  if (owner) requireSponsorAudioOutputReads(owner, state.request, state.env).current();
   if (state.source.scope !== state.identities.scope || state.source.principal !== state.identities.principal || state.source.context !== state.identities.context
     || state.source.sourceEvents !== state.identities.events || state.source.confirmedPlan !== state.identities.plan || state.source.target !== state.identities.target
     || json(sourceFacts(state.source)) !== state.sourceJson || !allowedAssertions(state, state.source.sourceAssertions)
@@ -120,11 +139,13 @@ function currentBase(state: Base, source = state.source) {
 async function nativeBase(input: { source: AudioNativeSource; command: Record<string, unknown>; quote: OutputPreflight }): Promise<Base> {
   const source = input.source; personal(source);
   const request = source.request, signal = signalOf(request), env = source.env, database = env.DB;
+  const owner = findSponsorAudioOutputReads(request, env), owned = owner ? requireSponsorAudioOutputReads(owner, request, env) : null;
   const identities = {scope:source.scope,principal:source.principal,context:source.context,events:source.sourceEvents,plan:source.confirmedPlan,target:source.target};
   const initialDeadline = Math.min(Date.parse(input.quote.expiresAt), ...(source.sourceAssertions ?? []).flatMap(a => a.deadlineMs === undefined ? [] : [a.deadlineMs]));
   const capturedCommand = commandJson(input.command), capturedQuote = json(input.quote), sourceJson = json(sourceFacts(source));
   const originalAssertionsJson = json(source.sourceAssertions ?? []), requestJson = requestFacts(request), environmentJson = environmentFacts(env);
   const unchanged = () => {
+    owned?.current();
     requireSignal(signal);
     if (source.scope !== identities.scope || source.principal !== identities.principal || source.context !== identities.context || source.sourceEvents !== identities.events
       || source.confirmedPlan !== identities.plan || source.target !== identities.target || !Number.isFinite(initialDeadline) || !Number.isFinite(Date.now()) || Date.now() >= initialDeadline
@@ -132,7 +153,11 @@ async function nativeBase(input: { source: AudioNativeSource; command: Record<st
       || requestFacts(request) !== requestJson || environmentFacts(env) !== environmentJson || json(sourceFacts(source)) !== sourceJson
       || json(source.sourceAssertions ?? []) !== originalAssertionsJson || commandJson(input.command) !== capturedCommand || json(input.quote) !== capturedQuote) fail();
   };
-  unchanged(); const native = await preflightOutputAudioTarget(source); unchanged();
+  unchanged();
+  if (owner) beginSponsorAudioOutputLaterSource(owner, source);
+  const native = await (owned ? owned.wait(() => preflightOutputAudioTarget(source)) : preflightOutputAudioTarget(source));
+  if (owner) retainSponsorAudioOutputLaterSource(owner, source, native);
+  unchanged();
   const { proof, preview } = proofOf(native), quote = copy(input.quote);
   if (quote.targets.length !== 1 || json(quote.targets[0]) !== json(native) || quote.planRevisionId !== source.confirmedPlan.revisionId
     || quote.sourceDigest !== source.sourceDigest || quote.requirementsDigest !== source.requirementsDigest
@@ -155,11 +180,14 @@ function evidenceSource(state: Base, trusted: OutputTrustedContext): AudioNative
 export async function prepareAudioSponsorReview(input: { source: AudioNativeSource; quote: OutputPreflight; quoteAssertions: readonly OutputSqlAssertion[] }): Promise<AudioSponsorReviewPreparation> {
   personal(input.source);
   const request = input.source.request, signal = signalOf(request), env = input.source.env, database = env.DB;
+  const owner = findSponsorAudioOutputReads(request, env), owned = owner ? requireSponsorAudioOutputReads(owner, request, env) : null;
+  if (owned && !["audio-output-review", "audio-output-authorize"].includes(owned.operation)) fail();
   const identities = { scope: input.source.scope, principal: input.source.principal, context: input.source.context, events: input.source.sourceEvents };
   const facts = () => json({ source: sourceFacts(input.source), assertions: input.source.sourceAssertions ?? [], quote: input.quote,
     quoteAssertions: input.quoteAssertions, request: requestFacts(request), environment: environmentFacts(env) });
   const captured = facts(), expiresAt = Date.parse(input.quote.expiresAt);
   const current = () => {
+    owned?.current();
     requireSignal(signal);
     if (input.source.request !== request || signalOf(request) !== signal || input.source.env !== env || env.DB !== database
       || input.source.scope !== identities.scope || input.source.principal !== identities.principal || input.source.context !== identities.context
@@ -171,12 +199,13 @@ export async function prepareAudioSponsorReview(input: { source: AudioNativeSour
   const payload = settings && record(settings.payload) ? settings.payload : null;
   const contract = payload && readOutputAudioPayload(payload);
   if (!contract || !input.quoteAssertions.length) fail();
-  const classification = await classifySponsorIntakeDraft(env, contract.source.draftId); current();
-  if (classification.kind !== "ordinary") fail();
+  const classification = owner ? null : await classifySponsorIntakeDraft(env, contract.source.draftId); current();
+  if (classification && classification.kind !== "ordinary") fail();
+  if (owner) ownedSources.set(input.source, { owner, value: Object.freeze({ phase: "review", quote: input.quote }) });
   const state = await nativeBase({ source: input.source, quote: input.quote,
     command: { action: "sponsor-audio-review", preflightId: input.quote.id } });
   current(); currentBase(state);
-  state.assertions.push(copy(classification.guard), ...copy(input.quoteAssertions));
+  state.assertions.push(...copy(owner ? sponsorAudioOutputNativeProofs(owner) : [classification!.guard]), ...copy(input.quoteAssertions));
   state.deadlineMs = Math.min(state.deadlineMs, ...input.quoteAssertions.flatMap(value => value.deadlineMs === undefined ? [] : [value.deadlineMs]));
   await check(env, state.assertions, () => { current(); currentBase(state); }); current(); currentBase(state);
   const handle = Object.freeze({}) as AudioSponsorReviewPreparation;
@@ -203,21 +232,24 @@ export async function prepareAudioSponsorAdmission(input: { source: AudioNativeS
     || command.expectedRevision !== `output:${input.source.ownerHead}`) fail();
   personal(input.source);
   const request = input.source.request, signal = signalOf(request), env = input.source.env, database = env.DB;
+  const owner = findSponsorAudioOutputReads(request, env), owned = owner ? requireSponsorAudioOutputReads(owner, request, env) : null;
+  if (owned && owned.operation !== "audio-output-authorize") fail();
   const capture = () => json({ command: input.command, quote: input.quote, review: readSponsoredAudioReview(input.review),
     source: sourceFacts(input.source), assertions: input.source.sourceAssertions ?? [], request: requestFacts(request), configuration: environmentFacts(env) });
   const captured = capture(), identities = {scope:input.source.scope,principal:input.source.principal,context:input.source.context,events:input.source.sourceEvents,plan:input.source.confirmedPlan,target:input.source.target};
   const retainedAssertions = copy(sponsorCurrentSourceAssertions(input.trusted));
   const initialDeadline = Math.min(Date.parse(review.expiresAt), Date.parse(review.preview.expiresAt), Date.parse(input.quote.expiresAt), ...retainedAssertions.flatMap(a => a.deadlineMs === undefined ? [] : [a.deadlineMs]));
-  const current = () => { requireSignal(signal); if (input.source.request !== request || input.trusted.request !== request || signalOf(request) !== signal
+  const current = () => { owned?.current(); requireSignal(signal); if (input.source.request !== request || input.trusted.request !== request || signalOf(request) !== signal
     || input.source.env !== env || input.trusted.env !== env || env.DB !== database || capture() !== captured
     || input.source.scope !== identities.scope || input.source.principal !== identities.principal || input.source.context !== identities.context || input.source.sourceEvents !== identities.events
     || input.source.confirmedPlan !== identities.plan || input.source.target !== identities.target
     || !Number.isFinite(initialDeadline) || !Number.isFinite(Date.now()) || Date.now() >= initialDeadline) fail(); };
   current(); const actor = await readSponsorAudioActorEvidence(input.trusted, command, review); current();
-  const classification = await classifySponsorIntakeDraft(env, review.preview.draftId); current();
-  if (classification.kind !== "ordinary") fail();
+  const classification = owner ? null : await classifySponsorIntakeDraft(env, review.preview.draftId); current();
+  if (classification && classification.kind !== "ordinary") fail();
+  if (owner) ownedSources.set(input.source, { owner, value: Object.freeze({ phase: "admission", quote: input.quote, command: input.command }) });
   const state = await nativeBase(input); current(); currentBase(state, evidenceSource(state, input.trusted));
-  state.assertions.push(...retainedAssertions, copy(classification.guard));
+  state.assertions.push(...retainedAssertions, ...copy(owner ? sponsorAudioOutputNativeProofs(owner) : [classification!.guard]));
   if (json(actor.native.offered) !== json(state.native) || actor.commandDigest !== `sha256:${await outputDigest(command)}`) fail();
   current(); currentBase(state);
   requireAudioMiniAppCostApproval(command.audioCostConsent, actor.review.preview, (state.native.settings as Record<string, unknown>).costPreview);
@@ -230,8 +262,14 @@ export async function requireAudioSponsorAdmissionForEvidence(handle: AudioSpons
   const state = admissions.get(handle); if (!state || commandJson(command) !== state.commandJson) fail();
   const assertCurrent = () => { if (commandJson(command) !== state.commandJson) fail(); currentBase(state, evidenceSource(state, trusted)); };
   await check(state.env, state.assertions, assertCurrent); assertCurrent();
-  return { nativePreflight: state.native, actorIntent: state.actorIntent, description: state.actor.native.description, recipe: state.actor.native.recipe,
+  const result = { nativePreflight: state.native, actorIntent: state.actorIntent, description: state.actor.native.description, recipe: state.actor.native.recipe,
     assertions: copy(state.assertions), deadlineMs: state.deadlineMs, assertCurrent };
+  const owner = findSponsorAudioOutputReads(trusted.request, trusted.env);
+  if (owner) {
+    freeze(result);
+    admissionEvidence.set(handle, { owner, value: result });
+  }
+  return result;
 }
 export function requireAudioSponsorAdmissionCurrent(handle: AudioSponsorAdmissionPreparation, input: OutputBridgeTargetInput, quote: OutputPreflight, audioCostConsent: unknown): OutputSqlAssertion[] {
   const state = admissions.get(handle); if (!state || json(quote) !== state.quoteJson
