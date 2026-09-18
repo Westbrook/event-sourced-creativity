@@ -92,6 +92,7 @@ export class StillDeveloperConsole extends LitElement {
     const jevState=this.pending?'Pending':this.received?'Received':'Not Requested',timing=decisionTiming(this.received,this.pending);
     const content=html`<div class="console">
           <header class="panel-heading"><h2 tabindex="-1">Decisions${this.detached?' · Live':''}</h2><div class="window-tools">${this.detached?html`<en-button variant="secondary" size="small" @click=${()=>this.dispatchEvent(new CustomEvent('developer-return'))}>Return to panel</en-button>`:html`<en-button variant="secondary" size="small" @click=${this.detach}>${this.windowOpen?'Focus window':'Open in window'}</en-button>${this.windowOpen?html`<en-button variant="ghost" size="small" @click=${this.reattach}>Close window</en-button>`:nothing}<en-button variant="ghost" size="small" aria-label="Close developer panel" @click=${()=>this.dispatchEvent(new CustomEvent('developer-disable',{bubbles:true,composed:true}))}>Close</en-button>`}</div><div class="jev-state" role="status" aria-live="polite" aria-atomic="true"><strong>Jev state</strong><div class="jev-state-badges">${['Not Requested','Pending','Received'].map(state=>html`<span class="jev-state-item"><en-badge variant=${state===jevState?'success':'neutral'} aria-current=${state===jevState?'step':nothing}><span slot="prefix" aria-hidden="true">${state===jevState?'●':'○'}</span>${state}</en-badge>${state==='Received'&&timing?html`<span class="jev-timing" title=${timing.description} aria-label=${timing.description}>${timing.label}</span>`:nothing}</span>`)}</div><span class="sr-only">Current: ${jevState}</span></div></header>
+          ${timing?html`<div class="latency-breakdown" aria-label="Decision timing">${timing.steps.map(step=>html`<span><strong>${step.label}</strong> ${step.value}</span>`)}${this.received?.delivery?.stage==='initial'?html`<en-badge variant="neutral">${this.received.delivery.enrichment==='interrupted'?'Enrichment interrupted':'Enriching…'}</en-badge>`:nothing}</div>`:nothing}
           ${this.windowError?html`<p role="alert">${this.windowError}</p>`:nothing}
           <div class="cache-status">
             <en-badge variant="neutral">${this.pending?'Checking':this.received?.cache?.status==='hit'?'Cached':this.received?.cache?.status==='shared'?'Shared request':this.received?.cache?.status==='bypass'?'Refreshed':this.received?'Fresh decision':'No decision'}</en-badge>
@@ -143,6 +144,8 @@ export class StillDeveloperConsole extends LitElement {
     return content;
   }
   static styles=css`
+    .latency-breakdown{display:flex;flex-wrap:wrap;gap:8px 16px;margin:12px 0;font-size:12px;color:var(--en-color-text-muted,#777)}
+    .latency-breakdown strong{font-weight:500;color:var(--en-color-text,#333)}
     :host{display:block;min-width:0;padding:0 20px 24px;font:13px/1.5 system-ui,sans-serif;color:#33332e;container-type:inline-size}
     :host([detached]){max-width:1200px;margin:auto;padding:0 24px 24px}
     .panel-heading{position:sticky;top:0;z-index:2;display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px;padding:18px 0 14px;background:#f7f6f2;border-bottom:1px solid #d9d7ce}

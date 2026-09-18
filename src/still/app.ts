@@ -1,3 +1,4 @@
+import { fetchDecision } from './decision-transport.ts';
 import { actionHelp, readOnboardingFlag, ONBOARDING_VIEWS, type OnboardingResult } from './onboarding.ts';
 import { OnboardingController } from './onboarding-client.ts';
 import './vendor/elements/define/tooltip.js';
@@ -55,10 +56,22 @@ export class StillApp extends LitElement {
     accept:r=>r.source==='jev'&&!r.reason&&r.policy===POLICY_VERSION&&r.head===this.client.head&&r.cache?.stored===true,
     ttl:r=>r.cache?.remainingMs??0,latency:r=>r.cache?.originalLatencyMs,age:r=>r.cache?.ageMs??0,
   });
-  private decisionKey(body:unknown){return stableDecisionKey({scope:this.client.scopeKey,epoch:this.client.epoch,head:this.client.head,abilities:this.client.abilities,body});}
+  private decisionValidity = "";
+  private decisionEvents = this.client.events;
+  private retireChangedDecisions(){
+    const validity=stableDecisionKey({scope:this.client.scopeKey,epoch:this.client.epoch,head:this.client.head,abilities:this.client.abilities});
+    if(validity!==this.decisionValidity||this.decisionEvents!==this.client.events){
+      this.decisionMemory.clear();this.decisionValidity=validity;
+      this.decisionEvents=this.client.events;
+    }
+  }
+  private decisionKey(body:unknown){
+    const ref=this.client.projection.artifacts.find(a=>a.id===this.client.position.outputId)?.contentRef;
+    return stableDecisionKey({scope:this.client.scopeKey,epoch:this.client.epoch,head:this.client.head,abilities:this.client.abilities,selectedContent:ref?this.client.content[ref]:undefined,body});
+  }
   private decisionBody(extra:Record<string,unknown>={}){return {...this.client.position,...extra,...(this.developer?{developer:true}:{})};}
-  private async requestDecision(body:Record<string,unknown>,bypass=false,timeout?:number){
-    const result=await this.decisionMemory.run(this.decisionKey(body),()=>api<DecisionResponse>('/api/still/decision',{...body,...(bypass?{cacheBypass:true}:{})},'POST',timeout),bypass);
+  private async requestDecision(body:Record<string,unknown>,bypass=false,timeout?:number,onInitial?:(value:DecisionResponse)=>void){
+    const result=await this.decisionMemory.run(this.decisionKey(body),()=>fetchDecision({...body,...(bypass?{cacheBypass:true}:{})},onInitial,timeout),bypass);
     return result.cache.status==='hit'||result.cache.status==='shared'?{...result.value,cache:{...result.cache,layer:'browser' as const}}:result.value;
   }
   private refreshDecision=()=>{
@@ -179,7 +192,7 @@ export class StillApp extends LitElement {
       if(inspector?.context)inspector.context={...inspector.context,attention:snapshot};
     });
     try{this.onboarding=readOnboardingFlag(location.href,localStorage);}catch{this.onboarding=new URL(location.href).searchParams.has('onboarding');}
-    this.client.onChange = () => { this.decisionMemory.clear(); if (this.client.recoveredWrite) { this.notice = 'Save confirmed.'; this.client.recoveredWrite = false; } this.changed(); };
+    this.client.onChange = () => { this.retireChangedDecisions(); if (this.client.recoveredWrite) { this.notice = 'Save confirmed.'; this.client.recoveredWrite = false; } this.changed(); };
     this.desktop.addEventListener('change', this.developerViewportChanged);
     window.addEventListener('keydown', this.paletteShortcut);
     window.addEventListener('popstate', this.popstate);
@@ -215,9 +228,9 @@ export class StillApp extends LitElement {
   private interactionScope(){return JSON.stringify([this.client.epoch,this.client.scopeKey,this.client.position.projectId,this.client.position.documentId]);}
   private diagnosticScope(){return `${this.developerEpoch}/${this.interactionScope()}`;}
   private localDiagnostics(reason:string, formats=false){return decisionDiagnostics(this.client.projection,{...this.client.position,...(formats?{view:'choose-format'}:{})},this.client.abilities,{head:this.client.head,source:'fallback',reason,localEvents:localHistoryEvidence(this.client.events),artifactKind:this.client.projection.artifacts.find(a=>a.id===this.client.position.outputId)?.kind});}
-  private recordDecision(result:DecisionResponse,disposition:string,scope:string,started:number){
+  private recordDecision(result:DecisionResponse,disposition:string,scope:string,started:number,firstResponseMs?:number){
     if(!this.developer||this.disposed||scope!==this.diagnosticScope())return;
-    this.developerReceived={preparation:result.preparation,cache:result.cache,receivedAt:Date.now(),at:new Date().toLocaleTimeString(),requestElapsedMs:Math.max(0,performance.now()-started),disposition,trace:result.diagnostics,source:result.source,reason:result.reason,recommended:result.paletteActions?.map(a=>a.id)??(result.formats?.length?result.formats:result.actions?.map(a=>a.id)??[])};
+    this.developerReceived={firstResponseMs,delivery:result.delivery,preparation:result.preparation,cache:result.cache,receivedAt:Date.now(),at:new Date().toLocaleTimeString(),requestElapsedMs:Math.max(0,performance.now()-started),disposition,trace:result.diagnostics,source:result.source,reason:result.reason,recommended:result.paletteActions?.map(a=>a.id)??(result.formats?.length?result.formats:result.actions?.map(a=>a.id)??[])};
     if(disposition==='Applied')this.developerApplied=result.diagnostics;
     this.changed();
   }
@@ -353,13 +366,19 @@ export class StillApp extends LitElement {
       this.developerPending=this.developer;this.changed();
       const started=performance.now();
       try {
-        const result = await this.requestDecision(this.decisionBody(),bypass);
+        let firstResponseMs:number|undefined;
+        const applyResult=(result:DecisionResponse)=>{
+        firstResponseMs??=Math.max(0,performance.now()-started);
         const disposition=responseDisposition(result,{head:this.client.head,headChanged:head!==this.client.head,stale:ticket!==this.decisionTicket||snapshot!==JSON.stringify(this.client.position)||!!this.mode||this.disposed||scope!==this.interactionScope(),focused:this.dockTouched||!!this.querySelector('.action-dock')?.contains(document.activeElement)});
-        this.recordDecision(result,disposition,diagnosticScope,started);
+        this.recordDecision(result,disposition,diagnosticScope,started,firstResponseMs);
         if(disposition==='Applied'){const allowed=new Map(this.candidates().map(a=>[a.id,a]));this.suggestions=result.actions!.map(a=>allowed.get(a.id)).filter((a):a is Action=>!!a).slice(0,4);this.rankedActions=(result.rankedActions??result.actions??[]).map(a=>allowed.get(a.id)).filter((a):a is Action=>!!a);this.emphasis=result.presentation??presentActions(this.suggestions.map(a=>a.id));this.suggestionTargets=result.targets??{};this.decisionSource=result.source;this.changed();}
+        if(ticket===this.decisionTicket){this.developerPending=false;this.changed();}
+        };
+        const result=await this.requestDecision(this.decisionBody(),bypass,undefined,applyResult);
+        applyResult(result);
       } catch(error) { this.recordDecision({source:'fallback',reason:error instanceof ApiError?`HTTP ${error.status}`:'Network unavailable',head,policy:POLICY_VERSION},'Kept local controls',diagnosticScope,started); }
       finally {if(ticket===this.decisionTicket){this.onboardingDecisionPending=false;this.developerPending=false;this.changed();}}
-    }, bypass||this.decisionMemory.peek(this.decisionKey(this.decisionBody()))?0:700);
+    }, 0);
   }
   private suggestFormats(bypass=false) {
     const ticket = this.decisionTicket, snapshot = JSON.stringify(this.client.position), head = this.client.head, scope = this.interactionScope();
@@ -379,7 +398,7 @@ export class StillApp extends LitElement {
         }
       } catch(error) { this.recordDecision({source:'fallback',reason:error instanceof ApiError?`HTTP ${error.status}`:'Network unavailable',head,policy:POLICY_VERSION},'Kept local format order',diagnosticScope,started); }
       finally {if(ticket===this.decisionTicket){this.onboardingDecisionPending=false;this.developerPending=false;this.changed();}}
-    }, bypass||this.decisionMemory.peek(this.decisionKey(this.decisionBody({view:'choose-format'})))?0:1300);
+    }, 0);
   }
   private async sync(force = false) {
     if (this.syncPending || this.disposed || this.loading || this.busy || document.hidden || !this.client.session?.policy.accepted) return;
