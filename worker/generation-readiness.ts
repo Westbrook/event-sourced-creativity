@@ -1,4 +1,4 @@
-import { assertOutputAdmissionActor, outputAdmissionBudgetOwner, outputAdmissionSponsor, readOutputAdmissionValue, type OutputAdmissionReads } from "./output-admission-reads.ts";
+import { assertOutputAdmissionActor, assertOutputAdmissionBudget, outputAdmissionBudgetOwner, outputAdmissionSponsor, readOutputAdmissionValue, requireGuestImageAdmissionPreparation, type OutputAdmissionReads } from "./output-admission-reads.ts";
 import { referencePixelMode, sendsReferencePixels } from "../src/model/block-types.ts";
 import { hasSavedModel3dView } from "../src/model/reference-media.ts";
 import { promptFactIsActive } from "../src/model/prompt-policy.ts";
@@ -22,6 +22,7 @@ import { ProductionWorkflowContextError, resolveProductionWorkflowContext } from
 import { governedPackageSourceRightsCurrent } from "./context-package-rights.ts";
 import type { ProductionWorkflowSource } from "../src/model/production-workflow.ts";
 import { assertDerivedReferenceProvenance } from "./derived-reference-guard.ts";
+import { outputSchemaIsReady } from "./output-schema-state.ts";
 
 export type GenerationPreflightInput = { kind: GenerationReadinessKind; documentId: string; documentRevision?: string; requestKey?: string; sourcePreviewId?: string | null; promptTechnique?: PromptTechnique; productionMode?:ProductionMode; snapshot?: Record<string, unknown>; sourceBlockVersions?:Array<Record<string,unknown>>;canvasId?:string;contextSetId?:string;contextRootBlockId?:string;characterOutputKind?:"headshot"|"character_sheet"; force?: boolean; sourceSurface?: string;workflowId?:string;workflowStageId?:string;workflowSources?:ProductionWorkflowSource[] };
 export type PromptTechniqueComparisonInput = { documentId: string; documentRevision?: string; sourcePreviewId?: string | null; failedTechnique?: PromptTechnique; failedPrompt?: string; kind?: "preview" | "generate"; productionMode?:ProductionMode; snapshot?: Record<string, unknown>; sourceSurface?: string };
@@ -45,7 +46,12 @@ function productionPreflightSnapshot(snapshot:Record<string,unknown>,mode:Produc
 function emptyProvider(message="No recent provider block has been observed."):ProviderHealthSnapshot { const now=Date.now();return{status:"unknown",scope:"unknown",message,observedAt:new Date(now).toISOString(),expiresAt:new Date(now+5*60_000).toISOString(),retryAfterMs:null,requestId:null}; }
 
 export async function readProviderHealth(env:WorkerEnv):Promise<ProviderHealthSnapshot>{
-  await ensureSchema(env);const row=await env.DB.prepare("SELECT status,scope,message,observed_at,expires_at,retry_after_ms,request_id FROM provider_health WHERE scope_key=?").bind(providerScopeKey(env)).first<ProviderHealthRow>();
+  await ensureSchema(env);
+  return readInstalledProviderHealth(env);
+}
+
+async function readInstalledProviderHealth(env:WorkerEnv):Promise<ProviderHealthSnapshot>{
+  const row=await env.DB.prepare("SELECT status,scope,message,observed_at,expires_at,retry_after_ms,request_id FROM provider_health WHERE scope_key=?").bind(providerScopeKey(env)).first<ProviderHealthRow>();
   if(!row||Date.parse(row.expires_at)<=Date.now())return emptyProvider();
   return{status:row.status as ProviderHealthSnapshot["status"],scope:row.scope as ProviderHealthSnapshot["scope"],message:row.message,observedAt:row.observed_at,expiresAt:row.expires_at,retryAfterMs:row.retry_after_ms===null?null:Number(row.retry_after_ms),requestId:row.request_id};
 }
@@ -177,6 +183,76 @@ export async function comparePromptTechniqueSafety(env: WorkerEnv, user: PilotUs
   return { comparisonId, documentId: projection.documentId, documentRevision, failedTechnique, recommendedTechnique, summary, results, referenceCount: references.length, imageGenerationCalls: 0, checkedAt, version };
 }
 
+function imageReadinessSource(events:EventRow[],input:GenerationPreflightInput,projectId?:string){
+  return authoritativeCreativeContext(events,{documentId:input.documentId,projectId,canvasId:input.canvasId,contextSetId:input.contextSetId,contextRootBlockId:input.contextRootBlockId,characterOutputKind:input.characterOutputKind,snapshot:input.snapshot,sourceBlockVersions:input.sourceBlockVersions});
+}
+function applicationBudgetProbe(remaining:number,estimatedTokens:number,canReadWorkspaceBudget:boolean):GenerationReadinessProbe{
+  return remaining>=estimatedTokens?{id:"application-budget",label:"Application budget",status:"pass",severity:"info",summary:canReadWorkspaceBudget?`${remaining.toLocaleString()} tokens remain; this request reserves ${estimatedTokens.toLocaleString()}.`:"This request is within your personal and organization generation limits.",action:"none"}:{id:"application-budget",label:"Application budget",status:"fail",severity:"blocking",summary:canReadWorkspaceBudget?`Only ${remaining.toLocaleString()} tokens remain; this request needs ${estimatedTokens.toLocaleString()}.`:"This request exceeds a personal or organization generation limit.",action:"review_budget"};
+}
+function configuredReadinessProvider(env:WorkerEnv,provider:ProviderHealthSnapshot):ProviderHealthSnapshot{
+  if(!env.OPENAI_API_KEY)return{...emptyProvider("The OpenAI planner and safety preflight are not configured."),status:"authentication_failed",scope:"account"};
+  if(usesFalImages(env)&&!env.FAL_KEY)return{...emptyProvider("Fal is selected for images but no Fal credential is configured."),status:"authentication_failed",scope:"account"};
+  return provider;
+}
+function providerReadinessProbe(env:WorkerEnv,provider:ProviderHealthSnapshot):GenerationReadinessProbe{
+  const providerLabel=usesFalImages(env)?"Fal + safety availability":"OpenAI availability";
+  return statusBlocksProvider(provider)?{id:"provider-health",label:providerLabel,status:"fail",severity:"blocking",summary:provider.message,action:provider.status==="rate_limited"?"wait":"refresh_provider"}:{id:"provider-health",label:providerLabel,status:"pass",severity:"info",summary:provider.status==="healthy"?provider.message:"No recent account, project, or model block has been observed.",action:"none"};
+}
+function imageFormatReadinessProbe(env:WorkerEnv,snapshot:Record<string,unknown>,kind:GenerationReadinessKind,outputImageRender?:{format:ImageFormat;size:`${number}x${number}`}):GenerationReadinessProbe{
+  const selected=outputImageRender?{format:outputImageRender.format,blockId:null}:documentImageFormat(snapshot);const render=outputImageRender??providerRenderFormat(selected.format,kind.startsWith("preview")?"preview":"full");const falSize=usesFalImages(env)?validateFalImageSize(render.size):null;const openaiSize=falSize?null:validateProviderImageSize(render.size);const sizeValid=falSize?.valid??openaiSize?.valid??false;const sizeIssues=falSize?[falSize.reason]:openaiSize?.issues??["The image size is not supported."];
+  return sizeValid?{id:"image-format",label:"Image format",status:"pass",severity:"info",summary:`${render.size} is accepted by the configured image adapter.`,action:"none"}:{id:"image-format",label:"Image format",status:"fail",severity:"blocking",summary:sizeIssues.join(" "),action:"review_blocks",blockIds:selected.blockId?[selected.blockId]:[]};
+}
+function contextSizeReadinessProbe(snapshot:Record<string,unknown>):GenerationReadinessProbe{
+  const payloadLength=JSON.stringify(snapshot).length;
+  return payloadLength>650_000?{id:"context-size",label:"Compiled context",status:"fail",severity:"blocking",summary:`The document context is ${payloadLength.toLocaleString()} characters and exceeds the durable job limit.`,action:"review_blocks"}:payloadLength>240_000?{id:"context-size",label:"Compiled context",status:"warning",severity:"warning",summary:"The document is unusually large. Safe compaction will run before the image request, but review very long block instructions.",action:"review_blocks"}:{id:"context-size",label:"Compiled context",status:"pass",severity:"info",summary:`${payloadLength.toLocaleString()} characters can be safely compiled.`,action:"none"};
+}
+function localContextSafetyProbe():GenerationReadinessProbe{
+  return{id:"context-safety",label:"Context safety review",status:"unknown",severity:"warning",summary:"No source has been sent. The exact prompt and selected reference pixels will be checked after authorization before image generation.",action:"review_prompt"};
+}
+function readinessSummary(probes:GenerationReadinessProbe[]){
+  const blocked=probes.some((probe)=>probe.status==="fail"&&probe.severity==="blocking");const review=!blocked&&probes.some((probe)=>probe.status==="warning"||probe.status==="unknown");const status=blocked?"blocked" as const:review?"review" as const:"ready" as const;const summary=blocked?probes.find((probe)=>probe.status==="fail"&&probe.severity==="blocking")?.summary??"Generation is blocked.":review?"Review the highlighted context before generation.":"Ready for generation.";
+  return{review,status,summary};
+}
+
+/** A sealed guest Image check has no installation, network, cache or write mode. */
+export async function preflightGuestImageAdmission(request:Request,env:WorkerEnv,reads:OutputAdmissionReads):Promise<GenerationReadiness>{
+  const current=()=>requireGuestImageAdmissionPreparation(reads,request,env);
+  const frame=current();
+  if(!outputSchemaIsReady(env.DB))throw new Error("output_budget_assertion_schema_unavailable");
+  if(frame.target.media_kind!=="image"||!frame.render)throw new Error("guest_image_admission_image_required");
+  const checkedAt=nowIso();
+  const input:GenerationPreflightInput={kind:"generate",documentId:frame.documentId,documentRevision:frame.context.documentRevision,
+    snapshot:frame.context.snapshot,sourceBlockVersions:frame.context.sourceBlockVersions,productionMode:"manual"};
+  const events=[...frame.sourceEvents],trusted=imageReadinessSource(events,input,frame.projectId),snapshot=trusted.snapshot;
+  if(trusted.documentRevision!==frame.context.documentRevision||JSON.stringify(snapshot)!==JSON.stringify(frame.context.snapshot)
+    ||JSON.stringify(trusted.sourceBlockVersions)!==JSON.stringify(frame.context.sourceBlockVersions))throw new Error("guest_image_admission_source_changed");
+  const facts=Array.isArray(snapshot.facts)?snapshot.facts as Array<Record<string,unknown>>:[];
+  if(facts.some(fact=>["reference","model3d"].includes(String(fact.type))))throw new Error("guest_image_admission_text_source_required");
+  // Guest eligibility comes from possession and approval. Only the actual payer
+  // uses canonical pilot eligibility; an absent guest participant is not proof.
+  const payer=outputAdmissionBudgetOwner(reads,env,frame.actorUserId,frame.actorUserId);
+  const payerAllowance=await pilotExecutionAllowance(env,payer,undefined,reads);current();
+  if(!payerAllowance.allowed||payerAllowance.pilot)throw new Error("sponsor_managed_pilot_unsupported");
+  const scopes=await readOutputAdmissionValue(reads,"budget-scopes",()=>ownerDocumentBudgetScopes(env,frame.ownerUserId,frame.documentId,frame.projectId));current();
+  if(scopes.length)throw new Error("sponsor_organization_budget_unsupported");
+  const budgets=await readOutputAdmissionValue(reads,"token-budgets",()=>readBudgets(env,payer,{initialize:false}));current();
+  assertOutputAdmissionBudget(reads,env,payer,budgets.period);
+  const estimatedTokens=generationReadinessReservation("generate");
+  const remaining=Math.max(0,Math.min(budgets.user.limit-budgets.user.used-budgets.user.reserved,budgets.workspace.limit-budgets.workspace.used-budgets.workspace.reserved));
+  const observedProvider=await readOutputAdmissionValue(reads,"provider-health",()=>readInstalledProviderHealth(env));current();
+  const provider=configuredReadinessProvider(env,observedProvider);
+  const probes:GenerationReadinessProbe[]=[applicationBudgetProbe(remaining,estimatedTokens,false),providerReadinessProbe(env,provider),
+    imageFormatReadinessProbe(env,snapshot,"generate",frame.render),contextSizeReadinessProbe(snapshot),
+    {id:"reference-availability",label:"Reference pixels",status:"pass",severity:"info",summary:"Requested reference images and saved 3D views are available or context-only.",action:"none"},localContextSafetyProbe()];
+  const {review,status,summary}=readinessSummary(probes);
+  const sourceContextHead=events.filter(event=>CONTEXT_MUTATION_TYPES.includes(event.type as typeof CONTEXT_MUTATION_TYPES[number])).reduce((head,event)=>Math.max(head,event.sequence),0);
+  const result:GenerationReadiness={preflightId:uuidV7(),requestKey:`guest-image:${frame.preflight.id}`,documentId:frame.documentId,
+    documentRevision:trusted.documentRevision,sourceContextHead,kind:"generate",productionMode:"manual",promptTechnique:normalizePromptTechnique(undefined),
+    status,summary,probes,provider,estimatedTokens,estimatedCostMicrousd:generationReadinessCostMicrousd("generate"),estimatedSeconds:generationReadinessSeconds("generate"),
+    requiresAcknowledgement:review,checkedAt,expiresAt:new Date(Math.min(Date.parse(checkedAt)+10*60_000,frame.expiresAtMs)).toISOString(),cached:false,version:GENERATION_PREFLIGHT_VERSION};
+  current();return result;
+}
+
 export async function preflightGeneration(env:WorkerEnv,user:PilotUser,input:GenerationPreflightInput,options:{appendEvents?:boolean;allowCache?:boolean;sourceEvents?:EventRow[];allowProviderCalls?:boolean;persist?:boolean;outputAdmissionReads?:OutputAdmissionReads;outputImageRender?:{format:ImageFormat;size:`${number}x${number}`}}={}):Promise<GenerationReadiness>{
   assertOutputAdmissionActor(options.outputAdmissionReads,env,user.userId,user.projectExecution?.organizationId??null,user.projectExecution?.projectAccessId??null,input.documentId);
   const sponsor=outputAdmissionSponsor(options.outputAdmissionReads);
@@ -203,7 +279,7 @@ export async function preflightGeneration(env:WorkerEnv,user:PilotUser,input:Gen
       prefetched=null;
     }catch{prefetched=null;/* Recompute malformed cache rows. */}
   }
-  const events=options.sourceEvents??await readWorkspaceEvents(env,user.streamId);const trusted=authoritativeCreativeContext(events,{documentId:input.documentId,projectId:execution?.projectId,canvasId:input.canvasId,contextSetId:input.contextSetId,contextRootBlockId:input.contextRootBlockId,characterOutputKind:input.characterOutputKind,snapshot:input.snapshot,sourceBlockVersions:input.sourceBlockVersions});const projection=trusted.projection;const baseSnapshot=trusted.snapshot;const documentRevision=trusted.documentRevision;
+  const events=options.sourceEvents??await readWorkspaceEvents(env,user.streamId);const trusted=imageReadinessSource(events,input,execution?.projectId);const projection=trusted.projection;const baseSnapshot=trusted.snapshot;const documentRevision=trusted.documentRevision;
   if(sponsor){
     const actorAllowance=await readOutputAdmissionValue(options.outputAdmissionReads,"sponsor-actor-pilot-allowance",()=>pilotExecutionAllowance(env,user.userId));
     if(!actorAllowance.allowed||actorAllowance.pilot)throw new Error("sponsor_managed_pilot_unsupported");
@@ -235,12 +311,11 @@ export async function preflightGeneration(env:WorkerEnv,user:PilotUser,input:Gen
   const budgetOwner=outputAdmissionBudgetOwner(options.outputAdmissionReads,env,user.userId,user.billingUserId??user.userId);
   const estimatedTokens=generationReadinessReservation(input.kind);const budgets=execution?(await readOutputAdmissionValue(options.outputAdmissionReads,"account-budgets",()=>readAccountBudgets(env,user.userId,execution.organizationId))).budgets:await readOutputAdmissionValue(options.outputAdmissionReads,"token-budgets",()=>readBudgets(env,budgetOwner,sponsor?{initialize:false}:{}));const remaining=Math.max(0,Math.min(budgets.user.limit-budgets.user.used-budgets.user.reserved,budgets.workspace.limit-budgets.workspace.used-budgets.workspace.reserved));
   const canReadWorkspaceBudget=!sponsor&&(!execution||hasCapability(user,"workspace.usage.read",{organizationId:execution.organizationId}));
-  add(remaining>=estimatedTokens?{id:"application-budget",label:"Application budget",status:"pass",severity:"info",summary:canReadWorkspaceBudget?`${remaining.toLocaleString()} tokens remain; this request reserves ${estimatedTokens.toLocaleString()}.`:"This request is within your personal and organization generation limits.",action:"none"}:{id:"application-budget",label:"Application budget",status:"fail",severity:"blocking",summary:canReadWorkspaceBudget?`Only ${remaining.toLocaleString()} tokens remain; this request needs ${estimatedTokens.toLocaleString()}.`:"This request exceeds a personal or organization generation limit.",action:"review_budget"});
-  let provider=await readOutputAdmissionValue(options.outputAdmissionReads,"provider-health",()=>readProviderHealth(env));if(!env.OPENAI_API_KEY){provider={...emptyProvider("The OpenAI planner and safety preflight are not configured."),status:"authentication_failed",scope:"account"};}else if(usesFalImages(env)&&!env.FAL_KEY){provider={...emptyProvider("Fal is selected for images but no Fal credential is configured."),status:"authentication_failed",scope:"account"};}
-  const providerLabel=usesFalImages(env)?"Fal + safety availability":"OpenAI availability";add(statusBlocksProvider(provider)?{id:"provider-health",label:providerLabel,status:"fail",severity:"blocking",summary:provider.message,action:provider.status==="rate_limited"?"wait":"refresh_provider"}:{id:"provider-health",label:providerLabel,status:"pass",severity:"info",summary:provider.status==="healthy"?provider.message:"No recent account, project, or model block has been observed.",action:"none"});
-  const selected=options.outputImageRender?{format:options.outputImageRender.format,blockId:null}:documentImageFormat(snapshot);const render=options.outputImageRender??providerRenderFormat(selected.format,input.kind.startsWith("preview")?"preview":"full");const falSize=usesFalImages(env)?validateFalImageSize(render.size):null;const openaiSize=falSize?null:validateProviderImageSize(render.size);const sizeValid=falSize?.valid??openaiSize?.valid??false;const sizeIssues=falSize?[falSize.reason]:openaiSize?.issues??["The image size is not supported."];
-  add(sizeValid?{id:"image-format",label:"Image format",status:"pass",severity:"info",summary:`${render.size} is accepted by the configured image adapter.`,action:"none"}:{id:"image-format",label:"Image format",status:"fail",severity:"blocking",summary:sizeIssues.join(" "),action:"review_blocks",blockIds:selected.blockId?[selected.blockId]:[]});
-  const payloadLength=JSON.stringify(snapshot).length;add(payloadLength>650_000?{id:"context-size",label:"Compiled context",status:"fail",severity:"blocking",summary:`The document context is ${payloadLength.toLocaleString()} characters and exceeds the durable job limit.`,action:"review_blocks"}:payloadLength>240_000?{id:"context-size",label:"Compiled context",status:"warning",severity:"warning",summary:"The document is unusually large. Safe compaction will run before the image request, but review very long block instructions.",action:"review_blocks"}:{id:"context-size",label:"Compiled context",status:"pass",severity:"info",summary:`${payloadLength.toLocaleString()} characters can be safely compiled.`,action:"none"});
+  add(applicationBudgetProbe(remaining,estimatedTokens,canReadWorkspaceBudget));
+  let provider=configuredReadinessProvider(env,await readOutputAdmissionValue(options.outputAdmissionReads,"provider-health",()=>readProviderHealth(env)));
+  add(providerReadinessProbe(env,provider));
+  add(imageFormatReadinessProbe(env,snapshot,input.kind,options.outputImageRender));
+  add(contextSizeReadinessProbe(snapshot));
   const facts=Array.isArray(snapshot.facts)?snapshot.facts as Array<Record<string,unknown>>:[];
   const pixelFacts=facts.filter((fact)=>["reference","model3d"].includes(String(fact.type))&&promptFactIsActive(fact)&&sendsReferencePixels(((fact.properties??{}) as Record<string,unknown>).pixel_reference_mode));
   const missingReferences=pixelFacts.filter((fact)=>!String(((fact.properties??{}) as Record<string,unknown>).media_url??"")||fact.type==="model3d"&&!hasSavedModel3dView((fact.properties??{}) as Record<string,unknown>)).map((fact)=>String(fact.block_id??"")).filter(Boolean);
@@ -254,13 +329,13 @@ export async function preflightGeneration(env:WorkerEnv,user:PilotUser,input:Gen
   const unavailableReferenceIds=[...new Set([...missingReferences,...provenanceFailures.map(failure=>failure.blockId)])];
   add(unavailableReferenceIds.length?{id:"reference-availability",label:"Reference pixels",status:"fail",severity:"blocking",summary:provenanceFailures[0]?.summary??(pixelFacts.some(fact=>fact.type==="model3d"&&missingReferences.includes(String(fact.block_id??"")))?"Open the 3D model and save the image view you want to send before generating.":`${missingReferences.length} requested image reference${missingReferences.length===1?" is":"s are"} unavailable.`),action:"review_references",blockIds:unavailableReferenceIds}:{id:"reference-availability",label:"Reference pixels",status:"pass",severity:"info",summary:"Requested reference images and saved 3D views are available or context-only.",action:"none"});
   const previousSafety=previous?.documentRevision===documentRevision&&(previous.productionMode??"manual")===productionMode&&(!hasWorkflow||previous.requestKey===requestKey)&&Date.parse(previous.expiresAt)>Date.now()?previous.probes.find((probe)=>probe.id==="context-safety"):null;
-  if(options.allowProviderCalls===false)add({id:"context-safety",label:"Context safety review",status:"unknown",severity:"warning",summary:"No source has been sent. The exact prompt and selected reference pixels will be checked after authorization before image generation.",action:"review_prompt"});
+  if(options.allowProviderCalls===false)add(localContextSafetyProbe());
   else if(previousSafety)add({...previousSafety,summary:`${previousSafety.summary} Reused for the same document revision; the exact prompt and selected pixels will still be checked before image work.`});
   else if(env.OPENAI_API_KEY&&!statusBlocksProvider(provider)&&remaining>=estimatedTokens&&!unavailableReferenceIds.length)try{
     const moderation=await moderateGenerationSnapshot(env,snapshot);
     add(moderation.flagged?{id:"context-safety",label:"Context safety review",status:"warning",severity:"warning",summary:`Likely moderation concern${moderation.categories.length?`: ${moderation.categories.join(", ")}`:""}. Review the named context before sending it to the image workflow.`,action:"review_blocks",blockIds:moderation.blockIds,categories:moderation.categories}:{id:"context-safety",label:"Context safety review",status:"pass",severity:"info",summary:`Text context passed an advisory ${moderation.model} review in ${moderation.latencyMs}ms. Exact prompt and selected reference pixels will be checked again before image generation.`,action:"none"});
   }catch(error){const detail=classifyProviderFailure(error);const observed=await observeProviderFailure(env,detail);if(observed){provider=observed;add({id:"context-safety",label:"Context safety review",status:statusBlocksProvider(observed)?"fail":"unknown",severity:statusBlocksProvider(observed)?"blocking":"warning",summary:observed.message,action:statusBlocksProvider(observed)?"refresh_provider":"none"});}else add({id:"context-safety",label:"Context safety review",status:"unknown",severity:"warning",summary:"The advisory safety probe was unavailable. Generation can continue only after acknowledging that the request was not pre-screened.",action:"review_prompt"});}
-  const blocked=probes.some((probe)=>probe.status==="fail"&&probe.severity==="blocking");const review=!blocked&&probes.some((probe)=>probe.status==="warning"||probe.status==="unknown");const status=blocked?"blocked":review?"review":"ready";const summary=blocked?probes.find((probe)=>probe.status==="fail"&&probe.severity==="blocking")?.summary??"Generation is blocked.":review?"Review the highlighted context before generation.":"Ready for generation.";
+  const {review,status,summary}=readinessSummary(probes);
   const canvas=baseSnapshot.canvas&&typeof baseSnapshot.canvas==="object"?baseSnapshot.canvas as Record<string,unknown>:{};
   const sourceContextHead=events.filter((event)=>CONTEXT_MUTATION_TYPES.includes(event.type as typeof CONTEXT_MUTATION_TYPES[number])).reduce((head,event)=>Math.max(head,event.sequence),0);
   const result:GenerationReadiness={preflightId,requestKey,documentId:projection.documentId,documentRevision,sourceContextHead,...(canvas.canvas_id?{canvasId:String(canvas.canvas_id),contextSetId:String(canvas.context_set_id??"")}:{}),kind:input.kind,productionMode,promptTechnique:technique,status,summary,probes,provider,estimatedTokens,estimatedCostMicrousd:generationReadinessCostMicrousd(input.kind),estimatedSeconds:generationReadinessSeconds(input.kind),requiresAcknowledgement:review,checkedAt,expiresAt,cached:false,version:GENERATION_PREFLIGHT_VERSION};
