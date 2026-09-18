@@ -27,6 +27,7 @@ export interface WorkerEnv {
   FORMA_MEMORY_PROFILE_USER_IDS?: string;
   /** Separate purpose/cost rollout. Unset qualification bindings remain inert. */
   FORMA_MEMORY_DERIVATION_ENABLED?: string;
+  FORMA_MEMORY_DERIVATION_PROCESSING_ENABLED?: string;
   FORMA_MEMORY_DERIVATION_USER_IDS?: string;
   FORMA_MEMORY_DERIVATION_SOURCE_SHA256?: string;
   FORMA_MEMORY_DERIVATION_ORIGIN?: string;

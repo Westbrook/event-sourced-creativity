@@ -7,7 +7,7 @@ import { liveMemoryLifetimeProjection, liveMemorySourceDeadline } from "./memory
 import { nativeMemoryAnswerExclusion } from "./memory-native-boundary.ts";
 import { observeNativeMemoryDocumentScope } from "./memory-native-scope.ts";
 import { memoryCanonical } from "./memory-sql.ts";
-import { derivationExact, derivationId, derivationInteger, derivationTime } from "./memory-derivation-policy.ts";
+import { derivationExact, derivationHash, derivationId, derivationInteger, derivationTime } from "./memory-derivation-policy.ts";
 import { derivationResults } from "./memory-derivation-store.ts";
 import { nativeDerivationEvidenceInputs, nativeDerivationEvidenceStatements, replayNativeDerivationEvidence, type NativeDerivationEvidence } from "./memory-derivation-admission.ts";
 import type { MemoryDerivationSource } from "./memory-derivation-result.ts";
@@ -31,7 +31,7 @@ type CaptureData = { jobId: string; purpose: MemoryDerivationSourcePurpose; scop
     enrollmentRevision: number; termsSha256: string; afterSequence: number; throughSequence: number };
   retentionCeiling: string; originals: MemoryDerivationSource[]; originalBacking: Backing[]; observations: NativeDerivationObservation[];
   provenance: NativeDerivationProvenance;
-  coverage: { queuedReferences: number; originalPairs: number; typedObservations: number; allReferencesCaptured: true; semanticComplete: false } };
+  coverage: { queuedReferences: number; originalPairs: number; typedObservations: number; excludedByUserControls?: number; allReferencesCaptured: true; semanticComplete: false } };
 type MemoryDerivationSourcePurpose = ReturnType<typeof nativeDerivationEvidenceInputs>["grant"]["purpose"];
 declare const issuedCapture: unique symbol;
 export type NativeDerivationSourceCapture = Readonly<{ [issuedCapture]: true }>;
@@ -200,6 +200,21 @@ export async function captureNativeDerivationSources(env: WorkerEnv, lease: Nati
     }
     if (bytes(JSON.stringify(originals)) > 460000 || new Set(originals.map(source => source.sourceId)).size !== originals.length) return capacity();
     const retentionCeiling = [...ceilings, ...originals.map(row => row.expiresAt), ...observations.map(row => row.expiresAt)].sort()[0]!;
+    let excludedByUserControls = 0;
+    if (input.userControlsPresent && originals.length) {
+      // Native read witness includes both presence and absence. A concurrent
+      // correction/release invalidates provider and publication proofs.
+      const controls = await read({ sql: `SELECT lineage_id,revision,action,expires_at FROM memory_derivation_user_controls
+        WHERE enrollment_id=? AND actor_user_id=? AND purpose=? AND scope_key=? AND lineage_id IN(SELECT value FROM json_each(?))
+        ORDER BY lineage_id LIMIT 65`, bindings: [e.enrollment_id,e.actor_user_id,g.purpose,scopeKey,JSON.stringify([...new Set(originals.map(row=>row.lineageId))])] });
+      if (controls.length>64 || controls.some(row=>!derivationExact(row,['lineage_id','revision','action','expires_at'])
+        || !derivationHash(row.lineage_id) || !derivationInteger(row.revision,1) || !['suppressed','corrected','released'].includes(String(row.action))
+        || !derivationTime(row.expires_at))) return unavailable();
+      const blocked = new Set(controls.filter(row=>row.action!=='released' && String(row.expires_at)>checkedAt).map(row=>row.lineage_id));
+      const kept = originals.filter(row=>!blocked.has(row.lineageId));excludedByUserControls=(originals.length-kept.length)/2;
+      originals.splice(0,originals.length,...kept);
+      for(const row of controls)if(String(row.expires_at)>checkedAt)witness.before(String(row.expires_at));
+    }
     const validUntil = [input.validUntil, retentionCeiling].sort()[0]!;
     // Keep every input, including uncited originals and observations. These
     // descriptors enable later exact manifest comparison and targeted erasure;
@@ -218,7 +233,7 @@ export async function captureNativeDerivationSources(env: WorkerEnv, lease: Nati
       binding: { actorUserId: e.actor_user_id, consentId: g.consent_id, grantId: g.grant_id, grantRevision: g.revision,
         enrollmentId: e.enrollment_id, enrollmentRevision: g.enrollment_revision, termsSha256: g.terms_sha256,
         afterSequence: job.after_sequence, throughSequence: job.through_sequence },
-      coverage: { queuedReferences: rows.length, originalPairs: originals.length / 2, typedObservations: observations.length, allReferencesCaptured: true, semanticComplete: false } };
+      coverage: { queuedReferences: rows.length, originalPairs: originals.length / 2, typedObservations: observations.length, ...(excludedByUserControls?{excludedByUserControls}:{}), allReferencesCaptured: true, semanticComplete: false } };
     witness.before(validUntil); witness.seal(data);
     const captured: Captured = { env, db, lease, validUntil, witness }, handle = Object.freeze({}) as NativeDerivationSourceCapture;
     captures.set(handle, captured);

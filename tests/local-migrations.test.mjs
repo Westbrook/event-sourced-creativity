@@ -844,3 +844,18 @@ test('Memory semantic results migration is additive, schema-only and exact on re
   assert.equal(migrateLocalDatabase(sqlite,{migrations:actualMigrations}).migrations.find(m=>m.tag===target.tag).status,'already-applied');
   assert.deepEqual(sqlite.prepare('PRAGMA foreign_key_check').all(),[]);
 });
+
+for(const [tag,statementCount,tables] of [
+  ['0048_memory_derivation_user_controls',11,['memory_derivation_user_controls']],
+  ['0049_memory_derivation_completion',8,['memory_derivation_completions','memory_derivation_completion_cursors']],
+])test('Memory additive controls/completion migration '+tag+' preserves rows and reruns exactly',t=>{
+  const target=actualMigrations.find(m=>m.tag===tag);assert.ok(target);const sqlite=database(t);
+  migrateLocalDatabase(sqlite,{migrations:actualMigrations.slice(0,actualMigrations.indexOf(target))});
+  sqlite.prepare('INSERT INTO memory_derivation_month_caps VALUES(?,?,?)').run('isolated-retained-payer','2026-09',450);
+  const oldSchema=schema(sqlite),receipts=rows(sqlite,receiptTable),caps=rows(sqlite,'memory_derivation_month_caps');
+  migrateLocalDatabase(sqlite,{migrations:actualMigrations,dryRun:true});assert.deepEqual(schema(sqlite),oldSchema);assert.deepEqual(rows(sqlite,receiptTable),receipts);
+  const applied=migrateLocalDatabase(sqlite,{migrations:actualMigrations}).migrations.find(m=>m.tag===tag);assert.equal(applied.executedStatements,statementCount);assert.equal(applied.status,'applied');
+  for(const table of tables)assert.deepEqual(rows(sqlite,table),[]);assert.deepEqual(rows(sqlite,'memory_derivation_month_caps'),caps);
+  assert.equal(migrateLocalDatabase(sqlite,{migrations:actualMigrations}).migrations.find(m=>m.tag===tag).status,'already-applied');
+  assert.deepEqual(sqlite.prepare('PRAGMA foreign_key_check').all(),[]);
+});

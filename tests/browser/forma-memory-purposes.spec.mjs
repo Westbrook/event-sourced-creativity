@@ -17,11 +17,17 @@ for(const locale of ['en','ar'])test.describe('Memory purpose locale '+locale,()
   const purposes={version:'memory-derivation-control-v1',enabled:false,available:false,reason:'disabled',policyVersion:'personal-memory-derivation-v1',
     scope:{projectId:item.projectId,documentId:item.documentId,custody:{kind:'personal'}},enrollmentId:item.id,enrollmentRevision:1,grants:[],qualifications:[],
     capScope:'payer-utc-calendar-month-all-memory-purposes',sourceWindow:'future-originals',processingImplemented:false,financial:{period:new Date().toISOString().slice(0,7),checkedAt:new Date().toISOString(),capMicroUsd:100000,usedMicroUsd:580,reservedMicroUsd:1200,remainingMicroUsd:98220,retention:'independent-of-memory-erasure'}};
+  const entry={jobId:'1'.repeat(64),purpose:'rolling-summary',scopeKey:'synthetic-private-scope',expiresAt:item.expiresAt},lineage='2'.repeat(64),claimKey='3'.repeat(64),validUntil=new Date(Date.now()+60000).toISOString();
+  const reviewList={version:purposes.version,scope:purposes.scope,enrollmentId:item.id,enrollmentRevision:1,results:[entry],next:null,checkedAt:new Date().toISOString(),progress:[]};
+  const reviewResult={version:purposes.version,jobId:entry.jobId,expiresAt:entry.expiresAt,controlRevisions:{[lineage]:0},candidate:{version:'memory-derivation-candidates-v1',purpose:entry.purpose,scopeKey:entry.scopeKey,manifestId:entry.jobId,manifestRevision:1,validUntil,semanticAuthority:'model-derived-unverified',semanticCompleteness:false,independentEvidence:false,
+    items:[{operation:'assert',target:null,category:'proposal',text:'Synthetic private proposal <script>not code</script>.',supports:[],counterevidence:[],claimKey,lineageIds:[lineage],sourceBindings:[],validUntil,citationStatus:'support-cited'}]}};
   const calls=[],errors=[];page.on('pageerror',error=>errors.push(error.message));
   await context.route('**/api/memory/**',async route=>{const request=route.request(),url=new URL(request.url());calls.push({method:request.method(),path:url.pathname,query:url.search});
     expect(url.origin).toBe(origin);expect(request.method()).toBe('GET');
     if(url.pathname==='/api/memory/settings'&&!url.search)return route.fulfill({json:settings});
     if(url.pathname==='/api/memory/derivation/settings'&&url.search==='?projectId=project-atmosphere&documentId=doc-atmosphere')return route.fulfill({json:purposes});
+    if(url.pathname==='/api/memory/derivation/results')return route.fulfill({json:reviewList});
+    if(url.pathname==='/api/memory/derivation/result'&&url.search==='?jobId='+entry.jobId)return route.fulfill({json:reviewResult});
     throw new Error('Undeclared Memory read');
   });
   await page.setViewportSize({width:locale==='ar'?320:1280,height:900});
@@ -54,6 +60,18 @@ for(const locale of ['en','ar'])test.describe('Memory purpose locale '+locale,()
   await info.attach('financial-disclosure-scroll',{body:JSON.stringify(scrollEvidence),contentType:'application/json'});
   await expect(section.getByRole('button',{name:message(locale,'purposeEnable'),exact:true})).toBeInViewport();
   await captureViewport(page,info,'memory-purposes-bounds-'+locale,{assertStable:false});
+  const review=section.locator('[data-memory-derived-review]');
+  await review.getByRole('button',{name:message(locale,'reviewLoad'),exact:true}).click();
+  await review.getByRole('button',{name:message(locale,'reviewInspect'),exact:true}).click();
+  await expect(review.locator('[data-memory-derived-content]')).toContainText('Synthetic private proposal <script>not code</script>.');
+  await expect(review.locator('script')).toHaveCount(0);
+  await expect(review.getByRole('button',{name:message(locale,'reviewCorrect'),exact:true})).toBeDisabled();
+  const correction=review.getByRole('textbox',{name:message(locale,'reviewCorrection'),exact:true});await correction.fill('A synthetic user correction.');
+  await expect(review.getByRole('button',{name:message(locale,'reviewCorrect'),exact:true})).toBeEnabled();
+  expect(calls.filter(c=>c.path.includes('/derivation/'))).toHaveLength(3);expect(calls.every(c=>c.method==='GET')).toBe(true);
+  await captureViewport(page,info,'memory-derived-review-'+locale,{assertStable:false});
+  await section.locator(':scope > summary').click();await expect(section.locator('[data-memory-derived-content]')).toHaveCount(0);
+  await section.locator(':scope > summary').click();await expect(section.locator('textarea')).toHaveCount(0);expect(errors).toEqual([]);
   await info.attach('declared-memory-transport',{body:JSON.stringify({syntheticOnly:true,production:false,providerCalls:0,mutations:0,calls,session:JSON.parse(syntheticReadBody('/api/session')).user.userId},null,2),contentType:'application/json'});
 });
 

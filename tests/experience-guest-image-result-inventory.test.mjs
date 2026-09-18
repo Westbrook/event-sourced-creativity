@@ -838,3 +838,19 @@ for(const link of ['unrelated','manifest-guest','manifest-document','manifest-du
   for(const row of definitions)f.sqlite.exec(row.sql);f.sqlite.exec('PRAGMA foreign_keys='+Number(wasForeignKeys));
   configurationTripwire(f,t);if(link==='unrelated')assert.deepEqual(await currentManifest(f,t),before);else await denied(f,t);
 });
+
+for(const fault of ['none','missing-inverse','inbound-view'])test('Memory user-control schema preserves guest isolation '+fault,async t=>{
+  const f=await completedResultFixture(t,{memory:true}),before=await currentManifest(f,t);installDerivationFinanceSchema(f);
+  installQualifiedMigration(f,'0020_assistant_runtime_tables.sql');installQualifiedMigration(f,'0047_memory_derivation_results.sql');installQualifiedMigration(f,'0048_memory_derivation_user_controls.sql');
+  if(fault==='missing-inverse')f.sqlite.exec('DROP TRIGGER memory_derivation_user_control_source_update');
+  if(fault==='inbound-view')f.sqlite.exec('CREATE VIEW unqualified_user_controls AS SELECT correction_text FROM memory_derivation_user_controls');
+  configurationTripwire(f,t);if(fault==='none')assert.deepEqual(await currentManifest(f,t),before);else await denied(f,t);
+});
+
+for(const fault of ['none','missing-guard','inbound-view'])test('Memory completion schema preserves guest isolation '+fault,async t=>{
+  const f=await completedResultFixture(t,{memory:true}),before=await currentManifest(f,t);installDerivationFinanceSchema(f);
+  for(const name of ['0020_assistant_runtime_tables','0047_memory_derivation_results','0048_memory_derivation_user_controls','0049_memory_derivation_completion'])installQualifiedMigration(f,name+'.sql');
+  if(fault==='missing-guard')f.sqlite.exec('DROP TRIGGER memory_derivation_completion_cursor_update');
+  if(fault==='inbound-view')f.sqlite.exec('CREATE VIEW unqualified_completion AS SELECT * FROM memory_derivation_completions');
+  configurationTripwire(f,t);if(fault==='none')assert.deepEqual(await currentManifest(f,t),before);else await denied(f,t);
+});

@@ -47,8 +47,7 @@ adds retained cap floors and protected original accounting. The subsequent
 [financial execution slice](forma-memory-financial-execution-2026-09-18.md) implements
 source-bound admission, one-shot provider transport, original-ledger recovery,
 organization deletion and localized cap/privacy controls with isolated tests.
-Durable semantic publication, worker integration, broader scopes/producers and
-full integration remain implementation work, not external-service gates.
+[User controls and native worker integration](forma-memory-user-controls-worker-2026-09-18.md) now add source-bound corrections/suppression, localized review UI, atomic completion, bounded dispatch and processing snapshots. Broader scopes/producers, consumer integration and index lifecycle remain native implementation work, not external-service gates.
 
 - Canvas now records a personal artifact view only after the actual viewer opens,
   hashing the exact retained bytes and rechecking route, revision, custody and visibility.
@@ -77,11 +76,11 @@ These are not external-service blockers and must not be moved into a rollout-onl
 | Work | Concrete next step | Completion evidence |
 | --- | --- | --- |
 | Purpose grants / native accounting integration | Consent, source-bound native holds, payer-month caps, one-shot transport, settlement/recovery and manual UI are implemented; connect them to durable semantic processing | Real admission/accounting/recovery and privacy tests, no automatic enrollment |
-| Reliable changed-scope delivery | Reference jobs, leases and [bounded recovery](forma-memory-native-recovery-2026-09-18.md) are implemented. [Private result storage and source inverses](forma-memory-native-results-2026-09-18.md) are implemented. Complete processing windows, completed cursors and index outbox acknowledgements | Cursor/publication atomicity, replay, backpressure, source invalidation and deletion acknowledgements |
+| Reliable changed-scope delivery | Reference jobs, leases and [bounded recovery](forma-memory-native-recovery-2026-09-18.md) are implemented. [Private result storage and source inverses](forma-memory-native-results-2026-09-18.md) are implemented. Atomic eligible-work completion cursors and bounded native worker are implemented; finish overflow/rebase processing windows and index outbox acknowledgements | Cursor/publication atomicity, replay, backpressure, source invalidation and deletion acknowledgements |
 | Wider scope identities | Implement canonical nested-project and page/block/artifact identities, bounded ancestry and reparent invalidation | Cycle, move, isolation and independent access-versus-relevance tests |
 | Broader source and consumption coverage | Extend original assistant capture, longer-history rebase and genuine inspection/reuse evidence | Exact source/body/lifetime/custody proofs; do not infer preference or comprehension from a click |
-| Semantic/profile and suggestion callers | Citation parsing, provider adapter, [fresh read-only evidence](forma-memory-native-read-evidence-2026-09-18.md) and [complete-input manifests/publication receipts](forma-memory-native-manifests-2026-09-18.md) are implemented. [Result storage](forma-memory-native-results-2026-09-18.md) retains complete dependencies and privacy inverses; implement cross-job corrections/suppression and publish guarded scoped suggestions | Local adapter tests can proceed before external qualification; actual provider/index integration stays gated |
-| Runtime observability | Add purpose-minimized derivation/index freshness, accounting and deletion status as those pipelines become real | Native measurements and failure drills; no text/vector payloads in general analytics |
+| Semantic/profile and suggestion callers | Citation parsing, provider adapter, [fresh read-only evidence](forma-memory-native-read-evidence-2026-09-18.md) and [complete-input manifests/publication receipts](forma-memory-native-manifests-2026-09-18.md) are implemented. [Result storage](forma-memory-native-results-2026-09-18.md) retains complete dependencies and privacy inverses; cross-job corrections/suppression and manual review are implemented; integrate correction priority into guarded scoped summaries, profiles, suggestions and autocomplete | Local adapter tests can proceed before external qualification; actual provider/index integration stays gated |
+| Runtime observability | Scoped derivation counts, completion and uncertain-usage snapshots are implemented; finish index freshness/deletion status as that pipeline becomes real | Native measurements and failure drills; no text/vector payloads in general analytics |
 | Pending migration integration | Assign candidates only after review, matching ORM/snapshot generation and qualified execution path | Append-only history, full rollback/row preservation and exact reader compatibility |
 
 ## Capabilities not available directly through the inspected Sites tools

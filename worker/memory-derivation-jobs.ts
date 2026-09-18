@@ -37,6 +37,10 @@ export async function prepareNativeDerivationDelivery(env: WorkerEnv, enrollment
   const enabled = () => memoryDerivationEnabled(env, e.actor_user_id) && e.learn_enabled === 1 && e.background_enabled === 1;
   let registeredPurposes = 0, capacityPurposes = 0;
   if (schema.jobsPresent && enabled()) {
+    // One queue window must fit the native 64-pair capture limit. Legacy
+    // schemas keep their original registration contract until completion exists.
+    const pageLimit = schema.completionPresent ? 64 : MEMORY_DERIVATION_REFERENCE_PAGE;
+    const pending = schema.completionPresent ? " AND NOT EXISTS(SELECT 1 FROM memory_derivation_completions done WHERE done.job_id=memory_derivation_jobs.job_id)" : "";
     const result = structuredClone(await db.prepare(`SELECT ${DERIVATION_GRANT_COLUMNS.join(",")} FROM memory_derivation_grants
       WHERE enrollment_id=? AND enrollment_revision=? AND revoked_at IS NULL AND background_enabled=1
         AND expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now') ORDER BY purpose LIMIT 4`).bind(e.enrollment_id, e.revision).all<Row>());
@@ -57,7 +61,7 @@ export async function prepareNativeDerivationDelivery(env: WorkerEnv, enrollment
         || !derivationTime(cursor.created_at) || !derivationTime(cursor.updated_at) || cursor.created_at < g.consented_at || cursor.updated_at < cursor.created_at)) fail();
       const after = cursor?.registered_through_sequence ?? g.source_after_sequence;
       if (through <= after) continue;
-      const countResult = structuredClone(await db.prepare("SELECT COUNT(*) AS count FROM memory_derivation_jobs WHERE consent_id=?").bind(g.consent_id).all<Row>());
+      const countResult = structuredClone(await db.prepare("SELECT COUNT(*) AS count FROM memory_derivation_jobs WHERE consent_id=?"+pending).bind(g.consent_id).all<Row>());
       if (!derivationResults([countResult], 1) || countResult.results.length !== 1 || !derivationExact(countResult.results[0], ["count"])
         || !derivationInteger(countResult.results[0]!.count) || !current() || !enabled()) fail();
       const count = countResult.results[0]!.count as number;
@@ -77,16 +81,16 @@ export async function prepareNativeDerivationDelivery(env: WorkerEnv, enrollment
       assert(derivationQualificationGuard(qualification.row));
       assert(liveMemoryEnrollmentGuard(e, "learn"));
       assert(snapshot(g.consent_id, cursor));
-      assert({ condition: "(SELECT COUNT(*) FROM memory_derivation_jobs WHERE consent_id=?)=? AND ?>strftime('%Y-%m-%dT%H:%M:%fZ','now')",
+      assert({ condition: "(SELECT COUNT(*) FROM memory_derivation_jobs WHERE consent_id=?"+pending+")=? AND ?>strftime('%Y-%m-%dT%H:%M:%fZ','now')",
         bindings: [g.consent_id, count, expires] });
       if (!cursor) statements.push(db.prepare(`INSERT INTO memory_derivation_cursors(${DERIVATION_CURSOR_COLUMNS.join(",")}) VALUES(?,?,?,?,?,0,?,?,?)`)
         .bind(g.consent_id, g.grant_id, g.revision, g.purpose, after, now, now, g.expires_at));
-      // 129th reference is only an overflow witness. Cursor never skips it.
+      // The extra reference is only an overflow witness. Cursor never skips it.
       statements.push(db.prepare(`WITH page AS (SELECT s.event_id,s.sequence,s.expires_at,
-          strftime('%Y-%m-%dT%H:%M:%fZ',original.recorded_at,'+'||?||' days') AS purpose_expires_at ${sources} ORDER BY s.sequence,s.event_id LIMIT 129),
-        selected AS (SELECT * FROM page ORDER BY sequence,event_id LIMIT 128)
+          strftime('%Y-%m-%dT%H:%M:%fZ',original.recorded_at,'+'||?||' days') AS purpose_expires_at ${sources} ORDER BY s.sequence,s.event_id LIMIT ${pageLimit+1}),
+        selected AS (SELECT * FROM page ORDER BY sequence,event_id LIMIT ${pageLimit})
         INSERT INTO memory_derivation_jobs(job_id,consent_id,purpose,after_sequence,through_sequence,source_count,created_at,expires_at,state,lease_token,lease_expires_at,attempts,not_before,failure_code)
-        SELECT ?,?,?,?,CASE WHEN (SELECT COUNT(*) FROM page)>128 THEN MAX(sequence) ELSE ? END,COUNT(*),?,MIN(?,MIN(expires_at),MIN(purpose_expires_at)),
+        SELECT ?,?,?,?,CASE WHEN (SELECT COUNT(*) FROM page)>${pageLimit} THEN MAX(sequence) ELSE ? END,COUNT(*),?,MIN(?,MIN(expires_at),MIN(purpose_expires_at)),
           'waiting',NULL,NULL,0,?,NULL FROM selected HAVING COUNT(*)>0`)
         .bind(g.retention_days, ...sourceBindings, jobId, g.consent_id, g.purpose, after, through, now, expires, now));
       statements.push(db.prepare(`INSERT INTO memory_derivation_job_sources(job_id,enrollment_id,event_id,sequence,expires_at)
@@ -140,7 +144,8 @@ export async function sweepNativeDerivationJobs(env: WorkerEnv) {
   const db = env.DB, schema = await memoryDerivationSchema(env), selected = `SELECT job_id FROM memory_derivation_jobs
     WHERE expires_at<=strftime('%Y-%m-%dT%H:%M:%fZ','now') ORDER BY expires_at,job_id LIMIT 128`;
   let cascades = 0;
-  const counter = `SELECT (SELECT COUNT(*) FROM memory_derivation_job_sources WHERE job_id IN(${selected}))${schema.resultsPresent ? `+
+  const counter = `SELECT (SELECT COUNT(*) FROM memory_derivation_job_sources WHERE job_id IN(${selected}))${schema.completionPresent ? `+
+    (SELECT COUNT(*) FROM memory_derivation_completions WHERE job_id IN(${selected}))` : ""}${schema.resultsPresent ? `+
     (SELECT COUNT(*) FROM memory_derivation_results WHERE job_id IN(${selected}))+
     (SELECT COUNT(*) FROM memory_derivation_result_dependencies WHERE job_id IN(${selected}))` : ""}${schema.financePresent ? `+
     (SELECT COUNT(*) FROM memory_derivation_job_finance WHERE job_id IN(${selected}))+
@@ -149,7 +154,7 @@ export async function sweepNativeDerivationJobs(env: WorkerEnv) {
   if (schema.jobsPresent) {
     const observed = structuredClone(await db.prepare(counter).all<Row>());
     if (!derivationResults([observed], 1) || observed.results.length !== 1 || !derivationExact(observed.results[0], ["count"])
-      || !derivationInteger(observed.results[0]!.count, 0, 128 * (130 + 1 + 2048))) fail();
+      || !derivationInteger(observed.results[0]!.count, 0, 128 * (130 + 2 + 2048))) fail();
     cascades = observed.results[0]!.count as number;
   }
   const statements = [derivationAssertion(env, schema.guard), ...(schema.jobsPresent ? [

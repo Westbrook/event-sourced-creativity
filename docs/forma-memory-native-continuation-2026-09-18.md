@@ -113,3 +113,11 @@ erase/browser qualification and affirmative enrollment in the linked
 and [non-implementation checklist](forma-memory-nonimplementation-work-2026-09-17.md).
 No service was provisioned; no credential, flags, audience, schedule or budget was
 changed. The three pending SQL candidates remain unassigned and unapplied.
+
+
+[User controls, scheduled processing and review](forma-memory-user-controls-worker-2026-09-18.md)
+now implement cross-job lineage suppression/correction/release, actor-scoped manual
+inspection, localized UI, bounded native worker dispatch, metadata-only backoff,
+atomic eligible-work completion watermarks, and scoped processing snapshots.
+Migrations0048–0049 are additive and unapplied. Broader consumers, processing rebase,
+independent producers, nested scope identity and native index lifecycle remain open.

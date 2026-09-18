@@ -1,5 +1,6 @@
+import { prepareNativeDerivationCompletion } from "./memory-derivation-completion.ts";
 import type { WorkerEnv } from './runtime.ts';
-import { memoryCanonical } from './memory-sql.ts';
+import { memoryCanonical, type MemorySqlGuard } from './memory-sql.ts';
 import { memoryDigest } from '../src/model/scoped-memory.ts';
 import { derivationExact, derivationHash, derivationId, derivationInteger } from './memory-derivation-policy.ts';
 import { derivationAssertion, derivationChanged, derivationResults, derivationVerified, memoryDerivationSchema } from './memory-derivation-store.ts';
@@ -97,13 +98,16 @@ export async function publishNativeDerivationResult(env: WorkerEnv, receipt: Nat
         derivationAssertion(env, { condition: 'changes()=1', bindings: [] }));
     }
     statements.push(rowGuard(env, row), dependencyGuard(env, jobId, expected), derivationAssertion(env, schema.guard));
+    const completion = schema.completionPresent ? await prepareNativeDerivationCompletion(env,jobId,'stored') : null;
+    const completionOffset = statements.length;
+    if(completion)statements.push(...completion.statements);
     nativeDerivationCandidateInputs(env, receipt);
     if (env.DB !== db) return { status: 'unavailable' as const };
     const result = structuredClone(await db.batch<Record<string, unknown>>(statements));
     nativeDerivationCandidateInputs(env, receipt);
-    if (env.DB !== db || !derivationResults(result, statements.length) || !result.every((value, index) => {
+    if (env.DB !== db || !derivationResults(result, statements.length) || !result.slice(0,completionOffset).every((value, index) => {
       const write = writes.find(([at]) => at === index); return write ? derivationChanged(value, write[1]) : validProof(value);
-    })) return { status: 'uncertain' as const };
+    }) || completion && !completion.acknowledge(result.slice(completionOffset))) return { status: 'uncertain' as const };
     return { status: 'stored' as const, jobId };
   } catch { return { status: 'uncertain' as const }; }
 }
@@ -159,7 +163,7 @@ export function nativeDerivationResultStatements(env: WorkerEnv, handle: NativeD
 /** Actor-private erasure does not require retaining permission to read the
  * source. Identity comes from a native authenticated principal. This withdraws
  * one result; cross-job lineage suppression is a separate user control. */
-export async function withdrawNativeDerivationResult(env: WorkerEnv, actorUserId: string, jobId: string): Promise<boolean> {
+export async function withdrawNativeDerivationResult(env: WorkerEnv, actorUserId: string, jobId: string, authorizationGuard?: MemorySqlGuard): Promise<boolean> {
   if (!derivationId(actorUserId) || !derivationHash(jobId)) return false;
   const db = env.DB, schema = await memoryDerivationSchema(env);
   if (!schema.resultsPresent || env.DB !== db) return false;
@@ -181,9 +185,9 @@ export async function withdrawNativeDerivationResult(env: WorkerEnv, actorUserId
     db.prepare(`UPDATE memory_derivation_results SET ${retire} WHERE job_id=? AND state IN('staging','active')`).bind(jobId),
     derivationAssertion(env, { condition: 'changes()=?', bindings: [change] }), derivationAssertion(env, {
       condition: `EXISTS(SELECT 1 FROM memory_derivation_results WHERE job_id=? AND state='withdrawn' AND raw_json IS NULL AND manifest_json IS NULL)
-        AND NOT EXISTS(SELECT 1 FROM memory_derivation_result_dependencies WHERE job_id=?)`, bindings: [jobId, jobId] })];
+        AND NOT EXISTS(SELECT 1 FROM memory_derivation_result_dependencies WHERE job_id=?)`, bindings: [jobId, jobId] }), ...(authorizationGuard ? [derivationAssertion(env,authorizationGuard)] : [])];
   const result = structuredClone(await db.batch<Record<string, unknown>>(statements));
-  if (env.DB !== db || !derivationResults(result, statements.length) || ![0, 1, 3, 4].every(index => derivationVerified(result[index]!))
+  if (env.DB !== db || !derivationResults(result, statements.length) || authorizationGuard && !derivationVerified(result[5]!) || ![0, 1, 3, 4].every(index => derivationVerified(result[index]!))
     || !derivationChanged(result[2]!, change, row.dependencies)) throw Error('memory-result-withdrawal-unconfirmed');
   return true;
 }
@@ -208,4 +212,19 @@ export async function sweepNativeDerivationResults(env: WorkerEnv) {
   if (env.DB !== db || !derivationResults(result, statements.length) || ![0, 1, 3].every(index => derivationVerified(result[index]!))
     || !derivationChanged(result[2]!, row.count, row.dependencies)) throw Error('memory-result-expiry-unconfirmed');
   return row.count;
+}
+
+/** Native-only edit targets. The browser supplies a claim key, never replacement
+ * source identities or retention deadlines. */
+export function nativeDerivationResultControlTarget(env: WorkerEnv, handle: NativeDerivationResultRead, claimKey: string) {
+  const read=currentRead(env,handle),source=nativeDerivationSourceInputs(env,read.capture);
+  const item=read.candidate.items.find(item=>item.claimKey===claimKey);
+  if(!item)throw Error('memory-user-control-target-unavailable');
+  return { actorUserId:source.binding.actorUserId,enrollmentId:source.binding.enrollmentId,purpose:source.purpose,scopeKey:source.scopeKey,claimKey,
+    lineages:item.lineageIds.map(lineageId=>{
+      const original=source.originals.find(original=>original.lineageId===lineageId&&original.role==='user');
+      const backing=source.originalBacking.find(row=>row.eventId===original?.sourceId);
+      if(!original||!backing)throw Error('memory-user-control-target-unavailable');
+      return {lineageId,sourceContentRef:backing.contentRef,expiresAt:[original.expiresAt,source.retentionCeiling].sort()[0]!};
+    }) };
 }

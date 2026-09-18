@@ -3414,3 +3414,33 @@ for(const locale of ['en','fr','ar','ja'])test('derived purpose controls disclos
   assert.ok(h.text().includes(personalMemoryMessage(locale,'memory.live.purposeFinanceRetention')));assert.doesNotMatch(h.text(),/memory\.live\.purpose/u);
   assert.equal(h.mutations().length,0);assert.equal(purposeActions(h).length,1);assert.equal(profileAction(h,'purposeEnable').disabled,true);
 });
+
+function derivedReviewFixture(item){
+  const scope={projectId:item.projectId,documentId:item.documentId,custody:{kind:'personal'}},jobId='1'.repeat(64),lineage='2'.repeat(64),claimKey='3'.repeat(64),scopeKey='isolated-private-native-scope';
+  const validUntil=new Date(Date.now()+30_000).toISOString(),entry={jobId,purpose:'rolling-summary',scopeKey,expiresAt:item.expiresAt};
+  return {entry,lineage,claimKey,list:{version:MEMORY_DERIVATION_CONTROL,scope,enrollmentId:item.id,enrollmentRevision:item.revision,results:[entry],next:null,checkedAt:new Date().toISOString(),progress:[]},
+    result:{version:MEMORY_DERIVATION_CONTROL,jobId,expiresAt:item.expiresAt,controlRevisions:{[lineage]:0},candidate:{version:'memory-derivation-candidates-v1',purpose:'rolling-summary',scopeKey,manifestId:jobId,manifestRevision:1,validUntil,semanticAuthority:'model-derived-unverified',semanticCompleteness:false,independentEvidence:false,
+      items:[{operation:'assert',target:null,category:'proposal',text:'Private tentative memory proposal.',supports:[],counterevidence:[],claimKey,lineageIds:[lineage],sourceBindings:[],validUntil,citationStatus:'support-cited'}]}}};
+}
+async function inspectDerivedReview(t){const {h,item}=await purposeFixture(t),data=derivedReviewFixture(item);h.enqueue(data.list);await profileClick(h,'reviewLoad');h.enqueue(data.result);await profileClick(h,'reviewInspect');assert.match(h.text(),/Private tentative memory proposal/);return {h,item,data};}
+test('derived review is explicit, read-only until a named user action, and does not enroll',async t=>{
+  const {h,item}=await purposeFixture(t),data=derivedReviewFixture(item);assert.equal(purposeActions(h).length,1);
+  h.enqueue(data.list);await profileClick(h,'reviewLoad');assert.doesNotMatch(h.text(),/Private tentative memory proposal/);
+  h.enqueue(data.result);await profileClick(h,'reviewInspect');assert.match(h.text(),/Private tentative memory proposal/);assert.equal(h.mutations().length,0);
+  assert.equal(profileAction(h,'reviewCorrect').disabled,true);
+  h.enqueue({version:MEMORY_DERIVATION_CONTROL,jobId:data.entry.jobId,state:'withdrawn',controls:[{controlId:'4'.repeat(64),claimKey:data.claimKey,lineageId:data.lineage,revision:1,action:'suppressed',correctionText:null,expiresAt:item.expiresAt,semanticAuthority:'explicit-user-control'}]});
+  await profileClick(h,'reviewSuppress');assert.equal(h.mutations().length,1);assert.equal(h.mutations()[0].body.action,'suppressed');
+  assert.deepEqual(h.mutations()[0].body.expectedRevisions,{[data.lineage]:0});assert.doesNotMatch(h.text(),/Private tentative memory proposal/);assert.match(h.text(),/memory.live.reviewChanged/);
+});
+for(const transition of ['expiry','visibility','close','navigation'])test('derived review retires private content and stale callbacks on '+transition,async t=>{
+  const {h,item}=await inspectDerivedReview(t),stale=profileAction(h,'reviewSuppress'),before=h.mutations().length;
+  if(transition==='expiry'){h.advance(31_000);h.fireTimer();}
+  if(transition==='visibility'){h.visibility('hidden');h.visibility('visible');}
+  if(transition==='close'){purposeToggle(h,false);purposeToggle(h,true);}
+  if(transition==='navigation'){h.enqueue(settings([item]));h.move({route:'/library'});await flush();}
+  assert.doesNotMatch(h.text(),/Private tentative memory proposal/);await h.invoke(stale,'@click').result;assert.equal(h.mutations().length,before);
+});
+test('derived review uncertain mutation clears private view, requires reload, and never retries',async t=>{
+  const {h}=await inspectDerivedReview(t),stale=profileAction(h,'reviewSuppress');h.enqueue(new Error('lost-review-ack'));await profileClick(h,'reviewSuppress');
+  assert.match(h.text(),/memory.live.purposeUnknown/);assert.doesNotMatch(h.text(),/Private tentative memory proposal/);await h.invoke(stale,'@click').result;assert.equal(h.mutations().length,1);
+});

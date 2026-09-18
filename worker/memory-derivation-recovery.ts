@@ -34,7 +34,8 @@ export async function recoverNativeDerivationUnfundedLease(env: WorkerEnv, jobId
   const unfunded = `NOT EXISTS(SELECT 1 FROM memory_derivation_job_finance WHERE job_id=?)
     AND NOT EXISTS(SELECT 1 FROM memory_derivation_finance WHERE finance_id=?)
     AND NOT EXISTS(SELECT 1 FROM budget_reservations WHERE reservation_id IN(?,?))
-    AND NOT EXISTS(SELECT 1 FROM cost_budget_reservations WHERE reservation_id IN(?,?))`;
+    AND NOT EXISTS(SELECT 1 FROM cost_budget_reservations WHERE reservation_id IN(?,?))
+    ${schema.completionPresent ? 'AND NOT EXISTS(SELECT 1 FROM memory_derivation_completions done WHERE done.job_id=memory_derivation_jobs.job_id)' : ''}`;
   const bindings = [jobId, financeId, financeId + ':tokens', financeId + ':usd', financeId + ':tokens', financeId + ':usd'];
   const exhausted = job.attempts >= MEMORY_DERIVATION_UNFUNDED_ATTEMPTS;
   const delaySeconds = 60 * 2 ** Math.min(job.attempts - 1, 6);
@@ -141,6 +142,7 @@ export async function maintainNativeDerivationRecovery(env: WorkerEnv) {
   }
   const statements = [derivationAssertion(env, schema.guard), db.prepare(`SELECT job.job_id FROM memory_derivation_jobs job
     WHERE job.state='leased' AND job.lease_expires_at<=${clock} AND job.expires_at>${clock}
+      ${schema.completionPresent ? `AND NOT EXISTS(SELECT 1 FROM memory_derivation_completions done WHERE done.job_id=job.job_id)` : ''}
       AND NOT EXISTS(SELECT 1 FROM memory_derivation_job_finance link WHERE link.job_id=job.job_id)
     ORDER BY job.lease_expires_at,job.job_id LIMIT 1`)];
   const result = structuredClone(await db.batch<Row>(statements));

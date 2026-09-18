@@ -1,3 +1,7 @@
+import { nativeMemoryDocumentIdentity } from "./memory-native-scope.ts";
+import { readNativeDerivationResult,nativeDerivationResultInputs,nativeDerivationResultStatements,withdrawNativeDerivationResult } from "./memory-derivation-results.ts";
+import { controlNativeDerivationResult,reviseNativeDerivationUserControl } from "./memory-derivation-user-controls.ts";
+import { DERIVATION_USER_CONTROL_COLUMNS } from "./memory-derivation-user-control-schema.ts";
 import { memoryDerivationFinanceView, memoryDerivationFinanceViewStatement } from "./memory-derivation-finance-view.ts";
 import { requireUser, requireConsent, type PilotUser } from "./pilot-policy.ts";
 import { prepareDocumentAuthority } from "./context-authoring-authority.ts";
@@ -30,7 +34,7 @@ const parentColumns = ["enrollment_id", "actor_user_id", "owner_user_id", "organ
   "enrolled_at", "expires_at", "cursor_sequence", "cutoff_sequence", "last_local_day", "last_admitted_at", "next_due_at", "lease_token", "lease_expires_at", "attempts", "failure_code"] as const;
 const clock = (before: string): MemorySqlGuard => ({ condition: "?>strftime('%Y-%m-%dT%H:%M:%fZ','now')", bindings: [before] });
 const settingsKey = (env: WorkerEnv) => memoryCanonical([env.FORMA_MEMORY_ENABLED, env.FORMA_MEMORY_USER_IDS,
-  env.FORMA_MEMORY_DERIVATION_ENABLED, env.FORMA_MEMORY_DERIVATION_USER_IDS, memoryDerivationBinding(env)]);
+  env.FORMA_MEMORY_DERIVATION_ENABLED, env.FORMA_MEMORY_DERIVATION_USER_IDS, env.FORMA_MEMORY_DERIVATION_PROCESSING_ENABLED, env.FORMA_MEMORY_SCHEDULING_ENABLED, memoryDerivationBinding(env)]);
 function grantView(grant: MemoryDerivationGrant) {
   return { scope: { projectId: grant.project_id, documentId: grant.document_id,
     custody: grant.organization_id === null ? { kind: "personal" } : { kind: "organization", organizationId: grant.organization_id,
@@ -51,13 +55,13 @@ function inventoryGuard(table: "memory_derivation_grants" | "memory_derivation_q
   return { condition: `(SELECT json_group_array(json_array(${columns.join(",")})) FROM
     (SELECT ${columns.join(",")} FROM ${table} WHERE ${where} ORDER BY ${order}))=?`, bindings: [...bindings, value] };
 }
-async function bodyOf(request: Request): Promise<Row | null> {
+async function bodyOf(request: Request, maximumBytes = 4096): Promise<Row | null> {
   if (!request.body || request.headers.get("content-type")?.split(";")[0]?.trim() !== "application/json") return null;
   const reader = request.body.getReader(), decoder = new TextDecoder("utf-8", { fatal: true });
   let text = "", length = 0;
   try {
     for (;;) { const next = await reader.read(); if (next.done) break; length += next.value.byteLength;
-      if (length > 4096) { await reader.cancel(); return null; } text += decoder.decode(next.value, { stream: true }); }
+      if (length > maximumBytes) { await reader.cancel(); return null; } text += decoder.decode(next.value, { stream: true }); }
     text += decoder.decode(); const value: unknown = JSON.parse(text);
     // Grammar is parsed above; reject duplicate keys, including escaped keys.
     const stack: { keys: Set<string> | null; key: boolean }[] = [];
@@ -180,7 +184,7 @@ export async function handleMemoryDerivationSettings(request: Request, env: Work
         scope: { projectId, documentId, custody: parent.organization_id !== null ? { kind: "organization", organizationId: parent.organization_id, projectAccessId: parent.project_access_id, ownerUserId: parent.owner_user_id } : { kind: "personal" } },
         policyVersion: MEMORY_DERIVATION_POLICY, enrollmentId: parent.enrollment_id, enrollmentRevision: parent.revision,
         grants: stored.map(grant => grantView(grant as MemoryDerivationGrant)), qualifications,...(financial?{financial}:{}),
-        capScope: "payer-utc-calendar-month-all-memory-purposes", sourceWindow: "future-originals", processingImplemented: false });
+        capScope: "payer-utc-calendar-month-all-memory-purposes", sourceWindow: "future-originals", processingImplemented: schema.completionPresent && env.FORMA_MEMORY_DERIVATION_PROCESSING_ENABLED === "true" && env.FORMA_MEMORY_SCHEDULING_ENABLED === "true" });
     }
     if (!prepared) return deny("memory_derivation_authority_unavailable", 403);
     if (!body || !derivationExact(body, ["version", "policyVersion", "purpose", "qualificationId", "termsSha256", "projectId", "documentId", "enrollmentId", "enrollmentRevision", "revision", "expectedConsentId", "expectedCustody", "monthlyCapMicroUsd", "background", "retentionDays", "expiresAt", "sourceWindow", "chargeMyAiAllowance", "confirmation"])
@@ -224,6 +228,147 @@ export async function handleMemoryDerivationSettings(request: Request, env: Work
         || !derivationChanged(result[before.length + writes.length - 2]!, 1, capFloor.changes)
         || withdrawal && !withdrawal.acknowledge(result.slice(before.length, before.length + withdrawal.statements.length))) return failure();
     } catch { return failure(); }
-    return reply({ grant: grantView(grant), capScope: "payer-utc-calendar-month-all-memory-purposes", processingImplemented: false });
+    return reply({ grant: grantView(grant), capScope: "payer-utc-calendar-month-all-memory-purposes", processingImplemented: schema.completionPresent && env.FORMA_MEMORY_DERIVATION_PROCESSING_ENABLED === "true" && env.FORMA_MEMORY_SCHEDULING_ENABLED === "true" });
   } catch { return request.method === "GET" ? deny("memory_derivation_unavailable", 503) : failure(); }
+}
+
+function principalGuard(actor:PilotUser):MemorySqlGuard|null{
+  return actor.authorizationSnapshot?{condition:"EXISTS(SELECT 1 FROM users WHERE user_id=? AND role=? AND COALESCE(updated_at,'')=?)",
+    bindings:[actor.userId,actor.role,actor.authorizationSnapshot.updatedAt]}:null;
+}
+const sameOrigin=(request:Request)=>request.headers.get('origin')===new URL(request.url).origin&&request.headers.get('sec-fetch-site')!=='cross-site';
+
+/** Private inspection and explicit user changes only. Never provider dispatch. */
+export async function handleMemoryDerivationResult(request:Request,env:WorkerEnv):Promise<Response>{
+  const db=env.DB,started=Date.now(),configuration=settingsKey(env);
+  const auth=await requireUser(request,env,'viewer',{account:'principal'});
+  if(auth.response||!auth.user)return privateResponse(auth.response??deny('authentication_required',401));
+  const actor=auth.user,identity=principalGuard(actor),url=new URL(request.url),jobId=url.searchParams.get('jobId');
+  if(actor.fictional||!identity)return deny('principal_account_required',403);
+  if(!['GET','POST','DELETE'].includes(request.method))return deny('method_not_allowed',405);
+  if(request.method!=='GET'&&!sameOrigin(request))return deny('same_origin_required',403);
+  if(!derivationHash(jobId)||url.searchParams.getAll('jobId').length!==1||[...url.searchParams.keys()].some(key=>key!=='jobId'))return deny('memory_result_request_invalid');
+  const current=()=>env.DB===db&&Date.now()-started<60000&&settingsKey(env)===configuration;
+  try{
+    if(request.method==='DELETE'){
+      const body=await bodyOf(request);
+      if(!body||!derivationExact(body,['version','confirmation'])||body.version!==MEMORY_DERIVATION_CONTROL||body.confirmation!=='WITHDRAW_DERIVED_RESULT')return deny('explicit_memory_result_withdrawal_required');
+      if(!current())return failure();
+      const withdrawn=await withdrawNativeDerivationResult(env,actor.userId,jobId,identity);
+      return current()?withdrawn?reply({jobId,state:'withdrawn'}):deny('memory_result_not_found',404):failure();
+    }
+    const body=request.method==='POST'?await bodyOf(request,16384):null;
+    if(request.method==='POST'&&(!body||!derivationExact(body,['version','claimKey','action','correctionText','expectedRevisions','confirmation'])
+      ||body.version!==MEMORY_DERIVATION_CONTROL||body.confirmation!=='CHANGE_DERIVED_MEMORY'||!derivationId(body.claimKey)
+      ||!['suppressed','corrected'].includes(String(body.action))||!body.expectedRevisions||typeof body.expectedRevisions!=='object'||Array.isArray(body.expectedRevisions)))return deny('explicit_memory_user_control_required');
+    const read=await readNativeDerivationResult(env,actor.userId,jobId);
+    if(!read||!current())return deny('memory_result_unavailable',404);
+    if(body){
+      const controls=await controlNativeDerivationResult(env,read,String(body.claimKey),body.action as 'suppressed'|'corrected',body.correctionText,body.expectedRevisions as Record<string,number>,identity);
+      return current()?reply({jobId,state:'withdrawn',controls}):failure();
+    }
+    const input=nativeDerivationResultInputs(env,read),lineages=[...new Set(input.candidate.items.flatMap(item=>[...item.lineageIds]))];
+    const controlQuery=`SELECT c.lineage_id,c.revision FROM memory_derivation_user_controls c JOIN memory_derivation_grants g ON g.enrollment_id=c.enrollment_id AND g.purpose=c.purpose
+      JOIN memory_derivation_jobs j ON j.consent_id=g.consent_id WHERE j.job_id=? AND c.actor_user_id=? AND c.lineage_id IN(SELECT value FROM json_each(?)) ORDER BY c.lineage_id`;
+    const controlBindings=[jobId,actor.userId,JSON.stringify(lineages)],schema=await memoryDerivationSchema(env);
+    const controls=schema.userControlsPresent?await rows(env,controlQuery,controlBindings):[];
+    const controlRevisions=Object.fromEntries(lineages.map(lineage=>[lineage,Number(controls.find(row=>row.lineage_id===lineage)?.revision??0)]));
+    const statements=[derivationAssertion(env,identity),...nativeDerivationResultStatements(env,read),...(schema.userControlsPresent?[derivationAssertion(env,{condition:`(SELECT json_group_array(json_array(lineage_id,revision)) FROM (${controlQuery}))=?`,bindings:[...controlBindings,JSON.stringify(controls.map(row=>[row.lineage_id,row.revision]))]})]:[])];
+    const checked=structuredClone(await db.batch<Record<string,unknown>>(statements));
+    if(!current()||!derivationResults(checked,statements.length)||!checked.every(row=>derivationVerified(row)||row.results.length===1&&row.results[0]?.context_source_asserted===1))return deny('memory_result_unavailable',503);
+    nativeDerivationResultInputs(env,read);return reply({...input,controlRevisions});
+  }catch{return request.method==='GET'?deny('memory_result_unavailable',503):failure();}
+}
+
+export async function handleMemoryDerivationUserControls(request:Request,env:WorkerEnv):Promise<Response>{
+  const db=env.DB,started=Date.now();const auth=await requireUser(request,env,'viewer',{account:'principal'});
+  if(auth.response||!auth.user)return privateResponse(auth.response??deny('authentication_required',401));
+  const actor=auth.user,identity=principalGuard(actor),url=new URL(request.url);
+  if(actor.fictional||!identity)return deny('principal_account_required',403);
+  if(!['GET','PUT'].includes(request.method))return deny('method_not_allowed',405);
+  if(request.method==='PUT'&&!sameOrigin(request))return deny('same_origin_required',403);
+  const current=()=>env.DB===db&&Date.now()-started<60000;
+  try{
+    if(request.method==='PUT'){
+      const body=await bodyOf(request,16384);
+      if(url.search||!body||!derivationExact(body,['version','controlId','revision','action','correctionText','confirmation'])
+        ||body.version!==MEMORY_DERIVATION_CONTROL||body.confirmation!=='CHANGE_DERIVED_MEMORY'||!derivationHash(body.controlId)
+        ||!derivationInteger(body.revision,1)||!['suppressed','corrected','released'].includes(String(body.action)))return deny('explicit_memory_user_control_required');
+      const result=await reviseNativeDerivationUserControl(env,actor.userId,body.controlId,body.revision,body.action as 'suppressed'|'corrected'|'released',body.correctionText,identity);
+      return current()?reply({control:result}):failure();
+    }
+    const projectId=url.searchParams.get('projectId'),documentId=url.searchParams.get('documentId'),after=url.searchParams.get('after')??'';
+    if(!derivationId(projectId)||!derivationId(documentId)||after!==''&&!derivationHash(after)
+      ||[...url.searchParams.keys()].some(key=>!['projectId','documentId','after'].includes(key)||url.searchParams.getAll(key).length!==1))return deny('memory_user_control_scope_required');
+    const schema=await memoryDerivationSchema(env);
+    if(!schema.userControlsPresent)return deny('memory_user_control_schema_unavailable',503);
+    let selected:Awaited<ReturnType<typeof scope>>|Awaited<ReturnType<typeof ownedScope>>=await scope(request,env,actor,projectId,documentId);const canReadText=!(selected instanceof Response);
+    if(selected instanceof Response&&[403,409].includes(selected.status))selected=await ownedScope(env,actor,projectId,documentId);
+    if(selected instanceof Response)return selected;
+    const where="enrollment_id=? AND actor_user_id=? AND control_id>? AND expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now')",bindings=[selected.parent.enrollment_id,actor.userId,after];
+    // No correction body is loaded on the metadata-only path after access loss.
+    const projection=DERIVATION_USER_CONTROL_COLUMNS.map(key=>!canReadText&&key==='correction_text'?'NULL AS correction_text':key).join(',');
+    const query=`SELECT ${projection} FROM memory_derivation_user_controls WHERE ${where} ORDER BY control_id LIMIT 129`;
+    const records=await rows(env,query,bindings);
+    if(records.length>129||records.some(row=>!derivationExact(row,DERIVATION_USER_CONTROL_COLUMNS)))return deny('memory_user_control_unavailable',503);
+    const guard:MemorySqlGuard={condition:`(SELECT json_group_array(json_array(${DERIVATION_USER_CONTROL_COLUMNS.join(',')})) FROM (${query}))=?`,
+      bindings:[...bindings,JSON.stringify(records.map(row=>DERIVATION_USER_CONTROL_COLUMNS.map(key=>row[key])))]};
+    const checked=await db.batch([schema.guard,identity,...selected.guards,guard].map(value=>derivationAssertion(env,value)));
+    if(!current()||records.some(row=>String(row.expires_at)<=new Date().toISOString())||!derivationResults(checked,selected.guards.length+3)||!checked.every(derivationVerified))return deny('memory_user_control_unavailable',503);
+    const parent=selected.parent;
+    return reply({available:true,scope:{projectId,documentId,custody:parent.organization_id===null?{kind:'personal'}:{kind:'organization',organizationId:parent.organization_id,projectAccessId:parent.project_access_id,ownerUserId:parent.owner_user_id}},enrollmentId:parent.enrollment_id,enrollmentRevision:parent.revision,validUntil:new Date(started+60000).toISOString(),controls:records.slice(0,128).map(row=>({controlId:row.control_id,claimKey:row.claim_key,lineageId:row.lineage_id,
+      revision:row.revision,action:row.action,correctionText:row.correction_text,expiresAt:row.expires_at,purpose:row.purpose,textAvailable:canReadText})),next:records.length>128?records[127]!.control_id:null});
+  }catch{return request.method==='GET'?deny('memory_user_control_unavailable',503):failure();}
+}
+
+/** Bounded metadata discovery. Private text is loaded only by a separate fresh
+ * result read, never by this inventory or an arbitrary client scope key. */
+export async function handleMemoryDerivationResults(request:Request,env:WorkerEnv):Promise<Response>{
+  const db=env.DB,started=Date.now(),configuration=settingsKey(env),url=new URL(request.url);
+  const auth=await requireUser(request,env,'viewer',{account:'principal'});
+  if(auth.response||!auth.user)return privateResponse(auth.response??deny('authentication_required',401));
+  const actor=auth.user,identity=principalGuard(actor);
+  if(actor.fictional||!identity)return deny('principal_account_required',403);
+  if(request.method!=='GET')return deny('method_not_allowed',405);
+  const projectId=url.searchParams.get('projectId'),documentId=url.searchParams.get('documentId'),after=url.searchParams.get('after')??'';
+  if(!derivationId(projectId)||!derivationId(documentId)||after!==''&&!derivationHash(after)
+    ||[...url.searchParams.keys()].some(key=>!['projectId','documentId','after'].includes(key)||url.searchParams.getAll(key).length!==1))return deny('memory_result_scope_required');
+  try{
+    const schema=await memoryDerivationSchema(env),selected=await scope(request,env,actor,projectId,documentId);
+    if(selected instanceof Response)return selected;
+    if(!schema.userControlsPresent)return deny('memory_result_schema_unavailable',503);
+    const resource=nativeMemoryDocumentIdentity(selected.parent);if(!resource)return deny('memory_result_scope_unavailable',503);
+    const scopeKey=memoryCanonical([resource.partitionKey,resource.documentKey]);
+    const now=new Date().toISOString(),query=`SELECT j.job_id,g.purpose,? AS scope_key,r.expires_at FROM memory_derivation_results r
+      JOIN memory_derivation_jobs j ON j.job_id=r.job_id JOIN memory_derivation_grants g ON g.consent_id=j.consent_id
+      WHERE g.enrollment_id=? AND g.actor_user_id=? AND g.revoked_at IS NULL AND g.expires_at>?
+        AND r.state='active' AND r.expires_at>? AND j.job_id>? ORDER BY j.job_id LIMIT 9`;
+    const bindings=[scopeKey,selected.parent.enrollment_id,actor.userId,now,now,after],found=await rows(env,query,bindings);
+    const columns=['job_id','purpose','scope_key','expires_at'];
+    if(found.length>9||found.some(row=>!derivationExact(row,columns)))return deny('memory_result_unavailable',503);
+    const guard:MemorySqlGuard={condition:`(SELECT json_group_array(json_array(${columns.join(',')})) FROM (${query}))=?`,bindings:[...bindings,JSON.stringify(found.map(row=>columns.map(key=>row[key])))]};
+    const progressQuery=`SELECT g.purpose,
+      SUM(CASE WHEN j.job_id IS NOT NULL AND done.job_id IS NULL THEN 1 ELSE 0 END) AS pending,
+      COUNT(done.job_id) AS completed,
+      SUM(CASE WHEN r.state='active' AND r.expires_at>? THEN 1 ELSE 0 END) AS retained,
+      SUM(CASE WHEN f.dispatch_token IS NOT NULL AND usage.finance_id IS NULL THEN 1 ELSE 0 END) AS uncertain,
+      (SELECT registered_through_sequence FROM memory_derivation_cursors WHERE consent_id=g.consent_id) AS registeredThrough,
+      (SELECT through_sequence FROM memory_derivation_completion_cursors WHERE consent_id=g.consent_id) AS completedThrough
+      FROM memory_derivation_grants g LEFT JOIN memory_derivation_jobs j ON j.consent_id=g.consent_id
+      LEFT JOIN memory_derivation_completions done ON done.job_id=j.job_id LEFT JOIN memory_derivation_results r ON r.job_id=j.job_id
+      LEFT JOIN memory_derivation_job_finance link ON link.job_id=j.job_id LEFT JOIN memory_derivation_finance f ON f.finance_id=link.finance_id
+      LEFT JOIN memory_derivation_usage usage ON usage.finance_id=f.finance_id
+      WHERE g.enrollment_id=? AND g.actor_user_id=? AND g.revoked_at IS NULL AND g.expires_at>? GROUP BY g.consent_id ORDER BY g.purpose LIMIT 4`;
+    const progressBindings=[now,selected.parent.enrollment_id,actor.userId,now],progressColumns=['purpose','pending','completed','retained','uncertain','registeredThrough','completedThrough'];
+    const progress=schema.completionPresent?await rows(env,progressQuery,progressBindings):[];
+    if(progress.length>3||progress.some(row=>!derivationExact(row,progressColumns)))return deny('memory_result_status_unavailable',503);
+    const guards=[schema.guard,identity,...selected.guards,guard,clock(new Date(started+60000).toISOString()),...(schema.completionPresent?[{condition:`(SELECT json_group_array(json_array(${progressColumns.join(',')})) FROM (${progressQuery}))=?`,bindings:[...progressBindings,JSON.stringify(progress.map(row=>progressColumns.map(key=>row[key])))]}]:[])];
+    const checked=await db.batch(guards.map(value=>derivationAssertion(env,value)));
+    if(env.DB!==db||settingsKey(env)!==configuration||Date.now()-started>=60000||found.some(row=>String(row.expires_at)<=new Date().toISOString())
+      ||!derivationResults(checked,guards.length)||!checked.every(derivationVerified))return deny('memory_result_unavailable',503);
+    const parent=selected.parent;
+    return reply({scope:{projectId,documentId,custody:parent.organization_id===null?{kind:'personal'}:{kind:'organization',organizationId:parent.organization_id,projectAccessId:parent.project_access_id,ownerUserId:parent.owner_user_id}},
+      enrollmentId:parent.enrollment_id,enrollmentRevision:parent.revision,
+      checkedAt:now,progress,results:found.slice(0,8).map(row=>({jobId:row.job_id,purpose:row.purpose,scopeKey:row.scope_key,expiresAt:row.expires_at})),next:found.length>8?found[7]!.job_id:null});
+  }catch{return deny('memory_result_unavailable',503);}
 }

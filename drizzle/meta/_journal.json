@@ -309,6 +309,20 @@
       "when": 1789772570016,
       "tag": "0047_memory_derivation_results",
       "breakpoints": true
+    },
+    {
+      "idx": 44,
+      "version": "6",
+      "when": 1789774150091,
+      "tag": "0048_memory_derivation_user_controls",
+      "breakpoints": true
+    },
+    {
+      "idx": 45,
+      "version": "6",
+      "when": 1789774667536,
+      "tag": "0049_memory_derivation_completion",
+      "breakpoints": true
     }
   ]
 }

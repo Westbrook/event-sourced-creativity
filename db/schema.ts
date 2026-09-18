@@ -2548,3 +2548,38 @@ export const memoryDerivationResultDependencies = sqliteTable("memory_derivation
   index("idx_memory_derivation_result_inverse").on(table.kind, table.resourceId, table.actorUserId, table.scopeKey, table.jobId),
   check("memory_derivation_result_dependency", sql.raw("kind IN('event','content','turn','task') AND length(resource_id) BETWEEN 1 AND 240 AND ((kind='turn' AND length(actor_user_id) BETWEEN 1 AND 240 AND length(scope_key) BETWEEN 1 AND 8192) OR (kind!='turn' AND actor_user_id='' AND scope_key=''))")),
 ]);
+
+/** Explicit private user controls survive job/consent turnover within the same
+ * enrollment, but never outlive their original source or the enrollment. */
+export const memoryDerivationUserControls = sqliteTable("memory_derivation_user_controls", {
+  controlId: text("control_id").notNull().primaryKey(),
+  enrollmentId: text("enrollment_id").notNull().references(() => memoryLiveEnrollments.enrollmentId, { onDelete: "cascade" }),
+  actorUserId: text("actor_user_id").notNull(), purpose: text("purpose").notNull(), scopeKey: text("scope_key").notNull(),
+  lineageId: text("lineage_id").notNull(), claimKey: text("claim_key").notNull(),
+  sourceContentRef: text("source_content_ref").notNull().references(() => privateContent.contentId, { onDelete: "cascade" }),
+  revision: integer("revision").notNull(), action: text("action").notNull(), correctionText: text("correction_text"),
+  createdAt: text("created_at").notNull(), updatedAt: text("updated_at").notNull(), expiresAt: text("expires_at").notNull(),
+}, table => [
+  uniqueIndex("idx_memory_derivation_user_control_lineage").on(table.enrollmentId, table.purpose, table.lineageId),
+  index("idx_memory_derivation_user_control_source").on(table.sourceContentRef),
+  index("idx_memory_derivation_user_control_expiry").on(table.expiresAt),
+  check("memory_derivation_user_control_shape", sql.raw("length(control_id)=64 AND control_id NOT GLOB '*[^0-9a-f]*' AND length(lineage_id)=64 AND lineage_id NOT GLOB '*[^0-9a-f]*' AND length(actor_user_id) BETWEEN 1 AND 240 AND length(scope_key) BETWEEN 1 AND 8192 AND length(claim_key) BETWEEN 1 AND 240 AND purpose IN('rolling-summary','profile','suggestion') AND typeof(revision)='integer' AND revision BETWEEN 1 AND 9007199254740991")),
+  check("memory_derivation_user_control_action", sql.raw("(action IN('suppressed','released') AND correction_text IS NULL) OR (action='corrected' AND correction_text IS NOT NULL AND length(trim(correction_text)) BETWEEN 1 AND 1000 AND length(CAST(correction_text AS BLOB))<=4096)")),
+  check("memory_derivation_user_control_time", sql.raw("length(created_at)=24 AND strftime('%Y-%m-%dT%H:%M:%fZ',created_at) IS created_at AND length(updated_at)=24 AND strftime('%Y-%m-%dT%H:%M:%fZ',updated_at) IS updated_at AND length(expires_at)=24 AND strftime('%Y-%m-%dT%H:%M:%fZ',expires_at) IS expires_at AND created_at<=updated_at AND updated_at<expires_at")),
+]);
+
+/** Terminal disposition of one bounded native reference window. */
+export const memoryDerivationCompletions = sqliteTable("memory_derivation_completions", {
+  jobId:text("job_id").notNull().primaryKey().references(()=>memoryDerivationJobs.jobId,{onDelete:"cascade"}),
+  outcome:text("outcome").notNull(), completedAt:text("completed_at").notNull(),
+},()=>[
+  check("memory_derivation_completion_outcome",sql.raw("outcome IN('stored','no-eligible-originals')")),
+  check("memory_derivation_completion_time",sql.raw("length(completed_at)=24 AND strftime('%Y-%m-%dT%H:%M:%fZ',completed_at) IS completed_at")),
+]);
+export const memoryDerivationCompletionCursors = sqliteTable("memory_derivation_completion_cursors", {
+  consentId:text("consent_id").notNull().primaryKey().references(()=>memoryDerivationCursors.consentId,{onDelete:"cascade"}),
+  throughSequence:integer("through_sequence").notNull(), generation:integer("generation").notNull(), updatedAt:text("updated_at").notNull(),
+},()=>[
+  check("memory_derivation_completion_cursor_bounds",sql.raw("typeof(through_sequence)='integer' AND through_sequence BETWEEN 0 AND 9007199254740991 AND typeof(generation)='integer' AND generation BETWEEN 0 AND 9007199254740991")),
+  check("memory_derivation_completion_cursor_time",sql.raw("length(updated_at)=24 AND strftime('%Y-%m-%dT%H:%M:%fZ',updated_at) IS updated_at")),
+]);

@@ -1,3 +1,5 @@
+import { runNativeDerivationScheduled } from "./memory-derivation-worker.ts";
+import { sweepNativeDerivationUserControls } from "./memory-derivation-user-controls.ts";
 import { handleStillOnboarding } from './still-onboarding.ts';
 import { handleStillExperiment } from './still-experiment.ts';
 import { handleHoldDispositions } from "./budget-hold-api.ts";
@@ -39,7 +41,7 @@ import { handleGeneratedImageEdit } from "./generated-image-api";
 import { handleAssistant, handleAssistantBillingReconciliation, handleAssistantProposal, handleAssistantTask, handleAssistantSpecialist } from "./assistant-api";
 import { handlePlatformAssistant } from "./platform-assistant-api";
 import { handleLiveMemory } from "./memory-live-api.ts";
-import { handleMemoryDerivationSettings } from "./memory-derivation-api.ts";
+import { handleMemoryDerivationSettings, handleMemoryDerivationResult, handleMemoryDerivationUserControls, handleMemoryDerivationResults } from "./memory-derivation-api.ts";
 import { maintainNativeDerivationRecovery } from "./memory-derivation-recovery.ts";
 import { sweepNativeDerivationJobs } from "./memory-derivation-jobs.ts";
 import { sweepNativeDerivationResults } from "./memory-derivation-results.ts";
@@ -182,6 +184,9 @@ async function routeRequest(request: Request, env: WorkerEnv, context: WorkerExe
     if(url.pathname==="/api/memory/export")return handleLiveMemory(request,env,"export");
     if(url.pathname==="/api/memory/processing")return handleLiveMemory(request,env,"processing");
     if(url.pathname==="/api/memory/derivation/settings")return handleMemoryDerivationSettings(request,env);
+    if(url.pathname==="/api/memory/derivation/results")return handleMemoryDerivationResults(request,env);
+    if(url.pathname==="/api/memory/derivation/result")return handleMemoryDerivationResult(request,env);
+    if(url.pathname==="/api/memory/derivation/controls")return handleMemoryDerivationUserControls(request,env);
     if(url.pathname==="/api/memory/document-profile/settings")return handleMemoryDocumentProfile(request,env,"settings");
     if(url.pathname==="/api/memory/document-profile/inspect")return handleMemoryDocumentProfile(request,env,"inspect");
     if(url.pathname==="/api/memory/document-profile/suppress")return handleMemoryDocumentProfile(request,env,"suppress");
@@ -376,6 +381,7 @@ export default {
         () => sweepExpiredDerivationGrants(env,128),
         () => sweepNativeDerivationJobs(env),
         () => sweepNativeDerivationResults(env),
+        () => sweepNativeDerivationUserControls(env),
         async () => {
           const recovery=await maintainNativeDerivationRecovery(env);
           if(recovery.failed)throw Error("memory-derivation-recovery-partial");
@@ -389,6 +395,7 @@ export default {
       // Native worker event only: the runner separately requires literal scheduling
       // admission, actor rollout and each existing background-purpose enrollment.
       await runLiveMemoryScheduled(env);
+      await runNativeDerivationScheduled(env);
     } finally {
       try {
         // Synthetic payload expiry is independent of spending/enrollment flags.

@@ -4,7 +4,8 @@ const quote = name => '"' + name.replaceAll('"', '""') + '"';
 // Synthetic databases only. Preserve scalar types, schema and rowids exactly.
 export function exportSynthetic(sqlite) {
   const schema = sqlite.prepare("SELECT type,name,tbl_name,sql FROM sqlite_schema ORDER BY type,name").all();
-  assert(schema.length <= 512);
+  // Native Memory privacy inverses add real schema objects; keep the export bounded.
+  assert(schema.length <= 1024);
   assert(schema.every(row => !row.name.startsWith('sqlite_') || row.sql === null));
   const tables = schema.filter(row => row.type === 'table'), inserts = [], rows = {};
   for (const { name } of tables) {
