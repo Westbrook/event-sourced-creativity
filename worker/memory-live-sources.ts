@@ -3,7 +3,10 @@ import { liveMemoryTurnGuard, type LiveMemoryAuthority, type LiveMemoryEnrollmen
 
 // Deliberately excludes passive attention, raw telemetry, generated prose and arbitrary analytics.
 // Additional signals require their own purpose/retention contract, not automatic enrollment.
-export const LIVE_MEMORY_EVENT_TYPES = ["DocumentOpened","DocumentViewVisited","ObjectViewed","DocumentArtifactViewed","ComparisonOpened",
+// Exact personal artifact-view receipts remain outside Memory until their retained-body
+// lifetime/replay and negotiated consumption projection are implemented. A correct
+// project binding alone must not silently enroll this richer source.
+export const LIVE_MEMORY_EVENT_TYPES = ["DocumentOpened","DocumentViewVisited","ObjectViewed","ComparisonOpened",
   "BlockCreated","BlockPropertyEdited","ChipEdited","BlockWeightSet","BlockLocked","BlockUnlocked","BlockRelationAdded","BlockRelationRemoved",
   "BlockRemoved","BlockRestored","ObjectSaved","ObjectPinned","ObjectExported","DocumentArtifactExported","ArtifactApproved",
   "CanvasItemPlaced","CanvasReferenceCreated","ContextSetFormalized","ObjectDiscarded","ObjectCritiqued","ArtifactChangesRequested",

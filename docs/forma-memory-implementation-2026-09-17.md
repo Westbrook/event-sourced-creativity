@@ -6,6 +6,15 @@ There is no configured Git remote in this checkout. The merge retained the newer
 main versions of both conflicted Memory model files; its tree matched main.
 It did not modify the main checkout or its unrelated proposal documents.
 
+## September 18 follow-up
+
+[Native producer continuation](forma-memory-native-producers-2026-09-18.md) adds
+bounded genuine Chat Studio completed-turn capture, personal exact artifact-view
+receipts and exact schema/custody compatibility. Those are implementation
+prerequisites, not semantic summaries or full consumption v2. The remaining table
+below reflects those delivered boundaries; the verification section retains the
+September 17 snapshot, with current evidence in the follow-up document.
+
 ## Current continuation
 
 - Connect Chat Studio's explicit document-memory request to the existing native
@@ -36,11 +45,11 @@ larger than the already-published extractive Memory foundation.
 
 | Area | Current boundary | Remaining implementation / dependency |
 | --- | --- | --- |
-| Structured conversation summaries | Durable structured-ledger storage and certified consumers exist; the declared ledger does not claim semantic completeness. | A genuine finalized-turn producer, grounded segment summarization/rebase, coverage and contradiction handling, and a native budgeted derivation pipeline. Test-only ledger writes do not complete this feature. |
+| Structured conversation summaries | The guarded ledger now has a bounded genuine completed Chat Studio turn producer, gated by the explicit reference-only schema candidate. Captured references carry no inferred annotations and do not claim semantic completeness. | Broader assistant-turn sources, longer-history window/rebase, grounded semantic segment summaries, coverage/contradiction handling and a native budgeted derivation pipeline. Reference capture does not complete semantic summarization. |
 | Evolving profile | The live document profile represents explicit palette choices; it is not a general inferred profile. | Purpose-authorized inferred facets, supporting/contradicting evidence, correction/suppression, contextual differentiation and conservative generalization. Depend on qualified derivation and accepted scope/retention policy. |
 | Semantic recall/index lifecycle | Current recall is extractive and the deterministic hash embedding is a test-oriented representation, not a production semantic embedding. | Approved provider adapter in the live pipeline, chosen durable vector-store binding, partitioned hybrid retrieval, transactional outbox consumption, index readiness, invalidation/deletion acknowledgements and recovery. A synthetic benchmark adapter alone does not supply these. |
 | Nested projects and wider zoom | The synthetic scope model supports ancestry; native project ownership does not yet provide the required parent/reparent contract. | Native acyclic containment, bounded ancestry, canonical subresource identity, reparent invalidation and separate access-versus-relevance rules before hierarchical inference/recall. |
-| Rich consumption | Native rolling Memory episodes cover navigation. Exact artifact review now improves intent evidence but does not itself expand Memory's consumption contract. Actual artifact-view capture also lacks a project binding required by the current private Memory source envelope. | Bind capture to the same authorized project/document snapshot and validate native revision/hash receipts at append; bind current retained artifact/body/custody/lifetime; version and negotiate the projection/client contract before adding artifact/block inspection, comparison or reuse episodes. An event reference alone is not underlying source authority. |
+| Rich consumption | Native rolling Memory episodes remain navigation-only. Personal artifact views now carry server-validated project/document/revision/hash/body/custody bindings; they are explicitly excluded from live Memory enrollment until richer source authority is implemented. | Governed/historical receipt coverage, retained current/historical body authority, immutable lifetime and final replay; negotiated projection/client v2 before artifact/block inspection, comparison or reuse episodes. There is still no genuine block-inspection producer. |
 | Learned suggestions/autocomplete | Existing intent/Re-entry features do not establish the new nightly learned-pattern pipeline. | Qualified changed-scope derivation, exposure/accept/reject feedback, lineage deduplication, rate/quality controls and native consumers. Do not translate clicks into aesthetic preference or comprehension. |
 | Benchmark extension | The isolated synthetic runner now has native self-payer accounting; it does not constitute a paired native Forma quality baseline or real-user Memory billing. | Add any approved wider payer scope and genuine native-baseline comparison. Reconcile claimed operations with missing usage only from a qualified original provider receipt; do not infer zero cost from missing content. |
 | Analytics and operations | Existing coarse analytics are separate from private Memory bodies. | Reconcile the final learned pipelines with minimized purpose-specific metrics and privacy-safe observability; implement any missing operator tooling once concrete runtime/provider contracts are selected. |

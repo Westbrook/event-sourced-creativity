@@ -18,6 +18,7 @@ import type { OutputSceneEnvelope } from "./output-scene-adapter.ts";
 import { readOutputNarrativePayload, outputNarrativePlannerCost, verifyOutputNarrativeCompletion } from "./output-narrative-execution.ts";
 import { outputAssertionStatements } from "./output-requirements-ledger.ts";
 import { nativeMemoryAnswerExclusion } from "./memory-native-boundary.ts";
+import { appendPersonalArtifactView } from "./memory-artifact-view.ts";
 import { preparePersonalSlidesPrivateContentPair } from "./private-content-storage.ts";
 import { presentationProviderLabels } from "../src/model/generation-execution-evidence.ts";
 import { documentRenderGuidance, documentRenderGuidanceProblem } from "../src/model/document-render-guidance.ts";
@@ -1064,6 +1065,13 @@ export async function handleEvents(request:Request,env:WorkerEnv,hot=false,userO
       return Response.json({error:"active_pilot_participation_required",appended:[released],head:released.sequence},{status:403});
     };
     const requested=body.action==="batch"||body.action==="canvas_sync"||hot?body.events??(body.event?[body.event]:[]):body.event?[body.event]:[];
+    if(requested.some(item=>item.type==="DocumentArtifactViewed")){
+      if(execution||body.action==="canvas_sync"||requested.length!==1||requested[0]?.compensatesEventId
+        ||!['append','hot','batch'].includes(body.action??'')
+        ||/(?:^|;\s*)forma_impersonation=/.test(request.headers.get('cookie')??''))
+        return Response.json({error:"artifact_view_isolated_personal_append_required",noAutomaticRetry:true},{status:409});
+      return appendPersonalArtifactView(env,auth.user,requested[0]?.payload,current,client,corr);
+    }
     if(requested.some((item)=>["BlockCreated","BlockPropertyEdited","ChipEdited"].includes(String(item.type)))){
       const modelAssets=await validateModel3dAssetEvents({env,ownerId:storageOwnerId,sourceEvents:await readEvents(env,streamId),events:requested,projectAccessId:executionScope?.projectAccessId});
       if(modelAssets)return Response.json({error:modelAssets.error,message:modelAssets.message,blockId:modelAssets.blockId},{status:modelAssets.status});

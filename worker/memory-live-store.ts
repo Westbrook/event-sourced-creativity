@@ -565,6 +565,8 @@ export type StructuredConversationLedgerRead = { readonly status: "initial" | "a
 const structuredHeads = "memory_structured_conversation_heads", structuredRevisions = "memory_structured_conversation_revisions";
 const structuredKind = "memory-structured-ledger", structuredRecipe = "native-declared-ledger-v1";
 const structuredSchemaHash = "4eac78f116b620e9fc22949faf7d4e3a5abfe8fab083e1c2827bd6091cae2a79";
+// Explicit candidate migration; absence preserves the original annotation-only contract.
+const structuredCaptureSchemaHash = "075a857266dad2a438313faf7641ddae71aa96ebdaed8c0a6e1af373de2e09e8";
 const structuredHeadColumns = ["ledger_id","actor_user_id","owner_user_id","organization_id","project_access_id","project_id","document_id",
   "enrollment_id","enrollment_revision","permission_epoch","policy_version","storage_revision","current_body_ref","current_body_hash","annotation_count",
   "coverage_after_sequence","coverage_through_sequence","state","first_terminal_at","cleanup_turn","expires_at","created_at","updated_at"];
@@ -587,7 +589,8 @@ const structuredId = (value: unknown): value is string => typeof value === "stri
 const structuredHash = (value: unknown): value is string => typeof value === "string" && /^[a-f0-9]{64}$/u.test(value);
 const structuredJsonRow = (alias: string, columns: readonly string[]) => "json_object(" + columns.map(column => `'${column}',${alias}.${column}`).join(",") + ")";
 const structuredFreeze = <T>(value: T): T => { if (value && typeof value === "object") { for (const child of Object.values(value)) structuredFreeze(child); Object.freeze(value); } return value; };
-const structuredSettings = (env: WorkerEnv) => canonicalConsent([env.FORMA_MEMORY_ENABLED,env.FORMA_MEMORY_USER_IDS,env.FORMA_PILOT_COHORT_ID,env.FORMA_ADMIN_EMAILS]);
+const structuredSettings = (env: WorkerEnv) => canonicalConsent([env.FORMA_MEMORY_ENABLED,env.FORMA_MEMORY_USER_IDS,
+  env.FORMA_MEMORY_SCHEDULING_ENABLED,env.FORMA_PILOT_COHORT_ID,env.FORMA_ADMIN_EMAILS]);
 const structuredScope = (e: LiveMemoryEnrollment) => [e.actor_user_id,e.owner_user_id,e.organization_id,e.project_access_id,e.project_id,e.document_id];
 const structuredScopeWhere = "(actor_user_id,owner_user_id,organization_id,project_access_id,project_id,document_id) IS (?,?,?,?,?,?)";
 const structuredRef = (value: LegacyConversationOriginalReceipt["originals"][number]): StructuredConversationOriginal => ({eventId:value.eventId,sequence:value.sequence,
@@ -605,18 +608,21 @@ function structuredAsserted(results: D1Result<StructuredLedgerRow>[], indexes: r
 async function structuredSchemaValue(value: unknown): Promise<boolean> {
   if (typeof value !== "string" || value.length > 20_000) throw new Error("memory-structured-schema-unavailable");
   const rows: unknown = JSON.parse(value);
-  if (!Array.isArray(rows) || rows.length !== 0 && (rows.length !== 11 || await memoryDigest(canonicalConsent(rows)) !== structuredSchemaHash))
+  if (!Array.isArray(rows) || rows.length !== 0 && (rows.length !== 11
+    || ![structuredSchemaHash,structuredCaptureSchemaHash].includes(await memoryDigest(canonicalConsent(rows)))))
     throw new Error("memory-structured-schema-unavailable");
   return rows.length === 11;
 }
-/** Exact normal 0032 schema only; compatibility absence is witnessed, never installed.
+/** Exact normal 0032 or reviewed reference-capture candidate; absence is witnessed, never installed.
  * This helper is metadata-only and grants no ledger/body access. */
-export async function structuredConversationLedgerSchema(env: WorkerEnv): Promise<{present:boolean;guard:MemorySqlGuard}> {
+export async function structuredConversationLedgerSchema(env: WorkerEnv): Promise<{present:boolean;referenceCapture:boolean;guard:MemorySqlGuard}> {
   const db=env.DB, result=structuredClone(await db.prepare(`SELECT ${structuredSchemaExpression} AS schema_json`).all<StructuredLedgerRow>());
   if (!structuredResults([result],1) || result.results.length !== 1) throw new Error("memory-structured-schema-unavailable");
   const value=result.results[0].schema_json, present=await structuredSchemaValue(value);
   if (env.DB!==db) throw new Error("memory-structured-preparation-changed");
-  return {present,guard:{condition:`${structuredSchemaExpression} IS ?`,bindings:[String(value)]}};
+  const referenceCapture=present&&await memoryDigest(canonicalConsent(JSON.parse(String(value))))===structuredCaptureSchemaHash;
+  if (env.DB!==db) throw new Error("memory-structured-preparation-changed");
+  return {present,referenceCapture,guard:{condition:`${structuredSchemaExpression} IS ?`,bindings:[String(value)]}};
 }
 function structuredLedgerValue(input: unknown, originals: readonly LegacyConversationOriginalReceipt["originals"][number][]): StructuredConversationLedger | null {
   if (!structuredKeys(input,["schemaVersion","recipeVersion","semanticCompleteness","annotations","originals"])
@@ -661,8 +667,9 @@ function structuredLedgerValue(input: unknown, originals: readonly LegacyConvers
   const result:StructuredConversationLedger={schemaVersion:1,recipeVersion:structuredRecipe,semanticCompleteness:false,annotations,originals:refs};
   return structuredBytes(result)<=131_072?result:null;
 }
-function structuredExtends(before: StructuredConversationLedger, after: StructuredConversationLedger): boolean {
-  return after.annotations.length>before.annotations.length
+function structuredExtends(before: StructuredConversationLedger, after: StructuredConversationLedger, referenceCapture=false): boolean {
+  return (after.annotations.length>before.annotations.length
+      || referenceCapture&&after.annotations.length===before.annotations.length&&after.originals.length>before.originals.length)
     && canonicalConsent(after.annotations.slice(0,before.annotations.length))===canonicalConsent(before.annotations)
     && before.originals.every(ref=>after.originals.some(next=>canonicalConsent(ref)===canonicalConsent(next)));
 }
@@ -703,7 +710,7 @@ type StructuredLedgerHistory = {head:StructuredLedgerRow|null;rows:StructuredLed
 type StructuredLedgerFrame = {env:WorkerEnv;enrollmentKey:string;preparedKey:string;settings:string;historyKey:string;read:StructuredConversationLedgerRead};
 const structuredLedgerFrames=new WeakMap<StructuredConversationLedgerRead,StructuredLedgerFrame>();
 async function structuredHistoryValue(row: StructuredLedgerRow, ledgerId:string, e:LiveMemoryEnrollment,
-  originals:readonly LegacyConversationOriginalReceipt["originals"][number][], fresh:()=>boolean):Promise<StructuredLedgerHistory|null> {
+  originals:readonly LegacyConversationOriginalReceipt["originals"][number][], fresh:()=>boolean,referenceCapture=false):Promise<StructuredLedgerHistory|null> {
   if (row.alive!==1 || typeof row.heads_json!=="string" || typeof row.history_json!=="string") return null;
   const heads:unknown=JSON.parse(row.heads_json), rows:unknown=JSON.parse(row.history_json);
   if (!Array.isArray(heads) || heads.length>1 || !Array.isArray(rows) || rows.length>64 || structuredBytes(rows)>1_048_576) return null;
@@ -729,7 +736,7 @@ async function structuredHistoryValue(row: StructuredLedgerRow, ledgerId:string,
       || typeof body.content!=="string" || body.content.length>131_072 || !body.content.isWellFormed() || new TextEncoder().encode(body.content).byteLength>131_072) return null;
     const ledger=structuredLedgerValue(JSON.parse(body.content),originals);
     if (!ledger || ledger.originals.some(ref=>Date.parse(originals.find(original=>original.eventId===ref.eventId)!.recordedAt)<Date.parse(e.enrolled_at))
-      || canonicalConsent(ledger)!==body.content || !structuredExtends(previous,ledger)
+      || canonicalConsent(ledger)!==body.content || !structuredExtends(previous,ledger,referenceCapture)
       || revision.annotation_count!==ledger.annotations.length || !ledger.originals.length
       || revision.coverage_after_sequence!==Math.min(...ledger.originals.map(ref=>ref.sequence))-1
       || revision.coverage_through_sequence!==Math.max(...ledger.originals.map(ref=>ref.sequence))) return null;
@@ -765,7 +772,7 @@ async function structuredHistoryValue(row: StructuredLedgerRow, ledgerId:string,
 type StructuredLedgerPreparation = {read:StructuredConversationLedgerRead;history:StructuredLedgerHistory;witness:AssistantContextReadWitness<null>;
   source:LegacyConversationOriginalsCommit;enrollment:LiveMemoryEnrollment;authority:NonNullable<Awaited<ReturnType<typeof liveMemoryAuthority>>>;
   enrollmentKey:string;preparedKey:string;settings:string;fresh:()=>boolean;historyQuery:ReturnType<typeof nativeMemoryDescriptor>;
-  historyKey:string;schemaGuard:MemorySqlGuard;ledgerId:string;policy:StructuredLedgerRow|null;authorityBytes:number};
+  historyKey:string;schemaGuard:MemorySqlGuard;ledgerId:string;policy:StructuredLedgerRow|null;authorityBytes:number;referenceCapture:boolean};
 async function structuredPrepare(env:WorkerEnv,enrollment:LiveMemoryEnrollment,prepared:LegacyConversationOriginalPrepared,
   captures:readonly LegacyConversationOriginalCapture[],learn:boolean):Promise<StructuredLedgerPreparation|null> {
   const e=structuredClone(enrollment), supplied=structuredClone(prepared), enrollmentKey=canonicalConsent(enrollment),preparedKey=canonicalConsent(prepared),settings=structuredSettings(env),db=env.DB;
@@ -805,7 +812,8 @@ async function structuredPrepare(env:WorkerEnv,enrollment:LiveMemoryEnrollment,p
   const source=await prepareLegacyConversationOriginalsCommit(env,prepared,captures,budget);
   if (!source || !fresh() || canonicalConsent([source.scope.actorUserId,source.scope.ownerUserId,source.scope.organizationId,source.scope.projectAccessId,source.scope.projectId,source.scope.documentId])
     !==canonicalConsent(structuredScope(e))) return null;
-  const history=await structuredHistoryValue(second[0].results[0],ledgerId,e,source.originals,()=>fresh()&&source.isCurrent());
+  const referenceCapture=await memoryDigest(canonicalConsent(JSON.parse(String(initial.schema_json))))===structuredCaptureSchemaHash;
+  const history=await structuredHistoryValue(second[0].results[0],ledgerId,e,source.originals,()=>fresh()&&source.isCurrent(),referenceCapture);
   if (!history || !fresh() || !source.isCurrent()) return null;
   const grant=nativeMemoryGrantDeadline(authority.principal,started);
   if (grant===undefined) return null;
@@ -818,7 +826,7 @@ async function structuredPrepare(env:WorkerEnv,enrollment:LiveMemoryEnrollment,p
     ledger:structuredClone(history.ledger),validUntil,expiresAt:history.expiresAt});
   return {read,history,witness,source,enrollment:e,authority,enrollmentKey,preparedKey,settings,
     fresh:()=>fresh()&&source.isCurrent()&&Date.now()<Date.parse(validUntil),historyQuery:q2,historyKey:canonicalConsent({head:history.head,rows:history.rows}),
-    schemaGuard:{condition:`${structuredSchemaExpression} IS ?`,bindings:[String(initial.schema_json)]},ledgerId,policy:policy as StructuredLedgerRow|null,authorityBytes:structuredBytes(initial)};
+    schemaGuard:{condition:`${structuredSchemaExpression} IS ?`,bindings:[String(initial.schema_json)]},ledgerId,policy:policy as StructuredLedgerRow|null,authorityBytes:structuredBytes(initial),referenceCapture};
 }
 /** Only native ledger append consumes these statements, within its issued source,
  * schema, exact policy/history and enrollment witnesses before every insertion.
@@ -908,7 +916,7 @@ export async function appendStructuredConversationLedger(env:WorkerEnv,enrollmen
       || expectedFrame.preparedKey!==plan.preparedKey || expectedFrame.settings!==plan.settings || expectedFrame.historyKey!==plan.historyKey
       || expected.revision!==plan.read.revision || expected.ledgerId!==plan.ledgerId || plan.history.rows.length>=64) return null;
     const ledger=structuredLedgerValue(copy,plan.source.originals);
-    if (!ledger || !structuredExtends(plan.history.ledger,ledger) || !ledger.originals.length) return null;
+    if (!ledger || !structuredExtends(plan.history.ledger,ledger,plan.referenceCapture) || !ledger.originals.length) return null;
     const e=plan.enrollment, originalMap=new Map(plan.source.originals.map(row=>[row.eventId,row]));
     const sourceDeadlines=ledger.originals.flatMap(ref=>{const row=originalMap.get(ref.eventId)!;return [Date.parse(row.expiresAt),Date.parse(row.recordedAt)+e.retention_days*86_400_000];});
     if (ledger.originals.some(ref=>Date.parse(originalMap.get(ref.eventId)!.recordedAt)<Date.parse(e.enrolled_at))) return null;

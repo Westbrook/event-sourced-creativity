@@ -630,3 +630,41 @@ for (const drift of ['headers', 'database', 'signal']) test(`inventory refuses $
   try { await assert.rejects(inspect(f, req)); assert.equal(changed, true); assert.equal(reads, 1, 'no next local read after observed owner drift'); }
   finally { f.env.DB = originalDB; f.DB.prepare = prepare; guard.close(); }
 });
+
+
+function installReferenceOnlyConversationLedger(f) {
+  const sql = readFileSync(new URL('../db/memory-conversation-capture.pending.sql', import.meta.url), 'utf8');
+  f.sqlite.exec('BEGIN');
+  try {
+    for (const statement of sql.split('--> statement-breakpoint').map(value => value.trim()).filter(Boolean)) f.sqlite.exec(statement);
+    f.sqlite.exec('COMMIT');
+  } catch (error) { f.sqlite.exec('ROLLBACK'); throw error; }
+}
+
+for (const kind of ['conversation head', 'conversation revision'])
+  test(`reference-only Memory ledger preserves guest inventory and refuses linked zero-annotation ${kind}`, async t => {
+    const f = await completedResultFixture(t, { memory: true });
+    installQualifiedMigration(f, '0032_memory_structured_conversation_ledger.sql');
+    const before = await currentManifest(f, t);
+    addForeignMemoryReference(f, kind, false);
+    const retained = ['memory_structured_conversation_heads', 'memory_structured_conversation_revisions']
+      .map(table => rows(f, table));
+    installReferenceOnlyConversationLedger(f);
+    assert.deepEqual(['memory_structured_conversation_heads', 'memory_structured_conversation_revisions']
+      .map(table => rows(f, table)), retained, 'schema evolution preserves retained ledger data');
+    f.sqlite.exec("UPDATE memory_structured_conversation_heads SET annotation_count=0 WHERE state='active'");
+    f.sqlite.exec('UPDATE memory_structured_conversation_revisions SET annotation_count=0');
+    assert.deepEqual(await currentManifest(f, t), before, 'unrelated reference-only Memory is not result custody');
+    addForeignMemoryReference(f, kind, true);
+    f.sqlite.exec("UPDATE memory_structured_conversation_heads SET annotation_count=0 WHERE state='active'");
+    f.sqlite.exec('UPDATE memory_structured_conversation_revisions SET annotation_count=0');
+    await denied(f, t);
+  });
+
+test('guest inventory refuses a partial reference-only Memory schema even with no rows', async t => {
+  const f = await completedResultFixture(t, { memory: true });
+  const partial = readFileSync(new URL('../drizzle/0032_memory_structured_conversation_ledger.sql', import.meta.url), 'utf8')
+    .replace('annotation_count BETWEEN 1 AND 256', 'annotation_count BETWEEN 0 AND 256');
+  for (const statement of partial.split('--> statement-breakpoint').map(value => value.trim()).filter(Boolean)) f.sqlite.exec(statement);
+  await denied(f, t);
+});

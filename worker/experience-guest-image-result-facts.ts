@@ -1282,7 +1282,12 @@ async function qualifyResultSchema(c:Captured,parts:Proof[]):Promise<Set<string>
     const alteredBase=conversationInstalled&&profile.source==="0025_memory_live_base";
     if(!found.length){if(alteredBase)return fail("memory_schema_changed");continue;}
     const expected=alteredBase?"sha256:644e656e4552770a5f7900e543e412f0f8f8817fe01d7f6b3c6861badd522bb6":profile.digest;
-    if(found.length!==profile.count||await c.life.wait(()=>digest(found))!==expected)return fail("memory_schema_changed");
+    const actual=await c.life.wait(()=>digest(found));
+    // Only the complete reviewed reference-only ledger rebuild is compatible.
+    // Exact row/reference closure below is unchanged, including zero declarations.
+    const referenceLedger=profile.source==="0032_memory_structured_conversation_ledger"
+      && actual==="sha256:b862536ea89bab8480972ec79279bb07e04171a59b0717017903eaf0477fb5fa";
+    if(found.length!==profile.count||actual!==expected&&!referenceLedger)return fail("memory_schema_changed");
   }
   const schemaSnapshot=`(SELECT json_group_array(json_object('type',type,'name',name,'tbl_name',tbl_name,'sql',sql)) FROM(${sql.replace(' LIMIT 513','')}))`;
   parts.push({sql:`${schemaSnapshot}=?`,bindings:[...bindings,JSON.stringify(rawRows)]},
