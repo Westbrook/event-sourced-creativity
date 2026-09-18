@@ -92,7 +92,7 @@ for (const [name, value, message] of [
   ["generic local persistence", detail("local_persistence_failed"), "Forma could not save the generation because a local database or event-store write failed. This is not a provider interruption."],
   ["source fidelity", detail("source_fidelity_validation_failed"), "The generated presentation did not preserve its required source facts, quotations, or authorized slide evidence."],
   ["execution interruption", detail("execution_interrupted"), "Forma lost contact with the generation worker before this operation finished."],
-  ["existing uncertain submission", detail("provider_submission_uncertain"), "The presentation provider request could not be confirmed. Automatic resubmission was stopped to prevent a duplicate charge."],
+  ["existing uncertain submission", detail("provider_submission_uncertain"), "We couldn’t confirm the original request. We haven’t sent it again, to avoid a duplicate charge."],
   ["ordinary safety", detail("safety_rejected", { category: "safety" }), "Safety checks stopped this generation. Change the request or reference before retrying."],
   ["unknown copy", detail("unknown", { category: "unknown", message: "Retained unrelated failure." }), "Retained unrelated failure."],
 ]) test("unrelated " + name + " behavior is unchanged", () => assert.equal(helpers.failureProgressMessage(value), message));

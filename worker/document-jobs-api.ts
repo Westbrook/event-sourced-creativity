@@ -489,7 +489,7 @@ function unsafePresentationRecovery(row:DocumentJobRow):ProviderFailureDetail|nu
     const candidateRequestId=checkpoint.presentationProviderClientRequestId;
     const requestId=typeof candidateRequestId==="string"&&/^forma-slides-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u.test(candidateRequestId)?candidateRequestId:null;
     const supportReference=requestId?` Support reference: ${requestId}.`:"";
-    return{code:"provider_submission_uncertain",category:"network",scope:"network",action:"contact_support",message:`The presentation request may already have reached its provider. Automatic resubmission was stopped to prevent a duplicate charge.${supportReference}`,retryable:false,retryAfterMs:null,requestId,httpStatus:null};
+    return{code:"provider_submission_uncertain",category:"network",scope:"network",action:"contact_support",message:`We couldn’t confirm the original request. We haven’t sent it again, to avoid a duplicate charge.${supportReference}`,retryable:false,retryAfterMs:null,requestId,httpStatus:null};
   }
   if(paid&&!resumable)return{code:"presentation_recovery_unavailable",category:"server",scope:"unknown",action:"contact_support",message:"A paid presentation response was recorded before its complete draft was saved. Automatic resubmission was stopped to prevent a duplicate charge.",retryable:false,retryAfterMs:null,requestId:null,httpStatus:null};
   return null;
@@ -506,7 +506,7 @@ function unsafePaidRecovery(row:DocumentJobRow):ProviderFailureDetail|null{
   const incompleteLegacyMedia=checkpoint.providerSubmissionProtocol!==1&&row.attempt_count>0&&["storyboard","video"].includes(String(request.artifactKind??""))
     &&!trustedStoryboardSafeRecovery(checkpoint)&&(legacyScenes.some((scene)=>scene.status==="preparing"&&!scene.providerJobId)
       ||!checkpoint.providerJobId&&!legacyScenes.length&&!checkpoint.productionFrameReceipts);
-  if(hasUnresolvedProviderSubmission(checkpoint)||unresolvedModel3dSubmission(row)||unknownLegacy||incompleteLegacyMedia)return{code:"provider_submission_uncertain",category:"network",scope:"network",action:"contact_support",message:"A paid request may already have reached its provider. Automatic resubmission was stopped to prevent a duplicate charge.",retryable:false,retryAfterMs:null,requestId:pending?.clientRequestId??null,httpStatus:null};
+  if(hasUnresolvedProviderSubmission(checkpoint)||unresolvedModel3dSubmission(row)||unknownLegacy||incompleteLegacyMedia)return{code:"provider_submission_uncertain",category:"network",scope:"network",action:"contact_support",message:"We couldn’t confirm the original request. We haven’t sent it again, to avoid a duplicate charge.",retryable:false,retryAfterMs:null,requestId:pending?.clientRequestId??null,httpStatus:null};
   const presentationFailure=unsafePresentationRecovery(row);if(presentationFailure)return presentationFailure;
   const unavailable=():ProviderFailureDetail=>({code:"provider_result_recovery_unavailable",category:"server",scope:"unknown",action:"contact_support",message:"Paid provider work was recorded, but its saved recovery data is incomplete. No replacement paid request was submitted.",retryable:false,retryAfterMs:null,requestId:null,httpStatus:null});
   const plannerUsage=checkpoint.plannerUsage&&typeof checkpoint.plannerUsage==="object"?checkpoint.plannerUsage as Record<string,unknown>:{};
@@ -1587,7 +1587,7 @@ function failureProgressMessage(detail: ProviderFailureDetail | DocumentJobError
   if(detail.code==="presentation_provider_call_cap_reached")return "The presentation reached its approved provider-attempt limit; no additional paid request was submitted.";
   if(detail.code==="presentation_provider_response_incomplete"||detail.code==="presentation_empty_provider_response")return "The provider returned an incomplete paid presentation response; review the saved draft before spending again.";
   if(detail.code==="execution_interrupted")return "Forma lost contact with the generation worker before this operation finished.";
-  if(detail.code==="provider_submission_uncertain")return "The presentation provider request could not be confirmed. Automatic resubmission was stopped to prevent a duplicate charge.";
+  if(detail.code==="provider_submission_uncertain")return "We couldn’t confirm the original request. We haven’t sent it again, to avoid a duplicate charge.";
   if(detail.code==="presentation_recovery_unavailable")return "A paid presentation response was recorded, but its complete draft was not saved. Automatic resubmission was stopped to prevent a duplicate charge.";
   if (detail.category === "safety") return detail.riskCategories?.includes("audio-copyright") || /\baudio\b.*\bcopyright\b/i.test(detail.message)
     ? "The provider rejected generated audio. Start a silent video instead of recovering the rejected render."
@@ -2353,10 +2353,10 @@ export async function runDocumentJob(env: WorkerEnv, user: PilotUser, jobId: str
   if (blocker) return row;
   if (row.status === "running" && !rowIsStale(row)) return row;
   if((row.status==="running"||row.status==="queued"&&row.attempt_count>0)&&requiresForegroundDocumentExecution(row)&&!resumeSafetyFailure){const unsafe=unsafePaidRecovery(row);if(unsafe){await failStaleJob(env,user,row,unsafe);return readJob(env,user.userId,jobId);}}
-  if(row.status==="running"&&unresolvedAudioSubmission(row)){await failStaleJob(env,user,row,{code:"provider_submission_uncertain",category:"network",scope:"network",action:"contact_support",message:"The paid music request may already have reached Lyria. Automatic resubmission was stopped to prevent a duplicate charge.",retryable:false,retryAfterMs:null,requestId:null,httpStatus:null});return readJob(env,user.userId,jobId);}
+  if(row.status==="running"&&unresolvedAudioSubmission(row)){await failStaleJob(env,user,row,{code:"provider_submission_uncertain",category:"network",scope:"network",action:"contact_support",message:"We couldn’t confirm the original request. We haven’t sent it again, to avoid a duplicate charge.",retryable:false,retryAfterMs:null,requestId:null,httpStatus:null});return readJob(env,user.userId,jobId);}
   if(row.status==="running"&&unresolvedStoryboardSubmission(row)){
     const checkpoint=parseResult(row);const confirmed=checkpoint.storyboardProviderSubmission==="confirmed"&&Boolean(checkpoint.providerJobId);
-    await failStaleJob(env,user,row,{code:confirmed?"execution_interrupted":"provider_submission_uncertain",category:confirmed?"server":"network",scope:confirmed?"unknown":"network",action:confirmed?"retry":"contact_support",message:confirmed?"The accepted storyboard frame stopped before its result was saved. Resume the same provider request without submitting another paid frame.":"The storyboard frame may already have reached its provider. Automatic resubmission was stopped to prevent a duplicate charge.",retryable:confirmed,retryAfterMs:null,requestId:confirmed?String(checkpoint.providerJobId):null,httpStatus:null});
+    await failStaleJob(env,user,row,{code:confirmed?"execution_interrupted":"provider_submission_uncertain",category:confirmed?"server":"network",scope:confirmed?"unknown":"network",action:confirmed?"retry":"contact_support",message:confirmed?"The accepted storyboard frame stopped before its result was saved. Resume the same provider request without submitting another paid frame.":"We couldn’t confirm the original request. We haven’t sent it again, to avoid a duplicate charge.",retryable:confirmed,retryAfterMs:null,requestId:confirmed?String(checkpoint.providerJobId):null,httpStatus:null});
     return readJob(env,user.userId,jobId);
   }
   if (row.status === "running" && row.attempt_count >= documentJobMaxAttempts(row.kind)) { await failStaleJob(env, user, row); return readJob(env, user.userId, jobId); }

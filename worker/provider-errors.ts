@@ -183,6 +183,10 @@ export function providerErrorFromResponse(response: Response, body: unknown, fal
 }
 
 export function publicFailureDetail(detail: ProviderFailureDetail) {
-  return { ...(detail.safetyInputDigest?{safetyInputDigest:detail.safetyInputDigest}:{}), code: detail.code, category: detail.category, scope: detail.scope, action: detail.action, message: detail.message, retryable: detail.retryable, retryAfterMs: detail.retryAfterMs, requestId: detail.requestId, httpStatus: detail.httpStatus, riskCategories: detail.riskCategories ?? [], contributingBlockIds: detail.contributingBlockIds ?? [], contributingReferenceIds: detail.contributingReferenceIds ?? [], probe: detail.probe ?? null,...(detail.validationIssues?.length?{validationIssues:detail.validationIssues}:{}) };
+  // Normalize historical receipts at the display boundary without rewriting them.
+  const message = detail.code === "provider_submission_uncertain"
+    ? "We couldn’t confirm the original request. We haven’t sent it again, to avoid a duplicate charge." + (detail.message.match(/ Support reference: forma-slides-[0-9a-f-]+\./u)?.[0] ?? "")
+    : detail.message;
+  return { ...(detail.safetyInputDigest?{safetyInputDigest:detail.safetyInputDigest}:{}), code: detail.code, category: detail.category, scope: detail.scope, action: detail.action, message, retryable: detail.retryable, retryAfterMs: detail.retryAfterMs, requestId: detail.requestId, httpStatus: detail.httpStatus, riskCategories: detail.riskCategories ?? [], contributingBlockIds: detail.contributingBlockIds ?? [], contributingReferenceIds: detail.contributingReferenceIds ?? [], probe: detail.probe ?? null,...(detail.validationIssues?.length?{validationIssues:detail.validationIssues}:{}) };
 }
 import type { PresentationCandidateValidationIssue } from "../src/model/presentation-candidates.ts";
