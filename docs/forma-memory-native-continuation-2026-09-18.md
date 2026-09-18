@@ -51,6 +51,11 @@ an exact-consent queue, source/qualification/privacy inverses, bounded catch-up
 and original-time retention. It is not provider-ready admission, paid processing,
 a completed semantic cursor or delivery of the separate Chat Studio producer.
 
+[Native job admission and budget primitives](forma-memory-native-admission-2026-09-18.md)
+now add exact single-consumer reference leases, replayable privacy/configuration
+checks, and protected paired-budget helpers. Full original hydration, financial
+admission/recovery and processing consumers remain implementation work.
+
 ## Remaining native implementation — still in scope
 
 1. Bind the implemented purpose-specific grants to real native callers and approved-cap/native accounting.

@@ -13,6 +13,8 @@ import {
   readBudgets,
   readCostBudgets,
   reconcileFailedBudgetReservations,
+  releaseBudgetReservationsForCorrelation,
+  releaseCostReservationsForCorrelation,
   reserveBudget,
   reserveCostBudget,
   settleBudget,
@@ -281,6 +283,37 @@ test("planner token receipts, dollar receipts, and partially covered costs remai
     {plannerTokensAlreadyRecorded:recorded.tokensRecorded,plannerCostAlreadyRecordedMicrousd:recorded.recordedCostMicrousd});
   assert.equal(remaining.totalTokens,0);
   assert.equal(remaining.plannerCostMicrousd,42_092);
+});
+
+test("generic orphan and correlation recovery cannot release native Memory paired holds",async()=>{
+  const {sqlite,env}=reconciliationDatabase();
+  try{
+    await ensureSchema(env);
+    const user={userId:"memory-owner",billingUserId:"memory-owner",streamId:"creative:memory-owner"};
+    const agedAt=new Date(Date.now()-86_400_000).toISOString(),correlation="memory-shared-correlation",pairs=[];
+    for(const purpose of ["rolling-summary","profile","suggestion"]){
+      const operation=`memory-derivation:${purpose}`;
+      const token=await reserveBudget(env,user.userId,100,{streamId:user.streamId,correlationId:correlation,operation});
+      const cost=await reserveCostBudget(env,user.userId,1_000,{reservationId:`memory-cost-${purpose}`,maximumMicrousd:1_000,
+        allowUserOverage:false,streamId:user.streamId,correlationId:correlation,operation,period:token.period});
+      assert.equal(token.ok,true);assert.equal(cost.ok,true);
+      if(purpose==="profile")assert.equal(await claimCostBudgetReservation(env,user.userId,cost.reservationId),true);
+      sqlite.prepare("UPDATE budget_reservations SET created_at=?,updated_at=? WHERE reservation_id=?").run(agedAt,agedAt,token.reservationId);
+      sqlite.prepare("UPDATE cost_budget_reservations SET created_at=?,updated_at=? WHERE reservation_id=?").run(agedAt,agedAt,cost.reservationId);
+      pairs.push({token,cost,purpose});
+    }
+    assert.deepEqual(await reconcileFailedBudgetReservations(env,user),{releasedTokens:0,reservationCount:0,releasedMicrousd:0,costReservationCount:0});
+    const ordinary=await reserveBudget(env,user.userId,50,{streamId:user.streamId,correlationId:correlation,operation:"image-generation"});
+    assert.equal(ordinary.ok,true);
+    assert.equal((await releaseBudgetReservationsForCorrelation(env,user,correlation,"ordinary_cancellation")).length,1);
+    assert.equal(await releaseCostReservationsForCorrelation(env,user.userId,correlation,user.streamId),0);
+    for(const {token,cost,purpose} of pairs){
+      assert.equal(sqlite.prepare("SELECT status FROM budget_reservations WHERE reservation_id=?").get(token.reservationId).status,"active");
+      assert.equal((await costBudgetReservation(env,user.userId,cost.reservationId)).status,purpose==="profile"?"executing":"active");
+    }
+    assert.equal((await readBudgets(env,user.userId)).user.reserved,300);
+    assert.equal((await readCostBudgets(env,user.userId)).user.reservedMicrousd,3_000);
+  }finally{sqlite.close();}
 });
 
 test("repairs a failed paid-render attempt without erasing planner or provider usage",async()=>{

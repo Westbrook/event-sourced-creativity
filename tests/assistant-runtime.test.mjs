@@ -13026,6 +13026,32 @@ test('native derivation controls commit and revoke on real isolated workerd D1 w
 });
 
 
+for(const shared of [false,true])test('native derivation budgets: original paired holds retain '+(shared?'shared':'personal')+' custody',{timeout:60000},async t=>{
+  const state=await nativeDerivationFixture(t,{shared}),policy=await import('../worker/pilot-policy.ts'),e=state.current();
+  const projectScope=shared?{organizationId:e.organization_id,projectAccessId:e.project_access_id,projectId:e.project_id,ownerUserId:e.owner_user_id,actorUserId:e.actor_user_id}:null;
+  const depth=enforceD1ExpressionDepth(state,{queryLimits:{functionArguments:32,parameters:100,sqlBytes:100000}});t.after(()=>depth.restore());
+  const claims=[];
+  for(const purpose of ['rolling-summary','profile','suggestion']){
+    const operation=`memory-derivation:${purpose}`,common={streamId:'memory-derivation:'+e.actor_user_id,correlationId:purpose,operation,...(projectScope?{projectScope}:{})};
+    const token=await policy.reserveBudget(state.env,e.actor_user_id,1000,{...common,reservationId:purpose+':tokens'});
+    const cost=await policy.reserveCostBudget(state.env,e.actor_user_id,2000,{...common,reservationId:purpose+':usd',maximumMicrousd:2000,allowUserOverage:false});
+    assert.equal(token.ok,true);assert.equal(cost.ok,true);
+    assert.equal(await policy.claimCostBudgetReservationWithoutRelease(state.env,e.actor_user_id,cost.reservationId),true);
+    assert.equal(await policy.claimCostBudgetReservationWithoutRelease(state.env,e.actor_user_id,cost.reservationId),false,'no second claim');
+    claims.push({operation,claim:{actorUserId:e.actor_user_id,streamId:common.streamId,correlationId:purpose,period:token.period,
+      tokenReservationId:token.reservationId,costReservationId:cost.reservationId,reservedTokens:1000,reservedMicrousd:2000,projectScope,pilotCohortId:null}});
+  }
+  const check=async(claim,operation)=>{const guard=policy.claimedProviderBudgetGuard(state.env,claim,operation);
+    return Boolean(await state.env.DB.prepare('SELECT 1 AS allowed WHERE '+guard.sql).bind(...guard.bindings).first());};
+  const before=adaptiveReentryFinancialState(state);
+  for(const {claim,operation}of claims){assert.equal(await check(claim,operation),true);assert.equal(await check(claim,'document-render:scene'),false);assert.equal(await check({...claim,costReservationId:'different'},operation),false);}
+  assert.deepEqual(adaptiveReentryFinancialState(state),before);
+  if(shared)state.sqlite.prepare("UPDATE organization_projects SET status='paused' WHERE project_access_id=?").run(e.project_access_id);
+  else state.sqlite.prepare("UPDATE cost_budget_counters SET used_microusd=hard_limit_microusd WHERE scope='user' AND scope_id=?").run(e.actor_user_id);
+  for(const {claim,operation}of claims)assert.equal(await check(claim,operation),false);
+  depth.assertVerified();
+});
+
 async function nativeDerivationDeliveryFixture(t,options={}) {
   const state=await nativeDerivationFixture(t,{...options,delivery:true});
   const response=await state.derivationRequest('PUT');assert.equal(response.status,200,await response.text());
@@ -13046,6 +13072,76 @@ async function nativeDerivationDeliveryFixture(t,options={}) {
   };
   return Object.assign(state,{delivery,queue,register,pointer});
 }
+for(const shared of [false,true])test('native derivation admission: exact '+(shared?'shared':'personal')+' lease is one-consumer and nonfinancial',{timeout:60000},async t=>{
+  const state=await nativeDerivationDeliveryFixture(t,{shared}),admission=await import('../worker/memory-derivation-admission.ts');
+  await state.send('admission-original');state.due();assert.equal((await state.run()).status,'completed');
+  const job=state.queue().jobs[0],before=adaptiveReentryFinancialState(state),calls=state.calls.length;
+  const depth=enforceD1ExpressionDepth(state,{queryLimits:{functionArguments:32,parameters:100,sqlBytes:100000}});t.after(()=>depth.restore());
+  const lease=await admission.claimNativeDerivationJob(state.env,job.job_id);assert.ok(lease);
+  assert.equal(await admission.replayNativeDerivationLease(state.env,lease),true);
+  assert.equal(await admission.claimNativeDerivationJob(state.env,job.job_id),null);
+  const input=admission.nativeDerivationLeaseInputs(state.env,lease);assert.equal(input.job.attempts,1);assert.equal(input.references.length,job.source_count);
+  assert.equal(input.job.lease_expires_at<=job.expires_at,true);assert.equal(Date.parse(input.validUntil)-Date.now()<=60_000,true);
+  input.grant.actor_user_id='forged';input.references.length=0;
+  assert.equal(admission.nativeDerivationLeaseInputs(state.env,lease).grant.actor_user_id,state.current().actor_user_id);
+  assert.throws(()=>admission.nativeDerivationLeaseStatements(state.env,{}),/admission-unavailable/);
+  assert.throws(()=>admission.nativeDerivationLeaseInputs({...state.env},lease),/admission-unavailable/);
+  state.env.FORMA_MEMORY_DERIVATION_ENABLED='false';assert.equal(await admission.replayNativeDerivationLease(state.env,lease),false);
+  assert.deepEqual(adaptiveReentryFinancialState(state),before);assert.equal(state.calls.length,calls);depth.assertVerified();
+});
+for(const fault of ['identity-consent','document-removed','source-delete','grant-revoked','qualification-withdrawn','flags-disabled','schema-change','foreign-keys-disabled','checks-disabled','database-changed','pilot-configuration','admin-configuration','clock-expired'])
+test('native derivation admission: final replay rejects '+fault,{timeout:60000},async t=>{
+  const state=await nativeDerivationDeliveryFixture(t),admission=await import('../worker/memory-derivation-admission.ts');
+  await state.send('admission-replay');state.due();await state.run();const job=state.queue().jobs[0],lease=await admission.claimNativeDerivationJob(state.env,job.job_id);assert.ok(lease);
+  const before=adaptiveReentryFinancialState(state),now=new Date().toISOString();
+  if(fault==='identity-consent')state.sqlite.prepare("UPDATE users SET consent_version='withdrawn' WHERE user_id=?").run(state.current().actor_user_id);
+  if(fault==='document-removed')await (await import('../worker/runtime.ts')).appendAuditEvent(state.env,'creative:'+state.current().owner_user_id,'user','DocumentRemoved',{project_id:state.current().project_id,document_id:state.current().document_id});
+  if(fault==='source-delete')state.sqlite.prepare('DELETE FROM memory_live_sources WHERE event_id=?').run(state.queue().job_sources[0].event_id);
+  if(fault==='grant-revoked')state.sqlite.prepare('UPDATE memory_derivation_grants SET revoked_at=?').run(now);
+  if(fault==='qualification-withdrawn')state.sqlite.exec("UPDATE memory_derivation_qualifications SET status='withdrawn'");
+  if(fault==='flags-disabled')state.env.FORMA_MEMORY_USER_IDS='';
+  if(fault==='schema-change')state.sqlite.exec('CREATE INDEX idx_memory_derivation_unexpected ON memory_derivation_jobs(attempts)');
+  if(fault==='foreign-keys-disabled')state.sqlite.exec('PRAGMA foreign_keys=OFF');
+  if(fault==='checks-disabled')state.sqlite.exec('PRAGMA ignore_check_constraints=ON');
+  if(fault==='database-changed')state.env.DB={...state.env.DB};
+  if(fault==='pilot-configuration')state.env.FORMA_PILOT_COHORT_ID='different-cohort';
+  if(fault==='admin-configuration')state.env.FORMA_ADMIN_EMAILS='different@example.invalid';
+  if(fault==='clock-expired')consequentialDbClock(state).set(new Date(Date.now()+600_000).toISOString());
+  assert.equal(await admission.replayNativeDerivationLease(state.env,lease),false);assert.deepEqual(adaptiveReentryFinancialState(state),before);
+});
+for(const mode of ['truncated','thrown','configuration-changed'])test('native derivation admission: '+mode+' claim ACK retains the exact lease without automatic retry',{timeout:60000},async t=>{
+  const state=await nativeDerivationDeliveryFixture(t),admission=await import('../worker/memory-derivation-admission.ts');
+  await state.send('admission-lost-ack');state.due();await state.run();const job=state.queue().jobs[0],before=adaptiveReentryFinancialState(state),batch=state.env.DB.batch;
+  state.env.DB.batch=async statements=>{const result=await batch.call(state.env.DB,statements);if(statements.some(s=>s.sql.startsWith("UPDATE memory_derivation_jobs SET state='leased'"))){
+    if(mode==='thrown')throw Error('lost-claim-ack');if(mode==='configuration-changed')state.env.FORMA_PILOT_COHORT_ID='late-cohort';else return result.slice(1);
+  }return result;};
+  await assert.rejects(()=>admission.claimNativeDerivationJob(state.env,job.job_id),/claim-unconfirmed|lost-claim-ack/);state.env.DB.batch=batch;
+  assert.equal(state.queue().jobs[0].state,'leased');assert.equal(state.queue().jobs[0].attempts,1);
+  assert.equal(await admission.claimNativeDerivationJob(state.env,job.job_id),null);assert.deepEqual(adaptiveReentryFinancialState(state),before);
+});
+test('native derivation admission: two preobserved claimants produce exactly one lease',{timeout:60000},async t=>{
+  const state=await nativeDerivationDeliveryFixture(t),admission=await import('../worker/memory-derivation-admission.ts');
+  await state.send('admission-concurrent');state.due();await state.run();const job=state.queue().jobs[0],before=adaptiveReentryFinancialState(state),batch=state.env.DB.batch;
+  const boundary=Promise.withResolvers();let arrived=0;
+  state.env.DB.batch=async statements=>{if(statements.some(s=>s.sql.startsWith("UPDATE memory_derivation_jobs SET state='leased'"))){if(++arrived===2)boundary.resolve();await boundary.promise;}return batch.call(state.env.DB,statements);};
+  const results=await Promise.allSettled([admission.claimNativeDerivationJob(state.env,job.job_id),admission.claimNativeDerivationJob(state.env,job.job_id)]);
+  assert.equal(arrived,2);assert.equal(results.filter(r=>r.status==='fulfilled'&&r.value).length,1);assert.equal(results.filter(r=>r.status==='rejected').length,1);
+  assert.equal(state.queue().jobs[0].attempts,1);assert.deepEqual(adaptiveReentryFinancialState(state),before);
+});
+test('native derivation admission: failure after mutation rolls back the original waiting row',{timeout:60000},async t=>{
+  const state=await nativeDerivationDeliveryFixture(t),admission=await import('../worker/memory-derivation-admission.ts');
+  await state.send('admission-rollback');state.due();await state.run();const job=state.queue().jobs[0],before=state.queue(),batch=state.env.DB.batch;let fired=false;
+  state.env.DB.batch=async statements=>{const index=statements.findIndex(s=>s.sql.startsWith("UPDATE memory_derivation_jobs SET state='leased'"));
+    if(index>=0){fired=true;statements=[...statements.slice(0,index+1),state.env.DB.prepare("SELECT json('injected-after-claim')"),...statements.slice(index+1)];}return batch.call(state.env.DB,statements);};
+  await assert.rejects(()=>admission.claimNativeDerivationJob(state.env,job.job_id));assert.equal(fired,true);assert.deepEqual(state.queue(),before);
+});
+test('native derivation admission: native source removal at the claim boundary rolls back claim',{timeout:60000},async t=>{
+  const state=await nativeDerivationDeliveryFixture(t),admission=await import('../worker/memory-derivation-admission.ts');
+  await state.send('admission-race');state.due();await state.run();const job=state.queue().jobs[0],before=adaptiveReentryFinancialState(state),batch=state.env.DB.batch;let fired=false;
+  state.env.DB.batch=async statements=>{if(!fired&&statements.some(s=>s.sql.startsWith("UPDATE memory_derivation_jobs SET state='leased'"))){fired=true;state.sqlite.prepare('DELETE FROM memory_live_sources WHERE event_id=?').run(state.queue().job_sources[0].event_id);}return batch.call(state.env.DB,statements);};
+  await assert.rejects(()=>admission.claimNativeDerivationJob(state.env,job.job_id));assert.equal(fired,true);assert.equal(state.queue().jobs.length,0);assert.deepEqual(adaptiveReentryFinancialState(state),before);
+});
+
 for(const shared of [false,true])test('native derivation delivery: genuine '+(shared?'shared':'personal')+' source publication registers work atomically',{timeout:60000},async t=>{
   const state=await nativeDerivationDeliveryFixture(t,{shared});await state.send('delivery-original');const before=nativeStructuredCallerNoSpend(state);
   state.due();const run=await state.run();assert.equal(run.status,'completed',JSON.stringify(run)+' '+state.controls.lastDatabaseError);
@@ -13156,7 +13252,7 @@ test('native derivation delivery: native statements compile within D1 limits',{t
     assert.equal(inverse.acknowledge(await state.env.DB.batch(inverse.statements)),true);assert.deepEqual(state.queue(),{cursors:[],jobs:[],job_sources:[]});
   }finally{depth.restore();}
 });
-test('native derivation delivery: isolated workerd D1 registration and privacy use no outbound service',{timeout:180000},async t=>{
+test('native derivation delivery: isolated workerd D1 registration, admission and privacy use no outbound service',{timeout:180000},async t=>{
   const {createRequire}=await import('node:module'),{Miniflare,Log,LogLevel}=createRequire(import.meta.resolve('wrangler'))('miniflare');
   const {exportSynthetic,install}=await import('./helpers/model3d-workerd-snapshot.mjs');let outbound=0;
   const mf=new Miniflare({modules:true,compatibilityDate:'2026-05-15',host:'127.0.0.1',port:0,log:new Log(LogLevel.NONE),d1Databases:['MemoryDelivery'],
@@ -13167,11 +13263,15 @@ test('native derivation delivery: isolated workerd D1 registration and privacy u
   const db=await mf.getD1Database('MemoryDelivery');await install(db,exportSynthetic(state.sqlite));state.env.DB=db;
   await state.register(g.source_after_sequence+129);assert.equal((await db.prepare('SELECT COUNT(*) AS count FROM memory_derivation_job_sources').first()).count,128);
   await state.register(g.source_after_sequence+129);assert.equal((await db.prepare('SELECT COUNT(*) AS count FROM memory_derivation_job_sources').first()).count,129);
+  const admission=await import('../worker/memory-derivation-admission.ts'),job=await db.prepare('SELECT job_id FROM memory_derivation_jobs ORDER BY after_sequence DESC LIMIT 1').first();
+  const lease=await admission.claimNativeDerivationJob(state.env,job.job_id);assert.ok(lease);assert.equal(await admission.replayNativeDerivationLease(state.env,lease),true);
+  assert.equal(await admission.claimNativeDerivationJob(state.env,job.job_id),null);
   await new Promise(resolve=>setTimeout(resolve,Math.max(0,Date.parse(shortExpiry)-Date.now()+10)));await state.delivery.sweepNativeDerivationJobs(state.env);
   assert.equal((await db.prepare('SELECT COUNT(*) AS count FROM memory_derivation_jobs').first()).count,1);
   assert.equal((await db.prepare('SELECT registered_through_sequence FROM memory_derivation_cursors').first()).registered_through_sequence,g.source_after_sequence+129);
   const inverse=await state.derivationStore.prepareDerivationWithdrawal(state.env,{actorUserId:g.actor_user_id},new Date().toISOString(),true);
   assert.equal(inverse.acknowledge(await db.batch(inverse.statements)),true);assert.equal((await db.prepare('SELECT COUNT(*) AS count FROM memory_derivation_jobs').first()).count,0);
+  assert.equal(await admission.replayNativeDerivationLease(state.env,lease),false);
   assert.deepEqual((await db.prepare('PRAGMA foreign_key_check').all()).results,[]);assert.equal(state.calls.length,0);
 });
 

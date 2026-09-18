@@ -6,6 +6,7 @@ import test from "node:test";
 import {
   adoptLegacyCostReservation,
   claimCostBudgetReservation,
+  claimCostBudgetReservationWithoutRelease,
   costBudgetReservation,
   readCostBudgets,
   releaseCostBudget,
@@ -138,6 +139,41 @@ test("correlation cancellation releases only the matching account, stream, and o
   assert.equal((await costBudgetReservation(env, "owner", "remaining")).status, "active");
   assert.equal((await costBudgetReservation(env, "owner", "other-stream")).status, "active");
   assert.equal((await costBudgetReservation(env, "other-owner", "other-account")).status, "active");
+});
+
+test("ordinary correlation cancellation preserves native Memory exposure", async () => {
+  const { sqlite, env } = budgetDatabase();
+  try {
+    for (const purpose of ["rolling-summary", "profile", "suggestion"]) {
+      const result = await reserveCostBudget(env, "owner", 1_000, authorization(purpose, "shared-correlation", { operation: `memory-derivation:${purpose}` }));
+      assert.equal(result.ok, true);
+    }
+    assert.equal(await claimCostBudgetReservationWithoutRelease(env, "owner", "profile"), true);
+    assert.equal((await reserveCostBudget(env, "owner", 1_000, authorization("ordinary", "shared-correlation"))).ok, true);
+    assert.equal(await releaseCostReservationsForCorrelation(env, "owner", "shared-correlation", "creative:owner"), 1);
+    assert.deepEqual(sqlite.prepare("SELECT reservation_id,status FROM cost_budget_reservations ORDER BY reservation_id").all().map(row => ({ ...row })), [
+      { reservation_id: "ordinary", status: "released" }, { reservation_id: "profile", status: "executing" },
+      { reservation_id: "rolling-summary", status: "active" }, { reservation_id: "suggestion", status: "active" },
+    ]);
+    assert.equal((await readCostBudgets(env, "owner")).user.reservedMicrousd, 3_000);
+  } finally { sqlite.close(); }
+});
+
+for (const preserve of [true, false]) test(`failed cost claim ${preserve ? "preserves the native Memory hold" : "retains legacy release behavior"}`, async () => {
+  const { sqlite, env } = budgetDatabase();
+  try {
+    assert.equal((await reserveCostBudget(env, "owner", 1_000, authorization("claim", "claim", { operation: preserve ? "memory-derivation:profile" : "document-render:video" }))).ok, true);
+    const now = new Date().toISOString(), future = new Date(Date.now() + 3_600_000).toISOString();
+    sqlite.prepare("INSERT INTO pilot_cohorts VALUES(?,?,?,?,?,?,?,?,?)").run("cohort", "organization", "active", now, future, 1_000_000, 1_000_000, now, now);
+    sqlite.prepare("INSERT INTO pilot_participants VALUES(?,?,?,?,?,?,?)").run("participant", "cohort", "organization", "owner", "member", "active", null);
+    const claim = preserve ? claimCostBudgetReservationWithoutRelease : claimCostBudgetReservation;
+    assert.equal(await claim(env, "owner", "claim"), false, "a newly governed actor cannot dispatch the unscoped reservation");
+    assert.equal((await costBudgetReservation(env, "owner", "claim")).status, preserve ? "active" : "released");
+    const budget = await readCostBudgets(env, "owner");
+    assert.equal(budget.user.reservedMicrousd, preserve ? 1_000 : 0);
+    assert.equal(budget.workspace.reservedMicrousd, preserve ? 1_000 : 0);
+    assert.equal(budget.user.usedMicrousd, 0);
+  } finally { sqlite.close(); }
 });
 
 test("the additive migration can safely run after an already-initialized runtime", async () => {

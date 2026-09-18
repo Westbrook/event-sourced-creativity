@@ -13,7 +13,7 @@ const hooks=registerOutputSourceImports();
 const fetchDescriptor=Object.getOwnPropertyDescriptor(globalThis,'fetch');let egress=0;
 globalThis.fetch=()=>{egress++;throw Error('No network in Scene paid-claim SQL qualification');};
 after(()=>{Object.defineProperty(globalThis,'fetch',fetchDescriptor);hooks.deregister();assert.equal(egress,0);});
-const {claimedSceneBudgetGuard}=await import('../worker/pilot-policy.ts');
+const {claimedSceneBudgetGuard,claimedProviderBudgetGuard}=await import('../worker/pilot-policy.ts');
 const {OUTPUT_REQUIREMENTS_SCHEMA}=await import('../worker/output-requirements-schema.ts');
 const source=readFileSync(new URL('../worker/experience-sponsor-scene-paid-claim.ts',import.meta.url),'utf8');
 const ast=ts.createSourceFile('experience-sponsor-scene-paid-claim.ts',source,ts.ScriptTarget.Latest,true,ts.ScriptKind.TS);
@@ -88,6 +88,38 @@ function fixture(t){
   };
   return {...f,purchases,prove,limits,insert};
 }
+
+test('Memory uses the same final paired-ledger proof with a closed exact operation',async t=>{
+  const f=fixture(t),{identity}=f.purchases.a;
+  const claim={actorUserId:identity.payerUserId,streamId:identity.streamId,correlationId:identity.correlationId,period:identity.period,
+    tokenReservationId:identity.tokenReservationId,costReservationId:identity.costReservationId,reservedTokens:identity.reservedTokens,
+    reservedMicrousd:identity.reservedMicrousd,projectScope:null,pilotCohortId:null};
+  assert.deepEqual(claimedSceneBudgetGuard(f.env,claim),claimedProviderBudgetGuard(f.env,claim,'document-render:scene'));
+  const prove=async operation=>{
+    const guard=claimedProviderBudgetGuard(f.env,claim,operation);
+    const row=await f.env.DB.prepare(`SELECT CASE WHEN (${guard.sql}) THEN 1 ELSE 0 END AS current`).bind(...guard.bindings).first();
+    return row.current;
+  };
+  for(const purpose of ['rolling-summary','profile','suggestion']){
+    const operation=`memory-derivation:${purpose}`;
+    f.sqlite.prepare("UPDATE budget_reservations SET operation=? WHERE reservation_id='tokens-a'").run(operation);
+    assert.equal(await prove(operation),0,'both original holds must agree');
+    f.sqlite.prepare("UPDATE cost_budget_reservations SET operation=? WHERE reservation_id='cost-a'").run(operation);
+    assert.equal(await prove(operation),1);
+    assert.equal(await prove('document-render:scene'),0,'Memory holds cannot dispatch a Scene');
+  }
+  for(const invalid of ["memory-derivation:unknown","memory-derivation:profile' OR 1=1 --",null,{}]){
+    assert.deepEqual(claimedProviderBudgetGuard(f.env,claim,invalid),{sql:'0',bindings:[]});
+  }
+  const prepared=claimedProviderBudgetGuard(f.env,claim,'memory-derivation:suggestion');
+  const nextMonth=new Date(Date.UTC(Number(claim.period.slice(0,4)),Number(claim.period.slice(5,7)),1)).toISOString().slice(0,7);
+  f.sqlite.function('strftime',(format,value)=>{
+    assert.equal(format,'%Y-%m');assert.equal(value,'now');return nextMonth;
+  });
+  assert.equal((await f.env.DB.prepare(`SELECT CASE WHEN (${prepared.sql}) THEN 1 ELSE 0 END AS current`).bind(...prepared.bindings).first()).current,0,
+    'a prepared proof cannot dispatch after the original UTC month ends');
+  f.limits.assertVerified();
+});
 
 test('Scene paid SQL minimal custody columns belong to the actual native job and plan schemas',()=>{
   const runtime=readFileSync(new URL('../worker/runtime.ts',import.meta.url),'utf8');

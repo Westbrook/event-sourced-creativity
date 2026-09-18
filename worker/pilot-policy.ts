@@ -389,7 +389,7 @@ export async function releaseBudgetReservationsForCorrelation(env:WorkerEnv,user
   const legacy=await env.DB.prepare(`SELECT occurred_at,json_extract(payload,'$.reservation_id') AS reservation_id,CAST(json_extract(payload,'$.reserved_tokens') AS INTEGER) AS reserved_tokens,COALESCE(json_extract(payload,'$.operation'),'provider-operation') AS operation,COALESCE(json_extract(payload,'$.period'),substr(occurred_at,1,7)) AS period FROM events reserved
     WHERE stream_id=? AND correlation_id=? AND type='BudgetReserved' AND NOT EXISTS (SELECT 1 FROM events terminal WHERE terminal.stream_id=reserved.stream_id AND terminal.type IN ('BudgetReleased','GenerationUsageRecorded') AND json_extract(terminal.payload,'$.reservation_id')=json_extract(reserved.payload,'$.reservation_id'))`).bind(user.streamId,correlationId).all<Record<string,unknown>>();
   for(const row of legacy.results){const reservationId=String(row.reservation_id??"");const tokens=Number(row.reserved_tokens??0);if(reservationId&&tokens>0)await adoptLegacyBudgetReservation(env,billingUserId,reservationId,tokens,{streamId:user.streamId,correlationId,operation:String(row.operation??"provider-operation"),period:String(row.period??period()),createdAt:String(row.occurred_at??new Date().toISOString())});}
-  const active=await env.DB.prepare("SELECT * FROM budget_reservations WHERE owner_id=? AND stream_id=? AND correlation_id=? AND status='active' ORDER BY created_at").bind(billingUserId,user.streamId,correlationId).all<BudgetReservationRow>();const released=[] as Array<{id:string;tokens:number;operation:string}>;
+  const active=await env.DB.prepare("SELECT * FROM budget_reservations WHERE owner_id=? AND stream_id=? AND correlation_id=? AND status='active' AND operation NOT LIKE 'memory-derivation:%' ORDER BY created_at").bind(billingUserId,user.streamId,correlationId).all<BudgetReservationRow>();const released=[] as Array<{id:string;tokens:number;operation:string}>;
   for(const reservation of active.results){const result=await releaseBudget(env,billingUserId,reservation.reservation_id,{reason});if(result.settled)released.push({id:reservation.reservation_id,tokens:result.reservedTokens,operation:reservation.operation});}
   return released;
 }
@@ -694,7 +694,7 @@ export async function reconcileFailedBudgetReservations(env: WorkerEnv, user: Pi
       AND reservation.correlation_id NOT LIKE 'assistant:%' AND reservation.correlation_id NOT LIKE 'assistant-specialist:%'
       -- Synthetic benchmark calls retain uncertain exposure even when optional benchmark schema is absent.
       -- Only exact verified usage or a proven-undispatched disposition may settle these operation-bound holds.
-      AND reservation.operation NOT LIKE 'memory-benchmark:%'
+      AND reservation.operation NOT LIKE 'memory-benchmark:%' AND reservation.operation NOT LIKE 'memory-derivation:%'
       AND NOT EXISTS (SELECT 1 FROM consequential_execution_steps step WHERE step.token_reservation_id=reservation.reservation_id
         AND(step.status IN('reserved','submitting','uncertain','usage-recorded','settled') OR step.verified_tokens IS NOT NULL
           OR step.verified_microusd IS NOT NULL OR step.provider_request_id IS NOT NULL))
@@ -1066,6 +1066,14 @@ async function resolveCostReservation(env: WorkerEnv, userId: string, reservatio
 
 /** Single-consumer provider execution prevents two requests from spending the same active reservation. */
 export async function claimCostBudgetReservation(env: WorkerEnv, userId: string, reservationId: string) {
+  return claimCostReservation(env,userId,reservationId,true);
+}
+/** Native Memory owns its original paired holds. A failed claim is not proof of
+ * non-submission and cannot release money. This still is not a dispatch grant. */
+export async function claimCostBudgetReservationWithoutRelease(env: WorkerEnv, userId: string, reservationId: string) {
+  return claimCostReservation(env,userId,reservationId,false);
+}
+async function claimCostReservation(env: WorkerEnv, userId: string, reservationId: string, releaseOnFailure:boolean) {
   const reservation=await env.DB.prepare(`SELECT *${outputReservationColumns(env,"cost_budget_reservations")},
     (SELECT json_object('cohort_id',fixed.cohort_id,'organization_id',fixed.organization_id) FROM pilot_cost_reservation_scopes fixed
       WHERE fixed.reservation_id=cost_budget_reservations.reservation_id AND fixed.actor_user_id=cost_budget_reservations.owner_id) AS fixed_scope_json
@@ -1146,7 +1154,7 @@ export async function claimCostBudgetReservation(env: WorkerEnv, userId: string,
     WHERE reservation_id=? AND owner_id=? AND status='active'${restriction}${projectCustody}`)
     .bind(now,reservationId,userId,...(fixed?[fixed.cohort_id,fixed.organization_id,now,now,POLICY_VERSION]:[]),...(reservation.workspace_id!=="forma"?[POLICY_VERSION]:[])).run();
   if(Number(claimed.meta.changes??0)===1)return true;
-  await settleCostBudget(env,userId,reservationId,0,{activeOnly:true});
+  if(releaseOnFailure)await settleCostBudget(env,userId,reservationId,0,{activeOnly:true});
   return false;
 }
 
@@ -1195,6 +1203,13 @@ export type ClaimedSceneBudget = {
  * Current counters already include this hold. Comparing their totals never adds the hold twice.
  */
 export function claimedSceneBudgetGuard(env: WorkerEnv, claim: ClaimedSceneBudget): BudgetReservationGuard {
+  return claimedProviderBudgetGuard(env,claim,"document-render:scene");
+}
+export type ClaimedProviderBudgetOperation = "document-render:scene" | "memory-derivation:rolling-summary" | "memory-derivation:profile" | "memory-derivation:suggestion";
+/** Same original-ledger/custody proof for a closed server-derived operation.
+ * Request JSON cannot choose an arbitrary operation or mint source authority. */
+export function claimedProviderBudgetGuard(env: WorkerEnv, claim: ClaimedSceneBudget, operation: ClaimedProviderBudgetOperation): BudgetReservationGuard {
+  if(!["document-render:scene","memory-derivation:rolling-summary","memory-derivation:profile","memory-derivation:suggestion"].includes(operation))return{sql:"0",bindings:[]};
   const tokens=budgetLimits(env), money=costBudgetLimits(env), scope=claim.projectScope;
   if (!claim.actorUserId || !claim.streamId || !claim.correlationId || claim.period!==period()
     || !claim.tokenReservationId || !claim.costReservationId
@@ -1219,8 +1234,8 @@ export function claimedSceneBudgetGuard(env: WorkerEnv, claim: ClaimedSceneBudge
     JOIN cost_budget_counters cost_global ON cost_global.scope='workspace' AND cost_global.scope_id='forma' AND cost_global.period=cost.period
     WHERE (token.owner_id,token.stream_id,token.correlation_id,token.operation,token.period,token.reserved_tokens,token.used_tokens,token.status)=
       (json_extract(pinned.value,'$.actorUserId'),json_extract(pinned.value,'$.streamId'),json_extract(pinned.value,'$.correlationId'),
-       'document-render:scene',json_extract(pinned.value,'$.period'),json_extract(pinned.value,'$.reservedTokens'),0,'active')
-      AND token.settled_at IS NULL
+       '${operation}',json_extract(pinned.value,'$.period'),json_extract(pinned.value,'$.reservedTokens'),0,'active')
+      AND token.settled_at IS NULL${operation === "document-render:scene" ? "" : " AND token.period=strftime('%Y-%m','now')"}
       AND (cost.owner_id,cost.stream_id,cost.correlation_id,cost.operation,cost.period,cost.reserved_microusd,cost.used_microusd,cost.status,cost.allow_user_overage,cost.workspace_id)=
       (token.owner_id,token.stream_id,token.correlation_id,token.operation,token.period,
        json_extract(pinned.value,'$.reservedMicrousd'),0,'executing',0,json_extract(pinned.value,'$.workspaceId'))
@@ -1428,7 +1443,7 @@ export async function adoptLegacyCostReservation(env: WorkerEnv, userId: string,
 }
 
 export async function releaseCostReservationsForCorrelation(env: WorkerEnv, userId: string, correlationId: string, streamId: string) {
-  const active = await env.DB.prepare("SELECT reservation_id FROM cost_budget_reservations WHERE owner_id=? AND stream_id=? AND correlation_id=? AND status IN ('active','executing')").bind(userId, streamId, correlationId).all<{ reservation_id: string }>();
+  const active = await env.DB.prepare("SELECT reservation_id FROM cost_budget_reservations WHERE owner_id=? AND stream_id=? AND correlation_id=? AND status IN ('active','executing') AND operation NOT LIKE 'memory-derivation:%'").bind(userId, streamId, correlationId).all<{ reservation_id: string }>();
   for (const row of active.results) await releaseCostBudget(env, userId, row.reservation_id);
   return active.results.length;
 }
