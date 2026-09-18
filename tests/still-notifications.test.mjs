@@ -17,7 +17,7 @@ test('generation status renders terminal errors only once and replaces stale pro
  const message='At least one reference image or video is required.';
  for(const progressMessage of [message,'Submitting…']){
   const job={jobId:'failed',documentId:'doc',kind:'render_document',status:'failed',progressMessage,result:{artifactKind:'video'},error:message,errorDetail:{message}};
-  const output=render.call({client:{projection:{documentId:'doc',documentTitle:'Scene',blocks:[]},position:{outputId:'failed'},jobs:[job],events:[]},button:()=>'<button>Check again</button>'});
+  const output=render.call({client:{projection:{documentId:'doc',documentTitle:'Scene',blocks:[]},position:{outputId:'failed'},jobs:[job],events:[]},canGenerateAgain:()=>true,generationCheckKey:()=>'',button:()=>assert.fail('Recovery controls belong in the toolbar')});
   assert.equal(output.split(message).length-1,1);assert.equal(output.includes('Submitting…'),false);assert.equal(output.split('role="status"').length-1,1);
  }
 });

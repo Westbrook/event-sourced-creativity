@@ -71,6 +71,7 @@ export class StillApp extends LitElement {
   private startupFailed = false;
   private contentRead: {key:string; error:string} | null = null;
   private busy = false;
+  private generationCheck: {key:string;message:string} | null = null;
   private errorMessage = '';
   private errorVersion = 0;
   private get error() { return this.errorMessage; }
@@ -627,11 +628,54 @@ export class StillApp extends LitElement {
     if ((a.kind === 'slides' || a.kind === 'storyboard') && item) return html`<article data-attention-id=${`result:${a.id}:item:${this.itemIndex}`} class="slide" style=${`--slide-bg:${/^#[a-f\d]{3,8}$/i.test(a.presentation?.palette.background ?? '') ? a.presentation?.palette.background : '#ede9e1'}`}><span class="eyebrow">${String(this.itemIndex + 1).padStart(2, '0')} / ${String(a.items.length).padStart(2, '0')}</span>${safeMedia(item.mediaUrl) ? html`<img src=${safeMedia(item.mediaUrl)} alt=${item.title} />` : nothing}<div><h1>${item.title}</h1><div class="prose">${this.prose(item.body)}</div></div></article>`;
     return html`<article data-attention-id=${`result:${a.id}`} class="writing"><span class="eyebrow">${FORMATS[a.kind] ?? 'Creative work'}</span><h1>${a.title}</h1><div class="prose">${this.prose(content?.content_markdown || a.items.map(x => `${x.title}\n\n${x.body}`).join('\n\n') || a.summary || 'Writing unavailable.')}</div></article>`;
   }
+  private generationCheckKey() { const c=this.client;return `${c.scopeKey}/${c.epoch}/${c.position.documentId}/${c.position.outputId}`; }
+  private selectedGeneration() { const c=this.client;return c.jobs.find(j=>j.jobId===c.position.outputId&&j.documentId===c.position.documentId); }
+  private canGenerateAgain(job:DocumentJob|undefined) {
+    const c=this.client,format=job&&generationFormat(job);
+    return !!format&&!!job&&['failed','canceled'].includes(job.status)&&c.abilities.generate&&c.abilities.formats.includes(format)&&!c.pendingGeneration&&!c.hasUnconfirmedWrite;
+  }
+  private async refreshGenerationStatus() {
+    const key=this.generationCheckKey();
+    await this.run(async()=>{
+      this.generationCheck={key,message:'Checking status…'};this.changed();
+      try {
+        await this.client.pollJobs();await this.client.refresh();
+        if(key!==this.generationCheckKey()||this.client.position.view!=='generation')return;
+        const job=this.selectedGeneration();
+        const status=!job?'This attempt is unavailable.':job.status==='failed'?'This attempt is still failed.':job.status==='canceled'?'This attempt is canceled.':job.status==='completed'?'This attempt is complete.':job.status==='partial'?'This attempt is partially complete.':'This attempt is still in progress.';
+        this.generationCheck={key,message:`Status checked. ${status} No new generation was started.`};
+      } catch {
+        if(key===this.generationCheckKey())this.generationCheck={key,message:'Couldn’t refresh status. No new generation was started.'};
+      }
+    });
+  }
+  private generateAgain(jobId:string) {
+    const job=this.selectedGeneration();
+    if(this.busy||this.composing||this.directGeneration||job?.jobId!==jobId||!this.canGenerateAgain(job))return;
+    const format=generationFormat(job)!;
+    this.generationCheck=null;this.generation=null;this.begin('generate');
+    void this.startGeneration(format);
+  }
+  private generationRecoveryActions() {
+    const job=this.selectedGeneration(),format=job&&generationFormat(job);
+    return [
+      ...(this.canGenerateAgain(job)?[{id:'ui:generate-new',label:`Generate new ${(FORMATS[format!]??format).toLowerCase()}`,variant:'primary' as const,run:()=>this.generateAgain(job!.jobId)}]:[]),
+      {id:'ui:refresh-generation',label:'Refresh status',variant:'secondary' as const,run:()=>void this.refreshGenerationStatus()},
+      {id:'document',label:'Document',variant:'secondary' as const,run:()=>this.navigate('document')},
+      {id:'results',label:'Results',variant:'secondary' as const,run:()=>this.navigate('results')},
+      {id:'ui:palette',label:'Palette',variant:'ghost' as const,run:()=>this.openFinder('shortcut')},
+    ];
+  }
+  private renderGenerationStatusDock() {
+    const actions=this.generationRecoveryActions();
+    if(this.pageActionLimit<actions.length)return this.compactDock(actions);
+    return html`<footer class="action-dock"><en-toolbar label="Your next step" keyboard-navigation="tab">${actions.map(a=>a.id==='ui:palette'?this.paletteButton('shortcut'):this.button(a.label,a.run,false,false,a.id,a.variant))}</en-toolbar></footer>`;
+  }
   private renderGeneration() {
     const c=this.client,p=c.projection,job=c.jobs.find(j=>j.jobId===c.position.outputId&&j.documentId===p.documentId);
     if(!job||!generationFormat(job))return html`<section class="quiet-state"><h1>${c.jobsError?'Couldn’t load generation':c.jobsLoaded?'Generation unavailable':'Loading generation…'}</h1>${c.jobsError?this.button('Try again',()=>void this.run(()=>c.pollJobs())):nothing}</section>`;
     const active=generationActive(job),kind=generationFormat(job),preview=generationPreview(job,p,c.events);
-    return html`<section class="generation-stage"><span class="eyebrow">${FORMATS[kind]??kind}</span><h1>${preview.title}</h1>${preview.width&&preview.height?html`<p class="caption">${preview.width} × ${preview.height}</p>`:nothing}<p role="status">${active?(job.progressMessage||generationStatus(job)):job.status==='completed'?'The result is being loaded.':job.errorDetail?.message||job.error||generationStatus(job)}</p>${active?html`<div class=${`generation-placeholder ${kind} ${preview.width?'known-size':''}`} style=${preview.width&&preview.height?`--generation-ratio:${preview.width/preview.height}`:nothing} aria-label="Generation in progress"><en-skeleton shape="rectangle"></en-skeleton></div>`:nothing}${!active?this.button('Check again',()=>void this.run(async()=>{await c.pollJobs();await c.refresh();})):nothing}</section>`;
+    return html`<section class="generation-stage"><span class="eyebrow">${FORMATS[kind]??kind}</span><h1>${preview.title}</h1>${preview.width&&preview.height?html`<p class="caption">${preview.width} × ${preview.height}</p>`:nothing}${job.status==='failed'?html`<p class="caption">This attempt failed.</p>`:nothing}<p role="status">${active?(job.progressMessage||generationStatus(job)):job.status==='completed'?'The result is being loaded.':job.errorDetail?.message||job.error||generationStatus(job)}</p>${active?html`<div class=${`generation-placeholder ${kind} ${preview.width?'known-size':''}`} style=${preview.width&&preview.height?`--generation-ratio:${preview.width/preview.height}`:nothing} aria-label="Generation in progress"><en-skeleton shape="rectangle"></en-skeleton></div>`:nothing}${this.canGenerateAgain(job)?html`<p class="caption">A new generation uses your current document and allowance.</p>`:nothing}${this.generationCheck?.key===this.generationCheckKey()?html`<p class="caption" role="status" aria-live="polite">${this.generationCheck.message}</p>`:nothing}</section>`;
   }
   private renderCanvas() {
     const c = this.client, p = c.projection, pos = c.position;
@@ -732,8 +776,7 @@ export class StillApp extends LitElement {
     if (this.loading || this.startupFailed || !c.session?.policy.accepted || this.currentRouteProblem(p)) return nothing;
     if(this.mode==='generate')return this.renderGenerationDock();
     if(this.mode)return nothing;
-    if(view==='generation'&&this.pageActionLimit<3)return this.compactDock([{id:'document',label:'Document',run:()=>this.navigate('document')},{id:'results',label:'Results',run:()=>this.navigate('results')},{id:'ui:palette',label:'Palette',run:()=>this.openFinder('shortcut'),variant:'ghost'}]);
-    if(view==='generation')return html`<footer class="action-dock"><en-toolbar label="Your next step" keyboard-navigation="tab">${this.button('Document',()=>this.navigate('document'),false,false,'','secondary')}${this.button('Results',()=>this.navigate('results'),false,false,'','secondary')}${this.paletteButton('shortcut')}</en-toolbar></footer>`;
+    if(view==='generation')return this.renderGenerationStatusDock();
     const limit=this.pageActionLimit,eligible=this.candidates();
     const pool=[...this.suggestions,...(limit>5?this.rankedActions.filter(a=>!this.suggestions.some(s=>s.id===a.id)):[])].filter(a=>eligible.some(e=>e.id===a.id));
     const a=p.artifacts.find(x=>x.id===c.position.outputId);
