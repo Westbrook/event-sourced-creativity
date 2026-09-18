@@ -173,9 +173,9 @@ export class StillApp extends LitElement {
   private interactionScope(){return JSON.stringify([this.client.epoch,this.client.scopeKey,this.client.position.projectId,this.client.position.documentId]);}
   private diagnosticScope(){return `${this.developerEpoch}/${this.interactionScope()}`;}
   private localDiagnostics(reason:string, formats=false){return decisionDiagnostics(this.client.projection,{...this.client.position,...(formats?{view:'choose-format'}:{})},this.client.abilities,{head:this.client.head,source:'fallback',reason,localEvents:localHistoryEvidence(this.client.events),artifactKind:this.client.projection.artifacts.find(a=>a.id===this.client.position.outputId)?.kind});}
-  private recordDecision(result:DecisionResponse,disposition:string,scope:string){
+  private recordDecision(result:DecisionResponse,disposition:string,scope:string,started:number){
     if(!this.developer||this.disposed||scope!==this.diagnosticScope())return;
-    this.developerReceived={at:new Date().toLocaleTimeString(),disposition,trace:result.diagnostics,source:result.source,reason:result.reason,recommended:result.paletteActions?.map(a=>a.id)??(result.formats?.length?result.formats:result.actions?.map(a=>a.id)??[])};
+    this.developerReceived={at:new Date().toLocaleTimeString(),requestElapsedMs:Math.max(0,performance.now()-started),disposition,trace:result.diagnostics,source:result.source,reason:result.reason,recommended:result.paletteActions?.map(a=>a.id)??(result.formats?.length?result.formats:result.actions?.map(a=>a.id)??[])};
     if(disposition==='Applied')this.developerApplied=result.diagnostics;
     this.changed();
   }
@@ -305,12 +305,13 @@ export class StillApp extends LitElement {
     this.decisionTimer = window.setTimeout(async () => {
       const snapshot = JSON.stringify(this.client.position), head = this.client.head, scope=this.interactionScope(), diagnosticScope=this.diagnosticScope();
       this.developerPending=this.developer;this.changed();
+      const started=performance.now();
       try {
         const result = await api<DecisionResponse>('/api/still/decision', {...this.client.position,...(this.developer?{developer:true}:{})});
         const disposition=responseDisposition(result,{head:this.client.head,headChanged:head!==this.client.head,stale:ticket!==this.decisionTicket||snapshot!==JSON.stringify(this.client.position)||!!this.mode||this.disposed||scope!==this.interactionScope(),focused:this.dockTouched||!!this.querySelector('.action-dock')?.contains(document.activeElement)});
-        this.recordDecision(result,disposition,diagnosticScope);
+        this.recordDecision(result,disposition,diagnosticScope,started);
         if(disposition==='Applied'){const allowed=new Map(this.candidates().map(a=>[a.id,a]));this.suggestions=result.actions!.map(a=>allowed.get(a.id)).filter((a):a is Action=>!!a).slice(0,4);this.rankedActions=(result.rankedActions??result.actions??[]).map(a=>allowed.get(a.id)).filter((a):a is Action=>!!a);this.emphasis=result.presentation??presentActions(this.suggestions.map(a=>a.id));this.suggestionTargets=result.targets??{};this.decisionSource=result.source;this.changed();}
-      } catch(error) { this.recordDecision({source:'fallback',reason:error instanceof ApiError?`HTTP ${error.status}`:'Network unavailable',head,policy:POLICY_VERSION},'Kept local controls',diagnosticScope); }
+      } catch(error) { this.recordDecision({source:'fallback',reason:error instanceof ApiError?`HTTP ${error.status}`:'Network unavailable',head,policy:POLICY_VERSION},'Kept local controls',diagnosticScope,started); }
       finally {if(ticket===this.decisionTicket){this.developerPending=false;this.changed();}}
     }, 700);
   }
@@ -318,18 +319,18 @@ export class StillApp extends LitElement {
     const ticket = this.decisionTicket, snapshot = JSON.stringify(this.client.position), head = this.client.head, scope = this.interactionScope();
     if(this.developer){this.developerApplied=this.localDiagnostics('No automatic format choice',true);this.developerReceived=undefined;}
     this.decisionTimer = window.setTimeout(async () => {
-      const diagnosticScope=this.diagnosticScope();
+      const diagnosticScope=this.diagnosticScope(),started=performance.now();
       try {
         if (ticket !== this.decisionTicket || this.mode !== 'generate' || this.generation || this.formatTouched || scope!==this.interactionScope()) return;
         this.developerPending=this.developer;this.changed();
         const result = await api<DecisionResponse>('/api/still/decision', { ...this.client.position, view:'choose-format',...(this.developer?{developer:true}:{}) });
         const disposition=responseDisposition(result,{formats:true,head:this.client.head,headChanged:head!==this.client.head,stale:ticket!==this.decisionTicket||this.mode!=='generate'||!!this.generation||this.disposed||scope!==this.interactionScope()||snapshot!==JSON.stringify(this.client.position),touched:this.formatTouched});
-        this.recordDecision(result,disposition,diagnosticScope);
+        this.recordDecision(result,disposition,diagnosticScope,started);
         if (disposition==='Applied') {
           const allowed = new Set(this.candidates().filter(a=>!!FORMATS[a.id]).map(a=>a.id));
           this.formatSuggestions = [...new Set(result.rankedFormats ?? result.formats!)].filter(id=>allowed.has(id));this.formatEmphasis=result.presentation??presentActions(this.formatSuggestions); this.changed();
         }
-      } catch(error) { this.recordDecision({source:'fallback',reason:error instanceof ApiError?`HTTP ${error.status}`:'Network unavailable',head,policy:POLICY_VERSION},'Kept local format order',diagnosticScope); }
+      } catch(error) { this.recordDecision({source:'fallback',reason:error instanceof ApiError?`HTTP ${error.status}`:'Network unavailable',head,policy:POLICY_VERSION},'Kept local format order',diagnosticScope,started); }
       finally {if(ticket===this.decisionTicket){this.developerPending=false;this.changed();}}
     }, 1300);
   }
@@ -376,14 +377,15 @@ export class StillApp extends LitElement {
     if(this.loading||this.startupFailed||!this.client.session?.policy.accepted)return;
     const snapshot=JSON.stringify(this.client.position),head=this.client.head,scope=this.interactionScope(),diagnosticScope=this.diagnosticScope(),ticket=this.paletteTicket;
     this.paletteRefreshing=true;if(this.developer)this.developerReceived=undefined;this.changed();
+    const started=performance.now();
     try{
       const result=await api<DecisionResponse>('/api/still/decision',{...this.client.position,palette:this.paletteFeedback,...(this.developer?{developer:true}:{})},'POST',1800);
       const stale=ticket!==this.paletteTicket||!this.paletteOpen||this.paletteTouched||scope!==this.interactionScope()||snapshot!==JSON.stringify(this.client.position)||head!==this.client.head||result.head!==head||this.disposed;
       const applied=!stale&&result.policy===POLICY_VERSION&&result.source==='jev'&&!!result.paletteActions?.length;
-      this.recordDecision(result,stale?'Ignored: palette changed':applied?'Palette order applied':'Kept local palette order',diagnosticScope);
+      this.recordDecision(result,stale?'Ignored: palette changed':applied?'Palette order applied':'Kept local palette order',diagnosticScope,started);
       if(applied)this.paletteOrder={rankedIds:result.paletteActions!.map(a=>a.id),passedOverIds:[]};
     }catch(error){
-      if(ticket===this.paletteTicket)this.recordDecision({source:'fallback',reason:error instanceof ApiError?`HTTP ${error.status}`:'Palette refresh exceeded budget or was unavailable',head,policy:POLICY_VERSION},'Kept local palette order',diagnosticScope);
+      if(ticket===this.paletteTicket)this.recordDecision({source:'fallback',reason:error instanceof ApiError?`HTTP ${error.status}`:'Palette refresh exceeded budget or was unavailable',head,policy:POLICY_VERSION},'Kept local palette order',diagnosticScope,started);
     }finally{if(ticket===this.paletteTicket){this.paletteRefreshing=false;this.changed();}}
   }
   private closeFinder(){this.paletteRefreshing=false;this.paletteOpen=false;this.paletteBusy=false;++this.paletteTicket;if(this.routeMode==='actions'){this.routeMode=this.mode;this.writeRoute(true);}this.changed();}
@@ -393,11 +395,12 @@ export class StillApp extends LitElement {
     if(explicit){this.paletteChoice=explicit;this.changed();return;}
     const snapshot=JSON.stringify(this.client.position),head=this.client.head,scope=this.interactionScope(),diagnosticScope=this.diagnosticScope(),ticket=++this.paletteTicket;
     this.paletteRefreshing=false;this.paletteBusy=true;if(this.developer)this.developerReceived=undefined;this.changed();
+    const started=performance.now();
     try{const result=await api<DecisionResponse>('/api/still/decision',{...this.client.position,view:'find-action',intent:query,palette:this.paletteFeedback,...(this.developer?{developer:true}:{})});
       const stale=result.policy!==POLICY_VERSION||result.head!==head||ticket!==this.paletteTicket||!this.paletteOpen||query!==this.paletteQuery.trim()||scope!==this.interactionScope()||snapshot!==JSON.stringify(this.client.position)||head!==this.client.head||this.disposed;
-      this.recordDecision(result,stale?'Ignored: palette changed':'Palette suggestion',diagnosticScope);if(stale)return;
+      this.recordDecision(result,stale?'Ignored: palette changed':'Palette suggestion',diagnosticScope,started);if(stale)return;
       this.paletteChoice=candidates.some(a=>a.id===result.resolvedAction)?result.resolvedAction!:'';this.finderMessage=this.paletteChoice?'':'Choose an action.';
-    }catch(error){if(ticket===this.paletteTicket){this.finderMessage='Choose an action.';this.recordDecision({source:'fallback',reason:error instanceof ApiError?`HTTP ${error.status}`:'Network unavailable',head,policy:POLICY_VERSION},'Palette lookup failed',diagnosticScope);}}finally{if(ticket===this.paletteTicket){this.paletteBusy=false;this.changed();}}
+    }catch(error){if(ticket===this.paletteTicket){this.finderMessage='Choose an action.';this.recordDecision({source:'fallback',reason:error instanceof ApiError?`HTTP ${error.status}`:'Network unavailable',head,policy:POLICY_VERSION},'Palette lookup failed',diagnosticScope,started);}}finally{if(ticket===this.paletteTicket){this.paletteBusy=false;this.changed();}}
   }
   private openFoundAction(id=this.paletteChoice,inferred=this.finderInferred){
     if(!id)return;
