@@ -52,7 +52,8 @@ function refreshFixture(){
   let resolve,reject,request;const response=new Promise((a,b)=>{resolve=a;reject=b;});
   const host={client:{head:7,position:{view:'document'},session:{policy:{accepted:true}}},paletteOpen:true,paletteTicket:1,paletteFeedback:feedback,paletteTouched:false,paletteOrder:{rankedIds:['create'],passedOverIds:['image']},interactionScope:()=> 'scope',diagnosticScope:()=> 'debug',changed(){},records:[],recordDecision(...v){this.records.push(v);}};
   const member=app.members.find(n=>n.name?.getText(source)==='refreshPalette');
-  const js=ts.transpileModule(`async function refreshPalette()${member.body.getText(source)}`,{compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText;
+  const js=ts.transpileModule(`async function refreshPalette(bypass=false)${member.body.getText(source)}`,{compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText;
+  host.decisionBody=extra=>({...host.client.position,...extra});host.requestDecision=(...args)=>{request=args;return response;};
   host.refresh=new Function('api','POLICY_VERSION','ApiError',`${js};return refreshPalette;`)((...args)=>{request=args;return response;},POLICY_VERSION,class ApiError extends Error{});
   return {host,resolve,reject,request:()=>request,result:{source:'jev',head:7,policy:POLICY_VERSION,paletteActions:[{id:'image'}]}};
 }
@@ -60,7 +61,7 @@ test('fast result applies only before interaction; stale, changed and failed res
   for(const change of [h=>{h.paletteTouched=true;},h=>{h.paletteTicket++;},h=>{h.paletteOpen=false;},h=>{h.client.head++;},h=>{h.client.position.view='projects';},h=>{h.disposed=true;}]){
     const f=refreshFixture(),before=structuredClone(f.host.paletteOrder),pending=f.host.refresh();change(f.host);f.resolve(f.result);await pending;assert.deepEqual(f.host.paletteOrder,before);
   }
-  const f=refreshFixture(),pending=f.host.refresh();assert.equal(f.request()[3],1800);assert.deepEqual(f.request()[1].palette,feedback);f.resolve(f.result);await pending;assert.deepEqual(f.host.paletteOrder,{rankedIds:['image'],passedOverIds:[]});assert.equal(f.host.paletteRefreshing,false);
+  const f=refreshFixture(),pending=f.host.refresh();assert.equal(f.request()[2],1800);assert.deepEqual(f.request()[0].palette,feedback);f.resolve(f.result);await pending;assert.deepEqual(f.host.paletteOrder,{rankedIds:['image'],passedOverIds:[]});assert.equal(f.host.paletteRefreshing,false);
   const failed=refreshFixture(),before=structuredClone(failed.host.paletteOrder),wait=failed.host.refresh();failed.reject(new Error('timeout'));await wait;assert.deepEqual(failed.host.paletteOrder,before);assert.equal(failed.host.paletteRefreshing,false);
 });
 

@@ -1,3 +1,5 @@
+import { DecisionMemo, stableDecisionKey } from './decision-cache.ts';
+import { StillAttentionObserver } from './attention-observer.ts';
 import { generationActive, generationPreview, generationFormat, generationResult, generationStatus, stillResults } from './results.ts';
 import { failureNotification, canContinueReview } from './notifications.ts';
 import type { DocumentJob } from '../model/document-jobs.ts';
@@ -45,6 +47,23 @@ const safeMedia = (url: string | null | undefined) => url?.startsWith('/api/medi
 
 export class StillApp extends LitElement {
   private client = new StillClient();
+  private attention?:StillAttentionObserver;
+  private decisionMemory=new DecisionMemo<DecisionResponse>({
+    accept:r=>r.source==='jev'&&!r.reason&&r.policy===POLICY_VERSION&&r.head===this.client.head&&r.cache?.stored===true,
+    ttl:r=>r.cache?.remainingMs??0,latency:r=>r.cache?.originalLatencyMs,age:r=>r.cache?.ageMs??0,
+  });
+  private decisionKey(body:unknown){return stableDecisionKey({scope:this.client.scopeKey,epoch:this.client.epoch,head:this.client.head,abilities:this.client.abilities,body});}
+  private decisionBody(extra:Record<string,unknown>={}){return {...this.client.position,...extra,...(this.developer?{developer:true}:{})};}
+  private async requestDecision(body:Record<string,unknown>,bypass=false,timeout?:number){
+    const result=await this.decisionMemory.run(this.decisionKey(body),()=>api<DecisionResponse>('/api/still/decision',{...body,...(bypass?{cacheBypass:true}:{})},'POST',timeout),bypass);
+    return result.cache.status==='hit'||result.cache.status==='shared'?{...result.value,cache:{...result.cache,layer:'browser' as const}}:result.value;
+  }
+  private refreshDecision=()=>{
+    if(!this.developer||this.developerPending||this.paletteBusy||this.paletteRefreshing||this.busy||this.loading)return;
+    this.decisionMemory.clear();
+    if(this.paletteOpen){this.paletteTouched=false;void this.refreshPalette(true);}
+    else{this.dockTouched=false;this.formatTouched=false;this.decide(true);}
+  };
   private loading = true;
   private startupFailed = false;
   private contentRead: {key:string; error:string} | null = null;
@@ -145,7 +164,11 @@ export class StillApp extends LitElement {
   createRenderRoot() { return this; }
   connectedCallback() {
     super.connectedCallback(); this.disposed = false;
-    this.client.onChange = () => { if (this.client.recoveredWrite) { this.notice = 'Save confirmed.'; this.client.recoveredWrite = false; } this.changed(); };
+    this.attention=new StillAttentionObserver(this,snapshot=>{
+      const inspector=this.querySelector<StillDeveloperConsole>('still-developer-console');
+      if(inspector?.context)inspector.context={...inspector.context,attention:snapshot};
+    });
+    this.client.onChange = () => { this.decisionMemory.clear(); if (this.client.recoveredWrite) { this.notice = 'Save confirmed.'; this.client.recoveredWrite = false; } this.changed(); };
     this.desktop.addEventListener('change', this.developerViewportChanged);
     window.addEventListener('keydown', this.paletteShortcut);
     window.addEventListener('popstate', this.popstate);
@@ -154,7 +177,7 @@ export class StillApp extends LitElement {
     document.addEventListener('visibilitychange', this.resumeSync);
     void this.run(() => this.loadWorkspace());
   }
-  disconnectedCallback() { super.disconnectedCallback(); this.desktop.removeEventListener('change', this.developerViewportChanged); this.disposed = true; ++this.developerEpoch; this.developerApplied=undefined;this.developerReceived=undefined;this.dockObserver.disconnect(); clearTimeout(this.pollTimer); clearTimeout(this.decisionTimer); window.removeEventListener('keydown', this.paletteShortcut);window.removeEventListener('popstate', this.popstate); window.removeEventListener('beforeunload', this.beforeUnload); window.removeEventListener('focus', this.resumeSync); document.removeEventListener('visibilitychange', this.resumeSync); }
+  disconnectedCallback() { super.disconnectedCallback(); this.attention?.dispose();this.attention=undefined;this.decisionMemory.clear(); this.desktop.removeEventListener('change', this.developerViewportChanged); this.disposed = true; ++this.developerEpoch; this.developerApplied=undefined;this.developerReceived=undefined;this.dockObserver.disconnect(); clearTimeout(this.pollTimer); clearTimeout(this.decisionTimer); window.removeEventListener('keydown', this.paletteShortcut);window.removeEventListener('popstate', this.popstate); window.removeEventListener('beforeunload', this.beforeUnload); window.removeEventListener('focus', this.resumeSync); document.removeEventListener('visibilitychange', this.resumeSync); }
   private draftSignature(){const g=this.generation;return JSON.stringify([this.titleDraft,this.bodyDraft,this.kindDraft,g?.prompt,g?.tone,g?.audience,g?.itemCount]);}
   private preventsRouteChange(){return this.busy&&!this.loading||this.composing||this.client.hasUnconfirmedWrite||!!this.generation?.attempted||!!this.mode&&this.draftSignature()!==this.draftBaseline||!!this.querySelector<StillContextFlow>('still-context-flow')?.preventsRouteChange||!!this.querySelector<StillUseInFlow>('still-use-in-flow')?.preventsRouteChange;}
   private beforeUnload = (e: BeforeUnloadEvent) => { if (this.preventsRouteChange()) { e.preventDefault(); e.returnValue = ''; } };
@@ -162,11 +185,14 @@ export class StillApp extends LitElement {
   protected updated() {
     this.reconcileGeneration();
     this.hydrateVisibleWriting();
+    const attentionPage=location.pathname;
+    const attentionEnabled=!this.loading&&!this.startupFailed&&!!this.client.session?.policy.accepted;
+    this.attention?.refresh(`${this.client.epoch}/${this.client.scopeKey}`,attentionEnabled?attentionPage:'',attentionEnabled,this.paletteOpen);
     const dock = this.querySelector('.action-dock'); this.dockObserver.disconnect(); if (dock) this.dockObserver.observe(dock);
     const inspector=this.querySelector<StillDeveloperConsole>('still-developer-console');
     if(inspector){
       if(this.developerScope!==this.diagnosticScope()){this.developerApplied=undefined;this.developerReceived=undefined;this.developerScope=this.diagnosticScope();}
-      inspector.context={view:this.client.position.view,mode:this.mode,head:this.client.head,page:this.page,actionLimit:this.pageActionLimit,more:this.moreOpen,paletteOpen:this.paletteOpen,paletteFeedback:this.paletteFeedback,paletteOrder:this.paletteOrder,selectedFormat:this.generation?.format??'',current:this.localDiagnostics('Current eligibility')};
+      inspector.context={canRefreshDecision:!this.loading&&!this.busy&&(this.paletteOpen||this.mode==='generate'&&!this.generation||!this.mode&&this.client.position.view!=='generation'),attention:this.attention?.summary.snapshot(),view:this.client.position.view,mode:this.mode,head:this.client.head,page:this.page,actionLimit:this.pageActionLimit,more:this.moreOpen,paletteOpen:this.paletteOpen,paletteFeedback:this.paletteFeedback,paletteOrder:this.paletteOrder,selectedFormat:this.generation?.format??'',current:this.localDiagnostics('Current eligibility')};
       inspector.applied=this.developerApplied;inspector.received=this.developerReceived;inspector.pending=this.developerPending||this.paletteBusy||this.paletteRefreshing;
       inspector.scope=this.diagnosticScope();
     }
@@ -176,7 +202,7 @@ export class StillApp extends LitElement {
   private localDiagnostics(reason:string, formats=false){return decisionDiagnostics(this.client.projection,{...this.client.position,...(formats?{view:'choose-format'}:{})},this.client.abilities,{head:this.client.head,source:'fallback',reason,localEvents:localHistoryEvidence(this.client.events),artifactKind:this.client.projection.artifacts.find(a=>a.id===this.client.position.outputId)?.kind});}
   private recordDecision(result:DecisionResponse,disposition:string,scope:string,started:number){
     if(!this.developer||this.disposed||scope!==this.diagnosticScope())return;
-    this.developerReceived={at:new Date().toLocaleTimeString(),requestElapsedMs:Math.max(0,performance.now()-started),disposition,trace:result.diagnostics,source:result.source,reason:result.reason,recommended:result.paletteActions?.map(a=>a.id)??(result.formats?.length?result.formats:result.actions?.map(a=>a.id)??[])};
+    this.developerReceived={cache:result.cache,receivedAt:Date.now(),at:new Date().toLocaleTimeString(),requestElapsedMs:Math.max(0,performance.now()-started),disposition,trace:result.diagnostics,source:result.source,reason:result.reason,recommended:result.paletteActions?.map(a=>a.id)??(result.formats?.length?result.formats:result.actions?.map(a=>a.id)??[])};
     if(disposition==='Applied')this.developerApplied=result.diagnostics;
     this.changed();
   }
@@ -295,10 +321,10 @@ export class StillApp extends LitElement {
   private turnPage(page:number){this.dockTouched=false;this.page=Math.max(0,page);this.writeRoute();this.changed();this.decide();}
   private turnItem(item:number){this.dockTouched=false;this.itemIndex=item;this.writeRoute();this.changed();this.decide();}
   private candidates() { return eligibleActions(this.client.projection, this.client.position, this.client.abilities); }
-  private decide() {
+  private decide(bypass=false) {
     if(this.client.position.view==='generation'&&!this.mode){clearTimeout(this.decisionTimer);++this.decisionTicket;this.developerPending=false;this.developerReceived=undefined;this.developerApplied=this.developer?this.localDiagnostics('Generation progress uses Document, Results and Palette navigation.'):undefined;return;}
     if(this.currentRouteProblem(this.client.projection))return;
-    if(this.mode){clearTimeout(this.decisionTimer);if(this.mode==='generate'&&!this.generation)this.suggestFormats();return;}
+    if(this.mode){clearTimeout(this.decisionTimer);if(this.mode==='generate'&&!this.generation){++this.decisionTicket;this.suggestFormats(bypass);}return;}
     clearTimeout(this.decisionTimer); const ticket = ++this.decisionTicket;
     const candidates = this.candidates(); if(this.dockTouched)return;this.suggestions = selectActions(candidates, this.client.position);this.rankedActions=evaluateActions(candidates,this.client.position).ranked;this.moreOpen=false;this.emphasis=presentActions(this.suggestions.map(a=>a.id));this.suggestionTargets={}; this.decisionSource = 'fallback'; this.changed();
     if(this.developer){this.developerScope=this.diagnosticScope();this.developerApplied=this.localDiagnostics('Local policy');this.developerReceived=undefined;this.developerPending=false;}
@@ -308,15 +334,15 @@ export class StillApp extends LitElement {
       this.developerPending=this.developer;this.changed();
       const started=performance.now();
       try {
-        const result = await api<DecisionResponse>('/api/still/decision', {...this.client.position,...(this.developer?{developer:true}:{})});
+        const result = await this.requestDecision(this.decisionBody(),bypass);
         const disposition=responseDisposition(result,{head:this.client.head,headChanged:head!==this.client.head,stale:ticket!==this.decisionTicket||snapshot!==JSON.stringify(this.client.position)||!!this.mode||this.disposed||scope!==this.interactionScope(),focused:this.dockTouched||!!this.querySelector('.action-dock')?.contains(document.activeElement)});
         this.recordDecision(result,disposition,diagnosticScope,started);
         if(disposition==='Applied'){const allowed=new Map(this.candidates().map(a=>[a.id,a]));this.suggestions=result.actions!.map(a=>allowed.get(a.id)).filter((a):a is Action=>!!a).slice(0,4);this.rankedActions=(result.rankedActions??result.actions??[]).map(a=>allowed.get(a.id)).filter((a):a is Action=>!!a);this.emphasis=result.presentation??presentActions(this.suggestions.map(a=>a.id));this.suggestionTargets=result.targets??{};this.decisionSource=result.source;this.changed();}
       } catch(error) { this.recordDecision({source:'fallback',reason:error instanceof ApiError?`HTTP ${error.status}`:'Network unavailable',head,policy:POLICY_VERSION},'Kept local controls',diagnosticScope,started); }
       finally {if(ticket===this.decisionTicket){this.developerPending=false;this.changed();}}
-    }, 700);
+    }, bypass||this.decisionMemory.peek(this.decisionKey(this.decisionBody()))?0:700);
   }
-  private suggestFormats() {
+  private suggestFormats(bypass=false) {
     const ticket = this.decisionTicket, snapshot = JSON.stringify(this.client.position), head = this.client.head, scope = this.interactionScope();
     if(this.developer){this.developerApplied=this.localDiagnostics('No automatic format choice',true);this.developerReceived=undefined;}
     this.decisionTimer = window.setTimeout(async () => {
@@ -324,7 +350,7 @@ export class StillApp extends LitElement {
       try {
         if (ticket !== this.decisionTicket || this.mode !== 'generate' || this.generation || this.formatTouched || scope!==this.interactionScope()) return;
         this.developerPending=this.developer;this.changed();
-        const result = await api<DecisionResponse>('/api/still/decision', { ...this.client.position, view:'choose-format',...(this.developer?{developer:true}:{}) });
+        const result = await this.requestDecision(this.decisionBody({view:'choose-format'}),bypass);
         const disposition=responseDisposition(result,{formats:true,head:this.client.head,headChanged:head!==this.client.head,stale:ticket!==this.decisionTicket||this.mode!=='generate'||!!this.generation||this.disposed||scope!==this.interactionScope()||snapshot!==JSON.stringify(this.client.position),touched:this.formatTouched});
         this.recordDecision(result,disposition,diagnosticScope,started);
         if (disposition==='Applied') {
@@ -333,7 +359,7 @@ export class StillApp extends LitElement {
         }
       } catch(error) { this.recordDecision({source:'fallback',reason:error instanceof ApiError?`HTTP ${error.status}`:'Network unavailable',head,policy:POLICY_VERSION},'Kept local format order',diagnosticScope,started); }
       finally {if(ticket===this.decisionTicket){this.developerPending=false;this.changed();}}
-    }, 1300);
+    }, bypass||this.decisionMemory.peek(this.decisionKey(this.decisionBody({view:'choose-format'})))?0:1300);
   }
   private async sync(force = false) {
     if (this.syncPending || this.disposed || this.loading || this.busy || document.hidden || !this.client.session?.policy.accepted) return;
@@ -361,10 +387,11 @@ export class StillApp extends LitElement {
       event.preventDefault();if(event.repeat)return;if(this.paletteOpen)this.closeFinder();else this.openFinder('shortcut');
     }
   };
-  private openMore(){this.toolbarSeen=this.visibleToolbarActions();this.moreOpen=true;this.dockTouched=true;this.client.position.recentActions=[...this.client.position.recentActions,'ui:more'].slice(-12);this.changed();void this.updateComplete.then(()=>this.querySelector<HTMLElement>('.action-dock en-button')?.focus());}
+  private openMore(){this.attention?.summary.explore('more');this.toolbarSeen=this.visibleToolbarActions();this.moreOpen=true;this.dockTouched=true;this.client.position.recentActions=[...this.client.position.recentActions,'ui:more'].slice(-12);this.changed();void this.updateComplete.then(()=>this.querySelector<HTMLElement>('.action-dock en-button')?.focus());}
   private visibleToolbarActions(){return [...this.querySelectorAll<HTMLElement>('.action-dock [data-action-id]')].map(e=>e.dataset.actionId!).filter(id=>this.candidates().some(a=>a.id===id));}
   private paletteOptions(){return paletteActions(this.paletteQuery,this.candidates(),this.paletteOrder).filter(a=>this.desktop.matches||a.id!=='ui:developer');}
   private openFinder(entry:PaletteFeedback['entry']='direct'){
+    if(!this.paletteOpen)this.attention?.summary.explore('palette');
     const visible=this.visibleToolbarActions();
     this.paletteFeedback={entry,surface:this.mode?'workflow':this.moreOpen?'more':'toolbar',toolbar:this.moreOpen?this.toolbarSeen:visible,more:this.moreOpen?visible:[]};
     this.paletteOrder={rankedIds:[...this.suggestions,...this.rankedActions].map(a=>a.id),passedOverIds:[...this.paletteFeedback.toolbar,...this.paletteFeedback.more]};
@@ -374,13 +401,13 @@ export class StillApp extends LitElement {
     void this.updateComplete.then(()=>this.querySelector<HTMLInputElement>('.palette-query')?.focus());
     void this.refreshPalette();
   }
-  private async refreshPalette(){
+  private async refreshPalette(bypass=false){
     if(this.loading||this.startupFailed||!this.client.session?.policy.accepted)return;
     const snapshot=JSON.stringify(this.client.position),head=this.client.head,scope=this.interactionScope(),diagnosticScope=this.diagnosticScope(),ticket=this.paletteTicket;
     this.paletteRefreshing=true;if(this.developer)this.developerReceived=undefined;this.changed();
     const started=performance.now();
     try{
-      const result=await api<DecisionResponse>('/api/still/decision',{...this.client.position,palette:this.paletteFeedback,...(this.developer?{developer:true}:{})},'POST',1800);
+      const result=await this.requestDecision(this.decisionBody({palette:this.paletteFeedback}),bypass,1800);
       const stale=ticket!==this.paletteTicket||!this.paletteOpen||this.paletteTouched||scope!==this.interactionScope()||snapshot!==JSON.stringify(this.client.position)||head!==this.client.head||result.head!==head||this.disposed;
       const applied=!stale&&result.policy===POLICY_VERSION&&result.source==='jev'&&!!result.paletteActions?.length;
       this.recordDecision(result,stale?'Ignored: palette changed':applied?'Palette order applied':'Kept local palette order',diagnosticScope,started);
@@ -397,7 +424,7 @@ export class StillApp extends LitElement {
     const snapshot=JSON.stringify(this.client.position),head=this.client.head,scope=this.interactionScope(),diagnosticScope=this.diagnosticScope(),ticket=++this.paletteTicket;
     this.paletteRefreshing=false;this.paletteBusy=true;if(this.developer)this.developerReceived=undefined;this.changed();
     const started=performance.now();
-    try{const result=await api<DecisionResponse>('/api/still/decision',{...this.client.position,view:'find-action',intent:query,palette:this.paletteFeedback,...(this.developer?{developer:true}:{})});
+    try{const result=await this.requestDecision(this.decisionBody({view:'find-action',intent:query,palette:this.paletteFeedback}));
       const stale=result.policy!==POLICY_VERSION||result.head!==head||ticket!==this.paletteTicket||!this.paletteOpen||query!==this.paletteQuery.trim()||scope!==this.interactionScope()||snapshot!==JSON.stringify(this.client.position)||head!==this.client.head||this.disposed;
       this.recordDecision(result,stale?'Ignored: palette changed':'Palette suggestion',diagnosticScope,started);if(stale)return;
       this.paletteChoice=candidates.some(a=>a.id===result.resolvedAction)?result.resolvedAction!:'';this.finderMessage=this.paletteChoice?'':'Choose an action.';
@@ -576,10 +603,10 @@ export class StillApp extends LitElement {
   private renderArtifact(a: DocumentArtifact) {
     if (this.missingWriting()) return this.renderWritingLoad();
     const content = parseDocumentArtifactContent(a.contentRef ? this.client.content[a.contentRef] : undefined), receipt = a.items[this.itemIndex], item = receipt ? {...receipt,...content?.items[this.itemIndex]} : undefined;
-    if (a.kind === 'model3d') { const file = model3dArtifactMediaFile(a); void import('./model-view.ts'); return html`<div class="model-stage"><still-model-view src=${safeMedia(file?.url)}></still-model-view></div><p class="caption">${a.title} · Drag to rotate</p>`; }
-    if (a.kind === 'video' || a.kind === 'audio') return html`<div class=${`media-stage ${a.kind}`}>${a.kind === 'video' ? html`<video controls playsinline src=${safeMedia(a.mediaUrl ?? item?.mediaUrl)}></video>` : html`<div class="sound-form" aria-hidden="true">${Array.from({ length: 42 }, (_, i) => html`<i style=${`height:${20 + Math.abs(Math.sin(i * .7) * Math.cos(i * .23)) * 100}px`}></i>`)}</div><audio controls src=${safeMedia(a.mediaUrl ?? item?.mediaUrl)}></audio>`}<h1>${a.title}</h1>${a.summary ? html`<p>${a.summary}</p>` : nothing}</div>`;
-    if ((a.kind === 'slides' || a.kind === 'storyboard') && item) return html`<article class="slide" style=${`--slide-bg:${/^#[a-f\d]{3,8}$/i.test(a.presentation?.palette.background ?? '') ? a.presentation?.palette.background : '#ede9e1'}`}><span class="eyebrow">${String(this.itemIndex + 1).padStart(2, '0')} / ${String(a.items.length).padStart(2, '0')}</span>${safeMedia(item.mediaUrl) ? html`<img src=${safeMedia(item.mediaUrl)} alt=${item.title} />` : nothing}<div><h1>${item.title}</h1><div class="prose">${this.prose(item.body)}</div></div></article>`;
-    return html`<article class="writing"><span class="eyebrow">${FORMATS[a.kind] ?? 'Creative work'}</span><h1>${a.title}</h1><div class="prose">${this.prose(content?.content_markdown || a.items.map(x => `${x.title}\n\n${x.body}`).join('\n\n') || a.summary || 'Writing unavailable.')}</div></article>`;
+    if (a.kind === 'model3d') { const file = model3dArtifactMediaFile(a); void import('./model-view.ts'); return html`<div data-attention-id=${`result:${a.id}`} class="model-stage"><still-model-view src=${safeMedia(file?.url)}></still-model-view></div><p class="caption">${a.title} · Drag to rotate</p>`; }
+    if (a.kind === 'video' || a.kind === 'audio') return html`<div data-attention-id=${`result:${a.id}`} class=${`media-stage ${a.kind}`}>${a.kind === 'video' ? html`<video controls playsinline src=${safeMedia(a.mediaUrl ?? item?.mediaUrl)}></video>` : html`<div class="sound-form" aria-hidden="true">${Array.from({ length: 42 }, (_, i) => html`<i style=${`height:${20 + Math.abs(Math.sin(i * .7) * Math.cos(i * .23)) * 100}px`}></i>`)}</div><audio controls src=${safeMedia(a.mediaUrl ?? item?.mediaUrl)}></audio>`}<h1>${a.title}</h1>${a.summary ? html`<p>${a.summary}</p>` : nothing}</div>`;
+    if ((a.kind === 'slides' || a.kind === 'storyboard') && item) return html`<article data-attention-id=${`result:${a.id}:item:${this.itemIndex}`} class="slide" style=${`--slide-bg:${/^#[a-f\d]{3,8}$/i.test(a.presentation?.palette.background ?? '') ? a.presentation?.palette.background : '#ede9e1'}`}><span class="eyebrow">${String(this.itemIndex + 1).padStart(2, '0')} / ${String(a.items.length).padStart(2, '0')}</span>${safeMedia(item.mediaUrl) ? html`<img src=${safeMedia(item.mediaUrl)} alt=${item.title} />` : nothing}<div><h1>${item.title}</h1><div class="prose">${this.prose(item.body)}</div></div></article>`;
+    return html`<article data-attention-id=${`result:${a.id}`} class="writing"><span class="eyebrow">${FORMATS[a.kind] ?? 'Creative work'}</span><h1>${a.title}</h1><div class="prose">${this.prose(content?.content_markdown || a.items.map(x => `${x.title}\n\n${x.body}`).join('\n\n') || a.summary || 'Writing unavailable.')}</div></article>`;
   }
   private renderGeneration() {
     const c=this.client,p=c.projection,job=c.jobs.find(j=>j.jobId===c.position.outputId&&j.documentId===p.documentId);
@@ -597,18 +624,18 @@ export class StillApp extends LitElement {
     if (this.mode) return this.renderMode();
     if (pos.view === 'projects' || pos.view === 'documents') {
       const projects = pos.view === 'projects', items = projects ? p.projects.map(x => ({ id: x.id, title: x.name, detail: `${x.documentCount} ${x.documentCount === 1 ? 'document' : 'documents'}` })) : p.documents.filter(d => !d.removed).map(d => ({ id: d.id, title: d.title, detail: '' }));
-      return html`<section class="library-page">${projects ? nothing : html`<span class="eyebrow">${p.projectName}</span>`}<h1>${projects ? 'Projects' : 'Documents'}</h1><div class="work-list">${items.slice(this.page * 3, this.page * 3 + 3).map((x, i) => html`<a class="work-row" href=${projects?this.viewURL('documents',{projectId:x.id,documentId:''}):this.viewURL('document',{documentId:x.id})} @click=${(e:MouseEvent)=>projects?this.follow(e,'documents',{projectId:x.id,documentId:''}):this.follow(e,'document',{documentId:x.id})}><span class="work-number">${String(this.page * 3 + i + 1).padStart(2, '0')}</span><span><strong>${x.title}</strong>${x.detail ? html`<small>${x.detail}</small>` : nothing}</span><span class="row-arrow" aria-hidden="true">↗</span></a>`)}</div>${!items.length ? html`<p class="empty-copy">${projects ? 'No projects yet.' : 'No documents yet.'}</p>` : nothing}</section>`;
+      return html`<section class="library-page">${projects ? nothing : html`<span class="eyebrow">${p.projectName}</span>`}<h1>${projects ? 'Projects' : 'Documents'}</h1><div class="work-list">${items.slice(this.page * 3, this.page * 3 + 3).map((x, i) => html`<a data-attention-id=${`${projects?'project':'document'}:${x.id}`} class="work-row" href=${projects?this.viewURL('documents',{projectId:x.id,documentId:''}):this.viewURL('document',{documentId:x.id})} @click=${(e:MouseEvent)=>projects?this.follow(e,'documents',{projectId:x.id,documentId:''}):this.follow(e,'document',{documentId:x.id})}><span class="work-number">${String(this.page * 3 + i + 1).padStart(2, '0')}</span><span><strong>${x.title}</strong>${x.detail ? html`<small>${x.detail}</small>` : nothing}</span><span class="row-arrow" aria-hidden="true">↗</span></a>`)}</div>${!items.length ? html`<p class="empty-copy">${projects ? 'No projects yet.' : 'No documents yet.'}</p>` : nothing}</section>`;
     }
     if (pos.view === 'results') {
       const results = stillResults(p,c.jobs,c.events);
-      return html`<section class="results-page"><span class="eyebrow">${p.documentTitle}</span><h1>Results</h1><div class="result-grid">${results.slice(this.page * 3, this.page * 3 + 3).map(r => html`<a class="result" href=${this.viewURL(r.view,{outputId:r.id})} @click=${(e:MouseEvent)=>this.follow(e,r.view,{outputId:r.id})}>${r.job?html`<div class="pending-thumbnail">${generationActive(r.job)?html`<en-skeleton shape="rectangle"></en-skeleton>`:nothing}<span>${FORMATS[r.kind]??r.kind}</span></div>`:safeMedia(r.url) ? html`<img src=${safeMedia(r.url)} alt=${r.title} />` : html`<div class="result-word">${FORMATS[r.kind]}</div>`}<span>${r.title}${r.job?html`<small>${generationStatus(r.job)}</small>`:nothing}</span></a>`)}</div>${!results.length ? html`<p>${c.jobsError?'Couldn’t load generations.':c.jobsLoaded?'No results yet.':'Loading generations…'}</p>`:nothing}${c.jobsError?this.button('Try again',()=>void this.run(()=>c.pollJobs())):nothing}</section>`;
+      return html`<section class="results-page"><span class="eyebrow">${p.documentTitle}</span><h1>Results</h1><div class="result-grid">${results.slice(this.page * 3, this.page * 3 + 3).map(r => html`<a data-attention-id=${`result:${r.id}`} class="result" href=${this.viewURL(r.view,{outputId:r.id})} @click=${(e:MouseEvent)=>this.follow(e,r.view,{outputId:r.id})}>${r.job?html`<div class="pending-thumbnail">${generationActive(r.job)?html`<en-skeleton shape="rectangle"></en-skeleton>`:nothing}<span>${FORMATS[r.kind]??r.kind}</span></div>`:safeMedia(r.url) ? html`<img src=${safeMedia(r.url)} alt=${r.title} />` : html`<div class="result-word">${FORMATS[r.kind]}</div>`}<span>${r.title}${r.job?html`<small>${generationStatus(r.job)}</small>`:nothing}</span></a>`)}</div>${!results.length ? html`<p>${c.jobsError?'Couldn’t load generations.':c.jobsLoaded?'No results yet.':'Loading generations…'}</p>`:nothing}${c.jobsError?this.button('Try again',()=>void this.run(()=>c.pollJobs())):nothing}</section>`;
     }
     if(pos.view==='generation')return this.renderGeneration();
     if (pos.view === 'artifact') {
       const a = p.artifacts.find(x => x.id === pos.outputId), o = p.outputs.find(x => x.id === pos.outputId);
-      return a ? this.renderArtifact(a) : o ? html`<figure class="image-stage"><img src=${safeMedia(o.mediaUrl)} alt=${o.title ?? p.documentTitle} /><figcaption>${o.title ?? p.documentTitle}</figcaption></figure>` : html`<section class="quiet-state"><h1>Result unavailable</h1></section>`;
+      return a ? this.renderArtifact(a) : o ? html`<figure data-attention-id=${`result:${pos.outputId}`} class="image-stage"><img src=${safeMedia(o.mediaUrl)} alt=${o.title ?? p.documentTitle} /><figcaption>${o.title ?? p.documentTitle}</figcaption></figure>` : html`<section class="quiet-state"><h1>Result unavailable</h1></section>`;
     }
-    return html`<article class="document-page"><span class="eyebrow">${p.projectName}</span><h1>${p.documentTitle}</h1><div class="context-blocks">${p.blocks.filter(b => !b.removed).map((b, i) => html`<a aria-current=${pos.blockId===b.id?'true':nothing} href=${this.viewURL('document',{blockId:pos.blockId===b.id?'':b.id})} class=${`context-block ${pos.blockId === b.id ? 'selected' : ''} ${Number(b.properties.weight ?? 1) <= 0 ? 'inactive' : ''}`} @click=${(e:MouseEvent)=>this.follow(e,'document',{blockId:pos.blockId===b.id?'':b.id})}><span class="block-index">${String(i + 1).padStart(2, '0')}</span><div><span class="block-label">${text(b.properties.label) || b.handle || b.type}${p.blockRelations.filter(r=>!r.removed&&r.toBlockId===b.id&&isContextCompositionRelation(r.kind)).map(r=>` · part of ${p.blocks.find(parent=>parent.id===r.fromBlockId)?.handle??'a group'}`).join('')}${b.locked ? ' · locked' : ''}${Number(b.properties.weight ?? 1) <= 0 ? ' · excluded' : ''}</span>${safeMedia(text(b.properties.media_url)) && b.type === 'reference' ? html`<img class="context-reference" src=${safeMedia(text(b.properties.media_url))} alt=${b.handle}/>` : nothing}<p>${text(b.properties.text) || text(b.properties.description) || 'Empty idea'}</p></div></a>`)}</div>${!p.blocks.filter(b => !b.removed).length ? html`<div class="blank-page"><span class="pencil-line" aria-hidden="true"></span><p>Add an idea.</p></div>` : nothing}</article>`;
+    return html`<article class="document-page"><span class="eyebrow">${p.projectName}</span><h1>${p.documentTitle}</h1><div class="context-blocks">${p.blocks.filter(b => !b.removed).map((b, i) => html`<a data-attention-id=${`block:${b.id}`} aria-current=${pos.blockId===b.id?'true':nothing} href=${this.viewURL('document',{blockId:pos.blockId===b.id?'':b.id})} class=${`context-block ${pos.blockId === b.id ? 'selected' : ''} ${Number(b.properties.weight ?? 1) <= 0 ? 'inactive' : ''}`} @click=${(e:MouseEvent)=>this.follow(e,'document',{blockId:pos.blockId===b.id?'':b.id})}><span class="block-index">${String(i + 1).padStart(2, '0')}</span><div><span class="block-label">${text(b.properties.label) || b.handle || b.type}${p.blockRelations.filter(r=>!r.removed&&r.toBlockId===b.id&&isContextCompositionRelation(r.kind)).map(r=>` · part of ${p.blocks.find(parent=>parent.id===r.fromBlockId)?.handle??'a group'}`).join('')}${b.locked ? ' · locked' : ''}${Number(b.properties.weight ?? 1) <= 0 ? ' · excluded' : ''}</span>${safeMedia(text(b.properties.media_url)) && b.type === 'reference' ? html`<img class="context-reference" src=${safeMedia(text(b.properties.media_url))} alt=${b.handle}/>` : nothing}<p>${text(b.properties.text) || text(b.properties.description) || 'Empty idea'}</p></div></a>`)}</div>${!p.blocks.filter(b => !b.removed).length ? html`<div class="blank-page"><span class="pencil-line" aria-hidden="true"></span><p>Add an idea.</p></div>` : nothing}</article>`;
   }
   private renderMode() {
     const mode = this.mode, p = this.client.projection;
@@ -763,7 +790,7 @@ export class StillApp extends LitElement {
   render() {
     const c = this.client, displayedGeneration = !this.loading && !this.mode && c.position.view === 'generation' ? c.position.outputId : '';
     const running = c.jobs.filter(j => activeJobs.has(j.status) && j.documentId === c.position.documentId && !(j.jobId === displayedGeneration && generationFormat(j))), failed = c.jobs.find(j => j.status === 'failed' && !j.dismissedAt && j.documentId === c.position.documentId);
-    return html`<div class=${this.developer?'still-layout has-developer':'still-layout'}><div class="still-shell"><header class="masthead"><a class="wordmark" href=${this.viewURL('projects',{projectId:'',documentId:''})} aria-label="Still home" @click=${this.home}>still<span aria-hidden="true">.</span></a><span class="working-status" role="status" aria-live="polite">${this.busy ? 'Working…' : ''}</span><span class="session-status">${c.session?.impersonation ? 'Preview · read only' : c.session && !c.abilities.author ? 'Read only' : ''}</span></header><div class="feedback-strip">${running.length ? html`<aside class="job-status" role="status"><i></i>${generationFormat(running[0])?html`<a href=${this.viewURL('generation',{outputId:running[0].jobId})} @click=${(e:MouseEvent)=>this.follow(e,'generation',{outputId:running[0].jobId})}>${running[0].progressMessage || 'Generating…'}</a>`:running[0].progressMessage||'Working…'}${running.length > 1 ? ` · ${running.length} in progress` : ''}</aside>` : nothing}</div><main id="still-content" aria-busy=${this.loading}>${this.renderCanvas()}</main>${this.renderDock()}${this.renderPalette()}</div>${this.developer ? html`<aside class="developer-panel" aria-label="Developer panel"><still-developer-console @developer-density=${this.setDensity} @developer-experiment=${this.experiment} @developer-disable=${()=>this.setDeveloper(false)}></still-developer-console></aside>` : nothing}${new URL(location.href).searchParams.has('progress-report') ? html`<a class="progress-return" href=${REPORT_URL}>Progress Report ↗</a>` : nothing}</div>${this.renderNotifications(failed)}`;
+    return html`<div class=${this.developer?'still-layout has-developer':'still-layout'}><div class="still-shell"><header class="masthead"><a class="wordmark" href=${this.viewURL('projects',{projectId:'',documentId:''})} aria-label="Still home" @click=${this.home}>still<span aria-hidden="true">.</span></a><span class="working-status" role="status" aria-live="polite">${this.busy ? 'Working…' : ''}</span><span class="session-status">${c.session?.impersonation ? 'Preview · read only' : c.session && !c.abilities.author ? 'Read only' : ''}</span></header><div class="feedback-strip">${running.length ? html`<aside class="job-status" role="status"><i></i>${generationFormat(running[0])?html`<a href=${this.viewURL('generation',{outputId:running[0].jobId})} @click=${(e:MouseEvent)=>this.follow(e,'generation',{outputId:running[0].jobId})}>${running[0].progressMessage || 'Generating…'}</a>`:running[0].progressMessage||'Working…'}${running.length > 1 ? ` · ${running.length} in progress` : ''}</aside>` : nothing}</div><main id="still-content" aria-busy=${this.loading}>${this.renderCanvas()}</main>${this.renderDock()}${this.renderPalette()}</div>${this.developer ? html`<aside class="developer-panel" aria-label="Developer panel"><still-developer-console @developer-refresh=${this.refreshDecision} @developer-density=${this.setDensity} @developer-experiment=${this.experiment} @developer-disable=${()=>this.setDeveloper(false)}></still-developer-console></aside>` : nothing}${new URL(location.href).searchParams.has('progress-report') ? html`<a class="progress-return" href=${REPORT_URL}>Progress Report ↗</a>` : nothing}</div>${this.renderNotifications(failed)}`;
   }
 }
 if (!customElements.get('still-app')) customElements.define('still-app', StillApp);
