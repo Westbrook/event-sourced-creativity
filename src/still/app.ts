@@ -694,21 +694,25 @@ export class StillApp extends LitElement {
     const slides=view==='artifact'&&a&&['slides','storyboard'].includes(a.kind)&&a.items.length>1;
     const browsing=['projects','documents','results'].includes(view);
     const count=view==='projects'?p.projects.length:view==='documents'?p.documents.filter(d=>!d.removed).length:stillResults(p,c.jobs,c.events).length;
-    const paging=browsing&&count>3;
+    const previousPage=browsing&&this.page>0,nextPage=browsing&&(this.page+1)*3<count;
+    const pageControls=[
+      ...(previousPage?[{id:'ui:previous-page',label:'Previous results',run:()=>this.turnPage(this.page-1)}]:[]),
+      ...(nextPage?[{id:'ui:next-page',label:'More results',run:()=>this.turnPage(this.page+1)}]:[]),
+    ];
     if(limit<3){
       const choices=pool.filter(a=>!browsing||a.id!==view),emphasis=presentToolbar(choices.map(a=>a.id),this.emphasis,{view});
       return this.compactDock([
         ...choices.map(a=>({id:a.id,label:a.label,run:()=>this.choose(a.id),variant:emphasis[a.id]?.variant})),
         ...(slides?[{id:'ui:previous',label:'Previous',run:()=>this.turnItem(this.itemIndex-1),disabled:this.itemIndex===0},{id:'ui:next',label:'Next',run:()=>this.turnItem(this.itemIndex+1),disabled:this.itemIndex>=a!.items.length-1}]:[]),
-        ...(paging?[{id:'ui:page',label:'More results',run:()=>this.turnPage((this.page+1)*3>=count?0:this.page+1)}]:[]),
+        ...pageControls,
         {id:'ui:palette',label:'Palette',run:()=>this.openFinder('more'),variant:'ghost'},
       ]);
     }
-    const visible=pool.filter(a=>!browsing||a.id!==view).slice(0,Math.max(0,limit-1-(slides?2:paging?1:0)));
+    const visible=pool.filter(a=>!browsing||a.id!==view).slice(0,Math.max(0,limit-1-(slides?2:pageControls.length)));
     const visibleIds=visible.map(a=>a.id);
     let actions:TemplateResult[]=[...this.toolbarSuggestions(visible)];
     if(slides)actions.unshift(this.button('Previous',()=>this.turnItem(this.itemIndex-1),false,this.itemIndex===0,'','secondary'),this.button('Next',()=>this.turnItem(this.itemIndex+1),false,this.itemIndex>=a!.items.length-1,'','secondary'));
-    if(paging)actions.push(this.button('More results',()=>this.turnPage((this.page+1)*3>=count?0:this.page+1),false,false,'','secondary'));
+    actions.push(...pageControls.map(control=>this.button(control.label,control.run,false,false,control.id,'secondary')));
     actions.push(this.button('More',()=>this.openMore(),false,false,'ui:more'));
     if(this.moreOpen)actions=[...this.toolbarSuggestions(nextToolbarActions(this.rankedActions,visibleIds,eligible,limit-2)),this.button('Back',()=>{this.moreOpen=false;this.changed();void this.updateComplete.then(()=>this.querySelector<HTMLElement>('[data-action-id="ui:more"]')?.focus());}),this.paletteButton('more')];
     return html`<footer class="action-dock" @pointerenter=${()=>{this.dockTouched=true;}} @pointerdown=${()=>{this.dockTouched=true;}} @focusin=${()=>{this.dockTouched=true;}}><en-toolbar label="Your next step" keyboard-navigation="tab">${actions}</en-toolbar></footer>`;
