@@ -14,6 +14,8 @@ import { nativeMemoryConsumptionSchemaQuery, nativeMemoryConsumptionQuery, nativ
 import type { ConsumptionProjection } from "./memory-consumption-types.ts";
 import type { PilotUser } from "./pilot-policy.ts";
 import type { WorkerEnv } from "./runtime.ts";
+import { captureNativeArtifactConsumption } from "./memory-native-artifact-consumption.ts";
+import { MEMORY_CONSUMPTION_V2, parseMemoryConsumptionV2, type MemoryConsumptionV2, type MemoryConsumptionV2Source } from "../src/model/memory-consumption-v2.ts";
 
 const NOTE = "Observed actions are not inferred preferences; excerpts are truncated and access-filtered.";
 const canonicalEnrollment = (value: LiveMemoryEnrollment) => JSON.stringify(Object.entries(value).sort(([a], [b]) => a.localeCompare(b)));
@@ -21,7 +23,7 @@ const canonicalEnrollment = (value: LiveMemoryEnrollment) => JSON.stringify(Obje
 /** Preserve the existing strict client contract; do not expose private capture identities or SQL.
  * Activity counts describe this bounded selection, not sessions, preferences or complete history. */
 export function nativeMemoryRecallView(value: NativeDocumentMemoryContext, retentionDays: number,
-  assistedOutcomes?: MemoryAssistedOutcomes, savedOutputs?: MemorySavedOutputs, consumptionEpisodes?: ConsumptionProjection) {
+  assistedOutcomes?: MemoryAssistedOutcomes, savedOutputs?: MemorySavedOutputs, consumptionEpisodes?: ConsumptionProjection | MemoryConsumptionV2) {
   const rows = [
     ...value.actions.map(row => ({ ...row, type: row.type })),
     ...value.conversationPairs.map(row => ({ eventId: row.eventId, sequence: row.sequence,
@@ -56,10 +58,10 @@ export function nativeMemoryRecallView(value: NativeDocumentMemoryContext, reten
  * The original authenticated HTTP principal participates; a later DB principal cannot silently
  * replace a request's expired grant. This does not register a route or authorize enrollment. */
 export async function recallLiveMemoryResponse(env: WorkerEnv, input: LiveMemoryEnrollment, requestPrincipal: PilotUser,
-  options: { assistedOutcomes?: boolean; savedOutputs?: boolean; consumptionEpisodes?: boolean } = {}): Promise<Response> {
+  options: { assistedOutcomes?: boolean; savedOutputs?: boolean; consumptionEpisodes?: boolean | typeof MEMORY_CONSUMPTION_V2 } = {}): Promise<Response> {
   const includeOutcomes = options.assistedOutcomes === true;
   const includeSavedOutputs = options.savedOutputs === true;
-  const includeConsumption = options.consumptionEpisodes === true;
+  const includeConsumption = options.consumptionEpisodes === true || options.consumptionEpisodes === MEMORY_CONSUMPTION_V2;
   const captured = structuredClone({ enrollment: input, principal: requestPrincipal });
   const { enrollment, principal } = captured;
   if (principal.fictional || !principal.authorizationSnapshot || principal.userId !== enrollment.actor_user_id
@@ -90,6 +92,7 @@ export async function recallLiveMemoryResponse(env: WorkerEnv, input: LiveMemory
   let outcomes: ReturnType<typeof nativeMemoryOutcomesValue> = null;
   let savedOutputs: ReturnType<typeof nativeMemorySavedOutputsValue> = null;
   let consumptionEpisodes: ConsumptionProjection | null = null;
+  let consumptionV2: MemoryConsumptionV2 | null = null;
   const selected = [
     ...value.actions,
     ...value.conversationPairs.map(row => ({ ...row, type: "AssistantReasoned", blockId: null })),
@@ -138,6 +141,9 @@ export async function recallLiveMemoryResponse(env: WorkerEnv, input: LiveMemory
   for (const projection of [outcomes, savedOutputs]) {
     if (projection && Date.parse(projection.validUntil) < Date.parse(validUntil)) validUntil = projection.validUntil;
   }
+  const artifactConsumption = options.consumptionEpisodes === MEMORY_CONSUMPTION_V2
+    ? await captureNativeArtifactConsumption(env, enrollment, authority, { after: 0, through: enrollment.cursor_sequence, remembered: true }, witness) : null;
+  for (const source of artifactConsumption?.sources ?? []) if (source.validUntil < validUntil) validUntil = source.validUntil;
   if (includeConsumption) {
     const schemaQuery = nativeMemoryConsumptionSchemaQuery();
     const schemaStatement = env.DB.prepare(schemaQuery.sql).bind(...schemaQuery.bindings);
@@ -163,8 +169,31 @@ export async function recallLiveMemoryResponse(env: WorkerEnv, input: LiveMemory
     witness.before(consumptionEpisodes.validUntil);
     validUntil = consumptionEpisodes.validUntil;
   }
+  if (artifactConsumption && consumptionEpisodes) {
+    const candidates: MemoryConsumptionV2Source[] = consumptionEpisodes.episodes.map(episode => {
+      const source = selected[episode.observations[0].sourceIndex];
+      return { eventId: source.eventId, type: "DocumentViewVisited", recordedAt: source.recordedAt, validUntil: source.validUntil,
+        target: { kind: "document", documentId: enrollment.document_id } };
+    });
+    candidates.push(...artifactConsumption.sources.map(source => ({ eventId: source.eventId, type: "DocumentArtifactViewed" as const,
+      recordedAt: source.recordedAt, validUntil: source.validUntil, target: source.target })));
+    candidates.sort((a, b) => a.recordedAt.localeCompare(b.recordedAt) || a.eventId.localeCompare(b.eventId));
+    const sources = candidates.slice(-64), projection: MemoryConsumptionV2 = {
+      version: MEMORY_CONSUMPTION_V2, treatment: "descriptive-consumption", validUntil, sources,
+      episodes: sources.map((source, sourceIndex) => ({ episodeId: null,
+        observations: [{ sourceIndex, kind: source.type === "DocumentViewVisited" ? "visit" : "viewer-open" }],
+        firstRecordedAt: source.recordedAt, lastRecordedAt: source.recordedAt, validUntil: source.validUntil, independentEvidence: false })),
+      coverage: { eligibleSourceCount: sources.length, observationCount: sources.length, unavailableArtifactSourceCount: artifactConsumption.unavailableSourceCount,
+        completeHistory: false, bounded: true, truncated: artifactConsumption.truncated || candidates.length > sources.length },
+      attention: "not-measured", comprehension: "not-measured", inferredPreferences: false,
+    };
+    consumptionV2 = parseMemoryConsumptionV2(projection, { version: MEMORY_RECALL_LIFETIME, checkedAt: value.lifetime.checkedAt, validUntil }, enrollment.document_id,
+      { since: enrollment.enrolled_at, expiresAt: enrollment.expires_at });
+    if (!consumptionV2) throw new Error("memory-consumption-unavailable");
+    witness.before(validUntil);
+  }
   const view = nativeMemoryRecallView({ ...value, lifetime: { ...value.lifetime, validUntil } },
-    enrollment.retention_days, outcomes?.value, savedOutputs?.value, consumptionEpisodes ?? undefined);
+    enrollment.retention_days, outcomes?.value, savedOutputs?.value, consumptionV2 ?? consumptionEpisodes ?? undefined);
   witness.seal(view);
   const statements = witness.statements();
   if (!statements.length) throw new Error("memory-unavailable");

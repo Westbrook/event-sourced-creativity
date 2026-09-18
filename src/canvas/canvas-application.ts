@@ -163,6 +163,7 @@ export class CanvasApplication extends FormaElement {
   #viewingOutputId="";
   #nextImageOpening:{current:()=>boolean;presented:boolean}|null=null;
   #viewingArtifactId="";
+  #artifactOpening=0;
   #viewerFocused=false;
   #viewerActionsOpen=false;
   #viewerReturnFocus?:HTMLElement;
@@ -1102,18 +1103,34 @@ const canvas=this.store.canvasProjection.get(),site=this.#site(),actionId=uid();
     </article>`;
   }
   async #showCanvasArtifact(artifact:DocumentArtifact){
-    const source=this.store.captureSourceOwnership(),route=this.store.route.get(),scope=this.#currentControlsScope();
+    const opening=++this.#artifactOpening,source=this.store.captureSourceOwnership(),authorization=this.store.captureAuthorizationScope(),route=this.store.route.get(),scope=this.#currentControlsScope();
+    const revision=documentArtifactRevision(this.store.events.get(),artifact.id);
+    const projectId=this.store.projection.get().documents.find(document=>document.id===artifact.documentId)?.projectId;
     const priorArtifact=this.#viewingArtifactId,priorOutput=this.#viewingOutputId,priorAdd=this.#addOpen;
-    const current=()=>Boolean(source&&this.isConnected&&this.store.sourceOwnershipActive(source)&&route===this.store.route.get()
-      &&scope&&scope===this.#currentControlsScope()&&priorArtifact===this.#viewingArtifactId&&priorOutput===this.#viewingOutputId&&priorAdd===this.#addOpen
-      &&this.store.projection.get().libraryArtifacts.some((item)=>item.id===artifact.id&&item.documentId===artifact.documentId&&item.sourceEventId===artifact.sourceEventId&&item.contentRef===artifact.contentRef));
+    let shown=false;
+    const current=()=>Boolean(opening===this.#artifactOpening&&source&&authorization&&this.isConnected&&this.store.sourceOwnershipActive(source)
+      &&this.store.authorizationScopeActive(authorization)&&route===this.store.route.get()&&scope&&scope===this.#currentControlsScope()
+      &&(shown?this.#viewingArtifactId===artifact.id:priorArtifact===this.#viewingArtifactId)&&priorOutput===this.#viewingOutputId&&priorAdd===this.#addOpen
+      &&revision===documentArtifactRevision(this.store.events.get(),artifact.id)
+      &&projectId&&this.store.projection.get().documents.some(document=>document.id===artifact.documentId&&document.projectId===projectId)
+      &&this.store.projection.get().libraryArtifacts.some((item)=>item.id===artifact.id&&item.documentId===artifact.documentId&&item.sequence===artifact.sequence&&item.sourceEventId===artifact.sourceEventId&&item.contentRef===artifact.contentRef));
     if(!current())return;
     this.#closePopovers();this.#viewerReturnFocus=document.activeElement instanceof HTMLElement?document.activeElement:undefined;this.#viewerFocused=false;this.#viewerActionsOpen=false;
     if(artifact.contentRef&&!this.store.content.get()[artifact.contentRef])try{await this.store.ensurePrivateContent(artifact.contentRef);}catch{return;}
     if(!current())return;
-    this.#viewingArtifactId=artifact.id;
-    if(this.store.ui.instrumentation&&!this.store.session.get()?.projectContext)void this.store.hot({type:"DocumentArtifactViewed",payload:{artifact_id:artifact.id,artifact_kind:artifact.kind,document_id:artifact.documentId,source_surface:"canvas-artifact-viewer"}});
-    this.requestUpdate();
+    const retained=this.store.content.get()[artifact.contentRef??""];
+    this.#viewingArtifactId=artifact.id;shown=true;
+    this.requestUpdate();await this.updateComplete;
+    // Opening a viewer is an observation, not a claim about reading, playback or dwell.
+    // Hash the retained body only for personal instrumentation; presentation still works without it.
+    if(!current()||!retained||!this.store.ui.instrumentation||this.store.session.get()?.projectContext)return;
+    let digest:string;
+    try{digest=Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256",new TextEncoder().encode(retained))),byte=>byte.toString(16).padStart(2,"0")).join("");}catch{return;}
+    const dialog=this.querySelector<HTMLDialogElement>(".canvas-artifact-viewer");
+    if(current()&&dialog?.isConnected&&dialog.open&&!dialog.closest("[inert],[hidden]")&&this.ownerDocument.visibilityState!=="hidden"
+      &&retained===this.store.content.get()[artifact.contentRef??""]&&this.store.ui.instrumentation&&!this.store.session.get()?.projectContext)
+      void this.store.hot({type:"DocumentArtifactViewed",payload:{artifact_id:artifact.id,artifact_kind:artifact.kind,project_id:projectId,document_id:artifact.documentId,
+        artifact_revision:revision,content_sha256:digest,source_surface:"canvas-artifact-gallery"}});
   }
   async #openArtifactDelivery(artifact:DocumentArtifact){
     const authorization=this.store.captureAuthorizationScope(),canvasId=this.store.canvasProjection.get().selectedCanvasId;

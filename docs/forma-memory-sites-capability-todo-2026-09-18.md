@@ -31,6 +31,31 @@ worker must independently reread native custody, source lifetime, source exclusi
 and purpose/budget authority. No semantic summary, inferred profile, learned
 suggestion or vector index is created by this change.
 
+## Merge-ready continuation (not published)
+
+The branch is based on local main `7d74584bb72a1ed3cbab25ee64071994f8976d2f`.
+This continuation does not change production configuration or enroll anyone.
+
+- Canvas now records a personal artifact view only after the actual viewer opens,
+  hashing the exact retained bytes and rechecking route, revision, custody and visibility.
+- Canonical actor-private document/project identities and native declaration/lifecycle/
+  custody proofs are shared by native recall, source selection and palette inspection.
+  Project ancestry remains explicitly unresolved; identity is not an access grant.
+- Negotiated consumption v2 joins genuine navigation and retained **current personal**
+  artifact-view receipts in the opt-in inspector, with its own source ordinal map.
+  Scheduled source publication preserves original lifetime ceilings, resumes bounded
+  pages, and rolls back the cursor if source writes are unacknowledged.
+- Exact native body/revision and final privacy replay reject changes to access,
+  enrollment, custody, source content and compensation. These observations mean only
+  that a viewer opened; they do not measure attention, reading or preference.
+- Artifact observations remain excluded from assistant answer origins and exports.
+  Historical and governed artifact evidence, genuine block inspection, longer rolling
+  conversation capture, and durable inferred-output inverses remain implementation work.
+
+Verification: 625 focused artifact/client/UI checks and 51 focused native runtime
+checks passed; typecheck and production build passed. These are local tests, not
+hosted provider, browser, scheduling or real-user qualification.
+
 ## Sites-native code still to implement
 
 These are not external-service blockers and must not be moved into a rollout-only list.

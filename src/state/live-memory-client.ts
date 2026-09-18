@@ -6,6 +6,7 @@ import { rollingLiveMemoryConsumption, type LiveMemoryConsumption } from "../mod
 import { MEMORY_ASSISTED_OUTCOMES_VERSION, parseMemoryAssistedOutcomes, type MemoryAssistedOutcomes } from "../model/memory-assisted-outcomes.ts";
 import { MEMORY_SAVED_OUTPUTS_VERSION, parseMemorySavedOutputs, type MemorySavedOutputs } from "../model/memory-saved-outputs.ts";
 import { MEMORY_CONSUMPTION_EPISODES_VERSION, parseMemoryConsumptionEpisodes, type MemoryConsumptionEpisodes } from "../model/memory-consumption-episodes.ts";
+import { MEMORY_CONSUMPTION_V2, parseMemoryConsumptionV2, type MemoryConsumptionV2 } from "../model/memory-consumption-v2.ts";
 export { MEMORY_WRITE_CONTRACT } from "../model/memory-custody.ts";
 export type { MemoryCustody } from "../model/memory-custody.ts";
 
@@ -80,7 +81,7 @@ export type MemoryRecall = {
   assistedOutcomes?: MemoryAssistedOutcomes;
   savedOutputs?: MemorySavedOutputs;
   /** Explicit inspector opt-in only; absent is unavailable, not a zero history. */
-  consumptionEpisodes?: MemoryConsumptionEpisodes;
+  consumptionEpisodes?: MemoryConsumptionEpisodes | MemoryConsumptionV2;
   rollingConversation: { summary: MemoryExcerpt[]; recent: MemoryExcerpt[]; completeFromStart: false };
   coverage: {
     since: string; throughSequence: number; remainingThroughSequence: number | null;
@@ -90,7 +91,7 @@ export type MemoryRecall = {
 };
 /** A local display lease, separate from the wire value; retirement cannot be undone. */
 export type MemoryRecallLease = Readonly<{ value: MemoryRecall; remaining: () => number; retire: () => void }>;
-export type MemoryRecallOptions = Readonly<{ consumptionEpisodes?: boolean }>;
+export type MemoryRecallOptions = Readonly<{ consumptionEpisodes?: boolean | typeof MEMORY_CONSUMPTION_V2 }>;
 
 export class MemoryClientError extends Error {
   readonly code: string;
@@ -302,18 +303,18 @@ function rollingConsumption(value: unknown, sources: MemorySource[], lifetime: M
   return expected;
 }
 
-function consumptionChoice(value: MemoryRecallOptions | undefined): boolean {
+function consumptionChoice(value: MemoryRecallOptions | undefined): false | typeof MEMORY_CONSUMPTION_EPISODES_VERSION | typeof MEMORY_CONSUMPTION_V2 {
   if (value === undefined) return false;
   check(value !== null && typeof value === "object" && Object.getPrototypeOf(value) === Object.prototype);
   const names = Reflect.ownKeys(value);
   check(names.length <= 1 && names.every(name => name === "consumptionEpisodes"));
   if (names.length === 0) return false;
   const descriptor = Object.getOwnPropertyDescriptor(value, "consumptionEpisodes");
-  check(descriptor?.enumerable && Object.hasOwn(descriptor, "value") && typeof descriptor.value === "boolean");
-  return descriptor.value;
+  check(descriptor?.enumerable && Object.hasOwn(descriptor, "value") && (typeof descriptor.value === "boolean" || descriptor.value === MEMORY_CONSUMPTION_V2));
+  return descriptor.value === true ? MEMORY_CONSUMPTION_EPISODES_VERSION : descriptor.value;
 }
 
-function recall(value: unknown, request: MemoryEnrollment, includeConsumption: boolean): MemoryRecall {
+function recall(value: unknown, request: MemoryEnrollment, includeConsumption: ReturnType<typeof consumptionChoice>): MemoryRecall {
   const required = ["mode", "lifetime", "scope", "treatment", "method", "consumption", "rollingConversation", "coverage", "sources", "note"];
   const row = object(value); keys(row, [...required, "rollingConsumption", "assistedOutcomes", "savedOutputs", "consumptionEpisodes"], required);
   check(includeConsumption || !Object.hasOwn(row, "consumptionEpisodes"));
@@ -341,7 +342,9 @@ function recall(value: unknown, request: MemoryEnrollment, includeConsumption: b
     ? parseMemorySavedOutputs(row.savedOutputs, sources, lifetime) : undefined;
   check(savedOutputs !== null);
   const consumptionEpisodes = Object.hasOwn(row, "consumptionEpisodes")
-    ? parseMemoryConsumptionEpisodes(row.consumptionEpisodes, sources, lifetime, request.documentId) : undefined;
+    ? includeConsumption === MEMORY_CONSUMPTION_V2 ? parseMemoryConsumptionV2(row.consumptionEpisodes, lifetime, request.documentId,
+      { since: String(object(row.coverage).since), expiresAt: request.expiresAt })
+      : parseMemoryConsumptionEpisodes(row.consumptionEpisodes, sources, lifetime, request.documentId) : undefined;
   check(consumptionEpisodes !== null);
   const rawCounts = object(row.consumption); check(Object.keys(rawCounts).every(key => ACTIONS.has(key)));
   const consumption: Record<string, number> = Object.fromEntries(Object.entries(rawCounts).map(([key, count]) => [key, integer(count, 1, 64)] as const));
@@ -541,7 +544,7 @@ export function createLiveMemoryClient(transport: Transport = fetch,
       const elapsed = createMemoryElapsed(sample());
       const observe = () => check(Number.isFinite(elapsed.elapsed(sample())));
       try { observe(); } catch { throw new MemoryClientError("memory_response_invalid"); }
-      const extra = includeConsumption ? `&consumptionEpisodes=${MEMORY_CONSUMPTION_EPISODES_VERSION}` : "";
+      const extra = includeConsumption ? `&consumptionEpisodes=${includeConsumption}` : "";
       return request(`${RECALL_PATH}?id=${encodeURIComponent(item.id)}&outcomes=${MEMORY_ASSISTED_OUTCOMES_VERSION}&savedOutputs=${MEMORY_SAVED_OUTPUTS_VERSION}${extra}`, "GET", undefined, signal, raw => {
         const value = recall(raw, item, includeConsumption);
         const budget = memoryTimestamp(value.lifetime.validUntil)! - memoryTimestamp(value.lifetime.checkedAt)!;

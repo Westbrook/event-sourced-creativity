@@ -25,6 +25,113 @@ async function fixture(t, options = {}) {
   return Object.assign(f, { payload, submit, count, original });
 }
 
+async function memoryArtifactFixture(t) {
+  const f=await fixture(t,{depth:true});
+  for(const name of ['0020_assistant_runtime_tables.sql','0021_assistant_specialist_consent.sql','0025_memory_live_base.sql','0026_memory_live_conversation.sql'])
+    f.sqlite.exec(readFileSync(new URL('../drizzle/'+name,import.meta.url),'utf8'));
+  Object.assign(f.env,{FORMA_MEMORY_ENABLED:'true',FORMA_MEMORY_USER_IDS:f.owner,FORMA_MEMORY_SCHEDULING_ENABLED:'true'});
+  const timeZone=Intl.supportedValuesOf('timeZone').find(zone=>{const hour=Number(new Intl.DateTimeFormat('en-US',{timeZone:zone,hour:'numeric',hourCycle:'h23'}).format(new Date()));return hour>=1&&hour<5;});
+  const preferences={projectId:f.projectId,documentId:f.documentId,learn:true,recall:true,background:true,retentionDays:30,timeZone,
+    expiresAt:new Date(Date.now()+30*86400000).toISOString(),revision:0,confirmation:'ENABLE_PERSONAL_MEMORY',policyVersion:'personal-memory-v2',
+    reviewTiming:'daily-with-daytime-catch-up',expectedCustody:{kind:'personal'}};
+  const response=await f.request('/api/memory/settings',{...f.json(preferences),method:'PUT'}),body=await response.json();
+  assert.equal(response.status,200,JSON.stringify(body));
+  const enrollment=()=>f.sqlite.prepare('SELECT * FROM memory_live_enrollments WHERE enrollment_id=?').get(body.enrollment.id);
+  const {runLiveMemoryScheduled}=await import('../worker/memory-live-jobs.ts');
+  const run=()=>runLiveMemoryScheduled(f.env);
+  const inspect=(version='memory-consumption-episodes-v2')=>f.request('/api/memory/recall?id='+body.enrollment.id+(version?'&consumptionEpisodes='+version:''));
+  return Object.assign(f,{enrollment,run,inspect});
+}
+
+test('personal artifact consumption v2 uses genuine enrollment, observation, scheduled source publication and certified inspector delivery',async t=>{
+  const f=await memoryArtifactFixture(t),money=f.counts();
+  const viewed=await f.submit();assert.equal(viewed.status,200,await viewed.clone().text());const event=(await viewed.json()).appended[0];
+  const run=await f.run();assert.equal(run.status,'completed',JSON.stringify(run));
+  assert.ok(f.sqlite.prepare('SELECT * FROM memory_live_sources WHERE event_id=?').get(event.eventId));
+  const response=await f.inspect(),body=await response.json();
+  assert.equal(response.status,200,JSON.stringify(body));
+  assert.equal(body.consumptionEpisodes.version,'memory-consumption-episodes-v2');
+  assert.deepEqual(body.consumptionEpisodes.sources.map(source=>source.target),[{kind:'artifact',documentId:f.documentId,artifactId:f.payload.artifact_id,
+    artifactKind:'short_story',revision:0,contentSha256:f.payload.content_sha256}]);
+  assert.equal(body.consumptionEpisodes.episodes[0].observations[0].kind,'viewer-open');
+  assert.equal(body.consumptionEpisodes.attention,'not-measured');assert.equal(body.sources.some(source=>source.eventId===event.eventId),false);
+  for(const version of ['', 'memory-consumption-episodes-v1']){const legacy=await f.inspect(version);assert.equal(legacy.status,200,await legacy.clone().text());const value=await legacy.json();
+    assert.equal(value.sources.some(source=>source.eventId===event.eventId),false);assert.equal(value.consumptionEpisodes?.episodes.length??0,0);}
+  assert.deepEqual(f.counts(),money);
+});
+
+test('personal artifact consumption retains the original observation deadline when source retention is later extended',async t=>{
+  const f=await memoryArtifactFixture(t),original=new Date(Date.now()+45_000).toISOString();
+  f.sqlite.prepare('UPDATE private_content SET expires_at=? WHERE content_id=?').run(original,f.contentRef);
+  const viewed=await f.submit();assert.equal(viewed.status,200,await viewed.clone().text());const event=(await viewed.json()).appended[0];
+  f.sqlite.prepare('UPDATE private_content SET expires_at=? WHERE content_id=?').run(new Date(Date.now()+86400000).toISOString(),f.contentRef);
+  assert.equal((await f.run()).status,'completed');
+  assert.equal(f.sqlite.prepare('SELECT expires_at FROM memory_live_sources WHERE event_id=?').get(event.eventId).expires_at,original);
+  const response=await f.inspect(),body=await response.json();assert.equal(response.status,200,JSON.stringify(body));
+  assert.ok(body.lifetime.validUntil<=original);assert.equal(body.consumptionEpisodes.sources[0].validUntil,original);
+});
+
+for(const fault of ['body','redaction','expiry','enrollment','custody','receipt-compensation','producer-compensation','ancestor-compensation','truncated-ack'])test('personal artifact consumption final replay refuses '+fault,async t=>{
+  const f=await memoryArtifactFixture(t);assert.equal((await f.submit()).status,200);assert.equal((await f.run()).status,'completed');
+  let injected=false;
+  const selected=statements=>statements.some(statement=>statement.sql.includes('AS remembered_until')&&statement.sql.includes('personal-artifact-view-v2'));
+  if(fault==='truncated-ack')f.controls.afterBatch=async(statements,results)=>{if(!injected&&selected(statements)){injected=true;results.pop();}};
+  else f.controls.beforeBatch=async statements=>{if(injected||!selected(statements))return;injected=true;
+    if(fault==='body')f.sqlite.prepare("UPDATE private_content SET content=content||' ' WHERE content_id=?").run(f.contentRef);
+    if(fault==='redaction')f.sqlite.prepare('UPDATE private_content SET redacted_at=? WHERE content_id=?').run(new Date().toISOString(),f.contentRef);
+    if(fault==='expiry')f.sqlite.prepare("UPDATE private_content SET expires_at='2000-01-01T00:00:00.000Z' WHERE content_id=?").run(f.contentRef);
+    if(fault==='enrollment')f.sqlite.exec('UPDATE memory_live_enrollments SET recall_enabled=0');
+    if(fault==='custody')f.sqlite.prepare("INSERT INTO project_resource_scopes(organization_id,project_access_id,project_id,owner_user_id,resource_kind,resource_id,visibility,actor_user_id,created_at) VALUES('org','access',?,?,'content',?,'actor_private',?,?)").run(f.projectId,f.owner,f.contentRef,f.owner,new Date().toISOString());
+    if(fault.endsWith('-compensation')){
+      const {makeEvent,eventWriteBindings,EVENT_WRITE_COLUMNS}=await import('../worker/runtime.ts');
+      const target=fault==='producer-compensation'?f.original:fault==='receipt-compensation'
+        ?f.sqlite.prepare("SELECT event_id FROM events WHERE type='DocumentArtifactViewed' ORDER BY sequence DESC LIMIT 1").get().event_id
+        :f.sqlite.prepare("SELECT event_id FROM events WHERE type='DocumentCreated' AND json_extract(payload,'$.document_id')=? ORDER BY sequence DESC LIMIT 1").get(f.documentId).event_id;
+      const head=f.sqlite.prepare('SELECT MAX(sequence) AS n FROM events WHERE stream_id=?').get(f.streamId).n;
+      const event=makeEvent(f.streamId,head+1,'user:'+f.owner,'compensation-fixture',crypto.randomUUID(),'ObjectDiscarded',{project_id:f.projectId,document_id:f.documentId});
+      event.compensatesEventId=target;const values=eventWriteBindings(event);
+      await f.env.DB.prepare('INSERT INTO event_write_stage('+EVENT_WRITE_COLUMNS+') VALUES('+values.map(()=>'?').join(',')+')').bind(...values).run();
+    }
+  };
+  const response=await f.inspect();assert.equal(response.status,403,await response.clone().text());assert.equal(injected,true);
+  assert.equal((await response.text()).includes(f.payload.content_sha256),false);
+});
+
+test('personal artifact consumption publication rolls back its cursor if a source insertion is suppressed',async t=>{
+  const f=await memoryArtifactFixture(t),cursor=f.enrollment().cursor_sequence;
+  const viewed=await f.submit();assert.equal(viewed.status,200);const event=(await viewed.json()).appended[0];
+  f.sqlite.exec("CREATE TRIGGER suppress_artifact_reference BEFORE INSERT ON memory_live_sources BEGIN SELECT RAISE(IGNORE); END");
+  assert.equal((await f.run()).status,'partial');assert.equal(f.enrollment().cursor_sequence,cursor);
+  assert.equal(f.sqlite.prepare('SELECT COUNT(*) AS n FROM memory_live_sources WHERE event_id=?').get(event.eventId).n,0);
+});
+
+test('personal artifact consumption resumes a bounded publication page without skipping view evidence',async t=>{
+  const f=await memoryArtifactFixture(t),ids=[];
+  for(let index=0;index<33;index++){
+    const response=await f.submit({source_surface:['document','canvas','library','search','project'][index%5]+'-artifact-gallery'});
+    assert.equal(response.status,200,await response.clone().text());ids.push((await response.json()).appended[0].eventId);
+  }
+  assert.equal((await f.run()).status,'completed');
+  assert.equal(f.sqlite.prepare('SELECT COUNT(*) AS n FROM memory_live_sources WHERE event_id IN(SELECT value FROM json_each(?))').get(JSON.stringify(ids)).n,32);
+  assert.ok(f.enrollment().cutoff_sequence>f.enrollment().cursor_sequence,'unprocessed source frontier remains in the original job');
+  f.sqlite.exec("UPDATE memory_live_enrollments SET next_due_at='2000-01-01T00:00:00.000Z'");
+  assert.equal((await f.run()).status,'completed');
+  assert.equal(f.sqlite.prepare('SELECT COUNT(*) AS n FROM memory_live_sources WHERE event_id IN(SELECT value FROM json_each(?))').get(JSON.stringify(ids)).n,33);
+  assert.equal(f.enrollment().cutoff_sequence,null);
+  const response=await f.inspect(),body=await response.json();assert.equal(response.status,200,JSON.stringify(body));
+  assert.equal(body.consumptionEpisodes.sources.length,32);assert.equal(body.consumptionEpisodes.coverage.truncated,true);
+});
+
+test('personal artifact consumption expires independently of a paused learning grant and Forget removes all references',async t=>{
+  const f=await memoryArtifactFixture(t);const viewed=await f.submit();assert.equal(viewed.status,200);const event=(await viewed.json()).appended[0];
+  assert.equal((await f.run()).status,'completed');
+  f.sqlite.prepare("UPDATE private_content SET expires_at='2000-01-01T00:00:00.000Z' WHERE content_id=?").run(f.contentRef);
+  f.sqlite.exec("UPDATE memory_live_enrollments SET learn_enabled=0,next_due_at='2000-01-01T00:00:00.000Z'");
+  assert.equal((await f.run()).status,'completed');assert.equal(f.sqlite.prepare('SELECT COUNT(*) AS n FROM memory_live_sources WHERE event_id=?').get(event.eventId).n,0);
+  const response=await f.request('/api/memory/settings?id='+f.enrollment().enrollment_id,{...f.json({confirmation:'FORGET_MY_MEMORY',revision:f.enrollment().revision}),method:'DELETE'});
+  assert.equal(response.status,200,await response.clone().text());assert.equal(f.sqlite.prepare('SELECT COUNT(*) AS n FROM memory_live_sources').get().n,0);
+});
+
 test('real personal hot append binds current revision-zero bytes, project, and erasable source identity', async t => {
   const f = await fixture(t), money = f.counts();
   const response = await f.submit(), result = await response.json();
@@ -32,7 +139,7 @@ test('real personal hot append binds current revision-zero bytes, project, and e
   assert.equal(result.appended.length, 1); assert.equal(f.count(), 1);
   const event = result.appended[0];
   assert.equal(event.actor, 'user:' + f.owner);
-  assert.deepEqual(event.payload, { ...f.payload, artifact_source_event_id: f.original, capture_version: 'personal-artifact-view-v1' });
+  assert.deepEqual(event.payload, { ...f.payload, artifact_source_event_id: f.original, capture_version: 'personal-artifact-view-v2', artifact_content_ref: f.contentRef, observed_source_expires_at: f.sqlite.prepare('SELECT expires_at FROM private_content WHERE content_id=?').get(f.contentRef).expires_at });
   const secret = f.sqlite.prepare('SELECT * FROM event_private_payloads WHERE private_event_id=?').get(event.eventId);
   assert.equal(secret.owner_id, f.owner); assert.equal(secret.project_id, f.projectId); assert.equal(secret.document_id, f.documentId);
   assert.deepEqual(JSON.parse(secret.private_json), event.payload);
@@ -151,9 +258,9 @@ for (const target of ['event', 'private']) test('post-write assertion rolls back
   const f = await fixture(t);
   f.sqlite.exec(target === 'event'
     ? `CREATE TRIGGER suppress_view BEFORE INSERT ON events WHEN NEW.type='DocumentArtifactViewed' BEGIN SELECT RAISE(IGNORE); END`
-    : `CREATE TRIGGER suppress_view BEFORE INSERT ON event_private_payloads WHEN json_extract(NEW.private_json,'$.capture_version')='personal-artifact-view-v1' BEGIN SELECT RAISE(IGNORE); END`);
+    : `CREATE TRIGGER suppress_view BEFORE INSERT ON event_private_payloads WHEN json_extract(NEW.private_json,'$.capture_version')='personal-artifact-view-v2' BEGIN SELECT RAISE(IGNORE); END`);
   assert.equal((await f.submit()).status, 409); assert.equal(f.count(), 0);
-  assert.equal(f.sqlite.prepare("SELECT COUNT(*) AS n FROM event_private_payloads WHERE json_extract(private_json,'$.capture_version')='personal-artifact-view-v1'").get().n, 0);
+  assert.equal(f.sqlite.prepare("SELECT COUNT(*) AS n FROM event_private_payloads WHERE json_extract(private_json,'$.capture_version')='personal-artifact-view-v2'").get().n, 0);
 });
 
 for (const fault of ['throw', 'missing', 'truncated', 'failed']) test('uncertain commit acknowledgment is never replayed: ' + fault, async t => {

@@ -100,14 +100,18 @@ export function nativeMemoryConsumptionQuery(original: Enrollment, originalQuery
     `json_extract(${json},'$.${field}') IS NULL`)).join(" AND ");
   const actorMetadata = (json: string) => `(json_type(${json},'$.actor_user_id') IS NULL OR
     json_type(${json},'$.actor_user_id')='text' AND json_extract(${json},'$.actor_user_id')=${bound("actor_user_id")})`;
-  const sql = `WITH binding AS (SELECT ? AS value), selection AS (SELECT value FROM json_each(?))
+  // Keep native eligibility and exact observation checks in separate expression
+  // trees. Concatenating both predicates exceeds D1's depth-100 ceiling.
+  const sql = `WITH binding AS (SELECT ? AS value), selection AS (SELECT value FROM json_each(?)),
+    native_eligible AS MATERIALIZED (SELECT event.event_id,event.sequence ${q.joins} WHERE ${q.condition})
     SELECT event.event_id,event.sequence,event.type,event.recorded_at,
       json_extract(event.payload,'$.block_id') AS block_id,remembered.expires_at AS remembered_until,
       json_object(${PAYLOAD.map(name => `'${name}',json_extract(${raw},'$.${name}')`).join(",")}) AS payload_json
-    ${q.joins} JOIN binding JOIN selection
+    FROM events event JOIN event_private_payloads secret ON secret.private_event_id=event.event_id
+    JOIN native_eligible eligible ON eligible.event_id=event.event_id AND eligible.sequence=event.sequence JOIN binding JOIN selection
     JOIN memory_live_sources remembered ON remembered.enrollment_id=${bound("enrollment_id")}
       AND remembered.event_id=event.event_id AND remembered.sequence=event.sequence
-    WHERE (${q.condition}) AND event.type='DocumentViewVisited'
+    WHERE event.type='DocumentViewVisited'
       AND event.stream_id='creative:'||${bound("owner_user_id")}
       AND (event.actor='user:'||${bound("actor_user_id")} OR ${bound("organization_id")} IS NULL AND event.actor='user')
       AND event.event_id NOT LIKE 'optimistic:%' AND event.client_id NOT LIKE '%optimistic%'

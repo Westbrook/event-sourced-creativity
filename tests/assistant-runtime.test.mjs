@@ -9540,6 +9540,38 @@ function nativeStructuredCallerNoSpend(state) {
     financial: adaptiveReentryFinancialState(state), jobs: state.sqlite.prepare('SELECT * FROM document_jobs ORDER BY job_id').all() };
 }
 
+for(const shared of [false,true])test('native Memory scope: '+(shared?'shared':'personal')+' canonical identity is owner-scoped and pinned without a stream-head lease',{timeout:60000},async t=>{
+  const state=await nativeMemoryJobFixture(t,{shared});
+  const {observeNativeMemoryDocumentScope,nativeMemoryDocumentIdentity}=await import('../worker/memory-native-scope.ts');
+  const {AssistantContextReadWitness}=await import('../worker/assistant-context-source.ts');
+  const prepared=await nativeMemoryPrepare(state),e=state.current(),witness=new AssistantContextReadWitness(state.env);
+  const scope=await observeNativeMemoryDocumentScope(state.env,prepared,e,witness);assert.ok(scope);
+  assert.equal(scope.projectAncestry,'unresolved');assert.equal(scope.documentId,e.document_id);
+  assert.notEqual(nativeMemoryDocumentIdentity({...e,owner_user_id:'other',actor_user_id:'other'}).documentKey,scope.documentKey);
+  if(shared){const peer=nativeMemoryDocumentIdentity({...e,actor_user_id:'peer'});assert.equal(peer.documentKey,scope.documentKey);assert.notEqual(peer.partitionKey,scope.partitionKey);}
+  witness.seal(scope);assert.ok(witness.statements().length);assert.equal(witness.matches(await state.env.DB.batch(witness.statements())),true);
+  await state.send('scope-unrelated-chat');assert.equal(witness.matches(await state.env.DB.batch(witness.statements())),true,'ordinary appended chat is not a resource move');
+  const {makeEvent,eventWriteBindings,EVENT_WRITE_COLUMNS}=await import('../worker/runtime.ts');
+  const head=state.sqlite.prepare('SELECT MAX(sequence) AS head FROM events WHERE stream_id=?').get(prepared.binding.streamId).head;
+  const rebound=makeEvent(prepared.binding.streamId,head+1,'user:'+e.owner_user_id,'scope-race-fixture',crypto.randomUUID(),'DocumentCreated',{document_id:e.document_id,project_id:'another-project'}),values=eventWriteBindings(rebound);
+  await state.env.DB.prepare('INSERT INTO event_write_stage('+EVENT_WRITE_COLUMNS+') VALUES('+values.map(()=>'?').join(',')+')').bind(...values).run();
+  assert.equal(witness.matches(await state.env.DB.batch(witness.statements())),false,'same-ID rebound invalidates the narrow proof');
+  assert.equal(await observeNativeMemoryDocumentScope(state.env,prepared,e,new AssistantContextReadWitness(state.env)),null);
+});
+
+test('native Memory scope: a foreign owner same-ID custody row is neither authority nor a false collision',{timeout:60000},async t=>{
+  const state=await nativeMemoryJobFixture(t),prepared=await nativeMemoryPrepare(state),e=state.current();
+  const {observeNativeMemoryDocumentScope}=await import('../worker/memory-native-scope.ts');
+  const {AssistantContextReadWitness}=await import('../worker/assistant-context-source.ts');
+  state.sqlite.prepare("INSERT INTO project_resource_scopes(organization_id,project_access_id,project_id,owner_user_id,resource_kind,resource_id,visibility,actor_user_id,created_at) VALUES('elsewhere','elsewhere','elsewhere','other','document',?,'actor_private','other',?)").run(e.document_id,new Date().toISOString());
+  assert.ok(await observeNativeMemoryDocumentScope(state.env,prepared,e,new AssistantContextReadWitness(state.env)));
+  assert.equal(await observeNativeMemoryDocumentScope(state.env,{...prepared,binding:{...prepared.binding,documentId:'invented'}},e,new AssistantContextReadWitness(state.env)),null);
+  const db=state.env.DB,prepare=db.prepare;let altered=false;
+  db.prepare=function(sql){const statement=prepare.call(this,sql);if(!sql.includes('AS declaration,'))return statement;const bind=statement.bind;
+    statement.bind=function(...values){const bound=bind.apply(this,values),all=bound.all;bound.all=async function(...args){const result=await all.apply(this,args);if(!altered){altered=true;e.project_id='mutated';}return result;};return bound;};return statement;};
+  try{assert.equal(await observeNativeMemoryDocumentScope(state.env,prepared,e,new AssistantContextReadWitness(state.env)),null);assert.equal(altered,true);}finally{db.prepare=prepare;}
+});
+
 // Queued-job memory authority foundation. The existing route, private input and
 // native claim execute in the isolated fixture; the existing compiling progress
 // write is held before handleEvents or any provider dispatch. No memory consumer

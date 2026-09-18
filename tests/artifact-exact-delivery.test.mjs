@@ -419,6 +419,40 @@ test("a changed or revoked assignment never opens a different output revision",{
 });
 
 const canvasSource=readFileSync(new URL("../src/canvas/canvas-application.ts",import.meta.url),"utf8");
+const canvasViewMethod=between(canvasSource,"  async #showCanvasArtifact(","  async #openArtifactDelivery(");
+function canvasViewFixture(change=()=>{}){
+  const state={active:true,source:true,route:"/canvas/board",scope:"personal:board",events:[...history],projectId:"project",artifact:{...artifact},
+    retained:bytes,instrumentation:true,shared:false,observations:[],hidden:false,inert:false,open:true,connected:true};
+  const store={captureSourceOwnership:()=>({key:"source"}),sourceOwnershipActive:()=>state.source,
+    captureAuthorizationScope:()=>({key:"authority"}),authorizationScopeActive:()=>state.active,
+    route:{get:()=>state.route},events:{get:()=>state.events},content:{get:()=>({content:state.retained})},
+    projection:{get:()=>({libraryArtifacts:state.artifact?[state.artifact]:[],documents:[{id:"document",projectId:state.projectId}]})},
+    session:{get:()=>({projectContext:state.shared?{}:null})},ui:{get instrumentation(){return state.instrumentation;}},
+    ensurePrivateContent:async()=>{},hot:value=>{state.observations.push(value);}};
+  const dialog={get isConnected(){return state.connected;},get open(){return state.open;},closest:()=>state.inert?{}:null};
+  const Probe=fixtureClass(`(class {
+    store=store;isConnected=true;#viewingArtifactId="";#artifactOpening=0;#viewingOutputId="";#addOpen=false;
+    #viewerReturnFocus;#viewerFocused=false;#viewerActionsOpen=false;
+    ownerDocument={get visibilityState(){return state.hidden?"hidden":"visible";}};
+    #currentControlsScope(){return state.scope;}#closePopovers(){}requestUpdate(){}
+    get updateComplete(){return Promise.resolve().then(()=>change(state,this));}
+    querySelector(){return dialog;}close(){this.#viewingArtifactId="";}open(){return this.#showCanvasArtifact(artifact);}
+    ${canvasViewMethod}
+  })`,{state,change,store,dialog,artifact,documentArtifactRevision,document:{activeElement:null},HTMLElement:class{},crypto,TextEncoder});
+  return{host:new Probe(),state};
+}
+test("Canvas records an exact personal artifact observation only after the retained viewer opens",async()=>{
+  const f=canvasViewFixture();await f.host.open();
+  assert.deepEqual(f.state.observations,[{type:"DocumentArtifactViewed",payload:{...exact,artifact_kind:"slides",source_surface:"canvas-artifact-gallery"}}]);
+  for(const mutate of [
+    state=>{state.open=false;},state=>{state.connected=false;},state=>{state.hidden=true;},state=>{state.inert=true;},
+    state=>{state.active=false;},state=>{state.source=false;},state=>{state.shared=true;},state=>{state.instrumentation=false;},
+    state=>{state.retained=bytes+" ";},state=>{state.projectId="other";},state=>{state.artifact.sequence++;},
+    state=>{state.artifact=null;},state=>{state.route="/elsewhere";},state=>{state.scope="another-board";},
+    state=>{state.events.push(event(5,"DocumentArtifactEdited",{artifact_id:"artifact"}));},(_state,host)=>host.close(),
+  ]){const changed=canvasViewFixture(mutate);await changed.host.open();assert.equal(changed.state.observations.length,0);}
+  const missing=canvasViewFixture();missing.state.retained=undefined;await missing.host.open();assert.equal(missing.state.observations.length,0);
+});
 const canvasMethod=between(canvasSource,"  async #openArtifactDelivery(","  #closeCanvasArtifact(");
 function canvasFixture(change=()=>{}){
   const state={canvasId:"board-a",active:true,events:[...history],blocks:structuredClone(blocks),opens:[]};

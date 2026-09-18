@@ -17,11 +17,11 @@ const native = (payload: Record<string, unknown>) => !payload.simulation && !pay
   && !(payload.origin && typeof payload.origin === "object" && (payload.origin as Record<string, unknown>).synthetic)
   && ["mock_data_source", "replay_session_id", "fictional_user_id", "report_space"].every(key => payload[key] == null);
 
-/** A reported current view, not proof of attention, understanding, preference, or a Memory grant.
- * This deliberately does not admit historical previews or publish a consumption v2 projection. */
-export async function appendPersonalArtifactView(
-  env: WorkerEnv, actor: PilotUser, input: unknown, head: number, clientId: string, correlationId: string,
-): Promise<Response> {
+/** Read-only exact current artifact certification, shared by the genuine view
+ * writer and explicitly negotiated Memory inspection. It never appends a view
+ * or grants enrollment. The returned guard must survive the caller's final batch. */
+export async function preparePersonalArtifactViewSource(env: WorkerEnv, actor: PilotUser, input: unknown) {
+  const db = env.DB, actorSnapshot = JSON.stringify(actor);
   if (actor.fictional || actor.projectExecution || actor.streamId !== `creative:${actor.userId}`
     || !["admin", "creator"].includes(actor.role) || !actor.authorizationSnapshot) return failure("artifact_view_personal_principal_required", 403);
   if (!input || typeof input !== "object" || Array.isArray(input)) return failure("artifact_view_invalid", 400);
@@ -29,8 +29,7 @@ export async function appendPersonalArtifactView(
   if (Object.keys(raw).some(key => !keys.has(key)) || ![raw.artifact_id, raw.project_id, raw.document_id].every(id)
     || !Number.isSafeInteger(raw.artifact_revision) || Number(raw.artifact_revision) < 0
     || typeof raw.content_sha256 !== "string" || !/^[a-f0-9]{64}$/u.test(raw.content_sha256)
-    || typeof raw.source_surface !== "string" || !/^[a-z][a-z-]{0,47}-artifact-gallery$/u.test(raw.source_surface)
-    || !Number.isSafeInteger(head) || head < 0) return failure("artifact_view_invalid", 400);
+    || typeof raw.source_surface !== "string" || !/^[a-z][a-z-]{0,47}-artifact-gallery$/u.test(raw.source_surface)) return failure("artifact_view_invalid", 400);
   // Snapshot browser fields before the first await. Only verified identifiers are written below.
   const payload = { ...raw }, artifactId = String(payload.artifact_id), documentId = String(payload.document_id), projectId = String(payload.project_id);
   const history = await readWorkspaceEvents(env, actor.streamId);
@@ -109,11 +108,25 @@ export async function appendPersonalArtifactView(
   bindings: [actor.streamId, artifactId, completed.eventId, actor.streamId, artifactId, Number(payload.artifact_revision),
     actor.streamId, documentId, created.eventId, actor.streamId, documentId] };
   const source = combineAuthoringGuards(authority, retained, selection, authoringEventRowsProof(sourceRows));
-  const event = makeEvent(actor.streamId, head + 1, `user:${actor.userId}`, clientId, correlationId, "DocumentArtifactViewed", {
+  if (env.DB !== db || JSON.stringify(actor) !== actorSnapshot) return failure("artifact_view_source_unavailable");
+  return { source, bodyBytes: bytes(body.content), payload: {
     artifact_id: artifactId, artifact_kind: artifact.kind, document_id: documentId, project_id: projectId,
     artifact_revision: payload.artifact_revision, content_sha256: hash, artifact_source_event_id: completed.eventId,
-    source_surface: payload.source_surface, capture_version: "personal-artifact-view-v1",
-  });
+    artifact_content_ref: contentId, observed_source_expires_at: body.expires_at,
+    source_surface: payload.source_surface, capture_version: "personal-artifact-view-v2",
+  } };
+}
+
+/** A reported current view, not proof of attention, understanding, preference, or a Memory grant. */
+export async function appendPersonalArtifactView(
+  env: WorkerEnv, actor: PilotUser, input: unknown, head: number, clientId: string, correlationId: string,
+): Promise<Response> {
+  if (!Number.isSafeInteger(head) || head < 0) return failure("artifact_view_invalid", 400);
+  const db = env.DB, certified = await preparePersonalArtifactViewSource(env, actor, input);
+  if (certified instanceof Response) return certified;
+  if (env.DB !== db) return failure("artifact_view_source_unavailable");
+  const { source } = certified;
+  const event = makeEvent(actor.streamId, head + 1, `user:${actor.userId}`, clientId, correlationId, "DocumentArtifactViewed", certified.payload);
   const exact = authoringEventProof([event]);
   const insert = env.DB.prepare(`INSERT INTO event_write_stage(${EVENT_WRITE_COLUMNS}) SELECT ${Array(17).fill("?").join(",")}
     WHERE (SELECT COALESCE(MAX(sequence),0) FROM events WHERE stream_id=?)=? AND (${source.sql})`)

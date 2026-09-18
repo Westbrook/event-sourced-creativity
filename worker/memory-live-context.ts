@@ -4,6 +4,7 @@ import type { LiveMemoryEnrollment } from "./memory-live-authority.ts";
 import type { LiveConversationRow } from "./memory-live-conversation.ts";
 import { liveMemoryLifetimeProjection, liveMemorySourceDeadline, type LiveSourceSnapshot } from "./memory-live-source-lifetime.ts";
 import type { WorkerEnv } from "./runtime.ts";
+import { observeNativeMemoryDocumentScope } from "./memory-native-scope.ts";
 import { captureNativeMemoryOrigin, nativeMemoryOriginPaidSourcesQuery, nativeMemoryOriginAncestryQuery, type NativeMemoryOriginSource } from "./memory-native-origin.ts";
 
 import { nativeMemoryTimestamp as timestamp, nativeMemoryDescriptor as descriptor, nativeMemoryGrantDeadline, nativeMemoryPilotQuery,
@@ -180,6 +181,7 @@ export async function readNativeDocumentMemory(env: WorkerEnv, prepared: NativeM
     // Retain the old transition bound before this new native-principal await; do not ask only for a later future transition.
     const a = await authority.liveMemoryAuthority(env, e);
     if (env.DB !== db || !a) return null;
+    if (!await observeNativeMemoryDocumentScope(env, { principal, binding }, e, observer) || env.DB !== db) return null;
     captureDeadline(nativeMemoryGrantDeadline(a.principal, initialAt));
     const requestGuard = consent.executionAdmissionGuard(principal, binding, null);
     const enrollmentGuard = authority.liveMemoryEnrollmentGuard(e, "recall");

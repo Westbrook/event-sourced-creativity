@@ -1,4 +1,5 @@
 import { memoryAssert, memoryGuardQuery, type MemorySqlGuard } from "./memory-sql.ts";
+import { observeNativeMemoryDocumentScope, type NativeMemoryDocumentScope } from "./memory-native-scope.ts";
 import { prepareLiveMemoryCheckpointWithdrawal } from "./memory-live-checkpoints.ts";
 import { liveMemoryAuthority, liveMemoryEnrollmentGuard, liveMemoryMaintenanceAttemptFor, type LiveMemoryEnrollment, type LiveMemoryMaintenanceAttempt,
   type LiveMemoryDenialCertificate } from "./memory-live-authority.ts";
@@ -1851,6 +1852,7 @@ type NativeMemorySelectionFrame = {
   env: WorkerEnv; db: WorkerEnv["DB"]; value: NativeMemorySelection;
   witness: AssistantContextReadWitness<null>; preparedKey: string; authorityKey: string;
   prepared: NativeMemoryPreparedDocument; key: string; settings: string; validUntil: string;
+  scope: NativeMemoryDocumentScope;
 };
 const nativeMemorySelectionFrames = new WeakMap<NativeMemorySelectionProof, NativeMemorySelectionFrame>();
 function nativeMemorySelectionFrame(env: WorkerEnv, selection: NativeMemorySelection) {
@@ -1871,6 +1873,10 @@ export function nativeMemorySelectionStatements(env: WorkerEnv, selection: Nativ
       .bind(frame.validUntil)];
     return nativeMemorySelectionFrame(env, selection) === frame ? statements : null;
   } catch { return null; }
+}
+/** Metadata only; authorization remains the original selection's replayed proof. */
+export function nativeMemorySelectionScope(env: WorkerEnv, selection: NativeMemorySelection): NativeMemoryDocumentScope | null {
+  return nativeMemorySelectionFrame(env, selection)?.scope ?? null;
 }
 /** Matches only the exact assertion result slice actually executed by the caller.
  * A successful host check or materialized statement is not a database receipt. */
@@ -2034,10 +2040,12 @@ export async function prepareNativeMemorySelection(env: WorkerEnv, prepared: Nat
     if (!fresh() || Date.now() >= Date.parse(validUntil)) return null;
     const witness = new AssistantContextReadWitness<null>(env);
     witness.observe(statements, capturedResults, queries);
+    const scope = await observeNativeMemoryDocumentScope(env, captured, e, witness);
+    if (!scope || !fresh()) return null;
     witness.before(validUntil); witness.seal(null);
     const proof = Object.freeze(Object.create(null)) as NativeMemorySelectionProof;
     selection = structuredFreeze({mode, proof, enrollment: e, ledgerId});
-    nativeMemorySelectionFrames.set(proof, {env, db, value: selection, witness, prepared, preparedKey,
+    nativeMemorySelectionFrames.set(proof, {env, db, value: selection, witness, prepared, preparedKey, scope,
       authorityKey: canonicalConsent({principal: captured.principal, binding: captured.binding}),
       settings, validUntil, key: canonicalConsent([mode, e, ledgerId])});
     if (await replayNativeMemorySelection(env, selection) !== selection) {

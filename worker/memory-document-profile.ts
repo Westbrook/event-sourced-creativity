@@ -5,6 +5,7 @@ import { nativeMemoryDescriptor as descriptor, nativeMemoryTimestamp as timestam
   nativeMemoryPilotQuery, nativeMemoryPilotDeadline, type NativeMemoryQuery, type NativeMemorySqlValue } from "./memory-native-deadlines.ts";
 import type { LiveMemoryEnrollment } from "./memory-live-authority.ts";
 import type { WorkerEnv } from "./runtime.ts";
+import { observeNativeMemoryDocumentScope } from "./memory-native-scope.ts";
 
 /** Separately consented, on-demand inspection. This recipe never learns from
  * output properties, natural language, default block intent, or chat history.
@@ -338,7 +339,8 @@ export async function readNativeDocumentPaletteProfile(env: ProfileEnv, input: N
   if (!observer || typeof observer.observe !== "function" || typeof observer.require !== "function" || typeof observer.before !== "function") return null;
   let prepared: NativeMemoryPreparedDocument; try { prepared = structuredClone(input); } catch { return null; }
   if (!prepared?.principal || !prepared.binding) return null;
-  const { principal, binding } = prepared, started = Date.now();
+  const db = env.DB, original = JSON.stringify(input), { principal, binding } = prepared, started = Date.now();
+  const current = () => env.DB === db && JSON.stringify(input) === original;
   if (!principal || !binding || !id(principal.userId) || !principal.access || typeof principal.email !== "string"
     || principal.fictional || !principal.authorizationSnapshot || !enabled(env, principal.userId)
     || principal.userId !== binding.actorUserId || principal.access.permissionEpoch !== binding.permissionEpoch
@@ -348,8 +350,9 @@ export async function readNativeDocumentPaletteProfile(env: ProfileEnv, input: N
   try {
     const queries: NativeMemoryQuery[] = [], observed: D1Result<Row>[] = [], statements: D1PreparedStatement[] = [];
     const run = async (query: NativeMemoryQuery) => {
-      const statement = env.DB.prepare(query.sql).bind(...query.bindings), result = structuredClone(await statement.all<Row>());
-      if (!result.success) throw new Error("document_profile_read_unavailable");
+      if (!current()) throw new Error("document_profile_read_unavailable");
+      const statement = db.prepare(query.sql).bind(...query.bindings), result = structuredClone(await statement.all<Row>());
+      if (!current() || !result.success) throw new Error("document_profile_read_unavailable");
       queries.push(query); observed.push(result); statements.push(statement); return result.results;
     };
     const schema = await run(descriptor("SELECT COUNT(*) AS count FROM sqlite_schema WHERE type='table' AND name IN"
@@ -364,7 +367,8 @@ export async function readNativeDocumentPaletteProfile(env: ProfileEnv, input: N
     const e = parent[0] as unknown as LiveMemoryEnrollment;
     if (!documentProfileGrantValid(g, e, started) || g.permission_epoch !== principal.access.permissionEpoch) return null;
     const [authority, source, consent] = await Promise.all([import("./memory-live-authority.ts"), import("./memory-live-sources.ts"), import("./consequential-consent.ts")]);
-    const a = await authority.liveMemoryAuthority(env, e); if (!a) return null;
+    if (!current()) return null;
+    const a = await authority.liveMemoryAuthority(env, e); if (!a || !current()) return null;
     const deadlines = [started + 60_000, Date.parse(g.expires_at), Date.parse(e.expires_at)];
     const before = (value: string | null | undefined) => {
       if (value === null) return;
@@ -384,19 +388,12 @@ export async function readNativeDocumentPaletteProfile(env: ProfileEnv, input: N
     const guards = [{ sql: a.guard.condition, bindings: [...a.guard.bindings] }, requestGuard,
       { sql: parentGuard.condition, bindings: [...parentGuard.bindings] }];
     const verify = async () => {
-      const result = await env.DB.batch<Row>(guards.map(guard => env.DB.prepare("SELECT CASE WHEN (" + guard.sql + ") THEN 1 ELSE 0 END AS verified").bind(...guard.bindings)));
-      return result.length === guards.length && result.every(row => row.success && row.results.length === 1 && row.results[0].verified === 1);
+      if (!current()) return false;
+      const result = await db.batch<Row>(guards.map(guard => db.prepare("SELECT CASE WHEN (" + guard.sql + ") THEN 1 ELSE 0 END AS verified").bind(...guard.bindings)));
+      return current() && result.length === guards.length && result.every(row => row.success && row.results.length === 1 && row.results[0].verified === 1);
     };
     if (!await verify()) return null;
-    // Current document custody is part of the exact witness, including personal
-    // documents which must not have silently acquired a shared resource scope.
-    const documentScopes = await run(descriptor("SELECT organization_id,project_access_id,project_id,owner_user_id,visibility,actor_user_id"
-      + " FROM project_resource_scopes WHERE resource_kind='document' AND resource_id=? ORDER BY project_access_id LIMIT 3", [e.document_id]));
-    if (e.organization_id === null ? documentScopes.length !== 0 : documentScopes.length !== 1
-      || documentScopes[0].organization_id !== e.organization_id || documentScopes[0].project_access_id !== e.project_access_id
-      || documentScopes[0].project_id !== e.project_id || documentScopes[0].owner_user_id !== e.owner_user_id
-      || !(documentScopes[0].visibility === "collaborative_output"
-        || documentScopes[0].visibility === "actor_private" && documentScopes[0].actor_user_id === e.actor_user_id)) return null;
+    if (!await observeNativeMemoryDocumentScope(env, prepared, e, observer) || !current()) return null;
     const headRows = await run(descriptor("SELECT COALESCE(MAX(sequence),0) AS head FROM events WHERE stream_id=?", [binding.streamId]));
     if (headRows.length !== 1 || !integer(headRows[0].head, 0) || headRows[0].head < g.source_after_sequence || headRows[0].head < e.cursor_sequence) return null;
     const sourceRows = await run(nativeDocumentProfileSourcesQuery(e, source.liveMemorySourceQuery(e, a), g));
@@ -424,7 +421,7 @@ export async function readNativeDocumentPaletteProfile(env: ProfileEnv, input: N
     if (!await verify()) return null;
     const checkedAt = new Date().toISOString(), value = await nativeDocumentPaletteProfileValue(history, selected, e, g, blockIds,
       suppressions.suppressed, checkedAt, new Date(Math.min(...deadlines)).toISOString());
-    if (!value || !enabled(env, principal.userId) || Date.now() >= Date.parse(value.lifetime.validUntil)) return null;
+    if (!value || !current() || !enabled(env, principal.userId) || Date.now() >= Date.parse(value.lifetime.validUntil)) return null;
     observer.observe(statements, observed, queries); guards.forEach(guard => observer.require(guard)); observer.before(value.lifetime.validUntil);
     return value;
   } catch { return null; }

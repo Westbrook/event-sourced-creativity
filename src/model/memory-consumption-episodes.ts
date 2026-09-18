@@ -36,7 +36,7 @@ function id(value: unknown): string {
 function timestamp(value: unknown): number { const result = memoryTimestamp(value); check(result !== null); return result; }
 
 /** Capture data descriptors only. Validation never revisits mutable caller input. */
-function snapshot(original: unknown): unknown {
+export function snapshotMemoryConsumptionInput(original: unknown): unknown {
   let nodes = 0, bytes = 0;
   const ancestors = new Set<object>();
   const copy = (value: unknown, depth: number): unknown => {
@@ -89,7 +89,7 @@ function snapshot(original: unknown): unknown {
 export function parseMemoryConsumptionEpisodes(original: unknown, originalSources: readonly MemoryConsumptionSource[],
   originalLifetime: MemoryRecallLifetime, originalDocumentId: string): MemoryConsumptionEpisodes | null {
   try {
-    const input = snapshot({ projection: original, sources: originalSources, lifetime: originalLifetime, documentId: originalDocumentId }) as Row;
+    const input = snapshotMemoryConsumptionInput({ projection: original, sources: originalSources, lifetime: originalLifetime, documentId: originalDocumentId }) as Row;
     const value = row(input.projection, ["version", "treatment", "validUntil", "episodes", "coverage", "attention", "comprehension", "inferredPreferences"]);
     const lifetime = parseMemoryLifetime(input.lifetime); check(lifetime);
     const documentId = id(input.documentId), checked = timestamp(lifetime.checkedAt), until = timestamp(lifetime.validUntil);

@@ -6,6 +6,7 @@ import type { WorkerEnv } from "./runtime.ts";
 import { liveConversationPublication, liveConversationMarkPublished, liveConversationPrune, liveConversationTrim } from "./memory-live-conversation.ts";
 import { publishCompletedConversationReferences, type CompletedConversationCaptureResult } from "./memory-completed-turns.ts";
 import { prepareLiveMemoryCheckpoint } from "./memory-live-checkpoints.ts";
+import { captureNativeArtifactConsumption, nativeArtifactMemoryCandidates } from "./memory-native-artifact-consumption.ts";
 
 export const LIVE_MEMORY_PAGE_SIZE=128;
 export const LIVE_MEMORY_RUNNING_LIMIT=8;
@@ -47,6 +48,7 @@ async function processScope(env:WorkerEnv,e:LiveMemoryEnrollment,now:string,eras
     erased(result.erased);return 0;
   }
   const q=liveMemorySourceQuery(e,authority),policy=liveMemoryEnrollmentGuard(e);
+  const artifactCandidates=nativeArtifactMemoryCandidates(e);
   const cleanup=liveConversationPrune(e.enrollment_id,e.revision),trim=liveConversationTrim(e.enrollment_id);
   const originMaintenance=await liveMemoryOriginDependencyWithdrawalStatements(env,
     {enrollmentId:e.enrollment_id,currentRevision:e.revision},"source-unavailable",now);
@@ -54,12 +56,14 @@ async function processScope(env:WorkerEnv,e:LiveMemoryEnrollment,now:string,eras
   // A CTE keeps the exact source predicate out of nested DELETE/EXISTS expressions (D1 depth <=100).
   const maintenance=await memoryAtomic(env,[authority.guard,policy],[...originMaintenance.beforeMutation,env.DB.prepare(`WITH tracked AS (
     SELECT event_id,sequence FROM memory_live_sources WHERE enrollment_id=?), eligible AS (
-    SELECT event.event_id ${q.joins} JOIN tracked candidate ON candidate.event_id=event.event_id AND candidate.sequence=event.sequence WHERE ${q.condition})
+    SELECT event.event_id ${q.joins} JOIN tracked candidate ON candidate.event_id=event.event_id AND candidate.sequence=event.sequence WHERE ${q.condition}
+    UNION SELECT event.event_id ${artifactCandidates.joins} JOIN tracked candidate ON candidate.event_id=event.event_id AND candidate.sequence=event.sequence
+      WHERE ${artifactCandidates.condition})
     DELETE FROM memory_live_sources
     WHERE enrollment_id=? AND event_id IN(SELECT expired.event_id FROM memory_live_sources expired
       WHERE expired.enrollment_id=? AND (expired.expires_at<=strftime('%Y-%m-%dT%H:%M:%fZ','now')
         OR expired.event_id NOT IN(SELECT event_id FROM eligible)) LIMIT 128)`)
-    .bind(e.enrollment_id,...q.bindings,e.enrollment_id,e.enrollment_id),env.DB.prepare("SELECT changes() AS erased"),
+    .bind(e.enrollment_id,...q.bindings,...artifactCandidates.bindings,e.enrollment_id,e.enrollment_id),env.DB.prepare("SELECT changes() AS erased"),
     env.DB.prepare(cleanup.sql).bind(...cleanup.bindings),env.DB.prepare(trim.sql).bind(...trim.bindings),...originMaintenance.afterMutation]);
   // Cleanup is already committed, even if later capture or bookkeeping fails.
   erased(Number((maintenance[originMaintenance.beforeMutation.length+1]?.results[0] as {erased:number}|undefined)?.erased??0));
@@ -113,7 +117,9 @@ async function processScope(env:WorkerEnv,e:LiveMemoryEnrollment,now:string,eras
     }
     const page=await env.DB.prepare("SELECT sequence FROM events WHERE stream_id=? AND sequence>? AND sequence<=? ORDER BY sequence LIMIT ?")
       .bind(`creative:${e.owner_user_id}`,e.cursor_sequence,head,LIVE_MEMORY_PAGE_SIZE).all<{sequence:number}>();
-    const through=page.results.at(-1)?.sequence??head,done=through>=head;
+    const pageThrough=page.results.at(-1)?.sequence??head;
+    const artifactViews=await captureNativeArtifactConsumption(env,e,authority,{after:e.cursor_sequence,through:pageThrough,remembered:false});
+    const through=artifactViews.throughSequence,done=through>=head;
     const conversation=liveConversationPublication(e,q,through,now);
     const conversationMarked=liveConversationMarkPublished(e,through);
     // Maintenance already committed. Publication needs a fresh full-header
@@ -122,12 +128,20 @@ async function processScope(env:WorkerEnv,e:LiveMemoryEnrollment,now:string,eras
       {enrollmentId:e.enrollment_id,currentRevision:e.revision},"source-unavailable",now);
     const checkpoint=await prepareLiveMemoryCheckpoint(env,e,through,now);
     // Selection and publication occur in the SAME database transaction. Only references cross the boundary.
-    const writes=await memoryAtomic(env,[authority.guard,liveMemoryEnrollmentGuard(e,"learn"),lease,checkpoint.guard],[
+    const writes=await memoryAtomic(env,[authority.guard,liveMemoryEnrollmentGuard(e,"learn"),lease,checkpoint.guard,...artifactViews.guards],[
       ...originPublication.beforeMutation,
       env.DB.prepare(`INSERT OR IGNORE INTO memory_live_sources(enrollment_id,event_id,sequence,expires_at)
         SELECT ?,event.event_id,event.sequence,MIN(?,strftime('%Y-%m-%dT%H:%M:%fZ',event.recorded_at,'+'||?||' days'))
         ${q.joins} WHERE ${q.condition} AND event.sequence>? AND event.sequence<=?`)
         .bind(e.enrollment_id,e.expires_at,e.retention_days,...q.bindings,e.cursor_sequence,through),
+      ...artifactViews.sources.map(source=>env.DB.prepare(`INSERT INTO memory_live_sources(enrollment_id,event_id,sequence,expires_at)
+        VALUES(?,?,?,?) ON CONFLICT(enrollment_id,event_id) DO UPDATE SET expires_at=MIN(memory_live_sources.expires_at,excluded.expires_at)
+        WHERE memory_live_sources.sequence=excluded.sequence`).bind(e.enrollment_id,source.eventId,source.sequence,source.validUntil)),
+      ...(artifactViews.sources.length?[memorySqlAssertion(env,{condition:`NOT EXISTS(SELECT 1 FROM json_each(?) expected WHERE NOT EXISTS(
+        SELECT 1 FROM memory_live_sources retained WHERE retained.enrollment_id=? AND retained.event_id=json_extract(expected.value,'$.eventId')
+          AND retained.sequence=json_extract(expected.value,'$.sequence') AND retained.expires_at<=json_extract(expected.value,'$.validUntil')
+          AND retained.expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now')))`,
+        bindings:[JSON.stringify(artifactViews.sources.map(({eventId,sequence,validUntil})=>({eventId,sequence,validUntil}))),e.enrollment_id]})]:[]),
       env.DB.prepare(conversation.sql).bind(...conversation.bindings),
       env.DB.prepare(conversationMarked.sql).bind(...conversationMarked.bindings),
       env.DB.prepare(trim.sql).bind(...trim.bindings),
@@ -139,8 +153,8 @@ async function processScope(env:WorkerEnv,e:LiveMemoryEnrollment,now:string,eras
         attempts=0,failure_code=?,next_due_at=? WHERE enrollment_id=? AND revision=? AND lease_token=?`)
         .bind(through,done?null:head,conversationFailure,at(now,done?3_600_000:60_000),e.enrollment_id,e.revision,token),
       memorySqlAssertion(env,{condition:"changes()=1",bindings:[]}),
-    ],[authority.guard,liveMemoryEnrollmentGuard(e,"learn"),clock,checkpoint.guard]);
-    return Number(writes[originPublication.beforeMutation.length]?.meta.changes??0);
+    ],[authority.guard,liveMemoryEnrollmentGuard(e,"learn"),clock,checkpoint.guard,...artifactViews.guards]);
+    return Number(writes[originPublication.beforeMutation.length]?.meta.changes??0)+artifactViews.sources.length;
   } catch {
     await env.DB.prepare("UPDATE memory_live_enrollments SET lease_token=NULL,lease_expires_at=NULL,next_due_at=?,failure_code='review-failed' WHERE enrollment_id=? AND revision=? AND lease_token=?")
       .bind(at(now,60_000*Math.min(8,2**e.attempts)),e.enrollment_id,e.revision,token).run();

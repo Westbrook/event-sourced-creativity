@@ -6,6 +6,7 @@ import { parseMemoryCustody, memoryCustodyMatches } from "../src/model/memory-cu
 import { createMemoryElapsed, memoryTimestamp, parseMemoryLifetime, MEMORY_RECALL_LIFETIME, MEMORY_RECALL_MAX_AGE_MS } from "../src/model/memory-lifetime.ts";
 import { rollingLiveMemoryConsumption } from "../src/model/memory-observations.ts";
 import { createDocumentJobMemoryClient, DocumentJobMemoryError, DOCUMENT_JOB_MEMORY_VERSION } from "../src/state/document-job-memory-client.ts";
+import { MEMORY_CONSUMPTION_V2, parseMemoryConsumptionV2 } from "../src/model/memory-consumption-v2.ts";
 
 const fixtureId = value => value.toString(16).padStart(64, "0");
 const now = () => new Date().toISOString();
@@ -46,6 +47,38 @@ function consumptionRecall(item) {
   body.rollingConsumption = rollingLiveMemoryConsumption(body.sources, body.lifetime, body.coverage.since, item.retentionDays);
   return body;
 }
+
+function artifactConsumptionRecall(item) {
+  const body=recalled(item),{checkedAt,validUntil}=body.lifetime;
+  body.consumptionEpisodes={version:MEMORY_CONSUMPTION_V2,treatment:'descriptive-consumption',validUntil,
+    sources:[{eventId:'artifact-view',type:'DocumentArtifactViewed',recordedAt:checkedAt,validUntil,target:{kind:'artifact',documentId:item.documentId,artifactId:'artifact',artifactKind:'slides',revision:0,contentSha256:'a'.repeat(64)}}],
+    episodes:[{episodeId:null,observations:[{sourceIndex:0,kind:'viewer-open'}],firstRecordedAt:checkedAt,lastRecordedAt:checkedAt,validUntil,independentEvidence:false}],
+    coverage:{eligibleSourceCount:1,observationCount:1,unavailableArtifactSourceCount:0,completeHistory:false,bounded:true,truncated:false},
+    attention:'not-measured',comprehension:'not-measured',inferredPreferences:false};
+  return body;
+}
+test('consumption v2 negotiates its own source map without changing legacy recall or extending the parent lease',async()=>{
+  const item=enrollment(),body=artifactConsumptionRecall(item),{client,calls}=fakeTransport(()=>Response.json(body));
+  const result=await client.recall(item,undefined,{consumptionEpisodes:MEMORY_CONSUMPTION_V2});
+  assert.deepEqual(result.value.consumptionEpisodes,body.consumptionEpisodes);assert.equal(result.value.sources[0].eventId,'isolated-event');
+  assert.ok(calls[0].url.endsWith('&consumptionEpisodes='+MEMORY_CONSUMPTION_V2));
+  await assert.rejects(client.recall(item),isClientError('memory_response_invalid',false,200));
+  await assert.rejects(client.recall(item,undefined,{consumptionEpisodes:true}),isClientError('memory_response_invalid',false,200));
+});
+test('consumption v2 refuses source/target substitution, invented episodes and interpretation claims',()=>{
+  const item=enrollment();
+  for(const mutate of [p=>{p.sources[0].target.documentId='foreign';},p=>{p.sources[0].target.kind='block';},
+    p=>{p.sources[0].target.revision=-1;},p=>{p.sources[0].target.contentSha256='missing';},p=>{p.sources[0].type='BlockViewed';},
+    p=>{p.sources[0].target.attention=1;},p=>{p.episodes[0].observations[0].sourceIndex=1;},p=>{p.episodes[0].observations[0].kind='read';},
+    p=>{p.episodes[0].independentEvidence=true;},p=>{p.inferredPreferences=true;},p=>{p.comprehension='measured';},
+    p=>{p.sources[0].validUntil='2000-01-01T00:00:00.000Z';},p=>{p.coverage.completeHistory=true;},
+    p=>{p.sources[0].validUntil=new Date(Date.parse(item.expiresAt)+1).toISOString();},
+    p=>{p.sources[0].recordedAt='2000-01-01T00:00:00.000Z';},
+    p=>{p.validUntil=new Date(Date.parse(p.validUntil)+1).toISOString();},p=>{p.sources.push({...p.sources[0]});},
+  ]){const body=artifactConsumptionRecall(item);mutate(body.consumptionEpisodes);assert.equal(parseMemoryConsumptionV2(body.consumptionEpisodes,body.lifetime,item.documentId,{since:body.coverage.since,expiresAt:item.expiresAt}),null);}
+  const accessor=artifactConsumptionRecall(item);let read=0;Object.defineProperty(accessor.consumptionEpisodes.sources[0].target,'revision',{enumerable:true,get(){read++;return 0;}});
+  assert.equal(parseMemoryConsumptionV2(accessor.consumptionEpisodes,accessor.lifetime,item.documentId,{since:accessor.coverage.since,expiresAt:item.expiresAt}),null);assert.equal(read,0);
+});
 function assistedRecall(item) {
   const body = recalled(item), recordedAt = body.lifetime.checkedAt, validUntil = body.lifetime.validUntil;
   body.sources.push({ eventId: "decision-accepted", type: "ProposalAccepted", blockId: null, recordedAt, validUntil },

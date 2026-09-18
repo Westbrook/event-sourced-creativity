@@ -2807,12 +2807,13 @@ function visitsRecall(item, { checkedAt = now(), leaseMs = 60_000, empty = false
   })));
   body.consumption.encounter = 3; body.coverage.sourceCount = body.sources.length;
   const indexes = empty ? [] : [1, 3];
-  body.consumptionEpisodes = { version: "memory-consumption-episodes-v1", treatment: "descriptive-consumption", validUntil: until,
-    episodes: indexes.map(sourceIndex => ({ episodeId: null, documentId: item.documentId, blockId: null, resourceRevision: null,
-      observations: [{ sourceIndex, kind: "visit", copiedFrom: null }], origins: ["unknown"], provenanceSourceIndexes: [],
+  body.consumptionEpisodes = { version: "memory-consumption-episodes-v2", treatment: "descriptive-consumption", validUntil: until,
+    sources:indexes.map(sourceIndex=>{const {eventId,type,recordedAt,validUntil}=body.sources[sourceIndex];return{eventId,type,recordedAt,validUntil,target:{kind:"document",documentId:item.documentId}};}),
+    episodes: indexes.map((_sourceIndex,sourceIndex) => ({ episodeId: null,
+      observations: [{ sourceIndex, kind: "visit" }],
       firstRecordedAt: checkedAt, lastRecordedAt: checkedAt, validUntil: until, independentEvidence: false })),
-    coverage: { eligibleSourceCount: body.sources.length, observationCount: indexes.length, compensatedObservationCount: 0,
-      unresolvedCompensationCount: 0, incompleteLineageCount: indexes.length, completeHistory: false, bounded: true },
+    coverage: { eligibleSourceCount: indexes.length, observationCount: indexes.length, unavailableArtifactSourceCount:0,
+      completeHistory: false, bounded: true, truncated:false },
     attention: "not-measured", comprehension: "not-measured", inferredPreferences: false };
   return body;
 }
@@ -2845,7 +2846,7 @@ test("recorded visits: explicit action replaces the complete receipt and shows o
   assert.ok(oldReceipt.retireCalls > 0); assert.equal(h.text().includes("Prior parent conversation"), false);
   assert.equal(h.text().includes("personal-memory-excerpts"), false);
   assert.equal(h.calls.at(-1).url, "/api/memory/recall?id=" + row.id
-    + "&outcomes=native-assisted-outcomes-v1&savedOutputs=native-saved-outputs-v1&consumptionEpisodes=memory-consumption-episodes-v1");
+    + "&outcomes=native-assisted-outcomes-v1&savedOutputs=native-saved-outputs-v1&consumptionEpisodes=memory-consumption-episodes-v2");
   assert.equal(h.focusLeases.length, 1); assert.equal(h.focusLeases[0].disposed, false);
   delayed.release(); await pending;
   const root = h.render(), section = [...templates(root)].find(value => value.strings.some(part => part.includes("data-memory-visits>")));
@@ -2856,7 +2857,7 @@ test("recorded visits: explicit action replaces the complete receipt and shows o
   const detail = controls(section).find(control => control.attributes.has("data-memory-visit-references"));
   assert.ok(detail); assert.equal(detail.attributes.has("open"), false); assert.equal(detail.attributes.has("?open"), false);
   assert.equal(detail.attributes.has("@toggle"), false); assert.ok(detail.label.includes("memory.live.visitsDetails [2]"));
-  assert.ok(detail.label.includes("memory.live.visitsSource [2]")); assert.ok(detail.label.includes("memory.live.visitsSource [4]"));
+  assert.ok(detail.label.includes("memory.live.visitsSource [1]")); assert.ok(detail.label.includes("memory.live.visitsSource [2]"));
   assert.equal(detail.label.includes("memory.live.visitsSource [3]"), false);
   assert.ok(text.includes(body.lifetime.checkedAt));
   for (const privateValue of [row.documentId, row.projectId, row.id, "Fresh parent conversation", "Synthetic historical response", ...body.sources.map(source => source.eventId)])
@@ -3012,7 +3013,7 @@ test("recorded visits: every supported locale has matching descriptive labels an
   const selected = dictionary => Object.keys(dictionary).filter(key => key.startsWith("memory.live.visits")).sort();
   const english = FORMA_PERSONAL_MEMORY_MESSAGES.en, keys = selected(english);
   const placeholders = value => [...value.matchAll(/\{(\w+)\}/gu)].map(match => match[1]).sort();
-  assert.equal(keys.length, 12);
+  assert.equal(keys.length, 14);
   for (const dictionary of Object.values(FORMA_PERSONAL_MEMORY_MESSAGES)) {
     assert.deepEqual(selected(dictionary), keys);
     for (const key of keys) { assert.ok(dictionary[key].trim()); assert.deepEqual(placeholders(dictionary[key]), placeholders(english[key])); }
