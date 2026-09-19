@@ -15148,3 +15148,18 @@ test('native derivation index: pre-migration results backfill only through fresh
   const rows=state.sqlite.prepare('SELECT * FROM memory_derivation_index_intents').all();assert.equal(rows.length,1);assert.ok(await index.captureNativeDerivationIndexUpsert(state.env,read));assert.deepEqual(state.sqlite.prepare('SELECT * FROM memory_derivation_index_intents').all(),rows);
   await assert.rejects(()=>index.readNativeDerivationIndexDeletes(state.env,'not-a-job'));await assert.rejects(()=>index.readNativeDerivationIndexDeletes(state.env,undefined,33));
 });
+
+for(const shared of [false,true])test('native derivation block binding: real event writer retains '+(shared?'governed':'personal')+' actor-private revision proof',{timeout:60000},async t=>{
+  const state=await nativeDerivationDeliveryFixture(t,{shared}),e=state.current();
+  const response=await state.request('/api/events',json({action:'append',event:{type:'BlockCreated',payload:{project_id:e.project_id,document_id:e.document_id,
+    block_id:'memory-native-written-block',scope:'document',type:'direction',properties:{text:'An actual native context write'}}}},state.owner??{}));
+  assert.equal(response.status,200,await response.clone().text());
+  state.due();assert.equal((await state.run()).status,'completed');
+  const admission=await import('../worker/memory-derivation-admission.ts'),sources=await import('../worker/memory-derivation-sources.ts');
+  const job=state.queue().jobs[0];assert.ok(job);const lease=await admission.claimNativeDerivationJob(state.env,job.job_id);assert.ok(lease);
+  const captured=await sources.captureNativeDerivationSources(state.env,lease);assert.equal(captured.status,'captured',state.controls.lastDatabaseError);
+  const bindings=sources.nativeDerivationSourceInputs(state.env,captured.capture).provenance.blockBindings;
+  assert.equal(bindings.entries.length,1);assert.equal(bindings.unresolved,0);assert.ok(bindings.entries[0].scopeKey.includes(e.actor_user_id));
+  if(shared){state.sqlite.prepare("UPDATE project_resource_scopes SET visibility='actor_private',actor_user_id='different-actor' WHERE resource_kind='block' AND resource_id='memory-native-written-block'").run();
+    assert.equal(await sources.replayNativeDerivationSources(state.env,captured.capture),false);}
+});

@@ -1,3 +1,4 @@
+import { observeNativeMemoryBlockBindings, type NativeMemoryBlockBindings } from './memory-native-blocks.ts';
 import { captureLegacyConversationOriginalWindows, replayLegacyConversationOriginals, prepareLegacyConversationOriginalsCommit, type LegacyConversationOriginalsCommit } from "./events-api.ts";
 import { nativeDerivationRequestBody, nativeDerivationRequestFits } from './memory-derivation-request.ts';
 import { captureNativeArtifactConsumption } from './memory-native-artifact-consumption.ts';
@@ -28,6 +29,7 @@ export type NativeDerivationProvenance = {
   paid: { taskId: string; turnId: string; consentRef: string; consentSha256: string; resultRef: string;
     bindingHash: string; intentHash: string; ancestry: PaidMemoryAncestryEntry[] }[];
   artifacts?: { eventId:string; contentRef:string; eventIds:string[] }[];
+  blockBindings?: NativeMemoryBlockBindings;
   sourceRowsSha256: string;
 };
 export type NativeDerivationHistory = { version: 1; windowJobIds: string[]; afterSequence: number; throughSequence: number; boundary: "consent" | "bounded" | "capacity"; originalPairs: number };
@@ -58,7 +60,7 @@ const clean = (payload: string) => `json_valid(${payload}) AND COALESCE(json_ext
  * remain incomplete; nothing is sliced, acknowledged as processed or deleted.
  * Typed observations are descriptive evidence, NOT original human quotations.
  */
-async function captureNativeDerivationWindow(env: WorkerEnv, lease: NativeDerivationEvidence) {
+async function captureNativeDerivationWindow(env: WorkerEnv, lease: NativeDerivationEvidence, bindBlocks = true) {
   try {
     if(nativeDerivationEvidenceInputs(env,lease).producer==='chat-studio')return await captureChatStudioDerivationWindow(env,lease);
     const db = env.DB, input = nativeDerivationEvidenceInputs(env, lease), { enrollment: e, grant: g, authority: a, job } = input;
@@ -240,6 +242,7 @@ async function captureNativeDerivationWindow(env: WorkerEnv, lease: NativeDeriva
         scopeKey:memoryCanonical([artifactScope.partitionKey,artifactScope.artifactKey]),blockPointer:null,expiresAt,independentEvidence:false});
     }
     observations.sort((left,right)=>left.sequence-right.sequence);
+    const blockBindings=bindBlocks?await observeNativeMemoryBlockBindings(env,e,observations,witness):undefined;
     const retentionCeiling = [...ceilings, ...originals.map(row => row.expiresAt), ...observations.map(row => row.expiresAt)].sort()[0]!;
     let excludedByUserControls = 0;
     if (input.userControlsPresent && originals.length) {
@@ -269,6 +272,7 @@ async function captureNativeDerivationWindow(env: WorkerEnv, lease: NativeDeriva
         consentRef: String(row.content_id), consentSha256: await memoryDigest(String(row.content)), resultRef: String(row.result_ref),
         bindingHash: String(row.binding_hash), intentHash: String(row.intent_hash), ancestry: groups.find(group => group.turnId === row.turn_id)!.entries }))),
       ...(artifactCapture?{artifacts:artifactCapture.provenance}:{}),
+      ...(blockBindings?{blockBindings}:{}),
       sourceRowsSha256: await memoryDigest(memoryCanonical({ rows, messages, paid, ...(artifactCapture?{artifacts:artifactCapture.sources,artifactProvenance:artifactCapture.provenance}:{}) })),
     };
     const data: CaptureData = { jobId: job.job_id, purpose: g.purpose, scopeKey, checkedAt, validUntil, retentionCeiling, originals, originalBacking, observations, provenance,
@@ -404,9 +408,9 @@ async function captureChatStudioDerivationHistory(env:WorkerEnv,lease:NativeDeri
  * Bounds are explicit: no source truncation, hidden gap skipping, or claim of a
  * complete lifetime history. Legacy result reads may request their exact original
  * single-window contract; this option cannot grant spending or widen access. */
-export async function captureNativeDerivationSources(env: WorkerEnv, lease: NativeDerivationEvidence, options: { history?: boolean } = {}) {
+export async function captureNativeDerivationSources(env: WorkerEnv, lease: NativeDerivationEvidence, options: { history?: boolean; blockBindings?: boolean } = {}) {
   try{const input=nativeDerivationEvidenceInputs(env,lease);if(input.producer==='chat-studio'&&input.historyPresent&&options.history!==false)return await captureChatStudioDerivationHistory(env,lease);}catch{return unavailable();}
-  const own = await captureNativeDerivationWindow(env, lease);
+  const own = await captureNativeDerivationWindow(env, lease, options.blockBindings!==false);
   if (own.status !== 'captured' || options.history === false) return own;
   try {
     const db=env.DB, input=nativeDerivationEvidenceInputs(env,lease);
@@ -430,7 +434,7 @@ export async function captureNativeDerivationSources(env: WorkerEnv, lease: Nati
     for(const row of result.results.slice(0,2)) {
       const evidence=await observeNativeDerivationHistoryJob(env,lease,String(row.job_id));
       if(!evidence){boundary='bounded';break;}
-      const previous=await captureNativeDerivationWindow(env,evidence);
+      const previous=await captureNativeDerivationWindow(env,evidence,options.blockBindings!==false);
       if(previous.status!=='captured'){boundary=previous.status==='capacity'?'capacity':'bounded';break;}
       const source=nativeDerivationSourceInputs(env,previous.capture);
       if(source.scopeKey!==current.scopeKey||source.purpose!==current.purpose||source.binding.consentId!==current.binding.consentId
@@ -448,6 +452,7 @@ export async function captureNativeDerivationSources(env: WorkerEnv, lease: Nati
         provenance:{events:unique(data.flatMap(value=>value.provenance.events)),turns:unique(data.flatMap(value=>value.provenance.turns)),
           paid:unique(data.flatMap(value=>value.provenance.paid)),
           ...(data.some(value=>value.provenance.artifacts)?{artifacts:unique(data.flatMap(value=>value.provenance.artifacts??[]))}:{}),
+          ...(current.provenance.blockBindings?{blockBindings:{version:1 as const,entries:unique(data.flatMap(value=>value.provenance.blockBindings?.entries??[])),unresolved:data.reduce((sum,value)=>sum+(value.provenance.blockBindings?.unresolved??0),0)}}:{}),
           sourceRowsSha256:await memoryDigest(memoryCanonical(data.map(value=>[value.jobId,value.provenance.sourceRowsSha256])))},
         coverage:{...current.coverage,originalPairs:originals.length/2,typedObservations:observations.length,
           ...(data.some(value=>value.coverage.excludedByUserControls)?{excludedByUserControls:data.reduce((n,value)=>n+(value.coverage.excludedByUserControls??0),0)}:{})}};

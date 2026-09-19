@@ -476,3 +476,118 @@ test('historical artifact consumption: isolated D1 retains old views but invalid
   await db.prepare('DELETE FROM event_private_payloads WHERE private_event_id=?').bind(event.eventId).run();await assert.rejects(replay);
   assert.ok(await preparePersonalArtifactHistorySource(f.env,actor,event.eventId) instanceof Response);
 });
+
+async function nativeBlockCaptureFixture(t){
+  const f=await artifactDerivationFixture(t);
+  const blockId='native-memory-block';
+  await appendAuditEvent(f.env,f.streamId,'user:'+f.owner,'BlockCreated',{project_id:f.projectId,document_id:f.documentId,block_id:blockId,
+    type:'direction',scope:'document',properties:{text:'Private native block fields, not a human quotation'}});
+  await appendAuditEvent(f.env,f.streamId,'user:'+f.owner,'BlockPropertyEdited',{project_id:f.projectId,document_id:f.documentId,block_id:blockId,
+    property_path:'text',new_value:'Revised private native fields'});
+  assert.equal((await f.run()).status,'completed');
+  const job=f.sqlite.prepare('SELECT * FROM memory_derivation_jobs').get();assert.ok(job);
+  const admission=await import('../worker/memory-derivation-admission.ts'),sources=await import('../worker/memory-derivation-sources.ts');
+  const lease=await admission.claimNativeDerivationJob(f.env,job.job_id);assert.ok(lease);
+  return Object.assign(f,{blockId,lease,sources,capture:()=>sources.captureNativeDerivationSources(f.env,lease)});
+}
+
+test('block memory: native field versions supplement document actions without promoting text or pointer authority',async t=>{
+  const f=await nativeBlockCaptureFixture(t),result=await f.capture();assert.equal(result.status,'captured');
+  const source=f.sources.nativeDerivationSourceInputs(f.env,result.capture),bindings=source.provenance.blockBindings;
+  assert.equal(source.originals.length,0);assert.equal(bindings.version,1);assert.equal(bindings.unresolved,0);assert.equal(bindings.entries.length,2);
+  assert.deepEqual(bindings.entries.map(row=>row.eventIds.length),[1,2]);assert.notEqual(bindings.entries[0].stateSha256,bindings.entries[1].stateSha256);
+  assert.equal(bindings.entries[0].scopeKey,bindings.entries[1].scopeKey);assert.ok(bindings.entries[0].scopeKey.includes(f.blockId));
+  assert.equal(JSON.stringify(source).includes('Private native block fields'),false);assert.equal(JSON.stringify(source).includes('Revised private native fields'),false);
+  assert.ok(source.observations.every(row=>row.independentEvidence===false));
+  const legacy=await f.sources.captureNativeDerivationSources(f.env,f.lease,{blockBindings:false});assert.equal(legacy.status,'captured');
+  assert.equal(Object.hasOwn(f.sources.nativeDerivationSourceInputs(f.env,legacy.capture).provenance,'blockBindings'),false);
+  assert.equal(f.sqlite.prepare('SELECT COUNT(*) AS n FROM memory_derivation_finance').get().n,0);
+});
+
+for(const fault of ['source-private-erasure','source-edit','compensation','rehome','custody','recreated','later-property-edit','unrelated'])test('block memory: exact replay handles '+fault,async t=>{
+  const f=await nativeBlockCaptureFixture(t),result=await f.capture();assert.equal(result.status,'captured');
+  const binding=f.sources.nativeDerivationSourceInputs(f.env,result.capture).provenance.blockBindings.entries[0];assert.ok(binding);
+  if(fault==='source-private-erasure')f.sqlite.prepare('DELETE FROM event_private_payloads WHERE private_event_id=?').run(binding.eventId);
+  if(fault==='source-edit')f.sqlite.prepare("UPDATE event_private_payloads SET private_json=json_set(private_json,'$.properties.text','altered') WHERE private_event_id=?").run(binding.eventId);
+  if(fault==='rehome')await appendAuditEvent(f.env,f.streamId,'user:'+f.owner,'BlockRehomed',{block_id:f.blockId,project_id:f.projectId,document_id:'foreign',scope:'document'});
+  if(fault==='recreated')await appendAuditEvent(f.env,f.streamId,'user:'+f.owner,'BlockCreated',{block_id:f.blockId,project_id:f.projectId,document_id:f.documentId,scope:'document'});
+  if(fault==='later-property-edit')await appendAuditEvent(f.env,f.streamId,'user:'+f.owner,'BlockPropertyEdited',{block_id:f.blockId,project_id:f.projectId,document_id:f.documentId,property_path:'text',new_value:'Later edit'});
+  if(fault==='unrelated')await appendAuditEvent(f.env,f.streamId,'user:'+f.owner,'DocumentOpened',{project_id:f.projectId,document_id:f.documentId});
+  if(fault==='custody')f.sqlite.prepare("INSERT INTO project_resource_scopes(organization_id,project_access_id,project_id,owner_user_id,resource_kind,resource_id,visibility,actor_user_id,created_at) VALUES('org','access',?,?,'block',?,'actor_private',?,?)").run(f.projectId,f.owner,f.blockId,f.owner,new Date().toISOString());
+  if(fault==='compensation'){
+    const {makeEvent,eventWriteBindings,EVENT_WRITE_COLUMNS}=await import('../worker/runtime.ts');
+    const head=f.sqlite.prepare('SELECT MAX(sequence) AS n FROM events WHERE stream_id=?').get(f.streamId).n;
+    const event=makeEvent(f.streamId,head+1,'user:'+f.owner,'isolated-compensation',crypto.randomUUID(),'ObjectDiscarded',{project_id:f.projectId,document_id:f.documentId});
+    event.compensatesEventId=binding.eventId;const values=eventWriteBindings(event);
+    await f.env.DB.prepare('INSERT INTO event_write_stage('+EVENT_WRITE_COLUMNS+') VALUES('+values.map(()=>'?').join(',')+')').bind(...values).run();
+  }
+  assert.equal(await f.sources.replayNativeDerivationSources(f.env,result.capture),['later-property-edit','unrelated'].includes(fault));
+});
+
+for(const fault of ['none','source-erasure','source-custody'])test('block memory: pre-window source events retain complete publication inverses '+fault,async t=>{
+  const f=await artifactDerivationFixture(t),blockId='scene-reuse-direction';
+  const original=f.sqlite.prepare("SELECT event_id FROM events WHERE type='BlockCreated' AND json_extract(payload,'$.block_id')=?").get(blockId).event_id;
+  const turn=await f.request('/api/assistant?route='+encodeURIComponent('/document/'+f.documentId)+'&projectId='+f.projectId,
+    f.json({turnId:'block-observation-original',message:'I want to review this story.',locale:'en'}));assert.equal(turn.status,201,await turn.clone().text());
+  await appendAuditEvent(f.env,f.streamId,'user:'+f.owner,'BlockPropertyEdited',{project_id:f.projectId,document_id:f.documentId,block_id:blockId,property_path:'text',new_value:'An updated native direction'});
+  assert.equal((await f.run()).status,'completed');
+  assert.equal(f.sqlite.prepare('SELECT COUNT(*) AS n FROM memory_derivation_job_sources WHERE event_id=?').get(original).n,0);
+  t.mock.method(globalThis,'fetch',async(_url,options)=>{
+    assert.equal(options.body.includes('An updated native direction'),false);
+    return Response.json({id:'isolated-block-result',object:'response',model:'isolated-artifact-test',service_tier:'default',status:'completed',error:null,incomplete_details:null,
+      usage:{input_tokens:100,output_tokens:10,total_tokens:110,input_tokens_details:{cached_tokens:0}},
+      output:[{type:'message',role:'assistant',status:'completed',content:[{type:'output_text',text:JSON.stringify({version:'memory-derivation-candidates-v1',items:[]})}]}]});
+  });
+  const result=await(await import('../worker/memory-derivation-worker.ts')).runNativeDerivationScheduled(f.env);assert.equal(result.status,'stored',JSON.stringify(result));
+  const stored=f.sqlite.prepare('SELECT * FROM memory_derivation_results').get(),manifest=JSON.parse(stored.manifest_json);
+  assert.ok(manifest.provenance.blockBindings.entries.some(row=>row.eventIds.includes(original)));
+  assert.ok(f.sqlite.prepare("SELECT * FROM memory_derivation_result_dependencies WHERE job_id=? AND kind='event' AND resource_id=?").get(stored.job_id,original));
+  if(fault==='source-erasure')f.sqlite.prepare('DELETE FROM event_private_payloads WHERE private_event_id=?').run(original);
+  if(fault==='source-custody')f.sqlite.prepare("INSERT INTO project_resource_scopes(organization_id,project_access_id,project_id,owner_user_id,resource_kind,resource_id,visibility,actor_user_id,created_at) VALUES('org','access',?,?,'block',?,'actor_private',?,?)").run(f.projectId,f.owner,blockId,f.owner,new Date().toISOString());
+  if(fault==='none')assert.ok(await(await import('../worker/memory-derivation-results.ts')).readNativeDerivationResult(f.env,f.owner,stored.job_id));
+  else{const retired=f.sqlite.prepare('SELECT * FROM memory_derivation_results').get();assert.equal(retired.state,'withdrawn');assert.equal(retired.manifest_json,null);}
+});
+
+test('block memory: isolated D1 replays native revision and rejects erased supporting events',{timeout:180000},async t=>{
+  const f=await nativeBlockCaptureFixture(t),{createRequire}=await import('node:module'),{Miniflare,Log,LogLevel}=createRequire(import.meta.resolve('wrangler'))('miniflare'),
+    {exportSynthetic,install}=await import('./helpers/model3d-workerd-snapshot.mjs');let outbound=0;
+  const mf=new Miniflare({modules:true,compatibilityDate:'2026-05-15',host:'127.0.0.1',port:0,log:new Log(LogLevel.NONE),d1Databases:['BlockMemory'],
+    script:"export default {fetch(){return new Response('Isolated',{status:404});}}",outboundService(){outbound++;throw Error('External fetch forbidden');}});
+  t.after(async()=>{await mf.dispose();assert.equal(outbound,0);});const db=await mf.getD1Database('BlockMemory');await install(db,exportSynthetic(f.sqlite));f.env.DB=db;
+  const {observeNativeMemoryBlockBindings}=await import('../worker/memory-native-blocks.ts'),{AssistantContextReadWitness}=await import('../worker/assistant-context-source.ts');
+  const observations=f.sqlite.prepare("SELECT event_id AS eventId,sequence,type AS eventType,json_extract(payload,'$.block_id') AS blockPointer FROM events WHERE json_extract(payload,'$.block_id')=? ORDER BY sequence").all(f.blockId);
+  const witness=new AssistantContextReadWitness(f.env),binding=await observeNativeMemoryBlockBindings(f.env,f.enrollment(),observations,witness);
+  assert.equal(binding.entries.length,2);witness.seal(binding);await db.batch(witness.precommitStatements());
+  await db.prepare('DELETE FROM event_private_payloads WHERE private_event_id=?').bind(binding.entries[0].eventId).run();
+  await assert.rejects(()=>db.batch(witness.precommitStatements()));
+});
+
+for(const fault of ['unknown-pointer','duplicate-declaration','foreign-placement','missing-private','synthetic-source','conflicting-public','oversized-history'])test('block memory: unproved block interpretation stays unresolved '+fault,async t=>{
+  const f=await nativeBlockCaptureFixture(t),{observeNativeMemoryBlockBindings}=await import('../worker/memory-native-blocks.ts'),
+    {AssistantContextReadWitness}=await import('../worker/assistant-context-source.ts');
+  let observations=f.sqlite.prepare("SELECT event_id AS eventId,sequence,type AS eventType,json_extract(payload,'$.block_id') AS blockPointer FROM events WHERE json_extract(payload,'$.block_id')=? ORDER BY sequence").all(f.blockId);
+  const created=observations[0].eventId;
+  if(fault==='unknown-pointer')observations=observations.map(row=>({...row,blockPointer:'unknown'}));
+  if(fault==='missing-private')f.sqlite.prepare('DELETE FROM event_private_payloads WHERE private_event_id=?').run(created);
+  if(fault==='synthetic-source')f.sqlite.prepare("UPDATE event_private_payloads SET private_json=json_set(private_json,'$.synthetic',1) WHERE private_event_id=?").run(created);
+  if(fault==='conflicting-public')f.sqlite.prepare("UPDATE event_private_payloads SET private_json=json_set(private_json,'$.project_id','foreign') WHERE private_event_id=?").run(created);
+  if(fault==='oversized-history')f.sqlite.prepare("UPDATE event_private_payloads SET private_json=json_set(private_json,'$.properties.text',?) WHERE private_event_id=?").run('x'.repeat(200000),created);
+  if(fault==='duplicate-declaration')await appendAuditEvent(f.env,f.streamId,'user:'+f.owner,'BlockCreated',{project_id:f.projectId,document_id:f.documentId,block_id:f.blockId,scope:'document'});
+  if(fault==='foreign-placement')await appendAuditEvent(f.env,f.streamId,'user:'+f.owner,'BlockRehomed',{project_id:f.projectId,document_id:'foreign',block_id:f.blockId,scope:'document'});
+  const witness=new AssistantContextReadWitness(f.env),result=await observeNativeMemoryBlockBindings(f.env,f.enrollment(),observations,witness);
+  assert.equal(result.entries.length,0);assert.equal(result.unresolved,observations.length);witness.seal(result);
+  assert.ok(witness.precommitStatements().length>0,'Absence and rejected sources are part of the exact witness');
+});
+
+test('block memory: a source growing after measurement is not hydrated',async t=>{
+  const f=await nativeBlockCaptureFixture(t),{observeNativeMemoryBlockBindings}=await import('../worker/memory-native-blocks.ts');
+  const observations=f.sqlite.prepare("SELECT event_id AS eventId,sequence,type AS eventType,json_extract(payload,'$.block_id') AS blockPointer FROM events WHERE json_extract(payload,'$.block_id')=? ORDER BY sequence").all(f.blockId);
+  const batch=f.env.DB.batch;let injected=false,hydrated=false;
+  f.env.DB.batch=async statements=>{
+    if(!injected&&statements.some(statement=>statement.sql.includes('AS compensated'))){injected=true;
+      f.sqlite.prepare("UPDATE event_private_payloads SET private_json=json_set(private_json,'$.properties.text',?) WHERE private_event_id=?").run('BLOCK_GROWTH_TAIL'.repeat(20000),observations[0].eventId);}
+    const result=await batch.call(f.env.DB,statements);if(JSON.stringify(result).includes('BLOCK_GROWTH_TAIL'))hydrated=true;return result;
+  };
+  const result=await observeNativeMemoryBlockBindings(f.env,f.enrollment(),observations,{observe(){}});
+  assert.equal(injected,true);assert.equal(hydrated,false);assert.equal(result.entries.length,0);assert.equal(result.unresolved,2);
+});

@@ -124,3 +124,7 @@ schedule work, provision a service or establish human review.
 ## Historical personal artifact continuation
 
 [Native historical artifact recertification](forma-memory-historical-artifact-consumption-2026-09-19.md) now covers genuine older viewed revisions in delivery/derivation, with original retention and current custody/access. Governed artifact evidence remains native integration work. The private inspector now explicitly negotiates v3 historical views; strict v1/v2 clients retain their prior contract. The current-view writer and v2 API contract are intentionally unchanged; neither unviewed history nor renewed retention is invented.
+
+## Native document-local block continuation
+
+[Block revision bindings](forma-memory-native-block-revisions-2026-09-19.md) now supplement Creator captures with exact native field histories, current personal/governed custody and complete pre-window supporting-event inverses. They do not promote raw pointers, block text or descendants into human preference evidence. Library/canvas placement, structural relations, reuse edges, nested scope ancestry and automatic consumers remain implementation work, not external-service blockers.
