@@ -565,7 +565,7 @@ export class FormaPersonalMemory extends FormaElement {
     const current = () => sourceCurrent() && Date.parse(row.expiresAt) > Date.now();
     this.#busy = "recall"; this.#error = ""; this.#notice = ""; this.requestUpdate();
     try {
-      const lease = await (consumptionEpisodesRequested ? this.#client.recall(row, controller.signal, { consumptionEpisodes: "memory-consumption-episodes-v3" })
+      const lease = await (consumptionEpisodesRequested ? this.#client.recall(row, controller.signal, { consumptionEpisodes: "memory-consumption-episodes-v4" })
         : this.#client.recall(row, controller.signal));
       if (requestCurrent() && current() && lease.remaining() > 0) {
         this.#revealed = { id: row.id, lease, sourceCurrent, current: () => current() && lease.remaining() > 0, consumptionEpisodesRequested };
@@ -1253,13 +1253,13 @@ export class FormaPersonalMemory extends FormaElement {
       <p>${this.#t("visitsMeaning")}</p>
       <p>${this.#t("visitsLineage")}</p>
       <p>${this.#t("visitsLimits")}</p>
-      ${(visits.version === "memory-consumption-episodes-v2" || visits.version === "memory-consumption-episodes-v3") && visits.coverage.unavailableArtifactSourceCount
+      ${(visits.version === "memory-consumption-episodes-v2" || visits.version === "memory-consumption-episodes-v3" || visits.version === "memory-consumption-episodes-v4") && visits.coverage.unavailableArtifactSourceCount
         ? html`<p>${this.#t("visitsArtifactUnavailable", { count: this.i18n.number(visits.coverage.unavailableArtifactSourceCount) })}</p>` : nothing}
       ${visits.episodes.length ? html`<details data-memory-visit-references>
         <summary>${this.#t("visitsDetails", { count: this.i18n.number(visits.episodes.length) })}</summary>
         <ol>${visits.episodes.map(episode => html`<li><article data-memory-visit>
           <p>${this.#t("visitsSource", { index: this.i18n.number(episode.observations[0].sourceIndex + 1) })}</p>
-          ${(visits.version === "memory-consumption-episodes-v2" || visits.version === "memory-consumption-episodes-v3") && episode.observations[0].kind === "viewer-open"
+          ${(visits.version === "memory-consumption-episodes-v2" || visits.version === "memory-consumption-episodes-v3" || visits.version === "memory-consumption-episodes-v4") && episode.observations[0].kind === "viewer-open"
             ? html`<p>${this.#t("visitsArtifactOpened")}</p>` : nothing}
           <time datetime=${episode.firstRecordedAt}>${this.#t("visitsRecorded", {
             at: "\u2068" + this.i18n.date(new Date(episode.firstRecordedAt), { dateStyle: "medium", timeStyle: "short" }) + "\u2069",

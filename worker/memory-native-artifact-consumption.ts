@@ -1,6 +1,6 @@
 import { AUTHORING_EVENT_COLUMNS } from "./authoring-event-proof.ts";
 import { eventWriteBindings, serializeEvent, type WorkerEnv } from "./runtime.ts";
-import { preparePersonalArtifactViewSource, preparePersonalArtifactHistorySource } from "./memory-artifact-view.ts";
+import { preparePersonalArtifactViewSource, preparePersonalArtifactHistorySource, prepareGovernedArtifactViewSource } from "./memory-artifact-view.ts";
 import type { LiveMemoryAuthority, LiveMemoryEnrollment } from "./memory-live-authority.ts";
 import type { NativeMemoryContextObserver } from "./memory-live-context.ts";
 import type { MemorySqlGuard } from "./memory-sql.ts";
@@ -17,17 +17,17 @@ export type NativeArtifactConsumptionSource = {
 
 /** Candidate/cleanup predicate only. It is NOT a body hash or source-authority
  * certificate. Publication and consumption additionally verify retained bytes
- * with preparePersonalArtifactViewSource and replay its exact native guards. */
+ * with the personal/governed certifier and replay its exact native guards. */
 export function nativeArtifactMemoryCandidates(e: LiveMemoryEnrollment) {
   const personal = e.organization_id === null && e.project_access_id === null && e.actor_user_id === e.owner_user_id;
   const payload = "secret.private_json";
   return { joins: "FROM events event JOIN event_private_payloads secret ON secret.private_event_id=event.event_id",
-    condition: `${personal ? "1" : "0"} AND event.type='DocumentArtifactViewed' AND event.stream_id=? AND event.actor=?
+    condition: `${personal || e.organization_id!==null&&e.project_access_id!==null ? "1" : "0"} AND event.type='DocumentArtifactViewed' AND event.stream_id=? AND event.actor=?
       AND (secret.owner_id,secret.project_id,secret.document_id,secret.redacted_at) IS (?,?,?,NULL)
       AND event.compensates_event_id IS NULL AND event.event_id NOT LIKE 'optimistic:%' AND event.client_id NOT LIKE '%optimistic%'
       AND secret.created_at=event.recorded_at AND json_valid(${payload}) AND json_valid(event.payload)
       AND json_extract(event.payload,'$._private_ref')=event.event_id
-      AND json_extract(${payload},'$.capture_version')='personal-artifact-view-v2'
+      AND json_extract(${payload},'$.capture_version')=?
       AND json_extract(${payload},'$.project_id')=? AND json_extract(${payload},'$.document_id')=?
       AND event.recorded_at>=? AND event.recorded_at<=${clock}
       AND strftime('%Y-%m-%dT%H:%M:%fZ',event.recorded_at,'+'||?||' days')>${clock}
@@ -35,17 +35,24 @@ export function nativeArtifactMemoryCandidates(e: LiveMemoryEnrollment) {
       AND EXISTS(SELECT 1 FROM private_content body WHERE body.content_id=json_extract(${payload},'$.artifact_content_ref')
         AND body.owner_id=? AND body.kind='document-artifact' AND body.redacted_at IS NULL AND body.expires_at>${clock})
       AND NOT EXISTS(SELECT 1 FROM events negative WHERE negative.compensates_event_id IN(event.event_id,json_extract(${payload},'$.artifact_source_event_id')))
-      AND NOT EXISTS(SELECT 1 FROM project_event_scopes governed WHERE governed.event_id=event.event_id)`,
+      AND ${personal?`NOT EXISTS(SELECT 1 FROM project_event_scopes governed WHERE governed.event_id=event.event_id)`:
+        `(SELECT COUNT(*) FROM project_event_scopes governed WHERE governed.event_id=event.event_id)=1
+        AND EXISTS(SELECT 1 FROM project_event_scopes governed WHERE governed.event_id=event.event_id
+          AND(governed.organization_id,governed.project_access_id,governed.project_id,governed.owner_user_id,governed.source_stream_id,governed.source_sequence,governed.actor_user_id)
+            =(?,?,?,?,event.stream_id,event.sequence,?))`}`,
     bindings: [`creative:${e.owner_user_id}`, `user:${e.actor_user_id}`, e.owner_user_id, e.project_id, e.document_id,
-      e.project_id, e.document_id, e.enrolled_at, e.retention_days, e.owner_user_id] };
+      personal?'personal-artifact-view-v2':'governed-artifact-view-v1',e.project_id, e.document_id, e.enrolled_at, e.retention_days, e.owner_user_id,
+      ...(personal?[]:[e.organization_id,e.project_access_id,e.project_id,e.owner_user_id,e.actor_user_id])] };
 }
 
-/** Bounded genuine personal observations only. Historical selection must use
+/** Bounded genuine actor-owned observations only. Historical selection must use
  * the retained native view and original deadline, never a browser-supplied old
- * revision or synthetic backfill. The default inspector remains current-only. */
+ * revision or synthetic backfill. Older inspectors remain personal-only. */
 export async function captureNativeArtifactConsumption(env: WorkerEnv, e: LiveMemoryEnrollment, authority: LiveMemoryAuthority,
-  range: { after: number; through: number; remembered: boolean; historical?: boolean }, observer?: NativeMemoryContextObserver) {
+  range: { after: number; through: number; remembered: boolean; historical?: boolean; governed?:boolean }, observer?: NativeMemoryContextObserver) {
   const db = env.DB, key = memoryCanonical({ e, authority, range }), candidates = nativeArtifactMemoryCandidates(e);
+  const governed=e.organization_id!==null,captureVersion=governed?'governed-artifact-view-v1':'personal-artifact-view-v2';
+  if(governed&&!range.governed)candidates.condition+=' AND 0';
   if (!Number.isSafeInteger(range.after) || range.after < 0 || !Number.isSafeInteger(range.through) || range.through < range.after
     || range.remembered && range.through > e.cursor_sequence) throw new Error("artifact_memory_range_invalid");
   const remembered = range.remembered ? "JOIN memory_live_sources remembered ON remembered.event_id=event.event_id AND remembered.sequence=event.sequence AND remembered.enrollment_id=?" : "";
@@ -69,7 +76,7 @@ export async function captureNativeArtifactConsumption(env: WorkerEnv, e: LiveMe
   if (!range.remembered && result.results.length > 32) throughSequence = Number(result.results[32].sequence) - 1;
   for (const row of result.results.slice(0, 32)) {
     const event = serializeEvent(row), payload = event.payload;
-    if (Object.keys(payload).sort().join(",") !== receiptKeys.join(",") || payload.capture_version !== "personal-artifact-view-v2"
+    if (Object.keys(payload).sort().join(",") !== receiptKeys.join(",") || payload.capture_version !== captureVersion
       || event.type !== "DocumentArtifactViewed" || event.actor !== `user:${e.actor_user_id}` || event.streamId !== `creative:${e.owner_user_id}`
       || event.compensatesEventId !== null || !timestamp(event.recordedAt) || !timestamp(event.occurredAt)
       || Date.parse(event.occurredAt) > Date.now() || !timestamp(payload.observed_source_expires_at)
@@ -87,7 +94,7 @@ export async function captureNativeArtifactConsumption(env: WorkerEnv, e: LiveMe
         if (!range.remembered) { throughSequence = event.sequence - 1; break; }
         continue;
       }
-      certified = range.historical ? await preparePersonalArtifactHistorySource(env, authority.principal, event.eventId) : await preparePersonalArtifactViewSource(env, authority.principal, input); bindings.set(identity, certified);
+      certified = governed ? await prepareGovernedArtifactViewSource(env,authority.principal,authority.binding,input,range.historical?event.eventId:undefined) : range.historical ? await preparePersonalArtifactHistorySource(env, authority.principal, event.eventId) : await preparePersonalArtifactViewSource(env, authority.principal, input); bindings.set(identity, certified);
       if (!current()) throw new Error("artifact_memory_source_changed");
       if (!(certified instanceof Response)) {
         if (retainedBytes + certified.bodyBytes > 1_500_000) {

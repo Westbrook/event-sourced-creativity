@@ -1122,13 +1122,13 @@ const canvas=this.store.canvasProjection.get(),site=this.#site(),actionId=uid();
     this.#viewingArtifactId=artifact.id;shown=true;
     this.requestUpdate();await this.updateComplete;
     // Opening a viewer is an observation, not a claim about reading, playback or dwell.
-    // Hash the retained body only for personal instrumentation; presentation still works without it.
-    if(!current()||!retained||!this.store.ui.instrumentation||this.store.session.get()?.projectContext)return;
+    // Hash retained bytes only when instrumentation is enabled; the server certifies current personal or governed custody.
+    if(!current()||!retained||!this.store.ui.instrumentation)return;
     let digest:string;
     try{digest=Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256",new TextEncoder().encode(retained))),byte=>byte.toString(16).padStart(2,"0")).join("");}catch{return;}
     const dialog=this.querySelector<HTMLDialogElement>(".canvas-artifact-viewer");
     if(current()&&dialog?.isConnected&&dialog.open&&!dialog.closest("[inert],[hidden]")&&this.ownerDocument.visibilityState!=="hidden"
-      &&retained===this.store.content.get()[artifact.contentRef??""]&&this.store.ui.instrumentation&&!this.store.session.get()?.projectContext)
+      &&retained===this.store.content.get()[artifact.contentRef??""]&&this.store.ui.instrumentation)
       void this.store.hot({type:"DocumentArtifactViewed",payload:{artifact_id:artifact.id,artifact_kind:artifact.kind,project_id:projectId,document_id:artifact.documentId,
         artifact_revision:revision,content_sha256:digest,source_surface:"canvas-artifact-gallery"}});
   }

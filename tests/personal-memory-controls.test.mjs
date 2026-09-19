@@ -2808,7 +2808,7 @@ function visitsRecall(item, { checkedAt = now(), leaseMs = 60_000, empty = false
   })));
   body.consumption.encounter = 3; body.coverage.sourceCount = body.sources.length;
   const indexes = empty ? [] : [1, 3];
-  body.consumptionEpisodes = { version: "memory-consumption-episodes-v3", treatment: "descriptive-consumption", validUntil: until,
+  body.consumptionEpisodes = { version: "memory-consumption-episodes-v4", treatment: "descriptive-consumption", validUntil: until,
     sources:indexes.map(sourceIndex=>{const {eventId,type,recordedAt,validUntil}=body.sources[sourceIndex];return{eventId,type,recordedAt,validUntil,target:{kind:"document",documentId:item.documentId}};}),
     episodes: indexes.map((_sourceIndex,sourceIndex) => ({ episodeId: null,
       observations: [{ sourceIndex, kind: "visit" }],
@@ -2847,7 +2847,7 @@ test("recorded visits: explicit action replaces the complete receipt and shows o
   assert.ok(oldReceipt.retireCalls > 0); assert.equal(h.text().includes("Prior parent conversation"), false);
   assert.equal(h.text().includes("personal-memory-excerpts"), false);
   assert.equal(h.calls.at(-1).url, "/api/memory/recall?id=" + row.id
-    + "&outcomes=native-assisted-outcomes-v1&savedOutputs=native-saved-outputs-v1&consumptionEpisodes=memory-consumption-episodes-v3");
+    + "&outcomes=native-assisted-outcomes-v1&savedOutputs=native-saved-outputs-v1&consumptionEpisodes=memory-consumption-episodes-v4");
   assert.equal(h.focusLeases.length, 1); assert.equal(h.focusLeases[0].disposed, false);
   delayed.release(); await pending;
   const root = h.render(), section = [...templates(root)].find(value => value.strings.some(part => part.includes("data-memory-visits>")));

@@ -25,15 +25,16 @@ async function fixture(t, options = {}) {
   return Object.assign(f, { payload, submit, count, original });
 }
 
-async function memoryArtifactFixture(t) {
-  const f=await fixture(t,{depth:true});
+async function memoryArtifactFixture(t,options={}) {
+  const f=await fixture(t,{depth:true,...options});
+  if(f.sharing)assert.equal((await f.request('/api/events?after=0&content=0')).status,200);
   for(const name of ['0020_assistant_runtime_tables.sql','0021_assistant_specialist_consent.sql','0025_memory_live_base.sql','0026_memory_live_conversation.sql'])
     f.sqlite.exec(readFileSync(new URL('../drizzle/'+name,import.meta.url),'utf8'));
   Object.assign(f.env,{FORMA_MEMORY_ENABLED:'true',FORMA_MEMORY_USER_IDS:f.owner,FORMA_MEMORY_SCHEDULING_ENABLED:'true'});
   const timeZone=Intl.supportedValuesOf('timeZone').find(zone=>{const hour=Number(new Intl.DateTimeFormat('en-US',{timeZone:zone,hour:'numeric',hourCycle:'h23'}).format(new Date()));return hour>=1&&hour<5;});
   const preferences={projectId:f.projectId,documentId:f.documentId,learn:true,recall:true,background:true,retentionDays:30,timeZone,
     expiresAt:new Date(Date.now()+30*86400000).toISOString(),revision:0,confirmation:'ENABLE_PERSONAL_MEMORY',policyVersion:'personal-memory-v2',
-    reviewTiming:'daily-with-daytime-catch-up',expectedCustody:{kind:'personal'}};
+    reviewTiming:'daily-with-daytime-catch-up',expectedCustody:f.sharing?{kind:'organization',organizationId:f.sharing.organizationId,projectAccessId:f.sharing.projectAccessId,ownerUserId:f.owner}:{kind:'personal'}};
   const response=await f.request('/api/memory/settings',{...f.json(preferences),method:'PUT'}),body=await response.json();
   assert.equal(response.status,200,JSON.stringify(body));
   const enrollment=()=>f.sqlite.prepare('SELECT * FROM memory_live_enrollments WHERE enrollment_id=?').get(body.enrollment.id);
@@ -74,7 +75,7 @@ test('personal artifact consumption retains the original observation deadline wh
 for(const fault of ['body','redaction','expiry','enrollment','custody','receipt-compensation','producer-compensation','ancestor-compensation','truncated-ack'])test('personal artifact consumption final replay refuses '+fault,async t=>{
   const f=await memoryArtifactFixture(t);assert.equal((await f.submit()).status,200);assert.equal((await f.run()).status,'completed');
   let injected=false;
-  const selected=statements=>statements.some(statement=>statement.sql.includes('AS remembered_until')&&statement.sql.includes('personal-artifact-view-v2'));
+  const selected=statements=>statements.some(statement=>statement.sql.includes('AS remembered_until')&&statement.values.includes('personal-artifact-view-v2'));
   if(fault==='truncated-ack')f.controls.afterBatch=async(statements,results)=>{if(!injected&&selected(statements)){injected=true;results.pop();}};
   else f.controls.beforeBatch=async statements=>{if(injected||!selected(statements))return;injected=true;
     if(fault==='body')f.sqlite.prepare("UPDATE private_content SET content=content||' ' WHERE content_id=?").run(f.contentRef);
@@ -278,7 +279,6 @@ for (const fault of ['throw', 'missing', 'truncated', 'failed']) test('uncertain
 
 test('project-governed custody is not accepted through the personal hot path', async t => {
   const f = await fixture(t, { shared: true });
-  assert.equal((await f.submit()).status, 403);
   f.setScopedHeaders({});
   assert.equal((await f.submit()).status, 409); assert.equal(f.count(), 0);
 });
@@ -299,8 +299,8 @@ test('a genuine exact receipt is retained but does not silently expand navigatio
   assert.deepEqual(selected, []); assert.equal(LIVE_MEMORY_EVENT_TYPES.includes(viewType), false);
 });
 
-async function artifactDerivationFixture(t){
-  const f=await memoryArtifactFixture(t);
+async function artifactDerivationFixture(t,options={}){
+  const f=await memoryArtifactFixture(t,options);
   for(const name of ['0043_memory_derivation_purpose_grants','0044_memory_derivation_reference_jobs','0045_memory_derivation_finance',
     '0046_memory_derivation_recovery_cursor','0047_memory_derivation_results','0048_memory_derivation_user_controls','0049_memory_derivation_completion','0050_memory_derivation_lifecycle'])
     f.sqlite.exec(readFileSync(new URL('../drizzle/'+name+'.sql',import.meta.url),'utf8'));
@@ -712,4 +712,144 @@ for(const boundary of ['ids','bytes'])test('resource union: optimization preserv
   assert.equal(result.blockBindings.entries.length,count-2);assert.equal(result.blockBindings.unresolved,0);
   assert.equal(result.relationBindings.entries.length,1);assert.equal(result.relationBindings.unresolved,0);
   assert.equal(result.relationBindings.entries[0].from.blockId,ids[0]);assert.equal(result.relationBindings.entries[0].to.blockId,ids[1]);
+});
+
+test('governed artifact view: actual selected-project hot writer certifies retained bytes and atomic custody',async t=>{
+  const f=await fixture(t,{shared:true,depth:true});
+  const refresh=await f.request('/api/events?after=0&content=0');assert.equal(refresh.status,200,await refresh.clone().text());
+  const before=f.counts(),response=await f.submit();
+  assert.equal(response.status,200,await response.clone().text());const body=await response.json();
+  assert.equal(body.appended.length,1);assert.equal(body.appended[0].payload.capture_version,'governed-artifact-view-v1');
+  const event=f.sqlite.prepare("SELECT * FROM events WHERE type='DocumentArtifactViewed'").get(),scope=f.sqlite.prepare('SELECT * FROM project_event_scopes WHERE event_id=?').get(event.event_id);
+  assert.equal(scope.actor_user_id,f.owner);assert.equal(scope.project_access_id,f.sharing.projectAccessId);assert.equal(scope.source_sequence,event.sequence);
+  assert.equal(f.sqlite.prepare('SELECT last_owner_sequence FROM project_migration_states WHERE project_access_id=?').get(f.sharing.projectAccessId).last_owner_sequence,event.sequence);
+  assert.deepEqual(f.counts(),before);assert.equal(body.noAutomaticRetry,true);
+});
+
+test('governed artifact consumption: native delivery, v4 inspector and original-backed derivation remain actor-scoped',async t=>{
+  const f=await artifactDerivationFixture(t,{shared:true}),view=await f.submit();assert.equal(view.status,200,await view.clone().text());
+  const event=(await view.json()).appended[0];assert.equal((await f.run()).status,'completed');
+  assert.ok(f.sqlite.prepare('SELECT 1 FROM memory_live_sources WHERE event_id=?').get(event.eventId));
+  for(const version of ['memory-consumption-episodes-v2','memory-consumption-episodes-v3']){
+    const response=await f.inspect(version),body=await response.json();assert.equal(response.status,200,JSON.stringify(body));
+    assert.equal(body.consumptionEpisodes.sources.filter(row=>row.type==='DocumentArtifactViewed').length,0,'Legacy negotiated contract remains personal-only');
+  }
+  const response=await f.inspect('memory-consumption-episodes-v4'),body=await response.json();assert.equal(response.status,200,JSON.stringify(body));
+  assert.equal(body.consumptionEpisodes.sources.length,1);assert.equal(body.consumptionEpisodes.version,'memory-consumption-episodes-v4');
+  const job=f.sqlite.prepare('SELECT * FROM memory_derivation_jobs').get(),admission=await import('../worker/memory-derivation-admission.ts'),sources=await import('../worker/memory-derivation-sources.ts');
+  const lease=await admission.claimNativeDerivationJob(f.env,job.job_id);assert.ok(lease);
+  const captured=await sources.captureNativeDerivationSources(f.env,lease);assert.equal(captured.status,'captured');
+  const data=sources.nativeDerivationSourceInputs(f.env,captured.capture);assert.equal(data.originals.length,0);assert.equal(data.observations.length,1);assert.equal(data.observations[0].independentEvidence,false);
+  assert.equal(JSON.stringify(data).includes('The keeper checks'),false);
+});
+
+for(const fault of ['body','source','custody','event-custody','access','context','epoch','head'])test('governed artifact writer: final atomic boundary refuses '+fault,async t=>{
+  const f=await fixture(t,{shared:true,depth:true});assert.equal((await f.request('/api/events?after=0&content=0')).status,200);
+  const previous=f.sqlite.prepare('SELECT last_owner_sequence FROM project_migration_states WHERE project_access_id=?').get(f.sharing.projectAccessId).last_owner_sequence;
+  let injected=false;f.controls.beforeBatch=async statements=>{if(injected||!statements.some(insert))return;injected=true;
+    if(fault==='body')f.sqlite.prepare("UPDATE private_content SET content=content||' ' WHERE content_id=?").run(f.contentRef);
+    if(fault==='source')f.sqlite.prepare("UPDATE event_private_payloads SET redacted_at='2026-01-01' WHERE private_event_id=?").run(f.original);
+    if(fault==='custody')f.sqlite.prepare("UPDATE project_resource_scopes SET visibility='actor_private' WHERE resource_kind='artifact' AND resource_id=?").run(f.payload.artifact_id);
+    if(fault==='event-custody')f.sqlite.prepare("DELETE FROM project_event_scopes WHERE event_id=?").run(f.original);
+    if(fault==='access')f.sqlite.prepare("UPDATE organization_projects SET status='archived' WHERE project_access_id=?").run(f.sharing.projectAccessId);
+    if(fault==='context')f.sqlite.prepare("UPDATE project_context_sessions SET revoked_at=? WHERE context_id=?").run(new Date().toISOString(),f.sharing.contextId);
+    if(fault==='epoch')f.sqlite.prepare("UPDATE users SET permission_epoch='revoked' WHERE user_id=?").run(f.owner);
+    if(fault==='head')await appendAuditEvent(f.env,f.streamId,'user:'+f.owner,'DocumentArtifactEdited',{project_id:f.projectId,document_id:f.documentId,artifact_id:f.payload.artifact_id,revision:1});
+  };
+  const response=await f.submit();assert.equal(response.status,409,await response.clone().text());assert.ok(injected);assert.equal(f.count(),0);
+  assert.equal(f.sqlite.prepare('SELECT last_owner_sequence FROM project_migration_states WHERE project_access_id=?').get(f.sharing.projectAccessId).last_owner_sequence,previous);
+});
+
+for(const target of ['event','private','scope','head'])test('governed artifact writer: suppressed '+target+' rolls back the complete receipt',async t=>{
+  const f=await fixture(t,{shared:true});assert.equal((await f.request('/api/events?after=0&content=0')).status,200);
+  const previous=f.sqlite.prepare('SELECT last_owner_sequence FROM project_migration_states WHERE project_access_id=?').get(f.sharing.projectAccessId).last_owner_sequence;
+  const trigger={event:"BEFORE INSERT ON events WHEN NEW.type='DocumentArtifactViewed'",private:"BEFORE INSERT ON event_private_payloads WHEN json_extract(NEW.private_json,'$.capture_version')='governed-artifact-view-v1'",
+    scope:"BEFORE INSERT ON project_event_scopes WHEN EXISTS(SELECT 1 FROM events WHERE event_id=NEW.event_id AND type='DocumentArtifactViewed')",head:'BEFORE UPDATE ON project_migration_states'}[target];
+  f.sqlite.exec('CREATE TRIGGER suppress_governed_view '+trigger+' BEGIN SELECT RAISE(IGNORE); END');
+  assert.equal((await f.submit()).status,409);assert.equal(f.count(),0);
+  assert.equal(f.sqlite.prepare("SELECT COUNT(*) AS n FROM event_private_payloads WHERE json_extract(private_json,'$.capture_version')='governed-artifact-view-v1'").get().n,0);
+  assert.equal(f.sqlite.prepare('SELECT last_owner_sequence FROM project_migration_states WHERE project_access_id=?').get(f.sharing.projectAccessId).last_owner_sequence,previous);
+});
+
+for(const fault of ['throw','missing','truncated','failed'])test('governed artifact writer: uncertain '+fault+' acknowledgment is never retried',async t=>{
+  const f=await fixture(t,{shared:true});assert.equal((await f.request('/api/events?after=0&content=0')).status,200);let writes=0;
+  f.controls.afterBatch=(statements,results)=>{if(!statements.some(insert))return;writes++;
+    if(fault==='throw')throw Error('Lost acknowledgment');if(fault==='missing')results.length=0;if(fault==='truncated')results.pop();if(fault==='failed')results[0].success=false;};
+  const response=await f.submit();assert.equal(response.status,409);assert.equal((await response.json()).noAutomaticRetry,true);assert.equal(writes,1);assert.equal(f.count(),1);
+});
+
+test('governed artifact views stay actor-private across member, owner and unselected owner event feeds',async t=>{
+  t.mock.method(globalThis,'fetch',async()=>assert.fail('No live providers in privacy qualification'));
+  const {createPilotSceneFixture}=await import('./helpers/scene-pilot-fixture.mjs'),f=await createPilotSceneFixture({count:1,member:true,pilot:false});
+  t.after(async()=>{await f.drainBackground();f.close();});
+  const payload={artifact_id:'saved-scene-story',artifact_kind:'short_story',project_id:f.projectId,document_id:f.documentId,artifact_revision:0,
+    content_sha256:createHash('sha256').update(f.content).digest('hex'),source_surface:'document-artifact-gallery'};
+  const view=await f.request('/api/events/hot',f.json({action:'hot',event:{type:viewType,payload},clientId:'private-viewer-device',correlationId:'private-viewer-correlation'}));
+  assert.equal(view.status,200,await view.clone().text());const event=(await view.json()).appended[0];assert.equal(event.actor,'user:'+f.actorUserId);
+  const own=await f.request('/api/events?after=0&content=0');assert.equal(own.status,200);assert.equal((await own.json()).events.find(row=>row.eventId===event.eventId).type,viewType);
+  const assertPrivate=async response=>{assert.equal(response.status,200,await response.clone().text());const body=await response.json(),row=body.events.find(row=>row.eventId===event.eventId);assert.ok(row);
+    assert.equal(row.type,'ProjectResourceRestricted');assert.deepEqual(row.payload,{restricted:true});assert.equal(row.actor,'private');assert.equal(row.clientId,'private');assert.equal(row.correlationId,'');
+    assert.equal(JSON.stringify(row).includes(f.payload.artifact_id??'saved-scene-story'),false);};
+  await assertPrivate(await f.asOwner('/api/events?after=0&content=0'));
+  f.setScopedHeaders(f.sharing.headers);await assertPrivate(await f.request('/api/events?after=0&content=0'));
+  // A subsequent project synchronization must retain the native private receipt without publishing it to the owner.
+  await appendAuditEvent(f.env,f.streamId,'user:'+f.owner,'DocumentRenamed',{project_id:f.projectId,document_id:f.documentId,new_title:'A later project edit'});
+  await assertPrivate(await f.request('/api/events?after=0&content=0'));
+  assert.equal(f.sqlite.prepare('SELECT actor_user_id FROM project_event_scopes WHERE event_id=?').get(event.eventId).actor_user_id,f.actorUserId);
+  f.setScopedHeaders(f.selectedHeaders);const refreshed=await f.request('/api/events?after=0&content=0');assert.equal((await refreshed.json()).events.find(row=>row.eventId===event.eventId).type,viewType);
+});
+
+test('governed artifact history: exact retained view survives later edits and loses authority on source withdrawal',async t=>{
+  const f=await memoryArtifactFixture(t,{shared:true}),view=await f.submit();assert.equal(view.status,200);const event=(await view.json()).appended[0];
+  await appendAuditEvent(f.env,f.streamId,'user:'+f.owner,'DocumentArtifactEdited',{project_id:f.projectId,document_id:f.documentId,artifact_id:f.payload.artifact_id,revision:1});
+  assert.equal((await f.request('/api/events?after=0&content=0')).status,200);assert.equal((await f.run()).status,'completed');
+  const response=await f.inspect('memory-consumption-episodes-v4'),body=await response.json();assert.equal(response.status,200,JSON.stringify(body));
+  assert.equal(body.consumptionEpisodes.sources[0].eventId,event.eventId);assert.equal(body.consumptionEpisodes.sources[0].target.revision,0);
+  f.sqlite.prepare("UPDATE project_resource_scopes SET visibility='actor_private' WHERE resource_kind='artifact' AND resource_id=?").run(f.payload.artifact_id);
+  const withdrawn=await f.inspect('memory-consumption-episodes-v4');assert.equal(withdrawn.status,200,await withdrawn.clone().text());assert.equal((await withdrawn.json()).consumptionEpisodes.sources.length,0);
+});
+
+for(const shared of [false,true])test('native artifact writer and consumption execute in isolated D1 without outbound services shared='+shared,{timeout:180000},async t=>{
+  const f=await memoryArtifactFixture(t,{shared}),{createRequire}=await import('node:module'),{Miniflare,Log,LogLevel}=createRequire(import.meta.resolve('wrangler'))('miniflare'),
+    {exportSynthetic,install}=await import('./helpers/model3d-workerd-snapshot.mjs');let outbound=0;
+  const mf=new Miniflare({modules:true,compatibilityDate:'2026-05-15',host:'127.0.0.1',port:0,log:new Log(LogLevel.NONE),d1Databases:['GovernedView'],
+    script:"export default {fetch(){return new Response('Isolated',{status:404});}}",outboundService(){outbound++;throw Error('External fetch forbidden');}});
+  t.after(async()=>{await mf.dispose();assert.equal(outbound,0);});const db=await mf.getD1Database('GovernedView');await install(db,exportSynthetic(f.sqlite));f.env.DB=db;
+  const response=await f.submit();assert.equal(response.status,200,await response.clone().text());const event=(await response.json()).appended[0];
+  assert.equal((await f.run()).status,'completed');const inspected=await f.inspect('memory-consumption-episodes-v4');assert.equal(inspected.status,200,await inspected.clone().text());
+  assert.equal((await inspected.json()).consumptionEpisodes.sources[0].eventId,event.eventId);
+  await db.prepare('DELETE FROM event_private_payloads WHERE private_event_id=?').bind(event.eventId).run();
+  const erased=await f.inspect('memory-consumption-episodes-v4');assert.equal(erased.status,200,await erased.clone().text());assert.equal((await erased.json()).consumptionEpisodes.sources.length,0);
+});
+
+for(const shared of [false,true])test('artifact inspector budget: four original sources through the complete HTTP route shared='+shared,async t=>{
+  const f=await memoryArtifactFixture(t,{shared});
+  for(let index=0;index<4;index++){
+    const artifactId=index?'bounded-artifact-'+index:f.payload.artifact_id;
+    if(index){await appendAuditEvent(f.env,f.streamId,'worker:renderer','DocumentRenderCompleted',{project_id:f.projectId,document_id:f.documentId,artifact_id:artifactId,
+      artifact_kind:'short_story',title:'Bounded original '+index,content_ref:f.contentRef});if(shared)assert.equal((await f.request('/api/events?after=0&content=0')).status,200);}
+    const response=await f.submit({artifact_id:artifactId});assert.equal(response.status,200,await response.clone().text());
+  }
+  assert.equal((await f.run()).status,'completed');
+  const db=f.env.DB,prepare=db.prepare,batch=db.batch,originals=new WeakMap();let operations=0;
+  const wrap=raw=>{const proxy=new Proxy(raw,{get(target,key){if(key==='bind')return(...args)=>wrap(target.bind(...args));if(['all','first','run','raw'].includes(key))return(...args)=>{operations++;return target[key](...args);};return Reflect.get(target,key,target);}});originals.set(proxy,raw);return proxy;};
+  db.prepare=function(sql){return wrap(prepare.call(this,sql));};db.batch=function(inputs){operations++;return batch.call(this,inputs.map(input=>originals.get(input)??input));};
+  t.after(()=>{db.prepare=prepare;db.batch=batch;});
+  const response=await f.inspect('memory-consumption-episodes-v4'),body=await response.json();assert.equal(response.status,200,JSON.stringify(body));assert.equal(body.consumptionEpisodes.sources.length,4);
+  t.diagnostic(JSON.stringify({shared,operations}));assert.ok(operations<50,'Complete read must stay below the conservative 50-call D1 budget: '+operations);
+});
+
+for(const fault of ['body','event','custody','access','enrollment','receipt-scope','truncated-ack'])test('governed artifact consumption: final replay rejects '+fault,async t=>{
+  const f=await memoryArtifactFixture(t,{shared:true}),view=await f.submit();assert.equal(view.status,200);const event=(await view.json()).appended[0];assert.equal((await f.run()).status,'completed');
+  let injected=false;const selected=statements=>statements.some(statement=>statement.sql.includes('AS remembered_until')&&statement.values.includes('governed-artifact-view-v1'));
+  if(fault==='truncated-ack')f.controls.afterBatch=(statements,results)=>{if(!injected&&selected(statements)){injected=true;results.pop();}};
+  else f.controls.beforeBatch=statements=>{if(injected||!selected(statements))return;injected=true;
+    if(fault==='body')f.sqlite.prepare("UPDATE private_content SET content=content||' ' WHERE content_id=?").run(f.contentRef);
+    if(fault==='event')f.sqlite.prepare('DELETE FROM event_private_payloads WHERE private_event_id=?').run(f.original);
+    if(fault==='custody')f.sqlite.prepare("UPDATE project_resource_scopes SET visibility='actor_private' WHERE resource_kind='artifact' AND resource_id=?").run(f.payload.artifact_id);
+    if(fault==='access')f.sqlite.prepare("UPDATE organization_projects SET status='archived' WHERE project_access_id=?").run(f.sharing.projectAccessId);
+    if(fault==='enrollment')f.sqlite.exec('UPDATE memory_live_enrollments SET recall_enabled=0');
+    if(fault==='receipt-scope')f.sqlite.prepare("UPDATE project_event_scopes SET actor_user_id='another-member' WHERE event_id=?").run(event.eventId);
+  };
+  const response=await f.inspect('memory-consumption-episodes-v4');assert.equal(response.status,403,await response.clone().text());assert.ok(injected);assert.equal((await response.text()).includes(f.payload.content_sha256),false);
 });

@@ -1847,7 +1847,7 @@ export class DocumentArtifacts extends FormaElement {
       &&binding.artifact_revision===documentArtifactRevision(this.store.events.get(),artifact.id)
       &&bindingContent===this.store.content.get()[artifact.contentRef??""]
       &&observationProjectId&&this.store.projection.get().documents.some(document=>document.id===artifact.documentId&&document.projectId===observationProjectId)
-      &&!this.store.session.get()?.projectContext&&this.store.ui.instrumentation)void this.store.hot({type:"DocumentArtifactViewed",payload:{artifact_id:artifact.id,artifact_kind:artifact.kind,project_id:observationProjectId,document_id:artifact.documentId,...binding,source_surface:`${this.source}-artifact-gallery`}});if(dialog?.open&&options.intent)await this.#showArtifactIntent(artifact,options.intent);return Boolean(dialog?.open&&this.#viewerCurrent===current&&current());
+      &&this.store.ui.instrumentation)void this.store.hot({type:"DocumentArtifactViewed",payload:{artifact_id:artifact.id,artifact_kind:artifact.kind,project_id:observationProjectId,document_id:artifact.documentId,...binding,source_surface:`${this.source}-artifact-gallery`}});if(dialog?.open&&options.intent)await this.#showArtifactIntent(artifact,options.intent);return Boolean(dialog?.open&&this.#viewerCurrent===current&&current());
     }finally{
       if(slidesFocus){
         slidesFocus.dispose();view?.removeEventListener("blur",departed);owner.removeEventListener("visibilitychange",hidden);

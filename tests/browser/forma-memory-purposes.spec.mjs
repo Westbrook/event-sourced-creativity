@@ -35,8 +35,8 @@ for(const locale of ['en','ar'])test.describe('Memory purpose locale '+locale,()
         sources:[{eventId:'synthetic-original',type:'AssistantReasoned',blockId:null,recordedAt:checkedAt,validUntil:until}],
         note:'Observed actions are not inferred preferences; excerpts are truncated and access-filtered.'};
       if(url.searchParams.has('consumptionEpisodes')){
-        expect(url.searchParams.get('consumptionEpisodes')).toBe('memory-consumption-episodes-v3');
-        body.consumptionEpisodes={version:'memory-consumption-episodes-v3',treatment:'descriptive-consumption',validUntil:until,
+        expect(url.searchParams.get('consumptionEpisodes')).toBe('memory-consumption-episodes-v4');
+        body.consumptionEpisodes={version:'memory-consumption-episodes-v4',treatment:'descriptive-consumption',validUntil:until,
           sources:[{eventId:'synthetic-old-view',type:'DocumentArtifactViewed',recordedAt,validUntil:until,target:{kind:'artifact',documentId:item.documentId,artifactId:'synthetic-artifact',artifactKind:'slides',revision:0,contentSha256:'a'.repeat(64)}}],
           episodes:[{episodeId:null,observations:[{sourceIndex:0,kind:'viewer-open'}],firstRecordedAt:recordedAt,lastRecordedAt:recordedAt,validUntil:until,independentEvidence:false}],
           coverage:{eligibleSourceCount:1,observationCount:1,unavailableArtifactSourceCount:0,completeHistory:false,bounded:true,truncated:false},attention:'not-measured',comprehension:'not-measured',inferredPreferences:false};
@@ -105,7 +105,7 @@ for(const locale of ['en','ar'])test.describe('Memory purpose locale '+locale,()
   await visits.locator('[data-memory-visit-references] > summary').click();
   const opened=visits.getByText(message(locale,'visitsArtifactOpened'),{exact:true});
   await opened.scrollIntoViewIfNeeded();await expect(opened).toBeInViewport();
-  expect(calls.filter(call=>call.query.includes('consumptionEpisodes=memory-consumption-episodes-v3'))).toHaveLength(1);
+  expect(calls.filter(call=>call.query.includes('consumptionEpisodes=memory-consumption-episodes-v4'))).toHaveLength(1);
   expect(calls.every(call=>call.method==='GET')).toBe(true);expect(errors).toEqual([]);
   await captureViewport(page,info,'memory-historical-views-'+locale,{assertStable:false});
   await info.attach('declared-memory-transport',{body:JSON.stringify({syntheticOnly:true,production:false,providerCalls:0,mutations:0,calls,session:JSON.parse(syntheticReadBody('/api/session')).user.userId},null,2),contentType:'application/json'});

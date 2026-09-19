@@ -6,7 +6,7 @@ import { parseMemoryCustody, memoryCustodyMatches } from "../src/model/memory-cu
 import { createMemoryElapsed, memoryTimestamp, parseMemoryLifetime, MEMORY_RECALL_LIFETIME, MEMORY_RECALL_MAX_AGE_MS } from "../src/model/memory-lifetime.ts";
 import { rollingLiveMemoryConsumption } from "../src/model/memory-observations.ts";
 import { createDocumentJobMemoryClient, DocumentJobMemoryError, DOCUMENT_JOB_MEMORY_VERSION } from "../src/state/document-job-memory-client.ts";
-import { MEMORY_CONSUMPTION_V2, MEMORY_CONSUMPTION_V3, parseMemoryConsumptionV2, parseMemoryConsumptionV3 } from "../src/model/memory-consumption-v2.ts";
+import { MEMORY_CONSUMPTION_V2, MEMORY_CONSUMPTION_V3, MEMORY_CONSUMPTION_V4, parseMemoryConsumptionV2, parseMemoryConsumptionV3, parseMemoryConsumptionV4 } from "../src/model/memory-consumption-v2.ts";
 
 const fixtureId = value => value.toString(16).padStart(64, "0");
 const now = () => new Date().toISOString();
@@ -1811,4 +1811,18 @@ test('consumption v3 retains strict original identity, privacy and interpretatio
   const body=artifactConsumptionRecall(item);body.consumptionEpisodes.version=MEMORY_CONSUMPTION_V3;let invoked=0;
   Object.defineProperty(body.consumptionEpisodes.sources[0].target,'revision',{enumerable:true,get(){invoked++;return 0;}});
   assert.equal(parseMemoryConsumptionV3(body.consumptionEpisodes,body.lifetime,item.documentId,{since:body.coverage.since,expiresAt:item.expiresAt}),null);assert.equal(invoked,0);
+});
+
+for(const [version,parse] of [[MEMORY_CONSUMPTION_V3,parseMemoryConsumptionV3],[MEMORY_CONSUMPTION_V4,parseMemoryConsumptionV4]])test(version+' requires exact negotiation and preserves original/privacy limits',async()=>{
+  const item=enrollment(),body=artifactConsumptionRecall(item);body.consumptionEpisodes.version=version;
+  const {client,calls}=fakeTransport(()=>Response.json(body));const result=await client.recall(item,undefined,{consumptionEpisodes:version});
+  assert.deepEqual(result.value.consumptionEpisodes,body.consumptionEpisodes);assert.deepEqual(result.value.lifetime,body.lifetime);assert.ok(calls[0].url.endsWith('&consumptionEpisodes='+version));
+  for(const other of [MEMORY_CONSUMPTION_V2,MEMORY_CONSUMPTION_V3,MEMORY_CONSUMPTION_V4].filter(other=>other!==version))await assert.rejects(client.recall(item,undefined,{consumptionEpisodes:other}),isClientError('memory_response_invalid',false,200));
+  for(const mutate of [p=>{p.sources[0].target.documentId='foreign';},p=>{p.sources[0].target.revision=-1;},p=>{p.sources[0].target.contentSha256='missing';},
+    p=>{p.inferredPreferences=true;},p=>{p.comprehension='measured';},p=>{p.coverage.completeHistory=true;},p=>{p.episodes[0].independentEvidence=true;},
+    p=>{p.episodes[0].observations[0].kind='read';},p=>{p.sources[0].validUntil=new Date(Date.parse(item.expiresAt)+1).toISOString();},p=>{p.sources.push({...p.sources[0]});}]){
+    const value=structuredClone(body.consumptionEpisodes);mutate(value);assert.equal(parse(value,body.lifetime,item.documentId,{since:body.coverage.since,expiresAt:item.expiresAt}),null);
+  }
+  let invoked=0;Object.defineProperty(body.consumptionEpisodes.sources[0].target,'revision',{enumerable:true,get(){invoked++;return 0;}});
+  assert.equal(parse(body.consumptionEpisodes,body.lifetime,item.documentId,{since:body.coverage.since,expiresAt:item.expiresAt}),null);assert.equal(invoked,0);
 });

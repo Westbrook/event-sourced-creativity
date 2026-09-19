@@ -235,7 +235,7 @@ const openingMethods=actualClassMembers(componentSource,"DocumentArtifacts",open
 // Production methods remain verbatim; only their former lexical eval inputs
 // become explicit dependencies visible to both the harness and static analysis.
 const fixtureClass=(source,bindings)=>new Function(...Object.keys(bindings),'"use strict"; return '+stripTypeScriptTypes(source)+";")(...Object.values(bindings));
-function viewerFixture({personal=false}={}){
+function viewerFixture({personal=false,instrumentation=personal}={}){
   const trace=[],state={bytes,events:[...base],active:true,documentId:"document",projectId:"project",beforeUpdate:()=>{},afterModal:()=>{},observations:[]};
   class HTMLElement{isConnected=true;focus(){trace.push("focus");}}
   const document={activeElement:new HTMLElement()};
@@ -245,7 +245,7 @@ function viewerFixture({personal=false}={}){
   const rejectIO=operation=>{trace.push("unexpected:"+operation);throw new Error("Unexpected viewer fixture I/O: "+operation);};
   const store=Object.assign(new SourceOwnership(),{captureAuthorizationScope:()=>({key:"authority",shared:true}),authorizationScopeActive:()=>state.active,
     projection:{get:()=>({documentId:"document",projectId:state.projectId,documents:[{id:"document",projectId:state.projectId}],libraryArtifacts:[artifact]})},events:{get:()=>state.events},content:{get:()=>({content:state.bytes})},
-    route:{get:()=>"/document"},subscribe:()=>()=>{},session:{get:()=>personal?{user:{userId:"author"}}:({user:{userId:"author"},projectContext:{permissions:["project.read","project.review.approve"]}})},ui:{instrumentation:personal},
+    route:{get:()=>"/document"},subscribe:()=>()=>{},session:{get:()=>personal?{user:{userId:"author"}}:({user:{userId:"author"},projectContext:{permissions:["project.read","project.review.approve"]}})},ui:{instrumentation},
     hot:async receipt=>state.observations.push(receipt),ensurePrivateContent:async contentRef=>rejectIO("content:"+contentRef)});
   const tree=ts.createSourceFile("document-artifacts.ts",componentSource,ts.ScriptTarget.Latest,true,ts.ScriptKind.TS);
   const parsed={tree,host:tree.statements.find(node=>ts.isClassDeclaration(node)&&node.name?.text==="DocumentArtifacts")};
@@ -272,7 +272,7 @@ test("the real viewer opening transaction refuses another revision or hash witho
   assert.deepEqual(f.trace,["modal","intent:review"]);
 });
 
-test("personal viewer observations capture the verified revision and bytes only after opening",async()=>{
+test("personal and governed viewer observations capture verified revision and bytes only after opening",async()=>{
   const f=viewerFixture({personal:true});
   assert.equal(await f.host.openArtifactById("artifact",{expectedRevision:0,expectedContentSha256:hash,intent:"review"}),true);
   assert.equal(f.state.observations.length,1);
@@ -280,6 +280,8 @@ test("personal viewer observations capture the verified revision and bytes only 
   assert.deepEqual({project_id:f.state.observations[0].payload.project_id,artifact_id:f.state.observations[0].payload.artifact_id,document_id:f.state.observations[0].payload.document_id,
     artifact_revision:f.state.observations[0].payload.artifact_revision,content_sha256:f.state.observations[0].payload.content_sha256},
     {project_id:"project",artifact_id:"artifact",document_id:"document",artifact_revision:0,content_sha256:hash});
+  const governed=viewerFixture({instrumentation:true});await governed.host.openArtifactById("artifact",{expectedRevision:0,expectedContentSha256:hash,intent:"review"});
+  assert.deepEqual(governed.state.observations,f.state.observations);
   const moved=viewerFixture({personal:true});
   moved.state.beforeUpdate=()=>{moved.state.bytes=bytes+" changed";};
   await assert.rejects(moved.host.openArtifactById("artifact",{intent:"review"}),/requested output changed before it opened/u);
@@ -441,12 +443,13 @@ function canvasViewFixture(change=()=>{}){
   })`,{state,change,store,dialog,artifact,documentArtifactRevision,document:{activeElement:null},HTMLElement:class{},crypto,TextEncoder});
   return{host:new Probe(),state};
 }
-test("Canvas records an exact personal artifact observation only after the retained viewer opens",async()=>{
+test("Canvas records exact personal and governed artifact observations only after the retained viewer opens",async()=>{
   const f=canvasViewFixture();await f.host.open();
   assert.deepEqual(f.state.observations,[{type:"DocumentArtifactViewed",payload:{...exact,artifact_kind:"slides",source_surface:"canvas-artifact-gallery"}}]);
+  const governed=canvasViewFixture();governed.state.shared=true;await governed.host.open();assert.deepEqual(governed.state.observations,f.state.observations);
   for(const mutate of [
     state=>{state.open=false;},state=>{state.connected=false;},state=>{state.hidden=true;},state=>{state.inert=true;},
-    state=>{state.active=false;},state=>{state.source=false;},state=>{state.shared=true;},state=>{state.instrumentation=false;},
+    state=>{state.active=false;},state=>{state.source=false;},state=>{state.instrumentation=false;},
     state=>{state.retained=bytes+" ";},state=>{state.projectId="other";},state=>{state.artifact.sequence++;},
     state=>{state.artifact=null;},state=>{state.route="/elsewhere";},state=>{state.scope="another-board";},
     state=>{state.events.push(event(5,"DocumentArtifactEdited",{artifact_id:"artifact"}));},(_state,host)=>host.close(),

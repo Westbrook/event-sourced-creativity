@@ -106,7 +106,7 @@ async function captureNativeDerivationWindow(env: WorkerEnv, lease: NativeDeriva
     if(artifactRefs.length&&!input.lifecyclePresent)return unavailable();
     const regularRefs=input.references.filter(ref=>!artifactRefs.some(row=>row.event_id===ref.event_id));
     const artifactCapture=artifactRefs.length?await captureNativeArtifactConsumption(env,e,a,
-      {after:job.after_sequence,through:job.through_sequence,remembered:true,historical:true},witness):null;
+      {after:job.after_sequence,through:job.through_sequence,remembered:true,historical:true,governed:true},witness):null;
     if(artifactCapture&&(artifactCapture.truncated||artifactCapture.sources.length!==artifactRefs.length
       ||artifactCapture.sources.some(source=>!artifactRefs.some(ref=>ref.event_id===source.eventId&&ref.sequence===source.sequence)
         ||source.recordedAt<g.consented_at)))return unavailable();

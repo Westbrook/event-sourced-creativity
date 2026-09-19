@@ -5,7 +5,9 @@ import { snapshotMemoryConsumptionInput } from "./memory-consumption-episodes.ts
 export const MEMORY_CONSUMPTION_V2 = "memory-consumption-episodes-v2" as const;
 /** Explicit historical-view negotiation; V2 remains current-only. */
 export const MEMORY_CONSUMPTION_V3 = "memory-consumption-episodes-v3" as const;
-export type MemoryArtifactConsumptionVersion = typeof MEMORY_CONSUMPTION_V2 | typeof MEMORY_CONSUMPTION_V3;
+/** Explicit governed artifact-view negotiation; V2/V3 remain personal-only. */
+export const MEMORY_CONSUMPTION_V4 = "memory-consumption-episodes-v4" as const;
+export type MemoryArtifactConsumptionVersion = typeof MEMORY_CONSUMPTION_V2 | typeof MEMORY_CONSUMPTION_V3 | typeof MEMORY_CONSUMPTION_V4;
 export type MemoryConsumptionTarget = { kind: "document"; documentId: string } | {
   kind: "artifact"; documentId: string; artifactId: string; artifactKind: string; revision: number; contentSha256: string;
 };
@@ -82,4 +84,8 @@ export function parseMemoryConsumptionV2(...input: ConsumptionParseInput): Memor
 }
 export function parseMemoryConsumptionV3(...input: ConsumptionParseInput): MemoryConsumptionV2 | null {
   return parseArtifactConsumption(...input, MEMORY_CONSUMPTION_V3);
+}
+
+export function parseMemoryConsumptionV4(...input: ConsumptionParseInput): MemoryConsumptionV2 | null {
+  return parseArtifactConsumption(...input, MEMORY_CONSUMPTION_V4);
 }
