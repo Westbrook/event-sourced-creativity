@@ -335,3 +335,34 @@ test('native artifact identities separate actor partitions, custody and exact do
   assert.equal(nativeMemoryArtifactIdentity(e,' invalid '),null);assert.equal(nativeMemoryArtifactIdentity({...e,organization_id:null},'artifact'),null);
   assert.equal(first.projectAncestry,'unresolved','artifact identity cannot fabricate nested-project authority');
 });
+
+const {parseMemoryBehavioralResult,behavioralSourceHash,MEMORY_BEHAVIORAL_RESULT_VERSION}=await import('../worker/memory-behavioral-result.ts');
+async function behavioralFixture(purpose='profile'){
+  const f=derivationFixture(purpose),context={...f.context,sources:[],observations:[]},descriptor={sourceId:'native-inspection',revision:7,lineageId:'b'.repeat(64),scopeKey:context.scopeKey,
+    resourceKey:'native-block:document:block',eventType:'BlockInspected',action:'inspect',recordedAt:context.checkedAt,expiresAt:context.validUntil,independentEvidence:false};
+  context.observations.push({...descriptor,contentHash:await behavioralSourceHash(descriptor)});
+  const item={operation:'assert',target:null,category:purpose==='profile'?'workflow-hypothesis':'proposal',text:'You may want to revisit the block you inspected.',supports:[],counterevidence:[],observationSupports:[0],observationCounterevidence:[]};
+  const body={version:MEMORY_BEHAVIORAL_RESULT_VERSION,items:[item]};return {context,item,body,original:f,parse:()=>parseMemoryBehavioralResult(JSON.stringify(body),context)};
+}
+for(const purpose of ['profile','suggestion','rolling-summary'])test('behavioral v2: native action citations stay separate from human quotations '+purpose,async()=>{
+  const f=await behavioralFixture(purpose),result=await f.parse();assert.ok(result);assert.equal(result.version,MEMORY_BEHAVIORAL_RESULT_VERSION);assert.equal(result.semanticAuthority,'model-derived-unverified');assert.equal(result.independentEvidence,false);assert.equal(result.semanticCompleteness,false);
+  const item=result.items[0];assert.deepEqual(item.supports,[]);assert.deepEqual(item.observationCitations,[{observationIndex:0,action:'inspect',recordedAt:f.context.checkedAt,role:'support'}]);assert.deepEqual(item.lineageIds,['b'.repeat(64)]);assert.equal(item.sourceBindings[0].sourceId,'native-inspection');assert.ok(Object.isFrozen(item.observationCitations[0]));
+  f.item.text='A different unverified workflow interpretation.';assert.equal((await f.parse()).items[0].claimKey,item.claimKey);assert.equal(await parseMemoryDerivationResult(JSON.stringify(f.body),f.context),null);
+});
+test('behavioral v2: genuine human preference quotes and typed counterevidence remain distinct',async()=>{
+  const f=await behavioralFixture();f.context.sources=f.original.context.sources;f.item.category='preference-hypothesis';f.item.supports=[f.original.quote()];f.item.observationSupports=[];f.item.observationCounterevidence=[0];
+  const result=await f.parse();assert.ok(result);assert.equal(result.items[0].citationStatus,'conflicting-citations');assert.deepEqual(result.items[0].lineageIds,['b'.repeat(64),'human-lineage']);assert.equal(result.items[0].observationCitations[0].role,'counterevidence');
+  f.context.sources[0].authorship='derived';assert.equal(await f.parse(),null);
+});
+for(const fault of ['wrong-version','source-hash','source-scope','source-expired','source-future','duplicate-source','unsupported-action','independent-use','wrong-index','duplicate-index','same-counter','no-support','invented-preference','invented-decision','suppressed','original-quote-substitute','unknown-key','target','operation','duplicate-claim','future-clock','expired-clock','accessor','snapshot-race'])test('behavioral v2 rejects '+fault,async()=>{
+  const f=await behavioralFixture(fault==='invented-decision'?'rolling-summary':'profile'),source=f.context.observations[0];let invoked=0;
+  if(fault==='wrong-version')f.body.version=MEMORY_DERIVATION_RESULT_VERSION;if(fault==='source-hash')source.contentHash='0'.repeat(64);if(fault==='source-scope')source.scopeKey='foreign';if(fault==='source-expired')source.expiresAt=f.context.checkedAt;if(fault==='source-future')source.recordedAt=new Date(Date.now()+60000).toISOString();
+  if(fault==='duplicate-source')f.context.observations.push({...source});if(fault==='unsupported-action')source.action='attention';if(fault==='independent-use')source.independentEvidence=true;if(fault==='wrong-index')f.item.observationSupports=[1];if(fault==='duplicate-index')f.item.observationSupports=[0,0];if(fault==='same-counter')f.item.observationCounterevidence=[0];if(fault==='no-support')f.item.observationSupports=[];
+  if(fault==='invented-preference')f.item.category='preference-hypothesis';if(fault==='invented-decision')f.item.category='decision';if(fault==='suppressed')f.context.suppressedLineages=[source.lineageId];if(fault==='original-quote-substitute')f.item.supports=[{sourceIndex:0,start:0,end:7,text:'inspect'}];if(fault==='unknown-key')f.item.attention=true;if(fault==='target')f.item.target={itemId:'claim',revision:1};if(fault==='operation')f.item.operation='correct';if(fault==='duplicate-claim')f.body.items.push({...f.item,text:'Paraphrased duplicate'});
+  if(fault==='future-clock')f.context.checkedAt=new Date(Date.now()+1000).toISOString();if(fault==='expired-clock')f.context.validUntil=f.context.checkedAt;if(fault==='accessor')Object.defineProperty(source,'action',{enumerable:true,get(){invoked++;return 'inspect';}});
+  if(fault==='snapshot-race'){const pending=f.parse();f.context.observations[0].action='edit';assert.ok(await pending,'Input mutation after parsing starts cannot alter the copied evidence');return;}
+  assert.equal(await f.parse(),null);assert.equal(invoked,0);
+});
+test('behavioral v2 rejects duplicate JSON keys without reading a later replacement',async()=>{
+  const f=await behavioralFixture(),raw=JSON.stringify(f.body).replace('"observationSupports":','"observationSupports":[],"observationSupports":');assert.equal(await parseMemoryBehavioralResult(raw,f.context),null);
+});

@@ -13641,7 +13641,7 @@ test('native derivation delivery: conversation bookkeeping keeps exact reference
   state.sqlite.exec('UPDATE memory_live_sources SET conversation_segmented=1');assert.deepEqual(state.queue(),before);
 });
 
-async function nativeDerivationExecutionFixture(t,{shared=false,hosted=false,recovery=false,results=false,userControls=false,completion=false,lifecycle=false,indexIntents=false,paid=false,termOverrides={}}={}){
+async function nativeDerivationExecutionFixture(t,{shared=false,hosted=false,recovery=false,results=false,userControls=false,completion=false,lifecycle=false,indexIntents=false,observationControls=false,paid=false,termOverrides={}}={}){
   const state=await nativeDerivationDeliveryFixture(t,{shared,termOverrides,beforeEnrollment:async state=>{
     state.sqlite.exec(await(await import('node:fs/promises')).readFile(new URL('../drizzle/0045_memory_derivation_finance.sql',import.meta.url),'utf8'));
     if(recovery||results)state.sqlite.exec(await(await import('node:fs/promises')).readFile(new URL('../drizzle/0046_memory_derivation_recovery_cursor.sql',import.meta.url),'utf8'));
@@ -13650,6 +13650,7 @@ async function nativeDerivationExecutionFixture(t,{shared=false,hosted=false,rec
     if(completion)state.sqlite.exec(await(await import('node:fs/promises')).readFile(new URL('../drizzle/0049_memory_derivation_completion.sql',import.meta.url),'utf8'));
     if(lifecycle)state.sqlite.exec(await(await import('node:fs/promises')).readFile(new URL('../drizzle/0050_memory_derivation_lifecycle.sql',import.meta.url),'utf8'));
     if(indexIntents)state.sqlite.exec(await(await import('node:fs/promises')).readFile(new URL('../drizzle/0054_memory_derivation_index_intents.sql',import.meta.url),'utf8'));
+    if(observationControls)state.sqlite.exec(await(await import('node:fs/promises')).readFile(new URL('../drizzle/0057_memory_derivation_observation_controls.sql',import.meta.url),'utf8'));
   }});
   const completed=await state.send('financial-execution-original');if(paid)await nativeDerivationPaidTurn(state,completed);
   state.due();await state.run();
@@ -15676,4 +15677,103 @@ for(const paid of [false,true])for(const first of ['creator','chat-studio'])test
   db.prepare=function(sql){return wrap(prepare.call(this,sql));};db.batch=function(inputs){operations++;return batch.call(this,inputs.map(input=>originals.get(input)??input));};t.after(()=>{db.prepare=prepare;db.batch=batch;});
   const response=await api.handleMemoryDerivationResult(new Request(state.derivationOrigin+'/api/memory/derivation/result?jobId='+last.job_id,{headers:state.owner}),state.env);
   assert.equal(response.status,200,await response.clone().text());const body=await response.json();t.diagnostic(JSON.stringify({operations,history:body.history}));assert.ok(operations<50,'Rich block/producer inspection: '+operations);
+});
+
+
+// Synthetic schema lifecycle evidence. Direct inserts exercise SQL inverses;
+// they are not a provider receipt or native result-control write capability.
+async function observationControlSchemaFixture(t,options={}){
+  const state=await nativeDerivationResultFixture(t,{...options,userControls:true,observationControls:true,indexIntents:true});
+  assert.equal((await state.resultStore.publishNativeDerivationResult(state.env,state.resultReceipt)).status,'stored');
+  const source=state.sources.nativeDerivationSourceInputs(state.env,state.executionCapture),original=source.originals.find(row=>row.role==='user');
+  await state.env.DB.prepare('INSERT INTO memory_live_sources(enrollment_id,event_id,sequence,expires_at) VALUES(?,?,?,?)')
+    .bind(source.binding.enrollmentId,original.sourceId,original.revision,original.expiresAt).run();
+  const now=new Date().toISOString(),row={control_id:'c'.repeat(64),enrollment_id:source.binding.enrollmentId,actor_user_id:source.binding.actorUserId,
+    purpose:source.purpose,scope_key:source.scopeKey,lineage_id:'d'.repeat(64),claim_key:'isolated-event-control',source_event_ref:original.sourceId,
+    revision:1,action:'corrected',correction_text:'An explicit user correction, not a model instruction.',created_at:now,updated_at:now,expires_at:original.expiresAt};
+  const insert=async(value=row)=>state.env.DB.prepare(`INSERT INTO memory_derivation_observation_controls(${Object.keys(value).join(',')}) VALUES(${Object.keys(value).map(()=>'?').join(',')})`).bind(...Object.values(value)).run();
+  return Object.assign(state,{observationControl:row,insertObservationControl:insert});
+}
+for(const shared of [false,true])for(const hosted of [false,true])test('native observation control schema: exact installation and private result/index inverse '+shared+'/'+hosted,{timeout:180000},async t=>{
+  const state=await observationControlSchemaFixture(t,{shared,hosted}),db=state.env.DB;
+  const schema=await state.derivationStore.memoryDerivationSchema(state.env);assert.equal(schema.observationControlsPresent,true);
+  await state.insertObservationControl();
+  const result=await db.prepare('SELECT state,raw_json,manifest_json FROM memory_derivation_results').first();assert.deepEqual({...result},{state:'withdrawn',raw_json:null,manifest_json:null});
+  assert.equal((await db.prepare('SELECT operation FROM memory_derivation_index_intents').first()).operation,'delete');
+  assert.equal((await db.prepare('SELECT COUNT(*) AS n FROM memory_derivation_result_dependencies').first()).n,0);
+  assert.equal(await state.readResult(),null);
+  await assert.rejects(()=>state.insertObservationControl());
+  await assert.rejects(()=>db.prepare('UPDATE memory_derivation_observation_controls SET revision=3').run());
+  await db.prepare("UPDATE memory_derivation_observation_controls SET revision=2,action='released',correction_text=NULL,updated_at=?").bind(new Date().toISOString()).run();
+  assert.equal((await db.prepare('SELECT used_microusd FROM cost_budget_reservations').first()).used_microusd,580);
+  assert.deepEqual((await db.prepare('PRAGMA foreign_key_check').all()).results,[]);
+});
+for(const fault of ['foreign-actor','foreign-enrollment','missing-event','unremembered','extended-expiry','invalid-action','future-clock'])test('native observation control schema: rejects '+fault,{timeout:60000},async t=>{
+  const state=await observationControlSchemaFixture(t),row={...state.observationControl};
+  if(fault==='foreign-actor')row.actor_user_id='not-the-owner';
+  if(fault==='foreign-enrollment')row.enrollment_id='not-the-parent';
+  if(fault==='missing-event')row.source_event_ref='not-a-source';
+  if(fault==='unremembered')state.sqlite.prepare('DELETE FROM memory_live_sources WHERE event_id=?').run(row.source_event_ref);
+  if(fault==='extended-expiry')row.expires_at=new Date(Date.parse(row.expires_at)+86400000).toISOString();
+  if(fault==='invalid-action')row.action='model-approved';
+  if(fault==='future-clock')row.created_at=row.updated_at=new Date(Date.now()+60000).toISOString();
+  await assert.rejects(()=>state.insertObservationControl(row));assert.equal(state.sqlite.prepare('SELECT COUNT(*) AS n FROM memory_derivation_observation_controls').get().n,0);
+});
+for(const fault of ['remembered-delete','remembered-update','private-delete','private-update','forget','erasure','compensation','custody-delete'])test('native observation control schema: erases private control on '+fault,{timeout:60000},async t=>{
+  const state=await observationControlSchemaFixture(t,{shared:fault==='custody-delete'}),row=state.observationControl;await state.insertObservationControl();
+  if(fault==='remembered-delete')state.sqlite.prepare('DELETE FROM memory_live_sources WHERE event_id=?').run(row.source_event_ref);
+  if(fault==='remembered-update')state.sqlite.prepare("UPDATE memory_live_sources SET expires_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE event_id=?").run(row.source_event_ref);
+  if(fault==='private-delete')state.sqlite.prepare('DELETE FROM event_private_payloads WHERE private_event_id=?').run(row.source_event_ref);
+  if(fault==='private-update')state.sqlite.prepare('UPDATE event_private_payloads SET private_json=private_json WHERE private_event_id=?').run(row.source_event_ref);
+  if(fault==='forget')state.sqlite.exec("UPDATE memory_live_enrollments SET failure_code='forgotten'");
+  if(fault==='erasure'){const response=await state.request('/api/privacy/events',json({action:'erase-personal-authored-context',confirmation:'ERASE_MY_PERSONAL_AUTHORED_CONTEXT'},state.owner));assert.equal(response.status,200,await response.text());}
+  if(fault==='custody-delete')state.sqlite.prepare('DELETE FROM project_event_scopes WHERE event_id=?').run(row.source_event_ref);
+  if(fault==='compensation'){
+    const source=state.sqlite.prepare('SELECT * FROM events WHERE event_id=?').get(row.source_event_ref);
+    const event={...source,event_id:crypto.randomUUID(),sequence:state.sqlite.prepare('SELECT MAX(sequence)+1 AS n FROM events WHERE stream_id=?').get(source.stream_id).n,compensates_event_id:row.source_event_ref};
+    state.sqlite.prepare(`INSERT INTO events(${Object.keys(event).join(',')}) VALUES(${Object.keys(event).map(()=>'?').join(',')})`).run(...Object.values(event));
+  }
+  assert.equal(state.sqlite.prepare('SELECT COUNT(*) AS n FROM memory_derivation_observation_controls').get().n,0);
+  assert.equal(state.sqlite.prepare('SELECT used_microusd FROM cost_budget_reservations').get().used_microusd,580);
+});
+
+for(const shared of [false,true])for(const hosted of [false,true])test('native observation control revision: owner inspection and release preserve original controls '+shared+'/'+hosted,{timeout:180000},async t=>{
+  const state=await observationControlSchemaFixture(t,{shared,hosted}),db=state.env.DB,row=state.observationControl;await state.insertObservationControl();
+  const controls=await import('../worker/memory-derivation-user-controls.ts'),api=await import('../worker/memory-derivation-api.ts');
+  const get=()=>api.handleMemoryDerivationUserControls(new Request(state.derivationOrigin+'/api/memory/derivation/controls?projectId='+state.preferences.projectId+'&documentId='+state.preferences.documentId,{headers:state.owner}),state.env);
+  let response=await get(),body=await response.json();assert.equal(response.status,200,JSON.stringify(body));assert.equal(body.controls[0].correctionText,row.correction_text);assert.equal(body.controls[0].textAvailable,true);
+  await assert.rejects(()=>controls.reviseNativeDerivationUserControl(state.env,'foreign-actor',row.control_id,1,'released',null));
+  await assert.rejects(()=>controls.reviseNativeDerivationUserControl(state.env,row.actor_user_id,row.control_id,2,'released',null));
+  if(shared){await db.prepare('UPDATE organization_memberships SET revoked_at=? WHERE user_id=?').bind(new Date().toISOString(),row.actor_user_id).run();
+    response=await get();body=await response.json();assert.equal(response.status,200,JSON.stringify(body));assert.equal(body.controls[0].correctionText,null);assert.equal(body.controls[0].textAvailable,false);}
+  const released=await controls.reviseNativeDerivationUserControl(state.env,row.actor_user_id,row.control_id,1,'released',null);assert.equal(released.revision,2);
+  assert.equal((await db.prepare('SELECT correction_text FROM memory_derivation_observation_controls').first()).correction_text,null);
+  assert.equal((await db.prepare('SELECT COUNT(*) AS n FROM memory_derivation_user_controls').first()).n,0);
+  assert.equal((await db.prepare('SELECT used_microusd FROM cost_budget_reservations').first()).used_microusd,580);
+});
+test('native observation control revision: bounded expiry and bookkeeping retention',{timeout:60000},async t=>{
+  const state=await observationControlSchemaFixture(t),row=state.observationControl;await state.insertObservationControl();
+  state.sqlite.exec('UPDATE memory_live_sources SET conversation_segmented=1');assert.equal(state.sqlite.prepare('SELECT COUNT(*) AS n FROM memory_derivation_observation_controls').get().n,1);
+  const controls=await import('../worker/memory-derivation-user-controls.ts'),clock=consequentialDbClock(state);t.after(()=>clock.close());clock.set(row.expires_at);
+  assert.equal(await controls.sweepNativeDerivationUserControls(state.env),1);assert.equal(await controls.sweepNativeDerivationUserControls(state.env),0);
+});
+
+for(const fault of ['missing-trigger','unexpected-trigger','revision-lost-ack','revision-rollback'])test('native observation control revision: fails closed on '+fault,{timeout:60000},async t=>{
+  const state=await observationControlSchemaFixture(t),row=state.observationControl;await state.insertObservationControl();
+  const controls=await import('../worker/memory-derivation-user-controls.ts'),db=state.env.DB,batch=db.batch;
+  if(fault==='missing-trigger')state.sqlite.exec('DROP TRIGGER memory_derivation_observation_control_private_delete');
+  if(fault==='unexpected-trigger')state.sqlite.exec('CREATE TRIGGER unqualified_observation_control AFTER UPDATE ON memory_derivation_observation_controls BEGIN SELECT 1; END;');
+  let injected=false;
+  if(fault.startsWith('revision-'))db.batch=async statements=>{if(statements.some(s=>s.sql.startsWith('UPDATE memory_derivation_observation_controls SET revision='))){injected=true;
+    if(fault==='revision-rollback')statements=[...statements,db.prepare("SELECT json('isolated-rollback')")];await batch.call(db,statements);throw Error('isolated-lost-ack');}return batch.call(db,statements);};
+  t.after(()=>{db.batch=batch;});await assert.rejects(()=>controls.reviseNativeDerivationUserControl(state.env,row.actor_user_id,row.control_id,1,'released',null));
+  assert.equal(injected,fault.startsWith('revision-'));
+  assert.equal(state.sqlite.prepare('SELECT revision FROM memory_derivation_observation_controls').get().revision,fault==='revision-lost-ack'?2:1);
+  assert.equal(state.sqlite.prepare('SELECT used_microusd FROM cost_budget_reservations').get().used_microusd,580);
+});
+test('native observation control revision: source-free expiry is bounded to 128 across stores',{timeout:60000},async t=>{
+  const state=await observationControlSchemaFixture(t),row=state.observationControl;
+  for(let n=1;n<=129;n++)await state.insertObservationControl({...row,control_id:n.toString(16).padStart(64,'0'),lineage_id:n.toString(16).padStart(64,'0')});
+  const controls=await import('../worker/memory-derivation-user-controls.ts'),clock=consequentialDbClock(state);t.after(()=>clock.close());clock.set(row.expires_at);
+  assert.equal(await controls.sweepNativeDerivationUserControls(state.env),128);assert.equal(await controls.sweepNativeDerivationUserControls(state.env),1);assert.equal(await controls.sweepNativeDerivationUserControls(state.env),0);
 });

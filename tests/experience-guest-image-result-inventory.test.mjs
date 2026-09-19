@@ -913,3 +913,11 @@ for(const fault of ['none','missing-guard','inbound-trigger'])test('Memory relat
   if(fault==='inbound-trigger')f.sqlite.exec('CREATE TRIGGER unqualified_relation AFTER INSERT ON events BEGIN SELECT COUNT(*) FROM memory_derivation_results; END');
   configurationTripwire(f,t);if(fault==='none')assert.deepEqual(await currentManifest(f,t),before);else await denied(f,t);
 });
+
+for(const fault of ['none','missing-inverse','inbound-view'])test('Memory observation-control schema preserves guest isolation '+fault,async t=>{
+  const f=await completedResultFixture(t,{memory:true}),before=await currentManifest(f,t);installDerivationFinanceSchema(f);
+  for(const name of ['0020_assistant_runtime_tables','0047_memory_derivation_results','0048_memory_derivation_user_controls','0057_memory_derivation_observation_controls'])installQualifiedMigration(f,name+'.sql');
+  if(fault==='missing-inverse')f.sqlite.exec('DROP TRIGGER memory_derivation_observation_control_remembered_delete');
+  if(fault==='inbound-view')f.sqlite.exec('CREATE VIEW unqualified_observation_controls AS SELECT correction_text FROM memory_derivation_observation_controls');
+  configurationTripwire(f,t);if(fault==='none')assert.deepEqual(await currentManifest(f,t),before);else await denied(f,t);
+});

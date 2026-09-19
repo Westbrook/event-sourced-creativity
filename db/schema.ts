@@ -2568,6 +2568,24 @@ export const memoryDerivationUserControls = sqliteTable("memory_derivation_user_
   check("memory_derivation_user_control_time", sql.raw("length(created_at)=24 AND strftime('%Y-%m-%dT%H:%M:%fZ',created_at) IS created_at AND length(updated_at)=24 AND strftime('%Y-%m-%dT%H:%M:%fZ',updated_at) IS updated_at AND length(expires_at)=24 AND strftime('%Y-%m-%dT%H:%M:%fZ',expires_at) IS expires_at AND created_at<=updated_at AND updated_at<expires_at")),
 ]);
 
+/** User controls for certified native actions; action evidence is never quoted speech. */
+export const memoryDerivationObservationControls = sqliteTable("memory_derivation_observation_controls", {
+  controlId: text("control_id").notNull().primaryKey(),
+  enrollmentId: text("enrollment_id").notNull().references(() => memoryLiveEnrollments.enrollmentId, { onDelete: "cascade" }),
+  actorUserId: text("actor_user_id").notNull(), purpose: text("purpose").notNull(), scopeKey: text("scope_key").notNull(),
+  lineageId: text("lineage_id").notNull(), claimKey: text("claim_key").notNull(),
+  sourceEventRef: text("source_event_ref").notNull().references(() => events.eventId, { onDelete: "cascade" }),
+  revision: integer("revision").notNull(), action: text("action").notNull(), correctionText: text("correction_text"),
+  createdAt: text("created_at").notNull(), updatedAt: text("updated_at").notNull(), expiresAt: text("expires_at").notNull(),
+}, table => [
+  uniqueIndex("idx_memory_derivation_observation_control_lineage").on(table.enrollmentId, table.purpose, table.lineageId),
+  index("idx_memory_derivation_observation_control_source").on(table.sourceEventRef),
+  index("idx_memory_derivation_observation_control_expiry").on(table.expiresAt),
+  check("memory_derivation_observation_control_shape", sql.raw("length(control_id)=64 AND control_id NOT GLOB '*[^0-9a-f]*' AND length(lineage_id)=64 AND lineage_id NOT GLOB '*[^0-9a-f]*' AND length(actor_user_id) BETWEEN 1 AND 240 AND length(scope_key) BETWEEN 1 AND 8192 AND length(claim_key) BETWEEN 1 AND 240 AND purpose IN('rolling-summary','profile','suggestion') AND typeof(revision)='integer' AND revision BETWEEN 1 AND 9007199254740991")),
+  check("memory_derivation_observation_control_action", sql.raw("(action IN('suppressed','released') AND correction_text IS NULL) OR (action='corrected' AND correction_text IS NOT NULL AND length(trim(correction_text)) BETWEEN 1 AND 1000 AND length(CAST(correction_text AS BLOB))<=4096)")),
+  check("memory_derivation_observation_control_time", sql.raw("length(created_at)=24 AND strftime('%Y-%m-%dT%H:%M:%fZ',created_at) IS created_at AND length(updated_at)=24 AND strftime('%Y-%m-%dT%H:%M:%fZ',updated_at) IS updated_at AND length(expires_at)=24 AND strftime('%Y-%m-%dT%H:%M:%fZ',expires_at) IS expires_at AND created_at<=updated_at AND updated_at<expires_at")),
+]);
+
 /** Terminal disposition of one bounded native reference window. */
 export const memoryDerivationCompletions = sqliteTable("memory_derivation_completions", {
   jobId:text("job_id").notNull().primaryKey().references(()=>memoryDerivationJobs.jobId,{onDelete:"cascade"}),

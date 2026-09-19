@@ -2,7 +2,7 @@ import { readProjectRequestContext, resolveOwnerExecutionScope } from './project
 import { nativeMemoryDocumentIdentity, observeNativeMemoryDocumentScope } from "./memory-native-scope.ts";
 import { readNativeDerivationResult,nativeDerivationResultInputs,nativeDerivationResultStatements,withdrawNativeDerivationResult } from "./memory-derivation-results.ts";
 import { controlNativeDerivationResult,reviseNativeDerivationUserControl } from "./memory-derivation-user-controls.ts";
-import { DERIVATION_USER_CONTROL_COLUMNS } from "./memory-derivation-user-control-schema.ts";
+import { DERIVATION_USER_CONTROL_COLUMNS, derivationControlRelation } from "./memory-derivation-user-control-schema.ts";
 import { memoryDerivationFinanceView, memoryDerivationFinanceViewStatement } from "./memory-derivation-finance-view.ts";
 import { requireUser, requireConsent, type PilotUser } from "./pilot-policy.ts";
 import { prepareDocumentAuthority } from "./context-authoring-authority.ts";
@@ -303,9 +303,10 @@ export async function handleMemoryDerivationResult(request:Request,env:WorkerEnv
       return current()?reply({jobId,state:'withdrawn',controls}):failure();
     }
     const input=nativeDerivationResultInputs(env,read),lineages=[...new Set(input.candidate.items.flatMap(item=>[...item.lineageIds]))];
-    const controlQuery=`SELECT c.lineage_id,c.revision FROM memory_derivation_user_controls c JOIN memory_derivation_grants g ON g.enrollment_id=c.enrollment_id AND g.purpose=c.purpose
+    const schema=await memoryDerivationSchema(env);
+    const controlQuery=`SELECT c.lineage_id,c.revision FROM ${derivationControlRelation(schema.observationControlsPresent)} c JOIN memory_derivation_grants g ON g.enrollment_id=c.enrollment_id AND g.purpose=c.purpose
       JOIN memory_derivation_jobs j ON j.consent_id=g.consent_id WHERE j.job_id=? AND c.actor_user_id=? AND c.lineage_id IN(SELECT value FROM json_each(?)) ORDER BY c.lineage_id`;
-    const controlBindings=[jobId,actor.userId,JSON.stringify(lineages)],schema=await memoryDerivationSchema(env);
+    const controlBindings=[jobId,actor.userId,JSON.stringify(lineages)];
     const controls=schema.userControlsPresent?await rows(env,controlQuery,controlBindings):[];
     const controlRevisions=Object.fromEntries(lineages.map(lineage=>[lineage,Number(controls.find(row=>row.lineage_id===lineage)?.revision??0)]));
     const statements=[derivationAssertion(env,identity),...nativeDerivationResultStatements(env,read),...(schema.userControlsPresent?[derivationAssertion(env,{condition:`(SELECT json_group_array(json_array(lineage_id,revision)) FROM (${controlQuery}))=?`,bindings:[...controlBindings,JSON.stringify(controls.map(row=>[row.lineage_id,row.revision]))]})]:[])];
@@ -343,7 +344,7 @@ export async function handleMemoryDerivationUserControls(request:Request,env:Wor
     const where="enrollment_id=? AND actor_user_id=? AND control_id>? AND expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now')",bindings=[selected.parent.enrollment_id,actor.userId,after];
     // No correction body is loaded on the metadata-only path after access loss.
     const projection=DERIVATION_USER_CONTROL_COLUMNS.map(key=>!canReadText&&key==='correction_text'?'NULL AS correction_text':key).join(',');
-    const query=`SELECT ${projection} FROM memory_derivation_user_controls WHERE ${where} ORDER BY control_id LIMIT 129`;
+    const query=`SELECT ${projection} FROM ${derivationControlRelation(schema.observationControlsPresent)} WHERE ${where} ORDER BY control_id LIMIT 129`;
     const records=await rows(env,query,bindings);
     if(records.length>129||records.some(row=>!derivationExact(row,DERIVATION_USER_CONTROL_COLUMNS)))return deny('memory_user_control_unavailable',503);
     const guard:MemorySqlGuard={condition:`(SELECT json_group_array(json_array(${DERIVATION_USER_CONTROL_COLUMNS.join(',')})) FROM (${query}))=?`,

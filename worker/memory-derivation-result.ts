@@ -228,3 +228,6 @@ export async function parseMemoryDerivationResult(rawJson: string, originalConte
       semanticAuthority: "model-derived-unverified", semanticCompleteness: false, independentEvidence: false, items });
   } catch { return null; }
 }
+
+/** Shared data-only boundary for the explicitly versioned native evidence recipe. */
+export const snapshotMemoryDerivationInput = snapshot;

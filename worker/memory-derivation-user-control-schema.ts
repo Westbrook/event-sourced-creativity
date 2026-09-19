@@ -24,3 +24,12 @@ export const memoryDerivationUserControlSchemaProfile = {
   "count": 11,
   "digest": "sha256:183701ad23e07022b19f1ed0972ea6205ccc6cabc9c745a4b19c92c4e8f43115"
 } as const;
+
+/** Native SQL only. The event reference is normalized to the internal original
+ * reference column for metadata/revision reads; neither reference leaves HTTP.
+ * This does not make an event an original quotation or grant source access. */
+export function derivationControlRelation(observationsPresent:boolean){
+  if(!observationsPresent)return 'memory_derivation_user_controls';
+  const projected=DERIVATION_USER_CONTROL_COLUMNS.map(key=>key==='source_content_ref'?'source_event_ref AS source_content_ref':key).join(',');
+  return `(SELECT ${DERIVATION_USER_CONTROL_COLUMNS.join(',')} FROM memory_derivation_user_controls UNION ALL SELECT ${projected} FROM memory_derivation_observation_controls)`;
+}

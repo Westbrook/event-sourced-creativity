@@ -154,3 +154,14 @@ schedule work, provision a service or establish human review.
 [The native inspection/v5 slice](forma-memory-block-inspection-2026-09-19.md) closes genuine document block-control receipt capture, consented reference learning, private inspection, bounded derivation and source erasure. Historical statuses above remain evidence for their earlier slices; broader scope and durable consumer work is still implementation, not an external-service blocker.
 
 [Rolling descriptive v5 windows](forma-memory-consumption-windows-2026-09-19.md) now summarize the already inspected document/artifact/block observations over 7/30 days. They add no collection, permission or external dependency and do not claim semantic patterns or complete analytics.
+
+
+### MEM-003 behavioral evidence continuation
+
+**In progress — Memory implementation task, local feature branch only.**
+[Explicit behavioral evidence and event-backed private controls](forma-memory-behavioral-evidence-2026-09-19.md)
+now provide the strict v2 data parser, additive migration0057 and native
+inspection/revision/expiry privacy lifecycle. No recipe activation is included.
+Next: integrate the separately qualified recipe with native source capture,
+suppression, provider/result manifests, control targets and localized evidence
+review. These remain implementation work, not unsupported external-service gates.

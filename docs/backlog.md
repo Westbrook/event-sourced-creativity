@@ -119,3 +119,14 @@ remain in Git and the independent report.
 ### MEM-003 rolling consumption inspector continuation
 
 **In progress — Memory implementation task.** [7/30-day descriptive document/artifact/block windows](forma-memory-consumption-windows-2026-09-19.md) are implemented and locally verified inside the existing private inspector lease. The native consumer/scope list and external qualification gates remain open; no deployment or full-system completion is claimed.
+
+
+### MEM-003 behavioral evidence continuation
+
+**In progress — Memory implementation task, local feature branch only.**
+[Explicit behavioral evidence and event-backed private controls](forma-memory-behavioral-evidence-2026-09-19.md)
+now provide the strict v2 data parser, additive migration0057 and native
+inspection/revision/expiry privacy lifecycle. No recipe activation is included.
+Next: integrate the separately qualified recipe with native source capture,
+suppression, provider/result manifests, control targets and localized evidence
+review. These remain implementation work, not unsupported external-service gates.

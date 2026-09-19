@@ -152,3 +152,14 @@ independent producers, nested scope identity and native index lifecycle remain o
 ## Native approved-copy continuation
 
 [Verified approved reuse](forma-memory-approved-reuse-2026-09-19.md) now binds actual native approval receipts and complete committed footprints into Creator derivation. Multiple copied blocks remain one dependent outcome; copied text is not new human authorship. Additive migration0056 retires result/index state when the receipt changes. Consolidated direct-block/endpoint reads retain three-window genuine-copy histories at 45/48 calls. Original-source recall, broader scopes and automatic consumers remain implementation work.
+
+
+### MEM-003 behavioral evidence continuation
+
+**In progress — Memory implementation task, local feature branch only.**
+[Explicit behavioral evidence and event-backed private controls](forma-memory-behavioral-evidence-2026-09-19.md)
+now provide the strict v2 data parser, additive migration0057 and native
+inspection/revision/expiry privacy lifecycle. No recipe activation is included.
+Next: integrate the separately qualified recipe with native source capture,
+suppression, provider/result manifests, control targets and localized evidence
+review. These remain implementation work, not unsupported external-service gates.
