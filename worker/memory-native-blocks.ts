@@ -6,6 +6,7 @@ import type { LiveMemoryEnrollment } from './memory-live-authority.ts';
 import type { NativeMemoryContextObserver } from './memory-live-context.ts';
 import { derivationId, derivationInteger, derivationTime } from './memory-derivation-policy.ts';
 
+export type NativeMemoryResourceScope = Pick<LiveMemoryEnrollment,'actor_user_id'|'owner_user_id'|'organization_id'|'project_access_id'|'project_id'|'document_id'>;
 type Row = Record<string, unknown>;
 type Observation = { eventId:string; sequence:number; blockPointer:string|null; eventType:string; reference?:true };
 export type NativeMemoryBlockBinding = { eventId:string; blockId:string; scopeKey:string; revision:number; stateSha256:string; eventIds:string[] };
@@ -20,7 +21,7 @@ const clean=(p:Record<string,unknown>)=>!p.simulation&&!p.synthetic&&!(p.origin&
 
 /** Shared strict native envelope decoding. Identity data alone is not authority;
  * callers must retain the exact DB read in the enclosing authenticated witness. */
-export function decodeNativeMemoryResourceEvent(row:Row,e:LiveMemoryEnrollment,resourceKind:'block'|'relation',resourceId:string){
+export function decodeNativeMemoryResourceEvent(row:Row,e:NativeMemoryResourceScope,resourceKind:'block'|'relation',resourceId:string){
   if(row.schema_version!==1||!derivationId(row.event_id)||!derivationInteger(row.sequence,1)||!derivationTime(row.recorded_at)||String(row.recorded_at)>new Date().toISOString()
     ||String(row.event_id).startsWith('optimistic:')||String(row.client_id).includes('optimistic')||row.compensated!==0||row.compensates_event_id!==null)throw Error('source');
   const publicPayload=JSON.parse(String(row.payload)),event=serializeEvent(row),p=event.payload;
@@ -40,13 +41,14 @@ export function decodeNativeMemoryResourceEvent(row:Row,e:LiveMemoryEnrollment,r
  * A raw pointer, absent/ambiguous source, library/canvas placement or oversized
  * history remains explicitly unresolved. No block text becomes a quotation.
  * The caller must seal/replay this observer with its native grant/access proof.
- * Reference requests are internal endpoint reads; their caller must separately
- * witness the genuine relationship event. They do not authorize a relationship.
+ * Reference requests are internal endpoint/version reads; their caller must
+ * separately certify a genuine relationship or inspection before treating it as
+ * an observation. A version read alone does not authorize publication.
  * Versions describe retained native block fields, NOT relations or dereferenced attachments.
  */
-export async function observeNativeMemoryBlockBindings(env:WorkerEnv,e:LiveMemoryEnrollment,
+export async function observeNativeMemoryBlockBindings(env:WorkerEnv,e:NativeMemoryResourceScope,
   observations:readonly Observation[],observer:NativeMemoryContextObserver,onCapacity?:()=>void):Promise<NativeMemoryBlockBindings>{
-  const selected=observations.filter(row=>row.blockPointer!==null&&(actions.has(row.eventType)||row.reference===true&&['BlockRelationAdded','BlockRelationRemoved'].includes(row.eventType)));
+  const selected=observations.filter(row=>row.blockPointer!==null&&(actions.has(row.eventType)||row.reference===true&&['BlockRelationAdded','BlockRelationRemoved','BlockInspected'].includes(row.eventType)));
   const empty=()=>({version:1 as const,entries:[],unresolved:selected.length});
   if(!selected.length)return empty();
   const parent=nativeMemoryDocumentIdentity(e);if(!parent)throw Error('memory-block-scope');
@@ -97,7 +99,7 @@ export async function observeNativeMemoryBlockBindings(env:WorkerEnv,e:LiveMemor
   const entries:NativeMemoryBlockBinding[]=[];
   for(const observation of selected){
     try{
-      if(observation.reference&&!['BlockRelationAdded','BlockRelationRemoved'].includes(observation.eventType))continue;
+      if(observation.reference&&!['BlockRelationAdded','BlockRelationRemoved','BlockInspected'].includes(observation.eventType))continue;
       const blockId=observation.blockPointer!,source=rows.filter(row=>JSON.parse(String(row.payload)).block_id===blockId&&Number(row.sequence)<=observation.sequence);
       const current=placements.find(row=>row.block_id===blockId);if(!source.length||!current)continue;
       const custody=JSON.parse(String(current.custody));

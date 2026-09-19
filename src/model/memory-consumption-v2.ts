@@ -7,18 +7,20 @@ export const MEMORY_CONSUMPTION_V2 = "memory-consumption-episodes-v2" as const;
 export const MEMORY_CONSUMPTION_V3 = "memory-consumption-episodes-v3" as const;
 /** Explicit governed artifact-view negotiation; V2/V3 remain personal-only. */
 export const MEMORY_CONSUMPTION_V4 = "memory-consumption-episodes-v4" as const;
-export type MemoryArtifactConsumptionVersion = typeof MEMORY_CONSUMPTION_V2 | typeof MEMORY_CONSUMPTION_V3 | typeof MEMORY_CONSUMPTION_V4;
+/** Explicit native document-block inspector receipts; earlier contracts stay unchanged. */
+export const MEMORY_CONSUMPTION_V5 = "memory-consumption-episodes-v5" as const;
+export type MemoryArtifactConsumptionVersion = typeof MEMORY_CONSUMPTION_V2 | typeof MEMORY_CONSUMPTION_V3 | typeof MEMORY_CONSUMPTION_V4 | typeof MEMORY_CONSUMPTION_V5;
 export type MemoryConsumptionTarget = { kind: "document"; documentId: string } | {
   kind: "artifact"; documentId: string; artifactId: string; artifactKind: string; revision: number; contentSha256: string;
-};
-export type MemoryConsumptionV2Source = { eventId: string; type: "DocumentViewVisited" | "DocumentArtifactViewed";
+} | { kind: "block"; documentId: string; blockId: string; revision: number; stateSha256: string };
+export type MemoryConsumptionV2Source = { eventId: string; type: "DocumentViewVisited" | "DocumentArtifactViewed" | "BlockInspected";
   recordedAt: string; validUntil: string; target: MemoryConsumptionTarget };
 export type MemoryConsumptionV2 = {
   version: MemoryArtifactConsumptionVersion; treatment: "descriptive-consumption"; validUntil: string;
   sources: MemoryConsumptionV2Source[];
-  episodes: { episodeId: null; observations: [{ sourceIndex: number; kind: "visit" | "viewer-open" }];
+  episodes: { episodeId: null; observations: [{ sourceIndex: number; kind: "visit" | "viewer-open" | "inspector-open" }];
     firstRecordedAt: string; lastRecordedAt: string; validUntil: string; independentEvidence: false }[];
-  coverage: { eligibleSourceCount: number; observationCount: number; unavailableArtifactSourceCount: number;
+  coverage: { eligibleSourceCount: number; observationCount: number; unavailableArtifactSourceCount: number; unavailableBlockSourceCount?: number;
     completeHistory: false; bounded: true; truncated: boolean };
   attention: "not-measured"; comprehension: "not-measured"; inferredPreferences: false;
 };
@@ -52,7 +54,11 @@ function parseArtifactConsumption(original: unknown, originalLifetime: MemoryRec
       const target = source.target as Row;
       check(target && target.documentId === input.documentId);
       if (source.type === "DocumentViewVisited") { row(target, ["kind", "documentId"]); check(target.kind === "document"); }
-      else {
+      else if (source.type === "BlockInspected") {
+        check(expectedVersion === MEMORY_CONSUMPTION_V5); row(target, ["kind", "documentId", "blockId", "revision", "stateSha256"]);
+        check(target.kind === "block" && id(target.blockId) && Number.isSafeInteger(target.revision) && Number(target.revision) >= 1
+          && typeof target.stateSha256 === "string" && /^[a-f0-9]{64}$/u.test(target.stateSha256));
+      } else {
         check(source.type === "DocumentArtifactViewed"); row(target, ["kind", "documentId", "artifactId", "artifactKind", "revision", "contentSha256"]);
         check(target.kind === "artifact" && id(target.artifactId) && typeof target.artifactKind === "string"
           && (DOCUMENT_ARTIFACT_KINDS as readonly string[]).includes(target.artifactKind) && Number.isSafeInteger(target.revision) && Number(target.revision) >= 0
@@ -66,13 +72,15 @@ function parseArtifactConsumption(original: unknown, originalLifetime: MemoryRec
         && episode.lastRecordedAt === source.recordedAt && episode.validUntil === source.validUntil
         && Array.isArray(episode.observations) && episode.observations.length === 1);
       const observation = row(episode.observations[0], ["sourceIndex", "kind"]);
-      check(observation.sourceIndex === index && observation.kind === (source.type === "DocumentViewVisited" ? "visit" : "viewer-open"));
+      check(observation.sourceIndex === index && observation.kind === (source.type === "DocumentViewVisited" ? "visit" : source.type === "BlockInspected" ? "inspector-open" : "viewer-open"));
       return episode as unknown as MemoryConsumptionV2["episodes"][number];
     });
-    const coverage = row(value.coverage, ["eligibleSourceCount", "observationCount", "unavailableArtifactSourceCount", "completeHistory", "bounded", "truncated"]);
+    const coverage = row(value.coverage, ["eligibleSourceCount", "observationCount", "unavailableArtifactSourceCount", "completeHistory", "bounded", "truncated", ...(expectedVersion === MEMORY_CONSUMPTION_V5 ? ["unavailableBlockSourceCount"] : [])]);
     check(coverage.eligibleSourceCount === sources.length && coverage.observationCount === episodes.length && coverage.completeHistory === false
       && coverage.bounded === true && typeof coverage.truncated === "boolean" && Number.isSafeInteger(coverage.unavailableArtifactSourceCount)
       && Number(coverage.unavailableArtifactSourceCount) >= 0 && Number(coverage.unavailableArtifactSourceCount) <= 32);
+    if(expectedVersion === MEMORY_CONSUMPTION_V5)check(Number.isSafeInteger(coverage.unavailableBlockSourceCount)
+      && Number(coverage.unavailableBlockSourceCount)>=0 && Number(coverage.unavailableBlockSourceCount)<=32);
     check(new TextEncoder().encode(JSON.stringify(value)).byteLength <= 65_536);
     return { ...value, sources, episodes } as MemoryConsumptionV2;
   } catch { return null; }
@@ -88,4 +96,8 @@ export function parseMemoryConsumptionV3(...input: ConsumptionParseInput): Memor
 
 export function parseMemoryConsumptionV4(...input: ConsumptionParseInput): MemoryConsumptionV2 | null {
   return parseArtifactConsumption(...input, MEMORY_CONSUMPTION_V4);
+}
+
+export function parseMemoryConsumptionV5(...input: ConsumptionParseInput): MemoryConsumptionV2 | null {
+  return parseArtifactConsumption(...input, MEMORY_CONSUMPTION_V5);
 }

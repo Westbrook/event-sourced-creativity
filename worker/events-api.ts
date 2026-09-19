@@ -685,6 +685,7 @@ export async function handleEvents(request:Request,env:WorkerEnv,hot=false,userO
       const consent=requireConsent(auth.user);if(consent)return consent;
       const selectedBody=await request.json() as Parameters<typeof appendGovernedArtifactView>[4];
       const selectedEvents=selectedBody.events??(selectedBody.event?[selectedBody.event]:[]);
+      if(selectedEvents.some(event=>event.type==='BlockInspected'))return appendNativeBlockInspection(request,env,auth.user,selectedBody,selected.context);
       if(selectedEvents.some(event=>event.type==='DocumentArtifactViewed'))return appendGovernedArtifactView(request,env,auth.user,selected.context,selectedBody);
       if(hot)return Response.json({error:'project_operation_unavailable'},{status:403});
       return appendProjectEvents(env,selected.context,auth.user,selectedBody);
@@ -1078,6 +1079,10 @@ export async function handleEvents(request:Request,env:WorkerEnv,hot=false,userO
       return Response.json({error:"active_pilot_participation_required",appended:[released],head:released.sequence},{status:403});
     };
     const requested=body.action==="batch"||body.action==="canvas_sync"||hot?body.events??(body.event?[body.event]:[]):body.event?[body.event]:[];
+    if(requested.some(item=>item.type==='BlockInspected')){
+      if(execution||body.action==='canvas_sync')return Response.json({error:'block_inspection_isolated_append_required',noAutomaticRetry:true},{status:409});
+      return appendNativeBlockInspection(request,env,auth.user,body);
+    }
     if(requested.some(item=>item.type==="DocumentArtifactViewed")){
       if(execution||body.action==="canvas_sync"||requested.length!==1||requested[0]?.compensatesEventId
         ||!['append','hot','batch'].includes(body.action??'')
@@ -2052,6 +2057,7 @@ import { configuredPilotAdmissionGuard, type BudgetReservationGuard } from "./pi
 import { projectSourceProjectionCurrentAssertion, projectStructuredSourceProjectionCurrentAssertion } from "./project-access.ts";
 import { publicEventPayload } from "./event-privacy.ts";
 import { projectSourceProjectionAssertion } from "./project-source-read.ts";
+import { appendNativeBlockInspection } from "./memory-block-inspection.ts";
 import { memoryDigest } from "../src/model/scoped-memory.ts";
 import { nativeMemoryDescriptor, nativeMemoryGrantDeadline, nativeMemoryPilotDeadline, nativeMemoryPilotQuery,
   nativeMemoryTimestamp, type NativeMemoryQuery } from "./memory-native-deadlines.ts";

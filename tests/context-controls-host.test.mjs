@@ -2297,3 +2297,16 @@ for (const [locale, expectedName] of Object.entries({
       "the saved source weight stays unchanged while each instance keeps its local draft");
   }
 });
+
+for(const fault of ['none','hidden','route','authorization','closed','detached','source-replaced','instrumentation-disabled'])test('actual Document inspector records only a visible current native block opening: '+fault,async t=>{
+  const f=fixture(),seen=[];f.store.ui.instrumentation=true;const oldVisibility=documentPort.visibilityState;documentPort.visibilityState='visible';t.after(()=>{documentPort.visibilityState=oldVisibility;});
+  await f.select('decision-0');const host=f.block('decision-0');let resume;const update=new Promise(resolve=>{resume=resolve;});Object.defineProperty(host,'updateComplete',{configurable:true,get:()=>update});
+  f.store.hot=async(event,options)=>{if(options.current())seen.push(event);};
+  const open=f.renderer.handler(host,'button',node=>String(node.attributes.class).includes('context-controls-toggle'));await open();f.draw();
+  const panel=host.querySelector('.context-controls-panel');assert.ok(panel);panel.getClientRects=()=>[{}];
+  if(fault==='hidden')documentPort.visibilityState='hidden';if(fault==='route')f.state.route='/document/other';if(fault==='authorization')f.state.authorization='other';
+  if(fault==='closed')await f.renderer.handler(host,'button',node=>String(node.attributes.class).includes('context-controls-toggle'))();
+  if(fault==='detached')host.isConnected=false;if(fault==='source-replaced')host.block={...host.block,sourceEvents:['different-native-source']};if(fault==='instrumentation-disabled')f.store.ui.instrumentation=false;
+  resume(true);for(let index=0;index<6;index++)await Promise.resolve();assert.equal(seen.length,Number(fault==='none'));
+  if(seen.length){assert.equal(seen[0].type,'BlockInspected');assert.equal(seen[0].payload.source_surface,'document-context-controls');assert.deepEqual(seen[0].payload.source_event_ids,host.block.sourceEvents);assert.equal(JSON.stringify(seen).includes('Authored'),false);}
+});

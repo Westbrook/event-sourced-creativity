@@ -912,3 +912,113 @@ test('native artifact frames: unrelated unindexed appends need no repair but cur
   assert.equal((await f.submit()).status,409,'Current-view writer still requires the refreshed native projection');
   assert.deepEqual(f.sqlite.prepare('SELECT * FROM project_migration_states WHERE project_access_id=?').get(f.sharing.projectAccessId),before,'Historical certification never repairs a project index');
 });
+
+async function nativeBlockInspectionFixture(t,{shared=false,memory=false}={}){
+  const f=await (memory?memoryArtifactFixture:fixture)(t,{depth:true,...(shared?{shared:true}:{})}),blockId='genuine-inspected-block';
+  const response=await f.request('/api/events',f.json({action:'append',event:{type:'BlockCreated',payload:{project_id:f.projectId,document_id:f.documentId,scope:'document',block_id:blockId,type:'direction',properties:{text:'Original inspected native block'}}}}));
+  assert.equal(response.status,200,await response.clone().text());const source=(await response.json()).appended.find(row=>row.type==='BlockCreated');assert.ok(source);
+  const payload={project_id:f.projectId,document_id:f.documentId,block_id:blockId,source_event_ids:[source.eventId],source_surface:'document-context-controls'};
+  const inspect=(changes={},extra={})=>f.request('/api/events/hot',f.json({action:'hot',event:{type:'BlockInspected',payload:{...payload,...changes}},...extra}));
+  return Object.assign(f,{blockId,blockSource:source,blockPayload:payload,inspectBlock:inspect});
+}
+for(const shared of [false,true])test('native block inspection: genuine current source publication is actor-private '+shared,async t=>{
+  const f=await nativeBlockInspectionFixture(t,{shared}),before=f.counts(),response=await f.inspectBlock();assert.equal(response.status,200,await response.clone().text());
+  const event=(await response.json()).appended[0];assert.equal(event.type,'BlockInspected');assert.equal(event.actor,'user:'+f.owner);assert.equal(event.payload.capture_version,'native-block-inspection-v1');assert.match(event.payload.state_sha256,/^[a-f0-9]{64}$/);
+  assert.deepEqual(event.payload.source_event_ids,[f.blockSource.eventId]);assert.ok(f.sqlite.prepare('SELECT * FROM event_private_payloads WHERE private_event_id=?').get(event.eventId));assert.deepEqual(f.counts(),before);
+  const {presentActorArtifactView}=await import('../worker/memory-artifact-presentation.ts');assert.equal(presentActorArtifactView(event,'other-actor').type,'ProjectResourceRestricted');assert.equal(presentActorArtifactView(event,f.owner).type,'BlockInspected');
+});
+
+for(const shared of [false,true])test('native block inspection: consented capture binds exact versions without plaintext '+shared,async t=>{
+  const f=await memoryArtifactFixture(t,{shared}),blockId='memory-observed-context',payload={project_id:f.projectId,document_id:f.documentId,block_id:blockId,scope:'document',type:'direction',properties:{text:'Private inspected block body'}};
+  const created=await f.request('/api/events',f.json({action:'append',event:{type:'BlockCreated',payload}}));assert.equal(created.status,200,await created.clone().text());const original=(await created.json()).appended.find(row=>row.type==='BlockCreated');
+  const response=await f.request('/api/events/hot',f.json({action:'hot',event:{type:'BlockInspected',payload:{project_id:f.projectId,document_id:f.documentId,block_id:blockId,source_event_ids:[original.eventId],source_surface:'document-context-controls'}}}));
+  assert.equal(response.status,200,await response.clone().text());const observed=(await response.json()).appended[0],run=await f.run();assert.equal(run.status,'completed',JSON.stringify(run));
+  assert.ok(f.sqlite.prepare('SELECT * FROM memory_live_sources WHERE event_id=?').get(observed.eventId));
+  const {captureNativeBlockInspections}=await import('../worker/memory-native-block-inspection.ts'),{AssistantContextReadWitness}=await import('../worker/assistant-context-source.ts'),e=f.enrollment(),a=await liveMemoryAuthority(f.env,e),witness=new AssistantContextReadWitness(f.env);
+  const captured=await captureNativeBlockInspections(f.env,e,a,{after:0,through:e.cursor_sequence,remembered:true},witness);assert.equal(captured.sources.length,1);assert.equal(captured.sources[0].version.blockId,blockId);
+  assert.equal(JSON.stringify(captured.sources).includes('Private inspected'),false);witness.seal(null);await f.env.DB.batch(witness.precommitStatements());
+  f.sqlite.prepare('DELETE FROM event_private_payloads WHERE private_event_id=?').run(original.eventId);await assert.rejects(()=>f.env.DB.batch(witness.precommitStatements()));
+});
+
+for(const shared of [false,true])test('native block inspection: fabricated, stale and mixed claims never publish '+shared,async t=>{
+  const f=await nativeBlockInspectionFixture(t,{shared}),count=()=>f.sqlite.prepare("SELECT COUNT(*) AS n FROM events WHERE type='BlockInspected'").get().n;
+  for(const change of [{source_event_ids:[]},{source_event_ids:['unknown']},{source_event_ids:[f.blockSource.eventId,f.blockSource.eventId]},
+    {source_event_ids:['optimistic:source']},{block_id:'wrong'},{document_id:'wrong'},{project_id:'wrong'},{source_surface:'library'},
+    {capture_version:'native-block-inspection-v1'},{state_sha256:'0'.repeat(64)},{synthetic:true},{actor_user_id:'other'}]){
+    const response=await f.inspectBlock(change);assert.ok([400,403,409].includes(response.status),JSON.stringify(change));
+  }
+  const before=f.sqlite.prepare('SELECT COUNT(*) AS n FROM events').get().n;
+  const mixed=await f.inspectBlock({}, {events:[{type:'BlockInspected',payload:f.blockPayload},{type:'DocumentRenamed',payload:{document_id:f.documentId,new_title:'Not written'}}]});assert.equal(mixed.status,400);assert.equal(f.sqlite.prepare('SELECT COUNT(*) AS n FROM events').get().n,before);
+  await appendAuditEvent(f.env,f.streamId,'user:'+f.owner,'BlockPropertyEdited',{project_id:f.projectId,document_id:f.documentId,block_id:f.blockId,property_path:'text',new_value:'Updated source'});
+  assert.equal((await f.inspectBlock()).status,409);assert.equal(count(),0);
+});
+for(const shared of [false,true])for(const fault of ['source-erased','block-removed','document-removed','late-property','lost-ack','false-ack'])test('native block inspection: final '+fault+' '+shared,async t=>{
+  const f=await nativeBlockInspectionFixture(t,{shared});let injected=false;
+  const selected=statements=>statements.some(row=>row.sql.startsWith('INSERT INTO event_write_stage(')&&row.values.includes('BlockInspected'));
+  if(fault==='lost-ack'||fault==='false-ack')f.controls.afterBatch=async(statements,results)=>{if(!injected&&selected(statements)){injected=true;if(fault==='lost-ack')throw Error('isolated-lost-ack');results.at(-1).results=[{block_inspection_committed:0}];}};
+  else f.controls.beforeBatch=async statements=>{if(injected||!selected(statements))return;injected=true;
+    if(fault==='source-erased')f.sqlite.prepare('DELETE FROM event_private_payloads WHERE private_event_id=?').run(f.blockSource.eventId);
+    if(fault==='block-removed'||fault==='document-removed'||fault==='late-property')await appendAuditEvent(f.env,f.streamId,'user:'+f.owner,
+      fault==='block-removed'?'BlockRemoved':fault==='document-removed'?'DocumentRemoved':'BlockPropertyEdited',
+      {project_id:f.projectId,document_id:f.documentId,block_id:f.blockId,...(fault==='late-property'?{property_path:'text',new_value:'Changed between capture and commit'}:{})});
+  };
+  const response=await f.inspectBlock();assert.equal(response.status,409,await response.clone().text());assert.equal(injected,true);
+  assert.equal(f.sqlite.prepare("SELECT COUNT(*) AS n FROM events WHERE type='BlockInspected'").get().n,Number(fault==='lost-ack'||fault==='false-ack'));
+});
+
+for(const shared of [false,true])test('native block inspection: bounded mixed pages resume without skipping and Forget removes references '+shared,async t=>{
+  const f=await nativeBlockInspectionFixture(t,{shared,memory:true}),ids=[];
+  for(let i=0;i<33;i++){
+    const response=await f.inspectBlock();assert.equal(response.status,200,await response.clone().text());ids.push((await response.json()).appended[0].eventId);
+    if(i===10||i===32){const view=await f.submit();assert.equal(view.status,200,await view.clone().text());ids.push((await view.json()).appended[0].eventId);}
+  }
+  assert.equal((await f.run()).status,'completed');
+  assert.equal(f.sqlite.prepare('SELECT COUNT(*) AS n FROM memory_live_sources WHERE event_id IN(SELECT value FROM json_each(?))').get(JSON.stringify(ids)).n,33);
+  assert.ok(f.enrollment().cutoff_sequence>f.enrollment().cursor_sequence);
+  f.sqlite.exec("UPDATE memory_live_enrollments SET next_due_at='2000-01-01T00:00:00.000Z'");assert.equal((await f.run()).status,'completed');
+  assert.equal(f.sqlite.prepare('SELECT COUNT(*) AS n FROM memory_live_sources WHERE event_id IN(SELECT value FROM json_each(?))').get(JSON.stringify(ids)).n,35);assert.equal(f.enrollment().cutoff_sequence,null);
+  const response=await f.request('/api/memory/settings?id='+f.enrollment().enrollment_id,{...f.json({confirmation:'FORGET_MY_MEMORY',revision:f.enrollment().revision}),method:'DELETE'});
+  assert.equal(response.status,200,await response.clone().text());assert.equal(f.sqlite.prepare('SELECT COUNT(*) AS n FROM memory_live_sources').get().n,0);
+});
+for(const shared of [false,true])for(const fault of ['source-erased','enrollment-paused','receipt-custody','source-custody','suppressed-reference'])test('native block inspection: atomic capture refuses '+fault+' '+shared,async t=>{
+  const f=await nativeBlockInspectionFixture(t,{shared,memory:true}),cursor=f.enrollment().cursor_sequence,response=await f.inspectBlock();assert.equal(response.status,200,await response.clone().text());const id=(await response.json()).appended[0].eventId;let injected=false;
+  f.controls.beforeBatch=statements=>{if(injected||!statements.some(row=>row.sql.startsWith('INSERT INTO memory_live_sources')&&row.values.includes(id)))return;injected=true;
+    if(fault==='source-erased')f.sqlite.prepare('DELETE FROM event_private_payloads WHERE private_event_id=?').run(f.blockSource.eventId);
+    if(fault==='enrollment-paused')f.sqlite.exec('UPDATE memory_live_enrollments SET learn_enabled=0');
+    if(fault==='receipt-custody')f.sqlite.prepare("UPDATE event_private_payloads SET owner_id='other' WHERE private_event_id=?").run(id);
+    if(fault==='source-custody')f.sqlite.prepare("UPDATE event_private_payloads SET owner_id='other' WHERE private_event_id=?").run(f.blockSource.eventId);
+    if(fault==='suppressed-reference')f.sqlite.exec("CREATE TRIGGER suppress_block_reference BEFORE INSERT ON memory_live_sources BEGIN SELECT RAISE(IGNORE); END");
+  };
+  assert.equal((await f.run()).status,'partial');assert.equal(injected,true);assert.equal(f.enrollment().cursor_sequence,cursor);assert.equal(f.sqlite.prepare('SELECT COUNT(*) AS n FROM memory_live_sources WHERE event_id=?').get(id).n,0);
+});
+for(const shared of [false,true])test('native block inspection: isolated D1 native writer capture and late erasure '+shared,{timeout:180000},async t=>{
+  const f=await nativeBlockInspectionFixture(t,{shared,memory:true}),{createRequire}=await import('node:module'),{Miniflare,Log,LogLevel}=createRequire(import.meta.resolve('wrangler'))('miniflare'),{exportSynthetic,install}=await import('./helpers/model3d-workerd-snapshot.mjs');let outbound=0;
+  const mf=new Miniflare({modules:true,compatibilityDate:'2026-05-15',host:'127.0.0.1',port:0,log:new Log(LogLevel.NONE),d1Databases:['BlockInspection'],script:"export default {fetch(){return new Response('Isolated',{status:404});}}",outboundService(){outbound++;throw Error('External fetch forbidden');}});
+  t.after(async()=>{await mf.dispose();assert.equal(outbound,0);});const db=await mf.getD1Database('BlockInspection');await install(db,exportSynthetic(f.sqlite));f.env.DB=db;
+  const response=await f.inspectBlock();assert.equal(response.status,200,await response.clone().text());const event=(await response.json()).appended[0],run=await f.run();assert.equal(run.status,'completed',JSON.stringify(run));
+  const e=await db.prepare('SELECT * FROM memory_live_enrollments').first(),a=await liveMemoryAuthority(f.env,e),{captureNativeBlockInspections}=await import('../worker/memory-native-block-inspection.ts'),{AssistantContextReadWitness}=await import('../worker/assistant-context-source.ts'),witness=new AssistantContextReadWitness(f.env);
+  const capture=await captureNativeBlockInspections(f.env,e,a,{after:0,through:e.cursor_sequence,remembered:true},witness);assert.equal(capture.sources[0].eventId,event.eventId);witness.seal(null);await db.batch(witness.precommitStatements());
+  await db.prepare('DELETE FROM event_private_payloads WHERE private_event_id=?').bind(f.blockSource.eventId).run();await assert.rejects(()=>db.batch(witness.precommitStatements()));assert.deepEqual((await db.prepare('PRAGMA foreign_key_check').all()).results,[]);
+});
+
+for(const shared of [false,true])test('native block inspection: v5 private inspector is exact, bounded and never widens older contracts '+shared,async t=>{
+  const f=await nativeBlockInspectionFixture(t,{shared,memory:true}),response=await f.inspectBlock();assert.equal(response.status,200,await response.clone().text());const event=(await response.json()).appended[0];assert.equal((await f.submit()).status,200);assert.equal((await f.run()).status,'completed');
+  const db=f.env.DB,prepare=db.prepare,batch=db.batch,originals=new WeakMap();let operations=0;
+  const wrap=raw=>{const proxy=new Proxy(raw,{get(target,key){if(key==='bind')return(...args)=>wrap(target.bind(...args));if(['all','first','run','raw'].includes(key))return(...args)=>{operations++;return target[key](...args);};return Reflect.get(target,key,target);}});originals.set(proxy,raw);return proxy;};
+  db.prepare=function(sql){return wrap(prepare.call(this,sql));};db.batch=function(inputs){operations++;return batch.call(this,inputs.map(input=>originals.get(input)??input));};t.after(()=>{db.prepare=prepare;db.batch=batch;});
+  const inspected=await f.inspect('memory-consumption-episodes-v5');assert.equal(inspected.status,200,await inspected.clone().text());const body=await inspected.json(),p=body.consumptionEpisodes;assert.ok(operations<50,'Complete inspector budget '+operations);t.diagnostic(JSON.stringify({shared,operations}));
+  assert.equal(p.sources.length,2);const source=p.sources.find(row=>row.eventId===event.eventId);assert.deepEqual(source.target,{kind:'block',documentId:f.documentId,blockId:f.blockId,revision:event.payload.block_revision,stateSha256:event.payload.state_sha256});assert.equal(JSON.stringify(body).includes('Original inspected native block'),false);
+  assert.equal(p.coverage.unavailableBlockSourceCount,0);assert.equal(p.episodes[p.sources.indexOf(source)].observations[0].kind,'inspector-open');
+  for(const version of ['','memory-consumption-episodes-v1','memory-consumption-episodes-v2','memory-consumption-episodes-v3','memory-consumption-episodes-v4']){const legacy=await f.inspect(version);assert.equal(legacy.status,200,await legacy.clone().text());assert.equal((await legacy.json()).consumptionEpisodes?.sources?.some(row=>row.eventId===event.eventId)??false,false);}
+  f.sqlite.prepare('DELETE FROM event_private_payloads WHERE private_event_id=?').run(f.blockSource.eventId);const withdrawn=await f.inspect('memory-consumption-episodes-v5');assert.equal(withdrawn.status,200,await withdrawn.clone().text());const expired=await withdrawn.json();assert.equal(expired.consumptionEpisodes.sources.some(row=>row.eventId===event.eventId),false);assert.equal(expired.consumptionEpisodes.coverage.unavailableBlockSourceCount,1);
+});
+for(const shared of [false,true])for(const fault of ['source','receipt','enrollment','truncated-ack'])test('native block inspection: v5 final delivery rejects '+fault+' '+shared,async t=>{
+  const f=await nativeBlockInspectionFixture(t,{shared,memory:true}),receipt=await f.inspectBlock();assert.equal(receipt.status,200,await receipt.clone().text());const id=(await receipt.json()).appended[0].eventId;assert.equal((await f.run()).status,'completed');let injected=false;
+  const selected=statements=>statements.some(row=>row.sql.includes('AS remembered_until')&&row.values.includes('user:'+f.owner));
+  if(fault==='truncated-ack')f.controls.afterBatch=(statements,results)=>{if(!injected&&selected(statements)){injected=true;results.pop();}};
+  else f.controls.beforeBatch=statements=>{if(injected||!selected(statements))return;injected=true;
+    if(fault==='source'||fault==='receipt')f.sqlite.prepare('DELETE FROM event_private_payloads WHERE private_event_id=?').run(fault==='source'?f.blockSource.eventId:id);
+    if(fault==='enrollment')f.sqlite.exec('UPDATE memory_live_enrollments SET recall_enabled=0');
+  };
+  const response=await f.inspect('memory-consumption-episodes-v5');assert.equal(response.status,403,await response.clone().text());assert.equal(injected,true);assert.equal((await response.text()).includes(f.blockId),false);
+});

@@ -2808,12 +2808,12 @@ function visitsRecall(item, { checkedAt = now(), leaseMs = 60_000, empty = false
   })));
   body.consumption.encounter = 3; body.coverage.sourceCount = body.sources.length;
   const indexes = empty ? [] : [1, 3];
-  body.consumptionEpisodes = { version: "memory-consumption-episodes-v4", treatment: "descriptive-consumption", validUntil: until,
+  body.consumptionEpisodes = { version: "memory-consumption-episodes-v5", treatment: "descriptive-consumption", validUntil: until,
     sources:indexes.map(sourceIndex=>{const {eventId,type,recordedAt,validUntil}=body.sources[sourceIndex];return{eventId,type,recordedAt,validUntil,target:{kind:"document",documentId:item.documentId}};}),
     episodes: indexes.map((_sourceIndex,sourceIndex) => ({ episodeId: null,
       observations: [{ sourceIndex, kind: "visit" }],
       firstRecordedAt: checkedAt, lastRecordedAt: checkedAt, validUntil: until, independentEvidence: false })),
-    coverage: { eligibleSourceCount: indexes.length, observationCount: indexes.length, unavailableArtifactSourceCount:0,
+    coverage: { eligibleSourceCount: indexes.length, observationCount: indexes.length, unavailableArtifactSourceCount:0,unavailableBlockSourceCount:0,
       completeHistory: false, bounded: true, truncated:false },
     attention: "not-measured", comprehension: "not-measured", inferredPreferences: false };
   return body;
@@ -2847,7 +2847,7 @@ test("recorded visits: explicit action replaces the complete receipt and shows o
   assert.ok(oldReceipt.retireCalls > 0); assert.equal(h.text().includes("Prior parent conversation"), false);
   assert.equal(h.text().includes("personal-memory-excerpts"), false);
   assert.equal(h.calls.at(-1).url, "/api/memory/recall?id=" + row.id
-    + "&outcomes=native-assisted-outcomes-v1&savedOutputs=native-saved-outputs-v1&consumptionEpisodes=memory-consumption-episodes-v4");
+    + "&outcomes=native-assisted-outcomes-v1&savedOutputs=native-saved-outputs-v1&consumptionEpisodes=memory-consumption-episodes-v5");
   assert.equal(h.focusLeases.length, 1); assert.equal(h.focusLeases[0].disposed, false);
   delayed.release(); await pending;
   const root = h.render(), section = [...templates(root)].find(value => value.strings.some(part => part.includes("data-memory-visits>")));
@@ -3014,7 +3014,7 @@ test("recorded visits: every supported locale has matching descriptive labels an
   const selected = dictionary => Object.keys(dictionary).filter(key => key.startsWith("memory.live.visits")).sort();
   const english = FORMA_PERSONAL_MEMORY_MESSAGES.en, keys = selected(english);
   const placeholders = value => [...value.matchAll(/\{(\w+)\}/gu)].map(match => match[1]).sort();
-  assert.equal(keys.length, 14);
+  assert.equal(keys.length, 16);
   for (const dictionary of Object.values(FORMA_PERSONAL_MEMORY_MESSAGES)) {
     assert.deepEqual(selected(dictionary), keys);
     for (const key of keys) { assert.ok(dictionary[key].trim()); assert.deepEqual(placeholders(dictionary[key]), placeholders(english[key])); }
@@ -3481,4 +3481,12 @@ test('latest derived purpose empty inventory does not load or invent a profile',
   const {h,item}=await purposeFixture(t),data=derivedReviewFixture(item),before=purposeActions(h).length;
   data.list.purpose='profile';data.list.results=[];h.enqueue(data.list);await profileClick(h,'reviewLatest.profile');
   assert.equal(purposeActions(h).length,before+1);assert.match(h.text(),/memory.live.reviewEmpty/);assert.equal(h.mutations().length,0);
+});
+
+test('recorded visits: block inspection is descriptive and retires with its parent receipt',async t=>{
+  const row=enrollment(),h=fixture(t,{initial:settings([row])});await openVisitAction(h,row);
+  const body=visitsRecall(row,{checkedAt:new Date(h.clock.now).toISOString()}),p=body.consumptionEpisodes;
+  p.sources[0]={...p.sources[0],type:'BlockInspected',target:{kind:'block',documentId:row.documentId,blockId:'private-inspected-block',revision:4,stateSha256:'a'.repeat(64)}};p.episodes[0].observations[0].kind='inspector-open';p.coverage.unavailableBlockSourceCount=1;
+  h.enqueue(body);await h.click('visitsInclude');assert.ok(h.text().includes('memory.live.visitsBlockOpened'));assert.ok(h.text().includes('memory.live.visitsBlockUnavailable'));
+  assert.equal(h.text().includes('private-inspected-block'),false);assert.equal(h.text().includes('a'.repeat(64)),false);await h.click('hide');assert.equal(h.text().includes('memory.live.visitsBlockOpened'),false);
 });

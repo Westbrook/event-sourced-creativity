@@ -48,7 +48,7 @@ export function nativeMemoryArtifactIdentity(input: Parameters<typeof nativeMemo
  * principal/session/grant guards and seal/replay that witness before use.
  * No whole-stream head is pinned: an unrelated or own-answer append is not a move. */
 export async function observeNativeMemoryDocumentScope(env: WorkerEnv, prepared: NativeMemoryPreparedDocument,
-  expected: LiveMemoryEnrollment, observer: NativeMemoryContextObserver): Promise<NativeMemoryDocumentScope | null> {
+  expected: Pick<LiveMemoryEnrollment,"actor_user_id"|"owner_user_id"|"organization_id"|"project_access_id"|"project_id"|"document_id"|"permission_epoch">, observer: NativeMemoryContextObserver): Promise<NativeMemoryDocumentScope | null> {
   const db = env.DB, original = memoryCanonical({ prepared, expected }), e = structuredClone(expected), identity = nativeMemoryDocumentIdentity(e);
   const { principal, binding } = prepared;
   if (!identity || !observer || principal.fictional || principal.userId !== e.actor_user_id || binding.actorUserId !== e.actor_user_id

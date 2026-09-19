@@ -37,12 +37,14 @@ for(const locale of ['en','ar'])test.describe('Memory purpose locale '+locale,()
         sources:[{eventId:'synthetic-original',type:'AssistantReasoned',blockId:null,recordedAt:checkedAt,validUntil:until}],
         note:'Observed actions are not inferred preferences; excerpts are truncated and access-filtered.'};
       if(url.searchParams.has('consumptionEpisodes')){
-        expect(url.searchParams.get('consumptionEpisodes')).toBe('memory-consumption-episodes-v4');
-        body.consumptionEpisodes={version:'memory-consumption-episodes-v4',treatment:'descriptive-consumption',validUntil:until,
+        expect(url.searchParams.get('consumptionEpisodes')).toBe('memory-consumption-episodes-v5');
+        body.consumptionEpisodes={version:'memory-consumption-episodes-v5',treatment:'descriptive-consumption',validUntil:until,
           sources:[{eventId:'synthetic-old-view',type:'DocumentArtifactViewed',recordedAt,validUntil:until,target:{kind:'artifact',documentId:item.documentId,artifactId:'synthetic-artifact',artifactKind:'slides',revision:0,contentSha256:'a'.repeat(64)}}],
           episodes:[{episodeId:null,observations:[{sourceIndex:0,kind:'viewer-open'}],firstRecordedAt:recordedAt,lastRecordedAt:recordedAt,validUntil:until,independentEvidence:false}],
-          coverage:{eligibleSourceCount:1,observationCount:1,unavailableArtifactSourceCount:0,completeHistory:false,bounded:true,truncated:false},attention:'not-measured',comprehension:'not-measured',inferredPreferences:false};
+          coverage:{eligibleSourceCount:1,observationCount:1,unavailableArtifactSourceCount:0,unavailableBlockSourceCount:0,completeHistory:false,bounded:true,truncated:false},attention:'not-measured',comprehension:'not-measured',inferredPreferences:false};
       }
+      if(body.consumptionEpisodes){const p=body.consumptionEpisodes;p.sources.push({eventId:'synthetic-block-inspection',type:'BlockInspected',recordedAt,validUntil:until,target:{kind:'block',documentId:item.documentId,blockId:'private-block',revision:3,stateSha256:'b'.repeat(64)}});
+        p.episodes.push({episodeId:null,observations:[{sourceIndex:1,kind:'inspector-open'}],firstRecordedAt:recordedAt,lastRecordedAt:recordedAt,validUntil:until,independentEvidence:false});p.coverage.eligibleSourceCount=2;p.coverage.observationCount=2;}
       return route.fulfill({json:body});
     }
 
@@ -107,9 +109,12 @@ for(const locale of ['en','ar'])test.describe('Memory purpose locale '+locale,()
   await visits.locator('[data-memory-visit-references] > summary').click();
   const opened=visits.getByText(message(locale,'visitsArtifactOpened'),{exact:true});
   await opened.scrollIntoViewIfNeeded();await expect(opened).toBeInViewport();
-  expect(calls.filter(call=>call.query.includes('consumptionEpisodes=memory-consumption-episodes-v4'))).toHaveLength(1);
+  await expect(visits.getByText(message(locale,'visitsBlockOpened'),{exact:true})).toBeVisible();
+  expect(calls.filter(call=>call.query.includes('consumptionEpisodes=memory-consumption-episodes-v5'))).toHaveLength(1);
   expect(calls.every(call=>call.method==='GET')).toBe(true);expect(errors).toEqual([]);
   await captureViewport(page,info,'memory-historical-views-'+locale,{assertStable:false});
+  const blockOpened=visits.getByText(message(locale,'visitsBlockOpened'),{exact:true});await blockOpened.scrollIntoViewIfNeeded();await expect(blockOpened).toBeInViewport();
+  await captureViewport(page,info,'memory-block-views-'+locale,{assertStable:false});
   await info.attach('declared-memory-transport',{body:JSON.stringify({syntheticOnly:true,production:false,providerCalls:0,mutations:0,calls,session:JSON.parse(syntheticReadBody('/api/session')).user.userId},null,2),contentType:'application/json'});
 });
 
@@ -165,5 +170,27 @@ for(const locale of ['en','ar'])test.describe('Automatic document memory '+local
     denied=true;await page.evaluate(()=>window.dispatchEvent(new Event('focus')));
     await expect.poll(()=>calls.filter(call=>call.path.endsWith('/result')).length).toBe(2);
     await expect(brief).toHaveCount(0);expect(calls.every(call=>call.method==='GET')).toBe(true);expect(errors).toEqual([]);
+  });
+});
+
+for(const locale of ['en','ar'])test.describe('Native block inspection '+locale,()=>{
+  test.use({geometry:{viewport:{width:locale==='ar'?320:1280,height:900},zoom:1,locale}});
+  test('Document controls publish only an exact synthetic opening receipt',async({page,context,baseURL},info)=>{
+    expect(syntheticNetworkEnabled(baseURL)).toBe(true);const seen=[],errors=[];page.on('pageerror',error=>errors.push(error.message));
+    await context.route('**/api/memory/settings',async route=>{expect(route.request().method()).toBe('GET');return route.fulfill({json:{enabled:false,enrollments:[],nextAfter:null}});});
+    await context.route('**/api/events/hot',async route=>{
+      const request=route.request(),body=request.postDataJSON();if(body?.event?.type!=='BlockInspected')return route.fallback();
+      expect(new URL(request.url()).origin).toBe(new URL(baseURL).origin);expect(request.method()).toBe('POST');
+      seen.push(body);return route.fulfill({json:{appended:[],rejected:[],head:0,noAutomaticRetry:true}});
+    });
+    await page.goto(path);const owner=page.locator('forma-workspace');await expect(owner).toBeVisible();
+    await owner.evaluate(host=>{host.store.patchUi({instrumentation:true});});
+    const block=owner.locator('forma-context-block:has(article[data-block-id="block-direction"])');await expect(block).toHaveCount(1);
+    expect(seen).toHaveLength(0);await block.locator('.context-decision-select > input[type="radio"]').check();expect(seen).toHaveLength(0);
+    await block.locator('.context-controls-toggle').click();await expect(block.locator('.context-controls-panel')).toBeVisible();
+    await expect.poll(()=>seen.length).toBe(1);expect(seen[0].event.payload).toMatchObject({block_id:'block-direction',document_id:'doc-atmosphere',project_id:'project-atmosphere',source_surface:'document-context-controls'});
+    expect(seen[0].event.payload.source_event_ids.length).toBeGreaterThan(0);expect(JSON.stringify(seen)).not.toContain('quiet interior');
+    await captureViewport(page,info,'native-block-inspection-'+locale,{assertStable:false});
+    await block.locator('.context-controls-toggle').click();await expect(block.locator('.context-controls-toggle')).toHaveAttribute('aria-expanded','false');expect(seen).toHaveLength(1);expect(errors).toEqual([]);
   });
 });

@@ -6,7 +6,7 @@ import { parseMemoryCustody, memoryCustodyMatches } from "../src/model/memory-cu
 import { createMemoryElapsed, memoryTimestamp, parseMemoryLifetime, MEMORY_RECALL_LIFETIME, MEMORY_RECALL_MAX_AGE_MS } from "../src/model/memory-lifetime.ts";
 import { rollingLiveMemoryConsumption } from "../src/model/memory-observations.ts";
 import { createDocumentJobMemoryClient, DocumentJobMemoryError, DOCUMENT_JOB_MEMORY_VERSION } from "../src/state/document-job-memory-client.ts";
-import { MEMORY_CONSUMPTION_V2, MEMORY_CONSUMPTION_V3, MEMORY_CONSUMPTION_V4, parseMemoryConsumptionV2, parseMemoryConsumptionV3, parseMemoryConsumptionV4 } from "../src/model/memory-consumption-v2.ts";
+import { MEMORY_CONSUMPTION_V2, MEMORY_CONSUMPTION_V3, MEMORY_CONSUMPTION_V4, MEMORY_CONSUMPTION_V5, parseMemoryConsumptionV2, parseMemoryConsumptionV3, parseMemoryConsumptionV4, parseMemoryConsumptionV5 } from "../src/model/memory-consumption-v2.ts";
 
 const fixtureId = value => value.toString(16).padStart(64, "0");
 const now = () => new Date().toISOString();
@@ -1825,4 +1825,21 @@ for(const [version,parse] of [[MEMORY_CONSUMPTION_V3,parseMemoryConsumptionV3],[
   }
   let invoked=0;Object.defineProperty(body.consumptionEpisodes.sources[0].target,'revision',{enumerable:true,get(){invoked++;return 0;}});
   assert.equal(parse(body.consumptionEpisodes,body.lifetime,item.documentId,{since:body.coverage.since,expiresAt:item.expiresAt}),null);assert.equal(invoked,0);
+});
+
+function blockConsumptionRecall(item){
+  const body=artifactConsumptionRecall(item),p=body.consumptionEpisodes;p.version=MEMORY_CONSUMPTION_V5;p.coverage.unavailableBlockSourceCount=0;
+  p.sources[0]={...p.sources[0],type:'BlockInspected',target:{kind:'block',documentId:item.documentId,blockId:'native-block',revision:7,stateSha256:'b'.repeat(64)}};p.episodes[0].observations[0].kind='inspector-open';return body;
+}
+test('consumption v5 strictly negotiates block source versions and keeps their own source map',async()=>{
+  const item=enrollment(),body=blockConsumptionRecall(item),{client,calls}=fakeTransport(()=>Response.json(body));
+  const result=await client.recall(item,undefined,{consumptionEpisodes:MEMORY_CONSUMPTION_V5});assert.deepEqual(result.value.consumptionEpisodes,body.consumptionEpisodes);assert.deepEqual(result.value.lifetime,body.lifetime);assert.ok(calls[0].url.endsWith('&consumptionEpisodes='+MEMORY_CONSUMPTION_V5));
+  for(const version of [MEMORY_CONSUMPTION_V2,MEMORY_CONSUMPTION_V3,MEMORY_CONSUMPTION_V4])await assert.rejects(client.recall(item,undefined,{consumptionEpisodes:version}),isClientError('memory_response_invalid',false,200));
+});
+for(const fault of ['kind','document','block','revision','hash','sourceIndex','attention','meaning','coverage','extra','expired','accessor'])test('consumption v5 refuses '+fault,()=>{
+  const item=enrollment(),body=blockConsumptionRecall(item),p=body.consumptionEpisodes,target=p.sources[0].target;let calls=0;
+  if(fault==='kind')target.kind='document';if(fault==='document')target.documentId='foreign';if(fault==='block')target.blockId='';if(fault==='revision')target.revision=0;if(fault==='hash')target.stateSha256='missing';
+  if(fault==='sourceIndex')p.episodes[0].observations[0].sourceIndex=1;if(fault==='attention')p.attention='measured';if(fault==='meaning')p.episodes[0].observations[0].kind='read';if(fault==='coverage')delete p.coverage.unavailableBlockSourceCount;
+  if(fault==='extra')target.text='Forbidden block body';if(fault==='expired')p.sources[0].validUntil='2000-01-01T00:00:00.000Z';if(fault==='accessor')Object.defineProperty(target,'revision',{enumerable:true,get(){calls++;return 7;}});
+  assert.equal(parseMemoryConsumptionV5(p,body.lifetime,item.documentId,{since:body.coverage.since,expiresAt:item.expiresAt}),null);assert.equal(calls,0);
 });

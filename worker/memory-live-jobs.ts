@@ -8,6 +8,7 @@ import type { WorkerEnv } from "./runtime.ts";
 import { liveConversationPublication, liveConversationMarkPublished, liveConversationPrune, liveConversationTrim } from "./memory-live-conversation.ts";
 import { publishCompletedConversationReferences, type CompletedConversationCaptureResult } from "./memory-completed-turns.ts";
 import { prepareLiveMemoryCheckpoint } from "./memory-live-checkpoints.ts";
+import { captureNativeBlockInspections, nativeBlockInspectionCandidates } from './memory-native-block-inspection.ts';
 import { captureNativeArtifactConsumption, nativeArtifactMemoryCandidates } from "./memory-native-artifact-consumption.ts";
 
 export const LIVE_MEMORY_PAGE_SIZE=128;
@@ -50,7 +51,7 @@ async function processScope(env:WorkerEnv,e:LiveMemoryEnrollment,now:string,eras
     erased(result.erased);return 0;
   }
   const q=liveMemorySourceQuery(e,authority),policy=liveMemoryEnrollmentGuard(e);
-  const artifactCandidates=nativeArtifactMemoryCandidates(e),chatCandidates=nativeChatStudioMemoryCandidates(e);
+  const artifactCandidates=nativeArtifactMemoryCandidates(e),chatCandidates=nativeChatStudioMemoryCandidates(e),blockCandidates=nativeBlockInspectionCandidates(e);
   const cleanup=liveConversationPrune(e.enrollment_id,e.revision),trim=liveConversationTrim(e.enrollment_id);
   const originMaintenance=await liveMemoryOriginDependencyWithdrawalStatements(env,
     {enrollmentId:e.enrollment_id,currentRevision:e.revision},"source-unavailable",now);
@@ -62,12 +63,14 @@ async function processScope(env:WorkerEnv,e:LiveMemoryEnrollment,now:string,eras
     UNION SELECT event.event_id ${artifactCandidates.joins} JOIN tracked candidate ON candidate.event_id=event.event_id AND candidate.sequence=event.sequence
       WHERE ${artifactCandidates.condition}
     UNION SELECT event.event_id ${chatCandidates.joins} JOIN tracked candidate ON candidate.event_id=event.event_id AND candidate.sequence=event.sequence
-      WHERE ${chatCandidates.condition})
+      WHERE ${chatCandidates.condition}
+    UNION SELECT event.event_id ${blockCandidates.joins} JOIN tracked candidate ON candidate.event_id=event.event_id AND candidate.sequence=event.sequence
+      WHERE ${blockCandidates.condition})
     DELETE FROM memory_live_sources
     WHERE enrollment_id=? AND event_id IN(SELECT expired.event_id FROM memory_live_sources expired
       WHERE expired.enrollment_id=? AND (expired.expires_at<=strftime('%Y-%m-%dT%H:%M:%fZ','now')
         OR expired.event_id NOT IN(SELECT event_id FROM eligible)) LIMIT 128)`)
-    .bind(e.enrollment_id,...q.bindings,...artifactCandidates.bindings,...chatCandidates.bindings,e.enrollment_id,e.enrollment_id),env.DB.prepare("SELECT changes() AS erased"),
+    .bind(e.enrollment_id,...q.bindings,...artifactCandidates.bindings,...chatCandidates.bindings,...blockCandidates.bindings,e.enrollment_id,e.enrollment_id),env.DB.prepare("SELECT changes() AS erased"),
     env.DB.prepare(cleanup.sql).bind(...cleanup.bindings),env.DB.prepare(trim.sql).bind(...trim.bindings),...originMaintenance.afterMutation]);
   // Cleanup is already committed, even if later capture or bookkeeping fails.
   erased(Number((maintenance[originMaintenance.beforeMutation.length+1]?.results[0] as {erased:number}|undefined)?.erased??0));
@@ -127,7 +130,8 @@ async function processScope(env:WorkerEnv,e:LiveMemoryEnrollment,now:string,eras
       .bind(`creative:${e.owner_user_id}`,e.cursor_sequence,head,LIVE_MEMORY_PAGE_SIZE).all<{sequence:number}>();
     const pageThrough=page.results.at(-1)?.sequence??head;
     const artifactViews=await captureNativeArtifactConsumption(env,e,authority,{after:e.cursor_sequence,through:pageThrough,remembered:false,historical:true,governed:true});
-    const through=artifactViews.throughSequence,done=through>=head;
+    const blockViews=await captureNativeBlockInspections(env,e,authority,{after:e.cursor_sequence,through:artifactViews.throughSequence,remembered:false});
+    const through=blockViews.throughSequence,done=through>=head,artifactSources=artifactViews.sources.filter(source=>source.sequence<=through),observedSources=[...artifactSources,...blockViews.sources];
     const conversation=liveConversationPublication(e,q,through,now);
     const conversationMarked=liveConversationMarkPublished(e,through);
     // Maintenance already committed. Publication needs a fresh full-header
@@ -138,26 +142,26 @@ async function processScope(env:WorkerEnv,e:LiveMemoryEnrollment,now:string,eras
     const delivery=await prepareNativeDerivationDelivery(env,e,through,now);
     // Selection and publication occur in the SAME database transaction. Only references cross the boundary.
     const publication:D1PreparedStatement[]=[
-      ...originPublication.beforeMutation,
+      ...blockViews.proof,...originPublication.beforeMutation,
       env.DB.prepare(`INSERT OR IGNORE INTO memory_live_sources(enrollment_id,event_id,sequence,expires_at)
         SELECT ?,event.event_id,event.sequence,MIN(?,strftime('%Y-%m-%dT%H:%M:%fZ',event.recorded_at,'+'||?||' days'))
         ${q.joins} WHERE ${q.condition} AND event.sequence>? AND event.sequence<=?`)
         .bind(e.enrollment_id,e.expires_at,e.retention_days,...q.bindings,e.cursor_sequence,through),
-      ...artifactViews.sources.map(source=>env.DB.prepare(`INSERT INTO memory_live_sources(enrollment_id,event_id,sequence,expires_at)
+      ...observedSources.map(source=>env.DB.prepare(`INSERT INTO memory_live_sources(enrollment_id,event_id,sequence,expires_at)
         VALUES(?,?,?,?) ON CONFLICT(enrollment_id,event_id) DO UPDATE SET expires_at=MIN(memory_live_sources.expires_at,excluded.expires_at)
         WHERE memory_live_sources.sequence=excluded.sequence`).bind(e.enrollment_id,source.eventId,source.sequence,source.validUntil)),
-      ...(artifactViews.sources.length?[memorySqlAssertion(env,{condition:`NOT EXISTS(SELECT 1 FROM json_each(?) expected WHERE NOT EXISTS(
+      ...(observedSources.length?[memorySqlAssertion(env,{condition:`NOT EXISTS(SELECT 1 FROM json_each(?) expected WHERE NOT EXISTS(
         SELECT 1 FROM memory_live_sources retained WHERE retained.enrollment_id=? AND retained.event_id=json_extract(expected.value,'$.eventId')
           AND retained.sequence=json_extract(expected.value,'$.sequence') AND retained.expires_at<=json_extract(expected.value,'$.validUntil')
           AND retained.expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now')))`,
-        bindings:[JSON.stringify(artifactViews.sources.map(({eventId,sequence,validUntil})=>({eventId,sequence,validUntil}))),e.enrollment_id]})]:[]),
+        bindings:[JSON.stringify(observedSources.map(({eventId,sequence,validUntil})=>({eventId,sequence,validUntil}))),e.enrollment_id]})]:[]),
       env.DB.prepare(conversation.sql).bind(...conversation.bindings),
       env.DB.prepare(conversationMarked.sql).bind(...conversationMarked.bindings),
       env.DB.prepare(trim.sql).bind(...trim.bindings),
       // A cap-evicted segment invalidates every origin that required its exact
       // membership, even though some individual references remain remembered.
       ...originPublication.afterMutation,
-      ...checkpoint.writes,
+      ...checkpoint.writes,...blockViews.proof,
     ];
     const deliveryOffset=publication.length;
     publication.push(...delivery.statements,
@@ -168,8 +172,9 @@ async function processScope(env:WorkerEnv,e:LiveMemoryEnrollment,now:string,eras
     );
     const writes=await memoryAtomic(env,[authority.guard,liveMemoryEnrollmentGuard(e,"learn"),lease,checkpoint.guard,...artifactViews.guards],publication,
       [authority.guard,liveMemoryEnrollmentGuard(e,"learn"),clock,checkpoint.guard,...artifactViews.guards]);
+    if([0,deliveryOffset-blockViews.proof.length].some(offset=>blockViews.proof.some((_,index)=>{const row=writes[offset+index];return row?.results?.length!==1||(row.results[0] as Record<string,unknown>)?.context_source_asserted!==1;})))throw new Error('memory-block-inspection-proof-unconfirmed');
     if(!delivery.acknowledge(writes.slice(deliveryOffset,deliveryOffset+delivery.statements.length)))throw new Error("memory-derivation-delivery-unconfirmed");
-    return Number(writes[originPublication.beforeMutation.length]?.meta.changes??0)+artifactViews.sources.length;
+    return Number(writes[blockViews.proof.length+originPublication.beforeMutation.length]?.meta.changes??0)+observedSources.length;
   } catch {
     await env.DB.prepare("UPDATE memory_live_enrollments SET lease_token=NULL,lease_expires_at=NULL,next_due_at=?,failure_code='review-failed' WHERE enrollment_id=? AND revision=? AND lease_token=?")
       .bind(at(now,60_000*Math.min(8,2**e.attempts)),e.enrollment_id,e.revision,token).run();

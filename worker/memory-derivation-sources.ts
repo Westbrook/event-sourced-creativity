@@ -3,6 +3,7 @@ import { observeNativeMemoryResourceBindings, observeNativeMemoryRelationBinding
 import { type NativeMemoryBlockBindings } from './memory-native-blocks.ts';
 import { captureLegacyHistoricalOriginalWindows, captureLegacyConversationOriginalWindows, replayLegacyConversationOriginals, prepareLegacyConversationOriginalsCommit, type LegacyConversationOriginalsCommit } from "./events-api.ts";
 import { nativeDerivationRequestBody, nativeDerivationRequestFits } from './memory-derivation-request.ts';
+import { captureNativeBlockInspections } from './memory-native-block-inspection.ts';
 import { captureNativeArtifactConsumption } from './memory-native-artifact-consumption.ts';
 import { memoryDigest } from "../src/model/scoped-memory.ts";
 import { memoryEventAction, type MemoryAction } from "../src/model/memory-observations.ts";
@@ -31,6 +32,7 @@ export type NativeDerivationProvenance = {
   paid: { taskId: string; turnId: string; consentRef: string; consentSha256: string; resultRef: string;
     bindingHash: string; intentHash: string; ancestry: PaidMemoryAncestryEntry[] }[];
   artifacts?: { eventId:string; contentRef:string; eventIds:string[] }[];
+  blockInspections?: {eventId:string;eventIds:string[]}[];
   blockBindings?: NativeMemoryBlockBindings;
   relationBindings?: NativeMemoryRelationBindings;
   reuseBindings?: NativeMemoryReuseBindings;
@@ -105,9 +107,13 @@ async function captureNativeDerivationWindow(env: WorkerEnv, lease: NativeDeriva
     const inventory=measured[0]!.results,sizes=measured[1]!.results;
     if(inventory.length!==input.references.length||inventory.some((row,i)=>!derivationExact(row,['event_id','sequence','type','recorded_at'])
       ||row.event_id!==input.references[i]!.event_id||row.sequence!==input.references[i]!.sequence))return unavailable();
+    const blockInspectionRefs=inventory.filter(row=>row.type==='BlockInspected');
+    if(blockInspectionRefs.length&&!input.lifecyclePresent)return unavailable();
+    const inspectedBlocks=blockInspectionRefs.length?await captureNativeBlockInspections(env,e,a,{after:job.after_sequence,through:job.through_sequence,remembered:true},witness):null;
+    if(inspectedBlocks&&(inspectedBlocks.truncated||inspectedBlocks.sources.length!==blockInspectionRefs.length||inspectedBlocks.sources.some(source=>!blockInspectionRefs.some(ref=>ref.event_id===source.eventId&&ref.sequence===source.sequence)||source.recordedAt<g.consented_at)))return unavailable();
     const artifactRefs=inventory.filter(row=>row.type==='DocumentArtifactViewed');
     if(artifactRefs.length&&!input.lifecyclePresent)return unavailable();
-    const regularRefs=input.references.filter(ref=>!artifactRefs.some(row=>row.event_id===ref.event_id));
+    const regularRefs=input.references.filter(ref=>![...artifactRefs,...blockInspectionRefs].some(row=>row.event_id===ref.event_id));
     const artifactCapture=artifactRefs.length?await captureNativeArtifactConsumption(env,e,a,
       {after:job.after_sequence,through:job.through_sequence,remembered:true,historical:true,governed:true},witness):null;
     if(artifactCapture&&(artifactCapture.truncated||artifactCapture.sources.length!==artifactRefs.length
@@ -251,9 +257,11 @@ async function captureNativeDerivationWindow(env: WorkerEnv, lease: NativeDeriva
       observations.push({eventId:artifact.eventId,sequence:artifact.sequence,eventType:'DocumentArtifactViewed',action:'inspect',recordedAt:artifact.recordedAt,
         scopeKey:memoryCanonical([artifactScope.partitionKey,artifactScope.artifactKey]),blockPointer:null,expiresAt,independentEvidence:false});
     }
+    for(const source of inspectedBlocks?.sources??[])observations.push({eventId:source.eventId,sequence:source.sequence,eventType:'BlockInspected',action:'inspect',recordedAt:source.recordedAt,
+      scopeKey:source.version.scopeKey,blockPointer:source.version.blockId,expiresAt:[source.validUntil,...ceilings,new Date(Date.parse(source.recordedAt)+g.retention_days*86400000).toISOString()].sort()[0]!,independentEvidence:false});
     observations.sort((left,right)=>left.sequence-right.sequence);
     const relationObservations=rows.map(row=>({eventId:String(row.event_id),sequence:Number(row.sequence),eventType:String(row.type),relationId:JSON.parse(String(JSON.parse(String(row.event_json))[12])).relation_id??null}));
-    const {blockBindings,relationBindings}=await observeNativeMemoryResourceBindings(env,e,observations,relationObservations,witness,
+    const {blockBindings,relationBindings}=await observeNativeMemoryResourceBindings(env,e,inspectionReferences(observations),relationObservations,witness,
       {blocks:bindBlocks,relations:bindRelations!==false&&input.relationsPresent&&input.lifecyclePresent});
     if(bindReuse===true&&(!input.reusePresent||!input.lifecyclePresent||!blockBindings))return unavailable();
     const reuseBindings=bindReuse!==false&&input.reusePresent&&input.lifecyclePresent&&blockBindings
@@ -288,10 +296,11 @@ async function captureNativeDerivationWindow(env: WorkerEnv, lease: NativeDeriva
         consentRef: String(row.content_id), consentSha256: await memoryDigest(String(row.content)), resultRef: String(row.result_ref),
         bindingHash: String(row.binding_hash), intentHash: String(row.intent_hash), ancestry: groups.find(group => group.turnId === row.turn_id)!.entries }))),
       ...(artifactCapture?{artifacts:artifactCapture.provenance}:{}),
+      ...(inspectedBlocks?{blockInspections:inspectedBlocks.sources.map(source=>({eventId:source.eventId,eventIds:source.version.eventIds}))}:{}),
       ...(blockBindings?{blockBindings}:{}),
       ...(relationBindings?{relationBindings}:{}),
       ...(reuseBindings?{reuseBindings}:{}),
-      sourceRowsSha256: await memoryDigest(memoryCanonical({ rows, messages, paid, ...(artifactCapture?{artifacts:artifactCapture.sources,artifactProvenance:artifactCapture.provenance}:{}) })),
+      sourceRowsSha256: await memoryDigest(memoryCanonical({ rows, messages, paid, ...(artifactCapture?{artifacts:artifactCapture.sources,artifactProvenance:artifactCapture.provenance}:{}),...(inspectedBlocks?{blockInspections:inspectedBlocks.sources}:{}) })),
     };
     const data: CaptureData = { jobId: job.job_id, purpose: g.purpose, scopeKey, checkedAt, validUntil, retentionCeiling, originals, originalBacking, observations, provenance,
       binding: { actorUserId: e.actor_user_id, consentId: g.consent_id, grantId: g.grant_id, grantRevision: g.revision,
@@ -456,6 +465,8 @@ export async function captureNativeDerivationSources(env: WorkerEnv, lease: Nati
     let boundary:NativeDerivationHistory['boundary']=result.results.length>2?'bounded':'consent';
     let merged=current;
     for(const row of result.results.slice(0,2)) {
+      if(data.some(value=>value.provenance.blockInspections?.length&&value.provenance.artifacts?.length)
+        &&(data.length>=2||data.some(value=>value.provenance.paid.length))){boundary='capacity';break;}
       const evidence=await observeNativeDerivationHistoryJob(env,lease,String(row.job_id));
       if(!evidence){boundary='bounded';break;}
       const previous=await captureNativeDerivationWindow(env,evidence,false,false,true,captures.get(own.capture)!.documentScope,false);
@@ -463,6 +474,7 @@ export async function captureNativeDerivationSources(env: WorkerEnv, lease: Nati
       const source=nativeDerivationSourceInputs(env,previous.capture);
       if(source.scopeKey!==current.scopeKey||source.purpose!==current.purpose||source.binding.consentId!==current.binding.consentId
         ||source.binding.throughSequence>current.binding.afterSequence)return unavailable();
+      if(source.provenance.blockInspections?.length&&source.provenance.artifacts?.length&&source.provenance.paid.length){boundary='capacity';break;}
       const windows=[source,...data];
       const originals=windows.flatMap(value=>value.originals),observations=windows.flatMap(value=>value.observations);
       if(originals.length>128||observations.length>128||bytes(JSON.stringify(originals))>460000
@@ -476,6 +488,7 @@ export async function captureNativeDerivationSources(env: WorkerEnv, lease: Nati
         provenance:{events:unique(data.flatMap(value=>value.provenance.events)),turns:unique(data.flatMap(value=>value.provenance.turns)),
           paid:unique(data.flatMap(value=>value.provenance.paid)),
           ...(data.some(value=>value.provenance.artifacts)?{artifacts:unique(data.flatMap(value=>value.provenance.artifacts??[]))}:{}),
+          ...(data.some(value=>value.provenance.blockInspections)?{blockInspections:unique(data.flatMap(value=>value.provenance.blockInspections??[]))}:{}),
           ...(current.provenance.relationBindings?{relationBindings:{version:1 as const,entries:unique(data.flatMap(value=>value.provenance.relationBindings?.entries??[])),unresolved:data.reduce((sum,value)=>sum+(value.provenance.relationBindings?.unresolved??0),0)}}:{}),
           ...(current.provenance.blockBindings?{blockBindings:{version:1 as const,entries:unique(data.flatMap(value=>value.provenance.blockBindings?.entries??[])),unresolved:data.reduce((sum,value)=>sum+(value.provenance.blockBindings?.unresolved??0),0)}}:{}),
           sourceRowsSha256:await memoryDigest(memoryCanonical(data.map(value=>[value.jobId,value.provenance.sourceRowsSha256])))},
@@ -561,6 +574,7 @@ async function captureCrossProducerHistory(env:WorkerEnv,lease:NativeDerivationE
       }
       if(failed){if(!selected.length)return unavailable();selected.shift();continue;}
       const current=data.find(value=>value.jobId===input.job.job_id);if(!current)return unavailable();
+      if(selected.length&&data.some(value=>value.provenance.blockInspections?.length&&value.provenance.artifacts?.length)){boundary='capacity';selected.length=0;continue;}
       if(data.some(value=>value.scopeKey!==current.scopeKey||value.purpose!==current.purpose||value.binding.consentId!==current.binding.consentId))return unavailable();
       const originals=data.flatMap(value=>value.originals).sort((a,b)=>a.revision-b.revision),observations=data.flatMap(value=>value.observations).sort((a,b)=>a.sequence-b.sequence);
       if(new Set(originals.map(value=>value.sourceId)).size!==originals.length)return unavailable();
@@ -573,6 +587,7 @@ async function captureCrossProducerHistory(env:WorkerEnv,lease:NativeDerivationE
         checkedAt:data.map(value=>value.checkedAt).sort().at(-1)!,validUntil:data.map(value=>value.validUntil).sort()[0]!,retentionCeiling:data.map(value=>value.retentionCeiling).sort()[0]!,
         provenance:{events:unique(data.flatMap(value=>value.provenance.events)).sort((a,b)=>a.sequence-b.sequence),turns:unique(data.flatMap(value=>value.provenance.turns)),paid:unique(data.flatMap(value=>value.provenance.paid)),
           ...(data.some(value=>value.provenance.artifacts)?{artifacts:unique(data.flatMap(value=>value.provenance.artifacts??[]))}:{}),
+          ...(data.some(value=>value.provenance.blockInspections)?{blockInspections:unique(data.flatMap(value=>value.provenance.blockInspections??[]))}:{}),
           sourceRowsSha256:await memoryDigest(memoryCanonical(data.map(value=>[value.jobId,value.provenance.sourceRowsSha256])))},
         coverage:{...current.coverage,queuedReferences:input.references.length,originalPairs:originals.length/2,typedObservations:observations.length,
           ...(data.some(value=>value.coverage.excludedByUserControls)?{excludedByUserControls:data.reduce((n,value)=>n+(value.coverage.excludedByUserControls??0),0)}:{})},
@@ -594,7 +609,7 @@ async function finalizeResourceHistory(env:WorkerEnv,lease:NativeDerivationEvide
   try{
     const db=env.DB,input=nativeDerivationEvidenceInputs(env,lease);
     if(options.relationBindings===true&&(!input.relationsPresent||!input.lifecyclePresent))return unavailable();
-    const {blockBindings,relationBindings}=await observeNativeMemoryResourceBindings(env,input.enrollment,data.observations,
+    const {blockBindings,relationBindings}=await observeNativeMemoryResourceBindings(env,input.enrollment,inspectionReferences(data.observations),
       parts.flatMap(part=>captures.get(part)?.relationObservations??[]),witness,
       {blocks:options.blockBindings!==false,relations:options.relationBindings!==false&&input.relationsPresent&&input.lifecyclePresent});
     if(options.reuseBindings===true&&(!input.reusePresent||!input.lifecyclePresent||!blockBindings))return unavailable();
@@ -655,4 +670,10 @@ function applyReuseObservations(observations:NativeDerivationObservation[],bindi
     const original=observations[index]!;observations[index]={...original,action:'reuse',outcomeKey:reuse.outcomeKey,
       expiresAt:[original.expiresAt,reuse.expiresAt].sort()[0]!};
   }
+}
+
+// These references are constructed only after the leaf has independently
+// certified genuine actor-owned native inspector receipts and their versions.
+function inspectionReferences(observations:readonly NativeDerivationObservation[]){
+  return observations.map(row=>row.eventType==='BlockInspected'?{...row,reference:true as const}:row);
 }

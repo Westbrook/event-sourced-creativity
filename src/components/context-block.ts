@@ -275,6 +275,21 @@ export class ContextBlock extends FormaElement {
     this.store.patchUi({ focusBlockId: this.block.id, ...(editable ? { editingBlockId: this.block.id } : {}) });
     this.requestUpdate();
     this.#focusAfterUpdate(() => this.querySelector<HTMLElement>(".context-controls-panel"));
+    void this.#recordNativeInspection();
+  }
+
+  async #recordNativeInspection() {
+    if(this.surface!=="document"||!this.store.ui.instrumentation||this.block.scope!=="document"||this.block.removed
+      ||!this.block.sourceEvents.length||this.block.sourceEvents.length>256||this.block.sourceEvents.some(id=>!id||id.startsWith("optimistic:")))return;
+    const block={id:this.block.id,projectId:this.block.projectId,documentId:this.block.documentId},sourceIds=[...this.block.sourceEvents],store=this.store,owner=store.captureSourceOwnership(),route=store.route.get();
+    const current=()=>this.store===store&&this.isConnected&&this.surface==="document"&&this.block.id===block.id&&this.block.documentId===block.documentId&&this.block.projectId===block.projectId&&this.block.scope==="document"&&!this.block.removed&&this.#controlsVisible()&&this.store.ui.instrumentation
+      &&this.store.route.get()===route&&this.store.sourceOwnershipActive(owner)&&this.ownerDocument.visibilityState==="visible"
+      &&JSON.stringify(this.block.sourceEvents)===JSON.stringify(sourceIds)&&Boolean(this.querySelector<HTMLElement>(".context-controls-panel")?.getClientRects().length);
+    try{
+      await this.updateComplete;if(!current())return;
+      await this.store.hot({type:"BlockInspected",payload:{project_id:block.projectId,document_id:block.documentId,block_id:block.id,
+        source_event_ids:sourceIds,source_surface:"document-context-controls"}},{current});
+    }catch{/* Optional observation never prevents inspection or retries a possibly committed write. */}
   }
 
   #controlsKeys(event: KeyboardEvent) {

@@ -34,6 +34,7 @@ function dependencies(manifest: NativeDerivationManifestData): Dependency[] {
   }
   for(const reuse of manifest.provenance.reuseBindings?.entries??[]){add('content',reuse.previewRef);for(const eventId of reuse.eventIds)add('event',eventId);}
   for (const relation of manifest.provenance.relationBindings?.entries??[]) for(const eventId of relation.eventIds)add('event',eventId);
+  for(const inspected of manifest.provenance.blockInspections??[])for(const eventId of [inspected.eventId,...inspected.eventIds])add('event',eventId);
   for (const block of manifest.provenance.blockBindings?.entries??[]) for(const eventId of block.eventIds)add('event',eventId);
   for (const original of manifest.originalBacking) add('content', original.contentRef);
   for (const turn of manifest.provenance.turns) add('turn', turn.turnId, turn.actorUserId, turn.scopeKey);

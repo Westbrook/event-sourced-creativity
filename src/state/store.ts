@@ -5708,8 +5708,8 @@ export class FormaStore {
     const write=await this.appendBatchWithReceipt(result.events,{rebaseAttempts:6,current:imageCurrent});if(write.publication!=="published"||!imageCurrent())return this.#withheldWrite(write);const created=write.appended.filter((event)=>event.type==="BlockCreated").length;if(!created)return null;const rootBlockId=result.blockIds[0]??"";if(options.reveal!==false)await this.revealOutputInput(rootBlockId,destinationDocumentId);else this.patchUi({focusBlockId:rootBlockId});this.toast("The generated image and its editable direction are ready to reuse.");return{rootBlockId,created:true,blockCount:created};
   }
 
-  async hot(event: EventInput, options: { keepalive?: boolean } = {}) {
-    if(this.session.get()?.impersonation)return;
+  async hot(event: EventInput, options: { keepalive?: boolean; current?: () => boolean } = {}) {
+    if(this.session.get()?.impersonation||options.current&&!options.current())return;
     const attention = event.type === "AttentionEpisodeObserved";
     const attentionTicket = this.attentionPublication.ticket();
     if(attention && !this.attentionPublication.current(attentionTicket))return;
@@ -5719,11 +5719,13 @@ export class FormaStore {
       if(!options.keepalive)await this.#appendPipeline;
       this.#assertAuthorizationScope(authorization);this.#assertSourceOwnership(sourceOwner);
       const publish = async () => {
+      if(options.current&&!options.current())return;
       const response = await fetch("/api/events/hot", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "hot", event, events: [event], clientId: "web:lit" }), keepalive: options.keepalive });
       this.#assertAuthorizationScope(authorization);this.#assertSourceOwnership(sourceOwner);
-      if (!response.ok) return;
+      if (!response.ok||options.current&&!options.current()) return;
       const body = await response.json() as { appended?: CreativeEvent[]; head?: number };
       this.#assertAuthorizationScope(authorization);this.#assertSourceOwnership(sourceOwner);
+      if(options.current&&!options.current())return;
       const appended=body.appended??[];this.events.set([...this.events.get(), ...appended].sort((left,right)=>left.sequence-right.sequence)); this.head.set(Math.max(this.head.get(),body.head??0)); this.#publishAppended(appended);this.notify();
       };
       if(attention)await this.attentionPublication.publish(attentionTicket,publish);
