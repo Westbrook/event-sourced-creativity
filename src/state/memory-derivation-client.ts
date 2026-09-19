@@ -15,7 +15,7 @@ export type DerivationSettings = { financial?: MemoryDerivationFinanceView; enab
 export type DerivationEnable = { version: typeof MEMORY_DERIVATION_CONTROL; policyVersion: typeof MEMORY_DERIVATION_POLICY;
   purpose: MemoryDerivationPurpose; qualificationId: string; termsSha256: string; projectId: string; documentId: string;
   enrollmentId: string; enrollmentRevision: number; revision: number; expectedConsentId: string | null; expectedCustody: MemoryCustody;
-  monthlyCapMicroUsd: number; background: boolean; retentionDays: number; expiresAt: string; sourceWindow: "future-originals";
+  monthlyCapMicroUsd: number; background: boolean; retentionDays: number; expiresAt: string; sourceWindow: "future-originals" | "future-originals-and-actions";
   chargeMyAiAllowance: true; confirmation: "ENABLE_DERIVED_MEMORY" };
 export class MemoryDerivationClientError extends Error {
   constructor(readonly mutationUnknown = false, readonly status: number | null = null) {
@@ -68,7 +68,7 @@ async function settings(raw: unknown, expected: DerivationScopeRequest): Promise
     financial=structuredClone(f) as MemoryDerivationFinanceView;
   }
   check(row.version === MEMORY_DERIVATION_CONTROL && row.policyVersion === MEMORY_DERIVATION_POLICY && typeof row.enabled === "boolean"
-    && typeof row.available === "boolean" && typeof row.processingImplemented === "boolean" && row.capScope === CAP_SCOPE && row.sourceWindow === "future-originals"
+    && typeof row.available === "boolean" && typeof row.processingImplemented === "boolean" && row.capScope === CAP_SCOPE && ["future-originals","qualified-recipe"].includes(String(row.sourceWindow))
     && row.enrollmentId === expected.enrollmentId && row.enrollmentRevision === expected.enrollmentRevision
     && [null, "disabled", "qualification-required"].includes(row.reason as string | null)
     && sameScope(scope(row.scope), { projectId: expected.projectId, documentId: expected.documentId, custody: expected.expectedCustody })
@@ -88,6 +88,7 @@ async function settings(raw: unknown, expected: DerivationScopeRequest): Promise
     qualifiedIds.add(item.qualificationId); qualifications.push({ qualificationId: item.qualificationId, termsSha256: item.termsSha256, expiresAt: item.expiresAt, terms });
   }
   check(qualifications.every(item => Date.parse(item.expiresAt) > Date.now()));
+  check(row.sourceWindow===(qualifications.some(item=>item.terms.recipeVersion==='memory-derivation-candidates-v2')?'qualified-recipe':'future-originals'));
   check(row.available === (qualifications.length > 0) && (row.enabled || !row.available));
   return frozen({ enabled: row.enabled, available: row.available, processingImplemented: row.processingImplemented, grants, qualifications,...(financial?{financial}:{}) });
 }
@@ -99,7 +100,7 @@ function enable(value: unknown): DerivationEnable {
     && (row.revision === 0 ? row.expectedConsentId === null : derivationConsentId(row.expectedConsentId))
     && derivationInteger(row.monthlyCapMicroUsd, 1, 1000000000) && typeof row.background === "boolean" && derivationInteger(row.retentionDays, 1, 365)
     && derivationTime(row.expiresAt) && Date.parse(row.expiresAt) > Date.now() && Date.parse(row.expiresAt) <= Date.now() + 365 * 86400000
-    && row.sourceWindow === "future-originals" && row.chargeMyAiAllowance === true && row.confirmation === "ENABLE_DERIVED_MEMORY");
+    && ["future-originals","future-originals-and-actions"].includes(String(row.sourceWindow)) && row.chargeMyAiAllowance === true && row.confirmation === "ENABLE_DERIVED_MEMORY");
   const result = frozen({ ...structuredClone(row), ...selected } as DerivationEnable);
   check(new TextEncoder().encode(JSON.stringify(result)).byteLength <= 4096); return result;
 }
@@ -120,8 +121,10 @@ async function read(response: Response, signal?: AbortSignal): Promise<unknown> 
 export type DerivationProgress = {purpose:MemoryDerivationPurpose;pending:number;completed:number;retained:number;uncertain:number;registeredThrough:number|null;completedThrough:number|null;producers?:ReadonlyArray<{producer:"creator"|"chat-studio";registeredThrough:number;completedThrough:number}>};
 export type DerivationResultEntry = {jobId:string;purpose:MemoryDerivationPurpose;scopeKey:string;expiresAt:string};
 export type DerivationCitation = {sourceIndex:number;start:number;end:number;text:string};
+export const DERIVATION_OBSERVED_ACTIONS=['encounter','inspect','compare','edit','commit','reuse','remove','restore','critique','request','accept','reject','defer'] as const;
+export type DerivationObservedCitation={observationIndex:number;action:typeof DERIVATION_OBSERVED_ACTIONS[number];recordedAt:string;role:'support'|'counterevidence'};
 export type DerivationResultItem = {claimKey:string;category:string;text:string;lineageIds:readonly string[];
-  citationStatus:'support-cited'|'conflicting-citations';supports:readonly DerivationCitation[];counterevidence:readonly DerivationCitation[]};
+  citationStatus:'support-cited'|'conflicting-citations';supports:readonly DerivationCitation[];counterevidence:readonly DerivationCitation[];observationCitations?:readonly DerivationObservedCitation[]};
 export type DerivationHistory = {windowCount:number;originalPairs:number;boundary:'consent'|'bounded'|'capacity';afterSequence:number;throughSequence:number};
 export type DerivationResultView = DerivationResultEntry & {validUntil:string;items:readonly DerivationResultItem[];history?:DerivationHistory;controlRevisions:Readonly<Record<string,number>>};
 export type DerivationControl = {controlId:string;claimKey:string;lineageId:string;revision:number;action:'corrected'|'suppressed'|'released';correctionText:string|null;expiresAt:string;purpose:MemoryDerivationPurpose;textAvailable:boolean};
@@ -134,14 +137,15 @@ function resultEntry(value:unknown):DerivationResultEntry{
 function resultView(value:unknown,expected:DerivationResultEntry):DerivationResultView{
   const hasHistory=!!value&&typeof value==='object'&&Object.hasOwn(value,'history');
   const row=own(value,['version','jobId','expiresAt','candidate','controlRevisions',...(hasHistory?['history']:[])]),candidate=own(row.candidate,['version','purpose','scopeKey','manifestId','manifestRevision','validUntil','semanticAuthority','semanticCompleteness','independentEvidence','items']);
-  check(row.version===MEMORY_DERIVATION_CONTROL&&row.jobId===expected.jobId&&row.expiresAt===expected.expiresAt&&candidate.version==='memory-derivation-candidates-v1'
+  check(row.version===MEMORY_DERIVATION_CONTROL&&row.jobId===expected.jobId&&row.expiresAt===expected.expiresAt&&['memory-derivation-candidates-v1','memory-derivation-candidates-v2'].includes(String(candidate.version))
     &&candidate.purpose===expected.purpose&&candidate.scopeKey===expected.scopeKey&&candidate.semanticAuthority==='model-derived-unverified'
     &&candidate.manifestId===expected.jobId&&candidate.manifestRevision===1
     &&candidate.semanticCompleteness===false&&candidate.independentEvidence===false&&derivationTime(candidate.validUntil)&&Date.parse(candidate.validUntil)>Date.now()
     &&Date.parse(candidate.validUntil)<=Date.now()+60000&&candidate.validUntil<=row.expiresAt
     &&Date.parse(row.expiresAt as string)>Date.now()&&Array.isArray(candidate.items)&&candidate.items.length<=16);
+  const behavioral=candidate.version==='memory-derivation-candidates-v2';
   const items=candidate.items.map(raw=>{
-    const item=own(raw,['operation','target','category','text','supports','counterevidence','claimKey','lineageIds','sourceBindings','validUntil','citationStatus']);
+    const item=own(raw,['operation','target','category','text','supports','counterevidence','claimKey','lineageIds','sourceBindings','validUntil','citationStatus',...(behavioral?['observationSupports','observationCounterevidence','observationCitations']:[])]);
     check(item.operation==='assert'&&item.target===null&&reviewText(item.claimKey,240)&&reviewText(item.category,120)&&reviewText(item.text)
       &&Array.isArray(item.lineageIds)&&item.lineageIds.length>0&&item.lineageIds.length<=128&&item.lineageIds.every(derivationHash)
       &&item.validUntil===candidate.validUntil&&['support-cited','conflicting-citations'].includes(String(item.citationStatus)));
@@ -154,13 +158,26 @@ function resultView(value:unknown,expected:DerivationResultEntry):DerivationResu
           &&Array.from(q.text).length===Number(q.end)-Number(q.start));
         const key=JSON.stringify([q.sourceIndex,q.start,q.end]);check(!seen.has(key));seen.add(key);return {...q} as DerivationCitation;});
     };
-    const supports=citations(item.supports,1),counterevidence=citations(item.counterevidence,0);
-    check(item.citationStatus===(counterevidence.length?'conflicting-citations':'support-cited')
+    const supports=citations(item.supports,behavioral?0:1),counterevidence=citations(item.counterevidence,0);
+    let observationCitations:DerivationObservedCitation[]|undefined;
+    if(behavioral){
+      check(Array.isArray(item.observationSupports)&&item.observationSupports.length<=8&&Array.isArray(item.observationCounterevidence)&&item.observationCounterevidence.length<=8);
+      const supportsObserved=item.observationSupports,countersObserved=item.observationCounterevidence,indexes=[...supportsObserved,...countersObserved];
+      check(indexes.every(index=>derivationInteger(index,0,127))&&new Set(indexes).size===indexes.length&&supports.length+supportsObserved.length>0
+        &&Array.isArray(item.observationCitations)&&item.observationCitations.length===indexes.length);
+      const categories=expected.purpose==='profile'?['preference-hypothesis','workflow-hypothesis']:expected.purpose==='suggestion'?['proposal','next-step']:['goal','decision','proposal','rejected-alternative','question','blocker','next-step'];
+      check(categories.includes(String(item.category))&&(supports.length>0||['workflow-hypothesis','proposal','next-step'].includes(String(item.category))&&!counterevidence.length));
+      observationCitations=item.observationCitations.map((raw,index)=>{const cited=own(raw,['observationIndex','action','recordedAt','role']);
+        check(cited.observationIndex===indexes[index]&&DERIVATION_OBSERVED_ACTIONS.includes(cited.action as DerivationObservedCitation['action'])
+          &&cited.role===(index<supportsObserved.length?'support':'counterevidence')&&derivationTime(cited.recordedAt)&&Date.parse(cited.recordedAt)<=Date.now());
+        return {...cited} as DerivationObservedCitation;});
+    }
+    check(item.citationStatus===(counterevidence.length||observationCitations?.some(row=>row.role==='counterevidence')?'conflicting-citations':'support-cited')
       &&new Set(item.lineageIds).size===item.lineageIds.length&&Array.isArray(item.sourceBindings)&&item.sourceBindings.length>0&&item.sourceBindings.length<=128);
     const sourceIds=new Set<string>();for(const raw of item.sourceBindings){const binding=own(raw,['sourceId','revision','contentHash']);
       check(derivationId(binding.sourceId)&&!sourceIds.has(binding.sourceId)&&derivationInteger(binding.revision,1)&&derivationHash(binding.contentHash));sourceIds.add(binding.sourceId);}
     return {claimKey:item.claimKey,category:item.category,text:item.text,lineageIds:[...item.lineageIds] as string[],
-      citationStatus:item.citationStatus as DerivationResultItem['citationStatus'],supports,counterevidence};
+      citationStatus:item.citationStatus as DerivationResultItem['citationStatus'],supports,counterevidence,...(observationCitations?{observationCitations}:{})};
   });
   check(new Set(items.map(item=>item.claimKey)).size===items.length);
   const ids=[...new Set(items.flatMap(item=>item.lineageIds))],revisions=own(row.controlRevisions,ids);check(Object.values(revisions).every(value=>derivationInteger(value)));

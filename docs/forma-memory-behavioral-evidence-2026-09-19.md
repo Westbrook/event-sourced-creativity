@@ -39,17 +39,57 @@ source-free bounded cleanup and access-loss metadata; 179 migration/parser tests
 production build and whitespace checks passed. Build retains existing chunk-size
 warnings. No real provider request or user enrollment was made.
 
-## Still implementation work — not an external prerequisite
+## Native recipe integration
 
-This foundation does **not** enable the v2 recipe. Remaining work is native
-source-descriptor capture and suppression, separately qualified recipe admission,
-request formatting and response parsing, durable manifest/result revalidation,
-observation-backed result-control targets, and localized action-evidence review.
-The end-to-end observation-only job and privacy/request-budget tests must pass
-before that recipe can be offered. Existing v1 grants are not silently broadened.
+The v2 recipe now has an end-to-end native path: separately qualified terms and
+explicit original/action consent, whole-window source capture, native suppression,
+bounded provider requests, verified usage, exact private manifests, atomic results,
+fresh reads and original/action control targets. Missing observation-control or
+lifecycle schema withholds the v2 offer. Existing v1 consent is not broadened.
+Action-only windows are processed; empty completion cannot silently skip them.
+
+Approved copies sharing one native outcome contribute one action citation and one
+suppression lineage. Raw supporting observations remain in the private dependency
+manifest, including suppressed ones; provider input contains only eligible local
+ordinals, action/date metadata and opaque request-local resource groups. No block
+plaintext, native identifiers, passive attention or invented intent is sent as
+action evidence. Corrections withdraw dependent results and index intents without
+changing financial usage. Released controls cannot resurrect old results.
+
+Private review and automatic document briefs distinguish action/date evidence
+from exact human quotations in English, French, Arabic and Japanese. Action-only
+candidates stay tentative proposals/workflow hypotheses; they cannot become an
+authored preference or decision. Existing visibility, ownership and expiry
+boundaries continue to clear ephemeral UI evidence.
+
+## Integration qualification
+
+All provider responses and data were synthetic. Focused native execution, consent,
+privacy, rollback/lost-ack, source/control races and retention checks passed,
+including isolated D1. The approved-reuse suite passed 27 checks; client/control/
+parser coverage passed 711 checks; all eight local browser journeys passed,
+including English and 320-pixel Arabic action evidence. Screenshots were visually
+reviewed. A browser test initialization race was corrected by waiting for the
+actual workspace store, not by changing production behavior.
+
+Whole HTTP reads retain three original/action windows at 49 database operations.
+Richer artifact/inspection cases retain two free windows at 43 operations or the
+paid current window at 31, with an explicit capacity boundary. One redundant
+inner replay was removed; the final combined assertion still checks every source,
+access rule and observation control. No proof is omitted or read lease renewed.
+Typecheck, changed-production-file lint, build and whitespace checks passed.
+The final broad native regression receipt is recorded in the continuation report.
+
+## Still planned
+
+This closes bounded native behavioral evidence, not lifetime/cross-scope semantic
+reconciliation, nested projects, Library/Canvas identity, automatic assistant
+prompt publication, autocomplete or accept/reject/undo provenance. These remain
+implementation work. No recipe qualification, production migration, provider
+purchase, scheduling registration or user enrollment was performed.
 
 Broader native scope/consumer work remains tracked in the
 [native continuation](forma-memory-native-continuation-2026-09-18.md#remaining-native-implementation--still-in-scope).
 Unsupported hosted/runtime work stays in the
 [capability To Do](forma-memory-sites-capability-todo-2026-09-18.md); neither list is
-closed by this foundation.
+closed by this slice.

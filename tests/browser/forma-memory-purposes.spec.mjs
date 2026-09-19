@@ -86,6 +86,7 @@ for(const locale of ['en','ar'])test.describe('Memory purpose locale '+locale,()
   await info.attach('financial-disclosure-scroll',{body:JSON.stringify(scrollEvidence),contentType:'application/json'});
   await expect(section.getByRole('button',{name:message(locale,'purposeEnable'),exact:true})).toBeInViewport();
   await captureViewport(page,info,'memory-purposes-bounds-'+locale,{assertStable:false});
+  reviewResult.candidate.version='memory-derivation-candidates-v2';Object.assign(reviewResult.candidate.items[0],{supports:[],observationSupports:[0],observationCounterevidence:[],observationCitations:[{observationIndex:0,action:'inspect',recordedAt:new Date(Date.now()-1000).toISOString(),role:'support'}]});
   const review=section.locator('[data-memory-derived-review]');
   await review.getByRole('button',{name:message(locale,'reviewLoad'),exact:true}).click();
   await review.getByRole('button',{name:message(locale,'reviewInspect'),exact:true}).click();
@@ -97,7 +98,12 @@ for(const locale of ['en','ar'])test.describe('Memory purpose locale '+locale,()
   const correction=review.getByRole('textbox',{name:message(locale,'reviewCorrection'),exact:true});await correction.fill('A synthetic user correction.');
   await expect(review.getByRole('button',{name:message(locale,'reviewCorrect'),exact:true})).toBeEnabled();
   expect(calls.filter(c=>!c.automatic&&c.path.includes('/derivation/'))).toHaveLength(5);expect(calls.every(c=>c.method==='GET')).toBe(true);
-  await captureViewport(page,info,'memory-derived-review-'+locale,{assertStable:false});
+  const actionEvidence=review.locator('[data-memory-observation-evidence]');await actionEvidence.locator('summary').click();
+  await expect(actionEvidence).toContainText(message(locale,'behavioralDisclosure'));await expect(actionEvidence).toContainText(message(locale,'behavioralAction.inspect'));
+  await expect(actionEvidence.locator('blockquote')).toHaveCount(0);await actionEvidence.scrollIntoViewIfNeeded();
+  await captureViewport(page,info,'memory-behavioral-review-'+locale,{assertStable:false});
+  const observedAction=actionEvidence.locator('li').first();await observedAction.scrollIntoViewIfNeeded();await expect(observedAction).toBeInViewport();
+  await captureViewport(page,info,'memory-behavioral-action-'+locale,{assertStable:false});
   await section.locator(':scope > summary').click();await expect(section.locator('[data-memory-derived-content]')).toHaveCount(0);
   await section.locator(':scope > summary').click();await expect(section.locator('textarea')).toHaveCount(0);expect(errors).toEqual([]);
   await panel.locator('[data-memory-action="inspect"]').click();
@@ -123,7 +129,7 @@ for(const locale of ['en','ar'])test.describe('Memory purpose locale '+locale,()
 
 });
 
-for(const locale of ['en','ar'])test.describe('Automatic document memory '+locale,()=>{
+for(const behavioral of [false,true])for(const locale of ['en','ar'])test.describe('Automatic document memory '+locale+(behavioral?' behavioral':'' ),()=>{
   test.use({geometry:{viewport:{width:locale==='ar'?320:1280,height:900},zoom:1,locale}});
   test('current read-only brief, evidence and visibility withdrawal',async({page,context,baseURL},info)=>{
     expect(syntheticNetworkEnabled(baseURL)).toBe(true);
@@ -135,11 +141,11 @@ for(const locale of ['en','ar'])test.describe('Automatic document memory '+local
     const grant={scope,grantId:'d'.repeat(64),revision:1,consentId:'11111111-1111-4111-8111-111111111111',purpose:'rolling-summary',enrollmentId:parent,enrollmentRevision:1,
       qualificationId:'synthetic-qualified',termsSha256:'e'.repeat(64),monthlyCapMicroUsd:100000,sourceAfterSequence:1,background:true,retentionDays:30,
       consentedAt:new Date(Date.now()-1000).toISOString(),expiresAt,revokedAt:null};
-    const terms={version:'memory-derivation-terms-v1',purpose:'rolling-summary',recipeVersion:'memory-derivation-candidates-v1',provider:'openai',model:'isolated-test-model',pricing:{inputMicroUsdPerMillion:1000000,cachedInputMicroUsdPerMillion:0,outputMicroUsdPerMillion:2000000},maximumInputTokens:1000,maximumOutputTokens:100,monthlyCapMicroUsd:100000,payer:'self-ai-allowance',providerStore:false,providerRetentionDisclosure:'Synthetic browser fixture only.',retentionPolicyId:'fixture-policy',evidence:Object.fromEntries(DERIVATION_EVIDENCE.map(key=>[key,'f'.repeat(64)]))};
+    const terms={version:'memory-derivation-terms-v1',purpose:'rolling-summary',recipeVersion:behavioral?'memory-derivation-candidates-v2':'memory-derivation-candidates-v1',provider:'openai',model:'isolated-test-model',pricing:{inputMicroUsdPerMillion:1000000,cachedInputMicroUsdPerMillion:0,outputMicroUsdPerMillion:2000000},maximumInputTokens:1000,maximumOutputTokens:100,monthlyCapMicroUsd:100000,payer:'self-ai-allowance',providerStore:false,providerRetentionDisclosure:'Synthetic browser fixture only.',retentionPolicyId:'fixture-policy',evidence:Object.fromEntries(DERIVATION_EVIDENCE.map(key=>[key,'f'.repeat(64)]))};
     grant.termsSha256=createHash('sha256').update(derivationCanonical(terms)).digest('hex');
     const offer={qualificationId:grant.qualificationId,termsSha256:grant.termsSha256,expiresAt,terms};
     const settings={version,enabled:true,available:true,reason:null,policyVersion:'personal-memory-derivation-v1',scope,enrollmentId:parent,enrollmentRevision:1,
-      grants:[grant],qualifications:[offer],capScope:'payer-utc-calendar-month-all-memory-purposes',sourceWindow:'future-originals',processingImplemented:false};
+      grants:[grant],qualifications:[offer],capScope:'payer-utc-calendar-month-all-memory-purposes',sourceWindow:behavioral?'qualified-recipe':'future-originals',processingImplemented:false};
     const calls=[],errors=[];page.on('pageerror',error=>errors.push(error.message));let denied=false;
     await context.route('**/api/memory/**',async route=>{
       const request=route.request(),url=new URL(request.url());calls.push({path:url.pathname,method:request.method()});
@@ -153,9 +159,9 @@ for(const locale of ['en','ar'])test.describe('Automatic document memory '+local
       if(url.pathname.endsWith('/result')){
         if(denied)return route.fulfill({status:404,json:{error:'memory_result_unavailable'}});
         return route.fulfill({json:{version,jobId,expiresAt,controlRevisions:{[lineage]:0},history:{windowCount:3,originalPairs:6,boundary:'bounded',afterSequence:1,throughSequence:24},
-          candidate:{version:'memory-derivation-candidates-v1',purpose:'rolling-summary',scopeKey:'synthetic-scope',manifestId:jobId,manifestRevision:1,validUntil,
+          candidate:{version:behavioral?'memory-derivation-candidates-v2':'memory-derivation-candidates-v1',purpose:'rolling-summary',scopeKey:'synthetic-scope',manifestId:jobId,manifestRevision:1,validUntil,
             semanticAuthority:'model-derived-unverified',semanticCompleteness:false,independentEvidence:false,items:[{operation:'assert',target:null,category:'proposal',
-              text:'Synthetic private brief <script>not code</script>.',supports:[{sourceIndex:0,start:0,end:8,text:'Original'}],counterevidence:[{sourceIndex:1,start:0,end:7,text:'Opposed'}],
+              text:'Synthetic private brief <script>not code</script>.',...(behavioral?{observationSupports:[0],observationCounterevidence:[],observationCitations:[{observationIndex:0,action:'inspect',recordedAt:new Date(Date.now()-1000).toISOString(),role:'support'}]}:{}),supports:[{sourceIndex:0,start:0,end:8,text:'Original'}],counterevidence:[{sourceIndex:1,start:0,end:7,text:'Opposed'}],
               claimKey:'derived:'+jobId,lineageIds:[lineage],sourceBindings:[{sourceId:'synthetic-original',revision:1,contentHash:'f'.repeat(64)}],validUntil,citationStatus:'conflicting-citations'}]}}});
       }
       if(url.pathname.endsWith('/controls'))return route.fulfill({json:{version,available:true,scope,enrollmentId:parent,enrollmentRevision:1,validUntil,controls:[],next:null}});
@@ -164,11 +170,12 @@ for(const locale of ['en','ar'])test.describe('Automatic document memory '+local
     await page.goto(path);const brief=page.locator('[data-memory-document-brief]');
     await expect(brief).toBeVisible();await expect(brief).toContainText('Synthetic private brief <script>not code</script>.');
     await expect(brief.locator('script')).toHaveCount(0);await expect(brief).toContainText(message(locale,'briefConflict'));
-    await brief.getByText(message(locale,'briefEvidence'),{exact:true}).click();await expect(brief.getByText('Original',{exact:true})).toBeVisible();
+    await brief.getByText(message(locale,behavioral?'behavioralEvidence':'briefEvidence'),{exact:true}).click();await expect(brief.getByText('Original',{exact:true})).toBeVisible();
     await expect(brief.getByText('Opposed',{exact:true})).toBeVisible();
     await expect(brief).not.toContainText('memory.live.');
+    if(behavioral){await expect(brief).toContainText(message(locale,'behavioralDisclosure'));await expect(brief).toContainText(message(locale,'behavioralAction.inspect'));}
     expect(await brief.evaluate(el=>el.scrollWidth<=el.clientWidth+1)).toBe(true);
-    await captureViewport(page,info,'automatic-document-memory-'+locale,{assertStable:false});
+    await captureViewport(page,info,'automatic-document-memory-'+locale+(behavioral?'-behavioral':''),{assertStable:false});
     await page.evaluate(()=>window.dispatchEvent(new Event('blur')));await expect(brief).toHaveCount(0);
     denied=true;await page.evaluate(()=>window.dispatchEvent(new Event('focus')));
     await expect.poll(()=>calls.filter(call=>call.path.endsWith('/result')).length).toBe(2);
@@ -187,6 +194,7 @@ for(const locale of ['en','ar'])test.describe('Native block inspection '+locale,
       seen.push(body);return route.fulfill({json:{appended:[],rejected:[],head:0,noAutomaticRetry:true}});
     });
     await page.goto(path);const owner=page.locator('forma-workspace');await expect(owner).toBeVisible();
+    await expect.poll(()=>owner.evaluate(host=>typeof host.store?.patchUi)).toBe('function');
     await owner.evaluate(host=>{host.store.patchUi({instrumentation:true});});
     const block=owner.locator('forma-context-block:has(article[data-block-id="block-direction"])');await expect(block).toHaveCount(1);
     expect(seen).toHaveLength(0);await block.locator('.context-decision-select > input[type="radio"]').check();expect(seen).toHaveLength(0);

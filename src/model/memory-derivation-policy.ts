@@ -6,7 +6,7 @@ export const MEMORY_DERIVATION_CONTROL = "memory-derivation-control-v1";
 export const MEMORY_DERIVATION_PURPOSES = ["rolling-summary", "profile", "suggestion"] as const;
 export type MemoryDerivationTerms = Readonly<{
   version: "memory-derivation-terms-v1"; purpose: MemoryDerivationPurpose;
-  recipeVersion: "memory-derivation-candidates-v1"; provider: "openai"; model: string;
+  recipeVersion: "memory-derivation-candidates-v1" | "memory-derivation-candidates-v2"; provider: "openai"; model: string;
   pricing: Readonly<{ inputMicroUsdPerMillion: number; cachedInputMicroUsdPerMillion: number; outputMicroUsdPerMillion: number }>;
   maximumInputTokens: number; maximumOutputTokens: number; monthlyCapMicroUsd: number;
   payer: "self-ai-allowance"; providerStore: false; retentionPolicyId: string; providerRetentionDisclosure: string;
@@ -44,7 +44,7 @@ export function parseMemoryDerivationTerms(terms: unknown): MemoryDerivationTerm
   try {
     if (!derivationExact(terms, ["version", "purpose", "recipeVersion", "provider", "model", "pricing", "maximumInputTokens", "maximumOutputTokens", "monthlyCapMicroUsd", "payer", "providerStore", "retentionPolicyId", "providerRetentionDisclosure", "evidence"])
       || terms.version !== "memory-derivation-terms-v1" || !MEMORY_DERIVATION_PURPOSES.some(purpose => purpose === terms.purpose)
-      || terms.recipeVersion !== "memory-derivation-candidates-v1" || terms.provider !== "openai" || !derivationId(terms.model)
+      || !(["memory-derivation-candidates-v1","memory-derivation-candidates-v2"] as unknown[]).includes(terms.recipeVersion) || terms.provider !== "openai" || !derivationId(terms.model)
       || !derivationExact(terms.pricing, ["inputMicroUsdPerMillion", "cachedInputMicroUsdPerMillion", "outputMicroUsdPerMillion"])
       || !derivationInteger(terms.pricing.inputMicroUsdPerMillion, 1, 1_000_000_000)
       || !derivationInteger(terms.pricing.cachedInputMicroUsdPerMillion, 0, terms.pricing.inputMicroUsdPerMillion)

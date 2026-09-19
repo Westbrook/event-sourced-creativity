@@ -196,3 +196,28 @@ test('automatic brief does not fetch private correction text when scope read is 
   const lease=await readDocumentMemoryBrief(f.selection,f.transport,f.current,f.controller.signal);
   assert.equal(lease.current().sections[0].items.length,0);assert.equal(lease.current().sections[0].corrections.length,0);lease.retire();
 });
+
+function behavioralViewFixture(){
+  const f=briefFixture();f.result.candidate.version='memory-derivation-candidates-v2';Object.assign(f.item,{category:'proposal',supports:[],counterevidence:[],observationSupports:[0],observationCounterevidence:[],
+    observationCitations:[{observationIndex:0,action:'inspect',recordedAt:new Date(Date.now()-1000).toISOString(),role:'support'}]});return f;
+}
+test('behavioral client keeps native action evidence separate and retires it with the brief lease',async()=>{
+  const f=behavioralViewFixture(),lease=await readDocumentMemoryBrief(f.selection,f.transport,f.current,f.controller.signal);assert.ok(lease);
+  const item=lease.current().sections[0].items[0];assert.deepEqual(item.supports,[]);assert.equal(item.observationCitations[0].action,'inspect');
+  item.observationCitations[0].action='invented';assert.equal(lease.current().sections[0].items[0].observationCitations[0].action,'inspect');lease.retire();assert.equal(lease.current(),null);
+});
+for(const fault of ['v1-with-actions','missing-actions','missing-citations','duplicate-index','invented-action','future-time','wrong-role','wrong-index','invented-preference','no-support','mismatched-conflict','unknown-field'])test('behavioral client rejects '+fault,async()=>{
+  const f=behavioralViewFixture();
+  if(fault==='v1-with-actions')f.result.candidate.version='memory-derivation-candidates-v1';if(fault==='missing-actions')delete f.item.observationSupports;
+  if(fault==='missing-citations')f.item.observationCitations=[];if(fault==='duplicate-index')f.item.observationCounterevidence=[0];
+  if(fault==='invented-action')f.item.observationCitations[0].action='attention';if(fault==='future-time')f.item.observationCitations[0].recordedAt=new Date(Date.now()+60000).toISOString();
+  if(fault==='wrong-role')f.item.observationCitations[0].role='counterevidence';if(fault==='wrong-index')f.item.observationCitations[0].observationIndex=2;
+  if(fault==='invented-preference')f.item.category='preference-hypothesis';if(fault==='no-support'){f.item.observationSupports=[];f.item.observationCitations=[];}
+  if(fault==='mismatched-conflict')f.item.citationStatus='conflicting-citations';if(fault==='unknown-field')f.item.observationCitations[0].quote='Invented human words';
+  await assert.rejects(()=>createMemoryDerivationClient(async()=>Response.json(f.result)).inspectResult(f.entry));
+});
+test('behavioral consent offer requires an exact recipe hash and distinguishes its source window',async()=>{
+  const f=fixture();f.offer.terms.recipeVersion='memory-derivation-candidates-v2';f.offer.termsSha256=hash(derivationCanonical(f.offer.terms));f.settings.sourceWindow='qualified-recipe';
+  const result=await createMemoryDerivationClient(async()=>Response.json(f.settings)).settings(f.expected);assert.equal(result.qualifications[0].terms.recipeVersion,'memory-derivation-candidates-v2');
+  f.settings.sourceWindow='future-originals';await assert.rejects(()=>createMemoryDerivationClient(async()=>Response.json(f.settings)).settings(f.expected));
+});

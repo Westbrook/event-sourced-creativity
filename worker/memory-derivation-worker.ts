@@ -72,7 +72,7 @@ export async function runNativeDerivationScheduled(env:WorkerEnv):Promise<{statu
   }
   if(!admitted(env))return {status:'unavailable',processed:0};
   const source=nativeDerivationSourceInputs(env,captured.capture);
-  if(!source.originals.length)return await completeEmptyNativeDerivation(env,captured.capture)
+  if(!source.originals.length&&!source.behavioralSources?.length)return await completeEmptyNativeDerivation(env,captured.capture)
     ?{status:'no-eligible-originals',processed:1}:{status:'uncertain',processed:0};
   const response=await executeNativeDerivationProvider(env,lease,captured.capture);
   // Capacity is established before any reservation/dispatch. Continue the

@@ -1,3 +1,4 @@
+import { parseMemoryBehavioralResult, type ParsedMemoryBehavioralDerivation } from './memory-behavioral-result.ts';
 import { prepareNativeDerivationCompletion } from "./memory-derivation-completion.ts";
 import type { WorkerEnv } from './runtime.ts';
 import { memoryCanonical, type MemorySqlGuard } from './memory-sql.ts';
@@ -123,7 +124,7 @@ export async function publishNativeDerivationResult(env: WorkerEnv, receipt: Nat
 declare const readBrand: unique symbol;
 export type NativeDerivationResultRead = Readonly<{ [readBrand]: true }>;
 const reads = new WeakMap<NativeDerivationResultRead, { env: WorkerEnv; db: WorkerEnv['DB']; row: Row;
-  capture: NativeDerivationSourceCapture; manifest: NativeDerivationManifest; candidate: ParsedMemoryDerivation; dependencies: Dependency[] }>();
+  capture: NativeDerivationSourceCapture; manifest: NativeDerivationManifest; candidate: ParsedMemoryDerivation | ParsedMemoryBehavioralDerivation; dependencies: Dependency[] }>();
 
 /** actorUserId comes from the authenticated native principal, never request JSON.
  * No result body is read before that actor's current scope/purpose proof. */
@@ -141,9 +142,10 @@ export async function readNativeDerivationResult(env: WorkerEnv, actorUserId: st
     const manifest = await revalidateNativeDerivationManifest(env, captured.capture, row.manifest_json); if (!manifest) return null;
     const source = nativeDerivationSourceInputs(env, captured.capture), expected = dependencies(nativeDerivationManifestInputs(env, manifest).manifest);
     if (row.dependency_count !== expected.length || source.retentionCeiling !== row.expires_at) return null;
-    const candidate = await parseMemoryDerivationResult(row.raw_json, { purpose: source.purpose, scopeKey: source.scopeKey,
+    const context={purpose: source.purpose, scopeKey: source.scopeKey,
       manifestId: jobId, manifestRevision: 1, checkedAt: source.checkedAt, validUntil: source.validUntil,
-      sources: source.originals, priorItems: [], suppressedLineages: [] });
+      sources: source.originals, priorItems: [], suppressedLineages: []};
+    const candidate = source.behavioralSources?await parseMemoryBehavioralResult(row.raw_json,{...context,observations:source.behavioralSources}):await parseMemoryDerivationResult(row.raw_json,context);
     if (!candidate) return null;
     const handle = Object.freeze({}) as NativeDerivationResultRead;
     reads.set(handle, { env, db, row, capture: captured.capture, manifest, candidate, dependencies: expected });
@@ -235,7 +237,9 @@ export function nativeDerivationResultControlTarget(env: WorkerEnv, handle: Nati
     lineages:item.lineageIds.map(lineageId=>{
       const original=source.originals.find(original=>original.lineageId===lineageId&&original.role==='user');
       const backing=source.originalBacking.find(row=>row.eventId===original?.sourceId);
-      if(!original||!backing)throw Error('memory-user-control-target-unavailable');
-      return {lineageId,sourceContentRef:backing.contentRef,expiresAt:[original.expiresAt,source.retentionCeiling].sort()[0]!};
+      if(original&&backing)return {lineageId,kind:'original' as const,sourceContentRef:backing.contentRef,expiresAt:[original.expiresAt,source.retentionCeiling].sort()[0]!};
+      const observed=source.behavioralSources?.find(row=>row.lineageId===lineageId);
+      if(!observed)throw Error('memory-user-control-target-unavailable');
+      return {lineageId,kind:'observation' as const,sourceContentRef:observed.sourceId,expiresAt:[observed.expiresAt,source.retentionCeiling].sort()[0]!};
     }) };
 }

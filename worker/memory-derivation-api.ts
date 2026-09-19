@@ -207,7 +207,7 @@ export async function handleMemoryDerivationSettings(request: Request, env: Work
         if (candidates.length > 16) return deny("memory_derivation_inventory_unavailable", 503);
         baseGuards.push(inventoryGuard("memory_derivation_qualifications", DERIVATION_QUALIFICATION_COLUMNS, where, values, "qualification_id", candidates));
         for (const candidate of candidates) { const accepted = await parseMemoryDerivationQualification(candidate, binding);
-          if (accepted) { baseGuards.push(derivationQualificationGuard(accepted.row));
+          if (accepted&&(accepted.terms.recipeVersion!=='memory-derivation-candidates-v2'||schema.observationControlsPresent&&schema.lifecyclePresent)) { baseGuards.push(derivationQualificationGuard(accepted.row));
             qualifications.push({ qualificationId: accepted.row.qualification_id, termsSha256: accepted.row.terms_sha256, expiresAt: accepted.row.expires_at, terms: accepted.terms }); } }
       }
       const reads=[...baseGuards.map(guard => derivationAssertion(env, guard)),...(schema.financePresent?[memoryDerivationFinanceViewStatement(env,actor.userId)]:[])];
@@ -219,12 +219,12 @@ export async function handleMemoryDerivationSettings(request: Request, env: Work
         scope: { projectId, documentId, custody: parent.organization_id !== null ? { kind: "organization", organizationId: parent.organization_id, projectAccessId: parent.project_access_id, ownerUserId: parent.owner_user_id } : { kind: "personal" } },
         policyVersion: MEMORY_DERIVATION_POLICY, enrollmentId: parent.enrollment_id, enrollmentRevision: parent.revision,
         grants: stored.map(grant => grantView(grant as MemoryDerivationGrant)), qualifications,...(financial?{financial}:{}),
-        capScope: "payer-utc-calendar-month-all-memory-purposes", sourceWindow: "future-originals", processingImplemented: schema.completionPresent && env.FORMA_MEMORY_DERIVATION_PROCESSING_ENABLED === "true" && env.FORMA_MEMORY_SCHEDULING_ENABLED === "true" });
+        capScope: "payer-utc-calendar-month-all-memory-purposes", sourceWindow: qualifications.some(item=>item.terms.recipeVersion==='memory-derivation-candidates-v2')?"qualified-recipe":"future-originals", processingImplemented: schema.completionPresent && env.FORMA_MEMORY_DERIVATION_PROCESSING_ENABLED === "true" && env.FORMA_MEMORY_SCHEDULING_ENABLED === "true" });
     }
     if (!prepared) return deny("memory_derivation_authority_unavailable", 403);
     if (!body || !derivationExact(body, ["version", "policyVersion", "purpose", "qualificationId", "termsSha256", "projectId", "documentId", "enrollmentId", "enrollmentRevision", "revision", "expectedConsentId", "expectedCustody", "monthlyCapMicroUsd", "background", "retentionDays", "expiresAt", "sourceWindow", "chargeMyAiAllowance", "confirmation"])
       || body.version !== MEMORY_DERIVATION_CONTROL || body.policyVersion !== MEMORY_DERIVATION_POLICY || body.confirmation !== "ENABLE_DERIVED_MEMORY"
-      || body.chargeMyAiAllowance !== true || body.sourceWindow !== "future-originals" || !MEMORY_DERIVATION_PURPOSES.some(purpose => purpose === body.purpose)
+      || body.chargeMyAiAllowance !== true || !(["future-originals","future-originals-and-actions"] as unknown[]).includes(body.sourceWindow) || !MEMORY_DERIVATION_PURPOSES.some(purpose => purpose === body.purpose)
       || !derivationId(body.qualificationId) || !derivationHash(body.termsSha256) || !derivationInteger(body.revision, 0, Number.MAX_SAFE_INTEGER - 1) || !(body.expectedConsentId === null || derivationConsentId(body.expectedConsentId))
       || !derivationInteger(body.retentionDays, 1, 365) || !derivationTime(body.expiresAt) || typeof body.background !== "boolean"
       || !derivationInteger(body.monthlyCapMicroUsd, 1, 1_000_000_000)) return deny("explicit_memory_derivation_consent_required");
@@ -233,7 +233,8 @@ export async function handleMemoryDerivationSettings(request: Request, env: Work
     const expectedCustody = parseMemoryCustody(body.expectedCustody);
     if (!expectedCustody || !memoryCustodyMatches(expectedCustody, prepared.binding.scope)) return deny("memory_derivation_custody_changed", 409);
     const qualified = await readDerivationQualification(env, body.qualificationId), now = new Date().toISOString();
-    if (!qualified || qualified.terms.purpose !== body.purpose || qualified.row.terms_sha256 !== body.termsSha256
+    if (!qualified || qualified.terms.recipeVersion==='memory-derivation-candidates-v2'&&(!schema.observationControlsPresent||!schema.lifecyclePresent)
+      || body.sourceWindow!==(qualified.terms.recipeVersion==='memory-derivation-candidates-v2'?'future-originals-and-actions':'future-originals') || qualified.terms.purpose !== body.purpose || qualified.row.terms_sha256 !== body.termsSha256
       || qualified.terms.monthlyCapMicroUsd !== body.monthlyCapMicroUsd) return deny("memory_derivation_qualification_required", 503);
     if (body.enrollmentId !== parent.enrollment_id || body.enrollmentRevision !== parent.revision || body.retentionDays > parent.retention_days
       || body.expiresAt <= now || body.expiresAt > parent.expires_at || body.expiresAt > qualified.row.expires_at

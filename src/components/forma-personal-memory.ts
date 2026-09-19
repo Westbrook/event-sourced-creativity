@@ -986,7 +986,7 @@ export class FormaPersonalMemory extends FormaElement {
       qualificationId: offer.qualificationId, termsSha256: offer.termsSha256, projectId: row.projectId, documentId: row.documentId,
       enrollmentId: row.id, enrollmentRevision: row.revision, revision: prior?.revision ?? 0, expectedConsentId: prior?.consentId ?? null,
       expectedCustody: custody, monthlyCapMicroUsd: offer.terms.monthlyCapMicroUsd, background: this.#purposeDraft.background,
-      retentionDays: row.retentionDays, expiresAt, sourceWindow: "future-originals" as const, chargeMyAiAllowance: true as const, confirmation: "ENABLE_DERIVED_MEMORY" as const };
+      retentionDays: row.retentionDays, expiresAt, sourceWindow: offer.terms.recipeVersion==='memory-derivation-candidates-v2'?"future-originals-and-actions":"future-originals", chargeMyAiAllowance: true as const, confirmation: "ENABLE_DERIVED_MEMORY" as const };
     this.#purposeDraft = { ...this.#purposeDraft, charge: false, consent: false };
     return this.#runPurpose(event, "enable", signal => this.#purposeClient.enable(draft, signal), result => {
       this.#purposeSettings = { ...settings, grants: [...settings.grants.filter(item => item.purpose !== result.purpose), result] }; this.#purposeNotice = "purposeSaved";
@@ -1066,6 +1066,7 @@ export class FormaPersonalMemory extends FormaElement {
       ${view&&Date.parse(view.validUntil)>Date.now()?html`<div data-memory-derived-content>
         ${view.history?html`<p data-memory-history-boundary>${this.#t('reviewHistory',{windows:this.i18n.number(view.history.windowCount),pairs:this.i18n.number(view.history.originalPairs)})} ${this.#t('reviewHistory.'+view.history.boundary)}</p>`:nothing}
         ${view.items.length?view.items.map(item=>html`<article><p>${item.text}</p>
+          ${item.observationCitations?.length?html`<details data-memory-observation-evidence><summary>${this.#t('behavioralEvidence')}</summary><p>${this.#t('behavioralDisclosure')}</p><ul>${item.observationCitations.map(cited=>html`<li>${this.#t('behavioralRole.'+cited.role)}: ${this.#t('behavioralAction.'+cited.action)} · <time datetime=${cited.recordedAt}>${this.i18n.date(new Date(cited.recordedAt),{dateStyle:'medium',timeStyle:'short'})}</time></li>`)}</ul></details>`:nothing}
           <button type="button" class="button secondary" ?disabled=${disabled||this.#purposeNeedsReload} @click=${(e:Event)=>captured(e,()=>this.#changeReview(e,view,item,'suppressed'))}>${this.#t('reviewSuppress')}</button>
           <button type="button" class="button secondary" ?disabled=${disabled||this.#purposeNeedsReload||!this.#reviewCorrection.trim()} @click=${(e:Event)=>captured(e,()=>this.#changeReview(e,view,item,'corrected'))}>${this.#t('reviewCorrect')}</button></article>`):html`<p>${this.#t('reviewEmpty')}</p>`}
         <label>${this.#t('reviewCorrection')}<textarea maxlength="2000" .value=${this.#reviewCorrection} ?disabled=${disabled} @input=${(e:Event)=>captured(e,()=>{if(!disabled&&this.#reviewView===view){this.#reviewCorrection=(e.currentTarget as HTMLTextAreaElement).value;this.requestUpdate();}})}></textarea></label>
@@ -1104,7 +1105,7 @@ export class FormaPersonalMemory extends FormaElement {
               <p>${this.#t("purposeBounds", { days: this.i18n.number(row.retentionDays), at: this.i18n.date(new Date(row.expiresAt < offer.expiresAt ? row.expiresAt : offer.expiresAt), { dateStyle: "medium", timeStyle: "short" }) })}</p>` : nothing}
             <label class="toggle-row"><input type="checkbox" name="memory-purpose-charge" .checked=${this.#purposeDraft.charge} @change=${(event: Event) => captured(event, () => this.#editPurpose(event, "charge"))}>${this.#t("purposeCharge")}</label>
             <label class="toggle-row"><input type="checkbox" name="memory-purpose-background" .checked=${this.#purposeDraft.background} ?disabled=${!row.background} @change=${(event: Event) => captured(event, () => this.#editPurpose(event, "background"))}>${this.#t("purposeBackground")}</label>
-            <label class="toggle-row"><input type="checkbox" name="memory-purpose-consent" .checked=${this.#purposeDraft.consent} @change=${(event: Event) => captured(event, () => this.#editPurpose(event, "consent"))}>${this.#t("purposeConsent")}</label>
+            <label class="toggle-row"><input type="checkbox" name="memory-purpose-consent" .checked=${this.#purposeDraft.consent} @change=${(event: Event) => captured(event, () => this.#editPurpose(event, "consent"))}>${this.#t(offer?.terms.recipeVersion==='memory-derivation-candidates-v2'?"purposeBehavioralConsent":"purposeConsent")}</label>
             <button type="submit" class="button primary" ?disabled=${disabled || !this.#purposeEligible() || !this.#purposeDraft.charge || !this.#purposeDraft.consent}>${this.#t("purposeEnable")}</button>
           </fieldset>
         </form>` : html`<p>${this.#t("purposeNotLoaded")}</p>`}</div>` : nothing}</details>`;

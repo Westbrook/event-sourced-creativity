@@ -96,7 +96,7 @@ lifecycle/custody retirement through additive migration0050.
 
 ## Remaining native implementation — still in scope
 
-1. [Bounded original-backed rolling refresh and latest-purpose review](forma-memory-rolling-history-2026-09-19.md) are implemented. [Bounded cross-producer reconciliation](forma-memory-cross-producer-history-2026-09-19.md) now combines genuine Creator/Chat Studio originals without advancing the other producer cursor. Longer-term semantic reconciliation, cross-scope recall and broader automatic consumers remain open; bounded windows are not lifetime coverage.
+1. [Bounded original-backed rolling refresh and latest-purpose review](forma-memory-rolling-history-2026-09-19.md) are implemented. [Bounded cross-producer reconciliation](forma-memory-cross-producer-history-2026-09-19.md) now combines genuine Creator/Chat Studio originals without advancing the other producer cursor. [Explicit native original/action derivation](forma-memory-behavioral-evidence-2026-09-19.md) now supports tentative behavioral patterns and action-only windows with separately qualified consent. Longer-term semantic reconciliation, cross-scope recall and broader automatic consumers remain open; bounded windows are not lifetime coverage.
 2. [Native index intents and source invalidation](forma-memory-native-index-intents-2026-09-19.md) are implemented. Remote dispatch, qualified deletion acknowledgements and index reconciliation remain gated on the external adapter.
 3. Nested project containment/reparenting and remaining page/library/canvas block identities. [Native document-local block revision bindings](forma-memory-native-block-revisions-2026-09-19.md) now certify personal/governed block field histories and complete supporting-event inverses.
 4. [Independent Chat Studio derivation](forma-memory-chat-studio-derivation-2026-09-19.md) is implemented; [genuine approved-copy evidence](forma-memory-approved-reuse-2026-09-19.md) is implemented. [Governed artifact consumption](forma-memory-governed-artifact-consumption-2026-09-19.md) is implemented with private actor presentation and explicit v4 inspection. [Genuine native document block inspection and private v5 consumption](forma-memory-block-inspection-2026-09-19.md), including [7/30-day descriptive windows](forma-memory-consumption-windows-2026-09-19.md), are implemented. Library/canvas resources, unsupported block-field histories and independent cross-document source recall remain open. [Historical personal artifact recertification](forma-memory-historical-artifact-consumption-2026-09-19.md) now supports native delivery/derivation and the explicitly negotiated v3 private inspector, while v1/v2 readers retain their original contract.
@@ -156,10 +156,12 @@ independent producers, nested scope identity and native index lifecycle remain o
 
 ### MEM-003 behavioral evidence continuation
 
-**In progress — Memory implementation task, local feature branch only.**
-[Explicit behavioral evidence and event-backed private controls](forma-memory-behavioral-evidence-2026-09-19.md)
-now provide the strict v2 data parser, additive migration0057 and native
-inspection/revision/expiry privacy lifecycle. No recipe activation is included.
-Next: integrate the separately qualified recipe with native source capture,
-suppression, provider/result manifests, control targets and localized evidence
-review. These remain implementation work, not unsupported external-service gates.
+**Bounded native integration implemented — local feature branch only.**
+[Behavioral evidence and event-backed private controls](forma-memory-behavioral-evidence-2026-09-19.md)
+now connect the strict v2 recipe to separately qualified original/action consent,
+native capture and suppression, provider/result manifests, atomic mixed control
+targets, localized evidence and scheduled-event processing. Additive migration0057
+remains unapplied. No v1 grant is broadened and no user/provider is activated.
+Broader cross-scope/long-term reconciliation, nested scopes, Library/Canvas and
+automatic assistant/autocomplete consumers remain implementation work; hosted
+qualification and enrollment remain separate operational gates.

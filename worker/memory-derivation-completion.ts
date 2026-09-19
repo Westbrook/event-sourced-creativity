@@ -42,7 +42,7 @@ export async function prepareNativeDerivationCompletion(env:WorkerEnv,jobId:stri
   });}};
 }
 export async function completeEmptyNativeDerivation(env:WorkerEnv,capture:NativeDerivationSourceCapture){
-  const input=nativeDerivationSourceInputs(env,capture);if(input.originals.length)return false;
+  const input=nativeDerivationSourceInputs(env,capture);if(input.originals.length||input.behavioralSources?.length)return false;
   const prepared=await prepareNativeDerivationCompletion(env,input.jobId,'no-eligible-originals');if(!prepared)return false;
   const proof=nativeDerivationSourceStatements(env,capture),result=await env.DB.batch([...proof,...prepared.statements]);
   return derivationResults(result,proof.length+prepared.statements.length)&&result.slice(0,proof.length).every(row=>derivationVerified(row)||row.results[0]?.context_source_asserted===1)&&prepared.acknowledge(result.slice(proof.length));

@@ -58,10 +58,11 @@ export async function controlNativeDerivationResult(env:WorkerEnv,read:NativeDer
   const target=nativeDerivationResultControlTarget(env,read,claimKey);
   if(!derivationExact(expectedRevisions,target.lineages.map(lineage=>lineage.lineageId))
     ||Object.values(expectedRevisions).some(value=>!derivationInteger(value,0,Number.MAX_SAFE_INTEGER-1)))throw Error('memory-user-control-revision-required');
-  const now=new Date().toISOString(),next:Row[]=[],previous:(Row|undefined)[]=[];
+  const now=new Date().toISOString(),next:Row[]=[],previous:(Row|undefined)[]=[],kinds:Storage[]=[];
   for(const lineage of target.lineages){
-    const id=await memoryDigest(memoryCanonical(['native-user-control-v1',target.enrollmentId,target.purpose,lineage.lineageId]));
-    const prior=await owned(env,target.actorUserId,id);
+    const kind=lineage.kind;if(kind==='observation'&&!schema.observationControlsPresent)throw Error('memory-user-control-unavailable');
+    const id=await memoryDigest(memoryCanonical([kind==='observation'?'native-observation-user-control-v1':'native-user-control-v1',target.enrollmentId,target.purpose,lineage.lineageId]));
+    const prior=await owned(env,target.actorUserId,id,kind);kinds.push(kind);
     if((prior?.revision??0)!==expectedRevisions[lineage.lineageId])throw Error('memory-user-control-revision-changed');
     const row:Row={control_id:id,enrollment_id:target.enrollmentId,actor_user_id:target.actorUserId,purpose:target.purpose,scope_key:target.scopeKey,
       lineage_id:lineage.lineageId,claim_key:target.claimKey,source_content_ref:lineage.sourceContentRef,revision:Number(prior?.revision??0)+1,
@@ -71,15 +72,15 @@ export async function controlNativeDerivationResult(env:WorkerEnv,read:NativeDer
   }
   const retiring=await retirement(env,target.enrollmentId,target.purpose,target.actorUserId,schema.indexPresent);
   const statements=[...nativeDerivationResultStatements(env,read),derivationAssertion(env,schema.guard),retiring.guard,
-    ...next.map((row,i)=>snapshot(env,String(row.control_id),previous[i])),
+    ...next.map((row,i)=>snapshot(env,String(row.control_id),previous[i],kinds[i])),
     ...(schema.observationControlsPresent?[derivationAssertion(env,{condition:`(SELECT COUNT(*) FROM ${derivationControlRelation(true)} WHERE enrollment_id=?)+?<=1024`,bindings:[target.enrollmentId,next.filter(row=>row.revision===1).length]})]:[]),...(authorizationGuard?[derivationAssertion(env,authorizationGuard)]:[])];
   const writes:number[]=[];
-  for(const row of next){
-    writes.push(statements.length);
-    if(Number(row.revision)===1)statements.push(db.prepare(`INSERT INTO memory_derivation_user_controls(${columns.join(',')}) VALUES(${columns.map(()=>'?').join(',')})`).bind(...columns.map(key=>row[key]!)));
-    else statements.push(db.prepare(`UPDATE memory_derivation_user_controls SET claim_key=?,revision=?,action=?,correction_text=?,updated_at=?,expires_at=? WHERE control_id=? AND revision=?`)
+  for(const [index,row] of next.entries()){
+    const kind=kinds[index]!;writes.push(statements.length);
+    if(Number(row.revision)===1)statements.push(db.prepare(`INSERT INTO ${table(kind)}(${fields(kind).join(',')}) VALUES(${columns.map(()=>'?').join(',')})`).bind(...columns.map(key=>row[key]!)));
+    else statements.push(db.prepare(`UPDATE ${table(kind)} SET claim_key=?,revision=?,action=?,correction_text=?,updated_at=?,expires_at=? WHERE control_id=? AND revision=?`)
       .bind(row.claim_key!,row.revision!,row.action!,row.correction_text!,row.updated_at!,row.expires_at!,row.control_id!,Number(row.revision)-1));
-    statements.push(derivationAssertion(env,{condition:'changes()=1',bindings:[]}),snapshot(env,String(row.control_id),row));
+    statements.push(derivationAssertion(env,{condition:'changes()=1',bindings:[]}),snapshot(env,String(row.control_id),row,kind));
   }
   if(env.DB!==db)throw Error('memory-user-control-unavailable');
   const results=structuredClone(await db.batch<Record<string,unknown>>(statements));

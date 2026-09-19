@@ -70,7 +70,8 @@ export class DocumentMemoryBrief extends FormaElement {
           <h3>${this.#t('purpose.'+section.purpose)}</h3>
           ${section.corrections.map(control=>html`<p class="memory-brief-correction"><strong>${this.#t('reviewAction.corrected')}</strong> ${control.correctionText}</p>`)}
           <ul>${section.items.map(item=>html`<li><p>${item.text}</p>${item.citationStatus==='conflicting-citations'?html`<strong>${this.#t('briefConflict')}</strong>`:nothing}
-            <details><summary>${this.#t('briefEvidence')}</summary>
+            <details><summary>${this.#t(item.observationCitations?.length?'behavioralEvidence':'briefEvidence')}</summary>
+              ${item.observationCitations?.length?html`<p>${this.#t('behavioralDisclosure')}</p><ul>${item.observationCitations.map(cited=>html`<li>${this.#t('behavioralRole.'+cited.role)}: ${this.#t('behavioralAction.'+cited.action)} · <time datetime=${cited.recordedAt}>${this.i18n.date(new Date(cited.recordedAt),{dateStyle:'medium',timeStyle:'short'})}</time></li>`)}</ul>`:nothing}
               ${item.supports.map(quote=>html`<blockquote>${quote.text}</blockquote>`)}
               ${item.counterevidence.length?html`<p>${this.#t('briefCounterevidence')}</p>${item.counterevidence.map(quote=>html`<blockquote>${quote.text}</blockquote>`)}`:nothing}
             </details></li>`)}</ul>

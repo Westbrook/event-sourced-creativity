@@ -123,10 +123,12 @@ remain in Git and the independent report.
 
 ### MEM-003 behavioral evidence continuation
 
-**In progress — Memory implementation task, local feature branch only.**
-[Explicit behavioral evidence and event-backed private controls](forma-memory-behavioral-evidence-2026-09-19.md)
-now provide the strict v2 data parser, additive migration0057 and native
-inspection/revision/expiry privacy lifecycle. No recipe activation is included.
-Next: integrate the separately qualified recipe with native source capture,
-suppression, provider/result manifests, control targets and localized evidence
-review. These remain implementation work, not unsupported external-service gates.
+**Bounded native integration implemented — local feature branch only.**
+[Behavioral evidence and event-backed private controls](forma-memory-behavioral-evidence-2026-09-19.md)
+now connect the strict v2 recipe to separately qualified original/action consent,
+native capture and suppression, provider/result manifests, atomic mixed control
+targets, localized evidence and scheduled-event processing. Additive migration0057
+remains unapplied. No v1 grant is broadened and no user/provider is activated.
+Broader cross-scope/long-term reconciliation, nested scopes, Library/Canvas and
+automatic assistant/autocomplete consumers remain implementation work; hosted
+qualification and enrollment remain separate operational gates.

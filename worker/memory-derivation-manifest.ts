@@ -14,7 +14,7 @@ export type NativeDerivationManifestData = Readonly<{
   expiresAt: string;
   originals: Omit<Capture['originals'][number], 'text'>[];
   originalBacking: Capture['originalBacking']; observations: Capture['observations'];
-  provenance: Capture['provenance']; coverage: Capture['coverage']; history?: Capture['history'];
+  behavioralSources?: Capture['behavioralSources']; provenance: Capture['provenance']; coverage: Capture['coverage']; history?: Capture['history'];
 }>;
 declare const manifestBrand: unique symbol;
 export type NativeDerivationManifest = Readonly<{ [manifestBrand]: true }>;
@@ -30,6 +30,7 @@ function serialize(source: Capture): string {
     scopeKey: source.scopeKey, binding: source.binding, expiresAt: source.retentionCeiling,
     originals: source.originals.map(({ text: _text, ...metadata }) => metadata),
     originalBacking: source.originalBacking, observations: source.observations,
+    ...(source.behavioralSources?{behavioralSources:source.behavioralSources}:{}),
     provenance: source.provenance, coverage: source.coverage, ...(source.history ? { history: source.history } : {}),
   };
   const serialized = memoryCanonical(value);
