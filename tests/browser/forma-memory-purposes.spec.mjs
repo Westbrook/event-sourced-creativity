@@ -25,6 +25,25 @@ for(const locale of ['en','ar'])test.describe('Memory purpose locale '+locale,()
   await context.route('**/api/memory/**',async route=>{const request=route.request(),url=new URL(request.url());calls.push({method:request.method(),path:url.pathname,query:url.search});
     expect(url.origin).toBe(origin);expect(request.method()).toBe('GET');
     if(url.pathname==='/api/memory/settings'&&!url.search)return route.fulfill({json:settings});
+    if(url.pathname==='/api/memory/recall'){
+      expect(url.searchParams.get('id')).toBe(item.id);
+      const checkedAt=new Date().toISOString(),until=new Date(Date.now()+60000).toISOString(),recordedAt=new Date(Date.now()-3600000).toISOString();
+      const body={mode:'live-reference-memory',scope:{organizationId:null,projectId:item.projectId,documentId:item.documentId},
+        lifetime:{version:'memory-recall-lifetime-v1',checkedAt,validUntil:until},treatment:'untrusted-historical-evidence',method:'extractive-not-semantic',consumption:{conversation:1},
+        rollingConversation:{summary:[],recent:[{sourceEventId:'synthetic-original',recordedAt:checkedAt,user:'Synthetic reference for browser verification',assistant:'Synthetic historical response'}],completeFromStart:false},
+        coverage:{since:new Date(Date.now()-86400000).toISOString(),throughSequence:24,remainingThroughSequence:null,bounded:true,sourceCount:1},
+        sources:[{eventId:'synthetic-original',type:'AssistantReasoned',blockId:null,recordedAt:checkedAt,validUntil:until}],
+        note:'Observed actions are not inferred preferences; excerpts are truncated and access-filtered.'};
+      if(url.searchParams.has('consumptionEpisodes')){
+        expect(url.searchParams.get('consumptionEpisodes')).toBe('memory-consumption-episodes-v3');
+        body.consumptionEpisodes={version:'memory-consumption-episodes-v3',treatment:'descriptive-consumption',validUntil:until,
+          sources:[{eventId:'synthetic-old-view',type:'DocumentArtifactViewed',recordedAt,validUntil:until,target:{kind:'artifact',documentId:item.documentId,artifactId:'synthetic-artifact',artifactKind:'slides',revision:0,contentSha256:'a'.repeat(64)}}],
+          episodes:[{episodeId:null,observations:[{sourceIndex:0,kind:'viewer-open'}],firstRecordedAt:recordedAt,lastRecordedAt:recordedAt,validUntil:until,independentEvidence:false}],
+          coverage:{eligibleSourceCount:1,observationCount:1,unavailableArtifactSourceCount:0,completeHistory:false,bounded:true,truncated:false},attention:'not-measured',comprehension:'not-measured',inferredPreferences:false};
+      }
+      return route.fulfill({json:body});
+    }
+
     if(url.pathname==='/api/memory/derivation/settings'&&url.search==='?projectId=project-atmosphere&documentId=doc-atmosphere')return route.fulfill({json:purposes});
     if(url.pathname==='/api/memory/derivation/results')return route.fulfill({json:{...reviewList,...(url.searchParams.has('purpose')?{purpose:url.searchParams.get('purpose')}:{})}});
     if(url.pathname==='/api/memory/derivation/result'&&url.search==='?jobId='+entry.jobId)return route.fulfill({json:reviewResult});
@@ -77,6 +96,18 @@ for(const locale of ['en','ar'])test.describe('Memory purpose locale '+locale,()
   await captureViewport(page,info,'memory-derived-review-'+locale,{assertStable:false});
   await section.locator(':scope > summary').click();await expect(section.locator('[data-memory-derived-content]')).toHaveCount(0);
   await section.locator(':scope > summary').click();await expect(section.locator('textarea')).toHaveCount(0);expect(errors).toEqual([]);
+  await panel.locator('[data-memory-action="inspect"]').click();
+  await expect(panel.getByRole('button',{name:message(locale,'visitsInclude'),exact:true})).toBeVisible();
+  expect(calls.some(call=>call.query.includes('consumptionEpisodes='))).toBe(false);
+  await panel.getByRole('button',{name:message(locale,'visitsInclude'),exact:true}).click();
+  const visits=panel.locator('[data-memory-visits]');await expect(visits).toBeVisible();
+  await expect(visits.getByText(message(locale,'visitsLimits'),{exact:true})).toBeVisible();
+  await visits.locator('[data-memory-visit-references] > summary').click();
+  const opened=visits.getByText(message(locale,'visitsArtifactOpened'),{exact:true});
+  await opened.scrollIntoViewIfNeeded();await expect(opened).toBeInViewport();
+  expect(calls.filter(call=>call.query.includes('consumptionEpisodes=memory-consumption-episodes-v3'))).toHaveLength(1);
+  expect(calls.every(call=>call.method==='GET')).toBe(true);expect(errors).toEqual([]);
+  await captureViewport(page,info,'memory-historical-views-'+locale,{assertStable:false});
   await info.attach('declared-memory-transport',{body:JSON.stringify({syntheticOnly:true,production:false,providerCalls:0,mutations:0,calls,session:JSON.parse(syntheticReadBody('/api/session')).user.userId},null,2),contentType:'application/json'});
 });
 

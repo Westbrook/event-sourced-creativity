@@ -3,13 +3,16 @@ import { memoryTimestamp, parseMemoryLifetime, type MemoryRecallLifetime } from 
 import { snapshotMemoryConsumptionInput } from "./memory-consumption-episodes.ts";
 
 export const MEMORY_CONSUMPTION_V2 = "memory-consumption-episodes-v2" as const;
+/** Explicit historical-view negotiation; V2 remains current-only. */
+export const MEMORY_CONSUMPTION_V3 = "memory-consumption-episodes-v3" as const;
+export type MemoryArtifactConsumptionVersion = typeof MEMORY_CONSUMPTION_V2 | typeof MEMORY_CONSUMPTION_V3;
 export type MemoryConsumptionTarget = { kind: "document"; documentId: string } | {
   kind: "artifact"; documentId: string; artifactId: string; artifactKind: string; revision: number; contentSha256: string;
 };
 export type MemoryConsumptionV2Source = { eventId: string; type: "DocumentViewVisited" | "DocumentArtifactViewed";
   recordedAt: string; validUntil: string; target: MemoryConsumptionTarget };
 export type MemoryConsumptionV2 = {
-  version: typeof MEMORY_CONSUMPTION_V2; treatment: "descriptive-consumption"; validUntil: string;
+  version: MemoryArtifactConsumptionVersion; treatment: "descriptive-consumption"; validUntil: string;
   sources: MemoryConsumptionV2Source[];
   episodes: { episodeId: null; observations: [{ sourceIndex: number; kind: "visit" | "viewer-open" }];
     firstRecordedAt: string; lastRecordedAt: string; validUntil: string; independentEvidence: false }[];
@@ -28,15 +31,15 @@ function at(value: unknown) { const result = memoryTimestamp(value); check(resul
 
 /** A negotiated, inspector-only map. Its source indexes never address the
  * enclosing assistant/outcome source map. No new display lease or authority. */
-export function parseMemoryConsumptionV2(original: unknown, originalLifetime: MemoryRecallLifetime, documentId: string,
-  sourceWindow: { since: string; expiresAt: string }): MemoryConsumptionV2 | null {
+function parseArtifactConsumption(original: unknown, originalLifetime: MemoryRecallLifetime, documentId: string,
+  sourceWindow: { since: string; expiresAt: string }, expectedVersion: MemoryArtifactConsumptionVersion): MemoryConsumptionV2 | null {
   try {
     const input = snapshotMemoryConsumptionInput({ original, lifetime: originalLifetime, documentId, sourceWindow }) as Row;
     const lifetime = parseMemoryLifetime(input.lifetime); check(lifetime && id(input.documentId));
     const window = row(input.sourceWindow, ["since", "expiresAt"]), since = at(window.since), expires = at(window.expiresAt);
     check(since <= at(lifetime.checkedAt) && expires >= at(lifetime.validUntil));
     const value = row(input.original, ["version", "treatment", "validUntil", "sources", "episodes", "coverage", "attention", "comprehension", "inferredPreferences"]);
-    check(value.version === MEMORY_CONSUMPTION_V2 && value.treatment === "descriptive-consumption" && value.validUntil === lifetime.validUntil
+    check(value.version === expectedVersion && value.treatment === "descriptive-consumption" && value.validUntil === lifetime.validUntil
       && value.attention === "not-measured" && value.comprehension === "not-measured" && value.inferredPreferences === false);
     check(Array.isArray(value.sources) && value.sources.length <= 64 && Array.isArray(value.episodes) && value.episodes.length === value.sources.length);
     const seen = new Set<string>(), checked = at(lifetime.checkedAt), until = at(lifetime.validUntil);
@@ -71,4 +74,12 @@ export function parseMemoryConsumptionV2(original: unknown, originalLifetime: Me
     check(new TextEncoder().encode(JSON.stringify(value)).byteLength <= 65_536);
     return { ...value, sources, episodes } as MemoryConsumptionV2;
   } catch { return null; }
+}
+
+type ConsumptionParseInput = [original: unknown, lifetime: MemoryRecallLifetime, documentId: string, sourceWindow: { since: string; expiresAt: string }];
+export function parseMemoryConsumptionV2(...input: ConsumptionParseInput): MemoryConsumptionV2 | null {
+  return parseArtifactConsumption(...input, MEMORY_CONSUMPTION_V2);
+}
+export function parseMemoryConsumptionV3(...input: ConsumptionParseInput): MemoryConsumptionV2 | null {
+  return parseArtifactConsumption(...input, MEMORY_CONSUMPTION_V3);
 }

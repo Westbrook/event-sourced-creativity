@@ -6,7 +6,7 @@ import { rollingLiveMemoryConsumption, type LiveMemoryConsumption } from "../mod
 import { MEMORY_ASSISTED_OUTCOMES_VERSION, parseMemoryAssistedOutcomes, type MemoryAssistedOutcomes } from "../model/memory-assisted-outcomes.ts";
 import { MEMORY_SAVED_OUTPUTS_VERSION, parseMemorySavedOutputs, type MemorySavedOutputs } from "../model/memory-saved-outputs.ts";
 import { MEMORY_CONSUMPTION_EPISODES_VERSION, parseMemoryConsumptionEpisodes, type MemoryConsumptionEpisodes } from "../model/memory-consumption-episodes.ts";
-import { MEMORY_CONSUMPTION_V2, parseMemoryConsumptionV2, type MemoryConsumptionV2 } from "../model/memory-consumption-v2.ts";
+import { MEMORY_CONSUMPTION_V2, MEMORY_CONSUMPTION_V3, parseMemoryConsumptionV2, parseMemoryConsumptionV3, type MemoryConsumptionV2 } from "../model/memory-consumption-v2.ts";
 export { MEMORY_WRITE_CONTRACT } from "../model/memory-custody.ts";
 export type { MemoryCustody } from "../model/memory-custody.ts";
 
@@ -91,7 +91,7 @@ export type MemoryRecall = {
 };
 /** A local display lease, separate from the wire value; retirement cannot be undone. */
 export type MemoryRecallLease = Readonly<{ value: MemoryRecall; remaining: () => number; retire: () => void }>;
-export type MemoryRecallOptions = Readonly<{ consumptionEpisodes?: boolean | typeof MEMORY_CONSUMPTION_V2 }>;
+export type MemoryRecallOptions = Readonly<{ consumptionEpisodes?: boolean | typeof MEMORY_CONSUMPTION_V2 | typeof MEMORY_CONSUMPTION_V3 }>;
 
 export class MemoryClientError extends Error {
   readonly code: string;
@@ -303,14 +303,14 @@ function rollingConsumption(value: unknown, sources: MemorySource[], lifetime: M
   return expected;
 }
 
-function consumptionChoice(value: MemoryRecallOptions | undefined): false | typeof MEMORY_CONSUMPTION_EPISODES_VERSION | typeof MEMORY_CONSUMPTION_V2 {
+function consumptionChoice(value: MemoryRecallOptions | undefined): false | typeof MEMORY_CONSUMPTION_EPISODES_VERSION | typeof MEMORY_CONSUMPTION_V2 | typeof MEMORY_CONSUMPTION_V3 {
   if (value === undefined) return false;
   check(value !== null && typeof value === "object" && Object.getPrototypeOf(value) === Object.prototype);
   const names = Reflect.ownKeys(value);
   check(names.length <= 1 && names.every(name => name === "consumptionEpisodes"));
   if (names.length === 0) return false;
   const descriptor = Object.getOwnPropertyDescriptor(value, "consumptionEpisodes");
-  check(descriptor?.enumerable && Object.hasOwn(descriptor, "value") && (typeof descriptor.value === "boolean" || descriptor.value === MEMORY_CONSUMPTION_V2));
+  check(descriptor?.enumerable && Object.hasOwn(descriptor, "value") && (typeof descriptor.value === "boolean" || descriptor.value === MEMORY_CONSUMPTION_V2 || descriptor.value === MEMORY_CONSUMPTION_V3));
   return descriptor.value === true ? MEMORY_CONSUMPTION_EPISODES_VERSION : descriptor.value;
 }
 
@@ -342,7 +342,7 @@ function recall(value: unknown, request: MemoryEnrollment, includeConsumption: R
     ? parseMemorySavedOutputs(row.savedOutputs, sources, lifetime) : undefined;
   check(savedOutputs !== null);
   const consumptionEpisodes = Object.hasOwn(row, "consumptionEpisodes")
-    ? includeConsumption === MEMORY_CONSUMPTION_V2 ? parseMemoryConsumptionV2(row.consumptionEpisodes, lifetime, request.documentId,
+    ? includeConsumption === MEMORY_CONSUMPTION_V2 || includeConsumption === MEMORY_CONSUMPTION_V3 ? (includeConsumption === MEMORY_CONSUMPTION_V3 ? parseMemoryConsumptionV3 : parseMemoryConsumptionV2)(row.consumptionEpisodes, lifetime, request.documentId,
       { since: String(object(row.coverage).since), expiresAt: request.expiresAt })
       : parseMemoryConsumptionEpisodes(row.consumptionEpisodes, sources, lifetime, request.documentId) : undefined;
   check(consumptionEpisodes !== null);

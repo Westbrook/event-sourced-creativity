@@ -25,7 +25,9 @@ understanding, an independent human quotation, or a new enrollment grant.
   submitted as a new view. There is no browser-controlled historical-write path.
 - The negotiated v2 consumption inspector remains current-only and reports an
   unavailable artifact source rather than silently displaying historical content.
-  A separately negotiated historical inspector remains UI integration work.
+  The private UI now explicitly requests v3 historical-view evidence. Older v1/v2
+  requests keep their original behavior; cross-version responses fail closed.
+  V3 retains the same parent display lease and descriptive-only source map.
 - Native reference delivery and original-backed derivation use the historical
   certificate. Existing whole-reference capacity/continuation limits remain;
   repeated views of one exact source version can share a source proof without
@@ -46,3 +48,18 @@ and the production build passed. Receipts are in the continuation handoff.
 
 Broader work stays in the [native continuation](forma-memory-native-continuation-2026-09-18.md)
 and [Sites capability To Do](forma-memory-sites-capability-todo-2026-09-18.md).
+
+## Historical inspector continuation
+
+The existing “include recorded visits” action now requests v3, with updated
+English/French/Arabic/Japanese disclosure of verified earlier views. Mounting and
+ordinary inspection still do not request the optional projection. Navigation,
+hiding, superseded requests and lease expiry retain their existing retirement
+behavior; the new request cannot turn viewing into preference or comprehension.
+
+622 client/component checks and all 73 native artifact checks pass. The two
+read-only synthetic whole-app browser cases pass in English at 1280px and Arabic
+at 320px, including visible scrollable historical detail and no enrollment,
+mutation or provider request. Typecheck, changed-file lint, localization and build
+pass. Screenshots and transport receipts are retained in the continuation lane;
+this is not production/browser-access qualification with real user data.

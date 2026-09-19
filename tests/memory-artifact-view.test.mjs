@@ -425,7 +425,12 @@ for(const after of ['edit','render'])test('historical artifact consumption: genu
   assert.equal(await sources.replayNativeDerivationSources(f.env,captured.capture),true);
   const oldInspector=await f.inspect(),body=await oldInspector.json();assert.equal(oldInspector.status,200,JSON.stringify(body));
   assert.equal(body.consumptionEpisodes.sources.length,0,'The explicitly current-only v2 inspector does not silently become historical');
-  assert.equal(body.consumptionEpisodes.coverage.unavailableArtifactSourceCount,1);assert.deepEqual(f.counts(),money);
+  assert.equal(body.consumptionEpisodes.coverage.unavailableArtifactSourceCount,1);
+  const historical=await f.inspect('memory-consumption-episodes-v3'),history=await historical.json();assert.equal(historical.status,200,JSON.stringify(history));
+  assert.equal(history.consumptionEpisodes.version,'memory-consumption-episodes-v3');assert.equal(history.consumptionEpisodes.sources.length,1);
+  assert.equal(history.consumptionEpisodes.sources[0].target.revision,0);assert.equal(history.consumptionEpisodes.sources[0].eventId,event.eventId);
+  assert.equal(history.consumptionEpisodes.coverage.unavailableArtifactSourceCount,0);assert.equal(history.consumptionEpisodes.inferredPreferences,false);
+  assert.equal(history.consumptionEpisodes.validUntil,history.lifetime.validUntil);assert.deepEqual(f.counts(),money);
 });
 for(const fault of ['view-erased','source-erased','body-changed','document-removed','document-replaced','custody','expiry-extended','unknown-view'])test('historical artifact consumption: '+fault+' cannot renew old observation authority',async t=>{
   const f=await memoryArtifactFixture(t),oldExpiry=new Date(Date.now()+60000).toISOString();

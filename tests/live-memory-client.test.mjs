@@ -6,7 +6,7 @@ import { parseMemoryCustody, memoryCustodyMatches } from "../src/model/memory-cu
 import { createMemoryElapsed, memoryTimestamp, parseMemoryLifetime, MEMORY_RECALL_LIFETIME, MEMORY_RECALL_MAX_AGE_MS } from "../src/model/memory-lifetime.ts";
 import { rollingLiveMemoryConsumption } from "../src/model/memory-observations.ts";
 import { createDocumentJobMemoryClient, DocumentJobMemoryError, DOCUMENT_JOB_MEMORY_VERSION } from "../src/state/document-job-memory-client.ts";
-import { MEMORY_CONSUMPTION_V2, parseMemoryConsumptionV2 } from "../src/model/memory-consumption-v2.ts";
+import { MEMORY_CONSUMPTION_V2, MEMORY_CONSUMPTION_V3, parseMemoryConsumptionV2, parseMemoryConsumptionV3 } from "../src/model/memory-consumption-v2.ts";
 
 const fixtureId = value => value.toString(16).padStart(64, "0");
 const now = () => new Date().toISOString();
@@ -1787,4 +1787,28 @@ test("document job Memory bounds and cancels response streams without retaining 
   }), { headers: { "content-type": "application/json" } }));
   const pending = x.client.start(jobMemoryRequest(), controller.signal); await ready; controller.abort();
   await assert.rejects(pending, jobMemoryError(true)); assert.equal(cancelCount, 1); assert.equal(x.calls.length, 1);
+});
+
+
+test('consumption v3 explicitly negotiates historical views without widening v1/v2 or the parent lease',async()=>{
+  const item=enrollment(),body=artifactConsumptionRecall(item);body.consumptionEpisodes.version=MEMORY_CONSUMPTION_V3;
+  const {client,calls}=fakeTransport(()=>Response.json(body));const result=await client.recall(item,undefined,{consumptionEpisodes:MEMORY_CONSUMPTION_V3});
+  assert.deepEqual(result.value.consumptionEpisodes,body.consumptionEpisodes);assert.deepEqual(result.value.lifetime,body.lifetime);
+  assert.ok(calls[0].url.endsWith('&consumptionEpisodes='+MEMORY_CONSUMPTION_V3));
+  for(const option of [undefined,{consumptionEpisodes:true},{consumptionEpisodes:MEMORY_CONSUMPTION_V2}])await assert.rejects(client.recall(item,undefined,option),isClientError('memory_response_invalid',false,200));
+  body.consumptionEpisodes.version=MEMORY_CONSUMPTION_V2;await assert.rejects(client.recall(item,undefined,{consumptionEpisodes:MEMORY_CONSUMPTION_V3}),isClientError('memory_response_invalid',false,200));
+});
+test('consumption v3 retains strict original identity, privacy and interpretation bounds',()=>{
+  const item=enrollment();
+  for(const mutate of [p=>{p.sources[0].target.documentId='foreign';},p=>{p.sources[0].target.revision=-1;},
+    p=>{p.sources[0].target.contentSha256='missing';},p=>{p.inferredPreferences=true;},p=>{p.comprehension='measured';},
+    p=>{p.coverage.completeHistory=true;},p=>{p.episodes[0].independentEvidence=true;},p=>{p.episodes[0].observations[0].kind='read';},
+    p=>{p.sources[0].validUntil=new Date(Date.parse(item.expiresAt)+1).toISOString();},p=>{p.sources.push({...p.sources[0]});},
+    p=>{p.version='memory-consumption-episodes-v4';}]){
+    const body=artifactConsumptionRecall(item);body.consumptionEpisodes.version=MEMORY_CONSUMPTION_V3;mutate(body.consumptionEpisodes);
+    assert.equal(parseMemoryConsumptionV3(body.consumptionEpisodes,body.lifetime,item.documentId,{since:body.coverage.since,expiresAt:item.expiresAt}),null);
+  }
+  const body=artifactConsumptionRecall(item);body.consumptionEpisodes.version=MEMORY_CONSUMPTION_V3;let invoked=0;
+  Object.defineProperty(body.consumptionEpisodes.sources[0].target,'revision',{enumerable:true,get(){invoked++;return 0;}});
+  assert.equal(parseMemoryConsumptionV3(body.consumptionEpisodes,body.lifetime,item.documentId,{since:body.coverage.since,expiresAt:item.expiresAt}),null);assert.equal(invoked,0);
 });
