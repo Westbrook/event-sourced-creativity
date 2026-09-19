@@ -849,6 +849,7 @@ for(const [tag,statementCount,tables] of [
   ['0048_memory_derivation_user_controls',11,['memory_derivation_user_controls']],
   ['0049_memory_derivation_completion',8,['memory_derivation_completions','memory_derivation_completion_cursors']],
   ['0050_memory_derivation_lifecycle',4,[]],
+  ['0051_memory_derivation_split',5,['memory_derivation_split_commands']],
 ])test('Memory additive controls/completion migration '+tag+' preserves rows and reruns exactly',t=>{
   const target=actualMigrations.find(m=>m.tag===tag);assert.ok(target);const sqlite=database(t);
   migrateLocalDatabase(sqlite,{migrations:actualMigrations.slice(0,actualMigrations.indexOf(target))});
@@ -859,4 +860,20 @@ for(const [tag,statementCount,tables] of [
   for(const table of tables)assert.deepEqual(rows(sqlite,table),[]);assert.deepEqual(rows(sqlite,'memory_derivation_month_caps'),caps);
   assert.equal(migrateLocalDatabase(sqlite,{migrations:actualMigrations}).migrations.find(m=>m.tag===tag).status,'already-applied');
   assert.deepEqual(sqlite.prepare('PRAGMA foreign_key_check').all(),[]);
+});
+
+for(const fault of ['altered-upgrade','missing-old-trigger','modified-old-trigger','reverted-receipted-trigger'])test('Memory split upgrade refuses '+fault+' without changing rows',t=>{
+  const target=actualMigrations.find(m=>m.tag==='0051_memory_derivation_split'),sqlite=database(t);
+  const before=actualMigrations.slice(0,actualMigrations.indexOf(target));migrateLocalDatabase(sqlite,{migrations:before});
+  const old=sqlite.prepare("SELECT sql FROM sqlite_schema WHERE name='memory_derivation_job_insert'").get().sql;
+  if(fault==='reverted-receipted-trigger')migrateLocalDatabase(sqlite,{migrations:actualMigrations});
+  if(fault!=='altered-upgrade'){
+    sqlite.exec('DROP TRIGGER memory_derivation_job_insert');
+    if(fault==='modified-old-trigger')sqlite.exec(old.replace("NEW.state!='waiting'","NEW.state='waiting'"));
+    if(fault==='reverted-receipted-trigger')sqlite.exec(old);
+  }
+  const snapshot=schema(sqlite),receipts=rows(sqlite,receiptTable);
+  const migrations=fault==='altered-upgrade'?actualMigrations.map(m=>m===target?{...m,hash:undefined,sql:m.sql+'\n-- not the qualified replacement'}:m):actualMigrations;
+  assert.throws(()=>migrateLocalDatabase(sqlite,{migrations}),/migration_hash_mismatch|migration_schema_mismatch/);
+  assert.deepEqual(schema(sqlite),snapshot);assert.deepEqual(rows(sqlite,receiptTable),receipts);
 });

@@ -2583,3 +2583,12 @@ export const memoryDerivationCompletionCursors = sqliteTable("memory_derivation_
   check("memory_derivation_completion_cursor_bounds",sql.raw("typeof(through_sequence)='integer' AND through_sequence BETWEEN 0 AND 9007199254740991 AND typeof(generation)='integer' AND generation BETWEEN 0 AND 9007199254740991")),
   check("memory_derivation_completion_cursor_time",sql.raw("length(updated_at)=24 AND strftime('%Y-%m-%dT%H:%M:%fZ',updated_at) IS updated_at")),
 ]);
+
+/** Transaction-local subdivision command. The insert trigger consumes this row
+ * atomically; no private content or completion is stored here. */
+export const memoryDerivationSplitCommands = sqliteTable("memory_derivation_split_commands", {
+  parentJobId:text("parent_job_id").notNull().primaryKey(),
+  leftJobId:text("left_job_id").notNull(), rightJobId:text("right_job_id").notNull(),
+  leaseToken:text("lease_token").notNull(), splitSequence:integer("split_sequence").notNull(),
+  financeId:text("finance_id").notNull(), parentJson:text("parent_json").notNull(), referencesJson:text("references_json").notNull(),
+},()=>[check("memory_derivation_split_bounds",sql.raw("length(parent_job_id)=64 AND length(left_job_id)=64 AND length(right_job_id)=64 AND parent_job_id!=left_job_id AND parent_job_id!=right_job_id AND left_job_id!=right_job_id AND length(lease_token)=36 AND length(finance_id)=64 AND typeof(split_sequence)='integer' AND split_sequence>0 AND json_valid(parent_json) AND json_valid(references_json) AND length(parent_json)<=4096 AND length(references_json)<=65536"))]);

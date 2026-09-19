@@ -862,3 +862,19 @@ for(const fault of ['none','missing-guard','inbound-trigger'])test('Memory lifec
   if(fault==='inbound-trigger')f.sqlite.exec("CREATE TRIGGER unqualified_lifecycle AFTER INSERT ON memory_derivation_results BEGIN SELECT COUNT(*) FROM memory_derivation_results; END");
   configurationTripwire(f,t);if(fault==='none')assert.deepEqual(await currentManifest(f,t),before);else await denied(f,t);
 });
+
+for(const fault of ['none','missing-guard','old-job-trigger','retained-command','inbound-trigger'])test('Memory split schema preserves guest isolation '+fault,async t=>{
+  const f=await completedResultFixture(t,{memory:true}),before=await currentManifest(f,t);installDerivationFinanceSchema(f);
+  const old=f.sqlite.prepare("SELECT sql FROM sqlite_schema WHERE name='memory_derivation_job_insert'").get().sql;
+  for(const name of ['0020_assistant_runtime_tables','0047_memory_derivation_results','0048_memory_derivation_user_controls','0049_memory_derivation_completion','0051_memory_derivation_split'])installQualifiedMigration(f,name+'.sql');
+  if(fault==='missing-guard')f.sqlite.exec('DROP TRIGGER memory_derivation_split_insert');
+  if(fault==='old-job-trigger')f.sqlite.exec('DROP TRIGGER memory_derivation_job_insert;'+old);
+  if(fault==='inbound-trigger')f.sqlite.exec('CREATE TRIGGER unqualified_split AFTER INSERT ON memory_derivation_split_commands BEGIN SELECT COUNT(*) FROM memory_derivation_split_commands; END');
+  if(fault==='retained-command'){
+    const definitions=f.sqlite.prepare("SELECT name,sql FROM sqlite_schema WHERE type='trigger' AND tbl_name='memory_derivation_split_commands'").all();
+    for(const row of definitions)f.sqlite.exec('DROP TRIGGER '+row.name);
+    insert(f,'memory_derivation_split_commands',{parent_job_id:'a'.repeat(64),left_job_id:'b'.repeat(64),right_job_id:'c'.repeat(64),lease_token:randomUUID(),split_sequence:1,finance_id:'d'.repeat(64),parent_json:'[]',references_json:'[]'});
+    for(const row of definitions)f.sqlite.exec(row.sql);
+  }
+  configurationTripwire(f,t);if(fault==='none')assert.deepEqual(await currentManifest(f,t),before);else await denied(f,t);
+});

@@ -14582,3 +14582,119 @@ test('native derivation windows: real isolated D1 registers sized pages and catc
   for(const job of jobs){const lease=await admission.claimNativeDerivationJob(state.env,job.job_id);assert.ok(lease);assert.equal((await sources.captureNativeDerivationSources(state.env,lease)).status,'captured');}
   assert.equal((await db.prepare('SELECT COUNT(*) AS n FROM memory_derivation_finance').first()).n,0);
 });
+
+async function nativeDerivationLegacySplitFixture(t,{originals=0,shared=false,hosted=false,references=5}={}){
+  const read=async name=>(await import('node:fs/promises')).readFile(new URL('../drizzle/'+name+'.sql',import.meta.url),'utf8');
+  const state=await nativeDerivationDeliveryFixture(t,{shared,termOverrides:{maximumInputTokens:12500},beforeEnrollment:async s=>{
+    for(const name of ['0045_memory_derivation_finance','0046_memory_derivation_recovery_cursor','0047_memory_derivation_results','0048_memory_derivation_user_controls'])s.sqlite.exec(await read(name));
+  }});
+  if(originals){
+    state.env.FORMA_MEMORY_DERIVATION_ENABLED='false';
+    for(let i=0;i<originals;i++)await specialistFreeTurn(state,'legacy-split-'+i,'Entire original '+i+' '+('長'.repeat(1100)));
+    state.due();assert.equal((await state.run()).status,'completed');state.env.FORMA_MEMORY_DERIVATION_ENABLED='true';
+    await state.delivery.registerNativeDerivationBacklog(state.env,state.current(),new Date().toISOString());
+  }else{const start=state.derivationRows()[0].source_after_sequence;for(let i=1;i<=references;i++)state.pointer(start+i);await state.register(start+references);}
+  for(const name of ['0049_memory_derivation_completion','0050_memory_derivation_lifecycle','0051_memory_derivation_split'])state.sqlite.exec(await read(name));
+  Object.assign(state.env,{FORMA_MEMORY_SCHEDULING_ENABLED:'true',FORMA_MEMORY_DERIVATION_PROCESSING_ENABLED:'true',OPENAI_API_KEY:'isolated-not-a-credential'});
+  if(hosted){
+    const {createRequire}=await import('node:module'),{Miniflare,Log,LogLevel}=createRequire(import.meta.resolve('wrangler'))('miniflare');
+    const {exportSynthetic,install}=await import('./helpers/model3d-workerd-snapshot.mjs');let outbound=0;
+    const mf=new Miniflare({modules:true,compatibilityDate:'2026-05-15',host:'127.0.0.1',port:0,log:new Log(LogLevel.NONE),d1Databases:['MemorySplit'],
+      script:"export default {fetch(){return new Response('Isolated split fixture',{status:404});}};",outboundService(){outbound++;throw Error('No external traffic');}});
+    t.after(async()=>{await mf.dispose();assert.equal(outbound,0);});const db=await mf.getD1Database('MemorySplit');await install(db,exportSynthetic(state.sqlite));state.env.DB=db;
+  }
+  return state;
+}
+for(const hosted of [false,true])test('native derivation split: atomic contiguous partition retains sources, expiry and completion gap D1='+hosted,{timeout:180000},async t=>{
+  const state=await nativeDerivationLegacySplitFixture(t,{hosted}),db=state.env.DB;
+  const admission=await import('../worker/memory-derivation-admission.ts'),split=await import('../worker/memory-derivation-split.ts');
+  const parent=await db.prepare('SELECT * FROM memory_derivation_jobs').first(),refs=(await db.prepare('SELECT * FROM memory_derivation_job_sources ORDER BY sequence').all()).results;
+  const cursor=(await db.prepare('SELECT * FROM memory_derivation_cursors').all()).results;
+  const lease=await admission.claimNativeDerivationJob(state.env,parent.job_id);assert.ok(lease);
+  assert.equal(await split.splitNativeDerivationJob(state.env,lease),'split',state.controls.lastDatabaseError);
+  const children=(await db.prepare('SELECT * FROM memory_derivation_jobs ORDER BY after_sequence').all()).results;
+  assert.equal(children.length,2);assert.deepEqual(children.map(j=>[j.after_sequence,j.through_sequence,j.source_count]),[[parent.after_sequence,refs[1].sequence,2],[refs[1].sequence,parent.through_sequence,3]]);
+  assert.ok(children.every(j=>j.expires_at===parent.expires_at&&j.created_at===parent.created_at&&j.state==='waiting'));
+  assert.deepEqual((await db.prepare('SELECT * FROM memory_derivation_cursors').all()).results,cursor);
+  assert.deepEqual((await db.prepare('SELECT * FROM memory_derivation_job_sources ORDER BY sequence').all()).results.map(({job_id,...row})=>row),refs.map(({job_id,...row})=>row));
+  for(const table of ['memory_derivation_split_commands','memory_derivation_completions','memory_derivation_finance'])assert.equal((await db.prepare('SELECT COUNT(*) AS n FROM '+table).first()).n,0);
+  assert.equal(await admission.replayNativeDerivationLease(state.env,lease),false);
+  assert.equal(await split.splitNativeDerivationJob(state.env,lease),'uncertain','stale parent never issues new work');
+  const sources=await import('../worker/memory-derivation-sources.ts'),completion=await import('../worker/memory-derivation-completion.ts');
+  for(const index of [1,0]){
+    const childLease=await admission.claimNativeDerivationJob(state.env,children[index].job_id);assert.ok(childLease);
+    const captured=await sources.captureNativeDerivationSources(state.env,childLease);assert.equal(captured.status,'captured');
+    assert.equal(await completion.completeEmptyNativeDerivation(state.env,captured.capture),true);
+    assert.equal((await db.prepare('SELECT through_sequence FROM memory_derivation_completion_cursors').first()).through_sequence,index===1?parent.after_sequence:parent.through_sequence);
+  }
+});
+for(const fault of ['rollback','lost-ack','source-erased','configuration','copied-lease','missing-guard'])test('native derivation split: '+fault+' never completes or retries submitted work',{timeout:60000},async t=>{
+  const state=await nativeDerivationLegacySplitFixture(t),db=state.env.DB,admission=await import('../worker/memory-derivation-admission.ts'),split=await import('../worker/memory-derivation-split.ts');
+  const parent=state.queue().jobs[0],lease=await admission.claimNativeDerivationJob(state.env,parent.job_id);assert.ok(lease);
+  const batch=db.batch;t.after(()=>{db.batch=batch;});
+  if(fault==='source-erased')state.sqlite.exec('DELETE FROM memory_live_sources WHERE sequence=(SELECT MIN(sequence) FROM memory_live_sources)');
+  if(fault==='configuration')state.env.FORMA_MEMORY_DERIVATION_ENABLED='false';
+  if(fault==='missing-guard')state.sqlite.exec('DROP TRIGGER memory_derivation_split_insert');
+  if(fault==='rollback'||fault==='lost-ack')db.batch=async statements=>{
+    if(statements.some(s=>s.sql.startsWith('INSERT INTO memory_derivation_split_commands'))){
+      if(fault==='rollback')return batch.call(db,[...statements,db.prepare("SELECT json('rollback-split')")]);
+      await batch.call(db,statements);throw Error('lost-split-ack');
+    }return batch.call(db,statements);
+  };
+  assert.equal(await split.splitNativeDerivationJob(state.env,fault==='copied-lease'?{}:lease),'uncertain');
+  assert.equal(state.sqlite.prepare('SELECT COUNT(*) AS n FROM memory_derivation_jobs').get().n,fault==='lost-ack'?2:fault==='source-erased'?0:1);
+  assert.equal(state.sqlite.prepare('SELECT COUNT(*) AS n FROM memory_derivation_split_commands').get().n,0);
+  assert.equal(state.sqlite.prepare('SELECT COUNT(*) AS n FROM memory_derivation_completions').get().n,0);
+  assert.equal(state.sqlite.prepare('SELECT COUNT(*) AS n FROM memory_derivation_finance').get().n,0);
+});
+test('native derivation split: worker subdivides real oversized originals then fresh children can be processed',{timeout:180000},async t=>{
+  const state=await nativeDerivationLegacySplitFixture(t,{originals:2}),worker=await import('../worker/memory-derivation-worker.ts');
+  assert.equal(state.queue().jobs.length,1);assert.equal(state.queue().jobs[0].source_count,2);
+  let calls=0;const fetch=globalThis.fetch;t.after(()=>{globalThis.fetch=fetch;});globalThis.fetch=async()=>{calls++;return Response.json({id:'isolated-split-'+calls,object:'response',model:'isolated-test-model',service_tier:'default',status:'completed',error:null,incomplete_details:null,
+    usage:{input_tokens:800,output_tokens:40,total_tokens:840,input_tokens_details:{cached_tokens:400}},output:[{type:'message',role:'assistant',status:'completed',content:[{type:'output_text',text:JSON.stringify({version:'memory-derivation-candidates-v1',items:[]})}]}]});};
+  assert.deepEqual(await worker.runNativeDerivationScheduled(state.env),{status:'split',processed:0},state.controls.lastDatabaseError);assert.equal(calls,0);
+  assert.equal(state.queue().jobs.length,2);
+  for(let i=0;i<2;i++)assert.equal((await worker.runNativeDerivationScheduled(state.env)).status,'stored',state.controls.lastDatabaseError);
+  assert.equal(calls,2);assert.equal(state.sqlite.prepare('SELECT COUNT(*) AS n FROM memory_derivation_completions').get().n,2);
+  assert.equal((await worker.runNativeDerivationScheduled(state.env)).status,'idle');assert.equal(calls,2);
+});
+
+for(const disposition of ['reserved','dispatched','detached-bridge'])test('native derivation split: '+disposition+' financial identity forbids repurchase',{timeout:60000},async t=>{
+  const state=await nativeDerivationLegacySplitFixture(t,{originals:2}),db=state.env.DB;
+  const admission=await import('../worker/memory-derivation-admission.ts'),sources=await import('../worker/memory-derivation-sources.ts'),finance=await import('../worker/memory-derivation-finance.ts'),split=await import('../worker/memory-derivation-split.ts');
+  const job=state.queue().jobs[0],lease=await admission.claimNativeDerivationJob(state.env,job.job_id);assert.ok(lease);
+  const captured=await sources.captureNativeDerivationSources(state.env,lease);assert.equal(captured.status,'captured');
+  const hold=await finance.reserveNativeDerivationFinance(state.env,lease,captured.capture,'a'.repeat(64));assert.ok(hold,state.controls.lastDatabaseError);
+  if(disposition==='dispatched')assert.ok(await finance.claimNativeDerivationDispatch(state.env,hold));
+  if(disposition==='detached-bridge'){
+    // Restored damaged bridge fixture: put the exact guard back before admission.
+    const guards=state.sqlite.prepare("SELECT name,sql FROM sqlite_schema WHERE type='trigger' AND tbl_name='memory_derivation_job_finance'").all();
+    for(const row of guards)state.sqlite.exec('DROP TRIGGER '+row.name);
+    state.sqlite.exec('DELETE FROM memory_derivation_job_finance');
+    for(const row of guards)state.sqlite.exec(row.sql);
+  }
+  const financial=adaptiveReentryFinancialState(state),before=state.queue();
+  assert.equal(await split.splitNativeDerivationJob(state.env,lease),'uncertain');
+  assert.deepEqual(state.queue(),before);assert.deepEqual(adaptiveReentryFinancialState(state),financial);
+  assert.equal((await db.prepare('SELECT COUNT(*) AS n FROM memory_derivation_split_commands').first()).n,0);
+});
+
+for(const count of [1,65,128])test('native derivation split: legacy '+count+' reference boundary is lossless and bounded',{timeout:60000},async t=>{
+  const state=await nativeDerivationLegacySplitFixture(t,{references:count}),admission=await import('../worker/memory-derivation-admission.ts'),split=await import('../worker/memory-derivation-split.ts');
+  const depth=enforceD1ExpressionDepth(state,{queryLimits:{functionArguments:32,parameters:100,sqlBytes:100000}});t.after(()=>{depth.assertVerified();depth.restore();});
+  const job=state.queue().jobs[0],lease=await admission.claimNativeDerivationJob(state.env,job.job_id);assert.ok(lease);
+  assert.equal(await split.splitNativeDerivationJob(state.env,lease),count===1?'unchanged':'split',state.controls.lastDatabaseError);
+  const queue=state.queue();assert.equal(queue.jobs.length,count===1?1:2);assert.equal(queue.job_sources.length,count);
+  assert.deepEqual(queue.job_sources.map(r=>r.sequence).sort((a,b)=>a-b),Array.from({length:count},(_,i)=>job.after_sequence+i+1));
+  if(count>1)assert.ok(queue.jobs.every(j=>j.source_count<=64));
+});
+test('native derivation split: full registration queue retains subdivision headroom without admitting new history',{timeout:60000},async t=>{
+  const state=await nativeDerivationLegacySplitFixture(t),admission=await import('../worker/memory-derivation-admission.ts'),split=await import('../worker/memory-derivation-split.ts');
+  const parent=state.queue().jobs[0];let through=parent.through_sequence;
+  for(let i=0;i<31;i++){state.pointer(++through);await state.register(through);}
+  assert.equal(state.queue().jobs.length,32);
+  const lease=await admission.claimNativeDerivationJob(state.env,parent.job_id);assert.ok(lease);
+  assert.equal(await split.splitNativeDerivationJob(state.env,lease),'split',state.controls.lastDatabaseError);assert.equal(state.queue().jobs.length,33);
+  state.pointer(++through);const result=await state.register(through);assert.equal(result.capacityPurposes,1);
+  assert.equal(state.queue().cursors[0].registered_through_sequence,through-1);
+});

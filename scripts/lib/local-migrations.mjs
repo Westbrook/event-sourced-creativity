@@ -402,6 +402,8 @@ function executeModel3dRebuild(database, rebuild, recorded) {
   return { executedStatements: rebuild.migration.statements.length, skippedStatements: 0 };
 }
 
+// Exact schema-only trigger upgrade, not general DROP/ALTER authority.
+const MEMORY_SPLIT_UPGRADE = { tag: '0051_memory_derivation_split', hash: 'ad95f306d80be738b9f9a5e38ab06927e8932ed87883b9dd8ff758f299ff5481', trigger: 'memory_derivation_job_insert' };
 function prepareMigrations(migrations) {
   if (!Array.isArray(migrations)) fail("migration_journal_invalid", "migrations must be an array");
   const tags = new Set();
@@ -415,8 +417,16 @@ function prepareMigrations(migrations) {
     const model3d = tag === MODEL3D_REBUILD.tag;
     if (model3d && hash !== MODEL3D_REBUILD.hash) fail("migration_hash_mismatch", tag);
     if (model3d && when !== MODEL3D_REBUILD.when) fail("migration_sql_unsupported", "unreviewed 3D migration timestamp");
+    const splitUpgrade = tag === MEMORY_SPLIT_UPGRADE.tag;
+    if (splitUpgrade && hash !== MEMORY_SPLIT_UPGRADE.hash) fail("migration_hash_mismatch", tag);
+    const parts = sql.split("--> statement-breakpoint");
+    if (splitUpgrade) {
+      const at = parts.findIndex(part => /^\s*DROP TRIGGER memory_derivation_job_insert;\s*$/u.test(part));
+      if (at < 0 || classify(parts[at+1])?.name !== MEMORY_SPLIT_UPGRADE.trigger) fail("migration_sql_unsupported", "invalid Memory trigger replacement");
+      parts.splice(at, 2, {kind:'trigger-replacement',name:MEMORY_SPLIT_UPGRADE.trigger,sql:parts[at]+'\n'+parts[at+1]});
+    }
     const statements = model3d ? sql.split("--> statement-breakpoint").filter((part) => part.trim()).map((part) => ({ kind: "model3d", sql: part }))
-      : sql.split("--> statement-breakpoint").map(classify).filter(Boolean);
+      : parts.map(part => typeof part === "string" ? classify(part) : part).filter(Boolean);
     if (model3d && statements.length !== MODEL3D_REBUILD.statementCount) fail("migration_sql_unsupported", "unreviewed 3D statement count");
     return { ...migration, hash, model3d, statements };
   });
@@ -427,6 +437,7 @@ function prepareMigrations(migrations) {
 export function migrateLocalDatabase(database, { migrations, dryRun = false }) {
   const plan = prepareMigrations(migrations), reference = new DatabaseSync(":memory:"), receiptReference = new DatabaseSync(":memory:");
   let transaction = false, rebuild = null;
+  const triggerReplacements = new Map();
   try {
     const tableNames = new Set(), objectNames = new Set();
     for (const migration of plan) {
@@ -435,6 +446,11 @@ export function migrateLocalDatabase(database, { migrations, dryRun = false }) {
         if (["table", "index", "trigger"].includes(statement.kind)) {
           if (objectNames.has(statement.name)) fail("migration_sql_unsupported", `duplicate declaration ${statement.name}`);
           objectNames.add(statement.name);
+        }
+        if (statement.kind === 'trigger-replacement') {
+          if (triggerReplacements.has(statement.name) || schemaObject(reference,statement.name)?.type !== 'trigger') fail('migration_sql_unsupported','unknown trigger replacement');
+          statement.beforeShape=triggerShape(schemaObject(reference,statement.name));
+          statement.migrationTag=migration.tag; triggerReplacements.set(statement.name,statement);
         }
         if (statement.kind === "column") statement.beforeColumns = tableShape(reference, statement.table, "migration_sql_unsupported").columns.map((column) => column.name);
         if (statement.kind !== "optimize") reference.exec(statement.sql);
@@ -500,6 +516,14 @@ export function migrateLocalDatabase(database, { migrations, dryRun = false }) {
         for (const [name, shape] of rebuild.after) currentTables.set(name, shape);
       } else for (const statement of migration.statements) {
         let exists = false;
+        if (statement.kind === 'trigger-replacement') {
+          const object=schemaObject(database,statement.name);
+          if (object?.type !== 'trigger') fail('migration_schema_mismatch','missing Memory trigger');
+          const actual=triggerShape(object), after=triggerShape(schemaObject(reference,statement.name));
+          if (equal(actual,after)) { skippedStatements++; continue; }
+          if (receipt || !equal(actual,statement.beforeShape)) fail('migration_schema_mismatch','unqualified Memory trigger replacement');
+          database.exec(statement.sql); executedStatements++; continue;
+        }
         if (statement.kind === "table") {
           exists = Boolean(schemaObject(database, statement.name));
           if (exists) validateTable(database, statement.name, currentTables.get(statement.name), statement.requiredColumns);
@@ -511,7 +535,12 @@ export function migrateLocalDatabase(database, { migrations, dryRun = false }) {
         } else if (statement.kind === "optimize") exists = true;
         else {
           exists = Boolean(schemaObject(database, statement.name));
-          if (exists) validateObject(database, statement, reference);
+          if (exists) {
+            const upgrade=triggerReplacements.get(statement.name), object=schemaObject(database,statement.name);
+            const knownBefore=upgrade && !receipts.has(upgrade.migrationTag) && object?.type==='trigger'
+              && equal(triggerShape(object),upgrade.beforeShape);
+            if (!knownBefore) validateObject(database, statement, reference);
+          }
         }
         if (exists) { skippedStatements++; continue; }
         if (receipt) fail("migration_schema_mismatch", `${migration.tag} is recorded but ${statement.name ?? statement.kind} is missing`);
