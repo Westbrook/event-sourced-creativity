@@ -215,7 +215,8 @@ function tableShape(database, name, unsupportedCode = "migration_schema_mismatch
       if (word(part[index], "on") && word(part[index + 1], "conflict")) fail(unsupportedCode, `ON CONFLICT schema is unsupported for ${name}`);
       if (word(part[index], "autoincrement")) extras.push({ scope, kind: "autoincrement" });
       // SQLite foreign_key_list omits deferral; table-scoped extras cannot bind it to each key.
-      if (word(part[index], "deferrable") || word(part[index], "initially")) fail(unsupportedCode, `DEFERRABLE/INITIALLY schema is unsupported for ${name}`);
+      if ((word(part[index], "deferrable") || word(part[index], "initially"))
+        && !(name === 'memory_derivation_producer_jobs' && hashSql(object.sql.trim()) === '1322c56c900f123ec6038fa75914e9f9422f7978f7d7ec41167107f3322fe2c8')) fail(unsupportedCode, `DEFERRABLE/INITIALLY schema is unsupported for ${name}`);
     }
   }
   const columns = database.prepare(`PRAGMA table_xinfo(${quote(name)})`).all();
@@ -404,6 +405,8 @@ function executeModel3dRebuild(database, rebuild, recorded) {
 
 // Exact schema-only trigger upgrade, not general DROP/ALTER authority.
 const MEMORY_SPLIT_UPGRADE = { tag: '0051_memory_derivation_split', hash: 'ad95f306d80be738b9f9a5e38ab06927e8932ed87883b9dd8ff758f299ff5481', trigger: 'memory_derivation_job_insert' };
+const replacementShape=(database,statement)=>statement.objectType==='index'?indexShape(database,schemaObject(database,statement.name)):triggerShape(schemaObject(database,statement.name));
+const MEMORY_PRODUCER_UPGRADE = { tag: '0053_memory_derivation_producers', hash: 'cd5c27f2fbba4f3eb26c9129b2d30eb0d57372e1a6fb9e86bc179814b20a1ada', objects: [['trigger','memory_derivation_job_insert'],['index','idx_memory_derivation_job_interval'],['trigger','memory_derivation_completion_cursor_update']] };
 function prepareMigrations(migrations) {
   if (!Array.isArray(migrations)) fail("migration_journal_invalid", "migrations must be an array");
   const tags = new Set();
@@ -419,11 +422,19 @@ function prepareMigrations(migrations) {
     if (model3d && when !== MODEL3D_REBUILD.when) fail("migration_sql_unsupported", "unreviewed 3D migration timestamp");
     const splitUpgrade = tag === MEMORY_SPLIT_UPGRADE.tag;
     if (splitUpgrade && hash !== MEMORY_SPLIT_UPGRADE.hash) fail("migration_hash_mismatch", tag);
+    const producerUpgrade = tag === MEMORY_PRODUCER_UPGRADE.tag;
+    if (producerUpgrade && hash !== MEMORY_PRODUCER_UPGRADE.hash) fail("migration_hash_mismatch", tag);
     const parts = sql.split("--> statement-breakpoint");
+    if (producerUpgrade) for (const [type,name] of MEMORY_PRODUCER_UPGRADE.objects) {
+      const at=parts.findIndex(part=>typeof part==='string'&&part.trim()===`DROP ${type.toUpperCase()} ${name};`);
+      const next=at<0?null:classify(parts[at+1]);
+      if(at<0||next?.name!==name||next.kind!==type) fail('migration_sql_unsupported','invalid producer object replacement');
+      parts.splice(at,2,{kind:'trigger-replacement',objectType:type,name,sql:parts[at]+'\n'+parts[at+1]});
+    }
     if (splitUpgrade) {
       const at = parts.findIndex(part => /^\s*DROP TRIGGER memory_derivation_job_insert;\s*$/u.test(part));
       if (at < 0 || classify(parts[at+1])?.name !== MEMORY_SPLIT_UPGRADE.trigger) fail("migration_sql_unsupported", "invalid Memory trigger replacement");
-      parts.splice(at, 2, {kind:'trigger-replacement',name:MEMORY_SPLIT_UPGRADE.trigger,sql:parts[at]+'\n'+parts[at+1]});
+      parts.splice(at, 2, {kind:'trigger-replacement',objectType:'trigger',name:MEMORY_SPLIT_UPGRADE.trigger,sql:parts[at]+'\n'+parts[at+1]});
     }
     const statements = model3d ? sql.split("--> statement-breakpoint").filter((part) => part.trim()).map((part) => ({ kind: "model3d", sql: part }))
       : parts.map(part => typeof part === "string" ? classify(part) : part).filter(Boolean);
@@ -448,12 +459,14 @@ export function migrateLocalDatabase(database, { migrations, dryRun = false }) {
           objectNames.add(statement.name);
         }
         if (statement.kind === 'trigger-replacement') {
-          if (triggerReplacements.has(statement.name) || schemaObject(reference,statement.name)?.type !== 'trigger') fail('migration_sql_unsupported','unknown trigger replacement');
-          statement.beforeShape=triggerShape(schemaObject(reference,statement.name));
-          statement.migrationTag=migration.tag; triggerReplacements.set(statement.name,statement);
+          if (schemaObject(reference,statement.name)?.type !== statement.objectType) fail('migration_sql_unsupported','unknown object replacement');
+          statement.beforeShape=replacementShape(reference,statement);
+          statement.migrationTag=migration.tag;
+          const chain=triggerReplacements.get(statement.name)??[];chain.push(statement);triggerReplacements.set(statement.name,chain);
         }
         if (statement.kind === "column") statement.beforeColumns = tableShape(reference, statement.table, "migration_sql_unsupported").columns.map((column) => column.name);
         if (statement.kind !== "optimize") reference.exec(statement.sql);
+        if (statement.kind === "trigger-replacement") statement.afterShape=replacementShape(reference,statement);
         if (statement.kind === "table") {
           tableNames.add(statement.name);
           statement.requiredColumns = tableShape(reference, statement.name, "migration_sql_unsupported").columns.map((column) => column.name);
@@ -518,10 +531,10 @@ export function migrateLocalDatabase(database, { migrations, dryRun = false }) {
         let exists = false;
         if (statement.kind === 'trigger-replacement') {
           const object=schemaObject(database,statement.name);
-          if (object?.type !== 'trigger') fail('migration_schema_mismatch','missing Memory trigger');
-          const actual=triggerShape(object), after=triggerShape(schemaObject(reference,statement.name));
-          if (equal(actual,after)) { skippedStatements++; continue; }
-          if (receipt || !equal(actual,statement.beforeShape)) fail('migration_schema_mismatch','unqualified Memory trigger replacement');
+          if (object?.type !== statement.objectType) fail('migration_schema_mismatch','missing Memory object');
+          const actual=replacementShape(database,statement),chain=triggerReplacements.get(statement.name),position=chain.indexOf(statement);
+          if (chain.slice(position).some(upgrade=>equal(actual,upgrade.afterShape))) { skippedStatements++; continue; }
+          if (receipt || !equal(actual,statement.beforeShape)) fail('migration_schema_mismatch','unqualified Memory object replacement');
           database.exec(statement.sql); executedStatements++; continue;
         }
         if (statement.kind === "table") {
@@ -536,9 +549,9 @@ export function migrateLocalDatabase(database, { migrations, dryRun = false }) {
         else {
           exists = Boolean(schemaObject(database, statement.name));
           if (exists) {
-            const upgrade=triggerReplacements.get(statement.name), object=schemaObject(database,statement.name);
-            const knownBefore=upgrade && !receipts.has(upgrade.migrationTag) && object?.type==='trigger'
-              && equal(triggerShape(object),upgrade.beforeShape);
+            const upgrades=triggerReplacements.get(statement.name)??[], object=schemaObject(database,statement.name);
+            const knownBefore=upgrades.some(upgrade=>!receipts.has(upgrade.migrationTag)&&object?.type===upgrade.objectType
+              &&equal(replacementShape(database,upgrade),upgrade.beforeShape));
             if (!knownBefore) validateObject(database, statement, reference);
           }
         }

@@ -1826,7 +1826,7 @@ export const memoryDerivationJobs = sqliteTable("memory_derivation_jobs", {
 }, table => [
   index("idx_memory_derivation_job_due").on(table.notBefore, table.createdAt, table.jobId),
   index("idx_memory_derivation_job_consent").on(table.consentId, table.afterSequence),
-  uniqueIndex("idx_memory_derivation_job_interval").on(table.consentId, table.afterSequence),
+  index("idx_memory_derivation_job_interval").on(table.consentId, table.afterSequence),
   check("memory_derivation_job_bounds", sql.raw("length(job_id)=64 AND job_id NOT GLOB '*[^0-9a-f]*' AND length(consent_id)=36 AND purpose IN('rolling-summary','profile','suggestion') AND typeof(after_sequence)='integer' AND after_sequence>=0 AND typeof(through_sequence)='integer' AND through_sequence>after_sequence AND through_sequence<=9007199254740991 AND typeof(source_count)='integer' AND source_count BETWEEN 1 AND 128 AND typeof(attempts)='integer' AND attempts BETWEEN 0 AND 9007199254740991")),
   check("memory_derivation_job_lease", sql.raw("(state='waiting' AND lease_token IS NULL AND lease_expires_at IS NULL) OR (state='leased' AND lease_token IS NOT NULL AND lease_expires_at IS NOT NULL AND length(lease_token)=36 AND length(lease_expires_at)=24 AND lease_expires_at<=expires_at)")),
   check("memory_derivation_job_time", sql.raw("length(created_at)=24 AND length(expires_at)=24 AND length(not_before)=24 AND created_at<expires_at AND not_before>=created_at AND (failure_code IS NULL OR failure_code IN('native-proof-unavailable','provider-unavailable','interrupted','budget-unavailable'))")),
@@ -2592,3 +2592,26 @@ export const memoryDerivationSplitCommands = sqliteTable("memory_derivation_spli
   leaseToken:text("lease_token").notNull(), splitSequence:integer("split_sequence").notNull(),
   financeId:text("finance_id").notNull(), parentJson:text("parent_json").notNull(), referencesJson:text("references_json").notNull(),
 },()=>[check("memory_derivation_split_bounds",sql.raw("length(parent_job_id)=64 AND length(left_job_id)=64 AND length(right_job_id)=64 AND parent_job_id!=left_job_id AND parent_job_id!=right_job_id AND left_job_id!=right_job_id AND length(lease_token)=36 AND length(finance_id)=64 AND typeof(split_sequence)='integer' AND split_sequence>0 AND json_valid(parent_json) AND json_valid(references_json) AND length(parent_json)<=4096 AND length(references_json)<=65536"))]);
+
+// The source SQL defers the producer-job FK within the atomic registration
+// transaction. A committed producer link can never outlive its native job.
+export const memoryDerivationProducerCursors = sqliteTable('memory_derivation_producer_cursors', {
+  consentId: text('consent_id').primaryKey().notNull().references(() => memoryDerivationCursors.consentId, { onDelete: 'cascade' }),
+  registeredThroughSequence: integer('registered_through_sequence').notNull(),
+  completedThroughSequence: integer('completed_through_sequence').notNull(),
+  generation: integer('generation').notNull(), updatedAt: text('updated_at').notNull(),
+}, () => [
+  check('memory_producer_registered', sql.raw("typeof(registered_through_sequence)='integer' AND registered_through_sequence BETWEEN 0 AND 9007199254740991")),
+  check('memory_producer_completed', sql.raw("typeof(completed_through_sequence)='integer' AND completed_through_sequence BETWEEN 0 AND registered_through_sequence")),
+  check('memory_producer_generation', sql.raw("typeof(generation)='integer' AND generation BETWEEN 0 AND 9007199254740991")),
+  check('memory_producer_time', sql.raw("length(updated_at)=24 AND strftime('%Y-%m-%dT%H:%M:%fZ',updated_at) IS updated_at")),
+]);
+export const memoryDerivationProducerJobs = sqliteTable('memory_derivation_producer_jobs', {
+  jobId: text('job_id').primaryKey().notNull().references(() => memoryDerivationJobs.jobId, { onDelete: 'cascade' }),
+  consentId: text('consent_id').notNull().references(() => memoryDerivationProducerCursors.consentId, { onDelete: 'cascade' }),
+  afterSequence: integer('after_sequence').notNull(), throughSequence: integer('through_sequence').notNull(),
+}, table => [
+  unique().on(table.consentId, table.afterSequence),
+  check('memory_producer_job_id', sql.raw("length(job_id)=64 AND job_id NOT GLOB '*[^0-9a-f]*'")),
+  check('memory_producer_job_range', sql.raw("typeof(after_sequence)='integer' AND typeof(through_sequence)='integer' AND after_sequence>=0 AND through_sequence>after_sequence AND through_sequence<=9007199254740991")),
+]);

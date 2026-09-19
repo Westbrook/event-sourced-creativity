@@ -88,3 +88,15 @@ for(const fault of ['none','negative','remaining','expired','extra','retention']
   if(fault==='none'){assert.deepEqual((await result).financial,f.settings.financial);assert.ok(Object.isFrozen((await result).financial));}
   else await assert.rejects(result,MemoryDerivationClientError);
 });
+
+for(const fault of ['none','missing-producer','swapped-producers','false-aggregate','future-completion','unknown-producer','extra'])test('purpose client verifies independent producer progress '+fault,async()=>{
+  const f=fixture(),progress={purpose:'rolling-summary',pending:1,completed:2,retained:2,uncertain:0,registeredThrough:12,completedThrough:9,
+    producers:[{producer:'creator',registeredThrough:40,completedThrough:30},{producer:'chat-studio',registeredThrough:12,completedThrough:9}]};
+  if(fault==='missing-producer')progress.producers.pop();if(fault==='swapped-producers')progress.producers.reverse();
+  if(fault==='false-aggregate')progress.completedThrough=30;if(fault==='future-completion')progress.producers[1].completedThrough=13;
+  if(fault==='unknown-producer')progress.producers[1].producer='untrusted';if(fault==='extra')progress.producers[0].text='not metadata';
+  const body={version,scope:f.settings.scope,enrollmentId:f.expected.enrollmentId,enrollmentRevision:f.expected.enrollmentRevision,results:[],next:null,checkedAt:new Date().toISOString(),progress:[progress]};
+  const client=createMemoryDerivationClient(async()=>Response.json(body));
+  if(fault==='none'){const page=await client.results(f.expected);assert.equal(page.progress[0].completedThrough,9);assert.ok(Object.isFrozen(page.progress[0].producers[0]));}
+  else await assert.rejects(client.results(f.expected),error=>error instanceof MemoryDerivationClientError&&!error.mutationUnknown);
+});

@@ -364,14 +364,23 @@ export async function handleMemoryDerivationResults(request:Request,env:WorkerEn
       COUNT(done.job_id) AS completed,
       SUM(CASE WHEN r.state='active' AND r.expires_at>? THEN 1 ELSE 0 END) AS retained,
       SUM(CASE WHEN f.dispatch_token IS NOT NULL AND usage.finance_id IS NULL THEN 1 ELSE 0 END) AS uncertain,
-      (SELECT registered_through_sequence FROM memory_derivation_cursors WHERE consent_id=g.consent_id) AS registeredThrough,
-      (SELECT through_sequence FROM memory_derivation_completion_cursors WHERE consent_id=g.consent_id) AS completedThrough
+      ${schema.producersPresent?`MIN(COALESCE((SELECT registered_through_sequence FROM memory_derivation_cursors WHERE consent_id=g.consent_id),g.source_after_sequence),
+        COALESCE((SELECT registered_through_sequence FROM memory_derivation_producer_cursors WHERE consent_id=g.consent_id),g.source_after_sequence))`:
+        '(SELECT registered_through_sequence FROM memory_derivation_cursors WHERE consent_id=g.consent_id)'} AS registeredThrough,
+      ${schema.producersPresent?`MIN(COALESCE((SELECT through_sequence FROM memory_derivation_completion_cursors WHERE consent_id=g.consent_id),g.source_after_sequence),
+        COALESCE((SELECT completed_through_sequence FROM memory_derivation_producer_cursors WHERE consent_id=g.consent_id),g.source_after_sequence))`:
+        '(SELECT through_sequence FROM memory_derivation_completion_cursors WHERE consent_id=g.consent_id)'} AS completedThrough
+      ${schema.producersPresent?`,json_array(
+        json_object('producer','creator','registeredThrough',COALESCE((SELECT registered_through_sequence FROM memory_derivation_cursors WHERE consent_id=g.consent_id),g.source_after_sequence),
+          'completedThrough',COALESCE((SELECT through_sequence FROM memory_derivation_completion_cursors WHERE consent_id=g.consent_id),g.source_after_sequence)),
+        json_object('producer','chat-studio','registeredThrough',COALESCE((SELECT registered_through_sequence FROM memory_derivation_producer_cursors WHERE consent_id=g.consent_id),g.source_after_sequence),
+          'completedThrough',COALESCE((SELECT completed_through_sequence FROM memory_derivation_producer_cursors WHERE consent_id=g.consent_id),g.source_after_sequence))) AS producers_json`:''}
       FROM memory_derivation_grants g LEFT JOIN memory_derivation_jobs j ON j.consent_id=g.consent_id
       LEFT JOIN memory_derivation_completions done ON done.job_id=j.job_id LEFT JOIN memory_derivation_results r ON r.job_id=j.job_id
       LEFT JOIN memory_derivation_job_finance link ON link.job_id=j.job_id LEFT JOIN memory_derivation_finance f ON f.finance_id=link.finance_id
       LEFT JOIN memory_derivation_usage usage ON usage.finance_id=f.finance_id
       WHERE g.enrollment_id=? AND g.actor_user_id=? AND g.revoked_at IS NULL AND g.expires_at>?${purpose?' AND g.purpose=?':''} GROUP BY g.consent_id ORDER BY g.purpose LIMIT 4`;
-    const progressBindings=[now,selected.parent.enrollment_id,actor.userId,now,...(purpose?[purpose]:[])],progressColumns=['purpose','pending','completed','retained','uncertain','registeredThrough','completedThrough'];
+    const progressBindings=[now,selected.parent.enrollment_id,actor.userId,now,...(purpose?[purpose]:[])],progressColumns=['purpose','pending','completed','retained','uncertain','registeredThrough','completedThrough',...(schema.producersPresent?['producers_json']:[])];
     const progress=schema.completionPresent?await rows(env,progressQuery,progressBindings):[];
     if(progress.length>3||progress.some(row=>!derivationExact(row,progressColumns)))return deny('memory_result_status_unavailable',503);
     const guards=[schema.guard,identity,...selected.guards,...cursorGuards,guard,clock(new Date(started+60000).toISOString()),...(schema.completionPresent?[{condition:`(SELECT json_group_array(json_array(${progressColumns.join(',')})) FROM (${progressQuery}))=?`,bindings:[...progressBindings,JSON.stringify(progress.map(row=>progressColumns.map(key=>row[key])))]}]:[])];
@@ -381,6 +390,6 @@ export async function handleMemoryDerivationResults(request:Request,env:WorkerEn
     const parent=selected.parent;
     return reply({scope:{projectId,documentId,custody:parent.organization_id===null?{kind:'personal'}:{kind:'organization',organizationId:parent.organization_id,projectAccessId:parent.project_access_id,ownerUserId:parent.owner_user_id}},
       enrollmentId:parent.enrollment_id,enrollmentRevision:parent.revision,
-      checkedAt:now,progress,...(purpose?{purpose}:{}),results:found.slice(0,8).map(row=>({jobId:row.job_id,purpose:row.purpose,scopeKey:row.scope_key,expiresAt:row.expires_at})),next:found.length>8?found[7]!.job_id:null});
+      checkedAt:now,progress:progress.map(({producers_json,...row})=>({...row,...(schema.producersPresent?{producers:JSON.parse(String(producers_json))}:{})})),...(purpose?{purpose}:{}),results:found.slice(0,8).map(row=>({jobId:row.job_id,purpose:row.purpose,scopeKey:row.scope_key,expiresAt:row.expires_at})),next:found.length>8?found[7]!.job_id:null});
   }catch{return deny('memory_result_unavailable',503);}
 }

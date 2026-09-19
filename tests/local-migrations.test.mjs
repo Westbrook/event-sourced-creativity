@@ -878,3 +878,36 @@ for(const fault of ['altered-upgrade','missing-old-trigger','modified-old-trigge
   assert.throws(()=>migrateLocalDatabase(sqlite,{migrations}),/migration_hash_mismatch|migration_schema_mismatch/);
   assert.deepEqual(schema(sqlite),snapshot);assert.deepEqual(rows(sqlite,receiptTable),receipts);
 });
+
+test('Memory producer migration is schema-only, preserves existing data and qualifies exact chained replacements',t=>{
+  const target=actualMigrations.find(m=>m.tag==='0053_memory_derivation_producers');assert.ok(target);const sqlite=database(t);
+  migrateLocalDatabase(sqlite,{migrations:actualMigrations.slice(0,actualMigrations.indexOf(target))});
+  sqlite.prepare('INSERT INTO memory_derivation_month_caps VALUES(?,?,?)').run('retained-producer-payer','2026-09',450);
+  const oldSchema=schema(sqlite),receipts=rows(sqlite,receiptTable),caps=rows(sqlite,'memory_derivation_month_caps');
+  migrateLocalDatabase(sqlite,{migrations:actualMigrations,dryRun:true});assert.deepEqual(schema(sqlite),oldSchema);assert.deepEqual(rows(sqlite,receiptTable),receipts);
+  const applied=migrateLocalDatabase(sqlite,{migrations:actualMigrations}).migrations.find(m=>m.tag===target.tag);
+  assert.equal(applied.executedStatements,12);assert.equal(applied.status,'applied');
+  for(const table of ['memory_derivation_producer_cursors','memory_derivation_producer_jobs'])assert.deepEqual(rows(sqlite,table),[]);
+  assert.deepEqual(rows(sqlite,'memory_derivation_month_caps'),caps);
+  assert.equal(migrateLocalDatabase(sqlite,{migrations:actualMigrations}).migrations.find(m=>m.tag===target.tag).status,'already-applied');
+  assert.deepEqual(sqlite.prepare('PRAGMA foreign_key_check').all(),[]);
+});
+for(const fault of ['altered-upgrade','old-receipted-trigger','old-receipted-index','deferred-fk-changed'])test('Memory producer migration rejects '+fault+' without changing rows',t=>{
+  const target=actualMigrations.find(m=>m.tag==='0053_memory_derivation_producers'),sqlite=database(t);
+  migrateLocalDatabase(sqlite,{migrations:actualMigrations.slice(0,actualMigrations.indexOf(target))});
+  const old=sqlite.prepare("SELECT name,type,sql FROM sqlite_schema WHERE name IN('memory_derivation_job_insert','idx_memory_derivation_job_interval')").all();
+  if(fault!=='altered-upgrade')migrateLocalDatabase(sqlite,{migrations:actualMigrations});
+  if(fault.startsWith('old-receipted-')){const row=old.find(row=>row.type===fault.slice('old-receipted-'.length));sqlite.exec('DROP '+row.type+' '+row.name+';'+row.sql);}
+  if(fault==='deferred-fk-changed'){
+    // No data in these new tables. Even a narrower-looking changed declaration
+    // must not be reconciled using pragma_foreign_key_list (which loses deferral).
+    const table=sqlite.prepare("SELECT sql FROM sqlite_schema WHERE name='memory_derivation_producer_jobs'").get().sql;
+    const attached=sqlite.prepare("SELECT sql FROM sqlite_schema WHERE tbl_name='memory_derivation_producer_jobs' AND type='trigger'").all();
+    sqlite.exec('DROP TABLE memory_derivation_producer_jobs;'+table.replace('DEFERRABLE INITIALLY DEFERRED','NOT DEFERRABLE INITIALLY IMMEDIATE'));
+    for(const row of attached)sqlite.exec(row.sql);
+  }
+  const snapshot=schema(sqlite),receipts=rows(sqlite,receiptTable);
+  const migrations=fault==='altered-upgrade'?actualMigrations.map(m=>m===target?{...m,hash:undefined,sql:m.sql+'\n-- drift'}:m):actualMigrations;
+  assert.throws(()=>migrateLocalDatabase(sqlite,{migrations}),/migration_hash_mismatch|migration_schema_mismatch/);
+  assert.deepEqual(schema(sqlite),snapshot);assert.deepEqual(rows(sqlite,receiptTable),receipts);
+});

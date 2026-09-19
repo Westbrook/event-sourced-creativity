@@ -886,3 +886,14 @@ for(const fault of ['none','missing-guard','inbound-trigger'])test('Memory rolli
   if(fault==='inbound-trigger')f.sqlite.exec('CREATE TRIGGER unqualified_history AFTER INSERT ON memory_derivation_results BEGIN SELECT COUNT(*) FROM memory_live_sources; END');
   configurationTripwire(f,t);if(fault==='none')assert.deepEqual(await currentManifest(f,t),before);else await denied(f,t);
 });
+
+for(const fault of ['none','missing-guard','inbound-trigger','old-job-trigger'])test('Memory Chat Studio producer schema preserves guest isolation '+fault,async t=>{
+  const f=await completedResultFixture(t,{memory:true}),before=await currentManifest(f,t);installDerivationFinanceSchema(f);
+  for(const name of ['0020_assistant_runtime_tables','0047_memory_derivation_results','0048_memory_derivation_user_controls','0049_memory_derivation_completion','0050_memory_derivation_lifecycle','0051_memory_derivation_split','0052_memory_derivation_history_privacy'])installQualifiedMigration(f,name+'.sql');
+  const old=f.sqlite.prepare("SELECT sql FROM sqlite_schema WHERE name='memory_derivation_job_insert'").get().sql;
+  installQualifiedMigration(f,'0053_memory_derivation_producers.sql');
+  if(fault==='missing-guard')f.sqlite.exec('DROP TRIGGER memory_derivation_producer_job_delete');
+  if(fault==='inbound-trigger')f.sqlite.exec('CREATE TRIGGER unqualified_producer AFTER INSERT ON memory_derivation_producer_jobs BEGIN SELECT COUNT(*) FROM memory_live_sources; END');
+  if(fault==='old-job-trigger')f.sqlite.exec('DROP TRIGGER memory_derivation_job_insert;'+old);
+  configurationTripwire(f,t);if(fault==='none')assert.deepEqual(await currentManifest(f,t),before);else await denied(f,t);
+});

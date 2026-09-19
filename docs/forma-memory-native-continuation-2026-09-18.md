@@ -99,8 +99,8 @@ lifecycle/custody retirement through additive migration0050.
 1. [Bounded original-backed rolling refresh and latest-purpose review](forma-memory-rolling-history-2026-09-19.md) are implemented. Longer-term semantic reconciliation, cross-scope recall and automatic consumers remain open; the three-window bound is not lifetime coverage.
 2. Native index outbox, source invalidation and deletion acknowledgements.
 3. Nested project containment/reparenting and remaining page/block identities.
-4. Independent Chat Studio derivation-job delivery, genuine block/reuse evidence,
-   and governed/historical artifact consumption.
+4. [Independent Chat Studio derivation](forma-memory-chat-studio-derivation-2026-09-19.md) is implemented; genuine block/reuse evidence
+   and governed/historical artifact consumption remain open.
 5. Guarded rolling summary/profile/suggestion/autocomplete consumers with explicit
    correction priority and separate access versus relevance checks. Manual result
    inspection and persisted candidates do not complete those consumer paths.
@@ -141,3 +141,5 @@ independent producers, nested scope identity and native index lifecycle remain o
 ## Whole-request Memory inspection
 
 [Native inspection budget work](forma-memory-native-read-budget-2026-09-19.md) reduces the tested three-window authenticated reads from 68 to 45/48 D1 calls for free/paid original histories, retaining every native privacy assertion. Local D1 includes paid ancestry. This does not qualify hosted quotas or close broader native integration.
+
+[Independent Chat Studio derivation](forma-memory-chat-studio-derivation-2026-09-19.md) adds schema-only migration0053, independent producer progress, bounded original-backed Chat Studio history and locally qualified privacy/recovery. It does not reset Creator progress or complete the broader plan.

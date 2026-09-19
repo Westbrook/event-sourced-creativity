@@ -26,7 +26,7 @@ export type NativeDerivationRead = Readonly<{ [issuedRead]: true }>;
 export type NativeDerivationEvidence = NativeDerivationLease | NativeDerivationRead;
 type Admission = { mode: "execute" | "read"; env: WorkerEnv; db: WorkerEnv["DB"]; configuration: string; until: string;
   job: NativeJob; enrollment: LiveMemoryEnrollment; grant: MemoryDerivationGrant; qualification: Qualification;
-  userControlsPresent: boolean; lifecyclePresent: boolean; resultsPresent: boolean; historyPresent: boolean; authority: LiveMemoryAuthority; references: Reference[]; guards: MemorySqlGuard[] };
+  userControlsPresent: boolean; lifecyclePresent: boolean; resultsPresent: boolean; historyPresent: boolean; producersPresent: boolean; producer: "creator" | "chat-studio"; authority: LiveMemoryAuthority; references: Reference[]; guards: MemorySqlGuard[] };
 const issued = new WeakMap<NativeDerivationEvidence, Admission>();
 const configuration = (env: WorkerEnv) => memoryCanonical([env.FORMA_MEMORY_ENABLED, env.FORMA_MEMORY_USER_IDS,
   env.FORMA_MEMORY_DERIVATION_ENABLED, env.FORMA_MEMORY_DERIVATION_USER_IDS, env.FORMA_MEMORY_DERIVATION_PROCESSING_ENABLED, env.FORMA_MEMORY_SCHEDULING_ENABLED, memoryDerivationBinding(env),
@@ -48,6 +48,10 @@ const referenceGuard = (jobId: string, references: Reference[]): MemorySqlGuard 
       WHERE reference.job_id=? AND (remembered.event_id IS NULL OR remembered.expires_at<=strftime('%Y-%m-%dT%H:%M:%fZ','now')))`,
   bindings: [jobId, JSON.stringify(references.map(row => DERIVATION_JOB_SOURCE_COLUMNS.map(key => row[key]))), jobId],
 });
+const producerProjection = (installed: boolean) => installed ? "EXISTS(SELECT 1 FROM memory_derivation_producer_jobs p WHERE p.job_id=memory_derivation_jobs.job_id) AS chat_studio" : "0 AS chat_studio";
+const producerGuard = (installed: boolean, jobId: string, chat: number): MemorySqlGuard[] => installed ? [{
+  condition: "EXISTS(SELECT 1 FROM memory_derivation_producer_jobs WHERE job_id=?)=?", bindings: [jobId,chat],
+}] : [];
 function jobShape(row: unknown): row is NativeJob {
   return derivationExact(row, DERIVATION_JOB_COLUMNS) && derivationHash(row.job_id) && derivationConsentId(row.consent_id)
     && ["rolling-summary", "profile", "suggestion"].includes(String(row.purpose)) && derivationInteger(row.after_sequence)
@@ -91,17 +95,18 @@ export async function observeNativeDerivationHistoryJob(env: WorkerEnv, anchor: 
     const source=lookup(env,anchor),db=env.DB;
     if(!source.historyPresent||source.enrollment.recall_enabled!==1||!derivationHash(jobId)||jobId===source.job.job_id)return null;
     const result=structuredClone(await db.batch<Row>([
-      db.prepare(`SELECT ${DERIVATION_JOB_COLUMNS.join(',')} FROM memory_derivation_jobs WHERE job_id=? LIMIT 2`).bind(jobId),
+      db.prepare(`SELECT ${DERIVATION_JOB_COLUMNS.join(',')},${producerProjection(source.producersPresent)} FROM memory_derivation_jobs WHERE job_id=? LIMIT 2`).bind(jobId),
       db.prepare(`SELECT ${DERIVATION_JOB_SOURCE_COLUMNS.join(',')} FROM memory_derivation_job_sources WHERE job_id=? ORDER BY sequence,event_id LIMIT 129`).bind(jobId),
     ]));
     if(lookup(env,anchor)!==source||!derivationResults(result,2)||result[0]!.results.length!==1)return null;
-    const job=result[0]!.results[0],references=result[1]!.results;
+    const {chat_studio:chat,...job}=result[0]!.results[0]!,references=result[1]!.results;
+    if(chat!==0&&chat!==1)return null;
     if(!jobShape(job)||job.state!=='leased'||job.consent_id!==source.grant.consent_id||job.purpose!==source.grant.purpose
       ||job.after_sequence<source.grant.source_after_sequence||job.through_sequence>source.job.after_sequence
       ||job.created_at<source.grant.consented_at||job.expires_at>source.grant.expires_at
       ||!referencesShape(references,job,source.grant))return null;
     const until=[source.until,job.expires_at].sort()[0]!;
-    const admission:Admission={...source,mode:'read',job,references,until,guards:[...source.guards,
+    const admission:Admission={...source,mode:'read',job,references,until,producer:chat?'chat-studio':'creator',guards:[...source.guards,...producerGuard(source.producersPresent,jobId,Number(chat)),
       liveMemoryEnrollmentGuard(source.enrollment,'recall'),referenceGuard(jobId,references),jobGuard(job),
       {condition:"?>strftime('%Y-%m-%dT%H:%M:%fZ','now')",bindings:[until]}]};
     if(!current(admission,env))return null;
@@ -121,9 +126,11 @@ async function resolveNativeDerivationAdmission(env: WorkerEnv, jobId: string, r
     if (env.DB !== db || configured !== configuration(env) || !derivationResults([result], 1)) fail();
     return result.results;
   };
-  const jobs = await read(`SELECT ${DERIVATION_JOB_COLUMNS.join(",")} FROM memory_derivation_jobs WHERE job_id=? LIMIT 2`, [jobId]);
-  if (jobs.length !== 1 || !jobShape(jobs[0])) return null;
-  const job = jobs[0], now = new Date().toISOString();
+  const jobs = await read(`SELECT ${DERIVATION_JOB_COLUMNS.join(",")},${producerProjection(schema.producersPresent)} FROM memory_derivation_jobs WHERE job_id=? LIMIT 2`, [jobId]);
+  if (jobs.length !== 1) return null;
+  const {chat_studio:chat,...job}=jobs[0]!;
+  if ((chat!==0&&chat!==1)||!jobShape(job)) return null;
+  const now = new Date().toISOString();
   if (job.expires_at <= now || (mode === "execute" ? job.state !== "waiting" || job.not_before > now : job.state !== "leased")) return null;
   const grants = await read(`SELECT ${DERIVATION_GRANT_COLUMNS.join(",")} FROM memory_derivation_grants WHERE consent_id=? LIMIT 2`, [job.consent_id]);
   if (grants.length !== 1 || !memoryDerivationGrantShape(grants[0])) return null;
@@ -165,13 +172,13 @@ async function resolveNativeDerivationAdmission(env: WorkerEnv, jobId: string, r
   const leaseExpires = [new Date(started + 300_000).toISOString(), job.expires_at, grant.expires_at, e.expires_at, qualification.row.expires_at].sort()[0]!;
   const until = [new Date(started + 60_000).toISOString(), leaseExpires, ...nativeDeadlines].sort()[0]!;
   const next: NativeJob = mode === "read" ? job : { ...job, state: "leased", lease_token: crypto.randomUUID(), lease_expires_at: leaseExpires, attempts: job.attempts + 1 };
-  const common = [schema.guard, { condition: "EXISTS(SELECT 1 FROM pragma_foreign_keys WHERE foreign_keys=1) AND EXISTS(SELECT 1 FROM pragma_ignore_check_constraints WHERE ignore_check_constraints=0)", bindings: [] },
+  const common = [schema.guard,...producerGuard(schema.producersPresent,jobId,Number(chat)), { condition: "EXISTS(SELECT 1 FROM pragma_foreign_keys WHERE foreign_keys=1) AND EXISTS(SELECT 1 FROM pragma_ignore_check_constraints WHERE ignore_check_constraints=0)", bindings: [] },
     authority.guard, ...nativeGuards, liveMemoryEnrollmentGuard(e, mode === "read" ? "recall" : "learn"),
     derivationRowGuard("memory_live_enrollments", DERIVATION_PARENT_COLUMNS, e),
     derivationRowGuard("memory_derivation_grants", DERIVATION_GRANT_COLUMNS, grant), derivationQualificationGuard(qualification.row),
     referenceGuard(jobId, references), { condition: "?>strftime('%Y-%m-%dT%H:%M:%fZ','now')", bindings: [until] }];
   const admission: Admission = { mode, env, db, configuration: configured, until, job: next, enrollment: e, grant, qualification, authority, references,
-    userControlsPresent: schema.userControlsPresent, lifecyclePresent: schema.lifecyclePresent, resultsPresent: schema.resultsPresent, historyPresent: schema.historyPresent, guards: [...common, jobGuard(next)] };
+    userControlsPresent: schema.userControlsPresent, lifecyclePresent: schema.lifecyclePresent, resultsPresent: schema.resultsPresent, historyPresent: schema.historyPresent, producersPresent: schema.producersPresent, producer:chat?"chat-studio":"creator", guards: [...common, jobGuard(next)] };
   if (!current(admission, env)) return null;
   const statements = [...common, jobGuard(job)].map(guard => derivationAssertion(env, guard));
   const mutationIndex = mode === "execute" ? statements.length : -1;
@@ -195,7 +202,7 @@ function lookup(env: WorkerEnv, handle: NativeDerivationEvidence, mode?: "execut
 export function nativeDerivationLeaseInputs(env: WorkerEnv, handle: NativeDerivationLease) {
   const a = lookup(env, handle, "execute");
   return structuredClone({ job: a.job, enrollment: a.enrollment, grant: a.grant, qualification: a.qualification,
-    authority: a.authority, references: a.references, validUntil: a.until, userControlsPresent: a.userControlsPresent, lifecyclePresent: a.lifecyclePresent, resultsPresent: a.resultsPresent, historyPresent: a.historyPresent });
+    authority: a.authority, references: a.references, validUntil: a.until, userControlsPresent: a.userControlsPresent, lifecyclePresent: a.lifecyclePresent, resultsPresent: a.resultsPresent, historyPresent: a.historyPresent, producersPresent: a.producersPresent, producer: a.producer });
 }
 export function nativeDerivationLeaseStatements(env: WorkerEnv, handle: NativeDerivationLease): D1PreparedStatement[] {
   return lookup(env, handle, "execute").guards.map(guard => derivationAssertion(env, guard));
@@ -212,7 +219,7 @@ export async function replayNativeDerivationLease(env: WorkerEnv, handle: Native
 export function nativeDerivationEvidenceInputs(env: WorkerEnv, handle: NativeDerivationEvidence) {
   const a = lookup(env, handle);
   return structuredClone({ job: a.job, enrollment: a.enrollment, grant: a.grant, qualification: a.qualification,
-    authority: a.authority, references: a.references, validUntil: a.until, userControlsPresent: a.userControlsPresent, lifecyclePresent: a.lifecyclePresent, resultsPresent: a.resultsPresent, historyPresent: a.historyPresent });
+    authority: a.authority, references: a.references, validUntil: a.until, userControlsPresent: a.userControlsPresent, lifecyclePresent: a.lifecyclePresent, resultsPresent: a.resultsPresent, historyPresent: a.historyPresent, producersPresent: a.producersPresent, producer: a.producer });
 }
 export function nativeDerivationEvidenceStatements(env: WorkerEnv, handle: NativeDerivationEvidence) {
   return lookup(env, handle).guards.map(guard => derivationAssertion(env, guard));

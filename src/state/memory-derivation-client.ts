@@ -117,7 +117,7 @@ async function read(response: Response, signal?: AbortSignal): Promise<unknown> 
   } catch (error) { cancel(reader); throw error; }
   finally { signal?.removeEventListener("abort", abort); try { reader.releaseLock(); } catch { /* cancelled read may settle */ } }
 }
-export type DerivationProgress = {purpose:MemoryDerivationPurpose;pending:number;completed:number;retained:number;uncertain:number;registeredThrough:number|null;completedThrough:number|null};
+export type DerivationProgress = {purpose:MemoryDerivationPurpose;pending:number;completed:number;retained:number;uncertain:number;registeredThrough:number|null;completedThrough:number|null;producers?:ReadonlyArray<{producer:"creator"|"chat-studio";registeredThrough:number;completedThrough:number}>};
 export type DerivationResultEntry = {jobId:string;purpose:MemoryDerivationPurpose;scopeKey:string;expiresAt:string};
 export type DerivationResultItem = {claimKey:string;category:string;text:string;lineageIds:readonly string[]};
 export type DerivationHistory = {windowCount:number;originalPairs:number;boundary:'consent'|'bounded'|'capacity';afterSequence:number;throughSequence:number};
@@ -187,7 +187,13 @@ export function createMemoryDerivationClient(transport: (input: RequestInfo | UR
         const row=own(raw,['version','scope','enrollmentId','enrollmentRevision','results','next','checkedAt','progress',...(purpose?['purpose']:[])]);
         check(purpose===null||row.purpose===purpose);
         check(derivationTime(row.checkedAt)&&Date.parse(row.checkedAt)<=Date.now()+5000&&Date.now()-Date.parse(row.checkedAt)<60000&&Array.isArray(row.progress)&&row.progress.length<=3);
-        const progress=row.progress.map(value=>{const p=own(value,['purpose','pending','completed','retained','uncertain','registeredThrough','completedThrough']);
+        const progress=row.progress.map(value=>{const hasProducers=!!value&&typeof value==='object'&&Object.hasOwn(value,'producers');
+          const p=own(value,['purpose','pending','completed','retained','uncertain','registeredThrough','completedThrough',...(hasProducers?['producers']:[])]);
+          if(hasProducers){check(Array.isArray(p.producers)&&p.producers.length===2);
+            const producers=p.producers.map((entry,index)=>{const row=own(entry,['producer','registeredThrough','completedThrough']);
+              check(row.producer===(index===0?'creator':'chat-studio')&&derivationInteger(row.registeredThrough)&&derivationInteger(row.completedThrough,0,Number(row.registeredThrough)));return row;});
+            check(p.registeredThrough===Math.min(...producers.map(row=>Number(row.registeredThrough)))&&p.completedThrough===Math.min(...producers.map(row=>Number(row.completedThrough))));
+          }
           check(MEMORY_DERIVATION_PURPOSES.includes(p.purpose as MemoryDerivationPurpose)&&['pending','completed','retained','uncertain'].every(key=>derivationInteger(p[key]))
             &&['registeredThrough','completedThrough'].every(key=>p[key]===null||derivationInteger(p[key]))&&(p.completedThrough===null||p.registeredThrough!==null&&Number(p.completedThrough)<=Number(p.registeredThrough)));return {...p} as DerivationProgress;});
         check(new Set(progress.map(p=>p.purpose)).size===progress.length&&progress.every(p=>purpose===null||p.purpose===purpose));

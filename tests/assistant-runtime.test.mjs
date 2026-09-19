@@ -12333,23 +12333,7 @@ test("actual scheduled Memory runner requires exact scheduling admission and pre
 
 // Production reference-only completed-turn capture. Provider traffic exists only
 // in finite, in-process fake setup of the actual native queued Chat Studio route.
-async function completedConversationCaptureFixture(t,{shared=false,candidate=true,beforeEnrollment}={}){
-  const state=await nativeMemoryJobFixture(t,{shared,beforeEnrollment:async current=>{
-    const {readFile}=await import('node:fs/promises');
-    current.sqlite.exec(await readFile(new URL('../drizzle/0032_memory_structured_conversation_ledger.sql',import.meta.url),'utf8'));
-    if(beforeEnrollment)await beforeEnrollment(current);
-  }});
-  await queuedJobMemorySeed(state,{history:false});
-  if(candidate){
-    const {readFile}=await import('node:fs/promises');
-    state.sqlite.exec('BEGIN');
-    try{state.sqlite.exec(await readFile(new URL('../db/memory-conversation-capture.pending.sql',import.meta.url),'utf8'));state.sqlite.exec('COMMIT');}
-    catch(error){state.sqlite.exec('ROLLBACK');throw error;}
-  }
-  const {publishCompletedConversationReferences}=await import('../worker/memory-completed-turns.ts');
-  const ledger=()=>Object.fromEntries(['memory_structured_conversation_heads','memory_structured_conversation_revisions']
-    .map(table=>[table,state.sqlite.prepare('SELECT * FROM '+table+' ORDER BY rowid').all().map(row=>({...row}))]));
-  const body=()=>{const row=state.sqlite.prepare("SELECT content FROM private_content WHERE content_id=(SELECT current_body_ref FROM memory_structured_conversation_heads WHERE state='active')").get();return row?JSON.parse(row.content):null;};
+function nativeCompletedTurnSeed(state){
   const seed=async(message='A genuine completed source without invented labels.',headers=state.owner)=>{
     const before=Number(state.sqlite.prepare('SELECT COALESCE(MAX(sequence),0) AS head FROM events WHERE stream_id=?').get('creative:'+state.current().owner_user_id).head);
     const originalFetch=globalThis.fetch,originalKey=state.env.OPENAI_API_KEY,originalUsers=state.env.FORMA_ASSISTANT_PROVIDER_USER_IDS;
@@ -12374,6 +12358,26 @@ async function completedConversationCaptureFixture(t,{shared=false,candidate=tru
     return state.sqlite.prepare("SELECT event_id,sequence,type,json_extract(payload,'$.content_ref') AS content_ref FROM events WHERE stream_id=? AND sequence>? AND type IN('ChatMessageSent','AssistantReasoned') ORDER BY sequence")
       .all('creative:'+state.current().owner_user_id,before).map(row=>({...row}));
   };
+  return seed;
+}
+async function completedConversationCaptureFixture(t,{shared=false,candidate=true,beforeEnrollment}={}){
+  const state=await nativeMemoryJobFixture(t,{shared,beforeEnrollment:async current=>{
+    const {readFile}=await import('node:fs/promises');
+    current.sqlite.exec(await readFile(new URL('../drizzle/0032_memory_structured_conversation_ledger.sql',import.meta.url),'utf8'));
+    if(beforeEnrollment)await beforeEnrollment(current);
+  }});
+  await queuedJobMemorySeed(state,{history:false});
+  if(candidate){
+    const {readFile}=await import('node:fs/promises');
+    state.sqlite.exec('BEGIN');
+    try{state.sqlite.exec(await readFile(new URL('../db/memory-conversation-capture.pending.sql',import.meta.url),'utf8'));state.sqlite.exec('COMMIT');}
+    catch(error){state.sqlite.exec('ROLLBACK');throw error;}
+  }
+  const {publishCompletedConversationReferences}=await import('../worker/memory-completed-turns.ts');
+  const ledger=()=>Object.fromEntries(['memory_structured_conversation_heads','memory_structured_conversation_revisions']
+    .map(table=>[table,state.sqlite.prepare('SELECT * FROM '+table+' ORDER BY rowid').all().map(row=>({...row}))]));
+  const body=()=>{const row=state.sqlite.prepare("SELECT content FROM private_content WHERE content_id=(SELECT current_body_ref FROM memory_structured_conversation_heads WHERE state='active')").get();return row?JSON.parse(row.content):null;};
+  const seed=nativeCompletedTurnSeed(state);
   return Object.assign(state,{capture:()=>publishCompletedConversationReferences(state.env,state.current()),captureLedger:ledger,captureBody:body,seedCapturedTurn:seed});
 }
 for(const shared of [false,true])test('completed conversation capture: '+(shared?'shared':'personal')+' genuine native pairs publish unannotated references and recover idempotently',{timeout:90000},async t=>{
@@ -14847,4 +14851,228 @@ test('native derivation read budget: native exclusion snapshot preserves aliases
   guards.authored.sql='1';guards.authored.bindings.length=0;assert.notEqual(boundary.nativeMemoryTurnExclusionInputs(state.env,snapshot).authored.sql,'1');
   assert.throws(()=>boundary.nativeMemoryTurnExclusionInputs(state.env,{...snapshot}));assert.throws(()=>boundary.nativeMemoryTurnExclusionInputs({...state.env},snapshot));
   await assert.rejects(()=>paid.paidMemoryBatchProof(state.env,state.current().actor_user_id,'private-scope',[{turnId:'one',entries:[{turnId:'one'}]}],{...snapshot}));
+});
+
+async function nativeChatDerivationFixture(t,{shared=false}={}){
+  const state=await nativeDerivationWorkerFixture(t,{shared,skipOriginal:true});
+  const {readFile}=await import('node:fs/promises');
+  for(const tag of ['0051_memory_derivation_split','0053_memory_derivation_producers'])state.sqlite.exec(await readFile(new URL('../drizzle/'+tag+'.sql',import.meta.url),'utf8'));
+  await queuedJobMemorySeed(state,{history:false});
+  const seed=nativeCompletedTurnSeed(state);
+  state.seedChat=async(message='Original Chat Studio user intention.')=>{
+    const enabled=state.env.FORMA_MEMORY_ENABLED;state.env.FORMA_MEMORY_ENABLED='false';
+    try{return await seed(message);}finally{state.env.FORMA_MEMORY_ENABLED=enabled;}
+  };
+  const {registerNativeChatStudioDerivationBacklog}=await import('../worker/memory-derivation-chat-delivery.ts');
+  state.registerChat=()=>registerNativeChatStudioDerivationBacklog(state.env,state.current());
+  state.producerQueue=()=>({cursors:state.sqlite.prepare('SELECT * FROM memory_derivation_producer_cursors').all(),links:state.sqlite.prepare('SELECT * FROM memory_derivation_producer_jobs ORDER BY after_sequence').all()});
+  return state;
+}
+for(const shared of [false,true])test('native derivation Chat Studio: independent late delivery, genuine originals and idempotency '+shared,{timeout:120000},async t=>{
+  const state=await nativeChatDerivationFixture(t,{shared});
+  const first=await state.seedChat(),second=await state.seedChat('A second independent original.');
+  // Creator progress deliberately passes BOTH Chat Studio conversations before
+  // the independent producer has ever registered a reference.
+  await state.register(second.at(-1).sequence);
+  const creator=state.queue().cursors[0].registered_through_sequence;
+  assert.equal(state.queue().jobs.length,0);
+  assert.deepEqual(await state.registerChat(),{registeredPurposes:1,capacityPurposes:0},state.controls.lastDatabaseError);
+  assert.equal(state.producerQueue().cursors[0].registered_through_sequence,first.at(-1).sequence);
+  assert.equal(state.producerQueue().cursors[0].completed_through_sequence,state.derivationRows()[0].source_after_sequence);
+  assert.deepEqual(await state.registerChat(),{registeredPurposes:1,capacityPurposes:0},state.controls.lastDatabaseError);
+  assert.deepEqual(await state.registerChat(),{registeredPurposes:0,capacityPurposes:0});
+  assert.equal(state.queue().cursors[0].registered_through_sequence,creator);
+  assert.equal(state.queue().jobs.length,2);
+  const admission=await import('../worker/memory-derivation-admission.ts'),sources=await import('../worker/memory-derivation-sources.ts');
+  const job=state.queue().jobs[0],lease=await admission.claimNativeDerivationJob(state.env,job.job_id);assert.ok(lease,state.controls.lastDatabaseError);
+  assert.equal(admission.nativeDerivationEvidenceInputs(state.env,lease).producer,'chat-studio');
+  const captured=await sources.captureNativeDerivationSources(state.env,lease);
+  assert.equal(captured.status,'captured',state.controls.lastDatabaseError);
+  const input=sources.nativeDerivationSourceInputs(state.env,captured.capture);
+  assert.deepEqual(input.originals.map(row=>row.sourceId),first.map(row=>row.event_id));assert.equal(input.originals[0].text,'Original Chat Studio user intention.');
+  assert.equal(input.provenance.events.length,3,'Both originals AND their native BudgetReserved cause are dependencies');
+  assert.equal(await sources.replayNativeDerivationSources(state.env,captured.capture),true);
+  state.sqlite.prepare("UPDATE private_content SET redacted_at=?,content='' WHERE content_id=?").run(new Date().toISOString(),first[0].content_ref);
+  assert.equal(await sources.replayNativeDerivationSources(state.env,captured.capture),false);
+  assert.equal(state.sqlite.prepare('SELECT COUNT(*) AS n FROM memory_derivation_finance').get().n,0);
+  assert.deepEqual(state.sqlite.prepare('PRAGMA foreign_key_check').all(),[]);
+});
+
+for(const shared of [false,true])test('native derivation Chat Studio: worker publication, independent completion and immediate erasure '+shared,{timeout:120000},async t=>{
+  const state=await nativeChatDerivationFixture(t,{shared}),first=await state.seedChat();
+  await state.register(first.at(-1).sequence);await state.registerChat();
+  const originalFetch=globalThis.fetch;let calls=0;
+  t.after(()=>{globalThis.fetch=originalFetch;});
+  globalThis.fetch=async(_url,init)=>{calls++;const request=JSON.parse(init.body);assert.ok(JSON.stringify(request).includes('Original Chat Studio user intention.'));
+    return Response.json({id:'isolated-chat-derivation',object:'response',model:'isolated-test-model',service_tier:'default',status:'completed',error:null,incomplete_details:null,
+      usage:{input_tokens:800,output_tokens:40,total_tokens:840,input_tokens_details:{cached_tokens:400}},
+      output:[{type:'message',role:'assistant',status:'completed',content:[{type:'output_text',text:JSON.stringify({version:'memory-derivation-candidates-v1',items:[]})}]}]});};
+  const worker=await import('../worker/memory-derivation-worker.ts'),firstWork=await worker.runNativeDerivationScheduled(state.env);
+  assert.equal(firstWork.status,'stored',JSON.stringify(firstWork)+' '+state.controls.lastDatabaseError);assert.equal(calls,1);
+  assert.equal(state.producerQueue().cursors[0].completed_through_sequence,first.at(-1).sequence);
+  assert.equal(state.sqlite.prepare('SELECT COUNT(*) AS n FROM memory_derivation_completion_cursors').get().n,0,'Chat completion never moves Creator completion');
+  assert.equal((await worker.runNativeDerivationScheduled(state.env)).status,'idle');assert.equal(calls,1);
+  const results=await import('../worker/memory-derivation-results.ts'),job=state.queue().jobs[0];
+  assert.ok(await results.readNativeDerivationResult(state.env,state.current().actor_user_id,job.job_id),state.controls.lastDatabaseError);
+  const dependencies=state.sqlite.prepare('SELECT kind,resource_id FROM memory_derivation_result_dependencies').all();
+  assert.ok(dependencies.some(row=>row.kind==='content'&&row.resource_id===first[0].content_ref));
+  const finances=state.sqlite.prepare('SELECT * FROM memory_derivation_finance').all();
+  state.sqlite.prepare("UPDATE private_content SET content='',redacted_at=? WHERE content_id=?").run(new Date().toISOString(),first[0].content_ref);
+  const result=state.sqlite.prepare('SELECT state,raw_json,manifest_json FROM memory_derivation_results').get();assert.equal(result.state,'withdrawn');assert.equal(result.raw_json,null);assert.equal(result.manifest_json,null);
+  assert.equal(await results.readNativeDerivationResult(state.env,state.current().actor_user_id,job.job_id),null);
+  assert.deepEqual(state.sqlite.prepare('SELECT * FROM memory_derivation_finance').all(),finances);assert.equal(calls,1);
+});
+
+for(const action of ['revoke','forget','rollback','lost-ack','creator-maintenance'])test('native derivation Chat Studio: '+action+' preserves privacy and delivery accounting',{timeout:120000},async t=>{
+  const state=await nativeChatDerivationFixture(t),first=await state.seedChat();
+  if(action==='rollback'||action==='lost-ack'){
+    const db=state.env.DB,batch=db.batch;let hit=false;
+    db.batch=async statements=>{if(!hit&&statements.some(s=>s.sql.startsWith('INSERT INTO memory_derivation_producer_jobs('))){hit=true;
+      if(action==='rollback')statements=[...statements,db.prepare("SELECT json('force rollback')")];
+      const result=await batch.call(db,statements);if(action==='lost-ack')throw Error('synthetic lost ack');return result;}return batch.call(db,statements);};
+    t.after(()=>{db.batch=batch;});await assert.rejects(()=>state.registerChat());assert.equal(hit,true);db.batch=batch;
+    assert.equal(state.queue().jobs.length,action==='rollback'?0:1);
+    assert.equal((await state.registerChat()).registeredPurposes,action==='rollback'?1:0);
+    assert.equal(state.queue().jobs.length,1);assert.equal(state.producerQueue().links.length,1);
+  }else{
+    await state.registerChat();
+    if(action==='revoke')state.sqlite.prepare('UPDATE memory_derivation_grants SET revoked_at=?').run(new Date().toISOString());
+    if(action==='forget')state.sqlite.prepare('DELETE FROM memory_live_sources WHERE event_id=?').run(first.at(-1).event_id);
+    if(action==='creator-maintenance'){
+      state.due();const run=await state.run();assert.equal(run.status,'completed',JSON.stringify(run)+' '+state.controls.lastDatabaseError);
+      assert.equal(state.producerQueue().links.length,1);assert.equal(state.queue().jobs.length,1,'Creator must not queue Chat Studio again');
+    }else assert.equal(state.producerQueue().links.length,0);
+  }
+  assert.equal(state.sqlite.prepare('SELECT COUNT(*) AS n FROM memory_derivation_finance').get().n,0);
+  assert.deepEqual(state.sqlite.prepare('PRAGMA foreign_key_check').all(),[]);
+});
+
+test('native derivation Chat Studio: real isolated D1 atomic registration, source capture and revoke',{timeout:180000},async t=>{
+  const {createRequire}=await import('node:module'),{Miniflare,Log,LogLevel}=createRequire(import.meta.resolve('wrangler'))('miniflare');
+  const {exportSynthetic,install}=await import('./helpers/model3d-workerd-snapshot.mjs');let outbound=0;
+  const mf=new Miniflare({modules:true,compatibilityDate:'2026-05-15',host:'127.0.0.1',port:0,log:new Log(LogLevel.NONE),d1Databases:['MemoryChat'],
+    script:"export default {fetch(){return new Response('Isolated Memory Chat fixture.',{status:404});}};",outboundService(){outbound++;throw Error('External fetch forbidden');}});
+  t.after(async()=>{await mf.dispose();assert.equal(outbound,0);});
+  const state=await nativeChatDerivationFixture(t,{shared:true}),pair=await state.seedChat();
+  const db=await mf.getD1Database('MemoryChat');await install(db,exportSynthetic(state.sqlite));state.env.DB=db;
+  assert.equal((await state.registerChat()).registeredPurposes,1);
+  assert.equal((await state.registerChat()).registeredPurposes,0);
+  const job=await db.prepare('SELECT job_id FROM memory_derivation_jobs').first();
+  const admission=await import('../worker/memory-derivation-admission.ts'),sources=await import('../worker/memory-derivation-sources.ts');
+  const lease=await admission.claimNativeDerivationJob(state.env,job.job_id);assert.ok(lease);
+  const capture=await sources.captureNativeDerivationSources(state.env,lease);assert.equal(capture.status,'captured');
+  assert.deepEqual(sources.nativeDerivationSourceInputs(state.env,capture.capture).originals.map(row=>row.sourceId),pair.map(row=>row.event_id));
+  await db.prepare('UPDATE memory_derivation_grants SET revoked_at=?').bind(new Date().toISOString()).run();
+  assert.equal(await sources.replayNativeDerivationSources(state.env,capture.capture),false);
+  assert.equal((await db.prepare('SELECT COUNT(*) AS n FROM memory_derivation_producer_jobs').first()).n,0);
+  assert.deepEqual((await db.prepare('PRAGMA foreign_key_check').all()).results,[]);
+});
+
+async function nativeChatDerivationRollingFixture(t,{shared=false,windows=3}={}){
+  const state=await nativeChatDerivationFixture(t,{shared}),worker=await import('../worker/memory-derivation-worker.ts'),requests=[];
+  const fetch=globalThis.fetch;t.after(()=>{globalThis.fetch=fetch;});
+  globalThis.fetch=async(_url,init)=>{const input=JSON.parse(JSON.parse(init.body).input);requests.push(input);
+    const quote=Array.from(input.originals[0].text).slice(0,8).join('');
+    return Response.json({id:'isolated-chat-history-'+requests.length,object:'response',model:'isolated-test-model',service_tier:'default',status:'completed',error:null,incomplete_details:null,
+      usage:{input_tokens:800,output_tokens:40,total_tokens:840,input_tokens_details:{cached_tokens:400}},output:[{type:'message',role:'assistant',status:'completed',content:[{type:'output_text',text:JSON.stringify({version:'memory-derivation-candidates-v1',items:[{operation:'assert',target:null,category:'goal',text:'Synthetic Chat Studio proposal '+requests.length,supports:[{sourceIndex:0,start:0,end:8,text:quote}],counterevidence:[]}]})}]}]});};
+  for(let index=0;index<windows;index++){
+    await state.seedChat('Original Chat Studio intention '+index);
+    assert.equal((await state.registerChat()).registeredPurposes,1);
+    const result=await worker.runNativeDerivationScheduled(state.env);
+    assert.equal(result.status,'stored',JSON.stringify(result)+' '+state.controls.lastDatabaseError);
+  }
+  return Object.assign(state,{rollingRequests:requests});
+}
+for(const shared of [false,true])test('native derivation Chat Studio: original-backed rolling history and complete HTTP budget '+shared,{timeout:120000},async t=>{
+  const state=await nativeChatDerivationRollingFixture(t,{shared}),api=await import('../worker/memory-derivation-api.ts');
+  assert.deepEqual(state.rollingRequests.map(input=>input.originals.length),[2,4,6]);
+  assert.ok(state.rollingRequests.every(input=>!JSON.stringify(input).includes('Synthetic Chat Studio proposal')));
+  const job=state.queue().jobs.sort((a,b)=>b.through_sequence-a.through_sequence)[0],db=state.env.DB,prepare=db.prepare,batch=db.batch;
+  let operations=0;const originals=new WeakMap();
+  const wrap=raw=>{const proxy=new Proxy(raw,{get(target,key){if(key==='bind')return(...args)=>wrap(target.bind(...args));
+    if(['all','first','run','raw'].includes(key))return(...args)=>{operations++;return target[key](...args);};return Reflect.get(target,key,target);}});originals.set(proxy,raw);return proxy;};
+  db.prepare=function(sql){return wrap(prepare.call(this,sql));};db.batch=function(inputs){operations++;return batch.call(this,inputs.map(input=>originals.get(input)??input));};
+  t.after(()=>{db.prepare=prepare;db.batch=batch;});
+  const response=await api.handleMemoryDerivationResult(new Request(state.derivationOrigin+'/api/memory/derivation/result?jobId='+job.job_id,{headers:state.owner}),state.env);
+  assert.equal(response.status,200,await response.clone().text());assert.equal((await response.json()).history.windowCount,3);
+  t.diagnostic(JSON.stringify({operations}));assert.ok(operations<50,'Complete Chat Studio inspection must stay below 50: '+operations);
+});
+
+for(const fault of ['history-source-erased','history-corrected','history-cause-erased','grant-revoked','same-interval-creator','schema-change'])test('native derivation Chat Studio: historical '+fault+' never becomes new authority',{timeout:120000},async t=>{
+  const state=await nativeChatDerivationRollingFixture(t,{windows:2}),store=await import('../worker/memory-derivation-results.ts'),jobs=state.queue().jobs.sort((a,b)=>a.after_sequence-b.after_sequence);
+  const first=JSON.parse(state.sqlite.prepare('SELECT manifest_json FROM memory_derivation_results WHERE job_id=?').get(jobs[0].job_id).manifest_json),last=jobs[1];
+  const finance=state.sqlite.prepare('SELECT * FROM memory_derivation_usage ORDER BY finance_id').all();
+  if(fault==='history-source-erased')state.sqlite.prepare('DELETE FROM private_content WHERE content_id=?').run(first.originalBacking[0].contentRef);
+  if(fault==='history-cause-erased'){
+    const originalIds=first.originalBacking.map(row=>row.eventId),cause=first.provenance.events.find(row=>!originalIds.includes(row.eventId));state.sqlite.prepare('DELETE FROM event_private_payloads WHERE private_event_id=?').run(cause.eventId);
+  }
+  if(fault==='history-corrected'){
+    const old=await store.readNativeDerivationResult(state.env,state.current().actor_user_id,jobs[0].job_id),item=store.nativeDerivationResultInputs(state.env,old).candidate.items[0];
+    const controls=await import('../worker/memory-derivation-user-controls.ts'),target=store.nativeDerivationResultControlTarget(state.env,old,item.claimKey);
+    assert.equal((await controls.controlNativeDerivationResult(state.env,old,item.claimKey,'corrected','My explicit Chat Studio correction.',Object.fromEntries(target.lineages.map(value=>[value.lineageId,0]))))[0].action,'corrected');
+  }
+  if(fault==='grant-revoked')state.sqlite.prepare('UPDATE memory_derivation_grants SET revoked_at=?').run(new Date().toISOString());
+  if(fault==='schema-change')state.sqlite.exec('DROP TRIGGER memory_derivation_producer_job_update');
+  if(fault==='same-interval-creator'){
+    // Registering Creator over the same numerical interval must not collide
+    // with or reclassify an existing producer job.
+    await state.send('Creator-original-after-Chat-Studio');state.due();assert.equal((await state.run()).status,'completed',state.controls.lastDatabaseError);
+    assert.equal(state.producerQueue().links.length,2);assert.ok(state.queue().jobs.length>2);
+    assert.ok(await store.readNativeDerivationResult(state.env,state.current().actor_user_id,last.job_id));
+  }else{
+    assert.equal(await store.readNativeDerivationResult(state.env,state.current().actor_user_id,last.job_id),null);
+    if(!['schema-change','grant-revoked'].includes(fault))assert.equal(state.sqlite.prepare('SELECT raw_json FROM memory_derivation_results WHERE job_id=?').get(last.job_id).raw_json,null);
+  }
+  assert.deepEqual(state.sqlite.prepare('SELECT * FROM memory_derivation_usage ORDER BY finance_id').all(),finance);
+});
+
+test('native derivation Chat Studio: HTTP inventory reports the conservative intersection and each producer',{timeout:120000},async t=>{
+  const state=await nativeChatDerivationRollingFixture(t,{windows:1}),api=await import('../worker/memory-derivation-api.ts'),{createMemoryDerivationClient}=await import('../src/state/memory-derivation-client.ts');
+  const client=createMemoryDerivationClient(async(path,init)=>api.handleMemoryDerivationResults(new Request(state.derivationOrigin+path,{...init,headers:{...init.headers,...state.owner}}),state.env));
+  const e=state.current(),page=await client.results({projectId:e.project_id,documentId:e.document_id,expectedCustody:{kind:'personal'},enrollmentId:e.enrollment_id,enrollmentRevision:e.revision});
+  const progress=page.progress[0];assert.equal(progress.completed,1);assert.equal(progress.producers[1].completedThrough,state.queue().jobs[0].through_sequence);
+  assert.equal(progress.completedThrough,state.derivationRows()[0].source_after_sequence);assert.equal(progress.producers[0].completedThrough,progress.completedThrough);
+  assert.equal(page.results.length,1);
+});
+
+for(const erase of [false,true])test('native derivation Chat Studio: counted native withdrawal includes producer cascades erase='+erase,{timeout:120000},async t=>{
+  const state=await nativeChatDerivationRollingFixture(t,{windows:2}),store=await import('../worker/memory-derivation-store.ts');
+  const financial=state.sqlite.prepare('SELECT * FROM memory_derivation_usage ORDER BY finance_id').all(),actor=state.current().actor_user_id;
+  const plan=await store.prepareDerivationWithdrawal(state.env,{actorUserId:actor},new Date().toISOString(),erase),result=await state.env.DB.batch(plan.statements);
+  assert.equal(plan.acknowledge(result),true,state.controls.lastDatabaseError);
+  for(const table of ['memory_derivation_producer_jobs','memory_derivation_producer_cursors','memory_derivation_jobs','memory_derivation_results','memory_derivation_job_sources'])assert.equal(state.sqlite.prepare('SELECT COUNT(*) AS n FROM '+table).get().n,0,table);
+  assert.deepEqual(state.sqlite.prepare('SELECT * FROM memory_derivation_usage ORDER BY finance_id').all(),financial);
+});
+
+test('native derivation Chat Studio: out-of-order completion cannot jump an earlier pending conversation',{timeout:120000},async t=>{
+  const state=await nativeChatDerivationFixture(t),worker=await import('../worker/memory-derivation-worker.ts');
+  await state.seedChat('First pending original.');await state.registerChat();await state.seedChat('Second completed original.');await state.registerChat();
+  const jobs=state.queue().jobs.sort((a,b)=>a.after_sequence-b.after_sequence),start=state.derivationRows()[0].source_after_sequence;
+  const now=Date.now(),delayed=new Date(now+3000).toISOString();state.sqlite.prepare('UPDATE memory_derivation_jobs SET not_before=? WHERE job_id=?').run(delayed,jobs[0].job_id);
+  const fetch=globalThis.fetch;let calls=0;t.after(()=>{globalThis.fetch=fetch;});
+  globalThis.fetch=async()=>{calls++;return Response.json({id:'isolated-out-of-order-'+calls,object:'response',model:'isolated-test-model',service_tier:'default',status:'completed',error:null,incomplete_details:null,
+    usage:{input_tokens:800,output_tokens:40,total_tokens:840,input_tokens_details:{cached_tokens:400}},output:[{type:'message',role:'assistant',status:'completed',content:[{type:'output_text',text:JSON.stringify({version:'memory-derivation-candidates-v1',items:[]})}]}]});};
+  assert.equal((await worker.runNativeDerivationScheduled(state.env)).status,'stored');assert.equal(state.producerQueue().cursors[0].completed_through_sequence,start);
+  const clock=consequentialDbClock(state);clock.set(new Date(now+4000).toISOString());t.mock.timers.enable({apis:['Date'],now:now+4000});
+  try{assert.equal((await worker.runNativeDerivationScheduled(state.env)).status,'stored');}finally{t.mock.timers.reset();}
+  assert.equal(state.producerQueue().cursors[0].completed_through_sequence,jobs[1].through_sequence);assert.equal(calls,2);
+});
+
+test('native derivation Chat Studio: isolated D1 rolling result and counted erasure retain accounting',{timeout:180000},async t=>{
+  const {createRequire}=await import('node:module'),{Miniflare,Log,LogLevel}=createRequire(import.meta.resolve('wrangler'))('miniflare');
+  const {exportSynthetic,install}=await import('./helpers/model3d-workerd-snapshot.mjs');let outbound=0;
+  const mf=new Miniflare({modules:true,compatibilityDate:'2026-05-15',host:'127.0.0.1',port:0,log:new Log(LogLevel.NONE),d1Databases:['MemoryChatRolling'],
+    script:"export default {fetch(){return new Response('Isolated Memory Chat rolling fixture.',{status:404});}};",outboundService(){outbound++;throw Error('External fetch forbidden');}});
+  t.after(async()=>{await mf.dispose();assert.equal(outbound,0);});
+  const state=await nativeChatDerivationRollingFixture(t,{shared:true}),job=state.queue().jobs.sort((a,b)=>b.through_sequence-a.through_sequence)[0];
+  const db=await mf.getD1Database('MemoryChatRolling');await install(db,exportSynthetic(state.sqlite));state.env.DB=db;
+  const results=await import('../worker/memory-derivation-results.ts'),store=await import('../worker/memory-derivation-store.ts');
+  const read=await results.readNativeDerivationResult(state.env,state.current().actor_user_id,job.job_id);assert.ok(read);
+  assert.equal(results.nativeDerivationResultInputs(state.env,read).history.windowCount,3);
+  const financial=(await db.prepare('SELECT * FROM memory_derivation_usage ORDER BY finance_id').all()).results;
+  const plan=await store.prepareDerivationWithdrawal(state.env,{organizationId:state.current().organization_id},new Date().toISOString(),true);
+  assert.equal(plan.acknowledge(await db.batch(plan.statements)),true);
+  assert.equal((await db.prepare('SELECT COUNT(*) AS n FROM memory_derivation_producer_jobs').first()).n,0);
+  assert.deepEqual((await db.prepare('SELECT * FROM memory_derivation_usage ORDER BY finance_id').all()).results,financial);
+  assert.deepEqual((await db.prepare('PRAGMA foreign_key_check').all()).results,[]);
 });

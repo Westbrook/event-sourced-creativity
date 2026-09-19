@@ -74,7 +74,7 @@ export async function prepareNativeDerivationDelivery(env: WorkerEnv, enrollment
       // The dependency still copies the original remembered ceiling exactly;
       // the job takes the smaller purpose-specific deadline.
       const sources = `FROM memory_live_sources s JOIN events original ON (original.event_id,original.sequence,original.stream_id)=(s.event_id,s.sequence,?)
-        WHERE s.enrollment_id=? AND s.sequence>? AND s.sequence<=? AND s.expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now')
+        WHERE NOT(original.type='AssistantReasoned' AND original.actor='model:forma-chat') AND s.enrollment_id=? AND s.sequence>? AND s.sequence<=? AND s.expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now')
           AND original.recorded_at>=? AND original.recorded_at<=strftime('%Y-%m-%dT%H:%M:%fZ','now')
           AND strftime('%Y-%m-%dT%H:%M:%fZ',original.recorded_at,'+'||?||' days')>strftime('%Y-%m-%dT%H:%M:%fZ','now')`;
       const sourceBindings = [`creative:${e.owner_user_id}`, e.enrollment_id, after, through, g.consented_at, g.retention_days];
@@ -177,7 +177,8 @@ export async function sweepNativeDerivationJobs(env: WorkerEnv) {
   const db = env.DB, schema = await memoryDerivationSchema(env), selected = `SELECT job_id FROM memory_derivation_jobs
     WHERE expires_at<=strftime('%Y-%m-%dT%H:%M:%fZ','now') ORDER BY expires_at,job_id LIMIT 128`;
   let cascades = 0;
-  const counter = `SELECT (SELECT COUNT(*) FROM memory_derivation_job_sources WHERE job_id IN(${selected}))${schema.completionPresent ? `+
+  const counter = `SELECT (SELECT COUNT(*) FROM memory_derivation_job_sources WHERE job_id IN(${selected}))${schema.producersPresent ? `+
+    (SELECT COUNT(*) FROM memory_derivation_producer_jobs WHERE job_id IN(${selected}))` : ""}${schema.completionPresent ? `+
     (SELECT COUNT(*) FROM memory_derivation_completions WHERE job_id IN(${selected}))` : ""}${schema.resultsPresent ? `+
     (SELECT COUNT(*) FROM memory_derivation_results WHERE job_id IN(${selected}))+
     (SELECT COUNT(*) FROM memory_derivation_result_dependencies WHERE job_id IN(${selected}))` : ""}${schema.financePresent ? `+

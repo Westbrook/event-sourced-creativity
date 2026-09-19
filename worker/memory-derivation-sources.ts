@@ -1,3 +1,4 @@
+import { captureLegacyConversationOriginalWindows, replayLegacyConversationOriginals, prepareLegacyConversationOriginalsCommit, type LegacyConversationOriginalsCommit } from "./events-api.ts";
 import { nativeDerivationRequestBody, nativeDerivationRequestFits } from './memory-derivation-request.ts';
 import { captureNativeArtifactConsumption } from './memory-native-artifact-consumption.ts';
 import { memoryDigest } from "../src/model/scoped-memory.ts";
@@ -39,7 +40,7 @@ type CaptureData = { jobId: string; purpose: MemoryDerivationSourcePurpose; scop
 type MemoryDerivationSourcePurpose = ReturnType<typeof nativeDerivationEvidenceInputs>["grant"]["purpose"];
 declare const issuedCapture: unique symbol;
 export type NativeDerivationSourceCapture = Readonly<{ [issuedCapture]: true }>;
-type Captured = { env: WorkerEnv; db: WorkerEnv["DB"]; lease: NativeDerivationEvidence; validUntil: string; witness: AssistantContextReadWitness<CaptureData>; parts?: NativeDerivationSourceCapture[] };
+type Captured = { env: WorkerEnv; db: WorkerEnv["DB"]; lease: NativeDerivationEvidence; validUntil: string; witness: AssistantContextReadWitness<CaptureData>; parts?: NativeDerivationSourceCapture[]; legacy?: LegacyConversationOriginalsCommit; evidences?: NativeDerivationEvidence[] };
 const captures = new WeakMap<NativeDerivationSourceCapture, Captured>();
 const unavailable = () => ({ status: "unavailable" } as const);
 const capacity = () => ({ status: "capacity" } as const);
@@ -59,6 +60,7 @@ const clean = (payload: string) => `json_valid(${payload}) AND COALESCE(json_ext
  */
 async function captureNativeDerivationWindow(env: WorkerEnv, lease: NativeDerivationEvidence) {
   try {
+    if(nativeDerivationEvidenceInputs(env,lease).producer==='chat-studio')return await captureChatStudioDerivationWindow(env,lease);
     const db = env.DB, input = nativeDerivationEvidenceInputs(env, lease), { enrollment: e, grant: g, authority: a, job } = input;
     if (!await replayNativeDerivationEvidence(env, lease) || env.DB !== db) return unavailable();
     const witness = new AssistantContextReadWitness<CaptureData>(env);
@@ -282,12 +284,128 @@ async function captureNativeDerivationWindow(env: WorkerEnv, lease: NativeDeriva
   } catch { return unavailable(); }
 }
 
+/** A single native legacy capture proves the complete selected original window
+ * union. Historical jobs retain separate read-only consent/reference assertions;
+ * batching source custody does not cache authority or reuse model prose. */
+async function captureChatStudioDerivationWindow(env: WorkerEnv, lease: NativeDerivationEvidence,
+  history?:{evidence:NativeDerivationEvidence[];query:Query;result:D1Result<Row>;boundary:NativeDerivationHistory['boundary']}) {
+  try {
+    const db=env.DB,input=nativeDerivationEvidenceInputs(env,lease),{enrollment:e,grant:g,authority:a,job}=input;
+    const evidences=[...(history?.evidence??[]),lease],inputs=evidences.map(value=>nativeDerivationEvidenceInputs(env,value));
+    if(inputs.some(value=>value.producer!=='chat-studio'||value.references.length!==1||value.grant.consent_id!==g.consent_id)
+      ||!await replayNativeDerivationEvidence(env,lease))return unavailable();
+    const witness=new AssistantContextReadWitness<CaptureData>(env);
+    if(history)witness.observe([db.prepare(history.query.sql).bind(...history.query.bindings)],[history.result],[history.query]);
+    const read=async(query:Query)=>{
+      const statement=db.prepare(query.sql).bind(...query.bindings),result=structuredClone(await statement.all<Row>());
+      for(const evidence of evidences)nativeDerivationEvidenceInputs(env,evidence);
+      if(env.DB!==db||!derivationResults([result],1))throw Error('memory-chat-source-unavailable');
+      witness.observe([statement],[result],[query]);return result.results;
+    };
+    const expected=inputs.map(value=>({eventId:value.references[0]!.event_id,sequence:value.references[0]!.sequence}));
+    const rows=await read({sql:`SELECT answer.event_id,answer.sequence,message.sequence AS user_sequence,
+      (SELECT COALESCE(MAX(sequence),0) FROM events WHERE stream_id=answer.stream_id) AS head
+      FROM json_each(?) expected JOIN events answer ON (answer.event_id,answer.sequence)=(json_extract(expected.value,'$.eventId'),json_extract(expected.value,'$.sequence'))
+      JOIN events message ON message.event_id=answer.causation_id AND message.stream_id=answer.stream_id
+      WHERE answer.stream_id=? AND answer.type='AssistantReasoned' AND answer.actor='model:forma-chat' AND message.type='ChatMessageSent'
+      ORDER BY answer.sequence LIMIT 4`,bindings:[JSON.stringify(expected),a.binding.streamId]});
+    if(rows.length!==inputs.length||rows.some((row,index)=>row.event_id!==expected[index]!.eventId||row.sequence!==expected[index]!.sequence
+      ||!derivationInteger(row.user_sequence,g.source_after_sequence+1,Number(row.sequence)-1)||!derivationInteger(row.head,job.through_sequence)))return unavailable();
+    const prepared={principal:a.principal,binding:a.binding,sourceHead:Number(rows[0]!.head)};
+    const capture=await captureLegacyConversationOriginalWindows(env,prepared,rows.map(row=>({afterSequence:Number(row.user_sequence)-1,throughSequence:Number(row.sequence)})));
+    const receipt=capture&&await replayLegacyConversationOriginals(env,prepared,capture);
+    if(!capture||!receipt||receipt.originals.length!==rows.length*2)return unavailable();
+    const originals=receipt.originals,users=originals.filter(value=>value.role==='user'),answers=originals.filter(value=>value.role==='assistant');
+    if(users.length!==rows.length||answers.length!==rows.length||rows.some((row,index)=>answers[index]!.eventId!==row.event_id
+      ||answers[index]!.sequence!==row.sequence||users[index]!.sequence!==row.user_sequence)
+      ||originals.some(value=>value.recordedAt<g.consented_at||value.sequence<=g.source_after_sequence))return unavailable();
+    const scope=await observeNativeMemoryDocumentScope(env,prepared,e,witness);if(!scope)return unavailable();
+    const scopeKey=memoryCanonical([scope.partitionKey,scope.documentKey]);
+    const lineages=new Map(await Promise.all(users.map(async value=>[value.turnId,await memoryDigest(memoryCanonical([scopeKey,value.turnId]))] as const)));
+    const events=await read({sql:`SELECT event_id,sequence,${originalEvent('event')} AS event_json FROM events event
+      WHERE stream_id=? AND event_id IN(SELECT value FROM json_each(?)) AND length(CAST(payload AS BLOB))<=16384 ORDER BY sequence`,
+      bindings:[a.binding.streamId,JSON.stringify([...originals.map(value=>value.eventId),...users.map(value=>value.causationId)])]});
+    if(events.length!==rows.length*3)return unavailable();
+    const checkedAt=clock(),retentionCeiling=[...inputs.map(value=>value.job.expires_at),g.expires_at,input.qualification.row.expires_at,
+      ...originals.flatMap(value=>[value.expiresAt,new Date(Date.parse(value.recordedAt)+g.retention_days*86400000).toISOString()])].sort()[0]!;
+    const blocked=new Set<string>();
+    if(input.userControlsPresent){
+      const controls=await read({sql:`SELECT lineage_id,revision,action,expires_at FROM memory_derivation_user_controls
+        WHERE enrollment_id=? AND actor_user_id=? AND purpose=? AND scope_key=? AND lineage_id IN(SELECT value FROM json_each(?)) ORDER BY lineage_id LIMIT 4`,
+        bindings:[e.enrollment_id,e.actor_user_id,g.purpose,scopeKey,JSON.stringify([...lineages.values()])]});
+      if(controls.length>users.length||controls.some(value=>!derivationExact(value,['lineage_id','revision','action','expires_at'])
+        ||![...lineages.values()].includes(String(value.lineage_id))||!derivationInteger(value.revision,1)||!derivationTime(value.expires_at)
+        ||!['suppressed','corrected','released'].includes(String(value.action))))return unavailable();
+      for(const value of controls)if(String(value.expires_at)>checkedAt){witness.before(String(value.expires_at));if(value.action!=='released')blocked.add(String(value.lineage_id));}
+    }
+    const validUntil=[...inputs.map(value=>value.validUntil),receipt.validUntil,retentionCeiling].sort()[0]!;
+    const selected=originals.filter(value=>!blocked.has(lineages.get(value.turnId)!));
+    const data:CaptureData={jobId:job.job_id,purpose:g.purpose,scopeKey,checkedAt,validUntil,retentionCeiling,
+      binding:{actorUserId:e.actor_user_id,consentId:g.consent_id,grantId:g.grant_id,grantRevision:g.revision,enrollmentId:e.enrollment_id,
+        enrollmentRevision:g.enrollment_revision,termsSha256:g.terms_sha256,afterSequence:job.after_sequence,throughSequence:job.through_sequence},
+      originals:selected.map(value=>({sourceId:value.eventId,revision:value.sequence,contentHash:value.contentHash,lineageId:lineages.get(value.turnId)!,scopeKey,
+        text:value.text,expiresAt:retentionCeiling,role:value.role,kind:'message',authorship:value.role==='user'?'original-human':'original-assistant'})),
+      originalBacking:originals.map(value=>({streamId:a.binding.streamId,eventId:value.eventId,sequence:value.sequence,contentRef:value.contentRef,
+        contentHash:value.contentHash,turnId:value.turnId})),observations:[],
+      provenance:{events:await Promise.all(events.map(async value=>({streamId:a.binding.streamId,eventId:String(value.event_id),sequence:Number(value.sequence),sha256:await memoryDigest(String(value.event_json))}))),
+        turns:[],paid:[],sourceRowsSha256:await memoryDigest(memoryCanonical({originals,events}))},
+      coverage:{queuedReferences:1,originalPairs:selected.length/2,typedObservations:0,...(blocked.size?{excludedByUserControls:blocked.size}:{}),allReferencesCaptured:true,semanticComplete:false}};
+    if(history){
+      const boundary=history.boundary==='consent'&&(inputs[0]!.job.after_sequence>g.source_after_sequence
+        ||inputs.some((value,index)=>index>0&&value.job.after_sequence!==inputs[index-1]!.job.through_sequence))?'bounded':history.boundary;
+      data.history={version:1,windowJobIds:inputs.slice(0,-1).map(value=>value.job.job_id),afterSequence:inputs[0]!.job.after_sequence,
+        throughSequence:job.through_sequence,boundary,originalPairs:selected.length/2};
+      if(!nativeDerivationRequestFits(input.qualification.terms,nativeDerivationRequestBody(input.qualification.terms,data.originals,[])))return capacity();
+    }
+    witness.before(validUntil);witness.seal(data);
+    // Actual additional captured reads, including history and deadline rows.
+    const statements=witness.statements(),results=structuredClone(await db.batch<Row>(statements));
+    if(!statements.length||!derivationResults(results,statements.length)||!witness.matches(results))return unavailable();
+    const budget={statements:statements.length,rows:results.reduce((n,result)=>n+result.results.length,0),
+      bytes:results.reduce((n,result)=>n+result.results.reduce((total,value)=>total+bytes(memoryCanonical(value)),0),0)};
+    const legacy=await prepareLegacyConversationOriginalsCommit(env,prepared,[capture],budget);
+    if(!legacy||!legacy.isCurrent()||env.DB!==db)return unavailable();
+    const handle=Object.freeze({}) as NativeDerivationSourceCapture;
+    captures.set(handle,{env,db,lease,validUntil,witness,legacy,evidences});
+    if(!await replayNativeDerivationSources(env,handle)){captures.delete(handle);return unavailable();}
+    return {status:'captured',capture:handle} as const;
+  }catch{return unavailable();}
+}
+
+async function captureChatStudioDerivationHistory(env:WorkerEnv,lease:NativeDerivationEvidence){
+  try{
+    const db=env.DB,input=nativeDerivationEvidenceInputs(env,lease),query:Query={sql:`SELECT j.job_id,j.after_sequence,j.through_sequence
+      FROM memory_derivation_jobs j JOIN memory_derivation_producer_jobs producer ON producer.job_id=j.job_id
+      JOIN memory_derivation_completions done ON done.job_id=j.job_id
+      JOIN memory_derivation_results retained ON retained.job_id=j.job_id AND retained.expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now')
+      WHERE j.consent_id=? AND j.through_sequence<=? AND j.expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now')
+      ORDER BY j.through_sequence DESC,j.job_id LIMIT 3`,bindings:[input.grant.consent_id,input.job.after_sequence]};
+    const result=structuredClone(await db.prepare(query.sql).bind(...query.bindings).all<Row>());
+    if(env.DB!==db||!derivationResults([result],1)||result.results.length>3||result.results.some(row=>!derivationExact(row,['job_id','after_sequence','through_sequence'])
+      ||!derivationHash(row.job_id)||!derivationInteger(row.after_sequence)||!derivationInteger(row.through_sequence,Number(row.after_sequence)+1,input.job.after_sequence)))return unavailable();
+    if(!result.results.length)return captureChatStudioDerivationWindow(env,lease);
+    const evidence:NativeDerivationEvidence[]=[];let boundary:NativeDerivationHistory['boundary']=result.results.length>2?'bounded':'consent';
+    for(const row of result.results.slice(0,2)){
+      const previous=await observeNativeDerivationHistoryJob(env,lease,String(row.job_id));
+      if(!previous){boundary='bounded';break;}evidence.unshift(previous);
+    }
+    // A disappeared historical input can narrow a NEW proposal with an explicit
+    // boundary; an old stored manifest will fail exact comparison, never renew.
+    for(;;){
+      const captured=await captureChatStudioDerivationWindow(env,lease,{evidence,query,result,boundary});
+      if(captured.status==='captured'||!evidence.length)return captured;
+      boundary=captured.status==='capacity'?'capacity':'bounded';evidence.shift();
+    }
+  }catch{return unavailable();}
+}
+
 /** Rebase from recent ORIGINAL windows, never from earlier model claims. Each
  * historical window uses separate fresh read-only proof under the same consent.
  * Bounds are explicit: no source truncation, hidden gap skipping, or claim of a
  * complete lifetime history. Legacy result reads may request their exact original
  * single-window contract; this option cannot grant spending or widen access. */
 export async function captureNativeDerivationSources(env: WorkerEnv, lease: NativeDerivationEvidence, options: { history?: boolean } = {}) {
+  try{const input=nativeDerivationEvidenceInputs(env,lease);if(input.producer==='chat-studio'&&input.historyPresent&&options.history!==false)return await captureChatStudioDerivationHistory(env,lease);}catch{return unavailable();}
   const own = await captureNativeDerivationWindow(env, lease);
   if (own.status !== 'captured' || options.history === false) return own;
   try {
@@ -297,7 +415,7 @@ export async function captureNativeDerivationSources(env: WorkerEnv, lease: Nati
     const query={sql:`SELECT j.job_id,j.after_sequence,j.through_sequence FROM memory_derivation_jobs j
       JOIN memory_derivation_completions done ON done.job_id=j.job_id
       JOIN memory_derivation_results retained ON retained.job_id=j.job_id AND retained.expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now')
-      WHERE j.consent_id=? AND j.through_sequence<=? AND j.expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now')
+      WHERE j.consent_id=? ${input.producersPresent?'AND NOT EXISTS(SELECT 1 FROM memory_derivation_producer_jobs producer WHERE producer.job_id=j.job_id)':''} AND j.through_sequence<=? AND j.expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now')
       ORDER BY j.through_sequence DESC,j.job_id LIMIT 3`,bindings:[input.grant.consent_id,input.job.after_sequence]};
     const statement=db.prepare(query.sql).bind(...query.bindings), result=await statement.all<Row>();
     if(env.DB!==db||!derivationResults([result],1)||result.results.length>3
@@ -350,7 +468,7 @@ export async function captureNativeDerivationSources(env: WorkerEnv, lease: Nati
 function lookup(env: WorkerEnv, handle: NativeDerivationSourceCapture) {
   const captured = captures.get(handle);
   if (!captured || captured.env !== env || captured.db !== env.DB || captured.validUntil <= clock()) throw Error("memory-derivation-source-unavailable");
-  nativeDerivationEvidenceInputs(env, captured.lease); return captured;
+  nativeDerivationEvidenceInputs(env, captured.lease); for(const evidence of captured.evidences??[])nativeDerivationEvidenceInputs(env,evidence); if(captured.legacy&&!captured.legacy.isCurrent())throw Error("memory-chat-source-expired"); return captured;
 }
 /** Copied staging data, not permission to use a source. Keep the issued handle:
  * every publication must include source statements in its same atomic batch;
@@ -360,8 +478,8 @@ export function nativeDerivationSourceInputs(env: WorkerEnv, handle: NativeDeriv
   return lookup(env, handle).witness.context()!;
 }
 export function nativeDerivationSourceStatements(env: WorkerEnv, handle: NativeDerivationSourceCapture): D1PreparedStatement[] {
-  const captured = lookup(env, handle), lease = captured.parts ? captured.parts.flatMap(part=>nativeDerivationSourceStatements(env,part)) : nativeDerivationEvidenceStatements(env, captured.lease), source = captured.witness.precommitStatements();
-  if (lease.length + source.length > (captured.parts ? 100 : 32)) throw Error("memory-derivation-source-capacity");
+  const captured = lookup(env, handle), lease = captured.parts ? captured.parts.flatMap(part=>nativeDerivationSourceStatements(env,part)) : (captured.evidences??[captured.lease]).flatMap(evidence=>nativeDerivationEvidenceStatements(env,evidence)), source = [...captured.witness.precommitStatements(),...(captured.legacy?.precommitStatements()??[])];
+  if (lease.length + source.length > (captured.parts||captured.legacy ? 100 : 32)) throw Error("memory-derivation-source-capacity");
   return [...lease, ...source];
 }
 export async function replayNativeDerivationSources(env: WorkerEnv, handle: NativeDerivationSourceCapture) {
@@ -369,7 +487,7 @@ export async function replayNativeDerivationSources(env: WorkerEnv, handle: Nati
     const captured = lookup(env, handle), statements = nativeDerivationSourceStatements(env, handle), leaseCount = nativeDerivationEvidenceStatements(env, captured.lease).length;
     const result = structuredClone(await captured.db.batch<Row>(statements));
     return lookup(env, handle) === captured && derivationResults(result, statements.length) && result.every((entry, index) => {
-      const field = captured.parts ? (Object.hasOwn(entry.results[0]??{},"verified")?"verified":"context_source_asserted") : index < leaseCount ? "verified" : "context_source_asserted";
+      const field = captured.parts||captured.evidences ? (Object.hasOwn(entry.results[0]??{},"verified")?"verified":"context_source_asserted") : index < leaseCount ? "verified" : "context_source_asserted";
       return entry.results.length === 1 && derivationExact(entry.results[0], [field]) && entry.results[0][field] === 1;
     });
   } catch { return false; }

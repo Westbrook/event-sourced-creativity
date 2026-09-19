@@ -1,3 +1,4 @@
+import { registerNativeChatStudioDerivationBacklog, nativeChatStudioMemoryCandidates } from "./memory-derivation-chat-delivery.ts";
 import { prepareNativeDerivationDelivery, registerNativeDerivationBacklog } from "./memory-derivation-jobs.ts";
 import { createLiveMemoryMaintenanceAttempt, liveMemoryAuthority, liveMemoryEnrollmentGuard, type LiveMemoryEnrollment } from "./memory-live-authority.ts";
 import { liveMemorySourceQuery } from "./memory-live-sources.ts";
@@ -49,7 +50,7 @@ async function processScope(env:WorkerEnv,e:LiveMemoryEnrollment,now:string,eras
     erased(result.erased);return 0;
   }
   const q=liveMemorySourceQuery(e,authority),policy=liveMemoryEnrollmentGuard(e);
-  const artifactCandidates=nativeArtifactMemoryCandidates(e);
+  const artifactCandidates=nativeArtifactMemoryCandidates(e),chatCandidates=nativeChatStudioMemoryCandidates(e);
   const cleanup=liveConversationPrune(e.enrollment_id,e.revision),trim=liveConversationTrim(e.enrollment_id);
   const originMaintenance=await liveMemoryOriginDependencyWithdrawalStatements(env,
     {enrollmentId:e.enrollment_id,currentRevision:e.revision},"source-unavailable",now);
@@ -59,18 +60,21 @@ async function processScope(env:WorkerEnv,e:LiveMemoryEnrollment,now:string,eras
     SELECT event_id,sequence FROM memory_live_sources WHERE enrollment_id=?), eligible AS (
     SELECT event.event_id ${q.joins} JOIN tracked candidate ON candidate.event_id=event.event_id AND candidate.sequence=event.sequence WHERE ${q.condition}
     UNION SELECT event.event_id ${artifactCandidates.joins} JOIN tracked candidate ON candidate.event_id=event.event_id AND candidate.sequence=event.sequence
-      WHERE ${artifactCandidates.condition})
+      WHERE ${artifactCandidates.condition}
+    UNION SELECT event.event_id ${chatCandidates.joins} JOIN tracked candidate ON candidate.event_id=event.event_id AND candidate.sequence=event.sequence
+      WHERE ${chatCandidates.condition})
     DELETE FROM memory_live_sources
     WHERE enrollment_id=? AND event_id IN(SELECT expired.event_id FROM memory_live_sources expired
       WHERE expired.enrollment_id=? AND (expired.expires_at<=strftime('%Y-%m-%dT%H:%M:%fZ','now')
         OR expired.event_id NOT IN(SELECT event_id FROM eligible)) LIMIT 128)`)
-    .bind(e.enrollment_id,...q.bindings,...artifactCandidates.bindings,e.enrollment_id,e.enrollment_id),env.DB.prepare("SELECT changes() AS erased"),
+    .bind(e.enrollment_id,...q.bindings,...artifactCandidates.bindings,...chatCandidates.bindings,e.enrollment_id,e.enrollment_id),env.DB.prepare("SELECT changes() AS erased"),
     env.DB.prepare(cleanup.sql).bind(...cleanup.bindings),env.DB.prepare(trim.sql).bind(...trim.bindings),...originMaintenance.afterMutation]);
   // Cleanup is already committed, even if later capture or bookkeeping fails.
   erased(Number((maintenance[originMaintenance.beforeMutation.length+1]?.results[0] as {erased:number}|undefined)?.erased??0));
   // Queue delivery has its own durable consent cursor. Catch up even when the
   // extractive night/page was already acknowledged or its checkpoint expired.
   await registerNativeDerivationBacklog(env,e,now);
+  await registerNativeChatStudioDerivationBacklog(env,e);
   const night=liveMemoryReviewDay(now,e.time_zone,e.enrolled_at);
   const continueJob=e.cutoff_sequence!==null;
   if(!liveMemoryEnabled(env,e.actor_user_id)||!e.learn_enabled||!e.background_enabled||!continueJob&&(!night.due||e.last_local_day===night.day
