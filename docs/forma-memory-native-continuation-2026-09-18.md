@@ -99,8 +99,7 @@ lifecycle/custody retirement through additive migration0050.
 1. [Bounded original-backed rolling refresh and latest-purpose review](forma-memory-rolling-history-2026-09-19.md) are implemented. Longer-term semantic reconciliation, cross-scope recall and automatic consumers remain open; the three-window bound is not lifetime coverage.
 2. [Native index intents and source invalidation](forma-memory-native-index-intents-2026-09-19.md) are implemented. Remote dispatch, qualified deletion acknowledgements and index reconciliation remain gated on the external adapter.
 3. Nested project containment/reparenting and remaining page/library/canvas block identities. [Native document-local block revision bindings](forma-memory-native-block-revisions-2026-09-19.md) now certify personal/governed block field histories and complete supporting-event inverses.
-4. [Independent Chat Studio derivation](forma-memory-chat-studio-derivation-2026-09-19.md) is implemented; library/canvas block and cross-document reuse evidence
-   and governed artifact consumption remain open. [Historical personal artifact recertification](forma-memory-historical-artifact-consumption-2026-09-19.md) now supports native delivery/derivation and the explicitly negotiated v3 private inspector, while v1/v2 readers retain their original contract.
+4. [Independent Chat Studio derivation](forma-memory-chat-studio-derivation-2026-09-19.md) is implemented; [genuine approved-copy evidence](forma-memory-approved-reuse-2026-09-19.md) is implemented. Library/canvas resources, independent cross-document source recall and governed artifact consumption remain open. [Historical personal artifact recertification](forma-memory-historical-artifact-consumption-2026-09-19.md) now supports native delivery/derivation and the explicitly negotiated v3 private inspector, while v1/v2 readers retain their original contract.
 5. Guarded rolling summary/profile/suggestion/autocomplete consumers with explicit
    correction priority and separate access versus relevance checks. Manual result
    inspection and persisted candidates do not complete those consumer paths.
@@ -151,3 +150,7 @@ independent producers, nested scope identity and native index lifecycle remain o
 ## Exact relationship version continuation
 
 [Native relationship bindings](forma-memory-native-relationship-bindings-2026-09-19.md) now certify both document-local endpoint revisions and retain complete privacy inverses. The bounded rolling reader consolidates resource evidence and preserves all three history windows under the native request gate (46 free / 49 paid calls in resource-rich synthetic qualification). Cross-document reuse, library/canvas resources and broader automatic consumers remain open.
+
+## Native approved-copy continuation
+
+[Verified approved reuse](forma-memory-approved-reuse-2026-09-19.md) now binds actual native approval receipts and complete committed footprints into Creator derivation. Multiple copied blocks remain one dependent outcome; copied text is not new human authorship. Additive migration0056 retires result/index state when the receipt changes. Consolidated direct-block/endpoint reads retain three-window genuine-copy histories at 45/48 calls. Original-source recall, broader scopes and automatic consumers remain implementation work.

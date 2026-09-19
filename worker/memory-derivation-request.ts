@@ -11,12 +11,17 @@ function outputSchema(purpose:string){
 }
 
 type Original={role:string;authorship:string;text:string};
-type Observation={action:string;recordedAt:string};
+type Observation={action:string;recordedAt:string;outcomeKey?:string};
 /** Formatting only: this data function cannot authorize transport or spending. */
 export function nativeDerivationRequestBody(terms:MemoryDerivationTerms,originals:readonly Original[],observations:readonly Observation[]){
+  const seen=new Set<string>();
+  const outcomes=observations.filter(row=>{
+    if(row.action!=='reuse'||!row.outcomeKey)return true;
+    if(seen.has(row.outcomeKey))return false;seen.add(row.outcomeKey);return true;
+  });
   return JSON.stringify({model:terms.model,instructions,input:JSON.stringify({purpose:terms.purpose,
     originals:originals.map((original,sourceIndex)=>({sourceIndex,role:original.role,authorship:original.authorship,text:original.text})),
-    observations:observations.map(observation=>({action:observation.action,recordedAt:observation.recordedAt,independentEvidence:false}))}),
+    observations:outcomes.map(observation=>({action:observation.action,recordedAt:observation.recordedAt,independentEvidence:false}))}),
     store:false,background:false,stream:false,service_tier:'default',tools:[],truncation:'disabled',max_output_tokens:terms.maximumOutputTokens,
     text:{format:{type:'json_schema',name:'forma_memory_candidates',strict:true,schema:outputSchema(terms.purpose)}}});
 }

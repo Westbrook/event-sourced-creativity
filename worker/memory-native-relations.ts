@@ -15,8 +15,8 @@ export type NativeMemoryRelationBindings={version:1;entries:{eventId:string;rela
  * The enclosing capture supplies the issued native actor/grant/schema proof,
  * including the relation lifecycle migration, and atomically replays this witness.
  */
-export async function observeNativeMemoryRelationBindings(env:WorkerEnv,e:LiveMemoryEnrollment,observations:readonly Observation[],
-  observer:NativeMemoryContextObserver):Promise<NativeMemoryRelationBindings>{
+async function captureRelations(env:WorkerEnv,e:LiveMemoryEnrollment,observations:readonly Observation[],
+  observer:NativeMemoryContextObserver,resolveEndpoints=(observations:Parameters<typeof observeNativeMemoryBlockBindings>[2])=>observeNativeMemoryBlockBindings(env,e,observations,observer)):Promise<NativeMemoryRelationBindings>{
   const selected=observations.filter(row=>['BlockRelationAdded','BlockRelationRemoved'].includes(row.eventType));
   const empty=():NativeMemoryRelationBindings=>({version:1,entries:[],unresolved:selected.length});
   if(!selected.length)return empty();
@@ -68,8 +68,8 @@ export async function observeNativeMemoryRelationBindings(env:WorkerEnv,e:LiveMe
       candidates.push({observation,events,fromId:p.from_block_id,toId:p.to_block_id,kind:p.kind});
     }catch{/* Keep the original document action, never invent an edge. */}
   }
-  const endpoints=await observeNativeMemoryBlockBindings(env,e,candidates.flatMap(({observation,fromId,toId})=>[fromId,toId].map(blockPointer=>({
-    eventId:observation.eventId,sequence:observation.sequence,eventType:observation.eventType,blockPointer,reference:true as const}))),observer);
+  const endpoints=await resolveEndpoints(candidates.flatMap(({observation,fromId,toId})=>[fromId,toId].map(blockPointer=>({
+    eventId:observation.eventId,sequence:observation.sequence,eventType:observation.eventType,blockPointer,reference:true as const}))));
   for(const {observation,events,fromId,toId,kind}of candidates){
     const from=endpoints.entries.find(row=>row.eventId===observation.eventId&&row.blockId===fromId),to=endpoints.entries.find(row=>row.eventId===observation.eventId&&row.blockId===toId);
     if(!from||!to)continue;
@@ -79,4 +79,40 @@ export async function observeNativeMemoryRelationBindings(env:WorkerEnv,e:LiveMe
       from,to,eventIds:[...new Set([...events.map(event=>event.eventId),...from.eventIds,...to.eventIds])]});
   }
   return {version:1,entries,unresolved:selected.length-entries.length};
+}
+
+export async function observeNativeMemoryRelationBindings(env:WorkerEnv,e:LiveMemoryEnrollment,observations:readonly Observation[],observer:NativeMemoryContextObserver){
+  return captureRelations(env,e,observations,observer);
+}
+
+/** One bounded native block read covers both direct observations and independently
+ * witnessed relation endpoints. The resolver is private to this capture; no
+ * cached block identity or caller-supplied binding becomes authority. */
+export async function observeNativeMemoryResourceBindings(env:WorkerEnv,e:LiveMemoryEnrollment,
+  observations:Parameters<typeof observeNativeMemoryBlockBindings>[2],relations:readonly Observation[],observer:NativeMemoryContextObserver,
+  options:{blocks:boolean;relations:boolean}){
+  let allBlocks:Awaited<ReturnType<typeof observeNativeMemoryBlockBindings>>|undefined;
+  const direct=options.blocks?observations:[];
+  const relationBindings=options.relations?await captureRelations(env,e,relations,observer,async endpoints=>{
+    const union=[...direct,...endpoints];
+    if(new Set(union.filter(row=>row.blockPointer!==null).map(row=>row.blockPointer)).size>32){
+      // Do not lower either existing coverage bound to make a request cheaper.
+      allBlocks=options.blocks?await observeNativeMemoryBlockBindings(env,e,direct,observer):undefined;
+      return observeNativeMemoryBlockBindings(env,e,endpoints,observer);
+    }
+    let overCapacity=false;
+    allBlocks=await observeNativeMemoryBlockBindings(env,e,union,observer,()=>{overCapacity=true;});
+    if(overCapacity){
+      allBlocks=options.blocks?await observeNativeMemoryBlockBindings(env,e,direct,observer):undefined;
+      return observeNativeMemoryBlockBindings(env,e,endpoints,observer);
+    }
+    return allBlocks;
+  }):undefined;
+  if(options.blocks&&!allBlocks)allBlocks=await observeNativeMemoryBlockBindings(env,e,direct,observer);
+  const directIds=new Set(direct.map(row=>row.eventId));
+  const entries=allBlocks?.entries.filter(row=>directIds.has(row.eventId))??[];
+  // Preserve the helper's exact direct-observation denominator, including null
+  // pointers and non-block event types that are not candidates in the first place.
+  const selected=direct.filter(row=>row.blockPointer!==null&&['BlockCreated','BlockPropertyEdited','ChipEdited','BlockWeightSet','BlockLocked','BlockUnlocked','BlockRemoved','BlockRestored'].includes(row.eventType));
+  return {blockBindings:options.blocks?{version:1 as const,entries,unresolved:selected.length-entries.length}:undefined,relationBindings};
 }

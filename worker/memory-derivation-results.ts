@@ -32,6 +32,7 @@ function dependencies(manifest: NativeDerivationManifestData): Dependency[] {
     add('content',artifact.contentRef);
     for(const eventId of artifact.eventIds)add('event',eventId);
   }
+  for(const reuse of manifest.provenance.reuseBindings?.entries??[]){add('content',reuse.previewRef);for(const eventId of reuse.eventIds)add('event',eventId);}
   for (const relation of manifest.provenance.relationBindings?.entries??[]) for(const eventId of relation.eventIds)add('event',eventId);
   for (const block of manifest.provenance.blockBindings?.entries??[]) for(const eventId of block.eventIds)add('event',eventId);
   for (const original of manifest.originalBacking) add('content', original.contentRef);
@@ -135,7 +136,7 @@ export async function readNativeDerivationResult(env: WorkerEnv, actorUserId: st
       || typeof row.expires_at !== 'string' || row.expires_at <= new Date().toISOString()
       || await memoryDigest(row.raw_json) !== row.output_sha256 || await memoryDigest(row.manifest_json) !== row.manifest_sha256) return null;
     const parsedManifest=JSON.parse(row.manifest_json) as NativeDerivationManifestData;
-    const captured = await captureNativeDerivationSources(env, evidence, {history:parsedManifest.history!==undefined,blockBindings:parsedManifest.provenance?.blockBindings!==undefined,relationBindings:parsedManifest.provenance?.relationBindings!==undefined}); if (captured.status !== 'captured') return null;
+    const captured = await captureNativeDerivationSources(env, evidence, {history:parsedManifest.history!==undefined,blockBindings:parsedManifest.provenance?.blockBindings!==undefined,relationBindings:parsedManifest.provenance?.relationBindings!==undefined,reuseBindings:parsedManifest.provenance?.reuseBindings!==undefined}); if (captured.status !== 'captured') return null;
     const manifest = await revalidateNativeDerivationManifest(env, captured.capture, row.manifest_json); if (!manifest) return null;
     const source = nativeDerivationSourceInputs(env, captured.capture), expected = dependencies(nativeDerivationManifestInputs(env, manifest).manifest);
     if (row.dependency_count !== expected.length || source.retentionCeiling !== row.expires_at) return null;

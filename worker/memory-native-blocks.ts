@@ -45,13 +45,13 @@ export function decodeNativeMemoryResourceEvent(row:Row,e:LiveMemoryEnrollment,r
  * Versions describe retained native block fields, NOT relations or dereferenced attachments.
  */
 export async function observeNativeMemoryBlockBindings(env:WorkerEnv,e:LiveMemoryEnrollment,
-  observations:readonly Observation[],observer:NativeMemoryContextObserver):Promise<NativeMemoryBlockBindings>{
+  observations:readonly Observation[],observer:NativeMemoryContextObserver,onCapacity?:()=>void):Promise<NativeMemoryBlockBindings>{
   const selected=observations.filter(row=>row.blockPointer!==null&&(actions.has(row.eventType)||row.reference===true&&['BlockRelationAdded','BlockRelationRemoved'].includes(row.eventType)));
   const empty=()=>({version:1 as const,entries:[],unresolved:selected.length});
   if(!selected.length)return empty();
   const parent=nativeMemoryDocumentIdentity(e);if(!parent)throw Error('memory-block-scope');
   const ids=[...new Set(selected.map(row=>row.blockPointer!))];
-  if(ids.length>32)return empty();
+  if(ids.length>32){onCapacity?.();return empty();}
   const db=env.DB,through=Math.max(...selected.map(row=>row.sequence)),stream='creative:'+e.owner_user_id;
   // Source selection is bounded to the observed window. Later property edits
   // do not rewrite a historical version; current placement is proved separately.
@@ -80,7 +80,7 @@ export async function observeNativeMemoryBlockBindings(env:WorkerEnv,e:LiveMemor
   if(env.DB!==db||!measured.success||!Array.isArray(measured.results)||measured.results.length!==1
     ||!derivationInteger(measured.results[0]!.count)||!derivationInteger(measured.results[0]!.bytes))throw Error('memory-block-size');
   observer.observe([sizeStatement],[measured],[size]);
-  if(Number(measured.results[0]!.count)>256||Number(measured.results[0]!.bytes)>196608)return empty();
+  if(Number(measured.results[0]!.count)>256||Number(measured.results[0]!.bytes)>196608){onCapacity?.();return empty();}
   // Repeat the measured aggregate in the full-row statement itself. A source
   // growing between calls is not hydrated before the final replay rejects it.
   const boundedQuery={sql:query.sql.replace('ORDER BY event.sequence,event.event_id LIMIT 257',
@@ -93,7 +93,7 @@ export async function observeNativeMemoryBlockBindings(env:WorkerEnv,e:LiveMemor
   // change which source interpretation was supplied to the derivation.
   observer.observe(statements,results,queries);
   const rows=results[0]!.results,placements=results[1]!.results;
-  if(rows.length>256||new TextEncoder().encode(JSON.stringify(rows)).byteLength>262144)return empty();
+  if(rows.length>256||new TextEncoder().encode(JSON.stringify(rows)).byteLength>262144){onCapacity?.();return empty();}
   const entries:NativeMemoryBlockBinding[]=[];
   for(const observation of selected){
     try{

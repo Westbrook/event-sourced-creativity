@@ -365,6 +365,13 @@
       "when": 1789842357428,
       "tag": "0055_memory_derivation_relation_lifecycle",
       "breakpoints": true
+    },
+    {
+      "idx": 52,
+      "version": "6",
+      "when": 1789844809481,
+      "tag": "0056_memory_derivation_reuse_lifecycle",
+      "breakpoints": true
     }
   ]
 }

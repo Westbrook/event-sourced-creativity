@@ -696,3 +696,20 @@ test('relation binding: whole authenticated result inspection stays within the n
   const response=await f.request('/api/memory/derivation/result?jobId='+f.stored.job_id);assert.equal(response.status,200,await response.clone().text());
   t.diagnostic(JSON.stringify({operations}));assert.ok(operations<50,'Complete native HTTP inspection must stay below the conservative native limit');
 });
+
+for(const boundary of ['ids','bytes'])test('resource union: optimization preserves independent coverage at '+boundary+' limit',async t=>{
+  const f=await memoryArtifactFixture(t),{observeNativeMemoryResourceBindings}=await import('../worker/memory-native-relations.ts'),
+    {AssistantContextReadWitness}=await import('../worker/assistant-context-source.ts'),scope={project_id:f.projectId,document_id:f.documentId,scope:'document'};
+  const count=boundary==='ids'?34:4,ids=[];
+  for(let index=0;index<count;index++){
+    const id='resource-union-'+index;ids.push(id);
+    await appendAuditEvent(f.env,f.streamId,'user:'+f.owner,'BlockCreated',{...scope,block_id:id,type:'direction',properties:{text:boundary==='bytes'?'x'.repeat(50000):'Original native block'}});
+  }
+  await appendAuditEvent(f.env,f.streamId,'user:'+f.owner,'BlockRelationAdded',{...scope,relation_id:'resource-union-link',from_block_id:ids[0],to_block_id:ids[1],kind:'visual_evidence'});
+  const direct=f.sqlite.prepare("SELECT event_id AS eventId,sequence,type AS eventType,json_extract(payload,'$.block_id') AS blockPointer FROM events WHERE type='BlockCreated' AND json_extract(payload,'$.block_id') IN(SELECT value FROM json_each(?)) ORDER BY sequence").all(JSON.stringify(ids.slice(2)));
+  const relations=f.sqlite.prepare("SELECT event_id AS eventId,sequence,type AS eventType,json_extract(payload,'$.relation_id') AS relationId FROM events WHERE type='BlockRelationAdded' AND json_extract(payload,'$.relation_id')='resource-union-link'").all();
+  const witness=new AssistantContextReadWitness(f.env),result=await observeNativeMemoryResourceBindings(f.env,f.enrollment(),direct,relations,witness,{blocks:true,relations:true});
+  assert.equal(result.blockBindings.entries.length,count-2);assert.equal(result.blockBindings.unresolved,0);
+  assert.equal(result.relationBindings.entries.length,1);assert.equal(result.relationBindings.unresolved,0);
+  assert.equal(result.relationBindings.entries[0].from.blockId,ids[0]);assert.equal(result.relationBindings.entries[0].to.blockId,ids[1]);
+});

@@ -32,7 +32,7 @@ export async function executionAuthorityCurrent(env:WorkerEnv,user:PilotUser,bin
 /** Retained read custody is independent of new-purchase roles or budget availability.
  * Row equalities keep every original comparison and SQL NULL behavior while avoiding
  * a left-deep AND chain when this proof is nested inside a final D1 custody check. */
-export function executionContentCustodyGuard(binding:ConsequentialBinding,alias:"private_content"|"content"|"raw"|"saved"="private_content"):BudgetReservationGuard{
+export function executionContentCustodyGuard(binding:Pick<ConsequentialBinding,"scope"|"actorUserId">,alias:"private_content"|"content"|"raw"|"saved"="private_content"):BudgetReservationGuard{
   const scope=binding.scope;
   if(!scope)return{sql:`NOT EXISTS(SELECT 1 FROM project_resource_scopes resource WHERE resource.resource_kind='content' AND resource.resource_id=${alias}.content_id) AND NOT EXISTS(SELECT 1 FROM private_content_retention_scopes retention WHERE retention.content_id=${alias}.content_id)`,bindings:[]};
   return{sql:`EXISTS(SELECT 1 FROM project_resource_scopes resource JOIN private_content_retention_scopes retention
