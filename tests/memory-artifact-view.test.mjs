@@ -405,3 +405,69 @@ test('artifact derivation: missing lifecycle protection refuses capture without 
   assert.equal((await(await import('../worker/memory-derivation-sources.ts')).captureNativeDerivationSources(f.env,lease)).status,'unavailable');
   assert.equal(f.sqlite.prepare('SELECT COUNT(*) AS n FROM memory_derivation_finance').get().n,0);
 });
+
+for(const after of ['edit','render'])test('historical artifact consumption: genuine viewed revision survives later '+after+' without widening the writer',async t=>{
+  const f=await artifactDerivationFixture(t),money=f.counts();
+  const viewed=await f.submit();assert.equal(viewed.status,200);const event=(await viewed.json()).appended[0];
+  await appendAuditEvent(f.env,f.streamId,after==='render'?'worker:renderer':'user',after==='render'?'DocumentRenderCompleted':'DocumentArtifactEdited',{
+    project_id:f.projectId,document_id:f.documentId,artifact_id:f.payload.artifact_id,artifact_kind:'short_story',content_ref:f.contentRef,revision:1});
+  if(after==='edit')assert.equal((await f.submit()).status,409,'A browser cannot append a fresh view against revision zero');
+  const {preparePersonalArtifactHistorySource}=await import('../worker/memory-artifact-view.ts');
+  const actor=await liveMemoryPrincipal(f.env,f.owner),certified=await preparePersonalArtifactHistorySource(f.env,actor,event.eventId);
+  assert.ok(!(certified instanceof Response),certified instanceof Response?await certified.text():'');
+  assert.equal(certified.payload.artifact_revision,0);assert.equal(certified.payload.artifact_source_event_id,f.original);
+  await f.env.DB.prepare(`SELECT CASE WHEN (${certified.source.sql}) THEN 1 ELSE json('history-invalid') END`).bind(...certified.source.bindings).all();
+  assert.equal((await f.run()).status,'completed');assert.ok(f.sqlite.prepare('SELECT event_id FROM memory_live_sources WHERE event_id=?').get(event.eventId));
+  const job=f.sqlite.prepare('SELECT * FROM memory_derivation_jobs').get(),admission=await import('../worker/memory-derivation-admission.ts'),sources=await import('../worker/memory-derivation-sources.ts');
+  const lease=await admission.claimNativeDerivationJob(f.env,job.job_id);assert.ok(lease);
+  const captured=await sources.captureNativeDerivationSources(f.env,lease);assert.equal(captured.status,'captured');
+  const input=sources.nativeDerivationSourceInputs(f.env,captured.capture);assert.equal(input.observations.length,1);assert.equal(input.originals.length,0);assert.equal(input.observations[0].independentEvidence,false);
+  assert.equal(await sources.replayNativeDerivationSources(f.env,captured.capture),true);
+  const oldInspector=await f.inspect(),body=await oldInspector.json();assert.equal(oldInspector.status,200,JSON.stringify(body));
+  assert.equal(body.consumptionEpisodes.sources.length,0,'The explicitly current-only v2 inspector does not silently become historical');
+  assert.equal(body.consumptionEpisodes.coverage.unavailableArtifactSourceCount,1);assert.deepEqual(f.counts(),money);
+});
+for(const fault of ['view-erased','source-erased','body-changed','document-removed','document-replaced','custody','expiry-extended','unknown-view'])test('historical artifact consumption: '+fault+' cannot renew old observation authority',async t=>{
+  const f=await memoryArtifactFixture(t),oldExpiry=new Date(Date.now()+60000).toISOString();
+  f.sqlite.prepare('UPDATE private_content SET expires_at=? WHERE content_id=?').run(oldExpiry,f.contentRef);
+  const viewed=await f.submit();assert.equal(viewed.status,200);const event=(await viewed.json()).appended[0];
+  await appendAuditEvent(f.env,f.streamId,'user','DocumentArtifactEdited',{project_id:f.projectId,document_id:f.documentId,artifact_id:f.payload.artifact_id,revision:1});
+  const {preparePersonalArtifactHistorySource}=await import('../worker/memory-artifact-view.ts'),actor=await liveMemoryPrincipal(f.env,f.owner);
+  const certified=await preparePersonalArtifactHistorySource(f.env,actor,event.eventId);assert.ok(!(certified instanceof Response));
+  const replay=()=>f.env.DB.prepare(`SELECT CASE WHEN (${certified.source.sql}) THEN 1 ELSE json('history-invalid') END`).bind(...certified.source.bindings).all();await replay();
+  if(fault==='view-erased')f.sqlite.prepare('DELETE FROM event_private_payloads WHERE private_event_id=?').run(event.eventId);
+  if(fault==='source-erased')f.sqlite.prepare('DELETE FROM event_private_payloads WHERE private_event_id=?').run(f.original);
+  if(fault==='body-changed')f.sqlite.prepare("UPDATE private_content SET content=content||' ' WHERE content_id=?").run(f.contentRef);
+  if(fault==='document-removed')await appendAuditEvent(f.env,f.streamId,'user','DocumentRemoved',{project_id:f.projectId,document_id:f.documentId});
+  if(fault==='document-replaced')await appendAuditEvent(f.env,f.streamId,'user','DocumentCreated',{project_id:f.projectId,document_id:f.documentId});
+  if(fault==='custody')f.sqlite.prepare("INSERT INTO project_resource_scopes(organization_id,project_access_id,project_id,owner_user_id,resource_kind,resource_id,visibility,actor_user_id,created_at) VALUES('org','access',?,?,'document',?,'actor_private',?,?)").run(f.projectId,f.owner,f.documentId,f.owner,new Date().toISOString());
+  if(fault==='unknown-view'){assert.ok(await preparePersonalArtifactHistorySource(f.env,actor,'unknown') instanceof Response);return;}
+  if(fault==='expiry-extended'){
+    f.sqlite.prepare('UPDATE private_content SET expires_at=? WHERE content_id=?').run(new Date(Date.now()+86400000).toISOString(),f.contentRef);
+    const fresh=await preparePersonalArtifactHistorySource(f.env,actor,event.eventId);assert.ok(!(fresh instanceof Response));assert.equal(fresh.payload.observed_source_expires_at,oldExpiry);
+    t.mock.timers.enable({apis:['Date'],now:Date.parse(oldExpiry)+1});assert.ok(await preparePersonalArtifactHistorySource(f.env,actor,event.eventId) instanceof Response);
+  }
+  await assert.rejects(replay);
+});
+
+test('historical artifact consumption: final database clock enforces the original view ceiling after retention extension',async t=>{
+  const f=await fixture(t),expiry=new Date(Date.now()+60000).toISOString();f.sqlite.prepare('UPDATE private_content SET expires_at=? WHERE content_id=?').run(expiry,f.contentRef);
+  const event=(await(await f.submit()).json()).appended[0];f.sqlite.prepare('UPDATE private_content SET expires_at=? WHERE content_id=?').run(new Date(Date.now()+86400000).toISOString(),f.contentRef);
+  const actor=await liveMemoryPrincipal(f.env,f.owner),{preparePersonalArtifactHistorySource}=await import('../worker/memory-artifact-view.ts'),certified=await preparePersonalArtifactHistorySource(f.env,actor,event.eventId);assert.ok(!(certified instanceof Response));
+  const {DatabaseSync}=await import('node:sqlite'),clockDb=new DatabaseSync(':memory:');t.after(()=>clockDb.close());
+  f.sqlite.function('strftime',{varargs:true},(format,...values)=>{if(values[0]==='now')values[0]=expiry;return clockDb.prepare('SELECT strftime('+[format,...values].map(()=>'?').join(',')+') AS value').get(format,...values).value;});
+  await assert.rejects(()=>f.env.DB.prepare(`SELECT CASE WHEN (${certified.source.sql}) THEN 1 ELSE json('expired-original') END`).bind(...certified.source.bindings).all());
+});
+
+test('historical artifact consumption: isolated D1 retains old views but invalidates late native erasure',{timeout:180000},async t=>{
+  const f=await memoryArtifactFixture(t),event=(await(await f.submit()).json()).appended[0];
+  await appendAuditEvent(f.env,f.streamId,'user','DocumentArtifactEdited',{project_id:f.projectId,document_id:f.documentId,artifact_id:f.payload.artifact_id,revision:1});
+  const {createRequire}=await import('node:module'),{Miniflare,Log,LogLevel}=createRequire(import.meta.resolve('wrangler'))('miniflare'),{exportSynthetic,install}=await import('./helpers/model3d-workerd-snapshot.mjs');let outbound=0;
+  const mf=new Miniflare({modules:true,compatibilityDate:'2026-05-15',host:'127.0.0.1',port:0,log:new Log(LogLevel.NONE),d1Databases:['ArtifactHistory'],script:"export default {fetch(){return new Response('Isolated',{status:404});}}",outboundService(){outbound++;throw Error('External fetch forbidden');}});
+  t.after(async()=>{await mf.dispose();assert.equal(outbound,0);});const db=await mf.getD1Database('ArtifactHistory');await install(db,exportSynthetic(f.sqlite));f.env.DB=db;
+  const actor=await liveMemoryPrincipal(f.env,f.owner),{preparePersonalArtifactHistorySource}=await import('../worker/memory-artifact-view.ts'),certified=await preparePersonalArtifactHistorySource(f.env,actor,event.eventId);assert.ok(!(certified instanceof Response));
+  const replay=()=>db.prepare(`SELECT CASE WHEN (${certified.source.sql}) THEN 1 ELSE json('history-erased') END`).bind(...certified.source.bindings).all();await replay();
+  assert.equal((await f.run()).status,'completed');assert.ok(await db.prepare('SELECT event_id FROM memory_live_sources WHERE event_id=?').bind(event.eventId).first());
+  await db.prepare('DELETE FROM event_private_payloads WHERE private_event_id=?').bind(event.eventId).run();await assert.rejects(replay);
+  assert.ok(await preparePersonalArtifactHistorySource(f.env,actor,event.eventId) instanceof Response);
+});

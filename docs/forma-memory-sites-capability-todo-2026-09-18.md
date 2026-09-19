@@ -120,3 +120,7 @@ schedule work, provision a service or establish human review.
 ## Native index lifecycle continuation
 
 [Atomic result-index intents](forma-memory-native-index-intents-2026-09-19.md) now cover publication, privacy invalidation, source-free deletion recovery and local queue diagnostics. Migration0054 is additive and unapplied. This closes the native outbox foundation, **not** qualified external dispatch/embedding consent or remote deletion acknowledgements. PostgreSQL/pgvector HTTP fencing, current-source admission, exact authenticated receipts and tombstone compaction remain tracked service/integration work; no remote indexing success is claimed.
+
+## Historical personal artifact continuation
+
+[Native historical artifact recertification](forma-memory-historical-artifact-consumption-2026-09-19.md) now covers genuine older viewed revisions in delivery/derivation, with original retention and current custody/access. Governed artifact evidence and a negotiated historical inspector remain native integration work. The current-view writer and v2 inspector are intentionally unchanged; neither unviewed history nor renewed retention is invented.

@@ -126,7 +126,7 @@ async function processScope(env:WorkerEnv,e:LiveMemoryEnrollment,now:string,eras
     const page=await env.DB.prepare("SELECT sequence FROM events WHERE stream_id=? AND sequence>? AND sequence<=? ORDER BY sequence LIMIT ?")
       .bind(`creative:${e.owner_user_id}`,e.cursor_sequence,head,LIVE_MEMORY_PAGE_SIZE).all<{sequence:number}>();
     const pageThrough=page.results.at(-1)?.sequence??head;
-    const artifactViews=await captureNativeArtifactConsumption(env,e,authority,{after:e.cursor_sequence,through:pageThrough,remembered:false});
+    const artifactViews=await captureNativeArtifactConsumption(env,e,authority,{after:e.cursor_sequence,through:pageThrough,remembered:false,historical:true});
     const through=artifactViews.throughSequence,done=through>=head;
     const conversation=liveConversationPublication(e,q,through,now);
     const conversationMarked=liveConversationMarkPublished(e,through);

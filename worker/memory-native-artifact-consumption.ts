@@ -1,6 +1,6 @@
 import { AUTHORING_EVENT_COLUMNS } from "./authoring-event-proof.ts";
 import { eventWriteBindings, serializeEvent, type WorkerEnv } from "./runtime.ts";
-import { preparePersonalArtifactViewSource } from "./memory-artifact-view.ts";
+import { preparePersonalArtifactViewSource, preparePersonalArtifactHistorySource } from "./memory-artifact-view.ts";
 import type { LiveMemoryAuthority, LiveMemoryEnrollment } from "./memory-live-authority.ts";
 import type { NativeMemoryContextObserver } from "./memory-live-context.ts";
 import type { MemorySqlGuard } from "./memory-sql.ts";
@@ -40,11 +40,11 @@ export function nativeArtifactMemoryCandidates(e: LiveMemoryEnrollment) {
       e.project_id, e.document_id, e.enrolled_at, e.retention_days, e.owner_user_id] };
 }
 
-/** Bounded genuine personal observations only. No synthetic backfill of old
- * receipt lifetimes and no historical-revision fallback. A current source that
- * cannot be recertified is omitted with explicit unavailable coverage. */
+/** Bounded genuine personal observations only. Historical selection must use
+ * the retained native view and original deadline, never a browser-supplied old
+ * revision or synthetic backfill. The default inspector remains current-only. */
 export async function captureNativeArtifactConsumption(env: WorkerEnv, e: LiveMemoryEnrollment, authority: LiveMemoryAuthority,
-  range: { after: number; through: number; remembered: boolean }, observer?: NativeMemoryContextObserver) {
+  range: { after: number; through: number; remembered: boolean; historical?: boolean }, observer?: NativeMemoryContextObserver) {
   const db = env.DB, key = memoryCanonical({ e, authority, range }), candidates = nativeArtifactMemoryCandidates(e);
   if (!Number.isSafeInteger(range.after) || range.after < 0 || !Number.isSafeInteger(range.through) || range.through < range.after
     || range.remembered && range.through > e.cursor_sequence) throw new Error("artifact_memory_range_invalid");
@@ -79,7 +79,7 @@ export async function captureNativeArtifactConsumption(env: WorkerEnv, e: LiveMe
     if (typeof payload.source_surface !== "string" || !/^[a-z][a-z-]{0,47}-artifact-gallery$/u.test(payload.source_surface)) throw new Error("artifact_memory_receipt_invalid");
     const input = Object.fromEntries(browserKeys.map(key => [key, payload[key]]));
     // Gallery placement is observation metadata, not a distinct retained source.
-    const identity = memoryCanonical(Object.fromEntries(browserKeys.filter(key=>key!=="source_surface").map(key=>[key,payload[key]])));
+    const identity = memoryCanonical([Object.fromEntries(browserKeys.filter(key=>key!=="source_surface").map(key=>[key,payload[key]])), ...(range.historical ? [payload.artifact_source_event_id] : [])]);
     let certified = bindings.get(identity);
     if (!certified) {
       if (bindings.size >= 4) {
@@ -87,7 +87,7 @@ export async function captureNativeArtifactConsumption(env: WorkerEnv, e: LiveMe
         if (!range.remembered) { throughSequence = event.sequence - 1; break; }
         continue;
       }
-      certified = await preparePersonalArtifactViewSource(env, authority.principal, input); bindings.set(identity, certified);
+      certified = range.historical ? await preparePersonalArtifactHistorySource(env, authority.principal, event.eventId) : await preparePersonalArtifactViewSource(env, authority.principal, input); bindings.set(identity, certified);
       if (!current()) throw new Error("artifact_memory_source_changed");
       if (!(certified instanceof Response)) {
         if (retainedBytes + certified.bodyBytes > 1_500_000) {

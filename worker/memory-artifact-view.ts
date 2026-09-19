@@ -21,9 +21,30 @@ const native = (payload: Record<string, unknown>) => !payload.simulation && !pay
  * writer and explicitly negotiated Memory inspection. It never appends a view
  * or grants enrollment. The returned guard must survive the caller's final batch. */
 export async function preparePersonalArtifactViewSource(env: WorkerEnv, actor: PilotUser, input: unknown) {
+  return preparePersonalArtifactSource(env, actor, input);
+}
+
+/** A genuine retained native view selects the historical snapshot. This never
+ * manufactures an old view or authorizes the browser to publish against it. */
+export async function preparePersonalArtifactHistorySource(env: WorkerEnv, actor: PilotUser, observationEventId: string) {
+  if (!id(observationEventId)) return failure("artifact_view_invalid", 400);
+  return preparePersonalArtifactSource(env, actor, null, observationEventId);
+}
+
+async function preparePersonalArtifactSource(env: WorkerEnv, actor: PilotUser, input: unknown, observationEventId?: string) {
   const db = env.DB, actorSnapshot = JSON.stringify(actor);
   if (actor.fictional || actor.projectExecution || actor.streamId !== `creative:${actor.userId}`
     || !["admin", "creator"].includes(actor.role) || !actor.authorizationSnapshot) return failure("artifact_view_personal_principal_required", 403);
+  // For history, obtain the selector from an actual native event, not browser
+  // revision/expiry claims. Every envelope is checked again below and replayed.
+  const fullHistory = observationEventId ? await readWorkspaceEvents(env, actor.streamId) : null;
+  const observation = fullHistory?.find(event => event.eventId === observationEventId);
+  if (observationEventId && (!observation || observation.type !== "DocumentArtifactViewed"
+    || observation.actor !== `user:${actor.userId}` || observation.payload.capture_version !== "personal-artifact-view-v2"
+    || Object.keys(observation.payload).sort().join(',') !== [...keys,'artifact_source_event_id','artifact_content_ref','observed_source_expires_at','capture_version'].sort().join(',')
+    || !timestamp(observation.payload.observed_source_expires_at) || Date.parse(observation.payload.observed_source_expires_at) <= Date.now()))
+    return failure("artifact_view_source_unavailable");
+  if (observation) input = Object.fromEntries([...keys].map(key => [key, observation.payload[key]]));
   if (!input || typeof input !== "object" || Array.isArray(input)) return failure("artifact_view_invalid", 400);
   const raw = input as Record<string, unknown>;
   if (Object.keys(raw).some(key => !keys.has(key)) || ![raw.artifact_id, raw.project_id, raw.document_id].every(id)
@@ -32,7 +53,8 @@ export async function preparePersonalArtifactViewSource(env: WorkerEnv, actor: P
     || typeof raw.source_surface !== "string" || !/^[a-z][a-z-]{0,47}-artifact-gallery$/u.test(raw.source_surface)) return failure("artifact_view_invalid", 400);
   // Snapshot browser fields before the first await. Only verified identifiers are written below.
   const payload = { ...raw }, artifactId = String(payload.artifact_id), documentId = String(payload.document_id), projectId = String(payload.project_id);
-  const history = await readWorkspaceEvents(env, actor.streamId);
+  const workspace = fullHistory ?? await readWorkspaceEvents(env, actor.streamId);
+  const history = observation ? workspace.filter(event => event.sequence < observation.sequence) : workspace;
   const projection = foldEvents(history, Number.POSITIVE_INFINITY, documentId, projectId);
   const document = projection.documents.find(row => row.id === documentId && row.projectId === projectId);
   const artifact = projection.artifacts.find(row => row.id === artifactId && row.documentId === documentId);
@@ -48,14 +70,18 @@ export async function preparePersonalArtifactViewSource(env: WorkerEnv, actor: P
     WHERE content_id=? AND owner_id=? AND kind='document-artifact' AND redacted_at IS NULL AND expires_at>${clock}
       AND length(CAST(content AS BLOB))<=1500000`).bind(contentId, actor.userId)
     .first<{ content: string; created_at: string; expires_at: string }>();
+  if (observation && (observation.payload.artifact_source_event_id !== completed.eventId
+    || observation.payload.artifact_content_ref !== contentId || completed.sequence >= observation.sequence)) return failure("artifact_view_source_unavailable");
   if (!body || !parseDocumentArtifactContent(body.content)
     || ![body.created_at, body.expires_at].every(timestamp)
-    || Date.parse(body.created_at) > Date.now() || Date.parse(body.expires_at) <= Date.now()) return failure("artifact_view_source_unavailable");
+    || Date.parse(body.created_at) > Date.now() || Date.parse(body.expires_at) <= Date.now()
+    || observation && body.created_at > observation.recordedAt) return failure("artifact_view_source_unavailable");
   const hash = Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(body.content))), byte => byte.toString(16).padStart(2, "0")).join("");
   if (hash !== payload.content_sha256) return failure("artifact_view_source_unavailable");
   const dependencies = history.filter(event => document.sourceEvents.includes(event.eventId)
     || event.eventId === completed.eventId || event.type === "DocumentArtifactEdited" && event.payload.artifact_id === artifactId
     || event.type === "ProjectCreated" && event.payload.project_id === projectId);
+  if (observation) dependencies.push(observation);
   if (!dependencies.length || dependencies.length > 256 || dependencies.some(event => event.compensatesEventId || event.eventId.startsWith("optimistic:")
     || event.clientId.includes("optimistic") || ![event.recordedAt, event.occurredAt].every(timestamp)
     || Date.parse(event.recordedAt) > Date.now() || Date.parse(event.occurredAt) > Date.now() || !native(event.payload)))
@@ -90,22 +116,23 @@ export async function preparePersonalArtifactViewSource(env: WorkerEnv, actor: P
     ...pilot.bindings, projectId, documentId, artifactId, contentId, contentId, dependencyIds, projectId] };
   const retained = { sql: `EXISTS(SELECT 1 FROM private_content WHERE
     (content_id,owner_id,kind,content,created_at,expires_at,redacted_at) IS (?,?, 'document-artifact',?,?,?,NULL) AND expires_at>${clock})
+    ${observation ? `AND ?>${clock}` : ''}
     AND NOT EXISTS(SELECT 1 FROM events negative WHERE negative.stream_id=? AND negative.compensates_event_id IN(SELECT value FROM json_each(?)))
     AND NOT EXISTS(SELECT 1 FROM event_private_payloads secret WHERE secret.private_event_id IN(SELECT value FROM json_each(?))
       AND secret.created_at!=(SELECT event.recorded_at FROM events event WHERE event.event_id=secret.private_event_id))`,
-  bindings: [contentId, actor.userId, body.content, body.created_at, body.expires_at, actor.streamId, dependencyIds, dependencyIds] };
+  bindings: [contentId, actor.userId, body.content, body.created_at, body.expires_at, ...(observation ? [String(observation.payload.observed_source_expires_at)] : []), actor.streamId, dependencyIds, dependencyIds] };
   // A returned workspace page is not a completeness certificate. Independently pin
   // current native selections and revision count, including rows a partial page omitted.
   const selection = { sql: `(SELECT current.event_id FROM events current WHERE current.stream_id=? AND current.type='DocumentRenderCompleted'
-      AND json_extract(current.payload,'$.artifact_id')=? ORDER BY current.sequence DESC LIMIT 1)=?
+      AND json_extract(current.payload,'$.artifact_id')=? ${observation ? 'AND current.sequence<?' : ''} ORDER BY current.sequence DESC LIMIT 1)=?
     AND (SELECT COUNT(*) FROM events edits WHERE edits.stream_id=? AND edits.type='DocumentArtifactEdited'
-      AND json_extract(edits.payload,'$.artifact_id')=?)=?
+      AND json_extract(edits.payload,'$.artifact_id')=? ${observation ? 'AND edits.sequence<?' : ''})=?
     AND (SELECT declaration.event_id FROM events declaration WHERE declaration.stream_id=? AND declaration.type IN('DocumentCreated','DocumentForked')
       AND json_extract(declaration.payload,'$.document_id')=? ORDER BY declaration.sequence DESC LIMIT 1)=?
     AND (SELECT boundary.type FROM events boundary WHERE boundary.stream_id=?
       AND boundary.type IN('DocumentCreated','DocumentForked','DocumentRemoved','DocumentRestored')
       AND json_extract(boundary.payload,'$.document_id')=? ORDER BY boundary.sequence DESC LIMIT 1)!='DocumentRemoved'`,
-  bindings: [actor.streamId, artifactId, completed.eventId, actor.streamId, artifactId, Number(payload.artifact_revision),
+  bindings: [actor.streamId, artifactId, ...(observation ? [observation.sequence] : []), completed.eventId, actor.streamId, artifactId, ...(observation ? [observation.sequence] : []), Number(payload.artifact_revision),
     actor.streamId, documentId, created.eventId, actor.streamId, documentId] };
   const source = combineAuthoringGuards(authority, retained, selection, authoringEventRowsProof(sourceRows));
   if (env.DB !== db || JSON.stringify(actor) !== actorSnapshot) return failure("artifact_view_source_unavailable");
@@ -114,7 +141,7 @@ export async function preparePersonalArtifactViewSource(env: WorkerEnv, actor: P
   }, payload: {
     artifact_id: artifactId, artifact_kind: artifact.kind, document_id: documentId, project_id: projectId,
     artifact_revision: payload.artifact_revision, content_sha256: hash, artifact_source_event_id: completed.eventId,
-    artifact_content_ref: contentId, observed_source_expires_at: body.expires_at,
+    artifact_content_ref: contentId, observed_source_expires_at: observation ? [body.expires_at, String(observation.payload.observed_source_expires_at)].sort()[0]! : body.expires_at,
     source_surface: payload.source_surface, capture_version: "personal-artifact-view-v2",
   } };
 }
