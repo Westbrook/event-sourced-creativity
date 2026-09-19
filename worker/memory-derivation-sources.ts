@@ -1,7 +1,7 @@
 import { observeNativeMemoryReuseBindings, type NativeMemoryReuseBindings } from './memory-native-reuse.ts';
 import { observeNativeMemoryResourceBindings, observeNativeMemoryRelationBindings, type NativeMemoryRelationBindings } from './memory-native-relations.ts';
 import { type NativeMemoryBlockBindings } from './memory-native-blocks.ts';
-import { captureLegacyConversationOriginalWindows, replayLegacyConversationOriginals, prepareLegacyConversationOriginalsCommit, type LegacyConversationOriginalsCommit } from "./events-api.ts";
+import { captureLegacyHistoricalOriginalWindows, captureLegacyConversationOriginalWindows, replayLegacyConversationOriginals, prepareLegacyConversationOriginalsCommit, type LegacyConversationOriginalsCommit } from "./events-api.ts";
 import { nativeDerivationRequestBody, nativeDerivationRequestFits } from './memory-derivation-request.ts';
 import { captureNativeArtifactConsumption } from './memory-native-artifact-consumption.ts';
 import { memoryDigest } from "../src/model/scoped-memory.ts";
@@ -36,7 +36,7 @@ export type NativeDerivationProvenance = {
   reuseBindings?: NativeMemoryReuseBindings;
   sourceRowsSha256: string;
 };
-export type NativeDerivationHistory = { version: 1; windowJobIds: string[]; afterSequence: number; throughSequence: number; boundary: "consent" | "bounded" | "capacity"; originalPairs: number };
+export type NativeDerivationHistory = { version: 1 | 2; windowJobIds: string[]; afterSequence: number; throughSequence: number; boundary: "consent" | "bounded" | "capacity"; originalPairs: number };
 type CaptureData = { jobId: string; purpose: MemoryDerivationSourcePurpose; scopeKey: string; checkedAt: string; validUntil: string;
   binding: { actorUserId: string; consentId: string; grantId: string; grantRevision: number; enrollmentId: string;
     enrollmentRevision: number; termsSha256: string; afterSequence: number; throughSequence: number };
@@ -66,7 +66,7 @@ const clean = (payload: string) => `json_valid(${payload}) AND COALESCE(json_ext
  */
 async function captureNativeDerivationWindow(env: WorkerEnv, lease: NativeDerivationEvidence, bindBlocks = true, bindRelations?:boolean, deferReplay=false, parentScope?:NativeMemoryDocumentScope,bindReuse?:boolean) {
   try {
-    if(nativeDerivationEvidenceInputs(env,lease).producer==='chat-studio')return await captureChatStudioDerivationWindow(env,lease);
+    if(nativeDerivationEvidenceInputs(env,lease).producer==='chat-studio')return await captureChatStudioDerivationWindow(env,lease,undefined,deferReplay);
     const db = env.DB, input = nativeDerivationEvidenceInputs(env, lease), { enrollment: e, grant: g, authority: a, job } = input;
     if(bindRelations===true&&(!input.relationsPresent||!input.lifecyclePresent))return unavailable();
     // Recheck every original admission guard before source selection in the same
@@ -310,7 +310,7 @@ async function captureNativeDerivationWindow(env: WorkerEnv, lease: NativeDeriva
  * union. Historical jobs retain separate read-only consent/reference assertions;
  * batching source custody does not cache authority or reuse model prose. */
 async function captureChatStudioDerivationWindow(env: WorkerEnv, lease: NativeDerivationEvidence,
-  history?:{evidence:NativeDerivationEvidence[];query:Query;result:D1Result<Row>;boundary:NativeDerivationHistory['boundary']}) {
+  history?:{evidence:NativeDerivationEvidence[];query:Query;result:D1Result<Row>;boundary:NativeDerivationHistory['boundary']},deferReplay=false,historicalReadOnly=false) {
   try {
     const db=env.DB,input=nativeDerivationEvidenceInputs(env,lease),{enrollment:e,grant:g,authority:a,job}=input;
     const evidences=[...(history?.evidence??[]),lease],inputs=evidences.map(value=>nativeDerivationEvidenceInputs(env,value));
@@ -334,7 +334,7 @@ async function captureChatStudioDerivationWindow(env: WorkerEnv, lease: NativeDe
     if(rows.length!==inputs.length||rows.some((row,index)=>row.event_id!==expected[index]!.eventId||row.sequence!==expected[index]!.sequence
       ||!derivationInteger(row.user_sequence,g.source_after_sequence+1,Number(row.sequence)-1)||!derivationInteger(row.head,job.through_sequence)))return unavailable();
     const prepared={principal:a.principal,binding:a.binding,sourceHead:Number(rows[0]!.head)};
-    const capture=await captureLegacyConversationOriginalWindows(env,prepared,rows.map(row=>({afterSequence:Number(row.user_sequence)-1,throughSequence:Number(row.sequence)})));
+    const capture=await (historicalReadOnly?captureLegacyHistoricalOriginalWindows:captureLegacyConversationOriginalWindows)(env,prepared,rows.map(row=>({afterSequence:Number(row.user_sequence)-1,throughSequence:Number(row.sequence)})));
     const receipt=capture&&await replayLegacyConversationOriginals(env,prepared,capture);
     if(!capture||!receipt||receipt.originals.length!==rows.length*2)return unavailable();
     const originals=receipt.originals,users=originals.filter(value=>value.role==='user'),answers=originals.filter(value=>value.role==='assistant');
@@ -389,7 +389,7 @@ async function captureChatStudioDerivationWindow(env: WorkerEnv, lease: NativeDe
     if(!legacy||!legacy.isCurrent()||env.DB!==db)return unavailable();
     const handle=Object.freeze({}) as NativeDerivationSourceCapture;
     captures.set(handle,{env,db,lease,validUntil,witness,legacy,evidences});
-    if(!await replayNativeDerivationSources(env,handle)){captures.delete(handle);return unavailable();}
+    if(!deferReplay&&!await replayNativeDerivationSources(env,handle)){captures.delete(handle);return unavailable();}
     return {status:'captured',capture:handle} as const;
   }catch{return unavailable();}
 }
@@ -426,7 +426,12 @@ async function captureChatStudioDerivationHistory(env:WorkerEnv,lease:NativeDeri
  * Bounds are explicit: no source truncation, hidden gap skipping, or claim of a
  * complete lifetime history. Legacy result reads may request their exact original
  * single-window contract; this option cannot grant spending or widen access. */
-export async function captureNativeDerivationSources(env: WorkerEnv, lease: NativeDerivationEvidence, options: { history?: boolean; blockBindings?: boolean; relationBindings?:boolean; reuseBindings?:boolean } = {}) {
+export async function captureNativeDerivationSources(env: WorkerEnv, lease: NativeDerivationEvidence, options: { history?: boolean; blockBindings?: boolean; relationBindings?:boolean; reuseBindings?:boolean; crossProducerHistory?:boolean; historySelection?:{jobIds:string[];boundary:NativeDerivationHistory['boundary']} } = {}) {
+  if(options.crossProducerHistory===true&&options.history!==false){
+    try{const input=nativeDerivationEvidenceInputs(env,lease);if(input.historyPresent&&input.producersPresent){
+      const cross=await captureCrossProducerHistory(env,lease,options);if(cross!==null)return cross;
+    }}catch{return unavailable();}
+  }
   try{const input=nativeDerivationEvidenceInputs(env,lease);if(input.producer==='chat-studio'&&input.historyPresent&&options.history!==false)return await captureChatStudioDerivationHistory(env,lease);}catch{return unavailable();}
   let deferred=false;try{deferred=nativeDerivationEvidenceInputs(env,lease).historyPresent&&options.history!==false;}catch{return unavailable();}
   const own = await captureNativeDerivationWindow(env, lease, deferred?false:options.blockBindings!==false,deferred?false:options.relationBindings,deferred,undefined,deferred?false:options.reuseBindings);
@@ -483,6 +488,100 @@ export async function captureNativeDerivationSources(env: WorkerEnv, lease: Nati
     merged={...merged,history:{version:1,windowJobIds:data.slice(0,-1).map(value=>value.jobId),afterSequence:data[0]!.binding.afterSequence,
       throughSequence:current.binding.throughSequence,boundary,originalPairs:merged.originals.length/2}};
     return finalizeResourceHistory(env,lease,parts,merged,witness,options);
+  }catch{return unavailable();}
+}
+
+/** A v2 manifest reconciles originals from both native producers, not their
+ * previous model claims. Same-producer lookback keeps the old non-overlap rule;
+ * the other producer may overlap registration intervals but must end strictly
+ * before this job. All original identities and current scope proofs stay exact.
+ * Null selects the byte-compatible legacy path when no mixed history is chosen. */
+async function captureCrossProducerHistory(env:WorkerEnv,lease:NativeDerivationEvidence,
+  options:{blockBindings?:boolean;relationBindings?:boolean;reuseBindings?:boolean;historySelection?:{jobIds:string[];boundary:NativeDerivationHistory['boundary']}}){
+  try{
+    const db=env.DB,input=nativeDerivationEvidenceInputs(env,lease),chat=Number(input.producer==='chat-studio');
+    const query:Query={sql:`SELECT j.job_id,j.after_sequence,j.through_sequence,
+      EXISTS(SELECT 1 FROM memory_derivation_producer_jobs producer WHERE producer.job_id=j.job_id) AS chat_studio,
+      EXISTS(SELECT 1 FROM memory_derivation_job_sources refs JOIN events event ON event.event_id=refs.event_id
+        WHERE refs.job_id=j.job_id AND event.type!='AssistantReasoned') AS resource_history,
+      EXISTS(SELECT 1 FROM memory_derivation_job_sources refs JOIN events event ON event.event_id=refs.event_id
+        WHERE refs.job_id=? AND event.type!='AssistantReasoned') AS resource_anchor
+      FROM memory_derivation_jobs j JOIN memory_derivation_completions done ON done.job_id=j.job_id
+      JOIN memory_derivation_results retained ON retained.job_id=j.job_id AND retained.expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now')
+      WHERE j.consent_id=? AND j.job_id!=? AND j.expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now')
+        AND (EXISTS(SELECT 1 FROM memory_derivation_producer_jobs producer WHERE producer.job_id=j.job_id)=? AND j.through_sequence<=?
+          OR EXISTS(SELECT 1 FROM memory_derivation_producer_jobs producer WHERE producer.job_id=j.job_id)!=? AND j.through_sequence<?)
+      ORDER BY j.through_sequence DESC,j.job_id LIMIT 3`,bindings:[input.job.job_id,input.grant.consent_id,input.job.job_id,chat,input.job.after_sequence,chat,input.job.through_sequence]};
+    const statement=db.prepare(query.sql).bind(...query.bindings),result=structuredClone(await statement.all<Row>());
+    if(env.DB!==db||!derivationResults([result],1)||result.results.length>3||result.results.some(row=>!derivationExact(row,['job_id','after_sequence','through_sequence','chat_studio','resource_history','resource_anchor'])
+      ||!derivationHash(row.job_id)||!derivationInteger(row.after_sequence)||!derivationInteger(row.through_sequence,Number(row.after_sequence)+1)
+      ||[row.chat_studio,row.resource_history,row.resource_anchor].some(value=>value!==0&&value!==1)))return unavailable();
+    if(!result.results.slice(0,2).some(row=>row.chat_studio!==chat))return null;
+    // Rich Creator windows carry artifact/relationship/approval proofs as well
+    // as messages. Bound the mixed union before hydrating it: two whole windows
+    // stay below both the native proof ceiling and full HTTP request budget.
+    // This is a disclosed capacity bound, not a claim that omitted history was read.
+    const resourceBound=result.results.slice(0,2).some(row=>row.resource_history===1||row.resource_anchor===1);
+    let candidates=result.results.slice(0,resourceBound?1:2);
+    let boundary:NativeDerivationHistory['boundary']=resourceBound&&result.results.length>1?'capacity':'bounded';
+    // Saved v2 reads recertify their exact selected windows, not every larger
+    // input that a new proposal might attempt before hitting a capacity bound.
+    // A selection is not authority: it must be a chronological subset of this
+    // native bounded inventory, and every selected original is recaptured below.
+    if(options.historySelection){
+      const {jobIds,boundary:claimedBoundary}=options.historySelection;
+      if(!Array.isArray(jobIds)||jobIds.length>candidates.length||jobIds.some(id=>!derivationHash(id))
+        ||new Set(jobIds).size!==jobIds.length||!['bounded','capacity'].includes(claimedBoundary))return unavailable();
+      candidates=candidates.filter(row=>jobIds.includes(String(row.job_id)));
+      if(memoryCanonical(candidates.map(row=>row.job_id).reverse())!==memoryCanonical(jobIds))return unavailable();
+      boundary=claimedBoundary;
+    }
+    const selected:NativeDerivationEvidence[]=[];
+    for(const row of candidates){
+      const evidence=await observeNativeDerivationHistoryJob(env,lease,String(row.job_id),true);if(!evidence)break;selected.unshift(evidence);
+    }
+    for(;;){
+      const evidences=[...selected,lease],chatEvidence=evidences.filter(value=>nativeDerivationEvidenceInputs(env,value).producer==='chat-studio');
+      const parts:NativeDerivationSourceCapture[]=[],data:CaptureData[]=[];
+      let failed=false;
+      // Certify all Chat Studio originals together. This keeps ONE complete
+      // native source witness; it does not drop repeated access/expiry proofs.
+      if(chatEvidence.length){
+        const newest=chatEvidence.at(-1)!;
+        const captured=await captureChatStudioDerivationWindow(env,newest,
+          chatEvidence.length>1?{evidence:chatEvidence.slice(0,-1),query,result,boundary}:undefined,true,true);
+        if(captured.status!=='captured'){failed=true;if(captured.status==='capacity')boundary='capacity';}
+        else{parts.push(captured.capture);data.push(nativeDerivationSourceInputs(env,captured.capture));}
+      }
+      for(const evidence of evidences.filter(value=>nativeDerivationEvidenceInputs(env,value).producer==='creator')){
+        if(failed)break;
+        const captured=await captureNativeDerivationWindow(env,evidence,false,false,true,parts.map(part=>captures.get(part)?.documentScope).find(Boolean),false);
+        if(captured.status!=='captured'){failed=true;if(captured.status==='capacity')boundary='capacity';break;}
+        parts.push(captured.capture);data.push(nativeDerivationSourceInputs(env,captured.capture));
+      }
+      if(failed){if(!selected.length)return unavailable();selected.shift();continue;}
+      const current=data.find(value=>value.jobId===input.job.job_id);if(!current)return unavailable();
+      if(data.some(value=>value.scopeKey!==current.scopeKey||value.purpose!==current.purpose||value.binding.consentId!==current.binding.consentId))return unavailable();
+      const originals=data.flatMap(value=>value.originals).sort((a,b)=>a.revision-b.revision),observations=data.flatMap(value=>value.observations).sort((a,b)=>a.sequence-b.sequence);
+      if(new Set(originals.map(value=>value.sourceId)).size!==originals.length)return unavailable();
+      if(originals.length>128||observations.length>128||bytes(JSON.stringify(originals))>460000
+        ||!nativeDerivationRequestFits(input.qualification.terms,nativeDerivationRequestBody(input.qualification.terms,originals,observations))){
+        if(!selected.length)return capacity();boundary='capacity';selected.shift();continue;
+      }
+      const unique=<T>(values:T[])=>[...new Map(values.map(value=>[memoryCanonical(value),value])).values()];
+      const merged:CaptureData={...current,originals,observations,originalBacking:unique(data.flatMap(value=>value.originalBacking)).sort((a,b)=>a.sequence-b.sequence),
+        checkedAt:data.map(value=>value.checkedAt).sort().at(-1)!,validUntil:data.map(value=>value.validUntil).sort()[0]!,retentionCeiling:data.map(value=>value.retentionCeiling).sort()[0]!,
+        provenance:{events:unique(data.flatMap(value=>value.provenance.events)).sort((a,b)=>a.sequence-b.sequence),turns:unique(data.flatMap(value=>value.provenance.turns)),paid:unique(data.flatMap(value=>value.provenance.paid)),
+          ...(data.some(value=>value.provenance.artifacts)?{artifacts:unique(data.flatMap(value=>value.provenance.artifacts??[]))}:{}),
+          sourceRowsSha256:await memoryDigest(memoryCanonical(data.map(value=>[value.jobId,value.provenance.sourceRowsSha256])))},
+        coverage:{...current.coverage,queuedReferences:input.references.length,originalPairs:originals.length/2,typedObservations:observations.length,
+          ...(data.some(value=>value.coverage.excludedByUserControls)?{excludedByUserControls:data.reduce((n,value)=>n+(value.coverage.excludedByUserControls??0),0)}:{})},
+        history:{version:2,windowJobIds:selected.map(value=>nativeDerivationEvidenceInputs(env,value).job.job_id),
+          afterSequence:Math.min(...evidences.map(value=>nativeDerivationEvidenceInputs(env,value).job.after_sequence)),
+          throughSequence:input.job.through_sequence,boundary,originalPairs:originals.length/2}};
+      const witness=new AssistantContextReadWitness<CaptureData>(env);witness.observe([statement],[result],[query]);
+      return finalizeResourceHistory(env,lease,parts,merged,witness,options);
+    }
   }catch{return unavailable();}
 }
 

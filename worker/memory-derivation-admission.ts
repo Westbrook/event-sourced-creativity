@@ -90,7 +90,7 @@ export async function observeNativeDerivationJob(env: WorkerEnv, actorUserId: st
  * Reuses the exact original authority/schema/grant assertions, not a cached
  * principal or copied DTO. Every final replay still checks them in the database.
  * A lookback can neither widen scope nor mint execution rights/renew its clock. */
-export async function observeNativeDerivationHistoryJob(env: WorkerEnv, anchor: NativeDerivationEvidence, jobId: string): Promise<NativeDerivationRead | null> {
+export async function observeNativeDerivationHistoryJob(env: WorkerEnv, anchor: NativeDerivationEvidence, jobId: string, crossProducer = false): Promise<NativeDerivationRead | null> {
   try {
     const source=lookup(env,anchor),db=env.DB;
     if(!source.historyPresent||source.enrollment.recall_enabled!==1||!derivationHash(jobId)||jobId===source.job.job_id)return null;
@@ -102,7 +102,9 @@ export async function observeNativeDerivationHistoryJob(env: WorkerEnv, anchor: 
     const {chat_studio:chat,...job}=result[0]!.results[0]!,references=result[1]!.results;
     if(chat!==0&&chat!==1)return null;
     if(!jobShape(job)||job.state!=='leased'||job.consent_id!==source.grant.consent_id||job.purpose!==source.grant.purpose
-      ||job.after_sequence<source.grant.source_after_sequence||job.through_sequence>source.job.after_sequence
+      ||job.after_sequence<source.grant.source_after_sequence
+      ||(crossProducer&&source.producersPresent&&(chat?'chat-studio':'creator')!==source.producer
+        ?job.through_sequence>=source.job.through_sequence:job.through_sequence>source.job.after_sequence)
       ||job.created_at<source.grant.consented_at||job.expires_at>source.grant.expires_at
       ||!referencesShape(references,job,source.grant))return null;
     const until=[source.until,job.expires_at].sort()[0]!;

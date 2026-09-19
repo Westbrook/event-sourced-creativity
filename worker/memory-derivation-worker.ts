@@ -63,7 +63,7 @@ export async function runNativeDerivationScheduled(env:WorkerEnv):Promise<{statu
     continue;
   }
   const input=nativeDerivationLeaseInputs(env,lease);if(!memoryDerivationEnabled(env,input.grant.actor_user_id))return {status:'unavailable',processed:0};
-  const captured=await captureNativeDerivationSources(env,lease);if(captured.status!=='captured'){
+  const captured=await captureNativeDerivationSources(env,lease,{crossProducerHistory:true});if(captured.status!=='captured'){
     if(captured.status==='capacity'){
       const split=await splitNativeDerivationJob(env,lease);
       if(split!=='unchanged')return {status:split,processed:0};

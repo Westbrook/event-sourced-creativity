@@ -2051,6 +2051,7 @@ import { liveMemoryPrincipal } from "./memory-live-authority.ts";
 import { configuredPilotAdmissionGuard, type BudgetReservationGuard } from "./pilot-policy.ts";
 import { projectSourceProjectionCurrentAssertion, projectStructuredSourceProjectionCurrentAssertion } from "./project-access.ts";
 import { publicEventPayload } from "./event-privacy.ts";
+import { projectSourceProjectionAssertion } from "./project-source-read.ts";
 import { memoryDigest } from "../src/model/scoped-memory.ts";
 import { nativeMemoryDescriptor, nativeMemoryGrantDeadline, nativeMemoryPilotDeadline, nativeMemoryPilotQuery,
   nativeMemoryTimestamp, type NativeMemoryQuery } from "./memory-native-deadlines.ts";
@@ -2073,7 +2074,7 @@ export type LegacyConversationOriginalReceipt = {
 };
 type LegacyOriginalRow = Record<string, unknown>;
 type LegacyOriginalFrame = { env: WorkerEnv; db: WorkerEnv["DB"]; preparedKey: string; settings: string;
-  witness: AssistantContextReadWitness<LegacyConversationOriginalReceipt> };
+  witness: AssistantContextReadWitness<LegacyConversationOriginalReceipt>; historicalReadOnly: boolean };
 const legacyOriginalFrames = new WeakMap<LegacyConversationOriginalCapture, LegacyOriginalFrame>();
 const legacyOriginalClock = "SELECT strftime('%Y-%m-%dT%H:%M:%fZ','now') AS checked_at";
 const legacyOriginalEventColumns = "event_id,stream_id,sequence,occurred_at,recorded_at,actor,client_id,correlation_id,"
@@ -2180,8 +2181,15 @@ export async function captureLegacyConversationOriginalWindows(env: WorkerEnv, p
   intervals: readonly LegacyConversationOriginalInterval[]): Promise<LegacyConversationOriginalCapture | null> {
   return captureLegacyOriginalWindows(env,prepared,intervals,true);
 }
+/** Explicit historical read: exact original event/content/document custody is
+ * checked below even when an unrelated append leaves the project index behind.
+ * No hydration or repair, and this capability cannot derive own-send authority. */
+export async function captureLegacyHistoricalOriginalWindows(env: WorkerEnv, prepared: LegacyConversationOriginalPrepared,
+  intervals: readonly LegacyConversationOriginalInterval[]): Promise<LegacyConversationOriginalCapture | null> {
+  return captureLegacyOriginalWindows(env,prepared,intervals,true,true);
+}
 async function captureLegacyOriginalWindows(env: WorkerEnv, prepared: LegacyConversationOriginalPrepared,
-  intervals: readonly LegacyConversationOriginalInterval[], multiple: boolean): Promise<LegacyConversationOriginalCapture | null> {
+  intervals: readonly LegacyConversationOriginalInterval[], multiple: boolean, historicalReadOnly = false): Promise<LegacyConversationOriginalCapture | null> {
   try {
     const captured = structuredClone(prepared), windows = structuredClone(intervals), db = env.DB;
     const maximum = multiple ? 128 : 12, maximumPairs = maximum / 2;
@@ -2218,7 +2226,7 @@ async function captureLegacyOriginalWindows(env: WorkerEnv, prepared: LegacyConv
     const witness = new AssistantContextReadWitness<LegacyConversationOriginalReceipt>(env);
     const guards = [executionAdmissionGuard(principal, binding, captured.sourceHead), executionAdmissionGuard(current, binding, captured.sourceHead),
       configuredPilotAdmissionGuard(env, current), legacyOriginalDocumentGuard(captured),
-      ...(scope ? [projectSourceProjectionCurrentAssertion(scope)] : [])];
+      ...(scope ? [historicalReadOnly?projectSourceProjectionAssertion(scope,{sql:'migration.last_owner_sequence BETWEEN 0 AND ?',bindings:[captured.sourceHead]}):projectSourceProjectionCurrentAssertion(scope)] : [])];
     const ownAdmission = (user: PilotUser) => (own: AssistantStructuredOwnSendFootprint): BudgetReservationGuard => {
       const authority = executionAdmissionGuard(user, binding, null);
       const head = assistantStructuredOwnSendOwnerHeadGuard(own, binding.streamId, captured.sourceHead);
@@ -2236,7 +2244,7 @@ async function captureLegacyOriginalWindows(env: WorkerEnv, prepared: LegacyConv
       + " CASE WHEN (" + guards[3]!.sql + ") THEN 1 ELSE 0 END AS document_allowed", [...guards[2]!.bindings, ...guards[3]!.bindings]);
     const authorityQueries = [legacyOriginalGuardQuery(guards[0]!), legacyOriginalGuardQuery(guards[1]!), ordinaryAuthorityQuery,
       ...(scope ? [legacyOriginalGuardQuery(guards[4]!)] : [])];
-    const authorityRows = await legacyOriginalRead(env, witness, authorityQueries, ownGuards);
+    const authorityRows = await legacyOriginalRead(env, witness, authorityQueries, historicalReadOnly?undefined:ownGuards);
     if (!fresh() || authorityRows.some((rows, index) => rows.length !== 1 || (index === 2
       ? Object.keys(rows[0]).length !== 2 || !Object.hasOwn(rows[0], "pilot_allowed") || !Object.hasOwn(rows[0], "document_allowed")
         || rows[0].pilot_allowed !== 1 || rows[0].document_allowed !== 1
@@ -2392,7 +2400,7 @@ async function captureLegacyOriginalWindows(env: WorkerEnv, prepared: LegacyConv
     if (!fresh() || final.length !== statements.length
       || final.some(result => result.success !== true || (result as typeof result & {error?:unknown}).error !== undefined || !Array.isArray(result.results)) || !witness.matches(final)) return null;
     const handle: LegacyConversationOriginalCapture = Object.freeze({ method, validUntil });
-    legacyOriginalFrames.set(handle, { env, db, preparedKey, settings, witness });
+    legacyOriginalFrames.set(handle, { env, db, preparedKey, settings, witness, historicalReadOnly });
     return handle;
   } catch { return null; }
 }
@@ -2545,7 +2553,7 @@ export async function prepareLegacyConversationOriginalsCommit(env: WorkerEnv, p
       validUntil: new Date(deadline).toISOString(), budget: Object.freeze({ ...budget }), frameCount: frames.length,
       isCurrent: current, precommitStatements });
     legacyOriginalCommitFrames.set(commit, { env, db, commit, current, witnesses: frames.map(({ frame }) => frame.witness),
-      additionalBudget: Object.freeze({ ...inputBudget }),
+      additionalBudget: Object.freeze({ ...inputBudget }), historicalReadOnly: frames.some(({frame})=>frame.historicalReadOnly),
       intervals: Object.freeze(frames.flatMap(({ frame }) => { const receipt=frame.witness.context()!;
         return (receipt.intervals ?? [receipt.interval!]).map(interval => Object.freeze({...interval})); })) });
     return commit;
@@ -2555,6 +2563,7 @@ export async function prepareLegacyConversationOriginalsCommit(env: WorkerEnv, p
 // R6: original commits stay strict. A separate private issuance registry permits
 // only their genuine captured witnesses to derive an exact own-send successor.
 type LegacyOriginalCommitFrame = {
+  historicalReadOnly: boolean;
   env: WorkerEnv; db: WorkerEnv["DB"]; commit: LegacyConversationOriginalsCommit; current: () => boolean;
   witnesses: readonly AssistantContextReadWitness<LegacyConversationOriginalReceipt>[];
   additionalBudget: LegacyConversationOriginalsReadBudget;
@@ -2586,7 +2595,7 @@ export async function prepareLegacyConversationOriginalsOwnSend(env: WorkerEnv, 
   own: AssistantStructuredOwnSendFootprint): Promise<LegacyConversationOriginalsOwnSend | null> {
   try {
     const source = legacyOriginalCommitFrames.get(commit);
-    if (!source || source.env !== env || source.db !== env.DB || !source.current()) return null;
+    if (!source || source.historicalReadOnly || source.env !== env || source.db !== env.DB || !source.current()) return null;
     const selected = copyAssistantStructuredOwnSendFootprint(own), ownKey = canonicalConsent(selected), scope = commit.scope;
     if (selected.streamId !== scope.streamId || selected.sourceHead !== commit.sourceHead || selected.actorUserId !== scope.actorUserId
       || selected.projectId !== scope.projectId || selected.documentId !== scope.documentId
