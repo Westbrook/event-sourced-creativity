@@ -42,8 +42,8 @@ const dependencyKeys = ["ordinal", "event_stream_id", "event_id", "source_sequen
 const originalKeys = ["ordinal", "event_stream_id", "event_id", "source_sequence", "event_type", "role", "turn_id", "content_id",
   "content_sha256", "projection_sha256", "recorded_at", "source_retention_ceiling", "retained_by_ledger", "presented_in_context"];
 const revisionKeys = ["ordinal", "ledger_id", "storage_revision", "predecessor_revision", "predecessor_hash", "body_ref", "body_hash", "created_at", "expires_at"];
-const sourceTypes = new Set(["DocumentOpened", "DocumentViewVisited", "ObjectViewed", "DocumentArtifactViewed", "ComparisonOpened",
-  "BlockCreated", "BlockPropertyEdited", "ChipEdited", "BlockWeightSet", "BlockLocked", "BlockUnlocked", "BlockRelationAdded", "BlockRelationRemoved",
+const sourceTypes = new Set(["DocumentOpened", "DocumentRenamed", "DocumentViewVisited", "ObjectViewed", "DocumentArtifactViewed", "ComparisonOpened",
+  "BlockCreated", "BlockRenamed", "BlockPropertyEdited", "ChipEdited", "BlockWeightSet", "BlockLocked", "BlockUnlocked", "BlockRelationAdded", "BlockRelationRemoved",
   "BlockRemoved", "BlockRestored", "ObjectSaved", "ObjectPinned", "ObjectExported", "DocumentArtifactExported", "ArtifactApproved",
   "CanvasItemPlaced", "CanvasReferenceCreated", "ContextSetFormalized", "ObjectDiscarded", "ObjectCritiqued", "ArtifactChangesRequested",
   "ArtifactReviewRequested", "GenerationRequested", "DocumentRenderRequested", "ProposalAccepted", "ProposalRejected", "ProposalDeclined",

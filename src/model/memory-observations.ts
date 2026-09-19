@@ -49,9 +49,9 @@ export function eligibleMemoryObservations(view: MemoryObservationView, purpose:
 }
 
 const ACTIONS: Readonly<Record<string, MemoryAction>> = {
-  DocumentOpened: "encounter", DocumentViewVisited: "encounter", ApplicationViewVisited: "navigate",
+  DocumentOpened: "encounter", DocumentRenamed: "edit", DocumentViewVisited: "encounter", ApplicationViewVisited: "navigate",
   ObjectViewed: "inspect", DocumentArtifactViewed: "inspect", ComparisonOpened: "compare",
-  BlockCreated: "edit", BlockPropertyEdited: "edit", ChipEdited: "edit", BlockWeightSet: "edit",
+  BlockCreated: "edit", BlockRenamed: "edit", BlockPropertyEdited: "edit", ChipEdited: "edit", BlockWeightSet: "edit",
   BlockLocked: "edit", BlockUnlocked: "edit", BlockRelationAdded: "edit", BlockRelationRemoved: "edit",
   DocumentArtifactEdited: "edit", CanvasTextApplied: "edit",
   BlockRemoved: "remove", BlockRestored: "restore", ObjectUnpinned: "remove", RemovedFromLibrary: "remove",

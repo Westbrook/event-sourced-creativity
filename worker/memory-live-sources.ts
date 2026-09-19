@@ -6,8 +6,8 @@ import { liveMemoryTurnGuard, type LiveMemoryAuthority, type LiveMemoryEnrollmen
 // Artifact-view references have a separate retained-body proof and negotiated
 // inspector projection. They stay OUT of this assistant/origin/export predicate:
 // durable answers do not yet carry artifact body/revision dependency inverses.
-export const LIVE_MEMORY_EVENT_TYPES = ["DocumentOpened","DocumentViewVisited","ObjectViewed","ComparisonOpened",
-  "BlockCreated","BlockPropertyEdited","ChipEdited","BlockWeightSet","BlockLocked","BlockUnlocked","BlockRelationAdded","BlockRelationRemoved",
+export const LIVE_MEMORY_EVENT_TYPES = ["DocumentOpened","DocumentRenamed","DocumentViewVisited","ObjectViewed","ComparisonOpened",
+  "BlockCreated","BlockRenamed","BlockPropertyEdited","ChipEdited","BlockWeightSet","BlockLocked","BlockUnlocked","BlockRelationAdded","BlockRelationRemoved",
   "BlockRemoved","BlockRestored","ObjectSaved","ObjectPinned","ObjectExported","DocumentArtifactExported","ArtifactApproved",
   "CanvasItemPlaced","CanvasReferenceCreated","ContextSetFormalized","ObjectDiscarded","ObjectCritiqued","ArtifactChangesRequested",
   "ArtifactReviewRequested","GenerationRequested","DocumentRenderRequested","ProposalAccepted","ProposalRejected","ProposalDeclined",

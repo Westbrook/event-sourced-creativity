@@ -11,7 +11,7 @@ type Row = Record<string, unknown>;
 type Observation = { eventId:string; sequence:number; blockPointer:string|null; eventType:string; reference?:true };
 export type NativeMemoryBlockBinding = { eventId:string; blockId:string; scopeKey:string; revision:number; stateSha256:string; eventIds:string[] };
 export type NativeMemoryBlockBindings = { version:1; entries:NativeMemoryBlockBinding[]; unresolved:number };
-const actions=new Set(['BlockCreated','BlockPropertyEdited','ChipEdited','BlockWeightSet','BlockLocked','BlockUnlocked','BlockRemoved','BlockRestored']);
+const actions=new Set(['BlockCreated','BlockRenamed','BlockPropertyEdited','ChipEdited','BlockWeightSet','BlockLocked','BlockUnlocked','BlockRemoved','BlockRestored']);
 const types=['BlockCreated','BlockRehomed','BlockRenamed','BlockPropertyEdited','ChipEdited','BlockWeightSet','BlockLocked','BlockUnlocked',
   'BlockRemoved','BlockRestored','ExtractionRequested','ExtractionCompleted','ExtractionFailed'];
 const sqlTypes=types.map(type=>"'"+type+"'").join(',');

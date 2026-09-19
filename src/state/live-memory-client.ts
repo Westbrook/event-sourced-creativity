@@ -127,8 +127,8 @@ const ACTIONS = new Set(["encounter", "inspect", "compare", "edit", "commit", "r
   "request", "accept", "reject", "defer", "conversation"]);
 // This is the sealed live-export source subset, not the broader observation vocabulary.
 const EXPORT_ACTIONS = {
-  DocumentOpened: "encounter", DocumentViewVisited: "encounter", ObjectViewed: "inspect", DocumentArtifactViewed: "inspect",
-  ComparisonOpened: "compare", BlockCreated: "edit", BlockPropertyEdited: "edit", ChipEdited: "edit", BlockWeightSet: "edit",
+  DocumentOpened: "encounter", DocumentRenamed: "edit", DocumentViewVisited: "encounter", ObjectViewed: "inspect", DocumentArtifactViewed: "inspect",
+  ComparisonOpened: "compare", BlockCreated: "edit", BlockRenamed: "edit", BlockPropertyEdited: "edit", ChipEdited: "edit", BlockWeightSet: "edit",
   BlockLocked: "edit", BlockUnlocked: "edit", BlockRelationAdded: "edit", BlockRelationRemoved: "edit",
   BlockRemoved: "remove", BlockRestored: "restore", ObjectSaved: "commit", ObjectPinned: "commit", ObjectExported: "commit",
   DocumentArtifactExported: "commit", ArtifactApproved: "commit", CanvasItemPlaced: "reuse", CanvasReferenceCreated: "reuse",

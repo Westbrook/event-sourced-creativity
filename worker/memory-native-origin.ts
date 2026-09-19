@@ -155,8 +155,8 @@ export const NATIVE_MEMORY_ORIGIN_DEPENDENCY_COLUMNS = ["origin_id", "ordinal", 
   "segment_enrollment_id", "segment_revision", "segment_recipe", "segment_first_sequence", "segment_last_sequence", "segment_member_count",
   "segment_ordinal", "segment_created_at", "segment_retention_ceiling"] as const;
 const segmentColumns = NATIVE_MEMORY_ORIGIN_DEPENDENCY_COLUMNS.slice(14);
-const sourceTypes = new Set(["DocumentOpened", "DocumentViewVisited", "ObjectViewed", "DocumentArtifactViewed", "ComparisonOpened",
-  "BlockCreated", "BlockPropertyEdited", "ChipEdited", "BlockWeightSet", "BlockLocked", "BlockUnlocked", "BlockRelationAdded", "BlockRelationRemoved",
+const sourceTypes = new Set(["DocumentOpened", "DocumentRenamed", "DocumentViewVisited", "ObjectViewed", "DocumentArtifactViewed", "ComparisonOpened",
+  "BlockCreated", "BlockRenamed", "BlockPropertyEdited", "ChipEdited", "BlockWeightSet", "BlockLocked", "BlockUnlocked", "BlockRelationAdded", "BlockRelationRemoved",
   "BlockRemoved", "BlockRestored", "ObjectSaved", "ObjectPinned", "ObjectExported", "DocumentArtifactExported", "ArtifactApproved",
   "CanvasItemPlaced", "CanvasReferenceCreated", "ContextSetFormalized", "ObjectDiscarded", "ObjectCritiqued", "ArtifactChangesRequested",
   "ArtifactReviewRequested", "GenerationRequested", "DocumentRenderRequested", "ProposalAccepted", "ProposalRejected", "ProposalDeclined",

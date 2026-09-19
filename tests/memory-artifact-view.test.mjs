@@ -1022,3 +1022,49 @@ for(const shared of [false,true])for(const fault of ['source','receipt','enrollm
   };
   const response=await f.inspect('memory-consumption-episodes-v5');assert.equal(response.status,403,await response.clone().text());assert.equal(injected,true);assert.equal((await response.text()).includes(f.blockId),false);
 });
+
+for(const shared of [false,true])test('block rename memory: native edits join capture, recall and reference export without renamed prose '+shared,async t=>{
+  const f=await artifactDerivationFixture(t,{shared}),blockId='memory-renamed-context';
+  const send=async(type,payload)=>{const response=await f.request('/api/events',f.json({action:'append',event:{type,payload:{project_id:f.projectId,document_id:f.documentId,block_id:blockId,...payload}}}));
+    assert.equal(response.status,200,await response.clone().text());return (await response.json()).appended.find(row=>row.type===type);};
+  const created=await send('BlockCreated',{scope:'document',type:'direction',properties:{text:'Private original block body'}});
+  const renamed=await send('BlockRenamed',{new_handle:'private-do-not-quote-title'});assert.ok(renamed);
+  assert.equal((await f.run()).status,'completed');assert.ok(f.sqlite.prepare('SELECT * FROM memory_live_sources WHERE event_id=?').get(renamed.eventId));
+  const e=f.enrollment(),recall=await f.request('/api/memory/recall?id='+e.enrollment_id+'&revision='+e.revision);assert.equal(recall.status,200,await recall.clone().text());
+  const recalled=await recall.json();assert.ok(recalled.sources.some(row=>row.eventId===renamed.eventId));assert.ok(recalled.consumption.edit>=2);
+  assert.equal(JSON.stringify(recalled).includes('private-do-not-quote-title'),false);
+  const client=(await import('../src/state/live-memory-client.ts')).createLiveMemoryClient(async(url,init)=>f.request(url,init));
+  const row=(await client.settings()).enrollments.find(row=>row.id===e.enrollment_id);assert.ok(row);
+  const exported=JSON.parse(await client.exportReferences(row));assert.equal(JSON.stringify(exported).includes('private-do-not-quote-title'),false);
+  assert.ok(exported.sources.some(source=>source.eventId===renamed.eventId&&source.action==='edit'));
+  const job=f.sqlite.prepare('SELECT * FROM memory_derivation_jobs').get(),admission=await import('../worker/memory-derivation-admission.ts'),sources=await import('../worker/memory-derivation-sources.ts');
+  const lease=await admission.claimNativeDerivationJob(f.env,job.job_id),capture=await sources.captureNativeDerivationSources(f.env,lease);assert.equal(capture.status,'captured');
+  const value=sources.nativeDerivationSourceInputs(f.env,capture.capture),observation=value.observations.find(row=>row.eventId===renamed.eventId);
+  assert.equal(observation.action,'edit');assert.equal(observation.independentEvidence,false);
+  const binding=value.provenance.blockBindings.entries.find(row=>row.eventId===renamed.eventId);assert.ok(binding);
+  assert.deepEqual(binding.eventIds,[created.eventId,renamed.eventId]);assert.equal(binding.revision,f.sqlite.prepare('SELECT sequence FROM events WHERE event_id=?').get(renamed.eventId).sequence);assert.equal(value.provenance.blockBindings.unresolved,0);
+  assert.equal(JSON.stringify(value).includes('private-do-not-quote-title'),false);assert.equal(value.originals.length,0);
+  assert.equal(await sources.replayNativeDerivationSources(f.env,capture.capture),true);
+  f.sqlite.prepare("UPDATE event_private_payloads SET private_json=json_set(private_json,'$.new_handle','late-title') WHERE private_event_id=?").run(renamed.eventId);
+  assert.equal(await sources.replayNativeDerivationSources(f.env,capture.capture),false);assert.equal(f.sqlite.prepare('SELECT COUNT(*) AS n FROM memory_derivation_finance').get().n,0);
+});
+
+for(const shared of [false,true])test('document rename memory: native edit reference has no title and rejects erased source bodies '+shared,async t=>{
+  const f=await artifactDerivationFixture(t,{shared});
+  const response=await f.request('/api/events',f.json({action:'append',event:{type:'DocumentRenamed',payload:{project_id:f.projectId,document_id:f.documentId,new_title:'Private revised document title'}}}));
+  assert.equal(response.status,200,await response.clone().text());const renamed=(await response.json()).appended.find(row=>row.type==='DocumentRenamed');assert.ok(renamed);
+  assert.equal((await f.run()).status,'completed');assert.ok(f.sqlite.prepare('SELECT * FROM memory_live_sources WHERE event_id=?').get(renamed.eventId));
+  const client=(await import('../src/state/live-memory-client.ts')).createLiveMemoryClient(async(url,init)=>f.request(url,init)),e=f.enrollment();
+  const row=(await client.settings()).enrollments.find(row=>row.id===e.enrollment_id),exported=JSON.parse(await client.exportReferences(row));
+  assert.ok(exported.sources.some(source=>source.eventId===renamed.eventId&&source.action==='edit'&&source.blockId===null));
+  assert.equal(JSON.stringify(exported).includes('Private revised document title'),false);
+  const job=f.sqlite.prepare('SELECT * FROM memory_derivation_jobs').get(),admission=await import('../worker/memory-derivation-admission.ts'),sources=await import('../worker/memory-derivation-sources.ts');
+  const lease=await admission.claimNativeDerivationJob(f.env,job.job_id),capture=await sources.captureNativeDerivationSources(f.env,lease);assert.equal(capture.status,'captured');
+  const value=sources.nativeDerivationSourceInputs(f.env,capture.capture),observation=value.observations.find(row=>row.eventId===renamed.eventId);
+  assert.equal(observation.action,'edit');assert.equal(observation.independentEvidence,false);assert.equal(value.originals.length,0);
+  assert.equal(JSON.stringify(value).includes('Private revised document title'),false);assert.equal(await sources.replayNativeDerivationSources(f.env,capture.capture),true);
+  f.sqlite.prepare('DELETE FROM event_private_payloads WHERE private_event_id=?').run(renamed.eventId);
+  assert.equal(await sources.replayNativeDerivationSources(f.env,capture.capture),false);
+  const after=JSON.parse(await client.exportReferences(row));assert.ok(!after.sources.some(source=>source.eventId===renamed.eventId));
+  assert.equal(f.sqlite.prepare('SELECT COUNT(*) AS n FROM memory_derivation_finance').get().n,0);
+});

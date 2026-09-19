@@ -113,6 +113,6 @@ export async function observeNativeMemoryResourceBindings(env:WorkerEnv,e:LiveMe
   const entries=allBlocks?.entries.filter(row=>directIds.has(row.eventId))??[];
   // Preserve the helper's exact direct-observation denominator, including null
   // pointers and non-block event types that are not candidates in the first place.
-  const selected=direct.filter(row=>row.blockPointer!==null&&['BlockCreated','BlockPropertyEdited','ChipEdited','BlockWeightSet','BlockLocked','BlockUnlocked','BlockRemoved','BlockRestored'].includes(row.eventType));
+  const selected=direct.filter(row=>row.blockPointer!==null&&['BlockCreated','BlockRenamed','BlockPropertyEdited','ChipEdited','BlockWeightSet','BlockLocked','BlockUnlocked','BlockRemoved','BlockRestored'].includes(row.eventType));
   return {blockBindings:options.blocks?{version:1 as const,entries,unresolved:selected.length-entries.length}:undefined,relationBindings};
 }
