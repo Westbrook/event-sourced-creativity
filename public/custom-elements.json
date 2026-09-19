@@ -11109,6 +11109,47 @@
     },
     {
       "kind": "javascript-module",
+      "path": "src/components/document-memory-brief.ts",
+      "declarations": [
+        {
+          "kind": "class",
+          "name": "DocumentMemoryBrief",
+          "tagName": "forma-document-memory-brief",
+          "customElement": true,
+          "summary": "Document memory brief application interface.",
+          "description": "Read-only re-entry consumer. It never applies a candidate to authored context,\nemits a consumption event, enrolls, or puts text into an assistant prompt.",
+          "superclass": {
+            "name": "FormaElement",
+            "module": "src/components/forma-element.ts"
+          },
+          "x-forma": {
+            "category": "application",
+            "renderRoot": "light",
+            "stateful": true
+          }
+        }
+      ],
+      "exports": [
+        {
+          "kind": "custom-element-definition",
+          "name": "forma-document-memory-brief",
+          "declaration": {
+            "name": "DocumentMemoryBrief",
+            "module": "src/components/document-memory-brief.ts"
+          }
+        },
+        {
+          "kind": "js",
+          "name": "DocumentMemoryBrief",
+          "declaration": {
+            "name": "DocumentMemoryBrief",
+            "module": "src/components/document-memory-brief.ts"
+          }
+        }
+      ]
+    },
+    {
+      "kind": "javascript-module",
       "path": "src/components/event-inspector.ts",
       "declarations": [
         {

@@ -3420,7 +3420,7 @@ function derivedReviewFixture(item){
   const validUntil=new Date(Date.now()+30_000).toISOString(),entry={jobId,purpose:'rolling-summary',scopeKey,expiresAt:item.expiresAt};
   return {entry,lineage,claimKey,list:{version:MEMORY_DERIVATION_CONTROL,scope,enrollmentId:item.id,enrollmentRevision:item.revision,results:[entry],next:null,checkedAt:new Date().toISOString(),progress:[]},
     result:{version:MEMORY_DERIVATION_CONTROL,jobId,expiresAt:item.expiresAt,controlRevisions:{[lineage]:0},candidate:{version:'memory-derivation-candidates-v1',purpose:'rolling-summary',scopeKey,manifestId:jobId,manifestRevision:1,validUntil,semanticAuthority:'model-derived-unverified',semanticCompleteness:false,independentEvidence:false,
-      items:[{operation:'assert',target:null,category:'proposal',text:'Private tentative memory proposal.',supports:[],counterevidence:[],claimKey,lineageIds:[lineage],sourceBindings:[],validUntil,citationStatus:'support-cited'}]}}};
+      items:[{operation:'assert',target:null,category:'proposal',text:'Private tentative memory proposal.',supports:[{sourceIndex:0,start:0,end:8,text:'Original'}],counterevidence:[],claimKey,lineageIds:[lineage],sourceBindings:[{sourceId:'fixture-original',revision:1,contentHash:fixtureId(901)}],validUntil,citationStatus:'support-cited'}]}}};
 }
 async function inspectDerivedReview(t){const {h,item}=await purposeFixture(t),data=derivedReviewFixture(item);h.enqueue(data.list);await profileClick(h,'reviewLoad');h.enqueue(data.result);await profileClick(h,'reviewInspect');assert.match(h.text(),/Private tentative memory proposal/);return {h,item,data};}
 test('derived review is explicit, read-only until a named user action, and does not enroll',async t=>{

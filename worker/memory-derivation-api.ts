@@ -1,4 +1,5 @@
-import { nativeMemoryDocumentIdentity } from "./memory-native-scope.ts";
+import { readProjectRequestContext, resolveOwnerExecutionScope } from './project-access.ts';
+import { nativeMemoryDocumentIdentity, observeNativeMemoryDocumentScope } from "./memory-native-scope.ts";
 import { readNativeDerivationResult,nativeDerivationResultInputs,nativeDerivationResultStatements,withdrawNativeDerivationResult } from "./memory-derivation-results.ts";
 import { controlNativeDerivationResult,reviseNativeDerivationUserControl } from "./memory-derivation-user-controls.ts";
 import { DERIVATION_USER_CONTROL_COLUMNS } from "./memory-derivation-user-control-schema.ts";
@@ -76,6 +77,7 @@ async function bodyOf(request: Request, maximumBytes = 4096): Promise<Row | null
   } catch { return null; } finally { reader.releaseLock(); }
 }
 async function scope(request: Request, env: WorkerEnv, actor: PilotUser, projectId: string, documentId: string) {
+  if(request.method==='GET')return readScope(request,env,actor,projectId,documentId);
   const prepared = await prepareDocumentAuthority(request, env, { projectId, documentId }, "read");
   if (prepared instanceof Response) return privateResponse(prepared);
   if (prepared.principal.fictional || prepared.principal.userId !== actor.userId || prepared.principal.projectExecution
@@ -94,6 +96,39 @@ async function scope(request: Request, env: WorkerEnv, actor: PilotUser, project
   const admission = executionAdmissionGuard(prepared.principal, binding, prepared.sourceHead);
   return { prepared, parent, guards: [{ condition: admission.sql, bindings: admission.bindings }, background.guard,
     liveMemoryEnrollmentGuard(parent, "learn"), derivationRowGuard("memory_live_enrollments", parentColumns, parent)] };
+}
+
+/** Read-only inventory/control authority. Source identities and current custody
+ * are proved natively; a presentation GET never hydrates the whole project or
+ * rebuilds its index (which can retire otherwise valid retained results). */
+async function readScope(request:Request,env:WorkerEnv,actor:PilotUser,projectId:string,documentId:string){
+  const db=env.DB,consent=requireConsent(actor);if(consent)return privateResponse(consent);
+  if(actor.projectExecution||actor.billingUserId&&actor.billingUserId!==actor.userId)return deny('memory_derivation_self_payer_required',403);
+  const selected=await readProjectRequestContext(request,env,actor);if(selected.response)return privateResponse(selected.response);
+  const context=selected.context;if(context&&context.projectId!==projectId)return deny('context_project_denied',403);
+  const custody=context?{scope:{organizationId:context.organizationId,projectAccessId:context.projectAccessId,projectId,ownerUserId:context.ownerUserId,actorUserId:actor.userId},denied:false}
+    :await resolveOwnerExecutionScope(env,actor,documentId,projectId,'read');
+  if(custody.denied)return deny('context_custody_unavailable',403);
+  const shared=custody.scope,parents=await rows(env,`SELECT ${parentColumns.join(',')} FROM memory_live_enrollments WHERE
+    (actor_user_id,owner_user_id,organization_id,project_access_id,project_id,document_id) IS (?,?,?,?,?,?) LIMIT 2`,
+    [actor.userId,shared?.ownerUserId??actor.userId,shared?.organizationId??null,shared?.projectAccessId??null,projectId,documentId]);
+  if(parents.length!==1||!derivationExact(parents[0],parentColumns))return deny('memory_derivation_parent_required',409);
+  const parent=parents[0] as unknown as LiveMemoryEnrollment;
+  if(parent.policy_version!=='personal-memory-v2'||parent.permission_epoch!==actor.access.permissionEpoch||parent.learn_enabled!==1
+    ||!derivationTime(parent.expires_at)||parent.expires_at<=new Date().toISOString()
+    ||['forgotten','erased','access-changed','revoked'].includes(parent.failure_code??''))return deny('memory_derivation_parent_unavailable',409);
+  const authority=await liveMemoryAuthority(env,parent);if(!authority)return deny('memory_derivation_authority_unavailable',403);
+  const binding={...authority.binding,contextSessionId:context?.contextId??null},admission=executionAdmissionGuard(actor,binding,null);
+  const guards:MemorySqlGuard[]=[{condition:admission.sql,bindings:admission.bindings},authority.guard,liveMemoryEnrollmentGuard(parent,'learn'),
+    derivationRowGuard('memory_live_enrollments',parentColumns,parent)];
+  const identity=await observeNativeMemoryDocumentScope(env,{principal:actor,binding},parent,{require:guard=>guards.push({condition:guard.sql,bindings:guard.bindings}),before:deadline=>{if(deadline!==null)guards.push(clock(deadline));},observe:(_statements,results,descriptors)=>{
+    if(descriptors?.length!==1||results.length!==1)throw Error('memory-scope-unavailable');
+    const query=descriptors[0]!;
+    guards.push({condition:`(SELECT json_group_array(json_array(declaration,lifecycle,custody)) FROM (${query.sql}))=?`,
+      bindings:[...query.bindings,JSON.stringify(results[0]!.results.map(row=>[row.declaration,row.lifecycle,row.custody]))]});
+  }});
+  if(!identity||env.DB!==db)return deny('memory_derivation_scope_unavailable',403);
+  return {parent,prepared:{principal:actor,binding,sourceHead:null},guards};
 }
 
 /** Original actors may inspect their own consent metadata to withdraw it even
@@ -194,7 +229,7 @@ export async function handleMemoryDerivationSettings(request: Request, env: Work
       || !derivationInteger(body.retentionDays, 1, 365) || !derivationTime(body.expiresAt) || typeof body.background !== "boolean"
       || !derivationInteger(body.monthlyCapMicroUsd, 1, 1_000_000_000)) return deny("explicit_memory_derivation_consent_required");
     const consent = requireConsent(actor); if (consent) return privateResponse(consent);
-    if (!enabled) return deny("memory_derivation_disabled", 503);
+    if (!enabled || prepared.sourceHead === null) return deny("memory_derivation_disabled", 503);
     const expectedCustody = parseMemoryCustody(body.expectedCustody);
     if (!expectedCustody || !memoryCustodyMatches(expectedCustody, prepared.binding.scope)) return deny("memory_derivation_custody_changed", 409);
     const qualified = await readDerivationQualification(env, body.qualificationId), now = new Date().toISOString();

@@ -1,5 +1,7 @@
 /** Audited Forma-owned interface, metadata, and component-documentation copy. */
 const messages: Record<string, string> = {
+  "system.auto.1m1532o.44": "Document memory brief application interface.",
+  "system.auto.wvfepv.153": "Read-only re-entry consumer. It never applies a candidate to authored context, emits a consumption event, enrolls, or puts text into an assistant prompt.",
   "system.auto.mnnucx.13": "Shared output",
   "system.auto.1h1pgn9.12": "Share output",
   "system.auto.g1h7cj.64": "Additional host clamp. It cannot override the server capability.",

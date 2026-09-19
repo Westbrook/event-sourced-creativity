@@ -1,5 +1,7 @@
 /** Audited Forma-owned interface, metadata, and component-documentation copy. */
 const messages: Record<string, string> = {
+  "system.auto.1m1532o.44": "Interface applicative du résumé de mémoire du document.",
+  "system.auto.wvfepv.153": "Présentation en lecture seule pour la reprise du travail. Elle ne modifie jamais le contexte rédigé, ne crée pas d’événement de consultation, n’inscrit personne et ne transmet aucun texte à une requête de l’assistant.",
   "generation.deliveryUnconfirmed": "L’envoi de la demande de génération n’a pas pu être confirmé.",
   "generation.riskDeliveryHint": "Cela envoie la demande examinée au modèle et peut entraîner des frais. Le fournisseur peut toujours la refuser.",
   "generation.acknowledgeRisks": "Je comprends les risques",

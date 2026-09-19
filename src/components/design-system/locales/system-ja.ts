@@ -1,5 +1,7 @@
 /** Audited Forma-owned interface, metadata, and component-documentation copy. */
 const messages: Record<string, string> = {
+  "system.auto.1m1532o.44": "ドキュメントのメモリ概要用インターフェース。",
+  "system.auto.wvfepv.153": "作業再開時の読み取り専用表示です。作成済みコンテキストへの候補の適用、閲覧イベントの記録、登録、アシスタントへのプロンプトへのテキスト追加は行いません。",
   "generation.deliveryUnconfirmed": "生成リクエストの送信を確認できませんでした。",
   "generation.riskDeliveryHint": "確認したリクエストをモデルに送信します。利用料金が発生する場合があり、プロバイダーが拒否することもあります。",
   "generation.acknowledgeRisks": "リスクを理解しました",

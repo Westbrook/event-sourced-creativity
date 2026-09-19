@@ -1,5 +1,12 @@
 export const FORMA_PERSONAL_MEMORY_MESSAGES = {
   en: {
+    "memory.live.briefHeading": "Document memory",
+    "memory.live.briefRefresh": "Refresh",
+    "memory.live.briefDisclosure": "Tentative model-derived notes from this document’s eligible history, not facts or authored instructions. Your corrections take priority. Nothing is applied automatically. Manage corrections and forgetting in Memory.",
+    "memory.live.briefConflict": "Conflicting evidence — not a settled conclusion",
+    "memory.live.briefEvidence": "Quoted evidence",
+    "memory.live.briefCounterevidence": "Counterevidence",
+    "memory.live.briefExpired": "Private notes cleared. Refresh to check current access and sources.",
     "memory.live.reviewProgress": "{purpose}: {pending} unfinished windows; {completed} completed windows; {retained} retained results; {uncertain} dispatched requests with unknown usage. Snapshot only, not a freshness or delivery guarantee.",
     "memory.live.reviewHistory": "Rebuilt from original interactions in {windows} recent processing windows ({pairs} conversation pairs).",
     "memory.live.reviewHistory.consent": "The included windows reach the consent boundary; this is not a claim of complete site history.",
@@ -279,6 +286,13 @@ export const FORMA_PERSONAL_MEMORY_MESSAGES = {
     "memory.live.reminder": "Saved permission, rollout availability, and a completed review are different states. Scheduling delivery is not yet verified."
   },
   fr: {
+    "memory.live.briefHeading": "Mémoire du document",
+    "memory.live.briefRefresh": "Actualiser",
+    "memory.live.briefDisclosure": "Notes provisoires produites par le modèle à partir de l’historique admissible de ce document, ni faits ni consignes rédigées. Vos corrections sont prioritaires. Rien n’est appliqué automatiquement. Gérez les corrections et l’oubli dans Mémoire.",
+    "memory.live.briefConflict": "Éléments contradictoires — conclusion non établie",
+    "memory.live.briefEvidence": "Éléments cités",
+    "memory.live.briefCounterevidence": "Éléments contraires",
+    "memory.live.briefExpired": "Notes privées effacées. Actualisez pour vérifier les accès et les sources actuels.",
     "memory.live.reviewProgress": "{purpose} : {pending} fenêtres inachevées ; {completed} terminées ; {retained} résultats conservés ; {uncertain} requêtes envoyées avec usage inconnu. Instantané, sans garantie de fraîcheur ni de livraison.",
     "memory.live.reviewHistory": "Recalculé à partir des interactions originales de {windows} fenêtres de traitement récentes ({pairs} paires de conversation).",
     "memory.live.reviewHistory.consent": "Les fenêtres incluses remontent au consentement ; cela ne garantit pas un historique complet du site.",
@@ -558,6 +572,13 @@ export const FORMA_PERSONAL_MEMORY_MESSAGES = {
     "memory.live.reminder": "Une autorisation enregistrée, la disponibilité du déploiement et un examen terminé sont des états différents. L’exécution de la planification n’est pas encore vérifiée."
   },
   ar: {
+    "memory.live.briefHeading": "ذاكرة المستند",
+    "memory.live.briefRefresh": "تحديث",
+    "memory.live.briefDisclosure": "ملاحظات أولية أنشأها النموذج من السجل المؤهل لهذا المستند، وليست حقائق أو تعليمات مؤلفة. لتصحيحاتك الأولوية. لا يُطبّق شيء تلقائيًا. يمكنك إدارة التصحيحات والنسيان في الذاكرة.",
+    "memory.live.briefConflict": "أدلة متعارضة — ليست نتيجة محسومة",
+    "memory.live.briefEvidence": "الأدلة المقتبسة",
+    "memory.live.briefCounterevidence": "الأدلة المضادة",
+    "memory.live.briefExpired": "مُسحت الملاحظات الخاصة. حدّث للتحقق من صلاحية الوصول والمصادر الحالية.",
     "memory.live.reviewProgress": "{purpose}: {pending} نوافذ غير مكتملة؛ {completed} مكتملة؛ {retained} نتائج محفوظة؛ {uncertain} طلبات مرسلة باستهلاك غير معروف. لقطة فقط وليست ضمانًا للحداثة أو التسليم.",
     "memory.live.reviewHistory": "أُعيد بناؤه من التفاعلات الأصلية في {windows} نوافذ معالجة حديثة ({pairs} أزواج محادثة).",
     "memory.live.reviewHistory.consent": "تصل النوافذ المشمولة إلى بداية الموافقة؛ ولا يعني ذلك اكتمال سجل الموقع.",
@@ -837,6 +858,13 @@ export const FORMA_PERSONAL_MEMORY_MESSAGES = {
     "memory.live.reminder": "الإذن المحفوظ، وتوافر الميزة ضمن النشر، واكتمال المراجعة حالات مختلفة. لم يُتحقق بعد من تنفيذ الجدولة."
   },
   ja: {
+    "memory.live.briefHeading": "ドキュメントのメモリ",
+    "memory.live.briefRefresh": "更新",
+    "memory.live.briefDisclosure": "このドキュメントの対象履歴からモデルが生成した暫定的なメモです。事実や作成済みの指示ではありません。あなたの訂正が優先され、自動適用はされません。訂正と削除はメモリで管理できます。",
+    "memory.live.briefConflict": "矛盾する証拠があります — 確定した結論ではありません",
+    "memory.live.briefEvidence": "引用された証拠",
+    "memory.live.briefCounterevidence": "反証",
+    "memory.live.briefExpired": "非公開メモを消去しました。更新して現在のアクセス権とソースを確認してください。",
     "memory.live.reviewProgress": "{purpose}：未完了 {pending} 件、完了 {completed} 件、保持結果 {retained} 件、使用量不明の送信済みリクエスト {uncertain} 件。現時点の記録であり、鮮度や配信の保証ではありません。",
     "memory.live.reviewHistory": "直近{windows}件の処理範囲の元のやり取り（会話{pairs}組）から再構成しました。",
     "memory.live.reviewHistory.consent": "含まれる範囲は同意時点まで達していますが、サイト履歴全体の網羅を意味しません。",

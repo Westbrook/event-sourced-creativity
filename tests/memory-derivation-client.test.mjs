@@ -100,3 +100,99 @@ for(const fault of ['none','missing-producer','swapped-producers','false-aggrega
   if(fault==='none'){const page=await client.results(f.expected);assert.equal(page.progress[0].completedThrough,9);assert.ok(Object.isFrozen(page.progress[0].producers[0]));}
   else await assert.rejects(client.results(f.expected),error=>error instanceof MemoryDerivationClientError&&!error.mutationUnknown);
 });
+
+// Automatic document presentation uses the real strict clients over finite HTTP
+// responses. This does not replace native source/consent qualification.
+const {readDocumentMemoryBrief}=await import('../src/state/document-memory-brief.ts');
+const {MEMORY_POLICY,MEMORY_TIMING,MEMORY_WRITE_CONTRACT}=await import('../src/state/live-memory-client.ts');
+function briefFixture(){
+  const f=fixture(),now=new Date().toISOString(),validUntil=new Date(Date.now()+45000).toISOString();
+  f.expected.enrollmentId=f.settings.enrollmentId=f.grant.enrollmentId=hash('parent');
+  const selection={projectId:'project',documentId:'document',custody:{kind:'personal'}};
+  const enrollment={id:hash('parent'),projectId:'project',documentId:'document',organizationId:null,revision:2,learn:true,recall:true,background:false,
+    retentionDays:1,timeZone:'UTC',expiresAt:f.grant.expiresAt,policyVersion:MEMORY_POLICY,lastAdmittedAt:null,throughSequence:20,cutoffSequence:null,
+    backlog:false,nextDueAt:now,attempts:0,status:'ready'};
+  const base={enabled:true,policyVersion:MEMORY_POLICY,writeContractVersion:MEMORY_WRITE_CONTRACT,enrollments:[enrollment],nextAfter:null,
+    reviewContract:{timing:MEMORY_TIMING,preferredLocalWindow:{startHour:1,endHour:5},freshDaytimeCatchUpAllowed:true,savedPagesMayContinueOutsideWindow:true,strictlyOvernight:false,deliverySlaVerified:false}};
+  const lineage=hash('original-lineage'),jobId=hash('brief-job'),entry={jobId,purpose:'rolling-summary',scopeKey:'native-scope',expiresAt:f.grant.expiresAt};
+  const item={operation:'assert',target:null,category:'goal',text:'Tentative goal',supports:[{sourceIndex:0,start:0,end:8,text:'Original'}],counterevidence:[],
+    claimKey:'derived:'+hash('claim'),lineageIds:[lineage],sourceBindings:[{sourceId:'original',revision:1,contentHash:hash('Original')}],validUntil,citationStatus:'support-cited'};
+  const result={version,jobId,expiresAt:entry.expiresAt,candidate:{version:'memory-derivation-candidates-v1',purpose:entry.purpose,scopeKey:entry.scopeKey,
+    manifestId:jobId,manifestRevision:1,validUntil,semanticAuthority:'model-derived-unverified',semanticCompleteness:false,independentEvidence:false,items:[item]},controlRevisions:{[lineage]:0},
+    history:{windowCount:3,originalPairs:3,boundary:'bounded',afterSequence:5,throughSequence:20}};
+  const listing={version,scope:f.grant.scope,enrollmentId:hash('parent'),enrollmentRevision:2,results:[entry],next:null,checkedAt:now,progress:[],purpose:'rolling-summary'};
+  const controls={version,available:true,controls:[],next:null,scope:f.grant.scope,enrollmentId:hash('parent'),enrollmentRevision:2,validUntil};
+  const calls=[],controller=new AbortController();let active=true;
+  const transport=async(input,init)=>{const url=new URL(String(input),'https://fixture.invalid');calls.push({url,init});
+    assert.equal(init.method,'GET');assert.equal(init.cache,'no-store');assert.equal(init.credentials,'same-origin');
+    const payload=url.pathname==='/api/memory/settings'?base:url.pathname.endsWith('/derivation/settings')?f.settings
+      :url.pathname.endsWith('/results')?listing:url.pathname.endsWith('/result')?result:url.pathname.endsWith('/controls')?controls:null;
+    assert.ok(payload,url.pathname);return Response.json(payload);};
+  return {...f,selection,base,enrollment,lineage,entry,item,result,listing,controls,calls,controller,transport,
+    current:()=>active,deactivate:()=>{active=false;}};
+}
+test('automatic document brief uses current native reads without mutations and preserves evidence/history',async()=>{
+  const f=briefFixture(),lease=await readDocumentMemoryBrief(f.selection,f.transport,f.current,f.controller.signal);
+  assert.equal(f.calls.length,5);const value=lease.current();assert.equal(value.completeHistory,false);assert.equal(value.independentEvidence,false);
+  assert.equal(value.sections[0].items[0].supports[0].text,'Original');assert.equal(value.sections[0].history.windowCount,3);
+  value.sections[0].items[0].text='tampered';assert.equal(lease.current().sections[0].items[0].text,'Tentative goal');
+  lease.retire();assert.equal(lease.current(),null);
+});
+for(const fault of ['disabled','no-enrollment','learn-off','recall-off','purpose-disabled','no-purpose','grant-revoked'])test('automatic brief does not read private bodies: '+fault,async()=>{
+  const f=briefFixture();if(fault==='disabled')f.base.enabled=false;if(fault==='no-enrollment')f.base.enrollments=[];
+  if(fault==='learn-off')f.enrollment.learn=false;if(fault==='recall-off')f.enrollment.recall=false;
+  if(fault==='purpose-disabled'){f.settings.available=false;f.settings.qualifications=[];}if(fault==='no-purpose')f.settings.grants=[];if(fault==='grant-revoked')f.grant.revokedAt=new Date().toISOString();
+  assert.equal(await readDocumentMemoryBrief(f.selection,f.transport,f.current,f.controller.signal),null);
+  assert.ok(f.calls.every(call=>call.url.pathname.endsWith('/settings')));
+});
+for(const action of ['corrected','suppressed','released'])test('automatic brief respects explicit '+action+' lineage controls',async()=>{
+  const f=briefFixture();f.controls.controls=[{controlId:hash('control'),claimKey:f.item.claimKey,lineageId:f.lineage,revision:1,action,
+    correctionText:action==='corrected'?'My explicit correction':null,expiresAt:f.grant.expiresAt,purpose:'rolling-summary',textAvailable:true}];
+  const lease=await readDocumentMemoryBrief(f.selection,f.transport,f.current,f.controller.signal),section=lease.current().sections[0];
+  assert.equal(section.items.length,action==='released'?1:0);assert.equal(section.corrections.length,action==='corrected'?1:0);lease.retire();
+});
+for(const fault of ['controls-incomplete','result-expiry','wrong-manifest','long-lease','no-quotes','quote-length','duplicate-quote','status-conflict','bad-source','duplicate-lineage','parent-revision','foreign-scope'])test('automatic brief rejects '+fault,async()=>{
+  const f=briefFixture();
+  if(fault==='controls-incomplete')f.controls.next=hash('more');if(fault==='result-expiry')f.result.candidate.validUntil=new Date(Date.now()-1).toISOString();
+  if(fault==='wrong-manifest')f.result.candidate.manifestId=hash('foreign');if(fault==='long-lease')f.result.candidate.validUntil=new Date(Date.now()+120000).toISOString();
+  if(fault==='no-quotes')f.item.supports=[];if(fault==='quote-length')f.item.supports[0].end=9;
+  if(fault==='duplicate-quote')f.item.supports.push({...f.item.supports[0]});if(fault==='status-conflict')f.item.citationStatus='conflicting-citations';
+  if(fault==='bad-source')f.item.sourceBindings[0].contentHash='bad';if(fault==='duplicate-lineage')f.item.lineageIds.push(f.lineage);
+  if(fault==='parent-revision')f.listing.enrollmentRevision++;if(fault==='foreign-scope')f.result.candidate.scopeKey='foreign';
+  await assert.rejects(readDocumentMemoryBrief(f.selection,f.transport,f.current,f.controller.signal));
+});
+for(const boundary of ['abort','owner','clock-backward','expiry'])test('automatic brief clears at '+boundary,async t=>{
+  const f=briefFixture(),lease=await readDocumentMemoryBrief(f.selection,f.transport,f.current,f.controller.signal);
+  if(boundary==='abort')f.controller.abort();if(boundary==='owner')f.deactivate();
+  if(boundary==='clock-backward'){const now=Date.now();t.mock.method(Date,'now',()=>now-1000);}
+  if(boundary==='expiry'){const now=Date.now();t.mock.method(Date,'now',()=>now+60001);}
+  assert.equal(lease.current(),null);assert.equal(lease.current(),null);
+});
+test('automatic brief checks current owner before dispatch and after asynchronous native reads',async()=>{
+  const f=briefFixture();f.deactivate();await assert.rejects(readDocumentMemoryBrief(f.selection,f.transport,f.current,f.controller.signal));assert.equal(f.calls.length,0);
+  const g=briefFixture();await assert.rejects(readDocumentMemoryBrief(g.selection,async(...args)=>{const result=await g.transport(...args);g.deactivate();return result;},g.current,g.controller.signal));assert.equal(g.calls.length,1);
+});
+test('automatic brief does not fall back to an older result after newest-source withdrawal',async()=>{
+  const f=briefFixture();f.listing.results.push({...f.entry,jobId:hash('older')});
+  await assert.rejects(readDocumentMemoryBrief(f.selection,async(input,init)=>String(input).includes('/result?')?Response.json({error:'withdrawn'},{status:404}):f.transport(input,init),f.current,f.controller.signal));
+  assert.equal(f.calls.filter(call=>call.url.pathname.endsWith('/results')).length,1);
+});
+test('automatic brief keeps three purpose facets separate and counterevidence visible',async()=>{
+  const f=briefFixture();f.settings.grants=['rolling-summary','profile','suggestion'].map(purpose=>({...f.grant,purpose,grantId:hash(purpose),consentId:crypto.randomUUID()}));
+  let currentPurpose;
+  const transport=async(input,init)=>{const url=new URL(String(input),'https://fixture.invalid');
+    assert.equal(new Headers(init.headers).get('x-forma-memory-consumer'),'document-brief-v1');
+    if(url.pathname.endsWith('/results')){currentPurpose=url.searchParams.get('purpose');return Response.json({...f.listing,purpose:currentPurpose,results:[{...f.entry,purpose:currentPurpose,jobId:hash(currentPurpose)}]});}
+    if(url.pathname.endsWith('/result'))return Response.json({...f.result,jobId:hash(currentPurpose),candidate:{...f.result.candidate,purpose:currentPurpose,manifestId:hash(currentPurpose),items:[{...f.item,
+      counterevidence:[{sourceIndex:1,start:0,end:7,text:'Opposed'}],citationStatus:'conflicting-citations'}]}});
+    return f.transport(input,init);};
+  const lease=await readDocumentMemoryBrief(f.selection,transport,f.current,f.controller.signal);
+  assert.deepEqual(lease.current().sections.map(section=>section.purpose),['rolling-summary','profile','suggestion']);
+  assert.ok(lease.current().sections.every(section=>section.items[0].citationStatus==='conflicting-citations'));lease.retire();
+});
+test('automatic brief does not fetch private correction text when scope read is unavailable',async()=>{
+  const f=briefFixture();f.controls.controls=[{controlId:hash('control'),claimKey:f.item.claimKey,lineageId:f.lineage,revision:1,action:'corrected',
+    correctionText:null,expiresAt:f.grant.expiresAt,purpose:'rolling-summary',textAvailable:false}];
+  const lease=await readDocumentMemoryBrief(f.selection,f.transport,f.current,f.controller.signal);
+  assert.equal(lease.current().sections[0].items.length,0);assert.equal(lease.current().sections[0].corrections.length,0);lease.retire();
+});

@@ -1,0 +1,13 @@
+forma-document-memory-brief { display: block; min-width: 0; }
+.document-memory-brief { border: 1px solid var(--line, #d8d7d0); border-radius: 12px; padding: 1rem; margin-block: .75rem; overflow-wrap: anywhere; }
+.document-memory-brief header { display: flex; align-items: center; justify-content: space-between; gap: .75rem; }
+.document-memory-brief h2 { font-size: .95rem; margin: 0; }
+.document-memory-brief h3 { font-size: .875rem; margin-block: 1rem .5rem; }
+.document-memory-brief p { margin-block: .4rem; }
+.document-memory-brief ul { padding-inline-start: 1.2rem; }
+.document-memory-brief li + li { margin-block-start: .75rem; }
+.document-memory-brief summary { cursor: pointer; font-size: .8rem; }
+.document-memory-brief blockquote { margin-inline: .5rem 0; padding-inline-start: .75rem; border-inline-start: 2px solid currentColor; }
+.document-memory-brief .memory-brief-disclosure, .document-memory-brief small { font-size: .75rem; }
+.document-memory-brief .memory-brief-correction { border-inline-start: 3px solid currentColor; padding-inline-start: .75rem; }
+.document-memory-brief summary:focus-visible, .document-memory-brief button:focus-visible { outline: 2px solid currentColor; outline-offset: 3px; }

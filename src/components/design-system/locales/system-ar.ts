@@ -1,5 +1,7 @@
 /** Audited Forma-owned interface, metadata, and component-documentation copy. */
 const messages: Record<string, string> = {
+  "system.auto.1m1532o.44": "واجهة ملخص ذاكرة المستند.",
+  "system.auto.wvfepv.153": "عرض للقراءة فقط عند العودة إلى العمل. لا يطبّق مقترحًا على المحتوى المؤلف، ولا يسجل حدث استهلاك، ولا يسجل مستخدمًا، ولا يضع نصًا في طلب المساعد.",
   "generation.deliveryUnconfirmed": "تعذّر تأكيد إرسال طلب التوليد.",
   "generation.riskDeliveryHint": "يُرسل هذا الطلب الذي راجعته إلى النموذج وقد تترتب عليه رسوم استخدام. ويمكن للمزوّد رفضه.",
   "generation.acknowledgeRisks": "أفهم المخاطر",

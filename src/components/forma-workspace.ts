@@ -1,3 +1,4 @@
+import './document-memory-brief.ts';
 import { model3dMimeType } from "../model/model3d-assets";
 import { referenceCompositionSources, type ReferenceCompositionRecipe } from "../model/reference-composition";
 import "./reference-compositor";
@@ -1066,6 +1067,7 @@ export class FormaWorkspace extends FormaElement {
         </div>
         <div class="studio-grid" data-inspector-open=${String(this.#workbenchInspectorOpen)} data-workbench-mode=${this.#workbenchPane}>
           <section id="document-context-panel" class="context-column" aria-labelledby="context-title" ?hidden=${this.#narrowWorkbench&&this.#workbenchPane!=="write"}><div class="section-heading"><div><span class="eyebrow">${p.blocks.length?p.blocks.length===1?this.i18n.system("1 creative decision"):`${this.i18n.number(p.blocks.length)} ${this.i18n.system("creative decisions")}`:this.i18n.system("Ready when you are")}</span><h2 id="context-title">Creative context</h2></div><span class="health-pill" title=${health.issues.length?health.issues.map((issue)=>this.#healthIssueCopy(issue,"label")).join(" · "):this.i18n.system("Objective, audience, delivery, rights, and evidence are complete")}><i></i> ${this.i18n.number(health.score)}/100</span></div>
+            <forma-document-memory-brief></forma-document-memory-brief>
             ${this.#proposal?html`<aside class="document-quick-edit-review" tabindex="-1" aria-live="polite" aria-label=${this.i18n.t("assistant.mode.quickEdit")}>${this.#proposalPreview()}</aside>`:nothing}
             ${blockingIssue?html`<aside class="document-workbench-critical" role="status"><span>${this.#healthIssueCopy(blockingIssue,"label")}</span>${canAuthor?html`<button type="button" class="button secondary compact" @click=${()=>this.#repairContext(blockingIssue)}>${this.i18n.t("context.health.severity.warning","Review")}</button>`:nothing}</aside>`:nothing}
             ${p.blocks.length ? html`<div class="block-list" data-forma-content="primary">${this.#contextBlocks(visibleBlocks)}</div>` : html`<div class="blank-context" data-forma-empty-state><span>${icon("plus")}</span><h3>This document is empty</h3><p>${canAuthor?this.i18n.system("Add a typed context block, upload a reference, or ask Forma only when you are ready. Nothing is created on your behalf."):this.i18n.system("There are no creative decisions in this shared document yet.")}</p>${canAuthor?html`<button class="button primary" @click=${this.#beginBlock}>Add context</button>`:nothing}</div>`}

@@ -119,7 +119,9 @@ async function read(response: Response, signal?: AbortSignal): Promise<unknown> 
 }
 export type DerivationProgress = {purpose:MemoryDerivationPurpose;pending:number;completed:number;retained:number;uncertain:number;registeredThrough:number|null;completedThrough:number|null;producers?:ReadonlyArray<{producer:"creator"|"chat-studio";registeredThrough:number;completedThrough:number}>};
 export type DerivationResultEntry = {jobId:string;purpose:MemoryDerivationPurpose;scopeKey:string;expiresAt:string};
-export type DerivationResultItem = {claimKey:string;category:string;text:string;lineageIds:readonly string[]};
+export type DerivationCitation = {sourceIndex:number;start:number;end:number;text:string};
+export type DerivationResultItem = {claimKey:string;category:string;text:string;lineageIds:readonly string[];
+  citationStatus:'support-cited'|'conflicting-citations';supports:readonly DerivationCitation[];counterevidence:readonly DerivationCitation[]};
 export type DerivationHistory = {windowCount:number;originalPairs:number;boundary:'consent'|'bounded'|'capacity';afterSequence:number;throughSequence:number};
 export type DerivationResultView = DerivationResultEntry & {validUntil:string;items:readonly DerivationResultItem[];history?:DerivationHistory;controlRevisions:Readonly<Record<string,number>>};
 export type DerivationControl = {controlId:string;claimKey:string;lineageId:string;revision:number;action:'corrected'|'suppressed'|'released';correctionText:string|null;expiresAt:string;purpose:MemoryDerivationPurpose;textAvailable:boolean};
@@ -134,14 +136,31 @@ function resultView(value:unknown,expected:DerivationResultEntry):DerivationResu
   const row=own(value,['version','jobId','expiresAt','candidate','controlRevisions',...(hasHistory?['history']:[])]),candidate=own(row.candidate,['version','purpose','scopeKey','manifestId','manifestRevision','validUntil','semanticAuthority','semanticCompleteness','independentEvidence','items']);
   check(row.version===MEMORY_DERIVATION_CONTROL&&row.jobId===expected.jobId&&row.expiresAt===expected.expiresAt&&candidate.version==='memory-derivation-candidates-v1'
     &&candidate.purpose===expected.purpose&&candidate.scopeKey===expected.scopeKey&&candidate.semanticAuthority==='model-derived-unverified'
+    &&candidate.manifestId===expected.jobId&&candidate.manifestRevision===1
     &&candidate.semanticCompleteness===false&&candidate.independentEvidence===false&&derivationTime(candidate.validUntil)&&Date.parse(candidate.validUntil)>Date.now()
-    &&Date.parse(row.expiresAt as string)>Date.now()&&Array.isArray(candidate.items)&&candidate.items.length<=128);
+    &&Date.parse(candidate.validUntil)<=Date.now()+60000&&candidate.validUntil<=row.expiresAt
+    &&Date.parse(row.expiresAt as string)>Date.now()&&Array.isArray(candidate.items)&&candidate.items.length<=16);
   const items=candidate.items.map(raw=>{
     const item=own(raw,['operation','target','category','text','supports','counterevidence','claimKey','lineageIds','sourceBindings','validUntil','citationStatus']);
     check(item.operation==='assert'&&item.target===null&&reviewText(item.claimKey,240)&&reviewText(item.category,120)&&reviewText(item.text)
       &&Array.isArray(item.lineageIds)&&item.lineageIds.length>0&&item.lineageIds.length<=128&&item.lineageIds.every(derivationHash)
       &&item.validUntil===candidate.validUntil&&['support-cited','conflicting-citations'].includes(String(item.citationStatus)));
-    return {claimKey:item.claimKey,category:item.category,text:item.text,lineageIds:[...item.lineageIds] as string[]};
+    const seen=new Set<string>();
+    const citations=(value:unknown,minimum:number)=>{
+      check(Array.isArray(value)&&value.length>=minimum&&value.length<=16);
+      return value.map(raw=>{const q=own(raw,['sourceIndex','start','end','text']);
+        check(derivationInteger(q.sourceIndex,0,127)&&derivationInteger(q.start)&&derivationInteger(q.end,Number(q.start)+1)
+          &&reviewText(q.text,2048)&&q.text.trim().length>0&&Number(q.end)-Number(q.start)<=512
+          &&Array.from(q.text).length===Number(q.end)-Number(q.start));
+        const key=JSON.stringify([q.sourceIndex,q.start,q.end]);check(!seen.has(key));seen.add(key);return {...q} as DerivationCitation;});
+    };
+    const supports=citations(item.supports,1),counterevidence=citations(item.counterevidence,0);
+    check(item.citationStatus===(counterevidence.length?'conflicting-citations':'support-cited')
+      &&new Set(item.lineageIds).size===item.lineageIds.length&&Array.isArray(item.sourceBindings)&&item.sourceBindings.length>0&&item.sourceBindings.length<=128);
+    const sourceIds=new Set<string>();for(const raw of item.sourceBindings){const binding=own(raw,['sourceId','revision','contentHash']);
+      check(derivationId(binding.sourceId)&&!sourceIds.has(binding.sourceId)&&derivationInteger(binding.revision,1)&&derivationHash(binding.contentHash));sourceIds.add(binding.sourceId);}
+    return {claimKey:item.claimKey,category:item.category,text:item.text,lineageIds:[...item.lineageIds] as string[],
+      citationStatus:item.citationStatus as DerivationResultItem['citationStatus'],supports,counterevidence};
   });
   check(new Set(items.map(item=>item.claimKey)).size===items.length);
   const ids=[...new Set(items.flatMap(item=>item.lineageIds))],revisions=own(row.controlRevisions,ids);check(Object.values(revisions).every(value=>derivationInteger(value)));

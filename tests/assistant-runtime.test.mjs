@@ -15471,3 +15471,53 @@ test('native derivation source consent batch: aggregate over-cap prose is reject
   try{assert.equal((await sources.captureNativeDerivationSources(state.env,lease)).status,'capacity');assert.ok(injected);assert.equal(hydrated,0);assert.deepEqual(adaptiveReentryFinancialState(state),before);}
   finally{db.batch=batch;}
 });
+
+for(const shared of [false,true])for(const paid of [false,true])test('native derivation automatic brief: original-backed HTTP bundle and correction priority shared='+shared+' paid='+paid,{timeout:120000},async t=>{
+  const state=await nativeDerivationRollingFixture(t,{windows:3,shared,paid}),api=await import('../worker/memory-derivation-api.ts'),
+    {handleLiveMemory}=await import('../worker/memory-live-api.ts'),{readDocumentMemoryBrief}=await import('../src/state/document-memory-brief.ts');
+  const parent=state.current(),scope={projectId:parent.project_id,documentId:parent.document_id,custody:state.preferences.expectedCustody};
+  const usage=state.sqlite.prepare('SELECT * FROM memory_derivation_usage').all(),providerCalls=state.rollingRequests.length,calls=[];
+  const readState=()=>Object.fromEntries(['events','event_private_payloads','project_resource_scopes','project_event_scopes','project_migration_states','memory_derivation_results','memory_derivation_result_dependencies'].map(table=>[table,state.sqlite.prepare('SELECT * FROM '+table+' ORDER BY rowid').all()]));
+  const unchanged=readState(),db=state.env.DB,prepare=db.prepare,batch=db.batch,originals=new WeakMap();let operations=0;
+  const wrap=raw=>{const proxy=new Proxy(raw,{get(target,key){if(key==='bind')return(...args)=>wrap(target.bind(...args));if(['all','first','run','raw'].includes(key))return(...args)=>{operations++;return target[key](...args);};return Reflect.get(target,key,target);}});originals.set(proxy,raw);return proxy;};
+  db.prepare=function(sql){return wrap(prepare.call(this,sql));};db.batch=function(inputs){operations++;return batch.call(this,inputs.map(input=>originals.get(input)??input));};t.after(()=>{db.prepare=prepare;db.batch=batch;});
+  const transport=async(path,init)=>{
+    assert.equal(init.method,'GET');const headers=new Headers(init.headers);for(const [key,value] of Object.entries(state.owner??{}))headers.set(key,value);
+    const request=new Request(state.derivationOrigin+path,{...init,headers}),url=new URL(request.url);calls.push(url.pathname);
+    const before=operations;const response=url.pathname==='/api/memory/settings'?await handleLiveMemory(request,state.env,'settings'):
+      await api[{settings:'handleMemoryDerivationSettings',results:'handleMemoryDerivationResults',result:'handleMemoryDerivationResult',controls:'handleMemoryDerivationUserControls'}[url.pathname.split('/').at(-1)]](request,state.env);
+    assert.ok(operations-before<50,url.pathname+' D1 calls: '+(operations-before));if(response.status!==200)t.diagnostic(url.pathname+' '+response.status+' '+await response.clone().text());return response;
+  };
+  const controller=new AbortController(),lease=await readDocumentMemoryBrief(scope,transport,()=>true,controller.signal);assert.ok(lease);
+  const value=lease.current();assert.equal(value.sections.length,1);assert.equal(value.sections[0].history.windowCount,3);assert.equal(value.sections[0].items.length,1);
+  assert.equal(value.sections[0].items[0].supports[0].text,'Original');assert.equal(calls.length,5);assert.deepEqual(readState(),unchanged,'Automatic presentation must not repair custody, mutate sources or retire results');lease.retire();
+  const store=await import('../worker/memory-derivation-results.ts'),controls=await import('../worker/memory-derivation-user-controls.ts');
+  const read=await store.readNativeDerivationResult(state.env,parent.actor_user_id,value.sections[0].jobId),item=store.nativeDerivationResultInputs(state.env,read).candidate.items[0],
+    target=store.nativeDerivationResultControlTarget(state.env,read,item.claimKey);
+  await controls.controlNativeDerivationResult(state.env,read,item.claimKey,'corrected','Explicit native user correction.',Object.fromEntries(target.lineages.map(row=>[row.lineageId,0])));
+  const corrected=await readDocumentMemoryBrief(scope,transport,()=>true,controller.signal);assert.equal(corrected.current().sections[0].items.length,0);
+  assert.equal(corrected.current().sections[0].corrections[0].correctionText,'Explicit native user correction.');corrected.retire();
+  state.sqlite.exec('UPDATE memory_live_enrollments SET recall_enabled=0');
+  assert.equal(await readDocumentMemoryBrief(scope,transport,()=>true,controller.signal),null);
+  assert.deepEqual(state.sqlite.prepare('SELECT * FROM memory_derivation_usage').all(),usage);assert.equal(state.rollingRequests.length,providerCalls);
+});
+
+for(const fault of ['document-removed','session-revoked','principal-changed','custody-changed','false-proof','database-swap'])test('native derivation read-only inventory: final '+fault+' withholds scoped metadata',{timeout:120000},async t=>{
+  const state=await nativeDerivationRollingFixture(t,{windows:1,shared:true,paid:true}),api=await import('../worker/memory-derivation-api.ts'),
+    {appendAuditEvent}=await import('../worker/runtime.ts'),parent=state.current(),db=state.env.DB,batch=db.batch;let injected=false;
+  db.batch=async statements=>{
+    const final=!injected&&statements.some(row=>row.sql.includes('json_group_array(json_array(declaration,lifecycle,custody))'));
+    if(final){injected=true;
+      if(fault==='document-removed')await appendAuditEvent(state.env,'creative:'+parent.owner_user_id,'user:'+parent.actor_user_id,'DocumentRemoved',{project_id:parent.project_id,document_id:parent.document_id});
+      if(fault==='session-revoked')state.sqlite.exec("UPDATE project_context_sessions SET revoked_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')");
+      if(fault==='principal-changed')state.sqlite.prepare('UPDATE users SET updated_at=? WHERE user_id=?').run(new Date(Date.now()+1000).toISOString(),parent.actor_user_id);
+      if(fault==='custody-changed')state.sqlite.prepare("UPDATE project_resource_scopes SET visibility='actor_private',actor_user_id='another-actor' WHERE resource_kind='document' AND resource_id=?").run(parent.document_id);
+    }
+    const results=await batch.call(db,statements);
+    if(final&&fault==='false-proof')return results.map((row,index)=>index===results.length-1?{...row,results:[{verified:0}]}:row);
+    if(final&&fault==='database-swap')state.env.DB={prepare:db.prepare.bind(db),batch:db.batch.bind(db)};
+    return results;
+  };t.after(()=>{db.batch=batch;state.env.DB=db;});
+  const response=await api.handleMemoryDerivationResults(new Request(state.derivationOrigin+'/api/memory/derivation/results?projectId='+parent.project_id+'&documentId='+parent.document_id,{headers:state.owner}),state.env);
+  assert.equal(injected,true);assert.equal(response.status,503);assert.equal(Object.hasOwn(await response.json(),'results'),false);
+});

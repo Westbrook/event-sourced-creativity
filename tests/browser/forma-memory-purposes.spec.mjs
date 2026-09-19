@@ -1,3 +1,5 @@
+import {createHash} from 'node:crypto';
+import {DERIVATION_EVIDENCE,derivationCanonical} from '../../src/model/memory-derivation-policy.ts';
 /** Whole-app rendering with declared synthetic GET responses only. No production,
  * authentication, enrollment, provider, background or hosted qualification claim. */
 import {test,expect,captureViewport} from './fixtures.mjs';
@@ -20,9 +22,9 @@ for(const locale of ['en','ar'])test.describe('Memory purpose locale '+locale,()
   const entry={jobId:'1'.repeat(64),purpose:'rolling-summary',scopeKey:'synthetic-private-scope',expiresAt:item.expiresAt},lineage='2'.repeat(64),claimKey='3'.repeat(64),validUntil=new Date(Date.now()+60000).toISOString();
   const reviewList={version:purposes.version,scope:purposes.scope,enrollmentId:item.id,enrollmentRevision:1,results:[entry],next:null,checkedAt:new Date().toISOString(),progress:[]};
   const reviewResult={version:purposes.version,jobId:entry.jobId,expiresAt:entry.expiresAt,controlRevisions:{[lineage]:0},history:{windowCount:3,originalPairs:6,boundary:'bounded',afterSequence:1,throughSequence:24},candidate:{version:'memory-derivation-candidates-v1',purpose:entry.purpose,scopeKey:entry.scopeKey,manifestId:entry.jobId,manifestRevision:1,validUntil,semanticAuthority:'model-derived-unverified',semanticCompleteness:false,independentEvidence:false,
-    items:[{operation:'assert',target:null,category:'proposal',text:'Synthetic private proposal <script>not code</script>.',supports:[],counterevidence:[],claimKey,lineageIds:[lineage],sourceBindings:[],validUntil,citationStatus:'support-cited'}]}};
+    items:[{operation:'assert',target:null,category:'proposal',text:'Synthetic private proposal <script>not code</script>.',supports:[{sourceIndex:0,start:0,end:8,text:'Original'}],counterevidence:[],claimKey,lineageIds:[lineage],sourceBindings:[{sourceId:'synthetic-original',revision:1,contentHash:'4'.repeat(64)}],validUntil,citationStatus:'support-cited'}]}};
   const calls=[],errors=[];page.on('pageerror',error=>errors.push(error.message));
-  await context.route('**/api/memory/**',async route=>{const request=route.request(),url=new URL(request.url());calls.push({method:request.method(),path:url.pathname,query:url.search});
+  await context.route('**/api/memory/**',async route=>{const request=route.request(),url=new URL(request.url());calls.push({method:request.method(),path:url.pathname,query:url.search,automatic:request.headers()['x-forma-memory-consumer']==='document-brief-v1'});
     expect(url.origin).toBe(origin);expect(request.method()).toBe('GET');
     if(url.pathname==='/api/memory/settings'&&!url.search)return route.fulfill({json:settings});
     if(url.pathname==='/api/memory/recall'){
@@ -56,7 +58,7 @@ for(const locale of ['en','ar'])test.describe('Memory purpose locale '+locale,()
   const panel=memory.locator('forma-personal-memory');await expect(panel.locator('select[name="memory-document"]')).toBeVisible();
   await panel.locator('select[name="memory-document"]').selectOption(item.documentId);
   const section=panel.locator('[data-memory-purposes]');await section.locator(':scope > summary').click();
-  await expect(section.getByText(message(locale,'purposeNotLoaded'),{exact:true})).toBeVisible();expect(calls.filter(c=>c.path.includes('/derivation/'))).toHaveLength(0);
+  await expect(section.getByText(message(locale,'purposeNotLoaded'),{exact:true})).toBeVisible();expect(calls.filter(c=>!c.automatic&&c.path.includes('/derivation/'))).toHaveLength(0);
   await section.getByRole('button',{name:message(locale,'purposeLoad'),exact:true}).click();
   await expect(section.getByText(message(locale,'purposeInactive'),{exact:true})).toBeVisible();
   await expect(section.locator('[data-memory-financial]')).toBeVisible();
@@ -66,7 +68,7 @@ for(const locale of ['en','ar'])test.describe('Memory purpose locale '+locale,()
   await expect(section.locator('[data-memory-derived-content]')).toContainText('Synthetic private proposal');
   expect(calls.some(call=>call.query.endsWith('&purpose=rolling-summary'))).toBe(true);
   for(const field of ['charge','background','consent'])await expect(section.locator('[name="memory-purpose-'+field+'"]')).not.toBeChecked();
-  expect(calls.filter(c=>c.path.includes('/derivation/'))).toHaveLength(3);expect(errors).toEqual([]);
+  expect(calls.filter(c=>!c.automatic&&c.path.includes('/derivation/'))).toHaveLength(3);expect(errors).toEqual([]);
   await captureViewport(page,info,'memory-purposes-'+locale,{assertStable:false});
   // Ordinary wheel scrolling targets the action, not a fixed distance that
   // overshoots it into the conversation following these variable-length terms.
@@ -92,7 +94,7 @@ for(const locale of ['en','ar'])test.describe('Memory purpose locale '+locale,()
   await expect(review.getByRole('button',{name:message(locale,'reviewCorrect'),exact:true})).toBeDisabled();
   const correction=review.getByRole('textbox',{name:message(locale,'reviewCorrection'),exact:true});await correction.fill('A synthetic user correction.');
   await expect(review.getByRole('button',{name:message(locale,'reviewCorrect'),exact:true})).toBeEnabled();
-  expect(calls.filter(c=>c.path.includes('/derivation/'))).toHaveLength(5);expect(calls.every(c=>c.method==='GET')).toBe(true);
+  expect(calls.filter(c=>!c.automatic&&c.path.includes('/derivation/'))).toHaveLength(5);expect(calls.every(c=>c.method==='GET')).toBe(true);
   await captureViewport(page,info,'memory-derived-review-'+locale,{assertStable:false});
   await section.locator(':scope > summary').click();await expect(section.locator('[data-memory-derived-content]')).toHaveCount(0);
   await section.locator(':scope > summary').click();await expect(section.locator('textarea')).toHaveCount(0);expect(errors).toEqual([]);
@@ -111,4 +113,57 @@ for(const locale of ['en','ar'])test.describe('Memory purpose locale '+locale,()
   await info.attach('declared-memory-transport',{body:JSON.stringify({syntheticOnly:true,production:false,providerCalls:0,mutations:0,calls,session:JSON.parse(syntheticReadBody('/api/session')).user.userId},null,2),contentType:'application/json'});
 });
 
+});
+
+for(const locale of ['en','ar'])test.describe('Automatic document memory '+locale,()=>{
+  test.use({geometry:{viewport:{width:locale==='ar'?320:1280,height:900},zoom:1,locale}});
+  test('current read-only brief, evidence and visibility withdrawal',async({page,context,baseURL},info)=>{
+    expect(syntheticNetworkEnabled(baseURL)).toBe(true);
+    const version='memory-derivation-control-v1',parent='a'.repeat(64),lineage='b'.repeat(64),jobId='c'.repeat(64);
+    const expiresAt=new Date(Date.now()+86400000).toISOString(),scope={projectId:'project-atmosphere',documentId:'doc-atmosphere',custody:{kind:'personal'}};
+    const enrollment={id:parent,projectId:scope.projectId,documentId:scope.documentId,organizationId:null,revision:1,learn:true,recall:true,background:true,
+      retentionDays:30,timeZone:'UTC',expiresAt,policyVersion:'personal-memory-v2',lastAdmittedAt:null,throughSequence:24,cutoffSequence:null,backlog:false,nextDueAt:new Date().toISOString(),attempts:0,status:'ready'};
+    const base={enabled:true,policyVersion:'personal-memory-v2',writeContractVersion:'memory-settings-custody-v1',reviewContract:{timing:'daily-with-daytime-catch-up',preferredLocalWindow:{startHour:1,endHour:5},freshDaytimeCatchUpAllowed:true,savedPagesMayContinueOutsideWindow:true,strictlyOvernight:false,deliverySlaVerified:false},enrollments:[enrollment],nextAfter:null};
+    const grant={scope,grantId:'d'.repeat(64),revision:1,consentId:'11111111-1111-4111-8111-111111111111',purpose:'rolling-summary',enrollmentId:parent,enrollmentRevision:1,
+      qualificationId:'synthetic-qualified',termsSha256:'e'.repeat(64),monthlyCapMicroUsd:100000,sourceAfterSequence:1,background:true,retentionDays:30,
+      consentedAt:new Date(Date.now()-1000).toISOString(),expiresAt,revokedAt:null};
+    const terms={version:'memory-derivation-terms-v1',purpose:'rolling-summary',recipeVersion:'memory-derivation-candidates-v1',provider:'openai',model:'isolated-test-model',pricing:{inputMicroUsdPerMillion:1000000,cachedInputMicroUsdPerMillion:0,outputMicroUsdPerMillion:2000000},maximumInputTokens:1000,maximumOutputTokens:100,monthlyCapMicroUsd:100000,payer:'self-ai-allowance',providerStore:false,providerRetentionDisclosure:'Synthetic browser fixture only.',retentionPolicyId:'fixture-policy',evidence:Object.fromEntries(DERIVATION_EVIDENCE.map(key=>[key,'f'.repeat(64)]))};
+    grant.termsSha256=createHash('sha256').update(derivationCanonical(terms)).digest('hex');
+    const offer={qualificationId:grant.qualificationId,termsSha256:grant.termsSha256,expiresAt,terms};
+    const settings={version,enabled:true,available:true,reason:null,policyVersion:'personal-memory-derivation-v1',scope,enrollmentId:parent,enrollmentRevision:1,
+      grants:[grant],qualifications:[offer],capScope:'payer-utc-calendar-month-all-memory-purposes',sourceWindow:'future-originals',processingImplemented:false};
+    const calls=[],errors=[];page.on('pageerror',error=>errors.push(error.message));let denied=false;
+    await context.route('**/api/memory/**',async route=>{
+      const request=route.request(),url=new URL(request.url());calls.push({path:url.pathname,method:request.method()});
+      expect(url.origin).toBe(new URL(baseURL).origin);expect(request.method()).toBe('GET');
+      expect(request.headers()['x-forma-memory-consumer']).toBe('document-brief-v1');
+      const validUntil=new Date(Date.now()+45000).toISOString();
+      if(url.pathname==='/api/memory/settings')return route.fulfill({json:base});
+      if(url.pathname.endsWith('/derivation/settings'))return route.fulfill({json:settings});
+      if(url.pathname.endsWith('/results'))return route.fulfill({json:{version,scope,enrollmentId:parent,enrollmentRevision:1,purpose:'rolling-summary',
+        checkedAt:new Date().toISOString(),progress:[],results:[{jobId,purpose:'rolling-summary',scopeKey:'synthetic-scope',expiresAt}],next:null}});
+      if(url.pathname.endsWith('/result')){
+        if(denied)return route.fulfill({status:404,json:{error:'memory_result_unavailable'}});
+        return route.fulfill({json:{version,jobId,expiresAt,controlRevisions:{[lineage]:0},history:{windowCount:3,originalPairs:6,boundary:'bounded',afterSequence:1,throughSequence:24},
+          candidate:{version:'memory-derivation-candidates-v1',purpose:'rolling-summary',scopeKey:'synthetic-scope',manifestId:jobId,manifestRevision:1,validUntil,
+            semanticAuthority:'model-derived-unverified',semanticCompleteness:false,independentEvidence:false,items:[{operation:'assert',target:null,category:'proposal',
+              text:'Synthetic private brief <script>not code</script>.',supports:[{sourceIndex:0,start:0,end:8,text:'Original'}],counterevidence:[{sourceIndex:1,start:0,end:7,text:'Opposed'}],
+              claimKey:'derived:'+jobId,lineageIds:[lineage],sourceBindings:[{sourceId:'synthetic-original',revision:1,contentHash:'f'.repeat(64)}],validUntil,citationStatus:'conflicting-citations'}]}}});
+      }
+      if(url.pathname.endsWith('/controls'))return route.fulfill({json:{version,available:true,scope,enrollmentId:parent,enrollmentRevision:1,validUntil,controls:[],next:null}});
+      throw Error('Undeclared automatic Memory route');
+    });
+    await page.goto(path);const brief=page.locator('[data-memory-document-brief]');
+    await expect(brief).toBeVisible();await expect(brief).toContainText('Synthetic private brief <script>not code</script>.');
+    await expect(brief.locator('script')).toHaveCount(0);await expect(brief).toContainText(message(locale,'briefConflict'));
+    await brief.getByText(message(locale,'briefEvidence'),{exact:true}).click();await expect(brief.getByText('Original',{exact:true})).toBeVisible();
+    await expect(brief.getByText('Opposed',{exact:true})).toBeVisible();
+    await expect(brief).not.toContainText('memory.live.');
+    expect(await brief.evaluate(el=>el.scrollWidth<=el.clientWidth+1)).toBe(true);
+    await captureViewport(page,info,'automatic-document-memory-'+locale,{assertStable:false});
+    await page.evaluate(()=>window.dispatchEvent(new Event('blur')));await expect(brief).toHaveCount(0);
+    denied=true;await page.evaluate(()=>window.dispatchEvent(new Event('focus')));
+    await expect.poll(()=>calls.filter(call=>call.path.endsWith('/result')).length).toBe(2);
+    await expect(brief).toHaveCount(0);expect(calls.every(call=>call.method==='GET')).toBe(true);expect(errors).toEqual([]);
+  });
 });
