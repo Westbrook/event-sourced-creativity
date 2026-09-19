@@ -2615,3 +2615,14 @@ export const memoryDerivationProducerJobs = sqliteTable('memory_derivation_produ
   check('memory_producer_job_id', sql.raw("length(job_id)=64 AND job_id NOT GLOB '*[^0-9a-f]*'")),
   check('memory_producer_job_range', sql.raw("typeof(after_sequence)='integer' AND typeof(through_sequence)='integer' AND after_sequence>=0 AND through_sequence>after_sequence AND through_sequence<=9007199254740991")),
 ]);
+
+/** Source-free terminal index intents survive grant/job erasure. No remote ACK is implied. */
+export const memoryDerivationIndexIntents = sqliteTable('memory_derivation_index_intents', {
+ jobId:text('job_id').notNull().primaryKey(), operation:text('operation').notNull(), generation:integer('generation').notNull(),
+ updatedAt:text('updated_at').notNull(), expiresAt:text('expires_at'),
+}, table=>[
+ index('idx_memory_derivation_index_pending').on(table.operation,table.jobId),
+ check('memory_index_id',sql.raw("length(job_id)=64 AND job_id NOT GLOB '*[^0-9a-f]*'")),
+ check('memory_index_state',sql.raw("(operation='upsert' AND generation=1 AND expires_at IS NOT NULL) OR (operation='delete' AND generation=2 AND expires_at IS NULL)")),
+ check('memory_index_time',sql.raw("length(updated_at)=24 AND strftime('%Y-%m-%dT%H:%M:%fZ',updated_at) IS updated_at AND (expires_at IS NULL OR length(expires_at)=24 AND strftime('%Y-%m-%dT%H:%M:%fZ',expires_at) IS expires_at AND updated_at<expires_at)")),
+]);

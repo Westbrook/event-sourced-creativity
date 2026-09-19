@@ -29,15 +29,15 @@ async function owned(env:WorkerEnv,actor:string,id:string){
 /** Before any edit, pin the entire affected result/dependency count. The first
  * control mutation erases these bodies; subsequent mutations affect no results.
  * Both direct SQLite and total D1 receipts must match exactly. */
-async function retirement(env:WorkerEnv,enrollment:string,purpose:string,actor:string){
+async function retirement(env:WorkerEnv,enrollment:string,purpose:string,actor:string,indexPresent:boolean){
   const selected=`SELECT j.job_id FROM memory_derivation_jobs j JOIN memory_derivation_grants g ON g.consent_id=j.consent_id
     WHERE g.enrollment_id=? AND g.purpose=? AND g.actor_user_id=?`;
   const query=`SELECT (SELECT COUNT(*) FROM memory_derivation_results WHERE state IN('staging','active') AND job_id IN(${selected})) AS bodies,
-    (SELECT COUNT(*) FROM memory_derivation_result_dependencies WHERE job_id IN(SELECT job_id FROM memory_derivation_results
-      WHERE state IN('staging','active') AND job_id IN(${selected}))) AS dependencies`;
-  const bindings=[enrollment,purpose,actor,enrollment,purpose,actor],rows=structuredClone(await env.DB.prepare(query).bind(...bindings).all<Record<string,unknown>>());
+    ((SELECT COUNT(*) FROM memory_derivation_result_dependencies WHERE job_id IN(SELECT job_id FROM memory_derivation_results
+      WHERE state IN('staging','active') AND job_id IN(${selected})))${indexPresent ? `+(SELECT COUNT(*) FROM memory_derivation_index_intents WHERE operation='upsert' AND job_id IN(SELECT job_id FROM memory_derivation_results WHERE state IN('staging','active') AND job_id IN(${selected})))` : ''}) AS dependencies`;
+  const bindings=[enrollment,purpose,actor,enrollment,purpose,actor,...(indexPresent?[enrollment,purpose,actor]:[])],rows=structuredClone(await env.DB.prepare(query).bind(...bindings).all<Record<string,unknown>>());
   if(!derivationResults([rows],1)||rows.results.length!==1||!derivationExact(rows.results[0],['bodies','dependencies'])
-    ||!derivationInteger(rows.results[0].bodies,0,1024)||!derivationInteger(rows.results[0].dependencies,0,1024*2048))throw Error('memory-user-control-unavailable');
+    ||!derivationInteger(rows.results[0].bodies,0,1024)||!derivationInteger(rows.results[0].dependencies,0,1024*2049))throw Error('memory-user-control-unavailable');
   const row=rows.results[0];return {changes:Number(row.bodies)+Number(row.dependencies),guard:derivationAssertion(env,{
     condition:`(SELECT bodies FROM (${query}))=? AND (SELECT dependencies FROM (${query}))=?`,
     bindings:[...bindings,Number(row.bodies),...bindings,Number(row.dependencies)]})};
@@ -64,7 +64,7 @@ export async function controlNativeDerivationResult(env:WorkerEnv,read:NativeDer
     if(prior&&(prior.scope_key!==row.scope_key||prior.source_content_ref!==row.source_content_ref))throw Error('memory-user-control-target-changed');
     previous.push(prior);next.push(row);
   }
-  const retiring=await retirement(env,target.enrollmentId,target.purpose,target.actorUserId);
+  const retiring=await retirement(env,target.enrollmentId,target.purpose,target.actorUserId,schema.indexPresent);
   const statements=[...nativeDerivationResultStatements(env,read),derivationAssertion(env,schema.guard),retiring.guard,
     ...next.map((row,i)=>snapshot(env,String(row.control_id),previous[i])),...(authorizationGuard?[derivationAssertion(env,authorizationGuard)]:[])];
   const writes:number[]=[];
@@ -93,7 +93,7 @@ export async function reviseNativeDerivationUserControl(env:WorkerEnv,actorUserI
   const db=env.DB,schema=await memoryDerivationSchema(env);if(!schema.userControlsPresent)throw Error('memory-user-control-unavailable');
   const prior=await owned(env,actorUserId,controlId);
   if(!prior||prior.revision!==revision||String(prior.expires_at)<=new Date().toISOString())throw Error('memory-user-control-revision-changed');
-  const next={...prior,revision:revision+1,action,correction_text:correction,updated_at:new Date().toISOString()},retiring=await retirement(env,String(prior.enrollment_id),String(prior.purpose),actorUserId);
+  const next={...prior,revision:revision+1,action,correction_text:correction,updated_at:new Date().toISOString()},retiring=await retirement(env,String(prior.enrollment_id),String(prior.purpose),actorUserId,schema.indexPresent);
   const statements=[derivationAssertion(env,schema.guard),snapshot(env,controlId,prior),retiring.guard,
     db.prepare(`UPDATE memory_derivation_user_controls SET revision=?,action=?,correction_text=?,updated_at=? WHERE control_id=? AND actor_user_id=? AND revision=?`)
       .bind(revision+1,action,correction,next.updated_at,controlId,actorUserId,revision),

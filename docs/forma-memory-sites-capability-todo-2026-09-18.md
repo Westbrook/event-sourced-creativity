@@ -116,3 +116,7 @@ schedule work, provision a service or establish human review.
 [Native whole-request inspection qualification](forma-memory-native-read-budget-2026-09-19.md) now covers tested three-window free/paid histories at 45/48 D1 calls in personal/shared scopes. Artifact-heavy and full broader integration qualification remain open; these local checks are not hosted quota evidence.
 
 [Independent Chat Studio derivation](forma-memory-chat-studio-derivation-2026-09-19.md) is implemented with separate consent-bound registration/completion frontiers and 36-call tested whole-request history reads. Its migration0053 is schema-only with exact trigger/index replacements, not purely additive.
+
+## Native index lifecycle continuation
+
+[Atomic result-index intents](forma-memory-native-index-intents-2026-09-19.md) now cover publication, privacy invalidation, source-free deletion recovery and local queue diagnostics. Migration0054 is additive and unapplied. This closes the native outbox foundation, **not** qualified external dispatch/embedding consent or remote deletion acknowledgements. PostgreSQL/pgvector HTTP fencing, current-source admission, exact authenticated receipts and tombstone compaction remain tracked service/integration work; no remote indexing success is claimed.

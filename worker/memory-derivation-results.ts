@@ -85,7 +85,7 @@ export async function publishNativeDerivationResult(env: WorkerEnv, receipt: Nat
       dependency_count: expected.length, published_at: previous?.published_at ?? new Date().toISOString(), expires_at: input.expiresAt, retired_at: null };
     if (previous && memoryCanonical(previous) !== memoryCanonical(row)) return { status: 'unavailable' as const };
     const proof = nativeDerivationCandidateStatements(env, receipt), statements = [...proof, derivationAssertion(env, schema.guard)];
-    const writes: [number, number][] = [];
+    const writes: [number, number, number?][] = [];
     if (previous) statements.push(rowGuard(env, row));
     else {
       statements.push(derivationAssertion(env, { condition: 'NOT EXISTS(SELECT 1 FROM memory_derivation_results WHERE job_id=?)', bindings: [jobId] }));
@@ -97,7 +97,7 @@ export async function publishNativeDerivationResult(env: WorkerEnv, receipt: Nat
         SELECT ?,json_extract(value,'$.kind'),json_extract(value,'$.resource_id'),json_extract(value,'$.actor_user_id'),json_extract(value,'$.scope_key') FROM json_each(?)`)
         .bind(jobId, JSON.stringify(expected)), derivationAssertion(env, { condition: 'changes()=?', bindings: [expected.length] }));
       statements.push(dependencyGuard(env, jobId, expected));
-      writes.push([statements.length, 1]);
+      writes.push([statements.length, 1, Number(schema.indexPresent)]);
       statements.push(db.prepare("UPDATE memory_derivation_results SET state='active' WHERE job_id=? AND state='staging'").bind(jobId),
         derivationAssertion(env, { condition: 'changes()=1', bindings: [] }));
     }
@@ -110,7 +110,7 @@ export async function publishNativeDerivationResult(env: WorkerEnv, receipt: Nat
     const result = structuredClone(await db.batch<Record<string, unknown>>(statements));
     nativeDerivationCandidateInputs(env, receipt);
     if (env.DB !== db || !derivationResults(result, statements.length) || !result.slice(0,completionOffset).every((value, index) => {
-      const write = writes.find(([at]) => at === index); return write ? derivationChanged(value, write[1]) : validProof(value);
+      const write = writes.find(([at]) => at === index); return write ? derivationChanged(value, write[1], write[2] ?? 0) : validProof(value);
     }) || completion && !completion.acknowledge(result.slice(completionOffset))) return { status: 'uncertain' as const };
     return { status: 'stored' as const, jobId };
   } catch { return { status: 'uncertain' as const }; }
@@ -177,18 +177,18 @@ export async function withdrawNativeDerivationResult(env: WorkerEnv, actorUserId
   const owned = `EXISTS(SELECT 1 FROM memory_derivation_jobs j JOIN memory_derivation_cursors c ON c.consent_id=j.consent_id
     JOIN memory_derivation_grants g ON (g.consent_id,g.grant_id,g.revision)=(c.consent_id,c.grant_id,c.grant_revision)
     WHERE j.job_id=? AND g.actor_user_id=?)`;
-  const query = `SELECT state,(SELECT COUNT(*) FROM memory_derivation_result_dependencies WHERE job_id=r.job_id) AS dependencies
+  const query = `SELECT state,((SELECT COUNT(*) FROM memory_derivation_result_dependencies WHERE job_id=r.job_id)${schema.indexPresent ? `+(SELECT COUNT(*) FROM memory_derivation_index_intents WHERE job_id=r.job_id AND operation='upsert')` : ''}) AS dependencies
     FROM memory_derivation_results r WHERE r.job_id=? AND ${owned}`;
   const observed = structuredClone(await db.prepare(query).bind(jobId, jobId, actorUserId).all<Record<string, unknown>>());
   if (env.DB !== db || !derivationResults([observed], 1) || observed.results.length > 1) throw Error('memory-result-withdrawal-unconfirmed');
   const row = observed.results[0]; if (!row) return false;
   if (!derivationExact(row, ['state', 'dependencies']) || !['staging', 'active', 'withdrawn'].includes(String(row.state))
-    || !derivationInteger(row.dependencies, 0, 2048) || row.state === 'withdrawn' && row.dependencies !== 0) throw Error('memory-result-withdrawal-unconfirmed');
+    || !derivationInteger(row.dependencies, 0, 2049) || row.state === 'withdrawn' && row.dependencies !== 0) throw Error('memory-result-withdrawal-unconfirmed');
   const change = Number(row.state !== 'withdrawn');
   const statements = [derivationAssertion(env, schema.guard), derivationAssertion(env, { condition: `${owned}
     AND EXISTS(SELECT 1 FROM memory_derivation_results WHERE job_id=? AND state=?)
-    AND (SELECT COUNT(*) FROM memory_derivation_result_dependencies WHERE job_id=?)=?`,
-    bindings: [jobId, actorUserId, jobId, String(row.state), jobId, row.dependencies] }),
+    AND (SELECT dependencies FROM (${query}))=?`,
+    bindings: [jobId, actorUserId, jobId, String(row.state), jobId, jobId, actorUserId, row.dependencies] }),
     db.prepare(`UPDATE memory_derivation_results SET ${retire} WHERE job_id=? AND state IN('staging','active')`).bind(jobId),
     derivationAssertion(env, { condition: 'changes()=?', bindings: [change] }), derivationAssertion(env, {
       condition: `EXISTS(SELECT 1 FROM memory_derivation_results WHERE job_id=? AND state='withdrawn' AND raw_json IS NULL AND manifest_json IS NULL)
@@ -206,11 +206,11 @@ export async function sweepNativeDerivationResults(env: WorkerEnv) {
   if (!schema.resultsPresent || env.DB !== db) return 0;
   const selected = `SELECT job_id FROM memory_derivation_results WHERE state IN('staging','active') AND expires_at<=${clock} ORDER BY expires_at,job_id LIMIT 16`;
   const counter = `SELECT (SELECT COUNT(*) FROM memory_derivation_results WHERE job_id IN(${selected})) AS count,
-    (SELECT COUNT(*) FROM memory_derivation_result_dependencies WHERE job_id IN(${selected})) AS dependencies`;
+    ((SELECT COUNT(*) FROM memory_derivation_result_dependencies WHERE job_id IN(${selected}))${schema.indexPresent ? `+(SELECT COUNT(*) FROM memory_derivation_index_intents WHERE operation='upsert' AND job_id IN(${selected}))` : ''}) AS dependencies`;
   const observed = structuredClone(await db.prepare(counter).all<Record<string, unknown>>());
   if (env.DB !== db || !derivationResults([observed], 1) || observed.results.length !== 1 || !derivationExact(observed.results[0], ['count', 'dependencies'])) throw Error('memory-result-expiry-unconfirmed');
   const row = observed.results[0]!;
-  if (!derivationInteger(row.count, 0, 16) || !derivationInteger(row.dependencies, 0, 16 * 2048)) throw Error('memory-result-expiry-unconfirmed');
+  if (!derivationInteger(row.count, 0, 16) || !derivationInteger(row.dependencies, 0, 16 * 2049)) throw Error('memory-result-expiry-unconfirmed');
   const statements = [derivationAssertion(env, schema.guard), derivationAssertion(env, {
     condition: `(SELECT count FROM (${counter}))=? AND (SELECT dependencies FROM (${counter}))=?`, bindings: [row.count, row.dependencies] }),
     db.prepare(`UPDATE memory_derivation_results SET ${retire} WHERE job_id IN(${selected})`),

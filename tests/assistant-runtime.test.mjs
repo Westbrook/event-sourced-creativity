@@ -13641,7 +13641,7 @@ test('native derivation delivery: conversation bookkeeping keeps exact reference
   state.sqlite.exec('UPDATE memory_live_sources SET conversation_segmented=1');assert.deepEqual(state.queue(),before);
 });
 
-async function nativeDerivationExecutionFixture(t,{shared=false,hosted=false,recovery=false,results=false,userControls=false,completion=false,lifecycle=false,paid=false,termOverrides={}}={}){
+async function nativeDerivationExecutionFixture(t,{shared=false,hosted=false,recovery=false,results=false,userControls=false,completion=false,lifecycle=false,indexIntents=false,paid=false,termOverrides={}}={}){
   const state=await nativeDerivationDeliveryFixture(t,{shared,termOverrides,beforeEnrollment:async state=>{
     state.sqlite.exec(await(await import('node:fs/promises')).readFile(new URL('../drizzle/0045_memory_derivation_finance.sql',import.meta.url),'utf8'));
     if(recovery||results)state.sqlite.exec(await(await import('node:fs/promises')).readFile(new URL('../drizzle/0046_memory_derivation_recovery_cursor.sql',import.meta.url),'utf8'));
@@ -13649,6 +13649,7 @@ async function nativeDerivationExecutionFixture(t,{shared=false,hosted=false,rec
     if(userControls)state.sqlite.exec(await(await import('node:fs/promises')).readFile(new URL('../drizzle/0048_memory_derivation_user_controls.sql',import.meta.url),'utf8'));
     if(completion)state.sqlite.exec(await(await import('node:fs/promises')).readFile(new URL('../drizzle/0049_memory_derivation_completion.sql',import.meta.url),'utf8'));
     if(lifecycle)state.sqlite.exec(await(await import('node:fs/promises')).readFile(new URL('../drizzle/0050_memory_derivation_lifecycle.sql',import.meta.url),'utf8'));
+    if(indexIntents)state.sqlite.exec(await(await import('node:fs/promises')).readFile(new URL('../drizzle/0054_memory_derivation_index_intents.sql',import.meta.url),'utf8'));
   }});
   const completed=await state.send('financial-execution-original');if(paid)await nativeDerivationPaidTurn(state,completed);
   state.due();await state.run();
@@ -15075,4 +15076,75 @@ test('native derivation Chat Studio: isolated D1 rolling result and counted eras
   assert.equal((await db.prepare('SELECT COUNT(*) AS n FROM memory_derivation_producer_jobs').first()).n,0);
   assert.deepEqual((await db.prepare('SELECT * FROM memory_derivation_usage ORDER BY finance_id').all()).results,financial);
   assert.deepEqual((await db.prepare('PRAGMA foreign_key_check').all()).results,[]);
+});
+
+for(const shared of [false,true])for(const hosted of [false,true])test('native derivation index: atomic publication, fresh preparation and source-free erase '+shared+'/'+hosted,{timeout:180000},async t=>{
+  const state=await nativeDerivationResultFixture(t,{shared,hosted,indexIntents:true}),db=state.env.DB,index=await import('../worker/memory-derivation-index.ts');
+  assert.equal((await state.resultStore.publishNativeDerivationResult(state.env,state.resultReceipt)).status,'stored',state.controls.lastDatabaseError);
+  const rows=()=>db.prepare('SELECT * FROM memory_derivation_index_intents').all();const initial=(await rows()).results;
+  assert.equal(initial.length,1);assert.equal(initial[0].operation,'upsert');assert.equal(initial[0].generation,1);
+  assert.deepEqual(Object.keys(initial[0]).sort(),['expires_at','generation','job_id','operation','updated_at']);
+  const read=await state.readResult(),capture=await index.captureNativeDerivationIndexUpsert(state.env,read);assert.ok(capture,state.controls.lastDatabaseError);
+  const input=index.nativeDerivationIndexUpsertInputs(state.env,capture);assert.equal(input.jobId,state.executionJob.job_id);assert.equal(input.remoteState,'unqualified');
+  assert.throws(()=>index.nativeDerivationIndexUpsertInputs(state.env,{...capture}));assert.throws(()=>index.nativeDerivationIndexUpsertInputs({...state.env},capture));
+  const proof=index.nativeDerivationIndexUpsertStatements(state.env,capture);await db.batch(proof);
+  assert.deepEqual((await rows()).results,initial);assert.equal((await index.readNativeDerivationIndexDeletes(state.env)).items.length,0);
+  const inverse=await state.derivationStore.prepareDerivationWithdrawal(state.env,{actorUserId:state.current().actor_user_id},new Date().toISOString(),true);
+  assert.equal(inverse.acknowledge(await db.batch(inverse.statements)),true,state.controls.lastDatabaseError);
+  const erased=(await rows()).results;assert.equal(erased.length,1);assert.equal(erased[0].operation,'delete');assert.equal(erased[0].generation,2);assert.equal(erased[0].expires_at,null);
+  assert.equal((await db.prepare('SELECT COUNT(*) AS n FROM memory_derivation_results').first()).n,0);
+  assert.equal((await db.prepare('SELECT COUNT(*) AS n FROM memory_derivation_usage').first()).n,1);
+  assert.deepEqual((await index.readNativeDerivationIndexDeletes(state.env)).items,[{jobId:state.executionJob.job_id,generation:2}]);
+  await assert.rejects(()=>db.batch(proof));assert.equal(await index.captureNativeDerivationIndexUpsert(state.env,read),null);
+  for(const sql of ["DELETE FROM memory_derivation_index_intents","UPDATE memory_derivation_index_intents SET operation='upsert',generation=1,expires_at='2099-01-01T00:00:00.000Z'","INSERT OR REPLACE INTO memory_derivation_index_intents SELECT * FROM memory_derivation_index_intents"])
+    await assert.rejects(()=>db.prepare(sql).run());
+  assert.deepEqual((await rows()).results,erased);
+});
+for(const fault of ['source','withdraw','correction','expire','lost-ack','rollback','schema','replace'])test('native derivation index: '+fault+' cannot resurrect a queued result',{timeout:120000},async t=>{
+  const state=await nativeDerivationResultFixture(t,{indexIntents:true,userControls:true}),db=state.env.DB,index=await import('../worker/memory-derivation-index.ts'),batch=db.batch;let hit=false;
+  if(fault==='lost-ack'||fault==='rollback')db.batch=async statements=>{
+    const at=statements.findIndex(s=>s.sql.startsWith("UPDATE memory_derivation_results SET state='active'"));
+    if(at<0||hit)return batch.call(db,statements);hit=true;
+    if(fault==='rollback')return batch.call(db,[...statements.slice(0,at+1),db.prepare("SELECT json('isolated-index-rollback')"),...statements.slice(at+1)]);
+    await batch.call(db,statements);throw Error('isolated-index-lost-ack');
+  };
+  const outcome=await state.resultStore.publishNativeDerivationResult(state.env,state.resultReceipt);db.batch=batch;
+  if(fault==='rollback'){assert.equal(outcome.status,'uncertain');assert.equal(state.sqlite.prepare('SELECT COUNT(*) AS n FROM memory_derivation_index_intents').get().n,0);assert.equal(state.sqlite.prepare('SELECT COUNT(*) AS n FROM memory_derivation_results').get().n,0);return;}
+  if(fault==='lost-ack'){assert.equal(outcome.status,'uncertain');assert.equal((await state.resultStore.publishNativeDerivationResult(state.env,state.resultReceipt)).status,'stored');return;}
+  assert.equal(outcome.status,'stored');const read=await state.readResult(),capture=await index.captureNativeDerivationIndexUpsert(state.env,read);assert.ok(capture);
+  const proof=index.nativeDerivationIndexUpsertStatements(state.env,capture);
+  const source=state.sources.nativeDerivationSourceInputs(state.env,state.executionCapture).originalBacking[0].contentRef;
+  if(fault==='source')state.sqlite.prepare("UPDATE private_content SET content='',redacted_at=? WHERE content_id=?").run(new Date().toISOString(),source);
+  if(fault==='withdraw')assert.equal(await state.resultStore.withdrawNativeDerivationResult(state.env,state.current().actor_user_id,state.executionJob.job_id),true);
+  if(fault==='correction'){
+    const controls=await import('../worker/memory-derivation-user-controls.ts'),target=state.resultStore.nativeDerivationResultControlTarget(state.env,read,state.resultStore.nativeDerivationResultInputs(state.env,read).candidate.items[0].claimKey);
+    await controls.controlNativeDerivationResult(state.env,read,target.claimKey,'corrected','Explicit replacement.',Object.fromEntries(target.lineages.map(l=>[l.lineageId,0])));
+  }
+  if(fault==='expire'){const clock=consequentialDbClock(state);t.after(()=>clock.close());clock.set(state.sqlite.prepare('SELECT expires_at FROM memory_derivation_results').get().expires_at);assert.equal(await state.resultStore.sweepNativeDerivationResults(state.env),1);await state.delivery.sweepNativeDerivationJobs(state.env);}
+  if(fault==='schema')state.sqlite.exec('DROP TRIGGER memory_derivation_index_retired');
+  if(fault==='replace'){state.sqlite.exec('PRAGMA recursive_triggers=OFF');assert.throws(()=>state.sqlite.exec('INSERT OR REPLACE INTO memory_derivation_index_intents SELECT * FROM memory_derivation_index_intents'));await db.batch(proof);return;}
+  assert.equal(await index.captureNativeDerivationIndexUpsert(state.env,read),null);await assert.rejects(()=>db.batch(proof));
+  if(fault!=='schema'){const row=state.sqlite.prepare('SELECT * FROM memory_derivation_index_intents').get();assert.equal(row.operation,'delete');assert.equal(row.generation,2);assert.equal(row.expires_at,null);}
+});
+
+for(const hosted of [false,true])test('native derivation index: correction counts and queue diagnostics are not remote acknowledgements '+hosted,{timeout:180000},async t=>{
+  const state=await nativeDerivationResultFixture(t,{hosted,indexIntents:true,userControls:true}),index=await import('../worker/memory-derivation-index.ts'),controls=await import('../worker/memory-derivation-user-controls.ts');
+  assert.equal((await state.resultStore.publishNativeDerivationResult(state.env,state.resultReceipt)).status,'stored');
+  let status=await index.readNativeDerivationIndexStatus(state.env);assert.equal(status.unexpiredQueued,1);assert.equal(status.pendingDeletes,0);assert.equal(status.remoteState,'unqualified');
+  const read=await state.readResult(),item=state.resultStore.nativeDerivationResultInputs(state.env,read).candidate.items[0],target=state.resultStore.nativeDerivationResultControlTarget(state.env,read,item.claimKey);
+  const changed=await controls.controlNativeDerivationResult(state.env,read,item.claimKey,'corrected','My explicit correction.',Object.fromEntries(target.lineages.map(l=>[l.lineageId,0])));
+  assert.equal(changed.length,1);status=await index.readNativeDerivationIndexStatus(state.env);assert.equal(status.unexpiredQueued,0);assert.equal(status.expiredQueued,0);assert.equal(status.pendingDeletes,1);
+  await controls.reviseNativeDerivationUserControl(state.env,state.current().actor_user_id,changed[0].controlId,1,'released',null);
+  assert.equal((await index.readNativeDerivationIndexStatus(state.env)).pendingDeletes,1,'Releasing a correction never resurrects old index material');
+});
+
+test('native derivation index: pre-migration results backfill only through fresh originals',{timeout:120000},async t=>{
+  const state=await nativeDerivationResultFixture(t),index=await import('../worker/memory-derivation-index.ts');assert.equal((await state.resultStore.publishNativeDerivationResult(state.env,state.resultReceipt)).status,'stored');
+  const oldRead=await state.readResult();assert.equal(await index.captureNativeDerivationIndexUpsert(state.env,oldRead),null);
+  state.sqlite.exec(await(await import('node:fs/promises')).readFile(new URL('../drizzle/0054_memory_derivation_index_intents.sql',import.meta.url),'utf8'));
+  assert.equal(state.sqlite.prepare('SELECT COUNT(*) AS n FROM memory_derivation_index_intents').get().n,0);
+  assert.equal(await index.captureNativeDerivationIndexUpsert(state.env,oldRead),null,'A changed schema invalidates the previous issued source proof');
+  const read=await state.readResult();assert.ok(read);assert.ok(await index.captureNativeDerivationIndexUpsert(state.env,read));
+  const rows=state.sqlite.prepare('SELECT * FROM memory_derivation_index_intents').all();assert.equal(rows.length,1);assert.ok(await index.captureNativeDerivationIndexUpsert(state.env,read));assert.deepEqual(state.sqlite.prepare('SELECT * FROM memory_derivation_index_intents').all(),rows);
+  await assert.rejects(()=>index.readNativeDerivationIndexDeletes(state.env,'not-a-job'));await assert.rejects(()=>index.readNativeDerivationIndexDeletes(state.env,undefined,33));
 });

@@ -181,7 +181,8 @@ export async function sweepNativeDerivationJobs(env: WorkerEnv) {
     (SELECT COUNT(*) FROM memory_derivation_producer_jobs WHERE job_id IN(${selected}))` : ""}${schema.completionPresent ? `+
     (SELECT COUNT(*) FROM memory_derivation_completions WHERE job_id IN(${selected}))` : ""}${schema.resultsPresent ? `+
     (SELECT COUNT(*) FROM memory_derivation_results WHERE job_id IN(${selected}))+
-    (SELECT COUNT(*) FROM memory_derivation_result_dependencies WHERE job_id IN(${selected}))` : ""}${schema.financePresent ? `+
+    (SELECT COUNT(*) FROM memory_derivation_result_dependencies WHERE job_id IN(${selected}))${schema.indexPresent ? `+
+    (SELECT COUNT(*) FROM memory_derivation_index_intents WHERE operation='upsert' AND job_id IN(SELECT job_id FROM memory_derivation_results WHERE job_id IN(${selected})))` : ''}` : ""}${schema.financePresent ? `+
     (SELECT COUNT(*) FROM memory_derivation_job_finance WHERE job_id IN(${selected}))+
     (SELECT COUNT(*) FROM memory_derivation_finance f JOIN memory_derivation_job_finance link ON link.finance_id=f.finance_id
       WHERE link.job_id IN(${selected}) AND f.admission_closed_at IS NULL)` : ""} AS count`;

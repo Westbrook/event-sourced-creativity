@@ -97,14 +97,14 @@ lifecycle/custody retirement through additive migration0050.
 ## Remaining native implementation — still in scope
 
 1. [Bounded original-backed rolling refresh and latest-purpose review](forma-memory-rolling-history-2026-09-19.md) are implemented. Longer-term semantic reconciliation, cross-scope recall and automatic consumers remain open; the three-window bound is not lifetime coverage.
-2. Native index outbox, source invalidation and deletion acknowledgements.
+2. [Native index intents and source invalidation](forma-memory-native-index-intents-2026-09-19.md) are implemented. Remote dispatch, qualified deletion acknowledgements and index reconciliation remain gated on the external adapter.
 3. Nested project containment/reparenting and remaining page/block identities.
 4. [Independent Chat Studio derivation](forma-memory-chat-studio-derivation-2026-09-19.md) is implemented; genuine block/reuse evidence
    and governed/historical artifact consumption remain open.
 5. Guarded rolling summary/profile/suggestion/autocomplete consumers with explicit
    correction priority and separate access versus relevance checks. Manual result
    inspection and persisted candidates do not complete those consumer paths.
-6. Index-specific minimized observability and full integration/privacy/request-
+6. Source-free local index diagnostics are implemented. Remote-index observability and full integration/privacy/request-
    budget qualification; eight prior Output HTTP budget failures remain tracked.
 
 The 64-pair cumulative ledger is not a rolling semantic summary. Native scheduled-

@@ -897,3 +897,11 @@ for(const fault of ['none','missing-guard','inbound-trigger','old-job-trigger'])
   if(fault==='old-job-trigger')f.sqlite.exec('DROP TRIGGER memory_derivation_job_insert;'+old);
   configurationTripwire(f,t);if(fault==='none')assert.deepEqual(await currentManifest(f,t),before);else await denied(f,t);
 });
+
+for(const fault of ['none','missing-guard','inbound-trigger'])test('Memory native index intent schema preserves guest isolation '+fault,async t=>{
+  const f=await completedResultFixture(t,{memory:true}),before=await currentManifest(f,t);installDerivationFinanceSchema(f);
+  for(const name of ['0020_assistant_runtime_tables','0047_memory_derivation_results','0054_memory_derivation_index_intents'])installQualifiedMigration(f,name+'.sql');
+  if(fault==='missing-guard')f.sqlite.exec('DROP TRIGGER memory_derivation_index_erased');
+  if(fault==='inbound-trigger')f.sqlite.exec('CREATE TRIGGER unqualified_index AFTER INSERT ON memory_derivation_index_intents BEGIN SELECT COUNT(*) FROM memory_live_sources; END');
+  configurationTripwire(f,t);if(fault==='none')assert.deepEqual(await currentManifest(f,t),before);else await denied(f,t);
+});
