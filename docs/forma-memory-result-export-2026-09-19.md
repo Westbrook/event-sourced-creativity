@@ -38,8 +38,7 @@ callback and wall/monotonic-clock changes prevent late downloads.
 
 ## Follow-up
 
-Manual derived-result/control review still needs monotonic display-retirement
-qualification; this is native privacy implementation, not an external blocker.
+[Manual derived-result/control monotonic display retirement](forma-memory-review-lifetime-2026-09-19.md) is now implemented and locally qualified.
 Long-term/cross-scope reconciliation, nested/resource identity, independent
 cross-document recall and automatic assistant/autocomplete origins remain in
 [the native continuation](forma-memory-native-continuation-2026-09-18.md).

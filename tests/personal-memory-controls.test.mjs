@@ -3557,3 +3557,31 @@ for(const locale of ['en','fr','ar','ja'])test('derived export has explicit loca
   h.enqueue(data.result);await profileClick(h,'reviewExport');assert.equal(h.downloads.length,1);
   assert.ok(h.text().includes(personalMemoryMessage(locale,'memory.live.reviewExportRequested')));
 });
+
+for(const clockChange of ['rollback','monotonic-only','wall-only','nonfinite'])test('manual derived review retires irreversibly on '+clockChange,async t=>{
+  const {h}=await inspectDerivedReview(t),stale=profileAction(h,'reviewSuppress'),before=h.calls.length,wall=h.clock.now,mono=h.clock.monotonic;
+  if(clockChange==='rollback')h.clock.now-=1000;
+  if(clockChange==='monotonic-only')h.clock.monotonic+=31000;
+  if(clockChange==='wall-only')h.clock.now+=31000;
+  if(clockChange==='nonfinite')h.clock.monotonic=NaN;
+  h.fireTimer();assert.doesNotMatch(h.text(),/Private tentative memory proposal/);
+  h.clock.now=wall;h.clock.monotonic=mono;h.notify();await h.invoke(stale,'@click').result;
+  assert.doesNotMatch(h.text(),/Private tentative memory proposal/);assert.equal(h.calls.length,before);assert.equal(h.mutations().length,0);
+});
+for(const clockChange of ['rollback','monotonic-only'])test('manual correction controls retire text and stale release on '+clockChange,async t=>{
+  const {h,item}=await purposeFixture(t),data=derivedReviewFixture(item),validUntil=new Date(Date.now()+30000).toISOString();
+  h.enqueue({version:MEMORY_DERIVATION_CONTROL,available:true,scope:data.list.scope,enrollmentId:item.id,enrollmentRevision:item.revision,validUntil,
+    controls:[{controlId:'4'.repeat(64),claimKey:data.claimKey,lineageId:data.lineage,revision:1,action:'corrected',correctionText:'Private explicit correction.',expiresAt:item.expiresAt,purpose:'rolling-summary',textAvailable:true}],next:'4'.repeat(64)});
+  await profileClick(h,'reviewControls');assert.match(h.text(),/Private explicit correction/);
+  const stale=profileAction(h,'reviewRelease'),before=h.calls.length;
+  if(clockChange==='rollback')h.clock.now-=1000;else h.clock.monotonic+=31000;
+  h.fireTimer();assert.doesNotMatch(h.text(),/Private explicit correction/);await h.invoke(stale,'@click').result;
+  assert.equal(h.calls.length,before);assert.equal(h.mutations().length,0);assert.ok(!h.all().some(control=>control.label==='memory.live.reviewNext'));
+});
+for(const clockChange of ['rollback','monotonic-only'])test('manual review read cancels stalled body on '+clockChange,async t=>{
+  const {h,item}=await purposeFixture(t),data=derivedReviewFixture(item);h.enqueue(data.list);await profileClick(h,'reviewLoad');
+  const delayed=delayedJson(data.result);h.enqueue(delayed.response);const pending=profileClick(h,'reviewInspect');await flush();
+  if(clockChange==='rollback')h.clock.now-=1000;else h.clock.monotonic+=61000;
+  h.fireTimer();await flush();assert.equal(delayed.cancellations,1);delayed.release();await pending;
+  assert.doesNotMatch(h.text(),/Private tentative memory proposal|memory.live.purposeUnknown/);assert.equal(h.mutations().length,0);
+});
