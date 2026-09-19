@@ -132,7 +132,8 @@ export async function readNativeDerivationResult(env: WorkerEnv, actorUserId: st
     if (!row || row.state !== 'active' || typeof row.raw_json !== 'string' || typeof row.manifest_json !== 'string'
       || typeof row.expires_at !== 'string' || row.expires_at <= new Date().toISOString()
       || await memoryDigest(row.raw_json) !== row.output_sha256 || await memoryDigest(row.manifest_json) !== row.manifest_sha256) return null;
-    const captured = await captureNativeDerivationSources(env, evidence); if (captured.status !== 'captured') return null;
+    const parsedManifest=JSON.parse(row.manifest_json) as NativeDerivationManifestData;
+    const captured = await captureNativeDerivationSources(env, evidence, {history:parsedManifest.history!==undefined}); if (captured.status !== 'captured') return null;
     const manifest = await revalidateNativeDerivationManifest(env, captured.capture, row.manifest_json); if (!manifest) return null;
     const source = nativeDerivationSourceInputs(env, captured.capture), expected = dependencies(nativeDerivationManifestInputs(env, manifest).manifest);
     if (row.dependency_count !== expected.length || source.retentionCeiling !== row.expires_at) return null;
@@ -154,7 +155,9 @@ function currentRead(env: WorkerEnv, handle: NativeDerivationResultRead) {
 }
 export function nativeDerivationResultInputs(env: WorkerEnv, handle: NativeDerivationResultRead) {
   const read = currentRead(env, handle);
-  return { jobId: String(read.row.job_id), expiresAt: String(read.row.expires_at), candidate: structuredClone(read.candidate) };
+  const history=nativeDerivationSourceInputs(env,read.capture).history;
+  return { jobId: String(read.row.job_id), expiresAt: String(read.row.expires_at), candidate: structuredClone(read.candidate),
+    ...(history?{history:{windowCount:history.windowJobIds.length+1,originalPairs:history.originalPairs,boundary:history.boundary,afterSequence:history.afterSequence,throughSequence:history.throughSequence}}:{}) };
 }
 /** A consumer that writes an answer must carry these statements into its own
  * atomic publication; read success alone is not durable answer authority. */

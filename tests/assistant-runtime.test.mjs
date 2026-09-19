@@ -14437,7 +14437,7 @@ test('native derivation worker: default-off path cannot touch data or dispatch',
 
 async function nativeDerivationWorkerFixture(t,{skipOriginal=false,shared=false,termOverrides={}}={}){
   const state=await nativeDerivationDeliveryFixture(t,{shared,termOverrides:{maximumInputTokens:16384,...termOverrides},beforeEnrollment:async state=>{
-    for(const name of ['0045_memory_derivation_finance','0046_memory_derivation_recovery_cursor','0047_memory_derivation_results','0048_memory_derivation_user_controls','0049_memory_derivation_completion','0050_memory_derivation_lifecycle'])
+    for(const name of ['0045_memory_derivation_finance','0046_memory_derivation_recovery_cursor','0047_memory_derivation_results','0048_memory_derivation_user_controls','0049_memory_derivation_completion','0050_memory_derivation_lifecycle','0052_memory_derivation_history_privacy'])
       state.sqlite.exec(await(await import('node:fs/promises')).readFile(new URL('../drizzle/'+name+'.sql',import.meta.url),'utf8'));
   }});
   if(!skipOriginal){await state.send('scheduled-native-original');state.due();assert.equal((await state.run()).status,'completed');}
@@ -14697,4 +14697,115 @@ test('native derivation split: full registration queue retains subdivision headr
   assert.equal(await split.splitNativeDerivationJob(state.env,lease),'split',state.controls.lastDatabaseError);assert.equal(state.queue().jobs.length,33);
   state.pointer(++through);const result=await state.register(through);assert.equal(result.capacityPurposes,1);
   assert.equal(state.queue().cursors[0].registered_through_sequence,through-1);
+});
+
+async function nativeDerivationRollingFixture(t,{windows=3,shared=false,termOverrides={},message=i=>'Original human intent '+i}={}){
+  const state=await nativeDerivationWorkerFixture(t,{skipOriginal:true,shared,termOverrides:{maximumInputTokens:65536,...termOverrides}}),worker=await import('../worker/memory-derivation-worker.ts');
+  const requests=[],fetch=globalThis.fetch;t.after(()=>{globalThis.fetch=fetch;});
+  globalThis.fetch=async(_url,init)=>{const input=JSON.parse(JSON.parse(init.body).input);requests.push(input);
+    const quote=Array.from(input.originals[0].text).slice(0,8).join('');
+    return Response.json({id:'isolated-rolling-'+requests.length,object:'response',model:'isolated-test-model',service_tier:'default',status:'completed',error:null,incomplete_details:null,
+      usage:{input_tokens:800,output_tokens:40,total_tokens:840,input_tokens_details:{cached_tokens:400}},output:[{type:'message',role:'assistant',status:'completed',content:[{type:'output_text',text:JSON.stringify({version:'memory-derivation-candidates-v1',items:[{operation:'assert',target:null,category:input.purpose==='profile'?'preference-hypothesis':input.purpose==='suggestion'?'proposal':'goal',text:'Synthetic rolling proposal '+requests.length,supports:[{sourceIndex:0,start:0,end:8,text:quote}],counterevidence:[]}]})}]}]});};
+  for(let i=0;i<windows;i++){
+    // Generate genuine unassisted originals; a memory-assisted answer is not new independent evidence.
+    state.env.FORMA_MEMORY_ENABLED='false';
+    await specialistFreeTurn(state,'rolling-original-'+i,message(i));
+    state.env.FORMA_MEMORY_ENABLED='true';
+    state.sqlite.exec('UPDATE memory_live_enrollments SET last_local_day=NULL,last_admitted_at=NULL');
+    state.due();assert.equal((await state.run()).status,'completed',state.controls.lastDatabaseError);
+    assert.equal((await worker.runNativeDerivationScheduled(state.env)).status,'stored',state.controls.lastDatabaseError);
+  }
+  return Object.assign(state,{rollingRequests:requests});
+}
+for(const shared of [false,true])test('native derivation history: rolling rebase rereads originals, never previous model claims '+shared,{timeout:180000},async t=>{
+  const state=await nativeDerivationRollingFixture(t,{windows:4,shared}),store=await import('../worker/memory-derivation-results.ts');
+  assert.deepEqual(state.rollingRequests.map(input=>input.originals.length),[2,4,6,6]);
+  assert.ok(state.rollingRequests.every(input=>!JSON.stringify(input).includes('Synthetic rolling proposal')));
+  const jobs=state.queue().jobs.sort((a,b)=>a.after_sequence-b.after_sequence),last=jobs.at(-1),row=state.sqlite.prepare('SELECT * FROM memory_derivation_results WHERE job_id=?').get(last.job_id);
+  const manifest=JSON.parse(row.manifest_json);assert.equal(manifest.history.boundary,'bounded');assert.deepEqual(manifest.history.windowJobIds,jobs.slice(1,3).map(j=>j.job_id));
+  assert.equal(manifest.originals.length,6);assert.equal(manifest.history.originalPairs,3);assert.equal(manifest.coverage.queuedReferences,1);
+  assert.equal(manifest.expiresAt,row.expires_at);assert.ok(row.expires_at<=last.expires_at);
+  assert.ok(await store.readNativeDerivationResult(state.env,state.current().actor_user_id,last.job_id),state.controls.lastDatabaseError);
+  // Old single-window results still replay under their original contract.
+  assert.ok(await store.readNativeDerivationResult(state.env,state.current().actor_user_id,jobs[0].job_id));
+});
+for(const fault of ['body-erased','reference-erased','correction','late-publication'])test('native derivation history: historical '+fault+' closes the current result too',{timeout:120000},async t=>{
+  const state=await nativeDerivationRollingFixture(t,{windows:2}),store=await import('../worker/memory-derivation-results.ts'),jobs=state.queue().jobs.sort((a,b)=>a.after_sequence-b.after_sequence),actor=state.current().actor_user_id;
+  const read=await store.readNativeDerivationResult(state.env,actor,jobs[1].job_id);assert.ok(read);
+  const earlier=JSON.parse(state.sqlite.prepare('SELECT manifest_json FROM memory_derivation_results WHERE job_id=?').get(jobs[0].job_id).manifest_json);
+  if(fault==='body-erased'||fault==='late-publication')state.sqlite.prepare('DELETE FROM private_content WHERE content_id=?').run(earlier.originalBacking[0].contentRef);
+  if(fault==='reference-erased')state.sqlite.prepare('DELETE FROM memory_live_sources WHERE event_id=?').run(earlier.provenance.events.find(e=>e.eventId===state.queue().job_sources.find(s=>s.job_id===jobs[0].job_id).event_id).eventId);
+  if(fault==='correction'){
+    const old=await store.readNativeDerivationResult(state.env,actor,jobs[0].job_id),item=store.nativeDerivationResultInputs(state.env,old).candidate.items[0];
+    const controls=await import('../worker/memory-derivation-user-controls.ts');
+    const target=store.nativeDerivationResultControlTarget(state.env,old,item.claimKey);
+    assert.equal((await controls.controlNativeDerivationResult(state.env,old,item.claimKey,'corrected','My current intent supersedes this.',Object.fromEntries(target.lineages.map(value=>[value.lineageId,0]))))[0].action,'corrected');
+  }
+  assert.equal(await store.readNativeDerivationResult(state.env,actor,jobs[1].job_id),null);
+  if(fault==='late-publication')await assert.rejects(()=>state.env.DB.batch(store.nativeDerivationResultStatements(state.env,read)));
+  const latest=state.sqlite.prepare('SELECT * FROM memory_derivation_results WHERE job_id=?').get(jobs[1].job_id);assert.equal(latest.state,'withdrawn');assert.equal(latest.raw_json,null);
+  assert.equal(state.sqlite.prepare('SELECT COUNT(*) AS n FROM memory_derivation_usage').get().n,2);
+});
+
+for(const recursive of [false,true])for(const change of ['replace','update','rollback'])test('native derivation history: reference '+change+' retires downstream without renewing money recursive='+recursive,{timeout:120000},async t=>{
+  const state=await nativeDerivationRollingFixture(t,{windows:2}),jobs=state.queue().jobs.sort((a,b)=>a.after_sequence-b.after_sequence);
+  const reference=state.queue().job_sources.find(row=>row.job_id===jobs[0].job_id),before=state.sqlite.prepare('SELECT * FROM memory_derivation_usage').all();
+  state.sqlite.exec('PRAGMA recursive_triggers='+(recursive?'ON':'OFF'));
+  if(change==='replace')state.sqlite.prepare('INSERT OR REPLACE INTO memory_live_sources SELECT * FROM memory_live_sources WHERE enrollment_id=? AND event_id=?').run(reference.enrollment_id,reference.event_id);
+  if(change==='update')state.sqlite.prepare('UPDATE memory_live_sources SET expires_at=? WHERE enrollment_id=? AND event_id=?').run(new Date(Date.parse(reference.expires_at)-1000).toISOString(),reference.enrollment_id,reference.event_id);
+  if(change==='rollback')await assert.rejects(()=>state.env.DB.batch([state.env.DB.prepare('DELETE FROM memory_live_sources WHERE enrollment_id=? AND event_id=?').bind(reference.enrollment_id,reference.event_id),state.env.DB.prepare("SELECT json('rollback-history')")]));
+  const row=state.sqlite.prepare('SELECT * FROM memory_derivation_results WHERE job_id=?').get(jobs[1].job_id);
+  assert.equal(row.state,change==='rollback'?'active':'withdrawn');assert.deepEqual(state.sqlite.prepare('SELECT * FROM memory_derivation_usage').all(),before);
+});
+test('native derivation history: real D1 replays all windows and atomically retires old-source dependencies',{timeout:180000},async t=>{
+  const state=await nativeDerivationRollingFixture(t,{windows:3,shared:true}),jobs=state.queue().jobs.sort((a,b)=>a.after_sequence-b.after_sequence);
+  const {createRequire}=await import('node:module'),{Miniflare,Log,LogLevel}=createRequire(import.meta.resolve('wrangler'))('miniflare');
+  const {exportSynthetic,install}=await import('./helpers/model3d-workerd-snapshot.mjs');let outbound=0;
+  const mf=new Miniflare({modules:true,compatibilityDate:'2026-05-15',host:'127.0.0.1',port:0,log:new Log(LogLevel.NONE),d1Databases:['MemoryRolling'],script:"export default {fetch(){return new Response('isolated',{status:404});}};",outboundService(){outbound++;throw Error('No network');}});
+  t.after(async()=>{await mf.dispose();assert.equal(outbound,0);});const db=await mf.getD1Database('MemoryRolling');await install(db,exportSynthetic(state.sqlite));state.env.DB=db;
+  const store=await import('../worker/memory-derivation-results.ts'),view=await store.readNativeDerivationResult(state.env,state.current().actor_user_id,jobs[2].job_id);assert.ok(view);
+  assert.equal(store.nativeDerivationResultInputs(state.env,view).history.windowCount,3);
+  const source=state.queue().job_sources.find(row=>row.job_id===jobs[0].job_id);
+  await db.prepare('DELETE FROM memory_live_sources WHERE enrollment_id=? AND event_id=?').bind(source.enrollment_id,source.event_id).run();
+  assert.equal((await db.prepare('SELECT state FROM memory_derivation_results WHERE job_id=?').bind(jobs[2].job_id).first()).state,'withdrawn');
+  assert.equal(await store.readNativeDerivationResult(state.env,state.current().actor_user_id,jobs[2].job_id),null);
+  assert.equal((await db.prepare('SELECT COUNT(*) AS n FROM memory_derivation_usage').first()).n,3);
+});
+
+test('native derivation history: authenticated discovery is newest-first with scope-bound pagination',{timeout:180000},async t=>{
+  const state=await nativeDerivationRollingFixture(t,{windows:10}),api=await import('../worker/memory-derivation-api.ts');
+  const jobs=state.queue().jobs.sort((a,b)=>b.through_sequence-a.through_sequence||a.job_id.localeCompare(b.job_id));
+  const get=after=>api.handleMemoryDerivationResults(new Request(state.derivationOrigin+'/api/memory/derivation/results?projectId=project-atmosphere&documentId=doc-atmosphere'+(after?'&after='+after:''),{headers:state.owner}),state.env);
+  const first=await get();assert.equal(first.status,200,await first.clone().text());assert.equal(first.headers.get('cache-control'),'private, no-store');
+  const page=await first.json();assert.deepEqual(page.results.map(r=>r.jobId),jobs.slice(0,8).map(j=>j.job_id));assert.equal(page.next,jobs[7].job_id);
+  const rest=await(await get(page.next)).json();assert.deepEqual(rest.results.map(r=>r.jobId),jobs.slice(8).map(j=>j.job_id));assert.equal(rest.next,null);
+  assert.equal((await get('f'.repeat(64))).status,409);
+  const {createMemoryDerivationClient}=await import('../src/state/memory-derivation-client.ts');
+  const client=createMemoryDerivationClient((path,init)=>(path.startsWith('/api/memory/derivation/results?')?api.handleMemoryDerivationResults:api.handleMemoryDerivationResult)(new Request(state.derivationOrigin+path,{...init,headers:{...init.headers,...state.owner}}),state.env));
+  const expected={projectId:'project-atmosphere',documentId:'doc-atmosphere',expectedCustody:{kind:'personal'},enrollmentId:state.current().enrollment_id,enrollmentRevision:state.current().revision};
+  const clientPage=await client.results(expected),clientRest=await client.results(expected,clientPage.next);
+  assert.deepEqual(clientRest.results.map(r=>r.jobId),jobs.slice(8).map(j=>j.job_id));
+  const purposePage=await client.results(expected,null,undefined,'rolling-summary');
+  assert.deepEqual(purposePage.results.map(r=>r.jobId),page.results.map(r=>r.jobId));
+  assert.equal((await client.results(expected,null,undefined,'profile')).results.length,0);
+  const filtered=(extra)=>api.handleMemoryDerivationResults(new Request(state.derivationOrigin+'/api/memory/derivation/results?projectId=project-atmosphere&documentId=doc-atmosphere'+extra,{headers:state.owner}),state.env);
+  assert.equal((await filtered('&purpose=profile&after='+page.next)).status,409);
+  assert.equal((await filtered('&purpose=unknown')).status,400);assert.equal((await filtered('&purpose=profile&purpose=profile')).status,400);
+  const view=await client.inspectResult(page.results[0]);assert.equal(view.history.windowCount,3);assert.equal(view.history.boundary,'bounded');assert.ok(Object.isFrozen(view.history));
+});
+
+for(const purpose of ['profile','suggestion'])test('native derivation history: '+purpose+' retains original human support across windows',{timeout:120000},async t=>{
+  const state=await nativeDerivationRollingFixture(t,{windows:3,termOverrides:{purpose}}),store=await import('../worker/memory-derivation-results.ts');
+  const job=state.queue().jobs.sort((a,b)=>b.through_sequence-a.through_sequence)[0];
+  const view=await store.readNativeDerivationResult(state.env,state.current().actor_user_id,job.job_id);assert.ok(view);
+  assert.deepEqual(state.rollingRequests.map(request=>request.purpose),[purpose,purpose,purpose]);
+  const result=store.nativeDerivationResultInputs(state.env,view);assert.equal(result.candidate.purpose,purpose);assert.equal(result.history.originalPairs,3);
+});
+test('native derivation history: qualified capacity keeps current originals whole and discloses excluded history',{timeout:120000},async t=>{
+  const state=await nativeDerivationRollingFixture(t,{windows:2,termOverrides:{maximumInputTokens:10000},message:i=>'Original intent '+i+' '+('界'.repeat(1000))});
+  assert.deepEqual(state.rollingRequests.map(request=>request.originals.length),[2,2]);
+  const last=state.queue().jobs.sort((a,b)=>b.through_sequence-a.through_sequence)[0];
+  const row=state.sqlite.prepare('SELECT manifest_json FROM memory_derivation_results WHERE job_id=?').get(last.job_id),manifest=JSON.parse(row.manifest_json);
+  assert.equal(manifest.history.boundary,'capacity');assert.equal(manifest.history.originalPairs,1);assert.deepEqual(manifest.history.windowJobIds,[]);
+  assert.equal(state.rollingRequests[1].originals[0].text,'Original intent 1 '+('界'.repeat(1000)));
 });

@@ -120,7 +120,8 @@ async function read(response: Response, signal?: AbortSignal): Promise<unknown> 
 export type DerivationProgress = {purpose:MemoryDerivationPurpose;pending:number;completed:number;retained:number;uncertain:number;registeredThrough:number|null;completedThrough:number|null};
 export type DerivationResultEntry = {jobId:string;purpose:MemoryDerivationPurpose;scopeKey:string;expiresAt:string};
 export type DerivationResultItem = {claimKey:string;category:string;text:string;lineageIds:readonly string[]};
-export type DerivationResultView = DerivationResultEntry & {validUntil:string;items:readonly DerivationResultItem[];controlRevisions:Readonly<Record<string,number>>};
+export type DerivationHistory = {windowCount:number;originalPairs:number;boundary:'consent'|'bounded'|'capacity';afterSequence:number;throughSequence:number};
+export type DerivationResultView = DerivationResultEntry & {validUntil:string;items:readonly DerivationResultItem[];history?:DerivationHistory;controlRevisions:Readonly<Record<string,number>>};
 export type DerivationControl = {controlId:string;claimKey:string;lineageId:string;revision:number;action:'corrected'|'suppressed'|'released';correctionText:string|null;expiresAt:string;purpose:MemoryDerivationPurpose;textAvailable:boolean};
 const reviewText=(value:unknown,max=16384):value is string=>typeof value==='string'&&value.isWellFormed()&&value.length>0&&value.length<=max;
 function resultEntry(value:unknown):DerivationResultEntry{
@@ -129,7 +130,8 @@ function resultEntry(value:unknown):DerivationResultEntry{
   return frozen({...row} as DerivationResultEntry);
 }
 function resultView(value:unknown,expected:DerivationResultEntry):DerivationResultView{
-  const row=own(value,['version','jobId','expiresAt','candidate','controlRevisions']),candidate=own(row.candidate,['version','purpose','scopeKey','manifestId','manifestRevision','validUntil','semanticAuthority','semanticCompleteness','independentEvidence','items']);
+  const hasHistory=!!value&&typeof value==='object'&&Object.hasOwn(value,'history');
+  const row=own(value,['version','jobId','expiresAt','candidate','controlRevisions',...(hasHistory?['history']:[])]),candidate=own(row.candidate,['version','purpose','scopeKey','manifestId','manifestRevision','validUntil','semanticAuthority','semanticCompleteness','independentEvidence','items']);
   check(row.version===MEMORY_DERIVATION_CONTROL&&row.jobId===expected.jobId&&row.expiresAt===expected.expiresAt&&candidate.version==='memory-derivation-candidates-v1'
     &&candidate.purpose===expected.purpose&&candidate.scopeKey===expected.scopeKey&&candidate.semanticAuthority==='model-derived-unverified'
     &&candidate.semanticCompleteness===false&&candidate.independentEvidence===false&&derivationTime(candidate.validUntil)&&Date.parse(candidate.validUntil)>Date.now()
@@ -143,7 +145,11 @@ function resultView(value:unknown,expected:DerivationResultEntry):DerivationResu
   });
   check(new Set(items.map(item=>item.claimKey)).size===items.length);
   const ids=[...new Set(items.flatMap(item=>item.lineageIds))],revisions=own(row.controlRevisions,ids);check(Object.values(revisions).every(value=>derivationInteger(value)));
-  return frozen({...expected,validUntil:candidate.validUntil,items,controlRevisions:{...revisions} as Record<string,number>});
+  let history:DerivationHistory|undefined;
+  if(hasHistory){const h=own(row.history,['windowCount','originalPairs','boundary','afterSequence','throughSequence']);
+    check(derivationInteger(h.windowCount,1,3)&&derivationInteger(h.originalPairs,0,64)&&['consent','bounded','capacity'].includes(String(h.boundary))
+      &&derivationInteger(h.afterSequence)&&derivationInteger(h.throughSequence,Number(h.afterSequence)+1));history={...h} as DerivationHistory;}
+  return frozen({...expected,validUntil:candidate.validUntil,items,...(history?{history}:{}),controlRevisions:{...revisions} as Record<string,number>});
 }
 function controlPage(raw:unknown,expected:DerivationScopeRequest){
   const row=own(raw,['version','available','controls','next','scope','enrollmentId','enrollmentRevision','validUntil']);
@@ -175,18 +181,19 @@ export function createMemoryDerivationClient(transport: (input: RequestInfo | UR
     finally { signal?.removeEventListener("abort", abort); }
   }
   return {
-    async results(value:DerivationScopeRequest,after:string|null=null,signal?:AbortSignal){
-      const expected=requestScope(value);check(after===null||derivationHash(after));
-      return request('GET','?projectId='+encodeURIComponent(expected.projectId)+'&documentId='+encodeURIComponent(expected.documentId)+(after?'&after='+after:''),undefined,raw=>{
-        const row=own(raw,['version','scope','enrollmentId','enrollmentRevision','results','next','checkedAt','progress']);
+    async results(value:DerivationScopeRequest,after:string|null=null,signal?:AbortSignal,purpose:MemoryDerivationPurpose|null=null){
+      const expected=requestScope(value);check((after===null||derivationHash(after))&&(purpose===null||MEMORY_DERIVATION_PURPOSES.includes(purpose)));
+      return request('GET','?projectId='+encodeURIComponent(expected.projectId)+'&documentId='+encodeURIComponent(expected.documentId)+(after?'&after='+after:'')+(purpose?'&purpose='+encodeURIComponent(purpose):''),undefined,raw=>{
+        const row=own(raw,['version','scope','enrollmentId','enrollmentRevision','results','next','checkedAt','progress',...(purpose?['purpose']:[])]);
+        check(purpose===null||row.purpose===purpose);
         check(derivationTime(row.checkedAt)&&Date.parse(row.checkedAt)<=Date.now()+5000&&Date.now()-Date.parse(row.checkedAt)<60000&&Array.isArray(row.progress)&&row.progress.length<=3);
         const progress=row.progress.map(value=>{const p=own(value,['purpose','pending','completed','retained','uncertain','registeredThrough','completedThrough']);
           check(MEMORY_DERIVATION_PURPOSES.includes(p.purpose as MemoryDerivationPurpose)&&['pending','completed','retained','uncertain'].every(key=>derivationInteger(p[key]))
             &&['registeredThrough','completedThrough'].every(key=>p[key]===null||derivationInteger(p[key]))&&(p.completedThrough===null||p.registeredThrough!==null&&Number(p.completedThrough)<=Number(p.registeredThrough)));return {...p} as DerivationProgress;});
-        check(new Set(progress.map(p=>p.purpose)).size===progress.length);
+        check(new Set(progress.map(p=>p.purpose)).size===progress.length&&progress.every(p=>purpose===null||p.purpose===purpose));
         check(row.version===MEMORY_DERIVATION_CONTROL&&sameScope(scope(row.scope),{projectId:expected.projectId,documentId:expected.documentId,custody:expected.expectedCustody})
           &&row.enrollmentId===expected.enrollmentId&&row.enrollmentRevision===expected.enrollmentRevision&&Array.isArray(row.results)&&row.results.length<=8&&(row.next===null||derivationHash(row.next)));
-        const results=row.results.map(resultEntry);check(new Set(results.map(item=>item.jobId)).size===results.length&&results.every(item=>!after||item.jobId>after)&&(!row.next||row.next===results.at(-1)?.jobId));
+        const results=row.results.map(resultEntry);check(new Set(results.map(item=>item.jobId)).size===results.length&&results.every(item=>item.jobId!==after&&(purpose===null||item.purpose===purpose))&&(!row.next||row.next===results.at(-1)?.jobId));
         return frozen({results,next:row.next as string|null,progress,checkedAt:row.checkedAt});
       },signal,'/api/memory/derivation/results');
     },

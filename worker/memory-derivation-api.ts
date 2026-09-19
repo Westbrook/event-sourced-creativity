@@ -330,20 +330,32 @@ export async function handleMemoryDerivationResults(request:Request,env:WorkerEn
   const actor=auth.user,identity=principalGuard(actor);
   if(actor.fictional||!identity)return deny('principal_account_required',403);
   if(request.method!=='GET')return deny('method_not_allowed',405);
-  const projectId=url.searchParams.get('projectId'),documentId=url.searchParams.get('documentId'),after=url.searchParams.get('after')??'';
+  const projectId=url.searchParams.get('projectId'),documentId=url.searchParams.get('documentId'),after=url.searchParams.get('after')??'',purpose=url.searchParams.get('purpose');
   if(!derivationId(projectId)||!derivationId(documentId)||after!==''&&!derivationHash(after)
-    ||[...url.searchParams.keys()].some(key=>!['projectId','documentId','after'].includes(key)||url.searchParams.getAll(key).length!==1))return deny('memory_result_scope_required');
+    ||purpose!==null&&!MEMORY_DERIVATION_PURPOSES.includes(purpose as MemoryDerivationPurpose)
+    ||[...url.searchParams.keys()].some(key=>!['projectId','documentId','after','purpose'].includes(key)||url.searchParams.getAll(key).length!==1))return deny('memory_result_scope_required');
   try{
     const schema=await memoryDerivationSchema(env),selected=await scope(request,env,actor,projectId,documentId);
     if(selected instanceof Response)return selected;
     if(!schema.userControlsPresent)return deny('memory_result_schema_unavailable',503);
     const resource=nativeMemoryDocumentIdentity(selected.parent);if(!resource)return deny('memory_result_scope_unavailable',503);
     const scopeKey=memoryCanonical([resource.partitionKey,resource.documentKey]);
-    const now=new Date().toISOString(),query=`SELECT j.job_id,g.purpose,? AS scope_key,r.expires_at FROM memory_derivation_results r
+    const now=new Date().toISOString(),cursorGuards:MemorySqlGuard[]=[];
+    let afterSequence=Number.MAX_SAFE_INTEGER;
+    if(after){
+      const cursorQuery=`SELECT j.through_sequence FROM memory_derivation_jobs j JOIN memory_derivation_grants g ON g.consent_id=j.consent_id
+        WHERE j.job_id=? AND g.enrollment_id=? AND g.actor_user_id=? AND g.revoked_at IS NULL AND g.expires_at>?${purpose?' AND g.purpose=?':''}`;
+      const cursorBindings=[after,selected.parent.enrollment_id,actor.userId,now,...(purpose?[purpose]:[])],cursor=await rows(env,cursorQuery,cursorBindings);
+      if(cursor.length!==1||!derivationExact(cursor[0],['through_sequence'])||!derivationInteger(cursor[0].through_sequence))return deny('memory_result_cursor_unavailable',409);
+      afterSequence=cursor[0].through_sequence;
+      cursorGuards.push({condition:`(SELECT json_group_array(through_sequence) FROM (${cursorQuery}))=?`,bindings:[...cursorBindings,JSON.stringify([afterSequence])]});
+    }
+    const query=`SELECT j.job_id,g.purpose,? AS scope_key,r.expires_at FROM memory_derivation_results r
       JOIN memory_derivation_jobs j ON j.job_id=r.job_id JOIN memory_derivation_grants g ON g.consent_id=j.consent_id
       WHERE g.enrollment_id=? AND g.actor_user_id=? AND g.revoked_at IS NULL AND g.expires_at>?
-        AND r.state='active' AND r.expires_at>? AND j.job_id>? ORDER BY j.job_id LIMIT 9`;
-    const bindings=[scopeKey,selected.parent.enrollment_id,actor.userId,now,now,after],found=await rows(env,query,bindings);
+        AND r.state='active' AND r.expires_at>?${purpose?' AND g.purpose=?':''} AND (j.through_sequence<? OR j.through_sequence=? AND j.job_id>?)
+      ORDER BY j.through_sequence DESC,j.job_id LIMIT 9`;
+    const bindings=[scopeKey,selected.parent.enrollment_id,actor.userId,now,now,...(purpose?[purpose]:[]),afterSequence,afterSequence,after],found=await rows(env,query,bindings);
     const columns=['job_id','purpose','scope_key','expires_at'];
     if(found.length>9||found.some(row=>!derivationExact(row,columns)))return deny('memory_result_unavailable',503);
     const guard:MemorySqlGuard={condition:`(SELECT json_group_array(json_array(${columns.join(',')})) FROM (${query}))=?`,bindings:[...bindings,JSON.stringify(found.map(row=>columns.map(key=>row[key])))]};
@@ -358,17 +370,17 @@ export async function handleMemoryDerivationResults(request:Request,env:WorkerEn
       LEFT JOIN memory_derivation_completions done ON done.job_id=j.job_id LEFT JOIN memory_derivation_results r ON r.job_id=j.job_id
       LEFT JOIN memory_derivation_job_finance link ON link.job_id=j.job_id LEFT JOIN memory_derivation_finance f ON f.finance_id=link.finance_id
       LEFT JOIN memory_derivation_usage usage ON usage.finance_id=f.finance_id
-      WHERE g.enrollment_id=? AND g.actor_user_id=? AND g.revoked_at IS NULL AND g.expires_at>? GROUP BY g.consent_id ORDER BY g.purpose LIMIT 4`;
-    const progressBindings=[now,selected.parent.enrollment_id,actor.userId,now],progressColumns=['purpose','pending','completed','retained','uncertain','registeredThrough','completedThrough'];
+      WHERE g.enrollment_id=? AND g.actor_user_id=? AND g.revoked_at IS NULL AND g.expires_at>?${purpose?' AND g.purpose=?':''} GROUP BY g.consent_id ORDER BY g.purpose LIMIT 4`;
+    const progressBindings=[now,selected.parent.enrollment_id,actor.userId,now,...(purpose?[purpose]:[])],progressColumns=['purpose','pending','completed','retained','uncertain','registeredThrough','completedThrough'];
     const progress=schema.completionPresent?await rows(env,progressQuery,progressBindings):[];
     if(progress.length>3||progress.some(row=>!derivationExact(row,progressColumns)))return deny('memory_result_status_unavailable',503);
-    const guards=[schema.guard,identity,...selected.guards,guard,clock(new Date(started+60000).toISOString()),...(schema.completionPresent?[{condition:`(SELECT json_group_array(json_array(${progressColumns.join(',')})) FROM (${progressQuery}))=?`,bindings:[...progressBindings,JSON.stringify(progress.map(row=>progressColumns.map(key=>row[key])))]}]:[])];
+    const guards=[schema.guard,identity,...selected.guards,...cursorGuards,guard,clock(new Date(started+60000).toISOString()),...(schema.completionPresent?[{condition:`(SELECT json_group_array(json_array(${progressColumns.join(',')})) FROM (${progressQuery}))=?`,bindings:[...progressBindings,JSON.stringify(progress.map(row=>progressColumns.map(key=>row[key])))]}]:[])];
     const checked=await db.batch(guards.map(value=>derivationAssertion(env,value)));
     if(env.DB!==db||settingsKey(env)!==configuration||Date.now()-started>=60000||found.some(row=>String(row.expires_at)<=new Date().toISOString())
       ||!derivationResults(checked,guards.length)||!checked.every(derivationVerified))return deny('memory_result_unavailable',503);
     const parent=selected.parent;
     return reply({scope:{projectId,documentId,custody:parent.organization_id===null?{kind:'personal'}:{kind:'organization',organizationId:parent.organization_id,projectAccessId:parent.project_access_id,ownerUserId:parent.owner_user_id}},
       enrollmentId:parent.enrollment_id,enrollmentRevision:parent.revision,
-      checkedAt:now,progress,results:found.slice(0,8).map(row=>({jobId:row.job_id,purpose:row.purpose,scopeKey:row.scope_key,expiresAt:row.expires_at})),next:found.length>8?found[7]!.job_id:null});
+      checkedAt:now,progress,...(purpose?{purpose}:{}),results:found.slice(0,8).map(row=>({jobId:row.job_id,purpose:row.purpose,scopeKey:row.scope_key,expiresAt:row.expires_at})),next:found.length>8?found[7]!.job_id:null});
   }catch{return deny('memory_result_unavailable',503);}
 }

@@ -3444,3 +3444,41 @@ test('derived review uncertain mutation clears private view, requires reload, an
   const {h}=await inspectDerivedReview(t),stale=profileAction(h,'reviewSuppress');h.enqueue(new Error('lost-review-ack'));await profileClick(h,'reviewSuppress');
   assert.match(h.text(),/memory.live.purposeUnknown/);assert.doesNotMatch(h.text(),/Private tentative memory proposal/);await h.invoke(stale,'@click').result;assert.equal(h.mutations().length,1);
 });
+
+for(const locale of ['en','fr','ar','ja'])for(const boundary of ['consent','bounded','capacity'])test('derived review discloses original-history boundary '+locale+' '+boundary,async t=>{
+  const {h,item}=await purposeFixture(t,{locale,localized:true}),data=derivedReviewFixture(item);
+  data.result.history={windowCount:3,originalPairs:6,boundary,afterSequence:5,throughSequence:25};
+  h.enqueue(data.list);await profileClick(h,'reviewLoad');h.enqueue(data.result);await profileClick(h,'reviewInspect');
+  assert.ok(h.text().includes(personalMemoryMessage(locale,'memory.live.reviewHistory.'+boundary)));
+  assert.doesNotMatch(h.text(),/memory\.live\.reviewHistory/);assert.equal(h.mutations().length,0);
+});
+for(const fault of ['too-many-windows','too-many-pairs','reversed','unknown-boundary','extra-key'])test('derived review refuses malformed history '+fault,async t=>{
+  const {h,item}=await purposeFixture(t),data=derivedReviewFixture(item);
+  data.result.history={windowCount:3,originalPairs:6,boundary:'bounded',afterSequence:5,throughSequence:25};
+  if(fault==='too-many-windows')data.result.history.windowCount=4;
+  if(fault==='too-many-pairs')data.result.history.originalPairs=65;
+  if(fault==='reversed')data.result.history.throughSequence=4;
+  if(fault==='unknown-boundary')data.result.history.boundary='all-history-complete';
+  if(fault==='extra-key')data.result.history.permission=true;
+  h.enqueue(data.list);await profileClick(h,'reviewLoad');h.enqueue(data.result);await profileClick(h,'reviewInspect');
+  assert.doesNotMatch(h.text(),/Private tentative memory proposal/);assert.equal(h.mutations().length,0);
+});
+
+for(const purpose of ['rolling-summary','profile','suggestion'])test('latest derived '+purpose+' is purpose-bound, freshly inspected and never enrolled',async t=>{
+  const {h,item}=await purposeFixture(t),data=derivedReviewFixture(item);
+  data.entry.purpose=purpose;data.result.candidate.purpose=purpose;data.list.purpose=purpose;
+  const before=purposeActions(h).length;h.enqueue(data.list);h.enqueue(data.result);await profileClick(h,'reviewLatest.'+purpose);
+  assert.equal(purposeActions(h).length,before+2);assert.ok(purposeActions(h).at(-2).url.endsWith('&purpose='+purpose));
+  assert.match(h.text(),/Private tentative memory proposal/);assert.equal(h.mutations().length,0);
+  h.visibility('hidden');h.visibility('visible');assert.doesNotMatch(h.text(),/Private tentative memory proposal/);
+});
+test('latest derived purpose refuses a mismatched inventory without loading any body',async t=>{
+  const {h,item}=await purposeFixture(t),data=derivedReviewFixture(item),before=purposeActions(h).length;
+  data.list.purpose='suggestion';h.enqueue(data.list);await profileClick(h,'reviewLatest.profile');
+  assert.equal(purposeActions(h).length,before+1);assert.doesNotMatch(h.text(),/Private tentative memory proposal/);assert.match(h.text(),/memory.live.purposeError/);
+});
+test('latest derived purpose empty inventory does not load or invent a profile',async t=>{
+  const {h,item}=await purposeFixture(t),data=derivedReviewFixture(item),before=purposeActions(h).length;
+  data.list.purpose='profile';data.list.results=[];h.enqueue(data.list);await profileClick(h,'reviewLatest.profile');
+  assert.equal(purposeActions(h).length,before+1);assert.match(h.text(),/memory.live.reviewEmpty/);assert.equal(h.mutations().length,0);
+});

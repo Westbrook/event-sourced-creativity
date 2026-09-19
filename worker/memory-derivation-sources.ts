@@ -1,3 +1,4 @@
+import { nativeDerivationRequestBody, nativeDerivationRequestFits } from './memory-derivation-request.ts';
 import { captureNativeArtifactConsumption } from './memory-native-artifact-consumption.ts';
 import { memoryDigest } from "../src/model/scoped-memory.ts";
 import { memoryEventAction, type MemoryAction } from "../src/model/memory-observations.ts";
@@ -9,8 +10,8 @@ import { nativeMemoryAnswerExclusion } from "./memory-native-boundary.ts";
 import { observeNativeMemoryDocumentScope, nativeMemoryArtifactIdentity } from "./memory-native-scope.ts";
 import { memoryCanonical } from "./memory-sql.ts";
 import { derivationExact, derivationHash, derivationId, derivationInteger, derivationTime } from "./memory-derivation-policy.ts";
-import { derivationResults } from "./memory-derivation-store.ts";
-import { nativeDerivationEvidenceInputs, nativeDerivationEvidenceStatements, replayNativeDerivationEvidence, type NativeDerivationEvidence } from "./memory-derivation-admission.ts";
+import { derivationResults, memoryDerivationSchema } from "./memory-derivation-store.ts";
+import { nativeDerivationEvidenceInputs, nativeDerivationEvidenceStatements, replayNativeDerivationEvidence, observeNativeDerivationJob, type NativeDerivationEvidence } from "./memory-derivation-admission.ts";
 import type { MemoryDerivationSource } from "./memory-derivation-result.ts";
 import type { WorkerEnv } from "./runtime.ts";
 
@@ -28,16 +29,17 @@ export type NativeDerivationProvenance = {
   artifacts?: { eventId:string; contentRef:string; eventIds:string[] }[];
   sourceRowsSha256: string;
 };
+export type NativeDerivationHistory = { version: 1; windowJobIds: string[]; afterSequence: number; throughSequence: number; boundary: "consent" | "bounded" | "capacity"; originalPairs: number };
 type CaptureData = { jobId: string; purpose: MemoryDerivationSourcePurpose; scopeKey: string; checkedAt: string; validUntil: string;
   binding: { actorUserId: string; consentId: string; grantId: string; grantRevision: number; enrollmentId: string;
     enrollmentRevision: number; termsSha256: string; afterSequence: number; throughSequence: number };
   retentionCeiling: string; originals: MemoryDerivationSource[]; originalBacking: Backing[]; observations: NativeDerivationObservation[];
-  provenance: NativeDerivationProvenance;
+  provenance: NativeDerivationProvenance; history?: NativeDerivationHistory;
   coverage: { queuedReferences: number; originalPairs: number; typedObservations: number; excludedByUserControls?: number; allReferencesCaptured: true; semanticComplete: false } };
 type MemoryDerivationSourcePurpose = ReturnType<typeof nativeDerivationEvidenceInputs>["grant"]["purpose"];
 declare const issuedCapture: unique symbol;
 export type NativeDerivationSourceCapture = Readonly<{ [issuedCapture]: true }>;
-type Captured = { env: WorkerEnv; db: WorkerEnv["DB"]; lease: NativeDerivationEvidence; validUntil: string; witness: AssistantContextReadWitness<CaptureData> };
+type Captured = { env: WorkerEnv; db: WorkerEnv["DB"]; lease: NativeDerivationEvidence; validUntil: string; witness: AssistantContextReadWitness<CaptureData>; parts?: NativeDerivationSourceCapture[] };
 const captures = new WeakMap<NativeDerivationSourceCapture, Captured>();
 const unavailable = () => ({ status: "unavailable" } as const);
 const capacity = () => ({ status: "capacity" } as const);
@@ -55,7 +57,7 @@ const clean = (payload: string) => `json_valid(${payload}) AND COALESCE(json_ext
  * remain incomplete; nothing is sliced, acknowledged as processed or deleted.
  * Typed observations are descriptive evidence, NOT original human quotations.
  */
-export async function captureNativeDerivationSources(env: WorkerEnv, lease: NativeDerivationEvidence) {
+async function captureNativeDerivationWindow(env: WorkerEnv, lease: NativeDerivationEvidence) {
   try {
     const db = env.DB, input = nativeDerivationEvidenceInputs(env, lease), { enrollment: e, grant: g, authority: a, job } = input;
     if (!await replayNativeDerivationEvidence(env, lease) || env.DB !== db) return unavailable();
@@ -268,6 +270,71 @@ export async function captureNativeDerivationSources(env: WorkerEnv, lease: Nati
   } catch { return unavailable(); }
 }
 
+/** Rebase from recent ORIGINAL windows, never from earlier model claims. Each
+ * historical window uses separate fresh read-only proof under the same consent.
+ * Bounds are explicit: no source truncation, hidden gap skipping, or claim of a
+ * complete lifetime history. Legacy result reads may request their exact original
+ * single-window contract; this option cannot grant spending or widen access. */
+export async function captureNativeDerivationSources(env: WorkerEnv, lease: NativeDerivationEvidence, options: { history?: boolean } = {}) {
+  const own = await captureNativeDerivationWindow(env, lease);
+  if (own.status !== 'captured' || options.history === false) return own;
+  try {
+    const db=env.DB, input=nativeDerivationEvidenceInputs(env,lease), schema=await memoryDerivationSchema(env);
+    if (!schema.historyPresent) return own;
+    const current=nativeDerivationSourceInputs(env,own.capture), witness=new AssistantContextReadWitness<CaptureData>(env);
+    const query={sql:`SELECT j.job_id,j.after_sequence,j.through_sequence FROM memory_derivation_jobs j
+      JOIN memory_derivation_completions done ON done.job_id=j.job_id
+      JOIN memory_derivation_results retained ON retained.job_id=j.job_id AND retained.expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now')
+      WHERE j.consent_id=? AND j.through_sequence<=? AND j.expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now')
+      ORDER BY j.through_sequence DESC,j.job_id LIMIT 3`,bindings:[input.grant.consent_id,input.job.after_sequence]};
+    const statement=db.prepare(query.sql).bind(...query.bindings), result=await statement.all<Row>();
+    if(env.DB!==db||!derivationResults([result],1)||result.results.length>3
+      ||result.results.some(row=>!derivationExact(row,['job_id','after_sequence','through_sequence'])||!derivationHash(row.job_id)
+        ||!derivationInteger(row.after_sequence)||!derivationInteger(row.through_sequence,Number(row.after_sequence)+1,input.job.after_sequence)))return unavailable();
+    // Keep zero-history manifests byte-compatible with previous single windows.
+    if(!result.results.length)return own;
+    witness.observe([statement],[result],[query]);
+    const parts=[own.capture], data=[current];
+    let boundary:NativeDerivationHistory['boundary']=result.results.length>2?'bounded':'consent';
+    let merged=current;
+    for(const row of result.results.slice(0,2)) {
+      const evidence=await observeNativeDerivationJob(env,input.grant.actor_user_id,String(row.job_id));
+      if(!evidence){boundary='bounded';break;}
+      const previous=await captureNativeDerivationWindow(env,evidence);
+      if(previous.status!=='captured'){boundary=previous.status==='capacity'?'capacity':'bounded';break;}
+      const source=nativeDerivationSourceInputs(env,previous.capture);
+      if(source.scopeKey!==current.scopeKey||source.purpose!==current.purpose||source.binding.consentId!==current.binding.consentId
+        ||source.binding.throughSequence>current.binding.afterSequence)return unavailable();
+      const windows=[source,...data];
+      const originals=windows.flatMap(value=>value.originals),observations=windows.flatMap(value=>value.observations);
+      if(originals.length>128||observations.length>128||bytes(JSON.stringify(originals))>460000
+        ||!nativeDerivationRequestFits(input.qualification.terms,nativeDerivationRequestBody(input.qualification.terms,originals,observations))){boundary='capacity';break;}
+      if(new Set(originals.map(value=>value.sourceId)).size!==originals.length)return unavailable();
+      parts.unshift(previous.capture);data.unshift(source);
+      const unique=<T>(values:T[])=>[...new Map(values.map(value=>[memoryCanonical(value),value])).values()];
+      merged={...current,originals,observations,originalBacking:unique(data.flatMap(value=>value.originalBacking)),
+        checkedAt:data.map(value=>value.checkedAt).sort().at(-1)!,validUntil:data.map(value=>value.validUntil).sort()[0]!,
+        retentionCeiling:data.map(value=>value.retentionCeiling).sort()[0]!,
+        provenance:{events:unique(data.flatMap(value=>value.provenance.events)),turns:unique(data.flatMap(value=>value.provenance.turns)),
+          paid:unique(data.flatMap(value=>value.provenance.paid)),
+          ...(data.some(value=>value.provenance.artifacts)?{artifacts:unique(data.flatMap(value=>value.provenance.artifacts??[]))}:{}),
+          sourceRowsSha256:await memoryDigest(memoryCanonical(data.map(value=>[value.jobId,value.provenance.sourceRowsSha256])))},
+        coverage:{...current.coverage,originalPairs:originals.length/2,typedObservations:observations.length,
+          ...(data.some(value=>value.coverage.excludedByUserControls)?{excludedByUserControls:data.reduce((n,value)=>n+(value.coverage.excludedByUserControls??0),0)}:{})}};
+    }
+    // Completion gaps, erased/expired windows and the fixed lookback cap are
+    // never represented as consent-to-present semantic coverage.
+    if((data[0]!.binding.afterSequence>input.grant.source_after_sequence||data.some((value,index)=>index>0&&value.binding.afterSequence!==data[index-1]!.binding.throughSequence))&&boundary==='consent')boundary='bounded';
+    merged={...merged,history:{version:1,windowJobIds:data.slice(0,-1).map(value=>value.jobId),afterSequence:data[0]!.binding.afterSequence,
+      throughSequence:current.binding.throughSequence,boundary,originalPairs:merged.originals.length/2}};
+    witness.before(merged.validUntil);witness.seal(merged);
+    const handle=Object.freeze({}) as NativeDerivationSourceCapture;
+    captures.set(handle,{env,db,lease,validUntil:merged.validUntil,witness,parts});
+    if(!await replayNativeDerivationSources(env,handle)){captures.delete(handle);return unavailable();}
+    return {status:'captured',capture:handle} as const;
+  }catch{return unavailable();}
+}
+
 function lookup(env: WorkerEnv, handle: NativeDerivationSourceCapture) {
   const captured = captures.get(handle);
   if (!captured || captured.env !== env || captured.db !== env.DB || captured.validUntil <= clock()) throw Error("memory-derivation-source-unavailable");
@@ -280,9 +347,9 @@ function lookup(env: WorkerEnv, handle: NativeDerivationSourceCapture) {
 export function nativeDerivationSourceInputs(env: WorkerEnv, handle: NativeDerivationSourceCapture) {
   return lookup(env, handle).witness.context()!;
 }
-export function nativeDerivationSourceStatements(env: WorkerEnv, handle: NativeDerivationSourceCapture) {
-  const captured = lookup(env, handle), lease = nativeDerivationEvidenceStatements(env, captured.lease), source = captured.witness.precommitStatements();
-  if (lease.length + source.length > 32) throw Error("memory-derivation-source-capacity");
+export function nativeDerivationSourceStatements(env: WorkerEnv, handle: NativeDerivationSourceCapture): D1PreparedStatement[] {
+  const captured = lookup(env, handle), lease = captured.parts ? captured.parts.flatMap(part=>nativeDerivationSourceStatements(env,part)) : nativeDerivationEvidenceStatements(env, captured.lease), source = captured.witness.precommitStatements();
+  if (lease.length + source.length > (captured.parts ? 100 : 32)) throw Error("memory-derivation-source-capacity");
   return [...lease, ...source];
 }
 export async function replayNativeDerivationSources(env: WorkerEnv, handle: NativeDerivationSourceCapture) {
@@ -290,7 +357,7 @@ export async function replayNativeDerivationSources(env: WorkerEnv, handle: Nati
     const captured = lookup(env, handle), statements = nativeDerivationSourceStatements(env, handle), leaseCount = nativeDerivationEvidenceStatements(env, captured.lease).length;
     const result = structuredClone(await captured.db.batch<Row>(statements));
     return lookup(env, handle) === captured && derivationResults(result, statements.length) && result.every((entry, index) => {
-      const field = index < leaseCount ? "verified" : "context_source_asserted";
+      const field = captured.parts ? (Object.hasOwn(entry.results[0]??{},"verified")?"verified":"context_source_asserted") : index < leaseCount ? "verified" : "context_source_asserted";
       return entry.results.length === 1 && derivationExact(entry.results[0], [field]) && entry.results[0][field] === 1;
     });
   } catch { return false; }

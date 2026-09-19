@@ -96,7 +96,7 @@ lifecycle/custody retirement through additive migration0050.
 
 ## Remaining native implementation — still in scope
 
-1. Actual rolling semantic rebase; [legacy oversized-job subdivision](forma-memory-legacy-subdivision-2026-09-18.md), byte-aware new windows and historical completion cursors are implemented but are not that rebase.
+1. [Bounded original-backed rolling refresh and latest-purpose review](forma-memory-rolling-history-2026-09-19.md) are implemented. Longer-term semantic reconciliation, cross-scope recall and automatic consumers remain open; the three-window bound is not lifetime coverage.
 2. Native index outbox, source invalidation and deletion acknowledgements.
 3. Nested project containment/reparenting and remaining page/block identities.
 4. Independent Chat Studio derivation-job delivery, genuine block/reuse evidence,
@@ -133,3 +133,7 @@ independent producers, nested scope identity and native index lifecycle remain o
 ## Legacy capacity recovery continuation
 
 [Atomic legacy subdivision](forma-memory-legacy-subdivision-2026-09-18.md) adds guarded whole-reference replacement with no financial repurchase or false completion. Migration0051 is schema-only but includes a hash-pinned trigger replacement, not a purely additive migration. It remains unapplied to production. Full native integration remains open.
+
+## Rolling history continuation
+
+[Original-backed rolling refresh](forma-memory-rolling-history-2026-09-19.md) adds same-consent recent originals, complete downstream dependencies, additive migration0052, explicit history boundaries and purpose-specific newest-first review. Migration0052 remains unapplied. All broader native and external work listed above remains tracked.

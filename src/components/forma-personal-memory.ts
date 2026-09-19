@@ -59,6 +59,7 @@ export class FormaPersonalMemory extends FormaElement {
   #reviewNext: string | null = null;
   #controlNext: string | null = null;
   #reviewLoaded = false;
+  #reviewPurpose: DerivationResultEntry["purpose"] | null = null;
   #reviewProgress: readonly DerivationProgress[] = [];
   #controlsLoaded = false;
   #controlsValidUntil: string | null = null;
@@ -1009,13 +1010,26 @@ export class FormaPersonalMemory extends FormaElement {
       && row.expiresAt === expiry && row.retentionDays === retention && row.background === background && this.store.events.get() === events && this.store.content.get() === content };
     this.#purposeScope = scope; this.#purposeOpen = true; this.requestUpdate();
   }
-  #clearReview(){this.#reviewProgress=[];this.#reviewResults=[];this.#reviewNext=null;this.#reviewLoaded=false;this.#reviewView=null;this.#reviewCorrection='';}
+  #clearReview(){this.#reviewPurpose=null;this.#reviewProgress=[];this.#reviewResults=[];this.#reviewNext=null;this.#reviewLoaded=false;this.#reviewView=null;this.#reviewCorrection='';}
   #reviewScope(){const row=this.#purposeScope?.row,custody=this.#owner?.expectedCustody;
     return row&&custody?{projectId:row.projectId,documentId:row.documentId,expectedCustody:custody,enrollmentId:row.id,enrollmentRevision:row.revision}:null;}
   #loadReview(event:Event,next=false){const scope=this.#reviewScope();if(!scope||next&&!this.#reviewNext)return;
-    const after=next?this.#reviewNext:null;this.#reviewView=null;this.#reviewCorrection='';
-    return this.#runPurpose(event,'review',signal=>this.#purposeClient.results(scope,after,signal),page=>{
-      this.#reviewProgress=page.progress;this.#reviewResults=page.results;this.#reviewNext=page.next;this.#reviewLoaded=true;this.#purposeNeedsReload=false;});}
+    const after=next?this.#reviewNext:null,purpose=next?this.#reviewPurpose:null;this.#reviewView=null;this.#reviewCorrection='';
+    return this.#runPurpose(event,'review',signal=>this.#purposeClient.results(scope,after,signal,purpose),page=>{
+      this.#reviewPurpose=purpose;this.#reviewProgress=page.progress;this.#reviewResults=page.results;this.#reviewNext=page.next;this.#reviewLoaded=true;this.#purposeNeedsReload=false;});}
+  #loadLatestReview(event:Event,purpose:DerivationResultEntry['purpose']){
+    const scope=this.#reviewScope();if(!scope)return;
+    this.#clearReview();
+    return this.#runPurpose(event,'review',async signal=>{
+      const page=await this.#purposeClient.results(scope,null,signal,purpose);
+      const latest=page.results[0];
+      const view=latest?await this.#purposeClient.inspectResult(latest,signal):null;
+      return {page,view};
+    },({page,view})=>{
+      this.#reviewPurpose=purpose;this.#reviewProgress=page.progress;this.#reviewResults=page.results;
+      this.#reviewNext=page.next;this.#reviewLoaded=true;this.#reviewView=view;this.#purposeNeedsReload=false;
+    });
+  }
   #inspectReview(event:Event,entry:DerivationResultEntry){if(!this.#reviewResults.includes(entry))return;
     this.#reviewView=null;this.#reviewCorrection='';
     return this.#runPurpose(event,'review',signal=>this.#purposeClient.inspectResult(entry,signal),view=>{this.#reviewView=view;},()=>this.#reviewResults.includes(entry)&&Date.parse(entry.expiresAt)>Date.now());}
@@ -1041,6 +1055,7 @@ export class FormaPersonalMemory extends FormaElement {
     return html`<section data-memory-derived-review aria-busy=${this.#purposeRequest?'true':'false'}>
       <h4>${this.#t('reviewHeading')}</h4><p>${this.#t('reviewDisclosure')}</p>
       <button type="button" class="button secondary" ?disabled=${disabled} @click=${(e:Event)=>captured(e,()=>this.#loadReview(e))}>${this.#t('reviewLoad')}</button>
+      ${(['rolling-summary','profile','suggestion'] as const).map(purpose=>html`<button type="button" class="button secondary" ?disabled=${disabled} @click=${(e:Event)=>captured(e,()=>this.#loadLatestReview(e,purpose))}>${this.#t('reviewLatest.'+purpose)}</button>`)}
       ${this.#reviewProgress.map(progress=>html`<p>${this.#t('reviewProgress',{purpose:this.#t('purpose.'+progress.purpose),pending:this.i18n.number(progress.pending),completed:this.i18n.number(progress.completed),retained:this.i18n.number(progress.retained),uncertain:this.i18n.number(progress.uncertain)})}</p>`)}
       ${this.#reviewLoaded&&!this.#reviewResults.length?html`<p>${this.#t('reviewEmpty')}</p>`:nothing}
       ${this.#reviewResults.map(entry=>html`<div><span>${this.#t('purpose.'+entry.purpose)}</span>
@@ -1048,6 +1063,7 @@ export class FormaPersonalMemory extends FormaElement {
         <button type="button" class="button secondary" ?disabled=${disabled||this.#purposeNeedsReload} @click=${(e:Event)=>captured(e,()=>this.#withdrawReview(e,entry))}>${this.#t('reviewWithdraw')}</button></div>`)}
       ${this.#reviewNext?html`<button type="button" class="button secondary" ?disabled=${disabled} @click=${(e:Event)=>captured(e,()=>this.#loadReview(e,true))}>${this.#t('reviewNext')}</button>`:nothing}
       ${view&&Date.parse(view.validUntil)>Date.now()?html`<div data-memory-derived-content>
+        ${view.history?html`<p data-memory-history-boundary>${this.#t('reviewHistory',{windows:this.i18n.number(view.history.windowCount),pairs:this.i18n.number(view.history.originalPairs)})} ${this.#t('reviewHistory.'+view.history.boundary)}</p>`:nothing}
         ${view.items.length?view.items.map(item=>html`<article><p>${item.text}</p>
           <button type="button" class="button secondary" ?disabled=${disabled||this.#purposeNeedsReload} @click=${(e:Event)=>captured(e,()=>this.#changeReview(e,view,item,'suppressed'))}>${this.#t('reviewSuppress')}</button>
           <button type="button" class="button secondary" ?disabled=${disabled||this.#purposeNeedsReload||!this.#reviewCorrection.trim()} @click=${(e:Event)=>captured(e,()=>this.#changeReview(e,view,item,'corrected'))}>${this.#t('reviewCorrect')}</button></article>`):html`<p>${this.#t('reviewEmpty')}</p>`}
