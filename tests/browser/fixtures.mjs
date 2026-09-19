@@ -18,11 +18,13 @@ export const test = base.extend({
   publicJavaScript: [true, { option: true }],
   acceptDownloads: [false, { option: true }],
   context: async ({ geometry, baseURL, publicMarketing, publicJavaScript, acceptDownloads }, use, testInfo) => {
+    const synthetic = syntheticNetworkEnabled(baseURL);
     const admittedDownloadCase = testInfo.project.name === "story-revision-download"
-      && testInfo.title === "Story revision one: approved synthetic source downloads the exact Markdown file";
+      && testInfo.title === "Story revision one: approved synthetic source downloads the exact Markdown file"
+      || synthetic && testInfo.file === resolve(directory, "forma-memory-purposes.spec.mjs")
+        && ["Memory purposes: explicit inactive controls in en", "Memory purposes: explicit inactive controls in ar"].includes(testInfo.title);
     if (acceptDownloads === true && !admittedDownloadCase)
       throw new Error("Downloads require the exact admitted project and positive test title");
-    const synthetic = syntheticNetworkEnabled(baseURL);
     const profile = await mkdtemp(resolve(tmpdir(), "forma-a11y-"));
     let context;
     try {

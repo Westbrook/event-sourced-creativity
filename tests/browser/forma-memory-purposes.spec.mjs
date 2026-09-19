@@ -8,7 +8,7 @@ import {FORMA_PERSONAL_MEMORY_MESSAGES} from '../../src/components/design-system
 const path='/document/doc-atmosphere/atmosphere-studies';
 const message=(locale,key)=>FORMA_PERSONAL_MEMORY_MESSAGES[locale]['memory.live.'+key];
 for(const locale of ['en','ar'])test.describe('Memory purpose locale '+locale,()=>{
-  test.use({geometry:{viewport:{width:locale==='ar'?320:1280,height:900},zoom:1,locale}});
+  test.use({acceptDownloads:true,geometry:{viewport:{width:locale==='ar'?320:1280,height:900},zoom:1,locale}});
   test('Memory purposes: explicit inactive controls in '+locale,async({page,context,baseURL},info)=>{
   expect(syntheticNetworkEnabled(baseURL)).toBe(true);const origin=new URL(baseURL).origin;
   const item={id:'a'.repeat(64),projectId:'project-atmosphere',documentId:'doc-atmosphere',organizationId:null,revision:1,learn:true,recall:true,background:true,
@@ -98,6 +98,20 @@ for(const locale of ['en','ar'])test.describe('Memory purpose locale '+locale,()
   const correction=review.getByRole('textbox',{name:message(locale,'reviewCorrection'),exact:true});await correction.fill('A synthetic user correction.');
   await expect(review.getByRole('button',{name:message(locale,'reviewCorrect'),exact:true})).toBeEnabled();
   expect(calls.filter(c=>!c.automatic&&c.path.includes('/derivation/'))).toHaveLength(5);expect(calls.every(c=>c.method==='GET')).toBe(true);
+  await expect(review.getByText(message(locale,'reviewExportHelp'),{exact:true})).toBeVisible();
+  const exported=page.waitForEvent('download');
+  await review.getByRole('button',{name:message(locale,'reviewExport'),exact:true}).click();
+  const download=await exported;expect(download.suggestedFilename()).toBe('forma-memory-result.json');
+  const chunks=[];for await(const chunk of await download.createReadStream())chunks.push(chunk);
+  const snapshot=JSON.parse(Buffer.concat(chunks).toString('utf8'));
+  expect(snapshot.result.items[0].observedActions[0].action).toBe('inspect');
+  expect(snapshot.result.items[0].originalQuotes.supports).toEqual([]);
+  expect(snapshot.downloadedCopyRevocable).toBe(false);expect(snapshot.accessAuthority).toBe(false);
+  expect(snapshot.completeHistory).toBe(false);expect(snapshot.result.items[0].text).toContain('<script>not code</script>');
+  expect(calls.filter(c=>!c.automatic&&c.path.includes('/derivation/'))).toHaveLength(6);
+  await expect(section.getByText(message(locale,'reviewExportRequested'),{exact:true})).toBeVisible();
+  await review.locator('[data-memory-derived-export]').scrollIntoViewIfNeeded();
+  await captureViewport(page,info,'memory-result-export-'+locale,{assertStable:false});
   const actionEvidence=review.locator('[data-memory-observation-evidence]');await actionEvidence.locator('summary').click();
   await expect(actionEvidence).toContainText(message(locale,'behavioralDisclosure'));await expect(actionEvidence).toContainText(message(locale,'behavioralAction.inspect'));
   await expect(actionEvidence.locator('blockquote')).toHaveCount(0);await actionEvidence.scrollIntoViewIfNeeded();

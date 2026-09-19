@@ -171,3 +171,7 @@ qualification and enrollment remain separate operational gates.
 ## Native whole-request qualification continuation
 
 [The eight retained Output HTTP budget failures are resolved](forma-memory-native-output-budget-2026-09-19.md): execution-local negative cleanup predicates retain exact transaction-time exclusions, and job claims bind the original request/resource identity. Worst measured request is 49 operations. This is local synthetic qualification, not a hosted capacity or activation receipt.
+
+### MEM-003 private result export continuation
+
+[Fresh private semantic-result export](forma-memory-result-export-2026-09-19.md) is implemented and locally verified: a new native access check for each explicit download, separate quotations/actions, bounded snapshot disclosure and localized copy-retention warning. This is neither all-memory export nor production activation. Remaining native scope/reconciliation/consumer work stays open.

@@ -221,3 +221,21 @@ test('behavioral consent offer requires an exact recipe hash and distinguishes i
   const result=await createMemoryDerivationClient(async()=>Response.json(f.settings)).settings(f.expected);assert.equal(result.qualifications[0].terms.recipeVersion,'memory-derivation-candidates-v2');
   f.settings.sourceWindow='future-originals';await assert.rejects(()=>createMemoryDerivationClient(async()=>Response.json(f.settings)).settings(f.expected));
 });
+
+for(const behavioral of [false,true])test('result export fresh read preserves separate evidence '+behavioral,async()=>{
+  const f=behavioral?behavioralViewFixture():briefFixture(),calls=[];
+  const client=createMemoryDerivationClient(async(url,init)=>{calls.push({url,init});return Response.json(f.result);});
+  const snapshot=await client.exportResult(f.entry),body=JSON.parse(snapshot.json);
+  assert.equal(calls.length,1);assert.equal(calls[0].init.method,'GET');assert.equal(calls[0].init.cache,'no-store');
+  assert.equal(body.format,'forma-memory-result-export-v1');assert.equal(body.result.items[0].text,f.item.text);
+  assert.deepEqual(body.result.items[0].originalQuotes.supports,f.item.supports);
+  assert.deepEqual(body.result.items[0].observedActions,behavioral?f.item.observationCitations:[]);
+  assert.equal(snapshot.validUntil,f.result.candidate.validUntil);assert.ok(Object.isFrozen(snapshot));
+  assert.equal(body.includes.controlHistory,false);assert.equal(body.includes.allMemory,false);
+});
+test('result export refuses arbitrary display objects, pre-abort and malformed response',async()=>{
+  const f=briefFixture();let calls=0;const client=createMemoryDerivationClient(async()=>{calls++;return Response.json({...f.result,privatePayload:'must not export'});});
+  await assert.rejects(client.exportResult({...f.entry,items:[]}));assert.equal(calls,0);
+  const controller=new AbortController();controller.abort();await assert.rejects(client.exportResult(f.entry,controller.signal));assert.equal(calls,0);
+  await assert.rejects(client.exportResult(f.entry));assert.equal(calls,1);
+});

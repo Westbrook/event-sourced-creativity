@@ -1,3 +1,4 @@
+import { createMemoryElapsed } from "../model/memory-lifetime.ts";
 /** Explicit consent transport only. No storage, enrollment, processing or retry. */
 import { parseMemoryCustody, type MemoryCustody } from "../model/memory-custody.ts";
 import { memoryDigest } from "../model/scoped-memory.ts";
@@ -241,6 +242,24 @@ export function createMemoryDerivationClient(transport: (input: RequestInfo | UR
     },
     async inspectResult(value:DerivationResultEntry,signal?:AbortSignal){
       const expected=resultEntry(value);return request('GET','?jobId='+expected.jobId,undefined,raw=>resultView(raw,expected),signal,'/api/memory/derivation/result');
+    },
+    async exportResult(value:DerivationResultEntry,signal?:AbortSignal){
+      // Always recertify through the native read. Never serialize a cached display
+      // lease, native source bindings, or an arbitrary caller-supplied view.
+      const expected=resultEntry(value),elapsed=createMemoryElapsed({wall:Date.now(),monotonic:performance.now()});
+      const view=await request('GET','?jobId='+expected.jobId,undefined,raw=>resultView(raw,expected),signal,'/api/memory/derivation/result');
+      check(!signal?.aborted&&elapsed.elapsed({wall:Date.now(),monotonic:performance.now()})<60000&&Date.parse(view.validUntil)>Date.now());
+      const json=JSON.stringify({format:'forma-memory-result-export-v1',capturedAt:new Date().toISOString(),
+        treatment:'model-derived-unverified',completeHistory:false,independentEvidence:false,
+        snapshotOnly:true,accessAuthority:false,downloadedCopyRevocable:false,
+        includes:{selectedResult:true,allMemory:false,vectors:false,fullSourceBodies:false,originalQuotes:true,observedActions:true,controlHistory:false},
+        result:{purpose:view.purpose,retentionUpperBound:view.expiresAt,
+          ...(view.history?{history:{windowCount:view.history.windowCount,originalPairs:view.history.originalPairs,boundary:view.history.boundary}}:{}),
+          items:view.items.map(item=>({category:item.category,text:item.text,citationStatus:item.citationStatus,
+            originalQuotes:{supports:item.supports,counterevidence:item.counterevidence},
+            observedActions:item.observationCitations??[]}))}},null,2);
+      check(new TextEncoder().encode(json).byteLength<=524288);
+      return frozen({json,validUntil:view.validUntil});
     },
     async changeResult(view:DerivationResultView,item:DerivationResultItem,action:'suppressed'|'corrected',correctionText:string|null,signal?:AbortSignal){
       check(view.items.includes(item)&&Date.parse(view.validUntil)>Date.now()&&['suppressed','corrected'].includes(action)

@@ -169,3 +169,7 @@ qualification and enrollment remain separate operational gates.
 ## Whole-request Output integration continuation
 
 [Native boundary and request-budget integration](forma-memory-native-output-budget-2026-09-19.md) closes the eight reproduced Output failures at a maximum 49 measured whole-request operations. Exact Memory exclusions and late job-identity checks remain transactional; production and broader implementation gates are unchanged.
+
+### MEM-003 private result export continuation
+
+[Fresh private semantic-result export](forma-memory-result-export-2026-09-19.md) is implemented and locally verified: a new native access check for each explicit download, separate quotations/actions, bounded snapshot disclosure and localized copy-retention warning. This is neither all-memory export nor production activation. Remaining native scope/reconciliation/consumer work stays open.

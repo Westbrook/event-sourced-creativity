@@ -1034,6 +1034,24 @@ export class FormaPersonalMemory extends FormaElement {
   #inspectReview(event:Event,entry:DerivationResultEntry){if(!this.#reviewResults.includes(entry))return;
     this.#reviewView=null;this.#reviewCorrection='';
     return this.#runPurpose(event,'review',signal=>this.#purposeClient.inspectResult(entry,signal),view=>{this.#reviewView=view;},()=>this.#reviewResults.includes(entry)&&Date.parse(entry.expiresAt)>Date.now());}
+  #exportReview(event:Event,view:DerivationResultView){
+    const entry=this.#reviewResults.find(item=>item.jobId===view.jobId);
+    if(!entry||this.#reviewView!==view||this.#purposeNeedsReload||this.#exportRequest)return;
+    const elapsed=createMemoryElapsed({wall:Date.now(),monotonic:performance.now()});
+    const current=()=>this.#reviewView===view&&this.#reviewResults.includes(entry)&&!this.#purposeNeedsReload
+      &&!this.#dirty&&!this.#exportRequest&&Date.parse(view.validUntil)>Date.now()
+      &&elapsed.elapsed({wall:Date.now(),monotonic:performance.now()})<60000;
+    return this.#runPurpose(event,'review',signal=>this.#purposeClient.exportResult(entry,signal),snapshot=>{
+      if(!current()||Date.parse(snapshot.validUntil)<=Date.now())return;
+      const url=URL.createObjectURL(new Blob([snapshot.json],{type:'application/json;charset=utf-8'}));
+      try{const link=this.ownerDocument.createElement('a');
+        try{if(!current()||Date.parse(snapshot.validUntil)<=Date.now())return;
+          link.href=url;link.download='forma-memory-result.json';link.rel='noopener';link.click();
+          if(current())this.#purposeNotice='reviewExportRequested';
+        }finally{link.remove();}
+      }finally{URL.revokeObjectURL(url);}
+    },current);
+  }
   #changeReview(event:Event,view:DerivationResultView,item:DerivationResultItem,action:'corrected'|'suppressed'){
     if(this.#purposeNeedsReload||this.#reviewView!==view||!view.items.includes(item))return;
     const correction=action==='corrected'?this.#reviewCorrection:null;
@@ -1064,6 +1082,7 @@ export class FormaPersonalMemory extends FormaElement {
         <button type="button" class="button secondary" ?disabled=${disabled||this.#purposeNeedsReload} @click=${(e:Event)=>captured(e,()=>this.#withdrawReview(e,entry))}>${this.#t('reviewWithdraw')}</button></div>`)}
       ${this.#reviewNext?html`<button type="button" class="button secondary" ?disabled=${disabled} @click=${(e:Event)=>captured(e,()=>this.#loadReview(e,true))}>${this.#t('reviewNext')}</button>`:nothing}
       ${view&&Date.parse(view.validUntil)>Date.now()?html`<div data-memory-derived-content>
+        <p>${this.#t('reviewExportHelp')}</p><button type="button" class="button secondary" data-memory-derived-export ?disabled=${disabled||this.#purposeNeedsReload||Boolean(this.#exportRequest)} @click=${(e:Event)=>captured(e,()=>this.#exportReview(e,view))}>${this.#t('reviewExport')}</button>
         ${view.history?html`<p data-memory-history-boundary>${this.#t('reviewHistory',{windows:this.i18n.number(view.history.windowCount),pairs:this.i18n.number(view.history.originalPairs)})} ${this.#t('reviewHistory.'+view.history.boundary)}</p>`:nothing}
         ${view.items.length?view.items.map(item=>html`<article><p>${item.text}</p>
           ${item.observationCitations?.length?html`<details data-memory-observation-evidence><summary>${this.#t('behavioralEvidence')}</summary><p>${this.#t('behavioralDisclosure')}</p><ul>${item.observationCitations.map(cited=>html`<li>${this.#t('behavioralRole.'+cited.role)}: ${this.#t('behavioralAction.'+cited.action)} · <time datetime=${cited.recordedAt}>${this.i18n.date(new Date(cited.recordedAt),{dateStyle:'medium',timeStyle:'short'})}</time></li>`)}</ul></details>`:nothing}

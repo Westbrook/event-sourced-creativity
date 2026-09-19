@@ -3510,3 +3510,50 @@ for(const locale of ['en','fr','ar','ja'])test('behavioral purpose consent is ex
   h.change('memory-purpose-consent',true);const grant=purposeGrant(item,control);h.enqueue({version:MEMORY_DERIVATION_CONTROL,grant,capScope:control.capScope,processingImplemented:true});await purposeSubmit(h);
   const call=h.mutations().at(-1);assert.ok(call);assert.equal(JSON.parse(call.init.body).sourceWindow,'future-originals-and-actions');
 });
+
+test('derived export recertifies on click and downloads only the fresh private result',async t=>{
+  const {h,data}=await inspectDerivedReview(t);assert.equal(h.downloads.length,0);
+  const fresh=structuredClone(data.result);fresh.candidate.items[0].text='Fresh private proposal, not the cached view.';
+  h.enqueue(fresh);const before=h.calls.length;await profileClick(h,'reviewExport');
+  assert.equal(h.calls.length,before+1);assert.equal(h.calls.at(-1).url,'/api/memory/derivation/result?jobId='+data.entry.jobId);
+  assert.equal(h.calls.at(-1).init.method,'GET');assert.equal(h.mutations().length,0);assert.equal(h.downloads.length,1);
+  const download=h.downloads[0],body=JSON.parse(await download.blob.text());assert.equal(download.filename,'forma-memory-result.json');
+  assert.equal(body.result.items[0].text,fresh.candidate.items[0].text);assert.equal(body.snapshotOnly,true);assert.equal(body.downloadedCopyRevocable,false);
+  assert.equal(body.completeHistory,false);assert.equal(body.accessAuthority,false);assert.equal(body.treatment,'model-derived-unverified');
+  assert.deepEqual(body.result.items[0].originalQuotes.supports,fresh.candidate.items[0].supports);
+  assert.deepEqual(body.result.items[0].observedActions,[]);assert.equal(body.result.retentionUpperBound,data.entry.expiresAt);
+  assert.doesNotMatch(await download.blob.text(),/sourceBindings|fixture-original|controlRevisions|lineageIds|scopeKey|validUntil/);
+  assert.ok(h.text().includes('memory.live.reviewExportRequested'));assert.equal(h.revokedDownloadUrls.length,1);
+  assert.ok(h.downloadLinks.every(link=>link.removed));
+});
+for(const transition of ['visibility','close','expiry','clock-backward','monotonic','events','content','navigation','actor','disconnect'])test('derived export prevents delayed download after '+transition,async t=>{
+  const {h,item,data}=await inspectDerivedReview(t),delayed=delayedJson(data.result);h.enqueue(delayed.response);
+  const pending=profileClick(h,'reviewExport');await flush();const request=h.calls.at(-1);
+  if(transition==='visibility'){h.visibility('hidden');h.visibility('visible');}
+  if(transition==='close')purposeToggle(h,false);
+  if(transition==='expiry'){h.advance(31000);h.fireTimer();}
+  if(transition==='clock-backward')h.clock.now-=1000;
+  if(transition==='monotonic')h.clock.monotonic+=61000;
+  if(transition==='events'||transition==='content'){h.state[transition]=transition==='events'?[]:{};h.notify();}
+  if(transition==='navigation'||transition==='actor'){h.enqueue(settings([item]));h.move(transition==='navigation'?{route:'/library'}:{actor:'other-actor'});}
+  if(transition==='disconnect')h.disconnect();
+  delayed.release();await pending;await flush();assert.equal(h.downloads.length,0);assert.equal(h.mutations().length,0);
+  assert.equal(request.init.method,'GET');assert.doesNotMatch(h.text(),/memory.live.purposeUnknown/);
+});
+for(const status of [401,403,404,409,503])test('derived export rejects native '+status+' without falling back to displayed memory',async t=>{
+  const {h}=await inspectDerivedReview(t);h.enqueue(Response.json({error:'unavailable'},{status}));const before=h.calls.length;
+  await profileClick(h,'reviewExport');assert.equal(h.calls.length,before+1);assert.equal(h.downloads.length,0);assert.equal(h.mutations().length,0);
+  assert.doesNotMatch(h.text(),/Private tentative memory proposal/);assert.match(h.text(),/memory.live.purposeError/);
+});
+test('derived export releases URLs even if the download fails',async t=>{
+  const {h,data}=await inspectDerivedReview(t);h.enqueue(data.result);h.failDownload();await profileClick(h,'reviewExport');
+  assert.equal(h.downloads.length,0);assert.equal(h.revokedDownloadUrls.length,1);assert.ok(h.downloadLinks.every(link=>link.removed));
+  assert.match(h.text(),/memory.live.purposeError/);
+});
+for(const locale of ['en','fr','ar','ja'])test('derived export has explicit localized copy warning in '+locale,async t=>{
+  const {h,item}=await purposeFixture(t,{locale,localized:true}),data=derivedReviewFixture(item);
+  h.enqueue(data.list);await profileClick(h,'reviewLoad');h.enqueue(data.result);await profileClick(h,'reviewInspect');
+  assert.ok(h.text().includes(personalMemoryMessage(locale,'memory.live.reviewExportHelp')));
+  h.enqueue(data.result);await profileClick(h,'reviewExport');assert.equal(h.downloads.length,1);
+  assert.ok(h.text().includes(personalMemoryMessage(locale,'memory.live.reviewExportRequested')));
+});

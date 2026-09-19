@@ -132,3 +132,7 @@ remains unapplied. No v1 grant is broadened and no user/provider is activated.
 Broader cross-scope/long-term reconciliation, nested scopes, Library/Canvas and
 automatic assistant/autocomplete consumers remain implementation work; hosted
 qualification and enrollment remain separate operational gates.
+
+### MEM-003 private result export continuation
+
+[Fresh private semantic-result export](forma-memory-result-export-2026-09-19.md) is implemented and locally verified: a new native access check for each explicit download, separate quotations/actions, bounded snapshot disclosure and localized copy-retention warning. This is neither all-memory export nor production activation. Remaining native scope/reconciliation/consumer work stays open.
