@@ -103,7 +103,7 @@ lifecycle/custody retirement through additive migration0050.
 5. Guarded rolling summary/profile/suggestion/autocomplete consumers with explicit
    correction priority and separate access versus relevance checks. Manual result
    inspection and persisted candidates do not complete those consumer paths.
-6. Source-free local index diagnostics are implemented. [Artifact-heavy three-window reads](forma-memory-artifact-rolling-budget-2026-09-19.md) now qualify at 46/49 free/paid D1 calls in personal/shared scopes. Remote-index observability and full integration/privacy/request-
+6. Source-free local index diagnostics are implemented. [Mixed three-window reads](forma-memory-mixed-history-budget-2026-09-19.md) now qualify at 43 artifact-only / 48 artifact-plus-approved-copy D1 calls across personal/shared and free/paid scopes, including four artifacts per window. Remote-index observability and full integration/privacy/request-
    budget qualification remain; eight prior Output HTTP budget failures remain tracked.
 
 The 64-pair cumulative ledger is not a rolling semantic summary. Native scheduled-

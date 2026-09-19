@@ -14,7 +14,7 @@ import { captureNativeMemoryTurnExclusions, nativeMemoryTurnExclusionInputs } fr
 import { observeNativeMemoryDocumentScope, nativeMemoryDocumentIdentity, nativeMemoryArtifactIdentity, type NativeMemoryDocumentScope } from "./memory-native-scope.ts";
 import { memoryCanonical } from "./memory-sql.ts";
 import { derivationExact, derivationHash, derivationId, derivationInteger, derivationTime } from "./memory-derivation-policy.ts";
-import { derivationResults } from "./memory-derivation-store.ts";
+import { derivationResults, derivationVerified } from "./memory-derivation-store.ts";
 import { nativeDerivationEvidenceInputs, nativeDerivationEvidenceStatements, replayNativeDerivationEvidence, observeNativeDerivationHistoryJob, type NativeDerivationEvidence } from "./memory-derivation-admission.ts";
 import type { MemoryDerivationSource } from "./memory-derivation-result.ts";
 import type { WorkerEnv } from "./runtime.ts";
@@ -69,7 +69,9 @@ async function captureNativeDerivationWindow(env: WorkerEnv, lease: NativeDeriva
     if(nativeDerivationEvidenceInputs(env,lease).producer==='chat-studio')return await captureChatStudioDerivationWindow(env,lease);
     const db = env.DB, input = nativeDerivationEvidenceInputs(env, lease), { enrollment: e, grant: g, authority: a, job } = input;
     if(bindRelations===true&&(!input.relationsPresent||!input.lifecyclePresent))return unavailable();
-    if (!await replayNativeDerivationEvidence(env, lease) || env.DB !== db) return unavailable();
+    // Recheck every original admission guard before source selection in the same
+    // native transaction below, rather than spending a separate round trip.
+    if(env.DB!==db)return unavailable();
     const witness = new AssistantContextReadWitness<CaptureData>(env);
     const read = async (query: Query) => {
       nativeDerivationEvidenceInputs(env, lease);
@@ -95,9 +97,10 @@ async function captureNativeDerivationWindow(env: WorkerEnv, lease: NativeDeriva
       WHERE queued.job_id=? AND event.stream_id=? ORDER BY event.sequence,event.event_id LIMIT 129`,bindings:[job.job_id,a.binding.streamId]},{ sql: `SELECT event.event_id,event.sequence,event.type,
       length(CAST(COALESCE(authored.content,'') AS BLOB)) AS user_bytes,length(CAST(COALESCE(answer.content,'') AS BLOB)) AS answer_bytes,
       length(CAST(event.payload AS BLOB)) AS event_bytes ${joined} WHERE ${where} ORDER BY event.sequence,event.event_id LIMIT 129`, bindings }];
-    const statements=queries.map(query=>db.prepare(query.sql).bind(...query.bindings));
-    const measured=structuredClone(await db.batch<Row>(statements));
-    if(env.DB!==db||!derivationResults(measured,queries.length))return unavailable();
+    const statements=queries.map(query=>db.prepare(query.sql).bind(...query.bindings)),admission=nativeDerivationEvidenceStatements(env,lease);
+    const selected=structuredClone(await db.batch<Row>([...admission,...statements]));
+    if(env.DB!==db||!derivationResults(selected,admission.length+queries.length)||!selected.slice(0,admission.length).every(derivationVerified))return unavailable();
+    const measured=selected.slice(admission.length);
     nativeDerivationEvidenceInputs(env,lease);witness.observe(statements,measured,queries);
     const inventory=measured[0]!.results,sizes=measured[1]!.results;
     if(inventory.length!==input.references.length||inventory.some((row,i)=>!derivationExact(row,['event_id','sequence','type','recorded_at'])
@@ -148,7 +151,7 @@ async function captureNativeDerivationWindow(env: WorkerEnv, lease: NativeDeriva
       LEFT JOIN consequential_executions execution ON execution.execution_id=task.task_id AND execution.actor_user_id=task.actor_user_id
       LEFT JOIN private_content approved ON approved.content_id=execution.consent_ref AND approved.owner_id=execution.actor_user_id`;
     const paidBindings = [JSON.stringify(expected), e.actor_user_id, a.scopeKey];
-    let messages:Row[]=[],paidSizes:Row[]=[];
+    let messages:Row[]=[],paidSizes:Row[]=[],paid:Row[]=[];
     if(expected.length){
       const queries:Query[]=[{ sql: `SELECT json_extract(expected.value,'$.turnId') AS turn_id,message.event_id,message.sequence,message.recorded_at,
         ${originalEvent("message")} AS event_json FROM json_each(?) expected JOIN events message
@@ -167,20 +170,21 @@ async function captureNativeDerivationWindow(env: WorkerEnv, lease: NativeDeriva
                 OR json_extract(secret.private_json,'$.actor_user_id')=?)) AND (${custody}) ORDER BY message.sequence,message.event_id LIMIT 129`,
       bindings: [JSON.stringify(expected), a.binding.streamId, "user:" + e.actor_user_id, e.actor_user_id, e.project_id, e.document_id,
         g.source_after_sequence, g.consented_at, e.actor_user_id, e.owner_user_id, e.project_id, e.document_id, e.actor_user_id,
-        ...(e.organization_id === null ? [] : [e.organization_id, e.project_access_id, e.project_id, e.owner_user_id, e.actor_user_id])] },{ sql: `SELECT task.task_id,length(CAST(approved.content AS BLOB)) AS bytes ${paidFrom} ORDER BY task.task_id LIMIT 65`, bindings: paidBindings }];
+        ...(e.organization_id === null ? [] : [e.organization_id, e.project_access_id, e.project_id, e.owner_user_id, e.actor_user_id])] },{ sql: `SELECT task.task_id,length(CAST(approved.content AS BLOB)) AS bytes ${paidFrom} ORDER BY task.task_id LIMIT 65`, bindings: paidBindings },
+      // Measure and hydrate in the same native snapshot. The aggregate byte gate
+      // is in the body query itself, so over-cap consent prose is never hydrated.
+      {sql:`SELECT task.task_id,task.turn_id,execution.binding_hash,execution.intent_hash,execution.result_ref,approved.content_id,approved.content,
+        approved.expires_at,approved.redacted_at,approved.kind ${paidFrom}
+        WHERE (SELECT COALESCE(SUM(length(CAST(approved.content AS BLOB))),0) ${paidFrom})<=524288
+        ORDER BY task.task_id LIMIT 65`,bindings:[...paidBindings,...paidBindings]}];
       const statements=queries.map(query=>db.prepare(query.sql).bind(...query.bindings)),result=structuredClone(await db.batch<Row>(statements));
-      if(env.DB!==db||!derivationResults(result,2))return unavailable();
+      if(env.DB!==db||!derivationResults(result,queries.length))return unavailable();
       nativeDerivationEvidenceInputs(env,lease);witness.observe(statements,result,queries);
-      messages=result[0]!.results;paidSizes=result[1]!.results;
+      messages=result[0]!.results;paidSizes=result[1]!.results;paid=result[2]!.results;
     }
     if (messages.length !== expected.length || expected.some(row => messages.filter(message => message.turn_id === row.turnId).length !== 1)) return unavailable();
     if (paidSizes.length > expected.length || paidSizes.some(row => !derivationInteger(row.bytes))) return unavailable();
     if (paidSizes.reduce((sum, row) => sum + Number(row.bytes), 0) > 524288) return capacity();
-    const paid = paidSizes.length ? await read({ sql: `SELECT task.task_id,task.turn_id,execution.binding_hash,execution.intent_hash,execution.result_ref,approved.content_id,approved.content,
-      approved.expires_at,approved.redacted_at,approved.kind ${paidFrom}
-      WHERE EXISTS(SELECT 1 FROM json_each(?) measured WHERE json_extract(measured.value,'$.task_id')=task.task_id
-        AND json_extract(measured.value,'$.bytes')=length(CAST(approved.content AS BLOB)))
-      ORDER BY task.task_id LIMIT 65`, bindings: [...paidBindings, JSON.stringify(paidSizes)] }) : [];
     if (paid.length !== paidSizes.length || paid.some((row, index) => row.task_id !== paidSizes[index]!.task_id || typeof row.content !== "string"
       || bytes(row.content) !== paidSizes[index]!.bytes || row.kind !== "execution-consent" || row.redacted_at !== null || !derivationId(row.result_ref))) return unavailable();
     const groups: { turnId: string; entries: PaidMemoryAncestryEntry[] }[] = [];

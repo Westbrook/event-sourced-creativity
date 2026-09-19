@@ -15388,24 +15388,86 @@ test('native memory reuse: committed approval deadline does not renew or replace
   assert.equal(expired.entries.length,0,'Expired original body cannot be reconstructed from a receipt');
 });
 
-for(const shared of [false,true])for(const paid of [false,true])test('native derivation artifact budget: three-window original-backed views shared='+shared+' paid='+paid,{timeout:180000},async t=>{
+for(const artifactCount of [1,4])for(const mixed of [false,true])for(const shared of [false,true])for(const paid of [false,true])test('native derivation artifact budget: three-window original-backed views shared='+shared+' paid='+paid+' mixed='+mixed+' artifacts='+artifactCount,{timeout:180000},async t=>{
   const {appendAuditEvent}=await import('../worker/runtime.ts'),{storePrivateContent}=await import('../worker/pilot-policy.ts'),{createHash}=await import('node:crypto');
   const state=await nativeDerivationRollingFixture(t,{windows:3,shared,paid,beforeWindow:async(state,index)=>{
-    const e=state.current(),content=JSON.stringify({title:'Retained native artifact '+index,summary:'Original fixture',content_markdown:'Synthetic original artifact body '+index,
+    if(mixed){
+      if(index===0)for(const tag of ['0054_memory_derivation_index_intents','0055_memory_derivation_relation_lifecycle','0056_memory_derivation_reuse_lifecycle'])state.sqlite.exec(await(await import('node:fs/promises')).readFile(new URL('../drizzle/'+tag+'.sql',import.meta.url),'utf8'));
+      await appendNativeMemoryApprovedCopies(state,'mixed-artifact-'+index);
+    }
+    for(let artifactIndex=0;artifactIndex<artifactCount;artifactIndex++){
+    const e=state.current(),content=JSON.stringify({title:'Retained native artifact '+index+':'+artifactIndex,summary:'Original fixture',content_markdown:'Synthetic original artifact body '+index,
       presentation:null,items:[{title:'Original',body:'Synthetic original artifact body '+index,notes:'',image_prompt:'',context_group_ids:[],slide:null}]});
-    const stored=await storePrivateContent(state.env,e.owner_user_id,'document-artifact',content),artifactId='rolling-original-artifact-'+index;
+    const stored=await storePrivateContent(state.env,e.owner_user_id,'document-artifact',content),artifactId='rolling-original-artifact-'+index+'-'+artifactIndex;
     await appendAuditEvent(state.env,'creative:'+e.owner_user_id,'worker:renderer','DocumentRenderCompleted',{project_id:e.project_id,document_id:e.document_id,
       artifact_id:artifactId,artifact_kind:'short_story',title:'Original '+index,content_ref:stored.contentId});
     if(shared)assert.equal((await state.request('/api/events?after=0&content=0',{headers:state.owner})).status,200);
     const response=await state.request('/api/events/hot',json({action:'hot',event:{type:'DocumentArtifactViewed',payload:{project_id:e.project_id,document_id:e.document_id,
       artifact_id:artifactId,artifact_kind:'short_story',artifact_revision:0,content_sha256:createHash('sha256').update(content).digest('hex'),source_surface:'document-artifact-gallery'}}},state.owner??{}));
     assert.equal(response.status,200,await response.clone().text());
+    }
   }}),api=await import('../worker/memory-derivation-api.ts');
   const job=state.queue().jobs.sort((a,b)=>b.through_sequence-a.through_sequence)[0],db=state.env.DB,prepare=db.prepare,batch=db.batch,originals=new WeakMap();let operations=0;
   const wrap=raw=>{const proxy=new Proxy(raw,{get(target,key){if(key==='bind')return(...args)=>wrap(target.bind(...args));if(['all','first','run','raw'].includes(key))return(...args)=>{operations++;return target[key](...args);};return Reflect.get(target,key,target);}});originals.set(proxy,raw);return proxy;};
   db.prepare=function(sql){return wrap(prepare.call(this,sql));};db.batch=function(inputs){operations++;return batch.call(this,inputs.map(input=>originals.get(input)??input));};t.after(()=>{db.prepare=prepare;db.batch=batch;});
   const response=await api.handleMemoryDerivationResult(new Request(state.derivationOrigin+'/api/memory/derivation/result?jobId='+job.job_id,{headers:state.owner}),state.env);
-  assert.equal(response.status,200,await response.clone().text());const body=await response.json();t.diagnostic(JSON.stringify({shared,paid,operations,history:body.history}));
-  assert.equal(body.history.windowCount,3);assert.equal(state.rollingRequests.at(-1).observations.filter(row=>row.action==='inspect').length,3);
+  assert.equal(response.status,200,await response.clone().text());const body=await response.json();t.diagnostic(JSON.stringify({shared,paid,mixed,artifactCount,operations,history:body.history}));
+  assert.equal(body.history.windowCount,3);assert.equal(state.rollingRequests.at(-1).observations.filter(row=>row.action==='inspect').length,3*artifactCount);
+  if(mixed)assert.equal(state.rollingRequests.at(-1).observations.filter(row=>row.action==='reuse').length,3);
   assert.ok(operations<50,'Complete artifact-rich inspection must stay below the conservative native request budget: '+operations);
+  if(mixed){
+    const manifest=JSON.parse(state.sqlite.prepare('SELECT manifest_json FROM memory_derivation_results WHERE job_id=?').get(job.job_id).manifest_json),usage=state.sqlite.prepare('SELECT * FROM memory_derivation_usage').all();
+    assert.equal(manifest.provenance.artifacts.length,3*artifactCount);assert.equal(manifest.provenance.reuseBindings.entries.length,6);
+    if(shared&&paid&&artifactCount===4){
+      const {createRequire}=await import('node:module'),{Miniflare,Log,LogLevel}=createRequire(import.meta.resolve('wrangler'))('miniflare'),{exportSynthetic,install}=await import('./helpers/model3d-workerd-snapshot.mjs');let outbound=0;
+      const mf=new Miniflare({modules:true,compatibilityDate:'2026-05-15',host:'127.0.0.1',port:0,log:new Log(LogLevel.NONE),d1Databases:['MixedMemoryHistory'],
+        script:"export default {fetch(){return new Response('Isolated',{status:404});}}",outboundService(){outbound++;throw Error('No external services');}});
+      t.after(async()=>{await mf.dispose();assert.equal(outbound,0);});const native=await mf.getD1Database('MixedMemoryHistory');await install(native,exportSynthetic(state.sqlite));state.env.DB=native;
+      try{
+        const checked=await api.handleMemoryDerivationResult(new Request(state.derivationOrigin+'/api/memory/derivation/result?jobId='+job.job_id,{headers:state.owner}),state.env);
+        assert.equal(checked.status,200,await checked.clone().text());assert.equal((await checked.json()).history.windowCount,3);
+        await native.prepare('DELETE FROM private_content WHERE content_id=?').bind(manifest.provenance.artifacts[0].contentRef).run();
+        const erased=await native.prepare('SELECT state,raw_json,manifest_json FROM memory_derivation_results WHERE job_id=?').bind(job.job_id).first();assert.deepEqual(erased,{state:'withdrawn',raw_json:null,manifest_json:null});
+        assert.equal((await native.prepare('SELECT operation FROM memory_derivation_index_intents WHERE job_id=?').bind(job.job_id).first()).operation,'delete');
+        assert.equal((await native.prepare('SELECT COUNT(*) AS n FROM memory_derivation_usage').first()).n,usage.length);
+      }finally{state.env.DB=db;}
+    }
+    if(paid)state.sqlite.prepare('DELETE FROM private_content WHERE content_id=?').run(manifest.provenance.artifacts[0].contentRef);
+    else state.sqlite.prepare('DELETE FROM authoring_commits WHERE preview_id=?').run(manifest.provenance.reuseBindings.entries[0].previewRef);
+    const retired=state.sqlite.prepare('SELECT * FROM memory_derivation_results WHERE job_id=?').get(job.job_id);assert.equal(retired.state,'withdrawn');assert.equal(retired.raw_json,null);assert.equal(retired.manifest_json,null);
+    assert.equal(state.sqlite.prepare('SELECT operation FROM memory_derivation_index_intents WHERE job_id=?').get(job.job_id).operation,'delete');
+    assert.deepEqual(state.sqlite.prepare('SELECT * FROM memory_derivation_usage').all(),usage,'Source erasure never resets original provider usage');
+  }
+});
+
+for(const fault of ['revoked','missing-proof','truncated','false-proof','database-swap'])test('native derivation source admission batch: '+fault+' never issues a source capability',async t=>{
+  const state=await nativeDerivationDeliveryFixture(t),admission=await import('../worker/memory-derivation-admission.ts'),sources=await import('../worker/memory-derivation-sources.ts');
+  await state.send('atomic-admission-original');state.due();await state.run();const lease=await admission.claimNativeDerivationJob(state.env,state.queue().jobs[0].job_id);assert.ok(lease);
+  const db=state.env.DB,batch=db.batch,before=adaptiveReentryFinancialState(state);let injected=false;
+  db.batch=async statements=>{
+    const selected=!injected&&statements.some(row=>row.sql.startsWith('SELECT queued.event_id,queued.sequence,event.type,event.recorded_at'));
+    if(selected){injected=true;assert.ok(statements[0].sql.includes('AS verified'),'Native admission assertions precede descriptor reads');
+      if(fault==='revoked')state.sqlite.exec('UPDATE memory_live_enrollments SET learn_enabled=0');}
+    const result=await batch.call(db,statements);
+    if(selected){if(fault==='missing-proof')result.shift();if(fault==='truncated')result.pop();if(fault==='false-proof')result[0].results=[{verified:0}];
+      if(fault==='database-swap')state.env.DB={prepare:db.prepare.bind(db),batch:batch.bind(db)};}
+    return result;
+  };
+  try{assert.equal((await sources.captureNativeDerivationSources(state.env,lease)).status,'unavailable');assert.ok(injected);assert.deepEqual(adaptiveReentryFinancialState(state),before);}
+  finally{state.env.DB=db;db.batch=batch;}
+});
+
+test('native derivation source consent batch: aggregate over-cap prose is rejected before hydration',async t=>{
+  const state=await nativeDerivationDeliveryFixture(t),admission=await import('../worker/memory-derivation-admission.ts'),sources=await import('../worker/memory-derivation-sources.ts');
+  const turn=await state.send('atomic-consent-original'),review=await nativeDerivationPaidTurn(state,turn);state.due();await state.run();
+  const lease=await admission.claimNativeDerivationJob(state.env,state.queue().jobs[0].job_id);assert.ok(lease);
+  const ref=state.sqlite.prepare('SELECT consent_ref FROM consequential_executions WHERE execution_id=?').get(review.quote.executionId).consent_ref;
+  const db=state.env.DB,batch=db.batch,before=adaptiveReentryFinancialState(state);let injected=false,hydrated=null;
+  db.batch=async statements=>{
+    const index=statements.findIndex(row=>row.sql.startsWith('SELECT task.task_id,task.turn_id,execution.binding_hash'));
+    if(index>=0&&!injected){injected=true;state.sqlite.prepare('UPDATE private_content SET content=? WHERE content_id=?').run('not hydrated '.repeat(50000),ref);}
+    const result=await batch.call(db,statements);if(index>=0)hydrated=result[index].results.length;return result;
+  };
+  try{assert.equal((await sources.captureNativeDerivationSources(state.env,lease)).status,'capacity');assert.ok(injected);assert.equal(hydrated,0);assert.deepEqual(adaptiveReentryFinancialState(state),before);}
+  finally{db.batch=batch;}
 });
