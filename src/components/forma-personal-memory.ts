@@ -5,6 +5,7 @@ import { navigateInApp, type CommandDeparture } from "./command-departure";
 import { captureOutputNavigationFocus, type OutputNavigationFocusLease } from "./output-navigation-focus.ts";
 import { parseMemoryCustody, type MemoryCustody } from "../model/memory-custody.ts";
 import { createMemoryElapsed } from "../model/memory-lifetime.ts";
+import { memoryConsumptionWindows } from "../model/memory-consumption-v2.ts";
 import { liveConversationDigest } from "../model/memory-conversation.ts";
 import { personalMemoryMessage } from "./design-system/locales/personal-memory-messages.ts";
 import { createLiveMemoryClient, MemoryClientError, MEMORY_POLICY, MEMORY_TIMING, MEMORY_WRITE_CONTRACT,
@@ -1243,6 +1244,8 @@ export class FormaPersonalMemory extends FormaElement {
     </div>`;
     const visits = value.consumptionEpisodes;
     if (!visits) return html`<p data-memory-visits-unavailable>${this.#t("visitsUnavailable")}</p>`;
+    const windows=visits.version==='memory-consumption-episodes-v5'?memoryConsumptionWindows(visits,value.lifetime,row.documentId,
+      {since:value.coverage.since,expiresAt:row.expiresAt}):null;
     // Detail remains inside the same parent receipt. Artifact projections have their own source map;
     // it does not renumber assistant/outcome evidence or create a display lease.
     return html`<section class="personal-memory-activity" data-memory-visits>
@@ -1257,6 +1260,18 @@ export class FormaPersonalMemory extends FormaElement {
         ? html`<p>${this.#t("visitsArtifactUnavailable", { count: this.i18n.number(visits.coverage.unavailableArtifactSourceCount) })}</p>` : nothing}
       ${visits.version === "memory-consumption-episodes-v5" && visits.coverage.unavailableBlockSourceCount
         ? html`<p>${this.#t("visitsBlockUnavailable", {count:this.i18n.number(visits.coverage.unavailableBlockSourceCount)})}</p>` : nothing}
+      ${windows?html`<details data-memory-consumption-windows>
+        <summary>${this.#t("visitsWindows")}</summary><p>${this.#t("visitsWindowBasis")}</p>
+        ${windows.windows.map(window=>html`<section data-memory-consumption-window=${window.days}>
+          <h5>${this.#t("activityWindow",{days:this.i18n.number(window.days)})}</h5>
+          <p>${this.#t("activityRange",{since:this.i18n.date(new Date(window.since),{dateStyle:"medium",timeStyle:"short"}),until:this.i18n.date(new Date(value.lifetime.checkedAt),{dateStyle:"medium",timeStyle:"short"})})}</p>
+          <dl class="personal-memory-facts">
+            <dt>${this.#t("visitsDocumentCount")}</dt><dd>${this.i18n.number(window.documentVisits)}</dd>
+            <dt>${this.#t("visitsArtifactCount")}</dt><dd>${this.i18n.number(window.artifactOpenings)}</dd>
+            <dt>${this.#t("visitsBlockCount")}</dt><dd>${this.i18n.number(window.blockOpenings)}</dd>
+          </dl><p>${this.#t("visitsDistinctResources",{artifacts:this.i18n.number(window.distinctArtifacts),blocks:this.i18n.number(window.distinctBlocks)})}</p>
+        </section>`)}
+      </details>`:nothing}
       ${visits.episodes.length ? html`<details data-memory-visit-references>
         <summary>${this.#t("visitsDetails", { count: this.i18n.number(visits.episodes.length) })}</summary>
         <ol>${visits.episodes.map(episode => html`<li><article data-memory-visit>

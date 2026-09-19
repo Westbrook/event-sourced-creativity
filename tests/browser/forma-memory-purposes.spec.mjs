@@ -115,6 +115,9 @@ for(const locale of ['en','ar'])test.describe('Memory purpose locale '+locale,()
   await captureViewport(page,info,'memory-historical-views-'+locale,{assertStable:false});
   const blockOpened=visits.getByText(message(locale,'visitsBlockOpened'),{exact:true});await blockOpened.scrollIntoViewIfNeeded();await expect(blockOpened).toBeInViewport();
   await captureViewport(page,info,'memory-block-views-'+locale,{assertStable:false});
+  const windows=visits.locator('[data-memory-consumption-windows]');await windows.locator(':scope > summary').click();
+  await expect(windows.locator('[data-memory-consumption-window]')).toHaveCount(2);const counts=windows.locator('[data-memory-consumption-window="7"]');await counts.scrollIntoViewIfNeeded();await expect(counts).toBeInViewport();
+  await captureViewport(page,info,'memory-consumption-windows-'+locale,{assertStable:false});
   await info.attach('declared-memory-transport',{body:JSON.stringify({syntheticOnly:true,production:false,providerCalls:0,mutations:0,calls,session:JSON.parse(syntheticReadBody('/api/session')).user.userId},null,2),contentType:'application/json'});
 });
 

@@ -115,3 +115,7 @@ remain in Git and the independent report.
 ### MEM-003 native document block inspection continuation
 
 **In progress — Memory implementation task.** [Native block inspection and private v5 consumption](forma-memory-block-inspection-2026-09-19.md) now implement genuine actor-private receipt publication, consented bounded capture, descriptive review, original-backed derivation and source erasure. Local feature branch only. Continue the [remaining native scope/consumer work](forma-memory-native-continuation-2026-09-18.md#remaining-native-implementation--still-in-scope); hosted/external gates remain separate in the [capability To Do](forma-memory-sites-capability-todo-2026-09-18.md). No all-system completion or deployment claim.
+
+### MEM-003 rolling consumption inspector continuation
+
+**In progress — Memory implementation task.** [7/30-day descriptive document/artifact/block windows](forma-memory-consumption-windows-2026-09-19.md) are implemented and locally verified inside the existing private inspector lease. The native consumer/scope list and external qualification gates remain open; no deployment or full-system completion is claimed.

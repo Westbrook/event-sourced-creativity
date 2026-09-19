@@ -101,3 +101,30 @@ export function parseMemoryConsumptionV4(...input: ConsumptionParseInput): Memor
 export function parseMemoryConsumptionV5(...input: ConsumptionParseInput): MemoryConsumptionV2 | null {
   return parseArtifactConsumption(...input, MEMORY_CONSUMPTION_V5);
 }
+
+export type MemoryConsumptionWindows = {
+  basis: "selected-certified-observations"; completeHistory: false; validUntil: string;
+  windows: { days: 7 | 30; since: string; sourceIndexes: number[]; documentVisits: number;
+    artifactOpenings: number; blockOpenings: number; distinctArtifacts: number; distinctBlocks: number }[];
+};
+/** Pure descriptive projection, never a new source, session, preference or access
+ * grant. Counts use only the explicitly negotiated inspector source map. Repeated
+ * openings remain observations; distinct resources coalesce revisions, not visits.
+ * The two windows overlap and inherit the exact parent's display deadline. */
+export function memoryConsumptionWindows(...input: ConsumptionParseInput): MemoryConsumptionWindows | null {
+  try{input=snapshotMemoryConsumptionInput(input) as ConsumptionParseInput;}catch{return null;}
+  const projection=parseMemoryConsumptionV5(...input);if(!projection)return null;
+  const checked=memoryTimestamp(input[1].checkedAt),enrolled=memoryTimestamp(input[3].since);
+  if(checked===null||enrolled===null)return null;
+  return {basis:"selected-certified-observations",completeHistory:false,validUntil:projection.validUntil,
+    windows:([7,30] as const).map(days=>{
+      const since=Math.max(enrolled,checked-days*86400000),sourceIndexes=projection.sources.flatMap((source,index)=>Date.parse(source.recordedAt)>=since?[index]:[]);
+      let documentVisits=0,artifactOpenings=0,blockOpenings=0;const artifacts=new Set<string>(),blocks=new Set<string>();
+      for(const index of sourceIndexes){const target=projection.sources[index]!.target;
+        if(target.kind==='document')documentVisits++;
+        if(target.kind==='artifact'){artifactOpenings++;artifacts.add(target.artifactId);}
+        if(target.kind==='block'){blockOpenings++;blocks.add(target.blockId);}
+      }
+      return {days,since:new Date(since).toISOString(),sourceIndexes,documentVisits,artifactOpenings,blockOpenings,distinctArtifacts:artifacts.size,distinctBlocks:blocks.size};
+    })};
+}

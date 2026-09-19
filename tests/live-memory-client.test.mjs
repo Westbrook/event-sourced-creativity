@@ -6,7 +6,7 @@ import { parseMemoryCustody, memoryCustodyMatches } from "../src/model/memory-cu
 import { createMemoryElapsed, memoryTimestamp, parseMemoryLifetime, MEMORY_RECALL_LIFETIME, MEMORY_RECALL_MAX_AGE_MS } from "../src/model/memory-lifetime.ts";
 import { rollingLiveMemoryConsumption } from "../src/model/memory-observations.ts";
 import { createDocumentJobMemoryClient, DocumentJobMemoryError, DOCUMENT_JOB_MEMORY_VERSION } from "../src/state/document-job-memory-client.ts";
-import { MEMORY_CONSUMPTION_V2, MEMORY_CONSUMPTION_V3, MEMORY_CONSUMPTION_V4, MEMORY_CONSUMPTION_V5, parseMemoryConsumptionV2, parseMemoryConsumptionV3, parseMemoryConsumptionV4, parseMemoryConsumptionV5 } from "../src/model/memory-consumption-v2.ts";
+import { MEMORY_CONSUMPTION_V2, MEMORY_CONSUMPTION_V3, MEMORY_CONSUMPTION_V4, MEMORY_CONSUMPTION_V5, parseMemoryConsumptionV2, parseMemoryConsumptionV3, parseMemoryConsumptionV4, parseMemoryConsumptionV5, memoryConsumptionWindows } from "../src/model/memory-consumption-v2.ts";
 
 const fixtureId = value => value.toString(16).padStart(64, "0");
 const now = () => new Date().toISOString();
@@ -1842,4 +1842,31 @@ for(const fault of ['kind','document','block','revision','hash','sourceIndex','a
   if(fault==='sourceIndex')p.episodes[0].observations[0].sourceIndex=1;if(fault==='attention')p.attention='measured';if(fault==='meaning')p.episodes[0].observations[0].kind='read';if(fault==='coverage')delete p.coverage.unavailableBlockSourceCount;
   if(fault==='extra')target.text='Forbidden block body';if(fault==='expired')p.sources[0].validUntil='2000-01-01T00:00:00.000Z';if(fault==='accessor')Object.defineProperty(target,'revision',{enumerable:true,get(){calls++;return 7;}});
   assert.equal(parseMemoryConsumptionV5(p,body.lifetime,item.documentId,{since:body.coverage.since,expiresAt:item.expiresAt}),null);assert.equal(calls,0);
+});
+
+function consumptionWindowFixture(){
+  const item=enrollment(),body=blockConsumptionRecall(item),p=body.consumptionEpisodes,checked=Date.parse(body.lifetime.checkedAt);body.coverage.since=new Date(checked-30*86400000).toISOString();
+  const definitions=[['document',0,'doc',0],['artifact',5,'artifact',0],['artifact',8,'artifact',1],['block',0,'block',3],['block',7,'block',4],['block',7+1/86400000,'block',5],['block',29,'other-block',1]];
+  p.sources=definitions.map(([kind,days,id,revision],index)=>({eventId:'observed-'+index,type:kind==='document'?'DocumentViewVisited':kind==='artifact'?'DocumentArtifactViewed':'BlockInspected',recordedAt:new Date(checked-days*86400000).toISOString(),validUntil:p.validUntil,target:{kind,documentId:item.documentId,...(kind==='artifact'?{artifactId:id,artifactKind:'slides',revision,contentSha256:'a'.repeat(64)}:kind==='block'?{blockId:id,revision,stateSha256:'b'.repeat(64)}:{})}}));
+  p.episodes=p.sources.map((source,index)=>({episodeId:null,observations:[{sourceIndex:index,kind:source.type==='DocumentViewVisited'?'visit':source.type==='DocumentArtifactViewed'?'viewer-open':'inspector-open'}],firstRecordedAt:source.recordedAt,lastRecordedAt:source.recordedAt,validUntil:source.validUntil,independentEvidence:false}));p.coverage.eligibleSourceCount=7;p.coverage.observationCount=7;
+  const input=()=>[p,body.lifetime,item.documentId,{since:body.coverage.since,expiresAt:item.expiresAt}];return {item,body,p,input};
+}
+test('consumption windows: exact day boundaries, repeated openings and distinct resource versions',()=>{
+  const f=consumptionWindowFixture(),view=memoryConsumptionWindows(...f.input());assert.ok(view);assert.equal(view.validUntil,f.body.lifetime.validUntil);assert.equal(view.completeHistory,false);
+  assert.deepEqual(view.windows.map(({days,sourceIndexes,documentVisits,artifactOpenings,blockOpenings,distinctArtifacts,distinctBlocks})=>({days,sourceIndexes,documentVisits,artifactOpenings,blockOpenings,distinctArtifacts,distinctBlocks})),[
+    {days:7,sourceIndexes:[0,1,3,4],documentVisits:1,artifactOpenings:1,blockOpenings:2,distinctArtifacts:1,distinctBlocks:1},
+    {days:30,sourceIndexes:[0,1,2,3,4,5,6],documentVisits:1,artifactOpenings:2,blockOpenings:4,distinctArtifacts:1,distinctBlocks:2}]);
+  const serial=JSON.stringify(view);for(const source of f.p.sources)assert.equal(serial.includes(source.eventId),false);assert.equal(serial.includes('other-block'),false);
+  f.p.sources[0].eventId='mutated-after';assert.equal(JSON.stringify(view),serial,'No mutable input graph is retained');
+});
+test('consumption windows: empty inspected selection is not complete history and clamps to enrollment',()=>{
+  const f=consumptionWindowFixture();f.p.sources=[];f.p.episodes=[];f.p.coverage.eligibleSourceCount=0;f.p.coverage.observationCount=0;f.p.coverage.truncated=true;f.body.coverage.since=new Date(Date.parse(f.body.lifetime.checkedAt)-1000).toISOString();
+  const view=memoryConsumptionWindows(...f.input());assert.equal(view.completeHistory,false);assert.ok(view.windows.every(window=>window.since===f.body.coverage.since&&window.sourceIndexes.length===0&&window.documentVisits===0&&window.artifactOpenings===0&&window.blockOpenings===0));
+});
+for(const fault of ['foreign-scope','unsupported-version','future','duplicate','meaning','expiry','getter','extra'])test('consumption windows: reject unverified '+fault,()=>{
+  const f=consumptionWindowFixture();let invoked=0;
+  if(fault==='foreign-scope')f.p.sources[0].target.documentId='foreign';if(fault==='unsupported-version')f.p.version=MEMORY_CONSUMPTION_V4;if(fault==='future')f.p.sources[0].recordedAt=new Date(Date.parse(f.body.lifetime.checkedAt)+1).toISOString();
+  if(fault==='duplicate')f.p.sources[1].eventId=f.p.sources[0].eventId;if(fault==='meaning')f.p.attention='measured';if(fault==='expiry')f.p.sources[0].validUntil=new Date(Date.parse(f.body.lifetime.validUntil)-1).toISOString();if(fault==='extra')f.p.completeHistory=true;
+  if(fault==='getter')Object.defineProperty(f.body.lifetime,'checkedAt',{enumerable:true,get(){invoked++;return new Date().toISOString();}});
+  assert.equal(memoryConsumptionWindows(...f.input()),null);assert.equal(invoked,0);
 });

@@ -17,6 +17,7 @@ import { parseMemoryAnswerPresentation } from "../src/model/memory-answer.ts";
 import { createMemoryElapsed } from "../src/model/memory-lifetime.ts";
 import { ASSISTANT_CONTEXT_LIMITS } from "../src/model/conversation-context.ts";
 import { parseMemoryCustody } from "../src/model/memory-custody.ts";
+import { memoryConsumptionWindows } from "../src/model/memory-consumption-v2.ts";
 import { liveConversationDigest } from "../src/model/memory-conversation.ts";
 import { rollingLiveMemoryConsumption, memoryEventAction } from "../src/model/memory-observations.ts";
 import { FORMA_PERSONAL_MEMORY_MESSAGES, personalMemoryMessage } from "../src/components/design-system/locales/personal-memory-messages.ts";
@@ -300,7 +301,7 @@ function fixture(t, { initial = settings(), route = "/memory", session: initialS
     if (response instanceof Error) throw response;
     return response instanceof Response ? response : Response.json(response);
   }
-  const ports = { FormaElement, html, nothing, createMemoryDerivationClient, MemoryDerivationClientError, MEMORY_DERIVATION_CONTROL, MEMORY_DERIVATION_POLICY, createMemoryElapsed, DocumentProfileClientError, DOCUMENT_PROFILE_CONTROL_VERSION, DOCUMENT_PROFILE_POLICY, NATIVE_DOCUMENT_PALETTE_CHOICE_RECIPE, MemoryClientError, MEMORY_POLICY, MEMORY_TIMING, MEMORY_WRITE_CONTRACT, parseMemoryCustody, liveConversationDigest,
+  const ports = { FormaElement, html, nothing, createMemoryDerivationClient, MemoryDerivationClientError, MEMORY_DERIVATION_CONTROL, MEMORY_DERIVATION_POLICY, createMemoryElapsed, DocumentProfileClientError, DOCUMENT_PROFILE_CONTROL_VERSION, DOCUMENT_PROFILE_POLICY, NATIVE_DOCUMENT_PALETTE_CHOICE_RECIPE, MemoryClientError, MEMORY_POLICY, MEMORY_TIMING, MEMORY_WRITE_CONTRACT, parseMemoryCustody, liveConversationDigest, memoryConsumptionWindows,
     personalMemoryMessage: localized ? personalMemoryMessage
       : (_locale, key, values = {}) => key + Object.values(values).map(value => ` [${value}]`).join(""),
     window: windowPort, document: documentPort, Date: FixtureDate, performance: { now: () => clock.monotonic },
@@ -3014,7 +3015,7 @@ test("recorded visits: every supported locale has matching descriptive labels an
   const selected = dictionary => Object.keys(dictionary).filter(key => key.startsWith("memory.live.visits")).sort();
   const english = FORMA_PERSONAL_MEMORY_MESSAGES.en, keys = selected(english);
   const placeholders = value => [...value.matchAll(/\{(\w+)\}/gu)].map(match => match[1]).sort();
-  assert.equal(keys.length, 16);
+  assert.equal(keys.length, 22);
   for (const dictionary of Object.values(FORMA_PERSONAL_MEMORY_MESSAGES)) {
     assert.deepEqual(selected(dictionary), keys);
     for (const key of keys) { assert.ok(dictionary[key].trim()); assert.deepEqual(placeholders(dictionary[key]), placeholders(english[key])); }
@@ -3489,4 +3490,14 @@ test('recorded visits: block inspection is descriptive and retires with its pare
   p.sources[0]={...p.sources[0],type:'BlockInspected',target:{kind:'block',documentId:row.documentId,blockId:'private-inspected-block',revision:4,stateSha256:'a'.repeat(64)}};p.episodes[0].observations[0].kind='inspector-open';p.coverage.unavailableBlockSourceCount=1;
   h.enqueue(body);await h.click('visitsInclude');assert.ok(h.text().includes('memory.live.visitsBlockOpened'));assert.ok(h.text().includes('memory.live.visitsBlockUnavailable'));
   assert.equal(h.text().includes('private-inspected-block'),false);assert.equal(h.text().includes('a'.repeat(64)),false);await h.click('hide');assert.equal(h.text().includes('memory.live.visitsBlockOpened'),false);
+});
+
+test('recorded visits: rolling windows stay inside the explicit parent receipt and disclose overlap',async t=>{
+  const row=enrollment(),h=fixture(t,{initial:settings([row])});await openVisitAction(h,row);
+  assert.equal(h.all().some(control=>control.attributes.has('data-memory-consumption-windows')),false);
+  const body=visitsRecall(row,{checkedAt:new Date(h.clock.now).toISOString()}),p=body.consumptionEpisodes;
+  p.sources[0]={...p.sources[0],type:'BlockInspected',target:{kind:'block',documentId:row.documentId,blockId:'private-window-block',revision:4,stateSha256:'a'.repeat(64)}};p.episodes[0].observations[0].kind='inspector-open';
+  h.enqueue(body);await h.click('visitsInclude');const detail=h.all().find(control=>control.attributes.has('data-memory-consumption-windows'));assert.ok(detail);assert.equal(detail.attributes.has('open'),false);assert.equal(detail.attributes.has('?open'),false);
+  assert.ok(h.text().includes('memory.live.visitsWindowBasis'));assert.ok(h.text().includes('memory.live.visitsBlockCount'));assert.equal(h.text().includes('private-window-block'),false);
+  const calls=h.calls.length;h.render();assert.equal(h.calls.length,calls);await h.click('hide');assert.equal(h.all().some(control=>control.attributes.has('data-memory-consumption-windows')),false);
 });
