@@ -6,12 +6,12 @@ import { AssistantContextReadWitness } from "./assistant-context-source.ts";
 import { decodeRetainedSpecialistConsent, paidMemoryBatchProof, type PaidMemoryAncestryEntry } from "./assistant-specialist-consent.ts";
 import { liveMemorySourceQueryParts } from "./memory-live-sources.ts";
 import { liveMemoryLifetimeProjection, liveMemorySourceDeadline } from "./memory-live-source-lifetime.ts";
-import { nativeMemoryAnswerExclusion } from "./memory-native-boundary.ts";
+import { captureNativeMemoryTurnExclusions, nativeMemoryTurnExclusionInputs } from "./memory-native-boundary.ts";
 import { observeNativeMemoryDocumentScope, nativeMemoryArtifactIdentity } from "./memory-native-scope.ts";
 import { memoryCanonical } from "./memory-sql.ts";
 import { derivationExact, derivationHash, derivationId, derivationInteger, derivationTime } from "./memory-derivation-policy.ts";
-import { derivationResults, memoryDerivationSchema } from "./memory-derivation-store.ts";
-import { nativeDerivationEvidenceInputs, nativeDerivationEvidenceStatements, replayNativeDerivationEvidence, observeNativeDerivationJob, type NativeDerivationEvidence } from "./memory-derivation-admission.ts";
+import { derivationResults } from "./memory-derivation-store.ts";
+import { nativeDerivationEvidenceInputs, nativeDerivationEvidenceStatements, replayNativeDerivationEvidence, observeNativeDerivationHistoryJob, type NativeDerivationEvidence } from "./memory-derivation-admission.ts";
 import type { MemoryDerivationSource } from "./memory-derivation-result.ts";
 import type { WorkerEnv } from "./runtime.ts";
 
@@ -69,11 +69,28 @@ async function captureNativeDerivationWindow(env: WorkerEnv, lease: NativeDeriva
       nativeDerivationEvidenceInputs(env, lease);
       witness.observe([statement], [result], [query]); return result.results;
     };
+    const q = liveMemorySourceQueryParts(e, a), joined = `${q.joins}
+      JOIN memory_derivation_job_sources queued ON queued.job_id=? AND (queued.event_id,queued.sequence)=(event.event_id,event.sequence)
+      JOIN memory_live_sources remembered ON (remembered.enrollment_id,remembered.event_id,remembered.sequence,remembered.expires_at)
+        =(queued.enrollment_id,queued.event_id,queued.sequence,queued.expires_at)`;
+    const where = `${q.condition} AND queued.enrollment_id=? AND event.sequence>? AND event.recorded_at>=?
+      AND (secret.private_json IS NULL OR (${clean("secret.private_json")})
+        AND (json_extract(secret.private_json,'$.actor_user_id') IS NULL OR json_extract(secret.private_json,'$.actor_user_id')=?))`;
+    const bindings = [...q.joinBindings, job.job_id, ...q.conditionBindings, e.enrollment_id, g.source_after_sequence, g.consented_at, e.actor_user_id];
     // The queue includes separately certified artifact observations. They must
     // not be silently dropped or admitted through the assistant-only predicate.
-    const inventory=await read({sql:`SELECT queued.event_id,queued.sequence,event.type,event.recorded_at
+    // Both descriptor/size selections depend only on the issued job. Their
+    // independent full snapshots are retained in one native binding call.
+    const queries:Query[]=[{sql:`SELECT queued.event_id,queued.sequence,event.type,event.recorded_at
       FROM memory_derivation_job_sources queued JOIN events event ON (event.event_id,event.sequence)=(queued.event_id,queued.sequence)
-      WHERE queued.job_id=? AND event.stream_id=? ORDER BY event.sequence,event.event_id LIMIT 129`,bindings:[job.job_id,a.binding.streamId]});
+      WHERE queued.job_id=? AND event.stream_id=? ORDER BY event.sequence,event.event_id LIMIT 129`,bindings:[job.job_id,a.binding.streamId]},{ sql: `SELECT event.event_id,event.sequence,event.type,
+      length(CAST(COALESCE(authored.content,'') AS BLOB)) AS user_bytes,length(CAST(COALESCE(answer.content,'') AS BLOB)) AS answer_bytes,
+      length(CAST(event.payload AS BLOB)) AS event_bytes ${joined} WHERE ${where} ORDER BY event.sequence,event.event_id LIMIT 129`, bindings }];
+    const statements=queries.map(query=>db.prepare(query.sql).bind(...query.bindings));
+    const measured=structuredClone(await db.batch<Row>(statements));
+    if(env.DB!==db||!derivationResults(measured,queries.length))return unavailable();
+    nativeDerivationEvidenceInputs(env,lease);witness.observe(statements,measured,queries);
+    const inventory=measured[0]!.results,sizes=measured[1]!.results;
     if(inventory.length!==input.references.length||inventory.some((row,i)=>!derivationExact(row,['event_id','sequence','type','recorded_at'])
       ||row.event_id!==input.references[i]!.event_id||row.sequence!==input.references[i]!.sequence))return unavailable();
     const artifactRefs=inventory.filter(row=>row.type==='DocumentArtifactViewed');
@@ -84,17 +101,6 @@ async function captureNativeDerivationWindow(env: WorkerEnv, lease: NativeDeriva
     if(artifactCapture&&(artifactCapture.truncated||artifactCapture.sources.length!==artifactRefs.length
       ||artifactCapture.sources.some(source=>!artifactRefs.some(ref=>ref.event_id===source.eventId&&ref.sequence===source.sequence)
         ||source.recordedAt<g.consented_at)))return unavailable();
-    const q = liveMemorySourceQueryParts(e, a), joined = `${q.joins}
-      JOIN memory_derivation_job_sources queued ON queued.job_id=? AND (queued.event_id,queued.sequence)=(event.event_id,event.sequence)
-      JOIN memory_live_sources remembered ON (remembered.enrollment_id,remembered.event_id,remembered.sequence,remembered.expires_at)
-        =(queued.enrollment_id,queued.event_id,queued.sequence,queued.expires_at)`;
-    const where = `${q.condition} AND queued.enrollment_id=? AND event.sequence>? AND event.recorded_at>=?
-      AND (secret.private_json IS NULL OR (${clean("secret.private_json")})
-        AND (json_extract(secret.private_json,'$.actor_user_id') IS NULL OR json_extract(secret.private_json,'$.actor_user_id')=?))`;
-    const bindings = [...q.joinBindings, job.job_id, ...q.conditionBindings, e.enrollment_id, g.source_after_sequence, g.consented_at, e.actor_user_id];
-    const sizes = await read({ sql: `SELECT event.event_id,event.sequence,event.type,
-      length(CAST(COALESCE(authored.content,'') AS BLOB)) AS user_bytes,length(CAST(COALESCE(answer.content,'') AS BLOB)) AS answer_bytes,
-      length(CAST(event.payload AS BLOB)) AS event_bytes ${joined} WHERE ${where} ORDER BY event.sequence,event.event_id LIMIT 129`, bindings });
     if (sizes.length !== regularRefs.length || sizes.some((row, index) => row.event_id !== regularRefs[index]!.event_id
       || row.sequence !== regularRefs[index]!.sequence || ![row.user_bytes, row.answer_bytes, row.event_bytes].every(value => derivationInteger(value)))) return unavailable();
     const pairs = sizes.filter(row => row.type === "AssistantReasoned");
@@ -128,7 +134,13 @@ async function captureNativeDerivationWindow(env: WorkerEnv, lease: NativeDeriva
       : `EXISTS(SELECT 1 FROM project_event_scopes custody WHERE (custody.event_id,custody.source_stream_id,custody.source_sequence,
           custody.organization_id,custody.project_access_id,custody.project_id,custody.owner_user_id,custody.actor_user_id)
           =(message.event_id,message.stream_id,message.sequence,?,?,?,?,?))`;
-    const messages = expected.length ? await read({ sql: `SELECT json_extract(expected.value,'$.turnId') AS turn_id,message.event_id,message.sequence,message.recorded_at,
+    const paidFrom = `FROM json_each(?) expected JOIN assistant_specialist_tasks task ON (task.actor_user_id,task.scope_key,task.turn_id)=(?,?,json_extract(expected.value,'$.turnId'))
+      LEFT JOIN consequential_executions execution ON execution.execution_id=task.task_id AND execution.actor_user_id=task.actor_user_id
+      LEFT JOIN private_content approved ON approved.content_id=execution.consent_ref AND approved.owner_id=execution.actor_user_id`;
+    const paidBindings = [JSON.stringify(expected), e.actor_user_id, a.scopeKey];
+    let messages:Row[]=[],paidSizes:Row[]=[];
+    if(expected.length){
+      const queries:Query[]=[{ sql: `SELECT json_extract(expected.value,'$.turnId') AS turn_id,message.event_id,message.sequence,message.recorded_at,
         ${originalEvent("message")} AS event_json FROM json_each(?) expected JOIN events message
         ON message.stream_id=? AND message.type='ChatMessageSent' AND message.actor=? AND message.client_id='web:assistant'
           AND message.correlation_id=?||':'||json_extract(expected.value,'$.turnId')
@@ -145,13 +157,13 @@ async function captureNativeDerivationWindow(env: WorkerEnv, lease: NativeDeriva
                 OR json_extract(secret.private_json,'$.actor_user_id')=?)) AND (${custody}) ORDER BY message.sequence,message.event_id LIMIT 129`,
       bindings: [JSON.stringify(expected), a.binding.streamId, "user:" + e.actor_user_id, e.actor_user_id, e.project_id, e.document_id,
         g.source_after_sequence, g.consented_at, e.actor_user_id, e.owner_user_id, e.project_id, e.document_id, e.actor_user_id,
-        ...(e.organization_id === null ? [] : [e.organization_id, e.project_access_id, e.project_id, e.owner_user_id, e.actor_user_id])] }) : [];
+        ...(e.organization_id === null ? [] : [e.organization_id, e.project_access_id, e.project_id, e.owner_user_id, e.actor_user_id])] },{ sql: `SELECT task.task_id,length(CAST(approved.content AS BLOB)) AS bytes ${paidFrom} ORDER BY task.task_id LIMIT 65`, bindings: paidBindings }];
+      const statements=queries.map(query=>db.prepare(query.sql).bind(...query.bindings)),result=structuredClone(await db.batch<Row>(statements));
+      if(env.DB!==db||!derivationResults(result,2))return unavailable();
+      nativeDerivationEvidenceInputs(env,lease);witness.observe(statements,result,queries);
+      messages=result[0]!.results;paidSizes=result[1]!.results;
+    }
     if (messages.length !== expected.length || expected.some(row => messages.filter(message => message.turn_id === row.turnId).length !== 1)) return unavailable();
-    const paidFrom = `FROM json_each(?) expected JOIN assistant_specialist_tasks task ON (task.actor_user_id,task.scope_key,task.turn_id)=(?,?,json_extract(expected.value,'$.turnId'))
-      LEFT JOIN consequential_executions execution ON execution.execution_id=task.task_id AND execution.actor_user_id=task.actor_user_id
-      LEFT JOIN private_content approved ON approved.content_id=execution.consent_ref AND approved.owner_id=execution.actor_user_id`;
-    const paidBindings = [JSON.stringify(expected), e.actor_user_id, a.scopeKey];
-    const paidSizes = expected.length ? await read({ sql: `SELECT task.task_id,length(CAST(approved.content AS BLOB)) AS bytes ${paidFrom} ORDER BY task.task_id LIMIT 65`, bindings: paidBindings }) : [];
     if (paidSizes.length > expected.length || paidSizes.some(row => !derivationInteger(row.bytes))) return unavailable();
     if (paidSizes.reduce((sum, row) => sum + Number(row.bytes), 0) > 524288) return capacity();
     const paid = paidSizes.length ? await read({ sql: `SELECT task.task_id,task.turn_id,execution.binding_hash,execution.intent_hash,execution.result_ref,approved.content_id,approved.content,
@@ -174,13 +186,13 @@ async function captureNativeDerivationWindow(env: WorkerEnv, lease: NativeDeriva
         { turnId: String(row.turn_id), userRef: decoded.request.turn.user_content_ref, answerRef: decoded.request.turn.assistant_content_ref }] });
     }
     if (expected.length) {
-      const [authored, answer] = await Promise.all([nativeMemoryAnswerExclusion(env, { answerAlias: "authored", turnAlias: "turn" }),
-        nativeMemoryAnswerExclusion(env, { answerAlias: "answer", turnAlias: "turn" })]);
+      const exclusions=await captureNativeMemoryTurnExclusions(env);
+      const {authored,answer}=nativeMemoryTurnExclusionInputs(env,exclusions);
       witness.require({ sql: `NOT EXISTS(SELECT 1 FROM json_each(?) expected JOIN assistant_turns turn
         ON (turn.actor_user_id,turn.scope_key,turn.turn_id)=(?,?,json_extract(expected.value,'$.turnId'))
         JOIN private_content authored ON authored.content_id=turn.user_content_ref JOIN private_content answer ON answer.content_id=turn.assistant_content_ref
         WHERE NOT (${authored.sql}) OR NOT (${answer.sql}))`, bindings: [JSON.stringify(expected), e.actor_user_id, a.scopeKey, ...authored.bindings, ...answer.bindings] });
-      if (groups.length) witness.require(await paidMemoryBatchProof(env, e.actor_user_id, a.scopeKey, groups));
+      if (groups.length) witness.require(await paidMemoryBatchProof(env, e.actor_user_id, a.scopeKey, groups, exclusions));
     }
     const checkedAt = clock(), at = Date.parse(checkedAt), originals: MemoryDerivationSource[] = [], originalBacking: Backing[] = [], observations: NativeDerivationObservation[] = [];
     const ceilings = [job.expires_at, g.expires_at, input.qualification.row.expires_at];
@@ -279,8 +291,8 @@ export async function captureNativeDerivationSources(env: WorkerEnv, lease: Nati
   const own = await captureNativeDerivationWindow(env, lease);
   if (own.status !== 'captured' || options.history === false) return own;
   try {
-    const db=env.DB, input=nativeDerivationEvidenceInputs(env,lease), schema=await memoryDerivationSchema(env);
-    if (!schema.historyPresent) return own;
+    const db=env.DB, input=nativeDerivationEvidenceInputs(env,lease);
+    if (!input.historyPresent) return own;
     const current=nativeDerivationSourceInputs(env,own.capture), witness=new AssistantContextReadWitness<CaptureData>(env);
     const query={sql:`SELECT j.job_id,j.after_sequence,j.through_sequence FROM memory_derivation_jobs j
       JOIN memory_derivation_completions done ON done.job_id=j.job_id
@@ -298,7 +310,7 @@ export async function captureNativeDerivationSources(env: WorkerEnv, lease: Nati
     let boundary:NativeDerivationHistory['boundary']=result.results.length>2?'bounded':'consent';
     let merged=current;
     for(const row of result.results.slice(0,2)) {
-      const evidence=await observeNativeDerivationJob(env,input.grant.actor_user_id,String(row.job_id));
+      const evidence=await observeNativeDerivationHistoryJob(env,lease,String(row.job_id));
       if(!evidence){boundary='bounded';break;}
       const previous=await captureNativeDerivationWindow(env,evidence);
       if(previous.status!=='captured'){boundary=previous.status==='capacity'?'capacity':'bounded';break;}

@@ -21,7 +21,7 @@ import { ASSISTANT_STATE_EVENT_SQL } from "../src/model/assistant-event-views.ts
 import { parseMemoryAnswerPresentation, type MemoryAnswerPresentation } from "../src/model/memory-answer.ts";
 import type { NativeMemoryPreparedDocument } from "./memory-live-context.ts";
 import { liveMemoryEnabled, nativeMemorySelectionStatements, nativeMemorySelectionMatches, type NativeMemorySelection } from "./memory-live-store.ts";
-import { nativeMemoryAnswerExclusion } from "./memory-native-boundary.ts";
+import { captureNativeMemoryTurnExclusions, nativeMemoryTurnExclusionInputs, type NativeMemoryTurnExclusions } from "./memory-native-boundary.ts";
 
 export const ASSISTANT_SPECIALIST_CONSENT_VERSION="assistant-specialist-consent-v1";
 const OPERATION="assistant-specialist",OUTPUT_TOKENS=1_600,CONVERSATION_TURNS=Math.floor(ASSISTANT_CONTEXT_LIMITS.turns/2),HEADERS={"cache-control":"private, no-store",vary:"Cookie, oai-authenticated-user-id, oai-authenticated-user-email"};
@@ -66,7 +66,7 @@ export async function paidMemoryProof(env:WorkerEnv,actorUserId:string,scopeKey:
  * Validate each original per-turn bound before flattening, preserving saved
  * references and their current pointers without per-turn witness expansion. */
 export async function paidMemoryBatchProof(env:WorkerEnv,actorUserId:string,scopeKey:string,
-  groups:readonly {turnId:string;entries:readonly PaidMemoryAncestryEntry[]}[]):Promise<BudgetReservationGuard>{
+  groups:readonly {turnId:string;entries:readonly PaidMemoryAncestryEntry[]}[],exclusions?:NativeMemoryTurnExclusions):Promise<BudgetReservationGuard>{
   if(!Array.isArray(groups)||!groups.length||groups.length>64)fail(MEMORY_PAID_UNSUPPORTED);
   const captured=Array.from(groups,group=>{
     if(!group)fail(MEMORY_PAID_UNSUPPORTED);
@@ -75,15 +75,12 @@ export async function paidMemoryBatchProof(env:WorkerEnv,actorUserId:string,scop
     return{turnId:group.turnId,entries};
   });
   if(new Set(captured.map(group=>group.turnId)).size!==captured.length)fail(MEMORY_PAID_UNSUPPORTED);
-  return paidMemoryExclusion(env,actorUserId,scopeKey,captured.flatMap(group=>group.entries));
+  return paidMemoryExclusion(env,actorUserId,scopeKey,captured.flatMap(group=>group.entries),exclusions);
 }
-async function paidMemoryExclusion(env:WorkerEnv,actorUserId:string,scopeKey:string,entries:readonly PaidMemoryAncestryEntry[]):Promise<BudgetReservationGuard>{
+async function paidMemoryExclusion(env:WorkerEnv,actorUserId:string,scopeKey:string,entries:readonly PaidMemoryAncestryEntry[],exclusions?:NativeMemoryTurnExclusions):Promise<BudgetReservationGuard>{
   const db=env.DB;
-  const [answer,authored,content]=await Promise.all([
-    nativeMemoryAnswerExclusion(env,{answerAlias:"answer",turnAlias:"turn"}),
-    nativeMemoryAnswerExclusion(env,{answerAlias:"authored",turnAlias:"turn"}),
-    nativeMemoryAnswerExclusion(env,{answerAlias:"content",turnAlias:"turn"}),
-  ]);
+  const captured=exclusions??await captureNativeMemoryTurnExclusions(env);
+  const {answer,authored,content}=nativeMemoryTurnExclusionInputs(env,captured);
   if(env.DB!==db)fail(MEMORY_PAID_UNSUPPORTED);
   // Negative markers survive erasure of the bodies and assistant_turns row.
   // Substitute only these closed, server-owned aliases: raw saved references

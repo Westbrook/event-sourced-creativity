@@ -37,6 +37,26 @@ export async function nativePrivateContentMemoryExclusionPair(env: WorkerEnv) {
   return qualified;
 }
 
+declare const nativeTurnExclusionsBrand: unique symbol;
+export type NativeMemoryTurnExclusions = Readonly<{[nativeTurnExclusionsBrand]:true}>;
+const turnExclusions=new WeakMap<NativeMemoryTurnExclusions,{env:WorkerEnv;db:WorkerEnv['DB'];guards:BudgetReservationGuard[]}>();
+/** One request-local native schema observation covers the closed turn aliases.
+ * These are exclusions only. Every returned predicate still checks exact schema
+ * and current negative markers in its consuming transaction. No schema cache. */
+export async function captureNativeMemoryTurnExclusions(env: WorkerEnv): Promise<NativeMemoryTurnExclusions> {
+  const db=env.DB,observations=structuredClone(await db.batch(nativeMemorySchemaReads(db,'turn')));
+  const guards=await Promise.all((['authored','answer','content'] as const).map(alias=>
+    qualifyNativeMemoryAnswerExclusion(env,db,alias,'turn',observations)));
+  if(env.DB!==db)throw new Error('memory_boundary_database_changed');
+  const handle=Object.freeze({}) as NativeMemoryTurnExclusions;turnExclusions.set(handle,{env,db,guards});return handle;
+}
+export function nativeMemoryTurnExclusionInputs(env:WorkerEnv,handle:NativeMemoryTurnExclusions) {
+  const captured=turnExclusions.get(handle);
+  if(!captured||captured.env!==env||captured.db!==env.DB)throw new Error('memory_boundary_snapshot_invalid');
+  const [authored,answer,content]=structuredClone(captured.guards);
+  return {authored:authored!,answer:answer!,content:content!};
+}
+
 /** Exclusion only, never authorization to read an answer. A permanent public
  * marker prevents a missing manifest or retyped private row from downgrading
  * a derived answer into ordinary chat. Presence (even malformed) is enough to

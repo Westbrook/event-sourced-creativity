@@ -6,7 +6,7 @@ import { derivationExact, derivationHash, derivationId, derivationInteger } from
 import { derivationAssertion, derivationChanged, derivationResults, derivationVerified, memoryDerivationSchema } from './memory-derivation-store.ts';
 import { DERIVATION_RESULT_TABLE_COLUMNS } from './memory-derivation-results-schema.ts';
 import { nativeDerivationCandidateInputs, nativeDerivationCandidateStatements, type NativeDerivationCandidateReceipt } from './memory-derivation-provider.ts';
-import { observeNativeDerivationJob } from './memory-derivation-admission.ts';
+import { observeNativeDerivationJob, nativeDerivationEvidenceInputs } from './memory-derivation-admission.ts';
 import { captureNativeDerivationSources, nativeDerivationSourceInputs, type NativeDerivationSourceCapture } from './memory-derivation-sources.ts';
 import { nativeDerivationManifestInputs, nativeDerivationManifestStatements, revalidateNativeDerivationManifest,
   type NativeDerivationManifest, type NativeDerivationManifestData } from './memory-derivation-manifest.ts';
@@ -127,7 +127,7 @@ export async function readNativeDerivationResult(env: WorkerEnv, actorUserId: st
   try {
     if (!derivationHash(jobId)) return null;
     const db = env.DB, evidence = await observeNativeDerivationJob(env, actorUserId, jobId);
-    if (!evidence || !(await memoryDerivationSchema(env)).resultsPresent || env.DB !== db) return null;
+    if (!evidence || !nativeDerivationEvidenceInputs(env,evidence).resultsPresent || env.DB !== db) return null;
     const row = await resultRow(env, jobId);
     if (!row || row.state !== 'active' || typeof row.raw_json !== 'string' || typeof row.manifest_json !== 'string'
       || typeof row.expires_at !== 'string' || row.expires_at <= new Date().toISOString()

@@ -112,3 +112,5 @@ scheduler registration and billing authority are unchanged.
 The release receipt and final test results are recorded in the
 [release status](forma-memory-release-2026-09-18.md). This checklist does not itself
 schedule work, provision a service or establish human review.
+
+[Native whole-request inspection qualification](forma-memory-native-read-budget-2026-09-19.md) now covers tested three-window free/paid histories at 45/48 D1 calls in personal/shared scopes. Artifact-heavy and full broader integration qualification remain open; these local checks are not hosted quota evidence.

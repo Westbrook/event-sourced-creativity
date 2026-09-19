@@ -137,3 +137,7 @@ independent producers, nested scope identity and native index lifecycle remain o
 ## Rolling history continuation
 
 [Original-backed rolling refresh](forma-memory-rolling-history-2026-09-19.md) adds same-consent recent originals, complete downstream dependencies, additive migration0052, explicit history boundaries and purpose-specific newest-first review. Migration0052 remains unapplied. All broader native and external work listed above remains tracked.
+
+## Whole-request Memory inspection
+
+[Native inspection budget work](forma-memory-native-read-budget-2026-09-19.md) reduces the tested three-window authenticated reads from 68 to 45/48 D1 calls for free/paid original histories, retaining every native privacy assertion. Local D1 includes paid ancestry. This does not qualify hosted quotas or close broader native integration.

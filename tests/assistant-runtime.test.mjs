@@ -13233,17 +13233,20 @@ for(const paid of [false,true])test('native derivation sources: '+(paid?'consent
   state.due();await state.run();const lease=await admission.claimNativeDerivationJob(state.env,state.queue().jobs[0].job_id);assert.ok(lease);
   const ref=paid?state.sqlite.prepare('SELECT consent_ref FROM consequential_executions WHERE execution_id=?').get(review.quote.executionId).consent_ref
     :state.sqlite.prepare('SELECT user_content_ref FROM assistant_turns WHERE turn_id=?').get(turn.id).user_content_ref;
-  let changed=false,loaded=false;const prepare=state.env.DB.prepare,oversize='never hydrate this '.repeat(40000);
+  let changed=false,loaded=false;const prepare=state.env.DB.prepare,batch=state.env.DB.batch,oversize='never hydrate this '.repeat(40000);
+  const inspect=(sql,result)=>{
+    if(JSON.stringify(result.results).includes(oversize))loaded=true;
+    if(!changed&&(paid?sql.startsWith('SELECT task.task_id,length(CAST(approved.content')
+      :sql.startsWith('SELECT event.event_id,event.sequence,event.type,')&&sql.includes('AS user_bytes'))){
+      changed=true;state.sqlite.prepare('UPDATE private_content SET content=? WHERE content_id=?').run(oversize,ref);
+    }
+  };
   state.env.DB.prepare=sql=>{const statement=prepare.call(state.env.DB,sql),bind=statement.bind;statement.bind=(...values)=>{
-    const bound=bind.call(statement,...values),all=bound.all;bound.all=async()=>{const result=await all.call(bound);
-      if(JSON.stringify(result.results).includes(oversize))loaded=true;
-      if(!changed&&(paid?sql.startsWith('SELECT task.task_id,length(CAST(approved.content'):sql.startsWith('SELECT event.event_id,event.sequence,event.type,'))){
-        changed=true;state.sqlite.prepare('UPDATE private_content SET content=? WHERE content_id=?').run(oversize,ref);
-      }return result;
-    };return bound;
+    const bound=bind.call(statement,...values),all=bound.all;bound.all=async()=>{const result=await all.call(bound);inspect(sql,result);return result;};return bound;
   };return statement;};
+  state.env.DB.batch=async statements=>{const result=await batch.call(state.env.DB,statements);statements.forEach((statement,index)=>inspect(statement.sql,result[index]));return result;};
   try{assert.equal((await sources.captureNativeDerivationSources(state.env,lease)).status,'unavailable');assert.equal(changed,true);assert.equal(loaded,false,'Oversized replacement is filtered in SQL before transport');}
-  finally{state.env.DB.prepare=prepare;}
+  finally{state.env.DB.prepare=prepare;state.env.DB.batch=batch;}
   assert.equal(state.queue().jobs.length,1);
 });
 test('native derivation sources: post-consent paid completion cannot admit the pre-consent prompt',{timeout:60000},async t=>{
@@ -14699,7 +14702,7 @@ test('native derivation split: full registration queue retains subdivision headr
   assert.equal(state.queue().cursors[0].registered_through_sequence,through-1);
 });
 
-async function nativeDerivationRollingFixture(t,{windows=3,shared=false,termOverrides={},message=i=>'Original human intent '+i}={}){
+async function nativeDerivationRollingFixture(t,{windows=3,shared=false,paid=false,termOverrides={},message=i=>'Original human intent '+i}={}){
   const state=await nativeDerivationWorkerFixture(t,{skipOriginal:true,shared,termOverrides:{maximumInputTokens:65536,...termOverrides}}),worker=await import('../worker/memory-derivation-worker.ts');
   const requests=[],fetch=globalThis.fetch;t.after(()=>{globalThis.fetch=fetch;});
   globalThis.fetch=async(_url,init)=>{const input=JSON.parse(JSON.parse(init.body).input);requests.push(input);
@@ -14709,7 +14712,8 @@ async function nativeDerivationRollingFixture(t,{windows=3,shared=false,termOver
   for(let i=0;i<windows;i++){
     // Generate genuine unassisted originals; a memory-assisted answer is not new independent evidence.
     state.env.FORMA_MEMORY_ENABLED='false';
-    await specialistFreeTurn(state,'rolling-original-'+i,message(i));
+    const turn=await specialistFreeTurn(state,'rolling-original-'+i,message(i));
+    if(paid)await nativeDerivationPaidTurn(state,turn);
     state.env.FORMA_MEMORY_ENABLED='true';
     state.sqlite.exec('UPDATE memory_live_enrollments SET last_local_day=NULL,last_admitted_at=NULL');
     state.due();assert.equal((await state.run()).status,'completed',state.controls.lastDatabaseError);
@@ -14757,8 +14761,8 @@ for(const recursive of [false,true])for(const change of ['replace','update','rol
   const row=state.sqlite.prepare('SELECT * FROM memory_derivation_results WHERE job_id=?').get(jobs[1].job_id);
   assert.equal(row.state,change==='rollback'?'active':'withdrawn');assert.deepEqual(state.sqlite.prepare('SELECT * FROM memory_derivation_usage').all(),before);
 });
-test('native derivation history: real D1 replays all windows and atomically retires old-source dependencies',{timeout:180000},async t=>{
-  const state=await nativeDerivationRollingFixture(t,{windows:3,shared:true}),jobs=state.queue().jobs.sort((a,b)=>a.after_sequence-b.after_sequence);
+for(const paid of [false,true])test('native derivation history: real D1 replays all windows and atomically retires old-source dependencies paid='+paid,{timeout:180000},async t=>{
+  const state=await nativeDerivationRollingFixture(t,{windows:3,shared:true,paid}),jobs=state.queue().jobs.sort((a,b)=>a.after_sequence-b.after_sequence);
   const {createRequire}=await import('node:module'),{Miniflare,Log,LogLevel}=createRequire(import.meta.resolve('wrangler'))('miniflare');
   const {exportSynthetic,install}=await import('./helpers/model3d-workerd-snapshot.mjs');let outbound=0;
   const mf=new Miniflare({modules:true,compatibilityDate:'2026-05-15',host:'127.0.0.1',port:0,log:new Log(LogLevel.NONE),d1Databases:['MemoryRolling'],script:"export default {fetch(){return new Response('isolated',{status:404});}};",outboundService(){outbound++;throw Error('No network');}});
@@ -14808,4 +14812,39 @@ test('native derivation history: qualified capacity keeps current originals whol
   const row=state.sqlite.prepare('SELECT manifest_json FROM memory_derivation_results WHERE job_id=?').get(last.job_id),manifest=JSON.parse(row.manifest_json);
   assert.equal(manifest.history.boundary,'capacity');assert.equal(manifest.history.originalPairs,1);assert.deepEqual(manifest.history.windowJobIds,[]);
   assert.equal(state.rollingRequests[1].originals[0].text,'Original intent 1 '+('界'.repeat(1000)));
+});
+
+for(const shared of [false,true])for(const paid of [false,true])test('native derivation read budget: complete three-window authenticated inspection shared='+shared+' paid='+paid,{timeout:120000},async t=>{
+  const state=await nativeDerivationRollingFixture(t,{windows:3,shared,paid}),api=await import('../worker/memory-derivation-api.ts');
+  const job=state.queue().jobs.sort((a,b)=>b.through_sequence-a.through_sequence)[0],db=state.env.DB,prepare=db.prepare,batch=db.batch;
+  let operations=0;const originals=new WeakMap(),trace=[];
+  const wrap=raw=>{const proxy=new Proxy(raw,{get(target,key){if(key==='bind')return(...args)=>wrap(target.bind(...args));
+    if(['all','first','run','raw'].includes(key))return(...args)=>{operations++;trace.push(target.sql.slice(0,100));return target[key](...args);};return Reflect.get(target,key,target);}});originals.set(proxy,raw);return proxy;};
+  db.prepare=function(sql){return wrap(prepare.call(this,sql));};db.batch=function(inputs){operations++;trace.push('batch:'+inputs.length);return batch.call(this,inputs.map(input=>originals.get(input)??input));};
+  t.after(()=>{db.prepare=prepare;db.batch=batch;});
+  const response=await api.handleMemoryDerivationResult(new Request(state.derivationOrigin+'/api/memory/derivation/result?jobId='+job.job_id,{headers:state.owner}),state.env);
+  assert.equal(response.status,200,await response.clone().text());assert.equal((await response.json()).history.windowCount,3);
+  t.diagnostic(JSON.stringify({operations}));assert.ok(operations<50,'Complete native inspection must stay below the conservative 50-request budget: '+operations);
+});
+
+for(const fault of ['copied','other-env','future','recall-withdrawn','schema-changed','source-withdrawn'])test('native derivation history read authority rejects '+fault,{timeout:120000},async t=>{
+  const state=await nativeDerivationRollingFixture(t,{windows:2}),admission=await import('../worker/memory-derivation-admission.ts');
+  const jobs=state.queue().jobs.sort((a,b)=>a.through_sequence-b.through_sequence),anchor=await admission.observeNativeDerivationJob(state.env,state.current().actor_user_id,jobs[1].job_id);
+  assert.ok(anchor);const history=await admission.observeNativeDerivationHistoryJob(state.env,anchor,jobs[0].job_id);assert.ok(history);
+  assert.throws(()=>admission.nativeDerivationLeaseInputs(state.env,history));
+  if(fault==='recall-withdrawn')state.sqlite.exec('UPDATE memory_live_enrollments SET recall_enabled=0');
+  if(fault==='schema-changed')state.sqlite.exec('DROP TRIGGER memory_derivation_history_source_delete');
+  if(fault==='source-withdrawn')state.sqlite.prepare('DELETE FROM memory_live_sources WHERE event_id=?').run(state.queue().job_sources.find(row=>row.job_id===jobs[0].job_id).event_id);
+  const result=await admission.observeNativeDerivationHistoryJob(fault==='other-env'?{...state.env}:state.env,fault==='copied'?{...anchor}:anchor,fault==='future'?jobs[1].job_id:jobs[0].job_id);
+  assert.equal(result,null);
+  if(!['copied','other-env','future'].includes(fault))assert.equal(await admission.replayNativeDerivationEvidence(state.env,history),false);
+});
+
+test('native derivation read budget: native exclusion snapshot preserves aliases and rejects forged reuse',{timeout:120000},async t=>{
+  const state=await nativeDerivationRollingFixture(t,{windows:1}),boundary=await import('../worker/memory-native-boundary.ts'),paid=await import('../worker/assistant-specialist-consent.ts');
+  const snapshot=await boundary.captureNativeMemoryTurnExclusions(state.env),guards=boundary.nativeMemoryTurnExclusionInputs(state.env,snapshot);
+  for(const alias of ['authored','answer','content'])assert.deepEqual(guards[alias],await boundary.nativeMemoryAnswerExclusion(state.env,{answerAlias:alias,turnAlias:'turn'}));
+  guards.authored.sql='1';guards.authored.bindings.length=0;assert.notEqual(boundary.nativeMemoryTurnExclusionInputs(state.env,snapshot).authored.sql,'1');
+  assert.throws(()=>boundary.nativeMemoryTurnExclusionInputs(state.env,{...snapshot}));assert.throws(()=>boundary.nativeMemoryTurnExclusionInputs({...state.env},snapshot));
+  await assert.rejects(()=>paid.paidMemoryBatchProof(state.env,state.current().actor_user_id,'private-scope',[{turnId:'one',entries:[{turnId:'one'}]}],{...snapshot}));
 });
