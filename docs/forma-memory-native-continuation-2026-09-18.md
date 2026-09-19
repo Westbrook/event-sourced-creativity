@@ -102,7 +102,7 @@ lifecycle/custody retirement through additive migration0050.
 4. [Independent Chat Studio derivation](forma-memory-chat-studio-derivation-2026-09-19.md) is implemented; [genuine approved-copy evidence](forma-memory-approved-reuse-2026-09-19.md) is implemented. [Governed artifact consumption](forma-memory-governed-artifact-consumption-2026-09-19.md) is implemented with private actor presentation and explicit v4 inspection. [Genuine native document block inspection and private v5 consumption](forma-memory-block-inspection-2026-09-19.md), including [7/30-day descriptive windows](forma-memory-consumption-windows-2026-09-19.md), are implemented. Library/canvas resources, unsupported block-field histories and independent cross-document source recall remain open. [Historical personal artifact recertification](forma-memory-historical-artifact-consumption-2026-09-19.md) now supports native delivery/derivation and the explicitly negotiated v3 private inspector, while v1/v2 readers retain their original contract.
 5. [Automatic document-local briefs](forma-memory-document-brief-2026-09-19.md) now present separate summary/profile/suggestion facets with correction priority, native current-scope reads and ephemeral privacy boundaries. Automatic assistant prompt integration, autocomplete and accept/reject/undo provenance remain open; display leases do not authorize saved answers or edits.
 6. Source-free local index diagnostics are implemented. [Mixed three-window reads](forma-memory-mixed-history-budget-2026-09-19.md) now qualify at 43 artifact-only / 48 artifact-plus-approved-copy D1 calls across personal/shared and free/paid scopes, including four artifacts per window. Remote-index observability and full integration/privacy/request-
-   budget qualification remain; eight prior Output HTTP budget failures remain tracked.
+   budget qualification remain. [Native Memory boundary/request-budget integration](forma-memory-native-output-budget-2026-09-19.md) now resolves all eight previously tracked Output HTTP failures without dropping transactional exclusions.
 
 The 64-pair cumulative ledger is not a rolling semantic summary. Native scheduled-
 event code does not register or qualify a hosted scheduler. Historical slice notes
@@ -165,3 +165,7 @@ remains unapplied. No v1 grant is broadened and no user/provider is activated.
 Broader cross-scope/long-term reconciliation, nested scopes, Library/Canvas and
 automatic assistant/autocomplete consumers remain implementation work; hosted
 qualification and enrollment remain separate operational gates.
+
+## Whole-request Output integration continuation
+
+[Native boundary and request-budget integration](forma-memory-native-output-budget-2026-09-19.md) closes the eight reproduced Output failures at a maximum 49 measured whole-request operations. Exact Memory exclusions and late job-identity checks remain transactional; production and broader implementation gates are unchanged.

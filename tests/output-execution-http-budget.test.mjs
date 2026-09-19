@@ -368,3 +368,22 @@ for(const shared of[false,true])for(const fault of['head-race','partial-publicat
   if(fault==='partial-publication'){assert.ok(publicationRangeIds.length>=2);for(const eventId of publicationRangeIds)assert.equal(f.sqlite.prepare('SELECT COUNT(*) AS n FROM events WHERE event_id=?').get(eventId).n,0,'a partial range rolls back its exact completion and usage IDs; a later failure-charge audit is still allowed');}
  assert.equal(f.sqlite.prepare('SELECT status FROM cost_budget_reservations').get().status,'settled','known provider charges survive a publication failure');
 });
+
+for(const fault of ['request','kind','document','surface'])test('request-local route identity cannot claim a changed job '+fault,async t=>{
+ const f=await fixture(undefined,{shared:true});t.after(()=>f.sqlite.close());const plan=await saveDeck(f),auth=await authorize(f,plan.planId,[plan.targetId]);await f.ok(await f.send({action:'run',grantId:auth.grantId}));
+ const job=f.sqlite.prepare('SELECT * FROM document_jobs').get(),batch=f.env.DB.batch.bind(f.env.DB);let changed=false,calls=0;
+ t.mock.method(globalThis,'fetch',()=>{calls++;throw Error('Changed native job must not reach a provider');});
+ f.env.DB.batch=async statements=>{
+  if(!changed&&statements.some(s=>s.sql.startsWith("UPDATE document_jobs SET status='running',attempt_count="))){
+   changed=true;
+   if(fault==='request')f.sqlite.prepare("UPDATE document_jobs SET request_json=json_set(request_json,'$.memoryMode','recall') WHERE job_id=?").run(job.job_id);
+   if(fault==='kind')f.sqlite.prepare("UPDATE document_jobs SET kind='chat' WHERE job_id=?").run(job.job_id);
+   if(fault==='document')f.sqlite.prepare("UPDATE document_jobs SET document_id='other-document' WHERE job_id=?").run(job.job_id);
+   if(fault==='surface')f.sqlite.prepare("UPDATE document_jobs SET source_surface='chat' WHERE job_id=?").run(job.job_id);
+  }
+  return batch(statements);
+ };
+ await assert.rejects(()=>handleDocumentJobs(new Request(`http://localhost/api/document-jobs/${job.job_id}/run`,{method:'POST',headers:f.headers}),f.env,`${job.job_id}/run`));
+ assert.equal(changed,true);assert.equal(calls,0);const current=f.sqlite.prepare('SELECT * FROM document_jobs').get();assert.equal(current.status,'queued');assert.equal(current.attempt_count,0);assert.equal(current.correlation_id,job.correlation_id);
+ assert.equal(f.sqlite.prepare('SELECT COUNT(*) AS n FROM output_provider_calls').get().n,0);assert.equal(f.sqlite.prepare('SELECT status FROM cost_budget_reservations').get().status,'active');
+});

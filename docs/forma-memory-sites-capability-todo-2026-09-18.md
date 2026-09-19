@@ -167,3 +167,7 @@ remains unapplied. No v1 grant is broadened and no user/provider is activated.
 Broader cross-scope/long-term reconciliation, nested scopes, Library/Canvas and
 automatic assistant/autocomplete consumers remain implementation work; hosted
 qualification and enrollment remain separate operational gates.
+
+## Native whole-request qualification continuation
+
+[The eight retained Output HTTP budget failures are resolved](forma-memory-native-output-budget-2026-09-19.md): execution-local negative cleanup predicates retain exact transaction-time exclusions, and job claims bind the original request/resource identity. Worst measured request is 49 operations. This is local synthetic qualification, not a hosted capacity or activation receipt.

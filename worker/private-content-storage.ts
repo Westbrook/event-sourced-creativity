@@ -130,7 +130,7 @@ async function preparePrivateContentInternal(env: WorkerEnv, ownerId: string, ki
   let cleanupGuard: { condition: string; bindings: (string | number | null)[] } | null = null;
   if (kind !== "memory-structured-ledger" && kind !== "memory-structured-origin" && !documentJobManifest) {
     if (env.DB !== preparationDb) throw new Error("native_structured_origin_schema_database_changed");
-    const { nativeMemoryAnswerExclusion } = await import("./memory-native-boundary.ts");
+    const { nativePrivateContentCleanupExclusion } = await import("./memory-native-boundary.ts");
     if (env.DB !== preparationDb) throw new Error("native_structured_origin_schema_database_changed");
     try {
       const exclusion = privateCleanupRead
@@ -139,7 +139,7 @@ async function preparePrivateContentInternal(env: WorkerEnv, ownerId: string, ki
         ? await readSponsorAudioIntakeCleanupExclusion(audioCleanupRead,env,ownerId,kind,content,projectScope,admissionReads,guard,identity,expiryCeiling)
         : storyCleanupRead
         ? await readSponsorStoryIntakeCleanupExclusion(storyCleanupRead,env,ownerId,kind,content,projectScope,admissionReads,guard,identity,expiryCeiling)
-        : await nativeMemoryAnswerExclusion(env, { answerAlias: "private_content" });
+        : await nativePrivateContentCleanupExclusion(env);
       if (env.DB !== preparationDb) throw new Error("native_structured_origin_schema_database_changed");
       cleanupGuard = { condition: exclusion.sql, bindings: [...exclusion.bindings] };
     } catch (error) {

@@ -157,7 +157,7 @@ test("a manual presentation bypasses only a verified video in another project",a
     .replaceAll('${documentJobProjectSql("document_jobs")}',projectExpression("document_jobs"))
     .replaceAll(staleHeartbeatTemplate,outputBinding?"":" OR updated_at<?");
   const legacyClaimSql=claimSqlFor(false),nativeClaimSql=claimSqlFor(true);
-  for(const [sql,bindings]of[[legacyClaimSql,13],[nativeClaimSql,12]]){
+  for(const [sql,bindings]of[[legacyClaimSql,17],[nativeClaimSql,16]]){
     assert.doesNotMatch(sql,/\$\{/u,"every trusted SQL-template expression must be resolved before the SQLite proof");
     assert.equal((sql.match(/\?/gu)??[]).length,bindings,"legacy and native claim parameter layouts differ only by the heartbeat cutoff");
   }
@@ -167,7 +167,7 @@ test("a manual presentation bypasses only a verified video in another project",a
   const sqlite=new DatabaseSync(":memory:");
   context.after(()=>sqlite.close());
   sqlite.exec("CREATE TABLE events(stream_id TEXT,sequence INTEGER,type TEXT,payload TEXT)");
-  sqlite.exec("CREATE TABLE document_jobs(job_id TEXT PRIMARY KEY,owner_id TEXT,stream_id TEXT,document_id TEXT,kind TEXT,status TEXT,correlation_id TEXT,started_at TEXT,lease_expires_at TEXT,result_json TEXT,updated_at TEXT,attempt_count INTEGER,requested_at TEXT,request_json TEXT)");
+  sqlite.exec("CREATE TABLE document_jobs(job_id TEXT PRIMARY KEY,owner_id TEXT,stream_id TEXT,document_id TEXT,kind TEXT,status TEXT,correlation_id TEXT,started_at TEXT,lease_expires_at TEXT,result_json TEXT,updated_at TEXT,attempt_count INTEGER,requested_at TEXT,request_json TEXT,source_surface TEXT)");
   const stream="creative:owner",owner="owner",now="2026-08-26T12:00:00.000Z";
   const append=sqlite.prepare("INSERT INTO events VALUES(?,?,?,?)");
   for(const [sequence,type,payload] of [
@@ -180,9 +180,11 @@ test("a manual presentation bypasses only a verified video in another project",a
     [7,"DocumentCreated",{document_id:"legacy-document"}],
   ])append.run(stream,sequence,type,JSON.stringify(payload));
 
-  const insert=sqlite.prepare("INSERT INTO document_jobs VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)");
-  const add=(id,document,kind,status,artifact)=>insert.run(id,owner,stream,document,kind,status,
-    `${id}:original`,null,"2099-01-01T00:00:00.000Z","{}",now,status==="running"?1:0,now,JSON.stringify({artifactKind:artifact}));
+  const insert=sqlite.prepare("INSERT INTO document_jobs VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"),originals=new Map();
+  const add=(id,document,kind,status,artifact)=>{
+    const request=JSON.stringify({artifactKind:artifact});originals.set(id,{request,kind,document,surface:'outputs'});
+    return insert.run(id,owner,stream,document,kind,status,`${id}:original`,null,"2099-01-01T00:00:00.000Z","{}",now,status==="running"?1:0,now,request,'outputs');
+  };
   add("unrelated-video","video-document","render_document","running","video");
   add("presentation-one","presentation-one","render_document","queued","slides");
   add("presentation-two","presentation-two","render_document","queued","slides");
@@ -196,7 +198,7 @@ test("a manual presentation bypasses only a verified video in another project",a
   const claim=(id,manual=true,outputBinding=false)=>{
     const sql=outputBinding?nativeClaimSql:legacyClaimSql;
     const bindings=[`${id}:attempt:1`,now,"2099-01-01T00:00:00.000Z","{}",now,id,owner,stream,now,
-      ...(outputBinding?[]:[now]),`${id}:original`,"{}",Number(manual)];
+      ...(outputBinding?[]:[now]),`${id}:original`,"{}",originals.get(id).request,originals.get(id).kind,originals.get(id).document,originals.get(id).surface,Number(manual)];
     assert.equal(bindings.length,(sql.match(/\?/gu)??[]).length,"each executed claim must bind every SQL parameter exactly once");
     return Number(sqlite.prepare(sql).run(...bindings).changes);
   };

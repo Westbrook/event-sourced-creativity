@@ -356,3 +356,35 @@ test('both cleanups preserve repointed marked turns only for their exact persona
     }
   }
 });
+
+const {nativePrivateContentCleanupEnvironment,nativePrivateContentCleanupExclusion}=await import('../worker/memory-native-boundary.ts');
+const {preparePrivateContent}=await import('../worker/private-content-storage.ts');
+
+test('execution-local cleanup reuses only an exact negative predicate and never shares mutable guards',async t=>{
+ const f=fixture(t),local=nativePrivateContentCleanupEnvironment(f.env);f.seed('ordinary');
+ const [first,second]=await Promise.all([nativePrivateContentCleanupExclusion(local),nativePrivateContentCleanupExclusion(local)]);
+ assert.equal(f.controls.bindings,1);assert.equal(f.controls.batches[0].length,3);assert.deepEqual(first,second);first.bindings.length=0;
+ const third=await nativePrivateContentCleanupExclusion(local);assert.deepEqual(third,second);
+ const prepared=await preparePrivateContent(local,owner,'provider-response','synthetic response');await local.DB.batch(prepared.statements);
+ assert.equal(f.row('ordinary').content,'');
+ await nativePrivateContentCleanupExclusion(f.env);assert.equal(f.controls.bindings,3,'ordinary callers still observe a fresh schema');
+ await nativePrivateContentCleanupExclusion(nativePrivateContentCleanupEnvironment(f.env));assert.equal(f.controls.bindings,4,'a new execution has its own read');
+});
+
+for(const fault of ['new-memory-marker','retyped-memory','schema-arrived','schema-changed'])test('execution-local optional cleanup preserves memory after '+fault,async t=>{
+ const f=fixture(t);if(fault==='schema-changed')installMemorySchema(f);
+ const local=nativePrivateContentCleanupEnvironment(f.env);await nativePrivateContentCleanupExclusion(local);f.seed('protected');
+ if(fault==='new-memory-marker')f.sqlite.prepare("INSERT INTO events VALUES(?,'AssistantReasoned',?,'user:synthetic')").run('late-marker',JSON.stringify({memory_origin_version:3,content_ref:'protected'}));
+ if(fault==='retyped-memory')f.sqlite.prepare("UPDATE private_content SET kind='chat-assistant-memory' WHERE content_id='protected'").run();
+ if(fault==='schema-arrived')installMemorySchema(f);
+ if(fault==='schema-changed')f.sqlite.exec('CREATE INDEX memory_structured_answer_origins_extra_cleanup_test ON memory_structured_answer_origins(status)');
+ const prepared=await preparePrivateContent(local,owner,'provider-response','synthetic response');await local.DB.batch(prepared.statements);
+ assert.equal(f.row('protected').content,'body:protected');assert.equal(f.row(prepared.contentId).content,'synthetic response');
+ assert.equal(f.controls.bindings,2,'the UPDATE itself carries current schema and negative-origin conditions');
+});
+
+for(const during of [false,true])test('execution-local cleanup rejects database replacement '+during,async t=>{
+ const f=fixture(t),local=nativePrivateContentCleanupEnvironment(f.env);
+ if(during)f.controls.afterRead=rows=>{local.DB={...f.DB};return rows;};else{await nativePrivateContentCleanupExclusion(local);local.DB={...f.DB};}
+ await assert.rejects(()=>nativePrivateContentCleanupExclusion(local),/database_changed/u);assert.equal(f.controls.writes,0);
+});

@@ -1,3 +1,4 @@
+import { nativePrivateContentCleanupEnvironment } from "./memory-native-boundary.ts";
 import { retainedPersonalFalRecoverySql } from "./output-fal-recovery-policy.ts";
 import { retainedModel3dRecoveryStorageSql } from "./output-model3d-recovery-storage.ts";
 import { markOutputSchemaReady, outputSchemaIsReady } from "./output-schema-state.ts";
@@ -359,7 +360,7 @@ export function guardOutputPrivateWrites(env: WorkerEnv, scope: OutputScope, slo
       };
     },
   });
-  return { ...env, DB, MEDIA };
+  return nativePrivateContentCleanupEnvironment({ ...env, DB, MEDIA });
 }
 
 type NativeStorageReceipt = { scope_key: string; slot_id: string; storage_key: string; content_sha256:string;owner_user_id:string;document_id:string;write_acknowledged: number;updated_at?:string };

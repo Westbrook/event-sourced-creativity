@@ -37,6 +37,30 @@ export async function nativePrivateContentMemoryExclusionPair(env: WorkerEnv) {
   return qualified;
 }
 
+type CleanupRead = { db: WorkerEnv['DB']; result?: Promise<BudgetReservationGuard> };
+const cleanupReads = new WeakMap<WorkerEnv, CleanupRead>();
+
+/** An explicit execution-local environment for OPTIONAL expiry cleanup only.
+ * This retains a SQL predicate, not a positive schema/access decision. Every
+ * cleanup UPDATE rechecks the exact schema and current negative origin markers.
+ * A schema change can only omit cleanup; it cannot authorize hydration or erase
+ * newly registered memory. Ordinary callers and paired publication stay fresh.
+ */
+export function nativePrivateContentCleanupEnvironment(env: WorkerEnv): WorkerEnv {
+  const local = { ...env };
+  cleanupReads.set(local, { db: env.DB });
+  return local;
+}
+export async function nativePrivateContentCleanupExclusion(env: WorkerEnv): Promise<BudgetReservationGuard> {
+  const local = cleanupReads.get(env);
+  if (!local) return nativeMemoryAnswerExclusion(env, { answerAlias: 'private_content' });
+  if (env.DB !== local.db) throw Error('memory_boundary_database_changed');
+  local.result ??= nativeMemoryAnswerExclusion(env, { answerAlias: 'private_content' });
+  const result = await local.result;
+  if (env.DB !== local.db) throw Error('memory_boundary_database_changed');
+  return structuredClone(result);
+}
+
 declare const nativeTurnExclusionsBrand: unique symbol;
 export type NativeMemoryTurnExclusions = Readonly<{[nativeTurnExclusionsBrand]:true}>;
 const turnExclusions=new WeakMap<NativeMemoryTurnExclusions,{env:WorkerEnv;db:WorkerEnv['DB'];guards:BudgetReservationGuard[]}>();

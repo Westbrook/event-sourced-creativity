@@ -2374,11 +2374,11 @@ export async function runDocumentJob(env: WorkerEnv, user: PilotUser, jobId: str
     && Boolean(previousCheckpoint.reservationId && previousCheckpoint.costReservationId));
   const now = new Date(); const nowIso = now.toISOString(); const staleBefore = new Date(now.getTime() - DOCUMENT_JOB_STALE_AFTER_MS).toISOString(); const leaseExpiresAt = new Date(now.getTime() + (outputBinding?nativeExecutionPolicy.maximumMilliseconds:DOCUMENT_JOB_LEASE_MS)).toISOString();
   const attemptCorrelationId=settledModel3dRecovery?row.correlation_id:consentedAdaptiveJob(row)?jobId:`${jobId}:attempt:${attempt}`;const foregroundPresentation=isPresentationJob(row);const initialResult={...previousCheckpoint,...(requiresForegroundDocumentExecution(row)?{providerSubmissionProtocol:1}:{}),stage:foregroundPresentation?"compiling":"preparing",progressMessage:foregroundPresentation?attempt>1?"Recovering the interrupted presentation and compiling its authorized document context.":"Compiling the document into the requested presentation.":attempt>1?"Recovering the interrupted operation.":"Preparing the document context."};
-  const claimSql=`UPDATE document_jobs SET status='running',attempt_count=attempt_count+1,correlation_id=?,started_at=COALESCE(started_at,?),lease_expires_at=?,result_json=?,updated_at=? WHERE job_id=? AND owner_id=? AND stream_id=? AND (status='queued' OR (status='running' AND (lease_expires_at<?${outputBinding?'':' OR updated_at<?'}))) AND correlation_id=? AND result_json IS ? AND NOT EXISTS(SELECT 1 FROM document_jobs active WHERE active.stream_id=document_jobs.stream_id AND active.job_id<>document_jobs.job_id AND json_type(active.request_json,'$.memoryMode') IS NULL AND active.kind!='prompt_fan' AND active.status IN('running','committing')
+  const claimSql=`UPDATE document_jobs SET status='running',attempt_count=attempt_count+1,correlation_id=?,started_at=COALESCE(started_at,?),lease_expires_at=?,result_json=?,updated_at=? WHERE job_id=? AND owner_id=? AND stream_id=? AND (status='queued' OR (status='running' AND (lease_expires_at<?${outputBinding?'':' OR updated_at<?'}))) AND correlation_id=? AND result_json IS ? AND request_json IS ? AND kind=? AND document_id=? AND source_surface=? AND NOT EXISTS(SELECT 1 FROM document_jobs active WHERE active.stream_id=document_jobs.stream_id AND active.job_id<>document_jobs.job_id AND json_type(active.request_json,'$.memoryMode') IS NULL AND active.kind!='prompt_fan' AND active.status IN('running','committing')
     AND NOT (?=1 AND active.kind='render_document' AND COALESCE(json_extract(active.request_json,'$.artifactKind'),'')='video'
       AND ${documentJobProjectSql("document_jobs")}<>''
       AND ${documentJobProjectSql("active")} NOT IN ('',${documentJobProjectSql("document_jobs")})))`;
-  const claimBindings=[attemptCorrelationId,nowIso,leaseExpiresAt,JSON.stringify(initialResult),nowIso,jobId,user.userId,user.streamId,nowIso,...(outputBinding?[]:[staleBefore]),row.correlation_id,row.result_json,Number(independentPresentation)] as const;
+  const claimBindings=[attemptCorrelationId,nowIso,leaseExpiresAt,JSON.stringify(initialResult),nowIso,jobId,user.userId,user.streamId,nowIso,...(outputBinding?[]:[staleBefore]),row.correlation_id,row.result_json,row.request_json,row.kind,row.document_id,row.source_surface,Number(independentPresentation)] as const;
   const sceneClaim=outputBinding&&row.scene_source_version_json!=null?prepareSceneJobSourceClaim(env,{scope:outputBinding.scope,slot:outputBinding.slot,
     previousRaw:row.scene_source_version_json,previousCorrelationId:row.correlation_id,correlationId:attemptCorrelationId}):null;
   if(outputBinding&&Boolean(row.scene_source_protocol===1)!==Boolean(sceneClaim))throw new OutputConflictError('output_scene_source_witness_unavailable',409);
@@ -3168,9 +3168,13 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
   if(!canRequestOutputs&&!readOnlyPlanning&&!readOnlyScene)return memoryHttp?documentJobMemoryDenied("memory_job_unavailable",403):Response.json({error:"project_read_only"},{status:403});
   const user:PilotUser=project?{...principal,streamId:`creative:${project.ownerUserId}`,projectExecution:{organizationId:project.organizationId,projectAccessId:project.projectAccessId,projectId:project.projectId,ownerUserId:project.ownerUserId,actorUserId:principal.userId}}:principal;
   if(memoryInput!==undefined)return admitDocumentJobMemory(request,env,user,memoryInput,project?.contextId??null);
+  // Share this request-local identity snapshot with the durable/shared route
+  // checks. It is not publication authority: current custody is still checked
+  // below and execution CAS binds the original request/checkpoint/attempt.
+  const pathJobId=path?decodeURIComponent(path.split("/")[0]!):null;
+  const pathJob=pathJobId?await readJob(env,user.userId,pathJobId):null;
   if(path){
-    const memoryId=decodeURIComponent(path.split("/")[0]);
-    const target=await readJob(env,user.userId,memoryId);
+    const target=pathJob;
     if(target&&documentJobMemoryMarked(target)){
       if(target.stream_id!==user.streamId||!await activeProjectExecution(env,user,target.document_id,target.job_id))return documentJobMemoryDenied("memory_job_unavailable");
       if(request.method!=="GET"||path.includes("/"))return documentJobMemoryDenied("memory_job_recovery_only");
@@ -3235,7 +3239,7 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
     if(!actorAllowance.allowed||actorAllowance.pilot)return Response.json({error:"sponsor_managed_pilot_unsupported"},{status:403});
   }
   if(request.method!=="GET" && path){
-    const durableTarget=await readJob(env,user.userId,decodeURIComponent(path.split("/")[0]!));
+    const durableTarget=request.method==="POST"&&path.endsWith("/run")?pathJob:await readJob(env,user.userId,decodeURIComponent(path.split("/")[0]!));
     if(durableTarget && outputJobIsDurable(durableTarget) && !/^[^/]+\/(?:ack|dismiss)$/u.test(path)) return Response.json({error:"output_durable_server_owned"},{status:409,headers:{"cache-control":"private, no-store"}});
   }
   if(path==="presentation-candidates"){
@@ -3492,7 +3496,7 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
   }
   if(project&&path){
     const targetId=decodeURIComponent(path.replace(/\/(?:cancel|force-fail|ack|dismiss|retry|run|recover|reconcile-provider|reconcile-output|continue-safer-frames|acknowledge-safety)$/,""));
-    const target=await readJob(env,user.userId,targetId);
+    const target=executionRequest&&targetId===pathJobId?pathJob:await readJob(env,user.userId,targetId);
     if(!target||!await activeProjectExecution(env,user,target.document_id,targetId))return Response.json({error:"job_not_found"},{status:404});
     if(executionRequest)verifiedPathJob=target;
   }
