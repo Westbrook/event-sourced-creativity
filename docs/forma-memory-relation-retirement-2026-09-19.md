@@ -30,8 +30,7 @@ hosted qualification or permission to run the migration here.
 ## Remaining integration
 
 This does not certify either endpoint's historical version, establish a reuse
-edge, grant cross-document access or prove user preference. Relationship-specific
-version capture, library/canvas/reuse evidence, nested scopes and automatic
+edge, grant cross-document access or prove user preference. [Document-local relationship version capture](forma-memory-native-relationship-bindings-2026-09-19.md) is now implemented. Library/canvas/reuse evidence, nested scopes and automatic
 consumers remain implementation work. The broader remaining work is tracked in
 [the continuation](forma-memory-native-continuation-2026-09-18.md) and
 [the Sites capability To Do](forma-memory-sites-capability-todo-2026-09-18.md).

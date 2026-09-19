@@ -609,6 +609,11 @@ async function nativeRelationResultFixture(t,options={}){
   const result=await(await import('../worker/memory-derivation-worker.ts')).runNativeDerivationScheduled(f.env);assert.equal(result.status,'stored',JSON.stringify(result));
   const stored=f.sqlite.prepare('SELECT * FROM memory_derivation_results').get();
   assert.ok(f.sqlite.prepare("SELECT d.resource_id FROM memory_derivation_result_dependencies d JOIN events e ON e.event_id=d.resource_id WHERE d.job_id=? AND d.kind='event' AND json_extract(e.payload,'$.relation_id')=?").get(stored.job_id,relationId));
+  if(!options.beforePublish){const bindings=JSON.parse(stored.manifest_json).provenance.relationBindings;
+    assert.equal(bindings.entries.length,1);assert.equal(bindings.unresolved,0);
+    const relation=bindings.entries[0];assert.equal(relation.state,'linked');assert.equal(relation.from.blockId,'scene-reuse-direction');assert.equal(relation.to.blockId,'memory-relation-other');
+    assert.ok(relation.eventIds.includes(relation.from.eventIds[0]));assert.ok(relation.eventIds.includes(relation.to.eventIds[0]));
+  }
   return Object.assign(f,{relationId,stored});
 }
 
@@ -649,4 +654,45 @@ test('relation memory: isolated D1 atomically retires results and preserves the 
   const row=await db.prepare('SELECT state,manifest_json,raw_json FROM memory_derivation_results WHERE job_id=?').bind(f.stored.job_id).first();
   assert.deepEqual(row,{state:'withdrawn',manifest_json:null,raw_json:null});
   assert.deepEqual(await db.prepare('SELECT operation,generation FROM memory_derivation_index_intents WHERE job_id=?').bind(f.stored.job_id).first(),{operation:'delete',generation:2});
+});
+
+for(const fault of ['endpoint-erasure','endpoint-rehome','endpoint-custody','later-endpoint-edit','relation-body'])test('relation binding: supporting endpoint privacy inverse '+fault,async t=>{
+  const f=await nativeRelationResultFixture(t),edge=JSON.parse(f.stored.manifest_json).provenance.relationBindings.entries[0];
+  assert.equal(f.sqlite.prepare('SELECT COUNT(*) AS n FROM memory_derivation_job_sources WHERE event_id=?').get(edge.from.eventIds[0]).n,0);
+  if(fault==='endpoint-erasure')f.sqlite.prepare('DELETE FROM event_private_payloads WHERE private_event_id=?').run(edge.from.eventIds[0]);
+  if(fault==='endpoint-rehome')await appendAuditEvent(f.env,f.streamId,'user:'+f.owner,'BlockRehomed',{project_id:f.projectId,document_id:'foreign',block_id:edge.from.blockId,scope:'document'});
+  if(fault==='endpoint-custody')f.sqlite.prepare("INSERT INTO project_resource_scopes(organization_id,project_access_id,project_id,owner_user_id,resource_kind,resource_id,visibility,actor_user_id,created_at) VALUES('org','access',?,?,'block',?,'actor_private',?,?)").run(f.projectId,f.owner,edge.from.blockId,f.owner,new Date().toISOString());
+  if(fault==='later-endpoint-edit')await appendAuditEvent(f.env,f.streamId,'user:'+f.owner,'BlockPropertyEdited',{project_id:f.projectId,document_id:f.documentId,block_id:edge.from.blockId,property_path:'text',new_value:'A later revision'});
+  if(fault==='relation-body')f.sqlite.prepare("UPDATE event_private_payloads SET private_json=json_set(private_json,'$.kind','changed') WHERE private_event_id=?").run(edge.eventId);
+  const row=f.sqlite.prepare('SELECT * FROM memory_derivation_results').get();assert.equal(row.state,fault==='later-endpoint-edit'?'active':'withdrawn');
+  if(fault==='later-endpoint-edit')assert.ok(await(await import('../worker/memory-derivation-results.ts')).readNativeDerivationResult(f.env,f.owner,row.job_id));
+  else{assert.equal(row.raw_json,null);assert.equal(row.manifest_json,null);assert.equal(f.sqlite.prepare('SELECT operation FROM memory_derivation_index_intents').get().operation,'delete');}
+});
+
+for(const fault of ['removed','unknown-endpoint','foreign-document','private-erasure','ambiguous-id','synthetic','oversized','cross-custody'])test('relation binding: exact endpoint interpretation '+fault,async t=>{
+  const f=await nativeRelationResultFixture(t),edge=JSON.parse(f.stored.manifest_json).provenance.relationBindings.entries[0];
+  if(fault==='removed')await appendAuditEvent(f.env,f.streamId,'user:'+f.owner,'BlockRelationRemoved',{project_id:f.projectId,document_id:f.documentId,relation_id:f.relationId});
+  if(fault==='unknown-endpoint')f.sqlite.prepare("UPDATE event_private_payloads SET private_json=json_set(private_json,'$.to_block_id','unknown') WHERE private_event_id=?").run(edge.eventId);
+  if(fault==='foreign-document')await appendAuditEvent(f.env,f.streamId,'user:'+f.owner,'BlockRehomed',{project_id:f.projectId,document_id:'foreign',block_id:edge.from.blockId,scope:'document'});
+  if(fault==='private-erasure')f.sqlite.prepare('DELETE FROM event_private_payloads WHERE private_event_id=?').run(edge.eventId);
+  if(fault==='ambiguous-id')await appendAuditEvent(f.env,f.streamId,'user:'+f.owner,'BlockRelationAdded',{project_id:f.projectId,document_id:f.documentId,relation_id:f.relationId,from_block_id:edge.from.blockId,to_block_id:edge.to.blockId,kind:'visual_evidence'});
+  if(fault==='synthetic')f.sqlite.prepare("UPDATE event_private_payloads SET private_json=json_set(private_json,'$.synthetic',1) WHERE private_event_id=?").run(edge.eventId);
+  if(fault==='oversized')f.sqlite.prepare("UPDATE event_private_payloads SET private_json=json_set(private_json,'$.properties.text',?) WHERE private_event_id=?").run('x'.repeat(65536),edge.eventId);
+  if(fault==='cross-custody')f.sqlite.prepare("INSERT INTO project_resource_scopes(organization_id,project_access_id,project_id,owner_user_id,resource_kind,resource_id,visibility,actor_user_id,created_at) VALUES('org','access',?,?,'relation',?,'actor_private',?,?)").run(f.projectId,f.owner,f.relationId,f.owner,new Date().toISOString());
+  const observations=f.sqlite.prepare("SELECT event_id AS eventId,sequence,type AS eventType,json_extract(payload,'$.relation_id') AS relationId FROM events WHERE json_extract(payload,'$.relation_id')=? ORDER BY sequence").all(f.relationId);
+  const {observeNativeMemoryRelationBindings}=await import('../worker/memory-native-relations.ts'),{AssistantContextReadWitness}=await import('../worker/assistant-context-source.ts');
+  const witness=new AssistantContextReadWitness(f.env),captured=await observeNativeMemoryRelationBindings(f.env,f.enrollment(),observations,witness);witness.seal(captured);
+  if(fault==='removed'){assert.equal(captured.entries.length,1);assert.equal(captured.entries[0].state,'unlinked');assert.equal(captured.unresolved,1);}
+  else{assert.equal(captured.entries.length,0);assert.equal(captured.unresolved,observations.length);}
+  await f.env.DB.batch(witness.precommitStatements());
+});
+
+test('relation binding: whole authenticated result inspection stays within the native request budget',async t=>{
+  const f=await nativeRelationResultFixture(t),db=f.env.DB,prepare=db.prepare,batch=db.batch,originals=new WeakMap();let operations=0;
+  const wrap=raw=>{const proxy=new Proxy(raw,{get(target,key){if(key==='bind')return(...args)=>wrap(target.bind(...args));
+    if(['all','first','run','raw'].includes(key))return(...args)=>{operations++;return target[key](...args);};return Reflect.get(target,key,target);}});originals.set(proxy,raw);return proxy;};
+  db.prepare=function(sql){return wrap(prepare.call(this,sql));};db.batch=function(inputs){operations++;return batch.call(this,inputs.map(input=>originals.get(input)??input));};
+  t.after(()=>{db.prepare=prepare;db.batch=batch;});
+  const response=await f.request('/api/memory/derivation/result?jobId='+f.stored.job_id);assert.equal(response.status,200,await response.clone().text());
+  t.diagnostic(JSON.stringify({operations}));assert.ok(operations<50,'Complete native HTTP inspection must stay below the conservative native limit');
 });

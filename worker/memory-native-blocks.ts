@@ -7,7 +7,7 @@ import type { NativeMemoryContextObserver } from './memory-live-context.ts';
 import { derivationId, derivationInteger, derivationTime } from './memory-derivation-policy.ts';
 
 type Row = Record<string, unknown>;
-type Observation = { eventId:string; sequence:number; blockPointer:string|null; eventType:string };
+type Observation = { eventId:string; sequence:number; blockPointer:string|null; eventType:string; reference?:true };
 export type NativeMemoryBlockBinding = { eventId:string; blockId:string; scopeKey:string; revision:number; stateSha256:string; eventIds:string[] };
 export type NativeMemoryBlockBindings = { version:1; entries:NativeMemoryBlockBinding[]; unresolved:number };
 const actions=new Set(['BlockCreated','BlockPropertyEdited','ChipEdited','BlockWeightSet','BlockLocked','BlockUnlocked','BlockRemoved','BlockRestored']);
@@ -18,15 +18,35 @@ const columns=['event_id','stream_id','sequence','occurred_at','recorded_at','ac
 const clean=(p:Record<string,unknown>)=>!p.simulation&&!p.synthetic&&!(p.origin&&typeof p.origin==='object'&&'synthetic' in p.origin&&p.origin.synthetic)
   &&p.mock_data_source==null&&p.replay_session_id==null&&p.fictional_user_id==null;
 
+/** Shared strict native envelope decoding. Identity data alone is not authority;
+ * callers must retain the exact DB read in the enclosing authenticated witness. */
+export function decodeNativeMemoryResourceEvent(row:Row,e:LiveMemoryEnrollment,resourceKind:'block'|'relation',resourceId:string){
+  if(row.schema_version!==1||!derivationId(row.event_id)||!derivationInteger(row.sequence,1)||!derivationTime(row.recorded_at)||String(row.recorded_at)>new Date().toISOString()
+    ||String(row.event_id).startsWith('optimistic:')||String(row.client_id).includes('optimistic')||row.compensated!==0||row.compensates_event_id!==null)throw Error('source');
+  const publicPayload=JSON.parse(String(row.payload)),event=serializeEvent(row),p=event.payload;
+  if(!clean(publicPayload)||!clean(p)||p._private_ref!==undefined||p[resourceKind+'_id']!==resourceId
+    ||[resourceKind+'_id','project_id','document_id','canvas_id','scope',...(resourceKind==='relation'?['from_block_id','to_block_id','kind']:[])].some(key=>publicPayload[key]!==undefined&&publicPayload[key]!==p[key])
+    ||p.project_id!==undefined&&p.project_id!==e.project_id||p.document_id!==undefined&&p.document_id!==e.document_id
+    ||row.redacted_at!==null||publicPayload._private_ref===undefined&&row.private_json!==null||publicPayload._private_ref!==undefined&&(publicPayload._private_ref!==row.event_id
+      ||typeof row.private_json!=='string'||row.owner_id!==e.owner_user_id||row.project_id!==e.project_id||row.document_id!==e.document_id))throw Error('private');
+  const scopes=JSON.parse(String(row.custody));
+  if(!Array.isArray(scopes)||(e.organization_id===null?scopes.length!==0:scopes.length!==1||scopes[0].organization!==e.organization_id
+    ||scopes[0].access!==e.project_access_id||scopes[0].project!==e.project_id||scopes[0].owner!==e.owner_user_id
+    ||scopes[0].stream!=='creative:'+e.owner_user_id||scopes[0].sequence!==row.sequence))throw Error('custody');
+  return event;
+}
+
 /** Supplement the already-authorized document observation, never widen it.
  * A raw pointer, absent/ambiguous source, library/canvas placement or oversized
  * history remains explicitly unresolved. No block text becomes a quotation.
  * The caller must seal/replay this observer with its native grant/access proof.
+ * Reference requests are internal endpoint reads; their caller must separately
+ * witness the genuine relationship event. They do not authorize a relationship.
  * Versions describe retained native block fields, NOT relations or dereferenced attachments.
  */
 export async function observeNativeMemoryBlockBindings(env:WorkerEnv,e:LiveMemoryEnrollment,
   observations:readonly Observation[],observer:NativeMemoryContextObserver):Promise<NativeMemoryBlockBindings>{
-  const selected=observations.filter(row=>row.blockPointer!==null&&actions.has(row.eventType));
+  const selected=observations.filter(row=>row.blockPointer!==null&&(actions.has(row.eventType)||row.reference===true&&['BlockRelationAdded','BlockRelationRemoved'].includes(row.eventType)));
   const empty=()=>({version:1 as const,entries:[],unresolved:selected.length});
   if(!selected.length)return empty();
   const parent=nativeMemoryDocumentIdentity(e);if(!parent)throw Error('memory-block-scope');
@@ -77,33 +97,20 @@ export async function observeNativeMemoryBlockBindings(env:WorkerEnv,e:LiveMemor
   const entries:NativeMemoryBlockBinding[]=[];
   for(const observation of selected){
     try{
+      if(observation.reference&&!['BlockRelationAdded','BlockRelationRemoved'].includes(observation.eventType))continue;
       const blockId=observation.blockPointer!,source=rows.filter(row=>JSON.parse(String(row.payload)).block_id===blockId&&Number(row.sequence)<=observation.sequence);
       const current=placements.find(row=>row.block_id===blockId);if(!source.length||!current)continue;
       const custody=JSON.parse(String(current.custody));
       if(!Array.isArray(custody)||(e.organization_id===null?custody.length!==0:custody.length!==1
         ||custody[0].organization!==e.organization_id||custody[0].access!==e.project_access_id||custody[0].project!==e.project_id
         ||custody[0].owner!==e.owner_user_id||!(custody[0].visibility==='collaborative_output'||custody[0].visibility==='actor_private'&&custody[0].actor===e.actor_user_id)))continue;
-      const events=source.map(row=>{
-        if(!derivationId(row.event_id)||!derivationInteger(row.sequence,1)||!derivationTime(row.recorded_at)||String(row.recorded_at)>new Date().toISOString()
-          ||String(row.event_id).startsWith('optimistic:')||String(row.client_id).includes('optimistic')||row.compensated!==0||row.compensates_event_id!==null)throw Error('source');
-        const publicPayload=JSON.parse(String(row.payload)),event=serializeEvent(row),p=event.payload;
-        if(!clean(publicPayload)||!clean(p)||p._private_ref!==undefined||p.block_id!==blockId
-          ||['block_id','project_id','document_id','canvas_id','scope'].some(key=>publicPayload[key]!==undefined&&publicPayload[key]!==p[key])
-          ||p.project_id!==undefined&&p.project_id!==e.project_id||p.document_id!==undefined&&p.document_id!==e.document_id
-          ||row.redacted_at!==null||publicPayload._private_ref===undefined&&row.private_json!==null||publicPayload._private_ref!==undefined&&(publicPayload._private_ref!==row.event_id
-            ||typeof row.private_json!=='string'||row.owner_id!==e.owner_user_id||row.project_id!==e.project_id||row.document_id!==e.document_id))throw Error('private');
-        const scopes=JSON.parse(String(row.custody));
-        if(!Array.isArray(scopes)||(e.organization_id===null?scopes.length!==0:scopes.length!==1||scopes[0].organization!==e.organization_id
-          ||scopes[0].access!==e.project_access_id||scopes[0].project!==e.project_id||scopes[0].owner!==e.owner_user_id
-          ||scopes[0].stream!==stream||scopes[0].sequence!==row.sequence))throw Error('custody');
-        return event;
-      });
+      const events=source.map(row=>decodeNativeMemoryResourceEvent(row,e,'block',blockId));
       const declarations=events.filter(event=>event.type==='BlockCreated');
       // No implicit projection defaults or duplicate IDs can manufacture custody.
       if(declarations.length!==1||declarations[0]!.payload.project_id!==e.project_id||declarations[0]!.payload.document_id!==e.document_id
         ||declarations[0]!.payload.scope!==undefined&&declarations[0]!.payload.scope!=='document'
         ||declarations[0]!.payload.canvas_id||declarations[0]!.payload.library_block===true
-        ||!events.some(event=>event.eventId===observation.eventId&&event.sequence===observation.sequence&&event.type===observation.eventType))continue;
+        ||!observation.reference&&!events.some(event=>event.eventId===observation.eventId&&event.sequence===observation.sequence&&event.type===observation.eventType))continue;
       if(events[0]!.type!=='BlockCreated')continue;
       let removed=false,documentPlaced=true;
       for(const event of events){

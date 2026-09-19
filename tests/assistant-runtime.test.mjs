@@ -14707,7 +14707,7 @@ test('native derivation split: full registration queue retains subdivision headr
   assert.equal(state.queue().cursors[0].registered_through_sequence,through-1);
 });
 
-async function nativeDerivationRollingFixture(t,{windows=3,shared=false,paid=false,termOverrides={},message=i=>'Original human intent '+i}={}){
+async function nativeDerivationRollingFixture(t,{windows=3,shared=false,paid=false,termOverrides={},message=i=>'Original human intent '+i,beforeWindow}={}){
   const state=await nativeDerivationWorkerFixture(t,{skipOriginal:true,shared,termOverrides:{maximumInputTokens:65536,...termOverrides}}),worker=await import('../worker/memory-derivation-worker.ts');
   const requests=[],fetch=globalThis.fetch;t.after(()=>{globalThis.fetch=fetch;});
   globalThis.fetch=async(_url,init)=>{const input=JSON.parse(JSON.parse(init.body).input);requests.push(input);
@@ -14715,6 +14715,7 @@ async function nativeDerivationRollingFixture(t,{windows=3,shared=false,paid=fal
     return Response.json({id:'isolated-rolling-'+requests.length,object:'response',model:'isolated-test-model',service_tier:'default',status:'completed',error:null,incomplete_details:null,
       usage:{input_tokens:800,output_tokens:40,total_tokens:840,input_tokens_details:{cached_tokens:400}},output:[{type:'message',role:'assistant',status:'completed',content:[{type:'output_text',text:JSON.stringify({version:'memory-derivation-candidates-v1',items:[{operation:'assert',target:null,category:input.purpose==='profile'?'preference-hypothesis':input.purpose==='suggestion'?'proposal':'goal',text:'Synthetic rolling proposal '+requests.length,supports:[{sourceIndex:0,start:0,end:8,text:quote}],counterevidence:[]}]})}]}]});};
   for(let i=0;i<windows;i++){
+    if(beforeWindow)await beforeWindow(state,i);
     // Generate genuine unassisted originals; a memory-assisted answer is not new independent evidence.
     state.env.FORMA_MEMORY_ENABLED='false';
     const turn=await specialistFreeTurn(state,'rolling-original-'+i,message(i));
@@ -15162,4 +15163,64 @@ for(const shared of [false,true])test('native derivation block binding: real eve
   assert.equal(bindings.entries.length,1);assert.equal(bindings.unresolved,0);assert.ok(bindings.entries[0].scopeKey.includes(e.actor_user_id));
   if(shared){state.sqlite.prepare("UPDATE project_resource_scopes SET visibility='actor_private',actor_user_id='different-actor' WHERE resource_kind='block' AND resource_id='memory-native-written-block'").run();
     assert.equal(await sources.replayNativeDerivationSources(state.env,captured.capture),false);}
+});
+
+for(const shared of [false,true])test('native derivation relation binding: real '+(shared?'governed':'personal')+' endpoints preserve current access and exact versions',{timeout:60000},async t=>{
+  const {readFile}=await import('node:fs/promises');
+  const state=await nativeDerivationDeliveryFixture(t,{shared,termOverrides:{maximumInputTokens:16384},beforeEnrollment:async state=>{
+    for(const name of ['0045_memory_derivation_finance','0046_memory_derivation_recovery_cursor','0047_memory_derivation_results','0048_memory_derivation_user_controls',
+      '0049_memory_derivation_completion','0050_memory_derivation_lifecycle','0055_memory_derivation_relation_lifecycle'])state.sqlite.exec(await readFile(new URL('../drizzle/'+name+'.sql',import.meta.url),'utf8'));
+  }}),e=state.current(),scope={project_id:e.project_id,document_id:e.document_id};
+  for(const [type,payload]of [
+    ['BlockCreated',{...scope,block_id:'memory-linked-from',scope:'document',type:'direction',properties:{text:'First native context'}}],
+    ['BlockCreated',{...scope,block_id:'memory-linked-to',scope:'document',type:'direction',properties:{text:'Second native context'}}],
+    ['BlockRelationAdded',{...scope,relation_id:'memory-native-relationship',from_block_id:'memory-linked-from',to_block_id:'memory-linked-to',kind:'visual_evidence'}],
+  ]){const response=await state.request('/api/events',json({action:'append',event:{type,payload}},state.owner??{}));assert.equal(response.status,200,await response.clone().text());}
+  state.due();assert.equal((await state.run()).status,'completed');
+  const admission=await import('../worker/memory-derivation-admission.ts'),sources=await import('../worker/memory-derivation-sources.ts');
+  const lease=await admission.claimNativeDerivationJob(state.env,state.queue().jobs[0].job_id);assert.ok(lease);
+  const captured=await sources.captureNativeDerivationSources(state.env,lease);assert.equal(captured.status,'captured',state.controls.lastDatabaseError);
+  const source=sources.nativeDerivationSourceInputs(state.env,captured.capture),bindings=source.provenance.relationBindings;
+  assert.equal(bindings.entries.length,1);assert.equal(bindings.unresolved,0);assert.equal(source.originals.length,0);
+  const edge=bindings.entries[0];assert.equal(edge.kind,'visual_evidence');assert.equal(edge.from.blockId,'memory-linked-from');assert.equal(edge.to.blockId,'memory-linked-to');
+  assert.notEqual(edge.from.scopeKey,edge.to.scopeKey);assert.equal(edge.eventIds.length,3);assert.equal(edge.state,'linked');
+  assert.equal(JSON.stringify(bindings).includes('First native context'),false);
+  if(shared){state.sqlite.prepare("UPDATE project_resource_scopes SET actor_user_id='other-actor',visibility='actor_private' WHERE resource_kind='block' AND resource_id='memory-linked-to'").run();
+    assert.equal(await sources.replayNativeDerivationSources(state.env,captured.capture),false);}
+});
+
+for(const paid of [false,true])test('native derivation relation budget: three-window resource evidence paid='+paid,{timeout:180000},async t=>{
+  const {readFile}=await import('node:fs/promises');
+  const state=await nativeDerivationRollingFixture(t,{windows:3,paid,beforeWindow:async(state,index)=>{
+    if(index===0)state.sqlite.exec(await readFile(new URL('../drizzle/0055_memory_derivation_relation_lifecycle.sql',import.meta.url),'utf8'));
+    const e=state.current(),scope={project_id:e.project_id,document_id:e.document_id},from='rolling-edge-from-'+index,to='rolling-edge-to-'+index;
+    for(const [type,payload]of [
+      ['BlockCreated',{...scope,block_id:from,scope:'document',type:'direction',properties:{text:'Source endpoint '+index}}],
+      ['BlockCreated',{...scope,block_id:to,scope:'document',type:'direction',properties:{text:'Target endpoint '+index}}],
+      ['BlockRelationAdded',{...scope,relation_id:'rolling-edge-'+index,from_block_id:from,to_block_id:to,kind:'visual_evidence'}],
+    ]){const response=await state.request('/api/events',json({action:'append',event:{type,payload}},state.owner??{}));assert.equal(response.status,200,await response.clone().text());}
+  }}),api=await import('../worker/memory-derivation-api.ts');
+  const job=state.queue().jobs.sort((a,b)=>b.through_sequence-a.through_sequence)[0],db=state.env.DB,prepare=db.prepare,batch=db.batch,originals=new WeakMap();let operations=0;
+  const wrap=raw=>{const proxy=new Proxy(raw,{get(target,key){if(key==='bind')return(...args)=>wrap(target.bind(...args));if(['all','first','run','raw'].includes(key))return(...args)=>{operations++;return target[key](...args);};return Reflect.get(target,key,target);}});originals.set(proxy,raw);return proxy;};
+  db.prepare=function(sql){return wrap(prepare.call(this,sql));};db.batch=function(inputs){operations++;return batch.call(this,inputs.map(input=>originals.get(input)??input));};t.after(()=>{db.prepare=prepare;db.batch=batch;});
+  const response=await api.handleMemoryDerivationResult(new Request(state.derivationOrigin+'/api/memory/derivation/result?jobId='+job.job_id,{headers:state.owner}),state.env);
+  assert.equal(response.status,200,await response.clone().text());const body=await response.json();t.diagnostic(JSON.stringify({operations,history:body.history}));
+  assert.equal(body.history.windowCount,3);assert.ok(operations<50,'Complete resource-rich inspection must stay within the conservative native request budget: '+operations);
+});
+
+for(const fault of ['old-original','document-placement'])test('native derivation aggregate proof: late '+fault+' invalidates deferred historical reads',{timeout:120000},async t=>{
+  const state=await nativeDerivationRollingFixture(t,{windows:3}),store=await import('../worker/memory-derivation-results.ts');
+  const jobs=state.queue().jobs.sort((a,b)=>a.through_sequence-b.through_sequence),db=state.env.DB,batch=db.batch;let injected=false;
+  const before=state.sqlite.prepare('SELECT COUNT(*) AS n FROM memory_derivation_usage').get().n;
+  db.batch=async statements=>{
+    if(!injected&&statements.some(statement=>statement.sql.includes('context_source_asserted'))){injected=true;
+      if(fault==='old-original'){
+        const manifest=JSON.parse(state.sqlite.prepare('SELECT manifest_json FROM memory_derivation_results WHERE job_id=?').get(jobs[0].job_id).manifest_json);
+        state.sqlite.prepare('DELETE FROM private_content WHERE content_id=?').run(manifest.originalBacking[0].contentRef);
+      }else{const e=state.current();await(await import('../worker/runtime.ts')).appendAuditEvent(state.env,'creative:'+e.owner_user_id,'user:'+e.actor_user_id,'DocumentCreated',{project_id:'foreign-project',document_id:e.document_id});}
+    }
+    return batch.call(db,statements);
+  };t.after(()=>{db.batch=batch;});
+  assert.equal(await store.readNativeDerivationResult(state.env,state.current().actor_user_id,jobs.at(-1).job_id),null);assert.equal(injected,true);
+  assert.equal(state.sqlite.prepare('SELECT COUNT(*) AS n FROM memory_derivation_usage').get().n,before);
 });

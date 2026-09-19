@@ -1,3 +1,4 @@
+import { observeNativeMemoryRelationBindings, type NativeMemoryRelationBindings } from './memory-native-relations.ts';
 import { observeNativeMemoryBlockBindings, type NativeMemoryBlockBindings } from './memory-native-blocks.ts';
 import { captureLegacyConversationOriginalWindows, replayLegacyConversationOriginals, prepareLegacyConversationOriginalsCommit, type LegacyConversationOriginalsCommit } from "./events-api.ts";
 import { nativeDerivationRequestBody, nativeDerivationRequestFits } from './memory-derivation-request.ts';
@@ -9,7 +10,7 @@ import { decodeRetainedSpecialistConsent, paidMemoryBatchProof, type PaidMemoryA
 import { liveMemorySourceQueryParts } from "./memory-live-sources.ts";
 import { liveMemoryLifetimeProjection, liveMemorySourceDeadline } from "./memory-live-source-lifetime.ts";
 import { captureNativeMemoryTurnExclusions, nativeMemoryTurnExclusionInputs } from "./memory-native-boundary.ts";
-import { observeNativeMemoryDocumentScope, nativeMemoryArtifactIdentity } from "./memory-native-scope.ts";
+import { observeNativeMemoryDocumentScope, nativeMemoryDocumentIdentity, nativeMemoryArtifactIdentity, type NativeMemoryDocumentScope } from "./memory-native-scope.ts";
 import { memoryCanonical } from "./memory-sql.ts";
 import { derivationExact, derivationHash, derivationId, derivationInteger, derivationTime } from "./memory-derivation-policy.ts";
 import { derivationResults } from "./memory-derivation-store.ts";
@@ -30,6 +31,7 @@ export type NativeDerivationProvenance = {
     bindingHash: string; intentHash: string; ancestry: PaidMemoryAncestryEntry[] }[];
   artifacts?: { eventId:string; contentRef:string; eventIds:string[] }[];
   blockBindings?: NativeMemoryBlockBindings;
+  relationBindings?: NativeMemoryRelationBindings;
   sourceRowsSha256: string;
 };
 export type NativeDerivationHistory = { version: 1; windowJobIds: string[]; afterSequence: number; throughSequence: number; boundary: "consent" | "bounded" | "capacity"; originalPairs: number };
@@ -42,7 +44,7 @@ type CaptureData = { jobId: string; purpose: MemoryDerivationSourcePurpose; scop
 type MemoryDerivationSourcePurpose = ReturnType<typeof nativeDerivationEvidenceInputs>["grant"]["purpose"];
 declare const issuedCapture: unique symbol;
 export type NativeDerivationSourceCapture = Readonly<{ [issuedCapture]: true }>;
-type Captured = { env: WorkerEnv; db: WorkerEnv["DB"]; lease: NativeDerivationEvidence; validUntil: string; witness: AssistantContextReadWitness<CaptureData>; parts?: NativeDerivationSourceCapture[]; legacy?: LegacyConversationOriginalsCommit; evidences?: NativeDerivationEvidence[] };
+type Captured = { env: WorkerEnv; db: WorkerEnv["DB"]; lease: NativeDerivationEvidence; validUntil: string; witness: AssistantContextReadWitness<CaptureData>; parts?: NativeDerivationSourceCapture[]; legacy?: LegacyConversationOriginalsCommit; evidences?: NativeDerivationEvidence[]; documentScope?:NativeMemoryDocumentScope; relationObservations?:Parameters<typeof observeNativeMemoryRelationBindings>[2] };
 const captures = new WeakMap<NativeDerivationSourceCapture, Captured>();
 const unavailable = () => ({ status: "unavailable" } as const);
 const capacity = () => ({ status: "capacity" } as const);
@@ -60,10 +62,11 @@ const clean = (payload: string) => `json_valid(${payload}) AND COALESCE(json_ext
  * remain incomplete; nothing is sliced, acknowledged as processed or deleted.
  * Typed observations are descriptive evidence, NOT original human quotations.
  */
-async function captureNativeDerivationWindow(env: WorkerEnv, lease: NativeDerivationEvidence, bindBlocks = true) {
+async function captureNativeDerivationWindow(env: WorkerEnv, lease: NativeDerivationEvidence, bindBlocks = true, bindRelations?:boolean, deferReplay=false, parentScope?:NativeMemoryDocumentScope) {
   try {
     if(nativeDerivationEvidenceInputs(env,lease).producer==='chat-studio')return await captureChatStudioDerivationWindow(env,lease);
     const db = env.DB, input = nativeDerivationEvidenceInputs(env, lease), { enrollment: e, grant: g, authority: a, job } = input;
+    if(bindRelations===true&&(!input.relationsPresent||!input.lifecyclePresent))return unavailable();
     if (!await replayNativeDerivationEvidence(env, lease) || env.DB !== db) return unavailable();
     const witness = new AssistantContextReadWitness<CaptureData>(env);
     const read = async (query: Query) => {
@@ -131,7 +134,8 @@ async function captureNativeDerivationWindow(env: WorkerEnv, lease: NativeDeriva
     const conversations = rows.filter(row => row.type === "AssistantReasoned");
     const expected = conversations.map(row => ({ turnId: row.turn_id, userRef: row.user_ref, answerRef: row.answer_ref, sequence: row.sequence }));
     if (expected.some(row => ![row.turnId, row.userRef, row.answerRef].every(derivationId)) || new Set(expected.map(row => row.turnId)).size !== expected.length) return unavailable();
-    const scope = await observeNativeMemoryDocumentScope(env, { principal: a.principal, binding: a.binding }, e, witness);
+    const scope = parentScope?nativeMemoryDocumentIdentity(e):await observeNativeMemoryDocumentScope(env, { principal: a.principal, binding: a.binding }, e, witness);
+    if(parentScope&&memoryCanonical(parentScope)!==memoryCanonical(scope))return unavailable();
     if (!scope || env.DB !== db) return unavailable();
     const scopeKey = memoryCanonical([scope.partitionKey, scope.documentKey]);
     const custody = e.organization_id === null ? "NOT EXISTS(SELECT 1 FROM project_event_scopes custody WHERE custody.event_id=message.event_id)"
@@ -243,6 +247,8 @@ async function captureNativeDerivationWindow(env: WorkerEnv, lease: NativeDeriva
     }
     observations.sort((left,right)=>left.sequence-right.sequence);
     const blockBindings=bindBlocks?await observeNativeMemoryBlockBindings(env,e,observations,witness):undefined;
+    const relationObservations=rows.map(row=>({eventId:String(row.event_id),sequence:Number(row.sequence),eventType:String(row.type),relationId:JSON.parse(String(JSON.parse(String(row.event_json))[12])).relation_id??null}));
+    const relationBindings=bindRelations!==false&&input.relationsPresent&&input.lifecyclePresent?await observeNativeMemoryRelationBindings(env,e,relationObservations,witness):undefined;
     const retentionCeiling = [...ceilings, ...originals.map(row => row.expiresAt), ...observations.map(row => row.expiresAt)].sort()[0]!;
     let excludedByUserControls = 0;
     if (input.userControlsPresent && originals.length) {
@@ -273,6 +279,7 @@ async function captureNativeDerivationWindow(env: WorkerEnv, lease: NativeDeriva
         bindingHash: String(row.binding_hash), intentHash: String(row.intent_hash), ancestry: groups.find(group => group.turnId === row.turn_id)!.entries }))),
       ...(artifactCapture?{artifacts:artifactCapture.provenance}:{}),
       ...(blockBindings?{blockBindings}:{}),
+      ...(relationBindings?{relationBindings}:{}),
       sourceRowsSha256: await memoryDigest(memoryCanonical({ rows, messages, paid, ...(artifactCapture?{artifacts:artifactCapture.sources,artifactProvenance:artifactCapture.provenance}:{}) })),
     };
     const data: CaptureData = { jobId: job.job_id, purpose: g.purpose, scopeKey, checkedAt, validUntil, retentionCeiling, originals, originalBacking, observations, provenance,
@@ -281,9 +288,9 @@ async function captureNativeDerivationWindow(env: WorkerEnv, lease: NativeDeriva
         afterSequence: job.after_sequence, throughSequence: job.through_sequence },
       coverage: { queuedReferences: inventory.length, originalPairs: originals.length / 2, typedObservations: observations.length, ...(excludedByUserControls?{excludedByUserControls}:{}), allReferencesCaptured: true, semanticComplete: false } };
     witness.before(validUntil); witness.seal(data);
-    const captured: Captured = { env, db, lease, validUntil, witness }, handle = Object.freeze({}) as NativeDerivationSourceCapture;
+    const captured: Captured = { env, db, lease, validUntil, witness,documentScope:scope,relationObservations }, handle = Object.freeze({}) as NativeDerivationSourceCapture;
     captures.set(handle, captured);
-    if (!await replayNativeDerivationSources(env, handle)) { captures.delete(handle); return unavailable(); }
+    if (!deferReplay&&!await replayNativeDerivationSources(env, handle)) { captures.delete(handle); return unavailable(); }
     return { status: "captured", capture: handle } as const;
   } catch { return unavailable(); }
 }
@@ -408,9 +415,10 @@ async function captureChatStudioDerivationHistory(env:WorkerEnv,lease:NativeDeri
  * Bounds are explicit: no source truncation, hidden gap skipping, or claim of a
  * complete lifetime history. Legacy result reads may request their exact original
  * single-window contract; this option cannot grant spending or widen access. */
-export async function captureNativeDerivationSources(env: WorkerEnv, lease: NativeDerivationEvidence, options: { history?: boolean; blockBindings?: boolean } = {}) {
+export async function captureNativeDerivationSources(env: WorkerEnv, lease: NativeDerivationEvidence, options: { history?: boolean; blockBindings?: boolean; relationBindings?:boolean } = {}) {
   try{const input=nativeDerivationEvidenceInputs(env,lease);if(input.producer==='chat-studio'&&input.historyPresent&&options.history!==false)return await captureChatStudioDerivationHistory(env,lease);}catch{return unavailable();}
-  const own = await captureNativeDerivationWindow(env, lease, options.blockBindings!==false);
+  let deferred=false;try{deferred=nativeDerivationEvidenceInputs(env,lease).historyPresent&&options.history!==false;}catch{return unavailable();}
+  const own = await captureNativeDerivationWindow(env, lease, deferred?false:options.blockBindings!==false,deferred?false:options.relationBindings,deferred);
   if (own.status !== 'captured' || options.history === false) return own;
   try {
     const db=env.DB, input=nativeDerivationEvidenceInputs(env,lease);
@@ -426,15 +434,15 @@ export async function captureNativeDerivationSources(env: WorkerEnv, lease: Nati
       ||result.results.some(row=>!derivationExact(row,['job_id','after_sequence','through_sequence'])||!derivationHash(row.job_id)
         ||!derivationInteger(row.after_sequence)||!derivationInteger(row.through_sequence,Number(row.after_sequence)+1,input.job.after_sequence)))return unavailable();
     // Keep zero-history manifests byte-compatible with previous single windows.
-    if(!result.results.length)return own;
     witness.observe([statement],[result],[query]);
+    if(!result.results.length)return finalizeResourceHistory(env,lease,[own.capture],current,witness,options);
     const parts=[own.capture], data=[current];
     let boundary:NativeDerivationHistory['boundary']=result.results.length>2?'bounded':'consent';
     let merged=current;
     for(const row of result.results.slice(0,2)) {
       const evidence=await observeNativeDerivationHistoryJob(env,lease,String(row.job_id));
       if(!evidence){boundary='bounded';break;}
-      const previous=await captureNativeDerivationWindow(env,evidence,options.blockBindings!==false);
+      const previous=await captureNativeDerivationWindow(env,evidence,false,false,true,captures.get(own.capture)!.documentScope);
       if(previous.status!=='captured'){boundary=previous.status==='capacity'?'capacity':'bounded';break;}
       const source=nativeDerivationSourceInputs(env,previous.capture);
       if(source.scopeKey!==current.scopeKey||source.purpose!==current.purpose||source.binding.consentId!==current.binding.consentId
@@ -452,6 +460,7 @@ export async function captureNativeDerivationSources(env: WorkerEnv, lease: Nati
         provenance:{events:unique(data.flatMap(value=>value.provenance.events)),turns:unique(data.flatMap(value=>value.provenance.turns)),
           paid:unique(data.flatMap(value=>value.provenance.paid)),
           ...(data.some(value=>value.provenance.artifacts)?{artifacts:unique(data.flatMap(value=>value.provenance.artifacts??[]))}:{}),
+          ...(current.provenance.relationBindings?{relationBindings:{version:1 as const,entries:unique(data.flatMap(value=>value.provenance.relationBindings?.entries??[])),unresolved:data.reduce((sum,value)=>sum+(value.provenance.relationBindings?.unresolved??0),0)}}:{}),
           ...(current.provenance.blockBindings?{blockBindings:{version:1 as const,entries:unique(data.flatMap(value=>value.provenance.blockBindings?.entries??[])),unresolved:data.reduce((sum,value)=>sum+(value.provenance.blockBindings?.unresolved??0),0)}}:{}),
           sourceRowsSha256:await memoryDigest(memoryCanonical(data.map(value=>[value.jobId,value.provenance.sourceRowsSha256])))},
         coverage:{...current.coverage,originalPairs:originals.length/2,typedObservations:observations.length,
@@ -462,6 +471,23 @@ export async function captureNativeDerivationSources(env: WorkerEnv, lease: Nati
     if((data[0]!.binding.afterSequence>input.grant.source_after_sequence||data.some((value,index)=>index>0&&value.binding.afterSequence!==data[index-1]!.binding.throughSequence))&&boundary==='consent')boundary='bounded';
     merged={...merged,history:{version:1,windowJobIds:data.slice(0,-1).map(value=>value.jobId),afterSequence:data[0]!.binding.afterSequence,
       throughSequence:current.binding.throughSequence,boundary,originalPairs:merged.originals.length/2}};
+    return finalizeResourceHistory(env,lease,parts,merged,witness,options);
+  }catch{return unavailable();}
+}
+
+/** Private parts never escape before this aggregate replay. Their independent
+ * native grant/source witnesses remain in the final atomic proof. Document
+ * identity is read once for the identical enrollment, and resource versions are
+ * certified in one bounded union instead of once per historical window. */
+async function finalizeResourceHistory(env:WorkerEnv,lease:NativeDerivationEvidence,parts:NativeDerivationSourceCapture[],data:CaptureData,
+  witness:AssistantContextReadWitness<CaptureData>,options:{blockBindings?:boolean;relationBindings?:boolean}){
+  try{
+    const db=env.DB,input=nativeDerivationEvidenceInputs(env,lease);
+    if(options.relationBindings===true&&(!input.relationsPresent||!input.lifecyclePresent))return unavailable();
+    const blockBindings=options.blockBindings!==false?await observeNativeMemoryBlockBindings(env,input.enrollment,data.observations,witness):undefined;
+    const relationBindings=options.relationBindings!==false&&input.relationsPresent&&input.lifecyclePresent?await observeNativeMemoryRelationBindings(env,input.enrollment,
+      parts.flatMap(part=>captures.get(part)?.relationObservations??[]),witness):undefined;
+    const merged={...data,provenance:{...data.provenance,...(blockBindings?{blockBindings}:{}),...(relationBindings?{relationBindings}:{})}};
     witness.before(merged.validUntil);witness.seal(merged);
     const handle=Object.freeze({}) as NativeDerivationSourceCapture;
     captures.set(handle,{env,db,lease,validUntil:merged.validUntil,witness,parts});

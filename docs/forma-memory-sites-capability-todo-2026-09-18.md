@@ -132,3 +132,7 @@ schedule work, provision a service or establish human review.
 ## Structural relationship privacy continuation
 
 [Relationship retirement](forma-memory-relation-retirement-2026-09-19.md) packages additive migration0055 and closes immediate native result/index-intent invalidation for relationship lifecycle and custody changes. Endpoint/version certification, reuse edges and automatic consumers are still open implementation work. The migration is not applied to production.
+
+## Relationship binding and rolling budget continuation
+
+[Exact document-local relationship/endpoint bindings](forma-memory-native-relationship-bindings-2026-09-19.md) are integrated into Creator derivation with legacy-manifest compatibility, complete supporting-event privacy inverses and bounded union reads. Cross-document reuse, library/canvas scope and nested ancestry remain implementation work; none is silently converted into an external blocker.
