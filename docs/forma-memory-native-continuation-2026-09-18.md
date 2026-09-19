@@ -143,3 +143,7 @@ independent producers, nested scope identity and native index lifecycle remain o
 [Native inspection budget work](forma-memory-native-read-budget-2026-09-19.md) reduces the tested three-window authenticated reads from 68 to 45/48 D1 calls for free/paid original histories, retaining every native privacy assertion. Local D1 includes paid ancestry. This does not qualify hosted quotas or close broader native integration.
 
 [Independent Chat Studio derivation](forma-memory-chat-studio-derivation-2026-09-19.md) adds schema-only migration0053, independent producer progress, bounded original-backed Chat Studio history and locally qualified privacy/recovery. It does not reset Creator progress or complete the broader plan.
+
+## Structural relationship privacy continuation
+
+[Relationship retirement](forma-memory-relation-retirement-2026-09-19.md) packages additive migration0055 and closes immediate native result/index-intent invalidation for relationship lifecycle and custody changes. Endpoint/version certification, reuse edges and automatic consumers are still open implementation work. The migration is not applied to production.

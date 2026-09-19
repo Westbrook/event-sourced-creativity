@@ -128,3 +128,7 @@ schedule work, provision a service or establish human review.
 ## Native document-local block continuation
 
 [Block revision bindings](forma-memory-native-block-revisions-2026-09-19.md) now supplement Creator captures with exact native field histories, current personal/governed custody and complete pre-window supporting-event inverses. They do not promote raw pointers, block text or descendants into human preference evidence. Library/canvas placement, structural relations, reuse edges, nested scope ancestry and automatic consumers remain implementation work, not external-service blockers.
+
+## Structural relationship privacy continuation
+
+[Relationship retirement](forma-memory-relation-retirement-2026-09-19.md) packages additive migration0055 and closes immediate native result/index-intent invalidation for relationship lifecycle and custody changes. Endpoint/version certification, reuse edges and automatic consumers are still open implementation work. The migration is not applied to production.

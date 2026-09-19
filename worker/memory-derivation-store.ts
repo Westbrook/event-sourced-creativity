@@ -1,3 +1,4 @@
+import { memoryDerivationRelationSchemaProfile } from './memory-derivation-relation-schema.ts';
 import { memoryDerivationIndexSchemaProfile } from './memory-derivation-index-schema.ts';
 import { memoryDerivationProducerSchemaProfile, memoryDerivationProducerJobDigest, memoryDerivationProducerCompletionDigest } from "./memory-derivation-producer-schema.ts";
 import { memoryDerivationHistorySchemaProfile } from "./memory-derivation-history-schema.ts";
@@ -39,7 +40,7 @@ export const memoryDerivationSchemaProfile = {
 } as const;
 type Row = Record<string, unknown>;
 type Query = { sql: string; bindings: (string | number | null)[] };
-const profiles = [memoryDerivationSchemaProfile, memoryDerivationJobSchemaProfile, memoryDerivationFinanceSchemaProfile, memoryDerivationRecoverySchemaProfile, memoryDerivationResultsSchemaProfile, memoryDerivationUserControlSchemaProfile, memoryDerivationCompletionSchemaProfile, memoryDerivationLifecycleSchemaProfile, memoryDerivationSplitSchemaProfile, memoryDerivationHistorySchemaProfile, memoryDerivationProducerSchemaProfile, memoryDerivationIndexSchemaProfile] as const;
+const profiles = [memoryDerivationSchemaProfile, memoryDerivationJobSchemaProfile, memoryDerivationFinanceSchemaProfile, memoryDerivationRecoverySchemaProfile, memoryDerivationResultsSchemaProfile, memoryDerivationUserControlSchemaProfile, memoryDerivationCompletionSchemaProfile, memoryDerivationLifecycleSchemaProfile, memoryDerivationSplitSchemaProfile, memoryDerivationHistorySchemaProfile, memoryDerivationProducerSchemaProfile, memoryDerivationIndexSchemaProfile,memoryDerivationRelationSchemaProfile] as const;
 const schemaTables = profiles.flatMap(profile => [...profile.tables]);
 const family = "name LIKE 'memory_derivation_%' OR name LIKE 'idx_memory_derivation_%' OR "
   + schemaTables.map(table => `tbl_name='${table}' OR instr(lower(COALESCE(sql,'')),'${table}')>0`).join(" OR ");
@@ -81,7 +82,7 @@ export async function memoryDerivationSchema(env: WorkerEnv): Promise<{ present:
     if (selected.length && (selected.length !== profile.count || "sha256:" + await memoryDigest(memoryCanonical(selected.map(row => ({ ...row,
       sql: (row.sql as string).trim().replace(/;$/u, "").replace(/\bIF\s+NOT\s+EXISTS\s+/giu, "") })))) !== (producersInstalled && profile === memoryDerivationJobSchemaProfile ? memoryDerivationProducerJobDigest : producersInstalled && profile === memoryDerivationCompletionSchemaProfile ? memoryDerivationProducerCompletionDigest : splitInstalled && profile === memoryDerivationJobSchemaProfile ? memoryDerivationSplitJobDigest : profile.digest))) fail();
   }
-  if (installed[1] && !installed[0] || installed[2] && !installed[1] || installed[3] && !installed[2] || installed[4] && !installed[2] || installed[5] && !installed[4] || installed[6] && !installed[5] || installed[7] && !installed[4] || installed[8] && !installed[6] || installed[9] && !installed[6] || installed[10] && (!installed[8] || !installed[9]) || installed[11] && !installed[4] || env.DB !== db) fail();
+  if (installed[1] && !installed[0] || installed[2] && !installed[1] || installed[3] && !installed[2] || installed[4] && !installed[2] || installed[5] && !installed[4] || installed[6] && !installed[5] || installed[7] && !installed[4] || installed[8] && !installed[6] || installed[9] && !installed[6] || installed[10] && (!installed[8] || !installed[9]) || installed[11] && !installed[4] || installed[12] && !installed[4] || env.DB !== db) fail();
   return { present: installed[0]!, jobsPresent: installed[1]!, financePresent: installed[2]!, recoveryPresent: installed[3]!, resultsPresent: installed[4]!, userControlsPresent: installed[5]!, completionPresent: installed[6]!, lifecyclePresent: installed[7]!, splitPresent: installed[8]!, historyPresent: installed[9]!, producersPresent: installed[10]!, indexPresent: installed[11]!, guard: { condition: `${snapshot}=? AND NOT EXISTS(SELECT 1 FROM sqlite_temp_schema)${splitInstalled ? ' AND NOT EXISTS(SELECT 1 FROM memory_derivation_split_commands)' : ''}`,
     bindings: [JSON.stringify(rows.map(row => ({ name: row.name, sql: row.sql, table: row.table, type: row.type })))] } };
 }

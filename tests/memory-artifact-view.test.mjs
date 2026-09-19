@@ -591,3 +591,62 @@ test('block memory: a source growing after measurement is not hydrated',async t=
   const result=await observeNativeMemoryBlockBindings(f.env,f.enrollment(),observations,{observe(){}});
   assert.equal(injected,true);assert.equal(hydrated,false);assert.equal(result.entries.length,0);assert.equal(result.unresolved,2);
 });
+
+async function nativeRelationResultFixture(t,options={}){
+  const f=await artifactDerivationFixture(t);
+  for(const name of ['0054_memory_derivation_index_intents','0055_memory_derivation_relation_lifecycle'])f.sqlite.exec(readFileSync(new URL('../drizzle/'+name+'.sql',import.meta.url),'utf8'));
+  const relationId='memory-observed-relation',scope={project_id:f.projectId,document_id:f.documentId};
+  for(const [type,payload]of [['BlockCreated',{...scope,block_id:'memory-relation-other',scope:'document',type:'direction',properties:{text:'A second context'}}],
+    ['BlockRelationAdded',{...scope,relation_id:relationId,from_block_id:'scene-reuse-direction',to_block_id:'memory-relation-other',kind:'visual_evidence'}]]){
+    const response=await f.request('/api/events',f.json({action:'append',event:{type,payload}}));assert.equal(response.status,200,await response.clone().text());}
+  const turn=await f.request('/api/assistant?route='+encodeURIComponent('/document/'+f.documentId)+'&projectId='+f.projectId,
+    f.json({turnId:'relation-observation-original',message:'I want to review this story.',locale:'en'}));assert.equal(turn.status,201,await turn.clone().text());
+  assert.equal((await f.run()).status,'completed');
+  t.mock.method(globalThis,'fetch',async()=>Response.json({id:'isolated-relation-result',object:'response',model:'isolated-artifact-test',service_tier:'default',status:'completed',error:null,incomplete_details:null,
+    usage:{input_tokens:100,output_tokens:10,total_tokens:110,input_tokens_details:{cached_tokens:0}},
+    output:[{type:'message',role:'assistant',status:'completed',content:[{type:'output_text',text:JSON.stringify({version:'memory-derivation-candidates-v1',items:[]})}]}]}));
+  if(options.beforePublish)await options.beforePublish({...f,relationId});
+  const result=await(await import('../worker/memory-derivation-worker.ts')).runNativeDerivationScheduled(f.env);assert.equal(result.status,'stored',JSON.stringify(result));
+  const stored=f.sqlite.prepare('SELECT * FROM memory_derivation_results').get();
+  assert.ok(f.sqlite.prepare("SELECT d.resource_id FROM memory_derivation_result_dependencies d JOIN events e ON e.event_id=d.resource_id WHERE d.job_id=? AND d.kind='event' AND json_extract(e.payload,'$.relation_id')=?").get(stored.job_id,relationId));
+  return Object.assign(f,{relationId,stored});
+}
+
+for(const fault of ['remove','redeclare','custody-insert','custody-update','custody-delete','foreign-owner-custody','unrelated'])test('relation memory: native relationship change retires private result and queues deletion '+fault,async t=>{
+  const installCustody=f=>f.sqlite.prepare("INSERT INTO project_resource_scopes(organization_id,project_access_id,project_id,owner_user_id,resource_kind,resource_id,visibility,actor_user_id,created_at) VALUES('org','access',?,?,'relation',?,'actor_private',?,?)").run(f.projectId,f.owner,f.relationId,f.owner,new Date().toISOString());
+  const f=await nativeRelationResultFixture(t,{beforePublish:['custody-update','custody-delete'].includes(fault)?installCustody:undefined});
+  if(fault==='remove')await appendAuditEvent(f.env,f.streamId,'user:'+f.owner,'BlockRelationRemoved',{project_id:f.projectId,document_id:f.documentId,relation_id:f.relationId});
+  if(fault==='redeclare'||fault==='unrelated')await appendAuditEvent(f.env,f.streamId,'user:'+f.owner,'BlockRelationAdded',{project_id:f.projectId,document_id:f.documentId,
+    relation_id:fault==='unrelated'?'different-relation':f.relationId,from_block_id:'scene-reuse-direction',to_block_id:'memory-relation-other',kind:'visual_evidence'});
+  if(fault==='custody-insert')installCustody(f);
+  if(fault==='custody-update')f.sqlite.prepare("UPDATE project_resource_scopes SET actor_user_id='changed-actor' WHERE resource_kind='relation' AND resource_id=?").run(f.relationId);
+  if(fault==='custody-delete')f.sqlite.prepare("DELETE FROM project_resource_scopes WHERE resource_kind='relation' AND resource_id=?").run(f.relationId);
+  if(fault==='foreign-owner-custody')installCustody({...f,owner:'foreign-owner'});
+  const row=f.sqlite.prepare('SELECT * FROM memory_derivation_results').get(),intent=f.sqlite.prepare('SELECT * FROM memory_derivation_index_intents WHERE job_id=?').get(row.job_id);
+  assert.equal(row.state,['unrelated','foreign-owner-custody'].includes(fault)?'active':'withdrawn');assert.equal(intent.operation,['unrelated','foreign-owner-custody'].includes(fault)?'upsert':'delete');
+  if(!['unrelated','foreign-owner-custody'].includes(fault)){assert.equal(row.manifest_json,null);assert.equal(row.raw_json,null);assert.equal(intent.generation,2);assert.equal(f.sqlite.prepare('SELECT COUNT(*) AS n FROM memory_derivation_result_dependencies').get().n,0);}
+  assert.equal(f.sqlite.prepare('SELECT COUNT(*) AS n FROM memory_derivation_usage').get().n,1);
+});
+
+test('relation memory: a rolled-back relation edit cannot partially retire private results',async t=>{
+  const f=await nativeRelationResultFixture(t),before=f.sqlite.prepare('SELECT * FROM memory_derivation_results').get();
+  const {makeEvent,eventWriteBindings,EVENT_WRITE_COLUMNS}=await import('../worker/runtime.ts');
+  const head=f.sqlite.prepare('SELECT MAX(sequence) AS n FROM events WHERE stream_id=?').get(f.streamId).n;
+  const event=makeEvent(f.streamId,head+1,'user:'+f.owner,'isolated-rollback',crypto.randomUUID(),'BlockRelationRemoved',{project_id:f.projectId,document_id:f.documentId,relation_id:f.relationId});
+  const values=eventWriteBindings(event);
+  await assert.rejects(()=>f.env.DB.batch([f.env.DB.prepare('INSERT INTO event_write_stage('+EVENT_WRITE_COLUMNS+') VALUES('+values.map(()=>'?').join(',')+')').bind(...values),f.env.DB.prepare("SELECT json('rollback-test')")]));
+  assert.deepEqual(f.sqlite.prepare('SELECT * FROM memory_derivation_results').get(),before);
+  assert.equal(f.sqlite.prepare('SELECT operation FROM memory_derivation_index_intents').get().operation,'upsert');
+});
+
+test('relation memory: isolated D1 atomically retires results and preserves the deletion tombstone',{timeout:180000},async t=>{
+  const f=await nativeRelationResultFixture(t),{createRequire}=await import('node:module'),{Miniflare,Log,LogLevel}=createRequire(import.meta.resolve('wrangler'))('miniflare'),
+    {exportSynthetic,install}=await import('./helpers/model3d-workerd-snapshot.mjs');let outbound=0;
+  const mf=new Miniflare({modules:true,compatibilityDate:'2026-05-15',host:'127.0.0.1',port:0,log:new Log(LogLevel.NONE),d1Databases:['RelationMemory'],
+    script:"export default {fetch(){return new Response('Isolated',{status:404});}}",outboundService(){outbound++;throw Error('External fetch forbidden');}});
+  t.after(async()=>{await mf.dispose();assert.equal(outbound,0);});const db=await mf.getD1Database('RelationMemory');await install(db,exportSynthetic(f.sqlite));f.env.DB=db;
+  await appendAuditEvent(f.env,f.streamId,'user:'+f.owner,'BlockRelationRemoved',{project_id:f.projectId,document_id:f.documentId,relation_id:f.relationId});
+  const row=await db.prepare('SELECT state,manifest_json,raw_json FROM memory_derivation_results WHERE job_id=?').bind(f.stored.job_id).first();
+  assert.deepEqual(row,{state:'withdrawn',manifest_json:null,raw_json:null});
+  assert.deepEqual(await db.prepare('SELECT operation,generation FROM memory_derivation_index_intents WHERE job_id=?').bind(f.stored.job_id).first(),{operation:'delete',generation:2});
+});
