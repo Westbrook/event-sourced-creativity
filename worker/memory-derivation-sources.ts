@@ -1,3 +1,4 @@
+import { captureNativeArtifactConsumption } from './memory-native-artifact-consumption.ts';
 import { memoryDigest } from "../src/model/scoped-memory.ts";
 import { memoryEventAction, type MemoryAction } from "../src/model/memory-observations.ts";
 import { AssistantContextReadWitness } from "./assistant-context-source.ts";
@@ -5,7 +6,7 @@ import { decodeRetainedSpecialistConsent, paidMemoryBatchProof, type PaidMemoryA
 import { liveMemorySourceQueryParts } from "./memory-live-sources.ts";
 import { liveMemoryLifetimeProjection, liveMemorySourceDeadline } from "./memory-live-source-lifetime.ts";
 import { nativeMemoryAnswerExclusion } from "./memory-native-boundary.ts";
-import { observeNativeMemoryDocumentScope } from "./memory-native-scope.ts";
+import { observeNativeMemoryDocumentScope, nativeMemoryArtifactIdentity } from "./memory-native-scope.ts";
 import { memoryCanonical } from "./memory-sql.ts";
 import { derivationExact, derivationHash, derivationId, derivationInteger, derivationTime } from "./memory-derivation-policy.ts";
 import { derivationResults } from "./memory-derivation-store.ts";
@@ -24,6 +25,7 @@ export type NativeDerivationProvenance = {
   turns: { actorUserId: string; scopeKey: string; turnId: string; sha256: string }[];
   paid: { taskId: string; turnId: string; consentRef: string; consentSha256: string; resultRef: string;
     bindingHash: string; intentHash: string; ancestry: PaidMemoryAncestryEntry[] }[];
+  artifacts?: { eventId:string; contentRef:string; eventIds:string[] }[];
   sourceRowsSha256: string;
 };
 type CaptureData = { jobId: string; purpose: MemoryDerivationSourcePurpose; scopeKey: string; checkedAt: string; validUntil: string;
@@ -65,6 +67,21 @@ export async function captureNativeDerivationSources(env: WorkerEnv, lease: Nati
       nativeDerivationEvidenceInputs(env, lease);
       witness.observe([statement], [result], [query]); return result.results;
     };
+    // The queue includes separately certified artifact observations. They must
+    // not be silently dropped or admitted through the assistant-only predicate.
+    const inventory=await read({sql:`SELECT queued.event_id,queued.sequence,event.type,event.recorded_at
+      FROM memory_derivation_job_sources queued JOIN events event ON (event.event_id,event.sequence)=(queued.event_id,queued.sequence)
+      WHERE queued.job_id=? AND event.stream_id=? ORDER BY event.sequence,event.event_id LIMIT 129`,bindings:[job.job_id,a.binding.streamId]});
+    if(inventory.length!==input.references.length||inventory.some((row,i)=>!derivationExact(row,['event_id','sequence','type','recorded_at'])
+      ||row.event_id!==input.references[i]!.event_id||row.sequence!==input.references[i]!.sequence))return unavailable();
+    const artifactRefs=inventory.filter(row=>row.type==='DocumentArtifactViewed');
+    if(artifactRefs.length&&!input.lifecyclePresent)return unavailable();
+    const regularRefs=input.references.filter(ref=>!artifactRefs.some(row=>row.event_id===ref.event_id));
+    const artifactCapture=artifactRefs.length?await captureNativeArtifactConsumption(env,e,a,
+      {after:job.after_sequence,through:job.through_sequence,remembered:true},witness):null;
+    if(artifactCapture&&(artifactCapture.truncated||artifactCapture.sources.length!==artifactRefs.length
+      ||artifactCapture.sources.some(source=>!artifactRefs.some(ref=>ref.event_id===source.eventId&&ref.sequence===source.sequence)
+        ||source.recordedAt<g.consented_at)))return unavailable();
     const q = liveMemorySourceQueryParts(e, a), joined = `${q.joins}
       JOIN memory_derivation_job_sources queued ON queued.job_id=? AND (queued.event_id,queued.sequence)=(event.event_id,event.sequence)
       JOIN memory_live_sources remembered ON (remembered.enrollment_id,remembered.event_id,remembered.sequence,remembered.expires_at)
@@ -76,8 +93,8 @@ export async function captureNativeDerivationSources(env: WorkerEnv, lease: Nati
     const sizes = await read({ sql: `SELECT event.event_id,event.sequence,event.type,
       length(CAST(COALESCE(authored.content,'') AS BLOB)) AS user_bytes,length(CAST(COALESCE(answer.content,'') AS BLOB)) AS answer_bytes,
       length(CAST(event.payload AS BLOB)) AS event_bytes ${joined} WHERE ${where} ORDER BY event.sequence,event.event_id LIMIT 129`, bindings });
-    if (sizes.length !== input.references.length || sizes.some((row, index) => row.event_id !== input.references[index]!.event_id
-      || row.sequence !== input.references[index]!.sequence || ![row.user_bytes, row.answer_bytes, row.event_bytes].every(value => derivationInteger(value)))) return unavailable();
+    if (sizes.length !== regularRefs.length || sizes.some((row, index) => row.event_id !== regularRefs[index]!.event_id
+      || row.sequence !== regularRefs[index]!.sequence || ![row.user_bytes, row.answer_bytes, row.event_bytes].every(value => derivationInteger(value)))) return unavailable();
     const pairs = sizes.filter(row => row.type === "AssistantReasoned");
     // The current citation parser accepts 128 original-role sources. Larger
     // jobs need explicit processing-window progress before any partial result.
@@ -199,6 +216,14 @@ export async function captureNativeDerivationSources(env: WorkerEnv, lease: Nati
       }
     }
     if (bytes(JSON.stringify(originals)) > 460000 || new Set(originals.map(source => source.sourceId)).size !== originals.length) return capacity();
+    for(const artifact of artifactCapture?.sources??[]){
+      const expiresAt=[artifact.validUntil,...ceilings,new Date(Date.parse(artifact.recordedAt)+g.retention_days*86400000).toISOString()].sort()[0]!;
+      if(expiresAt<=checkedAt)return unavailable();
+      const artifactScope=nativeMemoryArtifactIdentity(e,artifact.target.artifactId);if(!artifactScope)return unavailable();
+      observations.push({eventId:artifact.eventId,sequence:artifact.sequence,eventType:'DocumentArtifactViewed',action:'inspect',recordedAt:artifact.recordedAt,
+        scopeKey:memoryCanonical([artifactScope.partitionKey,artifactScope.artifactKey]),blockPointer:null,expiresAt,independentEvidence:false});
+    }
+    observations.sort((left,right)=>left.sequence-right.sequence);
     const retentionCeiling = [...ceilings, ...originals.map(row => row.expiresAt), ...observations.map(row => row.expiresAt)].sort()[0]!;
     let excludedByUserControls = 0;
     if (input.userControlsPresent && originals.length) {
@@ -227,13 +252,14 @@ export async function captureNativeDerivationSources(env: WorkerEnv, lease: Nati
       paid: await Promise.all(paid.map(async row => ({ taskId: String(row.task_id), turnId: String(row.turn_id),
         consentRef: String(row.content_id), consentSha256: await memoryDigest(String(row.content)), resultRef: String(row.result_ref),
         bindingHash: String(row.binding_hash), intentHash: String(row.intent_hash), ancestry: groups.find(group => group.turnId === row.turn_id)!.entries }))),
-      sourceRowsSha256: await memoryDigest(memoryCanonical({ rows, messages, paid })),
+      ...(artifactCapture?{artifacts:artifactCapture.provenance}:{}),
+      sourceRowsSha256: await memoryDigest(memoryCanonical({ rows, messages, paid, ...(artifactCapture?{artifacts:artifactCapture.sources,artifactProvenance:artifactCapture.provenance}:{}) })),
     };
     const data: CaptureData = { jobId: job.job_id, purpose: g.purpose, scopeKey, checkedAt, validUntil, retentionCeiling, originals, originalBacking, observations, provenance,
       binding: { actorUserId: e.actor_user_id, consentId: g.consent_id, grantId: g.grant_id, grantRevision: g.revision,
         enrollmentId: e.enrollment_id, enrollmentRevision: g.enrollment_revision, termsSha256: g.terms_sha256,
         afterSequence: job.after_sequence, throughSequence: job.through_sequence },
-      coverage: { queuedReferences: rows.length, originalPairs: originals.length / 2, typedObservations: observations.length, ...(excludedByUserControls?{excludedByUserControls}:{}), allReferencesCaptured: true, semanticComplete: false } };
+      coverage: { queuedReferences: inventory.length, originalPairs: originals.length / 2, typedObservations: observations.length, ...(excludedByUserControls?{excludedByUserControls}:{}), allReferencesCaptured: true, semanticComplete: false } };
     witness.before(validUntil); witness.seal(data);
     const captured: Captured = { env, db, lease, validUntil, witness }, handle = Object.freeze({}) as NativeDerivationSourceCapture;
     captures.set(handle, captured);

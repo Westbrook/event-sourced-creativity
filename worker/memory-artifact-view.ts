@@ -109,7 +109,9 @@ export async function preparePersonalArtifactViewSource(env: WorkerEnv, actor: P
     actor.streamId, documentId, created.eventId, actor.streamId, documentId] };
   const source = combineAuthoringGuards(authority, retained, selection, authoringEventRowsProof(sourceRows));
   if (env.DB !== db || JSON.stringify(actor) !== actorSnapshot) return failure("artifact_view_source_unavailable");
-  return { source, bodyBytes: bytes(body.content), payload: {
+  return { source, bodyBytes: bytes(body.content), provenance: {
+    contentRef: contentId, eventIds: dependencies.map(event=>event.eventId).sort(),
+  }, payload: {
     artifact_id: artifactId, artifact_kind: artifact.kind, document_id: documentId, project_id: projectId,
     artifact_revision: payload.artifact_revision, content_sha256: hash, artifact_source_event_id: completed.eventId,
     artifact_content_ref: contentId, observed_source_expires_at: body.expires_at,

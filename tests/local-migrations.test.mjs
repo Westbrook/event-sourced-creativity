@@ -848,6 +848,7 @@ test('Memory semantic results migration is additive, schema-only and exact on re
 for(const [tag,statementCount,tables] of [
   ['0048_memory_derivation_user_controls',11,['memory_derivation_user_controls']],
   ['0049_memory_derivation_completion',8,['memory_derivation_completions','memory_derivation_completion_cursors']],
+  ['0050_memory_derivation_lifecycle',4,[]],
 ])test('Memory additive controls/completion migration '+tag+' preserves rows and reruns exactly',t=>{
   const target=actualMigrations.find(m=>m.tag===tag);assert.ok(target);const sqlite=database(t);
   migrateLocalDatabase(sqlite,{migrations:actualMigrations.slice(0,actualMigrations.indexOf(target))});

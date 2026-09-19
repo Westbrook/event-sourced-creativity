@@ -1,3 +1,4 @@
+import { nativeDerivationWindowBudget, NATIVE_DERIVATION_PAIR_FRAMING, NATIVE_DERIVATION_OBSERVATION_FRAMING, NATIVE_DERIVATION_JSON_EXPANSION } from './memory-derivation-request.ts';
 import { memoryDigest } from "../src/model/scoped-memory.ts";
 import { memoryCanonical, type MemorySqlGuard } from "./memory-sql.ts";
 import { liveMemoryAuthority, liveMemoryEnrollmentGuard, type LiveMemoryEnrollment } from "./memory-live-authority.ts";
@@ -85,14 +86,46 @@ export async function prepareNativeDerivationDelivery(env: WorkerEnv, enrollment
         bindings: [g.consent_id, count, expires] });
       if (!cursor) statements.push(db.prepare(`INSERT INTO memory_derivation_cursors(${DERIVATION_CURSOR_COLUMNS.join(",")}) VALUES(?,?,?,?,?,0,?,?,?)`)
         .bind(g.consent_id, g.grant_id, g.revision, g.purpose, after, now, now, g.expires_at));
-      // The extra reference is only an overflow witness. Cursor never skips it.
+      // Size only actor/scope-bound native contents inside the same publication
+      // transaction; no body is returned, queued, or treated as source authority.
+      // Missing/irreducibly large first references get an isolated job, never a
+      // skipped cursor or an invented completion. Capture still proves custody.
+      const measured = schema.completionPresent ? `,
+          CASE WHEN original.type='AssistantReasoned' THEN COALESCE((SELECT
+            ${NATIVE_DERIVATION_PAIR_FRAMING}+${NATIVE_DERIVATION_JSON_EXPANSION}*(length(CAST(authored.content AS BLOB))+length(CAST(answer.content AS BLOB)))
+            FROM assistant_turns turn JOIN private_content authored ON authored.content_id=turn.user_content_ref
+              AND authored.owner_id=turn.actor_user_id AND authored.kind='chat-user' AND authored.redacted_at IS NULL
+              AND authored.expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now')
+            JOIN private_content answer ON answer.content_id=turn.assistant_content_ref
+              AND answer.owner_id=turn.actor_user_id AND answer.kind='chat-assistant' AND answer.redacted_at IS NULL
+              AND answer.expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now')
+            WHERE (turn.actor_user_id,turn.scope_key,turn.project_id,turn.document_id,turn.organization_id,turn.project_access_id)
+              IS (?,?,?,?,?,?) AND turn.turn_id=json_extract(original.payload,'$.turn_id')
+              AND turn.assistant_content_ref=json_extract(original.payload,'$.content_ref')
+              AND turn.status='completed'),131073) ELSE ${NATIVE_DERIVATION_OBSERVATION_FRAMING} END AS input_bytes,
+          length(CAST(original.payload AS BLOB)) AS event_bytes,
+          CASE WHEN original.type='DocumentArtifactViewed' THEN 1 ELSE 0 END AS artifact_count` : '';
+      const measuredBindings = schema.completionPresent ? [e.actor_user_id,
+        JSON.stringify([e.organization_id??'',e.project_access_id??'',e.project_id,e.document_id]),
+        e.project_id,e.document_id,e.organization_id,e.project_access_id] : [];
+      const windows = schema.completionPresent ? `measured AS (SELECT *,
+          row_number() OVER(ORDER BY sequence,event_id) AS ordinal,
+          SUM(input_bytes) OVER(ORDER BY sequence,event_id ROWS UNBOUNDED PRECEDING) AS cumulative_input,
+          SUM(artifact_count) OVER(ORDER BY sequence,event_id ROWS UNBOUNDED PRECEDING) AS cumulative_artifacts,
+          SUM(event_bytes+input_bytes) OVER(ORDER BY sequence,event_id ROWS UNBOUNDED PRECEDING) AS cumulative_capture FROM page),
+        selected AS (SELECT * FROM measured WHERE ordinal<=${pageLimit}
+          AND (ordinal=1 OR cumulative_input<=? AND cumulative_capture<=460000 AND cumulative_artifacts<=4))` :
+        `selected AS (SELECT * FROM page ORDER BY sequence,event_id LIMIT ${pageLimit})`;
+      // The extra reference is only an overflow witness. Count- or byte-limited
+      // pages end at the last complete selected reference and resume from it.
       statements.push(db.prepare(`WITH page AS (SELECT s.event_id,s.sequence,s.expires_at,
-          strftime('%Y-%m-%dT%H:%M:%fZ',original.recorded_at,'+'||?||' days') AS purpose_expires_at ${sources} ORDER BY s.sequence,s.event_id LIMIT ${pageLimit+1}),
-        selected AS (SELECT * FROM page ORDER BY sequence,event_id LIMIT ${pageLimit})
+          strftime('%Y-%m-%dT%H:%M:%fZ',original.recorded_at,'+'||?||' days') AS purpose_expires_at ${measured} ${sources}
+          ORDER BY s.sequence,s.event_id LIMIT ${pageLimit+1}), ${windows}
         INSERT INTO memory_derivation_jobs(job_id,consent_id,purpose,after_sequence,through_sequence,source_count,created_at,expires_at,state,lease_token,lease_expires_at,attempts,not_before,failure_code)
-        SELECT ?,?,?,?,CASE WHEN (SELECT COUNT(*) FROM page)>${pageLimit} THEN MAX(sequence) ELSE ? END,COUNT(*),?,MIN(?,MIN(expires_at),MIN(purpose_expires_at)),
+        SELECT ?,?,?,?,CASE WHEN (SELECT COUNT(*) FROM page)>(SELECT COUNT(*) FROM selected) THEN MAX(sequence) ELSE ? END,COUNT(*),?,MIN(?,MIN(expires_at),MIN(purpose_expires_at)),
           'waiting',NULL,NULL,0,?,NULL FROM selected HAVING COUNT(*)>0`)
-        .bind(g.retention_days, ...sourceBindings, jobId, g.consent_id, g.purpose, after, through, now, expires, now));
+        .bind(g.retention_days, ...measuredBindings, ...sourceBindings, ...(schema.completionPresent?[nativeDerivationWindowBudget(qualification.terms)]:[]),
+          jobId, g.consent_id, g.purpose, after, through, now, expires, now));
       statements.push(db.prepare(`INSERT INTO memory_derivation_job_sources(job_id,enrollment_id,event_id,sequence,expires_at)
         SELECT ?,s.enrollment_id,s.event_id,s.sequence,s.expires_at ${sources}
           AND s.sequence<=(SELECT through_sequence FROM memory_derivation_jobs WHERE job_id=?) ORDER BY s.sequence,s.event_id`)

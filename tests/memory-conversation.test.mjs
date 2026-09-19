@@ -305,3 +305,33 @@ test('purpose qualification rejects '+fault,async()=>{
   assert.equal(await f.parse(),null);
   if(fault==='future-qualified')assert.equal(await parseMemoryDerivationQualification(f.row,f.binding,new Date(Date.now()+20000).toISOString()),null);
 });
+
+for(const purpose of ['rolling-summary','profile','suggestion'])test('native derivation request windows bound escaped Unicode and whole-pair framing '+purpose,async()=>{
+  const request=await import('../worker/memory-derivation-request.ts'),terms={...derivationQualificationFixture().terms,purpose,maximumInputTokens:131072};
+  const bytes=value=>new TextEncoder().encode(value).byteLength;
+  const samples=['ordinary words','\u0000\u0001\n\t\r\b\f\\"','日本語 العربية 😀','x'.repeat(16384)];
+  const empty=bytes(request.nativeDerivationRequestBody(terms,[],[]));
+  for(const text of samples){
+    const originals=Array.from({length:128},(_,i)=>({role:i%2?'assistant':'user',authorship:i%2?'original-assistant':'original-human',text}));
+    const observed=Array.from({length:64},()=>({action:'request-changes',recordedAt:'2026-09-18T23:59:59.999Z'}));
+    for(const [items,observations]of [[originals,[]],[[],observed],[originals,observed]]){
+      const bound=empty+items.length/2*request.NATIVE_DERIVATION_PAIR_FRAMING+items.reduce((n,item)=>n+bytes(item.text)*request.NATIVE_DERIVATION_JSON_EXPANSION,0)+observations.length*request.NATIVE_DERIVATION_OBSERVATION_FRAMING;
+      assert.ok(bytes(request.nativeDerivationRequestBody(terms,items,observations))<=bound);
+    }
+  }
+  assert.equal(request.nativeDerivationWindowBudget({...terms,maximumInputTokens:1}),0);
+  const body=request.nativeDerivationRequestBody(terms,[],[]);
+  assert.equal(request.nativeDerivationRequestFits({...terms,maximumInputTokens:bytes(body)+4096},body),true);
+  assert.equal(request.nativeDerivationRequestFits({...terms,maximumInputTokens:bytes(body)+4095},body),false);
+});
+
+test('native artifact identities separate actor partitions, custody and exact document containment',async()=>{
+  const {nativeMemoryArtifactIdentity}=await import('../worker/memory-native-scope.ts');
+  const e={actor_user_id:'reader-a',owner_user_id:'owner',organization_id:'org',project_access_id:'access',project_id:'project',document_id:'document'};
+  const first=nativeMemoryArtifactIdentity(e,'artifact'),second=nativeMemoryArtifactIdentity({...e,actor_user_id:'reader-b'},'artifact');
+  assert.ok(Object.isFrozen(first));assert.equal(first.artifactKey,second.artifactKey);assert.notEqual(first.partitionKey,second.partitionKey);
+  for(const key of ['owner_user_id','organization_id','project_access_id','project_id','document_id'])assert.notEqual(first.artifactKey,nativeMemoryArtifactIdentity({...e,[key]:'different'},'artifact').artifactKey);
+  assert.notEqual(first.artifactKey,nativeMemoryArtifactIdentity(e,'artifact-next').artifactKey);
+  assert.equal(nativeMemoryArtifactIdentity(e,' invalid '),null);assert.equal(nativeMemoryArtifactIdentity({...e,organization_id:null},'artifact'),null);
+  assert.equal(first.projectAncestry,'unresolved','artifact identity cannot fabricate nested-project authority');
+});

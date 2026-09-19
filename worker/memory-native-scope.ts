@@ -30,6 +30,19 @@ export function nativeMemoryDocumentIdentity(input: Pick<LiveMemoryEnrollment,
     projectAncestry: "unresolved" });
 }
 
+export type NativeMemoryArtifactScope = Readonly<Omit<NativeMemoryDocumentScope,'version'> & {
+  version:'native-artifact-scope-v1'; artifactId:string; artifactKey:string;
+}>;
+/** Resource identity only. Callers must independently certify the current
+ * artifact placement, revision, retained bytes and access. A matching ID or
+ * parent document never authorizes a foreign/old artifact body. */
+export function nativeMemoryArtifactIdentity(input: Parameters<typeof nativeMemoryDocumentIdentity>[0],artifactId:string):NativeMemoryArtifactScope|null{
+  const parent=nativeMemoryDocumentIdentity(input);if(!parent||!id(artifactId))return null;
+  return Object.freeze({...parent,version:'native-artifact-scope-v1',artifactId,
+    artifactKey:JSON.stringify(['memory-resource-v1',parent.ownerUserId,parent.organizationId,parent.projectAccessId,
+      'artifact',parent.projectId,parent.documentId,artifactId])});
+}
+
 /** Add a narrow native identity proof to the caller's existing authenticated
  * document/enrollment witness. The caller must still enforce its original
  * principal/session/grant guards and seal/replay that witness before use.

@@ -1,3 +1,4 @@
+import { memoryDerivationLifecycleSchemaProfile } from "./memory-derivation-lifecycle-schema.ts";
 import { memoryDerivationCompletionSchemaProfile } from "./memory-derivation-completion-schema.ts";
 import { memoryDerivationUserControlSchemaProfile } from "./memory-derivation-user-control-schema.ts";
 import { memoryDerivationResultsSchemaProfile } from "./memory-derivation-results-schema.ts";
@@ -34,7 +35,7 @@ export const memoryDerivationSchemaProfile = {
 } as const;
 type Row = Record<string, unknown>;
 type Query = { sql: string; bindings: (string | number | null)[] };
-const profiles = [memoryDerivationSchemaProfile, memoryDerivationJobSchemaProfile, memoryDerivationFinanceSchemaProfile, memoryDerivationRecoverySchemaProfile, memoryDerivationResultsSchemaProfile, memoryDerivationUserControlSchemaProfile, memoryDerivationCompletionSchemaProfile] as const;
+const profiles = [memoryDerivationSchemaProfile, memoryDerivationJobSchemaProfile, memoryDerivationFinanceSchemaProfile, memoryDerivationRecoverySchemaProfile, memoryDerivationResultsSchemaProfile, memoryDerivationUserControlSchemaProfile, memoryDerivationCompletionSchemaProfile, memoryDerivationLifecycleSchemaProfile] as const;
 const schemaTables = profiles.flatMap(profile => [...profile.tables]);
 const family = "name LIKE 'memory_derivation_%' OR name LIKE 'idx_memory_derivation_%' OR "
   + schemaTables.map(table => `tbl_name='${table}' OR instr(lower(COALESCE(sql,'')),'${table}')>0`).join(" OR ");
@@ -58,7 +59,7 @@ export function derivationChanged(result: D1Result<Row>, expected: number, casca
 export function derivationVerified(result: D1Result<Row>): boolean {
   return result.results.length === 1 && derivationExact(result.results[0], ["verified"]) && result.results[0].verified === 1;
 }
-export async function memoryDerivationSchema(env: WorkerEnv): Promise<{ present: boolean; jobsPresent: boolean; financePresent: boolean; recoveryPresent: boolean; resultsPresent: boolean; userControlsPresent: boolean; completionPresent: boolean; guard: MemorySqlGuard }> {
+export async function memoryDerivationSchema(env: WorkerEnv): Promise<{ present: boolean; jobsPresent: boolean; financePresent: boolean; recoveryPresent: boolean; resultsPresent: boolean; userControlsPresent: boolean; completionPresent: boolean; lifecyclePresent: boolean; guard: MemorySqlGuard }> {
   const db = env.DB, result = structuredClone(await db.prepare(`SELECT name,sql,tbl_name AS 'table',type FROM sqlite_schema WHERE ${family} ORDER BY name,type LIMIT ${maximumSchemaRows + 1}`).all<Row>());
   if (env.DB !== db || !derivationResults([result], 1) || result.results.length > maximumSchemaRows) fail();
   const rows = result.results;
@@ -74,8 +75,8 @@ export async function memoryDerivationSchema(env: WorkerEnv): Promise<{ present:
     if (selected.length && (selected.length !== profile.count || "sha256:" + await memoryDigest(memoryCanonical(selected.map(row => ({ ...row,
       sql: (row.sql as string).trim().replace(/;$/u, "").replace(/\bIF\s+NOT\s+EXISTS\s+/giu, "") })))) !== profile.digest)) fail();
   }
-  if (installed[1] && !installed[0] || installed[2] && !installed[1] || installed[3] && !installed[2] || installed[4] && !installed[2] || installed[5] && !installed[4] || installed[6] && !installed[5] || env.DB !== db) fail();
-  return { present: installed[0]!, jobsPresent: installed[1]!, financePresent: installed[2]!, recoveryPresent: installed[3]!, resultsPresent: installed[4]!, userControlsPresent: installed[5]!, completionPresent: installed[6]!, guard: { condition: `${snapshot}=? AND NOT EXISTS(SELECT 1 FROM sqlite_temp_schema)`,
+  if (installed[1] && !installed[0] || installed[2] && !installed[1] || installed[3] && !installed[2] || installed[4] && !installed[2] || installed[5] && !installed[4] || installed[6] && !installed[5] || installed[7] && !installed[4] || env.DB !== db) fail();
+  return { present: installed[0]!, jobsPresent: installed[1]!, financePresent: installed[2]!, recoveryPresent: installed[3]!, resultsPresent: installed[4]!, userControlsPresent: installed[5]!, completionPresent: installed[6]!, lifecyclePresent: installed[7]!, guard: { condition: `${snapshot}=? AND NOT EXISTS(SELECT 1 FROM sqlite_temp_schema)`,
     bindings: [JSON.stringify(rows.map(row => ({ name: row.name, sql: row.sql, table: row.table, type: row.type })))] } };
 }
 export function memoryDerivationBinding(env: WorkerEnv) {

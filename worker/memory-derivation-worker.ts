@@ -68,6 +68,9 @@ export async function runNativeDerivationScheduled(env:WorkerEnv):Promise<{statu
   if(!source.originals.length)return await completeEmptyNativeDerivation(env,captured.capture)
     ?{status:'no-eligible-originals',processed:1}:{status:'uncertain',processed:0};
   const response=await executeNativeDerivationProvider(env,lease,captured.capture);
+  // Capacity is established before any reservation/dispatch. Continue the
+  // bounded scan so an irreducible legacy window cannot starve smaller work.
+  if(response.status==='capacity'){last='capacity';continue;}
   if(response.status!=='candidate')return {status:response.status,processed:0};
   const stored=await publishNativeDerivationResult(env,response.receipt);
   return stored.status==='stored'?{status:'stored',processed:1}:{status:'uncertain',processed:0};

@@ -26,7 +26,7 @@ export type NativeDerivationRead = Readonly<{ [issuedRead]: true }>;
 export type NativeDerivationEvidence = NativeDerivationLease | NativeDerivationRead;
 type Admission = { mode: "execute" | "read"; env: WorkerEnv; db: WorkerEnv["DB"]; configuration: string; until: string;
   job: NativeJob; enrollment: LiveMemoryEnrollment; grant: MemoryDerivationGrant; qualification: Qualification;
-  userControlsPresent: boolean; authority: LiveMemoryAuthority; references: Reference[]; guards: MemorySqlGuard[] };
+  userControlsPresent: boolean; lifecyclePresent: boolean; authority: LiveMemoryAuthority; references: Reference[]; guards: MemorySqlGuard[] };
 const issued = new WeakMap<NativeDerivationEvidence, Admission>();
 const configuration = (env: WorkerEnv) => memoryCanonical([env.FORMA_MEMORY_ENABLED, env.FORMA_MEMORY_USER_IDS,
   env.FORMA_MEMORY_DERIVATION_ENABLED, env.FORMA_MEMORY_DERIVATION_USER_IDS, env.FORMA_MEMORY_DERIVATION_PROCESSING_ENABLED, env.FORMA_MEMORY_SCHEDULING_ENABLED, memoryDerivationBinding(env),
@@ -142,7 +142,7 @@ async function resolveNativeDerivationAdmission(env: WorkerEnv, jobId: string, r
     derivationRowGuard("memory_derivation_grants", DERIVATION_GRANT_COLUMNS, grant), derivationQualificationGuard(qualification.row),
     referenceGuard(jobId, references), { condition: "?>strftime('%Y-%m-%dT%H:%M:%fZ','now')", bindings: [until] }];
   const admission: Admission = { mode, env, db, configuration: configured, until, job: next, enrollment: e, grant, qualification, authority, references,
-    userControlsPresent: schema.userControlsPresent, guards: [...common, jobGuard(next)] };
+    userControlsPresent: schema.userControlsPresent, lifecyclePresent: schema.lifecyclePresent, guards: [...common, jobGuard(next)] };
   if (!current(admission, env)) return null;
   const statements = [...common, jobGuard(job)].map(guard => derivationAssertion(env, guard));
   const mutationIndex = mode === "execute" ? statements.length : -1;
@@ -166,7 +166,7 @@ function lookup(env: WorkerEnv, handle: NativeDerivationEvidence, mode?: "execut
 export function nativeDerivationLeaseInputs(env: WorkerEnv, handle: NativeDerivationLease) {
   const a = lookup(env, handle, "execute");
   return structuredClone({ job: a.job, enrollment: a.enrollment, grant: a.grant, qualification: a.qualification,
-    authority: a.authority, references: a.references, validUntil: a.until, userControlsPresent: a.userControlsPresent });
+    authority: a.authority, references: a.references, validUntil: a.until, userControlsPresent: a.userControlsPresent, lifecyclePresent: a.lifecyclePresent });
 }
 export function nativeDerivationLeaseStatements(env: WorkerEnv, handle: NativeDerivationLease): D1PreparedStatement[] {
   return lookup(env, handle, "execute").guards.map(guard => derivationAssertion(env, guard));
@@ -183,7 +183,7 @@ export async function replayNativeDerivationLease(env: WorkerEnv, handle: Native
 export function nativeDerivationEvidenceInputs(env: WorkerEnv, handle: NativeDerivationEvidence) {
   const a = lookup(env, handle);
   return structuredClone({ job: a.job, enrollment: a.enrollment, grant: a.grant, qualification: a.qualification,
-    authority: a.authority, references: a.references, validUntil: a.until, userControlsPresent: a.userControlsPresent });
+    authority: a.authority, references: a.references, validUntil: a.until, userControlsPresent: a.userControlsPresent, lifecyclePresent: a.lifecyclePresent });
 }
 export function nativeDerivationEvidenceStatements(env: WorkerEnv, handle: NativeDerivationEvidence) {
   return lookup(env, handle).guards.map(guard => derivationAssertion(env, guard));

@@ -61,6 +61,9 @@ export async function captureNativeArtifactConsumption(env: WorkerEnv, e: LiveMe
     || result.results.length > 33 || result.results.some(row => !row || Object.keys(row).sort().join(",") !== columns.join(","))
     || new Set(result.results.map(row => row.event_id)).size !== result.results.length) throw new Error("artifact_memory_read_unavailable");
   const sources: NativeArtifactConsumptionSource[] = [], guards: MemorySqlGuard[] = [];
+  // Private inverse keys accompany native captures only; the public inspector
+  // deliberately projects just sources/targets, never these dependency keys.
+  const provenance: {eventId:string;contentRef:string;eventIds:string[]}[] = [];
   const bindings = new Map<string, Awaited<ReturnType<typeof preparePersonalArtifactViewSource>>>();
   let retainedBytes = 0, throughSequence = range.through, truncated = result.results.length > 32;
   if (!range.remembered && result.results.length > 32) throughSequence = Number(result.results[32].sequence) - 1;
@@ -103,6 +106,8 @@ export async function captureNativeArtifactConsumption(env: WorkerEnv, e: LiveMe
       Date.parse(payload.observed_source_expires_at), Date.parse(certified.payload.observed_source_expires_at),
       range.remembered && timestamp(row.remembered_until) ? Date.parse(row.remembered_until) : Infinity);
     if (!Number.isFinite(until) || until <= Date.now() || range.remembered && !timestamp(row.remembered_until)) continue;
+    provenance.push({eventId:event.eventId,contentRef:certified.provenance.contentRef,
+      eventIds:[...new Set([event.eventId,...certified.provenance.eventIds])].sort()});
     sources.push({ eventId: event.eventId, sequence: event.sequence, recordedAt: event.recordedAt, validUntil: new Date(until).toISOString(),
       target: { kind: "artifact", documentId: e.document_id, artifactId: certified.payload.artifact_id,
         artifactKind: certified.payload.artifact_kind, revision: Number(certified.payload.artifact_revision), contentSha256: certified.payload.content_sha256 } });
@@ -116,6 +121,6 @@ export async function captureNativeArtifactConsumption(env: WorkerEnv, e: LiveMe
   }
   if (!current()) throw new Error("artifact_memory_source_changed");
   if (observer) { observer.observe([statement], [result], [query]); guards.forEach(guard => observer.require({ sql: guard.condition, bindings: [...guard.bindings] })); }
-  return { sources, guards: [exact, ...guards], candidateCount: Math.min(result.results.length, 32), throughSequence,
+  return { sources, provenance, guards: [exact, ...guards], candidateCount: Math.min(result.results.length, 32), throughSequence,
     unavailableSourceCount: Math.min(result.results.length, 32) - sources.length, truncated };
 }

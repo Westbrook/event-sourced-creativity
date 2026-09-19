@@ -28,6 +28,10 @@ function dependencies(manifest: NativeDerivationManifestData): Dependency[] {
     const row = { kind, resource_id, actor_user_id, scope_key }; rows.set(memoryCanonical(row), row);
   };
   for (const event of manifest.provenance.events) add('event', event.eventId);
+  for (const artifact of manifest.provenance.artifacts??[]) {
+    add('content',artifact.contentRef);
+    for(const eventId of artifact.eventIds)add('event',eventId);
+  }
   for (const original of manifest.originalBacking) add('content', original.contentRef);
   for (const turn of manifest.provenance.turns) add('turn', turn.turnId, turn.actorUserId, turn.scopeKey);
   for (const paid of manifest.provenance.paid) {

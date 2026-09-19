@@ -84,25 +84,34 @@ inverses, single-result withdrawal, expiry and exact personal/organization priva
 cascades. Migration0047 remains unapplied in production. Cross-job suppression,
 completed semantic cursors and worker/consumer integration are still open.
 
+## Current native implementation status
+
+[User controls and native worker integration](forma-memory-user-controls-worker-2026-09-18.md)
+implement explicit corrections/suppression/release, private review UI, atomic
+completion cursors and bounded scheduled-event dispatch. The subsequent
+[processing-window/artifact/lifecycle slice](forma-memory-windows-artifacts-2026-09-18.md)
+adds byte-aware new-job registration, capacity fairness, certified current
+personal artifact observations, actor-private artifact identity and immediate
+lifecycle/custody retirement through additive migration0050.
+
 ## Remaining native implementation — still in scope
 
-1. Complete the durable worker consumer around the implemented purpose/source-bound
-   financial and provider functions; keep ordinary UI activation disabled until the
-   result lifecycle and native qualification pass.
-2. Add bounded processing windows and completed semantic cursors around the
-   implemented queue, leases, source manifests, result storage and financial recovery;
-   finish index outbox/source invalidation/deletion acknowledgements.
-3. Nested project containment/reparenting and broader page/block/artifact identities.
-4. Broader original assistant sources, actual rolling-history rebase, genuine
-   block/reuse inspection, and governed/historical artifact evidence.
-5. Native semantic summary/profile/suggestion callers, cross-job corrections/
-   suppression and guarded consumers. Stored private results alone are insufficient.
-6. Pipeline-specific minimized observability and remaining migration integration.
+1. Legacy oversize-job splitting and actual rolling semantic rebase; smaller new
+   registration windows and historical completion cursors are not that rebase.
+2. Native index outbox, source invalidation and deletion acknowledgements.
+3. Nested project containment/reparenting and remaining page/block identities.
+4. Independent Chat Studio derivation-job delivery, genuine block/reuse evidence,
+   and governed/historical artifact consumption.
+5. Guarded rolling summary/profile/suggestion/autocomplete consumers with explicit
+   correction priority and separate access versus relevance checks. Manual result
+   inspection and persisted candidates do not complete those consumer paths.
+6. Index-specific minimized observability and full integration/privacy/request-
+   budget qualification; eight prior Output HTTP budget failures remain tracked.
 
-The 64-pair cumulative ledger is **not** a rolling summary or rebase. The existing
-disposable checkpoint is **not** reliable job delivery. The source-bound provider function is implemented and tested with mocked transport,
-not connected to automatic production jobs. Purpose grants and financial primitives
-are not, by themselves, a completed rolling-memory pipeline.
+The 64-pair cumulative ledger is not a rolling semantic summary. Native scheduled-
+event code does not register or qualify a hosted scheduler. Historical slice notes
+above describe what each earlier change implemented; this section is the current
+reconciliation and does not reduce the original plan.
 
 ## External and operational gates
 

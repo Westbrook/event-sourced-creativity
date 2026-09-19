@@ -298,3 +298,110 @@ test('a genuine exact receipt is retained but does not silently expand navigatio
   const selected = f.sqlite.prepare(`SELECT event.event_id ${q.joins} WHERE ${q.condition} AND event.type='DocumentArtifactViewed'`).all(...q.bindings);
   assert.deepEqual(selected, []); assert.equal(LIVE_MEMORY_EVENT_TYPES.includes(viewType), false);
 });
+
+async function artifactDerivationFixture(t){
+  const f=await memoryArtifactFixture(t);
+  for(const name of ['0043_memory_derivation_purpose_grants','0044_memory_derivation_reference_jobs','0045_memory_derivation_finance',
+    '0046_memory_derivation_recovery_cursor','0047_memory_derivation_results','0048_memory_derivation_user_controls','0049_memory_derivation_completion','0050_memory_derivation_lifecycle'])
+    f.sqlite.exec(readFileSync(new URL('../drizzle/'+name+'.sql',import.meta.url),'utf8'));
+  const policy=await import('../worker/memory-derivation-policy.ts'),store=await import('../worker/memory-derivation-store.ts'),e=f.enrollment();
+  const hash=value=>createHash('sha256').update(value).digest('hex'),now=new Date().toISOString(),expires=new Date(Date.now()+86400000).toISOString();
+  const terms={version:'memory-derivation-terms-v1',purpose:'rolling-summary',recipeVersion:'memory-derivation-candidates-v1',provider:'openai',model:'isolated-artifact-test',
+    pricing:{inputMicroUsdPerMillion:1000000,cachedInputMicroUsdPerMillion:250000,outputMicroUsdPerMillion:2000000},maximumInputTokens:16384,maximumOutputTokens:100,
+    monthlyCapMicroUsd:100000,payer:'self-ai-allowance',providerStore:false,retentionPolicyId:'isolated-only',providerRetentionDisclosure:'Synthetic fixture, not hosted qualification.',
+    evidence:Object.fromEntries(policy.DERIVATION_EVIDENCE.map(key=>[key,hash('isolated:'+key)]))};
+  const text=policy.derivationCanonical(terms),termsHash=hash(text),origin='https://memory-artifact.fixture.invalid';
+  Object.assign(f.env,{FORMA_MEMORY_DERIVATION_ENABLED:'true',FORMA_MEMORY_DERIVATION_USER_IDS:f.owner,FORMA_MEMORY_DERIVATION_SOURCE_SHA256:'a'.repeat(64),
+    FORMA_MEMORY_DERIVATION_ORIGIN:origin,FORMA_MEMORY_DERIVATION_DEPLOYMENT_ID:'isolated-artifacts',FORMA_MEMORY_DERIVATION_PROCESSING_ENABLED:'true'});
+  f.sqlite.prepare('INSERT INTO memory_derivation_qualifications VALUES(?,?,?,?,?,?,?,?,?)').run('artifact-test','a'.repeat(64),origin,'isolated-artifacts',text,termsHash,'qualified',now,expires);
+  const grant={consent_id:crypto.randomUUID(),grant_id:await store.memoryDerivationGrantId(e,terms.purpose),revision:1,
+    ...Object.fromEntries(['actor_user_id','owner_user_id','organization_id','project_access_id','project_id','document_id','permission_epoch'].map(key=>[key,e[key]])),
+    enrollment_id:e.enrollment_id,enrollment_revision:e.revision,policy_version:policy.MEMORY_DERIVATION_POLICY,purpose:terms.purpose,qualification_id:'artifact-test',terms_sha256:termsHash,
+    payer_user_id:f.owner,monthly_cap_microusd:terms.monthlyCapMicroUsd,source_after_sequence:e.cursor_sequence,retention_days:1,background_enabled:1,consented_at:now,expires_at:expires,revoked_at:null};
+  f.sqlite.prepare(`INSERT INTO memory_derivation_grants(${store.DERIVATION_GRANT_COLUMNS.join(',')}) VALUES(${store.DERIVATION_GRANT_COLUMNS.map(()=>'?').join(',')})`).run(...store.DERIVATION_GRANT_COLUMNS.map(key=>grant[key]));
+  return Object.assign(f,{grant});
+}
+
+test('artifact derivation: certified views enter bounded native capture without invented quotations or spending',async t=>{
+  const f=await artifactDerivationFixture(t),money=f.counts();
+  assert.equal((await f.submit()).status,200);assert.equal((await f.run()).status,'completed');
+  const job=f.sqlite.prepare('SELECT * FROM memory_derivation_jobs').get();assert.ok(job);
+  const admission=await import('../worker/memory-derivation-admission.ts'),sources=await import('../worker/memory-derivation-sources.ts');
+  const lease=await admission.claimNativeDerivationJob(f.env,job.job_id);assert.ok(lease);
+  const captured=await sources.captureNativeDerivationSources(f.env,lease);assert.equal(captured.status,'captured');
+  const data=sources.nativeDerivationSourceInputs(f.env,captured.capture);
+  assert.equal(data.originals.length,0);assert.equal(data.observations.length,1);assert.equal(data.observations[0].action,'inspect');
+  assert.equal(data.observations[0].independentEvidence,false);assert.equal(data.coverage.queuedReferences,1);
+  assert.equal(data.provenance.artifacts[0].contentRef,f.contentRef);assert.ok(data.provenance.artifacts[0].eventIds.includes(f.original));
+  assert.equal(JSON.stringify(data).includes(f.content),false);
+  assert.equal(await(await import('../worker/memory-derivation-completion.ts')).completeEmptyNativeDerivation(f.env,captured.capture),true);
+  assert.equal(f.sqlite.prepare('SELECT outcome FROM memory_derivation_completions').get().outcome,'no-eligible-originals');
+  assert.deepEqual(f.counts(),money);
+});
+
+for(const fault of ['body','custody','compensation','reference-delete'])test('artifact derivation: final capture replay rejects '+fault,async t=>{
+  const f=await artifactDerivationFixture(t);assert.equal((await f.submit()).status,200);assert.equal((await f.run()).status,'completed');
+  const job=f.sqlite.prepare('SELECT * FROM memory_derivation_jobs').get(),admission=await import('../worker/memory-derivation-admission.ts'),sources=await import('../worker/memory-derivation-sources.ts');
+  const lease=await admission.claimNativeDerivationJob(f.env,job.job_id),captured=await sources.captureNativeDerivationSources(f.env,lease);assert.equal(captured.status,'captured');
+  if(fault==='body')f.sqlite.prepare("UPDATE private_content SET content=content||' ' WHERE content_id=?").run(f.contentRef);
+  if(fault==='custody')f.sqlite.prepare("INSERT INTO project_resource_scopes(organization_id,project_access_id,project_id,owner_user_id,resource_kind,resource_id,visibility,actor_user_id,created_at) VALUES('org','access',?,?,'content',?,'actor_private',?,?)").run(f.projectId,f.owner,f.contentRef,f.owner,new Date().toISOString());
+  if(fault==='compensation'){
+    const {makeEvent,eventWriteBindings,EVENT_WRITE_COLUMNS}=await import('../worker/runtime.ts');
+    const head=f.sqlite.prepare('SELECT MAX(sequence) AS n FROM events WHERE stream_id=?').get(f.streamId).n;
+    const event=makeEvent(f.streamId,head+1,'user:'+f.owner,'isolated-compensation',crypto.randomUUID(),'ObjectDiscarded',{project_id:f.projectId,document_id:f.documentId});
+    event.compensatesEventId=f.original;const values=eventWriteBindings(event);
+    await f.env.DB.prepare('INSERT INTO event_write_stage('+EVENT_WRITE_COLUMNS+') VALUES('+values.map(()=>'?').join(',')+')').bind(...values).run();
+  }
+  if(fault==='reference-delete')f.sqlite.exec('DELETE FROM memory_live_sources');
+  assert.equal(await sources.replayNativeDerivationSources(f.env,captured.capture),false);
+  assert.equal(f.sqlite.prepare('SELECT COUNT(*) AS n FROM memory_derivation_finance').get().n,0);
+});
+
+test('artifact derivation: five views continue into a second processing window without losing a reference',async t=>{
+  const f=await artifactDerivationFixture(t);for(let i=0;i<5;i++)assert.equal((await f.submit()).status,200);
+  assert.equal((await f.run()).status,'completed');
+  const delivery=await import('../worker/memory-derivation-jobs.ts');
+  await delivery.registerNativeDerivationBacklog(f.env,f.enrollment(),new Date().toISOString());
+  assert.deepEqual(f.sqlite.prepare('SELECT source_count FROM memory_derivation_jobs ORDER BY after_sequence').all().map(row=>row.source_count),[4,1]);
+  assert.equal(f.sqlite.prepare('SELECT COUNT(*) AS n FROM memory_derivation_job_sources').get().n,5);
+  assert.equal(f.sqlite.prepare('SELECT registered_through_sequence FROM memory_derivation_cursors').get().registered_through_sequence,f.enrollment().cursor_sequence);
+});
+
+for(const fault of ['none','body-erasure','source-erasure','artifact-edited','document-custody','block-rehome','block-custody'])test('artifact derivation: mixed originals retain all artifact inverses '+fault,async t=>{
+  const f=await artifactDerivationFixture(t);assert.equal((await f.submit()).status,200);
+  const turn=await f.request('/api/assistant?route='+encodeURIComponent('/document/'+f.documentId)+'&projectId='+f.projectId,
+    f.json({turnId:'artifact-observation-original',message:'I want to review this story.',locale:'en'}));
+  assert.equal(turn.status,201,await turn.clone().text());
+  await appendAuditEvent(f.env,f.streamId,'user:'+f.owner,'BlockCreated',{project_id:f.projectId,document_id:f.documentId,block_id:'observed-native-block',type:'direction',scope:'document',properties:{text:'An authored direction'}});
+  assert.equal((await f.run()).status,'completed');
+  let calls=0;t.mock.method(globalThis,'fetch',async(_url,options)=>{
+    calls++;const body=JSON.parse(options.body),input=JSON.parse(body.input);
+    assert.equal(input.originals.length,2);assert.ok(input.observations.some(row=>row.action==='inspect'));
+    assert.equal(JSON.stringify(input).includes(f.content),false,'Artifact body is certified locally, never a quoted original or provider input');
+    return Response.json({id:'isolated-artifact-result',object:'response',model:'isolated-artifact-test',service_tier:'default',status:'completed',error:null,incomplete_details:null,
+      usage:{input_tokens:100,output_tokens:10,total_tokens:110,input_tokens_details:{cached_tokens:0}},
+      output:[{type:'message',role:'assistant',status:'completed',content:[{type:'output_text',text:JSON.stringify({version:'memory-derivation-candidates-v1',items:[]})}]}]});
+  });
+  const result=await(await import('../worker/memory-derivation-worker.ts')).runNativeDerivationScheduled(f.env);assert.equal(result.status,'stored',JSON.stringify(result));assert.equal(calls,1);
+  const stored=f.sqlite.prepare('SELECT * FROM memory_derivation_results').get();
+  const dependencies=f.sqlite.prepare('SELECT * FROM memory_derivation_result_dependencies WHERE job_id=?').all(stored.job_id);
+  assert.ok(dependencies.some(row=>row.kind==='content'&&row.resource_id===f.contentRef));assert.ok(dependencies.some(row=>row.kind==='event'&&row.resource_id===f.original));
+  if(fault==='body-erasure')f.sqlite.prepare('DELETE FROM private_content WHERE content_id=?').run(f.contentRef);
+  if(fault==='source-erasure')f.sqlite.prepare('DELETE FROM event_private_payloads WHERE private_event_id=?').run(f.original);
+  if(fault==='artifact-edited')await appendAuditEvent(f.env,f.streamId,'user:'+f.owner,'DocumentArtifactEdited',{artifact_id:f.payload.artifact_id,project_id:f.projectId,document_id:f.documentId});
+  if(fault==='document-custody')f.sqlite.prepare("INSERT INTO project_resource_scopes(organization_id,project_access_id,project_id,owner_user_id,resource_kind,resource_id,visibility,actor_user_id,created_at) VALUES('org','access',?,?,'document',?,'actor_private',?,?)").run(f.projectId,f.owner,f.documentId,f.owner,new Date().toISOString());
+  if(fault==='block-rehome')await appendAuditEvent(f.env,f.streamId,'user:'+f.owner,'BlockRehomed',{block_id:'observed-native-block',project_id:f.projectId,document_id:'different-document',scope:'document'});
+  if(fault==='block-custody')f.sqlite.prepare("INSERT INTO project_resource_scopes(organization_id,project_access_id,project_id,owner_user_id,resource_kind,resource_id,visibility,actor_user_id,created_at) VALUES('org','access',?,?,'block','observed-native-block','actor_private',?,?)").run(f.projectId,f.owner,f.owner,new Date().toISOString());
+  const fresh=f.sqlite.prepare('SELECT * FROM memory_derivation_results').get();
+  if(fault==='none')assert.ok(await(await import('../worker/memory-derivation-results.ts')).readNativeDerivationResult(f.env,f.owner,stored.job_id));
+  else{assert.equal(fresh.state,'withdrawn');assert.equal(fresh.raw_json,null);assert.equal(fresh.manifest_json,null);}
+  assert.equal(f.sqlite.prepare('SELECT COUNT(*) AS n FROM memory_derivation_usage').get().n,1,'Privacy erasure never refunds recorded provider usage');
+});
+
+test('artifact derivation: missing lifecycle protection refuses capture without provider admission',async t=>{
+  const f=await artifactDerivationFixture(t);f.sqlite.exec(readFileSync(new URL('../drizzle/0050_memory_derivation_lifecycle.sql',import.meta.url),'utf8').match(/CREATE TRIGGER [a-z_]+/g).map(value=>'DROP TRIGGER '+value.split(' ')[2]).join(';'));
+  assert.equal((await f.submit()).status,200);assert.equal((await f.run()).status,'completed');
+  const job=f.sqlite.prepare('SELECT * FROM memory_derivation_jobs').get(),lease=await(await import('../worker/memory-derivation-admission.ts')).claimNativeDerivationJob(f.env,job.job_id);assert.ok(lease);
+  assert.equal((await(await import('../worker/memory-derivation-sources.ts')).captureNativeDerivationSources(f.env,lease)).status,'unavailable');
+  assert.equal(f.sqlite.prepare('SELECT COUNT(*) AS n FROM memory_derivation_finance').get().n,0);
+});
