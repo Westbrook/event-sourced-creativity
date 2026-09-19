@@ -246,7 +246,7 @@ for (const mutation of ['body', 'body-redacted', 'body-owner', 'body-expiry', 's
       if (mutation === 'source-redacted') f.sqlite.prepare("UPDATE event_private_payloads SET redacted_at='2026-01-01' WHERE private_event_id=?").run(f.original);
       if (mutation === 'source-envelope') f.sqlite.prepare("UPDATE event_private_payloads SET project_id='other-project' WHERE private_event_id=?").run(f.original);
       if (mutation === 'consent') f.sqlite.prepare('UPDATE users SET consent_version=NULL WHERE user_id=?').run(f.owner);
-      if (mutation === 'permission-epoch') f.sqlite.prepare("UPDATE users SET permission_epoch='withdrawn' WHERE user_id=?").run(f.owner);
+      if (mutation === 'permission-epoch') f.sqlite.prepare("UPDATE users SET updated_at='2099-01-01T00:00:00.000Z' WHERE user_id=?").run(f.owner);
       if (mutation === 'head') await appendAuditEvent(f.env, f.streamId, 'user', 'DocumentArtifactEdited', { project_id: f.projectId, document_id: f.documentId, artifact_id: f.payload.artifact_id, revision: 1 });
       if (mutation === 'resource-custody') f.sqlite.prepare(`INSERT INTO project_resource_scopes(project_access_id,resource_kind,resource_id,organization_id,project_id,owner_user_id,visibility,source_event_id,actor_user_id,created_at)
         VALUES('other-access','artifact',?,'other-org','other-project','other-owner','collaborative_output',?,'other-owner',?)`).run(f.payload.artifact_id, f.original, new Date().toISOString());
@@ -753,7 +753,7 @@ for(const fault of ['body','source','custody','event-custody','access','context'
     if(fault==='event-custody')f.sqlite.prepare("DELETE FROM project_event_scopes WHERE event_id=?").run(f.original);
     if(fault==='access')f.sqlite.prepare("UPDATE organization_projects SET status='archived' WHERE project_access_id=?").run(f.sharing.projectAccessId);
     if(fault==='context')f.sqlite.prepare("UPDATE project_context_sessions SET revoked_at=? WHERE context_id=?").run(new Date().toISOString(),f.sharing.contextId);
-    if(fault==='epoch')f.sqlite.prepare("UPDATE users SET permission_epoch='revoked' WHERE user_id=?").run(f.owner);
+    if(fault==='epoch')f.sqlite.prepare("UPDATE users SET updated_at='2099-01-01T00:00:00.000Z' WHERE user_id=?").run(f.owner);
     if(fault==='head')await appendAuditEvent(f.env,f.streamId,'user:'+f.owner,'DocumentArtifactEdited',{project_id:f.projectId,document_id:f.documentId,artifact_id:f.payload.artifact_id,revision:1});
   };
   const response=await f.submit();assert.equal(response.status,409,await response.clone().text());assert.ok(injected);assert.equal(f.count(),0);
@@ -852,4 +852,63 @@ for(const fault of ['body','event','custody','access','enrollment','receipt-scop
     if(fault==='receipt-scope')f.sqlite.prepare("UPDATE project_event_scopes SET actor_user_id='another-member' WHERE event_id=?").run(event.eventId);
   };
   const response=await f.inspect('memory-consumption-episodes-v4');assert.equal(response.status,403,await response.clone().text());assert.ok(injected);assert.equal((await response.text()).includes(f.payload.content_sha256),false);
+});
+
+async function artifactHistoryFrameFixture(t,{shared=false}={}){
+  const f=await memoryArtifactFixture(t,{shared}),actor=await liveMemoryPrincipal(f.env,f.owner),authority=await liveMemoryAuthority(f.env,f.enrollment());
+  await appendAuditEvent(f.env,f.streamId,'user:'+f.owner,'DocumentRenamed',{project_id:f.projectId,document_id:f.documentId,new_title:'A genuine source dependency'});
+  if(shared)assert.equal((await f.request('/api/events?after=0&content=0')).status,200);
+  const view=await f.submit();assert.equal(view.status,200,await view.clone().text());const event=(await view.json()).appended[0],certifier=await import('../worker/memory-artifact-view.ts');
+  const selectors=[{eventId:event.eventId,artifactId:f.payload.artifact_id,documentId:f.documentId,projectId:f.projectId,contentRef:f.contentRef}];
+  const frame=async()=>{const frames=await certifier.captureNativeArtifactHistoryFrames(f.env,actor,selectors,shared?authority.binding:undefined);return frames.get(event.eventId);};
+  const certify=frame=>certifier.prepareNativeArtifactHistoryFrame(f.env,actor,frame);
+  const replay=certificate=>f.env.DB.prepare(`SELECT CASE WHEN (${certificate.source.sql}) THEN 1 ELSE json('artifact-frame-changed') END AS verified`).bind(...certificate.source.bindings).all();
+  return Object.assign(f,{actor,authority,event,certifier,selectors,frame,certify,replay});
+}
+for(const shared of [false,true])for(const fault of ['omitted-dependency','duplicate-row','missing-batch','source-edit','view-erasure','body-erasure','document-removal','authority',...(shared?['custody','projection-state','unindexed-source']:[])])test('native artifact frames: complete original proof survives '+shared+'/'+fault,async t=>{
+  const f=await artifactHistoryFrameFixture(t,{shared});
+  let injected=false;
+  if(['omitted-dependency','duplicate-row','missing-batch'].includes(fault))f.controls.afterBatch=(statements,results)=>{
+    if(injected||!statements[0]?.sql.includes('ORDER BY event.sequence LIMIT 513'))return;injected=true;
+    if(fault==='missing-batch')results.pop();
+    else if(fault==='omitted-dependency')results[0].results=results[0].results.filter(row=>row.type!=='DocumentRenamed');
+    else results[0].results[1]=results[0].results[0];
+  };
+  if(fault==='missing-batch'||fault==='duplicate-row'){await assert.rejects(f.frame);assert.ok(injected);return;}
+  const frame=await f.frame(),certificate=await f.certify(frame);assert.ok(!(certificate instanceof Response));
+  if(fault==='omitted-dependency'){await assert.rejects(()=>f.replay(certificate));assert.ok(injected);return;}
+  assert.equal((await f.replay(certificate)).results[0].verified,1);
+  if(fault==='source-edit')f.sqlite.prepare("UPDATE event_private_payloads SET private_json=json_set(private_json,'$.new_title','Different dependency') WHERE private_event_id IN(SELECT event_id FROM events WHERE type='DocumentRenamed')").run();
+  if(fault==='view-erasure')f.sqlite.prepare('DELETE FROM event_private_payloads WHERE private_event_id=?').run(f.event.eventId);
+  if(fault==='body-erasure')f.sqlite.prepare('DELETE FROM private_content WHERE content_id=?').run(f.contentRef);
+  if(fault==='document-removal')await appendAuditEvent(f.env,f.streamId,'user:'+f.owner,'DocumentRemoved',{project_id:f.projectId,document_id:f.documentId});
+  if(fault==='authority')f.sqlite.prepare("UPDATE users SET updated_at='2099-01-01T00:00:00.000Z' WHERE user_id=?").run(f.owner);
+  if(fault==='custody')f.sqlite.prepare("UPDATE project_resource_scopes SET visibility='actor_private' WHERE resource_kind='artifact' AND resource_id=?").run(f.payload.artifact_id);
+  if(fault==='projection-state')f.sqlite.prepare("UPDATE project_migration_states SET status='pending' WHERE project_access_id=?").run(f.sharing.projectAccessId);
+  if(fault==='unindexed-source')await appendAuditEvent(f.env,f.streamId,'worker:renderer','DocumentRenderCompleted',{project_id:f.projectId,document_id:f.documentId,artifact_id:f.payload.artifact_id,artifact_kind:'short_story',content_ref:f.contentRef});
+  await assert.rejects(()=>f.replay(certificate));
+});
+
+test('native artifact frames: opaque handles cannot cross environment, principal or copied identity',async t=>{
+  const f=await artifactHistoryFrameFixture(t),frame=await f.frame();assert.ok(!(await f.certify(frame) instanceof Response));
+  assert.ok(await f.certify({...frame}) instanceof Response);
+  assert.ok(await f.certifier.prepareNativeArtifactHistoryFrame({...f.env},f.actor,frame) instanceof Response);
+  assert.ok(await f.certifier.prepareNativeArtifactHistoryFrame(f.env,{...f.actor,userId:'another'},frame) instanceof Response);
+  await assert.rejects(()=>f.certifier.captureNativeArtifactHistoryFrames(f.env,f.actor,Array(5).fill(f.selectors[0])));
+});
+
+for(const fault of ['bytes','rows'])test('native artifact frames: '+fault+' overflow is bounded before native hydration',async t=>{
+  const f=await artifactHistoryFrameFixture(t);
+  if(fault==='bytes')f.sqlite.prepare("UPDATE event_private_payloads SET private_json=json_set(private_json,'$.new_title',?) WHERE private_event_id IN(SELECT event_id FROM events WHERE type='DocumentRenamed')").run('x'.repeat(1_500_000));
+  else for(let i=0;i<513;i++)await appendAuditEvent(f.env,f.streamId,'user:'+f.owner,'DocumentOpened',{project_id:f.projectId,document_id:f.documentId});
+  let hydrated=null;f.controls.afterBatch=(statements,results)=>{if(statements[0]?.sql.includes('ORDER BY event.sequence LIMIT 513'))hydrated=results[0].results.length;};
+  assert.ok(await f.certify(await f.frame()) instanceof Response);assert.equal(hydrated,0);
+});
+
+test('native artifact frames: unrelated unindexed appends need no repair but current-view writing stays strict',async t=>{
+  const f=await artifactHistoryFrameFixture(t,{shared:true}),before=f.sqlite.prepare('SELECT * FROM project_migration_states WHERE project_access_id=?').get(f.sharing.projectAccessId);
+  await appendAuditEvent(f.env,f.streamId,'user:'+f.owner,'ChatMessageSent',{project_id:f.projectId,document_id:f.documentId,message:'Unrelated synthetic activity'});
+  const certificate=await f.certify(await f.frame());assert.ok(!(certificate instanceof Response));assert.equal((await f.replay(certificate)).results[0].verified,1);
+  assert.equal((await f.submit()).status,409,'Current-view writer still requires the refreshed native projection');
+  assert.deepEqual(f.sqlite.prepare('SELECT * FROM project_migration_states WHERE project_access_id=?').get(f.sharing.projectAccessId),before,'Historical certification never repairs a project index');
 });

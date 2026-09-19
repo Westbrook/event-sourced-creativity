@@ -1,6 +1,6 @@
 import { AUTHORING_EVENT_COLUMNS } from "./authoring-event-proof.ts";
 import { eventWriteBindings, serializeEvent, type WorkerEnv } from "./runtime.ts";
-import { preparePersonalArtifactViewSource, preparePersonalArtifactHistorySource, prepareGovernedArtifactViewSource } from "./memory-artifact-view.ts";
+import { preparePersonalArtifactViewSource, preparePersonalArtifactHistorySource, prepareGovernedArtifactViewSource, captureNativeArtifactHistoryFrames, prepareNativeArtifactHistoryFrame } from "./memory-artifact-view.ts";
 import type { LiveMemoryAuthority, LiveMemoryEnrollment } from "./memory-live-authority.ts";
 import type { NativeMemoryContextObserver } from "./memory-live-context.ts";
 import type { MemorySqlGuard } from "./memory-sql.ts";
@@ -74,6 +74,15 @@ export async function captureNativeArtifactConsumption(env: WorkerEnv, e: LiveMe
   const bindings = new Map<string, Awaited<ReturnType<typeof preparePersonalArtifactViewSource>>>();
   let retainedBytes = 0, throughSequence = range.through, truncated = result.results.length > 32;
   if (!range.remembered && result.results.length > 32) throughSequence = Number(result.results[32].sequence) - 1;
+  const frameSelectors=new Map<string,{eventId:string;artifactId:string;documentId:string;projectId:string;contentRef:string}>();
+  if(range.historical)for(const row of result.results.slice(0,32)){
+    const event=serializeEvent(row),payload=event.payload;
+    const identity=memoryCanonical([Object.fromEntries(browserKeys.filter(key=>key!=="source_surface").map(key=>[key,payload[key]])),payload.artifact_source_event_id]);
+    if(frameSelectors.has(identity))continue;if(frameSelectors.size>=4)break;
+    frameSelectors.set(identity,{eventId:event.eventId,artifactId:String(payload.artifact_id??''),documentId:e.document_id,projectId:e.project_id,contentRef:String(payload.artifact_content_ref??'')});
+  }
+  const frames=frameSelectors.size?await captureNativeArtifactHistoryFrames(env,authority.principal,[...frameSelectors.values()],governed?authority.binding:undefined):null;
+  if(!current())throw new Error("artifact_memory_source_changed");
   for (const row of result.results.slice(0, 32)) {
     const event = serializeEvent(row), payload = event.payload;
     if (Object.keys(payload).sort().join(",") !== receiptKeys.join(",") || payload.capture_version !== captureVersion
@@ -94,7 +103,7 @@ export async function captureNativeArtifactConsumption(env: WorkerEnv, e: LiveMe
         if (!range.remembered) { throughSequence = event.sequence - 1; break; }
         continue;
       }
-      certified = governed ? await prepareGovernedArtifactViewSource(env,authority.principal,authority.binding,input,range.historical?event.eventId:undefined) : range.historical ? await preparePersonalArtifactHistorySource(env, authority.principal, event.eventId) : await preparePersonalArtifactViewSource(env, authority.principal, input); bindings.set(identity, certified);
+      certified = frames ? await prepareNativeArtifactHistoryFrame(env,authority.principal,frames.get(frameSelectors.get(identity)!.eventId)!) : governed ? await prepareGovernedArtifactViewSource(env,authority.principal,authority.binding,input,range.historical?event.eventId:undefined) : range.historical ? await preparePersonalArtifactHistorySource(env, authority.principal, event.eventId) : await preparePersonalArtifactViewSource(env, authority.principal, input); bindings.set(identity, certified);
       if (!current()) throw new Error("artifact_memory_source_changed");
       if (!(certified instanceof Response)) {
         if (retainedBytes + certified.bodyBytes > 1_500_000) {

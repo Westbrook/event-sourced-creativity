@@ -15387,3 +15387,25 @@ test('native memory reuse: committed approval deadline does not renew or replace
   const expired=await api.observeNativeMemoryReuseBindings(state.env,state.current(),state.manifest.observations,state.manifest.provenance.blockBindings,new AssistantContextReadWitness(state.env));
   assert.equal(expired.entries.length,0,'Expired original body cannot be reconstructed from a receipt');
 });
+
+for(const shared of [false,true])for(const paid of [false,true])test('native derivation artifact budget: three-window original-backed views shared='+shared+' paid='+paid,{timeout:180000},async t=>{
+  const {appendAuditEvent}=await import('../worker/runtime.ts'),{storePrivateContent}=await import('../worker/pilot-policy.ts'),{createHash}=await import('node:crypto');
+  const state=await nativeDerivationRollingFixture(t,{windows:3,shared,paid,beforeWindow:async(state,index)=>{
+    const e=state.current(),content=JSON.stringify({title:'Retained native artifact '+index,summary:'Original fixture',content_markdown:'Synthetic original artifact body '+index,
+      presentation:null,items:[{title:'Original',body:'Synthetic original artifact body '+index,notes:'',image_prompt:'',context_group_ids:[],slide:null}]});
+    const stored=await storePrivateContent(state.env,e.owner_user_id,'document-artifact',content),artifactId='rolling-original-artifact-'+index;
+    await appendAuditEvent(state.env,'creative:'+e.owner_user_id,'worker:renderer','DocumentRenderCompleted',{project_id:e.project_id,document_id:e.document_id,
+      artifact_id:artifactId,artifact_kind:'short_story',title:'Original '+index,content_ref:stored.contentId});
+    if(shared)assert.equal((await state.request('/api/events?after=0&content=0',{headers:state.owner})).status,200);
+    const response=await state.request('/api/events/hot',json({action:'hot',event:{type:'DocumentArtifactViewed',payload:{project_id:e.project_id,document_id:e.document_id,
+      artifact_id:artifactId,artifact_kind:'short_story',artifact_revision:0,content_sha256:createHash('sha256').update(content).digest('hex'),source_surface:'document-artifact-gallery'}}},state.owner??{}));
+    assert.equal(response.status,200,await response.clone().text());
+  }}),api=await import('../worker/memory-derivation-api.ts');
+  const job=state.queue().jobs.sort((a,b)=>b.through_sequence-a.through_sequence)[0],db=state.env.DB,prepare=db.prepare,batch=db.batch,originals=new WeakMap();let operations=0;
+  const wrap=raw=>{const proxy=new Proxy(raw,{get(target,key){if(key==='bind')return(...args)=>wrap(target.bind(...args));if(['all','first','run','raw'].includes(key))return(...args)=>{operations++;return target[key](...args);};return Reflect.get(target,key,target);}});originals.set(proxy,raw);return proxy;};
+  db.prepare=function(sql){return wrap(prepare.call(this,sql));};db.batch=function(inputs){operations++;return batch.call(this,inputs.map(input=>originals.get(input)??input));};t.after(()=>{db.prepare=prepare;db.batch=batch;});
+  const response=await api.handleMemoryDerivationResult(new Request(state.derivationOrigin+'/api/memory/derivation/result?jobId='+job.job_id,{headers:state.owner}),state.env);
+  assert.equal(response.status,200,await response.clone().text());const body=await response.json();t.diagnostic(JSON.stringify({shared,paid,operations,history:body.history}));
+  assert.equal(body.history.windowCount,3);assert.equal(state.rollingRequests.at(-1).observations.filter(row=>row.action==='inspect').length,3);
+  assert.ok(operations<50,'Complete artifact-rich inspection must stay below the conservative native request budget: '+operations);
+});

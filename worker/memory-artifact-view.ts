@@ -40,14 +40,89 @@ export async function prepareGovernedArtifactViewSource(env:WorkerEnv,actor:Pilo
   return preparePersonalArtifactSource(env,actor,input,observationEventId,binding);
 }
 
-async function preparePersonalArtifactSource(env: WorkerEnv, actor: PilotUser, input: unknown, observationEventId?: string,governed?:ConsequentialBinding) {
+type ArtifactFrameSelector={eventId:string;artifactId:string;documentId:string;projectId:string;contentRef:string};
+declare const nativeArtifactFrame:unique symbol;
+export type NativeArtifactHistoryFrame=Readonly<{[nativeArtifactFrame]:true}>;
+type ArtifactFrame={env:WorkerEnv;db:WorkerEnv['DB'];actorSnapshot:string;bindingSnapshot:string|undefined;governed?:ConsequentialBinding;
+  selector:ArtifactFrameSelector;rows:Record<string,unknown>[];body:{content:string;created_at:string;expires_at:string}|null;
+  eventScopes:Record<string,unknown>[];resources:Record<string,unknown>[];projectionGuard:{sql:string;bindings:(string|number|null)[]}};
+const artifactFrames=new WeakMap<NativeArtifactHistoryFrame,ArtifactFrame>();
+
+/** One bounded native read batch for up to four exact historical selectors.
+ * No caller-supplied projection/body can become a frame. These opaque frames
+ * only replace read round trips; every dependency, selection, envelope, body,
+ * current access and custody guard is still reconstructed and replayed below. */
+export async function captureNativeArtifactHistoryFrames(env:WorkerEnv,actor:PilotUser,selectors:ArtifactFrameSelector[],governed?:ConsequentialBinding){
+  const db=env.DB,actorSnapshot=JSON.stringify(actor),bindingSnapshot=JSON.stringify(governed);
+  selectors=structuredClone(selectors);
+  if(!selectors.length||selectors.length>4||new Set(selectors.map(row=>row.eventId)).size!==selectors.length
+    ||selectors.some(row=>!Object.values(row).every(id)))throw Error('artifact_history_frame_invalid');
+  const owner=governed?.scope?.ownerUserId??actor.userId,stream=governed?.streamId??actor.streamId,scope=governed?.scope;
+  if(governed&&(!scope||!hasCapability(actor,'project.read',scope)||governed.actorUserId!==actor.userId
+    ||scope.actorUserId!==actor.userId||stream!=='creative:'+owner||governed.permissionEpoch!==actor.access.permissionEpoch))throw Error('artifact_history_frame_authority');
+  // Explicit native event/resource proofs do not depend on the projection's
+  // last indexed sequence. A paid assistant append can legitimately leave that
+  // index behind; relevant unindexed source events still fail exact custody.
+  const projectionGuard=scope?{sql:`EXISTS(SELECT 1 FROM project_migration_states WHERE project_access_id=? AND organization_id=? AND owner_user_id=? AND status='active'
+    AND last_owner_sequence<=(SELECT COALESCE(MAX(sequence),0) FROM events WHERE stream_id=?))`,bindings:[scope.projectAccessId,scope.organizationId,owner,stream]}:{sql:'1',bindings:[]};
+  const plans=selectors.map(selector=>{
+    if(governed&&(selector.projectId!==governed.projectId||selector.documentId!==governed.documentId))throw Error('artifact_history_frame_scope');
+    const selection=`FROM events event LEFT JOIN event_private_payloads secret ON secret.private_event_id=event.event_id AND secret.redacted_at IS NULL
+      WHERE event.stream_id=? AND (event.event_id=?
+        OR event.type='ProjectCreated' AND json_extract(event.payload,'$.project_id')=?
+        OR event.type IN('DocumentCreated','DocumentForked','DocumentRenamed','DocumentOpened','DocumentRemoved','DocumentRestored') AND json_extract(event.payload,'$.document_id')=?
+        OR event.type IN('DocumentRenderCompleted','DocumentArtifactEdited') AND json_extract(event.payload,'$.artifact_id')=?)`;
+    const bindings=[stream,selector.eventId,selector.projectId,selector.documentId,selector.artifactId];
+    // Bound bytes in the hydration statement itself. An oversized frame is
+    // unavailable, never a partial historical projection or acknowledged job.
+    const bounded=`(SELECT COUNT(*) ${selection})<=512 AND (SELECT COALESCE(SUM(length(CAST(event.payload AS BLOB))+length(CAST(COALESCE(secret.private_json,'') AS BLOB))),0) ${selection})<=1500000`;
+    return {selector,selection,bindings,queries:[
+      {sql:`SELECT event.*,secret.owner_id,secret.project_id,secret.document_id,secret.private_json,secret.created_at AS private_created_at,secret.redacted_at ${selection}
+        AND (${bounded}) ORDER BY event.sequence LIMIT 513`,bindings:[...bindings,...bindings,...bindings]},
+      {sql:`SELECT content,created_at,expires_at FROM private_content WHERE content_id=? AND owner_id=? AND kind='document-artifact'
+        AND redacted_at IS NULL AND expires_at>${clock} AND length(CAST(content AS BLOB))<=1500000`,bindings:[selector.contentRef,owner]},
+      ...(scope?[
+        {sql:`SELECT * FROM project_event_scopes WHERE event_id IN(SELECT event.event_id ${selection}) ORDER BY event_id LIMIT 513`,bindings},
+        {sql:`SELECT * FROM project_resource_scopes WHERE owner_user_id=? AND ((resource_kind='document' AND resource_id=?) OR(resource_kind='artifact' AND resource_id=?)
+          OR(resource_kind='content' AND resource_id=?)) ORDER BY resource_kind,resource_id,project_access_id LIMIT 4`,bindings:[owner,selector.documentId,selector.artifactId,selector.contentRef]},
+        {sql:`SELECT 1 AS current WHERE (${projectionGuard.sql})`,bindings:projectionGuard.bindings},
+      ]:[]),
+    ]};
+  });
+  const queries=plans.flatMap(plan=>plan.queries),results=structuredClone(await db.batch<Record<string,unknown>>(queries.map(query=>db.prepare(query.sql).bind(...query.bindings))));
+  if(env.DB!==db||JSON.stringify(actor)!==actorSnapshot||JSON.stringify(governed)!==bindingSnapshot||results.length!==queries.length
+    ||results.some(result=>result?.success!==true||!Array.isArray(result.results)||'error' in result&&result.error!==undefined))throw Error('artifact_history_frame_unavailable');
+  const frames=new Map<string,NativeArtifactHistoryFrame>();let offset=0;
+  for(const plan of plans){
+    const rows=results[offset]!.results,bodies=results[offset+1]!.results,eventScopes=scope?results[offset+2]!.results:[],resources=scope?results[offset+3]!.results:[];
+    if(rows.length>512||bodies.length>1||scope&&(eventScopes.length>512||resources.length!==3||results[offset+4]!.results.length!==1||results[offset+4]!.results[0]!.current!==1))throw Error('artifact_history_frame_unavailable');
+    const frameColumns=[...AUTHORING_EVENT_COLUMNS,'owner_id','project_id','document_id','private_json','private_created_at','redacted_at'];
+    if(new Set(rows.map(row=>row.event_id)).size!==rows.length||rows.some(row=>Object.keys(row).sort().join(',')!==[...frameColumns].sort().join(',')))throw Error('artifact_history_frame_unavailable');
+    const serialized=JSON.stringify(rows.map(row=>frameColumns.map(key=>row[key])));if(bytes(serialized)>1900000)throw Error('artifact_history_frame_capacity');
+    const exactFrame={sql:`(SELECT json_group_array(json(value)) FROM(SELECT json_array(${[...AUTHORING_EVENT_COLUMNS.map(key=>'event.'+key),'secret.owner_id','secret.project_id','secret.document_id','secret.private_json','secret.created_at','secret.redacted_at'].join(',')}) AS value ${plan.selection} ORDER BY event.sequence LIMIT 513))=?`,bindings:[...plan.bindings,serialized]};
+    const frame=Object.freeze({}) as NativeArtifactHistoryFrame;
+    artifactFrames.set(frame,{env,db,actorSnapshot,bindingSnapshot,governed,selector:structuredClone(plan.selector),rows,
+      body:(bodies[0]??null) as ArtifactFrame['body'],eventScopes,resources,projectionGuard:combineAuthoringGuards(projectionGuard,exactFrame)});frames.set(plan.selector.eventId,frame);offset+=plan.queries.length;
+  }
+  return frames;
+}
+export function prepareNativeArtifactHistoryFrame(env:WorkerEnv,actor:PilotUser,frame:NativeArtifactHistoryFrame){
+  const captured=artifactFrames.get(frame);
+  if(!captured||captured.env!==env||captured.db!==env.DB||captured.actorSnapshot!==JSON.stringify(actor)
+    ||captured.bindingSnapshot!==JSON.stringify(captured.governed))return Promise.resolve(failure('artifact_history_frame_unavailable'));
+  return preparePersonalArtifactSource(env,actor,null,captured.selector.eventId,captured.governed,frame);
+}
+
+async function preparePersonalArtifactSource(env: WorkerEnv, actor: PilotUser, input: unknown, observationEventId?: string,governed?:ConsequentialBinding,frame?:NativeArtifactHistoryFrame) {
   const db = env.DB, actorSnapshot = JSON.stringify(actor),bindingSnapshot=JSON.stringify(governed);
   const scope=governed?.scope,owner=scope?.ownerUserId??actor.userId,stream=governed?.streamId??actor.streamId;
   const captureVersion=governed?'governed-artifact-view-v1':'personal-artifact-view-v2';
   if (actor.fictional || !governed&&(actor.projectExecution || actor.streamId !== `creative:${actor.userId}`|| !["admin", "creator"].includes(actor.role)) || !actor.authorizationSnapshot) return failure("artifact_view_personal_principal_required", 403);
   // For history, obtain the selector from an actual native event, not browser
   // revision/expiry claims. Every envelope is checked again below and replayed.
-  const read=()=>scope?readProjectSourceEvents(env,scope,{synchronize:false}):readWorkspaceEvents(env,stream);
+  const captured=frame?artifactFrames.get(frame):undefined;
+  if(frame&&(!captured||captured.env!==env||captured.db!==db||captured.actorSnapshot!==actorSnapshot||captured.bindingSnapshot!==bindingSnapshot||captured.selector.eventId!==observationEventId))return failure("artifact_history_frame_unavailable");
+  const read=()=>captured?Promise.resolve(captured.rows.map(serializeEvent)):scope?readProjectSourceEvents(env,scope,{synchronize:false}):readWorkspaceEvents(env,stream);
   const fullHistory = observationEventId ? await read() : null;
   const observation = fullHistory?.find(event => event.eventId === observationEventId);
   if (observationEventId && (!observation || observation.type !== "DocumentArtifactViewed"
@@ -78,7 +153,7 @@ async function preparePersonalArtifactSource(env: WorkerEnv, actor: PilotUser, i
     || documentArtifactRevision(history, artifactId) !== payload.artifact_revision) return failure("artifact_view_source_unavailable");
   const contentId = artifact.contentRef;
   // A legal hold preserves evidence, not permission to turn expired content into learning evidence.
-  const body = await env.DB.prepare(`SELECT content,created_at,expires_at FROM private_content
+  const body = captured?captured.body:await env.DB.prepare(`SELECT content,created_at,expires_at FROM private_content
     WHERE content_id=? AND owner_id=? AND kind='document-artifact' AND redacted_at IS NULL AND expires_at>${clock}
       AND length(CAST(content AS BLOB))<=1500000`).bind(contentId, owner)
     .first<{ content: string; created_at: string; expires_at: string }>();
@@ -99,7 +174,7 @@ async function preparePersonalArtifactSource(env: WorkerEnv, actor: PilotUser, i
     || Date.parse(event.recordedAt) > Date.now() || Date.parse(event.occurredAt) > Date.now() || !native(event.payload)))
     return failure("artifact_view_source_unavailable");
   const dependencyIds = JSON.stringify(dependencies.map(event => event.eventId));
-  const rows = await env.DB.prepare(`SELECT event.*,secret.owner_id,secret.project_id,secret.document_id,secret.private_json,secret.created_at AS private_created_at,secret.redacted_at
+  const rows = captured?{success:true,results:captured.rows.filter(row=>dependencies.some(event=>event.eventId===row.event_id))}:await env.DB.prepare(`SELECT event.*,secret.owner_id,secret.project_id,secret.document_id,secret.private_json,secret.created_at AS private_created_at,secret.redacted_at
     FROM events event JOIN event_private_payloads secret ON secret.private_event_id=event.event_id
     WHERE event.stream_id=? AND event.event_id IN(SELECT value FROM json_each(?))`).bind(stream, dependencyIds).all<Record<string, unknown>>();
   if (rows.success !== true || !Array.isArray(rows.results) || rows.results.length !== dependencies.length
@@ -146,14 +221,14 @@ async function preparePersonalArtifactSource(env: WorkerEnv, actor: PilotUser, i
       AND json_extract(boundary.payload,'$.document_id')=? ORDER BY boundary.sequence DESC LIMIT 1)!='DocumentRemoved'`,
   bindings: [stream, artifactId, ...(observation ? [observation.sequence] : []), completed.eventId, stream, artifactId, ...(observation ? [observation.sequence] : []), Number(payload.artifact_revision),
     stream, documentId, created.eventId, stream, documentId] };
-  let sourceAuthority=authority;
+  let sourceAuthority=captured&&!governed?combineAuthoringGuards(authority,captured.projectionGuard):authority;
   if(governed&&scope){
     const queries=[
       {sql:'SELECT * FROM project_event_scopes WHERE event_id IN(SELECT value FROM json_each(?)) ORDER BY event_id',bindings:[dependencyIds]},
       {sql:`SELECT * FROM project_resource_scopes WHERE owner_user_id=? AND ((resource_kind='document' AND resource_id=?)
         OR (resource_kind='artifact' AND resource_id=?) OR (resource_kind='content' AND resource_id=?)) ORDER BY resource_kind,resource_id,project_access_id`,bindings:[owner,documentId,artifactId,contentId]},
     ];
-    const results=await db.batch<Record<string,unknown>>(queries.map(query=>db.prepare(query.sql).bind(...query.bindings)));
+    const results=captured?[{success:true,results:captured.eventScopes.filter(row=>dependencies.some(event=>event.eventId===row.event_id))},{success:true,results:captured.resources}]:await db.batch<Record<string,unknown>>(queries.map(query=>db.prepare(query.sql).bind(...query.bindings)));
     if(results.length!==2||results.some(result=>!result.success||!Array.isArray(result.results)))return failure('artifact_view_source_unavailable');
     const eventScopes=results[0]!.results,resources=results[1]!.results;
     if(eventScopes.length!==dependencies.length||resources.length!==3
@@ -166,7 +241,7 @@ async function preparePersonalArtifactSource(env: WorkerEnv, actor: PilotUser, i
     const exact={sql:`(SELECT COUNT(*) FROM project_event_scopes WHERE event_id IN(SELECT value FROM json_each(?)))=?
       AND(SELECT COUNT(*) FROM project_resource_scopes WHERE owner_user_id=? AND ((resource_kind='document' AND resource_id=?)
         OR(resource_kind='artifact' AND resource_id=?) OR(resource_kind='content' AND resource_id=?)))=3`,bindings:[dependencyIds,dependencies.length,owner,documentId,artifactId,contentId]};
-    sourceAuthority=combineAuthoringGuards(executionAdmissionGuard(actor,governed,null),pilot,eventProof,resourceProof,exact);
+    sourceAuthority=combineAuthoringGuards(executionAdmissionGuard(actor,governed,null),pilot,eventProof,resourceProof,exact,...(captured?[captured.projectionGuard]:[]));
   }
   const source = combineAuthoringGuards(sourceAuthority, retained, selection, authoringEventRowsProof(sourceRows));
   if (env.DB !== db || JSON.stringify(actor) !== actorSnapshot||JSON.stringify(governed)!==bindingSnapshot) return failure("artifact_view_source_unavailable");
