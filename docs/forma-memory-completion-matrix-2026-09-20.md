@@ -88,3 +88,7 @@ blocked recalls do not dispatch, and release/focus cannot resurrect the view.
 The ordinary unsent draft is retained. Verified by21 Chat Studio native-port
 journeys and68 focused Creator Memory host checks. This closes a presentation
 privacy gap, not Chat Studio semantic prompt integration or hosted qualification.
+
+## Chat Studio semantic guidance continuation
+
+[Embedded Memory guidance](forma-memory-chat-guidance-2026-09-20.md) now connects the actual Chat Studio conversation pane to canonical specialist consent, semantic prompts, bounded follow-up ancestry and privacy retirement. It preserves the ordinary creative draft and disables untracked document actions. This closes read-only Chat guidance integration, not Memory-assisted creative edits/outputs, exact-field autocomplete, whole-request capacity or the other required native workstreams. Local browser/runtime evidence and reproduced baseline failures are recorded in the linked checkpoint; no deployment or enrollment occurred.

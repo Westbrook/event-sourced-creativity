@@ -11,6 +11,8 @@ import { personalMemoryMessage } from "./design-system/locales/personal-memory-m
 import { createDocumentJobMemoryClient, DocumentJobMemoryError, type DocumentJobMemoryRequest,
   type DocumentJobMemoryLease } from "../state/document-job-memory-client.ts";
 import "./project-rail";
+import "./forma-creative-assistant";
+import type { FormaCreativeAssistant } from "./forma-creative-assistant";
 import "./studio-navigation";
 import "./output-visual";
 import "./generation-actions";
@@ -28,6 +30,7 @@ const CHAT_CONTEXT_STARTERS: readonly BlockKind[] = ["direction", "subject", "st
 
 export class FormaChatStudio extends FormaElement {
   #draft="";
+  #guidance=false;
   #livePreview=true;
   #sending=false;
   #showResult=false;
@@ -104,7 +107,22 @@ export class FormaChatStudio extends FormaElement {
     </section>`;
   }
 
+  #changeGuidance() {
+    const assistant = this.querySelector<FormaCreativeAssistant>("forma-creative-assistant");
+    if (this.#sending || this.store.documentJobActive("chat")) return;
+    if (assistant?.captureCommandDeparture().blocked()) {
+      this.store.toast(this.i18n.t("next.lifecycle.assistantOwnsWork")); return;
+    }
+    this.#retireMemory(); this.#guidance = !this.#guidance; this.requestUpdate();
+    this.#focusAfterUpdate("[data-chat-guidance-mode]");
+  }
+
   captureCommandDeparture():CommandDeparture {
+    const assistant = this.querySelector<FormaCreativeAssistant>("forma-creative-assistant");
+    if (this.#guidance && assistant) {
+      const departure=assistant.captureCommandDeparture();
+      return {...departure,blocked:()=>Boolean(this.#draft||this.#sending)||departure.blocked()};
+    }
     const store=this.store,projection=store.projection.get(),projectId=projection.projectId,documentId=projection.documentId;
     return {element:this,current:()=>this.isConnected&&this.store===store
       &&store.projection.get().projectId===projectId&&store.projection.get().documentId===documentId,
@@ -175,10 +193,19 @@ export class FormaChatStudio extends FormaElement {
     const provider=this.store.session.get()?.provider;
     const canChat=canGenerate&&Boolean(provider?.plannerConfigured??provider?.configured);
     const canPreview=Boolean(provider?.configured);
+    const session=this.store.session.get();
+    const canGuide=canChat&&Boolean(session?.assistant?.enabled&&session.policy.accepted&&!session.impersonation
+      &&(session.projectContext?.permissions??session.capabilities??[]).includes("project.output.request"));
+    const guidance=this.#guidance&&canGuide;
     const destination=withDocumentFocusInRoute(withDocumentInRoute("/studio/chat",projection.documentId,projection.documentTitle),documentFocusFromRoute(this.store.route.get()));
-    const conversation=html`<section class="chat-conversation" aria-labelledby="chat-thread-title">
-      <header><div><span class="eyebrow">Creative conversation</span><h2 id="chat-thread-title">Chat with Forma</h2></div><button type="button" class="button secondary compact chat-result-toggle" aria-controls="chat-result-preview" aria-expanded=${this.#showResult} @click=${()=>{this.#showResult=!this.#showResult;this.requestUpdate();}}>${this.i18n.t(this.#showResult?"chat.hideResult":"chat.showResult",this.#showResult?"Hide result":"Show result")}</button><p>${canGenerate?this.i18n.system("Describe the image, revise an idea, or remove something that no longer belongs. Forma keeps the plan organized for you."):this.i18n.t("chat.viewerConversationPrivacy","Creative conversations are private to each project editor; your role can review shared results.")}</p></header>
-      <div class="chat-thread" role="log" aria-live="polite" aria-busy=${chatActive}>
+    const conversation=html`<section class="chat-conversation" data-guidance=${String(guidance)} aria-labelledby="chat-thread-title">
+      <header><div><span class="eyebrow">Creative conversation</span><h2 id="chat-thread-title">Chat with Forma</h2></div><button type="button" class="button secondary compact chat-result-toggle" aria-controls="chat-result-preview" aria-expanded=${this.#showResult} @click=${()=>{this.#showResult=!this.#showResult;this.requestUpdate();}}>${this.i18n.t(this.#showResult?"chat.hideResult":"chat.showResult",this.#showResult?"Hide result":"Show result")}</button><p>${canGenerate?this.i18n.system("Describe the image, revise an idea, or remove something that no longer belongs. Forma keeps the plan organized for you."):this.i18n.t("chat.viewerConversationPrivacy","Creative conversations are private to each project editor; your role can review shared results.")}</p>
+      ${canGuide?html`<div class="chat-guidance-mode">
+        <button type="button" class="button secondary" data-chat-guidance-mode aria-pressed=${guidance}
+          ?disabled=${this.#sending||chatActive} @click=${this.#changeGuidance}>${this.#memoryText(guidance?"chatGuidanceReturn":"chatGuidanceOpen")}</button>
+        <p>${this.#memoryText("chatGuidanceHelp")}</p>
+      </div>`:nothing}</header>
+      ${guidance?html`<forma-creative-assistant .embedded=${true}></forma-creative-assistant>`:html`<div class="chat-thread" role="log" aria-live="polite" aria-busy=${chatActive}>
         ${!lines.length&&canChat?html`<article class="chat-line assistant"><span>Forma</span><p>What would you like to make? Start with the subject, feeling, setting, or simply the outcome you have in mind.</p></article><section class="chat-context-starters" aria-label=${this.i18n.system("Add context")}>${CHAT_CONTEXT_STARTERS.map((type)=>{const definition=blockTypeDefinition(type)!;return html`<forma-ui-choice-card compact .label=${this.i18n.system(definition.label)} .detail=${this.i18n.system(definition.description)} .iconName=${blockIconName(type)} .value=${type} @forma-action=${()=>this.#prepareContext(type)}></forma-ui-choice-card>`;})}</section>`:nothing}
         ${lines.map((line)=>html`<article class=${`chat-line ${line.role}`}><span>${line.role==="user"?this.i18n.system("You"):"Forma"}</span><p>${line.text}</p></article>`)}
         ${chatActive?html`<article class="chat-line assistant thinking"><span>Forma</span><p>Working through that idea on the server… You can refresh or leave this view safely.</p></article>`:previewActive?html`<article class="chat-line assistant thinking previewing"><span>Forma</span><p>The plan is updated. I’m drawing its working preview separately, so the conversation is available before the image finishes.</p></article>`:nothing}
@@ -195,6 +222,7 @@ export class FormaChatStudio extends FormaElement {
         <p class="chat-composer-help chat-budget-disclosure">${this.i18n.t(canPreview&&this.#livePreview?"assistant.creativeBudgetPreview":"assistant.creativeBudget")}</p>
         <div><label class="chat-live-preview"><input type="checkbox" .checked=${this.#livePreview&&canPreview} ?disabled=${!canPreview} aria-description=${!canPreview?this.i18n.t("assistant.previewUnavailable"):nothing} title=${!canPreview?this.i18n.t("assistant.previewUnavailable"):nothing} @change=${(event:Event)=>{this.#livePreview=(event.target as HTMLInputElement).checked;this.requestUpdate();}}><span><b>Live preview</b><small>${!canPreview?this.i18n.t("assistant.previewUnavailable"):this.#livePreview?this.i18n.system("Make a fast image after useful visual changes."):this.i18n.system("Keep chatting without generating an image.")}</small></span></label></div>
       </form>`:html`<p role="note">${canGenerate?this.i18n.t("assistant.creativeUnavailable"):this.i18n.t("workspace.admin.readOnlyGeneration","Your project role allows reviewing outputs but not creating them.")}</p>`}
+    `}
     </section>`;
     return html`<section class="workspace-page studio-subpage chat-view-page">
       <forma-project-rail surface="studio" destination=${destination} quiet></forma-project-rail>

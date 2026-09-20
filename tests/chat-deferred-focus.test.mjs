@@ -11,12 +11,12 @@ import { withDocumentInRoute } from "../src/model/routes.ts";
 import { blockTypeDefinition } from "../src/model/block-types.ts";
 
 const classed = (node, name) => String(node.attributes.class ?? "").split(/\s+/u).includes(name);
-async function chatPage(t) {
+async function chatPage(t, locale = "en") {
   const external = t.mock.method(globalThis, "fetch", async () => assert.fail("No external or provider request in local Chat focus controls"));
   const previousChannel = globalThis.BroadcastChannel;
   globalThis.BroadcastChannel = undefined; // No cross-process channels in this native-port fixture.
   t.after(() => { globalThis.BroadcastChannel = previousChannel; });
-  const f = await createCalmFullPage(t), h = f.storeHost;
+  const f = await createCalmFullPage(t, { locale }), h = f.storeHost;
   // The component and Store fixtures have separate window ports. Deliver the
   // real privacy module's events to both, as the one browser window would.
   const previousDispatch = ports.windowPort.dispatchEvent;
@@ -78,6 +78,7 @@ async function chatPage(t) {
   assert.equal(owners.length, 1); const owner = owners[0];
   assert.ok(owner instanceof f.renderer.registry["forma-chat-studio"]); assert.equal(owner.store, f.store);
   assert.equal(f.store.route.get(), href);
+  assert.ok(f.trace.includes("route-module:" + href), "The admitted destination is loaded before the current Chat view replaces its origin");
   assert.ok(historyCalls.some(call => call.route === href), "The actual Store committed this URL through native History");
   assert.equal(h.location.pathname + h.location.search + h.location.hash, href);
   const field = () => f.find("textarea", node => node.attributes.id === "creative-chat-message"
@@ -310,3 +311,38 @@ test("Chat generic job feed neither drives, acknowledges nor presents marked Mem
   assert.equal(f.store.events.get(), before.events); assert.equal(f.store.content.get(), before.content); assert.equal(f.store.head.get(), before.head);
   assert.deepEqual(financial(h.worker), before.financial); assert.equal(x.external.mock.callCount(), 0);
 });
+
+for (const locale of ["en", "ar"]) test("Chat Studio has one explicit embedded guidance composer and retains the creative draft: " + locale,
+  { concurrency: false, timeout: 45_000 }, async t => {
+    const x = await chatPage(t, locale), { f, h } = x;
+    // Enable the real existing feature flag after the ordinary route is mounted.
+    // This does not enroll Memory or create any native consent.
+    f.store.session.set({ ...f.store.session.get(), assistant: { enabled: true, phase: "read-only", capabilities: ["project.assistant.read"], models: [] } });
+    await f.settle();
+    const field=x.field();field.port.value="Retain my creative draft";await f.act(field,"input");
+    const mode=()=>f.find("button",node=>node.owner===x.owner&&Object.hasOwn(node.attributes,"data-chat-guidance-mode"));
+    const before={events:f.store.events.get(),content:f.store.content.get(),financial:financial(h.worker)};
+    h.intercept=request=>request.url.startsWith("/api/assistant")?Response.json({error:"unavailable"},{status:503}):undefined;
+    x.external.mock.restore();
+    const nativeReads=t.mock.method(globalThis,"fetch",(input,init={})=>{
+      const url=new URL(String(input));
+      assert.equal(url.origin,"https://fixture.invalid");assert.equal(url.pathname,"/api/assistant");
+      assert.equal(init.method??"GET","GET");return h.fetch(url.pathname+url.search,init);
+    });
+    await f.act(mode());await f.settle();
+    const assistant=f.components().find(c=>c.tag==="forma-creative-assistant"&&c.closest("forma-chat-studio"));
+    assert.ok(assistant?.embedded);const panels=f.components().filter(c=>c.tag==="forma-assistant-panel");
+    assert.equal(panels.length,1);assert.equal(panels[0].embedded,true);assert.equal(panels[0].open,true);
+    assert.deepEqual(panels[0].modes,["guidance"]);
+    assert.equal(f.tree().visible("textarea").length,1,"There is never a second visible chat composer");
+    assert.equal(f.tree().visible("button").some(node=>classed(node,"forma-assistant-launcher")||classed(node,"forma-assistant-close")),false);
+    assert.equal(f.tree().visible("section").find(node=>classed(node,"forma-assistant-panel")).attributes.role,"region");
+    assert.equal(h.requests.filter(r=>r.url.startsWith("/api/assistant")).length,1,"Opening only reads native context");
+    assert.equal(h.requests.some(r=>r.url.startsWith("/api/assistant")&&r.init.method==="POST"),false);
+    assert.equal(x.owner.captureCommandDeparture().blocked(),true,"The hidden creative draft still owns departure");
+    await f.act(mode());await f.settle();
+    assert.equal(x.field().port.value,"Retain my creative draft");
+    assert.equal(f.components().filter(c=>c.tag==="forma-assistant-panel").length,0);
+    assert.equal(f.store.events.get(),before.events);assert.equal(f.store.content.get(),before.content);
+    assert.deepEqual(financial(h.worker),before.financial);assert.equal(nativeReads.mock.callCount(),1);
+  });

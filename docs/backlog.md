@@ -211,3 +211,7 @@ services, qualification and enrollment remain in the Sites capability checklist.
 ## MEM-003 semantic follow-up — 2026-09-20
 
 [Bounded semantic follow-up](forma-memory-semantic-followup-2026-09-20.md) is implemented on the feature branch: actual prompt inputs, dependent-answer retirement and non-resurrection. Track migration0063’s non-additive trigger upgrade explicitly in owner/hosted review. No deployment or enrollment is claimed; continue every open row of the [completion matrix](forma-memory-completion-matrix-2026-09-20.md).
+
+### MEM-003 Chat Studio guidance checkpoint
+
+[Read-only embedded Memory guidance](forma-memory-chat-guidance-2026-09-20.md) is implemented and locally tested on the Memory branch. The [full native completion matrix](forma-memory-completion-matrix-2026-09-20.md) remains authoritative; creative-edit/output ancestry, autocomplete, long-term consolidation, resource coverage and integrated capacity are still implementation work. External provisioning, owner deployment and affirmative enrollment remain separate To Do gates.

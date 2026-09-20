@@ -626,3 +626,44 @@ forma-assistant-panel[data-browse-launcher="true"] > .forma-assistant-launcher {
   block-size: var(--forma-assistant-browse-size);
   min-block-size: var(--forma-assistant-browse-size);
 }
+
+/* Chat Studio has one in-flow guidance composer, never a second floating owner. */
+forma-assistant-panel[data-embedded="true"] {
+  position: static;
+  inset: auto;
+  z-index: auto;
+  inline-size: 100%;
+  min-inline-size: 0;
+  pointer-events: auto;
+}
+forma-assistant-panel[data-embedded="true"] > .forma-assistant-panel {
+  inline-size: 100%;
+  max-inline-size: 100%;
+  max-block-size: none;
+  box-shadow: none;
+}
+forma-assistant-panel[data-embedded="true"] .forma-assistant-transcript {
+  max-block-size: min(38rem, 60dvh);
+}
+
+.chat-view-page .chat-conversation > header > .chat-guidance-mode {
+  display: grid;
+  align-items: start;
+  gap: .375rem;
+  margin-block-start: .75rem;
+}
+.chat-view-page .chat-guidance-mode > button {
+  justify-self: start;
+  max-inline-size: 100%;
+  white-space: normal;
+  text-align: start;
+}
+.chat-view-page .chat-guidance-mode > p { margin: 0; font-size: .875rem; }
+.chat-view-page .chat-conversation[data-guidance="true"] { grid-template-rows: auto minmax(0, 1fr); }
+.chat-conversation[data-guidance="true"] > forma-creative-assistant {
+  display: block;
+  min-inline-size: 0;
+  min-block-size: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+}

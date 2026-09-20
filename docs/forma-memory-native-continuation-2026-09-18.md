@@ -220,3 +220,7 @@ personal/shared D1 verification. Existing unregistered origins fail closed and
 are swept; no live database was migrated. Continue the complete native matrix.
 
 [Bounded semantic follow-up](forma-memory-semantic-followup-2026-09-20.md) closes the specialist’s bounded generated-answer history and downstream retirement, with personal/shared D1 journeys and exact migration qualification. Migration0063 is schema-only but includes a hash-pinned trigger replacement, not a purely additive rollout. The complete native matrix remains active.
+
+## Chat Studio semantic guidance continuation
+
+[Embedded Memory guidance](forma-memory-chat-guidance-2026-09-20.md) now connects the actual Chat Studio conversation pane to canonical specialist consent, semantic prompts, bounded follow-up ancestry and privacy retirement. It preserves the ordinary creative draft and disables untracked document actions. This closes read-only Chat guidance integration, not Memory-assisted creative edits/outputs, exact-field autocomplete, whole-request capacity or the other required native workstreams. Local browser/runtime evidence and reproduced baseline failures are recorded in the linked checkpoint; no deployment or enrollment occurred.

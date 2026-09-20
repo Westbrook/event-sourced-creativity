@@ -46,6 +46,15 @@ type MemoryAnswerLease = {
  * Ask about the current page, selected work, recent authorized activity, and reviewable next steps without leaving the page.
  */
 export class FormaCreativeAssistant extends FormaElement {
+  static override properties = { embedded: { type: Boolean } };
+  declare embedded: boolean;
+  #embeddedStarted = false;
+  constructor() { super(); this.embedded = false; }
+  #ownsEmbeddedChat() {
+    return this.embedded && assistantSurfaceForRoute(this.store.route.get()).page === "chat"
+      && Boolean(this.closest("forma-chat-studio"));
+  }
+
   #open = false;
   #memoryOpen = false;
   #memoryScope = "";
@@ -60,7 +69,7 @@ export class FormaCreativeAssistant extends FormaElement {
   #semanticLeases=new Map<string,{elapsed:ReturnType<typeof createMemoryElapsed>;duration:number;validUntil:string}>();
   #semanticRetired=new Map<string,string>();
   #semanticTimer=0;
-  #semanticHidden=()=>{this.#closeMemoryRecall();this.#retireSemanticReviews();};
+  #semanticHidden=()=>{this.#closeMemoryRecall();this.#retireSemanticReviews();this.requestUpdate();};
   #retainSemanticReceipt(id:string,presentation:SemanticMemoryAnswerPresentation){
     if(!this.#open||document.visibilityState!=="visible"||memoryPrivacyMutationActive())return false;
     const now=Date.now();if(!parseSemanticMemoryAnswerPresentation(presentation,now)||presentation.validUntil<=(this.#semanticRetired.get(id)??''))return false;
@@ -83,9 +92,10 @@ export class FormaCreativeAssistant extends FormaElement {
     for(const id of ids)this.#retentionVersions.set('withdrawal:execution:'+id,++this.#withdrawalRevision);
     this.#tasks=this.#tasks.map(task=>task.executionId&&ids.has(task.executionId)?this.#taskReference(task):task);
     const active=this.#specialist;
-    if(active&&(active.semanticMemory||active.memoryRequested||ids.has(active.executionId)))this.#withdrawSpecialist(active);
+    const activeRetired=Boolean(active&&(active.semanticMemory||active.memoryRequested||ids.has(active.executionId)));
+    if(active&&activeRetired)this.#withdrawSpecialist(active);
     if(ids.size)this.#readRevision++;
-    this.requestUpdate();
+    if(ids.size||activeRetired)this.requestUpdate();
   }
   #memoryFocus = () => { this.#pruneMemoryAnswers(); this.#pruneSemanticReceipts(); this.requestUpdate(); };
   #memoryDisconnect?: () => void;
@@ -1221,6 +1231,7 @@ export class FormaCreativeAssistant extends FormaElement {
   }
 
   async #tool(input: { message: string; mode: Exclude<AssistantInteractionMode, "guidance"> }) {
+    if (this.embedded) return; // Chat Studio owns its separate document-edit composer.
     const panel = this.querySelector<FormaAssistantPanel>("forma-assistant-panel");
     const scope = this.#scope(), source = this.store.captureSourceOwnership();
     const session = this.store.session.get();
@@ -1338,6 +1349,7 @@ export class FormaCreativeAssistant extends FormaElement {
   }
 
   async #proposal(detail: { proposal: AssistantDisplayedProposal; action: "accept" | "dismiss" }) {
+    if (this.embedded) return; // Memory guidance never authors untracked document changes.
     const { proposal, action } = detail;
     if (!this.store.sourceOwnershipActive(this.store.captureSourceOwnership())) return;
     if (proposal.kind === "navigate") {
@@ -1430,7 +1442,9 @@ export class FormaCreativeAssistant extends FormaElement {
     const session = this.store.session.get();
     const surface = assistantSurfaceForRoute(this.store.route.get());
     const interaction = this.#interaction();
-    if (!session?.assistant?.enabled || surface.host !== "creator" || !surface.available || !session.policy.accepted || interaction.presentation !== "floating") {
+    const embedded = this.#ownsEmbeddedChat() && interaction.presentation === "embedded";
+    if (embedded && !this.#embeddedStarted) { this.#embeddedStarted = true; this.#open = true; }
+    if (!session?.assistant?.enabled || surface.host !== "creator" || !surface.available || !session.policy.accepted || (this.embedded ? !embedded : interaction.presentation !== "floating")) {
       this.#clearPrivateState(scope);
       return nothing;
     }
@@ -1438,7 +1452,7 @@ export class FormaCreativeAssistant extends FormaElement {
     const projection = this.store.projection.get();
     const documentId = surface.canvasId ? this.store.canvasPlanningDocumentId() : projection.documentId;
     const planning = Boolean(documentId && this.store.documentJobActive("structure_adaptive", documentId,surface.canvasId??null));
-    const next = this.#open ? this.#nextContext() : null;
+    const next = this.#open && !embedded ? this.#nextContext() : null;
     const chatting = Boolean(documentId && this.store.documentJobActive("chat", documentId));
     const busyModes: AssistantInteractionMode[] = [...(this.store.planningConsent.get() ? ["plan-document" as const, "plan-board" as const] : []), ...(chatting ? ["creative-chat" as const] : [])];
     const messages = this.#messages.map((message) => message.reviewMode
@@ -1446,8 +1460,8 @@ export class FormaCreativeAssistant extends FormaElement {
         ? this.store.adaptiveStructureFor(documentId)
         : surface.canvasId&&this.store.adaptiveSuggestionSetsFor(documentId,surface.canvasId).length) }
       : message);
-    return html`<forma-assistant-panel .open=${this.#open} .conversationScope=${this.#scope()} .context=${this.#context} .messages=${messages} .proposals=${this.#proposals}
-      .tasks=${this.#tasks} .models=${session.assistant.models ?? []} .modes=${interaction.modes}
+    return html`<forma-assistant-panel .embedded=${embedded} data-embedded=${String(embedded)} .open=${this.#open} .conversationScope=${this.#scope()} .context=${this.#context} .messages=${messages} .proposals=${this.#proposals}
+      .tasks=${this.#tasks} .models=${session.assistant.models ?? []} .modes=${embedded ? ["guidance"] : interaction.modes}
       .busyModes=${busyModes}
       .continuation=${this.#open ? html`${next ? renderLifecycleNextActionCards(creativeNextActions(next.facts), this.i18n, action => this.#followNextAction(action), {
         projectName: next.projectName, documentTitle: next.document.title,
@@ -1457,8 +1471,8 @@ export class FormaCreativeAssistant extends FormaElement {
       .retainGuidanceDraft=${true} .guidanceDelivery=${this.#guidance?.status ?? ""}
       .canSpecialist=${this.#canSpecialist()} .specialist=${this.#specialist}
       .canReconcile=${false}
-      .pending=${this.#pending.size + this.#activeTasks.size + Number(planning)} .readOnly=${!this.#canAuthor()}
-      .guidanceOnly=${this.#canAuthor() && (session.assistant.phase !== "actions" || !surface.documentId)}
+      .pending=${this.#pending.size + this.#activeTasks.size + Number(planning)} .readOnly=${embedded || !this.#canAuthor()}
+      .guidanceOnly=${embedded || this.#canAuthor() && (session.assistant.phase !== "actions" || !surface.documentId)}
       @forma-assistant-toggle=${(event: CustomEvent<{ open: boolean }>) => { this.#nextNavigation += 1; this.#open = event.detail.open; if (!this.#open) { this.#closeMemory(); this.#specialist = null; this.#reviewRevision += 1; } this.requestUpdate(); if (this.#open) void this.#load(); }}
       @forma-assistant-message=${(event: CustomEvent<{ message: string; mode?: Exclude<AssistantInteractionMode, "guidance"> }>) => { if (event.detail.mode) void this.#tool({ message: event.detail.message, mode: event.detail.mode }); else void this.#send({ message: event.detail.message }); }}
       @forma-assistant-guidance-recovery=${(event: CustomEvent<{ action: "check" | "retry" }>) => { if (event.detail.action === "check") void this.#load(); else void this.#deliverGuidance(); }}

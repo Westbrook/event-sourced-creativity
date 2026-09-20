@@ -2,6 +2,7 @@ import { html, nothing } from "lit";
 import { live } from "lit/directives/live.js";
 import { FormaElement, icon } from "./forma-element";
 import { navigateInApp } from "./command-departure";
+import { loadRouteComponent } from "../route-loader";
 import { captureOutputNavigationFocus, outputNavigationOwnedRouteFocus, type OutputNavigationFocusLease } from "./output-navigation-focus";
 import { ensureModalDialog } from "./modal-dialog";
 import type { FormaUiPopover } from "./design-system/feedback";
@@ -192,6 +193,11 @@ export class StudioModeNav extends FormaElement {
     if(path===this.store.route.get())return;
     void navigateInApp(this,async navigation=>{
       if(onAdmitted&&(!onAdmitted()||!navigation.current()))return false;
+      // Register the selected view before its old owner unmounts. A committed
+      // route can retire that owner's presentation lease before Shell's later
+      // route notification; module loading must not depend on that focus tail.
+      await loadRouteComponent(path);
+      if(!navigation.current())return false;
       const opened=await navigation.route(path);
       if(opened&&present&&navigation.current())await new Promise<void>(resolve=>requestAnimationFrame(()=>{
         if(navigation.current())document.getElementById("output-title")?.scrollIntoView({block:"start",behavior:matchMedia("(prefers-reduced-motion: reduce)").matches?"auto":"smooth"});

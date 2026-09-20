@@ -16738,14 +16738,14 @@ for(const shared of [false,true])test('semantic assistant consumer: approved req
  const replay=await specialistRetrieve(state,review,options);assert.equal(replay.status,404);assert.equal(calls.length,1);
 });
 
-async function semanticPaidConsumerFixture(t,{shared=false,prior=false}={}){
+async function semanticPaidConsumerFixture(t,{shared=false,prior=false,chat=false}={}){
  const state=await semanticAssistantContextFixture(t,{shared,crossScope:true});
  state.env.FORMA_ASSISTANT_PROVIDER_USER_IDS=state.current().actor_user_id;state.env.OPENAI_API_KEY='fixture-provider-key';
  state.sqlite.exec(await(await import('node:fs/promises')).readFile(new URL('../drizzle/0061_memory_derivation_consumers.sql',import.meta.url),'utf8'));
  state.sqlite.exec(await(await import('node:fs/promises')).readFile(new URL('../drizzle/0062_memory_derivation_consumer_sources.sql',import.meta.url),'utf8'));
  state.sqlite.exec(await(await import('node:fs/promises')).readFile(new URL('../drizzle/0063_memory_derivation_consumer_parents.sql',import.meta.url),'utf8'));
  await state.widen();assert.equal((await state.contextAccept(await state.contextGet())).status,200);
- const options={route:'/document/'+state.recallTarget.documentId,project:state.current().project_id};
+ const options={route:'/document/'+state.recallTarget.documentId+(chat?'/memory-guidance/view/chat':''),project:state.current().project_id};
  for(let i=0;i<Number(prior);i++)await specialistFreeTurn(state,'semantic-original-prior-turn'+(i?'-'+i:''),'Keep the original constraints.',options);
  const turn=await specialistFreeTurn(state,'semantic-consumer-privacy-turn','What should I do next?',options);
  const quote=async()=>{const response=await specialistProtocolRequest(state,{action:'quote',turnId:turn.id,memory:'saved'},options);return {response,body:await response.json()};};
@@ -17146,4 +17146,25 @@ test('semantic followup: complete native lineage limit denies a new purchase wit
  const root=state.followupReviews[0];state.sqlite.prepare('DELETE FROM private_content WHERE content_id=(SELECT result_ref FROM consequential_executions WHERE execution_id=?)').run(root.executionId);
  assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM memory_derivation_consumers WHERE state='active'").get().n,0);
  assert.equal(state.sqlite.prepare('SELECT SUM(verified_tokens) AS n FROM consequential_execution_steps WHERE execution_id IN(SELECT execution_id FROM memory_derivation_consumers)').get().n,17*1300);
+});
+
+for(const shared of [false,true])test('Chat Studio semantic guidance: canonical approval, prompt, followup and withdrawal '+shared,async t=>{
+ const state=await semanticPaidConsumerFixture(t,{shared,chat:true}),original=globalThis.fetch,calls=[];
+ globalThis.fetch=async(_url,init)=>{const payload=JSON.parse(init.body);calls.push(payload);return specialistRawResponse(payload);};t.after(()=>{globalThis.fetch=original;});
+ const beforeEvents=state.sqlite.prepare("SELECT COUNT(*) AS n FROM events WHERE type IN ('BlockCreated','BlockUpdated','OutputGenerated')").get().n;
+ const {response,body:review}=await state.semanticQuote();assert.equal(response.status,200,JSON.stringify(review));assert.equal(calls.length,0);
+ assert.equal(review.originalRequest.route,state.semanticOptions.route);
+ assert.equal((await specialistExecute(state,review,state.semanticOptions)).status,202);await state.drainBackground();
+ const r=await specialistRetrieve(state,review,state.semanticOptions),body=await r.json();assert.equal(r.status,200,JSON.stringify(body));
+ assert.equal(body.result.sourceStatus,'semantic-memory-assisted');assert.equal(calls.length,1);
+ assert.match(JSON.stringify(calls[0]),/semantic-memory-evidence-v1/);assert.equal(body.proposals?.length??0,0);
+ const turn=await specialistFreeTurn(state,'chat-semantic-followup','Explain that recommendation.',state.semanticOptions);
+ const q=await specialistProtocolRequest(state,{action:'quote',turnId:turn.id,memory:'saved'},state.semanticOptions),next=await q.json();assert.equal(q.status,200,JSON.stringify(next));
+ assert.equal((await specialistExecute(state,next,state.semanticOptions)).status,202);await state.drainBackground();
+ assert.equal(calls.length,2);assert.match(JSON.stringify(calls[1]),/Earlier Memory-assisted answer/);
+ assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM events WHERE type IN ('BlockCreated','BlockUpdated','OutputGenerated')").get().n,beforeEvents,'Guidance does not author document edits or generated outputs');
+ state.sqlite.exec('DELETE FROM memory_derivation_contexts');
+ assert.equal((await specialistRetrieve(state,review,state.semanticOptions)).status,404);assert.equal((await specialistRetrieve(state,next,state.semanticOptions)).status,404);
+ assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM memory_derivation_consumers WHERE state='active'").get().n,0);
+ assert.equal(calls.length,2);
 });

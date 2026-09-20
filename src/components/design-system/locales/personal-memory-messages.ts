@@ -1,5 +1,8 @@
 export const FORMA_PERSONAL_MEMORY_MESSAGES = {
   en: {
+    "memory.live.chatGuidanceOpen": "Memory-aware guidance",
+    "memory.live.chatGuidanceReturn": "Return to creative chat",
+    "memory.live.chatGuidanceHelp": "Discuss this document without changing it. Send a question, then review a specialist answer and explicitly include saved Memory. Paid work still requires approval. Your creative draft stays here.",
     "memory.live.assistantContextHeading": "Saved assistant context",
     "memory.live.assistantContextChoiceHelp": "Keep a private reference to this note for review in the assistant. This replaces the previous selection; it does not send a prompt or change the document.",
     "memory.live.assistantContextAccept": "Keep for assistant",
@@ -378,6 +381,9 @@ export const FORMA_PERSONAL_MEMORY_MESSAGES = {
     "memory.live.reminder": "Saved permission, rollout availability, and a completed review are different states. Scheduling delivery is not yet verified."
   },
   fr: {
+    "memory.live.chatGuidanceOpen": "Conseils avec mémoire",
+    "memory.live.chatGuidanceReturn": "Revenir à la conversation créative",
+    "memory.live.chatGuidanceHelp": "Discutez de ce document sans le modifier. Envoyez une question, puis examinez une réponse spécialisée et incluez explicitement la mémoire enregistrée. Toute opération payante nécessite votre accord. Votre brouillon créatif reste ici.",
     "memory.live.assistantContextHeading": "Contexte enregistré de l’assistant",
     "memory.live.assistantContextChoiceHelp": "Conservez une référence privée à cette note pour la consulter dans l’assistant. Elle remplace la sélection précédente sans envoyer de requête ni modifier le document.",
     "memory.live.assistantContextAccept": "Conserver pour l’assistant",
@@ -756,6 +762,9 @@ export const FORMA_PERSONAL_MEMORY_MESSAGES = {
     "memory.live.reminder": "Une autorisation enregistrée, la disponibilité du déploiement et un examen terminé sont des états différents. L’exécution de la planification n’est pas encore vérifiée."
   },
   ar: {
+    "memory.live.chatGuidanceOpen": "إرشادات مستعينة بالذاكرة",
+    "memory.live.chatGuidanceReturn": "العودة إلى المحادثة الإبداعية",
+    "memory.live.chatGuidanceHelp": "ناقش هذا المستند دون تغييره. أرسل سؤالًا، ثم راجع إجابة متخصصة وأدرج الذاكرة المحفوظة صراحةً. لا يزال العمل المدفوع يتطلب الموافقة. تبقى مسودتك الإبداعية هنا.",
     "memory.live.assistantContextHeading": "سياق المساعد المحفوظ",
     "memory.live.assistantContextChoiceHelp": "احتفظ بمرجع خاص إلى هذه الملاحظة لمراجعتها في المساعد. يحل محل الاختيار السابق دون إرسال طلب أو تغيير المستند.",
     "memory.live.assistantContextAccept": "الاحتفاظ للمساعد",
@@ -1134,6 +1143,9 @@ export const FORMA_PERSONAL_MEMORY_MESSAGES = {
     "memory.live.reminder": "الإذن المحفوظ، وتوافر الميزة ضمن النشر، واكتمال المراجعة حالات مختلفة. لم يُتحقق بعد من تنفيذ الجدولة."
   },
   ja: {
+    "memory.live.chatGuidanceOpen": "メモリを使ったガイダンス",
+    "memory.live.chatGuidanceReturn": "制作チャットに戻る",
+    "memory.live.chatGuidanceHelp": "文書を変更せずに相談します。質問を送信し、専門回答を確認して、保存済みメモリを明示的に含めてください。有料処理には引き続き承認が必要です。制作中の下書きはここに保持されます。",
     "memory.live.assistantContextHeading": "保存したアシスタントのコンテキスト",
     "memory.live.assistantContextChoiceHelp": "このメモへの非公開の参照を保存し、アシスタントで確認できます。以前の選択を置き換えますが、プロンプトの送信や文書の変更は行いません。",
     "memory.live.assistantContextAccept": "アシスタント用に保存",

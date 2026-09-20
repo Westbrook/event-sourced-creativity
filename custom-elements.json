@@ -2818,6 +2818,14 @@
             },
             {
               "kind": "field",
+              "name": "embedded",
+              "type": {
+                "text": "boolean"
+              },
+              "attribute": "embedded"
+            },
+            {
+              "kind": "field",
               "name": "guidanceDelivery",
               "type": {
                 "text": "\"\" | \"uncertain\" | \"sending\""
@@ -3014,6 +3022,13 @@
               "fieldName": "conversationScope",
               "type": {
                 "text": "string"
+              }
+            },
+            {
+              "name": "embedded",
+              "fieldName": "embedded",
+              "type": {
+                "text": "boolean"
               }
             },
             {
@@ -11608,6 +11623,23 @@
                 "type": {
                   "text": "CommandDeparture"
                 }
+              }
+            },
+            {
+              "kind": "field",
+              "name": "embedded",
+              "type": {
+                "text": "boolean"
+              },
+              "attribute": "embedded"
+            }
+          ],
+          "attributes": [
+            {
+              "name": "embedded",
+              "fieldName": "embedded",
+              "type": {
+                "text": "boolean"
               }
             }
           ],

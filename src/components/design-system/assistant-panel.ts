@@ -212,6 +212,7 @@ export function assistantApprovedRequestCanStop(state: AssistantSpecialistReview
 export class FormaAssistantPanel extends FormaPresentationalElement {
   static override properties = {
     open: { type: Boolean },
+    embedded: { type: Boolean },
     messages: { attribute: false },
     proposals: { attribute: false },
     tasks: { attribute: false },
@@ -233,6 +234,7 @@ export class FormaAssistantPanel extends FormaPresentationalElement {
   };
 
   declare open: boolean;
+  declare embedded: boolean;
   declare messages: AssistantDisplayedMessage[];
   declare proposals: AssistantDisplayedProposal[];
   declare tasks: AssistantDisplayedTask[];
@@ -273,7 +275,7 @@ export class FormaAssistantPanel extends FormaPresentationalElement {
     this.#schedulePosition();
   };
   #schedulePosition = () => {
-    if (this.#positionFrame || this.open && this.dataset.browseSlot !== "true" && this.dataset.browseLane !== "true") return;
+    if (this.embedded || this.#positionFrame || this.open && this.dataset.browseSlot !== "true" && this.dataset.browseLane !== "true") return;
     this.#positionFrame = requestAnimationFrame(() => {
       this.#positionFrame = 0;
       this.#positionLauncher();
@@ -307,6 +309,7 @@ export class FormaAssistantPanel extends FormaPresentationalElement {
   constructor() {
     super();
     this.open = false;
+    this.embedded = false;
     this.messages = [];
     this.proposals = [];
     this.tasks = [];
@@ -366,7 +369,7 @@ export class FormaAssistantPanel extends FormaPresentationalElement {
   protected override updated(changed: PropertyValues) {
     super.updated(changed);
     if (changed.has("modes") && !this.modes.includes(this.#activeMode)) this.#activeMode = "guidance";
-    if (changed.has("open") && this.open) queueMicrotask(() => { if (!this.specialist && !document.querySelector("dialog:modal")) this.querySelector<HTMLTextAreaElement>(".forma-assistant-input")?.focus(); });
+    if (!this.embedded && changed.has("open") && this.open) queueMicrotask(() => { if (!this.specialist && !document.querySelector("dialog:modal")) this.querySelector<HTMLTextAreaElement>(".forma-assistant-input")?.focus(); });
     if (changed.has("open") && !this.open && changed.get("open")) {
       const launcher = this.querySelector<HTMLButtonElement>(".forma-assistant-launcher");
       queueMicrotask(() => {
@@ -1075,6 +1078,7 @@ export class FormaAssistantPanel extends FormaPresentationalElement {
   }
 
   #positionLauncher(allowReservation = true) {
+    if (this.embedded) return;
     if (this.open) {
       if (this.dataset.browseSlot === "true") {
         this.#clearBrowseLauncher();
@@ -1687,8 +1691,8 @@ export class FormaAssistantPanel extends FormaPresentationalElement {
     const protectedOverflow=Math.max(0,Number(context?.totals.protectedDecisions??0)-includedProtected);
     const protectedTextOverflow=Number(context?.totals.truncatedProtectedDecisions??0);
     const unsafeRights=Number(context?.totals.unsafeRightsDecisions??0);
-    return html`<section class="forma-assistant-panel" role="dialog" aria-modal="false" aria-labelledby="forma-assistant-title" @keydown=${(event: KeyboardEvent) => { if (event.key === "Escape" && !event.isComposing && !document.querySelector("dialog:modal")) { event.preventDefault(); event.stopPropagation(); this.#toggle(false); } }}>
-      <header class="forma-assistant-header"><div><h2 id="forma-assistant-title" data-assistant-heading tabindex="-1">${this.i18n.t("assistant.heading")}</h2><small>${this.i18n.t("assistant.privacy")}</small></div><button type="button" class="icon-button forma-assistant-close" aria-label=${this.i18n.t("assistant.close")} @click=${() => this.#toggle(false)}>${icon("close")}</button></header>
+    return html`<section class="forma-assistant-panel" role=${this.embedded ? "region" : "dialog"} aria-modal=${this.embedded ? nothing : "false"} aria-labelledby="forma-assistant-title" @keydown=${(event: KeyboardEvent) => { if (!this.embedded && event.key === "Escape" && !event.isComposing && !document.querySelector("dialog:modal")) { event.preventDefault(); event.stopPropagation(); this.#toggle(false); } }}>
+      <header class="forma-assistant-header"><div><h2 id="forma-assistant-title" data-assistant-heading tabindex="-1">${this.i18n.t("assistant.heading")}</h2><small>${this.i18n.t("assistant.privacy")}</small></div>${this.embedded ? nothing : html`<button type="button" class="icon-button forma-assistant-close" aria-label=${this.i18n.t("assistant.close")} @click=${() => this.#toggle(false)}>${icon("close")}</button>`}</header>
       <div class="forma-assistant-transcript">
         ${this.continuation !== nothing ? html`<div class="forma-assistant-continuation">
           ${this.navigationBlocked ? html`<p class="forma-assistant-mode-detail">${this.i18n.t("next.lifecycle.assistantOwnsWork", "Clear unsent drafts or review the current request before continuing; wait if it is still running. Closing the Assistant keeps drafts and does not cancel submitted requests.")}</p>` : nothing}
