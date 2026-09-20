@@ -303,7 +303,7 @@ export class StillApp extends LitElement {
   private localDiagnostics(reason:string, formats=false){return decisionDiagnostics(this.client.projection,{...this.decisionPosition(),...(formats?{view:'choose-format'}:{})},this.client.abilities,{head:this.client.head,source:'fallback',reason,localEvents:localHistoryEvidence(this.client.events),artifactKind:this.client.projection.artifacts.find(a=>a.id===this.client.position.outputId)?.kind});}
   private recordDecision(result:DecisionResponse,disposition:string,scope:string,started:number,firstResponseMs?:number){
     if(!this.developer||this.disposed||scope!==this.diagnosticScope())return;
-    this.developerReceived={firstResponseMs,delivery:result.delivery,preparation:result.preparation,cache:result.cache,receivedAt:Date.now(),at:new Date().toLocaleTimeString(),requestElapsedMs:Math.max(0,performance.now()-started),disposition,trace:result.diagnostics,source:result.source,reason:result.reason,recommended:result.paletteActions?.map(a=>a.id)??(result.formats?.length?result.formats:result.actions?.map(a=>a.id)??[])};
+    this.developerReceived={firstResponseMs,delivery:result.delivery,originalTiming:result.originalTiming,preparation:result.preparation,cache:result.cache,receivedAt:Date.now(),at:new Date().toLocaleTimeString(),requestElapsedMs:Math.max(0,performance.now()-started),disposition,trace:result.diagnostics,source:result.source,reason:result.reason,recommended:result.paletteActions?.map(a=>a.id)??(result.formats?.length?result.formats:result.actions?.map(a=>a.id)??[])};
     if(disposition==='Applied')this.developerApplied=result.diagnostics;
     this.changed();
   }

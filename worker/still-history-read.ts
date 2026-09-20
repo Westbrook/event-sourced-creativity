@@ -19,3 +19,16 @@ export async function readStillHistoryPage(env:WorkerEnv,stream:string,after:num
  if(result.results.some(r=>r.payload===null))throw new Error('history_event_too_large');
  return result.results.map(serializeEvent);
 }
+
+/** Two bounded windows supply the same selected evidence as a full replay. */
+export async function readStillFocusedHistory(env:WorkerEnv,stream:string,head:number,position:{documentId?:string;blockId?:string;outputId?:string}){
+ if(!position.documentId&&!position.blockId&&!position.outputId)return [];
+ const matches=`((?<>'' AND json_extract(${source},'$.document_id')=?) OR (?<>'' AND json_extract(${source},'$.block_id')=?) OR (?<>'' AND (json_extract(${source},'$.object_id')=? OR json_extract(${source},'$.artifact_id')=? OR EXISTS(SELECT 1 FROM json_each(${source},'$.object_ids') WHERE value=?))))`;
+ const params=[position.documentId??'',position.documentId??'',position.blockId??'',position.blockId??'',position.outputId??'',position.outputId??'',position.outputId??'',position.outputId??''];
+ const query=(attention:boolean)=>env.DB.prepare(`SELECT event.event_id,event.stream_id,event.sequence,event.occurred_at,event.recorded_at,event.actor,event.client_id,event.correlation_id,event.causation_id,event.compensates_event_id,event.schema_version,event.type,${metadata} AS payload
+ FROM events event LEFT JOIN event_private_payloads secret ON secret.private_event_id=event.event_id AND secret.redacted_at IS NULL
+ WHERE event.stream_id=? AND event.sequence<=? AND ${attention?"event.type='AttentionEpisodeObserved'":"substr(event.type,1,9)<>'Attention'"} AND ${matches}
+ ORDER BY event.sequence DESC LIMIT 35`).bind(stream,head,...params);
+ const pages=await env.DB.batch<Record<string,unknown>>([query(false),query(true)]);
+ return pages.flatMap(p=>p.results.map(serializeEvent)).sort((a,b)=>a.sequence-b.sequence);
+}

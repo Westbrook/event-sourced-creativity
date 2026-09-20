@@ -20,7 +20,7 @@ type CachedDecision={status:number;body:Record<string,unknown>;reusable:boolean}
 const decisionCaches=new WeakMap<object,DecisionMemo<CachedDecision>>();
 function decisionCache(env:WorkerEnv){
   let cache=decisionCaches.get(env.DB);
-  if(!cache){cache=new DecisionMemo<CachedDecision>({accept:value=>value.status===200&&value.reusable});decisionCaches.set(env.DB,cache);}
+  if(!cache){cache=new DecisionMemo<CachedDecision>({accept:value=>value.status===200&&value.reusable,latency:value=>(value.body.delivery as DecisionResponse["delivery"])?.serverMs});decisionCaches.set(env.DB,cache);}
   return cache;
 }
 export async function handleStillDecision(request: Request, env: WorkerEnv, context: WorkerExecutionContext) {
@@ -66,7 +66,7 @@ export async function handleStillDecision(request: Request, env: WorkerEnv, cont
       const retained=stored.contentRef?await loadPrivateContent(env,auth.user.userId,'all',undefined,[stored.contentRef]):{};
       if(await decisionHash(retained)===stored.contentHash&&await sourceVersion(env,auth.user,false)===revision){
         const ageMs=Math.max(0,Date.now()-stored.createdAt),totalMs=Date.now()-preparationStarted;
-        return reply({...stored.response,preparation:{source:'decision-cache',eventsRead:0,head:stored.response.head,elapsedMs:0,sessionMs,selectedContentMs:0,totalMs},cache:{layer:'server',status:'hit',ageMs,remainingMs:Math.max(0,stored.expiresAt-Date.now()),originalLatencyMs:stored.response.delivery?.serverMs??0,stored:true}});
+        return reply({...stored.response,originalTiming:{preparation:stored.response.preparation,delivery:stored.response.delivery},delivery:{stage:'complete',serverMs:totalMs},preparation:{source:'decision-cache',eventsRead:0,head:stored.response.head,elapsedMs:0,sessionMs,selectedContentMs:0,totalMs},cache:{layer:'server',status:'hit',ageMs,remainingMs:Math.max(0,stored.expiresAt-Date.now()),originalLatencyMs:stored.response.delivery?.serverMs??0,stored:true}});
       }
     }
   }
@@ -174,13 +174,15 @@ export async function handleStillDecision(request: Request, env: WorkerEnv, cont
   const cached=await decisionCache(env).run(key,async()=>{
     const response=await compute(),body=await response.json() as Record<string,unknown>;
     const trace=body.diagnostics as {passes?:DecisionPass[]}|undefined;
-    return {status:response.status,body:{...body,delivery:delivery('complete')},reusable:!failedPass&&body.source==='jev'&&!body.reason&&typeof body.model==='string'&&!(trace?.passes?.some(p=>p.status==='failed'))};
+    return {status:response.status,body:{...body,preparation,delivery:delivery('complete')},reusable:!failedPass&&body.source==='jev'&&!body.reason&&typeof body.model==='string'&&!(trace?.passes?.some(p=>p.status==='failed'))};
   },input.cacheBypass===true);
+  const persistenceStarted=Date.now();
   if(durableKey&&cached.value.reusable&&cached.cache.status!=='hit'&&await sourceVersion(env,auth.user,false)===revision){
     // Commit before answering: an immediate reload must be able to reuse it.
     await writeStoredDecision(env,durableKey,auth.user.userId,{response:cached.value.body as DecisionResponse,contentRef:selectedRef??undefined,contentHash:await decisionHash(content)});
   }
-  return reply({...cached.value.body,preparation,cache:{...cached.cache,layer:'server'}},cached.value.status);
+  const original=cached.value.body as DecisionResponse;
+  return reply({...original,originalTiming:{preparation:original.preparation,delivery:original.delivery},preparation,delivery:{...delivery('complete'),cacheWriteMs:Date.now()-persistenceStarted},cache:{...cached.cache,layer:'server'}},cached.value.status);
   };
   if(!request.headers.get('accept')?.includes('application/x-ndjson'))return complete();
   const encoder=new TextEncoder();let closed=false;

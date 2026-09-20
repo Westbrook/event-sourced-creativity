@@ -2299,3 +2299,9 @@ export const stillPanelCommands=sqliteTable('still_panel_commands',{
   seq:integer('seq').primaryKey({autoIncrement:true}),sessionId:text('session_id').notNull(),
   type:text('type').notNull(),value:text('value').notNull(),scope:text('scope').notNull(),createdAt:integer('created_at').notNull(),
 },t=>[index('idx_still_panel_commands').on(t.sessionId,t.seq)]);
+
+/** Compressed derived history; never an authority or a creative record. */
+export const stillHistoryCache = sqliteTable('still_history_cache', {
+  cacheKey:text('cache_key').primaryKey(), ownerId:text('owner_id').notNull(),
+  createdAt:integer('created_at').notNull(), expiresAt:integer('expires_at').notNull(), body:text('body').notNull(),
+},table=>[index('idx_still_history_cache_expiry').on(table.expiresAt),index('idx_still_history_cache_owner').on(table.ownerId,table.createdAt)]);

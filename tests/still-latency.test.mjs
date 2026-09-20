@@ -68,7 +68,8 @@ test('warm personal history uses constant-size revision proof; private edits and
   await request();let queries=[];f.controls.beforeRead=s=>queries.push(s.sql);f.controls.beforeBatch=ss=>queries.push(...ss.map(s=>s.sql));
   const warm=await request();assert.equal(warm.preparation.source,'snapshot');assert.equal(warm.cache.status,'hit');
   assert.ok(queries.some(sql=>sql.includes('AS generation')&&sql.includes('scene_source_generations')));
-  assert.ok(!queries.some(sql=>sql.includes('ORDER BY event.sequence')&&sql.includes('secret.private_json')),'No full witness');
+  assert.ok(!queries.some(sql=>sql.includes('AS private_json')&&sql.includes('secret.redacted_at')),'No full witness');
+  assert.ok(!queries.some(sql=>sql.includes('WITH page AS MATERIALIZED')),'No global history replay');
   assert.ok(!queries.some(sql=>sql.includes('SELECT * FROM events LEFT JOIN')),'No event page for unchanged history');
   const row=f.sqlite.prepare("SELECT secret.private_event_id,secret.private_json FROM event_private_payloads secret JOIN events event ON event.event_id=secret.private_event_id WHERE secret.document_id=? AND event.type='BlockCreated' LIMIT 1").get(f.documentId);
   assert.ok(row);const payload=JSON.parse(row.private_json);payload.properties={...payload.properties,text:'PRIVATE ALTERED DIRECTION'};

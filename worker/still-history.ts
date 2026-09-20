@@ -1,9 +1,10 @@
-import { createHistoryCollector, installHistorySummary } from '../src/still/history.ts';
+import {appendOnlyHistory,historyCounts,historyStoreKey,loadHistorySnapshot,saveHistorySnapshot,discardHistorySnapshot,type PreparedHistory} from './still-history-store.ts';
+import { createHistoryCollector, installHistorySummary, historySummary } from '../src/still/history.ts';
 import { readProjectEventPage } from './project-access.ts';
 import type { ProjectRequestContext } from './project-request-context.ts';
 import type { CreativeEvent, CreativeProjection } from '../src/model/events.ts';
 import { foldEvents } from '../src/model/events.ts';
-import { readStillHistoryPage, STILL_REPLAY_TYPES } from './still-history-read.ts';
+import { readStillHistoryPage, readStillFocusedHistory, STILL_REPLAY_TYPES } from './still-history-read.ts';
 import { streamHead } from './event-stream-read.ts';
 import type { PilotUser } from './pilot-policy.ts';
 import type { WorkerEnv } from './runtime.ts';
@@ -12,11 +13,11 @@ import { captureSceneSourceVersion, sceneSourceSchemaAssertion } from './scene-s
 // These are expendable read accelerators, never creative storage or authority.
 // Shared snapshots recheck canonical resource/retention allowlists and rebuild
 // on any head change; certified personal revisions validate exact reuse.
-type Snapshot={events:CreativeEvent[];head:number;expires:number;projections:Map<string,CreativeProjection>};
+type Snapshot={events:CreativeEvent[];head:number;expires:number;projections:Map<string,CreativeProjection>;prepared?:PreparedHistory};
 const stores=new WeakMap<object,Map<string,Snapshot>>();
 const maxBytes=16_000_000,ttl=300_000;
 const weights=new WeakMap<Snapshot,number>();
-export type HistoryReceipt={source:'snapshot'|'incremental'|'fresh'|'shared'|'shared-snapshot';eventsRead:number;head:number;elapsedMs:number};
+export type HistoryReceipt={source:'snapshot'|'persistent-snapshot'|'incremental'|'fresh'|'shared'|'shared-snapshot';eventsRead:number;head:number;elapsedMs:number;readPages?:number;readMs?:number;cacheReadMs?:number;cacheWriteMs?:number;focusedReadMs?:number;focusedEventsRead?:number;persisted?:boolean};
 // Older schemas use a bounded exact hash, never an all-history payload array.
 async function witness(env:WorkerEnv,user:PilotUser,head:number){
  let after=0,digest='';
@@ -36,7 +37,6 @@ async function witness(env:WorkerEnv,user:PilotUser,head:number){
  return digest;
 }
 const witnesses=new WeakMap<Snapshot,string>();
-const versions=new WeakMap<Snapshot,string>();
 /** Existing transactional triggers cover appends, private-body edits/withdrawals
  * and rebuild epochs. No authored rows or cached authority are introduced. */
 export async function sourceVersion(env:WorkerEnv,user:PilotUser,activate=true):Promise<string|null>{
@@ -55,7 +55,7 @@ export async function sourceVersion(env:WorkerEnv,user:PilotUser,activate=true):
   }catch{return null;} // Older/missing schema uses the original full witness.
 }
 export async function readStillHistory(request:Request,env:WorkerEnv,user:PilotUser,scope:string,shared:ProjectRequestContext|undefined,position:{documentId?:string;blockId?:string;outputId?:string}={}){
-  scope+=JSON.stringify([position.documentId,position.blockId,position.outputId]);
+  if(shared)scope+=JSON.stringify([position.documentId,position.blockId,position.outputId]);
   const started=Date.now();let store=stores.get(env.DB);if(!store){store=new Map();stores.set(env.DB,store);}
   const old=store.get(scope);
   if(shared){
@@ -68,39 +68,63 @@ export async function readStillHistory(request:Request,env:WorkerEnv,user:PilotU
     witnesses.set(snapshot,proof!);remember(store,scope,snapshot);
     return result(snapshot,{source:'shared',eventsRead:events.length,head:target,elapsedMs:Date.now()-started});
   }
-  const version=await sourceVersion(env,user);
-  if(version&&old&&old.expires>Date.now()&&versions.get(old)===version)
-    return result(old,{source:'snapshot',eventsRead:0,head:old.head,elapsedMs:Date.now()-started});
-  // A certified revision covers all payload edits, withdrawals and stream changes.
-  // It replaces both expensive payload witnesses even on a cold start.
+  const version=await sourceVersion(env,user),key=await historyStoreKey(user.userId,user.streamId,scope);
+  const cacheStarted=Date.now();
+  let prepared=version?(old&&old.expires>Date.now()?old.prepared:undefined)??await loadHistorySnapshot(env,key,user.userId):undefined;
+  const cacheReadMs=Date.now()-cacheStarted;
+  let source:HistoryReceipt['source']=prepared===old?.prepared?'snapshot':'persistent-snapshot';
+  let counts:Awaited<ReturnType<typeof historyCounts>>=null;
+  if(prepared&&prepared.version!==version){
+    counts=await historyCounts(env,user.streamId,prepared.head);
+    if(version&&appendOnlyHistory(prepared,version,counts))source='incremental';
+    else{prepared=undefined;store.delete(scope);await discardHistorySnapshot(env,key,user.userId);}
+  }
   const target=version?Number(JSON.parse(version)[3]):await streamHead(env,user.streamId);
   const before=version??await witness(env,user,target);
-  const events:CreativeEvent[]=[],collector=createHistoryCollector(position),replayTypes=new Set<string>(STILL_REPLAY_TYPES);let after=0,bytes=0,eventsRead=0;
-  for(;;){
-    const page=await readStillHistoryPage(env,user.streamId,after,target);
-    if(!page.length)break;
-    for(const event of page){
-      eventsRead++;
-      // Remove SQL null placeholders before retaining compact history samples.
-      if(!replayTypes.has(event.type))event.payload=Object.fromEntries(Object.entries(event.payload).filter(([,v])=>v!==null));
-      collector.accept(event);
-      if(replayTypes.has(event.type)){
-        bytes+=JSON.stringify(event).length*2+256;
-        if(bytes>16_000_000)throw new Error('history_capacity');
-        events.push(event);
+  let eventsRead=0,readPages=0,readMs=0,cacheWriteMs=0,persisted=source==='persistent-snapshot';
+  let snapshot:Snapshot;
+  if(prepared&&prepared.version===version){
+    snapshot=old?.prepared===prepared?old:{events:prepared.events,head:target,expires:Date.now()+ttl,projections:new Map(),prepared};
+  }else{
+    source=prepared?'incremental':'fresh';
+    const events:CreativeEvent[]=prepared?[...prepared.events]:[],collector=createHistoryCollector(version?{}:position,prepared?.checkpoint),replayTypes=new Set<string>(STILL_REPLAY_TYPES);
+    let after=prepared?.head??0,bytes=events.reduce((n,e)=>n+JSON.stringify(e).length*2+256,0);
+    for(;;){
+      const at=Date.now(),page=await readStillHistoryPage(env,user.streamId,after,target);readMs+=Date.now()-at;readPages++;
+      if(!page.length)break;
+      for(const event of page){
+        eventsRead++;
+        if(!replayTypes.has(event.type))event.payload=Object.fromEntries(Object.entries(event.payload).filter(([,v])=>v!==null));
+        collector.accept(event);
+        if(replayTypes.has(event.type)){
+          bytes+=JSON.stringify(event).length*2+256;
+          if(bytes>16_000_000)throw new Error('history_capacity');
+          events.push(event);
+        }
+        if(eventsRead+(prepared?.checkpoint.accessibleEvents??0)>150_000)throw new Error('history_capacity');
       }
-      if(eventsRead>150_000)throw new Error('history_capacity');
+      after=page.at(-1)!.sequence;if(after>=target)break;
     }
-    after=page.at(-1)!.sequence;if(after>=target)break;
+    counts??=await historyCounts(env,user.streamId,prepared?.head??0);
+    const afterProof=version?await sourceVersion(env,user,false):await witness(env,user,target);
+    if(afterProof!==before){store.delete(scope);await discardHistorySnapshot(env,key,user.userId);throw new Error('History changed. Try again.');}
+    prepared=version&&counts?{version,head:target,privateCount:counts.privateBodies,events,checkpoint:collector.checkpoint()}:undefined;
+    snapshot={events,head:target,expires:Date.now()+ttl,projections:new Map(),prepared};
+    weights.set(snapshot,bytes+500_000);
+    // The legacy uncertified path remains usable but cannot persist or increment.
+    if(!prepared)installHistorySummary(events,collector.finish());
+    if(prepared){const at=Date.now();persisted=await saveHistorySnapshot(env,key,user.userId,prepared);cacheWriteMs=Date.now()-at;}
   }
-  const afterProof=version?await sourceVersion(env,user,false):await witness(env,user,target);
-  if(afterProof!==before){store.delete(scope);throw new Error('History changed. Try again.');}
-  const snapshot:Snapshot={events,head:target,expires:Date.now()+ttl,projections:new Map()};
-  const summary=collector.finish();installHistorySummary(events,summary);
-  weights.set(snapshot,bytes+250_000);
-  if(version)versions.set(snapshot,version);else witnesses.set(snapshot,before);
+  const focusedStarted=Date.now(),focused=version?await readStillFocusedHistory(env,user.streamId,target,position):[],focusedReadMs=Date.now()-focusedStarted;
+  if(version&&await sourceVersion(env,user,false)!==version){store.delete(scope);await discardHistorySnapshot(env,key,user.userId);throw new Error('History changed. Try again.');}
   remember(store,scope,snapshot);
-  return result(snapshot,{source:'fresh',eventsRead,head:target,elapsedMs:Date.now()-started});
+  // Each request owns its evidence array: concurrent selections must not replace
+  // one another's summary in the WeakMap used by the decision builder.
+  const events=[...snapshot.events];
+  const summary=snapshot.prepared?createHistoryCollector({},snapshot.prepared.checkpoint).finish():historySummary(snapshot.events)!;
+  summary.useful=[...new Map([...summary.useful,...focused.filter(e=>!e.type.startsWith('Attention')||e.sequence>summary.forgotten)].map(e=>[e.sequence,e])).values()].sort((a,b)=>a.sequence-b.sequence);
+  installHistorySummary(events,summary);
+  return {...result(snapshot,{source,eventsRead,head:target,elapsedMs:Date.now()-started,readPages,readMs,cacheReadMs,cacheWriteMs,focusedReadMs,focusedEventsRead:focused.length,persisted}),events};
 }
 function remember(store:Map<string,Snapshot>,scope:string,snapshot:Snapshot){
  store.delete(scope);
