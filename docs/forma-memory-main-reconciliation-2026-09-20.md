@@ -46,3 +46,12 @@ The [full remaining implementation](forma-memory-native-continuation-2026-09-18.
 and [external/operational checklist](forma-memory-sites-capability-todo-2026-09-18.md#capabilities-not-available-directly-through-the-inspected-sites-tools)
 remain open. No enrollment, service provisioning, remote push or deployment is
 implied by this merge.
+
+The broader follow-up also found and fixed independent maintenance ordering:
+Still/general-retention failure no longer skips Memory privacy/accounting work.
+[Native consumer and scheduled integration](forma-memory-native-consumer-source-2026-09-20.md)
+records the regression and its focused scheduled-entry checks.
+
+The synthetic D1 snapshot helper now preserves native AUTOINCREMENT sequence
+state, including deleted high-water marks introduced by the actual Still schema.
+This is local test infrastructure only, not a live database migration/repair.

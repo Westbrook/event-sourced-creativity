@@ -18,6 +18,57 @@ const columns = ['target_enrollment_id','actor_user_id','target_revision','job_i
   'boundary_revision','hierarchy_revision','revision','state','created_at','expires_at'] as const;
 const headers = { 'cache-control': 'private, no-store', vary: 'Cookie, oai-authenticated-user-id, oai-authenticated-user-email' };
 const answer = (body: Row, status=200) => Response.json({version,...body},{status,headers});
+/** Opaque, request-local native source evidence. JSON display references cannot
+ * reconstruct this handle. It is NOT execution consent, a provider reservation,
+ * a generated-answer origin, or permission to mutate an authored field. */
+declare const savedContextRead: unique symbol;
+export type NativeSavedAssistantContext = Readonly<{ readonly [savedContextRead]: true }>;
+type SavedContextSelection = {
+ actorUserId:string; targetEnrollmentId:string; targetRevision:number; projectId:string; documentId:string;
+ contextRevision:string; jobId:string; outputSha256:string; sourceEnrollmentId:string; sourceRevision:number;
+ boundaryRevision:string|null; hierarchyRevision:string|null; expiresAt:string; validUntil:string;
+ relation:{zoom:string;distance:number;weight:number};
+};
+type SavedContextCapture = { env:WorkerEnv; current:()=>boolean; selection:SavedContextSelection;
+ source:NonNullable<Awaited<ReturnType<typeof readNativeDerivationResult>>>; guards:MemorySqlGuard[] };
+const savedContextCaptures=new WeakMap<NativeSavedAssistantContext,SavedContextCapture>();
+const savedContextResponses=new WeakMap<Response,NativeSavedAssistantContext>();
+function contextCapture(env:WorkerEnv,handle:NativeSavedAssistantContext){
+ const captured=savedContextCaptures.get(handle);
+ if(!captured||captured.env!==env||!captured.current())throw Error('assistant_context_source_expired');
+ // The original native source lease is not renewed by reading this adapter.
+ nativeDerivationResultInputs(env,captured.source);return captured;
+}
+/** Native source preparation, deliberately independent from public JSON. Only
+ * an authenticated GET of an accepted, freshly checked reference can create a
+ * handle. Dismissed/unavailable/metadata-only views never create one. */
+export async function prepareNativeSavedAssistantContext(request:Request,env:WorkerEnv):Promise<NativeSavedAssistantContext|null>{
+ const url=new URL(request.url);
+ if(request.method!=='GET'||url.pathname!=='/api/memory/assistant-context'||url.searchParams.has('controls'))return null;
+ const response=await handleMemoryAssistantContext(request,env),handle=savedContextResponses.get(response);
+ if(!handle)return null;
+ try{contextCapture(env,handle);return handle;}catch{return null;}
+}
+/** Owned copies only. Selection metadata is kept separate from untrusted model
+ * interpretation; callers must not treat relevance weights as confidence. */
+export function nativeSavedAssistantContextInputs(env:WorkerEnv,handle:NativeSavedAssistantContext){
+ const captured=contextCapture(env,handle);
+ return {selection:structuredClone(captured.selection),presentation:nativeDerivationResultInputs(env,captured.source)};
+}
+/** Replay source, target, hierarchy, boundary, consent and saved-reference DB
+ * checks inside the consumer's atomic publication transaction. Environment and
+ * lease checks run before constructing and acknowledging that proof. Returning
+ * data above alone does not certify a subsequent write. */
+export function nativeSavedAssistantContextStatements(env:WorkerEnv,handle:NativeSavedAssistantContext){
+ const captured=contextCapture(env,handle);
+ return [...nativeDerivationResultStatements(env,captured.source),...packRecallGuards(captured.guards).map(g=>derivationAssertion(env,g))];
+}
+export function nativeSavedAssistantContextMatches(env:WorkerEnv,handle:NativeSavedAssistantContext,results:unknown){
+ try{const count=nativeSavedAssistantContextStatements(env,handle).length;
+  return derivationResults(results,count)&&proofMatches(results);
+ }catch{return false;}
+}
+
 const identity = (e: LiveMemoryEnrollment) => ({actorId:e.actor_user_id,ownerId:e.owner_user_id,organizationId:e.organization_id,projectId:e.project_id,documentId:e.document_id});
 function snapshot(sql:string, bindings:readonly (string|number|null)[], rows:Row[], keys:readonly string[]):MemorySqlGuard {
   return {condition:`(SELECT json_group_array(json_array(${keys.map(k=>'"'+k+'"').join(',')})) FROM (${sql}))=?`,
@@ -130,10 +181,18 @@ export async function handleMemoryAssistantContext(request:Request,env:WorkerEnv
       if(!current()||!derivationResults(result,proof.length+2)||!proofMatches(result.slice(0,proof.length))||!derivationVerified(result.at(-1)!))throw Error('context_commit');
       return answer({saved:true,refreshRequired:true});
     }
-    const result=await db.batch(proof);nativeDerivationResultInputs(env,handle);
-    if(!current()||!derivationResults(result,proof.length)||!proofMatches(result))throw Error('context_changed');
-    return answer({...metadata(),context:{revision:old!.revision,state:'accepted',jobId,source:{enrollmentId:source.enrollment_id,projectId:source.project_id,documentId:source.document_id,...relation},purpose:bound.purpose,expiresAt},
-      presentation,independentEvidence:false,completeHistory:false});
+    const nativeHandle=Object.freeze({}) as NativeSavedAssistantContext;
+    savedContextCaptures.set(nativeHandle,{env,current,source:handle,guards:structuredClone(guards),selection:{
+      actorUserId:actor.userId,targetEnrollmentId:target.enrollment_id,targetRevision:target.revision,projectId,documentId,
+      contextRevision:String(old!.revision),jobId,outputSha256:bound.outputSha256,sourceEnrollmentId:source.enrollment_id,
+      sourceRevision:source.revision,boundaryRevision,hierarchyRevision,expiresAt,validUntil:new Date(deadline).toISOString(),relation:structuredClone(relation),
+    }});
+    const result=await db.batch(nativeSavedAssistantContextStatements(env,nativeHandle));
+    if(!nativeSavedAssistantContextMatches(env,nativeHandle,result))throw Error('context_changed');
+    const final=nativeSavedAssistantContextInputs(env,nativeHandle);
+    const response=answer({...metadata(),context:{revision:old!.revision,state:'accepted',jobId,source:{enrollmentId:source.enrollment_id,projectId:source.project_id,documentId:source.document_id,...relation},purpose:bound.purpose,expiresAt},
+      presentation:final.presentation,independentEvidence:false,completeHistory:false});
+    savedContextResponses.set(response,nativeHandle);return response;
   }catch{return answer({error:request.method==='GET'?'assistant_context_unavailable':'assistant_context_commit_unconfirmed',noAutomaticRetry:true},503);}
 }
 function proofMatches(results:D1Result<Row>[]){return results.every(r=>derivationVerified(r)||r.results.length===1&&derivationExact(r.results[0],['context_source_asserted'])&&r.results[0]!.context_source_asserted===1);}

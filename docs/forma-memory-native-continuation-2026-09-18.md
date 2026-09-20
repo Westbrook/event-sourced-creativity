@@ -194,3 +194,10 @@ release. Broader automatic assistant/autocomplete, long-term reconciliation,
 Library/Canvas/cross-owner scopes and integration qualification remain tracked
 in the native continuation; external scheduling/provider/index qualification
 and enrollment remain separate gates.
+
+
+[Native saved-context source evidence](forma-memory-native-consumer-source-2026-09-20.md)
+now supplies the shared opaque source preparation and transactional replay used
+by the existing authenticated reference reader. This is not generated-answer or
+edit publication. The [consolidated completion matrix](forma-memory-completion-matrix-2026-09-20.md)
+keeps every remaining native workstream distinct from external/operational gates.

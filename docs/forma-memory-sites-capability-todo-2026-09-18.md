@@ -211,3 +211,10 @@ and enrollment remain separate gates.
 ## Contextual profile and privacy continuation — 2026-09-20
 
 [Contextual retained profiles, native resource evidence and privacy integration](forma-memory-contextual-profile-2026-09-20.md) implement bounded retained-profile reconciliation, explicitly negotiated native page/block citation locations, nearest-per-band project/tree/partition context, extended consumption windows and source-free cross-tab privacy invalidation. This is branch work with local evidence, not whole-plan completion or release. Automatic prompt/answer publication, exact-field autocomplete/undo provenance, longer-term semantic consolidation and broader native resource/owner scopes remain implementation work. External and operational gates above are unchanged.
+
+
+[Native saved-context source evidence](forma-memory-native-consumer-source-2026-09-20.md)
+now supplies the shared opaque source preparation and transactional replay used
+by the existing authenticated reference reader. This is not generated-answer or
+edit publication. The [consolidated completion matrix](forma-memory-completion-matrix-2026-09-20.md)
+keeps every remaining native workstream distinct from external/operational gates.

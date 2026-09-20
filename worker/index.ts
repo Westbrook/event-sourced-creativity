@@ -378,13 +378,13 @@ export default {
     return new Response(response.body,{status:response.status,statusText:response.statusText,headers});
   },
   async scheduled(_controller: unknown, env: WorkerEnv): Promise<void> {
-    await sweepStillPanels(env);
-    await observeScheduledRetention(env,1_000);
     try {
-      // Run every bounded, source-free cleanup step even if an earlier one fails.
+      // Run each independent maintenance step even if an earlier one fails.
       // These steps never enroll, infer, dispatch or retry a provider request.
       let cleanupFailed = false, cleanupError: unknown;
       const cleanupSteps = [
+        () => sweepStillPanels(env),
+        () => observeScheduledRetention(env,1_000),
         () => sweepExpiredMemoryCheckpoints(env,128),
         () => sweepExpiredDocumentProfileSuppressions(env,128),
         () => sweepExpiredDerivationGrants(env,128),

@@ -1971,6 +1971,12 @@ test("explicit personal erasure transactionally scrubs only the exact actor's pr
 
 test("actual scheduled retention physically erases expired privileged conversation text and records truthful maintenance counts", async () => {
   const state = await fixture();
+  state.sqlite.exec(await(await import('node:fs/promises')).readFile(new URL('../drizzle/0043_still_panel_relay.sql',import.meta.url),'utf8'));
+  const panelTime=Date.now();
+  for(const [id,expires]of [['expired-panel',panelTime-60000],['active-panel',panelTime+60000]]){
+    state.sqlite.prepare('INSERT INTO still_panel_sessions(id,owner_id,token_hash,expires_at,heartbeat,scope,revision) VALUES(?,?,?,?,?,?,0)').run(id,'synthetic-owner','0'.repeat(64),expires,panelTime,'');
+    state.sqlite.prepare('INSERT INTO still_panel_commands(session_id,type,value,scope,created_at) VALUES(?,?,?,?,?)').run(id,'synthetic-setting','synthetic-value','',panelTime);
+  }
   const headers = await platformHeaders(state, "operations");
   const route = platformEndpoint("/operations/providers");
   const expiredTurn = crypto.randomUUID();
@@ -1985,6 +1991,8 @@ test("actual scheduled retention physically erases expired privileged conversati
     .run(expired, expiredTurn);
   const metadataBefore = state.sqlite.prepare("SELECT event_id FROM platform_assistant_events ORDER BY event_id").all();
   await worker.scheduled({}, state.env);
+  assert.deepEqual(state.sqlite.prepare('SELECT id FROM still_panel_sessions ORDER BY id').all().map(row=>row.id),['active-panel']);
+  assert.deepEqual(state.sqlite.prepare('SELECT session_id FROM still_panel_commands ORDER BY seq').all().map(row=>row.session_id),['active-panel']);
 
   const removed = state.sqlite.prepare("SELECT content,redacted_at FROM platform_assistant_private_content WHERE content_id IN(SELECT content_id FROM platform_assistant_events WHERE turn_id=? AND content_id IS NOT NULL)")
     .all(expiredTurn);
@@ -9498,7 +9506,7 @@ async function nativeMemoryJobFixture(t, { shared = false, beforeEnrollment } = 
   const state = await postContextFixture({ shared, short: true });
   t.after(() => finishOrdinaryFeed(state, { failures: [] }));
   const { readFile } = await import('node:fs/promises');
-  for (const name of ['0025_memory_live_base.sql', '0026_memory_live_conversation.sql'])
+  for (const name of ['0025_memory_live_base.sql', '0026_memory_live_conversation.sql', '0043_still_panel_relay.sql'])
     state.sqlite.exec(await readFile(new URL('../drizzle/' + name, import.meta.url), 'utf8'));
   if (beforeEnrollment) await beforeEnrollment(state);
   const prepared = await nativeMemoryPrepare(state);
@@ -16450,4 +16458,94 @@ test('semantic context retirement: actual isolated D1 acceptance and atomic boun
  const reset=await state.recallRequest('recall-boundary',state.recallSource.document_id,{method:'DELETE',body:{confirmation:'RESET_RECALL_BOUNDARY'}});
  assert.equal(reset.status,200,await reset.clone().text());assert.equal((await actual.prepare('SELECT COUNT(*) AS n FROM memory_derivation_contexts').first()).n,0);
  assert.equal((await state.contextGet()).context,null);assert.equal((await actual.prepare('SELECT state FROM memory_derivation_results WHERE job_id=?').bind(state.executionJob.job_id).first()).state,'active');
+});
+
+
+for(const shared of [false,true])for(const crossScope of [false,true])test('native saved context source: opaque revalidated consumer evidence '+shared+'/'+crossScope,async t=>{
+ const state=await semanticAssistantContextFixture(t,{shared,crossScope});if(crossScope)await state.widen();
+ const api=await import('../worker/memory-assistant-context-api.ts');
+ const projectId=state.current().project_id,documentId=crossScope?state.recallTarget.documentId:state.current().document_id;
+ const request=()=>new Request('http://localhost/api/memory/assistant-context?'+new URLSearchParams({projectId,documentId}),{headers:state.owner});
+ assert.equal(await api.prepareNativeSavedAssistantContext(request(),state.env),null,'no accepted reference');
+ assert.equal((await state.contextAccept(await state.contextGet())).status,200);
+ const before=adaptiveReentryFinancialState(state),events=state.sqlite.prepare('SELECT COUNT(*) AS n FROM events').get().n;
+ const handle=await api.prepareNativeSavedAssistantContext(request(),state.env);assert.ok(handle);assert.deepEqual(JSON.stringify(handle),'{}');
+ const input=api.nativeSavedAssistantContextInputs(state.env,handle),saved=structuredClone(input);
+ assert.equal(input.selection.actorUserId,state.current().actor_user_id);assert.equal(input.selection.documentId,documentId);
+ assert.equal(input.selection.sourceEnrollmentId,state.current().enrollment_id);assert.equal(input.selection.jobId,state.executionJob.job_id);
+ assert.equal(input.selection.relation.zoom,crossScope?'project':'document');assert.ok(input.presentation.candidate.items.length);
+ input.selection.documentId='forged';input.presentation.candidate.items[0].text='untrusted replacement';
+ assert.deepEqual(api.nativeSavedAssistantContextInputs(state.env,handle),saved,'owned copies cannot change the original source');
+ const proof=api.nativeSavedAssistantContextStatements(state.env,handle),results=await state.env.DB.batch(proof);
+ assert.equal(api.nativeSavedAssistantContextMatches(state.env,handle,results),true);
+ assert.equal(api.nativeSavedAssistantContextMatches(state.env,handle,[]),false);
+ assert.throws(()=>api.nativeSavedAssistantContextInputs(state.env,JSON.parse(JSON.stringify(handle))));
+ assert.throws(()=>api.nativeSavedAssistantContextInputs({...state.env},handle),'an environment alias is not the native request owner');
+ assert.equal(state.sqlite.prepare('SELECT COUNT(*) AS n FROM events').get().n,events);assert.deepEqual(adaptiveReentryFinancialState(state),before);
+});
+for(const fault of ['dismiss','replace','source','result','target','boundary','configuration','database','wall-clock-backward','monotonic-expiry'])test('native saved context source: retained proof closes after '+fault,async t=>{
+ const state=await semanticAssistantContextFixture(t,{crossScope:true});await state.widen();assert.equal((await state.contextAccept(await state.contextGet())).status,200);
+ const api=await import('../worker/memory-assistant-context-api.ts'),request=new Request('http://localhost/api/memory/assistant-context?'+new URLSearchParams({projectId:state.current().project_id,documentId:state.recallTarget.documentId}),{headers:state.owner});
+ const handle=await api.prepareNativeSavedAssistantContext(request,state.env);assert.ok(handle);
+ const statements=api.nativeSavedAssistantContextStatements(state.env,handle),oldNow=Date.now,oldPerformance=performance.now,db=state.env.DB;
+ try{
+  if(fault==='dismiss')assert.equal((await state.contextRequest('DELETE',{revision:(await state.contextGet()).context.revision,confirmation:'DISMISS_ASSISTANT_CONTEXT'})).status,200);
+  if(fault==='replace')assert.equal((await state.contextAccept(await state.contextGet())).status,200);
+  if(fault==='source')state.sqlite.prepare("UPDATE private_content SET content='changed' WHERE content_id=?").run(JSON.parse(state.provider.nativeDerivationCandidateInputs(state.env,state.resultReceipt).manifest).originalBacking[0].contentRef);
+  if(fault==='result')assert.equal(await state.resultStore.withdrawNativeDerivationResult(state.env,state.current().actor_user_id,state.executionJob.job_id),true);
+  if(fault==='target')state.sqlite.prepare('UPDATE memory_live_enrollments SET recall_enabled=0 WHERE enrollment_id=?').run(state.recallTarget.id);
+  if(fault==='boundary')state.sqlite.prepare('DELETE FROM memory_recall_boundaries WHERE enrollment_id=?').run(state.recallSource.enrollment_id);
+  if(fault==='configuration')state.env.FORMA_MEMORY_ENABLED='false';
+  if(fault==='database')state.env.DB={...db};
+  if(fault==='wall-clock-backward'){const now=Date.now();Date.now=()=>now-60000;}
+  if(fault==='monotonic-expiry'){const now=performance.now();performance.now=()=>now+60000;}
+  if(['configuration','database','wall-clock-backward','monotonic-expiry'].includes(fault)){
+   assert.throws(()=>api.nativeSavedAssistantContextInputs(state.env,handle));
+   assert.throws(()=>api.nativeSavedAssistantContextStatements(state.env,handle));
+   assert.equal(api.nativeSavedAssistantContextMatches(state.env,handle,await db.batch(statements)),false);
+  }else await assert.rejects(()=>db.batch(statements),'publication must replay the original source, not trust cached inputs');
+ }finally{Date.now=oldNow;performance.now=oldPerformance;state.env.DB=db;}
+});
+test('native saved context source: metadata, mutation and wrong endpoint are not source preparation',async t=>{
+ const state=await semanticAssistantContextFixture(t);assert.equal((await state.contextAccept(await state.contextGet())).status,200);
+ const {prepareNativeSavedAssistantContext}=await import('../worker/memory-assistant-context-api.ts');
+ const query='?projectId=project-atmosphere&documentId=doc-atmosphere';
+ for(const [path,method]of [['/api/memory/assistant-context'+query+'&controls=1','GET'],['/api/memory/assistant-context'+query,'POST'],['/api/memory/other'+query,'GET']]){
+  assert.equal(await prepareNativeSavedAssistantContext(new Request('http://localhost'+path,{method,headers:state.owner}),state.env),null);
+ }
+});
+
+
+for(const fault of ['still','retention','both'])test('native scheduled maintenance: independent cleanup and accounting survive '+fault,async t=>{
+ const state=await nativeDerivationResultFixture(t);assert.equal((await state.resultStore.publishNativeDerivationResult(state.env,state.resultReceipt)).status,'stored');
+ const db=state.env.DB,prepare=db.prepare;let failed=false,retentionAttempted=false,resultExpiryAttempted=false,recoveryRead=false,remindersAttempted=false;
+ db.prepare=function(sql){
+  if(sql.startsWith('DELETE FROM still_panel_commands')&&fault!=='retention'){failed=true;throw Error('isolated-still-cleanup-failure');}
+  if(sql.startsWith('INSERT INTO retention_sweep_runs')){retentionAttempted=true;if(fault!=='still'){failed=true;throw Error('isolated-retention-cleanup-failure');}}
+  if(failed&&sql.startsWith('SELECT (SELECT COUNT(*) FROM memory_derivation_results'))resultExpiryAttempted=true;
+  if(failed&&sql.startsWith('SELECT f.finance_id FROM memory_derivation_finance'))recoveryRead=true;
+  if(sql.includes('FROM project_review_tasks task JOIN organizations'))remindersAttempted=true;
+  return prepare.call(this,sql);
+ };t.after(()=>{db.prepare=prepare;});
+ const before=state.table('memory_live_runs');state.env.FORMA_MEMORY_SCHEDULING_ENABLED='true';state.due();
+ await assert.rejects(()=>worker.scheduled({},state.env),fault==='retention'?/isolated-retention-cleanup-failure/:/isolated-still-cleanup-failure/);
+ assert.equal(failed,true);assert.equal(retentionAttempted,true);assert.equal(resultExpiryAttempted,true);assert.equal(recoveryRead,true);assert.equal(remindersAttempted,true);
+ assert.deepEqual(state.table('memory_live_runs'),before,'any failed cleanup blocks new learning');
+ assert.equal(state.sqlite.prepare('SELECT used_microusd FROM cost_budget_reservations').get().used_microusd,580);assert.equal(state.calls.length,0);
+});
+
+
+test('native derivation schema: main Still autoincrement history survives isolated D1 snapshot', {timeout:120000},async t=>{
+ const state=await nativeDerivationFixture(t),{createRequire}=await import('node:module');
+ const {Miniflare,Log,LogLevel}=createRequire(import.meta.resolve('wrangler'))('miniflare');
+ const {exportSynthetic,install}=await import('./helpers/model3d-workerd-snapshot.mjs');
+ const mf=new Miniflare({modules:true,compatibilityDate:'2026-05-15',host:'127.0.0.1',port:0,log:new Log(LogLevel.NONE),d1Databases:['MainMemory'],
+  script:"export default {fetch(){return new Response('Synthetic snapshot only',{status:404});}};",outboundService(){throw Error('No external requests');}});
+ t.after(()=>mf.dispose());
+ const sql="INSERT INTO still_panel_commands(seq,session_id,type,value,scope,created_at) VALUES(?,'synthetic-panel','setting','value','',1)";
+ state.sqlite.prepare(sql).run(7);state.sqlite.prepare(sql).run(1000);state.sqlite.prepare('DELETE FROM still_panel_commands WHERE seq=1000').run();
+ const db=await mf.getD1Database('MainMemory');await install(db,exportSynthetic(state.sqlite));
+ await db.prepare("INSERT INTO still_panel_commands(session_id,type,value,scope,created_at) VALUES('synthetic-panel','setting','next','',2)").run();
+ assert.deepEqual((await db.prepare('SELECT seq FROM still_panel_commands ORDER BY seq').all()).results.map(row=>row.seq),[7,1001]);
+ assert.deepEqual((await db.prepare('PRAGMA foreign_key_check').all()).results,[]);
 });
