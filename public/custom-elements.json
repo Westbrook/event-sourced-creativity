@@ -15885,6 +15885,68 @@
     },
     {
       "kind": "javascript-module",
+      "path": "src/components/project-containment.ts",
+      "declarations": [
+        {
+          "kind": "class",
+          "name": "FormaProjectContainment",
+          "tagName": "forma-project-containment",
+          "customElement": true,
+          "summary": "Project containment application interface.",
+          "description": "Explicit, short-lived structure editing. Never writes grants or enrolls Memory.",
+          "superclass": {
+            "name": "FormaElement",
+            "module": "src/components/forma-element.ts"
+          },
+          "members": [
+            {
+              "kind": "field",
+              "name": "projectId",
+              "type": {
+                "text": "string"
+              },
+              "default": "''",
+              "attribute": "project-id"
+            }
+          ],
+          "attributes": [
+            {
+              "name": "project-id",
+              "fieldName": "projectId",
+              "type": {
+                "text": "string"
+              },
+              "default": "''"
+            }
+          ],
+          "x-forma": {
+            "category": "application",
+            "renderRoot": "light",
+            "stateful": true
+          }
+        }
+      ],
+      "exports": [
+        {
+          "kind": "custom-element-definition",
+          "name": "forma-project-containment",
+          "declaration": {
+            "name": "FormaProjectContainment",
+            "module": "src/components/project-containment.ts"
+          }
+        },
+        {
+          "kind": "js",
+          "name": "FormaProjectContainment",
+          "declaration": {
+            "name": "FormaProjectContainment",
+            "module": "src/components/project-containment.ts"
+          }
+        }
+      ]
+    },
+    {
+      "kind": "javascript-module",
       "path": "src/components/project-rail.ts",
       "declarations": [
         {

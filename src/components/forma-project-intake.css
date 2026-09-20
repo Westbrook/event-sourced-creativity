@@ -13,3 +13,9 @@ forma-projects .project-intake summary:focus-visible { outline:3px solid var(--f
 forma-projects .project-intake-summary { display:grid; gap:.5rem; margin:0; }
 forma-projects .project-intake-summary dd { margin:0; white-space:pre-wrap; overflow-wrap:anywhere; max-block-size:18rem; overflow:auto; }
 forma-projects .project-intake footer { display:flex; flex-wrap:wrap; gap:var(--forma-space-2,.5rem); }
+
+.project-containment { margin-block-start: .75rem; }
+.project-containment section { padding-block: .5rem; }
+.project-containment p, .project-containment li { overflow-wrap: anywhere; }
+.project-containment form, .project-containment label { display: grid; gap: .5rem; min-width: 0; }
+.project-containment select { max-width: 100%; width: 100%; min-width: 0; }

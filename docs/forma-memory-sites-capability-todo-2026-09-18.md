@@ -179,3 +179,9 @@ qualification and enrollment remain separate operational gates.
 [Manual private review lifetimes](forma-memory-review-lifetime-2026-09-19.md) now retire result/correction presentation and stalled reads on monotonic expiry or clock anomalies. This locally verified privacy fix does not close broader scope/reconciliation/consumer implementation.
 
 [Native resource rename observations](forma-memory-resource-renames-2026-09-19.md) now include genuine document/block renames as descriptive edits, with strict export/origin compatibility and exact native block versions. Names remain outside model quotation inputs. Broader resource identity and automatic consumers remain implementation work.
+
+## Native project containment continuation — 2026-09-19
+
+[Native project containment](forma-memory-project-containment-2026-09-19.md) now implements same-owner nesting, reparenting/detach, independent parent access, transactional stale-edit rejection, schema/privacy inverses and localized Projects controls. Additive migration0058 is unapplied; no deployment or enrollment occurred.
+
+Still native implementation: ancestry-backed semantic recall and its durable move/erasure inverses, cross-owner hierarchy, broader resource identities/history, cross-document/long-term reconciliation and durable assistant/autocomplete consumers. Existing document-only Memory contracts are not broadened by this feature. External adapters/scheduling and operational qualification remain separately tracked; the full plan is not complete.

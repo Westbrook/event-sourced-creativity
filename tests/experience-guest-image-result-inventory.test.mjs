@@ -921,3 +921,10 @@ for(const fault of ['none','missing-inverse','inbound-view'])test('Memory observ
   if(fault==='inbound-view')f.sqlite.exec('CREATE VIEW unqualified_observation_controls AS SELECT correction_text FROM memory_derivation_observation_controls');
   configurationTripwire(f,t);if(fault==='none')assert.deepEqual(await currentManifest(f,t),before);else await denied(f,t);
 });
+
+test('guest inventory accepts exact optional native project containment without inferring guest ancestry',async t=>{
+ const f=await completedResultFixture(t,{memory:true});
+ f.sqlite.exec(readFileSync(new URL('../drizzle/0058_project_containment.sql',import.meta.url),'utf8'));
+ const guard=guardInventory(f,t);try{const cap=await inspect(f);await assertOriginalManifest(f,guestImageResultInventoryData(f.request,f.env,cap));guard.assertUntouched();}finally{guard.close();}
+ f.sqlite.exec('DROP TRIGGER project_containment_compensation');await denied(f,t);
+});

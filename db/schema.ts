@@ -2644,3 +2644,20 @@ export const memoryDerivationIndexIntents = sqliteTable('memory_derivation_index
  check('memory_index_state',sql.raw("(operation='upsert' AND generation=1 AND expires_at IS NOT NULL) OR (operation='delete' AND generation=2 AND expires_at IS NULL)")),
  check('memory_index_time',sql.raw("length(updated_at)=24 AND strftime('%Y-%m-%dT%H:%M:%fZ',updated_at) IS updated_at AND (expires_at IS NULL OR length(expires_at)=24 AND strftime('%Y-%m-%dT%H:%M:%fZ',expires_at) IS expires_at AND updated_at<expires_at)")),
 ]);
+
+/** Native containment is structure, never an inherited permission or Memory consent. */
+export const projectContainment = sqliteTable("project_containment", {
+  ownerUserId: text("owner_user_id").notNull().references(() => users.userId, { onDelete: "cascade" }),
+  projectId: text("project_id").notNull(),
+  declarationRef: text("declaration_ref").notNull().references(() => events.eventId, { onDelete: "cascade" }),
+  parentProjectId: text("parent_project_id"),
+  parentDeclarationRef: text("parent_declaration_ref").references(() => events.eventId, { onDelete: "cascade" }),
+  organizationId: text("organization_id").references(() => organizations.organizationId, { onDelete: "cascade" }),
+  revision: text("revision").notNull(),
+  updatedAt: text("updated_at").notNull(),
+}, table => [
+  primaryKey({ columns: [table.ownerUserId, table.projectId] }),
+  index("idx_project_containment_parent").on(table.ownerUserId, table.parentProjectId),
+  check("project_containment_parent_pair", sql`(${table.parentProjectId} IS NULL) = (${table.parentDeclarationRef} IS NULL)`),
+  check("project_containment_no_self", sql`${table.parentProjectId} IS NULL OR ${table.parentProjectId} <> ${table.projectId}`),
+]);
