@@ -1,3 +1,6 @@
+import { outputJobIsDurable } from '../worker/output-durable-control.ts';
+import { recoveredFalImageEventIds } from '../worker/output-fal-recovery-policy.ts';
+import { OutputConflictError } from '../worker/output-requirements-ledger.ts';
 import assert from "node:assert/strict";
 import test from "node:test";
 import { readFileSync } from "node:fs";
@@ -14,7 +17,7 @@ const sourceURL = process.env.FORMA_FAILURE_COPY_SOURCE
   ? new URL(process.env.FORMA_FAILURE_COPY_SOURCE) : new URL("../worker/document-jobs-api.ts", import.meta.url);
 const source = readFileSync(sourceURL, "utf8"), tree = ts.createSourceFile(sourceURL.pathname, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
 const names = ["parseResult", "parseRequest", "sceneConfigurationFromRequest", "generationRevisionFromRequest", "generationRequestIdentity",
-  "parentJobIdFromRequest", "fanKindFromRequest", "classifyDocumentJobFailure", "errorDetailFromResult", "failureProgressMessage", "queueRecoveryPresentation", "serializeJob", "safeScopedJob"];
+  "parentJobIdFromRequest", "fanKindFromRequest", "classifyDocumentJobFailure", "errorDetailFromResult", "failureProgressMessage", "queueRecoveryPresentation", "safetyDeliveryAvailable", "documentJobMemoryMarked", "serializeJob", "safeScopedJob"];
 const declarations = names.map(name => {
   const matches = tree.statements.filter(node => ts.isFunctionDeclaration(node) && node.name?.text === name);
   assert.equal(matches.length, 1, name); return matches[0].getText(tree);
@@ -23,7 +26,7 @@ for (const name of ["LOCAL_PERSISTENCE_FAILURE", "SOURCE_FIDELITY_FAILURE", "OUT
   const matches = tree.statements.filter(ts.isVariableStatement).flatMap(node => node.declarationList.declarations).filter(node => node.name.getText(tree) === name);
   assert.equal(matches.length, 1, name); declarations.push("const " + matches[0].getText(tree) + ";");
 }
-const dependencies = { classifyProviderFailure, publicFailureDetail, normalizePromptTechnique, documentGenerationRevision,
+const dependencies = { outputJobIsDurable, recoveredFalImageEventIds, OutputConflictError, classifyProviderFailure, publicFailureDetail, normalizePromptTechnique, documentGenerationRevision,
   documentGenerationRequestKey, model3dNativeCheckpoint, MODEL3D_PRIVATE_CHECKPOINT_KEYS };
 const compiled = ts.transpileModule(declarations.join("\n"), { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext } }).outputText;
 const helpers = new Function(...Object.keys(dependencies), compiled + "\nreturn {failureProgressMessage,serializeJob,safeScopedJob,errorDetailFromResult,classifyDocumentJobFailure};")(...Object.values(dependencies));
@@ -92,7 +95,7 @@ for (const [name, value, message] of [
   ["generic local persistence", detail("local_persistence_failed"), "Forma could not save the generation because a local database or event-store write failed. This is not a provider interruption."],
   ["source fidelity", detail("source_fidelity_validation_failed"), "The generated presentation did not preserve its required source facts, quotations, or authorized slide evidence."],
   ["execution interruption", detail("execution_interrupted"), "Forma lost contact with the generation worker before this operation finished."],
-  ["existing uncertain submission", detail("provider_submission_uncertain"), "The presentation provider request could not be confirmed. Automatic resubmission was stopped to prevent a duplicate charge."],
+  ["existing uncertain submission", detail("provider_submission_uncertain"), "We couldn’t confirm the original request. We haven’t sent it again, to avoid a duplicate charge."],
   ["ordinary safety", detail("safety_rejected", { category: "safety" }), "Safety checks stopped this generation. Change the request or reference before retrying."],
   ["unknown copy", detail("unknown", { category: "unknown", message: "Retained unrelated failure." }), "Retained unrelated failure."],
 ]) test("unrelated " + name + " behavior is unchanged", () => assert.equal(helpers.failureProgressMessage(value), message));

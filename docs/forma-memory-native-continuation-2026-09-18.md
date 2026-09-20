@@ -3,7 +3,9 @@
 This continues the full [Memory plan](forma-scope-aware-memory-plan-2026-09-02.md)
 and [Sites capability To Do](forma-memory-sites-capability-todo-2026-09-18.md).
 It is **branch work, not a production release or whole-plan completion**.
-Base: local main `7d74584bb72a1ed3cbab25ee64071994f8976d2f`.
+Initial base: local main `7d74584bb72a1ed3cbab25ee64071994f8976d2f`.
+[Current main reconciliation](forma-memory-main-reconciliation-2026-09-20.md) incorporates
+`80ed2618ac57fee8f77aef316dacd478308ac72f` and preserves upstream migration history.
 
 ## Implemented and locally verified
 

@@ -32,11 +32,11 @@ import { FormFieldElement } from '../forms-private/form-field.js';
  * @cssprop --en-ease-focus-enter - Entry easing for supplemental focus decoration.
  * @cssprop --en-ease-focus-exit - Exit easing for supplemental focus decoration.
  * @cssprop --en-control-background - Control background.
- * @cssprop --en-input-background - Field fill when no control background override is set.
- * @cssprop --en-input-color - Field text when no control color override is set.
+ * @cssprop --en-input-background - Field fill falling back to the shared control background.
+ * @cssprop --en-input-color - Field text falling back to the shared control color.
  * @cssprop --en-control-radius - Control corner radius.
  * @cssprop --en-field-gap - Gap between label, control and supporting text.
- * @cssprop --en-input-inline-padding - Text-editor inline padding; shared control-inline-padding takes precedence.
+ * @cssprop --en-input-inline-padding - Text-editor inline padding; takes precedence over shared control-inline-padding.
  * @cssprop --en-control-min-size - Minimum control block size.
  * @cssprop --en-select-appearance - Enhanced picker appearance where supported; auto retains the platform picker.
  * @cssprop --en-option-list-background - Option-list surface fill; falls back to the shared overlay hook.

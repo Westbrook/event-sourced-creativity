@@ -4034,71 +4034,6 @@
         }
       }
     },
-    "memory_derivation_recovery_cursor": {
-      "name": "memory_derivation_recovery_cursor",
-      "columns": {
-        "singleton": {
-          "name": "singleton",
-          "type": "integer",
-          "primaryKey": true,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "after_finance_id": {
-          "name": "after_finance_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "generation": {
-          "name": "generation",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "updated_at": {
-          "name": "updated_at",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        }
-      },
-      "indexes": {},
-      "foreignKeys": {
-        "memory_derivation_recovery_cursor_after_finance_id_memory_derivation_finance_finance_id_fk": {
-          "name": "memory_derivation_recovery_cursor_after_finance_id_memory_derivation_finance_finance_id_fk",
-          "tableFrom": "memory_derivation_recovery_cursor",
-          "tableTo": "memory_derivation_finance",
-          "columnsFrom": [
-            "after_finance_id"
-          ],
-          "columnsTo": [
-            "finance_id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "checkConstraints": {
-        "memory_derivation_recovery_singleton": {
-          "name": "memory_derivation_recovery_singleton",
-          "value": "\"memory_derivation_recovery_cursor\".\"singleton\"=1"
-        },
-        "memory_derivation_recovery_generation": {
-          "name": "memory_derivation_recovery_generation",
-          "value": "typeof(generation)='integer' AND generation BETWEEN 0 AND 9007199254740991"
-        },
-        "memory_derivation_recovery_time": {
-          "name": "memory_derivation_recovery_time",
-          "value": "length(updated_at)=24 AND strftime('%Y-%m-%dT%H:%M:%fZ',updated_at) IS updated_at"
-        }
-      }
-    },
     "memory_derivation_usage": {
       "name": "memory_derivation_usage",
       "columns": {
@@ -14554,6 +14489,148 @@
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "checkConstraints": {}
+    },
+    "still_panel_commands": {
+      "name": "still_panel_commands",
+      "columns": {
+        "seq": {
+          "name": "seq",
+          "type": "integer",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": true
+        },
+        "session_id": {
+          "name": "session_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "type": {
+          "name": "type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "value": {
+          "name": "value",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "scope": {
+          "name": "scope",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "idx_still_panel_commands": {
+          "name": "idx_still_panel_commands",
+          "columns": [
+            "session_id",
+            "seq"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "still_panel_sessions": {
+      "name": "still_panel_sessions",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "owner_id": {
+          "name": "owner_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "token_hash": {
+          "name": "token_hash",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "expires_at": {
+          "name": "expires_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "heartbeat": {
+          "name": "heartbeat",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "scope": {
+          "name": "scope",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "revision": {
+          "name": "revision",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "payload": {
+          "name": "payload",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "idx_still_panel_owner": {
+          "name": "idx_still_panel_owner",
+          "columns": [
+            "owner_id"
+          ],
+          "isUnique": false
+        },
+        "idx_still_panel_expiry": {
+          "name": "idx_still_panel_expiry",
+          "columns": [
+            "expires_at"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
     }
   },
   "views": {},
@@ -14573,6 +14650,6 @@
       }
     }
   },
-  "id": "0e6a62bb-5d68-4bc0-bcf6-53a1c3572178",
-  "prevId": "bade93d9-3efc-4b68-9d91-7299bb4cd71e"
+  "id": "72c08d57-703a-4b42-b32b-c41f8901c074",
+  "prevId": "7cbce8f6-025d-4718-b004-f865dec9d16f"
 }

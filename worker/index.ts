@@ -3,6 +3,7 @@ import { handleMemoryRecallBoundary } from './memory-recall-boundary-api.ts';
 import { handleProjectContainment } from './project-containment-api';
 import { runNativeDerivationScheduled } from "./memory-derivation-worker.ts";
 import { sweepNativeDerivationUserControls } from "./memory-derivation-user-controls.ts";
+import { handleStillPanel, sweepStillPanels } from './still-panel-api.ts';
 import { handleStillOnboarding } from './still-onboarding.ts';
 import { handleStillExperiment } from './still-experiment.ts';
 import { handleHoldDispositions } from "./budget-hold-api.ts";
@@ -174,6 +175,7 @@ async function routeRequest(request: Request, env: WorkerEnv, context: WorkerExe
       const headers=new Headers(response.headers);headers.set("cache-control","private, no-store");headers.append("vary","Cookie, oai-authenticated-user-id, oai-authenticated-user-email, cf-access-authenticated-user-email");
       return new Response(response.body,{status:response.status,statusText:response.statusText,headers});
     }
+    if(url.pathname==="/api/still/panel"||url.pathname.startsWith("/api/still/panel/"))return handleStillPanel(request,env);
     if(url.pathname==="/api/still/onboarding")return handleStillOnboarding(request,env,context);
     if(url.pathname==="/api/still/experiment")return handleStillExperiment(request,env,context);
     if(url.pathname==="/api/still/decision")return handleStillDecision(request,env,context);
@@ -364,7 +366,7 @@ export default {
     const retainedStoryRead=pathname==="/api/retained-story"||pathname.startsWith("/api/retained-story/")
       ||pathname==="/api/retained-output"||pathname.startsWith("/api/retained-output/");
     const memoryBenchmarkRequest=pathname==="/api/internal/memory-benchmark"||pathname==="/api/internal/memory-benchmark/approval"||pathname==="/api/internal/memory-benchmark/reconcile"||pathname==="/api/internal/memory-benchmark/release-undispatched";
-    if(pathname.startsWith("/api/")&&!memoryBenchmarkRequest&&pathname!==OUTPUT_SCHEMA_PREFLIGHT_PATH&&pathname!=="/api/admin/budget-hold-dispositions"&&pathname!=="/api/admin/generation-accounting"&&pathname!=="/api/admin/managed-video-reconciliation"&&!retainedStoryRead&&!isSelectedOutputShareApiPath(pathname)&&!sponsoredImageResponses.has(response))schedulePrivateContentRetention(env,context);
+    if(pathname.startsWith("/api/")&&!memoryBenchmarkRequest&&pathname!==OUTPUT_SCHEMA_PREFLIGHT_PATH&&pathname!=="/api/admin/budget-hold-dispositions"&&pathname!=="/api/admin/generation-accounting"&&pathname!=="/api/admin/managed-video-reconciliation"&&!retainedStoryRead&&!isSelectedOutputShareApiPath(pathname)&&!pathname.startsWith("/api/still/panel")&&!sponsoredImageResponses.has(response))schedulePrivateContentRetention(env,context);
     const headers=new Headers(response.headers);
     headers.append("server-timing",`app;dur=${Math.max(0,performance.now()-started).toFixed(1)}`);
     if(new URL(request.url).pathname.startsWith("/api/")&&!headers.has("cache-control"))headers.set("cache-control","private, no-store");
@@ -376,6 +378,7 @@ export default {
     return new Response(response.body,{status:response.status,statusText:response.statusText,headers});
   },
   async scheduled(_controller: unknown, env: WorkerEnv): Promise<void> {
+    await sweepStillPanels(env);
     await observeScheduledRetention(env,1_000);
     try {
       // Run every bounded, source-free cleanup step even if an earlier one fails.

@@ -48,7 +48,7 @@ export const overlayStyles = sizedStyles(css `
   .en-overlay-close { margin-inline-start: auto; }
   .en-popover { position: fixed; display: flex; flex-direction: column; margin: 0; row-gap: ${t('--en-space-4')}; border-radius: ${o('--en-overlay-radius', t('--en-radius-container'))}; }
   [popover].en-popover:not(:popover-open), [popover].en-tooltip:not(:popover-open) { display: none; }
-  .en-tooltip { position: fixed; margin: 0; row-gap: ${t('--en-space-2')}; padding: ${o('--en-overlay-padding', t('--en-space-2'))}; border-radius: ${o('--en-overlay-radius', t('--en-radius-control'))}; overflow-wrap: break-word; }
+  .en-tooltip { position: fixed; inline-size: max-content; margin: 0; row-gap: ${t('--en-space-2')}; padding: ${o('--en-overlay-padding', t('--en-space-2'))}; border-radius: ${o('--en-overlay-radius', t('--en-radius-control'))}; overflow-wrap: break-word; }
   /* An outside separator is clipped at viewport-flush edges, even for a drawer
      that fills the whole viewport. Keep it separate from the immediate focus cue. */
   :where(.en-drawer) { outline: ${t('--en-border-width')} solid ${o('--en-overlay-border-color', t('--en-color-boundary'))}; outline-offset: 0; }

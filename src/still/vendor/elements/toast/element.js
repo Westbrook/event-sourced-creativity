@@ -6,6 +6,7 @@ import { toastQueuedAttribute } from '../../primitives/interactions/toast-stack.
 import { dispatchChange } from '../../primitives/interactions/events.js';
 /**
  * A persistent-by-default notification. A containing en-toast-region owns announcements.
+ * @internalEvent en-internal-toast-focus-return
  * @tagname en-toast
  * @slot - Message content; communicate status in words, not only color.
  * @slot icon - Decorative status icon; replaces the shared default glyph.

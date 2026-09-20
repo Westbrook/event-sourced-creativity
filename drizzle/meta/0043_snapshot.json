@@ -4099,237 +4099,6 @@
         }
       }
     },
-    "memory_derivation_result_dependencies": {
-      "name": "memory_derivation_result_dependencies",
-      "columns": {
-        "job_id": {
-          "name": "job_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "kind": {
-          "name": "kind",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "resource_id": {
-          "name": "resource_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "actor_user_id": {
-          "name": "actor_user_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "scope_key": {
-          "name": "scope_key",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        }
-      },
-      "indexes": {
-        "idx_memory_derivation_result_inverse": {
-          "name": "idx_memory_derivation_result_inverse",
-          "columns": [
-            "kind",
-            "resource_id",
-            "actor_user_id",
-            "scope_key",
-            "job_id"
-          ],
-          "isUnique": false
-        }
-      },
-      "foreignKeys": {
-        "memory_derivation_result_dependencies_job_id_memory_derivation_results_job_id_fk": {
-          "name": "memory_derivation_result_dependencies_job_id_memory_derivation_results_job_id_fk",
-          "tableFrom": "memory_derivation_result_dependencies",
-          "tableTo": "memory_derivation_results",
-          "columnsFrom": [
-            "job_id"
-          ],
-          "columnsTo": [
-            "job_id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {
-        "memory_derivation_result_dependencies_job_id_kind_resource_id_actor_user_id_scope_key_pk": {
-          "columns": [
-            "job_id",
-            "kind",
-            "resource_id",
-            "actor_user_id",
-            "scope_key"
-          ],
-          "name": "memory_derivation_result_dependencies_job_id_kind_resource_id_actor_user_id_scope_key_pk"
-        }
-      },
-      "uniqueConstraints": {},
-      "checkConstraints": {
-        "memory_derivation_result_dependency": {
-          "name": "memory_derivation_result_dependency",
-          "value": "kind IN('event','content','turn','task') AND length(resource_id) BETWEEN 1 AND 240 AND ((kind='turn' AND length(actor_user_id) BETWEEN 1 AND 240 AND length(scope_key) BETWEEN 1 AND 8192) OR (kind!='turn' AND actor_user_id='' AND scope_key=''))"
-        }
-      }
-    },
-    "memory_derivation_results": {
-      "name": "memory_derivation_results",
-      "columns": {
-        "job_id": {
-          "name": "job_id",
-          "type": "text",
-          "primaryKey": true,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "finance_id": {
-          "name": "finance_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "state": {
-          "name": "state",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "raw_json": {
-          "name": "raw_json",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "manifest_json": {
-          "name": "manifest_json",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "output_sha256": {
-          "name": "output_sha256",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "manifest_sha256": {
-          "name": "manifest_sha256",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "dependency_count": {
-          "name": "dependency_count",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "published_at": {
-          "name": "published_at",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "expires_at": {
-          "name": "expires_at",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "retired_at": {
-          "name": "retired_at",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        }
-      },
-      "indexes": {
-        "memory_derivation_results_finance_id_unique": {
-          "name": "memory_derivation_results_finance_id_unique",
-          "columns": [
-            "finance_id"
-          ],
-          "isUnique": true
-        },
-        "idx_memory_derivation_result_expiry": {
-          "name": "idx_memory_derivation_result_expiry",
-          "columns": [
-            "state",
-            "expires_at",
-            "job_id"
-          ],
-          "isUnique": false
-        }
-      },
-      "foreignKeys": {
-        "memory_derivation_results_job_id_memory_derivation_jobs_job_id_fk": {
-          "name": "memory_derivation_results_job_id_memory_derivation_jobs_job_id_fk",
-          "tableFrom": "memory_derivation_results",
-          "tableTo": "memory_derivation_jobs",
-          "columnsFrom": [
-            "job_id"
-          ],
-          "columnsTo": [
-            "job_id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        },
-        "memory_derivation_results_finance_id_memory_derivation_finance_finance_id_fk": {
-          "name": "memory_derivation_results_finance_id_memory_derivation_finance_finance_id_fk",
-          "tableFrom": "memory_derivation_results",
-          "tableTo": "memory_derivation_finance",
-          "columnsFrom": [
-            "finance_id"
-          ],
-          "columnsTo": [
-            "finance_id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "checkConstraints": {
-        "memory_derivation_result_state": {
-          "name": "memory_derivation_result_state",
-          "value": "state IN('staging','active','withdrawn') AND typeof(dependency_count)='integer' AND dependency_count BETWEEN 1 AND 2048"
-        },
-        "memory_derivation_result_body": {
-          "name": "memory_derivation_result_body",
-          "value": "(state IN('staging','active') AND raw_json IS NOT NULL AND manifest_json IS NOT NULL AND output_sha256 IS NOT NULL AND manifest_sha256 IS NOT NULL AND json_valid(raw_json) AND json_valid(manifest_json) AND length(CAST(raw_json AS BLOB))<=65536 AND length(CAST(manifest_json AS BLOB))<=262144 AND length(output_sha256)=64 AND output_sha256 NOT GLOB '*[^0-9a-f]*' AND length(manifest_sha256)=64 AND manifest_sha256 NOT GLOB '*[^0-9a-f]*' AND retired_at IS NULL) OR (state='withdrawn' AND raw_json IS NULL AND manifest_json IS NULL AND output_sha256 IS NULL AND manifest_sha256 IS NULL AND retired_at IS NOT NULL)"
-        },
-        "memory_derivation_result_time": {
-          "name": "memory_derivation_result_time",
-          "value": "length(published_at)=24 AND strftime('%Y-%m-%dT%H:%M:%fZ',published_at) IS published_at AND length(expires_at)=24 AND strftime('%Y-%m-%dT%H:%M:%fZ',expires_at) IS expires_at AND published_at<expires_at AND (retired_at IS NULL OR length(retired_at)=24 AND strftime('%Y-%m-%dT%H:%M:%fZ',retired_at) IS retired_at AND retired_at>=published_at)"
-        }
-      }
-    },
     "memory_derivation_usage": {
       "name": "memory_derivation_usage",
       "columns": {
@@ -14785,6 +14554,148 @@
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "checkConstraints": {}
+    },
+    "still_panel_commands": {
+      "name": "still_panel_commands",
+      "columns": {
+        "seq": {
+          "name": "seq",
+          "type": "integer",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": true
+        },
+        "session_id": {
+          "name": "session_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "type": {
+          "name": "type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "value": {
+          "name": "value",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "scope": {
+          "name": "scope",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "idx_still_panel_commands": {
+          "name": "idx_still_panel_commands",
+          "columns": [
+            "session_id",
+            "seq"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "still_panel_sessions": {
+      "name": "still_panel_sessions",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "owner_id": {
+          "name": "owner_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "token_hash": {
+          "name": "token_hash",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "expires_at": {
+          "name": "expires_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "heartbeat": {
+          "name": "heartbeat",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "scope": {
+          "name": "scope",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "revision": {
+          "name": "revision",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "payload": {
+          "name": "payload",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "idx_still_panel_owner": {
+          "name": "idx_still_panel_owner",
+          "columns": [
+            "owner_id"
+          ],
+          "isUnique": false
+        },
+        "idx_still_panel_expiry": {
+          "name": "idx_still_panel_expiry",
+          "columns": [
+            "expires_at"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
     }
   },
   "views": {},
@@ -14804,6 +14715,6 @@
       }
     }
   },
-  "id": "20435985-ad3d-4241-ab1c-169e6337e6c4",
-  "prevId": "0e6a62bb-5d68-4bc0-bcf6-53a1c3572178"
+  "id": "b2da55a4-566c-4560-81ed-023cb2aa7b2e",
+  "prevId": "72c08d57-703a-4b42-b32b-c41f8901c074"
 }

@@ -9,14 +9,15 @@ export const controlFrameInset = css `calc(${segmentedFramePadding} + ${t('--en-
  * accommodates both typography roles, native compound-control borders, and a
  * complete option target inside the segmented frame. Wrapped content can grow.
  */
-export function textControlBlockSize(coarse = false) {
+export function textControlBlockSize(coarse = false, segmented = false) {
     const target = t(coarse ? '--en-size-target-touch' : '--en-size-target-min');
     const padding = t('--en-space-control-block');
     const border = t('--en-border-width');
-    // Preserve the default alignment envelope when a theme tightens the frame.
-    // A larger shared-scope frame can grow the envelope to protect each option.
-    // A host/Part-only override is local; it cannot resize sibling controls.
-    const frameReserve = css `max(calc(${t('--en-space-1')} + ${border}), ${controlFrameInset})`;
+    // Keep default alignment, but only segmented controls reserve their authored
+    // frame inset. Other families opt into a larger shared floor explicitly with
+    // --en-control-min-size; a segmented-family pin cannot resize them.
+    const baselineReserve = css `calc(${t('--en-space-1')} + ${border})`;
+    const frameReserve = segmented ? css `max(${baselineReserve}, ${controlFrameInset})` : baselineReserve;
     return css `max(
     ${o('--en-control-min-size', t('--en-size-control-min'))},
     calc(${target} + 2 * ${frameReserve}),

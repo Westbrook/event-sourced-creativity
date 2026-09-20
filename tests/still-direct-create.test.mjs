@@ -14,7 +14,7 @@ function method(name){
 }
 function fixture(overrides={}){
  const state={busy:false,composing:false,directGeneration:false,generation:null,generationGate:null,reviewVersion:0,changed(){},draftSignature(){return 'draft';},updateComplete:Promise.resolve(),querySelector(){return null;},navigate(view,ids){this.navigation={view,ids};},writeRoute(){throw Error('Unexpected intermediate route');},
- client:{prepareGeneration(format){return {format};},async generate(){return {jobId:'accepted'};},...overrides},
+ client:{position:{recentActions:[]},prepareGeneration(format){return {format};},async generate(){return {jobId:'accepted'};},...overrides},
  async run(work){if(this.busy)return;this.busy=true;try{await work();}catch(error){this.error=error;}finally{this.busy=false;}},generate:method('generate'),startGeneration:method('startGeneration')};
  return state;
 }

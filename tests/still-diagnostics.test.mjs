@@ -16,10 +16,10 @@ test('every action has a current gate, and fallback never invents probabilities'
   assert.equal(trace.actions.length,ACTIONS.length);assert.equal(new Set(trace.actions.map(r=>r.action.id)).size,ACTIONS.length);
   assert.equal(trace.actions.find(r=>r.action.id==='toggle-context').action.label,'Exclude idea');
   assert.equal(trace.actions.find(r=>r.action.id==='video').eligibilityReason,'Provider unavailable');
-  assert.equal(trace.actions.find(r=>r.action.id==='image').reason,'Current explicit format request required');
+  assert.equal(trace.actions.find(r=>r.action.id==='image').reason,'Available in More or Palette');
   assert.equal(trace.questions.some(q=>q.id==='use_image'),false);
   assert.ok(trace.questions.every(q=>!q.asked&&!q.probabilities&&q.score===undefined));
-  assert.deepEqual(trace.recommended,selectActions(candidates,pos).map(a=>a.id));
+  assert.deepEqual(trace.recommended,selectActions(candidates,pos,{},p).map(a=>a.id));
   const read=decisionDiagnostics(p,pos,{...abilities,author:false,generate:false},{head:3,source:'fallback'});
   assert.equal(read.actions.find(r=>r.action.id==='split-context').eligible,false);
   const malformed=structuredClone(p);malformed.blocks[0].properties.weight='invalid';
@@ -75,7 +75,7 @@ test('rejected results do not masquerade as the applied recommendation',()=>{
 
 test('failed model evaluation preserves observations without using them to rank fallback',()=>{
   const trace=decisionDiagnostics(p,pos,abilities,{head:3,source:'fallback',reason:'uncertain',asked:true,observedAnswers:{use_create:score(2,.01),invented:{type:'score',score:3,secret:'private'}}});
-  assert.deepEqual(trace.recommended,selectActions(candidates,pos).map(a=>a.id));
+  assert.deepEqual(trace.recommended,selectActions(candidates,pos,{},p).map(a=>a.id));
   assert.equal(trace.questions.find(q=>q.id==='use_create').score,2);
   assert.equal(trace.actions.find(r=>r.action.id==='create').basis,'policy');
   assert.doesNotMatch(JSON.stringify(trace),/private|invented/);

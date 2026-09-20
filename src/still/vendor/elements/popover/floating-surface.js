@@ -1,3 +1,4 @@
+import { admitOverlayClick, eligibleOverlayTrigger } from '../internal/overlay-trigger.js';
 import { setNativeSurfaceOpen } from '../internal/native-surface.js';
 import { EnElement } from '../internal/en-element.js';
 import { dispatchChange } from '../../primitives/interactions/events.js';
@@ -67,6 +68,7 @@ export class FloatingSurface extends EnElement {
     requestOpen(proposed, reason) {
         if (proposed === this.open)
             return 'unchanged';
+        const trigger = this.trigger, id = this.for;
         const previous = this.open;
         const previousNativeShown = this.#nativeShown;
         const previousCloseReason = this.#closeReason;
@@ -76,6 +78,7 @@ export class FloatingSurface extends EnElement {
             return dispatchChange(this, {
                 previous, proposed, reason,
                 getRevision: () => this.#revision,
+                canCommit: () => reason !== 'trigger' || (this.for === id && eligibleOverlayTrigger(this, id, trigger)),
                 stage: value => {
                     this.#open = value;
                     if (value) {
@@ -162,9 +165,8 @@ export class FloatingSurface extends EnElement {
         this.syncTriggerAttributes();
         this.syncPopover();
     }
-    triggerClick = () => {
-        if (!this.trigger?.isConnected || this.trigger.disabled || this.trigger.loading
-            || this.trigger.matches(':disabled, [aria-disabled="true"]'))
+    triggerClick = (event) => {
+        if (!admitOverlayClick(event, eligibleOverlayTrigger(this, this.for, this.trigger)))
             return;
         if (this.open)
             this.hide('trigger');

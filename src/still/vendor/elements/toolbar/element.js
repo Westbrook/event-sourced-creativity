@@ -15,7 +15,7 @@ import { toolbarTemplate } from './template.js';
  */
 export class EnToolbar extends EnElement {
     static properties = {
-        label: {},
+        label: { useDefault: true },
         orientation: { reflect: true },
         keyboardNavigation: { attribute: 'keyboard-navigation', reflect: true },
     };

@@ -16,6 +16,8 @@ interpretations remain separate; overlapping lineage is disclosed. Historical-on
 notes are labelled historical, not silently promoted to current preferences.
 
 Every displayed item retains its actual source job for saved-reference review.
+Only one reference control mounts per source result, avoiding up to 64 duplicate
+metadata reads when a retained profile contains many claims.
 Current corrections and suppression take precedence across all retained facets.
 A missing or withdrawn newest result never permits fallback to an older profile.
 An unavailable retained read closes this profile projection instead of hiding a gap.
@@ -76,7 +78,7 @@ not cross-device synchronization or a guaranteed delivery mechanism.
 
 ## Verification
 
-- 920 focused client/model/component tests passed, including retained-history
+- 921 focused client/model/component tests passed, including retained-history
   conflicts, stale results, explicit resource negotiation, all three recall bands,
   cross-tab leases, stalled privacy responses and transcript invalidation.
 - 36 native result/brief/behavioral/page/cross-scope tests passed, including personal/governed

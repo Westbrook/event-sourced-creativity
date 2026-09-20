@@ -33,7 +33,8 @@ suggestion or vector index is created by this change.
 
 ## Merge-ready continuation (not published)
 
-The branch is based on local main `7d74584bb72a1ed3cbab25ee64071994f8976d2f`.
+The branch now incorporates local main `80ed2618ac57fee8f77aef316dacd478308ac72f`;
+see the [migration-history reconciliation](forma-memory-main-reconciliation-2026-09-20.md).
 This continuation does not change production configuration or enroll anyone.
 The [native continuation record](forma-memory-native-continuation-2026-09-18.md)
 tracks the subsequent 64-pair bounded capture, saved-answer compatibility, shared

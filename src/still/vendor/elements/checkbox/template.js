@@ -8,10 +8,11 @@ export function choiceTemplate(view, onChange) {
         role=${view.kind === 'switch' ? 'switch' : nothing}
         ?checked=${view.checked} aria-checked=${view.kind === 'checkbox' && view.indeterminate ? 'mixed' : nothing}
         .value=${view.value} ?disabled=${view.disabled} ?required=${view.required}
-        tabindex=${view.tabIndex} aria-labelledby="label-text" aria-describedby="description"
+        tabindex=${view.tabIndex} aria-labelledby="label-text" aria-describedby=${view.error ? 'description error' : 'description'} aria-invalid=${view.error ? 'true' : nothing}
         @change=${onChange}>
       <span class="en-label" id="label-text" part="label-text"><slot name="label"><slot>${view.label}</slot></slot></span>
     </label>
     ${descriptionTemplate(view.description)}
+    ${view.error ? html `<div id="error" part="error" class="en-error">${view.error}</div>` : nothing}
   </div>`;
 }

@@ -1,8 +1,6 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "4513031c-b5da-4f11-8858-2175bbc7e943",
-  "prevId": "c3951873-70e8-4470-bf80-e34ba0ada55f",
   "tables": {
     "artifact_revisions": {
       "name": "artifact_revisions",
@@ -4119,178 +4117,6 @@
         "memory_derivation_no_dispatch_check_4": {
           "name": "memory_derivation_no_dispatch_check_4",
           "value": "length(recorded_at)=24 AND strftime('%Y-%m-%dT%H:%M:%fZ',recorded_at) IS recorded_at"
-        }
-      }
-    },
-    "memory_derivation_observation_controls": {
-      "name": "memory_derivation_observation_controls",
-      "columns": {
-        "control_id": {
-          "name": "control_id",
-          "type": "text",
-          "primaryKey": true,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "enrollment_id": {
-          "name": "enrollment_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "actor_user_id": {
-          "name": "actor_user_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "purpose": {
-          "name": "purpose",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "scope_key": {
-          "name": "scope_key",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "lineage_id": {
-          "name": "lineage_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "claim_key": {
-          "name": "claim_key",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "source_event_ref": {
-          "name": "source_event_ref",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "revision": {
-          "name": "revision",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "action": {
-          "name": "action",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "correction_text": {
-          "name": "correction_text",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "updated_at": {
-          "name": "updated_at",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "expires_at": {
-          "name": "expires_at",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        }
-      },
-      "indexes": {
-        "idx_memory_derivation_observation_control_lineage": {
-          "name": "idx_memory_derivation_observation_control_lineage",
-          "columns": [
-            "enrollment_id",
-            "purpose",
-            "lineage_id"
-          ],
-          "isUnique": true
-        },
-        "idx_memory_derivation_observation_control_source": {
-          "name": "idx_memory_derivation_observation_control_source",
-          "columns": [
-            "source_event_ref"
-          ],
-          "isUnique": false
-        },
-        "idx_memory_derivation_observation_control_expiry": {
-          "name": "idx_memory_derivation_observation_control_expiry",
-          "columns": [
-            "expires_at"
-          ],
-          "isUnique": false
-        }
-      },
-      "foreignKeys": {
-        "memory_derivation_observation_controls_enrollment_id_memory_live_enrollments_enrollment_id_fk": {
-          "name": "memory_derivation_observation_controls_enrollment_id_memory_live_enrollments_enrollment_id_fk",
-          "tableFrom": "memory_derivation_observation_controls",
-          "tableTo": "memory_live_enrollments",
-          "columnsFrom": [
-            "enrollment_id"
-          ],
-          "columnsTo": [
-            "enrollment_id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        },
-        "memory_derivation_observation_controls_source_event_ref_events_event_id_fk": {
-          "name": "memory_derivation_observation_controls_source_event_ref_events_event_id_fk",
-          "tableFrom": "memory_derivation_observation_controls",
-          "tableTo": "events",
-          "columnsFrom": [
-            "source_event_ref"
-          ],
-          "columnsTo": [
-            "event_id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "checkConstraints": {
-        "memory_derivation_observation_control_shape": {
-          "name": "memory_derivation_observation_control_shape",
-          "value": "length(control_id)=64 AND control_id NOT GLOB '*[^0-9a-f]*' AND length(lineage_id)=64 AND lineage_id NOT GLOB '*[^0-9a-f]*' AND length(actor_user_id) BETWEEN 1 AND 240 AND length(scope_key) BETWEEN 1 AND 8192 AND length(claim_key) BETWEEN 1 AND 240 AND purpose IN('rolling-summary','profile','suggestion') AND typeof(revision)='integer' AND revision BETWEEN 1 AND 9007199254740991"
-        },
-        "memory_derivation_observation_control_action": {
-          "name": "memory_derivation_observation_control_action",
-          "value": "(action IN('suppressed','released') AND correction_text IS NULL) OR (action='corrected' AND correction_text IS NOT NULL AND length(trim(correction_text)) BETWEEN 1 AND 1000 AND length(CAST(correction_text AS BLOB))<=4096)"
-        },
-        "memory_derivation_observation_control_time": {
-          "name": "memory_derivation_observation_control_time",
-          "value": "length(created_at)=24 AND strftime('%Y-%m-%dT%H:%M:%fZ',created_at) IS created_at AND length(updated_at)=24 AND strftime('%Y-%m-%dT%H:%M:%fZ',updated_at) IS updated_at AND length(expires_at)=24 AND strftime('%Y-%m-%dT%H:%M:%fZ',expires_at) IS expires_at AND created_at<=updated_at AND updated_at<expires_at"
         }
       }
     },
@@ -15543,12 +15369,153 @@
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "checkConstraints": {}
+    },
+    "still_panel_commands": {
+      "name": "still_panel_commands",
+      "columns": {
+        "seq": {
+          "name": "seq",
+          "type": "integer",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": true
+        },
+        "session_id": {
+          "name": "session_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "type": {
+          "name": "type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "value": {
+          "name": "value",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "scope": {
+          "name": "scope",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "idx_still_panel_commands": {
+          "name": "idx_still_panel_commands",
+          "columns": [
+            "session_id",
+            "seq"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "still_panel_sessions": {
+      "name": "still_panel_sessions",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "owner_id": {
+          "name": "owner_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "token_hash": {
+          "name": "token_hash",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "expires_at": {
+          "name": "expires_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "heartbeat": {
+          "name": "heartbeat",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "scope": {
+          "name": "scope",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "revision": {
+          "name": "revision",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "payload": {
+          "name": "payload",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "idx_still_panel_owner": {
+          "name": "idx_still_panel_owner",
+          "columns": [
+            "owner_id"
+          ],
+          "isUnique": false
+        },
+        "idx_still_panel_expiry": {
+          "name": "idx_still_panel_expiry",
+          "columns": [
+            "expires_at"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
     }
   },
   "views": {},
   "enums": {},
   "_meta": {
-    "schemas": {},
     "tables": {},
     "columns": {}
   },
@@ -15562,5 +15529,7 @@
         }
       }
     }
-  }
+  },
+  "id": "2d616f1a-af63-4767-a8fe-cabdfc5a722d",
+  "prevId": "56ed6c12-9f5f-4042-84c0-27509d6d414b"
 }

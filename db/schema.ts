@@ -2692,3 +2692,13 @@ export const memoryDerivationContexts = sqliteTable('memory_derivation_contexts'
  check('memory_context_time',sql.raw("length(created_at)=24 AND strftime('%Y-%m-%dT%H:%M:%fZ',created_at) IS created_at AND length(expires_at)=24 AND strftime('%Y-%m-%dT%H:%M:%fZ',expires_at) IS expires_at AND expires_at>created_at")),
  check('memory_context_scope',sql.raw("(target_enrollment_id=source_enrollment_id AND boundary_revision IS NULL AND hierarchy_revision IS NULL) OR (target_enrollment_id<>source_enrollment_id AND length(boundary_revision)=36 AND length(hierarchy_revision)=71)")),
 ]);
+// Ephemeral encrypted developer-panel relay. Tokens are stored only as hashes.
+export const stillPanelSessions=sqliteTable('still_panel_sessions',{
+  id:text('id').primaryKey(),ownerId:text('owner_id').notNull(),tokenHash:text('token_hash').notNull(),
+  expiresAt:integer('expires_at').notNull(),heartbeat:integer('heartbeat').notNull(),scope:text('scope').notNull(),
+  revision:integer('revision').notNull(),payload:text('payload'),
+},t=>[index('idx_still_panel_owner').on(t.ownerId),index('idx_still_panel_expiry').on(t.expiresAt)]);
+export const stillPanelCommands=sqliteTable('still_panel_commands',{
+  seq:integer('seq').primaryKey({autoIncrement:true}),sessionId:text('session_id').notNull(),
+  type:text('type').notNull(),value:text('value').notNull(),scope:text('scope').notNull(),createdAt:integer('created_at').notNull(),
+},t=>[index('idx_still_panel_commands').on(t.sessionId,t.seq)]);

@@ -11,18 +11,20 @@ import { EditableFieldElement } from '../forms-private/editable-field.js';
  * @csspart label - Visible label.
  * @csspart control - Native input.
  * @csspart focus-frame - Noninteractive field frame supporting the supplemental focus accent.
+ * @csspart supporting-text - Alias of description for independent composite forwarding.
+ * @csspart validation-message - Alias of error for independent composite forwarding.
  * @csspart description - Supporting text.
  * @csspart error - Validation feedback.
  * @cssprop --en-control-background - Control background.
- * @cssprop --en-input-background - Field fill when no control background override is set.
- * @cssprop --en-input-color - Field text when no control color override is set.
+ * @cssprop --en-input-background - Field fill falling back to the shared control background.
+ * @cssprop --en-input-color - Field text falling back to the shared control color.
  * @cssprop --en-color-text - Foreground color.
  * @cssprop --en-control-radius - Control corner radius.
  * @cssprop --en-border-width - Base border width used by padding compensation.
  * @cssprop --en-border-invalid-width - Invalid border width; defaults to 2px and consumes existing padding.
  * @cssprop --en-control-inline-padding - Inline padding before invalid-border compensation.
  * @cssprop --en-field-gap - Gap between label, control and supporting text.
- * @cssprop --en-input-inline-padding - Text-editor inline padding; shared control-inline-padding takes precedence.
+ * @cssprop --en-input-inline-padding - Text-editor inline padding; takes precedence over shared control-inline-padding.
  * @cssprop --en-control-min-size - Minimum control block size.
  * @cssprop --en-input-focus-width - Width of the immediate input-family focus contour.
  * @cssprop --en-input-focus-color - Color of the immediate input-family focus contour.
@@ -39,6 +41,8 @@ import { EditableFieldElement } from '../forms-private/editable-field.js';
  * @fires en-change - Cancelable accepted-value change; provisional value and form data are available during dispatch.
  */
 export class EnTextField extends EditableFieldElement {
+    descriptionPart = 'description supporting-text';
+    errorPart = 'error validation-message';
     static properties = {
         ...EditableFieldElement.properties,
         type: { type: String },

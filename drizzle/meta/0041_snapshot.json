@@ -2902,327 +2902,6 @@
         }
       }
     },
-    "memory_derivation_finance": {
-      "name": "memory_derivation_finance",
-      "columns": {
-        "finance_id": {
-          "name": "finance_id",
-          "type": "text",
-          "primaryKey": true,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "payer_id": {
-          "name": "payer_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "period": {
-          "name": "period",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "token_id": {
-          "name": "token_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "cost_id": {
-          "name": "cost_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "operation": {
-          "name": "operation",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "provider": {
-          "name": "provider",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "model": {
-          "name": "model",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "terms_sha256": {
-          "name": "terms_sha256",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "request_sha256": {
-          "name": "request_sha256",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "input_price": {
-          "name": "input_price",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "cached_input_price": {
-          "name": "cached_input_price",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "output_price": {
-          "name": "output_price",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "maximum_input": {
-          "name": "maximum_input",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "maximum_output": {
-          "name": "maximum_output",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "maximum_tokens": {
-          "name": "maximum_tokens",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "maximum_microusd": {
-          "name": "maximum_microusd",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "authorized_cap_microusd": {
-          "name": "authorized_cap_microusd",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "workspace_id": {
-          "name": "workspace_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "project_access_id": {
-          "name": "project_access_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "pilot_cohort_id": {
-          "name": "pilot_cohort_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "dispatch_token": {
-          "name": "dispatch_token",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "dispatched_at": {
-          "name": "dispatched_at",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "admission_closed_at": {
-          "name": "admission_closed_at",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        }
-      },
-      "indexes": {
-        "memory_derivation_finance_token_id_unique": {
-          "name": "memory_derivation_finance_token_id_unique",
-          "columns": [
-            "token_id"
-          ],
-          "isUnique": true
-        },
-        "memory_derivation_finance_cost_id_unique": {
-          "name": "memory_derivation_finance_cost_id_unique",
-          "columns": [
-            "cost_id"
-          ],
-          "isUnique": true
-        },
-        "memory_derivation_finance_dispatch_token_unique": {
-          "name": "memory_derivation_finance_dispatch_token_unique",
-          "columns": [
-            "dispatch_token"
-          ],
-          "isUnique": true
-        },
-        "idx_memory_derivation_finance_payer_month": {
-          "name": "idx_memory_derivation_finance_payer_month",
-          "columns": [
-            "payer_id",
-            "period"
-          ],
-          "isUnique": false
-        },
-        "idx_memory_derivation_finance_workspace": {
-          "name": "idx_memory_derivation_finance_workspace",
-          "columns": [
-            "workspace_id",
-            "project_access_id",
-            "pilot_cohort_id"
-          ],
-          "isUnique": false
-        }
-      },
-      "foreignKeys": {},
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "checkConstraints": {
-        "memory_derivation_finance_check_1": {
-          "name": "memory_derivation_finance_check_1",
-          "value": "length(finance_id) BETWEEN 1 AND 240"
-        },
-        "memory_derivation_finance_check_2": {
-          "name": "memory_derivation_finance_check_2",
-          "value": "length(payer_id) BETWEEN 1 AND 240"
-        },
-        "memory_derivation_finance_check_3": {
-          "name": "memory_derivation_finance_check_3",
-          "value": "period=substr(created_at,1,7)"
-        },
-        "memory_derivation_finance_check_4": {
-          "name": "memory_derivation_finance_check_4",
-          "value": "length(token_id) BETWEEN 1 AND 240"
-        },
-        "memory_derivation_finance_check_5": {
-          "name": "memory_derivation_finance_check_5",
-          "value": "length(cost_id) BETWEEN 1 AND 240 AND cost_id<>token_id"
-        },
-        "memory_derivation_finance_check_6": {
-          "name": "memory_derivation_finance_check_6",
-          "value": "operation IN('memory-derivation:rolling-summary','memory-derivation:profile','memory-derivation:suggestion')"
-        },
-        "memory_derivation_finance_check_7": {
-          "name": "memory_derivation_finance_check_7",
-          "value": "provider='openai'"
-        },
-        "memory_derivation_finance_check_8": {
-          "name": "memory_derivation_finance_check_8",
-          "value": "length(model) BETWEEN 1 AND 240"
-        },
-        "memory_derivation_finance_check_9": {
-          "name": "memory_derivation_finance_check_9",
-          "value": "length(terms_sha256)=64 AND terms_sha256 NOT GLOB '*[^0-9a-f]*'"
-        },
-        "memory_derivation_finance_check_10": {
-          "name": "memory_derivation_finance_check_10",
-          "value": "length(request_sha256)=64 AND request_sha256 NOT GLOB '*[^0-9a-f]*'"
-        },
-        "memory_derivation_finance_check_11": {
-          "name": "memory_derivation_finance_check_11",
-          "value": "typeof(input_price)='integer' AND input_price BETWEEN 0 AND 1000000000"
-        },
-        "memory_derivation_finance_check_12": {
-          "name": "memory_derivation_finance_check_12",
-          "value": "typeof(cached_input_price)='integer' AND cached_input_price BETWEEN 0 AND input_price"
-        },
-        "memory_derivation_finance_check_13": {
-          "name": "memory_derivation_finance_check_13",
-          "value": "typeof(output_price)='integer' AND output_price BETWEEN 0 AND 1000000000"
-        },
-        "memory_derivation_finance_check_14": {
-          "name": "memory_derivation_finance_check_14",
-          "value": "typeof(maximum_input)='integer' AND maximum_input BETWEEN 1 AND 131072"
-        },
-        "memory_derivation_finance_check_15": {
-          "name": "memory_derivation_finance_check_15",
-          "value": "typeof(maximum_output)='integer' AND maximum_output BETWEEN 1 AND 8192"
-        },
-        "memory_derivation_finance_check_16": {
-          "name": "memory_derivation_finance_check_16",
-          "value": "typeof(maximum_tokens)='integer' AND maximum_tokens=maximum_input+maximum_output"
-        },
-        "memory_derivation_finance_check_17": {
-          "name": "memory_derivation_finance_check_17",
-          "value": "typeof(maximum_microusd)='integer' AND maximum_microusd BETWEEN 1 AND 1000000000\n   AND maximum_microusd=(maximum_input*input_price+maximum_output*output_price+999999)/1000000"
-        },
-        "memory_derivation_finance_check_18": {
-          "name": "memory_derivation_finance_check_18",
-          "value": "typeof(authorized_cap_microusd)='integer' AND authorized_cap_microusd BETWEEN 1 AND 1000000000"
-        },
-        "memory_derivation_finance_check_19": {
-          "name": "memory_derivation_finance_check_19",
-          "value": "length(workspace_id) BETWEEN 1 AND 240"
-        },
-        "memory_derivation_finance_check_20": {
-          "name": "memory_derivation_finance_check_20",
-          "value": "length(created_at)=24 AND strftime('%Y-%m-%dT%H:%M:%fZ',created_at) IS created_at"
-        },
-        "memory_derivation_finance_check_21": {
-          "name": "memory_derivation_finance_check_21",
-          "value": "(workspace_id='forma' AND project_access_id IS NULL AND pilot_cohort_id IS NULL) OR (workspace_id<>'forma' AND project_access_id IS NOT NULL AND length(project_access_id) BETWEEN 1 AND 240)"
-        },
-        "memory_derivation_finance_check_22": {
-          "name": "memory_derivation_finance_check_22",
-          "value": "pilot_cohort_id IS NULL OR length(pilot_cohort_id) BETWEEN 1 AND 240"
-        },
-        "memory_derivation_finance_check_23": {
-          "name": "memory_derivation_finance_check_23",
-          "value": "(dispatch_token IS NULL AND dispatched_at IS NULL) OR (dispatch_token IS NOT NULL AND length(dispatch_token) BETWEEN 1 AND 240 AND dispatched_at IS NOT NULL AND length(dispatched_at)=24 AND strftime('%Y-%m-%dT%H:%M:%fZ',dispatched_at) IS dispatched_at AND dispatched_at>=created_at)"
-        },
-        "memory_derivation_finance_check_24": {
-          "name": "memory_derivation_finance_check_24",
-          "value": "admission_closed_at IS NULL OR length(admission_closed_at)=24 AND strftime('%Y-%m-%dT%H:%M:%fZ',admission_closed_at) IS admission_closed_at AND admission_closed_at>=created_at"
-        }
-      }
-    },
     "memory_derivation_grants": {
       "name": "memory_derivation_grants",
       "columns": {
@@ -3485,65 +3164,6 @@
           "value": "length(consented_at)=24 AND length(expires_at)=24 AND consented_at<expires_at AND (revoked_at IS NULL OR length(revoked_at)=24 AND revoked_at>=consented_at)"
         }
       }
-    },
-    "memory_derivation_job_finance": {
-      "name": "memory_derivation_job_finance",
-      "columns": {
-        "job_id": {
-          "name": "job_id",
-          "type": "text",
-          "primaryKey": true,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "finance_id": {
-          "name": "finance_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        }
-      },
-      "indexes": {
-        "memory_derivation_job_finance_finance_id_unique": {
-          "name": "memory_derivation_job_finance_finance_id_unique",
-          "columns": [
-            "finance_id"
-          ],
-          "isUnique": true
-        }
-      },
-      "foreignKeys": {
-        "memory_derivation_job_finance_job_id_memory_derivation_jobs_job_id_fk": {
-          "name": "memory_derivation_job_finance_job_id_memory_derivation_jobs_job_id_fk",
-          "tableFrom": "memory_derivation_job_finance",
-          "tableTo": "memory_derivation_jobs",
-          "columnsFrom": [
-            "job_id"
-          ],
-          "columnsTo": [
-            "job_id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        },
-        "memory_derivation_job_finance_finance_id_memory_derivation_finance_finance_id_fk": {
-          "name": "memory_derivation_job_finance_finance_id_memory_derivation_finance_finance_id_fk",
-          "tableFrom": "memory_derivation_job_finance",
-          "tableTo": "memory_derivation_finance",
-          "columnsFrom": [
-            "finance_id"
-          ],
-          "columnsTo": [
-            "finance_id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "checkConstraints": {}
     },
     "memory_derivation_job_sources": {
       "name": "memory_derivation_job_sources",
@@ -3810,134 +3430,6 @@
         }
       }
     },
-    "memory_derivation_month_caps": {
-      "name": "memory_derivation_month_caps",
-      "columns": {
-        "payer_id": {
-          "name": "payer_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "period": {
-          "name": "period",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "cap_microusd": {
-          "name": "cap_microusd",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        }
-      },
-      "indexes": {},
-      "foreignKeys": {},
-      "compositePrimaryKeys": {
-        "memory_derivation_month_caps_payer_id_period_pk": {
-          "columns": [
-            "payer_id",
-            "period"
-          ],
-          "name": "memory_derivation_month_caps_payer_id_period_pk"
-        }
-      },
-      "uniqueConstraints": {},
-      "checkConstraints": {
-        "memory_derivation_month_caps_check_1": {
-          "name": "memory_derivation_month_caps_check_1",
-          "value": "length(payer_id) BETWEEN 1 AND 240"
-        },
-        "memory_derivation_month_caps_check_2": {
-          "name": "memory_derivation_month_caps_check_2",
-          "value": "length(period)=7 AND period GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]' AND substr(period,6,2) BETWEEN '01' AND '12'"
-        },
-        "memory_derivation_month_caps_check_3": {
-          "name": "memory_derivation_month_caps_check_3",
-          "value": "typeof(cap_microusd)='integer' AND cap_microusd BETWEEN 1 AND 1000000000"
-        }
-      }
-    },
-    "memory_derivation_no_dispatch": {
-      "name": "memory_derivation_no_dispatch",
-      "columns": {
-        "finance_id": {
-          "name": "finance_id",
-          "type": "text",
-          "primaryKey": true,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "evidence_sha256": {
-          "name": "evidence_sha256",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "token_was_present": {
-          "name": "token_was_present",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "cost_was_present": {
-          "name": "cost_was_present",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "recorded_at": {
-          "name": "recorded_at",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        }
-      },
-      "indexes": {},
-      "foreignKeys": {
-        "memory_derivation_no_dispatch_finance_id_memory_derivation_finance_finance_id_fk": {
-          "name": "memory_derivation_no_dispatch_finance_id_memory_derivation_finance_finance_id_fk",
-          "tableFrom": "memory_derivation_no_dispatch",
-          "tableTo": "memory_derivation_finance",
-          "columnsFrom": [
-            "finance_id"
-          ],
-          "columnsTo": [
-            "finance_id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "checkConstraints": {
-        "memory_derivation_no_dispatch_check_1": {
-          "name": "memory_derivation_no_dispatch_check_1",
-          "value": "length(evidence_sha256)=64 AND evidence_sha256 NOT GLOB '*[^0-9a-f]*'"
-        },
-        "memory_derivation_no_dispatch_check_2": {
-          "name": "memory_derivation_no_dispatch_check_2",
-          "value": "typeof(token_was_present)='integer' AND token_was_present IN(0,1)"
-        },
-        "memory_derivation_no_dispatch_check_3": {
-          "name": "memory_derivation_no_dispatch_check_3",
-          "value": "typeof(cost_was_present)='integer' AND cost_was_present IN(0,1)"
-        },
-        "memory_derivation_no_dispatch_check_4": {
-          "name": "memory_derivation_no_dispatch_check_4",
-          "value": "length(recorded_at)=24 AND strftime('%Y-%m-%dT%H:%M:%fZ',recorded_at) IS recorded_at"
-        }
-      }
-    },
     "memory_derivation_qualifications": {
       "name": "memory_derivation_qualifications",
       "columns": {
@@ -4031,134 +3523,6 @@
         "memory_derivation_qualification_state": {
           "name": "memory_derivation_qualification_state",
           "value": "status IN('qualified','withdrawn') AND length(qualified_at)=24 AND length(expires_at)=24 AND qualified_at<expires_at"
-        }
-      }
-    },
-    "memory_derivation_usage": {
-      "name": "memory_derivation_usage",
-      "columns": {
-        "finance_id": {
-          "name": "finance_id",
-          "type": "text",
-          "primaryKey": true,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "provider_request_id": {
-          "name": "provider_request_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "receipt_sha256": {
-          "name": "receipt_sha256",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "input_tokens": {
-          "name": "input_tokens",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "cached_input_tokens": {
-          "name": "cached_input_tokens",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "output_tokens": {
-          "name": "output_tokens",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "used_tokens": {
-          "name": "used_tokens",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "used_microusd": {
-          "name": "used_microusd",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "recorded_at": {
-          "name": "recorded_at",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        }
-      },
-      "indexes": {
-        "memory_derivation_usage_provider_request_id_unique": {
-          "name": "memory_derivation_usage_provider_request_id_unique",
-          "columns": [
-            "provider_request_id"
-          ],
-          "isUnique": true
-        }
-      },
-      "foreignKeys": {
-        "memory_derivation_usage_finance_id_memory_derivation_finance_finance_id_fk": {
-          "name": "memory_derivation_usage_finance_id_memory_derivation_finance_finance_id_fk",
-          "tableFrom": "memory_derivation_usage",
-          "tableTo": "memory_derivation_finance",
-          "columnsFrom": [
-            "finance_id"
-          ],
-          "columnsTo": [
-            "finance_id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "checkConstraints": {
-        "memory_derivation_usage_check_1": {
-          "name": "memory_derivation_usage_check_1",
-          "value": "length(provider_request_id) BETWEEN 1 AND 240"
-        },
-        "memory_derivation_usage_check_2": {
-          "name": "memory_derivation_usage_check_2",
-          "value": "length(receipt_sha256)=64 AND receipt_sha256 NOT GLOB '*[^0-9a-f]*'"
-        },
-        "memory_derivation_usage_check_3": {
-          "name": "memory_derivation_usage_check_3",
-          "value": "typeof(input_tokens)='integer' AND input_tokens BETWEEN 0 AND 1000000"
-        },
-        "memory_derivation_usage_check_4": {
-          "name": "memory_derivation_usage_check_4",
-          "value": "typeof(cached_input_tokens)='integer' AND cached_input_tokens BETWEEN 0 AND input_tokens"
-        },
-        "memory_derivation_usage_check_5": {
-          "name": "memory_derivation_usage_check_5",
-          "value": "typeof(output_tokens)='integer' AND output_tokens BETWEEN 0 AND 1000000"
-        },
-        "memory_derivation_usage_check_6": {
-          "name": "memory_derivation_usage_check_6",
-          "value": "typeof(used_tokens)='integer' AND used_tokens=input_tokens+output_tokens"
-        },
-        "memory_derivation_usage_check_7": {
-          "name": "memory_derivation_usage_check_7",
-          "value": "typeof(used_microusd)='integer' AND used_microusd BETWEEN 0 AND 2000000000"
-        },
-        "memory_derivation_usage_check_8": {
-          "name": "memory_derivation_usage_check_8",
-          "value": "length(recorded_at)=24 AND strftime('%Y-%m-%dT%H:%M:%fZ',recorded_at) IS recorded_at"
         }
       }
     },
@@ -14489,6 +13853,148 @@
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "checkConstraints": {}
+    },
+    "still_panel_commands": {
+      "name": "still_panel_commands",
+      "columns": {
+        "seq": {
+          "name": "seq",
+          "type": "integer",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": true
+        },
+        "session_id": {
+          "name": "session_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "type": {
+          "name": "type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "value": {
+          "name": "value",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "scope": {
+          "name": "scope",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "idx_still_panel_commands": {
+          "name": "idx_still_panel_commands",
+          "columns": [
+            "session_id",
+            "seq"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "still_panel_sessions": {
+      "name": "still_panel_sessions",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "owner_id": {
+          "name": "owner_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "token_hash": {
+          "name": "token_hash",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "expires_at": {
+          "name": "expires_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "heartbeat": {
+          "name": "heartbeat",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "scope": {
+          "name": "scope",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "revision": {
+          "name": "revision",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "payload": {
+          "name": "payload",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "idx_still_panel_owner": {
+          "name": "idx_still_panel_owner",
+          "columns": [
+            "owner_id"
+          ],
+          "isUnique": false
+        },
+        "idx_still_panel_expiry": {
+          "name": "idx_still_panel_expiry",
+          "columns": [
+            "expires_at"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
     }
   },
   "views": {},
@@ -14508,6 +14014,6 @@
       }
     }
   },
-  "id": "bade93d9-3efc-4b68-9d91-7299bb4cd71e",
-  "prevId": "e54a65ca-b8a0-448d-b46c-cb65d90ab884"
+  "id": "7cbce8f6-025d-4718-b004-f865dec9d16f",
+  "prevId": "758e0b64-219e-449f-b1ff-33d31c1a7e2a"
 }

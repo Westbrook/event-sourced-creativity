@@ -1,8 +1,8 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "19d9bfe4-166f-4686-b0bc-b0575a487c23",
-  "prevId": "e836ddc7-bd95-4462-80d2-07eb823ec701",
+  "id": "98ae71b4-9900-4dc4-b40b-0591aead14c8",
+  "prevId": "aac61656-87fe-482e-ac09-c62b75691a37",
   "tables": {
     "artifact_revisions": {
       "name": "artifact_revisions",
@@ -7501,82 +7501,6 @@
         "memory_native_answer_origins_check_6": {
           "name": "memory_native_answer_origins_check_6",
           "value": "status='active' AND withdrawn_at IS NULL AND withdrawal_reason IS NULL OR status='withdrawn' AND withdrawn_at IS NOT NULL AND withdrawal_reason IS NOT NULL"
-        }
-      }
-    },
-    "memory_recall_boundaries": {
-      "name": "memory_recall_boundaries",
-      "columns": {
-        "enrollment_id": {
-          "name": "enrollment_id",
-          "type": "text",
-          "primaryKey": true,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "enrollment_revision": {
-          "name": "enrollment_revision",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "boundary": {
-          "name": "boundary",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "revision": {
-          "name": "revision",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "consented_at": {
-          "name": "consented_at",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        }
-      },
-      "indexes": {},
-      "foreignKeys": {
-        "memory_recall_boundaries_enrollment_id_memory_live_enrollments_enrollment_id_fk": {
-          "name": "memory_recall_boundaries_enrollment_id_memory_live_enrollments_enrollment_id_fk",
-          "tableFrom": "memory_recall_boundaries",
-          "tableTo": "memory_live_enrollments",
-          "columnsFrom": [
-            "enrollment_id"
-          ],
-          "columnsTo": [
-            "enrollment_id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "checkConstraints": {
-        "memory_recall_boundary_kind": {
-          "name": "memory_recall_boundary_kind",
-          "value": "boundary IN('document','project','project-tree','partition')"
-        },
-        "memory_recall_boundary_parent": {
-          "name": "memory_recall_boundary_parent",
-          "value": "typeof(enrollment_revision)='integer' AND enrollment_revision>=1"
-        },
-        "memory_recall_boundary_revision": {
-          "name": "memory_recall_boundary_revision",
-          "value": "length(revision)=36"
-        },
-        "memory_recall_boundary_time": {
-          "name": "memory_recall_boundary_time",
-          "value": "length(consented_at)=24 AND strftime('%Y-%m-%dT%H:%M:%fZ',consented_at) IS consented_at"
         }
       }
     },
@@ -15756,6 +15680,148 @@
           "name": "idx_users_role",
           "columns": [
             "role"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "still_panel_commands": {
+      "name": "still_panel_commands",
+      "columns": {
+        "seq": {
+          "name": "seq",
+          "type": "integer",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": true
+        },
+        "session_id": {
+          "name": "session_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "type": {
+          "name": "type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "value": {
+          "name": "value",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "scope": {
+          "name": "scope",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "idx_still_panel_commands": {
+          "name": "idx_still_panel_commands",
+          "columns": [
+            "session_id",
+            "seq"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "still_panel_sessions": {
+      "name": "still_panel_sessions",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "owner_id": {
+          "name": "owner_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "token_hash": {
+          "name": "token_hash",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "expires_at": {
+          "name": "expires_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "heartbeat": {
+          "name": "heartbeat",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "scope": {
+          "name": "scope",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "revision": {
+          "name": "revision",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "payload": {
+          "name": "payload",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "idx_still_panel_owner": {
+          "name": "idx_still_panel_owner",
+          "columns": [
+            "owner_id"
+          ],
+          "isUnique": false
+        },
+        "idx_still_panel_expiry": {
+          "name": "idx_still_panel_expiry",
+          "columns": [
+            "expires_at"
           ],
           "isUnique": false
         }

@@ -1,6 +1,8 @@
 {
   "version": "6",
   "dialect": "sqlite",
+  "id": "d40efb49-d375-459d-8c81-777ff99d410f",
+  "prevId": "053f83c2-b032-4f35-b36d-b6bd97f02d1a",
   "tables": {
     "artifact_revisions": {
       "name": "artifact_revisions",
@@ -2795,365 +2797,6 @@
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "checkConstraints": {}
-    },
-    "memory_derivation_grants": {
-      "name": "memory_derivation_grants",
-      "columns": {
-        "consent_id": {
-          "name": "consent_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "grant_id": {
-          "name": "grant_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "revision": {
-          "name": "revision",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "actor_user_id": {
-          "name": "actor_user_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "owner_user_id": {
-          "name": "owner_user_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "organization_id": {
-          "name": "organization_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "project_access_id": {
-          "name": "project_access_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "project_id": {
-          "name": "project_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "document_id": {
-          "name": "document_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "enrollment_id": {
-          "name": "enrollment_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "enrollment_revision": {
-          "name": "enrollment_revision",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "permission_epoch": {
-          "name": "permission_epoch",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "policy_version": {
-          "name": "policy_version",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "purpose": {
-          "name": "purpose",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "qualification_id": {
-          "name": "qualification_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "terms_sha256": {
-          "name": "terms_sha256",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "payer_user_id": {
-          "name": "payer_user_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "monthly_cap_microusd": {
-          "name": "monthly_cap_microusd",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "source_after_sequence": {
-          "name": "source_after_sequence",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "retention_days": {
-          "name": "retention_days",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "background_enabled": {
-          "name": "background_enabled",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "consented_at": {
-          "name": "consented_at",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "expires_at": {
-          "name": "expires_at",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "revoked_at": {
-          "name": "revoked_at",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        }
-      },
-      "indexes": {
-        "idx_memory_derivation_grant_active": {
-          "name": "idx_memory_derivation_grant_active",
-          "columns": [
-            "grant_id"
-          ],
-          "isUnique": true,
-          "where": "revoked_at IS NULL"
-        },
-        "idx_memory_derivation_grant_actor": {
-          "name": "idx_memory_derivation_grant_actor",
-          "columns": [
-            "actor_user_id",
-            "expires_at"
-          ],
-          "isUnique": false
-        },
-        "idx_memory_derivation_grant_parent": {
-          "name": "idx_memory_derivation_grant_parent",
-          "columns": [
-            "enrollment_id",
-            "enrollment_revision"
-          ],
-          "isUnique": false
-        },
-        "idx_memory_derivation_grant_organization": {
-          "name": "idx_memory_derivation_grant_organization",
-          "columns": [
-            "organization_id",
-            "actor_user_id"
-          ],
-          "isUnique": false
-        }
-      },
-      "foreignKeys": {
-        "memory_derivation_grants_enrollment_id_memory_live_enrollments_enrollment_id_fk": {
-          "name": "memory_derivation_grants_enrollment_id_memory_live_enrollments_enrollment_id_fk",
-          "tableFrom": "memory_derivation_grants",
-          "tableTo": "memory_live_enrollments",
-          "columnsFrom": [
-            "enrollment_id"
-          ],
-          "columnsTo": [
-            "enrollment_id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        },
-        "memory_derivation_grants_qualification_id_memory_derivation_qualifications_qualification_id_fk": {
-          "name": "memory_derivation_grants_qualification_id_memory_derivation_qualifications_qualification_id_fk",
-          "tableFrom": "memory_derivation_grants",
-          "tableTo": "memory_derivation_qualifications",
-          "columnsFrom": [
-            "qualification_id"
-          ],
-          "columnsTo": [
-            "qualification_id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {
-        "memory_derivation_grants_grant_id_revision_pk": {
-          "columns": [
-            "grant_id",
-            "revision"
-          ],
-          "name": "memory_derivation_grants_grant_id_revision_pk"
-        }
-      },
-      "uniqueConstraints": {},
-      "checkConstraints": {
-        "memory_derivation_grant_scope": {
-          "name": "memory_derivation_grant_scope",
-          "value": "length(actor_user_id)>0 AND length(owner_user_id)>0 AND length(project_id)>0 AND length(document_id)>0 AND payer_user_id=actor_user_id AND ((organization_id IS NULL AND project_access_id IS NULL AND actor_user_id=owner_user_id) OR (organization_id IS NOT NULL AND project_access_id IS NOT NULL AND length(organization_id)>0 AND length(project_access_id)>0))"
-        },
-        "memory_derivation_grant_identity": {
-          "name": "memory_derivation_grant_identity",
-          "value": "length(consent_id)=36 AND length(grant_id)=64 AND grant_id NOT GLOB '*[^0-9a-f]*' AND length(terms_sha256)=64 AND terms_sha256 NOT GLOB '*[^0-9a-f]*' AND policy_version='personal-memory-derivation-v1' AND purpose IN('rolling-summary','profile','suggestion')"
-        },
-        "memory_derivation_grant_bounds": {
-          "name": "memory_derivation_grant_bounds",
-          "value": "typeof(revision)='integer' AND revision BETWEEN 1 AND 9007199254740991 AND typeof(enrollment_revision)='integer' AND enrollment_revision BETWEEN 1 AND 9007199254740991 AND typeof(source_after_sequence)='integer' AND source_after_sequence BETWEEN 0 AND 9007199254740990 AND typeof(monthly_cap_microusd)='integer' AND monthly_cap_microusd BETWEEN 1 AND 1000000000 AND typeof(retention_days)='integer' AND retention_days BETWEEN 1 AND 365 AND background_enabled IN(0,1)"
-        },
-        "memory_derivation_grant_time": {
-          "name": "memory_derivation_grant_time",
-          "value": "length(consented_at)=24 AND length(expires_at)=24 AND consented_at<expires_at AND (revoked_at IS NULL OR length(revoked_at)=24 AND revoked_at>=consented_at)"
-        }
-      }
-    },
-    "memory_derivation_qualifications": {
-      "name": "memory_derivation_qualifications",
-      "columns": {
-        "qualification_id": {
-          "name": "qualification_id",
-          "type": "text",
-          "primaryKey": true,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "source_sha256": {
-          "name": "source_sha256",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "origin": {
-          "name": "origin",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "deployment_id": {
-          "name": "deployment_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "terms_json": {
-          "name": "terms_json",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "terms_sha256": {
-          "name": "terms_sha256",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "status": {
-          "name": "status",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "qualified_at": {
-          "name": "qualified_at",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "expires_at": {
-          "name": "expires_at",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        }
-      },
-      "indexes": {
-        "idx_memory_derivation_qualification_current": {
-          "name": "idx_memory_derivation_qualification_current",
-          "columns": [
-            "source_sha256",
-            "status",
-            "expires_at"
-          ],
-          "isUnique": false
-        }
-      },
-      "foreignKeys": {},
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "checkConstraints": {
-        "memory_derivation_qualification_hash": {
-          "name": "memory_derivation_qualification_hash",
-          "value": "length(source_sha256)=64 AND source_sha256 NOT GLOB '*[^0-9a-f]*' AND length(terms_sha256)=64 AND terms_sha256 NOT GLOB '*[^0-9a-f]*'"
-        },
-        "memory_derivation_qualification_terms": {
-          "name": "memory_derivation_qualification_terms",
-          "value": "json_valid(terms_json) AND json_type(terms_json)='object' AND length(CAST(terms_json AS BLOB)) BETWEEN 1 AND 8192"
-        },
-        "memory_derivation_qualification_state": {
-          "name": "memory_derivation_qualification_state",
-          "value": "status IN('qualified','withdrawn') AND length(qualified_at)=24 AND length(expires_at)=24 AND qualified_at<expires_at"
-        }
-      }
     },
     "memory_document_job_answer_origins": {
       "name": "memory_document_job_answer_origins",
@@ -13401,6 +13044,148 @@
       "uniqueConstraints": {},
       "checkConstraints": {}
     },
+    "still_panel_commands": {
+      "name": "still_panel_commands",
+      "columns": {
+        "seq": {
+          "name": "seq",
+          "type": "integer",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": true
+        },
+        "session_id": {
+          "name": "session_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "type": {
+          "name": "type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "value": {
+          "name": "value",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "scope": {
+          "name": "scope",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "idx_still_panel_commands": {
+          "name": "idx_still_panel_commands",
+          "columns": [
+            "session_id",
+            "seq"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "still_panel_sessions": {
+      "name": "still_panel_sessions",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "owner_id": {
+          "name": "owner_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "token_hash": {
+          "name": "token_hash",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "expires_at": {
+          "name": "expires_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "heartbeat": {
+          "name": "heartbeat",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "scope": {
+          "name": "scope",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "revision": {
+          "name": "revision",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "payload": {
+          "name": "payload",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "idx_still_panel_owner": {
+          "name": "idx_still_panel_owner",
+          "columns": [
+            "owner_id"
+          ],
+          "isUnique": false
+        },
+        "idx_still_panel_expiry": {
+          "name": "idx_still_panel_expiry",
+          "columns": [
+            "expires_at"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
     "users": {
       "name": "users",
       "columns": {
@@ -13487,6 +13272,7 @@
   "views": {},
   "enums": {},
   "_meta": {
+    "schemas": {},
     "tables": {},
     "columns": {}
   },
@@ -13500,7 +13286,5 @@
         }
       }
     }
-  },
-  "id": "981d41e6-5093-4508-8555-b0ee1e132bdb",
-  "prevId": "053f83c2-b032-4f35-b36d-b6bd97f02d1a"
+  }
 }

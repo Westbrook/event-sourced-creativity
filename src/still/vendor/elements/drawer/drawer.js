@@ -31,7 +31,7 @@ import { EnDialog } from '../dialog/dialog.js';
  * @csspart close - Native control of the internal icon-only en-button, forwarded through exportparts.
  * @csspart body - Content container.
  * @csspart footer - Footer container.
- * @fires en-change - Cancelable tentative open state: {previous, proposed, reason}.
+ * @fires {import('../dialog/types.js').OverlayChangeEvent} en-change - Cancelable tentative open state: {previous, proposed, reason}.
  */
 export class EnDrawer extends EnDialog {
     static properties = {

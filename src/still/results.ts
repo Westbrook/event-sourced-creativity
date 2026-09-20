@@ -25,13 +25,13 @@ export function generationPreview(job:DocumentJob,p:CreativeProjection,events:Cr
   const width=size?Number(size[1]):0,height=size?Number(size[2]):0;
   return {title,...(width>0&&height>0&&width<=16384&&height<=16384?{width,height}:{})};
 }
-export type StillResult = {id:string;view:'artifact'|'generation';title:string;kind:string;url:string;sequence:number;job?:DocumentJob};
+export type StillResult = {id:string;view:'artifact'|'generation';title:string;kind:string;url:string;sequence:number;width?:number|null;height?:number|null;job?:DocumentJob};
 export function stillResults(p:CreativeProjection,jobs:DocumentJob[],events:CreativeEvent[]):StillResult[] {
   const pending:StillResult[]=jobs.filter(j=>j.documentId===p.documentId&&generationFormat(j)&&!j.dismissedAt&&!generationResult(j,p,events,true)).map(job=>({
     id:job.jobId,view:'generation',title:generationPreview(job,p,events).title,kind:generationFormat(job),url:'',sequence:job.requestedSequence,job,
   }));
   const results:StillResult[]=[...pending,
-    ...p.outputs.filter(o=>!o.discarded).map(o=>({id:o.id,view:'artifact' as const,title:o.title??'Image',kind:'image',url:o.mediaUrl??'',sequence:o.sequence})),
+    ...p.outputs.filter(o=>!o.discarded).map(o=>({id:o.id,view:'artifact' as const,title:o.title??'Image',kind:'image',url:o.mediaUrl??'',width:o.width,height:o.height,sequence:o.sequence})),
     ...p.artifacts.map(a=>({id:a.id,view:'artifact' as const,title:a.title,kind:a.kind,url:'',sequence:a.sequence})),
   ];
   return results.sort((a,b)=>b.sequence-a.sequence||((b.job?.requestedAt??'').localeCompare(a.job?.requestedAt??'')));

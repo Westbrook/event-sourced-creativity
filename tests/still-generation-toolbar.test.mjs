@@ -17,7 +17,7 @@ const Recovery=new Function('documentJobCanAcknowledgeSafety','generationFormat'
 function fixture(status='failed') {
  const view=new Recovery();
  const calls=[];
- Object.assign(view,{busy:false,composing:false,changed:()=>{},begin:mode=>calls.push(['begin',mode]),startGeneration:format=>{assert.equal(view.generation,null);calls.push(['generate',format]);},client:{scopeKey:'owner',epoch:1,position:{view:'generation',documentId:'doc',outputId:'job'},abilities:{generate:true,formats:['video']},jobs:[{jobId:'job',documentId:'doc',status,kind:'render_document',result:{artifactKind:'video'}}],pollJobs:async()=>calls.push(['poll']),refresh:async()=>calls.push(['refresh'])}});
+ Object.assign(view,{busy:false,composing:false,decide:()=>{},changed:()=>{},begin:mode=>calls.push(['begin',mode]),startGeneration:format=>{assert.equal(view.generation,null);calls.push(['generate',format]);},client:{scopeKey:'owner',epoch:1,position:{recentActions:[],view:'generation',documentId:'doc',outputId:'job'},abilities:{generate:true,formats:['video']},jobs:[{jobId:'job',documentId:'doc',status,kind:'render_document',result:{artifactKind:'video'}}],pollJobs:async()=>calls.push(['poll']),refresh:async()=>calls.push(['refresh'])}});
  return {view,calls};
 }
 test('status refresh reads only, confirms no new generation, and does not repeat provider error',async()=>{
@@ -32,13 +32,13 @@ test('failed or stale refresh never claims a successful check',async()=>{
  view.client.pollJobs=async()=>{view.client.position.outputId='other';};await view.refreshGenerationStatus();
  assert.notEqual(view.generationCheck.key,view.generationCheckKey());
 });
-test('toolbar separates primary fresh generation from secondary read-only refresh',()=>{
+test('only explicit inline reviews use a deterministic primary generation control',()=>{
  const {view,calls}=fixture();const actions=view.generationRecoveryActions();
- assert.equal(actions[0].label,'Generate new video');assert.equal(actions[0].variant,'primary');
- assert.equal(actions[1].label,'Refresh status');assert.equal(actions[1].variant,'secondary');
- view.generation={attempted:true,providerModel:'old-model'};actions[0].run();
+ assert.equal(actions.some(a=>a.id==='ui:generate-new'),false);
+ assert.equal(actions[0].label,'Refresh status');assert.equal(actions[0].variant,'secondary');
+ view.generation={attempted:true,providerModel:'old-model'};view.generateAgain('job');
  assert.deepEqual(calls,[['generate','video']]);assert.equal(view.isInlineGeneration(),true);
- view.pageActionLimit=2;view.compactDock=options=>options;assert.equal(view.renderGenerationStatusDock()[0].id,'ui:continue-generation');
+ view.pageActionLimit=2;view.toolbarLimit=2;view.compactDock=options=>options;assert.equal(view.renderGenerationStatusDock()[0].id,'ui:continue-generation');
 });
 
 function executionFixture() {
@@ -84,7 +84,7 @@ test('a late accepted request does not redirect after the user leaves the origin
 });
 test('fresh action rechecks selected job, capability, uncertain requests and busy state',()=>{
  for(const change of [v=>v.client.position.outputId='other',v=>v.client.abilities.generate=false,v=>v.client.abilities.formats=[],v=>v.client.pendingGeneration={},v=>v.client.hasUnconfirmedWrite=true,v=>v.busy=true,v=>v.directGeneration=true,v=>v.client.jobs[0].status='running']){
-  const {view,calls}=fixture();const action=view.generationRecoveryActions()[0];change(view);action.run();assert.deepEqual(calls,[]);
+  const {view,calls}=fixture();const action=()=>view.generateAgain('job');change(view);action();assert.deepEqual(calls,[]);
  }
  for(const status of ['running','queued','committing','completed','partial']){const {view}=fixture(status);assert.equal(view.generationRecoveryActions().some(a=>a.id==='ui:generate-new'),false);}
 });

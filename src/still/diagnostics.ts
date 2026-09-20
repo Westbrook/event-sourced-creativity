@@ -1,3 +1,4 @@
+import { evaluateLocalActions, localFormatRules } from './local-policy.ts';
 import type { DecisionCacheInfo } from './decision-cache.ts';
 import type { compactHistoryEvent } from './history.ts';
 import type { Emphasis } from './presentation.ts';
@@ -48,9 +49,9 @@ export function decisionDiagnostics(p: CreativeProjection, position: Position, a
   const eligibility=evaluateEligibility(p,position,abilities), candidates=eligibility.filter(r=>r.eligible).map(r=>r.action);
   const questions=questionsFor(candidates,position,options.artifactKind), answers=options.answers??{};
   const formats=position.view==='choose-format'&&!position.palette;
-  const evaluation=formats?evaluateFormats(candidates,answers):evaluateActions(candidates,position,answers);
+  const evaluation=formats?evaluateFormats(candidates,answers):evaluateActions(candidates,position,answers,p);
   if (formats) {
-    const order=rankAllFormats(candidates,answers);
+    const order=rankAllFormats(candidates,answers,{projection:p,position});
     evaluation.selected=order.slice(0,3);
     for (const row of evaluation.rows) {
       const index=order.indexOf(row.id);
@@ -60,6 +61,7 @@ export function decisionDiagnostics(p: CreativeProjection, position: Position, a
     }
   }
   return {
+    localStartingPoint:formats?localFormatRules(p,position).filter(r=>candidates.some(a=>a.id===r.id)).slice(0,3):evaluateLocalActions(candidates,p,position).rows.filter(r=>r.selected).sort((a,b)=>a.selected!-b.selected!).map(r=>({id:r.id,reason:r.localReason??'Local page rule'})),
     version:1 as const, policy:POLICY_VERSION, source:options.source, reason:options.reason, model:typeof options.model==='string'?options.model.slice(0,100):undefined, head:options.head,
     channel:position.palette?'palette':formats?'formats':'actions',
     ...(options.exchange?{exchange:options.exchange}:{}),

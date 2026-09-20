@@ -1,10 +1,12 @@
 import { css } from 'lit';
 import { token as t, override as o } from './values.js';
 import { focusStylesFor } from './focus-core.js';
-const buttonInlinePadding = o('--en-control-inline-padding', o('--en-button-inline-padding', t('--en-space-control-inline')));
+const buttonInlinePadding = o('--en-button-inline-padding', o('--en-control-inline-padding', t('--en-space-control-inline')));
 /** Shared authored button rules; aggregate and leaf keep the same source. */
 export const buttonAppearanceStyles = css `
   .en-button {
+    --_en-button-state-background: var(--en-button-rest-background);
+    --_en-button-state-color: var(--en-button-rest-color);
     padding-inline: ${buttonInlinePadding};
     display: inline-flex;
     min-inline-size: ${t('--en-size-target-min')};
@@ -12,9 +14,9 @@ export const buttonAppearanceStyles = css `
     justify-content: center;
     gap: ${t('--en-space-icon-label')};
     border-color: ${o('--en-button-border-color', t('--en-color-action'))};
-    border-radius: ${o('--en-button-radius', t('--en-radius-control'))};
-    background: ${o('--en-button-background', t('--en-color-action'))};
-    color: ${o('--en-button-color', t('--en-color-on-action'))};
+    border-radius: ${o('--en-button-radius', o('--en-control-radius', t('--en-radius-control')))};
+    background: var(--_en-button-state-background, ${o('--en-button-background', t('--en-color-action'))});
+    color: var(--_en-button-state-color, ${o('--en-button-color', t('--en-color-on-action'))});
     font-weight: ${t('--en-font-label-strong-weight')};
     text-align: center;
     text-decoration: none;
@@ -24,29 +26,41 @@ export const buttonAppearanceStyles = css `
     transition: background-color ${t('--en-duration-fast')} ${t('--en-ease-standard')},
       border-color ${t('--en-duration-fast')} ${t('--en-ease-standard')};
   }
-  @media (hover: hover) { .en-button:where(:not(:disabled):not([aria-disabled='true']):hover) { background: ${o('--en-button-background', t('--en-color-action-hover'))}; } }
-  .en-button:where(:not(:disabled):not([aria-disabled='true']):active) { background: ${o('--en-button-background', t('--en-color-action-pressed'))}; }
+  @media (hover: hover) { .en-button:where(:not(:disabled):not([aria-disabled='true']):hover) { background: var(--_en-button-state-background, ${o('--en-button-background', t('--en-color-action-hover'))}); } }
+  .en-button:where(:not(:disabled):not([aria-disabled='true']):active) { background: var(--_en-button-state-background, ${o('--en-button-background', t('--en-color-action-pressed'))}); }
   .en-button--secondary, .en-button[data-variant='secondary'] {
-    background: ${o('--en-button-background', t('--en-color-surface-subtle'))};
-    color: ${o('--en-button-color', t('--en-color-text'))};
+    background: var(--_en-button-state-background, ${o('--en-button-background', t('--en-color-surface-subtle'))});
+    color: var(--_en-button-state-color, ${o('--en-button-color', t('--en-color-text'))});
     border-color: ${o('--en-button-border-color', t('--en-color-boundary'))};
   }
   .en-button--quiet, .en-button[data-variant='ghost'] {
-    background: none;
-    color: ${o('--en-button-color', t('--en-color-action-text'))};
+    background: var(--_en-button-state-background, none);
+    color: var(--_en-button-state-color, ${o('--en-button-color', t('--en-color-action-text'))});
     border-color: ${o('--en-button-border-color', t('--en-color-line'))};
   }
   @media (hover: hover) { :is(.en-button--secondary, .en-button--quiet, .en-button[data-variant='secondary'], .en-button[data-variant='ghost']):not(:disabled):not([aria-disabled='true']):hover {
-    background: ${o('--en-button-background', t('--en-color-selected'))};
+    background: var(--_en-button-state-background, ${o('--en-button-background', t('--en-color-selected'))});
   } }
   .en-button--danger, .en-button[data-variant='danger'] {
-    background: ${o('--en-button-background', t('--en-color-surface'))};
-    color: ${o('--en-button-color', t('--en-color-danger-text'))};
+    background: var(--_en-button-state-background, ${o('--en-button-background', t('--en-color-surface'))});
+    color: var(--_en-button-state-color, ${o('--en-button-color', t('--en-color-danger-text'))});
     border-color: ${o('--en-button-border-color', t('--en-color-danger-text'))};
   }
   @media (hover: hover) { :is(.en-button--danger, .en-button[data-variant='danger']):not(:disabled):not([aria-disabled='true']):hover {
-    background: ${o('--en-button-background', t('--en-color-surface-subtle'))};
+    background: var(--_en-button-state-background, ${o('--en-button-background', t('--en-color-surface-subtle'))});
   } }
+  /* Explicit state refinements have a shared order across variants. Clearing an
+     absent state slot preserves each variant's existing broad/semantic fallback. */
+  @media (hover: hover) {
+    .en-button:where(:not(:disabled):not([aria-disabled='true']):hover) {
+      --_en-button-state-background: var(--en-button-hover-background);
+      --_en-button-state-color: var(--en-button-hover-color);
+    }
+  }
+  .en-button:where(:not(:disabled):not([aria-disabled='true']):active) {
+    --_en-button-state-background: var(--en-button-pressed-background);
+    --_en-button-state-color: var(--en-button-pressed-color);
+  }
   .en-button__prefix, .en-button__suffix { display: contents; }
   .en-button__label { min-inline-size: 0; }
   .en-icon-button { padding-inline: ${t('--en-space-2')}; min-inline-size: max(${o('--en-control-min-size', t('--en-size-control-min'))}, ${t('--en-size-target-min')}); }

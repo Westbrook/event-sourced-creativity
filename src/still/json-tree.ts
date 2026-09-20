@@ -17,10 +17,10 @@ export class StillJsonTree extends LitElement {
   }
   static styles=css`
     :host{display:block;min-width:0;font:12px/1.6 ui-monospace,monospace;overflow-wrap:anywhere}
-    summary{cursor:pointer;padding:4px 0}summary:focus-visible{outline:2px solid #596345;outline-offset:2px}
-    b{font-weight:550}span{color:#77746d}code{font:inherit;white-space:pre-wrap}
-    .children{border-left:1px solid #dedbd2;margin-left:5px;padding-left:12px}
-    .leaf{padding:4px 0;display:flex;flex-wrap:wrap;column-gap:10px}.leaf code{color:#555f42;max-width:100%}
+    summary{cursor:pointer;padding:4px 0}summary:focus-visible{outline:2px solid var(--en-color-focus);outline-offset:2px}
+    b{font-weight:550}span{color:var(--en-color-text-muted)}code{font:inherit;white-space:pre-wrap}
+    .children{border-left:1px solid var(--en-color-line);margin-left:5px;padding-left:12px}
+    .leaf{padding:4px 0;display:flex;flex-wrap:wrap;column-gap:10px}.leaf code{color:var(--en-color-action-text);max-width:100%}
   `;
 }
 if(!customElements.get('still-json-tree'))customElements.define('still-json-tree',StillJsonTree);

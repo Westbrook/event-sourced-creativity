@@ -29,10 +29,10 @@ export class StillExchangeInspector extends LitElement {
     </details>`;
   }
   static styles=css`
-    :host{display:block;container-type:inline-size}details{border-top:1px solid #d9d7ce;padding:10px 0}summary{cursor:pointer;font-weight:550}
-    summary:focus-visible{outline:2px solid #596345;outline-offset:3px}p{margin:9px 0}h4{font-size:13px;margin:0 0 9px}
+    :host{display:block;container-type:inline-size}details{border-top:1px solid var(--en-color-line);padding:10px 0}summary{cursor:pointer;font-weight:550}
+    summary:focus-visible{outline:2px solid var(--en-color-focus);outline-offset:3px}p{margin:9px 0}h4{font-size:13px;margin:0 0 9px}
     en-select{display:block;width:100%;margin:12px 0}
-    .meta{font-size:11px;color:#706e65}code{font:11px/1.5 ui-monospace,monospace}
+    .meta{font-size:11px;color:var(--en-color-text-muted)}code{font:11px/1.5 ui-monospace,monospace}
     .pair{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:20px;margin:18px 0}section{min-width:0}
     @container(max-width:520px){.pair{grid-template-columns:minmax(0,1fr)}}
   `;

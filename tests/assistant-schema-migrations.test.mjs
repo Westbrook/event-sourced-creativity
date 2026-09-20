@@ -23,7 +23,7 @@ const LEGACY_ASSISTANT_DDL=[
 ];
 
 const identifier=value=>'"'+String(value).replaceAll('"','""')+'"';
-const normalizeSql=sql=>sql.replace(/["\x60\[\]]/gu,"").replace(/\s+/gu," ").trim();
+const normalizeSql=sql=>sql.replace(/["\x60[\]]/gu,"").replace(/\s+/gu," ").trim();
 function actualMigrations(){
  const journal=JSON.parse(readFileSync(new URL("meta/_journal.json",migrationDirectory),"utf8"));
  assert.equal(journal.dialect,"sqlite");assert.ok(Array.isArray(journal.entries));
@@ -702,4 +702,33 @@ test("main170 source metadata is NOT deployment certification: recorded history 
     assert.equal(indexes(sqlite, "assistant_specialist_tasks").some(index => index.name === "idx_assistant_single_consented_turn"), false);
     assert.deepEqual(snapshot(sqlite), before); assert.deepEqual(main170MetadataReceipts(sqlite), receipts);
   } finally { sqlite.close(); }
+});
+
+test('Memory main reconciliation preserves the upstream Still journal/snapshot and every following snapshot includes its tables',()=>{
+ const entries=actualMigrations(),entry=entries[39],upstream=main170MetadataSnapshot(39);
+ assert.equal(entry.tag,'0043_still_panel_relay');assert.equal(entry.when,1789761110511);
+ assert.equal(main170MetadataHash(entry.sql),'adac5ec6ad6348933c030f427f52193e1f8c13ddee08f45b353f263d841903c8');
+ assert.equal(main170MetadataHash(readFileSync(new URL('meta/0039_snapshot.json',migrationDirectory))),'96b860fb7466daac7bbabb752e86a1b4f0fd3ca9edf7023448150ad5968f41a1');
+ assert.equal(entries[40].tag,'0043_memory_derivation_purpose_grants');
+ for(let index=40;index<entries.length;index++){
+  assert.ok(entries[index].when>entries[index-1].when,'Unpublished work cannot be skipped behind a published timestamp');
+  const current=main170MetadataSnapshot(index);assert.equal(current.prevId,main170MetadataSnapshot(index-1).id);
+  for(const table of ['still_panel_commands','still_panel_sessions'])assert.deepEqual(current.tables[table],upstream.tables[table]);
+ }
+});
+test('Memory main reconciliation upgrades populated Still using the installed timestamp-based migrator without skipping grants or changing upstream rows',()=>{
+ const sqlite=database(),history=main170MetadataHistory();
+ try{
+  main170MetadataMigrate(sqlite,history.slice(0,40));
+  sqlite.prepare('INSERT INTO still_panel_sessions VALUES(?,?,?,?,?,?,?,?)').run('synthetic-session','synthetic-owner','synthetic-hash',9999999999999,123,'synthetic-scope',1,'opaque-synthetic-envelope');
+  sqlite.prepare('INSERT INTO still_panel_commands(session_id,type,value,scope,created_at) VALUES(?,?,?,?,?)').run('synthetic-session','command','opaque-synthetic-command','synthetic-scope',123);
+  const before=Object.fromEntries(['still_panel_commands','still_panel_sessions'].map(table=>[table,sqlite.prepare('SELECT * FROM '+table).all()])),receipts=main170MetadataReceipts(sqlite);
+  main170MetadataMigrate(sqlite,history);
+  assert.deepEqual(main170MetadataReceipts(sqlite),main170MetadataExpectedReceipts(history));
+  assert.deepEqual(main170MetadataReceipts(sqlite).slice(0,40),receipts);
+  for(const [table,rows]of Object.entries(before))assert.deepEqual(sqlite.prepare('SELECT * FROM '+table).all(),rows);
+  for(const name of ['memory_derivation_grants','memory_derivation_contexts'])assert.ok(main170MetadataExists(sqlite,name));
+  const completed=main170MetadataReceipts(sqlite);main170MetadataMigrate(sqlite,history);assert.deepEqual(main170MetadataReceipts(sqlite),completed);
+  assert.deepEqual(sqlite.prepare('PRAGMA foreign_key_check').all(),[]);
+ }finally{sqlite.close();}
 });

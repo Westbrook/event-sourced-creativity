@@ -1,3 +1,5 @@
+import { generationDecisionContext } from '../src/still/generation-decision.ts';
+import type { DocumentJob } from '../src/model/document-jobs.ts';
 import {decisionHash,readStoredDecision,writeStoredDecision} from './still-decision-store.ts';
 import type { ProjectRequestContext } from './project-request-context.ts';
 import { readStillHistory, sourceVersion } from './still-history.ts';
@@ -47,6 +49,15 @@ export async function handleStillDecision(request: Request, env: WorkerEnv, cont
   const scope=stableDecisionKey({user:auth.user.userId,stream:auth.user.streamId,session});
   // Cross-request reuse precedes history reconstruction, but never authentication,
   // consent, scope checks, provider capabilities or the certified source revision.
+  // Resolve job evidence from the authorized API; never trust a client-supplied receipt.
+  if(position.view==='generation') {
+    if(!position.outputId||!position.documentId)return reply({error:'selection_unavailable'},409);
+    const response=await import('./document-jobs-api.ts').then(m=>m.handleDocumentJobs(new Request(new URL('/api/document-jobs/'+encodeURIComponent(position.outputId),request.url),{headers:request.headers}),env,encodeURIComponent(position.outputId),context));
+    if(!response.ok)return response;
+    const {job}=await response.json() as {job?:DocumentJob};
+    if(!job||job.jobId!==position.outputId||job.documentId!==position.documentId)return reply({error:'selection_unavailable'},409);
+    position.generation=generationDecisionContext(job);
+  }
   const revision=!scoped?await sourceVersion(env,auth.user):null;
   const durableKey=revision?await decisionHash({version:2,policy:POLICY_VERSION,scope,revision,position,developer:input.developer===true,provider:env.JEV_API_KEY??null}):null;
   if(durableKey&&input.cacheBypass!==true){
@@ -101,7 +112,7 @@ export async function handleStillDecision(request: Request, env: WorkerEnv, cont
   let asked=false,exchange:DecisionExchange|undefined,presentation:Record<string,Emphasis>={},adjustments:MenuAdjustment[]=[],recommended:string[]|undefined;
   const metrics=()=>({elapsedMs:Date.now()-started,providerCalls:passes.filter(p=>p.status!=='skipped').length,candidateCount:built.candidates.length,questionsAsked:passes.reduce((n,p)=>n+p.questions.filter(q=>q.asked).length,0),menuGroups:recommended?[...new Set(recommended.map(id=>built.candidates.find(a=>a.id===id)?.group))]:[],recentEscapeHatches:position.recentActions.filter(id=>id==='ui:more'||id==='ui:palette').length,destinationCandidates:evidence.destinations.length});
   const diagnostics = (source:string, reason?:string, answers?:Record<string,Answer>, model?:string, observedAnswers?:Record<string,Answer>) => input.developer===true ? {diagnostics:decisionDiagnostics(built.projection,position,abilities,{head,source,reason,answers,model,observedAnswers,asked,exchange,passes,presentation,adjustments,recommended,metrics:metrics(),artifactKind:built.state.selectedWork?.kind,coverage:built.state.history.coverage})} : {};
-  const fallback = (reason: string, observedAnswers?:Record<string,Answer>) => reply({ source: 'fallback', reason, policy: POLICY_VERSION, head, actions: palette||choosingFormat||finding ? [] : selectActions(built.candidates, position), rankedActions: palette||choosingFormat||finding ? [] : evaluateActions(built.candidates,position).ranked.map(a=>({id:a.id})), formats: [], candidateIds: built.candidates.map(a => a.id), ...diagnostics('fallback',reason,undefined,undefined,observedAnswers) });
+  const fallback = (reason: string, observedAnswers?:Record<string,Answer>) => reply({ source: 'fallback', reason, policy: POLICY_VERSION, head, actions: palette||choosingFormat||finding ? [] : selectActions(built.candidates, position,{},built.projection), rankedActions: palette||choosingFormat||finding ? [] : evaluateActions(built.candidates,position,{},built.projection).ranked.map(a=>({id:a.id})), formats: [], candidateIds: built.candidates.map(a => a.id), ...diagnostics('fallback',reason,undefined,undefined,observedAnswers) });
   if (!env.JEV_API_KEY) return fallback('not_configured');
   const callPass=async(id:string,label:string,state:unknown,askedQuestions:typeof questions,timeout:number,parentId?:string)=>{
     const body=JSON.stringify({model:'jev-latest',state,questions:askedQuestions});
@@ -139,7 +150,7 @@ export async function handleStillDecision(request: Request, env: WorkerEnv, cont
     return reply({source:'jev',model:first.model,policy:POLICY_VERSION,head,paletteActions:recommended.map(id=>({id})),actions:[],candidateIds:built.candidates.map(a=>a.id),...diagnostics('jev',undefined,answers,first.model)});
   }
   let actions=choosingFormat?[]:selectActions(built.candidates,position,answers);
-  const rankedFormats=choosingFormat?rankAllFormats(built.candidates,answers):[];
+  const rankedFormats=choosingFormat?rankAllFormats(built.candidates,answers,{projection:built.projection,position}):[];
   const formats=rankedFormats.slice(0,3);
   let target:typeof evidence.destinations[number]|undefined;
   const resultBody=()=>{

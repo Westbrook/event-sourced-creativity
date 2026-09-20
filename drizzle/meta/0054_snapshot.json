@@ -1,8 +1,8 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "e836ddc7-bd95-4462-80d2-07eb823ec701",
-  "prevId": "4513031c-b5da-4f11-8858-2175bbc7e943",
+  "id": "aac61656-87fe-482e-ac09-c62b75691a37",
+  "prevId": "2d616f1a-af63-4767-a8fe-cabdfc5a722d",
   "tables": {
     "artifact_revisions": {
       "name": "artifact_revisions",
@@ -13579,151 +13579,6 @@
       "uniqueConstraints": {},
       "checkConstraints": {}
     },
-    "project_containment": {
-      "name": "project_containment",
-      "columns": {
-        "owner_user_id": {
-          "name": "owner_user_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "project_id": {
-          "name": "project_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "declaration_ref": {
-          "name": "declaration_ref",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "parent_project_id": {
-          "name": "parent_project_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "parent_declaration_ref": {
-          "name": "parent_declaration_ref",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "organization_id": {
-          "name": "organization_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "revision": {
-          "name": "revision",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "updated_at": {
-          "name": "updated_at",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        }
-      },
-      "indexes": {
-        "idx_project_containment_parent": {
-          "name": "idx_project_containment_parent",
-          "columns": [
-            "owner_user_id",
-            "parent_project_id"
-          ],
-          "isUnique": false
-        }
-      },
-      "foreignKeys": {
-        "project_containment_owner_user_id_users_user_id_fk": {
-          "name": "project_containment_owner_user_id_users_user_id_fk",
-          "tableFrom": "project_containment",
-          "tableTo": "users",
-          "columnsFrom": [
-            "owner_user_id"
-          ],
-          "columnsTo": [
-            "user_id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        },
-        "project_containment_declaration_ref_events_event_id_fk": {
-          "name": "project_containment_declaration_ref_events_event_id_fk",
-          "tableFrom": "project_containment",
-          "tableTo": "events",
-          "columnsFrom": [
-            "declaration_ref"
-          ],
-          "columnsTo": [
-            "event_id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        },
-        "project_containment_parent_declaration_ref_events_event_id_fk": {
-          "name": "project_containment_parent_declaration_ref_events_event_id_fk",
-          "tableFrom": "project_containment",
-          "tableTo": "events",
-          "columnsFrom": [
-            "parent_declaration_ref"
-          ],
-          "columnsTo": [
-            "event_id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        },
-        "project_containment_organization_id_organizations_organization_id_fk": {
-          "name": "project_containment_organization_id_organizations_organization_id_fk",
-          "tableFrom": "project_containment",
-          "tableTo": "organizations",
-          "columnsFrom": [
-            "organization_id"
-          ],
-          "columnsTo": [
-            "organization_id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {
-        "project_containment_owner_user_id_project_id_pk": {
-          "columns": [
-            "owner_user_id",
-            "project_id"
-          ],
-          "name": "project_containment_owner_user_id_project_id_pk"
-        }
-      },
-      "uniqueConstraints": {},
-      "checkConstraints": {
-        "project_containment_parent_pair": {
-          "name": "project_containment_parent_pair",
-          "value": "(\"project_containment\".\"parent_project_id\" IS NULL) = (\"project_containment\".\"parent_declaration_ref\" IS NULL)"
-        },
-        "project_containment_no_self": {
-          "name": "project_containment_no_self",
-          "value": "\"project_containment\".\"parent_project_id\" IS NULL OR \"project_containment\".\"parent_project_id\" <> \"project_containment\".\"project_id\""
-        }
-      }
-    },
     "project_context_package_bindings": {
       "name": "project_context_package_bindings",
       "columns": {
@@ -15680,6 +15535,148 @@
           "name": "idx_users_role",
           "columns": [
             "role"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "still_panel_commands": {
+      "name": "still_panel_commands",
+      "columns": {
+        "seq": {
+          "name": "seq",
+          "type": "integer",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": true
+        },
+        "session_id": {
+          "name": "session_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "type": {
+          "name": "type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "value": {
+          "name": "value",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "scope": {
+          "name": "scope",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "idx_still_panel_commands": {
+          "name": "idx_still_panel_commands",
+          "columns": [
+            "session_id",
+            "seq"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "still_panel_sessions": {
+      "name": "still_panel_sessions",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "owner_id": {
+          "name": "owner_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "token_hash": {
+          "name": "token_hash",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "expires_at": {
+          "name": "expires_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "heartbeat": {
+          "name": "heartbeat",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "scope": {
+          "name": "scope",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "revision": {
+          "name": "revision",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "payload": {
+          "name": "payload",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "idx_still_panel_owner": {
+          "name": "idx_still_panel_owner",
+          "columns": [
+            "owner_id"
+          ],
+          "isUnique": false
+        },
+        "idx_still_panel_expiry": {
+          "name": "idx_still_panel_expiry",
+          "columns": [
+            "expires_at"
           ],
           "isUnique": false
         }
