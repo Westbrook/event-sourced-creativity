@@ -54,3 +54,26 @@ all resource coverage. Whole-invocation capacity qualification also remains
 separate from the per-statement limits fixed here. Continue using the
 [complete implementation matrix](forma-memory-completion-matrix-2026-09-20.md).
 External/operational work stays in the [Sites capability checklist](forma-memory-sites-capability-todo-2026-09-18.md).
+
+## Request-local continuation and exact receipt recovery
+
+Post-provider publication can reuse compiled native source predicates only inside
+the original wall/monotonic lease and on the same DB/actor. Every disclosure and
+write still replays the complete native SQL assertions. Expired leases independently
+rehydrate; clock rollback/nonfinite time denies publication without discarding
+verified provider usage. Budget counter initialization now shares the existing
+atomic reservation path.
+
+Receipt recovery requires the same durable provider receipt ID as well as exact
+token/cost totals. Equal-cost conflicting receipts cannot become canonical results
+in specialist, adaptive, or context-intelligence recovery.
+
+Measured personal/shared synthetic binding calls: quote 52/58; execution HTTP
+58/62; background 95/108 (previously 132/150); retrieval 40/40. These measurements
+do **not** pass the conservative under-50 whole-invocation capacity gate and do
+not qualify hosted limits.
+
+Verification: 262 affected finance/specialist/semantic/lifecycle checks; 49 targeted
+receipt/consent/lease checks; all five clock/lease fault cases; the conflicting
+receipt integration case; and 219 adaptive runtime checks pass. TypeScript,
+changed-production-file lint, and the production build pass. Synthetic data only.

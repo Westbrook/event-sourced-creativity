@@ -234,8 +234,8 @@ export async function handleContextIntelligence(request:Request,env:WorkerEnv,op
       const long=inputTokens>272_000,used=long?Math.ceil(inputTokens*4+outputTokens*18)+searchCalls*CONTEXT_WEB_SEARCH_CALL_MICROUSD:assistantModelCostMicrousd(limit.model as AssistantModel,inputTokens,outputTokens)+searchCalls*CONTEXT_WEB_SEARCH_CALL_MICROUSD;
       try{await settleConsequentialStep(env,principal.userId,executionId,stepIndex,totalTokens,used,typeof provider.id==="string"?provider.id:null);}
       catch(error){
-        const retained=await env.DB.prepare("SELECT verified_tokens,verified_microusd,status FROM consequential_execution_steps WHERE execution_id=? AND step_index=?").bind(executionId,stepIndex).first<{verified_tokens:number;verified_microusd:number;status:string}>();
-        if(!retained||!["usage-recorded","settled"].includes(retained.status)||retained.verified_tokens!==totalTokens||retained.verified_microusd!==used)throw error;
+        const retained=await env.DB.prepare("SELECT verified_tokens,verified_microusd,status,provider_request_id FROM consequential_execution_steps WHERE execution_id=? AND step_index=?").bind(executionId,stepIndex).first<{verified_tokens:number;verified_microusd:number;status:string;provider_request_id:string|null}>();
+        if(!retained||!["usage-recorded","settled"].includes(retained.status)||retained.verified_tokens!==totalTokens||retained.verified_microusd!==used||retained.provider_request_id!==(typeof provider.id==="string"?provider.id:null))throw error;
         const settled=await consequentialUsageSettled(env,principal.userId,executionId,stepIndex,totalTokens,used);
         if(retained.status==="settled"&&!settled)throw error;
         billingPending=billingPending||!settled;

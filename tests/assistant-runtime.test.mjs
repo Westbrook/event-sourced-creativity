@@ -16966,3 +16966,39 @@ for(const shared of [false,true])test('semantic original lifecycle: original era
  assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM private_content WHERE content_id IN(SELECT content_id FROM memory_derivation_consumer_contents) AND content<>''").get().n,0);
  assert.equal((await specialistRetrieve(state,review,state.semanticOptions)).status,404);assert.equal(calls,1);
 });
+
+for(const mode of ['within-lease','elapsed','wall-rollback','monotonic-rollback','nonfinite'])test('semantic consumer lease: '+mode+' never substitutes a cached positive source decision',async t=>{
+ const state=await semanticPaidConsumerFixture(t),{response,body:review}=await state.semanticQuote();assert.equal(response.status,200);
+ const db=state.env.DB,prepare=db.prepare;let reads=0,atDispatch=0;
+ db.prepare=function(sql){if(sql.startsWith('SELECT c.target_enrollment_id,')&&sql.includes('FROM memory_derivation_contexts'))reads++;return prepare.call(this,sql);};t.after(()=>{db.prepare=prepare;});
+ const original=globalThis.fetch,performanceNow=performance.now.bind(performance);let calls=0;
+ globalThis.fetch=async(_url,init)=>{
+  calls++;atDispatch=reads;
+  if(mode==='elapsed')t.mock.method(performance,'now',()=>performanceNow()+31000);
+  if(mode==='monotonic-rollback')t.mock.method(performance,'now',()=>0);
+  if(mode==='nonfinite')t.mock.method(performance,'now',()=>NaN);
+  if(mode==='wall-rollback')t.mock.timers.enable({apis:['Date'],now:Date.now()-1000});
+  return specialistRawResponse(JSON.parse(init.body));
+ };t.after(()=>{globalThis.fetch=original;});
+ assert.equal((await specialistExecute(state,review,state.semanticOptions)).status,202);await state.drainBackground();
+ assert.equal(calls,1);assert.ok(atDispatch>0);
+ const copied=state.sqlite.prepare("SELECT COUNT(*) AS n FROM memory_derivation_consumer_contents WHERE role IN('response','result')").get().n;
+ assert.equal(copied,['within-lease','elapsed'].includes(mode)?2:0);
+ assert.equal(state.sqlite.prepare('SELECT verified_tokens FROM consequential_execution_steps WHERE execution_id=?').get(review.executionId).verified_tokens,1300);
+ if(mode==='within-lease')assert.equal(reads,atDispatch,'The original lease compiles the same final SQL guards without rehydrating prose');
+ if(mode==='elapsed')assert.ok(reads>atDispatch,'Expired native evidence must be independently rehydrated');
+});
+
+test('semantic consumer recovery: equal-cost conflicting receipt never becomes a completed result',async t=>{
+ const state=await semanticPaidConsumerFixture(t),{response,body:review}=await state.semanticQuote();assert.equal(response.status,200);
+ const original=globalThis.fetch;let calls=0;globalThis.fetch=async(_url,init)=>{calls++;return specialistRawResponse(JSON.parse(init.body));};t.after(()=>{globalThis.fetch=original;});
+ const db=state.env.DB,batch=db.batch;let changed=false;
+ db.batch=async statements=>{const result=await batch.call(db,statements);
+  if(!changed&&statements.some(row=>row.sql.startsWith('INSERT INTO memory_derivation_consumer_contents')&&row.values[2]==='response')){
+   changed=true;state.sqlite.prepare("UPDATE consequential_execution_steps SET provider_request_id='conflicting-native-receipt' WHERE execution_id=?").run(review.executionId);
+  }return result;};t.after(()=>{db.batch=batch;});
+ assert.equal((await specialistExecute(state,review,state.semanticOptions)).status,202);await state.drainBackground();assert.equal(changed,true);
+ for(let i=0;i<2;i++){const read=await specialistRetrieve(state,review,state.semanticOptions),body=await read.json();assert.equal(read.status,200);assert.equal(body.result,undefined);assert.equal(body.recoveryError,'context_provider_usage_conflict');}
+ assert.equal(calls,1);assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM memory_derivation_consumer_contents WHERE role='result'").get().n,0);
+ assert.equal(state.sqlite.prepare('SELECT verified_tokens FROM consequential_execution_steps WHERE execution_id=?').get(review.executionId).verified_tokens,1300);
+});

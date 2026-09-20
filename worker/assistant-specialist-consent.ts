@@ -1,4 +1,4 @@
-import { prepareSemanticAssistantMemory,semanticAssistantMemoryRetentionGuard,semanticAssistantMemoryInputs,semanticAssistantMemoryStatements,semanticAssistantMemoryQuoteStatements,semanticAssistantMemoryContentStatements,type SemanticAssistantMemory,type SemanticAssistantMemoryBinding } from './memory-assistant-consumer.ts';
+import { prepareSemanticAssistantMemory,semanticAssistantMemoryLeaseCurrent,semanticAssistantMemoryRetentionGuard,semanticAssistantMemoryInputs,semanticAssistantMemoryStatements,semanticAssistantMemoryQuoteStatements,semanticAssistantMemoryContentStatements,type SemanticAssistantMemory,type SemanticAssistantMemoryBinding } from './memory-assistant-consumer.ts';
 import { foldCanvasEvents } from "../src/canvas/model.ts";
 import { canvasDocumentTarget } from "../src/model/canvas-document-target.ts";
 import { foldEvents } from "../src/model/events.ts";
@@ -53,8 +53,10 @@ function semanticMemory(env:WorkerEnv,request:SpecialistRequest){
  const handle=semanticMemoryReads.get(request);if(!handle)fail('assistant_memory_unavailable');
  semanticAssistantMemoryInputs(env,handle);return handle;
 }
-async function refreshSemanticMemory(env:WorkerEnv,actor:SpecialistActor,request:SpecialistRequest){
+async function refreshSemanticMemory(env:WorkerEnv,actor:SpecialistActor,request:SpecialistRequest,continuePrepared=false){
  if(!request.memory)return;
+ const prepared=continuePrepared?semanticMemoryReads.get(request):null;
+ if(prepared&&semanticAssistantMemoryLeaseCurrent(env,prepared,actor.principal.userId))return;
  const source=await prepareSemanticAssistantMemory(env,actor.principal,{projectId:request.memory.projectId,documentId:request.memory.documentId,scopeKey:request.scopeKey,turnId:request.turnId},request.memory);
  semanticMemoryReads.set(request,source);
 }
@@ -501,8 +503,8 @@ async function accountRaw(env:WorkerEnv,actor:SpecialistActor,retained:Retained,
   const observed=readAssistantProviderUsage(body,{model:retained.binding.steps[0]!.model as AssistantModel}),cost=priceConsentedTextUsageMicrousd(retained.request.pricing,observed.usage);let billingPending=false;
   try{await settleConsequentialStep(env,actor.principal.userId,retained.row.execution_id,0,observed.usage.totalTokens,cost,observed.responseId);}
   catch(error){
-    const saved=await env.DB.prepare("SELECT status,verified_tokens,verified_microusd FROM consequential_execution_steps WHERE execution_id=? AND step_index=0").bind(retained.row.execution_id).first<{status:string;verified_tokens:number;verified_microusd:number}>();
-    if(!saved||!["usage-recorded","settled"].includes(saved.status)||saved.verified_tokens!==observed.usage.totalTokens||saved.verified_microusd!==cost)throw error;
+    const saved=await env.DB.prepare("SELECT status,verified_tokens,verified_microusd,provider_request_id FROM consequential_execution_steps WHERE execution_id=? AND step_index=0").bind(retained.row.execution_id).first<{status:string;verified_tokens:number;verified_microusd:number;provider_request_id:string|null}>();
+    if(!saved||!["usage-recorded","settled"].includes(saved.status)||saved.verified_tokens!==observed.usage.totalTokens||saved.verified_microusd!==cost||saved.provider_request_id!==observed.responseId)throw error;
     billingPending=!await consequentialUsageSettled(env,actor.principal.userId,retained.row.execution_id,0,observed.usage.totalTokens,cost);
   }
   if(!await env.DB.prepare("SELECT 1 AS retained WHERE "+raw.proof.sql).bind(...raw.proof.bindings).first())fail("assistant_provider_receipt_unavailable");
@@ -1061,7 +1063,7 @@ async function driveApprovedTask(request:Request,env:WorkerEnv,host:AssistantSpe
       await settleConsequentialStep(env,currentActor.principal.userId,taskId,0,usage.usage.totalTokens,priceConsentedTextUsageMicrousd(retained.request.pricing,usage.usage),usage.responseId);
     }
     const readActor=await refreshReadActor(request,env,retained);
-    if(retained.request.memory)await refreshSemanticMemory(env,readActor,retained.request);
+    if(retained.request.memory)await refreshSemanticMemory(env,readActor,retained.request,true);
     await retainRaw(env,readActor,task,retained,raw);
     await env.DB.prepare("UPDATE assistant_specialist_tasks SET provider_submitted=1,updated_at=? WHERE task_id=? AND actor_user_id=? AND json_extract(result_json,'$.leaseToken')=?").bind(new Date().toISOString(),taskId,task.actor_user_id,leaseToken).run();
     await recoverResult(env,readActor,host,task,retained);

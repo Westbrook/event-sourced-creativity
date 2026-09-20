@@ -154,7 +154,7 @@ export async function reserveConsequentialSteps(env:WorkerEnv,user:PilotUser,bin
     // Reserve room for shared custody and pilot counters in their INSERTs;
     // the complete source proof stays inside each reservation transaction.
     const splitReservation=reservationGuard.bindings.length>60;
-    const context={streamId:binding.streamId,correlationId,operation,period:binding.period,
+    const context={batchCounterInitialization:true,streamId:binding.streamId,correlationId,operation,period:binding.period,
       reservationGuard:splitReservation?nativeReservation:reservationGuard,
       ...(splitReservation?{reservationAssertions:[additional]}:{}),
       ...(binding.scope?{projectScope:binding.scope}:{})};

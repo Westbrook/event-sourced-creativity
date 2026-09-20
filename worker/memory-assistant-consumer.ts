@@ -9,15 +9,16 @@ export type SemanticAssistantMemoryBinding={version:1;originId:string;targetEnro
  jobId:string;outputSha256:string;expiresAt:string;projectId:string;documentId:string};
 declare const consumer:unique symbol;
 export type SemanticAssistantMemory=Readonly<{[consumer]:true}>;
-type Capture={env:WorkerEnv;source:NativeSavedAssistantContext;binding:SemanticAssistantMemoryBinding;actorUserId:string;scopeKey:string;turnId:string};
+type Capture={env:WorkerEnv;db:WorkerEnv['DB'];started:number;monotonic:number;source:NativeSavedAssistantContext;binding:SemanticAssistantMemoryBinding;actorUserId:string;scopeKey:string;turnId:string};
 const captures=new WeakMap<SemanticAssistantMemory,Capture>();
 function current(env:WorkerEnv,handle:SemanticAssistantMemory){
- const c=captures.get(handle);if(!c||c.env!==env)throw Error('assistant_memory_unavailable');
+ const c=captures.get(handle);if(!c||c.env!==env||c.db!==env.DB)throw Error('assistant_memory_unavailable');
  nativeSavedAssistantContextInputs(env,c.source);return c;
 }
 /** Only native principal/source evidence issues this handle. A saved binding
  * is an identity to revalidate, not an execution or access capability. */
 export async function prepareSemanticAssistantMemory(env:WorkerEnv,actor:PilotUser,target:{projectId:string;documentId:string;scopeKey:string;turnId:string},saved?:SemanticAssistantMemoryBinding){
+ const db=env.DB;
  const source=await prepareNativeSavedAssistantContextForPrincipal(env,actor,target.projectId,target.documentId);
  if(!source)throw Error('assistant_memory_unavailable');
  const {selection,consumersPresent}=nativeSavedAssistantContextInputs(env,source);
@@ -32,10 +33,21 @@ export async function prepareSemanticAssistantMemory(env:WorkerEnv,actor:PilotUs
  const cycle=await env.DB.prepare(`SELECT 1 AS cycle FROM memory_derivation_result_dependencies
   WHERE job_id=? AND kind='turn' AND actor_user_id=? AND scope_key=? AND resource_id=? LIMIT 1`)
   .bind(binding.jobId,actor.userId,target.scopeKey,target.turnId).first();
+ if(env.DB!==db)throw Error('assistant_memory_unavailable');
  if(cycle)throw Error('assistant_memory_source_cycle');
  const handle=Object.freeze({}) as SemanticAssistantMemory;
- captures.set(handle,{env,source,binding,actorUserId:actor.userId,scopeKey:target.scopeKey,turnId:target.turnId});
+ captures.set(handle,{env,db,started:Date.now(),monotonic:performance.now(),source,binding,actorUserId:actor.userId,scopeKey:target.scopeKey,turnId:target.turnId});
  return handle;
+}
+/** Reuse only the captured predicate compilation within this operation's
+ * original native lease. This does NOT assert current DB permissions or source
+ * state: every subsequent disclosure/write must still execute all native SQL
+ * assertions. A clock reversal or database/actor replacement cannot renew it. */
+export function semanticAssistantMemoryLeaseCurrent(env:WorkerEnv,handle:SemanticAssistantMemory,actorUserId:string){
+ const c=captures.get(handle),wall=Date.now(),monotonic=performance.now();
+ if(!c||c.env!==env||c.db!==env.DB||c.actorUserId!==actorUserId||!Number.isFinite(wall)||!Number.isFinite(monotonic)
+  ||wall<c.started||monotonic<c.monotonic)throw Error('assistant_memory_unavailable');
+ try{current(env,handle);return true;}catch{return false;}
 }
 export function semanticAssistantMemoryInputs(env:WorkerEnv,handle:SemanticAssistantMemory){
  const c=current(env,handle),{presentation,selection}=nativeSavedAssistantContextInputs(env,c.source);
