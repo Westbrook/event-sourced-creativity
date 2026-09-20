@@ -950,7 +950,7 @@ for(const shared of [false,true])test('native block inspection: structured relat
  for(const event of [firstEvent,secondEvent])assert.ok(f.sqlite.prepare('SELECT event_id FROM memory_live_sources WHERE event_id=?').get(event.eventId));
 });
 
-async function nativeUndoInspectionFixture(t,{shared=false,type='BlockPropertyEdited',memory=true}={}){
+async function nativeUndoInspectionFixture(t,{shared=false,type='BlockPropertyEdited',memory=true,deferUndo=false}={}){
  const f=await nativeBlockInspectionFixture(t,{shared,memory}),scope={project_id:f.projectId,document_id:f.documentId,block_id:f.blockId};
  const fields=type==='BlockPropertyEdited'?{property_path:'text',old_value:'Original inspected native block',new_value:'Revised inspected native block'}
   :type==='ChipEdited'?{property:'text',old_value:'Original inspected native block',new_value:'Revised inspected native block'}
@@ -961,12 +961,14 @@ async function nativeUndoInspectionFixture(t,{shared=false,type='BlockPropertyEd
  if(type==='BlockPropertyEdited'||type==='ChipEdited')[payload.old_value,payload.new_value]=[payload.new_value,payload.old_value];
  if(type==='BlockRenamed')[payload.old_handle,payload.new_handle]=[payload.new_handle,payload.old_handle];
  if(type==='BlockWeightSet')[payload.previous_weight,payload.weight]=[payload.weight,payload.previous_weight];
- const undone=await write({type:type==='BlockLocked'?'BlockUnlocked':type==='BlockRemoved'?'BlockRestored':type,payload,compensatesEventId:changed.eventId});
+ const undoInput={type:type==='BlockLocked'?'BlockUnlocked':type==='BlockRemoved'?'BlockRestored':type,payload,compensatesEventId:changed.eventId};
+ if(deferUndo)return Object.assign(f,{changed,undoInput,restoreBlock:()=>f.request('/api/events',f.json({action:'append',event:undoInput}))});
+ const undone=await write(undoInput);
  if(shared){const refreshed=await f.request('/api/events?after=0&limit=2000&content=0');assert.equal(refreshed.status,200,await refreshed.clone().text());}
  const ids=[f.blockSource.eventId,changed.eventId,undone.eventId];
  return Object.assign(f,{changed,undone,undoSources:ids,inspectUndo:()=>f.inspectBlock({source_event_ids:ids})});
 }
-for(const shared of [false,true])for(const type of ['BlockPropertyEdited','ChipEdited','BlockRenamed','BlockWeightSet','BlockLocked'])test('native block undo: exact same-author field history '+type+'/'+shared,async t=>{
+for(const shared of [false,true])for(const type of ['BlockPropertyEdited','ChipEdited','BlockRenamed','BlockWeightSet','BlockLocked','BlockRemoved'])test('native block undo: exact same-author field history '+type+'/'+shared,async t=>{
  const f=await nativeUndoInspectionFixture(t,{shared,type}),before=f.counts(),response=await f.inspectUndo();assert.equal(response.status,200,await response.clone().text());
  const observed=(await response.json()).appended[0];assert.deepEqual(observed.payload.source_event_ids,f.undoSources);assert.deepEqual(f.counts(),before);
  assert.equal((await f.run()).status,'completed');assert.ok(f.sqlite.prepare('SELECT event_id FROM memory_live_sources WHERE event_id=?').get(observed.eventId));
@@ -975,6 +977,56 @@ for(const shared of [false,true])for(const type of ['BlockPropertyEdited','ChipE
  const historical=await observeNativeMemoryBlockBindings(f.env,f.enrollment(),[{eventId:f.changed.eventId,sequence:source.sequence,blockPointer:f.blockId,eventType:type}],witness);
  assert.equal(historical.entries.length,0,'a later undo cannot certify the earlier field version');assert.equal(historical.unresolved,1);
 });
+for(const fault of ['missing-target','wrong-document','wrong-project','source-erased','removed-erased','late-source-erasure','late-custody','late-head','late-permission','during-write-erasure','suppressed-write','suppressed-custody','changed-restore-body','lost-ack','false-ack'])test('native block restore: exact historical authoring boundary '+fault,async t=>{
+ const f=await nativeUndoInspectionFixture(t,{shared:true,type:'BlockRemoved',deferUndo:true});
+ const refreshed=await f.request('/api/events?after=0&limit=2000&content=0');assert.equal(refreshed.status,200);
+ assert.equal(f.sqlite.prepare("SELECT COUNT(*) AS n FROM project_resource_scopes WHERE resource_kind='block' AND resource_id=?").get(f.blockId).n,0);
+ const count=()=>f.sqlite.prepare("SELECT COUNT(*) AS n FROM events WHERE type='BlockRestored' AND json_extract(payload,'$.block_id')=?").get(f.blockId).n;
+ if(fault==='missing-target')f.undoInput.compensatesEventId=null;
+ if(fault==='wrong-document')f.undoInput.payload.document_id='another-document';
+ if(fault==='wrong-project')f.undoInput.payload.project_id='another-project';
+ if(fault==='source-erased'||fault==='removed-erased')f.sqlite.prepare('DELETE FROM event_private_payloads WHERE private_event_id=?').run(fault==='source-erased'?f.blockSource.eventId:f.changed.eventId);
+ let injected=false;
+ const restoring=statements=>statements.some(statement=>statement.sql.includes('INSERT INTO event_write_stage')&&statement.values?.includes('BlockRestored'));
+ f.controls.beforeBatch=async statements=>{
+  if(injected||!fault.startsWith('late-')&&!['during-write-erasure','suppressed-write','suppressed-custody','changed-restore-body'].includes(fault)||!restoring(statements))return;injected=true;
+  if(fault==='late-source-erasure')f.sqlite.prepare('DELETE FROM event_private_payloads WHERE private_event_id=?').run(f.blockSource.eventId);
+  if(fault==='late-custody')f.sqlite.prepare('DELETE FROM project_event_scopes WHERE event_id=?').run(f.changed.eventId);
+  if(fault==='late-head')await appendAuditEvent(f.env,f.streamId,'user:'+f.owner,'ChatMessageSent',{project_id:f.projectId,document_id:f.documentId,message:'Unrelated late activity'});
+  if(fault==='late-permission')f.sqlite.prepare("UPDATE organization_memberships SET status='revoked',revoked_at=? WHERE organization_id=? AND user_id=?").run(new Date().toISOString(),f.sharing.organizationId,f.owner);
+  if(fault==='during-write-erasure')f.sqlite.exec("CREATE TRIGGER erase_restore_input BEFORE INSERT ON event_write_stage WHEN NEW.type='BlockRestored' BEGIN DELETE FROM event_private_payloads WHERE private_event_id='"+f.blockSource.eventId+"'; END");
+  if(fault==='suppressed-custody')f.sqlite.exec("CREATE TRIGGER suppress_restore_custody BEFORE INSERT ON project_event_scopes WHEN EXISTS(SELECT 1 FROM events WHERE event_id=NEW.event_id AND type='BlockRestored') BEGIN SELECT RAISE(IGNORE); END");
+  if(fault==='changed-restore-body')f.sqlite.exec("CREATE TRIGGER change_restore_body AFTER INSERT ON event_private_payloads WHEN json_extract(NEW.private_json,'$.block_id')='genuine-inspected-block' BEGIN UPDATE event_private_payloads SET private_json=json_set(private_json,'$.untrusted_restore',1) WHERE private_event_id=NEW.private_event_id; END");
+  if(fault==='suppressed-write')f.sqlite.exec("CREATE TRIGGER suppress_native_restore BEFORE INSERT ON event_write_stage WHEN NEW.type='BlockRestored' BEGIN SELECT RAISE(IGNORE); END");
+ };
+ f.controls.afterBatch=(statements,results)=>{
+  if(!restoring(statements)||!['lost-ack','false-ack'].includes(fault))return;injected=true;
+  if(fault==='lost-ack')throw Error('isolated lost restore acknowledgement');results.pop();
+ };
+ const response=await f.restoreBlock();assert.ok([403,409].includes(response.status),await response.clone().text());
+ if(fault.startsWith('late-')||['during-write-erasure','suppressed-write','suppressed-custody','changed-restore-body','lost-ack','false-ack'].includes(fault))assert.equal(injected,true);
+ assert.equal(count(),['lost-ack','false-ack'].includes(fault)?1:0);
+ if(fault==='during-write-erasure')assert.ok(f.sqlite.prepare('SELECT private_event_id FROM event_private_payloads WHERE private_event_id=?').get(f.blockSource.eventId),'post-write proof rolls back erasure and restore together');
+ f.controls.beforeBatch=null;f.controls.afterBatch=null;
+ if(['lost-ack','false-ack'].includes(fault)){
+  // Recovery must not repeat the already committed inverse.
+  const retry=await f.restoreBlock();assert.ok([403,409].includes(retry.status));assert.equal(count(),1);
+ }
+});
+
+test('native block restore: native proof cannot move to another database or principal object',async t=>{
+ const f=await nativeUndoInspectionFixture(t,{shared:true,type:'BlockRemoved',deferUndo:true});
+ assert.equal((await f.request('/api/events?after=0&limit=2000&content=0')).status,200);
+ const principal=await liveMemoryPrincipal(f.env,f.owner);assert.ok(principal);
+ const {readProjectRequestContext}=await import('../worker/project-request-context.ts');
+ const {context,response}=await readProjectRequestContext(new Request('http://localhost/api/events',{headers:f.sharing.headers}),f.env,principal);assert.equal(response,null);assert.ok(context);
+ const {prepareProjectBlockUndoRestore}=await import('../worker/project-block-restore.ts');
+ const head=f.sqlite.prepare('SELECT MAX(sequence) AS head FROM events WHERE stream_id=?').get(f.streamId).head;
+ const proof=await prepareProjectBlockUndoRestore(f.env,context,principal,f.undoInput,head);assert.ok(proof);assert.ok(proof.precommitStatements().length);
+ const db=f.env.DB;f.env.DB={...db};try{assert.throws(()=>proof.precommitStatements(),/block_restore_source_changed/);}finally{f.env.DB=db;}
+ const actor=principal.userId;principal.userId='another-principal';try{assert.throws(()=>proof.assertCurrent(),/block_restore_source_changed/);}finally{principal.userId=actor;}
+});
+
 for(const shared of [false,true])test('native block undo: redo and its own reversal remain separately bound '+shared,async t=>{
  const f=await nativeUndoInspectionFixture(t,{shared}),write=async event=>{const response=await f.request('/api/events',f.json({action:'append',event}));assert.equal(response.status,200,await response.clone().text());return(await response.json()).appended[0];};
  const redone=await write({type:f.changed.type,payload:f.changed.payload});
@@ -1073,10 +1125,16 @@ for(const shared of [false,true])for(const fault of ['source-erased','enrollment
   };
   assert.equal((await f.run()).status,'partial');assert.equal(injected,true);assert.equal(f.enrollment().cursor_sequence,cursor);assert.equal(f.sqlite.prepare('SELECT COUNT(*) AS n FROM memory_live_sources WHERE event_id=?').get(id).n,0);
 });
-for(const shared of [false,true])for(const undo of [false,true])test('native block inspection: isolated D1 native writer capture and late erasure '+shared+'/undo='+undo,{timeout:180000},async t=>{
-  const f=await (undo?nativeUndoInspectionFixture(t,{shared}):nativeBlockInspectionFixture(t,{shared,memory:true})),{createRequire}=await import('node:module'),{Miniflare,Log,LogLevel}=createRequire(import.meta.resolve('wrangler'))('miniflare'),{exportSynthetic,install}=await import('./helpers/model3d-workerd-snapshot.mjs');let outbound=0;
+for(const shared of [false,true])for(const history of ['plain','field-undo','remove-undo'])test('native block inspection: isolated D1 native writer capture and late erasure '+shared+'/'+history,{timeout:180000},async t=>{
+  const undo=history!=='plain';
+  const f=await (history==='remove-undo'?nativeUndoInspectionFixture(t,{shared,type:'BlockRemoved',deferUndo:true}):undo?nativeUndoInspectionFixture(t,{shared}):nativeBlockInspectionFixture(t,{shared,memory:true})),{createRequire}=await import('node:module'),{Miniflare,Log,LogLevel}=createRequire(import.meta.resolve('wrangler'))('miniflare'),{exportSynthetic,install}=await import('./helpers/model3d-workerd-snapshot.mjs');let outbound=0;
   const mf=new Miniflare({modules:true,compatibilityDate:'2026-05-15',host:'127.0.0.1',port:0,log:new Log(LogLevel.NONE),d1Databases:['BlockInspection'],script:"export default {fetch(){return new Response('Isolated',{status:404});}}",outboundService(){outbound++;throw Error('External fetch forbidden');}});
   t.after(async()=>{await mf.dispose();assert.equal(outbound,0);});const db=await mf.getD1Database('BlockInspection');await install(db,exportSynthetic(f.sqlite));f.env.DB=db;
+  if(history==='remove-undo'){
+    const restored=await f.restoreBlock();assert.equal(restored.status,200,await restored.clone().text());f.undone=(await restored.json()).appended[0];
+    f.undoSources=[f.blockSource.eventId,f.changed.eventId,f.undone.eventId];f.inspectUndo=()=>f.inspectBlock({source_event_ids:f.undoSources});
+    if(shared){const refreshed=await f.request('/api/events?after=0&limit=2000&content=0');assert.equal(refreshed.status,200,await refreshed.clone().text());}
+  }
   const response=await (undo?f.inspectUndo():f.inspectBlock());assert.equal(response.status,200,await response.clone().text());const event=(await response.json()).appended[0],run=await f.run();assert.equal(run.status,'completed',JSON.stringify(run));
   const e=await db.prepare('SELECT * FROM memory_live_enrollments').first(),a=await liveMemoryAuthority(f.env,e),{captureNativeBlockInspections}=await import('../worker/memory-native-block-inspection.ts'),{AssistantContextReadWitness}=await import('../worker/assistant-context-source.ts'),witness=new AssistantContextReadWitness(f.env);
   const capture=await captureNativeBlockInspections(f.env,e,a,{after:0,through:e.cursor_sequence,remembered:true},witness);assert.equal(capture.sources[0].eventId,event.eventId);witness.seal(null);await db.batch(witness.precommitStatements());

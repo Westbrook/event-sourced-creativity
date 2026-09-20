@@ -31,15 +31,43 @@ trimmed or reinterpreted as a fresh original.
 - TypeScript, changed-file lint and production build pass. Existing chunk-size
   warnings remain.
 
-## Continuation
+## Guarded restoration of removed shared blocks
 
-Shared-project Undo of **block removal** exposed a separate native authoring gap:
-the removed resource is absent from the current scope index, so the restoration
-writer rejects it. Fixing that requires an exact historical, same-author restore
-proof and atomic replay; it must not be solved by accepting arbitrary historical
-pointers or by letting Memory repair the project index. This is native
-implementation, tracked under resource/lifecycle coverage in the
+The separately reproduced shared-project restoration gap is now implemented.
+Undo of block removal can use a bounded historical proof when the block is no
+longer in the active resource index. It requires the latest retained removal by
+that same author, one original Document declaration, unchanged project/document
+custody and all retained native private field bodies. Rehomed or ambiguous
+histories remain unavailable. Historical pointers do not grant current access.
+
+The existing current author/document/project checks and owner-head CAS remain.
+Exact history, custody and lifetime checks run before and after the atomic write;
+a final receipt proves the new event, its private body, custody and stream head.
+D1 event and custody change counts include triggers, so those covered writes use
+the exact receipt instead of incorrectly requiring a change count of one.
+Suppressed writes/custody, changed new bodies, late source erasure, permission or
+head changes roll back or deny publication. Lost acknowledgements are uncertain;
+repeating the same compensated restore cannot publish a second inverse.
+
+The native proof is process-local, database/principal-bound and limited by both
+wall and monotonic clocks. It cannot repair the project index or enroll Memory.
+An ordinary authorized refresh rebuilds the index after restoration; old Memory
+versions are not resurrected by Undo.
+
+Final verification: **294/294** full artifact/block and project-schema/native D1
+tests pass, including 16 restore-boundary checks and six D1 inspection histories.
+The D1 cases include the actual removal-restore transaction, subsequent Memory
+capture and erasure of the restored history. Thirteen surrounding shared-authoring
+and semantic-consumer regressions pass. TypeScript, changed-file lint and the
+production build pass with the existing chunk-size warnings.
+
+## Remaining planned scope
+
+This completes the specific field-Undo and removed-block restoration defects,
+not all native Memory implementation. Assistant-assisted edits/outputs, exact-field
+autocomplete, longer-term profile consolidation, broader Library/Canvas and
+cross-owner resource scope coverage, downstream lifecycle integration and whole-
+invocation capacity remain tracked in the
 [completion matrix](forma-memory-completion-matrix-2026-09-20.md).
-
-The other native workstreams remain in scope. External hosting, scheduling,
-provider qualification and rollout gates stay in the separate capability To Do.
+External hosting, scheduling, provider qualification and rollout gates remain in
+the separate capability To Do. Nothing was deployed or enrolled by this change.

@@ -105,7 +105,8 @@ structural editor versions while retaining full-history invalidation. See the
 These close concrete boundary defects, not the remaining native workstreams.
 
 [Native field Undo/Redo](forma-memory-native-field-undo-2026-09-20.md) is now
-certified through the actual Document inspector and native/D1 capture. Shared
-block-removal restoration still needs a historical same-author authoring proof
-because removed resources are absent from the active resource index. This is a
-concrete native resource/lifecycle continuation, not an external-service gate.
+certified through the actual Document inspector and native/D1 capture. The subsequently reproduced shared
+block-removal restoration gap is also fixed with a bounded same-author historical
+proof and exact atomic source/write receipts. Six isolated D1 histories and the
+full 294-test native suite verify restoration, capture and late erasure. The
+remaining six native workstreams above are not closed by these specific fixes.

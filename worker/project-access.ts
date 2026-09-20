@@ -1,3 +1,5 @@
+import { authoringEventProof, authoringSidecarProof } from './authoring-event-proof.ts';
+import { prepareProjectBlockUndoRestore } from './project-block-restore.ts';
 import { presentActorArtifactView } from './memory-artifact-presentation.ts';
 import { stillDocumentPredicate } from './still-route-read.ts';
 import { parseModel3dMediaRevision, parseModel3dCurrentProjection, type Model3dCurrentProjection } from "../src/model/model3d-media-revision.ts";
@@ -1021,7 +1023,7 @@ async function ownerResourceExists(env:WorkerEnv,context:ProjectRequestContext,k
 }
 
 /** Reject account-global navigation, provider work, foreign documents, and fabricated membership. */
-async function validateProjectMutation(env:WorkerEnv,context:ProjectRequestContext,event:{type?:string;payload?:Record<string,unknown>;compensatesEventId?:string|null},pending:PendingProjectResources,principal:PilotUser,canvasAction=false){
+async function validateProjectMutation(env:WorkerEnv,context:ProjectRequestContext,event:{type?:string;payload?:Record<string,unknown>;compensatesEventId?:string|null},pending:PendingProjectResources,principal:PilotUser,canvasAction=false,restoredBlockUndo=false){
   const type=String(event.type??""),payload=event.payload??{};
   const exists=(kind:string,id:string)=>resourceExists(env,context,kind,id,pending);
   const canvasMutation=PROJECT_CANVAS_MUTATION_TYPES.has(type);
@@ -1102,7 +1104,7 @@ async function validateProjectMutation(env:WorkerEnv,context:ProjectRequestConte
   }
   const block=String(payload.block_id??"");
   if((type.startsWith("Block")&&!type.startsWith("BlockRelation")||type==="ChipEdited")&&!block)return"block_id_required";
-  if(block&&type!=="BlockCreated"&&!await exists("block",block))return"foreign_block_resource";
+  if(block&&type!=="BlockCreated"&&!(restoredBlockUndo&&type==="BlockRestored")&&!await exists("block",block))return"foreign_block_resource";
   const from=String(payload.from_block_id??""),to=String(payload.to_block_id??"");
   if((from&&!await exists("block",from))||(to&&!await exists("block",to)))return"foreign_block_resource";
   const collection=String(payload.collection_id??payload.to_collection_id??payload.from_collection_id??"");
@@ -1531,9 +1533,16 @@ export async function appendProjectEvents(env:WorkerEnv,context:ProjectRequestCo
   if(incoming.some((event)=>event.type==="ArtifactApproved")&&incoming.some((event)=>/^(?:Block|Chip|DocumentArtifactEdited)/.test(String(event.type??"")))){
     return Response.json({error:"review_context_changed",message:"Approve the output separately after its latest context changes have been reviewed."},{status:409});
   }
+  const restoreWitnesses=[];
   for(const [index,event] of incoming.entries()){
     if((assistantAcceptance||atomicSidecars?.authoringOperation==="workspace-quick-edit")&&index===0&&event.type==="ProposalAccepted")continue;
-    const reason=await validateProjectMutation(env,context,event,pending,principal,canvasAction);if(reason)return Response.json({error:reason},{status:403});
+    let restoredBlockUndo=false;
+    if(event.type==='BlockRestored'&&(Boolean(event.compensatesEventId)||!await resourceExists(env,context,'block',String(event.payload?.block_id??''),pending))){
+      const restore=validatedOutputOwnerHead===null?null:await prepareProjectBlockUndoRestore(env,context,principal,event,validatedOutputOwnerHead);
+      if(!restore)return Response.json({error:'foreign_block_resource'},{status:403});
+      restoreWitnesses.push(restore);restoredBlockUndo=true;
+    }
+    const reason=await validateProjectMutation(env,context,event,pending,principal,canvasAction,restoredBlockUndo);if(reason)return Response.json({error:reason},{status:403});
     if(reviewEvents&&ARTIFACT_REVIEW_EVENT_TYPES.has(String(event.type??""))){
       const type=String(event.type),artifactId=String(event.payload?.artifact_id??"");
       const completed=[...reviewEvents].reverse().find((candidate)=>candidate.type==="DocumentRenderCompleted"&&String(candidate.payload.artifact_id??"")===artifactId);
@@ -1601,6 +1610,8 @@ export async function appendProjectEvents(env:WorkerEnv,context:ProjectRequestCo
   const bulkProjectRows:Array<Array<string|number|null>>=[],bulkResourceRows:Array<Array<string|number|null>>=[];
   const bulkMediaRows:Array<[string,string,string,string]>=[];
   if(validatedOutputOwnerHead!==null)statements.push(outputRequirementHeadGuard(env,ownerStream,validatedOutputOwnerHead));
+  const restoreProof=restoreWitnesses.flatMap(witness=>witness.precommitStatements()),restoreProofIndexes=new Set<number>(),restoreProjectRows:Array<Array<string|number|null>>=[],restoreExactWriteIndexes=new Set<number>();
+  for(const proof of restoreProof){restoreProofIndexes.add(statements.length);statements.push(proof);}
   for(const [offset,input] of incoming.entries()){
     const payload:Record<string,unknown>={...(input.payload??{}),project_id:context.projectId,...(canvasAction?{history_owner_id:principal.userId}:{})};
     const event=makeEvent(ownerStream,ownerHead+offset+1,`user:${principal.userId}`,String(body.clientId??`project:${principal.userId}`),String(body.correlationId??uuidV7()),String(input.type),payload,{compensatesEventId:input.compensatesEventId??null});
@@ -1678,15 +1689,20 @@ export async function appendProjectEvents(env:WorkerEnv,context:ProjectRequestCo
       if(bulkAdmission&&bulkAdmissionKey!==key)throw new Error("invalid_authoring_operation");
       bulkAdmission={sql,bindings:writeBindings};bulkAdmissionKey=key;
     }else{
+      if(restoreProof.length)restoreExactWriteIndexes.add(statements.length);
       statements.push(env.DB.prepare(`INSERT INTO event_write_stage(${EVENT_WRITE_COLUMNS})
         SELECT ?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,? WHERE (SELECT COALESCE(MAX(sequence),0) FROM events WHERE stream_id=?)=? AND ${guard}${contentGuard}${exactContentProof.sql}${restoreGuard}${assignmentGuard}${decisionGuard}${sidecarGuard}`)
         .bind(...eventWriteBindings(event),ownerStream,event.sequence-1,...writeBindings));
     }
     projectHead+=1;
     const projectRow=[event.eventId,context.projectAccessId,context.organizationId,context.projectId,context.ownerUserId,ownerStream,event.sequence,projectHead,principal.userId,now];
+    if(restoreProof.length)restoreProjectRows.push(projectRow);
     if(bulkAuthoring)bulkProjectRows.push(projectRow);
-    else statements.push(env.DB.prepare("INSERT INTO project_event_scopes(event_id,project_access_id,organization_id,project_id,owner_user_id,source_stream_id,source_sequence,project_sequence,actor_user_id,created_at) SELECT ?,?,?,?,?,?,?,?,?,? WHERE EXISTS(SELECT 1 FROM events WHERE event_id=?)")
-      .bind(...projectRow,event.eventId));
+    else{
+      if(restoreProof.length)restoreExactWriteIndexes.add(statements.length);
+      statements.push(env.DB.prepare("INSERT INTO project_event_scopes(event_id,project_access_id,organization_id,project_id,owner_user_id,source_stream_id,source_sequence,project_sequence,actor_user_id,created_at) SELECT ?,?,?,?,?,?,?,?,?,? WHERE EXISTS(SELECT 1 FROM events WHERE event_id=?)")
+        .bind(...projectRow,event.eventId));
+    }
     if(atomicEdit)for(const revision of atomicEdit.revisions)statements.push(env.DB.prepare(`INSERT INTO artifact_revisions(revision_id,owner_id,organization_id,project_access_id,project_id,document_id,artifact_id,revision,content_json,content_sha256,created_by_user_id,created_at,expires_at,redacted_at)
       SELECT ?,?,?,?,?,?,?,?,?,?,?,?,?,NULL WHERE EXISTS(SELECT 1 FROM events WHERE event_id=?)`)
       .bind(revision.revisionId,context.ownerUserId,context.organizationId,context.projectAccessId,context.projectId,atomicEdit.documentId,atomicEdit.artifactId,revision.revision,revision.contentJson,revision.contentSha256,revision.createdByUserId,revision.createdAt,revision.expiresAt,event.eventId));
@@ -1743,9 +1759,38 @@ export async function appendProjectEvents(env:WorkerEnv,context:ProjectRequestCo
     statements.push(env.DB.prepare("UPDATE project_migration_states SET last_owner_sequence=?,updated_at=? WHERE project_access_id=? AND organization_id=? AND owner_user_id=? AND status='active' AND (?='' OR EXISTS(SELECT 1 FROM events WHERE event_id=?))")
       .bind(invalidatesResources?ownerHead:ownerHead+incoming.length,now,context.projectAccessId,context.organizationId,context.ownerUserId,atomicEdit||atomicSidecars?appended.at(-1)?.eventId??"":"",atomicEdit||atomicSidecars?appended.at(-1)?.eventId??"":""));
   }
+  for(const proof of restoreProof){restoreProofIndexes.add(statements.length);statements.push(proof);}
+  let restoreCommitIndex=-1;
+  if(restoreProof.length){
+    const exact=authoringEventProof(appended),custody=authoringSidecarProof('project_event_scopes',restoreProjectRows);
+    restoreCommitIndex=statements.length;
+    statements.push(env.DB.prepare(`SELECT CASE WHEN (${exact.sql}) AND (${custody.sql})
+      AND (SELECT COALESCE(MAX(sequence),0) FROM events WHERE stream_id=?)=?
+      AND EXISTS(SELECT 1 FROM project_migration_states WHERE project_access_id=? AND organization_id=? AND owner_user_id=?
+        AND status='active' AND last_owner_sequence=? AND updated_at=?)
+      THEN 1 ELSE json('project_block_restore_commit_changed') END AS project_restore_committed`)
+      .bind(...exact.bindings,...custody.bindings,ownerStream,ownerHead+incoming.length,context.projectAccessId,context.organizationId,context.ownerUserId,invalidatesResources?ownerHead:ownerHead+incoming.length,now));
+  }
   try{
-    const results=await env.DB.batch(statements);
-    if(!bulkAuthoring&&results.slice(validatedOutputOwnerHead===null?0:1).some((result)=>Number(result.meta.changes??0)!==1))return Response.json({error:"project_access_revoked"},{status:403});
+    for(const restore of restoreWitnesses)restore.assertCurrent();
+    const results=await env.DB.batch<Record<string,unknown>>(statements);
+    for(const restore of restoreWitnesses)restore.assertCurrent();
+    if(restoreProofIndexes.size&&(results.length!==statements.length||[...restoreProofIndexes].some(index=>{
+      const result=results[index];return result?.success!==true||'error' in result&&result.error!==undefined
+        ||result.results?.length!==1||result.results[0]?.context_source_asserted!==1;
+    })))return Response.json({error:'block_restore_commit_unconfirmed',noAutomaticRetry:true},{status:409});
+    if(restoreCommitIndex>=0){const result=results[restoreCommitIndex];
+      if(result?.success!==true||'error' in result&&result.error!==undefined||result.results?.length!==1||result.results[0]?.project_restore_committed!==1)
+        return Response.json({error:'block_restore_commit_unconfirmed',noAutomaticRetry:true},{status:409});
+    }
+    if(!bulkAuthoring&&results.some((result,index)=>{
+      if(index<(validatedOutputOwnerHead===null?0:1)||restoreProofIndexes.has(index)||index===restoreCommitIndex)return false;
+      const changes=Number(result.meta.changes??0);
+      // D1 includes trigger writes in event/custody change counts. The exact
+      // event/private/custody/head assertion above is the restore receipt.
+      return restoreExactWriteIndexes.has(index)
+        ? !Number.isSafeInteger(changes)||changes<1 : changes!==1;
+    }))return Response.json({error:"project_access_revoked"},{status:403});
   }catch{return Response.json({error:"stale_sequence",head:projectHead-incoming.length},{status:409});}
   const first=projectHead-appended.length+1;
   const newEvents=new Map(incoming.map((input,index)=>[input,{...appended[index]!,streamId:`project:${context.projectAccessId}`,sequence:first+index}] as const));

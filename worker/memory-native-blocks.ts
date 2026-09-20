@@ -71,6 +71,14 @@ function nativeFieldUndoEdges(rows:readonly Row[]):Map<string,FieldUndoEdge>{
   return edges;
 }
 
+/** Decode a complete, already bounded native field-history read. This is data
+ * validation only; an authoring caller must still prove current access and replay
+ * the exact rows in its own transaction. */
+export function decodeNativeMemoryBlockHistory(rows:readonly Row[],scope:NativeMemoryResourceScope,blockId:string){
+  const undo=nativeFieldUndoEdges(rows);
+  return rows.map(row=>decodeNativeMemoryResourceEvent(row,scope,'block',blockId,undo.get(String(row.event_id))));
+}
+
 /** Supplement the already-authorized document observation, never widen it.
  * A raw pointer, absent/ambiguous source, library/canvas placement or oversized
  * history remains explicitly unresolved. No block text becomes a quotation.
@@ -140,7 +148,7 @@ export async function observeNativeMemoryBlockBindings(env:WorkerEnv,e:NativeMem
       if(!Array.isArray(custody)||(e.organization_id===null?custody.length!==0:custody.length!==1
         ||custody[0].organization!==e.organization_id||custody[0].access!==e.project_access_id||custody[0].project!==e.project_id
         ||custody[0].owner!==e.owner_user_id||!(custody[0].visibility==='collaborative_output'||custody[0].visibility==='actor_private'&&custody[0].actor===e.actor_user_id)))continue;
-      const undo=nativeFieldUndoEdges(source),events=source.map(row=>decodeNativeMemoryResourceEvent(row,e,'block',blockId,undo.get(String(row.event_id))));
+      const events=decodeNativeMemoryBlockHistory(source,e,blockId);
       const declarations=events.filter(event=>event.type==='BlockCreated');
       // No implicit projection defaults or duplicate IDs can manufacture custody.
       if(declarations.length!==1||declarations[0]!.payload.project_id!==e.project_id||declarations[0]!.payload.document_id!==e.document_id
