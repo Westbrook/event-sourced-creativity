@@ -60,7 +60,7 @@ export class FormaCreativeAssistant extends FormaElement {
   #semanticLeases=new Map<string,{elapsed:ReturnType<typeof createMemoryElapsed>;duration:number;validUntil:string}>();
   #semanticRetired=new Map<string,string>();
   #semanticTimer=0;
-  #semanticHidden=()=>this.#retireSemanticReviews();
+  #semanticHidden=()=>{this.#closeMemoryRecall();this.#retireSemanticReviews();};
   #retainSemanticReceipt(id:string,presentation:SemanticMemoryAnswerPresentation){
     if(!this.#open||document.visibilityState!=="visible"||memoryPrivacyMutationActive())return false;
     const now=Date.now();if(!parseSemanticMemoryAnswerPresentation(presentation,now)||presentation.validUntil<=(this.#semanticRetired.get(id)??''))return false;

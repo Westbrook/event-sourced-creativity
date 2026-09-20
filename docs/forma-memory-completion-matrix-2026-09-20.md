@@ -80,3 +80,11 @@ does not close generated-answer follow-up, document/edit/output ancestry, broade
 resource coverage or whole-invocation capacity.
 
 [Bounded semantic follow-up](forma-memory-semantic-followup-2026-09-20.md) now supplies prior generated answers to the actual specialist prompt with immutable transitive ancestry and restore/non-resurrection checks. Migration0063 includes a hash-pinned, exact-no-op retirement trigger upgrade and needs explicit rollout review; it is not purely additive. Chat Studio, capacity and the other native workstreams remain required.
+
+Chat Studio and Creator provider-free recalled answers now retire on window blur,
+pagehide and saved-context invalidation. Chat Studio also joins the shared
+privacy-mutation barrier: pending reads abort, displayed text is discarded,
+blocked recalls do not dispatch, and release/focus cannot resurrect the view.
+The ordinary unsent draft is retained. Verified by21 Chat Studio native-port
+journeys and68 focused Creator Memory host checks. This closes a presentation
+privacy gap, not Chat Studio semantic prompt integration or hosted qualification.

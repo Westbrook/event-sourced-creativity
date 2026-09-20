@@ -13,7 +13,22 @@ import { blockTypeDefinition } from "../src/model/block-types.ts";
 const classed = (node, name) => String(node.attributes.class ?? "").split(/\s+/u).includes(name);
 async function chatPage(t) {
   const external = t.mock.method(globalThis, "fetch", async () => assert.fail("No external or provider request in local Chat focus controls"));
+  const previousChannel = globalThis.BroadcastChannel;
+  globalThis.BroadcastChannel = undefined; // No cross-process channels in this native-port fixture.
+  t.after(() => { globalThis.BroadcastChannel = previousChannel; });
   const f = await createCalmFullPage(t), h = f.storeHost;
+  // The component and Store fixtures have separate window ports. Deliver the
+  // real privacy module's events to both, as the one browser window would.
+  const previousDispatch = ports.windowPort.dispatchEvent;
+  ports.windowPort.dispatchEvent = event => {
+    h.window.dispatchEvent(event);
+    for (const listener of [...(f.listeners.get(event.type) ?? [])]) listener(event);
+    return true;
+  };
+  t.after(() => {
+    if (previousDispatch) ports.windowPort.dispatchEvent = previousDispatch;
+    else delete ports.windowPort.dispatchEvent;
+  });
   // Same finite History/Location port as navigationPage and mountedFallback.
   // Only the actual Store's push/replace calls publish a subsequent URL here;
   // this does not set its route, bypass its origin guard, or grant authority.
@@ -190,7 +205,7 @@ test("Chat Memory failed recall never submits the paid creative composer", { con
   assert.equal(x.external.mock.callCount(), 0);
 });
 
-for (const retirement of ["visibility", "authorization", "route", "disconnect"]) test(
+for (const retirement of ["visibility", "authorization", "route", "disconnect", "blur", "context-change", "privacy"]) test(
   "Chat Memory discards a late response after " + retirement, { concurrency: false, timeout: 45_000 }, async t => {
     const x = await memoryChatPage(t), { f, h, owner } = x;
     let respond, dispatched;
@@ -200,14 +215,53 @@ for (const retirement of ["visibility", "authorization", "route", "disconnect"])
       dispatched(request); return new Promise(resolve => { respond = () => resolve(Response.json(chatMemoryEnvelope(x, request))); });
     };
     const action = f.act(chatMemoryControl(x, "recall")); const request = await seen;
+    let releasePrivacy;
+    if(retirement==='blur')h.window.dispatchEvent(new Event('blur'));
+    if(retirement==='context-change')h.window.dispatchEvent(new Event('forma-memory-assistant-context-changed'));
+    if(retirement==='privacy'){releasePrivacy=f.modules.get('src/state/memory-privacy-mutation.ts').beginMemoryPrivacyMutation();t.after(()=>releasePrivacy());}
     if (retirement === "visibility") { h.document.visibilityState = "hidden"; x.native.emit("visibilitychange", h.document); }
     if (retirement === "authorization") { const session = f.store.session.get(); f.store.session.set({ ...session, user: { ...session.user, userId: "another-synthetic-actor" } }); }
     if (retirement === "route") f.store.route.set(f.store.route.get() + "?changed=1");
     if (retirement === "disconnect") { owner.isConnected = false; owner.disconnectedCallback(); }
     await f.settle(); respond(); await action; await f.settle();
     assert.equal(chatMemoryViews(x).length, 0); assert.equal(chatMemoryRequests(x).length, 1);
-    if (retirement === "visibility" || retirement === "disconnect") assert.equal(request.init.signal.aborted, true);
+    if (["visibility","disconnect","blur","context-change","privacy"].includes(retirement)) assert.equal(request.init.signal.aborted, true);
+    releasePrivacy?.();
     assert.equal(x.external.mock.callCount(), 0);
+  });
+
+for (const retirement of ["blur", "pagehide", "context-change", "privacy"]) test(
+  "Chat Memory clears a displayed view on " + retirement + " without reviving it or sending the draft",
+  { concurrency: false, timeout: 45_000 }, async t => {
+    const x = await memoryChatPage(t), { f, h } = x;
+    const field = x.field(); field.port.value = "My unsent draft stays private"; await f.act(field, "input");
+    const before = { events: f.store.events.get(), content: f.store.content.get(), financial: financial(h.worker) };
+    h.intercept = request => request.body?.payload?.memoryMode === "recall" ? Response.json(chatMemoryEnvelope(x, request)) : undefined;
+    await f.act(chatMemoryControl(x, "recall")); assert.equal(chatMemoryViews(x).length, 1);
+    const heldRecall = chatMemoryControl(x, "recall");
+    let release;
+    if (retirement === "privacy") {
+      release = f.modules.get("src/state/memory-privacy-mutation.ts").beginMemoryPrivacyMutation();
+      t.after(() => release());
+    } else h.window.dispatchEvent(new Event(retirement === "context-change" ? "forma-memory-assistant-context-changed" : retirement));
+    await f.settle();
+    assert.equal(chatMemoryViews(x).length, 0); assert.equal(chatMemoryRequests(x).length, 1);
+    assert.equal(x.field().port.value, "My unsent draft stays private");
+    if (release) {
+      assert.equal(chatMemoryControl(x, "recall").port.matches(":disabled"), true);
+      // Even a stale handler, bypassing the disabled native button, cannot read.
+      await heldRecall.handlers.click.call(x.owner, new Event("click")); await f.settle();
+      assert.equal(chatMemoryRequests(x).length, 1);
+      release(); await f.settle();
+    }
+    h.window.dispatchEvent(new Event("focus")); await f.settle();
+    assert.equal(chatMemoryViews(x).length, 0); assert.equal(chatMemoryRequests(x).length, 1);
+    assert.equal(chatMemoryControl(x, "recall").port.matches(":disabled"), false);
+    await f.act(chatMemoryControl(x, "recall"));
+    assert.equal(chatMemoryViews(x).length, 1); assert.equal(chatMemoryRequests(x).length, 2);
+    assert.notEqual(chatMemoryRequests(x)[0].body.payload.requestId, chatMemoryRequests(x)[1].body.payload.requestId);
+    assert.equal(f.store.events.get(), before.events); assert.equal(f.store.content.get(), before.content);
+    assert.deepEqual(financial(h.worker), before.financial); assert.equal(x.external.mock.callCount(), 0);
   });
 
 test("Chat Memory expiry retires the display without polling or writing ordinary history", { concurrency: false, timeout: 45_000 }, async t => {

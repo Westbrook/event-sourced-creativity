@@ -1,3 +1,4 @@
+import { memoryPrivacyMutationActive } from '../state/memory-privacy-mutation.ts';
 import { html, nothing } from "lit";
 import type { CommandDeparture } from "./command-departure";
 import { FormaElement, icon } from "./forma-element";
@@ -33,15 +34,25 @@ export class FormaChatStudio extends FormaElement {
   #memory:ChatMemoryRequest|null=null;
   #memoryTimer:ReturnType<typeof setTimeout>|null=null;
   #suspendMemory=()=>{this.#retireMemory();this.requestUpdate();};
+  #memoryPrivacyChanged=()=>{if(memoryPrivacyMutationActive())this.#suspendMemory();else this.requestUpdate();};
   #memoryVisibility=()=>{if(this.ownerDocument.visibilityState!=="visible")this.#suspendMemory();};
 
-  override connectedCallback(){super.connectedCallback();this.ownerDocument.addEventListener("visibilitychange",this.#memoryVisibility);this.ownerDocument.defaultView?.addEventListener("pagehide",this.#suspendMemory);}
-  override disconnectedCallback(){this.ownerDocument.removeEventListener("visibilitychange",this.#memoryVisibility);this.ownerDocument.defaultView?.removeEventListener("pagehide",this.#suspendMemory);this.#retireMemory();super.disconnectedCallback();}
+  override connectedCallback(){
+    super.connectedCallback();this.ownerDocument.addEventListener("visibilitychange",this.#memoryVisibility);
+    for(const name of ['blur','pagehide','forma-route-changed','forma-authorization-changed','forma-memory-assistant-context-changed'])this.ownerDocument.defaultView?.addEventListener(name,this.#suspendMemory);
+    this.ownerDocument.defaultView?.addEventListener('forma-memory-privacy-mutation',this.#memoryPrivacyChanged);
+  }
+  override disconnectedCallback(){
+    this.ownerDocument.removeEventListener("visibilitychange",this.#memoryVisibility);
+    for(const name of ['blur','pagehide','forma-route-changed','forma-authorization-changed','forma-memory-assistant-context-changed'])this.ownerDocument.defaultView?.removeEventListener(name,this.#suspendMemory);
+    this.ownerDocument.defaultView?.removeEventListener('forma-memory-privacy-mutation',this.#memoryPrivacyChanged);
+    this.#retireMemory();super.disconnectedCallback();
+  }
   #memoryText(key:string,values?:Record<string,string|number>){return personalMemoryMessage(this.i18n.locale,"memory.live."+key,values);}
   #retireMemory(){this.#memory?.controller?.abort();this.#memory?.lease?.retire();this.#memory=null;if(this.#memoryTimer!==null)clearTimeout(this.#memoryTimer);this.#memoryTimer=null;}
   #currentMemory(){
     const memory=this.#memory;
-    if(memory&&!memory.current()){this.#retireMemory();return null;}
+    if(memory&&(!memory.current()||memoryPrivacyMutationActive())){this.#retireMemory();return null;}
     if(memory?.lease&&!memory.lease.read()){memory.lease.retire();memory.lease=null;memory.status="expired";}
     return memory;
   }
@@ -51,11 +62,11 @@ export class FormaChatStudio extends FormaElement {
       this.#retireMemory();
       const store=this.store,session=store.session.get(),source=store.captureSourceOwnership(),authorization=store.captureAuthorizationScope();
       const projection=store.projection.get(),documentId=projection.documentId,projectId=projection.projectId,route=store.route.get(),locale=this.i18n.locale;
-      if(!this.isConnected||!session||session.impersonation||!authorization||!documentId||!projectId||!store.sourceOwnershipActive(source)
+      if(memoryPrivacyMutationActive()||!this.isConnected||!session||session.impersonation||!authorization||!documentId||!projectId||!store.sourceOwnershipActive(source)
         ||session.projectContext&&!session.projectContext.permissions.includes("project.output.request"))return;
       const actor=session.user.userId;
       memory={request:Object.freeze({documentId,requestId:crypto.randomUUID(),message:this.#memoryText("assistantRecallPrompt"),locale}),
-        jobId:null,controller:null,lease:null,status:"working",current:()=>this.#memory===memory&&this.isConnected&&this.store===store
+        jobId:null,controller:null,lease:null,status:"working",current:()=>!memoryPrivacyMutationActive()&&this.#memory===memory&&this.isConnected&&this.store===store
           &&this.ownerDocument.visibilityState==="visible"&&store.session.get()?.user.userId===actor&&!store.session.get()?.impersonation
           &&store.authorizationScopeActive(authorization)&&store.sourceOwnershipActive(source)&&store.route.get()===route&&this.i18n.locale===locale
           &&store.projection.get().projectId===projectId&&store.projection.get().documentId===documentId};
@@ -77,7 +88,7 @@ export class FormaChatStudio extends FormaElement {
   }
   #renderMemory(){
     const memory=this.#currentMemory(),view=memory?.lease?.read(),working=memory?.status==="working";
-    const actor=this.store.session.get(),available=Boolean(actor&&!actor.impersonation&&this.store.projection.get().documentId
+    const actor=this.store.session.get(),available=Boolean(!memoryPrivacyMutationActive()&&actor&&!actor.impersonation&&this.store.projection.get().documentId
       &&(!actor.projectContext||actor.projectContext.permissions.includes("project.output.request")));
     return html`<section class="chat-memory" aria-label=${this.#memoryText("assistantRecallHistorical")} aria-busy=${working?"true":"false"}>
       <button type="button" class="button secondary compact" aria-describedby="chat-memory-help" ?disabled=${!available||working} @click=${()=>this.#recallMemory()}>${this.#memoryText("assistantRecall")}</button>

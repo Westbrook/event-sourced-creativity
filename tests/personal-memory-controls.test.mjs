@@ -3643,3 +3643,17 @@ for(const transition of ['expiry','rollback','monotonic-only','visibility','clos
  assert.doesNotMatch(h.text(),/memory.live.reviewHealthHeading|memory.live.reviewProgress/);
  assert.equal(h.calls.length,before+(transition==='navigation'?1:0));assert.equal(h.mutations().length,0);
 });
+
+for(const interruption of ['blur','pagehide','forma-memory-assistant-context-changed']) {
+ test('assistant recall clears displayed private answers on '+interruption,async t=>{
+  const h=hostFixture(t);await openRecall(h);h.assistantPost(call=>answerPayload(h,call,'Retire this recalled source'));h.recallRequest();await flush();
+  assert.match(hostText(h),/Retire this recalled source/);const count=assistantPosts(h).length;
+  h.dispatchWindow(interruption);h.commit();assert.doesNotMatch(hostText(h),/Retire this recalled source/);
+  h.dispatchWindow('focus');h.commit();await flush();assert.doesNotMatch(hostText(h),/Retire this recalled source/);assert.equal(assistantPosts(h).length,count);
+ });
+ test('assistant recall rejects late private answers on '+interruption,async t=>{
+  const h=hostFixture(t);await openRecall(h);const gate=deferred();h.assistantPost(async call=>{await gate.promise;return answerPayload(h,call,'Do not restore late recall');});
+  h.recallRequest();await flush();const post=assistantPosts(h)[0];h.dispatchWindow(interruption);assert.equal(post.init.signal.aborted,true);
+  gate.resolve();await flush();h.dispatchWindow('focus');h.commit();assert.doesNotMatch(hostText(h),/Do not restore late recall/);assert.equal(assistantPosts(h).length,1);
+ });
+}
