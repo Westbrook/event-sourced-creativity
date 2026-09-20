@@ -4,7 +4,7 @@ import { DERIVATION_JOB_COLUMNS, DERIVATION_JOB_SOURCE_COLUMNS } from "./memory-
 import { DERIVATION_GRANT_COLUMNS, derivationAssertion, derivationChanged, derivationResults, derivationVerified,
   derivationRowGuard, derivationQualificationGuard, memoryDerivationBinding, memoryDerivationEnabled, memoryDerivationSchema,
   memoryDerivationGrantShape, readDerivationQualification, type MemoryDerivationGrant } from "./memory-derivation-store.ts";
-import { derivationConsentId, derivationExact, derivationHash, derivationId, derivationInteger, derivationTime } from "./memory-derivation-policy.ts";
+import { DERIVATION_QUALIFICATION_COLUMNS, parseMemoryDerivationQualification, derivationConsentId, derivationExact, derivationHash, derivationId, derivationInteger, derivationTime } from "./memory-derivation-policy.ts";
 import { nativeMemoryGrantDeadline, nativeMemoryPilotDeadline, nativeMemoryPilotQuery } from "./memory-native-deadlines.ts";
 import type { WorkerEnv } from "./runtime.ts";
 
@@ -128,7 +128,16 @@ async function resolveNativeDerivationAdmission(env: WorkerEnv, jobId: string, r
     if (env.DB !== db || configured !== configuration(env) || !derivationResults([result], 1)) fail();
     return result.results;
   };
-  const jobs = await read(`SELECT ${DERIVATION_JOB_COLUMNS.join(",")},${producerProjection(schema.producersPresent)} FROM memory_derivation_jobs WHERE job_id=? LIMIT 2`, [jobId]);
+  const jobQuery=`SELECT ${DERIVATION_JOB_COLUMNS.join(",")},${producerProjection(schema.producersPresent)} FROM memory_derivation_jobs WHERE job_id=? LIMIT 2`;
+  const referenceQuery=`SELECT ${DERIVATION_JOB_SOURCE_COLUMNS.join(",")} FROM memory_derivation_job_sources WHERE job_id=? ORDER BY sequence,event_id LIMIT 129`;
+  // These bounded metadata reads depend only on the native job identity. Sharing
+  // a binding call does not authorize either row; every exact reference and job
+  // predicate is still replayed in the final transaction below.
+  const observed=mode==='read'?structuredClone(await db.batch<Row>([
+    db.prepare(jobQuery).bind(jobId),db.prepare(referenceQuery).bind(jobId),
+  ])):null;
+  if(observed&&(env.DB!==db||configured!==configuration(env)||!derivationResults(observed,2)))fail();
+  const jobs = observed ? observed[0]!.results : await read(jobQuery, [jobId]);
   if (jobs.length !== 1) return null;
   const {chat_studio:chat,...job}=jobs[0]!;
   if ((chat!==0&&chat!==1)||!jobShape(job)) return null;
@@ -138,11 +147,14 @@ async function resolveNativeDerivationAdmission(env: WorkerEnv, jobId: string, r
   // Both exact row guards below still replay in every final source transaction.
   const bundle = mode === 'read' ? `,(SELECT json_group_array(json_array(${DERIVATION_PARENT_COLUMNS.join(',')}))
     FROM (SELECT ${DERIVATION_PARENT_COLUMNS.join(',')} FROM memory_live_enrollments
-      WHERE enrollment_id=memory_derivation_grants.enrollment_id LIMIT 2)) AS parent_rows` : '';
+      WHERE enrollment_id=memory_derivation_grants.enrollment_id LIMIT 2)) AS parent_rows,
+    (SELECT json_group_array(json_array(${DERIVATION_QUALIFICATION_COLUMNS.join(',')}))
+      FROM (SELECT ${DERIVATION_QUALIFICATION_COLUMNS.join(',')} FROM memory_derivation_qualifications
+        WHERE qualification_id=memory_derivation_grants.qualification_id LIMIT 2)) AS qualification_rows` : '';
   const grants = await read(`SELECT ${DERIVATION_GRANT_COLUMNS.join(',')}${bundle} FROM memory_derivation_grants WHERE consent_id=?${mode === 'read' ? ' AND actor_user_id=?' : ''} LIMIT 2`,
     [job.consent_id,...(mode === 'read' ? [readActorId!] : [])]);
   if (grants.length !== 1) return null;
-  const {parent_rows:parentRows,...unbundled} = grants[0]!;
+  const {parent_rows:parentRows,qualification_rows:qualificationRows,...unbundled} = grants[0]!;
   const grant = mode === 'read' ? unbundled : grants[0]!;
   if (!memoryDerivationGrantShape(grant)) return null;
   if (mode === "read" && grant.actor_user_id !== readActorId) return null;
@@ -161,7 +173,13 @@ async function resolveNativeDerivationAdmission(env: WorkerEnv, jobId: string, r
     || (mode === "execute" ? e.learn_enabled !== 1 || e.background_enabled !== 1 : e.recall_enabled !== 1)
     || !derivationInteger(e.retention_days, grant.retention_days, 365) || !derivationTime(e.enrolled_at) || !derivationTime(e.expires_at)
     || e.enrolled_at > grant.consented_at || e.expires_at < grant.expires_at) return null;
-  const qualification = await readDerivationQualification(env, grant.qualification_id);
+  const qualificationPacked:unknown=mode==='read'&&typeof qualificationRows==='string'?JSON.parse(qualificationRows):null;
+  if(mode==='read'&&(!Array.isArray(qualificationPacked)||qualificationPacked.length!==1||!Array.isArray(qualificationPacked[0])||qualificationPacked[0].length!==DERIVATION_QUALIFICATION_COLUMNS.length))return null;
+  const binding=memoryDerivationBinding(env);
+  const qualification = mode==='read' ? binding&&await parseMemoryDerivationQualification(
+    Object.fromEntries(DERIVATION_QUALIFICATION_COLUMNS.map((key,index)=>[key,(qualificationPacked as unknown[][])[0]![index]])),binding)
+    : await readDerivationQualification(env, grant.qualification_id);
+  if(env.DB!==db||configured!==configuration(env))fail();
   if (!qualification || qualification.terms.recipeVersion==='memory-derivation-candidates-v2'&&(!schema.observationControlsPresent||!schema.lifecyclePresent) || qualification.row.terms_sha256 !== grant.terms_sha256 || qualification.terms.purpose !== grant.purpose
     || qualification.terms.monthlyCapMicroUsd !== grant.monthly_cap_microusd) return null;
   const authority = await liveMemoryAuthority(env, e);
@@ -180,7 +198,7 @@ async function resolveNativeDerivationAdmission(env: WorkerEnv, jobId: string, r
     nativeGuards.push({ condition: `(SELECT json_group_array(json_array(${columns.join(",")})) FROM (${query.sql}))=?`,
       bindings: [...query.bindings, JSON.stringify(rows.map(row => columns.map(key => row[key])))] });
   }
-  const references = await read(`SELECT ${DERIVATION_JOB_SOURCE_COLUMNS.join(",")} FROM memory_derivation_job_sources WHERE job_id=? ORDER BY sequence,event_id LIMIT 129`, [jobId]);
+  const references = observed ? observed[1]!.results : await read(referenceQuery, [jobId]);
   if (!referencesShape(references, job, grant)) return null;
   const leaseExpires = [new Date(started + 300_000).toISOString(), job.expires_at, grant.expires_at, e.expires_at, qualification.row.expires_at].sort()[0]!;
   const until = [new Date(started + 60_000).toISOString(), leaseExpires, ...nativeDeadlines].sort()[0]!;

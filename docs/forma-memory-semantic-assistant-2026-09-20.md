@@ -69,3 +69,17 @@ External provisioning, hosted scheduling qualification, production-owner
 integration/deployment and affirmative enrollment remain separately tracked in
 [the Sites capability To Do](forma-memory-sites-capability-todo-2026-09-18.md) and
 [the operational checklist](forma-memory-nonimplementation-work-2026-09-17.md).
+
+## Capacity follow-up
+
+The retained consent and execution now share a native read. Read-only derivation
+admission batches bounded job/reference metadata and binds qualification/parent
+metadata to the grant read; every exact authority and source predicate still runs
+in the final transaction. Replaying an already settled exact provider receipt
+observes both ledgers without rewriting them. Different provider receipt IDs
+conflict even when their amounts match; inconsistent/partial ledgers still use
+reconciliation rather than a cached success.
+
+Verified: 574 native Memory runtime checks, 200 finance/specialist checks, eight
+new metadata/settlement fault cases, TypeScript and changed-file lint. These
+reduce database work but do not yet close whole-invocation capacity qualification.

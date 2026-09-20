@@ -321,8 +321,13 @@ export async function decodeRetainedSpecialistConsent(serialized:string,row:Pick
   }catch{return null;}
 }
 async function retainedConsent(env:WorkerEnv,actor:SpecialistActor,scopeKey:string,turnId:string,id:string,preparedMemory?:SemanticAssistantMemory):Promise<Retained|null>{
-  const row=await readConsequentialExecution(env,actor.principal.userId,id);if(!row)return null;
-  const content=await env.DB.prepare("SELECT content FROM private_content WHERE content_id=? AND owner_id=? AND kind='execution-consent' AND redacted_at IS NULL AND expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now')").bind(row.consent_ref,actor.principal.userId).first<{content:string}>();if(!content)return null;
+  const saved=await env.DB.prepare(`SELECT execution.*,content.content AS retained_consent_content FROM consequential_executions execution
+    JOIN private_content content ON content.content_id=execution.consent_ref AND content.owner_id=execution.actor_user_id
+    WHERE execution.execution_id=? AND execution.actor_user_id=? AND content.kind='execution-consent'
+      AND content.redacted_at IS NULL AND content.expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now')`)
+    .bind(id,actor.principal.userId).first<NonNullable<Awaited<ReturnType<typeof readConsequentialExecution>>> & {retained_consent_content:string}>();
+  if(!saved)return null;
+  const {retained_consent_content,...row}=saved,content={content:retained_consent_content};
   const decoded=await decodeRetainedSpecialistConsent(content.content,row,actor.principal.userId,scopeKey,turnId,id);if(!decoded)return null;
   const{binding,preview,request}=decoded;
   assertConsentedTextPricing(request.pricing,binding.steps[0]!.model as AssistantModel);

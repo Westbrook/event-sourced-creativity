@@ -175,9 +175,19 @@ export async function settleConsequentialStep(env:WorkerEnv,userId:string,id:str
   const recorded=await env.DB.prepare(`UPDATE consequential_execution_steps SET status='usage-recorded',verified_tokens=?,verified_microusd=?,provider_request_id=?,updated_at=? WHERE execution_id=? AND step_index=? AND status IN('submitting','uncertain')
     AND EXISTS(SELECT 1 FROM consequential_executions execution WHERE execution.execution_id=consequential_execution_steps.execution_id AND execution.actor_user_id=?)`)
     .bind(tokens,microusd,providerRequestId,new Date().toISOString(),id,index,userId).run();
-  if(Number(recorded.meta.changes??0)!==1){const retained=await env.DB.prepare(`SELECT step.status,step.verified_tokens,step.verified_microusd FROM consequential_execution_steps step JOIN consequential_executions execution ON execution.execution_id=step.execution_id
-    WHERE step.execution_id=? AND step.step_index=? AND execution.actor_user_id=?`).bind(id,index,userId).first<{status:string;verified_tokens:number;verified_microusd:number}>();
-    if(!retained||!["usage-recorded","settled"].includes(retained.status)||retained.verified_tokens!==tokens||retained.verified_microusd!==microusd)throw new Error("context_provider_usage_conflict");}
+  if(Number(recorded.meta.changes??0)!==1){const retained=await env.DB.prepare(`SELECT step.status,step.verified_tokens,step.verified_microusd,step.provider_request_id,
+      EXISTS(SELECT 1 FROM budget_reservations tokens JOIN cost_budget_reservations cost
+        ON cost.reservation_id=? AND cost.owner_id=tokens.owner_id AND cost.status='settled' AND cost.used_microusd=step.verified_microusd
+        WHERE tokens.reservation_id=? AND tokens.owner_id=execution.actor_user_id AND tokens.status='settled' AND tokens.used_tokens=step.verified_tokens) AS ledgers_settled
+      FROM consequential_execution_steps step JOIN consequential_executions execution ON execution.execution_id=step.execution_id
+    WHERE step.execution_id=? AND step.step_index=? AND execution.actor_user_id=?`).bind(`${id}:usd:${index}`,`${id}:tokens:${index}`,id,index,userId)
+      .first<{status:string;verified_tokens:number;verified_microusd:number;provider_request_id:string|null;ledgers_settled:number}>();
+    if(!retained||!["usage-recorded","settled"].includes(retained.status)||retained.verified_tokens!==tokens||retained.verified_microusd!==microusd||retained.provider_request_id!==providerRequestId)throw new Error("context_provider_usage_conflict");
+    // A repeated exact receipt needs no ledger mutations. This is a fresh joined
+    // database observation, never a request/process-local settlement cache.
+    // Partial or mismatched ledgers still go through ordinary reconciliation.
+    if(retained.status==='settled'&&retained.ledgers_settled===1)return;
+  }
   await settleBudget(env,userId,`${id}:tokens:${index}`,tokens);
   await settleCostBudget(env,userId,`${id}:usd:${index}`,microusd);
   if(!await consequentialUsageSettled(env,userId,id,index,tokens,microusd))throw new Error("context_billing_reconciliation_pending");

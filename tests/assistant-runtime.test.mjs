@@ -4610,6 +4610,24 @@ test("consequential consent session revocation at dispatch and cached-result rea
   }
 });
 
+test('consequential settlement: exact replay observes both ledgers without rewriting them',async()=>{
+ const state=await consequentialContractFixture({reserve:true}),id=state.executionId,user=state.user.userId;
+ await consequential.beginConsequentialStep(state.env,state.user,state.binding,id,0,state.sourceHead);
+ await consequential.settleConsequentialStep(state.env,user,id,0,1300,5600,'exact-receipt');
+ const before=consequentialReceipt(state,id),counter=semanticConsumerOperationCounter(state);
+ await consequential.settleConsequentialStep(state.env,user,id,0,1300,5600,'exact-receipt');
+ assert.equal(counter.read(),2);assert.deepEqual(consequentialReceipt(state,id),before);
+ await assert.rejects(consequential.settleConsequentialStep(state.env,user,id,0,1300,5600,'different-receipt'),/context_provider_usage_conflict/);
+ assert.deepEqual(consequentialReceipt(state,id),before);
+});
+for(const ledger of ['tokens','cost'])test('consequential settlement: replay cannot trust a settled step with inconsistent '+ledger+' ledger',async()=>{
+ const state=await consequentialContractFixture({reserve:true}),id=state.executionId,user=state.user.userId;
+ await consequential.beginConsequentialStep(state.env,state.user,state.binding,id,0,state.sourceHead);
+ await consequential.settleConsequentialStep(state.env,user,id,0,1300,5600,'exact-receipt');
+ state.sqlite.prepare(ledger==='tokens'?'UPDATE budget_reservations SET used_tokens=used_tokens+1 WHERE reservation_id=?':'UPDATE cost_budget_reservations SET used_microusd=used_microusd+1 WHERE reservation_id=?').run(id+(ledger==='tokens'?':tokens:0':':usd:0'));
+ await assert.rejects(consequential.settleConsequentialStep(state.env,user,id,0,1300,5600,'exact-receipt'),/context_billing_reconciliation_pending/);
+});
+
 test("consequential consent finishes a saved verified ledger settlement exactly once without repurchase",async()=>{
   const state=await fixture({provider:true}),original=globalThis.fetch;let calls=0;
   try{
@@ -16676,7 +16694,7 @@ for(const shared of [false,true])test('semantic assistant consumer: native paid 
  const before=adaptiveReentryFinancialState(state),calls=state.calls.length,counter=semanticConsumerOperationCounter(state);
  const response=await specialistProtocolRequest(state,{action:'quote',turnId:turn.id,memory:'saved'},options),body=await response.json();
  assert.equal(response.status,200,JSON.stringify(body)+' SQL: '+state.controls.lastDatabaseError);
- t.diagnostic(JSON.stringify({semanticQuoteOperations:counter.read()}));
+ t.diagnostic(JSON.stringify({semanticQuoteOperations:counter.read(),...(process.env.FORMA_TEST_SQL_TRACE?{trace:counter.trace}:{})}));
  assert.ok(body.quote?.privateInput.providerRequest);
  const consent=state.sqlite.prepare("SELECT content FROM private_content WHERE kind='execution-consent' ORDER BY created_at DESC LIMIT 1").get();
  const request=JSON.parse(consent.content).binding.request;
@@ -16701,7 +16719,7 @@ for(const shared of [false,true])test('semantic assistant consumer: approved req
  const original=globalThis.fetch,calls=[];globalThis.fetch=async(url,init)=>{assert.equal(String(url),'https://api.openai.com/v1/responses');const payload=JSON.parse(init.body);calls.push(payload);return specialistRawResponse(payload);};t.after(()=>{globalThis.fetch=original;});
  const executing=await specialistExecute(state,review,options);assert.equal(executing.status,202,await executing.clone().text()+' SQL: '+state.controls.lastDatabaseError);
  t.diagnostic(JSON.stringify({executeOperations:counter.read()}));counter.reset();
- await state.drainBackground();t.diagnostic(JSON.stringify({backgroundOperations:counter.read()}));counter.reset();
+ await state.drainBackground();t.diagnostic(JSON.stringify({backgroundOperations:counter.read(),...(process.env.FORMA_TEST_SQL_TRACE?{trace:counter.trace}:{})}));counter.reset();
  const response=await specialistRetrieve(state,review,options),body=await response.json();
  assert.equal(response.status,200,JSON.stringify(body)+' SQL: '+state.controls.lastDatabaseError);
  t.diagnostic(JSON.stringify({retrieveOperations:counter.read()}));
@@ -16832,4 +16850,24 @@ test('semantic assistant consumer: retired inverse survives private retyping and
  }
  assert.throws(()=>state.sqlite.prepare("UPDATE memory_derivation_consumers SET state='active',retired_at=NULL").run(),/immutable/u);
  assert.equal((await specialistRetrieve(state,review,state.semanticOptions)).status,404);
+});
+
+for(const fault of ['truncated','missing-references','reference-change','qualification-withdrawn','database-swap'])test('native derivation read metadata batch: '+fault+' denies issuance',async t=>{
+ const state=await nativeDerivationResultFixture(t),admission=await import('../worker/memory-derivation-admission.ts'),db=state.env.DB,batch=db.batch;
+ let injected=false;
+ db.batch=async statements=>{
+  const result=await batch.call(db,statements);
+  if(!injected&&statements.length===2&&statements[0].sql.startsWith('SELECT job_id,consent_id,purpose,')&&statements[1].sql.startsWith('SELECT job_id,enrollment_id,event_id,')){
+   injected=true;
+   if(fault==='truncated')result.pop();
+   if(fault==='missing-references')result[1].results=[];
+   if(fault==='reference-change')state.sqlite.exec('DELETE FROM memory_derivation_job_sources');
+   if(fault==='qualification-withdrawn')state.sqlite.exec("UPDATE memory_derivation_qualifications SET status='withdrawn'");
+   if(fault==='database-swap')state.env.DB={prepare:db.prepare.bind(db),batch:batch.bind(db)};
+  }
+  return result;
+ };
+ t.after(()=>{state.env.DB=db;db.batch=batch;});
+ let handle=null;try{handle=await admission.observeNativeDerivationJob(state.env,state.current().actor_user_id,state.executionJob.job_id);}catch{}
+ assert.equal(injected,true);assert.equal(handle,null);
 });
