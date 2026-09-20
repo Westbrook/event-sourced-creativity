@@ -17,9 +17,12 @@ export class DocumentMemoryBrief extends FormaElement {
   #timer:ReturnType<typeof setTimeout>|undefined;
   #suspended=false;
   #hadContent=false;
+  #profileAfter:string|null=null;
+  #focusProfilePage=false;
+  #profileScope:string|null=null;
   #t(key:string,values:Record<string,string|number>={}){return personalMemoryMessage(this.i18n.locale,'memory.live.'+key,values);}
   #clear(){this.#owner?.controller.abort();this.#owner=null;this.#lease?.retire();this.#lease=null;clearTimeout(this.#timer);this.#timer=undefined;this.#hadContent=false;}
-  #hide=()=>{this.#suspended=true;this.#clear();this.requestUpdate();};
+  #hide=()=>{this.#profileAfter=null;this.#profileScope=null;this.#suspended=true;this.#clear();this.requestUpdate();};
   #show=()=>{if(this.ownerDocument.visibilityState==='visible'){this.#suspended=false;this.#sync();this.requestUpdate();}};
   #visibility=()=>{if(this.ownerDocument.visibilityState==='hidden')this.#hide();else this.#show();};
   override connectedCallback(){super.connectedCallback();this.ownerDocument.addEventListener('visibilitychange',this.#visibility);
@@ -44,16 +47,21 @@ export class DocumentMemoryBrief extends FormaElement {
     const store=this.store,session=store.session.get(),authorization=store.captureAuthorizationScope(),source=store.captureSourceOwnership();
     const selected=this.#scope();if(!session||!authorization||!selected||!store.sourceOwnershipActive(source))return;
     const route=store.route.get(),locale=this.i18n.locale,scopeStamp=JSON.stringify(selected),controller=new AbortController();
+    const profileScope=JSON.stringify([session.user.userId,authorization,source,route,locale,scopeStamp]);
+    if(this.#profileScope!==profileScope){this.#profileAfter=null;this.#profileScope=profileScope;}
+    const profileAfter=this.#profileAfter,focusProfilePage=this.#focusProfilePage;this.#focusProfilePage=false;
     const owner:BriefOwner={controller,current:()=>this.#owner===owner&&!memoryPrivacyMutationActive()&&!controller.signal.aborted&&this.isConnected&&!this.#suspended
       &&this.ownerDocument.visibilityState==='visible'&&this.store===store&&store.session.get()?.user.userId===session.user.userId
       &&!store.session.get()?.impersonation&&store.authorizationScopeActive(authorization)&&store.sourceOwnershipActive(source)
       &&store.route.get()===route&&this.i18n.locale===locale&&JSON.stringify(this.#scope())===scopeStamp};
     this.#owner=owner;
-    void readDocumentMemoryBrief(selected,(input,init)=>store.guardedFetch(input,init,this.#t('briefHeading'),{current:owner.current}),owner.current,controller.signal)
+    void readDocumentMemoryBrief({...selected,profileAfter},(input,init)=>store.guardedFetch(input,init,this.#t('briefHeading'),{current:owner.current}),owner.current,controller.signal)
       .then(lease=>{if(!owner.current()){lease?.retire();return;}this.#lease=lease;const value=lease?.current();
         this.#hadContent=Boolean(value?.sections.some(section=>section.items.length||section.corrections.length));
         if(value)this.#timer=setTimeout(()=>this.#expire(owner),Math.max(0,Date.parse(value.validUntil)-Date.now()));
-        this.requestUpdate();}).catch(()=>{if(owner.current()){this.#lease=null;this.requestUpdate();}});
+        this.requestUpdate();
+        if(focusProfilePage&&value)void this.updateComplete.then(()=>{if(owner.current())this.querySelector<HTMLButtonElement>('button')?.focus();});
+      }).catch(()=>{if(owner.current()){this.#lease=null;this.requestUpdate();}});
   }
   #expire(owner:BriefOwner){
     if(!owner.current())return;
@@ -61,7 +69,12 @@ export class DocumentMemoryBrief extends FormaElement {
     this.#lease?.retire();this.#lease=null;this.requestUpdate();
     if(restore)void this.updateComplete.then(()=>{if(owner.current())this.querySelector<HTMLButtonElement>('button')?.focus({preventScroll:true});});
   }
-  #refresh=()=>{this.#clear();this.#sync();this.requestUpdate();};
+  #olderProfile=()=>{
+    if(!this.#owner?.current())return;
+    const next=this.#lease?.current()?.sections.find(section=>section.retainedProfile)?.retainedProfile?.nextAfter;
+    if(!next)return;this.#focusProfilePage=true;this.#profileAfter=next;this.#clear();this.#sync();this.requestUpdate();
+  };
+  #refresh=()=>{this.#profileAfter=null;this.#clear();this.#sync();this.requestUpdate();};
   override render(){
     if(!this.#owner?.current())return nothing;
     const value=this.#lease?.current();
@@ -74,11 +87,14 @@ export class DocumentMemoryBrief extends FormaElement {
           ${section.jobId&&section.items.length?html`<forma-memory-assistant-context .candidateJobId=${section.jobId}></forma-memory-assistant-context>`:nothing}
           ${section.source?html`<p>${section.source.documentId} · ${this.#t('recallBoundary.'+section.source.zoom)}</p><p class="memory-brief-disclosure">${this.#t('recallBoundaryPreview')} ${this.#t('briefSourceWeight',{weight:Math.round(section.source.weight*1000)/1000})}</p>`:nothing}
           ${section.corrections.map(control=>html`<p class="memory-brief-correction"><strong>${this.#t('reviewAction.corrected')}</strong> ${control.correctionText}</p>`)}
-          ${section.retainedProfile?html`<p class="memory-brief-disclosure">${this.#t('profileRetained',{count:section.retainedProfile.results})}</p>`:nothing}
+          ${section.retainedProfile?html`<p class="memory-brief-disclosure">${this.#t('profileRetained',{count:section.retainedProfile.results})}
+            ${section.retainedProfile.historicalPage?this.#t('profileHistoryPage'):nothing}</p>`:nothing}
           <ul>${section.items.map((item,index)=>html`<li><p>${item.text}</p>${item.citationStatus==='conflicting-citations'?html`<strong>${this.#t('briefConflict')}</strong>`:nothing}
             ${'profileOrigin' in item?html`<p class="memory-brief-disclosure">${this.#t(item.profileOrigin.state==='latest'?'profileLatest':'profileHistorical')}
               ${item.profileOrigin.repeatedIn>1?this.#t('profileRepeated',{count:item.profileOrigin.repeatedIn}):nothing}
-              ${item.profileOrigin.sharedEvidence?this.#t('profileSharedEvidence'):nothing}</p>
+              ${item.profileOrigin.sharedEvidence?this.#t('profileSharedEvidence'):nothing}
+              ${item.profileOrigin.interpretation==='revised'?this.#t('profileRevised'):nothing}
+              ${item.profileOrigin.counterevidence?this.#t('profileCitedConflict'):nothing}</p>
               ${index===section.items.findIndex(candidate=>'profileOrigin' in candidate&&candidate.profileOrigin.jobId===item.profileOrigin.jobId)?html`<forma-memory-assistant-context .candidateJobId=${item.profileOrigin.jobId}></forma-memory-assistant-context>`:nothing}`:nothing}
             <details><summary>${this.#t(item.observationCitations?.length?'behavioralEvidence':'briefEvidence')}</summary>
               ${item.resourceCitations?.length?html`<p class="memory-brief-disclosure">${this.#t('resourceEvidenceDisclosure')}</p><ul data-memory-evidence-resources>${[...new Map(item.resourceCitations.map(row=>[JSON.stringify(row.resource),row.resource])).values()].map(resource=>html`<li>${resource.zoom==='page'?this.#t('resourceEvidencePage',{view:this.#t('visitsPage.'+resource.view)}):resource.zoom==='block'?this.#t('resourceEvidenceBlock',{block:resource.blockId,revision:resource.revision}):this.#t('resourceEvidenceDocument')}</li>`)}</ul>`:nothing}
@@ -86,6 +102,7 @@ export class DocumentMemoryBrief extends FormaElement {
               ${item.supports.map(quote=>html`<blockquote>${quote.text}</blockquote>`)}
               ${item.counterevidence.length?html`<p>${this.#t('briefCounterevidence')}</p>${item.counterevidence.map(quote=>html`<blockquote>${quote.text}</blockquote>`)}`:nothing}
             </details></li>`)}</ul>
+          ${section.retainedProfile?.nextAfter?html`<button type="button" class="button ghost compact" @click=${this.#olderProfile}>${this.#t('profileOlder')}</button>`:nothing}
           ${section.history?html`<small>${this.#t('reviewHistory',{windows:section.history.windowCount,pairs:section.history.originalPairs})} ${this.#t('reviewHistory.'+section.history.boundary)}</small>`:nothing}
         </section>`)}`:html`<p role="status">${this.#t('briefExpired')}</p>`}
     </aside>`;

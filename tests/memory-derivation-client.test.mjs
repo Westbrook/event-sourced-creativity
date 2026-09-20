@@ -307,7 +307,7 @@ test('retained profile keeps changed interpretations and earlier-only facets his
  assert.deepEqual(result.items.map(row=>row.profileOrigin.state),['latest','historical','historical']);
  assert.deepEqual(result.items.map(row=>row.profileOrigin.sharedEvidence),[true,true,false]);assert.equal(result.items[1].text,'Prior interpretation');
 });
-for(const invalid of [[],[profileView('duplicate'),profileView('duplicate')],Array.from({length:5},(_,i)=>profileView(String(i))),[profileView('a'),{...profileView('b'),scopeKey:'foreign'}],[{...profileView('a'),purpose:'suggestion'}]])
+for(const invalid of [[],[profileView('duplicate'),profileView('duplicate')],Array.from({length:17},(_,i)=>profileView(String(i))),[profileView('a'),{...profileView('b'),scopeKey:'foreign'}],[{...profileView('a'),purpose:'suggestion'}]])
  test('retained profile rejects an incoherent or oversized collection '+JSON.stringify(invalid.map(row=>row.jobId)),()=>assert.throws(()=>reconcileMemoryProfile(invalid)));
 function profileBriefFixture(){
  const f=briefFixture();f.grant.purpose='profile';f.entry.purpose='profile';f.listing.purpose='profile';f.result.candidate.purpose='profile';f.item.category='preference-hypothesis';
@@ -424,4 +424,87 @@ test('processing diagnostics reject getters and distinguish empty from unknown',
  assert.deepEqual(parseMemoryDerivationHealth(empty,{pending:0,completed:0,retained:0},at),empty);
  for(const key of ['oldestPendingAt','lastCompletedAt','lastRetainedAt'])assert.throws(()=>parseMemoryDerivationHealth({...empty,[key]:at},{pending:0,completed:0,retained:0},at));
  assert.throws(()=>parseMemoryDerivationHealth(undefined,{pending:0,completed:0,retained:0},at));
+});
+
+
+test('retained profile identifies revised claims without guessing contradictions or merging evidence',()=>{
+ const latest=profileView('latest','Current interpretation','support-new');
+ const older=profileView('older','Earlier interpretation','support-old');
+ const unrelated=profileView('unrelated','Current interpretation','support-third');unrelated.items[0].claimKey='another-claim';
+ older.items[0].citationStatus='conflicting-citations';older.items[0].counterevidence=[{sourceIndex:1,start:0,end:5,text:'Other'}];
+ const result=reconcileMemoryProfile([latest,older,unrelated]);
+ assert.deepEqual(result.items.map(item=>item.profileOrigin.interpretation),['current','revised','earlier-only']);
+ assert.deepEqual(result.items.map(item=>item.profileOrigin.newerInterpretationJobId),[null,'latest',null]);
+ assert.deepEqual(result.items.map(item=>item.profileOrigin.counterevidence),[false,true,false]);
+ assert.equal(result.items[1].supports[0].text,'Original');assert.equal(result.items[1].counterevidence[0].text,'Other');
+ assert.ok(result.items.every(item=>item.profileOrigin.sharedEvidence===false));
+});
+test('retained profile accepts sixteen distinct source-backed windows, not a four-result history',()=>{
+ const result=reconcileMemoryProfile(Array.from({length:16},(_,i)=>profileView(String(i),'Interpretation '+i,'lineage-'+i)));
+ assert.equal(result.results,16);assert.equal(result.items.length,16);assert.equal(result.complete,false);
+ assert.ok(result.items.slice(1).every(item=>item.profileOrigin.newerInterpretationJobId==='0'));
+});
+function extendedProfileFixture(){
+ const f=profileBriefFixture(),entries=[f.entry,...Array.from({length:39},(_,i)=>({...f.entry,jobId:hash('profile-history-'+i)}))];
+ const pages=[];let reads=0;
+ const transport=async(input,init)=>{
+  const url=new URL(String(input),'https://fixture.invalid');
+  if(url.pathname.endsWith('/results')&&!url.searchParams.has('latest')){
+   const after=url.searchParams.get('after'),offset=after?entries.findIndex(entry=>entry.jobId===after)+1:0;
+   pages.push(after);const results=entries.slice(offset,offset+8);
+   return Response.json({...f.history,results,next:offset+8<entries.length?results.at(-1).jobId:null});
+  }
+  if(url.pathname.endsWith('/result')){
+   const jobId=url.searchParams.get('jobId'),index=entries.findIndex(entry=>entry.jobId===jobId);
+   if(index>=0){reads++;const body=structuredClone(f.result);body.jobId=jobId;body.candidate.manifestId=jobId;body.candidate.items[0].text='Interpretation '+index;return Response.json(body);}
+  }
+  return f.transport(input,init);
+ };
+ return {...f,entries,pages,transport,reads:()=>reads};
+}
+test('automatic profile reads two native pages with a hard sixteen-result bound',async()=>{
+ const f=extendedProfileFixture(),lease=await readDocumentMemoryBrief(f.selection,f.transport,f.current,f.controller.signal);
+ const section=lease.current().sections[0];assert.equal(section.retainedProfile.results,16);
+ assert.deepEqual(f.pages,[null,f.entries[7].jobId]);assert.equal(f.reads(),16);
+ assert.equal(section.items.length,16);assert.ok(section.items.every(item=>f.entries.slice(0,16).some(entry=>entry.jobId===item.profileOrigin.jobId)));
+ lease.retire();assert.equal(lease.current(),null);
+});
+for(const fault of ['repeated-page','withdrawn-second-page','expired-second-page','cancelled-second-page','changed-scope-second-page'])test('longer profile scan fails closed on '+fault,async()=>{
+ const f=extendedProfileFixture();
+ const transport=async(input,init)=>{
+  const url=new URL(String(input),'https://fixture.invalid');
+  if(url.pathname.endsWith('/results')&&url.searchParams.has('after')){
+   if(fault==='repeated-page')return Response.json({...f.history,results:f.entries.slice(0,8),next:f.entries[7].jobId});
+   if(fault==='withdrawn-second-page')return Response.json({error:'withdrawn'},{status:404});
+   if(fault==='cancelled-second-page')f.controller.abort();
+   if(fault==='changed-scope-second-page')f.deactivate();
+  }
+  const response=await f.transport(input,init);
+  if(fault==='expired-second-page'&&url.pathname.endsWith('/result')&&url.searchParams.get('jobId')===f.entries[8].jobId){
+   const body=await response.json();body.candidate.validUntil=new Date(Date.now()-1).toISOString();return Response.json(body);
+  }
+  return response;
+ };
+ await assert.rejects(readDocumentMemoryBrief(f.selection,transport,f.current,f.controller.signal));
+});
+
+
+test('explicit older profile pages preserve the latest result and visit retained results without gaps',async()=>{
+ const f=extendedProfileFixture();let next=null,seen=[];
+ for(let page=0;page<3;page++){
+  const lease=await readDocumentMemoryBrief({...f.selection,profileAfter:next},f.transport,f.current,f.controller.signal);
+  const section=lease.current().sections[0];
+  assert.equal(section.items[0].profileOrigin.jobId,f.entries[0].jobId);
+  assert.equal(section.retainedProfile.historicalPage,page>0);
+  assert.ok(section.retainedProfile.results<=16);
+  seen.push(...section.items.slice(page===0?0:1).map(item=>item.profileOrigin.jobId));
+  next=section.retainedProfile.nextAfter;lease.retire();
+ }
+ assert.equal(next,null);assert.deepEqual(seen,f.entries.map(entry=>entry.jobId));
+ assert.equal(new Set(seen).size,40);assert.equal(f.reads(),42,'The latest source is independently re-read for every page');
+});
+test('older review never resurrects history after the newest native result is withdrawn',async()=>{
+ const f=extendedProfileFixture();f.listing.results=[];
+ const lease=await readDocumentMemoryBrief({...f.selection,profileAfter:f.entries[15].jobId},f.transport,f.current,f.controller.signal);
+ assert.equal(lease.current().sections[0].items.length,0);assert.equal(f.reads(),0);assert.equal(f.pages.length,0);lease.retire();
 });

@@ -13,7 +13,7 @@ not close an end-to-end consumer.
 | --- | --- | --- |
 | Assistant and Chat Studio consumption | Native original-backed recall; private summary/profile/suggestion results; saved references; fresh native consumer source evidence | Wire eligible semantic context into the actual prompt paths with bounded current/recent coverage; durable generated-answer provenance; final source/target replay; historical reader and source withdrawal/expiry/erasure integration; whole-request budgets and UI privacy tests. |
 | Exact-field autocomplete | Native versioned block history, source proofs and suggestion results | Bind completion to exact field/revision/language; cancellable nonblocking presentation and IME/keyboard behavior; explicit accept/reject/edit/undo; retain assisted ancestry through later edits and independently authorized reuse; do not persist unsent drafts. |
-| Unified evolving profile | Qualified derivation, rolling original-backed windows, private controls, four-result retained profile and explicit broader bands | Longer-term source-backed consolidation, supersession and contradiction handling beyond the bounded retained projection; scope-specific promotion with independent support; consumer integration and lifecycle tests. |
+| Unified evolving profile | Qualified derivation, rolling original-backed windows, private controls, paginated retained profile with claim-revision/counterevidence review and explicit broader bands | Longer-term source-backed consolidation, supersession and contradiction handling beyond the bounded retained projection; scope-specific promotion with independent support; consumer integration and lifecycle tests. |
 | Complete native resource/zoom coverage | Document/page/block identities and inspection; artifact revisions; same-owner nesting; certified approved-copy outcomes | Library/Canvas resource identity and history, remaining unsupported block histories, cross-owner nesting with independent permissions, and original-source recall across reuse relationships. Nesting must not grant access. |
 | Durable downstream lifecycle | Native result/index-intent retirement and saved-reference retirement | Persisted ancestry-dependent generated-answer/edit/output/index invalidation, restore/rebuild negative provenance and non-resurrection tests for the new consumers/resources. |
 | Integrated qualification and operations | [Private retained-job diagnostics](forma-memory-processing-health-2026-09-20.md), budget/finance/recovery tests and migration reconciliation | End-to-end journeys across the above consumers, expanded privacy/request/byte bounds, consumer latency and source-evidence freshness qualification; reconcile all failures and update deployment/handoff evidence. |
@@ -59,3 +59,9 @@ connect retained queue age, disjoint job/recovery state, publication age and
 registration-to-completion timing to the actual localized Memory review controls.
 This closes that diagnostic slice, not the six end-to-end workstreams above.
 No migration, deployment, new service, polling or enrollment was added.
+
+[Retained profile history](forma-memory-profile-history-2026-09-20.md) now removes
+the four-result review ceiling through bounded explicit paging. It preserves
+original citations and distinguishes revised interpretations and counterevidence.
+This is implemented UI/source integration, not semantic consolidation or durable
+assistant/autocomplete publication.

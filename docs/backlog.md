@@ -185,3 +185,7 @@ keeps every remaining native workstream distinct from external/operational gates
 ## MEM-003 private processing diagnostics — 2026-09-20
 
 [Native queue, recovery and completion-timing diagnostics](forma-memory-processing-health-2026-09-20.md) are implemented through the actual private results API and localized Memory review controls, with bounded display lifetime and no extra database requests. Verified locally; not deployed. The [full completion matrix](forma-memory-completion-matrix-2026-09-20.md) remains open for native consumer, autocomplete, profile, resource and downstream lifecycle implementation. External/operational gates remain in the [Sites capability To Do](forma-memory-sites-capability-todo-2026-09-18.md) and [non-implementation checklist](forma-memory-nonimplementation-work-2026-09-17.md).
+
+## MEM-003 retained profile history — 2026-09-20
+
+[Native retained-profile paging and interpretation review](forma-memory-profile-history-2026-09-20.md) now support 16 freshly validated results per page and explicit older-page traversal, exact-claim revision/counterevidence disclosure, localized keyboard controls and privacy clearing. The [completion matrix](forma-memory-completion-matrix-2026-09-20.md) remains the implementation checklist; longer-term semantic consolidation and durable assistant/autocomplete consumers are not closed by this review feature. External services and rollout remain separately tracked.

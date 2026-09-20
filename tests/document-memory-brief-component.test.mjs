@@ -31,13 +31,13 @@ function fixture(t,{deferred=false,shared=false,saved=false,profile=false}={}){
   const calls=[];const capture=(selection,transport,current,signal)=>new Promise(resolve=>{let retired=false;
     const value={projectId:'project',documentId:'doc',validUntil:new Date(Date.now()+45000).toISOString(),completeHistory:false,independentEvidence:false,
       sections:[{purpose:'rolling-summary',jobId:'job',corrections:[],items:[{text:'Private native candidate',citationStatus:'support-cited',supports:[{text:'Original quotation'}],counterevidence:[]}]}]};
-    if(profile)value.sections=[{purpose:'profile',jobId:null,corrections:[],items:Array.from({length:64},(_,index)=>({text:'Profile note '+index,citationStatus:'support-cited',supports:[],counterevidence:[],profileOrigin:{jobId:'result-'+Math.floor(index/16),state:index<16?'latest':'historical',repeatedIn:1,sharedEvidence:false}}))}];
+    if(profile)value.sections=[{purpose:'profile',jobId:null,corrections:[],retainedProfile:{results:16,complete:false,nextAfter:'a'.repeat(64),historicalPage:Boolean(selection.profileAfter)},items:Array.from({length:256},(_,index)=>({text:'Profile note '+index,citationStatus:'support-cited',supports:[],counterevidence:[],profileOrigin:{jobId:'result-'+Math.floor(index/16),state:index<16?'latest':'historical',repeatedIn:1,sharedEvidence:false,interpretation:index<16?'current':'revised',newerInterpretationJobId:index<16?null:'result-0',counterevidence:index%2===0}}))}];
     const lease={current:()=>!retired&&current()?value:null,retire:()=>{retired=true;}};calls.push({selection,current,signal,resolve:()=>resolve(lease),retired:()=>retired});if(!deferred)resolve(lease);});
   const savedClient=()=>({read:(scope,signal)=>new Promise(resolve=>{calls.push({scope,signal,resolve:()=>resolve({validUntil:new Date(Date.now()+25000).toISOString(),context:{state:'accepted',source:{documentId:'doc',zoom:'document'}},presentation:{items:[{text:'Private native candidate'}]}})});if(!deferred)calls.at(-1).resolve();})});
   const Component=saved?new Function('memoryPrivacyMutationActive','FormaElement','html','nothing','createAssistantMemoryContextClient','parseMemoryCustody','personalMemoryMessage','createMemoryElapsed','window','setTimeout','clearTimeout',savedCompiled+'\nreturn MemoryAssistantContext;')(()=>privacyPending,Base,html,nothing,savedClient,parseMemoryCustody,personalMemoryMessage,createMemoryElapsed,window,callback=>{const id=++nextTimer;timers.set(id,callback);return id;},id=>timers.delete(id)):new Function('documentViewFromRoute','documentContextBlockFromRoute','memoryPrivacyMutationActive','FormaElement','html','nothing','readDocumentMemoryBrief','parseMemoryCustody','personalMemoryMessage','window','setTimeout','clearTimeout',compiled+'\nreturn DocumentMemoryBrief;')(
     documentViewFromRoute,documentContextBlockFromRoute,()=>privacyPending,Base,html,nothing,capture,parseMemoryCustody,personalMemoryMessage,window,callback=>{const id=++nextTimer;timers.set(id,callback);return id;},id=>timers.delete(id));
   const element=new Component();element.connectedCallback();element.updated();t.after(()=>{element.isConnected=false;element.disconnectedCallback();});
-  return {privacy:(value)=>{privacyPending=value;window.dispatchEvent(new Event('forma-memory-privacy-mutation'));},element,calls,document,window,timers,refresh,text:()=>flatten(element.render()),focused:()=>focused,
+  return {click:(label)=>{const visit=value=>{if(Array.isArray(value))return value.some(visit);if(!value?.values)return false;if(value.values.includes(label)){const action=value.values.find(v=>typeof v==='function');if(action){action();return true;}}return value.values.some(visit);};assert.ok(visit(element.render()),'Button exists: '+label);},privacy:(value)=>{privacyPending=value;window.dispatchEvent(new Event('forma-memory-privacy-mutation'));},element,calls,document,window,timers,refresh,text:()=>flatten(element.render()),focused:()=>focused,
     change:(kind)=>{if(kind==='route')route='/elsewhere';if(kind==='actor')session={...session,user:{userId:'another'}};
       if(kind==='auth')authorization='changed';if(kind==='source')generation++;if(kind==='retired-source')sourceActive=false;
       if(kind==='impersonation')session={...session,impersonation:{userId:'other'}};if(kind==='locale')element.i18n.locale='ar';
@@ -99,6 +99,28 @@ for(const saved of [false,true])test('privacy mutation rejects a late read and c
 
 test('retained profile mounts one reference control per source result, not one per repeated claim',async t=>{
  const f=fixture(t,{profile:true});await flush();
- assert.equal((f.text().match(/<forma-memory-assistant-context /gu)??[]).length,4);
- for(const i of [0,15,16,31,32,47,48,63])assert.match(f.text(),new RegExp('Profile note '+i));
+ assert.equal((f.text().match(/<forma-memory-assistant-context /gu)??[]).length,16);
+ for(const i of [0,15,16,31,32,47,48,63,127,255])assert.match(f.text(),new RegExp('Profile note '+i));
+});
+
+for(const locale of ['en','fr','ar','ja'])test('profile change and counterevidence disclosure remains localized '+locale,async t=>{
+ const f=fixture(t,{profile:true});f.element.i18n.locale=locale;f.element.updated();await flush();
+ assert.ok(f.text().includes(personalMemoryMessage(locale,'memory.live.profileRevised')));
+ assert.ok(f.text().includes(personalMemoryMessage(locale,'memory.live.profileCitedConflict')));
+ assert.doesNotMatch(f.text(),/memory.live.profile(?:Revised|CitedConflict)/);
+ f.privacy(true);assert.doesNotMatch(f.text(),/Profile note/);
+});
+
+
+test('explicit older-profile navigation discards the old lease and resets on privacy or scope changes',async t=>{
+ const f=fixture(t,{profile:true});await flush();
+ f.click(personalMemoryMessage('en','memory.live.profileOlder'));await flush();
+ assert.equal(f.calls.length,2);assert.equal(f.calls[0].signal.aborted,true);assert.equal(f.calls[0].retired(),true);
+ assert.equal(f.calls[1].selection.profileAfter,'a'.repeat(64));
+ assert.ok(f.text().includes(personalMemoryMessage('en','memory.live.profileHistoryPage')));
+ f.click(personalMemoryMessage('en','memory.live.briefRefresh'));await flush();assert.equal(f.calls[2].selection.profileAfter,null);
+ f.click(personalMemoryMessage('en','memory.live.profileOlder'));await flush();
+ f.change('locale');f.element.updated();await flush();assert.equal(f.calls.at(-1).selection.profileAfter,null);
+ f.privacy(true);assert.doesNotMatch(f.text(),/Profile note/);
+ f.privacy(false);await flush();assert.equal(f.calls.at(-1).selection.profileAfter,null);
 });

@@ -211,6 +211,8 @@ for(const purpose of ['rolling-summary','profile'])for(const behavioral of [fals
     const settings={version,enabled:true,available:true,reason:null,policyVersion:'personal-memory-derivation-v1',scope,enrollmentId:parent,enrollmentRevision:1,
       grants:[grant],qualifications:[offer],capScope:'payer-utc-calendar-month-all-memory-purposes',sourceWindow:behavioral?'qualified-recipe':'future-originals',processingImplemented:false};
     const calls=[],errors=[],contextWrites=[];page.on('pageerror',error=>errors.push(error.message));let denied=false;
+    const extendedProfile=purpose==='profile'&&!behavioral;
+    const historyJobs=[jobId,...Array.from({length:extendedProfile?19:1},(_,index)=>createHash('sha256').update('older-profile-'+index).digest('hex'))];
     await context.route('**/api/memory/**',async route=>{
       const request=route.request(),url=new URL(request.url());calls.push({path:url.pathname,method:request.method()});
       expect(url.origin).toBe(new URL(baseURL).origin);
@@ -225,17 +227,21 @@ for(const purpose of ['rolling-summary','profile'])for(const behavioral of [fals
       const validUntil=new Date(Date.now()+45000).toISOString();
       if(url.pathname==='/api/memory/settings')return route.fulfill({json:base});
       if(url.pathname.endsWith('/derivation/settings'))return route.fulfill({json:settings});
-      if(url.pathname.endsWith('/results'))return route.fulfill({json:{version,scope,enrollmentId:parent,enrollmentRevision:1,purpose,...(url.searchParams.has('latest')?{latest:true}:{}),
-        ...(url.searchParams.get('diagnostics')==='1'?{diagnostics:'memory-derivation-health-v1'}:{}),checkedAt:new Date().toISOString(),progress:[],results:[{jobId,purpose,scopeKey:'synthetic-scope',expiresAt},...(!url.searchParams.has('latest')?[{jobId:'9'.repeat(64),purpose,scopeKey:'synthetic-scope',expiresAt}]:[])],next:null}});
+      if(url.pathname.endsWith('/results')){
+        const latest=url.searchParams.has('latest'),after=url.searchParams.get('after'),offset=after?historyJobs.indexOf(after)+1:0;
+        const selected=latest?[jobId]:historyJobs.slice(offset,offset+8);
+        return route.fulfill({json:{version,scope,enrollmentId:parent,enrollmentRevision:1,purpose,...(latest?{latest:true}:{}),
+          checkedAt:new Date().toISOString(),progress:[],results:selected.map(jobId=>({jobId,purpose,scopeKey:'synthetic-scope',expiresAt})),next:!latest&&offset+8<historyJobs.length?selected.at(-1):null}});
+      }
       if(url.pathname.endsWith('/result')){
-        const selectedJob=url.searchParams.get('jobId'),historical=selectedJob!==jobId;
+        const selectedJob=url.searchParams.get('jobId'),historical=selectedJob!==jobId,claimJob=purpose==='profile'?jobId:selectedJob;
         if(denied)return route.fulfill({status:404,json:{error:'memory_result_unavailable'}});
         expect(url.searchParams.get('resources')).toBe('1');
-        return route.fulfill({json:{version,jobId:selectedJob,expiresAt,resourceEvidence:{version:'memory-evidence-resources-v1',complete:false,claims:[{claimKey:'derived:'+selectedJob,citations:[...[0,1].map(index=>({source:'original',index,resource:{zoom:'document',scopeKey:'synthetic-scope'}})),...(behavioral?[{source:'observation',index:0,resource:{zoom:'page',scopeKey:'synthetic-page',view:'document'}}]:[])]}]},controlRevisions:{[lineage]:0},history:{windowCount:3,originalPairs:6,boundary:'bounded',afterSequence:1,throughSequence:24},
+        return route.fulfill({json:{version,jobId:selectedJob,expiresAt,resourceEvidence:{version:'memory-evidence-resources-v1',complete:false,claims:[{claimKey:'derived:'+claimJob,citations:[...[0,1].map(index=>({source:'original',index,resource:{zoom:'document',scopeKey:'synthetic-scope'}})),...(behavioral?[{source:'observation',index:0,resource:{zoom:'page',scopeKey:'synthetic-page',view:'document'}}]:[])]}]},controlRevisions:{[lineage]:0},history:{windowCount:3,originalPairs:6,boundary:'bounded',afterSequence:1,throughSequence:24},
           candidate:{version:behavioral?'memory-derivation-candidates-v2':'memory-derivation-candidates-v1',purpose,scopeKey:'synthetic-scope',manifestId:selectedJob,manifestRevision:1,validUntil,
             semanticAuthority:'model-derived-unverified',semanticCompleteness:false,independentEvidence:false,items:[{operation:'assert',target:null,category:purpose==='profile'?'workflow-hypothesis':'proposal',
-              text:historical?'Historical private profile hypothesis.':'Synthetic private brief <script>not code</script>.',...(behavioral?{observationSupports:[0],observationCounterevidence:[],observationCitations:[{observationIndex:0,action:'inspect',recordedAt:new Date(Date.now()-1000).toISOString(),role:'support'}]}:{}),supports:[{sourceIndex:0,start:0,end:8,text:'Original'}],counterevidence:[{sourceIndex:1,start:0,end:7,text:'Opposed'}],
-              claimKey:'derived:'+selectedJob,lineageIds:[lineage],sourceBindings:[{sourceId:'synthetic-original',revision:1,contentHash:'f'.repeat(64)}],validUntil,citationStatus:'conflicting-citations'}]}}});
+              text:historical?'Historical private profile hypothesis.'+(extendedProfile?' '+historyJobs.indexOf(selectedJob):''):'Synthetic private brief <script>not code</script>.',...(behavioral?{observationSupports:[0],observationCounterevidence:[],observationCitations:[{observationIndex:0,action:'inspect',recordedAt:new Date(Date.now()-1000).toISOString(),role:'support'}]}:{}),supports:[{sourceIndex:0,start:0,end:8,text:'Original'}],counterevidence:[{sourceIndex:1,start:0,end:7,text:'Opposed'}],
+              claimKey:'derived:'+claimJob,lineageIds:[lineage],sourceBindings:[{sourceId:'synthetic-original',revision:1,contentHash:'f'.repeat(64)}],validUntil,citationStatus:'conflicting-citations'}]}}});
       }
       if(url.pathname.endsWith('/controls'))return route.fulfill({json:{version,available:true,scope,enrollmentId:parent,enrollmentRevision:1,validUntil,controls:[],next:null}});
       if(url.pathname==='/api/memory/recall-scopes'){
@@ -271,11 +277,24 @@ for(const purpose of ['rolling-summary','profile'])for(const behavioral of [fals
       await expect(brief).toContainText(message(locale,'briefSourceWeight').replace('{weight}','0.01'));
       await captureViewport(page,info,'automatic-document-memory-scopes-'+locale,{assertStable:false});
     }
-    if(purpose==='profile'){await expect(brief).toContainText('Historical private profile hypothesis.');await expect(brief).toContainText(message(locale,'profileHistorical'));await expect(brief).toContainText(message(locale,'profileSharedEvidence'));}
+    if(purpose==='profile'){await expect(brief).toContainText('Historical private profile hypothesis.');await expect(brief).toContainText(message(locale,'profileHistorical'));await expect(brief).toContainText(message(locale,'profileSharedEvidence'));await expect(brief).toContainText(message(locale,'profileCitedConflict'));await expect(brief).toContainText(message(locale,'profileRevised'));}
+    if(extendedProfile){
+      const older=brief.getByRole('button',{name:message(locale,'profileOlder'),exact:true});await older.scrollIntoViewIfNeeded();await older.focus();await page.keyboard.press('Enter');
+      await expect(brief).toContainText(message(locale,'profileHistoryPage'));
+      await expect(brief).toContainText('Historical private profile hypothesis. 19');
+      await expect(brief).not.toContainText('Historical private profile hypothesis. 15');
+      await expect(brief.getByRole('button',{name:message(locale,'profileOlder'),exact:true})).toHaveCount(0);
+      await expect(brief.getByRole('button',{name:message(locale,'briefRefresh'),exact:true})).toBeFocused();
+      const pageDisclosure=brief.locator('.memory-brief-disclosure').filter({hasText:message(locale,'profileHistoryPage')});
+      await pageDisclosure.scrollIntoViewIfNeeded();await expect(pageDisclosure).toBeInViewport();
+      await captureViewport(page,info,'older-profile-page-'+locale,{assertStable:false});
+      await brief.getByText('Historical private profile hypothesis. 19',{exact:true}).scrollIntoViewIfNeeded();
+      await captureViewport(page,info,'older-profile-page-end-'+locale,{assertStable:false});
+    }
     if(behavioral){await brief.getByRole('button',{name:message(locale,'assistantContextAccept'),exact:true}).first().click();await expect(brief.getByRole('status')).toHaveText(message(locale,'assistantContextSaved'));expect(contextWrites).toHaveLength(1);}
     await page.evaluate(()=>window.dispatchEvent(new Event('blur')));await expect(brief).toHaveCount(0);
     denied=true;await page.evaluate(()=>window.dispatchEvent(new Event('focus')));
-    await expect.poll(()=>calls.filter(call=>call.path.endsWith('/result')).length).toBe(purpose==='profile'?3:2);
+    await expect.poll(()=>calls.filter(call=>call.path.endsWith('/result')).length).toBe(extendedProfile?22:purpose==='profile'?3:2);
     await expect(brief).toHaveCount(0);expect(calls.filter(call=>call.method!=='GET')).toHaveLength(behavioral?1:0);expect(errors).toEqual([]);
   });
 });

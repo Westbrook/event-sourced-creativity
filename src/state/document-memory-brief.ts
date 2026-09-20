@@ -6,14 +6,14 @@ import { createMemoryElapsed } from '../model/memory-lifetime.ts';
 import { MEMORY_DERIVATION_PURPOSES, type MemoryDerivationPurpose } from '../model/memory-derivation-policy.ts';
 import { parseMemoryCustody, type MemoryCustody } from '../model/memory-custody.ts';
 import { createRecallBoundaryClient, type RecallSource } from './memory-recall-boundary-client.ts';
-import { reconcileMemoryProfile, type ReconciledProfileItem } from './memory-profile-reconciliation.ts';
+import { MEMORY_PROFILE_REVIEW_LIMIT, reconcileMemoryProfile, type ReconciledProfileItem } from './memory-profile-reconciliation.ts';
 
 export type DocumentMemoryBrief = Readonly<{ projectId:string;documentId:string;validUntil:string;
   completeHistory:false;independentEvidence:false;sections:readonly Readonly<{purpose:MemoryDerivationPurpose;
     corrections:readonly DerivationControl[];items:readonly (DerivationResultItem|ReconciledProfileItem)[];jobId:string|null;history?:DerivationHistory;source?:RecallSource;
-    retainedProfile?:{results:number;complete:false}}>[] }>;
+    retainedProfile?:{results:number;complete:false;nextAfter:string|null;historicalPage:boolean}}>[] }>;
 export type DocumentMemoryBriefLease = Readonly<{current:()=>DocumentMemoryBrief|null;retire:()=>void}>;
-type Selection={projectId:string;documentId:string;custody:MemoryCustody;view?:DocumentView|null;blockId?:string|null};
+type Selection={projectId:string;documentId:string;custody:MemoryCustody;view?:DocumentView|null;blockId?:string|null;profileAfter?:string|null};
 const sample=()=>({monotonic:performance.now(),wall:Date.now()});
 
 /** Automatic presentation only. Each private result is freshly checked by its
@@ -57,19 +57,31 @@ export async function readDocumentMemoryBrief(selection:Selection,transport:type
     const view=entry?await inspect(entry,signal):null;check();
     if(view)deadlines.push(Date.parse(view.validUntil),Date.parse(view.expiresAt));
     if(purpose==='profile'&&view){
-      // Always establish the latest result first. A withdrawn newest result
-      // must never resurrect an older profile. Historical review is capped at
-      // four separately authenticated requests, not an unbounded account scan.
-      const retained=await client.results(scope,null,signal,purpose);check();
-      deadlines.push(Date.parse(retained.checkedAt)+60000);
-      if(retained.results[0]?.jobId!==view.jobId)throw Error('memory-profile-changed');
-      const views=[view];
-      for(const older of retained.results.slice(1,4)){
-        const prior=await inspect(older,signal);check();
-        deadlines.push(Date.parse(prior.validUntil),Date.parse(prior.expiresAt));views.push(prior);
+      // Establish the latest result first: a withdrawn newest result must never
+      // resurrect an older profile. Every older page and body is independently
+      // authorized; this bounded scan neither extends retention nor persists a
+      // cumulative profile that could outlive its supporting originals.
+      const views=[view],seenJobs=new Set([view.jobId]),seenPages=new Set<string>();
+      let after:string|null=selected.profileAfter??null,nextAfter:string|null=null;
+      for(let page=0;page<MEMORY_PROFILE_REVIEW_LIMIT/8;page++){
+        const retained=await client.results(scope,after,signal,purpose);check();
+        deadlines.push(Date.parse(retained.checkedAt)+60000);
+        if(page===0&&!selected.profileAfter&&retained.results[0]?.jobId!==view.jobId)throw Error('memory-profile-changed');
+        const olderEntries=retained.results.slice(page===0&&!selected.profileAfter?1:0);
+        const pageEntries=olderEntries.slice(0,MEMORY_PROFILE_REVIEW_LIMIT-views.length);
+        for(const older of pageEntries){
+          if(seenJobs.has(older.jobId))throw Error('memory-profile-pagination');
+          seenJobs.add(older.jobId);
+          const prior=await inspect(older,signal);check();
+          deadlines.push(Date.parse(prior.validUntil),Date.parse(prior.expiresAt));views.push(prior);
+        }
+        nextAfter=pageEntries.length<olderEntries.length?pageEntries.at(-1)?.jobId??null:retained.next;
+        if(!nextAfter||views.length===MEMORY_PROFILE_REVIEW_LIMIT)break;
+        if(seenPages.has(nextAfter)||nextAfter===after)throw Error('memory-profile-pagination');
+        seenPages.add(nextAfter);after=nextAfter;
       }
       const profile=reconcileMemoryProfile(views);
-      sections.push({purpose,corrections:[],items:profile.items,jobId:null,retainedProfile:{results:profile.results,complete:false},...(view.history?{history:view.history}:{})});
+      sections.push({purpose,corrections:[],items:profile.items,jobId:null,retainedProfile:{results:profile.results,complete:false,nextAfter,historicalPage:Boolean(selected.profileAfter)},...(view.history?{history:view.history}:{})});
     }else sections.push({purpose,corrections:[],items:view?.items??[],jobId:view?.jobId??null,...(view?.history?{history:view.history}:{})});
   }
   const controls=purposes.length?await client.controls(scope,null,signal):{controls:[],next:null,validUntil:new Date(started.wall+60000).toISOString()};check();

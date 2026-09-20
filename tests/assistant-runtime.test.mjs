@@ -15488,8 +15488,8 @@ test('native derivation source consent batch: aggregate over-cap prose is reject
   finally{db.batch=batch;}
 });
 
-for(const shared of [false,true])for(const paid of [false,true])for(const purpose of ['rolling-summary','profile'])test('native derivation automatic brief: original-backed HTTP bundle and correction priority shared='+shared+' paid='+paid+' purpose='+purpose,{timeout:120000},async t=>{
-  const state=await nativeDerivationRollingFixture(t,{windows:3,shared,paid,termOverrides:{purpose}}),api=await import('../worker/memory-derivation-api.ts'),
+for(const shared of [false,true])for(const paid of [false,true])for(const purpose of ['rolling-summary','profile'])for(const windows of purpose==='profile'&&!shared&&!paid?[3,18]:[3])test('native derivation automatic brief: original-backed HTTP bundle and correction priority shared='+shared+' paid='+paid+' purpose='+purpose+' windows='+windows,{timeout:120000},async t=>{
+  const state=await nativeDerivationRollingFixture(t,{windows,shared,paid,termOverrides:{purpose}}),api=await import('../worker/memory-derivation-api.ts'),
     {handleLiveMemory}=await import('../worker/memory-live-api.ts'),{readDocumentMemoryBrief}=await import('../src/state/document-memory-brief.ts');
   const parent=state.current(),scope={projectId:parent.project_id,documentId:parent.document_id,custody:state.preferences.expectedCustody,view:'document'};
   const usage=state.sqlite.prepare('SELECT * FROM memory_derivation_usage').all(),providerCalls=state.rollingRequests.length,calls=[];
@@ -15506,15 +15506,24 @@ for(const shared of [false,true])for(const paid of [false,true])for(const purpos
     assert.ok(operations-before<50,url.pathname+' D1 calls: '+(operations-before));if(response.status!==200)t.diagnostic(url.pathname+' '+response.status+' '+await response.clone().text());return response;
   };
   const controller=new AbortController(),lease=await readDocumentMemoryBrief(scope,transport,()=>true,controller.signal);assert.ok(lease);
-  const retainedCount=unchanged.memory_derivation_results.filter(row=>row.state==='active').length;
+  const retainedTotal=unchanged.memory_derivation_results.filter(row=>row.state==='active').length,retainedCount=Math.min(16,retainedTotal);
   const value=lease.current();assert.equal(value.sections.length,1);assert.equal(value.sections[0].history.windowCount,3);assert.equal(value.sections[0].items.length,purpose==='profile'?retainedCount:1);
-  if(purpose==='profile'){assert.equal(value.sections[0].retainedProfile.results,retainedCount);assert.deepEqual(value.sections[0].items.map(item=>item.profileOrigin.state),['latest',...Array(retainedCount-1).fill('historical')]);assert.ok(value.sections[0].items.every(item=>item.profileOrigin.sharedEvidence===(retainedCount>1)));}
-  assert.equal(value.sections[0].items[0].supports[0].text,'Original');assert.equal(calls.length,purpose==='profile'?6+retainedCount:6);assert.equal(calls.at(-1),'/api/memory/recall-scopes');assert.deepEqual(readState(),unchanged,'Automatic presentation must not repair custody, mutate sources or retire results');lease.retire();
+  if(purpose==='profile'){assert.equal(value.sections[0].retainedProfile.results,retainedCount);assert.deepEqual(value.sections[0].items.map(item=>item.profileOrigin.state),['latest',...Array(retainedCount-1).fill('historical')]);for(const item of value.sections[0].items)assert.equal(item.profileOrigin.sharedEvidence,value.sections[0].items.some(peer=>peer!==item&&peer.lineageIds.some(id=>item.lineageIds.includes(id))));}
+  assert.equal(value.sections[0].items[0].supports[0].text,'Original');assert.equal(calls.length,purpose==='profile'?6+retainedCount+Math.floor((retainedCount-1)/8):6);assert.equal(calls.at(-1),'/api/memory/recall-scopes');assert.deepEqual(readState(),unchanged,'Automatic presentation must not repair custody, mutate sources or retire results');lease.retire();
+  if(windows===18){
+    assert.equal(retainedTotal,18);assert.ok(value.sections[0].retainedProfile.nextAfter);
+    const older=await readDocumentMemoryBrief({...scope,profileAfter:value.sections[0].retainedProfile.nextAfter},transport,()=>true,controller.signal);
+    assert.equal(older.current().sections[0].retainedProfile.results,3);assert.equal(older.current().sections[0].retainedProfile.nextAfter,null);
+    assert.equal(older.current().sections[0].retainedProfile.historicalPage,true);
+    const selected=[...value.sections[0].items,...older.current().sections[0].items.slice(1)].map(item=>item.profileOrigin.jobId);
+    assert.equal(new Set(selected).size,18);assert.deepEqual(new Set(selected),new Set(unchanged.memory_derivation_results.filter(row=>row.state==='active').map(row=>row.job_id)));
+    older.retire();assert.deepEqual(readState(),unchanged);
+  }
   const store=await import('../worker/memory-derivation-results.ts'),controls=await import('../worker/memory-derivation-user-controls.ts');
   const read=await store.readNativeDerivationResult(state.env,parent.actor_user_id,value.sections[0].jobId??value.sections[0].items[0].profileOrigin.jobId),item=store.nativeDerivationResultInputs(state.env,read).candidate.items[0],
     target=store.nativeDerivationResultControlTarget(state.env,read,item.claimKey);
   await controls.controlNativeDerivationResult(state.env,read,item.claimKey,'corrected','Explicit native user correction.',Object.fromEntries(target.lineages.map(row=>[row.lineageId,0])));
-  const corrected=await readDocumentMemoryBrief(scope,transport,()=>true,controller.signal);assert.equal(corrected.current().sections[0].items.length,0);
+  const corrected=await readDocumentMemoryBrief(scope,transport,()=>true,controller.signal);assert.equal(corrected.current().sections[0].items.length,0,'A correction retiring the newest result cannot resurrect older profile windows');
   assert.equal(corrected.current().sections[0].corrections[0].correctionText,'Explicit native user correction.');corrected.retire();
   state.sqlite.exec('UPDATE memory_live_enrollments SET recall_enabled=0');
   assert.equal(await readDocumentMemoryBrief(scope,transport,()=>true,controller.signal),null);
