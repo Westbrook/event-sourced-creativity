@@ -15,10 +15,10 @@ import { liveMemorySourceQueryParts } from "./memory-live-sources.ts";
 import { liveMemoryLifetimeProjection, liveMemorySourceDeadline } from "./memory-live-source-lifetime.ts";
 import { captureNativeMemoryTurnExclusions, nativeMemoryTurnExclusionInputs } from "./memory-native-boundary.ts";
 import { observeNativeMemoryDocumentScope, nativeMemoryDocumentIdentity, nativeMemoryArtifactIdentity, type NativeMemoryDocumentScope } from "./memory-native-scope.ts";
-import { memoryCanonical } from "./memory-sql.ts";
+import { memoryCanonical, type MemorySqlGuard } from "./memory-sql.ts";
 import { derivationExact, derivationHash, derivationId, derivationInteger, derivationTime } from "./memory-derivation-policy.ts";
 import { derivationResults, derivationVerified } from "./memory-derivation-store.ts";
-import { nativeDerivationEvidenceInputs, nativeDerivationEvidenceStatements, replayNativeDerivationEvidence, observeNativeDerivationHistoryJob, type NativeDerivationEvidence } from "./memory-derivation-admission.ts";
+import { nativeDerivationEvidenceInputs, nativeDerivationEvidenceGuards, nativeDerivationEvidenceStatements, replayNativeDerivationEvidence, observeNativeDerivationHistoryJob, type NativeDerivationEvidence } from "./memory-derivation-admission.ts";
 import type { MemoryDerivationSource } from "./memory-derivation-result.ts";
 import type { WorkerEnv } from "./runtime.ts";
 
@@ -446,7 +446,7 @@ async function captureNativeDerivationOriginalSources(env: WorkerEnv, lease: Nat
   }
   try{const input=nativeDerivationEvidenceInputs(env,lease);if(input.producer==='chat-studio'&&input.historyPresent&&options.history!==false)return await captureChatStudioDerivationHistory(env,lease);}catch{return unavailable();}
   let deferred=false;try{deferred=nativeDerivationEvidenceInputs(env,lease).historyPresent&&options.history!==false;}catch{return unavailable();}
-  const own = await captureNativeDerivationWindow(env, lease, deferred?false:options.blockBindings!==false,deferred?false:options.relationBindings,deferred,undefined,deferred?false:options.reuseBindings);
+  const own = await captureNativeDerivationWindow(env, lease, deferred?false:options.blockBindings!==false,deferred?false:options.relationBindings,deferred||deferFinalReplay,undefined,deferred?false:options.reuseBindings);
   if (own.status !== 'captured' || options.history === false) return own;
   try {
     const db=env.DB, input=nativeDerivationEvidenceInputs(env,lease);
@@ -642,6 +642,17 @@ function lookup(env: WorkerEnv, handle: NativeDerivationSourceCapture) {
 export function nativeDerivationSourceInputs(env: WorkerEnv, handle: NativeDerivationSourceCapture) {
   return lookup(env, handle).witness.context()!;
 }
+/** Native source predicates for consumers that must compose a write guard.
+ * No proof is inferred from prepared-statement internals or persisted JSON. */
+export function nativeDerivationSourceGuards(env: WorkerEnv, handle: NativeDerivationSourceCapture):MemorySqlGuard[] {
+  const captured=lookup(env,handle), lease=captured.parts
+    ?captured.parts.flatMap(part=>nativeDerivationSourceGuards(env,part))
+    :(captured.evidences??[captured.lease]).flatMap(evidence=>nativeDerivationEvidenceGuards(env,evidence));
+  const source=[...captured.witness.precommitGuards(),...(captured.legacy?.precommitGuards()??[])]
+    .map(guard=>({condition:guard.sql,bindings:guard.bindings}));
+  if(lease.length+source.length>(captured.parts||captured.legacy?100:32))throw Error('memory-derivation-source-capacity');
+  return [...lease,...source];
+}
 export function nativeDerivationSourceStatements(env: WorkerEnv, handle: NativeDerivationSourceCapture): D1PreparedStatement[] {
   const captured = lookup(env, handle), lease = captured.parts ? captured.parts.flatMap(part=>nativeDerivationSourceStatements(env,part)) : (captured.evidences??[captured.lease]).flatMap(evidence=>nativeDerivationEvidenceStatements(env,evidence)), source = [...captured.witness.precommitStatements(),...(captured.legacy?.precommitStatements()??[])];
   if (lease.length + source.length > (captured.parts||captured.legacy ? 100 : 32)) throw Error("memory-derivation-source-capacity");
@@ -686,13 +697,13 @@ function inspectionReferences(observations:readonly NativeDerivationObservation[
  * union. Nothing is reconstructed from provider prose. V1 stays byte-compatible;
  * an exact separately qualified recipe and schema are required before capture. */
 export async function captureNativeDerivationSources(env:WorkerEnv,lease:NativeDerivationEvidence,
-  options:NonNullable<Parameters<typeof captureNativeDerivationOriginalSources>[2]>&{pageBindings?:boolean}={}){
+  options:NonNullable<Parameters<typeof captureNativeDerivationOriginalSources>[2]>&{pageBindings?:boolean;deferFinalReplay?:boolean}={}){
   try{
     const input=nativeDerivationEvidenceInputs(env,lease);
     // A v2 wrapper owns the final aggregate replay, including the observation
     // control absence/presence witness. Inner handles never escape this closure.
     // Avoid a duplicate full-history round trip without omitting any assertion.
-    const captured=await captureNativeDerivationOriginalSources(env,lease,options,input.qualification.terms.recipeVersion===MEMORY_BEHAVIORAL_RESULT_VERSION);
+    const captured=await captureNativeDerivationOriginalSources(env,lease,options,options.deferFinalReplay===true||input.qualification.terms.recipeVersion===MEMORY_BEHAVIORAL_RESULT_VERSION);
     if(captured.status!=='captured')return captured;
     if(input.qualification.terms.recipeVersion!==MEMORY_BEHAVIORAL_RESULT_VERSION)return captured;
     if(!input.observationControlsPresent||!input.lifecyclePresent)return unavailable();
@@ -731,7 +742,7 @@ export async function captureNativeDerivationSources(env:WorkerEnv,lease:NativeD
     if(!nativeDerivationRequestFits(input.qualification.terms,nativeDerivationRequestBody(input.qualification.terms,data.originals,behavioralSources)))return capacity();
     witness.before(merged.validUntil);witness.seal(merged);
     const handle=Object.freeze({}) as NativeDerivationSourceCapture;captures.set(handle,{env,db,lease,validUntil:merged.validUntil,witness,parts:[captured.capture]});
-    if(!await replayNativeDerivationSources(env,handle)){captures.delete(handle);return unavailable();}
+    if(!options.deferFinalReplay&&!await replayNativeDerivationSources(env,handle)){captures.delete(handle);return unavailable();}
     return {status:'captured',capture:handle} as const;
   }catch{return unavailable();}
 }

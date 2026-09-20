@@ -189,3 +189,14 @@ keeps every remaining native workstream distinct from external/operational gates
 ## MEM-003 retained profile history — 2026-09-20
 
 [Native retained-profile paging and interpretation review](forma-memory-profile-history-2026-09-20.md) now support 16 freshly validated results per page and explicit older-page traversal, exact-claim revision/counterevidence disclosure, localized keyboard controls and privacy clearing. The [completion matrix](forma-memory-completion-matrix-2026-09-20.md) remains the implementation checklist; longer-term semantic consolidation and durable assistant/autocomplete consumers are not closed by this review feature. External services and rollout remain separately tracked.
+
+### Memory-assisted specialist consumer checkpoint
+
+[Native semantic assistant consumption](forma-memory-semantic-assistant-2026-09-20.md)
+now includes an explicit free quote choice, exact paid approval, private generated
+result provenance, historical review and source-dependent erasure. Capacity and
+semantic follow-up/Chat Studio integration remain implementation work; do not
+mark the [full completion matrix](forma-memory-completion-matrix-2026-09-20.md)
+complete or merge-ready based on this slice. No production deployment or real
+enrollment occurred. External/operational items stay in the linked capability
+and non-implementation To Do documents.

@@ -42,7 +42,7 @@ export function executionContentCustodyGuard(binding:Pick<ConsequentialBinding,"
       =('content',${alias}.content_id,'actor_private',?,?,?,?,?))`,bindings:[scope.projectAccessId,scope.organizationId,scope.projectId,scope.ownerUserId,binding.actorUserId]};
 }
 
-export async function quoteConsequentialExecution(env:WorkerEnv,user:PilotUser,binding:ConsequentialBinding,privateInput:unknown,sourceHead:number,availableMicrousd:number,additional?:BudgetReservationGuard){
+export async function quoteConsequentialExecution(env:WorkerEnv,user:PilotUser,binding:ConsequentialBinding,privateInput:unknown,sourceHead:number,availableMicrousd:number,additional?:BudgetReservationGuard,publicationEvidence?:(executionId:string,contentId:string)=>D1PreparedStatement[]){
   const executionId=uuidV7(),bindingHash=await consentHash(binding),now=new Date().toISOString(),expiresAt=new Date(Date.now()+10*60_000).toISOString();
   const admission=executionAdmissionGuard(user,binding,sourceHead),guard=additional?{sql:`(${admission.sql}) AND (${additional.sql})`,bindings:[...admission.bindings,...additional.bindings]}:admission,contentCustody=executionContentCustodyGuard(binding,"content");
   const existing=await env.DB.prepare(`SELECT execution.status,content.content FROM consequential_executions execution JOIN private_content content
@@ -65,13 +65,14 @@ export async function quoteConsequentialExecution(env:WorkerEnv,user:PilotUser,b
     ...binding.steps.map((step,index)=>env.DB.prepare("INSERT INTO consequential_execution_steps(execution_id,step_index,token_reservation_id,cost_reservation_id,maximum_tokens,maximum_microusd,status,updated_at) VALUES(?,?,?,?,?,?,'quoted',?)")
       .bind(executionId,index,`${executionId}:tokens:${index}`,`${executionId}:usd:${index}`,step.inputTokens+step.outputTokens,step.maximumMicrousd,now)),
   ];
+  if(publicationEvidence&&!additional)throw new Error("context_quote_source_required");
   if(additional){
     // Native guarded quote: private input, execution and planned steps either
     // publish together or roll back before retaining any copied provider bytes.
     const content=await preparePrivateContent(env,user.userId,"execution-consent",JSON.stringify({binding,preview}),binding.scope??undefined,undefined,guard);
     const rows=await env.DB.batch([
       env.DB.prepare(`SELECT CASE WHEN (${guard.sql}) THEN 1 ELSE json('context_quote_source_changed') END AS verified`).bind(...guard.bindings),
-      ...content.statements,...publication(content),
+      ...content.statements,...publication(content),...(publicationEvidence?.(executionId,content.contentId)??[]),
       env.DB.prepare(`SELECT CASE WHEN (${guard.sql}) THEN CASE WHEN EXISTS(SELECT 1 FROM private_content WHERE content_id=? AND owner_id=?) THEN 1 ELSE json('context_quote_source_changed') END ELSE json('context_quote_source_changed') END AS verified`).bind(...guard.bindings,content.contentId,user.userId),
     ]);
     if(rows.some(row=>!row.success))throw new Error("context_quote_source_changed");
@@ -151,12 +152,22 @@ export async function reserveConsequentialSteps(env:WorkerEnv,user:PilotUser,bin
 
 export async function beginConsequentialStep(env:WorkerEnv,user:PilotUser,binding:ConsequentialBinding,id:string,index:number,sourceHead:number,additional:BudgetReservationGuard={sql:"1",bindings:[]}){
   const guard=executionAdmissionGuard(user,binding,sourceHead,true),reservation=consequentialReservationGuard(user.userId,binding,id,index,await consentHash(binding)),now=new Date().toISOString();
-  const changed=await env.DB.prepare(`UPDATE consequential_execution_steps SET status='submitting',updated_at=? WHERE execution_id=? AND step_index=? AND status='reserved'
-    AND ${reservation.sql} AND ${guard.sql} AND (${additional.sql})
+  // A shared-project source can exceed D1's 100-bind limit when authority,
+  // reservation and source proofs are combined. Replay the additional proof in
+  // the same atomic batch, never as an earlier positive authorization cache.
+  const split=8+reservation.bindings.length+guard.bindings.length+additional.bindings.length>100;
+  const inline=split?{sql:"1",bindings:[]}:additional;
+  const statement=env.DB.prepare(`UPDATE consequential_execution_steps SET status='submitting',updated_at=? WHERE execution_id=? AND step_index=? AND status='reserved'
+    AND ${reservation.sql} AND ${guard.sql} AND (${inline.sql})
     AND NOT EXISTS(SELECT 1 FROM consequential_execution_steps pending WHERE pending.execution_id=? AND(pending.status NOT IN('reserved','usage-recorded','settled')
       OR pending.status='reserved' AND(NOT EXISTS(SELECT 1 FROM budget_reservations tokens WHERE tokens.reservation_id=pending.token_reservation_id AND tokens.owner_id=? AND tokens.status='active' AND tokens.period=? AND tokens.reserved_tokens=pending.maximum_tokens)
         OR NOT EXISTS(SELECT 1 FROM cost_budget_reservations cost WHERE cost.reservation_id=pending.cost_reservation_id AND cost.owner_id=? AND cost.status='executing' AND cost.period=? AND cost.reserved_microusd=pending.maximum_microusd))))`)
-    .bind(now,id,index,...reservation.bindings,...guard.bindings,...additional.bindings,id,user.userId,binding.period,user.userId,binding.period).run();
+    .bind(now,id,index,...reservation.bindings,...guard.bindings,...inline.bindings,id,user.userId,binding.period,user.userId,binding.period);
+  const changed=split?(await env.DB.batch([
+    env.DB.prepare(`SELECT CASE WHEN (${additional.sql}) THEN 1 ELSE abs(-9223372036854775808) END AS verified`).bind(...additional.bindings),
+    statement,
+    env.DB.prepare('SELECT CASE WHEN changes()=1 THEN 1 ELSE abs(-9223372036854775808) END AS verified'),
+  ]))[1]!:await statement.run();
   if(Number(changed.meta.changes??0)!==1)throw new Error("context_authorization_changed");
 }
 export async function settleConsequentialStep(env:WorkerEnv,userId:string,id:string,index:number,tokens:number,microusd:number,providerRequestId:string|null){
@@ -210,16 +221,25 @@ export async function failConsequentialExecution(env:WorkerEnv,userId:string,id:
   await releaseStoppedConsequentialSteps(env,userId,id);
   return(await readConsequentialExecution(env,userId,id))?.status==="uncertain";
 }
-export async function completeConsequentialExecution(env:WorkerEnv,user:PilotUser,binding:ConsequentialBinding,id:string,result:unknown,proof:BudgetReservationGuard={sql:"1",bindings:[]}){
+export async function completeConsequentialExecution(env:WorkerEnv,user:PilotUser,binding:ConsequentialBinding,id:string,result:unknown,proof:BudgetReservationGuard={sql:"1",bindings:[]},evidence?:{precommit:()=>D1PreparedStatement[];publish:(contentId:string)=>D1PreparedStatement[]}){
   const existing=await readConsequentialExecution(env,user.userId,id);if(existing?.result_ref)return existing;
   const hash=await consentHash(binding),authority=executionAdmissionGuard(user,{...binding,contextSessionId:null,pilotCohortId:null},null);
   const accounted={sql:`EXISTS(SELECT 1 FROM consequential_executions execution WHERE execution.execution_id=? AND execution.actor_user_id=? AND execution.binding_hash=? AND execution.result_ref IS NULL AND execution.status IN('reserved','uncertain','failed')
     AND(SELECT COUNT(*) FROM consequential_execution_steps step WHERE step.execution_id=execution.execution_id)=?
     AND NOT EXISTS(SELECT 1 FROM consequential_execution_steps step WHERE step.execution_id=execution.execution_id AND step.status NOT IN('usage-recorded','settled'))) AND ${authority.sql} AND (${proof.sql})`,bindings:[id,user.userId,hash,binding.steps.length,...authority.bindings,...proof.bindings]};
-  const serialized=JSON.stringify(result),content=await storePrivateContent(env,user.userId,"context-proposal",serialized,binding.scope??undefined,accounted),custody=executionContentCustodyGuard(binding);
-  await env.DB.prepare(`UPDATE consequential_executions SET status='completed',result_ref=?,error_code=NULL,updated_at=? WHERE execution_id=? AND actor_user_id=? AND ${accounted.sql}
+  const serialized=JSON.stringify(result),custody=executionContentCustodyGuard(binding);
+  const complete=(contentId:string)=>env.DB.prepare(`UPDATE consequential_executions SET status='completed',result_ref=?,error_code=NULL,updated_at=? WHERE execution_id=? AND actor_user_id=? AND ${accounted.sql}
     AND EXISTS(SELECT 1 FROM private_content WHERE content_id=? AND owner_id=? AND kind='context-proposal' AND content=? AND redacted_at IS NULL AND expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now') AND ${custody.sql})`)
-    .bind(content.contentId,new Date().toISOString(),id,user.userId,...accounted.bindings,content.contentId,user.userId,serialized,...custody.bindings).run();
+    .bind(contentId,new Date().toISOString(),id,user.userId,...accounted.bindings,contentId,user.userId,serialized,...custody.bindings);
+  if(evidence){
+    const content=await preparePrivateContent(env,user.userId,'context-proposal',serialized,binding.scope??undefined,undefined,accounted);
+    const rows=await env.DB.batch([...evidence.precommit(),...content.statements,...evidence.publish(content.contentId),complete(content.contentId),
+      env.DB.prepare("SELECT CASE WHEN changes()=1 THEN 1 ELSE json('context_result_not_retained') END AS verified")]);
+    if(rows.some(row=>!row.success)||(rows.at(-1)?.results[0] as Record<string,unknown>)?.verified!==1)throw new Error('context_result_not_retained');
+  }else{
+    const content=await storePrivateContent(env,user.userId,'context-proposal',serialized,binding.scope??undefined,accounted);
+    await complete(content.contentId).run();
+  }
   const current=await readConsequentialExecution(env,user.userId,id);if(!current?.result_ref)throw new Error("context_result_not_retained");return current;
 }
 

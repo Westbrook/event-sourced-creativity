@@ -38,3 +38,18 @@ export function parseMemoryAnswerPresentation(value: unknown, now = Date.now()):
     return null;
   }
 }
+
+/** Separate from original-backed v1/v2 answers: never relabel semantic text. */
+export type SemanticMemoryAnswerPresentation={version:'semantic-memory-answer-v1';validUntil:string;independentEvidence:false};
+export function parseSemanticMemoryAnswerPresentation(value:unknown,now=Date.now()):SemanticMemoryAnswerPresentation|null{
+ try{
+  if(!value||typeof value!=='object'||Array.isArray(value)||!Number.isFinite(now))return null;
+  const fields=Object.getOwnPropertyDescriptors(value),keys=Reflect.ownKeys(fields);
+  if(keys.length!==3||keys.some(k=>typeof k!=='string')||keys.sort().join(',')!=='independentEvidence,validUntil,version'
+   ||keys.some(k=>!fields[k as string].enumerable||!Object.hasOwn(fields[k as string],'value')))return null;
+  const version=fields.version.value,until=fields.validUntil.value;
+  if(version!=='semantic-memory-answer-v1'||fields.independentEvidence.value!==false||typeof until!=='string')return null;
+  const time=Date.parse(until);if(!Number.isFinite(time)||new Date(time).toISOString()!==until||time<=now||time-now>30_000)return null;
+  return {version,validUntil:until,independentEvidence:false};
+ }catch{return null;}
+}

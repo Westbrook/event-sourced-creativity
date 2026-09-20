@@ -89,15 +89,19 @@ export async function ownerDocumentBudgetScopes(env:WorkerEnv,userId:string,docu
 
 /** An absent context cookie is not permission to bill tenant work to a personal account. */
 export async function resolveOwnerExecutionScope(env:WorkerEnv,user:PilotUser,documentId:string,projectId:string,authority:"execute"|"author"|"read"="execute"){
-  const custody=await env.DB.prepare(`SELECT project_access_id,organization_id,owner_user_id FROM organization_projects
+  const db=env.DB;
+  const custodyStatement=db.prepare(`SELECT project_access_id,organization_id,owner_user_id FROM organization_projects
     WHERE project_id=? AND (owner_user_id=? OR EXISTS(SELECT 1 FROM project_resource_scopes resource
       WHERE resource.project_access_id=organization_projects.project_access_id AND resource.resource_kind='document'
         AND resource.resource_id=? AND resource.owner_user_id=?)) LIMIT 2`)
-    .bind(projectId,user.userId,documentId,user.userId).all<{project_access_id:string;organization_id:string;owner_user_id:string}>();
-  const resources=await env.DB.prepare("SELECT DISTINCT project_access_id,organization_id,project_id FROM project_resource_scopes WHERE owner_user_id=? AND resource_kind='document' AND resource_id=? LIMIT 2")
-    .bind(user.userId,documentId).all<{project_access_id:string;organization_id:string;project_id:string}>();
-  const eventCustody=await env.DB.prepare("SELECT DISTINCT project_access_id,organization_id FROM project_event_scopes WHERE owner_user_id=? AND project_id=? LIMIT 2")
-    .bind(user.userId,projectId).all<{project_access_id:string;organization_id:string}>();
+    .bind(projectId,user.userId,documentId,user.userId);
+  const resourcesStatement=db.prepare("SELECT DISTINCT project_access_id,organization_id,project_id FROM project_resource_scopes WHERE owner_user_id=? AND resource_kind='document' AND resource_id=? LIMIT 2")
+    .bind(user.userId,documentId);
+  const eventsStatement=db.prepare("SELECT DISTINCT project_access_id,organization_id FROM project_event_scopes WHERE owner_user_id=? AND project_id=? LIMIT 2")
+    .bind(user.userId,projectId);
+  const reads=await db.batch<{project_access_id:string;organization_id:string;owner_user_id:string;project_id:string}>([custodyStatement,resourcesStatement,eventsStatement]);
+  if(env.DB!==db||reads.length!==3||reads.some(row=>row.success!==true||!Array.isArray(row.results)))return{scope:undefined,denied:true};
+  const [custody,resources,eventCustody]=reads as [typeof reads[number],typeof reads[number],typeof reads[number]];
   if(!custody.results.length)return{scope:undefined,denied:Boolean(resources.results.length||eventCustody.results.length)};
   if(resources.results.some((row)=>row.project_id!==projectId||row.project_access_id!==custody.results[0].project_access_id||row.organization_id!==custody.results[0].organization_id)
     ||eventCustody.results.some((row)=>row.project_access_id!==custody.results[0].project_access_id||row.organization_id!==custody.results[0].organization_id))return{scope:undefined,denied:true};

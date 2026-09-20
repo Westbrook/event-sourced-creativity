@@ -1,3 +1,4 @@
+import { sweepSemanticAssistantMemory } from './memory-assistant-consumer.ts';
 import { handleMemoryAssistantContext, sweepAssistantMemoryContexts } from './memory-assistant-context-api.ts';
 import { handleMemoryRecallBoundary } from './memory-recall-boundary-api.ts';
 import { handleProjectContainment } from './project-containment-api';
@@ -391,6 +392,7 @@ export default {
         () => sweepNativeDerivationJobs(env),
         () => sweepNativeDerivationResults(env),
         () => sweepAssistantMemoryContexts(env),
+        () => sweepSemanticAssistantMemory(env),
         () => sweepNativeDerivationUserControls(env),
         async () => {
           const recovery=await maintainNativeDerivationRecovery(env);

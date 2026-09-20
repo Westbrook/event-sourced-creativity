@@ -205,3 +205,11 @@ keeps every remaining native workstream distinct from external/operational gates
 [Private processing diagnostics](forma-memory-processing-health-2026-09-20.md) now expose retained-job backlog/recovery classes, publication age and registration-to-completion timing in actual localized review controls. This is native implementation, not scheduler qualification or full-plan completion. See the [completion matrix](forma-memory-completion-matrix-2026-09-20.md) for the remaining work.
 
 [Retained profile history](forma-memory-profile-history-2026-09-20.md) supersedes the earlier four-result display limit with bounded, independently revalidated paging through retained results. Exact-claim revisions and cited counterevidence are disclosed without treating repeated model text as independent evidence. Longer-term semantic consolidation and the remaining native consumer work above remain in scope.
+
+## Semantic assistant publication continuation
+
+The [semantic specialist consumer checkpoint](forma-memory-semantic-assistant-2026-09-20.md)
+adds actual prompt consumption, exact paid approval, durable generated-result
+inverses and historical privacy clearing. It retains the separate native
+capacity and follow-up-conversation gaps; no hosted qualification, deployment or
+real enrollment is inferred from local tests.

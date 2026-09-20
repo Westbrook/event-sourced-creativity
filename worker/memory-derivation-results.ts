@@ -6,12 +6,12 @@ import type { WorkerEnv } from './runtime.ts';
 import { memoryCanonical, type MemorySqlGuard } from './memory-sql.ts';
 import { memoryDigest } from '../src/model/scoped-memory.ts';
 import { derivationExact, derivationHash, derivationId, derivationInteger } from './memory-derivation-policy.ts';
-import { derivationAssertion, derivationChanged, derivationResults, derivationVerified, memoryDerivationSchema } from './memory-derivation-store.ts';
+import { derivationAssertion, derivationAssertedChange, derivationChanged, derivationResults, derivationVerified, memoryDerivationSchema } from './memory-derivation-store.ts';
 import { DERIVATION_RESULT_TABLE_COLUMNS } from './memory-derivation-results-schema.ts';
 import { nativeDerivationCandidateInputs, nativeDerivationCandidateStatements, type NativeDerivationCandidateReceipt } from './memory-derivation-provider.ts';
 import { observeNativeDerivationJob, nativeDerivationEvidenceInputs } from './memory-derivation-admission.ts';
 import { captureNativeDerivationSources, nativeDerivationSourceInputs, type NativeDerivationSourceCapture } from './memory-derivation-sources.ts';
-import { nativeDerivationManifestInputs, nativeDerivationManifestStatements, revalidateNativeDerivationManifest,
+import { nativeDerivationManifestInputs, nativeDerivationManifestGuards, nativeDerivationManifestStatements, revalidateNativeDerivationManifest,
   type NativeDerivationManifest, type NativeDerivationManifestData } from './memory-derivation-manifest.ts';
 import { parseMemoryDerivationResult, type ParsedMemoryDerivation } from './memory-derivation-result.ts';
 
@@ -58,18 +58,20 @@ function dependencies(manifest: NativeDerivationManifestData): Dependency[] {
     return x < y ? -1 : x > y ? 1 : 0;
   });
 }
-const rowGuard = (env: WorkerEnv, row: Row) => derivationAssertion(env, {
+const resultRowPredicate = (row: Row) => ({
   condition: `EXISTS(SELECT 1 FROM memory_derivation_results WHERE ${columns.map(column => column + ' IS ?').join(' AND ')})`,
   bindings: columns.map(column => row[column]!),
 });
-function dependencyGuard(env: WorkerEnv, jobId: string, expected: Dependency[]) {
+const rowGuard = (env: WorkerEnv, row: Row) => derivationAssertion(env,resultRowPredicate(row));
+function dependencyPredicate(jobId: string, expected: Dependency[]) {
   // Exact set equality without relying on SQLite JSON object key ordering.
-  return derivationAssertion(env, { condition: `(SELECT COUNT(*) FROM memory_derivation_result_dependencies WHERE job_id=?)=?
+  return { condition: `(SELECT COUNT(*) FROM memory_derivation_result_dependencies WHERE job_id=?)=?
     AND NOT EXISTS(SELECT 1 FROM json_each(?) expected WHERE NOT EXISTS(SELECT 1 FROM memory_derivation_result_dependencies d
       WHERE d.job_id=? AND (d.kind,d.resource_id,d.actor_user_id,d.scope_key)=(json_extract(expected.value,'$.kind'),
         json_extract(expected.value,'$.resource_id'),json_extract(expected.value,'$.actor_user_id'),json_extract(expected.value,'$.scope_key'))))`,
-    bindings: [jobId, expected.length, JSON.stringify(expected), jobId] });
+    bindings: [jobId, expected.length, JSON.stringify(expected), jobId] };
 }
+const dependencyGuard=(env:WorkerEnv,jobId:string,expected:Dependency[])=>derivationAssertion(env,dependencyPredicate(jobId,expected));
 async function resultRow(env: WorkerEnv, jobId: string) {
   const db = env.DB, result = structuredClone(await db.prepare(`SELECT ${columns.join(',')} FROM memory_derivation_results WHERE job_id=? LIMIT 2`).bind(jobId).all<Row>());
   if (env.DB !== db || !derivationResults([result], 1) || result.results.length > 1
@@ -131,7 +133,7 @@ const reads = new WeakMap<NativeDerivationResultRead, { env: WorkerEnv; db: Work
 /** actorUserId comes from the authenticated native principal, never request JSON.
  * No result body is read before that actor's current scope/purpose proof. */
 async function readResult(env: WorkerEnv, actorUserId: string, jobId: string,
-  consumer?: { enrollmentId: string; enrollmentRevision: number; guards: readonly MemorySqlGuard[] }): Promise<NativeDerivationResultRead | null> {
+  consumer?: { enrollmentId: string; enrollmentRevision: number; guards: readonly MemorySqlGuard[] },prepareOnly=false): Promise<NativeDerivationResultRead | null> {
   try {
     if (!derivationHash(jobId)) return null;
     const db = env.DB, evidence = await observeNativeDerivationJob(env, actorUserId, jobId);
@@ -145,8 +147,8 @@ async function readResult(env: WorkerEnv, actorUserId: string, jobId: string,
       || typeof row.expires_at !== 'string' || row.expires_at <= new Date().toISOString()
       || await memoryDigest(row.raw_json) !== row.output_sha256 || await memoryDigest(row.manifest_json) !== row.manifest_sha256) return null;
     const parsedManifest=JSON.parse(row.manifest_json) as NativeDerivationManifestData;
-    const captured = await captureNativeDerivationSources(env, evidence, {history:parsedManifest.history!==undefined,crossProducerHistory:parsedManifest.history?.version===2,...(parsedManifest.history?.version===2?{historySelection:{jobIds:parsedManifest.history.windowJobIds,boundary:parsedManifest.history.boundary}}:{}),pageBindings:parsedManifest.provenance?.pageBindings!==undefined,blockBindings:parsedManifest.provenance?.blockBindings!==undefined,relationBindings:parsedManifest.provenance?.relationBindings!==undefined,reuseBindings:parsedManifest.provenance?.reuseBindings!==undefined}); if (captured.status !== 'captured') return null;
-    const manifest = await revalidateNativeDerivationManifest(env, captured.capture, row.manifest_json); if (!manifest) return null;
+    const captured = await captureNativeDerivationSources(env, evidence, {deferFinalReplay:prepareOnly,history:parsedManifest.history!==undefined,crossProducerHistory:parsedManifest.history?.version===2,...(parsedManifest.history?.version===2?{historySelection:{jobIds:parsedManifest.history.windowJobIds,boundary:parsedManifest.history.boundary}}:{}),pageBindings:parsedManifest.provenance?.pageBindings!==undefined,blockBindings:parsedManifest.provenance?.blockBindings!==undefined,relationBindings:parsedManifest.provenance?.relationBindings!==undefined,reuseBindings:parsedManifest.provenance?.reuseBindings!==undefined}); if (captured.status !== 'captured') return null;
+    const manifest = await revalidateNativeDerivationManifest(env, captured.capture, row.manifest_json,prepareOnly); if (!manifest) return null;
     const source = nativeDerivationSourceInputs(env, captured.capture), expected = dependencies(nativeDerivationManifestInputs(env, manifest).manifest);
     if (row.dependency_count !== expected.length || source.retentionCeiling !== row.expires_at) return null;
     const context={purpose: source.purpose, scopeKey: source.scopeKey,
@@ -156,12 +158,16 @@ async function readResult(env: WorkerEnv, actorUserId: string, jobId: string,
     if (!candidate) return null;
     const handle = Object.freeze({}) as NativeDerivationResultRead;
     reads.set(handle, { env, db, row, evidence, capture: captured.capture, manifest, candidate, dependencies: expected });
+    if(prepareOnly){nativeDerivationResultInputs(env,handle);return handle;}
     const proof = [...nativeDerivationResultStatements(env, handle), ...(consumer?.guards.map(guard => derivationAssertion(env, guard)) ?? [])],
       checked = structuredClone(await db.batch<Record<string, unknown>>(proof));
     if (env.DB !== db || !derivationResults(checked, proof.length) || !checked.every(validProof)) { reads.delete(handle); return null; }
     nativeDerivationResultInputs(env, handle); return handle;
   } catch { return null; }
 }
+/** Internal staging only. Source checks MUST be replayed atomically before
+ * disclosure, provider dispatch or publication; this is not a read receipt. */
+export const prepareNativeDerivationResult=(env:WorkerEnv,actorUserId:string,jobId:string)=>readResult(env,actorUserId,jobId,undefined,true);
 export const readNativeDerivationResult = (env: WorkerEnv, actorUserId: string, jobId: string) => readResult(env, actorUserId, jobId);
 
 /** Ephemeral presentation only. Never returns a publication handle: a future
@@ -221,6 +227,11 @@ export function nativeDerivationResultBinding(env: WorkerEnv, handle: NativeDeri
 }
 /** A consumer that writes an answer must carry these statements into its own
  * atomic publication; read success alone is not durable answer authority. */
+export function nativeDerivationResultGuards(env: WorkerEnv, handle: NativeDerivationResultRead) {
+  const read=currentRead(env,handle);
+  return [...nativeDerivationManifestGuards(env,read.manifest),resultRowPredicate(read.row),
+    dependencyPredicate(String(read.row.job_id),read.dependencies)];
+}
 export function nativeDerivationResultStatements(env: WorkerEnv, handle: NativeDerivationResultRead) {
   const read = currentRead(env, handle);
   return [...nativeDerivationManifestStatements(env, read.manifest), rowGuard(env, read.row),
@@ -258,7 +269,7 @@ export async function withdrawNativeDerivationResult(env: WorkerEnv, actorUserId
   if(!retired.acknowledge(all.slice(0,retired.assertions.length),all.slice(retired.assertions.length+statements.length)))throw Error('memory-result-withdrawal-unconfirmed');
   const result=all.slice(retired.assertions.length,retired.assertions.length+statements.length);
   if (env.DB !== db || !derivationResults(result, statements.length) || authorizationGuard && !derivationVerified(result[5]!) || ![0, 1, 3, 4].every(index => derivationVerified(result[index]!))
-    || !derivationChanged(result[2]!, change, row.dependencies)) throw Error('memory-result-withdrawal-unconfirmed');
+    || !(schema.consumersPresent?derivationAssertedChange(result[2]!,result[3]!,change):derivationChanged(result[2]!, change, row.dependencies))) throw Error('memory-result-withdrawal-unconfirmed');
   return true;
 }
 
@@ -280,7 +291,7 @@ export async function sweepNativeDerivationResults(env: WorkerEnv) {
     derivationAssertion(env, { condition: 'changes()=?', bindings: [row.count] })];
   const result = structuredClone(await db.batch<Record<string, unknown>>(statements));
   if (env.DB !== db || !derivationResults(result, statements.length) || ![0, 1, 3].every(index => derivationVerified(result[index]!))
-    || !derivationChanged(result[2]!, row.count, row.dependencies)) throw Error('memory-result-expiry-unconfirmed');
+    || !(schema.consumersPresent?derivationAssertedChange(result[2]!,result[3]!,row.count):derivationChanged(result[2]!, row.count, row.dependencies))) throw Error('memory-result-expiry-unconfirmed');
   return row.count;
 }
 

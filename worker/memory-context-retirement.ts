@@ -1,6 +1,6 @@
 import type { WorkerEnv } from './runtime.ts';
 import { memoryCanonical } from './memory-sql.ts';
-import { derivationAssertion, derivationChanged, derivationResults, derivationVerified, memoryDerivationSchema } from './memory-derivation-store.ts';
+import { derivationAssertion, derivationAssertedChange, derivationChanged, derivationResults, derivationVerified, memoryDerivationSchema } from './memory-derivation-store.ts';
 import { derivationExact, derivationHash, derivationId, derivationInteger, MEMORY_DERIVATION_PURPOSES } from './memory-derivation-policy.ts';
 
 type Selector = {kind:'boundary';actorUserId:string;projectId:string;documentId:string}
@@ -47,6 +47,6 @@ export async function prepareMemoryContextRetirement(env:WorkerEnv,input:Selecto
  return {assertions,statements,count,acknowledge(before:unknown,after:unknown){
   if(used)return false;used=true;
   return env.DB===db&&memoryCanonical(input)===identity&&derivationResults(before,assertions.length)&&before.every(derivationVerified)
-    &&derivationResults(after,statements.length)&&(!schema.contextsPresent||derivationChanged(after[0]!,count)&&after.slice(1).every(derivationVerified));
+    &&derivationResults(after,statements.length)&&(!schema.contextsPresent||(schema.consumersPresent?derivationAssertedChange(after[0]!,after[1]!,count):derivationChanged(after[0]!,count))&&after.slice(1).every(derivationVerified));
  }};
 }

@@ -1,7 +1,7 @@
 import type { WorkerEnv } from './runtime.ts';
 import { memoryCanonical } from './memory-sql.ts';
 import { memoryDigest } from '../src/model/scoped-memory.ts';
-import { nativeDerivationSourceInputs, nativeDerivationSourceStatements, replayNativeDerivationSources,
+import { nativeDerivationSourceInputs, nativeDerivationSourceGuards, nativeDerivationSourceStatements, replayNativeDerivationSources,
   type NativeDerivationSourceCapture } from './memory-derivation-sources.ts';
 
 export const NATIVE_DERIVATION_MANIFEST_VERSION = 'native-memory-manifest-v1';
@@ -40,11 +40,11 @@ function serialize(source: Capture): string {
 
 /** Only a live native capture may issue a manifest. This performs a fresh read
  * check; a subsequent write still MUST include manifest statements atomically. */
-export async function captureNativeDerivationManifest(env: WorkerEnv, capture: NativeDerivationSourceCapture): Promise<NativeDerivationManifest | null> {
+export async function captureNativeDerivationManifest(env: WorkerEnv, capture: NativeDerivationSourceCapture,deferReplay=false): Promise<NativeDerivationManifest | null> {
   try {
     const db = env.DB, serialized = serialize(nativeDerivationSourceInputs(env, capture));
     const sha256 = await memoryDigest(serialized);
-    if (env.DB !== db || !await replayNativeDerivationSources(env, capture)) return null;
+    if (env.DB !== db || !deferReplay&&!await replayNativeDerivationSources(env, capture)) return null;
     nativeDerivationSourceInputs(env, capture);
     const handle = Object.freeze({}) as NativeDerivationManifest;
     manifests.set(handle, { env, db, capture, serialized, sha256 });
@@ -70,6 +70,9 @@ export function nativeDerivationManifestForCapture(env: WorkerEnv, handle: Nativ
   return nativeDerivationManifestInputs(env, handle);
 }
 
+export function nativeDerivationManifestGuards(env: WorkerEnv, handle: NativeDerivationManifest) {
+  return nativeDerivationSourceGuards(env,lookup(env,handle).capture);
+}
 export function nativeDerivationManifestStatements(env: WorkerEnv, handle: NativeDerivationManifest) {
   return nativeDerivationSourceStatements(env, lookup(env, handle).capture);
 }
@@ -80,12 +83,12 @@ export function nativeDerivationManifestStatements(env: WorkerEnv, handle: Nativ
  * sources, changed ancestry, altered observations and extended retention.
  * It also conservatively rejects a shortened source lifetime; no saved result
  * survives a changed manifest by silently renewing or rewriting it. */
-export async function revalidateNativeDerivationManifest(env: WorkerEnv, capture: NativeDerivationSourceCapture, serialized: unknown): Promise<NativeDerivationManifest | null> {
+export async function revalidateNativeDerivationManifest(env: WorkerEnv, capture: NativeDerivationSourceCapture, serialized: unknown,deferReplay=false): Promise<NativeDerivationManifest | null> {
   if (typeof serialized !== 'string' || serialized.length > maximumBytes
     || new TextEncoder().encode(serialized).byteLength > maximumBytes) return null;
   try {
     // Compare before database replay to bound work on corrupt persisted bytes.
     if (serialize(nativeDerivationSourceInputs(env, capture)) !== serialized) return null;
-    return await captureNativeDerivationManifest(env, capture);
+    return await captureNativeDerivationManifest(env, capture,deferReplay);
   } catch { return null; }
 }

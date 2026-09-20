@@ -17,7 +17,7 @@ import { captureOutputNavigationFocus } from "./output-navigation-focus.ts";
 import type { AssistantDisplayedMessage, AssistantDisplayedProposal, AssistantDisplayedTask, AssistantSpecialistControl, AssistantSpecialistReview, AssistantSpecialistResponse, AssistantTurnOriginalRequest, FormaAssistantPanel } from "./design-system/assistant-panel.ts";
 import { assistantApprovedRequestCanRun, assistantApprovedRequestCanStop } from "./design-system/assistant-panel.ts";
 import { personalMemoryMessage } from "./design-system/locales/personal-memory-messages.ts";
-import { parseMemoryAnswerPresentation, type MemoryAnswerPresentation } from "../model/memory-answer.ts";
+import { parseMemoryAnswerPresentation, parseSemanticMemoryAnswerPresentation, type SemanticMemoryAnswerPresentation, type MemoryAnswerPresentation } from "../model/memory-answer.ts";
 import { createMemoryElapsed } from "../model/memory-lifetime.ts";
 import type { FormaPersonalMemory } from "./forma-personal-memory.ts";
 import "./forma-personal-memory.ts";
@@ -57,14 +57,44 @@ export class FormaCreativeAssistant extends FormaElement {
   #memoryAnswers = new Map<string, MemoryAnswerLease>();
   #memoryMarked = new Set<string>();
   #memoryRetired = new Set<string>();
-  #memoryFocus = () => { this.#pruneMemoryAnswers(); this.requestUpdate(); };
+  #semanticLeases=new Map<string,{elapsed:ReturnType<typeof createMemoryElapsed>;duration:number;validUntil:string}>();
+  #semanticRetired=new Map<string,string>();
+  #semanticTimer=0;
+  #semanticHidden=()=>this.#retireSemanticReviews();
+  #retainSemanticReceipt(id:string,presentation:SemanticMemoryAnswerPresentation){
+    if(!this.#open||document.visibilityState!=="visible"||memoryPrivacyMutationActive())return false;
+    const now=Date.now();if(!parseSemanticMemoryAnswerPresentation(presentation,now)||presentation.validUntil<=(this.#semanticRetired.get(id)??''))return false;
+    if(this.#semanticLeases.get(id)?.validUntil===presentation.validUntil){this.#pruneSemanticReceipts();return this.#semanticLeases.has(id);}
+    this.#semanticLeases.set(id,{elapsed:createMemoryElapsed({wall:now,monotonic:performance.now()}),duration:Date.parse(presentation.validUntil)-now,validUntil:presentation.validUntil});
+    this.#pruneSemanticReceipts();return this.#semanticLeases.has(id);
+  }
+  #pruneSemanticReceipts(){
+    window.clearTimeout(this.#semanticTimer);this.#semanticTimer=0;let delay=Infinity;
+    for(const lease of this.#semanticLeases.values()){
+      const remaining=lease.duration-lease.elapsed.elapsed({wall:Date.now(),monotonic:performance.now()});
+      if(remaining<=0){this.#retireSemanticReviews();return;}delay=Math.min(delay,remaining);
+    }
+    if(Number.isFinite(delay))this.#semanticTimer=window.setTimeout(()=>this.#pruneSemanticReceipts(),delay);
+  }
+  #retireSemanticReviews(){
+    window.clearTimeout(this.#semanticTimer);this.#semanticTimer=0;
+    const ids=new Set(this.#semanticLeases.keys());for(const [id,lease] of this.#semanticLeases){this.#semanticRetired.set(id,lease.validUntil);lease.elapsed.retire();}this.#semanticLeases.clear();
+    for(const task of this.#tasks)if(task.completedReview?.memory&&task.executionId)ids.add(task.executionId);
+    for(const id of ids)this.#retentionVersions.set('withdrawal:execution:'+id,++this.#withdrawalRevision);
+    this.#tasks=this.#tasks.map(task=>task.executionId&&ids.has(task.executionId)?this.#taskReference(task):task);
+    const active=this.#specialist;
+    if(active&&(active.semanticMemory||active.memoryRequested||ids.has(active.executionId)))this.#withdrawSpecialist(active);
+    if(ids.size)this.#readRevision++;
+    this.requestUpdate();
+  }
+  #memoryFocus = () => { this.#pruneMemoryAnswers(); this.#pruneSemanticReceipts(); this.requestUpdate(); };
   #memoryDisconnect?: () => void;
   #memoryInvalidated = () => { this.#closeMemory(); this.requestUpdate(); };
   #memoryPrivacyChanged = () => {
     // Retire derived answers and pending recall without unmounting the child
     // that may be executing the user's privacy mutation. Ordinary chat and
     // unsent drafts remain untouched. Settlement never automatically recalls.
-    if (memoryPrivacyMutationActive()) this.#closeMemoryRecall();
+    if (memoryPrivacyMutationActive()) {this.#closeMemoryRecall();this.#retireSemanticReviews();}
     this.requestUpdate();
   };
   #memoryVisibility = () => {
@@ -124,6 +154,7 @@ export class FormaCreativeAssistant extends FormaElement {
     document.addEventListener("visibilitychange", this.#memoryVisibility);
     window.addEventListener("focus", this.#memoryFocus);
     window.addEventListener('forma-memory-privacy-mutation', this.#memoryPrivacyChanged);
+    for(const name of ['blur','pagehide','forma-memory-assistant-context-changed'])window.addEventListener(name,this.#semanticHidden);
     const unsubscribeMemory = this.store.subscribe(() => {
       if (this.#memoryOpen && (this.#memoryScope !== this.#memoryContext(this.#scope())
         || !this.store.sourceOwnershipActive(this.store.captureSourceOwnership()))) this.#closeMemory();
@@ -135,6 +166,7 @@ export class FormaCreativeAssistant extends FormaElement {
       document.removeEventListener("visibilitychange", this.#memoryVisibility);
       window.removeEventListener("focus", this.#memoryFocus);
       window.removeEventListener('forma-memory-privacy-mutation', this.#memoryPrivacyChanged);
+      for(const name of ['blur','pagehide','forma-memory-assistant-context-changed'])window.removeEventListener(name,this.#semanticHidden);
       unsubscribeMemory();
     };
   }
@@ -148,6 +180,7 @@ export class FormaCreativeAssistant extends FormaElement {
   }
 
   #closeMemory() {
+    this.#retireSemanticReviews();
     this.#closeMemoryRecall();
     this.#memoryOpen = false;
     this.#memoryScope = "";
@@ -483,9 +516,12 @@ export class FormaCreativeAssistant extends FormaElement {
       || original.sourceHash !== quote.sourceHash || !quote.models.includes(original.model) || task.model !== original.model
       || quote.projectId !== this.#url().searchParams.get("projectId")
       || quote.canvasId !== surface.canvasId || surface.documentId && quote.documentId !== surface.documentId
-      || review.result.sourceStatus !== "original-approved-source") return null;
+      || !["original-approved-source","semantic-memory-assisted"].includes(review.result.sourceStatus)) return null;
     // Never derive paid evidence from a copied chat reply or a completed status.
-    return { quote, original, reply: review.result.reply };
+    const memory=review.memory?parseSemanticMemoryAnswerPresentation(review.memory):null;
+    if(review.result.sourceStatus==='semantic-memory-assisted'&&(!memory||!this.#retainSemanticReceipt(review.executionId,memory))
+      ||review.result.sourceStatus==='original-approved-source'&&review.memory)return null;
+    return { quote, original, reply: review.result.reply,memory:memory??undefined,sourceStatus:review.result.sourceStatus };
   }
 
   async #load() {
@@ -536,7 +572,11 @@ export class FormaCreativeAssistant extends FormaElement {
       const omitted = this.#tasks.filter((task) => task.executionId
         && !incoming.some((item) => item.executionId === task.executionId))
         .map(({ id, turnId, executionId, bindingHash }) => ({ id, turnId, executionId, bindingHash, status: "recovery", recoveryOnly: true }));
-      this.#tasks = [...incoming, ...omitted];
+      this.#tasks = [...incoming, ...omitted].map((task:AssistantDisplayedTask)=>{
+        if(!task.completedReview?.memory)return task;
+        const memory=parseSemanticMemoryAnswerPresentation(task.completedReview.memory);
+        return memory&&this.#retainSemanticReceipt(task.executionId!,memory)?task:this.#taskReference(task);
+      });
       const active = this.#specialist;
       const latest = active?.executionId ? incoming.find((task) => task.executionId === active.executionId) : undefined;
       const completed = latest ? this.#certifiedSpecialistCompletion(latest) : null;
@@ -546,7 +586,7 @@ export class FormaCreativeAssistant extends FormaElement {
         // resume must not restore its receipt after this currently retained result.
         this.#invalidateSpecialistReceipt(active.turnId, active.executionId);
         this.#specialist = { ...active, task: { ...latest, canExecute: false }, quote: completed.quote,
-          originalRequest: completed.original, resultReply: completed.reply, working: false, stopping: false,
+          originalRequest: completed.original, resultReply: completed.reply,semanticMemory:completed.memory,resultSource:completed.sourceStatus, working: false, stopping: false,
           retrievalOnly: true, notice: "" };
       } else if (active && latest && !this.#retentionUnavailable(latest) && latest.turnId === active.turnId
         && latest.bindingHash === activeHash && active.quote?.status !== "completed"
@@ -826,7 +866,7 @@ export class FormaCreativeAssistant extends FormaElement {
     await this.#requestSpecialist(existing ? "resume" : "quote");
   }
 
-  async #requestSpecialist(action: "quote" | "execute" | "retrieve" | "resume" | "stop", model?: string) {
+  async #requestSpecialist(action: "quote" | "execute" | "retrieve" | "resume" | "stop", model?: string,memoryChoice?:boolean) {
     const state = this.#specialist, source = this.store.captureSourceOwnership();
     if (!state || state.working || this.#memoryMarked.has(state.turnId) || state.scope !== this.#scope() || !this.store.sourceOwnershipScopeActive(source)) return;
     if (["quote", "execute", "stop"].includes(action) && !this.store.sourceOwnershipActive(source)) return;
@@ -880,12 +920,14 @@ export class FormaCreativeAssistant extends FormaElement {
       this.#readRevision += 1;
     } else this.#retentionVersions.delete("pending-read:" + readKey);
     const retentionVersion = this.#retentionVersion(state.turnId, state.executionId), withdrawalRevision = this.#withdrawalRevision;
+    const memoryRequested=memoryChoice??state.memoryRequested??false;
     const body = action === "stop" ? undefined : { action, turnId: state.turnId,
+      ...(action==="quote"&&memoryRequested?{memory:"saved"}:{}),
       ...(action === "quote" ? model ? { model } : {} : { executionId: state.executionId }),
       ...(action === "execute" || action === "retrieve" ? { approvedBindingHash: approvedHash } : {}) };
     if (action === "execute" || refreshUnused) this.#rememberSpecialistExecution(state);
     this.#specialist = { ...state, working: true, stopping: action === "stop", notice: "",
-      ...(action === "quote" ? { quote: null, originalRequest: null,
+      ...(action === "quote" ? { quote: null, originalRequest: null,memoryRequested,semanticMemory:undefined,resultSource:undefined,resultReply:null,
         executionId: refreshUnused ? state.executionId : "",
         task: refreshUnused ? this.#tasks.find((task) => task.executionId === state.executionId) ?? null : null,
         selectedModel: model, unusedExecution: false } : {}),
@@ -964,7 +1006,7 @@ export class FormaCreativeAssistant extends FormaElement {
         || action !== "quote" && !redirected && approvedHash && quote.bindingHash !== approvedHash
         || action === "stop" && (!payload.task || payload.task.id !== state.executionId || quote.bindingHash !== approvedHash)
         || payload.turn && payload.turn.id !== state.turnId
-        || payload.result && payload.result.sourceStatus !== "original-approved-source"
+        || payload.result && !["original-approved-source","semantic-memory-assisted"].includes(payload.result.sourceStatus)
         || payload.task && (payload.task.turnId !== state.turnId || payload.task.executionId !== quote.executionId
           || payload.task.bindingHash !== quote.bindingHash || payload.task.model !== original.model)) {
         throw new Error("assistant_specialist_identity_mismatch");
@@ -987,12 +1029,17 @@ export class FormaCreativeAssistant extends FormaElement {
           originalRequest: null, resultReply: null, quote: null, unusedExecution: false, stopping: false, retrievalOnly: true, notice: "unavailable" };
         return;
       }
-      const canonicalCompletion = quote.status === "completed" && payload.result?.sourceStatus === "original-approved-source";
+      const canonicalCompletion = quote.status === "completed" && Boolean(payload.result&&["original-approved-source","semantic-memory-assisted"].includes(payload.result.sourceStatus));
       const activeHash = this.#specialist?.quote?.bindingHash ?? this.#specialist?.task?.bindingHash;
       // A late paid completion may outrank a stopped/failed task receipt, but never
       // a newer withdrawal, changed review, different execution or different binding.
       if (!current() && !(canonicalCompletion && this.#specialist?.executionId === quote.executionId
         && activeHash === quote.bindingHash)) return;
+      const semantic=payload.memory?parseSemanticMemoryAnswerPresentation(payload.memory):null;
+      if(payload.memory&&!semantic||payload.result?.sourceStatus==='semantic-memory-assisted'&&!semantic
+        ||payload.result?.sourceStatus==='original-approved-source'&&semantic
+        ||action==='quote'&&memoryRequested&&!reusedQuote&&!semantic)throw new Error('assistant_memory_unavailable');
+      if(semantic&&!this.#retainSemanticReceipt(quote.executionId,semantic))throw new Error('assistant_memory_unavailable');
       const latestTask = this.#tasks.find((task) => task.executionId === quote.executionId);
       const certifiedTask = [latestTask, this.#specialist?.task].find((task) => task?.executionId === quote.executionId
         && task.turnId === state.turnId && task.bindingHash === quote.bindingHash && this.#certifiedSpecialistCompletion(task));
@@ -1000,7 +1047,7 @@ export class FormaCreativeAssistant extends FormaElement {
       const responseTask: AssistantDisplayedTask | undefined = canonicalCompletion && payload.task ? {
         ...payload.task, canExecute: false, certifiedCompleted: true, completedReview: {
           turnId: payload.turnId, executionId: quote.executionId, quote: { ...quote, canExecute: false },
-          originalRequest: original, result: payload.result!,
+          originalRequest: original, result: payload.result!,...(semantic?{memory:semantic}:{}),
         },
       } : payload.task;
       // Ordinary progress never cancels retrieval, but stale unused-reservation
@@ -1024,7 +1071,7 @@ export class FormaCreativeAssistant extends FormaElement {
         this.#invalidateSpecialistReceipt(state.turnId, quote.executionId);
       }
       this.#readRevision += 1; // An older positive GET cannot replace this response.
-      this.#specialist = { ...this.#specialist!, quote: currentQuote, originalRequest: certificate?.original ?? original, executionId: quote.executionId,
+      this.#specialist = { ...this.#specialist!,semanticMemory:certificate?.memory??semantic??undefined,resultSource:certificate?.sourceStatus??payload.result?.sourceStatus, quote: currentQuote, originalRequest: certificate?.original ?? original, executionId: quote.executionId,
         task: task ? reusedQuote ? { ...task, canExecute: false } : task : null, working: false, stopping: false,
         unusedExecution, retrievalOnly: action === "quote" && !reusedQuote ? quote.status !== "quoted" || Boolean(payload.task)
           : this.#specialist!.retrievalOnly || redirected || reusedQuote || quote.status !== "quoted" || Boolean(payload.task),
@@ -1093,7 +1140,7 @@ export class FormaCreativeAssistant extends FormaElement {
     }
     if (control.action === "retrieve") return this.#requestSpecialist("retrieve");
     if (control.action === "resume") return this.#requestSpecialist("resume");
-    if (control.action === "quote") return this.#requestSpecialist("quote", control.model);
+    if (control.action === "quote") return this.#requestSpecialist("quote", control.model,control.memory);
   }
 
   #nextContext() {

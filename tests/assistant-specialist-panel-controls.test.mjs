@@ -1,3 +1,4 @@
+import { libraryBlockEditorFromRoute } from '../src/model/routes.ts';
 import assert from "node:assert/strict";
 import test from "node:test";
 import fs from "node:fs";
@@ -100,6 +101,7 @@ function fixture(locale = "en", nativeWindow = { addEventListener() {}, removeEv
   const dependencies = {
     lit, "lit/directives/keyed.js": { keyed }, "../../model/conversation-context.ts": { ASSISTANT_CONTEXT_LIMITS },
     "../../model/context-consent-state.ts": { contextConsentAction },
+    "../../model/routes.ts": {libraryBlockEditorFromRoute},
     "../presentational-element.ts": { FormaPresentationalElement: Base }, "../icons.ts": { icon: () => lit.nothing },
     "../consequential-preview.ts": previewExports, "./native-dialog.ts": { ensureNativeModalDialog },
     "../output-navigation-focus.ts": { captureOutputNavigationFocus },
@@ -1423,7 +1425,11 @@ function e3StudioSlot(t, { rtl = false, coarse = false, short = false } = {}) {
     assert.equal(selector, "forma-assistant-panel", "only actual floating-panel membership is supplied");
     return state.present ? [x.f.panel] : [];
   };
-  shell.querySelector = selector => { assert.equal(selector, "#main-content"); return main; };
+  shell.querySelector = selector => {
+    if(selector === ':scope > forma-ui-audience-navigation.application-task-navigation[data-primary-navigation="true"]')return null;
+    assert.ok(["#main-content",":scope > #main-content"].includes(selector)); return main;
+  };
+  main.querySelector = selector => { assert.equal(selector,"forma-deliver > .forma-deliver-page"); return null; };
   main.getAttribute = name => { assert.equal(name, "aria-busy"); return String(state.busy); };
   main.closest = selector => { assert.equal(selector, ".application-creative"); return shell; };
   // Ordinary-copy owners are a separate explicit port when a reserved-slot
@@ -1642,7 +1648,11 @@ function e6CopyPlacement(t, { family = "forma-workspace-settings", locale = "en"
   const selected = new Map(), familyQueries = [], allOwnerQueries = [], layersOwnerQueries = [], terminalOwnerQueries = [], imageOwnerQueries = [], copyQueries = [], allCopyQueries = [], fCopyQueries = [], fLabelQueries = [], rangeReads = [], detached = [], copyBoxReads = [];
   shell.getAttribute = name => { assert.equal(name, "data-layout-intent"); return "browse"; };
   shell.querySelectorAll = selector => { assert.equal(selector, "forma-assistant-panel"); return [x.f.panel]; };
-  shell.querySelector = selector => { assert.equal(selector, "#main-content"); return main; };
+  shell.querySelector = selector => {
+    if(selector === ':scope > forma-ui-audience-navigation.application-task-navigation[data-primary-navigation="true"]')return null;
+    assert.ok(["#main-content",":scope > #main-content"].includes(selector)); return main;
+  };
+  main.querySelector = selector => { assert.equal(selector,"forma-deliver > .forma-deliver-page"); return null; };
   main.getAttribute = name => { assert.equal(name, "aria-busy"); return "false"; };
   main.closest = selector => { assert.equal(selector, ".application-creative"); return shell; };
   main.querySelectorAll = selector => {
@@ -3785,7 +3795,7 @@ for (const change of ['main-replacement', 'owner-replacement', 'owner-withdrawal
         setProperty() { assert.fail('retirement must not write the replacement main'); },
         removeProperty() { assert.fail('retirement must not remove replacement-owned style'); } },
     });
-    x.shell.querySelector = selector => (assert.equal(selector, '#main-content'), replacement);
+    x.shell.querySelector = selector => (assert.equal(selector, ':scope > #main-content'), replacement);
   }
   if (change === 'owner-replacement') x.f.panel.parentElement = { ...owner, parentElement: x.shell, ownerDocument: x.document };
   if (change === 'owner-withdrawal') owner.parentElement = null;

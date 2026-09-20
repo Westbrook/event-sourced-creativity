@@ -2702,3 +2702,26 @@ export const stillPanelCommands=sqliteTable('still_panel_commands',{
   seq:integer('seq').primaryKey({autoIncrement:true}),sessionId:text('session_id').notNull(),
   type:text('type').notNull(),value:text('value').notNull(),scope:text('scope').notNull(),createdAt:integer('created_at').notNull(),
 },t=>[index('idx_still_panel_commands').on(t.sessionId,t.seq)]);
+
+/** Private inverse lineage for semantic consumers. Tombstones carry no model
+ * text and outlive private bodies; rebuilding an index cannot make them original. */
+export const memoryDerivationConsumers=sqliteTable('memory_derivation_consumers',{
+ originId:text('origin_id').primaryKey().notNull(),actorUserId:text('actor_user_id').notNull(),
+ targetEnrollmentId:text('target_enrollment_id').notNull(),contextRevision:text('context_revision').notNull(),
+ jobId:text('job_id').notNull(),outputSha256:text('output_sha256').notNull(),
+ scopeKey:text('scope_key').notNull(),turnId:text('turn_id').notNull(),executionId:text('execution_id').notNull(),
+ state:text('state').notNull(),createdAt:text('created_at').notNull(),expiresAt:text('expires_at').notNull(),retiredAt:text('retired_at'),
+},t=>[
+ uniqueIndex('idx_memory_derivation_consumer_execution').on(t.executionId),
+ index('idx_memory_derivation_consumer_source').on(t.jobId,t.state),
+ index('idx_memory_derivation_consumer_context').on(t.targetEnrollmentId,t.contextRevision,t.state),
+ index('idx_memory_derivation_consumer_turn').on(t.actorUserId,t.scopeKey,t.turnId),
+ check('memory_consumer_state',sql.raw("(state='active' AND retired_at IS NULL) OR (state='retired' AND retired_at IS NOT NULL)")),
+ check('memory_consumer_identity',sql.raw("length(origin_id)=36 AND length(context_revision)=36 AND length(output_sha256)=64 AND output_sha256 NOT GLOB '*[^0-9a-f]*'")),
+ check('memory_consumer_time',sql.raw("length(created_at)=24 AND strftime('%Y-%m-%dT%H:%M:%fZ',created_at) IS created_at AND length(expires_at)=24 AND strftime('%Y-%m-%dT%H:%M:%fZ',expires_at) IS expires_at AND expires_at>created_at AND (retired_at IS NULL OR length(retired_at)=24 AND strftime('%Y-%m-%dT%H:%M:%fZ',retired_at) IS retired_at AND retired_at>=created_at)")),
+]);
+export const memoryDerivationConsumerContents=sqliteTable('memory_derivation_consumer_contents',{
+ contentId:text('content_id').primaryKey().notNull(),originId:text('origin_id').notNull().references(()=>memoryDerivationConsumers.originId),
+ role:text('role').notNull(),
+},t=>[index('idx_memory_derivation_consumer_content_origin').on(t.originId),
+ check('memory_consumer_content_role',sql.raw("role IN('consent','response','result','answer')"))]);

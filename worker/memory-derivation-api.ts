@@ -103,10 +103,10 @@ async function scope(request: Request, env: WorkerEnv, actor: PilotUser, project
 /** Read-only inventory/control authority. Source identities and current custody
  * are proved natively; a presentation GET never hydrates the whole project or
  * rebuilds its index (which can retire otherwise valid retained results). */
-export async function readScope(request:Request,env:WorkerEnv,actor:PilotUser,projectId:string,documentId:string){
+export async function readScope(request:Request|null,env:WorkerEnv,actor:PilotUser,projectId:string,documentId:string){
   const db=env.DB,consent=requireConsent(actor);if(consent)return privateResponse(consent);
   if(actor.projectExecution||actor.billingUserId&&actor.billingUserId!==actor.userId)return deny('memory_derivation_self_payer_required',403);
-  const selected=await readProjectRequestContext(request,env,actor);if(selected.response)return privateResponse(selected.response);
+  const selected=request?await readProjectRequestContext(request,env,actor):{context:null,response:null};if(selected.response)return privateResponse(selected.response);
   const context=selected.context;if(context&&context.projectId!==projectId)return deny('context_project_denied',403);
   const custody=context?{scope:{organizationId:context.organizationId,projectAccessId:context.projectAccessId,projectId,ownerUserId:context.ownerUserId,actorUserId:actor.userId},denied:false}
     :await resolveOwnerExecutionScope(env,actor,documentId,projectId,'read');

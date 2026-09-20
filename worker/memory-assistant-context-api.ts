@@ -1,11 +1,11 @@
 import type { WorkerEnv } from './runtime.ts';
-import { requireUser, hasCapability } from './pilot-policy.ts';
+import { requireUser, hasCapability, type PilotUser } from './pilot-policy.ts';
 import { liveMemoryEnabled } from './memory-live-store.ts';
 import { liveMemoryEnrollmentGuard, type LiveMemoryEnrollment } from './memory-live-authority.ts';
 import { bodyOf, readScope } from './memory-derivation-api.ts';
 import { derivationAssertion, derivationResults, derivationVerified, memoryDerivationSchema, memoryDerivationEnabled, memoryDerivationBinding } from './memory-derivation-store.ts';
 import { derivationExact, derivationHash, derivationId } from './memory-derivation-policy.ts';
-import { readNativeDerivationResult, nativeDerivationResultBinding, nativeDerivationResultInputs, nativeDerivationResultStatements } from './memory-derivation-results.ts';
+import { readNativeDerivationResult, prepareNativeDerivationResult, nativeDerivationResultBinding, nativeDerivationResultInputs, nativeDerivationResultGuards, nativeDerivationResultStatements } from './memory-derivation-results.ts';
 import { readNativeProjectContainment } from './project-containment-api.ts';
 import { packRecallGuards, readNativeRecallBoundarySnapshot } from './memory-recall-boundary-api.ts';
 import { memoryRecallBoundary, memoryRecallRelation } from '../src/model/memory-recall-boundary.ts';
@@ -30,7 +30,7 @@ type SavedContextSelection = {
  relation:{zoom:string;distance:number;weight:number};
 };
 type SavedContextCapture = { env:WorkerEnv; current:()=>boolean; selection:SavedContextSelection;
- source:NonNullable<Awaited<ReturnType<typeof readNativeDerivationResult>>>; guards:MemorySqlGuard[] };
+ source:NonNullable<Awaited<ReturnType<typeof readNativeDerivationResult>>>; consumersPresent:boolean; guards:MemorySqlGuard[] };
 const savedContextCaptures=new WeakMap<NativeSavedAssistantContext,SavedContextCapture>();
 const savedContextResponses=new WeakMap<Response,NativeSavedAssistantContext>();
 function contextCapture(env:WorkerEnv,handle:NativeSavedAssistantContext){
@@ -53,12 +53,16 @@ export async function prepareNativeSavedAssistantContext(request:Request,env:Wor
  * interpretation; callers must not treat relevance weights as confidence. */
 export function nativeSavedAssistantContextInputs(env:WorkerEnv,handle:NativeSavedAssistantContext){
  const captured=contextCapture(env,handle);
- return {selection:structuredClone(captured.selection),presentation:nativeDerivationResultInputs(env,captured.source)};
+ return {selection:structuredClone(captured.selection),consumersPresent:captured.consumersPresent,presentation:nativeDerivationResultInputs(env,captured.source)};
 }
 /** Replay source, target, hierarchy, boundary, consent and saved-reference DB
  * checks inside the consumer's atomic publication transaction. Environment and
  * lease checks run before constructing and acknowledging that proof. Returning
  * data above alone does not certify a subsequent write. */
+export function nativeSavedAssistantContextGuards(env:WorkerEnv,handle:NativeSavedAssistantContext){
+ const captured=contextCapture(env,handle);
+ return [...nativeDerivationResultGuards(env,captured.source),...structuredClone(captured.guards)];
+}
 export function nativeSavedAssistantContextStatements(env:WorkerEnv,handle:NativeSavedAssistantContext){
  const captured=contextCapture(env,handle);
  return [...nativeDerivationResultStatements(env,captured.source),...packRecallGuards(captured.guards).map(g=>derivationAssertion(env,g))];
@@ -83,6 +87,22 @@ async function read(env:WorkerEnv,sql:string,bindings:readonly (string|number|nu
  * Both scopes and the exact source result are replayed before each display.
  * Accept/dismiss/undo use CAS; no model, enrollment, allowance or event writes. */
 export async function handleMemoryAssistantContext(request:Request,env:WorkerEnv):Promise<Response>{
+ const auth=await requireUser(request,env,'viewer',{account:'principal'});
+ if(auth.response||!auth.user)return answer({error:'authentication_required'},auth.response?.status??401);
+ return readAssistantContext(request,env,auth.user);
+}
+/** Internal consumer entry point. Identity is an already authenticated native
+ * principal; no forged authentication headers or response DTO are accepted.
+ * Custody is resolved independently, without borrowing a browser session.
+ * This is staging evidence: native assertions must run atomically with every
+ * consuming disclosure, dispatch or write. It does not issue a read receipt. */
+export async function prepareNativeSavedAssistantContextForPrincipal(env:WorkerEnv,actor:PilotUser,projectId:string,documentId:string){
+ const selector=new Request('https://native.invalid/api/memory/assistant-context?'+new URLSearchParams({projectId,documentId}));
+ const response=await readAssistantContext(selector,env,actor,true),handle=savedContextResponses.get(response);
+ if(!handle)return null;
+ try{contextCapture(env,handle);return handle;}catch{return null;}
+}
+async function readAssistantContext(request:Request,env:WorkerEnv,actor:PilotUser,native=false):Promise<Response>{
   const db=env.DB,started=Date.now(),monotonic=performance.now();
   const config=()=>memoryCanonical([env.FORMA_MEMORY_ENABLED,env.FORMA_MEMORY_USER_IDS,env.FORMA_MEMORY_DERIVATION_ENABLED,
     env.FORMA_MEMORY_DERIVATION_USER_IDS,env.FORMA_PILOT_COHORT_ID,env.FORMA_ADMIN_EMAILS,memoryDerivationBinding(env)]),configured=config();
@@ -90,8 +110,7 @@ export async function handleMemoryAssistantContext(request:Request,env:WorkerEnv
   const current=()=>env.DB===db&&config()===configured&&Date.now()>=started&&Date.now()<deadline
     &&performance.now()>=monotonic&&performance.now()-monotonic<30000;
   try{
-    const url=new URL(request.url),auth=await requireUser(request,env,'viewer',{account:'principal'}),actor=auth.user;
-    if(auth.response||!actor)return answer({error:'authentication_required'},auth.response?.status??401);
+    const url=new URL(request.url);
     if(actor.fictional||actor.projectExecution||request.headers.get('cookie')?.split(';').some(c=>c.trim().startsWith('forma_impersonation=')))return answer({error:'principal_account_required'},403);
     if(!['GET','PUT','DELETE'].includes(request.method))return answer({error:'method_not_allowed'},405);
     if(request.headers.get('sec-fetch-site')==='cross-site'||request.method!=='GET'&&request.headers.get('origin')!==url.origin)return answer({error:'same_origin_required'},403);
@@ -129,7 +148,7 @@ export async function handleMemoryAssistantContext(request:Request,env:WorkerEnv
       return answer({saved:true,refreshRequired:true});
     }
     if(!liveMemoryEnabled(env,actor.userId)||!memoryDerivationEnabled(env,actor.userId))return answer({error:'memory_disabled'},403);
-    const selected=await readScope(request,env,actor,projectId,documentId);if(selected instanceof Response)return selected;
+    const selected=await readScope(native?null:request,env,actor,projectId,documentId);if(selected instanceof Response)return selected;
     const target=selected.parent;
     if(target.recall_enabled!==1)throw Error('context_consent');
     guards.push(...selected.guards,liveMemoryEnrollmentGuard(target,'recall'));
@@ -151,7 +170,7 @@ export async function handleMemoryAssistantContext(request:Request,env:WorkerEnv
       return answer({...metadata(),context:old?{revision:old.revision,state:'dismissed',jobId:old.job_id}:null,presentation:null});
     }
     if(!derivationHash(jobId))throw Error('context_job');
-    const handle=await readNativeDerivationResult(env,actor.userId,jobId);if(!handle)throw Error('context_source');
+    const handle=await (native?prepareNativeDerivationResult:readNativeDerivationResult)(env,actor.userId,jobId);if(!handle)throw Error('context_source');
     const bound=nativeDerivationResultBinding(env,handle),source=bound.enrollment,presentation=nativeDerivationResultInputs(env,handle);
     if(!source||source.actor_user_id!==target.actor_user_id||source.owner_user_id!==target.owner_user_id||source.organization_id!==target.organization_id)throw Error('context_partition');
     let boundaryRevision:string|null=null,hierarchyRevision:string|null=null;
@@ -182,13 +201,15 @@ export async function handleMemoryAssistantContext(request:Request,env:WorkerEnv
       return answer({saved:true,refreshRequired:true});
     }
     const nativeHandle=Object.freeze({}) as NativeSavedAssistantContext;
-    savedContextCaptures.set(nativeHandle,{env,current,source:handle,guards:structuredClone(guards),selection:{
+    savedContextCaptures.set(nativeHandle,{env,current,source:handle,consumersPresent:schema.consumersPresent,guards:structuredClone(guards),selection:{
       actorUserId:actor.userId,targetEnrollmentId:target.enrollment_id,targetRevision:target.revision,projectId,documentId,
       contextRevision:String(old!.revision),jobId,outputSha256:bound.outputSha256,sourceEnrollmentId:source.enrollment_id,
       sourceRevision:source.revision,boundaryRevision,hierarchyRevision,expiresAt,validUntil:new Date(deadline).toISOString(),relation:structuredClone(relation),
     }});
-    const result=await db.batch(nativeSavedAssistantContextStatements(env,nativeHandle));
-    if(!nativeSavedAssistantContextMatches(env,nativeHandle,result))throw Error('context_changed');
+    if(!native){
+      const result=await db.batch(nativeSavedAssistantContextStatements(env,nativeHandle));
+      if(!nativeSavedAssistantContextMatches(env,nativeHandle,result))throw Error('context_changed');
+    }
     const final=nativeSavedAssistantContextInputs(env,nativeHandle);
     const response=answer({...metadata(),context:{revision:old!.revision,state:'accepted',jobId,source:{enrollmentId:source.enrollment_id,projectId:source.project_id,documentId:source.document_id,...relation},purpose:bound.purpose,expiresAt},
       presentation:final.presentation,independentEvidence:false,completeHistory:false});

@@ -235,7 +235,11 @@ export function nativeDerivationEvidenceInputs(env: WorkerEnv, handle: NativeDer
     authority: a.authority, references: a.references, validUntil: a.until, observationControlsPresent: a.observationControlsPresent, userControlsPresent: a.userControlsPresent, lifecyclePresent: a.lifecyclePresent, relationsPresent: a.relationsPresent, reusePresent: a.reusePresent, resultsPresent: a.resultsPresent, historyPresent: a.historyPresent, producersPresent: a.producersPresent, producer: a.producer });
 }
 export function nativeDerivationEvidenceStatements(env: WorkerEnv, handle: NativeDerivationEvidence) {
-  return lookup(env, handle).guards.map(guard => derivationAssertion(env, guard));
+  return nativeDerivationEvidenceGuards(env, handle).map(guard => derivationAssertion(env, guard));
+}
+/** Fresh, owned server predicates; the opaque admission lease is still required. */
+export function nativeDerivationEvidenceGuards(env: WorkerEnv, handle: NativeDerivationEvidence) {
+  return structuredClone(lookup(env, handle).guards);
 }
 export async function replayNativeDerivationEvidence(env: WorkerEnv, handle: NativeDerivationEvidence) {
   try {

@@ -1,3 +1,7 @@
+import { personalMemoryMessage } from '../src/components/design-system/locales/personal-memory-messages.ts';
+import { parseSemanticMemoryAnswerPresentation } from '../src/model/memory-answer.ts';
+import { createMemoryElapsed } from '../src/model/memory-lifetime.ts';
+import { memoryPrivacyMutationActive } from '../src/state/memory-privacy-mutation.ts';
 import assert from "node:assert/strict";
 import { installSourceOwnershipPort } from "./helpers/source-ownership-port.mjs";
 import test from "node:test";
@@ -99,6 +103,7 @@ function fixture(t, locale = "en") {
   };
   installSourceOwnershipPort(store);
   const document = {
+    visibilityState: "visible",
     querySelectorAll: (selector) => selector.includes("canvas-item.selected") ? selected.map((id) => ({ dataset: { canvasItemId: id } }))
       : selector === "dialog:modal" ? (modal ? [modal] : []) : [],
     querySelector: (selector) => selector === "dialog:modal" ? modal : null,
@@ -170,7 +175,9 @@ function fixture(t, locale = "en") {
     loadForTest() { return this.#load(); }
     retryForTest() { return this.#deliverGuidance(); }
     reviewForTest(detail) { return this.#reviewSpecialist(detail); }
-    requestForTest(action, model) { return this.#requestSpecialist(action, model); }
+    requestForTest(action, model, memory) { return this.#requestSpecialist(action, model, memory); }
+    retireSemanticForTest(){this.#retireSemanticReviews();}
+    pruneSemanticForTest(){this.#pruneSemanticReceipts();}
     proposalForTest(detail) { return this.#proposal(detail); }
     actionForTest(control) { return this.#specialistAction(control); }
     taskForTest(detail) { return this.#task(detail); }
@@ -557,7 +564,8 @@ test("model choice only regenerates a free exact preview and deep-reasoning appr
   const rendered = f.render();
   assert.match(rendered.markup, /deep-reasoning model requires your explicit approval/u);
   assert.match(rendered.markup, /USD 0\.045/u);
-  assert.doesNotMatch(rendered.markup, /type="checkbox"/u);
+  assert.equal((rendered.markup.match(/type="checkbox"/gu)??[]).length,1);
+  assert.match(rendered.markup,/Include accepted Memory in a new quote/u);
   assert.equal(f.calls.some((call) => call.body?.action === "execute"), false);
 });
 
@@ -3060,4 +3068,56 @@ for(const locale of ["en","fr","ar","ja"])test("legacy assistant forged reconcil
   assert.equal(rendered.buttons.some(button=>button.label===ASSISTANT_MESSAGES[locale]["assistant.task.reconcile"]),false);
   assert.equal(rendered.markup.includes(ASSISTANT_MESSAGES[locale]["assistant.task.contactAdministrator"]),true);
   assert.equal(rendered.markup.includes(task.id),true,"Exact original review reference remains visible");
+});
+
+for(const locale of ['en','fr','ar','ja'])test('semantic Memory review: explicit free quote and privacy retirement '+locale,async t=>{
+ const f=fixture(t,locale);await f.open();await review(f);
+ f.panel.draftForTest='Unsent original draft remains local';
+ const changing=f.host.requestForTest('quote','gpt-5.6-luna',true),call=await f.take();
+ assert.deepEqual(call.body,{action:'quote',turnId:'turn-a',model:'gpt-5.6-luna',memory:'saved'});
+ const memory={version:'semantic-memory-answer-v1',validUntil:new Date(Date.now()+10000).toISOString(),independentEvidence:false};
+ await f.reply(call,specialistResponse(preview(),{memory}));await changing;
+ assert.equal(f.host.snapshotForTest().specialist.semanticMemory?.version,memory.version);
+ assert.equal(f.calls.some(c=>c.body?.action==='execute'),false);
+ const reading=f.host.requestForTest('retrieve'),get=await f.take();
+ await f.reply(get,specialistResponse(preview({status:'completed',canExecute:false}),{
+  memory,result:{reply:'Tentative derived guidance',sourceStatus:'semantic-memory-assisted'},
+  task:savedTask({status:'completed',submission:'settled',canExecute:false}),
+ }));await reading;
+ assert.equal(f.host.snapshotForTest().specialist.resultSource,'semantic-memory-assisted');
+ assert.match(f.render().markup,/Tentative derived guidance/u);
+ f.host.retireSemanticForTest();
+ assert.equal(f.host.snapshotForTest().specialist.resultReply,null);
+ assert.equal(f.host.snapshotForTest().specialist.quote,null);
+ assert.equal(f.panel.draftForTest,'Unsent original draft remains local');
+ assert.doesNotMatch(f.render().markup,/Tentative derived guidance|Complete original source/u);
+ const count=f.calls.length;await f.host.requestForTest('execute');assert.equal(f.calls.length,count);
+});
+
+test('semantic Memory review: a private quote cannot arrive after a privacy barrier',async t=>{
+ const f=fixture(t);await f.open();await review(f);
+ const changing=f.host.requestForTest('quote','gpt-5.6-luna',true),call=await f.take();
+ f.host.retireSemanticForTest();
+ await f.reply(call,specialistResponse(preview(),{memory:{version:'semantic-memory-answer-v1',validUntil:new Date(Date.now()+10000).toISOString(),independentEvidence:false}}));await changing;
+ assert.equal(f.host.snapshotForTest().specialist.quote,null);
+ assert.equal(f.host.snapshotForTest().specialist.resultReply,null);
+});
+
+test('semantic Memory presentation decoder rejects false independence, stale, extended and accessor metadata',()=>{
+ const now=Date.now(),value={version:'semantic-memory-answer-v1',validUntil:new Date(now+10000).toISOString(),independentEvidence:false};
+ assert.deepEqual(parseSemanticMemoryAnswerPresentation(value,now),value);
+ for(const changed of [{...value,independentEvidence:true},{...value,validUntil:new Date(now).toISOString()},
+  {...value,validUntil:new Date(now+30001).toISOString()},{...value,extra:'untrusted'},{...value,version:'native-memory-answer-v2'},
+  {get version(){throw Error('must not run');},validUntil:value.validUntil,independentEvidence:false}])assert.equal(parseSemanticMemoryAnswerPresentation(changed,now),null);
+});
+
+for(const clock of ['elapsed','rollback','nonfinite'])test('semantic Memory lifetime: '+clock+' clears the approved source and reply without renewing its receipt',async t=>{
+ const f=fixture(t);await f.open();await review(f);
+ const changing=f.host.requestForTest('quote','gpt-5.6-luna',true),call=await f.take();
+ const memory={version:'semantic-memory-answer-v1',validUntil:new Date(Date.now()+10000).toISOString(),independentEvidence:false};
+ await f.reply(call,specialistResponse(preview(),{memory}));await changing;assert.equal(f.host.snapshotForTest().specialist.semanticMemory.version,memory.version);
+ if(clock==='rollback')t.mock.timers.enable({apis:['Date'],now:Date.now()-1000});
+ else t.mock.method(performance,'now',()=>clock==='nonfinite'?NaN:1000000000000);
+ f.host.pruneSemanticForTest();assert.equal(f.host.snapshotForTest().specialist.quote,null);assert.equal(f.host.snapshotForTest().specialist.resultReply,null);
+ assert.equal(f.calls.some(c=>c.body?.action==='execute'),false);
 });

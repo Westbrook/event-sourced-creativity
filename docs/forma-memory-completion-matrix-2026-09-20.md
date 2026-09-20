@@ -65,3 +65,10 @@ the four-result review ceiling through bounded explicit paging. It preserves
 original citations and distinguishes revised interpretations and counterevidence.
 This is implemented UI/source integration, not semantic consolidation or durable
 assistant/autocomplete publication.
+
+[Semantic assistant consumer checkpoint](forma-memory-semantic-assistant-2026-09-20.md)
+now connects explicitly approved saved Memory to the actual specialist prompt,
+immutable private-copy provenance and historical/privacy UI. It preserves
+current-source precedence and suppresses untracked document actions. The first
+row remains open for request capacity, semantic follow-up conversation history
+and Chat Studio; the other workstreams remain required. This is not deployment.

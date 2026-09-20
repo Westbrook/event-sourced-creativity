@@ -370,17 +370,17 @@ export async function revokeLiveMemoryCounted(env:WorkerEnv,e:LiveMemoryEnrollme
     db.prepare(`UPDATE memory_live_enrollments SET learn_enabled=0,recall_enabled=0,background_enabled=0,revision=revision+1,
       lease_token=NULL,lease_expires_at=NULL,cutoff_sequence=NULL,failure_code=?,next_due_at='9999-12-31T00:00:00.000Z' WHERE enrollment_id=? AND revision=?`).bind(code,snapshot.enrollment_id,snapshot.revision)];
   const updateIndex=statements.length-1;
-  statements.push(...structuredWrites.terminalAssertions,...derivationWrites.terminalAssertions,exact(terminal));
+  statements.push(memorySqlAssertion(env,{condition:"changes()=1",bindings:[]}),...structuredWrites.terminalAssertions,...derivationWrites.terminalAssertions,exact(terminal));
   try {
     const results=structuredClone(await db.batch<StructuredLedgerRow>(statements));
     const derivationOffset=1+originWrites.length+profileWrites.length,structuredOffset=derivationOffset+derivationWrites.statements.length;
-    const assertions=[0,...structuredWrites.assertionIndexes.map(index=>structuredOffset+index),
-      ...structuredWrites.terminalAssertions.map((_,index)=>updateIndex+1+index),statements.length-1];
+    const assertions=[0,updateIndex+1,...structuredWrites.assertionIndexes.map(index=>structuredOffset+index),
+      ...structuredWrites.terminalAssertions.map((_,index)=>updateIndex+2+index),statements.length-1];
     assertions.push(...derivationWrites.assertionIndexes.map(index=>derivationOffset+index),
-      ...derivationWrites.terminalAssertions.map((_,index)=>updateIndex+1+structuredWrites.terminalAssertions.length+index));
+      ...derivationWrites.terminalAssertions.map((_,index)=>updateIndex+2+structuredWrites.terminalAssertions.length+index));
     const erased=results[withdrawalWrites.length+1]?.meta?.changes;
     if (env.DB!==db||canonicalConsent(e)!==key||!structuredResults(results,statements.length)||!structuredAsserted(results,assertions,"verified")
-      || results[updateIndex]?.meta?.changes!==1||typeof erased!=="number"||!Number.isSafeInteger(erased)||erased<0
+      || !(typeof results[updateIndex]?.meta?.changes==="number"&&Number.isSafeInteger(results[updateIndex].meta.changes)&&Number(results[updateIndex].meta.changes)>=1)||typeof erased!=="number"||!Number.isSafeInteger(erased)||erased<0
       || !derivationWrites.acknowledge(results.slice(derivationOffset,derivationOffset+derivationWrites.statements.length))
       || !structuredWrites.acknowledge(results.slice(structuredOffset,structuredOffset+structuredWrites.statements.length)))
       throw new Error("memory-structured-withdrawal-unconfirmed");

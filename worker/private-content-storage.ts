@@ -175,18 +175,20 @@ async function preparePrivateContentInternal(env: WorkerEnv, ownerId: string, ki
 }
 
 /** Existing callers keep their original storage behavior; atomic admissions collect the same statements. */
-export async function storePrivateContent(env: WorkerEnv, ownerId: string, kind: PrivateContentKind, content: string, projectScope?: ProjectExecutionScope,guard?:BudgetReservationGuard,publish?:(stored:{contentId:string;expiresAt:string})=>Array<ReturnType<WorkerEnv["DB"]["prepare"]>>,identity?:{contentId:string}) {
+export async function storePrivateContent(env: WorkerEnv, ownerId: string, kind: PrivateContentKind, content: string, projectScope?: ProjectExecutionScope,guard?:BudgetReservationGuard,publish?:(stored:{contentId:string;expiresAt:string})=>Array<ReturnType<WorkerEnv["DB"]["prepare"]>>,identity?:{contentId:string},precommit?:()=>D1PreparedStatement[]) {
   const prepared=await preparePrivateContent(env,ownerId,kind,content,projectScope,undefined,guard,identity);
-  const publicationOffset=prepared.statements.length,publications=publish?.({contentId:prepared.contentId,expiresAt:prepared.expiresAt})??[];
+  const assertions=precommit?.()??[];
+  const publicationOffset=assertions.length+prepared.statements.length,publications=publish?.({contentId:prepared.contentId,expiresAt:prepared.expiresAt})??[];
   let results:Awaited<ReturnType<WorkerEnv["DB"]["batch"]>>;
-  try{results=await env.DB.batch([...prepared.statements,...publications]);}
+  try{results=await env.DB.batch([...assertions,...prepared.statements,...publications]);}
   catch(error){
     const cause=error instanceof Error?error.cause:undefined;
     if(identity&&(projectScope||guard)&&[error,cause].some(value=>value instanceof Error&&/(?:^|: )NOT NULL constraint failed: private_content\.content(?:$|:)/u.test(value.message)))
       throw new Error("project_private_content_access_revoked",{cause:error});
     throw error;
   }
-  for(let index=0;index<prepared.requiredInserts;index++)if(Number(results[index]?.meta.changes??0)!==1)throw new Error("project_private_content_access_revoked");
+  if(assertions.some((_,index)=>results[index]?.success!==true||results[index]?.results.length!==1||(results[index]?.results[0] as Record<string,unknown>)?.verified!==1))throw new Error("private_content_source_unconfirmed");
+  for(let index=0;index<prepared.requiredInserts;index++)if(Number(results[assertions.length+index]?.meta.changes??0)!==1)throw new Error("project_private_content_access_revoked");
   if(publications.some((_,index)=>Number(results[publicationOffset+index]?.meta.changes??0)!==1))throw new Error("private_content_publication_unavailable");
   return {contentId:prepared.contentId,expiresAt:prepared.expiresAt};
 }

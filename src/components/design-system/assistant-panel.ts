@@ -1,3 +1,4 @@
+import type { SemanticMemoryAnswerPresentation } from '../../model/memory-answer.ts';
 import { html, nothing, type PropertyValues, type TemplateResult } from "lit";
 import { keyed } from "lit/directives/keyed.js";
 import { ASSISTANT_CONTEXT_LIMITS,type AssistantContext } from "../../model/conversation-context.ts";
@@ -146,21 +147,24 @@ export type AssistantSpecialistOriginalRequest = {
   selectedItemIds: string[]; locale: string; model: string; taskKind: string; sourceHash: string; conversationTurnIds: string[];
 };
 export type AssistantSpecialistResponse = {
+  memory?: SemanticMemoryAnswerPresentation;
   turnId: string; executionId: string; quote?: AvailableConsequentialPreview; originalRequest?: AssistantSpecialistOriginalRequest;
   task?: AssistantDisplayedTask;
   turn?: { id: string; user: string; reply: SpecialistReply; proposal: AssistantDisplayedProposal | null; proposals?: AssistantDisplayedProposal[]; originalRequest?: AssistantTurnOriginalRequest };
-  result?: { reply: SpecialistReply | string; sourceStatus: "original-approved-source" };
+  result?: { reply: SpecialistReply | string; sourceStatus: "original-approved-source" | "semantic-memory-assisted" };
   requestedExecutionId?: string; reusedExecutionId?: string; winnerExecutionId?: string; noAutomaticRetry?: boolean; reused?: boolean;
   /** Present only after an exact successful read proves no task, provider submission, or reservation exists. */
   unusedExecution?: boolean;
   error?: string; recoveryError?: string; submission?: string; retentionUnavailable?: boolean; retainedResultUnavailable?: boolean;
 };
 export type AssistantSpecialistCompletedReview = {
+  memory?: SemanticMemoryAnswerPresentation;
   turnId: string; executionId: string; quote: AvailableConsequentialPreview;
   originalRequest: AssistantSpecialistOriginalRequest;
-  result: { reply: SpecialistReply | string; sourceStatus: "original-approved-source" };
+  result: { reply: SpecialistReply | string; sourceStatus: "original-approved-source" | "semantic-memory-assisted" };
 };
 export type AssistantSpecialistReview = {
+  memoryRequested?: boolean; semanticMemory?: SemanticMemoryAnswerPresentation; resultSource?: "original-approved-source" | "semantic-memory-assisted";
   id: string; scope: string; turnId: string; executionId: string; task: AssistantDisplayedTask | null;
   quote: AvailableConsequentialPreview | null; originalRequest: AssistantSpecialistOriginalRequest | null;
   working: boolean; stopping?: boolean; retrievalOnly: boolean; selectedModel?: string; unusedExecution?: boolean;
@@ -170,7 +174,7 @@ export type AssistantSpecialistReview = {
 /** A captured control is an exact user intention, never an instruction to infer the current action. */
 export type AssistantSpecialistControl = {
   reviewId: string; turnId: string; executionId: string; bindingHash: string;
-  action: "approve" | "run-approved" | "retrieve" | "resume" | "quote"; model?: string;
+  action: "approve" | "run-approved" | "retrieve" | "resume" | "quote"; model?: string; memory?: boolean;
 };
 
 /** Resume is a free read. Only a fresh, exact server proof can enable this separate user action. */
@@ -1610,6 +1614,10 @@ export class FormaAssistantPanel extends FormaPresentationalElement {
               ${this.models.map((model) => html`<option value=${model.id}>${this.#modelLabel(model.id)}</option>`)}
             </select>
           </label>
+          ${state.originalRequest?.documentId ? html`<label><input type="checkbox" .checked=${state.memoryRequested??false}
+            ?disabled=${state.working||!this.#modalReady||Boolean(quote&&quote.status!=="quoted")}
+            @change=${(event:Event)=>this.#specialistControl({...modelControl,model:quote?.models[0]??state.selectedModel,memory:(event.currentTarget as HTMLInputElement).checked},true)}>
+            <span>${this.i18n.t("assistant.specialist.memoryInclude")}</span></label>`:nothing}
           ${quote && selected?.premiumApprovalRequired ? html`<p>${this.i18n.t("assistant.specialist.premium", "", { amount: this.#amount(quote.maximumMicrousd) })}</p>` : nothing}
         </div>` : nothing}
         ${canRunApproved ? html`<p>${this.i18n.t("assistant.specialist.runApprovedDetail")}</p>` : nothing}
@@ -1620,7 +1628,7 @@ export class FormaAssistantPanel extends FormaPresentationalElement {
         ${purchase && expired ? html`<p role="status">${this.i18n.t("assistant.specialist.expired")}</p>` : nothing}
         ${state.task && !state.task.recoveryOnly ? html`<p role="status">${this.#taskStatus(state.task)}</p>` : nothing}
         ${state.retrievalOnly || state.task ? html`<p role="status">${this.#specialistFinancial(state.task)}</p>` : nothing}
-        ${reply ? html`<section class="forma-assistant-specialist-result"><h3>${this.i18n.t("assistant.specialist.originalResult")}</h3><p dir="auto">${reply}</p><small>${this.i18n.t("assistant.specialist.resultReview")}</small></section>` : nothing}
+        ${reply ? html`<section class="forma-assistant-specialist-result"><h3>${this.i18n.t(state.resultSource==="semantic-memory-assisted"?"assistant.specialist.memoryResult":"assistant.specialist.originalResult")}</h3><p dir="auto">${reply}</p><small>${this.i18n.t(state.resultSource==="semantic-memory-assisted"?"assistant.specialist.memoryReview":"assistant.specialist.resultReview")}</small></section>` : nothing}
         <footer>
           <button type="button" class="button secondary" @click=${() => this.#closeSpecialist(state.id)}>${this.i18n.t("assistant.specialist.close")}</button>
           ${canStopApproved || state.stopping && state.working ? html`<button type="button" class="button ghost" ?disabled=${!canStopApproved || !this.#modalReady}

@@ -2450,6 +2450,7 @@ export type LegacyConversationOriginalsCommit = Readonly<{
    * assertions in the SAME transaction as every consuming read or mutation. */
   isCurrent: () => boolean;
   precommitStatements: () => D1PreparedStatement[];
+  precommitGuards: () => BudgetReservationGuard[];
 }>;
 const legacyOriginalAggregateLimit: LegacyConversationOriginalsReadBudget = Object.freeze({ statements: 32, rows: 8192, bytes: 2 * 1024 * 1024 });
 function legacyOriginalBudgetValid(value: LegacyConversationOriginalsReadBudget): boolean {
@@ -2553,13 +2554,19 @@ export async function prepareLegacyConversationOriginalsCommit(env: WorkerEnv, p
       if (statements.length !== budget.statements || !current()) throw new Error("legacy_original_commit_unavailable");
       return statements;
     };
+    const precommitGuards = () => {
+      if (!current() || !fits()) throw new Error("legacy_original_commit_unavailable");
+      const guards = frames.flatMap(({ frame }) => frame.witness.precommitGuards());
+      if (guards.length !== budget.statements || !current()) throw new Error("legacy_original_commit_unavailable");
+      return guards;
+    };
     precommitStatements();
     const immutableOriginals = Object.freeze([...originals.values()].sort((left, right) => left.sequence - right.sequence)
       .map(original => Object.freeze({ ...original })));
     const commit: LegacyConversationOriginalsCommit = Object.freeze({ method: "native-legacy-originals-commit-v1", treatment: "untrusted-historical-evidence",
       scope: Object.freeze({ ...scope }), sourceHead, completeFromStart: false, originals: immutableOriginals,
       validUntil: new Date(deadline).toISOString(), budget: Object.freeze({ ...budget }), frameCount: frames.length,
-      isCurrent: current, precommitStatements });
+      isCurrent: current, precommitStatements, precommitGuards });
     legacyOriginalCommitFrames.set(commit, { env, db, commit, current, witnesses: frames.map(({ frame }) => frame.witness),
       additionalBudget: Object.freeze({ ...inputBudget }), historicalReadOnly: frames.some(({frame})=>frame.historicalReadOnly),
       intervals: Object.freeze(frames.flatMap(({ frame }) => { const receipt=frame.witness.context()!;

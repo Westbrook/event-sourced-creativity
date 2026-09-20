@@ -432,6 +432,18 @@ export class AssistantContextReadWitness<Value=AssistantContext>{
    * malformed-JSON SELECT aborts the entire transaction on a stale source.
    * No opaque prepared-statement inspection and no persistent proof table. */
   precommitStatements():D1PreparedStatement[]{
+    return this.#precommitParts().map(part=>this.#env.DB.prepare(`${part.query} SELECT CASE WHEN ${part.condition}
+      THEN 1 ELSE json_extract('assistant_context_source_changed','$') END AS context_source_asserted`).bind(...part.bindings));
+  }
+
+  /** Composable native predicates for an atomic consumer write. These are
+   * request-local owned copies, not a persisted capability or a browser DTO.
+   * Exactly the same sealed read, lease and multiset checks as precommit. */
+  precommitGuards():BudgetReservationGuard[]{
+    return this.#precommitParts().map(part=>({sql:`${part.query} SELECT ${part.condition}`,bindings:part.bindings}));
+  }
+
+  #precommitParts(){
     if(!this.#valid||!this.#sealed||this.#own||this.#structuredOwn||this.#reads.length===0||this.#validUntil!==null&&Date.now()>=this.#validUntil)
       throw new Error("assistant_context_source_unavailable");
     return this.#reads.map(read=>{
@@ -439,18 +451,16 @@ export class AssistantContextReadWitness<Value=AssistantContext>{
       if(!descriptor||read.values.some(row=>row.some(value=>!scalar(value)||typeof value==="number"&&!Number.isSafeInteger(value))))throw new Error("assistant_context_source_unavailable");
       const values=JSON.stringify(read.values),column=(name:string)=>{
         const field='captured."'+name.replaceAll('"','""')+'"';
-        // A SELECT json_array(...) column reaches D1 as text. Strip SQLite's
-        // transient JSON subtype so nested provenance arrays stay exact strings.
+        // Strip SQLite's transient JSON subtype: D1 returns these as text.
         return `CASE WHEN typeof(${field})='text' THEN ${field}||'' ELSE ${field} END`;
       };
       const actual=read.columns.length?`SELECT json_array(${read.columns.map(column).join(",")}) AS value,COUNT(*) AS n FROM captured GROUP BY 1`
         :"SELECT '[]' AS value,COUNT(*) AS n FROM captured GROUP BY 1";
-      const sql=`WITH captured AS (${descriptor.sql}), actual AS (${actual}),
-        expected AS (SELECT json(value) AS value,COUNT(*) AS n FROM json_each(?) GROUP BY 1)
-        SELECT CASE WHEN NOT EXISTS(SELECT value,n FROM actual EXCEPT SELECT value,n FROM expected)
-          AND NOT EXISTS(SELECT value,n FROM expected EXCEPT SELECT value,n FROM actual)
-          THEN 1 ELSE json_extract('assistant_context_source_changed','$') END AS context_source_asserted`;
-      return this.#env.DB.prepare(sql).bind(...descriptor.bindings,values);
+      const query=`WITH captured AS (${descriptor.sql}), actual AS (${actual}),
+        expected AS (SELECT json(value) AS value,COUNT(*) AS n FROM json_each(?) GROUP BY 1)`;
+      const condition=`NOT EXISTS(SELECT value,n FROM actual EXCEPT SELECT value,n FROM expected)
+          AND NOT EXISTS(SELECT value,n FROM expected EXCEPT SELECT value,n FROM actual)`;
+      return {query,condition,bindings:[...descriptor.bindings,values]};
     });
   }
 
