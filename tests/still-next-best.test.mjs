@@ -28,7 +28,7 @@ test('toggle compares the same evidence, changes order and produces only one pri
 test('uncertain, malformed, unhelpful, missing and ineligible choices keep score behavior',()=>{
  for(const a of [undefined,{...answer,choice:'none'}, {...answer,confidence:.1}, {...answer,probabilities:undefined},{...answer,probabilities:{a:.6,b:.3,none:.1}},{...answer,probabilities:{a:-.1,b:1.05,none:.05}},{...answer,probabilities:{a:.2,b:.9,none:.1}}])assert.equal(assessNextBest(a,['a','b'],evidence,true).accepted,false);
  assert.equal(assessNextBest(answer,['a'],evidence,true).accepted,false);
- assert.equal(assessNextBest(answer,['a','b'],{...evidence,b:{...evidence.b,score:1}},true).accepted,false);
+ assert.equal(assessNextBest(answer,['a','b'],{...evidence,b:{...evidence.b,score:1,usefulProbability:.2}},true).accepted,false);
 });
 test('nominated action preserves group limits; local preference and remote flag are bounded',()=>{
  const selected=[{id:'a',group:'make'},{id:'c',group:'context'},{id:'d',group:'context'},{id:'e',group:'write'}],ranked=[{id:'b',group:'make'},...selected];
@@ -80,4 +80,35 @@ test('listing pages nominate toolbar affordances without adding content navigati
  assert.equal(palette.toolbarDecision.defaultAction,null);assert.equal(palette.toolbarDecision.surface,'command palette');
  const format=buildDecisionState(events,{...base,view:'choose-format',projectId:'p',documentId:'d'},abilities,2).state;
  assert.equal(format.toolbarDecision.defaultAction,null);assert.equal(format.toolbarDecision.surface,'output toolbar');
+});
+
+
+test('exported New document nomination overrides score-only emphasis when flagged on',()=>{
+ // Numeric evidence from the user export, without its private workspace state.
+ const choice={status:'Answered',choice:'new-document',confidence:.98,probabilities:{none:0,projects:.01,'new-project':0,'new-document':.99}};
+ const scores={'new-document':{score:1.76,confidence:.73,usefulProbability:.76},'new-project':{score:1.2,confidence:.65,usefulProbability:.27},projects:{score:.98,confidence:.55,usefulProbability:.2}};
+ const selected=[{id:'new-project'},{id:'new-document'},{id:'projects'}],ids=selected.map(a=>a.id);
+ const on=assessNextBest(choice,ids,scores,true);
+ assert.equal(on.accepted,true);assert.equal(on.usefulProbability,.76);assert.equal(on.usefulnessConfidence,.73);
+ const ordered=nextBestOrder(selected,selected,on).map(a=>a.id);assert.equal(ordered[0],'new-document');
+ const toolbar=presentToolbar(ordered,scores,{view:'documents',nextBest:on.accepted?on.choice:undefined});
+ assert.equal(toolbar['new-document'].variant,'primary');assert.match(toolbar['new-document'].reason,/next best action/);
+ assert.equal(Object.values(toolbar).filter(x=>x.variant==='primary').length,1);
+ const off=assessNextBest(choice,ids,scores,false);
+ assert.equal(off.accepted,false);assert.equal(presentToolbar(ids,scores,{view:'documents',nextBest:off.accepted?off.choice:undefined})['new-document'].variant,'secondary');
+ assert.equal(presentToolbar(ordered,scores,{view:'documents',more:true,nextBest:on.choice})['new-document'].variant,'secondary');
+ assert.equal(assessNextBest(choice,ids,scores,true,['new-document']).accepted,false);
+});
+
+test('choice and usefulness guards identify the exact failed threshold',()=>{
+ const check=(a=answer,s=evidence)=>assessNextBest(a,['a','b'],s,true);
+ assert.match(check({...answer,confidence:.59}).reason,/Choice confidence below 60%/);
+ assert.match(check({...answer,probabilities:{a:.1,b:.49,none:.41}}).reason,/Choice probability below 50%/);
+ assert.match(check({...answer,probabilities:{a:.4,b:.5,none:.1}}).reason,/Choice lead below 15/);
+ for(const score of [undefined,NaN,-1,4])assert.match(check(answer,{...evidence,b:{...evidence.b,score}}).reason,/invalid usefulness/);
+ assert.match(check(answer,{...evidence,b:{...evidence.b,confidence:.54}}).reason,/Usefulness confidence below 55%/);
+ assert.match(check(answer,{...evidence,b:{...evidence.b,usefulProbability:.69}}).reason,/Helpful-or-better probability below 70%/);
+ assert.match(check(answer,{...evidence,b:{...evidence.b,usefulProbability:undefined}}).reason,/invalid usefulness/);
+ const boundary=check({...answer,confidence:.6,probabilities:{a:.35,b:.5,none:.15}},{...evidence,b:{score:1.7,confidence:.55,usefulProbability:.7}});
+ assert.equal(boundary.accepted,true,'Threshold values are inclusive without a mean-score minimum');
 });

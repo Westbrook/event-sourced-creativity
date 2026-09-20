@@ -4,6 +4,7 @@ import { decisionTiming, jevRequestState } from './decision-timing.ts';
 import './form-elements.js';
 import './decision-lab-panel.ts';
 import { actionLimit, type ExperimentResult } from './decision-lab.ts';
+import { NEXT_BEST_POLICY } from './next-best.ts';
 import { PRIMARY_POLICY } from './presentation.ts';
 import './vendor/elements/define/badge.js';
 import { LitElement, css, html, nothing } from 'lit';
@@ -141,7 +142,8 @@ export class StillDeveloperConsole extends LitElement {
           <details><summary>Next best action <en-badge variant=${c.nextBest?.accepted?'success':'neutral'}>${c.nextBest?.accepted?'Accepted':c.nextBest?.enabled===false?'Disabled':'Not applied'}</en-badge></summary>
             <p>${c.nextBest?.choice??'No nomination'} · ${c.nextBest?.reason??'Awaiting a decision'}</p>
             ${c.nextBest?.probability!==undefined?html`<p>Probability: ${percent(c.nextBest.probability)} · Confidence: ${percent(c.nextBest.confidence??0)} · Lead: ${percent(c.nextBest.gap??0)} · Runner-up: ${c.nextBest.runnerUp??'—'}</p>`:nothing}
-            <p class="muted">Choice is assessed alongside usefulness scores. More keeps secondary emphasis; screen space and workflow rules still apply.</p>
+            ${c.nextBest?.usefulProbability!==undefined?html`<p>Helpful or better: ${percent(c.nextBest.usefulProbability)} · Usefulness confidence: ${percent(c.nextBest.usefulnessConfidence??0)}</p>`:nothing}
+            <p class="muted">Choice takes precedence when probability ≥ ${Math.round(NEXT_BEST_POLICY.probability*100)}%, confidence ≥ ${Math.round(NEXT_BEST_POLICY.confidence*100)}%, lead ≥ ${Math.round(NEXT_BEST_POLICY.gap*100)} percentage points, helpful-or-better probability ≥ ${Math.round(NEXT_BEST_POLICY.usefulProbability*100)}%, and usefulness confidence ≥ ${Math.round(NEXT_BEST_POLICY.scoreConfidence*100)}%. No minimum mean score. More keeps secondary emphasis; screen space and workflow rules still apply.</p>
             <still-json-tree label="Choice response" .value=${c.nextBestAnswer??null}></still-json-tree>
           </details>
           <p class="muted">History: ${c.historyComplete===false?'Loading wider context':'Ready'}</p>
@@ -181,7 +183,7 @@ export class StillDeveloperConsole extends LitElement {
             return html`<details class=${row.selected?'selected':''}><summary><span>${row.action.label}</span><span>${row.selected?`#${row.selected}`:row.eligible?'available':'excluded'}</span><code>${numeric(answer?.score)} / ${numeric(row.value)}</code></summary>
               <p><code>${row.action.id}</code> · ${row.action.group}</p><p>Now: ${current?.eligible?'available':current?.eligibilityReason??'unavailable'}. Decision: ${!row.eligible?row.eligibilityReason:row.reason||`selected #${row.selected}`}.</p>
               ${row.localReason?html`<p>Local rule: ${row.localReason}.</p>`:nothing}${row.base!==undefined?html`<p>Base ${numeric(row.base)} (${row.basis==='jev'?'Jev':'local policy'})${row.rank?` · rank ${row.rank}`:''}</p>${row.adjustments?.map(a=>html`<p class="adjustment"><b>${a.delta>0?'+':''}${numeric(a.delta)}</b> ${a.label}${a.questions.length?html`<small>${a.questions.join(', ')}</small>`:nothing}</p>`)}<p>Final rank value: ${numeric(row.value)}</p>`:nothing}
-              ${trace?.presentation[row.action.id]?html`<p>Initial menu emphasis: ${trace.presentation[row.action.id].tier} · ${trace.presentation[row.action.id].variant} · ${trace.presentation[row.action.id].size}. ${trace.presentation[row.action.id].reason}.</p>`:nothing}${this.distribution(answer)}
+              ${trace?.presentation[row.action.id]?html`<p>Score-only emphasis (before choice precedence): ${trace.presentation[row.action.id].tier} · ${trace.presentation[row.action.id].variant} · ${trace.presentation[row.action.id].size}. ${trace.presentation[row.action.id].reason}.</p>`:nothing}${this.distribution(answer)}
             </details>`;
           })}</div>
           <details><summary>Creative questions · ${questions.filter(q=>q.asked).length} sent</summary>${questions.filter(q=>`${q.id} ${q.question.instructions}`.toLowerCase().includes(this.filter)).map(q=>html`<details><summary><code>${q.id}</code> · ${q.composition} · ${q.question.type} · ${numeric(q.score??q.noul)}${q.choice?` ${q.choice}`:''}</summary>${this.distribution(q)}</details>`)}</details>

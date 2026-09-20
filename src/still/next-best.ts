@@ -1,9 +1,9 @@
 import type { Action, Question, Position } from './decisions.ts';
 import type { EmphasisEvidence } from './presentation.ts';
 
-export const NEXT_BEST_POLICY={confidence:.6,probability:.5,gap:.15,score:2,scoreConfidence:.55,usefulProbability:.7};
+export const NEXT_BEST_POLICY={confidence:.6,probability:.5,gap:.15,scoreConfidence:.55,usefulProbability:.7};
 export type NextBestAnswer={status:string;choice?:string;confidence?:number;probabilities?:Record<string,number>};
-export type NextBestAssessment={enabled:boolean;accepted:boolean;reason:string;choice?:string;confidence?:number;probability?:number;runnerUp?:string;gap?:number};
+export type NextBestAssessment={enabled:boolean;accepted:boolean;reason:string;choice?:string;confidence?:number;probability?:number;runnerUp?:string;gap?:number;usefulProbability?:number;usefulnessConfidence?:number};
 /** Product affordances, not inferred user intent or a ranking of content rows. */
 export function toolbarDecisionContext(position:Pick<Position,'view'|'palette'>,candidates:Pick<Action,'id'>[]){
   const listing=position.view==='projects'?'projects':position.view==='documents'?'documents':null;
@@ -31,8 +31,16 @@ export function assessNextBest(answer:NextBestAnswer|undefined,ids:string[],evid
   if(!ids.includes(choice))return {...result,reason:'Nominee is not eligible for the scored toolbar'};
   if(restricted.includes(choice))return {...result,reason:'Page policy prevents primary emphasis'};
   const p=NEXT_BEST_POLICY,s=evidence[choice];
-  if(answer.confidence<p.confidence||result.probability!<p.probability||result.gap!+1e-9<p.gap)return {...result,reason:'Choice does not have a clear enough lead'};
-  if(!s||!valid(s.score,3)||s.score<p.score||!valid(s.confidence)||s.confidence<p.scoreConfidence||!valid(s.usefulProbability)||s.usefulProbability<p.usefulProbability)return {...result,reason:'Usefulness evidence does not support the nomination'};
+  Object.assign(result,{usefulProbability:s?.usefulProbability,usefulnessConfidence:s?.confidence});
+  if(answer.confidence<p.confidence)return {...result,reason:`Choice confidence below ${Math.round(p.confidence*100)}%`};
+  if(result.probability!<p.probability)return {...result,reason:`Choice probability below ${Math.round(p.probability*100)}%`};
+  if(result.gap!+1e-9<p.gap)return {...result,reason:`Choice lead below ${Math.round(p.gap*100)} percentage points`};
+  if(!s||!valid(s.score,3)||!valid(s.confidence)||!valid(s.usefulProbability))return {...result,reason:'Missing or invalid usefulness evidence'};
+  if(s.confidence<p.scoreConfidence)return {...result,reason:`Usefulness confidence below ${Math.round(p.scoreConfidence*100)}%`};
+  if(s.usefulProbability<p.usefulProbability)return {...result,reason:`Helpful-or-better probability below ${Math.round(p.usefulProbability*100)}%`};
+  // The choice supplies precedence. Its support is P(helpful or better), not a
+  // second mean-score floor that would veto a likely-helpful nomination.
+
   return {...result,accepted:true,reason:'Choice supported by usefulness and a clear probability lead'};
 }
 export function nextBestOrder<T extends {id:string;group?:string}>(selected:T[],ranked:T[],assessment:NextBestAssessment,limit=4):T[]{
