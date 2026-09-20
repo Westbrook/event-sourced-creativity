@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {assessNextBest,nextBestOrder,nextBestQuestion,readNextBestFlag} from '../src/still/next-best.ts';
-import {questionsFor,ACTIONS} from '../src/still/decisions.ts';
+import {questionsFor,ACTIONS,buildDecisionState} from '../src/still/decisions.ts';
 import {presentToolbar} from '../src/still/presentation.ts';
 import {validPanelCommand} from '../src/still/remote-protocol.ts';
 const evidence={a:{score:2.5,confidence:.8,usefulProbability:.9},b:{score:2.4,confidence:.8,usefulProbability:.9}};
@@ -41,7 +41,7 @@ test('server returns sanitized choice in the same request and reuses it from cac
  const {createSceneCostFixture}=await import('./helpers/scene-cost-fixture.mjs');
  const f=await createSceneCostFixture(1,'visual'),saved=globalThis.fetch;f.env.JEV_API_KEY='fixture-only';let calls=0;
  globalThis.fetch=async(url,init)=>{
-  calls++;const {questions}=JSON.parse(init.body);assert.equal(questions.next_best_action.type,'choice');
+  calls++;const {questions,state}=JSON.parse(init.body);assert.equal(state.toolbarDecision.defaultAction,'new-project');assert.equal(questions.next_best_action.type,'choice');
   const choice='new-project',probabilities=Object.fromEntries(Object.keys(questions.next_best_action.criteria).map(id=>[id,id===choice?.9:id==='none'?.1:0]));
   return Response.json({model:'fixture',answers:{use_new_project:{type:'score',score:3,confidence:.9},'use_new-project':{type:'score',score:3,confidence:.9,probabilities:{0:0,1:0,2:0,3:1}},next_best_action:{type:'choice',choice,confidence:.8,probabilities,privateProviderField:'omit'}}});
  };
@@ -51,4 +51,33 @@ test('server returns sanitized choice in the same request and reuses it from cac
   assert.equal(a.nextBest.choice,'new-project');assert.equal(a.nextBest.status,'Answered');assert.equal(a.nextBest.privateProviderField,undefined);assert.equal(a.diagnostics,undefined);
   const b=await(await f.request('/api/still/decision',f.json(body))).json();assert.deepEqual(b.nextBest,a.nextBest);assert.equal(calls,1);
  }finally{globalThis.fetch=saved;await f.drainBackground();f.close();}
+});
+
+
+test('listing pages nominate toolbar affordances without adding content navigation or choosing listing order',()=>{
+ const events=[{eventId:'p',sequence:1,type:'ProjectCreated',occurredAt:'2026-09-20',payload:{project_id:'p',name:'Project'}},{eventId:'d',sequence:2,type:'DocumentCreated',occurredAt:'2026-09-20',payload:{project_id:'p',document_id:'d',title:'Existing document'}}];
+ const base={projectId:'',documentId:'',blockId:'',outputId:'',intent:'',recentActions:[]};
+ const abilities={author:true,projectCreate:true,generate:true,formats:['image']};
+ for(const [view,projectId,defaultAction] of [['projects','','new-project'],['documents','p','new-document']]){
+  const pos={...base,view,projectId};const {state,candidates}=buildDecisionState(events,pos,abilities,2);
+  const question=questionsFor(candidates,pos).next_best_action;
+  assert.equal(state.toolbarDecision.defaultAction,defaultAction);
+  assert.match(state.toolbarDecision.contentNavigation,/opened directly/);
+  assert.match(state.toolbarDecision.contentNavigation,/listing order are outside/);
+  assert.ok(question.criteria[defaultAction]);assert.equal(question.criteria[view],undefined,'No navigation to the current listing');
+  assert.equal(question.criteria.p,undefined);assert.equal(question.criteria.d,undefined,'No content rows in toolbar nominations');
+  assert.match(question.instructions,/none only when none of the eligible toolbar actions would be useful/);
+  assert.match(question.instructions,/uncertainty.*probabilities and confidence/);
+  assert.match(questionsFor(candidates,pos)['use_'+defaultAction].instructions,/invitation, not the probability/);
+  const denied=buildDecisionState(events,pos,{...abilities,author:false,projectCreate:false},2);
+  assert.equal(denied.state.toolbarDecision.defaultAction,null);
+  assert.equal(questionsFor(denied.candidates,pos).next_best_action.criteria[defaultAction],undefined);
+ }
+ // Defaults describe the page, never overwrite explicit intent or apply to other surfaces.
+ const explicit=buildDecisionState(events,{...base,view:'documents',projectId:'p',intent:'Return to my projects'},abilities,2).state;
+ assert.equal(explicit.current.intent,'Return to my projects');assert.match(explicit.toolbarDecision.defaultMeaning,/override/);
+ const palette=buildDecisionState(events,{...base,view:'projects',palette:{toolbar:['new-project'],more:[]}},abilities,2).state;
+ assert.equal(palette.toolbarDecision.defaultAction,null);assert.equal(palette.toolbarDecision.surface,'command palette');
+ const format=buildDecisionState(events,{...base,view:'choose-format',projectId:'p',documentId:'d'},abilities,2).state;
+ assert.equal(format.toolbarDecision.defaultAction,null);assert.equal(format.toolbarDecision.surface,'output toolbar');
 });
