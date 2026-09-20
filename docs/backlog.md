@@ -215,3 +215,7 @@ services, qualification and enrollment remain in the Sites capability checklist.
 ### MEM-003 Chat Studio guidance checkpoint
 
 [Read-only embedded Memory guidance](forma-memory-chat-guidance-2026-09-20.md) is implemented and locally tested on the Memory branch. The [full native completion matrix](forma-memory-completion-matrix-2026-09-20.md) remains authoritative; creative-edit/output ancestry, autocomplete, long-term consolidation, resource coverage and integrated capacity are still implementation work. External provisioning, owner deployment and affirmative enrollment remain separate To Do gates.
+
+### MEM-003 native capacity and response bounds
+
+[Lease-preserving dispatch continuation, metadata snapshots and bounded provider reads](forma-memory-native-capacity-2026-09-20.md) are implemented with local native/D1/privacy evidence. Conservative whole-invocation capacity still requires work; external hosted qualification is separately tracked. No real provider, deployment or user enrollment was activated.

@@ -648,8 +648,17 @@ async function structuredSchemaValue(value: unknown): Promise<boolean> {
 /** Exact normal 0032 or reviewed reference-capture candidate; absence is witnessed, never installed.
  * This helper is metadata-only and grants no ledger/body access. */
 export async function structuredConversationLedgerSchema(env: WorkerEnv): Promise<{present:boolean;referenceCapture:boolean;guard:MemorySqlGuard}> {
-  const db=env.DB, result=structuredClone(await db.prepare(`SELECT ${structuredSchemaExpression} AS schema_json`).all<StructuredLedgerRow>());
-  if (!structuredResults([result],1) || result.results.length !== 1) throw new Error("memory-structured-schema-unavailable");
+  const db=env.DB;
+  return qualifyStructuredConversationLedgerSchema(env,db,await structuredConversationLedgerSchemaRead(db).all<StructuredLedgerRow>());
+}
+export const structuredConversationLedgerSchemaRead=(db:WorkerEnv['DB'])=>db.prepare(`SELECT ${structuredSchemaExpression} AS schema_json`);
+/** Metadata-only observation. Its exact catalog predicate still guards every
+ * use; batching it does not cache schema, source access or custody decisions. */
+export async function qualifyStructuredConversationLedgerSchema(env:WorkerEnv,db:WorkerEnv['DB'],observation:unknown):Promise<{present:boolean;referenceCapture:boolean;guard:MemorySqlGuard}>{
+  const result=structuredClone(observation) as D1Result<StructuredLedgerRow>;
+  if (env.DB!==db) throw new Error("memory-structured-preparation-changed");
+  if (!structuredResults([result],1) || result.results.length !== 1 || !structuredObject(result.results[0])
+    || Object.keys(result.results[0]).length!==1 || !Object.hasOwn(result.results[0],'schema_json')) throw new Error("memory-structured-schema-unavailable");
   const value=result.results[0].schema_json, present=await structuredSchemaValue(value);
   if (env.DB!==db) throw new Error("memory-structured-preparation-changed");
   const referenceCapture=present&&await memoryDigest(canonicalConsent(JSON.parse(String(value))))===structuredCaptureSchemaHash;

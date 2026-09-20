@@ -130,19 +130,6 @@ async function resolveNativeDerivationAdmission(env: WorkerEnv, jobId: string, r
   };
   const jobQuery=`SELECT ${DERIVATION_JOB_COLUMNS.join(",")},${producerProjection(schema.producersPresent)} FROM memory_derivation_jobs WHERE job_id=? LIMIT 2`;
   const referenceQuery=`SELECT ${DERIVATION_JOB_SOURCE_COLUMNS.join(",")} FROM memory_derivation_job_sources WHERE job_id=? ORDER BY sequence,event_id LIMIT 129`;
-  // These bounded metadata reads depend only on the native job identity. Sharing
-  // a binding call does not authorize either row; every exact reference and job
-  // predicate is still replayed in the final transaction below.
-  const observed=mode==='read'?structuredClone(await db.batch<Row>([
-    db.prepare(jobQuery).bind(jobId),db.prepare(referenceQuery).bind(jobId),
-  ])):null;
-  if(observed&&(env.DB!==db||configured!==configuration(env)||!derivationResults(observed,2)))fail();
-  const jobs = observed ? observed[0]!.results : await read(jobQuery, [jobId]);
-  if (jobs.length !== 1) return null;
-  const {chat_studio:chat,...job}=jobs[0]!;
-  if ((chat!==0&&chat!==1)||!jobShape(job)) return null;
-  const now = new Date().toISOString();
-  if (job.expires_at <= now || (mode === "execute" ? job.state !== "waiting" || job.not_before > now : job.state !== "leased")) return null;
   // Read-only admission binds grant and parent metadata in one native snapshot.
   // Both exact row guards below still replay in every final source transaction.
   const bundle = mode === 'read' ? `,(SELECT json_group_array(json_array(${DERIVATION_PARENT_COLUMNS.join(',')}))
@@ -151,12 +138,26 @@ async function resolveNativeDerivationAdmission(env: WorkerEnv, jobId: string, r
     (SELECT json_group_array(json_array(${DERIVATION_QUALIFICATION_COLUMNS.join(',')}))
       FROM (SELECT ${DERIVATION_QUALIFICATION_COLUMNS.join(',')} FROM memory_derivation_qualifications
         WHERE qualification_id=memory_derivation_grants.qualification_id LIMIT 2)) AS qualification_rows` : '';
-  const grants = await read(`SELECT ${DERIVATION_GRANT_COLUMNS.join(',')}${bundle} FROM memory_derivation_grants WHERE consent_id=?${mode === 'read' ? ' AND actor_user_id=?' : ''} LIMIT 2`,
-    [job.consent_id,...(mode === 'read' ? [readActorId!] : [])]);
+  const grantQuery=`SELECT ${DERIVATION_GRANT_COLUMNS.join(',')}${bundle} FROM memory_derivation_grants
+    WHERE consent_id=(SELECT consent_id FROM memory_derivation_jobs WHERE job_id=?) AND actor_user_id=? LIMIT 2`;
+  // These bounded metadata reads depend only on the native job identity. Sharing
+  // a binding call does not authorize either row; every exact reference and job
+  // predicate is still replayed in the final transaction below.
+  const observed=mode==='read'?structuredClone(await db.batch<Row>([
+    db.prepare(jobQuery).bind(jobId),db.prepare(referenceQuery).bind(jobId),db.prepare(grantQuery).bind(jobId,readActorId!),
+  ])):null;
+  if(observed&&(env.DB!==db||configured!==configuration(env)||!derivationResults(observed,3)))fail();
+  const jobs = observed ? observed[0]!.results : await read(jobQuery, [jobId]);
+  if (jobs.length !== 1) return null;
+  const {chat_studio:chat,...job}=jobs[0]!;
+  if ((chat!==0&&chat!==1)||!jobShape(job)) return null;
+  const now = new Date().toISOString();
+  if (job.expires_at <= now || (mode === "execute" ? job.state !== "waiting" || job.not_before > now : job.state !== "leased")) return null;
+  const grants = observed ? observed[2]!.results : await read(`SELECT ${DERIVATION_GRANT_COLUMNS.join(',')} FROM memory_derivation_grants WHERE consent_id=? LIMIT 2`,[job.consent_id]);
   if (grants.length !== 1) return null;
   const {parent_rows:parentRows,qualification_rows:qualificationRows,...unbundled} = grants[0]!;
   const grant = mode === 'read' ? unbundled : grants[0]!;
-  if (!memoryDerivationGrantShape(grant)) return null;
+  if (!memoryDerivationGrantShape(grant) || grant.consent_id !== job.consent_id) return null;
   if (mode === "read" && grant.actor_user_id !== readActorId) return null;
   if (!memoryDerivationEnabled(env, grant.actor_user_id) || grant.revoked_at !== null || grant.background_enabled !== 1
     || grant.purpose !== job.purpose || job.after_sequence < grant.source_after_sequence || grant.expires_at < job.expires_at

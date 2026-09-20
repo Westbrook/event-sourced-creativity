@@ -17,7 +17,7 @@ import { synchronizeProjectScope, readProjectSourceEvents, type ProjectRequestCo
 import { managedPilotSourceClassificationValid, verifySourceDocumentEvidence } from "./media-api.ts";
 import { beginConsequentialStep, claimConsequentialExecution, completeConsequentialExecution, consentHash, canonicalConsent, executionAdmissionGuard, executionContentCustodyGuard, failConsequentialExecution, quoteConsequentialExecution, readConsequentialExecution, reconcileConsequentialUsage, reserveConsequentialSteps, settleConsequentialStep, consequentialUsageSettled, proveConsequentialStepNotSubmitted, type ConsequentialBinding, type ConsequentialPreview, type ExecutionRow } from "./consequential-consent.ts";
 import { hasCapability, pilotExecutionAllowance, readAccountBudgets, storePrivateContent, requireUser, requireConsent, type BudgetReservationGuard, type PilotUser, type ProjectExecutionScope } from "./pilot-policy.ts";
-import { buildAssistantProviderRequest, snapshotAssistantProviderInput, readAssistantProviderUsage, decodeAssistantProviderResult, MAX_ASSISTANT_PROVIDER_REQUEST_BYTES, MAX_ASSISTANT_PROVIDER_RESPONSE_BYTES, type AssistantProviderResult, type AssistantProviderAliases, type AssistantProviderSource } from "./assistant-provider.ts";
+import { buildAssistantProviderRequest, snapshotAssistantProviderInput, readAssistantProviderUsage, decodeAssistantProviderResult, readBoundedAssistantProviderResponse, MAX_ASSISTANT_PROVIDER_REQUEST_BYTES, type AssistantProviderResult, type AssistantProviderAliases, type AssistantProviderSource } from "./assistant-provider.ts";
 import { serializeEvent, type WorkerEnv, type WorkerExecutionContext } from "./runtime.ts";
 import { ASSISTANT_STATE_EVENT_SQL } from "../src/model/assistant-event-views.ts";
 import { parseMemoryAnswerPresentation, type MemoryAnswerPresentation } from "../src/model/memory-answer.ts";
@@ -340,7 +340,8 @@ async function retainedConsent(env:WorkerEnv,actor:SpecialistActor,scopeKey:stri
   if(await env.DB.prepare("SELECT 1 AS retained WHERE "+proof.sql).bind(...proof.bindings).first()){
     if(request.memory){
       if(request.memory.projectId!==binding.projectId||request.memory.documentId!==binding.documentId)fail('assistant_memory_source_changed');
-      if(preparedMemory&&canonicalConsent(semanticAssistantMemoryInputs(env,preparedMemory).binding)===canonicalConsent(request.memory))semanticMemoryReads.set(request,preparedMemory);
+      if(preparedMemory&&semanticAssistantMemoryLeaseCurrent(env,preparedMemory,actor.principal.userId)
+        &&canonicalConsent(semanticAssistantMemoryInputs(env,preparedMemory).binding)===canonicalConsent(request.memory))semanticMemoryReads.set(request,preparedMemory);
       else await refreshSemanticMemory(env,actor,request);
       const check=semanticAssistantMemoryRetentionGuard(env,semanticMemory(env,request)!,id);
       if(!await env.DB.prepare('SELECT 1 AS retained WHERE '+check.sql).bind(...check.bindings).first())return null;
@@ -1016,11 +1017,15 @@ async function finishFailed(env:WorkerEnv,task:SpecialistTaskRecord,leaseToken:s
     .bind(paid?"needs-review":"failed",code,new Date().toISOString(),new Date().toISOString(),task.task_id,task.actor_user_id,leaseToken).run();
 }
 /** Only an explicit execute request drives the existing queue. Reads never call this function. */
-async function driveApprovedTask(request:Request,env:WorkerEnv,host:AssistantSpecialistHost,taskId:string,turnId:string){
+async function driveApprovedTask(request:Request,env:WorkerEnv,host:AssistantSpecialistHost,taskId:string,turnId:string,preparedMemory?:SemanticAssistantMemory){
   let task:SpecialistTaskRecord|null=null,retained:Retained|null=null,leaseToken="",ownsSubmission=false,providerInvoked=false;
   try{
     const authorization=await host.authorize(request,env),actor=authorization.authorized;if(authorization.response||!actor)return;
-    const scopeKey=host.scopeKey(actor);retained=await retainedConsent(env,actor,scopeKey,turnId,taskId);if(!retained)return;
+    const scopeKey=host.scopeKey(actor);
+    // Continue only this execution's native source compilation, never its access
+    // decision. Retained consent is reread; the actor, exact binding, original
+    // monotonic lease and every transactional source assertion remain mandatory.
+    retained=await retainedConsent(env,actor,scopeKey,turnId,taskId,preparedMemory);if(!retained)return;
     task=await existingTask(env,actor,scopeKey,turnId);if(!task||task.task_id!==taskId)return;
     if(await recoverResult(env,actor,host,task,retained))return;
     if(retained.row.status!=="reserved")return;
@@ -1055,9 +1060,16 @@ async function driveApprovedTask(request:Request,env:WorkerEnv,host:AssistantSpe
     const ready=memory||splitReady?(await env.DB.batch<{deadline:string}>([...(memory?semanticAssistantMemoryStatements(env,memory):[]),...readyChecks,readyStatement])).at(-1)?.results[0]
       :await readyStatement.first<{deadline:string}>();
     if(!ready||!Number.isFinite(Date.parse(ready.deadline))||Date.now()>=Date.parse(ready.deadline)||new Date().toISOString().slice(0,7)!==retained.binding.period||!env.OPENAI_API_KEY||modelEligibility(env,currentActor,host,retained.request.taskKind,retained.binding.steps[0]!.model as AssistantModel,retained.request.explicitModel).length){await assertNoPaidMemory(env,noMemoryProof(retained.request));fail("assistant_dispatch_authorization_changed");}
-    const started=Date.now();providerInvoked=true;
-    const response=await fetch("https://api.openai.com/v1/responses",{method:"POST",headers:{authorization:"Bearer "+env.OPENAI_API_KEY,"content-type":"application/json","X-Client-Request-Id":taskId,...(env.OPENAI_PROJECT?{"OpenAI-Project":env.OPENAI_PROJECT}:{})},body:JSON.stringify(retained.request.providerRequest)});
-    const text=await response.text();if(new TextEncoder().encode(text).byteLength>MAX_ASSISTANT_PROVIDER_RESPONSE_BYTES)fail("assistant_provider_response_unconfirmed");
+    const started=Date.now(),remaining=Math.min(60_000,Date.parse(ready.deadline)-started);
+    if(!Number.isFinite(remaining)||remaining<=0)fail('assistant_dispatch_authorization_changed');
+    const controller=new AbortController(),timeout=setTimeout(()=>controller.abort(),remaining);
+    let response:Response,text:string;
+    try{
+      providerInvoked=true;
+      response=await fetch("https://api.openai.com/v1/responses",{method:"POST",signal:controller.signal,headers:{authorization:"Bearer "+env.OPENAI_API_KEY,"content-type":"application/json","X-Client-Request-Id":taskId,...(env.OPENAI_PROJECT?{"OpenAI-Project":env.OPENAI_PROJECT}:{})},body:JSON.stringify(retained.request.providerRequest)});
+      text=await readBoundedAssistantProviderResponse(response,controller.signal);
+    }catch(error){if(controller.signal.aborted)fail('assistant_provider_response_unconfirmed');throw error;}
+    finally{clearTimeout(timeout);}
     const raw:RawReceipt={schema:1,executionId:taskId,bindingHash:retained.row.binding_hash,providerRequestHash:await consentHash(retained.request.providerRequest),httpStatus:response.status,responseBody:text,receivedAt:new Date().toISOString(),latencyMs:Date.now()-started};
     if(retained.request.memory){
       // Record actual usage independently of source retention. A withdrawal
@@ -1146,7 +1158,7 @@ export async function handleAssistantSpecialistConsent(request:Request,env:Worke
       if(task.task_id!==id){const winner=await retainedConsent(env,actor,scopeKey,turnId,task.task_id);if(!winner)return json({error:"assistant_existing_task_unavailable",retentionUnavailable:true},409);return resultResponse(env,actor,host,winner,task,id);}
     }
     const background=new Request(request.url,{method:"GET",headers:request.headers});
-    execution.waitUntil(driveApprovedTask(background,env,host,id,turnId).catch(()=>undefined));
+    execution.waitUntil(driveApprovedTask(background,env,host,id,turnId,semanticMemory(env,retained.request)??undefined).catch(()=>undefined));
     return resultResponse(env,actor,host,retained,task,id,202);
   }catch(error){const code=errorCode(error);return json({error:code,noAutomaticRetry:true,...(code==="assistant_read_scope_denied"?{retentionUnavailable:true}:{})},code==="assistant_provider_unavailable"?503:/rights|denied|authorization|custody/u.test(code)?403:code.includes("too_large")?413:409);}
 }

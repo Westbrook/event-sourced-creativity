@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { providerFacingAssistantViews,requestAssistantProvider } from "../worker/assistant-provider.ts";
+import { providerFacingAssistantViews,requestAssistantProvider,readBoundedAssistantProviderResponse,MAX_ASSISTANT_PROVIDER_RESPONSE_BYTES } from "../worker/assistant-provider.ts";
 
 test("provider views use current page and recent actor-owned work without source transcripts or disabled audio", () => {
   const safe = providerFacingAssistantViews({
@@ -67,4 +67,41 @@ test("provider adapter aliases returned block actions and rejects input receipts
     globalThis.fetch=async()=>Response.json({id:"overrun",model:"gpt-5.6-luna",output_text:JSON.stringify({reply:"Approved",actions:[]}),usage:{input_tokens:5_000_000,output_tokens:2,total_tokens:5_000_002}});
     await assert.rejects(()=>requestAssistantProvider({OPENAI_API_KEY:"test"},"actor",{model:"gpt-5.6-luna",context,message:"Hi",locale:"en",maximumInputTokens:100,maximumOutputTokens:100}),/assistant_provider_usage_unverified/);
   }finally{globalThis.fetch=original;}
+});
+
+
+test('bounded specialist response preserves exact UTF-8 across chunk boundaries',async()=>{
+ const bytes=new TextEncoder().encode('{"text":"صباح الخير 日本語 🪴"}');let offset=0;
+ const response=new Response(new ReadableStream({pull(controller){if(offset===bytes.length)controller.close();else controller.enqueue(bytes.slice(offset,++offset));}},{highWaterMark:0}));
+ assert.equal(await readBoundedAssistantProviderResponse(response,new AbortController().signal),new TextDecoder().decode(bytes));
+});
+for(const declared of [false,true])test('bounded specialist response cancels overflow without draining remaining bytes '+declared,async()=>{
+ let pulls=0,cancels=0;
+ const response=new Response(new ReadableStream({pull(controller){pulls++;controller.enqueue(new Uint8Array(MAX_ASSISTANT_PROVIDER_RESPONSE_BYTES+1));},cancel(){cancels++;}},{highWaterMark:0}),
+  {headers:declared?{'content-length':String(MAX_ASSISTANT_PROVIDER_RESPONSE_BYTES+1)}:{'content-length':'1'}});
+ await assert.rejects(readBoundedAssistantProviderResponse(response,new AbortController().signal),/assistant_provider_response_unconfirmed/u);
+ assert.equal(pulls,Number(!declared));assert.equal(cancels,1);
+});
+test('bounded specialist response accepts exactly the byte ceiling',async()=>{
+ const value='a'.repeat(MAX_ASSISTANT_PROVIDER_RESPONSE_BYTES);
+ assert.equal(await readBoundedAssistantProviderResponse(new Response(value),new AbortController().signal),value);
+});
+for(const bytes of [[0xff],[0xf0,0x9f]])test('bounded specialist response rejects invalid or incomplete UTF-8 '+bytes,async()=>{
+ await assert.rejects(readBoundedAssistantProviderResponse(new Response(new Uint8Array(bytes)),new AbortController().signal),/assistant_provider_response_unconfirmed/u);
+});
+for(const prior of [false,true])test('bounded specialist response aborts a stalled body '+prior,async()=>{
+ const controller=new AbortController();let cancelled=0;
+ const response=new Response(new ReadableStream({cancel(){cancelled++;}},{highWaterMark:0}));
+ if(prior)controller.abort();
+ const result=readBoundedAssistantProviderResponse(response,controller.signal);if(!prior)controller.abort();
+ await assert.rejects(result,/assistant_provider_response_unconfirmed/u);assert.equal(cancelled,1);
+});
+for(const length of ['-1','invalid','1e8'])test('bounded specialist response rejects malformed declared length '+length,async()=>{
+ await assert.rejects(readBoundedAssistantProviderResponse(new Response('{}',{headers:{'content-length':length}}),new AbortController().signal),/assistant_provider_response_unconfirmed/u);
+});
+
+
+test('bounded specialist response does not silently remove a UTF-8 byte-order marker from retained text',async()=>{
+ const value='\ufeff{"receipt":"original bytes"}';
+ assert.equal(await readBoundedAssistantProviderResponse(new Response(value),new AbortController().signal),value);
 });

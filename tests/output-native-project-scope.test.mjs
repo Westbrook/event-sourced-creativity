@@ -84,8 +84,8 @@ async function fixture() {
 
 function assertCurrentManifestReads(state) {
   // Memory custody qualification precedes the one exact-scoped manifest read.
-  // This same four-read path predates sponsor admission (dc9c429 baseline).
-  assert.equal(state.transport.d1, 4);
+  // Four unchanged statements now use two read-only snapshots: catalogs, then integrity/manifest.
+  assert.equal(state.transport.d1, 2);
   assert.equal(state.transport.queries.length, 4);
   const [ledger, origin, integrity, manifest] = state.transport.queries;
   for (const sql of state.transport.queries) {

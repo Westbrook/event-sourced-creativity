@@ -97,6 +97,32 @@ function assistantProviderView(context: AssistantContext, message: string, alias
 export const MAX_ASSISTANT_PROVIDER_REQUEST_BYTES=128*1024;
 export const MAX_ASSISTANT_PROVIDER_RESPONSE_BYTES=256*1024;
 export const MAX_ASSISTANT_PROVIDER_OUTPUT_BYTES=64*1024;
+
+/** Bound bytes while reading, not after Response.text() has buffered arbitrary
+ * data. This retains exact UTF-8 text for receipt verification, never truncates
+ * a paid answer, and makes no claim that an interrupted call was uncharged. */
+export async function readBoundedAssistantProviderResponse(response:Response,signal:AbortSignal):Promise<string>{
+  const unavailable=()=>new Error('assistant_provider_response_unconfirmed');
+  const body=response.body,length=response.headers.get('content-length');
+  if(!body)throw unavailable();
+  if(signal.aborted||length!==null&&(!/^\d+$/u.test(length)||Number(length)>MAX_ASSISTANT_PROVIDER_RESPONSE_BYTES)){
+    void body.cancel().catch(()=>{});throw unavailable();
+  }
+  const reader=body.getReader(),decoder=new TextDecoder('utf-8',{fatal:true,ignoreBOM:true});let bytes=0,text='';
+  const abort=()=>{void reader.cancel().catch(()=>{});};
+  signal.addEventListener('abort',abort,{once:true});
+  try{
+    if(signal.aborted)throw unavailable();
+    for(;;){
+      const next=await reader.read();if(signal.aborted)throw unavailable();if(next.done)break;
+      bytes+=next.value.byteLength;if(bytes>MAX_ASSISTANT_PROVIDER_RESPONSE_BYTES)throw unavailable();
+      text+=decoder.decode(next.value,{stream:true});
+    }
+    return text+decoder.decode();
+  }catch{throw unavailable();}
+  finally{signal.removeEventListener('abort',abort);void reader.cancel().catch(()=>{});reader.releaseLock();}
+}
+
 export type AssistantProviderAliases=Readonly<Record<string,string>>;
 export type AssistantProviderSource={
   blocks:readonly {id:string;type:string;properties:Record<string,unknown>;locked:boolean;intent:string;document_id?:string;canvas_id?:string|null;scope?:string}[];

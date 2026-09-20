@@ -225,10 +225,15 @@ export function projectDocumentPublicationEvents(events:CreativeEvent[],projectI
 export async function synchronizeProjectScope(env:WorkerEnv,input:{organizationId:string;projectAccessId:string;projectId:string;ownerUserId:string}){
   const ownerStream=`creative:${input.ownerUserId}`;
   const ledgerDb=env.DB;
-  const {structuredConversationLedgerSchema}=await import("./memory-live-store.ts");
-  const ledgerSchema=await structuredConversationLedgerSchema(env);
-  const {nativeStructuredOriginSchema,nativeStructuredOriginMinimizedIntegrity}=await import("./memory-native-origin.ts");
-  const originSchema=await nativeStructuredOriginSchema(env);
+  const {structuredConversationLedgerSchemaRead,qualifyStructuredConversationLedgerSchema}=await import("./memory-live-store.ts");
+  const {nativeStructuredOriginSchemaRead,qualifyNativeStructuredOriginSchema}=await import("./memory-native-origin-schema.ts");
+  const {nativeStructuredOriginMinimizedIntegrity}=await import("./memory-native-origin.ts");
+  // Independent catalog metadata shares one native snapshot. Qualification and
+  // all pre-read/prewrite assertions below still use both exact SQL witnesses.
+  const schemas=await ledgerDb.batch([structuredConversationLedgerSchemaRead(ledgerDb),nativeStructuredOriginSchemaRead(ledgerDb)]);
+  if(!Array.isArray(schemas)||schemas.length!==2)throw new Error("memory_structured_schema_changed");
+  const ledgerSchema=await qualifyStructuredConversationLedgerSchema(env,ledgerDb,schemas[0]);
+  const originSchema=await qualifyNativeStructuredOriginSchema(env,ledgerDb,schemas[1]);
   const minimizedIntegrity=originSchema.present?nativeStructuredOriginMinimizedIntegrity():{sql:"1",bindings:[]};
   const ledgerSchemaAssertion=()=>ledgerDb.prepare(`SELECT CASE WHEN (${ledgerSchema.guard.condition}) AND (${originSchema.guard.condition}) AND (${minimizedIntegrity.sql}) THEN 1
     ELSE json('memory_structured_schema_changed') END AS verified`).bind(...ledgerSchema.guard.bindings,...originSchema.guard.bindings,...minimizedIntegrity.bindings);
@@ -255,11 +260,9 @@ export async function synchronizeProjectScope(env:WorkerEnv,input:{organizationI
   // are never interpreted as personal scope. Reject recreated answer/manifest
   // bodies or sidecars even when the ordinary project fast path would return.
   // The user's original authored content is deliberately outside this proof.
-  const originIntegrity=await ledgerSchemaAssertion().all();
-  sameLedgerDatabase();
-  confirmLedgerBatch([originIntegrity],1);
-  // The fast-path decision and its exact custody counts share one SQLite snapshot.
-  const state=await env.DB.prepare(`SELECT CASE WHEN (${ledgerSchema.guard.condition}) AND (${originSchema.guard.condition}) AND (${minimizedIntegrity.sql}) THEN 1
+  // The independent integrity check must also run when no migration row
+  // exists. Share its snapshot with the fast-path decision, not its outcome.
+  const stateStatement=ledgerDb.prepare(`SELECT CASE WHEN (${ledgerSchema.guard.condition}) AND (${originSchema.guard.condition}) AND (${minimizedIntegrity.sql}) THEN 1
       ELSE json('memory_structured_schema_changed') END AS origin_integrity,migration.status,migration.last_owner_sequence,
     (SELECT COALESCE(MAX(sequence),0) FROM events WHERE stream_id=?) AS owner_head,
     (SELECT COALESCE(MAX(project_sequence),0) FROM project_event_scopes WHERE project_access_id=? AND organization_id=? AND project_id=? AND owner_user_id=?) AS event_count,
@@ -268,10 +271,20 @@ export async function synchronizeProjectScope(env:WorkerEnv,input:{organizationI
     FROM project_migration_states migration WHERE migration.project_access_id=? AND migration.organization_id=? AND migration.owner_user_id=?`)
     .bind(...ledgerSchema.guard.bindings,...originSchema.guard.bindings,...minimizedIntegrity.bindings,ownerStream,input.projectAccessId,input.organizationId,input.projectId,input.ownerUserId,
       input.projectAccessId,input.organizationId,input.projectId,input.ownerUserId,input.projectAccessId,input.organizationId,input.projectId,input.ownerUserId,
-      input.projectAccessId,input.organizationId,input.ownerUserId)
-    .first<{origin_integrity:number;status:string;last_owner_sequence:number;owner_head:number;event_count:number;document_count:number;manifest_current:number}>();
+      input.projectAccessId,input.organizationId,input.ownerUserId);
+  const inspected=await ledgerDb.batch<Record<string,unknown>>([ledgerSchemaAssertion(),stateStatement]);
   sameLedgerDatabase();
-  if(state&&state.origin_integrity!==1)throw new Error("project_scope_sync_unconfirmed");
+  if(!Array.isArray(inspected)||inspected.length!==2)throw new Error("project_scope_sync_unconfirmed");
+  confirmLedgerBatch([inspected[0]!],1);
+  const stateResult=inspected[1];
+  if(!stateResult||stateResult.success!==true||'error' in stateResult&&stateResult.error!==undefined||!Array.isArray(stateResult.results)
+    ||stateResult.results.length>1)throw new Error("project_scope_sync_unconfirmed");
+  const state=stateResult.results[0];
+  if(stateResult.results.length&&(!state||typeof state!=='object'||Array.isArray(state)||Object.keys(state).sort().join(',')!==
+    ['origin_integrity','status','last_owner_sequence','owner_head','event_count','document_count','manifest_current'].sort().join(',')
+    ||state.origin_integrity!==1||typeof state.status!=='string'
+    ||['last_owner_sequence','owner_head','event_count','document_count'].some(key=>!Number.isSafeInteger(state[key])||Number(state[key])<0)
+    ||state.manifest_current!==0&&state.manifest_current!==1))throw new Error("project_scope_sync_unconfirmed");
   if(state?.status==="active"&&Number(state.last_owner_sequence)===Number(state.owner_head)&&Number(state.manifest_current)===1)
     return{eventCount:Number(state.event_count),documentCount:Number(state.document_count)};
   const events=await readEvents(env,ownerStream);

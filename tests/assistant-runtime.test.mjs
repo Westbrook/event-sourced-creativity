@@ -16697,6 +16697,7 @@ for(const shared of [false,true])test('semantic assistant consumer: native paid 
  const response=await specialistProtocolRequest(state,{action:'quote',turnId:turn.id,memory:'saved'},options),body=await response.json();
  assert.equal(response.status,200,JSON.stringify(body)+' SQL: '+state.controls.lastDatabaseError);
  t.diagnostic(JSON.stringify({semanticQuoteOperations:counter.read(),...(process.env.FORMA_TEST_SQL_TRACE?{trace:counter.trace}:{})}));
+ assert.ok(counter.read()<=(shared?54:50),'Native quote round-trip regression ceiling, not hosted capacity qualification');
  assert.ok(body.quote?.privateInput.providerRequest);
  const consent=state.sqlite.prepare("SELECT content FROM private_content WHERE kind='execution-consent' ORDER BY created_at DESC LIMIT 1").get();
  const request=JSON.parse(consent.content).binding.request;
@@ -16722,11 +16723,16 @@ for(const shared of [false,true])test('semantic assistant consumer: approved req
  assert.equal(quoted.status,200,JSON.stringify(review)+' SQL: '+state.controls.lastDatabaseError);
  const original=globalThis.fetch,calls=[];globalThis.fetch=async(url,init)=>{assert.equal(String(url),'https://api.openai.com/v1/responses');const payload=JSON.parse(init.body);calls.push(payload);return specialistRawResponse(payload);};t.after(()=>{globalThis.fetch=original;});
  const executing=await specialistExecute(state,review,options);assert.equal(executing.status,202,await executing.clone().text()+' SQL: '+state.controls.lastDatabaseError);
- t.diagnostic(JSON.stringify({executeOperations:counter.read()}));counter.reset();
- await state.drainBackground();t.diagnostic(JSON.stringify({backgroundOperations:counter.read(),...(process.env.FORMA_TEST_SQL_TRACE?{trace:counter.trace}:{})}));counter.reset();
+ const executeOperations=counter.read();t.diagnostic(JSON.stringify({executeOperations}));counter.reset();
+ await state.drainBackground();
+ // waitUntil starts before the HTTP response completes. Only the combined
+ // interval is a stable invocation measurement; phase counts are diagnostic.
+ const combinedExecuteOperations=executeOperations+counter.read();
+ t.diagnostic(JSON.stringify({backgroundOperations:counter.read(),combinedExecuteOperations,...(process.env.FORMA_TEST_SQL_TRACE?{trace:counter.trace}:{})}));
+ assert.ok(combinedExecuteOperations<=(shared?142:132),'Measured regression ceiling; conservative 50-call target is not yet satisfied');counter.reset();
  const response=await specialistRetrieve(state,review,options),body=await response.json();
  assert.equal(response.status,200,JSON.stringify(body)+' SQL: '+state.controls.lastDatabaseError);
- t.diagnostic(JSON.stringify({retrieveOperations:counter.read()}));
+ t.diagnostic(JSON.stringify({retrieveOperations:counter.read()}));assert.ok(counter.read()<=39);
  assert.equal(calls.length,1,JSON.stringify(body)+' SQL: '+state.controls.lastDatabaseError);
  assert.equal(body.result?.sourceStatus,'semantic-memory-assisted',JSON.stringify(body)+' SQL: '+state.controls.lastDatabaseError);
  assert.equal(body.materializationPending,false,JSON.stringify(body)+' SQL: '+state.controls.lastDatabaseError);
@@ -16859,15 +16865,18 @@ test('semantic assistant consumer: retired inverse survives private retyping and
  assert.equal((await specialistRetrieve(state,review,state.semanticOptions)).status,404);
 });
 
-for(const fault of ['truncated','missing-references','reference-change','qualification-withdrawn','database-swap'])test('native derivation read metadata batch: '+fault+' denies issuance',async t=>{
+for(const fault of ['truncated','missing-references','missing-grant','wrong-grant','malformed-parent','reference-change','qualification-withdrawn','database-swap'])test('native derivation read metadata batch: '+fault+' denies issuance',async t=>{
  const state=await nativeDerivationResultFixture(t),admission=await import('../worker/memory-derivation-admission.ts'),db=state.env.DB,batch=db.batch;
  let injected=false;
  db.batch=async statements=>{
   const result=await batch.call(db,statements);
-  if(!injected&&statements.length===2&&statements[0].sql.startsWith('SELECT job_id,consent_id,purpose,')&&statements[1].sql.startsWith('SELECT job_id,enrollment_id,event_id,')){
+  if(!injected&&statements.length===3&&statements[0].sql.startsWith('SELECT job_id,consent_id,purpose,')&&statements[1].sql.startsWith('SELECT job_id,enrollment_id,event_id,')){
    injected=true;
    if(fault==='truncated')result.pop();
    if(fault==='missing-references')result[1].results=[];
+   if(fault==='missing-grant')result[2].results=[];
+   if(fault==='wrong-grant')result[2].results[0].consent_id='a-different-valid-consent';
+   if(fault==='malformed-parent')result[2].results[0].parent_rows='[]';
    if(fault==='reference-change')state.sqlite.exec('DELETE FROM memory_derivation_job_sources');
    if(fault==='qualification-withdrawn')state.sqlite.exec("UPDATE memory_derivation_qualifications SET status='withdrawn'");
    if(fault==='database-swap')state.env.DB={prepare:db.prepare.bind(db),batch:batch.bind(db)};
@@ -16990,6 +16999,68 @@ for(const mode of ['within-lease','elapsed','wall-rollback','monotonic-rollback'
  assert.equal(state.sqlite.prepare('SELECT verified_tokens FROM consequential_execution_steps WHERE execution_id=?').get(review.executionId).verified_tokens,1300);
  if(mode==='within-lease')assert.equal(reads,atDispatch,'The original lease compiles the same final SQL guards without rehydrating prose');
  if(mode==='elapsed')assert.ok(reads>atDispatch,'Expired native evidence must be independently rehydrated');
+});
+
+for(const fault of ['oversized','invalid-utf8','deadline','header-deadline'])test('semantic provider read bounds: '+fault+' never retries an uncertain purchase',async t=>{
+ const state=await semanticPaidConsumerFixture(t),{response,body:review}=await state.semanticQuote();assert.equal(response.status,200);
+ const original=globalThis.fetch;let calls=0,cancelled=0;
+ if(fault.endsWith('deadline'))t.mock.timers.enable({apis:['setTimeout']});
+ globalThis.fetch=async(_url,init)=>{
+  calls++;assert.ok(init.signal instanceof AbortSignal);
+  if(fault==='header-deadline'){
+   const pending=new Promise((_resolve,reject)=>init.signal.addEventListener('abort',()=>reject(new DOMException('Aborted','AbortError')),{once:true}));
+   t.mock.timers.tick(60000);return pending;
+  }
+  const body=new ReadableStream({pull(controller){
+   if(fault==='oversized')controller.enqueue(new Uint8Array(256*1024+1));
+   if(fault==='invalid-utf8'){controller.enqueue(new Uint8Array([0xff]));controller.close();}
+  },cancel(){cancelled++;}},{highWaterMark:0});
+  if(fault==='deadline'){assert.equal(init.signal.aborted,false);t.mock.timers.tick(60000);assert.equal(init.signal.aborted,true);}
+  return new Response(body);
+ };t.after(()=>{globalThis.fetch=original;});
+ const execution=await specialistExecute(state,review,state.semanticOptions);assert.equal(execution.status,202,await execution.clone().text());await state.drainBackground();
+ assert.equal(calls,1);if(!['invalid-utf8','header-deadline'].includes(fault))assert.equal(cancelled,1);
+ const task=state.sqlite.prepare('SELECT status,error_code FROM assistant_specialist_tasks WHERE task_id=?').get(review.executionId);
+ assert.deepEqual({...task},{status:'needs-review',error_code:'assistant_provider_response_unconfirmed'});
+ assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM memory_derivation_consumer_contents WHERE role IN('response','result')").get().n,0);
+ const before=adaptiveReentryFinancialState(state);
+ await specialistRetrieve(state,review,state.semanticOptions);await specialistExecute(state,review,state.semanticOptions);await state.drainBackground();
+ assert.equal(calls,1);assert.deepEqual(adaptiveReentryFinancialState(state),before);
+});
+
+for(const shared of [false,true])for(const fault of ['current','elapsed','dismissed','withdrawn','permission','schema','wall-rollback','monotonic-rollback'])test('semantic dispatch handoff: '+shared+'/'+fault+' preserves fresh authority',async t=>{
+ const state=await semanticPaidConsumerFixture(t,{shared}),{response,body:review}=await state.semanticQuote();assert.equal(response.status,200);
+ const db=state.env.DB,prepare=db.prepare;let reads=0,retainedReads=0,release,entered;
+ const gate=new Promise(resolve=>{release=resolve;}),atHandoff=new Promise(resolve=>{entered=resolve;});
+ db.prepare=function(sql){
+  if(sql.startsWith('SELECT c.target_enrollment_id,')&&sql.includes('FROM memory_derivation_contexts'))reads++;
+  const statement=prepare.call(this,sql);
+  if(!sql.startsWith('SELECT execution.*,content.content AS retained_consent_content'))return statement;
+  const wrap=raw=>new Proxy(raw,{get(target,key){
+   if(key==='bind')return(...args)=>wrap(target.bind(...args));
+   if(key==='first')return async(...args)=>{if(++retainedReads===2){entered();await gate;}return target.first(...args);};
+   return Reflect.get(target,key,target);
+  }});return wrap(statement);
+ };
+ t.after(()=>{release();db.prepare=prepare;});
+ const original=globalThis.fetch;let calls=0;
+ globalThis.fetch=async(_url,init)=>{calls++;return specialistRawResponse(JSON.parse(init.body));};t.after(()=>{globalThis.fetch=original;});
+ try{
+  const executing=await specialistExecute(state,review,state.semanticOptions);assert.equal(executing.status,202,await executing.clone().text());await atHandoff;
+  assert.equal(reads,1,'HTTP admission captured source once before the deferred driver');
+  if(fault==='elapsed'){const elapsed=performance.now()+31000;t.mock.method(performance,'now',()=>elapsed);}
+  if(fault==='wall-rollback')t.mock.timers.enable({apis:['Date'],now:Date.now()-1000});
+  if(fault==='monotonic-rollback')t.mock.method(performance,'now',()=>0);
+  if(fault==='dismissed')state.sqlite.prepare("UPDATE memory_derivation_contexts SET state='dismissed',revision=?").run(crypto.randomUUID());
+  if(fault==='withdrawn')assert.equal(await state.resultStore.withdrawNativeDerivationResult(state.env,state.current().actor_user_id,state.executionJob.job_id),true);
+  if(fault==='permission')state.sqlite.prepare("UPDATE users SET role='viewer',updated_at=? WHERE user_id=?").run(new Date().toISOString(),state.current().actor_user_id);
+  if(fault==='schema')state.sqlite.exec('DROP TRIGGER memory_derivation_consumer_content_delete');
+  release();await state.drainBackground();
+  const allowed=['current','elapsed'].includes(fault);assert.equal(calls,Number(allowed),'stale or withdrawn evidence must never reach a provider');
+  assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM memory_derivation_consumer_contents WHERE role IN('response','result')").get().n,allowed?2:0);
+  if(fault==='current')assert.equal(reads,1,'same execution retains original capture, not a positive permission decision');
+  if(fault==='elapsed')assert.equal(reads,2,'elapsed capture is independently reconstructed without extending the first lease');
+ }finally{release();await state.drainBackground();}
 });
 
 test('semantic consumer recovery: equal-cost conflicting receipt never becomes a completed result',async t=>{

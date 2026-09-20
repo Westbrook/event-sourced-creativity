@@ -224,3 +224,7 @@ are swept; no live database was migrated. Continue the complete native matrix.
 ## Chat Studio semantic guidance continuation
 
 [Embedded Memory guidance](forma-memory-chat-guidance-2026-09-20.md) now connects the actual Chat Studio conversation pane to canonical specialist consent, semantic prompts, bounded follow-up ancestry and privacy retirement. It preserves the ordinary creative draft and disables untracked document actions. This closes read-only Chat guidance integration, not Memory-assisted creative edits/outputs, exact-field autocomplete, whole-request capacity or the other required native workstreams. Local browser/runtime evidence and reproduced baseline failures are recorded in the linked checkpoint; no deployment or enrollment occurred.
+
+### MEM-003 native capacity and response bounds
+
+[Lease-preserving dispatch continuation, metadata snapshots and bounded provider reads](forma-memory-native-capacity-2026-09-20.md) are implemented with local native/D1/privacy evidence. Conservative whole-invocation capacity still requires work; external hosted qualification is separately tracked. No real provider, deployment or user enrollment was activated.

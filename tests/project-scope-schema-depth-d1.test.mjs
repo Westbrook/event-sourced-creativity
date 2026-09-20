@@ -51,7 +51,9 @@ function observedDatabase(raw) {
       }
       const native = rows.map(row => row.statement);
       await observed.beforeBatch?.(rows, native);
-      const result = await raw.batch(native); batches.push(rows.map(row => row.sql)); return result;
+      const result = await raw.batch(native); batches.push(rows.map(row => row.sql));
+      for (const row of rows) if(row.sql.endsWith('AS schema_json')) await observed.afterRead?.(row);
+      return result;
     },
   };
   return observed;
@@ -89,27 +91,63 @@ async function fixture(t, memory) {
   return { raw, observed, env, scope, insert, now };
 }
 
-for (const memory of [false, true]) test(`actual workerd D1 synchronizes and takes the four-read fast path with ${memory ? 'full' : 'absent'} structured Memory schema`, { timeout: 90000 }, async t => {
+for (const memory of [false, true]) test(`actual workerd D1 synchronizes and takes the two-round-trip fast path with ${memory ? 'full' : 'absent'} structured Memory schema`, { timeout: 90000 }, async t => {
   const f = await fixture(t, memory);
   assert.deepEqual(await synchronizeProjectScope(f.env, f.scope), { eventCount: 2, documentCount: 1 });
-  assert.equal(f.observed.batches.length, 2, 'one scope chunk and activation both executed');
-  for (const batch of f.observed.batches) for (const sql of [batch[0], batch.at(-1)]) assert.match(sql, /memory_structured_schema_changed.*END AS verified/su);
+  assert.equal(f.observed.batches.length, 4, 'catalog and integrity snapshots, scope chunk and activation all executed');
+  for (const batch of f.observed.batches.slice(2)) for (const sql of [batch[0], batch.at(-1)]) assert.match(sql, /memory_structured_schema_changed.*END AS verified/su);
   assert.equal((await rows(f.raw, 'project_event_scopes')).length, 2);
   assert.equal((await rows(f.raw, 'project_migration_states'))[0].last_owner_sequence, 2);
   const before = await snapshot(f.raw);
   f.observed.records.length = 0; f.observed.batches.length = 0;
   assert.deepEqual(await synchronizeProjectScope(f.env, f.scope), { eventCount: 2, documentCount: 1 });
-  assert.equal(f.observed.records.length, 4); assert.equal(f.observed.batches.length, 0);
-  assert.ok(f.observed.records.every(row => row.method === 'all' || row.method === 'first'));
+  assert.equal(f.observed.records.length, 4); assert.equal(f.observed.batches.length, 2);
+  assert.deepEqual(f.observed.records.map(row=>row.method),['batch','batch','batch','batch']);
   assert.match(f.observed.records[2].sql, /END AS verified$/u);
   assert.match(f.observed.records[3].sql, /END AS origin_integrity,migration.status/u);
   assert.deepEqual(await snapshot(f.raw), before);
   t.diagnostic(JSON.stringify({ engine: 'Wrangler-pinned Miniflare/workerd D1', memory, queries: f.observed.records.map(({ method, sqlBytes, parameters, sha256 }) => ({ method, sqlBytes, parameters, sha256 })), egress: 0 }));
 });
 
+for(const fault of ['truncated','ledger-ack','origin-ack','ledger-shape','database-swap'])test('actual D1 catalog batch rejects '+fault+' before scope writes',{timeout:90000},async t=>{
+ const f=await fixture(t,true),before=await snapshot(f.raw),batch=f.env.DB.batch,db=f.env.DB;let hit=false;
+ db.batch=async items=>{
+  const result=await batch.call(db,items);
+  if(!hit&&items.length===2){hit=true;
+   if(fault==='truncated')result.pop();
+   if(fault==='ledger-ack')result[0].success=false;
+   if(fault==='origin-ack')result[1].success=false;
+   if(fault==='ledger-shape')result[0].results[0].extra='not-part-of-the-native-catalog';
+   if(fault==='database-swap')f.env.DB={prepare:db.prepare.bind(db),batch:batch.bind(db)};
+  }return result;
+ };
+ await assert.rejects(synchronizeProjectScope(f.env,f.scope),/(?:memory|native_structured_origin).*(?:schema|preparation|database)/u);
+ assert.equal(hit,true);assert.deepEqual(await snapshot(f.raw),before);
+ assert.equal(f.observed.batches.length,1,'only the read-only catalog batch ran');
+});
+
+for(const fault of ['truncated','integrity-ack','state-ack','state-shape','null-row','database-swap'])test('actual D1 state snapshot rejects '+fault+' before scope writes',{timeout:90000},async t=>{
+ const f=await fixture(t,true),before=await snapshot(f.raw),batch=f.env.DB.batch,db=f.env.DB;let count=0;
+ db.batch=async items=>{
+  const result=await batch.call(db,items);
+  if(++count===2){
+   if(fault==='truncated')result.pop();
+   if(fault==='integrity-ack')result[0].success=false;
+   if(fault==='state-ack')result[1].success=false;
+   if(fault==='state-shape')delete result[1].results[0].document_count;
+   if(fault==='null-row')result[1].results[0]=null;
+   if(fault==='database-swap')f.env.DB={prepare:db.prepare.bind(db),batch:batch.bind(db)};
+  }return result;
+ };
+ await assert.rejects(synchronizeProjectScope(f.env,f.scope),/(?:scope_sync_unconfirmed|database_changed)/u);
+ assert.equal(count,2);assert.deepEqual(await snapshot(f.raw),before);
+ assert.equal(f.observed.batches.length,2,'only catalog and state snapshots ran, no scope writes');
+});
+
 for (const memory of [false, true]) for (const phase of ['chunk', 'activation']) test(`actual D1 ${phase} final bookend rejects schema drift and rolls back that batch (${memory ? 'full' : 'absent'})`, { timeout: 90000 }, async t => {
   const f = await fixture(t, memory), initial = await snapshot(f.raw); let injections = 0, beforeBatch;
   f.observed.beforeBatch = async (items, native) => {
+    if(!items.some(row=>/^(?:INSERT|UPDATE|DELETE)/u.test(row.sql)))return;
     const activation = items.some(row => row.sql.startsWith('INSERT INTO project_migration_states'));
     if (activation !== (phase === 'activation')) return;
     beforeBatch = await snapshot(f.raw); injections++;
@@ -131,13 +169,17 @@ for (const memory of [false, true]) for (const phase of ['chunk', 'activation'])
 for (const boundary of ['assertion', 'state']) for (const table of schemaTables) test(`actual D1 rejects post-observation schema drift in ${table} at the ${boundary} query before copying scopes`, { timeout: 90000 }, async t => {
   const f = await fixture(t, true), before = await snapshot(f.raw); let injected = false;
   f.observed.afterRead = async row => {
-    const selected = boundary === 'assertion' ? row.sql.endsWith('AS schema_json') && row.sql.includes('memory_structured_answer_origins') : row.sql.endsWith('END AS verified');
+    const selected = boundary === 'assertion' && row.sql.endsWith('AS schema_json') && row.sql.includes('memory_structured_answer_origins');
     if (injected || !selected) return;
     injected = true;
     await f.raw.prepare(`CREATE TRIGGER observed_schema_drift AFTER INSERT ON ${table} BEGIN SELECT 1; END`).run();
   };
+  f.observed.beforeBatch=async(items,native)=>{
+    if(boundary!=='state'||injected||!items.some(row=>row.sql.includes('END AS origin_integrity,migration.status')))return;
+    injected=true;native.splice(1,0,f.raw.prepare(`CREATE TRIGGER observed_schema_drift AFTER INSERT ON ${table} BEGIN SELECT 1; END`));
+  };
   await assert.rejects(synchronizeProjectScope(f.env, f.scope), /malformed JSON/u);
-  assert.equal(injected, true); assert.deepEqual(await snapshot(f.raw), before); assert.equal(f.observed.batches.length, 0);
+  assert.equal(injected, true); assert.deepEqual(await snapshot(f.raw), before); assert.equal(f.observed.batches.length, 1);
 });
 
 const columns = NATIVE_STRUCTURED_ORIGIN_HEADER_COLUMNS, retained = NATIVE_STRUCTURED_ORIGIN_TOMBSTONE_COLUMNS,
@@ -455,7 +497,7 @@ function registerMinimizedIntegrityRegressions({test, fixture, snapshot, rows,
     f.observed.records.length = 0; f.observed.batches.length = 0;
     assert.deepEqual(await synchronizeProjectScope(f.env, f.scope), {eventCount: 2, documentCount: 1});
     assert.equal(f.observed.records.length, 4, 'a valid minimized header still takes the qualified fast path');
-    assert.equal(f.observed.batches.length, 0);
+    assert.equal(f.observed.batches.length, 2);
     assert.equal(await integrity(f), 1);
     assert.deepEqual(await snapshot(f.raw), clean);
     const residues = [];
@@ -483,7 +525,7 @@ function registerMinimizedIntegrityRegressions({test, fixture, snapshot, rows,
       assert.equal(await integrity(f), 0, `${residue.name}: shared predicate sees the restored row`);
       f.observed.records.length = 0; f.observed.batches.length = 0;
       await assert.rejects(synchronizeProjectScope(f.env, f.scope), /malformed JSON/u, residue.name);
-      assert.equal(f.observed.batches.length, 0, `${residue.name}: no scope chunk or activation ran`);
+      assert.equal(f.observed.batches.length, 1, `${residue.name}: only catalog metadata ran, no scope chunk or activation`);
       assert.deepEqual(await snapshot(f.raw), before, `${residue.name}: synchronizer left scopes and cursor unchanged`);
       assert.deepEqual(await rows(f.raw, residue.table), residueBefore, `${residue.name}: rejection did not silently erase residue`);
       assert.deepEqual(await f.raw.prepare('SELECT * FROM private_content WHERE content_id=?')
