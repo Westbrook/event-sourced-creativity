@@ -17001,6 +17001,29 @@ for(const mode of ['within-lease','elapsed','wall-rollback','monotonic-rollback'
  if(mode==='elapsed')assert.ok(reads>atDispatch,'Expired native evidence must be independently rehydrated');
 });
 
+for(const fault of ['oversized','invalid-utf8','duplicate-action','escaped-memory','array','null','wrong-type','aborted-upload','upload-deadline'])test('semantic control request bounds: '+fault+' cannot quote or purchase',async t=>{
+ const state=await semanticPaidConsumerFixture(t),options=state.semanticOptions,turnId=state.semanticTurn.id;
+ const valid=JSON.stringify({action:'quote',turnId,memory:'saved'});
+ let raw=valid;
+ if(fault==='oversized')raw=valid+' '.repeat(4096);
+ if(fault==='invalid-utf8')raw=new Uint8Array([0xff]);
+ if(fault==='duplicate-action')raw=valid.slice(0,-1)+',"action":"execute"}';
+ if(fault==='escaped-memory')raw=valid.slice(0,-1)+',"mem\\u006fry":"saved"}';
+ if(fault==='array')raw='[]';if(fault==='null')raw='null';
+ const upload=new AbortController();
+ if(fault==='upload-deadline')t.mock.timers.enable({apis:['setTimeout']});
+ if(fault==='aborted-upload'||fault==='upload-deadline')raw=new ReadableStream({pull(){
+  if(fault==='aborted-upload')upload.abort();else t.mock.timers.tick(30000);
+ }},{highWaterMark:0});
+ const before=adaptiveReentryFinancialState(state),calls=state.calls.length;
+ const path=endpoint(options.route,options.project).replace('/api/assistant?','/api/assistant/specialist?');
+ const response=await state.request(path,{...json({},state.owner),body:raw,duplex:'half',signal:upload.signal,...(fault==='wrong-type'?{headers:{...state.owner,'content-type':'text/plain'}}:{})});
+ assert.equal(response.status,400,await response.clone().text());assert.equal((await response.json()).error,'assistant_request_invalid');
+ await state.drainBackground();assert.equal(state.calls.length,calls);assert.deepEqual(adaptiveReentryFinancialState(state),before);
+ assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM consequential_executions WHERE operation='assistant-specialist'").get().n,0);
+ assert.equal(state.sqlite.prepare('SELECT COUNT(*) AS n FROM memory_derivation_consumers').get().n,0);
+});
+
 for(const fault of ['oversized','invalid-utf8','deadline','header-deadline'])test('semantic provider read bounds: '+fault+' never retries an uncertain purchase',async t=>{
  const state=await semanticPaidConsumerFixture(t),{response,body:review}=await state.semanticQuote();assert.equal(response.status,200);
  const original=globalThis.fetch;let calls=0,cancelled=0;
@@ -17238,4 +17261,29 @@ for(const shared of [false,true])test('Chat Studio semantic guidance: canonical 
  assert.equal((await specialistRetrieve(state,review,state.semanticOptions)).status,404);assert.equal((await specialistRetrieve(state,next,state.semanticOptions)).status,404);
  assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM memory_derivation_consumers WHERE state='active'").get().n,0);
  assert.equal(calls.length,2);
+});
+
+for(const fault of ['aborted','deadline','oversized-cancel-stalled','bad-length','length-too-large','truncated-utf8','utf8-bom'])test('Memory control parser: '+fault+' cannot keep an invalid body alive',async t=>{
+ const {bodyOf,MEMORY_CONTROL_READ_TIMEOUT_MS}=await import('../worker/memory-derivation-api.ts');
+ const controller=new AbortController();let cancelled=0,pulls=0;
+ if(fault==='deadline')t.mock.timers.enable({apis:['setTimeout']});
+ const body=new ReadableStream({pull(stream){
+  pulls++;
+  if(fault==='oversized-cancel-stalled')stream.enqueue(new Uint8Array(4097));
+  if(fault==='truncated-utf8'){stream.enqueue(new Uint8Array([0xe2,0x82]));stream.close();}
+  if(fault==='utf8-bom'){stream.enqueue(new TextEncoder().encode('\ufeff{}'));stream.close();}
+ },cancel(){cancelled++;return new Promise(()=>{});}},{highWaterMark:0});
+ const request=new Request('http://localhost/control',{method:'POST',body,duplex:'half',signal:controller.signal,
+  headers:{'content-type':'application/json',...(fault==='bad-length'?{'content-length':'invalid'}:fault==='length-too-large'?{'content-length':'4097'}:{})}});
+ const pending=bodyOf(request);
+ if(fault==='aborted')controller.abort();
+ if(fault==='deadline')t.mock.timers.tick(MEMORY_CONTROL_READ_TIMEOUT_MS);
+ assert.equal(await pending,null);assert.equal(cancelled,['truncated-utf8','utf8-bom'].includes(fault)?0:1);
+ assert.equal(request.body.locked,false);if(['bad-length','length-too-large'].includes(fault))assert.equal(pulls,0);
+});
+test('Memory control parser: split multibyte UTF-8 and exact byte bound preserve literal controls',async()=>{
+ const {bodyOf}=await import('../worker/memory-derivation-api.ts');const expected={action:'review',text:'日😀é'},encoded=new TextEncoder().encode(JSON.stringify(expected));
+ let offset=0;const body=new ReadableStream({pull(controller){if(offset===encoded.length)controller.close();else controller.enqueue(encoded.slice(offset,++offset));}});
+ const request=new Request('http://localhost/control',{method:'POST',body,duplex:'half',headers:{'content-type':'application/json'}});
+ assert.deepEqual(await bodyOf(request,encoded.length),expected);assert.equal(request.body.locked,false);
 });

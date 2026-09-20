@@ -282,13 +282,19 @@ export class ContextBlock extends FormaElement {
     if(this.surface!=="document"||!this.store.ui.instrumentation||this.block.scope!=="document"||this.block.removed
       ||!this.block.sourceEvents.length||this.block.sourceEvents.length>256||this.block.sourceEvents.some(id=>!id||id.startsWith("optimistic:")))return;
     const block={id:this.block.id,projectId:this.block.projectId,documentId:this.block.documentId},sourceIds=[...this.block.sourceEvents],store=this.store,owner=store.captureSourceOwnership(),route=store.route.get();
+    // The native inspection receipt certifies block fields, not relationship
+    // versions. Structural events still invalidate this full presentation lease.
+    // Unknown IDs are retained so the server rejects missing/ambiguous history;
+    // only known relationship records are excluded from the field inventory.
+    const structural=new Set(store.eventView.get().filter(event=>event.type==='BlockRelationAdded'||event.type==='BlockRelationRemoved').map(event=>event.eventId));
+    const fieldSourceIds=sourceIds.filter(id=>!structural.has(id));if(!fieldSourceIds.length)return;
     const current=()=>this.store===store&&this.isConnected&&this.surface==="document"&&this.block.id===block.id&&this.block.documentId===block.documentId&&this.block.projectId===block.projectId&&this.block.scope==="document"&&!this.block.removed&&this.#controlsVisible()&&this.store.ui.instrumentation
       &&this.store.route.get()===route&&this.store.sourceOwnershipActive(owner)&&this.ownerDocument.visibilityState==="visible"
       &&JSON.stringify(this.block.sourceEvents)===JSON.stringify(sourceIds)&&Boolean(this.querySelector<HTMLElement>(".context-controls-panel")?.getClientRects().length);
     try{
       await this.updateComplete;if(!current())return;
       await this.store.hot({type:"BlockInspected",payload:{project_id:block.projectId,document_id:block.documentId,block_id:block.id,
-        source_event_ids:sourceIds,source_surface:"document-context-controls"}},{current});
+        source_event_ids:fieldSourceIds,source_surface:"document-context-controls"}},{current});
     }catch{/* Optional observation never prevents inspection or retries a possibly committed write. */}
   }
 

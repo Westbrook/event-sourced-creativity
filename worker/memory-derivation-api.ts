@@ -58,13 +58,26 @@ function inventoryGuard(table: "memory_derivation_grants" | "memory_derivation_q
   return { condition: `(SELECT json_group_array(json_array(${columns.join(",")})) FROM
     (SELECT ${columns.join(",")} FROM ${table} WHERE ${where} ORDER BY ${order}))=?`, bindings: [...bindings, value] };
 }
+export const MEMORY_CONTROL_READ_TIMEOUT_MS = 30_000;
+/** Tiny control messages only. A slow, aborted or oversized upload never reaches
+ * native authorization or spending. Stream cancellation is best effort: an
+ * uncooperative producer cannot hold the response open through its cancel hook. */
 export async function bodyOf(request: Request, maximumBytes = 4096): Promise<Row | null> {
-  if (!request.body || request.headers.get("content-type")?.split(";")[0]?.trim() !== "application/json") return null;
-  const reader = request.body.getReader(), decoder = new TextDecoder("utf-8", { fatal: true });
-  let text = "", length = 0;
+  if (!request.body || request.signal.aborted || !Number.isSafeInteger(maximumBytes) || maximumBytes < 1 || maximumBytes > 65_536
+    || request.headers.get("content-type")?.split(";")[0]?.trim() !== "application/json") return null;
+  const declared = request.headers.get("content-length");
+  if (declared !== null && (!/^\d+$/u.test(declared) || Number(declared) > maximumBytes)) {
+    void request.body.cancel().catch(() => {}); return null;
+  }
+  const reader = request.body.getReader(), decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
+  let text = "", length = 0, stopped = false;
+  const stop = () => { stopped = true; void reader.cancel().catch(() => {}); };
+  const timer = setTimeout(stop, MEMORY_CONTROL_READ_TIMEOUT_MS);
+  request.signal.addEventListener("abort", stop, { once: true });
   try {
-    for (;;) { const next = await reader.read(); if (next.done) break; length += next.value.byteLength;
-      if (length > maximumBytes) { await reader.cancel(); return null; } text += decoder.decode(next.value, { stream: true }); }
+    if (request.signal.aborted) return null;
+    for (;;) { const next = await reader.read(); if (stopped || request.signal.aborted) return null; if (next.done) break; length += next.value.byteLength;
+      if (length > maximumBytes) return null; text += decoder.decode(next.value, { stream: true }); }
     text += decoder.decode(); const value: unknown = JSON.parse(text);
     // Grammar is parsed above; reject duplicate keys, including escaped keys.
     const stack: { keys: Set<string> | null; key: boolean }[] = [];
@@ -76,7 +89,10 @@ export async function bodyOf(request: Request, maximumBytes = 4096): Promise<Row
           if (current.keys.has(key)) return null; current.keys.add(key); current.key = false; } }
     }
     return value && typeof value === "object" && !Array.isArray(value) ? value as Row : null;
-  } catch { return null; } finally { reader.releaseLock(); }
+  } catch { return null; } finally {
+    clearTimeout(timer); request.signal.removeEventListener("abort", stop);
+    void reader.cancel().catch(() => {}); reader.releaseLock();
+  }
 }
 async function scope(request: Request, env: WorkerEnv, actor: PilotUser, projectId: string, documentId: string) {
   if(request.method==='GET')return readScope(request,env,actor,projectId,documentId);

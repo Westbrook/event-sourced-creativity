@@ -2310,3 +2310,21 @@ for(const fault of ['none','hidden','route','authorization','closed','detached',
   resume(true);for(let index=0;index<6;index++)await Promise.resolve();assert.equal(seen.length,Number(fault==='none'));
   if(seen.length){assert.equal(seen[0].type,'BlockInspected');assert.equal(seen[0].payload.source_surface,'document-context-controls');assert.deepEqual(seen[0].payload.source_event_ids,host.block.sourceEvents);assert.equal(JSON.stringify(seen).includes('Authored'),false);}
 });
+
+
+for(const kind of ['context_contains','action_participant'])for(const change of ['unchanged','removed-before-publish'])test('Document Memory inspection separates field history from structural edits: '+kind+'/'+change,async t=>{
+ const f=fixture(),seen=[];f.store.ui.instrumentation=true;const oldVisibility=documentPort.visibilityState;documentPort.visibilityState='visible';t.after(()=>{documentPort.visibilityState=oldVisibility;});
+ const last=f.state.events.at(-1),relation={...last,eventId:'native-structural-relation',sequence:last.sequence+1,type:'BlockRelationAdded',payload:{project_id:'project-a',document_id:'document-a',relation_id:'native-relation',from_block_id:'decision-0',to_block_id:'decision-1',kind,properties:{}}};
+ f.state.events=[...f.state.events,relation];f.draw();await f.select('decision-1');const host=f.block('decision-1');
+ assert.ok(host.block.sourceEvents.includes(relation.eventId));const fields=host.block.sourceEvents.filter(id=>id!==relation.eventId);
+ let resume;const update=new Promise(resolve=>{resume=resolve;});Object.defineProperty(host,'updateComplete',{configurable:true,get:()=>update});
+ f.store.hot=async(event,options)=>{if(options.current())seen.push(event);};
+ await f.renderer.handler(host,'button',node=>String(node.attributes.class).includes('context-controls-toggle'))();f.draw();
+ const panel=host.querySelector('.context-controls-panel');assert.ok(panel);panel.getClientRects=()=>[{}];
+ if(change==='removed-before-publish'){
+  f.state.events=[...f.state.events,{...relation,eventId:'native-structural-removal',sequence:relation.sequence+1,type:'BlockRelationRemoved',payload:{project_id:'project-a',document_id:'document-a',relation_id:'native-relation'}}];f.draw();
+ }
+ resume(true);for(let i=0;i<6;i++)await Promise.resolve();
+ assert.equal(seen.length,Number(change==='unchanged'));
+ if(seen.length){assert.deepEqual(seen[0].payload.source_event_ids,fields);assert.equal(JSON.stringify(seen).includes('Authored'),false);}
+});

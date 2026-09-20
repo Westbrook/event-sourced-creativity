@@ -928,6 +928,28 @@ for(const shared of [false,true])test('native block inspection: genuine current 
   const {presentActorArtifactView}=await import('../worker/memory-artifact-presentation.ts');assert.equal(presentActorArtifactView(event,'other-actor').type,'ProjectResourceRestricted');assert.equal(presentActorArtifactView(event,f.owner).type,'BlockInspected');
 });
 
+for(const shared of [false,true])test('native block inspection: structured relationship history remains separate from field receipts '+shared,async t=>{
+ const f=await nativeBlockInspectionFixture(t,{shared,memory:true}),scope={project_id:f.projectId,document_id:f.documentId};
+ const root=await f.request('/api/events',f.json({action:'append',event:{type:'BlockCreated',payload:{...scope,scope:'document',block_id:'inspection-context-root',type:'context',properties:{text:'Parent structure'}}}}));assert.equal(root.status,200,await root.clone().text());
+ const added=await f.request('/api/events',f.json({action:'append',event:{type:'BlockRelationAdded',payload:{...scope,relation_id:'inspection-relationship',from_block_id:'inspection-context-root',to_block_id:f.blockId,kind:'context_contains',properties:{member_order:0}}}}));assert.equal(added.status,200,await added.clone().text());
+ const relationship=(await added.json()).appended.find(event=>event.type==='BlockRelationAdded');assert.ok(relationship);
+ const full=[f.blockSource.eventId,relationship.eventId];
+ assert.equal((await f.inspectBlock({source_event_ids:full})).status,409,'relationship IDs are not native block-field versions');
+ const first=await f.inspectBlock();assert.equal(first.status,200,await first.clone().text());const firstEvent=(await first.json()).appended[0];
+ const removed=await f.request('/api/events',f.json({action:'append',event:{type:'BlockRelationRemoved',payload:{...scope,relation_id:'inspection-relationship'}}}));assert.equal(removed.status,200,await removed.clone().text());
+ if(shared){
+  const before=f.sqlite.prepare("SELECT COUNT(*) AS n FROM events WHERE type='BlockInspected'").get().n;
+  assert.equal((await f.inspectBlock()).status,409,'removed resources require an ordinary project refresh, not a Memory repair');
+  assert.equal(f.sqlite.prepare("SELECT COUNT(*) AS n FROM events WHERE type='BlockInspected'").get().n,before);
+  const refresh=await f.request('/api/events?after=0&limit=2000&content=0');assert.equal(refresh.status,200,await refresh.clone().text());
+ }
+ const second=await f.inspectBlock();assert.equal(second.status,200,await second.clone().text());const secondEvent=(await second.json()).appended[0];
+ assert.equal(firstEvent.payload.state_sha256,secondEvent.payload.state_sha256,'field version does not assert a relationship version');
+ assert.deepEqual(secondEvent.payload.source_event_ids,[f.blockSource.eventId]);
+ assert.equal((await f.run()).status,'completed');
+ for(const event of [firstEvent,secondEvent])assert.ok(f.sqlite.prepare('SELECT event_id FROM memory_live_sources WHERE event_id=?').get(event.eventId));
+});
+
 for(const shared of [false,true])test('native block inspection: consented capture binds exact versions without plaintext '+shared,async t=>{
   const f=await memoryArtifactFixture(t,{shared}),blockId='memory-observed-context',payload={project_id:f.projectId,document_id:f.documentId,block_id:blockId,scope:'document',type:'direction',properties:{text:'Private inspected block body'}};
   const created=await f.request('/api/events',f.json({action:'append',event:{type:'BlockCreated',payload}}));assert.equal(created.status,200,await created.clone().text());const original=(await created.json()).appended.find(row=>row.type==='BlockCreated');

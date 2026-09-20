@@ -219,3 +219,7 @@ services, qualification and enrollment remain in the Sites capability checklist.
 ### MEM-003 native capacity and response bounds
 
 [Lease-preserving dispatch continuation, metadata snapshots and bounded provider reads](forma-memory-native-capacity-2026-09-20.md) are implemented with local native/D1/privacy evidence. Conservative whole-invocation capacity still requires work; external hosted qualification is separately tracked. No real provider, deployment or user enrollment was activated.
+
+### MEM-003 native request and block-history boundaries
+
+[Incoming control upload limits](forma-memory-native-capacity-2026-09-20.md#incoming-control-message-bounds) and [structured-block inspection integration](forma-memory-block-inspection-2026-09-19.md#structured-block-history-integration--2026-09-20) are implemented and locally verified. Native inspection remains read-authorized and cannot repair stale project projections. Continue all remaining consumer/profile/resource/lifecycle work in the completion matrix; no deployment, scheduler registration or real-user enrollment occurred.

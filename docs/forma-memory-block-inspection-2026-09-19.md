@@ -77,3 +77,21 @@ The [Sites capability To Do](forma-memory-sites-capability-todo-2026-09-18.md)
 separately tracks external PostgreSQL/pgvector, remote delivery acknowledgements,
 hosted scheduling/execution, provider/cap qualification and affirmative enrollment.
 This slice does not close those requirements.
+
+## Structured block history integration — 2026-09-20
+
+The Document caller now sends exact **field-history** IDs, excluding known
+relationship edits from that inventory. Its pending visibility/source lease still
+tracks the complete block history, including structure; a relationship change
+before dispatch cancels capture. Unknown source IDs remain in the request so the
+native writer rejects ambiguous history instead of guessing.
+
+Native personal/governed journeys verify inspection before and after a structural
+removal. A governed removal intentionally invalidates the resource projection:
+inspection fails without publishing until an ordinary project refresh completes.
+Memory neither repairs the index nor retries the rejected observation.
+
+44 native inspection tests pass, including isolated workerd/D1 capture and late
+erasure. Twelve focused actual-component tests pass (eight lifecycle cases plus
+four structural cases). The unrelated Library harness baseline failures remain
+separately identified; this is not a whole-UI pass.

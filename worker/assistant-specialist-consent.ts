@@ -1,3 +1,4 @@
+import { bodyOf as readMemoryControlBody } from './memory-derivation-api.ts';
 import type { SemanticAssistantParent } from './memory-assistant-parents.ts';
 import { prepareSemanticAssistantMemory,semanticAssistantMemoryLeaseCurrent,semanticAssistantMemoryRetentionGuard,semanticAssistantMemoryInputs,semanticAssistantMemoryStatements,semanticAssistantMemoryQuoteStatements,semanticAssistantMemoryContentStatements,type SemanticAssistantMemory,type SemanticAssistantMemoryBinding } from './memory-assistant-consumer.ts';
 import { foldCanvasEvents } from "../src/canvas/model.ts";
@@ -1112,7 +1113,10 @@ async function admitTask(env:WorkerEnv,actor:SpecialistActor,retained:Retained,s
 export async function handleAssistantSpecialistConsent(request:Request,env:WorkerEnv,execution:WorkerExecutionContext,host:AssistantSpecialistHost):Promise<Response>{
   env=nativeMemoryTurnInspectionEnvironment(env);
   if(request.method!=="POST")return json({error:"method_not_allowed"},405);
-  let body:Record<string,unknown>;try{body=record(JSON.parse(await request.text()));}catch{return json({error:"assistant_request_invalid"},400);}
+  // Control identities and approval fields only, never a draft or chat body.
+  // Reuse the native bounded UTF-8/duplicate-key parser before any authority,
+  // quote, reservation or provider work is attempted.
+  const body=await readMemoryControlBody(request,4096);if(!body)return json({error:"assistant_request_invalid"},400);
   const action=String(body.action??""),turnId=String(body.turnId??"");
   if(!["quote","execute","retrieve","resume"].includes(action)||!/^[a-zA-Z0-9_-]{8,80}$/u.test(turnId))return json({error:"assistant_request_invalid"},400);
   const fields=action==="quote"?["action","turnId","model","memory"]:action==="resume"?["action","turnId","executionId"]:["action","turnId","executionId","approvedBindingHash"];

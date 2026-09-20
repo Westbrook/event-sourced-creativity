@@ -32,3 +32,20 @@ Regression ceilings now protect these improvements. The conservative 50-call tar
 - TypeScript, changed-worker/test lint and production build pass; existing large-chunk build warnings remain. The large existing runtime test file still has pre-existing lint findings outside these changes.
 
 Actual providers are mocked, D1 data is isolated and synthetic, and no hosted scheduling, deployment, budget changes or service provisioning took place. The [full native completion matrix](forma-memory-completion-matrix-2026-09-20.md) and [external capability To Do](forma-memory-sites-capability-todo-2026-09-18.md) remain authoritative.
+
+## Incoming control-message bounds
+
+Specialist quote/execute/retrieve/resume now use the same strict native Memory
+control parser before any approval or purchase work. It caps bytes while reading,
+rejects duplicate/escaped keys, invalid UTF-8, BOMs and non-object JSON, and never
+accepts drafts through this control route. The shared parser also cancels on
+request abort or its 30-second upload deadline. Cancellation is not awaited, so a
+stalled producer cancellation hook cannot keep the handler open. Declared excess
+length is rejected before pulling body bytes.
+
+Nineteen focused native/parser/structured-history checks pass, including two
+actual specialist upload-abort/deadline cases with unchanged financial state and
+zero new executions or provider calls. The earlier 27-case quote/dispatch/control
+regression also passes. TypeScript, changed source/host-test lint and the
+production build pass; existing chunk-size warnings remain. No runtime deadline
+is a substitute for separate hosted qualification.

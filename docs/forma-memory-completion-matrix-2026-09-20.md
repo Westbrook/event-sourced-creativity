@@ -96,3 +96,10 @@ privacy gap, not Chat Studio semantic prompt integration or hosted qualification
 ## Native capacity and bounded provider reads
 
 [Request-capacity and streaming-response implementation](forma-memory-native-capacity-2026-09-20.md) reduces duplicate native capture and metadata round trips without caching positive access decisions. Provider bodies are now incrementally bounded and deadline-limited; uncertain charges never trigger a retry. The measured full approved execution is still above the conservative native target. That remaining capacity work is explicit, not described as qualified by passing isolated helper tests.
+
+Incoming specialist/Memory controls now have byte, UTF-8, duplicate-key, abort and
+upload-deadline bounds. Document inspection now separates field history from
+structural editor versions while retaining full-history invalidation. See the
+[capacity checkpoint](forma-memory-native-capacity-2026-09-20.md) and
+[block-inspection checkpoint](forma-memory-block-inspection-2026-09-19.md).
+These close concrete boundary defects, not the remaining native workstreams.
