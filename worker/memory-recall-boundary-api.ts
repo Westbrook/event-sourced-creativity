@@ -1,5 +1,5 @@
 import { bodyOf, parentColumns, readScope } from './memory-derivation-api.ts';
-import { nativeMemoryGrantDeadline } from './memory-native-deadlines.ts';
+import { nativeMemoryGrantDeadline, nativeMemoryPilotDeadline, nativeMemoryPilotQuery } from './memory-native-deadlines.ts';
 import { requireUser, hasCapability } from './pilot-policy.ts';
 import { liveMemoryEnabled } from './memory-live-store.ts';
 import { liveMemoryAuthorityFromPrincipal, liveMemoryEnrollmentGuard, type LiveMemoryEnrollment } from './memory-live-authority.ts';
@@ -62,7 +62,8 @@ export async function handleMemoryRecallBoundary(request: Request, env: WorkerEn
   const config = () => memoryCanonical([env.FORMA_MEMORY_ENABLED, env.FORMA_MEMORY_USER_IDS, env.FORMA_MEMORY_DERIVATION_ENABLED,
     env.FORMA_MEMORY_DERIVATION_USER_IDS, env.FORMA_PILOT_COHORT_ID, env.FORMA_ADMIN_EMAILS, memoryDerivationBinding(env)]);
   const db = env.DB, started = Date.now(), monotonic = performance.now(), configuration = config();
-  const current = () => env.DB === db && Date.now() >= started && Date.now() < started + 30000
+  let responseDeadline = started + 30000;
+  const current = () => env.DB === db && Date.now() >= started && Date.now() < responseDeadline
     && performance.now() >= monotonic && performance.now() - monotonic < 30000 && configuration === config();
   try {
     const url = new URL(request.url), auth = await requireUser(request, env, 'viewer', { account: 'principal' }), actor = auth.user;
@@ -90,8 +91,20 @@ export async function handleMemoryRecallBoundary(request: Request, env: WorkerEn
     if (selected instanceof Response) return selected;
     const parent = selected.parent, grantDeadline = nativeMemoryGrantDeadline(actor, Date.now());
     if (grantDeadline === undefined) throw Error('recall_grant_deadline');
+    const pilot = env.FORMA_PILOT_COHORT_ID?.trim() ?? '';
+    const breakglass = (env.FORMA_ADMIN_EMAILS ?? '').split(',').map(value => value.trim().toLowerCase()).includes(actor.email.toLowerCase());
+    let pilotDeadline: string | null = null;
+    if (pilot && !breakglass) {
+      const query = nativeMemoryPilotQuery(pilot), found = await rows(env, query.sql, query.bindings);
+      const deadline = nativeMemoryPilotDeadline(found, pilot, started);
+      if (deadline === undefined) throw Error('recall_pilot_deadline');
+      pilotDeadline = deadline;
+      guards.push(inventory(query.sql, query.bindings, found, ['cohort_id', 'organization_id', 'status', 'starts_at', 'ends_at']));
+    }
     const presentationDeadline = Math.min(started + 30000, Date.parse(parent.expires_at),
+      ...(pilotDeadline ? [Date.parse(pilotDeadline)] : []),
       ...(grantDeadline ? [Date.parse(grantDeadline)] : []), ...(selected.accessDeadline ? [Date.parse(selected.accessDeadline)] : []));
+    responseDeadline = presentationDeadline;
     if (!Number.isFinite(presentationDeadline) || presentationDeadline <= Date.now()) throw Error('recall_expired');
     guards.push({condition:"?>strftime('%Y-%m-%dT%H:%M:%fZ','now')",bindings:[new Date(presentationDeadline).toISOString()]});
     if (parent.recall_enabled !== 1) return reply({ error: 'recall_consent_required' }, 403);

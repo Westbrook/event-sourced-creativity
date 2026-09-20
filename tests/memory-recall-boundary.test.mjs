@@ -61,3 +61,32 @@ test('native document IDs retain the existing 240-character Memory contract',()=
  assert.ok(memoryRecallRelation(scope('left','d'.repeat(240)),scope('left','other'),'project',forest,readable));
  assert.equal(memoryRecallRelation(scope('left','d'.repeat(241)),scope('left','other'),'project',forest,readable),null);
 });
+
+test('recall client sends only canonical scope fields, never caller custody or UI data',async()=>{
+ const client=createRecallBoundaryClient(async(url)=>{assert.deepEqual([...new URL(url,'https://fixture.invalid').searchParams],Object.entries(selected));return Response.json({version:'memory-scope-recall-v1',sources:[],validUntil:new Date(Date.now()+20000).toISOString(),complete:true});});
+ await client.sources({...selected,custody:{kind:'personal'},privateDraft:'must-not-be-sent'},signal());
+});
+
+test('already cancelled recall operation does not dispatch a consent write',async()=>{
+ let calls=0;const controller=new AbortController();controller.abort();const client=createRecallBoundaryClient(async()=>{calls++;return Response.json({});});
+ await assert.rejects(client.reset(selected,controller.signal));assert.equal(calls,0);
+});
+
+for(const stage of ['transport','body'])test('recall client cancellation interrupts stalled '+stage,async()=>{
+ const controller=new AbortController();let cancelled=false,transportSignal;
+ const client=createRecallBoundaryClient(async(_url,init)=>{transportSignal=init.signal;
+  if(stage==='transport')return new Promise(()=>{});
+  return new Response(new ReadableStream({cancel(){cancelled=true;}}),{headers:{'content-type':'application/json'}});
+ });
+ const read=client.boundary(selected,controller.signal);await new Promise(resolve=>setTimeout(resolve,0));controller.abort();
+ await assert.rejects(read);assert.equal(transportSignal.aborted,true);if(stage==='body')assert.equal(cancelled,true);
+});
+
+for(const stage of ['transport','body'])test('recall client ends a stalled '+stage+' at the bounded timeout',async t=>{
+ t.mock.timers.enable({apis:['setTimeout']});let cancelled=false,finish;
+ const client=createRecallBoundaryClient(async()=>stage==='transport'?new Promise(resolve=>{finish=resolve;}):new Response(new ReadableStream({cancel(){cancelled=true;}}),{headers:{'content-type':'application/json'}}));
+ const pending=client.boundary(selected,signal()),rejected=assert.rejects(pending);
+ await Promise.resolve();await Promise.resolve();await Promise.resolve();t.mock.timers.tick(30000);await rejected;
+ if(stage==='body')assert.equal(cancelled,true);
+ else{finish(new Response(new ReadableStream({cancel(){cancelled=true;}}),{headers:{'content-type':'application/json'}}));await Promise.resolve();await Promise.resolve();await Promise.resolve();assert.equal(cancelled,true);}
+});

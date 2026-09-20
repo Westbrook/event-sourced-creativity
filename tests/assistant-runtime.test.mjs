@@ -15493,12 +15493,13 @@ for(const shared of [false,true])for(const paid of [false,true])test('native der
     assert.equal(init.method,'GET');const headers=new Headers(init.headers);for(const [key,value] of Object.entries(state.owner??{}))headers.set(key,value);
     const request=new Request(state.derivationOrigin+path,{...init,headers}),url=new URL(request.url);calls.push(url.pathname);
     const before=operations;const response=url.pathname==='/api/memory/settings'?await handleLiveMemory(request,state.env,'settings'):
+      url.pathname==='/api/memory/recall-scopes'?await(await import('../worker/memory-recall-boundary-api.ts')).handleMemoryRecallBoundary(request,state.env):
       await api[{settings:'handleMemoryDerivationSettings',results:'handleMemoryDerivationResults',result:'handleMemoryDerivationResult',controls:'handleMemoryDerivationUserControls'}[url.pathname.split('/').at(-1)]](request,state.env);
     assert.ok(operations-before<50,url.pathname+' D1 calls: '+(operations-before));if(response.status!==200)t.diagnostic(url.pathname+' '+response.status+' '+await response.clone().text());return response;
   };
   const controller=new AbortController(),lease=await readDocumentMemoryBrief(scope,transport,()=>true,controller.signal);assert.ok(lease);
   const value=lease.current();assert.equal(value.sections.length,1);assert.equal(value.sections[0].history.windowCount,3);assert.equal(value.sections[0].items.length,1);
-  assert.equal(value.sections[0].items[0].supports[0].text,'Original');assert.equal(calls.length,5);assert.deepEqual(readState(),unchanged,'Automatic presentation must not repair custody, mutate sources or retire results');lease.retire();
+  assert.equal(value.sections[0].items[0].supports[0].text,'Original');assert.equal(calls.length,6);assert.equal(calls.at(-1),'/api/memory/recall-scopes');assert.deepEqual(readState(),unchanged,'Automatic presentation must not repair custody, mutate sources or retire results');lease.retire();
   const store=await import('../worker/memory-derivation-results.ts'),controls=await import('../worker/memory-derivation-user-controls.ts');
   const read=await store.readNativeDerivationResult(state.env,parent.actor_user_id,value.sections[0].jobId),item=store.nativeDerivationResultInputs(state.env,read).candidate.items[0],
     target=store.nativeDerivationResultControlTarget(state.env,read,item.claimKey);
@@ -16071,7 +16072,7 @@ test('native cross-scope recall: withdrawing newest result never revives an olde
  assert.equal(await store.withdrawNativeDerivationResult(state.env,state.recallSource.actor_user_id,jobs.at(-1).job_id),true);
  assert.ok(await store.readNativeDerivationResult(state.env,state.recallSource.actor_user_id,jobs[0].job_id));
  const {handleMemoryDerivationResults}=await import('../worker/memory-derivation-api.ts');
- const latest=await handleMemoryDerivationResults(new Request(state.derivationOrigin+'/api/memory/derivation/results?'+new URLSearchParams({projectId:state.recallSource.project_id,documentId:state.recallSource.document_id,purpose:'rolling-summary'}),{headers:state.owner}),state.env);
+ const latest=await handleMemoryDerivationResults(new Request(state.derivationOrigin+'/api/memory/derivation/results?'+new URLSearchParams({projectId:state.recallSource.project_id,documentId:state.recallSource.document_id,purpose:'rolling-summary',latest:'1'}),{headers:state.owner}),state.env);
  assert.equal(latest.status,200,await latest.clone().text());assert.deepEqual((await latest.json()).results,[],'Automatic latest-purpose reads must not revive older active results');
 
  const response=await state.recallRequest('recall-scopes',undefined,{query:{source:state.recallSource.enrollment_id,purpose:'rolling-summary'}});
@@ -16122,4 +16123,45 @@ for(const kind of ['grant','selected-session'])test('native recall boundary: pre
  const {handleMemoryRecallBoundary}=await import('../worker/memory-recall-boundary-api.ts');
  const response=await handleMemoryRecallBoundary(new Request('http://localhost/api/memory/recall-boundary?projectId=project-atmosphere&documentId=doc-atmosphere',{headers:state.owner}),state.env);
  assert.equal(response.status,200,await response.clone().text());assert.equal((await response.json()).validUntil,expiry);
+});
+
+test('native recall boundary: pilot end bounds private metadata',async t=>{
+ const until=new Date(Date.now()+15000).toISOString();
+ const state=await nativeMemoryJobFixture(t,{shared:true,beforeEnrollment:async state=>{
+  const actor=state.owner['oai-authenticated-user-id'],email=state.owner['oai-authenticated-user-email'],now=new Date().toISOString(),past=new Date(Date.now()-60000).toISOString();
+  state.env.FORMA_ADMIN_EMAILS='';state.env.FORMA_PILOT_COHORT_ID='recall-policy';
+  state.sqlite.prepare("INSERT INTO pilot_cohorts(cohort_id,organization_id,status,starts_at,ends_at,created_by_user_id,created_at,updated_at) VALUES(?,?,'active',?,?,?,?,?)").run('recall-policy',state.organizationId,past,until,actor,now,now);
+  state.sqlite.prepare("INSERT INTO pilot_participants(participant_id,cohort_id,organization_id,email_normalized,user_id,role,status,invited_by_user_id,created_at,revoked_at) VALUES(?,?,?,?,?,'member','active',?,?,NULL)").run('recall-policy-participant','recall-policy',state.organizationId,email,actor,actor,now);
+ }});
+ state.sqlite.exec(await(await import('node:fs/promises')).readFile(new URL('../drizzle/0059_memory_recall_boundaries.sql',import.meta.url),'utf8'));
+ const {handleMemoryRecallBoundary}=await import('../worker/memory-recall-boundary-api.ts');
+ const request=()=>handleMemoryRecallBoundary(new Request('http://localhost/api/memory/recall-boundary?projectId=project-atmosphere&documentId=doc-atmosphere',{headers:state.owner}),state.env);
+ const response=await request();assert.equal(response.status,200,await response.clone().text());assert.equal((await response.json()).validUntil,until);
+ const restore=interceptConsequentialDb(state,'batch',/memory_recall_boundaries/,()=>state.sqlite.prepare("UPDATE pilot_cohorts SET ends_at=? WHERE cohort_id='recall-policy'").run(new Date(Date.now()+10000).toISOString()));
+ try{assert.equal((await request()).status,503);}finally{restore();}
+});
+
+test('native recall boundary: an already checked response cannot outlive its original grant',async t=>{
+ const until=new Date(Date.now()+15000).toISOString(),state=await nativeMemoryJobFixture(t,{beforeEnrollment:async state=>{
+  const user=state.owner['oai-authenticated-user-id'],now=new Date().toISOString();state.sqlite.prepare("INSERT INTO capability_grants(grant_id,user_id,capability,scope_type,status,granted_by_user_id,created_at,updated_at,expires_at) VALUES('late-recall-grant',?,'product.delivery.read','platform','active',?,?,?,?)").run(user,user,now,now,until);
+ }});
+ state.sqlite.exec(await(await import('node:fs/promises')).readFile(new URL('../drizzle/0059_memory_recall_boundaries.sql',import.meta.url),'utf8'));
+ const originalNow=Date.now,restore=interceptConsequentialDb(state,'batch',/memory_recall_boundaries/,()=>{Date.now=()=>Date.parse(until)+1;},'after');
+ try{const {handleMemoryRecallBoundary}=await import('../worker/memory-recall-boundary-api.ts');const response=await handleMemoryRecallBoundary(new Request('http://localhost/api/memory/recall-boundary?projectId=project-atmosphere&documentId=doc-atmosphere',{headers:state.owner}),state.env);assert.equal(response.status,503);}finally{Date.now=originalNow;restore();}
+});
+
+for(const shared of [false,true])test('native automatic scoped brief: target recall without target derivation enrollment '+shared,async t=>{
+ const state=await nativeCrossScopeRecallFixture(t,{shared});await state.widen();
+ const {handleLiveMemory}=await import('../worker/memory-live-api.ts'),api=await import('../worker/memory-derivation-api.ts'),{handleMemoryRecallBoundary}=await import('../worker/memory-recall-boundary-api.ts'),{readDocumentMemoryBrief}=await import('../src/state/document-memory-brief.ts');
+ const before=state.sqlite.prepare('SELECT * FROM memory_derivation_grants ORDER BY consent_id').all(),calls=[];
+ const scope={projectId:state.recallTarget.projectId,documentId:state.recallTarget.documentId,custody:state.preferences.expectedCustody};
+ const transport=async(path,init)=>{assert.equal(init.method,'GET');const headers=new Headers(init.headers);for(const [key,value]of Object.entries(state.owner))headers.set(key,value);
+  const request=new Request(state.derivationOrigin+path,{...init,headers}),url=new URL(request.url);calls.push(url);
+  return url.pathname==='/api/memory/settings'?handleLiveMemory(request,state.env,'settings'):url.pathname==='/api/memory/derivation/settings'?api.handleMemoryDerivationSettings(request,state.env):handleMemoryRecallBoundary(request,state.env);
+ };
+ const lease=await readDocumentMemoryBrief(scope,transport,()=>true,new AbortController().signal);assert.ok(lease);
+ const value=lease.current();assert.equal(value.sections.length,1);assert.equal(value.sections[0].source.enrollmentId,state.recallSource.enrollment_id);assert.equal(value.sections[0].purpose,'rolling-summary');assert.equal(value.sections[0].items.length,1);
+ assert.equal(calls.filter(url=>url.pathname==='/api/memory/recall-scopes'&&url.searchParams.has('source')).length,3);
+ assert.ok(calls.every(url=>!url.searchParams.has('custody')));assert.deepEqual(state.sqlite.prepare('SELECT * FROM memory_derivation_grants ORDER BY consent_id').all(),before);
+ lease.retire();assert.equal(lease.current(),null);
 });

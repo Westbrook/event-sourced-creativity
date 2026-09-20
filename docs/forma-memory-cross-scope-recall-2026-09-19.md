@@ -36,17 +36,22 @@ not complete the full Memory plan.
   to erase. Reparenting changes subsequent ranking and rejects stale in-flight
   reads without erasing otherwise valid document-local results.
 - A withdrawn/expired/unavailable newest result cannot revive an older result.
-  The native first-page latest-purpose listing now follows the same rule while
-  leaving explicit historical browsing intact. Corrections remain displayable
+  The explicitly negotiated `latest=1` purpose listing follows the same rule;
+  ordinary purpose-filtered history keeps its original pagination. A latest-only
+  client requires the server acknowledgement and rejects multiple-result pages. Corrections remain displayable
   when no current model result is available.
 - The actual Memory panel has localized English/French/Arabic/Japanese controls,
   explicit source/purpose previews, uncertainty recovery, source/evidence labels
   and no implicit mutations. Wall and monotonic lifetimes are at most 30 seconds;
   route, authorization, source ownership, enrollment, locale, visibility, blur and
-  disconnect clear private content. Expiry returns in-control focus to Refresh
+  disconnect clear private content. The original pilot-policy transition also
+  limits metadata leases; a response delayed past any original deadline is refused. Expiry returns in-control focus to Refresh
   only while the same visible owner remains.
 - Automatic document briefs retain local notes/corrections first and may append
-  one nearest explicitly permitted source, separately labeled by scope. They do
+  one nearest explicitly permitted source, separately labeled by scope. Each source
+  purpose is independently verified; an unavailable facet does not discard other
+  valid facets. Target recall enrollment is required, but receiving these notes
+  does not require or create a target paid/background derivation grant. They do
   not fan out across the account, use an older-source fallback, mutate documents,
   put text into assistant prompts, save a cache or call a model. Optional schema
   absence or unavailable broader sources does not hide a valid local brief.
@@ -88,3 +93,22 @@ Those native implementation areas remain in the [current continuation plan](form
 Remote PostgreSQL/pgvector indexing and acknowledgements, hosted scheduling,
 qualification, production rollout and explicit enrollment remain separately
 tracked in the [capability To Do](forma-memory-sites-capability-todo-2026-09-18.md).
+
+## End-to-end integration qualification
+
+The full native Memory/recall matrix passes **532 tests**, the personal controls
+and brief-component suites pass **565**, and the client contract/transport suites
+pass **124**. Twelve synthetic browser cases pass in English and Arabic, covering
+manual scope controls, latest-purpose review, automatic notes and retirement.
+Typecheck, scoped lint and production build were rerun; build chunk-size warnings
+are unchanged. These are local fixtures, not hosted qualification or deployment.
+
+The expanded run caught and fixed two integration defects: latest-only discovery
+had narrowed historical purpose pagination, and the automatic caller had included
+its private custody object in a strict query string. The client now selects only
+canonical wire IDs. Actual personal/shared HTTP tests now read the nearest source
+from a target with no derivation grant and verify that no grants are created.
+
+Transport now rejects pre-aborted mutations before dispatch, interrupts hung
+response bodies/transports at its deadline, and cancels late response bodies.
+An uncertain write is still never retried or acknowledged as saved.

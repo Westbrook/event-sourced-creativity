@@ -150,3 +150,8 @@ Still native implementation: ancestry-backed semantic recall and its durable mov
 ## Native cross-scope Memory recall continuation — 2026-09-19
 
 [Source-side recall consent and hierarchy-backed private consumers](forma-memory-cross-scope-recall-2026-09-19.md) implement explicit project/tree/partition ranges, default document isolation, independent native source/target proofs, newest-result withdrawal handling, localized previews and automatic nearest-source document briefs. Migration0059 is additive and unapplied; no users were enrolled and nothing was deployed. The [remaining native implementation list](forma-memory-native-continuation-2026-09-18.md#remaining-native-implementation--still-in-scope) still includes long-term semantic reconciliation, broader resource learning and durable assistant/autocomplete publication. These are implementation tasks, not external-service excuses. Remote infrastructure, hosted qualification and rollout remain in the separate [capability To Do](forma-memory-sites-capability-todo-2026-09-18.md).
+
+Memory cross-scope integration qualification: historical pagination and explicit latest
+reads are separate, native target-only recall works without a processing grant, and
+pilot/cancellation deadlines are enforced. [Verified behavior and open scope](forma-memory-cross-scope-recall-2026-09-19.md#end-to-end-integration-qualification).
+The complete Memory plan remains open; no production activation is implied.

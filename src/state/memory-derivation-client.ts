@@ -223,11 +223,11 @@ export function createMemoryDerivationClient(transport: (input: RequestInfo | UR
     finally { signal?.removeEventListener("abort", abort); }
   }
   return {
-    async results(value:DerivationScopeRequest,after:string|null=null,signal?:AbortSignal,purpose:MemoryDerivationPurpose|null=null){
-      const expected=requestScope(value);check((after===null||derivationHash(after))&&(purpose===null||MEMORY_DERIVATION_PURPOSES.includes(purpose)));
-      return request('GET','?projectId='+encodeURIComponent(expected.projectId)+'&documentId='+encodeURIComponent(expected.documentId)+(after?'&after='+after:'')+(purpose?'&purpose='+encodeURIComponent(purpose):''),undefined,raw=>{
-        const row=own(raw,['version','scope','enrollmentId','enrollmentRevision','results','next','checkedAt','progress',...(purpose?['purpose']:[])]);
-        check(purpose===null||row.purpose===purpose);
+    async results(value:DerivationScopeRequest,after:string|null=null,signal?:AbortSignal,purpose:MemoryDerivationPurpose|null=null,latest=false){
+      const expected=requestScope(value);check(typeof latest==='boolean'&&(!latest||purpose!==null&&after===null));check((after===null||derivationHash(after))&&(purpose===null||MEMORY_DERIVATION_PURPOSES.includes(purpose)));
+      return request('GET','?projectId='+encodeURIComponent(expected.projectId)+'&documentId='+encodeURIComponent(expected.documentId)+(after?'&after='+after:'')+(purpose?'&purpose='+encodeURIComponent(purpose):'')+(latest?'&latest=1':''),undefined,raw=>{
+        const row=own(raw,['version','scope','enrollmentId','enrollmentRevision','results','next','checkedAt','progress',...(purpose?['purpose']:[]),...(latest?['latest']:[])]);
+        check(purpose===null||row.purpose===purpose);check(!latest||row.latest===true&&Array.isArray(row.results)&&row.results.length<=1&&row.next===null);
         check(derivationTime(row.checkedAt)&&Date.parse(row.checkedAt)<=Date.now()+5000&&Date.now()-Date.parse(row.checkedAt)<60000&&Array.isArray(row.progress)&&row.progress.length<=3);
         const progress=row.progress.map(value=>{const hasProducers=!!value&&typeof value==='object'&&Object.hasOwn(value,'producers');
           const p=own(value,['purpose','pending','completed','retained','uncertain','registeredThrough','completedThrough',...(hasProducers?['producers']:[])]);

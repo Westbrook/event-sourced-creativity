@@ -120,7 +120,7 @@ function briefFixture(){
   const result={version,jobId,expiresAt:entry.expiresAt,candidate:{version:'memory-derivation-candidates-v1',purpose:entry.purpose,scopeKey:entry.scopeKey,
     manifestId:jobId,manifestRevision:1,validUntil,semanticAuthority:'model-derived-unverified',semanticCompleteness:false,independentEvidence:false,items:[item]},controlRevisions:{[lineage]:0},
     history:{windowCount:3,originalPairs:3,boundary:'bounded',afterSequence:5,throughSequence:20}};
-  const listing={version,scope:f.grant.scope,enrollmentId:hash('parent'),enrollmentRevision:2,results:[entry],next:null,checkedAt:now,progress:[],purpose:'rolling-summary'};
+  const listing={version,scope:f.grant.scope,enrollmentId:hash('parent'),enrollmentRevision:2,results:[entry],next:null,checkedAt:now,progress:[],purpose:'rolling-summary',latest:true};
   const controls={version,available:true,controls:[],next:null,scope:f.grant.scope,enrollmentId:hash('parent'),enrollmentRevision:2,validUntil};
   const calls=[],controller=new AbortController();let active=true;
   const transport=async(input,init)=>{const url=new URL(String(input),'https://fixture.invalid');calls.push({url,init});
@@ -143,7 +143,7 @@ for(const fault of ['disabled','no-enrollment','learn-off','recall-off','purpose
   if(fault==='learn-off')f.enrollment.learn=false;if(fault==='recall-off')f.enrollment.recall=false;
   if(fault==='purpose-disabled'){f.settings.available=false;f.settings.qualifications=[];}if(fault==='no-purpose')f.settings.grants=[];if(fault==='grant-revoked')f.grant.revokedAt=new Date().toISOString();
   assert.equal(await readDocumentMemoryBrief(f.selection,f.transport,f.current,f.controller.signal),null);
-  assert.ok(f.calls.every(call=>call.url.pathname.endsWith('/settings')));
+  assert.ok(f.calls.every(call=>call.url.pathname.endsWith('/settings')||call.url.pathname==='/api/memory/recall-scopes'));
 });
 for(const action of ['corrected','suppressed','released'])test('automatic brief respects explicit '+action+' lineage controls',async()=>{
   const f=briefFixture();f.controls.controls=[{controlId:hash('control'),claimKey:f.item.claimKey,lineageId:f.lineage,revision:1,action,
@@ -256,7 +256,7 @@ test('automatic brief appends nearest consented scope separately and never recei
  const f=relatedBriefFixture(),lease=await readDocumentMemoryBrief(f.selection,f.transport,f.current,f.controller.signal),view=lease.current();
  assert.equal(view.sections.length,2);assert.equal(view.sections[0].items[0].text,'Tentative goal');assert.equal(view.sections[1].items[0].text,'Other document tentative context');
  assert.deepEqual(view.sections[1].source,f.source);assert.deepEqual(view.sections[1].corrections,[]);assert.ok(!Object.hasOwn(view.sections[1],'controlRevisions'));
- assert.ok(view.validUntil<=f.recalled.validUntil);assert.equal(f.recalls.length,2);assert.ok(f.recalls.every(c=>c.init.method==='GET'));
+ assert.ok(view.validUntil<=f.recalled.validUntil);assert.equal(f.recalls.length,4);assert.ok(f.recalls.every(c=>c.init.method==='GET'));
  assert.equal(f.recalls[1].url.searchParams.get('source'),f.source.enrollmentId);lease.retire();assert.equal(lease.current(),null);
 });
 for(const fault of ['schema','unavailable-source','incomplete-catalog','bad-rank'])test('automatic brief retains local notes without an older-source fallback on '+fault,async()=>{
@@ -273,4 +273,19 @@ test('automatic cross-scope reply arriving after target ownership changes is dis
  const f=relatedBriefFixture(),transport=async(input,init)=>{const result=await f.transport(input,init);
   if(new URL(String(input),'https://fixture.invalid').searchParams.has('source'))f.deactivate();return result;};
  await assert.rejects(readDocumentMemoryBrief(f.selection,transport,f.current,f.controller.signal));
+});
+
+test('nearest-source brief needs recall enrollment but no target processing grant',async()=>{
+ const f=relatedBriefFixture();f.settings.grants=[];
+ const lease=await readDocumentMemoryBrief(f.selection,f.transport,f.current,f.controller.signal);
+ assert.equal(lease.current().sections.length,1);assert.deepEqual(lease.current().sections[0].source,f.source);
+ assert.ok(f.calls.every(call=>call.url.pathname.endsWith('/settings')));assert.equal(f.recalls.length,4);lease.retire();
+});
+
+test('latest-only inventory must be explicitly acknowledged and cannot contain history',async()=>{
+ for(const fault of ['unacknowledged','multiple','cursor']){
+  const f=briefFixture();if(fault==='unacknowledged')delete f.listing.latest;
+  if(fault==='multiple')f.listing.results.push({...f.entry,jobId:hash('older')});if(fault==='cursor')f.listing.next=f.entry.jobId;
+  await assert.rejects(readDocumentMemoryBrief(f.selection,f.transport,f.current,f.controller.signal));
+ }
 });

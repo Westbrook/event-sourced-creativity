@@ -3468,9 +3468,9 @@ for(const fault of ['too-many-windows','too-many-pairs','reversed','unknown-boun
 
 for(const purpose of ['rolling-summary','profile','suggestion'])test('latest derived '+purpose+' is purpose-bound, freshly inspected and never enrolled',async t=>{
   const {h,item}=await purposeFixture(t),data=derivedReviewFixture(item);
-  data.entry.purpose=purpose;data.result.candidate.purpose=purpose;data.list.purpose=purpose;
+  data.entry.purpose=purpose;data.result.candidate.purpose=purpose;data.list.purpose=purpose;data.list.latest=true;
   const before=purposeActions(h).length;h.enqueue(data.list);h.enqueue(data.result);await profileClick(h,'reviewLatest.'+purpose);
-  assert.equal(purposeActions(h).length,before+2);assert.ok(purposeActions(h).at(-2).url.endsWith('&purpose='+purpose));
+  assert.equal(purposeActions(h).length,before+2);assert.ok(purposeActions(h).at(-2).url.endsWith('&purpose='+purpose+'&latest=1'));
   assert.match(h.text(),/Private tentative memory proposal/);assert.equal(h.mutations().length,0);
   h.visibility('hidden');h.visibility('visible');assert.doesNotMatch(h.text(),/Private tentative memory proposal/);
 });
@@ -3481,7 +3481,7 @@ test('latest derived purpose refuses a mismatched inventory without loading any 
 });
 test('latest derived purpose empty inventory does not load or invent a profile',async t=>{
   const {h,item}=await purposeFixture(t),data=derivedReviewFixture(item),before=purposeActions(h).length;
-  data.list.purpose='profile';data.list.results=[];h.enqueue(data.list);await profileClick(h,'reviewLatest.profile');
+  data.list.purpose='profile';data.list.latest=true;data.list.results=[];h.enqueue(data.list);await profileClick(h,'reviewLatest.profile');
   assert.equal(purposeActions(h).length,before+1);assert.match(h.text(),/memory.live.reviewEmpty/);assert.equal(h.mutations().length,0);
 });
 

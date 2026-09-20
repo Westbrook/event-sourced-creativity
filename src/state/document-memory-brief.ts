@@ -43,18 +43,17 @@ export async function readDocumentMemoryBrief(selection:Selection,transport:type
   const settings=await client.settings(scope,signal);check();if(!settings.enabled||!settings.available)return null;
   const grants=settings.grants.filter(row=>row.revokedAt===null&&Date.parse(row.expiresAt)>Date.now());
   const purposes=MEMORY_DERIVATION_PURPOSES.filter(purpose=>grants.some(row=>row.purpose===purpose));
-  if(!purposes.length)return null;
   const deadlines=[started.wall+60000,Date.parse(enrollment.expiresAt),...grants.map(row=>Date.parse(row.expiresAt))];
   const sections:DocumentMemoryBrief['sections'][number][]=[];
   for(const purpose of purposes){
-    const listing=await client.results(scope,null,signal,purpose);check();deadlines.push(Date.parse(listing.checkedAt)+60000);
+    const listing=await client.results(scope,null,signal,purpose,true);check();deadlines.push(Date.parse(listing.checkedAt)+60000);
     const entry=listing.results[0];
     // No older fallback when the newest native result becomes unavailable.
     const view=entry?await client.inspectResult(entry,signal):null;check();
     if(view)deadlines.push(Date.parse(view.validUntil),Date.parse(view.expiresAt));
     sections.push({purpose,corrections:[],items:view?.items??[],jobId:view?.jobId??null,...(view?.history?{history:view.history}:{})});
   }
-  const controls=await client.controls(scope,null,signal);check();
+  const controls=purposes.length?await client.controls(scope,null,signal):{controls:[],next:null,validUntil:new Date(started.wall+60000).toISOString()};check();
   if(controls.next!==null)throw Error('memory-brief-controls-incomplete');
   deadlines.push(Date.parse(controls.validUntil),...controls.controls.map(row=>Date.parse(row.expiresAt)));
   const resolved=sections.map(section=>{
@@ -72,14 +71,19 @@ export async function readDocumentMemoryBrief(selection:Selection,transport:type
     const recall=createRecallBoundaryClient(guarded),catalog=await recall.sources(selected,signal);check();
     const nearest=catalog.sources[0],relatedDeadlines=[Date.parse(catalog.validUntil)];
     if(nearest){
-      for(const purpose of purposes){
-        const view=await recall.inspect(selected,nearest,purpose,signal);check();
-        relatedDeadlines.push(Date.parse(view.validUntil));
-        related.push({purpose,corrections:[],items:view.items,jobId:view.jobId,...(view.history?{history:view.history}:{}),source:view.source});
+      // Source purpose consent governs these reads; receiving an already-derived
+      // note does not require enrolling the target in paid/background processing.
+      for(const purpose of MEMORY_DERIVATION_PURPOSES){
+        try {
+          const view=await recall.inspect(selected,nearest,purpose,signal);check();
+          relatedDeadlines.push(Date.parse(view.validUntil));
+          related.push({purpose,corrections:[],items:view.items,jobId:view.jobId,...(view.history?{history:view.history}:{}),source:view.source});
+        } catch { check(); } // A missing facet does not revoke other independently verified purposes.
       }
       if(related.length)deadlines.push(...relatedDeadlines);
     }
   } catch { check();related.length=0; }
+  if(!resolved.length&&!related.length)return null;
   const until=Math.min(...deadlines),duration=until-started.wall;
   if(!Number.isFinite(until)||duration<=0||elapsed.elapsed(sample())>=duration)throw Error('memory-brief-expired');
   const value:DocumentMemoryBrief={projectId:selected.projectId,documentId:selected.documentId,validUntil:new Date(until).toISOString(),

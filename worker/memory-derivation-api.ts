@@ -367,10 +367,11 @@ export async function handleMemoryDerivationResults(request:Request,env:WorkerEn
   const actor=auth.user,identity=principalGuard(actor);
   if(actor.fictional||!identity)return deny('principal_account_required',403);
   if(request.method!=='GET')return deny('method_not_allowed',405);
-  const projectId=url.searchParams.get('projectId'),documentId=url.searchParams.get('documentId'),after=url.searchParams.get('after')??'',purpose=url.searchParams.get('purpose');
+  const projectId=url.searchParams.get('projectId'),documentId=url.searchParams.get('documentId'),after=url.searchParams.get('after')??'',purpose=url.searchParams.get('purpose'),latest=url.searchParams.get('latest');
   if(!derivationId(projectId)||!derivationId(documentId)||after!==''&&!derivationHash(after)
+    ||latest!==null&&(latest!=='1'||purpose===null||after!=='')
     ||purpose!==null&&!MEMORY_DERIVATION_PURPOSES.includes(purpose as MemoryDerivationPurpose)
-    ||[...url.searchParams.keys()].some(key=>!['projectId','documentId','after','purpose'].includes(key)||url.searchParams.getAll(key).length!==1))return deny('memory_result_scope_required');
+    ||[...url.searchParams.keys()].some(key=>!['projectId','documentId','after','purpose','latest'].includes(key)||url.searchParams.getAll(key).length!==1))return deny('memory_result_scope_required');
   try{
     const schema=await memoryDerivationSchema(env),selected=await scope(request,env,actor,projectId,documentId);
     if(selected instanceof Response)return selected;
@@ -391,7 +392,7 @@ export async function handleMemoryDerivationResults(request:Request,env:WorkerEn
       JOIN memory_derivation_jobs j ON j.job_id=r.job_id JOIN memory_derivation_grants g ON g.consent_id=j.consent_id
       WHERE g.enrollment_id=? AND g.actor_user_id=? AND g.revoked_at IS NULL AND g.expires_at>?
         AND r.state='active' AND r.expires_at>?${purpose?' AND g.purpose=?':''} AND (j.through_sequence<? OR j.through_sequence=? AND j.job_id>?)
-        ${purpose&&!after?`AND NOT EXISTS(SELECT 1 FROM memory_derivation_results newer
+        ${latest?`AND NOT EXISTS(SELECT 1 FROM memory_derivation_results newer
           JOIN memory_derivation_jobs newer_job ON newer_job.job_id=newer.job_id
           JOIN memory_derivation_grants newer_grant ON newer_grant.consent_id=newer_job.consent_id
           WHERE newer_grant.enrollment_id=g.enrollment_id AND newer_grant.actor_user_id=g.actor_user_id
@@ -434,6 +435,6 @@ export async function handleMemoryDerivationResults(request:Request,env:WorkerEn
     const parent=selected.parent;
     return reply({scope:{projectId,documentId,custody:parent.organization_id===null?{kind:'personal'}:{kind:'organization',organizationId:parent.organization_id,projectAccessId:parent.project_access_id,ownerUserId:parent.owner_user_id}},
       enrollmentId:parent.enrollment_id,enrollmentRevision:parent.revision,
-      checkedAt:now,progress:progress.map(({producers_json,...row})=>({...row,...(schema.producersPresent?{producers:JSON.parse(String(producers_json))}:{})})),...(purpose?{purpose}:{}),results:found.slice(0,8).map(row=>({jobId:row.job_id,purpose:row.purpose,scopeKey:row.scope_key,expiresAt:row.expires_at})),next:found.length>8?found[7]!.job_id:null});
+      checkedAt:now,progress:progress.map(({producers_json,...row})=>({...row,...(schema.producersPresent?{producers:JSON.parse(String(producers_json))}:{})})),...(purpose?{purpose}:{}),...(latest?{latest:true}:{}),results:found.slice(0,8).map(row=>({jobId:row.job_id,purpose:row.purpose,scopeKey:row.scope_key,expiresAt:row.expires_at})),next:found.length>8?found[7]!.job_id:null});
   }catch{return deny('memory_result_unavailable',503);}
 }

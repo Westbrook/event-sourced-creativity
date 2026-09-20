@@ -50,7 +50,7 @@ for(const locale of ['en','ar'])test.describe('Memory purpose locale '+locale,()
     }
 
     if(url.pathname==='/api/memory/derivation/settings'&&url.search==='?projectId=project-atmosphere&documentId=doc-atmosphere')return route.fulfill({json:purposes});
-    if(url.pathname==='/api/memory/derivation/results')return route.fulfill({json:{...reviewList,...(url.searchParams.has('purpose')?{purpose:url.searchParams.get('purpose')}:{})}});
+    if(url.pathname==='/api/memory/derivation/results')return route.fulfill({json:{...reviewList,...(url.searchParams.has('latest')?{latest:true}:{}),...(url.searchParams.has('purpose')?{purpose:url.searchParams.get('purpose')}:{})}});
     if(url.pathname==='/api/memory/derivation/result'&&url.search==='?jobId='+entry.jobId)return route.fulfill({json:reviewResult});
     throw new Error('Undeclared Memory read');
   });
@@ -69,7 +69,7 @@ for(const locale of ['en','ar'])test.describe('Memory purpose locale '+locale,()
   await expect(section.getByRole('button',{name:message(locale,'purposeEnable'),exact:true})).toBeDisabled();
   await section.getByRole('button',{name:message(locale,'reviewLatest.rolling-summary'),exact:true}).click();
   await expect(section.locator('[data-memory-derived-content]')).toContainText('Synthetic private proposal');
-  expect(calls.some(call=>call.query.endsWith('&purpose=rolling-summary'))).toBe(true);
+  expect(calls.some(call=>new URLSearchParams(call.query).get('purpose')==='rolling-summary'&&new URLSearchParams(call.query).get('latest')==='1')).toBe(true);
   for(const field of ['charge','background','consent'])await expect(section.locator('[name="memory-purpose-'+field+'"]')).not.toBeChecked();
   expect(calls.filter(c=>!c.automatic&&c.path.includes('/derivation/'))).toHaveLength(3);expect(errors).toEqual([]);
   await captureViewport(page,info,'memory-purposes-'+locale,{assertStable:false});
@@ -169,7 +169,7 @@ for(const behavioral of [false,true])for(const locale of ['en','ar'])test.descri
       const validUntil=new Date(Date.now()+45000).toISOString();
       if(url.pathname==='/api/memory/settings')return route.fulfill({json:base});
       if(url.pathname.endsWith('/derivation/settings'))return route.fulfill({json:settings});
-      if(url.pathname.endsWith('/results'))return route.fulfill({json:{version,scope,enrollmentId:parent,enrollmentRevision:1,purpose:'rolling-summary',
+      if(url.pathname.endsWith('/results'))return route.fulfill({json:{version,scope,enrollmentId:parent,enrollmentRevision:1,purpose:'rolling-summary',latest:true,
         checkedAt:new Date().toISOString(),progress:[],results:[{jobId,purpose:'rolling-summary',scopeKey:'synthetic-scope',expiresAt}],next:null}});
       if(url.pathname.endsWith('/result')){
         if(denied)return route.fulfill({status:404,json:{error:'memory_result_unavailable'}});
@@ -180,6 +180,7 @@ for(const behavioral of [false,true])for(const locale of ['en','ar'])test.descri
               claimKey:'derived:'+jobId,lineageIds:[lineage],sourceBindings:[{sourceId:'synthetic-original',revision:1,contentHash:'f'.repeat(64)}],validUntil,citationStatus:'conflicting-citations'}]}}});
       }
       if(url.pathname.endsWith('/controls'))return route.fulfill({json:{version,available:true,scope,enrollmentId:parent,enrollmentRevision:1,validUntil,controls:[],next:null}});
+      if(url.pathname==='/api/memory/recall-scopes')return route.fulfill({json:{version:'memory-scope-recall-v1',sources:[],complete:true,validUntil:new Date(Date.now()+25000).toISOString()}});
       throw Error('Undeclared automatic Memory route');
     });
     await page.goto(path);const brief=page.locator('[data-memory-document-brief]');

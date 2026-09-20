@@ -1040,7 +1040,7 @@ export class FormaPersonalMemory extends FormaElement {
     const scope=this.#reviewScope();if(!scope)return;
     this.#clearReview();
     return this.#runPurpose(event,'review',async signal=>{
-      const page=await this.#purposeClient.results(scope,null,signal,purpose);
+      const page=await this.#purposeClient.results(scope,null,signal,purpose,true);
       const latest=page.results[0];
       const view=latest?await this.#purposeClient.inspectResult(latest,signal):null;
       return {page,view};
