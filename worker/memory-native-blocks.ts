@@ -21,9 +21,11 @@ const clean=(p:Record<string,unknown>)=>!p.simulation&&!p.synthetic&&!(p.origin&
 
 /** Shared strict native envelope decoding. Identity data alone is not authority;
  * callers must retain the exact DB read in the enclosing authenticated witness. */
-export function decodeNativeMemoryResourceEvent(row:Row,e:NativeMemoryResourceScope,resourceKind:'block'|'relation',resourceId:string){
+type FieldUndoEdge = Readonly<{ compensated:number; target:string|null }>;
+export function decodeNativeMemoryResourceEvent(row:Row,e:NativeMemoryResourceScope,resourceKind:'block'|'relation',resourceId:string,fieldUndo?:FieldUndoEdge){
   if(row.schema_version!==1||!derivationId(row.event_id)||!derivationInteger(row.sequence,1)||!derivationTime(row.recorded_at)||String(row.recorded_at)>new Date().toISOString()
-    ||String(row.event_id).startsWith('optimistic:')||String(row.client_id).includes('optimistic')||row.compensated!==0||row.compensates_event_id!==null)throw Error('source');
+    ||String(row.event_id).startsWith('optimistic:')||String(row.client_id).includes('optimistic')
+    ||fieldUndo&&resourceKind!=='block'||row.compensated!==(fieldUndo?.compensated??0)||row.compensates_event_id!==(fieldUndo?.target??null))throw Error('source');
   const publicPayload=JSON.parse(String(row.payload)),event=serializeEvent(row),p=event.payload;
   if(!clean(publicPayload)||!clean(p)||p._private_ref!==undefined||p[resourceKind+'_id']!==resourceId
     ||[resourceKind+'_id','project_id','document_id','canvas_id','scope',...(resourceKind==='relation'?['from_block_id','to_block_id','kind']:[])].some(key=>publicPayload[key]!==undefined&&publicPayload[key]!==p[key])
@@ -35,6 +37,38 @@ export function decodeNativeMemoryResourceEvent(row:Row,e:NativeMemoryResourceSc
     ||scopes[0].access!==e.project_access_id||scopes[0].project!==e.project_id||scopes[0].owner!==e.owner_user_id
     ||scopes[0].stream!=='creative:'+e.owner_user_id||scopes[0].sequence!==row.sequence))throw Error('custody');
   return event;
+}
+
+/** A closed native undo pair is part of the new field version, never proof that
+ * the old version remains current or that a reversal is independent preference.
+ * All rows are subsequently decoded with their original custody/private-body
+ * checks and retained in the enclosing exact SQL witness. A compensator outside
+ * this historical window, multiple reversals, chains or unrelated actions fail.
+ * This intentionally supports the Store's field/lifecycle inverses only. */
+function nativeFieldUndoEdges(rows:readonly Row[]):Map<string,FieldUndoEdge>{
+  const events=rows.map(row=>serializeEvent(row)),byId=new Map(events.map(event=>[event.eventId,event])),edges=new Map<string,FieldUndoEdge>();
+  if(byId.size!==rows.length)throw Error('memory-block-undo-identity');
+  const opposites:Record<string,string>={BlockLocked:'BlockUnlocked',BlockUnlocked:'BlockLocked',BlockRemoved:'BlockRestored',BlockRestored:'BlockRemoved'};
+  for(const event of events){
+    if(!event.compensatesEventId)continue;
+    const original=byId.get(event.compensatesEventId),p=event.payload,q=original?.payload;
+    if(!original||!q||original.compensatesEventId||original.sequence>=event.sequence||original.actor!==event.actor
+      ||p.block_id!==q.block_id||edges.has(original.eventId)||edges.has(event.eventId))throw Error('memory-block-undo-edge');
+    const swapped=(old:string,next:string)=>Object.hasOwn(p,old)&&Object.hasOwn(p,next)&&Object.hasOwn(q,old)&&Object.hasOwn(q,next)
+      &&memoryCanonical(p[old])===memoryCanonical(q[next])&&memoryCanonical(p[next])===memoryCanonical(q[old]);
+    let inverse=opposites[original.type]===event.type;
+    if(original.type===event.type){
+      if(event.type==='BlockRenamed')inverse=swapped('old_handle','new_handle');
+      if(event.type==='BlockWeightSet')inverse=swapped('previous_weight','weight');
+      if(event.type==='BlockPropertyEdited'||event.type==='ChipEdited'){
+        const field=event.type==='ChipEdited'?'property':'property_path';
+        inverse=typeof p[field]==='string'&&Boolean(p[field])&&p[field]===q[field]&&swapped('old_value','new_value');
+      }
+    }
+    if(!inverse)throw Error('memory-block-undo-inverse');
+    edges.set(original.eventId,{compensated:1,target:null});edges.set(event.eventId,{compensated:0,target:original.eventId});
+  }
+  return edges;
 }
 
 /** Supplement the already-authorized document observation, never widen it.
@@ -106,7 +140,7 @@ export async function observeNativeMemoryBlockBindings(env:WorkerEnv,e:NativeMem
       if(!Array.isArray(custody)||(e.organization_id===null?custody.length!==0:custody.length!==1
         ||custody[0].organization!==e.organization_id||custody[0].access!==e.project_access_id||custody[0].project!==e.project_id
         ||custody[0].owner!==e.owner_user_id||!(custody[0].visibility==='collaborative_output'||custody[0].visibility==='actor_private'&&custody[0].actor===e.actor_user_id)))continue;
-      const events=source.map(row=>decodeNativeMemoryResourceEvent(row,e,'block',blockId));
+      const undo=nativeFieldUndoEdges(source),events=source.map(row=>decodeNativeMemoryResourceEvent(row,e,'block',blockId,undo.get(String(row.event_id))));
       const declarations=events.filter(event=>event.type==='BlockCreated');
       // No implicit projection defaults or duplicate IDs can manufacture custody.
       if(declarations.length!==1||declarations[0]!.payload.project_id!==e.project_id||declarations[0]!.payload.document_id!==e.document_id

@@ -103,3 +103,9 @@ structural editor versions while retaining full-history invalidation. See the
 [capacity checkpoint](forma-memory-native-capacity-2026-09-20.md) and
 [block-inspection checkpoint](forma-memory-block-inspection-2026-09-19.md).
 These close concrete boundary defects, not the remaining native workstreams.
+
+[Native field Undo/Redo](forma-memory-native-field-undo-2026-09-20.md) is now
+certified through the actual Document inspector and native/D1 capture. Shared
+block-removal restoration still needs a historical same-author authoring proof
+because removed resources are absent from the active resource index. This is a
+concrete native resource/lifecycle continuation, not an external-service gate.

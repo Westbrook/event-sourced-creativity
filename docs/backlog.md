@@ -223,3 +223,7 @@ services, qualification and enrollment remain in the Sites capability checklist.
 ### MEM-003 native request and block-history boundaries
 
 [Incoming control upload limits](forma-memory-native-capacity-2026-09-20.md#incoming-control-message-bounds) and [structured-block inspection integration](forma-memory-block-inspection-2026-09-19.md#structured-block-history-integration--2026-09-20) are implemented and locally verified. Native inspection remains read-authorized and cannot repair stale project projections. Continue all remaining consumer/profile/resource/lifecycle work in the completion matrix; no deployment, scheduler registration or real-user enrollment occurred.
+
+### MEM-003 native field Undo coverage
+
+[Closed native Undo/Redo histories](forma-memory-native-field-undo-2026-09-20.md) are now supported by Document Memory inspection, with exact custody/private-body replay and historical invalidation. The complete context-controls suite also passes after reconciling its stale navigation port. Continue the newly reproduced shared-block-removal restoration writer gap with a guarded historical proof; do not bypass current resource authorization. The remaining completion matrix stays in scope.

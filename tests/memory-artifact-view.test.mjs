@@ -950,6 +950,66 @@ for(const shared of [false,true])test('native block inspection: structured relat
  for(const event of [firstEvent,secondEvent])assert.ok(f.sqlite.prepare('SELECT event_id FROM memory_live_sources WHERE event_id=?').get(event.eventId));
 });
 
+async function nativeUndoInspectionFixture(t,{shared=false,type='BlockPropertyEdited',memory=true}={}){
+ const f=await nativeBlockInspectionFixture(t,{shared,memory}),scope={project_id:f.projectId,document_id:f.documentId,block_id:f.blockId};
+ const fields=type==='BlockPropertyEdited'?{property_path:'text',old_value:'Original inspected native block',new_value:'Revised inspected native block'}
+  :type==='ChipEdited'?{property:'text',old_value:'Original inspected native block',new_value:'Revised inspected native block'}
+  :type==='BlockRenamed'?{old_handle:f.blockSource.payload.handle??f.blockId,new_handle:'Revised native handle'}
+  :type==='BlockWeightSet'?{previous_weight:1,weight:0.5}:{};
+ const write=async event=>{const response=await f.request('/api/events',f.json({action:'append',event}));assert.equal(response.status,200,await response.clone().text());return(await response.json()).appended[0];};
+ const changed=await write({type,payload:{...scope,...fields}}),payload={...changed.payload};
+ if(type==='BlockPropertyEdited'||type==='ChipEdited')[payload.old_value,payload.new_value]=[payload.new_value,payload.old_value];
+ if(type==='BlockRenamed')[payload.old_handle,payload.new_handle]=[payload.new_handle,payload.old_handle];
+ if(type==='BlockWeightSet')[payload.previous_weight,payload.weight]=[payload.weight,payload.previous_weight];
+ const undone=await write({type:type==='BlockLocked'?'BlockUnlocked':type==='BlockRemoved'?'BlockRestored':type,payload,compensatesEventId:changed.eventId});
+ if(shared){const refreshed=await f.request('/api/events?after=0&limit=2000&content=0');assert.equal(refreshed.status,200,await refreshed.clone().text());}
+ const ids=[f.blockSource.eventId,changed.eventId,undone.eventId];
+ return Object.assign(f,{changed,undone,undoSources:ids,inspectUndo:()=>f.inspectBlock({source_event_ids:ids})});
+}
+for(const shared of [false,true])for(const type of ['BlockPropertyEdited','ChipEdited','BlockRenamed','BlockWeightSet','BlockLocked'])test('native block undo: exact same-author field history '+type+'/'+shared,async t=>{
+ const f=await nativeUndoInspectionFixture(t,{shared,type}),before=f.counts(),response=await f.inspectUndo();assert.equal(response.status,200,await response.clone().text());
+ const observed=(await response.json()).appended[0];assert.deepEqual(observed.payload.source_event_ids,f.undoSources);assert.deepEqual(f.counts(),before);
+ assert.equal((await f.run()).status,'completed');assert.ok(f.sqlite.prepare('SELECT event_id FROM memory_live_sources WHERE event_id=?').get(observed.eventId));
+ const {observeNativeMemoryBlockBindings}=await import('../worker/memory-native-blocks.ts'),{AssistantContextReadWitness}=await import('../worker/assistant-context-source.ts');
+ const witness=new AssistantContextReadWitness(f.env),source=f.sqlite.prepare('SELECT sequence FROM events WHERE event_id=?').get(f.changed.eventId);
+ const historical=await observeNativeMemoryBlockBindings(f.env,f.enrollment(),[{eventId:f.changed.eventId,sequence:source.sequence,blockPointer:f.blockId,eventType:type}],witness);
+ assert.equal(historical.entries.length,0,'a later undo cannot certify the earlier field version');assert.equal(historical.unresolved,1);
+});
+for(const shared of [false,true])test('native block undo: redo and its own reversal remain separately bound '+shared,async t=>{
+ const f=await nativeUndoInspectionFixture(t,{shared}),write=async event=>{const response=await f.request('/api/events',f.json({action:'append',event}));assert.equal(response.status,200,await response.clone().text());return(await response.json()).appended[0];};
+ const redone=await write({type:f.changed.type,payload:f.changed.payload});
+ const undoneAgain=await write({type:f.undone.type,payload:f.undone.payload,compensatesEventId:redone.eventId});
+ f.undoSources.push(redone.eventId,undoneAgain.eventId);
+ const response=await f.inspectUndo();assert.equal(response.status,200,await response.clone().text());const receipt=(await response.json()).appended[0];
+ assert.deepEqual(receipt.payload.source_event_ids,f.undoSources);assert.equal((await f.run()).status,'completed');
+ assert.ok(f.sqlite.prepare('SELECT event_id FROM memory_live_sources WHERE event_id=?').get(receipt.eventId));
+});
+for(const shared of [false,true])for(const fault of ['wrong-inverse','wrong-field','foreign-target','cross-author','private-erased','extra-compensator','undo-chain'])test('native block undo: ambiguous history never publishes '+fault+'/'+shared,async t=>{
+ const f=await nativeUndoInspectionFixture(t,{shared});
+ if(fault==='wrong-inverse')f.sqlite.prepare("UPDATE event_private_payloads SET private_json=json_set(private_json,'$.new_value','invented') WHERE private_event_id=?").run(f.undone.eventId);
+ if(fault==='wrong-field')f.sqlite.prepare("UPDATE event_private_payloads SET private_json=json_set(private_json,'$.property_path','different-field') WHERE private_event_id=?").run(f.undone.eventId);
+ if(fault==='foreign-target'||fault==='cross-author'){
+  // Simulate a damaged restore while preserving the exact immutable schema at
+  // the subsequent native read; ordinary app writes cannot update these rows.
+  const trigger=f.sqlite.prepare("SELECT sql FROM sqlite_schema WHERE name='events_block_update'").get().sql;
+  f.sqlite.exec('DROP TRIGGER events_block_update');
+  try{if(fault==='foreign-target')f.sqlite.prepare('UPDATE events SET compensates_event_id=? WHERE event_id=?').run(f.blockSource.eventId,f.undone.eventId);
+   else f.sqlite.prepare("UPDATE events SET actor='user:other-actor' WHERE event_id=?").run(f.undone.eventId);
+  }finally{f.sqlite.exec(trigger);}
+ }
+ if(fault==='private-erased')f.sqlite.prepare('DELETE FROM event_private_payloads WHERE private_event_id=?').run(f.undone.eventId);
+ if(fault==='extra-compensator'||fault==='undo-chain'){
+  const {makeEvent,eventWriteBindings,EVENT_WRITE_COLUMNS}=await import('../worker/runtime.ts');
+  const head=f.sqlite.prepare('SELECT MAX(sequence) AS head FROM events WHERE stream_id=?').get(f.streamId).head;
+  const event=makeEvent(f.streamId,head+1,f.undone.actor,'synthetic-native-undo-test',crypto.randomUUID(),'BlockPropertyEdited',f.changed.payload,{compensatesEventId:fault==='undo-chain'?f.undone.eventId:f.changed.eventId});
+  f.sqlite.prepare('INSERT INTO event_write_stage('+EVENT_WRITE_COLUMNS+') VALUES('+Array(17).fill('?').join(',')+')').run(...eventWriteBindings(event));
+  if(shared){const refreshed=await f.request('/api/events?after=0&limit=2000&content=0');assert.equal(refreshed.status,200);}
+  f.undoSources.push(event.eventId);
+ }
+ const before=f.sqlite.prepare("SELECT COUNT(*) AS n FROM events WHERE type='BlockInspected'").get().n;
+ assert.equal((await f.inspectUndo()).status,409);assert.equal(f.sqlite.prepare("SELECT COUNT(*) AS n FROM events WHERE type='BlockInspected'").get().n,before);
+});
+
 for(const shared of [false,true])test('native block inspection: consented capture binds exact versions without plaintext '+shared,async t=>{
   const f=await memoryArtifactFixture(t,{shared}),blockId='memory-observed-context',payload={project_id:f.projectId,document_id:f.documentId,block_id:blockId,scope:'document',type:'direction',properties:{text:'Private inspected block body'}};
   const created=await f.request('/api/events',f.json({action:'append',event:{type:'BlockCreated',payload}}));assert.equal(created.status,200,await created.clone().text());const original=(await created.json()).appended.find(row=>row.type==='BlockCreated');
@@ -1013,14 +1073,14 @@ for(const shared of [false,true])for(const fault of ['source-erased','enrollment
   };
   assert.equal((await f.run()).status,'partial');assert.equal(injected,true);assert.equal(f.enrollment().cursor_sequence,cursor);assert.equal(f.sqlite.prepare('SELECT COUNT(*) AS n FROM memory_live_sources WHERE event_id=?').get(id).n,0);
 });
-for(const shared of [false,true])test('native block inspection: isolated D1 native writer capture and late erasure '+shared,{timeout:180000},async t=>{
-  const f=await nativeBlockInspectionFixture(t,{shared,memory:true}),{createRequire}=await import('node:module'),{Miniflare,Log,LogLevel}=createRequire(import.meta.resolve('wrangler'))('miniflare'),{exportSynthetic,install}=await import('./helpers/model3d-workerd-snapshot.mjs');let outbound=0;
+for(const shared of [false,true])for(const undo of [false,true])test('native block inspection: isolated D1 native writer capture and late erasure '+shared+'/undo='+undo,{timeout:180000},async t=>{
+  const f=await (undo?nativeUndoInspectionFixture(t,{shared}):nativeBlockInspectionFixture(t,{shared,memory:true})),{createRequire}=await import('node:module'),{Miniflare,Log,LogLevel}=createRequire(import.meta.resolve('wrangler'))('miniflare'),{exportSynthetic,install}=await import('./helpers/model3d-workerd-snapshot.mjs');let outbound=0;
   const mf=new Miniflare({modules:true,compatibilityDate:'2026-05-15',host:'127.0.0.1',port:0,log:new Log(LogLevel.NONE),d1Databases:['BlockInspection'],script:"export default {fetch(){return new Response('Isolated',{status:404});}}",outboundService(){outbound++;throw Error('External fetch forbidden');}});
   t.after(async()=>{await mf.dispose();assert.equal(outbound,0);});const db=await mf.getD1Database('BlockInspection');await install(db,exportSynthetic(f.sqlite));f.env.DB=db;
-  const response=await f.inspectBlock();assert.equal(response.status,200,await response.clone().text());const event=(await response.json()).appended[0],run=await f.run();assert.equal(run.status,'completed',JSON.stringify(run));
+  const response=await (undo?f.inspectUndo():f.inspectBlock());assert.equal(response.status,200,await response.clone().text());const event=(await response.json()).appended[0],run=await f.run();assert.equal(run.status,'completed',JSON.stringify(run));
   const e=await db.prepare('SELECT * FROM memory_live_enrollments').first(),a=await liveMemoryAuthority(f.env,e),{captureNativeBlockInspections}=await import('../worker/memory-native-block-inspection.ts'),{AssistantContextReadWitness}=await import('../worker/assistant-context-source.ts'),witness=new AssistantContextReadWitness(f.env);
   const capture=await captureNativeBlockInspections(f.env,e,a,{after:0,through:e.cursor_sequence,remembered:true},witness);assert.equal(capture.sources[0].eventId,event.eventId);witness.seal(null);await db.batch(witness.precommitStatements());
-  await db.prepare('DELETE FROM event_private_payloads WHERE private_event_id=?').bind(f.blockSource.eventId).run();await assert.rejects(()=>db.batch(witness.precommitStatements()));assert.deepEqual((await db.prepare('PRAGMA foreign_key_check').all()).results,[]);
+  await db.prepare('DELETE FROM event_private_payloads WHERE private_event_id=?').bind(undo?f.undone.eventId:f.blockSource.eventId).run();await assert.rejects(()=>db.batch(witness.precommitStatements()));assert.deepEqual((await db.prepare('PRAGMA foreign_key_check').all()).results,[]);
 });
 
 for(const shared of [false,true])test('native block inspection: v5 private inspector is exact, bounded and never widens older contracts '+shared,async t=>{

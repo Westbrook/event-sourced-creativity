@@ -1984,6 +1984,7 @@ async function cContextLibraryNavigationParent(t, f) {
   const { calmFullPageNativePorts: ports } = await import("./helpers/calm-full-page-fixture.mjs");
   const { installOutputNavigationFocusNative } = await import("./helpers/output-navigation-focus-native.mjs");
   const { applicationIdFromRoute } = await import("../src/platform/applications.ts");
+  const { isStandaloneExperienceRoute } = await import("../src/experiences/host-route.ts");
   const { FormaShell } = await ports.loadActual("src/components/forma-shell.ts");
   const { FormaLibrary: CurrentLibrary } = await ports.loadActual("src/components/forma-library.ts");
   const original = { store: f.store, state: f.state, events: JSON.stringify(f.state.events),
@@ -2038,9 +2039,10 @@ async function cContextLibraryNavigationParent(t, f) {
     if(!this.#workspaceNavigationCurrent(owner))return false;
     path=this.#projectTaskRoute(path,options);
     if(!this.#workspaceNavigationCurrent(owner))return false;
+    if(isStandaloneExperienceRoute(path))return this.#assignWorkspaceNavigation(path,owner);
     const source=applicationIdFromRoute(owner.route),destination=applicationIdFromRoute(path);
     if(source===destination)return this.#commitRoute(path,owner);
-  `, statements("transitionWorkspace").slice(0, 7));
+  `, statements("transitionWorkspace").slice(0, 8));
   expectStatements("#workspaceNavigationStable", `
     const session=this.session.get();
     return owner.revision===this.#workspaceTransition&&owner.route===this.route.get()
@@ -2132,6 +2134,7 @@ async function cContextLibraryNavigationParent(t, f) {
         owner.options={...options};
         assert.equal(owner.options.nativeImageStartup,undefined,"This finite port has no Image startup or retirement");
         if(!this.#workspaceNavigationCurrent(owner))return false;
+        assert.equal(isStandaloneExperienceRoute(path),false,"Standalone experience assignment is outside this finite Library port");
         assert.equal(applicationIdFromRoute(path),applicationIdFromRoute(owner.route),"This unit port cannot stand in for an audience handoff");
         assert.ok(path==="/library"||libraryBlockEditorFromRoute(path),"Only these existing local Library routes are modeled");
         if(!this.#handoffWorkspaceNavigation(owner)||!this.#advanceWorkspaceNavigation(owner))return false;
@@ -2143,7 +2146,7 @@ async function cContextLibraryNavigationParent(t, f) {
       }
     }`, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS } }).outputText;
   const { libraryBlockEditorFromRoute } = await import("../src/model/routes.ts");
-  const Boundary = new Function("assert", "applicationIdFromRoute", "libraryBlockEditorFromRoute", code)(assert, applicationIdFromRoute, libraryBlockEditorFromRoute);
+  const Boundary = new Function("assert", "applicationIdFromRoute", "libraryBlockEditorFromRoute", "isStandaloneExperienceRoute", code)(assert, applicationIdFromRoute, libraryBlockEditorFromRoute, isStandaloneExperienceRoute);
   const boundary = new Boundary(f.store);
   f.store.transitionWorkspace = boundary.transitionWorkspace.bind(boundary);
   f.store.captureWorkspaceNavigationFocus = boundary.captureWorkspaceNavigationFocus.bind(boundary);
