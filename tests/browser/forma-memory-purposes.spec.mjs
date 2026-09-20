@@ -141,7 +141,26 @@ for(const locale of ['en','ar'])test.describe('Memory purpose locale '+locale,()
   await expect(windows.locator('[data-memory-consumption-window]')).toHaveCount(2);const counts=windows.locator('[data-memory-consumption-window="7"]');await counts.scrollIntoViewIfNeeded();await expect(counts).toBeInViewport();
   const pageCounts=counts.locator('[data-memory-page-counts]');await expect(pageCounts).toContainText(message(locale,'visitsPage.editor'));await pageCounts.scrollIntoViewIfNeeded();await expect(pageCounts).toBeInViewport();
   await captureViewport(page,info,'memory-consumption-windows-'+locale,{assertStable:false});
-  await info.attach('declared-memory-transport',{body:JSON.stringify({syntheticOnly:true,production:false,providerCalls:0,mutations:0,calls,session:JSON.parse(syntheticReadBody('/api/session')).user.userId},null,2),contentType:'application/json'});
+  // A real inspector control clears private content BEFORE its response settles.
+  let settleWithdrawal;
+  await context.route('**/api/memory/derivation/result?*',async route=>{
+    if(route.request().method()!=='DELETE')return route.fallback();
+    calls.push({method:'DELETE',path:'/api/memory/derivation/result',query:new URL(route.request().url()).search,automatic:false});
+    expect(route.request().postDataJSON()).toEqual({version:purposes.version,confirmation:'WITHDRAW_DERIVED_RESULT'});
+    await new Promise(resolve=>{settleWithdrawal=resolve;});
+    return route.fulfill(locale==='ar'?{status:503,json:{error:'synthetic_unknown'}}:{json:{version:purposes.version,jobId:entry.jobId,state:'withdrawn'}});
+  });
+  await section.getByRole('button',{name:message(locale,'purposeLoad'),exact:true}).click();
+  await section.getByRole('button',{name:message(locale,'reviewLatest.rolling-summary'),exact:true}).click();
+  await expect(section.locator('[data-memory-derived-content]')).toContainText('Synthetic private proposal');
+  await section.getByRole('button',{name:message(locale,'reviewWithdraw'),exact:true}).click();
+  await expect.poll(()=>typeof settleWithdrawal).toBe('function');
+  await expect(section.locator('[data-memory-derived-content]')).toHaveCount(0);
+  settleWithdrawal();
+  await expect(section.getByText(message(locale,locale==='ar'?'purposeUnknown':'reviewChanged'),{exact:true})).toBeVisible();
+  await expect(section.locator('[data-memory-derived-content]')).toHaveCount(0);
+  expect(calls.filter(call=>call.method!=='GET')).toHaveLength(1);expect(errors).toEqual([]);
+  await info.attach('declared-memory-transport',{body:JSON.stringify({syntheticOnly:true,production:false,providerCalls:0,mutations:1,calls,session:JSON.parse(syntheticReadBody('/api/session')).user.userId},null,2),contentType:'application/json'});
 });
 
 });

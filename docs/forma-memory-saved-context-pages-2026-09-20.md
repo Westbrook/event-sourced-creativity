@@ -70,3 +70,13 @@ admitted history. Another 322 client/component/containment checks, eight
 purpose/brief browser regressions, four saved-context pending-dismissal checks,
 and four cross-scope browser checks passed. Typecheck, scoped lint and build pass;
 the build retains existing chunk warnings. All data was isolated and synthetic.
+
+### Manual inspector mutation lifetime
+
+The manual semantic inspector now hides candidate and correction text while its
+purpose/claim mutation is pending. Once that request settles, both views are
+cleared even for an uncertain outcome; stale content does not return when the
+busy state ends. Read-only inspection and exact revision checks are unchanged.
+This follow-up passes 684 existing client/control/component tests and two
+English/Arabic browser cases that hold the real withdrawal request open, then
+exercise confirmed and uncertain responses. Typecheck, lint and build pass.

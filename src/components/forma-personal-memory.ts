@@ -966,7 +966,10 @@ export class FormaPersonalMemory extends FormaElement {
     try { const result = await operation(controller.signal); if (this.#purposeRequest === request) this.#retirePurposes(); if (request.current()) accept(result); }
     catch (error) { if (this.#purposeRequest === request) this.#retirePurposes(); if (request.current()) {
       this.#clearReview(); this.#clearReviewControls(); this.#purposeNeedsReload = true; this.#purposeError = error instanceof MemoryDerivationClientError && error.mutationUnknown ? "purposeUnknown" : "purposeError";
-    } } finally { request.detach(); if (this.#purposeRequest === request) this.#purposeRequest = null;
+    } } finally { request.detach(); if (this.#purposeRequest === request) {
+      if (!["settings","review"].includes(kind)) { this.#clearReview(); this.#clearReviewControls(); }
+      this.#purposeRequest = null;
+    }
       if (scope.current()) { this.#scheduleDeadline(); this.requestUpdate(); } }
   }
   #loadPurposes(event: Event) {
@@ -1087,7 +1090,8 @@ export class FormaPersonalMemory extends FormaElement {
     return this.#runPurpose(event,'control',signal=>this.#purposeClient.releaseControl(control,signal),()=>{
       this.#clearReview();this.#clearReviewControls();this.#purposeNotice='reviewChanged';},()=>this.#reviewControls.includes(control)&&Boolean(this.#controlsRemaining&&this.#controlsRemaining()>0));}
   #renderReview(){
-    const disabled=Boolean(this.#purposeRequest||this.#busy||this.#dirty||this.#confirmation),view=this.#reviewView;
+    const mutating=Boolean(this.#purposeRequest&&!["settings","review"].includes(this.#purposeRequest.kind));
+    const disabled=Boolean(this.#purposeRequest||this.#busy||this.#dirty||this.#confirmation),view=mutating?null:this.#reviewView;
     const scope=this.#purposeScope,captured=(event:Event,run:()=>unknown)=>{if(scope===this.#purposeScope&&this.#purposeEvent(event))return run();};
     return html`<section data-memory-derived-review aria-busy=${this.#purposeRequest?'true':'false'}>
       <h4>${this.#t('reviewHeading')}</h4><p>${this.#t('reviewDisclosure')}</p>
@@ -1110,7 +1114,7 @@ export class FormaPersonalMemory extends FormaElement {
       </div>`:nothing}
       <button type="button" class="button secondary" ?disabled=${disabled} @click=${(e:Event)=>captured(e,()=>this.#loadReviewControls(e))}>${this.#t('reviewControls')}</button>
       ${this.#controlsLoaded&&!this.#reviewControls.length?html`<p>${this.#t('reviewEmptyControls')}</p>`:nothing}
-      ${this.#reviewControls.map(control=>html`<article><p>${this.#t('reviewAction.'+control.action)} — ${this.#t('purpose.'+control.purpose)}</p>
+      ${(mutating?[]:this.#reviewControls).map(control=>html`<article><p>${this.#t('reviewAction.'+control.action)} — ${this.#t('purpose.'+control.purpose)}</p>
         ${control.correctionText?html`<p>${control.correctionText}</p>`:nothing}
         ${control.action!=='released'?html`<button type="button" class="button secondary" ?disabled=${disabled||this.#purposeNeedsReload} @click=${(e:Event)=>captured(e,()=>this.#releaseReviewControl(e,control))}>${this.#t('reviewRelease')}</button>`:nothing}</article>`)}
       ${this.#controlNext?html`<button type="button" class="button secondary" ?disabled=${disabled} @click=${(e:Event)=>captured(e,()=>this.#loadReviewControls(e,true))}>${this.#t('reviewNext')}</button>`:nothing}
