@@ -2,8 +2,9 @@
 
 **The full plan is not complete.** This consolidates, rather than replaces or
 narrows, the [original plan](forma-scope-aware-memory-plan-2026-09-02.md).
-Source integration with local main is committed at `3ed22909`; production and
-main deployment have not occurred. Passing a foundation or display test does
+Source integration with local main is committed at `3ed22909`; the verified
+source/maintenance follow-up is `618d55e5`. Production and main deployment have
+not occurred. Passing a foundation or display test does
 not close an end-to-end consumer.
 
 ## Remaining implementation within the native application
@@ -42,3 +43,11 @@ Close the implementation task only after every native workstream above has its
 actual caller, durable privacy behavior, tests and recorded evidence. Keep the
 separate external/operational checklist open where appropriate. A clean branch,
 a passing isolated helper test, or a display-only feature is not full completion.
+
+## Integration handoff status
+
+The review handoff to **Assemble Forma specialist team**
+(`01a03eaa-d5b7-7630-943d-7105f7a3067b`) was rejected because that task is archived.
+No message was delivered, no task was unarchived and no replacement production
+owner was assumed. Owner integration/deployment remains pending; this does not
+block the native implementation work above.
