@@ -207,3 +207,7 @@ and non-implementation To Do documents.
 records the additive migration, completed privacy checks and rollout transition.
 Remaining native implementation stays in the Memory completion matrix; external
 services, qualification and enrollment remain in the Sites capability checklist.
+
+## MEM-003 semantic follow-up — 2026-09-20
+
+[Bounded semantic follow-up](forma-memory-semantic-followup-2026-09-20.md) is implemented on the feature branch: actual prompt inputs, dependent-answer retirement and non-resurrection. Track migration0063’s non-additive trigger upgrade explicitly in owner/hosted review. No deployment or enrollment is claimed; continue every open row of the [completion matrix](forma-memory-completion-matrix-2026-09-20.md).

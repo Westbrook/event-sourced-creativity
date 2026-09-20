@@ -1,3 +1,4 @@
+import { memoryDerivationConsumerParentSchemaProfile as parents,memoryDerivationConsumerParentConsumerDigest } from './memory-derivation-consumer-parent-schema.ts';
 import { memoryDerivationConsumerSourceSchemaProfile as sources } from './memory-derivation-consumer-source-schema.ts';
 import { memoryDerivationConsumerSchemaProfile as profile } from './memory-derivation-consumer-schema.ts';
 import { memoryDigest } from '../src/model/scoped-memory.ts';
@@ -7,12 +8,12 @@ export const semanticConsumerSchemaSnapshot=`(SELECT json_group_array(json_objec
 export async function qualifySemanticConsumerBoundary(encoded:unknown){
  if(typeof encoded!=='string')throw Error('memory_boundary_schema_unavailable');
  const rows=JSON.parse(encoded) as {name:string;sql:string|null;table:string;type:string}[];
- if(!Array.isArray(rows)||rows.length>profile.count+profile.automaticIndexes.length+sources.count+sources.automaticIndexes.length)throw Error('memory_boundary_schema_unavailable');
- const explicit=rows.filter(r=>r.sql!==null),names:readonly string[]=[...profile.names,...sources.names],automatic:readonly string[]=[...profile.automaticIndexes,...sources.automaticIndexes];
+ if(!Array.isArray(rows)||rows.length>profile.count+profile.automaticIndexes.length+sources.count+sources.automaticIndexes.length+parents.count+parents.automaticIndexes.length)throw Error('memory_boundary_schema_unavailable');
+ const explicit=rows.filter(r=>r.sql!==null),names:readonly string[]=[...profile.names,...sources.names,...parents.names],automatic:readonly string[]=[...profile.automaticIndexes,...sources.automaticIndexes,...parents.automaticIndexes];
  if(rows.some(r=>Object.keys(r).sort().join(',')!=='name,sql,table,type'||(r.sql===null?!automatic.includes(r.name):!names.includes(r.name))))throw Error('memory_boundary_schema_unavailable');
- for(const part of [profile,sources]){
+ for(const part of [profile,sources,parents]){
   const selected=explicit.filter(r=>(part.names as readonly string[]).includes(r.name));
-  if((part===profile&&rows.length>0||selected.length>0)&&(selected.length!==part.count||'sha256:'+await memoryDigest(memoryCanonical(selected.map(r=>({...r,sql:r.sql!.trim().replace(/;$/u,'').replace(/\bIF\s+NOT\s+EXISTS\s+/giu,'')}))))!==part.digest))throw Error('memory_boundary_schema_unavailable');
+  if((part===profile&&rows.length>0||selected.length>0)&&(selected.length!==part.count||'sha256:'+await memoryDigest(memoryCanonical(selected.map(r=>({...r,sql:r.sql!.trim().replace(/;$/u,'').replace(/\bIF\s+NOT\s+EXISTS\s+/giu,'')}))))!==(part===profile&&explicit.some(r=>(parents.names as readonly string[]).includes(r.name))?memoryDerivationConsumerParentConsumerDigest:part.digest)))throw Error('memory_boundary_schema_unavailable');
  }
  return {present:rows.length>0,guard:{sql:semanticConsumerSchemaSnapshot+'=?',bindings:[encoded]}};
 }

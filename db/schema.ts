@@ -2739,3 +2739,12 @@ export const memoryDerivationConsumerSources=sqliteTable('memory_derivation_cons
  index('idx_memory_derivation_consumer_original_user').on(t.userRef),
  index('idx_memory_derivation_consumer_original_answer').on(t.answerRef),
  index('idx_memory_derivation_consumer_original_turn').on(t.turnId,t.originId)]);
+
+/** Derived-answer edges are negative provenance, never independent support. */
+export const memoryDerivationConsumerParents=sqliteTable('memory_derivation_consumer_parents',{
+ originId:text('origin_id').notNull().references(()=>memoryDerivationConsumers.originId),
+ parentOriginId:text('parent_origin_id').notNull().references(()=>memoryDerivationConsumers.originId),
+ parentContentId:text('parent_content_id').notNull(),
+},t=>[primaryKey({columns:[t.originId,t.parentOriginId]}),
+ index('idx_memory_derivation_consumer_parent').on(t.parentOriginId),
+ check('memory_consumer_parent_distinct',sql.raw('origin_id<>parent_origin_id'))]);

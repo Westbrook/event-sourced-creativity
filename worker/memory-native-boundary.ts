@@ -76,7 +76,11 @@ export function nativeMemoryTurnInspectionEnvironment(env:WorkerEnv):WorkerEnv {
 /** One request-local native schema observation covers the closed turn aliases.
  * These are exclusions only. Every returned predicate still checks exact schema
  * and current negative markers in its consuming transaction. No schema cache. */
-export async function captureNativeMemoryTurnExclusions(env: WorkerEnv): Promise<NativeMemoryTurnExclusions> {
+export async function captureNativeMemoryTurnExclusions(env: WorkerEnv, semanticParents:readonly string[]=[]): Promise<NativeMemoryTurnExclusions> {
+  if(semanticParents.length){
+    if(semanticParents.length>2||semanticParents.some(id=>!/^[-0-9a-f]{36}$/u.test(id))||new Set(semanticParents).size!==semanticParents.length)throw Error("memory_boundary_parent_invalid");
+    return captureTurnExclusions(env,semanticParents);
+  }
   const local=requestTurnExclusions.get(env);
   if(!local)return captureTurnExclusions(env);
   if(env.DB!==local.db)throw Error('memory_boundary_database_changed');
@@ -84,10 +88,10 @@ export async function captureNativeMemoryTurnExclusions(env: WorkerEnv): Promise
   const handle=await local.capture;
   nativeMemoryTurnExclusionInputs(env,handle);return handle;
 }
-async function captureTurnExclusions(env:WorkerEnv):Promise<NativeMemoryTurnExclusions>{
+async function captureTurnExclusions(env:WorkerEnv,semanticParents:readonly string[]=[]):Promise<NativeMemoryTurnExclusions>{
   const db=env.DB,observations=structuredClone(await db.batch(nativeMemorySchemaReads(db,'turn')));
   const guards=await Promise.all((['authored','answer','content'] as const).map(alias=>
-    qualifyNativeMemoryAnswerExclusion(env,db,alias,'turn',observations)));
+    qualifyNativeMemoryAnswerExclusion(env,db,alias,'turn',observations,semanticParents)));
   if(env.DB!==db)throw new Error('memory_boundary_database_changed');
   const handle=Object.freeze({}) as NativeMemoryTurnExclusions;turnExclusions.set(handle,{env,db,guards});return handle;
 }
@@ -120,7 +124,7 @@ export async function nativeMemoryAnswerExclusion(env: WorkerEnv,
 }
 
 async function qualifyNativeMemoryAnswerExclusion(env: WorkerEnv, db: WorkerEnv["DB"],
-  answer: AnswerAlias, turn: TurnAlias | undefined, observations: D1Result<unknown>[]): Promise<BudgetReservationGuard> {
+  answer: AnswerAlias, turn: TurnAlias | undefined, observations: D1Result<unknown>[], semanticParents:readonly string[]=[]): Promise<BudgetReservationGuard> {
   if (env.DB !== db) throw new Error("memory_boundary_database_changed");
   if(!Array.isArray(observations)||observations.length!==3||[0,1,2].some(i=>!Object.hasOwn(observations,i)||observations[i]?.success!==true||(observations[i] as {error?:unknown}).error!==undefined))throw new Error("memory_boundary_schema_unavailable");
   const structured=await qualifyNativeStructuredOriginSchema(env,db,observations[0]);
@@ -177,8 +181,8 @@ async function qualifyNativeMemoryAnswerExclusion(env: WorkerEnv, db: WorkerEnv[
           AND json_extract(job_origin_event.payload,'$.content_ref')=${answer}.content_id))` : "";
   const semanticOrigins=semantic.present?` AND NOT EXISTS(SELECT 1 FROM memory_derivation_consumer_contents semantic_copy
     JOIN memory_derivation_consumers semantic_origin ON semantic_origin.origin_id=semantic_copy.origin_id
-    WHERE semantic_copy.content_id=${answer}.content_id${turn?` OR (semantic_copy.role IN('result','answer') AND
-      (semantic_origin.actor_user_id,semantic_origin.scope_key,semantic_origin.turn_id)=(${turn}.actor_user_id,${turn}.scope_key,${turn}.turn_id))`:''})`:'';
+    WHERE (semantic_copy.content_id=${answer}.content_id${turn?` OR (semantic_copy.role IN('result','answer') AND
+      (semantic_origin.actor_user_id,semantic_origin.scope_key,semantic_origin.turn_id)=(${turn}.actor_user_id,${turn}.scope_key,${turn}.turn_id))`:''}) ${semanticParents.length?'AND semantic_origin.origin_id NOT IN(SELECT value FROM json_each(?))':''})`:'';
   // Generic hydration has no outer turn alias. Repointing a marked turn's
   // authored or answer ref must not create a new ordinary hydration route.
   const linked = hasTurns && hasTurns.present === 1 ? ` AND NOT EXISTS(SELECT 1 FROM assistant_turns linked_turn
@@ -203,5 +207,5 @@ async function qualifyNativeMemoryAnswerExclusion(env: WorkerEnv, db: WorkerEnv[
     AND NOT EXISTS(SELECT 1 FROM events memory_answer WHERE memory_answer.type='AssistantReasoned'
       AND json_type(memory_answer.payload,'$.memory_origin_version') IS NOT NULL AND (${target}${tuple}))${origins}${structuredOrigins}${documentJobOrigins}${semanticOrigins}${linked})`,
     bindings: [...structured.guard.bindings, ...documentJob.guard.bindings, hasOrigins?.present === 1 ? 1 : 0,
-      ...(!turn ? [hasTurns && hasTurns.present === 1 ? 1 : 0] : []),...semantic.guard.bindings] };
+      ...(!turn ? [hasTurns && hasTurns.present === 1 ? 1 : 0] : []),...semantic.guard.bindings,...(semantic.present&&semanticParents.length?[JSON.stringify(semanticParents)]:[])] };
 }

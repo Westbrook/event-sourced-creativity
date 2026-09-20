@@ -201,7 +201,7 @@ async function readAssistantContext(request:Request,env:WorkerEnv,actor:PilotUse
       return answer({saved:true,refreshRequired:true});
     }
     const nativeHandle=Object.freeze({}) as NativeSavedAssistantContext;
-    savedContextCaptures.set(nativeHandle,{env,current,source:handle,consumersPresent:schema.consumersPresent&&schema.consumerSourcesPresent,guards:structuredClone(guards),selection:{
+    savedContextCaptures.set(nativeHandle,{env,current,source:handle,consumersPresent:schema.consumersPresent&&schema.consumerSourcesPresent&&schema.consumerParentsPresent,guards:structuredClone(guards),selection:{
       actorUserId:actor.userId,targetEnrollmentId:target.enrollment_id,targetRevision:target.revision,projectId,documentId,
       contextRevision:String(old!.revision),jobId,outputSha256:bound.outputSha256,sourceEnrollmentId:source.enrollment_id,
       sourceRevision:source.revision,boundaryRevision,hierarchyRevision,expiresAt,validUntil:new Date(deadline).toISOString(),relation:structuredClone(relation),

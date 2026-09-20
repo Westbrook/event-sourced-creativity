@@ -70,11 +70,13 @@ assistant/autocomplete publication.
 now connects explicitly approved saved Memory to the actual specialist prompt,
 immutable private-copy provenance and historical/privacy UI. It preserves
 current-source precedence and suppresses untracked document actions. The first
-row remains open for request capacity, semantic follow-up conversation history
-and Chat Studio; the other workstreams remain required. This is not deployment.
+row remains open for request capacity and Chat Studio; bounded semantic
+follow-up conversation history is now implemented as recorded below; the other workstreams remain required. This is not deployment.
 
 [Consumer conversation lifecycle](forma-memory-conversation-lifecycle-2026-09-20.md)
 closes original input-turn/body retirement for the semantic specialist consumer,
 including in-flight erasure and the complete three-turn native D1 window. This
 does not close generated-answer follow-up, document/edit/output ancestry, broader
 resource coverage or whole-invocation capacity.
+
+[Bounded semantic follow-up](forma-memory-semantic-followup-2026-09-20.md) now supplies prior generated answers to the actual specialist prompt with immutable transitive ancestry and restore/non-resurrection checks. Migration0063 includes a hash-pinned, exact-no-op retirement trigger upgrade and needs explicit rollout review; it is not purely additive. Chat Studio, capacity and the other native workstreams remain required.

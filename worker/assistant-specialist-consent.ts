@@ -1,3 +1,4 @@
+import type { SemanticAssistantParent } from './memory-assistant-parents.ts';
 import { prepareSemanticAssistantMemory,semanticAssistantMemoryLeaseCurrent,semanticAssistantMemoryRetentionGuard,semanticAssistantMemoryInputs,semanticAssistantMemoryStatements,semanticAssistantMemoryQuoteStatements,semanticAssistantMemoryContentStatements,type SemanticAssistantMemory,type SemanticAssistantMemoryBinding } from './memory-assistant-consumer.ts';
 import { foldCanvasEvents } from "../src/canvas/model.ts";
 import { canvasDocumentTarget } from "../src/model/canvas-document-target.ts";
@@ -57,7 +58,7 @@ async function refreshSemanticMemory(env:WorkerEnv,actor:SpecialistActor,request
  if(!request.memory)return;
  const prepared=continuePrepared?semanticMemoryReads.get(request):null;
  if(prepared&&semanticAssistantMemoryLeaseCurrent(env,prepared,actor.principal.userId))return;
- const source=await prepareSemanticAssistantMemory(env,actor.principal,{projectId:request.memory.projectId,documentId:request.memory.documentId,scopeKey:request.scopeKey,turnId:request.turnId},request.memory);
+ const source=await prepareSemanticAssistantMemory(env,actor.principal,{projectId:request.memory.projectId,documentId:request.memory.documentId,scopeKey:request.scopeKey,turnId:request.turnId,scope:actorScope(actor)},request.memory);
  semanticMemoryReads.set(request,source);
 }
 
@@ -93,9 +94,9 @@ export async function paidMemoryBatchProof(env:WorkerEnv,actorUserId:string,scop
   if(new Set(captured.map(group=>group.turnId)).size!==captured.length)fail(MEMORY_PAID_UNSUPPORTED);
   return paidMemoryExclusion(env,actorUserId,scopeKey,captured.flatMap(group=>group.entries),exclusions);
 }
-async function paidMemoryExclusion(env:WorkerEnv,actorUserId:string,scopeKey:string,entries:readonly PaidMemoryAncestryEntry[],exclusions?:NativeMemoryTurnExclusions):Promise<BudgetReservationGuard>{
+async function paidMemoryExclusion(env:WorkerEnv,actorUserId:string,scopeKey:string,entries:readonly PaidMemoryAncestryEntry[],exclusions?:NativeMemoryTurnExclusions,semanticParents:readonly string[]=[]):Promise<BudgetReservationGuard>{
   const db=env.DB;
-  const captured=exclusions??await captureNativeMemoryTurnExclusions(env);
+  const captured=exclusions??await captureNativeMemoryTurnExclusions(env,semanticParents);
   const {answer,authored,content}=nativeMemoryTurnExclusionInputs(env,captured);
   if(env.DB!==db)fail(MEMORY_PAID_UNSUPPORTED);
   // Negative markers survive erasure of the bodies and assistant_turns row.
@@ -125,11 +126,12 @@ async function assertNoPaidMemory(env:WorkerEnv,proof:BudgetReservationGuard){
 }
 async function rememberPaidMemoryProof(env:WorkerEnv,binding:ConsequentialBinding,request:SpecialistRequest){
   if(!Array.isArray(request.conversation)||request.conversation.length>CONVERSATION_TURNS)fail(MEMORY_PAID_UNSUPPORTED);
-  const proof=await paidMemoryProof(env,binding.actorUserId,request.scopeKey,[...request.conversation.map(row=>({turnId:row.turnId,userRef:row.userRef,answerRef:row.answerRef})),
-    {turnId:request.turnId,userRef:request.turn.user_content_ref,answerRef:request.turn.assistant_content_ref}]);
+  const parents=(request.memory?.parents??[]).map(parent=>parent.originId);
+  const proof=await paidMemoryExclusion(env,binding.actorUserId,request.scopeKey,[...request.conversation.map(row=>({turnId:row.turnId,userRef:row.userRef,answerRef:row.answerRef})),
+    {turnId:request.turnId,userRef:request.turn.user_content_ref,answerRef:request.turn.assistant_content_ref}],undefined,parents);
   if(request.memory){
     const prior=request.conversation.filter(row=>row.turnId!==request.turnId).map(row=>({turnId:row.turnId,userRef:row.userRef,answerRef:row.answerRef}));
-    const priorProof=prior.length?await paidMemoryProof(env,binding.actorUserId,request.scopeKey,prior):{sql:'1',bindings:[]};
+    const priorProof=prior.length?await paidMemoryExclusion(env,binding.actorUserId,request.scopeKey,prior,undefined,parents):{sql:'1',bindings:[]};
     const own:BudgetReservationGuard={sql:`EXISTS(SELECT 1 FROM memory_derivation_consumers origin
       JOIN memory_derivation_consumer_contents link ON link.origin_id=origin.origin_id AND link.role='result'
       JOIN consequential_executions execution ON execution.execution_id=origin.execution_id AND (execution.result_ref IS NULL OR execution.result_ref=link.content_id)
@@ -299,8 +301,8 @@ function conversationProof(binding:ConsequentialBinding,request:SpecialistReques
       WHEN answer.content_id IS NULL THEN 1
       WHEN (${authored.sql}) IS NOT TRUE THEN 1
       WHEN (${answer.sql}) IS NOT TRUE THEN 1
-      WHEN (${paid.sql}) THEN 0 ELSE 1 END)`,
-    bindings:[JSON.stringify(request.conversation),binding.actorUserId,request.scopeKey,...authored.bindings,...answer.bindings,...paid.bindings]};
+      WHEN (${paid.sql}) OR EXISTS(SELECT 1 FROM json_each(?) parent WHERE json_extract(parent.value,'$.turnId')=turn.turn_id) THEN 0 ELSE 1 END)`,
+    bindings:[JSON.stringify(request.conversation),binding.actorUserId,request.scopeKey,...authored.bindings,...answer.bindings,...paid.bindings,JSON.stringify(request.memory?.parents??[])]};
 }
 function readAuthority(actor:SpecialistActor,retained:Retained):BudgetReservationGuard{
   const scope=retained.binding.scope??undefined;if(!(scope?hasCapability(actor.principal,"project.read",scope):actor.principal.access.capabilities.includes("project.read")))fail("assistant_read_scope_denied");
@@ -361,20 +363,20 @@ function taskProof(task:SpecialistTaskRecord,retained:Retained):BudgetReservatio
 async function existingTask(env:WorkerEnv,actor:SpecialistActor,scopeKey:string,turnId:string){
   return env.DB.prepare("SELECT * FROM assistant_specialist_tasks WHERE actor_user_id=? AND scope_key=? AND turn_id=? ORDER BY created_at,task_id LIMIT 1").bind(actor.principal.userId,scopeKey,turnId).first<SpecialistTaskRecord>();
 }
-async function conversationWindow(env:WorkerEnv,actor:SpecialistActor,turn:SavedTurn):Promise<ConversationEntry[]>{
+async function conversationWindow(env:WorkerEnv,actor:SpecialistActor,turn:SavedTurn,useMemory=false):Promise<ConversationEntry[]>{
   const binding=scopeBinding(actor),authored=custody(binding,"authored"),answer=custody(binding,"answer"),paid=assistantPaidReplyReadGuard(actor,turn.scope_key,"prior.turn_id");
   // Choose the original window before custody checks. An unavailable included turn is not silently replaced by older history.
   const rows=await env.DB.prepare(`WITH included_turns AS(SELECT prior.* FROM assistant_turns prior
       WHERE prior.actor_user_id=? AND prior.scope_key=? AND prior.created_at<=? AND prior.turn_id!=? ORDER BY prior.created_at DESC,prior.turn_id DESC LIMIT ?)
     SELECT prior.turn_id,prior.user_content_ref,prior.assistant_content_ref,
       CASE WHEN ${authored.sql} THEN authored.content ELSE NULL END AS user_content,
-      CASE WHEN ${answer.sql} AND ${paid.sql} THEN answer.content ELSE NULL END AS assistant_content
+      CASE WHEN ${answer.sql} AND (${paid.sql}${useMemory?` OR EXISTS(SELECT 1 FROM memory_derivation_consumers parent JOIN memory_derivation_consumer_contents link ON link.origin_id=parent.origin_id AND link.role='result' WHERE parent.actor_user_id=prior.actor_user_id AND parent.scope_key=prior.scope_key AND parent.turn_id=prior.turn_id)`:''}) THEN answer.content ELSE NULL END AS assistant_content
     FROM included_turns prior LEFT JOIN private_content authored ON authored.content_id=prior.user_content_ref AND authored.owner_id=prior.actor_user_id AND authored.kind='chat-user' AND authored.redacted_at IS NULL AND authored.expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now')
     LEFT JOIN private_content answer ON answer.content_id=prior.assistant_content_ref AND answer.owner_id=prior.actor_user_id AND answer.kind='chat-assistant' AND answer.redacted_at IS NULL AND answer.expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now')
     ORDER BY prior.created_at DESC,prior.turn_id DESC`)
     .bind(actor.principal.userId,turn.scope_key,turn.created_at,turn.turn_id,Math.max(0,CONVERSATION_TURNS-1),...authored.bindings,...answer.bindings,...paid.bindings)
     .all<{turn_id:string;user_content_ref:string;assistant_content_ref:string;user_content:string|null;assistant_content:string|null}>();
-  await assertNoPaidMemory(env,await paidMemoryProof(env,actor.principal.userId,turn.scope_key,[...rows.results,turn].map(row=>({turnId:row.turn_id,userRef:row.user_content_ref,answerRef:row.assistant_content_ref}))));
+  if(!useMemory)await assertNoPaidMemory(env,await paidMemoryProof(env,actor.principal.userId,turn.scope_key,[...rows.results,turn].map(row=>({turnId:row.turn_id,userRef:row.user_content_ref,answerRef:row.assistant_content_ref}))));
   return[...rows.results.reverse(),turn].map(row=>{
     if(typeof row.user_content!=="string"||typeof row.assistant_content!=="string")fail("assistant_conversation_custody_unavailable");
     return{turnId:row.turn_id,userRef:row.user_content_ref,answerRef:row.assistant_content_ref,user:row.user_content,assistant:row.assistant_content};
@@ -394,7 +396,7 @@ async function documentForRequest(env:WorkerEnv,actor:SpecialistActor,original:S
   const documentId=canvasDocumentTarget(projection,canvas,original.selectedItemIds,"");
   if(!documentId)fail("assistant_source_document_required");return documentId;
 }
-async function sourcePreparation(request:Request,env:WorkerEnv,actor:SpecialistActor,original:SpecialistOriginalRequest,conversation:ConversationEntry[],binding?:ConsequentialBinding){
+async function sourcePreparation(request:Request,env:WorkerEnv,actor:SpecialistActor,original:SpecialistOriginalRequest,conversation:ConversationEntry[],binding?:ConsequentialBinding,parents:readonly SemanticAssistantParent[]=[]){
   const documentId=binding?.documentId??await documentForRequest(env,actor,original);
   if(!original.projectId)fail("assistant_source_document_required");
   const authority=binding?await readDocumentExecutionAuthority(env,actor.principal,binding):await prepareDocumentAuthority(request,env,{projectId:original.projectId,documentId,canvasId:original.canvasId},"author");
@@ -433,7 +435,7 @@ async function sourcePreparation(request:Request,env:WorkerEnv,actor:SpecialistA
   const context:AssistantContext={...base,surface,playbook:assistantPlaybookForSurface(surface),documentTitle:projection.documents.find(item=>item.id===documentId)?.title??null,
     scope:{actorUserId:actor.principal.userId,organizationId:scope?.organizationId??null,projectAccessId:scope?.projectAccessId??null,projectId:original.projectId,documentId},
     selectedItems:selected.map(item=>({id:item!.id,sourceId:item!.sourceId,kind:item!.sourceKind,title:item!.title,documentId})),
-    recentTurns:conversation.flatMap((turn,index)=>[{id:turn.turnId+":user",role:"user" as const,text:turn.user,sequence:index*2},{id:turn.turnId+":assistant",role:"assistant" as const,text:turn.assistant,sequence:index*2+1}]),
+    recentTurns:conversation.flatMap((turn,index)=>[{id:turn.turnId+":user",role:"user" as const,text:turn.user,sequence:index*2},{id:turn.turnId+":assistant",role:"assistant" as const,text:parents.some(p=>p.turnId===turn.turnId)?"Earlier Memory-assisted answer (derived context, not independent evidence):\n"+parents.find(p=>p.turnId===turn.turnId)!.reply:turn.assistant,sequence:index*2+1}]),
     decisionAtoms:blocks.map(block=>{const governed=Boolean(block.properties.organization_context_package_binding_id||block.properties.organization_context_package_id),immutable=Boolean(block.properties.source_evidence_hash||governed||block.properties.source_artifact_id||block.properties.source_artifact_item_id||block.properties.context_set_root_id||outputOwned.has(block.id));
       return{id:block.id,type:block.type,text:String(block.properties.text??block.properties.label??block.handle),intent:blockIntentFor(block.type,block.properties),locked:block.locked,protected:protectedAssistantDecision(block),focused:block.id===surface.focusedBlockId,version:block.sourceEvents.length,immutable,providerEligible:promptFactIsActive(block),providerVisibility:block.type==="reference"||block.type==="model3d"||block.type==="audio"&&immutable?"restricted":governed?"governed":immutable?"restricted":"editable"};}),
     relationships:relationships.map(relation=>({id:relation.id,from:relation.fromBlockId,to:relation.toBlockId,kind:relation.kind})),
@@ -449,13 +451,14 @@ function modelEligibility(env:WorkerEnv,actor:SpecialistActor,host:AssistantSpec
   return reasons;
 }
 async function prepareQuote(request:Request,env:WorkerEnv,actor:SpecialistActor,host:AssistantSpecialistHost,turn:SavedTurn,requestedModel:unknown,useMemory=false){
-  const original=metadata(turn),conversation=await conversationWindow(env,actor,turn),prepared=await sourcePreparation(request,env,actor,original,conversation),kind=host.kind(turn.user_content,prepared.context,turn.turn_id);
+  const original=metadata(turn),conversation=await conversationWindow(env,actor,turn,useMemory);
+  const memory=useMemory?await prepareSemanticAssistantMemory(env,actor.principal,{projectId:original.projectId!,documentId:await documentForRequest(env,actor,original),scopeKey:host.scopeKey(actor),turnId:turn.turn_id,priorTurnIds:conversation.filter(row=>row.turnId!==turn.turn_id).map(row=>row.turnId),scope:actorScope(actor)}):null;
+  const memoryInput=memory?semanticAssistantMemoryInputs(env,memory):null;
+  const prepared=await sourcePreparation(request,env,actor,original,conversation,undefined,memoryInput?.binding.parents),kind=host.kind(turn.user_content,prepared.context,turn.turn_id);
   if(requestedModel!==undefined&&(typeof requestedModel!=="string"||!ASSISTANT_MODELS.includes(requestedModel as AssistantModel)))fail("assistant_model_invalid");
   const explicit=requestedModel===undefined?null:requestedModel as AssistantModel,selection=selectAssistantModel(kind,{allowedModels:ASSISTANT_MODELS,remainingMicrousd:Infinity,premiumApproved:true,...(explicit?{requestedModel:explicit}:{})});if(!selection.model)fail("assistant_model_invalid");
   const model=selection.model,snapshot=snapshotAssistantProviderInput(prepared.context,turn.user_content,prepared.source);
   const visible=new Set(Object.values(snapshot.aliases));if(prepared.context.decisionAtoms.some(atom=>atom.providerEligible&&(atom.protected||atom.locked||atom.intent==="prohibit")&&!visible.has(atom.id)))fail("assistant_protected_source_unavailable");
-  const memory=useMemory?await prepareSemanticAssistantMemory(env,actor.principal,{projectId:prepared.binding.projectId,documentId:prepared.binding.documentId,scopeKey:host.scopeKey(actor),turnId:turn.turn_id}):null;
-  const memoryInput=memory?semanticAssistantMemoryInputs(env,memory):null;
   const providerRequest=await buildAssistantProviderRequest(actor.principal.userId,{model,locale:original.locale,maximumOutputTokens:OUTPUT_TOKENS,view:memoryInput?{...snapshot.view,memory_evidence:memoryInput.evidence}:snapshot.view}),bytes=new TextEncoder().encode(JSON.stringify(providerRequest)).byteLength;
   if(bytes>MAX_ASSISTANT_PROVIDER_REQUEST_BYTES)fail("assistant_source_too_large");const inputTokens=bytes+1_024,pricing=consentedTextPricing(model),maximumMicrousd=maximumConsentedTextMicrousd(pricing,inputTokens,OUTPUT_TOKENS);
   const stored:SpecialistRequest={schema:1,turnId:turn.turn_id,scopeKey:host.scopeKey(actor),originalRequest:{...original,documentId:prepared.binding.documentId},taskKind:kind,explicitModel:explicit,providerRequest,aliases:snapshot.aliases,context:prepared.context,conversation,pricing,sourceRightsValidUntil:prepared.sourceRightsValidUntil,turn:{user_content_ref:turn.user_content_ref,assistant_content_ref:turn.assistant_content_ref,request_json:turn.request_json,document_id:turn.document_id}};
@@ -992,7 +995,7 @@ async function resultResponse(env:WorkerEnv,actor:SpecialistActor,host:Assistant
 async function purchasePreparation(request:Request,env:WorkerEnv,actor:SpecialistActor,host:AssistantSpecialistHost,retained:Retained){
   await assertNoPaidMemory(env,noMemoryProof(retained.request));
   if(actor.principal.access.permissionEpoch!==retained.binding.permissionEpoch)fail("assistant_authorization_changed");
-  const source=await sourcePreparation(request,env,actor,retained.request.originalRequest,retained.request.conversation,retained.binding);
+  const source=await sourcePreparation(request,env,actor,retained.request.originalRequest,retained.request.conversation,retained.binding,retained.request.memory?.parents);
   if(source.sourceHash!==retained.binding.sourceHash||source.sourceRightsValidUntil!==retained.request.sourceRightsValidUntil)fail("assistant_consent_source_changed");
   const reasons=[...source.unavailableReasons,...modelEligibility(env,actor,host,retained.request.taskKind,retained.binding.steps[0]!.model as AssistantModel,retained.request.explicitModel)];
   if(reasons.length)fail(reasons[0]!);if(!env.OPENAI_API_KEY)fail("assistant_provider_unavailable");
@@ -1082,9 +1085,12 @@ async function admitTask(env:WorkerEnv,actor:SpecialistActor,retained:Retained,s
   const consentGuard=consentProof(retained),turnGuard=turnProof(binding,spec),conversationGuard=conversationProof(binding,spec);
   const insertProof=join(join(consentGuard,turnGuard),join(conversationGuard,join(sourceProof,single)));
   const exactExecution="EXISTS(SELECT 1 FROM consequential_executions execution WHERE execution.execution_id=? AND execution.actor_user_id=? AND execution.binding_hash=? AND execution.status='reserved')";
+  // The complete source proof is also the claim's atomic precondition. Keep
+  // the task INSERT below D1's 100-bind limit without dropping that proof.
+  const taskInsertProof=24+insertProof.bindings.length>100?single:insertProof;
   const inserted=env.DB.prepare(`INSERT OR IGNORE INTO assistant_specialist_tasks(task_id,actor_user_id,scope_key,turn_id,organization_id,project_access_id,project_id,document_id,route_family,task_kind,selected_model,token_reservation_id,cost_reservation_id,estimated_microusd,maximum_input_tokens,maximum_output_tokens,locale,permission_epoch,status,error_code,created_at,updated_at,started_at,completed_at,lease_expires_at,provider_submitted,result_json)
-    SELECT ?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'queued',NULL,?,?,NULL,NULL,NULL,0,? WHERE ${exactExecution} AND ${insertProof.sql}`)
-    .bind(id,actor.principal.userId,spec.scopeKey,spec.turnId,binding.scope?.organizationId??null,binding.scope?.projectAccessId??null,binding.projectId,binding.documentId,assistantSurfaceForRoute(spec.originalRequest.route).canonicalFamily,spec.taskKind,step.model,id+":tokens:0",id+":usd:0",step.maximumMicrousd,step.inputTokens,step.outputTokens,spec.originalRequest.locale,binding.permissionEpoch,now,now,JSON.stringify({specialistConsentVersion:1,bindingHash:retained.row.binding_hash}),id,actor.principal.userId,retained.row.binding_hash,...insertProof.bindings);
+    SELECT ?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'queued',NULL,?,?,NULL,NULL,NULL,0,? WHERE ${exactExecution} AND ${taskInsertProof.sql}`)
+    .bind(id,actor.principal.userId,spec.scopeKey,spec.turnId,binding.scope?.organizationId??null,binding.scope?.projectAccessId??null,binding.projectId,binding.documentId,assistantSurfaceForRoute(spec.originalRequest.route).canonicalFamily,spec.taskKind,step.model,id+":tokens:0",id+":usd:0",step.maximumMicrousd,step.inputTokens,step.outputTokens,spec.originalRequest.locale,binding.permissionEpoch,now,now,JSON.stringify({specialistConsentVersion:1,bindingHash:retained.row.binding_hash}),id,actor.principal.userId,retained.row.binding_hash,...taskInsertProof.bindings);
   const verified=env.DB.prepare(`INSERT OR IGNORE INTO assistant_action_commits(commit_id,verified,created_at)
     SELECT ?,CASE WHEN EXISTS(SELECT 1 FROM assistant_specialist_tasks task WHERE task.task_id=? AND task.actor_user_id=? AND task.scope_key=? AND task.turn_id=? AND json_extract(task.result_json,'$.bindingHash')=?) THEN 1 ELSE 0 END,?
     WHERE ${exactExecution}`).bind("specialist-admission:"+id,id,actor.principal.userId,spec.scopeKey,spec.turnId,retained.row.binding_hash,now,id,actor.principal.userId,retained.row.binding_hash);

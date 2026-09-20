@@ -407,6 +407,7 @@ function executeModel3dRebuild(database, rebuild, recorded) {
 const MEMORY_SPLIT_UPGRADE = { tag: '0051_memory_derivation_split', hash: 'ad95f306d80be738b9f9a5e38ab06927e8932ed87883b9dd8ff758f299ff5481', trigger: 'memory_derivation_job_insert' };
 const replacementShape=(database,statement)=>statement.objectType==='index'?indexShape(database,schemaObject(database,statement.name)):triggerShape(schemaObject(database,statement.name));
 const MEMORY_PRODUCER_UPGRADE = { tag: '0053_memory_derivation_producers', hash: 'cd5c27f2fbba4f3eb26c9129b2d30eb0d57372e1a6fb9e86bc179814b20a1ada', objects: [['trigger','memory_derivation_job_insert'],['index','idx_memory_derivation_job_interval'],['trigger','memory_derivation_completion_cursor_update']] };
+const MEMORY_CONSUMER_PARENT_UPGRADE = { tag: '0063_memory_derivation_consumer_parents', hash: '23505cbf8e56074974065303a638952bc329110dbae340b57cf518bb3c4d8903', objects: [['trigger','memory_derivation_consumer_update']] };
 function prepareMigrations(migrations) {
   if (!Array.isArray(migrations)) fail("migration_journal_invalid", "migrations must be an array");
   const tags = new Set();
@@ -422,10 +423,10 @@ function prepareMigrations(migrations) {
     if (model3d && when !== MODEL3D_REBUILD.when) fail("migration_sql_unsupported", "unreviewed 3D migration timestamp");
     const splitUpgrade = tag === MEMORY_SPLIT_UPGRADE.tag;
     if (splitUpgrade && hash !== MEMORY_SPLIT_UPGRADE.hash) fail("migration_hash_mismatch", tag);
-    const producerUpgrade = tag === MEMORY_PRODUCER_UPGRADE.tag;
-    if (producerUpgrade && hash !== MEMORY_PRODUCER_UPGRADE.hash) fail("migration_hash_mismatch", tag);
+    const producerUpgrade = [MEMORY_PRODUCER_UPGRADE,MEMORY_CONSUMER_PARENT_UPGRADE].find(upgrade=>tag===upgrade.tag);
+    if (producerUpgrade && hash !== producerUpgrade.hash) fail("migration_hash_mismatch", tag);
     const parts = sql.split("--> statement-breakpoint");
-    if (producerUpgrade) for (const [type,name] of MEMORY_PRODUCER_UPGRADE.objects) {
+    if (producerUpgrade) for (const [type,name] of producerUpgrade.objects) {
       const at=parts.findIndex(part=>typeof part==='string'&&part.trim()===`DROP ${type.toUpperCase()} ${name};`);
       const next=at<0?null:classify(parts[at+1]);
       if(at<0||next?.name!==name||next.kind!==type) fail('migration_sql_unsupported','invalid producer object replacement');

@@ -218,3 +218,5 @@ The [original-conversation lifecycle checkpoint](forma-memory-conversation-lifec
 adds immutable source-reference registration and copy retirement, with full-window
 personal/shared D1 verification. Existing unregistered origins fail closed and
 are swept; no live database was migrated. Continue the complete native matrix.
+
+[Bounded semantic follow-up](forma-memory-semantic-followup-2026-09-20.md) closes the specialist’s bounded generated-answer history and downstream retirement, with personal/shared D1 journeys and exact migration qualification. Migration0063 is schema-only but includes a hash-pinned trigger replacement, not a purely additive rollout. The complete native matrix remains active.
