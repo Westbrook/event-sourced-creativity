@@ -593,12 +593,13 @@ export class FormaShell extends FormaElement {
   #observeDocumentView(path: string) {
     const view = documentViewFromRoute(path);
     if (!view) { this.#lastObservedDocumentView = ""; return; }
-    if (document.documentElement.dataset.formaPhase !== "populated" || this.store.loading.get() || !this.store.events.get().length || this.store.session.get()?.projectContext) return;
+    if (document.documentElement.dataset.formaPhase !== "populated" || this.store.loading.get() || !this.store.events.get().length || this.store.session.get()?.impersonation) return;
     const projection = this.store.projection.get();
     const documentId = documentIdFromRoute(path) ?? projection.documentId;
     if (!documentId) return;
     const focused = documentFocusFromRoute(path);
-    const visitKey = `${documentId}:${view}:${focused ? "focus" : "standard"}`;
+    const session=this.store.session.get();
+    const visitKey = JSON.stringify([session?.user.userId,session?.projectContext??null,documentId,view,focused]);
     if (visitKey === this.#lastObservedDocumentView) return;
     this.#lastObservedDocumentView = visitKey;
     void this.store.hot({ type: "DocumentViewVisited", payload: { document_id: documentId, project_id: projection.projectId, view, focused, route_family: "document", source_surface: "document-view-navigation" } });

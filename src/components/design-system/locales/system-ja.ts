@@ -1,5 +1,8 @@
 /** Audited Forma-owned interface, metadata, and component-documentation copy. */
 const messages: Record<string, string> = {
+  "system.auto.1ajba9u.47": "アシスタントのメモリコンテキストのインターフェース。",
+  "system.auto.1tlq4uh.152": "参照のみを含む非公開のアシスタントコンテキストです。メモを選んでもプロンプトの送信や記述したフィールドの変更は行いません。保存した参照はネイティブ処理で再検証されます。",
+
   "system.auto.bz37n4.45": "メモリ想起範囲のアプリケーションインターフェース。",
   "system.auto.140i2bg.141": "アプリケーションに接続されたメモリ想起範囲のインターフェースです。構成する前に実際の属性、JavaScript プロパティ、イベントを確認してください。",
   "system.auto.1hqj2xr.42": "プロジェクト階層のアプリケーションインターフェース。",

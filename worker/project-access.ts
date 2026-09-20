@@ -629,7 +629,7 @@ async function projectModel3dCurrentProjections(rows:Record<string,unknown>[],co
 
 function presentProjectEvent(row:Record<string,unknown>,context:ProjectRequestContext,activeResources:ProjectPresentationResources,contentIds=new Set<string>(),model3dCurrent?:Model3dCurrentProjection){
   const event=serializeEvent(row);
-  if(['DocumentArtifactViewed','BlockInspected'].includes(event.type)&&event.actor!=='user:'+context.principalUserId)return{...presentActorArtifactView(event,context.principalUserId),streamId:'project:'+context.projectAccessId,sequence:Number(row.project_sequence)};
+  if(['DocumentArtifactViewed','BlockInspected','DocumentViewVisited'].includes(event.type)&&event.actor!=='user:'+context.principalUserId)return{...presentActorArtifactView(event,context.principalUserId),streamId:'project:'+context.projectAccessId,sequence:Number(row.project_sequence)};
   const privateConversation=event.type==="ChatMessageSent"||event.type==="AssistantReasoned"&&event.payload.operation==="creative-chat";
   const payload=event.payload,operation=payload.operation&&typeof payload.operation==="object"?payload.operation as Record<string,unknown>:{};
   const object=operation.object&&typeof operation.object==="object"?operation.object as Record<string,unknown>:{};

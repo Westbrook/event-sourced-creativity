@@ -5,14 +5,18 @@ import test from 'node:test';
 import {readFileSync} from 'node:fs';
 import ts from 'typescript';
 import {html,nothing} from 'lit';
+import {createMemoryElapsed} from '../src/model/memory-lifetime.ts';
 import {parseMemoryCustody} from '../src/model/memory-custody.ts';
 import {personalMemoryMessage} from '../src/components/design-system/locales/personal-memory-messages.ts';
 const source=ts.createSourceFile('document-memory-brief.ts',readFileSync(new URL('../src/components/document-memory-brief.ts',import.meta.url),'utf8'),ts.ScriptTarget.Latest,true);
 const declaration=source.statements.find(node=>ts.isClassDeclaration(node)&&node.name?.text==='DocumentMemoryBrief');assert.ok(declaration);
 const compiled=ts.transpileModule(declaration.getText(source).replace(/^export /u,''),{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.ESNext,useDefineForClassFields:false}}).outputText;
+const savedSource=ts.createSourceFile('memory-assistant-context.ts',readFileSync(new URL('../src/components/memory-assistant-context.ts',import.meta.url),'utf8'),ts.ScriptTarget.Latest,true);
+const savedDeclaration=savedSource.statements.find(node=>ts.isClassDeclaration(node)&&node.name?.text==='MemoryAssistantContext');assert.ok(savedDeclaration);
+const savedCompiled=ts.transpileModule(savedDeclaration.getText(savedSource).replace(/^export /u,''),{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.ESNext,useDefineForClassFields:false}}).outputText;
 const flatten=value=>typeof value==='string'?value:Array.isArray(value)?value.map(flatten).join(''):value?.strings?value.strings.map((part,i)=>part+flatten(value.values[i])).join(''):'';
 const flush=async()=>{for(let i=0;i<4;i++)await Promise.resolve();};
-function fixture(t,{deferred=false,shared=false}={}){
+function fixture(t,{deferred=false,shared=false,saved=false}={}){
   const window=new EventTarget(),document=new EventTarget();document.visibilityState='visible';document.activeElement=null;
   let session={user:{userId:'actor'},projects:[],impersonation:null},route='/document/doc/doc',authorization='auth',generation=1,sourceActive=true;
   let projection={projectId:'project',documentId:'doc',documents:[{id:'doc',projectId:'project',createdSequence:1,sourceEvents:['original']}]};
@@ -26,7 +30,8 @@ function fixture(t,{deferred=false,shared=false}={}){
     const value={projectId:'project',documentId:'doc',validUntil:new Date(Date.now()+45000).toISOString(),completeHistory:false,independentEvidence:false,
       sections:[{purpose:'rolling-summary',jobId:'job',corrections:[],items:[{text:'Private native candidate',citationStatus:'support-cited',supports:[{text:'Original quotation'}],counterevidence:[]}]}]};
     const lease={current:()=>!retired&&current()?value:null,retire:()=>{retired=true;}};calls.push({selection,current,signal,resolve:()=>resolve(lease),retired:()=>retired});if(!deferred)resolve(lease);});
-  const Component=new Function('FormaElement','html','nothing','readDocumentMemoryBrief','parseMemoryCustody','personalMemoryMessage','window','setTimeout','clearTimeout',compiled+'\nreturn DocumentMemoryBrief;')(
+  const savedClient=()=>({read:(scope,signal)=>new Promise(resolve=>{calls.push({scope,signal,resolve:()=>resolve({validUntil:new Date(Date.now()+25000).toISOString(),context:{state:'accepted',source:{documentId:'doc',zoom:'document'}},presentation:{items:[{text:'Private native candidate'}]}})});if(!deferred)calls.at(-1).resolve();})});
+  const Component=saved?new Function('FormaElement','html','nothing','createAssistantMemoryContextClient','parseMemoryCustody','personalMemoryMessage','createMemoryElapsed','window','setTimeout','clearTimeout',savedCompiled+'\nreturn MemoryAssistantContext;')(Base,html,nothing,savedClient,parseMemoryCustody,personalMemoryMessage,createMemoryElapsed,window,callback=>{const id=++nextTimer;timers.set(id,callback);return id;},id=>timers.delete(id)):new Function('FormaElement','html','nothing','readDocumentMemoryBrief','parseMemoryCustody','personalMemoryMessage','window','setTimeout','clearTimeout',compiled+'\nreturn DocumentMemoryBrief;')(
     Base,html,nothing,capture,parseMemoryCustody,personalMemoryMessage,window,callback=>{const id=++nextTimer;timers.set(id,callback);return id;},id=>timers.delete(id));
   const element=new Component();element.connectedCallback();element.updated();t.after(()=>{element.isConnected=false;element.disconnectedCallback();});
   return {element,calls,document,window,timers,refresh,text:()=>flatten(element.render()),focused:()=>focused,
@@ -61,4 +66,18 @@ test('brief expiry clears quotes, restores in-card focus to Refresh and does not
 test('a stale expiry callback cannot clear a new document lease or steal focus',async t=>{
   const f=fixture(t);await flush();const expire=[...f.timers.values()][0];f.change('route');f.element.updated();await flush();expire();await flush();
   assert.match(f.text(),/Private native candidate/);assert.equal(f.focused(),0);
+});
+
+for(const boundary of ['route','actor','auth','source','retired-source','impersonation','locale','document','revision','custody','store','disconnect'])test('saved semantic context component retires across '+boundary,async t=>{
+ const f=fixture(t,{saved:true});await flush();assert.match(f.text(),/Private native candidate/);f.change(boundary);assert.doesNotMatch(f.text(),/Private native candidate/);
+ f.element.updated();assert.equal(f.calls[0].signal.aborted,true);
+});
+for(const event of ['blur','pagehide','visibilitychange'])test('saved semantic context clears private presentation on '+event,async t=>{
+ const f=fixture(t,{saved:true});await flush();if(event==='visibilitychange'){f.document.visibilityState='hidden';f.document.dispatchEvent(new Event(event));}else f.window.dispatchEvent(new Event(event));
+ assert.doesNotMatch(f.text(),/Private native candidate/);assert.equal(f.calls[0].signal.aborted,true);assert.equal(f.timers.size,0);
+});
+test('saved semantic context rejects late old-scope data and retires on expiry without polling',async t=>{
+ const f=fixture(t,{saved:true,deferred:true});f.change('route');f.element.updated();f.calls[0].resolve();await flush();assert.doesNotMatch(f.text(),/Private native candidate/);
+ f.calls[1].resolve();await flush();assert.match(f.text(),/Private native candidate/);f.document.activeElement={inside:true};[...f.timers.values()][0]();await flush();
+ assert.doesNotMatch(f.text(),/Private native candidate/);assert.equal(f.focused(),1);f.element.updated();assert.equal(f.calls.length,2);
 });

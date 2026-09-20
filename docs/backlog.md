@@ -155,3 +155,7 @@ Memory cross-scope integration qualification: historical pagination and explicit
 reads are separate, native target-only recall works without a processing grant, and
 pilot/cancellation deadlines are enforced. [Verified behavior and open scope](forma-memory-cross-scope-recall-2026-09-19.md#end-to-end-integration-qualification).
 The complete Memory plan remains open; no production activation is implied.
+
+## Memory saved-context and page continuation — 2026-09-20
+
+[Saved assistant references and canonical document pages](forma-memory-saved-context-pages-2026-09-20.md) implement private native selection controls, reference retirement, localized review, genuine governed page encounters and exact per-view derivation provenance. Migration0060 is unapplied. Automatic prompt/answer integration, field autocomplete, long-term reconciliation and the broader native scopes remain planned implementation, not external-service blockers. No production activation occurred.

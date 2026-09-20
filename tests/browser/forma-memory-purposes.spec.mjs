@@ -26,6 +26,7 @@ for(const locale of ['en','ar'])test.describe('Memory purpose locale '+locale,()
   const calls=[],errors=[];page.on('pageerror',error=>errors.push(error.message));
   await context.route('**/api/memory/**',async route=>{const request=route.request(),url=new URL(request.url());calls.push({method:request.method(),path:url.pathname,query:url.search,automatic:request.headers()['x-forma-memory-consumer']==='document-brief-v1'});
     expect(url.origin).toBe(origin);expect(request.method()).toBe('GET');
+    if(url.pathname==='/api/memory/assistant-context')return route.fulfill({status:503,json:{error:'synthetic_assistant_context_unavailable'}});
     if(url.pathname==='/api/memory/recall-scopes')return route.fulfill({json:{version:'memory-scope-recall-v1',sources:[],validUntil:new Date(Date.now()+25000).toISOString(),complete:true}});
     if(url.pathname==='/api/memory/settings'&&!url.search)return route.fulfill({json:settings});
     if(url.pathname==='/api/memory/recall'){
@@ -161,10 +162,17 @@ for(const behavioral of [false,true])for(const locale of ['en','ar'])test.descri
     const offer={qualificationId:grant.qualificationId,termsSha256:grant.termsSha256,expiresAt,terms};
     const settings={version,enabled:true,available:true,reason:null,policyVersion:'personal-memory-derivation-v1',scope,enrollmentId:parent,enrollmentRevision:1,
       grants:[grant],qualifications:[offer],capScope:'payer-utc-calendar-month-all-memory-purposes',sourceWindow:behavioral?'qualified-recipe':'future-originals',processingImplemented:false};
-    const calls=[],errors=[];page.on('pageerror',error=>errors.push(error.message));let denied=false;
+    const calls=[],errors=[],contextWrites=[];page.on('pageerror',error=>errors.push(error.message));let denied=false;
     await context.route('**/api/memory/**',async route=>{
       const request=route.request(),url=new URL(request.url());calls.push({path:url.pathname,method:request.method()});
-      expect(url.origin).toBe(new URL(baseURL).origin);expect(request.method()).toBe('GET');
+      expect(url.origin).toBe(new URL(baseURL).origin);
+      if(url.pathname==='/api/memory/assistant-context'){
+        if(request.method()==='GET'){expect(url.searchParams.get('controls')).toBe('1');return route.fulfill({json:{version:'memory-assistant-context-v1',targetEnrollmentId:parent,targetRevision:1,validUntil:new Date(Date.now()+25000).toISOString(),context:null,presentation:null}});}
+        expect(request.method()).toBe('PUT');const body=request.postDataJSON();contextWrites.push(body);
+        expect(body).toEqual({jobId,revision:null,targetEnrollmentId:parent,targetRevision:1,confirmation:'ACCEPT_ASSISTANT_CONTEXT'});
+        return route.fulfill({json:{version:'memory-assistant-context-v1',saved:true,refreshRequired:true}});
+      }
+      expect(request.method()).toBe('GET');
       expect(request.headers()['x-forma-memory-consumer']).toBe('document-brief-v1');
       const validUntil=new Date(Date.now()+45000).toISOString();
       if(url.pathname==='/api/memory/settings')return route.fulfill({json:base});
@@ -192,10 +200,11 @@ for(const behavioral of [false,true])for(const locale of ['en','ar'])test.descri
     if(behavioral){await expect(brief).toContainText(message(locale,'behavioralDisclosure'));await expect(brief).toContainText(message(locale,'behavioralAction.inspect'));}
     expect(await brief.evaluate(el=>el.scrollWidth<=el.clientWidth+1)).toBe(true);
     await captureViewport(page,info,'automatic-document-memory-'+locale+(behavioral?'-behavioral':''),{assertStable:false});
+    if(behavioral){await brief.getByRole('button',{name:message(locale,'assistantContextAccept'),exact:true}).click();await expect(brief.getByRole('status')).toHaveText(message(locale,'assistantContextSaved'));expect(contextWrites).toHaveLength(1);}
     await page.evaluate(()=>window.dispatchEvent(new Event('blur')));await expect(brief).toHaveCount(0);
     denied=true;await page.evaluate(()=>window.dispatchEvent(new Event('focus')));
     await expect.poll(()=>calls.filter(call=>call.path.endsWith('/result')).length).toBe(2);
-    await expect(brief).toHaveCount(0);expect(calls.every(call=>call.method==='GET')).toBe(true);expect(errors).toEqual([]);
+    await expect(brief).toHaveCount(0);expect(calls.filter(call=>call.method!=='GET')).toHaveLength(behavioral?1:0);expect(errors).toEqual([]);
   });
 });
 

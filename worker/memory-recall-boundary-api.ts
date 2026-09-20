@@ -34,7 +34,7 @@ function inventory(sql: string, bindings: readonly (string | number | null)[], f
   return { condition: `(SELECT json_group_array(json_array(${keys.map(key => '"' + key + '"').join(',')})) FROM (${sql}))=?`,
     bindings: [...bindings, JSON.stringify(found.map(row => keys.map(key => row[key])))] };
 }
-async function schema(env: WorkerEnv) {
+export async function readNativeRecallBoundarySchema(env: WorkerEnv) {
   const found = await rows(env, schemaQuery), explicit = found.filter(row => row.sql !== null);
   if (found.length !== profile.count + 1 || explicit.length !== profile.count
     || found.some(row => row.sql === null && row.name !== profile.automaticIndexes[0])
@@ -74,7 +74,7 @@ export async function handleMemoryRecallBoundary(request: Request, env: WorkerEn
     if (request.headers.get('sec-fetch-site') === 'cross-site' || request.method !== 'GET' && request.headers.get('origin') !== url.origin) return reply({ error: 'same_origin_required' }, 403);
     const projectId = url.searchParams.get('projectId'), documentId = url.searchParams.get('documentId');
     if (!derivationId(projectId) || !derivationId(documentId) || [...url.searchParams.keys()].some(key => !(control ? ['projectId', 'documentId'] : ['projectId', 'documentId', 'source', 'purpose']).includes(key) || url.searchParams.getAll(key).length !== 1)) return reply({ error: 'recall_scope_required' }, 400);
-    const guards: MemorySqlGuard[] = [await schema(env), { condition: "?>strftime('%Y-%m-%dT%H:%M:%fZ','now') AND NOT EXISTS(SELECT 1 FROM sqlite_temp_schema) AND EXISTS(SELECT 1 FROM pragma_foreign_keys WHERE foreign_keys=1) AND EXISTS(SELECT 1 FROM pragma_ignore_check_constraints WHERE ignore_check_constraints=0)", bindings: [new Date(started + 30000).toISOString()] }];
+    const guards: MemorySqlGuard[] = [await readNativeRecallBoundarySchema(env), { condition: "?>strftime('%Y-%m-%dT%H:%M:%fZ','now') AND NOT EXISTS(SELECT 1 FROM sqlite_temp_schema) AND EXISTS(SELECT 1 FROM pragma_foreign_keys WHERE foreign_keys=1) AND EXISTS(SELECT 1 FROM pragma_ignore_check_constraints WHERE ignore_check_constraints=0)", bindings: [new Date(started + 30000).toISOString()] }];
     // Withdrawal remains possible after source access, qualification or learning ends.
     if (control && request.method === 'DELETE') {
       const body = await bodyOf(request);

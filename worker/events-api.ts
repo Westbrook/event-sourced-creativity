@@ -1,3 +1,4 @@
+import { appendNativeDocumentView } from './memory-document-view.ts';
 import { presentActorArtifactPage } from './memory-artifact-presentation.ts';
 import { appendGovernedArtifactView } from './memory-governed-artifact-view.ts';
 import { readStillRoutePage } from './still-route-read.ts';
@@ -685,6 +686,7 @@ export async function handleEvents(request:Request,env:WorkerEnv,hot=false,userO
       const consent=requireConsent(auth.user);if(consent)return consent;
       const selectedBody=await request.json() as Parameters<typeof appendGovernedArtifactView>[4];
       const selectedEvents=selectedBody.events??(selectedBody.event?[selectedBody.event]:[]);
+      if(selectedEvents.some(event=>event.type==='DocumentViewVisited'))return appendNativeDocumentView(request,env,auth.user,selectedBody,selected.context);
       if(selectedEvents.some(event=>event.type==='BlockInspected'))return appendNativeBlockInspection(request,env,auth.user,selectedBody,selected.context);
       if(selectedEvents.some(event=>event.type==='DocumentArtifactViewed'))return appendGovernedArtifactView(request,env,auth.user,selected.context,selectedBody);
       if(hot)return Response.json({error:'project_operation_unavailable'},{status:403});

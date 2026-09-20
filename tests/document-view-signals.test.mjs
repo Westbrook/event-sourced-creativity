@@ -40,3 +40,21 @@ test("keeps optional dwell supplemental and excludes view behavior from aestheti
   assert.equal(layers?.outcomes,0);
   assert.deepEqual(inferTasteBeliefs(events,new Date(Date.UTC(2026,7,14))),[]);
 });
+
+test('native page identities separate views, actors and custody without storing URLs',async()=>{
+ const {nativeMemoryPageIdentity}=await import('../worker/memory-native-pages.ts');
+ const enrollment={actor_user_id:'actor',owner_user_id:'actor',organization_id:null,project_access_id:null,project_id:'p',document_id:'d'};
+ const chat=nativeMemoryPageIdentity(enrollment,'chat'),editor=nativeMemoryPageIdentity(enrollment,'editor');assert.ok(chat);assert.notEqual(chat.scopeKey,editor.scopeKey);
+ assert.equal(nativeMemoryPageIdentity(enrollment,'https://private.example/?draft=secret'),null);assert.equal(nativeMemoryPageIdentity(enrollment,'unknown'),null);
+ assert.equal(nativeMemoryPageIdentity({...enrollment,owner_user_id:'other'},'chat'),null);
+ const shared={...enrollment,owner_user_id:'owner',organization_id:'org',project_access_id:'access'};
+ assert.notEqual(nativeMemoryPageIdentity(shared,'chat').scopeKey,nativeMemoryPageIdentity({...shared,actor_user_id:'another'},'chat').scopeKey);
+ assert.notEqual(nativeMemoryPageIdentity(shared,'chat').scopeKey,chat.scopeKey);
+});
+test('page encounters remain actor-private in shared presentation; legacy personal visits remain visible to their owner',async()=>{
+ const {presentActorArtifactView}=await import('../worker/memory-artifact-presentation.ts');
+ const source={...event(1,'DocumentViewVisited',{document_id:'d',view:'chat'},'user:actor'),streamId:'creative:owner'};
+ assert.deepEqual(presentActorArtifactView(source,'actor'),source);
+ for(const viewer of ['owner','collaborator']){const masked=presentActorArtifactView(source,viewer);assert.equal(masked.type,'ProjectResourceRestricted');assert.equal(masked.actor,'private');assert.deepEqual(masked.payload,{restricted:true});assert.equal(masked.correlationId,'');assert.equal(masked.sequence,source.sequence);}
+ const legacy={...source,actor:'user',streamId:'creative:actor'};assert.deepEqual(presentActorArtifactView(legacy,'actor'),legacy);assert.equal(presentActorArtifactView(legacy,'owner').type,'ProjectResourceRestricted');
+});

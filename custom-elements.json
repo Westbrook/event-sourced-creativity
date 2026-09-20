@@ -14492,6 +14492,68 @@
     },
     {
       "kind": "javascript-module",
+      "path": "src/components/memory-assistant-context.ts",
+      "declarations": [
+        {
+          "kind": "class",
+          "name": "MemoryAssistantContext",
+          "tagName": "forma-memory-assistant-context",
+          "customElement": true,
+          "summary": "Memory assistant context application interface.",
+          "description": "Private reference-only assistant context. Choosing a note neither sends a\nprompt nor changes authored fields; saved references are revalidated natively.",
+          "superclass": {
+            "name": "FormaElement",
+            "module": "src/components/forma-element.ts"
+          },
+          "members": [
+            {
+              "kind": "field",
+              "name": "candidateJobId",
+              "type": {
+                "text": "string"
+              },
+              "default": "''",
+              "attribute": "candidate-job-id"
+            }
+          ],
+          "attributes": [
+            {
+              "name": "candidate-job-id",
+              "fieldName": "candidateJobId",
+              "type": {
+                "text": "string"
+              },
+              "default": "''"
+            }
+          ],
+          "x-forma": {
+            "category": "application",
+            "renderRoot": "light",
+            "stateful": true
+          }
+        }
+      ],
+      "exports": [
+        {
+          "kind": "custom-element-definition",
+          "name": "forma-memory-assistant-context",
+          "declaration": {
+            "name": "MemoryAssistantContext",
+            "module": "src/components/memory-assistant-context.ts"
+          }
+        },
+        {
+          "kind": "js",
+          "name": "MemoryAssistantContext",
+          "declaration": {
+            "name": "MemoryAssistantContext",
+            "module": "src/components/memory-assistant-context.ts"
+          }
+        }
+      ]
+    },
+    {
+      "kind": "javascript-module",
       "path": "src/components/memory-recall-boundary.ts",
       "declarations": [
         {

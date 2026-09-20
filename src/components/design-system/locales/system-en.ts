@@ -1,5 +1,8 @@
 /** Audited Forma-owned interface, metadata, and component-documentation copy. */
 const messages: Record<string, string> = {
+  "system.auto.1ajba9u.47": "Memory assistant context application interface.",
+  "system.auto.1tlq4uh.152": "Private reference-only assistant context. Choosing a note neither sends a prompt nor changes authored fields; saved references are revalidated natively.",
+
   "system.auto.bz37n4.45": "Memory recall boundary application interface.",
   "system.auto.140i2bg.141": "Application-connected memory recall boundary interface. Inspect its actual attributes, JavaScript properties, and events before composing it.",
   "system.auto.1hqj2xr.42": "Project containment application interface.",

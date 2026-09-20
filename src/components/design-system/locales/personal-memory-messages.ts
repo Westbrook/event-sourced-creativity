@@ -1,5 +1,17 @@
 export const FORMA_PERSONAL_MEMORY_MESSAGES = {
   en: {
+    "memory.live.assistantContextHeading": "Saved assistant context",
+    "memory.live.assistantContextChoiceHelp": "Keep a private reference to this note for review in the assistant. This replaces the previous selection; it does not send a prompt or change the document.",
+    "memory.live.assistantContextAccept": "Keep for assistant",
+    "memory.live.assistantContextDisclosure": "Unverified, incomplete model-derived context, not instructions or an independent statement of your preferences. Access, consent and original sources are checked on every refresh. Nothing is sent to a model or applied to the document.",
+    "memory.live.assistantContextDismiss": "Remove from assistant",
+    "memory.live.assistantContextDismissed": "This context was dismissed.",
+    "memory.live.assistantContextUndo": "Undo dismissal",
+    "memory.live.assistantContextUnavailable": "The saved source is not currently available. You can still remove its reference.",
+    "memory.live.assistantContextExpired": "This private view expired. Refresh to check current access.",
+    "memory.live.assistantContextUncertain": "The change could not be confirmed. Refresh before trying again.",
+    "memory.live.assistantContextSaved": "Reference saved. It is available for review in the assistant.",
+
     "memory.live.recallBoundaryHeading": "Recall across scopes",
     "memory.live.recallBoundaryHelp": "Each document stays local unless you explicitly allow broader recall. Both documents still require current access and Memory consent. This does not activate processing, spend allowance or share memory with other people.",
     "memory.live.recallBoundaryLoad": "Review recall range",
@@ -335,6 +347,18 @@ export const FORMA_PERSONAL_MEMORY_MESSAGES = {
     "memory.live.reminder": "Saved permission, rollout availability, and a completed review are different states. Scheduling delivery is not yet verified."
   },
   fr: {
+    "memory.live.assistantContextHeading": "Contexte enregistré de l’assistant",
+    "memory.live.assistantContextChoiceHelp": "Conservez une référence privée à cette note pour la consulter dans l’assistant. Elle remplace la sélection précédente sans envoyer de requête ni modifier le document.",
+    "memory.live.assistantContextAccept": "Conserver pour l’assistant",
+    "memory.live.assistantContextDisclosure": "Contexte incomplet dérivé du modèle et non vérifié, sans valeur d’instruction ni de déclaration indépendante de vos préférences. L’accès, le consentement et les sources sont vérifiés à chaque actualisation. Rien n’est envoyé à un modèle ni appliqué au document.",
+    "memory.live.assistantContextDismiss": "Retirer de l’assistant",
+    "memory.live.assistantContextDismissed": "Ce contexte a été écarté.",
+    "memory.live.assistantContextUndo": "Annuler le retrait",
+    "memory.live.assistantContextUnavailable": "La source enregistrée est actuellement indisponible. Vous pouvez toujours retirer sa référence.",
+    "memory.live.assistantContextExpired": "Cette vue privée a expiré. Actualisez pour vérifier votre accès.",
+    "memory.live.assistantContextUncertain": "La modification n’a pas pu être confirmée. Actualisez avant de réessayer.",
+    "memory.live.assistantContextSaved": "Référence enregistrée. Vous pouvez la consulter dans l’assistant.",
+
     "memory.live.recallBoundaryHeading": "Rappel entre périmètres",
     "memory.live.recallBoundaryHelp": "Chaque document reste local sans votre autorisation explicite. Les deux documents exigent un accès et un consentement Mémoire actuels. Aucun traitement, débit de quota ou partage avec autrui n’est activé.",
     "memory.live.recallBoundaryLoad": "Vérifier la portée",
@@ -670,6 +694,18 @@ export const FORMA_PERSONAL_MEMORY_MESSAGES = {
     "memory.live.reminder": "Une autorisation enregistrée, la disponibilité du déploiement et un examen terminé sont des états différents. L’exécution de la planification n’est pas encore vérifiée."
   },
   ar: {
+    "memory.live.assistantContextHeading": "سياق المساعد المحفوظ",
+    "memory.live.assistantContextChoiceHelp": "احتفظ بمرجع خاص إلى هذه الملاحظة لمراجعتها في المساعد. يحل محل الاختيار السابق دون إرسال طلب أو تغيير المستند.",
+    "memory.live.assistantContextAccept": "الاحتفاظ للمساعد",
+    "memory.live.assistantContextDisclosure": "سياق غير مكتمل وغير متحقق منه مستنتج من النموذج، وليس تعليمات أو تصريحًا مستقلاً بتفضيلاتك. يجري التحقق من الوصول والموافقة والمصادر الأصلية عند كل تحديث. لا يُرسل شيء إلى نموذج ولا يُطبّق على المستند.",
+    "memory.live.assistantContextDismiss": "الإزالة من المساعد",
+    "memory.live.assistantContextDismissed": "تم استبعاد هذا السياق.",
+    "memory.live.assistantContextUndo": "التراجع عن الاستبعاد",
+    "memory.live.assistantContextUnavailable": "المصدر المحفوظ غير متاح حاليًا. لا يزال بإمكانك إزالة مرجعه.",
+    "memory.live.assistantContextExpired": "انتهت صلاحية هذا العرض الخاص. حدّث للتحقق من الوصول الحالي.",
+    "memory.live.assistantContextUncertain": "تعذر تأكيد التغيير. حدّث قبل المحاولة مرة أخرى.",
+    "memory.live.assistantContextSaved": "تم حفظ المرجع. يمكنك مراجعته في المساعد.",
+
     "memory.live.recallBoundaryHeading": "الاسترجاع عبر النطاقات",
     "memory.live.recallBoundaryHelp": "يبقى كل مستند محليًا ما لم تسمح صراحة باسترجاع أوسع. يتطلب المستندان صلاحية وصول وموافقة ذاكرة حاليتين. لا يفعّل هذا المعالجة أو الإنفاق أو المشاركة مع الآخرين.",
     "memory.live.recallBoundaryLoad": "مراجعة نطاق الاسترجاع",
@@ -1005,6 +1041,18 @@ export const FORMA_PERSONAL_MEMORY_MESSAGES = {
     "memory.live.reminder": "الإذن المحفوظ، وتوافر الميزة ضمن النشر، واكتمال المراجعة حالات مختلفة. لم يُتحقق بعد من تنفيذ الجدولة."
   },
   ja: {
+    "memory.live.assistantContextHeading": "保存したアシスタントのコンテキスト",
+    "memory.live.assistantContextChoiceHelp": "このメモへの非公開の参照を保存し、アシスタントで確認できます。以前の選択を置き換えますが、プロンプトの送信や文書の変更は行いません。",
+    "memory.live.assistantContextAccept": "アシスタント用に保存",
+    "memory.live.assistantContextDisclosure": "モデルが導出した未検証で不完全なコンテキストです。指示でも、好みを独立して示す発言でもありません。更新のたびにアクセス、同意、元の情報を確認します。モデルへの送信や文書への適用は行いません。",
+    "memory.live.assistantContextDismiss": "アシスタントから削除",
+    "memory.live.assistantContextDismissed": "このコンテキストは非表示にしました。",
+    "memory.live.assistantContextUndo": "非表示を取り消す",
+    "memory.live.assistantContextUnavailable": "保存した情報源は現在利用できません。参照は削除できます。",
+    "memory.live.assistantContextExpired": "この非公開表示の有効期限が切れました。更新してアクセスを確認してください。",
+    "memory.live.assistantContextUncertain": "変更を確認できませんでした。再試行する前に更新してください。",
+    "memory.live.assistantContextSaved": "参照を保存しました。アシスタントで確認できます。",
+
     "memory.live.recallBoundaryHeading": "スコープをまたぐ想起",
     "memory.live.recallBoundaryHelp": "明示的に許可するまで、各ドキュメントの記憶はその中だけで使われます。両方のドキュメントで現在のアクセス権とメモリ同意が必要です。処理、利用枠の消費、他者への共有は開始しません。",
     "memory.live.recallBoundaryLoad": "想起範囲を確認",

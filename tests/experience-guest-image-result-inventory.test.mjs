@@ -938,3 +938,12 @@ for(const fault of ['none','missing-inverse','inbound-view'])test('guest invento
  if(fault!=='none')return denied(f,t);
  const guard=guardInventory(f,t);try{const cap=await inspect(f);await assertOriginalManifest(f,guestImageResultInventoryData(f.request,f.env,cap));guard.assertUntouched();}finally{guard.close();}
 });
+
+for(const fault of ['none','missing-index','inbound-view'])test('guest inventory preserves optional saved Memory context isolation '+fault,async t=>{
+ const f=await completedResultFixture(t,{memory:true});
+ installQualifiedMigration(f,'0025_memory_live_base.sql');installQualifiedMigration(f,'0060_memory_derivation_contexts.sql');
+ if(fault==='missing-index')f.sqlite.exec('DROP INDEX idx_memory_derivation_contexts_source');
+ if(fault==='inbound-view')f.sqlite.exec('CREATE VIEW unqualified_assistant_context AS SELECT job_id FROM memory_derivation_contexts');
+ if(fault!=='none')return denied(f,t);
+ const guard=guardInventory(f,t);try{const cap=await inspect(f);await assertOriginalManifest(f,guestImageResultInventoryData(f.request,f.env,cap));guard.assertUntouched();}finally{guard.close();}
+});

@@ -1,3 +1,4 @@
+import { observeNativeMemoryPageBindings, type NativeMemoryPageBindings } from './memory-native-pages.ts';
 import { behavioralSourceHash, MEMORY_BEHAVIORAL_RESULT_VERSION, type MemoryBehavioralSource } from './memory-behavioral-result.ts';
 import { observeNativeMemoryReuseBindings, type NativeMemoryReuseBindings } from './memory-native-reuse.ts';
 import { observeNativeMemoryResourceBindings, observeNativeMemoryRelationBindings, type NativeMemoryRelationBindings } from './memory-native-relations.ts';
@@ -34,6 +35,7 @@ export type NativeDerivationProvenance = {
     bindingHash: string; intentHash: string; ancestry: PaidMemoryAncestryEntry[] }[];
   artifacts?: { eventId:string; contentRef:string; eventIds:string[] }[];
   blockInspections?: {eventId:string;eventIds:string[]}[];
+  pageBindings?: NativeMemoryPageBindings;
   blockBindings?: NativeMemoryBlockBindings;
   relationBindings?: NativeMemoryRelationBindings;
   reuseBindings?: NativeMemoryReuseBindings;
@@ -684,7 +686,7 @@ function inspectionReferences(observations:readonly NativeDerivationObservation[
  * union. Nothing is reconstructed from provider prose. V1 stays byte-compatible;
  * an exact separately qualified recipe and schema are required before capture. */
 export async function captureNativeDerivationSources(env:WorkerEnv,lease:NativeDerivationEvidence,
-  options:Parameters<typeof captureNativeDerivationOriginalSources>[2]={}){
+  options:NonNullable<Parameters<typeof captureNativeDerivationOriginalSources>[2]>&{pageBindings?:boolean}={}){
   try{
     const input=nativeDerivationEvidenceInputs(env,lease);
     // A v2 wrapper owns the final aggregate replay, including the observation
@@ -694,7 +696,13 @@ export async function captureNativeDerivationSources(env:WorkerEnv,lease:NativeD
     if(captured.status!=='captured')return captured;
     if(input.qualification.terms.recipeVersion!==MEMORY_BEHAVIORAL_RESULT_VERSION)return captured;
     if(!input.observationControlsPresent||!input.lifecyclePresent)return unavailable();
-    const db=env.DB,data=nativeDerivationSourceInputs(env,captured.capture),witness=new AssistantContextReadWitness<CaptureData>(env),seen=new Set<string>();
+    const db=env.DB,witness=new AssistantContextReadWitness<CaptureData>(env),seen=new Set<string>();
+    let data=nativeDerivationSourceInputs(env,captured.capture);
+    if(options.pageBindings!==false){
+      const pageBindings=await observeNativeMemoryPageBindings(env,input.enrollment,data.observations,witness);
+      const pages=new Map(pageBindings.entries.map(row=>[row.eventId,row.scopeKey]));
+      data={...data,observations:data.observations.map(row=>pages.has(row.eventId)?{...row,scopeKey:pages.get(row.eventId)!}:row),provenance:{...data.provenance,pageBindings}};
+    }
     const selected=data.observations.filter(row=>{const key=row.outcomeKey??row.eventId;if(seen.has(key))return false;seen.add(key);return true;});
     if(selected.length>128)return capacity();
     const descriptors:MemoryBehavioralSource[]=[];

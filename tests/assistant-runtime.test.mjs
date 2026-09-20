@@ -15790,6 +15790,7 @@ test('native observation control revision: source-free expiry is bounded to 128 
 async function nativeBehavioralRuntimeFixture(t,options={}){
   const state=await nativeDerivationExecutionFixture(t,{...options,results:true,userControls:true,observationControls:true,behavioralOnly:true,deferClaim:options.scheduled??false,completion:true,lifecycle:true,indexIntents:true,
     termOverrides:{recipeVersion:'memory-derivation-candidates-v2',maximumInputTokens:32768,...options.termOverrides}});
+  if(options.legacyPages){const old=await state.sources.captureNativeDerivationSources(state.env,state.executionLease,{pageBindings:false});assert.equal(old.status,'captured');state.executionCapture=old.capture;}
   const provider=await import('../worker/memory-derivation-provider.ts'),store=await import('../worker/memory-derivation-results.ts'),fetch=globalThis.fetch,requests=[];
   state.env.OPENAI_API_KEY='isolated-not-a-credential';let calls=0;
   globalThis.fetch=async(_url,init)=>{calls++;const request=JSON.parse(init.body),input=JSON.parse(request.input);requests.push(request);
@@ -16164,4 +16165,150 @@ for(const shared of [false,true])test('native automatic scoped brief: target rec
  assert.equal(calls.filter(url=>url.pathname==='/api/memory/recall-scopes'&&url.searchParams.has('source')).length,3);
  assert.ok(calls.every(url=>!url.searchParams.has('custody')));assert.deepEqual(state.sqlite.prepare('SELECT * FROM memory_derivation_grants ORDER BY consent_id').all(),before);
  lease.retire();assert.equal(lease.current(),null);
+});
+
+async function semanticAssistantContextFixture(t,{shared=false,crossScope=false}={}){
+ const state=crossScope?await nativeCrossScopeRecallFixture(t,{shared}):await nativeDerivationResultFixture(t,{shared,userControls:true,lifecycle:true,indexIntents:true});
+ if(!crossScope)assert.equal((await state.resultStore.publishNativeDerivationResult(state.env,state.resultReceipt)).status,'stored');
+ state.sqlite.exec(await(await import('node:fs/promises')).readFile(new URL('../drizzle/0060_memory_derivation_contexts.sql',import.meta.url),'utf8'));
+ const {handleMemoryAssistantContext}=await import('../worker/memory-assistant-context-api.ts');
+ const documentId=crossScope?state.recallTarget.documentId:state.current().document_id,projectId=state.current().project_id;
+ const request=(method='GET',body,headers={})=>handleMemoryAssistantContext(new Request('http://localhost/api/memory/assistant-context?'+new URLSearchParams({projectId,documentId}),
+  {method,headers:{...state.owner,origin:'http://localhost',...headers,...(body?{'content-type':'application/json'}:{})},...(body?{body:JSON.stringify(body)}:{})}),state.env);
+ const get=async()=>{const r=await request();assert.equal(r.status,200,await r.clone().text()+' '+state.controls.lastDatabaseError);return r.json();};
+ const accept=async(view)=>{const r=await request('PUT',{jobId:state.executionJob.job_id,revision:view.context?.revision??null,targetEnrollmentId:view.targetEnrollmentId,targetRevision:view.targetRevision,confirmation:'ACCEPT_ASSISTANT_CONTEXT'});return r;};
+ return Object.assign(state,{contextRequest:request,contextGet:get,contextAccept:accept});
+}
+for(const shared of [false,true])test('semantic assistant context: accept, reread, dismiss and explicit undo '+shared,async t=>{
+ const state=await semanticAssistantContextFixture(t,{shared}),before=adaptiveReentryFinancialState(state),events=state.sqlite.prepare('SELECT COUNT(*) AS n FROM events').get().n;
+ let view=await state.contextGet();assert.equal(view.context,null);
+ const accepted=await state.contextAccept(view);assert.equal(accepted.status,200,await accepted.clone().text()+' '+state.controls.lastDatabaseError);
+ view=await state.contextGet();assert.equal(view.context.state,'accepted');assert.ok(view.presentation.candidate.items.length);assert.equal(view.independentEvidence,false);
+ assert.equal((await state.contextRequest('DELETE',{revision:view.context.revision,confirmation:'DISMISS_ASSISTANT_CONTEXT'})).status,200);
+ const dismissed=await state.contextGet();assert.equal(dismissed.context.state,'dismissed');assert.equal(dismissed.presentation,null);
+ assert.equal((await state.contextAccept(view)).status,409,'stale acceptance cannot undo a later decision');
+ assert.equal((await state.contextAccept(dismissed)).status,200);assert.equal((await state.contextGet()).context.state,'accepted');
+ const row=state.sqlite.prepare('SELECT * FROM memory_derivation_contexts').get();assert.equal(Object.hasOwn(row,'text'),false);assert.equal(Object.hasOwn(row,'raw_json'),false);
+ assert.equal(state.sqlite.prepare('SELECT COUNT(*) AS n FROM events').get().n,events);assert.deepEqual(adaptiveReentryFinancialState(state),before);
+});
+for(const shared of [false,true])test('semantic assistant context: cross-scope binding and boundary retirement '+shared,async t=>{
+ const state=await semanticAssistantContextFixture(t,{shared,crossScope:true});let view=await state.contextGet();
+ assert.equal((await state.contextAccept(view)).status,503,'source document stays isolated by default');
+ await state.widen();view=await state.contextGet();const accepted=await state.contextAccept(view);assert.equal(accepted.status,200,await accepted.clone().text()+' '+state.controls.lastDatabaseError);
+ view=await state.contextGet();assert.equal(view.context.source.zoom,'project');
+ await state.recallRequest('recall-boundary',state.recallSource.document_id,{method:'DELETE',body:{confirmation:'RESET_RECALL_BOUNDARY'}});
+ assert.equal((await state.contextRequest()).status,503);
+ assert.equal((await state.contextRequest('DELETE',{revision:view.context.revision,confirmation:'DISMISS_ASSISTANT_CONTEXT'})).status,200);
+});
+for(const fault of ['result','source','target','feature','schema','foreign-keys'])test('semantic assistant context: closed after '+fault,async t=>{
+ const state=await semanticAssistantContextFixture(t);const initial=await state.contextGet();assert.equal((await state.contextAccept(initial)).status,200);const view=await state.contextGet();
+ if(fault==='result')assert.equal(await state.resultStore.withdrawNativeDerivationResult(state.env,state.current().actor_user_id,state.executionJob.job_id),true);
+ if(fault==='source')state.sqlite.prepare("UPDATE private_content SET content='changed' WHERE content_id=?").run(JSON.parse(state.provider.nativeDerivationCandidateInputs(state.env,state.resultReceipt).manifest).originalBacking[0].contentRef);
+ if(fault==='target')state.sqlite.prepare('UPDATE memory_live_enrollments SET recall_enabled=0 WHERE enrollment_id=?').run(state.current().enrollment_id);
+ if(fault==='feature')state.env.FORMA_MEMORY_ENABLED='false';
+ if(fault==='schema')state.sqlite.exec('CREATE INDEX idx_memory_derivation_contexts_unqualified ON memory_derivation_contexts(actor_user_id)');
+ if(fault==='foreign-keys')state.sqlite.exec('PRAGMA foreign_keys=OFF');
+ const response=await state.contextRequest();assert.ok(response.status>=400);assert.equal(JSON.stringify(await response.json()).includes('model-derived-unverified'),false);
+ if(['feature'].includes(fault))assert.equal((await state.contextRequest('DELETE',{revision:view.context.revision,confirmation:'DISMISS_ASSISTANT_CONTEXT'})).status,200);
+});
+for(const shared of [false,true])test('semantic assistant context: Forget clears target-only references without a paid grant '+shared,async t=>{
+ const state=await semanticAssistantContextFixture(t,{shared,crossScope:true});await state.widen();assert.equal((await state.contextAccept(await state.contextGet())).status,200);
+ const target=state.sqlite.prepare('SELECT * FROM memory_live_enrollments WHERE enrollment_id=?').get(state.recallTarget.id);
+ assert.equal(state.sqlite.prepare('SELECT COUNT(*) AS n FROM memory_derivation_grants WHERE enrollment_id=?').get(target.enrollment_id).n,0);
+ const result=await(await import('../worker/memory-live-store.ts')).revokeLiveMemoryCounted(state.env,target,'forgotten');assert.equal(result.revoked,true);
+ assert.equal(state.sqlite.prepare('SELECT COUNT(*) AS n FROM memory_derivation_contexts').get().n,0);
+ assert.ok(await state.readResult(),'The independent source remains intact');
+});
+for(const shared of [false,true])test('semantic assistant context: source Forget counts reference cascades '+shared,async t=>{
+ const state=await semanticAssistantContextFixture(t,{shared});assert.equal((await state.contextAccept(await state.contextGet())).status,200);
+ const result=await(await import('../worker/memory-live-store.ts')).revokeLiveMemoryCounted(state.env,state.current(),'forgotten');assert.equal(result.revoked,true);
+ assert.equal(state.sqlite.prepare('SELECT COUNT(*) AS n FROM memory_derivation_contexts').get().n,0);
+});
+for(const fault of ['boundary','target','source','schema','lost-ack','configuration'])test('semantic assistant context: atomic save rejects late '+fault,async t=>{
+ const state=await semanticAssistantContextFixture(t,{crossScope:true});await state.widen();const view=await state.contextGet(),db=state.env.DB,batch=db.batch;let hit=false;
+ db.batch=async function(statements){if(!hit&&statements.some(s=>String(s.sql??'').startsWith('INSERT INTO memory_derivation_contexts'))){hit=true;
+  if(fault==='boundary')state.sqlite.prepare('DELETE FROM memory_recall_boundaries WHERE enrollment_id=?').run(state.recallSource.enrollment_id);
+  if(fault==='target')state.sqlite.prepare('UPDATE memory_live_enrollments SET recall_enabled=0 WHERE enrollment_id=?').run(state.recallTarget.id);
+  if(fault==='source')state.sqlite.prepare("UPDATE private_content SET content='changed' WHERE content_id=?").run(JSON.parse(state.provider.nativeDerivationCandidateInputs(state.env,state.resultReceipt).manifest).originalBacking[0].contentRef);
+  if(fault==='schema')state.sqlite.exec('DROP INDEX idx_memory_derivation_contexts_source');
+  if(fault==='configuration')state.env.FORMA_MEMORY_ENABLED='false';
+  if(fault==='lost-ack'){await batch.call(this,statements);return[];}
+ }return batch.call(this,statements);};
+ let response;try{response=await state.contextAccept(view);}finally{db.batch=batch;}
+ assert.equal(hit,true);assert.equal(response.status,503,await response.clone().text());
+ const n=state.sqlite.prepare('SELECT COUNT(*) AS n FROM memory_derivation_contexts').get().n;assert.equal(n,['lost-ack','configuration'].includes(fault)?1:0);
+ if(fault==='lost-ack')assert.equal((await state.contextGet()).context.state,'accepted','A source-free status read recovers without replaying a write');
+});
+for(const shared of [false,true])test('semantic assistant context: source-free controls remain usable after feature shutdown '+shared,async t=>{
+ const state=await semanticAssistantContextFixture(t,{shared}),view=await state.contextGet();assert.equal((await state.contextAccept(view)).status,200);state.env.FORMA_MEMORY_ENABLED='false';
+ const {handleMemoryAssistantContext}=await import('../worker/memory-assistant-context-api.ts');
+ const r=await handleMemoryAssistantContext(new Request('http://localhost/api/memory/assistant-context?projectId=project-atmosphere&documentId=doc-atmosphere&controls=1',{headers:state.owner}),state.env);
+ assert.equal(r.status,200);const controls=await r.json();assert.equal(controls.context.state,'unavailable');assert.equal(controls.presentation,null);
+ assert.equal((await state.contextRequest('DELETE',{revision:controls.context.revision,confirmation:'DISMISS_ASSISTANT_CONTEXT'})).status,200);
+});
+for(const shared of [false,true])test('semantic assistant context: native query limits and request budget '+shared,async t=>{
+ const state=await semanticAssistantContextFixture(t,{shared,crossScope:true});await state.widen();const view=await state.contextGet();
+ const {enforceD1ExpressionDepth}=await import('./helpers/d1-expression-depth.mjs'),depth=enforceD1ExpressionDepth(state,{queryLimits:{functionArguments:32,parameters:100,sqlBytes:100000}});t.after(()=>depth.restore());
+ const db=state.env.DB,prepare=db.prepare,batch=db.batch,originals=new WeakMap();let operations=0;
+ const wrap=raw=>{const proxy=new Proxy(raw,{get(target,key){if(key==='bind')return(...args)=>wrap(target.bind(...args));if(['all','first','run','raw'].includes(key))return(...args)=>{operations++;return target[key](...args);};return Reflect.get(target,key,target);}});originals.set(proxy,raw);return proxy;};
+ db.prepare=function(sql){return wrap(prepare.call(this,sql));};db.batch=function(inputs){operations++;return batch.call(this,inputs.map(input=>originals.get(input)??input));};
+ try{for(const request of [()=>state.contextAccept(view),()=>state.contextRequest()]){operations=0;const r=await request();assert.equal(r.status,200,await r.clone().text()+' '+state.controls.lastDatabaseError);assert.ok(operations<=50,String(operations));t.diagnostic('native operations '+operations);}}finally{db.prepare=prepare;db.batch=batch;}
+});
+test('semantic assistant context: source-free retirement removes withdrawn references',async t=>{
+ const state=await semanticAssistantContextFixture(t),view=await state.contextGet();assert.equal((await state.contextAccept(view)).status,200);
+ assert.equal(await state.resultStore.withdrawNativeDerivationResult(state.env,state.current().actor_user_id,state.executionJob.job_id),true);
+ const {sweepAssistantMemoryContexts}=await import('../worker/memory-assistant-context-api.ts');assert.equal(await sweepAssistantMemoryContexts(state.env),1);assert.equal(await sweepAssistantMemoryContexts(state.env),0);
+});
+for(const shared of [false,true])test('native memory page bindings: genuine canonical document views remain distinct '+shared,async t=>{
+ const state=await nativeDerivationRollingFixture(t,{shared,windows:1,termOverrides:{recipeVersion:'memory-derivation-candidates-v2'},beforeWindow:async seed=>{
+  const e=seed.current();for(const view of ['chat','editor','chat']){const r=await seed.request('/api/events/hot',json({action:'hot',event:{type:'DocumentViewVisited',payload:{project_id:e.project_id,document_id:e.document_id,view,focused:true,route_family:'document',source_surface:'document-view-navigation'}}},{...seed.owner,origin:'http://localhost'}));assert.equal(r.status,200,await r.clone().text());}
+ }});
+ const job=state.queue().jobs[0],manifest=JSON.parse(state.sqlite.prepare('SELECT manifest_json FROM memory_derivation_results WHERE job_id=?').get(job.job_id).manifest_json);
+ const pages=manifest.provenance.pageBindings;assert.equal(pages.version,1);assert.equal(pages.unresolved,0);assert.deepEqual(pages.entries.map(p=>p.view),['chat','editor','chat']);
+ assert.equal(pages.entries[0].scopeKey,pages.entries[2].scopeKey);assert.notEqual(pages.entries[0].scopeKey,pages.entries[1].scopeKey);
+ const observations=manifest.behavioralSources.filter(row=>row.eventType==='DocumentViewVisited');assert.equal(observations.length,3);assert.ok(observations.every(row=>row.independentEvidence===false));
+ assert.equal(observations[0].resourceKey,observations[2].resourceKey);assert.notEqual(observations[0].resourceKey,observations[1].resourceKey);
+ const request=state.rollingRequests[0].observations.filter(row=>row.action==='encounter');assert.equal(request[0].resourceGroup,request[2].resourceGroup);assert.notEqual(request[0].resourceGroup,request[1].resourceGroup);
+ assert.ok(request.every(row=>!Object.hasOwn(row,'scopeKey')&&!Object.hasOwn(row,'view')&&!Object.hasOwn(row,'focused')),'Only opaque resource grouping goes to the model');
+ const store=await import('../worker/memory-derivation-results.ts');assert.ok(await store.readNativeDerivationResult(state.env,state.current().actor_user_id,job.job_id));
+ state.sqlite.prepare('DELETE FROM event_private_payloads WHERE private_event_id=?').run(pages.entries[0].eventId);
+ assert.equal(await store.readNativeDerivationResult(state.env,state.current().actor_user_id,job.job_id),null);
+ assert.equal(state.sqlite.prepare('SELECT state FROM memory_derivation_results WHERE job_id=?').get(job.job_id).state,'withdrawn');
+});
+test('native memory page bindings: older v2 manifests replay without new page interpretation',async t=>{
+ const state=await nativeBehavioralRuntimeFixture(t,{legacyPages:true}),store=state.behavioralStore;
+ assert.equal((await store.publishNativeDerivationResult(state.env,state.behavioralGenerated.receipt)).status,'stored');
+ const manifest=JSON.parse(state.sqlite.prepare('SELECT manifest_json FROM memory_derivation_results').get().manifest_json);assert.equal(Object.hasOwn(manifest.provenance,'pageBindings'),false);
+ assert.ok(await store.readNativeDerivationResult(state.env,state.current().actor_user_id,state.executionJob.job_id));
+});
+
+for(const fault of ['none','cross-site','extra-field','wrong-document','late-session','lost-ack'])test('native document page encounter: governed publication '+fault,async t=>{
+ const state=await sharedProjectFixture();t.after(()=>state.sqlite.close());
+ assert.equal((await state.request('/api/events?after=0&content=0',{headers:state.viewer})).status,200);
+ const payload={project_id:'project-atmosphere',document_id:'doc-atmosphere',view:'editor',focused:true,route_family:'document',source_surface:'document-view-navigation'};
+ const headers={...state.viewer,origin:fault==='cross-site'?'https://other.test':'http://localhost'};
+ if(fault==='extra-field')payload.draft='Never stored';if(fault==='wrong-document')payload.document_id='not-a-document';
+ const before=state.sqlite.prepare("SELECT COUNT(*) AS n FROM events WHERE type='DocumentViewVisited'").get().n;
+ const db=state.env.DB,batch=db.batch;let hit=false;
+ if(['late-session','lost-ack'].includes(fault))db.batch=async function(statements){
+  if(!hit&&statements.some(s=>String(s.sql??'').includes('document_view_committed'))){hit=true;
+   if(fault==='late-session')state.sqlite.prepare("UPDATE project_context_sessions SET revoked_at=? WHERE principal_user_id='assistant-viewer'").run(new Date().toISOString());
+   else{await batch.call(this,statements);return[];}
+  }return batch.call(this,statements);
+ };
+ let response;try{response=await state.request('/api/events/hot',json({action:'hot',event:{type:'DocumentViewVisited',payload}},headers));}finally{db.batch=batch;}
+ if(fault!=='none'){
+  assert.ok(response.status>=400,await response.clone().text());
+  assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM events WHERE type='DocumentViewVisited'").get().n-before,fault==='lost-ack'?1:0);
+  if(['late-session','lost-ack'].includes(fault))assert.equal(hit,true);
+  return;
+ }
+ assert.equal(response.status,200,await response.clone().text()+' '+state.controls.lastDatabaseError);const event=(await response.json()).appended[0];assert.equal(event.actor,'user:assistant-viewer');
+ assert.equal(state.sqlite.prepare('SELECT actor_user_id FROM project_event_scopes WHERE event_id=?').get(event.eventId).actor_user_id,'assistant-viewer');
+ for(const [identity,visible] of [[state.viewer,true],[state.owner,false]]){
+  const feed=await state.request('/api/events?after=0&limit=2000&content=1',{headers:identity});assert.equal(feed.status,200,await feed.clone().text());
+  const item=(await feed.json()).events.find(row=>row.eventId===event.eventId);assert.ok(item);
+  assert.equal(item.type,visible?'DocumentViewVisited':'ProjectResourceRestricted');
+  if(!visible){assert.equal(item.actor,'private');assert.deepEqual(item.payload,{restricted:true});}
+ }
 });

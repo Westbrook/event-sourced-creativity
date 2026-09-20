@@ -2675,3 +2675,20 @@ export const projectContainment = sqliteTable("project_containment", {
   check("project_containment_parent_pair", sql`(${table.parentProjectId} IS NULL) = (${table.parentDeclarationRef} IS NULL)`),
   check("project_containment_no_self", sql`${table.parentProjectId} IS NULL OR ${table.parentProjectId} <> ${table.projectId}`),
 ]);
+
+/** Durable, actor-private references; inference is never copied into original evidence. */
+export const memoryDerivationContexts = sqliteTable('memory_derivation_contexts', {
+ targetEnrollmentId:text('target_enrollment_id').primaryKey().notNull().references(()=>memoryLiveEnrollments.enrollmentId,{onDelete:'cascade'}),
+ actorUserId:text('actor_user_id').notNull(),targetRevision:integer('target_revision').notNull(),
+ jobId:text('job_id').notNull().references(()=>memoryDerivationJobs.jobId,{onDelete:'cascade'}),outputSha256:text('output_sha256').notNull(),
+ sourceEnrollmentId:text('source_enrollment_id').notNull(),sourceRevision:integer('source_revision').notNull(),
+ boundaryRevision:text('boundary_revision'),hierarchyRevision:text('hierarchy_revision'),revision:text('revision').notNull(),state:text('state').notNull(),
+ createdAt:text('created_at').notNull(),expiresAt:text('expires_at').notNull(),
+},table=>[
+ index('idx_memory_derivation_contexts_source').on(table.jobId),
+ check('memory_context_revisions',sql.raw("typeof(target_revision)='integer' AND target_revision>=1 AND typeof(source_revision)='integer' AND source_revision>=1 AND length(revision)=36")),
+ check('memory_context_output',sql.raw("length(output_sha256)=64 AND output_sha256 NOT GLOB '*[^0-9a-f]*'")),
+ check('memory_context_state',sql.raw("state IN('accepted','dismissed')")),
+ check('memory_context_time',sql.raw("length(created_at)=24 AND strftime('%Y-%m-%dT%H:%M:%fZ',created_at) IS created_at AND length(expires_at)=24 AND strftime('%Y-%m-%dT%H:%M:%fZ',expires_at) IS expires_at AND expires_at>created_at")),
+ check('memory_context_scope',sql.raw("(target_enrollment_id=source_enrollment_id AND boundary_revision IS NULL AND hierarchy_revision IS NULL) OR (target_enrollment_id<>source_enrollment_id AND length(boundary_revision)=36 AND length(hierarchy_revision)=71)")),
+]);

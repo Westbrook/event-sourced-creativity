@@ -1,5 +1,8 @@
 /** Audited Forma-owned interface, metadata, and component-documentation copy. */
 const messages: Record<string, string> = {
+  "system.auto.1ajba9u.47": "Interface de contexte de mémoire de l’assistant.",
+  "system.auto.1tlq4uh.152": "Contexte privé de l’assistant composé uniquement de références. Choisir une note n’envoie pas de requête et ne modifie pas les champs rédigés ; les références enregistrées sont revérifiées nativement.",
+
   "system.auto.bz37n4.45": "Interface de portée du rappel de mémoire.",
   "system.auto.140i2bg.141": "Interface de portée du rappel de mémoire connectée à l’application. Vérifiez ses attributs, propriétés JavaScript et événements réels avant de la composer.",
   "system.auto.1hqj2xr.42": "Interface de hiérarchie des projets.",

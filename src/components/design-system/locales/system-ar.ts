@@ -1,5 +1,8 @@
 /** Audited Forma-owned interface, metadata, and component-documentation copy. */
 const messages: Record<string, string> = {
+  "system.auto.1ajba9u.47": "واجهة سياق ذاكرة المساعد.",
+  "system.auto.1tlq4uh.152": "سياق خاص للمساعد يعتمد على المراجع فقط. لا يؤدي اختيار ملاحظة إلى إرسال طلب أو تغيير الحقول المكتوبة؛ تُعاد مصادقة المراجع المحفوظة محليًا.",
+
   "system.auto.bz37n4.45": "واجهة نطاق استرجاع الذاكرة.",
   "system.auto.140i2bg.141": "واجهة نطاق استرجاع الذاكرة المتصلة بالتطبيق. افحص سماتها وخصائص JavaScript وأحداثها الفعلية قبل تركيبها.",
   "system.auto.1hqj2xr.42": "واجهة تسلسل المشاريع.",

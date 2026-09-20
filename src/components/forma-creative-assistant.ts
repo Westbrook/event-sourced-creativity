@@ -1,3 +1,4 @@
+import './memory-assistant-context.ts';
 import { html, nothing } from "lit";
 import { keyed } from "lit/directives/keyed.js";
 import { navigateInApp, navigationPresentationClosing, type CommandDeparture } from "./command-departure";
@@ -1395,7 +1396,7 @@ export class FormaCreativeAssistant extends FormaElement {
         projectName: next.projectName, documentTitle: next.document.title,
         scopeUnknown: next.facts.lifecycle?.output.state !== "ready" || next.facts.lifecycle?.output.scopeKnown !== true,
         creatorHandoff: surface.application === "canvas",
-      }) : nothing}${this.#renderMemory(scope)}` : nothing}
+      }) : nothing}${this.#renderMemory(scope)}${surface.documentId&&this.#memoryOpen?html`<forma-memory-assistant-context></forma-memory-assistant-context>`:nothing}` : nothing}
       .retainGuidanceDraft=${true} .guidanceDelivery=${this.#guidance?.status ?? ""}
       .canSpecialist=${this.#canSpecialist()} .specialist=${this.#specialist}
       .canReconcile=${false}

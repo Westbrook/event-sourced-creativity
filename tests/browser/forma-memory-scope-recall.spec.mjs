@@ -9,6 +9,7 @@ for(const locale of ['en','ar'])test.describe('Memory cross-scope '+locale,()=>{
   const enrollment={id:'a'.repeat(64),projectId:'project-atmosphere',documentId:'doc-atmosphere',organizationId:null,revision:1,learn:true,recall:true,background:true,
    retentionDays:30,timeZone:'UTC',expiresAt:new Date(Date.now()+86400000).toISOString(),policyVersion:'personal-memory-v2',lastAdmittedAt:null,throughSequence:24,cutoffSequence:null,backlog:false,nextDueAt:new Date().toISOString(),attempts:0,status:'ready'};
   const source={enrollmentId:'b'.repeat(64),projectId:'project-atmosphere',documentId:'synthetic-other-document',zoom:'project',distance:0,weight:.7};
+  await context.route('**/api/memory/assistant-context?*',route=>route.fulfill({status:503,json:{error:'synthetic_assistant_context_unavailable'}}));
   await context.route('**/api/memory/**',async route=>{
    const request=route.request(),url=new URL(request.url());expect(url.origin).toBe(new URL(baseURL).origin);
    if(request.method()!=='GET'){writes.push({path:url.pathname,body:request.postDataJSON()});expect(url.pathname).toBe('/api/memory/recall-boundary');}

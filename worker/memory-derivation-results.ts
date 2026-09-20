@@ -123,7 +123,7 @@ export async function publishNativeDerivationResult(env: WorkerEnv, receipt: Nat
 
 declare const readBrand: unique symbol;
 export type NativeDerivationResultRead = Readonly<{ [readBrand]: true }>;
-const reads = new WeakMap<NativeDerivationResultRead, { env: WorkerEnv; db: WorkerEnv['DB']; row: Row;
+const reads = new WeakMap<NativeDerivationResultRead, { env: WorkerEnv; db: WorkerEnv['DB']; row: Row; evidence: import('./memory-derivation-admission.ts').NativeDerivationEvidence;
   capture: NativeDerivationSourceCapture; manifest: NativeDerivationManifest; candidate: ParsedMemoryDerivation | ParsedMemoryBehavioralDerivation; dependencies: Dependency[] }>();
 
 /** actorUserId comes from the authenticated native principal, never request JSON.
@@ -143,7 +143,7 @@ async function readResult(env: WorkerEnv, actorUserId: string, jobId: string,
       || typeof row.expires_at !== 'string' || row.expires_at <= new Date().toISOString()
       || await memoryDigest(row.raw_json) !== row.output_sha256 || await memoryDigest(row.manifest_json) !== row.manifest_sha256) return null;
     const parsedManifest=JSON.parse(row.manifest_json) as NativeDerivationManifestData;
-    const captured = await captureNativeDerivationSources(env, evidence, {history:parsedManifest.history!==undefined,crossProducerHistory:parsedManifest.history?.version===2,...(parsedManifest.history?.version===2?{historySelection:{jobIds:parsedManifest.history.windowJobIds,boundary:parsedManifest.history.boundary}}:{}),blockBindings:parsedManifest.provenance?.blockBindings!==undefined,relationBindings:parsedManifest.provenance?.relationBindings!==undefined,reuseBindings:parsedManifest.provenance?.reuseBindings!==undefined}); if (captured.status !== 'captured') return null;
+    const captured = await captureNativeDerivationSources(env, evidence, {history:parsedManifest.history!==undefined,crossProducerHistory:parsedManifest.history?.version===2,...(parsedManifest.history?.version===2?{historySelection:{jobIds:parsedManifest.history.windowJobIds,boundary:parsedManifest.history.boundary}}:{}),pageBindings:parsedManifest.provenance?.pageBindings!==undefined,blockBindings:parsedManifest.provenance?.blockBindings!==undefined,relationBindings:parsedManifest.provenance?.relationBindings!==undefined,reuseBindings:parsedManifest.provenance?.reuseBindings!==undefined}); if (captured.status !== 'captured') return null;
     const manifest = await revalidateNativeDerivationManifest(env, captured.capture, row.manifest_json); if (!manifest) return null;
     const source = nativeDerivationSourceInputs(env, captured.capture), expected = dependencies(nativeDerivationManifestInputs(env, manifest).manifest);
     if (row.dependency_count !== expected.length || source.retentionCeiling !== row.expires_at) return null;
@@ -153,7 +153,7 @@ async function readResult(env: WorkerEnv, actorUserId: string, jobId: string,
     const candidate = source.behavioralSources?await parseMemoryBehavioralResult(row.raw_json,{...context,observations:source.behavioralSources}):await parseMemoryDerivationResult(row.raw_json,context);
     if (!candidate) return null;
     const handle = Object.freeze({}) as NativeDerivationResultRead;
-    reads.set(handle, { env, db, row, capture: captured.capture, manifest, candidate, dependencies: expected });
+    reads.set(handle, { env, db, row, evidence, capture: captured.capture, manifest, candidate, dependencies: expected });
     const proof = [...nativeDerivationResultStatements(env, handle), ...(consumer?.guards.map(guard => derivationAssertion(env, guard)) ?? [])],
       checked = structuredClone(await db.batch<Record<string, unknown>>(proof));
     if (env.DB !== db || !derivationResults(checked, proof.length) || !checked.every(validProof)) { reads.delete(handle); return null; }
@@ -179,6 +179,15 @@ export function nativeDerivationResultInputs(env: WorkerEnv, handle: NativeDeriv
   const history=nativeDerivationSourceInputs(env,read.capture).history;
   return { jobId: String(read.row.job_id), expiresAt: String(read.row.expires_at), candidate: structuredClone(read.candidate),
     ...(history?{history:{windowCount:history.windowJobIds.length+1,originalPairs:history.originalPairs,boundary:history.boundary,afterSequence:history.afterSequence,throughSequence:history.throughSequence}}:{}) };
+}
+/** Native source identity for a reference-only consumer. This is data, not a
+ * publication capability; carry the opaque handle's statements into the write. */
+export function nativeDerivationResultBinding(env: WorkerEnv, handle: NativeDerivationResultRead) {
+  const read = currentRead(env, handle), input = nativeDerivationEvidenceInputs(env,
+    // The original native read captured this job's authority independently.
+    read.evidence);
+  return { enrollment: structuredClone(input.enrollment), purpose: input.grant.purpose,
+    outputSha256: String(read.row.output_sha256) };
 }
 /** A consumer that writes an answer must carry these statements into its own
  * atomic publication; read success alone is not durable answer authority. */

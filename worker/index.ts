@@ -1,3 +1,4 @@
+import { handleMemoryAssistantContext, sweepAssistantMemoryContexts } from './memory-assistant-context-api.ts';
 import { handleMemoryRecallBoundary } from './memory-recall-boundary-api.ts';
 import { handleProjectContainment } from './project-containment-api';
 import { runNativeDerivationScheduled } from "./memory-derivation-worker.ts";
@@ -185,6 +186,7 @@ async function routeRequest(request: Request, env: WorkerEnv, context: WorkerExe
     if(url.pathname==="/api/memory/recall")return handleLiveMemory(request,env,"recall");
     if(url.pathname==="/api/memory/export")return handleLiveMemory(request,env,"export");
     if(url.pathname==="/api/memory/processing")return handleLiveMemory(request,env,"processing");
+    if(url.pathname==="/api/memory/assistant-context")return handleMemoryAssistantContext(request,env);
     if(url.pathname==="/api/memory/recall-boundary"||url.pathname==="/api/memory/recall-scopes")return handleMemoryRecallBoundary(request,env);
     if(url.pathname==="/api/projects/containment")return handleProjectContainment(request,env);
     if(url.pathname==="/api/memory/derivation/settings")return handleMemoryDerivationSettings(request,env);
@@ -385,6 +387,7 @@ export default {
         () => sweepExpiredDerivationGrants(env,128),
         () => sweepNativeDerivationJobs(env),
         () => sweepNativeDerivationResults(env),
+        () => sweepAssistantMemoryContexts(env),
         () => sweepNativeDerivationUserControls(env),
         async () => {
           const recovery=await maintainNativeDerivationRecovery(env);
